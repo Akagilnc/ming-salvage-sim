@@ -34,12 +34,15 @@ from ming_sim.token_stats import tlog
 
 
 def _load_hitl_min_decisions() -> int:
-    """全局玩法设置：本回合 simulator 至少应产出的决策点数（0=不强制）。失败回落 1。"""
+    """全局玩法设置：本回合 simulator 至少应产出的决策点数（0=不强制）。
+
+    #1467：缺省/失败回落 0（禁恢复「每月至少一题」配额）。
+    """
     try:
         from ming_sim.llm_config import load_runtime_game
-        return int(load_runtime_game().get("hitl_min_decisions", 1))
+        return int(load_runtime_game().get("hitl_min_decisions", 0))
     except Exception:
-        return 1
+        return 0
 
 
 TOP_LEVEL_ALIASES = {

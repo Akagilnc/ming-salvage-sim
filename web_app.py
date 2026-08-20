@@ -4042,8 +4042,8 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
 
 
 class GameSettingsRequest(BaseModel):
-    # HITL 每回合最少决策点数，0-5。0=不强制（宁缺毋滥）。
-    hitl_min_decisions: int = 1
+    # HITL 每回合最少决策点数，0-5。#1467：默认 0=不强制（宁缺毋滥）。
+    hitl_min_decisions: int = 0
 
 
 @app.get("/api/menu/game_settings")

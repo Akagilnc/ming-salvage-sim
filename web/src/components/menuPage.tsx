@@ -178,7 +178,7 @@ export function GameSettingsModal({
   onSaved: () => Promise<void>;
 }) {
   const [minDecisions, setMinDecisions] = React.useState<number>(
-    initial?.hitl_min_decisions ?? 1
+    initial?.hitl_min_decisions ?? 0
   );
   const [busy, setBusy] = React.useState(false);
   const [err, setErr] = React.useState("");
