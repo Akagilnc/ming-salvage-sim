@@ -1359,15 +1359,23 @@ def _person_ids_from_extract_result(result: Dict[str, Any]) -> List[str]:
 _MIN_PERSON_PREFIX_LEN = 2
 
 
-def _original_input_text(
-    player_message: Optional[str], minister_reply: Optional[str],
+def _grounding_source_text(
+    player_message: Optional[str],
+    failed_slot_refs: Optional[List[str]] = None,
 ) -> str:
-    """自愈同人接地用的原始输入（皇帝话 + 大臣回话/旨文），非抽取器输出。"""
+    """自愈同人接地输入面（ADR 0142）：玩家输入 + 结构化首抽失败槽原始串。
+
+    禁 minister_reply / LLM 自由散文作机械判定输入；窄规则（子串/唯一前缀）
+    只扫本函数拼出的源。
+    """
     parts: List[str] = []
-    for raw in (player_message, minister_reply):
-        text = str(raw or "").strip()
-        if text:
-            parts.append(text)
+    text = str(player_message or "").strip()
+    if text:
+        parts.append(text)
+    for raw in failed_slot_refs or []:
+        ref = str(raw or "").strip()
+        if ref:
+            parts.append(ref)
     return "\n".join(parts)
 
 
@@ -1449,48 +1457,186 @@ def _person_grounded_in_source(
     return False
 
 
-def _replacements_grounded_in_source(
+def _failed_person_slot_count(
+    result: Dict[str, Any], pending_unknown: List[str],
+) -> int:
+    """首抽结果中失败人物槽位数（character_id + delegator，含重复）。"""
+    unknown = {
+        str(x).strip() for x in (pending_unknown or []) if str(x or "").strip()
+    }
+    if not unknown:
+        return 0
+    n = 0
+
+    def _absorb(roster: Any) -> None:
+        nonlocal n
+        if not isinstance(roster, list):
+            return
+        for item in roster:
+            if not isinstance(item, dict):
+                continue
+            cid = str(item.get("character_id") or "").strip()
+            if cid in unknown:
+                n += 1
+            did = str(
+                item.get("delegator_id") or item.get("delegator") or ""
+            ).strip()
+            if did in unknown:
+                n += 1
+
+    if "participant_roster" in result:
+        _absorb(result.get("participant_roster"))
+    for draft in result.get("drafts") or []:
+        if isinstance(draft, dict) and "participant_roster" in draft:
+            _absorb(draft.get("participant_roster"))
+    return n
+
+
+def _select_grounded_replacements(
     replacements: List[str],
     *,
+    need: int,
     player_message: Optional[str],
-    minister_reply: Optional[str],
+    failed_slot_refs: Optional[List[str]],
     db: Any,
     content: Any,
-) -> bool:
-    """纠错轮每个新参与人须能在原始输入+名册事实上唯一接地；否则 False。"""
-    if not replacements:
-        return True
-    source = _original_input_text(player_message, minister_reply)
+) -> Optional[List[str]]:
+    """从纠错轮新 id 中按序挑出已接地者，供失败槽回填。
+
+    依据面：player_message、结构化首抽失败槽原始串、单一 canon 索引。
+    禁 minister_reply 散文（ADR 0142）。
+    纠错轮多吐的未接地增人不纳入（形状冻结会丢掉），不挡自愈。
+    接地人数 < 失败槽数 → None（调用方 escalate）。
+    """
+    if need <= 0:
+        return []
+    source = _grounding_source_text(player_message, failed_slot_refs)
     forms_index = _all_roster_identity_forms(content=content)
+    grounded: List[str] = []
     for person_id in replacements:
         if not _person_grounded_in_source(
             person_id, source, db=db, content=content, roster_forms=forms_index,
         ):
-            return False
-    return True
+            continue
+        grounded.append(person_id)
+        if len(grounded) >= need:
+            return grounded[:need]
+    return None
+
+
+def _patch_failed_roster_slots(
+    baseline_roster: Any,
+    *,
+    pending_unknown: List[str],
+    grounded_replacements: List[str],
+    repl_offset: int,
+    db: Any,
+    content: Any,
+) -> tuple[List[Any], int]:
+    """冻结首抽 roster 形状/顺序/tier/role：只修补失败槽 character_id/delegator。
+
+    返回 (patched_roster, next_replacement_offset)。
+    """
+    if not isinstance(baseline_roster, list):
+        return [], repl_offset
+    unknown = {
+        str(x).strip() for x in (pending_unknown or []) if str(x or "").strip()
+    }
+    offset = int(repl_offset)
+
+    def _take_replacement() -> Optional[str]:
+        nonlocal offset
+        if offset >= len(grounded_replacements):
+            return None
+        value = grounded_replacements[offset]
+        offset += 1
+        return value
+
+    out: List[Any] = []
+    for item in baseline_roster:
+        if not isinstance(item, dict):
+            out.append(item)
+            continue
+        entry = dict(item)
+        raw_cid = str(entry.get("character_id") or "").strip()
+        if raw_cid in unknown:
+            new_cid = _take_replacement()
+            if new_cid:
+                entry["character_id"] = new_cid
+        elif raw_cid:
+            canon = _canon_person_id_key(raw_cid, db=db, content=content)
+            if canon:
+                entry["character_id"] = canon
+
+        raw_delegator = str(
+            entry.get("delegator_id") or entry.get("delegator") or ""
+        ).strip()
+        if raw_delegator:
+            if raw_delegator in unknown:
+                new_delegator = _take_replacement()
+                if new_delegator:
+                    entry["delegator_id"] = new_delegator
+            else:
+                canon_d = _canon_person_id_key(
+                    raw_delegator, db=db, content=content,
+                )
+                if canon_d:
+                    entry["delegator_id"] = canon_d
+            # 归一到 delegator_id；丢掉并行 raw 键避免双源
+            if "delegator" in entry and entry.get("delegator_id"):
+                entry.pop("delegator", None)
+        out.append(entry)
+    return out, offset
 
 
 def _backfill_healed_participant_refs(
     baseline: Dict[str, Any],
-    healed: Dict[str, Any],
+    *,
+    pending_unknown: List[str],
+    grounded_replacements: List[str],
+    db: Any,
+    content: Any,
 ) -> Dict[str, Any]:
-    """首抽权威快照：只回填纠错后的参与人引用；其余字段一律保首抽。"""
+    """首抽权威快照：形状/顺序/tier/role 冻结，只修补失败槽 character_id。
+
+    非参与人字段一律保首抽；纠错轮增人/重排/改档不落库。
+    """
     out = dict(baseline)
-    if "participant_roster" in healed:
-        out["participant_roster"] = healed.get("participant_roster")
+    offset = 0
+    base_roster = baseline.get("participant_roster")
+    if isinstance(base_roster, list):
+        patched, offset = _patch_failed_roster_slots(
+            base_roster,
+            pending_unknown=pending_unknown,
+            grounded_replacements=grounded_replacements,
+            repl_offset=offset,
+            db=db,
+            content=content,
+        )
+        out["participant_roster"] = normalize_draft_person_roster(
+            patched, db=db, content=content,
+        )
     base_drafts = baseline.get("drafts")
-    healed_drafts = healed.get("drafts")
-    if isinstance(base_drafts, list) and isinstance(healed_drafts, list):
+    if isinstance(base_drafts, list):
         merged: List[Any] = []
-        for idx, base_draft in enumerate(base_drafts):
+        for base_draft in base_drafts:
             if not isinstance(base_draft, dict):
                 merged.append(base_draft)
                 continue
             item = dict(base_draft)
-            if idx < len(healed_drafts) and isinstance(healed_drafts[idx], dict):
-                h_item = healed_drafts[idx]
-                if "participant_roster" in h_item:
-                    item["participant_roster"] = h_item.get("participant_roster")
+            base_item_roster = base_draft.get("participant_roster")
+            if isinstance(base_item_roster, list):
+                patched, offset = _patch_failed_roster_slots(
+                    base_item_roster,
+                    pending_unknown=pending_unknown,
+                    grounded_replacements=grounded_replacements,
+                    repl_offset=offset,
+                    db=db,
+                    content=content,
+                )
+                item["participant_roster"] = normalize_draft_person_roster(
+                    patched, db=db, content=content,
+                )
             merged.append(item)
         out["drafts"] = merged
     return out
@@ -1754,17 +1900,26 @@ def extract_draft_intent_with_roster_heal(
             )
             if lost_prior_valid or removal_only:
                 raise UnknownParticipantEscalate(pending_unknown)
-            if not _replacements_grounded_in_source(
+            assert baseline_result is not None
+            need = _failed_person_slot_count(baseline_result, pending_unknown)
+            grounded = _select_grounded_replacements(
                 replacements,
+                need=need,
                 player_message=player_message,
-                minister_reply=minister_reply,
+                failed_slot_refs=pending_unknown,
                 db=db,
                 content=content,
-            ):
+            )
+            if grounded is None:
                 raise UnknownParticipantEscalate(pending_unknown)
-            # 纠错只回填参与人引用；amount/target/mode/正文等保首抽。
-            assert baseline_result is not None
-            return _backfill_healed_participant_refs(baseline_result, validated)
+            # 形状/顺序/tier/role 冻结；只修补失败槽 id。amount/target/mode/正文保首抽。
+            return _backfill_healed_participant_refs(
+                baseline_result,
+                pending_unknown=pending_unknown,
+                grounded_replacements=grounded,
+                db=db,
+                content=content,
+            )
         return validated
 
 
