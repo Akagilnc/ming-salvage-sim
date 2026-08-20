@@ -37,7 +37,11 @@ _THINKING_BUDGET_BY_STRENGTH = {
 def _openai_reasoning_effort(model: str, reasoning_strength: str, thinking_level: str, enable_thinking: bool) -> str:
     if reasoning_strength == "off":
         model_id = (model or "").strip().lower()
-        return "none" if model_id.startswith(("gpt-5.1", "gpt-5.2", "gpt-5.4", "gpt-5.5")) else "minimal"
+        # 关思考：按族默认，禁止再续 gpt-5.x 版本清单（#1452 gpt-5.6 曾掉表外→minimal）。
+        # 遗留 o1 只认 minimal；gpt-5* / o3 / o4 及未知新族默认 none。
+        if model_id.startswith("o1"):
+            return "minimal"
+        return "none"
     if reasoning_strength:
         return _OPENAI_REASONING_BY_STRENGTH.get(reasoning_strength, "")
     if thinking_level:
@@ -156,7 +160,9 @@ def create_chat_model(
         "role_map": {"system": "system", "user": "user", "assistant": "assistant", "tool": "tool"},
         "extra_body": extra_body,
     }
-    if top_p is not None:
+    # OpenAI 推理族（gpt-5*/o*）拒 top_p：luna 回 HTTP 400 空 assistant → agno
+    # "Unknown model error" / 流式空回（#1452）。temperature 仍可传。
+    if top_p is not None and not supports_openai_reasoning_effort(llm_config.model):
         kwargs["top_p"] = top_p
     if force_json_output:
         # qwen / OpenAI 兼容协议：强制输出标准 JSON 字符串

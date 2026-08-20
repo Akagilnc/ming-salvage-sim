@@ -2111,6 +2111,14 @@ class WebGame:
         for event in stream:
             content = getattr(event, "content", None)
             event_name = getattr(event, "event", "")
+            # #1452：provider 失败时 agno 发 RunErrorEvent（如 Unknown model error）；
+            # 不得静默吞成「流式回复为空」，与 agents.run_agent_stream_text 同闸。
+            if type(event).__name__ == "RunErrorEvent":
+                raise LLMUnavailable(
+                    "LLM 调用失败：流式回复失败。",
+                    code="llm_stream_error",
+                    provider_message=str(content or ""),
+                )
             if event_name == "RunContent" and content:
                 delta = str(content)
                 chunks.append(delta)
