@@ -225,13 +225,14 @@ def test_capture_correction_drops_prior_valid_escalates(game, monkeypatch):
 
 
 def test_capture_correction_keeps_prior_valid_heals(game, monkeypatch):
-    """纠错轮保留毕自严 + 正确替换名 → 自愈成功落库（防过严误伤）。"""
+    """纠错轮保留毕自严 + 原文可接地的替换名 → 自愈成功落库（防过严误伤）。"""
     import ming_sim.cli_backend as cli_backend
 
     db, state, content = game
     _biziyan(content)
     replacement = _active_minister(db, content).name
-    text = "着不存在之人甲与毕自严核拨辽饷"
+    # 替换名须出现在原始输入（同人接地）；抄写错把替换名写成不存在之人
+    text = f"着{replacement}与毕自严核拨辽饷"
     calls: list[str] = []
 
     def backend(prompt, *_a, tag="", **_k):
@@ -261,6 +262,37 @@ def test_capture_correction_keeps_prior_valid_heals(game, monkeypatch):
     assert dv.id > 0
 
 
+def test_capture_ungrounded_replacement_escalates(game, monkeypatch):
+    """不存在之人甲→任意在册人（原文无接地）→ escalate，禁当抄写纠错落库。"""
+    import ming_sim.cli_backend as cli_backend
+
+    db, state, content = game
+    _biziyan(content)
+    replacement = _active_minister(db, content).name
+    text = "着不存在之人甲与毕自严核拨辽饷"
+    assert replacement not in text
+    calls: list[str] = []
+
+    def backend(prompt, *_a, tag="", **_k):
+        calls.append(prompt)
+        if tag == "participant_escalate_report":
+            return ("通政司启：朝中查无「不存在之人甲」，乞陛下明示。", 1)
+        if _CORRECTION_MARK in prompt:
+            person = ["毕自严", replacement]
+        else:
+            person = ["不存在之人甲", "毕自严"]
+        return (json.dumps(_ok_payload(person=person), ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
+    with pytest.raises(ValueError) as ei:
+        cli_backend.capture_manual_directive_payload(
+            text, None, db=db, content=content,
+        )
+    _assert_inworld_escalate(str(ei.value), "不存在之人甲")
+    assert len(db.list_directives(state) or []) == 0
+    assert any(_CORRECTION_MARK in p for p in calls)
+
+
 def test_capture_correction_alias_prior_valid_heals(game, monkeypatch):
     """首抽合法侧为 content 真 alias → 纠错轮回规范名+替换 → 须自愈落库。
 
@@ -279,7 +311,8 @@ def test_capture_correction_alias_prior_valid_heals(game, monkeypatch):
     assert aliases, "夹具毕自严须带真实 aliases（禁硬编码假别名）"
     alias = aliases[0]
     replacement = _active_minister(db, content).name
-    text = f"着不存在之人甲与{alias}核拨辽饷"
+    # 替换名与 alias 均须在原文（接地 + alias 守恒）
+    text = f"着{replacement}与{alias}核拨辽饷"
     calls: list[str] = []
 
     def backend(prompt, *_a, tag="", **_k):
@@ -461,7 +494,8 @@ def test_capture_delegator_alias_prior_valid_heals(game, monkeypatch):
     assert aliases, "夹具毕自严须带真实 aliases（禁硬编码假别名）"
     alias = aliases[0]
     replacement = _active_minister(db, content).name
-    text = f"着不存在之人甲核拨辽饷，由{alias}委派"
+    # 替换工人名须在原文（同人接地）
+    text = f"着{replacement}核拨辽饷，由{alias}委派"
     calls: list[str] = []
 
     def _payload(person: str, delegator: str):
@@ -860,7 +894,7 @@ def test_batch_drafts_heal_truncation(game, monkeypatch):
 
     monkeypatch.setattr(cb, "_run_backend_for_config", backend)
     result = cb.extract_draft_intent_with_roster_heal(
-        "两道旨", "臣遵拟。",
+        "两道旨着毕自严核拨辽饷", "臣遵拟。",
         db=db, content=content, draft_count=2,
     )
     drafts = result.get("drafts") or []
@@ -869,6 +903,219 @@ def test_batch_drafts_heal_truncation(game, monkeypatch):
         str(i.get("character_id") or "")
         for i in (drafts[0].get("participant_roster") or [])
     ]
+    assert ids == ["毕自严"]
+    assert len(calls) == 2
+
+
+def test_heal_second_fail_keeps_first_prior_valid(game, monkeypatch):
+    """两轮失败后首抽合法 participant 不丢：基线冻结，终轮洗掉首抽合法侧仍 escalate。
+
+    若每败覆写 prior_ids，第二轮只吐假名会洗掉毕自严，第三轮仅替换名会误自愈。
+    """
+    import ming_sim.cli_backend as cb
+
+    db, state, content = game
+    _biziyan(content)
+    replacement = _active_minister(db, content).name
+    text = f"着不存在之人甲与毕自严核拨辽饷"
+    n = {"c": 0}
+
+    def backend(prompt, *_a, tag="", **_k):
+        if tag == "participant_escalate_report":
+            return ("通政司启：朝中查无「不存在之人甲」，乞陛下明示。", 1)
+        n["c"] += 1
+        if n["c"] == 1:
+            person = ["不存在之人甲", "毕自严"]
+        elif n["c"] == 2:
+            # 第二轮另吐假名——旧码会覆写 prior，洗掉毕自严
+            person = ["另一个不存在之人"]
+        else:
+            # 终轮只给在册替换、丢掉首抽合法毕自严
+            person = [replacement]
+        return (json.dumps(_ok_payload(person=person), ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", backend)
+    with pytest.raises(ValueError) as ei:
+        cb.capture_manual_directive_payload(text, None, db=db, content=content)
+    _assert_inworld_escalate(str(ei.value), "不存在之人甲")
+    assert len(db.list_directives(state) or []) == 0
+    assert n["c"] == 1 + int(cb.DRAFT_PARTICIPANT_HEAL_RETRIES)
+
+
+def test_heal_keeps_first_extract_non_roster_fields(game, monkeypatch):
+    """纠错轮 amount/target/mode/text 漂移时仍保首抽（单条）。"""
+    import ming_sim.cli_backend as cb
+
+    db, _state, content = game
+    _biziyan(content)
+    text = "着毕自严核拨辽饷五十万"
+
+    def _payload(person: str, *,
+                 amount, target_id, mode, body, action="grant_allocation"):
+        return {
+            "拟旨意图": "拟旨",
+            "动作类型": action,
+            "目标类型": "issue",
+            "目标ID": target_id,
+            "正文": body,
+            "颁布方式": mode,
+            "金额": amount,
+            "账户": "太仓",
+            "执行面": "immediate",
+            "期限月数": 3,
+            "参与人": [{"character_id": person, "tier": "主办", "role": "核辽饷"}],
+        }
+
+    def backend(prompt, *_a, tag="", **_k):
+        if _CORRECTION_MARK in prompt:
+            # 纠错顺带改金额/目标/颁布/正文/期限
+            return (json.dumps(_payload(
+                "毕自严",
+                amount=999,
+                target_id="other-issue",
+                mode="中旨直发",
+                body="已被纠错轮改写的正文",
+                action="policy",
+            ), ensure_ascii=False), 1)
+        return (json.dumps(_payload(
+            "毕自",
+            amount=50,
+            target_id="liao-pay",
+            mode="普通",
+            body="着毕自严核拨辽饷五十万。",
+        ), ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", backend)
+    result = cb.extract_draft_intent_with_roster_heal(
+        text, text, db=db, content=content,
+    )
+    ids = [
+        str(i.get("character_id") or "")
+        for i in (result.get("participant_roster") or [])
+    ]
+    assert ids == ["毕自严"]
+    # 非参与人字段保首抽（单条 draft_text 源=minister_reply，不随 LLM 正文漂）
+    assert result.get("amount") == 50
+    assert result.get("target_id") == "liao-pay"
+    assert result.get("mode") == "ordinary"
+    assert result.get("draft_text") == text
+    assert result.get("dossier_action_type") == "grant_allocation"
+    assert result.get("deadline_months") == 3
+    assert result.get("account") == "太仓"
+    # 纠错轮的漂移值不得落库
+    assert result.get("amount") != 999
+    assert result.get("target_id") != "other-issue"
+
+
+def test_batch_heal_keeps_first_extract_non_roster_fields(game, monkeypatch):
+    """批抽：纠错轮漂移 amount/target/mode/正文/批序字段时仍保首抽。"""
+    import ming_sim.cli_backend as cb
+
+    db, _state, content = game
+    _biziyan(content)
+
+    def _batch(person: str, *,
+               body1, target1, mode1, amount1,
+               body2, target2, mode2):
+        return {
+            "成品旨稿": [
+                {
+                    "正文": body1,
+                    "动作类型": "grant_allocation",
+                    "目标类型": "issue",
+                    "目标ID": target1,
+                    "颁布方式": mode1,
+                    "金额": amount1,
+                    "账户": "太仓",
+                    "执行面": "immediate",
+                    "期限月数": 2,
+                    "参与人": [
+                        {"character_id": person, "tier": "主办", "role": "核"},
+                    ],
+                },
+                {
+                    "正文": body2,
+                    "动作类型": "military_order",
+                    "目标类型": "army",
+                    "目标ID": target2,
+                    "颁布方式": mode2,
+                    "期限月数": 4,
+                    "参与人": [],
+                },
+            ]
+        }
+
+    def backend(prompt, llm_config=None, tag=""):
+        if _CORRECTION_MARK in prompt:
+            # 漂移 + 甚至调换批序语义字段
+            return (json.dumps(_batch(
+                "毕自严",
+                body1="纠错轮改写其一",
+                target1="drift-issue",
+                mode1="中旨直发",
+                amount1=777,
+                body2="纠错轮改写其二",
+                target2="drift-army",
+                mode2="中旨直发",
+            ), ensure_ascii=False), 1)
+        return (json.dumps(_batch(
+            "毕自",
+            body1="着毕自严核拨辽饷。",
+            target1="liao-pay",
+            mode1="普通",
+            amount1=50,
+            body2="着边军整饬器械。",
+            target2="guanning",
+            mode2="普通",
+        ), ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", backend)
+    result = cb.extract_draft_intent_with_roster_heal(
+        "两道旨着毕自严核拨并整饬", "臣遵拟。",
+        db=db, content=content, draft_count=2,
+    )
+    drafts = result.get("drafts") or []
+    assert len(drafts) == 2
+    d0, d1 = drafts[0], drafts[1]
+    ids = [
+        str(i.get("character_id") or "")
+        for i in (d0.get("participant_roster") or [])
+    ]
+    assert ids == ["毕自严"]
+    # 首抽字段保留
+    assert d0.get("draft_text") == "着毕自严核拨辽饷。"
+    assert d0.get("target_id") == "liao-pay"
+    assert d0.get("mode") == "ordinary"
+    assert d0.get("amount") == 50
+    assert d0.get("deadline_months") == 2
+    assert d1.get("draft_text") == "着边军整饬器械。"
+    assert d1.get("target_id") == "guanning"
+    assert d1.get("mode") == "ordinary"
+    assert d1.get("deadline_months") == 4
+
+
+def test_capture_bi_shangshu_alias_grounds_and_heals(game, monkeypatch):
+    """毕尚书→毕自严：原文别名接地 → 自愈（正测，alias 钉不回退）。"""
+    import ming_sim.cli_backend as cli_backend
+
+    db, state, content = game
+    ch = _biziyan(content)
+    assert "毕尚书" in (getattr(ch, "aliases", None) or []), "夹具须含毕尚书别名"
+    text = "着毕尚书核拨辽饷"
+    calls: list[str] = []
+
+    def backend(prompt, *_a, tag="", **_k):
+        calls.append(prompt)
+        if tag == "participant_escalate_report":
+            raise AssertionError("别名接地自愈不得 escalate")
+        person = "毕自严" if _CORRECTION_MARK in prompt else "毕自"
+        return (json.dumps(_ok_payload(person=person), ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
+    payload = cli_backend.capture_manual_directive_payload(
+        text, None, db=db, content=content,
+    )
+    ids = [str(i["character_id"]) for i in (payload.get("participant_roster") or [])]
     assert ids == ["毕自严"]
     assert len(calls) == 2
 

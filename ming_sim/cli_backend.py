@@ -1356,6 +1356,146 @@ def _person_ids_from_extract_result(result: Dict[str, Any]) -> List[str]:
     return ids
 
 
+_MIN_PERSON_PREFIX_LEN = 2
+
+
+def _original_input_text(
+    player_message: Optional[str], minister_reply: Optional[str],
+) -> str:
+    """自愈同人接地用的原始输入（皇帝话 + 大臣回话/旨文），非抽取器输出。"""
+    parts: List[str] = []
+    for raw in (player_message, minister_reply):
+        text = str(raw or "").strip()
+        if text:
+            parts.append(text)
+    return "\n".join(parts)
+
+
+def _roster_identity_forms(canon: str, *, content: Any) -> List[str]:
+    """名册事实：规范名 + aliases（与 #1428 事实块同源，机械列表）。"""
+    forms: List[str] = []
+    name = str(canon or "").strip()
+    if name:
+        forms.append(name)
+    ch = None
+    if content is not None:
+        chars = getattr(content, "characters", None) or {}
+        ch = chars.get(name)
+    for raw in getattr(ch, "aliases", None) or []:
+        alias = str(raw or "").strip()
+        if alias and alias not in forms:
+            forms.append(alias)
+    return forms
+
+
+def _all_roster_identity_forms(*, content: Any) -> Dict[str, List[str]]:
+    """canon → 规范名+别名列表；供截断前缀唯一性判定。"""
+    out: Dict[str, List[str]] = {}
+    chars = getattr(content, "characters", None) or {} if content is not None else {}
+    for key, ch in chars.items():
+        canon = str(key or "").strip()
+        if not canon:
+            continue
+        forms = [canon]
+        for raw in getattr(ch, "aliases", None) or []:
+            alias = str(raw or "").strip()
+            if alias and alias not in forms:
+                forms.append(alias)
+        out[canon] = forms
+    return out
+
+
+def _person_grounded_in_source(
+    person_id: str,
+    source_text: str,
+    *,
+    db: Any,
+    content: Any,
+    roster_forms: Optional[Dict[str, List[str]]] = None,
+) -> bool:
+    """窄确定性同人接地：原文出现该人规范名/别名，或可截断前缀且唯一落此人。
+
+    禁散文关键词/第二套抽取语义；只做名册事实上的子串与前缀机械判定。
+    """
+    text = str(source_text or "")
+    if not text:
+        return False
+    canon = _canon_person_id_key(person_id, db=db, content=content)
+    if not canon:
+        return False
+    forms_index = roster_forms if roster_forms is not None else _all_roster_identity_forms(
+        content=content,
+    )
+    my_forms = forms_index.get(canon) or _roster_identity_forms(canon, content=content)
+    for form in my_forms:
+        if form and form in text:
+            return True
+    # 可截断前缀：form 的真前缀（长≥2）出现在原文，且全名册仅此人的 form 命中该前缀
+    for form in my_forms:
+        if len(form) <= _MIN_PERSON_PREFIX_LEN:
+            continue
+        for n in range(_MIN_PERSON_PREFIX_LEN, len(form)):
+            prefix = form[:n]
+            if prefix not in text:
+                continue
+            owners: set[str] = set()
+            for other_canon, other_forms in forms_index.items():
+                for other in other_forms:
+                    if other == prefix or other.startswith(prefix):
+                        owners.add(other_canon)
+                        break
+            if owners == {canon}:
+                return True
+    return False
+
+
+def _replacements_grounded_in_source(
+    replacements: List[str],
+    *,
+    player_message: Optional[str],
+    minister_reply: Optional[str],
+    db: Any,
+    content: Any,
+) -> bool:
+    """纠错轮每个新参与人须能在原始输入+名册事实上唯一接地；否则 False。"""
+    if not replacements:
+        return True
+    source = _original_input_text(player_message, minister_reply)
+    forms_index = _all_roster_identity_forms(content=content)
+    for person_id in replacements:
+        if not _person_grounded_in_source(
+            person_id, source, db=db, content=content, roster_forms=forms_index,
+        ):
+            return False
+    return True
+
+
+def _backfill_healed_participant_refs(
+    baseline: Dict[str, Any],
+    healed: Dict[str, Any],
+) -> Dict[str, Any]:
+    """首抽权威快照：只回填纠错后的参与人引用；其余字段一律保首抽。"""
+    out = dict(baseline)
+    if "participant_roster" in healed:
+        out["participant_roster"] = healed.get("participant_roster")
+    base_drafts = baseline.get("drafts")
+    healed_drafts = healed.get("drafts")
+    if isinstance(base_drafts, list) and isinstance(healed_drafts, list):
+        merged: List[Any] = []
+        for idx, base_draft in enumerate(base_drafts):
+            if not isinstance(base_draft, dict):
+                merged.append(base_draft)
+                continue
+            item = dict(base_draft)
+            if idx < len(healed_drafts) and isinstance(healed_drafts[idx], dict):
+                h_item = healed_drafts[idx]
+                if "participant_roster" in h_item:
+                    item["participant_roster"] = h_item.get("participant_roster")
+            merged.append(item)
+        out["drafts"] = merged
+    return out
+
+
 def build_participant_correction_feedback(
     exc: BaseException, *, roster_facts: str = "",
 ) -> str:
@@ -1545,6 +1685,8 @@ def extract_draft_intent_with_roster_heal(
     correction = ""
     pending_unknown: List[str] = []
     prior_ids_at_fail: List[str] = []
+    # 首抽权威快照：首次校验失败后冻结，后续失败不得覆写 baseline/闸基线。
+    baseline_result: Optional[Dict[str, Any]] = None
     for attempt in range(retries + 1):
         # llm_config 关键字传：别族 fake_draft(msg, reply, **kw) 形仍合法，
         # 不得因 heal 多塞第 3 位置参把旧 mock 签名整族打爆。
@@ -1577,8 +1719,11 @@ def extract_draft_intent_with_roster_heal(
         except ValueError as exc:
             if not is_unknown_participant_ref_error(exc):
                 raise
-            pending_unknown = _invalid_participant_names_from_error(exc)
-            prior_ids_at_fail = _person_ids_from_extract_result(result)
+            # 仅首败冻结基线；重试失败不得洗掉首抽合法参与人/未知名。
+            if baseline_result is None:
+                pending_unknown = _invalid_participant_names_from_error(exc)
+                prior_ids_at_fail = _person_ids_from_extract_result(result)
+                baseline_result = dict(result)
             if attempt >= retries:
                 raise UnknownParticipantEscalate(pending_unknown) from exc
             roster_facts = _draft_intent_character_roster_facts(content)
@@ -1593,6 +1738,7 @@ def extract_draft_intent_with_roster_heal(
         # 亦禁有替换时顺手抹掉本轮已在册的合法参与人。
         # prior 侧须过与 validated 同一条归一后再比（别名→规范名），
         # 禁生/熟键空间错位误杀自愈。
+        # 替换须原始输入+名册事实窄确定性同人接地；接不上唯一同人 → escalate。
         if pending_unknown:
             new_ids = _person_ids_from_extract_result(validated)
             prior_raw = [
@@ -1608,6 +1754,17 @@ def extract_draft_intent_with_roster_heal(
             )
             if lost_prior_valid or removal_only:
                 raise UnknownParticipantEscalate(pending_unknown)
+            if not _replacements_grounded_in_source(
+                replacements,
+                player_message=player_message,
+                minister_reply=minister_reply,
+                db=db,
+                content=content,
+            ):
+                raise UnknownParticipantEscalate(pending_unknown)
+            # 纠错只回填参与人引用；amount/target/mode/正文等保首抽。
+            assert baseline_result is not None
+            return _backfill_healed_participant_refs(baseline_result, validated)
         return validated
 
 
