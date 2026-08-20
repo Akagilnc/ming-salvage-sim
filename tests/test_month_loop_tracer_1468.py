@@ -5,9 +5,11 @@
 （不 mock 内部函数 / 结算核 / 收夜编排）。
 
 主 tracer：new_game → 召对开夜/回话/收夜 → 拟旨 → POST /api/decree/issue
-→ 月+1 → 再一月。断言月份走到、无 409 死锁、无裸 500、闸/账本自洽。
+→ 月+1 → 再一月。断言 turn+2 与 year/period 跨年安全月序 +2、无 409 死锁、
+无裸 500、闸/账双向等量（成功过月 count==len(pending)==0）。
 
-负向钉：收夜闸有欠账时 GET /api/audience/extraction/pending 必非空（#1353 病根）。
+负向钉：收夜闸有欠账时 GET /api/audience/extraction/pending 必
+count==len(pending)>=1 且含本轮 debt id（#1353 病根）。
 
 速度红线：单条 ≤30s；罩类断言用可注入小值（本片不靠真实超时窗）。
 """
@@ -221,6 +223,12 @@ def _turn_of(state: dict) -> int:
     return int(turn.get("turn") or 0)
 
 
+def _month_ord_of(state: dict) -> int:
+    """跨年安全月序：HTTP turn.year*12 + turn.period（禁只盯 turn 计数）。"""
+    turn = state.get("turn") or {}
+    return int(turn.get("year") or 0) * 12 + int(turn.get("period") or 0)
+
+
 def _get_state(client: TestClient) -> dict:
     resp = client.get("/api/game/state")
     _assert_not_bare_500(resp, step="GET /api/game/state")
@@ -314,12 +322,14 @@ def _play_one_month(client: TestClient, *, minister: str, month_label: str) -> i
         f"{month_label}: turn {turn_before} → {turn_after}, expected +1; "
         f"phase={after.get('turn')!r}"
     )
-    # 闸/账本自洽：过月后不应残留「闸说有债、pending 空」的死锁形。
+    # 闸/账双向等量：成功过月后 count == len(pending) == 0（漏账或残债均红）。
     pending = _pending_payload(client)
-    if int(pending.get("count") or 0) > 0:
-        assert pending.get("pending"), (
-            f"{month_label}: pending count>0 but list empty: {pending!r}"
-        )
+    pending_list = pending.get("pending") or []
+    count = int(pending.get("count") or 0)
+    assert count == len(pending_list) == 0, (
+        f"{month_label}: post-month pending not empty/eq: "
+        f"count={count} len={len(pending_list)} body={pending!r}"
+    )
     # 夜应收：无跨月开夜
     open_after = an.get_open_night(game.db)
     assert open_after is None or str(open_after.get("status")) == an.NIGHT_STATUS_CLOSED, (
@@ -332,7 +342,7 @@ def _play_one_month(client: TestClient, *, minister: str, month_label: str) -> i
 
 
 def test_month_loop_two_months_via_http_entry(tracer_client):
-    """HTTP 真入口起局走两个整月：月份走到、无 409 死锁、无裸 500、闸/账一致。"""
+    """HTTP 真入口起局走两个整月：turn+2 且 year/period 月序+2、无 409、闸/账双向清零。"""
     client = tracer_client
     t0 = time.perf_counter()
 
@@ -341,7 +351,9 @@ def test_month_loop_two_months_via_http_entry(tracer_client):
     assert new.status_code == 200, new.text
     state0 = (new.json() or {}).get("state") or {}
     turn0 = _turn_of(state0)
+    ord0 = _month_ord_of(state0)
     assert turn0 >= 1, state0.get("turn")
+    assert ord0 > 0, state0.get("turn")
     minister = _pick_active_minister(state0)
 
     game = web_app.web_game
@@ -355,6 +367,15 @@ def test_month_loop_two_months_via_http_entry(tracer_client):
     _install_canned_minister(web_app.web_game)
     turn2 = _play_one_month(client, minister=minister, month_label="M2")
     assert turn2 == turn0 + 2
+
+    # 年月投影跨年钉：冻结 calendar 只让 turn 自增须红（mutation 自验）。
+    state_end = _get_state(client)
+    assert _turn_of(state_end) == turn0 + 2
+    assert _month_ord_of(state_end) == ord0 + 2, (
+        f"calendar must advance +2 months (year-safe): "
+        f"start={state0.get('turn')!r} end={state_end.get('turn')!r} "
+        f"ord {ord0} → {_month_ord_of(state_end)}"
+    )
 
     elapsed = time.perf_counter() - t0
     assert elapsed <= 30.0, f"speed red line: tracer took {elapsed:.2f}s > 30s"
@@ -408,14 +429,16 @@ def test_issue_blocked_by_extraction_debt_pending_api_nonempty(tracer_client, mo
         for token in ("待补", "抽取", "未抽取", "pending")
     ), f"409 detail should mention extraction debt: {detail_text!r}"
 
+    # 闸/账双向等量：409 时 count == len(pending) >= 1 且含本轮 debt id。
+    # mutation：pending HTTP 面漏账而闸仍 409 须红。
     pending = _pending_payload(client)
-    assert int(pending.get("count") or 0) >= 1, (
-        f"#1353: gate blocked but pending empty: {pending!r}"
+    pending_list = pending.get("pending") or []
+    count = int(pending.get("count") or 0)
+    assert count == len(pending_list) >= 1, (
+        f"#1353: gate 409 but pending not bidirectional nonempty: "
+        f"count={count} len={len(pending_list)} body={pending!r}"
     )
-    assert pending.get("pending"), (
-        f"#1353: count>0 but pending list empty: {pending!r}"
-    )
-    api_ids = {int(p.get("chat_turn_id") or 0) for p in pending.get("pending") or []}
+    api_ids = {int(p.get("chat_turn_id") or 0) for p in pending_list}
     assert ctid in api_ids, f"pending API missing debt turn {ctid}: {pending!r}"
 
     # 夜保持开，可重试
