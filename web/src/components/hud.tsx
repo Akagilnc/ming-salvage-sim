@@ -73,7 +73,8 @@ export function snapToSlot(px: number, py: number, occupied: Set<string>, selfKe
 }
 
 
-// 坐标存百分比（0-1），持久化到服务端 db（按存档隔离）
+// 坐标存百分比（0-1），持久化到服务端 db（按存档隔离）。
+// #1290：空 {} = 无玩家覆盖，合法；默认朝班由 drawers arrange(courtSlots) 生成，不 seed。
 export async function loadCourtPos(): Promise<Record<string, { px: number; py: number }>> {
   try {
     const r = await fetch("/api/court_layout");
