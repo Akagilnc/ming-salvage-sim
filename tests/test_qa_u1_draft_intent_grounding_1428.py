@@ -54,7 +54,7 @@ def _fake_session(db, state, content):
 def _active_minister(db, content, *, exclude="毕自严"):
     return next(
         ch for ch in content.characters.values()
-        if getattr(ch, "office_type", "") not in ("后宫", "宗藩")
+        if getattr(ch, "office_type", "") not in ("后宫", "宗藩", "未仕")
         and db.resolve_power_id(ch) == "ming"
         and db.get_character_status(ch.name)[0] == "active"
         and ch.name != exclude
@@ -199,8 +199,9 @@ def test_extract_draft_intent_prompt_grounds_roster_when_content_given(game, mon
 
 
 def test_roster_facts_exclude_ineligible_include_biziyan(game):
-    """事实块资格=canon 同口径：外藩别名/后宫不入；毕自严+别名仍在。"""
+    """事实块资格=可召单真源：外藩别名/后宫/宗藩/未仕不入；毕自严+别名仍在。"""
     import ming_sim.cli_backend as cli_backend
+    from ming_sim.session import _is_summonable_court_minister
 
     _db, _state, content = game
     ch = _biziyan_in_content(content)
@@ -209,20 +210,19 @@ def test_roster_facts_exclude_ineligible_include_biziyan(game):
     assert "毕自严（别名：" in facts
     for alias in ("毕尚书", "南户部", "毕户部"):
         assert alias in facts
-    # 负向：外藩别名、后宫规范名/别名不得入块（别名承诺只对可 canon 条目）
+    # 负向：外藩别名、后宫规范名/别名、未仕不得入块（#1317 r2 与可召谓词同口径）
     assert "黄台吉" not in facts
     assert "皇太极" not in facts
     assert "周皇后" not in facts
     assert "中宫" not in facts
-    # 体积：不得倾倒全表
+    assert "史可法" not in facts
+    # 体积：不得倾倒全表；行数=可召谓词命中数（单真源，禁手写第二份过滤）
     line_count = sum(1 for line in facts.splitlines() if line and not line.startswith("【"))
     assert line_count < len(content.characters)
     assert line_count == sum(
         1
         for c in content.characters.values()
-        if getattr(c, "power_id", None) == "ming"
-        and getattr(c, "office_type", None) != "后宫"
-        and getattr(c, "status", None) != "candidate"
+        if _is_summonable_court_minister(c)
         and str(getattr(c, "name", None) or "").strip()
     )
     # seed 漂移防护

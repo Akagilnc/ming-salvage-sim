@@ -553,8 +553,8 @@ def build_simulator_payload(
 
     court_rows = []
     for row in db.conn.execute(
-        # roster scope：大明、非后宫、非宗藩（宗室就藩非朝堂命官，PR#121；web visible_in_court
-        # 已挡、simulator 在朝盘面须同步否则裁判仍把宗藩当可任命官/幻觉任命，cmr R3 cross-section）。
+        # roster scope：大明、非后宫、非宗藩、非未仕（#1317 r2 与 _is_summonable_court_minister /
+        # web visible_in_court 同口径；宗室就藩非朝堂命官 PR#121；诸生待铨非在朝命官）。
         # #613：任别进盘面简报（character_offices；缺档按真除）。
         "SELECT c.name,c.office,c.office_type,c.faction,c.status,c.power_id,c.location,"
         "c.transit_to,c.loyalty,c.ability,c.integrity,c.courage,c.identity,"
@@ -562,7 +562,7 @@ def build_simulator_payload(
         "FROM characters c "
         "LEFT JOIN character_offices co ON co.character_name=c.name "
         "WHERE c.status='active' AND c.power_id='ming' "
-        "AND c.office_type NOT IN ('后宫','宗藩') ORDER BY c.rowid"
+        "AND c.office_type NOT IN ('后宫','宗藩','未仕') ORDER BY c.rowid"
     ).fetchall():
         raw = dict(row)
         raw.update(qualitative_character_axes(SimpleNamespace(**raw)))
@@ -841,11 +841,10 @@ def _extractor_context_payload(
     active_ministers = [
         dict(r) for r in db.conn.execute(
             # roster scope（同 court_roster / _talent_pool_rows / tools.get_active_ministers）：
-            # 大明、非后宫、非宗藩。否则 active 外臣（皇太极等）/ active 后宫漏进 extractor 在朝名单
-            # （PR #106 CodeRabbit）；宗藩同 court_roster 排除（PR#121，cmr R3 cross-section）。
+            # 大明、非后宫、非宗藩、非未仕（#1317 r2 可召单真源；PR #106 / PR#121）。
             "SELECT name,office,office_type,faction,power_id,location,transit_to "
             "FROM characters WHERE status='active' AND power_id='ming' "
-            "AND office_type NOT IN ('后宫','宗藩') ORDER BY rowid"
+            "AND office_type NOT IN ('后宫','宗藩','未仕') ORDER BY rowid"
         ).fetchall()
     ]
     # ADR 0009 人才池视图：与 simulator 盘面共用 _talent_pool_rows（防两处漂移）。

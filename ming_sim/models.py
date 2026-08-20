@@ -402,6 +402,7 @@ class Character:
 
 
 VASSAL_PRINCE_OFFICE_TYPE = "宗藩"
+WEISHI_OFFICE_TYPE = "未仕"
 
 
 def is_vassal_prince(character: "Character") -> bool:
@@ -417,7 +418,7 @@ def is_vassal_prince(character: "Character") -> bool:
     - issues: apply_office_appointment（任命落地核 choke——授官会改 office_type、反解 roster 隐藏，必守）
     - session: can_summon（召对 choke，覆盖 session/web/CLI choose_minister 三路）
     - db: create_secret_order（密令唯一 DB 写口 choke）/ _commit_office_action 罢免（玩家罢免）
-    roster 类同时排 后宫，用 office_type in ('后宫','宗藩')；本 helper 只判宗藩这一面。
+    roster 类同时排 后宫/未仕，用 office_type in ('后宫','宗藩','未仕')；本 helper 只判宗藩这一面。
 
     **规则边界（玩家动作 vs 世界事件，cmr R7 拍）**：守的是「皇帝把宗室当朝堂命官来召见/任免/
     罢免/下密令」这类玩家动作面。**simulator/extractor 叙事处置故意不守**——宗室可因世界事件
@@ -427,6 +428,27 @@ def is_vassal_prince(character: "Character") -> bool:
 
     容 None（防御，R3 gemini）：传 None 返 False，使本判据不比调用点的存在性检查更严。"""
     return character is not None and character.office_type == VASSAL_PRINCE_OFFICE_TYPE
+
+
+def is_weishi(character: "Character") -> bool:
+    """未仕（诸生/童生等身名分）——可在册待铨，但非在朝可召命官（#1317 r2）。
+
+    与「在册身份归一」分离：别名/查重必须认识未仕（史宪之→史可法不得建重档）；
+    「在朝可召资格」= 身份归一 ∧ 非宗藩 ∧ 非未仕，由可召/名册面共吃。
+    受守面清单（新增同类面时一并加，勿漏；形制同 is_vassal_prince）：
+    - session: list_ministers / can_summon（朝臣支；后宫走专路）
+    - web_app: visible_in_court
+    - cli: terminal.choose_minister
+    - cli_backend: _draft_intent_character_roster_facts（拟诏事实块）
+    - simulation: court_roster / active_ministers（SQL office_type NOT IN(…'未仕')）
+    - tools: get_active_ministers
+    - registry: build_court_roster / build_court_roster_index
+    - db: current_court_roster_rows（已排）
+    - web_app: in_talent_pool / simulation._talent_pool_rows（未入仕非「可起复前臣」）
+    任命写路径（apply_office_appointment）**不**守本闸——未仕入仕是合法铨选。
+    同型 seed 先例：郑成功/张煌言等诸生童生 offstage（非钱谦益——钱为罢居礼部、非未仕）。
+    容 None：传 None 返 False。"""
+    return character is not None and getattr(character, "office_type", None) == WEISHI_OFFICE_TYPE
 
 
 @dataclass

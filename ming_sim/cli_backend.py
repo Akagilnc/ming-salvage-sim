@@ -1298,17 +1298,18 @@ def _draft_intent_character_roster_facts(content: Any) -> str:
 
     接地=结构化事实注入（ADR 0142）；不在此做散文截断修复/子串归一。
     参与人 character_id 须填规范名；别名仅作识别线索，输出仍归规范名。
-    资格与 _find_existing_minister / _is_ming_court_minister_character 同口径
-    （ming ∧ 非后宫 ∧ 非 candidate）；无 db 时用 content 静态 power_id（#125 live 翻转不扩）。
+    资格与可召面同口径：_is_summonable_court_minister（身份归一∧非宗藩∧非未仕；#1317 r2）。
+    无 db 时用 content 静态 power_id（#125 live 翻转不扩）。身份归一另由 _find_existing_minister
+    吃（含未仕/宗藩别名）；事实块只供可召朝臣接地，不倾倒待铨诸生。
     """
     characters = getattr(content, "characters", None) if content is not None else None
     if not characters:
         return ""
-    from ming_sim.session import _is_ming_court_minister_character
+    from ming_sim.session import _is_summonable_court_minister
 
     lines: List[str] = []
     for key, ch in characters.items():
-        if not _is_ming_court_minister_character(ch):
+        if not _is_summonable_court_minister(ch):
             continue
         name = str(getattr(ch, "name", None) or key or "").strip()
         if not name:
