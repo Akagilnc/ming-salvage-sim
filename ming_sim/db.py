@@ -7851,8 +7851,9 @@ class GameDB:
             "SELECT message FROM turn_logs WHERE turn = ? ORDER BY id",
             (previous_turn,),
         ).fetchall()
+        # #1356：非 t0 亦禁固定空态句；无 report 且无 logs → 真真空。
         if not logs:
-            return f"上{TURN_UNIT}未见正式记录。"
+            return ""
 
         lines = [
             f"上{TURN_UNIT}回顾：",
