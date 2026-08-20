@@ -1141,10 +1141,7 @@ class GameSession:
         if str(court_action or "") != "court_break":
             return
         from ming_sim.audience_night import close_night, get_open_night
-        from ming_sim.session_write_queue import (
-            TicketBarrierTimeout,
-            get_session_write_queue,
-        )
+        from ming_sim.session_write_queue import get_session_write_queue
 
         if get_open_night(self.db) is None:
             return
@@ -1161,27 +1158,8 @@ class GameSession:
                 scene_registry=getattr(self, "_scene_registry", None),
             )
 
-        q = get_session_write_queue(self)
-        try:
-            q.barrier(_do_close)
-        except TicketBarrierTimeout as barrier_exc:
-            from ming_sim.audience_night import AudienceNightError, write_audience_error_pack
-            open_seqs = list(getattr(barrier_exc, "open_seqs", []) or [])
-            message = (
-                "收夜中止：会话写队列仍有未完成票据（在飞/挂起），"
-                f"open_seqs={open_seqs}。夜保持开启，可原地重试。"
-            )
-            pack = write_audience_error_pack(
-                kind="in_flight_chat",
-                message=message,
-                detail={"open_seqs": open_seqs},
-            )
-            raise AudienceNightError(
-                message,
-                code="in_flight_chat",
-                error_pack_path=pack,
-                detail={"open_seqs": open_seqs},
-            ) from barrier_exc
+        # 屏障只等前序票工人终态/空放行（K10a：无 elapsed 熔断）。
+        get_session_write_queue(self).barrier(_do_close)
 
     def _confirmation_intent_for_preexisting_pending(
         self,

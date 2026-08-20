@@ -34,8 +34,8 @@
            **过月=session 单写者票据队列屏障**（`SessionWriteQueue.barrier`）：
            尾随腿（抽取/读心/高亮）起跑领 turn key 票，LLM 并行在外，写库经
            `TicketedWriteGate`/`run` 按票序执行；屏障排在已领票之后，前序未清不跑。
-           在飞回话：工人落终态即续跑（K10a 不把健康腿伪造成失败）；真挂死有界熔断
-           fail-closed（ADR 0038），夜保持 OPEN、可原地重试——禁无限悬吊。
+           在飞回话：工人落终态即续跑（K10a 不把健康腿伪造成失败）；真挂死由
+           provider/worker 硬超时落失败终态后 vacate，屏障只等终态——禁 elapsed 伪判。
            欠账抽取并入过月 drain/catch_up（玩家无感；统一重试耗尽才走失败单源）；
            背书：一夜一批 single-flight owner 去重（队列只管写序，不建第二套 dedup）；
            已绑定→续跑；真失败 fail-closed 保持 OPEN（禁第二次 LLM / contended 409）。
@@ -239,8 +239,8 @@ session.advance_without_decree / POST /api/decree/advance_without_edict:
 | 文件 | 看什么 |
 |---|---|
 | `ming_sim/decree.py` | `resolve_directives` + `_settle_after_narrative` 编排；可复用核 `pre_settle` / `settle_with_delta`；二者均转发调用方 `scene_registry`（#542）；`resolve_settling_recovery` / `persist_resolve_context` 恢复机械 |
-| `ming_sim/session_write_queue.py` | per-session 单写者有序票据队列（#1353 / ADR 0149）：尾随领票、写经 `TicketedWriteGate`/`run`、过月=`barrier`、失败空放行、撤回 `cancel_key`；屏障有界熔断 |
-| `ming_sim/audience_night.py` | `auto_close_open_night` / `close_night`：颁诏 / 退朝遇开夜时顺势自动收夜（#498）；在飞工人终态续跑 + 真挂死有界 fail-closed（ADR 0038）；欠账并入过月 drain；`scene_registry` 调用方所有，start→并行→终局前 join，失败 OPEN fail-closed |
+| `ming_sim/session_write_queue.py` | per-session 单写者有序票据队列（#1353 / ADR 0149）：尾随领票、写经 `TicketedWriteGate`/`run`、过月=`barrier`、失败空放行、撤回 `cancel_key`；屏障只等工人终态（K10a 无 elapsed 熔断） |
+| `ming_sim/audience_night.py` | `auto_close_open_night` / `close_night`：颁诏 / 退朝遇开夜时顺势自动收夜（#498）；在飞只依工人终态续跑（K10a）；欠账并入过月 drain；`scene_registry` 调用方所有，start→并行→终局前 join，失败 OPEN fail-closed |
 | `ming_sim/audience_extraction.py` | 收夜 endorsement 批：一夜一批 single-flight 去重；真失败 fail-closed 保持 OPEN，禁第二次 LLM；写序归队列票据 |}
 | `ming_sim/beat_orchestration.py` | `ChatTurnSceneRegistry` + `start_close_scene_on_registry` / `join_close_scene_on_registry`：收夜 scene 进既有 registry，不自建第二 executor（#542） |
 | `ming_sim/applier.py` | `atomic` 事务边界（`_SuspendableConnection`：内层 commit 暂停、executescript 拒绝、嵌套深度计数）+ `RejectionCollector` 拒收留痕契约 |

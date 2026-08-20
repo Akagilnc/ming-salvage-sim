@@ -1,17 +1,18 @@
 """#1353 单写者票据队列钉：序 / 屏障 / 失败空放行 / 撤回取消 / 生产 seam。
 
 法源 ADR 0149 + owner 无感宪法。确定性事件握手，不靠 sleep 判胜负。
+屏障只等工人终态（K10a：无 elapsed 熔断）。
 """
 
 from __future__ import annotations
 
 import threading
+import time
 
 import pytest
 
 from ming_sim.session_write_queue import (
     SessionWriteQueue,
-    TicketBarrierTimeout,
     TicketCancelled,
     WriteTicket,
 )
@@ -34,7 +35,7 @@ def test_queue_order_early_claim_late_finish_before_barrier():
         trail_ready.set()
         assert release_trail.wait(2.0)
         # 生产 seam：按票序写
-        q.run(t_trail, lambda: order.append("trail_write"), timeout_s=None)
+        q.run(t_trail, lambda: order.append("trail_write"))
         q.complete(t_trail)
 
     th = threading.Thread(target=trail, name="trail-late", daemon=True)
@@ -50,7 +51,7 @@ def test_queue_order_early_claim_late_finish_before_barrier():
 
     def run_barrier() -> None:
         assert barrier_may_start.wait(2.0)
-        result_box["r"] = q.barrier(barrier_body, timeout_s=None)
+        result_box["r"] = q.barrier(barrier_body)
         barrier_done.set()
 
     bt = threading.Thread(target=run_barrier, name="barrier", daemon=True)
@@ -99,7 +100,7 @@ def test_barrier_waits_multiple_prior_tickets():
 
     def br() -> None:
         started.set()
-        q.barrier(lambda: order.append("barrier") or None, timeout_s=None)
+        q.barrier(lambda: order.append("barrier") or None)
         done.set()
 
     threading.Thread(target=br, daemon=True).start()
@@ -119,7 +120,7 @@ def test_fail_vacate_lets_barrier_through():
     assert t is not None
     q.vacate(t)
     order: list[str] = []
-    q.barrier(lambda: order.append("barrier") or None, timeout_s=None)
+    q.barrier(lambda: order.append("barrier") or None)
     assert order == ["barrier"]
     assert q.inflight_count() == 0
 
@@ -140,7 +141,7 @@ def test_cancel_key_vacates_and_blocks_run():
         wrote["n"] += 1
 
     with pytest.raises(TicketCancelled):
-        q.run(t, write, timeout_s=None)
+        q.run(t, write)
     assert wrote["n"] == 0
 
 
@@ -151,7 +152,7 @@ def test_ticketed_gate_cancel_blocks_write():
     assert t is not None
     q.cancel(t)
     wrote = {"n": 0}
-    gate = q.ticketed_gate(t, timeout_s=None)
+    gate = q.ticketed_gate(t)
     with pytest.raises(TicketCancelled):
         with gate:
             wrote["n"] += 1
@@ -176,7 +177,7 @@ def test_post_barrier_claim_cannot_cross_barrier_write():
         assert release_barrier.wait(2.0)
 
     def run_barrier() -> None:
-        q.barrier(barrier_body, timeout_s=None)
+        q.barrier(barrier_body)
         barrier_done.set()
 
     bt = threading.Thread(target=run_barrier, daemon=True)
@@ -188,7 +189,7 @@ def test_post_barrier_claim_cannot_cross_barrier_write():
     late_claimed.set()
 
     def late_writer() -> None:
-        q.run(late, lambda: order.append("late_write") or late_wrote.set(), timeout_s=None)
+        q.run(late, lambda: order.append("late_write") or late_wrote.set())
         q.complete(late)
 
     lt = threading.Thread(target=late_writer, daemon=True)
@@ -206,19 +207,57 @@ def test_post_barrier_claim_cannot_cross_barrier_write():
     assert order == ["barrier_write", "late_write"], order
 
 
-def test_barrier_timeout_fail_closed_on_hung_prior():
-    """真挂死：屏障有界熔断，不得无限悬吊。"""
+def test_barrier_waits_healthy_slow_worker_terminal():
+    """K10a：健康工人慢于原 30s 熔断窗仍正常终态 → 屏障续跑，不伪造成挂死。"""
     q = SessionWriteQueue()
-    hung = q.claim(key=("turn", 1))
-    assert hung is not None
-    # 故意不 complete hung
-    with pytest.raises(TicketBarrierTimeout) as ei:
-        q.barrier(lambda: None, timeout_s=0.05)
-    assert hung.seq in (ei.value.open_seqs or [hung.seq])
-    # hung 仍 open——fail-closed 不静默吞票
-    assert q.inflight_count() == 1
-    q.complete(hung)
+    t = q.claim(key=("turn", 1))
+    assert t is not None
+    order: list[str] = []
+    barrier_done = threading.Event()
+    # 用可观测的“慢于旧熔断”窗（原 DEFAULT_TICKET_WAIT_S=30）；测试缩到 0.08s
+    # 证明屏障不按 elapsed 失败——工人 0.08s 后 complete，屏障必等其终态。
+    slow_s = 0.08
+
+    def slow_worker() -> None:
+        time.sleep(slow_s)
+        order.append("worker_terminal")
+        q.complete(t)
+
+    def run_barrier() -> None:
+        q.barrier(lambda: order.append("barrier") or None)
+        barrier_done.set()
+
+    threading.Thread(target=slow_worker, daemon=True).start()
+    threading.Thread(target=run_barrier, daemon=True).start()
+    assert barrier_done.wait(2.0)
+    assert order == ["worker_terminal", "barrier"], order
     assert q.inflight_count() == 0
+
+
+def test_barrier_proceeds_after_worker_fail_vacate():
+    """可控失败终态：工人 vacate 后屏障放行（无 elapsed 伪失败）。"""
+    q = SessionWriteQueue()
+    t = q.claim(key=("turn", 2))
+    assert t is not None
+    order: list[str] = []
+    started = threading.Event()
+    done = threading.Event()
+
+    def failing_worker() -> None:
+        started.set()
+        time.sleep(0.02)
+        order.append("fail_vacate")
+        q.vacate(t)  # 失败空放行
+
+    def run_barrier() -> None:
+        assert started.wait(2.0)
+        q.barrier(lambda: order.append("barrier") or None)
+        done.set()
+
+    threading.Thread(target=failing_worker, daemon=True).start()
+    threading.Thread(target=run_barrier, daemon=True).start()
+    assert done.wait(2.0)
+    assert order == ["fail_vacate", "barrier"], order
 
 
 def test_run_exclusive_serializes_writes():
@@ -240,13 +279,13 @@ def test_run_exclusive_serializes_writes():
         fast_done.set()
 
     th = threading.Thread(
-        target=lambda: (q.run_exclusive(slow, timeout_s=None), slow_done.set()),
+        target=lambda: (q.run_exclusive(slow), slow_done.set()),
         daemon=True,
     )
     th.start()
     assert in_critical.wait(2.0)
     th2 = threading.Thread(
-        target=lambda: q.run_exclusive(fast, timeout_s=None),
+        target=lambda: q.run_exclusive(fast),
         daemon=True,
     )
     th2.start()
@@ -259,3 +298,21 @@ def test_run_exclusive_serializes_writes():
     th.join(timeout=2.0)
     th2.join(timeout=2.0)
     assert order == ["slow", "fast"], order
+
+
+def test_no_elapsed_timeout_api_on_barrier():
+    """队列层已删 elapsed 熔断分类：barrier/wait_prior/run 无 timeout_s 形参。"""
+    import inspect
+    from pathlib import Path
+
+    import ming_sim.session_write_queue as swq
+
+    q = SessionWriteQueue()
+    assert "timeout_s" not in inspect.signature(q.barrier).parameters
+    assert "timeout_s" not in inspect.signature(q.wait_prior).parameters
+    assert "timeout_s" not in inspect.signature(q.run).parameters
+    assert "timeout_s" not in inspect.signature(q.ticketed_gate).parameters
+    text = Path(swq.__file__).read_text(encoding="utf-8")
+    assert "TicketBarrierTimeout" not in text
+    assert "DEFAULT_TICKET_WAIT_S" not in text
+    assert not hasattr(swq, "TicketBarrierTimeout")
