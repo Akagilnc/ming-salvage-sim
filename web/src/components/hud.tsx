@@ -361,6 +361,7 @@ export function BudgetMovementsList({ movements, total }: { movements: BudgetMov
 }
 
 export function BudgetList({ title, items, expense = false }: { title: string; items: BudgetItem[]; expense?: boolean }) {
+  // #1471：定额条目只显示 display 名+金额；工程 note 不进玩家 HUD。
   return (
     <span className="budget-list">
       <span className="budget-list-title">{title}</span>
@@ -368,7 +369,6 @@ export function BudgetList({ title, items, expense = false }: { title: string; i
         <span className="budget-row" key={`${title}-${item.name}`}>
           <span>
             <b>{item.name}</b>
-            <small>{item.note}</small>
           </span>
           <strong className={expense ? "expense" : "income"}>{expense ? "-" : "+"}{formatMoney(item.amount)}</strong>
         </span>
