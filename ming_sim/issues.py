@@ -6057,9 +6057,9 @@ def apply_office_appointment(
     new_office = str(new_office or "").strip()
     if not name or not new_office:
         return {"name": name, "new_office": new_office, "rejected": True, "reason": "name 或 new_office 空"}
-    # 别名归一：自然语言/LLM 可能用别名（韩老、温首辅…），解析到在册大臣的规范 key，
-    # 否则 in_roster 按确切 key 漏判 → 误走新建档被 apply_appointment 拒（CMR R3 gemini）。
-    # _find_existing_minister 仅匹配在册 active 非后宫非 candidate 的大明大臣，命中才改名；
+    # 别名归一：自然语言/LLM 可能用别名（韩老、温首辅、史宪之、福王…），解析到在册规范 key，
+    # 否则 in_roster 按确切 key 漏判 → 误走新建档（CMR R3 gemini；#1317 r2 身份归一含未仕/宗藩）。
+    # _find_existing_minister 吃在册身份归一（非后宫∧非 candidate∧ming，**含宗藩/未仕**）；
     # candidate/不在册返 None → name 不变（candidate 仍由 in_roster 确切 key 命中走激活分支）。
     if content is not None:
         from ming_sim.session import _find_existing_minister
@@ -6141,7 +6141,11 @@ def apply_office_appointment(
             "kind": "transfer", "reason": reason,
             **({"displaced": displaced_parts} if displaced_parts else {}),
         }
-    # ── 新任：建新档（apply_appointment 对在册者会拒，故仅不在册走到这）──
+    # ── 新任：建新档 ──
+    # 不变式（#1317 r2 重立）：经身份归一后若 name 仍不在 content.characters，才建档。
+    # 在册者（含未仕诸生/宗藩及其别名）必经上方 in_roster 分支——未仕入仕走授官，
+    # 宗藩撞硬闸 rejected；不得落到此，否则别名建重档 / 福王别名绕宗藩闸。
+    # apply_appointment 对身份归一命中者亦拒新建，双保险。
     if content is None:
         return {"name": name, "new_office": new_office, "rejected": True, "reason": "无 content，跳过建档"}
     from ming_sim.session import apply_appointment  # 延迟导入避循环

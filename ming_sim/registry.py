@@ -134,19 +134,19 @@ def _power_brief(context: CourtContext) -> str:
 def build_court_roster(context: CourtContext) -> str:
     """全体在朝大臣名册——表格（| 分隔）压 token，固定喂进大臣 system。
     去掉了 inspect_minister/list_court/list_personnel 后，大臣据此知道"别人"现状，不再调工具查。
-    含被罢/下狱/流放/致仕者（标状态），不含后宫、宗藩（就藩宗室非朝堂命官）、非大明势力、未登场者（防剧透）。
+    含被罢/下狱/流放/致仕者（标状态），不含后宫、宗藩、未仕（#1317 r2 可召同口径）、非大明、未登场。
     """
+    from ming_sim.session import _is_summonable_court_minister
+
     db = context.db
     lines: List[str] = []
+    resolve = db.resolve_power_id
     for c in _ctx().characters.values():
-        # roster scope：非后宫、非宗藩（宗室就藩非朝堂命官，PR#121；大臣据此名册知他人现状，
-        # 宗藩不入此册，与 web visible_in_court 同步，cmr R3 cross-section）。
-        if c.office_type in ("后宫", "宗藩"):
-            continue
+        # 可召资格单真源（惰性 resolve）；offstage 先短路省 resolve（gemini PR#130 R1）。
         status, reason = db.get_character_status(c.name)
-        if status == "offstage":  # offstage 多，先短路省一次 resolve_power_id DB 查询（gemini PR#130 R1）
+        if status == "offstage":
             continue
-        if db.resolve_power_id(c) != "ming":  # DB 权威：招抚归明者(DB翻ming/content仍旧势力)入册
+        if not _is_summonable_court_minister(c, resolve_power_id=resolve):
             continue
         # 直接按字段吐原值，不脑补、不翻译。状态原值 + 缘由（如有）。
         state_cell = f"{status}（{reason}）" if reason else status
@@ -164,16 +164,17 @@ def build_court_roster(context: CourtContext) -> str:
 
 def build_court_roster_index(context: CourtContext) -> str:
     """人物数超 100 时用索引替代完整名册：仅姓名+官署+状态，完整信息由 query_court_roster tool 提供。"""
+    from ming_sim.session import _is_summonable_court_minister
+
     db = context.db
     lines: List[str] = []
+    resolve = db.resolve_power_id
     for c in _ctx().characters.values():
-        # roster scope：非后宫、非宗藩（同 build_court_roster，cmr R3 cross-section）。
-        if c.office_type in ("后宫", "宗藩"):
-            continue
+        # 同 build_court_roster：可召单真源 + offstage 先短路（#1317 r2 / gemini PR#130 R1）。
         status, reason = db.get_character_status(c.name)
-        if status == "offstage":  # offstage 多，先短路省一次 resolve_power_id DB 查询（gemini PR#130 R1）
+        if status == "offstage":
             continue
-        if db.resolve_power_id(c) != "ming":  # DB 权威：招抚归明者(DB翻ming/content仍旧势力)入册
+        if not _is_summonable_court_minister(c, resolve_power_id=resolve):
             continue
         state_cell = f"{status}（{reason}）" if reason else status
         lines.append(f"{c.name}：{c.office or '无现任官职'}，{state_cell}")

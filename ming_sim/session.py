@@ -15,7 +15,7 @@ import time
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ming_sim.agents import bind_content as _bind_agents
 from ming_sim.agents import _dump_llm_messages
@@ -50,7 +50,7 @@ from ming_sim.decree_vocabulary import render_referenceable_dossier_brief
 from ming_sim.knowledge import render_character_knowledge
 from ming_sim.mindreading import is_inner_court_attendant
 from ming_sim.llm_model import create_agno_db, extract_agent_text
-from ming_sim.models import Character, CourtContext, GameState, LLMConfig, is_vassal_prince
+from ming_sim.models import Character, CourtContext, GameState, LLMConfig, is_vassal_prince, is_weishi
 from ming_sim.paths import user_data_path
 from ming_sim.registry import MinisterRegistry, bind_content as _bind_registry
 from ming_sim.settlement_payload import bind_decisions_to_candidate_events
@@ -173,43 +173,73 @@ def _find_candidate_by_name(content: GameContent, name: str) -> Optional[str]:
     return None
 
 
-def _is_ming_court_minister_character(character: Any, *, power_id: Optional[str] = None) -> bool:
-    """朝臣 canon 资格：非后宫 ∧ 非 candidate ∧ power=ming。
+def _is_ming_court_minister_character(
+    character: Any,
+    *,
+    power_id: Optional[str] = None,
+    resolve_power_id: Optional[Callable[[Any], str]] = None,
+) -> bool:
+    """在册身份归一（ming-guard / 别名 canonical）：非后宫 ∧ 非 candidate ∧ power=ming。
 
-    与 _find_existing_minister 资格同口径（#1428 事实块/校验 DRY）。
-    power_id 传入则用之（DB resolve 权威，#125）；否则读 content 静态 character.power_id
-    （与 seed 一致；招抚 live 翻转属既有 #125 口径，无 db 调用方不扩）。
+    #1317 r2：与「在朝可召资格」拆成两条单真源——身份解析必须认识所有在册者
+    （含宗藩/未仕），否则史宪之/福王别名 _find_existing_minister→None→建重档/绕宗藩闸。
+    可召面请用 _is_summonable_court_minister（= 本谓词 ∧ 非宗藩 ∧ 非未仕）。
+
+    power_id 传入则用之（DB resolve 权威，#125）；否则若给 resolve_power_id 则惰性解析
+    （仅过 office/status 闸后才调用，避 N+1 / 禁第二份类型短路表）；再否则读 content
+    静态 character.power_id（与 seed 一致；招抚 live 翻转属既有 #125 口径，无 db 调用方不扩）。
     """
+    if character is None:
+        return False
+    if getattr(character, "office_type", None) == "后宫":
+        return False
+    if getattr(character, "status", None) == "candidate":
+        return False
+    if power_id is None and resolve_power_id is not None:
+        power_id = resolve_power_id(character)
     pid = power_id if power_id is not None else getattr(character, "power_id", None)
-    return (
-        getattr(character, "office_type", None) != "后宫"
-        and getattr(character, "status", None) != "candidate"
-        and str(pid or "") == "ming"
+    return str(pid or "") == "ming"
+
+
+def _is_summonable_court_minister(
+    character: Any,
+    *,
+    power_id: Optional[str] = None,
+    resolve_power_id: Optional[Callable[[Any], str]] = None,
+) -> bool:
+    """在朝可召资格 = 在册身份归一 ∧ 非宗藩 ∧ 非未仕（#1317 r2 单真源）。
+
+    受守面清单见 models.is_weishi / is_vassal_prince；list_ministers / can_summon（朝臣支）/
+    visible_in_court / CLI choose_minister / 拟诏事实块共吃本谓词。禁另造过滤表。
+    resolve 成本规避走 resolve_power_id 惰性入参——类型短路不得与本谓词条件并存。
+    """
+    if character is None or is_vassal_prince(character) or is_weishi(character):
+        return False
+    return _is_ming_court_minister_character(
+        character, power_id=power_id, resolve_power_id=resolve_power_id,
     )
 
 
 def _find_existing_minister(content: GameContent, name: str, db: "GameDB") -> Optional[str]:
-    """铨选查重：拟任者是否已在册（非 candidate）。精确名 → aliases 命中。
+    """铨选查重 / 别名身份归一：拟任者是否已在册（非 candidate）。精确名 → aliases 命中。
     不做子串互含——'李标' vs '标' 那种巧合会误拒同义改写。
     后宫人物不在此查（走 _find_candidate_by_name）。返回在册原始 key，无则 None。
 
-    power_id 用 db.resolve_power_id（DB 权威，#125）而非 content 静态值：本函数是罢黜/任命去重/
-    密令 canonical 等 live court action 的 ming-guard（db._commit_office_action / apply_appointment /
-    create_secret_order / apply_office_appointment 别名归一），与 can_summon/list_ministers 必须同口径——
-    招抚归明者(DB翻ming但content仍旧势力)可召就必须可罢/可任，否则可召不可罢、跨切面不自洽（cmr #125 R2 codex high）。
-    外藩(皇太极 DB houjin)resolve_power_id≠ming 仍不接，防误黜外藩的保护不丢。"""
+    吃「在册身份归一」(_is_ming_court_minister_character)，**含宗藩/未仕**——五处解析
+    （本函数 / db._commit_office_action / create_secret_order / apply_office_appointment 别名归一 /
+    _apply_unlisted_person_registration）共吃，禁与可召谓词混用（#1317 r2）。
+    power_id 用 db.resolve_power_id 惰性入参（DB 权威，#125）：招抚归明者可召即可罢/可任；
+    外藩(皇太极) resolve≠ming 仍不接。"""
+    resolve = db.resolve_power_id
     if name in content.characters:
         c = content.characters[name]
-        if _is_ming_court_minister_character(c, power_id=db.resolve_power_id(c)):
+        if _is_ming_court_minister_character(c, resolve_power_id=resolve):
             return name
     for key, c in content.characters.items():
-        # 先 in-memory 短路（office/candidate/别名命中），别名命中才查库 resolve_power_id——
-        # 避免对每个人物都打一次 DB（N+1，gemini PR#130 R1 medium）。
-        if c.office_type == "后宫" or c.status == "candidate":
-            continue
+        # 别名命中后才进谓词；谓词内后宫/candidate 先闸再惰性 resolve——禁第二份类型表。
         if name not in (c.aliases or []):
             continue
-        if _is_ming_court_minister_character(c, power_id=db.resolve_power_id(c)):
+        if _is_ming_court_minister_character(c, resolve_power_id=resolve):
             return key
     return None
 
@@ -458,6 +488,7 @@ def apply_appointment(
             return (original_key, "")  # 返回原始 key，保持一致
 
     # ── 普通路径查重：精确名 + aliases 命中即拒，不重复建档 ──────────
+    # 身份归一认识未仕/宗藩——在册者（含史可法诸生）由此拒新建，走 apply_office_appointment。
     if not is_consort:
         existing = _find_existing_minister(content, name, db)
         if existing is not None:
@@ -838,15 +869,12 @@ class GameSession:
 
     def list_ministers(self) -> List[MinisterView]:
         # 状态以 DB 为准（历史卒/登场/罢黜均落 DB）；offstage 未登场者不进名单。
+        # 可召资格单真源 _is_summonable_court_minister（#1317 r2：身份归一∧非宗藩∧非未仕；
+        # 与 can_summon/visible_in_court/CLI/事实块同口径。resolve 惰性入参，禁第二份类型表）。
         views: List[MinisterView] = []
+        resolve = self.db.resolve_power_id
         for c in self.content.characters.values():
-            # 先 in-memory 短路（宗藩），再查库——避免对宗藩也打一次 resolve_power_id DB 查询
-            # （gemini PR#130 R1 medium）。宗藩（就藩宗室）非朝堂命官，同各 roster 排除（PR#121，cmr R5）。
-            if is_vassal_prince(c):
-                continue
-            # DB 权威 power_id：招抚归明者(DB翻ming/content仍旧势力)须入召见名册，否则可召(can_summon
-            # 认 DB)却不在册，两端不一致（#125；与 can_summon/court_roster 同口径）。
-            if self.db.resolve_power_id(c) != "ming":
+            if not _is_summonable_court_minister(c, resolve_power_id=resolve):
                 continue
             status, _ = self.db.get_character_status(c.name)
             if status == "offstage":
@@ -916,26 +944,34 @@ class GameSession:
             return (True, "")
         # 宗藩（就藩宗室）非朝堂命官，不可召见——与 web _require_active_minister / 各 roster 同口径
         # （PR#121 隐藏宗藩）。can_summon 是 summon_minister 工具链（session + web 流式两路）的共用闸，
-        # 集中守此一处即覆盖两路，否则裁判可绕列表按名召宗藩（cmr R4 cross-section）。后宫不在此拒。
+        # 集中守此一处即覆盖两路，否则裁判可绕列表按名召宗藩（cmr R4 cross-section）。
         if is_vassal_prince(character):
             return (False, f"{character.name}为就藩宗室，非朝廷命官，无法召见。")
         # 非大明势力（后金/蒙古/朝鲜/流寇）非朝廷命官，即便 active 也不可召见——皇帝召的是
         # 大明朝廷之臣，不召敌酋（皇太极等）。按 DB 权威 power_id 判：招抚归明者 DB 已翻 ming
         # 但内存仍旧势力，认 DB 才不会误拒归明者（#125；与 web_app 朝堂可见性同口径）。
-        if self.db.resolve_power_id(character) != "ming":
+        power_id = self.db.resolve_power_id(character)
+        if power_id != "ming":
             return (False, f"{character.name}不属大明朝廷，无法召见。")
         status, reason = self.db.get_character_status(character.name)
-        if status == "active":
+        if status != "active":
+            label = {
+                "offstage": "尚未登场",
+                "dismissed": "已罢黜",
+                "imprisoned": "下狱",
+                "exiled": "流放",
+                "retired": "致仕",
+                "dead": "已故",
+            }.get(status, status)
+            return (False, f"{character.name}{label}，无法召见。" + (reason or ""))
+        # 后宫 active+ming 可召（既有契约：嫔妃 chat 复用本闸，不经朝臣可召谓词；cmr 后宫反向锁）。
+        if getattr(character, "office_type", None) == "后宫":
             return (True, "")
-        label = {
-            "offstage": "尚未登场",
-            "dismissed": "已罢黜",
-            "imprisoned": "下狱",
-            "exiled": "流放",
-            "retired": "致仕",
-            "dead": "已故",
-        }.get(status, status)
-        return (False, f"{character.name}{label}，无法召见。" + (reason or ""))
+        # 朝臣可召：与 list_ministers / visible_in_court / CLI / 事实块同吃 _is_summonable_court_minister
+        # （#1317 r2：未仕诸生等身名分在册不得以在朝命官入可召；power 已解析，直传）。
+        if not _is_summonable_court_minister(character, power_id=power_id):
+            return (False, f"{character.name}尚未入仕，非朝廷命官，无法召见。")
+        return (True, "")
 
     def _start_cli_action_intent(self, character: Character, message: str) -> Optional[Future]:
         """CLI 召对动作判断只读皇帝消息，可与大臣回话并发。"""

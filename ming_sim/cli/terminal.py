@@ -19,8 +19,14 @@ from ming_sim.constants import (
 from ming_sim.assets import wrap
 from ming_sim.context import match_minister_from_text
 from ming_sim.exceptions import ExitGame, SettlementAbort
-from ming_sim.models import API_DEFAULT_TIMEOUT_SECONDS, Character, GameState, is_vassal_prince
-from ming_sim.session import FRONT_HALF_DONE_PHASES, GameSession, TurnPhase, _pending_action_failure_payload
+from ming_sim.models import API_DEFAULT_TIMEOUT_SECONDS, Character, GameState
+from ming_sim.session import (
+    FRONT_HALF_DONE_PHASES,
+    GameSession,
+    TurnPhase,
+    _is_summonable_court_minister,
+    _pending_action_failure_payload,
+)
 from ming_sim.skills import print_all_skill_cards, print_skill_card, skill_display_name
 
 _STATUS_LABEL = {
@@ -115,14 +121,14 @@ def _print_header(session: GameSession) -> None:
 def choose_minister(session: GameSession) -> Optional[Character]:
     """列大臣，皇帝选一位。返回 None 表示退朝去审阅诏书。"""
     characters = session.content.characters
-    # offstage（历史尚未登场）不进名单——到 debut 年月由月初 tick 转 active 才现身。
-    # candidate（待选采女池）也不进名单——须经选妃诏书册封升 active 后方可召见。
+    # 可召名册资格单真源 _is_summonable_court_minister（#1317 r2 DRY：与 can_summon/
+    # list_ministers/visible_in_court/事实块同口径）。offstage 未登场另滤——到 debut 年月现身。
+    # 后宫不经朝臣可召谓词、走 can_summon 专路，CLI 大臣单亦不列后宫（与 web consorts 分栏同形）。
+    resolve = session.db.resolve_power_id
     names = [
         name for name in characters
-        if session.db.get_character_status(name)[0] not in ("offstage", "candidate")
-        and getattr(characters[name], "status", "active") != "candidate"
-        and session.db.resolve_power_id(characters[name]) == "ming"  # DB 权威，同 can_summon（#125）
-        and not is_vassal_prince(characters[name])  # 宗藩（就藩宗室）不入召见名单（PR#121，cmr R6）
+        if _is_summonable_court_minister(characters[name], resolve_power_id=resolve)
+        and session.db.get_character_status(name)[0] not in ("offstage", "candidate")
     ]
     print("\n可召见大臣：")
     for idx, name in enumerate(names, 1):
