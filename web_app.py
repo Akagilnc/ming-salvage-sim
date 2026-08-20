@@ -3007,13 +3007,24 @@ class WebGame:
                 except RuntimeError:
                     pass
                 gate_held = False
+            # ADR 0005 / #1408：清理二次失败记日志不宽吞；abandon / 终态写分 try，
+            # 清理异常不覆盖原始错误、不阻断终态上抛。
             try:
                 if chat_turn_id:
                     self.session.abandon_chat_turn_scene(chat_turn_id)
+            except Exception:
+                logger.exception(
+                    "stream prologue cleanup: abandon_chat_turn_scene failed chat_turn_id=%s",
+                    chat_turn_id,
+                )
+            try:
                 with write_gate:
                     self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot)
             except Exception:
-                pass
+                logger.exception(
+                    "stream prologue cleanup: fail_chat_turn/reload failed chat_turn_id=%s",
+                    chat_turn_id,
+                )
             self._complete_pending_write(pending_ticket)
             raise
         finally:
@@ -3038,13 +3049,23 @@ class WebGame:
                 identity["night_id"] = int(open_night["id"]) if open_night else 0
                 ev_queue.put({"type": "accepted", **identity})
         except Exception as error:  # noqa: BLE001
+            # ADR 0005 / #1408：清理二次失败记日志不宽吞；原始 error 仍下发。
             try:
                 if chat_turn_id:
                     self.session.abandon_chat_turn_scene(chat_turn_id)
+            except Exception:
+                logger.exception(
+                    "stream identity cleanup: abandon_chat_turn_scene failed chat_turn_id=%s",
+                    chat_turn_id,
+                )
+            try:
                 with write_gate:
                     self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot)
             except Exception:
-                pass
+                logger.exception(
+                    "stream identity cleanup: fail_chat_turn/reload failed chat_turn_id=%s",
+                    chat_turn_id,
+                )
             self._complete_pending_write(pending_ticket)
             yield {"type": "error", "message": str(error), **identity}
             return
@@ -3174,19 +3195,29 @@ class WebGame:
 
                     ev_queue.put({"type": "end"})
                 except Exception as error:  # noqa: BLE001
-                    # #1353 r12：worker 单一异常出口——payload / 后处理 / 收夜任一失败
+                    # #1353 r12/r13：worker 单一异常出口——payload / 后处理 / 收夜任一失败
                     # 皆 error→end；禁逐点补丁，禁只走 finally 致消费者永阻。
                     # payload 未成（回话失败）才 fail 本轮；后处理失败回话已可见。
-                    # R3: _fail_chat_turn_and_reload 自身可能再抛——必须吞掉才能投终态。
+                    # ADR 0005 / #1408：清理二次失败 logger.exception 记 traceback 不宽吞；
+                    # abandon / 终态写分 try；清理异常不覆盖原始 error、不阻断 error→end。
                     # Scene drain stays outside write_gate (C9/T1/T10).
                     if payload is None:
                         try:
                             if chat_turn_id:
                                 self.session.abandon_chat_turn_scene(chat_turn_id)
+                        except Exception:
+                            logger.exception(
+                                "stream worker cleanup: abandon_chat_turn_scene failed chat_turn_id=%s",
+                                chat_turn_id,
+                            )
+                        try:
                             with write_gate:
                                 self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot)
                         except Exception:
-                            pass
+                            logger.exception(
+                                "stream worker cleanup: fail_chat_turn/reload failed chat_turn_id=%s",
+                                chat_turn_id,
+                            )
                     if isinstance(error, LLMUnavailable):
                         ev_queue.put({
                             "type": "error",
@@ -3207,13 +3238,23 @@ class WebGame:
         try:
             thread.start()
         except Exception:
+            # ADR 0005 / #1408：清理二次失败记日志不宽吞；原始异常仍上抛。
             try:
                 if chat_turn_id:
                     self.session.abandon_chat_turn_scene(chat_turn_id)
+            except Exception:
+                logger.exception(
+                    "stream start cleanup: abandon_chat_turn_scene failed chat_turn_id=%s",
+                    chat_turn_id,
+                )
+            try:
                 with write_gate:
                     self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot)
             except Exception:
-                pass
+                logger.exception(
+                    "stream start cleanup: fail_chat_turn/reload failed chat_turn_id=%s",
+                    chat_turn_id,
+                )
             self._complete_pending_write(pending_ticket)
             raise
         while True:
