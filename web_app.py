@@ -2711,11 +2711,11 @@ class WebGame:
         )
 
     def pending_story_extractions(self) -> Dict[str, Any]:
-        """#501 AC8：待补抽取的玩家可见状态（本开夜 turn ids + 大臣名 + 计数）——显眼提示的取数源，
-        对齐密令失败语义（DB 可读 + 可原地重试）。无开夜则回全库待补。测试替身无 conn 时空。
+        """#501/#1353：待补抽取只读诊断（本开夜 turn ids + 大臣名 + 计数）。
 
-        #1353：与 close_night drain 挡收夜判定同一真源（list_unextracted via helper）。
-        真欠账时 count>0 可重试；不再发 closing+zero 自愈提示（OPEN 期 join 消竞态后无此假态）。
+        与 close_night drain 挡收夜判定同一真源（list_unextracted via helper）。
+        欠账唯一处理路=过月/收夜内部 drain；本接口不承载玩家手动补写 CTA。
+        无开夜则回全库待补。测试替身无 conn 时空。
         """
         if not hasattr(self.db, "conn"):
             return {"night_id": 0, "count": 0, "pending": []}
@@ -2747,23 +2747,6 @@ class WebGame:
         if night_status:
             out["night_status"] = night_status
         return out
-
-    def retry_story_extractions(self, on_event=None) -> Dict[str, Any]:
-        """#501 AC8：玩家原地重试补跑——并入既有补跑通道（catch_up），不造第二套失败总线。
-        gate 外调（drain 内部按写抢 runtime write_gate）；返回重试后的待补状态。
-        #1312：可选 on_event(kind, data) 透传既有 stage 形分段进度（禁新机制）。"""
-        from ming_sim.audience_night import get_open_night
-
-        open_n = get_open_night(self.db) if hasattr(self.db, "conn") else None
-        nid = int(open_n["id"]) if open_n else None
-        catch_up_pending_extractions(
-            db=self.db,
-            llm_config=getattr(self.session, "llm_config", None),
-            write_gate=self._runtime_write_gate(),
-            night_id=nid,
-            on_event=on_event,
-        )
-        return self.pending_story_extractions()
 
     def chat_stream(self, minister_name: str, message: str) -> Iterator[Dict[str, Any]]:
         if minister_name not in self.content.characters and minister_name not in self.session.temporary_characters:
@@ -4309,45 +4292,8 @@ async def api_chat_mindreading(minister_name: str, chat_turn_id: int = 0) -> Dic
 
 @app.get("/api/audience/extraction/pending")
 async def api_pending_story_extractions() -> Dict[str, Any]:
-    """#501 AC8：本开夜待补叙事抽取的显眼状态（可读 + 供重试按钮）。"""
+    """#501/#1353：本开夜待补叙事抽取只读诊断（无玩家手动补写入口）。"""
     return get_game().pending_story_extractions()
-
-
-@app.post("/api/audience/extraction/retry")
-async def api_retry_story_extractions() -> StreamingResponse:
-    """#501 AC8：玩家原地重试补跑（含 LLM 调用）。
-
-    #1312：既有 SSE stage/done 形推分段进度（与 settle stream 同消费形）；
-    worker 仍在线程跑，不冻结 event loop。禁新机制。
-    """
-    ev_queue: "queue.Queue[tuple[str, Any]]" = queue.Queue()
-
-    def on_event(kind: str, data: str) -> None:
-        ev_queue.put((kind, data))
-
-    def worker() -> None:
-        try:
-            result = get_game().retry_story_extractions(on_event=on_event)
-            ev_queue.put(("__done__", result))
-        except Exception as e:  # noqa: BLE001
-            message = _llm_error_detail(e) if isinstance(e, LLMUnavailable) else str(e)
-            ev_queue.put(("__error__", {"message": message}))
-
-    async def generate() -> AsyncIterator[str]:
-        thread = threading.Thread(target=worker, daemon=True)
-        thread.start()
-        loop = asyncio.get_running_loop()
-        while True:
-            kind, data = await loop.run_in_executor(None, ev_queue.get)
-            if kind == "__done__":
-                yield sse_event("done", data if isinstance(data, dict) else {"result": data})
-                break
-            if kind == "__error__":
-                yield sse_event("error", data if isinstance(data, dict) else {"message": data})
-                break
-            yield sse_event(kind, {"content": data})
-
-    return StreamingResponse(generate(), media_type="text/event-stream")
 
 
 @app.post("/api/ministers/{minister_name}/secret_order")

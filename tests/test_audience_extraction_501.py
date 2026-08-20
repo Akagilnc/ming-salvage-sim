@@ -776,8 +776,8 @@ def test_blank_reply_marked_done_and_closeable(game):
     assert an.close_night(db, state, night_id=nid)["closed"] is True
 
 
-# ── L5 待补对玩家可读 + 原地重试（并入既有补跑通道）────────────────────────
-def test_pending_readable_and_retry_via_web(web_game, monkeypatch):
+# ── L5 待补只读诊断 + 内部 catch_up（#1353：无玩家手动补写面）─────────────
+def test_pending_readable_and_internal_catch_up(web_game, monkeypatch):
     game = web_game
     minister = _minister(game.db, game.content)
     ctid, _snap = game._start_chat_turn(minister)
@@ -789,10 +789,18 @@ def test_pending_readable_and_retry_via_web(web_game, monkeypatch):
     status = game.pending_story_extractions()
     assert status["count"] >= 1
     assert any(p["chat_turn_id"] == ctid for p in status["pending"])
-    # 点重试（换好抽取员）→ 水位 done、待补清零
+    # 内部 catch_up（换好抽取员）→ 水位 done、待补清零；禁 retry_story_extractions 包装
     monkeypatch.setattr(
         agents_mod, "create_audience_extractor_agent",
         lambda *a, **k: _FactsAgent(_STAGE_FACT_JSON))
-    after = game.retry_story_extractions()
+    nid = int(status.get("night_id") or 0) or None
+    catch_up_pending_extractions(
+        db=game.db,
+        llm_config=getattr(game.session, "llm_config", None),
+        write_gate=game._runtime_write_gate(),
+        night_id=nid,
+    )
+    after = game.pending_story_extractions()
     assert after["count"] == 0
     assert game.db.get_story_extract_status(ctid) == "done"
+    assert not hasattr(game, "retry_story_extractions")
