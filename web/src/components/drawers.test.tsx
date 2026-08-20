@@ -151,6 +151,85 @@ describe("ArmyDrawer presentation", () => {
   });
 });
 
+describe("朝堂空 layout 合法态（#1290/#1332）", () => {
+  it("GET layout={} 时殿上仍按默认朝班落座（非 hidden）", async () => {
+    // 契约：court_layout 是玩家拖拽覆盖；新局空 {} 合法，前端 courtSlots 生成默认位。
+    // QA 只 curl 到空 API 不等于殿上无卡——本钉锁呈现层不把空当错。
+    const host = await renderCourtList([
+      minister({ name: "黄立极", office: "首辅,中极殿大学士" }),
+      minister({ name: "毕自严", office: "户部尚书" }),
+    ]);
+
+    const huang = cardPos(host, "黄立极");
+    const bi = cardPos(host, "毕自严");
+    expect(huang).not.toBeNull();
+    expect(bi).not.toBeNull();
+    expect(huang!.left).not.toBe("");
+    expect(huang!.top).not.toBe("");
+    expect(bi!.left).not.toBe("");
+    expect(bi!.top).not.toBe("");
+    expect(`${huang!.left}|${huang!.top}`).not.toBe(`${bi!.left}|${bi!.top}`);
+
+    const cards = Array.from(host.querySelectorAll<HTMLElement>("button.minister-card"));
+    for (const c of cards) {
+      expect(c.style.visibility).not.toBe("hidden");
+      expect(c.style.position).toBe("absolute");
+    }
+  });
+
+  it("layout fetch 未完成时也先默认落座，不堵首屏", async () => {
+    let resolveLayout!: (v: { ok: boolean; json: () => Promise<{ layout: string }> }) => void;
+    const pending = new Promise<{ ok: boolean; json: () => Promise<{ layout: string }> }>((r) => {
+      resolveLayout = r;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (String(url).includes("/api/court_layout")) return pending as unknown as Response;
+        return { ok: true, json: async () => ({}) } as Response;
+      })
+    );
+
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    await act(async () => {
+      root.render(
+        <MinisterCardList
+          list={[
+            minister({ name: "黄立极", office: "首辅,中极殿大学士" }),
+            minister({ name: "施凤来", office: "次辅" }),
+          ]}
+          portraitPrefix="minister_"
+          selectedMinister=""
+          emptyNote="empty"
+          onOpenChat={() => {}}
+          courtMode={true}
+        />
+      );
+    });
+    // 同步 arrange({}) 后首帧即有坐标；不等待 fetch
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const before = cardPos(host, "黄立极");
+    expect(before).not.toBeNull();
+    expect(before!.left).not.toBe("");
+
+    await act(async () => {
+      resolveLayout({ ok: true, json: async () => ({ layout: "{}" }) });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    mountedRoots.push({ root, host });
+
+    const after = cardPos(host, "黄立极");
+    expect(after).not.toBeNull();
+    expect(after!.left).not.toBe("");
+  });
+});
+
 describe("朝堂同衔分座（#1196 呈现层去冲突）", () => {
   it("同 role 双人大臣 arrange 后坐标不重合", async () => {
     // 来宗道/温体仁同「礼部尚书」开局叠座复现：次名起应降级自由槽
