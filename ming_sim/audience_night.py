@@ -1053,12 +1053,11 @@ def _raise_pending_extraction(
 def _drain_story_extraction_or_fail_closed(
     db: Any, night_id: int, *, llm_config: Any, write_gate: Any,
     extractor_agent: Any = None,
-    on_event: Optional[Callable[[str, str], None]] = None,
 ) -> None:
     """收夜前清空普通待补抽取（ADR 0036）——并入过月/收夜流，玩家无感。
 
-    只补 story/presence；不含 endorsement batch。有待补 → 强制同步补跑（进度经
-    on_event 并入过月 SSE）；仍有 → 失败单源（LLMUnavailable）。LLM 在 write_gate
+    只补 story/presence；不含 endorsement batch。有待补 → 强制同步补跑（内部静默，
+    不推玩家可见 stage）；仍有 → 失败单源（LLMUnavailable）。LLM 在 write_gate
     外跑（drain 内 settle 才短持锁）。
 
     write_gate 必须是调用方原始锁（或 None）——禁传入 _gate_cm(nullcontext)，
@@ -1076,7 +1075,6 @@ def _drain_story_extraction_or_fail_closed(
     drain_pending_before_close(
         db=db, llm_config=llm_config, write_gate=write_gate, night_id=int(night_id),
         extractor_agent=extractor_agent,
-        on_event=on_event,
     )
 
 
@@ -1107,7 +1105,6 @@ def close_night(
     endorsement_extractor_agent: Any = None,
     scene_registry: Any = None,
     close_chat_turn_id: int = 0,
-    on_event: Optional[Callable[[str, str], None]] = None,
 ) -> Dict[str, Any]:
     """收夜：短写前提 → 无锁普通补抽 + 夜级 endorsement-only 批 → 短写终局。
 
@@ -1281,7 +1278,6 @@ def close_night(
         _drain_story_extraction_or_fail_closed(
             db, int(night_id), llm_config=llm_config, write_gate=write_gate,
             extractor_agent=extractor_agent,
-            on_event=on_event,
         )
     except Exception as drain_exc:
         from ming_sim.exceptions import LLMUnavailable
@@ -1483,7 +1479,6 @@ def auto_close_open_night(
     scene_registry: Any = None,
     close_chat_turn_id: int = 0,
     body: str = "",
-    on_event: Optional[Callable[[str, str], None]] = None,
 ) -> Optional[Dict[str, Any]]:
     """颁诏/过回合前：有开夜则顺势收夜；无开夜返回 None。
 
@@ -1491,7 +1486,7 @@ def auto_close_open_night(
     endorsement LLM 期间释放。调用方不得在外层持同一把非重入锁再传入 nullcontext。
     scene_registry：既有 ChatTurnSceneRegistry（session 持有）；start_close 后与
     endorsement 并行，终局写入前 join；不自建第二 registry/executor。
-    on_event：过月流式进度回调；欠账补跑 stage 并入同一进度面（#1353 fold-in）。
+    #1353 fold-in r5：欠账补跑内部静默，不透传过月 SSE。
     """
     open_n = get_open_night(db)
     if open_n is None:
@@ -1513,7 +1508,6 @@ def auto_close_open_night(
         endorsement_extractor_agent=endorsement_extractor_agent,
         scene_registry=scene_registry,
         close_chat_turn_id=int(close_chat_turn_id or 0),
-        on_event=on_event,
     )
 
 

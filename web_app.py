@@ -3176,7 +3176,7 @@ def _await_audience_inflight_clear(game) -> None:
 
 
 def _auto_close_open_night_gate_free(
-    game, *, inflight_wait_s: float = 0.0, on_event=None,
+    game, *, inflight_wait_s: float = 0.0,
 ) -> None:
     """Close the open audience night outside any outer runtime write gate.
 
@@ -3186,7 +3186,7 @@ def _auto_close_open_night_gate_free(
 
     与 _await_audience_inflight_clear 同 seam：无真实 game.db.conn 的 legacy/
     non-production 替身直接跳过 engine-owned auto-close，继续进入 session.resolve_turn。
-    on_event：过月 SSE 进度；欠账补跑 stage 并入同一进度面（#1353 fold-in）。
+    #1353 fold-in r5：欠账补跑内部静默，不并入过月 SSE。
     """
     db = getattr(game, "db", None)
     if db is None or not hasattr(db, "conn"):
@@ -3204,7 +3204,6 @@ def _auto_close_open_night_gate_free(
         llm_config=getattr(session, "llm_config", None) if session is not None else None,
         write_gate=_game_write_gate(game),
         scene_registry=getattr(session, "_scene_registry", None) if session is not None else None,
-        on_event=on_event,
     )
 
 
@@ -3252,7 +3251,7 @@ def _serialized_web_write(game):
 
 
 @contextlib.contextmanager
-def _settlement_period_entry(game, *, write_cm: Callable[[Any], Any], on_event=None):
+def _settlement_period_entry(game, *, write_cm: Callable[[Any], Any]):
     """#1241 S1：颁布/退朝/stream 三入口受理样板（begin→accept→await→close→gate）。
 
     行为零变化硬约束：write_cm **必须**参数化锁获取语义分叉——
@@ -3260,7 +3259,7 @@ def _settlement_period_entry(game, *, write_cm: Callable[[Any], Any], on_event=N
       · issue / stream → `_game_write_gate`（阻塞 acquire）
     统一获取语义即破 T2 行为零变化（r2-r7 不变式）。
 
-    on_event：过月 SSE 进度；收夜欠账补跑 stage 并入同一进度面（#1353 fold-in）。
+    #1353 fold-in r5：收夜欠账补跑内部静默；过月 SSE 只由 resolve 本体推正常进度。
 
     成功路径（with 体正常结束/return）保留展示态；异常路径先 exit 再 end
     （exit 先于 end；created_display 只控 blocking，不门控是否调用 exit）。
@@ -3275,9 +3274,9 @@ def _settlement_period_entry(game, *, write_cm: Callable[[Any], Any], on_event=N
         # #1235 / ADR 0149：点即入——先 capture 入核账展示态，再等在飞/收夜/结算续跑。
         created_display = _accept_settlement_period(game)
         # #498 AC10：gate 外先等在飞回话落档，再 gate-free 收夜即时复查，不自锁。
-        # #1353：欠账抽取并入同一次过月动作（进度 on_event），不再 409 打回玩家补写。
+        # #1353：欠账抽取并入同一次过月动作（内部静默），不再 409 打回玩家补写。
         _await_audience_inflight_clear(game)
-        _auto_close_open_night_gate_free(game, inflight_wait_s=0.0, on_event=on_event)
+        _auto_close_open_night_gate_free(game, inflight_wait_s=0.0)
         with write_cm(game):
             yield
             # #1343/#1378/#1379/#1388：成功回常态后兜底清残留快照。
@@ -4679,9 +4678,7 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
             # 终态 __done__/__decisions__ 须在 entry（含 clear）成功后才入队——
             # 与 settled_ok 同核：clear 抛错走 __error__，禁先推成功终态。
             terminal: Optional[tuple[str, Any]] = None
-            with _settlement_period_entry(
-                game, write_cm=_game_write_gate, on_event=on_event,
-            ):
+            with _settlement_period_entry(game, write_cm=_game_write_gate):
                 # #1277/#1351：获锁后、resolve_turn 前比对令牌；不匹配 → 409（样板 finally 清展示态）。
                 _reject_stale_month_token(game, body.expected_turn, token_label="颁诏")
                 result = game.session.resolve_turn(

@@ -2661,7 +2661,7 @@ class GameSession:
         # Web callers must invoke auto_close outside any outer runtime write gate
         # (see web_app issue/stream/no-edict) so this is typically already-closed.
         # CLI is single-writer: None write_gate = no lock around LLM.
-        # #1353：欠账补跑并入过月 on_event 进度；耗尽走 LLMUnavailable 失败单源。
+        # #1353 fold-in r5：欠账补跑内部静默并入过月；耗尽走 LLMUnavailable 失败单源。
         try:
             auto_close_open_night(
                 self.db, self.state,
@@ -2672,7 +2672,6 @@ class GameSession:
                 llm_config=getattr(self, "llm_config", None),
                 write_gate=None,
                 scene_registry=self._scene_registry,
-                on_event=on_event,
             )
         except (AudienceNightError, LLMUnavailable):
             # #1235 真失败另形：收夜中止后人话 + 出展示态（欠账耗尽=失败单源）。
