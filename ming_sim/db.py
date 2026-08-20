@@ -5766,15 +5766,28 @@ class GameDB:
             (region_id,),
         ).fetchall()
 
-    def class_report(self) -> str:
-        """全国汇总 + 各省紧张切片（sat<=30 且 lev>=60）。"""
+    def class_report(self, *, audience: bool = False) -> str:
+        """全国汇总 + 各省紧张切片（sat<=30 且 lev>=60）。
+
+        audience=True 时满意度/势力走既有定性档（与 faction_report 同词表），
+        供 simulator 等玩家可感混合调用；机面默认仍给裸值。
+        """
         national = self.class_rows("")
         if not national:
             return "阶级未建档。"
-        head = "；".join(
-            f"{row['name']}满意{row['satisfaction']}、势力{row['leverage']}（{row['agenda']}）"
-            for row in national
-        )
+        sat_words = ("怨愤", "不满", "平常", "顺应", "拥戴")
+        lev_words = ("极弱", "偏弱", "中等", "偏强", "强盛")
+        if audience:
+            head = "；".join(
+                f"{row['name']}满意{qualitative_band(row['satisfaction'], sat_words)}、"
+                f"势力{qualitative_band(row['leverage'], lev_words)}（{row['agenda']}）"
+                for row in national
+            )
+        else:
+            head = "；".join(
+                f"{row['name']}满意{row['satisfaction']}、势力{row['leverage']}（{row['agenda']}）"
+                for row in national
+            )
         hot = self.conn.execute(
             """
             SELECT c.name, c.region_id, c.satisfaction, c.leverage, r.name AS region_name
@@ -5786,10 +5799,19 @@ class GameDB:
         ).fetchall()
         if not hot:
             return f"阶级总览：{head}。各省阶级暂无高压预警。"
-        warn = "；".join(
-            f"{row['region_name'] or row['region_id']} {row['name']}满意{row['satisfaction']}/势力{row['leverage']}"
-            for row in hot
-        )
+        if audience:
+            warn = "；".join(
+                f"{row['region_name'] or row['region_id']} {row['name']}"
+                f"满意{qualitative_band(row['satisfaction'], sat_words)}/"
+                f"势力{qualitative_band(row['leverage'], lev_words)}"
+                for row in hot
+            )
+        else:
+            warn = "；".join(
+                f"{row['region_name'] or row['region_id']} {row['name']}"
+                f"满意{row['satisfaction']}/势力{row['leverage']}"
+                for row in hot
+            )
         return f"阶级总览：{head}。高压预警：{warn}。"
 
     def adjust_classes(

@@ -148,3 +148,12 @@ def building_output_effect(metric: str, amount: object, prefix: str = "") -> str
 def power_band(value: object) -> str:
     """Present a faction/power abstract score without exposing its number."""
     return qualitative_band(value, ("极弱", "偏弱", "中等", "偏强", "强盛"), default=50)
+
+
+# Issue/dossier bar progress — single vocabulary (was tools._progress_band).
+PROGRESS_BANDS = ("未见起色", "略有起色", "进展过半", "进展顺利", "近于收束")
+
+
+def progress_band(value: object) -> str:
+    """Present issue bar_value / 局势进度 without exposing the score."""
+    return qualitative_band(value, PROGRESS_BANDS)

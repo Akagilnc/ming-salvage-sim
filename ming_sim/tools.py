@@ -9,7 +9,7 @@ from typing import Dict, List
 from ming_sim.constants import DOSSIER_LINK_TYPES, TURN_UNIT
 from ming_sim.context import _ctx as _content_ctx, state_context
 from ming_sim.models import FRONT_HALF_DONE_PHASES, Character, CourtContext
-from ming_sim.qualitative import qualitative_band
+from ming_sim.qualitative import progress_band, qualitative_band
 from ming_sim.strict_types import strict_int
 from ming_sim.token_stats import tlog
 
@@ -65,7 +65,8 @@ def _compact_json_text(raw: object) -> str:
 
 
 def _progress_band(value: object) -> str:
-    return qualitative_band(value, ("未见起色", "略有起色", "进展过半", "进展顺利", "近于收束"))
+    # Single vocabulary lives in qualitative.progress_band (#1356 r6).
+    return progress_band(value)
 
 
 _ABSTRACT_STOP_FIELDS = {
