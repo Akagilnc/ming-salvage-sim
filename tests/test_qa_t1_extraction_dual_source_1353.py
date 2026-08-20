@@ -635,8 +635,12 @@ def test_deleted_surface_no_healed_drain_retry_residue():
     ):
         assert retired_ae not in prod, f"retired extraction join residue: {retired_ae}"
     night_src = (root / "ming_sim/audience_night.py").read_text(encoding="utf-8")
-    # K10a：wait_in_flight 不按 elapsed 伪造失败；错误包 kind 仍可被 provider 终态路径使用
-    assert "del timeout_s" in night_src or "timeout_s" in night_src
+    # K10a：wait_in_flight_clear 无 elapsed 失败路——del 签名兼容参；不 raise / 不伪造错误包
+    wfc_src = night_src.split("def wait_in_flight_clear", 1)[1].split("\ndef ", 1)[0]
+    assert "del timeout_s" in wfc_src
+    assert "raise " not in wfc_src
+    assert "AudienceNightError" not in wfc_src
+    assert 'code="in_flight_chat"' not in wfc_src
     swq = (root / "ming_sim/session_write_queue.py").read_text(encoding="utf-8")
     assert "TicketBarrierTimeout" not in swq
     assert "DEFAULT_TICKET_WAIT_S" not in swq

@@ -354,12 +354,22 @@ class SessionWriteQueue:
             self.complete(ticket)
 
 
+# Lazy-install path is fixture/partial-wiring only (GameSession/WebGame eager).
+# Module lock + double-check keeps concurrent first-touch from forking ledgers.
+_INSTALL_LOCK = threading.Lock()
+
+
 def get_session_write_queue(owner: Any) -> SessionWriteQueue:
     """Resolve the per-session queue from WebGame / GameSession / duck owner.
 
     Prefer owner._write_queue; else session._write_queue; else install a fresh
     queue on session (and mirror write_gate) so CLI/tests without explicit
     wiring still share one ledger.
+
+    Production owners (GameSession.__init__, WebGame runtime) install eagerly;
+    the lazy install below is fixture/partial-wiring only and is serialized by
+    `_INSTALL_LOCK` (double-checked) so concurrent first-touch cannot fork two
+    queues onto the same owner/session.
 
     If owner already has a bare `_write_gate` Lock (legacy fixtures), reuse that
     lock as the queue's write_gate so drain/barrier never diverge onto a second lock.
@@ -378,18 +388,30 @@ def get_session_write_queue(owner: Any) -> SessionWriteQueue:
             # Keep owner._write_gate pointing at the same lock.
             owner._write_gate = q.write_gate
             return q
-    # Install on the most session-like object available.
-    target = session if session is not None else owner
-    q = SessionWriteQueue()
-    # Reuse pre-existing write_gate Lock if present (fixture / partial wiring).
-    existing_gate = getattr(owner, "_write_gate", None)
-    if existing_gate is None and session is not None:
-        existing_gate = getattr(session, "_write_gate", None)
-    if existing_gate is not None and hasattr(existing_gate, "acquire"):
-        q.write_gate = existing_gate  # type: ignore[assignment]
-    target._write_queue = q  # type: ignore[attr-defined]
-    target._write_gate = q.write_gate  # type: ignore[attr-defined]
-    if session is not None and owner is not session:
-        owner._write_queue = q
-        owner._write_gate = q.write_gate
-    return q
+    with _INSTALL_LOCK:
+        # Double-check after acquiring install lock.
+        q = getattr(owner, "_write_queue", None)
+        if isinstance(q, SessionWriteQueue):
+            return q
+        session = getattr(owner, "session", None)
+        if session is not None:
+            q = getattr(session, "_write_queue", None)
+            if isinstance(q, SessionWriteQueue):
+                owner._write_queue = q
+                owner._write_gate = q.write_gate
+                return q
+        # Install on the most session-like object available.
+        target = session if session is not None else owner
+        q = SessionWriteQueue()
+        # Reuse pre-existing write_gate Lock if present (fixture / partial wiring).
+        existing_gate = getattr(owner, "_write_gate", None)
+        if existing_gate is None and session is not None:
+            existing_gate = getattr(session, "_write_gate", None)
+        if existing_gate is not None and hasattr(existing_gate, "acquire"):
+            q.write_gate = existing_gate  # type: ignore[assignment]
+        target._write_queue = q  # type: ignore[attr-defined]
+        target._write_gate = q.write_gate  # type: ignore[attr-defined]
+        if session is not None and owner is not session:
+            owner._write_queue = q
+            owner._write_gate = q.write_gate
+        return q
