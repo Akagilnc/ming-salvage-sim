@@ -15,7 +15,8 @@
    9b. owner 真失败 → contender 不调 extractor、夜未绑定
 10. fold-in r5：drain/catch_up 不推玩家可见补写 stage；签名无 on_event
 11. fold-in r9：整轮 worker 真终态后才 gate-free close（尾随 pending-write）
-12. fold-in r9：CLI 真实闭环钉——pending→一次 advance→turn+1 / 耗尽留回合
+12. fold-in r10：归零复查与冻结同临界区；冻结后拒新 admission + 窗口钉
+13. fold-in r10：闭环钉改走 play_turn 真 CLI 面——pending→一次 skip→turn+1 / 耗尽留回合
 """
 
 from __future__ import annotations
@@ -29,11 +30,12 @@ import pytest
 import ming_sim.agents as agents_mod
 import ming_sim.audience_extraction as ae
 import ming_sim.cli.terminal as term
+import ming_sim.issues as issues_mod
 import web_app
 from ming_sim import audience_night as an
-from ming_sim.exceptions import LLMUnavailable
+from ming_sim.exceptions import ExitGame, LLMUnavailable
 from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
-from ming_sim.session import GameSession
+from ming_sim.session import GameSession, TurnPhase
 from tests.test_audience_extraction_501 import (
     _BoomAgent,
     _FactsAgent,
@@ -1020,11 +1022,12 @@ def test_drain_catch_up_silent_no_on_event_surface(game, tmp_path, monkeypatch):
 
 
 def test_await_inflight_blocks_until_trail_worker_end(web_game):
-    """#1353 fold-in r9 最小诊断钉：chat_turn 已 done 但尾随仍持 pending-write 时，
-    gate-free close 前门必须等整轮 worker 真终态（_complete_pending_write）才返回。
+    """#1353 fold-in r9/r10：chat_turn 已 done 但尾随仍持 pending-write 时，
+    gate-free close 前门必须等整轮 worker 真终态（_complete_pending_write）才返回；
+    归零与冻结同临界区——await 返回后 `_mark_pending_write` 拒新 admission。
 
     旧缝只等 list_in_flight_chat_turns（minister_message 已落即放行）→ 尾随与
-    auto_close 并发打同一 SQLite 连接随机 500。禁新锁：复用既有 _drain_cond。
+    auto_close 并发打同一 SQLite 连接随机 500。禁新锁：复用既有 _drain_cond/_draining。
     """
     game = web_game
     # 无开夜时 wait_in_flight 早退；本钉只证 pending-write ownership 接缝。
@@ -1058,10 +1061,54 @@ def test_await_inflight_blocks_until_trail_worker_end(web_game):
     assert order == ["release", "trail_end"], order
     assert int(getattr(game, "_pending_writes_count", 0) or 0) == 0
     assert elapsed >= 0.04, f"await returned too early ({elapsed:.4f}s); did not wait trail"
+    # r10 窗口钉：await 返回边界即已冻结——判官复现窗 mark 仍 True 不得再现
+    assert getattr(game, "_draining", False) is True
+    assert game._mark_pending_write() is False
+
+
+def test_await_freeze_rejects_sneaky_admission_after_zero(web_game):
+    """#1353 fold-in r10 窗口钉：await 返回↔auto_close 边界 mark 必拒。
+
+    判官复现窗：归零返回后 `_mark_pending_write` 仍 True。
+    归零复查与 `_draining` 冻结同 `_drain_cond` 临界区（#1476/r2 判例形）。
+    并发 complete 后抢 mark：若抢在冻结前则被 await 再纳入等待（须 complete 放行），
+    await **返回后** 边界 mark 恒 False。
+    """
+    game = web_game
+    assert game._mark_pending_write()
+    release = threading.Event()
+    sneaky_got: list[bool] = []
+
+    def trail_and_sneak() -> None:
+        assert release.wait(2.0)
+        game._complete_pending_write()
+        got = game._mark_pending_write()
+        sneaky_got.append(got)
+        if got:
+            # 冻结前抢入 = 新既有 worker，await 会再等；必须放 ownership 才能归零冻结
+            game._complete_pending_write()
+
+    t = threading.Thread(target=trail_and_sneak, name="sneaky-admit-r10", daemon=True)
+    t.start()
+
+    def release_soon() -> None:
+        time.sleep(0.05)
+        release.set()
+
+    threading.Thread(target=release_soon, daemon=True).start()
+    web_app._await_audience_inflight_clear(game)
+    t.join(timeout=2.0)
+    assert not t.is_alive()
+    assert sneaky_got, "sneaky thread must attempt mark"
+    # 契约：await 已返回 → 冻结已生效（判官边界）
+    assert getattr(game, "_draining", False) is True
+    assert game._mark_pending_write() is False
+    assert int(getattr(game, "_pending_writes_count", 0) or 0) == 0
 
 
 def test_settlement_entry_gate_free_close_after_worker_end(web_game, monkeypatch):
-    """#1353 fold-in r9：受理样板 gate-free close 只在整轮 worker 终态后进入。"""
+    """#1353 fold-in r9/r10：受理样板 gate-free close 只在整轮 worker 终态后进入；
+    await→close 窗冻结 admission，close 返回后解冻（CLOSING/相位接棒）。"""
     game = web_game
     assert game._mark_pending_write()
 
@@ -1085,29 +1132,41 @@ def test_settlement_entry_gate_free_close_after_worker_end(web_game, monkeypatch
     def track_auto_close(_g, **_k):
         # close 入缝时尾随必须已放 ownership——否则即并发窗。
         assert int(getattr(game, "_pending_writes_count", 0) or 0) == 0
+        # r10：await→close 窗内已冻结，新 admission 必拒
+        assert getattr(game, "_draining", False) is True
+        assert game._mark_pending_write() is False
         order.append("auto_close")
 
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", track_auto_close)
     monkeypatch.setattr(web_app, "_accept_settlement_period", lambda _g: False)
 
     with web_app._settlement_period_entry(game, write_cm=web_app._game_write_gate):
+        # close 返回后 finally 已解冻（真 close 在 OPEN→CLOSING 的 on_closing 更早解冻）
+        assert getattr(game, "_draining", False) is False
         order.append("body")
 
     t.join(timeout=2.0)
     assert not t.is_alive()
     assert order == ["trail_end", "auto_close", "body"], order
+    assert getattr(game, "_draining", False) is False
+    assert game._mark_pending_write() is True
+    game._complete_pending_write()
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_cli_pending_one_op_closed_loop_turn_or_exhaust(game, tmp_path, monkeypatch):
-    """#1353 fold-in r9：真实 DB/GameSession + 唯一 _write_gate 闭环钉（替假半钉）。
+def test_cli_pending_one_op_closed_loop_turn_or_exhaust(
+    game, tmp_path, monkeypatch, capsys,
+):
+    """#1353 fold-in r10：闭环钉改走 play_turn 真 CLI 面（禁直调 advance_without_decree）。
 
-    A) 尾随失败留 pending → 一次 skip/advance 自动清零且 turn == before+1
-    B) 统一重试耗尽 → 玩家只见失败单源、turn 不进；清源后可重按推进
+    A) 尾随失败留 pending → 一次 play_turn skip 自动清零且 turn == before+1
+    B) 统一重试耗尽 → 玩家只见失败单源、turn 不进、play_turn 留回合可重按
     """
     db, state, content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
     minister = _minister(db, content)
+    monkeypatch.setattr(term, "_print_header", lambda _s: None)
+    monkeypatch.setattr(issues_mod, "show_active_issues", lambda _db: None)
 
     def _mk_session() -> GameSession:
         sess = object.__new__(GameSession)
@@ -1124,12 +1183,19 @@ def test_cli_pending_one_op_closed_loop_turn_or_exhaust(game, tmp_path, monkeypa
         sess._decree_draft_fingerprint = ()
         sess.deaths_this_turn = []
         sess.debuts_this_turn = []
+        sess.previous_summary = ""
         sess.auto_save = lambda *a, **k: None  # type: ignore[method-assign]
+        # play_turn 面：非 SUMMONING → 直入 review；begin/end 不落盘
+        sess.begin_turn = (  # type: ignore[method-assign]
+            lambda: SimpleNamespace(deaths_this_turn=[])
+        )
+        sess.current_phase = lambda: TurnPhase.REVIEWING  # type: ignore[method-assign]
+        sess.end_turn = lambda: None  # type: ignore[method-assign]
         # CLI 唯一闸：与 resolve/advance 收夜 drain 同流
         term._cli_write_gate(sess)
         return sess
 
-    # ── B) 耗尽：真欠账 + Boom → 失败单源、turn 不进、可重按 ─────────────
+    # ── B) 耗尽：真欠账 + Boom → play_turn skip 失败单源、turn 不进、留回合 ─
     nid_b, ctid_b, _ = _open_night_with_persisted_reply(
         db, state, minister, reply="耗尽轮回话。",
     )
@@ -1140,22 +1206,32 @@ def test_cli_pending_one_op_closed_loop_turn_or_exhaust(game, tmp_path, monkeypa
         lambda *a, **k: _BoomAgent(),
     )
     sess_b = _mk_session()
-    with pytest.raises(LLMUnavailable) as ei_b:
-        sess_b.advance_without_decree()
-    assert ei_b.value.code == "pending_extraction"
-    assert CLI_RUNNER_PLAYER_MESSAGE in str(ei_b.value)
+    actions_b = iter(["skip"])
+
+    def review_b(_s):
+        try:
+            return next(actions_b)
+        except StopIteration:
+            # 耗尽后 play_turn 须 continue 留在本回合——二次 review 用 ExitGame 收束测程
+            raise ExitGame()
+
+    monkeypatch.setattr(term, "review_directives", review_b)
+    with pytest.raises(ExitGame):
+        term.play_turn(sess_b)
+    out_b = capsys.readouterr().out
+    assert CLI_RUNNER_PLAYER_MESSAGE in out_b
     assert int(state.turn) == turn_before_b, "耗尽不得假推进 turn"
     assert int(_pending_api(db)["count"] or 0) >= 1
     assert an.get_night(db, nid_b)["status"] == an.NIGHT_STATUS_OPEN
 
-    # ── A) 一次 skip：换成功抽取 + canned 结算 → 清零且 turn+1 ───────────
-    # 复用同一开夜欠账（耗尽后仍 OPEN/pending）——重按真路径。
+    # ── A) 一次 play_turn skip：换成功抽取 + canned 结算 → 清零且 turn+1 ──
+    # 复用同一开夜欠账（耗尽后仍 OPEN/pending）——重按真 CLI 路径。
     monkeypatch.setattr(
         agents_mod, "create_audience_extractor_agent",
         lambda *a, **k: _FactsAgent(
             '{"facts":[{"person_names":["'
             + minister
-            + '"],"audibility":"殿上公开","body":"r9闭环补清","tags":[],'
+            + '"],"audibility":"殿上公开","body":"r10闭环补清","tags":[],'
             '"presence_effect":""}]}'
         ),
     )
@@ -1167,9 +1243,8 @@ def test_cli_pending_one_op_closed_loop_turn_or_exhaust(game, tmp_path, monkeypa
     turn_before_a = int(state.turn)
     assert turn_before_a == turn_before_b
     sess_a = _mk_session()
-    result = sess_a.advance_without_decree()
-    assert result is not None
-    assert result.awaiting is False
+    monkeypatch.setattr(term, "review_directives", lambda _s: "skip")
+    term.play_turn(sess_a)
     assert int(state.turn) == turn_before_a + 1
     assert db.get_story_extract_status(ctid_b) == "done"
     assert int(_pending_api(db)["count"] or 0) == 0
