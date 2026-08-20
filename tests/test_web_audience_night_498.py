@@ -141,6 +141,7 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
     - agents.create_audience_extractor_agent → 回话尾随 / 收夜 drain 叙事抽取
     - agents.create_endorsement_extractor_agent → 收夜 endorsement-only 批
     - mindreading.create_mindreading_agent → 回话 done 后读心尾随（#499）
+    - web_app.run_highlight_judge → 回话 done 后高亮判官（#544；禁 sk-test 真网）
     - _fake_settlement_llm：decree 判官/推演/抽取/拟诏 + memories.run_agent_text
     - load_runtime_llm 配置中和
     - registry.get → 大臣回话流（_FakeAgent，按测例挂起）
@@ -163,6 +164,8 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
         mindreading_mod, "create_mindreading_agent",
         lambda *a, **k: _CannedMindreadingAgent(),
     )
+    # #544 / #1353 r6：高亮判官同属回话后 LLM 边界——离线中和，禁 sk-test 打真 OpenAI。
+    monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
     game = web_app.WebGame(fresh=False)
     monkeypatch.setattr(web_app, "web_game", game)
     yield game

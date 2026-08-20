@@ -498,6 +498,8 @@ def web_game(tmp_path, monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
+    # #544 / #1353 r6：高亮判官 LLM 边界离线中和，禁 sk-test 真网。
+    monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
     game = web_app.WebGame(fresh=False)
     yield game
     try:

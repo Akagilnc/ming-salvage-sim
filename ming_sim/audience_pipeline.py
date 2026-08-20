@@ -60,15 +60,20 @@ def run_mindreading_for_turn(
         generate_mindreading_payload,
     )
 
-    # 唯一资格判定入口（外层不再重复查询）
-    reader_name = mindreading_eligible(db, content_characters, minister_name)
-    if reader_name is None:
-        return None
-    reader = content_characters[reader_name]
-    target = content_characters[minister_name]
-    materials = build_mindreading_materials(
-        db, state, reader, target, minister_reply,
-    )
+    # #1353：资格/组材料凡碰共享 conn 必须先经 write_gate（TicketedWriteGate 会先
+    # wait_prior）。禁在票序/闸外读库——过月屏障常先于尾随领票，gate-free close
+    # 与尾随并发读同一连接会 IndexError（tuple index out of range）。
+    with write_gate:
+        # 唯一资格判定入口（外层不再重复查询）
+        reader_name = mindreading_eligible(db, content_characters, minister_name)
+        if reader_name is None:
+            return None
+        reader = content_characters[reader_name]
+        target = content_characters[minister_name]
+        materials = build_mindreading_materials(
+            db, state, reader, target, minister_reply,
+        )
+    # LLM 在 gate 外（与抽取同形）
     payload = generate_mindreading_payload(
         materials, llm_config, mindreading_agent=mindreading_agent,
     )

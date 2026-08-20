@@ -460,7 +460,13 @@ def run_extraction_for_turn(
             if db.get_story_extract_status(cid) == "done":
                 return {"status": "done", "chat_turn_id": cid, "already": True}
 
-        question_text = _user_message_for_turn(db, cid)
+            # 短读并入首闸：禁 gate 外碰共享 conn（与屏障 close / 他腿并发）。
+            question_text = _user_message_for_turn(db, cid)
+            if present_names is None:
+                try:
+                    present_names = sorted(persons_present_tonight(db, int(night_id)))
+                except Exception:
+                    present_names = []
 
         if not str(reply or "").strip() and not question_text.strip():
             return _settle_or_pending(
@@ -468,12 +474,6 @@ def run_extraction_for_turn(
                 facts=[], source_night_seq=source_night_seq, fact_count=0,
                 allow_closing=allow_closing,
             )
-
-        if present_names is None:
-            try:
-                present_names = sorted(persons_present_tonight(db, int(night_id)))
-            except Exception:
-                present_names = []
 
         try:
             facts = extract_story_facts(
@@ -686,22 +686,26 @@ def trail_extraction_after_reply(
         reply = str(minister_reply or "")
         if not chat_turn_id or not hasattr(db, "conn"):
             return None
-        row = db.conn.execute(
-            "SELECT night_id, night_seq FROM chat_turns WHERE id = ?",
-            (int(chat_turn_id),),
-        ).fetchone()
-        if row is None:
-            return None
-        night_id = int(row["night_id"] or 0)
-        if night_id <= 0:
-            return None
+        # #1353：首碰共享 conn 必须经 write_gate（TicketedWriteGate → wait_prior）。
+        # 禁闸外 SELECT——与过月屏障 gate-free close 并发读会搞坏 sqlite3.Row。
+        with write_gate:
+            row = db.conn.execute(
+                "SELECT night_id, night_seq FROM chat_turns WHERE id = ?",
+                (int(chat_turn_id),),
+            ).fetchone()
+            if row is None:
+                return None
+            night_id = int(row["night_id"] or 0)
+            source_night_seq = int(row["night_seq"] or 0)
+            if night_id <= 0:
+                return None
         return run_extraction_for_turn(
             db=db,
             minister_name=minister_name,
             reply=reply,
             chat_turn_id=int(chat_turn_id),
             night_id=night_id,
-            source_night_seq=int(row["night_seq"] or 0),
+            source_night_seq=source_night_seq,
             llm_config=llm_config,
             write_gate=write_gate,
             extractor_agent=extractor_agent,

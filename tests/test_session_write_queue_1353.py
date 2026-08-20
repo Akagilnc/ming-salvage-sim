@@ -125,6 +125,54 @@ def test_fail_vacate_lets_barrier_through():
     assert q.inflight_count() == 0
 
 
+def test_post_barrier_claim_run_waits_for_barrier():
+    """#1353 r6：屏障已开后才领的尾随票，run()/TicketedWriteGate 须等屏障结束后才写。
+
+    生产路径：issue barrier 常在 chat hang 时 claim，回话收尾才 spawn 尾随——
+    尾随 seq > barrier。契约：尾随凡碰共享 conn 必先 wait_prior（经 run/ticketed
+    gate），不得闸外读库与 gate-free close 并发。
+    """
+    q = SessionWriteQueue()
+    order: list[str] = []
+    barrier_hold = threading.Event()
+    barrier_entered = threading.Event()
+    trail_blocked = threading.Event()
+
+    def barrier_body() -> None:
+        order.append("barrier_start")
+        barrier_entered.set()
+        assert barrier_hold.wait(2.0)
+        order.append("barrier_end")
+
+    bt = threading.Thread(
+        target=lambda: q.barrier(barrier_body), name="barrier", daemon=True,
+    )
+    bt.start()
+    assert barrier_entered.wait(2.0)
+
+    t_trail = q.claim(key=("turn", 1))
+    assert t_trail is not None
+
+    def trail() -> None:
+        trail_blocked.set()
+        q.run(t_trail, lambda: order.append("trail_write"))
+        q.complete(t_trail)
+
+    th = threading.Thread(target=trail, name="trail-post", daemon=True)
+    th.start()
+    assert trail_blocked.wait(2.0)
+    # 屏障未放行前尾随不得写
+    assert "trail_write" not in order
+    assert order == ["barrier_start"]
+
+    barrier_hold.set()
+    bt.join(timeout=2.0)
+    th.join(timeout=2.0)
+    assert not bt.is_alive() and not th.is_alive()
+    assert order == ["barrier_start", "barrier_end", "trail_write"], order
+    assert q.inflight_count() == 0
+
+
 def test_cancel_key_vacates_and_blocks_run():
     """撤回钉：按 key 取消在飞票据；run 见取消不写库。"""
     q = SessionWriteQueue()
