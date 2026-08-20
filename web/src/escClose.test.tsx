@@ -12,7 +12,7 @@ const jsonResp = (payload: unknown): Response => ({ ok: true, json: async () => 
 
 const MENU_STATUS = {
   has_api_key: true, has_running_game: true, has_main_db: true, saves: [],
-  llm: { base_url: "x", model: "m", has_api_key: true, max_tokens: 1, timeout_seconds: 1, thinking_level: "", advanced_model: "", advanced_base_url: "", has_advanced_api_key: false, advanced_thinking_level: "" },
+  llm: { base_url: "x", model: "m", has_api_key: true, timeout_seconds: 1, thinking_level: "", advanced_model: "", advanced_base_url: "", has_advanced_api_key: false, advanced_thinking_level: "" },
 };
 const acct = () => ({ balance: 0, income: [], expense: [], income_total: 0, expense_total: 0, net: 0, movements: [], movements_total: 0 });
 const makeState = () => ({

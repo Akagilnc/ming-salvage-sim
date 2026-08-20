@@ -121,7 +121,6 @@ def llm_stream_unavailable(provider_message: object = "") -> LLMUnavailable:
 def create_chat_model(
     llm_config: LLMConfig,
     temperature: float = 0.7,
-    max_tokens: Optional[int] = None,
     enable_thinking: bool = False,
     thinking_budget: Optional[int] = None,
     top_p: Optional[float] = None,
@@ -165,9 +164,6 @@ def create_chat_model(
         "role_map": {"system": "system", "user": "user", "assistant": "assistant", "tool": "tool"},
         "extra_body": extra_body,
     }
-    # 未显式配置（None/≤0）不发 max_tokens，取提供商官方上限；>0 才注入。
-    if max_tokens is not None and int(max_tokens) > 0:
-        kwargs["max_tokens"] = int(max_tokens)
     # OpenAI 推理族（gpt-5*/o*）拒 top_p：luna 回 HTTP 400 空 assistant → agno
     # "Unknown model error" / 流式空回（#1452）。temperature 仍可传。
     if top_p is not None and not supports_openai_reasoning_effort(llm_config.model):
@@ -284,13 +280,11 @@ def verify_llm_available(llm_config: LLMConfig) -> None:
         except Exception as error:
             raise llm_unavailable_from_error(error) from error
         return
-    # 推理模型（luna/glm/kimi/ds-v4 等）会先耗 thinking tokens；8 会被思考耗尽回空，
-    # agno 抛 Unknown model error，好模型被烟测误杀。一次校验成本可忽略，预算放宽。
     agent = Agent(
         name="LLM连通性检查",
         id="llm-smoke-test",
         session_id="llm-smoke-test",
-        model=create_chat_model(llm_config, temperature=0, max_tokens=512),
+        model=create_chat_model(llm_config, temperature=0),
         instructions=["只输出 ok。"],
         markdown=False,
     )
