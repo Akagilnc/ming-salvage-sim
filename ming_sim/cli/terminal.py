@@ -530,23 +530,44 @@ def _trail_extraction_after_reply_cli(
     """#501：CLI 回话落库后自动尾随抽取（与 Web `_trail_extraction_after_reply` 同核）。
 
     同步调用——CLI 无后台线程池；失败标待补、不抛、不回滚回话。
+    #1353：起跑领 turn key 票，写经票据执行 seam（与 Web 生产同形）。
     """
     if not chat_turn_id:
         return
+    ticket = None
     try:
         from ming_sim.audience_extraction import trail_extraction_after_reply
-        trail_extraction_after_reply(
-            db=session.db,
-            minister_name=minister_name,
-            minister_reply=str(minister_reply or ""),
-            chat_turn_id=int(chat_turn_id),
-            llm_config=getattr(session, "llm_config", None),
-            write_gate=_cli_write_gate(session),
+        from ming_sim.session_write_queue import (
+            TicketCancelled,
+            get_session_write_queue,
         )
+        q = get_session_write_queue(session)
+        ticket = q.claim(key=("turn", int(chat_turn_id)))
+        if ticket is None:
+            return
+        write_gate = q.ticketed_gate(ticket)
+        try:
+            trail_extraction_after_reply(
+                db=session.db,
+                minister_name=minister_name,
+                minister_reply=str(minister_reply or ""),
+                chat_turn_id=int(chat_turn_id),
+                llm_config=getattr(session, "llm_config", None),
+                write_gate=write_gate,
+            )
+        except TicketCancelled:
+            pass
     except Exception:
         # 共享核从不抛；到此=import 等外围故障——不锁档、不打断对话。
         # #1353 fold-in r5：欠账唯一处理路=过月内部 drain；禁玩家可见技术提示。
         pass
+    finally:
+        if ticket is not None:
+            try:
+                from ming_sim.session_write_queue import get_session_write_queue
+                get_session_write_queue(session).complete(ticket)
+            except Exception:
+                pass
 
 
 def minister_chat(session: GameSession, character: Character) -> str:

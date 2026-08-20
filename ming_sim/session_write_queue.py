@@ -2,27 +2,44 @@
 
 Design contract:
 - Trailing legs (extraction / highlight / mindreading) claim a ticket at start
-  (ordering). LLM stays parallel outside the queue. DB writes run under the
-  shared write_gate; the ticket is completed only after the leg finishes
+  (ordering). LLM stays parallel outside the queue. DB writes run through the
+  ticket execution seam (`run` / `TicketedWriteGate`) so they observe ticket
+  order and cancel; the ticket is completed only after the leg finishes
   (success, fail, or cancel → empty vacate).
 - Month-advance is a barrier ticket: claimed after all already-issued tickets,
-  so prior legs drain naturally before close/settle runs.
+  so prior legs drain naturally before close/settle runs. Post-barrier claims
+  wait on the barrier via wait_prior when they use the write seam.
 - write_gate remains the exclusive write lock (CLI + Web share one session
   queue). Queue length / open tickets are the sole inflight fact source.
 - Cancel vacates without resurrecting work (ADR 0038 retract).
+- Real hang is fail-closed with a bounded wait (ADR 0038 fuse); healthy legs
+  that reach a terminal state continue — no elapsed forging of normal success
+  into failure (K10a). Infinite barrier hang is forbidden.
 """
 
 from __future__ import annotations
 
 import threading
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Hashable, Optional, TypeVar
 
 T = TypeVar("T")
 
+# Default fuse for wait_prior / barrier (aligned with audience in-flight budget).
+DEFAULT_TICKET_WAIT_S = 30.0
+
 
 class TicketCancelled(Exception):
     """Ticket was cancelled before or during its work; caller must not write."""
+
+
+class TicketBarrierTimeout(Exception):
+    """Priors did not clear within the fuse — fail-closed, do not hang forever."""
+
+    def __init__(self, message: str, *, open_seqs: Optional[list[int]] = None) -> None:
+        super().__init__(message)
+        self.open_seqs = list(open_seqs or [])
 
 
 @dataclass
@@ -33,6 +50,56 @@ class WriteTicket:
     key: Optional[Hashable] = None
     cancelled: bool = False
     _done: bool = field(default=False, repr=False, compare=False)
+
+
+class TicketedWriteGate:
+    """Lock-like production write seam: wait_prior(ticket) → write_gate + cancel check.
+
+    Drop-in for `threading.Lock` at trailing-leg write sites (`with gate` / acquire).
+    Does not complete the ticket — caller still complete()/vacate() in finally.
+    """
+
+    def __init__(
+        self,
+        queue: "SessionWriteQueue",
+        ticket: WriteTicket,
+        *,
+        timeout_s: Optional[float] = None,
+    ) -> None:
+        self._queue = queue
+        self._ticket = ticket
+        self._timeout_s = timeout_s
+        self._held = False
+
+    def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+        if not blocking:
+            # Non-blocking ticketed acquire is not meaningful (order wait is the point).
+            raise RuntimeError("TicketedWriteGate only supports blocking acquire")
+        wait_timeout = self._timeout_s
+        if timeout is not None and float(timeout) >= 0:
+            wait_timeout = float(timeout)
+        self._queue.wait_prior(self._ticket, timeout_s=wait_timeout)
+        self._queue.write_gate.acquire()
+        self._held = True
+        if self._ticket.cancelled or self._ticket._done:
+            self._held = False
+            self._queue.write_gate.release()
+            raise TicketCancelled(f"ticket {self._ticket.seq} cancelled")
+        return True
+
+    def release(self) -> None:
+        if not self._held:
+            return
+        self._held = False
+        self._queue.write_gate.release()
+
+    def __enter__(self) -> "TicketedWriteGate":
+        self.acquire()
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        self.release()
+        return False
 
 
 class SessionWriteQueue:
@@ -131,25 +198,54 @@ class SessionWriteQueue:
 
     # ── barrier / waits ────────────────────────────────────────────────
 
-    def wait_prior(self, ticket: WriteTicket) -> None:
-        """Block until every open ticket with seq < ticket.seq is finished."""
+    def wait_prior(
+        self,
+        ticket: WriteTicket,
+        *,
+        timeout_s: Optional[float] = None,
+    ) -> None:
+        """Block until every open ticket with seq < ticket.seq is finished.
+
+        timeout_s=None → wait forever (tests / explicit unbounded).
+        timeout_s>=0 → fail-closed with TicketBarrierTimeout when fuse elapses
+        while priors remain (no infinite hang). Cancelled ticket → TicketCancelled.
+        """
+        deadline = None if timeout_s is None else time.monotonic() + max(0.0, float(timeout_s))
         with self._cond:
-            while any(seq < ticket.seq for seq in self._open):
+            while True:
                 if ticket.cancelled or ticket._done:
                     raise TicketCancelled(f"ticket {ticket.seq} cancelled")
-                self._cond.wait()
-            if ticket.cancelled or ticket._done:
-                raise TicketCancelled(f"ticket {ticket.seq} cancelled")
+                priors = [seq for seq in self._open if seq < ticket.seq]
+                if not priors:
+                    return
+                if deadline is None:
+                    self._cond.wait()
+                    continue
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TicketBarrierTimeout(
+                        f"ticket {ticket.seq} wait_prior timed out; open priors={priors}",
+                        open_seqs=priors,
+                    )
+                self._cond.wait(timeout=remaining)
 
-    def barrier(self, fn: Callable[[], T]) -> T:
+    def barrier(
+        self,
+        fn: Callable[[], T],
+        *,
+        timeout_s: Optional[float] = DEFAULT_TICKET_WAIT_S,
+    ) -> T:
         """Claim a barrier ticket after current claims; run fn when priors clear.
 
         Prior open tickets (trailing legs claimed earlier) must finish first.
         Tickets claimed after this barrier wait on their own wait_prior if they
-        use run()/barrier — close itself uses write_gate sections as before.
+        use run()/TicketedWriteGate — so they cannot cross the barrier write.
 
         Sealed queue: still waits for open priors, then runs fn (lifecycle/
         month-advance must proceed even when new claims are rejected).
+
+        timeout_s defaults to DEFAULT_TICKET_WAIT_S (fail-closed fuse). Pass
+        None only for explicit unbounded waits (unit tests of pure ordering).
         """
         with self._cond:
             seq = self._next_seq
@@ -158,22 +254,20 @@ class SessionWriteQueue:
             self._open[seq] = ticket
             self._by_key.setdefault(("barrier",), set()).add(seq)
         try:
-            self.wait_prior(ticket)
+            self.wait_prior(ticket, timeout_s=timeout_s)
             return fn()
         finally:
             self.complete(ticket)
 
     def wait_idle(self, *, timeout_s: Optional[float] = None) -> bool:
         """Wait until no open tickets remain. True if idle, False on timeout."""
-        import time as _time
-
-        deadline = None if timeout_s is None else _time.monotonic() + float(timeout_s)
+        deadline = None if timeout_s is None else time.monotonic() + float(timeout_s)
         with self._cond:
             while self._open:
                 if deadline is None:
                     self._cond.wait()
                     continue
-                remaining = deadline - _time.monotonic()
+                remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     return False
                 self._cond.wait(timeout=remaining)
@@ -183,25 +277,45 @@ class SessionWriteQueue:
         with self._cond:
             return len(self._open)
 
-    def run(self, ticket: WriteTicket, fn: Callable[[], T]) -> T:
+    def ticketed_gate(
+        self,
+        ticket: WriteTicket,
+        *,
+        timeout_s: Optional[float] = DEFAULT_TICKET_WAIT_S,
+    ) -> TicketedWriteGate:
+        """Production write seam for a claimed ticket."""
+        return TicketedWriteGate(self, ticket, timeout_s=timeout_s)
+
+    def run(
+        self,
+        ticket: WriteTicket,
+        fn: Callable[[], T],
+        *,
+        timeout_s: Optional[float] = DEFAULT_TICKET_WAIT_S,
+    ) -> T:
         """Wait for prior tickets, then run fn under write_gate; caller completes.
 
         Does not complete the ticket — legs may do LLM outside and only use
-        write_gate via this helper for the write section, then complete().
+        this helper for the write section, then complete().
         """
-        self.wait_prior(ticket)
+        self.wait_prior(ticket, timeout_s=timeout_s)
         with self.write_gate:
             if ticket.cancelled or ticket._done:
                 raise TicketCancelled(f"ticket {ticket.seq} cancelled")
             return fn()
 
-    def run_exclusive(self, fn: Callable[[], T]) -> T:
+    def run_exclusive(
+        self,
+        fn: Callable[[], T],
+        *,
+        timeout_s: Optional[float] = DEFAULT_TICKET_WAIT_S,
+    ) -> T:
         """Claim + wait_prior + write_gate + complete — one-shot exclusive write."""
         ticket = self.claim()
         if ticket is None:
             raise RuntimeError("write queue sealed")
         try:
-            return self.run(ticket, fn)
+            return self.run(ticket, fn, timeout_s=timeout_s)
         finally:
             self.complete(ticket)
 
