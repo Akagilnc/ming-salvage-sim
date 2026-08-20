@@ -2,7 +2,7 @@
 
 公开 seam：开夜 → 宣人入殿账 → 对话轮锚定 → 收夜；按夜取账/对话；
 廉价死账校验；常在员额动态解析；夜×结算顺势收夜；收夜提交幂等游标；
-在飞回话 fail-closed。
+在飞/待补回话并入收夜流程处理完再结算，玩家无感；仅统一重试耗尽才走失败单源。
 
 口令账标签由本模块引擎常量写入——确定性写读，restore 不解析自由文本。
 """
@@ -137,7 +137,8 @@ CLOSE_STEPS = (
     CLOSE_STEP_FINALIZE,
 )
 
-# 在飞回话：公开入口可达的有界等待（秒）。挂起/超时 fail-closed。
+# 在飞回话：轮询间隔；wait 只消费既有 chat turn/worker 终态，不按 elapsed 伪造失败（#1353 K10a）。
+# DEFAULT_IN_FLIGHT_WAIT_S 仅作签名/调用方兼容残留，不再驱动墙钟 409。
 DEFAULT_IN_FLIGHT_WAIT_S = 30.0
 DEFAULT_IN_FLIGHT_POLL_S = 0.05
 
@@ -938,34 +939,24 @@ def wait_in_flight_clear(
     *,
     timeout_s: float | None = None,
     poll_s: float | None = None,
+    write_gate: Any = None,
 ) -> None:
-    """等在飞回话完成；超时 fail-closed（夜保持开）。不持 write_gate。"""
-    if timeout_s is None:
-        timeout_s = DEFAULT_IN_FLIGHT_WAIT_S
+    """等在飞回话完成；只依 chat turn/worker 终态放行，不按 elapsed 伪造失败。
+
+    #1353 K10a / ADR 0149：工人落 active/failed/interrupted 终态即续跑。
+    真挂死终结属 provider/worker 接缝（硬超时 → 失败终态 → 本等待自然解除）；
+    timeout_s 保留调用方签名兼容，**不再**用于墙钟 409。
+    #1353 r7：每次轮询短持 write_gate 读共享 conn，sleep 必在闸外（禁持锁睡眠）。
+    """
+    del timeout_s  # 签名兼容；禁 elapsed 伪造失败（K10a）
     if poll_s is None:
         poll_s = DEFAULT_IN_FLIGHT_POLL_S
-    deadline = time.monotonic() + max(0.0, float(timeout_s))
+    gate = _gate_cm(write_gate)
     while True:
-        inflight = list_in_flight_chat_turns(db, night_id)
+        with gate:
+            inflight = list_in_flight_chat_turns(db, night_id)
         if not inflight:
             return
-        if time.monotonic() >= deadline:
-            ids = [int(r["id"]) for r in inflight]
-            message = (
-                "收夜中止：本夜仍有未完成回话（在飞/挂起），"
-                f"chat_turn_ids={ids}。夜保持开启，可原地重试。"
-            )
-            pack = write_audience_error_pack(
-                kind="in_flight_chat",
-                message=message,
-                detail={"night_id": int(night_id), "chat_turn_ids": ids},
-            )
-            raise AudienceNightError(
-                message,
-                code="in_flight_chat",
-                error_pack_path=pack,
-                detail={"night_id": int(night_id), "chat_turn_ids": ids},
-            )
         time.sleep(max(0.0, float(poll_s)))
 
 
@@ -1032,26 +1023,35 @@ def _raise_pending_extraction(
     rows: Optional[Sequence[Mapping[str, Any]]] = None,
     missing_deps: bool = False,
 ) -> None:
-    """由当前 list_unextracted 快照构造 pending_extraction（禁 stale ids）。"""
+    """欠账抽取耗尽 → 既定失败单源（#1353 fold-in）。
+
+    诊断细节进 error pack / provider_message；玩家 message 唯一走
+    CLI_RUNNER_PLAYER_MESSAGE。禁玩家可见欠账拒绝面与手动补写入口。
+    """
+    from ming_sim.exceptions import LLMUnavailable
+    from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
+
     snap = list(rows) if rows is not None else _pending_extraction_rows(db, int(night_id))
     ids = [int(r.get("chat_turn_id") or 0) for r in snap]
     if missing_deps:
-        message = (
+        technical = (
             f"收夜中止：本夜仍有 {len(ids)} 条待补抽取，且无 LLM/写锁可清空"
-            f"（chat_turn_ids={ids}）。夜保持开启，可原地重试补跑。"
+            f"（chat_turn_ids={ids}）。"
         )
     else:
-        message = (
+        technical = (
             "收夜中止：本夜仍有未抽取落账的回话（待补），"
-            f"chat_turn_ids={ids}。夜保持开启，可原地重试补跑。"
+            f"chat_turn_ids={ids}。"
         )
-    pack = write_audience_error_pack(
-        kind="pending_extraction", message=message,
+    write_audience_error_pack(
+        kind="pending_extraction", message=technical,
         detail={"night_id": int(night_id), "chat_turn_ids": ids},
     )
-    raise AudienceNightError(
-        message, code="pending_extraction", error_pack_path=pack,
-        detail={"night_id": int(night_id), "chat_turn_ids": ids},
+    # code 保留 pending_extraction 供引擎内 heal 重拍；玩家只见单源文案。
+    raise LLMUnavailable(
+        CLI_RUNNER_PLAYER_MESSAGE,
+        code="pending_extraction",
+        provider_message=technical,
     )
 
 
@@ -1059,21 +1059,30 @@ def _drain_story_extraction_or_fail_closed(
     db: Any, night_id: int, *, llm_config: Any, write_gate: Any,
     extractor_agent: Any = None,
 ) -> None:
-    """收夜前清空普通待补抽取（ADR 0036）——引擎侧强制闸。
+    """收夜前清空普通待补抽取（ADR 0036）——并入过月/收夜流，玩家无感。
 
-    只补 story/presence；不含 endorsement batch。有待补 → 强制同步补跑；仍有 →
-    fail-closed。LLM 在 write_gate 外跑（drain 内 settle 才短持锁）。
+    只补 story/presence；不含 endorsement batch。有待补 → 强制同步补跑（内部静默，
+    不推玩家可见 stage）；仍有 → 失败单源（LLMUnavailable）。LLM 在 write_gate
+    外跑（drain 内 settle 才短持锁）。
 
     write_gate 必须是调用方原始锁（或 None）——禁传入 _gate_cm(nullcontext)，
     否则 `write_gate is None` 卫兵被架空（#1353 嫌疑缝②）。
     """
     if not hasattr(db, "count_pending_story_extractions"):
         return
-    pending = int(db.count_pending_story_extractions(night_id=int(night_id)) or 0)
-    if pending <= 0:
-        return
-    if llm_config is None or write_gate is None:
-        _raise_pending_extraction(db, int(night_id), missing_deps=True)
+    # #1353 r10：pending 计数与缺依赖时的 list 同持 gate（禁二相锁外裸读）。
+    gate = _gate_cm(write_gate)
+    with gate:
+        pending = int(db.count_pending_story_extractions(night_id=int(night_id)) or 0)
+        if pending <= 0:
+            return
+        missing_rows: Optional[List[Dict[str, Any]]] = None
+        if llm_config is None or write_gate is None:
+            missing_rows = _pending_extraction_rows(db, int(night_id))
+    if missing_rows is not None:
+        _raise_pending_extraction(
+            db, int(night_id), rows=missing_rows, missing_deps=True,
+        )
     from ming_sim.audience_extraction import drain_pending_before_close
 
     drain_pending_before_close(
@@ -1101,6 +1110,7 @@ def close_night(
     wait_timeout_s: float | None = None,
     crash_after_step: Optional[int] = None,
     on_step: Optional[Callable[[int, Dict[str, Any]], None]] = None,
+    on_closing: Optional[Callable[[], None]] = None,
     beat_generator: Any = None,
     knowledge_provider: Any = None,
     llm_config: Any = None,
@@ -1126,19 +1136,22 @@ def close_night(
     """
     if wait_timeout_s is None:
         wait_timeout_s = DEFAULT_IN_FLIGHT_WAIT_S
+    # #1353 r7：共享 conn 读一律短持 runtime gate（禁闸外裸 SELECT）。
+    gate = _gate_cm(write_gate)
     if night_id is None:
-        open_n = get_open_night(db)
+        with gate:
+            open_n = get_open_night(db)
         if open_n is None:
             return {"closed": False, "reason": "no_open_night"}
         night_id = int(open_n["id"])
 
-    night = get_night(db, night_id)
+    with gate:
+        night = get_night(db, night_id)
     if night is None:
         raise AudienceNightError(f"夜不存在：{night_id}", code="night_not_found")
     if night["status"] == NIGHT_STATUS_CLOSED:
         return {"closed": True, "night_id": int(night_id), "already": True}
 
-    gate = _gate_cm(write_gate)
     close_body = str(body or "")
     close_ctid = int(close_chat_turn_id or 0)
     close_scaffold_owned = False
@@ -1195,44 +1208,32 @@ def close_night(
 
     try:
         if night["status"] == NIGHT_STATUS_OPEN:
-            # In-flight wait is gate-free (may sleep).
-            wait_in_flight_clear(db, night_id, timeout_s=wait_timeout_s)
-            # Start close scene on caller registry only — never join here; no ephemeral lifecycle.
-            _start_close_scene()
-            # #1353：封 join→freeze TOCTOU——join 与 OPEN→CLOSING 冻结之间不留可穿越窗。
-            # 复用 turn single-flight + runtime write_gate：gate 外有限 join；gate 内复查
-            # inflight（与 admission 同锁，新 owner 要么入表被看见、要么冻结后拒入）；
-            # 仍有在飞则放锁再 join，不增 Future/第二账/新状态/第二锁。
-            from ming_sim.audience_extraction import (
-                has_inflight_turn_extractions,
-                join_pending_turn_extractions,
+            # In-flight wait：轮询短持 gate 读，sleep 闸外（禁持锁睡眠）。
+            wait_in_flight_clear(
+                db, night_id, timeout_s=wait_timeout_s, write_gate=write_gate,
             )
-
-            join_deadline = time.monotonic() + max(0.0, float(wait_timeout_s))
-            while True:
-                remaining = max(0.0, join_deadline - time.monotonic())
-                join_pending_turn_extractions(
-                    db, night_id=int(night_id), timeout_s=remaining,
+            # #1353：start_close 的 assemble/知识短读与置 CLOSING 同持 write_gate。
+            # 禁闸外知识链读共享 conn——后于屏障领票的尾随若尚未 wait_prior，
+            # 并发 SELECT 会 sqlite3.Row IndexError（tuple index out of range）。
+            # start_close 只同步组 inputs + 提交 Future，不 join LLM。
+            with gate:
+                _start_close_scene()
+                _set_night_fields(
+                    db, night_id, status=NIGHT_STATUS_CLOSING,
                 )
-                with gate:
-                    # 持 write_gate：admission 不能并行 claim；inflight 空或预算耗尽才冻结。
-                    still_inflight = has_inflight_turn_extractions(
-                        db, night_id=int(night_id),
-                    )
-                    if still_inflight and time.monotonic() < join_deadline:
-                        # join 返回后新 admission 已入表——放锁再 join，禁在此窗冻结。
-                        pass
-                    else:
-                        _set_night_fields(
-                            db, night_id, status=NIGHT_STATUS_CLOSING,
-                        )
-                        break
-            night = get_night(db, night_id)
+                if on_closing is not None:
+                    on_closing()
+                night = get_night(db, night_id)
             assert night is not None
         else:
             # Resume CLOSING：仍无 body 时 start 同一 registry 缝（不自建平行生命周期）。
             # CLOSING restore drain 留作 ADR 0036 崩溃恢复口（下方 phase-2 drain）。
-            _start_close_scene()
+            # 与 OPEN 同：start_close 短读持 gate；重读 night 同持。
+            with gate:
+                _start_close_scene()
+                if on_closing is not None:
+                    on_closing()
+                night = get_night(db, night_id) or night
 
         cursor = int(night["close_commit_cursor"] or 0)
 
@@ -1284,6 +1285,8 @@ def close_night(
             extractor_agent=extractor_agent,
         )
     except Exception as drain_exc:
+        from ming_sim.exceptions import LLMUnavailable
+
         cleanup_exc: BaseException | None = None
         if close_started and reg is not None:
             try:
@@ -1298,19 +1301,21 @@ def close_night(
                 db, night_id, status=NIGHT_STATUS_OPEN, closed_at=None,
                 close_commit_cursor=0,
             )
-        # 清理后按 list_unextracted 单真源重拍——error.ids 与 pending API 必同集。
-        # 不递归重入；空集 → 请玩家原地重试。
+        # 清理后按 list_unextracted 单真源重拍。欠账耗尽 → 失败单源（非玩家 CTA 409）。
+        # 不递归重入；空集 → close_retry（竞态全愈，玩家重按过月）。
         is_pending_block = (
-            isinstance(drain_exc, AudienceNightError)
+            isinstance(drain_exc, LLMUnavailable)
             and getattr(drain_exc, "code", None) == "pending_extraction"
         )
         if is_pending_block:
-            still = _pending_extraction_rows(db, int(night_id))
+            # #1353 r7：失败重拍 pending 短持 gate（共享 conn 读）。
+            with gate:
+                still = _pending_extraction_rows(db, int(night_id))
             if still:
                 try:
-                    # 单点构造 escaping error：禁 `from drain_exc`（stale ids 经 cause 拼 409）。
+                    # 单点构造 escaping error：禁 `from drain_exc`（stale ids 经 cause 漏出）。
                     _raise_pending_extraction(db, int(night_id), rows=still)
-                except AudienceNightError as fresh:
+                except LLMUnavailable as fresh:
                     if cleanup_exc is not None:
                         raise fresh from cleanup_exc
                     raise fresh
@@ -1375,9 +1380,10 @@ def close_night(
     # ── Phase 3: short writes — final effects, 明发, close ledger, CLOSED ──
     # Close body joined above (or explicit body=); no generator under the runtime
     # gate (ADR 0005: no silent in-gate fallback).
-    night = get_night(db, night_id) or night
-    cursor = int(night["close_commit_cursor"] or 0)
+    # #1353 r7：phase3 前 get_night 与终局写同持 gate（禁闸外裸读）。
     with gate:
+        night = get_night(db, night_id) or night
+        cursor = int(night["close_commit_cursor"] or 0)
         if cursor < CLOSE_STEP_ENDORSEMENT_BOUND:
             # settle path should have advanced this; missing watermark is a hard fault.
             # Restore OPEN so the player can retry (ADR 0036); keep code + diagnostics.
@@ -1453,8 +1459,8 @@ def close_night(
                 closed_at=_now_iso(),
                 close_commit_cursor=CLOSE_STEP_FINALIZE,
             )
+        final = get_night(db, night_id)
 
-    final = get_night(db, night_id)
     return {
         "closed": True,
         "night_id": int(night_id),
@@ -1481,6 +1487,7 @@ def auto_close_open_night(
     scene_registry: Any = None,
     close_chat_turn_id: int = 0,
     body: str = "",
+    on_closing: Optional[Callable[[], None]] = None,
 ) -> Optional[Dict[str, Any]]:
     """颁诏/过回合前：有开夜则顺势收夜；无开夜返回 None。
 
@@ -1488,8 +1495,11 @@ def auto_close_open_night(
     endorsement LLM 期间释放。调用方不得在外层持同一把非重入锁再传入 nullcontext。
     scene_registry：既有 ChatTurnSceneRegistry（session 持有）；start_close 后与
     endorsement 并行，终局写入前 join；不自建第二 registry/executor。
+    #1353 fold-in r5：欠账补跑内部静默，不透传过月 SSE。
+    #1353 r10：wrapper 入口 get_open_night 短持 gate（r7 修了 close_night 内、漏此处）。
     """
-    open_n = get_open_night(db)
+    with _gate_cm(write_gate):
+        open_n = get_open_night(db)
     if open_n is None:
         return None
     return close_night(
@@ -1509,6 +1519,7 @@ def auto_close_open_night(
         endorsement_extractor_agent=endorsement_extractor_agent,
         scene_registry=scene_registry,
         close_chat_turn_id=int(close_chat_turn_id or 0),
+        on_closing=on_closing,
     )
 
 

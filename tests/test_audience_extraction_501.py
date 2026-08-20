@@ -22,6 +22,8 @@ import pytest
 import ming_sim.agents as agents_mod
 import web_app
 from ming_sim import audience_night as an
+from ming_sim.exceptions import LLMUnavailable
+from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
 from ming_sim.audience_extraction import (
     ExtractionShapeError,
     catch_up_pending_extractions,
@@ -429,15 +431,15 @@ def test_drain_before_close_fail_closed(game, tmp_path, monkeypatch):
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
     minister = _minister(db, content)
     nid, ctid, seq = _open_night_with_persisted_reply(db, state, minister)
-    # 补跑持续失败 → fail-closed 中止收夜（响亮错误包、夜保持开、可原地重试）。
-    with pytest.raises(an.AudienceNightError) as ei:
+    # 补跑持续失败 → 失败单源（LLMUnavailable），夜保持开可重按过月。
+    with pytest.raises(LLMUnavailable) as ei:
         drain_pending_before_close(
             db=db, llm_config=object(), write_gate=threading.Lock(),
             night_id=nid, extractor_agent=_BoomAgent(),
         )
     assert ei.value.code == "pending_extraction"
-    assert ei.value.error_pack_path
-    # 夜未被封（保持可续 / 可重试），待补仍在。
+    assert ei.value.message == CLI_RUNNER_PLAYER_MESSAGE
+    # 夜未被封（保持可续 / 可重按），待补仍在（诊断面）。
     assert an.get_night(db, nid)["status"] != an.NIGHT_STATUS_CLOSED
     assert db.count_pending_story_extractions(night_id=nid) >= 1
 
@@ -450,6 +452,8 @@ def web_game(tmp_path, monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
+    # #544 / #1353 r6：高亮判官 LLM 边界离线中和，禁 sk-test 真网。
+    monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
     return web_app.WebGame(fresh=False)
 
 
@@ -554,7 +558,9 @@ def test_web_await_inflight_does_not_pre_drain_pending(web_game, monkeypatch):
 
     monkeypatch.setattr(
         agents_mod, "create_audience_extractor_agent", lambda cfg: _BoomAgent())
-    web_app._await_audience_inflight_clear(game)
+    # #1353：前门屏障/等待不得预清待补——待补留给 close-night 单一 owner。
+    from ming_sim.session_write_queue import get_session_write_queue
+    get_session_write_queue(game).barrier(lambda: None)
     assert game.db.count_pending_story_extractions(night_id=nid) == 1
     assert an.get_night(game.db, nid)["status"] == an.NIGHT_STATUS_OPEN
 
@@ -708,11 +714,12 @@ def test_engine_close_night_fail_closed_on_boom(game, monkeypatch, tmp_path):
         agents_mod, "create_audience_extractor_agent", lambda *a, **k: _BoomAgent())
     minister = _minister(db, content)
     nid, ctid, seq = _open_night_with_persisted_reply(db, state, minister)
-    # 持续失败 → 引擎 close fail-closed 中止收夜、夜保持开
-    with pytest.raises(an.AudienceNightError) as ei:
+    # 持续失败 → 引擎 close 失败单源中止收夜、夜保持开
+    with pytest.raises(LLMUnavailable) as ei:
         an.close_night(
             db, state, night_id=nid, llm_config=object(), write_gate=threading.Lock())
     assert ei.value.code == "pending_extraction"
+    assert ei.value.message == CLI_RUNNER_PLAYER_MESSAGE
     assert an.get_night(db, nid)["status"] != an.NIGHT_STATUS_CLOSED
 
 
@@ -721,10 +728,11 @@ def test_engine_close_night_fail_closed_without_deps(game, tmp_path, monkeypatch
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
     minister = _minister(db, content)
     nid, ctid, seq = _open_night_with_persisted_reply(db, state, minister)
-    # 无 llm/write_gate 又带待补 = 无从清空又不得带待补收夜 → fail-closed（不静默跳过）
-    with pytest.raises(an.AudienceNightError) as ei:
+    # 无 llm/write_gate 又带待补 = 无从清空又不得带待补收夜 → 失败单源（不静默跳过）
+    with pytest.raises(LLMUnavailable) as ei:
         an.close_night(db, state, night_id=nid)
     assert ei.value.code == "pending_extraction"
+    assert ei.value.message == CLI_RUNNER_PLAYER_MESSAGE
     assert an.get_night(db, nid)["status"] != an.NIGHT_STATUS_CLOSED
 
 
@@ -772,8 +780,8 @@ def test_blank_reply_marked_done_and_closeable(game):
     assert an.close_night(db, state, night_id=nid)["closed"] is True
 
 
-# ── L5 待补对玩家可读 + 原地重试（并入既有补跑通道）────────────────────────
-def test_pending_readable_and_retry_via_web(web_game, monkeypatch):
+# ── L5 待补只读诊断 + 内部 catch_up（#1353：无玩家手动补写面）─────────────
+def test_pending_readable_and_internal_catch_up(web_game, monkeypatch):
     game = web_game
     minister = _minister(game.db, game.content)
     ctid, _snap = game._start_chat_turn(minister)
@@ -785,10 +793,18 @@ def test_pending_readable_and_retry_via_web(web_game, monkeypatch):
     status = game.pending_story_extractions()
     assert status["count"] >= 1
     assert any(p["chat_turn_id"] == ctid for p in status["pending"])
-    # 点重试（换好抽取员）→ 水位 done、待补清零
+    # 内部 catch_up（换好抽取员）→ 水位 done、待补清零；禁 retry_story_extractions 包装
     monkeypatch.setattr(
         agents_mod, "create_audience_extractor_agent",
         lambda *a, **k: _FactsAgent(_STAGE_FACT_JSON))
-    after = game.retry_story_extractions()
+    nid = int(status.get("night_id") or 0) or None
+    catch_up_pending_extractions(
+        db=game.db,
+        llm_config=getattr(game.session, "llm_config", None),
+        write_gate=game._runtime_write_gate(),
+        night_id=nid,
+    )
+    after = game.pending_story_extractions()
     assert after["count"] == 0
     assert game.db.get_story_extract_status(ctid) == "done"
+    assert not hasattr(game, "retry_story_extractions")

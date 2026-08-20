@@ -262,7 +262,7 @@ def test_web_no_edict_endpoint_routes_to_full_settlement(game, monkeypatch):
         yield
 
     monkeypatch.setattr(web_app, "get_game", lambda: web_game)
-    monkeypatch.setattr(web_app, "_await_audience_inflight_clear", lambda *_a, **_k: None)
+    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
     monkeypatch.setattr(web_app, "_serialized_web_write", unlocked)
     # 端点不应再依赖 advance_without_edict 快路返回 True
     response = web_app.api_advance_without_edict()

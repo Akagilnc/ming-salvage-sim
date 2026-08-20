@@ -14,7 +14,8 @@ import pytest
 
 import ming_sim.cli.terminal as term
 import ming_sim.issues as issues_mod
-from ming_sim.exceptions import SettlementAbort
+from ming_sim.exceptions import LLMUnavailable, SettlementAbort
+from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
 from ming_sim.session import TurnPhase
 
 
@@ -58,6 +59,8 @@ class _Sess:
 @pytest.mark.parametrize("exc", [
     ValueError("有 pending 拟旨待处理，请先处理再颁诏。"),
     SettlementAbort("本月结算失败，进度已保存，可重试。", turn=1, stage="extract"),
+    # #1353 fold-in r8：统一重试耗尽的 LLMUnavailable 与结算中止同形——留本回合可重按。
+    LLMUnavailable(CLI_RUNNER_PLAYER_MESSAGE, code="pending_extraction"),
 ])
 def test_issue_refusal_stays_in_loop(monkeypatch, capsys, exc):
     sess = _Sess(exc)
@@ -629,3 +632,15 @@ def test_play_turn_reports_secret_order_failure_when_settlement_aborts(monkeypat
     assert "【密令落库失败 #42】" in out
     assert "retry 42" in out
     assert session.calls == ["begin", "resolve", "advance"]
+
+
+def test_cli_write_gate_canonical_session_attr():
+    """#1353 fold-in r8：CLI 唯一 write gate 挂 session._write_gate（禁第二锁名分叉）。"""
+    import threading
+
+    session = SimpleNamespace()
+    gate = term._cli_write_gate(session)
+    assert isinstance(gate, type(threading.Lock()))
+    assert getattr(session, "_write_gate", None) is gate
+    # 二次调用同锁
+    assert term._cli_write_gate(session) is gate

@@ -73,7 +73,6 @@ def test_success_clear_holds_write_gate_not_peer_txn(game, monkeypatch):
     db.save_state(state)
 
     monkeypatch.setattr(web_app, "_accept_settlement_period", lambda _g: True)
-    monkeypatch.setattr(web_app, "_await_audience_inflight_clear", lambda _g: None)
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda _g, **_k: None)
 
     # 预置残留快照（模拟点即入 capture 后未推月）
@@ -138,7 +137,6 @@ def test_success_clear_throw_still_ends_inflight(game, monkeypatch):
     db.capture_month_open_snapshot(state)
 
     monkeypatch.setattr(web_app, "_accept_settlement_period", lambda _g: True)
-    monkeypatch.setattr(web_app, "_await_audience_inflight_clear", lambda _g: None)
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda _g, **_k: None)
 
     exit_calls = {"n": 0}
@@ -175,7 +173,6 @@ def test_failure_exit_throw_still_ends_inflight(game, monkeypatch):
     db.save_state(state)
 
     monkeypatch.setattr(web_app, "_accept_settlement_period", lambda _g: True)
-    monkeypatch.setattr(web_app, "_await_audience_inflight_clear", lambda _g: None)
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda _g, **_k: None)
 
     def _boom_exit(*_a, **_k):
@@ -207,7 +204,6 @@ def test_success_clear_throw_via_orphan_exits_display(game, monkeypatch):
     assert runtime.state_payload()["turn"]["settlement_display"] is True
 
     monkeypatch.setattr(web_app, "_accept_settlement_period", lambda _g: True)
-    monkeypatch.setattr(web_app, "_await_audience_inflight_clear", lambda _g: None)
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda _g, **_k: None)
 
     import ming_sim.month_open_snapshot as mos

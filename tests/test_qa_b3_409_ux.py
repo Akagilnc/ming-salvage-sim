@@ -245,36 +245,3 @@ def test_resolve_decisions_stream_awaiting_still_submits_under_lock(monkeypatch)
     assert payload["report"] == "邸报：已裁。"
 
 
-# ── #1312 retry 分段进度：后端可回调 stage（供既有 SSE/轮询形消费）────────
-
-def test_retry_story_extractions_emits_segment_progress(monkeypatch):
-    """#1312：补跑路径按段推进度（既有 on_event/stage 形），不造新总线。"""
-    stages: list[str] = []
-
-    def _catch_up(**kwargs):
-        on_event = kwargs.get("on_event")
-        assert on_event is not None, "retry must thread on_event into catch_up"
-        on_event("stage", "补写召对账本（1/2）")
-        on_event("stage", "补写召对账本（2/2）")
-        return {"extracted": 2, "pending": 0}
-
-    class _RetryHost:
-        def __init__(self):
-            self.db = SimpleNamespace(conn=object())
-            self.session = SimpleNamespace(llm_config=None)
-
-        def _runtime_write_gate(self):
-            return threading.Lock()
-
-        def pending_story_extractions(self):
-            return {"night_id": 1, "count": 0, "pending": []}
-
-        retry_story_extractions = web_app.WebGame.retry_story_extractions
-
-    host = _RetryHost()
-    monkeypatch.setattr(an, "get_open_night", lambda _db: {"id": 1})
-    monkeypatch.setattr(web_app, "catch_up_pending_extractions", _catch_up)
-
-    result = host.retry_story_extractions(on_event=lambda k, d: stages.append(f"{k}:{d}"))
-    assert result["count"] == 0
-    assert stages == ["stage:补写召对账本（1/2）", "stage:补写召对账本（2/2）"]

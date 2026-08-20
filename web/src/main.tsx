@@ -147,8 +147,6 @@ export function App() {
     chatFailures,
     activeChatFailures,
     replyRetry,
-    extractionPendingCount,
-    refreshExtractionPending,
     canUndoLastChat,
     composerHint,
     setComposerHint,
@@ -160,7 +158,6 @@ export function App() {
     sendChat,
     undoLastChat,
     retryInterruptedReply,
-    retryStoryExtraction,
     retryPendingAction,
     openFailureRecovery,
     surfacePendingActionFailures,
@@ -223,7 +220,6 @@ export function App() {
     cheatDirective,
     setCheatDirective,
     loadState,
-    refreshExtractionPending,
     surfacePendingActionFailures,
     state,
   });
@@ -659,12 +655,10 @@ export function App() {
             error={error}
             secretOrders={secretOrders.filter((o) => o.status === "active" || o.status === "pending_review")}
             replyRetry={replyRetry}
-            extractionPendingCount={extractionPendingCount}
             onInput={setInput}
             onSend={sendChat}
             onRetryFailure={retryPendingAction}
             onRetryReply={retryInterruptedReply}
-            onRetryExtraction={retryStoryExtraction}
             onUndo={undoLastChat}
             onHint={setComposerHint}
             onFavorite={toggleFavorite}
@@ -710,7 +704,6 @@ export function App() {
             report={report}
             busy={busy}
             error={error}
-            extractionPendingCount={extractionPendingCount}
             onDirectiveTextChange={setDirectiveText}
             onEditingTextChange={setEditingDirectiveText}
             onCreateDirective={createDirective}
@@ -721,7 +714,6 @@ export function App() {
             onAdvanceWithoutEdict={advanceWithoutEdict}
             onIssueDecree={issueDecree}
             onOpenFailureRecovery={openFailureRecovery}
-            onRetryExtraction={retryStoryExtraction}
           />
         </FullscreenModal>
       ) : null}

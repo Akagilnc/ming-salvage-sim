@@ -41,9 +41,9 @@ def webgame_shell_for_secret_order(db, state, content, *, session_chat):
     """
     runtime = object.__new__(web_app.WebGame)
     runtime._write_gate = threading.Lock()
-    runtime._drain_cond = None
-    runtime._pending_writes_count = 0
-    runtime._draining = False
+    from ming_sim.session_write_queue import SessionWriteQueue
+    runtime._write_queue = SessionWriteQueue()
+    runtime._write_gate = runtime._write_queue.write_gate
     runtime.chat_history = {name: [] for name in content.characters}
     runtime.session = SimpleNamespace(
         db=db,

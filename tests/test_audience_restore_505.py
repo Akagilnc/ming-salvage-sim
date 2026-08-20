@@ -273,9 +273,12 @@ def _retry_runtime(db, state, minister):
     rt.pending_action_failures_for = lambda name: []
     rt._audience_turn_in_flight = lambda name: False
     # 整轮 pending 由 retry 本体持有；尾随（读心/抽取）在本单元测试外——不起后台线程。
-    rt._drain_cond = __import__("threading").Condition()
-    rt._pending_writes_count = 0
-    rt._draining = False
+    from ming_sim.session_write_queue import SessionWriteQueue
+    rt._write_queue = SessionWriteQueue()
+    rt._write_gate = rt._write_queue.write_gate
+    rt._runtime_write_queue = lambda: rt._write_queue  # type: ignore
+    rt._mark_pending_write = lambda key=None: rt._write_queue.claim(key=key or ("pending",))  # type: ignore
+    rt._complete_pending_write = lambda ticket=None: rt._write_queue.complete(ticket)  # type: ignore
     rt._spawn_pending_write_thread = lambda *a, **k: False
     rt._spawn_extraction_trail = lambda *a, **k: None
     return rt
@@ -495,6 +498,8 @@ def web_game(tmp_path, monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
+    # #544 / #1353 r6：高亮判官 LLM 边界离线中和，禁 sk-test 真网。
+    monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
     game = web_app.WebGame(fresh=False)
     yield game
     try:
