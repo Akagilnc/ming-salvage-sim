@@ -1236,7 +1236,16 @@ def test_heal_freezes_first_roster_shape_against_drift(game, monkeypatch):
 
 def test_minister_reply_only_assignee_falls_to_default(monkeypatch):
     """r11 负钉：承办人线索只在 minister_reply → 不采信，退默认（ADR 0142）。"""
+    import inspect
+
     import ming_sim.cli_backend as cb
+
+    # r12：私有选择缝签名不接自由文本（ADR 0117）
+    params = inspect.signature(cb._choose_assignee).parameters
+    assert "minister_reply" not in params and "content" not in params
+    assert list(params) == [
+        "assignee_llm", "player_command", "default_assignee",
+    ]
 
     monkeypatch.setattr(
         cb, "_run_backend",
@@ -1352,6 +1361,115 @@ def test_two_unknown_refs_escalates_first_error_stop(game, monkeypatch):
     # 首错即停至少钉到甲；不得静默按池回填两槽
     assert "不存在之人甲" in ei.value.names
     assert len(db.list_directives(state) or []) == 0
+
+
+def test_cross_drafts_dual_unknown_escalates(game, monkeypatch):
+    """r12 负钉：两 draft 各一未知 → 全局失败槽=2 → escalate（禁分别局部修补）。"""
+    import ming_sim.cli_backend as cb
+
+    db, state, content = game
+    _biziyan(content)
+    r1 = _active_minister(db, content).name
+    r2 = _active_minister(db, content, exclude=r1).name
+    player = f"两道旨：着不存在之人甲核拨辽饷、着不存在之人乙整饬边军；可令{r1}、{r2}分办"
+    minister_reply = "臣遵拟两道。"
+
+    def _batch(roster0, roster1):
+        return {
+            "成品旨稿": [
+                {
+                    "正文": "着核拨辽饷。",
+                    "动作类型": "policy",
+                    "目标类型": "issue",
+                    "目标ID": "liao-pay",
+                    "颁布方式": "普通",
+                    "参与人": roster0,
+                },
+                {
+                    "正文": "着边军整饬器械。",
+                    "动作类型": "military_order",
+                    "目标类型": "army",
+                    "目标ID": "guanning",
+                    "颁布方式": "普通",
+                    "参与人": roster1,
+                },
+            ]
+        }
+
+    first = _batch(
+        [{"character_id": "不存在之人甲", "tier": "主办", "role": "核"}],
+        [{"character_id": "不存在之人乙", "tier": "主办", "role": "整"}],
+    )
+    # 纠错轮两槽都换成接地新人——若按单 roster 独立计数会分别通过；全局须 escalate
+    fixed = _batch(
+        [{"character_id": r1, "tier": "主办", "role": "核"}],
+        [{"character_id": r2, "tier": "主办", "role": "整"}],
+    )
+
+    def backend(prompt, *_a, tag="", **_k):
+        if tag == "participant_escalate_report":
+            return ("通政司启：朝中查无不存在之人，乞陛下明示。", 1)
+        payload = fixed if _CORRECTION_MARK in prompt else first
+        return (json.dumps(payload, ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", backend)
+    with pytest.raises(cb.UnknownParticipantEscalate) as ei:
+        cb.extract_draft_intent_with_roster_heal(
+            player, minister_reply, db=db, content=content, draft_count=2,
+        )
+    assert "不存在之人甲" in ei.value.names or "不存在之人乙" in ei.value.names
+    assert len(db.list_directives(state) or []) == 0
+
+
+def test_single_unknown_with_institution_heals(game, monkeypatch):
+    """r12 负钉：单未知 + 机构项 → 机构不算失败槽，唯一人物失败槽同下标修补。"""
+    import ming_sim.cli_backend as cb
+
+    db, _state, content = game
+    _biziyan(content)
+    replacement = _active_minister(db, content).name
+    player = f"着不存在之人甲与户部核拨辽饷，可令{replacement}主事"
+    minister_reply = "臣遵拟。"
+
+    first_roster = [
+        {"character_id": "不存在之人甲", "tier": "主办", "role": "核辽饷"},
+        {"character_id": "户部", "tier": "协办", "role": "会核"},
+    ]
+    fixed_roster = [
+        {"character_id": replacement, "tier": "主办", "role": "核辽饷"},
+        {"character_id": "户部", "tier": "协办", "role": "会核"},
+    ]
+
+    def backend(prompt, *_a, tag="", **_k):
+        if tag == "participant_escalate_report":
+            raise AssertionError("机构项不得抬升失败槽数导致 escalate")
+        roster = fixed_roster if _CORRECTION_MARK in prompt else first_roster
+        return (
+            json.dumps({
+                "拟旨意图": "拟旨",
+                "动作类型": "policy",
+                "目标类型": "issue",
+                "目标ID": "liao-pay",
+                "正文": "着核拨辽饷。",
+                "参与人": roster,
+            }, ensure_ascii=False),
+            1,
+        )
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", backend)
+    # 机构排除后全局失败槽=1，应正常修补
+    assert cb._count_failed_person_slots(
+        {"participant_roster": first_roster}, db=db, content=content,
+    ) == 1
+    result = cb.extract_draft_intent_with_roster_heal(
+        player, minister_reply, db=db, content=content,
+    )
+    ids = [
+        str(i.get("character_id") or "")
+        for i in (result.get("participant_roster") or [])
+    ]
+    assert ids == [replacement]
+    assert "户部" not in ids
 
 
 def test_session_post_pass_appends_escalate_report(game, monkeypatch):

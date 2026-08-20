@@ -1931,12 +1931,12 @@ class GameSession:
         return text
 
     def _merge_staged_new_secret_order_content(
-        self, pending_action_id: int, minister_name: str, player_message: str, minister_reply: str,
+        self, pending_action_id: int, minister_name: str, player_message: str,
     ) -> None:
         """Tool/API/哨兵 staged 新密令：与抽取路同一结构化 content 装配（御旨+既有 schema 内容）。
 
         #1274 K1 / ADR 0142：reply 永不入 content 拼装；大臣实质补充须已在 payload.content
-        （extractor/tool 显式字段）。承办人只取御旨祈使 + 结构化字段，reply 不读。
+        （extractor/tool 显式字段）。承办人只取御旨祈使 + 结构化字段（ADR 0117 不接自由文本）。
         """
         if not pending_action_id:
             return
@@ -1961,7 +1961,6 @@ class GameSession:
             return
         content = str(payload.get("content") or "").strip()
         command = GameSession._secret_order_command_material(player_message)
-        reply = (minister_reply or "").strip()
         from ming_sim.cli_backend import (
             _choose_assignee,
             _secret_metadata_from_command,
@@ -1977,11 +1976,10 @@ class GameSession:
             payload["content"] = assembled
             changed = True
 
+        # ADR 0117/0142：承办人只读结构化字段 + 御旨祈使，不接 minister_reply 散文。
         assignee = _choose_assignee(
             str(payload.get("assignee") or ""),
             command,
-            reply,
-            str(payload.get("content") or ""),
             minister_name,
         )
         if assignee and assignee != str(payload.get("assignee") or ""):
@@ -2051,7 +2049,6 @@ class GameSession:
                     preexisting_pending_id,
                     character.name,
                     player_message,
-                    result.answer or "",
                 )
             result.answer = GameSession._ensure_confirmation_cue(result.answer or "")
         if res.get("pending_action_failures"):
