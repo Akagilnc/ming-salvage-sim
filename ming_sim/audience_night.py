@@ -1195,12 +1195,12 @@ def close_night(
         if night["status"] == NIGHT_STATUS_OPEN:
             # In-flight wait is gate-free (may sleep).
             wait_in_flight_clear(db, night_id, timeout_s=wait_timeout_s)
-            # Start close scene on caller registry only — never join here; no ephemeral lifecycle.
-            _start_close_scene()
-            # #1353：写序归 session 队列屏障——调用方 barrier 已等前序尾随票据
-            # （生产写经 TicketedWriteGate/run 按票序）；不再 join_pending 旁路舞步。
-            # LLM 去重仍走 per-turn single-flight（队列只管写序）。持 gate 原子置 CLOSING。
+            # #1353：start_close 的 assemble/知识短读与置 CLOSING 同持 write_gate。
+            # 禁闸外知识链读共享 conn——后于屏障领票的尾随若尚未 wait_prior，
+            # 并发 SELECT 会 sqlite3.Row IndexError（tuple index out of range）。
+            # start_close 只同步组 inputs + 提交 Future，不 join LLM。
             with gate:
+                _start_close_scene()
                 _set_night_fields(
                     db, night_id, status=NIGHT_STATUS_CLOSING,
                 )
@@ -1211,9 +1211,11 @@ def close_night(
         else:
             # Resume CLOSING：仍无 body 时 start 同一 registry 缝（不自建平行生命周期）。
             # CLOSING restore drain 留作 ADR 0036 崩溃恢复口（下方 phase-2 drain）。
-            _start_close_scene()
-            if on_closing is not None:
-                on_closing()
+            # 与 OPEN 同：start_close 短读持 gate。
+            with gate:
+                _start_close_scene()
+                if on_closing is not None:
+                    on_closing()
 
         cursor = int(night["close_commit_cursor"] or 0)
 

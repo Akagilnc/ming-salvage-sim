@@ -104,6 +104,8 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
         mindreading_mod, "create_mindreading_agent",
         lambda *a, **k: _CannedMindreadingAgent(),
     )
+    # #544 / #1353 r6：高亮判官同属回话后 LLM 边界——离线中和。
+    monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
     game = web_app.WebGame(fresh=False)
     monkeypatch.setattr(web_app, "web_game", game)
     yield game
