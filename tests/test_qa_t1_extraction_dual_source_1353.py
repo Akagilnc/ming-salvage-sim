@@ -1032,7 +1032,7 @@ def test_catch_up_entry_list_under_gate_ticket_cancelled_empty():
 
 
 def test_stream_close_pending_extraction_emits_error_not_hang(web_game, monkeypatch):
-    """#1353 r10 / 66nX：流式收夜欠账耗尽 LLMUnavailable 必须终态化（error），禁永阻。"""
+    """#1353 r10/r11 / 66nX：流式收夜欠账耗尽须 error+end 双终态，禁永阻。"""
     from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
 
     game = web_game
@@ -1090,7 +1090,7 @@ def test_stream_close_pending_extraction_emits_error_not_hang(web_game, monkeypa
     game.session.close_night_after_chat_if_needed = boom_close
 
     gen = game.chat_stream(minister, "边饷如何？")
-    # 有界消费：若未终态化，下一事件永不到 → 测试挂死；用线程+超时护栏
+    # 有界消费：须收到 end 才算终态；error 后若无 end → 挂死护栏咬住
     done = threading.Event()
     box: dict = {}
 
@@ -1098,7 +1098,7 @@ def test_stream_close_pending_extraction_emits_error_not_hang(web_game, monkeypa
         try:
             for item in gen:
                 events.append(item)
-                if item.get("type") in {"end", "error"}:
+                if item.get("type") == "end":
                     break
             box["ok"] = True
         except Exception as exc:
@@ -1108,13 +1108,15 @@ def test_stream_close_pending_extraction_emits_error_not_hang(web_game, monkeypa
 
     th = threading.Thread(target=consume, daemon=True)
     th.start()
-    assert done.wait(5.0), "stream must terminalize (error/end); hung on ev_queue"
+    assert done.wait(5.0), "stream must terminalize error+end; hung on ev_queue"
     th.join(timeout=1.0)
     assert box.get("ok") is True, box
     types = [e.get("type") for e in events]
     assert "error" in types, events
-    assert types[-1] in {"error", "end"}
-    # done 可先于 close 失败；error 必须到达
+    assert types[-1] == "end", events
+    # error 紧邻 end 之前（双终态序）；done 可先于 close 失败
+    err_idx = types.index("error")
+    assert types[err_idx + 1] == "end", types
     err = next(e for e in events if e.get("type") == "error")
     assert "detail" in err or "message" in err
 

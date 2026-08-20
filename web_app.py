@@ -3086,6 +3086,8 @@ class WebGame:
                         ev_queue.put({"type": "error", "detail": _llm_error_detail(error), **identity})
                     else:
                         ev_queue.put({"type": "error", "message": str(error), **identity})
+                    # #1353 r11：流式失败双终态——error 后必 end，禁只 error 致消费者形不齐。
+                    ev_queue.put({"type": "end"})
                     return
 
                 # P5：先 done（回话可见），再读心∥高亮∥抽取补挂，最后 end——玩家无「为后处理黑屏」。
@@ -3191,6 +3193,7 @@ class WebGame:
                     except Exception as close_err:
                         # #1353 r10 / 66nX：流式收夜欠账耗尽等失败必须终态化——
                         # 与其它流式 LLM 失败同形投 error，禁裸 raise 致 ev_queue 永阻。
+                        # #1353 r11：error 后必再 end（双终态）；消费者只以 end 收束。
                         from ming_sim.audience_night import AudienceNightError
                         if isinstance(close_err, LLMUnavailable):
                             ev_queue.put({
@@ -3210,6 +3213,7 @@ class WebGame:
                                 "message": str(close_err),
                                 **identity,
                             })
+                        ev_queue.put({"type": "end"})
                         return
 
                 ev_queue.put({"type": "end"})
@@ -3232,7 +3236,8 @@ class WebGame:
         while True:
             item = ev_queue.get()
             yield item
-            if item.get("type") in {"end", "error"}:
+            # #1353 r11：只以 end 收束——失败路径先 error 再 end，禁 error 单终态截断。
+            if item.get("type") == "end":
                 break
 
     def suggestions_for(self, character: Character) -> List[Dict[str, Any]]:
@@ -3435,6 +3440,37 @@ def _game_write_gate(game) -> threading.Lock:
     return gate
 
 
+def _refuse_settling_or_busy_write_phase(game) -> None:
+    """#393 Gate2 相位拒——与 `_serialized_web_write` 同文案单源。"""
+    state = getattr(game, "state", None)
+    phase = getattr(state, "turn_phase", None)
+    if phase in FRONT_HALF_DONE_PHASES:
+        # #1306：分相位文案——awaiting_decision 是等批红（结算未在跑），settling 才是月末结算中。
+        if phase == TurnPhase.AWAITING_DECISION.value:
+            raise HTTPException(status_code=409, detail="等待批红，请待批红完成后再操作。")
+        raise HTTPException(status_code=409, detail="月末结算进行中，请待结算完成后再操作。")
+
+
+def _try_acquire_serialized_web_write_gate(game):
+    """非阻塞抢 write_gate；抢不到立即 409（不挂死）。返回已持锁的 gate。"""
+    gate = _game_write_gate(game)
+    if not gate.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="月末结算或上一步写入进行中，请稍候再操作。")
+    return gate
+
+
+def _refuse_if_serialized_web_write_unavailable(game) -> None:
+    """#393 Gate2 / #1353 r11：相位拒 + 非阻塞探闸（探后即释，不持锁）。
+
+    advance 受理样板在 barrier/auto_close（会短持 write_gate）之前必须先探——
+    否则闸已被结算/召对 worker 占用时，get_open_night 短持会阻塞线程，退化掉
+    「非阻塞 409」契约。真正持锁仍由 `_serialized_web_write`。
+    """
+    _refuse_settling_or_busy_write_phase(game)
+    gate = _try_acquire_serialized_web_write_gate(game)
+    gate.release()
+
+
 @contextlib.contextmanager
 def _serialized_web_write(game):
     """串行化「绕过会话层、直写 game.db」的 web 端点写入，杜绝它与月末结算原子块 / 后台召对
@@ -3452,16 +3488,8 @@ def _serialized_web_write(game):
     直写 game.db 的端点、以及绕过 _write_gate 的会话写端点（诏稿/拟旨/撤回召对——它们各自的
     session._refuse_if_settling/相位门只查相位、守不住 pre_settle 窗口）都经本 CM 串行；结算入口
     （resolve_turn/submit_decisions）走阻塞版 _game_write_gate（在自己的 worker 线程里持锁）。"""
-    state = getattr(game, "state", None)
-    phase = getattr(state, "turn_phase", None)
-    if phase in FRONT_HALF_DONE_PHASES:
-        # #1306：分相位文案——awaiting_decision 是等批红（结算未在跑），settling 才是月末结算中。
-        if phase == TurnPhase.AWAITING_DECISION.value:
-            raise HTTPException(status_code=409, detail="等待批红，请待批红完成后再操作。")
-        raise HTTPException(status_code=409, detail="月末结算进行中，请待结算完成后再操作。")
-    gate = _game_write_gate(game)
-    if not gate.acquire(blocking=False):
-        raise HTTPException(status_code=409, detail="月末结算或上一步写入进行中，请稍候再操作。")
+    _refuse_settling_or_busy_write_phase(game)
+    gate = _try_acquire_serialized_web_write_gate(game)
     try:
         yield
     finally:
@@ -3491,6 +3519,11 @@ def _settlement_period_entry(game, *, write_cm: Callable[[Any], Any]):
         entered = True
         # #1235 / ADR 0149：点即入——先 capture 入核账展示态，再等在飞/收夜/结算续跑。
         created_display = _accept_settlement_period(game)
+        # #1353 r11：advance 非阻塞契约——barrier/auto_close 会短持 write_gate 读开夜；
+        # 若闸已被占，须在进 barrier 前 409，禁挂死在 get_open_night 短持上。
+        # issue/stream 走阻塞 write_cm，允许在 worker 线程等闸，不预探。
+        if write_cm is _serialized_web_write:
+            _refuse_if_serialized_web_write_unavailable(game)
         # #1353：过月=屏障票据（队列内任务）。整轮 chat 票 + 尾随 turn 票清零后
         # 才 gate-free 收夜；屏障只等工人终态/空放行（K10a：无 elapsed 熔断）。
         # 欠账抽取并入同一次过月动作（内部静默），不再 409 打回玩家补写。
