@@ -12,6 +12,9 @@ from __future__ import annotations
 import json
 import re
 
+from types import SimpleNamespace
+
+import web_app
 from ming_sim.assets import format_wanliang_amount
 from ming_sim.flows import apply_fixed_period_flows, army_needed, compute_budget_lines
 
@@ -22,6 +25,8 @@ _FLOAT_GARBAGE = re.compile(r"\d+\.\d{3,}")
 _WANLIANG_AMOUNT = re.compile(r"欠发(\d+(?:\.\d)?)万两")
 # 省源分账 reason 内嵌万两数额
 _PROVINCE_WANLIANG = re.compile(r"(摊新增欠|偿还)(\d+(?:\.\d+)?)万两")
+# #1471：玩家预算字段不得泄漏工程注记词
+_ENGINEERING_NOTE_TOKENS = ("hub", "旁路", "substrate", "实发率", "可降到")
 
 
 def test_army_pay_shortfall_reason_has_no_float_garbage(game):
@@ -76,6 +81,49 @@ def test_budget_army_pay_and_warning_due_calibers_are_labeled(read_game):
         f"预算各军军饷 note 须标明 hub/实拨口径，得 {note!r}"
     )
     assert "应发" in report, "army_warning 须标明应发口径"
+
+
+def test_player_budget_payload_strips_engineering_notes(read_game):
+    """#1471：API 玩家字段只保留 display 名+金额；工程 note/internal 不得下发。"""
+    db, state, _ = read_game
+    runtime = object.__new__(web_app.WebGame)
+    runtime.session = SimpleNamespace(db=db, state=state)
+
+    # 工程侧仍保留注记（flows / fiscal_config 源不丢）
+    eng = compute_budget_lines(db, state)
+    eng_notes = [
+        str(item.get("note") or "")
+        for acc in eng.values()
+        for direction in ("income", "expense")
+        for item in acc[direction]
+    ]
+    assert any(eng_notes), "compute_budget_lines 工程 note 不得被删空"
+    assert any(
+        item.get("internal") == "substrate_hub"
+        for item in eng["国库"]["income"] + eng["国库"]["expense"]
+    ), "flows internal=substrate_hub 工程标记须保留"
+
+    payload = runtime.budget_payload()
+    player_texts: list[str] = []
+    for account_name in ("国库", "内库"):
+        account = payload[account_name]
+        for direction in ("income", "expense"):
+            for item in account[direction]:
+                assert set(item.keys()) <= {"name", "amount", "note"}, (
+                    f"玩家预算行不得夹带 internal 等工程键：{item!r}"
+                )
+                assert "internal" not in item
+                note = str(item.get("note") or "")
+                assert note == "", f"玩家预算 note 须剥离，得 {item!r}"
+                player_texts.append(str(item.get("name") or ""))
+                player_texts.append(note)
+                player_texts.append(str(item.get("amount") or ""))
+
+    joined = "\n".join(player_texts)
+    for token in _ENGINEERING_NOTE_TOKENS:
+        assert token not in joined, (
+            f"玩家预算字段泄漏工程词 {token!r}：{joined!r}"
+        )
 
 
 def _seed_province_pay_split_scenario(db) -> None:
