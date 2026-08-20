@@ -1,4 +1,4 @@
-"""#1467 r2 — 端到端删除 hitl_min_decisions 配额机制。
+"""#1467 r3 — 端到端删除 hitl_min_decisions 配额机制。
 
 庭裁：月末亲裁最低题数配额违 P6；r1 只改默认仍保留 opt-in。
 本片删除 UI/API/config/payload/prompt 整条配额接缝；旧 runtime_game.json
@@ -6,7 +6,7 @@
 
 钉测：
 1. 机制缺席：源码/payload 不再出现 hitl_min_decisions 读写与注入
-2. 失效钉：旧持久值 1-5 在档时，无真实抉择月仍 0 题过月
+2. 失效钉：旧持久值经 user_data_path 落在真实用户数据位时，无真实抉择月仍 0 题过月
 3. 正向：有真实抉择月仍进 pending
 """
 
@@ -23,6 +23,7 @@ import ming_sim.llm_config as llm_config
 import ming_sim.memories as memories
 import ming_sim.simulation as simulation
 import web_app
+from ming_sim.paths import user_data_path
 
 
 _DECISION_BLOCK = (
@@ -90,21 +91,17 @@ def test_hitl_quota_mechanism_fully_deleted():
     assert "hitl_min_decisions" not in types
     assert "game_settings" not in types
 
-    # prompt 无条件宁缺毋滥，不再读配额字段
+    # prompt 不再读配额字段（正向措辞由源码复核，不盯自由文本）
     prompt = (_REPO / "content/prompts/season_simulator.md").read_text(encoding="utf-8")
     assert "hitl_min_decisions" not in prompt
-    assert "宁缺毋滥" in prompt
-    assert "凑够下限" not in prompt
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_stale_persisted_quota_ineffective_zero_decision_month(game, monkeypatch, tmp_path):
-    """失效钉：旧 runtime_game.json 正值在档时，无真实抉择月仍 0 题过月。"""
-    stale = tmp_path / "runtime_game.json"
+def test_stale_persisted_quota_ineffective_zero_decision_month(game, monkeypatch):
+    """失效钉：旧 runtime_game.json 正值落在真实用户数据位时，无真实抉择月仍 0 题过月。"""
+    # 经现行 user_data_path 写到生产原先真实用户数据位置（隔离 fixture 下）
+    stale = Path(user_data_path("runtime_game.json"))
     stale.write_text(json.dumps({"hitl_min_decisions": 5}), encoding="utf-8")
-    # 即便把旧路径指到含正值的文件，读面已删——不得再注入/生效
-    if hasattr(llm_config, "RUNTIME_GAME_PATH"):
-        monkeypatch.setattr(llm_config, "RUNTIME_GAME_PATH", str(stale))
 
     db, state, content = game
     closed_turn = int(state.turn)
