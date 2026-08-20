@@ -160,12 +160,14 @@ def create_chat_model(
         "api_key": llm_config.api_key,
         "base_url": llm_config.base_url,
         "temperature": temperature,
-        "max_tokens": max_tokens,
         "timeout": llm_config.timeout_seconds,
         "max_retries": 1,
         "role_map": {"system": "system", "user": "user", "assistant": "assistant", "tool": "tool"},
         "extra_body": extra_body,
     }
+    # 未显式配置（None/≤0）不发 max_tokens，取提供商官方上限；>0 才注入。
+    if max_tokens is not None and int(max_tokens) > 0:
+        kwargs["max_tokens"] = int(max_tokens)
     # OpenAI 推理族（gpt-5*/o*）拒 top_p：luna 回 HTTP 400 空 assistant → agno
     # "Unknown model error" / 流式空回（#1452）。temperature 仍可传。
     if top_p is not None and not supports_openai_reasoning_effort(llm_config.model):

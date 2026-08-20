@@ -37,7 +37,7 @@ def test_load_runtime_llm_coerces_stringified_numeric_fields(tmp_path, monkeypat
 
 
 def test_load_runtime_llm_garbage_numeric_fields_fall_back_to_default(tmp_path, monkeypatch):
-    """#53 _slot_number:不可解析的数值字段回落默认(max_tokens=8000 / timeout=180.0)。"""
+    """#53 _slot_number:不可解析的数值字段回落默认(max_tokens=None=不发 / timeout=180.0)。"""
     path = tmp_path / "runtime_llm.json"
     path.write_text(json.dumps({
         "channel": "api",
@@ -46,7 +46,7 @@ def test_load_runtime_llm_garbage_numeric_fields_fall_back_to_default(tmp_path, 
     }, ensure_ascii=False), encoding="utf-8")
     monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(path))
     out = llm_config.load_runtime_llm()
-    assert out["api"]["max_tokens"] == 8000
+    assert out["api"]["max_tokens"] is None
     assert out["api"]["timeout_seconds"] == 180.0
 
 

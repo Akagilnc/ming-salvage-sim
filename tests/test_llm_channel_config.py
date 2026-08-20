@@ -155,6 +155,59 @@ def test_create_chat_model_off_reasoning_keeps_minimal_for_legacy_o1(monkeypatch
     assert model.reasoning_effort == "minimal"
 
 
+def test_create_chat_model_omits_max_tokens_when_unconfigured(monkeypatch):
+    """未显式配置 max_tokens → 构造 kwargs 不含该键（取官方上限，不灌注 8000）。"""
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    captured: list = []
+    real = llm_model.OpenAIChat
+
+    def spy(*args, **kwargs):
+        captured.append(kwargs)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(llm_model, "OpenAIChat", spy)
+    cfg = LLMConfig(
+        api_key="sk-test",
+        base_url="https://api.example.com/v1",
+        model="gpt-test",
+        channel="api",
+    )
+    assert cfg.max_tokens is None
+
+    create_chat_model(cfg)
+    create_chat_model(cfg, max_tokens=None)
+    create_chat_model(cfg, max_tokens=0)
+
+    assert len(captured) == 3
+    for kwargs in captured:
+        assert "max_tokens" not in kwargs
+
+
+def test_create_chat_model_sends_max_tokens_when_explicit(monkeypatch):
+    """显式 max_tokens>0 → kwargs 照发。"""
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    captured: dict = {}
+    real = llm_model.OpenAIChat
+
+    def spy(*args, **kwargs):
+        captured["kwargs"] = kwargs
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(llm_model, "OpenAIChat", spy)
+    cfg = LLMConfig(
+        api_key="sk-test",
+        base_url="https://api.example.com/v1",
+        model="gpt-test",
+        channel="api",
+        max_tokens=4096,
+    )
+
+    model = create_chat_model(cfg, max_tokens=cfg.max_tokens)
+
+    assert captured["kwargs"]["max_tokens"] == 4096
+    assert model.max_tokens == 4096
+
+
 def test_create_chat_model_strips_top_p_for_openai_reasoning_family(monkeypatch):
     """#1452：luna/gpt-5 推理族拒 top_p（HTTP 400 空 assistant → agno Unknown model error）。
     召对 registry 固定传 top_p=0.9，工厂必须剥离，temperature 可保留。"""
@@ -564,9 +617,9 @@ def test_for_role_preserves_cli_channel_fields_for_advanced_roles():
 
 
 def test_config_constants_single_source_in_models():
-    """SSOT 接线（#58/#60）：channel/model/timeout/max_tokens 默认常量的 canonical 定义在 models，
+    """SSOT 接线（#58/#60）：channel/model/timeout 默认常量的 canonical 定义在 models，
     llm_config / cli_backend 旧址只是 re-export（同一对象），LLMConfig 默认值即引用这些常量——
-    防未来在第二处重写字面量漂移。"""
+    防未来在第二处重写字面量漂移。max_tokens 已取消默认灌注（None=不发/官方上限）。"""
     import ming_sim.models as m
     import ming_sim.llm_config as lc
     import ming_sim.cli_backend as cb
@@ -577,11 +630,12 @@ def test_config_constants_single_source_in_models():
     assert lc.CODEX_DEFAULT_MODEL is m.CODEX_DEFAULT_MODEL
     assert cb.CODEX_DEFAULT_MODEL is m.CODEX_DEFAULT_MODEL
     assert cb.CLAUDE_DEFAULT_MODEL is m.CLAUDE_DEFAULT_MODEL
-    assert lc.API_DEFAULT_MAX_TOKENS is m.API_DEFAULT_MAX_TOKENS
+    assert not hasattr(m, "API_DEFAULT_MAX_TOKENS")
+    assert not hasattr(lc, "API_DEFAULT_MAX_TOKENS")
     assert lc.API_DEFAULT_TIMEOUT_SECONDS is m.API_DEFAULT_TIMEOUT_SECONDS
     # LLMConfig 默认值 == 常量（dataclass 默认引用 SSOT，非裸字面量）
     cfg = LLMConfig(api_key="", base_url="", model="m")
-    assert cfg.max_tokens == m.API_DEFAULT_MAX_TOKENS
+    assert cfg.max_tokens is None
     assert cfg.timeout_seconds == m.API_DEFAULT_TIMEOUT_SECONDS
     assert cfg.cli_timeout_seconds == m.CLI_DEFAULT_TIMEOUT_SECONDS
 
