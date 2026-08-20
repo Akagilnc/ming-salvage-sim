@@ -16,6 +16,7 @@ capture + 召对两路。
 from __future__ import annotations
 
 import json
+import time
 import types
 
 import pytest
@@ -157,16 +158,8 @@ def test_capture_unknown_person_escalates_no_draft(game, monkeypatch):
     _assert_inworld_escalate(str(ei.value), "不存在之人甲")
     # 输入文未改（调用方仍持有原 text）
     assert text == "着不存在之人甲核清太仓，边饷优先"
-    # 不得落库
-    session = GameSession.__new__(GameSession)
-    session.db = db
-    session.state = state
-    session.llm_config = None
-    session.content = content
-    before = len(session.db.list_directives(state) or [])
-    # 无 payload 可加；确认无因副作用落行
-    after = len(session.db.list_directives(state) or [])
-    assert after == before
+    # 不得落库（直断计数 0，禁 before/after 同点恒真）
+    assert len(db.list_directives(state) or []) == 0
     max_retries = int(cli_backend.DRAFT_PARTICIPANT_HEAL_RETRIES)
     # heal 环 1+retries；回禀产文可再 +1
     draft_calls = sum(1 for p in calls if "拟旨意图" in p or "参与人" in p or _CORRECTION_MARK in p or "请据此拟旨" in p or "信息抽取器" in p)
@@ -394,6 +387,232 @@ def test_capture_timeout_constant_is_30():
     import ming_sim.cli_backend as cli_backend
 
     assert cli_backend.MANUAL_DIRECTIVE_CAPTURE_TIMEOUT_S == 30.0
+
+
+def test_capture_delegator_truncation_heals(game, monkeypatch):
+    """委派人截断「毕自」→纠错「毕自严」须自愈，不得因键空间漏 delegator 误 escalate。"""
+    import ming_sim.cli_backend as cli_backend
+
+    db, state, content = game
+    ch = _biziyan(content)
+    worker = _active_minister(db, content).name
+    text = f"着{worker}核拨辽饷，由毕自严委派"
+    calls: list[str] = []
+
+    def _payload(person: str, delegator: str):
+        return {
+            "拟旨意图": "拟旨",
+            "动作类型": "policy",
+            "目标类型": "issue",
+            "目标ID": "liao-pay",
+            "正文": text,
+            "参与人": [{
+                "character_id": person,
+                "tier": "协办",
+                "role": "核辽饷",
+                "delegator_id": delegator,
+            }],
+        }
+
+    def backend(prompt, *_a, tag="", **_k):
+        calls.append(prompt)
+        if tag == "participant_escalate_report":
+            raise AssertionError("委派人截断自愈不得 escalate")
+        if _CORRECTION_MARK in prompt:
+            assert "毕自" in prompt
+            return (json.dumps(_payload(worker, ch.name), ensure_ascii=False), 1)
+        return (json.dumps(_payload(worker, "毕自"), ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
+    payload = cli_backend.capture_manual_directive_payload(
+        text, None, db=db, content=content,
+    )
+    roster = payload.get("participant_roster") or []
+    assert len(roster) == 1
+    assert str(roster[0]["character_id"]) == worker
+    assert str(roster[0].get("delegator_id") or "") == ch.name
+    assert any(_CORRECTION_MARK in p for p in calls)
+    assert len(calls) == 2
+
+    session = GameSession.__new__(GameSession)
+    session.db = db
+    session.state = state
+    session.llm_config = None
+    session.content = content
+    dv = session.add_directive(text, dossier_payload=payload)
+    assert dv.id > 0
+
+
+def test_capture_delegator_alias_prior_valid_heals(game, monkeypatch):
+    """首抽合法委派人为 content 真 alias → 纠错轮回规范名 + 替换未知人 → 须自愈。
+
+    复现键空间漏 delegator：prior 含 alias 委派人时须走 _canon 后再比，
+    不得因 alias⊄new_ids 误 lost_prior_valid。
+    """
+    import ming_sim.cli_backend as cli_backend
+
+    db, state, content = game
+    ch = _biziyan(content)
+    aliases = [
+        str(a).strip()
+        for a in (getattr(ch, "aliases", None) or [])
+        if str(a).strip() and str(a).strip() != ch.name
+    ]
+    assert aliases, "夹具毕自严须带真实 aliases（禁硬编码假别名）"
+    alias = aliases[0]
+    replacement = _active_minister(db, content).name
+    text = f"着不存在之人甲核拨辽饷，由{alias}委派"
+    calls: list[str] = []
+
+    def _payload(person: str, delegator: str):
+        return {
+            "拟旨意图": "拟旨",
+            "动作类型": "policy",
+            "目标类型": "issue",
+            "目标ID": "liao-pay",
+            "正文": text,
+            "参与人": [{
+                "character_id": person,
+                "tier": "协办",
+                "role": "核辽饷",
+                "delegator_id": delegator,
+            }],
+        }
+
+    def backend(prompt, *_a, tag="", **_k):
+        calls.append(prompt)
+        if tag == "participant_escalate_report":
+            raise AssertionError("委派人 alias 守恒自愈不得 escalate")
+        if _CORRECTION_MARK in prompt:
+            # 未知人→在册替换；alias 委派人→规范名
+            return (
+                json.dumps(_payload(replacement, ch.name), ensure_ascii=False),
+                1,
+            )
+        return (
+            json.dumps(_payload("不存在之人甲", alias), ensure_ascii=False),
+            1,
+        )
+
+    monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
+    payload = cli_backend.capture_manual_directive_payload(
+        text, None, db=db, content=content,
+    )
+    roster = payload.get("participant_roster") or []
+    assert len(roster) == 1
+    assert str(roster[0]["character_id"]) == replacement
+    assert str(roster[0].get("delegator_id") or "") == ch.name
+    assert "不存在之人甲" not in str(roster)
+    assert len(calls) == 2
+
+    session = GameSession.__new__(GameSession)
+    session.db = db
+    session.state = state
+    session.llm_config = None
+    session.content = content
+    dv = session.add_directive(text, dossier_payload=payload)
+    assert dv.id > 0
+
+
+def test_capture_correction_drops_prior_valid_delegator_escalates(game, monkeypatch):
+    """纠错轮丢掉本轮合法委派人 → escalate（delegator 入 prior/new 键空间）。"""
+    import ming_sim.cli_backend as cli_backend
+
+    db, state, content = game
+    _biziyan(content)
+    worker = _active_minister(db, content).name
+    text = "着不存在之人甲核拨辽饷，由毕自严委派"
+    calls: list[str] = []
+
+    def _payload(person: str, delegator: str | None):
+        entry = {
+            "character_id": person,
+            "tier": "协办",
+            "role": "核辽饷",
+        }
+        if delegator is not None:
+            entry["delegator_id"] = delegator
+        return {
+            "拟旨意图": "拟旨",
+            "动作类型": "policy",
+            "目标类型": "issue",
+            "目标ID": "liao-pay",
+            "正文": text,
+            "参与人": [entry],
+        }
+
+    def backend(prompt, *_a, tag="", **_k):
+        calls.append(prompt)
+        if tag == "participant_escalate_report":
+            return ("通政司启：朝中查无「不存在之人甲」，乞陛下明示。", 1)
+        if _CORRECTION_MARK in prompt:
+            # 有替换工人，但抹掉合法委派人毕自严
+            return (json.dumps(_payload(worker, None), ensure_ascii=False), 1)
+        return (
+            json.dumps(_payload("不存在之人甲", "毕自严"), ensure_ascii=False),
+            1,
+        )
+
+    monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
+    with pytest.raises(ValueError) as ei:
+        cli_backend.capture_manual_directive_payload(
+            text, None, db=db, content=content,
+        )
+    _assert_inworld_escalate(str(ei.value), "不存在之人甲")
+    assert len(db.list_directives(state) or []) == 0
+    assert any(_CORRECTION_MARK in p for p in calls)
+
+
+def test_capture_escalate_report_timeout_falls_back_inworld(game, monkeypatch):
+    """回禀路径超时 → 确定性戏内 fallback，不裸抛 TimeoutError 给玩家。"""
+    import ming_sim.cli_backend as cli_backend
+
+    db, state, content = game
+    text = "着不存在之人甲核清太仓"
+
+    def backend(prompt, *_a, tag="", **_k):
+        if tag == "participant_escalate_report":
+            time.sleep(1.5)
+            return ("慢回禀不该露脸", 1)
+        return (
+            json.dumps(_ok_payload(person="不存在之人甲"), ensure_ascii=False),
+            1,
+        )
+
+    monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
+    # 极短总罩：extract 立刻 escalate 后回禀几乎无剩余预算 → fallback
+    with pytest.raises(ValueError) as ei:
+        cli_backend.capture_manual_directive_payload(
+            text, None, db=db, content=content, capture_timeout_s=0.2,
+        )
+    msg = str(ei.value)
+    _assert_inworld_escalate(msg, "不存在之人甲")
+    assert "慢回禀不该露脸" not in msg
+    assert "TimeoutError" not in msg
+    assert len(db.list_directives(state) or []) == 0
+
+
+def test_compose_escalate_report_timeout_s_zero_is_fallback():
+    """timeout_s≤0 直落确定性戏内文，零 LLM。"""
+    import ming_sim.cli_backend as cli_backend
+
+    calls = {"n": 0}
+
+    def boom(*_a, **_k):
+        calls["n"] += 1
+        raise AssertionError("timeout_s≤0 不得调后端")
+
+    # 不依赖 monkeypatch fixture：直接临时替换
+    real = cli_backend._run_backend_for_config
+    cli_backend._run_backend_for_config = boom  # type: ignore[assignment]
+    try:
+        text = cli_backend.compose_unknown_participant_inworld_report(
+            ["不存在之人甲"], timeout_s=0.0,
+        )
+    finally:
+        cli_backend._run_backend_for_config = real  # type: ignore[assignment]
+    _assert_inworld_escalate(text, "不存在之人甲")
+    assert calls["n"] == 0
 
 
 # ── 召对 materialize 路 ─────────────────────────────────────────────

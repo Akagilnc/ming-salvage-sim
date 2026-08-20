@@ -1329,7 +1329,12 @@ def _invalid_participant_names_from_error(exc: BaseException) -> List[str]:
 
 
 def _person_ids_from_extract_result(result: Dict[str, Any]) -> List[str]:
-    """单条/批抽结果中的人物 character_id（保序去重）。"""
+    """单条/批抽结果中的人物键（character_id + delegator_id/delegator，保序去重）。
+
+    除名闸 prior/new 同键空间：委派人与主办/协办同属人物参与侧，漏收会把
+    「毕自」→「毕自严」的委派人自愈误判 removal_only，或丢合法委派人不触发
+    lost_prior_valid。raw `delegator` 与 `delegator_id` 同收（与 normalize 接缝一致）。
+    """
     ids: List[str] = []
 
     def _absorb(roster: Any) -> None:
@@ -1338,9 +1343,10 @@ def _person_ids_from_extract_result(result: Dict[str, Any]) -> List[str]:
         for item in roster:
             if not isinstance(item, dict):
                 continue
-            cid = str(item.get("character_id") or "").strip()
-            if cid and cid not in ids:
-                ids.append(cid)
+            for key in ("character_id", "delegator_id", "delegator"):
+                cid = str(item.get(key) or "").strip()
+                if cid and cid not in ids:
+                    ids.append(cid)
 
     if "participant_roster" in result:
         _absorb(result.get("participant_roster"))
@@ -1373,10 +1379,12 @@ def compose_unknown_participant_inworld_report(
     voice: str = "tongzheng",
     speaker_name: str = "",
     llm_config: Any = None,
+    timeout_s: float | None = None,
 ) -> str:
     """P7：把查无此人事实喂给 LLM，产大臣/通政司口吻回禀；禁模板当台词。
 
-    LLM 失败时退保守 in-world 短句（仍非系统 409 术语），仅兜底。
+    timeout_s：有界等待（capture 剩余预算）；None=不另加罩；≤0 或超时/失败 →
+    确定性戏内 fallback（仍非系统 409 术语），不得裸抛给玩家。
     """
     cleaned = _normalize_unknown_participant_names(names)
     shown = "、".join(cleaned) if cleaned else "其人"
@@ -1391,7 +1399,10 @@ def compose_unknown_participant_inworld_report(
         f"事实：{fact}\n"
     )
     fallback = f"臣查朝籍未有「{shown}」其人，此事不敢擅专，乞陛下明示。"
-    try:
+    if timeout_s is not None and float(timeout_s) <= 0:
+        return fallback
+
+    def _produce() -> str:
         raw, _ = _run_backend_for_config(
             prompt, llm_config, tag="participant_escalate_report",
         )
@@ -1403,6 +1414,17 @@ def compose_unknown_participant_inworld_report(
         # 抽取器 JSON / 空响 → 不用；只要非结构化戏内文。
         if text and not text.lstrip().startswith("{"):
             return text
+        return fallback
+
+    try:
+        if timeout_s is None:
+            return _produce()
+        pool = ThreadPoolExecutor(max_workers=1)
+        try:
+            fut = pool.submit(_produce)
+            return fut.result(timeout=float(timeout_s))
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
     except Exception as exc:
         _log(f"查无此人回禀产文失败：{exc}")
     return fallback
@@ -1512,10 +1534,12 @@ def extract_draft_intent_with_roster_heal(
     pending_unknown: List[str] = []
     prior_ids_at_fail: List[str] = []
     for attempt in range(retries + 1):
+        # llm_config 关键字传：别族 fake_draft(msg, reply, **kw) 形仍合法，
+        # 不得因 heal 多塞第 3 位置参把旧 mock 签名整族打爆。
         result = extract_draft_intent(
             player_message,
             minister_reply,
-            llm_config,
+            llm_config=llm_config,
             content=content,
             correction_feedback=correction,
             **extract_kwargs,
@@ -1877,7 +1901,9 @@ def capture_manual_directive_payload(
         )
 
     # 有界等待：超时不堵死 HTTP/CLI；后台线程不 join（shutdown wait=False）。
+    # 总罩含自愈 + escalate 回禀；回禀只拿剩余预算，超时落确定性戏内 fallback。
     captured: Dict[str, Any]
+    t0 = time.monotonic()
     try:
         if timeout_s <= 0:
             captured = _run_extract()
@@ -1890,8 +1916,14 @@ def capture_manual_directive_payload(
                 pool.shutdown(wait=False, cancel_futures=True)
     except UnknownParticipantEscalate as exc:
         # 真不在册：通政司戏内回禀；禁吞 special_decree、禁除名照落。
+        remaining: float | None = None
+        if timeout_s > 0:
+            remaining = max(0.0, float(timeout_s) - (time.monotonic() - t0))
         report = compose_unknown_participant_inworld_report(
-            exc.names, voice="tongzheng", llm_config=llm_config,
+            exc.names,
+            voice="tongzheng",
+            llm_config=llm_config,
+            timeout_s=remaining,
         )
         raise ValueError(report) from exc
     except ValueError:
