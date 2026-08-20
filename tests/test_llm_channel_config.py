@@ -155,8 +155,8 @@ def test_create_chat_model_off_reasoning_keeps_minimal_for_legacy_o1(monkeypatch
     assert model.reasoning_effort == "minimal"
 
 
-def test_create_chat_model_omits_max_tokens_when_unconfigured(monkeypatch):
-    """未显式配置 max_tokens → 构造 kwargs 不含该键（取官方上限，不灌注 8000）。"""
+def test_create_chat_model_never_injects_max_tokens(monkeypatch):
+    """#1472：create_chat_model 构造 kwargs 永不含 max_tokens（官方上限）。"""
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     captured: list = []
     real = llm_model.OpenAIChat
@@ -171,41 +171,17 @@ def test_create_chat_model_omits_max_tokens_when_unconfigured(monkeypatch):
         base_url="https://api.example.com/v1",
         model="gpt-test",
         channel="api",
+        reasoning_strength="high",
     )
-    assert cfg.max_tokens is None
+    assert not hasattr(cfg, "max_tokens")
 
     create_chat_model(cfg)
-    create_chat_model(cfg, max_tokens=None)
-    create_chat_model(cfg, max_tokens=0)
+    create_chat_model(cfg, temperature=0.2, enable_thinking=True)
+    create_chat_model(cfg, temperature=0, force_json_output=True)
 
     assert len(captured) == 3
     for kwargs in captured:
         assert "max_tokens" not in kwargs
-
-
-def test_create_chat_model_sends_max_tokens_when_explicit(monkeypatch):
-    """显式 max_tokens>0 → kwargs 照发。"""
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    captured: dict = {}
-    real = llm_model.OpenAIChat
-
-    def spy(*args, **kwargs):
-        captured["kwargs"] = kwargs
-        return real(*args, **kwargs)
-
-    monkeypatch.setattr(llm_model, "OpenAIChat", spy)
-    cfg = LLMConfig(
-        api_key="sk-test",
-        base_url="https://api.example.com/v1",
-        model="gpt-test",
-        channel="api",
-        max_tokens=4096,
-    )
-
-    model = create_chat_model(cfg, max_tokens=cfg.max_tokens)
-
-    assert captured["kwargs"]["max_tokens"] == 4096
-    assert model.max_tokens == 4096
 
 
 def test_create_chat_model_strips_top_p_for_openai_reasoning_family(monkeypatch):
@@ -219,10 +195,9 @@ def test_create_chat_model_strips_top_p_for_openai_reasoning_family(monkeypatch)
         channel="api",
     )
 
-    model = create_chat_model(cfg, temperature=0.6, top_p=0.9, max_tokens=8000)
+    model = create_chat_model(cfg, temperature=0.6, top_p=0.9)
 
     assert model.temperature == 0.6
-    assert model.max_tokens == 8000
     assert getattr(model, "top_p", None) is None
     # request 层同样不得带 top_p
     params = model.get_request_params()
@@ -451,10 +426,15 @@ def _api_cfg(**overrides) -> LLMConfig:
     return LLMConfig(**base)
 
 
-def test_verify_llm_available_api_smoke_uses_relaxed_token_budget(monkeypatch):
-    """API 烟测不得用 8 token 掐死推理模型；一次校验成本可忽略，预算须够思考+短回。"""
+def test_verify_llm_available_api_smoke_omits_max_tokens(monkeypatch):
+    """#1472：API 烟测不发 max_tokens，取官方上限（避免小预算饿死推理族）。"""
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     captured = {}
+    real = llm_model.OpenAIChat
+
+    def spy(*args, **kwargs):
+        captured["kwargs"] = kwargs
+        return real(*args, **kwargs)
 
     class FakeAgent:
         def __init__(self, **kwargs):
@@ -463,10 +443,11 @@ def test_verify_llm_available_api_smoke_uses_relaxed_token_budget(monkeypatch):
         def run(self, prompt: str) -> str:
             return "ok"
 
+    monkeypatch.setattr(llm_model, "OpenAIChat", spy)
     monkeypatch.setattr(llm_model, "Agent", FakeAgent)
     monkeypatch.setattr(llm_model, "extract_agent_text", lambda output: output)
     verify_llm_available(_api_cfg())
-    assert captured["model"].max_tokens >= 512
+    assert "max_tokens" not in captured["kwargs"]
 
 
 def test_verify_llm_available_api_empty_content_passes(monkeypatch):
@@ -619,7 +600,7 @@ def test_for_role_preserves_cli_channel_fields_for_advanced_roles():
 def test_config_constants_single_source_in_models():
     """SSOT 接线（#58/#60）：channel/model/timeout 默认常量的 canonical 定义在 models，
     llm_config / cli_backend 旧址只是 re-export（同一对象），LLMConfig 默认值即引用这些常量——
-    防未来在第二处重写字面量漂移。max_tokens 已取消默认灌注（None=不发/官方上限）。"""
+    防未来在第二处重写字面量漂移。#1472：max_tokens 字段已概念级删除。"""
     import ming_sim.models as m
     import ming_sim.llm_config as lc
     import ming_sim.cli_backend as cb
@@ -635,7 +616,9 @@ def test_config_constants_single_source_in_models():
     assert lc.API_DEFAULT_TIMEOUT_SECONDS is m.API_DEFAULT_TIMEOUT_SECONDS
     # LLMConfig 默认值 == 常量（dataclass 默认引用 SSOT，非裸字面量）
     cfg = LLMConfig(api_key="", base_url="", model="m")
-    assert cfg.max_tokens is None
+    assert not hasattr(cfg, "max_tokens")
+    assert "max_tokens" not in {f.name for f in cfg.__dataclass_fields__.values()} if hasattr(cfg, "__dataclass_fields__") else True
+    assert "max_tokens" not in LLMConfig.__dataclass_fields__
     assert cfg.timeout_seconds == m.API_DEFAULT_TIMEOUT_SECONDS
     assert cfg.cli_timeout_seconds == m.CLI_DEFAULT_TIMEOUT_SECONDS
 
@@ -659,7 +642,7 @@ def test_web_runtime_cli_no_saved_timeout_uses_cli_default(monkeypatch):
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")
     cfg = web_app._llm_config_from_runtime(
         {"channel": "cli", "cli": {"runner": "codex", "model": "gpt-5.5"}},
-        base_url="", model="m", api_key="", max_tokens=8000, timeout_seconds=180.0,
+        base_url="", model="m", api_key="", timeout_seconds=180.0,
         thinking_level="", advanced_model="", advanced_base_url="",
         advanced_api_key="", advanced_thinking_level="",
     )
@@ -749,3 +732,102 @@ def test_cli_reasoning_strength_runners_single_source_in_cli_backend():
     src = inspect.getsource(cli_supports_reasoning_strength)
     assert "CLI_REASONING_STRENGTH_RUNNERS" in src
     assert '{"codex"' not in src and "{'codex'" not in src
+
+
+def test_agent_factories_omit_max_tokens_on_param_surface(monkeypatch):
+    """#1472：全部 11 个 ming_sim.agents 工厂 + gate 真实参数面无 max_tokens 键。"""
+    from types import SimpleNamespace
+
+    import ming_sim.agents as agents_mod
+    from ming_sim import cli_backend as cb
+
+    seen: list = []
+
+    def spy(_cfg, **kwargs):
+        seen.append(dict(kwargs))
+        return object()
+
+    fake_ctx = SimpleNamespace(
+        game_world_prompt="gw",
+        decree_writer_prompt="dw",
+        season_simulator_prompt="ss",
+        score_extractor_shared_prompt="shared",
+        score_extractor_module_prompts={"economy": "econ"},
+        chapter_memory_prompt="cm",
+        ending_summary_prompt="es",
+    )
+    monkeypatch.setattr(agents_mod, "_ctx", lambda: fake_ctx)
+    monkeypatch.setattr(agents_mod, "build_simulator_context", lambda payload: "ctx")
+    monkeypatch.setattr(agents_mod, "create_chat_model", spy)
+    monkeypatch.setattr(agents_mod, "Agent", lambda **kwargs: kwargs)
+    monkeypatch.setattr(agents_mod, "tlog", lambda *a, **k: None)
+    monkeypatch.setattr(agents_mod, "describe_effective_model", lambda cfg: "m")
+    monkeypatch.setattr(agents_mod, "is_minimax_base_url", lambda url: False)
+    monkeypatch.setattr(agents_mod, "_llm_for_role", lambda cfg, role: cfg)
+
+    cfg = LLMConfig(
+        api_key="sk-test",
+        base_url="https://api.example.com/v1",
+        model="gpt-test",
+        channel="api",
+        reasoning_strength="high",
+    )
+
+    # 11 个 ming_sim.agents 工厂——逐项命名调用，漏一个即红
+    factories = [
+        ("create_mindreading_agent", lambda: agents_mod.create_mindreading_agent(cfg)),
+        ("create_highlight_judge_agent", lambda: agents_mod.create_highlight_judge_agent(cfg)),
+        ("create_audience_extractor_agent", lambda: agents_mod.create_audience_extractor_agent(cfg)),
+        ("create_endorsement_extractor_agent", lambda: agents_mod.create_endorsement_extractor_agent(cfg)),
+        (
+            "create_score_extractor_module_agent",
+            lambda: agents_mod.create_score_extractor_module_agent(cfg, object(), module="economy"),
+        ),
+        ("create_json_sanitizer_agent", lambda: agents_mod.create_json_sanitizer_agent(cfg, object())),
+        ("create_chapter_memory_agent", lambda: agents_mod.create_chapter_memory_agent(cfg, object())),
+        ("create_decree_writer_agent", lambda: agents_mod.create_decree_writer_agent(cfg, object())),
+        ("create_season_simulator_agent", lambda: agents_mod.create_season_simulator_agent(cfg, object())),
+        ("create_promulgation_judge_agent", lambda: agents_mod.create_promulgation_judge_agent(cfg, object())),
+        ("create_ending_summary_agent", lambda: agents_mod.create_ending_summary_agent(cfg, object())),
+    ]
+    factory_names = [name for name, _ in factories]
+    assert len(factory_names) == len(set(factory_names)) == 11
+
+    for name, call in factories:
+        before = len(seen)
+        call()
+        assert len(seen) == before + 1, f"{name} must hit create_chat_model once, got +{len(seen) - before}"
+        assert "max_tokens" not in seen[-1], (name, seen[-1])
+
+    class FakeRun:
+        content = "{}"
+
+    class FakeAgent:
+        def __init__(self, **kwargs):
+            pass
+
+        def run(self, prompt):
+            return FakeRun()
+
+    # _run_api_for_config 在函数内 from-import create_chat_model / Agent
+    import ming_sim.llm_model as lm
+
+    monkeypatch.setattr(lm, "create_chat_model", spy)
+    monkeypatch.setattr(lm, "extract_agent_text", lambda output: "{}")
+    monkeypatch.setattr("agno.agent.Agent", FakeAgent)
+    before_gate = len(seen)
+    cb._run_api_for_config("输出 {}", cfg, tag="gate")
+    assert len(seen) == before_gate + 1, f"gate must hit create_chat_model once, got +{len(seen) - before_gate}"
+    assert "max_tokens" not in seen[-1], seen[-1]
+
+
+def test_gate_evidence_config_omits_max_tokens():
+    """#1472：四闸证据块不再写 max_tokens。"""
+    from types import SimpleNamespace
+    from ming_sim import cli_backend as cb
+
+    args = SimpleNamespace(channel="cli", runner="kimi", model="kimi-k2")
+    cfg = cb.gate_llm_config_from_args(args)
+    block = cb.gate_evidence_config(args, cfg)
+    assert "max_tokens" not in block
+    assert not hasattr(cfg, "max_tokens")

@@ -31,7 +31,7 @@ def main() -> int:
     # CLI 后端下这些值不会真用到（cli_backend 走 subprocess），给占位即可。
     cfg = LLMConfig(
         model="agy-local", api_key="none", base_url="http://localhost/v1",
-        timeout_seconds=300, max_tokens=2048,
+        timeout_seconds=300,
     )
     session = GameSession(ns.db, cfg)
 

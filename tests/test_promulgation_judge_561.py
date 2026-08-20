@@ -778,15 +778,16 @@ def test_leader_only_mutation_changes_faction_posture_not_roster(game):
     assert qian_after["office"] == qian_before["office"]
 
 
-def test_promulgation_judge_preserves_role_resolved_token_budget(monkeypatch):
+def test_promulgation_judge_omits_max_tokens(monkeypatch):
+    """#1472：颁布判官参数面不发 max_tokens。"""
     seen = {}
     monkeypatch.setattr(agents_mod, "create_chat_model", lambda _cfg, **kwargs: seen.update(kwargs) or object())
     monkeypatch.setattr(agents_mod, "Agent", lambda **kwargs: kwargs)
-    cfg = LLMConfig(api_key="test", base_url="http://unused", model="test", max_tokens=321)
+    cfg = LLMConfig(api_key="test", base_url="http://unused", model="test")
 
     agents_mod.create_promulgation_judge_agent(cfg, object())
 
-    assert seen["max_tokens"] == 321
+    assert "max_tokens" not in seen
 
 
 def _rejected_verdict(dossier_id, authority_band, *, midzhi=False):

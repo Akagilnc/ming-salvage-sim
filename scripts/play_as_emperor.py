@@ -178,7 +178,6 @@ def create_emperor_agent(api_key: str, base_url: str, model: str, goal: str, per
         base_url=base_url if base_url.endswith("/v1") else base_url.rstrip("/") + "/v1",
         temperature=0.9,
         top_p=0.95,
-        max_tokens=600,
         role_map={"system": "system", "user": "user", "assistant": "assistant", "tool": "tool"},
         extra_body=extra_body,
     )

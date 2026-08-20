@@ -23,7 +23,6 @@ _API_RUNTIME_FIELDS = (
     "base_url",
     "model",
     "api_key",
-    "max_tokens",
     "timeout_seconds",
     "thinking_level",
     "advanced_model",
@@ -64,8 +63,8 @@ def _slot_text(data: Dict[str, object], key: str) -> str:
 
 # API slot 的数值字段保持 JSON 数值类型（int/float），让 preserve-save 与 fresh-save 产出
 # 同一形态、load 归一也统一类型（#53）。default 与 save_runtime_llm 签名默认对齐。
+# 未知键（含旧档残留）由 _api_runtime_slot 只读白名单字段，自然忽略。
 _API_NUMERIC_FIELDS = {
-    "max_tokens": (int, None),  # None/缺省=不发，取官方上限
     "timeout_seconds": (float, API_DEFAULT_TIMEOUT_SECONDS),
 }
 
@@ -87,11 +86,7 @@ def _api_runtime_slot(data: Dict[str, object]) -> Dict[str, object]:
     for k in _API_RUNTIME_FIELDS:
         if k in _API_NUMERIC_FIELDS:
             caster, default = _API_NUMERIC_FIELDS[k]
-            value = _slot_number(data.get(k), caster, default)
-            # max_tokens：0/负值与缺省同义 = 不发（官方上限）
-            if k == "max_tokens" and value is not None and int(value) <= 0:
-                value = None
-            out[k] = value
+            out[k] = _slot_number(data.get(k), caster, default)
         elif k == "advanced_thinking_level":
             out[k] = ""
         elif k == "reasoning_strength":
@@ -112,7 +107,7 @@ def _normalize_runtime_llm(data: Dict[str, object]) -> Dict[str, object]:
     channel = str(data.get("channel") or "").strip().lower()
     if channel not in VALID_CHANNELS:
         # 扁平旧配置只有「存在真实 API key」才推断 api。占位符 + 默认数值字段
-        # （max_tokens/timeout 等）不算 api 信号，否则旧 CLI-env 存档被误升成显式
+        # （timeout 等）不算 api 信号，否则旧 CLI-env 存档被误升成显式
         # API、env CLI 后端被忽略，假 key 还会被送上 API 路径。
         channel = "api" if is_real_api_key(data.get("api_key")) else ""
     api_raw = data.get("api")
@@ -310,7 +305,6 @@ def for_role(cfg: LLMConfig, role: str) -> LLMConfig:
             api_key=adv_key,
             base_url=adv_base,
             model=cfg.advanced_model.strip(),
-            max_tokens=cfg.max_tokens,
             timeout_seconds=cfg.timeout_seconds,
             thinking_level="",
             advanced_model=cfg.advanced_model,
@@ -344,7 +338,6 @@ def save_runtime_llm(
     base_url: str,
     model: str,
     api_key: str,
-    max_tokens: Optional[int] = None,
     timeout_seconds: float = API_DEFAULT_TIMEOUT_SECONDS,
     thinking_level: str = "",
     advanced_model: str = "",
@@ -384,7 +377,6 @@ def save_runtime_llm(
             "base_url": (base_url or "").strip(),
             "model": (model or "").strip(),
             "api_key": (api_key or "").strip(),
-            "max_tokens": int(max_tokens) if max_tokens is not None and int(max_tokens) > 0 else None,
             "timeout_seconds": timeout_seconds,
             "thinking_level": normalize_thinking_level(thinking_level),
             "advanced_model": (advanced_model or "").strip(),

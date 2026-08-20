@@ -370,7 +370,6 @@ export type LLMConfigInfo = {
   channel?: "api" | "cli";
   base_url: string;
   model: string;
-  max_tokens: number | null;
   timeout_seconds: number;
   thinking_level: string;
   advanced_model: string;
@@ -396,7 +395,6 @@ export type LLMConfigInfo = {
     base_url: string;
     model: string;
     has_api_key: boolean;
-    max_tokens: number | null;
     timeout_seconds: number;
     thinking_level: string;
     advanced_model: string;
@@ -564,7 +562,6 @@ export type MenuStatus = {
     /** Backend runner dropdown from cli_backend.cli_runner_choices() (#1274 W1). */
     cli_runners?: CliRunnerChoice[];
     cli_timeout_seconds?: number;
-    max_tokens: number | null;
     timeout_seconds: number;
     thinking_level: string;
     advanced_model: string;
