@@ -1002,3 +1002,108 @@ def test_drain_catch_up_silent_no_on_event_surface(game, tmp_path, monkeypatch):
     prod = pathlib.Path(ae.__file__).read_text(encoding="utf-8")
     assert "补写召对账本" not in prod
     assert "过月时自动补跑" not in prod
+
+
+def test_resolve_turn_auto_close_passes_session_write_gate(game, tmp_path, monkeypatch):
+    """#1353 fold-in r8：闸空闲时 resolve_turn 收夜穿 session._write_gate——欠账真可 drain。
+
+    最短真实行为：尾随失败留 pending → 一次 resolve 自动补清；
+    禁硬编码 None（missing_deps 假失败断链 / CLI 断链）。
+    """
+    from ming_sim.session import GameSession, TurnPhase
+
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
+    minister = _minister(db, content)
+    nid, ctid, _seq = _open_night_with_persisted_reply(db, state, minister)
+    assert db.get_story_extract_status(ctid) != "done"
+
+    gate = threading.Lock()
+    seen: dict = {}
+    real_close = an.close_night
+
+    def track_close(*a, **k):
+        seen["write_gate"] = k.get("write_gate")
+        return real_close(*a, **k)
+
+    monkeypatch.setattr(an, "close_night", track_close)
+    monkeypatch.setattr(
+        agents_mod, "create_audience_extractor_agent",
+        lambda *a, **k: _FactsAgent(
+            '{"facts":[{"person_names":["'
+            + minister
+            + '"],"audibility":"殿上公开","body":"r8补清","tags":[],'
+            '"presence_effect":""}]}'
+        ),
+    )
+
+    sess = object.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.registry = None
+    sess.llm_config = object()
+    sess._scene_registry = None
+    sess._beat_generator = None
+    sess._write_gate = gate
+    sess.agno_db = None
+    sess.last_decree = ""
+    sess._decree_draft_fingerprint = ()
+    sess.deaths_this_turn = []
+    state.turn_phase = TurnPhase.REVIEWING.value
+
+    # 无草案 → auto_close 成功后 ValueError；本钉只证 write_gate 同流 + 欠账补清。
+    with pytest.raises(ValueError, match="草案"):
+        sess.resolve_turn()
+
+    assert seen.get("write_gate") is gate, (
+        f"resolve_turn must pass free session._write_gate, got {seen.get('write_gate')!r}"
+    )
+    assert db.get_story_extract_status(ctid) == "done"
+    assert int(_pending_api(db)["count"] or 0) == 0
+    night = an.get_night(db, nid)
+    assert night is not None
+    assert night["status"] == an.NIGHT_STATUS_CLOSED
+
+
+def test_resolve_turn_write_gate_held_by_caller_no_reenter(game, tmp_path, monkeypatch):
+    """#1353 fold-in r8：外层已持闸时 resolve 不得再传入同一把锁（禁自锁）。"""
+    from ming_sim.session import GameSession, TurnPhase
+
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
+    # 夜已关：auto_close 早退；本钉只证 held → write_gate 参数为 None
+    state.turn_phase = TurnPhase.REVIEWING.value
+
+    gate = threading.Lock()
+    assert gate.acquire(blocking=False)
+    seen: dict = {}
+
+    def track_auto_close(*a, **k):
+        seen["write_gate"] = k.get("write_gate")
+        return None  # 无开夜
+
+    monkeypatch.setattr(an, "auto_close_open_night", track_auto_close)
+
+    sess = object.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.registry = None
+    sess.llm_config = object()
+    sess._scene_registry = None
+    sess._beat_generator = None
+    sess._write_gate = gate
+    sess.agno_db = None
+    sess.last_decree = ""
+    sess._decree_draft_fingerprint = ()
+    sess.deaths_this_turn = []
+
+    try:
+        with pytest.raises(ValueError, match="草案"):
+            sess.resolve_turn()
+        assert seen.get("write_gate") is None, (
+            f"held outer gate must not re-enter; got {seen.get('write_gate')!r}"
+        )
+    finally:
+        gate.release()

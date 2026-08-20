@@ -18,7 +18,7 @@ from ming_sim.constants import (
 )
 from ming_sim.assets import wrap
 from ming_sim.context import match_minister_from_text
-from ming_sim.exceptions import ExitGame, SettlementAbort
+from ming_sim.exceptions import ExitGame, LLMUnavailable, SettlementAbort
 from ming_sim.models import API_DEFAULT_TIMEOUT_SECONDS, Character, GameState
 from ming_sim.session import (
     FRONT_HALF_DONE_PHASES,
@@ -506,19 +506,23 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> No
 
 
 def _cli_write_gate(session: GameSession):
-    """CLI 写锁：优先 session 已有 gate，否则进程内轻量锁（单线程 CLI 足够）。"""
+    """CLI 唯一 write gate：与 resolve_turn 收夜/过月 drain 同穿（#1353 fold-in r8）。
+
+    挂 session._write_gate（与 Web runtime 同属性名）——禁第二锁名分叉，
+    否则 trail 用一把、颁诏 auto_close 读另一把/None → 欠账 missing_deps 断链。
+    """
     import threading
     gate = getattr(session, "_write_gate", None)
     if gate is not None:
         return gate
-    # 懒挂一份，避免每调用新建一把让并发语义发散
+    # 兼容旧挂点一次迁入 canonical 名
     gate = getattr(session, "_cli_extract_write_gate", None)
     if gate is None:
         gate = threading.Lock()
-        try:
-            session._cli_extract_write_gate = gate  # type: ignore[attr-defined]
-        except Exception:
-            pass
+    try:
+        session._write_gate = gate  # type: ignore[attr-defined]
+    except Exception:
+        pass
     return gate
 
 
@@ -590,7 +594,8 @@ def minister_chat(session: GameSession, character: Character) -> str:
                         write_gate=_cli_write_gate(session),
                         llm_config=getattr(session, "llm_config", None),
                     )
-            except AudienceNightError as err:
+            except (AudienceNightError, LLMUnavailable) as err:
+                # #1353 fold-in r8：欠账耗尽/收夜失败留本回合，可重按退朝；CLI 不退出。
                 print(f"\n收夜未成：{err}\n")
                 continue
             print(f"{character.name}退下。\n")
@@ -877,10 +882,13 @@ def play_turn(session: GameSession) -> None:
             turn_before = int(session.state.turn)
             failed_before = _failed_secret_order_ids(session, turn_before)
             try:
+                # #1353 fold-in r8：颁诏/退朝前挂唯一 write_gate，使 resolve 收夜 drain 同流。
+                _cli_write_gate(session)
                 result = session.advance_without_decree()
                 report = _submit_first_cli_decisions(session, result)
-            except (ValueError, SettlementAbort) as error:
+            except (ValueError, SettlementAbort, LLMUnavailable) as error:
                 # 跳过与颁诏共享可恢复结算语义：失败后留在本回合循环，允许重试。
+                # #1353 fold-in r8：统一重试耗尽的 LLMUnavailable 不退出 CLI。
                 print(f"\n{error}")
                 _print_pending_action_failures(
                     _new_secret_order_failure_payloads(session, turn_before, failed_before)
@@ -897,21 +905,13 @@ def play_turn(session: GameSession) -> None:
             turn_before = int(session.state.turn)
             failed_before = _failed_secret_order_ids(session, turn_before)
             try:
+                # #1353 fold-in r8：颁诏/退朝前挂唯一 write_gate，使 resolve 收夜 drain 同流。
+                _cli_write_gate(session)
                 result = session.resolve_turn()
                 report = _submit_first_cli_decisions(session, result)
-            except ValueError as error:
-                # 恢复态守门消息（pending 拟旨/草案等）：打印指引留在本回合交互循环
-                # （continue 与 skip 分支同语义，不 return 重进 play_turn 刷屏——
-                # PR #90 R1 gemini；ship-pre r5——issue 分支此前只接 SettlementAbort）。
-                print(f"\n{error}")
-                _print_pending_action_failures(
-                    _new_secret_order_failure_payloads(session, turn_before, failed_before)
-                )
-                continue
-            except SettlementAbort as error:
-                # 结算中止（ADR 0008 决定 6/7）：打印玩家指引（含错误包路径）后留在
-                # 本回合交互循环——「可重试」要成立就不能崩出进程；重进时
-                # settling/awaiting 守门保证前半段不重跑。
+            except (ValueError, SettlementAbort, LLMUnavailable) as error:
+                # 恢复态守门 / 结算中止 / 欠账耗尽（#1353 r8）：打印指引后留在
+                # 本回合交互循环——玩家重按 issue/skip 即重试整段，CLI 不退出。
                 print(f"\n{error}")
                 _print_pending_action_failures(
                     _new_secret_order_failure_payloads(session, turn_before, failed_before)
@@ -955,6 +955,8 @@ def run_cli(
         import os
         os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
         session = GameSession(db_path, llm_config, start_ym=start_ym)
+        # #1353 fold-in r8：建 session 即挂唯一 write_gate，trail/收夜/颁诏同穿。
+        _cli_write_gate(session)
         print("《明末力挽狂澜》文字 MVP")
         print(f"你是刚刚登基的崇祯。每回合一个{TURN_UNIT}：看奏报、召见大臣、下圣旨、听回奏。")
         print(f"手动玩法：quit/退朝 = 结束本{TURN_UNIT}进入下一{TURN_UNIT}；exit/退出游戏 = 退出程序。")

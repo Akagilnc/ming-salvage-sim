@@ -1096,6 +1096,29 @@ class GameSession:
             return ask
         return text + "\n" + ask
 
+    def _write_gate_if_free(self) -> Any:
+        """#1353 fold-in r8：resolve_turn 收夜用——仅当既有唯一 write_gate 空闲时传入。
+
+        Web 入口在 write_cm 内调 resolve_turn 时外层已持同一把非重入锁；若仍传入，
+        close_night 短写 `with gate` 会自锁。探测：非阻塞 acquire 成功=空闲（立刻
+        release，close 自己短持）；失败=外层持锁中，回落 None（夜应已在闸外收完）。
+        CLI 单写者不持外层锁 → 恒传入真锁，欠账 drain 同流。禁第二锁。
+        """
+        gate = getattr(self, "_write_gate", None)
+        if gate is None:
+            return None
+        try:
+            acquired = bool(gate.acquire(blocking=False))
+        except Exception:
+            return None
+        if not acquired:
+            return None
+        try:
+            gate.release()
+        except Exception:
+            pass
+        return gate
+
     def close_night_after_chat_if_needed(
         self,
         court_action: str,
@@ -2658,10 +2681,12 @@ class GameSession:
         accept_settlement_period(self.db, self.state)
         # #503/#542：收夜与开夜、入殿、退侍共用真实 scene LLM adapter。
         # Close-night owns short write sections + gate-free endorsement LLM.
-        # Web callers must invoke auto_close outside any outer runtime write gate
-        # (see web_app issue/stream/no-edict) so this is typically already-closed.
-        # CLI is single-writer: None write_gate = no lock around LLM.
-        # #1353 fold-in r5：欠账补跑内部静默并入过月；耗尽走 LLMUnavailable 失败单源。
+        # Web 入口先在闸外 free-close（issue/stream/no-edict），再持闸跑 resolve；
+        # 此处幂等兜底 CLI/直调。
+        # #1353 fold-in r8：穿既有唯一 write_gate（session._write_gate）。
+        # 若调用方已持同一把非重入锁（Web write_cm 内），不得再传入——否则 close
+        # 短写 with gate 自锁；闸已被外层持时回落 None（夜应已在闸外收完）。
+        # 闸空闲（CLI）→ 传入真锁，欠账 drain 同流；耗尽走 LLMUnavailable 失败单源。
         try:
             auto_close_open_night(
                 self.db, self.state,
@@ -2670,7 +2695,7 @@ class GameSession:
                 wait_timeout_s=inflight_wait_s,
                 beat_generator=self._beat_generator,
                 llm_config=getattr(self, "llm_config", None),
-                write_gate=None,
+                write_gate=self._write_gate_if_free(),
                 scene_registry=self._scene_registry,
             )
         except (AudienceNightError, LLMUnavailable):
