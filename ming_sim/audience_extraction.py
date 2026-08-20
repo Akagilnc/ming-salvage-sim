@@ -37,6 +37,7 @@ from ming_sim.audience_night import (
 )
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.llm_model import extract_agent_text
+from ming_sim.session_write_queue import TicketCancelled
 
 _AUDIBILITIES = frozenset({AUDIBILITY_PUBLIC, AUDIBILITY_PRIVATE})
 _ENDORSEMENT_FORMS = frozenset({"会签", "当面站台", "御笔手敕"})
@@ -734,31 +735,42 @@ def catch_up_pending_extractions(
     **从不抛**——补跑失败不锁档（AC8）。只补 story/presence，不触发夜级 endorsement batch。
     allow_closing 仅 close_night ordinary drain 显式开启。
     #1353 fold-in r5：欠账只在内部处理——不推玩家可见 stage/SSE/CLI 进度。
+    #1353 r10：入口首读必须持 write_gate（共享 conn）；TicketCancelled → 空结果不抛。
     """
-    rows = db.list_unextracted_replies(night_id=night_id)
+    empty = {"extracted": 0, "pending": 0, "scanned": 0}
+    try:
+        with write_gate:
+            rows = list(db.list_unextracted_replies(night_id=night_id) or [])
+    except TicketCancelled:
+        return empty
+
     extracted = 0
     pending = 0
 
     # Source turns are semantically ordered: later turns consume already-settled
     # presence/ledger. Cross-turn catch-up therefore stays serial.
-    for row in rows:
-        result = run_extraction_for_turn(
-            db=db,
-            minister_name=str(row.get("minister_name") or ""),
-            reply=str(row.get("reply") or ""),
-            chat_turn_id=int(row.get("chat_turn_id") or 0),
-            night_id=int(row.get("night_id") or 0),
-            source_night_seq=int(row.get("night_seq") or 0),
-            llm_config=llm_config,
-            write_gate=write_gate,
-            extractor_agent=extractor_agent,
-            allow_closing=bool(allow_closing),
-        )
-        status = result.get("status")
-        if status == "done":
-            extracted += 1
-        elif status == "pending":
-            pending += 1
+    try:
+        for row in rows:
+            result = run_extraction_for_turn(
+                db=db,
+                minister_name=str(row.get("minister_name") or ""),
+                reply=str(row.get("reply") or ""),
+                chat_turn_id=int(row.get("chat_turn_id") or 0),
+                night_id=int(row.get("night_id") or 0),
+                source_night_seq=int(row.get("night_seq") or 0),
+                llm_config=llm_config,
+                write_gate=write_gate,
+                extractor_agent=extractor_agent,
+                allow_closing=bool(allow_closing),
+            )
+            status = result.get("status")
+            if status == "done":
+                extracted += 1
+            elif status == "pending":
+                pending += 1
+    except TicketCancelled:
+        # 契约从不抛；票取消 → 空结果（不把半截进度当成功扫描）。
+        return empty
     return {
         "extracted": extracted,
         "pending": pending,
@@ -791,9 +803,19 @@ def drain_pending_before_close(
         extractor_agent=extractor_agent,
         allow_closing=True,
     )
-    remaining = db.count_pending_story_extractions(night_id=int(night_id))
+    # #1353 r10：水位复读（count + list）同持 write_gate，禁锁释放后裸二相读。
+    try:
+        with write_gate:
+            remaining = int(db.count_pending_story_extractions(night_id=int(night_id)) or 0)
+            rows = (
+                list(db.list_unextracted_replies(night_id=int(night_id)) or [])
+                if remaining > 0
+                else []
+            )
+    except TicketCancelled:
+        # 票取消：无授权继续判定欠账——不抛玩家失败单源。
+        return
     if remaining > 0:
-        rows = db.list_unextracted_replies(night_id=int(night_id))
         ids = [int(r.get("chat_turn_id") or 0) for r in rows]
         technical = (
             "收夜中止：本夜仍有未抽取落账的回话（待补），"

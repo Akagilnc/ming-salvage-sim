@@ -1070,17 +1070,18 @@ def _drain_story_extraction_or_fail_closed(
     """
     if not hasattr(db, "count_pending_story_extractions"):
         return
-    # #1353 r7：pending 计数短持 gate（close 路径共享 conn 读）。
+    # #1353 r10：pending 计数与缺依赖时的 list 同持 gate（禁二相锁外裸读）。
     gate = _gate_cm(write_gate)
     with gate:
         pending = int(db.count_pending_story_extractions(night_id=int(night_id)) or 0)
-    if pending <= 0:
-        return
-    if llm_config is None or write_gate is None:
-        with gate:
-            rows = _pending_extraction_rows(db, int(night_id))
+        if pending <= 0:
+            return
+        missing_rows: Optional[List[Dict[str, Any]]] = None
+        if llm_config is None or write_gate is None:
+            missing_rows = _pending_extraction_rows(db, int(night_id))
+    if missing_rows is not None:
         _raise_pending_extraction(
-            db, int(night_id), rows=rows, missing_deps=True,
+            db, int(night_id), rows=missing_rows, missing_deps=True,
         )
     from ming_sim.audience_extraction import drain_pending_before_close
 
@@ -1495,8 +1496,10 @@ def auto_close_open_night(
     scene_registry：既有 ChatTurnSceneRegistry（session 持有）；start_close 后与
     endorsement 并行，终局写入前 join；不自建第二 registry/executor。
     #1353 fold-in r5：欠账补跑内部静默，不透传过月 SSE。
+    #1353 r10：wrapper 入口 get_open_night 短持 gate（r7 修了 close_night 内、漏此处）。
     """
-    open_n = get_open_night(db)
+    with _gate_cm(write_gate):
+        open_n = get_open_night(db)
     if open_n is None:
         return None
     return close_night(
