@@ -210,7 +210,6 @@ export type ClosedIssue = {
 export type BudgetItem = {
   name: string;
   amount: number;
-  note: string;
 };
 
 export type BudgetMovement = {

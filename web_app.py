@@ -1397,13 +1397,12 @@ class WebGame:
         budget["国库"]["balance"] = int(display["国库"])
         budget["内库"]["balance"] = int(display["内库"])
         for account in (budget["国库"], budget["内库"]):
-            # #1471：玩家 HUD 定额只下发 display 名+金额；flows/fiscal_config 工程 note·internal 留源侧。
+            # #1471：玩家 HUD 定额精确投影 {name, amount}；flows/fiscal_config 工程 note·internal 留源侧。
             for direction in ("income", "expense"):
                 account[direction] = [
                     {
                         "name": str(item["name"]),
                         "amount": int(item["amount"]),
-                        "note": "",
                     }
                     for item in account[direction]
                 ]
