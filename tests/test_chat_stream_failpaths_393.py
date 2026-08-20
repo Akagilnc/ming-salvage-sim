@@ -278,6 +278,73 @@ def test_worker_cleanup_failure_still_emits_error_and_releases_gate():
     _assert_write_path_free(runtime)
 
 
+def test_worker_cleanup_double_failure_emits_original_error_end_and_logs(caplog):
+    """#1353 r13 / ADR 0005：payload-None 清理 abandon + fail 双二次失败 →
+    消费者有界收到*原始* error→end；清理异常只 logger.exception 记 traceback，不覆盖原错、不阻断终态。"""
+    import logging
+
+    db = _WorkerPathDB()
+    runtime, minister = _base_runtime(db)
+    agent = _StreamCrashAgent()
+    runtime.session.registry = SimpleNamespace(get=lambda _c: agent)
+    runtime.session._character = lambda name: SimpleNamespace(name=minister)
+    runtime.session._start_cli_action_intent = lambda *_a, **_k: None
+
+    abandon_calls: list[int] = []
+
+    def _boom_abandon(ctid):
+        abandon_calls.append(int(ctid))
+        raise RuntimeError("abandon 二次崩溃")
+
+    runtime.session.abandon_chat_turn_scene = _boom_abandon
+
+    primary = "LLM 流式调用崩溃。"
+    events: list[dict] = []
+    done = threading.Event()
+    box: dict = {}
+
+    def consume() -> None:
+        try:
+            for item in runtime.chat_stream(minister, "辽东军情如何？"):
+                events.append(item)
+                if item.get("type") == "end":
+                    break
+            box["ok"] = True
+        except Exception as exc:  # noqa: BLE001
+            box["exc"] = exc
+        finally:
+            done.set()
+
+    with caplog.at_level(logging.ERROR, logger="web_app"):
+        th = threading.Thread(target=consume, daemon=True)
+        th.start()
+        assert done.wait(5.0), (
+            "double cleanup failure must terminalize original error+end; hung on ev_queue"
+        )
+        th.join(timeout=1.0)
+
+    assert box.get("ok") is True, box
+    types = [e.get("type") for e in events]
+    assert "error" in types, events
+    assert types[-1] == "end", events
+    err_idx = types.index("error")
+    assert types[err_idx + 1] == "end", types
+    err = next(e for e in events if e.get("type") == "error")
+    # 原始 error 不变：清理二次崩溃不得覆盖 message
+    assert err.get("message") == primary, err
+    assert "abandon" not in str(err.get("message") or "")
+    assert "fail_chat_turn" not in str(err.get("message") or "")
+    assert abandon_calls == [7]
+
+    # 日志机械断言：abandon + fail 两次 cleanup 均 logger.exception 留痕
+    joined = "\n".join(r.getMessage() for r in caplog.records)
+    assert "stream worker cleanup: abandon_chat_turn_scene failed" in joined, joined
+    assert "stream worker cleanup: fail_chat_turn/reload failed" in joined, joined
+    # traceback 须在 exception 记录里（logger.exception → exc_info）
+    assert any(r.exc_info for r in caplog.records), caplog.records
+    _assert_write_path_free(runtime)
+
+
 def test_worker_postprocess_exception_emits_error_end():
     """#1353 r12：payload 成功后后处理（_spawn_extraction_trail）抛错 → 单一出口 error→end。
 
