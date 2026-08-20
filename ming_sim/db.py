@@ -48,7 +48,10 @@ from ming_sim.qualitative import (
     building_output_effect,
     building_qualitative_fields,
     city_defense_description,
+    power_band,
+    public_support_band,
     qualitative_band,
+    satisfaction_band,
 )
 from ming_sim.relations import (
     bind_origin_round,
@@ -89,7 +92,7 @@ def _seed_guilt_storage_value(value: object) -> str:
 
 
 def _public_support_description(value: object) -> str:
-    return "民心" + qualitative_band(value, ("堪忧", "偏弱", "起伏", "尚可", "稳固"))
+    return "民心" + public_support_band(value)
 
 
 def _unrest_description(value: object) -> str:
@@ -2307,6 +2310,8 @@ class GameDB:
             self.conn.commit()
         self.init_fiscal_config()
         self._migrate_missing_fiscal_engine_from_pay_source_cutover()
+        # #1356：旧档精确 DELETE 已知 seed 全文（不动真实结算产物）
+        self._purge_fixed_opening_gazette_seed()
 
     def _migrate_legacy_office_pollution(self) -> None:
         """ADR 0009 决定9/L94 一次性数据清洗（幂等，init 时跑）：pre-0009 存档把状态词塞在
@@ -4759,29 +4764,37 @@ class GameDB:
             )
         self.conn.commit()
 
-    def seed_opening_gazette(self, state: GameState) -> None:
-        """新档塞一份「即位前一月」邸报（turn=state.turn-1），让大臣首回合即可经 read_past_report
-        查到开局朝局速览，不必凭空臆议。已存在则不覆盖。文本来自 content/opening_gazette.md。"""
-        prev_turn = state.turn - 1
-        prev_year, prev_period = state.year, state.period - 1
-        if prev_period < 1:
-            prev_period = 12
-            prev_year -= 1
-        exists = self.conn.execute(
-            "SELECT 1 FROM turn_reports WHERE turn = ?",
-            (prev_turn,),
-        ).fetchone()
-        if exists is None:
+    def _known_opening_gazette_seed_text(self) -> str:
+        """#1356 已知固定开局邸报全文指纹（与历史 seed 写入一致：strip 后入库）。"""
+        try:
             from pathlib import Path
             from ming_sim.paths import bundled_path
-            gazette_path = Path(bundled_path("content", "opening_gazette.md"))
-            if gazette_path.is_file():
-                text = gazette_path.read_text(encoding="utf-8").strip()
-                if text:
-                    self.conn.execute(
-                        "INSERT INTO turn_reports (turn, year, period, report) VALUES (?, ?, ?, ?)",
-                        (prev_turn, prev_year, prev_period, text),
-                    )
+            path = Path(bundled_path("content", "opening_gazette.md"))
+            if path.is_file():
+                return path.read_text(encoding="utf-8").strip()
+        except OSError:
+            return ""
+        return ""
+
+    def _purge_fixed_opening_gazette_seed(self) -> None:
+        """#1356：旧档精确 DELETE 已知 seed 全文。
+
+        单条 SQL 等值匹配，天然幂等；不扫表、不写 meta、不按短语 substring。
+        真实结算邸报（哪怕含 seed 短语）因全文不等而不被删。
+        """
+        known = self._known_opening_gazette_seed_text()
+        if not known:
+            return
+        self.conn.execute("DELETE FROM turn_reports WHERE report = ?", (known,))
+        self.conn.commit()
+
+    def seed_opening_gazette(self, state: GameState) -> None:
+        """开局公共见闻（新君登基/倒魏）。
+
+        #1356/#1292：不再写入固定开局邸报文到 turn_reports（P7 禁固定模板直显）。
+        首份玩家可见邸报由第一个正常月末 LLM 结算产生；content/opening_gazette.md
+        仅作旧档 purge 指纹源，不进玩家面。
+        """
         # Keep the two opening facts addressable as public knowledge rather than
         # requiring a character to infer them from an undifferentiated gazette.
         self.record_public_knowledge_event(
@@ -5739,8 +5752,8 @@ class GameDB:
             return "派系未建档。"
         if audience:
             return "；".join(
-                f"{row['name']}满意{qualitative_band(row['satisfaction'], ('怨愤', '不满', '平常', '顺应', '拥戴'))}、"
-                f"势力{qualitative_band(row['leverage'], ('极弱', '偏弱', '中等', '偏强', '强盛'))}，所求：{row['agenda']}"
+                f"{row['name']}满意{satisfaction_band(row['satisfaction'])}、"
+                f"势力{power_band(row['leverage'])}，所求：{row['agenda']}"
                 for row in rows
             )
         return "；".join(
@@ -5756,15 +5769,26 @@ class GameDB:
             (region_id,),
         ).fetchall()
 
-    def class_report(self) -> str:
-        """全国汇总 + 各省紧张切片（sat<=30 且 lev>=60）。"""
+    def class_report(self, *, audience: bool = False) -> str:
+        """全国汇总 + 各省紧张切片（sat<=30 且 lev>=60）。
+
+        audience=True 时满意度/势力走既有定性档（与 faction_report 同词表），
+        供 simulator 等玩家可感混合调用；机面默认仍给裸值。
+        """
         national = self.class_rows("")
         if not national:
             return "阶级未建档。"
-        head = "；".join(
-            f"{row['name']}满意{row['satisfaction']}、势力{row['leverage']}（{row['agenda']}）"
-            for row in national
-        )
+        if audience:
+            head = "；".join(
+                f"{row['name']}满意{satisfaction_band(row['satisfaction'])}、"
+                f"势力{power_band(row['leverage'])}（{row['agenda']}）"
+                for row in national
+            )
+        else:
+            head = "；".join(
+                f"{row['name']}满意{row['satisfaction']}、势力{row['leverage']}（{row['agenda']}）"
+                for row in national
+            )
         hot = self.conn.execute(
             """
             SELECT c.name, c.region_id, c.satisfaction, c.leverage, r.name AS region_name
@@ -5776,10 +5800,19 @@ class GameDB:
         ).fetchall()
         if not hot:
             return f"阶级总览：{head}。各省阶级暂无高压预警。"
-        warn = "；".join(
-            f"{row['region_name'] or row['region_id']} {row['name']}满意{row['satisfaction']}/势力{row['leverage']}"
-            for row in hot
-        )
+        if audience:
+            warn = "；".join(
+                f"{row['region_name'] or row['region_id']} {row['name']}"
+                f"满意{satisfaction_band(row['satisfaction'])}/"
+                f"势力{power_band(row['leverage'])}"
+                for row in hot
+            )
+        else:
+            warn = "；".join(
+                f"{row['region_name'] or row['region_id']} {row['name']}"
+                f"满意{row['satisfaction']}/势力{row['leverage']}"
+                for row in hot
+            )
         return f"阶级总览：{head}。高压预警：{warn}。"
 
     def adjust_classes(
@@ -5885,8 +5918,8 @@ class GameDB:
         if audience:
             return "；".join(
                 f"{row['name']}（{row['leader']}）：{row['stance']}，"
-                f"威望{qualitative_band(row['leverage'], ('极弱', '偏弱', '中等', '偏强', '强盛'))}、"
-                f"实力{qualitative_band(row['military_strength'], ('极弱', '偏弱', '中等', '偏强', '强盛'))}、"
+                f"威望{power_band(row['leverage'])}、"
+                f"实力{power_band(row['military_strength'])}、"
                 f"经济{qualitative_band(row['supply'], ('匮乏', '吃紧', '尚可', '充足', '丰裕'))}，"
                 f"{row['status']}；近动：{row['last_action'] or '尚无新动'}"
                 for row in rows
@@ -7826,23 +7859,24 @@ class GameDB:
 
     def previous_turn_summary(self, state: GameState) -> str:
         previous_turn = state.turn - 1
-        # turn=0 是开局即位邸报（seed_opening_gazette 落库）；turn<0 才算未登基前。
+        # #1356：不再 seed turn=0 固定邸报；t0 / 无上月 → 空串（P7 禁固定空态文案）。
         if previous_turn < 0:
-            return f"登基伊始，尚无上{TURN_UNIT}回奏。"
+            return ""
 
         # 上回合奏报单独存在 turn_reports，直接取。
         report = self.get_turn_report(previous_turn)
         if report:
             return report
         if previous_turn == 0:
-            return f"登基伊始，尚无上{TURN_UNIT}回奏。"
+            return ""
 
         logs = self.conn.execute(
             "SELECT message FROM turn_logs WHERE turn = ? ORDER BY id",
             (previous_turn,),
         ).fetchall()
+        # #1356：非 t0 亦禁固定空态句；无 report 且无 logs → 真真空。
         if not logs:
-            return f"上{TURN_UNIT}未见正式记录。"
+            return ""
 
         lines = [
             f"上{TURN_UNIT}回顾：",
@@ -7857,8 +7891,8 @@ class GameDB:
         """邸报面报头年月 ≡ 所显示报文自身所属月（#1356）。
 
         与 previous_turn_summary 同源：优先读 turn_reports 已存 year/period，
-        经 reign_period_label 投影；无行时按当前 state 回推上一月（与
-        seed_opening_gazette 算法一致）。当前 turn 年号不得混充上月报头。
+        经 reign_period_label 投影；无行时按当前 state 回推上一月。
+        当前 turn 年号不得混充上月报头。
         """
         previous_turn = int(state.turn) - 1
         if previous_turn < 0:
@@ -12017,16 +12051,14 @@ class GameDB:
         from ming_sim.participant_roster import resolve_dossier_owner_name
         from ming_sim.qualitative import (
             identity_band,
-            qualitative_band,
+            power_band,
             qualitative_character_axis,
+            satisfaction_band,
         )
         from ming_sim.supervision import (
             character_faction_integrity,
             faction_relation,
         )
-
-        leverage_words = ("极弱", "偏弱", "中等", "偏强", "强盛")
-        satisfaction_words = ("怨愤", "不满", "平常", "顺应", "拥戴")
 
         rows = self.conn.execute(
             """
@@ -12128,11 +12160,9 @@ class GameDB:
         for fac in sorted(related_factions):
             situations.append({
                 "faction": fac,
-                "leverage_band": qualitative_band(
-                    self.faction_leverage(fac), leverage_words,
-                ),
-                "satisfaction_band": qualitative_band(
-                    self.faction_satisfaction(fac), satisfaction_words,
+                "leverage_band": power_band(self.faction_leverage(fac)),
+                "satisfaction_band": satisfaction_band(
+                    self.faction_satisfaction(fac),
                 ),
             })
 

@@ -72,23 +72,32 @@ def test_season_simulator_uses_fed_reign_label_not_self_compute():
 
 
 def test_gazette_header_uses_report_own_month_not_current_turn(game):
-    """#1356：报头年月 ≡ 报文自身月；开局九月 / 跨年十二月→正月。
+    """#1356：报头年月 ≡ 报文自身月；跨年十二月→正月。
 
-    后端 previous_reign_period_label 与 previous_summary 同源（turn_reports year/period），
+    #1356 删除方案后开局不再 seed 九月固定邸报；报头同源仍钉真实 turn_reports 行。
     不得用当前 turn.reign_period_label 混充上月报头。真渲染见 vitest ReportModal。
     """
-    from ming_sim.models import GameState, reign_period_label
+    from ming_sim.models import reign_period_label
 
     db, state, _content = game
 
-    # 开局：state=天启七年十月，turn0 九月报文 → 报头必须九月
+    # 开局 t0：无固定 seed 邸报（删除方案）；当前回合仍是天启七年十月
     assert state.turn == 1
     assert (state.year, state.period) == (1627, 10)
     assert reign_period_label(state.year, state.period) == "天启七年十月"
-    opening_label = db.previous_turn_reign_period_label(state)
-    assert opening_label == "天启七年九月"
     opening_body = db.previous_turn_summary(state)
-    assert opening_body.startswith("天启七年九月")
+    assert "天启七年九月邸报" not in opening_body
+    assert "待办未解（开局三事）" not in opening_body
+    assert "信王于乾清宫即皇帝位" not in opening_body
+
+    # 落一条真实「九月」报文 → 报头必须九月（与报文自身月同源）
+    db.conn.execute(
+        "INSERT OR REPLACE INTO turn_reports (turn, year, period, report) VALUES (?, ?, ?, ?)",
+        (0, 1627, 9, "天启七年九月邸报\n\n一、真结算九月报文"),
+    )
+    db.conn.commit()
+    assert db.previous_turn_reign_period_label(state) == "天启七年九月"
+    assert "真结算九月报文" in db.previous_turn_summary(state)
 
     # 禁前端第二份年号表：无天启/崇祯 epoch 常量平行表
     web_src = ROOT / "web/src"
@@ -124,12 +133,20 @@ def test_gazette_header_cross_year_december_report_under_january_state(game):
 
 
 def test_state_payload_projects_previous_reign_period_label(game):
-    """#1356：state_payload 挂 previous_reign_period_label；turn 标签仍是当前月。"""
+    """#1356：state_payload 挂 previous_reign_period_label；turn 标签仍是当前月。
+
+    删除固定开局邸报后：先落一条真实上月报文再钉投影同源。
+    """
     import web_app
     from types import SimpleNamespace
     from ming_sim.models import reign_period_label
 
     db, state, content = game
+    db.conn.execute(
+        "INSERT OR REPLACE INTO turn_reports (turn, year, period, report) VALUES (?, ?, ?, ?)",
+        (0, 1627, 9, "天启七年九月邸报\n\n一、真结算九月报文·payload 钉"),
+    )
+    db.conn.commit()
     assert db.previous_turn_reign_period_label(state) == "天启七年九月"
 
     # 与 c3 同形轻壳：经 WebGame.state_payload 真投影
@@ -156,7 +173,7 @@ def test_state_payload_projects_previous_reign_period_label(game):
 
     payload = web_app.WebGame.state_payload(runtime)
     assert payload["previous_reign_period_label"] == "天启七年九月"
-    assert payload["previous_summary"].startswith("天启七年九月")
+    assert "真结算九月报文" in payload["previous_summary"]
     assert payload["turn"]["reign_period_label"] == reign_period_label(state.year, state.period)
     assert payload["turn"]["reign_period_label"] == "天启七年十月"
     assert payload["previous_reign_period_label"] != payload["turn"]["reign_period_label"]
