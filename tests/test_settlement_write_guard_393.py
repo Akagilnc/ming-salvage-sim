@@ -357,6 +357,63 @@ def test_advance_without_edict_refused_when_gate_held(monkeypatch):
         worker.join(timeout=1)
 
 
+def test_advance_short_hold_409_when_gate_taken_after_admit(monkeypatch):
+    """#1353 r12：删预探后，真实短持接缝被占 → 409 不挂死。
+
+    事件握手：advance 已过 accept 进入 auto_close 前夕，对端占闸；
+    短持 non-blocking acquire 须立即 409（禁阻塞等闸）。
+    """
+    game = _FakeGame(TurnPhase.SUMMONING.value)
+    game.directive_rows = lambda: []
+
+    def _should_not_run(**_k):
+        game.db.writes.append("advance_without_decree")
+        return None
+
+    game.session.advance_without_decree = _should_not_run
+    monkeypatch.setattr(web_app, "get_game", lambda: game)
+
+    at_short_hold = threading.Event()
+    gate_held_by_peer = threading.Event()
+    real_auto = web_app._auto_close_open_night_gate_free
+
+    def _wrapped_auto(game_arg, *, inflight_wait_s=0.0, write_gate=None):
+        at_short_hold.set()
+        assert gate_held_by_peer.wait(2.0), "peer failed to occupy write gate before short-hold"
+        return real_auto(
+            game_arg, inflight_wait_s=inflight_wait_s, write_gate=write_gate,
+        )
+
+    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", _wrapped_auto)
+
+    result: dict[str, object] = {}
+
+    def _run_call():
+        try:
+            web_app.api_advance_without_edict()
+        except BaseException as exc:
+            result["exc"] = exc
+        finally:
+            result["done"] = True
+
+    worker = threading.Thread(target=_run_call)
+    worker.start()
+    try:
+        assert at_short_hold.wait(2.0), "advance never reached auto_close short-hold seam"
+        assert game._write_gate.acquire(blocking=False), "gate should be free at admit→short-hold window"
+        gate_held_by_peer.set()
+        worker.join(timeout=2.0)
+        assert result.get("done") is True, "advance blocked on short-hold after peer took gate"
+        exc = result.get("exc")
+        assert isinstance(exc, HTTPException), result
+        assert exc.status_code == 409
+        assert game.db.writes == []
+    finally:
+        if game._write_gate.locked():
+            game._write_gate.release()
+        worker.join(timeout=1)
+
+
 def test_secret_order_endpoint_refused_by_phase_before_chat(monkeypatch):
     """兼容密令按钮端点不得靠真实 WebGame.chat 的 blocking gate/phase-only 路径绕过守门。"""
     game = _FakeGame(TurnPhase.SETTLING.value)
