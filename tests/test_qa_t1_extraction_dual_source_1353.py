@@ -1172,8 +1172,10 @@ def test_close_night_shared_conn_reads_short_hold_gate_source():
     auto_src = auto_src.split("\ndef ", 1)[0]
     assert "gate = _gate_cm(write_gate)" in auto_src
     assert "with gate:" in auto_src
-    before_auto_gate = auto_src.split("gate = _gate_cm", 1)[0]
-    assert "get_open_night" not in before_auto_gate
+    # 只查可执行语句：docstring 会提到函数名，不算闸外调用。
+    after_doc = auto_src.split('"""', 2)[-1]
+    before_auto_gate = after_doc.split("gate = _gate_cm", 1)[0]
+    assert "get_open_night(" not in before_auto_gate
 
     # catch_up / drain 水位重读入闸（启动补跑与收夜 drain 的 list 不得闸外裸 SELECT）
     ae_src = Path(ae.__file__).read_text(encoding="utf-8")
