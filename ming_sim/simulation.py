@@ -26,6 +26,11 @@ from ming_sim.issues import (
     normalize_event_outcome_labels_or_error,
 )
 from ming_sim.models import GameState, loads_effect_dict, reign_period_label
+from ming_sim.qualitative import (
+    imperial_authority_band,
+    progress_band,
+    public_support_band,
+)
 from ming_sim.settlement_payload import (
     augment_secret_orders_with_due_commitments,
     iter_secret_order_ids,
@@ -334,8 +339,27 @@ def _project_simulator_condition(value: object) -> object:
     return json.dumps(projected, ensure_ascii=False) if encoded else projected
 
 
+def _project_simulator_current_state(metrics: object) -> Dict[str, object]:
+    """#1356 / ADR 0143: 民心·皇威走 qualitative 单源；国库/内库等钱粮口径保留裸数。"""
+    raw = dict(metrics or {})
+    projected: Dict[str, object] = dict(raw)
+    if "民心" in projected:
+        projected["民心"] = public_support_band(projected["民心"])
+    if "皇威" in projected:
+        projected["皇威"] = imperial_authority_band(projected["皇威"])
+    return projected
+
+
+def _project_simulator_region_row(row: Dict[str, object]) -> Dict[str, object]:
+    """#1356: region public_support（民心）走 qualitative 单源；可数物照旧。"""
+    projected = dict(row)
+    if "public_support" in projected:
+        projected["public_support"] = public_support_band(projected["public_support"])
+    return projected
+
+
 def _project_simulator_issue_conditions(issue: Dict[str, object]) -> Dict[str, object]:
-    """Apply the simulator-only character gate projection to one issue."""
+    """Apply the simulator-only character gate + 局势进度 projection to one issue."""
     projected = dict(issue)
     has_character_gate = any(
         _condition_has_character_axis(projected.get(key))
@@ -344,6 +368,9 @@ def _project_simulator_issue_conditions(issue: Dict[str, object]) -> Dict[str, o
     for key in ("结案条件", "失败条件", "resolve_condition", "fail_condition", "stop_condition"):
         if key in projected:
             projected[key] = _project_simulator_condition(projected[key])
+    # #1356 r6：局势进度 bar_value 裸分 → 既有 progress_band 定性档。
+    if "进度" in projected:
+        projected["进度"] = progress_band(projected["进度"])
     progress = projected.get("commitment_progress")
     if has_character_gate and isinstance(progress, dict):
         qualitative_progress = dict(progress)
@@ -522,7 +549,8 @@ def build_simulator_payload(
         for ev in gather_candidate_events(state, db)
     ]
     region_rows = [
-        dict(r) for r in db.conn.execute(
+        _project_simulator_region_row(dict(r))
+        for r in db.conn.execute(
             "SELECT name,kind,population,public_support,unrest,natural_disaster,"
             "human_disaster,registered_land,hidden_land,tax_per_turn,grain_security,"
             "gentry_resistance,military_pressure,status,controlled_by,city_level,cannon,"
@@ -581,10 +609,12 @@ def build_simulator_payload(
         "monthly_progress": project_monthly_progress_for_simulator(db),
         # #569 D / #567 slot: empty until S12 wires reconciliation reads.
         "reconciliation_inputs": [],
-        "current_state": dict(state.metrics),
+        # #1356 r6 / ADR 0143：民心·皇威定性；国库/内库钱粮裸数保留。
+        "current_state": _project_simulator_current_state(state.metrics),
         "treasury_brief": db.treasury_report(state),
-        "factions_brief": db.faction_report(),
-        "classes_brief": db.class_report(),
+        # 满意度/势力走既有 audience 定性轨（与大臣面同词表）。
+        "factions_brief": db.faction_report(audience=True),
+        "classes_brief": db.class_report(audience=True),
         "powers_brief": db.power_report(exclude_self=True),
         "active_issues": issues_payload,
         "candidate_events": candidate_events,

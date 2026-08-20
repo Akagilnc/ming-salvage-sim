@@ -18,7 +18,8 @@ Assertions read structured fields only (P-3):
     OR (force path) execution_outcome∈{degraded,failed}
   - 白身破格授巡抚: decision=rejected；可强颁时 force 三笔闸检（signed direction×intensity）
   - 中旨强授: structured decision + 必过 force 端到端三笔复验（非命门、非 unpromulgatable）
-  - P4 LLM 面: 邸报/密奏/召对 brief 消费真实渲染产物（每面正负各一；空产物不计过）
+  - P4：ADR 0143 输入侧定性投影（确定性构造钉，非 LLM 输出措辞扫描）；
+    live 邸报/密奏/召对 brief 仅作真报证据面，不作 P4 合规断言
 """
 from __future__ import annotations
 
@@ -26,7 +27,6 @@ import argparse
 import json
 import logging
 import os
-import re
 import sys
 import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -36,9 +36,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from agno.db.sqlite import SqliteDb
-
-from ming_sim.agents import bind_content as bind_agent_content
+from ming_sim.agents import bind_content as bind_agent_content, build_simulator_context
 from ming_sim.content import GameContent
 from ming_sim.context import bind_content
 from ming_sim.db import GameDB
@@ -56,18 +54,22 @@ from ming_sim.cli_backend import (
 )
 from ming_sim.issues import bind_content as bind_issue_content
 from ming_sim.models import Character, LLMConfig
+from ming_sim.session import GameSession
+from ming_sim.simulation import build_simulator_payload
 
 _LOG = logging.getLogger("issue-570-acceptance")
 _BLOCKED_LAYERS = frozenset({"cabinet_drafting", "palace_rescript", "six_offices"})
 _REACTION_INTENSITY = {"weak": 4, "strong": 8}
 _REACTION_SIGN = {"positive": 1, "negative": -1}
 _AUTHORITY_DELTA = -5
-_SYSTEM_LEAK = re.compile(
-    r"\b(?:promulgated|rejected|executing|proposed|force_promulgated|midzhi|"
-    r"break_rank|blocked_layer|degraded|failed|fulfilled|transformed|"
-    r"cabinet_drafting|palace_rescript|six_offices|is_break_rank)\b"
-    r"|破格标|进展档|execution_outcome"
-)
+
+# #1356 r6 哨兵：偏门抽象裸值，用于输入侧构造钉（非输出扫描）。
+_P4_INPUT_SENTINELS = {
+    "民心": 32,
+    "皇威": 16,
+    "满意度": 32,
+    "局势进度": 28,
+}
 
 
 def _args() -> argparse.Namespace:
@@ -204,29 +206,196 @@ def _judge_batch(
     return context, verdicts
 
 
-def _p4_scan(label: str, text: str) -> dict:
-    """Positive clean requires non-empty real product; empty never counts as pass."""
+def _plant_p4_input_sentinels(db: GameDB, state) -> dict:
+    """#1356 r6：把四类抽象轴钉成哨兵裸值，供输入侧构造钉对照。"""
+    mh = int(_P4_INPUT_SENTINELS["民心"])
+    hw = int(_P4_INPUT_SENTINELS["皇威"])
+    sat = int(_P4_INPUT_SENTINELS["满意度"])
+    bar = int(_P4_INPUT_SENTINELS["局势进度"])
+    state.metrics["民心"] = mh
+    state.metrics["皇威"] = hw
+    db.conn.execute("UPDATE regions SET public_support=?", (mh,))
+    db.conn.execute("UPDATE factions SET satisfaction=?", (sat,))
+    db.conn.execute(
+        "UPDATE issues SET bar_value=? WHERE status='active'", (bar,),
+    )
+    # 若无 active issue，种一条专供进度哨兵。
+    active = db.conn.execute(
+        "SELECT id FROM issues WHERE status='active' LIMIT 1"
+    ).fetchone()
+    if active is None:
+        issue_id = int(db.insert_issue(
+            state,
+            kind="initiative",
+            title="P4输入哨兵局势",
+            origin_kind="decree",
+            origin_ref="p4-input-sentinel",
+            bar_value=bar,
+            inertia=0,
+            stage_text="哨兵",
+        ))
+    else:
+        issue_id = int(active["id"])
+    db.conn.commit()
+    return {
+        "民心": mh,
+        "皇威": hw,
+        "满意度": sat,
+        "局势进度": bar,
+        "issue_id": issue_id,
+    }
+
+
+def _p4_input_construction_pin(db: GameDB, state) -> dict:
+    """ADR 0143：确定性钉 simulator 材料装配不含四类抽象裸值（非盯产物散文）。"""
+    sentinels = _plant_p4_input_sentinels(db, state)
+    payload = build_simulator_payload(state, db, "", "")
+    rendered = build_simulator_context(payload)
+    leaks: list[str] = []
+
+    cs = payload.get("current_state") or {}
+    for key in ("民心", "皇威"):
+        val = cs.get(key)
+        if val == sentinels[key] or str(val) == str(sentinels[key]):
+            leaks.append(f"current_state.{key}={val!r}")
+        elif not isinstance(val, str) or not str(val).strip():
+            leaks.append(f"current_state.{key} missing qualitative band: {val!r}")
+
+    regions = payload.get("regions") or {}
+    cols = list(regions.get("cols") or [])
+    rows = list(regions.get("rows") or [])
+    if "public_support" not in cols:
+        leaks.append("regions missing public_support column")
+    else:
+        idx = cols.index("public_support")
+        for row in rows:
+            cell = row[idx] if idx < len(row) else None
+            if cell == sentinels["民心"] or str(cell) == str(sentinels["民心"]):
+                leaks.append(f"regions.public_support bare={cell!r}")
+                break
+
+    for brief_key in ("factions_brief", "classes_brief"):
+        blob = str(payload.get(brief_key) or "")
+        token = f"满意{sentinels['满意度']}"
+        if token in blob:
+            leaks.append(f"{brief_key} contains {token!r}")
+
+    issue_progress = None
+    for issue in payload.get("active_issues") or []:
+        if not isinstance(issue, dict):
+            continue
+        prog = issue.get("进度")
+        issue_progress = prog if issue_progress is None else issue_progress
+        if prog == sentinels["局势进度"] or str(prog) == str(sentinels["局势进度"]):
+            leaks.append(f"active_issues.进度 bare={prog!r}")
+            break
+
+    # 渲染串：轴标签紧邻哨兵裸值即红（钱粮等可数物不在此列）。
+    for label, value in (
+        ("民心", sentinels["民心"]),
+        ("皇威", sentinels["皇威"]),
+    ):
+        for needle in (
+            f'"{label}": {value}',
+            f'"{label}":{value}',
+            f"{label}{value}",
+        ):
+            if needle in rendered:
+                leaks.append(f"rendered {needle!r}")
+                break
+    if f"满意{sentinels['满意度']}" in rendered:
+        leaks.append(f"rendered 满意{sentinels['满意度']}")
+
+    return {
+        "label": "simulator_input_construction",
+        "clean": not leaks,
+        "leaks": leaks,
+        "sentinels": sentinels,
+        "current_state": dict(cs),
+        "factions_brief_head": str(payload.get("factions_brief") or "")[:160],
+        "classes_brief_head": str(payload.get("classes_brief") or "")[:160],
+        "sample_issue_progress": issue_progress,
+    }
+
+
+def _surface_capture(label: str, text: str) -> dict:
+    """真报证据面：只记录非空与原文，不作 P4 措辞扫描判定（ADR 0143）。"""
     blob = str(text or "")
-    non_empty = bool(blob.strip())
-    clean = non_empty and _SYSTEM_LEAK.search(blob) is None
     return {
         "label": label,
-        "non_empty": non_empty,
-        "clean": clean,
+        "non_empty": bool(blob.strip()),
         "text": blob,
     }
+
+
+def _auto_complete_hitl(session: GameSession) -> Optional[str]:
+    """真实结算若出 HITL，一次 awaiting 自动选第一项；返回完整 report。
+
+    形状对齐生产 API（terminal._submit_first_cli_decisions / agy_turn_probe）：
+    submit_decisions 返回报告字符串，再无 awaiting——不造 while/round_cap/伪结果。
+    """
+    result = session.advance_without_decree()
+    if result is None:
+        return None
+    if not result.awaiting:
+        return result.report
+    decisions = list(result.decisions) or session.pending_decisions()
+    choices = []
+    for d in sorted(decisions, key=lambda x: int(x["idx"])):
+        opts = d.get("options") or []
+        pick = opts[0] if opts else {}
+        label = pick.get("label", "") if isinstance(pick, dict) else str(pick)
+        hint = pick.get("hint", "") if isinstance(pick, dict) else ""
+        choices.append({"label": label, "hint": hint})
+    return session.submit_decisions(choices)
+
+
+def _first_month_gazette_via_production_settle(
+    session: GameSession,
+) -> str:
+    """#1356 P-5 邸报臂：生产 GameSession 首月 advance_without_decree 落库 turn_report。
+
+    不 mock simulator/extractor/memory；不 GameSession.__new__；不自造 narrative。
+    结算失败或空报 → 返回空串（空不计过；不恢复 seed/固定模板）。
+    须在种植 proposed 案卷之前调用（否则结算会再进颁布判官）。
+    """
+    db = session.db
+    closed_turn = int(session.state.turn)
+    existing = str(db.get_turn_report(closed_turn) or "").strip()
+    if existing:
+        return existing
+
+    try:
+        result = _auto_complete_hitl(session)
+        if result is None:
+            _LOG.warning("first-month settle returned None; gazette arm stays empty")
+            return ""
+    except Exception:  # noqa: BLE001 — 空不计过；臂失败不拖垮整样
+        _LOG.exception("first-month settle failed; gazette arm stays empty")
+        return ""
+
+    # 唯一真源：落库 turn_report（closed_turn）；禁用内存 last_report 冒充。
+    return str(db.get_turn_report(closed_turn) or "")
 
 
 def _run_sample(index: int, root: str, content: GameContent, cfg: LLMConfig) -> dict:
     sample_dir = Path(root) / str(index)
     sample_dir.mkdir()
-    db = GameDB(str(sample_dir / "game.db"), content)
+    # 生产 GameSession：既有 LLMConfig 驱动完整结算链（非 __new__ 伪装配）。
+    session = GameSession(str(sample_dir / "game.db"), cfg, content=content)
+    db = session.db
     try:
-        db.seed_static_data()
-        state = db.load_state()
+        session.begin_turn()
+        state = session.state
         # Low authority so resistance is on the table.
         state.metrics["皇威"] = 15
         db.save_state(state)
+
+        # P-5 邸报原料：开局无 seed 后，经生产首月结算缝先落非空真实 report。
+        # 必须在种植 proposed 案卷之前（否则结算会再进颁布判官）。
+        first_month_gazette = _first_month_gazette_via_production_settle(session)
+        # 结算推进后从 DB 重读 state（turn 已 +1）。
+        state = db.load_state()
 
         cabinet_name = f"候补阁僚-{index}"
         bare_name = f"白身巡抚-{index}"
@@ -275,8 +444,8 @@ def _run_sample(index: int, root: str, content: GameContent, cfg: LLMConfig) -> 
         if index % 4 in (1, 2):
             order.reverse()
         rows = [rows_by_id[i] for i in order]
-        agno = SqliteDb(db_file=str(sample_dir / "agno.db"))
-        context, verdicts = _judge_batch(db, state, rows, cfg, agno)
+        # 与生产结算共用 session.agno_db（禁另起旁路 agno 伪库）。
+        context, verdicts = _judge_batch(db, state, rows, cfg, session.agno_db)
         by_id = {int(v["dossier_id"]): v for v in verdicts}
 
         # Apply verdicts so force / stigma / costs can be exercised on structured path.
@@ -367,17 +536,17 @@ def _run_sample(index: int, root: str, content: GameContent, cfg: LLMConfig) -> 
             and midzhi_force_error is None
         )
 
-        # ── P-5 three LLM/text faces: real rendered products, pos+neg each ──
-        # 1) 召对认账 brief（真实 vocabulary 渲染产物；空 brief 不计过）
+        # ── P4 / ADR 0143：输入侧确定性构造钉（非 LLM 输出措辞扫描）──
+        p4_input = _p4_input_construction_pin(db, state)
+
+        # 真报证据面（只存 raw，不作 P4 合规断言）
         ref_name = cabinet_name
-        # Prefer a name that still has referenceable force-promulgated bare dossier.
         candidates = db.list_referenceable_dossiers(bare_name, state.turn)
         if not candidates:
             candidates = db.list_referenceable_dossiers(ref_name, state.turn)
         brief = render_referenceable_dossier_brief(candidates)
-        p4_brief = _p4_scan("召对认账brief", brief)
+        p4_brief = _surface_capture("召对认账brief", brief)
 
-        # 2) 密奏：真实 record_dossier_progress → list_dossier_progress 产物
         memorial_text = f"{state.year}年边饷核验，兵额如实陈，库银按册无缺。"
         errand = db.create_decree_dossier(
             state, action_type="assignment",
@@ -401,18 +570,16 @@ def _run_sample(index: int, root: str, content: GameContent, cfg: LLMConfig) -> 
         memorial_blob = "\n".join(
             str(r.get("memorial_text") or "") for r in progress_rows
         )
-        p4_memorial = _p4_scan("密奏memorial", memorial_blob)
+        p4_memorial = _surface_capture("密奏memorial", memorial_blob)
 
-        # 3) 邸报：seed_opening_gazette 真实落库产物（get_turn_report）
-        gazette_blob = str(db.get_turn_report(0) or "")
-        p4_gazette = _p4_scan("邸报gazette", gazette_blob)
-
-        # Negative controls: detector must fire on injected system words.
-        neg_brief = _SYSTEM_LEAK.search("force_promulgated break_rank") is not None
-        neg_memorial = _SYSTEM_LEAK.search("execution_outcome=failed 破格标") is not None
-        neg_gazette = _SYSTEM_LEAK.search(
-            "decision=rejected blocked_layer=six_offices midzhi"
-        ) is not None
+        # 邸报：生产首月结算落库 turn_report（证据面；空不造假）
+        gazette_blob = str(first_month_gazette or "")
+        if not gazette_blob.strip():
+            reports = db.list_turn_reports() if hasattr(db, "list_turn_reports") else []
+            gazette_blob = str((reports[-1]["report"] if reports else "") or "")
+            if not gazette_blob.strip() and int(state.turn) > 0:
+                gazette_blob = str(db.get_turn_report(int(state.turn) - 1) or "")
+        p4_gazette = _surface_capture("邸报gazette", gazette_blob)
 
         checks = {
             "cabinet_break_rank_resisted": cabinet_ok,
@@ -423,12 +590,8 @@ def _run_sample(index: int, root: str, content: GameContent, cfg: LLMConfig) -> 
             "bare_force_no_error": bare_force_error is None and bare_force_attempted,
             "midzhi_structured_decision": midzhi_structured,
             "midzhi_force_e2e_three_costs": midzhi_ok,
-            "p4_audience_brief_clean": p4_brief["clean"],
-            "p4_memorial_clean": p4_memorial["clean"],
-            "p4_gazette_clean": p4_gazette["clean"],
-            "p4_negative_brief_detector": neg_brief,
-            "p4_negative_memorial_detector": neg_memorial,
-            "p4_negative_gazette_detector": neg_gazette,
+            "p4_simulator_input_clean": p4_input["clean"],
+            "p4_gazette_non_empty": p4_gazette["non_empty"],
         }
         # force_error must count as failed even if other arms look green.
         if bare_force_error:
@@ -473,6 +636,7 @@ def _run_sample(index: int, root: str, content: GameContent, cfg: LLMConfig) -> 
                 "verdict": midzhi_v,
                 "force": midzhi_force,
             },
+            "p4_input_construction": p4_input,
             "p4_surfaces": {
                 "brief": p4_brief,
                 "memorial": p4_memorial,
@@ -482,7 +646,7 @@ def _run_sample(index: int, root: str, content: GameContent, cfg: LLMConfig) -> 
             "detail": detail,
         }
     finally:
-        db.close()
+        session.close()
 
 
 def main() -> int:
@@ -516,13 +680,24 @@ def main() -> int:
             for line in trace_path.read_text(encoding="utf-8").splitlines()
             if line.strip()
         ]
-        # Acceptance gate: one judge call per sample → trace count == samples.
-        if len(trace_records) != args.samples or any(
-            record.get("error") is not None for record in trace_records
-        ):
+        # #1356 r4 诚实契约：真实首月结算会追加 simulator/extractor/chapter_memory
+        # 等多条 TRACE，不再要求 length == samples。
+        # 仍钉：全部无 error；颁布判官每 sample 恰 1 条。
+        errored = [r for r in trace_records if r.get("error") is not None]
+        if errored:
             raise RuntimeError(
-                f"expected {args.samples} successful raw trace records; "
-                f"got {len(trace_records)}"
+                f"raw trace has {len(errored)} error record(s) "
+                f"(total={len(trace_records)})"
+            )
+        judge_traces = [
+            r for r in trace_records
+            if "颁布判官" in str(r.get("prompt") or "")
+            or str(r.get("tag") or "") in {"promulgation-judge", "promulgation_judge"}
+        ]
+        if len(judge_traces) != args.samples:
+            raise RuntimeError(
+                f"expected {args.samples} promulgation-judge trace(s); "
+                f"got {len(judge_traces)} (total traces={len(trace_records)})"
             )
     else:
         trace_records = []
@@ -541,8 +716,9 @@ def main() -> int:
                 "Live production promulgation Judge on isolated DBs; "
                 "P-3 structured-field anchors for 破格授阁臣 / 白身破格授巡抚 / 中旨强授; "
                 "force three-cost legs assert signed direction×intensity; "
-                "P4 scans real 邸报/密奏/召对 brief products "
-                "(positive non-empty clean + negative detector self-check)."
+                "P4 = ADR 0143 input-side construction pin on simulator payload "
+                "(民心/皇威/满意度/局势进度 sentinels absent); live 邸报/密奏/召对 "
+                "captured as evidence only — no LLM-output regex P4 gate."
             ),
             "samples": args.samples,
             "config": gate_evidence_config(args, cfg),
@@ -559,9 +735,19 @@ def main() -> int:
                     "rejected ∧ ¬unpromulgatable ∧ force e2e three costs "
                     "(non-vital 太常寺卿 arm)"
                 ),
-                "p4_faces": "邸报 gazette / 密奏 memorial / 召对 brief — real products",
+                "p4_input": (
+                    "build_simulator_payload + build_simulator_context: "
+                    "sentinel 民心/皇威/满意度/局势进度 bare values absent"
+                ),
+                "p4_evidence_faces": (
+                    "邸报 gazette / 密奏 memorial / 召对 brief — raw evidence only"
+                ),
             },
-            "trace_contract": f"raw_cli_trace length == samples ({args.samples})",
+            "trace_contract": (
+                f"cli: all traces error-free ∧ promulgation-judge count == samples "
+                f"({args.samples}); settlement simulator/extractor/... extras allowed "
+                f"(no longer length == samples)"
+            ),
         },
         "summary": {
             "samples": args.samples,
@@ -575,10 +761,12 @@ def main() -> int:
             "辞让 (execution degraded/failed) path requires full execution Judge after force; "
             "this gate primarily locks the promulgation reject+layer arm of P-3 for cabinet.",
             "Force errors are logged and count as failed checks (no silent swallow).",
-            "P4 LLM faces consume real render products reachable without a second full-month "
-            "settle: opening gazette (邸报), dossier progress memorial (密奏), "
-            "referenceable-dossier brief (召对认账). Live minister dialogue prose is not "
-            "re-run here; brief is the production audience-facing dossier render.",
+            "P4 (#1356 r6 / ADR 0143): 唯一机械证明=simulator 输入构造钉；"
+            "删 LLM 输出措辞扫描式 p4_*_clean。邸报 arm 仍经生产首月结算取落库 "
+            "turn_report 作真报证据（空不造假、不恢复 seed）。"
+            "密奏=dossier progress；召对=referenceable brief。",
+            "CLI trace: real first-month settle emits extra simulator/extractor traces; "
+            "contract pins judge-count == samples and zero errors, not total length.",
         ],
         "samples": samples,
         "raw_cli_trace": trace_records,

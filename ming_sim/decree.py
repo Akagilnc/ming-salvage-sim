@@ -51,7 +51,7 @@ from ming_sim.issues import (
 )
 from ming_sim.llm_model import extract_agent_text, llm_unavailable_from_error
 from ming_sim.models import FRONT_HALF_DONE_PHASES, GameState, LLMConfig, TurnPhase
-from ming_sim.qualitative import power_band, qualitative_band, qualitative_character_axis
+from ming_sim.qualitative import imperial_authority_band, power_band, qualitative_character_axis
 from ming_sim.appointment_tenure import (
     DEFAULT_APPOINTMENT_TENURE,
     command_power_rank,
@@ -202,9 +202,7 @@ def build_promulgation_judge_context(
     ).fetchall()
     issue_rows = db.list_active_issues()
     authority = int(state.metrics.get("皇威", 0))
-    authority_band = qualitative_band(
-        authority, ("极弱", "偏弱", "中等", "偏强", "强盛")
-    )
+    authority_band = imperial_authority_band(authority)
     assert authority_band in IMPERIAL_AUTHORITY_BANDS
     dossier_rows: List[Dict[str, object]] = []
     for row in sorted(dossiers, key=lambda item: int(item["id"])):

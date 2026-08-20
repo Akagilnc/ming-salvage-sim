@@ -38,8 +38,10 @@ from ming_sim.qualitative import (
     building_risk_description,
     identity_band,
     power_band,
+    public_support_band,
     qualitative_band,
     qualitative_character_axes,
+    satisfaction_band,
 )
 from ming_sim.db import _qualitative_army_stat
 
@@ -79,7 +81,7 @@ def _capture_agent(game, *characters):
 
 
 def _support_label(value: int) -> str:
-    return "民心" + qualitative_band(value, ("堪忧", "偏弱", "起伏", "尚可", "稳固"))
+    return "民心" + public_support_band(value)
 
 
 def _unrest_label(value: int) -> str:
@@ -798,7 +800,7 @@ def test_audience_faction_and_power_reports_never_emit_raw_abstract_axes(game):
     ))
 
     assert not _RAW_ABSTRACT_AXIS.search(rendered)
-    assert qualitative_band(17, ("怨愤", "不满", "平常", "顺应", "拥戴")) in rendered
+    assert satisfaction_band(17) in rendered
     assert power_band(82) in rendered
 
 

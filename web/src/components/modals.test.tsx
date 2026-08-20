@@ -1275,9 +1275,9 @@ describe("ReportModal — narrative settlement bulletin", () => {
   });
 
   it("#1356 报头吃报文自身月 periodLabel，不吃当前 turn 月", () => {
-    // 上月报文 + 状态口当前月：报头必须=报文月（开局九月 / 跨年十二月）
+    // 上月报文 + 状态口当前月：报头必须=报文月（真结算九月 / 跨年十二月）
     const hostSept = renderReportModal({
-      report: "天启七年九月邸报\n\n一、新君嗣位",
+      report: "天启七年九月邸报\n\n一、真结算九月",
       periodLabel: "天启七年九月",
     });
     const mastSept = hostSept.querySelector(".gazette-masthead")?.textContent || "";
@@ -1293,6 +1293,23 @@ describe("ReportModal — narrative settlement bulletin", () => {
     // 正月状态不得混充报头
     expect(mastDec).not.toContain("崇祯元年正月");
     expect(mastDec).not.toContain("天启七年正月");
+  });
+
+  it("#1356 空邸报态不崩：卷轴壳复用 pre + 朕知道了可关闭（无固定空注）", () => {
+    const onClose = vi.fn();
+    const host = renderReportModal({ report: "", onClose });
+    expect(host.querySelector(".gazette-document")).not.toBeNull();
+    expect(host.querySelector(".gazette-masthead")).not.toBeNull();
+    // 空壳复用原 pre，不另写固定空态文案
+    expect(host.querySelector("pre.memorial-text")).not.toBeNull();
+    expect(host.textContent).not.toContain("尚无上月邸报");
+    expect(host.textContent).not.toContain("登基伊始");
+    const dismiss = Array.from(host.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("朕知道了"),
+    ) as HTMLButtonElement | undefined;
+    expect(dismiss).toBeTruthy();
+    act(() => dismiss!.click());
+    expect(onClose).toHaveBeenCalledOnce();
   });
 
   it("#1398 朕知道了视口常显：不埋在长文滚底", () => {
