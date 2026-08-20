@@ -278,6 +278,64 @@ def test_worker_cleanup_failure_still_emits_error_and_releases_gate():
     _assert_write_path_free(runtime)
 
 
+def test_worker_postprocess_exception_emits_error_end():
+    """#1353 r12：payload 成功后后处理（_spawn_extraction_trail）抛错 → 单一出口 error→end。
+
+    事件握手：有界消费必见 end；禁只走 finally 致消费者永阻。
+    """
+    db = _WorkerPathDB()
+    runtime, minister = _base_runtime(db)
+    runtime.session.registry = SimpleNamespace(get=lambda _c: None)
+    runtime.session._character = lambda name: SimpleNamespace(name=minister)
+    runtime.session._start_cli_action_intent = lambda *_a, **_k: None
+    runtime.session.abandon_chat_turn_scene = lambda *_a, **_k: None
+    runtime.session.close_night_after_chat_if_needed = None
+
+    runtime._chat_stream_payload = (  # type: ignore[method-assign]
+        lambda *a, **k: {
+            "answer": "臣已知晓。",
+            "minister_message_id": 1,
+            "court_action": "",
+        }
+    )
+
+    def _boom_spawn(*_a, **_k):
+        raise RuntimeError("extraction trail boom")
+
+    runtime._spawn_extraction_trail = _boom_spawn  # type: ignore[method-assign]
+
+    events: list[dict] = []
+    done = threading.Event()
+    box: dict = {}
+
+    def consume() -> None:
+        try:
+            for item in runtime.chat_stream(minister, "边饷如何？"):
+                events.append(item)
+                if item.get("type") == "end":
+                    break
+            box["ok"] = True
+        except Exception as exc:  # noqa: BLE001
+            box["exc"] = exc
+        finally:
+            done.set()
+
+    th = threading.Thread(target=consume, daemon=True)
+    th.start()
+    assert done.wait(5.0), "postprocess exception must terminalize error+end; hung on ev_queue"
+    th.join(timeout=1.0)
+    assert box.get("ok") is True, box
+    types = [e.get("type") for e in events]
+    assert "done" in types, events  # 回话已可见
+    assert "error" in types, events
+    assert types[-1] == "end", events
+    err_idx = types.index("error")
+    assert types[err_idx + 1] == "end", types
+    err = next(e for e in events if e.get("type") == "error")
+    assert "trail boom" in str(err.get("message") or "")
+    _assert_write_path_free(runtime)
+
+
 # ── #542 r6e：非流 chat / retry prologue 与流式同清理缝 ─────────────────────
 
 
