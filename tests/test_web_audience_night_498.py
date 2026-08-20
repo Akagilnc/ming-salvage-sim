@@ -249,10 +249,10 @@ def test_asgi_inflight_reply_lands_then_issue_closes_and_advances(web_game, monk
     q = game._runtime_write_queue()
     real_wait_prior = q.wait_prior
 
-    def observe_wait_prior(ticket, *, timeout_s=None):
+    def observe_wait_prior(ticket):
         if q.inflight_count() > 1:  # barrier 票 + chat 票
             observed_ticket_inflight.set()
-        result = real_wait_prior(ticket, timeout_s=timeout_s)
+        result = real_wait_prior(ticket)
         # wait_prior 返回时 priors 已清
         if observed_ticket_inflight.is_set() and q.inflight_count() <= 1:
             observed_ticket_clear.set()

@@ -85,7 +85,6 @@ from ming_sim.audience_extraction import (
 )
 from ming_sim.session_write_queue import (
     SessionWriteQueue,
-    TicketBarrierTimeout,
     TicketCancelled,
     TicketedWriteGate,
     WriteTicket,
@@ -1015,11 +1014,11 @@ class WebGame:
         return self._runtime_write_queue().write_gate
 
     def _ticketed_write_gate(
-        self, ticket: Optional[WriteTicket],
-    ) -> Any:
-        """#1353：生产写 seam——有票则按票序+取消检查；无票回落裸 write_gate。"""
+        self, ticket: WriteTicket,
+    ) -> TicketedWriteGate:
+        """#1353：生产写 seam——必须持有效票，无裸 write_gate 回落。"""
         if ticket is None:
-            return self._runtime_write_gate()
+            raise RuntimeError("ticketed write requires a live WriteTicket")
         return self._runtime_write_queue().ticketed_gate(ticket)
 
     def _mark_pending_write(
@@ -1878,8 +1877,8 @@ class WebGame:
                 answer_text = str(getattr(result, "answer", "") or "")
                 message_id = int(payload.get("minister_message_id") or 0)
                 # P5：先 spawn 读心/抽取，再折进判官等待窗——折窗期内后处理已在跑。
-                # #1353：尾随领 turn 票后立刻放行整轮票——否则尾随 ticketed write 等整轮票
-                # 而主线程持整轮票等尾随 = 自锁。
+                # #1353：非持闸路尾随领 turn 票后立刻放行整轮票——否则 ticketed write 等整轮票
+                # 而主线程持整轮票等尾随 = 自锁。持闸兼容路整轮票覆盖高亮写（禁无票裸写）。
                 if chat_turn_id and answer_text:
                     self._spawn_pending_write_thread(
                         self._trail_mindreading_after_reply,
@@ -1889,17 +1888,24 @@ class WebGame:
                     )
                     # #501：叙事抽取落账与读心并行尾随（各自队列票据，P5）。
                     self._spawn_extraction_trail(minister_name, answer_text, chat_turn_id)
-                    self._complete_pending_write(pending_ticket)
-                    pending_ticket = None
+                    if not gate_already_held:
+                        self._complete_pending_write(pending_ticket)
+                        pending_ticket = None
                 # #544：非流式折进等待窗——判官以超时封顶后与回话同到；超时则空清单先行。
                 # 持闸路须把已持闸态传到判官写库缝，禁同线程二次 acquire 非可重入 Lock。
                 if message_id and answer_text:
+                    held_ticket = pending_ticket if gate_already_held else None
                     self._trail_highlight_judge_after_reply(
                         answer_text,
                         message_id=message_id,
                         chat_turn_id=chat_turn_id,
                         gate_already_held=gate_already_held,
+                        pending_ticket=held_ticket,
                     )
+                    if held_ticket is not None:
+                        # 持闸兼容：整轮票覆盖高亮写；trail 不二次 acquire，由调用方收口。
+                        self._complete_pending_write(held_ticket)
+                        pending_ticket = None
                     payload["history"] = self.chat_projection(minister_name)
             except Exception:
                 # drain 在 write_gate 外（与 stream / retry 同序），再短写 fail。
@@ -2035,7 +2041,7 @@ class WebGame:
                     self._complete_pending_write(pending_ticket)
                     pending_ticket = None
                 if message_id and answer_text:
-                    # #544：重试非流式同折窗封顶
+                    # #544：重试非流式同折窗封顶（自领 turn 票，无裸写）
                     self._trail_highlight_judge_after_reply(
                         answer_text,
                         message_id=message_id,
@@ -2576,16 +2582,21 @@ class WebGame:
         读心是单一依赖任务、调用方随即等其结果——无需另起 executor/Future。回话已完成并
         落库（读心闸门=非空完整回话，喂真实 reply 而非问句）；写库经票据执行 seam。
         起跑已领票时传 pending_ticket，finally 空放行/完成。失败不回滚回话。
+        无票且 seal → 零 LLM 零写（禁裸 write_gate 回落）。
         """
         del owns_pending  # 票据路径取代布尔 ownership
         try:
             reply = str(minister_reply or "")
             if not chat_turn_id or not reply.strip():
                 return None
+            if pending_ticket is None:
+                pending_ticket = self._mark_pending_write(
+                    key=("turn", int(chat_turn_id)),
+                )
+            if pending_ticket is None:
+                return None  # seal/拒票：无第二入口
             # 撤回后 ticket 已 cancel：禁复活写（ADR 0038）。
-            if pending_ticket is not None and (
-                pending_ticket.cancelled or pending_ticket._done
-            ):
+            if pending_ticket.cancelled or pending_ticket._done:
                 return None
             write_gate = self._ticketed_write_gate(pending_ticket)
             # 资格判定唯一入口在 run_mindreading_for_turn 内（不在此重复查询）
@@ -2622,6 +2633,7 @@ class WebGame:
                     pass
             return result if isinstance(result, dict) else None
         finally:
+            # spawn 交接或自领：本腿收口；未领到票则 noop。
             if pending_ticket is not None:
                 self._complete_pending_write(pending_ticket)
 
@@ -2639,13 +2651,14 @@ class WebGame:
 
         判官失败边界在 run_highlight_judge（带日志）；此处只收窄写库 sqlite 异常并 warning。
         写库经票据执行 seam；调用方已持闸时传 gate_already_held=True，禁同线程二次 acquire。
-        匹配/剥离在前端，此处只存短语。
+        匹配/剥离在前端，此处只存短语。无票且 seal → 零 LLM 零写。
         """
         own_ticket = False
+        caller_owned = pending_ticket is not None and not gate_already_held
         mid = int(message_id or 0)
         reply = str(minister_reply or "")
         if mid <= 0 or not reply.strip():
-            if pending_ticket is not None:
+            if caller_owned:
                 self._complete_pending_write(pending_ticket)
             return []
         # 未由调用方领票且非持闸兼容路 → 本腿自领 turn key 票（生产写必经 seam）。
@@ -2654,6 +2667,9 @@ class WebGame:
                 key=("turn", int(chat_turn_id)),
             )
             own_ticket = pending_ticket is not None
+        if pending_ticket is None and not gate_already_held:
+            # seal/拒票：禁无票裸写/裸跑 LLM
+            return []
         try:
             if pending_ticket is not None and (
                 pending_ticket.cancelled or pending_ticket._done
@@ -2666,7 +2682,7 @@ class WebGame:
             ) or [])
             # 持闸态是 _chat_core span 一等参数：密令兼容路外层已持非可重入 Lock，
             # 此处再 with write_gate 会永久挂死（外层 finally 永不 release）。
-            # 已持闸时只做取消检查，不二次 acquire。
+            # 已持闸时票仍覆盖本写（调用方收口 complete）；只做取消检查，不二次 acquire。
             if gate_already_held:
                 if pending_ticket is not None and (
                     pending_ticket.cancelled or pending_ticket._done
@@ -2688,10 +2704,8 @@ class WebGame:
                 return []
             return phrases
         finally:
-            if own_ticket and pending_ticket is not None:
-                self._complete_pending_write(pending_ticket)
-            elif pending_ticket is not None and not gate_already_held and not own_ticket:
-                # 调用方传入的票（stream spawn 形）— 由本腿收口。
+            if own_ticket or caller_owned:
+                # 自领或 spawn 交接票由本腿收口；持闸兼容票由调用方 complete。
                 self._complete_pending_write(pending_ticket)
 
     def _trail_extraction_after_reply(
@@ -2707,12 +2721,17 @@ class WebGame:
 
         核在 `audience_extraction.trail_extraction_after_reply`（Web/CLI 共用）；本方法只
         包票据执行 seam。起跑领票经 pending_ticket 传入，finally 完成/空放行。
+        无票则自领；seal 拒票 → 零写（禁裸 gate）。
         """
         del owns_pending
         try:
-            if pending_ticket is not None and (
-                pending_ticket.cancelled or pending_ticket._done
-            ):
+            if pending_ticket is None and int(chat_turn_id or 0) > 0:
+                pending_ticket = self._mark_pending_write(
+                    key=("turn", int(chat_turn_id)),
+                )
+            if pending_ticket is None:
+                return None
+            if pending_ticket.cancelled or pending_ticket._done:
                 return None
             return trail_extraction_after_reply(
                 db=self.db,
@@ -2732,15 +2751,16 @@ class WebGame:
         self, target: Any, args: tuple, name: str,
         *,
         ticket_key: Optional[Any] = None,
-    ) -> bool:
+    ) -> Optional[threading.Thread]:
         """起跑领票后交接票据起后台线程（#1353：标了必收敛）。
 
         `Thread.start()` 抛异常时补偿 complete 再上抛，绝不泄漏票据致 barrier/drain 永阻。
-        队列 seal 则不起、返 False。
+        队列 seal 则不起、返 None（调用方不得另开无票旁路）。
+        返回 Thread 供 stream join 收 SSE；非 stream 可忽略。
         """
         ticket = self._mark_pending_write(key=ticket_key)
         if ticket is None:
-            return False
+            return None
         thread = threading.Thread(
             target=target,
             args=args,
@@ -2753,17 +2773,17 @@ class WebGame:
         except Exception:
             self._complete_pending_write(ticket)
             raise
-        return True
+        return thread
 
     def _spawn_extraction_trail(
         self, minister_name: str, minister_reply: str, chat_turn_id: int,
-    ) -> None:
+    ) -> Optional[threading.Thread]:
         """在独立后台线程发起抽取落账尾随（与读心并行）。原子交接 pending ownership：
         任何 DB 访问前先登记，关闭须等其完成。非召对夜轮 / 空白回话由尾随函数内自决
-        （空白 → 标 done，不占永久待补；与 run 入口一致）。"""
+        （空白 → 标 done，不占永久待补；与 run 入口一致）。seal → None。"""
         if not chat_turn_id:
-            return
-        self._spawn_pending_write_thread(
+            return None
+        return self._spawn_pending_write_thread(
             self._trail_extraction_after_reply,
             (minister_name, str(minister_reply or ""), chat_turn_id),
             "audience-p5-extraction",
@@ -2779,14 +2799,21 @@ class WebGame:
         """重开补跑（ADR 0036）：已持久化回话但账未抽 → 补跑抽取，不回滚对话。
 
         `catch_up_pending_extractions` 从不抛——补跑失败标待补、不锁档，**永不进启动致命路径**。
-        在后台线程跑，不阻塞存档加载。"""
+        在后台线程跑，不阻塞存档加载。写经已领票据 seam（禁裸 gate）。
+        """
         del owns_pending
         try:
+            if pending_ticket is None:
+                return
+            if pending_ticket.cancelled or pending_ticket._done:
+                return
             catch_up_pending_extractions(
                 db=self.db,
                 llm_config=getattr(self.session, "llm_config", None),
-                write_gate=self._runtime_write_gate(),
+                write_gate=self._ticketed_write_gate(pending_ticket),
             )
+        except TicketCancelled:
+            return
         except Exception as exc:
             # catch_up 契约从不抛；到此=意外故障。铁律：不锁档、不进启动致命路径——
             # 但**留痕不静默**（窄捕 + log，账仍待补候下轮 drain/重试）。
@@ -2999,8 +3026,8 @@ class WebGame:
                 ev_queue.put({"type": "done", "payload": payload or {}})
                 answer = str((payload or {}).get("answer") or "")
                 message_id = int((payload or {}).get("minister_message_id") or 0)
-                # #1353：每条尾随腿各自领 turn key 票，写经票据 seam；整轮票在 spawn 后
-                # 空放行——屏障等尾随票而非一张无 turn key 的整轮票。
+                # #1353：三腿统一经 _spawn_pending_write_thread（claim→start→失败 vacate）；
+                # seal/claim 拒绝 → 不起线程、零 LLM 零写。整轮票在 spawn 后空放行。
                 turn_key = ("turn", int(chat_turn_id)) if chat_turn_id else None
                 extraction_thread: Optional[threading.Thread] = None
                 highlight_thread: Optional[threading.Thread] = None
@@ -3009,66 +3036,57 @@ class WebGame:
                 mind_box: List[Optional[Dict[str, Any]]] = []
 
                 if chat_turn_id and answer:
-                    ext_ticket = self._mark_pending_write(key=turn_key)
-                    if ext_ticket is not None:
-                        extraction_thread = threading.Thread(
-                            target=self._trail_extraction_after_reply,
-                            args=(minister_name, answer, chat_turn_id),
-                            kwargs={"pending_ticket": ext_ticket},
-                            daemon=True,
-                            name="audience-p5-extraction",
-                        )
-                        extraction_thread.start()
-
-                    hl_ticket = self._mark_pending_write(key=turn_key)
-
-                    def _highlight_worker(
-                        ticket: Optional[WriteTicket] = hl_ticket,
-                    ) -> None:
-                        if message_id and answer:
-                            highlight_box.extend(
-                                self._trail_highlight_judge_after_reply(
-                                    answer,
-                                    message_id=message_id,
-                                    chat_turn_id=chat_turn_id,
-                                    pending_ticket=ticket,
-                                ) or []
-                            )
-                        elif ticket is not None:
-                            self._complete_pending_write(ticket)
+                    extraction_thread = self._spawn_extraction_trail(
+                        minister_name, answer, chat_turn_id,
+                    )
 
                     if message_id and answer:
-                        highlight_thread = threading.Thread(
-                            target=_highlight_worker,
-                            daemon=True,
-                            name="audience-p5-highlight",
-                        )
-                        highlight_thread.start()
-                    elif hl_ticket is not None:
-                        self._complete_pending_write(hl_ticket)
+                        def _highlight_worker(
+                            reply: str,
+                            mid: int,
+                            ctid: int,
+                            *,
+                            pending_ticket: Optional[WriteTicket] = None,
+                        ) -> None:
+                            highlight_box.extend(
+                                self._trail_highlight_judge_after_reply(
+                                    reply,
+                                    message_id=mid,
+                                    chat_turn_id=ctid,
+                                    pending_ticket=pending_ticket,
+                                ) or []
+                            )
 
-                    mind_ticket = self._mark_pending_write(key=turn_key)
+                        highlight_thread = self._spawn_pending_write_thread(
+                            _highlight_worker,
+                            (answer, message_id, chat_turn_id),
+                            "audience-p5-highlight",
+                            ticket_key=turn_key,
+                        )
 
                     def _mind_worker(
-                        ticket: Optional[WriteTicket] = mind_ticket,
+                        mname: str,
+                        reply: str,
+                        ctid: int,
+                        *,
+                        pending_ticket: Optional[WriteTicket] = None,
                     ) -> None:
-                        # _trail_mindreading_after_reply finally 负责 complete/vacate
                         try:
                             mind_box.append(
                                 self._trail_mindreading_after_reply(
-                                    minister_name, answer, chat_turn_id,
-                                    pending_ticket=ticket,
+                                    mname, reply, ctid,
+                                    pending_ticket=pending_ticket,
                                 )
                             )
                         except Exception:
                             mind_box.append(None)
 
-                    mind_thread = threading.Thread(
-                        target=_mind_worker,
-                        daemon=True,
-                        name="audience-p5-mindreading",
+                    mind_thread = self._spawn_pending_write_thread(
+                        _mind_worker,
+                        (minister_name, answer, chat_turn_id),
+                        "audience-p5-mindreading",
+                        ticket_key=turn_key,
                     )
-                    mind_thread.start()
                     # 整轮票在尾随已领票后放行——屏障盯尾随票。
                     self._complete_pending_write(pending_ticket)
                     pending_ticket = None
@@ -3304,8 +3322,8 @@ def _auto_close_open_night_gate_free(
     stream / no-edict share this single orchestration (no duplicated close flow).
 
     #1353：过月屏障票据排在已领票之后——调用方经 queue.barrier 入此函数时，
-    前序尾随已空放行/落库；close 内 wait_in_flight 仅作有界熔断兜底（timeout=0
-    表示屏障后不应再有 generating）。无真实 game.db.conn 的 legacy 替身跳过。
+    前序尾随已空放行/落库；close 内 wait_in_flight 只消费工人终态（K10a）。
+    无真实 game.db.conn 的 legacy 替身跳过。
     #1353 fold-in r5：欠账补跑内部静默，不并入过月 SSE。
     """
     db = getattr(game, "db", None)
@@ -3394,33 +3412,12 @@ def _settlement_period_entry(game, *, write_cm: Callable[[Any], Any]):
         # #1235 / ADR 0149：点即入——先 capture 入核账展示态，再等在飞/收夜/结算续跑。
         created_display = _accept_settlement_period(game)
         # #1353：过月=屏障票据（队列内任务）。整轮 chat 票 + 尾随 turn 票清零后
-        # 才 gate-free 收夜；屏障自带有界熔断（真挂死 fail-closed，禁无限悬吊）。
+        # 才 gate-free 收夜；屏障只等工人终态/空放行（K10a：无 elapsed 熔断）。
         # 欠账抽取并入同一次过月动作（内部静默），不再 409 打回玩家补写。
         # 在途事实唯一来源=队列票据（旁路 wait 已删）。
-        q = get_session_write_queue(game)
-        try:
-            q.barrier(
-                lambda: _auto_close_open_night_gate_free(game, inflight_wait_s=0.0),
-            )
-        except TicketBarrierTimeout as barrier_exc:
-            # 真挂死：票据未在熔断内清空 → 响亮 fail-closed，夜保持可恢复。
-            from ming_sim.audience_night import AudienceNightError, write_audience_error_pack
-            open_seqs = list(getattr(barrier_exc, "open_seqs", []) or [])
-            message = (
-                "收夜中止：会话写队列仍有未完成票据（在飞/挂起），"
-                f"open_seqs={open_seqs}。夜保持开启，可原地重试。"
-            )
-            pack = write_audience_error_pack(
-                kind="in_flight_chat",
-                message=message,
-                detail={"open_seqs": open_seqs},
-            )
-            raise AudienceNightError(
-                message,
-                code="in_flight_chat",
-                error_pack_path=pack,
-                detail={"open_seqs": open_seqs},
-            ) from barrier_exc
+        get_session_write_queue(game).barrier(
+            lambda: _auto_close_open_night_gate_free(game, inflight_wait_s=0.0),
+        )
         with write_cm(game):
             yield
             # #1343/#1378/#1379/#1388：成功回常态后兜底清残留快照。

@@ -88,7 +88,7 @@ def test_close_joins_in_flight_owner_while_open_one_shot(game, tmp_path, monkeyp
 
     def owner_worker():
         try:
-            write_gate = q.ticketed_gate(ticket, timeout_s=None)
+            write_gate = q.ticketed_gate(ticket)
             owner_result["out"] = ae.run_extraction_for_turn(
                 db=db,
                 minister_name=minister,
@@ -115,8 +115,7 @@ def test_close_joins_in_flight_owner_while_open_one_shot(game, tmp_path, monkeyp
             lambda: an.close_night(
                 db, state, night_id=nid, llm_config=object(), write_gate=gate,
             ),
-            timeout_s=None,
-        )
+                    )
 
     # 先起 close（阻塞在 barrier），再放 LLM——证明屏障等票而非旁路抢跑
     ct = threading.Thread(target=close_worker, name="close-barrier-1353", daemon=True)
@@ -635,8 +634,13 @@ def test_deleted_surface_no_healed_drain_retry_residue():
     ):
         assert retired_ae not in prod, f"retired extraction join residue: {retired_ae}"
     night_src = (root / "ming_sim/audience_night.py").read_text(encoding="utf-8")
-    # ADR 0038 真挂死 fail-closed 路径必须在；禁删熔断
-    assert 'code="in_flight_chat"' in night_src
+    # K10a：wait_in_flight 不按 elapsed 伪造失败；错误包 kind 仍可被 provider 终态路径使用
+    assert "del timeout_s" in night_src or "timeout_s" in night_src
+    swq = (root / "ming_sim/session_write_queue.py").read_text(encoding="utf-8")
+    assert "TicketBarrierTimeout" not in swq
+    assert "DEFAULT_TICKET_WAIT_S" not in swq
+    # 无票裸回落已删
+    assert "return self._runtime_write_gate()" not in (root / "web_app.py").read_text(encoding="utf-8")
     assert "TicketedWriteGate" in (root / "ming_sim/session_write_queue.py").read_text(
         encoding="utf-8"
     )
@@ -878,33 +882,98 @@ def test_production_seam_post_barrier_ticket_ordered(web_game, monkeypatch):
     assert order.index("barrier") < order.index("body")
 
 
-def test_wait_in_flight_hang_fail_closed(game, tmp_path, monkeypatch):
-    """ADR 0038：真挂死有界熔断 fail-closed，夜保持 OPEN（禁无限轮询）。"""
+def test_wait_in_flight_releases_on_worker_terminal(game, tmp_path, monkeypatch):
+    """K10a：wait_in_flight 只依工人终态放行，不按 elapsed 伪造 409。"""
     db, state, content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
     minister = _minister(db, content)
     nid, ctid, _seq = _open_night_with_persisted_reply(db, state, minister)
-    # 伪造 generating 在飞（无工人会落终态）
     db.conn.execute(
         "UPDATE chat_turns SET status='generating' WHERE id=?", (ctid,)
     )
     db.conn.commit()
-    monkeypatch.setattr(an, "DEFAULT_IN_FLIGHT_WAIT_S", 0.05)
     monkeypatch.setattr(an, "DEFAULT_IN_FLIGHT_POLL_S", 0.01)
-    with pytest.raises(an.AudienceNightError) as ei:
-        an.wait_in_flight_clear(db, nid, timeout_s=0.05)
-    assert ei.value.code == "in_flight_chat"
-    assert an.get_night(db, nid) is None or an.get_night(db, nid)["status"] in {
-        an.NIGHT_STATUS_OPEN, "open",
-    }
-    # close 同样熔断
-    with pytest.raises(an.AudienceNightError) as ei2:
-        an.close_night(
-            db, state, night_id=nid, llm_config=object(),
-            write_gate=threading.Lock(), wait_timeout_s=0.05,
+    done = threading.Event()
+
+    def _worker_terminal() -> None:
+        time.sleep(0.05)
+        db.conn.execute(
+            "UPDATE chat_turns SET status='active' WHERE id=?", (ctid,)
         )
-    assert ei2.value.code == "in_flight_chat"
-    assert an.get_night(db, nid)["status"] == an.NIGHT_STATUS_OPEN
+        db.conn.commit()
+        done.set()
+
+    threading.Thread(target=_worker_terminal, daemon=True).start()
+    # 不传短 timeout 墙钟；工人终态后必须返回（禁 elapsed 伪失败）
+    an.wait_in_flight_clear(db, nid)
+    assert done.is_set()
+    assert an.list_in_flight_chat_turns(db, nid) == []
+
+
+def test_seal_claim_rejects_three_trail_legs_zero_write(web_game, monkeypatch):
+    """生产钉：seal 后三腿 claim 拒绝 → 零 LLM、零写。"""
+    game = web_game
+    q = game._runtime_write_queue()
+    q.seal()
+    calls = {"hl": 0, "mind": 0, "ext": 0, "catch": 0}
+
+    monkeypatch.setattr(
+        web_app, "run_highlight_judge",
+        lambda **_k: calls.__setitem__("hl", calls["hl"] + 1) or ["x"],
+    )
+
+    def boom_mind(**_k):
+        calls["mind"] += 1
+        return {"id": 1}
+
+    monkeypatch.setattr(web_app, "run_mindreading_for_turn", boom_mind)
+    monkeypatch.setattr(
+        web_app, "trail_extraction_after_reply",
+        lambda **_k: calls.__setitem__("ext", calls["ext"] + 1) or {"status": "done"},
+    )
+    monkeypatch.setattr(
+        web_app, "catch_up_pending_extractions",
+        lambda **_k: calls.__setitem__("catch", calls["catch"] + 1),
+    )
+
+    assert game._spawn_pending_write_thread(
+        game._trail_mindreading_after_reply, ("m", "r", 1), "t",
+        ticket_key=("turn", 1),
+    ) is None
+    assert game._spawn_extraction_trail("m", "r", 1) is None
+    assert game._trail_highlight_judge_after_reply(
+        "回话", message_id=1, chat_turn_id=1,
+    ) == []
+    assert game._trail_mindreading_after_reply("m", "r", 1) is None
+    assert game._trail_extraction_after_reply("m", "r", 1) is None
+    game._run_startup_extraction_catch_up(pending_ticket=None)
+    assert calls == {"hl": 0, "mind": 0, "ext": 0, "catch": 0}
+    assert q.inflight_count() == 0
+    q.unseal()
+
+
+def test_startup_catchup_uses_ticketed_gate_not_bare(web_game, monkeypatch):
+    """startup catch-up 必须经 ticketed gate，不得传裸 write_gate。"""
+    game = web_game
+    seen = {}
+
+    def fake_catch_up(*, write_gate=None, **_k):
+        seen["gate_type"] = type(write_gate).__name__
+        seen["is_ticketed"] = type(write_gate).__name__ == "TicketedWriteGate"
+
+    monkeypatch.setattr(web_app, "catch_up_pending_extractions", fake_catch_up)
+    ticket = game._mark_pending_write(key=("startup",))
+    assert ticket is not None
+    game._run_startup_extraction_catch_up(pending_ticket=ticket)
+    assert seen.get("is_ticketed") is True
+    assert ticket._done is True
+
+
+def test_ticketed_write_gate_rejects_none(web_game):
+    """无票不得回落裸 runtime write_gate。"""
+    game = web_game
+    with pytest.raises(RuntimeError, match="live WriteTicket"):
+        game._ticketed_write_gate(None)  # type: ignore[arg-type]
 
 
 def test_seal_rejects_new_claim_after_lifecycle(web_game):
