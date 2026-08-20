@@ -27,6 +27,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 from ming_sim.audience_night import (
     AUDIBILITY_PRIVATE,
     AUDIBILITY_PUBLIC,
+    NIGHT_STATUS_CLOSING,
     PRESENCE_EFFECTS,
     AudienceNightError,
     get_night,
@@ -460,6 +461,41 @@ def join_pending_turn_extractions(
         _join_single_flight(_turn_flight_key(db, cid), remaining)
 
 
+def has_inflight_turn_extractions(db: Any, *, night_id: int) -> bool:
+    """#1353：list_unextracted 中是否仍有活的 turn single-flight owner。
+
+    供 close 在 write_gate 临界区内与 OPEN→CLOSING 冻结同锁复查；不阻塞、不建 Future。
+    True = 至少一轮 owner 锁仍被持有（join 后新 admission 的窗口样本）。
+    """
+    if not hasattr(db, "list_unextracted_replies"):
+        return False
+    rows = db.list_unextracted_replies(night_id=int(night_id)) or []
+    if not rows:
+        return False
+    with _single_flight_guard:
+        for row in rows:
+            if not isinstance(row, Mapping):
+                continue
+            cid = int(row.get("chat_turn_id") or 0)
+            if cid <= 0:
+                continue
+            if (
+                hasattr(db, "get_story_extract_status")
+                and db.get_story_extract_status(cid) == "done"
+            ):
+                continue
+            slot = _single_flight_ownership.get(_turn_flight_key(db, cid))
+            if slot is None:
+                continue
+            owner = slot[0]
+            # 非阻塞探测：拿得到锁 ⇒ owner 已释放（非在飞）；立即还回。
+            if owner.acquire(blocking=False):
+                owner.release()
+                continue
+            return True
+    return False
+
+
 def _is_endorsement_bound(db: Any, night_id: int) -> bool:
     return night_endorsement_bound(get_night(db, int(night_id)))
 
@@ -488,25 +524,44 @@ def run_extraction_for_turn(
     - 不处理 endorsement（夜级批处理）。
 
     `write_gate` 必传：落账走真实 runtime 写锁。
+
+    #1353：admission（CLOSING 拒新 + claim single-flight + done 水位）与 close 冻结同持
+    write_gate，使 join→freeze 窗内新 owner 要么被 gate 内 inflight 复查看见，要么在
+    冻结后直接拒入（不跑 LLM、不假 settle 失败）；LLM 仍在 gate 外。
     """
     cid = int(chat_turn_id)
     if not cid:
         return {"status": "skipped", "chat_turn_id": cid}
 
     flight_key = _turn_flight_key(db, cid)
-    owner, owned = _claim_single_flight(flight_key)
-    if owner is None:
-        return {"status": "pending", "chat_turn_id": cid, "contended": True}
+    owner: Optional[threading.Lock] = None
     try:
-        if not owned:
-            status = db.get_story_extract_status(cid)
-            return {
-                "status": "done" if status == "done" else "pending",
-                "chat_turn_id": cid,
-                "already": status == "done",
-            }
-        if db.get_story_extract_status(cid) == "done":
-            return {"status": "done", "chat_turn_id": cid, "already": True}
+        # Admission under the same runtime write_gate close uses to freeze CLOSING.
+        with write_gate:
+            night = get_night(db, int(night_id)) if int(night_id or 0) > 0 else None
+            if (
+                night is not None
+                and str(night.get("status") or "") == NIGHT_STATUS_CLOSING
+                and not allow_closing
+            ):
+                # 冻结后再拒新 owner；不 claim、不 LLM。真欠账由 close drain（allow_closing）清。
+                return {
+                    "status": "pending",
+                    "chat_turn_id": cid,
+                    "rejected_closing": True,
+                }
+            owner, owned = _claim_single_flight(flight_key)
+            if owner is None:
+                return {"status": "pending", "chat_turn_id": cid, "contended": True}
+            if not owned:
+                status = db.get_story_extract_status(cid)
+                return {
+                    "status": "done" if status == "done" else "pending",
+                    "chat_turn_id": cid,
+                    "already": status == "done",
+                }
+            if db.get_story_extract_status(cid) == "done":
+                return {"status": "done", "chat_turn_id": cid, "already": True}
 
         question_text = _user_message_for_turn(db, cid)
 
@@ -545,7 +600,8 @@ def run_extraction_for_turn(
             allow_closing=allow_closing,
         )
     finally:
-        _release_single_flight(flight_key, owner)
+        if owner is not None:
+            _release_single_flight(flight_key, owner)
 
 
 def run_endorsement_batch_for_night(
