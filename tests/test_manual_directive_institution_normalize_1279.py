@@ -29,7 +29,15 @@ def _mock_draft_intent(monkeypatch, *, text: str, roster):
         "参与人": roster,
     }
 
-    def backend(prompt, *_args, **_kwargs):
+    def backend(prompt, *_args, tag="", **_kwargs):
+        # r6 escalate 出口：按 tag 分派，禁一律吐抽取 JSON / 禁 prompt 形状假设炸 IndexError
+        if tag == "participant_escalate_report":
+            names = "、".join(
+                str(item.get("character_id") or "").strip()
+                for item in roster
+                if str(item.get("character_id") or "").strip()
+            ) or "此人"
+            return (f"通政司启：朝中查无「{names}」，乞陛下明示。", 1)
         emperor = prompt.split("【皇帝】", 1)[1].split("【大臣回话】", 1)[0]
         if "请据此拟旨" not in emperor or text not in emperor:
             return (json.dumps({"拟旨意图": "无"}, ensure_ascii=False), 1)
