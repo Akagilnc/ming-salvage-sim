@@ -18,7 +18,7 @@ def test_choices_cover_all_supported_runners():
     choices = cb.cli_model_choices()
     # 每个受支持的 CLI runner 都要有一档清单（与 _CLI_BACKENDS 单一真源对齐，#1256）。
     assert set(choices) == set(cb._CLI_BACKENDS)
-    assert {"agy", "codex", "claude", "cursor", "kimi", "grok"} <= set(choices)
+    assert {"agy", "codex", "claude", "cursor", "kimi", "grok", "pi"} <= set(choices)
 
 
 def test_each_runner_has_default_escape_option_first():
