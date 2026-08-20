@@ -234,3 +234,16 @@
 .hud2-cmd-caption b { font-size: 1.8cqh; }
 .hud2-cmd-caption small { font-size: 1.3cqh; color: #c9b48a; margin-top: 0.2em; }
 
+/* #1454：拟诏台开着时木牌视觉弱化——收起语义，勿与盖玺主钮争辉 */
+.hud2-cmd.edict-toggle-open .hud2-cmd-img {
+  opacity: 0.72;
+  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.55)) grayscale(0.2);
+}
+.hud2-cmd-caption.edict-toggle-open {
+  opacity: 0.82;
+  color: #d4c49a;
+}
+.hud2-cmd-caption.edict-toggle-open small {
+  color: #b8a57a;
+}
+
