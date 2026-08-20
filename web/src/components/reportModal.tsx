@@ -22,8 +22,7 @@ export function ReportModal({
             <b>邸报</b>
             <span>{masthead} · 通政使司发抄</span>
           </div>
-          {/* #1356：空卷轴复用原 pre，不另写固定空态文案（P7）
-              #1486：叠字根因=滚动链断裂；CSS flex/overflow 单独治，单 pre 块级流式即可 */}
+          {/* #1356：空卷轴复用原 pre，不另写固定空态文案（P7） */}
           <pre className="memorial-text">{activeText}</pre>
         </article>
         {/* #1387：主关闭钮（系统 chrome，ADR 0046）；正文仍只滚 LLM/引擎叙事，不代笔。 */}

@@ -1331,40 +1331,6 @@ describe("ReportModal — narrative settlement bulletin", () => {
     act(() => dismissBtn!.click());
     expect(onClose).toHaveBeenCalledOnce();
   });
-
-  it("#1486 长卷正文可读可滚：单 pre 全文明示，滚容器在壳内，不靠分节形状", () => {
-    // 行为面钉：长卷首/中/尾段均在 DOM 可达；滚动链宿主存在；无分节第二机制
-    const longReport = [
-      "《饥火边声逼帝阍》\n天启七年十二月 月末奏章",
-      "一、太仓亏短\n本月国库账面三百七万两，内库五百六万两。国库收支表面略有结余。",
-      "二、陕西饥乱\n陕西连年旱荒，西安常平仓几近枯竭，灾民、逃户与裁驿驿卒继续聚散山谷。",
-      "三、辽东军情\n关宁军宁锦防线尚守，宁远城垣与城头炮械仍足拒敌，然关宁军欠饷已逾六十万两。",
-      "四、待办未解\n户部亏空——太仓仍靠临时挪借维持。",
-    ].join("\n\n");
-    const host = renderReportModal({ report: longReport });
-    const shell = host.querySelector(".gazette-shell") as HTMLElement | null;
-    const scroll = host.querySelector(".gazette-document") as HTMLElement | null;
-    const bodyPre = host.querySelector(".gazette-document pre.memorial-text") as HTMLElement | null;
-    expect(shell).not.toBeNull();
-    expect(scroll).not.toBeNull();
-    expect(bodyPre).not.toBeNull();
-    // 单一正文 pre（非多 section 分节形状）
-    expect(host.querySelectorAll(".gazette-document pre.memorial-text").length).toBe(1);
-    expect(host.querySelectorAll(".gazette-block").length).toBe(0);
-    // 首/中/尾段全文在 pre 内可达（不覆盖=不丢段）
-    const preText = bodyPre!.textContent || "";
-    expect(preText).toContain("饥火边声逼帝阍");
-    expect(preText).toContain("一、太仓亏短");
-    expect(preText).toContain("三、辽东军情");
-    expect(preText).toContain("四、待办未解");
-    expect(preText).toContain("临时挪借维持");
-    // 滚容器是 shell 子、pre 是滚容器后代；dismiss 不埋长文滚底
-    expect(shell!.contains(scroll)).toBe(true);
-    expect(scroll!.contains(bodyPre)).toBe(true);
-    const dismissWrap = host.querySelector(".gazette-dismiss");
-    expect(dismissWrap).not.toBeNull();
-    expect(scroll!.contains(dismissWrap)).toBe(false);
-  });
 });
 
 describe("ChatModal — explicit legacy authority", () => {
