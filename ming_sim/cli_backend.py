@@ -88,6 +88,10 @@ _GROK_BIN = os.environ.get("MING_SIM_GROK_BIN", "grok")
 _CLI_BACKENDS = frozenset({"agy", "codex", "claude", "cursor", "kimi", "grok"})
 # 闸脚本 --runner choices 单一真源（不含 agy：闸形制未用）。脚本 import 此元组，禁各自复制。
 GATE_CLI_RUNNERS = ("codex", "claude", "cursor", "kimi", "grok")
+# 前端 CLI Runner 下拉稳定 UI 顺序；membership 仍以 _CLI_BACKENDS 为唯一准入（#1274 W1）。
+# GATE_CLI_RUNNERS ⊂ 此序（无 agy）；禁在 menuPage/gameMenu 再硬编一份。
+_CLI_RUNNER_UI_ORDER = ("agy", "codex", "claude", "cursor", "kimi", "grok")
+_CLI_RUNNER_LABELS = {"agy": "agy（Gemini）"}
 # 实际消费 --model / cli_model 的 runner（describe_effective_model 用）；agy 走自身 ladder。
 _CLI_MODEL_RUNNERS = frozenset({"codex", "claude", "cursor", "kimi", "grok"})
 _CODEX_REASONING_BY_STRENGTH = {
@@ -113,6 +117,19 @@ _GROK_EFFORT_BY_STRENGTH = {
 # 表同缝。有传输表 = 支持；kimi/cursor 无独立档位旗，不入此集（另票/庭裁）。
 # 导出 frozenset——llm_config 谓词与 web payload 均消费此名，禁第二处手写名单。
 CLI_REASONING_STRENGTH_RUNNERS = frozenset({"codex", "claude", "grok"})
+
+
+def cli_runner_choices() -> List[Dict[str, str]]:
+    """前端「CLI Runner」下拉的单一真源（有序 {value,label}）。
+
+    membership = _CLI_BACKENDS；顺序 = _CLI_RUNNER_UI_ORDER。menuPage / gameMenu
+    经 config 端点共吃此清单，禁各自硬编码 option（#1274 W1 防单页漏更）。
+    每次返回独立副本。"""
+    return [
+        {"value": name, "label": _CLI_RUNNER_LABELS.get(name, name)}
+        for name in _CLI_RUNNER_UI_ORDER
+        if name in _CLI_BACKENDS
+    ]
 
 
 def cli_model_choices() -> Dict[str, List[Dict[str, str]]]:
