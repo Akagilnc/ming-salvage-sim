@@ -907,20 +907,49 @@ def test_wait_in_flight_releases_on_worker_terminal(game, tmp_path, monkeypatch)
     )
     db.conn.commit()
     monkeypatch.setattr(an, "DEFAULT_IN_FLIGHT_POLL_S", 0.01)
-    done = threading.Event()
+
+    # 确定性握手：waiter 入轮询 → worker 发终态 → waiter 因终态返回
+    # （禁 sleep 毫秒窗；禁 commit 与 done.set 夹缝上 assert is_set）
+    waiter_polling = threading.Event()
+    worker_published = threading.Event()
+    waiter_done = threading.Event()
+    real_list = an.list_in_flight_chat_turns
+
+    def _list_tracking(db_arg, night_id_arg):
+        rows = real_list(db_arg, night_id_arg)
+        waiter_polling.set()
+        return rows
+
+    monkeypatch.setattr(an, "list_in_flight_chat_turns", _list_tracking)
 
     def _worker_terminal() -> None:
-        time.sleep(0.05)
+        assert waiter_polling.wait(5.0), "waiter must enter poll before terminal"
         db.conn.execute(
             "UPDATE chat_turns SET status='active' WHERE id=?", (ctid,)
         )
         db.conn.commit()
-        done.set()
+        worker_published.set()
 
-    threading.Thread(target=_worker_terminal, daemon=True).start()
-    # 不传短 timeout 墙钟；工人终态后必须返回（禁 elapsed 伪失败）
-    an.wait_in_flight_clear(db, nid)
-    assert done.is_set()
+    def _waiter() -> None:
+        try:
+            # 不传短 timeout 墙钟；工人终态后必须返回（禁 elapsed 伪失败）
+            an.wait_in_flight_clear(db, nid)
+        finally:
+            waiter_done.set()
+
+    wt = threading.Thread(
+        target=_worker_terminal, name="worker-terminal-1353", daemon=True,
+    )
+    vt = threading.Thread(
+        target=_waiter, name="wait-in-flight-1353", daemon=True,
+    )
+    wt.start()
+    vt.start()
+    assert worker_published.wait(5.0), "worker must publish terminal"
+    assert waiter_done.wait(5.0), "wait_in_flight must release on worker terminal"
+    wt.join(timeout=2.0)
+    vt.join(timeout=2.0)
+    assert not wt.is_alive() and not vt.is_alive()
     assert an.list_in_flight_chat_turns(db, nid) == []
 
 
