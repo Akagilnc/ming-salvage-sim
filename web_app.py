@@ -66,7 +66,7 @@ from ming_sim.llm_config import (
     save_runtime_llm,
 )
 from ming_sim.agents import _dump_llm_messages
-from ming_sim.llm_model import extract_agent_text, verify_llm_available
+from ming_sim.llm_model import extract_agent_text, llm_stream_unavailable, verify_llm_available
 from ming_sim.llm_contract import fail_if_llm_error
 from ming_sim.issues import _format_issue_ongoing, commitment_display_text, commitment_progress_payload, commitment_timed_bar_value
 from ming_sim.session import GameSession
@@ -2114,11 +2114,7 @@ class WebGame:
             # #1452：provider 失败时 agno 发 RunErrorEvent（如 Unknown model error）；
             # 不得静默吞成「流式回复为空」，与 agents.run_agent_stream_text 同闸。
             if type(event).__name__ == "RunErrorEvent":
-                raise LLMUnavailable(
-                    "LLM 调用失败：流式回复失败。",
-                    code="llm_stream_error",
-                    provider_message=str(content or ""),
-                )
+                raise llm_stream_unavailable(content)
             if event_name == "RunContent" and content:
                 delta = str(content)
                 chunks.append(delta)
@@ -4412,6 +4408,9 @@ async def api_chat(minister_name: str, request: ChatRequest) -> Dict[str, Any]:
     except AudienceNightError as e:
         # CLOSING / night admission → 409 (retryable); same family as stream path.
         raise _retryable_audience_close_http(e) from None
+    except LLMUnavailable as e:
+        # #1452：非流式召对 LLM 死 → 结构化错误，禁裸 500。
+        raise HTTPException(status_code=400, detail=_llm_error_detail(e)) from None
 
 
 @app.post("/api/ministers/{minister_name}/chat/undo")
@@ -4706,6 +4705,13 @@ def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> Dict[st
         failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
         detail = {"message": str(e), "pending_action_failures": failures} if failures else str(e)
         raise HTTPException(status_code=409, detail=detail) from None
+    except LLMUnavailable as e:
+        # #1452：非流式颁诏 LLM 死 → 结构化错误，禁裸 500（对齐 _llm_error_detail）。
+        failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
+        detail = _llm_error_detail(e)
+        if failures:
+            detail = {**detail, "pending_action_failures": failures}
+        raise HTTPException(status_code=400, detail=detail) from None
     except (AudienceNightError, ExceptionGroup) as e:
         # #498 AC10 / #612：在飞超时或 close 双支 → 夜保持开、409 可原地重试。
         raise _retryable_audience_close_http(e) from None

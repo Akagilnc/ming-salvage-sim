@@ -899,7 +899,11 @@ def test_api_backend_streaming_emits_real_token_deltas(monkeypatch):
 
 
 def test_luna_shaped_stream_keeps_content_when_reasoning_deltas_interleave(monkeypatch):
-    """#1452：推理模型流式 delta 可能夹 reasoning 分片；正文 content 不得被丢。"""
+    """#1452：推理模型流式 delta 可能夹 reasoning 分片；正文 content 不得被丢。
+
+    钉 agents.run_agent_stream_text 路径；本票 web 面 RunErrorEvent 闸由
+    tests/test_chat_stream_failpaths_393.py 真实入口覆盖，不在此重复。
+    """
     class _Delta:
         def __init__(self, content=None, reasoning_content=None, is_final=False):
             self.content = content

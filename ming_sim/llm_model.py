@@ -112,6 +112,12 @@ def cli_runner_unavailable(
     )
 
 
+def llm_stream_unavailable(provider_message: object = "") -> LLMUnavailable:
+    """RunErrorEvent → typed；玩家 message 单源 CLI_RUNNER_PLAYER_MESSAGE。"""
+    p = str(provider_message or "").strip() or CLI_RUNNER_PLAYER_MESSAGE
+    return LLMUnavailable(CLI_RUNNER_PLAYER_MESSAGE, code="llm_stream_error", provider_message=p)
+
+
 def create_chat_model(
     llm_config: LLMConfig,
     temperature: float = 0.7,
