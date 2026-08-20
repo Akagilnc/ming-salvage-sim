@@ -3161,9 +3161,13 @@ def _await_audience_inflight_clear(game) -> None:
     #1353 K10a：消费既有 chat turn/worker 终态续跑，不按 elapsed 伪造 409；
     工人干完即放行（一次点击自动续跑）。
 
+    #1353 fold-in r9：chat_turn 已 done ≠ 整轮 worker 终态。done 后仍可能有
+    extraction/highlight/mindreading 尾随持 `_pending_writes_count` 写同一连接；
+    gate-free close 必须等该既有 ownership 归零（真 end），禁新锁/重试总线。
+    待补抽取债仍由 close_night 单一 owner 清——此处只等工人，不预清债。
+
     走 game.db seam（与 _start_chat_turn 同 idiom：无 conn 的测试替身直接跳过）。
 
-    抽取由引擎 close_night 单独拥有：Web 这里只等待在飞回话，不在案卷创建前预清待补。
     #1235：调用方须先 _accept_settlement_period，使未了/失败前已入核账展示态。"""
     db = getattr(game, "db", None)
     if db is None or not hasattr(db, "conn"):
@@ -3172,6 +3176,16 @@ def _await_audience_inflight_clear(game) -> None:
     open_n = get_open_night(db)
     if open_n is not None:
         wait_in_flight_clear(db, int(open_n["id"]))
+    # 整轮 worker 真终态：既有 pending-write ownership（含 stream 主 worker 与
+    # 非流式 spawn 的尾随）。不设 _draining——只等，不挡新召对登记。
+    cond = getattr(game, "_drain_cond", None)
+    if cond is not None:
+        with cond:
+            while int(getattr(game, "_pending_writes_count", 0) or 0) > 0:
+                cond.wait()
+    else:
+        while int(getattr(game, "_pending_writes_count", 0) or 0) > 0:
+            time.sleep(0.01)
 
 
 

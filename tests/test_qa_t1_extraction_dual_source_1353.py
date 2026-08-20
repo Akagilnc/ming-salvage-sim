@@ -14,6 +14,8 @@
    9a. owner 挂过预算 → contender 有限 fail-closed
    9b. owner 真失败 → contender 不调 extractor、夜未绑定
 10. fold-in r5：drain/catch_up 不推玩家可见补写 stage；签名无 on_event
+11. fold-in r9：整轮 worker 真终态后才 gate-free close（尾随 pending-write）
+12. fold-in r9：CLI 真实闭环钉——pending→一次 advance→turn+1 / 耗尽留回合
 """
 
 from __future__ import annotations
@@ -26,22 +28,35 @@ import pytest
 
 import ming_sim.agents as agents_mod
 import ming_sim.audience_extraction as ae
+import ming_sim.cli.terminal as term
 import web_app
 from ming_sim import audience_night as an
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
+from ming_sim.session import GameSession
 from tests.test_audience_extraction_501 import (
     _BoomAgent,
     _FactsAgent,
     _minister,
     _open_night_with_persisted_reply,
 )
+from tests.test_no_edict_full_settlement_1274 import _canned_full_settlement
 
 
 def _pending_api(db) -> dict:
     runtime = object.__new__(web_app.WebGame)
     runtime.session = SimpleNamespace(db=db)
     return runtime.pending_story_extractions()
+
+
+@pytest.fixture
+def web_game(tmp_path, monkeypatch):
+    """真实 WebGame（temp DB）；r9 工人终态钉用。"""
+    monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
+    return web_app.WebGame(fresh=False)
 
 
 def test_close_joins_in_flight_owner_while_open_one_shot(game, tmp_path, monkeypatch):
@@ -1004,66 +1019,163 @@ def test_drain_catch_up_silent_no_on_event_surface(game, tmp_path, monkeypatch):
     assert "过月时自动补跑" not in prod
 
 
-def test_resolve_turn_auto_close_passes_session_write_gate(game, tmp_path, monkeypatch):
-    """#1353 fold-in r8：闸空闲时 resolve_turn 收夜穿 session._write_gate——欠账真可 drain。
+def test_await_inflight_blocks_until_trail_worker_end(web_game):
+    """#1353 fold-in r9 最小诊断钉：chat_turn 已 done 但尾随仍持 pending-write 时，
+    gate-free close 前门必须等整轮 worker 真终态（_complete_pending_write）才返回。
 
-    最短真实行为：尾随失败留 pending → 一次 resolve 自动补清；
-    禁硬编码 None（missing_deps 假失败断链 / CLI 断链）。
+    旧缝只等 list_in_flight_chat_turns（minister_message 已落即放行）→ 尾随与
+    auto_close 并发打同一 SQLite 连接随机 500。禁新锁：复用既有 _drain_cond。
     """
-    from ming_sim.session import GameSession, TurnPhase
+    game = web_game
+    # 无开夜时 wait_in_flight 早退；本钉只证 pending-write ownership 接缝。
+    assert game._mark_pending_write()
+    assert int(game._pending_writes_count) == 1
 
+    order: list[str] = []
+    release = threading.Event()
+
+    def trail_worker() -> None:
+        assert release.wait(2.0), "await must block until trail ends"
+        order.append("trail_end")
+        game._complete_pending_write()
+
+    t = threading.Thread(target=trail_worker, name="trail-pending-r9", daemon=True)
+    t.start()
+
+    def release_soon() -> None:
+        time.sleep(0.05)
+        order.append("release")
+        release.set()
+
+    threading.Thread(target=release_soon, name="release-trail-r9", daemon=True).start()
+
+    started = time.perf_counter()
+    web_app._await_audience_inflight_clear(game)
+    elapsed = time.perf_counter() - started
+    t.join(timeout=2.0)
+    assert not t.is_alive()
+
+    assert order == ["release", "trail_end"], order
+    assert int(getattr(game, "_pending_writes_count", 0) or 0) == 0
+    assert elapsed >= 0.04, f"await returned too early ({elapsed:.4f}s); did not wait trail"
+
+
+def test_settlement_entry_gate_free_close_after_worker_end(web_game, monkeypatch):
+    """#1353 fold-in r9：受理样板 gate-free close 只在整轮 worker 终态后进入。"""
+    game = web_game
+    assert game._mark_pending_write()
+
+    order: list[str] = []
+    release = threading.Event()
+
+    def trail_worker() -> None:
+        assert release.wait(2.0)
+        order.append("trail_end")
+        game._complete_pending_write()
+
+    t = threading.Thread(target=trail_worker, name="trail-entry-r9", daemon=True)
+    t.start()
+
+    def release_soon() -> None:
+        time.sleep(0.05)
+        release.set()
+
+    threading.Thread(target=release_soon, daemon=True).start()
+
+    def track_auto_close(_g, **_k):
+        # close 入缝时尾随必须已放 ownership——否则即并发窗。
+        assert int(getattr(game, "_pending_writes_count", 0) or 0) == 0
+        order.append("auto_close")
+
+    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", track_auto_close)
+    monkeypatch.setattr(web_app, "_accept_settlement_period", lambda _g: False)
+
+    with web_app._settlement_period_entry(game, write_cm=web_app._game_write_gate):
+        order.append("body")
+
+    t.join(timeout=2.0)
+    assert not t.is_alive()
+    assert order == ["trail_end", "auto_close", "body"], order
+
+
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
+def test_cli_pending_one_op_closed_loop_turn_or_exhaust(game, tmp_path, monkeypatch):
+    """#1353 fold-in r9：真实 DB/GameSession + 唯一 _write_gate 闭环钉（替假半钉）。
+
+    A) 尾随失败留 pending → 一次 skip/advance 自动清零且 turn == before+1
+    B) 统一重试耗尽 → 玩家只见失败单源、turn 不进；清源后可重按推进
+    """
     db, state, content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
     minister = _minister(db, content)
-    nid, ctid, _seq = _open_night_with_persisted_reply(db, state, minister)
-    assert db.get_story_extract_status(ctid) != "done"
 
-    gate = threading.Lock()
-    seen: dict = {}
-    real_close = an.close_night
+    def _mk_session() -> GameSession:
+        sess = object.__new__(GameSession)
+        sess.db = db
+        sess.state = state
+        sess.content = content
+        sess.registry = None
+        sess.llm_config = object()
+        sess._scene_registry = None
+        sess._beat_generator = None
+        sess.agno_db = None
+        sess.last_decree = ""
+        sess.last_report = ""
+        sess._decree_draft_fingerprint = ()
+        sess.deaths_this_turn = []
+        sess.debuts_this_turn = []
+        sess.auto_save = lambda *a, **k: None  # type: ignore[method-assign]
+        # CLI 唯一闸：与 resolve/advance 收夜 drain 同流
+        term._cli_write_gate(sess)
+        return sess
 
-    def track_close(*a, **k):
-        seen["write_gate"] = k.get("write_gate")
-        return real_close(*a, **k)
+    # ── B) 耗尽：真欠账 + Boom → 失败单源、turn 不进、可重按 ─────────────
+    nid_b, ctid_b, _ = _open_night_with_persisted_reply(
+        db, state, minister, reply="耗尽轮回话。",
+    )
+    assert db.get_story_extract_status(ctid_b) != "done"
+    turn_before_b = int(state.turn)
+    monkeypatch.setattr(
+        agents_mod, "create_audience_extractor_agent",
+        lambda *a, **k: _BoomAgent(),
+    )
+    sess_b = _mk_session()
+    with pytest.raises(LLMUnavailable) as ei_b:
+        sess_b.advance_without_decree()
+    assert ei_b.value.code == "pending_extraction"
+    assert CLI_RUNNER_PLAYER_MESSAGE in str(ei_b.value)
+    assert int(state.turn) == turn_before_b, "耗尽不得假推进 turn"
+    assert int(_pending_api(db)["count"] or 0) >= 1
+    assert an.get_night(db, nid_b)["status"] == an.NIGHT_STATUS_OPEN
 
-    monkeypatch.setattr(an, "close_night", track_close)
+    # ── A) 一次 skip：换成功抽取 + canned 结算 → 清零且 turn+1 ───────────
+    # 复用同一开夜欠账（耗尽后仍 OPEN/pending）——重按真路径。
     monkeypatch.setattr(
         agents_mod, "create_audience_extractor_agent",
         lambda *a, **k: _FactsAgent(
             '{"facts":[{"person_names":["'
             + minister
-            + '"],"audibility":"殿上公开","body":"r8补清","tags":[],'
+            + '"],"audibility":"殿上公开","body":"r9闭环补清","tags":[],'
             '"presence_effect":""}]}'
         ),
     )
-
-    sess = object.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-    sess.content = content
-    sess.registry = None
-    sess.llm_config = object()
-    sess._scene_registry = None
-    sess._beat_generator = None
-    sess._write_gate = gate
-    sess.agno_db = None
-    sess.last_decree = ""
-    sess._decree_draft_fingerprint = ()
-    sess.deaths_this_turn = []
-    state.turn_phase = TurnPhase.REVIEWING.value
-
-    # 无草案 → auto_close 成功后 ValueError；本钉只证 write_gate 同流 + 欠账补清。
-    with pytest.raises(ValueError, match="草案"):
-        sess.resolve_turn()
-
-    assert seen.get("write_gate") is gate, (
-        f"resolve_turn must pass free session._write_gate, got {seen.get('write_gate')!r}"
+    _canned_full_settlement(
+        monkeypatch,
+        narrative="本月邸报：欠账一次清后过月。",
     )
-    assert db.get_story_extract_status(ctid) == "done"
+
+    turn_before_a = int(state.turn)
+    assert turn_before_a == turn_before_b
+    sess_a = _mk_session()
+    result = sess_a.advance_without_decree()
+    assert result is not None
+    assert result.awaiting is False
+    assert int(state.turn) == turn_before_a + 1
+    assert db.get_story_extract_status(ctid_b) == "done"
     assert int(_pending_api(db)["count"] or 0) == 0
-    night = an.get_night(db, nid)
-    assert night is not None
-    assert night["status"] == an.NIGHT_STATUS_CLOSED
+    assert an.get_night(db, nid_b)["status"] == an.NIGHT_STATUS_CLOSED
+    # 闸仍是 session 唯一 _write_gate（禁第二锁名）
+    assert getattr(sess_a, "_write_gate", None) is not None
 
 
 def test_resolve_turn_write_gate_held_by_caller_no_reenter(game, tmp_path, monkeypatch):
