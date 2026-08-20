@@ -21,7 +21,7 @@ from ming_sim.exceptions import LLMContractError, LLMUnavailable
 from ming_sim.cli_backend import describe_effective_model
 from ming_sim.llm_config import for_role as _llm_for_role, is_minimax_base_url
 from ming_sim.llm_contract import abort_llm_contract, fail_if_llm_error
-from ming_sim.llm_model import create_chat_model, extract_agent_text
+from ming_sim.llm_model import create_chat_model, extract_agent_text, llm_stream_unavailable
 from ming_sim.models import GameState, LLMConfig, reign_period_label
 from ming_sim.token_stats import record_stream_metrics, tlog
 
@@ -173,11 +173,7 @@ def run_agent_stream_text(
             or ev_type in ("RunOutput", "RunCompletedEvent")
         )
         if ev_type == "RunErrorEvent":
-            raise LLMUnavailable(
-                f"{tag} 流式调用失败：{getattr(event, 'content', None)}",
-                code="llm_stream_error",
-                provider_message=str(getattr(event, "content", None) or ""),
-            )
+            raise llm_stream_unavailable(getattr(event, "content", None))
         if is_terminal:
             final_output = event
             continue
