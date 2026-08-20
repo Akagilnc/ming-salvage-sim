@@ -529,13 +529,12 @@ def persist_chat_turn_scene(db: Any, generated: List[Tuple[int, str]]) -> None:
 class ChatTurnSceneRegistry:
     """本轮 scene 工作的唯一 registry（open/enter/exit 同桶，禁止平行第二表）。
 
-    无依赖 beat 在 parallel_safe 时各提交独立 Future 真并发；否则同轮串行。
-    join/abandon 排空整桶。Future.cancel 挡不住已在跑的 LLM——abandon 必须 join drain。
+    无依赖 beat 各提交独立 Future 真并发。join/abandon 排空整桶。
+    Future.cancel 挡不住已在跑的 LLM——abandon 必须 join drain。
     """
 
-    def __init__(self, executor: Executor, *, parallel_safe: bool = True) -> None:
+    def __init__(self, executor: Executor) -> None:
         self._executor = executor
-        self._parallel_safe = bool(parallel_safe)
         self._lock = threading.Lock()
         self._futures: Dict[int, List[Future]] = {}
 
@@ -570,22 +569,8 @@ class ChatTurnSceneRegistry:
                 bucket = self._futures.get(key)
                 if bucket is None:
                     return
-            if self._parallel_safe or len(tasks) <= 1:
-                for entry_id, inputs in tasks:
-                    bucket.append(self._executor.submit(_run, int(entry_id), inputs))
-            else:
-                # Unsafe CLI backend: same-turn beats share one serial lock so open/enter
-                # never overlap subprocess/auth (cli_backend_parallel_safe=False).
-                serial = threading.Lock()
-
-                def _run_serial(entry_id: int, inputs: BeatInputs) -> Tuple[int, str]:
-                    with serial:
-                        return _run(entry_id, inputs)
-
-                for entry_id, inputs in tasks:
-                    bucket.append(
-                        self._executor.submit(_run_serial, int(entry_id), inputs)
-                    )
+            for entry_id, inputs in tasks:
+                bucket.append(self._executor.submit(_run, int(entry_id), inputs))
 
     def start_open_enter(
         self,
