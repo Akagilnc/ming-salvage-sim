@@ -452,6 +452,36 @@ def test_personal_projection_only_reads_the_current_open_night(game):
     assert {message["chat_turn_id"] for message in projection} == {current_turn}
 
 
+def test_1473_projection_strips_redundant_speaker_prefix_history_and_scroll_same(game):
+    """#1473：历史投影与夜卷同形——去「XX叩答：」重复前缀+空首行；无前缀正文不动。"""
+    from ming_sim.assets import strip_redundant_chat_speaker_prefix
+
+    db, state, _ = game
+    minister = "曹化淳"
+    night_id = open_audience_night(db, state)
+    an.summon_enter(db, night_id, minister, method=an.METHOD_YUECI)
+    prefixed = f"{minister}叩答：\n\n边事已备，请陛下示下。"
+    plain = "臣以为当先固宁锦。"
+    append_night_chat(db, state, night_id, minister, "边事如何？", prefixed, 10)
+    append_night_chat(db, state, night_id, minister, "再问军务", plain, 11)
+
+    # 单源 helper：样本 + 负例（中途人名、他名前缀不剥）
+    assert strip_redundant_chat_speaker_prefix(prefixed, minister) == "边事已备，请陛下示下。"
+    assert strip_redundant_chat_speaker_prefix(plain, minister) == plain
+    assert strip_redundant_chat_speaker_prefix(
+        f"臣与{minister}同议：可。", minister,
+    ) == f"臣与{minister}同议：可。"
+    assert strip_redundant_chat_speaker_prefix(f"温体仁叩答：\n假", minister) == "温体仁叩答：\n假"
+
+    proj = db.build_chat_projection(minister)
+    proj_minister = [m["content"] for m in proj if m["role"] == "minister"]
+    assert proj_minister == ["边事已备，请陛下示下。", plain]
+
+    scroll = an.read_night_scroll(db, night_id)
+    scroll_minister = [m["content"] for m in scroll if m["role"] == "minister"]
+    assert scroll_minister == proj_minister
+
+
 def test_ending_timeline_consumes_monthly_archive_once_not_scene_rows():
     from ming_sim.memories import build_timeline
 

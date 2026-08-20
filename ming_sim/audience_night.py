@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from collections.abc import Mapping
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
+from ming_sim.assets import strip_redundant_chat_speaker_prefix
 from ming_sim.error_pack import error_packs_root
 from ming_sim.mindreading import is_inner_court_attendant
 from ming_sim.models import GameState
@@ -496,7 +497,10 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
             ).fetchone()
             if row is None:
                 continue
-            content = str(row["content"] or "")
+            # #1473：与 build_chat_projection 同缝——去气泡头重复人名前缀+空首行
+            content = strip_redundant_chat_speaker_prefix(
+                str(row["content"] or ""), speaker,
+            )
             # #544：只走 GameDB._parse_highlights_json 唯一真源（SELECT 已点名该列）
             hl: List[str] = (
                 list(db._parse_highlights_json(row["highlights_json"]))

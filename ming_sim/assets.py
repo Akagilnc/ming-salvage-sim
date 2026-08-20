@@ -47,6 +47,26 @@ def strip_json_fence(text: str) -> str:
     return text.strip()
 
 
+# #1473：气泡头已有 speaker；LLM 偶发自署「XX叩答：」+ 空首行叠床架屋。
+# 投影缝（历史 build_chat_projection / 夜卷 read_night_scroll）共用，钉历史与实时同形。
+_REDUNDANT_CHAT_SPEAKER_VERB = r"(?:叩答|谨奏|奏曰|顿首|回奏)?"
+_REDUNDANT_CHAT_SPEAKER_TAIL = rf"{_REDUNDANT_CHAT_SPEAKER_VERB}[：:]\s*(?:\n[ \t]*)*"
+
+
+def strip_redundant_chat_speaker_prefix(content: str, speaker: str) -> str:
+    """去掉与气泡头重复的领头人名前缀及紧随空行；正文中途提及不动。"""
+    text = str(content or "")
+    name = str(speaker or "").strip()
+    if not text or not name:
+        return text
+    # 人名必须与 speaker 全等锚定（re.escape），禁非贪婪吞掉「叩答」动词。
+    pat = re.compile(rf"^{re.escape(name)}{_REDUNDANT_CHAT_SPEAKER_TAIL}")
+    match = pat.match(text)
+    if match is None:
+        return text
+    return text[match.end():]
+
+
 def format_money(value: int) -> str:
     return f"{value}{MONEY_UNIT}"
 

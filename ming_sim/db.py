@@ -18,7 +18,12 @@ from typing import Any, Dict, Iterable, List, Mapping, NamedTuple, Optional, Seq
 from ming_sim.applier import atomic, safe_json_dumps, sanitize_sqlite_text
 from ming_sim.appointment_tenure import appointment_tenure_from
 from ming_sim.authority_privileges import AUTHORITY_PRIVILEGE_SQL_IN
-from ming_sim.assets import format_money, format_money_delta, format_wanliang_amount
+from ming_sim.assets import (
+    format_money,
+    format_money_delta,
+    format_wanliang_amount,
+    strip_redundant_chat_speaker_prefix,
+)
 from ming_sim.constants import (
     ARMY_FIELD_ALIASES, ARMY_FIELD_LABELS, ARMY_QUANTITY_FIELDS, ARMY_SCORE_FIELDS, ARMY_TEXT_FIELDS,
     BUILDING_CATEGORIES, BUILDING_FIELD_LABELS, BUILDING_OUTPUT_METRICS,
@@ -8067,9 +8072,19 @@ class GameDB:
                 if role == "minister"
                 else []
             )
+            # #1473：气泡头已有人名；投影去「XX叩答：」重复前缀+空首行，与实时同形
+            raw_content = str(m["content"] or "")
+            if role == "minister":
+                display_content = strip_redundant_chat_speaker_prefix(
+                    raw_content, minister_name,
+                )
+            elif role == "user":
+                display_content = strip_redundant_chat_speaker_prefix(raw_content, "朕")
+            else:
+                display_content = raw_content
             projection.append({
                 "role": role,
-                "content": m["content"],
+                "content": display_content,
                 "chat_turn_id": turn_id,
                 "highlights": highlights,
             })
