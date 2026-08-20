@@ -1344,12 +1344,15 @@ describe("ReportModal — narrative settlement bulletin", () => {
     expect(mastDec).not.toContain("天启七年正月");
   });
 
-  it("#1356 空邸报态不崩：卷轴壳 + 空注 + 朕知道了可达", () => {
+  it("#1356 空邸报态不崩：卷轴壳复用 pre + 朕知道了可关闭（无固定空注）", () => {
     const onClose = vi.fn();
     const host = renderReportModal({ report: "", onClose });
     expect(host.querySelector(".gazette-document")).not.toBeNull();
     expect(host.querySelector(".gazette-masthead")).not.toBeNull();
-    expect(host.textContent).toContain("尚无上月邸报");
+    // 空壳复用原 pre，不另写固定空态文案
+    expect(host.querySelector("pre.memorial-text")).not.toBeNull();
+    expect(host.textContent).not.toContain("尚无上月邸报");
+    expect(host.textContent).not.toContain("登基伊始");
     const dismiss = Array.from(host.querySelectorAll("button")).find((b) =>
       (b.textContent || "").includes("朕知道了"),
     ) as HTMLButtonElement | undefined;

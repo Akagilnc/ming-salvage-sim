@@ -13,7 +13,6 @@ export function ReportModal({
 }) {
   const activeText = stripOrganicMarkdown(report || "");
   const masthead = periodLabel || "邸报";
-  const isEmpty = !activeText.trim();
   return (
     <FullscreenModal title="邸报" subtitle={masthead} bgClass="modal-bg-gazette" onClose={onClose} hideTitle>
       {/* #1398：dismiss 移出滚容器，视口常显，长文滚底不再把「朕知道了」埋掉。 */}
@@ -23,12 +22,8 @@ export function ReportModal({
             <b>邸报</b>
             <span>{masthead} · 通政使司发抄</span>
           </div>
-          {/* #1356：空邸报态不崩——卷轴壳 + 空注 + 朕知道了仍可达 */}
-          {isEmpty ? (
-            <div className="empty-note" role="status">尚无上月邸报。</div>
-          ) : (
-            <pre className="memorial-text">{activeText}</pre>
-          )}
+          {/* #1356：空卷轴复用原 pre，不另写固定空态文案（P7） */}
+          <pre className="memorial-text">{activeText}</pre>
         </article>
         {/* #1387：主关闭钮（系统 chrome，ADR 0046）；正文仍只滚 LLM/引擎叙事，不代笔。 */}
         <div className="gazette-dismiss">
