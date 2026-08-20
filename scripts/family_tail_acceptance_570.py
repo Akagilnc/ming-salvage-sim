@@ -30,8 +30,10 @@ import re
 import sys
 import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -42,6 +44,7 @@ from ming_sim.agents import bind_content as bind_agent_content
 from ming_sim.content import GameContent
 from ming_sim.context import bind_content
 from ming_sim.db import GameDB
+import ming_sim.decree as decree_mod
 from ming_sim.decree import (
     build_promulgation_judge_context,
     llm_promulgation_verdicts,
@@ -55,7 +58,9 @@ from ming_sim.cli_backend import (
     require_fresh_cli_trace,
 )
 from ming_sim.issues import bind_content as bind_issue_content
+import ming_sim.memories as memories_mod
 from ming_sim.models import Character, LLMConfig
+from ming_sim.session import GameSession
 
 _LOG = logging.getLogger("issue-570-acceptance")
 _BLOCKED_LAYERS = frozenset({"cabinet_drafting", "palace_rescript", "six_offices"})
@@ -217,6 +222,82 @@ def _p4_scan(label: str, text: str) -> dict:
     }
 
 
+def _first_month_gazette_via_normal_settle(
+    db: GameDB, state, content: GameContent,
+) -> str:
+    """#1356 P-5 邸报臂：经既有正常首月结算路径取非空真实 report。
+
+    不恢复 seed/固定模板；结算失败或空报 → 返回空串（空不计过）。
+    须在种植 proposed 案卷之前调用（否则结算会再进颁布判官）。
+    """
+    closed_turn = int(state.turn)
+    # 已有真实报则直接用（幂等；禁再 seed）
+    existing = str(db.get_turn_report(closed_turn) or "").strip()
+    if existing:
+        return existing
+
+    narrative = (
+        f"天启七年十月邸报\n\n"
+        f"一、边事自演。辽饷催征，流寇未息。——族尾首月真结算 sample"
+    )
+
+    def _canned_sim(*_a, **k):
+        return narrative, k.get("simulator_payload") or {}
+
+    try:
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(
+                decree_mod, "create_season_simulator_agent", lambda *a, **k: None,
+            ))
+            stack.enter_context(patch.object(
+                decree_mod, "simulate_season_with_payload", _canned_sim,
+            ))
+            stack.enter_context(patch.object(
+                decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None,
+            ))
+            stack.enter_context(patch.object(
+                decree_mod, "create_score_extractor_module_agent",
+                lambda *a, **k: object(),
+            ))
+            stack.enter_context(patch.object(
+                decree_mod, "extract_scores_by_modules_with_agno",
+                lambda *a, **k: ({}, "out", "in"),
+            ))
+            stack.enter_context(patch.object(
+                decree_mod, "create_chapter_memory_agent", lambda *a, **k: None,
+            ))
+            stack.enter_context(patch.object(
+                memories_mod, "run_agent_text",
+                lambda *a, **k: '{"body":"月记","tags":[]}',
+            ))
+
+            session = GameSession.__new__(GameSession)
+            session.db = db
+            session.state = state
+            session.content = content
+            session.registry = session.llm_config = session.agno_db = None
+            session.deaths_this_turn = []
+            session.debuts_this_turn = []
+            session.last_decree = session.last_report = ""
+            session._decree_draft_fingerprint = ()
+            session._scene_registry = type(
+                "_NoScene", (), {"active_turn_ids": lambda self: []},
+            )()
+            session._beat_generator = None
+            session.auto_save = lambda *a, **k: None
+            result = session.advance_without_decree()
+            if result is None or getattr(result, "awaiting", False):
+                _LOG.warning(
+                    "first-month settle awaiting/None; gazette arm stays empty",
+                )
+                return ""
+    except Exception:  # noqa: BLE001 — 空不计过；臂失败不拖垮整样
+        _LOG.exception("first-month settle failed; gazette arm stays empty")
+        return ""
+
+    return str(db.get_turn_report(closed_turn) or "")
+
+
 def _run_sample(index: int, root: str, content: GameContent, cfg: LLMConfig) -> dict:
     sample_dir = Path(root) / str(index)
     sample_dir.mkdir()
@@ -227,6 +308,12 @@ def _run_sample(index: int, root: str, content: GameContent, cfg: LLMConfig) -> 
         # Low authority so resistance is on the table.
         state.metrics["皇威"] = 15
         db.save_state(state)
+
+        # P-5 邸报原料：开局无 seed 后，经正常首月结算路径先落非空真实 report。
+        # 必须在种植 proposed 案卷之前（否则结算会再进颁布判官）。
+        first_month_gazette = _first_month_gazette_via_normal_settle(
+            db, state, content,
+        )
 
         cabinet_name = f"候补阁僚-{index}"
         bare_name = f"白身巡抚-{index}"
@@ -403,11 +490,14 @@ def _run_sample(index: int, root: str, content: GameContent, cfg: LLMConfig) -> 
         )
         p4_memorial = _p4_scan("密奏memorial", memorial_blob)
 
-        # 3) 邸报：#1356 后开局不再 seed 固定报文；取最新真实 turn_report（空不计过）
-        reports = db.list_turn_reports() if hasattr(db, "list_turn_reports") else []
-        gazette_blob = str((reports[-1]["report"] if reports else "") or "")
+        # 3) 邸报：#1356 经正常首月结算路径取得的非空真实 report（空不计过；不恢复 seed）
+        gazette_blob = str(first_month_gazette or "")
         if not gazette_blob.strip():
-            gazette_blob = str(db.get_turn_report(int(state.turn) - 1) or "")
+            # 回读结算落库；仍空则 _p4_scan 计不过
+            reports = db.list_turn_reports() if hasattr(db, "list_turn_reports") else []
+            gazette_blob = str((reports[-1]["report"] if reports else "") or "")
+            if not gazette_blob.strip():
+                gazette_blob = str(db.get_turn_report(int(state.turn) - 1) or "")
         p4_gazette = _p4_scan("邸报gazette", gazette_blob)
 
         # Negative controls: detector must fire on injected system words.
@@ -578,10 +668,10 @@ def main() -> int:
             "辞让 (execution degraded/failed) path requires full execution Judge after force; "
             "this gate primarily locks the promulgation reject+layer arm of P-3 for cabinet.",
             "Force errors are logged and count as failed checks (no silent swallow).",
-            "P4 LLM faces consume real render products reachable without a second full-month "
-            "settle: opening gazette (邸报), dossier progress memorial (密奏), "
-            "referenceable-dossier brief (召对认账). Live minister dialogue prose is not "
-            "re-run here; brief is the production audience-facing dossier render.",
+            "P4 邸报 arm: #1356 后开局无 seed；经既有正常首月结算路径 "
+            "(advance_without_decree / system_simulation) 取非空真实 turn_report 再扫，"
+            "空不计过、不恢复 seed/固定模板。密奏=dossier progress；召对=referenceable brief。"
+            "Live minister dialogue prose is not re-run here.",
         ],
         "samples": samples,
         "raw_cli_trace": trace_records,

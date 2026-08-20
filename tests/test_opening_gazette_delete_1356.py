@@ -78,6 +78,23 @@ def test_new_game_t0_previous_summary_strictly_empty(game):
     assert "尚无上月" not in summary
 
 
+def test_non_t0_empty_previous_summary_strictly_empty(game):
+    """① 非 t0：无 report 且无 logs 同样严格空串（禁固定空态句）。"""
+    db, state, _content = game
+    # previous_turn = 2（>0）；确保该月无报文、无 turn_logs
+    state.turn = 3
+    assert db.get_turn_report(2) == ""
+    assert (
+        db.conn.execute("SELECT 1 FROM turn_logs WHERE turn = 2").fetchone() is None
+    )
+
+    summary = db.previous_turn_summary(state)
+    assert summary == ""
+    assert "未见正式记录" not in summary
+    assert "登基伊始" not in summary
+    assert "尚无上月" not in summary
+
+
 def test_first_month_settlement_produces_real_gazette(game, monkeypatch):
     """④ 正向：首份真实邸报由第一个正常月末结算产生。"""
     db, state, content = game
