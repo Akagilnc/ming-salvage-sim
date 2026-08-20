@@ -10,7 +10,9 @@
 6. 背书空文本独立 fail-closed + 409 重试形态（非欠账类）
 7. 删除面：无 _healed_drain_retry / closing+zero player_hint / 玩家补写 CTA
 8. fold-in r2 K10a：wait_in_flight 不按 elapsed 造 409
-9. fold-in r2 K10c：背书争用有限 join + 重读 DB（禁 Future/contended 409）
+9. fold-in r2/r3 K10c：背书争用一次有界 join + 重读 DB（禁 while/二次 LLM/contended 409）
+   9a. owner 挂过预算 → contender 有限 fail-closed
+   9b. owner 真失败 → contender 不调 extractor、夜未绑定
 10. fold-in r2：drain/catch_up on_event 推 stage（结构钉）
 """
 
@@ -659,9 +661,15 @@ def test_deleted_surface_no_healed_drain_retry_residue():
         hits.append("web/src/extractionRetry.ts:exists")
     assert hits == [], hits
     assert "_healed_drain_retry" not in inspect.signature(an.close_night).parameters
-    # fold-in r2：禁 elapsed 伪造 in_flight / 背书争用 409 码残留于生产路径
+    # fold-in r2/r3：禁 elapsed 伪造 in_flight / 背书争用 409 / while 回环二次 LLM
     prod = (root / "ming_sim/audience_extraction.py").read_text(encoding="utf-8")
     assert 'code="endorsement_batch_contended"' not in prod
+    # run_endorsement_batch_for_night 体：一次 claim+join，禁 while True 无界重试
+    fn_start = prod.index("def run_endorsement_batch_for_night")
+    fn_end = prod.index("\ndef ", fn_start + 1)
+    assert "while True" not in prod[fn_start:fn_end], (
+        "K10c forbids unbounded while-retry in endorsement contention"
+    )
     night_src = (root / "ming_sim/audience_night.py").read_text(encoding="utf-8")
     assert 'code="in_flight_chat"' not in night_src
 
@@ -704,18 +712,16 @@ def test_wait_in_flight_clear_consumes_terminal_no_elapsed_409(game):
     assert an.list_in_flight_chat_turns(db, nid) == []
 
 
-def test_endorsement_contention_joins_owner_then_continues(game, tmp_path, monkeypatch):
-    """#1353 K10c：背书单飞争用 → 有限 join + 重读 bound，不造 contended 409。"""
+def _prep_endorsement_contention(game, tmp_path, monkeypatch, *, reply="臣愿作保。"):
+    """K10c 并发夹具：普通抽取 done + 背书批输入桩。"""
     db, state, content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
     minister = _minister(db, content)
-    nid, ctid, seq = _open_night_with_persisted_reply(db, state, minister, reply="臣愿作保。")
-
-    # 普通抽取先 done
+    nid, ctid, seq = _open_night_with_persisted_reply(db, state, minister, reply=reply)
     assert ae.run_extraction_for_turn(
         db=db,
         minister_name=minister,
-        reply="臣愿作保。",
+        reply=reply,
         chat_turn_id=ctid,
         night_id=nid,
         source_night_seq=seq,
@@ -728,7 +734,6 @@ def test_endorsement_contention_joins_owner_then_continues(game, tmp_path, monke
             '"presence_effect":""}]}'
         ),
     )["status"] == "done"
-
     db.list_endorsement_batch_inputs = lambda _nid: {  # type: ignore[method-assign]
         "candidates": [{
             "ref": {"dossier_id": 1, "kind": "directive"},
@@ -738,10 +743,16 @@ def test_endorsement_contention_joins_owner_then_continues(game, tmp_path, monke
             "source_chat_turn_id": ctid,
             "minister_name": minister,
             "emperor_text": "准。",
-            "minister_reply": "臣愿作保。",
+            "minister_reply": reply,
             "ordinary_facts": [],
         }],
     }
+    return db, nid
+
+
+def test_endorsement_contention_joins_owner_then_continues(game, tmp_path, monkeypatch):
+    """#1353 K10c：owner 成功绑定 → contender 一次有界 join 后重读 bound 续跑。"""
+    db, nid = _prep_endorsement_contention(game, tmp_path, monkeypatch)
 
     started = threading.Event()
     release_llm = threading.Event()
@@ -778,8 +789,8 @@ def test_endorsement_contention_joins_owner_then_continues(game, tmp_path, monke
                 night_id=nid,
                 llm_config=object(),
                 write_gate=gate,
-                extractor_agent=_SlowEndorsement(),
-                join_timeout_s=0.05,
+                extractor_agent=_BoomAgent(),  # 成功路径 contender 只重读 bound，禁二次 LLM
+                join_timeout_s=5.0,  # 覆盖 owner 成功绑定窗口；禁短预算误杀
             )
         except BaseException as exc:  # noqa: BLE001
             contender_out["exc"] = exc
@@ -787,8 +798,8 @@ def test_endorsement_contention_joins_owner_then_continues(game, tmp_path, monke
     ct = threading.Thread(target=contender_worker, name="endorsement-contender-k10c")
     ct.start()
     # contender 进入 join，不得立即 contended 抛出
-    time.sleep(0.08)
-    assert ct.is_alive() or "r" in contender_out or "exc" in contender_out
+    time.sleep(0.05)
+    assert ct.is_alive(), "contender must be joining owner, not returning contended 409"
     release_llm.set()
     ot.join(timeout=5)
     ct.join(timeout=5)
@@ -799,8 +810,152 @@ def test_endorsement_contention_joins_owner_then_continues(game, tmp_path, monke
     assert owner_out["r"]["status"] in {"done", "skipped"}
     assert contender_out["r"]["status"] in {"done", "skipped"}
     assert ae._is_endorsement_bound(db, nid)
-    # 禁 contended 码残留于异常面
     assert getattr(contender_out.get("exc"), "code", None) != "endorsement_batch_contended"
+
+
+def test_endorsement_contender_join_timeout_fail_closed_no_second_budget(
+    game, tmp_path, monkeypatch,
+):
+    """#1353 K10c r3：(a) owner 挂过总预算 → contender 一次 join 后有限 fail-closed。"""
+    db, nid = _prep_endorsement_contention(game, tmp_path, monkeypatch)
+
+    started = threading.Event()
+    release_llm = threading.Event()
+    gate = threading.Lock()
+    owner_out: dict = {}
+    contender_out: dict = {}
+    contender_calls = {"n": 0}
+
+    class _HangEndorsement:
+        def run(self, _materials):
+            started.set()
+            assert release_llm.wait(5), "release hang owner"
+            return SimpleNamespace(content='{"endorsements":[]}')
+
+    class _CountEndorsement:
+        def run(self, _materials):
+            contender_calls["n"] += 1
+            raise AssertionError("contender must not start second endorsement LLM")
+
+    def owner_worker():
+        try:
+            owner_out["r"] = ae.run_endorsement_batch_for_night(
+                db=db,
+                night_id=nid,
+                llm_config=object(),
+                write_gate=gate,
+                extractor_agent=_HangEndorsement(),
+            )
+        except BaseException as exc:  # noqa: BLE001
+            owner_out["exc"] = exc
+
+    ot = threading.Thread(target=owner_worker, name="endorsement-owner-hang-k10c")
+    ot.start()
+    assert started.wait(5), "owner LLM must start"
+
+    t0 = time.monotonic()
+
+    def contender_worker():
+        try:
+            contender_out["r"] = ae.run_endorsement_batch_for_night(
+                db=db,
+                night_id=nid,
+                llm_config=object(),
+                write_gate=gate,
+                extractor_agent=_CountEndorsement(),
+                join_timeout_s=0.05,
+            )
+        except BaseException as exc:  # noqa: BLE001
+            contender_out["exc"] = exc
+
+    ct = threading.Thread(target=contender_worker, name="endorsement-contender-timeout-k10c")
+    ct.start()
+    ct.join(timeout=2.0)
+    elapsed = time.monotonic() - t0
+    assert not ct.is_alive(), "contender must finite-return after one join budget"
+    assert elapsed < 1.0, f"unbounded while-retry suspected: elapsed={elapsed:.3f}s"
+    assert "exc" in contender_out, contender_out
+    assert getattr(contender_out["exc"], "code", None) == "endorsement_not_bound"
+    assert getattr(contender_out["exc"], "code", None) != "endorsement_batch_contended"
+    assert contender_calls["n"] == 0
+    # owner 仍在飞：夜不得被 contender 绑定
+    assert not ae._is_endorsement_bound(db, nid)
+
+    release_llm.set()
+    ot.join(timeout=5)
+    assert not ot.is_alive()
+    # owner 最终可绑定；contender 不得在超时路径抢成第二 owner
+    assert "exc" not in owner_out, owner_out
+    assert ae._is_endorsement_bound(db, nid)
+
+
+def test_endorsement_owner_fail_contender_no_second_llm(game, tmp_path, monkeypatch):
+    """#1353 K10c r3：(b) owner 真失败 → contender 不调 extractor、夜未绑定 fail-closed。"""
+    db, nid = _prep_endorsement_contention(game, tmp_path, monkeypatch)
+
+    started = threading.Event()
+    release_fail = threading.Event()
+    gate = threading.Lock()
+    owner_out: dict = {}
+    contender_out: dict = {}
+    contender_calls = {"n": 0}
+
+    class _FailEndorsement:
+        def run(self, _materials):
+            started.set()
+            assert release_fail.wait(5), "release fail owner"
+            raise RuntimeError("owner endorsement true failure")
+
+    class _CountEndorsement:
+        def run(self, _materials):
+            contender_calls["n"] += 1
+            return SimpleNamespace(content='{"endorsements":[]}')
+
+    def owner_worker():
+        try:
+            owner_out["r"] = ae.run_endorsement_batch_for_night(
+                db=db,
+                night_id=nid,
+                llm_config=object(),
+                write_gate=gate,
+                extractor_agent=_FailEndorsement(),
+            )
+        except BaseException as exc:  # noqa: BLE001
+            owner_out["exc"] = exc
+
+    ot = threading.Thread(target=owner_worker, name="endorsement-owner-fail-k10c")
+    ot.start()
+    assert started.wait(5), "owner LLM must start"
+
+    def contender_worker():
+        try:
+            contender_out["r"] = ae.run_endorsement_batch_for_night(
+                db=db,
+                night_id=nid,
+                llm_config=object(),
+                write_gate=gate,
+                extractor_agent=_CountEndorsement(),
+                join_timeout_s=5.0,
+            )
+        except BaseException as exc:  # noqa: BLE001
+            contender_out["exc"] = exc
+
+    ct = threading.Thread(target=contender_worker, name="endorsement-contender-fail-k10c")
+    ct.start()
+    time.sleep(0.05)
+    assert ct.is_alive(), "contender must join, not contend-409"
+    release_fail.set()
+    ot.join(timeout=5)
+    ct.join(timeout=5)
+    assert not ot.is_alive() and not ct.is_alive()
+
+    assert "exc" in owner_out, owner_out
+    assert getattr(owner_out["exc"], "code", None) == "endorsement_extract_failed"
+    assert "exc" in contender_out, contender_out
+    assert getattr(contender_out["exc"], "code", None) == "endorsement_not_bound"
+    assert getattr(contender_out["exc"], "code", None) != "endorsement_batch_contended"
+    assert contender_calls["n"] == 0, "K10b: contender must not start second LLM"
+    assert not ae._is_endorsement_bound(db, nid)
 
 
 def test_drain_catch_up_emits_stage_on_event(game, tmp_path, monkeypatch):
