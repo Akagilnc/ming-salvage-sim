@@ -546,6 +546,8 @@ export function App() {
         secretOrderActiveCount={secretOrders.filter((o) => o.status === "active" || o.status === "pending_review").length}
         onOpenModal={openModal}
         onClosedFaceAttempt={(reason) => setError(reason)}
+        edictOpen={edictOpen}
+        onCloseEdict={() => setActiveModal("none")}
       />
 
       <CourtDrawer
@@ -697,6 +699,8 @@ export function App() {
               : "退朝即草案成案并过月"
           }
           bgClass="modal-bg-edict"
+          // #1454：底栏安全区——desk-footer 不得挡 HUD 拟诏木牌（台开时为收起开关）。
+          layerClassName="edict-safe-cmd"
           onClose={() => setActiveModal("none")}
         >
           <EdictModal
