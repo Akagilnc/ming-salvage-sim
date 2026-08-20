@@ -313,6 +313,52 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     }
   });
 
+  it("#1475 召对顶栏不重复左卡身份，横幅压成 bare 回收正文", async () => {
+    const roster = [
+      { id: "a", name: "曹化淳", office: "信邸内官（候补司礼监）", summary: "东厂", status: "active" },
+    ];
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      const u = new URL(String(url), "http://t.local");
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) return jsonResp(makeState(1, [], roster));
+      if (/\/api\/ministers\/[^/]+\/chat$/.test(u.pathname)) {
+        return jsonResp({
+          minister: roster[0], history: [], suggestions: [],
+          campaign_id: "c1", night_id: 77, pending_turn_ids: [],
+        });
+      }
+      if (u.pathname.endsWith("/api/audience/extraction/pending")) return jsonResp({ count: 0 });
+      if (u.pathname.endsWith("/api/audience/scroll")) return jsonResp({ night_id: 77, messages: [] });
+      return jsonResp({});
+    }));
+
+    const host = document.createElement("div"); document.body.appendChild(host);
+    await act(async () => { createRoot(host).render(<App />); });
+    await tick();
+    await click(host.querySelector('[aria-label="朝堂·召见大臣"]'));
+    await tick();
+    await click(Array.from(host.querySelectorAll("button")).find((b) => b.textContent?.includes("曹化淳")));
+    await tick();
+
+    const dialog = host.querySelector('[role="dialog"][aria-label="召对：曹化淳"]') as HTMLElement | null;
+    expect(dialog).not.toBeNull();
+    // a11y 标签保留；可见横幅标题删除——身份只在左卡一份
+    expect(dialog!.querySelector(".modal-title")).toBeNull();
+    expect(dialog!.querySelector(".modal-header-bare")).not.toBeNull();
+    expect(dialog!.textContent || "").not.toMatch(/召对：/);
+
+    const profile = dialog!.querySelector(".minister-profile");
+    expect(profile).not.toBeNull();
+    expect(profile!.textContent).toContain("曹化淳");
+    expect(profile!.textContent).toContain("信邸内官（候补司礼监）");
+    // 官衔不得在 dialog 内再出现第二份（左卡以外）
+    const office = "信邸内官（候补司礼监）";
+    const occurrences = (dialog!.textContent || "").split(office).length - 1;
+    expect(occurrences).toBe(1);
+  });
+
   it("退朝按钮与手输下朝都走召对 chat stream 同一收夜管线，不旁路 advance", async () => {
     const paths: string[] = [];
     const roster = [{ id: "a", name: "温体仁", office: "首辅", summary: "", status: "active" }];
