@@ -790,18 +790,14 @@ def test_agent_factories_omit_max_tokens_on_param_surface(monkeypatch):
         ("create_promulgation_judge_agent", lambda: agents_mod.create_promulgation_judge_agent(cfg, object())),
         ("create_ending_summary_agent", lambda: agents_mod.create_ending_summary_agent(cfg, object())),
     ]
-    assert len(factories) == 11
+    factory_names = [name for name, _ in factories]
+    assert len(factory_names) == len(set(factory_names)) == 11
 
-    factory_kwargs: dict = {}
     for name, call in factories:
         before = len(seen)
         call()
         assert len(seen) == before + 1, f"{name} must hit create_chat_model once, got +{len(seen) - before}"
-        factory_kwargs[name] = seen[-1]
-
-    assert set(factory_kwargs) == {name for name, _ in factories}
-    for name, kwargs in factory_kwargs.items():
-        assert "max_tokens" not in kwargs, (name, kwargs)
+        assert "max_tokens" not in seen[-1], (name, seen[-1])
 
     class FakeRun:
         content = "{}"
