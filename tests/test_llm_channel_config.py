@@ -735,7 +735,7 @@ def test_cli_reasoning_strength_runners_single_source_in_cli_backend():
 
 
 def test_agent_factories_omit_max_tokens_on_param_surface(monkeypatch):
-    """#1472：mindreading/highlight/extractor/gate 真实参数面无 max_tokens 键。"""
+    """#1472：全部 11 个 ming_sim.agents 工厂 + gate 真实参数面无 max_tokens 键。"""
     from types import SimpleNamespace
 
     import ming_sim.agents as agents_mod
@@ -773,16 +773,35 @@ def test_agent_factories_omit_max_tokens_on_param_surface(monkeypatch):
         reasoning_strength="high",
     )
 
-    agents_mod.create_mindreading_agent(cfg)
-    agents_mod.create_highlight_judge_agent(cfg)
-    agents_mod.create_audience_extractor_agent(cfg)
-    agents_mod.create_endorsement_extractor_agent(cfg)
-    agents_mod.create_score_extractor_module_agent(cfg, object(), module="economy")
-    agents_mod.create_json_sanitizer_agent(cfg, object())
-    agents_mod.create_chapter_memory_agent(cfg, object())
-    agents_mod.create_decree_writer_agent(cfg, object())
-    agents_mod.create_season_simulator_agent(cfg, object())
-    agents_mod.create_promulgation_judge_agent(cfg, object())
+    # 11 个 ming_sim.agents 工厂——逐项命名调用，漏一个即红
+    factories = [
+        ("create_mindreading_agent", lambda: agents_mod.create_mindreading_agent(cfg)),
+        ("create_highlight_judge_agent", lambda: agents_mod.create_highlight_judge_agent(cfg)),
+        ("create_audience_extractor_agent", lambda: agents_mod.create_audience_extractor_agent(cfg)),
+        ("create_endorsement_extractor_agent", lambda: agents_mod.create_endorsement_extractor_agent(cfg)),
+        (
+            "create_score_extractor_module_agent",
+            lambda: agents_mod.create_score_extractor_module_agent(cfg, object(), module="economy"),
+        ),
+        ("create_json_sanitizer_agent", lambda: agents_mod.create_json_sanitizer_agent(cfg, object())),
+        ("create_chapter_memory_agent", lambda: agents_mod.create_chapter_memory_agent(cfg, object())),
+        ("create_decree_writer_agent", lambda: agents_mod.create_decree_writer_agent(cfg, object())),
+        ("create_season_simulator_agent", lambda: agents_mod.create_season_simulator_agent(cfg, object())),
+        ("create_promulgation_judge_agent", lambda: agents_mod.create_promulgation_judge_agent(cfg, object())),
+        ("create_ending_summary_agent", lambda: agents_mod.create_ending_summary_agent(cfg, object())),
+    ]
+    assert len(factories) == 11
+
+    factory_kwargs: dict = {}
+    for name, call in factories:
+        before = len(seen)
+        call()
+        assert len(seen) == before + 1, f"{name} must hit create_chat_model once, got +{len(seen) - before}"
+        factory_kwargs[name] = seen[-1]
+
+    assert set(factory_kwargs) == {name for name, _ in factories}
+    for name, kwargs in factory_kwargs.items():
+        assert "max_tokens" not in kwargs, (name, kwargs)
 
     class FakeRun:
         content = "{}"
@@ -800,11 +819,10 @@ def test_agent_factories_omit_max_tokens_on_param_surface(monkeypatch):
     monkeypatch.setattr(lm, "create_chat_model", spy)
     monkeypatch.setattr(lm, "extract_agent_text", lambda output: "{}")
     monkeypatch.setattr("agno.agent.Agent", FakeAgent)
+    before_gate = len(seen)
     cb._run_api_for_config("输出 {}", cfg, tag="gate")
-
-    assert len(seen) >= 10, f"expected agent+gate captures, got {len(seen)}"
-    for kwargs in seen:
-        assert "max_tokens" not in kwargs, kwargs
+    assert len(seen) == before_gate + 1, f"gate must hit create_chat_model once, got +{len(seen) - before_gate}"
+    assert "max_tokens" not in seen[-1], seen[-1]
 
 
 def test_gate_evidence_config_omits_max_tokens():
