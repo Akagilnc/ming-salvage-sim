@@ -617,8 +617,10 @@ def run_endorsement_batch_for_night(
 
     - 已 bound → 幂等跳过。
     - 无候选或无 surviving turns → 确定性 skip 并标 bound。
-    - 争用 → 有限 join 既有 owner + 重读 DB 终态（#1353 K10c / #1476 模式；
-      不建 Future/结果登记；争用方干完即续跑，不造 409）。
+    - 争用 → **一次**总量有界 join 既有 owner + 重读 DB bound（#1353 K10c / #1476；
+      不建 Future/结果登记；禁 while 回环、第二次 LLM、contended 409）。
+      已绑定 → 续跑；超时或 owner 终止仍未绑定 → 既有 fail-closed 保持 OPEN。
+    - owned=False（前 owner 已释放）→ 只重读终态，不启动新 attempt。
     - LLM/shape 失败 → 抛 AudienceNightError（调用方 fail-closed 保持 OPEN；K10b）。
     """
     nid = int(night_id)
@@ -631,16 +633,27 @@ def run_endorsement_batch_for_night(
     flight_key = _night_flight_key(db, nid)
     owner: Optional[threading.Lock] = None
     try:
-        # #1353 K10c：claim 失败 = 他方 owner 在飞 → 有限 join 单飞锁 + 重读 bound；
-        # 禁争用 409。owner 真失败仍走下方 K10b fail-closed。
-        while True:
-            owner, _owned = _claim_single_flight(flight_key)
-            if owner is not None:
-                break
+        # #1353 K10c r3：一次 claim；争用则一次有界 join + 重读 bound。
+        # 已绑定→续跑；超时/owner 终止未绑定→既有 fail-closed（禁回环二次 LLM）。
+        owner, owned = _claim_single_flight(flight_key)
+        if owner is None:
             _join_single_flight(flight_key, float(join_timeout_s))
             if _is_endorsement_bound(db, nid):
                 return {"status": "done", "night_id": nid, "already": True, "ids": []}
-            # join 超时仍未 bound：owner 可能刚释放或仍在飞——回环再 claim，不伪造失败。
+            raise AudienceNightError(
+                f"收夜背书批未落定（night_id={nid}）",
+                code="endorsement_not_bound",
+                detail={"night_id": nid},
+            )
+        if not owned:
+            # _claim_single_flight 契约：前 owner 已释放 → 只重读终态，不启动新 attempt。
+            if _is_endorsement_bound(db, nid):
+                return {"status": "done", "night_id": nid, "already": True, "ids": []}
+            raise AudienceNightError(
+                f"收夜背书批未落定（night_id={nid}）",
+                code="endorsement_not_bound",
+                detail={"night_id": nid},
+            )
 
         if _is_endorsement_bound(db, nid):
             return {"status": "done", "night_id": nid, "already": True, "ids": []}

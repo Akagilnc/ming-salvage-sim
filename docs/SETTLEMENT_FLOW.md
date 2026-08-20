@@ -30,8 +30,13 @@
      #   resolve_directives / pre_settle 只转发，不在此新建第二 registry/executor。
      a0. auto_close_open_night(db, state, ..., scene_registry=)
          # #498 颁诏遇开夜→顺势自动收夜（王承恩代宣）
-         ↳ 在 atomic 外单独调用，收夜自有写与错误包，不与结算事务半嵌；
-           在飞回话 fail-closed 会挡住本路（夜保持开、settle 不进 settling）——见 `ming_sim/audience_night.py`
+         ↳ 在 atomic 外单独调用，收夜自有写与错误包，不与结算事务半嵌（#1353 / ADR 0149）：
+           在飞回话：wait 消费既有 chat turn/worker 终态后自动续跑，不按 elapsed 伪造 409；
+           欠账抽取并入过月 drain/catch_up（玩家无感；统一重试耗尽才走失败单源）；
+           背书争用：一次总量有界 join 既有单飞锁 + 重读 bound；已绑定→续跑，
+           超时或 owner 终止仍未绑定→既有背书 fail-closed 保持 OPEN
+           （禁第二次 LLM / contended 409 / while 回环）。见 `ming_sim/audience_night.py`
+           + `ming_sim/audience_extraction.py`。
          ↳ #542 收夜 scene 生命周期（调用方 registry 所有）：
            start_close_scene_on_registry（不立即 join）→ 与 endorsement 并行 →
            终局写入前 join_close_scene_on_registry（join-before-finalize）；
@@ -231,7 +236,8 @@ session.advance_without_decree / POST /api/decree/advance_without_edict:
 | 文件 | 看什么 |
 |---|---|
 | `ming_sim/decree.py` | `resolve_directives` + `_settle_after_narrative` 编排；可复用核 `pre_settle` / `settle_with_delta`；二者均转发调用方 `scene_registry`（#542）；`resolve_settling_recovery` / `persist_resolve_context` 恢复机械 |
-| `ming_sim/audience_night.py` | `auto_close_open_night` / `close_night`：颁诏 / 退朝遇开夜时顺势自动收夜（`session.resolve_turn` / `pre_settle` / `resolve_directives` 起手，#498）；`scene_registry` 调用方所有，start→并行→终局前 join，失败 OPEN fail-closed |
+| `ming_sim/audience_night.py` | `auto_close_open_night` / `close_night`：颁诏 / 退朝遇开夜时顺势自动收夜（`session.resolve_turn` / `pre_settle` / `resolve_directives` 起手，#498）；在飞消费 worker 终态（#1353 K10a，无 elapsed 409）；欠账并入过月 drain；`scene_registry` 调用方所有，start→并行→终局前 join，失败 OPEN fail-closed |
+| `ming_sim/audience_extraction.py` | 收夜 endorsement 批：一夜一批 single-flight；争用一次有界 join + 重读 bound（#1353 K10c）；未绑定 fail-closed 保持 OPEN，禁第二次 LLM |
 | `ming_sim/beat_orchestration.py` | `ChatTurnSceneRegistry` + `start_close_scene_on_registry` / `join_close_scene_on_registry`：收夜 scene 进既有 registry，不自建第二 executor（#542） |
 | `ming_sim/applier.py` | `atomic` 事务边界（`_SuspendableConnection`：内层 commit 暂停、executescript 拒绝、嵌套深度计数）+ `RejectionCollector` 拒收留痕契约 |
 | `ming_sim/error_pack.py` | `write_error_pack` 五件套诊断包 / `clear_for_resimulation` 重新推演逃生口 |
