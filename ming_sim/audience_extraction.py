@@ -12,7 +12,7 @@ DB transaction / runtime write gate；成功后短事务原子落背书，再允
 - **单轮多条账原子落账**（`db.settle_story_extraction` 走 `atomic`）。
 - **垃圾 shape / 抽取失败 → 响亮错误包 + 待补**（普通事实）；背书批失败 → fail-closed 收夜。
 - **补跑失败不锁档**：`catch_up_pending_extractions` 从不抛；只补普通 story/presence。
-- **收夜前清空普通待补**：`drain_pending_before_close`；仍有待补 → fail-closed。
+- **收夜前清空普通待补**：`drain_pending_before_close` 并入过月/收夜流；仍有待补 → 失败单源（LLMUnavailable）。
 
 本模块只提供纯函数 + 编排入口，不持时序状态机；写库须走真实 runtime write_gate。
 """
@@ -883,12 +883,17 @@ def drain_pending_before_close(
     write_gate: threading.Lock,
     night_id: int,
     extractor_agent: Any = None,
+    on_event=None,
 ) -> None:
     """收夜是史实书写边界（ADR 0036）：收夜前强制同步补跑普通待补一次。
 
-    仍有待补 → **fail-closed 中止收夜**。不含 endorsement batch。
+    仍有待补 → **失败单源**（LLMUnavailable / CLI_RUNNER_PLAYER_MESSAGE）；
+    玩家重按过月=重试整段。不含 endorsement batch。
     close-owned：显式 allow_closing，使 CLOSING 下 ordinary residue 可落账。
+    on_event：过月流式进度；补跑 stage 并入同一进度面（#1353 fold-in）。
     """
+    from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
+
     catch_up_pending_extractions(
         db=db,
         llm_config=llm_config,
@@ -896,25 +901,25 @@ def drain_pending_before_close(
         night_id=int(night_id),
         extractor_agent=extractor_agent,
         allow_closing=True,
+        on_event=on_event,
     )
     remaining = db.count_pending_story_extractions(night_id=int(night_id))
     if remaining > 0:
         rows = db.list_unextracted_replies(night_id=int(night_id))
         ids = [int(r.get("chat_turn_id") or 0) for r in rows]
-        message = (
+        technical = (
             "收夜中止：本夜仍有未抽取落账的回话（待补），"
-            f"chat_turn_ids={ids}。夜保持开启，可原地重试补跑。"
+            f"chat_turn_ids={ids}。"
         )
-        pack = write_audience_error_pack(
+        write_audience_error_pack(
             kind="pending_extraction",
-            message=message,
+            message=technical,
             detail={"night_id": int(night_id), "chat_turn_ids": ids},
         )
-        raise AudienceNightError(
-            message,
+        raise LLMUnavailable(
+            CLI_RUNNER_PLAYER_MESSAGE,
             code="pending_extraction",
-            error_pack_path=pack,
-            detail={"night_id": int(night_id), "chat_turn_ids": ids},
+            provider_message=technical,
         )
 
 

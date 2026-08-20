@@ -2,7 +2,7 @@
 
 公开 seam：开夜 → 宣人入殿账 → 对话轮锚定 → 收夜；按夜取账/对话；
 廉价死账校验；常在员额动态解析；夜×结算顺势收夜；收夜提交幂等游标；
-在飞回话 fail-closed。
+在飞/待补回话并入收夜流程处理完再结算，玩家无感；仅统一重试耗尽才走失败单源。
 
 口令账标签由本模块引擎常量写入——确定性写读，restore 不解析自由文本。
 """
@@ -1032,37 +1032,48 @@ def _raise_pending_extraction(
     rows: Optional[Sequence[Mapping[str, Any]]] = None,
     missing_deps: bool = False,
 ) -> None:
-    """由当前 list_unextracted 快照构造 pending_extraction（禁 stale ids）。"""
+    """欠账抽取耗尽 → 既定失败单源（#1353 fold-in）。
+
+    诊断细节进 error pack / provider_message；玩家 message 唯一走
+    CLI_RUNNER_PLAYER_MESSAGE。禁玩家可见欠账拒绝面与手动补写入口。
+    """
+    from ming_sim.exceptions import LLMUnavailable
+    from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
+
     snap = list(rows) if rows is not None else _pending_extraction_rows(db, int(night_id))
     ids = [int(r.get("chat_turn_id") or 0) for r in snap]
     if missing_deps:
-        message = (
+        technical = (
             f"收夜中止：本夜仍有 {len(ids)} 条待补抽取，且无 LLM/写锁可清空"
-            f"（chat_turn_ids={ids}）。夜保持开启，可原地重试补跑。"
+            f"（chat_turn_ids={ids}）。"
         )
     else:
-        message = (
+        technical = (
             "收夜中止：本夜仍有未抽取落账的回话（待补），"
-            f"chat_turn_ids={ids}。夜保持开启，可原地重试补跑。"
+            f"chat_turn_ids={ids}。"
         )
-    pack = write_audience_error_pack(
-        kind="pending_extraction", message=message,
+    write_audience_error_pack(
+        kind="pending_extraction", message=technical,
         detail={"night_id": int(night_id), "chat_turn_ids": ids},
     )
-    raise AudienceNightError(
-        message, code="pending_extraction", error_pack_path=pack,
-        detail={"night_id": int(night_id), "chat_turn_ids": ids},
+    # code 保留 pending_extraction 供引擎内 heal 重拍；玩家只见单源文案。
+    raise LLMUnavailable(
+        CLI_RUNNER_PLAYER_MESSAGE,
+        code="pending_extraction",
+        provider_message=technical,
     )
 
 
 def _drain_story_extraction_or_fail_closed(
     db: Any, night_id: int, *, llm_config: Any, write_gate: Any,
     extractor_agent: Any = None,
+    on_event: Optional[Callable[[str, str], None]] = None,
 ) -> None:
-    """收夜前清空普通待补抽取（ADR 0036）——引擎侧强制闸。
+    """收夜前清空普通待补抽取（ADR 0036）——并入过月/收夜流，玩家无感。
 
-    只补 story/presence；不含 endorsement batch。有待补 → 强制同步补跑；仍有 →
-    fail-closed。LLM 在 write_gate 外跑（drain 内 settle 才短持锁）。
+    只补 story/presence；不含 endorsement batch。有待补 → 强制同步补跑（进度经
+    on_event 并入过月 SSE）；仍有 → 失败单源（LLMUnavailable）。LLM 在 write_gate
+    外跑（drain 内 settle 才短持锁）。
 
     write_gate 必须是调用方原始锁（或 None）——禁传入 _gate_cm(nullcontext)，
     否则 `write_gate is None` 卫兵被架空（#1353 嫌疑缝②）。
@@ -1079,6 +1090,7 @@ def _drain_story_extraction_or_fail_closed(
     drain_pending_before_close(
         db=db, llm_config=llm_config, write_gate=write_gate, night_id=int(night_id),
         extractor_agent=extractor_agent,
+        on_event=on_event,
     )
 
 
@@ -1109,6 +1121,7 @@ def close_night(
     endorsement_extractor_agent: Any = None,
     scene_registry: Any = None,
     close_chat_turn_id: int = 0,
+    on_event: Optional[Callable[[str, str], None]] = None,
 ) -> Dict[str, Any]:
     """收夜：短写前提 → 无锁普通补抽 + 夜级 endorsement-only 批 → 短写终局。
 
@@ -1282,8 +1295,11 @@ def close_night(
         _drain_story_extraction_or_fail_closed(
             db, int(night_id), llm_config=llm_config, write_gate=write_gate,
             extractor_agent=extractor_agent,
+            on_event=on_event,
         )
     except Exception as drain_exc:
+        from ming_sim.exceptions import LLMUnavailable
+
         cleanup_exc: BaseException | None = None
         if close_started and reg is not None:
             try:
@@ -1298,19 +1314,19 @@ def close_night(
                 db, night_id, status=NIGHT_STATUS_OPEN, closed_at=None,
                 close_commit_cursor=0,
             )
-        # 清理后按 list_unextracted 单真源重拍——error.ids 与 pending API 必同集。
-        # 不递归重入；空集 → 请玩家原地重试。
+        # 清理后按 list_unextracted 单真源重拍。欠账耗尽 → 失败单源（非玩家 CTA 409）。
+        # 不递归重入；空集 → close_retry（竞态全愈，玩家重按过月）。
         is_pending_block = (
-            isinstance(drain_exc, AudienceNightError)
+            isinstance(drain_exc, LLMUnavailable)
             and getattr(drain_exc, "code", None) == "pending_extraction"
         )
         if is_pending_block:
             still = _pending_extraction_rows(db, int(night_id))
             if still:
                 try:
-                    # 单点构造 escaping error：禁 `from drain_exc`（stale ids 经 cause 拼 409）。
+                    # 单点构造 escaping error：禁 `from drain_exc`（stale ids 经 cause 漏出）。
                     _raise_pending_extraction(db, int(night_id), rows=still)
-                except AudienceNightError as fresh:
+                except LLMUnavailable as fresh:
                     if cleanup_exc is not None:
                         raise fresh from cleanup_exc
                     raise fresh
@@ -1481,6 +1497,7 @@ def auto_close_open_night(
     scene_registry: Any = None,
     close_chat_turn_id: int = 0,
     body: str = "",
+    on_event: Optional[Callable[[str, str], None]] = None,
 ) -> Optional[Dict[str, Any]]:
     """颁诏/过回合前：有开夜则顺势收夜；无开夜返回 None。
 
@@ -1488,6 +1505,7 @@ def auto_close_open_night(
     endorsement LLM 期间释放。调用方不得在外层持同一把非重入锁再传入 nullcontext。
     scene_registry：既有 ChatTurnSceneRegistry（session 持有）；start_close 后与
     endorsement 并行，终局写入前 join；不自建第二 registry/executor。
+    on_event：过月流式进度回调；欠账补跑 stage 并入同一进度面（#1353 fold-in）。
     """
     open_n = get_open_night(db)
     if open_n is None:
@@ -1509,6 +1527,7 @@ def auto_close_open_night(
         endorsement_extractor_agent=endorsement_extractor_agent,
         scene_registry=scene_registry,
         close_chat_turn_id=int(close_chat_turn_id or 0),
+        on_event=on_event,
     )
 
 

@@ -4,7 +4,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { useAudienceChat, type SendChatCallbacks } from "./useAudienceChat";
 import { ChatModal } from "./components/chatModal";
-import { retryAudienceStoryExtraction } from "./extractionRetry";
 import type { ChatResponse, Minister, ServerChatMessage } from "./types";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -95,7 +94,6 @@ function mount(scrollMode: "audience" | "legacy" = "legacy", refreshOnEnd = fals
   return {
     hookRef, busyRef, rows,
     setModal: (m: string) => act(() => setModalRef.current(m)),
-    retryExtraction: () => retryAudienceStoryExtraction(invalidateScrollRef.current),
   };
 }
 
@@ -144,45 +142,6 @@ describe("读心投递（#499 经真实 useAudienceChat 生产控制器）", () 
 
     expect(scrollCalls).toBe(callsBeforeEnd + 1);
     expect(document.body.textContent).toContain("新落账场景");
-  });
-
-  it("补写成功且 pending 归零后复用同一代次重读公共卷轴", async () => {
-    let scrollCalls = 0;
-    let retried = false;
-    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-      if (String(url).includes("/api/audience/extraction/retry")) {
-        retried = true;
-        return sse([
-          { event: "stage", data: { content: "补写召对账本（1/1）" } },
-          { event: "done", data: { night_id: 24, count: 0, pending: [] } },
-        ]);
-      }
-      if (String(url).includes("/api/ministers/") && String(url).endsWith("/chat")) return jsonResp({
-        minister: MINISTER, history: [], suggestions: [], can_undo_last_chat: false,
-        campaign_id: "c1", night_id: 24,
-      });
-      if (String(url).includes("/api/audience/scroll")) {
-        scrollCalls += 1;
-        return jsonResp({
-          night_id: 24,
-          messages: !retried ? [] : [
-            { role: "scene", speaker: "", content: "补写完成场景", chat_turn_id: 8 },
-          ],
-        });
-      }
-      throw new Error(`unexpected request: ${url}`);
-    }));
-    const { hookRef, retryExtraction } = mount("audience", true);
-    await tick();
-    await act(async () => { await hookRef.current!.loadHistory("温体仁"); });
-    await tick();
-    const callsBeforeRetry = scrollCalls;
-
-    await act(async () => { await retryExtraction(); });
-    await tick();
-
-    expect(scrollCalls).toBe(callsBeforeRetry + 1);
-    expect(document.body.textContent).toContain("补写完成场景");
   });
 
   it("accepted 后 provider failure 以持久 identity 淘汰 generating 快照且保留其它轮", async () => {

@@ -456,9 +456,7 @@ export type ReplyRetry = {
   question: string;
 };
 
-/** #501：待补叙事抽取状态（显眼提示 + 原地重试）。
- * #1353：与 drain 挡收夜同真源；真欠账 count>0 露补写 CTA。
- */
+/** #501 / #1353：待补叙事抽取诊断状态（不再驱动玩家 CTA）。 */
 export type ExtractionPendingStatus = {
   night_id: number;
   count: number;

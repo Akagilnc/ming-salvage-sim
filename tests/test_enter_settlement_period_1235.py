@@ -286,11 +286,13 @@ def test_web_entry_captures_before_await_close(web_game, monkeypatch):
 
 
 def test_true_failure_pending_extraction_exits_display(web_game, monkeypatch, tmp_path):
-    """AC2：drain 真失败 → 409 人话 + settlement_display 退出（≠ 未了在办）。"""
+    """AC2 / #1353 fold-in：drain 真失败 → 失败单源 + settlement_display 退出（≠ 未了在办）。"""
+    from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
+
     game = web_game
     minister = _active_minister(game)
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
-    # 持续失败的抽取员 → drain fail-closed
+    # 持续失败的抽取员 → drain 失败单源
     monkeypatch.setattr(
         agents_mod, "create_audience_extractor_agent", lambda *a, **k: _BoomExtractor())
     before = _click_before(game.state)
@@ -313,12 +315,15 @@ def test_true_failure_pending_extraction_exits_display(web_game, monkeypatch, tm
             return await client.post("/api/decree/advance_without_edict")
 
     resp = asyncio.run(go())
-    assert resp.status_code == 409, resp.text
+    # 欠账类 409 已删；advance 走 LLMUnavailable → 412 失败单源
+    assert resp.status_code == 412, resp.text
     detail = resp.json()["detail"]
     text = detail if isinstance(detail, str) else (
         detail.get("message") if isinstance(detail, dict) else json.dumps(detail, ensure_ascii=False)
     )
-    assert "待补" in text or "未抽取" in text or "抽取" in text
+    assert CLI_RUNNER_PLAYER_MESSAGE in str(text)
+    assert "待补" not in str(text)
+    assert "补写" not in str(text)
     # 点即入曾发生
     assert saw_capture.get("snap") == before
     # 真失败另形：展示态退出
@@ -327,7 +332,7 @@ def test_true_failure_pending_extraction_exits_display(web_game, monkeypatch, tm
     assert payload["turn"]["settlement_display"] is False
     for k in MONTH_OPEN_KEYS:
         assert payload["metrics"][k] == int(game.state.metrics[k])  # 活值，非冻快照
-    # 夜保持开（0036 原意），可重试
+    # 夜保持开（0036 原意），可重按过月
     assert an.get_night(game.db, nid)["status"] == an.NIGHT_STATUS_OPEN
     assert game.db.count_pending_story_extractions(night_id=nid) >= 1
     assert game.db.get_story_extract_status(ctid) in ("", "pending")
@@ -366,7 +371,12 @@ def test_true_failure_issue_exits_display(web_game, monkeypatch, tmp_path):
             return await client.post("/api/decree/issue", json={})
 
     resp = asyncio.run(go())
-    assert resp.status_code == 409, resp.text
+    from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
+    # 欠账类 409 已删；issue 走 LLMUnavailable → 400 失败单源
+    assert resp.status_code == 400, resp.text
+    detail = resp.json().get("detail")
+    blob = detail if isinstance(detail, str) else json.dumps(detail or {}, ensure_ascii=False)
+    assert CLI_RUNNER_PLAYER_MESSAGE in blob
     assert saw.get("snap") == before  # 点即入曾发生
     assert game.db.get_month_open_snapshot(turn) is None
     assert game.state_payload()["turn"]["settlement_display"] is False

@@ -2650,6 +2650,7 @@ class GameSession:
         # accept_settlement_period：FRONT_HALF_DONE 跳过（恢复态已有快照/半程活值不可重写）。
         # Web 入口另在 await/close 前先 capture（点即入时序）；此处幂等兜底 CLI/直调。
         from ming_sim.audience_night import AudienceNightError, auto_close_open_night
+        from ming_sim.exceptions import LLMUnavailable
         from ming_sim.month_open_snapshot import (
             accept_settlement_period,
             exit_settlement_display_on_failure,
@@ -2660,6 +2661,7 @@ class GameSession:
         # Web callers must invoke auto_close outside any outer runtime write gate
         # (see web_app issue/stream/no-edict) so this is typically already-closed.
         # CLI is single-writer: None write_gate = no lock around LLM.
+        # #1353：欠账补跑并入过月 on_event 进度；耗尽走 LLMUnavailable 失败单源。
         try:
             auto_close_open_night(
                 self.db, self.state,
@@ -2670,9 +2672,10 @@ class GameSession:
                 llm_config=getattr(self, "llm_config", None),
                 write_gate=None,
                 scene_registry=self._scene_registry,
+                on_event=on_event,
             )
-        except AudienceNightError:
-            # #1235 真失败另形：0036 收夜 fail-closed 后人话中止 + 出展示态。
+        except (AudienceNightError, LLMUnavailable):
+            # #1235 真失败另形：收夜中止后人话 + 出展示态（欠账耗尽=失败单源）。
             exit_settlement_display_on_failure(self.db, self.state)
             raise
         # 结束回合才执行“不回=默认同意”；旧式 turn_directives 沿用既有确认口。

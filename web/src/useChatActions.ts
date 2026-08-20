@@ -1,13 +1,11 @@
 import React from "react";
 import { api } from "./api";
-import { retryAudienceStoryExtraction } from "./extractionRetry";
 import { mergePendingActionFailures, refreshRetriedPendingActionFailures } from "./chatFailures";
 import type { AudienceHistoryData, SendChatCallbacks } from "./useAudienceChat";
 import type {
   ChatIdentity,
   ChatResponse,
   ChatUndoResponse,
-  ExtractionPendingStatus,
   GameState,
   Minister,
   ModalName,
@@ -79,7 +77,6 @@ export function useChatActions({
   const [chatNotice, setChatNotice] = React.useState("");
   const [chatFailures, setChatFailures] = React.useState<PendingActionFailure[]>([]);
   const [replyRetry, setReplyRetry] = React.useState<ReplyRetry | null>(null);
-  const [extractionPendingCount, setExtractionPendingCount] = React.useState(0);
   const [canUndoLastChat, setCanUndoLastChat] = React.useState(false);
   const [composerHint, setComposerHint] = React.useState("");
   const [input, setInput] = React.useState("");
@@ -114,27 +111,6 @@ export function useChatActions({
       setChatFailures(data.pending_action_failures || []);
     }
   }, [loadHistoryProjection, selectedMinisterRef]);
-
-  const refreshExtractionPending = React.useCallback(async () => {
-    // #501：本开夜待补叙事抽取——显眼提示取数；失败静默（不挡召对）。
-    // #1353：真欠账 count>0 露补写 CTA；不再读 closing+zero 自愈 hint。
-    try {
-      const data = await api<ExtractionPendingStatus>("/api/audience/extraction/pending");
-      setExtractionPendingCount(Number(data?.count || 0));
-    } catch {
-      /* 取数失败不锁面板 */
-    }
-  }, []);
-
-  // 召对/拟诏台打开时拉待补状态（#1312 颁诏 409 后拟诏台 CTA 同缝），低频刷新可自愈。
-  React.useEffect(() => {
-    if (activeModal !== "chat" && activeModal !== "edict") return;
-    void refreshExtractionPending();
-    const id = window.setInterval(() => {
-      void refreshExtractionPending();
-    }, 8000);
-    return () => window.clearInterval(id);
-  }, [activeModal, refreshExtractionPending, selectedMinister]);
 
   React.useEffect(() => {
     if (!selectedMinister) {
@@ -236,8 +212,6 @@ export function useChatActions({
           setSelectedMinister(data.next_minister);
           setActiveModal("chat");
         }
-        // 正常回话完成后刷新待补抽取状态（可能有新的失败待补）。
-        void refreshExtractionPending();
         if (data.court_action === "dismiss") {
           clearPendingText();
         }
@@ -355,28 +329,6 @@ export function useChatActions({
       setChatNotice("已重新生成回话。");
       invalidateAudienceScroll();
       void refreshDurableProjection({ secretOrders: true });
-      void refreshExtractionPending();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy("");
-    }
-  };
-
-  const retryStoryExtraction = async () => {
-    // #501：原地重试补跑叙事抽取。
-    // #1312：SSE stage 分段进度反馈（既有 settle 同形），禁干等无反馈。
-    if (busy) return;
-    setBusy("重试补写账本");
-    setError("");
-    try {
-      const data = await retryAudienceStoryExtraction(invalidateAudienceScroll, {
-        onStage: (text) => setBusy(text || "重试补写账本"),
-      });
-      setExtractionPendingCount(Number(data?.count || 0));
-      if ((data?.count || 0) === 0) {
-        setChatNotice("待补账本已补写完毕。");
-      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -458,8 +410,6 @@ export function useChatActions({
     chatFailures,
     activeChatFailures,
     replyRetry,
-    extractionPendingCount,
-    refreshExtractionPending,
     canUndoLastChat,
     composerHint,
     setComposerHint,
@@ -471,7 +421,6 @@ export function useChatActions({
     sendChat,
     undoLastChat,
     retryInterruptedReply,
-    retryStoryExtraction,
     retryPendingAction,
     openFailureRecovery,
     surfacePendingActionFailures,
