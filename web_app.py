@@ -1026,7 +1026,8 @@ class WebGame:
     ) -> Optional[WriteTicket]:
         """#1353：起跑领票。返回票据；队列已 seal（生命周期 drain）→ None 拒入。
 
-        队列长度即在途事实来源；调用方须在 finally 里 _complete_pending_write(ticket)。
+        队列长度即在途事实来源；领票方须在 finally 里 _complete_pending_write(ticket)。
+        spawn 路由 `_spawn_pending_write_thread` 单真源 claim/try/finally 包任意 callee。
         key 用于撤回轮 cancel（ADR 0038）——尾随建议 key=("turn", chat_turn_id)。
         """
         return self._runtime_write_queue().claim(key=key if key is not None else ("pending",))
@@ -2581,10 +2582,11 @@ class WebGame:
 
         读心是单一依赖任务、调用方随即等其结果——无需另起 executor/Future。回话已完成并
         落库（读心闸门=非空完整回话，喂真实 reply 而非问句）；写库经票据执行 seam。
-        起跑已领票时传 pending_ticket，finally 空放行/完成。失败不回滚回话。
-        无票且 seal → 零 LLM 零写（禁裸 write_gate 回落）。
+        #1353：spawn 路票据生命周期在 spawner finally；本腿只消费票、不归还交接票。
+        直接调用无票时自领并自还。失败不回滚回话。无票且 seal → 零 LLM 零写。
         """
         del owns_pending  # 票据路径取代布尔 ownership
+        own_ticket = False
         try:
             reply = str(minister_reply or "")
             if not chat_turn_id or not reply.strip():
@@ -2593,6 +2595,7 @@ class WebGame:
                 pending_ticket = self._mark_pending_write(
                     key=("turn", int(chat_turn_id)),
                 )
+                own_ticket = pending_ticket is not None
             if pending_ticket is None:
                 return None  # seal/拒票：无第二入口
             # 撤回后 ticket 已 cancel：禁复活写（ADR 0038）。
@@ -2633,8 +2636,8 @@ class WebGame:
                     pass
             return result if isinstance(result, dict) else None
         finally:
-            # spawn 交接或自领：本腿收口；未领到票则 noop。
-            if pending_ticket is not None:
+            # 仅自领票由本腿收口；spawn 交接票由 spawner finally 归还（stub 安全）。
+            if own_ticket:
                 self._complete_pending_write(pending_ticket)
 
     def _trail_highlight_judge_after_reply(
@@ -2652,14 +2655,12 @@ class WebGame:
         判官失败边界在 run_highlight_judge（带日志）；此处只收窄写库 sqlite 异常并 warning。
         写库经票据执行 seam；调用方已持闸时传 gate_already_held=True，禁同线程二次 acquire。
         匹配/剥离在前端，此处只存短语。无票且 seal → 零 LLM 零写。
+        #1353：spawn 路票据由 spawner finally 归还；本腿只消费交接票。直接调用无票时自领自还。
         """
         own_ticket = False
-        caller_owned = pending_ticket is not None and not gate_already_held
         mid = int(message_id or 0)
         reply = str(minister_reply or "")
         if mid <= 0 or not reply.strip():
-            if caller_owned:
-                self._complete_pending_write(pending_ticket)
             return []
         # 未由调用方领票且非持闸兼容路 → 本腿自领 turn key 票（生产写必经 seam）。
         if pending_ticket is None and not gate_already_held and int(chat_turn_id or 0) > 0:
@@ -2704,8 +2705,8 @@ class WebGame:
                 return []
             return phrases
         finally:
-            if own_ticket or caller_owned:
-                # 自领或 spawn 交接票由本腿收口；持闸兼容票由调用方 complete。
+            # 仅自领票由本腿收口；spawn 交接/持闸兼容票由 spawner 或调用方归还。
+            if own_ticket:
                 self._complete_pending_write(pending_ticket)
 
     def _trail_extraction_after_reply(
@@ -2720,15 +2721,17 @@ class WebGame:
         """#501：回话 done 后尾随叙事抽取落账（与读心并行——二者皆只依赖已完成回话，P5）。
 
         核在 `audience_extraction.trail_extraction_after_reply`（Web/CLI 共用）；本方法只
-        包票据执行 seam。起跑领票经 pending_ticket 传入，finally 完成/空放行。
-        无票则自领；seal 拒票 → 零写（禁裸 gate）。
+        包票据执行 seam。#1353：spawn 路票据由 spawner finally 归还；本腿只消费交接票。
+        直接调用无票时自领自还；seal 拒票 → 零写（禁裸 gate）。
         """
         del owns_pending
+        own_ticket = False
         try:
             if pending_ticket is None and int(chat_turn_id or 0) > 0:
                 pending_ticket = self._mark_pending_write(
                     key=("turn", int(chat_turn_id)),
                 )
+                own_ticket = pending_ticket is not None
             if pending_ticket is None:
                 return None
             if pending_ticket.cancelled or pending_ticket._done:
@@ -2744,7 +2747,8 @@ class WebGame:
         except TicketCancelled:
             return None
         finally:
-            if pending_ticket is not None:
+            # 仅自领票由本腿收口；spawn 交接票由 spawner finally 归还（stub 安全）。
+            if own_ticket:
                 self._complete_pending_write(pending_ticket)
 
     def _spawn_pending_write_thread(
@@ -2752,8 +2756,9 @@ class WebGame:
         *,
         ticket_key: Optional[Any] = None,
     ) -> Optional[threading.Thread]:
-        """起跑领票后交接票据起后台线程（#1353：标了必收敛）。
+        """起跑领票 → try 调任意 callee → finally 归还（#1353：生命周期单真源在 spawner）。
 
+        包住 stub/异常/早退——callee 不得再负责交接票归还（腿内归还副本已删）。
         `Thread.start()` 抛异常时补偿 complete 再上抛，绝不泄漏票据致 barrier/drain 永阻。
         队列 seal 则不起、返 None（调用方不得另开无票旁路）。
         返回 Thread 供 stream join 收 SSE；非 stream 可忽略。
@@ -2761,10 +2766,15 @@ class WebGame:
         ticket = self._mark_pending_write(key=ticket_key)
         if ticket is None:
             return None
+
+        def _runner() -> None:
+            try:
+                target(*args, pending_ticket=ticket)
+            finally:
+                self._complete_pending_write(ticket)
+
         thread = threading.Thread(
-            target=target,
-            args=args,
-            kwargs={"pending_ticket": ticket},
+            target=_runner,
             daemon=True,
             name=name,
         )
@@ -2800,6 +2810,7 @@ class WebGame:
 
         `catch_up_pending_extractions` 从不抛——补跑失败标待补、不锁档，**永不进启动致命路径**。
         在后台线程跑，不阻塞存档加载。写经已领票据 seam（禁裸 gate）。
+        #1353：spawn 路票据由 spawner finally 归还；本函数不归还交接票（complete 幂等保直接调用钉）。
         """
         del owns_pending
         try:
@@ -2819,6 +2830,8 @@ class WebGame:
             # 但**留痕不静默**（窄捕 + log，账仍待补候下轮 drain/重试）。
             tlog(f"[audience-extraction] 启动补跑意外故障（不锁档、已忽略）：{exc}")
         finally:
+            # 直接调用钉（test_startup_catchup_uses_ticketed_gate_not_bare）仍依赖此处收口；
+            # spawn 路 spawner 也会 complete——complete 幂等，双路径皆安全。
             if pending_ticket is not None:
                 self._complete_pending_write(pending_ticket)
 
@@ -3026,7 +3039,7 @@ class WebGame:
                 ev_queue.put({"type": "done", "payload": payload or {}})
                 answer = str((payload or {}).get("answer") or "")
                 message_id = int((payload or {}).get("minister_message_id") or 0)
-                # #1353：三腿统一经 _spawn_pending_write_thread（claim→start→失败 vacate）；
+                # #1353：三腿统一经 _spawn_pending_write_thread（claim→try callee→finally 归还）；
                 # seal/claim 拒绝 → 不起线程、零 LLM 零写。整轮票在 spawn 后空放行。
                 turn_key = ("turn", int(chat_turn_id)) if chat_turn_id else None
                 extraction_thread: Optional[threading.Thread] = None
