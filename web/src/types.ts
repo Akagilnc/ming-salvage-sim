@@ -460,7 +460,7 @@ export type ReplyRetry = {
 };
 
 /** #501：待补叙事抽取状态（显眼提示 + 原地重试）。
- * #1353/#1381：closing + count=0 时附 player_hint（已自愈可重试）。
+ * #1353：与 drain 挡收夜同真源；真欠账 count>0 露补写 CTA。
  */
 export type ExtractionPendingStatus = {
   night_id: number;
@@ -471,7 +471,6 @@ export type ExtractionPendingStatus = {
     night_id: number;
   }>;
   night_status?: string;
-  player_hint?: string;
 };
 
 export type ChatIdentity = { campaign_id: string; night_id: number; chat_turn_id: number };
