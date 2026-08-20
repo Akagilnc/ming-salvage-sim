@@ -198,7 +198,8 @@ describe("朝堂空 layout 合法态（#1290/#1332）", () => {
         <MinisterCardList
           list={[
             minister({ name: "黄立极", office: "首辅,中极殿大学士" }),
-            minister({ name: "施凤来", office: "次辅" }),
+            // 非固定槽官职：松手不吸回 FIXED_SLOTS，才能钉「完成拖拽后回包不回滚」
+            minister({ name: "施凤来", office: "东阁大学士" }),
           ]}
           portraitPrefix="minister_"
           selectedMinister=""
@@ -234,44 +235,44 @@ describe("朝堂空 layout 合法态（#1290/#1332）", () => {
       }) as DOMRect;
 
     const cards = Array.from(host.querySelectorAll<HTMLElement>("button.minister-card"));
-    const huangCard = cards.find((el) => el.querySelector(".minister-name")?.textContent === "黄立极");
-    expect(huangCard).toBeTruthy();
+    const shiCard = cards.find((el) => el.querySelector(".minister-name")?.textContent === "施凤来");
+    expect(shiCard).toBeTruthy();
 
-    // 真拖拽：mousedown → mousemove(>3px) → mouseup。
-    // 首辅松手会吸回固定槽；要钉「回包不回滚」，须在仍持拖拽位移时让 fetch 落地
-    // （onMove 已写 savedPosRef；mouseup 仍派发以走完手势/卸监听）。
+    // 完整真实拖拽：mousedown → mousemove(>3px) → mouseup，之后再 resolve。
+    // 契约是「完成拖拽后回包不回滚」，不得在持拖时 resolve 开例外路径。
+    // 拖向左远槽（松手吸附 left:9≈37.7%/6.6%）；服务端回包瞄右近槽——两槽必须不同，mutation 才钉得死。
     await act(async () => {
-      huangCard!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, clientX: 100, clientY: 100 }));
+      shiCard!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, clientX: 500, clientY: 500 }));
     });
     await act(async () => {
-      window.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, clientX: 700, clientY: 100 }));
+      window.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, clientX: 100, clientY: 100 }));
+    });
+    await act(async () => {
+      window.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, clientX: 100, clientY: 100 }));
     });
 
-    const dragged = cardPos(host, "黄立极");
+    const dragged = cardPos(host, "施凤来");
     expect(dragged).not.toBeNull();
     expect(dragged!.left).not.toBe("");
-    // 契约前提：拖中坐标须异于将要回包的服务端 layout，否则钉不住回滚
-    expect(`${dragged!.left}|${dragged!.top}`).not.toBe("7.7%|53.2%");
+    // 契约前提：拖后吸附位须异于将要回包的服务端 layout 吸附位（右近 86.2%/53.2%），否则钉不住回滚
+    expect(`${dragged!.left}|${dragged!.top}`).not.toBe("86.2%|53.2%");
 
     await act(async () => {
-      // 非空且刻意不同于拖后：默认首辅锚点——若缺 savedPosRef 守卫会把本地拖拽滚回去
+      // 非空且刻意不同于拖后：右近槽锚点——若缺 savedPosRef 守卫会把本地拖拽滚回去
       resolveLayout({
         ok: true,
-        json: async () => ({ layout: JSON.stringify({ 黄立极: { px: 0.077, py: 0.532 } }) }),
+        json: async () => ({ layout: JSON.stringify({ 施凤来: { px: 0.9, py: 0.9 } }) }),
       });
       await Promise.resolve();
       await Promise.resolve();
     });
 
-    const after = cardPos(host, "黄立极");
+    const after = cardPos(host, "施凤来");
     expect(after).not.toBeNull();
     expect(after!.left).not.toBe("");
-    // pending 期间已拖 → 非空服务端 layout 回包不得回滚本地
+    // 完成拖拽后 → 非空服务端 layout 回包不得回滚本地
     expect(after).toEqual(dragged);
 
-    await act(async () => {
-      window.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, clientX: 700, clientY: 100 }));
-    });
     mountedRoots.push({ root, host });
   });
 });
