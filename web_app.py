@@ -4496,6 +4496,9 @@ async def api_create_directive(request: DirectiveRequest) -> Dict[str, Any]:
             )
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from None  # 恢复窗冻结指引
+    except LLMUnavailable as e:
+        # #1274 V-1 r6 / #1452：回禀产文失败 → 结构化 400，禁裸 500 / 固定戏内模板。
+        raise HTTPException(status_code=400, detail=_llm_error_detail(e)) from None
     return {
         "directive": {"id": dv.id, "text": dv.text, "status": dv.status},
         "directives": [game.directive_payload(item) for item in game.directive_rows()],
@@ -4535,6 +4538,9 @@ async def api_update_directive(directive_id: int, request: DirectivePatch) -> Di
             )
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from None
+    except LLMUnavailable as e:
+        # #1274 V-1 r6 / #1452：回禀产文失败 → 结构化 400，禁裸 500 / 固定戏内模板。
+        raise HTTPException(status_code=400, detail=_llm_error_detail(e)) from None
     return {"directives": [game.directive_payload(item) for item in game.directive_rows()]}
 
 

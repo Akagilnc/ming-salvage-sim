@@ -1383,11 +1383,14 @@ def compose_unknown_participant_inworld_report(
 ) -> str:
     """P7：把查无此人事实喂给 LLM，产大臣/通政司口吻回禀；禁模板当台词。
 
-    timeout_s：有界等待（capture 剩余预算）；None=不另加罩；≤0 或超时/失败 →
-    确定性戏内 fallback（仍非系统 409 术语），不得裸抛给玩家。
+    timeout_s：有界等待（capture 剩余预算）；None=不另加罩。
+    剩余预算≤0、超时或产文失败 → typed LLMUnavailable（#1299/#1310/#1452
+    失败单源 CLI_RUNNER_PLAYER_MESSAGE），玩家重下这道点名。
     """
+    from ming_sim.exceptions import LLMUnavailable
+    from ming_sim.llm_model import cli_runner_unavailable
+
     cleaned = _normalize_unknown_participant_names(names)
-    shown = "、".join(cleaned) if cleaned else "其人"
     if voice == "minister" and str(speaker_name or "").strip():
         role = f"大臣{str(speaker_name).strip()}"
     else:
@@ -1398,9 +1401,11 @@ def compose_unknown_participant_inworld_report(
         f"只输出回禀正文，不要标题、不要系统术语、不要 JSON。\n"
         f"事实：{fact}\n"
     )
-    fallback = f"臣查朝籍未有「{shown}」其人，此事不敢擅专，乞陛下明示。"
     if timeout_s is not None and float(timeout_s) <= 0:
-        return fallback
+        raise cli_runner_unavailable(
+            TimeoutError("查无此人回禀无剩余预算"),
+            backend="participant_escalate_report",
+        )
 
     def _produce() -> str:
         raw, _ = _run_backend_for_config(
@@ -1411,10 +1416,13 @@ def compose_unknown_participant_inworld_report(
             text = re.sub(r"^```\w*\n?", "", text)
             text = re.sub(r"\n?```$", "", text)
             text = text.strip()
-        # 抽取器 JSON / 空响 → 不用；只要非结构化戏内文。
+        # 抽取器 JSON / 空响 → 失败；只要非结构化戏内文。
         if text and not text.lstrip().startswith("{"):
             return text
-        return fallback
+        raise cli_runner_unavailable(
+            RuntimeError("查无此人回禀空响或非戏内文"),
+            backend="participant_escalate_report",
+        )
 
     try:
         if timeout_s is None:
@@ -1425,9 +1433,13 @@ def compose_unknown_participant_inworld_report(
             return fut.result(timeout=float(timeout_s))
         finally:
             pool.shutdown(wait=False, cancel_futures=True)
+    except LLMUnavailable:
+        raise
     except Exception as exc:
         _log(f"查无此人回禀产文失败：{exc}")
-    return fallback
+        raise cli_runner_unavailable(
+            exc, backend="participant_escalate_report",
+        ) from exc
 
 
 def _canon_person_id_key(raw: Any, *, db: Any, content: Any) -> Optional[str]:
@@ -1876,7 +1888,8 @@ def capture_manual_directive_payload(
 
     #1327 / #1274 V-1：空载零 LLM 直落 special_decree；非空载 LLM 有界等待（默认 30s
     总罩，自愈重试计入罩内）。超时/挂死 → special_decree 原文照落（不改参与人）。
-    真不在册耗尽 → 通政司戏内回禀 ValueError（不落草案、不除名）。
+    真不在册耗尽 → 通政司戏内回禀 ValueError（不落草案、不除名）；
+    回禀产文超时/失败 → typed LLMUnavailable（禁固定戏内模板当台词）。
     """
     directive_text = str(text or "").strip()
     fallback_mode = resolve_directive_mode(text, None, existing_mode)
@@ -1901,7 +1914,7 @@ def capture_manual_directive_payload(
         )
 
     # 有界等待：超时不堵死 HTTP/CLI；后台线程不 join（shutdown wait=False）。
-    # 总罩含自愈 + escalate 回禀；回禀只拿剩余预算，超时落确定性戏内 fallback。
+    # 总罩含自愈 + escalate 回禀；回禀只拿剩余预算，超时/失败 → LLMUnavailable。
     captured: Dict[str, Any]
     t0 = time.monotonic()
     try:
