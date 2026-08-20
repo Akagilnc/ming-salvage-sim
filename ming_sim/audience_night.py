@@ -1109,15 +1109,16 @@ def close_night(
     endorsement_extractor_agent: Any = None,
     scene_registry: Any = None,
     close_chat_turn_id: int = 0,
-    _healed_drain_retry: bool = False,
 ) -> Dict[str, Any]:
     """收夜：短写前提 → 无锁普通补抽 + 夜级 endorsement-only 批 → 短写终局。
 
     分相：
-    1. 在飞已清后，经调用方既有 ChatTurnSceneRegistry start_close（不立即 join）；
-       持 write_gate 标 CLOSING、提交 draft 前提。不得自建第二 registry/executor/Thread。
-    2. 释放 gate：清空普通 story 待补；endorsement-only LLM 与 close scene 并行
-       （无 DB transaction / 无 runtime write gate）；终局写入前 join close scene。
+    1. OPEN 期：等在飞回话清；有限 join 普通抽取 single-flight owner 后重读 DB；
+       经调用方既有 ChatTurnSceneRegistry start_close（不立即 join）；持 write_gate
+       原子复查并冻结 CLOSING、提交 draft 前提。不得自建第二 registry/executor/Thread。
+    2. 释放 gate：清空普通 story 待补（CLOSING restore drain 作崩溃恢复口）；
+       endorsement-only LLM 与 close scene 并行（无 DB transaction / 无 runtime write
+       gate）；终局写入前 join close scene。
     3. 重取 gate：原子落背书水位；consort/明发/收夜账/CLOSED。
 
     背书或 close scene 失败 → OPEN、cursor=0、draft identity 保留；scene 失败另走
@@ -1196,14 +1197,24 @@ def close_night(
         if night["status"] == NIGHT_STATUS_OPEN:
             # In-flight wait is gate-free (may sleep).
             wait_in_flight_clear(db, night_id, timeout_s=wait_timeout_s)
+            # #1353：OPEN 期有限 join 普通抽取 owner（single-flight 信号），join 后重读 DB；
+            # 禁在 CLOSING 后与后台 owner（allow_closing=False）争 settle。
+            from ming_sim.audience_extraction import join_pending_turn_extractions
+
+            join_pending_turn_extractions(
+                db, night_id=int(night_id), timeout_s=wait_timeout_s,
+            )
             # Start close scene on caller registry only — never join here; no ephemeral lifecycle.
             _start_close_scene()
             with gate:
+                # 持 write_gate 原子复查并冻结 CLOSING：owner 须同锁 settle，
+                # 冻结窗内不得半途落账；真欠账仍由后续 drain 读 DB 真源 fail-closed。
                 _set_night_fields(db, night_id, status=NIGHT_STATUS_CLOSING)
             night = get_night(db, night_id)
             assert night is not None
         else:
             # Resume CLOSING：仍无 body 时 start 同一 registry 缝（不自建平行生命周期）。
+            # CLOSING restore drain 留作 ADR 0036 崩溃恢复口（下方 phase-2 drain）。
             _start_close_scene()
 
         cursor = int(night["close_commit_cursor"] or 0)
@@ -1247,9 +1258,9 @@ def close_night(
         raise
 
     # ── Phase 2: gate-free ordinary catch-up + endorsement-only LLM ────────
-    # Ordinary story drain (LLM outside settle lock). Failure reopen keeps drafts.
-    # Close scene already started: drain 失败走 abandon（与 early cleanup 同形），
-    # 禁 join 拉长窗口致并发 heal 与 stale chat_turn_ids 双源（#1353）。
+    # Ordinary story drain (LLM outside settle lock). CLOSING restore drain =
+    # ADR 0036 崩溃恢复口；OPEN 期 join 已汇合在飞 owner，此处只清真欠账。
+    # drain 失败走 abandon（与 early cleanup 同形），禁 join 拉长双源窗。
     try:
         _drain_story_extraction_or_fail_closed(
             db, int(night_id), llm_config=llm_config, write_gate=write_gate,
@@ -1270,7 +1281,8 @@ def close_night(
                 db, night_id, status=NIGHT_STATUS_OPEN, closed_at=None,
                 close_commit_cursor=0,
             )
-        # #1353：清理后按 list_unextracted 单真源重拍——error.ids 与 pending API 必同集。
+        # 清理后按 list_unextracted 单真源重拍——error.ids 与 pending API 必同集。
+        # 不递归重入；空集 → 请玩家原地重试。
         is_pending_block = (
             isinstance(drain_exc, AudienceNightError)
             and getattr(drain_exc, "code", None) == "pending_extraction"
@@ -1279,46 +1291,17 @@ def close_night(
             still = _pending_extraction_rows(db, int(night_id))
             if still:
                 try:
-                    # close_night 单点构造 escaping error：禁 `from drain_exc`——
-                    # drain 内层自构可能带 stale chat_turn_ids；converter 走 __cause__
-                    # 会把 stale+fresh 拼进 409 正文（#1353 r1）。
+                    # 单点构造 escaping error：禁 `from drain_exc`（stale ids 经 cause 拼 409）。
                     _raise_pending_extraction(db, int(night_id), rows=still)
                 except AudienceNightError as fresh:
                     if cleanup_exc is not None:
                         raise fresh from cleanup_exc
                     raise fresh
-            # 并发 trail 已愈：夜已 OPEN，单次重入收夜（禁无限递归）。
-            if not _healed_drain_retry:
-                return close_night(
-                    db,
-                    state,
-                    night_id=int(night_id),
-                    content=content,
-                    registry=registry,
-                    auto=auto,
-                    body=body,
-                    wait_timeout_s=wait_timeout_s,
-                    crash_after_step=crash_after_step,
-                    on_step=on_step,
-                    beat_generator=beat_generator,
-                    knowledge_provider=knowledge_provider,
-                    llm_config=llm_config,
-                    write_gate=write_gate,
-                    extractor_agent=extractor_agent,
-                    endorsement_extractor_agent=endorsement_extractor_agent,
-                    scene_registry=scene_registry,
-                    close_chat_turn_id=0,
-                    _healed_drain_retry=True,
-                )
-            retry_msg = "收夜中止：请原地重试收夜或颁诏。"
             retry_exc = AudienceNightError(
-                retry_msg,
+                "收夜中止：请原地重试收夜或颁诏。",
                 code="close_retry",
                 detail={"night_id": int(night_id)},
             )
-            # #1353 r2：重入封顶支同首入支——禁 `from drain_exc`。
-            # drain 内层自构恒带（可能已愈的）chat_turn_ids；converter 走 __cause__
-            # 会把 stale ids 拼进 409 正文，与 pending API count==0 双源（首入支已断，此支漏网）。
             if cleanup_exc is not None:
                 raise retry_exc from cleanup_exc
             raise retry_exc
