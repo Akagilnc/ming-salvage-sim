@@ -619,7 +619,7 @@ def test_empty_endorsement_text_fail_closed_retryable_409(game, tmp_path, monkey
 
 
 def test_deleted_surface_no_healed_drain_retry_residue():
-    """删除面 grep 钉：自愈 hint + 玩家补写 CTA 零残留。"""
+    """删除面 grep 钉：自愈 hint + 玩家补写 CTA/CLI 命令/Web retry 入口零残留。"""
     import inspect
     import pathlib
 
@@ -628,6 +628,7 @@ def test_deleted_surface_no_healed_drain_retry_residue():
     for rel in (
         "ming_sim/audience_night.py",
         "ming_sim/audience_extraction.py",
+        "ming_sim/cli/terminal.py",
         "web_app.py",
         "web/src/useChatActions.ts",
         "web/src/useSettlementFlow.ts",
@@ -643,16 +644,22 @@ def test_deleted_surface_no_healed_drain_retry_residue():
             hits.append(f"{rel}:player_hint自愈")
         if "extractionHealedHint" in text:
             hits.append(f"{rel}:extractionHealedHint")
-        # #1353 fold-in：玩家可见补写 CTA 面
+        # #1353 fold-in：玩家可见补写 CTA / CLI 命令 / Web retry 包装
         for needle in (
             "data-testid=\"extraction-pending\"",
             "data-testid=\"edict-extraction-pending\"",
             "召对账待补写",
             "重试补写",
+            "retry extraction",
+            "retry_extraction",
             "onRetryExtraction",
             "extractionPendingCount",
             "retryStoryExtraction",
             "retryAudienceStoryExtraction",
+            "retry_story_extractions",
+            "/api/audience/extraction/retry",
+            "_retry_story_extraction_cli",
+            "_print_extraction_pending_hint",
         ):
             if needle in text:
                 hits.append(f"{rel}:{needle}")

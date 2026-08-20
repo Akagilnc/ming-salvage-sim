@@ -449,26 +449,6 @@ def _print_interrupted_reply_retry_hint(session: GameSession, minister_name: str
     )
 
 
-def _print_extraction_pending_hint(session: GameSession) -> None:
-    """#501：CLI 待补叙事抽取显眼提示——可输入「重试补写」原地重试。"""
-    db = getattr(session, "db", None)
-    if db is None or not hasattr(db, "list_unextracted_replies"):
-        return
-    try:
-        from ming_sim.audience_night import get_open_night
-        open_n = get_open_night(db) if hasattr(db, "conn") else None
-        nid = int(open_n["id"]) if open_n else None
-        rows = db.list_unextracted_replies(night_id=nid) or []
-    except Exception:
-        return
-    if not rows:
-        return
-    print(
-        f"【账本待补】本夜有 {len(rows)} 段召对账待补写。"
-        f"输入「重试补写」原地重试（不锁档，收夜前须清空）。\n"
-    )
-
-
 def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> None:
     """#505 CLI：复用已持久问话重新生成回话（与 web retry 同核语义：不重记问话）。"""
     db = getattr(session, "db", None)
@@ -566,32 +546,8 @@ def _trail_extraction_after_reply_cli(
         )
     except Exception as exc:
         # 共享核从不抛；到此=import 等外围故障——不锁档、不打断对话。
-        print(f"【账本抽取】尾随异常（已忽略、可稍后「重试补写」）：{exc}\n")
-
-
-def _retry_story_extraction_cli(session: GameSession) -> None:
-    """#501 CLI：原地重试补跑叙事抽取。"""
-    try:
-        from ming_sim.audience_extraction import catch_up_pending_extractions
-        from ming_sim.audience_night import get_open_night
-        db = session.db
-        open_n = get_open_night(db) if hasattr(db, "conn") else None
-        nid = int(open_n["id"]) if open_n else None
-        catch_up_pending_extractions(
-            db=db,
-            llm_config=getattr(session, "llm_config", None),
-            write_gate=_cli_write_gate(session),
-            night_id=nid,
-        )
-        remaining = []
-        if hasattr(db, "list_unextracted_replies"):
-            remaining = db.list_unextracted_replies(night_id=nid) or []
-        if remaining:
-            print(f"补写后仍有 {len(remaining)} 段待补，可稍后再试。\n")
-        else:
-            print("待补账本已补写完毕。\n")
-    except Exception as exc:
-        print(f"重试补写失败：{exc}\n")
+        # #1353：欠账唯一处理路=过月内部 drain；禁玩家手动补写 CTA。
+        print(f"【账本抽取】尾随异常（已忽略，过月时自动补跑）：{exc}\n")
 
 
 def minister_chat(session: GameSession, character: Character) -> str:
@@ -599,21 +555,18 @@ def minister_chat(session: GameSession, character: Character) -> str:
     other = next((n for n in session.content.characters if n != character.name), character.name)
     print(f"\n{character.name}入殿。可持续问话；done/退下 退下，“传{other}来”换人，quit 退朝审阅诏书，exit 退出游戏。")
     print(f"提示：陛下示意采纳后（如“准奏”），大臣会拟旨呈陛下核定。\n")
-    # #505 / #501：入殿时显眼提示系统层恢复入口（与 web ChatModal 同语义）。
+    # #505：入殿时显眼提示回话中断恢复入口（与 web ChatModal 同语义）。
+    # #1353：欠账抽取无玩家手动补写面——过月内部 drain 唯一处理路。
     _print_interrupted_reply_retry_hint(session, character.name)
-    _print_extraction_pending_hint(session)
     while True:
         question = input("朕问：").strip()
         if not question:
             print("可继续问话；若要让其退下，请输入 done。")
             continue
-        # #505 / #501 系统层恢复命令（非皇帝内容选项）。
+        # #505 系统层恢复命令（非皇帝内容选项）。禁抽取手动补写平行面（#1353）。
         low_q = question.lower().strip()
         if low_q in {"重试回话", "retry reply", "retry_reply"}:
             _retry_interrupted_reply_cli(session, character.name)
-            continue
-        if low_q in {"重试补写", "retry extraction", "retry_extraction"}:
-            _retry_story_extraction_cli(session)
             continue
         cmd = _handle_court_command(session, question, character)
         if cmd == "handled":
