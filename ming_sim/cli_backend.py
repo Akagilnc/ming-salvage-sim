@@ -90,6 +90,11 @@ _PI_BIN = os.environ.get("MING_SIM_PI_BIN", "pi")
 _CLI_BACKENDS = frozenset({"agy", "codex", "claude", "cursor", "kimi", "grok", "pi"})
 # 闸脚本 --runner choices 单一真源（不含 agy：闸形制未用）。脚本 import 此元组，禁各自复制。
 GATE_CLI_RUNNERS = ("codex", "claude", "cursor", "kimi", "grok", "pi")
+# 前端 CLI Runner 下拉稳定 UI 顺序；membership 仍以 _CLI_BACKENDS 为唯一准入（#1274 W1）。
+# GATE_CLI_RUNNERS ⊂ 此序（无 agy）；禁在 menuPage/gameMenu 再硬编一份。
+# #1274-qa-y1：pi 紧随 grok（UI_ORDER∩_CLI_BACKENDS → cli_runner_choices 自动带出）。
+_CLI_RUNNER_UI_ORDER = ("agy", "codex", "claude", "cursor", "kimi", "grok", "pi")
+_CLI_RUNNER_LABELS = {"agy": "agy（Gemini）"}
 # 实际消费 --model / cli_model 的 runner（describe_effective_model 用）；agy 走自身 ladder。
 _CLI_MODEL_RUNNERS = frozenset({"codex", "claude", "cursor", "kimi", "grok", "pi"})
 _CODEX_REASONING_BY_STRENGTH = {
@@ -123,6 +128,19 @@ _PI_THINKING_BY_STRENGTH = {
 # 表同缝。有传输表 = 支持；kimi/cursor 无独立档位旗，不入此集（另票/庭裁）。
 # 导出 frozenset——llm_config 谓词与 web payload 均消费此名，禁第二处手写名单。
 CLI_REASONING_STRENGTH_RUNNERS = frozenset({"codex", "claude", "grok", "pi"})
+
+
+def cli_runner_choices() -> List[Dict[str, str]]:
+    """前端「CLI Runner」下拉的单一真源（有序 {value,label}）。
+
+    membership = _CLI_BACKENDS；顺序 = _CLI_RUNNER_UI_ORDER。menuPage / gameMenu
+    经 config 端点共吃此清单，禁各自硬编码 option（#1274 W1 防单页漏更）。
+    每次返回独立副本。"""
+    return [
+        {"value": name, "label": _CLI_RUNNER_LABELS.get(name, name)}
+        for name in _CLI_RUNNER_UI_ORDER
+        if name in _CLI_BACKENDS
+    ]
 
 
 def cli_model_choices() -> Dict[str, List[Dict[str, str]]]:
@@ -1008,33 +1026,6 @@ def cli_backend_active(llm_config: Any = None) -> bool:
         except RuntimeError:
             return False
     return cli_backend_from_env() is not None
-
-
-# 已证「并发取数无 session 串话」的 CLI runner 白名单：仅 codex（每次 exec 带 --ephemeral，
-# 不落盘 session rollout，openai/codex#11435 workaround，#83 立项基础）。claude（claude -p 虽
-# 独立进程但并发未实测、有 rate-limit 顾虑）、agy（keychain auth-race，cmr 故意一次只跑一个）暂
-# 不在内——验证其并发安全后再加。月末 4-extractor 并行只对本名单启用，其余 runner 串行不变。
-_PARALLEL_SAFE_CLI_RUNNERS = {"codex"}
-
-
-def cli_backend_parallel_safe(llm_config: Any = None) -> bool:
-    """月末多 extractor 并发是否安全：实际后端 runner 须在 _PARALLEL_SAFE_CLI_RUNNERS 内（仅 codex）。
-
-    比 cli_backend_active 严：后者「是不是 CLI 后端」，本预言「这个 runner 并发取数安全吗」。
-    --ephemeral 隔离只对 codex 成立，故只有 codex 返 True；claude/agy/api/形态1 返 False=串行（#83）。
-
-    runner 解析**精确镜像 create_chat_model**（llm_model.py，extractor 真正用的后端）：
-    channel=='cli' → cli_runner or 旧 env or 'agy'；channel=='' → 旧 env（legacy/形态1）；'api' → 无 CLI。
-    与 cli_backend_active 用 _cli_config_parts（只认显式 cli channel）不同——否则 legacy env=codex
-    会被误判串行（cmr #83 codex R3：门控须与执行端同口径解 runner）。"""
-    channel = _llm_channel(llm_config)
-    if channel == "api":
-        return False
-    if channel == "cli":
-        runner = (getattr(llm_config, "cli_runner", "") or cli_backend_from_env() or "agy").strip().lower()
-    else:
-        runner = cli_backend_from_env()  # 空 channel（legacy/形态1）：env 回落，无 env → None
-    return runner in _PARALLEL_SAFE_CLI_RUNNERS
 
 
 def _messages_to_prompt(
@@ -2473,7 +2464,7 @@ def _extract_secret_order(
     raw = ""
     confirmation_future = None
     confirmation_pool = None
-    if cli_backend_parallel_safe(llm_config) and dossier_candidates:
+    if dossier_candidates:
         # Confirmation reads only the already-visible reply/candidate set, so it
         # can run beside field extraction; extracted proposals are intersected locally below.
         broad_proposals = [

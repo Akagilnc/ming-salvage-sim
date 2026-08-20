@@ -222,56 +222,21 @@ def _settle_capturing_parallel(game, monkeypatch, cfg):
     return captured.get("parallel")
 
 
-def test_settle_passes_parallel_for_cli_backend(game, monkeypatch):
-    """decree 按 cli_backend_parallel_safe 决定 parallel：codex CLI 后端 → True。"""
+def test_settle_passes_parallel_for_any_runner(game, monkeypatch):
+    """月末多 extractor 并发对任意 runner 一视同仁——不按模型退串行。
+
+    行为钉：非 codex runner（grok）与 api channel 均 parallel=True。
+    """
     from ming_sim.models import LLMConfig
-    cli_cfg = LLMConfig(api_key="cli-backend", base_url="", model="api-fallback",
-                        channel="cli", cli_runner="codex", cli_model="gpt-5.5", cli_timeout_seconds=240)
-    assert _settle_capturing_parallel(game, monkeypatch, cli_cfg) is True
-
-
-def test_settle_serial_for_non_cli_backend(game, monkeypatch):
-    """非 CLI 后端（api channel / 形态1）→ parallel=False，串行不变。"""
-    from ming_sim.models import LLMConfig
-    api_cfg = LLMConfig(api_key="sk-x", base_url="https://api.example/v1", model="gpt-x", channel="api")
-    assert _settle_capturing_parallel(game, monkeypatch, api_cfg) is False
-
-
-def test_settle_serial_for_non_codex_cli_runner(game, monkeypatch):
-    """非 codex 的 CLI runner（agy/claude，并发安全未证）→ parallel=False（cmr #83 codex R2：
-    --ephemeral 隔离只对 codex 成立，门控收窄到 codex）。"""
-    from ming_sim.models import LLMConfig
-    agy_cfg = LLMConfig(api_key="cli-backend", base_url="", model="api-fallback",
-                        channel="cli", cli_runner="agy", cli_model="", cli_timeout_seconds=240)
-    assert _settle_capturing_parallel(game, monkeypatch, agy_cfg) is False
-
-
-def test_cli_backend_parallel_safe_resolution(monkeypatch):
-    """门控 cli_backend_parallel_safe 与 create_chat_model 同口径解 runner（cmr #83 codex R3）：
-    codex（显式 cli / legacy env / cli channel 无 runner+env）→ True；agy/claude/api/形态1 → False。"""
-    import ming_sim.cli_backend as cb
-    from ming_sim.models import LLMConfig
-
-    def cfg(**kw):
-        kw.setdefault("api_key", "cli-backend")
-        kw.setdefault("base_url", "")
-        kw.setdefault("model", "m")
-        return LLMConfig(**kw)
-
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    # 显式 cli channel
-    assert cb.cli_backend_parallel_safe(cfg(channel="cli", cli_runner="codex")) is True
-    assert cb.cli_backend_parallel_safe(cfg(channel="cli", cli_runner="agy")) is False
-    assert cb.cli_backend_parallel_safe(cfg(channel="cli", cli_runner="claude")) is False
-    # api / 形态1（空 channel 无 env）
-    assert cb.cli_backend_parallel_safe(cfg(channel="api", base_url="https://x/v1", model="gpt")) is False
-    assert cb.cli_backend_parallel_safe(cfg(channel="")) is False
-    # legacy env（空 channel + 旧 env）——须与 create_chat_model 一致
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")
-    assert cb.cli_backend_parallel_safe(cfg(channel="")) is True            # legacy env=codex → 并行
-    assert cb.cli_backend_parallel_safe(cfg(channel="cli")) is True         # cli channel 无 runner → env codex
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
-    assert cb.cli_backend_parallel_safe(cfg(channel="")) is False           # legacy env=agy → 串行
+    grok_cfg = LLMConfig(
+        api_key="cli-backend", base_url="", model="api-fallback",
+        channel="cli", cli_runner="grok", cli_model="grok-4.5", cli_timeout_seconds=240,
+    )
+    api_cfg = LLMConfig(
+        api_key="sk-x", base_url="https://api.example/v1", model="gpt-x", channel="api",
+    )
+    assert _settle_capturing_parallel(game, monkeypatch, grok_cfg) is True
+    assert _settle_capturing_parallel(game, monkeypatch, api_cfg) is True
 
 
 def test_cli_trace_concurrent_writes_not_corrupted(tmp_path, monkeypatch):
