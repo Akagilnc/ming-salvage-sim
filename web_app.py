@@ -2836,13 +2836,24 @@ class WebGame:
                 self._complete_pending_write(pending_ticket)
 
     def _spawn_startup_extraction_catch_up(self) -> None:
-        """存档（重）加载后在后台发起一次抽取补跑（重开崩溃窗口丢的站台/进出账补落）。"""
+        """存档（重）加载后在后台发起一次抽取补跑（重开崩溃窗口丢的站台/进出账补落）。
+
+        #1353 r7：无待补时不领票——空 catch-up 占票会与同 session 的 barrier/
+        `_pending_writes_count` 钉竞态（全量 xdist 下 residual ticket）。有待补才
+        claim+spawn；key=("startup",) 与 turn/pending 区分。
+        """
         if not hasattr(self.db, "conn"):
+            return
+        if not hasattr(self.db, "list_unextracted_replies"):
+            return
+        pending = self.db.list_unextracted_replies() or []
+        if not pending:
             return
         self._spawn_pending_write_thread(
             self._run_startup_extraction_catch_up,
             (),
             "audience-startup-extraction-catchup",
+            ticket_key=("startup",),
         )
 
     def pending_story_extractions(self) -> Dict[str, Any]:
