@@ -554,7 +554,6 @@ export type MenuStatus = {
   saves: MenuSave[];
   campaigns?: MenuCampaign[];
   current_campaign?: string;
-  game_settings?: { hitl_min_decisions: number };
   llm: {
     channel?: "api" | "cli";
     base_url: string;
