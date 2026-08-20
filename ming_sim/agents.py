@@ -302,7 +302,7 @@ def create_promulgation_judge_agent(llm_config: LLMConfig, agno_db: SqliteDb) ->
     return Agent(
         name="颁布判官",
         id="promulgation-judge",
-        model=create_chat_model(cfg, temperature=0.2, max_tokens=cfg.max_tokens),
+        model=create_chat_model(cfg, temperature=0.2),
         instructions=[
             "你是 interim 颁布判官，只依据输入快照判断经外廷明发的全部案卷。"
             "派系阻力只能读 leverage 与 agenda，绝不可臆测或使用 satisfaction。",
@@ -353,7 +353,7 @@ def create_decree_writer_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agen
     return Agent(
         name="诏书润色官",
         id="decree-writer",
-        model=create_chat_model(llm_config, temperature=0.3, top_p=0.9, max_tokens=(max(1200, llm_config.max_tokens) if llm_config.max_tokens else None)),
+        model=create_chat_model(llm_config, temperature=0.3, top_p=0.9),
         instructions=[_ctx().game_world_prompt, _ctx().decree_writer_prompt],
         add_history_to_context=False,
         markdown=False,
@@ -365,7 +365,7 @@ def create_mindreading_agent(llm_config: LLMConfig) -> Agent:
     return Agent(
         name="御前近臣读心",
         id="mindreading",
-        model=create_chat_model(llm_config, temperature=0.4, max_tokens=240),
+        model=create_chat_model(llm_config, temperature=0.4),
         instructions=[
             "你是御前近臣。只依据用户提供的定性底账、当轮完整回话和你自己的见闻，"
             "低声向皇帝点明大臣未说尽的潜台词。",
@@ -381,7 +381,7 @@ def create_highlight_judge_agent(llm_config: LLMConfig) -> Agent:
     return Agent(
         name="高亮判官",
         id="highlight-judge",
-        model=create_chat_model(llm_config, temperature=0.2, max_tokens=240),
+        model=create_chat_model(llm_config, temperature=0.2),
         instructions=[
             "你是奏对高亮判官。读大臣已经说完的全文，挑出承重短语清单。",
             "organic markdown（如 **粗体**）只作信号，不要把标记本身当答案。",
@@ -403,7 +403,7 @@ def create_audience_extractor_agent(llm_config: LLMConfig) -> Agent:
     return Agent(
         name="召对叙事抽取员",
         id="audience_extractor",
-        model=create_chat_model(llm_config, temperature=0.2, max_tokens=600),
+        model=create_chat_model(llm_config, temperature=0.2),
         instructions=[
             "你从一段已经发生的君臣对话（皇帝问话 + 大臣回话 + 当前在场名单）里，抽取**显著的故事事实**，"
             "落成故事账。只搬运对话里真实演出的情节，不虚构、不引申、不复述整段原文。",
@@ -427,7 +427,7 @@ def create_endorsement_extractor_agent(llm_config: LLMConfig) -> Agent:
     return Agent(
         name="召对背书绑定员",
         id="endorsement_extractor",
-        model=create_chat_model(llm_config, temperature=0.1, max_tokens=800),
+        model=create_chat_model(llm_config, temperature=0.1),
         instructions=[
             "你只做一件事：把本夜对话里已经说出口的会签、当面站台、御笔手敕，"
             "绑定到输入给出的可背书案卷。只输出引用绑定，不重写、不复制故事正文。",
@@ -549,7 +549,7 @@ def create_season_simulator_agent(
     return Agent(
         name="月末推演日讲官",
         id="season-simulator",
-        model=create_chat_model(cfg, temperature=0.9, top_p=0.95, max_tokens=cfg.max_tokens, enable_thinking=True),
+        model=create_chat_model(cfg, temperature=0.9, top_p=0.95, enable_thinking=True),
         instructions=instructions,
         add_history_to_context=False,
         markdown=False,
@@ -584,7 +584,6 @@ def create_score_extractor_module_agent(
             cfg,
             temperature=0.1,
             top_p=0.7,
-            max_tokens=cfg.max_tokens,
             enable_thinking=False,
             force_json_output=True,
         ),
@@ -612,7 +611,6 @@ def create_json_sanitizer_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Age
             llm_config,
             temperature=0.0,
             top_p=0.7,
-            max_tokens=(max(4000, llm_config.max_tokens) if llm_config.max_tokens else None),
             enable_thinking=False,
             force_json_output=True,
         ),
@@ -634,7 +632,6 @@ def create_chapter_memory_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Age
             llm_config,
             temperature=0.5,
             top_p=0.85,
-            max_tokens=(max(1200, llm_config.max_tokens) if llm_config.max_tokens else None),
             enable_thinking=False,
             force_json_output=True,
         ),
@@ -655,7 +652,6 @@ def create_ending_summary_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Age
             llm_config,
             temperature=0.6,
             top_p=0.9,
-            max_tokens=(max(2400, llm_config.max_tokens) if llm_config.max_tokens else None),
             enable_thinking=True,
         ),
         instructions=[ctx.game_world_prompt, ctx.ending_summary_prompt],

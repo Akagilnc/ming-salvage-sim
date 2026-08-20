@@ -23,7 +23,6 @@ def test_runtime_cli_slot_builds_cli_llm_config_without_backend_env(monkeypatch)
         base_url="https://api.example.com/v1",
         model="gpt-api",
         api_key="",
-        max_tokens=8000,
         timeout_seconds=180,
         thinking_level="",
         advanced_model="",
@@ -90,7 +89,6 @@ def test_runtime_api_reasoning_strength_builds_llm_config(monkeypatch):
         base_url="https://api.example.com/v1",
         model="gpt-5",
         api_key="sk-test",
-        max_tokens=8000,
         timeout_seconds=180,
         thinking_level="",
         advanced_model="",
@@ -111,7 +109,6 @@ def test_runtime_env_legacy_advanced_thinking_builds_reasoning_strength(monkeypa
         base_url="https://api.example.com/v1",
         model="gpt-main",
         api_key="sk-test",
-        max_tokens=8000,
         timeout_seconds=180,
         thinking_level="",
         advanced_model="gpt-5.5",
@@ -153,7 +150,6 @@ def test_build_llm_config_switches_to_api_on_real_key_over_backend_env(monkeypat
         "https://api.example.com",
         "gpt-api",
         "sk-test",
-        max_tokens=16000,
         timeout_seconds=90,
         thinking_level="medium",
         advanced_model="",
@@ -641,7 +637,6 @@ def test_menu_save_llm_validates_api_channel_over_backend_env(monkeypatch):
         base_url="https://api.example.com",
         model="gpt-api",
         api_key="sk-test",
-        max_tokens=16000,
         timeout_seconds=90,
         thinking_level="medium",
     )))
@@ -666,7 +661,6 @@ def test_menu_status_treats_saved_cli_runtime_as_ready_without_api_key(monkeypat
         "base_url": "",
         "model": "",
         "api_key": "",
-        "max_tokens": "8000",
         "timeout_seconds": "180",
         "thinking_level": "",
         "advanced_model": "",
@@ -688,7 +682,6 @@ def test_game_llm_config_reports_active_cli_channel_without_fake_api_key(monkeyp
         api_key="cli-backend",
         base_url="https://api.example.com/v1",
         model="api-fallback",
-        max_tokens=8000,
         timeout_seconds=180,
         reasoning_strength="medium",
         channel="cli",
@@ -705,7 +698,6 @@ def test_game_llm_config_reports_active_cli_channel_without_fake_api_key(monkeyp
             "base_url": "https://api.example.com/v1",
             "model": "api-fallback",
             "api_key": "",
-            "max_tokens": "8000",
             "timeout_seconds": "180",
             "thinking_level": "",
             "advanced_model": "",
@@ -718,7 +710,6 @@ def test_game_llm_config_reports_active_cli_channel_without_fake_api_key(monkeyp
         "base_url": "https://api.example.com/v1",
         "model": "api-fallback",
         "api_key": "",
-        "max_tokens": "8000",
         "timeout_seconds": "180",
         "thinking_level": "",
         "advanced_model": "",
@@ -1035,7 +1026,7 @@ def test_build_llm_config_does_not_reuse_placeholder_as_api_key(monkeypatch):
     fake = SimpleNamespace(session=SimpleNamespace(llm_config=current, begin_turn=lambda: None))
 
     # 空表单 + CLI 局：保留 cli 通道（#51）、不把占位符当 API key 带入。
-    cfg = web_app.WebGame.build_llm_config(fake, "", "", "", max_tokens=16000)
+    cfg = web_app.WebGame.build_llm_config(fake, "", "", "")
 
     assert cfg.api_key != "cli-backend"
     assert cfg.channel == "cli"
@@ -1051,7 +1042,6 @@ def test_llm_config_from_runtime_api_channel_drops_placeholder_key(monkeypatch):
         base_url="https://api.example.com/v1",
         model="gpt-api",
         api_key="cli-backend",
-        max_tokens=8000,
         timeout_seconds=180,
         thinking_level="",
         advanced_model="",

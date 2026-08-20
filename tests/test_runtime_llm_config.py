@@ -21,33 +21,56 @@ def test_load_runtime_llm_malformed_json_returns_empty(tmp_path, monkeypatch):
 
 
 def test_load_runtime_llm_coerces_stringified_numeric_fields(tmp_path, monkeypatch):
-    """#53 _slot_number:旧存档把 max_tokens/timeout_seconds 存成字符串时,load 归一回数值
-    (covers caster(value) / caster(float(value)) 兜底 / garbage→default 三分支,Red Team/Testing)。"""
+    """#53 _slot_number:旧存档把 timeout_seconds 存成字符串时,load 归一回数值
+    (covers caster(value) / caster(float(value)) 兜底 / garbage→default 三分支)。"""
     path = tmp_path / "runtime_llm.json"
     path.write_text(json.dumps({
         "channel": "api",
-        # max_tokens="4096.0":直接 int("4096.0") 失败 → 走 caster(float(value)) 兜底分支(codex CMR)。
+        # timeout_seconds="120.5":直接 float 可过；另用 "180.0" 形态钉 caster 路径。
         "api": {"base_url": "https://x/v1", "model": "m", "api_key": "sk-x",
-                "max_tokens": "4096.0", "timeout_seconds": "120.5"},
+                "timeout_seconds": "120.5"},
     }, ensure_ascii=False), encoding="utf-8")
     monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(path))
     out = llm_config.load_runtime_llm()
-    assert out["api"]["max_tokens"] == 4096 and isinstance(out["api"]["max_tokens"], int)
     assert out["api"]["timeout_seconds"] == 120.5 and isinstance(out["api"]["timeout_seconds"], float)
+    assert "max_tokens" not in out["api"]
 
 
 def test_load_runtime_llm_garbage_numeric_fields_fall_back_to_default(tmp_path, monkeypatch):
-    """#53 _slot_number:不可解析的数值字段回落默认(max_tokens=None=不发 / timeout=180.0)。"""
+    """#53 _slot_number:不可解析的数值字段回落默认(timeout=180.0)。"""
     path = tmp_path / "runtime_llm.json"
     path.write_text(json.dumps({
         "channel": "api",
         "api": {"base_url": "https://x/v1", "model": "m", "api_key": "sk-x",
-                "max_tokens": "abc", "timeout_seconds": "xyz"},
+                "timeout_seconds": "xyz"},
     }, ensure_ascii=False), encoding="utf-8")
     monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(path))
     out = llm_config.load_runtime_llm()
-    assert out["api"]["max_tokens"] is None
     assert out["api"]["timeout_seconds"] == 180.0
+    assert "max_tokens" not in out["api"]
+
+
+def test_load_runtime_llm_ignores_legacy_max_tokens_key(tmp_path, monkeypatch):
+    """#1472：旧 runtime_llm.json 带 max_tokens 键载入不炸、键被自然忽略（勿写迁移）。"""
+    path = tmp_path / "runtime_llm.json"
+    path.write_text(json.dumps({
+        "channel": "api",
+        "api": {
+            "base_url": "https://x/v1",
+            "model": "m",
+            "api_key": "sk-x",
+            "max_tokens": 6000,
+            "timeout_seconds": 120,
+        },
+        "max_tokens": 8000,
+    }, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(path))
+    out = llm_config.load_runtime_llm()
+    assert out["channel"] == "api"
+    assert out["api"]["model"] == "m"
+    assert out["api"]["timeout_seconds"] == 120
+    assert "max_tokens" not in out["api"]
+    assert "max_tokens" not in out
 
 
 def test_load_runtime_llm_non_dict_payload_returns_empty(tmp_path, monkeypatch):
@@ -67,7 +90,6 @@ def test_load_runtime_llm_migrates_flat_api_config(tmp_path, monkeypatch):
                 "base_url": "https://api.example.com/v1",
                 "model": "gpt-test",
                 "api_key": "sk-test",
-                "max_tokens": 4096,
                 "timeout_seconds": 120,
                 "thinking_level": "medium",
                 "advanced_model": "gpt-advanced",
@@ -88,7 +110,6 @@ def test_load_runtime_llm_migrates_flat_api_config(tmp_path, monkeypatch):
         "base_url": "https://api.example.com/v1",
         "model": "gpt-test",
         "api_key": "sk-test",
-        "max_tokens": 4096,
         "timeout_seconds": 120,
         "thinking_level": "medium",
         "advanced_model": "gpt-advanced",
@@ -110,7 +131,6 @@ def test_save_runtime_llm_persists_channel_slots(tmp_path, monkeypatch):
         "https://api.example.com/v1",
         "gpt-test",
         "sk-test",
-        max_tokens=2048,
         timeout_seconds=150,
         thinking_level="minimal",
         channel="cli",
@@ -124,7 +144,8 @@ def test_save_runtime_llm_persists_channel_slots(tmp_path, monkeypatch):
     assert saved["channel"] == "cli"
     assert saved["api"]["model"] == "gpt-test"
     assert saved["api"]["api_key"] == "sk-test"
-    assert saved["api"]["max_tokens"] == 2048
+    assert "max_tokens" not in saved["api"]
+    assert "max_tokens" not in saved
     assert saved["cli"] == {
         "runner": "codex",
         "model": "gpt-5.5",
@@ -347,7 +368,6 @@ def test_save_runtime_llm_preserves_existing_api_slot_when_saving_cli(tmp_path, 
                     "base_url": "https://api.example.com/v1",
                     "model": "gpt-api",
                     "api_key": "sk-api",
-                    "max_tokens": 4096,
                     "timeout_seconds": 150,
                     "thinking_level": "minimal",
                 },
@@ -375,8 +395,8 @@ def test_save_runtime_llm_preserves_existing_api_slot_when_saving_cli(tmp_path, 
     assert saved["api"]["model"] == "gpt-api"
     assert saved["api"]["api_key"] == "sk-api"
     # #53:preserve 路径与 fresh 路径产出同一 JSON 形态——数值字段保持数值,不被 stringify。
-    assert saved["api"]["max_tokens"] == 4096
-    assert isinstance(saved["api"]["max_tokens"], int)
+    # #1472：max_tokens 不再写入；旧档残留也不再 preserve。
+    assert "max_tokens" not in saved["api"]
     assert saved["api"]["timeout_seconds"] == 150
     assert isinstance(saved["api"]["timeout_seconds"], (int, float))
     assert not isinstance(saved["api"]["timeout_seconds"], str)
@@ -389,8 +409,9 @@ def test_save_runtime_llm_preserves_existing_api_slot_when_saving_cli(tmp_path, 
 
 
 def test_load_runtime_flat_cli_backend_placeholder_not_api_channel(tmp_path, monkeypatch):
-    # ship-pre CMR Group A'：真实扁平旧配置（占位符 key + 默认 max_tokens/timeout/
-    # base_url/model）不该被推成 channel=api。只有「存在真实 API key」才推 api。
+    # ship-pre CMR Group A'：真实扁平旧配置（占位符 key + 默认 timeout/
+    # base_url/model + 旧档残留 max_tokens）不该被推成 channel=api。
+    # 只有「存在真实 API key」才推 api。
     path = tmp_path / "runtime_llm.json"
     path.write_text(json.dumps({
         "api_key": "cli-backend",
