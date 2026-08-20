@@ -443,9 +443,9 @@ def _print_interrupted_reply_retry_hint(session: GameSession, minister_name: str
     last = retries[-1]
     question = str(last.get("question") or "").strip()
     print(
-        f"【回话中断】上回问话未得回话"
+        "【回话中断】上回问话未得回话"
         f"{f'（「{question}」）' if question else ''}。"
-        f"输入「重试回话」重新生成回话（系统层恢复，不重复记问话）。\n"
+        "输入「重试回话」重新生成回话（系统层恢复，不重复记问话）。\n"
     )
 
 
@@ -508,17 +508,11 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> No
 def _cli_write_gate(session: GameSession):
     """CLI 唯一 write gate：与 resolve_turn 收夜/过月屏障同穿（#1353 队列）。
 
-    挂 session 队列的 write_gate（与 Web runtime 同属性名）——禁第二锁名分叉，
-    否则 trail 用一把、颁诏 auto_close 读另一把/None → 欠账 missing_deps 断链。
+    GameSession 构造已 eager 装队列；此处只解析既有 ledger，不二次安装、不宽吞重挂，
+    禁第二锁名分叉（trail 与颁诏 auto_close 必须同闸）。
     """
     from ming_sim.session_write_queue import get_session_write_queue
-    q = get_session_write_queue(session)
-    try:
-        session._write_queue = q  # type: ignore[attr-defined]
-        session._write_gate = q.write_gate  # type: ignore[attr-defined]
-    except Exception:
-        pass
-    return q.write_gate
+    return get_session_write_queue(session).write_gate
 
 
 def _trail_extraction_after_reply_cli(
@@ -535,6 +529,7 @@ def _trail_extraction_after_reply_cli(
     if not chat_turn_id:
         return
     ticket = None
+    q = None
     try:
         from ming_sim.audience_extraction import trail_extraction_after_reply
         from ming_sim.session_write_queue import (
@@ -562,19 +557,16 @@ def _trail_extraction_after_reply_cli(
         # #1353 fold-in r5：欠账唯一处理路=过月内部 drain；禁玩家可见技术提示。
         pass
     finally:
-        if ticket is not None:
-            try:
-                from ming_sim.session_write_queue import get_session_write_queue
-                get_session_write_queue(session).complete(ticket)
-            except Exception:
-                pass
+        # 局部 q 归票——禁二次 get_session_write_queue（重解析可叉 ledger 漏票挂死 CLI）。
+        if ticket is not None and q is not None:
+            q.complete(ticket)
 
 
 def minister_chat(session: GameSession, character: Character) -> str:
     """与一位大臣对话。返回 'dismiss' | 'court_break' | 'summon:<name>'。"""
     other = next((n for n in session.content.characters if n != character.name), character.name)
     print(f"\n{character.name}入殿。可持续问话；done/退下 退下，“传{other}来”换人，quit 退朝审阅诏书，exit 退出游戏。")
-    print(f"提示：陛下示意采纳后（如“准奏”），大臣会拟旨呈陛下核定。\n")
+    print("提示：陛下示意采纳后（如“准奏”），大臣会拟旨呈陛下核定。\n")
     # #505：入殿时显眼提示回话中断恢复入口（与 web ChatModal 同语义）。
     # #1353：欠账抽取无玩家手动补写面——过月内部 drain 唯一处理路。
     _print_interrupted_reply_retry_hint(session, character.name)
