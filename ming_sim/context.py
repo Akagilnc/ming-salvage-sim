@@ -135,7 +135,8 @@ def victory_status(db: GameDB, state: GameState) -> Dict[str, object]:
             "status": ENDING_CAPITAL_FALLEN,
             "summary": f"京师失守，{holder_name}入主北京，社稷倾覆，大明失其神器。",
         }
-    return {"status": ENDING_ONGOING, "summary": "局势未决，社稷尚在崇祯一念之间。"}
+    # #1313 r4：ongoing 只留结构化 status，不提供玩家固定句子（禁换另一句模板/禁加 LLM）。
+    return {"status": ENDING_ONGOING, "summary": ""}
 
 
 # 地区/军队名称匹配实现在 matching.py；此处提供绑定 GameContent 的便捷封装。

@@ -148,3 +148,23 @@ def test_open_beat_instructions_share_no_preenact_contract(monkeypatch):
     joined = "\n".join(str(x) for x in instructions)
     assert "不预演奏对" in joined
     assert "不写皇帝答复" in joined
+
+
+@pytest.mark.parametrize("beat_kind", [BEAT_OPEN, BEAT_ENTER])
+def test_llm_materials_include_reign_period_label_for_open_enter(monkeypatch, beat_kind):
+    """#1294/#1313 r4：create_llm_beat_generator 材料面投喂当期年月（open/enter）。"""
+    capture: dict = {}
+    probe = _load_fresh_beat_module(monkeypatch, capture=capture)
+    gen = probe.create_llm_beat_generator(object())
+    label = "天启七年十月"
+    gen(BeatInputs(
+        beat_kind=beat_kind,
+        time_of_day="戌时",
+        location="乾清宫",
+        person_name="杨嗣昌" if beat_kind == BEAT_ENTER else "",
+        reign_period_label=label,
+    ))
+    assert capture.get("prompts"), "generator never received materials"
+    payload = json.loads(capture["prompts"][0])
+    assert payload.get("当期年月") == label
+    assert payload.get("场景节点") == beat_kind

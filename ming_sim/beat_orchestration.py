@@ -73,6 +73,8 @@ class BeatInputs:
     court_tension: str = ""          # 当下朝局张力（定性，见闻内切片）
     prior_appearances: Tuple[str, ...] = ()  # 前次入殿与奏对账目
     public_layer: Tuple[str, ...] = ()       # 本夜公开层账（该知扩散取数）
+    # #1294/#1313 r4：当期权威年号（天启七年十月…），in-world 特征；不钉 scene 不改散文
+    reign_period_label: str = ""
 
 
 def _default_knowledge_provider(db: Any, state: Any) -> KnowledgeProvider:
@@ -218,6 +220,16 @@ def assemble_beat_inputs(
             db, night_id, person_name, before_entry_id=prior_bound,
         )
 
+    # #1294：open/enter 当期年号事实；复用 models.reign_period_label，不另写投影。
+    era_label = ""
+    if beat_kind in (BEAT_OPEN, BEAT_ENTER):
+        year = getattr(state, "year", None)
+        period = getattr(state, "period", None)
+        if year is not None and period is not None:
+            from ming_sim.models import reign_period_label as _reign_period_label
+
+            era_label = _reign_period_label(int(year), int(period))
+
     return BeatInputs(
         beat_kind=beat_kind,
         time_of_day=str(time_of_day or ""),
@@ -231,6 +243,7 @@ def assemble_beat_inputs(
         public_layer=tuple(extra_public_layer) + _public_layer_bodies(
             db, night_id, before_entry_id=prior_bound,
         ),
+        reign_period_label=era_label,
     )
 
 
@@ -296,6 +309,8 @@ def create_llm_beat_generator(llm_config: Any) -> BeatGenerator:
             "人物感知的朝局张力": inputs.court_tension,
             "此前入殿与奏对": inputs.prior_appearances,
             "此前殿上公开之事": inputs.public_layer,
+            # #1294：当期权威年号 in-world 特征（open/enter 由 assemble 喂入）
+            "当期年月": inputs.reign_period_label,
         }
         return extract_agent_text(agent.run(json.dumps(materials, ensure_ascii=False)))
 
