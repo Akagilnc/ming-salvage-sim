@@ -210,15 +210,47 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     );
     expect(runnerSelect).toBeTruthy();
     const runnerValues = Array.from(runnerSelect?.options || []).map((option) => option.value);
+    // #1274 W1：runner 下拉吃后端/fallback 单源，含 grok + cursor/kimi（=_CLI_BACKENDS）。
     expect(runnerValues).toContain("grok");
-    expect(runnerValues).not.toContain("cursor");
-    expect(runnerValues).not.toContain("kimi");
+    expect(runnerValues).toContain("cursor");
+    expect(runnerValues).toContain("kimi");
     expect(runnerSelect?.value).toBe("grok");
 
     const strength = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
     expect(strength?.disabled).toBe(false);
     const offOption = Array.from(strength?.options || []).find((option) => option.value === "off");
     expect(offOption?.textContent).toBe("关（grok 最低=低）");
+    cleanup();
+  });
+
+  it("in-game CLI runner dropdown includes grok from shared source (#1274 W1)", async () => {
+    mockFetch({
+      ...BASE_LLM_RESPONSE,
+      channel: "cli",
+      cli_runner: "agy",
+      cli_runners: [
+        { value: "agy", label: "agy（Gemini）" },
+        { value: "codex", label: "codex" },
+        { value: "claude", label: "claude" },
+        { value: "cursor", label: "cursor" },
+        { value: "kimi", label: "kimi" },
+        { value: "grok", label: "grok" },
+      ],
+      persisted: {
+        ...BASE_LLM_RESPONSE.persisted,
+        channel: "cli",
+        cli_runner: "agy",
+      },
+    });
+    const { cleanup } = render(<LLMConfigTab />);
+    await act(async () => {});
+
+    const runnerSelect = Array.from(document.querySelectorAll("select")).find((select) =>
+      Array.from(select.options).some((option) => option.value === "codex")
+    );
+    const runnerValues = Array.from(runnerSelect?.options || []).map((option) => option.value);
+    expect(runnerValues).toEqual(["agy", "codex", "claude", "cursor", "kimi", "grok"]);
+    expect(runnerValues).toContain("grok");
     cleanup();
   });
 

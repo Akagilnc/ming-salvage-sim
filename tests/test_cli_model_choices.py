@@ -21,6 +21,34 @@ def test_choices_cover_all_supported_runners():
     assert {"agy", "codex", "claude", "cursor", "kimi", "grok", "pi"} <= set(choices)
 
 
+def test_cli_runner_choices_cover_all_supported_runners():
+    """#1274 W1/#1274-y1：CLI Runner 下拉单源 = _CLI_BACKENDS 有序；含 grok/cursor/kimi/pi。"""
+    runners = cb.cli_runner_choices()
+    values = [r["value"] for r in runners]
+    assert set(values) == set(cb._CLI_BACKENDS)
+    assert {"agy", "codex", "claude", "cursor", "kimi", "grok", "pi"} <= set(values)
+    assert "grok" in values
+    assert "pi" in values
+    # 稳定 UI 顺序（_CLI_RUNNER_UI_ORDER 过滤后）；pi 紧随 grok。
+    assert values == [n for n in cb._CLI_RUNNER_UI_ORDER if n in cb._CLI_BACKENDS]
+    assert values.index("pi") == values.index("grok") + 1
+    for opt in runners:
+        assert set(opt) == {"value", "label"}
+        assert opt["label"]  # 非空 label
+    # agy 保留括号注释标签；其余裸名。
+    by_value = {r["value"]: r["label"] for r in runners}
+    assert by_value["agy"] == "agy（Gemini）"
+    assert by_value["grok"] == "grok"
+    assert by_value["pi"] == "pi"
+
+
+def test_cli_runner_choices_returns_independent_copies():
+    a = cb.cli_runner_choices()
+    a.append({"value": "x", "label": "x"})
+    b = cb.cli_runner_choices()
+    assert all(r["value"] != "x" for r in b)
+
+
 def test_each_runner_has_default_escape_option_first():
     choices = cb.cli_model_choices()
     for runner, options in choices.items():
@@ -97,6 +125,7 @@ def test_menu_status_exposes_choices(monkeypatch):
     web_app = _patch_status_io(monkeypatch, {})
     data = asyncio.run(web_app.api_menu_status())
     assert data["llm"]["cli_model_choices"] == cb.cli_model_choices()
+    assert data["llm"]["cli_runners"] == cb.cli_runner_choices()
 
 
 def test_menu_status_exposes_raw_cli_model_saved_default(monkeypatch):
@@ -136,3 +165,4 @@ def test_get_llm_config_exposes_choices(monkeypatch):
     )
     data = asyncio.run(web_app.api_get_llm_config())
     assert data["cli_model_choices"] == cb.cli_model_choices()
+    assert data["cli_runners"] == cb.cli_runner_choices()

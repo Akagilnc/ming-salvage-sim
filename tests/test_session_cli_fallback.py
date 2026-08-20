@@ -2250,8 +2250,8 @@ def test_chat_starts_cli_action_classification_before_reply_finishes(read_game, 
     sess.state = state
     sess.content = content
     sess.registry = registry
-    # 并发分类器仅对并发安全 runner（codex）启用——cmr Gate2 守门（agy/claude 并发未验证）。
-    sess.llm_config = SimpleNamespace(channel="cli", cli_runner="codex")
+    # 任意 CLI runner 均并发启动分类器——不按模型退串行。
+    sess.llm_config = SimpleNamespace(channel="cli", cli_runner="grok")
     sess.temporary_characters = {}
     sess._retrieve_memories_for_message = lambda message: message
 
@@ -2267,130 +2267,6 @@ def test_chat_starts_cli_action_classification_before_reply_finishes(read_game, 
     assert allow_reply.is_set()
     assert result.answer == "臣谨奏：辽饷尚可支应。"
     assert calls == ["classify"]
-
-
-def test_non_parallel_safe_runner_skips_concurrent_classifier(read_game, monkeypatch):
-    """非并发安全 runner（agy）不得把动作分类器与回话并发跑（会撞 keychain auth-race，
-    cmr Gate2 F-E）：_start_cli_action_intent 返 None → 回话后回落串行抽取，动作不丢。"""
-    db, state, content = read_game
-    minister = next(
-        ch for ch in content.characters.values()
-        if getattr(ch, "office_type", "") not in ("后宫",)
-        and db.resolve_power_id(ch) == "ming"
-        and db.get_character_status(ch.name)[0] == "active"
-    )
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-    sess.content = content
-    sess.llm_config = SimpleNamespace(channel="cli", cli_runner="agy")
-    sess.temporary_characters = {}
-
-    def fake_classify(*args, **kwargs):
-        raise AssertionError("agy runner 不应并发跑分类器")
-
-    monkeypatch.setattr(cb, "classify_cli_action_intent", fake_classify)
-    # agy 非并发安全 → 返 None，不触发分类器。
-    assert sess._start_cli_action_intent(minister, "辽东军饷如何？") is None
-    # 对照：codex 并发安全 → 返回 future（真跑分类器）。
-    sess.llm_config = SimpleNamespace(channel="cli", cli_runner="codex")
-    monkeypatch.setattr(cb, "classify_cli_action_intent", lambda *a, **k: {"kind": "none"})
-    fut = sess._start_cli_action_intent(minister, "辽东军饷如何？")
-    assert fut is not None
-    fut.result(timeout=2)
-
-
-@pytest.mark.parametrize(
-    ("message", "classified", "expected_kind", "audience_context"),
-    [
-        ("请另拟一道赈陕西的旨。", [{"kind": "draft"}], "directive", "plain"),
-        (
-            "另遣人暗查晋商输饷去向。",
-            [{"kind": "secret", "secret_action": "新建"}],
-            "secret_order",
-            "plain",
-        ),
-        ("请另拟一道赈陕西的旨。", [{"kind": "draft"}], "directive", "active_secret"),
-        ("请另拟一道赈陕西的旨。", [{"kind": "draft"}], "directive", "consort"),
-    ],
-)
-def test_non_parallel_safe_chat_serially_classifies_new_actions(
-    game, monkeypatch, message, classified, expected_kind, audience_context,
-):
-    """agy/claude 不并发时按 runtime 串行分类；既有业务状态不吞 fresh draft。"""
-    db, state, content = game
-    if audience_context == "consort":
-        minister = next(
-            ch for ch in content.characters.values()
-            if getattr(ch, "office_type", "") == "后宫"
-            and db.resolve_power_id(ch) == "ming"
-            and db.get_character_status(ch.name)[0] == "active"
-        )
-    else:
-        minister = next(
-            ch for ch in content.characters.values()
-            if getattr(ch, "office_type", "") != "后宫"
-            and db.resolve_power_id(ch) == "ming"
-            and db.get_character_status(ch.name)[0] == "active"
-        )
-    if audience_context == "active_secret":
-        db.create_secret_order(state, minister.name, "暗查旧案", "继续暗查旧案。", [])
-    calls = []
-
-    class FakeAgent:
-        def run(self, _message):
-            calls.append("reply")
-            return SimpleNamespace(content="臣已拟妥，伏候圣裁。", tools=[])
-
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-    sess.content = content
-    sess.registry = SimpleNamespace(
-        get=lambda _character: FakeAgent(),
-        build_draft_line=lambda: "无",
-    )
-    sess.llm_config = SimpleNamespace(channel="cli", cli_runner="agy")
-    sess.temporary_characters = {}
-    sess._retrieve_memories_for_message = lambda text: text
-    monkeypatch.setattr(session_mod, "_dump_llm_messages", lambda *a, **k: None)
-
-    def fake_classify(*_args, **_kwargs):
-        calls.append("classify")
-        return classified
-
-    # 串行分类契约：只替 classifier；后置物化 extract 用返回值 stub，禁 blanket patch runner/真 subprocess。
-    monkeypatch.setattr(cb, "classify_cli_action_intent", fake_classify)
-    monkeypatch.setattr(
-        cb,
-        "_extract_secret_order",
-        lambda *a, **k: {
-            "title": "暗查输饷",
-            "content": "暗查晋商输饷去向",
-            "assignee": minister.name,
-            "tags": [],
-            "deadline_months": 0,
-            "excluded_names": [],
-            "excluded_offices": [],
-        },
-    )
-    monkeypatch.setattr(
-        cb,
-        "extract_draft_intent",
-        lambda *a, **k: {
-            "draft_action": "拟旨",
-            "draft_text": "臣已拟妥，伏候圣裁。",
-            "target_candidate": "",
-        },
-    )
-
-    sess.chat(minister.name, message)
-
-    assert calls == ["reply", "classify"]
-    assert any(
-        row["kind"] == expected_kind
-        for row in db.list_pending_actions(state.turn, minister_name=minister.name)
-    )
 
 
 def test_api_chat_never_calls_cli_classifier(game, monkeypatch):

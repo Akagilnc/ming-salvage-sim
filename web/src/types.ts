@@ -363,6 +363,8 @@ export type SaveEntry = { name: string; size: number; mtime: number };
 // 单一真源在后端 cli_backend.cli_model_choices()，经 config 端点下发，前端不硬编。
 export type CliModelChoice = { value: string; label: string };
 export type CliModelChoices = Record<string, CliModelChoice[]>;
+// CLI Runner 下拉的一档。单一真源在后端 cli_backend.cli_runner_choices()（#1274 W1）。
+export type CliRunnerChoice = { value: string; label: string };
 export type ReasoningStrengthChoice = { value: string; label: string };
 
 export type LLMConfigInfo = {
@@ -387,6 +389,8 @@ export type LLMConfigInfo = {
   cli_runner?: string;
   cli_model?: string;
   cli_model_choices?: CliModelChoices;
+  /** Backend runner dropdown from cli_backend.cli_runner_choices() (#1274 W1). */
+  cli_runners?: CliRunnerChoice[];
   cli_timeout_seconds?: number;
   persisted: {
     channel?: "api" | "cli";
@@ -560,6 +564,8 @@ export type MenuStatus = {
     cli_model?: string;          // resolved（兜底默认名，供「当前后端」展示）
     cli_model_saved?: string;    // raw 存盘值（空=默认档，供设置表单初始化）
     cli_model_choices?: CliModelChoices;
+    /** Backend runner dropdown from cli_backend.cli_runner_choices() (#1274 W1). */
+    cli_runners?: CliRunnerChoice[];
     cli_timeout_seconds?: number;
     max_tokens: number;
     timeout_seconds: number;

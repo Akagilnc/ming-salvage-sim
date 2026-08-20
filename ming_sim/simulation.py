@@ -1515,13 +1515,10 @@ def extract_scores_by_modules_with_agno(
 ) -> tuple[Dict[str, object], str, str]:
     """四模块结算 extractor：内政财政、军务外势、局势、人事密令。
 
-    parallel=True（仅并发安全 CLI runner=codex，#83）：4 个互不依赖的 extractor LLM 调用并发跑，
-    wall-clock≈最慢单个而非串行总和。解析/sanitizer/合并仍串行按模块顺序——确定性不变、sanitizer
-    单实例不并发、输出与串行版字节一致。落库（apply_score_extraction）在本函数之外，仍串行单事务
-    （ADR 0008）。形态1（session 当 LLM）/api/非 codex CLI runner 走 parallel=False（默认）串行，
-    行为字节级不受影响（调用方门控见 cli_backend_parallel_safe）。
-    并发安全依据：extractor agent 一次性、不写 agno_db、各持独立 model；codex --ephemeral 隔离子进程
-    （openai/codex#11435 workaround）——故仅 codex 入并行白名单，claude/agy 待验证。"""
+    parallel=True：4 个互不依赖的 extractor LLM 调用并发跑，wall-clock≈最慢单个而非串行总和。
+    解析/sanitizer/合并仍串行按模块顺序——确定性不变、sanitizer 单实例不并发、输出与串行版字节一致。
+    落库（apply_score_extraction）在本函数之外，仍串行单事务（ADR 0008）。
+    调用方（decree 月末 settle）一律 parallel=True，不按 runner/模型退串行。"""
     base_payload = _extractor_context_payload(
         db, state, narrative, decree_text,
         relevant_memories=relevant_memories,
@@ -1558,7 +1555,7 @@ def extract_scores_by_modules_with_agno(
         # 解析/sanitizer/净化（sanitizer 单实例不并发、确定性）。任一模块抛错经 map 迭代原样上抛
         # （with 块先等齐在跑线程再传播）→ 与串行同样触发上层 SettlementAbort。
         from concurrent.futures import ThreadPoolExecutor
-        tlog(f"[extractor] CLI 后端并发抽取 {len(EXTRACTION_MODULES)} 模块（wall-clock≈最慢单个）")
+        tlog(f"[extractor] 并发抽取 {len(EXTRACTION_MODULES)} 模块（wall-clock≈最慢单个）")
         with ThreadPoolExecutor(max_workers=len(EXTRACTION_MODULES)) as pool:
             raws = list(pool.map(_run_raw, EXTRACTION_MODULES))
         for module, raw in zip(EXTRACTION_MODULES, raws):
