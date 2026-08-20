@@ -78,6 +78,82 @@ def test_new_game_t0_previous_summary_strictly_empty(game):
     assert "尚无上月" not in summary
 
 
+def test_new_game_t0_previous_reign_period_label_empty_with_empty_summary(game):
+    """r5：t0 无上月报 → previous_reign_period_label 与空 summary 同口径（禁九月残留）。"""
+    db, state, _content = game
+    assert state.turn == 1
+    assert (state.year, state.period) == (1627, 10)
+    assert db.previous_turn_summary(state) == ""
+    label = db.previous_turn_reign_period_label(state)
+    assert label == ""
+    assert "九月" not in label
+    assert "天启" not in label
+
+
+def test_empty_report_row_label_aligns_summary_four_ways(game):
+    """r5-r2：label 与 summary 同口径——仅非空 report 才算有报（四路钉）。
+
+    1) t0 空 report 行 → label/summary 皆空（禁因行在贴九月）
+    2) 非 t0 空 report 行 + 无 logs → 皆空
+    3) 非 t0 空 report 行 + 有 logs → summary 走 logs 回落，label 同步回推
+    4) 非空 report 行 → label 取该行 year/period（不混充当前月）
+    """
+    from ming_sim.models import reign_period_label
+
+    db, state, _content = game
+
+    # ① t0：空 report 行反例（行在但正文空）
+    assert state.turn == 1
+    assert (state.year, state.period) == (1627, 10)
+    db.conn.execute(
+        "INSERT OR REPLACE INTO turn_reports (turn, year, period, report) VALUES (?, ?, ?, ?)",
+        (0, 1627, 9, ""),
+    )
+    db.conn.commit()
+    assert db.get_turn_report(0) == ""
+    assert db.previous_turn_summary(state) == ""
+    assert db.previous_turn_reign_period_label(state) == ""
+
+    # ② 非 t0：空 report 行 + 无 logs
+    state.turn = 3
+    state.year, state.period = 1627, 12
+    db.conn.execute(
+        "INSERT OR REPLACE INTO turn_reports (turn, year, period, report) VALUES (?, ?, ?, ?)",
+        (2, 1627, 11, ""),
+    )
+    db.conn.execute("DELETE FROM turn_logs WHERE turn = ?", (2,))
+    db.conn.commit()
+    assert db.get_turn_report(2) == ""
+    assert db.conn.execute("SELECT 1 FROM turn_logs WHERE turn = 2").fetchone() is None
+    assert db.previous_turn_summary(state) == ""
+    assert db.previous_turn_reign_period_label(state) == ""
+
+    # ③ 非 t0：空 report 行 + 有 logs → 与 summary 回落同形
+    db.conn.execute(
+        "INSERT INTO turn_logs (turn, year, period, message) VALUES (?, ?, ?, ?)",
+        (2, 1627, 11, "边饷核账一笔"),
+    )
+    db.conn.commit()
+    summary_logs = db.previous_turn_summary(state)
+    assert summary_logs != ""  # logs 回落有文 → label 才可非空
+    label_logs = db.previous_turn_reign_period_label(state)
+    # state 十二月 → 回推十一月
+    assert label_logs == reign_period_label(1627, 11)
+    assert label_logs == "天启七年十一月"
+
+    # ④ 非空 report 行 → 取其自身年月（故意与当前 state 错位，禁混充）
+    db.conn.execute(
+        "INSERT OR REPLACE INTO turn_reports (turn, year, period, report) VALUES (?, ?, ?, ?)",
+        (2, 1627, 9, "天启七年九月邸报\n\n一、真非空报文"),
+    )
+    db.conn.commit()
+    assert "真非空报文" in db.previous_turn_summary(state)
+    assert db.previous_turn_reign_period_label(state) == "天启七年九月"
+    assert db.previous_turn_reign_period_label(state) != reign_period_label(
+        state.year, state.period
+    )
+
+
 def test_non_t0_empty_previous_summary_strictly_empty(game):
     """① 非 t0：无 report 且无 logs 同样严格空串（禁固定空态句）。"""
     db, state, _content = game
@@ -93,6 +169,8 @@ def test_non_t0_empty_previous_summary_strictly_empty(game):
     assert "未见正式记录" not in summary
     assert "登基伊始" not in summary
     assert "尚无上月" not in summary
+    # 与 summary 同口径：label 亦空
+    assert db.previous_turn_reign_period_label(state) == ""
 
 
 def test_first_month_settlement_produces_real_gazette(game, monkeypatch):
@@ -113,6 +191,11 @@ def test_first_month_settlement_produces_real_gazette(game, monkeypatch):
     summary = db.previous_turn_summary(state)
     assert "首月真结算" in summary
     assert summary == report
+
+    # r5 双向钉：首月结算后 label 正常出现（与 summary 同月口径）
+    label = db.previous_turn_reign_period_label(state)
+    assert label == "天启七年十月"
+    assert label != ""
 
 
 def test_old_save_exact_purge_keeps_real_with_phrase_counterexample(game):
@@ -196,3 +279,6 @@ def test_state_payload_t0_previous_summary_empty(game):
     assert payload.get("previous_summary") == ""
     assert "登基伊始" not in (payload.get("previous_summary") or "")
     assert payload["turn"]["reign_period_label"] == "天启七年十月"
+    # r5：payload 开局 label 与空 summary 同口径，禁九月残留
+    assert payload.get("previous_reign_period_label") in ("", None)
+    assert "九月" not in (payload.get("previous_reign_period_label") or "")
