@@ -17,7 +17,8 @@ def _active_ming_minister(db, content) -> str:
     for name, ch in content.characters.items():
         if getattr(ch, "power_id", "ming") != "ming":
             continue
-        if getattr(ch, "office_type", "") == "后宫":
+        # #1317：未仕/后宫/宗藩非朝臣可召样本
+        if getattr(ch, "office_type", "") in ("后宫", "宗藩", "未仕"):
             continue
         if db.get_character_status(name)[0] == "active":
             return name
@@ -320,7 +321,7 @@ def test_summon_power_check_uses_db_not_content(game):
     # 找一个 content 内存非 ming 的人物，把其 DB power_id 翻成 ming（模拟招抚归明落库）
     name = next((n for n, c in content.characters.items()
                  if getattr(c, "power_id", "ming") != "ming"
-                 and c.office_type not in ("后宫", "宗藩")), None)
+                 and c.office_type not in ("后宫", "宗藩", "未仕")), None)
     import pytest
     if name is None:
         pytest.skip("基底盘面无非 ming 可招抚人物")
@@ -353,7 +354,7 @@ def test_list_ministers_uses_db_power_id(game):
     # 招抚归明者：content 非 ming，DB 翻 ming → 应入册
     归明 = next((n for n, c in content.characters.items()
                 if getattr(c, "power_id", "ming") != "ming"
-                and c.office_type not in ("后宫", "宗藩")), None)
+                and c.office_type not in ("后宫", "宗藩", "未仕")), None)
     if 归明 is None:
         pytest.skip("基底盘面无非 ming 可招抚人物")
     db.conn.execute("UPDATE characters SET power_id='ming' WHERE name=?", (归明,))
@@ -376,7 +377,7 @@ def test_find_existing_minister_uses_db_power_id(game):
     # 招抚归明者：DB 翻 ming、content 仍非 ming、active → 应被 _find_existing_minister 命中
     归明 = next((n for n, c in content.characters.items()
                 if getattr(c, "power_id", "ming") != "ming"
-                and c.office_type not in ("后宫", "宗藩") and c.status != "candidate"), None)
+                and c.office_type not in ("后宫", "宗藩", "未仕") and c.status != "candidate"), None)
     if 归明 is None:
         pytest.skip("基底盘面无非 ming 可招抚人物")
     db.conn.execute("UPDATE characters SET power_id='ming' WHERE name=?", (归明,))
@@ -443,7 +444,7 @@ def test_secret_order_endpoint_preserves_long_title_into_confirmation(game, monk
     db, state, content = game
     minister = next(
         c for c in content.characters.values()
-        if c.office_type not in ("后宫", "宗藩")
+        if c.office_type not in ("后宫", "宗藩", "未仕")
         and db.get_character_status(c.name)[0] == "active"
     )
     seen = {}
@@ -464,3 +465,94 @@ def test_secret_order_endpoint_preserves_long_title_into_confirmation(game, monk
     ))
 
     assert title in seen["message"]
+
+
+# ── #1317：未仕（史可法诸生）不得入可召/朝堂名册 ──────────────────────────
+
+
+def test_shi_kefa_not_in_summonable_court_roster(read_game):
+    """#1317 QA r3：史可法 office=诸生（应天府学）/未仕，不得以在朝身份入可召名册。
+
+    接缝：list_ministers（召见名册）+ can_summon（召对闸）+ visible_in_court（web 朝堂投影）
+    三面同拒；seed status=offstage 与谓词排未仕双保险。
+    """
+    from ming_sim.session import GameSession
+
+    db, _state, content = read_game
+    assert "史可法" in content.characters, "seed 须含史可法"
+    ch = content.characters["史可法"]
+    assert ch.office_type == "未仕"
+    assert "诸生" in (ch.office or "")
+
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.content = content
+    sess.temporary_characters = {}
+
+    names = {v.name for v in sess.list_ministers()}
+    assert "史可法" not in names, "史可法不得入 list_ministers 可召名册"
+
+    ok, reason = sess.can_summon(ch)
+    assert ok is False, f"史可法 can_summon 应拒，实际放行 reason={reason!r}"
+    assert reason  # 拒因非空
+
+    assert visible_in_court(ch, db) is False, "史可法不得入 web 朝堂 ministers 投影"
+
+
+def test_real_court_ministers_not_collateral_damaged_by_1317(read_game):
+    """#1317 回归：真在朝大臣（非未仕）仍可召、仍在名册——禁谓词收窄误伤。"""
+    from ming_sim.session import GameSession
+
+    db, _state, content = read_game
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.content = content
+    sess.temporary_characters = {}
+
+    # 钉几个开局在朝真臣（seed 常驻，非未仕）
+    for name in ("温体仁", "毕自严", "张瑞图"):
+        assert name in content.characters, f"seed 缺 {name}"
+        ch = content.characters[name]
+        assert ch.office_type != "未仕"
+        assert db.get_character_status(name)[0] == "active", name
+        assert visible_in_court(ch, db) is True, name
+        ok, reason = sess.can_summon(ch)
+        assert ok is True, f"{name} 被误伤：{reason}"
+
+    roster_names = {v.name for v in sess.list_ministers()}
+    for name in ("温体仁", "毕自严", "张瑞图"):
+        assert name in roster_names, f"{name} 被挡出 list_ministers"
+
+
+def test_no_active_weishi_in_opening_summonable_roster(game):
+    """#1317 全 seed 同型扫：开局可召名册不得含 office_type=未仕（在野/未仕 active 漏召类）。"""
+    from ming_sim.session import GameSession
+
+    db, _state, content = game
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.content = content
+    sess.temporary_characters = {}
+
+    leaked = [
+        v.name for v in sess.list_ministers()
+        if getattr(content.characters.get(v.name), "office_type", "") == "未仕"
+    ]
+    assert leaked == [], f"未仕漏入可召名册：{leaked}"
+
+    # 即便 DB 强行 active，谓词仍拒（类防御，不靠单一 seed status）
+    weishi = [
+        (n, c) for n, c in content.characters.items()
+        if getattr(c, "office_type", "") == "未仕"
+        and getattr(c, "power_id", "ming") == "ming"
+    ]
+    assert weishi, "seed 须有未仕样本（史可法等同型）"
+    for name, ch in weishi:
+        db.conn.execute(
+            "UPDATE characters SET status='active' WHERE name=?", (name,),
+        )
+        db.conn.commit()
+        ok, _ = sess.can_summon(ch)
+        assert ok is False, f"active 未仕 {name} 仍可召"
+        assert name not in {v.name for v in sess.list_ministers()}
+        assert visible_in_court(ch, db) is False

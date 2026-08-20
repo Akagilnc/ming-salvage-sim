@@ -1230,7 +1230,8 @@ def _draft_intent_character_roster_facts(content: Any) -> str:
     接地=结构化事实注入（ADR 0142）；不在此做散文截断修复/子串归一。
     参与人 character_id 须填规范名；别名仅作识别线索，输出仍归规范名。
     资格与 _find_existing_minister / _is_ming_court_minister_character 同口径
-    （ming ∧ 非后宫 ∧ 非 candidate）；无 db 时用 content 静态 power_id（#125 live 翻转不扩）。
+    （ming ∧ 非后宫 ∧ 非宗藩 ∧ 非未仕 ∧ 非 candidate）；无 db 时用 content 静态 power_id
+    （#125 live 翻转不扩；#1317 未仕不入朝臣事实块）。
     """
     characters = getattr(content, "characters", None) if content is not None else None
     if not characters:

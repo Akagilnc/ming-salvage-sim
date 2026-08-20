@@ -1517,6 +1517,7 @@
       "historical_death_year": 0,
       "historical_death_month": 0,
       "power_id": "ming",
+      "status": "offstage",
       "identity": 94,
       "seed_guilt": {
         "crime": "无",
