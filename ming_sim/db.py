@@ -2307,6 +2307,8 @@ class GameDB:
             self.conn.commit()
         self.init_fiscal_config()
         self._migrate_missing_fiscal_engine_from_pay_source_cutover()
+        # #1356：旧档精确清除固定开局邸报 seed（按已知文本/标记；不动真实结算产物）
+        self._purge_fixed_opening_gazette_seed()
 
     def _migrate_legacy_office_pollution(self) -> None:
         """ADR 0009 决定9/L94 一次性数据清洗（幂等，init 时跑）：pre-0009 存档把状态词塞在
@@ -4759,29 +4761,59 @@ class GameDB:
             )
         self.conn.commit()
 
-    def seed_opening_gazette(self, state: GameState) -> None:
-        """新档塞一份「即位前一月」邸报（turn=state.turn-1），让大臣首回合即可经 read_past_report
-        查到开局朝局速览，不必凭空臆议。已存在则不覆盖。文本来自 content/opening_gazette.md。"""
-        prev_turn = state.turn - 1
-        prev_year, prev_period = state.year, state.period - 1
-        if prev_period < 1:
-            prev_period = 12
-            prev_year -= 1
-        exists = self.conn.execute(
-            "SELECT 1 FROM turn_reports WHERE turn = ?",
-            (prev_turn,),
-        ).fetchone()
-        if exists is None:
+    # #1356 固定开局邸报 seed 指纹（与 content/opening_gazette.md 对齐；三标记全中才清）
+    _OPENING_GAZETTE_SEED_MARKERS = (
+        "天启七年九月邸报",
+        "待办未解（开局三事）",
+        "信王于乾清宫即皇帝位",
+    )
+
+    def _known_opening_gazette_seed_text(self) -> str:
+        """已知固定开局邸报全文（fingerprint 源）；缺文件则空串。"""
+        try:
             from pathlib import Path
             from ming_sim.paths import bundled_path
-            gazette_path = Path(bundled_path("content", "opening_gazette.md"))
-            if gazette_path.is_file():
-                text = gazette_path.read_text(encoding="utf-8").strip()
-                if text:
-                    self.conn.execute(
-                        "INSERT INTO turn_reports (turn, year, period, report) VALUES (?, ?, ?, ?)",
-                        (prev_turn, prev_year, prev_period, text),
-                    )
+            path = Path(bundled_path("content", "opening_gazette.md"))
+            if path.is_file():
+                return path.read_text(encoding="utf-8").strip()
+        except OSError:
+            return ""
+        return ""
+
+    def _is_fixed_opening_gazette_seed(self, report: str) -> bool:
+        """按已知全文精确匹配，或三标记全中识别固定 seed（勿碰真实结算产物）。"""
+        text = str(report or "").strip()
+        if not text:
+            return False
+        known = self._known_opening_gazette_seed_text()
+        if known and text == known:
+            return True
+        return all(marker in text for marker in self._OPENING_GAZETTE_SEED_MARKERS)
+
+    def _purge_fixed_opening_gazette_seed(self) -> None:
+        """#1356：旧档精确清除固定开局邸报 seed。幂等（meta 标记）。
+
+        只删匹配已知 seed 文本/标记的 turn_reports 行；真实月末结算邸报保留。
+        """
+        if self._has_meta_flag("__opening_gazette_seed_purged_1356"):
+            return
+        rows = self.conn.execute("SELECT turn, report FROM turn_reports").fetchall()
+        for row in rows:
+            if self._is_fixed_opening_gazette_seed(str(row["report"] or "")):
+                self.conn.execute(
+                    "DELETE FROM turn_reports WHERE turn = ?",
+                    (int(row["turn"]),),
+                )
+        self._set_meta_flag("__opening_gazette_seed_purged_1356")
+        self.conn.commit()
+
+    def seed_opening_gazette(self, state: GameState) -> None:
+        """开局公共见闻（新君登基/倒魏）。
+
+        #1356/#1292：不再写入固定开局邸报文到 turn_reports（P7 禁固定模板直显）。
+        首份玩家可见邸报由第一个正常月末 LLM 结算产生；content/opening_gazette.md
+        仅作旧档 purge 指纹源，不进玩家面。
+        """
         # Keep the two opening facts addressable as public knowledge rather than
         # requiring a character to infer them from an undifferentiated gazette.
         self.record_public_knowledge_event(
@@ -7826,7 +7858,7 @@ class GameDB:
 
     def previous_turn_summary(self, state: GameState) -> str:
         previous_turn = state.turn - 1
-        # turn=0 是开局即位邸报（seed_opening_gazette 落库）；turn<0 才算未登基前。
+        # #1356：不再 seed turn=0 固定邸报；turn<0 或 turn=0 无真实月报 → 登基占位。
         if previous_turn < 0:
             return f"登基伊始，尚无上{TURN_UNIT}回奏。"
 
@@ -7857,8 +7889,8 @@ class GameDB:
         """邸报面报头年月 ≡ 所显示报文自身所属月（#1356）。
 
         与 previous_turn_summary 同源：优先读 turn_reports 已存 year/period，
-        经 reign_period_label 投影；无行时按当前 state 回推上一月（与
-        seed_opening_gazette 算法一致）。当前 turn 年号不得混充上月报头。
+        经 reign_period_label 投影；无行时按当前 state 回推上一月。
+        当前 turn 年号不得混充上月报头。
         """
         previous_turn = int(state.turn) - 1
         if previous_turn < 0:

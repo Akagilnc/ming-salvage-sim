@@ -403,8 +403,11 @@ def _run_sample(index: int, root: str, content: GameContent, cfg: LLMConfig) -> 
         )
         p4_memorial = _p4_scan("密奏memorial", memorial_blob)
 
-        # 3) 邸报：seed_opening_gazette 真实落库产物（get_turn_report）
-        gazette_blob = str(db.get_turn_report(0) or "")
+        # 3) 邸报：#1356 后开局不再 seed 固定报文；取最新真实 turn_report（空不计过）
+        reports = db.list_turn_reports() if hasattr(db, "list_turn_reports") else []
+        gazette_blob = str((reports[-1]["report"] if reports else "") or "")
+        if not gazette_blob.strip():
+            gazette_blob = str(db.get_turn_report(int(state.turn) - 1) or "")
         p4_gazette = _p4_scan("邸报gazette", gazette_blob)
 
         # Negative controls: detector must fire on injected system words.

@@ -728,9 +728,10 @@ export function App() {
         </FullscreenModal>
       ) : null}
 
-      {gazetteOpen && (gazetteReport || state.previous_summary || report) ? (
+      {/* #1356：空邸报态仍开卷轴壳，不因无 previous_summary 而崩/卡死 */}
+      {gazetteOpen ? (
         <ReportModal
-          report={gazetteReport || state.previous_summary || report}
+          report={(gazetteReport || state.previous_summary || report || "").trim()}
           periodLabel={state.previous_reign_period_label || undefined}
           onClose={() => setActiveModal("none")}
         />
