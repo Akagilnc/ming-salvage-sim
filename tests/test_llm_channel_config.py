@@ -318,6 +318,162 @@ def test_verify_llm_available_legacy_env_only_failure_raises(monkeypatch):
         verify_llm_available(cfg)
 
 
+def _api_cfg(**overrides) -> LLMConfig:
+    base = dict(
+        api_key="sk-test",
+        base_url="https://api.example.com/v1",
+        model="gpt-5.6-luna",
+        channel="api",
+    )
+    base.update(overrides)
+    return LLMConfig(**base)
+
+
+def test_verify_llm_available_api_smoke_uses_relaxed_token_budget(monkeypatch):
+    """API 烟测不得用 8 token 掐死推理模型；一次校验成本可忽略，预算须够思考+短回。"""
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    captured = {}
+
+    class FakeAgent:
+        def __init__(self, **kwargs):
+            captured["model"] = kwargs["model"]
+
+        def run(self, prompt: str) -> str:
+            return "ok"
+
+    monkeypatch.setattr(llm_model, "Agent", FakeAgent)
+    monkeypatch.setattr(llm_model, "extract_agent_text", lambda output: output)
+    verify_llm_available(_api_cfg())
+    assert captured["model"].max_tokens >= 512
+
+
+def test_verify_llm_available_api_empty_content_passes(monkeypatch):
+    """推理模型思考耗尽回空 content：调用成功即过，空文不作失败。"""
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+
+    class EmptyOutput:
+        content = ""
+        status = None
+
+    class FakeAgent:
+        def __init__(self, **kwargs):
+            pass
+
+        def run(self, prompt: str) -> EmptyOutput:
+            return EmptyOutput()
+
+    monkeypatch.setattr(llm_model, "Agent", FakeAgent)
+    # 走真实 extract_agent_text：空 content 不得误杀
+    verify_llm_available(_api_cfg())
+
+
+def test_verify_llm_available_api_empty_content_none_passes(monkeypatch):
+    """content=None 同空串：烟测不校验返回内容。"""
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+
+    class NoneContent:
+        content = None
+        status = None
+
+    class FakeAgent:
+        def __init__(self, **kwargs):
+            pass
+
+        def run(self, prompt: str) -> NoneContent:
+            return NoneContent()
+
+    monkeypatch.setattr(llm_model, "Agent", FakeAgent)
+    verify_llm_available(_api_cfg())
+
+
+def test_verify_llm_available_api_empty_content_error_status_passes(monkeypatch):
+    """extract_agent_text 若因空文+ERROR status 抛错，烟测路须捕之判过。"""
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+
+    class EmptyErrorOutput:
+        content = ""
+        status = "ERROR"
+
+    class FakeAgent:
+        def __init__(self, **kwargs):
+            pass
+
+        def run(self, prompt: str) -> EmptyErrorOutput:
+            return EmptyErrorOutput()
+
+    monkeypatch.setattr(llm_model, "Agent", FakeAgent)
+    verify_llm_available(_api_cfg())
+
+
+def test_verify_llm_available_api_http_401_still_raises(monkeypatch):
+    """真错：HTTP 401 仍须报 LLMUnavailable。"""
+    import httpx
+    from openai import APIStatusError
+
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    req = httpx.Request("POST", "https://api.example.com/v1/chat/completions")
+    resp = httpx.Response(
+        401,
+        json={"error": {"message": "Invalid API key", "code": "invalid_api_key"}},
+        request=req,
+    )
+
+    class FakeAgent:
+        def __init__(self, **kwargs):
+            pass
+
+        def run(self, prompt: str):
+            raise APIStatusError("Invalid API key", response=resp, body=None)
+
+    monkeypatch.setattr(llm_model, "Agent", FakeAgent)
+    with pytest.raises(LLMUnavailable) as ei:
+        verify_llm_available(_api_cfg())
+    assert ei.value.status_code == 401
+
+
+def test_verify_llm_available_api_timeout_still_raises(monkeypatch):
+    """真错：超时仍须报。"""
+    import httpx
+    from openai import APITimeoutError
+
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    req = httpx.Request("POST", "https://api.example.com/v1/chat/completions")
+
+    class FakeAgent:
+        def __init__(self, **kwargs):
+            pass
+
+        def run(self, prompt: str):
+            raise APITimeoutError(request=req)
+
+    monkeypatch.setattr(llm_model, "Agent", FakeAgent)
+    with pytest.raises(LLMUnavailable) as ei:
+        verify_llm_available(_api_cfg())
+    assert ei.value.code == "llm_timeout"
+
+
+def test_verify_llm_available_api_error_status_nonempty_content_raises(monkeypatch):
+    """真错：生产 agno 形 status=ERROR 且 content 非空错误串，走真实 extract_agent_text，须报 llm_run_error。"""
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+
+    class ErrorOutput:
+        content = "Invalid API key"
+        status = "ERROR"
+
+    class FakeAgent:
+        def __init__(self, **kwargs):
+            pass
+
+        def run(self, prompt: str) -> ErrorOutput:
+            return ErrorOutput()
+
+    monkeypatch.setattr(llm_model, "Agent", FakeAgent)
+    # 不 stub extract_agent_text：咬住内层非空再抛
+    with pytest.raises(LLMUnavailable) as ei:
+        verify_llm_available(_api_cfg())
+    assert ei.value.code == "llm_run_error"
+
+
 def test_for_role_preserves_cli_channel_fields_for_advanced_roles():
     cfg = LLMConfig(
         api_key="cli-backend",
