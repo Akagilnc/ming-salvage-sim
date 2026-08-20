@@ -563,9 +563,11 @@ def test_capture_correction_drops_prior_valid_delegator_escalates(game, monkeypa
     assert any(_CORRECTION_MARK in p for p in calls)
 
 
-def test_capture_escalate_report_timeout_falls_back_inworld(game, monkeypatch):
-    """回禀路径超时 → 确定性戏内 fallback，不裸抛 TimeoutError 给玩家。"""
+def test_capture_escalate_report_timeout_raises_llm_unavailable(game, monkeypatch):
+    """回禀路径超时 → typed LLMUnavailable（#1452 单源），不落固定戏内文案。"""
     import ming_sim.cli_backend as cli_backend
+    from ming_sim.exceptions import LLMUnavailable
+    from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
 
     db, state, content = game
     text = "着不存在之人甲核清太仓"
@@ -580,21 +582,23 @@ def test_capture_escalate_report_timeout_falls_back_inworld(game, monkeypatch):
         )
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
-    # 极短总罩：extract 立刻 escalate 后回禀几乎无剩余预算 → fallback
-    with pytest.raises(ValueError) as ei:
+    # 极短总罩：extract 立刻 escalate 后回禀几乎无剩余预算 → LLMUnavailable
+    with pytest.raises(LLMUnavailable) as ei:
         cli_backend.capture_manual_directive_payload(
             text, None, db=db, content=content, capture_timeout_s=0.2,
         )
-    msg = str(ei.value)
-    _assert_inworld_escalate(msg, "不存在之人甲")
-    assert "慢回禀不该露脸" not in msg
-    assert "TimeoutError" not in msg
+    assert ei.value.message == CLI_RUNNER_PLAYER_MESSAGE
+    assert "慢回禀不该露脸" not in ei.value.message
+    assert "臣查朝籍" not in ei.value.message
+    assert "TimeoutError" not in ei.value.message
     assert len(db.list_directives(state) or []) == 0
 
 
-def test_compose_escalate_report_timeout_s_zero_is_fallback():
-    """timeout_s≤0 直落确定性戏内文，零 LLM。"""
+def test_compose_escalate_report_timeout_s_zero_raises_llm_unavailable():
+    """timeout_s≤0 → typed LLMUnavailable，零 LLM、零固定戏内文案。"""
     import ming_sim.cli_backend as cli_backend
+    from ming_sim.exceptions import LLMUnavailable
+    from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
 
     calls = {"n": 0}
 
@@ -606,12 +610,14 @@ def test_compose_escalate_report_timeout_s_zero_is_fallback():
     real = cli_backend._run_backend_for_config
     cli_backend._run_backend_for_config = boom  # type: ignore[assignment]
     try:
-        text = cli_backend.compose_unknown_participant_inworld_report(
-            ["不存在之人甲"], timeout_s=0.0,
-        )
+        with pytest.raises(LLMUnavailable) as ei:
+            cli_backend.compose_unknown_participant_inworld_report(
+                ["不存在之人甲"], timeout_s=0.0,
+            )
     finally:
         cli_backend._run_backend_for_config = real  # type: ignore[assignment]
-    _assert_inworld_escalate(text, "不存在之人甲")
+    assert ei.value.message == CLI_RUNNER_PLAYER_MESSAGE
+    assert "臣查朝籍" not in ei.value.message
     assert calls["n"] == 0
 
 
