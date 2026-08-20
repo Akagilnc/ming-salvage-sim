@@ -898,6 +898,42 @@ def test_api_backend_streaming_emits_real_token_deltas(monkeypatch):
     assert chunks == ["A", "B", "C"]
 
 
+def test_luna_shaped_stream_keeps_content_when_reasoning_deltas_interleave(monkeypatch):
+    """#1452：推理模型流式 delta 可能夹 reasoning 分片；正文 content 不得被丢。"""
+    class _Delta:
+        def __init__(self, content=None, reasoning_content=None, is_final=False):
+            self.content = content
+            self.reasoning_content = reasoning_content
+            self.is_final = is_final
+
+    class _FakeLunaAgent:
+        model = SimpleNamespace(id="gpt-5.6-luna")
+
+        def run(self, prompt, stream=False, stream_events=False):
+            assert stream and stream_events
+            yield _Delta(reasoning_content="先核辽饷账目…")
+            yield _Delta(content="辽")
+            yield _Delta(reasoning_content="再陈缺口。")
+            yield _Delta(content="饷缺口甚大。")
+            yield _Delta(content="辽饷缺口甚大。", is_final=True)
+
+        def get_last_run_output(self):
+            return None
+
+    texts: list[str] = []
+    thinks: list[str] = []
+    out = run_agent_stream_text(
+        _FakeLunaAgent(),
+        "PROMPT",
+        "minister",
+        on_text=texts.append,
+        on_thinking=thinks.append,
+    )
+    assert out == "辽饷缺口甚大。"
+    assert texts == ["辽", "饷缺口甚大。"]
+    assert any("辽饷" in t or "账" in t for t in thinks)
+
+
 def test_codex_stream_watchdog_kills_hung_process(monkeypatch):
     import threading as _t
 
