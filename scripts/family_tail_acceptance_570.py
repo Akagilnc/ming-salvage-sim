@@ -216,27 +216,26 @@ def _p4_scan(label: str, text: str) -> dict:
     }
 
 
-def _auto_complete_hitl(session: GameSession, *, round_cap: int = 8):
-    """真实结算若出 HITL，自动选第一项续跑至非 awaiting（与 agy_turn_probe 同形）。"""
+def _auto_complete_hitl(session: GameSession) -> Optional[str]:
+    """真实结算若出 HITL，一次 awaiting 自动选第一项；返回完整 report。
+
+    形状对齐生产 API（terminal._submit_first_cli_decisions / agy_turn_probe）：
+    submit_decisions 返回报告字符串，再无 awaiting——不造 while/round_cap/伪结果。
+    """
     result = session.advance_without_decree()
-    rounds = 0
-    while result is not None and getattr(result, "awaiting", False):
-        rounds += 1
-        if rounds > round_cap:
-            raise RuntimeError(
-                f"first-month settle HITL exceeded round_cap={round_cap}"
-            )
-        decisions = session.pending_decisions()
-        choices = []
-        for d in sorted(decisions, key=lambda x: int(x["idx"])):
-            opts = d.get("options") or []
-            pick = opts[0] if opts else {}
-            label = pick.get("label", "") if isinstance(pick, dict) else str(pick)
-            hint = pick.get("hint", "") if isinstance(pick, dict) else ""
-            choices.append({"label": label, "hint": hint})
-        report = session.submit_decisions(choices)
-        result = type("R", (), {"awaiting": False, "report": report})()
-    return result
+    if result is None:
+        return None
+    if not result.awaiting:
+        return result.report
+    decisions = list(result.decisions) or session.pending_decisions()
+    choices = []
+    for d in sorted(decisions, key=lambda x: int(x["idx"])):
+        opts = d.get("options") or []
+        pick = opts[0] if opts else {}
+        label = pick.get("label", "") if isinstance(pick, dict) else str(pick)
+        hint = pick.get("hint", "") if isinstance(pick, dict) else ""
+        choices.append({"label": label, "hint": hint})
+    return session.submit_decisions(choices)
 
 
 def _first_month_gazette_via_production_settle(
