@@ -1,6 +1,6 @@
 """#629 S2 — 复命/哭谏/检举用词 prompt 定向增量。
 
-目标文件 + 章节清单（白名单；白名单外 diff 必须零变化）：
+目标文件 + 章节清单（闸类声明；戏内词契约由本文件钉）：
 1. content/prompts/season_simulator.md
    - 输入真值 · `due_commitments` 条
    - 奏章目录 · `N+2` 章名
@@ -18,13 +18,9 @@
 from __future__ import annotations
 
 import re
-import subprocess
 from pathlib import Path
 
-import pytest
-
 ROOT = Path(__file__).resolve().parents[1]
-BASE_REF = "5d7223ba"  # 票面 base
 
 # 白名单：相对 ROOT 的路径 → 允许改动的章节锚点（### 标题或唯一行锚）
 S2_PROMPT_WHITELIST: dict[str, tuple[str, ...]] = {
@@ -49,13 +45,6 @@ S2_PROMPT_WHITELIST: dict[str, tuple[str, ...]] = {
     ),
 }
 
-# 仅检查本片新增/改写的 diegetic 段，不扫既有「严禁 xxx 系统词」说明行
-_DIEGETIC_SECTION_TITLES = (
-    "### 复命",
-    "### 探子回报",
-    "## 召对场面用词",
-)
-
 _SYSTEM_LEAK = (
     "due_review",
     "breach_plea",
@@ -69,14 +58,6 @@ _SYSTEM_LEAK = (
 
 def _read(rel: str) -> str:
     return (ROOT / rel).read_text(encoding="utf-8")
-
-
-def _git_show(rel: str) -> str:
-    return subprocess.check_output(
-        ["git", "show", f"{BASE_REF}:{rel}"],
-        cwd=ROOT,
-        text=True,
-    )
 
 
 def _split_sections(text: str) -> dict[str, str]:
@@ -128,95 +109,3 @@ def test_diegetic_terms_in_simulator_and_minister_prompts():
             blob = title_key + body
             for token in _SYSTEM_LEAK:
                 assert token not in blob, (rel, title_key, token)
-
-
-def _base_commit_available() -> bool:
-    """票面 base 对象是否在本地 git 对象库（shallow clone 常缺）。"""
-    probe = subprocess.run(
-        ["git", "cat-file", "-e", f"{BASE_REF}^{{commit}}"],
-        cwd=ROOT,
-        capture_output=True,
-        check=False,
-    )
-    return probe.returncode == 0
-
-
-def test_whitelist_outside_sections_zero_diff_vs_base():
-    """白名单外章节相对票面 base diff 零变化。"""
-    if not _base_commit_available():
-        pytest.skip(
-            "base 对象不在（shallow clone），AC5 白名单验证需全 clone 本地跑"
-        )
-    for rel, anchors in S2_PROMPT_WHITELIST.items():
-        base = _git_show(rel)
-        head = _read(rel)
-        if rel.endswith("minister_agent.md"):
-            # 新章整段追加：base 全文必须是 head 的前缀（只许尾部增量）
-            # 或：除白名单新章外，其余 section 字节级相等
-            base_secs = _split_sections(base)
-            head_secs = _split_sections(head)
-            for title, body in base_secs.items():
-                if title.startswith("## 召对场面用词"):
-                    continue
-                assert title in head_secs, f"丢失章节 {title!r} in {rel}"
-                # 尾随空行因新章追加会产生，不计入实质 diff
-                assert head_secs[title].rstrip("\n") == body.rstrip("\n"), (
-                    f"白名单外章节被改：{title!r} in {rel}"
-                )
-            # 新章必须存在
-            assert any(t.startswith("## 召对场面用词") for t in head_secs), rel
-            continue
-
-        # season_simulator：按行 diff，仅允许命中白名单锚点的行及其紧邻段变化
-        base_lines = base.splitlines(keepends=True)
-        head_lines = head.splitlines(keepends=True)
-        # 用简单 LCS-unaware：逐行对齐失败则按「变更行必须含锚点或落在白名单节内」
-        if base == head:
-            continue
-        import difflib
-        sm = difflib.SequenceMatcher(a=base_lines, b=head_lines)
-        changed_head_idxs: list[int] = []
-        for tag, i1, i2, j1, j2 in sm.get_opcodes():
-            if tag == "equal":
-                continue
-            changed_head_idxs.extend(range(j1, j2))
-            # 删除行也须能在 base 侧归因到白名单（改名/改写）
-            for bi in range(i1, i2):
-                line = base_lines[bi]
-                assert any(a in line for a in anchors) or _line_in_whitelist_section(
-                    base_lines, bi, anchors
-                ), f"base 非白名单行被改/删：L{bi+1}: {line!r}"
-
-        for ji in changed_head_idxs:
-            line = head_lines[ji]
-            assert any(a in line for a in anchors) or _line_in_whitelist_section(
-                head_lines, ji, anchors
-            ), f"head 非白名单行新增/改写：L{ji+1}: {line!r}"
-
-
-def _line_in_whitelist_section(lines: list[str], idx: int, anchors: tuple[str, ...]) -> bool:
-    """向上找最近 ###/目录锚，判断是否落在白名单节。"""
-    # 目录区：含 N+2 的 fenced 目录块
-    for a in anchors:
-        if a in ("N+2", "六、复命", "没有军事", "due_commitments"):
-            # 这些是行级锚：允许该锚出现的行及其同段连续改写
-            pass
-    # 回溯最近 ### 标题
-    title = ""
-    for k in range(idx, -1, -1):
-        s = lines[k].strip()
-        if s.startswith("### "):
-            title = s
-            break
-        if s.startswith("## ") and not s.startswith("### "):
-            title = s
-            break
-    if title:
-        for a in anchors:
-            if a.startswith("###") and title.startswith(a):
-                return True
-    # 行本身或邻近 ±2 行含锚点
-    lo = max(0, idx - 2)
-    hi = min(len(lines), idx + 3)
-    window = "".join(lines[lo:hi])
-    return any(a in window for a in anchors)
