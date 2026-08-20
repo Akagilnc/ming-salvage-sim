@@ -59,17 +59,27 @@ def _active_minister(db, content, *, exclude="毕自严"):
     )
 
 
-def _ok_payload(*, person: str | None | list[str] = "毕自严"):
+def _ok_payload(
+    *,
+    person: str | None | list[str] = "毕自严",
+    delegator: str | None = None,
+):
     roster = []
     if isinstance(person, list):
         for i, name in enumerate(person):
-            roster.append({
+            item = {
                 "character_id": name,
                 "tier": "主办" if i == 0 else "协办",
                 "role": "核辽饷",
-            })
+            }
+            if i == 0 and delegator:
+                item["delegator_id"] = delegator
+            roster.append(item)
     elif person is not None:
-        roster = [{"character_id": person, "tier": "主办", "role": "核辽饷"}]
+        item = {"character_id": person, "tier": "主办", "role": "核辽饷"}
+        if delegator:
+            item["delegator_id"] = delegator
+        roster = [item]
     return {
         "拟旨意图": "拟旨",
         "动作类型": "policy",
@@ -266,6 +276,83 @@ def test_capture_correction_keeps_prior_valid_heals(game, monkeypatch):
     session.content = content
     dv = session.add_directive(text, dossier_payload=payload)
     assert dv.id > 0
+
+
+def test_capture_correction_delegator_typo_heals(game, monkeypatch):
+    """委派人抄写纠错（毕自→毕自严）须自愈，不得当 removal_only 误杀。"""
+    import ming_sim.cli_backend as cli_backend
+
+    db, state, content = game
+    _biziyan(content)
+    host = _active_minister(db, content).name
+    text = f"着{host}核拨辽饷，委派毕自严"
+    calls: list[str] = []
+
+    def backend(prompt, *_a, tag="", **_k):
+        calls.append(prompt)
+        if _CORRECTION_MARK in prompt:
+            delegator = "毕自严"
+        else:
+            delegator = "毕自"
+        return (
+            json.dumps(_ok_payload(person=host, delegator=delegator), ensure_ascii=False),
+            1,
+        )
+
+    monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
+    payload = cli_backend.capture_manual_directive_payload(
+        text, None, db=db, content=content,
+    )
+    roster = payload.get("participant_roster") or []
+    assert [str(i["character_id"]) for i in roster] == [host]
+    assert [str(i.get("delegator_id") or "") for i in roster] == ["毕自严"]
+    assert len(calls) == 2
+
+    session = GameSession.__new__(GameSession)
+    session.db = db
+    session.state = state
+    session.llm_config = None
+    session.content = content
+    dv = session.add_directive(text, dossier_payload=payload)
+    assert dv.id > 0
+
+
+def test_capture_correction_drops_prior_valid_delegator_escalates(game, monkeypatch):
+    """纠错轮丢掉首抽已合法的委派人 → escalate，不落草案。"""
+    import ming_sim.cli_backend as cli_backend
+
+    db, state, content = game
+    _biziyan(content)
+    replacement = _active_minister(db, content).name
+    text = "着不存在之人甲核拨辽饷，委派毕自严"
+    calls: list[str] = []
+
+    def backend(prompt, *_a, tag="", **_k):
+        calls.append(prompt)
+        if tag == "participant_escalate_report":
+            return ("通政司启：朝中查无「不存在之人甲」，乞陛下明示。", 1)
+        if _CORRECTION_MARK in prompt:
+            # 有替换，但顺手抹掉合法委派人毕自严
+            return (
+                json.dumps(_ok_payload(person=replacement), ensure_ascii=False),
+                1,
+            )
+        return (
+            json.dumps(
+                _ok_payload(person="不存在之人甲", delegator="毕自严"),
+                ensure_ascii=False,
+            ),
+            1,
+        )
+
+    monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
+    with pytest.raises(ValueError) as ei:
+        cli_backend.capture_manual_directive_payload(
+            text, None, db=db, content=content,
+        )
+    _assert_inworld_escalate(str(ei.value), "不存在之人甲")
+    assert len(db.list_directives(state) or []) == 0
+    assert any(_CORRECTION_MARK in p for p in calls)
 
 
 def test_capture_correction_alias_prior_valid_heals(game, monkeypatch):
