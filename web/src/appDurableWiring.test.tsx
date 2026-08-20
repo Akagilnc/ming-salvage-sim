@@ -563,8 +563,8 @@ const validDecision = {
 
 const snapBudget = (balance: number) => ({
   balance,
-  income: [{ name: "田赋", amount: 100, note: "" }],
-  expense: [{ name: "军饷", amount: 80, note: "" }],
+  income: [{ name: "田赋", amount: 100 }],
+  expense: [{ name: "军饷", amount: 80 }],
   income_total: 100,
   expense_total: 80,
   net: 20,
