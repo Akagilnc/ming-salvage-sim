@@ -203,11 +203,11 @@ minister 大臣奏对全文见 [docs/raw/02_narratives/minister__*.txt](raw/02_n
 
 | `--runner` | 本机 invocation（模型旗各 runner 如实） | 备注 |
 |---|---|---|
-| `codex` | `codex exec -` stdin | 既有；唯一 `_PARALLEL_SAFE` |
+| `codex` | `codex exec -` stdin | 既有（调用形含 `--ephemeral`，非并发护栏） |
 | `claude` | `claude -p --output-format text` | 既有 |
-| `cursor` | `cursor-agent -p --output-format text --trust [--model <id>]` | #1256；串行；`--trust` 免非交互 workspace 信任闸 |
-| `kimi` | `kimi -p <prompt> --output-format text [-m <alias>]`（**禁**与 `--yolo`/`--auto` 组合；只取 stdout） | #1256；串行 |
-| `grok` | `grok -p <prompt> --output-format plain [-m <id>] [--effort low\|med\|high]` | #1256 / §十二 grok-4.5 腿；串行 |
+| `cursor` | `cursor-agent -p --output-format text --trust [--model <id>]` | #1256；`--trust` 免非交互 workspace 信任闸 |
+| `kimi` | `kimi -p <prompt> --output-format text [-m <alias>]`（**禁**与 `--yolo`/`--auto` 组合；只取 stdout） | #1256 |
+| `grok` | `grok -p <prompt> --output-format plain [-m <id>] [--effort low\|med\|high]` | #1256 / §十二 grok-4.5 腿 |
 
 choices 单一真源：`ming_sim.cli_backend.GATE_CLI_RUNNERS`。非法名 argparse 拒收；`opencode` 不在 choices。
 

@@ -26,7 +26,6 @@ from ming_sim.agents import (
     run_agent_text,
 )
 from ming_sim.applier import Provenance, RejectedItem, RejectionCollector, atomic
-from ming_sim.cli_backend import cli_backend_parallel_safe
 from ming_sim.constants import TURN_UNIT
 from ming_sim.context import ENDING_LABELS, ENDING_ONGOING, ENDING_TIMEOUT, victory_status
 from ming_sim.db import GameDB
@@ -1543,13 +1542,13 @@ def _settle_after_narrative(
             )
             for module in EXTRACTION_MODULES
         }
-        # 仅并发安全的 CLI runner（codex，--ephemeral 隔离）下并发跑 4 个 extractor（#83，省约 1 分钟）；
-        # claude/agy/api/形态1 → cli_backend_parallel_safe=False → 串行不变。合并/落库仍串行单事务（ADR 0008）。
+        # 月末 4 个互不依赖 extractor 一律并发（wall-clock≈最慢单个）；合并/落库仍串行单事务（ADR 0008）。
+        # 不按 runner/模型保留串行——owner 2026-08-20：编排器日常并行 N 条 grok 零问题。
         extracted, extractor_output, extractor_input = extract_scores_by_modules_with_agno(
             extractors, db, state, effective_narrative, decree_text=executable_decree_text, sanitizer=sanitizer,
             relevant_memories=relevant_memories,
             secret_orders=secret_orders_for_sim,
-            parallel=cli_backend_parallel_safe(llm_config),
+            parallel=True,
         )
         # 拆不出 section 的 extractor 产物（顶层非 dict / 未知顶层 key）仍属 extractor 失败：
         # 在 try 内验形，让它走 pack+SettlementAbort 路。ADR0015 下可拆 section/list/entity
