@@ -1016,6 +1016,34 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     expect(edictDialog?.textContent).not.toContain("退朝即草案成案并过月");
   });
 
+  it("#1454 拟诏台开着：木牌改收起可点关掉，层带安全区且主钮仍独占盖玺文案", async () => {
+    stubSettlementFetch({
+      ...settlementBaseState("player"),
+      turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
+      previous_summary: "",
+      pending_decisions: [],
+    });
+    const host = await mountApp();
+    await click(cmdByCaption(host, "拟诏·盖玺颁诏过月"));
+    await tick();
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
+    });
+    const layer = host.querySelector('.fullscreen-layer.edict-safe-cmd[aria-label="诏书草案"]');
+    expect(layer).not.toBeNull();
+    // 名实：HUD 木牌不再与 seal-btn-issue 同文；台内主钮仍独占「盖玺颁诏过月」
+    expect(cmdByCaption(host, "拟诏·盖玺颁诏过月")).toBeNull();
+    const collapse = cmdByCaption(host, "拟诏·收起");
+    expect(collapse).not.toBeNull();
+    expect(host.querySelector("button.seal-btn-issue")?.textContent).toMatch(/盖玺颁诏过月/);
+    // 可点性：点收起木牌关台（非空等、非二次颁诏）
+    await click(collapse);
+    await tick();
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).toBeNull());
+    });
+  });
+
   it("#1305 court/harem nav 互斥：开后宫即关朝堂", async () => {
     stubSettlementFetch({
       ...settlementBaseState("player"),

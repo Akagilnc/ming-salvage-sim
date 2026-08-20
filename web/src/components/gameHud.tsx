@@ -26,6 +26,8 @@ export function GameHud({
   secretOrderActiveCount,
   onOpenModal,
   onClosedFaceAttempt,
+  edictOpen = false,
+  onCloseEdict,
 }: {
   stageRef: (el: HTMLDivElement | null) => void;
   ready: boolean;
@@ -39,6 +41,9 @@ export function GameHud({
   onOpenModal: (modal: ModalName) => void;
   /** 关闭组入口被点时的戏内提示（可选）。 */
   onClosedFaceAttempt?: (reason: string) => void;
+  /** #1454：拟诏台已开时木牌降为收起语义（勿与盖玺主钮同文双路径）。 */
+  edictOpen?: boolean;
+  onCloseEdict?: () => void;
 }) {
   // #1236：全部门控唯一谓词 = 状态口 settlement_display（禁 busy/phase 充真源）。
   // #1323：关闭理由/递话正文按 phase 分口吻——只改文案层，锁面谓词不动。
@@ -197,11 +202,23 @@ export function GameHud({
         caption="史册" sub="历代奏报/诏书"
         onClick={() => gatedModal("history", "history")} />
       <CommandSlot slotKey="拟诏" img="拟诏" badge={isFaceReachable("edict", settlementDisplay) ? state.directives.length : 0}
-        caption={state.directives.length > 0 ? "拟诏·盖玺颁诏过月" : "拟诏·退朝过月"}
-        sub={isFaceReachable("edict", settlementDisplay)
-          ? (state.directives.length ? `${state.directives.length} 道草案` : "成案并过月")
-          : closedReason}
-        onClick={() => gatedModal("edict", "edict")} />
+        className={edictOpen ? "edict-toggle-open" : undefined}
+        caption={edictOpen
+          ? "拟诏·收起"
+          : (state.directives.length > 0 ? "拟诏·盖玺颁诏过月" : "拟诏·退朝过月")}
+        sub={edictOpen
+          ? "收起拟诏台"
+          : (isFaceReachable("edict", settlementDisplay)
+            ? (state.directives.length ? `${state.directives.length} 道草案` : "成案并过月")
+            : closedReason)}
+        onClick={() => {
+          // #1454：台开时木牌=收起开关，不造第二条「盖玺颁诏过月」路径。
+          if (edictOpen) {
+            onCloseEdict?.();
+            return;
+          }
+          gatedModal("edict", "edict");
+        }} />
 
       {/* #1236 P4：王承恩递话条——显隐同谓词；#1323 正文按 phase 分口吻 */}
       {showWangSlip ? (

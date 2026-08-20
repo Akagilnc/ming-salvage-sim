@@ -379,19 +379,22 @@ export function BudgetList({ title, items, expense = false }: { title: string; i
 
 // 底部命令物件：扣图按木牌坑定位，文字标签按独立文字坑定位（两者分离，各自调位）
 export function CommandSlot({
-  slotKey, img, badge, caption, sub, onClick,
+  slotKey, img, badge, caption, sub, onClick, className,
 }: {
   slotKey: keyof typeof HUD_SLOTS.命令;
   img: string; badge?: number; caption: string; sub: string; onClick: () => void;
+  /** 可选修饰类（如 #1454 台开收起态）。 */
+  className?: string;
 }) {
+  const extra = className ? ` ${className}` : "";
   return (
     <>
-      <button className="hud2-cmd" style={HUD_SLOTS.命令[slotKey]} onClick={onClick}
+      <button className={`hud2-cmd${extra}`} style={HUD_SLOTS.命令[slotKey]} onClick={onClick}
         aria-label={`${caption}：${sub}`}>
         <img className="hud2-cmd-img" src={`/ui/exact/cmd/${img}.png`} alt="" />
         {badge ? <span className="hud2-cmd-badge">{badge}</span> : null}
       </button>
-      <button className="hud2-slot hud2-cmd-caption" style={HUD_SLOTS.命令文字[slotKey]}
+      <button className={`hud2-slot hud2-cmd-caption${extra}`} style={HUD_SLOTS.命令文字[slotKey]}
         onClick={onClick} aria-label={`${caption}：${sub}`}>
         <b>{caption}</b><small>{sub}</small>
       </button>
@@ -403,6 +406,7 @@ export function FullscreenModal({
   title,
   subtitle,
   bgClass,
+  layerClassName,
   onClose,
   children,
   headerExtra,
@@ -411,13 +415,20 @@ export function FullscreenModal({
   title: string;
   subtitle: string;
   bgClass?: string;
+  /** 叠在 fullscreen-layer 上的修饰类（如 #1454 拟诏台底栏安全区）。 */
+  layerClassName?: string;
   onClose: () => void;
   children: React.ReactNode;
   headerExtra?: React.ReactNode;
   hideTitle?: boolean;
 }) {
   return (
-    <section className="fullscreen-layer" role="dialog" aria-modal="true" aria-label={title}>
+    <section
+      className={layerClassName ? `fullscreen-layer ${layerClassName}` : "fullscreen-layer"}
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+    >
       <div className="fullscreen-scrim" onClick={onClose} />
       <div className={`fullscreen-modal ${bgClass || ""}`}>
         <header className={`modal-header ${hideTitle ? "modal-header-bare" : ""}`}>

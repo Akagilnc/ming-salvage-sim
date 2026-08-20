@@ -537,6 +537,16 @@
   z-index: 30;
 }
 
+/* #1454：拟诏台层底部留出命令安全区——desk-footer 不得挡 HUD 拟诏木牌。
+   台开时木牌降为「收起」开关，须可点；hud2-stage 有 transform 叠层上下文，
+   单靠抬木牌 z-index 压不过本层，故缩 layer 底边（同 #1342 抽屉口径）。 */
+.fullscreen-layer.edict-safe-cmd {
+  top: 0;
+  right: 0;
+  left: 0;
+  bottom: max(148px, 22vh);
+}
+
 .fullscreen-scrim {
   position: absolute;
   inset: 0;
