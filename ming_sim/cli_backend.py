@@ -959,33 +959,6 @@ def cli_backend_active(llm_config: Any = None) -> bool:
     return cli_backend_from_env() is not None
 
 
-# 已证「并发取数无 session 串话」的 CLI runner 白名单：仅 codex（每次 exec 带 --ephemeral，
-# 不落盘 session rollout，openai/codex#11435 workaround，#83 立项基础）。claude（claude -p 虽
-# 独立进程但并发未实测、有 rate-limit 顾虑）、agy（keychain auth-race，cmr 故意一次只跑一个）暂
-# 不在内——验证其并发安全后再加。月末 4-extractor 并行只对本名单启用，其余 runner 串行不变。
-_PARALLEL_SAFE_CLI_RUNNERS = {"codex"}
-
-
-def cli_backend_parallel_safe(llm_config: Any = None) -> bool:
-    """月末多 extractor 并发是否安全：实际后端 runner 须在 _PARALLEL_SAFE_CLI_RUNNERS 内（仅 codex）。
-
-    比 cli_backend_active 严：后者「是不是 CLI 后端」，本预言「这个 runner 并发取数安全吗」。
-    --ephemeral 隔离只对 codex 成立，故只有 codex 返 True；claude/agy/api/形态1 返 False=串行（#83）。
-
-    runner 解析**精确镜像 create_chat_model**（llm_model.py，extractor 真正用的后端）：
-    channel=='cli' → cli_runner or 旧 env or 'agy'；channel=='' → 旧 env（legacy/形态1）；'api' → 无 CLI。
-    与 cli_backend_active 用 _cli_config_parts（只认显式 cli channel）不同——否则 legacy env=codex
-    会被误判串行（cmr #83 codex R3：门控须与执行端同口径解 runner）。"""
-    channel = _llm_channel(llm_config)
-    if channel == "api":
-        return False
-    if channel == "cli":
-        runner = (getattr(llm_config, "cli_runner", "") or cli_backend_from_env() or "agy").strip().lower()
-    else:
-        runner = cli_backend_from_env()  # 空 channel（legacy/形态1）：env 回落，无 env → None
-    return runner in _PARALLEL_SAFE_CLI_RUNNERS
-
-
 def _messages_to_prompt(
     messages: List[Message],
     response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
@@ -2422,7 +2395,7 @@ def _extract_secret_order(
     raw = ""
     confirmation_future = None
     confirmation_pool = None
-    if cli_backend_parallel_safe(llm_config) and dossier_candidates:
+    if dossier_candidates:
         # Confirmation reads only the already-visible reply/candidate set, so it
         # can run beside field extraction; extracted proposals are intersected locally below.
         broad_proposals = [

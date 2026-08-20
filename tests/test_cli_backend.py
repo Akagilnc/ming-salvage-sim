@@ -1665,15 +1665,6 @@ def test_gate_cli_runners_single_source_excludes_agy():
     assert set(cb.GATE_CLI_RUNNERS) <= set(cb._CLI_BACKENDS)
 
 
-def test_new_runners_not_parallel_safe():
-    from ming_sim.models import LLMConfig
-    for runner in ("cursor", "kimi", "grok"):
-        cfg = LLMConfig(
-            api_key="", base_url="", model="m", channel="cli", cli_runner=runner, cli_model="m",
-        )
-        assert cb.cli_backend_parallel_safe(cfg) is False
-
-
 def test_cli_backend_from_env_accepts_new_runners(monkeypatch):
     for name in ("cursor", "kimi", "grok"):
         monkeypatch.setenv("MING_SIM_LLM_BACKEND", name)

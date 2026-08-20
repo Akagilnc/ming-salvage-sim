@@ -702,14 +702,10 @@ class GameSession:
         _bind_all_content(self.content)
         self.llm_config = llm_config
         from ming_sim.beat_orchestration import ChatTurnSceneRegistry, create_llm_beat_generator
-        from ming_sim.cli_backend import cli_backend_parallel_safe
         self._beat_generator = create_llm_beat_generator(llm_config)
         # Scene lifecycle lives in beat_orchestration; session only holds the registry handle.
-        # Reuse cli_backend_parallel_safe — no dedicated scene executor (C6 rejected).
-        self._scene_registry = ChatTurnSceneRegistry(
-            _CLI_ACTION_INTENT_EXECUTOR,
-            parallel_safe=cli_backend_parallel_safe(llm_config),
-        )
+        # No dedicated scene executor (C6 rejected); open/enter share the action-intent pool.
+        self._scene_registry = ChatTurnSceneRegistry(_CLI_ACTION_INTENT_EXECUTOR)
         self.db = GameDB(db_path, content=self.content, llm_config=llm_config)
         # 接档载入阶段计时（#84）：原为零日志盲区，群友以为死机；逐阶段 tlog 用时，
         # 自部署者在 server 控制台看得见进度、定位慢阶段。
@@ -945,18 +941,12 @@ class GameSession:
         """CLI 召对动作判断只读皇帝消息，可与大臣回话并发。"""
         from ming_sim.cli_backend import (
             _DRAFT_PREFIXES, _SECRET_PREFIXES, classify_cli_action_intent,
-            cli_backend_from_env, cli_backend_parallel_safe,
+            cli_backend_from_env,
         )
         channel = (getattr(getattr(self, "llm_config", None), "channel", "") or "").strip().lower()
         if channel != "cli" and (channel == "api" or cli_backend_from_env() is None):
             return None
-        # 并发安全白名单守门（cmr Gate2）：只有 _PARALLEL_SAFE_CLI_RUNNERS（仅 codex，--ephemeral
-        # 隔离）才能把动作分类器与大臣回话并发跑；agy（keychain auth-race）/claude（rate-limit）
-        # 并发未验证——并发两个子进程会撞 auth/session race。非安全 runner 返 None → preclassified
-        # 为空 → apply_cli_conversation_actions 回落到回话后串行抽取（extract_minister_actions 等），
-        # 动作不丢、只是不并发（与月末 4-extractor 并行同一口径，cli_backend.cli_backend_parallel_safe）。
-        if not cli_backend_parallel_safe(getattr(self, "llm_config", None)):
-            return None
+        # CLI 动作分类器与大臣回话一律并发；不按 runner 退串行。
         text = (message or "").strip()
         if text.startswith(_DRAFT_PREFIXES) or text.startswith(_SECRET_PREFIXES):
             return None
@@ -1763,43 +1753,6 @@ class GameSession:
             # 拒绝丢弃）针对的是窗前已暂存的 pending，保持可用（ship-pre r2 设计）。
             # 抽取器（LLM 调用）一并跳过。
             return out
-        active_orders = self.db.get_active_secret_orders_for_minister(minister_name)
-        is_consort = getattr(character, "office_type", "") == "后宫"
-        from ming_sim.cli_backend import cli_backend_active, cli_backend_parallel_safe
-        if (
-            intent is None
-            and not explicit_prefixed
-            and cli_backend_active(llm_config)
-            and not cli_backend_parallel_safe(llm_config)
-        ):
-            # 非并发安全 CLI runner（agy/claude）不在回话同时启动 classifier；
-            # 故回话完成后串行跑同一结构化判词缝。是否串行只由实际 runtime
-            # route 决定，不能让既有密令/妃嫔等业务状态吞掉 fresh action。
-            from ming_sim.cli_backend import classify_cli_action_intent
-
-            has_pending_draft = any(p["kind"] == "directive" for p in pend_for_minister)
-            recent_context = _recent_audience_context_for_secret_order(
-                getattr(self, "db", None), minister_name, int(self.state.turn), message_text,
-            )
-            serial_candidates = classify_cli_action_intent(
-                message_text,
-                active_orders,
-                is_consort,
-                has_pending_draft,
-                [
-                    f"#{int(p['id'])} {_pending_action_brief(p)}"
-                    for p in pend_for_minister
-                ],
-                llm_config,
-                recent_context,
-                int(self.state.turn),
-            )
-            # 空判词仍保留既有任免结构化 extractor 兜底；只有 classifier
-            # 真给出候选时才阻断后续类别专用 extractor。
-            if serial_candidates:
-                intent_candidates = serial_candidates
-                intent = resolve_primary_intent(intent_candidates)
-                intent_kind = str((intent or {}).get("kind") or "none")
         needs_draft_fallback = not has_directive and message_text.startswith(_DRAFT_PREFIXES)
         needs_secret_fallback = (
             not has_directive
