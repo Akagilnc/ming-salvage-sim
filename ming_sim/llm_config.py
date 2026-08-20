@@ -23,7 +23,8 @@ RUNTIME_GAME_PATH = user_data_path("runtime_game.json")
 
 # 游戏玩法设置默认值（全局，跨局共享）。
 GAME_SETTINGS_DEFAULTS = {
-    "hitl_min_decisions": 1,  # 每回合 simulator 至少产出的重大决策点数（0=不强制，宁缺毋滥）
+    # #1467：默认 0=不强制「每月至少一题」；无值得亲裁的新决策时 0 题合法。
+    "hitl_min_decisions": 0,
 }
 
 _API_RUNTIME_FIELDS = (
