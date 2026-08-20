@@ -189,7 +189,7 @@ session.advance_without_decree / POST /api/decree/advance_without_edict:
   # #498 退朝遇开夜顺势自动收夜；#542 scene_registry 调用方所有（session._scene_registry）
 ```
 
-hitl_min_decisions：无旨月 simulator 仍可产局势决策 → 批红；真零决策则既有空批/all-decided 链路走通。
+#1467：无 hitl_min_decisions 配额；无旨月 simulator 仍可产局势决策 → 批红；真零决策则既有空批/all-decided 链路走通。
 批量跳 N 月 = 另票 #1425，本片不做。
 
 ## 崩溃 / 中止恢复（ADR 0008 PR1，v0.8.0.0）

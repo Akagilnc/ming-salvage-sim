@@ -414,7 +414,6 @@ def test_menu_status_active_cli_unsupported_runner_not_ready_despite_preserved_a
     monkeypatch.setattr(web_app, "_scan_saves", lambda: [])
     monkeypatch.setattr(web_app, "_scan_campaigns", lambda: [])
     monkeypatch.setattr(web_app, "_main_db_campaign_id", lambda: "")
-    monkeypatch.setattr(web_app, "load_runtime_game", lambda: {"hitl_min_decisions": 1})
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {
         "channel": "cli",
         "api": {"base_url": "https://api.example.com/v1", "model": "gpt-api", "api_key": "sk-real-key"},
@@ -441,7 +440,6 @@ def test_menu_status_active_cli_placeholder_api_key_not_counted(monkeypatch):
     monkeypatch.setattr(web_app, "_scan_saves", lambda: [])
     monkeypatch.setattr(web_app, "_scan_campaigns", lambda: [])
     monkeypatch.setattr(web_app, "_main_db_campaign_id", lambda: "")
-    monkeypatch.setattr(web_app, "load_runtime_game", lambda: {"hitl_min_decisions": 1})
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {
         "channel": "cli",
         "api": {"base_url": "", "model": "", "api_key": "cli-backend"},
@@ -464,7 +462,6 @@ def test_menu_status_reports_reasoning_strength_capability_for_cli_runner(monkey
     monkeypatch.setattr(web_app, "_scan_saves", lambda: [])
     monkeypatch.setattr(web_app, "_scan_campaigns", lambda: [])
     monkeypatch.setattr(web_app, "_main_db_campaign_id", lambda: "")
-    monkeypatch.setattr(web_app, "load_runtime_game", lambda: {"hitl_min_decisions": 1})
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {
         "channel": "cli",
         "api": {"base_url": "", "model": "", "api_key": ""},
@@ -487,7 +484,6 @@ def test_menu_status_reports_inactive_cli_reasoning_strength(monkeypatch):
     monkeypatch.setattr(web_app, "_scan_saves", lambda: [])
     monkeypatch.setattr(web_app, "_scan_campaigns", lambda: [])
     monkeypatch.setattr(web_app, "_main_db_campaign_id", lambda: "")
-    monkeypatch.setattr(web_app, "load_runtime_game", lambda: {"hitl_min_decisions": 1})
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {
         "channel": "api",
         "reasoning_strength": "low",
@@ -517,7 +513,6 @@ def test_menu_status_uses_advanced_model_for_api_reasoning_capability(monkeypatc
     monkeypatch.setattr(web_app, "_scan_saves", lambda: [])
     monkeypatch.setattr(web_app, "_scan_campaigns", lambda: [])
     monkeypatch.setattr(web_app, "_main_db_campaign_id", lambda: "")
-    monkeypatch.setattr(web_app, "load_runtime_game", lambda: {"hitl_min_decisions": 1})
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {
         "channel": "api",
         "base_url": "https://api.deepseek.com/v1",
@@ -600,7 +595,6 @@ def test_menu_status_unsupported_cli_runner_not_ready(monkeypatch):
     monkeypatch.setattr(web_app, "_scan_saves", lambda: [])
     monkeypatch.setattr(web_app, "_scan_campaigns", lambda: [])
     monkeypatch.setattr(web_app, "_main_db_campaign_id", lambda: "")
-    monkeypatch.setattr(web_app, "load_runtime_game", lambda: {"hitl_min_decisions": 1})
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {
         "channel": "cli",
         "api": {"base_url": "", "model": "", "api_key": ""},
@@ -665,7 +659,6 @@ def test_menu_status_treats_saved_cli_runtime_as_ready_without_api_key(monkeypat
     monkeypatch.setattr(web_app, "_scan_saves", lambda: [])
     monkeypatch.setattr(web_app, "_scan_campaigns", lambda: [])
     monkeypatch.setattr(web_app, "_main_db_campaign_id", lambda: "")
-    monkeypatch.setattr(web_app, "load_runtime_game", lambda: {"hitl_min_decisions": 1})
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {
         "channel": "cli",
         "api": {"base_url": "", "model": "", "api_key": ""},
@@ -844,7 +837,6 @@ def test_1271_three_endpoints_grok_reasoning_supported_and_capability_list(monke
     monkeypatch.setattr(web_app, "_scan_saves", lambda: [])
     monkeypatch.setattr(web_app, "_scan_campaigns", lambda: [])
     monkeypatch.setattr(web_app, "_main_db_campaign_id", lambda: "")
-    monkeypatch.setattr(web_app, "load_runtime_game", lambda: {"hitl_min_decisions": 1})
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {
         "channel": "cli",
         "api": {"base_url": "", "model": "", "api_key": ""},

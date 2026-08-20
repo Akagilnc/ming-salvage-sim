@@ -33,15 +33,6 @@ from ming_sim.settlement_payload import (
 from ming_sim.token_stats import tlog
 
 
-def _load_hitl_min_decisions() -> int:
-    """全局玩法设置：本回合 simulator 至少应产出的决策点数（0=不强制）。失败回落 1。"""
-    try:
-        from ming_sim.llm_config import load_runtime_game
-        return int(load_runtime_game().get("hitl_min_decisions", 1))
-    except Exception:
-        return 1
-
-
 TOP_LEVEL_ALIASES = {
     "国势变化": "metric_delta",
     "钱粮收支": "economy_moves",
@@ -612,8 +603,6 @@ def build_simulator_payload(
         "debuts_this_turn": debuts_this_turn or [],
         "relevant_memories": relevant_memories or [],
         "due_commitments": due_commitments,
-        # HITL：本回合 simulator 至少应产出的重大决策点数（全局玩法设置，0=不强制）。
-        "hitl_min_decisions": _load_hitl_min_decisions(),
         # LLM nudge：在途人物列表（#346）。simulator 优先产叙事到任（行止+location），
         # 代码在 pre_settle 中兜底强制（≥2月未到 → 强制；此 nudge 鼓励 LLM 主动叙事）。
         "transit_nudge": _build_transit_nudge(db, state),
