@@ -270,8 +270,11 @@ def test_worker_cleanup_failure_still_emits_error_and_releases_gate():
     gen = runtime.chat_stream(minister, "辽东军情如何？")
     events = list(gen)  # consumer drives generator to completion
 
-    # error 事件被投递（消费者没挂死）
-    assert events[-1]["type"] == "error"
+    # #1353 r11：error+end 双终态（消费者没挂死，且以 end 收束）
+    types = [e.get("type") for e in events]
+    assert "error" in types, events
+    assert types[-1] == "end", events
+    assert types[types.index("error") + 1] == "end", types
     _assert_write_path_free(runtime)
 
 

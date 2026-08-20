@@ -691,7 +691,11 @@ def test_llm_failure_does_not_leave_half_chat_in_history(game):
 
     events = list(web_game.chat_stream(minister_name, "户部钱粮如何？"))
 
-    assert events[-1]["type"] == "error"
+    # #1353 r11：worker 失败双终态 error→end
+    types = [e.get("type") for e in events]
+    assert "error" in types, events
+    assert types[-1] == "end", events
+    assert types[types.index("error") + 1] == "end", types
     assert web_game.chat_history[minister_name] == []
     assert db.conn.execute("SELECT COUNT(*) FROM chat_messages").fetchone()[0] == 0
     row = db.conn.execute("SELECT status FROM chat_turns").fetchone()
@@ -721,7 +725,11 @@ def test_background_audience_failure_after_action_rolls_back_cleanly(game):
 
     events = list(web_game.chat_stream(minister_name, "拟一道清核辽饷的旨。"))
 
-    assert events[-1]["type"] == "error"
+    # #1353 r11：worker 失败双终态 error→end
+    types = [e.get("type") for e in events]
+    assert "error" in types, events
+    assert types[-1] == "end", events
+    assert types[types.index("error") + 1] == "end", types
     # 已暂存的拟旨被回滚——不留不可撤回的半成品政务结果
     assert not any(
         row["kind"] == "directive"
