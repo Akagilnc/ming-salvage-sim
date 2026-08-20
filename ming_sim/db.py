@@ -7890,8 +7890,10 @@ class GameDB:
     def previous_turn_reign_period_label(self, state: GameState) -> str:
         """邸报面报头年月 ≡ 所显示报文自身所属月（#1356）。
 
-        与 previous_turn_summary 同源：优先读 turn_reports 已存 year/period，
-        经 reign_period_label 投影；无行时按当前 state 回推上一月。
+        与 previous_turn_summary 同源同口径：
+        - 优先读 turn_reports 已存 year/period，经 reign_period_label 投影；
+        - 无 report 行时，仅当 logs 回落会产出 summary 才回推上一月；
+        - t0 / 真空 summary → 空串（禁「九月残留」空报却有 label）。
         当前 turn 年号不得混充上月报头。
         """
         previous_turn = int(state.turn) - 1
@@ -7906,7 +7908,16 @@ class GameDB:
                 return reign_period_label(int(row["year"]), int(row["period"]))
             except (TypeError, ValueError):
                 return ""
-        # 无 turn_reports 行（日志回落路径）：回推上一月，与 seed 算法同形
+        # 与 previous_turn_summary 同口径：t0 无报 → 空；非 t0 仅 logs 回落有文时才给 label
+        if previous_turn == 0:
+            return ""
+        has_logs = self.conn.execute(
+            "SELECT 1 FROM turn_logs WHERE turn = ? LIMIT 1",
+            (previous_turn,),
+        ).fetchone()
+        if not has_logs:
+            return ""
+        # 日志回落路径：回推上一月，与 summary 回落同形
         prev_year, prev_period = int(state.year), int(state.period) - 1
         if prev_period < 1:
             prev_period = 12

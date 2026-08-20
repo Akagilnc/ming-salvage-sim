@@ -1331,6 +1331,30 @@ describe("ReportModal — narrative settlement bulletin", () => {
     act(() => dismissBtn!.click());
     expect(onClose).toHaveBeenCalledOnce();
   });
+
+  it("#1486 长卷各节块级竖排：多节各自独立流式，不共用绝对定位层", () => {
+    const longReport = [
+      "《饥火边声逼帝阍》\n天启七年十二月 月末奏章",
+      "一、太仓亏短\n本月国库账面三百七万两，内库五百六万两。国库收支表面略有结余。",
+      "二、陕西饥乱\n陕西连年旱荒，西安常平仓几近枯竭，灾民、逃户与裁驿驿卒继续聚散山谷。",
+      "三、辽东军情\n关宁军宁锦防线尚守，宁远城垣与城头炮械仍足拒敌，然关宁军欠饷已逾六十万两。",
+      "四、待办未解\n户部亏空——太仓仍靠临时挪借维持。",
+    ].join("\n\n");
+    const host = renderReportModal({ report: longReport });
+    const blocks = host.querySelectorAll(".gazette-document .gazette-block");
+    // 结构性：长卷按空行分节，至少四节独立块（非单 pre 叠层）
+    expect(blocks.length).toBeGreaterThanOrEqual(4);
+    for (const block of Array.from(blocks)) {
+      expect(block.tagName.toLowerCase()).not.toBe("pre");
+      // 每节都在 document 流内，且非绝对定位容器的唯一子层叠
+      expect(block.parentElement?.classList.contains("gazette-document")).toBe(true);
+    }
+    // 正文仍可达（不盯具体文案措辞，只钉分节标题骨架仍在）
+    const body = host.textContent || "";
+    expect(body).toMatch(/一、/);
+    expect(body).toMatch(/三、/);
+    expect(body).toMatch(/四、/);
+  });
 });
 
 describe("ChatModal — explicit legacy authority", () => {

@@ -66,6 +66,28 @@ describe("#1398 邸报朕知道了视口常显", () => {
   });
 });
 
+describe("#1486 邸报长卷各节竖排互不覆盖", () => {
+  it("滚动链：shell 限高裁切 + document flex 收缩可滚 + 节块静态流式", () => {
+    const shell = styles.match(/\.gazette-shell\s*\{[^}]*\}/)?.[0] || "";
+    expect(shell).toMatch(/min-height:\s*0/);
+    expect(shell).toMatch(/overflow:\s*hidden/);
+
+    const docBlocks = styles.match(/\.gazette-document\s*\{[^}]*\}/g)?.join("\n") || "";
+    expect(docBlocks).toMatch(/flex:\s*1\s+1\s+0/);
+    expect(docBlocks).toMatch(/min-height:\s*0/);
+    expect(docBlocks).toMatch(/overflow-y:\s*auto/);
+
+    const block = styles.match(/\.gazette-block\s*\{[^}]*\}/)?.[0] || "";
+    expect(block).toBeTruthy();
+    expect(block).toMatch(/display:\s*block/);
+    expect(block).toMatch(/position:\s*static/);
+    expect(block).toMatch(/white-space:\s*pre-wrap/);
+    expect(block).toMatch(/line-height:\s*2/);
+    // 禁绝对定位叠字
+    expect(block).not.toMatch(/position:\s*absolute/);
+  });
+});
+
 describe("#1475 召对顶栏回收版面", () => {
   it("chat 大横幅轨不压过 modal-header-bare（hideTitle 时高度归零）", () => {
     // 大字居中横幅 min-height:78px 不得以更高特异性压过 bare 的 min-height:0，

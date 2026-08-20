@@ -78,6 +78,18 @@ def test_new_game_t0_previous_summary_strictly_empty(game):
     assert "尚无上月" not in summary
 
 
+def test_new_game_t0_previous_reign_period_label_empty_with_empty_summary(game):
+    """r5：t0 无上月报 → previous_reign_period_label 与空 summary 同口径（禁九月残留）。"""
+    db, state, _content = game
+    assert state.turn == 1
+    assert (state.year, state.period) == (1627, 10)
+    assert db.previous_turn_summary(state) == ""
+    label = db.previous_turn_reign_period_label(state)
+    assert label == ""
+    assert "九月" not in label
+    assert "天启" not in label
+
+
 def test_non_t0_empty_previous_summary_strictly_empty(game):
     """① 非 t0：无 report 且无 logs 同样严格空串（禁固定空态句）。"""
     db, state, _content = game
@@ -113,6 +125,11 @@ def test_first_month_settlement_produces_real_gazette(game, monkeypatch):
     summary = db.previous_turn_summary(state)
     assert "首月真结算" in summary
     assert summary == report
+
+    # r5 双向钉：首月结算后 label 正常出现（与 summary 同月口径）
+    label = db.previous_turn_reign_period_label(state)
+    assert label == "天启七年十月"
+    assert label != ""
 
 
 def test_old_save_exact_purge_keeps_real_with_phrase_counterexample(game):
@@ -196,3 +213,6 @@ def test_state_payload_t0_previous_summary_empty(game):
     assert payload.get("previous_summary") == ""
     assert "登基伊始" not in (payload.get("previous_summary") or "")
     assert payload["turn"]["reign_period_label"] == "天启七年十月"
+    # r5：payload 开局 label 与空 summary 同口径，禁九月残留
+    assert payload.get("previous_reign_period_label") in ("", None)
+    assert "九月" not in (payload.get("previous_reign_period_label") or "")

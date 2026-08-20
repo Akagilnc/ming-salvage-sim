@@ -31,27 +31,48 @@
   overflow: hidden;
   grid-template-rows: minmax(0, 1fr);
 }
-/* #1398：壳层分栏——正文滚、dismiss 视口常显（不埋长文滚底） */
+/* #1398：壳层分栏——正文滚、dismiss 视口常显（不埋长文滚底）
+   #1486：shell 限高 + overflow hidden，document flex-basis 0 强制收缩可滚，
+   长卷底节不再被外层裁切叠画。 */
 .gazette-shell {
   display: flex;
   flex-direction: column;
   min-height: 0;
   height: 100%;
   max-height: 100%;
+  overflow: hidden;
   width: min(1180px, 92%);
   margin: 0 auto;
   box-sizing: border-box;
 }
 .gazette-document {
-  flex: 1 1 auto;
+  flex: 1 1 0;
   margin: 0;
   width: 100%;
   max-height: none;
   min-height: 0;
   padding: 26px clamp(20px, 5vw, 90px) 16px;
   color: #efe3c2;
+  overflow-x: hidden;
   overflow-y: auto;
   box-sizing: border-box;
+}
+/* #1486：各节独立块级流式竖排，禁绝对定位叠字 */
+.gazette-block {
+  display: block;
+  position: static;
+  margin: 0 0 1.25em;
+  padding: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  line-height: 2.05;
+  height: auto;
+  min-height: 0;
+  overflow: visible;
+}
+.gazette-block:last-child {
+  margin-bottom: 0.5em;
 }
 .gazette-dismiss {
   flex: 0 0 auto;
