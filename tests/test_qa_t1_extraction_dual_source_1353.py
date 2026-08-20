@@ -2,6 +2,7 @@
 
 钉：
 1. 竞态：owner 在跑时发起 close → 有限 join 后一次过（不 409、不假 pending）
+1b. 竞态：join 已返回、freeze 前才 admission 的 owner（确定性调度钉，不靠 sleep）
 2. 真欠账时 pending 必非空可重试（error.ids 与 pending API 同集）
 3. drain 失败清理不得藏挡夜 turn；write_gate=None 卫兵不被架空
 4. 清理窗部分 heal → 409 正文只含鲜集；全愈 → close_retry（无递归重入）
@@ -94,6 +95,94 @@ def test_close_joins_in_flight_owner_while_open_one_shot(game, tmp_path, monkeyp
 
     assert result.get("closed") is True, result
     assert owner_result.get("out", {}).get("status") == "done"
+    assert db.get_story_extract_status(ctid) == "done"
+    assert an.get_night(db, nid)["status"] == an.NIGHT_STATUS_CLOSED
+    assert int(_pending_api(db)["count"]) == 0
+
+
+def test_close_joins_owner_admitted_after_join_before_freeze(
+    game, tmp_path, monkeypatch,
+):
+    """#1353 r2：join 已返回、freeze 尚未发生时 owner 才启动 → 仍一次过（不假 pending）。
+
+    确定性调度钉（不靠 sleep 竞猜）：
+    - 第 1 次 join 返回后同步 admission owner，并等到其进入 LLM；
+    - 第 2 次 join（gate 内 inflight 复查看见后的再汇合）才放行 owner settle。
+    旧实现只 join 一次即 freeze → owner allow_closing=False settle 必败 → 假 pending。
+    """
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
+    minister = _minister(db, content)
+    nid, ctid, seq = _open_night_with_persisted_reply(db, state, minister)
+
+    started_llm = threading.Event()
+    release_llm = threading.Event()
+    gate = threading.Lock()
+    owner_result: dict = {}
+    join_calls = {"n": 0}
+    owner_thread_box: list[threading.Thread] = []
+
+    class _SlowAgent:
+        def run(self, _material):
+            started_llm.set()
+            assert release_llm.wait(5), "second join must release owner"
+            return SimpleNamespace(
+                content=(
+                    '{"facts":[{"person_names":["'
+                    + minister
+                    + '"],"audibility":"殿上公开","body":"窗内启动落账","tags":[],'
+                    '"presence_effect":""}]}'
+                )
+            )
+
+    def owner_worker():
+        owner_result["out"] = ae.run_extraction_for_turn(
+            db=db,
+            minister_name=minister,
+            reply="臣愿肩起此事。",
+            chat_turn_id=ctid,
+            night_id=nid,
+            source_night_seq=seq,
+            llm_config=object(),
+            write_gate=gate,
+            extractor_agent=_SlowAgent(),
+            allow_closing=False,  # 后台 trail 形
+        )
+
+    real_join = ae.join_pending_turn_extractions
+
+    def join_schedule_hook(db_, *, night_id, timeout_s=None):
+        join_calls["n"] += 1
+        if join_calls["n"] == 1:
+            # 先跑真 join（此时尚无 owner），返回后才 admission——钉住 join→freeze 窗。
+            real_join(db_, night_id=night_id, timeout_s=timeout_s)
+            t = threading.Thread(
+                target=owner_worker, name="extract-owner-after-join-1353",
+            )
+            owner_thread_box.append(t)
+            t.start()
+            assert started_llm.wait(2), (
+                "owner must enter LLM inside join→freeze window"
+            )
+            return None
+        # 第 2+ 次：close 在 gate 内看见 inflight 后的再汇合——此刻放行 owner。
+        release_llm.set()
+        return real_join(db_, night_id=night_id, timeout_s=timeout_s)
+
+    monkeypatch.setattr(ae, "join_pending_turn_extractions", join_schedule_hook)
+
+    result = an.close_night(
+        db, state, night_id=nid, llm_config=object(), write_gate=gate,
+    )
+    assert owner_thread_box, "owner must have been admitted after first join"
+    owner_thread_box[0].join(timeout=5)
+    assert not owner_thread_box[0].is_alive()
+
+    assert join_calls["n"] >= 2, (
+        f"inflight recheck must re-join after window admission, got {join_calls['n']}"
+    )
+    assert result.get("closed") is True, result
+    assert owner_result.get("out", {}).get("status") == "done", owner_result
     assert db.get_story_extract_status(ctid) == "done"
     assert an.get_night(db, nid)["status"] == an.NIGHT_STATUS_CLOSED
     assert int(_pending_api(db)["count"]) == 0

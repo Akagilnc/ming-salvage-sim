@@ -1197,19 +1197,36 @@ def close_night(
         if night["status"] == NIGHT_STATUS_OPEN:
             # In-flight wait is gate-free (may sleep).
             wait_in_flight_clear(db, night_id, timeout_s=wait_timeout_s)
-            # #1353：OPEN 期有限 join 普通抽取 owner（single-flight 信号），join 后重读 DB；
-            # 禁在 CLOSING 后与后台 owner（allow_closing=False）争 settle。
-            from ming_sim.audience_extraction import join_pending_turn_extractions
-
-            join_pending_turn_extractions(
-                db, night_id=int(night_id), timeout_s=wait_timeout_s,
-            )
             # Start close scene on caller registry only — never join here; no ephemeral lifecycle.
             _start_close_scene()
-            with gate:
-                # 持 write_gate 原子复查并冻结 CLOSING：owner 须同锁 settle，
-                # 冻结窗内不得半途落账；真欠账仍由后续 drain 读 DB 真源 fail-closed。
-                _set_night_fields(db, night_id, status=NIGHT_STATUS_CLOSING)
+            # #1353：封 join→freeze TOCTOU——join 与 OPEN→CLOSING 冻结之间不留可穿越窗。
+            # 复用 turn single-flight + runtime write_gate：gate 外有限 join；gate 内复查
+            # inflight（与 admission 同锁，新 owner 要么入表被看见、要么冻结后拒入）；
+            # 仍有在飞则放锁再 join，不增 Future/第二账/新状态/第二锁。
+            from ming_sim.audience_extraction import (
+                has_inflight_turn_extractions,
+                join_pending_turn_extractions,
+            )
+
+            join_deadline = time.monotonic() + max(0.0, float(wait_timeout_s))
+            while True:
+                remaining = max(0.0, join_deadline - time.monotonic())
+                join_pending_turn_extractions(
+                    db, night_id=int(night_id), timeout_s=remaining,
+                )
+                with gate:
+                    # 持 write_gate：admission 不能并行 claim；inflight 空或预算耗尽才冻结。
+                    still_inflight = has_inflight_turn_extractions(
+                        db, night_id=int(night_id),
+                    )
+                    if still_inflight and time.monotonic() < join_deadline:
+                        # join 返回后新 admission 已入表——放锁再 join，禁在此窗冻结。
+                        pass
+                    else:
+                        _set_night_fields(
+                            db, night_id, status=NIGHT_STATUS_CLOSING,
+                        )
+                        break
             night = get_night(db, night_id)
             assert night is not None
         else:
