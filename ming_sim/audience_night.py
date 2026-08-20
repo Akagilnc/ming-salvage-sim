@@ -1097,6 +1097,7 @@ def close_night(
     wait_timeout_s: float | None = None,
     crash_after_step: Optional[int] = None,
     on_step: Optional[Callable[[int, Dict[str, Any]], None]] = None,
+    on_closing: Optional[Callable[[], None]] = None,
     beat_generator: Any = None,
     knowledge_provider: Any = None,
     llm_config: Any = None,
@@ -1222,6 +1223,11 @@ def close_night(
                         _set_night_fields(
                             db, night_id, status=NIGHT_STATUS_CLOSING,
                         )
+                        # #1353 r10：OPEN→CLOSING 冻结已生效——通知调用方释放
+                        # await 窗的 pending-write `_draining` 冻结；此后拒入由
+                        # CLOSING 准入缝（收夜中）接棒，禁 drain 文案冒充。
+                        if on_closing is not None:
+                            on_closing()
                         break
             night = get_night(db, night_id)
             assert night is not None
@@ -1229,6 +1235,9 @@ def close_night(
             # Resume CLOSING：仍无 body 时 start 同一 registry 缝（不自建平行生命周期）。
             # CLOSING restore drain 留作 ADR 0036 崩溃恢复口（下方 phase-2 drain）。
             _start_close_scene()
+            # 已是 CLOSING：同样释放 await 窗 pending-write 冻结（若有）。
+            if on_closing is not None:
+                on_closing()
 
         cursor = int(night["close_commit_cursor"] or 0)
 
@@ -1479,6 +1488,7 @@ def auto_close_open_night(
     scene_registry: Any = None,
     close_chat_turn_id: int = 0,
     body: str = "",
+    on_closing: Optional[Callable[[], None]] = None,
 ) -> Optional[Dict[str, Any]]:
     """颁诏/过回合前：有开夜则顺势收夜；无开夜返回 None。
 
@@ -1508,6 +1518,7 @@ def auto_close_open_night(
         endorsement_extractor_agent=endorsement_extractor_agent,
         scene_registry=scene_registry,
         close_chat_turn_id=int(close_chat_turn_id or 0),
+        on_closing=on_closing,
     )
 
 

@@ -3166,6 +3166,12 @@ def _await_audience_inflight_clear(game) -> None:
     gate-free close 必须等该既有 ownership 归零（真 end），禁新锁/重试总线。
     待补抽取债仍由 close_night 单一 owner 清——此处只等工人，不预清债。
 
+    #1353 fold-in r10：归零复查与冻结同 `_drain_cond` 临界区（#1476/r2 判例形）——
+    既有 worker 归零后原子置 `_draining`，冻结后 `_mark_pending_write` 拒新 admission；
+    禁新锁。`_draining` 只封 await→gate-free close 窗；close 将夜置 CLOSING 后由
+    `_settlement_period_entry` 立即解冻，CLOSING/相位门接棒拒新召对（禁用 drain 文案
+    冒充收夜中）。异常路径 finally 亦解冻兜底。
+
     走 game.db seam（与 _start_chat_turn 同 idiom：无 conn 的测试替身直接跳过）。
 
     #1235：调用方须先 _accept_settlement_period，使未了/失败前已入核账展示态。"""
@@ -3177,16 +3183,28 @@ def _await_audience_inflight_clear(game) -> None:
     if open_n is not None:
         wait_in_flight_clear(db, int(open_n["id"]))
     # 整轮 worker 真终态：既有 pending-write ownership（含 stream 主 worker 与
-    # 非流式 spawn 的尾随）。不设 _draining——只等，不挡新召对登记。
+    # 非流式 spawn 的尾随）。归零与冻结同临界区——不留 await→close 可穿越窗。
     cond = getattr(game, "_drain_cond", None)
     if cond is not None:
         with cond:
             while int(getattr(game, "_pending_writes_count", 0) or 0) > 0:
                 cond.wait()
+            setattr(game, "_draining", True)
     else:
         while int(getattr(game, "_pending_writes_count", 0) or 0) > 0:
             time.sleep(0.01)
+        setattr(game, "_draining", True)
 
+
+
+def _release_pending_write_admission_freeze(game) -> None:
+    """#1353 r10：释放 await 窗 `_draining` 冻结（复用既有 _drain_cond，禁新锁）。"""
+    cond = getattr(game, "_drain_cond", None)
+    if cond is not None:
+        with cond:
+            setattr(game, "_draining", False)
+    else:
+        setattr(game, "_draining", False)
 
 
 def _auto_close_open_night_gate_free(
@@ -3201,6 +3219,8 @@ def _auto_close_open_night_gate_free(
     与 _await_audience_inflight_clear 同 seam：无真实 game.db.conn 的 legacy/
     non-production 替身直接跳过 engine-owned auto-close，继续进入 session.resolve_turn。
     #1353 fold-in r5：欠账补跑内部静默，不并入过月 SSE。
+    #1353 fold-in r10：OPEN→CLOSING 冻结瞬间 on_closing 解冻 pending-write，
+    此后拒入由 CLOSING「收夜中」接棒。
     """
     db = getattr(game, "db", None)
     if db is None or not hasattr(db, "conn"):
@@ -3218,6 +3238,7 @@ def _auto_close_open_night_gate_free(
         llm_config=getattr(session, "llm_config", None) if session is not None else None,
         write_gate=_game_write_gate(game),
         scene_registry=getattr(session, "_scene_registry", None) if session is not None else None,
+        on_closing=lambda: _release_pending_write_admission_freeze(game),
     )
 
 
@@ -3289,8 +3310,16 @@ def _settlement_period_entry(game, *, write_cm: Callable[[Any], Any]):
         created_display = _accept_settlement_period(game)
         # #498 AC10：gate 外先等在飞回话落档，再 gate-free 收夜即时复查，不自锁。
         # #1353：欠账抽取并入同一次过月动作（内部静默），不再 409 打回玩家补写。
-        _await_audience_inflight_clear(game)
-        _auto_close_open_night_gate_free(game, inflight_wait_s=0.0)
+        # #1353 r10：await 内归零+置 _draining；close 在 OPEN→CLOSING 瞬间 on_closing
+        # 解冻；无开夜时 auto_close 早退，此处 finally 兜底解冻。
+        admission_frozen = False
+        try:
+            _await_audience_inflight_clear(game)
+            admission_frozen = True
+            _auto_close_open_night_gate_free(game, inflight_wait_s=0.0)
+        finally:
+            if admission_frozen:
+                _release_pending_write_admission_freeze(game)
         with write_cm(game):
             yield
             # #1343/#1378/#1379/#1388：成功回常态后兜底清残留快照。
