@@ -579,20 +579,6 @@ def test_gatekeeper_successor_removes_donglin_block_posture(game):
     assert successor["faction"] != "东林"
 
 
-def test_gate_arm_pool_size_follows_cli_backend_parallel_safe():
-    """Arm scheduler workers must reuse production parallel-safe policy."""
-    from scripts.promulgation_gate_561 import _arm_pool_size
-
-    codex = LLMConfig(
-        api_key="", base_url="", model="x", channel="cli", cli_runner="codex",
-    )
-    claude = LLMConfig(
-        api_key="", base_url="", model="x", channel="cli", cli_runner="claude",
-    )
-    assert _arm_pool_size(codex, 5) == 5
-    assert _arm_pool_size(claude, 5) == 1
-
-
 def test_choose_rescripts_keeps_authority_edge_off_force_promulgated(game):
     """Rejected authority_edge must pick withdrawn/hold, never options[0] force."""
     from scripts.promulgation_gate_561 import _choose_rescripts

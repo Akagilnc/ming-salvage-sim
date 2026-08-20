@@ -1200,43 +1200,6 @@ def test_create_llm_beat_generator_isolates_agent_per_call(monkeypatch):
     assert out_a != out_b
 
 
-def test_registry_serializes_open_enter_when_backend_not_parallel_safe(game):
-    """C13/T14: unsafe CLI backend must not run open/enter scene beats concurrently."""
-    db, state, content = game
-    minister = _active_minister(db, content)
-    _nid, ctid = an.attach_chat_turn_to_night(
-        db, state, minister, agno_session_id="serial-oe", agno_runs_before=0,
-    )
-    active = max_active = 0
-    lock = threading.Lock()
-    release = threading.Event()
-
-    def blocking_gen(inputs: BeatInputs) -> str:
-        nonlocal active, max_active
-        with lock:
-            active += 1
-            max_active = max(max_active, active)
-        assert release.wait(1)
-        with lock:
-            active -= 1
-        return f"kind={inputs.beat_kind}"
-
-    registry = bo.ChatTurnSceneRegistry(
-        ThreadPoolExecutor(max_workers=4), parallel_safe=False,
-    )
-    registry.start_open_enter(
-        db, state, minister_name=minister, chat_turn_id=ctid,
-        beat_generator=blocking_gen,
-    )
-    time.sleep(0.15)
-    with lock:
-        observed = max_active
-    release.set()
-    kinds = {body.split("=", 1)[-1] for _eid, body in registry.join(ctid)}
-    assert kinds == {"open", "enter"}
-    assert observed == 1
-
-
 def test_start_open_enter_releases_claim_when_discover_raises(game, monkeypatch):
     """C3/T4: discover failure must drop empty claim so same chat_turn_id can retry."""
     db, state, content = game

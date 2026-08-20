@@ -38,7 +38,6 @@ from agno.db.sqlite import SqliteDb
 from ming_sim.agents import bind_content as bind_agent_content
 from ming_sim.cli_backend import (
     add_gate_llm_args,
-    cli_backend_parallel_safe,
     gate_evidence_config,
     gate_llm_config_from_args,
     require_fresh_cli_trace,
@@ -277,9 +276,9 @@ def _select_second_verdict(
     return verdict
 
 
-def _arm_pool_size(cfg: LLMConfig, job_count: int) -> int:
-    """Reuse production cli_backend_parallel_safe: Codex concurrent, Claude serial."""
-    return int(job_count) if cli_backend_parallel_safe(cfg) else 1
+def _arm_pool_size(_cfg: LLMConfig, job_count: int) -> int:
+    """All runners concurrent — no per-model serial fallback."""
+    return int(job_count)
 
 
 def _resolve_arm_verdicts(
@@ -711,11 +710,7 @@ def main() -> int:
             "config": gate_evidence_config(args, cfg),
             "method": {
                 "runner": "resolve_directives",
-                "scheduling": (
-                    "cli_backend_parallel_safe isolated temporary DBs"
-                    if cli_backend_parallel_safe(cfg)
-                    else "serial isolated temporary DBs"
-                ),
+                "scheduling": "concurrent isolated temporary DBs",
                 "arms": sorted(arm_jobs),
                 "controls": {
                     "authority_slider": "only 皇威 differs between low_hold_rail and high_authority",

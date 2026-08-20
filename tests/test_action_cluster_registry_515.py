@@ -552,8 +552,8 @@ def test_finish_poisoned_classifier_yields_empty_list_not_none(game):
     assert sess._finish_cli_action_intent(None) is None
 
 
-def test_non_parallel_cli_chat_materializes_each_top_level_candidate(game, monkeypatch):
-    """一句多旨经真实 session.chat 串行 classifier 后逐项暂存。"""
+def test_cli_chat_materializes_each_top_level_candidate(game, monkeypatch):
+    """一句多旨经真实 session.chat classifier 后逐项暂存（任意 CLI runner 并发分类）。"""
     db, state, content = game
     minister = _active_ch(db, content)
     old_text = "着户部清核旧案。"

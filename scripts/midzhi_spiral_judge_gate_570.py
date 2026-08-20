@@ -55,7 +55,6 @@ from ming_sim.decree import (
 )
 from ming_sim.cli_backend import (
     add_gate_llm_args,
-    cli_backend_parallel_safe,
     gate_evidence_config,
     gate_llm_config_from_args,
     require_fresh_cli_trace,
@@ -276,7 +275,7 @@ def main() -> int:
     trace_path = require_fresh_cli_trace(cfg)
 
     with tempfile.TemporaryDirectory(prefix="ming-570-spiral-") as tmp:
-        workers = min(4, args.samples) if cli_backend_parallel_safe(cfg) else 1
+        workers = min(4, args.samples)
         with ThreadPoolExecutor(max_workers=workers) as executor:
             futures = [
                 executor.submit(_run_sample, i, tmp, content, cfg)
