@@ -611,35 +611,37 @@ def run_endorsement_batch_for_night(
     llm_config: Any,
     write_gate: Any,
     extractor_agent: Any = None,
+    join_timeout_s: float | None = None,
 ) -> Dict[str, Any]:
     """收夜 endorsement-only 批：LLM 在 write_gate 外；短事务原子落背书。
 
     - 已 bound → 幂等跳过。
     - 无候选或无 surviving turns → 确定性 skip 并标 bound。
-    - 争用 → 有限返回（不阻塞、不建 Future）。
-    - LLM/shape 失败 → 抛 AudienceNightError（调用方 fail-closed 保持 OPEN）。
+    - 争用 → 有限 join 既有 owner + 重读 DB 终态（#1353 K10c / #1476 模式；
+      不建 Future/结果登记；争用方干完即续跑，不造 409）。
+    - LLM/shape 失败 → 抛 AudienceNightError（调用方 fail-closed 保持 OPEN；K10b）。
     """
     nid = int(night_id)
     if _is_endorsement_bound(db, nid):
         return {"status": "done", "night_id": nid, "already": True, "ids": []}
 
+    if join_timeout_s is None:
+        join_timeout_s = DEFAULT_EXTRACT_JOIN_S
+
     flight_key = _night_flight_key(db, nid)
-    owner, owned = _claim_single_flight(flight_key)
-    if owner is None:
-        raise AudienceNightError(
-            f"收夜背书批处理争用中（night_id={nid}），请稍后重试。",
-            code="endorsement_batch_contended",
-            detail={"night_id": nid},
-        )
+    owner: Optional[threading.Lock] = None
     try:
-        if not owned:
+        # #1353 K10c：claim 失败 = 他方 owner 在飞 → 有限 join 单飞锁 + 重读 bound；
+        # 禁争用 409。owner 真失败仍走下方 K10b fail-closed。
+        while True:
+            owner, _owned = _claim_single_flight(flight_key)
+            if owner is not None:
+                break
+            _join_single_flight(flight_key, float(join_timeout_s))
             if _is_endorsement_bound(db, nid):
                 return {"status": "done", "night_id": nid, "already": True, "ids": []}
-            raise AudienceNightError(
-                f"收夜背书批处理争用中（night_id={nid}），请稍后重试。",
-                code="endorsement_batch_contended",
-                detail={"night_id": nid},
-            )
+            # join 超时仍未 bound：owner 可能刚释放或仍在飞——回环再 claim，不伪造失败。
+
         if _is_endorsement_bound(db, nid):
             return {"status": "done", "night_id": nid, "already": True, "ids": []}
 
@@ -710,7 +712,8 @@ def run_endorsement_batch_for_night(
             "count": len(ids),
         }
     finally:
-        _release_single_flight(flight_key, owner)
+        if owner is not None:
+            _release_single_flight(flight_key, owner)
 
 
 def _pending_with_pack(

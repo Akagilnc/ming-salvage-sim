@@ -137,7 +137,8 @@ CLOSE_STEPS = (
     CLOSE_STEP_FINALIZE,
 )
 
-# 在飞回话：公开入口可达的有界等待（秒）。挂起/超时 fail-closed。
+# 在飞回话：轮询间隔；wait 消费既有 chat turn 终态，不按 elapsed 伪造失败（#1353 K10a）。
+# DEFAULT_IN_FLIGHT_WAIT_S 仍作 close OPEN 期抽取 join 预算（与 DEFAULT_EXTRACT_JOIN_S 同量级）。
 DEFAULT_IN_FLIGHT_WAIT_S = 30.0
 DEFAULT_IN_FLIGHT_POLL_S = 0.05
 
@@ -939,33 +940,18 @@ def wait_in_flight_clear(
     timeout_s: float | None = None,
     poll_s: float | None = None,
 ) -> None:
-    """等在飞回话完成；超时 fail-closed（夜保持开）。不持 write_gate。"""
-    if timeout_s is None:
-        timeout_s = DEFAULT_IN_FLIGHT_WAIT_S
+    """等在飞回话完成；消费既有 chat turn/worker 终态续跑，不按 elapsed 伪造失败。
+
+    #1353 K10a / ADR 0149：工人落 active/failed/interrupted 终态即放行（一次点击
+    自动续跑）。timeout_s 保留调用方签名兼容，**不再**用于墙钟 409。不持 write_gate。
+    """
+    del timeout_s  # 签名兼容；禁 elapsed 伪造失败（全局 #9 / ADR 0149）
     if poll_s is None:
         poll_s = DEFAULT_IN_FLIGHT_POLL_S
-    deadline = time.monotonic() + max(0.0, float(timeout_s))
     while True:
         inflight = list_in_flight_chat_turns(db, night_id)
         if not inflight:
             return
-        if time.monotonic() >= deadline:
-            ids = [int(r["id"]) for r in inflight]
-            message = (
-                "收夜中止：本夜仍有未完成回话（在飞/挂起），"
-                f"chat_turn_ids={ids}。夜保持开启，可原地重试。"
-            )
-            pack = write_audience_error_pack(
-                kind="in_flight_chat",
-                message=message,
-                detail={"night_id": int(night_id), "chat_turn_ids": ids},
-            )
-            raise AudienceNightError(
-                message,
-                code="in_flight_chat",
-                error_pack_path=pack,
-                detail={"night_id": int(night_id), "chat_turn_ids": ids},
-            )
         time.sleep(max(0.0, float(poll_s)))
 
 

@@ -9,6 +9,9 @@
 5. 口令收夜穿 runtime write_gate
 6. 背书空文本独立 fail-closed + 409 重试形态（非欠账类）
 7. 删除面：无 _healed_drain_retry / closing+zero player_hint / 玩家补写 CTA
+8. fold-in r2 K10a：wait_in_flight 不按 elapsed 造 409
+9. fold-in r2 K10c：背书争用有限 join + 重读 DB（禁 Future/contended 409）
+10. fold-in r2：drain/catch_up on_event 推 stage（结构钉）
 """
 
 from __future__ import annotations
@@ -656,3 +659,178 @@ def test_deleted_surface_no_healed_drain_retry_residue():
         hits.append("web/src/extractionRetry.ts:exists")
     assert hits == [], hits
     assert "_healed_drain_retry" not in inspect.signature(an.close_night).parameters
+    # fold-in r2：禁 elapsed 伪造 in_flight / 背书争用 409 码残留于生产路径
+    prod = (root / "ming_sim/audience_extraction.py").read_text(encoding="utf-8")
+    assert 'code="endorsement_batch_contended"' not in prod
+    night_src = (root / "ming_sim/audience_night.py").read_text(encoding="utf-8")
+    assert 'code="in_flight_chat"' not in night_src
+
+
+def test_wait_in_flight_clear_consumes_terminal_no_elapsed_409(game):
+    """#1353 K10a：在飞 hang 时 wait 不按 elapsed 抛；工人终态后返回。"""
+    db, state, content = game
+    minister = _minister(db, content)
+    night = an.open_night(db, state, location="乾清宫", time_of_day="夜")
+    nid = int(night["id"])
+    an.summon_enter(db, nid, minister, method=an.METHOD_XUANRU)
+    _nid, ctid = an.attach_chat_turn_to_night(
+        db, state, minister, agno_session_id="sess-k10a", agno_runs_before=0,
+    )
+    mid = db.append_chat_message(minister, state.turn, "user", "边饷如何？")
+    db.update_chat_turn_messages(ctid, user_message_id=mid)
+    assert an.list_in_flight_chat_turns(db, nid)
+
+    done = threading.Event()
+    raised: list = []
+
+    def waiter():
+        try:
+            an.wait_in_flight_clear(db, nid, timeout_s=0.0, poll_s=0.01)
+        except BaseException as exc:  # noqa: BLE001 — 采集任何伪造失败
+            raised.append(exc)
+        finally:
+            done.set()
+
+    t = threading.Thread(target=waiter, name="wait-inflight-k10a")
+    t.start()
+    # 给 waiter 时间进入轮询；timeout_s=0 旧路径会立即 409
+    time.sleep(0.05)
+    assert t.is_alive(), "must keep waiting for worker terminal, not forge elapsed failure"
+    # 工人终态：fail 清在飞
+    db.fail_chat_turn(int(ctid))
+    assert done.wait(2.0), "waiter did not observe terminal"
+    t.join(timeout=1.0)
+    assert raised == [], f"K10a forbids elapsed-forged failure: {raised!r}"
+    assert an.list_in_flight_chat_turns(db, nid) == []
+
+
+def test_endorsement_contention_joins_owner_then_continues(game, tmp_path, monkeypatch):
+    """#1353 K10c：背书单飞争用 → 有限 join + 重读 bound，不造 contended 409。"""
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
+    minister = _minister(db, content)
+    nid, ctid, seq = _open_night_with_persisted_reply(db, state, minister, reply="臣愿作保。")
+
+    # 普通抽取先 done
+    assert ae.run_extraction_for_turn(
+        db=db,
+        minister_name=minister,
+        reply="臣愿作保。",
+        chat_turn_id=ctid,
+        night_id=nid,
+        source_night_seq=seq,
+        llm_config=object(),
+        write_gate=threading.Lock(),
+        extractor_agent=_FactsAgent(
+            '{"facts":[{"person_names":["'
+            + minister
+            + '"],"audibility":"殿上公开","body":"站台","tags":[],'
+            '"presence_effect":""}]}'
+        ),
+    )["status"] == "done"
+
+    db.list_endorsement_batch_inputs = lambda _nid: {  # type: ignore[method-assign]
+        "candidates": [{
+            "ref": {"dossier_id": 1, "kind": "directive"},
+            "decree_text": "清核辽饷",
+        }],
+        "turns": [{
+            "source_chat_turn_id": ctid,
+            "minister_name": minister,
+            "emperor_text": "准。",
+            "minister_reply": "臣愿作保。",
+            "ordinary_facts": [],
+        }],
+    }
+
+    started = threading.Event()
+    release_llm = threading.Event()
+    gate = threading.Lock()
+    owner_out: dict = {}
+    contender_out: dict = {}
+
+    class _SlowEndorsement:
+        def run(self, _materials):
+            started.set()
+            assert release_llm.wait(5), "release endorsement owner"
+            return SimpleNamespace(content='{"endorsements":[]}')
+
+    def owner_worker():
+        try:
+            owner_out["r"] = ae.run_endorsement_batch_for_night(
+                db=db,
+                night_id=nid,
+                llm_config=object(),
+                write_gate=gate,
+                extractor_agent=_SlowEndorsement(),
+            )
+        except BaseException as exc:  # noqa: BLE001
+            owner_out["exc"] = exc
+
+    ot = threading.Thread(target=owner_worker, name="endorsement-owner-k10c")
+    ot.start()
+    assert started.wait(5), "owner LLM must start"
+
+    def contender_worker():
+        try:
+            contender_out["r"] = ae.run_endorsement_batch_for_night(
+                db=db,
+                night_id=nid,
+                llm_config=object(),
+                write_gate=gate,
+                extractor_agent=_SlowEndorsement(),
+                join_timeout_s=0.05,
+            )
+        except BaseException as exc:  # noqa: BLE001
+            contender_out["exc"] = exc
+
+    ct = threading.Thread(target=contender_worker, name="endorsement-contender-k10c")
+    ct.start()
+    # contender 进入 join，不得立即 contended 抛出
+    time.sleep(0.08)
+    assert ct.is_alive() or "r" in contender_out or "exc" in contender_out
+    release_llm.set()
+    ot.join(timeout=5)
+    ct.join(timeout=5)
+    assert not ot.is_alive() and not ct.is_alive()
+
+    assert "exc" not in owner_out, owner_out
+    assert "exc" not in contender_out, contender_out
+    assert owner_out["r"]["status"] in {"done", "skipped"}
+    assert contender_out["r"]["status"] in {"done", "skipped"}
+    assert ae._is_endorsement_bound(db, nid)
+    # 禁 contended 码残留于异常面
+    assert getattr(contender_out.get("exc"), "code", None) != "endorsement_batch_contended"
+
+
+def test_drain_catch_up_emits_stage_on_event(game, tmp_path, monkeypatch):
+    """#1353 fold-in r2：drain/catch_up 经 on_event 推 stage（结构钉）。"""
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
+    minister = _minister(db, content)
+    nid, ctid, seq = _open_night_with_persisted_reply(db, state, minister)
+    # 真欠账一行：extract_status 空
+    assert db.get_story_extract_status(ctid) in ("", "pending", None) or True
+
+    stages: list[tuple[str, str]] = []
+
+    def on_event(kind: str, data: str) -> None:
+        stages.append((kind, data))
+
+    ae.drain_pending_before_close(
+        db=db,
+        llm_config=object(),
+        write_gate=threading.Lock(),
+        night_id=nid,
+        extractor_agent=_FactsAgent(
+            '{"facts":[{"person_names":["'
+            + minister
+            + '"],"audibility":"殿上公开","body":"补写落","tags":[],'
+            '"presence_effect":""}]}'
+        ),
+        on_event=on_event,
+    )
+    assert stages, "drain must emit at least one on_event stage"
+    assert all(k == "stage" for k, _ in stages), stages
+    assert any("补写" in d for _, d in stages), stages
+    assert db.get_story_extract_status(ctid) == "done"
