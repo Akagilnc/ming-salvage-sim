@@ -438,7 +438,7 @@ export function LLMConfigTab() {
         setModel(data.model);
         setAdvancedModel(data.advanced_model || "");
         setAdvancedBaseUrl(data.advanced_base_url || "");
-        setMaxTokens(String(data.max_tokens || 8000));
+        setMaxTokens(data.max_tokens != null && Number(data.max_tokens) > 0 ? String(data.max_tokens) : "");
         setTimeoutSeconds(String(data.timeout_seconds || 180));
         setApiReasoningStrength(normalizeStrength(
           data.persisted?.api_reasoning_strength || (data.channel === "api" ? data.reasoning_strength : "") || data.thinking_level
@@ -468,7 +468,7 @@ export function LLMConfigTab() {
           base_url: baseUrl,
           model,
           api_key: apiKey,
-          max_tokens: parseInt(maxTokens) || 8000,
+          max_tokens: parseInt(maxTokens, 10) || 0,
           timeout_seconds: parseFloat(timeoutSeconds) || 180,
           // 统一「推理强度」选择器已在 load 时把旧 thinking_level 迁进 reasoningStrength；保存时清掉
           // 旧字段，否则它会作隐藏第二旋钮被后端 fallback 消费、用户选「默认」也清不掉（#358 cmr）。
@@ -678,7 +678,7 @@ export function LLMConfigTab() {
               max={65536}
               value={maxTokens}
               onChange={(e) => setMaxTokens(e.target.value)}
-              placeholder="8000"
+              placeholder="空=官方上限"
             />
           </label>
           <label className="menu-field">
