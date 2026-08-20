@@ -1363,62 +1363,78 @@ def test_two_unknown_refs_escalates_first_error_stop(game, monkeypatch):
     assert len(db.list_directives(state) or []) == 0
 
 
-def test_cross_drafts_dual_unknown_escalates(game, monkeypatch):
-    """r12 负钉：两 draft 各一未知 → 全局失败槽=2 → escalate（禁分别局部修补）。"""
+def test_cross_drafts_dual_unknown_escalates(game):
+    """r13 定向负钉：两 draft 各一未知 → 全局失败槽=2 → _backfill 咬死全局闸返 None。
+
+    每 draft 局部失败槽恰=1，局部一一对应会各自成功；无全局闸会静默双修。
+    直接构造 baseline/correction 调 _backfill_healed_participant_refs（不经 e2e
+    先行拒绝旁路），mutation：删/旁路全局 ≠1 闸 → 本钉须红。
+    """
     import ming_sim.cli_backend as cb
 
-    db, state, content = game
+    db, _state, content = game
     _biziyan(content)
     r1 = _active_minister(db, content).name
     r2 = _active_minister(db, content, exclude=r1).name
-    player = f"两道旨：着不存在之人甲核拨辽饷、着不存在之人乙整饬边军；可令{r1}、{r2}分办"
-    minister_reply = "臣遵拟两道。"
+    player = (
+        f"两道旨：着不存在之人甲核拨辽饷、着不存在之人乙整饬边军；"
+        f"可令{r1}、{r2}分办"
+    )
 
-    def _batch(roster0, roster1):
+    def _drafts(roster0, roster1):
         return {
-            "成品旨稿": [
+            "drafts": [
                 {
-                    "正文": "着核拨辽饷。",
-                    "动作类型": "policy",
-                    "目标类型": "issue",
-                    "目标ID": "liao-pay",
-                    "颁布方式": "普通",
-                    "参与人": roster0,
+                    "draft_text": "着核拨辽饷。",
+                    "participant_roster": roster0,
                 },
                 {
-                    "正文": "着边军整饬器械。",
-                    "动作类型": "military_order",
-                    "目标类型": "army",
-                    "目标ID": "guanning",
-                    "颁布方式": "普通",
-                    "参与人": roster1,
+                    "draft_text": "着边军整饬器械。",
+                    "participant_roster": roster1,
                 },
             ]
         }
 
-    first = _batch(
+    baseline = _drafts(
         [{"character_id": "不存在之人甲", "tier": "主办", "role": "核"}],
         [{"character_id": "不存在之人乙", "tier": "主办", "role": "整"}],
     )
-    # 纠错轮两槽都换成接地新人——若按单 roster 独立计数会分别通过；全局须 escalate
-    fixed = _batch(
+    # 纠错轮两槽都换成接地新人——按单 roster 独立计数会分别通过
+    correction = _drafts(
         [{"character_id": r1, "tier": "主办", "role": "核"}],
         [{"character_id": r2, "tier": "主办", "role": "整"}],
     )
 
-    def backend(prompt, *_a, tag="", **_k):
-        if tag == "participant_escalate_report":
-            return ("通政司启：朝中查无不存在之人，乞陛下明示。", 1)
-        payload = fixed if _CORRECTION_MARK in prompt else first
-        return (json.dumps(payload, ensure_ascii=False), 1)
-
-    monkeypatch.setattr(cb, "_run_backend_for_config", backend)
-    with pytest.raises(cb.UnknownParticipantEscalate) as ei:
-        cb.extract_draft_intent_with_roster_heal(
-            player, minister_reply, db=db, content=content, draft_count=2,
+    # 前置：全局=2，各 draft 局部=1（证明「无全局闸则双修成功」的前提成立）
+    assert cb._count_failed_person_slots(baseline, db=db, content=content) == 2
+    assert cb._count_failed_person_slots_in_roster(
+        baseline["drafts"][0]["participant_roster"], db=db, content=content,
+    ) == 1
+    assert cb._count_failed_person_slots_in_roster(
+        baseline["drafts"][1]["participant_roster"], db=db, content=content,
+    ) == 1
+    pending = ["不存在之人甲", "不存在之人乙"]
+    for i, (bd, cd) in enumerate(zip(baseline["drafts"], correction["drafts"])):
+        local = cb._patch_roster_slots_one_to_one(
+            bd["participant_roster"],
+            cd["participant_roster"],
+            player_message=player,
+            failed_slot_refs=pending,
+            db=db,
+            content=content,
         )
-    assert "不存在之人甲" in ei.value.names or "不存在之人乙" in ei.value.names
-    assert len(db.list_directives(state) or []) == 0
+        assert local is not None, f"draft[{i}] 局部一一对应须成功（否则负钉前提崩）"
+
+    # 定向钉：全局闸 ≠1 → backfill 必须拒修（禁分别局部修补落库）
+    out = cb._backfill_healed_participant_refs(
+        baseline,
+        correction,
+        pending_unknown=pending,
+        player_message=player,
+        db=db,
+        content=content,
+    )
+    assert out is None
 
 
 def test_single_unknown_with_institution_heals(game, monkeypatch):
