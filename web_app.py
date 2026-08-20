@@ -91,7 +91,6 @@ from ming_sim.context import match_minister_from_text
 from ming_sim.flows import compute_budget_lines
 from ming_sim.exceptions import LLMContractError  # noqa: F401  (保留：供错误处理)
 from ming_sim.models import (
-    API_DEFAULT_MAX_TOKENS,
     API_DEFAULT_TIMEOUT_SECONDS,
     Character,
     FRONT_HALF_DONE_PHASES,
@@ -432,6 +431,20 @@ def _runtime_float(value: object, default: float) -> float:
         return default
 
 
+def _optional_max_tokens(value: object) -> Optional[int]:
+    """>0 = 显式上限；None/空/≤0 = 不发 max_tokens（官方上限）。"""
+    if value is None or value == "":
+        return None
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        try:
+            n = int(float(value))
+        except (TypeError, ValueError):
+            return None
+    return n if n > 0 else None
+
+
 def _has_real_api_key(value: object) -> bool:
     # 单一真源在 llm_config.is_real_api_key；此处只做 web 层薄包装。
     return is_real_api_key(value)
@@ -443,7 +456,7 @@ def _llm_config_from_runtime(
     base_url: str,
     model: str,
     api_key: str,
-    max_tokens: int,
+    max_tokens: Optional[int],
     timeout_seconds: float,
     thinking_level: str,
     advanced_model: str,
@@ -656,7 +669,7 @@ class WebGame:
         advanced_base_url = runtime.get("advanced_base_url") or advanced_base_url
         advanced_api_key = real_api_key_or_empty(runtime.get("advanced_api_key")) or advanced_api_key
         advanced_thinking_level = runtime.get("advanced_thinking_level") or advanced_thinking_level
-        max_tokens = int(runtime.get("max_tokens") or API_DEFAULT_MAX_TOKENS)
+        max_tokens = _optional_max_tokens(runtime.get("max_tokens"))
         timeout_seconds = float(runtime.get("timeout_seconds") or timeout_seconds)
         random.seed(int(os.environ.get("MING_SIM_SEED", "7")))
         os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
@@ -825,7 +838,7 @@ class WebGame:
         base_url: str,
         model: str,
         api_key: str,
-        max_tokens: int = 0,
+        max_tokens: Optional[int] = None,
         timeout_seconds: float = 0,
         thinking_level: Optional[str] = None,
         reasoning_strength: Optional[str] = None,
@@ -871,7 +884,8 @@ class WebGame:
                 saved = load_runtime_llm()
                 saved_api = saved.get("api") if isinstance(saved.get("api"), dict) else {}
                 new_key = real_api_key_or_empty(saved_api.get("api_key"))
-        new_max = max_tokens if max_tokens > 0 else cur.max_tokens
+        # max_tokens：None=保留当前；0=清空（官方上限）；>0=显式。空值合法，不强填 8000。
+        new_max = cur.max_tokens if max_tokens is None else _optional_max_tokens(max_tokens)
         new_timeout = timeout_seconds if timeout_seconds > 0 else cur.timeout_seconds
         if thinking_level is None:
             new_thinking_level = cur.thinking_level
@@ -3682,7 +3696,7 @@ async def api_menu_status() -> Dict[str, Any]:
             "reasoning_strengths": list(REASONING_STRENGTH_CHOICES),
             # #1271：能力名单自 cli_backend 单源导出，供前端 fallback 消费（禁前端硬编码）。
             "cli_reasoning_runners": sorted(CLI_REASONING_STRENGTH_RUNNERS),
-            "max_tokens": int(runtime.get("max_tokens") or API_DEFAULT_MAX_TOKENS),
+            "max_tokens": _optional_max_tokens(runtime.get("max_tokens")),
             "timeout_seconds": float(runtime.get("timeout_seconds") or os.environ.get("OPENAI_TIMEOUT_SECONDS") or API_DEFAULT_TIMEOUT_SECONDS),
             "thinking_level": runtime.get("thinking_level") or os.environ.get("OPENAI_THINKING_LEVEL", ""),
             "advanced_model": runtime.get("advanced_model") or os.environ.get("OPENAI_ADVANCED_MODEL", ""),
@@ -3869,7 +3883,7 @@ class LlmSetupRequest(BaseModel):
     base_url: str
     model: str
     api_key: str
-    max_tokens: int = API_DEFAULT_MAX_TOKENS
+    max_tokens: Optional[int] = None
     timeout_seconds: float = API_DEFAULT_TIMEOUT_SECONDS
     thinking_level: str = ""
     advanced_model: str = ""
@@ -3889,7 +3903,7 @@ async def _menu_save_cli_llm(request: LlmSetupRequest) -> Dict[str, Any]:
     cli_model = (request.cli_model or "").strip()
     reasoning_strength = normalize_reasoning_strength(request.reasoning_strength)
     cli_timeout = request.cli_timeout_seconds if request.cli_timeout_seconds and request.cli_timeout_seconds > 0 else CLI_DEFAULT_TIMEOUT_SECONDS
-    max_tokens = request.max_tokens if request.max_tokens > 0 else API_DEFAULT_MAX_TOKENS
+    max_tokens = _optional_max_tokens(request.max_tokens)
     timeout_seconds = request.timeout_seconds if request.timeout_seconds > 0 else API_DEFAULT_TIMEOUT_SECONDS
     if not cli_runner:
         raise HTTPException(status_code=400, detail="cli_runner 不能为空。")
@@ -3963,7 +3977,7 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
     adv_base_in = (request.advanced_base_url or "").strip()
     advanced_base_url = normalize_openai_base_url(adv_base_in) if adv_base_in else ""
     advanced_api_key = (request.advanced_api_key or "").strip()
-    max_tokens = request.max_tokens if request.max_tokens > 0 else API_DEFAULT_MAX_TOKENS
+    max_tokens = _optional_max_tokens(request.max_tokens)
     timeout_seconds = request.timeout_seconds if request.timeout_seconds > 0 else API_DEFAULT_TIMEOUT_SECONDS
     thinking_level = normalize_thinking_level(request.thinking_level)
     advanced_thinking_level = ""
@@ -4932,7 +4946,7 @@ class LLMConfigRequest(BaseModel):
     base_url: str = ""
     model: str = ""
     api_key: str = ""
-    max_tokens: int = 0
+    max_tokens: Optional[int] = None  # None=保留；0=官方上限；>0=显式
     timeout_seconds: float = 0
     thinking_level: str = "__keep__"
     reasoning_strength: str = "__keep__"
@@ -5078,7 +5092,7 @@ async def api_get_llm_config() -> Dict[str, Any]:
             "base_url": saved.get("base_url", ""),
             "model": saved.get("model", ""),
             "has_api_key": _has_real_api_key(saved.get("api_key", "")),
-            "max_tokens": int(saved.get("max_tokens") or API_DEFAULT_MAX_TOKENS),
+            "max_tokens": _optional_max_tokens(saved.get("max_tokens")),
             "timeout_seconds": float(saved.get("timeout_seconds") or API_DEFAULT_TIMEOUT_SECONDS),
             "thinking_level": saved.get("thinking_level", ""),
             "reasoning_strength": saved.get("reasoning_strength", ""),

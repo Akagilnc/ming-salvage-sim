@@ -3050,6 +3050,7 @@ def gate_evidence_config(args: Any, cfg: Any) -> Dict[str, Any]:
         "model": model,
         "reasoning_strength": str(getattr(cfg, "reasoning_strength", "") or ""),
     }
-    if getattr(cfg, "max_tokens", None) is not None:
-        block["max_tokens"] = int(cfg.max_tokens)
+    mt = getattr(cfg, "max_tokens", None)
+    if mt is not None and int(mt) > 0:
+        block["max_tokens"] = int(mt)
     return block
