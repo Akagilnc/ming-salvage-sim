@@ -84,7 +84,7 @@ def test_budget_army_pay_and_warning_due_calibers_are_labeled(read_game):
 
 
 def test_player_budget_payload_strips_engineering_notes(read_game):
-    """#1471：API 玩家字段只保留 display 名+金额；工程 note/internal 不得下发。"""
+    """#1471：API 玩家定额行键集恰为 {name, amount}；工程 note/internal 不得下发。"""
     db, state, _ = read_game
     runtime = object.__new__(web_app.WebGame)
     runtime.session = SimpleNamespace(db=db, state=state)
@@ -109,14 +109,12 @@ def test_player_budget_payload_strips_engineering_notes(read_game):
         account = payload[account_name]
         for direction in ("income", "expense"):
             for item in account[direction]:
-                assert set(item.keys()) <= {"name", "amount", "note"}, (
-                    f"玩家预算行不得夹带 internal 等工程键：{item!r}"
+                assert set(item.keys()) == {"name", "amount"}, (
+                    f"玩家预算行键集须恰为 name+amount：{item!r}"
                 )
+                assert "note" not in item
                 assert "internal" not in item
-                note = str(item.get("note") or "")
-                assert note == "", f"玩家预算 note 须剥离，得 {item!r}"
                 player_texts.append(str(item.get("name") or ""))
-                player_texts.append(note)
                 player_texts.append(str(item.get("amount") or ""))
 
     joined = "\n".join(player_texts)
