@@ -144,11 +144,13 @@ def test_capture_truncation_style_name_still_whole_order_409(game, monkeypatch):
         "目标ID": "liao-pay",
         "参与人": [{"character_id": "毕自", "tier": "主办"}],
     }
-    monkeypatch.setattr(
-        cli_backend,
-        "_run_backend_for_config",
-        lambda *_a, **_k: (json.dumps(response, ensure_ascii=False), 1),
-    )
+
+    def backend(prompt, *_a, tag="", **_k):
+        if tag == "participant_escalate_report":
+            return ("通政司启：朝中查无「毕自」，乞陛下明示。", 1)
+        return (json.dumps(response, ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
     with pytest.raises(ValueError) as ei:
         cli_backend.capture_manual_directive_payload(
             text, None, db=db, content=content,
@@ -172,11 +174,13 @@ def test_capture_unknown_person_still_409(game, monkeypatch):
         "目标ID": "x",
         "参与人": [{"character_id": "不存在之人甲", "tier": "主办"}],
     }
-    monkeypatch.setattr(
-        cli_backend,
-        "_run_backend_for_config",
-        lambda *_a, **_k: (json.dumps(response, ensure_ascii=False), 1),
-    )
+
+    def backend(prompt, *_a, tag="", **_k):
+        if tag == "participant_escalate_report":
+            return ("通政司启：朝中查无「不存在之人甲」，乞陛下明示。", 1)
+        return (json.dumps(response, ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
     with pytest.raises(ValueError) as ei:
         cli_backend.capture_manual_directive_payload(
             text, None, db=db, content=content,
