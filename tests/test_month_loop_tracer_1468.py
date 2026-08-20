@@ -1,4 +1,4 @@
-"""#1468 过月主链 e2e tracer——真实 HTTP 入口两月循环 + #1353 闸/账本一致性负向钉。
+"""#1468 过月主链 e2e tracer——真实 HTTP 入口两月循环 + #1353 fold-in 钉。
 
 回应 owner「测试全绿流程走不通」：全仓接缝钉照不到跨接缝状态机脱节；
 本文件从真实 HTTP 入口走玩家基本循环，仅在最外层 LLM 接缝 deterministic stub
@@ -8,8 +8,9 @@
 → 月+1 → 再一月。断言 turn+2 与 year/period 跨年安全月序 +2、无 409 死锁、
 无裸 500、闸/账双向等量（成功过月 count==len(pending)==0）。
 
-负向钉：收夜闸有欠账时 GET /api/audience/extraction/pending 必
-count==len(pending)>=1 且含本轮 debt id（#1353 病根）。
+#1353 fold-in 钉：
+- 植入欠账后一次过月动作成功（流内处理、无 409、无 CTA、账清、月+1）
+- 真死 LLM stub → 失败单源（通传未达），非待补 CTA/409；夜保持可重按
 
 速度红线：单条 ≤30s；罩类断言用可注入小值（本片不靠真实超时窗）。
 """
@@ -381,70 +382,158 @@ def test_month_loop_two_months_via_http_entry(tracer_client):
     assert elapsed <= 30.0, f"speed red line: tracer took {elapsed:.2f}s > 30s"
 
 
-# ── 负向钉：#1353 闸有欠账 → pending 必非空 ─────────────────────────────
+# ── #1353 fold-in：带欠账一次过月成功 + 死透失败单源 ─────────────────────
 
 
-def test_issue_blocked_by_extraction_debt_pending_api_nonempty(tracer_client, monkeypatch):
-    """#1353 病根钉（HTTP 面）：收夜闸挡退朝/颁诏时 extraction/pending 必非空可重试。
+def _plant_extraction_debt(game, minister: str, *, sess_tag: str) -> int:
+    """生产同核欠账：开夜 + 回话落库未抽。返回 chat_turn_id。"""
+    night = an.open_night(game.db, game.state, location="乾清宫", time_of_day="夜")
+    nid = int(night["id"])
+    an.ensure_summon_enter(game.db, nid, minister)
+    ctid = game.db.create_chat_turn(game.state, minister, sess_tag, 0, night_id=nid)
+    game.db.persist_minister_reply(minister, int(game.state.turn), "臣愿肩起此事。", ctid)
+    assert int(game.db.count_pending_story_extractions(night_id=nid) or 0) >= 1
+    return int(ctid)
 
-    共用 new_game HTTP 起局；失败路最短——在已起局面上植入真欠账（生产 open_night +
-    persist 同核），boom 只换外层抽取工厂。断言闸 409 与 pending API 同集非空。
-    """
+
+def test_issue_with_extraction_debt_succeeds_once(tracer_client):
+    """#1353 fold-in：植入欠账后一次过月成功——流内清账、无 409、无 CTA、月+1。"""
+    from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
+
     client = tracer_client
     t0 = time.perf_counter()
 
     new = client.post("/api/menu/new_game")
-    _assert_not_bare_500(new, step="new_game (neg)")
+    _assert_not_bare_500(new, step="new_game (debt-ok)")
     assert new.status_code == 200, new.text
     state0 = (new.json() or {}).get("state") or {}
+    turn0 = _turn_of(state0)
+    ord0 = _month_ord_of(state0)
     minister = _pick_active_minister(state0)
     game = web_app.web_game
     assert game is not None
 
-    # 最短失败路：不起 chat 尾随线程（避免与 plant/issue 竞态写库），直接生产同核欠账。
-    night = an.open_night(game.db, game.state, location="乾清宫", time_of_day="夜")
-    nid = int(night["id"])
-    an.ensure_summon_enter(game.db, nid, minister)
-    ctid = game.db.create_chat_turn(game.state, minister, "sess-1468-neg", 0, night_id=nid)
-    game.db.persist_minister_reply(minister, int(game.state.turn), "臣愿肩起此事。", ctid)
-    assert int(game.db.count_pending_story_extractions(night_id=nid) or 0) >= 1
+    ctid = _plant_extraction_debt(game, minister, sess_tag="sess-1468-debt-ok")
+
+    # 颁诏须至少一条草案（与主 tracer 同形）；欠账在收夜流内清，不靠手动补写。
+    directive = client.post(
+        "/api/directives",
+        json={"text": "着户部清核辽饷（debt-ok）。", "notes": ""},
+    )
+    _assert_not_bare_500(directive, step="debt-ok 拟旨")
+    assert directive.status_code == 200, directive.text
+
+    issue = client.post("/api/decree/issue", json={"expected_turn": turn0})
+    _assert_not_bare_500(issue, step="debt-ok issue")
+    assert issue.status_code != 409, (
+        f"fold-in forbids debt-class 409; body={issue.text}"
+    )
+    assert CLI_RUNNER_PLAYER_MESSAGE not in issue.text
+    assert issue.status_code == 200, (
+        f"debt-ok issue → {issue.status_code}: {issue.text}"
+    )
+    body = issue.json()
+    if body.get("awaiting_decision"):
+        decisions = body.get("decisions") or []
+        assert decisions, f"awaiting_decision empty: {body!r}"
+        choices = []
+        for d in decisions:
+            opts = d.get("options") or ["准"]
+            choices.append({
+                "title": d.get("title") or d.get("id"),
+                "choice": opts[0] if isinstance(opts[0], str) else str(opts[0]),
+            })
+        resolve = client.post(
+            "/api/decree/resolve_decisions/stream",
+            json={"choices": choices},
+        )
+        _assert_not_bare_500(resolve, step="debt-ok resolve")
+        assert resolve.status_code == 200, resolve.text
+        assert "event: error" not in resolve.text, resolve.text
+
+    _wait_pending_writes(game)
+    after = _get_state(client)
+    assert _turn_of(after) == turn0 + 1, (
+        f"debt-ok: turn {turn0} → {_turn_of(after)}; phase={after.get('turn')!r}"
+    )
+    assert _month_ord_of(after) == ord0 + 1
+    pending = _pending_payload(client)
+    pending_list = pending.get("pending") or []
+    count = int(pending.get("count") or 0)
+    assert count == len(pending_list) == 0, (
+        f"debt-ok: post-month pending not empty: count={count} body={pending!r} ctid={ctid}"
+    )
+    open_after = an.get_open_night(game.db)
+    assert open_after is None or str(open_after.get("status")) == an.NIGHT_STATUS_CLOSED, (
+        f"debt-ok: night still blocking: {open_after!r}"
+    )
+
+    elapsed = time.perf_counter() - t0
+    assert elapsed <= 30.0, f"speed red line: debt-ok took {elapsed:.2f}s > 30s"
+
+
+def test_issue_extraction_llm_dead_single_source_not_cta(tracer_client, monkeypatch):
+    """#1353 fold-in：抽取 LLM 死透 → 失败单源（通传未达），非待补 CTA/409；夜可重按。"""
+    from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
+
+    client = tracer_client
+    t0 = time.perf_counter()
+
+    new = client.post("/api/menu/new_game")
+    _assert_not_bare_500(new, step="new_game (dead-llm)")
+    assert new.status_code == 200, new.text
+    state0 = (new.json() or {}).get("state") or {}
+    turn0 = _turn_of(state0)
+    minister = _pick_active_minister(state0)
+    game = web_app.web_game
+    assert game is not None
+
+    ctid = _plant_extraction_debt(game, minister, sess_tag="sess-1468-dead")
 
     monkeypatch.setattr(
         agents_mod, "create_audience_extractor_agent",
         lambda *a, **k: _BoomExtractor(),
     )
 
-    issue = client.post("/api/decree/issue", json={})
-    _assert_not_bare_500(issue, step="neg issue")
-    assert issue.status_code == 409, (
-        f"expected 409 pending_extraction gate, got {issue.status_code}: {issue.text}"
+    issue = client.post("/api/decree/issue", json={"expected_turn": turn0})
+    _assert_not_bare_500(issue, step="dead-llm issue")
+    # 欠账类不得再 409 打回；走既定 LLM 失败单源面。
+    assert issue.status_code != 409, (
+        f"debt-class 409 deleted; got {issue.status_code}: {issue.text}"
+    )
+    assert issue.status_code in (400, 412), (
+        f"expected LLM single-source status, got {issue.status_code}: {issue.text}"
     )
     detail = issue.json().get("detail")
-    detail_text = detail if isinstance(detail, str) else (
-        (detail or {}).get("message") if isinstance(detail, dict)
-        else str(detail)
+    if isinstance(detail, dict):
+        detail_text = str(detail.get("message") or "")
+        detail_blob = str(detail)
+    else:
+        detail_text = str(detail or "")
+        detail_blob = detail_text
+    assert CLI_RUNNER_PLAYER_MESSAGE in detail_text or CLI_RUNNER_PLAYER_MESSAGE in detail_blob, (
+        f"failure single source missing: {detail!r}"
     )
-    assert any(
-        token in str(detail_text)
-        for token in ("待补", "抽取", "未抽取", "pending")
-    ), f"409 detail should mention extraction debt: {detail_text!r}"
+    # 禁玩家可见待补/补写 CTA 语义
+    assert "待补" not in detail_text
+    assert "补写" not in detail_text
+    assert "chat_turn" not in detail_text
 
-    # 闸/账双向等量：409 时 count == len(pending) >= 1 且含本轮 debt id。
-    # mutation：pending HTTP 面漏账而闸仍 409 须红。
+    # 诊断面仍可见欠账；夜保持开，玩家重按过月=重试整段
     pending = _pending_payload(client)
     pending_list = pending.get("pending") or []
     count = int(pending.get("count") or 0)
     assert count == len(pending_list) >= 1, (
-        f"#1353: gate 409 but pending not bidirectional nonempty: "
-        f"count={count} len={len(pending_list)} body={pending!r}"
+        f"diagnostic pending should remain: count={count} body={pending!r}"
     )
     api_ids = {int(p.get("chat_turn_id") or 0) for p in pending_list}
     assert ctid in api_ids, f"pending API missing debt turn {ctid}: {pending!r}"
 
-    # 夜保持开，可重试
     still = an.get_open_night(game.db)
     assert still is not None
     assert str(still.get("status")) == an.NIGHT_STATUS_OPEN
+    after = _get_state(client)
+    assert _turn_of(after) == turn0, "dead-llm must not advance month"
 
     elapsed = time.perf_counter() - t0
-    assert elapsed <= 30.0, f"speed red line: neg nail took {elapsed:.2f}s > 30s"
+    assert elapsed <= 30.0, f"speed red line: dead-llm took {elapsed:.2f}s > 30s"

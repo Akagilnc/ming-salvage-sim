@@ -429,7 +429,6 @@ def test_web_no_edict_endpoint_routes_real_long_order_to_full_settlement(game, m
         yield
 
     monkeypatch.setattr(web_app, "get_game", lambda: web_game)
-    monkeypatch.setattr(web_app, "_await_audience_inflight_clear", lambda _game: None)
     monkeypatch.setattr(web_app, "_serialized_web_write", unlocked)
     response = web_app.api_advance_without_edict()
 
@@ -467,7 +466,6 @@ def test_web_short_order_full_settlement_no_monthly_progress(game, monkeypatch, 
         yield
 
     monkeypatch.setattr(web_app, "get_game", lambda: web_game)
-    monkeypatch.setattr(web_app, "_await_audience_inflight_clear", lambda _game: None)
     monkeypatch.setattr(web_app, "_serialized_web_write", unlocked)
     response = web_app.api_advance_without_edict()
 
@@ -576,7 +574,6 @@ def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write
             yield
 
         monkeypatch.setattr(web_app, "get_game", lambda: web_game)
-        monkeypatch.setattr(web_app, "_await_audience_inflight_clear", lambda _game: None)
         monkeypatch.setattr(web_app, "_serialized_web_write", unlocked)
         invoke = web_app.api_advance_without_edict
     else:

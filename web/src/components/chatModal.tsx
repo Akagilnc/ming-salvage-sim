@@ -37,12 +37,10 @@ export function ChatModal({
   error,
   secretOrders,
   replyRetry,
-  extractionPendingCount,
   onInput,
   onSend,
   onRetryFailure,
   onRetryReply,
-  onRetryExtraction,
   onUndo,
   onHint,
   onFavorite,
@@ -79,13 +77,10 @@ export function ChatModal({
   secretOrders: SecretOrder[];
   /** #505：系统层回话重试（崩溃后问话保留）。 */
   replyRetry?: { chat_turn_id: number; question: string } | null;
-  /** #501：本夜待补叙事抽取条数。 */
-  extractionPendingCount?: number;
   onInput: (value: string) => void;
   onSend: (ministerName: string, text?: string) => void;
   onRetryFailure: (failure: PendingActionFailure) => void;
   onRetryReply?: (ministerName: string) => void;
-  onRetryExtraction?: () => void;
   onUndo: (ministerName: string) => void;
   onHint: (value: string) => void;
   onFavorite: (minister: Minister) => void;
@@ -227,7 +222,7 @@ export function ChatModal({
     } else if (followsTailRef.current) {
       node.scrollTop = node.scrollHeight;
     }
-  }, [minister.name, chat, scrollState, pendingUserMessage, streamingMinisterMessage, chatNotice, chatFailures, busy, error, replyRetry, extractionPendingCount]);
+  }, [minister.name, chat, scrollState, pendingUserMessage, streamingMinisterMessage, chatNotice, chatFailures, busy, error, replyRetry]);
 
   const handleScroll = () => {
     const node = chatLogRef.current;
@@ -318,15 +313,6 @@ export function ChatModal({
               <span>上回问话未得回话（「{replyRetry.question}」），可重新生成回话。</span>
               <button type="button" onClick={() => onRetryReply(currentMinister.name)} disabled={!!busy}>
                 重新生成回话
-              </button>
-            </div>
-          )}
-          {/* #501：待补叙事抽取——显眼提示 + 原地重试（不锁档）。 */}
-          {!!extractionPendingCount && extractionPendingCount > 0 && onRetryExtraction && (
-            <div className="chat-system-note danger chat-failure-note" role="alert" data-testid="extraction-pending">
-              <span>本夜有 {extractionPendingCount} 段召对账待补写，可原地重试。</span>
-              <button type="button" onClick={onRetryExtraction} disabled={!!busy}>
-                重试补写
               </button>
             </div>
           )}

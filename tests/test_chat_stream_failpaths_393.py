@@ -84,9 +84,12 @@ def _base_runtime(db):
     state = SimpleNamespace(turn=1, year=1628, period=1, turn_phase="summoning")
     runtime = object.__new__(web_app.WebGame)
     runtime._write_gate = threading.Lock()
-    runtime._drain_cond = threading.Condition()
-    runtime._pending_writes_count = 0
-    runtime._draining = False
+    from ming_sim.session_write_queue import SessionWriteQueue
+    runtime._write_queue = SessionWriteQueue()
+    runtime._write_gate = runtime._write_queue.write_gate
+    runtime._runtime_write_queue = lambda: runtime._write_queue  # type: ignore
+    runtime._mark_pending_write = lambda key=None: runtime._write_queue.claim(key=key or ("pending",))  # type: ignore
+    runtime._complete_pending_write = lambda ticket=None: runtime._write_queue.complete(ticket)  # type: ignore
     runtime.session = SimpleNamespace(
         temporary_characters=set(),
         content=SimpleNamespace(characters={character.name: character}),
@@ -136,9 +139,9 @@ def test_prologue_finally_does_not_release_foreign_gate_holder():
 
     original_complete = runtime._complete_pending_write
 
-    def complete_then_hand_path_to_other() -> None:
+    def complete_then_hand_path_to_other(ticket=None) -> None:
         # Runs after cleanup `with write_gate` exited and released, before finally.
-        original_complete()
+        original_complete(ticket)
         other = threading.Thread(target=other_writer, name="foreign-serialized-holder")
         other_thread_holder.append(other)
         other.start()
@@ -267,8 +270,136 @@ def test_worker_cleanup_failure_still_emits_error_and_releases_gate():
     gen = runtime.chat_stream(minister, "辽东军情如何？")
     events = list(gen)  # consumer drives generator to completion
 
-    # error 事件被投递（消费者没挂死）
-    assert events[-1]["type"] == "error"
+    # #1353 r11：error+end 双终态（消费者没挂死，且以 end 收束）
+    types = [e.get("type") for e in events]
+    assert "error" in types, events
+    assert types[-1] == "end", events
+    assert types[types.index("error") + 1] == "end", types
+    _assert_write_path_free(runtime)
+
+
+def test_worker_cleanup_double_failure_emits_original_error_end_and_logs(caplog):
+    """#1353 r13 / ADR 0005：payload-None 清理 abandon + fail 双二次失败 →
+    消费者有界收到*原始* error→end；清理异常只 logger.exception 记 traceback，不覆盖原错、不阻断终态。"""
+    import logging
+
+    db = _WorkerPathDB()
+    runtime, minister = _base_runtime(db)
+    agent = _StreamCrashAgent()
+    runtime.session.registry = SimpleNamespace(get=lambda _c: agent)
+    runtime.session._character = lambda name: SimpleNamespace(name=minister)
+    runtime.session._start_cli_action_intent = lambda *_a, **_k: None
+
+    abandon_calls: list[int] = []
+
+    def _boom_abandon(ctid):
+        abandon_calls.append(int(ctid))
+        raise RuntimeError("abandon 二次崩溃")
+
+    runtime.session.abandon_chat_turn_scene = _boom_abandon
+
+    primary = "LLM 流式调用崩溃。"
+    events: list[dict] = []
+    done = threading.Event()
+    box: dict = {}
+
+    def consume() -> None:
+        try:
+            for item in runtime.chat_stream(minister, "辽东军情如何？"):
+                events.append(item)
+                if item.get("type") == "end":
+                    break
+            box["ok"] = True
+        except Exception as exc:  # noqa: BLE001
+            box["exc"] = exc
+        finally:
+            done.set()
+
+    with caplog.at_level(logging.ERROR, logger="web_app"):
+        th = threading.Thread(target=consume, daemon=True)
+        th.start()
+        assert done.wait(5.0), (
+            "double cleanup failure must terminalize original error+end; hung on ev_queue"
+        )
+        th.join(timeout=1.0)
+
+    assert box.get("ok") is True, box
+    types = [e.get("type") for e in events]
+    assert "error" in types, events
+    assert types[-1] == "end", events
+    err_idx = types.index("error")
+    assert types[err_idx + 1] == "end", types
+    err = next(e for e in events if e.get("type") == "error")
+    # 原始 error 不变：清理二次崩溃不得覆盖 message
+    assert err.get("message") == primary, err
+    assert "abandon" not in str(err.get("message") or "")
+    assert "fail_chat_turn" not in str(err.get("message") or "")
+    assert abandon_calls == [7]
+
+    # 日志机械断言：abandon + fail 两次 cleanup 均 logger.exception 留痕
+    joined = "\n".join(r.getMessage() for r in caplog.records)
+    assert "stream worker cleanup: abandon_chat_turn_scene failed" in joined, joined
+    assert "stream worker cleanup: fail_chat_turn/reload failed" in joined, joined
+    # traceback 须在 exception 记录里（logger.exception → exc_info）
+    assert any(r.exc_info for r in caplog.records), caplog.records
+    _assert_write_path_free(runtime)
+
+
+def test_worker_postprocess_exception_emits_error_end():
+    """#1353 r12：payload 成功后后处理（_spawn_extraction_trail）抛错 → 单一出口 error→end。
+
+    事件握手：有界消费必见 end；禁只走 finally 致消费者永阻。
+    """
+    db = _WorkerPathDB()
+    runtime, minister = _base_runtime(db)
+    runtime.session.registry = SimpleNamespace(get=lambda _c: None)
+    runtime.session._character = lambda name: SimpleNamespace(name=minister)
+    runtime.session._start_cli_action_intent = lambda *_a, **_k: None
+    runtime.session.abandon_chat_turn_scene = lambda *_a, **_k: None
+    runtime.session.close_night_after_chat_if_needed = None
+
+    runtime._chat_stream_payload = (  # type: ignore[method-assign]
+        lambda *a, **k: {
+            "answer": "臣已知晓。",
+            "minister_message_id": 1,
+            "court_action": "",
+        }
+    )
+
+    def _boom_spawn(*_a, **_k):
+        raise RuntimeError("extraction trail boom")
+
+    runtime._spawn_extraction_trail = _boom_spawn  # type: ignore[method-assign]
+
+    events: list[dict] = []
+    done = threading.Event()
+    box: dict = {}
+
+    def consume() -> None:
+        try:
+            for item in runtime.chat_stream(minister, "边饷如何？"):
+                events.append(item)
+                if item.get("type") == "end":
+                    break
+            box["ok"] = True
+        except Exception as exc:  # noqa: BLE001
+            box["exc"] = exc
+        finally:
+            done.set()
+
+    th = threading.Thread(target=consume, daemon=True)
+    th.start()
+    assert done.wait(5.0), "postprocess exception must terminalize error+end; hung on ev_queue"
+    th.join(timeout=1.0)
+    assert box.get("ok") is True, box
+    types = [e.get("type") for e in events]
+    assert "done" in types, events  # 回话已可见
+    assert "error" in types, events
+    assert types[-1] == "end", events
+    err_idx = types.index("error")
+    assert types[err_idx + 1] == "end", types
+    err = next(e for e in events if e.get("type") == "error")
+    assert "trail boom" in str(err.get("message") or "")
     _assert_write_path_free(runtime)
 
 
@@ -334,9 +465,12 @@ def _runtime_for_nonstream_chat(*, start_scene=None, append_error=None, abandon_
 
     runtime = object.__new__(web_app.WebGame)
     runtime._write_gate = threading.Lock()
-    runtime._drain_cond = threading.Condition()
-    runtime._pending_writes_count = 0
-    runtime._draining = False
+    from ming_sim.session_write_queue import SessionWriteQueue
+    runtime._write_queue = SessionWriteQueue()
+    runtime._write_gate = runtime._write_queue.write_gate
+    runtime._runtime_write_queue = lambda: runtime._write_queue  # type: ignore
+    runtime._mark_pending_write = lambda key=None: runtime._write_queue.claim(key=key or ("pending",))  # type: ignore
+    runtime._complete_pending_write = lambda ticket=None: runtime._write_queue.complete(ticket)  # type: ignore
     runtime.session = SimpleNamespace(
         temporary_characters=set(),
         content=SimpleNamespace(characters={character.name: character}),
@@ -515,7 +649,6 @@ def test_nonstream_api_issue_decree_llm_unavailable_is_structured_not_500(
         _write_gate=threading.Lock(),
     )
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
-    monkeypatch.setattr(web_app, "_await_audience_inflight_clear", lambda *_a, **_k: None)
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
     monkeypatch.setattr(web_app, "_failed_secret_order_ids_for_turn", lambda *_a, **_k: set())
     monkeypatch.setattr(web_app, "_new_secret_order_failure_payloads_for_turn", lambda *_a, **_k: [])

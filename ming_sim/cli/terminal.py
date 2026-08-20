@@ -18,7 +18,7 @@ from ming_sim.constants import (
 )
 from ming_sim.assets import wrap
 from ming_sim.context import match_minister_from_text
-from ming_sim.exceptions import ExitGame, SettlementAbort
+from ming_sim.exceptions import ExitGame, LLMUnavailable, SettlementAbort
 from ming_sim.models import API_DEFAULT_TIMEOUT_SECONDS, Character, GameState
 from ming_sim.session import (
     FRONT_HALF_DONE_PHASES,
@@ -443,29 +443,9 @@ def _print_interrupted_reply_retry_hint(session: GameSession, minister_name: str
     last = retries[-1]
     question = str(last.get("question") or "").strip()
     print(
-        f"【回话中断】上回问话未得回话"
+        "【回话中断】上回问话未得回话"
         f"{f'（「{question}」）' if question else ''}。"
-        f"输入「重试回话」重新生成回话（系统层恢复，不重复记问话）。\n"
-    )
-
-
-def _print_extraction_pending_hint(session: GameSession) -> None:
-    """#501：CLI 待补叙事抽取显眼提示——可输入「重试补写」原地重试。"""
-    db = getattr(session, "db", None)
-    if db is None or not hasattr(db, "list_unextracted_replies"):
-        return
-    try:
-        from ming_sim.audience_night import get_open_night
-        open_n = get_open_night(db) if hasattr(db, "conn") else None
-        nid = int(open_n["id"]) if open_n else None
-        rows = db.list_unextracted_replies(night_id=nid) or []
-    except Exception:
-        return
-    if not rows:
-        return
-    print(
-        f"【账本待补】本夜有 {len(rows)} 段召对账待补写。"
-        f"输入「重试补写」原地重试（不锁档，收夜前须清空）。\n"
+        "输入「重试回话」重新生成回话（系统层恢复，不重复记问话）。\n"
     )
 
 
@@ -526,20 +506,13 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> No
 
 
 def _cli_write_gate(session: GameSession):
-    """CLI 写锁：优先 session 已有 gate，否则进程内轻量锁（单线程 CLI 足够）。"""
-    import threading
-    gate = getattr(session, "_write_gate", None)
-    if gate is not None:
-        return gate
-    # 懒挂一份，避免每调用新建一把让并发语义发散
-    gate = getattr(session, "_cli_extract_write_gate", None)
-    if gate is None:
-        gate = threading.Lock()
-        try:
-            session._cli_extract_write_gate = gate  # type: ignore[attr-defined]
-        except Exception:
-            pass
-    return gate
+    """CLI 唯一 write gate：与 resolve_turn 收夜/过月屏障同穿（#1353 队列）。
+
+    GameSession 构造已 eager 装队列；此处只解析既有 ledger，不二次安装、不宽吞重挂，
+    禁第二锁名分叉（trail 与颁诏 auto_close 必须同闸）。
+    """
+    from ming_sim.session_write_queue import get_session_write_queue
+    return get_session_write_queue(session).write_gate
 
 
 def _trail_extraction_after_reply_cli(
@@ -551,69 +524,61 @@ def _trail_extraction_after_reply_cli(
     """#501：CLI 回话落库后自动尾随抽取（与 Web `_trail_extraction_after_reply` 同核）。
 
     同步调用——CLI 无后台线程池；失败标待补、不抛、不回滚回话。
+    #1353：起跑领 turn key 票，写经票据执行 seam（与 Web 生产同形）。
     """
     if not chat_turn_id:
         return
+    ticket = None
+    q = None
     try:
         from ming_sim.audience_extraction import trail_extraction_after_reply
-        trail_extraction_after_reply(
-            db=session.db,
-            minister_name=minister_name,
-            minister_reply=str(minister_reply or ""),
-            chat_turn_id=int(chat_turn_id),
-            llm_config=getattr(session, "llm_config", None),
-            write_gate=_cli_write_gate(session),
+        from ming_sim.session_write_queue import (
+            TicketCancelled,
+            get_session_write_queue,
         )
-    except Exception as exc:
+        q = get_session_write_queue(session)
+        ticket = q.claim(key=("turn", int(chat_turn_id)))
+        if ticket is None:
+            return
+        write_gate = q.ticketed_gate(ticket)
+        try:
+            trail_extraction_after_reply(
+                db=session.db,
+                minister_name=minister_name,
+                minister_reply=str(minister_reply or ""),
+                chat_turn_id=int(chat_turn_id),
+                llm_config=getattr(session, "llm_config", None),
+                write_gate=write_gate,
+            )
+        except TicketCancelled:
+            pass
+    except Exception:
         # 共享核从不抛；到此=import 等外围故障——不锁档、不打断对话。
-        print(f"【账本抽取】尾随异常（已忽略、可稍后「重试补写」）：{exc}\n")
-
-
-def _retry_story_extraction_cli(session: GameSession) -> None:
-    """#501 CLI：原地重试补跑叙事抽取。"""
-    try:
-        from ming_sim.audience_extraction import catch_up_pending_extractions
-        from ming_sim.audience_night import get_open_night
-        db = session.db
-        open_n = get_open_night(db) if hasattr(db, "conn") else None
-        nid = int(open_n["id"]) if open_n else None
-        catch_up_pending_extractions(
-            db=db,
-            llm_config=getattr(session, "llm_config", None),
-            write_gate=_cli_write_gate(session),
-            night_id=nid,
-        )
-        remaining = []
-        if hasattr(db, "list_unextracted_replies"):
-            remaining = db.list_unextracted_replies(night_id=nid) or []
-        if remaining:
-            print(f"补写后仍有 {len(remaining)} 段待补，可稍后再试。\n")
-        else:
-            print("待补账本已补写完毕。\n")
-    except Exception as exc:
-        print(f"重试补写失败：{exc}\n")
+        # #1353 fold-in r5：欠账唯一处理路=过月内部 drain；禁玩家可见技术提示。
+        pass
+    finally:
+        # 局部 q 归票——禁二次 get_session_write_queue（重解析可叉 ledger 漏票挂死 CLI）。
+        if ticket is not None and q is not None:
+            q.complete(ticket)
 
 
 def minister_chat(session: GameSession, character: Character) -> str:
     """与一位大臣对话。返回 'dismiss' | 'court_break' | 'summon:<name>'。"""
     other = next((n for n in session.content.characters if n != character.name), character.name)
     print(f"\n{character.name}入殿。可持续问话；done/退下 退下，“传{other}来”换人，quit 退朝审阅诏书，exit 退出游戏。")
-    print(f"提示：陛下示意采纳后（如“准奏”），大臣会拟旨呈陛下核定。\n")
-    # #505 / #501：入殿时显眼提示系统层恢复入口（与 web ChatModal 同语义）。
+    print("提示：陛下示意采纳后（如“准奏”），大臣会拟旨呈陛下核定。\n")
+    # #505：入殿时显眼提示回话中断恢复入口（与 web ChatModal 同语义）。
+    # #1353：欠账抽取无玩家手动补写面——过月内部 drain 唯一处理路。
     _print_interrupted_reply_retry_hint(session, character.name)
-    _print_extraction_pending_hint(session)
     while True:
         question = input("朕问：").strip()
         if not question:
             print("可继续问话；若要让其退下，请输入 done。")
             continue
-        # #505 / #501 系统层恢复命令（非皇帝内容选项）。
+        # #505 系统层恢复命令（非皇帝内容选项）。禁抽取手动补写平行面（#1353）。
         low_q = question.lower().strip()
         if low_q in {"重试回话", "retry reply", "retry_reply"}:
             _retry_interrupted_reply_cli(session, character.name)
-            continue
-        if low_q in {"重试补写", "retry extraction", "retry_extraction"}:
-            _retry_story_extraction_cli(session)
             continue
         cmd = _handle_court_command(session, question, character)
         if cmd == "handled":
@@ -637,7 +602,8 @@ def minister_chat(session: GameSession, character: Character) -> str:
                         write_gate=_cli_write_gate(session),
                         llm_config=getattr(session, "llm_config", None),
                     )
-            except AudienceNightError as err:
+            except (AudienceNightError, LLMUnavailable) as err:
+                # #1353 fold-in r8：欠账耗尽/收夜失败留本回合，可重按退朝；CLI 不退出。
                 print(f"\n收夜未成：{err}\n")
                 continue
             print(f"{character.name}退下。\n")
@@ -924,10 +890,13 @@ def play_turn(session: GameSession) -> None:
             turn_before = int(session.state.turn)
             failed_before = _failed_secret_order_ids(session, turn_before)
             try:
+                # #1353 fold-in r8：颁诏/退朝前挂唯一 write_gate，使 resolve 收夜 drain 同流。
+                _cli_write_gate(session)
                 result = session.advance_without_decree()
                 report = _submit_first_cli_decisions(session, result)
-            except (ValueError, SettlementAbort) as error:
+            except (ValueError, SettlementAbort, LLMUnavailable) as error:
                 # 跳过与颁诏共享可恢复结算语义：失败后留在本回合循环，允许重试。
+                # #1353 fold-in r8：统一重试耗尽的 LLMUnavailable 不退出 CLI。
                 print(f"\n{error}")
                 _print_pending_action_failures(
                     _new_secret_order_failure_payloads(session, turn_before, failed_before)
@@ -944,21 +913,13 @@ def play_turn(session: GameSession) -> None:
             turn_before = int(session.state.turn)
             failed_before = _failed_secret_order_ids(session, turn_before)
             try:
+                # #1353 fold-in r8：颁诏/退朝前挂唯一 write_gate，使 resolve 收夜 drain 同流。
+                _cli_write_gate(session)
                 result = session.resolve_turn()
                 report = _submit_first_cli_decisions(session, result)
-            except ValueError as error:
-                # 恢复态守门消息（pending 拟旨/草案等）：打印指引留在本回合交互循环
-                # （continue 与 skip 分支同语义，不 return 重进 play_turn 刷屏——
-                # PR #90 R1 gemini；ship-pre r5——issue 分支此前只接 SettlementAbort）。
-                print(f"\n{error}")
-                _print_pending_action_failures(
-                    _new_secret_order_failure_payloads(session, turn_before, failed_before)
-                )
-                continue
-            except SettlementAbort as error:
-                # 结算中止（ADR 0008 决定 6/7）：打印玩家指引（含错误包路径）后留在
-                # 本回合交互循环——「可重试」要成立就不能崩出进程；重进时
-                # settling/awaiting 守门保证前半段不重跑。
+            except (ValueError, SettlementAbort, LLMUnavailable) as error:
+                # 恢复态守门 / 结算中止 / 欠账耗尽（#1353 r8）：打印指引后留在
+                # 本回合交互循环——玩家重按 issue/skip 即重试整段，CLI 不退出。
                 print(f"\n{error}")
                 _print_pending_action_failures(
                     _new_secret_order_failure_payloads(session, turn_before, failed_before)
@@ -1002,6 +963,8 @@ def run_cli(
         import os
         os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
         session = GameSession(db_path, llm_config, start_ym=start_ym)
+        # #1353 fold-in r8：建 session 即挂唯一 write_gate，trail/收夜/颁诏同穿。
+        _cli_write_gate(session)
         print("《明末力挽狂澜》文字 MVP")
         print(f"你是刚刚登基的崇祯。每回合一个{TURN_UNIT}：看奏报、召见大臣、下圣旨、听回奏。")
         print(f"手动玩法：quit/退朝 = 结束本{TURN_UNIT}进入下一{TURN_UNIT}；exit/退出游戏 = 退出程序。")

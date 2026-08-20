@@ -58,8 +58,6 @@ function renderModal(props: {
   onRetryFailure?: (failure: PendingActionFailure) => void;
   replyRetry?: { chat_turn_id: number; question: string } | null;
   onRetryReply?: (ministerName: string) => void;
-  extractionPendingCount?: number;
-  onRetryExtraction?: () => void;
   suggestions?: Suggestion[];
   secretOrders?: React.ComponentProps<typeof ChatModal>["secretOrders"];
   onSend?: (ministerName: string, text?: string) => void;
@@ -122,12 +120,10 @@ function renderModal(props: {
         error=""
         secretOrders={props.secretOrders ?? []}
         replyRetry={props.replyRetry}
-        extractionPendingCount={props.extractionPendingCount}
         onInput={(value) => setInput(value)}
         onSend={props.onSend ?? (() => {})}
         onRetryFailure={props.onRetryFailure ?? (() => {})}
         onRetryReply={props.onRetryReply}
-        onRetryExtraction={props.onRetryExtraction}
         onUndo={props.onUndo ?? (() => {})}
         onHint={() => {}}
         onFavorite={props.onFavorite ?? (() => {})}
@@ -217,8 +213,6 @@ function renderEdictModal(props: {
   onAdvanceWithoutEdict?: () => void;
   onIssueDecree?: () => void;
   onOpenFailureRecovery?: () => void;
-  extractionPendingCount?: number;
-  onRetryExtraction?: () => void;
   error?: string;
 }) {
   const host = document.createElement("div");
@@ -235,7 +229,6 @@ function renderEdictModal(props: {
         report=""
         busy=""
         error={props.error ?? ""}
-        extractionPendingCount={props.extractionPendingCount}
         onDirectiveTextChange={() => {}}
         onEditingTextChange={() => {}}
         onCreateDirective={() => {}}
@@ -246,7 +239,6 @@ function renderEdictModal(props: {
         onAdvanceWithoutEdict={props.onAdvanceWithoutEdict ?? (() => {})}
         onIssueDecree={props.onIssueDecree ?? (() => {})}
         onOpenFailureRecovery={props.onOpenFailureRecovery ?? (() => {})}
-        onRetryExtraction={props.onRetryExtraction}
       />
     )
   );
@@ -383,27 +375,6 @@ describe("EdictModal — hidden secret-order default approval", () => {
       button?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     expect(onOpenFailureRecovery).toHaveBeenCalledTimes(1);
-  });
-
-  it("#1312 颁诏待补后拟诏台露出补写 CTA（同缝 retry）", () => {
-    const onRetry = vi.fn();
-    const { host } = renderEdictModal({
-      state: baseGameState({}),
-      extractionPendingCount: 2,
-      onRetryExtraction: onRetry,
-      error: "收夜中止：本夜仍有未抽取落账的回话（待补），chat_turn_ids=[8]。",
-    });
-    const note = host.querySelector('[data-testid="edict-extraction-pending"]');
-    expect(note?.textContent).toMatch(/2 段召对账待补写/);
-    expect(host.querySelector(".error-line")?.textContent).toContain("收夜中止");
-    const btn = Array.from(host.querySelectorAll("button")).find((item) =>
-      item.textContent?.includes("重试补写")
-    ) as HTMLButtonElement | undefined;
-    expect(btn).toBeTruthy();
-    act(() => {
-      btn?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    expect(onRetry).toHaveBeenCalledTimes(1);
   });
 
   it("prioritizes failed secret-order recovery over generic pending-action hint", () => {
@@ -615,23 +586,6 @@ describe("ChatModal — placeholder switches on character type", () => {
     expect(retry).toHaveBeenCalledTimes(1);
   });
 
-  it("shows #501 extraction-pending notice with in-place retry", () => {
-    const retry = vi.fn();
-    renderModal({
-      minister: MINISTER_MOCK,
-      portraitPrefix: "minister_",
-      extractionPendingCount: 2,
-      onRetryExtraction: retry,
-    });
-    const note = document.querySelector('[data-testid="extraction-pending"]');
-    expect(note?.textContent).toContain("2 段");
-    const button = Array.from(document.querySelectorAll("button")).find(
-      (node) => node.textContent === "重试补写",
-    );
-    expect(button).toBeTruthy();
-    act(() => button?.click());
-    expect(retry).toHaveBeenCalledTimes(1);
-  });
 });
 
 describe("ChatModal — organic markdown display cleanup", () => {

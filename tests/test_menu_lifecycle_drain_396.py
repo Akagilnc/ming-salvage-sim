@@ -623,9 +623,12 @@ def test_drain_waits_for_queued_chat_stream_not_just_gate_holder():
         state, db)
     runtime.session.close = lambda: closed.append(1)
     runtime.chat_history = {char_a.name: [], char_b.name: []}
-    runtime._write_gate = threading.Lock()
-    runtime._drain_cond = threading.Condition()
-    runtime._pending_writes_count = 0
+    from ming_sim.session_write_queue import SessionWriteQueue
+    runtime._write_queue = SessionWriteQueue()
+    runtime._write_gate = runtime._write_queue.write_gate
+    runtime._runtime_write_queue = lambda: runtime._write_queue  # type: ignore
+    runtime._mark_pending_write = lambda key=None: runtime._write_queue.claim(key=key or ("pending",))  # type: ignore
+    runtime._complete_pending_write = lambda ticket=None: runtime._write_queue.complete(ticket)  # type: ignore
     runtime.directive_rows = lambda: []
     runtime.directive_payload = lambda row: row
     runtime.suggestions_for = lambda _c: []
@@ -688,9 +691,12 @@ def test_drain_rejects_late_pending_write_before_gate_acquire():
     """#402 R3（Sourcery）：drain 开始后，迟到的旧 game 写入不得再登记进关闭队列。"""
     runtime = object.__new__(web_app.WebGame)
     runtime._write_gate = threading.Lock()
-    runtime._drain_cond = threading.Condition()
-    runtime._pending_writes_count = 0
-    runtime._draining = False
+    from ming_sim.session_write_queue import SessionWriteQueue
+    runtime._write_queue = SessionWriteQueue()
+    runtime._write_gate = runtime._write_queue.write_gate
+    runtime._runtime_write_queue = lambda: runtime._write_queue  # type: ignore
+    runtime._mark_pending_write = lambda key=None: runtime._write_queue.claim(key=key or ("pending",))  # type: ignore
+    runtime._complete_pending_write = lambda ticket=None: runtime._write_queue.complete(ticket)  # type: ignore
     closed: list[int] = []
     runtime.session = SimpleNamespace(close=lambda: closed.append(1))
 
@@ -702,9 +708,10 @@ def test_drain_rejects_late_pending_write_before_gate_acquire():
     )
     thread.start()
 
-    assert _wait_for(lambda: getattr(runtime, "_draining", False))
-    assert runtime._mark_pending_write() is False
-    assert runtime._pending_writes_count == 0
+    assert _wait_for(lambda: runtime._write_queue.is_sealed())
+    assert runtime._mark_pending_write() is None
+    # 屏障票据在等 gate 期间可占 1；新 claim 已拒。
+    assert runtime._pending_writes_count <= 1
 
     runtime._write_gate.release()
 
@@ -717,9 +724,12 @@ def test_spawn_pending_write_thread_start_failure_releases_ownership():
     `Thread.start()` 抛异常，须补偿 `_complete_pending_write` 再上抛——否则 pending 泄漏、
     drain 在 `_drain_cond` 永阻、关档/重置/加载挂死。断言异常上抛且计数归 0（无泄漏）。"""
     runtime = object.__new__(web_app.WebGame)
-    runtime._drain_cond = threading.Condition()
-    runtime._pending_writes_count = 0
-    runtime._draining = False
+    from ming_sim.session_write_queue import SessionWriteQueue
+    runtime._write_queue = SessionWriteQueue()
+    runtime._write_gate = runtime._write_queue.write_gate
+    runtime._runtime_write_queue = lambda: runtime._write_queue  # type: ignore
+    runtime._mark_pending_write = lambda key=None: runtime._write_queue.claim(key=key or ("pending",))  # type: ignore
+    runtime._complete_pending_write = lambda ticket=None: runtime._write_queue.complete(ticket)  # type: ignore
 
     class _FailingThread:
         def __init__(self, *a, **k):

@@ -12,7 +12,7 @@ DB transaction / runtime write gate；成功后短事务原子落背书，再允
 - **单轮多条账原子落账**（`db.settle_story_extraction` 走 `atomic`）。
 - **垃圾 shape / 抽取失败 → 响亮错误包 + 待补**（普通事实）；背书批失败 → fail-closed 收夜。
 - **补跑失败不锁档**：`catch_up_pending_extractions` 从不抛；只补普通 story/presence。
-- **收夜前清空普通待补**：`drain_pending_before_close`；仍有待补 → fail-closed。
+- **收夜前清空普通待补**：`drain_pending_before_close` 并入过月/收夜流；仍有待补 → 失败单源（LLMUnavailable）。
 
 本模块只提供纯函数 + 编排入口，不持时序状态机；写库须走真实 runtime write_gate。
 """
@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import json
 import threading
-import time
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from ming_sim.audience_night import (
@@ -38,6 +37,7 @@ from ming_sim.audience_night import (
 )
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.llm_model import extract_agent_text
+from ming_sim.session_write_queue import TicketCancelled
 
 _AUDIBILITIES = frozenset({AUDIBILITY_PUBLIC, AUDIBILITY_PRIVATE})
 _ENDORSEMENT_FORMS = frozenset({"会签", "当面站台", "御笔手敕"})
@@ -387,113 +387,12 @@ def _release_single_flight(key: tuple[Any, ...], owner: threading.Lock) -> None:
             _single_flight_ownership.pop(key, None)
 
 
-# #1353：收夜 OPEN 期有限 join 预算（与 wait_in_flight 同量级；不另起状态机）。
-DEFAULT_EXTRACT_JOIN_S = 30.0
-
-
-def _join_single_flight(key: tuple[Any, ...], timeout_s: float) -> bool:
-    """有限 join 在飞 owner：不启动工作、不建 Future。
-
-    True = 无 owner 或 owner 已在时限内结束（调用方须重读 DB 真源）。
-    False = 超时仍在飞。超时路径不得 pop 仍持锁 owner 的槽。
-    """
-    with _single_flight_guard:
-        slot = _single_flight_ownership.get(key)
-        if slot is None:
-            return True
-        owner = slot[0]
-        slot[1] += 1
-    acquired = False
-    try:
-        acquired = bool(owner.acquire(timeout=max(0.0, float(timeout_s))))
-        return acquired
-    finally:
-        if acquired:
-            _release_single_flight(key, owner)
-        else:
-            with _single_flight_guard:
-                slot = _single_flight_ownership.get(key)
-                if slot is not None and slot[0] is owner:
-                    slot[1] -= 1
-                    # owner 仍在飞时 ref 至少为 1；仅当我们是最后旁观者且槽已空才 pop
-                    if slot[1] <= 0:
-                        _single_flight_ownership.pop(key, None)
-
-
 def _turn_flight_key(db: Any, chat_turn_id: int) -> tuple[Any, ...]:
     return ("turn", id(db), int(chat_turn_id))
 
 
 def _night_flight_key(db: Any, night_id: int) -> tuple[Any, ...]:
     return ("night", id(db), int(night_id))
-
-
-def join_pending_turn_extractions(
-    db: Any,
-    *,
-    night_id: int,
-    timeout_s: float | None = None,
-) -> None:
-    """#1353 OPEN 期汇合普通抽取：对 list_unextracted 各轮 single-flight owner 有限 join。
-
-    只作 join 信号；结果只读 `chat_turns.extract_status`（调用方/drain 重读）。
-    不启动新抽取、不建 Future/第二欠账表。超时不抛——真欠账由后续 drain fail-closed。
-    """
-    if timeout_s is None:
-        timeout_s = DEFAULT_EXTRACT_JOIN_S
-    if not hasattr(db, "list_unextracted_replies"):
-        return
-    rows = db.list_unextracted_replies(night_id=int(night_id)) or []
-    if not rows:
-        return
-    deadline = time.monotonic() + max(0.0, float(timeout_s))
-    for row in rows:
-        if not isinstance(row, Mapping):
-            continue
-        cid = int(row.get("chat_turn_id") or 0)
-        if cid <= 0:
-            continue
-        if hasattr(db, "get_story_extract_status") and db.get_story_extract_status(cid) == "done":
-            continue
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            break
-        _join_single_flight(_turn_flight_key(db, cid), remaining)
-
-
-def has_inflight_turn_extractions(db: Any, *, night_id: int) -> bool:
-    """#1353：list_unextracted 中是否仍有活的 turn single-flight owner。
-
-    供 close 在 write_gate 临界区内与 OPEN→CLOSING 冻结同锁复查；不阻塞、不建 Future。
-    True = 至少一轮 owner 锁仍被持有（join 后新 admission 的窗口样本）。
-    """
-    if not hasattr(db, "list_unextracted_replies"):
-        return False
-    rows = db.list_unextracted_replies(night_id=int(night_id)) or []
-    if not rows:
-        return False
-    with _single_flight_guard:
-        for row in rows:
-            if not isinstance(row, Mapping):
-                continue
-            cid = int(row.get("chat_turn_id") or 0)
-            if cid <= 0:
-                continue
-            if (
-                hasattr(db, "get_story_extract_status")
-                and db.get_story_extract_status(cid) == "done"
-            ):
-                continue
-            slot = _single_flight_ownership.get(_turn_flight_key(db, cid))
-            if slot is None:
-                continue
-            owner = slot[0]
-            # 非阻塞探测：拿得到锁 ⇒ owner 已释放（非在飞）；立即还回。
-            if owner.acquire(blocking=False):
-                owner.release()
-                continue
-            return True
-    return False
 
 
 def _is_endorsement_bound(db: Any, night_id: int) -> bool:
@@ -523,11 +422,10 @@ def run_extraction_for_turn(
     - 成功 → `settle_story_extraction` 单事务全有或全无（AC7），返回 status='done'。
     - 不处理 endorsement（夜级批处理）。
 
-    `write_gate` 必传：落账走真实 runtime 写锁。
+    `write_gate` 必传：落账走真实 runtime 写锁（生产经 TicketedWriteGate 按票序）。
 
-    #1353：admission（CLOSING 拒新 + claim single-flight + done 水位）与 close 冻结同持
-    write_gate，使 join→freeze 窗内新 owner 要么被 gate 内 inflight 复查看见，要么在
-    冻结后直接拒入（不跑 LLM、不假 settle 失败）；LLM 仍在 gate 外。
+    #1353：CLOSING 拒新 owner（屏障后晚到的腿）+ per-turn single-flight LLM 去重
+    + done 水位；写序归队列票据，不再 join/admission 旁路舞步。LLM 在 gate 外。
     """
     cid = int(chat_turn_id)
     if not cid:
@@ -563,7 +461,13 @@ def run_extraction_for_turn(
             if db.get_story_extract_status(cid) == "done":
                 return {"status": "done", "chat_turn_id": cid, "already": True}
 
-        question_text = _user_message_for_turn(db, cid)
+            # 短读并入首闸：禁 gate 外碰共享 conn（与屏障 close / 他腿并发）。
+            question_text = _user_message_for_turn(db, cid)
+            if present_names is None:
+                try:
+                    present_names = sorted(persons_present_tonight(db, int(night_id)))
+                except Exception:
+                    present_names = []
 
         if not str(reply or "").strip() and not question_text.strip():
             return _settle_or_pending(
@@ -571,12 +475,6 @@ def run_extraction_for_turn(
                 facts=[], source_night_seq=source_night_seq, fact_count=0,
                 allow_closing=allow_closing,
             )
-
-        if present_names is None:
-            try:
-                present_names = sorted(persons_present_tonight(db, int(night_id)))
-            except Exception:
-                present_names = []
 
         try:
             facts = extract_story_facts(
@@ -611,35 +509,35 @@ def run_endorsement_batch_for_night(
     llm_config: Any,
     write_gate: Any,
     extractor_agent: Any = None,
+    join_timeout_s: float | None = None,
 ) -> Dict[str, Any]:
     """收夜 endorsement-only 批：LLM 在 write_gate 外；短事务原子落背书。
 
     - 已 bound → 幂等跳过。
     - 无候选或无 surviving turns → 确定性 skip 并标 bound。
-    - 争用 → 有限返回（不阻塞、不建 Future）。
-    - LLM/shape 失败 → 抛 AudienceNightError（调用方 fail-closed 保持 OPEN）。
+    - LLM 去重走既有 per-night single-flight（防双跑）；写序由 session 队列屏障覆盖
+      （#1353：删除争用 join 舞步）。争用/前 owner 已释放 → 只重读 bound 终态。
+    - LLM/shape 失败 → 抛 AudienceNightError（调用方 fail-closed 保持 OPEN；K10b）。
     """
+    del join_timeout_s  # 签名兼容；队列屏障后不再 join 争用
     nid = int(night_id)
     if _is_endorsement_bound(db, nid):
         return {"status": "done", "night_id": nid, "already": True, "ids": []}
 
     flight_key = _night_flight_key(db, nid)
-    owner, owned = _claim_single_flight(flight_key)
-    if owner is None:
-        raise AudienceNightError(
-            f"收夜背书批处理争用中（night_id={nid}），请稍后重试。",
-            code="endorsement_batch_contended",
-            detail={"night_id": nid},
-        )
+    owner: Optional[threading.Lock] = None
     try:
-        if not owned:
+        # single-flight 只防双跑 LLM；写序归 session 队列。争用/已释放 → 重读终态。
+        owner, owned = _claim_single_flight(flight_key)
+        if owner is None or not owned:
             if _is_endorsement_bound(db, nid):
                 return {"status": "done", "night_id": nid, "already": True, "ids": []}
             raise AudienceNightError(
-                f"收夜背书批处理争用中（night_id={nid}），请稍后重试。",
-                code="endorsement_batch_contended",
+                f"收夜背书批未落定（night_id={nid}）",
+                code="endorsement_not_bound",
                 detail={"night_id": nid},
             )
+
         if _is_endorsement_bound(db, nid):
             return {"status": "done", "night_id": nid, "already": True, "ids": []}
 
@@ -710,7 +608,8 @@ def run_endorsement_batch_for_night(
             "count": len(ids),
         }
     finally:
-        _release_single_flight(flight_key, owner)
+        if owner is not None:
+            _release_single_flight(flight_key, owner)
 
 
 def _pending_with_pack(
@@ -788,22 +687,26 @@ def trail_extraction_after_reply(
         reply = str(minister_reply or "")
         if not chat_turn_id or not hasattr(db, "conn"):
             return None
-        row = db.conn.execute(
-            "SELECT night_id, night_seq FROM chat_turns WHERE id = ?",
-            (int(chat_turn_id),),
-        ).fetchone()
-        if row is None:
-            return None
-        night_id = int(row["night_id"] or 0)
-        if night_id <= 0:
-            return None
+        # #1353：首碰共享 conn 必须经 write_gate（TicketedWriteGate → wait_prior）。
+        # 禁闸外 SELECT——与过月屏障 gate-free close 并发读会搞坏 sqlite3.Row。
+        with write_gate:
+            row = db.conn.execute(
+                "SELECT night_id, night_seq FROM chat_turns WHERE id = ?",
+                (int(chat_turn_id),),
+            ).fetchone()
+            if row is None:
+                return None
+            night_id = int(row["night_id"] or 0)
+            source_night_seq = int(row["night_seq"] or 0)
+            if night_id <= 0:
+                return None
         return run_extraction_for_turn(
             db=db,
             minister_name=minister_name,
             reply=reply,
             chat_turn_id=int(chat_turn_id),
             night_id=night_id,
-            source_night_seq=int(row["night_seq"] or 0),
+            source_night_seq=source_night_seq,
             llm_config=llm_config,
             write_gate=write_gate,
             extractor_agent=extractor_agent,
@@ -826,49 +729,48 @@ def catch_up_pending_extractions(
     night_id: Optional[int] = None,
     extractor_agent: Any = None,
     allow_closing: bool = False,
-    on_event=None,
 ) -> Dict[str, Any]:
     """补跑普通抽取：对已持久化但账未抽（''/'pending'）的回话逐轮尽力补跑（ADR 0036）。
 
     **从不抛**——补跑失败不锁档（AC8）。只补 story/presence，不触发夜级 endorsement batch。
     allow_closing 仅 close_night ordinary drain 显式开启。
-    #1312：可选 on_event(kind, data) 推既有 stage 形分段进度（与 settle on_event 同款）。
+    #1353 fold-in r5：欠账只在内部处理——不推玩家可见 stage/SSE/CLI 进度。
+    #1353 r10：入口首读必须持 write_gate（共享 conn）；TicketCancelled → 空结果不抛。
     """
-    rows = db.list_unextracted_replies(night_id=night_id)
+    empty = {"extracted": 0, "pending": 0, "scanned": 0}
+    try:
+        with write_gate:
+            rows = list(db.list_unextracted_replies(night_id=night_id) or [])
+    except TicketCancelled:
+        return empty
+
     extracted = 0
     pending = 0
-    total = len(rows)
-
-    def _emit(kind: str, data: str) -> None:
-        if on_event is None:
-            return
-        try:
-            on_event(kind, data)
-        except Exception:  # noqa: BLE001 — 进度回调失败不得阻断补跑
-            pass
 
     # Source turns are semantically ordered: later turns consume already-settled
     # presence/ledger. Cross-turn catch-up therefore stays serial.
-    for index, row in enumerate(rows, start=1):
-        minister = str(row.get("minister_name") or "") or "臣工"
-        _emit("stage", f"补写召对账本（{index}/{total}）·{minister}")
-        result = run_extraction_for_turn(
-            db=db,
-            minister_name=str(row.get("minister_name") or ""),
-            reply=str(row.get("reply") or ""),
-            chat_turn_id=int(row.get("chat_turn_id") or 0),
-            night_id=int(row.get("night_id") or 0),
-            source_night_seq=int(row.get("night_seq") or 0),
-            llm_config=llm_config,
-            write_gate=write_gate,
-            extractor_agent=extractor_agent,
-            allow_closing=bool(allow_closing),
-        )
-        status = result.get("status")
-        if status == "done":
-            extracted += 1
-        elif status == "pending":
-            pending += 1
+    try:
+        for row in rows:
+            result = run_extraction_for_turn(
+                db=db,
+                minister_name=str(row.get("minister_name") or ""),
+                reply=str(row.get("reply") or ""),
+                chat_turn_id=int(row.get("chat_turn_id") or 0),
+                night_id=int(row.get("night_id") or 0),
+                source_night_seq=int(row.get("night_seq") or 0),
+                llm_config=llm_config,
+                write_gate=write_gate,
+                extractor_agent=extractor_agent,
+                allow_closing=bool(allow_closing),
+            )
+            status = result.get("status")
+            if status == "done":
+                extracted += 1
+            elif status == "pending":
+                pending += 1
+    except TicketCancelled:
+        # 契约从不抛；票取消 → 空结果（不把半截进度当成功扫描）。
+        return empty
     return {
         "extracted": extracted,
         "pending": pending,
@@ -886,9 +788,13 @@ def drain_pending_before_close(
 ) -> None:
     """收夜是史实书写边界（ADR 0036）：收夜前强制同步补跑普通待补一次。
 
-    仍有待补 → **fail-closed 中止收夜**。不含 endorsement batch。
+    仍有待补 → **失败单源**（LLMUnavailable / CLI_RUNNER_PLAYER_MESSAGE）；
+    玩家重按过月=重试整段。不含 endorsement batch。
     close-owned：显式 allow_closing，使 CLOSING 下 ordinary residue 可落账。
+    #1353 fold-in r5：内部静默补跑，不透传玩家可见进度。
     """
+    from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
+
     catch_up_pending_extractions(
         db=db,
         llm_config=llm_config,
@@ -897,24 +803,33 @@ def drain_pending_before_close(
         extractor_agent=extractor_agent,
         allow_closing=True,
     )
-    remaining = db.count_pending_story_extractions(night_id=int(night_id))
+    # #1353 r10：水位复读（count + list）同持 write_gate，禁锁释放后裸二相读。
+    try:
+        with write_gate:
+            remaining = int(db.count_pending_story_extractions(night_id=int(night_id)) or 0)
+            rows = (
+                list(db.list_unextracted_replies(night_id=int(night_id)) or [])
+                if remaining > 0
+                else []
+            )
+    except TicketCancelled:
+        # 票取消：无授权继续判定欠账——不抛玩家失败单源。
+        return
     if remaining > 0:
-        rows = db.list_unextracted_replies(night_id=int(night_id))
         ids = [int(r.get("chat_turn_id") or 0) for r in rows]
-        message = (
+        technical = (
             "收夜中止：本夜仍有未抽取落账的回话（待补），"
-            f"chat_turn_ids={ids}。夜保持开启，可原地重试补跑。"
+            f"chat_turn_ids={ids}。"
         )
-        pack = write_audience_error_pack(
+        write_audience_error_pack(
             kind="pending_extraction",
-            message=message,
+            message=technical,
             detail={"night_id": int(night_id), "chat_turn_ids": ids},
         )
-        raise AudienceNightError(
-            message,
+        raise LLMUnavailable(
+            CLI_RUNNER_PLAYER_MESSAGE,
             code="pending_extraction",
-            error_pack_path=pack,
-            detail={"night_id": int(night_id), "chat_turn_ids": ids},
+            provider_message=technical,
         )
 
 

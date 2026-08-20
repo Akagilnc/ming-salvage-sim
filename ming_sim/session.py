@@ -766,6 +766,10 @@ class GameSession:
         # P1-1：last_decree 所覆盖的 draft 指纹（write_decree 时记，颁诏时校验是否已陈旧）。
         self._decree_draft_fingerprint: Tuple[Tuple[int, str], ...] = ()
         self._begun = False
+        # #1353：per-session 单写者票据队列（CLI/Web 共用）；write_gate 并入队列。
+        from ming_sim.session_write_queue import SessionWriteQueue
+        self._write_queue = SessionWriteQueue()
+        self._write_gate = self._write_queue.write_gate
 
     # ── 回合生命周期 ──────────────────────────────────────────────────────
 
@@ -1096,6 +1100,29 @@ class GameSession:
             return ask
         return text + "\n" + ask
 
+    def _write_gate_if_free(self) -> Any:
+        """#1353 fold-in r8：resolve_turn 收夜用——仅当既有唯一 write_gate 空闲时传入。
+
+        Web 入口在 write_cm 内调 resolve_turn 时外层已持同一把非重入锁；若仍传入，
+        close_night 短写 `with gate` 会自锁。探测：非阻塞 acquire 成功=空闲（立刻
+        release，close 自己短持）；失败=外层持锁中，回落 None（夜应已在闸外收完）。
+        CLI 单写者不持外层锁 → 恒传入真锁，欠账 drain 同流。禁第二锁。
+        """
+        gate = getattr(self, "_write_gate", None)
+        if gate is None:
+            return None
+        try:
+            acquired = bool(gate.acquire(blocking=False))
+        except Exception:
+            return None
+        if not acquired:
+            return None
+        try:
+            gate.release()
+        except Exception:
+            pass
+        return gate
+
     def close_night_after_chat_if_needed(
         self,
         court_action: str,
@@ -1107,23 +1134,38 @@ class GameSession:
         失败按 ADR 0005 响亮上抛——不得静默当成已退朝；夜保持可恢复。
         write_gate：既有 runtime 写锁（Web `_runtime_write_gate` / CLI `_cli_write_gate`）；
         未显式传入时回落 session._write_gate。禁第二锁；缺锁由 close_night 卫兵响亮。
+
+        #1353：经 session 队列屏障入队——须等已领尾随票清零后再 close（调用方不得
+        在仍持本线程票据时调用，否则自等待死锁）。
         """
         if str(court_action or "") != "court_break":
             return
         from ming_sim.audience_night import close_night, get_open_night
+        from ming_sim.session_write_queue import get_session_write_queue
 
-        if get_open_night(self.db) is None:
-            return
         gate = write_gate if write_gate is not None else getattr(self, "_write_gate", None)
-        close_night(
-            self.db, self.state,
-            content=getattr(self, "content", None),
-            registry=getattr(self, "registry", None),
-            wait_timeout_s=0.0,
-            llm_config=getattr(self, "llm_config", None),
-            write_gate=gate,
-            scene_registry=getattr(self, "_scene_registry", None),
-        )
+        # #1353 r7：入口探测开夜短持 gate（共享 conn 读；无 gate 时 CLI 单写者）。
+        if gate is not None:
+            with gate:
+                open_n = get_open_night(self.db)
+        else:
+            open_n = get_open_night(self.db)
+        if open_n is None:
+            return
+
+        def _do_close() -> None:
+            close_night(
+                self.db, self.state,
+                content=getattr(self, "content", None),
+                registry=getattr(self, "registry", None),
+                wait_timeout_s=0.0,
+                llm_config=getattr(self, "llm_config", None),
+                write_gate=gate,
+                scene_registry=getattr(self, "_scene_registry", None),
+            )
+
+        # 屏障只等前序票工人终态/空放行（K10a：无 elapsed 熔断）。
+        get_session_write_queue(self).barrier(_do_close)
 
     def _confirmation_intent_for_preexisting_pending(
         self,
@@ -2650,6 +2692,7 @@ class GameSession:
         # accept_settlement_period：FRONT_HALF_DONE 跳过（恢复态已有快照/半程活值不可重写）。
         # Web 入口另在 await/close 前先 capture（点即入时序）；此处幂等兜底 CLI/直调。
         from ming_sim.audience_night import AudienceNightError, auto_close_open_night
+        from ming_sim.exceptions import LLMUnavailable
         from ming_sim.month_open_snapshot import (
             accept_settlement_period,
             exit_settlement_display_on_failure,
@@ -2657,9 +2700,12 @@ class GameSession:
         accept_settlement_period(self.db, self.state)
         # #503/#542：收夜与开夜、入殿、退侍共用真实 scene LLM adapter。
         # Close-night owns short write sections + gate-free endorsement LLM.
-        # Web callers must invoke auto_close outside any outer runtime write gate
-        # (see web_app issue/stream/no-edict) so this is typically already-closed.
-        # CLI is single-writer: None write_gate = no lock around LLM.
+        # Web 入口先在闸外 free-close（issue/stream/no-edict），再持闸跑 resolve；
+        # 此处幂等兜底 CLI/直调。
+        # #1353 fold-in r8：穿既有唯一 write_gate（session._write_gate）。
+        # 若调用方已持同一把非重入锁（Web write_cm 内），不得再传入——否则 close
+        # 短写 with gate 自锁；闸已被外层持时回落 None（夜应已在闸外收完）。
+        # 闸空闲（CLI）→ 传入真锁，欠账 drain 同流；耗尽走 LLMUnavailable 失败单源。
         try:
             auto_close_open_night(
                 self.db, self.state,
@@ -2668,11 +2714,11 @@ class GameSession:
                 wait_timeout_s=inflight_wait_s,
                 beat_generator=self._beat_generator,
                 llm_config=getattr(self, "llm_config", None),
-                write_gate=None,
+                write_gate=self._write_gate_if_free(),
                 scene_registry=self._scene_registry,
             )
-        except AudienceNightError:
-            # #1235 真失败另形：0036 收夜 fail-closed 后人话中止 + 出展示态。
+        except (AudienceNightError, LLMUnavailable):
+            # #1235 真失败另形：收夜中止后人话 + 出展示态（欠账耗尽=失败单源）。
             exit_settlement_display_on_failure(self.db, self.state)
             raise
         # 结束回合才执行“不回=默认同意”；旧式 turn_directives 沿用既有确认口。

@@ -141,6 +141,7 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
     - agents.create_audience_extractor_agent → 回话尾随 / 收夜 drain 叙事抽取
     - agents.create_endorsement_extractor_agent → 收夜 endorsement-only 批
     - mindreading.create_mindreading_agent → 回话 done 后读心尾随（#499）
+    - web_app.run_highlight_judge → 回话 done 后高亮判官（#544；禁 sk-test 真网）
     - _fake_settlement_llm：decree 判官/推演/抽取/拟诏 + memories.run_agent_text
     - load_runtime_llm 配置中和
     - registry.get → 大臣回话流（_FakeAgent，按测例挂起）
@@ -163,6 +164,8 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
         mindreading_mod, "create_mindreading_agent",
         lambda *a, **k: _CannedMindreadingAgent(),
     )
+    # #544 / #1353 r6：高亮判官同属回话后 LLM 边界——离线中和，禁 sk-test 打真 OpenAI。
+    monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
     game = web_app.WebGame(fresh=False)
     monkeypatch.setattr(web_app, "web_game", game)
     yield game
@@ -234,33 +237,35 @@ async def _start_hanging_chat(game, client, minister):
 
 # ── ① AC10 成功等待分支：在飞时触发颁诏 → 回话在超时内落档 → 收夜后颁诏、推进回合 ──
 def test_asgi_inflight_reply_lands_then_issue_closes_and_advances(web_game, monkeypatch):
-    """AC10「回话完成入档后才收夜再颁诏」：颁诏在真实在飞等待中观测到 generating 轮，
-    回话在正超时内落档→在飞清空→颁诏续跑收夜、真实结算核推进回合。"""
+    """AC10「回话完成入档后才收夜再颁诏」：#1353 过月屏障等 chat 整轮票清零后收夜再颁诏。
+
+    顺序：挂起 chat（持票）→ issue 进屏障等票 → 放行回话落档/放票 → 收夜→颁诏推进。
+    """
     game = web_game
     minister = _active_minister(game)
     _fake_settlement_llm(monkeypatch)
-    monkeypatch.setattr("ming_sim.audience_night.DEFAULT_IN_FLIGHT_WAIT_S", 5.0)  # 正超时
     turn_before = int(game.state.turn)
 
-    # 透明观察者：只调真实 list_in_flight_chat_turns、原样返回，同时记录两处转变——
-    #   observed_inflight：首个非空真实结果（颁诏 worker 真观测到持久 generating 在飞轮）；
-    #   observed_clear：在飞被观测过之后，某次真实结果转空（=颁诏 worker 亲眼看到在飞清空）。
-    # 要求放行回话后 observed_clear 才接受颁诏完成 → 咬死 AC10 顺序：回话落档→在飞清空→收夜→颁诏。
-    # 「列一次即返回」的 waiter 收夜全程持 write_gate、回话 epilogue 抢不到 gate 落档，其 list 恒非空 →
-    # observed_clear 永不置 → 测试按超时红（非仅最终态）。
-    observed_inflight = threading.Event()
-    observed_clear = threading.Event()
-    real_list = an.list_in_flight_chat_turns
+    # 观测队列：issue 进 barrier 时 inflight>0；放行后票清、收夜可走。
+    observed_ticket_inflight = threading.Event()
+    observed_ticket_clear = threading.Event()
+    q = game._runtime_write_queue()
+    real_wait_prior = q.wait_prior
 
-    def observe_inflight(*args, **kwargs):
-        rows = real_list(*args, **kwargs)
-        if rows:
-            observed_inflight.set()
-        elif observed_inflight.is_set():
-            observed_clear.set()
-        return rows
+    def observe_wait_prior(ticket):
+        if q.inflight_count() > 1:  # barrier 票 + chat 票
+            observed_ticket_inflight.set()
+        result = real_wait_prior(ticket)
+        # wait_prior 返回 = 该票 priors 已清。后序 trail（seq>barrier）可仍 open（P5），
+        # 不得用总 inflight<=1 判清——只核无 seq < barrier 的 prior。
+        if observed_ticket_inflight.is_set():
+            with q._cond:
+                priors = [seq for seq in q._open if seq < ticket.seq]
+            if not priors:
+                observed_ticket_clear.set()
+        return result
 
-    monkeypatch.setattr("ming_sim.audience_night.list_in_flight_chat_turns", observe_inflight)
+    monkeypatch.setattr(q, "wait_prior", observe_wait_prior)
 
     async def scenario():
         async with _client() as chat_client, _client() as issue_client:
@@ -269,6 +274,7 @@ def test_asgi_inflight_reply_lands_then_issue_closes_and_advances(web_game, monk
             # 持久化行确认在飞
             assert game.db.conn.execute(
                 "SELECT status FROM chat_turns WHERE night_id=?", (night["id"],)).fetchone()["status"] == "generating"
+            assert int(game._pending_writes_count) >= 1
             # 预置 draft 候选（应允/默认同意路径）；draft 而非 pending，回话 epilogue 无待确认项、
             # 不触发确认抽取 LLM。
             game.db.upsert_pending_directive(
@@ -280,9 +286,9 @@ def test_asgi_inflight_reply_lands_then_issue_closes_and_advances(web_game, monk
             game.db.commit_pending_actions(game.state, kind_filter="directive")
 
             issue_task = asyncio.create_task(issue_client.post("/api/decree/issue/stream", json={}))
-            await _await_event(observed_inflight)  # 颁诏 worker 真观测到 generating 在飞轮后
-            allow.set()                             # 才在正超时内放行 → 回话落档
-            await _await_event(observed_clear)      # 颁诏 worker 又亲眼看到在飞清空（收夜前）
+            await _await_event(observed_ticket_inflight)  # 颁诏屏障真见到 chat 票
+            allow.set()                                   # 放行回话落档 + 放票
+            await _await_event(observed_ticket_clear)     # 屏障见到票清
 
             chat_resp = await chat_task
             issue_resp = await issue_task
@@ -677,48 +683,60 @@ def test_legacy_pending_only_advances_to_durable_dossier_without_review_api(web_
     assert int(game.db.load_state().turn) == turn_before + 1
 
 
-# ── ③ AC10 fail-closed：真实并发 /chat/stream 挂起在飞 → /decree/issue/stream in-flight 拒 ──
-def test_asgi_hanging_chat_makes_issue_fail_closed(web_game, monkeypatch):
+# ── ③ #1353 K10a：挂起在飞不按 elapsed 造 409；工人终态后过月续跑 ──
+def test_asgi_hanging_chat_issue_waits_for_worker_terminal(web_game, monkeypatch):
+    """#1353 K10a：在飞回话挂起时颁诏等待工人终态，不按墙钟伪造 in_flight 409。
+
+    顺序：挂起 chat → 起 issue（阻塞等在飞）→ 放行 chat → issue 消费终态续跑。
+    """
     game = web_game
     minister = _active_minister(game)
-    monkeypatch.setattr("ming_sim.audience_night.DEFAULT_IN_FLIGHT_WAIT_S", 0.0)
+    _fake_settlement_llm(monkeypatch)
+    monkeypatch.setattr("ming_sim.audience_night.DEFAULT_IN_FLIGHT_POLL_S", 0.02)
+    turn_before = int(game.state.turn)
 
     async def scenario():
         async with _client() as chat_client, _client() as issue_client:
             chat_task, allow = await _start_hanging_chat(game, chat_client, minister)
             night = an.get_open_night(game.db)
-            turn_before = int(game.state.turn)
+            assert game.db.conn.execute(
+                "SELECT status FROM chat_turns WHERE night_id=?",
+                (night["id"],),
+            ).fetchone()["status"] == "generating"
 
-            issue_resp = await issue_client.post("/api/decree/issue/stream", json={})
-            issue_events = _parse_sse(issue_resp.text)
-            mid_status = an.get_night(game.db, night["id"])["status"]
-            mid_turn = int(game.state.turn)
-            chat_row = game.db.conn.execute(
-                "SELECT status FROM chat_turns WHERE night_id=?", (night["id"],)).fetchone()["status"]
+            issue_task = asyncio.create_task(
+                issue_client.post("/api/decree/issue/stream", json={})
+            )
+            # 给 issue 时间进入队列屏障（不得已 error 结束）
+            await asyncio.sleep(0.15)
+            assert not issue_task.done(), "issue must wait for chat ticket, not forge elapsed 409"
 
             allow.set()
             chat_resp = await chat_task
-            return issue_events, night, turn_before, mid_status, mid_turn, chat_row, chat_resp.text
+            issue_resp = await asyncio.wait_for(issue_task, timeout=10.0)
+            return night, _parse_sse(issue_resp.text), _parse_sse(chat_resp.text)
 
-    issue_events, night, turn_before, mid_status, mid_turn, chat_row, chat_text = asyncio.run(scenario())
-
+    night, issue_events, chat_events = asyncio.run(scenario())
     assert night is not None
-    # 颁诏经 SSE 报「在飞」in-flight fail-closed
-    assert issue_events[-1]["event"] == "error"
-    assert "在飞" in (issue_events[-1].get("data") or "")
-    assert mid_status == "open"          # 夜保持开
-    assert mid_turn == turn_before       # turn 不变
-    assert chat_row == "generating"      # 在飞轮仍在
-    # 放行后回话正常收尾（#499：end 才是终态终止事件）
-    assert _parse_sse(chat_text)[-1]["event"] == "end"
+    assert chat_events[-1]["event"] == "end"
+    # 工人终态后续跑：不得以「在飞」error 收场
+    assert not any(
+        ev.get("event") == "error" and "在飞" in (ev.get("data") or "")
+        for ev in issue_events
+    ), issue_events
+    assert issue_events[-1]["event"] != "error" or "在飞" not in (
+        issue_events[-1].get("data") or ""
+    )
+    # 成功支：月推进或核账展示；失败若有也不得是 elapsed 伪造的 in_flight
+    assert int(game.state.turn) >= turn_before
 
 
 # ── ③ 同步退朝端点 offload 不冻结 event loop（真实 ASGI + 并发在飞 + ticker）──────
 def test_sync_advance_endpoint_does_not_stall_event_loop(web_game, monkeypatch):
     game = web_game
     minister = _active_minister(game)
-    # 在飞挂起，使退朝端点在 _await_audience_inflight_clear 阻塞约 0.4s（同步等待）
-    monkeypatch.setattr("ming_sim.audience_night.DEFAULT_IN_FLIGHT_WAIT_S", 0.4)
+    _fake_settlement_llm(monkeypatch)
+    # 在飞挂起：退朝经队列屏障等 chat 票（#1353 K10a 不造 409）
     monkeypatch.setattr("ming_sim.audience_night.DEFAULT_IN_FLIGHT_POLL_S", 0.02)
 
     async def scenario():
@@ -733,15 +751,23 @@ def test_sync_advance_endpoint_does_not_stall_event_loop(web_game, monkeypatch):
         async with _client() as chat_client, _client() as adv_client:
             chat_task, allow = await _start_hanging_chat(game, chat_client, minister)
             t = asyncio.create_task(ticker())
-            resp = await adv_client.post("/api/decree/advance_without_edict")
-            t.cancel()
+            adv_task = asyncio.create_task(
+                adv_client.post("/api/decree/advance_without_edict")
+            )
+            # 等待期间 event loop 须继续跑 ticker（端点已 offload）
+            await asyncio.sleep(0.2)
+            mid_ticks = ticks
             allow.set()
             await chat_task
-            return ticks, resp.status_code
+            resp = await asyncio.wait_for(adv_task, timeout=10.0)
+            t.cancel()
+            return mid_ticks, ticks, resp.status_code
 
-    ticks, status = asyncio.run(scenario())
-    assert ticks >= 5, f"event loop 被同步端点冻结（ticks={ticks}）"
-    assert status == 409  # 在飞超时 fail-closed
+    mid_ticks, ticks, status = asyncio.run(scenario())
+    assert mid_ticks >= 5, f"event loop 被同步端点冻结（mid_ticks={mid_ticks}）"
+    assert ticks >= mid_ticks
+    # #1353 K10a：工人终态后继续，不按在飞 elapsed 造 409
+    assert status == 200, f"advance after chat terminal expected 200, got {status}"
 
 
 # ── ④ TOCTOU：等 gate 期间相位翻到亲裁 → 持锁内权威复查经真实 /chat/stream SSE 拒 ──
