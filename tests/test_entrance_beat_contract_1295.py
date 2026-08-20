@@ -20,7 +20,14 @@ import pytest
 
 from ming_sim import audience_night as an
 from ming_sim import beat_orchestration as bo
-from ming_sim.beat_orchestration import BEAT_ENTER, BEAT_OPEN, BeatInputs, assemble_beat_inputs
+from ming_sim.beat_orchestration import (
+    BEAT_CLOSE,
+    BEAT_ENTER,
+    BEAT_EXIT,
+    BEAT_OPEN,
+    BeatInputs,
+    assemble_beat_inputs,
+)
 
 
 def _load_fresh_beat_module(monkeypatch, *, capture: dict):
@@ -148,3 +155,62 @@ def test_open_beat_instructions_share_no_preenact_contract(monkeypatch):
     joined = "\n".join(str(x) for x in instructions)
     assert "不预演奏对" in joined
     assert "不写皇帝答复" in joined
+
+
+@pytest.mark.parametrize("beat_kind", [BEAT_OPEN, BEAT_ENTER])
+def test_llm_materials_include_reign_period_label_for_open_enter(monkeypatch, beat_kind):
+    """#1294/#1313 r4：create_llm_beat_generator 材料面投喂当期年月（open/enter 且非空）。"""
+    capture: dict = {}
+    probe = _load_fresh_beat_module(monkeypatch, capture=capture)
+    gen = probe.create_llm_beat_generator(object())
+    label = "天启七年十月"
+    gen(BeatInputs(
+        beat_kind=beat_kind,
+        time_of_day="戌时",
+        location="乾清宫",
+        person_name="杨嗣昌" if beat_kind == BEAT_ENTER else "",
+        reign_period_label=label,
+    ))
+    assert capture.get("prompts"), "generator never received materials"
+    payload = json.loads(capture["prompts"][0])
+    assert payload.get("当期年月") == label
+    assert payload.get("场景节点") == beat_kind
+
+
+@pytest.mark.parametrize("beat_kind", [BEAT_EXIT, BEAT_CLOSE])
+def test_llm_materials_exclude_reign_period_label_for_exit_close(monkeypatch, beat_kind):
+    """#1313 r4b：exit/close 材料面不得含「当期年月」（即便字段被误填）。"""
+    capture: dict = {}
+    probe = _load_fresh_beat_module(monkeypatch, capture=capture)
+    gen = probe.create_llm_beat_generator(object())
+    gen(BeatInputs(
+        beat_kind=beat_kind,
+        time_of_day="戌时",
+        location="乾清宫",
+        person_name="杨嗣昌" if beat_kind == BEAT_EXIT else "",
+        # 故意塞非空：发射闸须按 beat_kind 拒绝，不能仅靠空串默认
+        reign_period_label="天启七年十月",
+    ))
+    assert capture.get("prompts"), "generator never received materials"
+    payload = json.loads(capture["prompts"][0])
+    assert "当期年月" not in payload
+    assert payload.get("场景节点") == beat_kind
+
+
+@pytest.mark.parametrize("beat_kind", [BEAT_OPEN, BEAT_ENTER])
+def test_llm_materials_omit_empty_reign_period_label_for_open_enter(monkeypatch, beat_kind):
+    """#1313 r4b：open/enter 但 label 空/空白时亦不发射「当期年月」键。"""
+    capture: dict = {}
+    probe = _load_fresh_beat_module(monkeypatch, capture=capture)
+    gen = probe.create_llm_beat_generator(object())
+    gen(BeatInputs(
+        beat_kind=beat_kind,
+        time_of_day="戌时",
+        location="乾清宫",
+        person_name="杨嗣昌" if beat_kind == BEAT_ENTER else "",
+        reign_period_label="   ",
+    ))
+    assert capture.get("prompts"), "generator never received materials"
+    payload = json.loads(capture["prompts"][0])
+    assert "当期年月" not in payload
+    assert payload.get("场景节点") == beat_kind
