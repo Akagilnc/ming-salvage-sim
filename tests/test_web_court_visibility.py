@@ -467,49 +467,47 @@ def test_secret_order_endpoint_preserves_long_title_into_confirmation(game, monk
     assert title in seen["message"]
 
 
-# ── #1317：未仕（史可法诸生）不得入可召/朝堂名册 ──────────────────────────
+# ── #1317 r2：身份归一 ≠ 可召资格；未仕/宗藩别名解析 + 可召排未仕 ──────────
+
+
+def _session_stub(db, content):
+    from ming_sim.session import GameSession
+
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.content = content
+    sess.temporary_characters = {}
+    return sess
 
 
 def test_shi_kefa_not_in_summonable_court_roster(read_game):
-    """#1317 QA r3：史可法 office=诸生（应天府学）/未仕，不得以在朝身份入可召名册。
+    """#1317：史可法 office=诸生/未仕，不得以在朝身份入可召名册。
 
-    接缝：list_ministers（召见名册）+ can_summon（召对闸）+ visible_in_court（web 朝堂投影）
-    三面同拒；seed status=offstage 与谓词排未仕双保险。
+    接缝：list_ministers + can_summon + visible_in_court 三面同拒。
+    同型先例：郑成功/张煌言等诸生童生 offstage（非钱谦益——钱为罢居礼部）。
     """
-    from ming_sim.session import GameSession
-
     db, _state, content = read_game
     assert "史可法" in content.characters, "seed 须含史可法"
     ch = content.characters["史可法"]
     assert ch.office_type == "未仕"
     assert "诸生" in (ch.office or "")
 
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.content = content
-    sess.temporary_characters = {}
-
+    sess = _session_stub(db, content)
     names = {v.name for v in sess.list_ministers()}
     assert "史可法" not in names, "史可法不得入 list_ministers 可召名册"
 
     ok, reason = sess.can_summon(ch)
     assert ok is False, f"史可法 can_summon 应拒，实际放行 reason={reason!r}"
-    assert reason  # 拒因非空
+    assert reason
 
     assert visible_in_court(ch, db) is False, "史可法不得入 web 朝堂 ministers 投影"
 
 
 def test_real_court_ministers_not_collateral_damaged_by_1317(read_game):
     """#1317 回归：真在朝大臣（非未仕）仍可召、仍在名册——禁谓词收窄误伤。"""
-    from ming_sim.session import GameSession
-
     db, _state, content = read_game
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.content = content
-    sess.temporary_characters = {}
+    sess = _session_stub(db, content)
 
-    # 钉几个开局在朝真臣（seed 常驻，非未仕）
     for name in ("温体仁", "毕自严", "张瑞图"):
         assert name in content.characters, f"seed 缺 {name}"
         ch = content.characters[name]
@@ -524,15 +522,15 @@ def test_real_court_ministers_not_collateral_damaged_by_1317(read_game):
         assert name in roster_names, f"{name} 被挡出 list_ministers"
 
 
-def test_no_active_weishi_in_opening_summonable_roster(game):
-    """#1317 全 seed 同型扫：开局可召名册不得含 office_type=未仕（在野/未仕 active 漏召类）。"""
-    from ming_sim.session import GameSession
+def test_no_active_weishi_in_summonable_roster_including_1642_1645(game):
+    """#1317 r2 类防御：开局 + 强行 active + 1642/1645 debut 未仕均不漏入可召名册。
 
-    db, _state, content = game
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.content = content
-    sess.temporary_characters = {}
+    钉张煌言(debut 1642)/郑成功(debut 1645) 等同型诸生童生——不靠单一史可法 seed status。
+    """
+    from ming_sim.simulation import _extractor_context_payload, build_simulator_payload
+
+    db, state, content = game
+    sess = _session_stub(db, content)
 
     leaked = [
         v.name for v in sess.list_ministers()
@@ -540,19 +538,119 @@ def test_no_active_weishi_in_opening_summonable_roster(game):
     ]
     assert leaked == [], f"未仕漏入可召名册：{leaked}"
 
-    # 即便 DB 强行 active，谓词仍拒（类防御，不靠单一 seed status）
     weishi = [
         (n, c) for n, c in content.characters.items()
         if getattr(c, "office_type", "") == "未仕"
         and getattr(c, "power_id", "ming") == "ming"
     ]
-    assert weishi, "seed 须有未仕样本（史可法等同型）"
+    assert weishi, "seed 须有未仕样本（史可法/郑成功/张煌言等同型）"
+    names_pinned = {n for n, _ in weishi}
+    assert "张煌言" in names_pinned and int(getattr(content.characters["张煌言"], "debut_year", 0) or 0) == 1642
+    assert "郑成功" in names_pinned and int(getattr(content.characters["郑成功"], "debut_year", 0) or 0) == 1645
+
     for name, ch in weishi:
         db.conn.execute(
-            "UPDATE characters SET status='active' WHERE name=?", (name,),
+            "UPDATE characters SET status='active', power_id='ming' WHERE name=?", (name,),
         )
         db.conn.commit()
         ok, _ = sess.can_summon(ch)
         assert ok is False, f"active 未仕 {name} 仍可召"
         assert name not in {v.name for v in sess.list_ministers()}
         assert visible_in_court(ch, db) is False
+
+    # LLM/extractor 受守面同口径（simulation court_roster / active_ministers）
+    sim = build_simulator_payload(state, db, decree_text="", previous_narrative="")
+    assert "史可法" not in str(sim.get("court_roster", ""))
+    assert "张煌言" not in str(sim.get("court_roster", ""))
+    assert "郑成功" not in str(sim.get("court_roster", ""))
+    ext = _extractor_context_payload(db, state, narrative="", decree_text="")
+    assert "史可法" not in str(ext.get("active_ministers", ""))
+    assert "张煌言" not in str(ext.get("active_ministers", ""))
+    assert "郑成功" not in str(ext.get("active_ministers", ""))
+
+
+def test_identity_resolves_weishi_and_vassal_aliases_no_duplicate_file(game):
+    """#1317 r2 钉：身份归一认识未仕/宗藩——史宪之入仕不建重档；福王别名撞宗藩闸。"""
+    from ming_sim import issues
+    from ming_sim.session import _find_existing_minister
+
+    db, state, content = game
+
+    assert "史可法" in content.characters
+    assert "史宪之" in (content.characters["史可法"].aliases or [])
+    assert _find_existing_minister(content, "史可法", db) == "史可法"
+    assert _find_existing_minister(content, "史宪之", db) == "史可法"
+
+    before = {
+        r["name"]
+        for r in db.conn.execute("SELECT name FROM characters").fetchall()
+    }
+    res = issues.apply_office_appointment(
+        db, state, content, None, "史宪之", "兵部职方司主事",
+        reason="#1317 r2 别名入仕", new_office_type="兵部",
+    )
+    assert not res.get("rejected"), res
+    assert res.get("name") == "史可法"
+    after = {
+        r["name"]
+        for r in db.conn.execute("SELECT name FROM characters").fetchall()
+    }
+    assert after == before, f"史宪之入仕不得建重档，多出：{after - before}"
+    row = db.conn.execute(
+        "SELECT status, office FROM characters WHERE name=?", ("史可法",),
+    ).fetchone()
+    assert row["status"] == "active"
+    assert "职方" in (row["office"] or "") or "兵部" in (row["office"] or "")
+
+    # 福王别名 → 朱常洵 → 宗藩硬闸，不建档
+    prince = next(
+        (n for n, c in content.characters.items()
+         if c.office_type == "宗藩" and "福王" in (c.aliases or [])),
+        None,
+    )
+    assert prince is not None, "seed 须有福王别名宗藩（朱常洵）"
+    assert _find_existing_minister(content, "福王", db) == prince
+    before_p = {
+        r["name"]
+        for r in db.conn.execute("SELECT name FROM characters").fetchall()
+    }
+    res_p = issues.apply_office_appointment(
+        db, state, content, None, "福王", "兵部尚书", reason="幻觉授宗藩",
+    )
+    assert res_p.get("rejected") is True
+    assert "宗藩" in str(res_p.get("reason") or "")
+    after_p = {
+        r["name"]
+        for r in db.conn.execute("SELECT name FROM characters").fetchall()
+    }
+    assert after_p == before_p, f"福王别名不得建重档，多出：{after_p - before_p}"
+
+
+def test_choose_minister_real_entry_excludes_weishi_includes_court(game, monkeypatch):
+    """#1317 r2：CLI choose_minister 真入口与可召谓词同口径（排未仕，留真臣）。"""
+    from ming_sim.cli import terminal as term
+
+    db, _state, content = game
+    sess = _session_stub(db, content)
+
+    # 强行 active 未仕，确认真入口仍不列
+    db.conn.execute(
+        "UPDATE characters SET status='active' WHERE name=?", ("史可法",),
+    )
+    db.conn.commit()
+
+    printed: list[str] = []
+
+    def fake_print(*args, **_kwargs):
+        printed.append(" ".join(str(a) for a in args))
+
+    # quit ∈ COURT_BREAK_COMMANDS → 返回 None（退朝），只验证列名册副作用
+    monkeypatch.setattr("builtins.print", fake_print)
+    monkeypatch.setattr("builtins.input", lambda *_a, **_k: "quit")
+
+    assert term.choose_minister(sess) is None
+
+    blob = "\n".join(printed)
+    assert "可召见大臣" in blob
+    assert "史可法" not in blob
+    assert "温体仁" in blob or "毕自严" in blob

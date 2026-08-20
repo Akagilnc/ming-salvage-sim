@@ -72,7 +72,7 @@ from ming_sim.issues import _format_issue_ongoing, commitment_display_text, comm
 from ming_sim.session import GameSession
 from ming_sim.session import (
     AUTO_SAVE_PREFIX,
-    _is_ming_court_minister_character,
+    _is_summonable_court_minister,
     _pending_action_failure_payload,
     coalesce_pending_action_id,
 )
@@ -97,7 +97,6 @@ from ming_sim.models import (
     FRONT_HALF_DONE_PHASES,
     LLMConfig,
     TurnPhase,
-    is_vassal_prince,
     loads_effect_dict,
     reign_period_label,
 )
@@ -548,26 +547,20 @@ def _character_power_id(character: Character, db) -> str:
 
 
 def visible_in_court(character: Character, db) -> bool:
-    """朝堂大臣列表准入：朝臣 canon 资格 + DB 权威状态非 offstage（离场/未登场不入列）。
+    """朝堂大臣列表准入：在朝可召资格 + DB 权威状态非 offstage（离场/未登场不入列）。
 
-    资格单真源 session._is_ming_court_minister_character（#1317 DRY：ming∧非后宫∧非宗藩∧
-    非未仕∧非 candidate）——与 list_ministers/can_summon/court_roster 同口径，禁另造过滤表。
+    资格单真源 session._is_summonable_court_minister（#1317 r2：身份归一∧非宗藩∧非未仕）——
+    与 list_ministers/can_summon/CLI/事实块同口径，禁另造过滤表。resolve 惰性入参，
+    类型短路不得与谓词条件并存。
     状态与势力一律以 DB 为准（与 public_character 同源）——内存 c.status 在 auto-debut
     等路径（set_character_status 只写 DB、不回写内存）会 stale，不能用作过滤依据（见 #104）。
 
     宗藩/未仕不是可召见/可任免的朝堂官员，排除出朝堂+任免列表；藩王/诸生在册数据照旧
     留 DB，事件按名引用与铨选任命不受影响。
     """
-    # 类型短路（后宫/宗藩/未仕/candidate）免 resolve——不可拿 content.power 预判，否则招抚
-    # 归明者(DB 已 ming、content 仍旧势力)会被误挡（#125）。
-    if (
-        is_vassal_prince(character)
-        or getattr(character, "office_type", None) in ("后宫", "未仕")
-        or getattr(character, "status", None) == "candidate"
-    ):
-        return False
-    if not _is_ming_court_minister_character(
-        character, power_id=_character_power_id(character, db),
+    if not _is_summonable_court_minister(
+        character,
+        resolve_power_id=lambda c: _character_power_id(c, db),
     ):
         return False
     if db.get_character_status(character.name)[0] == "offstage":

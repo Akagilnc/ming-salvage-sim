@@ -24,7 +24,7 @@ from ming_sim.session import (
     FRONT_HALF_DONE_PHASES,
     GameSession,
     TurnPhase,
-    _is_ming_court_minister_character,
+    _is_summonable_court_minister,
     _pending_action_failure_payload,
 )
 from ming_sim.skills import print_all_skill_cards, print_skill_card, skill_display_name
@@ -121,15 +121,13 @@ def _print_header(session: GameSession) -> None:
 def choose_minister(session: GameSession) -> Optional[Character]:
     """列大臣，皇帝选一位。返回 None 表示退朝去审阅诏书。"""
     characters = session.content.characters
-    # 可召名册资格单真源 _is_ming_court_minister_character（#1317 DRY：与 can_summon/
-    # list_ministers/visible_in_court 同口径）。offstage 未登场另滤——到 debut 年月现身。
-    # 后宫不经朝臣谓词、走 can_summon 专路，CLI 大臣单亦不列后宫（与 web consorts 分栏同形）。
+    # 可召名册资格单真源 _is_summonable_court_minister（#1317 r2 DRY：与 can_summon/
+    # list_ministers/visible_in_court/事实块同口径）。offstage 未登场另滤——到 debut 年月现身。
+    # 后宫不经朝臣可召谓词、走 can_summon 专路，CLI 大臣单亦不列后宫（与 web consorts 分栏同形）。
+    resolve = session.db.resolve_power_id
     names = [
         name for name in characters
-        if _is_ming_court_minister_character(
-            characters[name],
-            power_id=session.db.resolve_power_id(characters[name]),
-        )
+        if _is_summonable_court_minister(characters[name], resolve_power_id=resolve)
         and session.db.get_character_status(name)[0] not in ("offstage", "candidate")
     ]
     print("\n可召见大臣：")

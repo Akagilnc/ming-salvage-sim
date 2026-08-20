@@ -948,10 +948,10 @@ def build_board_query_tools(context: CourtContext):
         """查当前在朝（active）官员名单：姓名、官职、派系。
         写 canonical 人物变更前必查，核实人物是否确实在朝。"""
         rows = context.db.conn.execute(
-            # roster scope（同 court_roster / _talent_pool_rows）：大明、非后宫、非宗藩
-            # （宗室就藩非朝堂命官，PR#121；写 canonical 人物变更前查此名单不应见宗藩，cmr R3 cross-section）。
+            # roster scope（同 court_roster / _is_summonable_court_minister）：大明、非后宫、
+            # 非宗藩、非未仕（#1317 r2；PR#121 宗室；写 canonical 前查此名单不应见待铨诸生）。
             "SELECT name,office,faction FROM characters WHERE status='active' "
-            "AND power_id='ming' AND office_type NOT IN ('后宫','宗藩') ORDER BY rowid"
+            "AND power_id='ming' AND office_type NOT IN ('后宫','宗藩','未仕') ORDER BY rowid"
         ).fetchall()
         return "\n".join(f"{r['name']}：{r['office']}，{r['faction']}" for r in rows)
 
