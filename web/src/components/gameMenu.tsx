@@ -1,6 +1,7 @@
 import React from "react";
 import { Check, Loader2, LogOut, Power, RotateCcw, Save, Settings, Trash2, Upload, X } from "lucide-react";
 import { ApiRequestError, api } from "../api";
+import { cliRunnerOptions } from "../cliRunners";
 import { resolveReasoningSupported } from "../reasoningSupport";
 import type { LLMConfigInfo, SaveEntry } from "../types";
 import { visibleReasoningStrengthChoices } from "../reasoningStrength";
@@ -488,6 +489,7 @@ export function LLMConfigTab() {
         ...data,
         persisted: mergePersistedSaveSnapshot(data, cur),
         cli_model_choices: data.cli_model_choices || cur?.cli_model_choices || {},
+        cli_runners: data.cli_runners || cur?.cli_runners,
       }));
       setBaseUrl(data.base_url);
       setModel(data.model);
@@ -546,10 +548,9 @@ export function LLMConfigTab() {
                 setCliModel("");  // 换 runner 归零到默认档，避免旧模型漏进新 runner
               }}
             >
-              <option value="agy">agy（Gemini）</option>
-              <option value="codex">codex</option>
-              <option value="claude">claude</option>
-              <option value="grok">grok</option>
+              {cliRunnerOptions(info?.cli_runners).map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
             </select>
           </label>
           <label className="menu-field">
