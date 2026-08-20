@@ -65,3 +65,17 @@ describe("#1398 邸报朕知道了视口常显", () => {
     expect(dismiss).toMatch(/flex:\s*0\s+0\s+auto/);
   });
 });
+
+describe("#1475 召对顶栏回收版面", () => {
+  it("chat 大横幅轨不压过 modal-header-bare（hideTitle 时高度归零）", () => {
+    // 大字居中横幅 min-height:78px 不得以更高特异性压过 bare 的 min-height:0，
+    // 否则 hideTitle 仍占约 1/6 屏。要么 :not(.modal-header-bare)，要么显式 bare 覆盖。
+    const fatBlocks = [...styles.matchAll(/[^{}]*modal-bg-chat[^{}]*modal-header[^{}]*\{[^}]*min-height:\s*78px[^}]*\}/g)].map((m) => m[0]);
+    for (const fat of fatBlocks) {
+      expect(fat).toMatch(/:not\(\s*\.modal-header-bare\s*\)/);
+    }
+    const bareOverride = [...styles.matchAll(/[^{}]*modal-bg-chat[^{}]*modal-header-bare[^{}]*\{[^}]*\}/g)].map((m) => m[0]);
+    const bareOk = bareOverride.some((block) => /min-height:\s*0/.test(block));
+    expect(fatBlocks.length > 0 || bareOk).toBe(true);
+  });
+});

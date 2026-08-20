@@ -634,7 +634,7 @@ export function App() {
       ) : null}
 
       {chatOpen && activeMinister ? (
-        <FullscreenModal title={`召对：${activeMinister.name}`} subtitle={activeMinister.office} bgClass="modal-bg-chat" onClose={() => setActiveModal("none")}>
+        <FullscreenModal title={`召对：${activeMinister.name}`} subtitle={activeMinister.office} bgClass="modal-bg-chat" hideTitle onClose={() => setActiveModal("none")}>
           <ChatModal
             minister={activeMinister}
             ministers={audienceRoster}
