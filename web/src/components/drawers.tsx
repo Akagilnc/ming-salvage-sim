@@ -116,7 +116,13 @@ export function MinisterCardList({
     if (savedPosRef.current !== null) {
       arrange(savedPosRef.current);
     } else {
+      // #1290/#1332：GET /api/court_layout 空 {} 是合法态（玩家尚未拖拽覆盖，无 seed）。
+      // 先按 office→courtSlots 默认朝班落座，卡片不堵在 fetch；有覆盖再重排。
+      // fetch 返回前若玩家已拖（savedPosRef 已写），不以服务端回滚本地。
+      arrange({});
       loadCourtPos().then((saved) => {
+        if (cancelled) return;
+        if (savedPosRef.current !== null) return;
         savedPosRef.current = saved;
         arrange(saved);
       });

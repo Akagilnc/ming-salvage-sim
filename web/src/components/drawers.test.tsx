@@ -151,6 +151,132 @@ describe("ArmyDrawer presentation", () => {
   });
 });
 
+describe("朝堂空 layout 合法态（#1290/#1332）", () => {
+  it("GET layout={} 时殿上仍按默认朝班落座（非 hidden）", async () => {
+    // 契约：court_layout 是玩家拖拽覆盖；新局空 {} 合法，前端 courtSlots 生成默认位。
+    // QA 只 curl 到空 API 不等于殿上无卡——本钉锁呈现层不把空当错。
+    const host = await renderCourtList([
+      minister({ name: "黄立极", office: "首辅,中极殿大学士" }),
+      minister({ name: "毕自严", office: "户部尚书" }),
+    ]);
+
+    const huang = cardPos(host, "黄立极");
+    const bi = cardPos(host, "毕自严");
+    expect(huang).not.toBeNull();
+    expect(bi).not.toBeNull();
+    expect(huang!.left).not.toBe("");
+    expect(huang!.top).not.toBe("");
+    expect(bi!.left).not.toBe("");
+    expect(bi!.top).not.toBe("");
+    expect(`${huang!.left}|${huang!.top}`).not.toBe(`${bi!.left}|${bi!.top}`);
+
+    const cards = Array.from(host.querySelectorAll<HTMLElement>("button.minister-card"));
+    for (const c of cards) {
+      expect(c.style.visibility).not.toBe("hidden");
+      expect(c.style.position).toBe("absolute");
+    }
+  });
+
+  it("layout fetch 未完成时也先默认落座，不堵首屏", async () => {
+    let resolveLayout!: (v: { ok: boolean; json: () => Promise<{ layout: string }> }) => void;
+    const pending = new Promise<{ ok: boolean; json: () => Promise<{ layout: string }> }>((r) => {
+      resolveLayout = r;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (String(url).includes("/api/court_layout")) return pending as unknown as Response;
+        return { ok: true, json: async () => ({}) } as Response;
+      })
+    );
+
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    await act(async () => {
+      root.render(
+        <MinisterCardList
+          list={[
+            minister({ name: "黄立极", office: "首辅,中极殿大学士" }),
+            // 非固定槽官职：松手不吸回 FIXED_SLOTS，才能钉「完成拖拽后回包不回滚」
+            minister({ name: "施凤来", office: "东阁大学士" }),
+          ]}
+          portraitPrefix="minister_"
+          selectedMinister=""
+          emptyNote="empty"
+          onOpenChat={() => {}}
+          courtMode={true}
+        />
+      );
+    });
+    // 同步 arrange({}) 后首帧即有坐标；不等待 fetch
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const before = cardPos(host, "黄立极");
+    expect(before).not.toBeNull();
+    expect(before!.left).not.toBe("");
+
+    // pending 期间真拖拽：jsdom 容器默认 0×0，须 stub 非零宽高，否则 onMove 除零失真
+    const court = host.querySelector(".minister-list-court") as HTMLElement | null;
+    expect(court).toBeTruthy();
+    court!.getBoundingClientRect = () =>
+      ({
+        x: 0,
+        y: 0,
+        width: 1000,
+        height: 1000,
+        top: 0,
+        right: 1000,
+        bottom: 1000,
+        left: 0,
+        toJSON: () => ({}),
+      }) as DOMRect;
+
+    const cards = Array.from(host.querySelectorAll<HTMLElement>("button.minister-card"));
+    const shiCard = cards.find((el) => el.querySelector(".minister-name")?.textContent === "施凤来");
+    expect(shiCard).toBeTruthy();
+
+    // 完整真实拖拽：mousedown → mousemove(>3px) → mouseup，之后再 resolve。
+    // 契约是「完成拖拽后回包不回滚」，不得在持拖时 resolve 开例外路径。
+    // 拖向左远槽（松手吸附 left:9≈37.7%/6.6%）；服务端回包瞄右近槽——两槽必须不同，mutation 才钉得死。
+    await act(async () => {
+      shiCard!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, clientX: 500, clientY: 500 }));
+    });
+    await act(async () => {
+      window.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, clientX: 100, clientY: 100 }));
+    });
+    await act(async () => {
+      window.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, clientX: 100, clientY: 100 }));
+    });
+
+    const dragged = cardPos(host, "施凤来");
+    expect(dragged).not.toBeNull();
+    expect(dragged!.left).not.toBe("");
+    // 契约前提：拖后吸附位须异于将要回包的服务端 layout 吸附位（右近 86.2%/53.2%），否则钉不住回滚
+    expect(`${dragged!.left}|${dragged!.top}`).not.toBe("86.2%|53.2%");
+
+    await act(async () => {
+      // 非空且刻意不同于拖后：右近槽锚点——若缺 savedPosRef 守卫会把本地拖拽滚回去
+      resolveLayout({
+        ok: true,
+        json: async () => ({ layout: JSON.stringify({ 施凤来: { px: 0.9, py: 0.9 } }) }),
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const after = cardPos(host, "施凤来");
+    expect(after).not.toBeNull();
+    expect(after!.left).not.toBe("");
+    // 完成拖拽后 → 非空服务端 layout 回包不得回滚本地
+    expect(after).toEqual(dragged);
+
+    mountedRoots.push({ root, host });
+  });
+});
+
 describe("朝堂同衔分座（#1196 呈现层去冲突）", () => {
   it("同 role 双人大臣 arrange 后坐标不重合", async () => {
     // 来宗道/温体仁同「礼部尚书」开局叠座复现：次名起应降级自由槽
