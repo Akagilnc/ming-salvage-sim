@@ -22,6 +22,8 @@ import pytest
 import ming_sim.agents as agents_mod
 import web_app
 from ming_sim import audience_night as an
+from ming_sim.exceptions import LLMUnavailable
+from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
 from ming_sim.audience_extraction import (
     ExtractionShapeError,
     catch_up_pending_extractions,
@@ -429,15 +431,15 @@ def test_drain_before_close_fail_closed(game, tmp_path, monkeypatch):
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
     minister = _minister(db, content)
     nid, ctid, seq = _open_night_with_persisted_reply(db, state, minister)
-    # 补跑持续失败 → fail-closed 中止收夜（响亮错误包、夜保持开、可原地重试）。
-    with pytest.raises(an.AudienceNightError) as ei:
+    # 补跑持续失败 → 失败单源（LLMUnavailable），夜保持开可重按过月。
+    with pytest.raises(LLMUnavailable) as ei:
         drain_pending_before_close(
             db=db, llm_config=object(), write_gate=threading.Lock(),
             night_id=nid, extractor_agent=_BoomAgent(),
         )
     assert ei.value.code == "pending_extraction"
-    assert ei.value.error_pack_path
-    # 夜未被封（保持可续 / 可重试），待补仍在。
+    assert ei.value.message == CLI_RUNNER_PLAYER_MESSAGE
+    # 夜未被封（保持可续 / 可重按），待补仍在（诊断面）。
     assert an.get_night(db, nid)["status"] != an.NIGHT_STATUS_CLOSED
     assert db.count_pending_story_extractions(night_id=nid) >= 1
 
@@ -708,11 +710,12 @@ def test_engine_close_night_fail_closed_on_boom(game, monkeypatch, tmp_path):
         agents_mod, "create_audience_extractor_agent", lambda *a, **k: _BoomAgent())
     minister = _minister(db, content)
     nid, ctid, seq = _open_night_with_persisted_reply(db, state, minister)
-    # 持续失败 → 引擎 close fail-closed 中止收夜、夜保持开
-    with pytest.raises(an.AudienceNightError) as ei:
+    # 持续失败 → 引擎 close 失败单源中止收夜、夜保持开
+    with pytest.raises(LLMUnavailable) as ei:
         an.close_night(
             db, state, night_id=nid, llm_config=object(), write_gate=threading.Lock())
     assert ei.value.code == "pending_extraction"
+    assert ei.value.message == CLI_RUNNER_PLAYER_MESSAGE
     assert an.get_night(db, nid)["status"] != an.NIGHT_STATUS_CLOSED
 
 
@@ -721,10 +724,11 @@ def test_engine_close_night_fail_closed_without_deps(game, tmp_path, monkeypatch
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
     minister = _minister(db, content)
     nid, ctid, seq = _open_night_with_persisted_reply(db, state, minister)
-    # 无 llm/write_gate 又带待补 = 无从清空又不得带待补收夜 → fail-closed（不静默跳过）
-    with pytest.raises(an.AudienceNightError) as ei:
+    # 无 llm/write_gate 又带待补 = 无从清空又不得带待补收夜 → 失败单源（不静默跳过）
+    with pytest.raises(LLMUnavailable) as ei:
         an.close_night(db, state, night_id=nid)
     assert ei.value.code == "pending_extraction"
+    assert ei.value.message == CLI_RUNNER_PLAYER_MESSAGE
     assert an.get_night(db, nid)["status"] != an.NIGHT_STATUS_CLOSED
 
 

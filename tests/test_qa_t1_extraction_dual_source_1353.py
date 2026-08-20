@@ -1,14 +1,14 @@
-"""QA P0 #1353：OPEN 期汇合普通抽取 + 闸/账一致 + 删除面。
+"""QA P0 #1353：OPEN 期汇合普通抽取 + 欠账并入过月 + 删除面。
 
 钉：
 1. 竞态：owner 在跑时发起 close → 有限 join 后一次过（不 409、不假 pending）
 1b. 竞态：join 已返回、freeze 前才 admission 的 owner（确定性调度钉，不靠 sleep）
-2. 真欠账时 pending 必非空可重试（error.ids 与 pending API 同集）
+2. 真欠账耗尽 → 失败单源（LLMUnavailable/通传未达）；诊断 pending API 非空
 3. drain 失败清理不得藏挡夜 turn；write_gate=None 卫兵不被架空
-4. 清理窗部分 heal → 409 正文只含鲜集；全愈 → close_retry（无递归重入）
+4. 清理窗部分 heal → 失败单源 + pending 仅鲜集；全愈 → close_retry（无递归重入）
 5. 口令收夜穿 runtime write_gate
-6. 背书空文本独立 fail-closed + 409 重试形态
-7. 删除面：无 _healed_drain_retry / closing+zero player_hint
+6. 背书空文本独立 fail-closed + 409 重试形态（非欠账类）
+7. 删除面：无 _healed_drain_retry / closing+zero player_hint / 玩家补写 CTA
 """
 
 from __future__ import annotations
@@ -23,6 +23,8 @@ import ming_sim.agents as agents_mod
 import ming_sim.audience_extraction as ae
 import web_app
 from ming_sim import audience_night as an
+from ming_sim.exceptions import LLMUnavailable
+from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
 from tests.test_audience_extraction_501 import (
     _BoomAgent,
     _FactsAgent,
@@ -189,7 +191,7 @@ def test_close_joins_owner_admitted_after_join_before_freeze(
 
 
 def test_drain_fail_closed_pending_api_pairs_with_error_ids(game, tmp_path, monkeypatch):
-    """#1353：真欠账时 error.chat_turn_ids 与 pending API 成对非空且同集。"""
+    """#1353 fold-in：真欠账耗尽 → 失败单源；诊断 pending API 含本轮 debt。"""
     db, state, content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
     monkeypatch.setattr(
@@ -198,20 +200,21 @@ def test_drain_fail_closed_pending_api_pairs_with_error_ids(game, tmp_path, monk
     minister = _minister(db, content)
     nid, ctid, _seq = _open_night_with_persisted_reply(db, state, minister)
 
-    with pytest.raises(an.AudienceNightError) as ei:
+    with pytest.raises(LLMUnavailable) as ei:
         an.close_night(
             db, state, night_id=nid, llm_config=object(), write_gate=threading.Lock(),
         )
     assert ei.value.code == "pending_extraction"
-    err_ids = [int(x) for x in (ei.value.detail or {}).get("chat_turn_ids") or []]
-    assert ctid in err_ids
+    assert ei.value.message == CLI_RUNNER_PLAYER_MESSAGE
+    assert "待补" not in ei.value.message
+    assert "chat_turn" not in ei.value.message
 
     payload = _pending_api(db)
     assert int(payload["count"]) >= 1, (
-        f"挡收夜时 pending 必非 0，got {payload!r} err_ids={err_ids}"
+        f"挡收夜时 pending 必非 0，got {payload!r}"
     )
     api_ids = {int(p["chat_turn_id"]) for p in payload.get("pending") or []}
-    assert set(err_ids) <= api_ids
+    assert ctid in api_ids
     assert an.get_night(db, nid)["status"] == an.NIGHT_STATUS_OPEN
     # 删除面：closing+zero 自愈 hint 不得再发
     assert not payload.get("player_hint")
@@ -241,7 +244,7 @@ def test_drain_fail_cleanup_does_not_hide_blocking_turn(game, tmp_path, monkeypa
             joined.append(int(chat_turn_id))
             return []
 
-    with pytest.raises(an.AudienceNightError) as ei:
+    with pytest.raises(LLMUnavailable) as ei:
         an.close_night(
             db,
             state,
@@ -252,6 +255,7 @@ def test_drain_fail_cleanup_does_not_hide_blocking_turn(game, tmp_path, monkeypa
             scene_registry=_Reg(),
         )
     assert ei.value.code == "pending_extraction"
+    assert ei.value.message == CLI_RUNNER_PLAYER_MESSAGE
     assert joined == [], "drain 失败路径不得 join 拉长窗口"
     assert abandoned, "drain 失败应 abandon close scaffold"
     assert ctid not in abandoned
@@ -322,18 +326,18 @@ def test_write_gate_none_not_defeated_by_nullcontext(game, tmp_path, monkeypatch
 
     monkeypatch.setattr(ae, "drain_pending_before_close", track_drain)
 
-    with pytest.raises(an.AudienceNightError) as ei:
+    with pytest.raises(LLMUnavailable) as ei:
         an.close_night(db, state, night_id=nid, llm_config=object(), write_gate=None)
     assert ei.value.code == "pending_extraction"
+    assert ei.value.message == CLI_RUNNER_PLAYER_MESSAGE
     assert called["drain"] == 0
-    assert ctid in [
-        int(x) for x in (ei.value.detail or {}).get("chat_turn_ids") or []
-    ]
-    assert int(_pending_api(db)["count"]) >= 1
+    payload = _pending_api(db)
+    assert int(payload["count"]) >= 1
+    assert ctid in {int(p["chat_turn_id"]) for p in payload.get("pending") or []}
 
 
-def test_issue_409_recovery_pending_pairs_for_retry_cta(game, tmp_path, monkeypatch):
-    """#1312：颁诏/收夜 409 后 pending 非 0，retry 数源可喂拟诏台 CTA。"""
+def test_debt_exhausted_single_source_no_player_cta(game, tmp_path, monkeypatch):
+    """#1353 fold-in：欠账耗尽 → 失败单源；诊断 pending 可查；无玩家补写 CTA 面。"""
     db, state, content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
     monkeypatch.setattr(
@@ -342,32 +346,25 @@ def test_issue_409_recovery_pending_pairs_for_retry_cta(game, tmp_path, monkeypa
     minister = _minister(db, content)
     nid, ctid, _seq = _open_night_with_persisted_reply(db, state, minister)
 
-    with pytest.raises(an.AudienceNightError) as ei:
+    with pytest.raises(LLMUnavailable) as ei:
         an.close_night(
             db, state, night_id=nid, llm_config=object(), write_gate=threading.Lock(),
         )
     assert ei.value.code == "pending_extraction"
+    assert ei.value.message == CLI_RUNNER_PLAYER_MESSAGE
     payload = _pending_api(db)
     assert int(payload["count"]) >= 1
     assert any(int(p["chat_turn_id"]) == ctid for p in payload["pending"])
-    runtime = object.__new__(web_app.WebGame)
-    runtime.session = SimpleNamespace(db=db, llm_config=None)
-    runtime._runtime_write_gate = lambda: threading.Lock()  # type: ignore[method-assign]
-    runtime.pending_story_extractions = (  # type: ignore[method-assign]
-        lambda: web_app.WebGame.pending_story_extractions(runtime)
-    )
-    monkeypatch.setattr(
-        web_app, "catch_up_pending_extractions",
-        lambda **_k: {"extracted": 0, "pending": 1, "scanned": 1},
-    )
-    after = web_app.WebGame.retry_story_extractions(runtime)
-    assert int(after["count"]) >= 1
+    # 删除面：玩家 message 不得再带待补/chat_turn CTA 语义
+    assert "待补" not in ei.value.message
+    assert "补写" not in ei.value.message
+    assert "chat_turn" not in ei.value.message
 
 
-def test_converter_409_body_only_fresh_ids_after_partial_heal(
+def test_partial_heal_single_source_pending_only_fresh(
     game, tmp_path, monkeypatch,
 ):
-    """部分 heal 后新旧 id 集不同 → converter 409 正文只含鲜集。"""
+    """部分 heal 后新旧 id 集不同 → 失败单源；诊断 pending 只含鲜集。"""
     db, state, content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
     monkeypatch.setattr(
@@ -391,25 +388,20 @@ def test_converter_409_body_only_fresh_ids_after_partial_heal(
 
     monkeypatch.setattr(an, "_set_night_fields", heal_stale_only)
 
-    with pytest.raises(an.AudienceNightError) as ei:
+    with pytest.raises(LLMUnavailable) as ei:
         an.close_night(
             db, state, night_id=nid, llm_config=object(), write_gate=threading.Lock(),
         )
     assert ei.value.code == "pending_extraction"
-    fresh_ids = [int(x) for x in (ei.value.detail or {}).get("chat_turn_ids") or []]
-    assert fresh_ids == [ctid_fresh], fresh_ids
-    assert ctid_stale not in fresh_ids
-
-    http_exc = web_app._retryable_audience_close_http(ei.value)
-    assert http_exc.status_code == 409
-    body = str(http_exc.detail)
-    assert f"chat_turn_ids=[{ctid_fresh}]" in body, body
-    assert str(ctid_stale) not in body, (
-        f"409 正文不得含已愈 stale id={ctid_stale}：{body!r}"
-    )
-    assert ei.value.__cause__ is None or getattr(
-        ei.value.__cause__, "code", None
-    ) != "pending_extraction"
+    assert ei.value.message == CLI_RUNNER_PLAYER_MESSAGE
+    # 玩家面无 id；诊断 pending 仅鲜集
+    assert "chat_turn" not in ei.value.message
+    payload = _pending_api(db)
+    api_ids = {int(p["chat_turn_id"]) for p in payload.get("pending") or []}
+    assert api_ids == {ctid_fresh}, api_ids
+    assert ctid_stale not in api_ids
+    assert str(ctid_fresh) in str(ei.value.provider_message)
+    assert str(ctid_stale) not in str(ei.value.provider_message)
 
 
 def test_close_retry_on_healed_cleanup_no_stale_ids(game, tmp_path, monkeypatch):
@@ -491,28 +483,26 @@ def test_close_after_chat_passes_write_gate_like_auto_close(
     sess._scene_registry = None
     sess._write_gate = gate
 
-    with pytest.raises(an.AudienceNightError) as ei_cmd:
+    with pytest.raises(LLMUnavailable) as ei_cmd:
         sess.close_night_after_chat_if_needed("court_break", write_gate=gate)
     assert ei_cmd.value.code == "pending_extraction"
+    assert ei_cmd.value.message == CLI_RUNNER_PLAYER_MESSAGE
     assert seen.get("write_gate") is gate
     msg_cmd = str(ei_cmd.value)
     assert "无 LLM/写锁" not in msg_cmd, msg_cmd
-    assert ctid in [
-        int(x) for x in (ei_cmd.value.detail or {}).get("chat_turn_ids") or []
-    ]
+    assert ctid in {int(p["chat_turn_id"]) for p in _pending_api(db).get("pending") or []}
 
     assert an.get_night(db, nid)["status"] == an.NIGHT_STATUS_OPEN
     seen.clear()
-    with pytest.raises(an.AudienceNightError) as ei_edict:
+    with pytest.raises(LLMUnavailable) as ei_edict:
         an.auto_close_open_night(
             db, state, llm_config=object(), write_gate=gate,
         )
     assert ei_edict.value.code == "pending_extraction"
+    assert ei_edict.value.message == CLI_RUNNER_PLAYER_MESSAGE
     assert seen.get("write_gate") is gate
     assert "无 LLM/写锁" not in str(ei_edict.value)
-    assert (ei_cmd.value.detail or {}).get("chat_turn_ids") == (
-        ei_edict.value.detail or {}
-    ).get("chat_turn_ids")
+    assert ei_cmd.value.message == ei_edict.value.message
 
 
 def test_close_after_chat_session_write_gate_fallback(game, tmp_path, monkeypatch):
@@ -546,9 +536,10 @@ def test_close_after_chat_session_write_gate_fallback(game, tmp_path, monkeypatc
     sess._scene_registry = None
     sess._write_gate = gate
 
-    with pytest.raises(an.AudienceNightError) as ei:
+    with pytest.raises(LLMUnavailable) as ei:
         sess.close_night_after_chat_if_needed("court_break")
     assert ei.value.code == "pending_extraction"
+    assert ei.value.message == CLI_RUNNER_PLAYER_MESSAGE
     assert seen.get("write_gate") is gate
     assert "无 LLM/写锁" not in str(ei.value)
 
@@ -623,7 +614,7 @@ def test_empty_endorsement_text_fail_closed_retryable_409(game, tmp_path, monkey
 
 
 def test_deleted_surface_no_healed_drain_retry_residue():
-    """删除面 grep 钉：_healed_drain_retry 零残留。"""
+    """删除面 grep 钉：自愈 hint + 玩家补写 CTA 零残留。"""
     import inspect
     import pathlib
 
@@ -634,7 +625,10 @@ def test_deleted_surface_no_healed_drain_retry_residue():
         "ming_sim/audience_extraction.py",
         "web_app.py",
         "web/src/useChatActions.ts",
+        "web/src/useSettlementFlow.ts",
         "web/src/components/chatModal.tsx",
+        "web/src/components/edictModal.tsx",
+        "web/src/main.tsx",
         "web/src/types.ts",
     ):
         text = (root / rel).read_text(encoding="utf-8")
@@ -644,5 +638,21 @@ def test_deleted_surface_no_healed_drain_retry_residue():
             hits.append(f"{rel}:player_hint自愈")
         if "extractionHealedHint" in text:
             hits.append(f"{rel}:extractionHealedHint")
+        # #1353 fold-in：玩家可见补写 CTA 面
+        for needle in (
+            "data-testid=\"extraction-pending\"",
+            "data-testid=\"edict-extraction-pending\"",
+            "召对账待补写",
+            "重试补写",
+            "onRetryExtraction",
+            "extractionPendingCount",
+            "retryStoryExtraction",
+            "retryAudienceStoryExtraction",
+        ):
+            if needle in text:
+                hits.append(f"{rel}:{needle}")
+    # extractionRetry 模块整链删除
+    if (root / "web/src/extractionRetry.ts").exists():
+        hits.append("web/src/extractionRetry.ts:exists")
     assert hits == [], hits
     assert "_healed_drain_retry" not in inspect.signature(an.close_night).parameters
