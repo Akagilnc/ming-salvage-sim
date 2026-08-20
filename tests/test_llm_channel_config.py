@@ -452,30 +452,26 @@ def test_verify_llm_available_api_timeout_still_raises(monkeypatch):
     assert ei.value.code == "llm_timeout"
 
 
-def test_verify_llm_available_api_model_not_found_still_raises(monkeypatch):
-    """真错：模型不存在（404）仍须报。"""
-    import httpx
-    from openai import APIStatusError
-
+def test_verify_llm_available_api_error_status_nonempty_content_raises(monkeypatch):
+    """真错：生产 agno 形 status=ERROR 且 content 非空错误串，走真实 extract_agent_text，须报 llm_run_error。"""
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    req = httpx.Request("POST", "https://api.example.com/v1/chat/completions")
-    resp = httpx.Response(
-        404,
-        json={"error": {"message": "The model `gpt-nope` does not exist", "code": "model_not_found"}},
-        request=req,
-    )
+
+    class ErrorOutput:
+        content = "Invalid API key"
+        status = "ERROR"
 
     class FakeAgent:
         def __init__(self, **kwargs):
             pass
 
-        def run(self, prompt: str):
-            raise APIStatusError("model not found", response=resp, body=None)
+        def run(self, prompt: str) -> ErrorOutput:
+            return ErrorOutput()
 
     monkeypatch.setattr(llm_model, "Agent", FakeAgent)
+    # 不 stub extract_agent_text：咬住内层非空再抛
     with pytest.raises(LLMUnavailable) as ei:
         verify_llm_available(_api_cfg())
-    assert ei.value.status_code == 404
+    assert ei.value.code == "llm_run_error"
 
 
 def test_for_role_preserves_cli_channel_fields_for_advanced_roles():
