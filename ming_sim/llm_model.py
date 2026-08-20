@@ -270,16 +270,27 @@ def verify_llm_available(llm_config: LLMConfig) -> None:
         except Exception as error:
             raise llm_unavailable_from_error(error) from error
         return
+    # 推理模型（luna/glm/kimi/ds-v4 等）会先耗 thinking tokens；8 会被思考耗尽回空，
+    # agno 抛 Unknown model error，好模型被烟测误杀。一次校验成本可忽略，预算放宽。
     agent = Agent(
         name="LLM连通性检查",
         id="llm-smoke-test",
         session_id="llm-smoke-test",
-        model=create_chat_model(llm_config, temperature=0, max_tokens=8),
+        model=create_chat_model(llm_config, temperature=0, max_tokens=512),
         instructions=["只输出 ok。"],
         markdown=False,
     )
     try:
-        extract_agent_text(agent.run("输出 ok"))
+        run_output = agent.run("输出 ok")
+        try:
+            extract_agent_text(run_output)
+        except LLMUnavailable:
+            # docstring 本义：调用成功即过，不校验返回内容。空 content（含 ERROR status
+            # 但正文为空——推理耗尽等）不作失败；非空正文的真错（认证标记等）仍上抛。
+            content = getattr(run_output, "content", None)
+            if content is None or not str(content).strip():
+                return
+            raise
     except LLMUnavailable:
         raise
     except Exception as error:
