@@ -1273,6 +1273,177 @@ def _draft_intent_character_roster_facts(content: Any) -> str:
     )
 
 
+# #1274 QA V-1：参与人校验失败有界纠错重试（owner 2026-08-20）。
+# 1–2 次；happy path 零额外调用。只在「参与人物/委派人不存在」路上触发。
+DRAFT_PARTICIPANT_HEAL_RETRIES = 2
+_PARTICIPANT_REF_MISSING_RE = re.compile(
+    r"(?:参与人物|委派人)不存在[：:]\s*([^。\n]+)"
+)
+
+
+def is_unknown_participant_ref_error(exc: BaseException) -> bool:
+    """校验报「参与人物/委派人不存在」——可回喂 LLM 纠错的失败类。"""
+    return bool(_PARTICIPANT_REF_MISSING_RE.search(str(exc) or ""))
+
+
+def _invalid_participant_names_from_error(exc: BaseException) -> List[str]:
+    names: List[str] = []
+    for match in _PARTICIPANT_REF_MISSING_RE.finditer(str(exc) or ""):
+        name = str(match.group(1) or "").strip()
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
+def build_participant_correction_feedback(
+    exc: BaseException, *, roster_facts: str = "",
+) -> str:
+    """正向纠错指令（P7）：无效名 + 名册事实 + 「改正或除去」。"""
+    names = _invalid_participant_names_from_error(exc)
+    name_part = "、".join(names) if names else "（见校验）"
+    block = (
+        f"【纠错】名册无此人：{name_part}。"
+        f"请改正为名册正确人名，或从参与人中除去。\n"
+    )
+    facts = str(roster_facts or "").strip()
+    if facts:
+        block += facts if facts.endswith("\n") else facts + "\n"
+    return block
+
+
+def humanize_participant_ref_error(exc: BaseException) -> ValueError:
+    """重试耗尽后的玩家面兜底文案（人话；ADR 0053 缝不松）。"""
+    names = _invalid_participant_names_from_error(exc)
+    if names:
+        shown = "、".join(names)
+        return ValueError(
+            f"拟旨参与人「{shown}」不在朝堂名册。"
+            f"系统已尝试自动纠正未果，请改用名册中的大臣姓名，或去掉该参与人后重试。"
+        )
+    msg = str(exc or "").strip() or "拟旨参与人无法核对名册。"
+    return ValueError(msg)
+
+
+def normalize_draft_person_roster(
+    roster: Any, *, db: Any, content: Any,
+) -> List[Dict[str, object]]:
+    """人物参与人：normalize → 非人滤除 → canon → ADR 0053 校验。
+
+    capture 与召对 materialize 共用；校验失败 raise ValueError（参与人物不存在…）。
+    """
+    if not isinstance(roster, list):
+        raise ValueError("参与人须为对象列表")
+    from ming_sim.session import _canonical_minister_key
+
+    canonical_roster = db._normalize_participant_roster(
+        roster, strict_structured=True,
+    )
+    person_roster: List[Dict[str, object]] = []
+    for item in canonical_roster:
+        entry = dict(item)
+        cid = str(entry.get("character_id") or "").strip()
+        if _is_non_person_participant_name(cid):
+            continue
+        entry["character_id"] = _canonical_minister_key(content, cid, db)
+        delegator = str(entry.get("delegator_id") or "").strip()
+        if delegator:
+            if _is_non_person_participant_name(delegator):
+                entry["delegator_id"] = None
+            else:
+                entry["delegator_id"] = _canonical_minister_key(
+                    content, delegator, db,
+                )
+        person_roster.append(entry)
+    db._validate_participant_roster_references(person_roster)
+    return person_roster
+
+
+def _apply_validated_roster_to_extract_result(
+    result: Dict[str, Any], *, db: Any, content: Any,
+) -> Dict[str, Any]:
+    """对单条/批抽结果的 participant_roster 做 normalize+validate（就地拷贝）。"""
+    out = dict(result)
+    if "participant_roster" in out and out.get("participant_roster") is not None:
+        out["participant_roster"] = normalize_draft_person_roster(
+            out.get("participant_roster"), db=db, content=content,
+        )
+    drafts = out.get("drafts")
+    if isinstance(drafts, list):
+        healed_drafts: List[Any] = []
+        for draft in drafts:
+            if not isinstance(draft, dict):
+                healed_drafts.append(draft)
+                continue
+            item = dict(draft)
+            if "participant_roster" in item and item.get("participant_roster") is not None:
+                item["participant_roster"] = normalize_draft_person_roster(
+                    item.get("participant_roster"), db=db, content=content,
+                )
+            healed_drafts.append(item)
+        out["drafts"] = healed_drafts
+    return out
+
+
+def extract_draft_intent_with_roster_heal(
+    player_message: Optional[str],
+    minister_reply: str,
+    llm_config: Any = None,
+    *,
+    db: Any = None,
+    content: Any = None,
+    heal_retries: int = DRAFT_PARTICIPANT_HEAL_RETRIES,
+    **extract_kwargs: Any,
+) -> Dict[str, Any]:
+    """extract → 名册校验；「参与人物不存在」时有界纠错重抽（P5 只走失败路）。
+
+    db/content 缺一则只抽不校验（与旧 extract 同）。LLM 在纠错路上挂死 → 原样上抛。
+    """
+    retries = max(0, int(heal_retries))
+    correction = ""
+    last_err: Optional[BaseException] = None
+    for attempt in range(retries + 1):
+        result = extract_draft_intent(
+            player_message,
+            minister_reply,
+            llm_config,
+            content=content,
+            correction_feedback=correction,
+            **extract_kwargs,
+        )
+        if db is None or content is None:
+            return result
+        # 无参与人字段/空名单 → 无需校验，happy/除名后直过
+        has_roster_field = (
+            ("participant_roster" in result and result.get("participant_roster") is not None)
+            or any(
+                isinstance(d, dict) and "participant_roster" in d
+                for d in (result.get("drafts") or [])
+            )
+        )
+        if not has_roster_field:
+            return result
+        try:
+            return _apply_validated_roster_to_extract_result(
+                result, db=db, content=content,
+            )
+        except ValueError as exc:
+            if not is_unknown_participant_ref_error(exc):
+                raise
+            last_err = exc
+            if attempt >= retries:
+                raise humanize_participant_ref_error(exc) from exc
+            roster_facts = _draft_intent_character_roster_facts(content)
+            correction = build_participant_correction_feedback(
+                exc, roster_facts=roster_facts,
+            )
+            _log(
+                f"拟旨参与人纠错重试 {attempt + 1}/{retries}: {exc}"
+            )
+    if last_err is not None:
+        raise humanize_participant_ref_error(last_err) from last_err
+    return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
+
+
 def extract_draft_intent(
     player_message: Optional[str],
     minister_reply: str,
@@ -1282,6 +1453,7 @@ def extract_draft_intent(
     existing_candidates: Optional[List[Dict[str, Any]]] = None,
     draft_count: int = 1,
     content: Any = None,
+    correction_feedback: str = "",
 ) -> Dict[str, Any]:
     """LLM 判皇帝本轮是否在口头请大臣拟旨（非显式前缀），返回拟旨意图 + 草案文本 + 目标候选。
     失败/无 → {"draft_action": "无", "draft_text": "", "target_candidate": ""}。
@@ -1296,8 +1468,13 @@ def extract_draft_intent(
     无候选时 target_candidate 恒空。
 
     content（#1428）：可选 GameContent；提供时把 characters 的 name+aliases 作结构化
-    事实注入抽取 prompt，接地参与人规范名（禁散文守门族）。"""
+    事实注入抽取 prompt，接地参与人规范名（禁散文守门族）。
+
+    correction_feedback（#1274 V-1）：校验失败回喂的纠错指令；非空时 LLM 挂死响亮上抛。"""
     roster_facts = _draft_intent_character_roster_facts(content)
+    correction_block = str(correction_feedback or "").strip()
+    if correction_block and not correction_block.endswith("\n"):
+        correction_block += "\n"
     if draft_count > 1:
         prompt = (
             "你是信息抽取器，不扮演。皇帝同一句要求拟多道彼此独立的圣旨，大臣已在一段回话中"
@@ -1311,6 +1488,7 @@ def extract_draft_intent(
             '"承办人":"...","期限月数":3,"颁布方式":"普通|中旨直发",'
             '"参与人":[{"character_id":"规范名","tier":"主办|协办|知情","role":"本案职分","delegator_id":null}]}]}\n'
             "不得把同一段文字复制成多道；不得遗漏皇帝要求的任一道拟旨事项。\n\n"
+            + correction_block
             + roster_facts
             + "【皇帝】" + (player_message or "（无）") + "\n"
             + "【大臣完整回话】" + (minister_reply or "（无）") + "\n"
@@ -1319,6 +1497,9 @@ def extract_draft_intent(
         try:
             raw, _ = _run_backend_for_config(prompt, llm_config, tag="draft_intent")
         except Exception as exc:
+            # 纠错重试路上 LLM 挂死响亮上抛（owner：该报）；首抽仍吞掉以免挡对话。
+            if correction_block:
+                raise
             _log(f"多旨稿抽取失败：{exc}")
         obj = _loads_lenient(raw) or {}
         values = obj.get("成品旨稿") if isinstance(obj, dict) else None
@@ -1436,6 +1617,7 @@ def extract_draft_intent(
         + merge_schema_line
         + "}\n"
         "判定要点：皇帝明确让大臣拟旨/起草圣旨→拟旨；仅商议/问询/催办/评论不算。语义判断，别拘字面。\n\n"
+        + correction_block
         + roster_facts
         + draft_context
         + candidates_context
@@ -1446,6 +1628,8 @@ def extract_draft_intent(
     try:
         raw, _ = _run_backend_for_config(prompt, llm_config, tag="draft_intent")
     except Exception as exc:
+        if correction_block:
+            raise
         _log(f"拟旨意图抽取失败：{exc}")
     obj = _loads_lenient(raw) or {}
     if not isinstance(obj, dict):
@@ -1553,8 +1737,10 @@ def capture_manual_directive_payload(
     )
 
     def _run_extract() -> Dict[str, Any]:
-        return extract_draft_intent(
-            prompt, directive_text, llm_config=llm_config, content=content,
+        # #1274 V-1：extract→validate 有界纠错；db/content 齐时参与人名册自愈。
+        return extract_draft_intent_with_roster_heal(
+            prompt, directive_text, llm_config=llm_config,
+            db=db, content=content,
         )
 
     # 有界等待：超时不堵死 HTTP/CLI；后台线程不 join（shutdown wait=False）。
@@ -1569,7 +1755,11 @@ def capture_manual_directive_payload(
                 captured = fut.result(timeout=timeout_s)
             finally:
                 pool.shutdown(wait=False, cancel_futures=True)
+    except ValueError:
+        # 参与人名册校验耗尽等人话业务错 → 409；禁吞成 special_decree。
+        raise
     except Exception as exc:
+        # 超时 / 纠错路上 LLM 挂死 → 既有降级路（草案照落 special_decree）。
         _log(f"手工拟诏 capture 有界降级 special_decree：{exc}")
         return _manual_special_decree_payload(fallback_mode)
 
@@ -1588,37 +1778,7 @@ def capture_manual_directive_payload(
     ):
         if captured.get(field) not in (None, ""):
             payload[field] = captured[field]
-    roster = payload.get("participant_roster")
-    if roster is not None and db is not None and content is not None:
-        if not isinstance(roster, list):
-            raise ValueError("参与人须为对象列表")
-        from ming_sim.session import _canonical_minister_key
-        canonical_roster = db._normalize_participant_roster(
-            roster, strict_structured=True,
-        )
-        # #1279 / QA A-2：人物参与人只产 characters 名册可解析的人名。
-        # 过滤顺序钉 raw character_id（canon 前）：裸机构整词 / 自称集体先丢，
-        # 避免司礼监→王承恩；通过者再 canon，再送 ADR 0053（缝本身零动）。
-        # 带姓称谓别名（韩阁老/毕户部…）不得当机构丢——走 canon 留人名。
-        person_roster: List[Dict[str, object]] = []
-        for item in canonical_roster:
-            cid = str(item.get("character_id") or "").strip()
-            if _is_non_person_participant_name(cid):
-                continue
-            item["character_id"] = _canonical_minister_key(content, cid, db)
-            delegator = str(item.get("delegator_id") or "").strip()
-            if delegator:
-                if _is_non_person_participant_name(delegator):
-                    item["delegator_id"] = None
-                else:
-                    item["delegator_id"] = _canonical_minister_key(
-                        content, delegator, db,
-                    )
-            person_roster.append(item)
-        # Reuse the durable roster reference validator here so unknown aliases
-        # fail at the manual-entry boundary rather than surviving until issue.
-        db._validate_participant_roster_references(person_roster)
-        payload["participant_roster"] = person_roster
+    # heal 已 normalize+validate；无 db/content 时保持抽取原样（旧调用兼容）。
     if payload.get("dossier_action_type") == "dismiss_assignment":
         # Manual CLI/Web directives bypass pending office actions, so preserve
         # the same structured materialization fields at this capture seam.
