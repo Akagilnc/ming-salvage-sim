@@ -1495,8 +1495,13 @@ def auto_close_open_night(
     scene_registry：既有 ChatTurnSceneRegistry（session 持有）；start_close 后与
     endorsement 并行，终局写入前 join；不自建第二 registry/executor。
     #1353 fold-in r5：欠账补跑内部静默，不透传过月 SSE。
+    #1353：入场 get_open_night 短持 write_gate。过月屏障 wait_prior 返回后 close
+    # 仍可能与后于屏障领票的 chat 裸 write_gate 写入重叠；闸外 SELECT 会搞坏
+    # 共享 sqlite3.Row（与 r6/r7 close_night 入闸同因）。
     """
-    open_n = get_open_night(db)
+    gate = _gate_cm(write_gate)
+    with gate:
+        open_n = get_open_night(db)
     if open_n is None:
         return None
     return close_night(
