@@ -908,11 +908,10 @@ def test_wait_in_flight_releases_on_worker_terminal(game, tmp_path, monkeypatch)
     db.conn.commit()
     monkeypatch.setattr(an, "DEFAULT_IN_FLIGHT_POLL_S", 0.01)
 
-    # 确定性握手：waiter 入轮询 → worker 发终态 → waiter 因终态返回
-    # （禁 sleep 毫秒窗；禁 commit 与 done.set 夹缝上 assert is_set）
+    # 确定性握手：主线程入轮询 → worker 发终态 → 主线程因终态返回
+    # （禁 sleep 毫秒窗；禁把 SUT 包进 waiter 线程 try/finally 吞异常假绿）
     waiter_polling = threading.Event()
     worker_published = threading.Event()
-    waiter_done = threading.Event()
     real_list = an.list_in_flight_chat_turns
 
     def _list_tracking(db_arg, night_id_arg):
@@ -930,26 +929,16 @@ def test_wait_in_flight_releases_on_worker_terminal(game, tmp_path, monkeypatch)
         db.conn.commit()
         worker_published.set()
 
-    def _waiter() -> None:
-        try:
-            # 不传短 timeout 墙钟；工人终态后必须返回（禁 elapsed 伪失败）
-            an.wait_in_flight_clear(db, nid)
-        finally:
-            waiter_done.set()
-
     wt = threading.Thread(
         target=_worker_terminal, name="worker-terminal-1353", daemon=True,
     )
-    vt = threading.Thread(
-        target=_waiter, name="wait-in-flight-1353", daemon=True,
-    )
     wt.start()
-    vt.start()
+    # 主测试线程直调 SUT；pytest 原生捕获被测异常（禁 waiter 包装线程）
+    # 不传短 timeout 墙钟；工人终态后必须返回（禁 elapsed 伪失败）
+    an.wait_in_flight_clear(db, nid)
     assert worker_published.wait(5.0), "worker must publish terminal"
-    assert waiter_done.wait(5.0), "wait_in_flight must release on worker terminal"
     wt.join(timeout=2.0)
-    vt.join(timeout=2.0)
-    assert not wt.is_alive() and not vt.is_alive()
+    assert not wt.is_alive()
     assert an.list_in_flight_chat_turns(db, nid) == []
 
 
