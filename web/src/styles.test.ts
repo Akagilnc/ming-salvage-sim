@@ -66,10 +66,12 @@ describe("#1398 邸报朕知道了视口常显", () => {
   });
 });
 
-describe("#1486 邸报长卷各节竖排互不覆盖", () => {
-  it("滚动链：shell 限高裁切 + document flex 收缩可滚 + 节块静态流式", () => {
+describe("#1486 邸报长卷可滚不叠字", () => {
+  it("最小滚动链：shell 限高裁切 + document flex 收缩可滚；正文 pre-wrap 非绝对定位", () => {
+    // 行为面：长卷靠滚动链可读可滚，不靠分节第二机制
     const shell = styles.match(/\.gazette-shell\s*\{[^}]*\}/)?.[0] || "";
     expect(shell).toMatch(/min-height:\s*0/);
+    expect(shell).toMatch(/max-height:\s*100%/);
     expect(shell).toMatch(/overflow:\s*hidden/);
 
     const docBlocks = styles.match(/\.gazette-document\s*\{[^}]*\}/g)?.join("\n") || "";
@@ -77,14 +79,11 @@ describe("#1486 邸报长卷各节竖排互不覆盖", () => {
     expect(docBlocks).toMatch(/min-height:\s*0/);
     expect(docBlocks).toMatch(/overflow-y:\s*auto/);
 
-    const block = styles.match(/\.gazette-block\s*\{[^}]*\}/)?.[0] || "";
-    expect(block).toBeTruthy();
-    expect(block).toMatch(/display:\s*block/);
-    expect(block).toMatch(/position:\s*static/);
-    expect(block).toMatch(/white-space:\s*pre-wrap/);
-    expect(block).toMatch(/line-height:\s*2/);
-    // 禁绝对定位叠字
-    expect(block).not.toMatch(/position:\s*absolute/);
+    // 正文流式 pre-wrap，禁绝对定位叠层（不钉 .gazette-block 实现形状）
+    const memorial = styles.match(/\.memorial-text\s*\{[^}]*\}/)?.[0] || "";
+    expect(memorial).toMatch(/white-space:\s*pre-wrap/);
+    expect(memorial).not.toMatch(/position:\s*absolute/);
+    expect(styles).not.toMatch(/\.gazette-block\s*\{/);
   });
 });
 
