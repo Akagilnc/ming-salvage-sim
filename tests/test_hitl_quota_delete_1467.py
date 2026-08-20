@@ -1,22 +1,28 @@
-"""#1467 — 删「每月至少一题」亲裁配额（0 题合法）。
+"""#1467 r2 — 端到端删除 hitl_min_decisions 配额机制。
 
-庭裁：月末亲裁最低题数配额违 P6；题源不足时反复兜底同一母题。
-本片只删配额默认，禁加去重/题库/冷却机制。
+庭裁：月末亲裁最低题数配额违 P6；r1 只改默认仍保留 opt-in。
+本片删除 UI/API/config/payload/prompt 整条配额接缝；旧 runtime_game.json
+正值自然失效（不写迁移）；禁加去重/题库/冷却/替代 quota。
 
-双向钉测：
-1. 默认 hitl_min_decisions = 0（无「每月至少一题」）
-2. 无新决策月 → pending_decisions 空，过月不被批红闸卡
-3. 有真实新决策月 → 照常出题（正向不回退）
+钉测：
+1. 机制缺席：源码/payload 不再出现 hitl_min_decisions 读写与注入
+2. 失效钉：旧持久值 1-5 在档时，无真实抉择月仍 0 题过月
+3. 正向：有真实抉择月仍进 pending
 """
 
 from __future__ import annotations
 
+import inspect
+import json
+from pathlib import Path
+
 import pytest
 
 import ming_sim.decree as decree_mod
+import ming_sim.llm_config as llm_config
 import ming_sim.memories as memories
-from ming_sim.llm_config import GAME_SETTINGS_DEFAULTS, load_runtime_game
-from ming_sim.simulation import _load_hitl_min_decisions
+import ming_sim.simulation as simulation
+import web_app
 
 
 _DECISION_BLOCK = (
@@ -28,14 +34,20 @@ _DECISION_BLOCK = (
     "<<END>>"
 )
 
+_REPO = Path(__file__).resolve().parents[1]
 
-def _stub_full_settlement(monkeypatch, *, narrative: str):
+
+def _stub_full_settlement(monkeypatch, *, narrative: str, payload_spy=None):
     """只替外部 LLM 缝；结算脊骨走生产码。"""
     monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
-    monkeypatch.setattr(
-        decree_mod, "simulate_season_with_payload",
-        lambda *a, **k: (narrative, k.get("simulator_payload") or {}),
-    )
+
+    def _sim(*a, **k):
+        payload = k.get("simulator_payload") or {}
+        if payload_spy is not None:
+            payload_spy.append(payload)
+        return narrative, payload
+
+    monkeypatch.setattr(decree_mod, "simulate_season_with_payload", _sim)
     monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
     monkeypatch.setattr(decree_mod, "create_score_extractor_module_agent", lambda *a, **k: object())
     monkeypatch.setattr(
@@ -46,23 +58,78 @@ def _stub_full_settlement(monkeypatch, *, narrative: str):
     monkeypatch.setattr(memories, "run_agent_text", lambda *a, **k: '{"body":"月记","tags":[]}')
 
 
-def test_default_hitl_min_decisions_is_zero_no_monthly_quota(tmp_path, monkeypatch):
-    """默认配额=0：缺 runtime_game.json / 读失败均不回落成「每月至少一题」。"""
-    assert GAME_SETTINGS_DEFAULTS["hitl_min_decisions"] == 0
+def test_hitl_quota_mechanism_fully_deleted():
+    """机制缺席：配置读写/loader/API/payload 注入/UI 选择器全部不在。"""
+    # config / loader 符号
+    assert not hasattr(llm_config, "GAME_SETTINGS_DEFAULTS")
+    assert not hasattr(llm_config, "load_runtime_game")
+    assert not hasattr(llm_config, "save_runtime_game")
+    assert not hasattr(llm_config, "RUNTIME_GAME_PATH")
+    assert not hasattr(simulation, "_load_hitl_min_decisions")
 
-    missing = tmp_path / "runtime_game.json"
-    monkeypatch.setattr("ming_sim.llm_config.RUNTIME_GAME_PATH", str(missing))
-    loaded = load_runtime_game()
-    assert loaded["hitl_min_decisions"] == 0
-    assert _load_hitl_min_decisions() == 0
+    # payload 组装源不再含配额字段
+    src = inspect.getsource(simulation)
+    assert "hitl_min_decisions" not in src
+    assert "_load_hitl_min_decisions" not in src
 
-    # 读失败回落也必须是 0，不得悄悄恢复配额 1
-    import ming_sim.llm_config as llm_cfg
-    monkeypatch.setattr(
-        llm_cfg, "load_runtime_game",
-        lambda: (_ for _ in ()).throw(OSError("boom")),
+    # API 面
+    assert not hasattr(web_app, "GameSettingsRequest")
+    assert not hasattr(web_app, "api_menu_game_settings")
+    assert not hasattr(web_app, "api_menu_save_game_settings")
+    web_src = inspect.getsource(web_app)
+    assert "hitl_min_decisions" not in web_src
+    assert "/api/menu/game_settings" not in web_src
+
+    # UI 选择器与 game_settings 字段
+    menu = (_REPO / "web/src/components/menuPage.tsx").read_text(encoding="utf-8")
+    assert "hitl_min_decisions" not in menu
+    assert "GameSettingsModal" not in menu
+    assert "每回合最少重大抉择数" not in menu
+    assert "每回合至少 1 个" not in menu
+    types = (_REPO / "web/src/types.ts").read_text(encoding="utf-8")
+    assert "hitl_min_decisions" not in types
+    assert "game_settings" not in types
+
+    # prompt 无条件宁缺毋滥，不再读配额字段
+    prompt = (_REPO / "content/prompts/season_simulator.md").read_text(encoding="utf-8")
+    assert "hitl_min_decisions" not in prompt
+    assert "宁缺毋滥" in prompt
+    assert "凑够下限" not in prompt
+
+
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
+def test_stale_persisted_quota_ineffective_zero_decision_month(game, monkeypatch, tmp_path):
+    """失效钉：旧 runtime_game.json 正值在档时，无真实抉择月仍 0 题过月。"""
+    stale = tmp_path / "runtime_game.json"
+    stale.write_text(json.dumps({"hitl_min_decisions": 5}), encoding="utf-8")
+    # 即便把旧路径指到含正值的文件，读面已删——不得再注入/生效
+    if hasattr(llm_config, "RUNTIME_GAME_PATH"):
+        monkeypatch.setattr(llm_config, "RUNTIME_GAME_PATH", str(stale))
+
+    db, state, content = game
+    closed_turn = int(state.turn)
+    payloads = []
+    _stub_full_settlement(
+        monkeypatch,
+        narrative="本月无值得亲裁的新决策，朝局按惯性推移。",
+        payload_spy=payloads,
     )
-    assert _load_hitl_min_decisions() == 0
+
+    result = decree_mod.resolve_directives(
+        state, db, None, None, [], "",
+        content=content, registry=None,
+    )
+
+    assert result.awaiting is False
+    assert result.decisions in (None, [])
+    assert db.list_pending_decisions(closed_turn) == []
+    assert int(state.turn) == closed_turn + 1
+    assert state.turn_phase != "awaiting_decision"
+    assert db.list_pending_decisions(int(state.turn)) == []
+    # payload 不得再携带配额字段（旧存值自然失效）
+    assert payloads, "simulator must have been invoked"
+    for p in payloads:
+        assert "hitl_min_decisions" not in p
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
@@ -85,7 +152,6 @@ def test_zero_decision_month_pending_empty_month_advances(game, monkeypatch):
     assert db.list_pending_decisions(closed_turn) == []
     assert int(state.turn) == closed_turn + 1
     assert state.turn_phase != "awaiting_decision"
-    # 过月后新回合也无残留批红题
     assert db.list_pending_decisions(int(state.turn)) == []
 
 
@@ -107,6 +173,5 @@ def test_real_decision_month_still_surfaces_pending(game, monkeypatch):
     assert len(pending) >= 1
     assert any("内帑" in str(d.get("title") or "") for d in pending)
     assert state.turn_phase == "awaiting_decision"
-    # 回执面：result.decisions 与库同真源
     assert result.decisions
     assert len(result.decisions) == len(pending)

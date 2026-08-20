@@ -232,7 +232,7 @@ def _isolated_user_data_dir(tmp_path):
     自己的 tmp_path 仍可覆盖本兜底（后设者胜）。
 
     同步把 import 时钉死的 user_data 常量（``UPLOAD_PORTRAIT_DIR`` /
-    ``RUNTIME_LLM_PATH`` / ``RUNTIME_GAME_PATH``）拨到本用例 tmp——否则 env 改了
+    ``RUNTIME_LLM_PATH``）拨到本用例 tmp——否则 env 改了
     常量仍指仓内 ``data/``，xdist 多 worker 会抢同一固定路径（#1233 刀2 gate）。
 
     用独立 MonkeyPatch 实例而非共享的 monkeypatch fixture：后者与测试同一实例，
@@ -249,7 +249,6 @@ def _isolated_user_data_dir(tmp_path):
     mp.setenv("MING_SIM_USER_DATA_DIR", str(user_root))
     mp.setattr(_web_app, "UPLOAD_PORTRAIT_DIR", str(portrait_dir))
     mp.setattr(_llm_config, "RUNTIME_LLM_PATH", str(user_root / "runtime_llm.json"))
-    mp.setattr(_llm_config, "RUNTIME_GAME_PATH", str(user_root / "runtime_game.json"))
     yield
     mp.undo()
 

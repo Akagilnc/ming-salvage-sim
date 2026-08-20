@@ -19,13 +19,6 @@ from ming_sim.models import (
 from ming_sim.paths import user_data_path
 
 RUNTIME_LLM_PATH = user_data_path("runtime_llm.json")
-RUNTIME_GAME_PATH = user_data_path("runtime_game.json")
-
-# 游戏玩法设置默认值（全局，跨局共享）。
-GAME_SETTINGS_DEFAULTS = {
-    # #1467：默认 0=不强制「每月至少一题」；无值得亲裁的新决策时 0 题合法。
-    "hitl_min_decisions": 0,
-}
 
 _API_RUNTIME_FIELDS = (
     "base_url",
@@ -342,34 +335,6 @@ def load_runtime_llm() -> Dict[str, object]:
     if not isinstance(data, dict):
         return {}
     return _normalize_runtime_llm(data)
-
-
-def load_runtime_game() -> Dict[str, object]:
-    """读 data/runtime_game.json（全局玩法设置）。缺/坏字段回落默认。"""
-    data: Dict[str, object] = {}
-    if os.path.isfile(RUNTIME_GAME_PATH):
-        try:
-            with open(RUNTIME_GAME_PATH, "r", encoding="utf-8") as fh:
-                loaded = json.load(fh)
-            if isinstance(loaded, dict):
-                data = loaded
-        except (OSError, json.JSONDecodeError):
-            data = {}
-    out: Dict[str, object] = dict(GAME_SETTINGS_DEFAULTS)
-    try:
-        out["hitl_min_decisions"] = max(0, min(5, int(data.get("hitl_min_decisions", out["hitl_min_decisions"]))))
-    except (TypeError, ValueError):
-        pass
-    return out
-
-
-def save_runtime_game(hitl_min_decisions: int) -> Dict[str, object]:
-    """写 data/runtime_game.json。clamp 到 [0,5]。返回落盘后的设置。"""
-    os.makedirs(os.path.dirname(RUNTIME_GAME_PATH), exist_ok=True)
-    payload = {"hitl_min_decisions": max(0, min(5, int(hitl_min_decisions)))}
-    with open(RUNTIME_GAME_PATH, "w", encoding="utf-8") as fh:
-        json.dump(payload, fh, ensure_ascii=False, indent=2)
-    return payload
 
 
 def save_runtime_llm(

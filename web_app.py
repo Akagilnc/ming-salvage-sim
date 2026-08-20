@@ -56,13 +56,11 @@ from ming_sim.llm_config import (
     REASONING_STRENGTH_CHOICES,
     real_api_key_or_empty,
     load_llm_config,
-    load_runtime_game,
     load_runtime_llm,
     normalize_openai_base_url,
     normalize_thinking_level,
     normalize_reasoning_strength,
     legacy_reasoning_strength,
-    save_runtime_game,
     save_runtime_llm,
 )
 from ming_sim.agents import _dump_llm_messages
@@ -3662,7 +3660,6 @@ async def api_menu_status() -> Dict[str, Any]:
         "saves": _scan_saves(),
         "campaigns": _scan_campaigns(),
         "current_campaign": _main_db_campaign_id(),
-        "game_settings": load_runtime_game(),
         "llm": {
             "channel": channel,
             "base_url": base_url,
@@ -4039,24 +4036,6 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
             "reasoning_strength": reasoning_strength,
         },
     }
-
-
-class GameSettingsRequest(BaseModel):
-    # HITL 每回合最少决策点数，0-5。#1467：默认 0=不强制（宁缺毋滥）。
-    hitl_min_decisions: int = 0
-
-
-@app.get("/api/menu/game_settings")
-async def api_menu_game_settings() -> Dict[str, Any]:
-    """读全局玩法设置。"""
-    return {"game_settings": load_runtime_game()}
-
-
-@app.post("/api/menu/game_settings")
-async def api_menu_save_game_settings(request: GameSettingsRequest) -> Dict[str, Any]:
-    """保存全局玩法设置（runtime_game.json）。立即对下一回合推演生效。"""
-    saved = save_runtime_game(request.hitl_min_decisions)
-    return {"ok": True, "game_settings": saved}
 
 
 app.add_middleware(
