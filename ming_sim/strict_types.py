@@ -1,6 +1,7 @@
 """Shared strict scalar contracts for structured machine payloads."""
 
 from ming_sim.appointment_tenure import APPOINTMENT_TENURES
+from ming_sim.qualitative import POWER_BANDS
 
 
 def strict_int(raw: object, *, accept_numeric_strings: bool = True) -> int:
@@ -24,7 +25,8 @@ REJECTION_SNAPSHOT_KEYS = frozenset({
     "imperial_authority_band", "appointment_tenure",
     "authorization_ids", "endorsement_entry_ids",
 })
-IMPERIAL_AUTHORITY_BANDS = frozenset({"极弱", "偏弱", "中等", "偏强", "强盛"})
+# Membership set derived from qualitative.POWER_BANDS (皇威/势力同词表).
+IMPERIAL_AUTHORITY_BANDS = frozenset(POWER_BANDS)
 
 
 def validate_affected_parties(

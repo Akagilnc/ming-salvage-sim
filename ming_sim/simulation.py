@@ -26,17 +26,16 @@ from ming_sim.issues import (
     normalize_event_outcome_labels_or_error,
 )
 from ming_sim.models import GameState, loads_effect_dict, reign_period_label
-from ming_sim.qualitative import progress_band, qualitative_band
+from ming_sim.qualitative import (
+    imperial_authority_band,
+    progress_band,
+    public_support_band,
+)
 from ming_sim.settlement_payload import (
     augment_secret_orders_with_due_commitments,
     iter_secret_order_ids,
 )
 from ming_sim.token_stats import tlog
-
-# ADR 0143 / #1356 r6：simulator 混合调用（判定+写邸报）输入侧抽象轴词表——
-# 复用既有 band 字面，不另立平行词表。
-_SIM_PUBLIC_SUPPORT_BANDS = ("堪忧", "偏弱", "起伏", "尚可", "稳固")  # db._public_support_description
-_SIM_IMPERIAL_AUTHORITY_BANDS = ("极弱", "偏弱", "中等", "偏强", "强盛")  # decree imperial_authority_band
 
 
 def _load_hitl_min_decisions() -> int:
@@ -350,23 +349,21 @@ def _project_simulator_condition(value: object) -> object:
 
 
 def _project_simulator_current_state(metrics: object) -> Dict[str, object]:
-    """#1356 r6 / ADR 0143: 民心·皇威走定性档；国库/内库等钱粮口径保留裸数。"""
+    """#1356 / ADR 0143: 民心·皇威走 qualitative 单源；国库/内库等钱粮口径保留裸数。"""
     raw = dict(metrics or {})
     projected: Dict[str, object] = dict(raw)
     if "民心" in projected:
-        projected["民心"] = qualitative_band(projected["民心"], _SIM_PUBLIC_SUPPORT_BANDS)
+        projected["民心"] = public_support_band(projected["民心"])
     if "皇威" in projected:
-        projected["皇威"] = qualitative_band(projected["皇威"], _SIM_IMPERIAL_AUTHORITY_BANDS)
+        projected["皇威"] = imperial_authority_band(projected["皇威"])
     return projected
 
 
 def _project_simulator_region_row(row: Dict[str, object]) -> Dict[str, object]:
-    """#1356 r6: region public_support（民心）定性；人口/田亩/税/粮等可数物照旧。"""
+    """#1356: region public_support（民心）走 qualitative 单源；可数物照旧。"""
     projected = dict(row)
     if "public_support" in projected:
-        projected["public_support"] = qualitative_band(
-            projected["public_support"], _SIM_PUBLIC_SUPPORT_BANDS,
-        )
+        projected["public_support"] = public_support_band(projected["public_support"])
     return projected
 
 
