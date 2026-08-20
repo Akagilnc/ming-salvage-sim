@@ -81,7 +81,6 @@ def _web_runtime(db, state, content, *, monkeypatch):
     )
 
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
-    monkeypatch.setattr(web_app, "_await_audience_inflight_clear", lambda *_a, **_k: None)
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
     return runtime
 

@@ -934,9 +934,12 @@ def _wire_web_game(db, state, content, agent, monkeypatch) -> WebGame:
     wg.session = sess
     wg.chat_history = {name: [] for name in content.characters}
     wg._write_gate = threading.Lock()
-    wg._drain_cond = threading.Condition()
-    wg._pending_writes_count = 0
-    wg._draining = False
+    from ming_sim.session_write_queue import SessionWriteQueue
+    wg._write_queue = SessionWriteQueue()
+    wg._write_gate = wg._write_queue.write_gate
+    wg._runtime_write_queue = lambda: wg._write_queue  # type: ignore
+    wg._mark_pending_write = lambda key=None: wg._write_queue.claim(key=key or ("pending",))  # type: ignore
+    wg._complete_pending_write = lambda ticket=None: wg._write_queue.complete(ticket)  # type: ignore
     wg.favorites = set()
     wg.suggestions_for = lambda _c: []
     wg._spawn_pending_write_thread = lambda *a, **k: None

@@ -150,9 +150,12 @@ def _web_game(db, state, content, agent: _FakeAgent) -> WebGame:
     # The production lifecycle waits on this condition before closing its
     # shared DB.  Keep observer-departure tests on the same boundary so a
     # daemon worker cannot outlive the fixture and touch a closed connection.
-    game._drain_cond = threading.Condition()
-    game._pending_writes_count = 0
-    game._draining = False
+    from ming_sim.session_write_queue import SessionWriteQueue
+    game._write_queue = SessionWriteQueue()
+    game._write_gate = game._write_queue.write_gate
+    game._runtime_write_queue = lambda: game._write_queue  # type: ignore
+    game._mark_pending_write = lambda key=None: game._write_queue.claim(key=key or ("pending",))  # type: ignore
+    game._complete_pending_write = lambda ticket=None: game._write_queue.complete(ticket)  # type: ignore
     return game
 
 
@@ -166,10 +169,16 @@ def _wait_for(predicate, timeout: float = 1.0) -> bool:
 
 
 def _wait_for_pending_writes_to_drain(web_game: WebGame) -> None:
-    with web_game._drain_cond:
-        web_game._drain_cond.wait_for(
-            lambda: web_game._pending_writes_count == 0
-        )
+    q = getattr(web_game, "_write_queue", None)
+    if q is not None and hasattr(q, "wait_idle"):
+        assert q.wait_idle(timeout_s=5.0), "pending write tickets did not drain"
+        return
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        if int(getattr(web_game, "_pending_writes_count", 0) or 0) == 0:
+            return
+        time.sleep(0.01)
+    raise AssertionError("pending write tickets did not drain")
 
 
 def _assert_next_accepted(stream) -> None:
@@ -539,9 +548,12 @@ def _cli_web_game(db, state, content, agent, **kwargs) -> WebGame:
     game.session = _CliActionSession(db, state, content, agent, **kwargs)
     game.chat_history = {name: [] for name in content.characters}
     game.suggestions_for = lambda _character: []
-    game._drain_cond = threading.Condition()
-    game._pending_writes_count = 0
-    game._draining = False
+    from ming_sim.session_write_queue import SessionWriteQueue
+    game._write_queue = SessionWriteQueue()
+    game._write_gate = game._write_queue.write_gate
+    game._runtime_write_queue = lambda: game._write_queue  # type: ignore
+    game._mark_pending_write = lambda key=None: game._write_queue.claim(key=key or ("pending",))  # type: ignore
+    game._complete_pending_write = lambda ticket=None: game._write_queue.complete(ticket)  # type: ignore
     return game
 
 

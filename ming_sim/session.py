@@ -766,6 +766,10 @@ class GameSession:
         # P1-1：last_decree 所覆盖的 draft 指纹（write_decree 时记，颁诏时校验是否已陈旧）。
         self._decree_draft_fingerprint: Tuple[Tuple[int, str], ...] = ()
         self._begun = False
+        # #1353：per-session 单写者票据队列（CLI/Web 共用）；write_gate 并入队列。
+        from ming_sim.session_write_queue import SessionWriteQueue
+        self._write_queue = SessionWriteQueue()
+        self._write_gate = self._write_queue.write_gate
 
     # ── 回合生命周期 ──────────────────────────────────────────────────────
 

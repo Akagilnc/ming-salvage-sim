@@ -617,36 +617,21 @@ def run_endorsement_batch_for_night(
 
     - 已 bound → 幂等跳过。
     - 无候选或无 surviving turns → 确定性 skip 并标 bound。
-    - 争用 → **一次**总量有界 join 既有 owner + 重读 DB bound（#1353 K10c / #1476；
-      不建 Future/结果登记；禁 while 回环、第二次 LLM、contended 409）。
-      已绑定 → 续跑；超时或 owner 终止仍未绑定 → 既有 fail-closed 保持 OPEN。
-    - owned=False（前 owner 已释放）→ 只重读终态，不启动新 attempt。
+    - LLM 去重走既有 per-night single-flight（防双跑）；写序由 session 队列屏障覆盖
+      （#1353：删除争用 join 舞步）。争用/前 owner 已释放 → 只重读 bound 终态。
     - LLM/shape 失败 → 抛 AudienceNightError（调用方 fail-closed 保持 OPEN；K10b）。
     """
+    del join_timeout_s  # 签名兼容；队列屏障后不再 join 争用
     nid = int(night_id)
     if _is_endorsement_bound(db, nid):
         return {"status": "done", "night_id": nid, "already": True, "ids": []}
 
-    if join_timeout_s is None:
-        join_timeout_s = DEFAULT_EXTRACT_JOIN_S
-
     flight_key = _night_flight_key(db, nid)
     owner: Optional[threading.Lock] = None
     try:
-        # #1353 K10c r3：一次 claim；争用则一次有界 join + 重读 bound。
-        # 已绑定→续跑；超时/owner 终止未绑定→既有 fail-closed（禁回环二次 LLM）。
+        # single-flight 只防双跑 LLM；写序归 session 队列。争用/已释放 → 重读终态。
         owner, owned = _claim_single_flight(flight_key)
-        if owner is None:
-            _join_single_flight(flight_key, float(join_timeout_s))
-            if _is_endorsement_bound(db, nid):
-                return {"status": "done", "night_id": nid, "already": True, "ids": []}
-            raise AudienceNightError(
-                f"收夜背书批未落定（night_id={nid}）",
-                code="endorsement_not_bound",
-                detail={"night_id": nid},
-            )
-        if not owned:
-            # _claim_single_flight 契约：前 owner 已释放 → 只重读终态，不启动新 attempt。
+        if owner is None or not owned:
             if _is_endorsement_bound(db, nid):
                 return {"status": "done", "night_id": nid, "already": True, "ids": []}
             raise AudienceNightError(
