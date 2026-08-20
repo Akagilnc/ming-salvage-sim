@@ -1457,183 +1457,235 @@ def _person_grounded_in_source(
     return False
 
 
-def _failed_person_slot_count(
-    result: Dict[str, Any], pending_unknown: List[str],
+def _known_person_canon(raw: Any, *, db: Any, content: Any) -> Optional[str]:
+    """名册内人物 → 规范名；不在册 / 非人 → None。
+
+    与校验缝同口径（_find_existing_minister），禁把生名当合法 prior。
+    """
+    from ming_sim.session import _find_existing_minister
+
+    cid = str(raw or "").strip()
+    if not cid or _is_non_person_participant_name(cid):
+        return None
+    if content is None or db is None:
+        return None
+    found = _find_existing_minister(content, cid, db)
+    key = str(found or "").strip()
+    return key or None
+
+
+def _roster_dict_entries(roster: Any) -> List[Dict[str, Any]]:
+    if not isinstance(roster, list):
+        return []
+    return [dict(item) for item in roster if isinstance(item, dict)]
+
+
+def _entry_person_fields(entry: Dict[str, Any]) -> List[tuple[str, str]]:
+    """(field, raw_id) for character_id + delegator；保序。"""
+    fields: List[tuple[str, str]] = []
+    cid = str(entry.get("character_id") or "").strip()
+    if cid:
+        fields.append(("character_id", cid))
+    did = str(
+        entry.get("delegator_id") or entry.get("delegator") or ""
+    ).strip()
+    if did:
+        fields.append(("delegator_id", did))
+    return fields
+
+
+def _count_failed_person_slots_in_roster(
+    roster: Any, *, db: Any, content: Any,
 ) -> int:
-    """首抽结果中失败人物槽位数（character_id + delegator，含重复）。"""
-    unknown = {
-        str(x).strip() for x in (pending_unknown or []) if str(x or "").strip()
-    }
-    if not unknown:
-        return 0
     n = 0
-
-    def _absorb(roster: Any) -> None:
-        nonlocal n
-        if not isinstance(roster, list):
-            return
-        for item in roster:
-            if not isinstance(item, dict):
-                continue
-            cid = str(item.get("character_id") or "").strip()
-            if cid in unknown:
+    for entry in _roster_dict_entries(roster):
+        for _field, raw in _entry_person_fields(entry):
+            if _known_person_canon(raw, db=db, content=content) is None:
                 n += 1
-            did = str(
-                item.get("delegator_id") or item.get("delegator") or ""
-            ).strip()
-            if did in unknown:
-                n += 1
-
-    if "participant_roster" in result:
-        _absorb(result.get("participant_roster"))
-    for draft in result.get("drafts") or []:
-        if isinstance(draft, dict) and "participant_roster" in draft:
-            _absorb(draft.get("participant_roster"))
     return n
 
 
-def _select_grounded_replacements(
-    replacements: List[str],
+def _count_failed_person_slots(
+    result: Dict[str, Any], *, db: Any, content: Any,
+) -> int:
+    """首抽结果中不在册人物槽位数（character_id + delegator，含重复）。"""
+    n = 0
+    if "participant_roster" in result:
+        n += _count_failed_person_slots_in_roster(
+            result.get("participant_roster"), db=db, content=content,
+        )
+    for draft in result.get("drafts") or []:
+        if isinstance(draft, dict) and "participant_roster" in draft:
+            n += _count_failed_person_slots_in_roster(
+                draft.get("participant_roster"), db=db, content=content,
+            )
+    return n
+
+
+def _collect_corr_person_ids(roster: Any, *, db: Any, content: Any) -> List[str]:
+    """纠错轮 roster 人物规范名（保序，可重复）。"""
+    out: List[str] = []
+    for entry in _roster_dict_entries(roster):
+        for _field, raw in _entry_person_fields(entry):
+            known = _known_person_canon(raw, db=db, content=content)
+            if known:
+                out.append(known)
+    return out
+
+
+def _patch_roster_slots_one_to_one(
+    baseline_roster: Any,
+    correction_roster: Any,
     *,
-    need: int,
     player_message: Optional[str],
     failed_slot_refs: Optional[List[str]],
     db: Any,
     content: Any,
-) -> Optional[List[str]]:
-    """从纠错轮新 id 中按序挑出已接地者，供失败槽回填。
+) -> Optional[List[Any]]:
+    """可证明一一对应的结构化槽级修补；对应不明 → None（调用方 escalate）。
 
-    依据面：player_message、结构化首抽失败槽原始串、单一 canon 索引。
-    禁 minister_reply 散文（ADR 0142）。
-    纠错轮多吐的未接地增人不纳入（形状冻结会丢掉），不挡自愈。
-    接地人数 < 失败槽数 → None（调用方 escalate）。
+    - baseline 形状/顺序/tier/role 冻结
+    - 同下标对应：合法槽必须仍是同一人；失败槽取同位置纠错名（须接地）
+    - 禁聚合候选池按序回填（增人/重排可静默换人）
+    - 未接地增人可忽略；接地增人计入「新人数」，与失败槽数不等 → 不明
+    - 多失败槽（含 validator 首错即停只报一个）→ 不明
     """
-    if need <= 0:
+    base_entries = _roster_dict_entries(baseline_roster)
+    corr_entries = _roster_dict_entries(correction_roster)
+    if not base_entries:
         return []
+    if len(corr_entries) < len(base_entries):
+        return None
+
     source = _grounding_source_text(player_message, failed_slot_refs)
     forms_index = _all_roster_identity_forms(content=content)
-    grounded: List[str] = []
-    for person_id in replacements:
+
+    prior_valid: set[str] = set()
+    failed_slots: List[tuple[int, str]] = []  # (entry_idx, field)
+    for idx, entry in enumerate(base_entries):
+        for field, raw in _entry_person_fields(entry):
+            known = _known_person_canon(raw, db=db, content=content)
+            if known is None:
+                failed_slots.append((idx, field))
+            else:
+                prior_valid.add(known)
+
+    # 多未知：validator 常首错即停，无法证明各失败槽与纠错名的一一对应
+    if len(failed_slots) > 1:
+        return None
+    if not failed_slots:
+        return [dict(e) for e in base_entries]
+
+    # 纠错轮全部人物中的「接地新人」；未接地增人忽略，接地增人绝不可多于失败槽
+    corr_all_ids = _collect_corr_person_ids(corr_entries, db=db, content=content)
+    grounded_newcomers: List[str] = []
+    seen_new: set[str] = set()
+    for pid in corr_all_ids:
+        if pid in prior_valid or pid in seen_new:
+            continue
         if not _person_grounded_in_source(
-            person_id, source, db=db, content=content, roster_forms=forms_index,
+            pid, source, db=db, content=content, roster_forms=forms_index,
         ):
             continue
-        grounded.append(person_id)
-        if len(grounded) >= need:
-            return grounded[:need]
-    return None
-
-
-def _patch_failed_roster_slots(
-    baseline_roster: Any,
-    *,
-    pending_unknown: List[str],
-    grounded_replacements: List[str],
-    repl_offset: int,
-    db: Any,
-    content: Any,
-) -> tuple[List[Any], int]:
-    """冻结首抽 roster 形状/顺序/tier/role：只修补失败槽 character_id/delegator。
-
-    返回 (patched_roster, next_replacement_offset)。
-    """
-    if not isinstance(baseline_roster, list):
-        return [], repl_offset
-    unknown = {
-        str(x).strip() for x in (pending_unknown or []) if str(x or "").strip()
-    }
-    offset = int(repl_offset)
-
-    def _take_replacement() -> Optional[str]:
-        nonlocal offset
-        if offset >= len(grounded_replacements):
-            return None
-        value = grounded_replacements[offset]
-        offset += 1
-        return value
+        seen_new.add(pid)
+        grounded_newcomers.append(pid)
+    if len(grounded_newcomers) != len(failed_slots):
+        return None
 
     out: List[Any] = []
-    for item in baseline_roster:
-        if not isinstance(item, dict):
-            out.append(item)
-            continue
-        entry = dict(item)
-        raw_cid = str(entry.get("character_id") or "").strip()
-        if raw_cid in unknown:
-            new_cid = _take_replacement()
-            if new_cid:
-                entry["character_id"] = new_cid
-        elif raw_cid:
-            canon = _canon_person_id_key(raw_cid, db=db, content=content)
-            if canon:
-                entry["character_id"] = canon
-
-        raw_delegator = str(
-            entry.get("delegator_id") or entry.get("delegator") or ""
-        ).strip()
-        if raw_delegator:
-            if raw_delegator in unknown:
-                new_delegator = _take_replacement()
-                if new_delegator:
-                    entry["delegator_id"] = new_delegator
+    for idx, base_entry in enumerate(base_entries):
+        corr_entry = corr_entries[idx]
+        entry = dict(base_entry)
+        for field, raw in _entry_person_fields(base_entry):
+            base_known = _known_person_canon(raw, db=db, content=content)
+            corr_raw = str(
+                corr_entry.get(field)
+                or (corr_entry.get("delegator") if field == "delegator_id" else "")
+                or ""
+            ).strip()
+            corr_known = _known_person_canon(corr_raw, db=db, content=content)
+            if base_known is None:
+                # 失败槽：同位置必须是唯一接地新人
+                if (
+                    corr_known is None
+                    or corr_known not in seen_new
+                    or not _person_grounded_in_source(
+                        corr_known, source, db=db, content=content,
+                        roster_forms=forms_index,
+                    )
+                ):
+                    return None
+                entry[field] = corr_known
+                if field == "delegator_id":
+                    entry.pop("delegator", None)
             else:
-                canon_d = _canon_person_id_key(
-                    raw_delegator, db=db, content=content,
-                )
-                if canon_d:
-                    entry["delegator_id"] = canon_d
-            # 归一到 delegator_id；丢掉并行 raw 键避免双源
-            if "delegator" in entry and entry.get("delegator_id"):
-                entry.pop("delegator", None)
+                # 合法槽：同位置必须仍是同一人（重排 → 不明）
+                if corr_known != base_known:
+                    return None
+                entry[field] = base_known
+                if field == "delegator_id":
+                    entry.pop("delegator", None)
         out.append(entry)
-    return out, offset
+    # 尾部增人（corr 更长）一律丢弃，不落库、不进池
+    return out
 
 
 def _backfill_healed_participant_refs(
     baseline: Dict[str, Any],
+    correction: Dict[str, Any],
     *,
     pending_unknown: List[str],
-    grounded_replacements: List[str],
+    player_message: Optional[str],
     db: Any,
     content: Any,
-) -> Dict[str, Any]:
-    """首抽权威快照：形状/顺序/tier/role 冻结，只修补失败槽 character_id。
+) -> Optional[Dict[str, Any]]:
+    """首抽权威快照 + 纠错轮一一对应槽级修补；对应不明 → None。
 
     非参与人字段一律保首抽；纠错轮增人/重排/改档不落库。
     """
     out = dict(baseline)
-    offset = 0
     base_roster = baseline.get("participant_roster")
     if isinstance(base_roster, list):
-        patched, offset = _patch_failed_roster_slots(
+        patched = _patch_roster_slots_one_to_one(
             base_roster,
-            pending_unknown=pending_unknown,
-            grounded_replacements=grounded_replacements,
-            repl_offset=offset,
+            correction.get("participant_roster"),
+            player_message=player_message,
+            failed_slot_refs=pending_unknown,
             db=db,
             content=content,
         )
+        if patched is None:
+            return None
         out["participant_roster"] = normalize_draft_person_roster(
             patched, db=db, content=content,
         )
     base_drafts = baseline.get("drafts")
+    corr_drafts = correction.get("drafts")
     if isinstance(base_drafts, list):
         merged: List[Any] = []
-        for base_draft in base_drafts:
+        corr_list = corr_drafts if isinstance(corr_drafts, list) else []
+        for idx, base_draft in enumerate(base_drafts):
             if not isinstance(base_draft, dict):
                 merged.append(base_draft)
                 continue
             item = dict(base_draft)
             base_item_roster = base_draft.get("participant_roster")
             if isinstance(base_item_roster, list):
-                patched, offset = _patch_failed_roster_slots(
+                corr_item = (
+                    corr_list[idx]
+                    if idx < len(corr_list) and isinstance(corr_list[idx], dict)
+                    else {}
+                )
+                patched = _patch_roster_slots_one_to_one(
                     base_item_roster,
-                    pending_unknown=pending_unknown,
-                    grounded_replacements=grounded_replacements,
-                    repl_offset=offset,
+                    corr_item.get("participant_roster"),
+                    player_message=player_message,
+                    failed_slot_refs=pending_unknown,
                     db=db,
                     content=content,
                 )
+                if patched is None:
+                    return None
                 item["participant_roster"] = normalize_draft_person_roster(
                     patched, db=db, content=content,
                 )
@@ -1901,25 +1953,18 @@ def extract_draft_intent_with_roster_heal(
             if lost_prior_valid or removal_only:
                 raise UnknownParticipantEscalate(pending_unknown)
             assert baseline_result is not None
-            need = _failed_person_slot_count(baseline_result, pending_unknown)
-            grounded = _select_grounded_replacements(
-                replacements,
-                need=need,
-                player_message=player_message,
-                failed_slot_refs=pending_unknown,
-                db=db,
-                content=content,
-            )
-            if grounded is None:
-                raise UnknownParticipantEscalate(pending_unknown)
-            # 形状/顺序/tier/role 冻结；只修补失败槽 id。amount/target/mode/正文保首抽。
-            return _backfill_healed_participant_refs(
+            # 一一对应槽级修补（禁聚合候选池）；对应不明（增人接地/重排/多未知）→ escalate
+            backfilled = _backfill_healed_participant_refs(
                 baseline_result,
+                validated,
                 pending_unknown=pending_unknown,
-                grounded_replacements=grounded,
+                player_message=player_message,
                 db=db,
                 content=content,
             )
+            if backfilled is None:
+                raise UnknownParticipantEscalate(pending_unknown)
+            return backfilled
         return validated
 
 
@@ -2677,22 +2722,7 @@ def assemble_secret_order_content(
 
 
 # 大臣回话里"建议某人承办"的线索：大臣常以"可授/可委/请授 X …"点名承办人。
-# LLM 偶发把『承办人』留空、甚至把该人从正文里也抹掉——#397 Step6 须兜底找回，
-# 不让大臣补充的承办人被"看起来合法"的 LLM 输出吞掉。只认建议式措辞（可授/请授/可委…），
-# 不认皇帝祈使式"着/令"——后者常带机关名（着户部…），会把"户部"误当人名。
-# 贪心 {2,4} + 尾部剥动作字（#397 Step6 R3 agy P0）：旧非贪心 {2,4}? 在动词首字不在
-# lookahead 时会把动作字吞进名字（如『周延儒监督』→『周延儒监』）或丢掉整条线索
-# （如『李若琏负责』→ None）。改为贪心捕获后从尾部剥 _ASSIGNEE_VERB_TAIL_CHARS 中的
-# 动词首字（lookahead 扩充 监|协|处|负 覆盖更多动词），保证不漏不脏。
-_ASSIGNEE_HINT_RE = re.compile(
-    r"(?:可\s*委\s*派|可\s*差\s*派|请\s*委\s*派|请\s*差\s*派|建议\s*委\s*派|建议\s*差\s*派|"
-    r"可\s*授|可\s*委|可\s*差|可\s*令|可\s*派|请\s*授|请\s*委|请\s*派|"
-    r"建议\s*授|建议\s*委|可\s*由|可\s*命)"
-    r"\s*([\u4e00-\u9fa5·]{2,4})"
-    r"(?=[，,。.；;！!？?、\s]|暗|密|调|督|拟|领|查|办|为|任|去|往|主|核|理|统|提|巡|镇|守|征|讨|驻|屯|管|行|前|担|监|协|处|负|$)"
-)
-# 动作动词首字集：greedy 捕获后从尾部剥掉这些字。与 lookahead 的动词字同集——
-# lookahead 判定名字后的动词首字、tail strip 剥掉被贪心吞进名字的动词首字（#397 Step6 R3 agy P0）。
+# 祈使式承办人尾部动作字（greedy 捕获后剥离）。
 _ASSIGNEE_VERB_TAIL_CHARS = frozenset("暗密调督拟领查办为任去往主核理统提巡镇守征讨驻屯管行前担监督协处负责")
 # 捕获到机关/地名（含 部/寺/院… 字）的不是人名，跳过。
 # 注意：曹是常见姓（曹化淳/曹文诏），不是机关字，故不入此集（#397 Step6 R3 Codex P2）。
@@ -2720,25 +2750,8 @@ def _is_institution_like_name(name: str) -> bool:
 # _is_non_person_participant_name 由模块顶 import 绑定。
 
 
-def _extract_assignee_hint(text: str) -> Optional[str]:
-    """从文本（多为大臣回话）里找"建议某人承办"的人名线索。无则 None。
-
-    #397 Step6 R3（agy P0）：greedy 捕获后从尾部剥动作字——旧非贪心 {2,4}? 在动作首字
-    不在 lookahead 时会把动作字吞进名字或丢掉整条线索（如『周延儒监督』→『周延儒监』、
-    『李若琏负责』→ None）。"""
-    for m in _ASSIGNEE_HINT_RE.finditer(text or ""):
-        name = m.group(1).strip()
-        while len(name) > 2 and name[-1] in _ASSIGNEE_VERB_TAIL_CHARS:
-            name = name[:-1]
-        if len(name) >= 2 and not _is_institution_like_name(name):
-            return name
-    return None
-
-
-# 皇帝祈使式指名（着/令/命/敕 X …）：从御旨/最终 content 抽承办人。与大臣建议式分开：
-# 祈使式常带机关名（着户部…）须过机关滤；后跟副词时（着即办/着速理）排除——加副词起头守门。
-# #401 R1（CodeRabbit major codex P2）：御旨常以『着X』指名，LLM 却偶发把承办人字段留空
-# 或漂移到默认召对大臣——此函数从皇帝显式旨意找回承办人，供 _choose_assignee 校验。
+# 皇帝祈使式指名（着/令/命/敕 X …）：只从皇帝输入侧抽承办人（ADR 0142）。
+# 祈使式常带机关名（着户部…）须过机关滤；后跟副词时（着即办/着速理）排除。
 _ASSIGNEE_IMPERATIVE_RE = re.compile(
     r"(?<![\u4e00-\u9fa5·])(?:着|令|命|敕)\s*([\u4e00-\u9fa5·]{2,4})"
     r"(?=[，,。.；;！!？?、\s]|暗|密|调|督|拟|领|查|办|为|任|去|往|主|核|理|统|提|巡|镇|守|征|讨|驻|屯|管|行|前|担|监|协|处|负|$)"
@@ -2766,31 +2779,18 @@ def _choose_assignee(
     content: str,
     default_assignee: str,
 ) -> str:
-    """选定承办人：LLM 字段经校验才采信，否则退回经校验线索，最后才默认召对大臣。
+    """选定承办人：只取皇帝输入侧确定性点名 + 显式结构化字段（ADR 0142）。
 
-    #401 R1（CodeRabbit major）：旧 `assignee = _assignee_llm or _assignee_hint or default`
-    盲信任何非空 LLM 字段——正文留李若琏、字段却填王在晋时即漂移。改为：线索取自皇帝
-    显式旨意（祈使式）+ 大臣回话（建议式）+ 最终正文；LLM 字段仅当与某条线索一致、或确实
-    出现在最终正文里才采信；否则用第一条经校验线索；无线索才退回默认。"""
-    hints: List[str] = []
-    seen: set = set()
-    for h in (
-        _extract_imperative_assignee(player_command),
-        _extract_assignee_hint(minister_reply),
-        _extract_assignee_hint(content),
-        _extract_imperative_assignee(content),
-    ):
-        if h and h not in seen:
-            seen.add(h)
-            hints.append(h)
+    禁从 minister_reply / extractor 散文 content 机械反推承办人。
+    优先级：御旨祈使点名 > 结构化「承办人」字段 > 默认召对大臣。
+    minister_reply / content 参数保留签名兼容，生产路径不读。
+    """
+    _ = (minister_reply, content)  # 签名保留；生产路径不读散文
+    emperor = _extract_imperative_assignee(player_command)
+    if emperor:
+        return emperor
     llm = (assignee_llm or "").strip()
-    if hints:
-        # 多条线索冲突时，按来源优先级取第一条（御旨祈使 > 大臣建议 > 正文）。
-        # 不能因为坏 LLM 字段出现在兜底合并后的正文里，就覆盖更权威的显式线索。
-        if llm and llm == hints[0]:
-            return llm
-        return hints[0]
-    if llm and len(llm) >= 2 and llm in (content or ""):
+    if llm and len(llm) >= 2 and not _is_institution_like_name(llm):
         return llm
     return default_assignee
 
@@ -3098,9 +3098,8 @@ def _extract_secret_order(
     # No formal title hard-cap: keep the full extracted title; only synthesize a
     # short fallback when the extractor omitted 标题 entirely.
     title = str(obj.get("标题") or "").strip() or (content or player_command)[:14]
-    # 承办人：LLM 字段经校验才采信（防漂移），否则退回经校验线索（御旨祈使 / 大臣建议 /
-    # 最终正文），最后才默认召对大臣（#401 R1 CodeRabbit major：旧 `or` 链盲信任何非空
-    # LLM 字段，正文留李若琏、字段填王在晋时即漂移）。
+    # 承办人：皇帝祈使点名 > 结构化「承办人」字段 > 默认（ADR 0142：禁 minister_reply/
+    # extractor 散文反推）。
     assignee = default_assignee if force_default_assignee else _choose_assignee(
         _assignee_llm, player_command, minister_reply, content, default_assignee
     )

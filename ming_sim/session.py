@@ -1936,7 +1936,7 @@ class GameSession:
         """Tool/API/哨兵 staged 新密令：与抽取路同一结构化 content 装配（御旨+既有 schema 内容）。
 
         #1274 K1 / ADR 0142：reply 永不入 content 拼装；大臣实质补充须已在 payload.content
-        （extractor/tool 显式字段）。reply 仅供承办人线索与对话记录。
+        （extractor/tool 显式字段）。承办人只取御旨祈使 + 结构化字段，reply 不读。
         """
         if not pending_action_id:
             return

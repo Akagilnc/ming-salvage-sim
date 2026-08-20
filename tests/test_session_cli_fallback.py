@@ -313,7 +313,7 @@ def test_tool_call_staged_secret_order_structured_merge_keeps_completion(game, m
 
 
 def test_tool_call_staged_secret_order_merge_updates_reply_assignee(game, monkeypatch):
-    """tool-call 新密令也要从大臣补充里回填承办人。"""
+    """tool-call 新密令：承办人只采御旨祈使/结构化字段，禁回话散文（ADR 0142）。"""
     db, state, _ = game
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
     minister = "工具密令承办官"
@@ -329,16 +329,28 @@ def test_tool_call_staged_secret_order_merge_updates_reply_assignee(game, monkey
 
     result = _result()
     result.pending_action_id = pid
-    result.answer = "臣请委李若琏负责密访关宁诸将。"
+    result.answer = "臣请委李若琏负责密访关宁诸将。"  # 回话不得覆盖
 
+    # 无御旨祈使 → 保持结构化/默认承办人
     _session(db, state, llm_config=SimpleNamespace(channel="api"))._cli_backend_fallback_actions(
         result,
         SimpleNamespace(name=minister, office_type="司礼监"),
         "密令如下：暗查辽饷侵冒。",
     )
-
     payload = json.loads(db.list_pending_actions(state.turn)[0]["payload_json"])
-    assert payload["assignee"] == "李若琏"
+    assert payload["assignee"] == minister
+
+    # 御旨祈使点名 → 覆盖
+    result2 = _result()
+    result2.pending_action_id = pid
+    result2.answer = "臣请委他人。"
+    _session(db, state, llm_config=SimpleNamespace(channel="api"))._cli_backend_fallback_actions(
+        result2,
+        SimpleNamespace(name=minister, office_type="司礼监"),
+        "密令如下：着李若琏暗查辽饷侵冒。",
+    )
+    payload2 = json.loads(db.list_pending_actions(state.turn)[0]["payload_json"])
+    assert payload2["assignee"] == "李若琏"
 
 
 def test_staged_secret_order_assignee_merge_uses_llm_field_contract(game, monkeypatch):
@@ -2588,12 +2600,12 @@ def test_runtime_cli_secret_prefix_merges_via_configured_runner(game, monkeypatc
     assert calls == [("codex", "gpt-5.5", 240)]
     row = _commit_staged_secret_order(db, state, result)
     assert "查辽东军饷" in row["content"]          # 御旨不丢
-    assert "李若琏" in row["content"]              # 大臣补充保留
-    assert row["minister_name"] == "李若琏"        # 大臣建议的承办人被采纳
+    assert "李若琏" in row["content"]              # extractor 内容保留
+    assert row["minister_name"] == "李若琏"        # 结构化承办人字段
 
 
 def test_secret_prefix_creates_order(game, monkeypatch):
-    """#397/#413：玩家『密令如下：』→ 合并皇帝旨意 + 大臣回话，先暂存，确认/commit 后建 active 密令。"""
+    """#397/#413：玩家『密令如下：』→ 合并皇帝旨意 + extractor，先暂存，确认/commit 后建 active 密令。"""
     db, state, _ = game
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
     canned = json.dumps({
@@ -2612,9 +2624,9 @@ def test_secret_prefix_creates_order(game, monkeypatch):
         "密令如下：查辽东军饷有无侵冒，三月内回奏")
     row = _commit_staged_secret_order(db, state, result)
     assert "查辽东军饷" in row["content"]          # 御旨不丢（#397）
-    assert "李若琏" in row["content"]              # 大臣补充保留
-    # #401 R1：正文/回话皆指李若琏，承办人字段填王在晋属漂移→采信校验后的线索李若琏
-    assert row["minister_name"] == "李若琏"
+    assert "李若琏" in row["content"]              # extractor 内容可含人名
+    # ADR 0142：无御旨祈使时采信结构化承办人；禁回话散文反推覆盖
+    assert row["minister_name"] == "王在晋"
     assert row["status"] == "active"
 
 

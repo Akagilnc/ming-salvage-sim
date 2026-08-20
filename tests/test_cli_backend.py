@@ -297,8 +297,8 @@ def test_secret_content_assembly_mutation_reply_not_in_signature_or_merge_sites(
             "臣领密旨，可授李若琏暗查。",
             "密令如下：查辽东军饷有无侵冒，三月内回奏",
             ("查辽东军饷有无侵冒", "三月内回奏"),
-            (),  # 承办人走结构化字段/线索，不要求写入 content
-            "李若琏",
+            (),  # 回话建议不入 content；亦不得作承办人（ADR 0142）
+            "王在晋",  # 无御旨祈使、无结构化字段 → 默认
         ),
         (
             "extractor_carries_minister_supplement",
@@ -333,7 +333,7 @@ def test_secret_prefix_structured_assembly_guards(
     monkeypatch, case_id, llm_content, llm_assignee, reply, message,
     expect_content_bits, absent_content_bits, expect_assignee,
 ):
-    """#1274 K1：content=御旨+extractor；reply 不入拼装；承办人仍可从回话线索选定。"""
+    """#1274 K1：content=御旨+extractor；reply 不入拼装；承办人禁回话散文（ADR 0142）。"""
     so = _resolve_secret(
         monkeypatch, reply, message,
         payload=_so_json(内容=llm_content, 承办人=llm_assignee, 期限月数=3, 标签=["辽饷"]),
@@ -503,13 +503,14 @@ def test_secret_imperative_assignee_requires_command_boundary(monkeypatch):
     assert so_named["assignee"] == "李若琏"
 
 
-def test_secret_assignee_does_not_drift_to_unvalidated_llm_field(monkeypatch):
+def test_secret_assignee_emperor_imperative_beats_structured_field(monkeypatch):
+    """御旨祈使点名优先于结构化字段；禁从回话/正文散文反推（ADR 0142）。"""
     so = _resolve_secret(
         monkeypatch,
-        "臣领密旨，可授李若琏暗查。",
-        "密令如下：查辽东军饷有无侵冒，三月内回奏",
+        "臣领密旨，可授王在晋暗查。",  # 回话建议不得覆盖御旨
+        "密令如下：着李若琏查辽东军饷有无侵冒，三月内回奏",
         payload=_so_json(
-            内容="查辽东军饷有无侵冒，三月内回奏；着李若琏暗查。",
+            内容="查辽东军饷有无侵冒，三月内回奏；着王在晋暗查。",
             承办人="王在晋", 期限月数=3, 标签=["辽饷"],
         ),
     )
@@ -517,8 +518,8 @@ def test_secret_assignee_does_not_drift_to_unvalidated_llm_field(monkeypatch):
     assert so["assignee"] == "李若琏"
 
 
-def test_secret_assignee_prefers_hint_when_bad_llm_field_survives_merge(monkeypatch):
-    """正文可留 LLM 写的王在晋；承办人仍采信回话建议线索李若琏（字段≠content 拼装）。"""
+def test_secret_assignee_structured_field_when_no_emperor_name(monkeypatch):
+    """无御旨祈使时采信显式结构化承办人；回话建议不读。"""
     so = _resolve_secret(
         monkeypatch,
         "臣领密旨，可授李若琏暗查。",
@@ -530,8 +531,7 @@ def test_secret_assignee_prefers_hint_when_bad_llm_field_survives_merge(monkeypa
     )
     assert so is not None
     assert "王在晋" in so["content"]
-    # reply 不入 content 拼装——李若琏不必出现在正文，但 assignee 字段采信回话线索
-    assert so["assignee"] == "李若琏"
+    assert so["assignee"] == "王在晋"
 
 
 def test_secret_assignee_uses_emperor_imperative_hint_when_llm_blank(monkeypatch):
@@ -544,63 +544,62 @@ def test_secret_assignee_uses_emperor_imperative_hint_when_llm_blank(monkeypatch
 
 
 @pytest.mark.parametrize(
-    "reply,expect",
-    [
-        ("臣领密旨，可授曹化淳暗查东厂线索。", "曹化淳"),
-        ("可委曹文诏征讨流贼。", "曹文诏"),
-    ],
+    "person",
+    ["曹化淳", "曹文诏"],
     ids=["cao_huachun", "cao_wenzhao"],
 )
-def test_secret_assignee_keeps_cao_surname_characters(monkeypatch, reply, expect):
-    """公开 resolve：曹姓不得被机关字滤误拒（#397）。"""
+def test_secret_assignee_keeps_cao_surname_characters(monkeypatch, person):
+    """公开 resolve：曹姓不得被机关字滤误拒（#397）；经御旨祈使点名。"""
     so = _resolve_secret(
-        monkeypatch, reply, "密令如下：TASK_BODY",
+        monkeypatch, "臣领旨。", f"密令如下：着{person}暗查东厂线索",
         default="王在晋",
         payload=_so_json(内容="TASK_BODY", 承办人=""),
     )
     assert so is not None
-    assert so["assignee"] == expect
+    assert so["assignee"] == person
 
 
 def test_secret_assignee_keeps_wei_and_si_surnames(monkeypatch):
-    """公开 resolve：卫/司 作姓保留；锦衣卫/布政司整词仍滤回默认。"""
+    """公开 resolve：卫/司 作姓经祈使保留；锦衣卫/布政司整词仍滤回默认。"""
     blank = _so_json(内容="TASK_BODY", 承办人="")
     so_wei = _resolve_secret(
-        monkeypatch, "可授卫景瑗暗查东厂线索。", "密令如下：TASK_BODY",
+        monkeypatch, "臣领旨。", "密令如下：着卫景瑗暗查东厂线索",
         default="王在晋", payload=blank,
     )
     assert so_wei["assignee"] == "卫景瑗"
     so_si = _resolve_secret(
-        monkeypatch, "可委司马懿督师。", "密令如下：TASK_BODY",
+        monkeypatch, "臣领旨。", "密令如下：着司马懿督师",
         default="王在晋", payload=blank,
     )
     assert so_si["assignee"] == "司马懿"
     so_jinyi = _resolve_secret(
-        monkeypatch, "可授锦衣卫查办。", "密令如下：TASK_BODY",
+        monkeypatch, "臣领旨。", "密令如下：着锦衣卫查办",
         default="王在晋", payload=blank,
     )
     assert so_jinyi["assignee"] == "王在晋"
     so_buzheng = _resolve_secret(
-        monkeypatch, "可授布政司核对。", "密令如下：TASK_BODY",
+        monkeypatch, "臣领旨。", "密令如下：着布政司核对",
         default="王在晋", payload=blank,
     )
     assert so_buzheng["assignee"] == "王在晋"
 
 
-@pytest.mark.parametrize(
-    "reply",
-    ["可委派李若琏暗查辽饷。", "可差派李若琏暗查辽饷。"],
-    ids=["wei_pai", "chai_pai"],
-)
-def test_secret_assignee_prefers_long_compound_prefixes(monkeypatch, reply):
-    """公开 resolve：可委派/可差派整前缀优先，『派』不并进人名。"""
+def test_secret_assignee_structured_field_not_prose_prefix(monkeypatch):
+    """r11：结构化字段承办人；回话『可委派』散文不得覆盖/补事实。"""
     so = _resolve_secret(
-        monkeypatch, reply, "密令如下：TASK_BODY",
+        monkeypatch, "可委派李若琏暗查辽饷。", "密令如下：TASK_BODY",
         default="王在晋",
-        payload=_so_json(内容="TASK_BODY", 承办人=""),
+        payload=_so_json(内容="TASK_BODY", 承办人="李若琏"),
     )
     assert so is not None
     assert so["assignee"] == "李若琏"
+    # 无结构化、仅回话散文 → 默认
+    so_default = _resolve_secret(
+        monkeypatch, "可差派李若琏暗查辽饷。", "密令如下：TASK_BODY",
+        default="王在晋",
+        payload=_so_json(内容="TASK_BODY", 承办人=""),
+    )
+    assert so_default["assignee"] == "王在晋"
 
 
 # ── enrich_initiative_effects ──

@@ -238,7 +238,8 @@ def test_capture_correction_keeps_prior_valid_heals(game, monkeypatch):
     def backend(prompt, *_a, tag="", **_k):
         calls.append(prompt)
         if _CORRECTION_MARK in prompt:
-            person = ["毕自严", replacement]
+            # 同序一一对应：失败槽→替换名，合法槽位置不变
+            person = [replacement, "毕自严"]
         else:
             person = ["不存在之人甲", "毕自严"]
         return (json.dumps(_ok_payload(person=person), ensure_ascii=False), 1)
@@ -248,9 +249,7 @@ def test_capture_correction_keeps_prior_valid_heals(game, monkeypatch):
         text, None, db=db, content=content,
     )
     ids = [str(i["character_id"]) for i in (payload.get("participant_roster") or [])]
-    assert "毕自严" in ids
-    assert replacement in ids
-    assert "不存在之人甲" not in ids
+    assert ids == [replacement, "毕自严"]
     assert len(calls) == 2
 
     session = GameSession.__new__(GameSession)
@@ -318,8 +317,8 @@ def test_capture_correction_alias_prior_valid_heals(game, monkeypatch):
     def backend(prompt, *_a, tag="", **_k):
         calls.append(prompt)
         if _CORRECTION_MARK in prompt:
-            # 纠错轮：未知人→在册替换；alias→规范名
-            person = [ch.name, replacement]
+            # 同序：失败槽→replacement，合法 alias 槽→规范名
+            person = [replacement, ch.name]
         else:
             person = ["不存在之人甲", alias]
         return (json.dumps(_ok_payload(person=person), ensure_ascii=False), 1)
@@ -329,10 +328,7 @@ def test_capture_correction_alias_prior_valid_heals(game, monkeypatch):
         text, None, db=db, content=content,
     )
     ids = [str(i["character_id"]) for i in (payload.get("participant_roster") or [])]
-    assert ch.name in ids
-    assert replacement in ids
-    assert alias not in ids or alias == ch.name
-    assert "不存在之人甲" not in ids
+    assert ids == [replacement, ch.name]
     assert len(calls) == 2
 
     session = GameSession.__new__(GameSession)
@@ -1183,16 +1179,17 @@ def test_minister_reply_only_grounding_escalates(game, monkeypatch):
 
 
 def test_heal_freezes_first_roster_shape_against_drift(game, monkeypatch):
-    """r10 负向：纠错轮改 tier/role/增人/重排 → 落库仍为首抽形状（仅失败槽 id）。"""
+    """r10/r11：同序纠错只改失败槽 id；tier/role 冻结为首抽，尾部未接地增人丢弃。"""
     import ming_sim.cli_backend as cb
 
     db, _state, content = game
     _biziyan(content)
     replacement = _active_minister(db, content).name
+    # 未接地增人（不在玩家输入）——可忽略、不进池
     extra = _active_minister(db, content, exclude=replacement).name
-    # 替换名须在玩家输入中可接地
     player = f"着不存在之人甲与毕自严核拨辽饷，可令{replacement}主事"
     minister_reply = "臣遵拟。"
+    assert extra not in player
 
     def _payload(roster):
         return {
@@ -1208,17 +1205,17 @@ def test_heal_freezes_first_roster_shape_against_drift(game, monkeypatch):
         {"character_id": "不存在之人甲", "tier": "主办", "role": "核辽饷"},
         {"character_id": "毕自严", "tier": "协办", "role": "监核"},
     ]
-    # 纠错轮：重排 + 改 tier/role + 增人
-    drifted_roster = [
-        {"character_id": "毕自严", "tier": "主办", "role": "被篡改职分"},
-        {"character_id": replacement, "tier": "知情", "role": "新职分"},
+    # 同序修补 + 改 tier/role + 尾部未接地增人
+    fixed_roster = [
+        {"character_id": replacement, "tier": "知情", "role": "被篡改职分"},
+        {"character_id": "毕自严", "tier": "主办", "role": "新职分"},
         {"character_id": extra, "tier": "协办", "role": "增人"},
     ]
 
     def backend(prompt, *_a, tag="", **_k):
         if tag == "participant_escalate_report":
             raise AssertionError("形状冻结自愈不得 escalate")
-        roster = drifted_roster if _CORRECTION_MARK in prompt else first_roster
+        roster = fixed_roster if _CORRECTION_MARK in prompt else first_roster
         return (json.dumps(_payload(roster), ensure_ascii=False), 1)
 
     monkeypatch.setattr(cb, "_run_backend_for_config", backend)
@@ -1234,10 +1231,127 @@ def test_heal_freezes_first_roster_shape_against_drift(game, monkeypatch):
     assert str(roster[0].get("role") or "") == "核辽饷"
     assert str(roster[1].get("tier") or "") == "协办"
     assert str(roster[1].get("role") or "") == "监核"
-    # 增人不得落库
-    assert extra not in [
-        str(i.get("character_id") or "") for i in roster
+    assert extra not in [str(i.get("character_id") or "") for i in roster]
+
+
+def test_minister_reply_only_assignee_falls_to_default(monkeypatch):
+    """r11 负钉：承办人线索只在 minister_reply → 不采信，退默认（ADR 0142）。"""
+    import ming_sim.cli_backend as cb
+
+    monkeypatch.setattr(
+        cb, "_run_backend",
+        lambda p: (
+            json.dumps({
+                "标题": "密查",
+                "内容": "查辽东军饷有无侵冒，三月内回奏",
+                "承办人": "",
+                "期限月数": 3,
+                "标签": ["辽饷"],
+            }, ensure_ascii=False),
+            1,
+        ),
+    )
+    acts = cb.resolve_minister_actions(
+        "臣领密旨，可授李若琏暗查。",
+        "密令如下：查辽东军饷有无侵冒，三月内回奏",
+        default_assignee="王在晋",
+    )
+    so = acts["secret_order"]
+    assert so is not None
+    assert so["assignee"] == "王在晋"
+
+
+def test_grounded_extra_front_must_not_fill_failed_slot(game, monkeypatch):
+    """r11 负钉：接地增人前置不得顶失败槽（禁聚合池按序回填）。"""
+    import ming_sim.cli_backend as cb
+
+    db, state, content = game
+    _biziyan(content)
+    replacement = _active_minister(db, content).name
+    extra = _active_minister(db, content, exclude=replacement).name
+    # 两人都在玩家输入中可接地
+    player = f"着不存在之人甲核拨辽饷；可令{extra}与{replacement}会商"
+    minister_reply = "臣遵拟。"
+
+    first_roster = [
+        {"character_id": "不存在之人甲", "tier": "主办", "role": "核辽饷"},
     ]
+    # 纠错轮：接地增人在前、真替换在后——旧聚合池会误把 extra 填进失败槽
+    drifted = [
+        {"character_id": extra, "tier": "主办", "role": "核辽饷"},
+        {"character_id": replacement, "tier": "协办", "role": "会商"},
+    ]
+
+    def backend(prompt, *_a, tag="", **_k):
+        if tag == "participant_escalate_report":
+            return ("通政司启：朝中查无「不存在之人甲」，乞陛下明示。", 1)
+        roster = drifted if _CORRECTION_MARK in prompt else first_roster
+        return (
+            json.dumps({
+                "拟旨意图": "拟旨",
+                "动作类型": "policy",
+                "目标类型": "issue",
+                "目标ID": "liao-pay",
+                "正文": "着核拨辽饷。",
+                "参与人": roster,
+            }, ensure_ascii=False),
+            1,
+        )
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", backend)
+    with pytest.raises(cb.UnknownParticipantEscalate) as ei:
+        cb.extract_draft_intent_with_roster_heal(
+            player, minister_reply, db=db, content=content,
+        )
+    assert "不存在之人甲" in ei.value.names
+    assert len(db.list_directives(state) or []) == 0
+
+
+def test_two_unknown_refs_escalates_first_error_stop(game, monkeypatch):
+    """r11 负钉：两个不同未知引用（validator 首错即停）→ 对应不明 escalate。"""
+    import ming_sim.cli_backend as cb
+
+    db, state, content = game
+    _biziyan(content)
+    r1 = _active_minister(db, content).name
+    r2 = _active_minister(db, content, exclude=r1).name
+    player = f"着不存在之人甲与不存在之人乙核拨辽饷，可令{r1}、{r2}分办"
+    minister_reply = "臣遵拟。"
+
+    first_roster = [
+        {"character_id": "不存在之人甲", "tier": "主办", "role": "核辽饷"},
+        {"character_id": "不存在之人乙", "tier": "协办", "role": "分办"},
+    ]
+    # 纠错轮即使两槽都换成接地新人——多未知仍对应不明
+    fixed = [
+        {"character_id": r1, "tier": "主办", "role": "核辽饷"},
+        {"character_id": r2, "tier": "协办", "role": "分办"},
+    ]
+
+    def backend(prompt, *_a, tag="", **_k):
+        if tag == "participant_escalate_report":
+            return ("通政司启：朝中查无不存在之人，乞陛下明示。", 1)
+        roster = fixed if _CORRECTION_MARK in prompt else first_roster
+        return (
+            json.dumps({
+                "拟旨意图": "拟旨",
+                "动作类型": "policy",
+                "目标类型": "issue",
+                "目标ID": "liao-pay",
+                "正文": "着核拨辽饷。",
+                "参与人": roster,
+            }, ensure_ascii=False),
+            1,
+        )
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", backend)
+    with pytest.raises(cb.UnknownParticipantEscalate) as ei:
+        cb.extract_draft_intent_with_roster_heal(
+            player, minister_reply, db=db, content=content,
+        )
+    # 首错即停至少钉到甲；不得静默按池回填两槽
+    assert "不存在之人甲" in ei.value.names
+    assert len(db.list_directives(state) or []) == 0
 
 
 def test_session_post_pass_appends_escalate_report(game, monkeypatch):
