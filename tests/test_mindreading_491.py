@@ -14,7 +14,6 @@ import pytest
 import ming_sim.mindreading as mindreading
 from ming_sim.agents import create_mindreading_agent
 from ming_sim.db import GameDB
-from ming_sim.exceptions import LLMUnavailable
 from ming_sim.mindreading import (
     build_mindreading_materials,
     build_scouting_precision_payload,
@@ -103,6 +102,28 @@ def test_mindreading_agent_has_no_minister_session_history_or_tools():
     assert agent.session_id is None
     assert agent.tools == []
     assert agent.add_history_to_context is False
+
+
+def test_mindreading_agent_instructions_carry_wang_chengen_persona():
+    """#1474：递话 agent 装王承恩个性——正向例句带、无硬一句、指令零负向。"""
+    agent = create_mindreading_agent(
+        LLMConfig(api_key="test", base_url="http://localhost/v1", model="test")
+    )
+    parts = [str(part) for part in (agent.instructions or [])]
+    text = "\n".join(parts)
+
+    assert "王承恩" in text
+    # 北极星示范口吻入桩（正向例句，原句可含对话内用词）
+    assert "皇爷" in text
+    assert "奴婢替皇爷说透" in text or "替皇爷把那座金矿" in text
+    assert "只输出一句简短旁白" not in text
+    # 宁缺毋滥资格入桩
+    assert "暗流" in text and "隐情" in text
+    # 指令句（非「」例句）零负向：不要/禁止 只允许出现在例句引号内
+    import re
+    instructional = re.sub(r"「[^」]*」", "", text)
+    for banned in ("不要", "禁止"):
+        assert banned not in instructional, banned
 
 
 def test_mindreading_and_scouting_consume_the_same_precision_contract(game, monkeypatch):
@@ -318,14 +339,35 @@ def test_reader_eligibility_uses_current_db_office_after_reassignment(game):
         )
 
 
-def test_empty_model_text_fails_without_keyword_fallback(game):
+def test_empty_model_text_is_legitimate_absence(game):
+    """#1474：无真增量 → 空返回缺席（行为路径），非失败、非凑数旁白。"""
     db, state, content = game
     materials = build_mindreading_materials(
         db, state, content.characters["王承恩"], content.characters["温体仁"],
         "臣愿肩起此事。",
     )
 
-    with pytest.raises(LLMUnavailable, match="模型返回空文本"):
-        generate_mindreading_payload(
-            materials, object(), mindreading_agent=_SpyMindreadingAgent(""),
-        )
+    assert generate_mindreading_payload(
+        materials, object(), mindreading_agent=_SpyMindreadingAgent(""),
+    ) is None
+    assert generate_mindreading_payload(
+        materials, object(), mindreading_agent=_SpyMindreadingAgent("   "),
+    ) is None
+
+
+def test_nonempty_model_text_still_enters_narration(game):
+    """#1474：有增量路径仍出话。"""
+    db, state, content = game
+    materials = build_mindreading_materials(
+        db, state, content.characters["王承恩"], content.characters["温体仁"],
+        "臣愿肩起此事。",
+    )
+    payload = generate_mindreading_payload(
+        materials,
+        object(),
+        mindreading_agent=_SpyMindreadingAgent(
+            "皇爷，他这句应承背后另有人事盘算。"
+        ),
+    )
+    assert payload is not None
+    assert payload["narration"] == "皇爷，他这句应承背后另有人事盘算。"

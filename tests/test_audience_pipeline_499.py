@@ -84,6 +84,31 @@ def test_run_mindreading_for_turn_persists_and_survives_failed_turn_guard(game):
     assert db.list_mindreading_records(chat_turn_id) == []
 
 
+def test_run_mindreading_for_turn_empty_narration_is_absent_no_record(game):
+    """#1474：无增量空返回 → 不落库、不投递（缺席合法）。"""
+    db, state, content = game
+    target = content.characters["温体仁"]
+    chat_turn_id = db.create_chat_turn(state, target.name, "p5-absent", 0)
+
+    class _EmptyAgent:
+        def run(self, material):
+            return SimpleNamespace(content="")
+
+    payload = run_mindreading_for_turn(
+        db=db,
+        state=state,
+        content_characters=content.characters,
+        minister_name=target.name,
+        minister_reply="臣愿肩起此事。",
+        llm_config=object(),
+        chat_turn_id=chat_turn_id,
+        write_gate=threading.Lock(),
+        mindreading_agent=_EmptyAgent(),
+    )
+    assert payload is None
+    assert db.list_mindreading_records(chat_turn_id) == []
+
+
 def test_chat_stream_done_before_mindreading_and_delivers_event(game, monkeypatch):
     """真实 chat_stream：done 先于 mindreading；读心事件可浮现；输入为完整回话。"""
     import web_app as web_app_mod

@@ -72,6 +72,9 @@ def run_mindreading_for_turn(
     payload = generate_mindreading_payload(
         materials, llm_config, mindreading_agent=mindreading_agent,
     )
+    # #1474：空返回 = 无真增量缺席，不落库、不投递
+    if not payload:
+        return None
     if chat_turn_id:
         with write_gate:
             # 撤回安全（ADR 0038）：写前校验目标轮仍存活；failed/undone 不写孤儿，
