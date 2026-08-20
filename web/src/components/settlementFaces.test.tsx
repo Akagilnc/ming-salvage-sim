@@ -322,9 +322,12 @@ describe("QA A-1 #1276/#1282/#1285 GameHud HUD 对齐", () => {
     state?: GameState;
     onOpenModal?: (modal: string) => void;
     navHandlers?: Record<string, () => void>;
+    edictOpen?: boolean;
+    onCloseEdict?: () => void;
   } = {}) {
     const opened: string[] = [];
     const navCalls: string[] = [];
+    const closed: string[] = [];
     const host = mount(
       <GameHud
         stageRef={() => {}}
@@ -351,13 +354,18 @@ describe("QA A-1 #1276/#1282/#1285 GameHud HUD 对齐", () => {
           appointment: () => navCalls.push("appointment"),
         }}
         secretOrderActiveCount={0}
+        edictOpen={opts.edictOpen}
+        onCloseEdict={() => {
+          closed.push("edict");
+          opts.onCloseEdict?.();
+        }}
         onOpenModal={(modal) => {
           opened.push(modal);
           opts.onOpenModal?.(modal);
         }}
       />,
     );
-    return { host, opened, navCalls };
+    return { host, opened, navCalls, closed };
   }
 
   it("#1276 邸报木牌 caption/动作对齐 gazette，不再挂起居注", () => {
@@ -427,6 +435,38 @@ describe("QA A-1 #1276/#1282/#1285 GameHud HUD 对齐", () => {
     );
     expect(edict1?.textContent).toMatch(/拟诏·盖玺颁诏过月/);
     expect(edict1?.textContent).not.toMatch(/退朝过月/);
+  });
+
+  it("#1454 拟诏台开着：木牌名实降为收起，不再与主钮同文盖玺颁诏过月", () => {
+    const { host } = mountHud({ edictOpen: true });
+    const edict = Array.from(host.querySelectorAll(".hud2-cmd-caption")).find((b) =>
+      (b.getAttribute("aria-label") || "").includes("拟诏"),
+    );
+    expect(edict).toBeTruthy();
+    expect(edict?.textContent).toMatch(/拟诏·收起/);
+    expect(edict?.textContent).toMatch(/收起拟诏台/);
+    // 名实：台开时不得再挂与 seal-btn-issue 同文的「盖玺颁诏过月」
+    expect(edict?.textContent).not.toMatch(/盖玺颁诏过月/);
+    expect(edict?.getAttribute("aria-label") || "").not.toMatch(/盖玺颁诏过月/);
+    // 图钮 aria 同步
+    const cmd = Array.from(host.querySelectorAll("button.hud2-cmd")).find((b) =>
+      (b.getAttribute("aria-label") || "").includes("拟诏"),
+    );
+    expect(cmd?.getAttribute("aria-label") || "").toMatch(/拟诏·收起/);
+    expect(cmd?.getAttribute("aria-label") || "").not.toMatch(/盖玺颁诏过月/);
+  });
+
+  it("#1454 拟诏台开着：木牌可点收起，不二次打开/不造第二条颁诏路径", () => {
+    const { host, opened, closed } = mountHud({ edictOpen: true });
+    const edict = Array.from(host.querySelectorAll(".hud2-cmd-caption")).find((b) =>
+      (b.getAttribute("aria-label") || "").includes("拟诏"),
+    );
+    expect(edict).toBeTruthy();
+    // 可点性：台开态木牌必须响应（不再被 desk-footer 挡成空等）
+    act(() => { edict?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    expect(closed).toEqual(["edict"]);
+    // 勿再走 onOpenModal("edict")——那会变成无反馈/二次开台，不是收起
+    expect(opened).toEqual([]);
   });
 });
 

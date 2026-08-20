@@ -32,6 +32,16 @@ describe("#1342 朝堂抽屉不得挡底栏命令", () => {
   });
 });
 
+describe("#1454 拟诏台不得挡底栏拟诏木牌", () => {
+  it("edict-safe-cmd 层底部留出命令安全区（修 desk-footer 遮挡）", () => {
+    const layer = styles.match(/\.fullscreen-layer\.edict-safe-cmd\s*\{[^}]*\}/)?.[0] || "";
+    expect(layer).toBeTruthy();
+    expect(layer).toMatch(/bottom:\s*(max\(|[1-9]\d|calc)/);
+    // 不得 inset:0 把收起木牌盖死在 desk-footer 下
+    expect(layer).not.toMatch(/inset:\s*0/);
+  });
+});
+
 describe("#1352 地图驻军表头不拆字", () => {
   it("garrison intel 表头 nowrap / keep-all", () => {
     expect(styles).toMatch(/\.intel-table--garrison[^{]*thead th[^{]*\{[^}]*white-space:\s*nowrap/);
