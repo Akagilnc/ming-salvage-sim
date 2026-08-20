@@ -19,8 +19,8 @@ from ming_sim.context import bind_content as ctx_bind
 import ming_sim.issues as issues_mod
 from ming_sim.db import GameDB
 
-# 全新库 load_state 只 seed 危机/账本/邸报，不 seed powers/完整军政盘面（那些另处加载）。
-# 测试需要齐全盘面（powers/characters/armies），用现有存档副本作基底，最可靠。
+# 全新库 load_state 只 seed 危机/账本/开局公共见闻，不 seed powers/完整军政盘面（那些另处加载）。
+# #1356：不再 seed 固定开局邸报文。测试需要齐全盘面（powers/characters/armies），用现有存档副本作基底，最可靠。
 _SEED_DB = os.path.join(os.path.dirname(__file__), "..", "data", "probe.db")
 
 
