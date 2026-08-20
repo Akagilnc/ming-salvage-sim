@@ -13,7 +13,7 @@
 9. fold-in r2/r3 K10c：背书争用一次有界 join + 重读 DB（禁 while/二次 LLM/contended 409）
    9a. owner 挂过预算 → contender 有限 fail-closed
    9b. owner 真失败 → contender 不调 extractor、夜未绑定
-10. fold-in r2：drain/catch_up on_event 推 stage（结构钉）
+10. fold-in r5：drain/catch_up 不推玩家可见补写 stage；签名无 on_event
 """
 
 from __future__ import annotations
@@ -660,6 +660,10 @@ def test_deleted_surface_no_healed_drain_retry_residue():
             "/api/audience/extraction/retry",
             "_retry_story_extraction_cli",
             "_print_extraction_pending_hint",
+            # #1353 fold-in r5：欠账技术进度/CLI 提示不得穿透玩家面
+            "补写召对账本",
+            "【账本抽取】",
+            "过月时自动补跑",
         ):
             if needle in text:
                 hits.append(f"{rel}:{needle}")
@@ -965,19 +969,19 @@ def test_endorsement_owner_fail_contender_no_second_llm(game, tmp_path, monkeypa
     assert not ae._is_endorsement_bound(db, nid)
 
 
-def test_drain_catch_up_emits_stage_on_event(game, tmp_path, monkeypatch):
-    """#1353 fold-in r2：drain/catch_up 经 on_event 推 stage（结构钉）。"""
+def test_drain_catch_up_silent_no_on_event_surface(game, tmp_path, monkeypatch):
+    """#1353 fold-in r5：drain/catch_up 静默补跑——签名无 on_event，落账仍成功。"""
+    import inspect
+
     db, state, content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
     minister = _minister(db, content)
-    nid, ctid, seq = _open_night_with_persisted_reply(db, state, minister)
-    # 真欠账一行：extract_status 空
-    assert db.get_story_extract_status(ctid) in ("", "pending", None) or True
+    nid, ctid, _seq = _open_night_with_persisted_reply(db, state, minister)
 
-    stages: list[tuple[str, str]] = []
-
-    def on_event(kind: str, data: str) -> None:
-        stages.append((kind, data))
+    assert "on_event" not in inspect.signature(ae.catch_up_pending_extractions).parameters
+    assert "on_event" not in inspect.signature(ae.drain_pending_before_close).parameters
+    assert "on_event" not in inspect.signature(an.close_night).parameters
+    assert "on_event" not in inspect.signature(an.auto_close_open_night).parameters
 
     ae.drain_pending_before_close(
         db=db,
@@ -987,12 +991,14 @@ def test_drain_catch_up_emits_stage_on_event(game, tmp_path, monkeypatch):
         extractor_agent=_FactsAgent(
             '{"facts":[{"person_names":["'
             + minister
-            + '"],"audibility":"殿上公开","body":"补写落","tags":[],'
+            + '"],"audibility":"殿上公开","body":"静默落","tags":[],'
             '"presence_effect":""}]}'
         ),
-        on_event=on_event,
     )
-    assert stages, "drain must emit at least one on_event stage"
-    assert all(k == "stage" for k, _ in stages), stages
-    assert any("补写" in d for _, d in stages), stages
     assert db.get_story_extract_status(ctid) == "done"
+    # 生产源码无欠账技术进度文案
+    import pathlib
+
+    prod = pathlib.Path(ae.__file__).read_text(encoding="utf-8")
+    assert "补写召对账本" not in prod
+    assert "过月时自动补跑" not in prod

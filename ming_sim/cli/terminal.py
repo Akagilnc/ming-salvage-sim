@@ -544,10 +544,10 @@ def _trail_extraction_after_reply_cli(
             llm_config=getattr(session, "llm_config", None),
             write_gate=_cli_write_gate(session),
         )
-    except Exception as exc:
+    except Exception:
         # 共享核从不抛；到此=import 等外围故障——不锁档、不打断对话。
-        # #1353：欠账唯一处理路=过月内部 drain；禁玩家手动补写 CTA。
-        print(f"【账本抽取】尾随异常（已忽略，过月时自动补跑）：{exc}\n")
+        # #1353 fold-in r5：欠账唯一处理路=过月内部 drain；禁玩家可见技术提示。
+        pass
 
 
 def minister_chat(session: GameSession, character: Character) -> str:

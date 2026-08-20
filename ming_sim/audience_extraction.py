@@ -842,32 +842,20 @@ def catch_up_pending_extractions(
     night_id: Optional[int] = None,
     extractor_agent: Any = None,
     allow_closing: bool = False,
-    on_event=None,
 ) -> Dict[str, Any]:
     """补跑普通抽取：对已持久化但账未抽（''/'pending'）的回话逐轮尽力补跑（ADR 0036）。
 
     **从不抛**——补跑失败不锁档（AC8）。只补 story/presence，不触发夜级 endorsement batch。
     allow_closing 仅 close_night ordinary drain 显式开启。
-    #1312：可选 on_event(kind, data) 推既有 stage 形分段进度（与 settle on_event 同款）。
+    #1353 fold-in r5：欠账只在内部处理——不推玩家可见 stage/SSE/CLI 进度。
     """
     rows = db.list_unextracted_replies(night_id=night_id)
     extracted = 0
     pending = 0
-    total = len(rows)
-
-    def _emit(kind: str, data: str) -> None:
-        if on_event is None:
-            return
-        try:
-            on_event(kind, data)
-        except Exception:  # noqa: BLE001 — 进度回调失败不得阻断补跑
-            pass
 
     # Source turns are semantically ordered: later turns consume already-settled
     # presence/ledger. Cross-turn catch-up therefore stays serial.
-    for index, row in enumerate(rows, start=1):
-        minister = str(row.get("minister_name") or "") or "臣工"
-        _emit("stage", f"补写召对账本（{index}/{total}）·{minister}")
+    for row in rows:
         result = run_extraction_for_turn(
             db=db,
             minister_name=str(row.get("minister_name") or ""),
@@ -899,14 +887,13 @@ def drain_pending_before_close(
     write_gate: threading.Lock,
     night_id: int,
     extractor_agent: Any = None,
-    on_event=None,
 ) -> None:
     """收夜是史实书写边界（ADR 0036）：收夜前强制同步补跑普通待补一次。
 
     仍有待补 → **失败单源**（LLMUnavailable / CLI_RUNNER_PLAYER_MESSAGE）；
     玩家重按过月=重试整段。不含 endorsement batch。
     close-owned：显式 allow_closing，使 CLOSING 下 ordinary residue 可落账。
-    on_event：过月流式进度；补跑 stage 并入同一进度面（#1353 fold-in）。
+    #1353 fold-in r5：内部静默补跑，不透传玩家可见进度。
     """
     from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
 
@@ -917,7 +904,6 @@ def drain_pending_before_close(
         night_id=int(night_id),
         extractor_agent=extractor_agent,
         allow_closing=True,
-        on_event=on_event,
     )
     remaining = db.count_pending_story_extractions(night_id=int(night_id))
     if remaining > 0:
