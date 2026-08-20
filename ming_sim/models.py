@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from ming_sim.constants import (
     ARMY_FIELD_ALIASES,
@@ -348,8 +348,8 @@ CLAUDE_DEFAULT_MODEL = "claude-opus-4-8"
 CLI_DEFAULT_TIMEOUT_SECONDS = 300.0  # CLI 子进程默认超时（秒），与 API 的 timeout_seconds 区分
 MINISTER_CHAT_CLI_TIMEOUT_SECONDS = 90.0  # 实时召对大臣回话专用短超时（#353），与月末结算 300s 解耦
 VALID_CHANNELS = frozenset({"api", "cli"})  # 合法执行通道集合，新增通道只改这里
-API_DEFAULT_MAX_TOKENS = 8000  # API 通道默认 max_tokens 单一真源（#58）
 API_DEFAULT_TIMEOUT_SECONDS = 180.0  # API 请求默认超时（秒）单一真源（#58）
+# max_tokens：None/0/缺省 = 不发该参数，取提供商官方上限（owner 2026-08-20：删 8000 默认灌注）
 
 
 @dataclass
@@ -357,7 +357,7 @@ class LLMConfig:
     api_key: str
     base_url: str
     model: str
-    max_tokens: int = API_DEFAULT_MAX_TOKENS
+    max_tokens: Optional[int] = None
     timeout_seconds: float = API_DEFAULT_TIMEOUT_SECONDS
     thinking_level: str = ""  # 空=沿用旧逻辑；否则原样传给 reasoning_effort
     advanced_model: str = ""  # 空=fallback model；非空=推演/打分专用更强模型（如 deepseek-reasoner / gpt-5）
