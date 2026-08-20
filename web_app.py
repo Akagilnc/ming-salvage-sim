@@ -3173,8 +3173,10 @@ def _exit_settlement_display_on_failure(game, *, blocking: bool = False) -> None
 def _await_audience_inflight_clear(game) -> None:
     """#498 AC10：颁诏/退朝入口在抢 write_gate **之前**先 gate-free 等本夜在飞回话落档，
     让回话 epilogue 抢得 gate 落库；清空后再持 gate 收夜（resolve_turn/advance 传
-    inflight_wait_s=0.0 即时复查），避免持 gate 轮询自锁。无开夜 → no-op；超时抛
-    AudienceNightError（夜保持开、可原地重试，端点映射 409）。
+    inflight_wait_s=0.0 即时复查），避免持 gate 轮询自锁。无开夜 → no-op。
+
+    #1353 K10a：消费既有 chat turn/worker 终态续跑，不按 elapsed 伪造 409；
+    工人干完即放行（一次点击自动续跑）。
 
     走 game.db seam（与 _start_chat_turn 同 idiom：无 conn 的测试替身直接跳过）。
 
@@ -4544,8 +4546,9 @@ async def api_delete_directive(directive_id: int) -> Dict[str, Any]:
 def api_advance_without_edict(
     body: AdvanceWithoutEdictRequest = AdvanceWithoutEdictRequest(),
 ) -> Dict[str, Any]:
-    # #498 AC10：内部 _await_audience_inflight_clear 可同步阻塞至多 30s 等在飞回话落档。
-    # 用同步 def 交给 FastAPI threadpool 跑，绝不在 async event loop 上跑同步 sleep（会冻结全服务）。
+    # #498 AC10 / #1353 K10a：内部 _await_audience_inflight_clear 同步等在飞回话终态
+    # （消费工人终态，不按 elapsed 伪造 409）。用同步 def 交给 FastAPI threadpool，
+    # 绝不在 async event loop 上跑同步 sleep（会冻结全服务）。
     game = get_game()
     turn_before = int(getattr(game.state, "turn", 0) or 0)
     failed_before = _failed_secret_order_ids_for_turn(game, turn_before)
@@ -4641,8 +4644,9 @@ def _reject_stale_month_token(game, expected_turn: Optional[int], *, token_label
 def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> Dict[str, Any]:
     """非流式颁诏（保留兼容）。前端默认走 /api/decree/issue/stream。
 
-    同步 def：内部 _await_audience_inflight_clear + resolve_turn 是阻塞同步调用（含至多 30s
-    在飞等待），交给 FastAPI threadpool，不冻结 async event loop。"""
+    同步 def：内部 _await_audience_inflight_clear + resolve_turn 是阻塞同步调用
+    （等在飞回话工人终态；#1353 K10a 不按 elapsed 造 409），交给 FastAPI threadpool，
+    不冻结 async event loop。"""
     game = get_game()
     was_ended = bool(game.state.ended)
     turn_before = int(getattr(game.state, "turn", 0) or 0)
