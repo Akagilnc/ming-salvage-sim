@@ -1329,8 +1329,17 @@ def _invalid_participant_names_from_error(exc: BaseException) -> List[str]:
 
 
 def _person_ids_from_extract_result(result: Dict[str, Any]) -> List[str]:
-    """单条/批抽结果中的人物 character_id（保序去重）。"""
+    """单条/批抽结果中的人物 character_id + delegator_id（保序去重）。
+
+    除名闸 prior/new 必须把委派人算进同一键空间：只收 character_id 会让
+    「委派人抄写纠错」被误判 removal_only，或让合法委派人被静默抹掉。
+    """
     ids: List[str] = []
+
+    def _take(raw: Any) -> None:
+        name = str(raw or "").strip()
+        if name and name not in ids:
+            ids.append(name)
 
     def _absorb(roster: Any) -> None:
         if not isinstance(roster, list):
@@ -1338,9 +1347,8 @@ def _person_ids_from_extract_result(result: Dict[str, Any]) -> List[str]:
         for item in roster:
             if not isinstance(item, dict):
                 continue
-            cid = str(item.get("character_id") or "").strip()
-            if cid and cid not in ids:
-                ids.append(cid)
+            _take(item.get("character_id"))
+            _take(item.get("delegator_id") or item.get("delegator"))
 
     if "participant_roster" in result:
         _absorb(result.get("participant_roster"))
