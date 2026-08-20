@@ -30,21 +30,16 @@ import re
 import sys
 import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from contextlib import ExitStack
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
-from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-
-from agno.db.sqlite import SqliteDb
 
 from ming_sim.agents import bind_content as bind_agent_content
 from ming_sim.content import GameContent
 from ming_sim.context import bind_content
 from ming_sim.db import GameDB
-import ming_sim.decree as decree_mod
 from ming_sim.decree import (
     build_promulgation_judge_context,
     llm_promulgation_verdicts,
@@ -58,7 +53,6 @@ from ming_sim.cli_backend import (
     require_fresh_cli_trace,
 )
 from ming_sim.issues import bind_content as bind_issue_content
-import ming_sim.memories as memories_mod
 from ming_sim.models import Character, LLMConfig
 from ming_sim.session import GameSession
 
@@ -222,98 +216,75 @@ def _p4_scan(label: str, text: str) -> dict:
     }
 
 
-def _first_month_gazette_via_normal_settle(
-    db: GameDB, state, content: GameContent,
-) -> str:
-    """#1356 P-5 邸报臂：经既有正常首月结算路径取非空真实 report。
+def _auto_complete_hitl(session: GameSession, *, round_cap: int = 8):
+    """真实结算若出 HITL，自动选第一项续跑至非 awaiting（与 agy_turn_probe 同形）。"""
+    result = session.advance_without_decree()
+    rounds = 0
+    while result is not None and getattr(result, "awaiting", False):
+        rounds += 1
+        if rounds > round_cap:
+            raise RuntimeError(
+                f"first-month settle HITL exceeded round_cap={round_cap}"
+            )
+        decisions = session.pending_decisions()
+        choices = []
+        for d in sorted(decisions, key=lambda x: int(x["idx"])):
+            opts = d.get("options") or []
+            pick = opts[0] if opts else {}
+            label = pick.get("label", "") if isinstance(pick, dict) else str(pick)
+            hint = pick.get("hint", "") if isinstance(pick, dict) else ""
+            choices.append({"label": label, "hint": hint})
+        report = session.submit_decisions(choices)
+        result = type("R", (), {"awaiting": False, "report": report})()
+    return result
 
-    不恢复 seed/固定模板；结算失败或空报 → 返回空串（空不计过）。
+
+def _first_month_gazette_via_production_settle(
+    session: GameSession,
+) -> str:
+    """#1356 P-5 邸报臂：生产 GameSession 首月 advance_without_decree 落库 turn_report。
+
+    不 mock simulator/extractor/memory；不 GameSession.__new__；不自造 narrative。
+    结算失败或空报 → 返回空串（空不计过；不恢复 seed/固定模板）。
     须在种植 proposed 案卷之前调用（否则结算会再进颁布判官）。
     """
-    closed_turn = int(state.turn)
-    # 已有真实报则直接用（幂等；禁再 seed）
+    db = session.db
+    closed_turn = int(session.state.turn)
     existing = str(db.get_turn_report(closed_turn) or "").strip()
     if existing:
         return existing
 
-    narrative = (
-        f"天启七年十月邸报\n\n"
-        f"一、边事自演。辽饷催征，流寇未息。——族尾首月真结算 sample"
-    )
-
-    def _canned_sim(*_a, **k):
-        return narrative, k.get("simulator_payload") or {}
-
     try:
-        with ExitStack() as stack:
-            stack.enter_context(patch.object(
-                decree_mod, "create_season_simulator_agent", lambda *a, **k: None,
-            ))
-            stack.enter_context(patch.object(
-                decree_mod, "simulate_season_with_payload", _canned_sim,
-            ))
-            stack.enter_context(patch.object(
-                decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None,
-            ))
-            stack.enter_context(patch.object(
-                decree_mod, "create_score_extractor_module_agent",
-                lambda *a, **k: object(),
-            ))
-            stack.enter_context(patch.object(
-                decree_mod, "extract_scores_by_modules_with_agno",
-                lambda *a, **k: ({}, "out", "in"),
-            ))
-            stack.enter_context(patch.object(
-                decree_mod, "create_chapter_memory_agent", lambda *a, **k: None,
-            ))
-            stack.enter_context(patch.object(
-                memories_mod, "run_agent_text",
-                lambda *a, **k: '{"body":"月记","tags":[]}',
-            ))
-
-            session = GameSession.__new__(GameSession)
-            session.db = db
-            session.state = state
-            session.content = content
-            session.registry = session.llm_config = session.agno_db = None
-            session.deaths_this_turn = []
-            session.debuts_this_turn = []
-            session.last_decree = session.last_report = ""
-            session._decree_draft_fingerprint = ()
-            session._scene_registry = type(
-                "_NoScene", (), {"active_turn_ids": lambda self: []},
-            )()
-            session._beat_generator = None
-            session.auto_save = lambda *a, **k: None
-            result = session.advance_without_decree()
-            if result is None or getattr(result, "awaiting", False):
-                _LOG.warning(
-                    "first-month settle awaiting/None; gazette arm stays empty",
-                )
-                return ""
+        result = _auto_complete_hitl(session)
+        if result is None:
+            _LOG.warning("first-month settle returned None; gazette arm stays empty")
+            return ""
     except Exception:  # noqa: BLE001 — 空不计过；臂失败不拖垮整样
         _LOG.exception("first-month settle failed; gazette arm stays empty")
         return ""
 
+    # 唯一真源：落库 turn_report（closed_turn）；禁用内存 last_report 冒充。
     return str(db.get_turn_report(closed_turn) or "")
 
 
 def _run_sample(index: int, root: str, content: GameContent, cfg: LLMConfig) -> dict:
     sample_dir = Path(root) / str(index)
     sample_dir.mkdir()
-    db = GameDB(str(sample_dir / "game.db"), content)
+    # 生产 GameSession：既有 LLMConfig 驱动完整结算链（非 __new__ 伪装配）。
+    session = GameSession(str(sample_dir / "game.db"), cfg, content=content)
+    db = session.db
     try:
-        db.seed_static_data()
-        state = db.load_state()
+        session.begin_turn()
+        state = session.state
         # Low authority so resistance is on the table.
         state.metrics["皇威"] = 15
         db.save_state(state)
 
-        # P-5 邸报原料：开局无 seed 后，经正常首月结算路径先落非空真实 report。
+        # P-5 邸报原料：开局无 seed 后，经生产首月结算缝先落非空真实 report。
         # 必须在种植 proposed 案卷之前（否则结算会再进颁布判官）。
-        first_month_gazette = _first_month_gazette_via_normal_settle(
-            db, state, content,
-        )
+        first_month_gazette = _first_month_gazette_via_production_settle(session)
+        # 结算推进后从 DB 重读 state（turn 已 +1）。
+        state = db.load_state()
 
         cabinet_name = f"候补阁僚-{index}"
         bare_name = f"白身巡抚-{index}"
@@ -362,8 +333,8 @@ def _run_sample(index: int, root: str, content: GameContent, cfg: LLMConfig) -> 
         if index % 4 in (1, 2):
             order.reverse()
         rows = [rows_by_id[i] for i in order]
-        agno = SqliteDb(db_file=str(sample_dir / "agno.db"))
-        context, verdicts = _judge_batch(db, state, rows, cfg, agno)
+        # 与生产结算共用 session.agno_db（禁另起旁路 agno 伪库）。
+        context, verdicts = _judge_batch(db, state, rows, cfg, session.agno_db)
         by_id = {int(v["dossier_id"]): v for v in verdicts}
 
         # Apply verdicts so force / stigma / costs can be exercised on structured path.
@@ -490,13 +461,13 @@ def _run_sample(index: int, root: str, content: GameContent, cfg: LLMConfig) -> 
         )
         p4_memorial = _p4_scan("密奏memorial", memorial_blob)
 
-        # 3) 邸报：#1356 经正常首月结算路径取得的非空真实 report（空不计过；不恢复 seed）
+        # 3) 邸报：#1356 生产首月结算落库 turn_report（空不计过；不恢复 seed/固定模板）
         gazette_blob = str(first_month_gazette or "")
         if not gazette_blob.strip():
-            # 回读结算落库；仍空则 _p4_scan 计不过
+            # 回读落库；仍空则 _p4_scan 计不过（不放宽）
             reports = db.list_turn_reports() if hasattr(db, "list_turn_reports") else []
             gazette_blob = str((reports[-1]["report"] if reports else "") or "")
-            if not gazette_blob.strip():
+            if not gazette_blob.strip() and int(state.turn) > 0:
                 gazette_blob = str(db.get_turn_report(int(state.turn) - 1) or "")
         p4_gazette = _p4_scan("邸报gazette", gazette_blob)
 
@@ -575,7 +546,7 @@ def _run_sample(index: int, root: str, content: GameContent, cfg: LLMConfig) -> 
             "detail": detail,
         }
     finally:
-        db.close()
+        session.close()
 
 
 def main() -> int:
@@ -609,13 +580,24 @@ def main() -> int:
             for line in trace_path.read_text(encoding="utf-8").splitlines()
             if line.strip()
         ]
-        # Acceptance gate: one judge call per sample → trace count == samples.
-        if len(trace_records) != args.samples or any(
-            record.get("error") is not None for record in trace_records
-        ):
+        # #1356 r4 诚实契约：真实首月结算会追加 simulator/extractor/chapter_memory
+        # 等多条 TRACE，不再要求 length == samples。
+        # 仍钉：全部无 error；颁布判官每 sample 恰 1 条。
+        errored = [r for r in trace_records if r.get("error") is not None]
+        if errored:
             raise RuntimeError(
-                f"expected {args.samples} successful raw trace records; "
-                f"got {len(trace_records)}"
+                f"raw trace has {len(errored)} error record(s) "
+                f"(total={len(trace_records)})"
+            )
+        judge_traces = [
+            r for r in trace_records
+            if "颁布判官" in str(r.get("prompt") or "")
+            or str(r.get("tag") or "") in {"promulgation-judge", "promulgation_judge"}
+        ]
+        if len(judge_traces) != args.samples:
+            raise RuntimeError(
+                f"expected {args.samples} promulgation-judge trace(s); "
+                f"got {len(judge_traces)} (total traces={len(trace_records)})"
             )
     else:
         trace_records = []
@@ -654,7 +636,11 @@ def main() -> int:
                 ),
                 "p4_faces": "邸报 gazette / 密奏 memorial / 召对 brief — real products",
             },
-            "trace_contract": f"raw_cli_trace length == samples ({args.samples})",
+            "trace_contract": (
+                f"cli: all traces error-free ∧ promulgation-judge count == samples "
+                f"({args.samples}); settlement simulator/extractor/... extras allowed "
+                f"(no longer length == samples)"
+            ),
         },
         "summary": {
             "samples": args.samples,
@@ -668,10 +654,13 @@ def main() -> int:
             "辞让 (execution degraded/failed) path requires full execution Judge after force; "
             "this gate primarily locks the promulgation reject+layer arm of P-3 for cabinet.",
             "Force errors are logged and count as failed checks (no silent swallow).",
-            "P4 邸报 arm: #1356 后开局无 seed；经既有正常首月结算路径 "
-            "(advance_without_decree / system_simulation) 取非空真实 turn_report 再扫，"
-            "空不计过、不恢复 seed/固定模板。密奏=dossier progress；召对=referenceable brief。"
+            "P4 邸报 arm: #1356 后开局无 seed；经生产 GameSession 首月 "
+            "advance_without_decree / system_simulation 结算缝取落库 turn_report 再扫，"
+            "空不计过、不恢复 seed/固定模板、不 mock simulator。"
+            "密奏=dossier progress；召对=referenceable brief。"
             "Live minister dialogue prose is not re-run here.",
+            "CLI trace: real first-month settle emits extra simulator/extractor traces; "
+            "contract pins judge-count == samples and zero errors, not total length.",
         ],
         "samples": samples,
         "raw_cli_trace": trace_records,
