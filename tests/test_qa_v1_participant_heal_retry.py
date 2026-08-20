@@ -268,6 +268,56 @@ def test_capture_correction_keeps_prior_valid_heals(game, monkeypatch):
     assert dv.id > 0
 
 
+def test_capture_correction_alias_prior_valid_heals(game, monkeypatch):
+    """首抽合法侧为 content 真 alias → 纠错轮回规范名+替换 → 须自愈落库。
+
+    复现 r3 生/熟键错位：prior=「毕尚书」 validated=「毕自严」时
+    不得因 alias⊄canon 误 escalate。
+    """
+    import ming_sim.cli_backend as cli_backend
+
+    db, state, content = game
+    ch = _biziyan(content)
+    aliases = [
+        str(a).strip()
+        for a in (getattr(ch, "aliases", None) or [])
+        if str(a).strip() and str(a).strip() != ch.name
+    ]
+    assert aliases, "夹具毕自严须带真实 aliases（禁硬编码假别名）"
+    alias = aliases[0]
+    replacement = _active_minister(db, content).name
+    text = f"着不存在之人甲与{alias}核拨辽饷"
+    calls: list[str] = []
+
+    def backend(prompt, *_a, tag="", **_k):
+        calls.append(prompt)
+        if _CORRECTION_MARK in prompt:
+            # 纠错轮：未知人→在册替换；alias→规范名
+            person = [ch.name, replacement]
+        else:
+            person = ["不存在之人甲", alias]
+        return (json.dumps(_ok_payload(person=person), ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
+    payload = cli_backend.capture_manual_directive_payload(
+        text, None, db=db, content=content,
+    )
+    ids = [str(i["character_id"]) for i in (payload.get("participant_roster") or [])]
+    assert ch.name in ids
+    assert replacement in ids
+    assert alias not in ids or alias == ch.name
+    assert "不存在之人甲" not in ids
+    assert len(calls) == 2
+
+    session = GameSession.__new__(GameSession)
+    session.db = db
+    session.state = state
+    session.llm_config = None
+    session.content = content
+    dv = session.add_directive(text, dossier_payload=payload)
+    assert dv.id > 0
+
+
 def test_capture_heal_retry_bounded(game, monkeypatch):
     """重试上界：持续吐无效名 → 有界次后戏内回禀；调用次数有上界。"""
     import ming_sim.cli_backend as cli_backend
