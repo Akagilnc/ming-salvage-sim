@@ -309,9 +309,12 @@ def create_llm_beat_generator(llm_config: Any) -> BeatGenerator:
             "人物感知的朝局张力": inputs.court_tension,
             "此前入殿与奏对": inputs.prior_appearances,
             "此前殿上公开之事": inputs.public_layer,
-            # #1294：当期权威年号 in-world 特征（open/enter 由 assemble 喂入）
-            "当期年月": inputs.reign_period_label,
         }
+        # #1294/#1313 r4b：仅 open/enter 且 label 非空时发射「当期年月」；
+        # exit/close（及空 label）不加入该键，避免越界空键。
+        label = str(inputs.reign_period_label or "").strip()
+        if inputs.beat_kind in (BEAT_OPEN, BEAT_ENTER) and label:
+            materials["当期年月"] = label
         return extract_agent_text(agent.run(json.dumps(materials, ensure_ascii=False)))
 
     return generate
