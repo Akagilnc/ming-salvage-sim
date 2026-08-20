@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from ming_sim.audience_night import (
@@ -385,12 +386,78 @@ def _release_single_flight(key: tuple[Any, ...], owner: threading.Lock) -> None:
             _single_flight_ownership.pop(key, None)
 
 
+# #1353：收夜 OPEN 期有限 join 预算（与 wait_in_flight 同量级；不另起状态机）。
+DEFAULT_EXTRACT_JOIN_S = 30.0
+
+
+def _join_single_flight(key: tuple[Any, ...], timeout_s: float) -> bool:
+    """有限 join 在飞 owner：不启动工作、不建 Future。
+
+    True = 无 owner 或 owner 已在时限内结束（调用方须重读 DB 真源）。
+    False = 超时仍在飞。超时路径不得 pop 仍持锁 owner 的槽。
+    """
+    with _single_flight_guard:
+        slot = _single_flight_ownership.get(key)
+        if slot is None:
+            return True
+        owner = slot[0]
+        slot[1] += 1
+    acquired = False
+    try:
+        acquired = bool(owner.acquire(timeout=max(0.0, float(timeout_s))))
+        return acquired
+    finally:
+        if acquired:
+            _release_single_flight(key, owner)
+        else:
+            with _single_flight_guard:
+                slot = _single_flight_ownership.get(key)
+                if slot is not None and slot[0] is owner:
+                    slot[1] -= 1
+                    # owner 仍在飞时 ref 至少为 1；仅当我们是最后旁观者且槽已空才 pop
+                    if slot[1] <= 0:
+                        _single_flight_ownership.pop(key, None)
+
+
 def _turn_flight_key(db: Any, chat_turn_id: int) -> tuple[Any, ...]:
     return ("turn", id(db), int(chat_turn_id))
 
 
 def _night_flight_key(db: Any, night_id: int) -> tuple[Any, ...]:
     return ("night", id(db), int(night_id))
+
+
+def join_pending_turn_extractions(
+    db: Any,
+    *,
+    night_id: int,
+    timeout_s: float | None = None,
+) -> None:
+    """#1353 OPEN 期汇合普通抽取：对 list_unextracted 各轮 single-flight owner 有限 join。
+
+    只作 join 信号；结果只读 `chat_turns.extract_status`（调用方/drain 重读）。
+    不启动新抽取、不建 Future/第二欠账表。超时不抛——真欠账由后续 drain fail-closed。
+    """
+    if timeout_s is None:
+        timeout_s = DEFAULT_EXTRACT_JOIN_S
+    if not hasattr(db, "list_unextracted_replies"):
+        return
+    rows = db.list_unextracted_replies(night_id=int(night_id)) or []
+    if not rows:
+        return
+    deadline = time.monotonic() + max(0.0, float(timeout_s))
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        cid = int(row.get("chat_turn_id") or 0)
+        if cid <= 0:
+            continue
+        if hasattr(db, "get_story_extract_status") and db.get_story_extract_status(cid) == "done":
+            continue
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        _join_single_flight(_turn_flight_key(db, cid), remaining)
 
 
 def _is_endorsement_bound(db: Any, night_id: int) -> bool:
