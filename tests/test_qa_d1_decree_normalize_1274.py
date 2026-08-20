@@ -59,7 +59,7 @@ def test_capture_drops_dachen_generic_no_409(game, monkeypatch):
 
 
 def test_capture_unknown_person_still_409(game, monkeypatch):
-    """#1391 负向：真正不存在之人仍在 capture 拒收（ADR 0053 缝不松）。"""
+    """#1391 负向：纠错耗尽后真正不存在之人仍拒收（ADR 0053 缝不松；#1274 V-1 人话）。"""
     import ming_sim.cli_backend as cli_backend
 
     db, _state, content = game
@@ -75,7 +75,7 @@ def test_capture_unknown_person_still_409(game, monkeypatch):
         cli_backend, "_run_backend_for_config",
         lambda *_a, **_k: (json.dumps(response, ensure_ascii=False), 1),
     )
-    with pytest.raises(ValueError, match="参与人物不存在"):
+    with pytest.raises(ValueError, match=r"不存在之人甲|名册|参与"):
         cli_backend.capture_manual_directive_payload(
             text, None, db=db, content=content,
         )

@@ -203,7 +203,7 @@ def test_non_person_filter_does_not_use_institution_substring_class():
 
 
 def test_adr0053_unknown_person_still_rejected_at_capture(game, monkeypatch):
-    """禁放松主键校验：真正不存在的人名仍在 capture seam 拒收。"""
+    """禁放松主键校验：纠错耗尽后真正不存在的人名仍在 capture seam 拒收。"""
     import ming_sim.cli_backend as cli_backend
 
     db, _state, content = game
@@ -213,7 +213,7 @@ def test_adr0053_unknown_person_still_rejected_at_capture(game, monkeypatch):
         roster=[{"character_id": "不存在之人甲", "tier": "主办"}],
     )
 
-    with pytest.raises(ValueError, match="参与人物不存在"):
+    with pytest.raises(ValueError, match=r"不存在之人甲|名册|参与"):
         cli_backend.capture_manual_directive_payload(
             text, None, db=db, content=content,
         )

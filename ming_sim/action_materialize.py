@@ -271,7 +271,10 @@ def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
 
 
 def _materialize_draft(ctx: MaterializeCtx) -> None:
-    from ming_sim.cli_backend import extract_draft_intent, resolve_directive_mode
+    from ming_sim.cli_backend import (
+        extract_draft_intent_with_roster_heal,
+        resolve_directive_mode,
+    )
 
     session = ctx.session
     minister_name = ctx.character.name
@@ -327,12 +330,13 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
         and ctx.candidate_kind_count > 1
     ):
         if "drafts" not in ctx.batch_state:
-            batch_res = extract_draft_intent(
+            batch_res = extract_draft_intent_with_roster_heal(
                 ctx.player_message,
                 ctx.reply,
                 llm_config=ctx.llm_config,
                 draft_count=ctx.candidate_kind_count,
                 content=getattr(session, "content", None),
+                db=session.db,
             )
             ctx.batch_state["drafts"] = list(batch_res.get("drafts") or [])
         drafts = ctx.batch_state["drafts"]
@@ -343,12 +347,13 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
             return
         draft_res = dict(batch_draft)
     else:
-        draft_res = extract_draft_intent(
+        draft_res = extract_draft_intent_with_roster_heal(
             ctx.player_message, ctx.reply, llm_config=ctx.llm_config,
             has_pending_draft=has_existing_draft,
             existing_draft_text=existing_draft_text,
             existing_candidates=dir_candidates or None,
             content=getattr(session, "content", None),
+            db=session.db,
         )
         if intent is not None and intent_kind == "draft" and not has_existing_draft:
             # #515 的并行 classifier 已经确定“拟旨”，大臣回话仍是正文真源；
