@@ -376,9 +376,12 @@ def test_real_web_stream_pending_commit_traces_only_confirmed_visible_links(
     runtime.session = Session()
     runtime.chat_history = {name: [] for name in content.characters}
     runtime.suggestions_for = lambda _character: []
-    runtime._drain_cond = threading.Condition()
-    runtime._pending_writes_count = 0
-    runtime._draining = False
+    from ming_sim.session_write_queue import SessionWriteQueue
+    runtime._write_queue = SessionWriteQueue()
+    runtime._write_gate = runtime._write_queue.write_gate
+    runtime._runtime_write_queue = lambda: runtime._write_queue  # type: ignore
+    runtime._mark_pending_write = lambda key=None: runtime._write_queue.claim(key=key or ("pending",))  # type: ignore
+    runtime._complete_pending_write = lambda ticket=None: runtime._write_queue.complete(ticket)  # type: ignore
     runtime._trail_extraction_after_reply = lambda *_args, **_kwargs: None
     runtime._trail_mindreading_after_reply = lambda *_args, **_kwargs: None
 

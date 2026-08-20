@@ -385,7 +385,6 @@ def test_web_issue_entry_exposes_settlement_display(game, monkeypatch):
     runtime.session.last_decree = "诏曰测试"
     runtime.refresh_turn = lambda: None
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
-    monkeypatch.setattr(web_app, "_await_audience_inflight_clear", lambda *_a, **_k: None)
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
     monkeypatch.setattr(web_app, "_game_write_gate", _null_cm)
     monkeypatch.setattr(web_app, "_failed_secret_order_ids_for_turn", lambda *_a, **_k: set())
@@ -430,7 +429,6 @@ def test_web_advance_entry_exposes_settlement_display(game, monkeypatch):
 
     runtime.session.advance_without_decree = _observe_then_done
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
-    monkeypatch.setattr(web_app, "_await_audience_inflight_clear", lambda *_a, **_k: None)
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
     monkeypatch.setattr(web_app, "_serialized_web_write", _null_cm)
     monkeypatch.setattr(web_app, "_failed_secret_order_ids_for_turn", lambda *_a, **_k: set())

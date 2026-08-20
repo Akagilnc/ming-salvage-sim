@@ -83,6 +83,11 @@ from ming_sim.audience_extraction import (
     catch_up_pending_extractions,
     trail_extraction_after_reply,
 )
+from ming_sim.session_write_queue import (
+    SessionWriteQueue,
+    WriteTicket,
+    get_session_write_queue,
+)
 from ming_sim.token_stats import tlog
 from ming_sim.skills import available_skill_ids, skill_display_name, skill_source_labels
 from ming_sim.context import match_minister_from_text
@@ -675,15 +680,11 @@ class WebGame:
         _stage("载入上次进度...")
         self.session = GameSession(db_path, llm_config)
         # #542：Web/CLI/收夜共用 session 持有的真实 scene LLM adapter；测试可在此 seam 注入 fake。
-        self._write_gate = threading.Lock()
-        # #1353：session 口令收夜与颁诏 auto_close 同穿既有 runtime write_gate（禁第二锁）。
+        # #1353：per-session 单写者票据队列 = 唯一写点；write_gate 并入队列执行器。
+        self._write_queue: SessionWriteQueue = get_session_write_queue(self.session)
+        self._write_gate = self._write_queue.write_gate
         self.session._write_gate = self._write_gate  # type: ignore[attr-defined]
-        # #396 Gap B: 排队等 gate 的旧召对 worker 计数 + 条件变量。
-        # drain 须等计数归零（所有排队 worker 跑完）再关连接——否则只等当前持锁者，
-        # drain 抢下一轮 acquire 后关 session，排队 worker 永不跑或写 closed DB。
-        self._drain_cond = threading.Condition()
-        self._pending_writes_count = 0
-        self._draining = False
+        self.session._write_queue = self._write_queue  # type: ignore[attr-defined]
         # #1235 r4：点即入入口 in-flight 计数——accept 后 gate-free 窗锁闲≠孤儿；
         # 非创建者 exit 仅当无其他入口仍在办时才可清（见 _begin/_end_settlement_entry）。
         self._settlement_entry_lock = threading.Lock()
@@ -793,8 +794,17 @@ class WebGame:
     def _rebuild_session(self, llm_config: LLMConfig) -> None:
         """用新 llm_config（或换完 DB 后）重建 GameSession + 内存缓存。"""
         self.session = GameSession(self.db_path, llm_config)
-        # 换档后仍共享既有 runtime write_gate（#1353 口令收夜穿锁）。
-        self.session._write_gate = self._runtime_write_gate()  # type: ignore[attr-defined]
+        # 换档后仍共享既有 runtime 队列 / write_gate（#1353 口令收夜穿锁）。
+        q = getattr(self, "_write_queue", None)
+        if not isinstance(q, SessionWriteQueue):
+            q = get_session_write_queue(self.session)
+            self._write_queue = q
+            self._write_gate = q.write_gate
+        else:
+            # 新 session 挂上既有队列（不断开在途 barrier 语义；换档前应已 drain）。
+            self.session._write_queue = q  # type: ignore[attr-defined]
+            self.session._write_gate = q.write_gate  # type: ignore[attr-defined]
+            self._write_gate = q.write_gate
         self.session.begin_turn()
         self.chat_history = {name: [] for name in self.session.content.characters}
         for name, msgs in self.db.load_all_chat_history().items():
@@ -995,36 +1005,30 @@ class WebGame:
     def last_report(self) -> str:
         return self.session.last_report
 
+    def _runtime_write_queue(self) -> SessionWriteQueue:
+        return get_session_write_queue(self)
+
     def _runtime_write_gate(self) -> threading.Lock:
-        gate = getattr(self, "_write_gate", None)
-        if gate is None:
-            gate = threading.Lock()
-            self._write_gate = gate
-        return gate
+        return self._runtime_write_queue().write_gate
 
-    def _mark_pending_write(self) -> bool:
-        """#396 Gap B: 标记一个即将抢 write_gate 的流式召对 worker。
-        drain 须等所有已标记 worker 完成才关连接——否则排队等 gate 的 worker
-        会被 drain 抢下一轮 acquire 后关连接饿死。"""
-        cond = getattr(self, "_drain_cond", None)
-        if cond is None:
-            return True
-        with cond:
-            if getattr(self, "_draining", False):
-                return False
-            self._pending_writes_count = getattr(self, "_pending_writes_count", 0) + 1
-            return True
+    def _mark_pending_write(
+        self, key: Optional[Any] = None,
+    ) -> Optional[WriteTicket]:
+        """#1353：起跑领票。返回票据；队列已 seal（生命周期 drain）→ None 拒入。
 
-    def _complete_pending_write(self) -> None:
-        cond = getattr(self, "_drain_cond", None)
-        if cond is None:
-            return
-        with cond:
-            count = getattr(self, "_pending_writes_count", 0)
-            if count > 0:
-                self._pending_writes_count = count - 1
-            if self._pending_writes_count == 0:
-                cond.notify_all()
+        队列长度即在途事实来源；调用方须在 finally 里 _complete_pending_write(ticket)。
+        key 用于撤回轮 cancel（ADR 0038）——尾随建议 key=("turn", chat_turn_id)。
+        """
+        return self._runtime_write_queue().claim(key=key if key is not None else ("pending",))
+
+    def _complete_pending_write(self, ticket: Optional[WriteTicket] = None) -> None:
+        """释放领票（成功/失败/空放行同形）。"""
+        self._runtime_write_queue().complete(ticket)
+
+    @property
+    def _pending_writes_count(self) -> int:
+        """兼容只读：队列在途票据数（旧 counter 名，事实来源=队列）。"""
+        return int(self._runtime_write_queue().inflight_count())
 
     def refresh_turn(self) -> None:
         self.session.begin_turn()
@@ -1646,8 +1650,14 @@ class WebGame:
             raise HTTPException(status_code=409, detail="只能撤回全局最后一轮召对。")
         if not row.get("user_message_id") or not row.get("minister_message_id"):
             raise HTTPException(status_code=409, detail="该召对尚未完整完成，不能撤回。")
+        # #1353 / ADR 0038：撤回轮取消其在飞票据（空放行、不复活写库）。
+        turn_id = int(row["id"])
         try:
-            undone = self.db.undo_chat_turn(int(row["id"]))
+            self._runtime_write_queue().cancel_key(("turn", turn_id))
+        except Exception:
+            pass
+        try:
+            undone = self.db.undo_chat_turn(turn_id)
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from None
         # P1-2：撤回若删了已 commit 的对话草案，作废已生成的诏书正文（last_decree），
@@ -1785,10 +1795,11 @@ class WebGame:
         # 锁前查仅为快速失败；权威判定须在持 gate 后、建任何 chat turn/开夜/写库之前复查——
         # 否则 SUMMONING 通过后等 gate 时被结算 worker 改成 AWAITING_DECISION/SETTLING，仍会开夜（TOCTOU）。
         self._reject_if_settlement_phase()
-        # 整轮（含 LLM 无锁窗 + epilogue）共用一次 pending ownership——对齐 chat_stream。
-        # #1291 卸到 threadpool 后事件循环可与回菜单/新局重叠；不标 pending 则 drain 当空闲
-        # 关连接，epilogue 落库打到已关连接。公开 chat 与持闸密令路共用 mark→try/finally complete。
-        if not self._mark_pending_write():
+        # 整轮（含 LLM 无锁窗 + epilogue）共用一次队列票据——对齐 chat_stream。
+        # #1291 卸到 threadpool 后事件循环可与回菜单/新局重叠；不领票则 barrier/drain
+        # 当空闲关连接，epilogue 落库打到已关连接。公开 chat 与持闸密令路共用 claim→finally complete。
+        pending_ticket = self._mark_pending_write()
+        if pending_ticket is None:
             raise HTTPException(
                 status_code=503,
                 detail="当前会话正在关闭，请回菜单重新进入。",
@@ -1862,8 +1873,9 @@ class WebGame:
                         self._trail_mindreading_after_reply,
                         (minister_name, answer_text, chat_turn_id),
                         "audience-p5-mindreading",
+                        ticket_key=("turn", int(chat_turn_id)),
                     )
-                    # #501：叙事抽取落账与读心并行尾随（各自 pending ownership，P5）。
+                    # #501：叙事抽取落账与读心并行尾随（各自队列票据，P5）。
                     self._spawn_extraction_trail(minister_name, answer_text, chat_turn_id)
                 # #544：非流式折进等待窗——判官以超时封顶后与回话同到；超时则空清单先行。
                 # 持闸路须把已持闸态传到判官写库缝，禁同线程二次 acquire 非可重入 Lock。
@@ -1910,7 +1922,7 @@ class WebGame:
                 )
             return payload
         finally:
-            self._complete_pending_write()
+            self._complete_pending_write(pending_ticket)
 
     def interrupted_reply_retries(self, minister_name: str) -> List[Dict[str, Any]]:
         """#505：某大臣重开后待重试的中断回话轮（问话已落、回话未落）——恢复提示取数。
@@ -1933,8 +1945,9 @@ class WebGame:
         accepted_turn = int(target["turn"])
         # #505 finding4：结算/亲裁相位不得重试召对（与 chat 同相位门，夜不跨月）。锁前快速失败。
         self._reject_if_settlement_phase()
-        # 与非流式 chat 同形：整轮 pending 覆盖 LLM 无锁窗 + epilogue，防 drain 当空闲关连接。
-        if not self._mark_pending_write():
+        # 与非流式 chat 同形：整轮票据覆盖 LLM 无锁窗 + epilogue，防 barrier/drain 当空闲关连接。
+        pending_ticket = self._mark_pending_write()
+        if pending_ticket is None:
             raise HTTPException(
                 status_code=503,
                 detail="当前会话正在关闭，请回菜单重新进入。",
@@ -1997,6 +2010,7 @@ class WebGame:
                         self._trail_mindreading_after_reply,
                         (minister_name, answer_text, chat_turn_id),
                         "audience-p5-mindreading",
+                        ticket_key=("turn", int(chat_turn_id)),
                     )
                     self._spawn_extraction_trail(minister_name, answer_text, chat_turn_id)
                 if message_id and answer_text:
@@ -2041,7 +2055,7 @@ class WebGame:
                 )
             return payload
         finally:
-            self._complete_pending_write()
+            self._complete_pending_write(pending_ticket)
 
     def mindreading_for_minister(
         self, minister_name: str, chat_turn_id: int = 0,
@@ -2530,15 +2544,16 @@ class WebGame:
         minister_reply: str,
         chat_turn_id: int,
         *,
-        owns_pending: bool = False,
+        pending_ticket: Optional[WriteTicket] = None,
+        owns_pending: bool = False,  # 旧形兼容；新路传 pending_ticket
     ) -> Optional[Dict[str, Any]]:
         """P5（#499）：回话 done 后在本 worker 内直接尾随读心（依赖回话、必串于其后）。
 
         读心是单一依赖任务、调用方随即等其结果——无需另起 executor/Future。回话已完成并
         落库（读心闸门=非空完整回话，喂真实 reply 而非问句）；写库走 runtime write_gate。
-        调用方必须已持 pending-write ownership；owns_pending=True 时本函数 finally 里 complete。
-        失败不回滚回话。
+        起跑已领票时传 pending_ticket，finally 空放行/完成。失败不回滚回话。
         """
+        del owns_pending  # 票据路径取代布尔 ownership
         try:
             reply = str(minister_reply or "")
             if not chat_turn_id or not reply.strip():
@@ -2573,8 +2588,8 @@ class WebGame:
                     pass
             return result if isinstance(result, dict) else None
         finally:
-            if owns_pending:
-                self._complete_pending_write()
+            if pending_ticket is not None:
+                self._complete_pending_write(pending_ticket)
 
     def _trail_highlight_judge_after_reply(
         self,
@@ -2625,13 +2640,15 @@ class WebGame:
         minister_reply: str,
         chat_turn_id: int,
         *,
-        owns_pending: bool = False,
+        pending_ticket: Optional[WriteTicket] = None,
+        owns_pending: bool = False,  # 旧形兼容
     ) -> Optional[Dict[str, Any]]:
         """#501：回话 done 后尾随叙事抽取落账（与读心并行——二者皆只依赖已完成回话，P5）。
 
         核在 `audience_extraction.trail_extraction_after_reply`（Web/CLI 共用）；本方法只
-        包 runtime write_gate + pending ownership。owns_pending=True 时 finally complete。
+        包 runtime write_gate + 队列票据。起跑领票经 pending_ticket 传入，finally 完成/空放行。
         """
+        del owns_pending
         try:
             return trail_extraction_after_reply(
                 db=self.db,
@@ -2642,28 +2659,33 @@ class WebGame:
                 write_gate=self._runtime_write_gate(),
             )
         finally:
-            if owns_pending:
-                self._complete_pending_write()
+            if pending_ticket is not None:
+                self._complete_pending_write(pending_ticket)
 
     def _spawn_pending_write_thread(
         self, target: Any, args: tuple, name: str,
+        *,
+        ticket_key: Optional[Any] = None,
     ) -> bool:
-        """标 pending 后交接 ownership 起后台线程（#396 Gap B 不变式：标了必收敛）。
-        `Thread.start()` 抛异常时补偿 `_complete_pending_write()` 再上抛，绝不泄漏
-        pending ownership 致 drain 永阻、关档/重置/加载挂死。pending 满载则不起、返 False。"""
-        if not self._mark_pending_write():
+        """起跑领票后交接票据起后台线程（#1353：标了必收敛）。
+
+        `Thread.start()` 抛异常时补偿 complete 再上抛，绝不泄漏票据致 barrier/drain 永阻。
+        队列 seal 则不起、返 False。
+        """
+        ticket = self._mark_pending_write(key=ticket_key)
+        if ticket is None:
             return False
         thread = threading.Thread(
             target=target,
             args=args,
-            kwargs={"owns_pending": True},
+            kwargs={"pending_ticket": ticket},
             daemon=True,
             name=name,
         )
         try:
             thread.start()
         except Exception:
-            self._complete_pending_write()
+            self._complete_pending_write(ticket)
             raise
         return True
 
@@ -2679,13 +2701,20 @@ class WebGame:
             self._trail_extraction_after_reply,
             (minister_name, str(minister_reply or ""), chat_turn_id),
             "audience-p5-extraction",
+            ticket_key=("turn", int(chat_turn_id)),
         )
 
-    def _run_startup_extraction_catch_up(self, *, owns_pending: bool = False) -> None:
+    def _run_startup_extraction_catch_up(
+        self,
+        *,
+        pending_ticket: Optional[WriteTicket] = None,
+        owns_pending: bool = False,
+    ) -> None:
         """重开补跑（ADR 0036）：已持久化回话但账未抽 → 补跑抽取，不回滚对话。
 
         `catch_up_pending_extractions` 从不抛——补跑失败标待补、不锁档，**永不进启动致命路径**。
         在后台线程跑，不阻塞存档加载。"""
+        del owns_pending
         try:
             catch_up_pending_extractions(
                 db=self.db,
@@ -2697,8 +2726,8 @@ class WebGame:
             # 但**留痕不静默**（窄捕 + log，账仍待补候下轮 drain/重试）。
             tlog(f"[audience-extraction] 启动补跑意外故障（不锁档、已忽略）：{exc}")
         finally:
-            if owns_pending:
-                self._complete_pending_write()
+            if pending_ticket is not None:
+                self._complete_pending_write(pending_ticket)
 
     def _spawn_startup_extraction_catch_up(self) -> None:
         """存档（重）加载后在后台发起一次抽取补跑（重开崩溃窗口丢的站台/进出账补落）。"""
@@ -2761,8 +2790,9 @@ class WebGame:
         if getattr(self.state, "turn_phase", None) in FRONT_HALF_DONE_PHASES:
             yield {"type": "error", "message": "月末结算/亲裁进行中，暂不能召对。"}
             return
-        # 整轮（含读心尾随）共用一次 pending ownership——关闭/fixture 必须等其完成。
-        if not self._mark_pending_write():
+        # 整轮（含读心尾随）共用一次队列票据——关闭/fixture 必须等其完成。
+        pending_ticket = self._mark_pending_write()
+        if pending_ticket is None:
             yield {"type": "error", "message": "当前会话正在关闭，请回菜单重新进入。"}
             return
         write_gate = self._runtime_write_gate()
@@ -2777,7 +2807,7 @@ class WebGame:
         try:
             # 权威相位复查（持 gate 内，建 chat turn/开夜/写库之前）：等锁期间若被结算改相位则拒。
             if getattr(self.state, "turn_phase", None) in FRONT_HALF_DONE_PHASES:
-                self._complete_pending_write()
+                self._complete_pending_write(pending_ticket)
                 yield {"type": "error", "message": "月末结算/亲裁进行中，暂不能召对。"}
                 return
             # #612：CLOSING 冻结新对话——唯一玩家输入准入真源，无平行 status 判断。
@@ -2790,7 +2820,7 @@ class WebGame:
                     assert_night_accepts_player_input(self.db, what="召对")
                 except AudienceNightError as err:
                     if getattr(err, "code", "") == "night_closing":
-                        self._complete_pending_write()
+                        self._complete_pending_write(pending_ticket)
                         yield {
                             "type": "error",
                             "message": str(err) or "本夜收夜中，暂不能召对。",
@@ -2799,7 +2829,7 @@ class WebGame:
                         return
                     raise
             if self._audience_turn_in_flight(minister_name):
-                self._complete_pending_write()
+                self._complete_pending_write(pending_ticket)
                 yield {"type": "error", "message": f"{minister_name}上一轮回奏仍在进行，请稍候再问。"}
                 return
             accepted_turn = int(self.state.turn)
@@ -2825,7 +2855,7 @@ class WebGame:
                     self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot)
             except Exception:
                 pass
-            self._complete_pending_write()
+            self._complete_pending_write(pending_ticket)
             raise
         finally:
             if gate_held:
@@ -2856,7 +2886,7 @@ class WebGame:
                     self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot)
             except Exception:
                 pass
-            self._complete_pending_write()
+            self._complete_pending_write(pending_ticket)
             yield {"type": "error", "message": str(error), **identity}
             return
 
@@ -2953,7 +2983,7 @@ class WebGame:
                 mind_payload: Optional[Dict[str, Any]] = None
                 try:
                     mind_payload = self._trail_mindreading_after_reply(
-                        minister_name, answer, chat_turn_id, owns_pending=False,
+                        minister_name, answer, chat_turn_id,
                     )
                 except Exception:
                     mind_payload = None
@@ -2975,7 +3005,7 @@ class WebGame:
                 extraction_thread.join()
                 ev_queue.put({"type": "end"})
             finally:
-                self._complete_pending_write()
+                self._complete_pending_write(pending_ticket)
 
         thread = threading.Thread(target=worker, daemon=True)
         try:
@@ -2988,7 +3018,7 @@ class WebGame:
                     self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot)
             except Exception:
                 pass
-            self._complete_pending_write()
+            self._complete_pending_write(pending_ticket)
             raise
         while True:
             item = ev_queue.get()
@@ -3153,28 +3183,11 @@ def _exit_settlement_display_on_failure(game, *, blocking: bool = False) -> None
         gate.release()
 
 
-def _await_audience_inflight_clear(game) -> None:
-    """#498 AC10：颁诏/退朝入口在抢 write_gate **之前**先 gate-free 等本夜在飞回话落档，
-    让回话 epilogue 抢得 gate 落库；清空后再持 gate 收夜（resolve_turn/advance 传
-    inflight_wait_s=0.0 即时复查），避免持 gate 轮询自锁。无开夜 → no-op。
+def _wait_open_night_chat_inflight(game) -> None:
+    """#498 AC10 / #1353：gate-free 等本夜 generating 回话终态（不造 elapsed 409）。
 
-    #1353 K10a：消费既有 chat turn/worker 终态续跑，不按 elapsed 伪造 409；
-    工人干完即放行（一次点击自动续跑）。
-
-    #1353 fold-in r9：chat_turn 已 done ≠ 整轮 worker 终态。done 后仍可能有
-    extraction/highlight/mindreading 尾随持 `_pending_writes_count` 写同一连接；
-    gate-free close 必须等该既有 ownership 归零（真 end），禁新锁/重试总线。
-    待补抽取债仍由 close_night 单一 owner 清——此处只等工人，不预清债。
-
-    #1353 fold-in r10：归零复查与冻结同 `_drain_cond` 临界区（#1476/r2 判例形）——
-    既有 worker 归零后原子置 `_draining`，冻结后 `_mark_pending_write` 拒新 admission；
-    禁新锁。`_draining` 只封 await→gate-free close 窗；close 将夜置 CLOSING 后由
-    `_settlement_period_entry` 立即解冻，CLOSING/相位门接棒拒新召对（禁用 drain 文案
-    冒充收夜中）。异常路径 finally 亦解冻兜底。
-
-    走 game.db seam（与 _start_chat_turn 同 idiom：无 conn 的测试替身直接跳过）。
-
-    #1235：调用方须先 _accept_settlement_period，使未了/失败前已入核账展示态。"""
+    只等 chat_turns 在飞，不等尾随票据——尾随归队列屏障。无开夜 / 无 conn → no-op。
+    """
     db = getattr(game, "db", None)
     if db is None or not hasattr(db, "conn"):
         return
@@ -3182,29 +3195,6 @@ def _await_audience_inflight_clear(game) -> None:
     open_n = get_open_night(db)
     if open_n is not None:
         wait_in_flight_clear(db, int(open_n["id"]))
-    # 整轮 worker 真终态：既有 pending-write ownership（含 stream 主 worker 与
-    # 非流式 spawn 的尾随）。归零与冻结同临界区——不留 await→close 可穿越窗。
-    cond = getattr(game, "_drain_cond", None)
-    if cond is not None:
-        with cond:
-            while int(getattr(game, "_pending_writes_count", 0) or 0) > 0:
-                cond.wait()
-            setattr(game, "_draining", True)
-    else:
-        while int(getattr(game, "_pending_writes_count", 0) or 0) > 0:
-            time.sleep(0.01)
-        setattr(game, "_draining", True)
-
-
-
-def _release_pending_write_admission_freeze(game) -> None:
-    """#1353 r10：释放 await 窗 `_draining` 冻结（复用既有 _drain_cond，禁新锁）。"""
-    cond = getattr(game, "_drain_cond", None)
-    if cond is not None:
-        with cond:
-            setattr(game, "_draining", False)
-    else:
-        setattr(game, "_draining", False)
 
 
 def _auto_close_open_night_gate_free(
@@ -3216,11 +3206,10 @@ def _auto_close_open_night_gate_free(
     the night-level endorsement-only LLM runs with the gate released. Web issue /
     stream / no-edict share this single orchestration (no duplicated close flow).
 
-    与 _await_audience_inflight_clear 同 seam：无真实 game.db.conn 的 legacy/
-    non-production 替身直接跳过 engine-owned auto-close，继续进入 session.resolve_turn。
+    #1353：过月屏障票据排在已领票之后——调用方经 queue.barrier 入此函数时，
+    前序尾随已空放行/落库；此处不再轮询等待或 admission 冻结。
+    无真实 game.db.conn 的 legacy 替身直接跳过 engine-owned auto-close。
     #1353 fold-in r5：欠账补跑内部静默，不并入过月 SSE。
-    #1353 fold-in r10：OPEN→CLOSING 冻结瞬间 on_closing 解冻 pending-write，
-    此后拒入由 CLOSING「收夜中」接棒。
     """
     db = getattr(game, "db", None)
     if db is None or not hasattr(db, "conn"):
@@ -3238,7 +3227,6 @@ def _auto_close_open_night_gate_free(
         llm_config=getattr(session, "llm_config", None) if session is not None else None,
         write_gate=_game_write_gate(game),
         scene_registry=getattr(session, "_scene_registry", None) if session is not None else None,
-        on_closing=lambda: _release_pending_write_admission_freeze(game),
     )
 
 
@@ -3308,18 +3296,13 @@ def _settlement_period_entry(game, *, write_cm: Callable[[Any], Any]):
         entered = True
         # #1235 / ADR 0149：点即入——先 capture 入核账展示态，再等在飞/收夜/结算续跑。
         created_display = _accept_settlement_period(game)
-        # #498 AC10：gate 外先等在飞回话落档，再 gate-free 收夜即时复查，不自锁。
-        # #1353：欠账抽取并入同一次过月动作（内部静默），不再 409 打回玩家补写。
-        # #1353 r10：await 内归零+置 _draining；close 在 OPEN→CLOSING 瞬间 on_closing
-        # 解冻；无开夜时 auto_close 早退，此处 finally 兜底解冻。
-        admission_frozen = False
-        try:
-            _await_audience_inflight_clear(game)
-            admission_frozen = True
-            _auto_close_open_night_gate_free(game, inflight_wait_s=0.0)
-        finally:
-            if admission_frozen:
-                _release_pending_write_admission_freeze(game)
+        # #498 AC10：gate-free 先等本夜 generating 回话落档（DB 终态），使 epilogue
+        # 可抢 write_gate 写库；不按 elapsed 造 409。
+        # #1353：再以过月屏障票据等尾随领票清零，然后 gate-free 收夜。
+        # 欠账抽取并入同一次过月动作（内部静默），不再 409 打回玩家补写。
+        _wait_open_night_chat_inflight(game)
+        q = get_session_write_queue(game)
+        q.barrier(lambda: _auto_close_open_night_gate_free(game, inflight_wait_s=0.0))
         with write_cm(game):
             yield
             # #1343/#1378/#1379/#1388：成功回常态后兜底清残留快照。
@@ -3441,33 +3424,34 @@ def _get_main_db_path() -> str:
 
 
 def _drain_and_close_session(game, archive_db: bool = False) -> None:
-    """等在途后台写入（召对 worker / 结算 worker）排空 write_gate 后再关连接。
+    """等在途后台写入（召对 worker / 结算 worker）排空后再关连接。
 
     #396：菜单生命周期端点（exit_to_menu / new_game / shutdown）不再在 write_gate 被
     持时直接 session.close()——否则后台 worker 崩在 closed database（#382 连接级并发）。
     exit_to_menu 立刻清 web_game 并返回，连接在后台 daemon 线程延后关（detach）；
     new_game 先把旧库 park 旁路、再立刻建新局（零等待）；排空后关连接并把旁路库归档为存档；
-    shutdown await 排空后再杀进程。不挂 #382 大设计，仅用现有 write_gate 队列续跑再关。
+    shutdown await 排空后再杀进程。
+
+    #1353：seal 拒新领票 + barrier 等既有票据清 + 持 write_gate 关连接。
     """
-    # #396 Gap B: 先等所有排队等 gate 的旧召对 worker 跑完（counter→0）再抢 gate——
-    # 否则只等当前持锁者，drain 抢下一轮 acquire 后关 session，排队的 worker 永不跑或写 closed DB。
-    cond = getattr(game, "_drain_cond", None)
-    if cond is not None:
-        with cond:
-            setattr(game, "_draining", True)
-            while getattr(game, "_pending_writes_count", 0) > 0:
-                cond.wait()
-    gate = _game_write_gate(game)
-    gate.acquire()  # 阻塞——等最后一个 worker 释放
+    q = get_session_write_queue(game)
+    q.seal()
+
+    def _close_under_gate() -> None:
+        gate = _game_write_gate(game)
+        gate.acquire()
+        try:
+            session = getattr(game, "session", None)
+            if session is not None:
+                session.close()
+        finally:
+            gate.release()
+
     close_failed = False
     try:
-        session = getattr(game, "session", None)
-        if session is not None:
-            session.close()
+        q.barrier(_close_under_gate)
     except Exception:
         close_failed = True
-    finally:
-        gate.release()
     if close_failed:
         return
     if archive_db:
@@ -4534,7 +4518,7 @@ async def api_delete_directive(directive_id: int) -> Dict[str, Any]:
 def api_advance_without_edict(
     body: AdvanceWithoutEdictRequest = AdvanceWithoutEdictRequest(),
 ) -> Dict[str, Any]:
-    # #498 AC10 / #1353 K10a：内部 _await_audience_inflight_clear 同步等在飞回话终态
+    # #498 AC10 / #1353：内部屏障票据同步等在飞尾随终态
     # （消费工人终态，不按 elapsed 伪造 409）。用同步 def 交给 FastAPI threadpool，
     # 绝不在 async event loop 上跑同步 sleep（会冻结全服务）。
     game = get_game()
@@ -4632,7 +4616,7 @@ def _reject_stale_month_token(game, expected_turn: Optional[int], *, token_label
 def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> Dict[str, Any]:
     """非流式颁诏（保留兼容）。前端默认走 /api/decree/issue/stream。
 
-    同步 def：内部 _await_audience_inflight_clear + resolve_turn 是阻塞同步调用
+    同步 def：内部队列屏障 + resolve_turn 是阻塞同步调用
     （等在飞回话工人终态；#1353 K10a 不按 elapsed 造 409），交给 FastAPI threadpool，
     不冻结 async event loop。"""
     game = get_game()

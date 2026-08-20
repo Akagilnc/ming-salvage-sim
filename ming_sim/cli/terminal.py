@@ -506,24 +506,19 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> No
 
 
 def _cli_write_gate(session: GameSession):
-    """CLI 唯一 write gate：与 resolve_turn 收夜/过月 drain 同穿（#1353 fold-in r8）。
+    """CLI 唯一 write gate：与 resolve_turn 收夜/过月屏障同穿（#1353 队列）。
 
-    挂 session._write_gate（与 Web runtime 同属性名）——禁第二锁名分叉，
+    挂 session 队列的 write_gate（与 Web runtime 同属性名）——禁第二锁名分叉，
     否则 trail 用一把、颁诏 auto_close 读另一把/None → 欠账 missing_deps 断链。
     """
-    import threading
-    gate = getattr(session, "_write_gate", None)
-    if gate is not None:
-        return gate
-    # 兼容旧挂点一次迁入 canonical 名
-    gate = getattr(session, "_cli_extract_write_gate", None)
-    if gate is None:
-        gate = threading.Lock()
+    from ming_sim.session_write_queue import get_session_write_queue
+    q = get_session_write_queue(session)
     try:
-        session._write_gate = gate  # type: ignore[attr-defined]
+        session._write_queue = q  # type: ignore[attr-defined]
+        session._write_gate = q.write_gate  # type: ignore[attr-defined]
     except Exception:
         pass
-    return gate
+    return q.write_gate
 
 
 def _trail_extraction_after_reply_cli(

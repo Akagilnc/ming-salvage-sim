@@ -148,9 +148,12 @@ def test_web_retry_failed_scene_drain_does_not_hold_write_gate(game):
     rt._runtime_write_gate = lambda: rt._write_gate
     rt._audience_turn_in_flight = lambda _n: False
     # 整轮 pending 由 retry 本体持有；尾随不起后台线程。
-    rt._drain_cond = threading.Condition()
-    rt._pending_writes_count = 0
-    rt._draining = False
+    from ming_sim.session_write_queue import SessionWriteQueue
+    rt._write_queue = SessionWriteQueue()
+    rt._write_gate = rt._write_queue.write_gate
+    rt._runtime_write_queue = lambda: rt._write_queue  # type: ignore
+    rt._mark_pending_write = lambda key=None: rt._write_queue.claim(key=key or ("pending",))  # type: ignore
+    rt._complete_pending_write = lambda ticket=None: rt._write_queue.complete(ticket)  # type: ignore
     rt._spawn_pending_write_thread = lambda *a, **k: False
     rt._spawn_extraction_trail = lambda *a, **k: None
     rt.directive_rows = lambda: []
@@ -1468,10 +1471,12 @@ def test_stream_join_and_abandon_do_not_hold_write_gate(monkeypatch):
     rt = object.__new__(web_app.WebGame)
     object.__setattr__(rt, "session", session)
     object.__setattr__(rt, "chat_history", {minister: []})
-    object.__setattr__(rt, "_write_gate", threading.Lock())
+    from ming_sim.session_write_queue import SessionWriteQueue
+    q = SessionWriteQueue()
+    object.__setattr__(rt, "_write_queue", q)
+    object.__setattr__(rt, "_write_gate", q.write_gate)
     rt._runtime_write_gate = lambda: rt._write_gate
-    object.__setattr__(rt, "_drain_cond", threading.Condition())
-    object.__setattr__(rt, "_pending_writes_count", 0)
+    rt._runtime_write_queue = lambda: q
     rt._persistent_chat_minister = lambda _n: True
     rt._audience_turn_in_flight = lambda _n: False
     rt._start_chat_turn = lambda _n: (11, {})
@@ -1479,8 +1484,8 @@ def test_stream_join_and_abandon_do_not_hold_write_gate(monkeypatch):
     rt._chat_payload = lambda *a, **k: {"answer": "臣遵旨。"}
     rt._spawn_extraction_trail = lambda *_a, **_k: None
     rt._trail_mindreading_after_reply = lambda *_a, **_k: None
-    rt._complete_pending_write = lambda: setattr(rt, "_pending_writes_count", 0)
-    rt._mark_pending_write = lambda: True
+    rt._complete_pending_write = lambda ticket=None: q.complete(ticket)
+    rt._mark_pending_write = lambda key=None: q.claim(key=key or ("pending",))
     monkeypatch.setattr(
         web_app, "_audience_prompt_for_web_chat",
         lambda *_a, **_k: "prompt",

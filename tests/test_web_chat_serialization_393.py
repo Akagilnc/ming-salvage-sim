@@ -230,7 +230,7 @@ def test_identity_setup_failure_closes_durable_turn_and_pending_owner_as_termina
     completed = []
     runtime.db.kv_get = lambda _key: (_ for _ in ()).throw(RuntimeError("identity read failed"))
     runtime._fail_chat_turn_and_reload = lambda turn_id, snapshot: failed.append((turn_id, snapshot))
-    runtime._complete_pending_write = lambda: completed.append(True)
+    runtime._complete_pending_write = lambda ticket=None: completed.append(True)
 
     events = list(runtime.chat_stream(minister_name, "请奏"))
 
@@ -380,9 +380,12 @@ def test_drain_waits_for_in_flight_nonstream_chat():
     runtime.session = _SlowChatSession(character, _FakeAgent(allow_finish), state, db)
     runtime.chat_history = {character.name: []}
     runtime._write_gate = threading.Lock()
-    runtime._drain_cond = threading.Condition()
-    runtime._pending_writes_count = 0
-    runtime._draining = False
+    from ming_sim.session_write_queue import SessionWriteQueue
+    runtime._write_queue = SessionWriteQueue()
+    runtime._write_gate = runtime._write_queue.write_gate
+    runtime._runtime_write_queue = lambda: runtime._write_queue  # type: ignore
+    runtime._mark_pending_write = lambda key=None: runtime._write_queue.claim(key=key or ("pending",))  # type: ignore
+    runtime._complete_pending_write = lambda ticket=None: runtime._write_queue.complete(ticket)  # type: ignore
     runtime.directive_rows = lambda: []
     runtime.directive_payload = lambda row: row
     runtime.suggestions_for = lambda _c: []
@@ -417,7 +420,7 @@ def test_drain_waits_for_in_flight_nonstream_chat():
     drain_thread = threading.Thread(target=run_drain, daemon=True)
     drain_thread.start()
 
-    assert _wait_for(lambda: getattr(runtime, "_draining", False)), "drain 未置 _draining"
+    assert _wait_for(lambda: runtime._write_queue.is_sealed()), "drain 未 seal 队列"
     # 负向：LLM 仍在飞时 drain 不得关连接
     assert not drain_done.wait(0.15), "drain 在非流式 chat 仍在飞时就关了 session"
     assert closed == []
@@ -442,9 +445,13 @@ def test_nonstream_chat_rejects_when_session_draining():
     runtime.session = _FakeSession(character, _FakeAgent(threading.Event()), state, db)
     runtime.chat_history = {character.name: []}
     runtime._write_gate = threading.Lock()
-    runtime._drain_cond = threading.Condition()
-    runtime._pending_writes_count = 0
-    runtime._draining = True
+    from ming_sim.session_write_queue import SessionWriteQueue
+    runtime._write_queue = SessionWriteQueue()
+    runtime._write_queue.seal()
+    runtime._write_gate = runtime._write_queue.write_gate
+    runtime._runtime_write_queue = lambda: runtime._write_queue  # type: ignore
+    runtime._mark_pending_write = lambda key=None: runtime._write_queue.claim(key=key or ("pending",))  # type: ignore
+    runtime._complete_pending_write = lambda ticket=None: runtime._write_queue.complete(ticket)  # type: ignore
 
     with pytest.raises(HTTPException) as ei:
         runtime.chat(character.name, "边饷如何？")

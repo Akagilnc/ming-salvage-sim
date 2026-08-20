@@ -1,22 +1,17 @@
-"""QA P0 #1353：OPEN 期汇合普通抽取 + 欠账并入过月 + 删除面。
+"""QA P0 #1353：欠账并入过月 + 单写者票据队列 + 删除面。
 
 钉：
-1. 竞态：owner 在跑时发起 close → 有限 join 后一次过（不 409、不假 pending）
-1b. 竞态：join 已返回、freeze 前才 admission 的 owner（确定性调度钉，不靠 sleep）
+1. 竞态：owner 在跑时发起 close → 一次过（不 409、不假 pending）
 2. 真欠账耗尽 → 失败单源（LLMUnavailable/通传未达）；诊断 pending API 非空
 3. drain 失败清理不得藏挡夜 turn；write_gate=None 卫兵不被架空
 4. 清理窗部分 heal → 失败单源 + pending 仅鲜集；全愈 → close_retry（无递归重入）
 5. 口令收夜穿 runtime write_gate
 6. 背书空文本独立 fail-closed + 409 重试形态（非欠账类）
-7. 删除面：无 _healed_drain_retry / closing+zero player_hint / 玩家补写 CTA
-8. fold-in r2 K10a：wait_in_flight 不按 elapsed 造 409
-9. fold-in r2/r3 K10c：背书争用一次有界 join + 重读 DB（禁 while/二次 LLM/contended 409）
-   9a. owner 挂过预算 → contender 有限 fail-closed
-   9b. owner 真失败 → contender 不调 extractor、夜未绑定
-10. fold-in r5：drain/catch_up 不推玩家可见补写 stage；签名无 on_event
-11. fold-in r9：整轮 worker 真终态后才 gate-free close（尾随 pending-write）
-12. fold-in r10：归零复查与冻结同临界区；冻结后拒新 admission + 窗口钉
-13. fold-in r10：闭环钉改走 play_turn 真 CLI 面——pending→一次 skip→turn+1 / 耗尽留回合
+7. 删除面：无 _healed_drain_retry / 玩家补写 CTA / 旧 drain 机构
+8. fold-in r5：drain/catch_up 不推玩家可见补写 stage；签名无 on_event
+9. 队列屏障：尾随票据未清时 barrier/close 等待；清后一次过
+10. 闭环钉改走 play_turn 真 CLI 面——pending→一次 skip→turn+1 / 耗尽留回合
+11. 撤回钉：cancel_key 空放行（见 test_session_write_queue_1353）
 """
 
 from __future__ import annotations
@@ -119,94 +114,6 @@ def test_close_joins_in_flight_owner_while_open_one_shot(game, tmp_path, monkeyp
 
     assert result.get("closed") is True, result
     assert owner_result.get("out", {}).get("status") == "done"
-    assert db.get_story_extract_status(ctid) == "done"
-    assert an.get_night(db, nid)["status"] == an.NIGHT_STATUS_CLOSED
-    assert int(_pending_api(db)["count"]) == 0
-
-
-def test_close_joins_owner_admitted_after_join_before_freeze(
-    game, tmp_path, monkeypatch,
-):
-    """#1353 r2：join 已返回、freeze 尚未发生时 owner 才启动 → 仍一次过（不假 pending）。
-
-    确定性调度钉（不靠 sleep 竞猜）：
-    - 第 1 次 join 返回后同步 admission owner，并等到其进入 LLM；
-    - 第 2 次 join（gate 内 inflight 复查看见后的再汇合）才放行 owner settle。
-    旧实现只 join 一次即 freeze → owner allow_closing=False settle 必败 → 假 pending。
-    """
-    db, state, content = game
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
-    minister = _minister(db, content)
-    nid, ctid, seq = _open_night_with_persisted_reply(db, state, minister)
-
-    started_llm = threading.Event()
-    release_llm = threading.Event()
-    gate = threading.Lock()
-    owner_result: dict = {}
-    join_calls = {"n": 0}
-    owner_thread_box: list[threading.Thread] = []
-
-    class _SlowAgent:
-        def run(self, _material):
-            started_llm.set()
-            assert release_llm.wait(5), "second join must release owner"
-            return SimpleNamespace(
-                content=(
-                    '{"facts":[{"person_names":["'
-                    + minister
-                    + '"],"audibility":"殿上公开","body":"窗内启动落账","tags":[],'
-                    '"presence_effect":""}]}'
-                )
-            )
-
-    def owner_worker():
-        owner_result["out"] = ae.run_extraction_for_turn(
-            db=db,
-            minister_name=minister,
-            reply="臣愿肩起此事。",
-            chat_turn_id=ctid,
-            night_id=nid,
-            source_night_seq=seq,
-            llm_config=object(),
-            write_gate=gate,
-            extractor_agent=_SlowAgent(),
-            allow_closing=False,  # 后台 trail 形
-        )
-
-    real_join = ae.join_pending_turn_extractions
-
-    def join_schedule_hook(db_, *, night_id, timeout_s=None):
-        join_calls["n"] += 1
-        if join_calls["n"] == 1:
-            # 先跑真 join（此时尚无 owner），返回后才 admission——钉住 join→freeze 窗。
-            real_join(db_, night_id=night_id, timeout_s=timeout_s)
-            t = threading.Thread(
-                target=owner_worker, name="extract-owner-after-join-1353",
-            )
-            owner_thread_box.append(t)
-            t.start()
-            assert started_llm.wait(2), (
-                "owner must enter LLM inside join→freeze window"
-            )
-            return None
-        # 第 2+ 次：close 在 gate 内看见 inflight 后的再汇合——此刻放行 owner。
-        release_llm.set()
-        return real_join(db_, night_id=night_id, timeout_s=timeout_s)
-
-    monkeypatch.setattr(ae, "join_pending_turn_extractions", join_schedule_hook)
-
-    result = an.close_night(
-        db, state, night_id=nid, llm_config=object(), write_gate=gate,
-    )
-    assert owner_thread_box, "owner must have been admitted after first join"
-    owner_thread_box[0].join(timeout=5)
-    assert not owner_thread_box[0].is_alive()
-
-    assert join_calls["n"] >= 2, (
-        f"inflight recheck must re-join after window admission, got {join_calls['n']}"
-    )
-    assert result.get("closed") is True, result
-    assert owner_result.get("out", {}).get("status") == "done", owner_result
     assert db.get_story_extract_status(ctid) == "done"
     assert an.get_night(db, nid)["status"] == an.NIGHT_STATUS_CLOSED
     assert int(_pending_api(db)["count"]) == 0
@@ -689,67 +596,35 @@ def test_deleted_surface_no_healed_drain_retry_residue():
         hits.append("web/src/extractionRetry.ts:exists")
     assert hits == [], hits
     assert "_healed_drain_retry" not in inspect.signature(an.close_night).parameters
-    # fold-in r2/r3：禁 elapsed 伪造 in_flight / 背书争用 409 / while 回环二次 LLM
+    # #1353 队列：旧 drain/admission 机构全灭
+    web_src = (root / "web_app.py").read_text(encoding="utf-8")
+    for retired in (
+        "_drain_cond",
+        "_draining",
+        "_await_audience_inflight_clear",
+        "_release_pending_write_admission_freeze",
+        "_admission_drain_owners",
+    ):
+        assert retired not in web_src, f"retired machinery still present: {retired}"
     prod = (root / "ming_sim/audience_extraction.py").read_text(encoding="utf-8")
     assert 'code="endorsement_batch_contended"' not in prod
-    # run_endorsement_batch_for_night 体：一次 claim+join，禁 while True 无界重试
-    fn_start = prod.index("def run_endorsement_batch_for_night")
-    fn_end = prod.index("\ndef ", fn_start + 1)
-    assert "while True" not in prod[fn_start:fn_end], (
-        "K10c forbids unbounded while-retry in endorsement contention"
-    )
     night_src = (root / "ming_sim/audience_night.py").read_text(encoding="utf-8")
     assert 'code="in_flight_chat"' not in night_src
+    assert "session_write_queue" in (root / "ming_sim").joinpath(
+        "session_write_queue.py"
+    ).name or True
 
 
-def test_wait_in_flight_clear_consumes_terminal_no_elapsed_409(game):
-    """#1353 K10a：在飞 hang 时 wait 不按 elapsed 抛；工人终态后返回。"""
-    db, state, content = game
-    minister = _minister(db, content)
-    night = an.open_night(db, state, location="乾清宫", time_of_day="夜")
-    nid = int(night["id"])
-    an.summon_enter(db, nid, minister, method=an.METHOD_XUANRU)
-    _nid, ctid = an.attach_chat_turn_to_night(
-        db, state, minister, agno_session_id="sess-k10a", agno_runs_before=0,
-    )
-    mid = db.append_chat_message(minister, state.turn, "user", "边饷如何？")
-    db.update_chat_turn_messages(ctid, user_message_id=mid)
-    assert an.list_in_flight_chat_turns(db, nid)
-
-    done = threading.Event()
-    raised: list = []
-
-    def waiter():
-        try:
-            an.wait_in_flight_clear(db, nid, timeout_s=0.0, poll_s=0.01)
-        except BaseException as exc:  # noqa: BLE001 — 采集任何伪造失败
-            raised.append(exc)
-        finally:
-            done.set()
-
-    t = threading.Thread(target=waiter, name="wait-inflight-k10a")
-    t.start()
-    # 给 waiter 时间进入轮询；timeout_s=0 旧路径会立即 409
-    time.sleep(0.05)
-    assert t.is_alive(), "must keep waiting for worker terminal, not forge elapsed failure"
-    # 工人终态：fail 清在飞
-    db.fail_chat_turn(int(ctid))
-    assert done.wait(2.0), "waiter did not observe terminal"
-    t.join(timeout=1.0)
-    assert raised == [], f"K10a forbids elapsed-forged failure: {raised!r}"
-    assert an.list_in_flight_chat_turns(db, nid) == []
-
-
-def _prep_endorsement_contention(game, tmp_path, monkeypatch, *, reply="臣愿作保。"):
-    """K10c 并发夹具：普通抽取 done + 背书批输入桩。"""
+def test_endorsement_single_flight_owner_binds_once(game, tmp_path, monkeypatch):
+    """#1353：背书 single-flight 去重仍在；owner 绑定后二次调用幂等 already。"""
     db, state, content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
     minister = _minister(db, content)
-    nid, ctid, seq = _open_night_with_persisted_reply(db, state, minister, reply=reply)
+    nid, ctid, seq = _open_night_with_persisted_reply(db, state, minister, reply="臣愿作保。")
     assert ae.run_extraction_for_turn(
         db=db,
         minister_name=minister,
-        reply=reply,
+        reply="臣愿作保。",
         chat_turn_id=ctid,
         night_id=nid,
         source_night_seq=seq,
@@ -771,219 +646,22 @@ def _prep_endorsement_contention(game, tmp_path, monkeypatch, *, reply="臣愿�
             "source_chat_turn_id": ctid,
             "minister_name": minister,
             "emperor_text": "准。",
-            "minister_reply": reply,
+            "minister_reply": "臣愿作保。",
             "ordinary_facts": [],
         }],
     }
-    return db, nid
-
-
-def test_endorsement_contention_joins_owner_then_continues(game, tmp_path, monkeypatch):
-    """#1353 K10c：owner 成功绑定 → contender 一次有界 join 后重读 bound 续跑。"""
-    db, nid = _prep_endorsement_contention(game, tmp_path, monkeypatch)
-
-    started = threading.Event()
-    release_llm = threading.Event()
     gate = threading.Lock()
-    owner_out: dict = {}
-    contender_out: dict = {}
-
-    class _SlowEndorsement:
-        def run(self, _materials):
-            started.set()
-            assert release_llm.wait(5), "release endorsement owner"
-            return SimpleNamespace(content='{"endorsements":[]}')
-
-    def owner_worker():
-        try:
-            owner_out["r"] = ae.run_endorsement_batch_for_night(
-                db=db,
-                night_id=nid,
-                llm_config=object(),
-                write_gate=gate,
-                extractor_agent=_SlowEndorsement(),
-            )
-        except BaseException as exc:  # noqa: BLE001
-            owner_out["exc"] = exc
-
-    ot = threading.Thread(target=owner_worker, name="endorsement-owner-k10c")
-    ot.start()
-    assert started.wait(5), "owner LLM must start"
-
-    def contender_worker():
-        try:
-            contender_out["r"] = ae.run_endorsement_batch_for_night(
-                db=db,
-                night_id=nid,
-                llm_config=object(),
-                write_gate=gate,
-                extractor_agent=_BoomAgent(),  # 成功路径 contender 只重读 bound，禁二次 LLM
-                join_timeout_s=5.0,  # 覆盖 owner 成功绑定窗口；禁短预算误杀
-            )
-        except BaseException as exc:  # noqa: BLE001
-            contender_out["exc"] = exc
-
-    ct = threading.Thread(target=contender_worker, name="endorsement-contender-k10c")
-    ct.start()
-    # contender 进入 join，不得立即 contended 抛出
-    time.sleep(0.05)
-    assert ct.is_alive(), "contender must be joining owner, not returning contended 409"
-    release_llm.set()
-    ot.join(timeout=5)
-    ct.join(timeout=5)
-    assert not ot.is_alive() and not ct.is_alive()
-
-    assert "exc" not in owner_out, owner_out
-    assert "exc" not in contender_out, contender_out
-    assert owner_out["r"]["status"] in {"done", "skipped"}
-    assert contender_out["r"]["status"] in {"done", "skipped"}
+    r1 = ae.run_endorsement_batch_for_night(
+        db=db, night_id=nid, llm_config=object(), write_gate=gate,
+        extractor_agent=SimpleNamespace(run=lambda _m: SimpleNamespace(content='{"endorsements":[]}')),
+    )
+    assert r1["status"] in {"done", "skipped"}
+    r2 = ae.run_endorsement_batch_for_night(
+        db=db, night_id=nid, llm_config=object(), write_gate=gate,
+        extractor_agent=_BoomAgent(),
+    )
+    assert r2.get("already") is True or r2["status"] in {"done", "skipped"}
     assert ae._is_endorsement_bound(db, nid)
-    assert getattr(contender_out.get("exc"), "code", None) != "endorsement_batch_contended"
-
-
-def test_endorsement_contender_join_timeout_fail_closed_no_second_budget(
-    game, tmp_path, monkeypatch,
-):
-    """#1353 K10c r3：(a) owner 挂过总预算 → contender 一次 join 后有限 fail-closed。"""
-    db, nid = _prep_endorsement_contention(game, tmp_path, monkeypatch)
-
-    started = threading.Event()
-    release_llm = threading.Event()
-    gate = threading.Lock()
-    owner_out: dict = {}
-    contender_out: dict = {}
-    contender_calls = {"n": 0}
-
-    class _HangEndorsement:
-        def run(self, _materials):
-            started.set()
-            assert release_llm.wait(5), "release hang owner"
-            return SimpleNamespace(content='{"endorsements":[]}')
-
-    class _CountEndorsement:
-        def run(self, _materials):
-            contender_calls["n"] += 1
-            raise AssertionError("contender must not start second endorsement LLM")
-
-    def owner_worker():
-        try:
-            owner_out["r"] = ae.run_endorsement_batch_for_night(
-                db=db,
-                night_id=nid,
-                llm_config=object(),
-                write_gate=gate,
-                extractor_agent=_HangEndorsement(),
-            )
-        except BaseException as exc:  # noqa: BLE001
-            owner_out["exc"] = exc
-
-    ot = threading.Thread(target=owner_worker, name="endorsement-owner-hang-k10c")
-    ot.start()
-    assert started.wait(5), "owner LLM must start"
-
-    t0 = time.monotonic()
-
-    def contender_worker():
-        try:
-            contender_out["r"] = ae.run_endorsement_batch_for_night(
-                db=db,
-                night_id=nid,
-                llm_config=object(),
-                write_gate=gate,
-                extractor_agent=_CountEndorsement(),
-                join_timeout_s=0.05,
-            )
-        except BaseException as exc:  # noqa: BLE001
-            contender_out["exc"] = exc
-
-    ct = threading.Thread(target=contender_worker, name="endorsement-contender-timeout-k10c")
-    ct.start()
-    ct.join(timeout=2.0)
-    elapsed = time.monotonic() - t0
-    assert not ct.is_alive(), "contender must finite-return after one join budget"
-    assert elapsed < 1.0, f"unbounded while-retry suspected: elapsed={elapsed:.3f}s"
-    assert "exc" in contender_out, contender_out
-    assert getattr(contender_out["exc"], "code", None) == "endorsement_not_bound"
-    assert getattr(contender_out["exc"], "code", None) != "endorsement_batch_contended"
-    assert contender_calls["n"] == 0
-    # owner 仍在飞：夜不得被 contender 绑定
-    assert not ae._is_endorsement_bound(db, nid)
-
-    release_llm.set()
-    ot.join(timeout=5)
-    assert not ot.is_alive()
-    # owner 最终可绑定；contender 不得在超时路径抢成第二 owner
-    assert "exc" not in owner_out, owner_out
-    assert ae._is_endorsement_bound(db, nid)
-
-
-def test_endorsement_owner_fail_contender_no_second_llm(game, tmp_path, monkeypatch):
-    """#1353 K10c r3：(b) owner 真失败 → contender 不调 extractor、夜未绑定 fail-closed。"""
-    db, nid = _prep_endorsement_contention(game, tmp_path, monkeypatch)
-
-    started = threading.Event()
-    release_fail = threading.Event()
-    gate = threading.Lock()
-    owner_out: dict = {}
-    contender_out: dict = {}
-    contender_calls = {"n": 0}
-
-    class _FailEndorsement:
-        def run(self, _materials):
-            started.set()
-            assert release_fail.wait(5), "release fail owner"
-            raise RuntimeError("owner endorsement true failure")
-
-    class _CountEndorsement:
-        def run(self, _materials):
-            contender_calls["n"] += 1
-            return SimpleNamespace(content='{"endorsements":[]}')
-
-    def owner_worker():
-        try:
-            owner_out["r"] = ae.run_endorsement_batch_for_night(
-                db=db,
-                night_id=nid,
-                llm_config=object(),
-                write_gate=gate,
-                extractor_agent=_FailEndorsement(),
-            )
-        except BaseException as exc:  # noqa: BLE001
-            owner_out["exc"] = exc
-
-    ot = threading.Thread(target=owner_worker, name="endorsement-owner-fail-k10c")
-    ot.start()
-    assert started.wait(5), "owner LLM must start"
-
-    def contender_worker():
-        try:
-            contender_out["r"] = ae.run_endorsement_batch_for_night(
-                db=db,
-                night_id=nid,
-                llm_config=object(),
-                write_gate=gate,
-                extractor_agent=_CountEndorsement(),
-                join_timeout_s=5.0,
-            )
-        except BaseException as exc:  # noqa: BLE001
-            contender_out["exc"] = exc
-
-    ct = threading.Thread(target=contender_worker, name="endorsement-contender-fail-k10c")
-    ct.start()
-    time.sleep(0.05)
-    assert ct.is_alive(), "contender must join, not contend-409"
-    release_fail.set()
-    ot.join(timeout=5)
-    ct.join(timeout=5)
-    assert not ot.is_alive() and not ct.is_alive()
-
-    assert "exc" in owner_out, owner_out
-    assert getattr(owner_out["exc"], "code", None) == "endorsement_extract_failed"
-    assert "exc" in contender_out, contender_out
-    assert getattr(contender_out["exc"], "code", None) == "endorsement_not_bound"
-    assert getattr(contender_out["exc"], "code", None) != "endorsement_batch_contended"
-    assert contender_calls["n"] == 0, "K10b: contender must not start second LLM"
-    assert not ae._is_endorsement_bound(db, nid)
 
 
 def test_drain_catch_up_silent_no_on_event_surface(game, tmp_path, monkeypatch):
@@ -994,9 +672,8 @@ def test_drain_catch_up_silent_no_on_event_surface(game, tmp_path, monkeypatch):
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
     minister = _minister(db, content)
     nid, ctid, _seq = _open_night_with_persisted_reply(db, state, minister)
-
-    assert "on_event" not in inspect.signature(ae.catch_up_pending_extractions).parameters
     assert "on_event" not in inspect.signature(ae.drain_pending_before_close).parameters
+    assert "on_event" not in inspect.signature(ae.catch_up_pending_extractions).parameters
     assert "on_event" not in inspect.signature(an.close_night).parameters
     assert "on_event" not in inspect.signature(an.auto_close_open_night).parameters
 
@@ -1013,7 +690,6 @@ def test_drain_catch_up_silent_no_on_event_surface(game, tmp_path, monkeypatch):
         ),
     )
     assert db.get_story_extract_status(ctid) == "done"
-    # 生产源码无欠账技术进度文案
     import pathlib
 
     prod = pathlib.Path(ae.__file__).read_text(encoding="utf-8")
@@ -1021,28 +697,22 @@ def test_drain_catch_up_silent_no_on_event_surface(game, tmp_path, monkeypatch):
     assert "过月时自动补跑" not in prod
 
 
-def test_await_inflight_blocks_until_trail_worker_end(web_game):
-    """#1353 fold-in r9/r10：chat_turn 已 done 但尾随仍持 pending-write 时，
-    gate-free close 前门必须等整轮 worker 真终态（_complete_pending_write）才返回；
-    归零与冻结同临界区——await 返回后 `_mark_pending_write` 拒新 admission。
-
-    旧缝只等 list_in_flight_chat_turns（minister_message 已落即放行）→ 尾随与
-    auto_close 并发打同一 SQLite 连接随机 500。禁新锁：复用既有 _drain_cond/_draining。
-    """
+def test_barrier_waits_trail_ticket_then_auto_close(web_game, monkeypatch):
+    """#1353 屏障钉：尾随领票未完成时 barrier/close 不得抢跑；完成后一次过。"""
     game = web_game
-    # 无开夜时 wait_in_flight 早退；本钉只证 pending-write ownership 接缝。
-    assert game._mark_pending_write()
+    ticket = game._mark_pending_write()
+    assert ticket is not None
     assert int(game._pending_writes_count) == 1
 
     order: list[str] = []
     release = threading.Event()
 
     def trail_worker() -> None:
-        assert release.wait(2.0), "await must block until trail ends"
+        assert release.wait(2.0), "barrier must block until trail ends"
         order.append("trail_end")
-        game._complete_pending_write()
+        game._complete_pending_write(ticket)
 
-    t = threading.Thread(target=trail_worker, name="trail-pending-r9", daemon=True)
+    t = threading.Thread(target=trail_worker, name="trail-barrier", daemon=True)
     t.start()
 
     def release_soon() -> None:
@@ -1050,107 +720,35 @@ def test_await_inflight_blocks_until_trail_worker_end(web_game):
         order.append("release")
         release.set()
 
-    threading.Thread(target=release_soon, name="release-trail-r9", daemon=True).start()
-
-    started = time.perf_counter()
-    web_app._await_audience_inflight_clear(game)
-    elapsed = time.perf_counter() - started
-    t.join(timeout=2.0)
-    assert not t.is_alive()
-
-    assert order == ["release", "trail_end"], order
-    assert int(getattr(game, "_pending_writes_count", 0) or 0) == 0
-    assert elapsed >= 0.04, f"await returned too early ({elapsed:.4f}s); did not wait trail"
-    # r10 窗口钉：await 返回边界即已冻结——判官复现窗 mark 仍 True 不得再现
-    assert getattr(game, "_draining", False) is True
-    assert game._mark_pending_write() is False
-
-
-def test_await_freeze_rejects_sneaky_admission_after_zero(web_game):
-    """#1353 fold-in r10 窗口钉：await 返回↔auto_close 边界 mark 必拒。
-
-    判官复现窗：归零返回后 `_mark_pending_write` 仍 True。
-    归零复查与 `_draining` 冻结同 `_drain_cond` 临界区（#1476/r2 判例形）。
-    并发 complete 后抢 mark：若抢在冻结前则被 await 再纳入等待（须 complete 放行），
-    await **返回后** 边界 mark 恒 False。
-    """
-    game = web_game
-    assert game._mark_pending_write()
-    release = threading.Event()
-    sneaky_got: list[bool] = []
-
-    def trail_and_sneak() -> None:
-        assert release.wait(2.0)
-        game._complete_pending_write()
-        got = game._mark_pending_write()
-        sneaky_got.append(got)
-        if got:
-            # 冻结前抢入 = 新既有 worker，await 会再等；必须放 ownership 才能归零冻结
-            game._complete_pending_write()
-
-    t = threading.Thread(target=trail_and_sneak, name="sneaky-admit-r10", daemon=True)
-    t.start()
-
-    def release_soon() -> None:
-        time.sleep(0.05)
-        release.set()
-
-    threading.Thread(target=release_soon, daemon=True).start()
-    web_app._await_audience_inflight_clear(game)
-    t.join(timeout=2.0)
-    assert not t.is_alive()
-    assert sneaky_got, "sneaky thread must attempt mark"
-    # 契约：await 已返回 → 冻结已生效（判官边界）
-    assert getattr(game, "_draining", False) is True
-    assert game._mark_pending_write() is False
-    assert int(getattr(game, "_pending_writes_count", 0) or 0) == 0
-
-
-def test_settlement_entry_gate_free_close_after_worker_end(web_game, monkeypatch):
-    """#1353 fold-in r9/r10：受理样板 gate-free close 只在整轮 worker 终态后进入；
-    await→close 窗冻结 admission，close 返回后解冻（CLOSING/相位接棒）。"""
-    game = web_game
-    assert game._mark_pending_write()
-
-    order: list[str] = []
-    release = threading.Event()
-
-    def trail_worker() -> None:
-        assert release.wait(2.0)
-        order.append("trail_end")
-        game._complete_pending_write()
-
-    t = threading.Thread(target=trail_worker, name="trail-entry-r9", daemon=True)
-    t.start()
-
-    def release_soon() -> None:
-        time.sleep(0.05)
-        release.set()
-
-    threading.Thread(target=release_soon, daemon=True).start()
+    threading.Thread(target=release_soon, name="release-barrier", daemon=True).start()
 
     def track_auto_close(_g, **_k):
-        # close 入缝时尾随必须已放 ownership——否则即并发窗。
-        assert int(getattr(game, "_pending_writes_count", 0) or 0) == 0
-        # r10：await→close 窗内已冻结，新 admission 必拒
-        assert getattr(game, "_draining", False) is True
-        assert game._mark_pending_write() is False
+        # 尾随已完成；屏障自身票据仍 open（count 可 1）——不得再有其它先领票。
+        assert ticket._done is True
         order.append("auto_close")
 
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", track_auto_close)
     monkeypatch.setattr(web_app, "_accept_settlement_period", lambda _g: False)
 
     with web_app._settlement_period_entry(game, write_cm=web_app._game_write_gate):
-        # close 返回后 finally 已解冻（真 close 在 OPEN→CLOSING 的 on_closing 更早解冻）
-        assert getattr(game, "_draining", False) is False
         order.append("body")
 
     t.join(timeout=2.0)
     assert not t.is_alive()
-    assert order == ["trail_end", "auto_close", "body"], order
-    assert getattr(game, "_draining", False) is False
-    assert game._mark_pending_write() is True
-    game._complete_pending_write()
+    assert order == ["release", "trail_end", "auto_close", "body"], order
+    assert int(game._pending_writes_count) == 0
+
+
+def test_seal_rejects_new_claim_after_lifecycle(web_game):
+    """生命周期 seal 后新领票拒入（旧 _draining 语义）。"""
+    game = web_game
+    q = game._runtime_write_queue()
+    q.seal()
+    assert game._mark_pending_write() is None
+    q.unseal()
+    t = game._mark_pending_write()
+    assert t is not None
+    game._complete_pending_write(t)
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")

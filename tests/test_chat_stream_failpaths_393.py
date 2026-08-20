@@ -84,9 +84,12 @@ def _base_runtime(db):
     state = SimpleNamespace(turn=1, year=1628, period=1, turn_phase="summoning")
     runtime = object.__new__(web_app.WebGame)
     runtime._write_gate = threading.Lock()
-    runtime._drain_cond = threading.Condition()
-    runtime._pending_writes_count = 0
-    runtime._draining = False
+    from ming_sim.session_write_queue import SessionWriteQueue
+    runtime._write_queue = SessionWriteQueue()
+    runtime._write_gate = runtime._write_queue.write_gate
+    runtime._runtime_write_queue = lambda: runtime._write_queue  # type: ignore
+    runtime._mark_pending_write = lambda key=None: runtime._write_queue.claim(key=key or ("pending",))  # type: ignore
+    runtime._complete_pending_write = lambda ticket=None: runtime._write_queue.complete(ticket)  # type: ignore
     runtime.session = SimpleNamespace(
         temporary_characters=set(),
         content=SimpleNamespace(characters={character.name: character}),
@@ -136,9 +139,9 @@ def test_prologue_finally_does_not_release_foreign_gate_holder():
 
     original_complete = runtime._complete_pending_write
 
-    def complete_then_hand_path_to_other() -> None:
+    def complete_then_hand_path_to_other(ticket=None) -> None:
         # Runs after cleanup `with write_gate` exited and released, before finally.
-        original_complete()
+        original_complete(ticket)
         other = threading.Thread(target=other_writer, name="foreign-serialized-holder")
         other_thread_holder.append(other)
         other.start()
@@ -334,9 +337,12 @@ def _runtime_for_nonstream_chat(*, start_scene=None, append_error=None, abandon_
 
     runtime = object.__new__(web_app.WebGame)
     runtime._write_gate = threading.Lock()
-    runtime._drain_cond = threading.Condition()
-    runtime._pending_writes_count = 0
-    runtime._draining = False
+    from ming_sim.session_write_queue import SessionWriteQueue
+    runtime._write_queue = SessionWriteQueue()
+    runtime._write_gate = runtime._write_queue.write_gate
+    runtime._runtime_write_queue = lambda: runtime._write_queue  # type: ignore
+    runtime._mark_pending_write = lambda key=None: runtime._write_queue.claim(key=key or ("pending",))  # type: ignore
+    runtime._complete_pending_write = lambda ticket=None: runtime._write_queue.complete(ticket)  # type: ignore
     runtime.session = SimpleNamespace(
         temporary_characters=set(),
         content=SimpleNamespace(characters={character.name: character}),
@@ -515,7 +521,6 @@ def test_nonstream_api_issue_decree_llm_unavailable_is_structured_not_500(
         _write_gate=threading.Lock(),
     )
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
-    monkeypatch.setattr(web_app, "_await_audience_inflight_clear", lambda *_a, **_k: None)
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
     monkeypatch.setattr(web_app, "_failed_secret_order_ids_for_turn", lambda *_a, **_k: set())
     monkeypatch.setattr(web_app, "_new_secret_order_failure_payloads_for_turn", lambda *_a, **_k: [])

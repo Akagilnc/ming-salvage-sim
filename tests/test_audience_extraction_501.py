@@ -556,7 +556,9 @@ def test_web_await_inflight_does_not_pre_drain_pending(web_game, monkeypatch):
 
     monkeypatch.setattr(
         agents_mod, "create_audience_extractor_agent", lambda cfg: _BoomAgent())
-    web_app._await_audience_inflight_clear(game)
+    # #1353：前门屏障/等待不得预清待补——待补留给 close-night 单一 owner。
+    from ming_sim.session_write_queue import get_session_write_queue
+    get_session_write_queue(game).barrier(lambda: None)
     assert game.db.count_pending_story_extractions(night_id=nid) == 1
     assert an.get_night(game.db, nid)["status"] == an.NIGHT_STATUS_OPEN
 
