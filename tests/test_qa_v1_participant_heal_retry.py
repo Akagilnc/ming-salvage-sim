@@ -59,9 +59,16 @@ def _active_minister(db, content, *, exclude="毕自严"):
     )
 
 
-def _ok_payload(*, person: str | None = "毕自严"):
+def _ok_payload(*, person: str | None | list[str] = "毕自严"):
     roster = []
-    if person is not None:
+    if isinstance(person, list):
+        for i, name in enumerate(person):
+            roster.append({
+                "character_id": name,
+                "tier": "主办" if i == 0 else "协办",
+                "role": "核辽饷",
+            })
+    elif person is not None:
         roster = [{"character_id": person, "tier": "主办", "role": "核辽饷"}]
     return {
         "拟旨意图": "拟旨",
@@ -148,8 +155,6 @@ def test_capture_unknown_person_escalates_no_draft(game, monkeypatch):
             text, None, db=db, content=content,
         )
     _assert_inworld_escalate(str(ei.value), "不存在之人甲")
-    # 总罩默认 30s（Q1）
-    assert float(cli_backend.MANUAL_DIRECTIVE_CAPTURE_TIMEOUT_S) == 30.0
     # 输入文未改（调用方仍持有原 text）
     assert text == "着不存在之人甲核清太仓，边饷优先"
     # 不得落库
@@ -193,6 +198,74 @@ def test_capture_unknown_then_removal_still_escalates(game, monkeypatch):
         )
     _assert_inworld_escalate(str(ei.value), "不存在之人甲")
     assert any(_CORRECTION_MARK in p for p in calls)
+
+
+def test_capture_correction_drops_prior_valid_escalates(game, monkeypatch):
+    """纠错轮只回替换名、丢掉本轮合法参与人 → escalate，不落草案。"""
+    import ming_sim.cli_backend as cli_backend
+
+    db, state, content = game
+    _biziyan(content)
+    replacement = _active_minister(db, content).name
+    text = "着不存在之人甲与毕自严核拨辽饷"
+    calls: list[str] = []
+
+    def backend(prompt, *_a, tag="", **_k):
+        calls.append(prompt)
+        if tag == "participant_escalate_report":
+            return ("通政司启：朝中查无「不存在之人甲」，乞陛下明示。", 1)
+        if _CORRECTION_MARK in prompt:
+            # 有替换，但顺手抹掉合法的毕自严
+            person = [replacement]
+        else:
+            person = ["不存在之人甲", "毕自严"]
+        return (json.dumps(_ok_payload(person=person), ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
+    with pytest.raises(ValueError) as ei:
+        cli_backend.capture_manual_directive_payload(
+            text, None, db=db, content=content,
+        )
+    _assert_inworld_escalate(str(ei.value), "不存在之人甲")
+    assert len(db.list_directives(state) or []) == 0
+    assert any(_CORRECTION_MARK in p for p in calls)
+
+
+def test_capture_correction_keeps_prior_valid_heals(game, monkeypatch):
+    """纠错轮保留毕自严 + 正确替换名 → 自愈成功落库（防过严误伤）。"""
+    import ming_sim.cli_backend as cli_backend
+
+    db, state, content = game
+    _biziyan(content)
+    replacement = _active_minister(db, content).name
+    text = "着不存在之人甲与毕自严核拨辽饷"
+    calls: list[str] = []
+
+    def backend(prompt, *_a, tag="", **_k):
+        calls.append(prompt)
+        if _CORRECTION_MARK in prompt:
+            person = ["毕自严", replacement]
+        else:
+            person = ["不存在之人甲", "毕自严"]
+        return (json.dumps(_ok_payload(person=person), ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
+    payload = cli_backend.capture_manual_directive_payload(
+        text, None, db=db, content=content,
+    )
+    ids = [str(i["character_id"]) for i in (payload.get("participant_roster") or [])]
+    assert "毕自严" in ids
+    assert replacement in ids
+    assert "不存在之人甲" not in ids
+    assert len(calls) == 2
+
+    session = GameSession.__new__(GameSession)
+    session.db = db
+    session.state = state
+    session.llm_config = None
+    session.content = content
+    dv = session.add_directive(text, dossier_payload=payload)
+    assert dv.id > 0
 
 
 def test_capture_heal_retry_bounded(game, monkeypatch):

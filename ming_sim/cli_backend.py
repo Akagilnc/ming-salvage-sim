@@ -1283,22 +1283,34 @@ _PARTICIPANT_REF_MISSING_RE = re.compile(
 )
 
 
+def _normalize_unknown_participant_names(
+    names: Optional[List[str]] = None,
+) -> List[str]:
+    cleaned: List[str] = []
+    for raw in names or []:
+        name = str(raw or "").strip()
+        if name and name not in cleaned:
+            cleaned.append(name)
+    return cleaned
+
+
+def unknown_participant_fact(names: Optional[List[str]] = None) -> str:
+    """查无此人事实串唯一真源（escalate.fact 与 compose 共用）。"""
+    cleaned = _normalize_unknown_participant_names(names)
+    shown = "、".join(cleaned) if cleaned else "其人"
+    return (
+        f"朝中名册查无「{shown}」此人；"
+        f"不得擅自将其从参与人中除去或另换他人；"
+        f"须回禀陛下，乞陛下明示该如何处置。"
+    )
+
+
 class UnknownParticipantEscalate(Exception):
     """真不在册：自愈耗尽后须戏内回禀，禁除名照落 / 禁静默 409 术语怼玩家。"""
 
     def __init__(self, names: Optional[List[str]] = None):
-        cleaned: List[str] = []
-        for raw in names or []:
-            name = str(raw or "").strip()
-            if name and name not in cleaned:
-                cleaned.append(name)
-        self.names = cleaned
-        shown = "、".join(self.names) if self.names else "其人"
-        self.fact = (
-            f"朝中名册查无「{shown}」此人；"
-            f"不得擅自将其从参与人中除去或另换他人；"
-            f"须回禀陛下，乞陛下明示该如何处置。"
-        )
+        self.names = _normalize_unknown_participant_names(names)
+        self.fact = unknown_participant_fact(self.names)
         super().__init__(self.fact)
 
 
@@ -1366,20 +1378,13 @@ def compose_unknown_participant_inworld_report(
 
     LLM 失败时退保守 in-world 短句（仍非系统 409 术语），仅兜底。
     """
-    cleaned: List[str] = []
-    for raw in names or []:
-        name = str(raw or "").strip()
-        if name and name not in cleaned:
-            cleaned.append(name)
+    cleaned = _normalize_unknown_participant_names(names)
     shown = "、".join(cleaned) if cleaned else "其人"
     if voice == "minister" and str(speaker_name or "").strip():
         role = f"大臣{str(speaker_name).strip()}"
     else:
         role = "通政使司官"
-    fact = (
-        f"朝中名册查无「{shown}」此人；不得擅自除名或另换；"
-        f"须回禀陛下，乞陛下明示。"
-    )
+    fact = unknown_participant_fact(cleaned)
     prompt = (
         f"你是{role}。根据下列事实，以本职口吻向皇帝回禀（一两句即可）。"
         f"只输出回禀正文，不要标题、不要系统术语、不要 JSON。\n"
@@ -1401,17 +1406,6 @@ def compose_unknown_participant_inworld_report(
     except Exception as exc:
         _log(f"查无此人回禀产文失败：{exc}")
     return fallback
-
-
-def humanize_participant_ref_error(exc: BaseException) -> ValueError:
-    """兼容旧调用：耗尽事实 → ValueError（正式玩家面走 compose 戏内回禀）。"""
-    if isinstance(exc, UnknownParticipantEscalate):
-        names = list(exc.names)
-    else:
-        names = _invalid_participant_names_from_error(exc)
-    return ValueError(
-        compose_unknown_participant_inworld_report(names, voice="tongzheng")
-    )
 
 
 def normalize_draft_person_roster(
@@ -1536,12 +1530,17 @@ def extract_draft_intent_with_roster_heal(
                 f"拟旨参与人纠错重试 {attempt + 1}/{retries}: {exc}"
             )
             continue
-        # 校验过了：若本轮曾因查无而纠错，禁「只删不改」的除名照落
+        # 校验过了：若本轮曾因查无而纠错，禁「只删不改」；
+        # 亦禁有替换时顺手抹掉本轮已在册的合法参与人。
         if pending_unknown:
             new_ids = _person_ids_from_extract_result(validated)
             prior_valid = [i for i in prior_ids_at_fail if i not in pending_unknown]
             replacements = [i for i in new_ids if i not in prior_valid]
-            if not replacements and set(new_ids) <= set(prior_valid):
+            lost_prior_valid = not set(prior_valid) <= set(new_ids)
+            removal_only = (
+                not replacements and set(new_ids) <= set(prior_valid)
+            )
+            if lost_prior_valid or removal_only:
                 raise UnknownParticipantEscalate(pending_unknown)
         return validated
 
