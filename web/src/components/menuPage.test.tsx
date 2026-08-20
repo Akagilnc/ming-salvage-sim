@@ -480,9 +480,10 @@ describe("ApiSettingsModal reasoning strength", () => {
     );
     expect(runnerSelect).toBeTruthy();
     const runnerValues = Array.from(runnerSelect?.options || []).map((option) => option.value);
+    // #1274 W1：runner 下拉吃后端/fallback 单源，含 grok + cursor/kimi（=_CLI_BACKENDS）。
     expect(runnerValues).toContain("grok");
-    expect(runnerValues).not.toContain("cursor");
-    expect(runnerValues).not.toContain("kimi");
+    expect(runnerValues).toContain("cursor");
+    expect(runnerValues).toContain("kimi");
     expect(runnerSelect?.value).toBe("grok");
 
     const strength = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');

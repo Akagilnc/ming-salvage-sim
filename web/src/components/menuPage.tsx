@@ -1,9 +1,10 @@
 import React from "react";
 import { Loader2, Trash2 } from "lucide-react";
 import { api, normalizeApiError } from "../api";
+import { cliRunnerOptions } from "../cliRunners";
 import { resolveReasoningSupported } from "../reasoningSupport";
 import { consumeSettleStream } from "../settleStream";
-import type { CliModelChoices, MenuCampaign, MenuStatus, ReasoningStrengthChoice } from "../types";
+import type { CliModelChoices, CliRunnerChoice, MenuCampaign, MenuStatus, ReasoningStrengthChoice } from "../types";
 import { visibleReasoningStrengthChoices } from "../reasoningStrength";
 import { CliModelField } from "./cliModelField";
 
@@ -258,6 +259,7 @@ export function ApiSettingsModal({
     cli_model?: string;
     cli_model_saved?: string;
     cli_model_choices?: CliModelChoices;
+    cli_runners?: CliRunnerChoice[];
     cli_timeout_seconds?: number;
   };
   onClose: () => void;
@@ -389,10 +391,9 @@ export function ApiSettingsModal({
                   setCliModel("");  // 换 runner 归零到默认档，避免旧模型漏进新 runner
                 }}
               >
-                <option value="agy">agy（Gemini）</option>
-                <option value="codex">codex</option>
-                <option value="claude">claude</option>
-                <option value="grok">grok</option>
+                {cliRunnerOptions(initial?.cli_runners).map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
               </select>
             </label>
             <label>
