@@ -217,16 +217,62 @@ describe("朝堂空 layout 合法态（#1290/#1332）", () => {
     expect(before).not.toBeNull();
     expect(before!.left).not.toBe("");
 
+    // pending 期间真拖拽：jsdom 容器默认 0×0，须 stub 非零宽高，否则 onMove 除零失真
+    const court = host.querySelector(".minister-list-court") as HTMLElement | null;
+    expect(court).toBeTruthy();
+    court!.getBoundingClientRect = () =>
+      ({
+        x: 0,
+        y: 0,
+        width: 1000,
+        height: 1000,
+        top: 0,
+        right: 1000,
+        bottom: 1000,
+        left: 0,
+        toJSON: () => ({}),
+      }) as DOMRect;
+
+    const cards = Array.from(host.querySelectorAll<HTMLElement>("button.minister-card"));
+    const huangCard = cards.find((el) => el.querySelector(".minister-name")?.textContent === "黄立极");
+    expect(huangCard).toBeTruthy();
+
+    // 真拖拽：mousedown → mousemove(>3px) → mouseup。
+    // 首辅松手会吸回固定槽；要钉「回包不回滚」，须在仍持拖拽位移时让 fetch 落地
+    // （onMove 已写 savedPosRef；mouseup 仍派发以走完手势/卸监听）。
     await act(async () => {
-      resolveLayout({ ok: true, json: async () => ({ layout: "{}" }) });
+      huangCard!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, clientX: 100, clientY: 100 }));
+    });
+    await act(async () => {
+      window.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, clientX: 700, clientY: 100 }));
+    });
+
+    const dragged = cardPos(host, "黄立极");
+    expect(dragged).not.toBeNull();
+    expect(dragged!.left).not.toBe("");
+    // 契约前提：拖中坐标须异于将要回包的服务端 layout，否则钉不住回滚
+    expect(`${dragged!.left}|${dragged!.top}`).not.toBe("7.7%|53.2%");
+
+    await act(async () => {
+      // 非空且刻意不同于拖后：默认首辅锚点——若缺 savedPosRef 守卫会把本地拖拽滚回去
+      resolveLayout({
+        ok: true,
+        json: async () => ({ layout: JSON.stringify({ 黄立极: { px: 0.077, py: 0.532 } }) }),
+      });
       await Promise.resolve();
       await Promise.resolve();
     });
-    mountedRoots.push({ root, host });
 
     const after = cardPos(host, "黄立极");
     expect(after).not.toBeNull();
     expect(after!.left).not.toBe("");
+    // pending 期间已拖 → 非空服务端 layout 回包不得回滚本地
+    expect(after).toEqual(dragged);
+
+    await act(async () => {
+      window.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, clientX: 700, clientY: 100 }));
+    });
+    mountedRoots.push({ root, host });
   });
 });
 
