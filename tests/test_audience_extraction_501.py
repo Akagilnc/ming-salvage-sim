@@ -808,3 +808,78 @@ def test_pending_readable_and_internal_catch_up(web_game, monkeypatch):
     assert after["count"] == 0
     assert game.db.get_story_extract_status(ctid) == "done"
     assert not hasattr(game, "retry_story_extractions")
+
+
+def test_catch_up_list_unextracted_waits_prior_via_ticketed_gate():
+    """#1353：catch_up 首碰 list_unextracted 必须经 TicketedWriteGate wait_prior。
+
+    触发：启动 catch-up / 收夜 drain 在过月屏障之后领票。闸外 list 与
+    barrier close / chat 裸写并发同一 sqlite 连接 → Row IndexError。
+    """
+    from ming_sim.session_write_queue import SessionWriteQueue
+
+    q = SessionWriteQueue()
+    listed = threading.Event()
+    entered_catch = threading.Event()
+    barrier_hold = threading.Event()
+    barrier_entered = threading.Event()
+    done = threading.Event()
+
+    class _FakeDB:
+        def list_unextracted_replies(self, night_id=None):
+            listed.set()
+            return []
+
+    def barrier_body() -> None:
+        barrier_entered.set()
+        assert barrier_hold.wait(2.0)
+
+    bt = threading.Thread(target=lambda: q.barrier(barrier_body), daemon=True)
+    bt.start()
+    assert barrier_entered.wait(2.0)
+
+    ticket = q.claim(key=("startup",))
+    assert ticket is not None
+    gate = q.ticketed_gate(ticket)
+
+    def run_catch() -> None:
+        entered_catch.set()
+        catch_up_pending_extractions(
+            db=_FakeDB(), llm_config=None, write_gate=gate,
+        )
+        q.complete(ticket)
+        done.set()
+
+    th = threading.Thread(target=run_catch, daemon=True)
+    th.start()
+    assert entered_catch.wait(2.0)
+    # 屏障未放行前不得碰共享 conn
+    assert not listed.is_set()
+    barrier_hold.set()
+    assert listed.wait(2.0)
+    assert done.wait(2.0)
+    bt.join(timeout=2.0)
+    th.join(timeout=2.0)
+    assert not bt.is_alive() and not th.is_alive()
+
+
+def test_catch_up_cancelled_ticket_does_not_touch_db():
+    """取消票：catch_up 不得闸外/闸内 list，且从不抛（ADR 0036）。"""
+    from ming_sim.session_write_queue import SessionWriteQueue
+
+    q = SessionWriteQueue()
+    ticket = q.claim(key=("startup",))
+    assert ticket is not None
+    q.cancel(ticket)
+    calls = {"n": 0}
+
+    class _FakeDB:
+        def list_unextracted_replies(self, night_id=None):
+            calls["n"] += 1
+            return []
+
+    summary = catch_up_pending_extractions(
+        db=_FakeDB(), llm_config=None, write_gate=q.ticketed_gate(ticket),
+    )
+    assert calls["n"] == 0
+    assert summary == {"extracted": 0, "pending": 0, "scanned": 0}

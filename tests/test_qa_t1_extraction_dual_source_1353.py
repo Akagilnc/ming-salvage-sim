@@ -1167,3 +1167,24 @@ def test_close_night_shared_conn_reads_short_hold_gate_source():
     assert "get_open_night" not in before_gate
     assert "get_night(" not in before_gate
 
+    # auto_close 入场 get_open_night 同样入闸（过月屏障路径；禁闸外裸读）
+    auto_src = src.split("def auto_close_open_night(", 1)[1]
+    auto_src = auto_src.split("\ndef ", 1)[0]
+    assert "gate = _gate_cm(write_gate)" in auto_src
+    assert "with gate:" in auto_src
+    before_auto_gate = auto_src.split("gate = _gate_cm", 1)[0]
+    assert "get_open_night" not in before_auto_gate
+
+    # catch_up / drain 水位重读入闸（启动补跑与收夜 drain 的 list 不得闸外裸 SELECT）
+    ae_src = Path(ae.__file__).read_text(encoding="utf-8")
+    catch_src = ae_src.split("def catch_up_pending_extractions(", 1)[1]
+    catch_src = catch_src.split("\ndef drain_pending_before_close", 1)[0]
+    assert "with write_gate:" in catch_src
+    list_idx = catch_src.find("list_unextracted_replies")
+    with_idx = catch_src.find("with write_gate:")
+    assert 0 <= with_idx < list_idx
+    drain_src = ae_src.split("def drain_pending_before_close(", 1)[1]
+    drain_src = drain_src.split("\ndef drain_pending_before_open_night_close", 1)[0]
+    assert "with write_gate:" in drain_src
+    assert "count_pending_story_extractions" in drain_src
+

@@ -37,6 +37,7 @@ from ming_sim.audience_night import (
 )
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.llm_model import extract_agent_text
+from ming_sim.session_write_queue import TicketCancelled
 
 _AUDIBILITIES = frozenset({AUDIBILITY_PUBLIC, AUDIBILITY_PRIVATE})
 _ENDORSEMENT_FORMS = frozenset({"会签", "当面站台", "御笔手敕"})
@@ -520,8 +521,11 @@ def run_endorsement_batch_for_night(
     """
     del join_timeout_s  # 签名兼容；队列屏障后不再 join 争用
     nid = int(night_id)
-    if _is_endorsement_bound(db, nid):
-        return {"status": "done", "night_id": nid, "already": True, "ids": []}
+    # #1353：凡碰共享 conn 先经 write_gate（TicketedWriteGate → wait_prior）。
+    # 禁闸外 get_night / list_endorsement——过月屏障 close 与 chat 裸写并发会搞坏 sqlite3.Row。
+    with write_gate:
+        if _is_endorsement_bound(db, nid):
+            return {"status": "done", "night_id": nid, "already": True, "ids": []}
 
     flight_key = _night_flight_key(db, nid)
     owner: Optional[threading.Lock] = None
@@ -529,20 +533,21 @@ def run_endorsement_batch_for_night(
         # single-flight 只防双跑 LLM；写序归 session 队列。争用/已释放 → 重读终态。
         owner, owned = _claim_single_flight(flight_key)
         if owner is None or not owned:
-            if _is_endorsement_bound(db, nid):
-                return {"status": "done", "night_id": nid, "already": True, "ids": []}
+            with write_gate:
+                if _is_endorsement_bound(db, nid):
+                    return {"status": "done", "night_id": nid, "already": True, "ids": []}
             raise AudienceNightError(
                 f"收夜背书批未落定（night_id={nid}）",
                 code="endorsement_not_bound",
                 detail={"night_id": nid},
             )
 
-        if _is_endorsement_bound(db, nid):
-            return {"status": "done", "night_id": nid, "already": True, "ids": []}
-
-        inputs = db.list_endorsement_batch_inputs(nid)
-        candidates = list(inputs.get("candidates") or [])
-        source_turns = list(inputs.get("turns") or [])
+        with write_gate:
+            if _is_endorsement_bound(db, nid):
+                return {"status": "done", "night_id": nid, "already": True, "ids": []}
+            inputs = db.list_endorsement_batch_inputs(nid)
+            candidates = list(inputs.get("candidates") or [])
+            source_turns = list(inputs.get("turns") or [])
 
         if not candidates or not source_turns:
             # Same short path as settle: advance CLOSE_STEP_ENDORSEMENT_BOUND.
@@ -734,8 +739,15 @@ def catch_up_pending_extractions(
     **从不抛**——补跑失败不锁档（AC8）。只补 story/presence，不触发夜级 endorsement batch。
     allow_closing 仅 close_night ordinary drain 显式开启。
     #1353 fold-in r5：欠账只在内部处理——不推玩家可见 stage/SSE/CLI 进度。
+    #1353：首碰共享 conn（list_unextracted）必须经 write_gate（TicketedWriteGate →
+    wait_prior）。启动 catch-up / 收夜 drain 常在屏障之后领票；闸外 list 与
+    gate-free close / chat 裸写并发会 sqlite3.Row IndexError。
     """
-    rows = db.list_unextracted_replies(night_id=night_id)
+    try:
+        with write_gate:
+            rows = db.list_unextracted_replies(night_id=night_id) or []
+    except TicketCancelled:
+        return {"extracted": 0, "pending": 0, "scanned": 0}
     extracted = 0
     pending = 0
 
@@ -791,9 +803,14 @@ def drain_pending_before_close(
         extractor_agent=extractor_agent,
         allow_closing=True,
     )
-    remaining = db.count_pending_story_extractions(night_id=int(night_id))
+    # 收夜 drain 的水位重读同样入闸——禁与 chat 裸写 / 他腿并发裸 SELECT。
+    with write_gate:
+        remaining = int(db.count_pending_story_extractions(night_id=int(night_id)) or 0)
+        rows = (
+            db.list_unextracted_replies(night_id=int(night_id)) or []
+            if remaining > 0 else []
+        )
     if remaining > 0:
-        rows = db.list_unextracted_replies(night_id=int(night_id))
         ids = [int(r.get("chat_turn_id") or 0) for r in rows]
         technical = (
             "收夜中止：本夜仍有未抽取落账的回话（待补），"
