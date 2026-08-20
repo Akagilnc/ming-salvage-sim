@@ -364,3 +364,41 @@ def test_no_elapsed_timeout_api_on_barrier():
     assert "TicketBarrierTimeout" not in text
     assert "DEFAULT_TICKET_WAIT_S" not in text
     assert not hasattr(swq, "TicketBarrierTimeout")
+
+
+def test_get_session_write_queue_wiring_fail_loud_no_broad_swallow():
+    """#1353 r7 / ADR 0005：接线赋值禁宽吞；WebGame/session 必共享同一 queue/gate。"""
+    import re
+    from pathlib import Path
+
+    import ming_sim.session_write_queue as swq
+    from ming_sim.session_write_queue import get_session_write_queue
+
+    text = Path(swq.__file__).read_text(encoding="utf-8")
+    # 定位 get_session_write_queue 函数体，禁 except Exception + pass 宽吞。
+    m = re.search(
+        r"def get_session_write_queue\(.*?(?=\ndef |\Z)",
+        text,
+        flags=re.S,
+    )
+    assert m is not None
+    body = m.group(0)
+    assert "except Exception" not in body
+    assert re.search(r"except\s+Exception\s*:\s*\n\s*pass", body) is None
+
+    class _Sess:
+        pass
+
+    class _Owner:
+        def __init__(self) -> None:
+            self.session = _Sess()
+
+    owner = _Owner()
+    q1 = get_session_write_queue(owner)
+    q2 = get_session_write_queue(owner)
+    q3 = get_session_write_queue(owner.session)
+    assert q1 is q2 is q3
+    assert owner._write_queue is q1
+    assert owner.session._write_queue is q1
+    assert owner._write_gate is q1.write_gate
+    assert owner.session._write_gate is q1.write_gate

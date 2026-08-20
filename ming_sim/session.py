@@ -1143,9 +1143,15 @@ class GameSession:
         from ming_sim.audience_night import close_night, get_open_night
         from ming_sim.session_write_queue import get_session_write_queue
 
-        if get_open_night(self.db) is None:
-            return
         gate = write_gate if write_gate is not None else getattr(self, "_write_gate", None)
+        # #1353 r7：入口探测开夜短持 gate（共享 conn 读；无 gate 时 CLI 单写者）。
+        if gate is not None:
+            with gate:
+                open_n = get_open_night(self.db)
+        else:
+            open_n = get_open_night(self.db)
+        if open_n is None:
+            return
 
         def _do_close() -> None:
             close_night(

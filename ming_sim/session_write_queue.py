@@ -284,6 +284,9 @@ def get_session_write_queue(owner: Any) -> SessionWriteQueue:
 
     If owner already has a bare `_write_gate` Lock (legacy fixtures), reuse that
     lock as the queue's write_gate so drain/barrier never diverge onto a second lock.
+
+    Wiring assignments are fail-loud (ADR 0005): silent swallow here can fork
+    owner/session onto different queue/gate ledgers and leak tickets.
     """
     q = getattr(owner, "_write_queue", None)
     if isinstance(q, SessionWriteQueue):
@@ -292,12 +295,9 @@ def get_session_write_queue(owner: Any) -> SessionWriteQueue:
     if session is not None:
         q = getattr(session, "_write_queue", None)
         if isinstance(q, SessionWriteQueue):
-            try:
-                owner._write_queue = q
-                # Keep owner._write_gate pointing at the same lock.
-                owner._write_gate = q.write_gate
-            except Exception:
-                pass
+            owner._write_queue = q
+            # Keep owner._write_gate pointing at the same lock.
+            owner._write_gate = q.write_gate
             return q
     # Install on the most session-like object available.
     target = session if session is not None else owner
@@ -308,15 +308,9 @@ def get_session_write_queue(owner: Any) -> SessionWriteQueue:
         existing_gate = getattr(session, "_write_gate", None)
     if existing_gate is not None and hasattr(existing_gate, "acquire"):
         q.write_gate = existing_gate  # type: ignore[assignment]
-    try:
-        target._write_queue = q  # type: ignore[attr-defined]
-        target._write_gate = q.write_gate  # type: ignore[attr-defined]
-    except Exception:
-        pass
+    target._write_queue = q  # type: ignore[attr-defined]
+    target._write_gate = q.write_gate  # type: ignore[attr-defined]
     if session is not None and owner is not session:
-        try:
-            owner._write_queue = q
-            owner._write_gate = q.write_gate
-        except Exception:
-            pass
+        owner._write_queue = q
+        owner._write_gate = q.write_gate
     return q

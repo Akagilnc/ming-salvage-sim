@@ -735,9 +735,23 @@ def test_drain_catch_up_silent_no_on_event_surface(game, tmp_path, monkeypatch):
     assert "过月时自动补跑" not in prod
 
 
+def test_empty_startup_catchup_claims_zero_tickets(web_game):
+    """#1353 r7：无待补时 startup catch-up 不领票——禁 residual pending 竞态。"""
+    game = web_game
+    q = game._runtime_write_queue()
+    # fresh WebGame 无未抽回话；init 时 spawn 必须早退，队列空。
+    assert q.inflight_count() == 0
+    assert int(game._pending_writes_count) == 0
+    # 显式再调仍不领票。
+    game._spawn_startup_extraction_catch_up()
+    assert q.inflight_count() == 0
+
+
 def test_barrier_waits_trail_ticket_then_auto_close(web_game, monkeypatch):
     """#1353 生产接缝屏障钉：尾随领票未完成时 entry 不得抢跑；完成后一次过。"""
     game = web_game
+    # 空库 startup 不得占票；本钉只见自领 1 票（全量 xdist 顺序依赖根因）。
+    assert int(game._pending_writes_count) == 0
     ticket = game._mark_pending_write(key=("turn", 1))
     assert ticket is not None
     assert int(game._pending_writes_count) == 1
@@ -1129,3 +1143,27 @@ def test_resolve_turn_write_gate_held_by_caller_no_reenter(game, tmp_path, monke
         )
     finally:
         gate.release()
+
+
+def test_close_night_shared_conn_reads_short_hold_gate_source():
+    """#1353 r7：close_night 共享 conn 读入闸——禁闸外 get_open/get_night/wait 裸读。"""
+    import inspect
+    from pathlib import Path
+
+    import ming_sim.audience_night as an
+
+    src = Path(an.__file__).read_text(encoding="utf-8")
+    # wait_in_flight_clear 必接受 write_gate，且 sleep 在 with 外
+    sig = inspect.signature(an.wait_in_flight_clear)
+    assert "write_gate" in sig.parameters
+    # close_night 调用 wait 时传 write_gate
+    assert "wait_in_flight_clear(" in src
+    assert "write_gate=write_gate" in src
+    # 入场 get_open_night / get_night 在 with gate 内（源码形态）
+    close_src = src.split("def close_night(", 1)[1].split("\ndef auto_close_open_night", 1)[0]
+    assert "with gate:" in close_src
+    # 禁「gate 赋值前」裸 get_open_night
+    before_gate = close_src.split("gate = _gate_cm", 1)[0]
+    assert "get_open_night" not in before_gate
+    assert "get_night(" not in before_gate
+
