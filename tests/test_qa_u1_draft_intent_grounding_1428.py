@@ -149,10 +149,14 @@ def test_capture_truncation_style_name_still_whole_order_409(game, monkeypatch):
         "_run_backend_for_config",
         lambda *_a, **_k: (json.dumps(response, ensure_ascii=False), 1),
     )
-    with pytest.raises(ValueError, match=r"毕自|名册|参与"):
+    with pytest.raises(ValueError) as ei:
         cli_backend.capture_manual_directive_payload(
             text, None, db=db, content=content,
         )
+    msg = str(ei.value)
+    assert "毕自" in msg
+    assert any(m in msg for m in ("乞陛下明示", "朝籍", "查无"))
+    assert "参与人物不存在" not in msg  # F5：禁原始 409 泄漏
 
 
 def test_capture_unknown_person_still_409(game, monkeypatch):
@@ -173,10 +177,14 @@ def test_capture_unknown_person_still_409(game, monkeypatch):
         "_run_backend_for_config",
         lambda *_a, **_k: (json.dumps(response, ensure_ascii=False), 1),
     )
-    with pytest.raises(ValueError, match=r"不存在之人甲|名册|参与"):
+    with pytest.raises(ValueError) as ei:
         cli_backend.capture_manual_directive_payload(
             text, None, db=db, content=content,
         )
+    msg = str(ei.value)
+    assert "不存在之人甲" in msg
+    assert any(m in msg for m in ("乞陛下明示", "朝籍", "查无"))
+    assert "参与人物不存在" not in msg  # F5：禁原始 409 泄漏
 
 
 def test_extract_draft_intent_prompt_grounds_roster_when_content_given(game, monkeypatch):

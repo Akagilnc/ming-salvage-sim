@@ -272,7 +272,10 @@ def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
 
 def _materialize_draft(ctx: MaterializeCtx) -> None:
     from ming_sim.cli_backend import (
+        UnknownParticipantEscalate,
+        compose_unknown_participant_inworld_report,
         extract_draft_intent_with_roster_heal,
+        normalize_draft_person_roster,
         resolve_directive_mode,
     )
 
@@ -324,20 +327,49 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
     elif committed_draft is not None and not has_pending_directive:
         existing_draft_text = str(committed_draft["text"] or "")
 
+    def _heal_or_escalate(**kwargs: Any) -> Optional[Dict[str, Any]]:
+        """自愈抽取；真不在册 → 戏内回禀、不落草案、不炸整轮。"""
+        try:
+            return extract_draft_intent_with_roster_heal(**kwargs)
+        except UnknownParticipantEscalate as exc:
+            report = compose_unknown_participant_inworld_report(
+                exc.names,
+                voice="minister",
+                speaker_name=minister_name,
+                llm_config=ctx.llm_config,
+            )
+            ctx.out["unknown_participant_escalate"] = {
+                "names": list(exc.names),
+                "report": report,
+            }
+            return None
+
     if (
         intent is not None
         and intent_kind == "draft"
         and ctx.candidate_kind_count > 1
     ):
         if "drafts" not in ctx.batch_state:
-            batch_res = extract_draft_intent_with_roster_heal(
-                ctx.player_message,
-                ctx.reply,
+            if "unknown_participant_escalate" in ctx.batch_state:
+                ctx.out["unknown_participant_escalate"] = ctx.batch_state[
+                    "unknown_participant_escalate"
+                ]
+                return
+            batch_res = _heal_or_escalate(
+                player_message=ctx.player_message,
+                minister_reply=ctx.reply,
                 llm_config=ctx.llm_config,
                 draft_count=ctx.candidate_kind_count,
                 content=getattr(session, "content", None),
                 db=session.db,
             )
+            if batch_res is None:
+                # 批抽一次耗尽：记入 batch_state，兄弟 kind 同回禀不重复 LLM
+                esc = ctx.out.get("unknown_participant_escalate")
+                if esc is not None:
+                    ctx.batch_state["unknown_participant_escalate"] = esc
+                ctx.batch_state["drafts"] = []
+                return
             ctx.batch_state["drafts"] = list(batch_res.get("drafts") or [])
         drafts = ctx.batch_state["drafts"]
         if ctx.candidate_kind_index >= len(drafts):
@@ -347,14 +379,19 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
             return
         draft_res = dict(batch_draft)
     else:
-        draft_res = extract_draft_intent_with_roster_heal(
-            ctx.player_message, ctx.reply, llm_config=ctx.llm_config,
+        healed = _heal_or_escalate(
+            player_message=ctx.player_message,
+            minister_reply=ctx.reply,
+            llm_config=ctx.llm_config,
             has_pending_draft=has_existing_draft,
             existing_draft_text=existing_draft_text,
             existing_candidates=dir_candidates or None,
             content=getattr(session, "content", None),
             db=session.db,
         )
+        if healed is None:
+            return
+        draft_res = healed
         if intent is not None and intent_kind == "draft" and not has_existing_draft:
             # #515 的并行 classifier 已经确定“拟旨”，大臣回话仍是正文真源；
             # #571 的串行抽取只补案卷结构字段，失败不得吞掉已判定的动作。
@@ -405,40 +442,15 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
             "text": draft_res["draft_text"],
             "actor": minister_name,
         }
-        roster = draft_res.get("participant_roster")
-        if "participant_roster" in draft_res:
-            if not isinstance(roster, list):
-                raise ValueError("参与人须为对象列表")
-            from ming_sim.session import _canonical_minister_key
-
-            roster = session.db._normalize_participant_roster(
-                roster, strict_structured=True,
-            )
-            # #1279 / #1380 r1 二选一：静默滤非人（filter-before-canon，禁司礼监→王承恩）。
-            # 人话提示留给直达 _validate_participant_roster_references 的路径。
-            from ming_sim.participant_roster import is_non_person_participant_name
-            person_roster: List[Dict[str, Any]] = []
-            for item in roster:
-                cid = str(item.get("character_id") or "").strip()
-                if is_non_person_participant_name(cid):
-                    continue
-                item = {
-                    **item,
-                    "character_id": _canonical_minister_key(
-                        session.content, cid, session.db,
-                    ),
-                }
-                delegator = str(item.get("delegator_id") or "").strip()
-                if delegator:
-                    if is_non_person_participant_name(delegator):
-                        item["delegator_id"] = None
-                    else:
-                        item["delegator_id"] = _canonical_minister_key(
-                            session.content, delegator, session.db,
-                        )
-                person_roster.append(item)
-            roster = person_roster
-            draft_res["participant_roster"] = roster
+        # F3：与 capture 共用 normalize_draft_person_roster（禁第二份 inline 形）。
+        if "participant_roster" in draft_res and draft_res.get("participant_roster") is not None:
+            content = getattr(session, "content", None)
+            if content is not None:
+                draft_res["participant_roster"] = normalize_draft_person_roster(
+                    draft_res.get("participant_roster"),
+                    db=session.db,
+                    content=content,
+                )
         _target = str(draft_res.get("target_candidate") or "")
         _target_id = int(_target) if _target.isdigit() else None
         pending_target = next(
