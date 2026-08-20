@@ -335,9 +335,9 @@ export function App() {
     // 结局页未关掉时让位给它；玩家关掉后（endingDismissed）邸报照常。
     if (state.ending && !endingDismissed) return;
     const currentTurn = state.turn.turn;
+    // #1356：t0 previous_summary 为空串——自动弹仅在有真报时；空壳仍可由木牌打开。
     const summary = (state.previous_summary || "").trim();
     if (!summary) return;
-    if (summary.startsWith("登基伊始")) return;
     if (currentTurn === gazetteShown) return;
     if (!isFaceReachable("gazette", isSettlementDisplay(state.turn))) return;
     if (suppressNextReportRef.current) {
@@ -728,7 +728,7 @@ export function App() {
         </FullscreenModal>
       ) : null}
 
-      {/* #1356：空邸报态仍开卷轴壳，不因无 previous_summary 而崩/卡死 */}
+      {/* #1356：空 previous_summary 亦可开卷轴壳（木牌）；无固定空注 */}
       {gazetteOpen ? (
         <ReportModal
           report={(gazetteReport || state.previous_summary || report || "").trim()}

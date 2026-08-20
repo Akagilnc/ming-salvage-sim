@@ -2307,7 +2307,7 @@ class GameDB:
             self.conn.commit()
         self.init_fiscal_config()
         self._migrate_missing_fiscal_engine_from_pay_source_cutover()
-        # #1356：旧档精确清除固定开局邸报 seed（按已知文本/标记；不动真实结算产物）
+        # #1356：旧档精确 DELETE 已知 seed 全文（不动真实结算产物）
         self._purge_fixed_opening_gazette_seed()
 
     def _migrate_legacy_office_pollution(self) -> None:
@@ -4761,15 +4761,8 @@ class GameDB:
             )
         self.conn.commit()
 
-    # #1356 固定开局邸报 seed 指纹（与 content/opening_gazette.md 对齐；三标记全中才清）
-    _OPENING_GAZETTE_SEED_MARKERS = (
-        "天启七年九月邸报",
-        "待办未解（开局三事）",
-        "信王于乾清宫即皇帝位",
-    )
-
     def _known_opening_gazette_seed_text(self) -> str:
-        """已知固定开局邸报全文（fingerprint 源）；缺文件则空串。"""
+        """#1356 已知固定开局邸报全文指纹（与历史 seed 写入一致：strip 后入库）。"""
         try:
             from pathlib import Path
             from ming_sim.paths import bundled_path
@@ -4780,31 +4773,16 @@ class GameDB:
             return ""
         return ""
 
-    def _is_fixed_opening_gazette_seed(self, report: str) -> bool:
-        """按已知全文精确匹配，或三标记全中识别固定 seed（勿碰真实结算产物）。"""
-        text = str(report or "").strip()
-        if not text:
-            return False
-        known = self._known_opening_gazette_seed_text()
-        if known and text == known:
-            return True
-        return all(marker in text for marker in self._OPENING_GAZETTE_SEED_MARKERS)
-
     def _purge_fixed_opening_gazette_seed(self) -> None:
-        """#1356：旧档精确清除固定开局邸报 seed。幂等（meta 标记）。
+        """#1356：旧档精确 DELETE 已知 seed 全文。
 
-        只删匹配已知 seed 文本/标记的 turn_reports 行；真实月末结算邸报保留。
+        单条 SQL 等值匹配，天然幂等；不扫表、不写 meta、不按短语 substring。
+        真实结算邸报（哪怕含 seed 短语）因全文不等而不被删。
         """
-        if self._has_meta_flag("__opening_gazette_seed_purged_1356"):
+        known = self._known_opening_gazette_seed_text()
+        if not known:
             return
-        rows = self.conn.execute("SELECT turn, report FROM turn_reports").fetchall()
-        for row in rows:
-            if self._is_fixed_opening_gazette_seed(str(row["report"] or "")):
-                self.conn.execute(
-                    "DELETE FROM turn_reports WHERE turn = ?",
-                    (int(row["turn"]),),
-                )
-        self._set_meta_flag("__opening_gazette_seed_purged_1356")
+        self.conn.execute("DELETE FROM turn_reports WHERE report = ?", (known,))
         self.conn.commit()
 
     def seed_opening_gazette(self, state: GameState) -> None:
@@ -7858,16 +7836,16 @@ class GameDB:
 
     def previous_turn_summary(self, state: GameState) -> str:
         previous_turn = state.turn - 1
-        # #1356：不再 seed turn=0 固定邸报；turn<0 或 turn=0 无真实月报 → 登基占位。
+        # #1356：不再 seed turn=0 固定邸报；t0 / 无上月 → 空串（P7 禁固定空态文案）。
         if previous_turn < 0:
-            return f"登基伊始，尚无上{TURN_UNIT}回奏。"
+            return ""
 
         # 上回合奏报单独存在 turn_reports，直接取。
         report = self.get_turn_report(previous_turn)
         if report:
             return report
         if previous_turn == 0:
-            return f"登基伊始，尚无上{TURN_UNIT}回奏。"
+            return ""
 
         logs = self.conn.execute(
             "SELECT message FROM turn_logs WHERE turn = ? ORDER BY id",
