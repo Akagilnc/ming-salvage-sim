@@ -18,18 +18,20 @@ def test_choices_cover_all_supported_runners():
     choices = cb.cli_model_choices()
     # 每个受支持的 CLI runner 都要有一档清单（与 _CLI_BACKENDS 单一真源对齐，#1256）。
     assert set(choices) == set(cb._CLI_BACKENDS)
-    assert {"agy", "codex", "claude", "cursor", "kimi", "grok"} <= set(choices)
+    assert {"agy", "codex", "claude", "cursor", "kimi", "grok", "pi"} <= set(choices)
 
 
 def test_cli_runner_choices_cover_all_supported_runners():
-    """#1274 W1：CLI Runner 下拉单源 = _CLI_BACKENDS 有序；含 grok/cursor/kimi。"""
+    """#1274 W1/#1274-y1：CLI Runner 下拉单源 = _CLI_BACKENDS 有序；含 grok/cursor/kimi/pi。"""
     runners = cb.cli_runner_choices()
     values = [r["value"] for r in runners]
     assert set(values) == set(cb._CLI_BACKENDS)
-    assert {"agy", "codex", "claude", "cursor", "kimi", "grok"} <= set(values)
+    assert {"agy", "codex", "claude", "cursor", "kimi", "grok", "pi"} <= set(values)
     assert "grok" in values
-    # 稳定 UI 顺序（_CLI_RUNNER_UI_ORDER 过滤后）。
+    assert "pi" in values
+    # 稳定 UI 顺序（_CLI_RUNNER_UI_ORDER 过滤后）；pi 紧随 grok。
     assert values == [n for n in cb._CLI_RUNNER_UI_ORDER if n in cb._CLI_BACKENDS]
+    assert values.index("pi") == values.index("grok") + 1
     for opt in runners:
         assert set(opt) == {"value", "label"}
         assert opt["label"]  # 非空 label
@@ -37,6 +39,7 @@ def test_cli_runner_choices_cover_all_supported_runners():
     by_value = {r["value"]: r["label"] for r in runners}
     assert by_value["agy"] == "agy（Gemini）"
     assert by_value["grok"] == "grok"
+    assert by_value["pi"] == "pi"
 
 
 def test_cli_runner_choices_returns_independent_copies():
