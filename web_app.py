@@ -393,7 +393,6 @@ def _verify_llm_configs_or_raise(config: LLMConfig) -> None:
         api_key=real_api_key_or_empty(config.advanced_api_key) or real_api_key_or_empty(config.api_key),
         base_url=(config.advanced_base_url or "").strip() or config.base_url,
         model=advanced_model,
-        max_tokens=config.max_tokens,
         timeout_seconds=config.timeout_seconds,
         thinking_level="",
         advanced_model=config.advanced_model,
@@ -431,20 +430,6 @@ def _runtime_float(value: object, default: float) -> float:
         return default
 
 
-def _optional_max_tokens(value: object) -> Optional[int]:
-    """>0 = 显式上限；None/空/≤0 = 不发 max_tokens（官方上限）。"""
-    if value is None or value == "":
-        return None
-    try:
-        n = int(value)
-    except (TypeError, ValueError):
-        try:
-            n = int(float(value))
-        except (TypeError, ValueError):
-            return None
-    return n if n > 0 else None
-
-
 def _has_real_api_key(value: object) -> bool:
     # 单一真源在 llm_config.is_real_api_key；此处只做 web 层薄包装。
     return is_real_api_key(value)
@@ -456,7 +441,6 @@ def _llm_config_from_runtime(
     base_url: str,
     model: str,
     api_key: str,
-    max_tokens: Optional[int],
     timeout_seconds: float,
     thinking_level: str,
     advanced_model: str,
@@ -498,7 +482,6 @@ def _llm_config_from_runtime(
         api_key=api_key,
         base_url=normalize_openai_base_url(base_url),
         model=model,
-        max_tokens=max_tokens,
         timeout_seconds=timeout_seconds,
         thinking_level=normalize_thinking_level(thinking_level),
         advanced_model=(advanced_model or "").strip(),
@@ -669,7 +652,6 @@ class WebGame:
         advanced_base_url = runtime.get("advanced_base_url") or advanced_base_url
         advanced_api_key = real_api_key_or_empty(runtime.get("advanced_api_key")) or advanced_api_key
         advanced_thinking_level = runtime.get("advanced_thinking_level") or advanced_thinking_level
-        max_tokens = _optional_max_tokens(runtime.get("max_tokens"))
         timeout_seconds = float(runtime.get("timeout_seconds") or timeout_seconds)
         random.seed(int(os.environ.get("MING_SIM_SEED", "7")))
         os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
@@ -679,7 +661,6 @@ class WebGame:
             base_url=base_url,
             model=model,
             api_key=api_key,
-            max_tokens=max_tokens,
             timeout_seconds=timeout_seconds,
             thinking_level=thinking_level,
             advanced_model=advanced_model,
@@ -838,7 +819,6 @@ class WebGame:
         base_url: str,
         model: str,
         api_key: str,
-        max_tokens: Optional[int] = None,
         timeout_seconds: float = 0,
         thinking_level: Optional[str] = None,
         reasoning_strength: Optional[str] = None,
@@ -884,8 +864,6 @@ class WebGame:
                 saved = load_runtime_llm()
                 saved_api = saved.get("api") if isinstance(saved.get("api"), dict) else {}
                 new_key = real_api_key_or_empty(saved_api.get("api_key"))
-        # max_tokens：None=保留当前；0=清空（官方上限）；>0=显式。空值合法，不强填 8000。
-        new_max = cur.max_tokens if max_tokens is None else _optional_max_tokens(max_tokens)
         new_timeout = timeout_seconds if timeout_seconds > 0 else cur.timeout_seconds
         if thinking_level is None:
             new_thinking_level = cur.thinking_level
@@ -914,7 +892,6 @@ class WebGame:
             api_key=new_key,
             base_url=base,
             model=new_model,
-            max_tokens=new_max,
             timeout_seconds=new_timeout,
             thinking_level=new_thinking_level,
             advanced_model=new_advanced,
@@ -954,7 +931,6 @@ class WebGame:
                     prev.base_url,
                     prev.model,
                     real_api_key_or_empty(prev.api_key),
-                    prev.max_tokens,
                     prev.timeout_seconds,
                     prev.thinking_level,
                     prev.advanced_model,
@@ -973,7 +949,6 @@ class WebGame:
                 new_config.base_url,
                 new_config.model,
                 new_config.api_key,
-                new_config.max_tokens,
                 new_config.timeout_seconds,
                 new_config.thinking_level,
                 new_config.advanced_model,
@@ -3696,7 +3671,6 @@ async def api_menu_status() -> Dict[str, Any]:
             "reasoning_strengths": list(REASONING_STRENGTH_CHOICES),
             # #1271：能力名单自 cli_backend 单源导出，供前端 fallback 消费（禁前端硬编码）。
             "cli_reasoning_runners": sorted(CLI_REASONING_STRENGTH_RUNNERS),
-            "max_tokens": _optional_max_tokens(runtime.get("max_tokens")),
             "timeout_seconds": float(runtime.get("timeout_seconds") or os.environ.get("OPENAI_TIMEOUT_SECONDS") or API_DEFAULT_TIMEOUT_SECONDS),
             "thinking_level": runtime.get("thinking_level") or os.environ.get("OPENAI_THINKING_LEVEL", ""),
             "advanced_model": runtime.get("advanced_model") or os.environ.get("OPENAI_ADVANCED_MODEL", ""),
@@ -3883,7 +3857,6 @@ class LlmSetupRequest(BaseModel):
     base_url: str
     model: str
     api_key: str
-    max_tokens: Optional[int] = None
     timeout_seconds: float = API_DEFAULT_TIMEOUT_SECONDS
     thinking_level: str = ""
     advanced_model: str = ""
@@ -3903,7 +3876,6 @@ async def _menu_save_cli_llm(request: LlmSetupRequest) -> Dict[str, Any]:
     cli_model = (request.cli_model or "").strip()
     reasoning_strength = normalize_reasoning_strength(request.reasoning_strength)
     cli_timeout = request.cli_timeout_seconds if request.cli_timeout_seconds and request.cli_timeout_seconds > 0 else CLI_DEFAULT_TIMEOUT_SECONDS
-    max_tokens = _optional_max_tokens(request.max_tokens)
     timeout_seconds = request.timeout_seconds if request.timeout_seconds > 0 else API_DEFAULT_TIMEOUT_SECONDS
     if not cli_runner:
         raise HTTPException(status_code=400, detail="cli_runner 不能为空。")
@@ -3911,7 +3883,6 @@ async def _menu_save_cli_llm(request: LlmSetupRequest) -> Dict[str, Any]:
         api_key="",  # CLI 通道不要 API key；占位符在 create_chat_model 构造 CliChat 时注入
         base_url="",
         model=cli_model,
-        max_tokens=max_tokens,
         timeout_seconds=timeout_seconds,
         reasoning_strength=reasoning_strength,
         channel="cli",
@@ -3936,7 +3907,6 @@ async def _menu_save_cli_llm(request: LlmSetupRequest) -> Dict[str, Any]:
         "",
         "",
         "",
-        max_tokens,
         timeout_seconds,
         "",
         "",
@@ -3977,7 +3947,6 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
     adv_base_in = (request.advanced_base_url or "").strip()
     advanced_base_url = normalize_openai_base_url(adv_base_in) if adv_base_in else ""
     advanced_api_key = (request.advanced_api_key or "").strip()
-    max_tokens = _optional_max_tokens(request.max_tokens)
     timeout_seconds = request.timeout_seconds if request.timeout_seconds > 0 else API_DEFAULT_TIMEOUT_SECONDS
     thinking_level = normalize_thinking_level(request.thinking_level)
     advanced_thinking_level = ""
@@ -4001,7 +3970,6 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
         api_key=api_key,
         base_url=normalized_base_url,
         model=model,
-        max_tokens=max_tokens,
         timeout_seconds=timeout_seconds,
         thinking_level=thinking_level,
         advanced_model=advanced_model,
@@ -4027,7 +3995,6 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
         normalized_base_url,
         model,
         api_key,
-        max_tokens,
         timeout_seconds,
         thinking_level,
         advanced_model,
@@ -4043,7 +4010,6 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
             "base_url": normalized_base_url,
             "model": model,
             "has_api_key": _has_real_api_key(api_key),
-            "max_tokens": max_tokens,
             "timeout_seconds": timeout_seconds,
             "thinking_level": thinking_level,
             "advanced_model": advanced_model,
@@ -4946,7 +4912,6 @@ class LLMConfigRequest(BaseModel):
     base_url: str = ""
     model: str = ""
     api_key: str = ""
-    max_tokens: Optional[int] = None  # None=保留；0=官方上限；>0=显式
     timeout_seconds: float = 0
     thinking_level: str = "__keep__"
     reasoning_strength: str = "__keep__"
@@ -5068,7 +5033,6 @@ async def api_get_llm_config() -> Dict[str, Any]:
         "channel": cfg.channel,
         "base_url": cfg.base_url,
         "model": cfg.model,
-        "max_tokens": cfg.max_tokens,
         "timeout_seconds": cfg.timeout_seconds,
         "thinking_level": cfg.thinking_level,
         "reasoning_strength": cfg.reasoning_strength,
@@ -5092,7 +5056,6 @@ async def api_get_llm_config() -> Dict[str, Any]:
             "base_url": saved.get("base_url", ""),
             "model": saved.get("model", ""),
             "has_api_key": _has_real_api_key(saved.get("api_key", "")),
-            "max_tokens": _optional_max_tokens(saved.get("max_tokens")),
             "timeout_seconds": float(saved.get("timeout_seconds") or API_DEFAULT_TIMEOUT_SECONDS),
             "thinking_level": saved.get("thinking_level", ""),
             "reasoning_strength": saved.get("reasoning_strength", ""),
@@ -5130,7 +5093,6 @@ async def api_set_llm_config(request: LLMConfigRequest) -> Dict[str, Any]:
             request.base_url,
             request.model,
             request.api_key,
-            request.max_tokens,
             request.timeout_seconds,
             thinking_level=thinking_level,
             reasoning_strength=reasoning_strength,
@@ -5169,7 +5131,6 @@ async def api_set_llm_config(request: LLMConfigRequest) -> Dict[str, Any]:
     return {
         "base_url": cfg.base_url,
         "model": cfg.model,
-        "max_tokens": cfg.max_tokens,
         "timeout_seconds": cfg.timeout_seconds,
         "thinking_level": cfg.thinking_level,
         "reasoning_strength": cfg.reasoning_strength,

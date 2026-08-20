@@ -241,7 +241,6 @@ export function ApiSettingsModal({
     base_url: string;
     model: string;
     has_api_key: boolean;
-    max_tokens?: number | null;
     timeout_seconds?: number;
     thinking_level?: string;
     advanced_model?: string;
@@ -288,9 +287,6 @@ export function ApiSettingsModal({
     normalizeStrength(initial?.cli_reasoning_strength || (initial?.channel === "cli" ? initial?.reasoning_strength : ""))
   );
   const [apiKey, setApiKey] = React.useState("");
-  const [maxTokens, setMaxTokens] = React.useState(
-    initial?.max_tokens != null && Number(initial.max_tokens) > 0 ? String(initial.max_tokens) : ""
-  );
   const [timeoutSeconds, setTimeoutSeconds] = React.useState(String(initial?.timeout_seconds || 180));
   const [busy, setBusy] = React.useState(false);
   const [err, setErr] = React.useState("");
@@ -344,7 +340,6 @@ export function ApiSettingsModal({
           base_url: baseUrl.trim(),
           model: model.trim(),
           api_key: apiKey.trim(),
-          max_tokens: parseInt(maxTokens, 10) || 0,
           timeout_seconds: parseFloat(timeoutSeconds) || 180,
           // 统一选择器已在初始化时把旧 thinking_level 迁进 reasoningStrength；保存清掉旧字段，
           // 否则它仍作隐藏旋钮被后端 fallback 消费、用户选「默认」也清不掉（#358 cmr）。
@@ -470,10 +465,6 @@ export function ApiSettingsModal({
           Advanced API Key{" "}
           <small className="menu-hint">{initial?.has_advanced_api_key ? "(已配置；留空保留)" : "(留空=复用主 API Key)"}</small>
           <input type="password" value={advancedApiKey} onChange={(e) => setAdvancedApiKey(e.target.value)} placeholder={initial?.has_advanced_api_key ? "(已配置；如需更换请重新填写)" : "留空=复用主 Key"} />
-        </label>
-        <label>
-          Max Tokens
-          <input type="number" min={256} max={65536} value={maxTokens} onChange={(e) => setMaxTokens(e.target.value)} placeholder="空=官方上限" />
         </label>
         <label>
           Timeout Seconds

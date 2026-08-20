@@ -963,7 +963,7 @@ def _run_api_for_config(prompt: str, llm_config: Any = None, tag: str = "") -> T
         id=f"api-extractor-{tag or 'generic'}",
         session_id=f"api-extractor-{tag or 'generic'}",
         model=create_chat_model(
-            llm_config, temperature=0, max_tokens=1200, force_json_output=True,
+            llm_config, temperature=0, force_json_output=True,
         ),
         instructions=["只输出符合要求的 JSON/文本，不要 markdown 代码围栏。"],
         markdown=False,
@@ -2952,7 +2952,6 @@ def add_gate_llm_args(parser: Any) -> None:
 def gate_llm_config_from_args(
     args: Any,
     *,
-    max_tokens: int = 6000,
     reasoning_strength: str = "high",
     cli_timeout_seconds: float = 600.0,
 ) -> LLMConfig:
@@ -2988,7 +2987,6 @@ def gate_llm_config_from_args(
             base_url=base_url,
             model=model,
             channel="api",
-            max_tokens=max_tokens,
             reasoning_strength=reasoning_strength,
         )
     if channel != "cli":
@@ -3006,7 +3004,6 @@ def gate_llm_config_from_args(
         cli_runner=runner,
         cli_model=model,
         cli_timeout_seconds=cli_timeout_seconds,
-        max_tokens=max_tokens,
         reasoning_strength=reasoning_strength,
     )
 
@@ -3044,13 +3041,9 @@ def gate_evidence_config(args: Any, cfg: Any) -> Dict[str, Any]:
         or getattr(args, "model", "")
         or ""
     ).strip()
-    block: Dict[str, Any] = {
+    return {
         "channel": channel or "cli",
         "runner": runner,
         "model": model,
         "reasoning_strength": str(getattr(cfg, "reasoning_strength", "") or ""),
     }
-    mt = getattr(cfg, "max_tokens", None)
-    if mt is not None and int(mt) > 0:
-        block["max_tokens"] = int(mt)
-    return block
