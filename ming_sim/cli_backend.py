@@ -1408,6 +1408,32 @@ def compose_unknown_participant_inworld_report(
     return fallback
 
 
+def _canon_person_id_key(raw: Any, *, db: Any, content: Any) -> Optional[str]:
+    """单 id：非人滤除 + _canonical_minister_key → 熟键；与 roster 归一同口径。"""
+    from ming_sim.session import _canonical_minister_key
+
+    cid = str(raw or "").strip()
+    if not cid or _is_non_person_participant_name(cid):
+        return None
+    canon = str(_canonical_minister_key(content, cid, db) or "").strip()
+    return canon or None
+
+
+def _canon_person_id_keys(
+    ids: Any, *, db: Any, content: Any,
+) -> List[str]:
+    """生 character_id 列表 → 熟键（非人滤 + canon），保序去重。
+
+    除名闸 prior 侧与 validated 必须同走此接缝，禁平行第三套 id 语义。
+    """
+    out: List[str] = []
+    for raw in ids or []:
+        canon = _canon_person_id_key(raw, db=db, content=content)
+        if canon and canon not in out:
+            out.append(canon)
+    return out
+
+
 def normalize_draft_person_roster(
     roster: Any, *, db: Any, content: Any,
 ) -> List[Dict[str, object]]:
@@ -1417,7 +1443,6 @@ def normalize_draft_person_roster(
     """
     if not isinstance(roster, list):
         raise ValueError("参与人须为对象列表")
-    from ming_sim.session import _canonical_minister_key
 
     canonical_roster = db._normalize_participant_roster(
         roster, strict_structured=True,
@@ -1425,18 +1450,16 @@ def normalize_draft_person_roster(
     person_roster: List[Dict[str, object]] = []
     for item in canonical_roster:
         entry = dict(item)
-        cid = str(entry.get("character_id") or "").strip()
-        if _is_non_person_participant_name(cid):
+        cid = _canon_person_id_key(entry.get("character_id"), db=db, content=content)
+        if not cid:
             continue
-        entry["character_id"] = _canonical_minister_key(content, cid, db)
-        delegator = str(entry.get("delegator_id") or "").strip()
-        if delegator:
-            if _is_non_person_participant_name(delegator):
-                entry["delegator_id"] = None
-            else:
-                entry["delegator_id"] = _canonical_minister_key(
-                    content, delegator, db,
-                )
+        entry["character_id"] = cid
+        delegator_raw = str(entry.get("delegator_id") or "").strip()
+        if delegator_raw:
+            delegator = _canon_person_id_key(
+                delegator_raw, db=db, content=content,
+            )
+            entry["delegator_id"] = delegator  # None if 非人
         person_roster.append(entry)
     db._validate_participant_roster_references(person_roster)
     return person_roster
@@ -1532,9 +1555,16 @@ def extract_draft_intent_with_roster_heal(
             continue
         # 校验过了：若本轮曾因查无而纠错，禁「只删不改」；
         # 亦禁有替换时顺手抹掉本轮已在册的合法参与人。
+        # prior 侧须过与 validated 同一条归一后再比（别名→规范名），
+        # 禁生/熟键空间错位误杀自愈。
         if pending_unknown:
             new_ids = _person_ids_from_extract_result(validated)
-            prior_valid = [i for i in prior_ids_at_fail if i not in pending_unknown]
+            prior_raw = [
+                i for i in prior_ids_at_fail if i not in pending_unknown
+            ]
+            prior_valid = _canon_person_id_keys(
+                prior_raw, db=db, content=content,
+            )
             replacements = [i for i in new_ids if i not in prior_valid]
             lost_prior_valid = not set(prior_valid) <= set(new_ids)
             removal_only = (
