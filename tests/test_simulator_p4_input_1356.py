@@ -1,19 +1,19 @@
-"""#1356 r6 / ADR 0143 — simulator 输入侧四类抽象轴定性投影钉。
+"""#1356 / ADR 0143 — simulator 输入侧四类抽象轴定性投影钉。
 
 构造缝：build_simulator_payload → build_simulator_context。
 哨兵裸值不得出现在 payload 结构化字段与渲染串；钱粮/兵额等可数物保留。
-非 LLM 输出措辞扫描。
+非 LLM 输出措辞扫描。期望档位经 qualitative 单源 helper 计算，禁本地复写词表。
 """
 
 from __future__ import annotations
 
 from ming_sim.agents import build_simulator_context
-from ming_sim.qualitative import progress_band, qualitative_band
+from ming_sim.qualitative import (
+    imperial_authority_band,
+    progress_band,
+    public_support_band,
+)
 from ming_sim.simulation import build_simulator_payload
-
-# 与 simulation._SIM_* / decree imperial / db faction audience 同词表
-_PUBLIC_SUPPORT_BANDS = ("堪忧", "偏弱", "起伏", "尚可", "稳固")
-_IMPERIAL_BANDS = ("极弱", "偏弱", "中等", "偏强", "强盛")
 
 _SENTINEL_MINXIN = 32
 _SENTINEL_HUANGWEI = 16
@@ -51,8 +51,8 @@ def test_simulator_payload_projects_four_abstract_axes(game):
 
     # —— current_state：民心/皇威定性；国库保留数 ——
     cs = payload["current_state"]
-    assert cs["民心"] == qualitative_band(_SENTINEL_MINXIN, _PUBLIC_SUPPORT_BANDS)
-    assert cs["皇威"] == qualitative_band(_SENTINEL_HUANGWEI, _IMPERIAL_BANDS)
+    assert cs["民心"] == public_support_band(_SENTINEL_MINXIN)
+    assert cs["皇威"] == imperial_authority_band(_SENTINEL_HUANGWEI)
     assert cs["民心"] != _SENTINEL_MINXIN
     assert cs["皇威"] != _SENTINEL_HUANGWEI
     assert isinstance(cs.get("国库"), (int, float))
@@ -64,7 +64,7 @@ def test_simulator_payload_projects_four_abstract_axes(game):
     assert rows, "regions 不得空"
     for row in rows:
         cell = row[idx]
-        assert cell == qualitative_band(_SENTINEL_MINXIN, _PUBLIC_SUPPORT_BANDS)
+        assert cell == public_support_band(_SENTINEL_MINXIN)
         assert cell != _SENTINEL_MINXIN
         assert str(cell) != str(_SENTINEL_MINXIN)
 

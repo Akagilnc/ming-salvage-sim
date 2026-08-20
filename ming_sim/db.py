@@ -48,7 +48,10 @@ from ming_sim.qualitative import (
     building_output_effect,
     building_qualitative_fields,
     city_defense_description,
+    power_band,
+    public_support_band,
     qualitative_band,
+    satisfaction_band,
 )
 from ming_sim.relations import (
     bind_origin_round,
@@ -89,7 +92,7 @@ def _seed_guilt_storage_value(value: object) -> str:
 
 
 def _public_support_description(value: object) -> str:
-    return "民心" + qualitative_band(value, ("堪忧", "偏弱", "起伏", "尚可", "稳固"))
+    return "民心" + public_support_band(value)
 
 
 def _unrest_description(value: object) -> str:
@@ -5749,8 +5752,8 @@ class GameDB:
             return "派系未建档。"
         if audience:
             return "；".join(
-                f"{row['name']}满意{qualitative_band(row['satisfaction'], ('怨愤', '不满', '平常', '顺应', '拥戴'))}、"
-                f"势力{qualitative_band(row['leverage'], ('极弱', '偏弱', '中等', '偏强', '强盛'))}，所求：{row['agenda']}"
+                f"{row['name']}满意{satisfaction_band(row['satisfaction'])}、"
+                f"势力{power_band(row['leverage'])}，所求：{row['agenda']}"
                 for row in rows
             )
         return "；".join(
@@ -5775,12 +5778,10 @@ class GameDB:
         national = self.class_rows("")
         if not national:
             return "阶级未建档。"
-        sat_words = ("怨愤", "不满", "平常", "顺应", "拥戴")
-        lev_words = ("极弱", "偏弱", "中等", "偏强", "强盛")
         if audience:
             head = "；".join(
-                f"{row['name']}满意{qualitative_band(row['satisfaction'], sat_words)}、"
-                f"势力{qualitative_band(row['leverage'], lev_words)}（{row['agenda']}）"
+                f"{row['name']}满意{satisfaction_band(row['satisfaction'])}、"
+                f"势力{power_band(row['leverage'])}（{row['agenda']}）"
                 for row in national
             )
         else:
@@ -5802,8 +5803,8 @@ class GameDB:
         if audience:
             warn = "；".join(
                 f"{row['region_name'] or row['region_id']} {row['name']}"
-                f"满意{qualitative_band(row['satisfaction'], sat_words)}/"
-                f"势力{qualitative_band(row['leverage'], lev_words)}"
+                f"满意{satisfaction_band(row['satisfaction'])}/"
+                f"势力{power_band(row['leverage'])}"
                 for row in hot
             )
         else:
@@ -5917,8 +5918,8 @@ class GameDB:
         if audience:
             return "；".join(
                 f"{row['name']}（{row['leader']}）：{row['stance']}，"
-                f"威望{qualitative_band(row['leverage'], ('极弱', '偏弱', '中等', '偏强', '强盛'))}、"
-                f"实力{qualitative_band(row['military_strength'], ('极弱', '偏弱', '中等', '偏强', '强盛'))}、"
+                f"威望{power_band(row['leverage'])}、"
+                f"实力{power_band(row['military_strength'])}、"
                 f"经济{qualitative_band(row['supply'], ('匮乏', '吃紧', '尚可', '充足', '丰裕'))}，"
                 f"{row['status']}；近动：{row['last_action'] or '尚无新动'}"
                 for row in rows
@@ -12050,16 +12051,14 @@ class GameDB:
         from ming_sim.participant_roster import resolve_dossier_owner_name
         from ming_sim.qualitative import (
             identity_band,
-            qualitative_band,
+            power_band,
             qualitative_character_axis,
+            satisfaction_band,
         )
         from ming_sim.supervision import (
             character_faction_integrity,
             faction_relation,
         )
-
-        leverage_words = ("极弱", "偏弱", "中等", "偏强", "强盛")
-        satisfaction_words = ("怨愤", "不满", "平常", "顺应", "拥戴")
 
         rows = self.conn.execute(
             """
@@ -12161,11 +12160,9 @@ class GameDB:
         for fac in sorted(related_factions):
             situations.append({
                 "faction": fac,
-                "leverage_band": qualitative_band(
-                    self.faction_leverage(fac), leverage_words,
-                ),
-                "satisfaction_band": qualitative_band(
-                    self.faction_satisfaction(fac), satisfaction_words,
+                "leverage_band": power_band(self.faction_leverage(fac)),
+                "satisfaction_band": satisfaction_band(
+                    self.faction_satisfaction(fac),
                 ),
             })
 
