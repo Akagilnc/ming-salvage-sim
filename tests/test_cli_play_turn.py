@@ -14,7 +14,8 @@ import pytest
 
 import ming_sim.cli.terminal as term
 import ming_sim.issues as issues_mod
-from ming_sim.exceptions import SettlementAbort
+from ming_sim.exceptions import LLMUnavailable, SettlementAbort
+from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
 from ming_sim.session import TurnPhase
 
 
@@ -58,6 +59,8 @@ class _Sess:
 @pytest.mark.parametrize("exc", [
     ValueError("有 pending 拟旨待处理，请先处理再颁诏。"),
     SettlementAbort("本月结算失败，进度已保存，可重试。", turn=1, stage="extract"),
+    # #1353 fold-in r8：统一重试耗尽的 LLMUnavailable 与结算中止同形——留本回合可重按。
+    LLMUnavailable(CLI_RUNNER_PLAYER_MESSAGE, code="pending_extraction"),
 ])
 def test_issue_refusal_stays_in_loop(monkeypatch, capsys, exc):
     sess = _Sess(exc)
@@ -629,3 +632,73 @@ def test_play_turn_reports_secret_order_failure_when_settlement_aborts(monkeypat
     assert "【密令落库失败 #42】" in out
     assert "retry 42" in out
     assert session.calls == ["begin", "resolve", "advance"]
+
+
+def test_cli_write_gate_canonical_session_attr():
+    """#1353 fold-in r8：CLI 唯一 write gate 挂 session._write_gate（禁第二锁名分叉）。"""
+    import threading
+
+    session = SimpleNamespace()
+    gate = term._cli_write_gate(session)
+    assert isinstance(gate, type(threading.Lock()))
+    assert getattr(session, "_write_gate", None) is gate
+    # 二次调用同锁
+    assert term._cli_write_gate(session) is gate
+
+
+def test_play_turn_issue_installs_write_gate_before_resolve(monkeypatch, capsys):
+    """#1353 fold-in r8：颁诏前挂 gate；持续 LLMUnavailable → turn 不进、可重按。"""
+
+    class Session:
+        previous_summary = ""
+
+        def __init__(self):
+            self.db = SimpleNamespace(list_pending_actions=lambda *a, **k: [])
+            self.state = SimpleNamespace(turn=3)
+            self.calls = []
+            self.resolve_n = 0
+
+        def begin_turn(self):
+            self.calls.append("begin")
+            return _Snap()
+
+        def current_phase(self):
+            return TurnPhase.REVIEWING
+
+        def resolve_turn(self):
+            self.resolve_n += 1
+            self.calls.append("resolve")
+            # 门必须在 resolve 前已挂——否则欠账 drain 走 missing_deps
+            assert getattr(self, "_write_gate", None) is not None, (
+                "play_turn must install session._write_gate before resolve_turn"
+            )
+            if self.resolve_n < 2:
+                raise LLMUnavailable(
+                    CLI_RUNNER_PLAYER_MESSAGE, code="pending_extraction",
+                )
+            return SimpleNamespace(awaiting=False, report="本月清账后已过", decisions=[])
+
+        def end_turn(self):
+            self.calls.append("end")
+
+        def submit_decisions(self, choices):
+            return "ok"
+
+    actions = iter(["issue", "issue"])
+    monkeypatch.setattr(term, "review_directives", lambda s: next(actions))
+    monkeypatch.setattr(term, "_print_header", lambda s: None)
+    monkeypatch.setattr(issues_mod, "show_active_issues", lambda db: None)
+    monkeypatch.setattr(
+        term, "_submit_first_cli_decisions",
+        lambda s, r: (r.report if r is not None else ""),
+    )
+    session = Session()
+
+    term.play_turn(session)
+
+    out = capsys.readouterr().out
+    assert CLI_RUNNER_PLAYER_MESSAGE in out
+    assert "本月清账后已过" in out
+    # 失败一次 + 重按成功：begin 一次、resolve 两次、end 一次；turn 不因失败假进
+    assert session.calls == ["begin", "resolve", "resolve", "end"]
+    assert session.state.turn == 3
