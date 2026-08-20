@@ -41,6 +41,24 @@ function externalResourceUrls(text: string): string[] {
   return [...found];
 }
 
+describe("源 index.html 字体卫生 #1332/#1412", () => {
+  it("web/index.html 不引 Google Fonts 外网（截图/离线不阻塞）", () => {
+    // #1412 已去三外链；本钉锁源入口不再回归。prototypes/ 不在玩家首屏路径，不扫。
+    const indexPath = join(root, "index.html");
+    expect(existsSync(indexPath)).toBe(true);
+    const html = readFileSync(indexPath, "utf8");
+    expect(externalResourceUrls(html)).toEqual([]);
+    for (const host of ["fonts.googleapis.com", "fonts.gstatic.com"]) {
+      expect(html).not.toContain(host);
+    }
+    // 无 @import 远程样式、无 stylesheet 指向 http(s)
+    expect(html).not.toMatch(/@import\s+url\(\s*['"]?https?:/i);
+    expect(html).not.toMatch(
+      /rel=["']stylesheet["'][^>]*href=["']https?:/i,
+    );
+  });
+});
+
 describe("构建产物资源卫生 #1302/#1303", () => {
   it("dist 零外链资源，且含本地 favicon", () => {
     execSync("npm run build", { cwd: root, stdio: "pipe", env: process.env });
