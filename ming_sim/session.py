@@ -1889,6 +1889,19 @@ class GameSession:
         return text + "\n请陛下定夺准驳。"
 
     @staticmethod
+    def _ensure_unknown_participant_report_cue(answer: str, report: str) -> str:
+        """#1274 V-1：附上 LLM 已产的查无此人回禀（报告正文本身禁在此写死台词）。"""
+        text = (answer or "").strip()
+        body = (report or "").strip()
+        if not body:
+            return text
+        if body in text:
+            return text
+        if not text:
+            return body
+        return text + "\n" + body
+
+    @staticmethod
     def _ensure_clarification_cue(answer: str, ambiguous: Dict[str, Any]) -> str:
         """#502 AC5：多道并存、准驳指称含糊时，大臣当场追问是哪一道（确定性 post-pass 句，
         不串 LLM）。列出候选摘要供皇帝指名，避免被静默当「不回」。"""
@@ -2051,6 +2064,13 @@ class GameSession:
             result.directive_confirmation_ambiguous = res["directive_confirmation_ambiguous"]
             result.answer = GameSession._ensure_clarification_cue(
                 result.answer or "", res["directive_confirmation_ambiguous"])
+        # #1274 V-1：查无此人耗尽 → 大臣戏内回禀；草案不落、对话保留。
+        esc = res.get("unknown_participant_escalate") or {}
+        report = str(esc.get("report") or "").strip()
+        if report:
+            result.answer = GameSession._ensure_unknown_participant_report_cue(
+                result.answer or "", report,
+            )
 
     def _apply_appointment(self, payload: str, appointer: Character) -> Tuple[str, str]:
         """吏部 propose_appointment 落地：建档入库 + 注册 Agent，本回合即可召见。

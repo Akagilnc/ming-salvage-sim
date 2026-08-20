@@ -213,7 +213,11 @@ def test_adr0053_unknown_person_still_rejected_at_capture(game, monkeypatch):
         roster=[{"character_id": "不存在之人甲", "tier": "主办"}],
     )
 
-    with pytest.raises(ValueError, match=r"不存在之人甲|名册|参与"):
+    with pytest.raises(ValueError) as ei:
         cli_backend.capture_manual_directive_payload(
             text, None, db=db, content=content,
         )
+    msg = str(ei.value)
+    assert "不存在之人甲" in msg
+    assert any(m in msg for m in ("乞陛下明示", "朝籍", "查无"))
+    assert "参与人物不存在" not in msg  # F5：禁原始 409 泄漏

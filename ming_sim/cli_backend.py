@@ -1273,12 +1273,33 @@ def _draft_intent_character_roster_facts(content: Any) -> str:
     )
 
 
-# #1274 QA V-1：参与人校验失败有界纠错重试（owner 2026-08-20）。
+# #1274 QA V-1：参与人校验失败有界纠错重试（owner 2026-08-20 三连拍板）。
+# 宪法：查无此人不告诉皇帝、底下人偷偷划掉=篡改圣旨，绝对禁止。
+# 自愈只许修 LLM 自己的抄写错（修完仍是皇帝说的那个人）；真不在册→戏内回禀。
 # 1–2 次；happy path 零额外调用。只在「参与人物/委派人不存在」路上触发。
 DRAFT_PARTICIPANT_HEAL_RETRIES = 2
 _PARTICIPANT_REF_MISSING_RE = re.compile(
     r"(?:参与人物|委派人)不存在[：:]\s*([^。\n]+)"
 )
+
+
+class UnknownParticipantEscalate(Exception):
+    """真不在册：自愈耗尽后须戏内回禀，禁除名照落 / 禁静默 409 术语怼玩家。"""
+
+    def __init__(self, names: Optional[List[str]] = None):
+        cleaned: List[str] = []
+        for raw in names or []:
+            name = str(raw or "").strip()
+            if name and name not in cleaned:
+                cleaned.append(name)
+        self.names = cleaned
+        shown = "、".join(self.names) if self.names else "其人"
+        self.fact = (
+            f"朝中名册查无「{shown}」此人；"
+            f"不得擅自将其从参与人中除去或另换他人；"
+            f"须回禀陛下，乞陛下明示该如何处置。"
+        )
+        super().__init__(self.fact)
 
 
 def is_unknown_participant_ref_error(exc: BaseException) -> bool:
@@ -1295,15 +1316,38 @@ def _invalid_participant_names_from_error(exc: BaseException) -> List[str]:
     return names
 
 
+def _person_ids_from_extract_result(result: Dict[str, Any]) -> List[str]:
+    """单条/批抽结果中的人物 character_id（保序去重）。"""
+    ids: List[str] = []
+
+    def _absorb(roster: Any) -> None:
+        if not isinstance(roster, list):
+            return
+        for item in roster:
+            if not isinstance(item, dict):
+                continue
+            cid = str(item.get("character_id") or "").strip()
+            if cid and cid not in ids:
+                ids.append(cid)
+
+    if "participant_roster" in result:
+        _absorb(result.get("participant_roster"))
+    for draft in result.get("drafts") or []:
+        if isinstance(draft, dict) and "participant_roster" in draft:
+            _absorb(draft.get("participant_roster"))
+    return ids
+
+
 def build_participant_correction_feedback(
     exc: BaseException, *, roster_facts: str = "",
 ) -> str:
-    """正向纠错指令（P7）：无效名 + 名册事实 + 「改正或除去」。"""
+    """正向纠错指令（P7）：无效名 + 名册事实；只许改正抄写，禁除名/另换。"""
     names = _invalid_participant_names_from_error(exc)
     name_part = "、".join(names) if names else "（见校验）"
     block = (
         f"【纠错】名册无此人：{name_part}。"
-        f"请改正为名册正确人名，或从参与人中除去。\n"
+        f"请改正为名册中陛下所指之人的正确规范名（须仍是同一人）；"
+        f"不得擅自除去或另换他人。\n"
     )
     facts = str(roster_facts or "").strip()
     if facts:
@@ -1311,17 +1355,63 @@ def build_participant_correction_feedback(
     return block
 
 
-def humanize_participant_ref_error(exc: BaseException) -> ValueError:
-    """重试耗尽后的玩家面兜底文案（人话；ADR 0053 缝不松）。"""
-    names = _invalid_participant_names_from_error(exc)
-    if names:
-        shown = "、".join(names)
-        return ValueError(
-            f"拟旨参与人「{shown}」不在朝堂名册。"
-            f"系统已尝试自动纠正未果，请改用名册中的大臣姓名，或去掉该参与人后重试。"
+def compose_unknown_participant_inworld_report(
+    names: Optional[List[str]] = None,
+    *,
+    voice: str = "tongzheng",
+    speaker_name: str = "",
+    llm_config: Any = None,
+) -> str:
+    """P7：把查无此人事实喂给 LLM，产大臣/通政司口吻回禀；禁模板当台词。
+
+    LLM 失败时退保守 in-world 短句（仍非系统 409 术语），仅兜底。
+    """
+    cleaned: List[str] = []
+    for raw in names or []:
+        name = str(raw or "").strip()
+        if name and name not in cleaned:
+            cleaned.append(name)
+    shown = "、".join(cleaned) if cleaned else "其人"
+    if voice == "minister" and str(speaker_name or "").strip():
+        role = f"大臣{str(speaker_name).strip()}"
+    else:
+        role = "通政使司官"
+    fact = (
+        f"朝中名册查无「{shown}」此人；不得擅自除名或另换；"
+        f"须回禀陛下，乞陛下明示。"
+    )
+    prompt = (
+        f"你是{role}。根据下列事实，以本职口吻向皇帝回禀（一两句即可）。"
+        f"只输出回禀正文，不要标题、不要系统术语、不要 JSON。\n"
+        f"事实：{fact}\n"
+    )
+    fallback = f"臣查朝籍未有「{shown}」其人，此事不敢擅专，乞陛下明示。"
+    try:
+        raw, _ = _run_backend_for_config(
+            prompt, llm_config, tag="participant_escalate_report",
         )
-    msg = str(exc or "").strip() or "拟旨参与人无法核对名册。"
-    return ValueError(msg)
+        text = str(raw or "").strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```\w*\n?", "", text)
+            text = re.sub(r"\n?```$", "", text)
+            text = text.strip()
+        # 抽取器 JSON / 空响 → 不用；只要非结构化戏内文。
+        if text and not text.lstrip().startswith("{"):
+            return text
+    except Exception as exc:
+        _log(f"查无此人回禀产文失败：{exc}")
+    return fallback
+
+
+def humanize_participant_ref_error(exc: BaseException) -> ValueError:
+    """兼容旧调用：耗尽事实 → ValueError（正式玩家面走 compose 戏内回禀）。"""
+    if isinstance(exc, UnknownParticipantEscalate):
+        names = list(exc.names)
+    else:
+        names = _invalid_participant_names_from_error(exc)
+    return ValueError(
+        compose_unknown_participant_inworld_report(names, voice="tongzheng")
+    )
 
 
 def normalize_draft_person_roster(
@@ -1396,11 +1486,14 @@ def extract_draft_intent_with_roster_heal(
 ) -> Dict[str, Any]:
     """extract → 名册校验；「参与人物不存在」时有界纠错重抽（P5 只走失败路）。
 
+    自愈只许抄写纠错（修完仍是皇帝所指之人）。真不在册 / 擅自除名 →
+    raise UnknownParticipantEscalate（调用方戏内回禀，不落草案）。
     db/content 缺一则只抽不校验（与旧 extract 同）。LLM 在纠错路上挂死 → 原样上抛。
     """
     retries = max(0, int(heal_retries))
     correction = ""
-    last_err: Optional[BaseException] = None
+    pending_unknown: List[str] = []
+    prior_ids_at_fail: List[str] = []
     for attempt in range(retries + 1):
         result = extract_draft_intent(
             player_message,
@@ -1412,7 +1505,6 @@ def extract_draft_intent_with_roster_heal(
         )
         if db is None or content is None:
             return result
-        # 无参与人字段/空名单 → 无需校验，happy/除名后直过
         has_roster_field = (
             ("participant_roster" in result and result.get("participant_roster") is not None)
             or any(
@@ -1421,17 +1513,21 @@ def extract_draft_intent_with_roster_heal(
             )
         )
         if not has_roster_field:
+            # 纠错路上抽掉参与人字段 = 除名企图 → 篡改，回禀
+            if pending_unknown:
+                raise UnknownParticipantEscalate(pending_unknown)
             return result
         try:
-            return _apply_validated_roster_to_extract_result(
+            validated = _apply_validated_roster_to_extract_result(
                 result, db=db, content=content,
             )
         except ValueError as exc:
             if not is_unknown_participant_ref_error(exc):
                 raise
-            last_err = exc
+            pending_unknown = _invalid_participant_names_from_error(exc)
+            prior_ids_at_fail = _person_ids_from_extract_result(result)
             if attempt >= retries:
-                raise humanize_participant_ref_error(exc) from exc
+                raise UnknownParticipantEscalate(pending_unknown) from exc
             roster_facts = _draft_intent_character_roster_facts(content)
             correction = build_participant_correction_feedback(
                 exc, roster_facts=roster_facts,
@@ -1439,9 +1535,15 @@ def extract_draft_intent_with_roster_heal(
             _log(
                 f"拟旨参与人纠错重试 {attempt + 1}/{retries}: {exc}"
             )
-    if last_err is not None:
-        raise humanize_participant_ref_error(last_err) from last_err
-    return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
+            continue
+        # 校验过了：若本轮曾因查无而纠错，禁「只删不改」的除名照落
+        if pending_unknown:
+            new_ids = _person_ids_from_extract_result(validated)
+            prior_valid = [i for i in prior_ids_at_fail if i not in pending_unknown]
+            replacements = [i for i in new_ids if i not in prior_valid]
+            if not replacements and set(new_ids) <= set(prior_valid):
+                raise UnknownParticipantEscalate(pending_unknown)
+        return validated
 
 
 def extract_draft_intent(
@@ -1698,8 +1800,9 @@ def extract_draft_intent(
     }
 
 
-# 手工拟诏 capture 有界等待（#1327）：须 < 客户端 30s；超时降级 special_decree，禁重试护栏。
-MANUAL_DIRECTIVE_CAPTURE_TIMEOUT_S = 20.0
+# 手工拟诏 capture 总罩（#1327 / #1274 V-1 owner 2026-08-20）：
+# 30s 罩住整段 extract+自愈重试；到点仅 special_decree 原文照落（零改参与人=不算篡改）。
+MANUAL_DIRECTIVE_CAPTURE_TIMEOUT_S = 30.0
 
 
 def _manual_special_decree_payload(mode: str) -> Dict[str, object]:
@@ -1718,8 +1821,9 @@ def capture_manual_directive_payload(
 ) -> Dict[str, object]:
     """Web/CLI 手工下旨共用既有草稿抽取 seam；在写入边界归一人物引用。
 
-    #1327：空载（无可抽取正文）零 LLM 直落 special_decree；非空载 LLM 有界等待，
-    超时/失败降级既有 special_decree 路（草案照落，不新增重试）。
+    #1327 / #1274 V-1：空载零 LLM 直落 special_decree；非空载 LLM 有界等待（默认 30s
+    总罩，自愈重试计入罩内）。超时/挂死 → special_decree 原文照落（不改参与人）。
+    真不在册耗尽 → 通政司戏内回禀 ValueError（不落草案、不除名）。
     """
     directive_text = str(text or "").strip()
     fallback_mode = resolve_directive_mode(text, None, existing_mode)
@@ -1755,11 +1859,17 @@ def capture_manual_directive_payload(
                 captured = fut.result(timeout=timeout_s)
             finally:
                 pool.shutdown(wait=False, cancel_futures=True)
+    except UnknownParticipantEscalate as exc:
+        # 真不在册：通政司戏内回禀；禁吞 special_decree、禁除名照落。
+        report = compose_unknown_participant_inworld_report(
+            exc.names, voice="tongzheng", llm_config=llm_config,
+        )
+        raise ValueError(report) from exc
     except ValueError:
-        # 参与人名册校验耗尽等人话业务错 → 409；禁吞成 special_decree。
+        # 其它业务 ValueError 原样上抛；禁吞成 special_decree。
         raise
     except Exception as exc:
-        # 超时 / 纠错路上 LLM 挂死 → 既有降级路（草案照落 special_decree）。
+        # 超时 / 纠错路上 LLM 挂死 → special_decree 原文照落（零改参与人）。
         _log(f"手工拟诏 capture 有界降级 special_decree：{exc}")
         return _manual_special_decree_payload(fallback_mode)
 
