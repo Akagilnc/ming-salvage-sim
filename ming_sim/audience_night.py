@@ -137,8 +137,8 @@ CLOSE_STEPS = (
     CLOSE_STEP_FINALIZE,
 )
 
-# 在飞回话：轮询间隔；wait 消费既有 chat turn 终态，不按 elapsed 伪造失败（#1353 K10a）。
-# DEFAULT_IN_FLIGHT_WAIT_S 仍作 close OPEN 期抽取 join 预算（与 DEFAULT_EXTRACT_JOIN_S 同量级）。
+# 在飞回话：有界等待熔断（ADR 0038）。工人落终态即放行（K10a 不把健康腿伪造成失败）；
+# 真挂死/无终态 → 超时 fail-closed，夜保持 OPEN，可原地重试。禁无限轮询悬吊。
 DEFAULT_IN_FLIGHT_WAIT_S = 30.0
 DEFAULT_IN_FLIGHT_POLL_S = 0.05
 
@@ -940,18 +940,40 @@ def wait_in_flight_clear(
     timeout_s: float | None = None,
     poll_s: float | None = None,
 ) -> None:
-    """等在飞回话完成；消费既有 chat turn/worker 终态续跑，不按 elapsed 伪造失败。
+    """等在飞回话完成；工人终态即放行，真挂死有界熔断 fail-closed（夜保持开）。
 
-    #1353 K10a / ADR 0149：工人落 active/failed/interrupted 终态即放行（一次点击
-    自动续跑）。timeout_s 保留调用方签名兼容，**不再**用于墙钟 409。不持 write_gate。
+    #1353 / ADR 0038 / ADR 0149：
+    - 健康工人落 active/failed/interrupted 终态 → 立即续跑（不伪造失败）。
+    - 真无终态挂死 → timeout 熔断，写错误包 + AudienceNightError(in_flight_chat)，
+      夜保持 OPEN，玩家可原地重试。禁无限 while 悬吊屏障/颁诏。
+    不持 write_gate。
     """
-    del timeout_s  # 签名兼容；禁 elapsed 伪造失败（全局 #9 / ADR 0149）
+    if timeout_s is None:
+        timeout_s = DEFAULT_IN_FLIGHT_WAIT_S
     if poll_s is None:
         poll_s = DEFAULT_IN_FLIGHT_POLL_S
+    deadline = time.monotonic() + max(0.0, float(timeout_s))
     while True:
         inflight = list_in_flight_chat_turns(db, night_id)
         if not inflight:
             return
+        if time.monotonic() >= deadline:
+            ids = [int(r["id"]) for r in inflight]
+            message = (
+                "收夜中止：本夜仍有未完成回话（在飞/挂起），"
+                f"chat_turn_ids={ids}。夜保持开启，可原地重试。"
+            )
+            pack = write_audience_error_pack(
+                kind="in_flight_chat",
+                message=message,
+                detail={"night_id": int(night_id), "chat_turn_ids": ids},
+            )
+            raise AudienceNightError(
+                message,
+                code="in_flight_chat",
+                error_pack_path=pack,
+                detail={"night_id": int(night_id), "chat_turn_ids": ids},
+            )
         time.sleep(max(0.0, float(poll_s)))
 
 
@@ -1196,15 +1218,9 @@ def close_night(
             wait_in_flight_clear(db, night_id, timeout_s=wait_timeout_s)
             # Start close scene on caller registry only — never join here; no ephemeral lifecycle.
             _start_close_scene()
-            # #1353：写序归 session 队列屏障——调用方 barrier 已等前序尾随票据。
-            # 此处有限 join single-flight 仅作 LLM 去重回合（防双跑），不再做
-            # join→freeze admission 特判舞步；持 gate 原子置 CLOSING。
-            from ming_sim.audience_extraction import join_pending_turn_extractions
-
-            join_pending_turn_extractions(
-                db, night_id=int(night_id),
-                timeout_s=max(0.0, float(wait_timeout_s)),
-            )
+            # #1353：写序归 session 队列屏障——调用方 barrier 已等前序尾随票据
+            # （生产写经 TicketedWriteGate/run 按票序）；不再 join_pending 旁路舞步。
+            # LLM 去重仍走 per-turn single-flight（队列只管写序）。持 gate 原子置 CLOSING。
             with gate:
                 _set_night_fields(
                     db, night_id, status=NIGHT_STATUS_CLOSING,

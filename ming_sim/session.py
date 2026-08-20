@@ -1134,23 +1134,54 @@ class GameSession:
         失败按 ADR 0005 响亮上抛——不得静默当成已退朝；夜保持可恢复。
         write_gate：既有 runtime 写锁（Web `_runtime_write_gate` / CLI `_cli_write_gate`）；
         未显式传入时回落 session._write_gate。禁第二锁；缺锁由 close_night 卫兵响亮。
+
+        #1353：经 session 队列屏障入队——须等已领尾随票清零后再 close（调用方不得
+        在仍持本线程票据时调用，否则自等待死锁）。
         """
         if str(court_action or "") != "court_break":
             return
         from ming_sim.audience_night import close_night, get_open_night
+        from ming_sim.session_write_queue import (
+            TicketBarrierTimeout,
+            get_session_write_queue,
+        )
 
         if get_open_night(self.db) is None:
             return
         gate = write_gate if write_gate is not None else getattr(self, "_write_gate", None)
-        close_night(
-            self.db, self.state,
-            content=getattr(self, "content", None),
-            registry=getattr(self, "registry", None),
-            wait_timeout_s=0.0,
-            llm_config=getattr(self, "llm_config", None),
-            write_gate=gate,
-            scene_registry=getattr(self, "_scene_registry", None),
-        )
+
+        def _do_close() -> None:
+            close_night(
+                self.db, self.state,
+                content=getattr(self, "content", None),
+                registry=getattr(self, "registry", None),
+                wait_timeout_s=0.0,
+                llm_config=getattr(self, "llm_config", None),
+                write_gate=gate,
+                scene_registry=getattr(self, "_scene_registry", None),
+            )
+
+        q = get_session_write_queue(self)
+        try:
+            q.barrier(_do_close)
+        except TicketBarrierTimeout as barrier_exc:
+            from ming_sim.audience_night import AudienceNightError, write_audience_error_pack
+            open_seqs = list(getattr(barrier_exc, "open_seqs", []) or [])
+            message = (
+                "收夜中止：会话写队列仍有未完成票据（在飞/挂起），"
+                f"open_seqs={open_seqs}。夜保持开启，可原地重试。"
+            )
+            pack = write_audience_error_pack(
+                kind="in_flight_chat",
+                message=message,
+                detail={"open_seqs": open_seqs},
+            )
+            raise AudienceNightError(
+                message,
+                code="in_flight_chat",
+                error_pack_path=pack,
+                detail={"open_seqs": open_seqs},
+            ) from barrier_exc
 
     def _confirmation_intent_for_preexisting_pending(
         self,

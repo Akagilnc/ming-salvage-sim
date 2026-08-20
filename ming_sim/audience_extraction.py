@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import json
 import threading
-import time
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from ming_sim.audience_night import (
@@ -387,113 +386,12 @@ def _release_single_flight(key: tuple[Any, ...], owner: threading.Lock) -> None:
             _single_flight_ownership.pop(key, None)
 
 
-# #1353：收夜 OPEN 期有限 join 预算（与 wait_in_flight 同量级；不另起状态机）。
-DEFAULT_EXTRACT_JOIN_S = 30.0
-
-
-def _join_single_flight(key: tuple[Any, ...], timeout_s: float) -> bool:
-    """有限 join 在飞 owner：不启动工作、不建 Future。
-
-    True = 无 owner 或 owner 已在时限内结束（调用方须重读 DB 真源）。
-    False = 超时仍在飞。超时路径不得 pop 仍持锁 owner 的槽。
-    """
-    with _single_flight_guard:
-        slot = _single_flight_ownership.get(key)
-        if slot is None:
-            return True
-        owner = slot[0]
-        slot[1] += 1
-    acquired = False
-    try:
-        acquired = bool(owner.acquire(timeout=max(0.0, float(timeout_s))))
-        return acquired
-    finally:
-        if acquired:
-            _release_single_flight(key, owner)
-        else:
-            with _single_flight_guard:
-                slot = _single_flight_ownership.get(key)
-                if slot is not None and slot[0] is owner:
-                    slot[1] -= 1
-                    # owner 仍在飞时 ref 至少为 1；仅当我们是最后旁观者且槽已空才 pop
-                    if slot[1] <= 0:
-                        _single_flight_ownership.pop(key, None)
-
-
 def _turn_flight_key(db: Any, chat_turn_id: int) -> tuple[Any, ...]:
     return ("turn", id(db), int(chat_turn_id))
 
 
 def _night_flight_key(db: Any, night_id: int) -> tuple[Any, ...]:
     return ("night", id(db), int(night_id))
-
-
-def join_pending_turn_extractions(
-    db: Any,
-    *,
-    night_id: int,
-    timeout_s: float | None = None,
-) -> None:
-    """#1353 OPEN 期汇合普通抽取：对 list_unextracted 各轮 single-flight owner 有限 join。
-
-    只作 join 信号；结果只读 `chat_turns.extract_status`（调用方/drain 重读）。
-    不启动新抽取、不建 Future/第二欠账表。超时不抛——真欠账由后续 drain fail-closed。
-    """
-    if timeout_s is None:
-        timeout_s = DEFAULT_EXTRACT_JOIN_S
-    if not hasattr(db, "list_unextracted_replies"):
-        return
-    rows = db.list_unextracted_replies(night_id=int(night_id)) or []
-    if not rows:
-        return
-    deadline = time.monotonic() + max(0.0, float(timeout_s))
-    for row in rows:
-        if not isinstance(row, Mapping):
-            continue
-        cid = int(row.get("chat_turn_id") or 0)
-        if cid <= 0:
-            continue
-        if hasattr(db, "get_story_extract_status") and db.get_story_extract_status(cid) == "done":
-            continue
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            break
-        _join_single_flight(_turn_flight_key(db, cid), remaining)
-
-
-def has_inflight_turn_extractions(db: Any, *, night_id: int) -> bool:
-    """#1353：list_unextracted 中是否仍有活的 turn single-flight owner。
-
-    供 close 在 write_gate 临界区内与 OPEN→CLOSING 冻结同锁复查；不阻塞、不建 Future。
-    True = 至少一轮 owner 锁仍被持有（join 后新 admission 的窗口样本）。
-    """
-    if not hasattr(db, "list_unextracted_replies"):
-        return False
-    rows = db.list_unextracted_replies(night_id=int(night_id)) or []
-    if not rows:
-        return False
-    with _single_flight_guard:
-        for row in rows:
-            if not isinstance(row, Mapping):
-                continue
-            cid = int(row.get("chat_turn_id") or 0)
-            if cid <= 0:
-                continue
-            if (
-                hasattr(db, "get_story_extract_status")
-                and db.get_story_extract_status(cid) == "done"
-            ):
-                continue
-            slot = _single_flight_ownership.get(_turn_flight_key(db, cid))
-            if slot is None:
-                continue
-            owner = slot[0]
-            # 非阻塞探测：拿得到锁 ⇒ owner 已释放（非在飞）；立即还回。
-            if owner.acquire(blocking=False):
-                owner.release()
-                continue
-            return True
-    return False
 
 
 def _is_endorsement_bound(db: Any, night_id: int) -> bool:
@@ -523,11 +421,10 @@ def run_extraction_for_turn(
     - 成功 → `settle_story_extraction` 单事务全有或全无（AC7），返回 status='done'。
     - 不处理 endorsement（夜级批处理）。
 
-    `write_gate` 必传：落账走真实 runtime 写锁。
+    `write_gate` 必传：落账走真实 runtime 写锁（生产经 TicketedWriteGate 按票序）。
 
-    #1353：admission（CLOSING 拒新 + claim single-flight + done 水位）与 close 冻结同持
-    write_gate，使 join→freeze 窗内新 owner 要么被 gate 内 inflight 复查看见，要么在
-    冻结后直接拒入（不跑 LLM、不假 settle 失败）；LLM 仍在 gate 外。
+    #1353：CLOSING 拒新 owner（屏障后晚到的腿）+ per-turn single-flight LLM 去重
+    + done 水位；写序归队列票据，不再 join/admission 旁路舞步。LLM 在 gate 外。
     """
     cid = int(chat_turn_id)
     if not cid:
