@@ -1815,9 +1815,24 @@ class WebGame:
                 status_code=503,
                 detail="当前会话正在关闭，请回菜单重新进入。",
             )
-        gate = self._runtime_write_gate()
-        # 调用方已持闸 → nullcontext；否则 prologue/epilogue 各自 with gate。
-        gate_cm = contextlib.nullcontext() if gate_already_held else gate
+        # #1353 r10：删简优先——屏障已受理则拒后序聊天（与 seal 合流），禁排队等屏障后
+        # 再写旧 night；公开路径 DB 缝另经 ticketed gate。持闸兼容路外层已持裸锁。
+        # 失败清理在票可能已 complete 后走裸 runtime gate（ticketed 见 _done 会 TicketCancelled）。
+        if (
+            not gate_already_held
+            and self._runtime_write_queue().has_open_barrier()
+        ):
+            self._complete_pending_write(pending_ticket)
+            raise HTTPException(
+                status_code=409,
+                detail="本夜收夜中，暂不能召对。",
+            )
+        if gate_already_held:
+            gate_cm: Any = contextlib.nullcontext()
+            cleanup_gate: Any = contextlib.nullcontext()
+        else:
+            gate_cm = self._ticketed_write_gate(pending_ticket)
+            cleanup_gate = self._runtime_write_gate()
         chat_turn_id = 0
         before_snapshot: Dict[str, Any] = {}
         accepted_turn = 0
@@ -1920,7 +1935,7 @@ class WebGame:
                         chat_turn_id,
                     )
                 try:
-                    with gate_cm:
+                    with cleanup_gate:
                         if chat_turn_id:
                             self._record_chat_rollback_items(chat_turn_id, before_snapshot)
                             self.db.fail_chat_turn(chat_turn_id)
@@ -1977,7 +1992,16 @@ class WebGame:
                 status_code=503,
                 detail="当前会话正在关闭，请回菜单重新进入。",
             )
-        gate = self._runtime_write_gate()
+        # #1353 r10：屏障已受理则拒重试召对；否则整轮 DB 缝经 ticketed gate。
+        # 失败清理在票可能已 complete 后走裸 runtime gate。
+        if self._runtime_write_queue().has_open_barrier():
+            self._complete_pending_write(pending_ticket)
+            raise HTTPException(
+                status_code=409,
+                detail="本夜收夜中，暂不能召对。",
+            )
+        gate = self._ticketed_write_gate(pending_ticket)
+        cleanup_gate = self._runtime_write_gate()
         before_snapshot: Dict[str, Any] = {}
         # #542 r6e：reopen + start_chat_turn_scene 纳入既有 try/except；
         # 失败复用 abandon + restore interrupted；drain 在 write_gate 外。
@@ -2064,7 +2088,7 @@ class WebGame:
                         chat_turn_id,
                     )
                 try:
-                    with gate:
+                    with cleanup_gate:
                         self._record_chat_rollback_items(chat_turn_id, before_snapshot)
                         self.db.restore_interrupted_after_failed_retry(chat_turn_id)
                 except Exception:
@@ -2841,12 +2865,14 @@ class WebGame:
         #1353 r7：无待补时不领票——空 catch-up 占票会与同 session 的 barrier/
         `_pending_writes_count` 钉竞态（全量 xdist 下 residual ticket）。有待补才
         claim+spawn；key=("startup",) 与 turn/pending 区分。
+        #1353 r10：预检 list_unextracted 短持 runtime gate（共享 conn 禁裸读）。
         """
         if not hasattr(self.db, "conn"):
             return
         if not hasattr(self.db, "list_unextracted_replies"):
             return
-        pending = self.db.list_unextracted_replies() or []
+        with self._runtime_write_gate():
+            pending = self.db.list_unextracted_replies() or []
         if not pending:
             return
         self._spawn_pending_write_thread(
@@ -2912,7 +2938,18 @@ class WebGame:
         if pending_ticket is None:
             yield {"type": "error", "message": "当前会话正在关闭，请回菜单重新进入。"}
             return
-        write_gate = self._runtime_write_gate()
+        # #1353 r10：屏障已受理则拒后序流式聊天（与 seal 合流）；否则 prologue/epilogue
+        # 经 ticketed gate（写段序）。LLM 仍在无锁窗（AC10）。
+        if self._runtime_write_queue().has_open_barrier():
+            self._complete_pending_write(pending_ticket)
+            yield {
+                "type": "error",
+                "message": "本夜收夜中，暂不能召对。",
+                "code": "night_closing",
+            }
+            return
+        write_gate = self._ticketed_write_gate(pending_ticket)
+        bare_write_gate = self._runtime_write_gate()
         chat_turn_id = 0
         before_snapshot: Dict[str, Any] = {}
         accepted_turn = 0
@@ -2920,7 +2957,12 @@ class WebGame:
         # 颁诏入口可并发观测 generating 并有界超时 fail-closed，不被挂起回话永久挡死。
         # #542 r6g：Lock.locked() 不记 owner——本路径自记是否仍持 gate，只放自己的锁。
         gate_held = True
-        write_gate.acquire()
+        try:
+            write_gate.acquire()
+        except TicketCancelled:
+            self._complete_pending_write(pending_ticket)
+            yield {"type": "error", "message": "当前会话正在关闭，请回菜单重新进入。"}
+            return
         try:
             # 权威相位复查（持 gate 内，建 chat turn/开夜/写库之前）：等锁期间若被结算改相位则拒。
             if getattr(self.state, "turn_phase", None) in FRONT_HALF_DONE_PHASES:
@@ -3137,24 +3179,38 @@ class WebGame:
                 if extraction_thread is not None:
                     extraction_thread.join()
 
-                # #526/#1353：尾随票已清后经队列屏障收夜（禁持整轮票自锁）。
+                # #526/#1353：尾随票已清后收夜。整轮票已 complete 时 ticketed gate 会
+                # TicketCancelled——收夜短写改走裸 runtime write_gate（腿已终态，无越屏障窗）。
                 close_after = getattr(self.session, "close_night_after_chat_if_needed", None)
                 if close_after is not None:
                     try:
                         close_after(
                             (payload or {}).get("court_action") or "",
-                            write_gate=write_gate,
+                            write_gate=bare_write_gate,
                         )
                     except Exception as close_err:
+                        # #1353 r10 / 66nX：流式收夜欠账耗尽等失败必须终态化——
+                        # 与其它流式 LLM 失败同形投 error，禁裸 raise 致 ev_queue 永阻。
                         from ming_sim.audience_night import AudienceNightError
-                        if isinstance(close_err, AudienceNightError):
+                        if isinstance(close_err, LLMUnavailable):
+                            ev_queue.put({
+                                "type": "error",
+                                "detail": _llm_error_detail(close_err),
+                                **identity,
+                            })
+                        elif isinstance(close_err, AudienceNightError):
                             ev_queue.put({
                                 "type": "error",
                                 "message": str(close_err),
                                 **identity,
                             })
-                            return
-                        raise
+                        else:
+                            ev_queue.put({
+                                "type": "error",
+                                "message": str(close_err),
+                                **identity,
+                            })
+                        return
 
                 ev_queue.put({"type": "end"})
             finally:

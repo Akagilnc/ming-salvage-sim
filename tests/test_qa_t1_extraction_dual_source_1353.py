@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import re
 import threading
 import time
 from types import SimpleNamespace
@@ -1006,6 +1007,166 @@ def test_ticketed_write_gate_rejects_none(web_game):
     game = web_game
     with pytest.raises(RuntimeError, match="live WriteTicket"):
         game._ticketed_write_gate(None)  # type: ignore[arg-type]
+
+
+def test_catch_up_entry_list_under_gate_ticket_cancelled_empty():
+    """#1353 r10 / 68Xp：catch-up 入口 list_unextracted 持闸；TicketCancelled → 空结果不抛。"""
+    from ming_sim.audience_extraction import catch_up_pending_extractions
+    from ming_sim.session_write_queue import SessionWriteQueue, TicketCancelled
+
+    class _DB:
+        def list_unextracted_replies(self, night_id=None):
+            raise AssertionError("must not bare-read outside gate")
+
+    q = SessionWriteQueue()
+    ticket = q.claim(key=("startup",))
+    assert ticket is not None
+    q.cancel(ticket)
+    gate = q.ticketed_gate(ticket)
+
+    # 取消票进 gate → TicketCancelled；catch_up 必须吞成空结果
+    out = catch_up_pending_extractions(
+        db=_DB(), llm_config=object(), write_gate=gate,
+    )
+    assert out == {"extracted": 0, "pending": 0, "scanned": 0}
+
+
+def test_stream_close_pending_extraction_emits_error_not_hang(web_game, monkeypatch):
+    """#1353 r10 / 66nX：流式收夜欠账耗尽 LLMUnavailable 必须终态化（error），禁永阻。"""
+    from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
+
+    game = web_game
+    minister = next(iter(game.content.characters))
+    # prologue 最小：持久大臣路径需要 chat turn；用 session stub 简化
+    events: list[dict] = []
+
+    class _Agent:
+        def run(self, *_a, **_k):
+            # 最小流：一个 content + RunOutput
+            yield SimpleNamespace(event="RunContent", content="臣已知晓。")
+            yield SimpleNamespace(
+                event="RunCompletedEvent",
+                content="臣已知晓。",
+                tools=[],
+                messages=[],
+                status="COMPLETED",
+            )
+
+    game.session.registry.get = lambda _ch: _Agent()
+    game.session._character = lambda name: SimpleNamespace(name=name)
+    game.session.join_chat_turn_scene = lambda *_a, **_k: []
+    game.session.persist_chat_turn_scene = lambda *_a, **_k: None
+    game.session.abandon_chat_turn_scene = lambda *_a, **_k: None
+    # 避免真实开夜/落库依赖：非持久路径（临时角色）或 stub 持久
+    monkeypatch.setattr(game, "_persistent_chat_minister", lambda _n: False)
+    monkeypatch.setattr(
+        game, "_chat_stream_interpret_tools",
+        lambda *a, **k: {
+            "answer": "臣已知晓。",
+            "court_action": "close_night",
+            "next_minister": "",
+            "proposed": None,
+            "appointed": "",
+            "registered": "",
+            "displaced": "",
+            "secret_order_id": 0,
+            "pending_action_id": 0,
+            "pending_action_failures": [],
+            "directive_ambiguous": None,
+        },
+    )
+    monkeypatch.setattr(
+        game, "_chat_payload",
+        lambda *a, **k: {"answer": "臣已知晓。", "minister_message_id": 0},
+    )
+
+    def boom_close(_action="", *, write_gate=None):
+        raise LLMUnavailable(
+            CLI_RUNNER_PLAYER_MESSAGE,
+            code="pending_extraction",
+            provider_message="欠账耗尽",
+        )
+
+    game.session.close_night_after_chat_if_needed = boom_close
+
+    gen = game.chat_stream(minister, "边饷如何？")
+    # 有界消费：若未终态化，下一事件永不到 → 测试挂死；用线程+超时护栏
+    done = threading.Event()
+    box: dict = {}
+
+    def consume() -> None:
+        try:
+            for item in gen:
+                events.append(item)
+                if item.get("type") in {"end", "error"}:
+                    break
+            box["ok"] = True
+        except Exception as exc:
+            box["exc"] = exc
+        finally:
+            done.set()
+
+    th = threading.Thread(target=consume, daemon=True)
+    th.start()
+    assert done.wait(5.0), "stream must terminalize (error/end); hung on ev_queue"
+    th.join(timeout=1.0)
+    assert box.get("ok") is True, box
+    types = [e.get("type") for e in events]
+    assert "error" in types, events
+    assert types[-1] in {"error", "end"}
+    # done 可先于 close 失败；error 必须到达
+    err = next(e for e in events if e.get("type") == "error")
+    assert "detail" in err or "message" in err
+
+
+def test_chat_stream_prologue_uses_ticketed_not_bare_runtime(web_game, monkeypatch):
+    """#1353 r10 / 66nR：流式 prologue 经 ticketed gate，不得裸 runtime write_gate 越屏障。"""
+    from pathlib import Path
+
+    # 源码钉：chat_stream 领票后绑定 _ticketed_write_gate，禁 prologue 直绑 _runtime_write_gate
+    src = Path(web_app.__file__).read_text(encoding="utf-8")
+    # 定位 chat_stream 函数体（下一 def 前）
+    start = src.index("def chat_stream(")
+    end = src.index("\n    def ", start + 1)
+    body = src[start:end]
+    assert "_ticketed_write_gate(pending_ticket)" in body
+    assert "has_open_barrier()" in body
+    # 禁 prologue 把业务闸直接绑成裸 runtime（bare_write_gate= 收夜收口除外）
+    assert re.search(
+        r"^\s*write_gate\s*=\s*self\._runtime_write_gate\(\)",
+        body,
+        flags=re.M,
+    ) is None
+
+    game = web_game
+    minister = next(iter(game.content.characters))
+    seen = {"ticketed_acquire": 0}
+    real_tw = game._ticketed_write_gate
+
+    def wrap_ticketed(ticket):
+        gate = real_tw(ticket)
+        real_acq = gate.acquire
+
+        def acq(*a, **k):
+            seen["ticketed_acquire"] += 1
+            return real_acq(*a, **k)
+
+        gate.acquire = acq  # type: ignore[method-assign]
+        return gate
+
+    monkeypatch.setattr(game, "_ticketed_write_gate", wrap_ticketed)
+
+    class _Boom:
+        def run(self, *_a, **_k):
+            raise LLMUnavailable("boom")
+            yield  # pragma: no cover
+
+    game.session.registry.get = lambda _ch: _Boom()
+    monkeypatch.setattr(game, "_persistent_chat_minister", lambda _n: False)
+
+    events = list(game.chat_stream(minister, "边饷如何？"))
+    assert seen["ticketed_acquire"] >= 1
+    assert any(e.get("type") == "error" for e in events)
 
 
 def test_seal_rejects_new_claim_after_lifecycle(web_game):

@@ -348,6 +348,100 @@ def test_run_exclusive_serializes_writes():
     assert order == ["slow", "fast"], order
 
 
+def test_write_turn_orders_cs_not_whole_leg_llm():
+    """#1353 r10 / 66nU P5：wait_write_turn 只排写段——先票 LLM 中时后票可进材料读/写。
+
+    事件序：extract 领票 → extract 短读放闸 → extract 入 LLM 窗 → mind 领票并完成
+    材料读（证明未等 extract LLM）→ extract LLM 终 → extract 写段 → 两票 complete。
+    """
+    q = SessionWriteQueue()
+    order: list[str] = []
+    extract_in_llm = threading.Event()
+    mind_read_done = threading.Event()
+    release_extract_llm = threading.Event()
+
+    t_extract = q.claim(key=("turn", 1))
+    t_mind = q.claim(key=("turn", 1))
+    assert t_extract is not None and t_mind is not None
+
+    def extract_leg() -> None:
+        # 首碰共享 conn：短持写段
+        with q.ticketed_gate(t_extract):
+            order.append("extract_read")
+        order.append("extract_llm_enter")
+        extract_in_llm.set()
+        assert release_extract_llm.wait(2.0)
+        order.append("extract_llm_exit")
+        with q.ticketed_gate(t_extract):
+            order.append("extract_write")
+        q.complete(t_extract)
+
+    def mind_leg() -> None:
+        assert extract_in_llm.wait(2.0)
+        # 此时 extract 仍 open 且在 LLM——材料读不得被整票 wait_prior 串行化
+        with q.ticketed_gate(t_mind):
+            order.append("mind_read")
+        mind_read_done.set()
+        with q.ticketed_gate(t_mind):
+            order.append("mind_write")
+        q.complete(t_mind)
+
+    et = threading.Thread(target=extract_leg, name="extract", daemon=True)
+    mt = threading.Thread(target=mind_leg, name="mind", daemon=True)
+    et.start()
+    mt.start()
+    assert mind_read_done.wait(2.0), "mind material read must not wait extract LLM"
+    assert "mind_read" in order
+    assert "extract_llm_exit" not in order  # still inside extract LLM
+    release_extract_llm.set()
+    et.join(timeout=2.0)
+    mt.join(timeout=2.0)
+    assert not et.is_alive() and not mt.is_alive()
+    assert order.index("extract_read") < order.index("extract_llm_enter")
+    assert order.index("mind_read") < order.index("extract_llm_exit")
+    assert "extract_write" in order and "mind_write" in order
+    assert q.inflight_count() == 0
+
+
+def test_write_turn_still_blocks_on_open_barrier():
+    """写段序仍尊重开放屏障：后票 ticketed gate 不得越过 barrier body。"""
+    q = SessionWriteQueue()
+    order: list[str] = []
+    barrier_in = threading.Event()
+    release_barrier = threading.Event()
+    late_done = threading.Event()
+
+    def barrier_body() -> None:
+        barrier_in.set()
+        order.append("barrier")
+        assert release_barrier.wait(2.0)
+
+    bt = threading.Thread(
+        target=lambda: q.barrier(barrier_body), name="barrier", daemon=True,
+    )
+    bt.start()
+    assert barrier_in.wait(2.0)
+
+    late = q.claim(key=("turn", 9))
+    assert late is not None
+
+    def late_writer() -> None:
+        with q.ticketed_gate(late):
+            order.append("late")
+        q.complete(late)
+        late_done.set()
+
+    lt = threading.Thread(target=late_writer, daemon=True)
+    lt.start()
+    assert "late" not in order
+    assert not late_done.is_set()
+    release_barrier.set()
+    assert late_done.wait(2.0)
+    bt.join(timeout=2.0)
+    lt.join(timeout=2.0)
+    assert order == ["barrier", "late"], order
+
+
 def test_no_elapsed_timeout_api_on_barrier():
     """队列层已删 elapsed 熔断分类：barrier/wait_prior/run 无 timeout_s 形参。"""
     import inspect

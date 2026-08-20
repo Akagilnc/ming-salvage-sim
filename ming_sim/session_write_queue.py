@@ -2,13 +2,16 @@
 
 Design contract:
 - Trailing legs (extraction / highlight / mindreading) claim a ticket at start
-  (ordering). LLM stays parallel outside the queue. DB writes run through the
-  ticket execution seam (`run` / `TicketedWriteGate`) so they observe ticket
-  order and cancel; the ticket is completed only after the leg finishes
-  (success, fail, or cancel → empty vacate).
+  (barrier/inflight ordering). LLM stays parallel outside the queue (P5).
+  DB critical sections run through the ticket execution seam (`run` /
+  `TicketedWriteGate`) which orders only **write turns** among open tickets —
+  not whole-leg completion — so peer trails do not serialize each other's LLM.
+  The ticket is completed only after the leg finishes (success, fail, or
+  cancel → empty vacate).
 - Month-advance is a barrier ticket: claimed after all already-issued tickets,
-  so prior legs drain naturally before close/settle runs. Post-barrier claims
-  wait on the barrier via wait_prior when they use the write seam.
+  so prior legs drain naturally before close/settle runs (`wait_prior` = full
+  prior complete). Post-barrier claims wait on the open barrier via the write
+  seam (barrier key blocks write turns until barrier vacates).
 - write_gate remains the exclusive write lock (CLI + Web share one session
   queue). Queue length / open tickets are the sole inflight fact source.
 - Cancel vacates without resurrecting work (ADR 0038 retract).
@@ -40,13 +43,29 @@ class WriteTicket:
     key: Optional[Hashable] = None
     cancelled: bool = False
     _done: bool = field(default=False, repr=False, compare=False)
+    # Write-turn state (P5): only serializes DB critical sections, not whole-leg LLM.
+    _awaiting_write: bool = field(default=False, repr=False, compare=False)
+    _in_write: bool = field(default=False, repr=False, compare=False)
+
+
+def _is_barrier_ticket(ticket: WriteTicket) -> bool:
+    """Barrier tickets block later write turns until they fully vacate."""
+    key = ticket.key
+    if key == ("barrier",):
+        return True
+    # claim/barrier both tag barrier as tuple; tolerate bare string marks in tests.
+    return key == "barrier" or (
+        isinstance(key, tuple) and len(key) > 0 and key[0] == "barrier"
+    )
 
 
 class TicketedWriteGate:
-    """Lock-like production write seam: wait_prior(ticket) → write_gate + cancel check.
+    """Lock-like production write seam: wait_write_turn → write_gate + cancel check.
 
     Drop-in for `threading.Lock` at trailing-leg write sites (`with gate` / acquire).
-    Does not complete the ticket — caller still complete()/vacate() in finally.
+    Orders only concurrent write turns (and open barriers) — peer legs keep LLM
+    parallel (P5). Does not complete the ticket — caller still complete()/vacate()
+    in finally.
     """
 
     def __init__(
@@ -63,12 +82,17 @@ class TicketedWriteGate:
             # Non-blocking ticketed acquire is not meaningful (order wait is the point).
             raise RuntimeError("TicketedWriteGate only supports blocking acquire")
         del timeout  # lock timeout unused; order wait is terminal-state only
-        self._queue.wait_prior(self._ticket)
-        self._queue.write_gate.acquire()
+        self._queue.wait_write_turn(self._ticket)
+        try:
+            self._queue.write_gate.acquire()
+        except BaseException:
+            self._queue.finish_write_turn(self._ticket)
+            raise
         self._held = True
         if self._ticket.cancelled or self._ticket._done:
             self._held = False
             self._queue.write_gate.release()
+            self._queue.finish_write_turn(self._ticket)
             raise TicketCancelled(f"ticket {self._ticket.seq} cancelled")
         return True
 
@@ -76,7 +100,10 @@ class TicketedWriteGate:
         if not self._held:
             return
         self._held = False
-        self._queue.write_gate.release()
+        try:
+            self._queue.write_gate.release()
+        finally:
+            self._queue.finish_write_turn(self._ticket)
 
     def __enter__(self) -> "TicketedWriteGate":
         self.acquire()
@@ -118,6 +145,11 @@ class SessionWriteQueue:
     def is_sealed(self) -> bool:
         with self._cond:
             return bool(self._sealed)
+
+    def has_open_barrier(self) -> bool:
+        """True while a month-advance/close barrier ticket is still open."""
+        with self._cond:
+            return any(_is_barrier_ticket(t) for t in self._open.values())
 
     def claim(self, key: Optional[Hashable] = None) -> Optional[WriteTicket]:
         """Synchronously take the next ordering ticket (trail start / barrier).
@@ -186,8 +218,9 @@ class SessionWriteQueue:
     def wait_prior(self, ticket: WriteTicket) -> None:
         """Block until every open ticket with seq < ticket.seq is finished.
 
-        Waits only on prior worker/provider terminal vacate (K10a). Cancelled
+        Full prior-complete wait — used by barrier admission (K10a). Cancelled
         ticket → TicketCancelled. No elapsed failure classification.
+        Write seams use wait_write_turn instead (P5: do not serialize peer LLM).
         """
         with self._cond:
             while True:
@@ -198,12 +231,60 @@ class SessionWriteQueue:
                     return
                 self._cond.wait()
 
+    def wait_write_turn(self, ticket: WriteTicket) -> None:
+        """Block only for prior write turns / open barriers — not whole-leg LLM.
+
+        A later ticket may enter its DB critical section while an earlier peer
+        leg is still in LLM (ticket open but not awaiting/in write). Open
+        barrier tickets always block later write turns until they vacate, so
+        post-barrier claims cannot cross the barrier body.
+        """
+        with self._cond:
+            if ticket.cancelled or ticket._done:
+                raise TicketCancelled(f"ticket {ticket.seq} cancelled")
+            ticket._awaiting_write = True
+            self._cond.notify_all()
+            try:
+                while True:
+                    if ticket.cancelled or ticket._done:
+                        raise TicketCancelled(f"ticket {ticket.seq} cancelled")
+                    blocked = False
+                    for seq, prior in self._open.items():
+                        if seq >= ticket.seq:
+                            continue
+                        if (
+                            _is_barrier_ticket(prior)
+                            or prior._in_write
+                            or prior._awaiting_write
+                        ):
+                            blocked = True
+                            break
+                    if not blocked:
+                        ticket._awaiting_write = False
+                        ticket._in_write = True
+                        self._cond.notify_all()
+                        return
+                    self._cond.wait()
+            except BaseException:
+                ticket._awaiting_write = False
+                ticket._in_write = False
+                self._cond.notify_all()
+                raise
+
+    def finish_write_turn(self, ticket: WriteTicket) -> None:
+        """Release write-turn flags after leaving the DB critical section."""
+        with self._cond:
+            ticket._in_write = False
+            ticket._awaiting_write = False
+            self._cond.notify_all()
+
     def barrier(self, fn: Callable[[], T]) -> T:
         """Claim a barrier ticket after current claims; run fn when priors clear.
 
-        Prior open tickets (trailing legs claimed earlier) must finish first.
-        Tickets claimed after this barrier wait on their own wait_prior if they
-        use run()/TicketedWriteGate — so they cannot cross the barrier write.
+        Prior open tickets (trailing legs claimed earlier) must finish first
+        (full complete via wait_prior). Tickets claimed after this barrier wait
+        on the open barrier key via run()/TicketedWriteGate write turns — so
+        they cannot cross the barrier body.
 
         Sealed queue: still waits for open priors, then runs fn (lifecycle/
         month-advance must proceed even when new claims are rejected).
@@ -253,19 +334,17 @@ class SessionWriteQueue:
         ticket: WriteTicket,
         fn: Callable[[], T],
     ) -> T:
-        """Wait for prior tickets, then run fn under write_gate; caller completes.
+        """Take a write turn, run fn under write_gate; caller completes the ticket.
 
+        Write-turn ordered (not whole-leg wait_prior) so peer LLM stays parallel.
         Does not complete the ticket — legs may do LLM outside and only use
         this helper for the write section, then complete().
         """
-        self.wait_prior(ticket)
-        with self.write_gate:
-            if ticket.cancelled or ticket._done:
-                raise TicketCancelled(f"ticket {ticket.seq} cancelled")
+        with self.ticketed_gate(ticket):
             return fn()
 
     def run_exclusive(self, fn: Callable[[], T]) -> T:
-        """Claim + wait_prior + write_gate + complete — one-shot exclusive write."""
+        """Claim + write-turn + write_gate + complete — one-shot exclusive write."""
         ticket = self.claim()
         if ticket is None:
             raise RuntimeError("write queue sealed")

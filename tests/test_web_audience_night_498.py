@@ -256,9 +256,13 @@ def test_asgi_inflight_reply_lands_then_issue_closes_and_advances(web_game, monk
         if q.inflight_count() > 1:  # barrier 票 + chat 票
             observed_ticket_inflight.set()
         result = real_wait_prior(ticket)
-        # wait_prior 返回时 priors 已清
-        if observed_ticket_inflight.is_set() and q.inflight_count() <= 1:
-            observed_ticket_clear.set()
+        # wait_prior 返回 = 该票 priors 已清。后序 trail（seq>barrier）可仍 open（P5），
+        # 不得用总 inflight<=1 判清——只核无 seq < barrier 的 prior。
+        if observed_ticket_inflight.is_set():
+            with q._cond:
+                priors = [seq for seq in q._open if seq < ticket.seq]
+            if not priors:
+                observed_ticket_clear.set()
         return result
 
     monkeypatch.setattr(q, "wait_prior", observe_wait_prior)
