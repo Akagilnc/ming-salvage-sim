@@ -75,10 +75,11 @@
 }
 
 
-/* 弹窗标题栏：透明、大字居中、无深色底 */
-.modal-bg-state .modal-header,
-.modal-bg-chat .modal-header,
-.modal-bg-edict .modal-header {
+/* 弹窗标题栏：透明、大字居中、无深色底。
+ * #1475：:not(.modal-header-bare)——hideTitle（召对并入左卡身份）时不得以 78px 轨压过 bare 归零。 */
+.modal-bg-state .modal-header:not(.modal-header-bare),
+.modal-bg-chat .modal-header:not(.modal-header-bare),
+.modal-bg-edict .modal-header:not(.modal-header-bare) {
   justify-content: center;
   min-height: 78px;
   border-bottom: 1px solid rgba(255, 232, 170, 0.18);
@@ -115,9 +116,9 @@
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
 }
 
-.modal-bg-state .modal-header .icon-button,
-.modal-bg-chat .modal-header .icon-button,
-.modal-bg-edict .modal-header .icon-button {
+.modal-bg-state .modal-header:not(.modal-header-bare) .icon-button,
+.modal-bg-chat .modal-header:not(.modal-header-bare) .icon-button,
+.modal-bg-edict .modal-header:not(.modal-header-bare) .icon-button {
   position: absolute;
   top: 50%;
   right: 18px;
@@ -130,18 +131,33 @@
   background: rgba(255, 250, 235, 0.85);
 }
 
-.modal-bg-state .modal-header .icon-button:hover,
-.modal-bg-chat .modal-header .icon-button:hover,
-.modal-bg-edict .modal-header .icon-button:hover {
+.modal-bg-state .modal-header:not(.modal-header-bare) .icon-button:hover,
+.modal-bg-chat .modal-header:not(.modal-header-bare) .icon-button:hover,
+.modal-bg-edict .modal-header:not(.modal-header-bare) .icon-button:hover {
   background: rgba(158, 42, 43, 0.92);
   color: #ffe4b0;
 }
 
-.modal-bg-state .modal-header .icon-button svg,
-.modal-bg-chat .modal-header .icon-button svg,
-.modal-bg-edict .modal-header .icon-button svg {
+.modal-bg-state .modal-header:not(.modal-header-bare) .icon-button svg,
+.modal-bg-chat .modal-header:not(.modal-header-bare) .icon-button svg,
+.modal-bg-edict .modal-header:not(.modal-header-bare) .icon-button svg {
   width: 28px;
   height: 28px;
+}
+
+/* #1475：召对 hideTitle 悬浮关闭钮——浅底可见，不占横幅轨 */
+.modal-bg-chat .modal-header-bare .icon-button {
+  width: 40px;
+  height: 40px;
+  border: 1px solid rgba(0, 0, 0, 0.28);
+  border-radius: 8px;
+  color: #1a1410;
+  background: rgba(255, 250, 235, 0.9);
+}
+
+.modal-bg-chat .modal-header-bare .icon-button:hover {
+  background: rgba(158, 42, 43, 0.92);
+  color: #ffe4b0;
 }
 
 /* 例外：必须保留底色的交互元素 —— 输入框、徽章、进度条 */
