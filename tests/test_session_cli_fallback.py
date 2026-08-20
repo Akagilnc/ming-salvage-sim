@@ -369,12 +369,10 @@ def test_staged_secret_order_assignee_merge_uses_llm_field_contract(game, monkey
     )
     seen = {}
 
-    def fake_choose_assignee(assignee_llm, player_command, minister_reply, content, default_assignee):
+    def fake_choose_assignee(assignee_llm, player_command, default_assignee):
         seen.update({
             "assignee_llm": assignee_llm,
             "player_command": player_command,
-            "minister_reply": minister_reply,
-            "content": content,
             "default_assignee": default_assignee,
         })
         return "李若琏"
@@ -392,9 +390,8 @@ def test_staged_secret_order_assignee_merge_uses_llm_field_contract(game, monkey
 
     assert seen["assignee_llm"] == "王在晋"
     assert seen["player_command"] == "暗查辽饷侵冒。"
-    assert seen["minister_reply"] == "臣请委李若琏负责密访关宁诸将。"
-    assert "暗查辽饷侵冒" in seen["content"]
     assert seen["default_assignee"] == minister
+    assert set(seen) == {"assignee_llm", "player_command", "default_assignee"}
     payload = json.loads(db.list_pending_actions(state.turn)[0]["payload_json"])
     assert payload["assignee"] == "李若琏"
 

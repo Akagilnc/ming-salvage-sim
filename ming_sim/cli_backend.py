@@ -1494,13 +1494,21 @@ def _entry_person_fields(entry: Dict[str, Any]) -> List[tuple[str, str]]:
     return fields
 
 
+def _is_failed_person_slot(raw: Any, *, db: Any, content: Any) -> bool:
+    """人物失败槽？normalize 同口径：空/机构/泛称不算；在册人物不算；其余未知人物算。"""
+    cid = str(raw or "").strip()
+    if not cid or _is_non_person_participant_name(cid):
+        return False
+    return _known_person_canon(cid, db=db, content=content) is None
+
+
 def _count_failed_person_slots_in_roster(
     roster: Any, *, db: Any, content: Any,
 ) -> int:
     n = 0
     for entry in _roster_dict_entries(roster):
         for _field, raw in _entry_person_fields(entry):
-            if _known_person_canon(raw, db=db, content=content) is None:
+            if _is_failed_person_slot(raw, db=db, content=content):
                 n += 1
     return n
 
@@ -1508,7 +1516,7 @@ def _count_failed_person_slots_in_roster(
 def _count_failed_person_slots(
     result: Dict[str, Any], *, db: Any, content: Any,
 ) -> int:
-    """首抽结果中不在册人物槽位数（character_id + delegator，含重复）。"""
+    """首抽整个结果的人物失败槽数（顶层 roster + 全 drafts；机构/泛称排除）。"""
     n = 0
     if "participant_roster" in result:
         n += _count_failed_person_slots_in_roster(
@@ -1554,8 +1562,13 @@ def _patch_roster_slots_one_to_one(
     corr_entries = _roster_dict_entries(correction_roster)
     if not base_entries:
         return []
+    # corr 短于 baseline：仅当被截去的尾槽全是机构/空才可（人物槽缺失 → 不明）
     if len(corr_entries) < len(base_entries):
-        return None
+        for entry in base_entries[len(corr_entries):]:
+            for _field, raw in _entry_person_fields(entry):
+                cid = str(raw or "").strip()
+                if cid and not _is_non_person_participant_name(cid):
+                    return None
 
     source = _grounding_source_text(player_message, failed_slot_refs)
     forms_index = _all_roster_identity_forms(content=content)
@@ -1564,13 +1577,16 @@ def _patch_roster_slots_one_to_one(
     failed_slots: List[tuple[int, str]] = []  # (entry_idx, field)
     for idx, entry in enumerate(base_entries):
         for field, raw in _entry_person_fields(entry):
+            # 机构/泛称：normalize 会丢，不入失败槽、不入 prior_valid
+            if not str(raw or "").strip() or _is_non_person_participant_name(raw):
+                continue
             known = _known_person_canon(raw, db=db, content=content)
             if known is None:
                 failed_slots.append((idx, field))
             else:
                 prior_valid.add(known)
 
-    # 多未知：validator 常首错即停，无法证明各失败槽与纠错名的一一对应
+    # 本 roster 多未知 → 对应不明（全局闸应已拦；此处保本地不变量）
     if len(failed_slots) > 1:
         return None
     if not failed_slots:
@@ -1594,9 +1610,12 @@ def _patch_roster_slots_one_to_one(
 
     out: List[Any] = []
     for idx, base_entry in enumerate(base_entries):
-        corr_entry = corr_entries[idx]
+        corr_entry = corr_entries[idx] if idx < len(corr_entries) else {}
         entry = dict(base_entry)
         for field, raw in _entry_person_fields(base_entry):
+            # 机构/泛称槽：保首抽原值，交 normalize 滤除；不参与同人对应
+            if not str(raw or "").strip() or _is_non_person_participant_name(raw):
+                continue
             base_known = _known_person_canon(raw, db=db, content=content)
             corr_raw = str(
                 corr_entry.get(field)
@@ -1642,7 +1661,12 @@ def _backfill_healed_participant_refs(
     """首抽权威快照 + 纠错轮一一对应槽级修补；对应不明 → None。
 
     非参与人字段一律保首抽；纠错轮增人/重排/改档不落库。
+    失败槽不变式（全局）：顶层 roster + 全 drafts 合计人物失败槽须恰好为 1
+    （机构/泛称按 normalize 口径排除）；≠1 → None；唯一失败槽同下标修补。
     """
+    # 全局闸：复用 _count_failed_person_slots（禁第三套扫描器）
+    if _count_failed_person_slots(baseline, db=db, content=content) != 1:
+        return None
     out = dict(baseline)
     base_roster = baseline.get("participant_roster")
     if isinstance(base_roster, list):
@@ -1954,9 +1978,11 @@ def extract_draft_intent_with_roster_heal(
                 raise UnknownParticipantEscalate(pending_unknown)
             assert baseline_result is not None
             # 一一对应槽级修补（禁聚合候选池）；对应不明（增人接地/重排/多未知）→ escalate
+            # 纠错轮用原形 result（保留机构槽位形），禁 validated 压缩后再对下标——
+            # 机构/泛称被 normalize 丢掉会错位。人物合法性已由 validated 闸证明。
             backfilled = _backfill_healed_participant_refs(
                 baseline_result,
-                validated,
+                result,
                 pending_unknown=pending_unknown,
                 player_message=player_message,
                 db=db,
@@ -2775,17 +2801,14 @@ def _extract_imperative_assignee(text: str) -> Optional[str]:
 def _choose_assignee(
     assignee_llm: str,
     player_command: str,
-    minister_reply: str,
-    content: str,
     default_assignee: str,
 ) -> str:
     """选定承办人：只取皇帝输入侧确定性点名 + 显式结构化字段（ADR 0142）。
 
     禁从 minister_reply / extractor 散文 content 机械反推承办人。
     优先级：御旨祈使点名 > 结构化「承办人」字段 > 默认召对大臣。
-    minister_reply / content 参数保留签名兼容，生产路径不读。
+    路由签名不接自由文本（ADR 0117）。
     """
-    _ = (minister_reply, content)  # 签名保留；生产路径不读散文
     emperor = _extract_imperative_assignee(player_command)
     if emperor:
         return emperor
@@ -3101,7 +3124,7 @@ def _extract_secret_order(
     # 承办人：皇帝祈使点名 > 结构化「承办人」字段 > 默认（ADR 0142：禁 minister_reply/
     # extractor 散文反推）。
     assignee = default_assignee if force_default_assignee else _choose_assignee(
-        _assignee_llm, player_command, minister_reply, content, default_assignee
+        _assignee_llm, player_command, default_assignee,
     )
     raw_deadline = obj.get("期限月数")
     explicit_zero_deadline = raw_deadline in (0, "0")

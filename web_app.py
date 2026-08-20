@@ -2489,7 +2489,6 @@ class WebGame:
                     tool_pending_action_id,
                     character.name,
                     text,
-                    answer,
                 )
             answer = GameSession._ensure_confirmation_cue(answer)
         # #502 AC5：多道准驳含糊 → 结构化含糊态透进 chat payload + 大臣当场追问哪一道（表面契约可达）。
