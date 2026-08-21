@@ -388,7 +388,7 @@ export function ArmyDrawer({
               <tr><th>欠饷</th><td colSpan={3}>
                 {formatArmyArrears(selected)}
               </td></tr>
-              <tr><th>状态</th><td colSpan={3}>{selected.status}</td></tr>
+              {/* #1501：军牌不渲染静态 status 句；欠饷栏真数是唯一欠饷呈现源 */}
             </tbody>
           </table>
         </div>
