@@ -61,6 +61,15 @@ function makeNode(region: Region): MapNode {
   };
 }
 
+describe("NodeIntel #648 population (P7: LLM 长文，无 UI 模板)", () => {
+  it("never renders fixed population strings (约N万口 / 不足一万口)", () => {
+    const host = renderNodeIntel(makeNode(makeRegion({ population: 7200000 })));
+    expect(host.textContent).not.toContain("万口");
+    expect(host.textContent).not.toContain("不足一万");
+    expect(host.textContent).not.toContain("undefined");
+  });
+});
+
 describe("NodeIntel monthly tax display", () => {
   it("shows tax_per_turn=1 as 1万/月, not rounded quarterly 0", () => {
     const host = renderNodeIntel(makeNode(makeRegion({ tax_per_turn: 1 })));
