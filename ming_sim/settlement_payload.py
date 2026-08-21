@@ -136,6 +136,12 @@ def bind_decisions_to_candidate_events(
         if explicit and explicit in candidate_ids:
             bound.append(out)  # 回显 id 确属本回合候选 → 采信（正常路径行为不变）
             continue
+        # #1490：dossier 批红的 event_id（dossier:<id>）是 rescript 轨真源，不在
+        # candidate_events 快照里——不得当 off-snapshot 解绑，否则 submit_decisions
+        # 的批红校验（靠 event_id 前缀识别）被跳过，缺字段载荷会带病落 decided。
+        if explicit.startswith("dossier:"):
+            bound.append(out)
+            continue
         # 缺 id，或回显 id 不在权威候选快照里：以快照唯一标题为准（重）绑，不被 LLM 回显牵着走。
         title = str(out.get("title") or "").strip()
         ids = title_to_ids.get(title) or []

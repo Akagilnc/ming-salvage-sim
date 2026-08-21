@@ -1,0 +1,236 @@
+"""#1490：批红待裁缺 dossier_id 被写成 decided 后无法重交。
+
+1. 接收端：缺字段 → SSE error 且仍 pending；带齐字段重交 → decided。
+   经 httpx.ASGITransport 真 POST /api/decree/resolve_decisions/stream。
+2. 生成端：dossier options 含 dossier_id / dossier_decision。
+3. bind 保 dossier: event_id。
+"""
+
+from __future__ import annotations
+
+import asyncio
+
+import httpx
+import pytest
+
+import ming_sim.decree as decree_mod
+import ming_sim.session as session_mod
+import web_app
+from ming_sim.models import TurnPhase
+from tests.dossier_test_helpers import rejected_verdict
+
+
+@pytest.fixture
+def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
+    """真实 WebGame + ASGI 入口；仅中和构造/LLM 边界（与 #498/#1235 同形）。"""
+    monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
+    # 回话后高亮判官属 LLM 边界——离线中和，禁 sk-test 打真网。
+    monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
+    game = web_app.WebGame(fresh=False)
+    monkeypatch.setattr(web_app, "web_game", game)
+    yield game
+    try:
+        game.session.close()
+    except Exception:
+        pass
+
+
+def _client() -> httpx.AsyncClient:
+    return httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=web_app.app), base_url="http://t",
+    )
+
+
+async def _post_resolve(choices: list[dict]) -> httpx.Response:
+    async with _client() as client:
+        return await client.post(
+            "/api/decree/resolve_decisions/stream",
+            json={"choices": choices},
+        )
+
+
+def _plant_dossier_awaiting(db, state):
+    """种 QA 同形：dossier 批红待裁 + resolve_context（含 candidate_events，触发 bind）。"""
+    dossier_id = db.create_decree_dossier(
+        state,
+        action_type="policy",
+        decree_text="密查陕西驿卒",
+        target_kind="issue",
+        target_id="river-works",
+    )
+    options = [
+        {
+            "label": "强颁",
+            "hint": "以中旨强行颁出",
+            "dossier_id": dossier_id,
+            "dossier_decision": "force_promulgated",
+        },
+        {
+            "label": "收回",
+            "hint": "收回此道准旨",
+            "dossier_id": dossier_id,
+            "dossier_decision": "withdrawn",
+        },
+        {
+            "label": "留中",
+            "hint": "留待下月重判",
+            "dossier_id": dossier_id,
+            "dossier_decision": "hold",
+        },
+    ]
+    db.save_pending_decisions(state.turn, [{
+        "event_id": f"dossier:{dossier_id}",
+        "title": "批红待裁",
+        "context": "密查陕西驿卒",
+        "rejection_reason": "科臣封驳",
+        "opposition": "东林",
+        "options": options,
+    }])
+    db.save_resolve_context(
+        state.turn,
+        "诏曰密查",
+        "待续邸报",
+        {"candidate_events": [{"id": "ev_border", "title": "边警"}]},
+        secret_orders=[],
+        relevant_memories=[],
+    )
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
+    return dossier_id
+
+
+def test_missing_dossier_fields_stay_pending_then_full_retry_decides(
+    web_game, monkeypatch,
+):
+    """失败形（#1490 QA）：缺 dossier_id → error 且 pending；带齐字段 → decided。
+    经 ASGI 真 HTTP POST /api/decree/resolve_decisions/stream；真实 WebGame，
+    仅 stub phase2 LLM 边界。"""
+    db, state = web_game.db, web_game.state
+    dossier_id = _plant_dossier_awaiting(db, state)
+
+    phase2_calls: list[list] = []
+
+    def _phase2(_state, _db, *_a, **_k):
+        rows = list(_db.list_pending_decisions(int(_state.turn)))
+        phase2_calls.append(rows)
+        _db.clear_pending_decisions(int(_state.turn))
+        return "邸报：批红已落。"
+
+    monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _phase2)
+
+    # ① 缺字段（与 QA m02-first-issue-pihong-choices 同形）
+    incomplete = {"label": "强颁", "hint": "", "note": "准。先济关宁边饷。"}
+    r1 = asyncio.run(_post_resolve([incomplete]))
+    assert r1.status_code == 200, r1.text
+    assert "event: error" in r1.text, r1.text
+    assert "event: done" not in r1.text
+    assert any(
+        token in r1.text for token in ("批红", "dossier", "非法", "选项")
+    ), r1.text
+
+    row = db.list_pending_decisions(state.turn)[0]
+    assert row["status"] == "pending", (
+        f"非法载荷绝不可落 decided，got status={row['status']!r} choice={row['choice']!r}"
+    )
+    assert row["choice"] is None
+    assert phase2_calls == [], "校验失败不得进入 phase2"
+
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
+
+    # ② 带齐字段重交 → 成功
+    full = {
+        "label": "强颁",
+        "hint": "以中旨强行颁出",
+        "note": "准。先济关宁边饷。",
+        "dossier_id": dossier_id,
+        "dossier_decision": "force_promulgated",
+    }
+    r2 = asyncio.run(_post_resolve([full]))
+    assert r2.status_code == 200, r2.text
+    assert "event: done" in r2.text, r2.text
+    assert "event: error" not in r2.text
+    assert len(phase2_calls) == 1
+    decided_row = phase2_calls[0][0]
+    assert decided_row["status"] == "decided"
+    choice = decided_row["choice"] or {}
+    assert choice.get("dossier_id") == dossier_id
+    assert choice.get("dossier_decision") == "force_promulgated"
+
+
+def test_rescript_decision_options_carry_dossier_capability_fields(game, monkeypatch):
+    """生成端正常路径：dossier 类 decision 的 options 含 dossier_id / dossier_decision。"""
+    db, state, content = game
+    dossier_id = db.create_decree_dossier(
+        state,
+        action_type="policy",
+        decree_text="特旨清核河工",
+        target_kind="issue",
+        target_id="river-works",
+        payload={"mode": "ordinary"},
+    )
+
+    def provider(_dossiers, _state):
+        return [rejected_verdict(dossier_id)]
+
+    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: object())
+    monkeypatch.setattr(
+        decree_mod,
+        "simulate_season_with_payload",
+        lambda _simulator, _state, _db, _decree_text, _previous, **kwargs: (
+            "本月邸报。", kwargs["simulator_payload"],
+        ),
+    )
+
+    result = decree_mod.resolve_directives(
+        state, db, None, None, [object()], "清核河工",
+        content=content, promulgation_verdict_provider=provider,
+    )
+
+    assert result.awaiting is True
+    dossier_rows = [
+        d for d in result.decisions
+        if str(d.get("event_id") or "") == f"dossier:{dossier_id}"
+    ]
+    assert len(dossier_rows) == 1, result.decisions
+    options = dossier_rows[0]["options"]
+    assert options, "批红 options 不得为空"
+    for opt in options:
+        assert opt.get("dossier_id") == dossier_id, opt
+        assert opt.get("dossier_decision") in {
+            "force_promulgated", "withdrawn", "hold",
+        }, opt
+        assert isinstance(opt.get("hint"), str), opt
+
+    stored = db.list_pending_decisions(state.turn)
+    stored_dossier = [
+        d for d in stored
+        if str(d.get("event_id") or "") == f"dossier:{dossier_id}"
+    ]
+    assert stored_dossier
+    for opt in stored_dossier[0]["options"]:
+        assert opt.get("dossier_id") == dossier_id
+        assert opt.get("dossier_decision") in {
+            "force_promulgated", "withdrawn", "hold",
+        }
+
+
+def test_bind_preserves_dossier_event_id():
+    """#1490 接收端病灶：bind 不得把 dossier: 前缀 event_id 当 off-snapshot 解绑。"""
+    from ming_sim.settlement_payload import bind_decisions_to_candidate_events
+
+    decisions = [{
+        "event_id": "dossier:8",
+        "title": "批红待裁",
+        "options": [{
+            "label": "强颁",
+            "dossier_id": 8,
+            "dossier_decision": "force_promulgated",
+        }],
+    }]
+    payload = {"candidate_events": [{"id": "ev1", "title": "边警"}]}
+    out = bind_decisions_to_candidate_events(decisions, payload)
+    assert out[0]["event_id"] == "dossier:8"

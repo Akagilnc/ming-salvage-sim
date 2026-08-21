@@ -516,22 +516,24 @@ def _rescript_decisions(
             "context": str(dossier.get("decree_text") or ""),
             "rejection_reason": str(verdict.get("reason") or "").strip(),
             "opposition": opposition,
+            # hint（非 note）：前端 isPendingDecision / DecisionOption 认 hint；
+            # dossier_id/dossier_decision 是批红能力字段，点选必须原样回传（#1490）。
             "options": [
                 *([] if verdict.get("midzhi_unpromulgatable") is True else [{
                     "label": "强颁",
-                    "note": "以中旨强行颁出",
+                    "hint": "以中旨强行颁出",
                     "dossier_id": dossier_id,
                     "dossier_decision": "force_promulgated",
                 }]),
                 {
                     "label": "收回",
-                    "note": "收回此道准旨",
+                    "hint": "收回此道准旨",
                     "dossier_id": dossier_id,
                     "dossier_decision": "withdrawn",
                 },
                 {
                     "label": "留中",
-                    "note": "留待下月重判",
+                    "hint": "留待下月重判",
                     "dossier_id": dossier_id,
                     "dossier_decision": "hold",
                 },
