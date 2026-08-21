@@ -668,6 +668,49 @@ def test_brew_program_error_propagates_loudly_not_degraded(game):
     ]
 
 
+def test_brew_fn_value_error_is_program_error_propagates_loudly(game):
+    """判词机械反例（确认庭 r5 残余）：_brew_fn 自身抛出的裸 ValueError 是程序错
+    ——降级面按结构位置分界而非异常类型，LLM 调用缝只收声明类型 LLMUnavailable，
+    调用段的 ValueError/KeyError 等一律响亮上抛（ADR 0005），不得吞成单条降级；
+    durable claim 已在册，恢复凭据不丢。"""
+    db, state, _ = game
+    _add_edge(db, state, source="温体仁", target="周延儒", kind="结怨",
+              context="温体仁当殿讦周延儒。", origin="audience:turn-1")
+
+    def buggy_brew(payload_json: str) -> str:
+        raise ValueError("酿制手程序错误")
+
+    with pytest.raises(ValueError, match="酿制手程序错误"):
+        run_month_end_relation_brew(db, state, buggy_brew)
+    # 响亮上抛而非降级：无 degraded 留痕；认领先行的 pending 凭据已持久在册。
+    assert [(row["source"], row["target"]) for row in db.get_relation_brew_pending()] == [
+        ("温体仁", "周延儒")
+    ]
+
+
+def test_parse_seam_value_error_degrades_single_item(game):
+    """解析/shape 校验缝的 ValueError（输出结构化契约违约，parse_brew_output 声明
+    类型）属真 LLM 单条失败：单条降级留痕（保旧摘要＋pending 在册），不响亮上抛。
+    与上一测试合起来钉死分界：同是 ValueError，缝内降级、缝外上抛。"""
+    db, state, _ = game
+    _add_edge(db, state, source="温体仁", target="周延儒", kind="结怨",
+              context="温体仁当殿讦周延儒。", origin="audience:turn-1")
+
+    def malformed_brew(payload_json: str) -> str:
+        # 合法 JSON 但 shape 违约：recent_segment 缺失 → parse_brew_output 抛 ValueError。
+        return json.dumps({FOUNDINGS_KEY: []}, ensure_ascii=False)
+
+    report = run_month_end_relation_brew(db, state, malformed_brew)
+    assert report["selected"] == 1 and report["degraded"]
+    assert report["brewed"] == []
+    # 保旧摘要（本就无摘要）、事件不丢、pending 持久在册。
+    assert db.get_relation_summary("温体仁", "周延儒") is None
+    assert db.get_relation_edge_events(source="温体仁", target="周延儒")
+    assert [(row["source"], row["target"]) for row in db.get_relation_brew_pending()] == [
+        ("温体仁", "周延儒")
+    ]
+
+
 def test_settle_aborts_loudly_when_brew_prepare_db_fails(game):
     """生产路径：prepare 的 claim DB 错误发生在结算 atomic 内→随整体回滚走错误包
     SettlementAbort，绝不静默继续（ADR 0008 决定 6）。"""
