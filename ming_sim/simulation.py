@@ -76,6 +76,7 @@ TOP_LEVEL_ALIASES = {
     "人物变更": "人物变更",
     "密令副作用": "secret_order_updates",
     "密令结案": "secret_order_closes",
+    "密令执行态": "covert_exec_selections",
     "崇祯结局": "emperor_fate",
 }
 TOP_LEVEL_LABELS = {value: key for key, value in TOP_LEVEL_ALIASES.items()}
@@ -149,6 +150,7 @@ ITEM_FIELD_ALIASES = {
     "office_type": "office_type", "官署类别": "office_type",
     "approved": "approved", "准许": "approved",
     "order_id": "order_id", "密令编号": "order_id",
+    "fidelity": "fidelity", "执行态": "fidelity", "state": "fidelity",
     "sim_note": "sim_note", "推演备注": "sim_note",
     "disclosed": "disclosed", "泄漏结论": "disclosed",
     "result": "result", "结果": "result",
@@ -781,6 +783,7 @@ EMPTY_EXTRACTION: Dict[str, object] = {
     "人物变更": [],
     "secret_order_updates": [],
     "secret_order_closes": [],
+    "covert_exec_selections": [],
     "dossier_executions": [],
     "dossier_participants": [],
     "secret_dossier_participants": [],
@@ -800,7 +803,7 @@ MODULE_FIELDS: Dict[str, set[str]] = {
         "faction_denunciations", "authority_changes",
     },
     "personnel_secret": {
-        "人物变更", "new_issues", "secret_order_updates", "secret_order_closes",
+        "人物变更", "new_issues", "secret_order_updates", "covert_exec_selections",
         "dossier_progress_reports", "secret_dossier_participants", "emperor_fate",
     },
 }
@@ -1120,6 +1123,12 @@ def build_extractor_shared_context(
         # #1252/#883: secret-dossier roster read seam — batch only, never public.
         slim["secret_dossier_rosters"] = secret_dossier_rosters_from_orders(
             db, compat["secret_orders"],
+        )
+        # #1504：机械底档带（纯函数快照）注入判官带内选态；结案真源不在此模块。
+        from ming_sim.covert_progress import build_covert_floor_payload
+        from ming_sim.settlement_payload import _select_secret_orders_for_sim
+        slim["covert_exec_floors"] = build_covert_floor_payload(
+            db, _select_secret_orders_for_sim(db),
         )
     if module == "issues":
         # #1483：阈值裸数仅 issues 档房——对照 resolve/fail（民心>60 / bar≥Y）。

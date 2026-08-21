@@ -8206,47 +8206,18 @@ def apply_score_extraction(
         except Exception as exc:
             applied_secret_orders.append({"order_id": real_id, "rejected": True, "reason": str(exc)})
 
-    # 12) secret_order_closes：推演给 pending_review 密令最终判定（done/failed），落库结案。
+    # 12) secret_order_closes：#1504 退役。结案真源改 settle 尾部机械对账；此处一律拒收。
     applied_secret_closes: List[Dict[str, object]] = []
     for item in extracted.get("secret_order_closes") or []:
         if not isinstance(item, dict):
             continue
-        raw_id = item.get("order_id")
-        status = str(item.get("status") or "").strip().lower()
-        result_text = str(item.get("result") or "").strip()
-        if status not in {"done", "failed"}:
-            applied_secret_closes.append({"order_id": raw_id, "rejected": True,
-                                          "category": "invalid_enum",
-                                          "reason": f"status 必须 done/failed，得到 {status!r}"})
-            continue
-        if raw_id is None or not result_text:
-            applied_secret_closes.append({"order_id": raw_id, "rejected": True,
-                                          "category": "invalid_enum",
-                                          "reason": "order_id 或 result 缺失"})
-            continue
-        try:
-            real_id = _parse_sqlite_id(raw_id)
-        except (TypeError, ValueError):
-            applied_secret_closes.append({"order_id": raw_id, "rejected": True,
-                                          "category": "invalid_enum", "reason": "order_id 非整数或超界"})
-            continue
-        # 仅 pending_review 状态才允许结案；active 不能跳级，done/failed 已结案不重复
-        order = db.get_secret_order(real_id)
-        if order is None:
-            applied_secret_closes.append({"order_id": real_id, "rejected": True,
-                                          "category": "missing_ref", "reason": "密令不存在"})
-            continue
-        if order["status"] != "pending_review":
-            applied_secret_closes.append({"order_id": real_id, "rejected": True,
-                                          "category": "invalid_enum",
-                                          "reason": f"当前状态 {order['status']}，非 pending_review，不予结案"})
-            continue
-        try:
-            db.close_secret_order(real_id, status, result_text, state.turn, commit=commit_now)
-            print(f"[secret_order] 推演结案 id={real_id} status={status} result={result_text[:60]!r}")
-            applied_secret_closes.append({"order_id": real_id, "status": status, "result": result_text})
-        except Exception as exc:
-            applied_secret_closes.append({"order_id": real_id, "rejected": True, "reason": str(exc)})
+        applied_secret_closes.append({
+            "order_id": item.get("order_id"),
+            "rejected": True,
+            "retired": True,
+            "category": "retired_source",
+            "reason": "secret_order_closes 真源已退役；到期由实进度对账结案",
+        })
 
     validate_rejection_items = [
         {
