@@ -188,18 +188,23 @@ export function GameHud({
 
       {/* 底部 5 命令物件（扣图填进木牌） */}
       {/* 奏疏 badge/sub 同源 situation 谓词：核账期零半程件数，禁平行计数源 */}
+      {/* #1458：台开时安全区整条开洞——其余命令 blocked，只放行拟诏收起 */}
       <CommandSlot slotKey="奏疏" img="奏疏" badge={showSituation ? state.issues.length : 0}
         caption="奏疏" sub={showSituation ? `${state.issues.length} 件待览` : "0 件待览"}
+        blocked={edictOpen}
         onClick={() => gatedModal("memorials", "state")} />
       <CommandSlot slotKey="邸报" img="邸报"
         caption="邸报" sub="上月抄报"
+        blocked={edictOpen}
         onClick={() => gatedModal("gazette", "report")} />
       <CommandSlot slotKey="密令" img="密令"
         badge={secretBadge}
         caption="密令" sub={isFaceReachable("secret_orders", settlementDisplay) ? "进行中密令" : closedReason}
+        blocked={edictOpen}
         onClick={() => gatedModal("secret_orders", "secret_orders")} />
       <CommandSlot slotKey="史册" img="史册"
         caption="史册" sub="历代奏报/诏书"
+        blocked={edictOpen}
         onClick={() => gatedModal("history", "history")} />
       <CommandSlot slotKey="拟诏" img="拟诏" badge={isFaceReachable("edict", settlementDisplay) ? state.directives.length : 0}
         className={edictOpen ? "edict-toggle-open" : undefined}

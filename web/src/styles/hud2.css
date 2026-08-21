@@ -247,3 +247,10 @@
   color: #b8a57a;
 }
 
+/* #1458：拟诏台开着——底栏安全区整条开洞时，其余命令不可点（只放行拟诏收起） */
+.hud2-cmd.hud-cmd-blocked-by-edict,
+.hud2-cmd-caption.hud-cmd-blocked-by-edict {
+  pointer-events: none;
+  cursor: default;
+}
+

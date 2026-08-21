@@ -468,6 +468,33 @@ describe("QA A-1 #1276/#1282/#1285 GameHud HUD 对齐", () => {
     // 勿再走 onOpenModal("edict")——那会变成无反馈/二次开台，不是收起
     expect(opened).toEqual([]);
   });
+
+  it("#1458 拟诏台开着：底栏仅拟诏收起可点，其余命令不得切走 activeModal", () => {
+    // 复现：edict-safe-cmd 底边整条开洞，奏疏/邸报/密令/史册图钮与文字钮都在洞内可点，
+    // 一点就 openModal 把拟诏台切走。修：台开时只放行拟诏收起。
+    const { host, opened, closed } = mountHud({ edictOpen: true });
+    const captions = Array.from(host.querySelectorAll(".hud2-cmd-caption"));
+    const cmds = Array.from(host.querySelectorAll("button.hud2-cmd"));
+    const others = ["奏疏", "邸报", "密令", "史册"];
+    for (const name of others) {
+      const cap = captions.find((b) => (b.getAttribute("aria-label") || "").includes(name));
+      const img = cmds.find((b) => (b.getAttribute("aria-label") || "").includes(name));
+      expect(cap, `${name} caption`).toBeTruthy();
+      expect(img, `${name} img`).toBeTruthy();
+      expect(cap?.classList.contains("hud-cmd-blocked-by-edict")).toBe(true);
+      expect(img?.classList.contains("hud-cmd-blocked-by-edict")).toBe(true);
+      act(() => { cap?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+      act(() => { img?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    }
+    expect(opened).toEqual([]);
+
+    const edictCap = captions.find((b) => (b.getAttribute("aria-label") || "").includes("拟诏"));
+    const edictImg = cmds.find((b) => (b.getAttribute("aria-label") || "").includes("拟诏"));
+    expect(edictCap?.classList.contains("hud-cmd-blocked-by-edict")).toBe(false);
+    expect(edictImg?.classList.contains("hud-cmd-blocked-by-edict")).toBe(false);
+    act(() => { edictCap?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    expect(closed).toEqual(["edict"]);
+  });
 });
 
 describe("#1236 SettlementLock 装饰层自身契约", () => {
