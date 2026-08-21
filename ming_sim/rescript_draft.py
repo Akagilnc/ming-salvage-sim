@@ -24,13 +24,13 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from ming_sim.agents import parse_agent_json, run_agent_text
+from ming_sim.constants import TURN_UNIT
 from ming_sim.db import GameDB
 from ming_sim.error_pack import error_packs_root
 from ming_sim.models import GameState, reign_period_label
 from ming_sim.token_stats import tlog
 
-RESCRIPT_DRAFT_KIND = "rescript_draft"
-MAX_RESRIPT_DRAFTS = 5
+MAX_RESCRIPT_DRAFTS = 5
 
 
 def select_triage_actor(db: GameDB) -> Optional[Dict[str, str]]:
@@ -51,23 +51,79 @@ def select_triage_actor(db: GameDB) -> Optional[Dict[str, str]]:
     return None
 
 
+_EFFECT_KEYS = (f"当前每{TURN_UNIT}效果", "成功效果", "失败效果")
+_ADVANCE_KEY = f"上{TURN_UNIT}推进"
+
+
+def _strip_bare_quantities(value: object) -> Optional[object]:
+    """递归剥离 gameplay 裸量（int/float；bool 是语义标志不剥），保留定性文字与结构。
+
+    0143 输入侧投影：剥净后的空容器一并去掉——票拟输入里只留 ID、纪年与文字事实
+    （P4：皇帝无表，票拟官也不看裸数）。
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return None
+    if isinstance(value, dict):
+        cleaned = {
+            key: stripped for key, item in value.items()
+            if (stripped := _strip_bare_quantities(item)) is not None
+        }
+        return cleaned or None
+    if isinstance(value, list):
+        cleaned = [
+            stripped for item in value
+            if (stripped := _strip_bare_quantities(item)) is not None
+        ]
+        return cleaned or None
+    return value
+
+
+def _project_issue_qualitatively(issue: object) -> Optional[Dict[str, object]]:
+    """单条 issue 的票拟输入侧定性投影（P4 / ADR 0143 唯一通道）。
+
+    剥 gameplay 裸量：`局势走向` inertia、效果 delta、上月推进 delta_bar、待办
+    数值进度（months_elapsed/paid_total/remaining 等）；保留契约所需 issue_id 与
+    定性文字（状态档位、结案条件、推进叙事）。simulator 共用投影不动——只在票拟
+    payload 出口收窄。
+    """
+    if not isinstance(issue, dict):
+        return None
+    row = dict(issue)
+    row.pop("局势走向", None)
+    for key in (*_EFFECT_KEYS, "commitment_progress"):
+        if key in row:
+            row[key] = _strip_bare_quantities(row[key])
+    advance = row.get(_ADVANCE_KEY)
+    if isinstance(advance, dict) and "delta_bar" in advance:
+        adv = dict(advance)
+        adv.pop("delta_bar", None)
+        row[_ADVANCE_KEY] = adv
+    return row
+
+
 def build_rescript_draft_payload(
     state: GameState,
-    db: GameDB,
     narrative: str,
     simulator_payload: Dict[str, object],
     triage_actor: Dict[str, str],
 ) -> Dict[str, object]:
     """票拟生成 LLM 步的确定性输入（F1.3：零依赖 extractor 输出，只读盘面投影）。
 
-    active_issues 复用 simulator_payload 里已做定性投影的同一份（0143 输入侧投影唯一
-    通道，issue_id 是权威绑定快照）；缺失时回空表并留痕（无盘面可投影＝无急务可选）。
+    active_issues 取 simulator_payload 里已投影的一份再过票拟出口定性投影（0143
+    输入侧投影唯一通道，issue_id 是权威绑定快照）；缺失时回空表并留痕（无盘面可
+    投影＝无急务可选）。
     """
-    del db
-    active_issues = simulator_payload.get("active_issues")
-    if not isinstance(active_issues, list):
+    raw_issues = simulator_payload.get("active_issues")
+    if not isinstance(raw_issues, list):
         tlog("[rescript] simulator_payload 无 active_issues 投影，按空盘面处理。")
-        active_issues = []
+        raw_issues = []
+    active_issues = [
+        projected for projected in
+        (_project_issue_qualitatively(issue) for issue in raw_issues)
+        if projected is not None
+    ]
     return {
         "turn": {
             "year": state.year,
@@ -78,7 +134,7 @@ def build_rescript_draft_payload(
         "gazette": narrative,
         "triage_actor": dict(triage_actor),
         "active_issues": active_issues,
-        "target": {"min_items": 3, "max_items": MAX_RESRIPT_DRAFTS},
+        "target": {"min_items": 3, "max_items": MAX_RESCRIPT_DRAFTS},
     }
 
 
@@ -86,39 +142,46 @@ def validate_rescript_draft_items(
     data: object,
     board_issue_ids: set[int],
 ) -> List[Dict[str, object]]:
-    """shape 校验（F2.5 响亮降级的判据面）＋权威快照绑定。
+    """shape 校验（F2.2/F2.5 整批响亮降级的判据面）＋权威快照绑定＋原样不变式（F3.3）。
 
     - 顶层非法（非 dict / 无 items list）→ raise ValueError（整批降级，本月无头版）；
-    - 单条缺必需字段（title 空 / options 非 2-3 项或 label 空）→ 丢弃该条并 tlog 留痕，
-      不静默吞；存活 0 条与「本月确无急务」同形（合法的无头版，不凑数 F2.3）；
+    - 任一条目必需字段缺失或非法（title/context 非空字符串 / options 非 2-3 项 /
+      option.label/hint 非空字符串）→ raise ValueError 整批失败（冻结票面 F2.2/F2.5：
+      不得保留合法项形成部分头版，不得把缺失洗成空串）；合法 `items=[]` 仍是
+      「本月无急务」；
+    - 自由文本零删改（CLAUDE.md P6 / F3.3）：strip 只作判空的临时值，落库一律原文；
     - 超出上限截前 MAX 条（确定性）；
     - event_id 只采信出现在权威盘面里的 issue_id 回指（bind 同款纪律）；其余留给
       落库层合成 `urgent:{turn}:{idx}`。
     """
     if not isinstance(data, dict) or not isinstance(data.get("items"), list):
         raise ValueError("票拟生成输出顶层非法：须为 {\"items\":[...]}")
+
+    def _required_text(item: Dict[str, object], field: str) -> str:
+        value = item.get(field)
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"票拟条目缺必需字段或为空白：{field}")
+        return value  # 原样返回，零删改（F3.3）
+
     drafts: List[Dict[str, object]] = []
     for raw in data["items"]:
-        if len(drafts) >= MAX_RESRIPT_DRAFTS:
+        if len(drafts) >= MAX_RESCRIPT_DRAFTS:
             break
         if not isinstance(raw, dict):
-            tlog("[rescript] 票拟条目非 object，丢弃该条。")
-            continue
-        title = str(raw.get("title") or "").strip()
-        context = str(raw.get("context") or "").strip()
+            raise ValueError("票拟条目非 object（整批失败，F2.5）")
+        title = _required_text(raw, "title")
+        context = _required_text(raw, "context")
         raw_opts = raw.get("options")
+        if not isinstance(raw_opts, list) or not (2 <= len(raw_opts) <= 3):
+            raise ValueError(f"票拟条目 options 非 2-3 项（整批失败，F2.2）：{title!r}")
         options: List[Dict[str, str]] = []
-        if isinstance(raw_opts, list):
-            for opt in raw_opts:
-                if not isinstance(opt, dict):
-                    continue
-                label = str(opt.get("label") or "").strip()
-                if not label:
-                    continue
-                options.append({"label": label, "hint": str(opt.get("hint") or "").strip()})
-        if not title or not (2 <= len(options) <= 3):
-            tlog(f"[rescript] 票拟条目缺必需字段（title 空或 options 非 2-3 项），丢弃：{title!r}")
-            continue
+        for opt in raw_opts:
+            if not isinstance(opt, dict):
+                raise ValueError(f"票拟 option 非 object（整批失败，F2.2）：{title!r}")
+            options.append({
+                "label": _required_text(opt, "label"),
+                "hint": _required_text(opt, "hint"),
+            })
         draft: Dict[str, object] = {"title": title, "context": context, "options": options}
         # 权威快照为准：只认喂给 LLM 的 issue 盘面里真实存在的 issue_id（不信回显）。
         issue_id = raw.get("issue_id")

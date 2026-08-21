@@ -1551,8 +1551,9 @@ def _settle_after_narrative(
     # #656 / ADR 0093 前半：phase2 五路 fan-out 的第五路＝票拟生成（F1.3 唯一并行刀口）。
     # 输入只读邸报正文＋分拣人事实＋既有 issue 盘面投影，零依赖任何 extractor 输出。
     # 分拣人缺位（首辅掌印均不在任）＝本月无头版，全量邸报照旧可读（F3.1）。
-    side_legs: Dict[str, Callable[[], object]] = {}
-    side_results: Dict[str, object] = {}
+    # 单腿接缝：腿结果由闭包持有（draft_cell），无外部可变结果容器、无串行备选形态。
+    draft_cell: Dict[str, object] = {}
+    side_leg: Optional[Callable[[], object]] = None
     triage_actor = select_triage_actor(db)
     if triage_actor is None:
         tlog("[rescript] 无在任首辅／掌印，本月无头版（全量邸报照旧）。")
@@ -1560,23 +1561,24 @@ def _settle_after_narrative(
         try:
             draft_agent = create_rescript_draft_agent(llm_config, agno_db)
             draft_payload = build_rescript_draft_payload(
-                state, db, narrative, simulator_payload, triage_actor,
+                state, narrative, simulator_payload, triage_actor,
             )
 
-            def _rescript_draft_leg() -> object:
+            def _rescript_draft_leg() -> None:
                 # 自降级契约：内部响亮降级返回 None，绝不抛（F2.5）。
                 # actor 身份随行落 payload（F3.2）：分拣人事实钉进每条票拟行，任免后可机械断言。
+                # 结果写入闭包持有的 draft_cell，供 persist 与重跑真源同事务读回（F2.5）。
                 drafts = generate_rescript_draft(draft_agent, draft_payload, before_turn)
                 if drafts:
                     for d in drafts:
                         d["actor_name"] = triage_actor["name"]
                         d["actor_office"] = triage_actor["office"]
                         d["actor_faction"] = triage_actor["faction"]
-                return drafts
+                draft_cell["drafts"] = drafts
         except Exception as exc:  # noqa: BLE001 — 票拟步不可用＝响亮降级无头版，不耦合关键路（F2.5）
             tlog(f"[rescript] 票拟生成步构造失败，本月视作无头版：{exc}")
         else:
-            side_legs["rescript_draft"] = _rescript_draft_leg
+            side_leg = _rescript_draft_leg
     try:
         tlog("结算 3/4 抽取（模块 module）")
         extractors = {
@@ -1596,8 +1598,7 @@ def _settle_after_narrative(
             relevant_memories=relevant_memories,
             secret_orders=secret_orders_for_sim,
             parallel=True,
-            side_legs=side_legs,
-            side_results=side_results,
+            side_leg=side_leg,
         )
         # 拆不出 section 的 extractor 产物（顶层非 dict / 未知顶层 key）仍属 extractor 失败：
         # 在 try 内验形，让它走 pack+SettlementAbort 路。ADR0015 下可拆 section/list/entity
@@ -1638,7 +1639,7 @@ def _settle_after_narrative(
         secret_orders=secret_orders_for_sim,
         relevant_memories=relevant_memories,
         source=source,  # #146 A：来源贯穿进 ctx，崩溃恢复重抽从 ctx['source'] 继承、不丢
-        rescript_drafts=side_results.get("rescript_draft"),  # #656：与重跑真源同事务（F2.5）
+        rescript_drafts=draft_cell.get("drafts"),  # #656：与重跑真源同事务（F2.5，闭包持有）
     )
 
     # 后括号确定性结算核：与探针 driver 共用同一段（ADR 0004）。章节记忆 / 结局总评
