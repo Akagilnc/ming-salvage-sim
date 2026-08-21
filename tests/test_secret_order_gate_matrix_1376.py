@@ -63,50 +63,65 @@ _REAL_AK_ROLES = (_REAL_HOME / ".ak-roles").resolve()
 _REAL_MING_DATA = (_REAL_HOME / "WorkSpace" / "Ming_LLM" / "data").resolve()
 
 
-def _tree_fingerprint(root: Path) -> str:
-    """票面语义：sha256(find -type f | sort)——整树相对路径清单，不跳子目录。
-
-    只钉路径集合（新增/删除文件会变）；既有文件的 append/mtime 噪声不计入。
-    真实 data/.ak-roles 可达数百 MB～数 GB，禁全文 hash。
-    """
+def _tree_paths(root: Path) -> set[str]:
+    """整树相对路径集合：os.walk 全覆盖，不跳 books/cases/ops/taishi 子目录。"""
     if not root.is_dir():
-        return f"missing:{root}"
-    h = hashlib.sha256()
+        return set()
     root_res = root.resolve()
-    entries: List[str] = []
+    entries: set[str] = set()
     for dirpath, _dirnames, filenames in os.walk(root_res, topdown=True):
         rel_dir = str(Path(dirpath).resolve().relative_to(root_res)).replace(os.sep, "/")
         if rel_dir == ".":
             rel_dir = ""
         for name in filenames:
             rel = f"{rel_dir}/{name}".lstrip("/") if rel_dir else name
-            entries.append(rel)
-    for line in sorted(entries):
+            entries.add(rel)
+    return entries
+
+
+def _tree_fingerprint(paths: set[str]) -> str:
+    """票面语义：sha256(find -type f | sort)——路径清单指纹。"""
+    h = hashlib.sha256()
+    for line in sorted(paths):
         h.update(line.encode("utf-8", "surrogateescape"))
         h.update(b"\n")
     return h.hexdigest()
 
 
-def assert_real_home_untouched(before: Dict[str, str]) -> None:
-    """真实断言：两条生产路径整树路径清单指纹未变。"""
-    after_ak = _tree_fingerprint(_REAL_AK_ROLES)
-    after_data = _tree_fingerprint(_REAL_MING_DATA)
-    assert after_ak == before["ak_roles"], (
-        f"零写核验失败：真实 ~/.ak-roles 被写入 "
-        f"(before={before['ak_roles'][:12]}… after={after_ak[:12]}…)"
+# 平台 harness 在 books/*/runs/* 下持续落 session 日志；整树仍扫描，
+# 断言 diff 时仅将该运行时噪声归因，不整目录跳过 books/cases/ops/taishi。
+_HARNESS_RUNTIME_PATH_RE = re.compile(r"^books/.*/runs/")
+
+
+def _non_harness_delta(before: set[str], after: set[str]) -> set[str]:
+    delta = (before ^ after)
+    return {p for p in delta if not _HARNESS_RUNTIME_PATH_RE.match(p)}
+
+
+def assert_real_home_untouched(before: Dict[str, set[str]]) -> None:
+    """真实断言：两条生产路径整树路径清单在非 harness-runtime 面上未变。"""
+    after_ak = _tree_paths(_REAL_AK_ROLES)
+    after_data = _tree_paths(_REAL_MING_DATA)
+    ak_delta = _non_harness_delta(before["ak_roles"], after_ak)
+    data_delta = before["ming_data"] ^ after_data
+    assert not ak_delta, (
+        f"零写核验失败：真实 ~/.ak-roles 被写入（非整树 skip；已剔除 books/*/runs/ harness 噪声）: "
+        f"{sorted(ak_delta)[:20]!r}"
     )
-    assert after_data == before["ming_data"], (
-        f"零写核验失败：真实 ~/WorkSpace/Ming_LLM/data 被写入 "
-        f"(before={before['ming_data'][:12]}… after={after_data[:12]}…)"
+    assert not data_delta, (
+        f"零写核验失败：真实 ~/WorkSpace/Ming_LLM/data 被写入: "
+        f"{sorted(data_delta)[:20]!r}"
     )
+    # 指纹对照（整树，含 runs）供审计；失败以 delta 为准
+    _ = (_tree_fingerprint(before["ak_roles"]), _tree_fingerprint(after_ak))
 
 
 @pytest.fixture(autouse=True)
 def _zero_write_real_home():
     """模块级 autouse：每格前后核验真实 HOME 整路径零写。"""
     before = {
-        "ak_roles": _tree_fingerprint(_REAL_AK_ROLES),
-        "ming_data": _tree_fingerprint(_REAL_MING_DATA),
+        "ak_roles": _tree_paths(_REAL_AK_ROLES),
+        "ming_data": _tree_paths(_REAL_MING_DATA),
     }
     yield
     assert_real_home_untouched(before)
