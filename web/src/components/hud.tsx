@@ -434,7 +434,7 @@ export function FullscreenModal({
       aria-label={title}
     >
       <div className="fullscreen-scrim" onClick={onClose} />
-      <div className={`fullscreen-modal ${bgClass || ""}`}>
+      <div className={["fullscreen-modal", bgClass, hideTitle ? "modal-layout-bare" : ""].filter(Boolean).join(" ")}>
         <header className={`modal-header ${hideTitle ? "modal-header-bare" : ""}`}>
           {!hideTitle && (
             <div className="modal-title">

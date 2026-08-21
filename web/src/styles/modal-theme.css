@@ -145,15 +145,16 @@
   height: 28px;
 }
 
-/* #1480：hideTitle（.modal-header-bare 绝对定位）脱离 grid 后，正文须落在唯一 1fr 行
-   （默认 auto minmax(0,1fr) 会把唯一流内子项放进 auto 行 → 长转录/高侧栏溢出）。
-   召对 modal-bg-chat 恒 hideTitle；与 #1398 邸报单行 1fr 同形。 */
-.modal-bg-chat.fullscreen-modal {
+/* #1480 / #1499：单行 1fr 只对 hideTitle（组件挂 .modal-layout-bare）生效。
+   bare 头绝对定位脱离 grid 后，默认 auto minmax(0,1fr) 会把唯一流内子项放进 auto 行 → 溢出；
+   但起居注 / 政务失败恢复等有可见标题栏的 modal-bg-chat 必须保留 auto minmax(0,1fr)，
+   否则标题被塞进唯一显式行、正文落隐式 auto 行遭 overflow:hidden 裁切。 */
+.modal-bg-chat.fullscreen-modal.modal-layout-bare {
   grid-template-rows: minmax(0, 1fr);
   min-height: 0;
   overflow: hidden;
 }
-.modal-bg-chat.fullscreen-modal > .chat-full-grid {
+.modal-bg-chat.fullscreen-modal.modal-layout-bare > .chat-full-grid {
   min-height: 0;
   max-height: 100%;
   overflow: hidden;
