@@ -1050,6 +1050,19 @@ def build_extractor_shared_context(
         if decree_dossiers is not None
         else db.list_decree_dossiers_for_simulation(state.turn)
     )
+    # #1503：immediate 拨饷颁布即 close，模拟可见集不再含该案；extractor 输入须
+    # 仍见 origin_ref=dossier:<id>，使回声带 dossier 身份，由
+    # _payload_owned_dossier_for_origin 单写者判重（勿把独立盘面自发一并吞掉）。
+    if decree_dossiers is None:
+        seen_ids = {int(row["id"]) for row in authorized_dossiers}
+        extra = []
+        for row in db.list_closed_army_pay_dossiers_for_provenance(state.turn):
+            rid = int(row["id"])
+            if rid not in seen_ids:
+                seen_ids.add(rid)
+                extra.append(row)
+        if extra:
+            authorized_dossiers = list(authorized_dossiers) + extra
     # #613：执行格读端字段随案卷进 extractor；优先沿用推演装配已写字段，缺则现场补投影。
     from ming_sim.decree import execution_side_read_fields
 

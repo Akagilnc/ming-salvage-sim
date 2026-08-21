@@ -13351,6 +13351,46 @@ class GameDB:
             decisions.append(item)
         return decisions
 
+    def list_closed_army_pay_dossiers_for_provenance(
+        self, turn: int,
+    ) -> List[Dict[str, object]]:
+        """#1503：本回合已关闭的拨饷/协饷案卷，供 extractor provenance 保留 dossier 身份。
+
+        immediate 拨饷颁布即 close，不再进入 list_decree_dossiers_for_simulation；
+        若不把 origin_ref=dossier:<id> 送回 extractor 输入，回声只能落成「盘面自发」。
+        此读缝只服务 provenance，不重开执行权、不改模拟可见集。
+        """
+        rows = self.conn.execute(
+            """
+            SELECT d.*
+            FROM decree_dossiers d
+            WHERE d.status='closed'
+              AND d.closed_turn=?
+              AND d.action_type='grant_allocation'
+              AND d.promulgation_decision='promulgated'
+            ORDER BY d.id
+            """,
+            (int(turn),),
+        ).fetchall()
+        out: List[Dict[str, object]] = []
+        for row in rows:
+            try:
+                payload = json.loads(str(row["payload_json"] or "{}"))
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+            if not self._is_army_pay_grant_payload(payload):
+                continue
+            # 仅保留本回合已有 dossier 源补饷流水的案卷（已消费身份）。
+            if not any(
+                str(m.get("purpose") or "") == "补饷"
+                for m in self.list_economy_moves_for_dossier(int(row["id"]))
+            ):
+                continue
+            out.append(self._dossier_row(row))
+        return out
+
     def list_decree_dossiers_for_simulation(self, turn: int) -> List[Dict[str, object]]:
         """本月新生/重判案卷及所有未结案执行中案卷。"""
         rows = self.conn.execute(
