@@ -36,26 +36,37 @@ SETTLEMENT_ORIGIN_SENTINEL = "盘面自发"
 def settlement_edge_origin(origin_ref: object, kind: str) -> str:
     """#633 结算口唯一 origin 拼装器：``{来源引用}:relation:{类目}``。
 
-    bind_origin_round 在写口内再附 ``|round:N``（N=当前回合），TD-1 的 origin 回指
-    由既有绑定机制承担，此处不重复拼 round。禁在调用侧另拼第二套 origin。"""
-    base = str(origin_ref or "").strip() or SETTLEMENT_ORIGIN_SENTINEL
+    来源须为非空字符串且已过 ``GameDB.effect_origin_rejection`` 守门（守门由
+    ``_validated_settlement_origin`` 在调用侧先行）；缺失或非字符串形状在此
+    诚实报错，不再静默默认成「盘面自发」。bind_origin_round 在写口内再附
+    ``|round:N``（N=当前回合），TD-1 的 origin 回指由既有绑定机制承担，此处
+    不重复拼 round。禁在调用侧另拼第二套 origin。"""
+    if not isinstance(origin_ref, str):
+        raise ValueError(f"来源引用必须为字符串，得 {type(origin_ref).__name__}")
+    base = origin_ref.strip()
+    if not base:
+        raise ValueError("效果缺 origin_ref；盘面自然演化须显式标为「盘面自发」")
     return f"{base}:relation:{validate_edge_kind(kind)}"
 
 
-def _capture_target_names(raw: object) -> list[str]:
-    """受动者归一：接受单名或名单；去空白、去空、去重，保序。"""
-    if isinstance(raw, str):
-        candidates: list[Any] = [raw]
-    elif isinstance(raw, (list, tuple)):
-        candidates = list(raw)
-    else:
-        return []
-    out: list[str] = []
-    for candidate in candidates:
-        name = str(candidate or "").strip()
-        if name and name not in out:
-            out.append(name)
-    return out
+def _validated_settlement_origin(db: Any, origin_ref: object) -> str:
+    """结算口 provenance 守门：只收精确「盘面自发」或已颁且授权效果的案卷引用。
+
+    复用 GameDB.effect_origin_rejection 既有拒收 API；拒绝缺失、伪前缀、未知/
+    未授权案卷与自带 round/turn 的伪造值（origin_round 一律由当前回合同步绑定，
+    TD-1 不容伪造）。非法形状按失败诚实报错，不猜测修正。"""
+    if not isinstance(origin_ref, str):
+        raise ValueError(f"来源引用必须为字符串，得 {type(origin_ref).__name__}")
+    value = origin_ref.strip()
+    if not value:
+        raise ValueError("效果缺 origin_ref；盘面自然演化须显式标为「盘面自发」")
+    if _ROUND_RE.search(value) or _TURN_RE.search(value):
+        raise ValueError(
+            f"来源引用不得自带回合绑定（origin_round 由当前回合强制）：{value}"
+        )
+    if db.effect_origin_rejection(value) is not None:
+        raise ValueError(f"origin_ref 非法：{value}")
+    return value
 
 
 def validate_edge_kind(event_kind: Any) -> str:
@@ -137,24 +148,53 @@ def _capture_one_interaction(
     kind = validate_edge_kind(item.get("类目") or item.get("kind"))
     if kind not in MINISTER_EDGE_KINDS:
         raise ValueError(f"结算口只收大臣侧类目，得 {kind!r}（君臣类目归 0079 写端）")
-    source = str(item.get("施动者") or item.get("source") or "").strip()
+    raw_source = (
+        item["施动者"] if item.get("施动者") is not None else item.get("source")
+    )
+    if not isinstance(raw_source, str):
+        raise ValueError(
+            "施动者不能为空" if raw_source is None
+            else f"施动者必须为字符串，得 {type(raw_source).__name__}"
+        )
+    source = raw_source.strip()
     if not source:
         raise ValueError("施动者不能为空")
     raw_targets = (
         item["受动者"] if item.get("受动者") is not None else item.get("target")
     )
-    targets = [name for name in _capture_target_names(raw_targets) if name != source]
+    # 受动者形状只收字符串或纯字符串列表；tuple/混型等垃圾按失败逐项拒收。
+    if isinstance(raw_targets, str):
+        candidates: list[str] = [raw_targets]
+    elif isinstance(raw_targets, list) and all(isinstance(t, str) for t in raw_targets):
+        candidates = list(raw_targets)
+    else:
+        raise ValueError("受动者必须为字符串或字符串列表")
+    seen: set[str] = set()
+    targets: list[str] = []
+    for candidate in candidates:
+        name = candidate.strip()
+        if name and name != source and name not in seen:
+            seen.add(name)
+            targets.append(name)
     if not targets:
         raise ValueError("受动者不能为空")
     raw_context = (
         item["语境"] if item.get("语境") is not None else item.get("context")
     )
-    context = str(raw_context or "")
+    if not isinstance(raw_context, str):
+        raise ValueError(
+            "边事件语境不能为空" if raw_context is None
+            else f"语境必须为字符串，得 {type(raw_context).__name__}"
+        )
     # F1：strip 只作非空谓词；存储值原样交写口（字节相等验收靠这条不加工）。
-    if not context.strip():
+    if not raw_context.strip():
         raise ValueError("边事件语境不能为空")
+    context = raw_context
     origin = settlement_edge_origin(
-        item.get("来源引用") if item.get("来源引用") is not None else item.get("origin_ref"),
+        _validated_settlement_origin(
+            db,
+            item.get("来源引用") if item.get("来源引用") is not None else item.get("origin_ref"),
+        ),
         kind,
     )
     out: list[dict[str, Any]] = []

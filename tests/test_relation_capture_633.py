@@ -188,6 +188,116 @@ def test_shape_garbage_rejected_per_existing_extractor_contract(game):
     assert _edge_rows(db) == []
 
 
+def test_non_string_actor_target_context_shapes_rejected(game):
+    """施动者/受动者/语境非字符串形状逐项拒收留痕，零写入（不 str() 搭救）。"""
+    db, state, content = game
+    base = {"受动者": "乙", "类目": "结怨", "语境": "x", "来源引用": "盘面自发"}
+    out = apply_score_extraction(
+        db, state,
+        {
+            "relation_edge_events": [
+                {"施动者": 123, **base},  # 数字型施动者
+                {"施动者": {"名": "甲"}, **base},  # 对象型施动者
+                {"施动者": "甲", "受动者": ("乙",), "类目": "结怨",
+                 "语境": "x", "来源引用": "盘面自发"},  # tuple 受动者容器
+                {"施动者": "甲", "受动者": ["乙", 3], "类目": "结怨",
+                 "语境": "x", "来源引用": "盘面自发"},  # 混型受动者列表
+                {"施动者": "甲", "受动者": "乙", "类目": "结怨",
+                 "语境": 42, "来源引用": "盘面自发"},  # 数字型语境
+                {"施动者": "甲", "受动者": "乙", "类目": "结怨",
+                 "语境": {"句": "x"}, "来源引用": "盘面自发"},  # 对象型语境
+            ],
+        },
+        content=content,
+    )
+    res = out["relation_edge_event_resolutions"]
+    rejected = [r for r in res if r.get("rejected")]
+    assert len(rejected) == 6
+    assert all(r["category"] == "invalid_relation_event" for r in rejected)
+    assert any("施动者必须为字符串" in r["reason"] for r in rejected)
+    assert any("受动者必须为字符串或字符串列表" in r["reason"] for r in rejected)
+    assert any("语境必须为字符串" in r["reason"] for r in rejected)
+    assert _edge_rows(db) == []
+
+
+def test_missing_or_forged_provenance_rejected_with_trace_no_edges(game):
+    """缺 provenance/伪前缀/未知未授权案卷/自带 round 的伪造值：逐项拒收留痕不落边。"""
+    db, state, content = game
+    base = {"施动者": "甲", "受动者": "乙", "类目": "结怨", "语境": "x"}
+    out = apply_score_extraction(
+        db, state,
+        {
+            "relation_edge_events": [
+                dict(base),  # 缺 provenance 条目
+                {**base, "来源引用": None},  # 空来源
+                {**base, "来源引用": "   "},  # 空白来源
+                {**base, "来源引用": "盘面自发|round:999"},  # 伪造当前回合回指
+                {**base, "来源引用": "dossier:999999"},  # 未知案卷
+                {**base, "来源引用": "fake"},  # 伪前缀自由文本
+            ],
+        },
+        content=content,
+    )
+    res = out["relation_edge_event_resolutions"]
+    rejected = [r for r in res if r.get("rejected")]
+    assert len(rejected) == 6
+    assert all(r["category"] == "invalid_relation_event" for r in rejected)
+    assert all("origin_ref" in r["reason"] or "来源引用" in r["reason"] for r in rejected)
+    # 全部拒收：库里零边、无任何 origin 被默认成「盘面自发」落库
+    assert _edge_rows(db) == []
+
+
+def test_settlement_edge_origin_rejects_missing_and_non_string():
+    """拼装器本体不再静默默认哨兵；缺失/非字符串诚实报错。"""
+    import pytest
+
+    from ming_sim.relations import settlement_edge_origin
+
+    with pytest.raises(ValueError, match="来源引用必须为字符串"):
+        settlement_edge_origin(None, "联名")
+    with pytest.raises(ValueError, match="来源引用必须为字符串"):
+        settlement_edge_origin(123, "联名")
+    with pytest.raises(ValueError, match="盘面自然演化须显式标为"):
+        settlement_edge_origin("   ", "联名")
+    # 合法条目照常拼装
+    assert settlement_edge_origin("盘面自发", "联名") == "盘面自发:relation:联名"
+
+
+def test_authorized_dossier_origin_accepted_bound_to_current_turn(game):
+    """合法已颁且授权效果的 dossier 引用照常落边，origin_round 由当前回合绑定。"""
+    db, state, content = game
+    holder = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
+    ).fetchone()["name"]
+    did = db.create_decree_dossier(
+        state,
+        action_type="assignment",
+        decree_text="结算口来源验",
+        target_kind="issue",
+        target_id="relation-origin-633",
+        executor_kind="character",
+        executor_id=holder,
+        payload={"token": "relation-origin-633"},
+    )
+    db.record_dossier_decision(did, "promulgated")
+    db.conn.commit()
+    out = apply_score_extraction(
+        db, state,
+        {
+            "relation_edge_events": [{
+                "施动者": "毕自严", "受动者": "王绍徽", "类目": "把柄",
+                "语境": "案卷授权的互动。", "来源引用": f"dossier:{did}",
+            }],
+        },
+        content=content,
+    )
+    res = out["relation_edge_event_resolutions"]
+    assert not any(r.get("rejected") for r in res), res
+    row = _edge_rows(db, source="毕自严", target="王绍徽")[0]
+    assert row["origin"] == f"dossier:{did}:relation:把柄|round:{state.turn}"
+    assert row["origin_round"] == state.turn
+
+
 def test_module_misroute_of_relation_field_is_stripped_not_applied(monkeypatch):
     """大臣互动错放进其它模块：白名单剔除 + misroute 留痕，不落库。"""
     from ming_sim.simulation import _sanitize_module_output
