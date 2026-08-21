@@ -46,9 +46,18 @@ def test_liaodong_stage_text_does_not_name_bajiu_offstage_as_active_petitioners(
     for name in ("袁崇焕", "孙承宗"):
         assert name not in stage, f"辽东索饷 stage_text 仍点名罢居者 {name!r}: {stage!r}"
 
+    # #1406：正则 [\u4e00-\u9fff]{2,4} 会把「赵率教交章」切成「赵率教交」，
+    # 使赵率教缺席 named 仍绿。显式钉两位请饷人在 stage 且 active。
+    petitioners = {"祖大寿", "赵率教"}
+    assert petitioners <= set(characters), "辽东索饷请饷人须存在于 seed 名册"
+    assert all(name in stage for name in petitioners), (
+        f"stage_text 须点名 {sorted(petitioners)}: {stage!r}"
+    )
+    assert all(characters[name].status == "active" for name in petitioners), (
+        "辽东索饷请饷人须为 active seed 人物"
+    )
     # 若点到名册人物，每人须非罢居串；允许匿名将领/边情质感
-    candidates = set(re.findall(r"[\u4e00-\u9fff]{2,4}", stage))
-    named = candidates & set(characters)
+    named = {name for name in characters if name in stage}
     assert named or ("将" in stage or "边" in stage), (
         "stage_text 既未点名册人物，也未保留将领/边情叙事质感"
     )
