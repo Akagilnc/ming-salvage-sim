@@ -545,9 +545,15 @@ def _rescript_decisions(
 def _chosen_rescript_actions(
     decisions: List[Dict[str, object]],
 ) -> List[Dict[str, object]]:
+    from ming_sim.settlement_payload import decision_has_rescript_capability
+
     actions: List[Dict[str, object]] = []
     for decision in decisions:
+        # #1492 A：批红轨 = event_id dossier: 前缀 AND options 带齐能力字段。
+        # 裸 origin_ref 同形（due-commitment 等）跳过，不抛「批红决策载荷非法」。
         if not str(decision.get("event_id") or "").startswith("dossier:"):
+            continue
+        if not decision_has_rescript_capability(decision):
             continue
         choice = decision.get("choice")
         if not isinstance(choice, dict):

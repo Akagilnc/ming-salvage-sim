@@ -53,7 +53,10 @@ from ming_sim.llm_model import create_agno_db, extract_agent_text
 from ming_sim.models import Character, CourtContext, GameState, LLMConfig, is_vassal_prince, is_weishi
 from ming_sim.paths import user_data_path
 from ming_sim.registry import MinisterRegistry, bind_content as _bind_registry
-from ming_sim.settlement_payload import bind_decisions_to_candidate_events
+from ming_sim.settlement_payload import (
+    bind_decisions_to_candidate_events,
+    decision_has_rescript_capability,
+)
 from ming_sim.skills import bind_content as _bind_skills
 
 
@@ -2864,32 +2867,64 @@ class GameSession:
             # payloads leave the retry state untouched（非法载荷绝不落 decided，#1490）。
             # #1418 r2：已 decided 行（崩溃安全先写后跑）不得被空/异载荷覆写——
             # phase2 续跑重发 resolve 时保留账上 choice，校验与回写均跳过。
+            # #1492 A：allowed 排除 (None,None) 残对；D：命中后从服务端 option 重建落库。
+            import json as _json
+            rebuilt_by_idx: Dict[int, Dict[str, object]] = {}
             for d in stored:
                 if str(d.get("status") or "") == "decided":
                     continue
-                options = d.get("options") or []
-                # 批红轨真源：event_id 的 dossier: 前缀（bind 已保此前缀，#1490）。
-                if not str(d.get("event_id") or "").startswith("dossier:"):
+                # 批红轨：options 带齐能力字段（#1492 A；bind 亦同此识别）。
+                if not decision_has_rescript_capability(d):
                     continue
+                options = [
+                    option for option in (d.get("options") or [])
+                    if isinstance(option, dict)
+                ]
                 idx = int(d["idx"])
                 choice = choices[idx] if idx < len(choices) else None
                 allowed = {
                     (option.get("dossier_id"), option.get("dossier_decision"))
-                    for option in options if isinstance(option, dict)
+                    for option in options
+                    if option.get("dossier_id") is not None
+                    and option.get("dossier_decision") is not None
                 }
                 selected = (
                     choice.get("dossier_id"), choice.get("dossier_decision")
                 ) if isinstance(choice, dict) else (None, None)
                 if selected not in allowed:
                     raise ValueError("批红选择必须是本案提供的强颁、收回或留中选项")
-            import json as _json
+                matched = next(
+                    (
+                        option for option in options
+                        if (
+                            option.get("dossier_id"),
+                            option.get("dossier_decision"),
+                        ) == selected
+                    ),
+                    None,
+                )
+                if matched is None:
+                    raise ValueError("批红选择必须是本案提供的强颁、收回或留中选项")
+                rebuilt: Dict[str, object] = {
+                    "label": matched.get("label"),
+                    "hint": matched.get("hint") or "",
+                    "dossier_id": matched.get("dossier_id"),
+                    "dossier_decision": matched.get("dossier_decision"),
+                }
+                # 客户端只允许附加自由 note（#1492 D）
+                if isinstance(choice, dict) and choice.get("note") is not None:
+                    rebuilt["note"] = choice.get("note")
+                rebuilt_by_idx[idx] = rebuilt
             for d in stored:
                 if str(d.get("status") or "") == "decided":
                     continue
                 idx = int(d["idx"])
-                choice = choices[idx] if idx < len(choices) else None
-                if not isinstance(choice, dict):
-                    choice = {}
+                if idx in rebuilt_by_idx:
+                    choice = rebuilt_by_idx[idx]
+                else:
+                    choice = choices[idx] if idx < len(choices) else None
+                    if not isinstance(choice, dict):
+                        choice = {}
                 self.db.conn.execute(
                     "UPDATE pending_decisions SET choice_json=?, status='decided' WHERE turn=? AND idx=?",
                     (_json.dumps(choice, ensure_ascii=False), self.state.turn, idx),
