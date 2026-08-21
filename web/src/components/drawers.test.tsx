@@ -275,6 +275,114 @@ describe("朝堂空 layout 合法态（#1290/#1332）", () => {
 
     mountedRoots.push({ root, host });
   });
+
+  it("#1463 慢载期间早拖：GET 回包合并脏键，不丢未拖大臣的服务端位，且 POST 不灌默认布局", async () => {
+    // 复现：GET 未回时拖一张卡 → savedPosRef 被默认布局灌满 → 旧逻辑直接 return 丢弃服务端；
+    // mouseup saveCourtPos 再把临时默认写穿服务器。修：脏键本地优先，其余合并服务端。
+    let resolveLayout!: (v: { ok: boolean; json: () => Promise<{ layout: string }> }) => void;
+    const pending = new Promise<{ ok: boolean; json: () => Promise<{ layout: string }> }>((r) => {
+      resolveLayout = r;
+    });
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (String(url).includes("/api/court_layout")) {
+        if (init && String(init.method || "GET").toUpperCase() === "POST") {
+          return { ok: true, json: async () => ({}) } as Response;
+        }
+        return pending as unknown as Response;
+      }
+      return { ok: true, json: async () => ({}) } as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    await act(async () => {
+      root.render(
+        <MinisterCardList
+          list={[
+            // 两名非固定槽：服务端位可观测，不与 FIXED_SLOTS 纠缠
+            minister({ name: "施凤来", office: "东阁大学士" }),
+            minister({ name: "张瑞图", office: "东阁大学士" }),
+          ]}
+          portraitPrefix="minister_"
+          selectedMinister=""
+          emptyNote="empty"
+          onOpenChat={() => {}}
+          courtMode={true}
+        />
+      );
+    });
+    await act(async () => { await Promise.resolve(); });
+
+    const court = host.querySelector(".minister-list-court") as HTMLElement | null;
+    expect(court).toBeTruthy();
+    court!.getBoundingClientRect = () =>
+      ({
+        x: 0, y: 0, width: 1000, height: 1000,
+        top: 0, right: 1000, bottom: 1000, left: 0, toJSON: () => ({}),
+      }) as DOMRect;
+
+    const cards = Array.from(host.querySelectorAll<HTMLElement>("button.minister-card"));
+    const shiCard = cards.find((el) => el.querySelector(".minister-name")?.textContent === "施凤来");
+    expect(shiCard).toBeTruthy();
+    const zhangBeforeDrag = cardPos(host, "张瑞图");
+
+    // 只拖施凤来；张瑞图保持默认位（尚未合并服务端）
+    await act(async () => {
+      shiCard!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, clientX: 500, clientY: 500 }));
+    });
+    await act(async () => {
+      window.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, clientX: 100, clientY: 100 }));
+    });
+    await act(async () => {
+      window.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, clientX: 100, clientY: 100 }));
+    });
+    const shiDragged = cardPos(host, "施凤来");
+    expect(shiDragged).not.toBeNull();
+
+    // 服务端：张瑞图在左远槽（默认第二人是右近 86.2%/53.2%，必须错开才钉得住合并）
+    // 施凤来服务端旧位应被脏键盖住
+    await act(async () => {
+      resolveLayout({
+        ok: true,
+        json: async () => ({
+          layout: JSON.stringify({
+            施凤来: { px: 0.9, py: 0.9 },
+            张瑞图: { px: 0.377, py: 0.066 },
+          }),
+        }),
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const shiAfter = cardPos(host, "施凤来");
+    const zhangAfter = cardPos(host, "张瑞图");
+    // 脏键：本地拖位保留
+    expect(shiAfter).toEqual(shiDragged);
+    // 未拖大臣：吃服务端左远槽，不得停在早拖前的临时默认（右近）
+    expect(parseFloat(zhangAfter!.left)).toBeCloseTo(37.7, 5);
+    expect(parseFloat(zhangAfter!.top)).toBeCloseTo(6.6, 5);
+    expect(zhangBeforeDrag).toEqual({ left: "86.2%", top: "53.2%" });
+    expect(zhangAfter).not.toEqual(zhangBeforeDrag);
+
+    // POST 载荷须含合并结果：张瑞图服务端位 + 施凤来本地拖位；不得只剩默认布局
+    const posts = fetchMock.mock.calls.filter(
+      (c) => String(c[0]).includes("/api/court_layout") && c[1] && String((c[1] as RequestInit).method || "").toUpperCase() === "POST",
+    );
+    expect(posts.length).toBeGreaterThan(0);
+    const lastPost = posts[posts.length - 1];
+    const body = JSON.parse(String((lastPost[1] as RequestInit).body));
+    const saved = JSON.parse(body.layout) as Record<string, { px: number; py: number }>;
+    expect(saved["张瑞图"].px).toBeCloseTo(0.377, 5);
+    expect(saved["张瑞图"].py).toBeCloseTo(0.066, 5);
+    expect(saved["施凤来"]).toBeTruthy();
+    expect(saved["施凤来"]).not.toEqual({ px: 0.9, py: 0.9 });
+
+    mountedRoots.push({ root, host });
+  });
 });
 
 describe("朝堂同衔分座（#1196 呈现层去冲突）", () => {

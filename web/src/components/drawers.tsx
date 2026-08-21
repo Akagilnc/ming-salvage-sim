@@ -32,6 +32,11 @@ export function MinisterCardList({
   const containerRef = React.useRef<HTMLDivElement>(null);
   const [positions, setPositions] = React.useState<Record<string, { px: number; py: number }>>({});
   const savedPosRef = React.useRef<Record<string, { px: number; py: number }> | null>(null);
+  /** #1463：GET 完成前的服务端位；早拖只脏化本卡，回包合并而非整表丢弃。 */
+  const serverPosRef = React.useRef<Record<string, { px: number; py: number }> | null>(null);
+  const layoutReadyRef = React.useRef(false);
+  const dirtyNamesRef = React.useRef<Set<string>>(new Set());
+  const pendingSaveRef = React.useRef(false);
   const dragging = React.useRef<{ name: string; startMX: number; startMY: number; startPX: number; startPY: number } | null>(null);
   const didDrag = React.useRef(false);
 
@@ -113,18 +118,35 @@ export function MinisterCardList({
       setPositions(next);
     };
 
-    if (savedPosRef.current !== null) {
+    if (layoutReadyRef.current && savedPosRef.current !== null) {
+      arrange(savedPosRef.current);
+    } else if (savedPosRef.current !== null && !layoutReadyRef.current) {
+      // 早拖中：先维持本地视位，等 GET 合并
       arrange(savedPosRef.current);
     } else {
       // #1290/#1332：GET /api/court_layout 空 {} 是合法态（玩家尚未拖拽覆盖，无 seed）。
       // 先按 office→courtSlots 默认朝班落座，卡片不堵在 fetch；有覆盖再重排。
-      // fetch 返回前若玩家已拖（savedPosRef 已写），不以服务端回滚本地。
+      // #1463：fetch 返回前若已拖，合并脏键与服务端，不整表丢弃持久化位。
       arrange({});
       loadCourtPos().then((saved) => {
         if (cancelled) return;
-        if (savedPosRef.current !== null) return;
-        savedPosRef.current = saved;
-        arrange(saved);
+        serverPosRef.current = saved;
+        layoutReadyRef.current = true;
+        const local = savedPosRef.current;
+        const merged: Record<string, { px: number; py: number }> = { ...saved };
+        if (local && dirtyNamesRef.current.size > 0) {
+          for (const name of dirtyNamesRef.current) {
+            const p = local[name];
+            if (p) merged[name] = p;
+          }
+        }
+        savedPosRef.current = merged;
+        serverPosRef.current = merged;
+        arrange(merged);
+        if (pendingSaveRef.current) {
+          pendingSaveRef.current = false;
+          saveCourtPos(merged);
+        }
       });
     }
     return () => { cancelled = true; };
@@ -151,7 +173,9 @@ export function MinisterCardList({
       setPositions((prev) => {
         // 拖动中只更新视图与暂存，不写库——一次拖动数十个 mousemove，
         // fire-and-forget POST 乱序到达会让旧坐标覆盖新坐标；持久化只在松手时做一次。
-        const next = { ...prev, [dragging.current!.name]: { px: npx, py: npy } };
+        const name = dragging.current!.name;
+        dirtyNamesRef.current.add(name);
+        const next = { ...prev, [name]: { px: npx, py: npy } };
         savedPosRef.current = next;
         return next;
       });
@@ -160,6 +184,7 @@ export function MinisterCardList({
       if (dragging.current && didDrag.current) {
         // 松手时吸附到最近槽位
         const dragName = dragging.current.name;
+        dirtyNamesRef.current.add(dragName);
         setPositions((prev) => {
           const cur = prev[dragName];
           if (!cur) return prev;
@@ -185,8 +210,21 @@ export function MinisterCardList({
           // 找吸附目标
           const snapped = fixed ?? snapToSlot(cur.px, cur.py, occupied, "");
           const next = { ...prev, [dragName]: snapped };
+          // 视位：全员当前坐标（含吸附）
           savedPosRef.current = next;
-          saveCourtPos(next);
+          // #1463：持久化 = 服务端 ∪ 脏键；layout 未就绪则挂 pending，避免默认布局写穿。
+          if (!layoutReadyRef.current) {
+            pendingSaveRef.current = true;
+          } else {
+            const toSave: Record<string, { px: number; py: number }> = {
+              ...(serverPosRef.current || {}),
+            };
+            for (const n of dirtyNamesRef.current) {
+              if (next[n]) toSave[n] = next[n];
+            }
+            serverPosRef.current = toSave;
+            saveCourtPos(toSave);
+          }
           return next;
         });
       }
