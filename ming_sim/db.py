@@ -1971,7 +1971,9 @@ class GameDB:
                 PRIMARY KEY (source, target)
             );
 
-            -- #636 S5（庭裁 r1 F1）：酿制失败月的持久 pending-backlog（保旧摘要、不阻塞结算）。
+            -- #636 S5（庭裁 r1 F1＋r2/r3 F1）：relation_brew_pending 双角色——
+            -- ① settled 年月入选关系的 durable claim（认领先行，酿造前落盘提交，
+            -- 与本月边事件同结算事务生死）；② 酿制失败月的持久 pending-backlog。
             -- 成功路径＝摘要写入与 pending 清除同一 DB 事务原子落定（庭裁 r2 F1，ADR 0008 一脉）。
             CREATE TABLE IF NOT EXISTS relation_brew_pending (
                 source TEXT NOT NULL,
@@ -20106,6 +20108,33 @@ class GameDB:
                 except Exception:
                     pass
             raise
+
+    def claim_relation_brew_targets(self, *, year: int, period: int) -> int:
+        """settled 年月入选关系先作 durable claim（庭裁 r2/r3 F1）。
+
+        选中＝该年月新增边事件（id 在摘要水位之上）；已在册的 pending 原样保留
+        （不覆盖原失败月份/原因）。事务归属与 mark_relation_brew_pending 一致：
+        settle 事务内（atomic_depth>0）不提前 commit，认领与本月边事件同生共死——
+        任意缝崩溃→两者一并回滚→重启重放再认领；独立调用则自成一体提交。
+        返回本次新认领的关系数。"""
+        owns = self.owns_transaction()
+        cur = self.conn.execute(
+            """
+            INSERT INTO relation_brew_pending (source, target, year, period, reason)
+            SELECT e.source, e.target, ?, ?, '月末新事件认领'
+            FROM relation_edge_events AS e
+            LEFT JOIN relation_summaries AS s
+                ON s.source = e.source AND s.target = e.target
+            WHERE e.year = ? AND e.period = ?
+              AND e.id > COALESCE(s.last_event_id, 0)
+            GROUP BY e.source, e.target
+            ON CONFLICT(source, target) DO NOTHING
+            """,
+            (int(year), int(period), int(year), int(period)),
+        )
+        if owns:
+            self.conn.commit()
+        return max(int(cur.rowcount or 0), 0)
 
     def get_relation_brew_pending(self) -> List[Dict[str, Any]]:
         rows = self.conn.execute(
