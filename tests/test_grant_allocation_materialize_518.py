@@ -434,14 +434,21 @@ def test_grant_restore_from_db_only_is_lossless(game):
 
 
 def test_xiexang_oneshot_is_same_path_treasury_after_verdict(game):
-    """同类型自查：协饷走同一案卷+判决双拍，口谕额扣国库。"""
+    """同类型自查：协饷走同一案卷+判决双拍，口谕额扣国库（#1503 销欠）。"""
     db, state, content = game
+    # #1503：协饷 target 须为真实 army_id；欠饷盖过口谕额以免 clamp 干扰面额断言。
+    db.conn.execute(
+        "UPDATE armies SET arrears=80, province_pay_arrears=0, central_pay_arrears=80 "
+        "WHERE id='guanning'"
+    )
+    db.conn.commit()
+    state.metrics["国库"] = max(int(state.metrics["国库"]), 50)
     treasury_before = int(state.metrics["国库"])
     ctx = _stage_grant(
         db, state.turn, action="协饷", amount=18, account="国库",
-        target_id="liaodong",
-        message="着国库拨十八万两协饷辽东。",
-        reply="臣请户部发帑协济辽东。",
+        target_id="guanning",
+        message="着国库拨十八万两协饷关宁。",
+        reply="臣请户部发帑协济关宁。",
     )
     dossier = _close_night_dossier(db, state, content, ctx.out["pending_action_id"])
     assert int(state.metrics["国库"]) == treasury_before
@@ -453,6 +460,7 @@ def test_xiexang_oneshot_is_same_path_treasury_after_verdict(game):
     moves = db.list_economy_moves_for_dossier(dossier["id"])
     assert moves and int(moves[0]["delta"]) == -18
     assert moves[0]["account"] == "国库"
+    assert moves[0]["purpose"] == "补饷"
     assert int(state.metrics["国库"]) == treasury_before - 18
 
 
