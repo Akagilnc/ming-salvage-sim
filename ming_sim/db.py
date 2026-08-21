@@ -6310,10 +6310,16 @@ class GameDB:
         if str(row["controlled_by"]) != "ming":
             held = f"，控制权：已为{self.power_display_name(row['controlled_by'])}所据（非大明辖治）"
         # ADR 0088/#648：人口展示按档口径——新档（人）玩家面投影「约N万口」（P4），
+        # 不足一万口不定性为 0（与 simulation._population_wan_kou_label 同口径）；
         # 机面裸人数；无标旧档沿万人 legacy 原样，不加换算层。
         persons_unit = self.population_unit == POPULATION_UNIT_PERSONS
+
+        def _wan_kou_label(persons: int) -> str:
+            wan = int(persons) // 10000
+            return "不足一万口" if wan <= 0 else f"约{wan}万口"
+
         pop_qual = (
-            f"人口约{int(row['population']) // 10000}万口" if persons_unit
+            f"人口{_wan_kou_label(int(row['population']))}" if persons_unit
             else f"人口{row['population']}万人"
         )
         pop_raw = f"人口{row['population']}人" if persons_unit else f"人口{row['population']}万人"

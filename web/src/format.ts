@@ -14,15 +14,6 @@ export const scoreTone = (value: number, inverse = false) => {
 
 export const formatMoney = (value: number) => `${value}万两`;
 
-/** #648（ADR 0088/AC1）：地区人口玩家面投影「约 N 万口」定性，与引擎侧
- * simulation._population_wan_kou_label 同口径；入参为服务端 population_wan
- * （新档=人÷10⁴，旧档原值）。不足一万口不定性为 0。 */
-export const populationWanKou = (wan: number) => {
-  const n = Number.isFinite(wan) ? Math.floor(wan) : 0;
-  if (n <= 0) return "不足一万口";
-  return `约${n}万口`;
-};
-
 export const formatSignedMoney = (value: number) => `${value > 0 ? "+" : ""}${formatMoney(value)}`;
 
 export const approximateWanliang = (value: number) => {
