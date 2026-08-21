@@ -14,7 +14,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sqlite3
+import os
+import signal
+import subprocess
+import sys
 import threading
 
 import pytest
@@ -187,10 +190,113 @@ def test_failed_month_degrades_to_pending_and_rebrews_next_month(game):
     assert summary["dimension"] == "大臣"
 
 
-# ------------------------------------ 庭裁 r3 F1① 故障注入 A：事务未提交即崩
+# ---------------- 庭裁 r3 F1①② 故障注入 A/B：进程边界硬杀证明（真崩溃，非可捕获异常）
+
+# 崩溃子进程：在注入点对自身 os.kill(SIGKILL)——进程级猝死，宽 catch 路径、
+# finally、atexit 一概无从执行，未提交事务由 SQLite 热日志在下次开库时回滚。
+# 只操作测试自建的临时库文件；被硬杀的仅是测试子进程自身，不触碰任何在役进程。
+# 生产代码零改动、零 crash hook——注入全部在子进程内对测试自己的连接打补丁。
+_CRASH_CHILD_SCRIPT = r'''
+import json
+import os
+import signal
+import sys
+
+from ming_sim.db import GameDB
+from ming_sim.relation_brew import (
+    FOUNDINGS_KEY,
+    RECENT_KEY,
+    run_month_end_relation_brew,
+)
+from ming_sim.relations import EMPEROR_NODE
+
+db_path, mode = sys.argv[1], sys.argv[2]
+db = GameDB(db_path)
+
+row = db.conn.execute(
+    "SELECT turn, year, period FROM game_state WHERE id = 1"
+).fetchone()
+
+
+class _State:
+    turn = int(row["turn"])
+    year = int(row["year"])
+    period = int(row["period"])
+
+
+state = _State()
+
+
+def _recent_brew(recent):
+    return lambda payload: json.dumps(
+        {FOUNDINGS_KEY: [], RECENT_KEY: recent}, ensure_ascii=False
+    )
+
+
+if mode == "A":
+    # 故障 A「摘要已写、事务未提交即崩」：次月新边事件先落库（正常提交），随后
+    # 第 1 次 commit＝认领（须先持久），第 2 次 commit＝apply 落定提交——不提交、
+    # 直接 SIGKILL。崩溃点之后任何写（含宽 catch 补记）都不可能发生。
+    state.turn += 1
+    state.period += 1
+    db.record_relation_edge_event(
+        source="洪承畴", target=EMPEROR_NODE, event_kind="辜负",
+        context="洪承畴所请饷银被驳。", origin="audience:turn-2",
+        turn=state.turn, year=state.year, period=state.period,
+    )
+    original_commit = db.conn.commit
+    commits = {"n": 0}
+
+    def crashing_commit():
+        commits["n"] += 1
+        if commits["n"] >= 2:
+            os.kill(os.getpid(), signal.SIGKILL)
+        original_commit()
+
+    db.conn.commit = crashing_commit
+    run_month_end_relation_brew(
+        db, state, _recent_brew("洪承畴请饷被驳，心怨。"),
+        settled_turn=state.turn, settled_year=state.year, settled_period=state.period,
+    )
+    os._exit(3)  # 不可达：第 2 次 commit 处已硬杀；到达即注入失败。
+elif mode == "B":
+    # 故障 B「新边事件已落、pending 标记尚未持久即崩」（fresh claim→durable
+    # pending 缝）：边事件已在父进程持久，第 1 次 commit＝认领——不提交、直接
+    # SIGKILL，pending 从未落盘。
+    def crashing_commit():
+        os.kill(os.getpid(), signal.SIGKILL)
+
+    db.conn.commit = crashing_commit
+    run_month_end_relation_brew(
+        db, state, _recent_brew("孙传庭困守乏饷，怨望渐深。"),
+        settled_turn=state.turn, settled_year=state.year, settled_period=state.period,
+    )
+    os._exit(3)  # 不可达：认领 commit 处已硬杀。
+else:
+    os._exit(2)
+'''
+
+
+def _run_crash_child(db_path: str, mode: str) -> int:
+    """拉起最小崩溃子进程，返回其退出码（SIGKILL 死亡＝-signal.SIGKILL）。"""
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    env = dict(os.environ)
+    env["PYTHONPATH"] = repo_root + os.pathsep + env.get("PYTHONPATH", "")
+    proc = subprocess.run(
+        [sys.executable, "-c", _CRASH_CHILD_SCRIPT, str(db_path), mode],
+        env=env, capture_output=True, text=True, timeout=120,
+    )
+    return proc.returncode, proc.stderr
+
+
+def _assert_sigkilled(returncode: int, stderr: str, *, mode: str) -> None:
+    assert returncode == -signal.SIGKILL, (
+        f"故障{mode}子进程未在注入点被硬杀：rc={returncode}\n{stderr}"
+    )
+
 
 def test_fault_a_uncommitted_summary_crash_keeps_pending_and_old_summary(game):
-    db, state, content = game
+    db, state, _ = game
     _add_edge(db, state, source="洪承畴", target=EMPEROR_NODE, kind="兑现所托",
               context="洪承畴剿抚办结。", origin="audience:turn-1")
     calls: list = []
@@ -199,44 +305,27 @@ def test_fault_a_uncommitted_summary_crash_keeps_pending_and_old_summary(game):
     run_month_end_relation_brew(db, state, brew_fn)
     old_summary = db.get_relation_summary("洪承畴", EMPEROR_NODE)
 
-    # 次月：先推进、再落新边事件（事件落在次月），随后注入「摘要已写、事务未提交
-    # 即崩」：第 1 次 commit＝认领（须成功、先于崩溃点持久），第 2 次起全部失败——
-    # 真实崩溃点之后任何写（含 catch 后补记）都无法落盘，重启后 pending 在册即
-    # 证明它来自崩溃前的认领，而非 catch 补记。
-    state.turn += 1
-    state.period += 1
-    _add_edge(db, state, source="洪承畴", target=EMPEROR_NODE, kind="辜负",
-              context="洪承畴所请饷银被驳。", origin="audience:turn-2")
-    original_commit = db.conn.commit
-    commits = {"n": 0}
-
-    def crashing_commit():
-        commits["n"] += 1
-        if commits["n"] >= 2:
-            raise sqlite3.OperationalError("injected: crash before commit")
-        original_commit()
-
-    db.conn.commit = crashing_commit
-    try:
-        brew_fn.outputs = [_script(recent="洪承畴请饷被驳，心怨。")]
-        run_month_end_relation_brew(db, state, brew_fn)
-    finally:
-        db.conn.commit = original_commit
-    assert commits["n"] >= 2  # 崩溃点确实被注入在认领提交之后的 apply 提交处
-
-    # 重启（关闭重开 DB）：pending 仍在——且只能是崩前已持久的认领；
-    # 摘要读回＝崩前旧值（不得已见新摘要）。
+    # 次月新边事件＋「摘要已写、事务未提交即崩」注入全部发生在子进程：子进程在
+    # apply 落定提交处被 SIGKILL 真硬杀——生产宽 catch 路径随进程一起死亡，
+    # 重启后 pending 在册只能是崩前已持久的 durable claim，绝非 catch 补记。
     path = db.path
     db.close()
-    db = GameDB(path, content)
+    _assert_sigkilled(*_run_crash_child(path, "A"), mode="A")
+
+    # 父进程重开 DB 文件（真实崩溃恢复：热日志回滚未提交事务）：
+    # pending 在册、事件不丢、摘要读回＝崩前旧值（不得已见新摘要、无半写）。
+    db = GameDB(path)
     assert [(row["source"], row["target"]) for row in db.get_relation_brew_pending()] == [
         ("洪承畴", EMPEROR_NODE)
     ]
+    assert db.get_relation_edge_events(source="洪承畴", target=EMPEROR_NODE)
     assert db.get_relation_summary("洪承畴", EMPEROR_NODE)["recent_segment"] == (
         old_summary["recent_segment"]
     )
 
     # 补酿恰一次：再跑结算，成功落定、pending 清除。
+    state.turn += 1
+    state.period += 1
     calls.clear()
     brew_fn.outputs = [_script(recent="洪承畴请饷被驳，心怨。")]
     report = run_month_end_relation_brew(db, state, brew_fn)
@@ -249,34 +338,18 @@ def test_fault_a_uncommitted_summary_crash_keeps_pending_and_old_summary(game):
 # ------------------------------------ 庭裁 r3 F1② 故障注入 B：pending 未持久即崩
 
 def test_fault_b_pending_mark_lost_still_selected_and_brewed_once(game):
-    db, state, content = game
+    db, state, _ = game
     _add_edge(db, state, source="孙传庭", target=EMPEROR_NODE, kind="辜负",
               context="孙传庭困守乏饷。", origin="audience:turn-1")
 
-    # 注入 fresh claim→durable pending 缝：第 1 次 commit（认领）即崩，且窗口内
-    # 后续 commit 全部失败——pending 确实未曾持久。
-    original_commit = db.conn.commit
-    injected = {"active": True}
-
-    def crashing_commit():
-        if injected["active"]:
-            raise sqlite3.OperationalError("injected: crash before pending durable")
-        original_commit()
-
-    def failing_brew(payload_json: str) -> str:
-        raise RuntimeError("酿制裁判失手")
-
-    db.conn.commit = crashing_commit
-    try:
-        run_month_end_relation_brew(db, state, failing_brew)
-    finally:
-        injected["active"] = False
-        db.conn.commit = original_commit
-
-    # 重启（关闭重开 DB）：pending 未持久、边事件已在册。
+    # fresh claim→durable pending 缝在子进程内注入：边事件已持久（父进程已提交），
+    # 子进程在第 1 次 commit（认领）处被 SIGKILL 真硬杀——pending 确实未曾持久。
     path = db.path
     db.close()
-    db = GameDB(path, content)
+    _assert_sigkilled(*_run_crash_child(path, "B"), mode="B")
+
+    # 重启（父进程重开 DB 文件）：pending 未持久、边事件已在册。
+    db = GameDB(path)
     assert db.get_relation_brew_pending() == []
     assert db.get_relation_edge_events(source="孙传庭", target=EMPEROR_NODE)
 
