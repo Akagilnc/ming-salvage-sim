@@ -36,7 +36,7 @@ import ming_sim.mindreading as mindreading_mod
 import ming_sim.session as session_mod
 import web_app
 from ming_sim import audience_night as an
-from ming_sim.session_write_queue import get_session_write_queue
+from ming_sim.session_write_queue import _is_barrier_ticket, get_session_write_queue
 
 
 # ── outermost LLM seams only ─────────────────────────────────────────────
@@ -251,16 +251,42 @@ def _install_trail_hold(game, release: threading.Event):
     return _restore
 
 
-def _release_trails_when_barrier_open(game, release: threading.Event) -> None:
-    """侧线程：观察到过月屏障票已开（issue 已进队等尾随）再放行 stub 尾随写。"""
+def _arm_barrier_open_event(game):
+    """包装 session queue 的 barrier claim/open 接缝：票入 _open 后 wait_prior 时置 Event。
+
+    与 test_web_audience_night_498 同形——只观察既有 wait_prior 接缝，不改生产、不加钩子。
+    返回 (barrier_open_event, restore_fn)。
+    """
+    q = get_session_write_queue(game)
+    barrier_open = threading.Event()
+    real_wait_prior = q.wait_prior
+
+    def _observe_wait_prior(ticket):
+        # barrier() 先把票写入 _open 再 wait_prior——此处即 claim/open 接缝。
+        if _is_barrier_ticket(ticket):
+            barrier_open.set()
+        return real_wait_prior(ticket)
+
+    q.wait_prior = _observe_wait_prior  # type: ignore[method-assign]
+
+    def _restore() -> None:
+        q.wait_prior = real_wait_prior  # type: ignore[method-assign]
+
+    return barrier_open, _restore
+
+
+def _release_trails_when_barrier_open(
+    barrier_open: threading.Event, release: threading.Event,
+) -> None:
+    """侧线程：显式等待并断言 barrier 真打开后，再放行 stub 尾随写。
+
+    禁 deadline/sleep 轮询；禁『未见 barrier 也放行』。
+    """
 
     def _run() -> None:
-        q = get_session_write_queue(game)
-        deadline = time.perf_counter() + 5.0
-        while time.perf_counter() < deadline:
-            if q.has_open_barrier():
-                break
-            time.sleep(0.005)
+        assert barrier_open.wait(timeout=5.0), (
+            "barrier ticket never claimed/opened; refusing unconditional trail release"
+        )
         release.set()
 
     threading.Thread(target=_run, daemon=True, name="trail-release-on-barrier").start()
@@ -409,10 +435,13 @@ def _play_one_month(
     assert game is not None
 
     trail_release: threading.Event | None = None
+    barrier_open: threading.Event | None = None
     restore_trails = None
+    restore_barrier_signal = None
     if race_trailing_writes:
         trail_release = threading.Event()
         restore_trails = _install_trail_hold(game, trail_release)
+        barrier_open, restore_barrier_signal = _arm_barrier_open_event(game)
 
     try:
         chat = client.post(
@@ -433,7 +462,8 @@ def _play_one_month(
                 f"{month_label}: expected in-flight trailing writes after chat, "
                 f"got count={pending_now}"
             )
-            _release_trails_when_barrier_open(game, trail_release)
+            assert barrier_open is not None and trail_release is not None
+            _release_trails_when_barrier_open(barrier_open, trail_release)
         else:
             # 非竞态轮：拟旨/颁诏前放空尾随（短轮询，非真超时窗）。
             _wait_pending_writes(game)
@@ -455,6 +485,11 @@ def _play_one_month(
         body = _post_issue_stream(
             client, expected_turn=turn_before, step=f"{month_label} issue/stream",
         )
+        if race_trailing_writes:
+            # 主链结束后再钉一次：屏障票必须真打开过（非超时放行）。
+            assert barrier_open is not None and barrier_open.is_set(), (
+                f"{month_label}: issue/stream finished without barrier ticket open"
+            )
         # 若 simulator canned 仍吐决策点，最短续跑：空批不得卡死主链。
         if body.get("awaiting_decision"):
             decisions = body.get("decisions") or []
@@ -469,6 +504,8 @@ def _play_one_month(
             trail_release.set()  # 安全网：异常路径也放行，避免挂线程
         if restore_trails is not None:
             restore_trails()
+        if restore_barrier_signal is not None:
+            restore_barrier_signal()
 
     _wait_pending_writes(game)
     after = _get_state(client)
