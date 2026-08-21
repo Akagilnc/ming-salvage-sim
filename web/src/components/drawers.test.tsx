@@ -383,6 +383,144 @@ describe("朝堂空 layout 合法态（#1290/#1332）", () => {
 
     mountedRoots.push({ root, host });
   });
+
+  it("#1463 早拖后、GET 回前 list 变化：加载不被取消，合并后 POST 一次",
+    async () => {
+    // 复现：GET 挂起 → 早拖置 dirty/pending → listKey 变化 cleanup 取消唯一 GET
+    // → 替换 effect 见 saved 非空且未 ready 只 arrange 不重载 → ready 永假、无合并无 POST。
+    // 契约四件：未拖键取服务端、拖键取本地、合并完成前无 POST、完成后 POST 一次且载荷完整。
+    let resolveLayout!: (v: { ok: boolean; json: () => Promise<{ layout: string }> }) => void;
+    const pending = new Promise<{ ok: boolean; json: () => Promise<{ layout: string }> }>((r) => {
+      resolveLayout = r;
+    });
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (String(url).includes("/api/court_layout")) {
+        if (init && String(init.method || "GET").toUpperCase() === "POST") {
+          return { ok: true, json: async () => ({}) } as Response;
+        }
+        return pending as unknown as Response;
+      }
+      return { ok: true, json: async () => ({}) } as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const listA = [
+      minister({ name: "施凤来", office: "东阁大学士" }),
+      minister({ name: "张瑞图", office: "东阁大学士" }),
+    ];
+    // listKey 变化：第三人入列，触发重排 effect cleanup
+    const listB = [
+      ...listA,
+      minister({ name: "李国樑", office: "东阁大学士" }),
+    ];
+
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    await act(async () => {
+      root.render(
+        <MinisterCardList
+          list={listA}
+          portraitPrefix="minister_"
+          selectedMinister=""
+          emptyNote="empty"
+          onOpenChat={() => {}}
+          courtMode={true}
+        />
+      );
+    });
+    await act(async () => { await Promise.resolve(); });
+
+    const court = host.querySelector(".minister-list-court") as HTMLElement | null;
+    expect(court).toBeTruthy();
+    court!.getBoundingClientRect = () =>
+      ({
+        x: 0, y: 0, width: 1000, height: 1000,
+        top: 0, right: 1000, bottom: 1000, left: 0, toJSON: () => ({}),
+      }) as DOMRect;
+
+    const cards = Array.from(host.querySelectorAll<HTMLElement>("button.minister-card"));
+    const shiCard = cards.find((el) => el.querySelector(".minister-name")?.textContent === "施凤来");
+    expect(shiCard).toBeTruthy();
+
+    // 早拖施凤来并松手（pending save）
+    await act(async () => {
+      shiCard!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, clientX: 500, clientY: 500 }));
+    });
+    await act(async () => {
+      window.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, clientX: 100, clientY: 100 }));
+    });
+    await act(async () => {
+      window.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, clientX: 100, clientY: 100 }));
+    });
+    const shiDragged = cardPos(host, "施凤来");
+    expect(shiDragged).not.toBeNull();
+
+    // 合并完成前不得 POST
+    const postsBefore = fetchMock.mock.calls.filter(
+      (c) => String(c[0]).includes("/api/court_layout") && c[1] && String((c[1] as RequestInit).method || "").toUpperCase() === "POST",
+    );
+    expect(postsBefore.length).toBe(0);
+
+    // GET 仍挂起时 list 变化（重排生命周期不得取消加载）
+    await act(async () => {
+      root.render(
+        <MinisterCardList
+          list={listB}
+          portraitPrefix="minister_"
+          selectedMinister=""
+          emptyNote="empty"
+          onOpenChat={() => {}}
+          courtMode={true}
+        />
+      );
+    });
+    await act(async () => { await Promise.resolve(); });
+
+    // 仍无 POST
+    const postsMid = fetchMock.mock.calls.filter(
+      (c) => String(c[0]).includes("/api/court_layout") && c[1] && String((c[1] as RequestInit).method || "").toUpperCase() === "POST",
+    );
+    expect(postsMid.length).toBe(0);
+
+    // 回包：张瑞图服务端左远槽；施凤来服务端旧位应被脏键盖住
+    await act(async () => {
+      resolveLayout({
+        ok: true,
+        json: async () => ({
+          layout: JSON.stringify({
+            施凤来: { px: 0.9, py: 0.9 },
+            张瑞图: { px: 0.377, py: 0.066 },
+          }),
+        }),
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const shiAfter = cardPos(host, "施凤来");
+    const zhangAfter = cardPos(host, "张瑞图");
+    // 拖键取本地
+    expect(shiAfter).toEqual(shiDragged);
+    // 未拖键取服务端
+    expect(parseFloat(zhangAfter!.left)).toBeCloseTo(37.7, 5);
+    expect(parseFloat(zhangAfter!.top)).toBeCloseTo(6.6, 5);
+
+    // 完成后 POST 一次且载荷完整
+    const posts = fetchMock.mock.calls.filter(
+      (c) => String(c[0]).includes("/api/court_layout") && c[1] && String((c[1] as RequestInit).method || "").toUpperCase() === "POST",
+    );
+    expect(posts.length).toBe(1);
+    const body = JSON.parse(String((posts[0][1] as RequestInit).body));
+    const saved = JSON.parse(body.layout) as Record<string, { px: number; py: number }>;
+    expect(saved["张瑞图"].px).toBeCloseTo(0.377, 5);
+    expect(saved["张瑞图"].py).toBeCloseTo(0.066, 5);
+    expect(saved["施凤来"]).toBeTruthy();
+    expect(saved["施凤来"]).not.toEqual({ px: 0.9, py: 0.9 });
+
+    mountedRoots.push({ root, host });
+  });
 });
 
 describe("朝堂同衔分座（#1196 呈现层去冲突）", () => {
