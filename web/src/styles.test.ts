@@ -102,4 +102,15 @@ describe("#1480 hideTitle 时 chat 落入 minmax(0,1fr) 行", () => {
     expect(chatModal.length).toBeGreaterThan(0);
     expect(ok).toBe(true);
   });
+
+  it("单行 1fr 必须收口到 hideTitle/bare，不得改写带标题的 modal-bg-chat", () => {
+    // 起居注 AudienceArchiveModal、政务失败恢复 同用 modal-bg-chat 但有可见标题栏。
+    // 裸 .modal-bg-chat.fullscreen-modal { grid-template-rows: minmax(0,1fr) } 会把
+    // header 放进唯一 1fr 行、正文挤进 implicit auto 行，再被 overflow:hidden 裁掉。
+    const unscoped = /\.modal-bg-chat\.fullscreen-modal\s*\{[^}]*grid-template-rows:\s*minmax\(\s*0\s*,\s*1fr\s*\)/;
+    expect(styles).not.toMatch(unscoped);
+    expect(styles).toMatch(
+      /modal-bg-chat[^{]*modal-header-bare[^{]*\{[^}]*grid-template-rows:\s*minmax\(\s*0\s*,\s*1fr\s*\)/,
+    );
+  });
 });
