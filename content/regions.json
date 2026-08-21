@@ -1865,7 +1865,7 @@
       "on_restore": {
         "name": "建州 / 赫图阿拉",
         "kind": "外域",
-        "population": 90,
+        "population": 900000,
         "public_support": 45,
         "unrest": 45,
         "natural_disaster": "山林寒瘠",
@@ -1917,7 +1917,7 @@
       "on_restore": {
         "name": "沈阳 / 辽阳",
         "kind": "边镇",
-        "population": 160,
+        "population": 1600000,
         "public_support": 52,
         "unrest": 38,
         "natural_disaster": "兵燹后田土待复",
@@ -1969,7 +1969,7 @@
       "on_restore": {
         "name": "察哈尔 / 漠南草原",
         "kind": "草原",
-        "population": 95,
+        "population": 950000,
         "public_support": 52,
         "unrest": 38,
         "natural_disaster": "草场寒旱",
@@ -2021,7 +2021,7 @@
       "on_restore": {
         "name": "朝鲜",
         "kind": "外域",
-        "population": 500,
+        "population": 5000000,
         "public_support": 38,
         "unrest": 55,
         "natural_disaster": "兵燹后民力未复",
@@ -2073,7 +2073,7 @@
       "on_restore": {
         "name": "奴儿干 / 黑龙江诸部",
         "kind": "外域",
-        "population": 45,
+        "population": 450000,
         "public_support": 42,
         "unrest": 50,
         "natural_disaster": "极寒山林",
@@ -2287,7 +2287,7 @@
       "on_restore": {
         "name": "台湾",
         "kind": "外域",
-        "population": 30,
+        "population": 300000,
         "public_support": 45,
         "unrest": 40,
         "natural_disaster": "瘴疠台风",

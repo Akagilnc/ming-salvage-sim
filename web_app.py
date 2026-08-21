@@ -1162,7 +1162,10 @@ class WebGame:
             "xuan_da": (50.49, 40.08), "shanhaiguan": (55.52, 42.84),
         }
         armies = self.db.army_payload(danger_order=True)
-        regions = self.db.region_payload()
+        # #648：地图节点 region 与地区抽屉共享同一存档感知人口投影
+        # （regions_display_payload：新档 population_wan=人÷10⁴，旧档原值），
+        # 机面 population 原样保留；不得另开第二真源。
+        regions = self.regions_display_payload()
         # 一军一挂：theater 关键词优先（命中不进 region claimed）；未命中再 region 首命中
         claimed_army_ids: set[str] = set()
         theater_armies: Dict[str, List[Dict[str, Any]]] = {

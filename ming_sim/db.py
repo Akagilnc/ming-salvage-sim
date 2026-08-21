@@ -6715,7 +6715,12 @@ class GameDB:
                 continue
             old_val = row[raw_field]
             if raw_field in (REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS):
-                new_val: object = int(value)
+                # #648（ADR 0088）：on_restore 是 content 静态真源→存档接缝，population
+                # 已全线「人」，落本档前按存档口径换算（新档原样；无标旧档无损÷10⁴）。
+                new_val: object = (
+                    self.scale_content_population_to_save_unit(value)
+                    if raw_field == "population" else int(value)
+                )
             else:
                 new_val = str(value)
             if str(old_val) == str(new_val):

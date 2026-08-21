@@ -292,3 +292,71 @@ def test_web_region_display_population_wan_by_save_unit(game, legacy_game, tmp_p
     old_rows = {r["id"]: r for r in old_runtime.regions_display_payload()}
     assert old_rows["beizhili"]["population_wan"] == 720
     assert old_rows["beizhili"]["population"] == 720
+
+
+def test_web_map_nodes_share_save_aware_population_projection(game, legacy_game):
+    """#648 类2：地图节点 region 与地区抽屉共享同一存档感知人口投影。
+
+    map_nodes 不得直取 db.region_payload()——否则 node.region 缺 population_wan，
+    前端渲染 undefined万；机面 population 字段仍原样保留。"""
+    new_db, new_state, content = game
+    nodes = {n["id"]: n for n in _web_runtime(new_db, new_state, content).map_nodes()}
+    bz = nodes["beizhili"]["region"]
+    assert bz["population_wan"] == 720
+    assert bz["population"] == BEIZHILI_POP_PERSONS  # 机面不動
+
+    old_db, old_state = legacy_game
+    old_nodes = {
+        n["id"]: n for n in _web_runtime(old_db, old_state, game[2]).map_nodes()
+    }
+    old_bz = old_nodes["beizhili"]["region"]
+    assert old_bz["population_wan"] == 720
+    assert old_bz["population"] == 720
+
+
+# ── on_restore 收复单位接缝（ADR 0088：content 静态真源已全线「人」）───────────
+
+JIANZHOU_OPENING_POP_PERSONS = 1200000  # 新档开局建州人口（人）
+JIANZHOU_RESTORE_POP_PERSONS = 900000   # content on_restore 90（万）→ 迁「人」
+JIANZHOU_RESTORE_POP_WAN = 90           # 无标旧档接缝无损 ÷10⁴ 回万人
+
+
+def _settle_region_delta(db, state, content, delta):
+    """同 test_section4_rejections 帮手：自发信封形态走真结算路径触发收复。"""
+    from driver import run_settle
+
+    for item in (delta.get("region_delta") or {}).values():
+        if isinstance(item, dict):
+            item.setdefault("origin_ref", "盘面自发")
+    run_settle(db, state, content, delta, narrative="x", decree_text="y")
+
+
+def test_new_save_restore_jianzhou_keeps_persons_unit(game):
+    """判词反例：新档收复建州不得从 1,200,000 人重置为 90——on_restore 预置按「人」落库。"""
+    db, state, content = game
+    before = db.conn.execute(
+        "SELECT population FROM regions WHERE id='jianzhou'"
+    ).fetchone()[0]
+    assert before == JIANZHOU_OPENING_POP_PERSONS
+
+    _settle_region_delta(db, state, content, {
+        "region_delta": {"jianzhou": {"controlled_by": "ming"}},
+    })
+
+    after = db.conn.execute(
+        "SELECT population FROM regions WHERE id='jianzhou'"
+    ).fetchone()[0]
+    assert after == JIANZHOU_RESTORE_POP_PERSONS
+    assert after != 90  # 漏迁/漏换算任一即 FAIL（×10⁴ mutation 咬点）
+
+
+def test_legacy_save_restore_jianzhou_converts_to_wan(game, legacy_game):
+    """无标旧档收复建州：content→档唯一接缝无损换回万人口径，不混刻度。"""
+    old_db, old_state = legacy_game
+    _settle_region_delta(old_db, old_state, game[2], {
+        "region_delta": {"jianzhou": {"controlled_by": "ming"}},
+    })
+    after = old_db.conn.execute(
+        "SELECT population FROM regions WHERE id='jianzhou'"
+    ).fetchone()[0]
+    assert after == JIANZHOU_RESTORE_POP_WAN

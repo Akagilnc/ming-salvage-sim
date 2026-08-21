@@ -62,6 +62,20 @@ function makeNode(region: Region): MapNode {
   };
 }
 
+describe("NodeIntel #648 population projection", () => {
+  it("renders 约 N 万口 qualitative label, not a bare N万", () => {
+    const host = renderNodeIntel(makeNode(makeRegion({ population_wan: 720 })));
+    expect(host.textContent).toContain("约720万口");
+    expect(host.textContent).not.toMatch(/[^约]720万/);
+  });
+
+  it("renders 不足一万口 when population_wan <= 0 (never undefined万)", () => {
+    const host = renderNodeIntel(makeNode(makeRegion({ population_wan: 0 })));
+    expect(host.textContent).toContain("不足一万口");
+    expect(host.textContent).not.toContain("undefined万");
+  });
+});
+
 describe("NodeIntel monthly tax display", () => {
   it("shows tax_per_turn=1 as 1万/月, not rounded quarterly 0", () => {
     const host = renderNodeIntel(makeNode(makeRegion({ tax_per_turn: 1 })));
