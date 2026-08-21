@@ -17,8 +17,10 @@ import json
 from ming_sim.issues import apply_score_extraction
 from ming_sim.relations import (
     MINISTER_EDGE_KINDS,
+    resolve_relation_edge_events_from_extraction,
     settlement_edge_origin,
 )
+import pytest
 from ming_sim.simulation import (
     EMPTY_EXTRACTION,
     EXTRACTION_MODULES,
@@ -735,3 +737,41 @@ def test_never_qualified_endpoints_still_rejected_in_mutating_batch(game):
     assert _triplets(_edge_rows(db)) == {
         ("王绍徽", "毕自严", "结怨"), ("孙承宗", "毕自严", "协作"),
     }
+
+
+# ── r6 确认庭：资格集必传单一契约——无 live/post fallback ─────────────
+
+
+def test_live_roster_cannot_rescue_endpoint_outside_passed_union(game):
+    """负向：端点资格唯一语义＝传入的 pre∪post 并集。在 live 名册但在传入
+    资格集之外者仍拒收——不存在「仅 live 可过而 pre∪post 不过」的通路。
+    （apply_score_extraction 批内 post=live，故该构造只能经直调缝验证。）"""
+    db, state, content = game
+    assert db.get_character_status("王绍徽")[0] == "active"  # live 在册
+    res = resolve_relation_edge_events_from_extraction(
+        db, state,
+        {"relation_edge_events": [{
+            "施动者": "王绍徽", "受动者": "毕自严", "类目": "结怨",
+            "语境": "live 在册但不在传入资格集。", "来源引用": "盘面自发",
+        }]},
+        allowed_endpoint_names={"毕自严"},  # 故意缺王绍徽
+    )
+    assert len(res) == 1 and res[0].get("rejected")
+    assert res[0]["category"] == "invalid_relation_event"
+    assert "王绍徽" in res[0]["reason"]
+    assert _edge_rows(db) == []  # 零边写入
+
+
+def test_missing_endpoint_qualification_set_fails_loud(game):
+    """负向：资格集必传——缺参即 TypeError 显式失败，绝不静默退化到
+    live/post 语义（无第二机制、无直调兼容后门）。"""
+    db, state, content = game
+    with pytest.raises(TypeError):
+        resolve_relation_edge_events_from_extraction(
+            db, state,
+            {"relation_edge_events": [{
+                "施动者": "毕自严", "受动者": "王绍徽", "类目": "结怨",
+                "语境": "缺资格集必须炸，不静默退化。", "来源引用": "盘面自发",
+            }]},
+        )
+    assert _edge_rows(db) == []  # 零边副作用
