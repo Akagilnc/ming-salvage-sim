@@ -636,3 +636,102 @@ def test_valid_roster_endpoints_still_land_after_endpoint_gate(game):
     res = out["relation_edge_event_resolutions"]
     assert not any(r.get("rejected") for r in res), res
     assert _triplets(_edge_rows(db)) == {("孙传庭", "洪承畴", "恩义")}
+
+
+# ── T1 r5 B 案：批内 pre∪post 名册并集时间语义 ────────────────────────
+
+
+def test_interaction_then_same_batch_dismissal_still_lands(game):
+    """先互动后退场（同批罢黜）：端点 ∈ 入口 pre-roster，边照落。
+
+    回归锚：旧实现按 apply 后 live 名册校验，会把退场者当月真实互动静默丢账
+    （P1 事实账完整性缺口）；B 案以入口 canonical pre-roster 保住该向。"""
+    db, state, content = game
+    assert db.get_character_status("王绍徽")[0] == "active"
+    out = apply_score_extraction(
+        db, state,
+        {
+            "人物变更": [
+                {"name": "王绍徽", "origin_ref": "盘面自发",
+                 "动作": "罢黜", "reason": "同批罢黜时序验收"},
+            ],
+            "relation_edge_events": [{
+                "施动者": "王绍徽", "受动者": "毕自严", "类目": "结怨",
+                "语境": "退场前真实互动须当回合落账。", "来源引用": "盘面自发",
+            }],
+        },
+        content=content,
+    )
+    # 人物变更确实生效：该员已出 post 名册（证明拒收不是守门失灵）
+    assert db.get_character_status("王绍徽")[0] == "dismissed"
+    res = out["relation_edge_event_resolutions"]
+    assert not any(r.get("rejected") for r in res), res
+    row = _edge_rows(db, source="王绍徽", target="毕自严")[0]
+    assert (row["source"], row["target"], row["event_kind"]) == ("王绍徽", "毕自严", "结怨")
+    assert row["origin"] == f"盘面自发:relation:结怨|round:{state.turn}"
+
+
+def test_reinstatement_then_interaction_in_same_batch_still_lands(game):
+    """先入场后互动（同批起复/任命）：端点 ∈ 人物变更后 post-roster，边照落。
+
+    回归锚：任何只冻 pre roster/前移 resolver 的方案会误拒同批入场者的真实
+    互动；B 案以人物变更 apply 后的 post-roster 并入并集保住该向。"""
+    db, state, content = game
+    assert db.get_character_status("孙承宗")[0] != "active"
+    out = apply_score_extraction(
+        db, state,
+        {
+            "人物变更": [
+                {"name": "孙承宗", "origin_ref": "盘面自发", "动作": "任命",
+                 "office": "兵部尚书", "reason": "同批起复时序验收"},
+            ],
+            "relation_edge_events": [{
+                "施动者": "孙承宗", "受动者": "毕自严", "类目": "协作",
+                "语境": "起复后当月互动须落账。", "来源引用": "盘面自发",
+            }],
+        },
+        content=content,
+    )
+    # 人物变更确实生效：该员已入 post 名册（证明落库不是 pre 资格）
+    assert db.get_character_status("孙承宗")[0] == "active"
+    res = out["relation_edge_event_resolutions"]
+    assert not any(r.get("rejected") for r in res), res
+    row = _edge_rows(db, source="孙承宗", target="毕自严")[0]
+    assert (row["source"], row["target"], row["event_kind"]) == ("孙承宗", "毕自严", "协作")
+
+
+def test_never_qualified_endpoints_still_rejected_in_mutating_batch(game):
+    """前后均不合格（幻觉名）在同批人物变更下仍拒收留痕、零边写入；
+    同批双向合格项隔离照落——并集只放宽「任一投影合格」，不放宽到全放行。"""
+    db, state, content = game
+    out = apply_score_extraction(
+        db, state,
+        {
+            "人物变更": [
+                {"name": "王绍徽", "origin_ref": "盘面自发",
+                 "动作": "罢黜", "reason": "同批退场仍不豁免幻觉门"},
+                {"name": "孙承宗", "origin_ref": "盘面自发", "动作": "任命",
+                 "office": "兵部尚书", "reason": "同批起复仍不豁免幻觉门"},
+            ],
+            "relation_edge_events": [
+                {"施动者": "幻觉甲", "受动者": "毕自严", "类目": "结怨",
+                 "语境": "幻觉施动者前后两投影均不合格。", "来源引用": "盘面自发"},
+                {"施动者": "毕自严", "受动者": "皇帝", "类目": "把柄",
+                 "语境": "皇帝节点不入大臣边任一端。", "来源引用": "盘面自发"},
+                {"施动者": "王绍徽", "受动者": "毕自严", "类目": "结怨",
+                 "语境": "退场向照落。", "来源引用": "盘面自发"},
+                {"施动者": "孙承宗", "受动者": "毕自严", "类目": "协作",
+                 "语境": "入场向照落。", "来源引用": "盘面自发"},
+            ],
+        },
+        content=content,
+    )
+    res = out["relation_edge_event_resolutions"]
+    rejected = [r for r in res if r.get("rejected")]
+    assert len(rejected) == 2
+    assert all(r["category"] == "invalid_relation_event" for r in rejected)
+    assert all("当前在朝合格大臣" in r["reason"] for r in rejected)
+    assert any("幻觉甲" in r["reason"] for r in rejected)
+    assert _triplets(_edge_rows(db)) == {
+        ("王绍徽", "毕自严", "结怨"), ("孙承宗", "毕自严", "协作"),
+    }
