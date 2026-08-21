@@ -2781,13 +2781,14 @@ def test_runtime_cli_conversation_update_uses_configured_runner_without_env(game
 
 
 def test_conversation_rush_skips_pending_review(game, monkeypatch):
-    """催办目标恰为 pending_review 时不抛错、不误置成功（target_active 守门）。"""
+    """催办目标恰为非 active（legacy pending_review）时不抛错、不误置成功（target_active 守门）。"""
     db, state, _ = game
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
     who = "待核承办官"
     oid = db.create_secret_order(state, who, "待核令", "内容", [], deadline_months=6)
-    db.submit_secret_order_for_review(oid, "已呈核", state.year, state.period)  # → pending_review
+    db.conn.execute("UPDATE secret_orders SET status='pending_review' WHERE id=?", (oid,))
+    db.conn.commit()  # legacy pending_review 行（#1504 submit 不再产此态）
     monkeypatch.setattr(cb, "extract_minister_actions", lambda *a, **k: {
         "secret_action": "催办", "order_id": oid, "new_title": "", "new_content": "",
         "deadline_months": 0, "cultivate_skill": "", "cultivate_trait": ""})
