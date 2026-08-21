@@ -35,6 +35,8 @@ export function MinisterCardList({
   const baselineRef = React.useRef<Record<string, { px: number; py: number }> | null>(null);
   const dirtyRef = React.useRef<Record<string, { px: number; py: number }>>({});
   const pendingSaveRef = React.useRef(false);
+  const positionsRef = React.useRef(positions);
+  positionsRef.current = positions;
   const listRef = React.useRef(list);
   listRef.current = list;
   const dragging = React.useRef<{ name: string; startMX: number; startMY: number; startPX: number; startPY: number } | null>(null);
@@ -129,10 +131,10 @@ export function MinisterCardList({
   }, [viewLayout]);
 
   // #1463：布局加载只随挂载/卸载，不被 list 重排 cancel。
+  // #1499-F2：GET reject 视为空基线 {}，放行后续 commit（禁 baseline 永 null）。
   React.useEffect(() => {
     let cancelled = false;
-    // #1290/#1332：GET 空 {} 合法；先默认落座不堵首屏，回包再合并脏键。
-    loadCourtPos().then((saved) => {
+    const applyBaseline = (saved: Record<string, { px: number; py: number }>) => {
       if (cancelled) return;
       baselineRef.current = saved;
       arrange(viewLayout());
@@ -140,7 +142,12 @@ export function MinisterCardList({
         pendingSaveRef.current = false;
         commitSave();
       }
-    });
+    };
+    // #1290/#1332：GET 空 {} 合法；先默认落座不堵首屏，回包再合并脏键。
+    loadCourtPos().then(
+      (saved) => applyBaseline(saved),
+      () => applyBaseline({}),
+    );
     return () => { cancelled = true; };
   }, [arrange, viewLayout, commitSave]);
 
@@ -179,11 +186,13 @@ export function MinisterCardList({
     };
     const onUp = () => {
       if (dragging.current && didDrag.current) {
-        // 松手时吸附到最近槽位
+        // 松手时吸附到最近槽位。
+        // #1499-F1：updater 纯函数——吸附/脏键/commit 均在 setState 外计算，
+        // 避免 StrictMode 双调 updater 导致 POST 两发或 ref/视图失同步。
         const dragName = dragging.current.name;
-        setPositions((prev) => {
-          const cur = prev[dragName];
-          if (!cur) return prev;
+        const prev = positionsRef.current;
+        const cur = prev[dragName] ?? dirtyRef.current[dragName];
+        if (cur) {
           // 固定官职：固定槽空着才弹回；已被他人占用则降级自由吸附（避免拖完与同衔复叠）
           const dragMinister = list.find((m) => m.name === dragName);
           const role = dragMinister ? roleFromOffice(dragMinister.office || "") : "";
@@ -203,18 +212,18 @@ export function MinisterCardList({
             if (bestKey) occupied.add(bestKey);
           });
           const fixed = fixedKey && !occupied.has(fixedKey) ? fixedSlotFor(role) : null;
-          // 找吸附目标
           const snapped = fixed ?? snapToSlot(cur.px, cur.py, occupied, "");
           const next = { ...prev, [dragName]: snapped };
           dirtyRef.current = { ...dirtyRef.current, [dragName]: snapped };
+          positionsRef.current = next;
+          setPositions(next);
           // #1463：基线未就绪则挂 pending，合并后再走唯一 commitSave；就绪则立即提交。
           if (baselineRef.current === null) {
             pendingSaveRef.current = true;
           } else {
             commitSave();
           }
-          return next;
-        });
+        }
       }
       dragging.current = null;
       window.removeEventListener("mousemove", onMove);
