@@ -90,7 +90,7 @@
         ↳ 已有终态或刚被上一步记成 expired 的事件退出候选 / 硬触发流，防止史实节点晚弹或重入
         ↳ situation 转 issue；node/ending 只记 event_triggers，并可落 effect_on_trigger
         ↳ 出现在本月候选清单 / 硬触发清单里供我推演引用
-     f. db.auto_submit_due_secret_orders(state)   # 到期密令转核议（原在 resolve_directives，已挪入此事务）
+     f. db.auto_submit_due_secret_orders(state)   # #1504：到期只打期限戳，保持 active（结案在 settle 尾对账）
      g. turn_phase = settling + save_state        # 同事务收尾：「前半段已完成」相位锚
      幂等守门：相位已在 FRONT_HALF_DONE_PHASES（settling/awaiting_decision/…）时直接
      return，不二次落财政；崩在内部 = 全回滚 = 相位未变 = 重进干净重跑。
@@ -100,7 +100,7 @@
      （driver 路无 ready=0 占位，pre_settle 后直接存 ready=1，见 8.5）
 
   4. chapter_memories = db.list_chapter_memories(upto_turn=state.turn, recent=6)
-     secret_orders = group_secret_orders_for_sim(active + pending_review 行)  # 分中文键两组{在办,待核议}、剥英文 status（#48）
+     secret_orders = group_secret_orders_for_sim(active + legacy pending_review 行)  # 分中文键两组；#1504 结案不靠 pending 核议
      secret_orders = augment_secret_orders_with_due_commitments(secret_orders, db, state)
        ↳ form③ 承诺（有 end_turn、无 ongoing_effects）到期时写入「待核议」分组（entry_kind=due_commitment）
        ↳ #883 分流：分组只喂 personnel_secret extractor 独立 rail；

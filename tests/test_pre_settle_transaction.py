@@ -84,19 +84,17 @@ def test_settling_survives_begin_turn_phase_whitelist(game, monkeypatch):
 
 
 def test_due_secret_order_submission_rolls_back_on_pre_settle_crash(saved_game, monkeypatch):
-    """auto_submit_due_secret_orders 挪进 pre_settle 事务（ADR 0008 S4）：到期密令本应
-    转 pending_review，但 pre_settle 内部崩溃 → 该状态翻转随事务回滚，order 仍是 active。
+    """auto_submit_due_secret_orders 挪进 pre_settle 事务（ADR 0008 S4）：#1504 到期只打
+    期限戳保持 active；pre_settle 内部崩溃 → 戳写随事务回滚，order 仍是 active 且无新戳。
     用 saved_game：依赖玩过存档里到期的 secret_order，fresh seed 无（#5）。"""
     db, state, content = saved_game
     turn = state.turn
-    # 让某 active 密令本回合到期（due_turn <= 当前 turn），auto_submit 应将其转 pending_review。
     db.conn.execute(
-        "UPDATE secret_orders SET status='active', due_turn=? WHERE id=2", (turn,))
+        "UPDATE secret_orders SET status='active', due_turn=?, result='' WHERE id=2", (turn,))
     db.conn.commit()
     assert db.conn.execute(
         "SELECT status FROM secret_orders WHERE id=2").fetchone()[0] == "active"
 
-    # 在 auto_submit 之后的相位写处崩：用 save_state 抛错，验前面 auto_submit 的写回滚。
     orig_save = db.save_state
     def _boom_save(st):
         raise RuntimeError("phase-write boom")
@@ -106,13 +104,13 @@ def test_due_secret_order_submission_rolls_back_on_pre_settle_crash(saved_game, 
         pre_settle(state, db)
 
     monkeypatch.setattr(db, "save_state", orig_save)
-    # 用新连接读盘：密令呈递随事务整体回滚，仍是 active（没有事务外散写）。
     other = sqlite3.connect(db.path)
     try:
-        st = other.execute("SELECT status FROM secret_orders WHERE id=2").fetchone()[0]
+        row = other.execute("SELECT status, result FROM secret_orders WHERE id=2").fetchone()
     finally:
         other.close()
-    assert st == "active"
+    assert row[0] == "active"
+    assert "[期限届满]" not in (row[1] or "")
 
 
 def test_driver_pre_settle_same_transaction_semantics(game, monkeypatch):

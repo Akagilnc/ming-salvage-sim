@@ -696,7 +696,7 @@ def build_minister_tools(character: Character, context: CourtContext,
         if order is None:
             return err
         if order["status"] != "active":
-            return f"密令 #{order['id']} 当前状态 {order['status']}，不可重复提交核议。"
+            return f"密令 #{order['id']} 当前状态 {order['status']}，不可提交办结对账。"
         text = (claim or "").strip()
         if not text:
             return "提交失败：claim 为空。"

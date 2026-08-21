@@ -1,9 +1,7 @@
 """secret_order 段拒收补精确 category（ADR 0008 决定 1 逐项拒收契约统一，#14 C2）。
 
-secret_order_closes 早已逐项拒收（含未知 order_id「密令不存在」）、updates 此前对未知/非
-active id 静默报成功（cmr r1 codex 抓出，#14 silent-success）。本组把两段数据校验类拒收
-统一带精确 category（未知 order_id → missing_ref，坏值/坏状态/非 active → invalid_enum），
-并补 updates 的未知 id 拒收（对齐 closes）。
+#1504：secret_order_closes 真源退役（一律 retired_source 拒收、不落库结案）。
+updates 数据校验类拒收带精确 category（未知 order_id → missing_ref，坏值/非 active → invalid_enum）。
 
 只覆盖 LLM 数据校验类拒收；落库真异常（except）的拒收不在此（属 #63.4 设计待定，不动）。
 经 driver.run_settle 端到端查 rejection_reports。
@@ -21,54 +19,30 @@ from tests.section_rejection_helpers import game, rejection_rows
 _rejection_rows = partial(rejection_rows, columns="section, reason, category")
 
 
-def test_close_unknown_order_id_missing_ref(game):
-    """secret_order_closes 引用不存在的 order_id → missing_ref 拒收达 rejection_reports
-    （不再兜底 legacy_inline）。"""
+def test_close_retired_source_rejected(game):
+    """#1504：secret_order_closes 不论 id/status 一律 retired_source，且不结案。"""
     db, state, content = game
     turn = state.turn
+    oid = db.create_secret_order(
+        state, "测试密令官", "退役结案", "不应被 closes 结", [], deadline_months=1,
+    )
+    db.conn.execute(
+        "UPDATE secret_orders SET status='pending_review' WHERE id=?", (oid,),
+    )
+    db.conn.commit()
 
     run_settle(db, state, content, {
         "secret_order_closes": [
+            {"order_id": oid, "status": "done", "result": "旧链结案"},
             {"order_id": 999999, "status": "done", "result": "查无此密令"},
-        ],
-    }, narrative="x", decree_text="y")
-
-    rows = _rejection_rows(db, turn, "secret_order_closes")
-    assert len(rows) == 1, rows
-    assert rows[0][2] == "missing_ref", rows
-    assert rows[0][1]  # 人读原因非空
-
-
-def test_close_nonint_order_id_invalid_enum(game):
-    """secret_order_closes order_id 非整数 → invalid_enum 拒收达 rejection_reports。"""
-    db, state, content = game
-    turn = state.turn
-
-    run_settle(db, state, content, {
-        "secret_order_closes": [
             {"order_id": "甲", "status": "done", "result": "坏 id"},
         ],
     }, narrative="x", decree_text="y")
 
-    rows = [r for r in _rejection_rows(db, turn, "secret_order_closes")
-            if r[2] == "invalid_enum"]
-    assert len(rows) == 1, rows
-
-
-def test_close_bad_status_invalid_enum(game):
-    """secret_order_closes status 非 done/failed → invalid_enum 拒收。"""
-    db, state, content = game
-    turn = state.turn
-
-    run_settle(db, state, content, {
-        "secret_order_closes": [
-            {"order_id": 1, "status": "搁置", "result": "非法状态"},
-        ],
-    }, narrative="x", decree_text="y")
-
-    rows = [r for r in _rejection_rows(db, turn, "secret_order_closes")
-            if r[2] == "invalid_enum"]
-    assert len(rows) == 1, rows
+    rows = _rejection_rows(db, turn, "secret_order_closes")
+    assert len(rows) >= 3, rows
+    assert all(r[2] == "retired_source" for r in rows), rows
+    assert db.get_secret_order(oid)["status"] == "pending_review"
 
 
 def test_update_nonint_order_id_invalid_enum(game):
@@ -150,8 +124,8 @@ def test_apply_score_extraction_secret_order_update_respects_outer_transaction_r
     assert "测试密令副作用R8" not in (row["sim_note"] or "")
 
 
-def test_apply_score_extraction_secret_order_close_respects_outer_transaction_rollback(game):
-    """post-merge CMR R8：secret_order_closes 不得绕过外层事务硬提交。"""
+def test_apply_score_extraction_secret_order_close_retired_no_write(game):
+    """#1504：closes 退役后 apply 不写库；无事务副作用可回滚。"""
     db, state, content = game
     oid = db.create_secret_order(state, "测试密令官R8", "测试结案密令", "测试内容", [], deadline_months=1)
     db.conn.execute("UPDATE secret_orders SET status='pending_review' WHERE id=?", (oid,))
@@ -164,17 +138,17 @@ def test_apply_score_extraction_secret_order_close_respects_outer_transaction_ro
         {"secret_order_closes": [{"order_id": oid, "status": "done", "result": "测试密令结案R8"}]},
         content=content,
     )
-    assert out["secret_order_closes"][0]["order_id"] == oid
+    assert out["secret_order_closes"][0].get("retired") is True
+    assert out["secret_order_closes"][0].get("rejected") is True
     in_tx = db.get_secret_order(oid)
     assert in_tx is not None
-    assert in_tx["status"] == "done"
-    assert "测试密令结案R8" in (in_tx["result"] or "")
+    assert in_tx["status"] == "pending_review"
+    assert "测试密令结案R8" not in (in_tx["result"] or "")
     db.conn.rollback()
 
     row = db.get_secret_order(oid)
     assert row is not None
     assert row["status"] == "pending_review"
-    assert "测试密令结案R8" not in (row["result"] or "")
     assert row["turn_closed"] is None
 
 
@@ -191,6 +165,6 @@ def test_oversized_order_id_rejected_not_crash(game):
     }, narrative="x", decree_text="y")
 
     up = [r for r in _rejection_rows(db, turn, "secret_order_updates") if r[2] == "invalid_enum"]
-    cl = [r for r in _rejection_rows(db, turn, "secret_order_closes") if r[2] == "invalid_enum"]
+    cl = [r for r in _rejection_rows(db, turn, "secret_order_closes") if r[2] == "retired_source"]
     assert len(up) == 1, up
     assert len(cl) == 1, cl
