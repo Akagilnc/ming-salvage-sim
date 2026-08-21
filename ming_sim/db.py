@@ -2059,8 +2059,6 @@ class GameDB:
                 "MAX(COALESCE(due_turn, 0)-COALESCE(turn_issued, 0), 0)"
             )
         self.ensure_column("secret_orders", "excluded_names", "TEXT NOT NULL DEFAULT '[]'")
-        # #1504 SURVEY §5.2 F2：旧档 pending_review 一次迁 active+到期标记（含 due_turn=0）。
-        self._migrate_legacy_pending_review_secret_orders()
         # #566/#883: secret monthly reports stay private on the order itself.
         # #619 adds a separate physical general track (dossier_reported_progress);
         # the retired shared table name remains forbidden (no shared table+flag).
@@ -2140,6 +2138,9 @@ class GameDB:
         )
         self._backfill_proposed_appointment_break_ranks()
         self._migrate_legacy_secret_order_dossiers()
+        # #1504 SURVEY §5.2 F2：须在案卷补建之后——先按 pending_review→executing 建轴，
+        # 再一次迁 active+到期标记（含 due_turn=0），案卷保持 executing。
+        self._migrate_legacy_pending_review_secret_orders()
         # #498：旧档 chat_turns 无 night_id/night_seq 列；必须先 ensure 列再建索引
         # （旧档 CREATE TABLE IF NOT EXISTS 不重建 chat_turns，索引若先建会引用缺列失败）。
         self.ensure_column("chat_turns", "night_id", "INTEGER NOT NULL DEFAULT 0")
@@ -10614,6 +10615,7 @@ class GameDB:
                 lines = [ln for ln in prev.split("\n") if ln.strip()]
                 lines.append(stamp)
                 new_result = "\n".join(lines)
+            oid = int(row["id"])
             self.conn.execute(
                 """
                 UPDATE secret_orders
@@ -10623,8 +10625,13 @@ class GameDB:
                     updated_at=CURRENT_TIMESTAMP
                 WHERE id=? AND status='pending_review'
                 """,
-                (int(due), new_result, int(row["id"])),
+                (int(due), new_result, oid),
             )
+            # 核议中本就在办：保持/补齐案卷 executing（幂等）
+            try:
+                self.mark_secret_order_in_progress(oid, commit=False)
+            except Exception:
+                pass
 
     def _migrate_legacy_secret_order_dossiers(self) -> None:
         """旧密令单向补建案卷；唯一索引使重复开库幂等。"""
