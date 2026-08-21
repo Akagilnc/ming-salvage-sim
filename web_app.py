@@ -1235,15 +1235,33 @@ class WebGame:
                 })
         return nodes
 
+    @staticmethod
+    def _liaodong_core_station(station: str) -> bool:
+        """辽东 station 唯一真源：本体或「辽东 /…」；禁侧翼/门户/外线前缀误吞。
+
+        theater 与 region 回退共用——勿在别处再写一份白名单。
+        """
+        s = str(station or "")
+        return s == "辽东" or s.startswith("辽东 /") or s.startswith("辽东/")
+
     def _army_belongs_to_region(self, army: Dict[str, Any], region: Dict[str, Any]) -> bool:
         station = str(army["station"])
+        region_id = str(region["id"])
         region_name = str(region["name"])
-        return (
-            str(region["id"]) in station
-            or region_name in station
-            or station in region_name
-            or any(part.strip() and part.strip() in station for part in region_name.replace("／", "/").split("/"))
-        )
+        if region_id in station or region_name in station or station in region_name:
+            return True
+        for part in region_name.replace("／", "/").split("/"):
+            p = part.strip()
+            if not p or p not in station:
+                continue
+            # 辽东 region 名分段「辽东」与 theater 共用 station 白名单
+            # （#1448/#1497：theater 堵了、region 回退仍会把 辽东侧翼/门户/外线 误挂）
+            if region_id == "liaodong" and p == "辽东":
+                if self._liaodong_core_station(station):
+                    return True
+                continue
+            return True
+        return False
 
     def _army_belongs_to_theater(self, army: Dict[str, Any], theater_id: str) -> bool:
         """theater 归属。禁裸「辽东」扫全字段——否则 辽东侧翼/门户/外线 误挂 liaodong，
@@ -1252,7 +1270,7 @@ class WebGame:
             return True
         text = f"{army['id']} {army['name']} {army['station']} {army['theater']}"
         mapping = {
-            # 不用裸「辽东」：theater/station 精确口径见下
+            # 不用裸「辽东」：theater/station 精确口径见 _liaodong_core_station
             "liaodong": ("宁锦", "关宁"),
             "dongjiang": ("东江", "皮岛"),
             "xuan_da": ("宣大", "宣府", "大同"),
@@ -1261,13 +1279,12 @@ class WebGame:
         if any(word in text for word in mapping.get(theater_id, ())):
             return True
         if theater_id == "liaodong":
-            station = str(army.get("station") or "")
             theater = str(army.get("theater") or "")
-            # 关宁等：theater 恰为「辽东」；station 仅白名单「辽东」本体/「辽东 /…」
+            # 关宁等：theater 恰为「辽东」；station 走单一白名单真源
             # （#1448/#1401 同根：startswith("辽东") 会把 辽东侧翼/门户/外线 误吞进 liaodong）
             if theater == "辽东":
                 return True
-            if station == "辽东" or station.startswith("辽东 /") or station.startswith("辽东/"):
+            if self._liaodong_core_station(army.get("station") or ""):
                 return True
         return False
 
