@@ -72,8 +72,22 @@ describe("#1486 邸报底栏不与卷轴末行混层", () => {
     const starred = styles.match(/\.modal-bg-gazette\s+\*\s*\{[^}]*\}/)?.[0] || "";
     expect(starred).toMatch(/background:\s*transparent/);
     const dismiss = styles.match(/\.modal-bg-gazette\s+\.gazette-dismiss\s*\{[^}]*\}/)?.[0] || "";
-    expect(dismiss).toMatch(/background:\s*rgba\(/);
-    expect(dismiss).not.toMatch(/background:\s*transparent/);
+    const bg = dismiss.match(/background:\s*([^;}]+)/)?.[1]?.trim() || "";
+    expect(bg).not.toMatch(/^transparent$/i);
+    // 真断言：解析后 alpha 必须 > 0，拒绝 rgba(...,0) 伪实底逃逸
+    const rgba = bg.match(
+      /^rgba?\(\s*[\d.]+%?\s*,\s*[\d.]+%?\s*,\s*[\d.]+%?(?:\s*,\s*([\d.]+%?))?\s*\)$/i,
+    );
+    expect(rgba).toBeTruthy();
+    const rawAlpha = rgba![1];
+    const alpha =
+      rawAlpha === undefined
+        ? 1
+        : rawAlpha.endsWith("%")
+          ? Number(rawAlpha.slice(0, -1)) / 100
+          : Number(rawAlpha);
+    expect(Number.isFinite(alpha)).toBe(true);
+    expect(alpha).toBeGreaterThan(0);
   });
 });
 
