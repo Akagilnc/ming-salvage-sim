@@ -1947,8 +1947,9 @@ class GameSession:
                         named_set = {
                             i for i in confirm_named_ids if i in allowed
                         }
-                        if not named_set:
-                            # 多 pending 无合法编号：含糊追问，禁止静默改写全家。
+                        # #1509-F1：修改只更新「同一」候选；0 个或多于 1 个合法编号
+                        # 一律 ambiguous，禁止整族批量覆写（复用应允/拒绝含糊缝）。
+                        if len(named_set) != 1:
                             out["directive_confirmation_ambiguous"] = {
                                 "candidates": [
                                     {
