@@ -592,46 +592,50 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       retryable: true,
       // 无 minister_name → selectedMinister 空 → activeMinister null → 走 recovery 分支
     };
-    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-      const u = new URL(String(url), "http://t.local");
-      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
-      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
-      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
-      if (u.pathname.endsWith("/api/game/state")) {
-        // 无草案 + 有失败密令 → 拟诏台露出「处理」入口
-        return jsonResp({ ...makeState(1, []), failed_secret_order_count: 1 });
-      }
-      if (u.pathname.endsWith("/api/pending_actions/failures")) {
-        return jsonResp({ pending_action_failures: [failure] });
-      }
-      return jsonResp({});
-    }));
-    const host = document.createElement("div");
-    document.body.appendChild(host);
-    await act(async () => { createRoot(host).render(<App />); });
-    await tick();
-    expect(host.querySelector(".hud2-stage")).not.toBeNull();
+    try {
+      vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+        const u = new URL(String(url), "http://t.local");
+        if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+        if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+        if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+        if (u.pathname.endsWith("/api/game/state")) {
+          // 无草案 + 有失败密令 → 拟诏台露出「处理」入口
+          return jsonResp({ ...makeState(1, []), failed_secret_order_count: 1 });
+        }
+        if (u.pathname.endsWith("/api/pending_actions/failures")) {
+          return jsonResp({ pending_action_failures: [failure] });
+        }
+        return jsonResp({});
+      }));
+      const host = document.createElement("div");
+      document.body.appendChild(host);
+      await act(async () => { createRoot(host).render(<App />); });
+      await tick();
+      expect(host.querySelector(".hud2-stage")).not.toBeNull();
 
-    await click(findButton(host, "拟诏"));
-    await act(async () => {
-      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
-    });
-    const processBtn = Array.from(host.querySelectorAll("button")).find((b) => (b.textContent || "").includes("处理"));
-    expect(processBtn).toBeTruthy();
-    await click(processBtn);
-
-    await act(async () => {
-      await vi.waitFor(() => {
-        expect(host.querySelector('[role="dialog"][aria-label="政务失败恢复"]')).not.toBeNull();
+      await click(findButton(host, "拟诏"));
+      await act(async () => {
+        await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
       });
-    });
-    const dialog = host.querySelector('[role="dialog"][aria-label="政务失败恢复"]') as HTMLElement;
-    // 可见标题（main 未传 hideTitle）
-    expect(dialog.querySelector(".modal-title h1")?.textContent).toContain("政务失败恢复");
-    const modal = dialog.querySelector(".fullscreen-modal.modal-bg-chat");
-    expect(modal).not.toBeNull();
-    expect(modal!.classList.contains("modal-layout-bare")).toBe(false);
-    expect(dialog.querySelector(".modal-header-bare")).toBeNull();
+      const processBtn = Array.from(host.querySelectorAll("button")).find((b) => (b.textContent || "").includes("处理"));
+      expect(processBtn).toBeTruthy();
+      await click(processBtn);
+
+      await act(async () => {
+        await vi.waitFor(() => {
+          expect(host.querySelector('[role="dialog"][aria-label="政务失败恢复"]')).not.toBeNull();
+        });
+      });
+      const dialog = host.querySelector('[role="dialog"][aria-label="政务失败恢复"]') as HTMLElement;
+      // 可见标题（main 未传 hideTitle）
+      expect(dialog.querySelector(".modal-title h1")?.textContent).toContain("政务失败恢复");
+      const modal = dialog.querySelector(".fullscreen-modal.modal-bg-chat");
+      expect(modal).not.toBeNull();
+      expect(modal!.classList.contains("modal-layout-bare")).toBe(false);
+      expect(dialog.querySelector(".modal-header-bare")).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 
