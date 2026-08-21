@@ -1953,6 +1953,35 @@ class GameDB:
 
             CREATE INDEX IF NOT EXISTS idx_relation_edges_person
             ON relation_edge_events(source, target, event_kind, id);
+
+            -- #636 关系摘要层 S5：两段式摘要（奠基段机械只增不改＋近况段整段重酿，ID-9）。
+            -- 零数值强度字段（P4/ADR 0083）；结构字段首发集＝有向关系对、维度标记、
+            -- 奠基段、近况段、最近事件回指（last_event_id 水位）、最后重酿回合。
+            CREATE TABLE IF NOT EXISTS relation_summaries (
+                source TEXT NOT NULL,
+                target TEXT NOT NULL,
+                dimension TEXT NOT NULL CHECK (dimension IN ('君臣', '大臣')),
+                founding_segment TEXT NOT NULL DEFAULT '',
+                recent_segment TEXT NOT NULL DEFAULT '',
+                last_event_id INTEGER NOT NULL DEFAULT 0,
+                last_brewed_turn INTEGER NOT NULL DEFAULT 0,
+                last_brewed_year INTEGER NOT NULL DEFAULT 0,
+                last_brewed_period INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (source, target)
+            );
+
+            -- #636 S5（庭裁 r1 F1）：酿制失败月的持久 pending-backlog（保旧摘要、不阻塞结算）。
+            -- 成功路径＝摘要写入与 pending 清除同一 DB 事务原子落定（庭裁 r2 F1，ADR 0008 一脉）。
+            CREATE TABLE IF NOT EXISTS relation_brew_pending (
+                source TEXT NOT NULL,
+                target TEXT NOT NULL,
+                year INTEGER NOT NULL,
+                period INTEGER NOT NULL,
+                reason TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (source, target)
+            );
             """.replace("__AUTHORITY_PRIVILEGES__", AUTHORITY_PRIVILEGE_SQL_IN)
         )
         self._migrate_building_logs_to_durable_audit()
@@ -19966,6 +19995,123 @@ class GameDB:
     def read_credit_events_as_edges(self, records: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """0079 读侧契约适配；只返回边，不把 fixture 写入 0079 或本表。"""
         return credit_events_as_edges(records)
+
+    # ------------------------------------------------------------------
+    # #636 关系摘要层 S5：两段式存储＋月末增量重酿腿的持久化接缝。
+    # 摘要文本机械原样存取（LLM 自由文本零删改，CLAUDE.md P6/ADR 0142）；
+    # 奠基段只增不改、近况段覆盖式幂等由 apply 路机械保证。
+    # ------------------------------------------------------------------
+
+    def get_relation_summary(self, source: str, target: str) -> Optional[Dict[str, Any]]:
+        row = self.conn.execute(
+            "SELECT * FROM relation_summaries WHERE source = ? AND target = ?",
+            (str(source), str(target)),
+        ).fetchone()
+        return dict(row) if row is not None else None
+
+    def get_relation_summaries(self) -> List[Dict[str, Any]]:
+        rows = self.conn.execute(
+            "SELECT * FROM relation_summaries ORDER BY source, target"
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def apply_relation_brew_result(
+        self,
+        *,
+        source: str,
+        target: str,
+        dimension: str,
+        founding_segment: str,
+        recent_segment: str,
+        last_event_id: int,
+        turn: int,
+        year: int,
+        period: int,
+    ) -> None:
+        """摘要落定＋该关系 pending 清除在同一 DB 事务内原子落定（庭裁 r2 F1）。
+
+        近况段覆盖式幂等（禁半量累积）；奠基段由调用方拼好只增不改的结果传入。
+        任意缝失败→整体回滚→pending 保留→下次结算补酿。"""
+        if dimension not in ("君臣", "大臣"):
+            raise ValueError(f"未知关系维度: {dimension!r}")
+        owns = self.owns_transaction()
+        try:
+            self.conn.execute(
+                """
+                INSERT INTO relation_summaries
+                    (source, target, dimension, founding_segment, recent_segment,
+                     last_event_id, last_brewed_turn, last_brewed_year, last_brewed_period)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(source, target) DO UPDATE SET
+                    dimension = excluded.dimension,
+                    founding_segment = excluded.founding_segment,
+                    recent_segment = excluded.recent_segment,
+                    last_event_id = excluded.last_event_id,
+                    last_brewed_turn = excluded.last_brewed_turn,
+                    last_brewed_year = excluded.last_brewed_year,
+                    last_brewed_period = excluded.last_brewed_period,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (
+                    str(source), str(target), dimension,
+                    str(founding_segment), str(recent_segment),
+                    int(last_event_id), int(turn), int(year), int(period),
+                ),
+            )
+            self.conn.execute(
+                "DELETE FROM relation_brew_pending WHERE source = ? AND target = ?",
+                (str(source), str(target)),
+            )
+            if owns:
+                self.conn.commit()
+        except Exception:
+            # 故障注入验收缝（庭裁 r3 F1①）：摘要已写、事务未提交即崩→整体回滚，
+            # pending 仍在、摘要读回＝崩前旧值。
+            if owns:
+                try:
+                    self.conn.rollback()
+                except Exception:
+                    pass
+            raise
+
+    def mark_relation_brew_pending(
+        self,
+        *,
+        source: str,
+        target: str,
+        year: int,
+        period: int,
+        reason: str = "",
+    ) -> None:
+        """酿制失败的月份进持久 pending-backlog（庭裁 r1 F1）；保旧摘要、不阻塞结算。"""
+        owns = self.owns_transaction()
+        try:
+            self.conn.execute(
+                """
+                INSERT INTO relation_brew_pending (source, target, year, period, reason)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(source, target) DO UPDATE SET
+                    year = excluded.year,
+                    period = excluded.period,
+                    reason = excluded.reason
+                """,
+                (str(source), str(target), int(year), int(period), str(reason)),
+            )
+            if owns:
+                self.conn.commit()
+        except Exception:
+            if owns:
+                try:
+                    self.conn.rollback()
+                except Exception:
+                    pass
+            raise
+
+    def get_relation_brew_pending(self) -> List[Dict[str, Any]]:
+        rows = self.conn.execute(
+            "SELECT * FROM relation_brew_pending ORDER BY source, target"
+        ).fetchall()
+        return [dict(row) for row in rows]
 
     def close(self) -> None:
         self.conn.close()

@@ -20,6 +20,7 @@ from ming_sim.agents import (
     create_promulgation_judge_agent,
     create_ending_summary_agent,
     create_json_sanitizer_agent,
+    create_relation_brew_agent,
     create_score_extractor_module_agent,
     create_season_simulator_agent,
     parse_agent_json,
@@ -68,6 +69,7 @@ from ming_sim.decree_vocabulary import (
     qualitative_promulgation_slot,
 )
 from ming_sim.memories import build_timeline, record_chapter_memory
+from ming_sim.relation_brew import run_month_end_relation_brew
 from ming_sim.simulation import (
     EXTRACTION_MODULES,
     build_simulator_payload,
@@ -1379,6 +1381,7 @@ def _replay_settle(
         ending_summarizer=lambda d, s, oc: _generate_ending_summary(
             d, s, llm_config, agno_db, oc, _emit
         ),
+        relation_brew_runner=_make_relation_brew_runner(llm_config, agno_db),
         delta_applier=lambda d, s, ex, ct, rg: apply_score_extraction(
             d, s, ex, content=ct, registry=rg, llm_config=llm_config,
             candidate_event_ids_at_input=_candidate_event_ids_from_simulator_payload(simulator_payload),
@@ -1617,6 +1620,7 @@ def _settle_after_narrative(
         ending_summarizer=lambda d, s, oc: _generate_ending_summary(
             d, s, llm_config, agno_db, oc, _emit
         ),
+        relation_brew_runner=_make_relation_brew_runner(llm_config, agno_db),
         # 落库走捕获 llm_config 的闭包：issue/office 的通道感知 enrichment 才能按 active
         # channel 选后端（cli_backend_active(llm_config)）；结算核本体仍不见 llm_config。
         delta_applier=lambda d, s, ex, ct, rg: apply_score_extraction(
@@ -1902,6 +1906,22 @@ def pre_settle(
     return auto_triggered
 
 
+def _make_relation_brew_runner(llm_config: LLMConfig, agno_db: SqliteDb) -> Callable[[GameState, GameDB], object]:
+    """#636 S5：月末关系酿制腿的注入闭包（真实流程= LLM agent；driver= None 跳过）。
+
+    每条关系一个新 agent 实例（批内并行各自独享，不共享运行态）；输出零裁剪零 clamp
+    （庭裁 r1 F2），长度约束只走 prompt 正向输入契约。"""
+
+    def _run(state: GameState, db: GameDB) -> object:
+        def _brew_fn(payload_json: str) -> str:
+            agent = create_relation_brew_agent(llm_config, agno_db)
+            return run_agent_text(agent, payload_json, tag="relation-brew")
+
+        return run_month_end_relation_brew(db, state, _brew_fn)
+
+    return _run
+
+
 def settle_with_delta(
     state: GameState,
     db: GameDB,
@@ -1919,6 +1939,7 @@ def settle_with_delta(
     ending_summarizer=None,
     delta_applier=None,
     on_stage=None,
+    relation_brew_runner=None,
     source: Provenance = Provenance.unknown,
     dossier_verdicts: Optional[List[Dict[str, object]]] = None,
     dossier_rescript_actions: Optional[List[Dict[str, object]]] = None,
@@ -2044,6 +2065,14 @@ def settle_with_delta(
             collector.mirror_to_jsonl(rejections_jsonl_path())
         except Exception as mirror_exc:
             tlog(f"[rejection] jsonl 镜像失败（DB 行已落，仅副本丢失）：{mirror_exc}")
+    # #636 S5 月末关系酿制腿：结算事务已提交、本月边事件集定型后方启酿（ID-10 输入依赖
+    # 边界）。腿内批内并行（P5）；单条失败降级进 pending-backlog、保旧摘要，不阻塞结算；
+    # 腿整体异常也只降级记日志——结算结果已落定，不因酿制腿失败而败。探针 driver 传 None。
+    if relation_brew_runner is not None:
+        try:
+            relation_brew_runner(state, db)
+        except Exception as brew_exc:  # noqa: BLE001 — 酿制腿降级不阻塞结算
+            tlog(f"[relation-brew] 月末酿制腿整体失败降级（结算已落定）：{brew_exc}")
     return full_report
 
 
