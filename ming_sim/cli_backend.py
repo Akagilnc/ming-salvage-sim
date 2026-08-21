@@ -2149,6 +2149,10 @@ def extract_draft_intent(
                     ("期限月数", "deadline_months"),
                 )
             }
+            # #653：pay_order_override 结构化载荷（entries）随草案整道转交，
+            # 成案点/物化点共 prepare_pay_order_entries 同一验形。
+            if value.get("entries") is not None:
+                mechanical["entries"] = value.get("entries")
             drafts.append({
                 "draft_action": "拟旨", "draft_text": text,
                 "dossier_action_type": action, "target_kind": target_kind,
@@ -2184,7 +2188,12 @@ def extract_draft_intent(
         '  "动作类型": "policy|approve_reject|assignment|'
         'grant_allocation|authorization|secret_authorization|secret_investigation|'
         'protection|strategy_selection|punishment|pacification|referral|'
-        'revoke_decree|revoke_authority|dismiss_assignment|military_order",\n'
+        'revoke_decree|revoke_authority|dismiss_assignment|military_order|'
+        'pay_order_override",\n'
+        '  "entries": [],              // 仅 pay_order_override：偿还序/折发调整清单，\n'
+        '                             // 形如 [{"key":"due_haircut_bp_宗禄","value":5000,"until_turn":null}]；\n'
+        '                             // key∈due_priority_<科目>[@省]/arrears_priority_<欠科目>[@省]/'
+        'due_haircut_bp_<科目>[@省][#province|#central]；haircut 值=万分数(0,10000]；非该动作留 []\n'
         '  "目标类型": "policy|character|office|army|region|issue|account",\n'
         '  "目标ID": "",\n'
         '  "颁布方式": "普通|中旨直发", // 皇帝预先声明中旨直发时选后者\n'
@@ -2262,6 +2271,8 @@ def extract_draft_intent(
         "execution_surface": obj.get("执行面"),
         "assignee": obj.get("承办人"),
         "deadline_months": obj.get("期限月数"),
+        # #653：pay_order_override 结构化载荷随 capture 整道转交（禁旁路）。
+        "entries": obj.get("entries"),
     }
     mode = _directive_mode(obj.get("颁布方式"))
     if mode is not None:
@@ -2405,7 +2416,7 @@ def capture_manual_directive_payload(
     }
     for field in (
         "amount", "account", "execution_surface", "assignee",
-        "deadline_months", "participant_roster",
+        "deadline_months", "participant_roster", "entries",
     ):
         if captured.get(field) not in (None, ""):
             payload[field] = captured[field]

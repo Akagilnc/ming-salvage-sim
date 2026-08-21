@@ -11037,6 +11037,12 @@ class GameDB:
                     normalized.pop("delta", None)
                 # #1503：拨饷/协饷类 — 成案即结构化补饷载荷；缺字段 fail-loud，不猜散文。
                 normalized = self._normalize_army_pay_grant_payload(normalized)
+        elif action == "pay_order_override":
+            # #653：结构化载荷 presence 在指令归一边界先验（键形/值域/幻影 region
+            # 仍由成案点与物化点共 prepare_pay_order_entries 同一验形，不在此重复）。
+            entries = normalized.get("entries")
+            if not isinstance(entries, list) or not entries:
+                raise ValueError("pay_order_override 旨意缺少 entries 结构化载荷")
         elif action in {
             "assignment", "authorization", "secret_authorization", "military_order",
         }:
