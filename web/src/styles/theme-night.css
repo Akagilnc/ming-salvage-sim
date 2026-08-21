@@ -60,6 +60,13 @@
   margin-top: 8px;
   padding: 12px 0 calc(12px + clamp(8px, 2vh, 24px));
 }
+/* #1486：长卷底缘裁切行与「朕知道了」区视觉叠层。
+   根因= .modal-bg-gazette * { background:transparent } 让 dismiss 全透，
+   卷轴 overflow 底缘的半裁切行/字影与按钮同带混层。
+   单治：dismiss 以更高特异性补不透明底，正文与按钮区分层（不改滚动链、不加第二机制）。 */
+.modal-bg-gazette .gazette-dismiss {
+  background: rgba(6, 6, 9, 0.94);
+}
 .gazette-dismiss-btn {
   min-width: 9.5em;
   min-height: 44px;

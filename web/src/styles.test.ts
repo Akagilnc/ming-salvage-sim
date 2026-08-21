@@ -66,6 +66,17 @@ describe("#1398 邸报朕知道了视口常显", () => {
   });
 });
 
+describe("#1486 邸报底栏不与卷轴末行混层", () => {
+  it("modal-bg-gazette 下 dismiss 有实底，压过 * transparent", () => {
+    // 行为面：按钮区自带实底，不与卷轴底缘半裁切行共透底层
+    const starred = styles.match(/\.modal-bg-gazette\s+\*\s*\{[^}]*\}/)?.[0] || "";
+    expect(starred).toMatch(/background:\s*transparent/);
+    const dismiss = styles.match(/\.modal-bg-gazette\s+\.gazette-dismiss\s*\{[^}]*\}/)?.[0] || "";
+    expect(dismiss).toMatch(/background:\s*rgba\(/);
+    expect(dismiss).not.toMatch(/background:\s*transparent/);
+  });
+});
+
 describe("#1475 召对顶栏回收版面", () => {
   it("chat 大横幅轨不压过 modal-header-bare（hideTitle 时高度归零）", () => {
     // 大字居中横幅 min-height:78px 不得以更高特异性压过 bare 的 min-height:0，
