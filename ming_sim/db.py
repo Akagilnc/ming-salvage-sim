@@ -16538,16 +16538,30 @@ class GameDB:
             # a failure while recording cannot leave the appointment adopted
             # without its auditable recommendation.
             if isinstance(recommendation, dict):
+                # #635 荐人口（庭裁 r3）：荐词（payload.reason 原句）是双边的一句
+                # 语境，非空必填；缺失即在调用方事务内 fail-loud，任命与双边一并
+                # 回滚（ADR 0079/0082 零模板、P1 失败诚实）。原句逐字透传，
+                # 只以 strip 判空、不裁剪持久化文本。
+                recommendation_reason = str(payload.get("reason") or "")
+                if not recommendation_reason.strip():
+                    raise ValueError("荐人双边缺非空荐词语境：payload.reason 必填")
+                from ming_sim.recommendations import record_recommendation_edges
                 with atomic(self):
                     res = apply_office_appointment(
                         self, state, content, registry, name, office,
-                        reason=reason, new_office_type=office_type,
+                        reason=recommendation_reason, new_office_type=office_type,
                         faction=faction, appointment_tenure=appointment_tenure,
                         llm_config=self.llm_config, commit=False)
                     accepted = not res.get("rejected")
                     if accepted:
-                        self.record_recommendation(
-                            state, recommender, staged_candidate, office, reason,
+                        event_id = self.record_recommendation(
+                            state, recommender, staged_candidate, office,
+                            recommendation_reason,
+                        )
+                        record_recommendation_edges(
+                            self, state, recommender,
+                            str(staged_candidate.get("name") or ""),
+                            event_id, recommendation_reason,
                         )
                     return accepted
             res = apply_office_appointment(
@@ -19945,10 +19959,12 @@ class GameDB:
         game_state 行即可。"""
         source = str(source or "").strip()
         target = str(target or "").strip()
-        context = str(context or "").strip()
+        # 语境是叙事原句，写口零改字（ADR 0079/0080/0142）：只以 strip 判空，
+        # 持久化与下传保持逐字原文。
+        context = str(context or "")
         if not source or not target:
             raise ValueError("边事件 source/target 不能为空")
-        if not context:
+        if not context.strip():
             raise ValueError("边事件语境不能为空")
         kind = validate_edge_kind(event_kind)
         evidence_flag = normalize_evidence(evidence)
