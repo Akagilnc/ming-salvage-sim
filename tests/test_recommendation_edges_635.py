@@ -150,6 +150,33 @@ def test_second_leg_failure_rolls_back_everything(game, monkeypatch):
     assert char_row["office"] != "巡盐御史"
 
 
+def test_replay_same_event_with_changed_reason_stays_two_rows(game):
+    """r1 F2：幂等身份只锚稳定 origin（recommendation:{id}:{腿别}+|round 口径），
+    不含可变 context——同 event_id 换荐词重放，恒 2 行且原文不被改写。"""
+    from ming_sim.recommendations import record_recommendation_edges
+
+    db, state, content = game
+    recommender = _pick_recommender(content)
+    row = db.list_recommendation_candidates(state, recommender.name)[0]
+    reason1 = "旧任有实绩，罢居后仍可起复"
+    grace1, zhiyu1 = record_recommendation_edges(
+        db, state, recommender.name, row["name"], 501, reason1)
+
+    # 换 reason、甚至跨回合重放同一事件 id。
+    state.turn = int(state.turn) + 3
+    reason2 = "改口：边才可用，堪当巡盐"
+    grace2, zhiyu2 = record_recommendation_edges(
+        db, state, recommender.name, row["name"], 501, reason2)
+
+    assert (grace1, zhiyu1) == (grace2, zhiyu2)
+    legs = [e for e in db.get_relation_edge_events()
+            if str(e["origin"]).startswith("recommendation:501:")]
+    assert len(legs) == 2
+    assert {e["event_kind"] for e in legs} == {"恩义", "知遇"}
+    # 原 context 不被重放改写。
+    assert all(e["context"] == reason1 for e in legs)
+
+
 def test_appointment_without_recommendation_writes_no_edges(game):
     """生成侧缺席时接口幂等待命：无 recommendation 载荷不落边、不阻塞其他写端。"""
     db, state, content = game
