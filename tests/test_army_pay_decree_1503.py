@@ -595,8 +595,8 @@ def test_extractor_cannot_second_write_army_pay_for_payload_dossier(game):
 
 
 def test_closed_army_pay_dossier_keeps_origin_in_extractor_input(game):
-    """#1503 provenance：immediate 结案后 extractor 输入仍见 dossier:<id>。"""
-    from ming_sim.simulation import build_extractor_shared_context
+    """#1503 provenance：closed 拨饷 origin 仅 internal 可见（module 门控双向）。"""
+    from ming_sim.simulation import EXTRACTION_MODULES, build_extractor_shared_context
 
     db, state, content = game
     _set_guanning_arrears(db, 40, central=40, province=0)
@@ -618,6 +618,7 @@ def test_closed_army_pay_dossier_keeps_origin_in_extractor_input(game):
         for r in db.list_closed_army_pay_dossiers_for_provenance(state.turn)
     }
 
+    # 正向：唯一拥有 economy_moves 的 internal 能见 closed 拨饷 provenance。
     payload = build_extractor_shared_context(
         db, state, narrative="", decree_text="", module="internal",
     )
@@ -626,6 +627,18 @@ def test_closed_army_pay_dossier_keeps_origin_in_extractor_input(game):
     assert hit is not None
     assert hit["origin_ref"] == f"dossier:{did}"
     assert hit["action_type"] == "grant_allocation"
+
+    # 负向：其余 extractor 不因本修复新增 closed 拨饷案卷输入面。
+    non_internal = tuple(m for m in EXTRACTION_MODULES if m != "internal")
+    assert non_internal == ("military_external", "issues", "personnel_secret")
+    for module in non_internal:
+        other = build_extractor_shared_context(
+            db, state, narrative="", decree_text="", module=module,
+        )
+        other_ids = {int(r["id"]) for r in (other.get("decree_dossiers") or [])}
+        assert did not in other_ids, (
+            f"module={module!r} 不应吃 closed 拨饷 provenance；ids={sorted(other_ids)}"
+        )
 
 
 def test_independent_panmian_zifa_pay_lands_alongside_decree_pay(game):

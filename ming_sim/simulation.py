@@ -1034,6 +1034,9 @@ def build_extractor_shared_context(
     #1483：current_state/regions/active_issues 在 simulator 侧是 P4 定性档；仅
     module=='issues' 再注入这三字段的 engine 裸数（阈值对照）。其余模块不吃全量拷贝。
 
+    #1503：本回合已关闭拨饷案卷 provenance 仅 module=='internal' 合并
+    （economy_moves 单写者）；其余 extractor 不新增 closed dossier 输入面。
+
     #883: only the secret-order extractor may receive order prose.  The public
     monthly judge and all other extractors must see a disclosure event after
     promotion, never an undisclosed order beforehand.
@@ -1050,10 +1053,12 @@ def build_extractor_shared_context(
         if decree_dossiers is not None
         else db.list_decree_dossiers_for_simulation(state.turn)
     )
-    # #1503：immediate 拨饷颁布即 close，模拟可见集不再含该案；extractor 输入须
-    # 仍见 origin_ref=dossier:<id>，使回声带 dossier 身份，由
+    # #1503：immediate 拨饷颁布即 close，模拟可见集不再含该案；仅 internal
+    # （MODULE_FIELDS 独占 economy_moves）extractor 输入须仍见
+    # origin_ref=dossier:<id>，使回声带 dossier 身份，由
     # _payload_owned_dossier_for_origin 单写者判重（勿把独立盘面自发一并吞掉）。
-    if decree_dossiers is None:
+    # 同 #1495 issues-only 门控：其余模块不吃 closed 拨饷 provenance。
+    if decree_dossiers is None and module == "internal":
         seen_ids = {int(row["id"]) for row in authorized_dossiers}
         extra = []
         for row in db.list_closed_army_pay_dossiers_for_provenance(state.turn):
