@@ -15,6 +15,7 @@ from ming_sim.llm_config import (
     is_dashscope_base_url,
     is_deepseek_base_url,
     is_minimax_base_url,
+    openai_model_id_without_provider,
     provider_extra_body,
     supports_openai_reasoning_effort,
 )
@@ -36,10 +37,11 @@ _THINKING_BUDGET_BY_STRENGTH = {
 
 def _openai_reasoning_effort(model: str, reasoning_strength: str, thinking_level: str, enable_thinking: bool) -> str:
     if reasoning_strength == "off":
-        model_id = (model or "").strip().lower()
+        model_id = openai_model_id_without_provider(model)
         # 关思考：按族默认，禁止再续 gpt-5.x 版本清单（#1452 gpt-5.6 曾掉表外→minimal）。
-        # 遗留 o1 只认 minimal；gpt-5* / o3 / o4 及未知新族默认 none。
-        if model_id.startswith("o1"):
+        # o1/o3/o4 只认 minimal（#1461：o3/o4 发 none 会被不支持的 provider 拒）；
+        # gpt-5* 及未知新族默认 none。
+        if model_id.startswith(("o1", "o3", "o4")):
             return "minimal"
         return "none"
     if reasoning_strength:
