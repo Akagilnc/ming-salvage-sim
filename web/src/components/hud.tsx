@@ -380,23 +380,26 @@ export function BudgetList({ title, items, expense = false }: { title: string; i
 
 // 底部命令物件：扣图按木牌坑定位，文字标签按独立文字坑定位（两者分离，各自调位）
 export function CommandSlot({
-  slotKey, img, badge, caption, sub, onClick, className,
+  slotKey, img, badge, caption, sub, onClick, className, blocked = false,
 }: {
   slotKey: keyof typeof HUD_SLOTS.命令;
   img: string; badge?: number; caption: string; sub: string; onClick: () => void;
   /** 可选修饰类（如 #1454 台开收起态）。 */
   className?: string;
+  /** #1458：拟诏台开着时其余底栏命令禁用——安全区整条开洞不得把 activeModal 切走。 */
+  blocked?: boolean;
 }) {
-  const extra = className ? ` ${className}` : "";
+  const extra = `${className ? ` ${className}` : ""}${blocked ? " hud-cmd-blocked-by-edict" : ""}`;
+  const handleClick = blocked ? undefined : onClick;
   return (
     <>
-      <button className={`hud2-cmd${extra}`} style={HUD_SLOTS.命令[slotKey]} onClick={onClick}
-        aria-label={`${caption}：${sub}`}>
+      <button className={`hud2-cmd${extra}`} style={HUD_SLOTS.命令[slotKey]} onClick={handleClick}
+        aria-label={`${caption}：${sub}`} aria-disabled={blocked || undefined}>
         <img className="hud2-cmd-img" src={`/ui/exact/cmd/${img}.png`} alt="" />
         {badge ? <span className="hud2-cmd-badge">{badge}</span> : null}
       </button>
       <button className={`hud2-slot hud2-cmd-caption${extra}`} style={HUD_SLOTS.命令文字[slotKey]}
-        onClick={onClick} aria-label={`${caption}：${sub}`}>
+        onClick={handleClick} aria-label={`${caption}：${sub}`} aria-disabled={blocked || undefined}>
         <b>{caption}</b><small>{sub}</small>
       </button>
     </>
@@ -431,7 +434,7 @@ export function FullscreenModal({
       aria-label={title}
     >
       <div className="fullscreen-scrim" onClick={onClose} />
-      <div className={`fullscreen-modal ${bgClass || ""}`}>
+      <div className={["fullscreen-modal", bgClass, hideTitle ? "modal-layout-bare" : ""].filter(Boolean).join(" ")}>
         <header className={`modal-header ${hideTitle ? "modal-header-bare" : ""}`}>
           {!hideTitle && (
             <div className="modal-title">

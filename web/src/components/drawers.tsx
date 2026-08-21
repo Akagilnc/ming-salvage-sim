@@ -31,7 +31,12 @@ export function MinisterCardList({
   const closedTitle = chatEntryEnabled ? undefined : settlementClosedReason(phase);
   const containerRef = React.useRef<HTMLDivElement>(null);
   const [positions, setPositions] = React.useState<Record<string, { px: number; py: number }>>({});
-  const savedPosRef = React.useRef<Record<string, { px: number; py: number }> | null>(null);
+  /** #1463：已提交基线（null=GET 未回）；脏键与 pending 是其上的本地增量，合并/保存只走这一真源。 */
+  const baselineRef = React.useRef<Record<string, { px: number; py: number }> | null>(null);
+  const dirtyRef = React.useRef<Record<string, { px: number; py: number }>>({});
+  const pendingSaveRef = React.useRef(false);
+  const listRef = React.useRef(list);
+  listRef.current = list;
   const dragging = React.useRef<{ name: string; startMX: number; startMY: number; startPX: number; startPY: number } | null>(null);
   const didDrag = React.useRef(false);
 
@@ -64,71 +69,86 @@ export function MinisterCardList({
     return s ? { px: s.px, py: s.py } : null;
   }
 
-  // 拖动覆盖坐标只加载一次。list 变化只重排，不重 fetch。
-  const listKey = list.map((m) => m.name).join("|");
+  // 视位 = 已提交基线 ∪ 脏键（GET 前基线当 {}）。
+  const viewLayout = React.useCallback(
+    () => ({ ...(baselineRef.current || {}), ...dirtyRef.current }),
+    [],
+  );
+
+  const arrange = React.useCallback((saved: Record<string, { px: number; py: number }>) => {
+    const curList = listRef.current;
+    const allSlots = courtSlots();
+    const next: Record<string, { px: number; py: number }> = {};
+    const usedSlots = new Set<string>();
+
+    // 固定槽：同 role 仅首名占座，次名起留给下方自由槽分配（ADR 0064 同衔并存合法，呈现层去叠）
+    curList.forEach((m) => {
+      const role = roleFromOffice(m.office || "");
+      const fixed = fixedSlotFor(role);
+      if (!fixed) return;
+      const fs = FIXED_SLOTS.find((f) => f.role === role);
+      if (!fs) return;
+      const key = `${fs.side}:${fs.slot}`;
+      if (usedSlots.has(key)) return; // 次名起降级自由槽
+      next[m.name] = fixed;
+      usedSlots.add(key);
+    });
+
+    curList.forEach((m) => {
+      if (next[m.name]) return;
+      if (saved[m.name]) {
+        const cur = saved[m.name];
+        let best = allSlots.find((s) => !usedSlots.has(`${s.side}:${s.slot}`)) ?? allSlots[0];
+        let bestD = Infinity;
+        for (const s of allSlots) {
+          if (usedSlots.has(`${s.side}:${s.slot}`)) continue;
+          const d = Math.hypot(s.px - cur.px, s.py - cur.py);
+          if (d < bestD) { bestD = d; best = s; }
+        }
+        usedSlots.add(`${best.side}:${best.slot}`);
+        next[m.name] = { px: best.px, py: best.py };
+      } else {
+        const slot = allSlots.find((s) => !usedSlots.has(`${s.side}:${s.slot}`));
+        if (slot) {
+          usedSlots.add(`${slot.side}:${slot.slot}`);
+          next[m.name] = { px: slot.px, py: slot.py };
+        } else {
+          next[m.name] = { px: 0.5, py: 0.532 };
+        }
+      }
+    });
+    setPositions(next);
+  }, []);
+
+  // 合并脏键入基线并 POST 一次——唯一保存真源。
+  const commitSave = React.useCallback(() => {
+    const merged = viewLayout();
+    baselineRef.current = merged;
+    dirtyRef.current = {};
+    saveCourtPos(merged);
+  }, [viewLayout]);
+
+  // #1463：布局加载只随挂载/卸载，不被 list 重排 cancel。
   React.useEffect(() => {
     let cancelled = false;
-    const arrange = (saved: Record<string, { px: number; py: number }>) => {
+    // #1290/#1332：GET 空 {} 合法；先默认落座不堵首屏，回包再合并脏键。
+    loadCourtPos().then((saved) => {
       if (cancelled) return;
-      const allSlots = courtSlots();
-      const next: Record<string, { px: number; py: number }> = {};
-      const usedSlots = new Set<string>();
-
-      // 固定槽：同 role 仅首名占座，次名起留给下方自由槽分配（ADR 0064 同衔并存合法，呈现层去叠）
-      list.forEach((m) => {
-        const role = roleFromOffice(m.office || "");
-        const fixed = fixedSlotFor(role);
-        if (!fixed) return;
-        const fs = FIXED_SLOTS.find((f) => f.role === role);
-        if (!fs) return;
-        const key = `${fs.side}:${fs.slot}`;
-        if (usedSlots.has(key)) return; // 次名起降级自由槽
-        next[m.name] = fixed;
-        usedSlots.add(key);
-      });
-
-      list.forEach((m) => {
-        if (next[m.name]) return;
-        if (saved[m.name]) {
-          const cur = saved[m.name];
-          let best = allSlots.find((s) => !usedSlots.has(`${s.side}:${s.slot}`)) ?? allSlots[0];
-          let bestD = Infinity;
-          for (const s of allSlots) {
-            if (usedSlots.has(`${s.side}:${s.slot}`)) continue;
-            const d = Math.hypot(s.px - cur.px, s.py - cur.py);
-            if (d < bestD) { bestD = d; best = s; }
-          }
-          usedSlots.add(`${best.side}:${best.slot}`);
-          next[m.name] = { px: best.px, py: best.py };
-        } else {
-          const slot = allSlots.find((s) => !usedSlots.has(`${s.side}:${s.slot}`));
-          if (slot) {
-            usedSlots.add(`${slot.side}:${slot.slot}`);
-            next[m.name] = { px: slot.px, py: slot.py };
-          } else {
-            next[m.name] = { px: 0.5, py: 0.532 };
-          }
-        }
-      });
-      setPositions(next);
-    };
-
-    if (savedPosRef.current !== null) {
-      arrange(savedPosRef.current);
-    } else {
-      // #1290/#1332：GET /api/court_layout 空 {} 是合法态（玩家尚未拖拽覆盖，无 seed）。
-      // 先按 office→courtSlots 默认朝班落座，卡片不堵在 fetch；有覆盖再重排。
-      // fetch 返回前若玩家已拖（savedPosRef 已写），不以服务端回滚本地。
-      arrange({});
-      loadCourtPos().then((saved) => {
-        if (cancelled) return;
-        if (savedPosRef.current !== null) return;
-        savedPosRef.current = saved;
-        arrange(saved);
-      });
-    }
+      baselineRef.current = saved;
+      arrange(viewLayout());
+      if (pendingSaveRef.current) {
+        pendingSaveRef.current = false;
+        commitSave();
+      }
+    });
     return () => { cancelled = true; };
-  }, [listKey]);
+  }, [arrange, viewLayout, commitSave]);
+
+  // list 变化只重排，不重 fetch。
+  const listKey = list.map((m) => m.name).join("|");
+  React.useEffect(() => {
+    arrange(viewLayout());
+  }, [listKey, arrange, viewLayout]);
 
   const onMouseDown = (e: React.MouseEvent, name: string) => {
     if ((e.target as HTMLElement).closest(".portrait-upload-btn")) return;
@@ -149,11 +169,12 @@ export function MinisterCardList({
       const npx = Math.max(0, Math.min(1, dragging.current.startPX + dx / width));
       const npy = Math.max(0, Math.min(1, dragging.current.startPY + dy / height));
       setPositions((prev) => {
-        // 拖动中只更新视图与暂存，不写库——一次拖动数十个 mousemove，
+        // 拖动中只更新视图与脏键，不写库——一次拖动数十个 mousemove，
         // fire-and-forget POST 乱序到达会让旧坐标覆盖新坐标；持久化只在松手时做一次。
-        const next = { ...prev, [dragging.current!.name]: { px: npx, py: npy } };
-        savedPosRef.current = next;
-        return next;
+        const name = dragging.current!.name;
+        const pos = { px: npx, py: npy };
+        dirtyRef.current = { ...dirtyRef.current, [name]: pos };
+        return { ...prev, [name]: pos };
       });
     };
     const onUp = () => {
@@ -185,8 +206,13 @@ export function MinisterCardList({
           // 找吸附目标
           const snapped = fixed ?? snapToSlot(cur.px, cur.py, occupied, "");
           const next = { ...prev, [dragName]: snapped };
-          savedPosRef.current = next;
-          saveCourtPos(next);
+          dirtyRef.current = { ...dirtyRef.current, [dragName]: snapped };
+          // #1463：基线未就绪则挂 pending，合并后再走唯一 commitSave；就绪则立即提交。
+          if (baselineRef.current === null) {
+            pendingSaveRef.current = true;
+          } else {
+            commitSave();
+          }
           return next;
         });
       }
