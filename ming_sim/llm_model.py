@@ -293,8 +293,11 @@ def verify_llm_available(llm_config: LLMConfig) -> None:
         try:
             extract_agent_text(run_output)
         except LLMUnavailable:
-            # docstring 本义：调用成功即过，不校验返回内容。空 content（含 ERROR status
-            # 但正文为空——推理耗尽等）不作失败；非空正文的真错（认证标记等）仍上抛。
+            # #1455：status=ERROR/FAILED 是权威失败信号（_run_output_status_is_error），
+            # 空正文也不能证明「只是推理 token 耗尽」——保留失败语义上抛。
+            # 仅无错误 status 的空 content（真·调用成功但无正文）才按烟测「不校验返回内容」放行。
+            if _run_output_status_is_error(run_output):
+                raise
             content = getattr(run_output, "content", None)
             if content is None or not str(content).strip():
                 return
