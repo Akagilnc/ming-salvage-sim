@@ -8,14 +8,18 @@
 编排约束：
 - 选中判据＝该 settled 年月新增边事件（id > 水位）∨ 存在 pending（庭裁 r1 F1）——
   历史月份的未酿旧事件不得选中无本月新事件的关系（「本月新增」总判据）。
-- 认领先行（庭裁 r2/r3 F1）：入选关系在酿造开始前先作 durable claim（pending 落盘
-  提交）——生产路径在结算事务内与本月边事件同生共死；任意缝崩溃→pending 在册
-  →下次结算补酿。pending 不靠失败后 catch 补记。
-- 输入依赖边界（ID-10）：本月边事件集定型后方启酿；腿内批内条目无依赖必并行（P5）。
-- 单条失败降级：保旧摘要＋事件已在流水＋认领已在册，不阻塞结算。
+- 认领先行（庭裁 r2/r3 F1）：入选关系在酿造开始前先作 durable claim（pending 落盘）
+  ——生产路径在结算事务内与本月边事件同生共死；任意缝崩溃→pending 在册→下次
+  结算补酿。pending 不靠失败后 catch 补记。
+- 输入依赖边界（ID-10）：本月边事件集定型后方启酿；腿内批内条目无依赖必并行（P5）；
+  生产路径由 settle_with_delta 把 brew() 放进唯一一条受管 Future，使 LLM 等待与无
+  依赖的 chapter/ending 等后处理重叠，摘要持久化前 join、异常路排空丢弃。
+- 异常边界（ADR 0005/0008）：prepare/persist 两段是 DB 相——claim/apply/mark 的
+  DB/schema/程序错误响亮上抛，绝不降级；只有 brew() 段的单条 LLM 调用或其结构化
+  输出契约失败走降级留痕（保旧摘要＋事件已在流水＋认领已在册，不阻塞结算）。
 - 成功路径＝摘要写入与 pending 清除同一 DB 事务原子落定（庭裁 r2 F1）。
-- settled 年月快照由 decree 在 next_period 之前取定并传入；state 在腿启动时已被
-  推进到下一个月，一律不得直读 state 年月落款。
+- settled 年月快照由 decree 在 next_period 之前取定并传入；一律不得直读 state 年月
+  落款（直调路径回落调用时的 state——此时 state 仍指被结算的那个月）。
 """
 
 from __future__ import annotations
@@ -151,25 +155,165 @@ def parse_brew_output(raw: str, stage: str = "关系酿制") -> Dict[str, Any]:
 
 
 def merge_founding_segment(old_founding: str, new_foundings: List[str]) -> str:
-    """奠基段机械只增不改（ID-9；P6/ADR 0142 零删改）：旧段与新字符串逐字保留。
+    """奠基段机械只增不改（ID-9；P6/ADR 0142 零删改）：零解析零推断的合并。
 
-    只允许两种机械操作：①严格字节相等的去重（与既有行或已追加句逐字全等才跳过，
-    补酿不重复记账）；②结构追加（新句以单个换行符接在段尾）。禁对既有字节做
-    任何改写——split 滤空行、strip 首尾空白、rejoin 一律不用：旧段的空行、末尾
-    换行、新句的首尾空白全部原样。空字符串条目是结构空操作，跳过。"""
+    对旧段不做任何拆行/滤空/集合推断——「按行拆分＋候选各行都已在段内即判重」
+    会把整条多行候选误删（机械反例：旧段 '甲\\n中\\n乙' 配候选 '甲\\n乙'，候选的
+    每一行各自都在段内，行集合推断即把整条候选吞掉）。唯一两种机械操作：
+    ①严格字节相等去重——候选与旧段整体或本批已追加条目逐字全等才跳过（补酿整段
+    原样重报不重复记账）；②其余候选连同其内部换行、首尾空白逐字完整追加（以单个
+    换行符接在段尾）。禁对任何字节做改写：空行、末尾换行、首尾空白全部原样。
+    空字符串条目是结构空操作，跳过。"""
     old = str(old_founding)
-    seen = set(old.split("\n"))
+    known = {old} if old else set()
     parts = [old] if old else []
-    for line in new_foundings:
-        text = str(line)
-        if not text or text in seen:
+    for item in new_foundings:
+        text = str(item)
+        if not text or text in known:
             continue
-        entry_lines = text.split("\n")
-        if all(part in seen for part in entry_lines):
-            continue  # 整条逐字已全在段内（含跨行重报），不重复追加（补酿不重复记账）
-        seen.update(entry_lines)
+        known.add(text)
         parts.append(text)
     return "\n".join(parts)
+
+
+class MonthEndRelationBrewLeg:
+    """月末增量重酿腿的三段生命周期对象（ID-10/P5；settle_with_delta 单点编排）。
+
+    prepare()＝DB 相（主线程、可在结算事务内运行）：选中、认领、备料。brew()＝LLM
+    相（零 DB 访问，可放进 Future 与 chapter/ending 重叠跑）。persist()＝DB 相
+    （主线程、必须在结算事务提交之后）：apply/mark 落定。异常边界（ADR 0005/0008）：
+    DB/schema/程序错误在任何一段都响亮上抛；只有 brew() 内单条 LLM 调用或其结构化
+    输出契约失败降级留痕。brew_fn(rendered_payload) -> LLM 原始文本（生产＝
+    run_agent_text 闭包；测试注入确定性假手）。
+
+    settled_turn/year/period＝被结算月份的快照（decree 在 next_period 之前取定
+    传入）；None 时回落当前 state（直调路径，state 尚未推进）。"""
+
+    def __init__(
+        self,
+        db: Any,
+        state: GameState,
+        brew_fn: Callable[[str], str],
+        *,
+        settled_turn: Optional[int] = None,
+        settled_year: Optional[int] = None,
+        settled_period: Optional[int] = None,
+        max_workers: int = 4,
+        parallel: bool = True,
+    ) -> None:
+        self._db = db
+        self._brew_fn = brew_fn
+        self._parallel = bool(parallel)
+        self._max_workers = int(max_workers)
+        # settled 年月快照：生产路径由 decree 在 next_period 之前取定传入；直调
+        # （测试/探针）回落构造时的 state——此时 state 仍指被结算的那个月。
+        self.turn = int(settled_turn) if settled_turn is not None else int(state.turn)
+        self.year = int(settled_year) if settled_year is not None else int(state.year)
+        self.period = int(settled_period) if settled_period is not None else int(state.period)
+        self.jobs: List[Dict[str, Any]] = []
+        self.outcomes: List[Tuple[Dict[str, Any], Optional[Dict[str, Any]], Optional[Exception]]] = []
+        self.report: Dict[str, Any] = {
+            "selected": 0,
+            "brewed": [],
+            "degraded": [],
+            "skipped_events": 0,
+        }
+
+    def prepare(self) -> bool:
+        """DB 相：选中＋认领先行＋备料。有入选关系返回 True（可启酿），否则 False。
+
+        认领先行（庭裁 r2/r3 F1）：入选关系在酿造开始前先把 pending 落盘——生产
+        路径在结算事务内与本月边事件同生共死；任意缝崩溃→pending 在册→下次结算
+        补酿；pending 不靠失败后 catch 补记。本相任何 DB/schema/程序错误响亮上抛
+        （ADR 0005/0008）：无 durable claim 就开酿会让失败月失去恢复凭据，宁可不酿。"""
+        targets = select_brew_targets(self._db, year=self.year, period=self.period)
+        self.report["selected"] = len(targets)
+        if not targets:
+            return False
+        self._db.claim_relation_brew_targets(year=self.year, period=self.period)
+        # 输入先串行备好（纯计算、确定性，不含 LLM 调用），brew() 才能零 DB 并行。
+        jobs: List[Dict[str, Any]] = []
+        for item in targets:
+            new_events = collect_new_edge_events(
+                self._db, source=item["source"], target=item["target"],
+                watermark=item["watermark"],
+            )
+            jobs.append({
+                **item,
+                "new_events": new_events,
+                "input": build_brew_input(
+                    source=item["source"], target=item["target"],
+                    dimension=item["dimension"], year=self.year, period=self.period,
+                    summary=item["summary"], new_events=new_events,
+                    has_pending=item["has_pending"],
+                ),
+            })
+        self.jobs = jobs
+        return True
+
+    def _brew_one(self, job: Dict[str, Any]) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]], Optional[Exception]]:
+        # payload 备制是纯程序逻辑：其错误属代码侧错（ADR 0005），不在降级面内，
+        # 响亮上抛。try 只包 LLM 调用与其输出的结构化契约校验——仅此两类是 LLM 单
+        # 条失败，降级留痕保旧摘要。
+        payload = render_brew_user_payload(job["input"])
+        try:
+            raw = self._brew_fn(payload)
+            parsed = parse_brew_output(raw)
+        except Exception as exc:  # noqa: BLE001 — 仅 LLM 调用/输出契约失败：单条降级
+            return job, None, exc
+        return job, parsed, None
+
+    def brew(self) -> None:
+        """LLM 相：批内条目间无依赖必并行（P5）。零 DB 访问——可在 Future 中与
+        chapter/ending 等无依赖后处理重叠（ID-10）；结果存 self.outcomes 待 persist。"""
+        if not self.jobs:
+            self.outcomes = []
+            return
+        if self._parallel and len(self.jobs) > 1:
+            workers = max(1, min(int(self._max_workers), len(self.jobs)))
+            tlog(f"[relation-brew] 批内并行酿制 {len(self.jobs)} 条关系（workers={workers}）")
+            with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="relation-brew") as pool:
+                self.outcomes = list(pool.map(self._brew_one, self.jobs))
+        else:
+            self.outcomes = [self._brew_one(job) for job in self.jobs]
+
+    def persist(self) -> Dict[str, Any]:
+        """DB 相（结算提交后）：逐条落定/降级留痕，返回机械报告。
+
+        apply/mark 是摘要与 pending 真源的 DB 写——失败响亮上抛（ADR 0005/0008），
+        绝不伪装成 LLM 单条失败；认领先行下 pending 凭据已持久，落定失败由外层
+        响亮处置而非就地吞掉。"""
+        report = self.report
+        for job, parsed, exc in self.outcomes:
+            source, target = job["source"], job["target"]
+            if exc is not None or parsed is None:
+                reason = str(exc) if exc is not None else "空结果"
+                tlog(f"[relation-brew] {source}→{target} 酿制失败降级（保旧摘要）：{reason}")
+                # 认领先行下 pending 已持久在册（不靠此处补记）；本写只刷新失败原因。
+                self._db.mark_relation_brew_pending(
+                    source=source, target=target, year=self.year, period=self.period,
+                    reason=reason,
+                )
+                report["degraded"].append({"source": source, "target": target, "reason": reason})
+                continue
+            # 成功路径：摘要写入＋pending 清除同事务原子落定（庭裁 r2 F1）。
+            # 奠基段只增不改在此拼定；近况段覆盖式幂等；水位推进到本批最大事件 id。
+            last_event_id = max(
+                [int(event["id"]) for event in job["new_events"]] + [int(job["watermark"])]
+            )
+            self._db.apply_relation_brew_result(
+                source=source, target=target, dimension=job["dimension"],
+                founding_segment=merge_founding_segment(
+                    str(job["summary"]["founding_segment"]) if job["summary"] else "",
+                    parsed[FOUNDINGS_KEY],
+                ),
+                recent_segment=parsed[RECENT_KEY],
+                last_event_id=last_event_id,
+                turn=self.turn, year=self.year, period=self.period,
+            )
+            report["brewed"].append({"source": source, "target": target})
+            tlog(f"[relation-brew] {source}→{target} 酿制落定（pending 同事务清除）")
+        return report
 
 
 def run_month_end_relation_brew(
@@ -183,122 +327,19 @@ def run_month_end_relation_brew(
     settled_year: Optional[int] = None,
     settled_period: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """月末增量重酿腿。
+    """月末增量重酿腿（三段顺序合跑：prepare→brew→persist，直调/测试便利入口）。
 
-    brew_fn(rendered_payload) -> LLM 原始文本（生产＝run_agent_text 闭包；
-    测试注入确定性假手）。批内条目间无依赖必并行（P5）；单条失败降级进
-    pending-backlog、保旧摘要，绝不向上抛（不阻塞结算）；返回机械报告。
-
-    settled_turn/year/period＝被结算月份的快照（decree 在 next_period 之前取定
-    传入）；None 时回落当前 state（直调路径，state 尚未推进）。"""
-    # settled 年月快照：生产路径由 decree 在 next_period 之前取定传入；直调
-    # （测试/探针）回落调用时的 state——此时 state 仍指被结算的那个月。
-    turn = int(settled_turn) if settled_turn is not None else int(state.turn)
-    year = int(settled_year) if settled_year is not None else int(state.year)
-    period = int(settled_period) if settled_period is not None else int(state.period)
-    targets = select_brew_targets(db, year=year, period=period)
-    report: Dict[str, Any] = {
-        "selected": len(targets),
-        "brewed": [],
-        "degraded": [],
-        "skipped_events": 0,
-    }
-    if not targets:
-        return report
-
-    # 认领先行（庭裁 r2/r3 F1）：入选关系在酿造开始前先把 pending 落盘提交——
-    # 任意缝崩溃→pending 在册→下次结算补酿；pending 不靠失败后 catch 补记。
-    # 生产路径 settle 事务内已认领过，此处幂等兜底（直调路径的唯一认领点）。
-    try:
-        db.claim_relation_brew_targets(year=year, period=period)
-    except Exception as claim_exc:  # noqa: BLE001 — 认领未持久即崩（r3 F1②缝）：
-        # 无 durable claim 就开酿会让失败月失去恢复凭据——本腿整体降级，待下次结算。
-        tlog(f"[relation-brew] 认领未持久，本腿整体降级（保旧摘要）：{claim_exc}")
-        report["degraded"] = [
-            {"source": item["source"], "target": item["target"],
-             "reason": f"认领未持久：{claim_exc}"}
-            for item in targets
-        ]
-        return report
-
-    # 输入先串行备好（纯计算、确定性，不含 LLM 调用），再批内并行酿制。
-    jobs: List[Dict[str, Any]] = []
-    for item in targets:
-        new_events = collect_new_edge_events(
-            db, source=item["source"], target=item["target"],
-            watermark=item["watermark"],
-        )
-        jobs.append({
-            **item,
-            "new_events": new_events,
-            "input": build_brew_input(
-                source=item["source"], target=item["target"],
-                dimension=item["dimension"], year=year, period=period,
-                summary=item["summary"], new_events=new_events,
-                has_pending=item["has_pending"],
-            ),
-        })
-
-    def _brew_one(job: Dict[str, Any]) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]], Optional[Exception]]:
-        try:
-            raw = brew_fn(render_brew_user_payload(job["input"]))
-            return job, parse_brew_output(raw), None
-        except Exception as exc:  # noqa: BLE001 — 单条失败降级，不上抛
-            return job, None, exc
-
-    if parallel and len(jobs) > 1:
-        workers = max(1, min(int(max_workers), len(jobs)))
-        tlog(f"[relation-brew] 批内并行酿制 {len(jobs)} 条关系（workers={workers}）")
-        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="relation-brew") as pool:
-            outcomes = list(pool.map(_brew_one, jobs))
-    else:
-        outcomes = [_brew_one(job) for job in jobs]
-
-    for job, parsed, exc in outcomes:
-        source, target = job["source"], job["target"]
-        if exc is not None or parsed is None:
-            reason = str(exc) if exc is not None else "空结果"
-            tlog(f"[relation-brew] {source}→{target} 酿制失败降级（保旧摘要）：{reason}")
-            # 认领先行下 pending 已持久在册（不靠此处补记）；本写只是刷新失败原因，
-            # 自身失败不再上抛——凭据已在，下次结算仍凭 pending 被选中补酿。
-            try:
-                db.mark_relation_brew_pending(
-                    source=source, target=target, year=year, period=period, reason=reason,
-                )
-            except Exception as mark_exc:  # noqa: BLE001 — 原因刷新失败不影响恢复凭据：
-                tlog(f"[relation-brew] {source}→{target} pending 原因刷新未持久：{mark_exc}")
-            report["degraded"].append({"source": source, "target": target, "reason": reason})
-            continue
-        # 成功路径：摘要写入＋pending 清除同事务原子落定（庭裁 r2 F1）。
-        # 奠基段只增不改在此拼定；近况段覆盖式幂等；水位推进到本批最大事件 id。
-        last_event_id = max(
-            [int(event["id"]) for event in job["new_events"]] + [int(job["watermark"])]
-        )
-        try:
-            db.apply_relation_brew_result(
-                source=source, target=target, dimension=job["dimension"],
-                founding_segment=merge_founding_segment(
-                    str(job["summary"]["founding_segment"]) if job["summary"] else "",
-                    parsed[FOUNDINGS_KEY],
-                ),
-                recent_segment=parsed[RECENT_KEY],
-                last_event_id=last_event_id,
-                turn=turn, year=year, period=period,
-            )
-        except Exception as apply_exc:  # noqa: BLE001 — 落定失败同走单条降级，不上抛
-            tlog(f"[relation-brew] {source}→{target} 落定失败降级（保旧摘要）：{apply_exc}")
-            # 同上：pending 已在认领阶段持久，这里只刷新失败原因。
-            try:
-                db.mark_relation_brew_pending(
-                    source=source, target=target, year=year, period=period,
-                    reason=str(apply_exc),
-                )
-            except Exception as mark_exc:  # noqa: BLE001 — 原因刷新失败不影响恢复凭据
-                tlog(f"[relation-brew] {source}→{target} pending 原因刷新未持久：{mark_exc}")
-            report["degraded"].append(
-                {"source": source, "target": target, "reason": str(apply_exc)}
-            )
-            continue
-        report["brewed"].append({"source": source, "target": target})
-        tlog(f"[relation-brew] {source}→{target} 酿制落定（pending 同事务清除）")
-    return report
+    生产路径不经此函数：settle_with_delta 持有 Leg 三段生命周期，把 brew() 放进
+    受管 Future 与 chapter/ending 重叠。返回机械报告。"""
+    leg = MonthEndRelationBrewLeg(
+        db, state, brew_fn,
+        settled_turn=settled_turn,
+        settled_year=settled_year,
+        settled_period=settled_period,
+        max_workers=max_workers,
+        parallel=parallel,
+    )
+    if not leg.prepare():
+        return leg.report
+    leg.brew()
+    return leg.persist()
