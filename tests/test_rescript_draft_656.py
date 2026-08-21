@@ -149,10 +149,13 @@ def test_rescript_draft_idx_continues_after_decision_rows(game):
         {"title": "急务", "context": "", "options": [
             {"label": "甲", "hint": ""}, {"label": "乙", "hint": ""}]},
     ])
+    # 亲裁 API 只回 decision 行；票拟走 list_rescript_drafts，不混进批红信封。
     rows = db.list_pending_decisions(turn)
-    assert [r["idx"] for r in rows] == [0, 1, 2]
-    assert rows[0]["kind"] == "decision"
-    assert rows[2]["kind"] == "rescript_draft"
+    assert [r["idx"] for r in rows] == [0, 1]
+    assert all(r["kind"] == "decision" for r in rows)
+    drafts = db.list_rescript_drafts()
+    assert [d["idx"] for d in drafts] == [2]
+    assert drafts[0]["title"] == "急务"
 
 
 def test_clear_pending_decisions_keeps_rescript_drafts(game):
@@ -168,10 +171,50 @@ def test_clear_pending_decisions_keeps_rescript_drafts(game):
             {"label": "甲", "hint": ""}, {"label": "乙", "hint": ""}]},
     ])
     db.clear_pending_decisions(turn)
-    # decision 行清；draft 行仍在案头（跨月留存，list 同表可读）
-    rows = db.list_pending_decisions(turn)
-    assert [r["kind"] for r in rows] == ["rescript_draft"]
+    # 亲裁信封空；draft 行仍在案头（跨月留存，#657 经 list_rescript_drafts 读）
+    assert db.list_pending_decisions(turn) == []
     assert [d["title"] for d in db.list_rescript_drafts()] == ["急务"]
+
+
+def test_list_pending_decisions_hides_rescript_drafts_from_hitl_recovery(game):
+    """persist 票拟后、settle 中止前：list_pending_decisions 仍只有已决亲裁行。
+
+    具体触发：有批红的月份 phase2 已 persist（票拟与 ready context 同事务落库），
+    settle_with_delta 随后中止，相位仍停在 awaiting_decision。web 的
+    needsPhase2Resume / isAllDecisionsDecided 读 pending_decisions——若混入
+    status=pending 的票拟行，全员 decided 谓词为假，崩溃恢复误开批红弹窗
+    （把票拟当亲裁）或挡住 settle-resume 续跑。
+    """
+    db, state, _content = game
+    turn = state.turn
+    db.save_pending_decisions(turn, [
+        {"title": "抉择", "context": "c", "options": [
+            {"label": "a", "hint": ""}, {"label": "b", "hint": ""}]},
+    ])
+    db.conn.execute(
+        "UPDATE pending_decisions SET status='decided', choice_json=? "
+        "WHERE turn=? AND idx=0",
+        (json.dumps({"label": "a", "hint": ""}, ensure_ascii=False), turn),
+    )
+    db.conn.commit()
+    persist_resolve_context(
+        db, turn, {},
+        decree_text="诏", narrative="邸报",
+        simulator_payload={}, secret_orders=[], relevant_memories=[],
+        rescript_drafts=[{
+            "title": "陕西告饥", "context": "秦地赤旱千里。",
+            "options": [{"label": "发帑赈济", "hint": "所安者饥民"},
+                        {"label": "缓议加派", "hint": "所拂者小农"}],
+            "actor_name": "测试首辅", "actor_office": "内阁首辅", "actor_faction": "阉党",
+        }],
+    )
+    pending = db.list_pending_decisions(turn)
+    assert [r["title"] for r in pending] == ["抉择"]
+    assert all(r["kind"] == "decision" for r in pending)
+    assert all(r["status"] == "decided" for r in pending)
+    drafts = db.list_rescript_drafts()
+    assert [d["title"] for d in drafts] == ["陕西告饥"]
+    assert drafts[0]["status"] == "pending"
 
 
 def test_save_rescript_drafts_overwrites_not_duplicates(game):
@@ -456,9 +499,8 @@ def test_settlement_persists_drafts_verbatim_and_survives_clear(game, monkeypatc
     assert row["actor_name"] == "测试首辅"
     assert row["actor_office"] == "内阁首辅"
     assert row["actor_faction"] == "阉党"
-    # phase2 已跑完（clear 已按 kind 过滤）→ decision 行清、draft 行跨月留存
-    rows = db.list_pending_decisions(turn)
-    assert [r["kind"] for r in rows] == ["rescript_draft"]
+    # phase2 已跑完（clear 已按 kind 过滤）→ 亲裁信封空、draft 行跨月留存
+    assert db.list_pending_decisions(turn) == []
     assert db.get_resolve_context(turn) is None
     # 全量邸报不被裁剪：turn_extractions.narrative 原文照存（落库前文仍用原始 narrative）
     row = db.conn.execute(
