@@ -1628,13 +1628,21 @@ def extract_scores_by_modules_with_agno(
     secret_orders: Optional[Dict[str, object]] = None,
     parallel: bool = False,
     event_outcome_retry_limit: int = 1,
+    side_legs: Optional[Dict[str, Callable[[], object]]] = None,
+    side_results: Optional[Dict[str, object]] = None,
 ) -> tuple[Dict[str, object], str, str]:
     """四模块结算 extractor：内政财政、军务外势、局势、人事密令。
 
     parallel=True：4 个互不依赖的 extractor LLM 调用并发跑，wall-clock≈最慢单个而非串行总和。
     解析/sanitizer/合并仍串行按模块顺序——确定性不变、sanitizer 单实例不并发、输出与串行版字节一致。
     落库（apply_score_extraction）在本函数之外，仍串行单事务（ADR 0008）。
-    调用方（decree 月末 settle）一律 parallel=True，不按 runner/模型退串行。"""
+    调用方（decree 月末 settle）一律 parallel=True，不按 runner/模型退串行。
+
+    #656 / ADR 0093 前半：side_legs＝与四 extractor 同池并发的额外 LLM 腿（phase2 五路
+    fan-out 的票拟生成腿）。全管线唯一并行刀口：所有腿同交一个 ThreadPoolExecutor，
+    任一腿完成前全部腿均已起跑。腿可调用体契约＝自降级绝不抛（非承重支路不耦合进关键路，
+    F2.5），结果写入 side_results[name]（None 表示该腿降级）。parallel=False 时侧腿在四
+    模块之后串行补跑，仅供测试/降级形态。"""
     base_payload = _extractor_context_payload(
         db, state, narrative, decree_text,
         relevant_memories=relevant_memories,
@@ -1667,13 +1675,23 @@ def extract_scores_by_modules_with_agno(
         return _sanitize_module_output(module, parsed)
 
     if parallel and len(EXTRACTION_MODULES) > 1:
-        # CLI 后端：4 个 LLM 调用并发取 raw（ThreadPoolExecutor.map 保序），再串行按模块顺序
-        # 解析/sanitizer/净化（sanitizer 单实例不并发、确定性）。任一模块抛错经 map 迭代原样上抛
+        # CLI 后端：4 个 LLM 调用并发取 raw，再串行按模块顺序解析/sanitizer/净化
+        # （sanitizer 单实例不并发、确定性）。任一模块抛错在收 result 时原样上抛
         # （with 块先等齐在跑线程再传播）→ 与串行同样触发上层 SettlementAbort。
+        # #656：侧腿（票拟生成）同池提交——五路共享唯一 fan-out 点，任一腿完成前
+        # 五腿均已起跑；侧腿自降级绝不抛，异常只可能来自契约破坏的调用方代码。
         from concurrent.futures import ThreadPoolExecutor
-        tlog(f"[extractor] 并发抽取 {len(EXTRACTION_MODULES)} 模块（wall-clock≈最慢单个）")
-        with ThreadPoolExecutor(max_workers=len(EXTRACTION_MODULES)) as pool:
-            raws = list(pool.map(_run_raw, EXTRACTION_MODULES))
+        legs = list(EXTRACTION_MODULES) + list((side_legs or {}).keys())
+        tlog(f"[extractor] 并发抽取 {legs} 腿（wall-clock≈最慢单个）")
+        with ThreadPoolExecutor(max_workers=len(legs)) as pool:
+            raw_futures = [pool.submit(_run_raw, m) for m in EXTRACTION_MODULES]
+            side_futures = [
+                (name, pool.submit(fn)) for name, fn in (side_legs or {}).items()
+            ]
+            raws = [f.result() for f in raw_futures]
+            for name, future in side_futures:
+                if side_results is not None:
+                    side_results[name] = future.result()
         for module, raw in zip(EXTRACTION_MODULES, raws):
             module_outputs[module] = _parse_module(module, raw)
     else:
@@ -1681,6 +1699,9 @@ def extract_scores_by_modules_with_agno(
         # 的旧时机，行为字节级不变（cmr #83 codex：并行不改串行路径）。
         for module in EXTRACTION_MODULES:
             module_outputs[module] = _parse_module(module, _run_raw(module))
+        for name, fn in (side_legs or {}).items():
+            if side_results is not None:
+                side_results[name] = fn()
 
     retry_attempt = 0
     while True:

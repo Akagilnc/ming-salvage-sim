@@ -2038,6 +2038,14 @@ class GameDB:
         self.ensure_column("pending_decisions", "event_id", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("pending_decisions", "rejection_reason", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("pending_decisions", "opposition", "TEXT NOT NULL DEFAULT ''")
+        # #656 / ADR 0093 前半：kind 扩列（最小扩展，ensure_column 先例同款）。
+        # 'decision'=既有 simulator 决策块行为一字不变；'rescript_draft'=急务票拟行
+        # （phase2 产生、跨月留存待 #657 六动作裁决）。actor 三列＝分拣/票拟 actor 身份
+        # 投影随行落库（票面 F3.2：任免后 actor 变更可机械断言）。
+        self.ensure_column("pending_decisions", "kind", "TEXT NOT NULL DEFAULT 'decision'")
+        self.ensure_column("pending_decisions", "actor_name", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column("pending_decisions", "actor_office", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column("pending_decisions", "actor_faction", "TEXT NOT NULL DEFAULT ''")
         self._backfill_event_triggers_from_event_pool_issues()
         # 步骤7：回合阶段（旧库迁移，schema 升级非 fallback）
         self.ensure_column("game_state", "turn_phase", "TEXT NOT NULL DEFAULT 'summoning'")
@@ -10370,7 +10378,7 @@ class GameDB:
         """读本回合决策点（按 idx）。options 反序列化；choice 为已选则带出。"""
         rows = self.conn.execute(
             "SELECT idx, event_id, title, context, rejection_reason, opposition, "
-            "options_json, choice_json, status "
+            "options_json, choice_json, status, kind, actor_name, actor_office, actor_faction "
             "FROM pending_decisions WHERE turn = ? ORDER BY idx",
             (int(turn),),
         ).fetchall()
@@ -10397,12 +10405,89 @@ class GameDB:
                 "options": options if isinstance(options, list) else [],
                 "choice": choice,
                 "status": r["status"],
+                "kind": r["kind"] or "decision",
+                "actor_name": r["actor_name"],
+                "actor_office": r["actor_office"],
+                "actor_faction": r["actor_faction"],
             })
         return out
 
     def clear_pending_decisions(self, turn: int) -> None:
-        self.conn.execute("DELETE FROM pending_decisions WHERE turn = ?", (int(turn),))
+        """#656：按 kind 过滤——只清 'decision' 行（既有生命周期一字不变）；
+        'rescript_draft' 行跨月留存，终态清理归 #657 六动作裁决路径。"""
+        self.conn.execute(
+            "DELETE FROM pending_decisions WHERE turn = ? AND kind = 'decision'",
+            (int(turn),),
+        )
         self.conn.commit()
+
+    def save_rescript_drafts(self, turn: int, drafts: List[Dict[str, object]]) -> None:
+        """#656 / ADR 0093 前半：急务票拟行（kind='rescript_draft'）覆写本回合。
+
+        与 save_pending_decisions 同款先清后插（只清同 kind，不碰 decision 行）；
+        idx 从本回合现有最大 idx 之后续编（与 decision 行共占 (turn, idx) 主键不撞）。
+        event_id 缺失的急务在此确定性合成 `urgent:{turn}:{idx}`（票面 F2.2）。
+        只写 conn 不 commit——提交交调用方事务（与 persist_resolve_context 同事务序列，F2.5）。
+        """
+        row = self.conn.execute(
+            "SELECT COALESCE(MAX(idx) + 1, 0) FROM pending_decisions WHERE turn = ?",
+            (int(turn),),
+        ).fetchone()
+        idx = int(row[0] or 0)
+        self.conn.execute(
+            "DELETE FROM pending_decisions WHERE turn = ? AND kind = 'rescript_draft'",
+            (int(turn),),
+        )
+        for d in drafts:
+            actor_name = str(d.get("actor_name") or "")
+            actor_office = str(d.get("actor_office") or "")
+            actor_faction = str(d.get("actor_faction") or "")
+            event_id = str(d.get("event_id") or "").strip()
+            if not event_id:
+                event_id = f"urgent:{int(turn)}:{idx}"
+            self.conn.execute(
+                """INSERT INTO pending_decisions
+                   (turn, idx, event_id, title, context, options_json, choice_json,
+                    status, kind, actor_name, actor_office, actor_faction)
+                   VALUES (?, ?, ?, ?, ?, ?, '', 'pending', 'rescript_draft', ?, ?, ?)""",
+                (
+                    int(turn), idx,
+                    event_id,
+                    str(d.get("title") or ""),
+                    str(d.get("context") or ""),
+                    json.dumps(d.get("options") or [], ensure_ascii=False),
+                    actor_name, actor_office, actor_faction,
+                ),
+            )
+            idx += 1
+
+    def list_rescript_drafts(self) -> List[Dict[str, object]]:
+        """#656：全部急务票拟行（kind='rescript_draft'），跨月留存待 #657 批红面消费。"""
+        rows = self.conn.execute(
+            "SELECT turn, idx, event_id, title, context, options_json, status, "
+            "actor_name, actor_office, actor_faction "
+            "FROM pending_decisions WHERE kind = 'rescript_draft' ORDER BY turn, idx"
+        ).fetchall()
+        out: List[Dict[str, object]] = []
+        for r in rows:
+            try:
+                options = json.loads(r["options_json"] or "[]")
+            except Exception as exc:
+                tlog(f"[db] options_json 损坏，回空：{exc}")  # #14 surface
+                options = []
+            out.append({
+                "turn": int(r["turn"]),
+                "idx": int(r["idx"]),
+                "event_id": r["event_id"],
+                "title": r["title"],
+                "context": r["context"],
+                "options": options if isinstance(options, list) else [],
+                "status": r["status"],
+                "actor_name": r["actor_name"],
+                "actor_office": r["actor_office"],
+                "actor_faction": r["actor_faction"],
+            })
+        return out
 
     # ── 动作闸门：结构化聊天写动作暂存(ADR 0006) ──────────────────────────
     def _latest_held_user_chat_message_id(
