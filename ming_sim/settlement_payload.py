@@ -87,6 +87,26 @@ def parse_decision_blocks(narrative: str) -> tuple[str, List[Dict[str, object]]]
     return clean, decisions
 
 
+def decision_has_rescript_capability(decision: object) -> bool:
+    """批红轨识别：options 同时带 dossier_id + dossier_decision（#1490/#1492 A）。
+
+    仅 event_id 的 dossier: 前缀不够——due-commitment / backlash 等决策块会把
+    origin_ref=dossier:N 回填成 event_id，但 options 只有 {label,hint}。那些行
+    不是批红待裁，不得按 rescript 轨处理。
+    """
+    if not isinstance(decision, dict):
+        return False
+    options = decision.get("options") or []
+    if not isinstance(options, list):
+        return False
+    for opt in options:
+        if not isinstance(opt, dict):
+            continue
+        if opt.get("dossier_id") is not None and opt.get("dossier_decision") is not None:
+            return True
+    return False
+
+
 def bind_decisions_to_candidate_events(
     decisions: List[Dict[str, object]],
     simulator_payload: object,
@@ -136,10 +156,10 @@ def bind_decisions_to_candidate_events(
         if explicit and explicit in candidate_ids:
             bound.append(out)  # 回显 id 确属本回合候选 → 采信（正常路径行为不变）
             continue
-        # #1490：dossier 批红的 event_id（dossier:<id>）是 rescript 轨真源，不在
-        # candidate_events 快照里——不得当 off-snapshot 解绑，否则 submit_decisions
-        # 的批红校验（靠 event_id 前缀识别）被跳过，缺字段载荷会带病落 decided。
-        if explicit.startswith("dossier:"):
+        # #1490/#1492 A：仅当 options 带齐 dossier_id+dossier_decision 时保留
+        # dossier: 前缀（真批红待裁）。裸 origin_ref 回填 / LLM 幻觉行照旧解绑，
+        # 否则 due-commitment 同形会空对空过先验 → phase2 批红卡死。
+        if explicit.startswith("dossier:") and decision_has_rescript_capability(out):
             bound.append(out)
             continue
         # 缺 id，或回显 id 不在权威候选快照里：以快照唯一标题为准（重）绑，不被 LLM 回显牵着走。
