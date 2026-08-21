@@ -26,14 +26,14 @@ PROGRESS_UNITS: Dict[str, float] = {
     "反噬": 0.0,
 }
 
-# 四态 → 本月人物/钱粮/局势后果系数（首版随 playtest；成色轴 0108 不读）
-# loyalty: 承办人评定增量；economy: 内库开销（负=支出）；皇威: 局势 metric；
-# faction_sat: 承办派 satisfaction；region_unrest: 承办人所在地动乱。
+# 四态 → 本月人物/钱粮/地区后果系数（首版随 playtest；成色轴 0108 不读）
+# 仅走已有 canonical origin 写口：loyalty→人物评定；economy→内库；region_unrest→地区动乱。
+# 不派生 皇威 metric / faction satisfaction——二者 applier 无 origin 落点（ADR 0054/0073）。
 _WORLD_EFFECT_BY_FIDELITY: Dict[str, Dict[str, int]] = {
-    "忠实": {"loyalty": 1, "economy": -3, "皇威": 0, "faction_sat": 0, "region_unrest": 0},
-    "打折": {"loyalty": 0, "economy": -1, "皇威": 0, "faction_sat": 0, "region_unrest": 0},
-    "阳奉阴违": {"loyalty": -1, "economy": 0, "皇威": 0, "faction_sat": -1, "region_unrest": 1},
-    "反噬": {"loyalty": -2, "economy": 0, "皇威": -1, "faction_sat": -2, "region_unrest": 2},
+    "忠实": {"loyalty": 1, "economy": -3, "region_unrest": 0},
+    "打折": {"loyalty": 0, "economy": -1, "region_unrest": 0},
+    "阳奉阴违": {"loyalty": -1, "economy": 0, "region_unrest": 1},
+    "反噬": {"loyalty": -2, "economy": 0, "region_unrest": 2},
 }
 
 # 兼容 LLM 英文/旧词
@@ -312,13 +312,13 @@ def derive_monthly_covert_world_effects(
     fidelity: object,
     minister_name: str,
     dossier_id: int,
-    faction: str = "",
     region_id: str = "",
     title: str = "",
 ) -> Dict[str, object]:
-    """由 clamp 后执行态机械派生本月人物/钱粮/局势效果包（纯函数，可 golden）。
+    """由 clamp 后执行态机械派生本月人物/钱粮/地区效果包（纯函数，可 golden）。
 
     返回喂既有 applier 的结构；每项 origin_ref=dossier:N。不读奏报/sim_note。
+    不派生 皇威 metric / faction satisfaction（canonical applier 无 origin 落点）。
     """
     state_name = normalize_fidelity_state(fidelity) or "反噬"
     coef = dict(_WORLD_EFFECT_BY_FIDELITY.get(state_name) or _WORLD_EFFECT_BY_FIDELITY["反噬"])
@@ -349,17 +349,6 @@ def derive_monthly_covert_world_effects(
             "origin_ref": origin,
         })
 
-    metric_delta: Dict[str, int] = {}
-    huangwei = int(coef.get("皇威") or 0)
-    if huangwei != 0:
-        metric_delta["皇威"] = huangwei
-
-    faction_delta: Dict[str, object] = {}
-    fac = str(faction or "").strip()
-    fac_sat = int(coef.get("faction_sat") or 0)
-    if fac and fac_sat != 0:
-        faction_delta[fac] = {"satisfaction": fac_sat}
-
     region_delta: Dict[str, Dict[str, object]] = {}
     rid = str(region_id or "").strip()
     unrest = int(coef.get("region_unrest") or 0)
@@ -375,8 +364,6 @@ def derive_monthly_covert_world_effects(
         "origin_ref": origin,
         "人物变更": person_changes,
         "economy_moves": economy_moves,
-        "metric_delta": metric_delta,
-        "faction_delta": faction_delta,
         "region_delta": region_delta,
     }
 
@@ -384,15 +371,14 @@ def derive_monthly_covert_world_effects(
 def _minister_world_context(db: Any, minister_name: str) -> Dict[str, str]:
     name = str(minister_name or "").strip()
     if not name:
-        return {"faction": "", "region_id": ""}
+        return {"region_id": ""}
     row = db.conn.execute(
-        "SELECT faction, location FROM characters WHERE name=?",
+        "SELECT location FROM characters WHERE name=?",
         (name,),
     ).fetchone()
     if row is None:
-        return {"faction": "", "region_id": ""}
+        return {"region_id": ""}
     return {
-        "faction": str(row["faction"] or ""),
         "region_id": str(row["location"] or ""),
     }
 
@@ -403,7 +389,7 @@ def _apply_derived_world_effects(
     package: Mapping[str, object],
 ) -> Dict[str, object]:
     """经既有 applier 落库；origin 纪律与 apply_score_extraction 同口径。"""
-    from ming_sim.flows import _apply_economy_list, _apply_faction_dict, _apply_metric_dict
+    from ming_sim.flows import _apply_economy_list
     from ming_sim.issues import _apply_person_changes
     from ming_sim.models import Event
 
@@ -412,8 +398,6 @@ def _apply_derived_world_effects(
         "origin_ref": origin,
         "人物变更": [],
         "economy_moves": [],
-        "metric_delta": {},
-        "faction_delta": {},
         "region_delta": [],
     }
 
@@ -443,17 +427,6 @@ def _apply_derived_world_effects(
         )
         out["economy_moves"] = [r for r in eco_out if not r.get("rejected")]
         out["economy_rejections"] = [r for r in eco_out if r.get("rejected")]
-
-    metrics = package.get("metric_delta") or {}
-    if isinstance(metrics, dict) and metrics:
-        out["metric_delta"] = _apply_metric_dict(state, metrics, db=db)
-
-    factions = package.get("faction_delta") or {}
-    if isinstance(factions, dict) and factions:
-        applied_fac, fac_rej = _apply_faction_dict(db, factions, commit=False)
-        out["faction_delta"] = applied_fac
-        if fac_rej:
-            out["faction_rejections"] = fac_rej
 
     regions = package.get("region_delta") or {}
     if isinstance(regions, dict) and regions:
@@ -564,7 +537,6 @@ def apply_monthly_covert_actual_progress(
                 fidelity=fidelity,
                 minister_name=minister,
                 dossier_id=did,
-                faction=str(ctx.get("faction") or ""),
                 region_id=str(ctx.get("region_id") or ""),
                 title=str(order.get("title") or ""),
             )
