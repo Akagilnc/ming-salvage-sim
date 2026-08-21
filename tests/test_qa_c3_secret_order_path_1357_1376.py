@@ -286,13 +286,15 @@ def test_confirm_secret_order_http_returns_id_and_list_visible(
     """#1376：召对确认密令后 secret_order_id 非 0，且立刻 GET /api/secret_orders 可见。
 
     真实 HTTP（ASGI TestClient）：POST /api/ministers/{name}/chat → 立刻
-    GET /api/secret_orders。只 stub 大臣 agent.run / 尾随 LLM 边界；生产
-    session.chat→确认→commit→HTTP 序列化全链保留（确认句「准」走确定性应允，
-    零 confirmation-LLM；内容在 pending payload 定文，落行不需 LLM）。
+    GET /api/secret_orders。stub 大臣 agent.run / 尾随 LLM / 确认判词边界；生产
+    session.chat→确认→commit→HTTP 序列化全链保留。确认句「准」经结构化 LLM
+    枚举 stub 返回应允（ADR 0028：禁自由散文词表快路）；内容在 pending payload
+    定文，落行不需内容抽取 LLM。
     """
     from fastapi.testclient import TestClient
 
     import ming_sim.agents as agents_mod
+    import ming_sim.cli_backend as cli_backend
     import ming_sim.mindreading as mindreading_mod
 
     class _CannedRun:
@@ -330,6 +332,12 @@ def test_confirm_secret_order_http_returns_id_and_list_visible(
         lambda *a, **k: _CannedMindreading(),
     )
     monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
+    # 确认判读只许结构化 LLM 枚举：stub 抽取器返回应允（禁生产词表快路）
+    monkeypatch.setattr(
+        cli_backend,
+        "_run_json_extractor_for_config",
+        lambda *a, **k: (__import__("json").dumps({"确认": "应允"}, ensure_ascii=False), 1),
+    )
 
     game = web_app.WebGame(fresh=False)
     monkeypatch.setattr(web_app, "web_game", game)

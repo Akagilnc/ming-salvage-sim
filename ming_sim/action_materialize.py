@@ -2796,7 +2796,8 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
             fields=(
                 FieldSpec(
                     "confirmation", "确认",
-                    frozenset({"应允", "拒绝", "留中", "无"}), "无",
+                    # #1376：修改=原地更新同一 pending 候选内容（owner 既裁）
+                    frozenset({"应允", "拒绝", "留中", "修改", "无"}), "无",
                 ),
             ),
         ),
