@@ -1,7 +1,8 @@
-"""#1356 / ADR 0143 — simulator 输入侧四类抽象轴定性投影钉。
+"""#1356 / ADR 0143 — simulator 输入侧抽象轴定性投影钉。
 
 构造缝：build_simulator_payload → build_simulator_context。
-哨兵裸值不得出现在 payload 结构化字段与渲染串；钱粮/兵额等可数物保留。
+民心/皇威/地区民心/局势进度/阶级满意度走定性；钱粮/兵额等可数物保留。
+#1483：factions_brief 属 engine 规则输入，保留精确 leverage/satisfaction。
 非 LLM 输出措辞扫描。期望档位经 qualitative 单源 helper 计算，禁本地复写词表。
 """
 
@@ -42,7 +43,7 @@ def _plant_sentinels(db, state) -> None:
 
 
 def test_simulator_payload_projects_four_abstract_axes(game):
-    """民心/皇威/满意度/局势进度走既有定性档；哨兵裸值不进材料。"""
+    """民心/皇威/地区民心/局势进度/阶级满意走定性档；factions 裸数见 #1483。"""
     db, state, _content = game
     _plant_sentinels(db, state)
 
@@ -68,11 +69,14 @@ def test_simulator_payload_projects_four_abstract_axes(game):
         assert cell != _SENTINEL_MINXIN
         assert str(cell) != str(_SENTINEL_MINXIN)
 
-    # —— factions/classes brief：满意{sentinel} 不得出现 ——
+    # —— classes brief：满意{sentinel} 不得出现（玩家向定性）——
+    # #1483：factions_brief 是 simulator 规则输入（leverage<=30），engine 侧保留裸数，
+    # 不在本 P4 投影钉范围内；精确 leverage 由 test_extractor_engine_numerics_1483 钉。
     bare_sat = f"满意{_SENTINEL_SAT}"
-    assert bare_sat not in str(payload["factions_brief"])
     assert bare_sat not in str(payload["classes_brief"])
-    assert "满意" in str(payload["factions_brief"])  # 定性档仍在
+    assert "满意" in str(payload["classes_brief"])  # 定性档仍在
+    # factions engine 裸数：满意哨兵应在场（与 classes 定性面对照）
+    assert bare_sat in str(payload["factions_brief"])
 
     # —— active_issues 进度 ——
     pinned = next(
@@ -83,7 +87,7 @@ def test_simulator_payload_projects_four_abstract_axes(game):
     assert pinned["进度"] != _SENTINEL_BAR
     assert str(pinned["进度"]) != str(_SENTINEL_BAR)
 
-    # —— 渲染串：轴标签紧邻哨兵裸值即红 ——
+    # —— 渲染串：民心/皇威轴标签紧邻哨兵裸值即红（factions 裸数属 engine 侧，见 #1483）——
     for needle in (
         f'"民心": {_SENTINEL_MINXIN}',
         f'"民心":{_SENTINEL_MINXIN}',
@@ -91,7 +95,6 @@ def test_simulator_payload_projects_four_abstract_axes(game):
         f'"皇威": {_SENTINEL_HUANGWEI}',
         f'"皇威":{_SENTINEL_HUANGWEI}',
         f"皇威{_SENTINEL_HUANGWEI}",
-        bare_sat,
     ):
         assert needle not in rendered, f"rendered leaked {needle!r}"
 

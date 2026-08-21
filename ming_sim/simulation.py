@@ -612,8 +612,10 @@ def build_simulator_payload(
         # #1356 r6 / ADR 0143：民心·皇威定性；国库/内库钱粮裸数保留。
         "current_state": _project_simulator_current_state(state.metrics),
         "treasury_brief": db.treasury_report(state),
-        # 满意度/势力走既有 audience 定性轨（与大臣面同词表）。
-        "factions_brief": db.faction_report(audience=True),
+        # #1483：factions 是 simulator 规则输入（season_simulator leverage<=30），
+        # engine 侧保留精确势力/满意度；P4 玩家面仍走 knowledge/audience 定性轨。
+        "factions_brief": db.faction_report(),
+        # 阶级总览仍可走 audience 定性；高压预警过滤在 SQL 侧用裸数。
         "classes_brief": db.class_report(audience=True),
         "powers_brief": db.power_report(exclude_self=True),
         "active_issues": issues_payload,
@@ -930,16 +932,20 @@ def _extractor_compat_payload(base: Dict[str, object]) -> Dict[str, object]:
 
 # module 模式专用：simulator_payload 已在同一 system 前缀给出全量盘面，这些字段同名同格式
 # 重复，从补充上下文里剔除，省掉约一半 extractor system 体积。
+#
+# #1483 / P4 边界：simulator_payload 对民心·皇威·地区民心·局势进度做了玩家向定性投影，
+# 但 issues extractor 明文要求拿 current_state/regions/active_issues 的**精确数值**
+# 对照 resolve/fail 阈值（如 民心>60 / bar≥Y）。这三字段是 engine 阈值输入，不得剥。
 _MODULE_DROP_FIELDS = (
-    # 同名同格式，simulator_payload 已全量给出
-    "regions", "armies", "buildings", "current_state",
-    "active_issues", "candidate_events", "decree_text",
+    # 同名同格式且 simulator 侧仍是精确裸数（或 extractor 不靠其做阈值比对）
+    "armies", "buildings",
+    "candidate_events", "decree_text",
     "relevant_memories", "secret_orders",
     # 异名但同源：simulator_payload 已有等价视图，extractor prompt（score_extractor_shared.md:17、
     # personnel_secret.md:5）明确指向从 simulator_payload 读，这里的副本是死字段。
     #   active_ministers → court_roster TSV（在朝大臣）
     #   powers → powers_brief（势力态势叙述）；new_power 合法集另有 power_ids
-    #   factions → factions_brief；faction_delta key 是 7 个固定枚举，写死在 prompt
+    #   factions → factions_brief（#1483 起 factions_brief 亦保留精确 leverage）
     #   classes → classes_brief；class_delta key 取 class_names + region_ids 校验集
     "active_ministers", "powers", "factions", "classes",
 )
@@ -979,12 +985,13 @@ def build_extractor_shared_context(
 ) -> Dict[str, object]:
     """供模块 extractor 放入 system 前缀的共同结算补充上下文。
 
-    盘面（regions/armies/buildings/current_state/active_issues/candidate_events…）
-    已由同 system 前缀的 simulator_payload 全量给出，这里剔除重复，只留 extractor 独有的
-    校验集（region_ids/army_ids/class_names/power_ids/fiscal_config）+ offstage_ministers
-    （court_roster 不含离场，任命查重需要）+ turn/narrative。在朝大臣/势力/派系/阶级
-    （active_ministers/powers/factions/classes）也剔除——simulator_payload 已有等价视图，
-    extractor prompt 指向从那读。
+    与 simulator_payload 同名且仍为精确裸数的盘面表（armies/buildings 等）剔除重复。
+    #1483：current_state / regions / active_issues 在 simulator_payload 侧已做 P4 定性
+    投影，但 issues 阈值对照需要裸数——这三字段保留在 extractor_context。
+    另留 extractor 独有的校验集（region_ids/army_ids/class_names/power_ids/fiscal_config）
+    + offstage_ministers（court_roster 不含离场，任命查重需要）+ turn/narrative。
+    在朝大臣/势力/派系/阶级（active_ministers/powers/factions/classes）剔除——
+    simulator_payload 已有等价视图（factions_brief 含精确 leverage），prompt 从那读。
 
     #883: only the secret-order extractor may receive order prose.  The public
     monthly judge and all other extractors must see a disclosure event after
@@ -1062,10 +1069,13 @@ def build_extractor_shared_context(
         # 不在 _extractor_context_payload 无门副本，避免非 issues 模块误读。
         slim["commitment_backlash_facts"] = build_backlash_narrative_features(db)
     slim["_dedup_note"] = (
-        "盘面、诏书、在朝大臣、势力/派系/阶级态势已在 system 的 simulator_payload 中给出"
-        "（盘面表 regions/armies/buildings 走 TSV；court_roster 即在朝大臣；"
-        "powers_brief/factions_brief/classes_brief 即势力/派系/阶级），抽取时直接读 simulator_payload。"
-        "本 extractor_context 只补：校验用 id 集（region_ids/army_ids/class_names/power_ids）、"
+        "军队/建筑/在朝大臣/势力/派系/阶级态势已在 system 的 simulator_payload 中给出"
+        "（armies/buildings/court_roster 走 TSV；powers_brief/factions_brief/classes_brief "
+        "即势力/派系/阶级；factions_brief 含精确 leverage），抽取时直接读 simulator_payload。"
+        "阈值对照用裸数在本 extractor_context：current_state（民心/皇威等）、regions"
+        "（含 public_support 整数）、active_issues（含 bar_value 整数与 resolve/fail 条件）。"
+        "simulator_payload 同名字段可能是 P4 定性档，判结案/算 delta 以本 context 裸数为准。"
+        "另补：校验用 id 集（region_ids/army_ids/class_names/power_ids）、"
         "fiscal_config、offstage_ministers（离场名册，court_roster 不含，任命查重用）。"
     )
     return slim
@@ -1081,7 +1091,7 @@ def _payload_for_module(
     return {
         "module": module,
         "module_allowed_fields": sorted(MODULE_FIELDS[module]),
-        "instruction": "盘面（regions/armies/buildings/current_state/active_issues/candidate_events 等）看 system 的 simulator_payload；extractor_context 只补 id 校验集与人事/派系元数据。只输出当前模块允许的中文顶层字段 JSON object。",
+        "instruction": "军队/建筑/候选事件等盘面看 system 的 simulator_payload；阈值对照用 current_state/regions/active_issues 裸数看 system 的 extractor_context（simulator_payload 同名可能是定性档）。只输出当前模块允许的中文顶层字段 JSON object。",
     }
 
 
