@@ -280,82 +280,104 @@ def test_pending_secret_order_count_reflects_staged_candidate(game):
     assert db.list_secret_orders() == []
 
 
-def test_confirm_secret_order_http_returns_id_and_list_visible(game, monkeypatch):
+def test_confirm_secret_order_http_returns_id_and_list_visible(
+    tmp_path, monkeypatch, _offline_scene_beat_generator,
+):
     """#1376：召对确认密令后 secret_order_id 非 0，且立刻 GET /api/secret_orders 可见。
 
-    接缝：真实 HTTP 入口 POST /api/ministers/{name}/chat（确认句）+
-    GET /api/secret_orders。session.chat 只 canned 回奏文本，确认→落库走生产
-    apply_cli_conversation_actions（内容已在 pending payload 定文，落行不需 LLM）。
+    真实 HTTP（ASGI TestClient）：POST /api/ministers/{name}/chat → 立刻
+    GET /api/secret_orders。只 stub 大臣 agent.run / 尾随 LLM 边界；生产
+    session.chat→确认→commit→HTTP 序列化全链保留（确认句「准」走确定性应允，
+    零 confirmation-LLM；内容在 pending payload 定文，落行不需 LLM）。
     """
-    db, state, content = game
-    name = _active_minister_name(db, content)
-    ch = content.characters.get(name)
-    if ch is None or getattr(ch, "name", None) != name:
-        ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    from fastapi.testclient import TestClient
 
-    pending_id = db.stage_pending_action(
-        state.turn,
-        kind="secret_order",
-        action="新建",
-        minister_name=name,
-        target_id=None,
-        payload={
-            "title": "暗查辽饷",
-            "content": "密查辽东军饷侵冒。",
-            "assignee": name,
-            "tags": ["辽饷"],
-            "deadline_months": 3,
-        },
+    import ming_sim.agents as agents_mod
+    import ming_sim.mindreading as mindreading_mod
+
+    class _CannedRun:
+        content = "臣即密办。"
+        tools: list = []
+
+    class _CannedAgent:
+        def run(self, *_a, **_k):
+            return _CannedRun()
+
+        def get_last_run_output(self):
+            return None
+
+    class _CannedExtractor:
+        def run(self, _material):
+            return SimpleNamespace(content='{"facts":[]}')
+
+    class _CannedMindreading:
+        def run(self, _material):
+            return SimpleNamespace(content="近臣低声：此人心里另有盘算。")
+
+    monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
+    # 回话后尾随 LLM 边界离线中和（禁 sk-test 打真网）；被测缝 session.chat 不 stub。
+    monkeypatch.setattr(
+        agents_mod, "create_audience_extractor_agent", lambda *a, **k: _CannedExtractor())
+    monkeypatch.setattr(
+        agents_mod, "create_endorsement_extractor_agent",
+        lambda *a, **k: _CannedExtractor(),
     )
-    assert pending_id > 0
-    assert db.list_secret_orders() == []
+    monkeypatch.setattr(
+        mindreading_mod, "create_mindreading_agent",
+        lambda *a, **k: _CannedMindreading(),
+    )
+    monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
 
-    def _session_chat(minister_name, message, *, chat_turn_id=0):
-        del minister_name, chat_turn_id
-        result = ChatTurnResult(answer="臣即密办。")
-        # 与 session.chat 非流式工具后落点同缝：确认句 → apply → 应允即落地。
-        sess = SimpleNamespace(
-            db=db,
-            state=state,
-            content=content,
-            llm_config=SimpleNamespace(channel="cli"),
-            registry=None,
-            _active_chat_turn_id=0,
+    game = web_app.WebGame(fresh=False)
+    monkeypatch.setattr(web_app, "web_game", game)
+    try:
+        name = _active_minister_name(game.db, game.content)
+        # 唯一 fake 面：大臣回话 agent（LLM 边界）；确认/落库走生产。
+        game.session.registry.get = lambda _ch: _CannedAgent()
+
+        pending_id = game.db.stage_pending_action(
+            game.state.turn,
+            kind="secret_order",
+            action="新建",
+            minister_name=name,
+            target_id=None,
+            payload={
+                "title": "暗查辽饷",
+                "content": "密查辽东军饷侵冒。",
+                "assignee": name,
+                "tags": ["辽饷"],
+                "deadline_months": 3,
+            },
         )
-        res = GameSession.apply_cli_conversation_actions(
-            sess,
-            ch,
-            message,
-            result.answer,
-            has_directive=False,
-            secret_order_id=None,
-            preclassified_intent=[{"kind": "confirmation", "confirmation": "应允"}],
-            confirm_target_ids={int(pending_id)},
+        assert pending_id > 0
+        assert game.db.list_secret_orders() == []
+
+        client = TestClient(web_app.app)
+        chat_resp = client.post(
+            f"/api/ministers/{name}/chat",
+            json={"message": "准"},
         )
-        if res.get("secret_order_id"):
-            result.secret_order_id = int(res["secret_order_id"])
-        if res.get("pending_action_id"):
-            result.pending_action_id = int(res["pending_action_id"])
-        if res.get("pending_action_failures"):
-            result.pending_action_failures = list(res["pending_action_failures"])
-        return result
+        assert chat_resp.status_code == 200, chat_resp.text
+        chat_result = chat_resp.json()
+        oid = int(chat_result.get("secret_order_id") or 0)
+        assert oid > 0, (
+            f"#1376 确认后 secret_order_id 须非 0，got {chat_result!r}"
+        )
 
-    runtime = _webgame_shell(db, state, content, session_chat=_session_chat)
-    monkeypatch.setattr(web_app, "web_game", runtime)
-    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
-
-    chat_result = asyncio.run(
-        web_app.api_chat(name, web_app.ChatRequest(message="准，就这么办"))
-    )
-    oid = int(chat_result.get("secret_order_id") or 0)
-    assert oid > 0, (
-        f"#1376 确认后 secret_order_id 须非 0，got {chat_result!r}"
-    )
-
-    listing = asyncio.run(web_app.api_secret_orders())
-    ids = {int(o["id"]) for o in (listing.get("orders") or [])}
-    assert oid in ids, (
-        f"#1376 确认返回后 GET /api/secret_orders 须立刻可见 id={oid}，got {listing!r}"
-    )
-    # 应允即落地：暂存不再挂 pending
-    assert db.list_pending_actions(state.turn) == []
+        listing_resp = client.get("/api/secret_orders")
+        assert listing_resp.status_code == 200, listing_resp.text
+        listing = listing_resp.json()
+        ids = {int(o["id"]) for o in (listing.get("orders") or [])}
+        assert oid in ids, (
+            f"#1376 确认返回后 GET /api/secret_orders 须立刻可见 id={oid}，got {listing!r}"
+        )
+        # 应允即落地：暂存不再挂 pending
+        assert game.db.list_pending_actions(game.state.turn) == []
+    finally:
+        try:
+            game.session.close()
+        except Exception:
+            pass
