@@ -93,18 +93,28 @@ def _validated_settlement_origin(
 
 def _validated_settlement_endpoints(
     db: Any, state: Any, source: str, targets: list[str],
+    allowed_endpoint_names: Any = None,
 ) -> None:
-    """结算口端点守门（V1）：大臣边两端须为当前在朝合格大臣。
+    """结算口端点守门（V1 + T1 r5 owner 裁决 B 案时间语义）：大臣边两端须为
+    批内任一 canonical 名册投影的合格大臣。
 
     复用 GameDB.current_court_roster_rows 既有 canonical 名册投影（不另立
     第二名册、不下沉到通用写口——ADR 0081 君臣边与 seed 仍由该写口合法承载
-    皇帝节点）：幻觉名/错字/未登场/已退场者及「皇帝」节点一律逐项拒收留痕。
-    在任何边写入前整项校验 source 与全部 targets：同一互动含任一非法端点时
-    零边写入，不做部分落库（ADR 0015 坏项不牵连好项、好项也不被坏项拖写）。"""
+    皇帝节点）：幻觉名/错字/「皇帝」节点及前后两投影均不合格者一律逐项拒收
+    留痕。时间语义＝批内瞬态 pre∪post 并集（``allowed_endpoint_names`` 由
+    apply_score_extraction 一次算出传入：入口 pre-roster ∪ 人物变更落定后
+    post-roster）——同批退场者（先互动后退场）与同批入场者（先入仕/复出后
+    互动）的互动都落，不建持久 snapshot、无第二编排；缺省（直调兼容）退化为
+    当前 live 投影。在任何边写入前整项校验 source 与全部 targets：同一互动
+    含任一非法端点时零边写入，不做部分落库（ADR 0015 坏项不牵连好项、好项
+    也不被坏项拖写）。"""
     wanted = [source, *targets]
-    qualified = {
-        row["name"] for row in db.current_court_roster_rows(state, wanted)
-    }
+    if allowed_endpoint_names is None:
+        qualified = {
+            row["name"] for row in db.current_court_roster_rows(state, wanted)
+        }
+    else:
+        qualified = allowed_endpoint_names
     illegal = [name for name in wanted if name not in qualified]
     if illegal:
         raise ValueError(
@@ -189,6 +199,7 @@ def credit_events_as_edges(records: Iterable[Mapping[str, Any]]) -> list[dict[st
 def _capture_one_interaction(
     db: Any, state: Any, item: Mapping[str, Any], turn: int,
     allowed_dossier_ids: Any = None,
+    allowed_endpoint_names: Any = None,
 ) -> list[dict[str, Any]]:
     kind = validate_edge_kind(item.get("类目") or item.get("kind"))
     if kind not in MINISTER_EDGE_KINDS:
@@ -244,7 +255,9 @@ def _capture_one_interaction(
         kind,
     )
     # V1：端点整项校验在任何边写入前完成——含坏端点的互动零边写入。
-    _validated_settlement_endpoints(db, state, source, targets)
+    _validated_settlement_endpoints(
+        db, state, source, targets, allowed_endpoint_names,
+    )
     out: list[dict[str, Any]] = []
     for target in targets:
         # r2 F2 基数：每「施动者→受动者」有序对恰一行；N 方联名=牵头者→各联署者
@@ -269,14 +282,16 @@ def _capture_one_interaction(
 def resolve_relation_edge_events_from_extraction(
     db: Any, state: Any, extracted: Any,
     dossier_ids_at_input: Any = None,
+    allowed_endpoint_names: Any = None,
 ) -> list[dict[str, Any]]:
     """#633 结算口真入口（resolve_credit_events_from_extraction 先例）。
 
     消费 extractor delta 的 ``relation_edge_events`` section，经 record_relation_edge_event
     唯一写口当场落库（TD-1）；尊重调用方事务（apply_score_extraction atomic 内）。
     dossier 来源受本批冻结输入闭集（dossier_ids_at_input，None/缺集按空闭集
-    fail-closed）与既有 effect_origin_rejection 双重合取；端点经既有名册投影校验。
-    类目 fail-closed 限大臣侧九类；坏项逐条拒收留痕（category=invalid_relation_event），
+    fail-closed）与既有 effect_origin_rejection 双重合取；端点经既有名册投影
+    校验，资格＝调用方传入的批内瞬态 pre∪post 名册并集（T1 r5 B 案；缺省退化
+    为 live 投影）。类目 fail-closed 限大臣侧九类；坏项逐条拒收留痕（category=invalid_relation_event），
     不猜测修正；捕获为空时零事件零副作用。重复项由表 UNIQUE
     (source,target,event_kind,context,origin) 幂等吸收，重放不双记。"""
     results: list[dict[str, Any]] = []
@@ -296,6 +311,7 @@ def resolve_relation_edge_events_from_extraction(
         try:
             results.extend(_capture_one_interaction(
                 db, state, item, turn, dossier_ids_at_input,
+                allowed_endpoint_names,
             ))
         except (TypeError, ValueError) as exc:
             results.append({

@@ -7089,6 +7089,13 @@ def apply_score_extraction(
     commit_now = not caller_transaction
     if caller_transaction:
         _register_runtime_rollback_snapshot(db, state, content, registry)
+    # #633 T1 r5 owner 裁决（B 案）：结算口边事件端点资格＝批内瞬态 canonical
+    # 名册并集。此处取 pre-roster 观察点（任何人物变更 apply 前）；post-roster
+    # 在人物变更全部落定后、relations 解析前另取。不建持久 snapshot、不新增
+    # 编排：atomic 回滚重试重新进入本函数时由同一 pre-state 自然重算。
+    _relation_pre_roster = {
+        row["name"] for row in db.current_court_roster_rows(state)
+    }
     # 0) 落库前校验/净化容器与可拆项；ADR0015 下可拆坏项逐项拒收，不再整批 abort。
     extracted, validate_rejections = sanitize_delta_shape(extracted)
     # #623：召对 extraction 真入口——反悔/坚持消费哭谏条（须先于 cancels 物化，
@@ -8299,6 +8306,12 @@ def apply_score_extraction(
         db, state, extracted,
         # V2：dossier 来源锁本批冻结输入闭集（None/缺集按空闭集 fail-closed）。
         dossier_ids_at_input=dossier_ids_at_input,
+        # T1 B 案：端点 ∈ 批内 pre∪post 名册并集——同批退场者与同批入场者的
+        # 互动都落；前后均不合格（幻觉/皇帝入大臣端）仍拒收。此处已在该批人物
+        # 变更全部 apply 之后，live 投影即 post-roster。
+        allowed_endpoint_names=_relation_pre_roster | {
+            row["name"] for row in db.current_court_roster_rows(state)
+        },
     )
 
     state.clamp()
