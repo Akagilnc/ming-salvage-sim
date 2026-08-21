@@ -1182,6 +1182,37 @@ def _apply_economy_list(
     return applied
 
 
+def _central_dues_with_haircut(
+    db: GameDB, state: GameState, ordered: List[Any],
+) -> Tuple[Dict[str, float], Dict[str, float]]:
+    """#653 / ADR 0090：军饷中央份额 Due 折发读端（r3 每（科目×省×饷源）独立取胜）。
+
+    只改写中央份额 Due 输入值：floor(Due×bp/10000)，余数=免除不入欠（F1.5）。
+    hub tier 恒先、0023 D9 合并 k 公式、中央旧欠不自动偿还（D7③）一律不动——
+    折后应得照常进同一 tier 分母与同一 waterfall。胜出键按
+    @region#central > @region > #central > 裸全序（region=army pay_source_region）。
+    返回（折后中央份额 Due by army id，免除额 by army id——仅 >0 者入）。"""
+    from ming_sim.pay_order import haircut_due, resolve_haircut_bp
+
+    config = db.get_fiscal_config()
+    turn = int(state.turn)
+    dues: Dict[str, float] = {}
+    exempts: Dict[str, float] = {}
+    for row in ordered:
+        raw_due = army_needed(row) * float(row["central_pay_share"] or 0)
+        bp = resolve_haircut_bp(
+            config, "军饷", str(row["pay_source_region"] or ""), turn, "central",
+        )
+        if bp is not None and bp != 10000 and raw_due > 0:
+            eff_due, exempt = haircut_due(raw_due, bp)
+            dues[str(row["id"])] = eff_due
+            if exempt > 0:
+                exempts[str(row["id"])] = exempt
+        else:
+            dues[str(row["id"])] = raw_due
+    return dues, exempts
+
+
 def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, object]]:
     """月度财政 tick：固定收支（compute_budget_lines 定额）+ 军饷逐军 + 建筑逐项落账，LLM 推演前完成。"""
     if not getattr(db.conn, "_commit_suspended", False):
@@ -1248,10 +1279,9 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
         army_map = {str(r["id"]): r for r in army_rows_raw}
         ordered = [army_map[k] for k in ARMY_SALARY_PRIORITY if k in army_map]
         ordered += [r for r in army_rows_raw if str(r["id"]) not in ARMY_SALARY_PRIORITY]
-        central_due_by_army = {
-            str(row["id"]): army_needed(row) * float(row["central_pay_share"] or 0)
-            for row in ordered
-        }
+        central_due_by_army, central_haircut_exempt_by_army = _central_dues_with_haircut(
+            db, state, ordered,
+        )
         try:
             hub_outbound = _compute_substrate_hub_outbound(
                 db,
@@ -1315,7 +1345,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
         for row in ordered:
             army_id = str(row["id"])
             name = str(row["name"])
-            full_needed = army_needed(row)
+            # #653：折发后中央份额应得额（无折＝原值）；morale 公式不变，只吃折后 Due。
             needed = max(0.0, central_due_by_army.get(army_id, 0.0))
             if needed <= 0:
                 continue
@@ -1335,7 +1365,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
             if province_pay_share > 0:
                 morale_delta = 0
             else:
-                morale_delta = army_pay_morale_delta(full_needed, shortfall, old_arrears)
+                morale_delta = army_pay_morale_delta(needed, shortfall, old_arrears)
             new_morale = max(0, min(100, old_morale + morale_delta))
 
             db.conn.execute(
@@ -1374,6 +1404,8 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                 "shortfall": shortfall,
                 "arrears_delta": new_arrears - old_arrears,
                 "morale_delta": new_morale - old_morale,
+                **({"due_haircut": central_haircut_exempt_by_army[army_id]}
+                   if army_id in central_haircut_exempt_by_army else {}),
             })
         db._reconcile_central_army_pay_arrears_container()
 
