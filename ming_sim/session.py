@@ -1974,11 +1974,13 @@ class GameSession:
                         if meta_deadline:
                             payload["deadline_months"] = meta_deadline
                         encoded = json.dumps(payload, ensure_ascii=False)
-                        self.db.conn.execute(
+                        cur = self.db.conn.execute(
                             "UPDATE pending_actions SET payload_json=? "
                             "WHERE id=? AND status='pending'",
                             (encoded, int(pending["id"])),
                         )
+                        if cur.rowcount != 1:
+                            continue
                         pending["payload_json"] = encoded
                         out["pending_action_id"] = int(pending["id"])
                     if not bool(getattr(self.db.conn, "_commit_suspended", False)) and int(
