@@ -1,12 +1,14 @@
 """#1509 online findings：密令「修改」确认缝——点名/保字段/P5 无二调/非密令不吞/去前缀。
 
 r2：目标编号取自同次 confirmation 结构化 JSON stub，不从消息字面机械解析。
+r3：真实 chat 编排路（preclassification → apply）须保留同次 target_ids。
 """
 
 from __future__ import annotations
 
 import json
 import types
+from types import SimpleNamespace
 
 import ming_sim.cli_backend as cb
 from ming_sim.session import (
@@ -299,3 +301,150 @@ def test_extract_confirmation_intent_returns_target_ids(monkeypatch):
     assert result["confirmation"] == "修改"
     # 7 不在合法集合；42/99 保留
     assert result["target_ids"] == [42, 99]
+
+
+def _chat_shell(db, state, content, *, channel="cli"):
+    """轻量 GameSession.chat 壳：走真实 preclassification/chat 接缝。"""
+
+    class Agent:
+        def run(self, _message):
+            return SimpleNamespace(content="臣遵旨改。", tools=[])
+
+    class Registry:
+        def get(self, _character):
+            return Agent()
+
+        def build_draft_line(self):
+            return "无"
+
+        def refresh(self, _name):
+            return None
+
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.registry = Registry()
+    sess.llm_config = SimpleNamespace(channel=channel)
+    sess.temporary_characters = set()
+    sess._audience_prompt_for_message = lambda message, *a, **k: message
+    # 分类器未跑：强制走 _confirmation_intent_for_preexisting_pending 真缝
+    sess._start_cli_action_intent = lambda *_a, **_k: None
+    sess._finish_cli_action_intent = lambda *_a, **_k: None
+    return sess
+
+
+def _stage_two_secret_pending(db, state, name):
+    id1 = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name,
+        target_id=None,
+        payload={
+            "title": "密察关宁", "content": "密察关宁欠饷", "assignee": name,
+            "tags": ["关宁"], "deadline_months": 3,
+        },
+    )
+    id2 = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name,
+        target_id=None,
+        payload={
+            "title": "暗结蒙古", "content": "暗结蒙古诸部", "assignee": name,
+            "tags": ["蒙古"], "deadline_months": 2,
+        },
+    )
+    return id1, id2
+
+
+def test_chat_path_modify_uses_stub_id_not_message_literal(game, monkeypatch):
+    """#1509 r3 反证：真实 chat 路，消息写『第二道』、判词返 id1 → 只改 id1。
+
+    覆盖 preclassification 丢 _named 的真病：若 target_ids 未过缝，
+    intent 非 None 分支 confirm_named_ids 空 → 必落 ambiguity、两道都不改。
+    """
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    id1, id2 = _stage_two_secret_pending(db, state, name)
+    assert id1 != id2
+
+    confirm_calls: list = []
+
+    def _stub_backend(prompt, llm_config=None, tag=""):
+        confirm_calls.append(tag)
+        # 故意与消息字面「第二道」相反：点名第一道
+        return (
+            json.dumps(
+                {"确认": "修改", "目标编号": [id1]},
+                ensure_ascii=False,
+            ),
+            1,
+        )
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _stub_backend)
+    monkeypatch.setattr(
+        cb, "_extract_secret_order",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            AssertionError("P5: 修改不得二次串行 _extract_secret_order"),
+        ),
+    )
+
+    sess = _chat_shell(db, state, content)
+    # 字面『第二道』+ 第二道 title——旧机械 resolver / 丢编号缝都会错
+    GameSession.chat(sess, name, "修改第二道：暗结蒙古那道改成只查饷银去向")
+
+    p1 = json.loads(
+        db.conn.execute(
+            "SELECT payload_json FROM pending_actions WHERE id=?", (id1,),
+        ).fetchone()[0]
+    )
+    p2 = json.loads(
+        db.conn.execute(
+            "SELECT payload_json FROM pending_actions WHERE id=?", (id2,),
+        ).fetchone()[0]
+    )
+    assert p1["content"] == "暗结蒙古那道改成只查饷银去向"
+    assert p2["content"] == "暗结蒙古诸部"
+    assert p2["title"] == "暗结蒙古"
+    # 只许同次 confirmation 一次；禁第二次 LLM
+    assert confirm_calls.count("confirmation") == 1
+    assert all(t == "confirmation" for t in confirm_calls)
+
+
+def test_chat_path_modify_without_target_id_is_ambiguous(game, monkeypatch):
+    """#1509 r3：真实 chat 路，多候选修改无合法编号 → 含糊，两道都不改。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    id1, id2 = _stage_two_secret_pending(db, state, name)
+
+    monkeypatch.setattr(
+        cb, "_run_backend_for_config",
+        lambda *a, **k: (
+            json.dumps({"确认": "修改", "目标编号": []}, ensure_ascii=False), 1,
+        ),
+    )
+    monkeypatch.setattr(
+        cb, "_extract_secret_order",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            AssertionError("P5: 含糊修改不得二次 _extract_secret_order"),
+        ),
+    )
+
+    sess = _chat_shell(db, state, content)
+    result = GameSession.chat(sess, name, "修改：都改成只查饷银")
+
+    amb = getattr(result, "directive_confirmation_ambiguous", None) or {}
+    # chat 结果字段名可能在 result 上，也可能只反映 DB 未改
+    p1 = json.loads(
+        db.conn.execute(
+            "SELECT payload_json FROM pending_actions WHERE id=?", (id1,),
+        ).fetchone()[0]
+    )
+    p2 = json.loads(
+        db.conn.execute(
+            "SELECT payload_json FROM pending_actions WHERE id=?", (id2,),
+        ).fetchone()[0]
+    )
+    assert p1["content"] == "密察关宁欠饷"
+    assert p2["content"] == "暗结蒙古诸部"
+    # 若 result 透出 ambiguous，编号集合须覆盖两道
+    if amb:
+        cands = {int(c["id"]) for c in (amb.get("candidates") or [])}
+        assert cands == {id1, id2}
