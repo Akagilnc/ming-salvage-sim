@@ -201,8 +201,25 @@ def test_break_rank_appointment_rescript_td4_tracer(
     assert _sat(restored, "factions", "东林") == before_faction
     assert _cost_events(restored, dossier_id) == []
 
+    # 现行 rendered 契约：服务端 options 带 dossier_id/dossier_decision + hint
+    # （#1492 A / #1494：_chosen_rescript_actions 靠 options 合法能力对识别批红轨）
+    rescript_options = [
+        {
+            "label": "强颁", "hint": "以中旨强行颁出",
+            "dossier_id": dossier_id, "dossier_decision": "force_promulgated",
+        },
+        {
+            "label": "收回", "hint": "收回此道准旨",
+            "dossier_id": dossier_id, "dossier_decision": "withdrawn",
+        },
+        {
+            "label": "留中", "hint": "留待下月重判",
+            "dossier_id": dossier_id, "dossier_decision": "hold",
+        },
+    ]
     actions = _chosen_rescript_actions([{
         "event_id": f"dossier:{dossier_id}",
+        "options": rescript_options,
         "choice": {"dossier_id": dossier_id, "dossier_decision": decision},
     }])
     assert actions == [{"dossier_id": dossier_id, "decision": decision}]

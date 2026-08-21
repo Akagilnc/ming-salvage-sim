@@ -356,3 +356,153 @@ def test_lying_label_rebuilt_from_server_option(web_game, monkeypatch):
     assert choice.get("label") == "强颁", choice
     assert choice.get("hint") == "以中旨强行颁出", choice
     assert choice.get("note") == "准。先济关宁边饷。"
+
+
+def test_parse_rescript_capability_pair_rejects_non_positive_and_unknown():
+    """#1494 共享校验器：正整数 id + 支持动作枚举；其余一律 None。"""
+    from ming_sim.settlement_payload import parse_rescript_capability_pair
+
+    assert parse_rescript_capability_pair({
+        "dossier_id": 3, "dossier_decision": "hold",
+    }) == (3, "hold")
+    assert parse_rescript_capability_pair({
+        "dossier_id": "7", "dossier_decision": "withdrawn",
+    }) == (7, "withdrawn")
+    # 非正 / 未知动作 / 缺字段 / 非 dict
+    assert parse_rescript_capability_pair({
+        "dossier_id": 0, "dossier_decision": "hold",
+    }) is None
+    assert parse_rescript_capability_pair({
+        "dossier_id": -1, "dossier_decision": "hold",
+    }) is None
+    assert parse_rescript_capability_pair({
+        "dossier_id": 3, "dossier_decision": "promulgated",
+    }) is None
+    assert parse_rescript_capability_pair({
+        "dossier_id": 3, "dossier_decision": None,
+    }) is None
+    assert parse_rescript_capability_pair({"dossier_decision": "hold"}) is None
+    assert parse_rescript_capability_pair(None) is None
+    assert parse_rescript_capability_pair("force_promulgated") is None
+
+
+def test_mixed_legal_illegal_options_illegal_choice_stays_pending(
+    web_game, monkeypatch,
+):
+    """#1494：混合合法/非法 options 时，选非法能力对保持 pending、不进 phase2。
+
+    allowed 只收共享校验器放行的对；非法残对（负 id / 未知 decision）不得空对空放行。
+    """
+    db, state = web_game.db, web_game.state
+    dossier_id = db.create_decree_dossier(
+        state,
+        action_type="policy",
+        decree_text="密查陕西驿卒",
+        target_kind="issue",
+        target_id="river-works",
+    )
+    options = [
+        {
+            "label": "强颁",
+            "hint": "以中旨强行颁出",
+            "dossier_id": dossier_id,
+            "dossier_decision": "force_promulgated",
+        },
+        {
+            "label": "伪收回",
+            "hint": "残对负 id",
+            "dossier_id": -9,
+            "dossier_decision": "withdrawn",
+        },
+        {
+            "label": "伪留中",
+            "hint": "未知动作",
+            "dossier_id": dossier_id,
+            "dossier_decision": "promulgated",
+        },
+        {
+            "label": "裸字段",
+            "hint": "仅非 None",
+            "dossier_id": dossier_id,
+            "dossier_decision": None,
+        },
+    ]
+    db.save_pending_decisions(state.turn, [{
+        "event_id": f"dossier:{dossier_id}",
+        "title": "批红待裁",
+        "context": "密查陕西驿卒",
+        "options": options,
+    }])
+    db.save_resolve_context(
+        state.turn,
+        "诏曰密查",
+        "待续邸报",
+        {"candidate_events": [{"id": "ev_border", "title": "边警"}]},
+        secret_orders=[],
+        relevant_memories=[],
+    )
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
+
+    phase2_calls: list[list] = []
+
+    def _phase2(_state, _db, *_a, **_k):
+        rows = list(_db.list_pending_decisions(int(_state.turn)))
+        phase2_calls.append(rows)
+        _db.clear_pending_decisions(int(_state.turn))
+        return "邸报：不应到此。"
+
+    monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _phase2)
+
+    # ① 选非法残对（负 id）→ error + pending
+    illegal = {
+        "label": "伪收回",
+        "hint": "残对负 id",
+        "dossier_id": -9,
+        "dossier_decision": "withdrawn",
+    }
+    r1 = asyncio.run(_post_resolve([illegal]))
+    assert r1.status_code == 200, r1.text
+    assert "event: error" in r1.text, r1.text
+    assert "event: done" not in r1.text
+    row = db.list_pending_decisions(state.turn)[0]
+    assert row["status"] == "pending", row
+    assert row["choice"] is None
+    assert phase2_calls == [], "非法选择不得进入 phase2"
+
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
+
+    # ② 选未知动作枚举 → 同样 fail-closed
+    unknown = {
+        "label": "伪留中",
+        "hint": "未知动作",
+        "dossier_id": dossier_id,
+        "dossier_decision": "promulgated",
+    }
+    r2 = asyncio.run(_post_resolve([unknown]))
+    assert r2.status_code == 200, r2.text
+    assert "event: error" in r2.text, r2.text
+    assert phase2_calls == []
+    assert db.list_pending_decisions(state.turn)[0]["status"] == "pending"
+
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
+
+    # ③ 同批合法 option 仍可过
+    legal = {
+        "label": "强颁",
+        "hint": "以中旨强行颁出",
+        "note": "准。",
+        "dossier_id": dossier_id,
+        "dossier_decision": "force_promulgated",
+    }
+    r3 = asyncio.run(_post_resolve([legal]))
+    assert r3.status_code == 200, r3.text
+    assert "event: done" in r3.text, r3.text
+    assert "event: error" not in r3.text
+    assert len(phase2_calls) == 1
+    choice = phase2_calls[0][0]["choice"] or {}
+    assert choice.get("dossier_id") == dossier_id
+    assert choice.get("dossier_decision") == "force_promulgated"
+    assert choice.get("label") == "强颁"

@@ -56,6 +56,7 @@ from ming_sim.registry import MinisterRegistry, bind_content as _bind_registry
 from ming_sim.settlement_payload import (
     bind_decisions_to_candidate_events,
     decision_has_rescript_capability,
+    parse_rescript_capability_pair,
 )
 from ming_sim.skills import bind_content as _bind_skills
 
@@ -2867,13 +2868,14 @@ class GameSession:
             # payloads leave the retry state untouched（非法载荷绝不落 decided，#1490）。
             # #1418 r2：已 decided 行（崩溃安全先写后跑）不得被空/异载荷覆写——
             # phase2 续跑重发 resolve 时保留账上 choice，校验与回写均跳过。
-            # #1492 A：allowed 排除 (None,None) 残对；D：命中后从服务端 option 重建落库。
+            # #1492 A：allowed 排除残对；#1494：能力对经共享校验器（正整数 id +
+            # 支持动作枚举）；D：命中后从服务端 option 重建落库。
             import json as _json
             rebuilt_by_idx: Dict[int, Dict[str, object]] = {}
             for d in stored:
                 if str(d.get("status") or "") == "decided":
                     continue
-                # 批红轨：options 带齐能力字段（#1492 A；bind 亦同此识别）。
+                # 批红轨：options 含合法能力对（#1492 A / #1494；bind 亦同此识别）。
                 if not decision_has_rescript_capability(d):
                     continue
                 options = [
@@ -2882,34 +2884,24 @@ class GameSession:
                 ]
                 idx = int(d["idx"])
                 choice = choices[idx] if idx < len(choices) else None
-                allowed = {
-                    (option.get("dossier_id"), option.get("dossier_decision"))
-                    for option in options
-                    if option.get("dossier_id") is not None
-                    and option.get("dossier_decision") is not None
-                }
+                option_by_pair: Dict[tuple, Dict[str, object]] = {}
+                for option in options:
+                    pair = parse_rescript_capability_pair(option)
+                    if pair is not None:
+                        option_by_pair[pair] = option
+                allowed = set(option_by_pair)
                 selected = (
-                    choice.get("dossier_id"), choice.get("dossier_decision")
-                ) if isinstance(choice, dict) else (None, None)
-                if selected not in allowed:
-                    raise ValueError("批红选择必须是本案提供的强颁、收回或留中选项")
-                matched = next(
-                    (
-                        option for option in options
-                        if (
-                            option.get("dossier_id"),
-                            option.get("dossier_decision"),
-                        ) == selected
-                    ),
-                    None,
+                    parse_rescript_capability_pair(choice)
+                    if isinstance(choice, dict) else None
                 )
-                if matched is None:
+                if selected is None or selected not in allowed:
                     raise ValueError("批红选择必须是本案提供的强颁、收回或留中选项")
+                matched = option_by_pair[selected]
                 rebuilt: Dict[str, object] = {
                     "label": matched.get("label"),
                     "hint": matched.get("hint") or "",
-                    "dossier_id": matched.get("dossier_id"),
-                    "dossier_decision": matched.get("dossier_decision"),
+                    "dossier_id": selected[0],
+                    "dossier_decision": selected[1],
                 }
                 # 客户端只允许附加自由 note（#1492 D）
                 if isinstance(choice, dict) and choice.get("note") is not None:

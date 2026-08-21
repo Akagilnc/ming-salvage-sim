@@ -13,13 +13,18 @@ from __future__ import annotations
 
 import json
 import re
-from typing import TYPE_CHECKING, Dict, List, Set
+from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
 
 from ming_sim.models import effect_dict_has_work
 
 if TYPE_CHECKING:  # GameDB 仅用于 _select_secret_orders_for_sim 的类型注解（已 `from __future__ annotations`
     from ming_sim.db import GameDB  # 惰性字符串）；不在运行时 import db，使本模块运行时零 db 依赖（线上 sourcery）
     from ming_sim.models import GameState
+
+# 批红玩家 disposition 动作枚举（与 _chosen_rescript_actions / 生成端 options 同集）
+RESCRIPT_CAPABILITY_DECISIONS = frozenset({
+    "force_promulgated", "withdrawn", "hold",
+})
 
 CHEAT_NARRATIVE_PREFIX = (
     "【天命强制·结算优先】以下为既成事实，最高优先级，先于一切规则与档位上限。"
@@ -87,12 +92,40 @@ def parse_decision_blocks(narrative: str) -> tuple[str, List[Dict[str, object]]]
     return clean, decisions
 
 
+def parse_rescript_capability_pair(
+    option: object,
+) -> Optional[Tuple[int, str]]:
+    """共享校验器：合法批红能力对 → (正整数 dossier_id, 支持动作枚举)。
+
+    非法（缺字段 / 非正整数 id / 未知 decision / 非 dict）一律 None。
+    bind 保留、allowed/matched 构造、decision_has_rescript_capability 均走此缝
+    （CodeRabbit Major on #1494：从『非 None』收紧）。
+    """
+    if not isinstance(option, dict):
+        return None
+    raw_id = option.get("dossier_id")
+    # bool 是 int 子类，须先排除；拒绝 0/负与不可转 int 的值
+    if isinstance(raw_id, bool) or raw_id is None:
+        return None
+    try:
+        dossier_id = int(raw_id)
+    except (TypeError, ValueError):
+        return None
+    if dossier_id <= 0:
+        return None
+    decision = option.get("dossier_decision")
+    if not isinstance(decision, str) or decision not in RESCRIPT_CAPABILITY_DECISIONS:
+        return None
+    return (dossier_id, decision)
+
+
 def decision_has_rescript_capability(decision: object) -> bool:
-    """批红轨识别：options 同时带 dossier_id + dossier_decision（#1490/#1492 A）。
+    """批红轨识别：options 含至少一对合法能力对（#1490/#1492 A / #1494）。
 
     仅 event_id 的 dossier: 前缀不够——due-commitment / backlash 等决策块会把
     origin_ref=dossier:N 回填成 event_id，但 options 只有 {label,hint}。那些行
-    不是批红待裁，不得按 rescript 轨处理。
+    不是批红待裁，不得按 rescript 轨处理。能力对须经 parse_rescript_capability_pair
+    （正整数 id + 支持动作枚举），裸非 None 残对不算。
     """
     if not isinstance(decision, dict):
         return False
@@ -100,9 +133,7 @@ def decision_has_rescript_capability(decision: object) -> bool:
     if not isinstance(options, list):
         return False
     for opt in options:
-        if not isinstance(opt, dict):
-            continue
-        if opt.get("dossier_id") is not None and opt.get("dossier_decision") is not None:
+        if parse_rescript_capability_pair(opt) is not None:
             return True
     return False
 

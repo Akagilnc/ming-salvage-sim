@@ -545,11 +545,14 @@ def _rescript_decisions(
 def _chosen_rescript_actions(
     decisions: List[Dict[str, object]],
 ) -> List[Dict[str, object]]:
-    from ming_sim.settlement_payload import decision_has_rescript_capability
+    from ming_sim.settlement_payload import (
+        decision_has_rescript_capability,
+        parse_rescript_capability_pair,
+    )
 
     actions: List[Dict[str, object]] = []
     for decision in decisions:
-        # #1492 A：批红轨 = event_id dossier: 前缀 AND options 带齐能力字段。
+        # #1492 A / #1494：批红轨 = event_id dossier: 前缀 AND options 含合法能力对。
         # 裸 origin_ref 同形（due-commitment 等）跳过，不抛「批红决策载荷非法」。
         if not str(decision.get("event_id") or "").startswith("dossier:"):
             continue
@@ -558,13 +561,10 @@ def _chosen_rescript_actions(
         choice = decision.get("choice")
         if not isinstance(choice, dict):
             raise LLMContractError("批红决策缺少玩家选择")
-        dossier_id = int(choice.get("dossier_id") or 0)
-        action = str(choice.get("dossier_decision") or "")
-        if dossier_id <= 0 or action not in {
-            "force_promulgated", "withdrawn", "hold",
-        }:
+        pair = parse_rescript_capability_pair(choice)
+        if pair is None:
             raise LLMContractError("批红决策载荷非法")
-        actions.append({"dossier_id": dossier_id, "decision": action})
+        actions.append({"dossier_id": pair[0], "decision": pair[1]})
     return actions
 
 
