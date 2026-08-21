@@ -208,6 +208,7 @@ minister 大臣奏对全文见 [docs/raw/02_narratives/minister__*.txt](raw/02_n
 | `cursor` | `cursor-agent -p --output-format text --trust [--model <id>]` | #1256；`--trust` 免非交互 workspace 信任闸 |
 | `kimi` | `kimi -p <prompt> --output-format text [-m <alias>]`（**禁**与 `--yolo`/`--auto` 组合；只取 stdout） | #1256 |
 | `grok` | `grok -p <prompt> --output-format plain [-m <id>] [--effort low\|med\|high]` | #1256 / §十二 grok-4.5 腿 |
+| `pi` | `pi -p --mode text --no-tools [--model <provider/id>] [--thinking off\|minimal\|low\|medium\|high\|xhigh\|max] <prompt>` | #1274-qa-y1 / #1456；`--no-tools` 关内置工具 |
 
 choices 单一真源：`ming_sim.cli_backend.GATE_CLI_RUNNERS`。非法名 argparse 拒收；`opencode` 不在 choices。
 
