@@ -21,7 +21,7 @@ def test_phase2_fanout_five_legs_meet_at_barrier(game, monkeypatch):
     """r3 oracle：五腿全部在任一腿完成前已起跑＝真五路 fan-out。
 
     串行形（逐腿跑、先完成后起）永远凑不齐 count=5 → Barrier 超时 BrokenBarrierError
-    → 测试失败；真五路启动则统一释放。
+    → 测试失败；真五路启动则统一释放。单腿接缝：腿结果由闭包持有（box）。
     """
     db, state, _content = game
     barrier = threading.Barrier(5)
@@ -39,21 +39,24 @@ def test_phase2_fanout_five_legs_meet_at_barrier(game, monkeypatch):
 
     monkeypatch.setattr(simulation, "run_agent_text", _fake_leg)
 
-    side_results: dict = {}
+    box: dict = {}
+
+    def _side_leg() -> None:
+        box["draft"] = _fake_leg(object(), "draft-prompt", "rescript-draft")
+
     merged, _, _ = extract_scores_by_modules_with_agno(
         {m: object() for m in EXTRACTION_MODULES}, db, state, "邸报",
         parallel=True,
-        side_legs={"rescript_draft": lambda: _fake_leg(object(), "draft-prompt", "rescript-draft")},
-        side_results=side_results,
+        side_leg=_side_leg,
     )
     assert len(started) == 5
     assert set(started) == {f"extractor/{m}" for m in EXTRACTION_MODULES} | {"rescript-draft"}
-    assert side_results["rescript_draft"] == "draft-prompt"
+    assert box["draft"] == "draft-prompt"
 
 
 def test_settle_wires_rescript_draft_into_single_fanout(game, monkeypatch):
-    """接线证明：_settle_after_narrative 把票拟腿交进与四 extractor 同一个 fan-out 调用
-    （side_legs 同批提交、parallel=True），不另起串行 LLM 步。"""
+    """接线证明：_settle_after_narrative 把唯一票拟 companion 腿交进与四 extractor 同一个
+    fan-out 调用（side_leg 单腿接缝、parallel=True），不另起串行 LLM 步。"""
     import ming_sim.decree as decree_mod
     from tests.test_rescript_draft_656 import (
         _add_character,
@@ -70,8 +73,7 @@ def test_settle_wires_rescript_draft_into_single_fanout(game, monkeypatch):
 
     def _capture(*args, **kwargs):
         captured["parallel"] = kwargs.get("parallel")
-        captured["side_legs"] = kwargs.get("side_legs")
-        captured["side_results"] = kwargs.get("side_results")
+        captured["side_leg"] = kwargs.get("side_leg")
         return ({}, "out", "in")
 
     monkeypatch.setattr(decree_mod, "extract_scores_by_modules_with_agno", _capture)
@@ -84,5 +86,4 @@ def test_settle_wires_rescript_draft_into_single_fanout(game, monkeypatch):
         before_turn=state.turn, _emit=lambda *a: None, content=content,
     )
     assert captured["parallel"] is True
-    assert set(captured["side_legs"]) == {"rescript_draft"}
-    assert callable(captured["side_legs"]["rescript_draft"])
+    assert callable(captured["side_leg"])  # 唯一票拟腿，无多腿容器
