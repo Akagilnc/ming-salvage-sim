@@ -274,6 +274,97 @@ def _fake_api_session(db, state, content=None):
     return sess
 
 
+def test_api_classifier_dispatch_produces_appointment_and_stages_office(
+    game, monkeypatch,
+):
+    """#1510：真实 channel=api 配置经 _run_json_extractor→_run_api_for_config 分派缝，
+    classifier 真产 appointment 候选并最终 stage office。
+    禁 mock classifier / 预注入 candidates / mock _run_backend_for_config 伪造成功。
+    """
+    db, state, content = game
+    ch = _minister_wang_shaohui(db, content)
+    assert db.get_character_status("袁崇焕")[0] == "offstage"
+
+    api_calls: list[str] = []
+    backend_calls: list[str] = []
+
+    def _api(prompt, llm_config=None, tag=""):
+        api_calls.append(tag or "")
+        assert tag == "action_intent"
+        assert getattr(llm_config, "channel", None) == "api"
+        # 中文 schema 多候选：拟旨 + 任免（与 registry 软归一契约对齐）
+        payload = [
+            {"动作类型": "拟旨", "确认": "", "密令动作": "", "任免动作": ""},
+            {
+                "动作类型": "任免",
+                "确认": "",
+                "密令动作": "",
+                "任免动作": "任命",
+                "姓名": "袁崇焕",
+                "官职": "兵部右侍郎兼都察院右佥都御史督师蓟辽",
+            },
+        ]
+        return (json.dumps(payload, ensure_ascii=False), 1)
+
+    def _backend_must_not_run(prompt, llm_config=None, tag=""):
+        backend_calls.append(tag or "")
+        raise AssertionError(
+            f"API channel must not call CLI-only _run_backend_for_config tag={tag!r}"
+        )
+
+    monkeypatch.setattr(cb, "_run_api_for_config", _api)
+    monkeypatch.setattr(cb, "_run_backend_for_config", _backend_must_not_run)
+
+    api_cfg = types.SimpleNamespace(channel="api")
+    player_message = "着起复袁崇焕，以兵部右侍郎兼都察院右佥都御史督师蓟辽"
+    # 真跑 classifier（不 mock classify、不预注入 candidates）
+    candidates = cb.classify_cli_action_intent(
+        player_message, llm_config=api_cfg,
+    )
+    kinds = sorted(str(c.get("kind") or "") for c in candidates)
+    assert "appointment" in kinds, f"API extractor 须产 appointment，got {candidates!r}"
+    assert "draft" in kinds, f"API extractor 须同时产 draft，got {candidates!r}"
+    assert api_calls == ["action_intent"], f"须经 _run_api_for_config，got {api_calls!r}"
+    assert backend_calls == [], f"CLI-only helper 不得被调用，got {backend_calls!r}"
+
+    appt = next(c for c in candidates if c.get("kind") == "appointment")
+    assert appt.get("name") == "袁崇焕"
+
+    # tools 仅 directive；office 必须来自 classifier 产出的 appointment 候选
+    dir_pid = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨",
+        minister_name=ch.name, target_id=None,
+        payload={
+            "text": (
+                "奉天承运皇帝诏曰，着起复袁崇焕，"
+                "以兵部右侍郎兼都察院右佥都御史督师蓟辽。钦此。"
+            ),
+            "actor": ch.name,
+            "dossier_action_type": "special_decree",
+        },
+    )
+    sess = _fake_api_session(db, state, content)
+    GameSession.apply_cli_conversation_actions(
+        sess, ch,
+        player_message=player_message,
+        answer="奉天承运皇帝诏曰，着起复袁崇焕……钦此。请陛下定夺准驳。",
+        has_directive=True, secret_order_id=None,
+        preclassified_intent=candidates,
+    )
+
+    pending = db.list_pending_actions(state.turn)
+    pending_kinds = {p["kind"] for p in pending}
+    assert "directive" in pending_kinds
+    assert "office" in pending_kinds, "API classifier appointment 须 stage office"
+    assert any(int(p["id"]) == int(dir_pid) for p in pending if p["kind"] == "directive")
+    office_row = next(p for p in pending if p["kind"] == "office")
+    office_payload = json.loads(office_row["payload_json"])
+    assert office_payload["name"] == "袁崇焕"
+    assert db.get_character_status("袁崇焕")[0] == "offstage"
+    # materialize 路径亦不得再撞 CLI-only 咽喉
+    assert backend_calls == []
+
+
 def test_api_natural_language_preclassified_draft_appointment_stages_office(
     game, monkeypatch,
 ):
