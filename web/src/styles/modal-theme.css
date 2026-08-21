@@ -147,8 +147,9 @@
 
 /* #1480：hideTitle（.modal-header-bare 绝对定位）脱离 grid 后，正文须落在唯一 1fr 行
    （默认 auto minmax(0,1fr) 会把唯一流内子项放进 auto 行 → 长转录/高侧栏溢出）。
-   召对 modal-bg-chat 恒 hideTitle；与 #1398 邸报单行 1fr 同形。 */
-.modal-bg-chat.fullscreen-modal {
+   只收口 bare 头：起居注 / 政务失败恢复同用 modal-bg-chat 但有可见标题栏，
+   裸单行 1fr 会把正文挤进 implicit auto 行再被 overflow:hidden 裁掉。 */
+.modal-bg-chat.fullscreen-modal:has(> .modal-header-bare) {
   grid-template-rows: minmax(0, 1fr);
   min-height: 0;
   overflow: hidden;
