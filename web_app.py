@@ -5076,7 +5076,8 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
 
 
 class ResolveDecisionsRequest(BaseModel):
-    # 皇帝亲裁结果：按决策点 idx 顺序，每项 {label, hint?, note?}。
+    # 皇帝亲裁结果：按决策点 idx 顺序，每项 {label, hint?, note?}；
+    # dossier 批红另须带 dossier_id/dossier_decision（#1490，非法不落 decided）。
     choices: List[Dict[str, Any]] = []
     cheat: str = ""
 
