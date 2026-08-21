@@ -1243,7 +1243,9 @@ def classify_cli_action_intent(
     )
     raw = ""
     try:
-        raw, _ = _run_backend_for_config(prompt, llm_config, tag="action_intent")
+        # #1502：API channel 须走 JSON 分发（_run_api_for_config），不得撞
+        # _run_backend_for_config 的「显式 API channel 未启用本地 CLI backend」。
+        raw, _ = _run_json_extractor_for_config(prompt, llm_config, tag="action_intent")
     except Exception as exc:
         _log(f"召对动作意图判断失败：{exc}")
         return []
