@@ -16,6 +16,7 @@ from ming_sim.commitment_backlash import build_backlash_narrative_features
 from ming_sim.constants import TURN_UNIT
 from ming_sim.context import historical_anchor_for_month, victory_status
 from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS
+from ming_sim.fiscal_fact_brief import build_fiscal_fact_brief
 from ming_sim.issues import (
     commitment_condition_role,
     commitment_display_text,
@@ -690,6 +691,10 @@ def build_simulator_payload(
         "active_issues": issues_payload,
         "candidate_events": candidate_events,
         "fiscal_levy_memorial_estimates": fiscal_levy_memorial_estimates(state, db),
+        # #653 F3.1：财政事实摘要（F2 六源纯投影）喂 simulator——被亏方怨气定性叙事由
+        # 既有 simulator 自由长出，零新增 LLM 调用；阶级 satisfaction 变动仍只由
+        # internal extractor 的 class_delta 槽产出（EXTRACTION_MODULES 一字不动）。
+        "fiscal_fact_brief": build_fiscal_fact_brief(db),
         "previous_narrative_tail": previous_narrative[-1500:] if previous_narrative else "",
         "historical_anchor": historical_anchor_for_month(state.year, state.period),
         "victory_status": victory_status(db, state),

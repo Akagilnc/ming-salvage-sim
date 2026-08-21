@@ -2822,6 +2822,13 @@ class GameDB:
         fiscal = json.loads(str(row["fiscal"] or "{}"))
         return self._settle_province_tick_from_fiscal(region_id, fiscal, actions or [])
 
+    def _current_settle_turn(self) -> int:
+        """#653 override 期限判定用的当前绝对 turn（game_state 单行真源；无行=0＝永不到期）。"""
+        row = self.conn.execute(
+            "SELECT turn FROM game_state WHERE id = 1"
+        ).fetchone()
+        return int(row["turn"]) if row is not None and row["turn"] is not None else 0
+
     def settle_ming_province_substrate_ticks(
         self,
         actions_by_region: Optional[Dict[str, List[Dict[str, Any]]]] = None,
@@ -2900,6 +2907,18 @@ class GameDB:
         if p_overrides:
             tick_p = dict(tick_p)
             tick_p.update(p_overrides)
+        # ── #653 / ADR 0090：偿还序 override ＋ 折发系数读取端（r2/r3 表示法）──
+        # 无在位 override 键 → resolve 返 None → 零合并，结算逐字节走默认路径（回归不破）。
+        from ming_sim.pay_order import resolve_pay_order_overrides
+        overrides = resolve_pay_order_overrides(
+            self.get_fiscal_config(), region_id, self._current_settle_turn()
+        )
+        if overrides is not None:
+            tick_p = dict(tick_p)
+            tick_p["due_order"] = list(overrides.due_order)
+            tick_p["arrears_order"] = list(overrides.arrears_order)
+            if overrides.haircut_bp:
+                tick_p["due_haircut_bp"] = dict(overrides.haircut_bp)
         result = settle_tick(settle["st"], tick_p, actions)  # raise→下方不执行（港口锁）
         if pay_rows:
             self._apply_region_army_pay_tick(pay_rows, result, standalone_pay_component)
