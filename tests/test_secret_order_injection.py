@@ -59,7 +59,7 @@ def test_active_capped(game):
 
 
 def test_reopen_migrates_pending_review_due_zero(game):
-    """重开 GameDB：due_turn=0 的 pending_review 得到期标记且可进 due 集。"""
+    """重开 GameDB：due_turn=0 的 pending_review 迁 active 并得未来实况窗（不立即 due）。"""
     db, state, content = game
     db.conn.execute("DELETE FROM secret_orders")
     _insert_order(db, state, "零期核议", "pending_review", due_turn=0)
@@ -76,7 +76,8 @@ def test_reopen_migrates_pending_review_due_zero(game):
         ).fetchone()
         assert row["status"] == "active"
         assert int(row["due_turn"]) > 0
-        assert int(row["due_turn"]) <= int(state2.turn)
+        # 尚缺 target 时给未来窗，禁止 due<=current 空实况即死
+        assert int(row["due_turn"]) > int(state2.turn)
     finally:
         db2.close()
 
