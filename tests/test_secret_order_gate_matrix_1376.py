@@ -20,7 +20,7 @@ import re
 import time
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional
 
 import pytest
 from fastapi.testclient import TestClient
@@ -63,20 +63,27 @@ _REAL_AK_ROLES = (_REAL_HOME / ".ak-roles").resolve()
 _REAL_MING_DATA = (_REAL_HOME / "WorkSpace" / "Ming_LLM" / "data").resolve()
 
 
-# 文件状态指纹：(size, mtime_ns, ctime_ns)。禁全文 hash（真实树可达 GB）；
-# 同路径覆写/截断/改写会改变 size 或时间戳，路径集合不可见的写入由此咬住。
-FileState = Tuple[int, int, int]
-TreeSnapshot = Dict[str, FileState]
+# 内容摘要指纹：逐文件流式分块 sha256（防 GB 级全文载入）。
+# 元数据 (size/mtime/ctime) 漏检「等长改写后恢复 mtime」；内容摘要咬住真实写入。
+_CONTENT_HASH_CHUNK = 1024 * 1024  # 1 MiB 分块
+FileDigest = str  # hex sha256 of file bytes
+TreeSnapshot = Dict[str, FileDigest]
 
 
-def _file_state(path: Path) -> FileState:
-    st = os.lstat(path)
-    ctime_ns = getattr(st, "st_ctime_ns", int(st.st_ctime * 1_000_000_000))
-    return (int(st.st_size), int(st.st_mtime_ns), int(ctime_ns))
+def _file_content_digest(path: Path) -> FileDigest:
+    """流式分块 hash：不把整文件读入内存。"""
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        while True:
+            chunk = fh.read(_CONTENT_HASH_CHUNK)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def _tree_paths(root: Path) -> TreeSnapshot:
-    """整树相对路径→文件状态指纹：os.walk 全覆盖，不跳 books/cases/ops/taishi 子目录。"""
+    """整树相对路径→内容摘要：os.walk 全覆盖，不跳 books/cases/ops/taishi 子目录。"""
     if not root.is_dir():
         return {}
     root_res = root.resolve()
@@ -89,18 +96,17 @@ def _tree_paths(root: Path) -> TreeSnapshot:
             rel = f"{rel_dir}/{name}".lstrip("/") if rel_dir else name
             full = Path(dirpath) / name
             try:
-                entries[rel] = _file_state(full)
+                entries[rel] = _file_content_digest(full)
             except OSError:
-                entries[rel] = (-1, -1, -1)
+                entries[rel] = "unreadable"
     return entries
 
 
 def _tree_fingerprint(snapshot: TreeSnapshot) -> str:
-    """票面语义：sha256(sorted path + file-state)——全树状态指纹。"""
+    """票面语义：sha256(sorted path + content-digest)——全树内容指纹。"""
     h = hashlib.sha256()
     for rel in sorted(snapshot):
-        size, mtime_ns, ctime_ns = snapshot[rel]
-        line = f"{rel}\t{size}\t{mtime_ns}\t{ctime_ns}"
+        line = f"{rel}\t{snapshot[rel]}"
         h.update(line.encode("utf-8", "surrogateescape"))
         h.update(b"\n")
     return h.hexdigest()
@@ -112,7 +118,7 @@ _HARNESS_RUNTIME_PATH_RE = re.compile(r"^books/.*/runs/")
 
 
 def _snapshot_delta(before: TreeSnapshot, after: TreeSnapshot) -> set[str]:
-    """新增/删除/同路径状态指纹变化的相对路径。"""
+    """新增/删除/同路径内容摘要变化的相对路径。"""
     keys = set(before) | set(after)
     return {p for p in keys if before.get(p) != after.get(p)}
 
@@ -123,7 +129,7 @@ def _non_harness_delta(before: TreeSnapshot, after: TreeSnapshot) -> set[str]:
 
 
 def assert_real_home_untouched(before: Dict[str, TreeSnapshot]) -> None:
-    """真实断言：两条生产路径整树文件状态在非 harness-runtime 面上未变。"""
+    """真实断言：两条生产路径整树内容摘要在非 harness-runtime 面上未变。"""
     after_ak = _tree_paths(_REAL_AK_ROLES)
     after_data = _tree_paths(_REAL_MING_DATA)
     ak_delta = _non_harness_delta(before["ak_roles"], after_ak)
@@ -142,7 +148,7 @@ def assert_real_home_untouched(before: Dict[str, TreeSnapshot]) -> None:
 
 @pytest.fixture(autouse=True)
 def _zero_write_real_home():
-    """模块级 autouse：每格前后核验真实 HOME 整树文件状态零写。"""
+    """模块级 autouse：每格前后核验真实 HOME 整树内容摘要零写。"""
     before = {
         "ak_roles": _tree_paths(_REAL_AK_ROLES),
         "ming_data": _tree_paths(_REAL_MING_DATA),
@@ -152,7 +158,7 @@ def _zero_write_real_home():
 
 
 def test_zero_write_oracle_catches_same_path_rewrite(tmp_path):
-    """最小自验：同路径等长改写须使 oracle 红（纯路径集合会漏检）。"""
+    """最小自验：同路径等长改写 + 恢复 mtime 仍被内容摘要检出（元数据指纹会漏）。"""
     root = tmp_path / "zw_tree"
     (root / "books" / "Ming_LLM" / "runs" / "sess").mkdir(parents=True)
     (root / "books" / "Ming_LLM" / "cases").mkdir(parents=True)
@@ -163,22 +169,36 @@ def test_zero_write_oracle_catches_same_path_rewrite(tmp_path):
     case_f.write_bytes(b"CCCC")
     run_f.write_bytes(b"RRRR")
     before = _tree_paths(root)
+    kept_stat = os.lstat(kept)
+    kept_atime_ns = getattr(kept_stat, "st_atime_ns", int(kept_stat.st_atime * 1_000_000_000))
+    kept_mtime_ns = int(kept_stat.st_mtime_ns)
 
-    # 同路径、等长覆写：路径集合不变，状态指纹须变
-    time.sleep(0.02)
+    # 同路径、等长覆写后恢复 mtime：路径集合与元数据可不变，内容摘要须变
     kept.write_bytes(b"BBBB")
+    os.utime(kept, ns=(kept_atime_ns, kept_mtime_ns))
+    after_stat = os.lstat(kept)
+    assert int(after_stat.st_size) == int(kept_stat.st_size), "自验前提：等长改写"
+    assert int(after_stat.st_mtime_ns) == kept_mtime_ns, "自验前提：mtime 已恢复"
     after_rewrite = _tree_paths(root)
     assert set(before) == set(after_rewrite), "自验前提：等长覆写不得增删路径"
     rewrite_delta = _snapshot_delta(before, after_rewrite)
     assert "kept.txt" in rewrite_delta, (
-        f"同路径等长改写须被文件状态指纹捕获: delta={sorted(rewrite_delta)!r}"
+        f"同路径等长改写+恢复 mtime 须被内容摘要捕获: delta={sorted(rewrite_delta)!r}"
     )
+    assert before["kept.txt"] != after_rewrite["kept.txt"]
     assert _tree_fingerprint(before) != _tree_fingerprint(after_rewrite)
 
     # harness runs 路径可归因过滤；其它目录（含 books/*/cases）不得跳过
-    time.sleep(0.02)
+    case_stat = os.lstat(case_f)
+    case_atime_ns = getattr(case_stat, "st_atime_ns", int(case_stat.st_atime * 1_000_000_000))
+    case_mtime_ns = int(case_stat.st_mtime_ns)
+    run_stat = os.lstat(run_f)
+    run_atime_ns = getattr(run_stat, "st_atime_ns", int(run_stat.st_atime * 1_000_000_000))
+    run_mtime_ns = int(run_stat.st_mtime_ns)
     case_f.write_bytes(b"DDDD")
+    os.utime(case_f, ns=(case_atime_ns, case_mtime_ns))
     run_f.write_bytes(b"SSSS")
+    os.utime(run_f, ns=(run_atime_ns, run_mtime_ns))
     after_mixed = _tree_paths(root)
     mixed = _non_harness_delta(after_rewrite, after_mixed)
     assert "books/Ming_LLM/cases/note.txt" in mixed, (
