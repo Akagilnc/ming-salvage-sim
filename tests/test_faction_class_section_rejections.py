@@ -28,9 +28,18 @@ def _valid_faction(db):
 
 
 def _valid_class_key(db):
-    """取一个合法阶级 key（name 或 name@region_id），供「好项照落」对照。"""
+    """取一个合法阶级 key（name 或 name@region_id），供「好项照落」对照。
+
+    #653 F3.2 起 class_delta satisfaction 吃账本符号域硬约束：受损阶级（军户/官僚/
+    宗藩/农民——欠饷/欠禄/加派事实在案）的正增量会被 clamp。本文件只验拒收隔离
+    契约，故优先取不受符号域约束的阶级，避免与 #653 硬约束正交耦合。
+    """
     row = db.conn.execute(
-        "SELECT name, region_id FROM classes LIMIT 1").fetchone()
+        "SELECT name, region_id FROM classes "
+        "WHERE name NOT IN ('军户','官僚','宗藩','农民') LIMIT 1").fetchone()
+    if row is None:
+        row = db.conn.execute(
+            "SELECT name, region_id FROM classes LIMIT 1").fetchone()
     assert row is not None, "probe.db 需至少一个阶级"
     name, region_id = row[0], row[1]
     return f"{name}@{region_id}" if region_id else name
