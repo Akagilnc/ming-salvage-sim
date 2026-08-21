@@ -7386,7 +7386,12 @@ def apply_score_extraction(
         if not isinstance(move, dict):
             economy_moves.append(move)
             continue
-        origin_ref = str(move.get("origin_ref") or "").strip()
+        origin_ref = str(
+            move.get("origin_ref") or move.get("来源引用") or ""
+        ).strip()
+        # #1503 单写者：仅按 origin_ref=dossier:<id> 复用既有 payload 案卷 provenance
+        # 判重（_payload_owned_dossier_for_origin）。不得按 army+turn 吞掉同回合
+        # 独立「盘面自发」补饷；已消费案卷身份由 extractor 输入接缝保留。
         if not origin_ref.startswith("dossier:"):
             economy_moves.append(move)
             continue
