@@ -8297,6 +8297,8 @@ def apply_score_extraction(
     from ming_sim.relations import resolve_relation_edge_events_from_extraction
     relation_edge_event_resolutions = resolve_relation_edge_events_from_extraction(
         db, state, extracted,
+        # V2：dossier 来源锁本批冻结输入闭集（None/缺集按空闭集 fail-closed）。
+        dossier_ids_at_input=dossier_ids_at_input,
     )
 
     state.clamp()

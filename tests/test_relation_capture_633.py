@@ -90,9 +90,9 @@ def test_three_way_joint_memorial_expands_lead_to_each_cosigner_only(game):
         {
             "relation_edge_events": [{
                 "施动者": "温体仁",
-                "受动者": ["钱龙锡", "闵洪学"],
+                "受动者": ["周延儒", "黄立极"],
                 "类目": "联名",
-                "语境": "温体仁牵头联合钱龙锡、闵洪学上疏。",
+                "语境": "温体仁牵头联合周延儒、黄立极上疏。",
                 "来源引用": "盘面自发",
             }],
         },
@@ -103,17 +103,17 @@ def test_three_way_joint_memorial_expands_lead_to_each_cosigner_only(game):
     rows = [r for r in _edge_rows(db) if r["event_kind"] == "联名"]
     # 正例：唯一应有集合 {甲→乙, 甲→丙}，同 origin
     assert _triplets(rows) == {
-        ("温体仁", "钱龙锡", "联名"),
-        ("温体仁", "闵洪学", "联名"),
+        ("温体仁", "周延儒", "联名"),
+        ("温体仁", "黄立极", "联名"),
     }
     assert len(rows) == 2
     assert len({r["origin"] for r in rows}) == 1
     # 负向：不得出现乙→丙、丙→乙、乙→甲、丙→甲或任何反向/重复行
     pairs = [(r["source"], r["target"]) for r in rows]
-    assert pairs.count(("温体仁", "钱龙锡")) == 1
-    assert pairs.count(("温体仁", "闵洪学")) == 1
-    banned = {("钱龙锡", "闵洪学"), ("闵洪学", "钱龙锡"),
-              ("钱龙锡", "温体仁"), ("闵洪学", "温体仁")}
+    assert pairs.count(("温体仁", "周延儒")) == 1
+    assert pairs.count(("温体仁", "黄立极")) == 1
+    banned = {("周延儒", "黄立极"), ("黄立极", "周延儒"),
+              ("周延儒", "温体仁"), ("黄立极", "温体仁")}
     assert not banned & set(pairs)
 
 
@@ -122,8 +122,8 @@ def test_replayed_delta_does_not_double_write(game):
     db, state, content = game
     delta = {
         "relation_edge_events": [{
-            "施动者": "杨嗣昌", "受动者": ["徐光启"], "类目": "协作",
-            "语境": "杨嗣昌与徐光启当面相发明历法。",
+            "施动者": "杨嗣昌", "受动者": ["孙元化"], "类目": "协作",
+            "语境": "杨嗣昌与孙元化当面相发炮术历法。",
             "来源引用": "盘面自发",
         }],
     }
@@ -175,7 +175,7 @@ def test_shape_garbage_rejected_per_existing_extractor_contract(game):
         isinstance(r.get("item"), dict) and r["item"].get("raw_value") == "不是对象"
         for r in validate_rejections
     )
-    # 内容级坏项由适配器逐条拒收留痕，不阻塞其它项
+    # 内容级坏项由适配器逐条拒收留痕，不阻塞其它项；未入名册端点也是拒收理由之一
     res = out["relation_edge_event_resolutions"]
     rejected = [r for r in res if r.get("rejected")]
     assert len(rejected) == 4
@@ -244,7 +244,11 @@ def test_missing_or_forged_provenance_rejected_with_trace_no_edges(game):
     rejected = [r for r in res if r.get("rejected")]
     assert len(rejected) == 8
     assert all(r["category"] == "invalid_relation_event" for r in rejected)
-    assert all("origin_ref" in r["reason"] or "来源引用" in r["reason"] for r in rejected)
+    assert all(
+        "origin_ref" in r["reason"] or "来源引用" in r["reason"]
+        or "本批冻结输入" in r["reason"]
+        for r in rejected
+    )
     # 全部拒收：库里零边、无任何 origin 被默认成「盘面自发」落库
     assert _edge_rows(db) == []
 
@@ -287,23 +291,29 @@ def test_settlement_edge_origin_rejects_missing_and_non_string():
     assert settlement_edge_origin("盘面自发", "联名") == "盘面自发:relation:联名"
 
 
-def test_authorized_dossier_origin_accepted_bound_to_current_turn(game):
-    """合法已颁且授权效果的 dossier 引用照常落边，origin_round 由当前回合绑定。"""
-    db, state, content = game
-    holder = db.conn.execute(
-        "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
-    ).fetchone()["name"]
+def _promulgated_dossier(db, state, holder, token):
+    """建并颁布一个案卷，返回 id（effect_origin_rejection 授权路径）。"""
     did = db.create_decree_dossier(
         state,
         action_type="assignment",
         decree_text="结算口来源验",
         target_kind="issue",
-        target_id="relation-origin-633",
+        target_id=token,
         executor_kind="character",
         executor_id=holder,
-        payload={"token": "relation-origin-633"},
+        payload={"token": token},
     )
     db.record_dossier_decision(did, "promulgated")
+    return did
+
+
+def test_authorized_dossier_origin_accepted_bound_to_current_turn(game):
+    """冻结闭集内且已颁授权的 dossier 引用照常落边，origin_round 由当前回合绑定。"""
+    db, state, content = game
+    holder = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
+    ).fetchone()["name"]
+    did = _promulgated_dossier(db, state, holder, "relation-origin-633")
     db.conn.commit()
     out = apply_score_extraction(
         db, state,
@@ -318,6 +328,7 @@ def test_authorized_dossier_origin_accepted_bound_to_current_turn(game):
             }],
         },
         content=content,
+        dossier_ids_at_input={did},
     )
     res = out["relation_edge_event_resolutions"]
     padded = next(
@@ -333,6 +344,109 @@ def test_authorized_dossier_origin_accepted_bound_to_current_turn(game):
     row = _edge_rows(db, source="毕自严", target="王绍徽")[0]
     assert row["origin"] == f"dossier:{did}:relation:把柄|round:{state.turn}"
     assert row["origin_round"] == state.turn
+
+
+# ── V2：dossier 来源锁本批冻结输入闭集（fail-closed 双重合取） ────────
+
+
+def test_authorized_dossier_outside_frozen_batch_rejected_zero_edges(game):
+    """已颁授权但不在本批冻结输入的案卷：逐项拒收留痕，好项不受牵连。"""
+    db, state, content = game
+    holder = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
+    ).fetchone()["name"]
+    in_batch = _promulgated_dossier(db, state, holder, "v2-in-batch")
+    stale = _promulgated_dossier(db, state, holder, "v2-stale-legal-but-not-fed")
+    db.conn.commit()
+    out = apply_score_extraction(
+        db, state,
+        {
+            "relation_edge_events": [
+                {"施动者": "毕自严", "受动者": "王绍徽", "类目": "把柄",
+                 "语境": "陈旧无关旧旨归因。", "来源引用": f"dossier:{stale}"},
+                {"施动者": "毕自严", "受动者": "王绍徽", "类目": "协作",
+                 "语境": "本批闭集内合法来源。", "来源引用": f"dossier:{in_batch}"},
+            ],
+        },
+        content=content,
+        dossier_ids_at_input={in_batch},
+    )
+    res = out["relation_edge_event_resolutions"]
+    rejected = [r for r in res if r.get("rejected")]
+    assert len(rejected) == 1
+    assert "本批冻结输入" in rejected[0]["reason"]
+    assert (rejected[0]["item"]["来源引用"] == f"dossier:{stale}")
+    # 好项不牵连：闭集内且授权的照常落库
+    rows = _edge_rows(db)
+    assert len(rows) == 1
+    assert rows[0]["origin"] == f"dossier:{in_batch}:relation:协作|round:{state.turn}"
+
+
+def test_unauthorized_dossier_inside_frozen_set_still_rejected(game):
+    """闭集合取另一支：在本批集合但未颁/未授权（effect_origin_rejection 不过）仍拒收。"""
+    db, state, content = game
+    holder = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
+    ).fetchone()["name"]
+    unissued = db.create_decree_dossier(
+        state,
+        action_type="assignment",
+        decree_text="建而不颁",
+        target_kind="issue",
+        target_id="v2-unissued",
+        executor_kind="character",
+        executor_id=holder,
+        payload={"token": "v2-unissued"},
+    )
+    db.conn.commit()
+    out = apply_score_extraction(
+        db, state,
+        {"relation_edge_events": [{
+            "施动者": "毕自严", "受动者": "王绍徽", "类目": "结怨",
+            "语境": "未颁案卷引用。", "来源引用": f"dossier:{unissued}",
+        }]},
+        content=content,
+        dossier_ids_at_input={unissued},
+    )
+    res = out["relation_edge_event_resolutions"]
+    rejected = [r for r in res if r.get("rejected")]
+    assert len(rejected) == 1
+    assert "origin_ref 非法" in rejected[0]["reason"]
+    assert _edge_rows(db) == []
+
+
+def test_missing_frozen_dossier_set_is_empty_closed_set(game):
+    """None/缺集按空闭集：live DB 里已颁授权也不搭救（不从 DB 重建）。"""
+    db, state, content = game
+    holder = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
+    ).fetchone()["name"]
+    did = _promulgated_dossier(db, state, holder, "v2-fail-closed")
+    db.conn.commit()
+    out = apply_score_extraction(
+        db, state,
+        {"relation_edge_events": [{
+            "施动者": "毕自严", "受动者": "王绍徽", "类目": "结怨",
+            "语境": "缺冻结集时已授权也拒。", "来源引用": f"dossier:{did}",
+        }]},
+        content=content,
+    )
+    res = out["relation_edge_event_resolutions"]
+    rejected = [r for r in res if r.get("rejected")]
+    assert len(rejected) == 1
+    assert "本批冻结输入" in rejected[0]["reason"]
+    assert _edge_rows(db) == []
+    # 盘面自发不受 dossier 闭集影响：同批照常落边
+    out2 = apply_score_extraction(
+        db, state,
+        {"relation_edge_events": [{
+            "施动者": "温体仁", "受动者": "周延儒", "类目": "站台",
+            "语境": "盘面自发不受案卷闭集影响。", "来源引用": "盘面自发",
+        }]},
+        content=content,
+    )
+    assert not any(r.get("rejected") for r in out2["relation_edge_event_resolutions"])
+    assert len(_edge_rows(db, source="温体仁", target="周延儒")) == 1
 
 
 def test_module_misroute_of_relation_field_is_stripped_not_applied(monkeypatch):
@@ -431,3 +545,81 @@ def test_relations_module_joins_parallel_extraction(read_game, monkeypatch):
     items = merged["relation_edge_events"]
     assert [it["施动者"] for it in items] == ["温体仁"]
     assert "大臣互动" in localized
+
+
+# ── V1：端点须为当前在朝合格大臣（复用既有名册投影，先校验后零边写入） ──
+
+
+def test_hallucinated_and_emperor_endpoints_rejected_per_item_zero_edges(game):
+    """幻觉名/错字/「皇帝」入大臣边端点：逐项拒收留痕，零写入。"""
+    db, state, content = game
+    out = apply_score_extraction(
+        db, state,
+        {
+            "relation_edge_events": [
+                # 幻觉 source
+                {"施动者": "幻觉甲", "受动者": "王绍徽", "类目": "结怨",
+                 "语境": "幻觉施动者。", "来源引用": "盘面自发"},
+                # 幻觉 target
+                {"施动者": "毕自严", "受动者": "幻觉乙", "类目": "结怨",
+                 "语境": "幻觉受动者。", "来源引用": "盘面自发"},
+                # 皇帝作 source（君臣类目归 0079，皇帝节点不归大臣边任一端）
+                {"施动者": "皇帝", "受动者": "王绍徽", "类目": "把柄",
+                 "语境": "皇帝施动者。", "来源引用": "盘面自发"},
+                # 皇帝作 target
+                {"施动者": "毕自严", "受动者": "皇帝", "类目": "把柄",
+                 "语境": "皇帝受动者。", "来源引用": "盘面自发"},
+                # 未登场/已退场（不在当前在朝名册）
+                {"施动者": "毕自严", "受动者": "徐光启", "类目": "协作",
+                 "语境": "未登场人物。", "来源引用": "盘面自发"},
+            ],
+        },
+        content=content,
+    )
+    res = out["relation_edge_event_resolutions"]
+    rejected = [r for r in res if r.get("rejected")]
+    assert len(rejected) == 5
+    assert all(r["category"] == "invalid_relation_event" for r in rejected)
+    assert all("当前在朝合格大臣" in r["reason"] for r in rejected)
+    assert _edge_rows(db) == []
+
+
+def test_multi_target_with_one_bad_endpoint_writes_zero_edges_for_item(game):
+    """同互动含任一非法端点：先整项校验后零边写入，不做部分落库；好项隔离照落。"""
+    db, state, content = game
+    out = apply_score_extraction(
+        db, state,
+        {
+            "relation_edge_events": [
+                {"施动者": "温体仁", "受动者": ["周延儒", "幻觉丙"],
+                 "类目": "联名", "语境": "联名混入幻觉联署者。",
+                 "来源引用": "盘面自发"},
+                {"施动者": "毕自严", "受动者": "王绍徽", "类目": "协作",
+                 "语境": "同批好项照常落。", "来源引用": "盘面自发"},
+            ],
+        },
+        content=content,
+    )
+    res = out["relation_edge_event_resolutions"]
+    rejected = [r for r in res if r.get("rejected")]
+    assert len(rejected) == 1
+    assert "幻觉丙" in rejected[0]["reason"]
+    # 坏项零写入（含好端点也不部分落库）；好项不受牵连
+    rows = _edge_rows(db)
+    assert _triplets(rows) == {("毕自严", "王绍徽", "协作")}
+
+
+def test_valid_roster_endpoints_still_land_after_endpoint_gate(game):
+    """两个合格在朝大臣的合法边照常落库（端点守门不误伤）。"""
+    db, state, content = game
+    out = apply_score_extraction(
+        db, state,
+        {"relation_edge_events": [{
+            "施动者": "孙传庭", "受动者": ["洪承畴"], "类目": "恩义",
+            "语境": "合格名册双端点。", "来源引用": "盘面自发",
+        }]},
+        content=content,
+    )
+    res = out["relation_edge_event_resolutions"]
+    assert not any(r.get("rejected") for r in res), res
+    assert _triplets(_edge_rows(db)) == {("孙传庭", "洪承畴", "恩义")}
