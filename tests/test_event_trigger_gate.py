@@ -3530,7 +3530,7 @@ def test_huabei_plague_auto_triggers_with_deterministic_core_effect(game):
         "SELECT population, unrest FROM regions WHERE id=?",
         ("shanxi",),
     ).fetchone()
-    assert after["population"] == before["population"] - 40
+    assert after["population"] == before["population"] - 400000  # #648：新档人口单位=人（ADR 0088），content -40万
     assert after["unrest"] == before["unrest"] + 6
 
 
@@ -3715,7 +3715,7 @@ def test_historical_situation_auto_trigger_backfills_core_effect_for_existing_so
         "SELECT population, unrest FROM regions WHERE id=?",
         ("shanxi",),
     ).fetchone()
-    assert after["population"] == before["population"] - 40
+    assert after["population"] == before["population"] - 400000  # #648：新档人口单位=人（ADR 0088），content -40万
     assert after["unrest"] == before["unrest"] + 6
 
 
