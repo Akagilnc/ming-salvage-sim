@@ -602,6 +602,83 @@ describe("朝堂同衔分座（#1196 呈现层去冲突）", () => {
     expect(`${a!.left}|${a!.top}`).not.toBe(`${b!.left}|${b!.top}`);
   });
 
+  it("#1499-F1 StrictMode 松手：吸附副作用在 updater 外，POST 恰一次", async () => {
+    // 判官 mutation 反例：把 drawers.tsx 回退至 57dc9cfe（副作用回到 setState updater 内），
+    // StrictMode 双调 updater → commitSave 两发 → 本测试必须转红；非 StrictMode 不具判别力。
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (String(url).includes("/api/court_layout")) {
+        if (init && String(init.method || "GET").toUpperCase() === "POST") {
+          return { ok: true, json: async () => ({}) } as Response;
+        }
+        return { ok: true, json: async () => ({ layout: "{}" }) } as Response;
+      }
+      return { ok: true, json: async () => ({}) } as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    await act(async () => {
+      root.render(
+        <React.StrictMode>
+          <MinisterCardList
+            list={[minister({ name: "施凤来", office: "东阁大学士" })]}
+            portraitPrefix="minister_"
+            selectedMinister=""
+            emptyNote="empty"
+            onOpenChat={() => {}}
+            courtMode={true}
+          />
+        </React.StrictMode>
+      );
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const court = host.querySelector(".minister-list-court") as HTMLElement | null;
+    expect(court).toBeTruthy();
+    court!.getBoundingClientRect = () =>
+      ({
+        x: 0, y: 0, width: 1000, height: 1000,
+        top: 0, right: 1000, bottom: 1000, left: 0, toJSON: () => ({}),
+      }) as DOMRect;
+
+    const cards = Array.from(host.querySelectorAll<HTMLElement>("button.minister-card"));
+    const shiCard = cards.find((el) => el.querySelector(".minister-name")?.textContent === "施凤来");
+    expect(shiCard).toBeTruthy();
+
+    await act(async () => {
+      shiCard!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, clientX: 500, clientY: 500 }));
+    });
+    await act(async () => {
+      window.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, clientX: 120, clientY: 80 }));
+    });
+    await act(async () => {
+      window.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, clientX: 120, clientY: 80 }));
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // 纯化 updater：同一次松手只允许一次 POST（StrictMode 双调下旧实现会发两发）
+    const posts = fetchMock.mock.calls.filter(
+      (c) =>
+        String(c[0]).includes("/api/court_layout") &&
+        c[1] &&
+        String((c[1] as RequestInit).method || "").toUpperCase() === "POST",
+    );
+    expect(posts.length).toBe(1);
+    const body = JSON.parse(String((posts[0][1] as RequestInit).body));
+    const saved = JSON.parse(body.layout) as Record<string, { px: number; py: number }>;
+    expect(saved["施凤来"]).toBeTruthy();
+
+    mountedRoots.push({ root, host });
+  });
+
   it("同衔两张 minister-card 依次点击均委派 onOpenChat", async () => {
     // 票面复现对：来宗道/温体仁同「礼部尚书」——每人一张卡，各自 click 须召对到本人
     const lai = minister({ name: "来宗道", office: "礼部尚书,东阁大学士" });

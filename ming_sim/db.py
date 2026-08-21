@@ -13967,6 +13967,8 @@ class GameDB:
                             state, row, payload, dossier_id,
                         )
                         # 欠资（库银不足且军仍欠）记 failed；超欠 clamp 军已清则仍 fulfilled。
+                        # #1507-F5：删多余 spent<=0——军已清（still_owed==0）时 spent=0
+                        # 仍属 clamp 成功终局，不得误判 failed。
                         if spent < amount:
                             target_id = str(
                                 payload.get("target_id") or row.get("target_id") or ""
@@ -13978,7 +13980,7 @@ class GameDB:
                             still_owed = (
                                 float(army["arrears"] or 0) if army is not None else 0.0
                             )
-                            if still_owed > 0 or spent <= 0:
+                            if still_owed > 0:
                                 self.record_dossier_execution(
                                     dossier_id, "failed",
                                     f"拨饷不足额：应拨{amount}两，实拨{spent}两",

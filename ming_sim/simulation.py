@@ -1061,7 +1061,10 @@ def build_extractor_shared_context(
     # origin_ref=dossier:<id>，使回声带 dossier 身份，由
     # _payload_owned_dossier_for_origin 单写者判重（勿把独立盘面自发一并吞掉）。
     # 同 #1495 issues-only 门控：其余模块不吃 closed 拨饷 provenance。
-    if decree_dossiers is None and module == "internal":
+    # #1507-F1：删 decree_dossiers is None 死门——生产 settle 必预传 list
+    # （见 decree.py extractor 装配），None 门使 provenance 永不可达；
+    # 预传/现场拉取均按 module==internal 并入 closed 拨饷身份。
+    if module == "internal":
         seen_ids = {int(row["id"]) for row in authorized_dossiers}
         extra = []
         for row in db.list_closed_army_pay_dossiers_for_provenance(state.turn):

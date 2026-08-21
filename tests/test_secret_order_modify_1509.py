@@ -240,6 +240,57 @@ def test_modify_multi_without_target_id_is_ambiguous(game, monkeypatch):
     assert p2["content"] == "暗结蒙古诸部"
 
 
+def test_modify_multi_named_targets_is_ambiguous_no_batch_overwrite(game, monkeypatch):
+    """#1509-F1：多候选 + 修改点名多个合法编号 → ambiguous，禁止整族覆写。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    id1 = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name,
+        target_id=None,
+        payload={
+            "title": "密察关宁", "content": "密察关宁欠饷", "assignee": name,
+            "tags": ["关宁"], "deadline_months": 3,
+        },
+    )
+    id2 = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name,
+        target_id=None,
+        payload={
+            "title": "暗结蒙古", "content": "暗结蒙古诸部", "assignee": name,
+            "tags": ["蒙古"], "deadline_months": 2,
+        },
+    )
+    monkeypatch.setattr(
+        cb, "_run_backend_for_config",
+        lambda *a, **k: (
+            json.dumps({"确认": "修改", "目标编号": [id1, id2]}, ensure_ascii=False), 1,
+        ),
+    )
+    out = GameSession.apply_cli_conversation_actions(
+        _sess(db, state), ch,
+        player_message="修改：两道都改成只查饷银",
+        answer="臣请皇上明示改哪一道。",
+        has_directive=False, secret_order_id=None,
+    )
+    amb = out.get("directive_confirmation_ambiguous") or {}
+    cands = {int(c["id"]) for c in (amb.get("candidates") or [])}
+    assert cands == {id1, id2}, amb
+    assert "pending_action_id" not in out
+    p1 = json.loads(
+        db.conn.execute(
+            "SELECT payload_json FROM pending_actions WHERE id=?", (id1,),
+        ).fetchone()[0]
+    )
+    p2 = json.loads(
+        db.conn.execute(
+            "SELECT payload_json FROM pending_actions WHERE id=?", (id2,),
+        ).fetchone()[0]
+    )
+    assert p1["content"] == "密察关宁欠饷"
+    assert p2["content"] == "暗结蒙古诸部"
+
+
 def test_modify_preserves_fields_targets_one_no_second_extract(game, monkeypatch):
     """F1 点名第二道 / F2 保留未提及字段 / F3 P5 无二次 extract / F5 去前缀正文。"""
     db, state, content = game

@@ -506,3 +506,65 @@ def test_mixed_legal_illegal_options_illegal_choice_stays_pending(
     assert choice.get("dossier_id") == dossier_id
     assert choice.get("dossier_decision") == "force_promulgated"
     assert choice.get("label") == "强颁"
+
+
+def test_ordinary_event_with_hallucinated_capability_submits(
+    web_game, monkeypatch,
+):
+    """#1494-F1：普通 event_id + options 幻觉能力对不得入批红轨。
+
+    submit 须与 bind/phase2 同用「dossier: 前缀 AND 能力对」合取；仅能力对
+    会把普通决策块当批红校验 → 客户端无能力字段的 choice 永卡 AWAITING。
+    """
+    db, state = web_game.db, web_game.state
+    # 普通候选事件决策：真实 event_id（无 dossier: 前缀），但 LLM 幻觉出能力字段
+    event_id = "mao_wenlong"
+    db.save_pending_decisions(state.turn, [{
+        "event_id": event_id,
+        "title": "边警",
+        "context": "辽东来报",
+        "options": [
+            {"label": "准其销号", "hint": "事已办结"},
+            {
+                "label": "强颁",
+                "hint": "幻觉批红",
+                "dossier_id": 3,
+                "dossier_decision": "hold",
+            },
+        ],
+    }])
+    db.save_resolve_context(
+        state.turn,
+        "诏曰边警",
+        "待续邸报",
+        {"candidate_events": [{"id": event_id, "title": "边警"}]},
+        secret_orders=[],
+        relevant_memories=[],
+    )
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
+
+    phase2_calls: list[list] = []
+
+    def _phase2(_state, _db, *_a, **_k):
+        rows = list(_db.list_pending_decisions(int(_state.turn)))
+        phase2_calls.append(rows)
+        _db.clear_pending_decisions(int(_state.turn))
+        return "邸报：边警已核。"
+
+    monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _phase2)
+
+    # 客户端按普通决策提交（无能力字段）——不得 SSE error / 批红卡死
+    choice = {"label": "准其销号", "hint": "事已办结", "note": "准销。"}
+    r = asyncio.run(_post_resolve([choice]))
+    assert r.status_code == 200, r.text
+    assert "event: error" not in r.text, r.text
+    assert "event: done" in r.text, r.text
+    assert "批红选择必须是本案提供的强颁、收回或留中选项" not in r.text
+    assert len(phase2_calls) == 1
+    decided = phase2_calls[0][0]
+    assert decided["status"] == "decided"
+    stored = decided["choice"] or {}
+    assert stored.get("label") == "准其销号"
+    assert stored.get("note") == "准销。"
+    assert not stored.get("dossier_decision")

@@ -1947,8 +1947,9 @@ class GameSession:
                         named_set = {
                             i for i in confirm_named_ids if i in allowed
                         }
-                        if not named_set:
-                            # 多 pending 无合法编号：含糊追问，禁止静默改写全家。
+                        # #1509-F1：修改只更新「同一」候选；0 个或多于 1 个合法编号
+                        # 一律 ambiguous，禁止整族批量覆写（复用应允/拒绝含糊缝）。
+                        if len(named_set) != 1:
                             out["directive_confirmation_ambiguous"] = {
                                 "candidates": [
                                     {
@@ -3037,7 +3038,10 @@ class GameSession:
             for d in stored:
                 if str(d.get("status") or "") == "decided":
                     continue
-                # 批红轨：options 含合法能力对（#1492 A / #1494；bind 亦同此识别）。
+                # 批红轨：event_id dossier: 前缀 AND options 含合法能力对
+                # （与 bind / phase2 _chosen_rescript_actions 合取谓词同形，#1494-F1）。
+                if not str(d.get("event_id") or "").startswith("dossier:"):
+                    continue
                 if not decision_has_rescript_capability(d):
                     continue
                 options = [
