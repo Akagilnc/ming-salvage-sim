@@ -12652,12 +12652,9 @@ class GameDB:
         normalized["target_id"] = target_id
         if not str(normalized.get("grant_action") or "").strip():
             normalized["grant_action"] = "协饷"
-        # 颁布即扣库+销欠；在途只留叙事，不进机械对账轨。
-        surface = str(normalized.get("execution_surface") or "").strip()
-        if surface not in {"immediate", "in_transit"}:
-            normalized["execution_surface"] = "immediate"
-        elif not surface:
-            normalized["execution_surface"] = "immediate"
+        # #1503：非月度拨饷强制 immediate。覆盖 normalize 前置插入的 in_transit 默认，
+        # 以及旧 pending/恢复载荷残留的在途面——在途只留叙事，不进机械对账轨。
+        normalized["execution_surface"] = "immediate"
         return normalized
 
     def _apply_army_pay_grant_effect(
@@ -13833,9 +13830,28 @@ class GameDB:
                         raise ValueError("拨帑案卷 amount 必须为正数")
                     # #1503：拨饷/协饷走补饷销欠缝（ADR 0023 clamp）；其它拨帑仍面额扣库。
                     if self._is_army_pay_grant_payload(payload):
-                        self._apply_army_pay_grant_effect(
+                        spent = self._apply_army_pay_grant_effect(
                             state, row, payload, dossier_id,
                         )
+                        # 欠资（库银不足且军仍欠）记 failed；超欠 clamp 军已清则仍 fulfilled。
+                        if spent < amount:
+                            target_id = str(
+                                payload.get("target_id") or row.get("target_id") or ""
+                            ).strip()
+                            army = self.conn.execute(
+                                "SELECT arrears FROM armies WHERE id=?",
+                                (target_id,),
+                            ).fetchone()
+                            still_owed = (
+                                float(army["arrears"] or 0) if army is not None else 0.0
+                            )
+                            if still_owed > 0 or spent <= 0:
+                                self.record_dossier_execution(
+                                    dossier_id, "failed",
+                                    f"拨饷不足额：应拨{amount}两，实拨{spent}两",
+                                    state.turn, close=True, commit=False,
+                                )
+                                return
                     else:
                         actual = self.record_issue_economy_move(
                             state,
