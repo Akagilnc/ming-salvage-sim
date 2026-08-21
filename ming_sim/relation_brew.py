@@ -15,8 +15,10 @@
   生产路径由 settle_with_delta 把 brew() 放进唯一一条受管 Future，使 LLM 等待与无
   依赖的 chapter/ending 等后处理重叠，摘要持久化前 join、异常路排空丢弃。
 - 异常边界（ADR 0005/0008）：prepare/persist 两段是 DB 相——claim/apply/mark 的
-  DB/schema/程序错误响亮上抛，绝不降级；只有 brew() 段的单条 LLM 调用或其结构化
-  输出契约失败走降级留痕（保旧摘要＋事件已在流水＋认领已在册，不阻塞结算）。
+  DB/schema/程序错误响亮上抛，绝不降级；brew() 段的降级面只收两类真 LLM 单条
+  失败——LLMUnavailable（LLM 调用/接口失败）与 LLMContractError/ValueError
+  （输出结构化契约违约），降级留痕（保旧摘要＋事件已在流水＋认领已在册，不阻塞
+  结算）；其余异常类型属程序错，同样响亮上抛。
 - 成功路径＝摘要写入与 pending 清除同一 DB 事务原子落定（庭裁 r2 F1）。
 - settled 年月快照由 decree 在 next_period 之前取定并传入；一律不得直读 state 年月
   落款（直调路径回落调用时的 state——此时 state 仍指被结算的那个月）。
@@ -29,6 +31,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ming_sim.agents import parse_agent_json
+from ming_sim.exceptions import LLMContractError, LLMUnavailable
 from ming_sim.models import GameState
 from ming_sim.relations import EMPEROR_NODE
 from ming_sim.token_stats import tlog
@@ -160,9 +163,11 @@ def merge_founding_segment(old_founding: str, new_foundings: List[str]) -> str:
     对旧段不做任何拆行/滤空/集合推断——「按行拆分＋候选各行都已在段内即判重」
     会把整条多行候选误删（机械反例：旧段 '甲\\n中\\n乙' 配候选 '甲\\n乙'，候选的
     每一行各自都在段内，行集合推断即把整条候选吞掉）。唯一两种机械操作：
-    ①严格字节相等去重——候选与旧段整体或本批已追加条目逐字全等才跳过（补酿整段
-    原样重报不重复记账）；②其余候选连同其内部换行、首尾空白逐字完整追加（以单个
-    换行符接在段尾）。禁对任何字节做改写：空行、末尾换行、首尾空白全部原样。
+    跨轮去重按庭裁 r5 收窄，唯一两种机械操作：①候选与整个旧段或本批已追加条目
+    严格字节全等才跳过（补酿整段原样重报不重复记账）；②其余候选连同其内部换行、
+    首尾空白逐字完整追加（以单个换行符接在段尾）——旧段内某个精确历史条目被再次
+    报出时如实追加，接受有界重复噪声（酿制 LLM 读面自行消化），禁止条目级拆解去重。
+    禁对任何字节做改写：空行、末尾换行、首尾空白全部原样。
     空字符串条目是结构空操作，跳过。"""
     old = str(old_founding)
     known = {old} if old else set()
@@ -253,13 +258,15 @@ class MonthEndRelationBrewLeg:
 
     def _brew_one(self, job: Dict[str, Any]) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]], Optional[Exception]]:
         # payload 备制是纯程序逻辑：其错误属代码侧错（ADR 0005），不在降级面内，
-        # 响亮上抛。try 只包 LLM 调用与其输出的结构化契约校验——仅此两类是 LLM 单
-        # 条失败，降级留痕保旧摘要。
+        # 响亮上抛。try 只收两类真 LLM 单条失败的声明类型——LLMUnavailable（调用/
+        # 接口失败）与 LLMContractError/ValueError（输出结构化契约违约）才降级留痕；
+        # KeyError/TypeError/RuntimeError 等其余类型一律响亮上抛（判词残留项②：
+        # 宽 except Exception 把程序错吞成降级的缺口在此拆类封死）。
         payload = render_brew_user_payload(job["input"])
         try:
             raw = self._brew_fn(payload)
             parsed = parse_brew_output(raw)
-        except Exception as exc:  # noqa: BLE001 — 仅 LLM 调用/输出契约失败：单条降级
+        except (LLMUnavailable, LLMContractError, ValueError) as exc:
             return job, None, exc
         return job, parsed, None
 
