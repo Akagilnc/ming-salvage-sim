@@ -131,10 +131,12 @@ export function MinisterCardList({
   }, [viewLayout]);
 
   // #1463：布局加载只随挂载/卸载，不被 list 重排 cancel。
-  // #1499-F2：GET reject 视为空基线 {}，放行后续 commit（禁 baseline 永 null）。
+  // #1499：loadCourtPos 已捕获 fetch/HTTP/parse 异常并 resolve {}，
+  // 无需平行 reject 分支（重复护栏）；GET 空 {} 合法，回包即基线。
   React.useEffect(() => {
     let cancelled = false;
-    const applyBaseline = (saved: Record<string, { px: number; py: number }>) => {
+    // #1290/#1332：先默认落座不堵首屏，回包再合并脏键。
+    loadCourtPos().then((saved) => {
       if (cancelled) return;
       baselineRef.current = saved;
       arrange(viewLayout());
@@ -142,12 +144,7 @@ export function MinisterCardList({
         pendingSaveRef.current = false;
         commitSave();
       }
-    };
-    // #1290/#1332：GET 空 {} 合法；先默认落座不堵首屏，回包再合并脏键。
-    loadCourtPos().then(
-      (saved) => applyBaseline(saved),
-      () => applyBaseline({}),
-    );
+    });
     return () => { cancelled = true; };
   }, [arrange, viewLayout, commitSave]);
 
