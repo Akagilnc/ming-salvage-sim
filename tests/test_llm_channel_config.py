@@ -489,8 +489,11 @@ def test_verify_llm_available_api_empty_content_none_passes(monkeypatch):
     verify_llm_available(_api_cfg())
 
 
-def test_verify_llm_available_api_empty_content_error_status_passes(monkeypatch):
-    """extract_agent_text 若因空文+ERROR status 抛错，烟测路须捕之判过。"""
+def test_verify_llm_available_api_empty_content_error_status_raises(monkeypatch):
+    """#1455：status=ERROR 且空 content 仍是权威失败——设置页不得判连通成功。
+
+    空正文不能证明只是推理 token 耗尽；token 耗尽须另据结束原因识别（无错误 status）。
+    """
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
     class EmptyErrorOutput:
@@ -505,7 +508,9 @@ def test_verify_llm_available_api_empty_content_error_status_passes(monkeypatch)
             return EmptyErrorOutput()
 
     monkeypatch.setattr(llm_model, "Agent", FakeAgent)
-    verify_llm_available(_api_cfg())
+    with pytest.raises(LLMUnavailable) as ei:
+        verify_llm_available(_api_cfg())
+    assert ei.value.code == "llm_run_error"
 
 
 def test_verify_llm_available_api_http_401_still_raises(monkeypatch):
