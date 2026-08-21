@@ -281,8 +281,10 @@ def test_verbal_approve_targets_one_of_many(game, monkeypatch):
     id_a, id_b = _stage_two_night_candidates(db, state, name)
     sess = _fake_session(db, state)
 
-    monkeypatch.setattr(cb, "_run_backend_for_config", _canned_by_tag(
-        {"directive_confirmation": {"决定": "应允", "目标编号": [id_a]}}))
+    monkeypatch.setattr(cb, "_run_backend_for_config", _canned_by_tag({
+        "confirmation": {"确认": "应允"},
+        "directive_confirmation": {"决定": "应允", "目标编号": [id_a]},
+    }))
 
     GameSession.apply_cli_conversation_actions(
         sess, ch, player_message="户部清查那道旨，准了", answer="臣遵旨。",
@@ -305,8 +307,10 @@ def test_verbal_reject_targets_one_others_survive(game, monkeypatch):
     id_a, id_b = _stage_two_night_candidates(db, state, name)
     sess = _fake_session(db, state)
 
-    monkeypatch.setattr(cb, "_run_backend_for_config", _canned_by_tag(
-        {"directive_confirmation": {"决定": "拒绝", "目标编号": [id_a]}}))
+    monkeypatch.setattr(cb, "_run_backend_for_config", _canned_by_tag({
+        "confirmation": {"确认": "拒绝"},
+        "directive_confirmation": {"决定": "拒绝", "目标编号": [id_a]},
+    }))
 
     GameSession.apply_cli_conversation_actions(
         sess, ch, player_message="户部那道不必了，作罢", answer="臣领旨。",
@@ -329,8 +333,10 @@ def test_ambiguous_command_returns_structured_state_no_silent_default(game, monk
     id_a, id_b = _stage_two_night_candidates(db, state, name)
     sess = _fake_session(db, state)
 
-    monkeypatch.setattr(cb, "_run_backend_for_config", _canned_by_tag(
-        {"directive_confirmation": {"决定": "含糊", "目标编号": []}}))
+    monkeypatch.setattr(cb, "_run_backend_for_config", _canned_by_tag({
+        "confirmation": {"确认": "应允"},
+        "directive_confirmation": {"决定": "含糊", "目标编号": []},
+    }))
 
     out = GameSession.apply_cli_conversation_actions(
         sess, ch, player_message="准了", answer="请陛下明示是哪一道。",
@@ -358,8 +364,10 @@ def test_multi_confirm_none_result_does_not_stage_third_decree(game, monkeypatch
     id_a, id_b = _stage_two_night_candidates(db, state, name)
     sess = _fake_session(db, state)
 
-    # directive_confirmation=无（空指向）；draft_intent 故意判「拟旨」——若 free-fall 就会误建第三道。
+    # 外层确认应允打开多道闸；directive_confirmation=无（空指向）；
+    # draft_intent 故意判「拟旨」——若 free-fall 就会误建第三道。
     monkeypatch.setattr(cb, "_run_backend_for_config", _canned_by_tag({
+        "confirmation": {"确认": "应允"},
         "directive_confirmation": {"决定": "无", "目标编号": []},
         "draft_intent": {"拟旨意图": "拟旨", "目标草案": "新", "合并草案": "误建第三道"},
     }))
@@ -385,8 +393,10 @@ def test_named_clarification_clears_flag_frees_sibling_default(game, monkeypatch
     sess = _fake_session(db, state)
 
     # 第一轮：含糊「准了」→ 两道打待澄清标
-    monkeypatch.setattr(cb, "_run_backend_for_config", _canned_by_tag(
-        {"directive_confirmation": {"决定": "含糊", "目标编号": []}}))
+    monkeypatch.setattr(cb, "_run_backend_for_config", _canned_by_tag({
+        "confirmation": {"确认": "应允"},
+        "directive_confirmation": {"决定": "含糊", "目标编号": []},
+    }))
     GameSession.apply_cli_conversation_actions(
         sess, ch, player_message="准了", answer="请陛下明示。",
         has_directive=False, secret_order_id=None)

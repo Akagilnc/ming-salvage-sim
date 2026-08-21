@@ -610,6 +610,87 @@ def _confirmation_targets_for_message(pending_actions: List[Dict[str, Any]], mes
     return non_directive or directive
 
 
+_AMEND_PREFIXES = ("修改：", "修改:", "改：", "改:")
+_AMEND_ORDINAL_PREFIX_RE = re.compile(
+    r"^(?:修改|改)\s*第[一二三四五六七八九十百零0-9]+(?:道|条|件|个)?\s*[：:]\s*"
+)
+_SECRET_MODIFY_ORDINAL_RE = re.compile(
+    r"第([一二三四五六七八九十百零0-9]+)(?:道|条|件|个)?"
+)
+_SECRET_MODIFY_ORDINAL_MAP = {
+    "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5,
+    "六": 6, "七": 7, "八": 8, "九": 9, "十": 10,
+}
+
+
+def _strip_secret_amendment_prefix(message: str) -> str:
+    """Strip 修改：/改：/修改第N道： so amendment text does not re-enter content."""
+    text = (message or "").strip()
+    for prefix in _AMEND_PREFIXES:
+        if text.startswith(prefix):
+            return text[len(prefix):].strip()
+    m = _AMEND_ORDINAL_PREFIX_RE.match(text)
+    if m:
+        return text[m.end():].strip()
+    return text
+
+
+def _ordinal_from_token(token: str) -> Optional[int]:
+    raw = (token or "").strip()
+    if not raw:
+        return None
+    if raw.isdigit():
+        return int(raw)
+    if raw in _SECRET_MODIFY_ORDINAL_MAP:
+        return _SECRET_MODIFY_ORDINAL_MAP[raw]
+    return None
+
+
+def _resolve_secret_modify_targets(
+    targets: List[Dict[str, Any]], message: str,
+) -> Optional[List[Dict[str, Any]]]:
+    """Pick which secret_order/新建 candidate a 修改 round may rewrite.
+
+    Single candidate → that one. Multiple → ordinal / id / title·content cue;
+    None = ambiguous (must not silently rewrite the whole family).
+    """
+    if not targets:
+        return []
+    if len(targets) == 1:
+        return list(targets)
+    ordered = sorted(targets, key=lambda p: int(p.get("id") or 0))
+    text = message or ""
+    m = _SECRET_MODIFY_ORDINAL_RE.search(text)
+    if m:
+        idx = _ordinal_from_token(m.group(1))
+        if idx is not None and 1 <= idx <= len(ordered):
+            return [ordered[idx - 1]]
+    by_id = {int(p.get("id") or 0): p for p in ordered}
+    id_hits = [
+        by_id[i] for i in by_id
+        if i > 0 and re.search(rf"(?<!\d){i}(?!\d)", text)
+    ]
+    if len(id_hits) == 1:
+        return id_hits
+    content_hits: List[Dict[str, Any]] = []
+    for p in ordered:
+        try:
+            payload = json.loads(p.get("payload_json") or "{}")
+        except (TypeError, ValueError):
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        cues = [
+            str(payload.get("title") or "").strip(),
+            str(payload.get("content") or "").strip(),
+        ]
+        if any(c and len(c) >= 2 and c in text for c in cues):
+            content_hits.append(p)
+    if len(content_hits) == 1:
+        return content_hits
+    return None
+
+
 def _pending_action_failure_payload(pa: Dict[str, Any], state: Optional[GameState] = None) -> Dict[str, Any]:
     """把落库失败的暂存动作翻成可给玩家看的失败状态。"""
     kind = str(pa.get("kind") or "")
@@ -1839,62 +1920,76 @@ class GameSession:
                     self.state.turn, minister_name,
                     action_ids=confirm_action_ids)
             elif confirm == "修改":
-                # #1376 owner：修改=更新同一 pending 候选内容（id 不变），不 commit、不新建。
-                # 结构化正文经 _extract_secret_order（与 stage 同缝），禁平行机制。
-                from ming_sim.cli_backend import _extract_secret_order
-                for pending in confirm_targets:
+                # #1376 owner：修改=更新同一 pending 密令候选内容（id 不变），不 commit、不新建。
+                # 仅 secret_order/新建；非密令整改不得吞掉既有 kind 物化缝（回落 confirm=无）。
+                # P5：不二次串行 _extract_secret_order——正文取去前缀御旨材料，元数据仅在
+                # 修改句显式给出时覆盖（保留未提及字段）。
+                from ming_sim.cli_backend import (
+                    _extract_imperative_assignee,
+                    _secret_metadata_from_command,
+                )
+                secret_new = [
+                    p for p in confirm_targets
                     if (
-                        pending.get("kind") != "secret_order"
-                        or str(pending.get("action") or "") != "新建"
-                    ):
-                        continue
-                    try:
-                        payload = json.loads(pending.get("payload_json") or "{}")
-                    except (ValueError, TypeError):
-                        payload = {}
-                    if not isinstance(payload, dict):
-                        payload = {}
-                    so = _extract_secret_order(
-                        player_message,
-                        reply,
-                        minister_name,
-                        llm_config=llm_config,
-                        force_default_assignee=False,
-                        dossier_candidates=self.db.list_referenceable_dossiers(
-                            minister_name, self.state.turn),
+                        p.get("kind") == "secret_order"
+                        and str(p.get("action") or "") == "新建"
                     )
-                    if so.get("title"):
-                        payload["title"] = so["title"]
-                    if so.get("content"):
-                        payload["content"] = so["content"]
-                    if so.get("assignee"):
-                        payload["assignee"] = so["assignee"]
-                    if so.get("tags") is not None:
-                        payload["tags"] = so.get("tags") or []
-                    if so.get("deadline_months") is not None:
-                        payload["deadline_months"] = so.get("deadline_months", 0)
-                    if so.get("excluded_names") is not None:
-                        payload["excluded_names"] = so.get("excluded_names") or []
-                    if so.get("excluded_offices") is not None:
-                        payload["excluded_offices"] = so.get("excluded_offices") or []
-                    if so.get("dossier_links") is not None:
-                        payload["dossier_links"] = so.get("dossier_links") or []
-                    encoded = json.dumps(payload, ensure_ascii=False)
-                    self.db.conn.execute(
-                        "UPDATE pending_actions SET payload_json=? WHERE id=? AND status='pending'",
-                        (encoded, int(pending["id"])),
-                    )
-                    pending["payload_json"] = encoded
-                    out["pending_action_id"] = int(pending["id"])
-                if not bool(getattr(self.db.conn, "_commit_suspended", False)) and int(
-                    getattr(self.db.conn, "_atomic_depth", 0) or 0
-                ) <= 0:
-                    self.db.conn.commit()
-            if confirm in ("应允", "拒绝", "留中", "修改"):
+                ]
+                if not secret_new:
+                    # 非密令「修改」：不提前 return，放行既有 directive/office 等补充路径。
+                    confirm = "无"
+                else:
+                    resolved = _resolve_secret_modify_targets(secret_new, player_message)
+                    if resolved is None:
+                        # 多 pending 未点名：含糊追问，禁止静默改写全家。
+                        out["directive_confirmation_ambiguous"] = {
+                            "candidates": [
+                                {
+                                    "id": int(p["id"]),
+                                    "summary": _pending_action_brief(p),
+                                }
+                                for p in secret_new
+                            ],
+                        }
+                        return out
+                    material = _strip_secret_amendment_prefix(player_message)
+                    meta_tags, meta_deadline = _secret_metadata_from_command(material)
+                    named_assignee = _extract_imperative_assignee(material)
+                    for pending in resolved:
+                        try:
+                            payload = json.loads(pending.get("payload_json") or "{}")
+                        except (ValueError, TypeError):
+                            payload = {}
+                        if not isinstance(payload, dict):
+                            payload = {}
+                        # 正文：去「修改：」后的御旨材料；空材料不覆写。
+                        if material:
+                            payload["content"] = material
+                        # 仅修改句显式给出的字段才覆盖；未提及保留原候选。
+                        if named_assignee:
+                            payload["assignee"] = named_assignee
+                        if meta_tags:
+                            payload["tags"] = meta_tags
+                        if meta_deadline:
+                            payload["deadline_months"] = meta_deadline
+                        encoded = json.dumps(payload, ensure_ascii=False)
+                        self.db.conn.execute(
+                            "UPDATE pending_actions SET payload_json=? "
+                            "WHERE id=? AND status='pending'",
+                            (encoded, int(pending["id"])),
+                        )
+                        pending["payload_json"] = encoded
+                        out["pending_action_id"] = int(pending["id"])
+                    if not bool(getattr(self.db.conn, "_commit_suspended", False)) and int(
+                        getattr(self.db.conn, "_atomic_depth", 0) or 0
+                    ) <= 0:
+                        self.db.conn.commit()
+                    # 密令修改已落地：确认族提前返回，屏蔽同轮新建 materialize。
+                    return out
+            if confirm in ("应允", "拒绝", "留中"):
                 # 本轮是对暂存的确认：大臣回话已【复述】该动作(领命 prompt 所致),若继续走下面的
                 # 抽取,会把刚 commit 的动作从复述里重抽成新暂存→颁诏二次落库,或重建刚拒的动作。
                 # 故确认轮直接返回,不再抽新动作(线上 codex P2)。确认句无前缀,前缀路无损失。
-                # #1376：修改同属确认族——改完候选后不再 materialize 第二条。
                 return out
         if api_or_no_cli_passthrough:
             return out

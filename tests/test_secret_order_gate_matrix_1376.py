@@ -44,7 +44,8 @@ E3_MESSAGE = "你替朕悄悄查一查关宁欠饷实数"
 
 # stub 结构化 content：复述版 / 修改版（不断言散文匹配，只钉判词→落库映射）
 RESTATED_CONTENT = "密察关宁欠饷，据实密奏，不得声张。"
-MODIFIED_CONTENT = "只查饷银去向，不查动向。"
+# 修改正文=去「修改：」前缀后的御旨材料（P5：不二次抽取；与 production strip 同口径）
+MODIFIED_CONTENT = "只查饷银去向，不查动向"
 MODIFIED_TITLE = "只查饷银去向"
 
 S2_MODIFY_MESSAGE = "修改：只查饷银去向，不查动向"

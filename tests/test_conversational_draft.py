@@ -1612,7 +1612,7 @@ def test_confirm_reject_does_not_delete_conversational_directive(game, monkeypat
     assert surviving[0]["id"] == did
 
 
-def test_targeted_directive_rejection_does_not_drop_secret_order(game):
+def test_targeted_directive_rejection_does_not_drop_secret_order(game, monkeypatch):
     """同一大臣同时有密令候选和拟旨时，点名“圣旨作罢”只应丢拟旨。"""
     db, state, content = game
     name = _active_minister_name(db, content)
@@ -1623,6 +1623,12 @@ def test_targeted_directive_rejection_does_not_drop_secret_order(game):
         state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
         payload={"title": "暗查辽饷", "content": "密查辽饷侵冒。", "assignee": name})
 
+    # 确认判读只许结构化 LLM 枚举（ADR 0028）；stub 拒绝，禁词表快路。
+    monkeypatch.setattr(
+        cb, "_run_backend_for_config",
+        lambda prompt, llm_config=None, tag="": (
+            json.dumps({"确认": "拒绝"}, ensure_ascii=False), 1),
+    )
     GameSession.apply_cli_conversation_actions(
         _fake_session(db, state), ch,
         player_message="那道圣旨作罢。",
