@@ -19911,6 +19911,21 @@ class GameDB:
         effective_year = int(year if year is not None else default_year)
         effective_period = int(period if period is not None else default_period)
         bound_origin, origin_round = bind_origin_round(origin, effective_turn)
+        # 幂等身份只锚稳定 origin（|round 后缀前的裸串）+端点+腿别，不含可变
+        # context（#635 r1 F2：不得依赖可变 context 判重）；同 origin 重放返回
+        # 既有行原 id，原 context 不被改写。
+        bare_origin = bound_origin.split("|", 1)[0]
+        existing = self.conn.execute(
+            """
+            SELECT id FROM relation_edge_events
+            WHERE source = ? AND target = ? AND event_kind = ?
+              AND (origin = ? OR origin LIKE ?)
+            ORDER BY id LIMIT 1
+            """,
+            (source, target, kind, bound_origin, f"{bare_origin}|%"),
+        ).fetchone()
+        if existing is not None:
+            return int(existing["id"])
         self.conn.execute(
             """
             INSERT OR IGNORE INTO relation_edge_events
@@ -19928,9 +19943,9 @@ class GameDB:
         row = self.conn.execute(
             """
             SELECT id FROM relation_edge_events
-            WHERE source = ? AND target = ? AND event_kind = ? AND context = ? AND origin = ?
+            WHERE source = ? AND target = ? AND event_kind = ? AND origin = ?
             """,
-            (source, target, kind, context, bound_origin),
+            (source, target, kind, bound_origin),
         ).fetchone()
         return int(row["id"])
 
