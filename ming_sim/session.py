@@ -1280,18 +1280,24 @@ class GameSession:
         summaries = [
             f"[{int(p['id'])}] {_pending_action_brief(p)}" for p in confirm_targets
         ]
-        confirm, _named = _coerce_confirmation_result(
+        confirm, named = _coerce_confirmation_result(
             extract_confirmation_intent(
                 player_message, reply, summaries,
                 llm_config=getattr(self, "llm_config", None),
             )
         )
         # #1376：修改同属确认族（原地改候选，屏蔽同轮新建推断）
+        # #1509 r3：同次 confirmation 的目标编号必须随 candidate 过缝，
+        # 不得在此丢弃——下游 apply 在 intent 非 None 时不再二调 extractor。
         if confirm in ("应允", "拒绝", "留中", "修改"):
-            cand = normalize_one_candidate(
-                {"kind": "confirmation", "confirmation": confirm},
-                soft=False,
-            )
+            payload: Dict[str, Any] = {
+                "kind": "confirmation", "confirmation": confirm,
+            }
+            if named:
+                payload["target_ids"] = list(named)
+            cand = normalize_one_candidate(payload, soft=False)
+            if named:
+                cand["target_ids"] = list(named)
             return [cand]
         return candidates
 
@@ -1764,12 +1770,11 @@ class GameSession:
             ]
             confirm_named_ids: List[int] = []
             if intent is not None:
-                confirm = (
-                    str(intent.get("confirmation") or "无")
-                    if cluster_effect(intent_kind) == EFFECT_ANSWER_EXISTING
-                    else "无"
-                )
-                if confirm not in ("应允", "拒绝", "留中", "修改", "无"):
+                # #1509 r3：preclassification 已跑过同次 confirmation 抽取时，
+                # 确认枚举与目标编号均取自 intent（禁二调 extractor / 禁散文机械解析）。
+                if cluster_effect(intent_kind) == EFFECT_ANSWER_EXISTING:
+                    confirm, confirm_named_ids = _coerce_confirmation_result(intent)
+                else:
                     confirm = "无"
             else:
                 confirm, confirm_named_ids = _coerce_confirmation_result(

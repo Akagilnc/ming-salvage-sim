@@ -253,6 +253,12 @@ def normalize_one_candidate(obj: Mapping[str, Any], *, soft: bool) -> Dict[str, 
             out[name] = s
     if "draft_text" in obj:
         out["draft_text"] = obj.get("draft_text")
+    # #1509：confirmation 同次抽取的目标编号非 classifier FieldSpec，须随 candidate 过缝
+    # （normalize_intent_candidates 会再走本函数；丢了则真实 chat 路多候选修改必歧义）。
+    if "target_ids" in obj and obj.get("target_ids") is not None:
+        out["target_ids"] = obj.get("target_ids")
+    elif "目标编号" in obj and obj.get("目标编号") is not None:
+        out["target_ids"] = obj.get("目标编号")
     return out
 
 
