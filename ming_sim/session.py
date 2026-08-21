@@ -1224,7 +1224,8 @@ class GameSession:
         summaries = [_pending_action_brief(p) for p in confirm_targets]
         confirm = extract_confirmation_intent(
             player_message, reply, summaries, llm_config=getattr(self, "llm_config", None))
-        if confirm in ("应允", "拒绝", "留中"):
+        # #1376：修改同属确认族（原地改候选，屏蔽同轮新建推断）
+        if confirm in ("应允", "拒绝", "留中", "修改"):
             cand = normalize_one_candidate(
                 {"kind": "confirmation", "confirmation": confirm},
                 soft=False,
@@ -1703,7 +1704,7 @@ class GameSession:
                     if cluster_effect(intent_kind) == EFFECT_ANSWER_EXISTING
                     else "无"
                 )
-                if confirm not in ("应允", "拒绝", "留中", "无"):
+                if confirm not in ("应允", "拒绝", "留中", "修改", "无"):
                     confirm = "无"
             else:
                 confirm = extract_confirmation_intent(
@@ -1837,10 +1838,63 @@ class GameSession:
                 self.db.hold_over_pending_actions(
                     self.state.turn, minister_name,
                     action_ids=confirm_action_ids)
-            if confirm in ("应允", "拒绝", "留中"):
+            elif confirm == "修改":
+                # #1376 owner：修改=更新同一 pending 候选内容（id 不变），不 commit、不新建。
+                # 结构化正文经 _extract_secret_order（与 stage 同缝），禁平行机制。
+                from ming_sim.cli_backend import _extract_secret_order
+                for pending in confirm_targets:
+                    if (
+                        pending.get("kind") != "secret_order"
+                        or str(pending.get("action") or "") != "新建"
+                    ):
+                        continue
+                    try:
+                        payload = json.loads(pending.get("payload_json") or "{}")
+                    except (ValueError, TypeError):
+                        payload = {}
+                    if not isinstance(payload, dict):
+                        payload = {}
+                    so = _extract_secret_order(
+                        player_message,
+                        reply,
+                        minister_name,
+                        llm_config=llm_config,
+                        force_default_assignee=False,
+                        dossier_candidates=self.db.list_referenceable_dossiers(
+                            minister_name, self.state.turn),
+                    )
+                    if so.get("title"):
+                        payload["title"] = so["title"]
+                    if so.get("content"):
+                        payload["content"] = so["content"]
+                    if so.get("assignee"):
+                        payload["assignee"] = so["assignee"]
+                    if so.get("tags") is not None:
+                        payload["tags"] = so.get("tags") or []
+                    if so.get("deadline_months") is not None:
+                        payload["deadline_months"] = so.get("deadline_months", 0)
+                    if so.get("excluded_names") is not None:
+                        payload["excluded_names"] = so.get("excluded_names") or []
+                    if so.get("excluded_offices") is not None:
+                        payload["excluded_offices"] = so.get("excluded_offices") or []
+                    if so.get("dossier_links") is not None:
+                        payload["dossier_links"] = so.get("dossier_links") or []
+                    encoded = json.dumps(payload, ensure_ascii=False)
+                    self.db.conn.execute(
+                        "UPDATE pending_actions SET payload_json=? WHERE id=? AND status='pending'",
+                        (encoded, int(pending["id"])),
+                    )
+                    pending["payload_json"] = encoded
+                    out["pending_action_id"] = int(pending["id"])
+                if not bool(getattr(self.db.conn, "_commit_suspended", False)) and int(
+                    getattr(self.db.conn, "_atomic_depth", 0) or 0
+                ) <= 0:
+                    self.db.conn.commit()
+            if confirm in ("应允", "拒绝", "留中", "修改"):
                 # 本轮是对暂存的确认：大臣回话已【复述】该动作(领命 prompt 所致),若继续走下面的
                 # 抽取,会把刚 commit 的动作从复述里重抽成新暂存→颁诏二次落库,或重建刚拒的动作。
                 # 故确认轮直接返回,不再抽新动作(线上 codex P2)。确认句无前缀,前缀路无损失。
+                # #1376：修改同属确认族——改完候选后不再 materialize 第二条。
                 return out
         if api_or_no_cli_passthrough:
             return out
