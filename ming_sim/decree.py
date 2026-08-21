@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Callable, Dict, Iterator, List, Mapping, Optional, Protocol, Sequence
@@ -69,7 +70,7 @@ from ming_sim.decree_vocabulary import (
     qualitative_promulgation_slot,
 )
 from ming_sim.memories import build_timeline, record_chapter_memory
-from ming_sim.relation_brew import run_month_end_relation_brew
+from ming_sim.relation_brew import MonthEndRelationBrewLeg
 from ming_sim.simulation import (
     EXTRACTION_MODULES,
     build_simulator_payload,
@@ -1906,26 +1907,32 @@ def pre_settle(
     return auto_triggered
 
 
-def _make_relation_brew_runner(llm_config: LLMConfig, agno_db: SqliteDb) -> Callable[[GameState, GameDB], object]:
-    """#636 S5：月末关系酿制腿的注入闭包（真实流程= LLM agent；driver= None 跳过）。
+def _make_relation_brew_runner(
+        llm_config: LLMConfig, agno_db: SqliteDb,
+) -> Callable[[GameState, GameDB, int, int, int], MonthEndRelationBrewLeg]:
+    """#636 S5：月末关系酿制腿的注入工厂（真实流程= LLM agent；driver= None 跳过）。
 
-    每条关系一个新 agent 实例（批内并行各自独享，不共享运行态）；输出零裁剪零 clamp
+    返回 (state, db, settled_turn, settled_year, settled_period) -> Leg 工厂；
+    settle_with_delta 单点拥有 start/join/drain 生命周期：在结算事务内边事件定型
+    后调 prepare()，把 brew()（零 DB 的 LLM 相）放进唯一一条受管 Future 与
+    chapter/ending 重叠，提交后、摘要持久化前 join，异常路排空丢弃。每条关系一个
+    新 agent 实例（批内并行各自独享，不共享运行态）；输出零裁剪零 clamp
     （庭裁 r1 F2），长度约束只走 prompt 正向输入契约。"""
 
-    def _run(state: GameState, db: GameDB, *, settled_turn: int, settled_year: int,
-             settled_period: int) -> object:
+    def _create(state: GameState, db: GameDB, *, settled_turn: int, settled_year: int,
+                settled_period: int) -> MonthEndRelationBrewLeg:
         def _brew_fn(payload_json: str) -> str:
             agent = create_relation_brew_agent(llm_config, agno_db)
             return run_agent_text(agent, payload_json, tag="relation-brew")
 
-        return run_month_end_relation_brew(
+        return MonthEndRelationBrewLeg(
             db, state, _brew_fn,
             settled_turn=settled_turn,
             settled_year=settled_year,
             settled_period=settled_period,
         )
 
-    return _run
+    return _create
 
 
 def settle_with_delta(
@@ -2006,6 +2013,30 @@ def settle_with_delta(
     # 拒非 _SuspendableConnection、BEGIN 撞锁）时 as 绑定不发生，except 块若裸访问
     # _atomic.reload_failed 会触发 UnboundLocalError 吃掉原始结算异常（cmr S4 三模型收敛）。
     _atomic = None
+    # #636 S5（ID-10/P5，判词类②跨阶段并行）：月末酿制腿的唯一受管 Future——
+    # start/join/drain 生命周期单点归 settle_with_delta。start 在结算事务内、本月
+    # 边事件集定型后（body 在 chapter/ending 前触发钩子）执行：prepare()（DB 相，
+    # 事务内选中＋认领＋备料）后把 brew()（零 DB 的 LLM 相）放进单工 executor，
+    # 使酿制 LLM 等待与无依赖的 chapter/ending 等后处理重叠。提交成功后、摘要
+    # 持久化前 join；异常路（结算回滚）排空等待并丢弃结果——事务回滚后事件与
+    # 认领均不存在，酿制产物一律作废。探针 driver 传 None（无腿，零 Future）。
+    _brew_pool = None
+    _brew_future = None
+    _brew_leg = None
+
+    def _start_relation_brew() -> None:
+        nonlocal _brew_pool, _brew_future, _brew_leg
+        leg = relation_brew_runner(
+            state, db,
+            settled_turn=settled_turn,
+            settled_year=settled_year,
+            settled_period=settled_period,
+        )
+        if not leg.prepare():
+            return
+        _brew_leg = leg
+        _brew_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="relation-brew-leg")
+        _brew_future = _brew_pool.submit(leg.brew)
     try:
         with atomic_and_reload(
             db, state, content=content, registry=registry,
@@ -2042,9 +2073,19 @@ def settle_with_delta(
                 chapter_recorder=chapter_recorder, ending_summarizer=ending_summarizer,
                 delta_applier=delta_applier, _stage=_stage,
                 collector=collector, source=source,
-                claim_relation_brew=relation_brew_runner is not None,
+                start_relation_brew=(
+                    _start_relation_brew if relation_brew_runner is not None else None
+                ),
             )
     except BaseException as exc:
+        # 酿制腿异常路排空（判词：异常时也排空）：等 brew() 收尾并丢弃结果——结算
+        # 事务已整体回滚，本月边事件与认领均不存在，任何酿制产物一律作废；排空
+        # 不吞不换原异常，只防悬空 worker。
+        if _brew_pool is not None:
+            _brew_pool.shutdown(wait=True)
+            _brew_exc = _brew_future.exception() if _brew_future is not None else None
+            if _brew_exc is not None:
+                tlog(f"[relation-brew] 酿制 Future 随结算回滚排空丢弃：{_brew_exc}")
         # reload 失败（atomic_and_reload 在 yield 句柄上标的,cmr S4 r1）：内存仍脏——
         # 裸传播,不写包不包 SettlementAbort（脏态写包/宣传可重试都是误导;b12a60e 原语义）。
         if _atomic is not None and _atomic.reload_failed:
@@ -2078,20 +2119,15 @@ def settle_with_delta(
             collector.mirror_to_jsonl(rejections_jsonl_path())
         except Exception as mirror_exc:
             tlog(f"[rejection] jsonl 镜像失败（DB 行已落，仅副本丢失）：{mirror_exc}")
-    # #636 S5 月末关系酿制腿：结算事务已提交、本月边事件集定型后方启酿（ID-10 输入依赖
-    # 边界）。腿内批内并行（P5）；单条失败降级进 pending-backlog、保旧摘要，不阻塞结算；
-    # 腿整体异常也只降级记日志——结算结果已落定，不因酿制腿失败而败。探针 driver 传 None。
-    # settled 年月快照传入（next_period 已把 state 推进到下一个月，不得直读）。
-    if relation_brew_runner is not None:
+    # #636 S5 月末酿制腿收尾（判词类②）：结算事务已提交，摘要持久化前 join。
+    # brew() 内仅单条 LLM 调用/输出契约失败降级留痕；persist 内 apply/mark 的
+    # DB/schema/程序错误响亮上抛（ADR 0005/0008）——腿级宽吞已删。
+    if _brew_pool is not None:
         try:
-            relation_brew_runner(
-                state, db,
-                settled_turn=settled_turn,
-                settled_year=settled_year,
-                settled_period=settled_period,
-            )
-        except Exception as brew_exc:  # noqa: BLE001 — 酿制腿降级不阻塞结算
-            tlog(f"[relation-brew] 月末酿制腿整体失败降级（结算已落定）：{brew_exc}")
+            _brew_future.result()
+        finally:
+            _brew_pool.shutdown(wait=True)
+        _brew_leg.persist()
     return full_report
 
 
@@ -2197,7 +2233,7 @@ def _settle_after_extract_body(
     _stage: Callable[[str], None],
     collector: Optional[RejectionCollector] = None,
     source: Provenance = Provenance.unknown,
-    claim_relation_brew: bool = False,
+    start_relation_brew: Optional[Callable[[], None]] = None,
 ) -> str:
     """settle_with_delta 的后半段写序列正文（被其 atomic 包裹调用）。
 
@@ -2360,6 +2396,15 @@ def _settle_after_extract_body(
     # next_period 之前——与结算同生死、可整体回滚；recompute 绝对幂等，被 hook 重算过再扫一遍得同值）。
     db.recompute_all_faction_leverage()
 
+    # #636 S5（ID-10/P5）：本月边事件集至此已全部定型——delta 落库与 breach plea 等
+    # 确定性补写全毕，此后到提交再无边事件写口。此刻触发酿制腿 start 钩子：
+    # prepare() 在本事务内选中＋认领（与边事件同生共死，庭裁 r2/r3 F1），brew()
+    # 进受管 Future 与下方无依赖的章节记忆/结局总评重叠。start/join/drain 归
+    # settle_with_delta 单点所有，此处只触发。prepare 的 DB/程序错误响亮上抛、
+    # 随本 atomic 整体回滚走错误包路（ADR 0005/0008）。
+    if start_relation_brew is not None:
+        start_relation_brew()
+
     # 章节记忆：注入回调（真实流程= LLM 浓缩落 event_memories；driver= None 跳过）。失败不抛断。
     _stage("记起居注")
     if chapter_recorder is not None:
@@ -2398,17 +2443,6 @@ def _settle_after_extract_body(
                 ending_text = ending_summarizer(db, state, outcome)
             state.ended = True
             state.ending_status = str(outcome.get("status") or "")
-
-    # #636 S5（庭裁 r2/r3 F1）：settled 年月入选关系在本结算事务内先作 durable claim——
-    # 与本月新边事件同生共死：任意缝崩溃→认领随事件一并回滚→重启重放再认领；
-    # 认领持久后酿制任意缝失败→pending 在册→下次结算补酿。此刻 state 尚未
-    # next_period，年月即被结算月份。
-    if claim_relation_brew:
-        claimed = db.claim_relation_brew_targets(
-            year=int(state.year), period=int(state.period),
-        )
-        if claimed:
-            tlog(f"[relation-brew] 结算事务内认领 {claimed} 条关系的月末酿制")
 
     db.mark_directives_issued(state)
     state.next_period()

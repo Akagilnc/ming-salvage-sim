@@ -16,6 +16,7 @@ import hashlib
 import json
 import os
 import signal
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -23,10 +24,11 @@ import threading
 import pytest
 
 from ming_sim.db import GameDB
-from ming_sim.decree import settle_with_delta
+from ming_sim.decree import SettlementAbort, settle_with_delta
 from ming_sim.relation_brew import (
     FOUNDINGS_KEY,
     RECENT_KEY,
+    MonthEndRelationBrewLeg,
     merge_founding_segment,
     relation_dimension,
     run_month_end_relation_brew,
@@ -452,33 +454,53 @@ def test_historical_events_alone_do_not_select_in_later_month(game):
     assert db.get_relation_summary("毕自严", "王绍徽") is None
 
 
-# ------------------------------------------------- 结算接缝：腿在事务提交后启酿、失败不阻塞
+# -------------------------------- 结算接缝：事务内定型即启酿、与 chapter/ending 重叠（判词类②）
 
-def test_settle_invokes_brew_leg_after_commit_and_survives_leg_failure(game):
+def test_settle_brew_overlaps_chapter_and_joins_before_persist(game):
+    """ID-10/P5：本月边事件集在结算事务内定型后即启酿——酿制 LLM 等待与无依赖的
+    章节记忆重叠；摘要持久化前 join；串行实现（等整个 atomic 完成才同步调）在此破裂。"""
     db, state, content = game
-    observed: list = []
+    _add_edge(db, state, source="徐光启", target=EMPEROR_NODE, kind="协作",
+              context="徐光启与皇上当场协作。", origin="audience:turn-1")
+
+    started = threading.Event()
+    release = threading.Event()
+    brew_turns: list = []
+
+    def brew_fn(payload_json: str) -> str:
+        brew_turns.append(int(state.turn))  # 事务内启酿：state 尚未被 next_period 推进
+        started.set()
+        if not release.wait(timeout=10):
+            raise RuntimeError("chapter 未与酿制重叠（串行实现）")
+        return json.dumps(_script(recent="协作在案。"), ensure_ascii=False)
 
     def runner(settle_state, settle_db, *, settled_turn, settled_year, settled_period):
-        # 输入依赖边界：runner 收到调用时结算事务已提交（state 已推进），但 settled
-        # 年月快照必须是 next_period 之前的本结算月（不得把下一个月写进输入/落款）。
-        observed.append((
-            "called", settle_state.turn, settle_db is db,
-            settled_turn, int(settled_year), int(settled_period),
-        ))
-        raise RuntimeError("腿整体故障")
+        return MonthEndRelationBrewLeg(
+            settle_db, settle_state, brew_fn,
+            settled_turn=settled_turn,
+            settled_year=settled_year,
+            settled_period=settled_period,
+        )
+
+    def chapter(db_, s, decree_text, narrative, applied):
+        assert started.wait(timeout=10), "酿制未与 chapter 重叠（串行实现）"
+        release.set()
 
     before_turn = state.turn
     settled_year, settled_period = int(state.year), int(state.period)
     settle_with_delta(
         state, db, {}, before_turn=before_turn, content=content,
-        relation_brew_runner=runner,
+        chapter_recorder=chapter, relation_brew_runner=runner,
     )
 
     assert state.turn == before_turn + 1
-    assert observed == [(
-        "called", before_turn + 1, True,
-        before_turn, settled_year, settled_period,
-    )]  # 结算未被腿故障拖垮；快照＝next_period 前的本结算月
+    # 重叠证明：brew 在事务内（next_period 前）启酿、且与 chapter 互等通过。
+    assert brew_turns == [before_turn]
+    summary = db.get_relation_summary("徐光启", EMPEROR_NODE)
+    assert summary["recent_segment"] == "协作在案。"
+    assert (summary["last_brewed_year"], summary["last_brewed_period"]) == (
+        settled_year, settled_period,
+    )
 
 
 def test_settle_brew_leg_records_settled_month_not_advanced_month(game):
@@ -492,7 +514,7 @@ def test_settle_brew_leg_records_settled_month_not_advanced_month(game):
     def runner(settle_state, settle_db, *, settled_turn, settled_year, settled_period):
         brew_fn = _brew_fn_factory(calls)
         brew_fn.outputs = [_script(recent="协作在案。")]
-        return run_month_end_relation_brew(
+        return MonthEndRelationBrewLeg(
             settle_db, settle_state, brew_fn,
             settled_turn=settled_turn,
             settled_year=settled_year,
@@ -538,10 +560,136 @@ def test_merge_founding_segment_preserves_bytes_exactly():
     assert merge_founding_segment("甲句。", [" 甲句。 "]) == "甲句。\n 甲句。 "
     # 严格字节相等去重：仅逐字全等才跳过；近似串（多空格/带后缀）不吞。
     assert merge_founding_segment("甲句。", ["甲句。", "甲句。", "甲句 "]) == "甲句。\n甲句 "
-    # 补酿不重复记账：整段重复报同一句（含多行句）不重复追加。
+    # 补酿不重复记账只在严格字节全等时成立：整段原样重报（含多行句）逐字全等→跳过。
     merged = merge_founding_segment("", ["甲句。", "乙句。\n乙二句。"])
     assert merged == "甲句。\n乙句。\n乙二句。"
-    assert merge_founding_segment(merged, ["乙句。\n乙二句。", "甲句。"]) == merged
+    assert merge_founding_segment(merged, [merged]) == merged
+
+
+def test_merge_founding_segment_never_infers_by_lines():
+    """判词类①机械反例（冻结）：按行拆分＋集合推断会把整段候选误删。
+
+    旧段 '甲\\n中\\n乙' 配候选 '甲\\n乙'：候选的每一行各自都在旧段内，旧的行集合
+    推断据此把整条候选吞掉——零删改宪法下候选必须完整逐字追加。"""
+    assert merge_founding_segment("甲\n中\n乙", ["甲\n乙"]) == "甲\n中\n乙\n甲\n乙"
+    # 多行候选即使每一行都已在段内，也整条逐字追加（不拆行不推断）。
+    assert merge_founding_segment("甲句。", ["甲句。\n甲句二。"]) == "甲句。\n甲句。\n甲句二。"
+
+
+# ------- 判词类③ fail-loud 异常边界：DB/schema/程序错误响亮，仅 LLM 单条降级
+
+def test_prepare_claim_db_error_propagates_loudly(game):
+    """认领 DB 失败不得伪装成 LLM 降级：无 durable claim 就开酿会让失败月失去恢复
+    凭据（庭裁 r3 F1②缝），必须响亮上抛（ADR 0005/0008）。"""
+    db, state, _ = game
+    _add_edge(db, state, source="温体仁", target="周延儒", kind="结怨",
+              context="温体仁当殿讦周延儒。", origin="audience:turn-1")
+
+    def boom(*args, **kwargs):
+        raise sqlite3.OperationalError("认领库不可写")
+
+    db.claim_relation_brew_targets = boom
+    with pytest.raises(sqlite3.OperationalError, match="认领库不可写"):
+        run_month_end_relation_brew(db, state, _brew_fn_factory([]))
+
+
+def test_apply_db_error_propagates_loudly_not_disguised_as_llm_failure(game):
+    """apply 落定的 DB/schema 错误是落库侧错（ADR 0005）：响亮上抛，不走单条降级、
+    不再重复 mark 补降级。"""
+    db, state, _ = game
+    _add_edge(db, state, source="毕自严", target="王绍徽", kind="站台",
+              context="毕自严当面替王绍徽担名。", origin="audience:turn-1")
+
+    def boom(*args, **kwargs):
+        raise sqlite3.OperationalError("落定库不可写")
+
+    db.apply_relation_brew_result = boom
+    marked: list = []
+    original_mark = db.mark_relation_brew_pending
+
+    def spy_mark(**kwargs):
+        marked.append(kwargs)
+        return original_mark(**kwargs)
+
+    db.mark_relation_brew_pending = spy_mark
+    with pytest.raises(sqlite3.OperationalError, match="落定库不可写"):
+        run_month_end_relation_brew(db, state, _brew_fn_factory([]))
+    assert marked == []  # 宽吞与重复补降级已删
+
+
+def test_mark_failure_after_llm_failure_propagates_loudly(game):
+    """LLM 单条失败本身合法降级，但降级留痕的 pending 写若遇 DB 错误同样响亮上抛。"""
+    db, state, _ = game
+    _add_edge(db, state, source="温体仁", target="周延儒", kind="结怨",
+              context="温体仁当殿讦周延儒。", origin="audience:turn-1")
+
+    def failing_brew(payload_json: str) -> str:
+        raise RuntimeError("酿制裁判失手")
+
+    def boom(*args, **kwargs):
+        raise sqlite3.OperationalError("pending 库不可写")
+
+    db.mark_relation_brew_pending = boom
+    with pytest.raises(sqlite3.OperationalError, match="pending 库不可写"):
+        run_month_end_relation_brew(db, state, failing_brew)
+
+
+def test_settle_aborts_loudly_when_brew_prepare_db_fails(game):
+    """生产路径：prepare 的 claim DB 错误发生在结算 atomic 内→随整体回滚走错误包
+    SettlementAbort，绝不静默继续（ADR 0008 决定 6）。"""
+    db, state, content = game
+    _add_edge(db, state, source="徐光启", target=EMPEROR_NODE, kind="协作",
+              context="徐光启与皇上当场协作。", origin="audience:turn-1")
+
+    class _BoomLeg:
+        def prepare(self):
+            raise sqlite3.OperationalError("认领库不可写")
+
+        def brew(self):
+            raise AssertionError("prepare 已响，不可达")
+
+        def persist(self):
+            raise AssertionError("prepare 已响，不可达")
+
+    def runner(settle_state, settle_db, *, settled_turn, settled_year, settled_period):
+        return _BoomLeg()
+
+    before_turn = state.turn
+    with pytest.raises(SettlementAbort):
+        settle_with_delta(
+            state, db, {}, before_turn=before_turn, content=content,
+            relation_brew_runner=runner,
+        )
+    # 结算整体回滚：turn 不推进、无摘要落定。
+    assert state.turn == before_turn
+    assert db.get_relation_summary("徐光启", EMPEROR_NODE) is None
+
+
+def test_settle_brew_program_error_propagates_loudly_after_commit(game):
+    """brew 相的程序错误不是 LLM 单条失败：join 时响亮上抛（ADR 0005）；结算本体
+    已提交不受影响；join/shutdown 保证不悬空 worker。"""
+    db, state, content = game
+
+    class _BoomLeg:
+        def prepare(self):
+            return True
+
+        def brew(self):
+            raise RuntimeError("酿制编排程序错误必须响亮")
+
+        def persist(self):
+            raise AssertionError("join 已响，不可达")
+
+    def runner(settle_state, settle_db, *, settled_turn, settled_year, settled_period):
+        return _BoomLeg()
+
+    before_turn = state.turn
+    with pytest.raises(RuntimeError, match="酿制编排程序错误必须响亮"):
+        settle_with_delta(
+            state, db, {}, before_turn=before_turn, content=content,
+            relation_brew_runner=runner,
+        )
+    assert state.turn == before_turn + 1  # 结算本体已提交
 
 
 def test_relation_dimension_marks_emperor_edges():
