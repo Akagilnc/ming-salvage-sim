@@ -304,9 +304,9 @@
     "effect_on_trigger": {
       "region_delta": {
         "shanxi": {
-          "population": -40,
+          "population": -400000,
           "unrest": 6,
-          "reason": "华北大疫核心事实：山西疫起、人口锐减、逃户动荡增加"
+          "reason": "华北大疫核心事实：山西疫起、人口锐减（-40万，单位人/ADR 0088）、逃户动荡增加"
         }
       }
     },

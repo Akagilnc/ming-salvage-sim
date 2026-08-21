@@ -32,6 +32,7 @@ function makeRegion(overrides: Partial<Region> = {}): Region {
     name: "辽东",
     kind: "边镇",
     population: 100,
+    population_wan: 100,
     public_support: 50,
     unrest: 20,
     natural_disaster: "无",
