@@ -1,20 +1,30 @@
 import type { AudienceScrollMessage } from "./types";
 
+export type MinisterScrollLensOptions = {
+  /**
+   * One-shot presentation claim for a half-turn already owned by this window
+   * (replyRetry.chat_turn_id, or in-flight pendingIdentity.chat_turn_id).
+   * Only applies when the turn has no named minister owner yet. No cache / durable write.
+   */
+  claimedTurnId?: number | null;
+};
+
 /**
  * #1511 pure presentation lens: campaign-wide night scroll → selected minister window.
  *
- * Consumes only speaker / chat_turn_id / beat. No cache, no durable state.
- * - Soft segments (named entrance/divider anchors): whole segment kept iff owned by selected.
- *   Side interjections inside the segment travel with the segment (不串窗、不误删上下文).
- * - Unanchored stretches (e.g. 密令): bind by chat_turn_id to the turn's named minister;
- *   emperor / attendant / scene on that turn go in/out together.
+ * Consumes only speaker / chat_turn_id / beat (+ optional window claim). No cache, no durable state.
+ * - Messages with chat_turn_id and a named minister turnOwner follow that owner in/out as a whole
+ *   turn — segment ownerHint never overrides a formal turn.
+ * - Messages without chat_turn_id follow the soft segment ownerHint (side interjections travel
+ *   with the named entrance/divider stretch).
  * - Single-principal unanchored stretch (empty-speaker entrance + one turn owner): whole stretch
  *   kept for that principal so entrance/scene without chat_turn_id is not orphaned.
- * - 无主消息不泛留: turns without a named minister speaker are dropped.
+ * - 无主消息不泛留: turns without a named minister speaker (and without window claim) are dropped.
  */
 export function filterScrollForSelectedMinister(
   messages: AudienceScrollMessage[],
   selectedMinister: string,
+  options?: MinisterScrollLensOptions,
 ): AudienceScrollMessage[] {
   if (!selectedMinister || messages.length === 0) return [];
 
@@ -24,6 +34,11 @@ export function filterScrollForSelectedMinister(
     if (message.role === "minister" && turnId && message.speaker) {
       turnOwner.set(turnId, message.speaker);
     }
+  }
+  // Window-local half-turn claim: only fill a turn that still has no minister owner.
+  const claimedTurnId = options?.claimedTurnId;
+  if (claimedTurnId && !turnOwner.has(claimedTurnId)) {
+    turnOwner.set(claimedTurnId, selectedMinister);
   }
 
   type Segment = { ownerHint: string | null; messages: AudienceScrollMessage[] };
@@ -52,26 +67,20 @@ export function filterScrollForSelectedMinister(
 
   const out: AudienceScrollMessage[] = [];
   for (const segment of segments) {
-    const owner = resolveSegmentOwner(segment, turnOwner);
-    if (owner === selectedMinister) {
-      out.push(...segment.messages);
-      continue;
-    }
-    if (owner != null) {
-      // Other minister's full semantic segment — drop entirely.
-      continue;
-    }
-    // Multi-principal or empty unanchored stretch: keep only turns bound to selected.
-    const keepTurns = new Set<number>();
+    // segmentOwner only governs no-turn messages (soft-segment context).
+    const segmentOwner = resolveSegmentOwner(segment, turnOwner);
     for (const message of segment.messages) {
       const turnId = message.chat_turn_id;
-      if (turnId && turnOwner.get(turnId) === selectedMinister) {
-        keepTurns.add(turnId);
+      if (turnId) {
+        // Formal turn: structured turnOwner wins over any segment ownerHint.
+        if (turnOwner.get(turnId) === selectedMinister) {
+          out.push(message);
+        }
+        // else: other minister's turn, or orphan turn — drop from this window
+        continue;
       }
-    }
-    for (const message of segment.messages) {
-      const turnId = message.chat_turn_id;
-      if (turnId && keepTurns.has(turnId)) {
+      // No chat_turn_id: follow soft segment (side interjection / entrance / local scene).
+      if (segmentOwner === selectedMinister) {
         out.push(message);
       }
     }
