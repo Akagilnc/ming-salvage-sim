@@ -61,43 +61,26 @@ S3_REJECT = {
 _REAL_HOME = Path(os.environ.get("HOME") or os.path.expanduser("~")).resolve()
 _REAL_AK_ROLES = (_REAL_HOME / ".ak-roles").resolve()
 _REAL_MING_DATA = (_REAL_HOME / "WorkSpace" / "Ming_LLM" / "data").resolve()
-# harness 常态写 books/cases/ops——零写只钉游戏可能污染的静态面
-_AK_ROLES_SKIP_PREFIXES = ("books/", "cases/", "ops/", "taishi/")
 
 
-def _tree_fingerprint(root: Path, *, skip_prefixes: tuple[str, ...] = ()) -> str:
-    """sha256(find -type f | sort) 语义：相对路径 + size + mtime_ns 串联（等同上层清单不变）。
+def _tree_fingerprint(root: Path) -> str:
+    """票面语义：sha256(find -type f | sort)——整树相对路径清单，不跳子目录。
 
-    用元数据而非全文 hash：真实 data/.ak-roles 可达数百 MB～数 GB，全文 hash 会拖垮矩阵。
-    任何新增/改写/删除文件都会改 size 或 mtime → 指纹变。
+    只钉路径集合（新增/删除文件会变）；既有文件的 append/mtime 噪声不计入。
+    真实 data/.ak-roles 可达数百 MB～数 GB，禁全文 hash。
     """
     if not root.is_dir():
         return f"missing:{root}"
     h = hashlib.sha256()
     root_res = root.resolve()
     entries: List[str] = []
-    for dirpath, dirnames, filenames in os.walk(root_res, topdown=True):
+    for dirpath, _dirnames, filenames in os.walk(root_res, topdown=True):
         rel_dir = str(Path(dirpath).resolve().relative_to(root_res)).replace(os.sep, "/")
         if rel_dir == ".":
             rel_dir = ""
-        # 剪枝 skip 前缀（含顶层 books/cases/…）
-        keep: List[str] = []
-        for d in dirnames:
-            child = f"{rel_dir}/{d}".lstrip("/") + "/"
-            if any(child.startswith(p) or child.rstrip("/") == p.rstrip("/") for p in skip_prefixes):
-                continue
-            keep.append(d)
-        dirnames[:] = keep
         for name in filenames:
             rel = f"{rel_dir}/{name}".lstrip("/") if rel_dir else name
-            if any(rel.startswith(p) for p in skip_prefixes):
-                continue
-            path = Path(dirpath) / name
-            try:
-                st = path.stat()
-                entries.append(f"{rel}\0{st.st_size}\0{st.st_mtime_ns}")
-            except OSError:
-                entries.append(f"{rel}\0?\0?")
+            entries.append(rel)
     for line in sorted(entries):
         h.update(line.encode("utf-8", "surrogateescape"))
         h.update(b"\n")
@@ -105,8 +88,8 @@ def _tree_fingerprint(root: Path, *, skip_prefixes: tuple[str, ...] = ()) -> str
 
 
 def assert_real_home_untouched(before: Dict[str, str]) -> None:
-    """真实断言：两条生产路径指纹未变。"""
-    after_ak = _tree_fingerprint(_REAL_AK_ROLES, skip_prefixes=_AK_ROLES_SKIP_PREFIXES)
+    """真实断言：两条生产路径整树路径清单指纹未变。"""
+    after_ak = _tree_fingerprint(_REAL_AK_ROLES)
     after_data = _tree_fingerprint(_REAL_MING_DATA)
     assert after_ak == before["ak_roles"], (
         f"零写核验失败：真实 ~/.ak-roles 被写入 "
@@ -120,9 +103,9 @@ def assert_real_home_untouched(before: Dict[str, str]) -> None:
 
 @pytest.fixture(autouse=True)
 def _zero_write_real_home():
-    """模块级 autouse：每格前后核验真实 HOME 路径零写。"""
+    """模块级 autouse：每格前后核验真实 HOME 整路径零写。"""
     before = {
-        "ak_roles": _tree_fingerprint(_REAL_AK_ROLES, skip_prefixes=_AK_ROLES_SKIP_PREFIXES),
+        "ak_roles": _tree_fingerprint(_REAL_AK_ROLES),
         "ming_data": _tree_fingerprint(_REAL_MING_DATA),
     }
     yield
@@ -249,6 +232,7 @@ class _ConfirmStub:
     def __init__(self) -> None:
         self.queue: List[str] = []
         self.calls: List[str] = []
+        self.results: List[str] = []
 
     def push(self, *values: str) -> None:
         self.queue.extend(values)
@@ -263,38 +247,45 @@ class _ConfirmStub:
         del minister_reply, pending_summaries, llm_config
         text = (player_message or "").strip()
         self.calls.append(text)
-        # 确定性应允短句仍走生产口径（票面 S2「准」）
+        # 测试边界模拟结构化 LLM 枚举：短应允句 / 队列灌入的修改·拒绝
         compact = re.sub(r"[\s，,。.!！?？；;：:、]+", "", text)
         if compact in {"准", "可", "允", "好", "行", "善"} or compact in {
             "准奏", "照准", "准了", "照办",
         }:
-            return "应允"
-        if self.queue:
-            return self.queue.pop(0)
-        return "无"
+            result = "应允"
+        elif self.queue:
+            result = self.queue.pop(0)
+        else:
+            result = "无"
+        self.results.append(result)
+        return result
 
 
 class _ClassifierStub:
-    """分类器 stub：E3 入口返回结构化密令判词；其它默认 []。"""
+    """分类器 stub：E3 入口返回结构化密令判词；其它默认 []。记录真实调用契约。"""
 
     def __init__(self) -> None:
         self.mode: str = "none"  # none | secret_new | secret_modify
         self.calls: List[str] = []
+        self.results: List[List[Dict[str, Any]]] = []
 
     def __call__(self, player_message: str, *args, **kwargs) -> List[Dict[str, Any]]:
         del args, kwargs
         text = (player_message or "").strip()
         self.calls.append(text)
         if self.mode == "secret_new":
-            return [{"kind": "secret", "secret_action": "新建"}]
-        if self.mode == "secret_modify":
-            return [{
+            result: List[Dict[str, Any]] = [{"kind": "secret", "secret_action": "新建"}]
+        elif self.mode == "secret_modify":
+            result = [{
                 "kind": "secret",
                 "secret_action": "新建",
                 "new_title": MODIFIED_TITLE,
                 "new_content": MODIFIED_CONTENT,
             }]
-        return []
+        else:
+            result = []
+        self.results.append(result)
+        return result
 
 
 # ── 公共 fixture：临时 HOME/DB + TestClient ─────────────────────────────
@@ -625,27 +616,43 @@ def test_matrix_S1_default_commit_on_settle(matrix_env, cell, entry):
     # 首包设计口径：secret_order_id=0（暂存态）
     assert int(inject.get("secret_order_id") or 0) == 0, f"{cell} 首包应 id=0: {inject!r}"
 
+    classifier: _ClassifierStub = env["classifier"]
     # 结构性信号：E1/E2 不经分类器亦达 stage；E3 经分类器 stub
     pending = _db_pending_secret_new(game)
     assert len(pending) >= 1, f"{cell} stage 后须有 secret_order/新建 候选: {pending!r}"
     cand = pending[0]
     cand_id = int(cand["id"])
     payload = _payload_of(cand)
-    assert RESTATED_CONTENT in str(payload.get("content") or "") or E2_TITLE in str(
-        payload.get("title") or ""
-    ) or "关宁" in str(payload.get("content") or payload.get("title") or ""), (
-        f"{cell} 候选 content 未含复述/关宁: {payload!r}"
+    assert str(payload.get("content") or "") == RESTATED_CONTENT, (
+        f"{cell} 候选 content 须为完整复述版: {payload!r}"
     )
 
     if entry == "E3":
-        assert env["classifier"].calls, f"{cell} E3 须打到分类器 stub"
+        # 真实分类器调用契约：注入文被记录，且返回含 kind=secret 的结构化判词
+        assert classifier.calls, f"{cell} E3 须打到分类器 stub"
         assert any(
-            c.get("kind") == "secret"
-            for c in [{"kind": "secret", "secret_action": "新建"}]  # stub 契约
-        )
+            E3_MESSAGE == c or E3_MESSAGE in c or "悄悄查" in c
+            for c in classifier.calls
+        ), f"{cell} E3 分类器须收到无前缀密令文: {classifier.calls!r}"
+        assert classifier.results, f"{cell} E3 分类器须有返回记录"
+        assert any(
+            isinstance(item, dict) and item.get("kind") == "secret"
+            for result in classifier.results
+            for item in result
+        ), f"{cell} E3 分类器返回须含 secret 判词: {classifier.results!r}"
     else:
-        # E1/E2：前缀/端点确定性路由——分类器可不跑或跑了也不依赖
-        pass
+        # E1/E2：前缀/端点确定性路由——mode=none 时 stub 返回 []，仍达 stage（上面 pending）
+        assert classifier.mode == "none", f"{cell} 结构性入口 classifier.mode 须为 none"
+        assert all(
+            not any(
+                isinstance(item, dict) and item.get("kind") == "secret"
+                for item in result
+            )
+            for result in classifier.results
+        ), (
+            f"{cell} E1/E2 不得依赖分类器密令判词达 stage: "
+            f"calls={classifier.calls!r} results={classifier.results!r}"
+        )
 
     # 先观测 settle 前不可见（票面 v4.3 观测序）
     before = _matrix_orders(client)
@@ -659,8 +666,8 @@ def test_matrix_S1_default_commit_on_settle(matrix_env, cell, entry):
     row = after[0]
     assert int(row["id"]) > 0
     content = str(row.get("content") or "")
-    assert RESTATED_CONTENT in content or content == RESTATED_CONTENT or "关宁" in content, (
-        f"{cell} content 须为复述版: {content!r}"
+    assert content == RESTATED_CONTENT, (
+        f"{cell} content 须为完整复述版 {RESTATED_CONTENT!r}，得 {content!r}"
     )
     # 候选已消费
     assert _db_pending_secret_new(game) == [] or all(
@@ -711,8 +718,11 @@ def test_matrix_S2_modify_then_land(matrix_env, cell, entry, via_approve):
     assert MODIFIED_CONTENT in mid_content or mid_content == MODIFIED_CONTENT, (
         f"{cell} 修改后候选 content 须=修改版: {mid_payload!r}"
     )
-    # 确认判词→修改 映射被消费
-    assert "修改" in confirm.calls or any("只查饷银" in c for c in confirm.calls), confirm.calls
+    # 确认判词→修改 映射被消费（results 记录结构化枚举，非散文自证）
+    assert "修改" in confirm.results, (
+        f"{cell} 修改轮须消费确认判词=修改: calls={confirm.calls!r} results={confirm.results!r}"
+    )
+    assert any(S2_MODIFY_MESSAGE == c or "只查饷银" in c for c in confirm.calls), confirm.calls
 
     if via_approve:
         out = _chat(env, S2_APPROVE_MESSAGE)
@@ -760,7 +770,13 @@ def test_matrix_S3_reject_then_settle_no_resurrection(matrix_env, cell, entry):
         f"{cell} 拒绝后 pending 新建候选须清除: {_db_pending_secret_new(game)!r}"
     )
     assert _matrix_orders(client) == []
-    assert "拒绝" in confirm.calls or reject_msg in confirm.calls or confirm.calls, confirm.calls
+    # 拒绝判词须被真实消费（禁 `or confirm.calls` 恒真尾）
+    assert reject_msg in confirm.calls, (
+        f"{cell} 拒绝轮须调用确认判词: calls={confirm.calls!r}"
+    )
+    assert "拒绝" in confirm.results, (
+        f"{cell} 拒绝轮须消费确认判词=拒绝: results={confirm.results!r}"
+    )
 
     # 过月不复活
     _settle_month(env)
