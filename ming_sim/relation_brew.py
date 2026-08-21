@@ -15,10 +15,11 @@
   生产路径由 settle_with_delta 把 brew() 放进唯一一条受管 Future，使 LLM 等待与无
   依赖的 chapter/ending 等后处理重叠，摘要持久化前 join、异常路排空丢弃。
 - 异常边界（ADR 0005/0008）：prepare/persist 两段是 DB 相——claim/apply/mark 的
-  DB/schema/程序错误响亮上抛，绝不降级；brew() 段的降级面只收两类真 LLM 单条
-  失败——LLMUnavailable（LLM 调用/接口失败）与 LLMContractError/ValueError
-  （输出结构化契约违约），降级留痕（保旧摘要＋事件已在流水＋认领已在册，不阻塞
-  结算）；其余异常类型属程序错，同样响亮上抛。
+  DB/schema/程序错误响亮上抛，绝不降级。brew() 段按**结构位置**分界而非异常类型：
+  LLM 调用缝只收其声明类型 LLMUnavailable；解析/shape 校验缝只收输出结构化契约
+  违约（LLMContractError/ValueError）；两段各自降级留痕（保旧摘要＋事件已在流水
+  ＋认领已在册，不阻塞结算）。缝外的程序逻辑异常——含 _brew_fn 自身抛出的裸
+  ValueError——一律响亮上抛，不用异常类型猜语义。
 - 成功路径＝摘要写入与 pending 清除同一 DB 事务原子落定（庭裁 r2 F1）。
 - settled 年月快照由 decree 在 next_period 之前取定并传入；一律不得直读 state 年月
   落款（直调路径回落调用时的 state——此时 state 仍指被结算的那个月）。
@@ -258,15 +259,21 @@ class MonthEndRelationBrewLeg:
 
     def _brew_one(self, job: Dict[str, Any]) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]], Optional[Exception]]:
         # payload 备制是纯程序逻辑：其错误属代码侧错（ADR 0005），不在降级面内，
-        # 响亮上抛。try 只收两类真 LLM 单条失败的声明类型——LLMUnavailable（调用/
-        # 接口失败）与 LLMContractError/ValueError（输出结构化契约违约）才降级留痕；
-        # KeyError/TypeError/RuntimeError 等其余类型一律响亮上抛（判词残留项②：
-        # 宽 except Exception 把程序错吞成降级的缺口在此拆类封死）。
+        # 响亮上抛。降级面按**结构位置**拆成两段独立 try（判词残留项：同一 try 包住
+        # 调用与解析并捕裸 ValueError，会把 _brew_fn 自身的程序性 ValueError 吞成
+        # 降级）——每段只收该结构位置可能合法产生的声明类型：
+        # - LLM 调用缝：只收 LLMUnavailable（LLM 调用/接口失败的 typed 声明）；
+        #   该段的 KeyError/TypeError/裸 ValueError 等属程序错，响亮上抛。
+        # - 解析/shape 校验缝：只收输出结构化契约违约 LLMContractError（JSON 层）
+        #   与 ValueError（shape 层，parse_brew_output 的声明类型）。
         payload = render_brew_user_payload(job["input"])
         try:
             raw = self._brew_fn(payload)
+        except LLMUnavailable as exc:
+            return job, None, exc
+        try:
             parsed = parse_brew_output(raw)
-        except (LLMUnavailable, LLMContractError, ValueError) as exc:
+        except (LLMContractError, ValueError) as exc:
             return job, None, exc
         return job, parsed, None
 
