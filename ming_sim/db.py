@@ -10375,11 +10375,16 @@ class GameDB:
         self.conn.commit()
 
     def list_pending_decisions(self, turn: int) -> List[Dict[str, object]]:
-        """读本回合决策点（按 idx）。options 反序列化；choice 为已选则带出。"""
+        """读本回合亲裁决策点（按 idx）。options 反序列化；choice 为已选则带出。
+
+        #656：只回 kind='decision'。票拟行与亲裁共表但走 list_rescript_drafts——
+        web pending_decisions / needsPhase2Resume / submit_decisions 均经此入口，
+        混入 status=pending 的票拟会把崩溃恢复的全员 decided 谓词打断。
+        """
         rows = self.conn.execute(
             "SELECT idx, event_id, title, context, rejection_reason, opposition, "
             "options_json, choice_json, status, kind, actor_name, actor_office, actor_faction "
-            "FROM pending_decisions WHERE turn = ? ORDER BY idx",
+            "FROM pending_decisions WHERE turn = ? AND kind = 'decision' ORDER BY idx",
             (int(turn),),
         ).fetchall()
         out: List[Dict[str, object]] = []
