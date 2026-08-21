@@ -11287,9 +11287,10 @@ class GameDB:
             str(target.get("execution_outcome") or "").strip() if target else ""
         )
         # #1260：durable_effects / beyond 单源助手（economy+fiscal），禁再只扫 economy。
+        # #1272：beyond 直接读已取的 durable，禁再调 dossier_has_beyond_intent 重扫 4 表。
         durable = self.list_dossier_durable_effects(int(dossier_id))
         actual_effect_count = len(durable)
-        beyond = self.dossier_has_beyond_intent(int(dossier_id))
+        beyond = any(bool(row.get("beyond_intent")) for row in durable)
         fork = is_reported_actual_fork(
             reported_bands=reported_bands,
             beyond_intent=beyond,
