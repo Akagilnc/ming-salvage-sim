@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
 # 四态：索引越大越重（只准加重 = 索引只增不减）
@@ -49,6 +50,43 @@ _FIDELITY_ALIASES = {
 }
 
 
+def seed_guilt_is_active(raw: object) -> bool:
+    """True only when stored seed_guilt is an actual charge.
+
+    characters.json 无案底写成 ``{"crime":"无","severity":"无"}``，落库后是非空
+    JSON 字符串；mindreading 已把这对当作「未见坐实」。空串 / ``{}`` / 字面
+    「无」同样不是血债代理。
+    """
+    if raw is None:
+        return False
+    if isinstance(raw, Mapping):
+        crime = str(raw.get("crime") or "").strip()
+        severity = str(raw.get("severity") or "").strip()
+        return (crime not in {"", "无"}) or (severity not in {"", "无"})
+    text = str(raw).strip()
+    if not text or text in {"无", "{}", "null", "None"}:
+        return False
+    if text[0] in "{[":
+        try:
+            parsed = json.loads(text)
+        except (TypeError, ValueError):
+            return True
+        if isinstance(parsed, Mapping):
+            return seed_guilt_is_active(parsed)
+        return bool(str(parsed).strip()) and str(parsed).strip() != "无"
+    return True
+
+
+def _int_axis(value: object, default: int = 50) -> int:
+    """Preserve 0; only None/blank fall back to the neutral default."""
+    if value is None or value == "":
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def normalize_fidelity_state(raw: object) -> Optional[str]:
     text = str(raw or "").strip()
     if not text:
@@ -70,7 +108,7 @@ def compute_willingness_floor(
     loyalty: int,
     identity: int,
     satisfaction: int,
-    seed_guilt: str = "",
+    seed_guilt: object = "",
 ) -> str:
     """0116 意愿轴机械底档（纯函数，可 golden）。
 
@@ -84,7 +122,7 @@ def compute_willingness_floor(
     score = 0.55 * loy + 0.35 * sat + 0.10 * (100 - ident)
     if ident >= 70 and loy < 55:
         score -= 18.0
-    if str(seed_guilt or "").strip():
+    if seed_guilt_is_active(seed_guilt):
         score -= 12.0
     if score >= 70.0:
         return "忠实"
@@ -177,8 +215,8 @@ def build_minister_snapshot(db: Any, minister_name: str) -> Dict[str, object]:
             sat = 50
     return {
         "minister_name": name,
-        "loyalty": int(row["loyalty"] or 50),
-        "identity": int(row["identity"] or 50),
+        "loyalty": _int_axis(row["loyalty"]),
+        "identity": _int_axis(row["identity"]),
         "faction": faction,
         "satisfaction": int(sat),
         "seed_guilt": str(row["seed_guilt"] or "") if "seed_guilt" in row.keys() else "",
