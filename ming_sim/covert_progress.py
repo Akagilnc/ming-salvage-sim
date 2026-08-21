@@ -25,6 +25,16 @@ PROGRESS_UNITS: Dict[str, float] = {
     "反噬": 0.0,
 }
 
+# 四态 → 本月人物/钱粮/局势后果系数（首版随 playtest；成色轴 0108 不读）
+# loyalty: 承办人评定增量；economy: 内库开销（负=支出）；皇威: 局势 metric；
+# faction_sat: 承办派 satisfaction；region_unrest: 承办人所在地动乱。
+_WORLD_EFFECT_BY_FIDELITY: Dict[str, Dict[str, int]] = {
+    "忠实": {"loyalty": 1, "economy": -3, "皇威": 0, "faction_sat": 0, "region_unrest": 0},
+    "打折": {"loyalty": 0, "economy": -1, "皇威": 0, "faction_sat": 0, "region_unrest": 0},
+    "阳奉阴违": {"loyalty": -1, "economy": 0, "皇威": 0, "faction_sat": -1, "region_unrest": 1},
+    "反噬": {"loyalty": -2, "economy": 0, "皇威": -1, "faction_sat": -2, "region_unrest": 2},
+}
+
 # 兼容 LLM 英文/旧词
 _FIDELITY_ALIASES = {
     "faithful": "忠实",
@@ -195,7 +205,7 @@ def build_covert_floor_payload(db: Any, orders: Sequence[Mapping[str, object]]) 
         if oid <= 0:
             continue
         status = str(order.get("status") or "")
-        if status not in {"active", "pending_review"}:
+        if status != "active":
             continue
         minister = str(order.get("minister_name") or "")
         floor = compute_floor_for_minister(db, minister)
@@ -230,6 +240,190 @@ def _selection_map(raw_selections: object) -> Dict[int, Dict[str, object]]:
     return mapping
 
 
+def derive_monthly_covert_world_effects(
+    *,
+    fidelity: object,
+    minister_name: str,
+    dossier_id: int,
+    faction: str = "",
+    region_id: str = "",
+    title: str = "",
+) -> Dict[str, object]:
+    """由 clamp 后执行态机械派生本月人物/钱粮/局势效果包（纯函数，可 golden）。
+
+    返回喂既有 applier 的结构；每项 origin_ref=dossier:N。不读奏报/sim_note。
+    """
+    state_name = normalize_fidelity_state(fidelity) or "反噬"
+    coef = dict(_WORLD_EFFECT_BY_FIDELITY.get(state_name) or _WORLD_EFFECT_BY_FIDELITY["反噬"])
+    origin = f"dossier:{int(dossier_id)}"
+    label = str(title or "密令差务").strip()[:24] or "密令差务"
+    reason = f"密令实办（{state_name}）：{label}"
+
+    person_changes: List[Dict[str, object]] = []
+    loyalty = int(coef.get("loyalty") or 0)
+    minister = str(minister_name or "").strip()
+    if loyalty != 0 and minister:
+        person_changes.append({
+            "name": minister,
+            "动作": "评定",
+            "loyalty": loyalty,
+            "reason": reason,
+            "origin_ref": origin,
+        })
+
+    economy_moves: List[Dict[str, object]] = []
+    eco = int(coef.get("economy") or 0)
+    if eco != 0:
+        economy_moves.append({
+            "account": "内库",
+            "delta": eco,
+            "category": "密令差务",
+            "reason": reason,
+            "origin_ref": origin,
+        })
+
+    metric_delta: Dict[str, int] = {}
+    huangwei = int(coef.get("皇威") or 0)
+    if huangwei != 0:
+        metric_delta["皇威"] = huangwei
+
+    faction_delta: Dict[str, object] = {}
+    fac = str(faction or "").strip()
+    fac_sat = int(coef.get("faction_sat") or 0)
+    if fac and fac_sat != 0:
+        faction_delta[fac] = {"satisfaction": fac_sat}
+
+    region_delta: Dict[str, Dict[str, object]] = {}
+    rid = str(region_id or "").strip()
+    unrest = int(coef.get("region_unrest") or 0)
+    if rid and unrest != 0:
+        region_delta[rid] = {
+            "unrest": unrest,
+            "reason": reason,
+            "origin_ref": origin,
+        }
+
+    return {
+        "fidelity": state_name,
+        "origin_ref": origin,
+        "人物变更": person_changes,
+        "economy_moves": economy_moves,
+        "metric_delta": metric_delta,
+        "faction_delta": faction_delta,
+        "region_delta": region_delta,
+    }
+
+
+def _minister_world_context(db: Any, minister_name: str) -> Dict[str, str]:
+    name = str(minister_name or "").strip()
+    if not name:
+        return {"faction": "", "region_id": ""}
+    row = db.conn.execute(
+        "SELECT faction, location FROM characters WHERE name=?",
+        (name,),
+    ).fetchone()
+    if row is None:
+        return {"faction": "", "region_id": ""}
+    return {
+        "faction": str(row["faction"] or ""),
+        "region_id": str(row["location"] or ""),
+    }
+
+
+def _apply_derived_world_effects(
+    db: Any,
+    state: Any,
+    package: Mapping[str, object],
+) -> Dict[str, object]:
+    """经既有 applier 落库；origin 纪律与 apply_score_extraction 同口径。"""
+    from ming_sim.flows import _apply_economy_list, _apply_faction_dict, _apply_metric_dict
+    from ming_sim.issues import _apply_person_changes
+    from ming_sim.models import Event
+
+    origin = str(package.get("origin_ref") or "").strip()
+    out: Dict[str, object] = {
+        "origin_ref": origin,
+        "人物变更": [],
+        "economy_moves": [],
+        "metric_delta": {},
+        "faction_delta": {},
+        "region_delta": [],
+    }
+
+    people = list(package.get("人物变更") or [])
+    if people:
+        results = _apply_person_changes(
+            db,
+            state,
+            people,
+            content=getattr(db, "content", None),
+            origin_ref=origin,
+            require_origin=True,
+            external_transaction=True,
+        )
+        out["人物变更"] = [r for r in results if not r.get("rejected")]
+        out["人物变更_rejections"] = [r for r in results if r.get("rejected")]
+
+    economy = list(package.get("economy_moves") or [])
+    if economy:
+        eco_out = _apply_economy_list(
+            db,
+            state,
+            economy,
+            commit=False,
+            require_origin=True,
+            origin_ref=origin,
+        )
+        out["economy_moves"] = [r for r in eco_out if not r.get("rejected")]
+        out["economy_rejections"] = [r for r in eco_out if r.get("rejected")]
+
+    metrics = package.get("metric_delta") or {}
+    if isinstance(metrics, dict) and metrics:
+        out["metric_delta"] = _apply_metric_dict(state, metrics, db=db)
+
+    factions = package.get("faction_delta") or {}
+    if isinstance(factions, dict) and factions:
+        applied_fac, fac_rej = _apply_faction_dict(db, factions, commit=False)
+        out["faction_delta"] = applied_fac
+        if fac_rej:
+            out["faction_rejections"] = fac_rej
+
+    regions = package.get("region_delta") or {}
+    if isinstance(regions, dict) and regions:
+        pseudo = Event(
+            id="covert_monthly",
+            title="密令月度实办",
+            kind="密令",
+            summary="",
+            urgency=0,
+            severity=0,
+            credibility=100,
+            interests=[],
+            audiences=[],
+        )
+        region_changes: List[Dict[str, object]] = []
+        for region_id, raw_changes in regions.items():
+            if not isinstance(raw_changes, dict):
+                continue
+            payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
+            region_changes.extend(
+                db.apply_region_deltas(
+                    state,
+                    pseudo,
+                    None,
+                    "密令实办",
+                    {str(region_id): payload},
+                    commit=False,
+                    origin_ref=origin,
+                    require_origin=True,
+                )
+            )
+        out["region_delta"] = [r for r in region_changes if not r.get("rejected")]
+        out["region_rejections"] = [r for r in region_changes if r.get("rejected")]
+
+    return out
+
+
 def apply_monthly_covert_actual_progress(
     db: Any,
     state: Any,
@@ -237,14 +431,13 @@ def apply_monthly_covert_actual_progress(
     selections: object = None,
     commit: bool = False,
 ) -> List[Dict[str, object]]:
-    """当月实况轨落笔：底档 + 判官选态 clamp → actual_progress 行 + 在办迁移。
+    """当月实况轨落笔：clamp 执行态 → actual_progress + 真实后果经既有 applier。
 
     与 apply_score_extraction 同 atomic 调用（commit=False）。
     不读/不写 dossier_progress_json；奏报仍走既有 0058 路径。
+    旧档 pending_review 已由 DB 一次迁移为 active，本函数只扫 active。
     """
     orders = list(db.list_secret_orders(status="active"))
-    # 迁移窗：旧档 pending_review 仍可产当月实进度后对账
-    orders.extend(db.list_secret_orders(status="pending_review"))
     by_sel = _selection_map(selections)
     applied: List[Dict[str, object]] = []
     turn = int(state.turn)
@@ -259,6 +452,12 @@ def apply_monthly_covert_actual_progress(
         # 已结案案卷不重复写月度实况
         if str(dossier.get("status") or "") == "closed":
             continue
+        did = int(dossier["id"])
+        # 同回合幂等：已有本月实进度行则只刷新 units/态，不重复叠世界后果
+        prior = db.conn.execute(
+            "SELECT id FROM dossier_actual_progress WHERE dossier_id=? AND turn=?",
+            (did, turn),
+        ).fetchone()
         floor = compute_floor_for_minister(db, str(order.get("minister_name") or ""))
         sel = by_sel.get(oid) or {}
         selected = sel.get("fidelity", sel.get("执行态", sel.get("state")))
@@ -268,7 +467,7 @@ def apply_monthly_covert_actual_progress(
         if not note:
             note = f"机械实进度：底档{floor}→落态{fidelity}（{units:g}）"
         row = db.record_dossier_actual_progress(
-            int(dossier["id"]),
+            did,
             turn,
             units=units,
             fidelity_state=fidelity,
@@ -278,13 +477,29 @@ def apply_monthly_covert_actual_progress(
         )
         # 过程态：沿 mark_in_progress 既有特例进入 executing（不改 terminal policy 表）
         db.mark_secret_order_in_progress(oid, commit=False)
+
+        world: Dict[str, object] = {}
+        if prior is None:
+            ctx = _minister_world_context(db, str(order.get("minister_name") or ""))
+            package = derive_monthly_covert_world_effects(
+                fidelity=fidelity,
+                minister_name=str(order.get("minister_name") or ""),
+                dossier_id=did,
+                faction=str(ctx.get("faction") or ""),
+                region_id=str(ctx.get("region_id") or ""),
+                title=str(order.get("title") or ""),
+            )
+            world = _apply_derived_world_effects(db, state, package)
+
         applied.append({
             "order_id": oid,
-            "dossier_id": int(dossier["id"]),
+            "dossier_id": did,
             "units": units,
             "fidelity": fidelity,
             "floor": floor,
             "row_id": row.get("id"),
+            "world_effects": world,
+            "effects_applied": bool(world),
         })
     if commit and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0:
         db.conn.commit()
@@ -292,14 +507,13 @@ def apply_monthly_covert_actual_progress(
 
 
 def list_due_secret_orders_for_settlement(db: Any, state: Any) -> List[Dict[str, object]]:
-    """可对账集：active|pending_review 且 due_turn∈(0, turn]。"""
+    """可对账集：active 且 due_turn∈(0, turn]（legacy pending_review 已一次迁 active）。"""
     turn = int(state.turn)
     due: List[Dict[str, object]] = []
-    for status in ("active", "pending_review"):
-        for order in db.list_secret_orders(status=status):
-            due_turn = int(order.get("due_turn") or 0)
-            if due_turn > 0 and due_turn <= turn:
-                due.append(order)
+    for order in db.list_secret_orders(status="active"):
+        due_turn = int(order.get("due_turn") or 0)
+        if due_turn > 0 and due_turn <= turn:
+            due.append(order)
     due.sort(key=lambda o: int(o["id"]))
     return due
 
