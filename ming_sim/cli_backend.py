@@ -1211,7 +1211,8 @@ def classify_cli_action_intent(
         "判断本轮是否属于一个或多个政务动作，并抽出可从皇帝话与相关上下文直接确定的结构字段。"
         "单动作输出一个 JSON 对象，多动作输出 JSON 对象数组（无代码围栏、无多余字）：\n"
         + schema_obj + "\n"
-        "规则：确认优先于新动作；拟旨优先于任免。\n"
+        "规则：确认优先于新动作；同一话语可同时含拟旨与任免时须同时输出"
+        "拟旨与任免候选（draft+appointment 并存），多候选不得因拟旨省略任免。\n"
         "跨轮指代（如「这三件事你都办」「三事全允」）须结合最近相关召对上下文与"
         "待确认动作列表解析所指事项，逐事各产一条候选；更新既有候选时填目标候选=该道 id。\n"
         "拿问、下狱、赐死、廷杖、罚俸、削籍、放归、昭雪属惩处，不得判任免罢免。\n"
@@ -1242,7 +1243,9 @@ def classify_cli_action_intent(
     )
     raw = ""
     try:
-        raw, _ = _run_backend_for_config(prompt, llm_config, tag="action_intent")
+        # 跨通道 JSON 抽取：API → _run_api_for_config；其余 → CLI backend。
+        # 不得直调 _run_backend_for_config（显式 API 会抛，classify 捕后返 []）。
+        raw, _ = _run_json_extractor_for_config(prompt, llm_config, tag="action_intent")
     except Exception as exc:
         _log(f"召对动作意图判断失败：{exc}")
         return []
