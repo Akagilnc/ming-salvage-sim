@@ -1038,13 +1038,18 @@ class GameSession:
         return (True, "")
 
     def _start_cli_action_intent(self, character: Character, message: str) -> Optional[Future]:
-        """CLI 召对动作判断只读皇帝消息，可与大臣回话并发。"""
+        """召对动作判断只读皇帝消息，可与大臣回话并发。
+
+        #1502：API 与 CLI 非前缀自然语言均并行提交既有 classifier；
+        显式前缀仍跳过（#344）。无可用通道时不启动。
+        """
         from ming_sim.cli_backend import (
             _DRAFT_PREFIXES, _SECRET_PREFIXES, classify_cli_action_intent,
             cli_backend_from_env,
         )
         channel = (getattr(getattr(self, "llm_config", None), "channel", "") or "").strip().lower()
-        if channel != "cli" and (channel == "api" or cli_backend_from_env() is None):
+        # API/CLI 可跑预分类；其它通道仍需 CLI backend 在场
+        if channel not in {"cli", "api"} and cli_backend_from_env() is None:
             return None
         # CLI 动作分类器与大臣回话一律并发；不按 runner 退串行。
         text = (message or "").strip()
@@ -1712,7 +1717,8 @@ class GameSession:
         返回 {"directive": {id,text,status,notes}|None, "secret_order_id": int|None}。
 
         #515：preclassified_intent 接受 list（生产契约）或 dict（测试/旧注入）；
-        None = 分类器未跑（串行回落）；[] = 已跑无动作（零 classifier 写入）。
+        None = 分类器未跑（CLI 串行回落；API 早退）；[] = 已跑无动作（零 classifier 写入）。
+        #1502：API 在 classifier 已跑（含 []）时进入既有 materialize，不再无条件 passthrough。
         """
         from ming_sim.cli_backend import (
             _DRAFT_PREFIXES, _SECRET_PREFIXES,
@@ -1747,6 +1753,9 @@ class GameSession:
         explicit_prefixed = message_text.startswith(_DRAFT_PREFIXES) or message_text.startswith(_SECRET_PREFIXES)
         channel = (getattr(getattr(self, "llm_config", None), "channel", "") or "").strip().lower()
         api_explicit_prefix = channel == "api" and explicit_prefixed
+        # #1502：API 仅在 classifier 未运行（preclassified is None）时 passthrough 早退；
+        # 已跑（含 []）则交既有 materialize 消费 structured candidates。
+        # 显式前缀仍走前缀/resolve 路（#344）。确认块在本闸之前，位置与所有权不动。
         api_or_no_cli_passthrough = (
             channel != "cli" and (channel == "api" or cli_backend_from_env() is None) and not api_explicit_prefix
         )
@@ -1994,7 +2003,8 @@ class GameSession:
                 # 抽取,会把刚 commit 的动作从复述里重抽成新暂存→颁诏二次落库,或重建刚拒的动作。
                 # 故确认轮直接返回,不再抽新动作(线上 codex P2)。确认句无前缀,前缀路无损失。
                 return out
-        if api_or_no_cli_passthrough:
+        # #1502：classifier 未跑 → API 仍早退；已跑（list，含空）→ 进入 materialize
+        if api_or_no_cli_passthrough and intent_candidates is None:
             return out
         if GameSession._proposal_blocked(self.state):
             # 恢复窗总闸（PR #90 R1/R2/R3 收束为单一出口）：前缀拟旨/密令与自然语言

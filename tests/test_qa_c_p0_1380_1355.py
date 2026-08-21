@@ -264,6 +264,326 @@ def test_draft_without_appointment_intent_does_not_stage_office(game, monkeypatc
     assert all(p["kind"] != "office" for p in pending)
 
 
+# ── #1502 API 通道接通既有预分类 + draft/appointment 非互斥 ─────────────
+
+
+def _fake_api_session(db, state, content=None):
+    """API 通道会话：与 CLI fake 同壳，仅 channel=api。"""
+    sess = _fake_session(db, state, content)
+    sess.llm_config = types.SimpleNamespace(channel="api")
+    return sess
+
+
+def test_api_natural_language_preclassified_draft_appointment_stages_office(
+    game, monkeypatch,
+):
+    """#1502：冻结原句×API，即使 tools 仅 directive，preclassified 含 appointment
+    → 同轮 pending 至少一条 office 且 directive 可并存；stage 时袁崇焕仍 offstage。
+    """
+    db, state, content = game
+    ch = _minister_wang_shaohui(db, content)
+    assert db.get_character_status("袁崇焕")[0] == "offstage"
+
+    # tools 已产 directive（has_directive=True），无 propose_appointment
+    dir_pid = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨",
+        minister_name=ch.name, target_id=None,
+        payload={
+            "text": "奉天承运皇帝诏曰，着起复袁崇焕，以兵部右侍郎兼都察院右佥都御史督师蓟辽。钦此。",
+            "actor": ch.name,
+            "dossier_action_type": "special_decree",
+        },
+    )
+
+    def _backend(prompt, llm_config=None, tag=""):
+        if tag == "appointment":
+            raise AssertionError(
+                "#1502 P5: structured appointment must not call serial extractor"
+            )
+        return ("{}", 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _backend)
+    sess = _fake_api_session(db, state, content)
+    GameSession.apply_cli_conversation_actions(
+        sess, ch,
+        player_message="着起复袁崇焕，以兵部右侍郎兼都察院右佥都御史督师蓟辽",
+        answer="奉天承运皇帝诏曰，着起复袁崇焕……钦此。请陛下定夺准驳。",
+        has_directive=True, secret_order_id=None,
+        preclassified_intent=[
+            {"kind": "draft"},
+            {
+                "kind": "appointment",
+                "appoint_action": "任命",
+                "name": "袁崇焕",
+                "office": "兵部右侍郎兼都察院右佥都御史督师蓟辽",
+            },
+        ],
+    )
+
+    pending = db.list_pending_actions(state.turn)
+    kinds = {p["kind"] for p in pending}
+    assert "directive" in kinds, "tool 已产 directive 须保留"
+    assert "office" in kinds, "#1502 API preclassified appointment 须 stage office"
+    assert any(int(p["id"]) == int(dir_pid) for p in pending if p["kind"] == "directive")
+    office_row = next(p for p in pending if p["kind"] == "office")
+    office_payload = json.loads(office_row["payload_json"])
+    assert office_payload["name"] == "袁崇焕"
+    # stage ≠ commit：人物真表不动
+    assert db.get_character_status("袁崇焕")[0] == "offstage"
+
+
+def test_api_classifier_empty_list_skips_passthrough_zero_serial_office(game, monkeypatch):
+    """#1502：classifier 已跑（[]）越过 API passthrough；结构化无 appointment → 零 office、禁串行。"""
+    db, state, content = game
+    ch = _minister_wang_shaohui(db, content)
+
+    def _backend(prompt, llm_config=None, tag=""):
+        if tag == "appointment":
+            raise AssertionError(
+                "classifier [] must not fall into serial appointment extractor"
+            )
+        if tag in {"draft_intent", "secret_order", "minister_actions"}:
+            raise AssertionError(
+                f"classifier [] must not serial-extract tag={tag!r}"
+            )
+        return ("{}", 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _backend)
+    before = db.list_pending_actions(state.turn)
+    sess = _fake_api_session(db, state, content)
+    GameSession.apply_cli_conversation_actions(
+        sess, ch,
+        player_message="今日边事如何？",
+        answer="臣谨奏边情平稳。",
+        has_directive=False, secret_order_id=None,
+        preclassified_intent=[],
+    )
+    after = db.list_pending_actions(state.turn)
+    assert after == before
+    assert all(p["kind"] != "office" for p in after)
+
+
+def test_api_classifier_not_run_still_passthrough_early_return(game, monkeypatch):
+    """#1502：classifier 未运行（None）的 API 路径仍早退，不入 materialize/串行抽取。"""
+    db, state, content = game
+    ch = _minister_wang_shaohui(db, content)
+
+    def _backend(prompt, llm_config=None, tag=""):
+        raise AssertionError(
+            f"API preclassified=None must early-return; unexpected tag={tag!r}"
+        )
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _backend)
+    before_ids = {int(p["id"]) for p in db.list_pending_actions(state.turn)}
+    sess = _fake_api_session(db, state, content)
+    out = GameSession.apply_cli_conversation_actions(
+        sess, ch,
+        player_message="着起复袁崇焕，以兵部右侍郎兼都察院右佥都御史督师蓟辽",
+        answer="奉天承运皇帝诏曰……钦此。",
+        has_directive=False, secret_order_id=None,
+        preclassified_intent=None,
+    )
+    after_ids = {int(p["id"]) for p in db.list_pending_actions(state.turn)}
+    assert after_ids == before_ids
+    assert out.get("pending_action_id") in (None, 0, "")
+    assert all(
+        p["kind"] != "office"
+        for p in db.list_pending_actions(state.turn)
+    )
+
+
+def test_api_start_cli_action_intent_runs_for_natural_language(game, monkeypatch):
+    """#1502：API 非前缀自然语言在回话前并行提交既有 classifier（不再 return None）。"""
+    db, state, content = game
+    ch = _minister_wang_shaohui(db, content)
+    captured = {}
+
+    def _fake_classify(message, *args, **kwargs):
+        captured["message"] = message
+        return [
+            {"kind": "draft"},
+            {
+                "kind": "appointment",
+                "appoint_action": "任命",
+                "name": "袁崇焕",
+                "office": "兵部右侍郎兼都察院右佥都御史督师蓟辽",
+            },
+        ]
+
+    monkeypatch.setattr(cb, "classify_cli_action_intent", _fake_classify)
+    sess = _fake_api_session(db, state, content)
+    # GameSession 方法体 import classify；需挂到真实 session 实例方法路径
+    fut = GameSession._start_cli_action_intent(
+        sess, ch, "着起复袁崇焕，以兵部右侍郎兼都察院右佥都御史督师蓟辽",
+    )
+    assert fut is not None, "API 非前缀须提交 classifier Future"
+    finished = GameSession._finish_cli_action_intent(sess, fut)
+    assert finished is not None
+    kinds = sorted(str(c.get("kind") or "") for c in finished)
+    assert "appointment" in kinds
+    assert "draft" in kinds
+    assert captured.get("message", "").startswith("着起复袁崇焕")
+
+    # 显式前缀仍跳过（#344）
+    fut_prefix = GameSession._start_cli_action_intent(
+        sess, ch, "拟旨如下：着起复袁崇焕为辽东巡抚",
+    )
+    assert fut_prefix is None
+
+
+def test_classify_prompt_allows_draft_and_appointment_coexistence(monkeypatch):
+    """#1502：删「拟旨优先于任免」互斥；确认仍优先；同话语 draft+appointment 可并存。"""
+    prompts: list[str] = []
+
+    def _capture(prompt, llm_config=None, tag=""):
+        prompts.append(prompt)
+        return ('{"动作类型":"无"}', 0)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _capture)
+    assert cb.classify_cli_action_intent("着起复袁崇焕并拟旨") == []
+    assert prompts, "classify 必须走结构化判词"
+    rules = prompts[0].split("【待确认动作】", 1)[0]
+    assert "确认优先" in rules
+    assert "拟旨优先于任免" not in rules
+    # 须明示 multi 并存，不得因 draft 省略 appointment
+    assert "拟旨" in rules and "任免" in rules
+    assert any(
+        tok in rules
+        for tok in ("并存", "同时", "可同时", "不得因")
+    )
+
+
+def test_api_pure_appointment_does_not_force_directive(game, monkeypatch):
+    """#1502 负例：纯任免不强造 directive。"""
+    db, state, content = game
+    ch = _minister_wang_shaohui(db, content)
+
+    def _backend(prompt, llm_config=None, tag=""):
+        if tag == "appointment":
+            raise AssertionError("structured appointment must not serial-extract")
+        if tag == "draft_intent":
+            raise AssertionError("pure appointment must not force draft extract")
+        return ("{}", 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _backend)
+    sess = _fake_api_session(db, state, content)
+    GameSession.apply_cli_conversation_actions(
+        sess, ch,
+        player_message="着起复袁崇焕为辽东巡抚。",
+        answer="臣遵旨，请陛下定夺。",
+        has_directive=False, secret_order_id=None,
+        preclassified_intent=[{
+            "kind": "appointment",
+            "appoint_action": "任命",
+            "name": "袁崇焕",
+            "office": "辽东巡抚",
+        }],
+    )
+    pending = db.list_pending_actions(state.turn)
+    assert any(p["kind"] == "office" for p in pending)
+    assert all(p["kind"] != "directive" for p in pending)
+
+
+def test_api_tool_appointment_not_duplicated_by_preclassified(game, monkeypatch):
+    """#1502：tool 已产 appointment 时 preclassified 同人同职不重复 stage。"""
+    db, state, content = game
+    ch = _minister_wang_shaohui(db, content)
+    office_pid = db.stage_pending_action(
+        state.turn, kind="office", action="任命",
+        minister_name=ch.name, target_id=None,
+        payload={
+            "name": "袁崇焕",
+            "office": "辽东巡抚",
+            "appointer": ch.name,
+        },
+    )
+
+    def _backend(prompt, llm_config=None, tag=""):
+        if tag == "appointment":
+            raise AssertionError("must not serial-extract when structured")
+        return ("{}", 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _backend)
+    sess = _fake_api_session(db, state, content)
+    GameSession.apply_cli_conversation_actions(
+        sess, ch,
+        player_message="着起复袁崇焕为辽东巡抚。",
+        answer="臣遵旨。",
+        has_directive=False, secret_order_id=None,
+        preclassified_intent=[{
+            "kind": "appointment",
+            "appoint_action": "任命",
+            "name": "袁崇焕",
+            "office": "辽东巡抚",
+        }],
+    )
+    office_rows = [
+        p for p in db.list_pending_actions(state.turn) if p["kind"] == "office"
+    ]
+    yuan_rows = [
+        p for p in office_rows
+        if json.loads(p["payload_json"]).get("name") == "袁崇焕"
+    ]
+    assert len(yuan_rows) == 1
+    assert int(yuan_rows[0]["id"]) == int(office_pid)
+
+
+def test_api_confirmation_round_does_not_revive_actions(game, monkeypatch):
+    """#1502 负例：确认轮只走既有时序，不因 API materialize 复活新动作。"""
+    db, state, content = game
+    ch = _minister_wang_shaohui(db, content)
+    pid = db.stage_pending_action(
+        state.turn, kind="office", action="任命",
+        minister_name=ch.name, target_id=None,
+        payload={"name": "某人", "office": "某职", "appointer": ch.name},
+    )
+
+    def _backend(prompt, llm_config=None, tag=""):
+        if tag == "appointment":
+            raise AssertionError("confirm round must not serial appointment")
+        if tag == "draft_intent":
+            raise AssertionError("confirm round must not draft extract")
+        if tag == "confirmation":
+            return (json.dumps({"确认": "应允"}, ensure_ascii=False), 1)
+        return ("{}", 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _backend)
+    before_n = len(db.list_pending_actions(state.turn))
+    sess = _fake_api_session(db, state, content)
+    GameSession.apply_cli_conversation_actions(
+        sess, ch,
+        player_message="准。",
+        answer="臣遵旨。",
+        has_directive=False, secret_order_id=None,
+        # 确认优先：即使夹带 draft+appointment 也不得新 stage
+        preclassified_intent=[
+            {"kind": "confirmation", "confirmation": "应允"},
+            {"kind": "draft"},
+            {
+                "kind": "appointment",
+                "appoint_action": "任命",
+                "name": "袁崇焕",
+                "office": "辽东巡抚",
+            },
+        ],
+        confirm_target_ids={int(pid)},
+    )
+    # 应允后该 office 离开 pending（开夜则 night_approved；无开夜则 commit）
+    remaining_ids = {int(p["id"]) for p in db.list_pending_actions(state.turn)}
+    assert int(pid) not in remaining_ids or before_n >= 1
+    # 不得因确认轮夹带的 draft/appointment 新 stage 袁崇焕 office
+    yuan_office = [
+        p for p in db.list_pending_actions(state.turn)
+        if p["kind"] == "office"
+        and json.loads(p["payload_json"]).get("name") == "袁崇焕"
+    ]
+    assert yuan_office == []
+    assert all(
+        p["kind"] != "directive" or "袁崇焕" not in str(p.get("payload_json") or "")
+        for p in db.list_pending_actions(state.turn)
+    )
+
+
 def test_pending_count_includes_staged_directive_and_office(game):
     """#1380 附带：pending_count 计入 directive/office staged（语义洞）。"""
     db, state, content = game

@@ -1019,6 +1019,58 @@ def test_draft_request_with_appointment_content_stages_directive_and_office(game
     assert json.loads(office["payload_json"]).get("name") == "史可法"
 
 
+def test_api_channel_multi_draft_appointment_not_dropped_by_draft_bias(
+    game, monkeypatch,
+):
+    """#1502：API 通道 multi draft+appointment 不得因拟旨偏置省略 office。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+
+    def _capture(prompt, llm_config=None, tag=""):
+        if tag == "appointment":
+            raise AssertionError(
+                "#1502 multi structured appointment must not call serial extractor"
+            )
+        if tag == "draft_intent":
+            return (json.dumps({
+                "拟旨意图": "拟旨",
+                "动作类型": "special_decree",
+                "目标类型": "character",
+                "目标ID": "史可法",
+            }, ensure_ascii=False), 1)
+        return ("{}", 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _capture)
+    sess = types.SimpleNamespace(
+        db=db, state=state,
+        llm_config=types.SimpleNamespace(channel="api"),
+        registry=None,
+    )
+    GameSession.apply_cli_conversation_actions(
+        sess, ch,
+        player_message="帮我拟一道旨，授史可法为兵部尚书。",
+        answer="奉天承运皇帝诏曰，授史可法为兵部尚书，钦此。",
+        has_directive=False, secret_order_id=None,
+        preclassified_intent=[
+            {"kind": "draft"},
+            {
+                "kind": "appointment",
+                "appoint_action": "任命",
+                "name": "史可法",
+                "office": "兵部尚书",
+            },
+        ],
+    )
+    pending = db.list_pending_actions(state.turn)
+    kinds = sorted(p["kind"] for p in pending)
+    assert "directive" in kinds and "office" in kinds, (
+        f"#1502 API multi 须 draft+appointment 并存，实际={kinds}"
+    )
+    office = next(p for p in pending if p["kind"] == "office")
+    assert json.loads(office["payload_json"]).get("name") == "史可法"
+
+
 def test_structured_verdict_alone_routes_natural_language_action(game, monkeypatch):
     """#513：散文关键词不得覆盖结构化判词；只有判词决定候选暂存。"""
     db, state, content = game
