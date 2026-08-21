@@ -67,6 +67,13 @@ from ming_sim.token_stats import tlog
 
 CURRENT_RESOLVE_CONTRACT_VERSION = 1
 
+# ADR 0088 / #648：人口存储单位口径。content 静态人口量已全线「人」（与 armies.manpower
+# 同刻度）；存档口径判别持久化在 DB 内（save_meta 表），新档 seed 落「人」标，
+# 无标旧档一律判「万人」legacy——不得读 content 元信息判别（其不随档持久化）。
+POPULATION_UNIT_PERSONS = "人"
+POPULATION_UNIT_WAN = "万人"
+_POPULATION_UNIT_KEY = "population_unit"
+
 # 落库字段白名单（模块级常量化——避免在 apply_region_deltas / apply_army_deltas /
 # create_armies_from_extraction 的内循环每项重算同一常量集合，cmr PR2 R1 gemini perf）。
 _REGION_DIRECT_TUPLE = REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS + REGION_TEXT_FIELDS
@@ -2270,6 +2277,16 @@ class GameDB:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        # #648（ADR 0088）：存档级持久元数据；人口单位口径判别标（population_unit）落此，
+        # 无标旧档一律判「万人」legacy，不读 content 元信息。
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS save_meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+            """
+        )
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_decree_dossiers_executor "
             "ON decree_dossiers(executor_kind, executor_id, status)"
@@ -3214,6 +3231,35 @@ class GameDB:
             ),
         )
 
+    @property
+    def population_unit(self) -> str:
+        """本档人口存储单位口径（ADR 0088/#648）：新档「人」，无标旧档一律「万人」。
+
+        判别只读存档 DB 内的持久标记（save_meta），不读 content 元信息（其不随档
+        持久化，0088 明文禁止）。旧档不迁移、读写按档口径走 legacy。"""
+        row = self.conn.execute(
+            "SELECT value FROM save_meta WHERE key = ?", (_POPULATION_UNIT_KEY,)
+        ).fetchone()
+        return str(row[0]) if row else POPULATION_UNIT_WAN
+
+    def _mark_population_unit_persons(self) -> None:
+        """新档 classes 首次 seed 时落持久人口单位标「人」（commit 由 seed_static_data 末尾统一提交）。"""
+        self.conn.execute(
+            "INSERT OR REPLACE INTO save_meta (key, value) VALUES (?, ?)",
+            (_POPULATION_UNIT_KEY, POPULATION_UNIT_PERSONS),
+        )
+
+    def scale_content_population_to_save_unit(self, value: int) -> int:
+        """content 静态人口量（事件 effect 等）已全线「人」；落本档前按存档口径换算。
+
+        新档（人）原样；无标旧档（万人）÷10⁴——迁移后 content 人口值均为 10⁴ 整倍数，
+        整除无损（F4 禁的是对旧档读写加通用有损换算层；此处是 content→档的唯一确定性
+        口径接缝，非通用层）。"""
+        value = int(value)
+        if self.population_unit == POPULATION_UNIT_PERSONS:
+            return value
+        return value // 10000
+
     def seed_static_data(self) -> None:
         self._ensure_office_type_parents()
 
@@ -3291,6 +3337,9 @@ class GameDB:
                     (faction.name, faction.satisfaction, faction.leverage, faction.agenda),
                 )
         if not self.table_has_rows("classes"):
+            # ADR 0088/#648：classes 首次 seed = 新档 cutover 点，落持久人口单位标「人」。
+            # 旧档表已有行（万人口径）不重 seed、不落标 → population_unit 恒判「万人」legacy。
+            self._mark_population_unit_persons()
             for cls in self.content.classes.values():
                 self.conn.execute(
                     """
@@ -6260,9 +6309,17 @@ class GameDB:
         held = ""
         if str(row["controlled_by"]) != "ming":
             held = f"，控制权：已为{self.power_display_name(row['controlled_by'])}所据（非大明辖治）"
+        # ADR 0088/#648：人口展示按档口径——新档（人）玩家面投影「约N万口」（P4），
+        # 机面裸人数；无标旧档沿万人 legacy 原样，不加换算层。
+        persons_unit = self.population_unit == POPULATION_UNIT_PERSONS
+        pop_qual = (
+            f"人口约{int(row['population']) // 10000}万口" if persons_unit
+            else f"人口{row['population']}万人"
+        )
+        pop_raw = f"人口{row['population']}人" if persons_unit else f"人口{row['population']}万人"
         if qualitative:
             return (
-                f"{row['name']}（{row['kind']}）{held}：人口{row['population']}万人，"
+                f"{row['name']}（{row['kind']}）{held}：{pop_qual}，"
                 f"{_public_support_description(row['public_support'])}，"
                 f"{_unrest_description(row['unrest'])}，粮食{row['grain_security']}万石，"
                 f"田亩{row['registered_land']}万亩，隐田{row['hidden_land']}万亩，"
@@ -6274,7 +6331,7 @@ class GameDB:
                 f"人祸：{row['human_disaster']}；状态：{row['status']}"
             )
         return (
-            f"{row['name']}（{row['kind']}）{held}：人口{row['population']}万人，"
+            f"{row['name']}（{row['kind']}）{held}：{pop_raw}，"
             f"民心{row['public_support']}，动乱{row['unrest']}，粮食{row['grain_security']}万石，"
             f"田亩{row['registered_land']}万亩，隐田{row['hidden_land']}万亩，"
             f"账面税收{format_money(monthly_amount(int(row['tax_per_turn'])))}/{TURN_UNIT}，"

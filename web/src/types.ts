@@ -7,6 +7,8 @@ export type Region = {
   name: string;
   kind: string;
   population: number;
+  /** 展示层万人口径（#648：服务端按存档单位换算；新档=人÷10⁴，旧档原值） */
+  population_wan: number;
   public_support: number;
   unrest: number;
   natural_disaster: string;
