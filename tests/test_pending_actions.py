@@ -1983,7 +1983,7 @@ def test_retry_failed_secret_order_preserves_original_issue_turn(game):
 
 
 def test_successful_secret_order_confirmation_stays_quiet(game, monkeypatch):
-    """成功落库只通过密令表可见,不新增聊天成功通知。"""
+    """成功落库：无失败噪声；#1376 确认响应带回 secret_order_id，列表立刻可见。"""
     db, state, content = game
     name = _active_minister_name(db, content)
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
@@ -2001,8 +2001,10 @@ def test_successful_secret_order_confirmation_stays_quiet(game, monkeypatch):
         answer="臣即密办。", has_directive=False, secret_order_id=None)
 
     assert out.get("pending_action_failures") == []
-    assert not out.get("secret_order_id")
-    assert db.list_secret_orders(status="active")[-1]["title"] == "暗查辽饷"
+    oid = int(out.get("secret_order_id") or 0)
+    assert oid > 0
+    orders = db.list_secret_orders(status="active")
+    assert any(int(o["id"]) == oid and o["title"] == "暗查辽饷" for o in orders)
 
 
 def test_dialogue_affirm_commits_office_now(game, monkeypatch):

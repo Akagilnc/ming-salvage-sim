@@ -1776,6 +1776,7 @@ class GameSession:
                     # 避免事务外落真表后 settle 中止造成半写（所有权规则，ship-pre r2）。
                     # #498 / ADR 0038：开夜期间 office/consort/directive 应允 = 标 night_approved，
                     # 收夜才提交；密令仍应允即落地（白名单直写）。无开夜则保持历史即时 commit。
+                    applied: List[Dict[str, Any]] = []
                     if open_n is not None:
                         defer_ids = {
                             int(p["id"]) for p in confirm_targets
@@ -1786,18 +1787,34 @@ class GameSession:
                             mark_actions_night_approved(
                                 self.db, sorted(defer_ids), night_id=int(open_n["id"]))
                         if immediate_ids:
-                            self.db.commit_pending_actions(
+                            applied = self.db.commit_pending_actions(
                                 self.state, minister_name=minister_name,
                                 action_ids=immediate_ids,
                                 content=getattr(self, "content", None),
                                 registry=getattr(self, "registry", None))
                     else:
-                        self.db.commit_pending_actions(
+                        applied = self.db.commit_pending_actions(
                             self.state, minister_name=minister_name,
                             directive_status="pending" if directive_confirm_targets else "draft",
                             action_ids=confirm_action_ids,
                             content=getattr(self, "content", None),
                             registry=getattr(self, "registry", None))
+                    # #1376：应允即落地的新建密令须把真实 order id 回填确认响应
+                    # （内容在 stage 时已定文，落行不经 LLM；此处只取 commit 回执）。
+                    if not out.get("secret_order_id"):
+                        for item in applied or []:
+                            if (
+                                item.get("kind") == "secret_order"
+                                and str(item.get("action") or "") == "新建"
+                            ):
+                                oid = item.get("secret_order_id") or item.get("target_id")
+                                try:
+                                    oid_i = int(oid or 0)
+                                except (TypeError, ValueError):
+                                    oid_i = 0
+                                if oid_i > 0:
+                                    out["secret_order_id"] = oid_i
+                                    break
                     failures = [
                         _pending_action_failure_payload(p)
                         for p in self.db.list_pending_actions(
