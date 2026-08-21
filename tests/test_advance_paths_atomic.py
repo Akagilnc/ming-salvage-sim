@@ -873,8 +873,11 @@ def test_submit_dossier_rescript_does_not_create_event_trigger(game, monkeypatch
         state, action_type="policy", decree_text="清核河工",
         target_kind="issue", target_id="river-works",
     )
+    # 现行 rendered 契约：服务端 option 带 hint；choice 由服务端 option 重建（#1492 D）
     option = {
-        "label": "收回", "dossier_id": dossier_id,
+        "label": "收回",
+        "hint": "收回此道准旨",
+        "dossier_id": dossier_id,
         "dossier_decision": "withdrawn",
     }
     db.save_pending_decisions(state.turn, [{
@@ -903,7 +906,12 @@ def test_submit_dossier_rescript_does_not_create_event_trigger(game, monkeypatch
     ).fetchone() is None
     stored = db.list_pending_decisions(state.turn)[0]
     assert stored["status"] == "decided"
-    assert stored["choice"] == option
+    assert stored["choice"] == {
+        "label": "收回",
+        "hint": "收回此道准旨",
+        "dossier_id": dossier_id,
+        "dossier_decision": "withdrawn",
+    }
 
 
 def test_record_event_decision_choice_preserves_non_triggered_terminal_state(game):
