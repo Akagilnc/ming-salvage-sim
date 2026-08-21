@@ -1912,12 +1912,18 @@ def _make_relation_brew_runner(llm_config: LLMConfig, agno_db: SqliteDb) -> Call
     每条关系一个新 agent 实例（批内并行各自独享，不共享运行态）；输出零裁剪零 clamp
     （庭裁 r1 F2），长度约束只走 prompt 正向输入契约。"""
 
-    def _run(state: GameState, db: GameDB) -> object:
+    def _run(state: GameState, db: GameDB, *, settled_turn: int, settled_year: int,
+             settled_period: int) -> object:
         def _brew_fn(payload_json: str) -> str:
             agent = create_relation_brew_agent(llm_config, agno_db)
             return run_agent_text(agent, payload_json, tag="relation-brew")
 
-        return run_month_end_relation_brew(db, state, _brew_fn)
+        return run_month_end_relation_brew(
+            db, state, _brew_fn,
+            settled_turn=settled_turn,
+            settled_year=settled_year,
+            settled_period=settled_period,
+        )
 
     return _run
 
@@ -1964,6 +1970,12 @@ def settle_with_delta(
     """
     if trace_narrative is None:
         trace_narrative = narrative
+
+    # #636 S5：settled 年月快照——next_period 推进后 state 已指下一个月，月末酿制腿的
+    # 输入/落款/认领一律用此快照（庭裁：runner 取结算月须用 next_period 前的年月）。
+    settled_turn, settled_year, settled_period = (
+        int(state.turn), int(state.year), int(state.period),
+    )
 
     def _stage(label: str) -> None:
         if on_stage is not None:
@@ -2030,6 +2042,7 @@ def settle_with_delta(
                 chapter_recorder=chapter_recorder, ending_summarizer=ending_summarizer,
                 delta_applier=delta_applier, _stage=_stage,
                 collector=collector, source=source,
+                claim_relation_brew=relation_brew_runner is not None,
             )
     except BaseException as exc:
         # reload 失败（atomic_and_reload 在 yield 句柄上标的,cmr S4 r1）：内存仍脏——
@@ -2068,9 +2081,15 @@ def settle_with_delta(
     # #636 S5 月末关系酿制腿：结算事务已提交、本月边事件集定型后方启酿（ID-10 输入依赖
     # 边界）。腿内批内并行（P5）；单条失败降级进 pending-backlog、保旧摘要，不阻塞结算；
     # 腿整体异常也只降级记日志——结算结果已落定，不因酿制腿失败而败。探针 driver 传 None。
+    # settled 年月快照传入（next_period 已把 state 推进到下一个月，不得直读）。
     if relation_brew_runner is not None:
         try:
-            relation_brew_runner(state, db)
+            relation_brew_runner(
+                state, db,
+                settled_turn=settled_turn,
+                settled_year=settled_year,
+                settled_period=settled_period,
+            )
         except Exception as brew_exc:  # noqa: BLE001 — 酿制腿降级不阻塞结算
             tlog(f"[relation-brew] 月末酿制腿整体失败降级（结算已落定）：{brew_exc}")
     return full_report
@@ -2178,6 +2197,7 @@ def _settle_after_extract_body(
     _stage: Callable[[str], None],
     collector: Optional[RejectionCollector] = None,
     source: Provenance = Provenance.unknown,
+    claim_relation_brew: bool = False,
 ) -> str:
     """settle_with_delta 的后半段写序列正文（被其 atomic 包裹调用）。
 
@@ -2378,6 +2398,17 @@ def _settle_after_extract_body(
                 ending_text = ending_summarizer(db, state, outcome)
             state.ended = True
             state.ending_status = str(outcome.get("status") or "")
+
+    # #636 S5（庭裁 r2/r3 F1）：settled 年月入选关系在本结算事务内先作 durable claim——
+    # 与本月新边事件同生共死：任意缝崩溃→认领随事件一并回滚→重启重放再认领；
+    # 认领持久后酿制任意缝失败→pending 在册→下次结算补酿。此刻 state 尚未
+    # next_period，年月即被结算月份。
+    if claim_relation_brew:
+        claimed = db.claim_relation_brew_targets(
+            year=int(state.year), period=int(state.period),
+        )
+        if claimed:
+            tlog(f"[relation-brew] 结算事务内认领 {claimed} 条关系的月末酿制")
 
     db.mark_directives_issued(state)
     state.next_period()

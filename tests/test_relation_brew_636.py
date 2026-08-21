@@ -19,6 +19,7 @@ import threading
 
 import pytest
 
+from ming_sim.db import GameDB
 from ming_sim.decree import settle_with_delta
 from ming_sim.relation_brew import (
     FOUNDINGS_KEY,
@@ -73,11 +74,12 @@ def test_founding_segment_survives_consecutive_brews_byte_identical(game):
     assert first["dimension"] == "君臣"
     assert first["founding_segment"] == "越次一召，擢杨嗣昌于五品郎中。"
 
-    # 连续多轮重酿：新事件、酿制手不再报奠基句——奠基段字节不丢不改。
-    _add_edge(db, state, source=EMPEROR_NODE, target="杨嗣昌", kind="兑现所托",
-              context="杨嗣昌复命，所托之事办结。", origin="audience:turn-2")
+    # 次月：新边事件入账（先落事件、后在本月末酿——与生产同序），酿制手不再报
+    # 奠基句——奠基段字节不丢不改。次月无新事件的关系不因历史旧事件被选中。
     state.turn += 1
     state.period += 1
+    _add_edge(db, state, source=EMPEROR_NODE, target="杨嗣昌", kind="兑现所托",
+              context="杨嗣昌复命，所托之事办结。", origin="audience:turn-2")
     brew_fn.outputs = [_script(foundings=[], recent="杨嗣昌所托办结，恩遇正浓。")]
     run_month_end_relation_brew(db, state, brew_fn)
 
@@ -85,11 +87,11 @@ def test_founding_segment_survives_consecutive_brews_byte_identical(game):
     assert second["founding_segment"] == first["founding_segment"]
     assert second["recent_segment"] == "杨嗣昌所托办结，恩遇正浓。"
 
-    # 酿制手重复报同一奠基句也不重复入段（补酿不重复记账）。
-    _add_edge(db, state, source=EMPEROR_NODE, target="杨嗣昌", kind="辜负",
-              context="杨嗣昌所请被驳。", origin="audience:turn-3")
+    # 第三月：酿制手重复报同一奠基句也不重复入段（补酿不重复记账）。
     state.turn += 1
     state.period += 1
+    _add_edge(db, state, source=EMPEROR_NODE, target="杨嗣昌", kind="辜负",
+              context="杨嗣昌所请被驳。", origin="audience:turn-3")
     brew_fn.outputs = [_script(foundings=["越次一召，擢杨嗣昌于五品郎中。"],
                                recent="杨嗣昌所请被驳，渐生离心。")]
     run_month_end_relation_brew(db, state, brew_fn)
@@ -188,7 +190,7 @@ def test_failed_month_degrades_to_pending_and_rebrews_next_month(game):
 # ------------------------------------ 庭裁 r3 F1① 故障注入 A：事务未提交即崩
 
 def test_fault_a_uncommitted_summary_crash_keeps_pending_and_old_summary(game):
-    db, state, _ = game
+    db, state, content = game
     _add_edge(db, state, source="洪承畴", target=EMPEROR_NODE, kind="兑现所托",
               context="洪承畴剿抚办结。", origin="audience:turn-1")
     calls: list = []
@@ -197,17 +199,20 @@ def test_fault_a_uncommitted_summary_crash_keeps_pending_and_old_summary(game):
     run_month_end_relation_brew(db, state, brew_fn)
     old_summary = db.get_relation_summary("洪承畴", EMPEROR_NODE)
 
-    # 次月：新事件＋酿制成功，但注入「摘要已写、事务未提交即崩」。
-    _add_edge(db, state, source="洪承畴", target=EMPEROR_NODE, kind="辜负",
-              context="洪承畴所请饷银被驳。", origin="audience:turn-2")
+    # 次月：先推进、再落新边事件（事件落在次月），随后注入「摘要已写、事务未提交
+    # 即崩」：第 1 次 commit＝认领（须成功、先于崩溃点持久），第 2 次起全部失败——
+    # 真实崩溃点之后任何写（含 catch 后补记）都无法落盘，重启后 pending 在册即
+    # 证明它来自崩溃前的认领，而非 catch 补记。
     state.turn += 1
     state.period += 1
+    _add_edge(db, state, source="洪承畴", target=EMPEROR_NODE, kind="辜负",
+              context="洪承畴所请饷银被驳。", origin="audience:turn-2")
     original_commit = db.conn.commit
-    injected = {"done": False}
+    commits = {"n": 0}
 
     def crashing_commit():
-        if not injected["done"]:
-            injected["done"] = True
+        commits["n"] += 1
+        if commits["n"] >= 2:
             raise sqlite3.OperationalError("injected: crash before commit")
         original_commit()
 
@@ -217,8 +222,13 @@ def test_fault_a_uncommitted_summary_crash_keeps_pending_and_old_summary(game):
         run_month_end_relation_brew(db, state, brew_fn)
     finally:
         db.conn.commit = original_commit
+    assert commits["n"] >= 2  # 崩溃点确实被注入在认领提交之后的 apply 提交处
 
-    # 重启后：pending 仍在，摘要读回＝崩前旧值（不得已见新摘要）。
+    # 重启（关闭重开 DB）：pending 仍在——且只能是崩前已持久的认领；
+    # 摘要读回＝崩前旧值（不得已见新摘要）。
+    path = db.path
+    db.close()
+    db = GameDB(path, content)
     assert [(row["source"], row["target"]) for row in db.get_relation_brew_pending()] == [
         ("洪承畴", EMPEROR_NODE)
     ]
@@ -239,17 +249,17 @@ def test_fault_a_uncommitted_summary_crash_keeps_pending_and_old_summary(game):
 # ------------------------------------ 庭裁 r3 F1② 故障注入 B：pending 未持久即崩
 
 def test_fault_b_pending_mark_lost_still_selected_and_brewed_once(game):
-    db, state, _ = game
+    db, state, content = game
     _add_edge(db, state, source="孙传庭", target=EMPEROR_NODE, kind="辜负",
               context="孙传庭困守乏饷。", origin="audience:turn-1")
 
-    # 酿制失败且 pending 标记本身未持久即崩（fresh claim→durable pending 缝）。
+    # 注入 fresh claim→durable pending 缝：第 1 次 commit（认领）即崩，且窗口内
+    # 后续 commit 全部失败——pending 确实未曾持久。
     original_commit = db.conn.commit
-    injected = {"done": False}
+    injected = {"active": True}
 
     def crashing_commit():
-        if not injected["done"]:
-            injected["done"] = True
+        if injected["active"]:
             raise sqlite3.OperationalError("injected: crash before pending durable")
         original_commit()
 
@@ -260,10 +270,17 @@ def test_fault_b_pending_mark_lost_still_selected_and_brewed_once(game):
     try:
         run_month_end_relation_brew(db, state, failing_brew)
     finally:
+        injected["active"] = False
         db.conn.commit = original_commit
 
-    # 崩溃缝后：pending 未持久，但边事件已落——重启后该月仍被选中、酿制恰一次。
+    # 重启（关闭重开 DB）：pending 未持久、边事件已在册。
+    path = db.path
+    db.close()
+    db = GameDB(path, content)
     assert db.get_relation_brew_pending() == []
+    assert db.get_relation_edge_events(source="孙传庭", target=EMPEROR_NODE)
+
+    # 该月仍被选中（本月新事件判据）、酿制恰一次：认领→成功→pending 同事务清除。
     calls: list = []
     brew_fn = _brew_fn_factory(calls)
     brew_fn.outputs = [_script(recent="孙传庭困守乏饷，怨望渐深。")]
@@ -343,25 +360,88 @@ def test_brew_batch_runs_items_in_parallel_not_serialized(game):
         )
 
 
-# ------------------------------------- 结算接缝：腿在事务提交后启酿、失败不阻塞
+# ------------------------------------------------- 「本月新增」总判据（历史水位不选旧事）
+
+def test_historical_events_alone_do_not_select_in_later_month(game):
+    """历史月份的未酿旧事件（无 pending、无本月新事件）不得在后续月被选中。"""
+    db, state, _ = game
+    _add_edge(db, state, source="毕自严", target="王绍徽", kind="结怨",
+              context="毕自严当殿与王绍徽结怨。", origin="audience:turn-1")
+
+    calls: list = []
+    brew_fn = _brew_fn_factory(calls)
+    state.turn += 1
+    state.period += 1
+    report = run_month_end_relation_brew(db, state, brew_fn)
+
+    assert report["selected"] == 0
+    assert calls == []
+    assert db.get_relation_summary("毕自严", "王绍徽") is None
+
+
+# ------------------------------------------------- 结算接缝：腿在事务提交后启酿、失败不阻塞
 
 def test_settle_invokes_brew_leg_after_commit_and_survives_leg_failure(game):
     db, state, content = game
     observed: list = []
 
-    def runner(settle_state, settle_db):
-        # 输入依赖边界：runner 收到调用时结算事务已提交（turn 已推进）。
-        observed.append(("called", settle_state.turn, settle_db is db))
+    def runner(settle_state, settle_db, *, settled_turn, settled_year, settled_period):
+        # 输入依赖边界：runner 收到调用时结算事务已提交（state 已推进），但 settled
+        # 年月快照必须是 next_period 之前的本结算月（不得把下一个月写进输入/落款）。
+        observed.append((
+            "called", settle_state.turn, settle_db is db,
+            settled_turn, int(settled_year), int(settled_period),
+        ))
         raise RuntimeError("腿整体故障")
 
     before_turn = state.turn
+    settled_year, settled_period = int(state.year), int(state.period)
     settle_with_delta(
         state, db, {}, before_turn=before_turn, content=content,
         relation_brew_runner=runner,
     )
 
     assert state.turn == before_turn + 1
-    assert observed == [("called", before_turn + 1, True)]  # 结算未被腿故障拖垮
+    assert observed == [(
+        "called", before_turn + 1, True,
+        before_turn, settled_year, settled_period,
+    )]  # 结算未被腿故障拖垮；快照＝next_period 前的本结算月
+
+
+def test_settle_brew_leg_records_settled_month_not_advanced_month(game):
+    """next_period 已把 state 推进到下一个月后，酿制输入/摘要落款仍须是本结算月
+    快照（decree 传递），不得把下一个月写进输入/last_brewed（错月修复）。"""
+    db, state, content = game
+    _add_edge(db, state, source="徐光启", target=EMPEROR_NODE, kind="协作",
+              context="徐光启与皇上当场协作。", origin="audience:turn-1")
+    calls: list = []
+
+    def runner(settle_state, settle_db, *, settled_turn, settled_year, settled_period):
+        brew_fn = _brew_fn_factory(calls)
+        brew_fn.outputs = [_script(recent="协作在案。")]
+        return run_month_end_relation_brew(
+            settle_db, settle_state, brew_fn,
+            settled_turn=settled_turn,
+            settled_year=settled_year,
+            settled_period=settled_period,
+        )
+
+    before_turn = state.turn
+    settled_year, settled_period = int(state.year), int(state.period)
+    settle_with_delta(
+        state, db, {}, before_turn=before_turn, content=content,
+        relation_brew_runner=runner,
+    )
+
+    assert state.turn == before_turn + 1  # state 已被推进，但落款不得跟着走
+    assert len(calls) == 1
+    payload = calls[0]
+    assert (payload["year"], payload["period"]) == (settled_year, settled_period)
+    summary = db.get_relation_summary("徐光启", EMPEROR_NODE)
+    assert (summary["last_brewed_year"], summary["last_brewed_period"]) == (
+        settled_year, settled_period,
+    )
+    assert summary["recent_segment"] == "协作在案。"
 
 
 # ------------------------------------------------------- 奠基段拼装机械语义
@@ -370,7 +450,25 @@ def test_merge_founding_segment_append_only_and_dedup():
     assert merge_founding_segment("", ["甲句。", "乙句。"]) == "甲句。\n乙句。"
     assert merge_founding_segment("甲句。", ["甲句。", "丙句。"]) == "甲句。\n丙句。"
     assert merge_founding_segment("甲句。", []) == "甲句。"
-    assert merge_founding_segment("甲句。", ["", "  "]) == "甲句。"
+    # 空字符串条目是结构空操作；空白条目是合法字符串，逐字保留不去除。
+    assert merge_founding_segment("甲句。", [""]) == "甲句。"
+    assert merge_founding_segment("甲句。", ["  "]) == "甲句。\n  "
+
+
+def test_merge_founding_segment_preserves_bytes_exactly():
+    # P6/ADR 0142 零删改：旧段空行与末尾换行逐字保留，新句只做结构追加。
+    old = "甲句。\n\n乙句。\n"
+    assert merge_founding_segment(old, ["丙句。"]) == old + "\n丙句。"
+    assert merge_founding_segment(old, []) == old
+    # 新字符串逐字保留：首尾空白不剥。
+    assert merge_founding_segment("", ["  句前空格。  "]) == "  句前空格。  "
+    assert merge_founding_segment("甲句。", [" 甲句。 "]) == "甲句。\n 甲句。 "
+    # 严格字节相等去重：仅逐字全等才跳过；近似串（多空格/带后缀）不吞。
+    assert merge_founding_segment("甲句。", ["甲句。", "甲句。", "甲句 "]) == "甲句。\n甲句 "
+    # 补酿不重复记账：整段重复报同一句（含多行句）不重复追加。
+    merged = merge_founding_segment("", ["甲句。", "乙句。\n乙二句。"])
+    assert merged == "甲句。\n乙句。\n乙二句。"
+    assert merge_founding_segment(merged, ["乙句。\n乙二句。", "甲句。"]) == merged
 
 
 def test_relation_dimension_marks_emperor_edges():

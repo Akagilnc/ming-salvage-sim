@@ -6,10 +6,16 @@
 （庭裁 r1 F2），长度约束只走 prompt 正向输入契约。
 
 编排约束：
-- 选中判据＝该关系有未酿新边事件（id > 水位）∨ 存在 pending 失败（庭裁 r1 F1）。
+- 选中判据＝该 settled 年月新增边事件（id > 水位）∨ 存在 pending（庭裁 r1 F1）——
+  历史月份的未酿旧事件不得选中无本月新事件的关系（「本月新增」总判据）。
+- 认领先行（庭裁 r2/r3 F1）：入选关系在酿造开始前先作 durable claim（pending 落盘
+  提交）——生产路径在结算事务内与本月边事件同生共死；任意缝崩溃→pending 在册
+  →下次结算补酿。pending 不靠失败后 catch 补记。
 - 输入依赖边界（ID-10）：本月边事件集定型后方启酿；腿内批内条目无依赖必并行（P5）。
-- 单条失败降级：保旧摘要＋事件已在流水，进持久 pending-backlog，不阻塞结算。
+- 单条失败降级：保旧摘要＋事件已在流水＋认领已在册，不阻塞结算。
 - 成功路径＝摘要写入与 pending 清除同一 DB 事务原子落定（庭裁 r2 F1）。
+- settled 年月快照由 decree 在 next_period 之前取定并传入；state 在腿启动时已被
+  推进到下一个月，一律不得直读 state 年月落款。
 """
 
 from __future__ import annotations
@@ -36,12 +42,13 @@ def relation_dimension(source: str, target: str) -> str:
     return DIMENSION_JUNXIN if EMPEROR_NODE in (source, target) else DIMENSION_DACHEN
 
 
-def select_brew_targets(db: Any) -> List[Dict[str, Any]]:
-    """选中判据（庭裁 r1 F1）：未酿新边事件 ∨ pending 失败。
+def select_brew_targets(db: Any, *, year: int, period: int) -> List[Dict[str, Any]]:
+    """选中判据（庭裁 r1 F1）：该 settled 年月新增边事件 ∨ pending。
 
-    「新」以该关系摘要的 last_event_id 水位计——崩溃缝里已落库但未酿的事件
-    （庭裁 r3 F1② fresh claim→durable pending 缝）重启后仍是新事件，仍被选中。
-    既无新事件又无 pending 的关系不入选（TD-3 无事不变）。"""
+    「本月新增」双条件：事件落在 settled 年月内、且 id 在该关系摘要水位之上——
+    历史月份的旧事件不得把无本月新事件的关系选中。崩溃缝里本月已落库但未酿的
+    事件（庭裁 r3 F1② fresh claim→durable pending 缝）重启后仍是新事件，仍被
+    选中。既无本月新事件又无 pending 的关系不入选（TD-3 无事不变）。"""
     summaries = {
         (row["source"], row["target"]): row for row in db.get_relation_summaries()
     }
@@ -51,7 +58,8 @@ def select_brew_targets(db: Any) -> List[Dict[str, Any]]:
     latest_event_id: Dict[Tuple[str, str], int] = {}
     for row in db.conn.execute(
         "SELECT source, target, MAX(id) AS max_id FROM relation_edge_events "
-        "GROUP BY source, target"
+        "WHERE year = ? AND period = ? GROUP BY source, target",
+        (int(year), int(period)),
     ).fetchall():
         latest_event_id[(row["source"], row["target"])] = int(row["max_id"])
 
@@ -143,17 +151,25 @@ def parse_brew_output(raw: str, stage: str = "关系酿制") -> Dict[str, Any]:
 
 
 def merge_founding_segment(old_founding: str, new_foundings: List[str]) -> str:
-    """奠基段机械只增不改（ID-9）：旧字节永不丢不改，新奠基句原样追加。
+    """奠基段机械只增不改（ID-9；P6/ADR 0142 零删改）：旧段与新字符串逐字保留。
 
-    与既有奠基句逐字相同的行不再重复追加（补酿不重复记账，覆盖式幂等）。"""
-    lines = [line for line in old_founding.split("\n") if line]
+    只允许两种机械操作：①严格字节相等的去重（与既有行或已追加句逐字全等才跳过，
+    补酿不重复记账）；②结构追加（新句以单个换行符接在段尾）。禁对既有字节做
+    任何改写——split 滤空行、strip 首尾空白、rejoin 一律不用：旧段的空行、末尾
+    换行、新句的首尾空白全部原样。空字符串条目是结构空操作，跳过。"""
+    old = str(old_founding)
+    seen = set(old.split("\n"))
+    parts = [old] if old else []
     for line in new_foundings:
-        text = str(line).strip()
-        if not text:
+        text = str(line)
+        if not text or text in seen:
             continue
-        if text not in lines:
-            lines.append(text)
-    return "\n".join(lines)
+        entry_lines = text.split("\n")
+        if all(part in seen for part in entry_lines):
+            continue  # 整条逐字已全在段内（含跨行重报），不重复追加（补酿不重复记账）
+        seen.update(entry_lines)
+        parts.append(text)
+    return "\n".join(parts)
 
 
 def run_month_end_relation_brew(
@@ -163,14 +179,24 @@ def run_month_end_relation_brew(
     *,
     max_workers: int = 4,
     parallel: bool = True,
+    settled_turn: Optional[int] = None,
+    settled_year: Optional[int] = None,
+    settled_period: Optional[int] = None,
 ) -> Dict[str, Any]:
     """月末增量重酿腿。
 
     brew_fn(rendered_payload) -> LLM 原始文本（生产＝run_agent_text 闭包；
     测试注入确定性假手）。批内条目间无依赖必并行（P5）；单条失败降级进
-    pending-backlog、保旧摘要，绝不向上抛（不阻塞结算）；返回机械报告。"""
-    turn, year, period = int(state.turn), int(state.year), int(state.period)
-    targets = select_brew_targets(db)
+    pending-backlog、保旧摘要，绝不向上抛（不阻塞结算）；返回机械报告。
+
+    settled_turn/year/period＝被结算月份的快照（decree 在 next_period 之前取定
+    传入）；None 时回落当前 state（直调路径，state 尚未推进）。"""
+    # settled 年月快照：生产路径由 decree 在 next_period 之前取定传入；直调
+    # （测试/探针）回落调用时的 state——此时 state 仍指被结算的那个月。
+    turn = int(settled_turn) if settled_turn is not None else int(state.turn)
+    year = int(settled_year) if settled_year is not None else int(state.year)
+    period = int(settled_period) if settled_period is not None else int(state.period)
+    targets = select_brew_targets(db, year=year, period=period)
     report: Dict[str, Any] = {
         "selected": len(targets),
         "brewed": [],
@@ -178,6 +204,21 @@ def run_month_end_relation_brew(
         "skipped_events": 0,
     }
     if not targets:
+        return report
+
+    # 认领先行（庭裁 r2/r3 F1）：入选关系在酿造开始前先把 pending 落盘提交——
+    # 任意缝崩溃→pending 在册→下次结算补酿；pending 不靠失败后 catch 补记。
+    # 生产路径 settle 事务内已认领过，此处幂等兜底（直调路径的唯一认领点）。
+    try:
+        db.claim_relation_brew_targets(year=year, period=period)
+    except Exception as claim_exc:  # noqa: BLE001 — 认领未持久即崩（r3 F1②缝）：
+        # 无 durable claim 就开酿会让失败月失去恢复凭据——本腿整体降级，待下次结算。
+        tlog(f"[relation-brew] 认领未持久，本腿整体降级（保旧摘要）：{claim_exc}")
+        report["degraded"] = [
+            {"source": item["source"], "target": item["target"],
+             "reason": f"认领未持久：{claim_exc}"}
+            for item in targets
+        ]
         return report
 
     # 输入先串行备好（纯计算、确定性，不含 LLM 调用），再批内并行酿制。
@@ -218,13 +259,14 @@ def run_month_end_relation_brew(
         if exc is not None or parsed is None:
             reason = str(exc) if exc is not None else "空结果"
             tlog(f"[relation-brew] {source}→{target} 酿制失败降级（保旧摘要）：{reason}")
+            # 认领先行下 pending 已持久在册（不靠此处补记）；本写只是刷新失败原因，
+            # 自身失败不再上抛——凭据已在，下次结算仍凭 pending 被选中补酿。
             try:
                 db.mark_relation_brew_pending(
                     source=source, target=target, year=year, period=period, reason=reason,
                 )
-            except Exception as mark_exc:  # noqa: BLE001 — pending 未持久即崩（庭裁 r3 F1②缝）：
-                # 降级标记自身失败不再上抛；该关系仍凭水位新事件判据在下次结算被选中。
-                tlog(f"[relation-brew] {source}→{target} pending 标记未持久：{mark_exc}")
+            except Exception as mark_exc:  # noqa: BLE001 — 原因刷新失败不影响恢复凭据：
+                tlog(f"[relation-brew] {source}→{target} pending 原因刷新未持久：{mark_exc}")
             report["degraded"].append({"source": source, "target": target, "reason": reason})
             continue
         # 成功路径：摘要写入＋pending 清除同事务原子落定（庭裁 r2 F1）。
@@ -245,13 +287,14 @@ def run_month_end_relation_brew(
             )
         except Exception as apply_exc:  # noqa: BLE001 — 落定失败同走单条降级，不上抛
             tlog(f"[relation-brew] {source}→{target} 落定失败降级（保旧摘要）：{apply_exc}")
+            # 同上：pending 已在认领阶段持久，这里只刷新失败原因。
             try:
                 db.mark_relation_brew_pending(
                     source=source, target=target, year=year, period=period,
                     reason=str(apply_exc),
                 )
-            except Exception as mark_exc:  # noqa: BLE001 — 同上，水位判据兜底
-                tlog(f"[relation-brew] {source}→{target} pending 标记未持久：{mark_exc}")
+            except Exception as mark_exc:  # noqa: BLE001 — 原因刷新失败不影响恢复凭据
+                tlog(f"[relation-brew] {source}→{target} pending 原因刷新未持久：{mark_exc}")
             report["degraded"].append(
                 {"source": source, "target": target, "reason": str(apply_exc)}
             )
