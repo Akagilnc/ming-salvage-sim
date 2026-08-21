@@ -43,6 +43,19 @@ _DECISION_RE = re.compile(r"<<DECISION>>\s*(\{.*?\})\s*<<END>>", re.DOTALL)
 MAX_DECISIONS_PER_TURN = 5
 
 
+def _decision_has_rescript_capability(decision: Dict[str, object]) -> bool:
+    """True only for 批红轨 decisions whose options carry dossier capability fields."""
+    options = decision.get("options") or []
+    if not isinstance(options, list):
+        return False
+    return any(
+        isinstance(option, dict)
+        and option.get("dossier_id") is not None
+        and option.get("dossier_decision") is not None
+        for option in options
+    )
+
+
 def parse_decision_blocks(narrative: str) -> tuple[str, List[Dict[str, object]]]:
     """从邸报抽 <<DECISION>>...<<END>> JSON 块，返回 (剥离后的干净邸报, 决策列表)。
 
@@ -80,6 +93,12 @@ def parse_decision_blocks(narrative: str) -> tuple[str, List[Dict[str, object]]]
             "options": options[:3],
         }
         event_id = str(obj.get("event_id") or obj.get("origin_ref") or "").strip()
+        # dossier: is reserved for _rescript_decisions. LLM blocks that copy
+        # due_commitment.origin_ref (or a hallucinated event_id) must not enter
+        # the 批红 rail — bind-preserving a bare prefix lets submit treat
+        # (None, None) as legal, then phase2 raises after writing decided.
+        if event_id.startswith("dossier:"):
+            event_id = ""
         if event_id:
             decision["event_id"] = event_id
         decisions.append(decision)
@@ -136,10 +155,11 @@ def bind_decisions_to_candidate_events(
         if explicit and explicit in candidate_ids:
             bound.append(out)  # 回显 id 确属本回合候选 → 采信（正常路径行为不变）
             continue
-        # #1490：dossier 批红的 event_id（dossier:<id>）是 rescript 轨真源，不在
-        # candidate_events 快照里——不得当 off-snapshot 解绑，否则 submit_decisions
-        # 的批红校验（靠 event_id 前缀识别）被跳过，缺字段载荷会带病落 decided。
-        if explicit.startswith("dossier:"):
+        # #1490：真批红的 event_id（dossier:<id>）是 rescript 轨真源，不在
+        # candidate_events 快照里——不得当 off-snapshot 解绑。只认 options 带
+        # dossier_id/dossier_decision 的案；LLM 抄 due_commitment.origin_ref
+        # 的假前缀仍走下面解绑，否则 phase2 当批红炸、#1418 卡死。
+        if explicit.startswith("dossier:") and _decision_has_rescript_capability(out):
             bound.append(out)
             continue
         # 缺 id，或回显 id 不在权威候选快照里：以快照唯一标题为准（重）绑，不被 LLM 回显牵着走。

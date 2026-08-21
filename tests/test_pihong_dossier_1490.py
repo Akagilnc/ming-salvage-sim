@@ -3,7 +3,7 @@
 1. 接收端：缺字段 → SSE error 且仍 pending；带齐字段重交 → decided。
    经 httpx.ASGITransport 真 POST /api/decree/resolve_decisions/stream。
 2. 生成端：dossier options 含 dossier_id / dossier_decision。
-3. bind 保 dossier: event_id。
+3. bind 保真批红 dossier: event_id；LLM 抄 origin_ref 的假前缀须解绑。
 """
 
 from __future__ import annotations
@@ -234,3 +234,129 @@ def test_bind_preserves_dossier_event_id():
     payload = {"candidate_events": [{"id": "ev1", "title": "边警"}]}
     out = bind_decisions_to_candidate_events(decisions, payload)
     assert out[0]["event_id"] == "dossier:8"
+
+
+def test_bind_unbinds_llm_copied_dossier_origin_ref():
+    """due_commitment / 邸报 DECISION 常把 origin_ref=dossier:N 抄进 event_id，
+    options 只有 label/hint（parse_decision_blocks 也只留这两键）。
+    这类不是批红轨——bind 必须解绑，否则 submit 把 (None, None) 当合法，
+    phase2 _chosen_rescript_actions 再炸，#1490 同类卡死。"""
+    from ming_sim.settlement_payload import bind_decisions_to_candidate_events
+
+    decisions = [{
+        "event_id": "dossier:17",
+        "title": "到期复命",
+        "options": [
+            {"label": "准复", "hint": "依限办结"},
+            {"label": "驳回", "hint": "再核"},
+        ],
+    }]
+    payload = {"candidate_events": [{"id": "ev1", "title": "边警"}]}
+    out = bind_decisions_to_candidate_events(decisions, payload)
+    assert not str(out[0].get("event_id") or "").startswith("dossier:")
+
+
+def test_parse_drops_reserved_dossier_prefix_from_llm_block():
+    """parse 认 origin_ref 作 event_id 回退；LLM 抄 due_commitment.origin_ref
+    不得把 reserved dossier: 前缀带进 HITL 轨。"""
+    from ming_sim.settlement_payload import parse_decision_blocks
+
+    narrative = (
+        "正文\n<<DECISION>>\n"
+        '{"title":"到期复命","context":"前诺届满请圣裁",'
+        '"options":[{"label":"准复","hint":"依限办结"},'
+        '{"label":"驳回","hint":"再核"}],'
+        '"origin_ref":"dossier:17"}\n<<END>>'
+    )
+    _, decisions = parse_decision_blocks(narrative)
+    assert len(decisions) == 1
+    assert not str(decisions[0].get("event_id") or "").startswith("dossier:")
+
+
+def test_llm_copied_dossier_prefix_does_not_stick_after_submit(game, monkeypatch):
+    """生产落库同形：真批红 + 邸报 DECISION 抄 origin_ref=dossier:17。
+    修前：bind 保假前缀 → 缺字段 choice 落 decided → phase2 批红载荷非法 → 卡死。
+    修后：假前缀不得入账，真批红照常落，phase2 只处理真案。"""
+    from ming_sim.decree import _chosen_rescript_actions, _rescript_decisions
+    from ming_sim.session import GameSession
+    from ming_sim.settlement_payload import (
+        bind_decisions_to_candidate_events,
+        parse_decision_blocks,
+    )
+
+    db, state, content = game
+    dossier_id = db.create_decree_dossier(
+        state,
+        action_type="policy",
+        decree_text="密查陕西驿卒",
+        target_kind="issue",
+        target_id="river-works",
+    )
+    dossier = next(
+        row for row in db.list_decree_dossiers() if int(row["id"]) == dossier_id
+    )
+    verdict = {
+        "dossier_id": dossier_id,
+        "decision": "rejected",
+        "reason": "科臣封驳",
+        "primary_opponents": [{"kind": "faction", "key": "东林"}],
+        "midzhi_unpromulgatable": False,
+    }
+    narrative = (
+        "正文\n<<DECISION>>\n"
+        '{"title":"到期复命","context":"前诺届满请圣裁",'
+        '"options":[{"label":"准复","hint":"依限办结"},'
+        '{"label":"驳回","hint":"再核"}],'
+        '"origin_ref":"dossier:17"}\n<<END>>'
+    )
+    payload = {"candidate_events": [{"id": "ev_border", "title": "边警"}]}
+    _, llm_decisions = parse_decision_blocks(narrative)
+    decisions = _rescript_decisions([verdict], [dossier]) + (
+        bind_decisions_to_candidate_events(llm_decisions, payload)
+    )
+    db.save_pending_decisions(state.turn, decisions)
+    db.save_resolve_context(
+        state.turn,
+        "诏曰密查",
+        "待续邸报",
+        payload,
+        secret_orders=[],
+        relevant_memories=[],
+    )
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
+
+    stored_before = db.list_pending_decisions(state.turn)
+    assert len(stored_before) == 2
+    assert stored_before[0]["event_id"] == f"dossier:{dossier_id}"
+    assert not str(stored_before[1].get("event_id") or "").startswith("dossier:")
+
+    def _phase2(_state, _db, *_a, **_k):
+        rows = list(_db.list_pending_decisions(int(_state.turn)))
+        _chosen_rescript_actions(rows)
+        return "ok"
+
+    monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _phase2)
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.last_decree = "测试诏书"
+    sess.agno_db = None
+    sess.llm_config = None
+    sess.content = content
+    sess.registry = None
+
+    report = sess.submit_decisions([
+        {
+            "label": "强颁",
+            "hint": "以中旨强行颁出",
+            "dossier_id": dossier_id,
+            "dossier_decision": "force_promulgated",
+        },
+        {"label": "准复", "hint": "依限办结"},
+    ])
+    assert report == "ok"
+    stored = db.list_pending_decisions(state.turn)
+    assert stored[0]["status"] == "decided"
+    assert stored[0]["choice"]["dossier_decision"] == "force_promulgated"
+    assert stored[1]["status"] == "decided"

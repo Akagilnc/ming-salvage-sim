@@ -549,6 +549,15 @@ def _chosen_rescript_actions(
     for decision in decisions:
         if not str(decision.get("event_id") or "").startswith("dossier:"):
             continue
+        options = decision.get("options") or []
+        if options and not any(
+            isinstance(option, dict)
+            and option.get("dossier_id") is not None
+            and option.get("dossier_decision") is not None
+            for option in options
+        ):
+            # LLM-copied dossier: prefix on ordinary HITL — not a 批红案。
+            continue
         choice = decision.get("choice")
         if not isinstance(choice, dict):
             raise LLMContractError("批红决策缺少玩家选择")

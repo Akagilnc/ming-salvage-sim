@@ -2859,6 +2859,8 @@ class GameSession:
                 allowed = {
                     (option.get("dossier_id"), option.get("dossier_decision"))
                     for option in options if isinstance(option, dict)
+                    and option.get("dossier_id") is not None
+                    and option.get("dossier_decision") is not None
                 }
                 selected = (
                     choice.get("dossier_id"), choice.get("dossier_decision")
