@@ -234,6 +234,21 @@ def test_minister_tools_only_submit_recommendations(game):
     assert candidate["name"] in payload
 
 
+def test_recommend_person_rejects_empty_reason(game):
+    """#635：生产 tool 缺省/空白荐词必须当场拒，不得吐 pending 标记。"""
+    db, state, content = game
+    minister = next(c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩"))
+    tools = {tool.__name__: tool for tool in build_minister_tools(
+        minister, type("Context", (), {"db": db, "state": state})()
+    )}
+    candidate = db.list_recommendation_candidates(state, minister.name)[0]
+
+    for reason in ("", "   ", None):
+        result = tools["recommend_person"](candidate["name"], "巡盐御史", reason)
+        assert not str(result).startswith("__pending_recommendation__")
+        assert "荐词" in str(result)
+
+
 def test_recommendation_appointment_preserves_kind_and_restores_both_types(game):
     db, state, content = game
     recommender = next(c for c in content.characters.values()
