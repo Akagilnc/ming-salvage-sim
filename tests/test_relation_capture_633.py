@@ -234,16 +234,40 @@ def test_missing_or_forged_provenance_rejected_with_trace_no_edges(game):
                 {**base, "来源引用": "盘面自发|round:999"},  # 伪造当前回合回指
                 {**base, "来源引用": "dossier:999999"},  # 未知案卷
                 {**base, "来源引用": "fake"},  # 伪前缀自由文本
+                {**base, "来源引用": " 盘面自发 "},  # 空白包裹哨兵变体
+                {**base, "来源引用": "\n盘面自发\t"},  # 换行/制表包裹变体
             ],
         },
         content=content,
     )
     res = out["relation_edge_event_resolutions"]
     rejected = [r for r in res if r.get("rejected")]
-    assert len(rejected) == 6
+    assert len(rejected) == 8
     assert all(r["category"] == "invalid_relation_event" for r in rejected)
     assert all("origin_ref" in r["reason"] or "来源引用" in r["reason"] for r in rejected)
     # 全部拒收：库里零边、无任何 origin 被默认成「盘面自发」落库
+    assert _edge_rows(db) == []
+
+
+def test_whitespace_padded_noncanonical_origins_rejected_no_strip_rescue(game):
+    """r2 残余：来源只收精确 canonical 值——空白/变体一律拒收留痕，不 strip 后放行。
+
+    庭裁 probe：守门曾先 strip 后授权，把非 canonical provenance 归一成合法
+    来源（fail-open）；本负例钉死精确匹配契约。"""
+    db, state, content = game
+    base = {"施动者": "甲", "受动者": "乙", "类目": "结怨", "语境": "x"}
+    variants = [" 盘面自发 ", "\n盘面自发\t", "盘面自发\n", "\t盘面自发", "盘面自发 "]
+    out = apply_score_extraction(
+        db, state,
+        {"relation_edge_events": [{**base, "来源引用": v} for v in variants]},
+        content=content,
+    )
+    res = out["relation_edge_event_resolutions"]
+    rejected = [r for r in res if r.get("rejected")]
+    assert len(rejected) == len(variants), res
+    assert all(r["category"] == "invalid_relation_event" for r in rejected)
+    assert all("不归一首尾空白" in r["reason"] for r in rejected)
+    # 零写入：无任何归一后的「盘面自发」origin 溜进库
     assert _edge_rows(db) == []
 
 
@@ -259,7 +283,7 @@ def test_settlement_edge_origin_rejects_missing_and_non_string():
         settlement_edge_origin(123, "联名")
     with pytest.raises(ValueError, match="盘面自然演化须显式标为"):
         settlement_edge_origin("   ", "联名")
-    # 合法条目照常拼装
+    # 合法条目照常拼装；拼装器不独立 strip——值原样进入 origin（空白只作非空谓词）
     assert settlement_edge_origin("盘面自发", "联名") == "盘面自发:relation:联名"
 
 
@@ -287,12 +311,25 @@ def test_authorized_dossier_origin_accepted_bound_to_current_turn(game):
             "relation_edge_events": [{
                 "施动者": "毕自严", "受动者": "王绍徽", "类目": "把柄",
                 "语境": "案卷授权的互动。", "来源引用": f"dossier:{did}",
+            }, {
+                # 空白包裹的 dossier 引用：非 canonical，逐项拒收不搭救
+                "施动者": "毕自严", "受动者": "王绍徽", "类目": "结怨",
+                "语境": "空白包裹的案卷引用。", "来源引用": f" dossier:{did} ",
             }],
         },
         content=content,
     )
     res = out["relation_edge_event_resolutions"]
-    assert not any(r.get("rejected") for r in res), res
+    padded = next(
+        r for r in res if (r.get("item") or {}).get("语境") == "空白包裹的案卷引用。"
+    )
+    assert padded.get("rejected") and padded["category"] == "invalid_relation_event"
+    assert "不归一首尾空白" in padded["reason"]
+    assert not any(r.get("rejected") for r in res if r is not padded), res
+    # 恰一行合法边落库；无归一后的 dossier origin 变体
+    rows = _edge_rows(db)
+    assert len(rows) == 1
+    assert rows[0]["origin"] == f"dossier:{did}:relation:把柄|round:{state.turn}"
     row = _edge_rows(db, source="毕自严", target="王绍徽")[0]
     assert row["origin"] == f"dossier:{did}:relation:把柄|round:{state.turn}"
     assert row["origin_round"] == state.turn
