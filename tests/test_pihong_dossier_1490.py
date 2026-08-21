@@ -9,7 +9,6 @@
 from __future__ import annotations
 
 import asyncio
-import threading
 
 import httpx
 import pytest
@@ -19,6 +18,24 @@ import ming_sim.session as session_mod
 import web_app
 from ming_sim.models import TurnPhase
 from tests.dossier_test_helpers import rejected_verdict
+
+
+@pytest.fixture
+def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
+    """真实 WebGame + ASGI 入口；仅中和构造/LLM 边界（与 #498/#1235 同形）。"""
+    monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
+    # 回话后高亮判官属 LLM 边界——离线中和，禁 sk-test 打真网。
+    monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
+    game = web_app.WebGame(fresh=False)
+    monkeypatch.setattr(web_app, "web_game", game)
+    yield game
+    try:
+        game.session.close()
+    except Exception:
+        pass
 
 
 def _client() -> httpx.AsyncClient:
@@ -85,51 +102,14 @@ def _plant_dossier_awaiting(db, state):
     return dossier_id
 
 
-def _wire_game(db, state, content, monkeypatch):
-    """挂真实 GameSession.submit_decisions 到 get_game，供 ASGI 路由命中。"""
-    sess = session_mod.GameSession.__new__(session_mod.GameSession)
-    sess.db = db
-    sess.state = state
-    sess.last_decree = "诏曰测试"
-    sess.last_report = ""
-    sess.agno_db = None
-    sess.llm_config = None
-    sess.content = content
-    sess.registry = None
-    sess.previous_summary = ""
-    sess.pending_count = lambda: 0
-    sess.pending_decisions = lambda: db.list_pending_decisions(int(state.turn))
-    sess.victory = lambda: {"status": "ongoing", "summary": ""}
-    sess.current_phase = lambda: TurnPhase(state.turn_phase)
-
-    runtime = object.__new__(web_app.WebGame)
-    runtime.session = sess
-    runtime.directive_rows = lambda: []
-    runtime.issue_payloads = lambda: []
-    runtime.legacies_payload = lambda: []
-    runtime.closed_this_turn_payloads = lambda: []
-    runtime.map_nodes = lambda: []
-    runtime.ending_payload = lambda: None
-    runtime.public_character = lambda c: {"name": getattr(c, "name", "")}
-    runtime.character_power_id = lambda c: "ming"
-    runtime.refresh_turn = lambda: None
-    runtime._write_gate = threading.Lock()
-
-    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
-    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
-    monkeypatch.setattr(web_app, "_failed_secret_order_ids_for_turn", lambda *_a, **_k: set())
-    monkeypatch.setattr(web_app, "_new_secret_order_failure_payloads_for_turn", lambda *_a, **_k: [])
-    return runtime
-
-
 def test_missing_dossier_fields_stay_pending_then_full_retry_decides(
-    game, monkeypatch,
+    web_game, monkeypatch,
 ):
     """失败形（#1490 QA）：缺 dossier_id → error 且 pending；带齐字段 → decided。
-    经 ASGI 真 HTTP POST /api/decree/resolve_decisions/stream。"""
-    db, state, content = game
+    经 ASGI 真 HTTP POST /api/decree/resolve_decisions/stream；真实 WebGame，
+    仅 stub phase2 LLM 边界。"""
+    db, state = web_game.db, web_game.state
     dossier_id = _plant_dossier_awaiting(db, state)
-    _wire_game(db, state, content, monkeypatch)
 
     phase2_calls: list[list] = []
 
