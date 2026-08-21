@@ -25,6 +25,7 @@ import pytest
 
 from ming_sim.db import GameDB
 from ming_sim.decree import SettlementAbort, settle_with_delta
+from ming_sim.exceptions import LLMUnavailable
 from ming_sim.relation_brew import (
     FOUNDINGS_KEY,
     RECENT_KEY,
@@ -164,8 +165,9 @@ def test_failed_month_degrades_to_pending_and_rebrews_next_month(game):
     _add_edge(db, state, source="温体仁", target="周延儒", kind="结怨",
               context="温体仁当殿讦周延儒。", origin="audience:turn-1")
 
+    # 真 LLM 单条失败（声明类型 LLMUnavailable）→ 降级留痕；程序错类不走此路。
     def failing_brew(payload_json: str) -> str:
-        raise RuntimeError("酿制裁判失手")
+        raise LLMUnavailable("酿制裁判接口不可用")
 
     report = run_month_end_relation_brew(db, state, failing_brew)
     assert report["selected"] == 1 and report["degraded"]
@@ -566,6 +568,18 @@ def test_merge_founding_segment_preserves_bytes_exactly():
     assert merge_founding_segment(merged, [merged]) == merged
 
 
+def test_merge_founding_segment_exact_old_entry_re_report_appended_verbatim():
+    """r5：跨轮去重收窄——只有「候选与整个旧段全等」与「同批候选间全等」跳过；
+    旧段内某个精确历史条目被再次报出→如实逐字追加（有界重复噪声，酿制读面
+    自行消化）；禁止恢复任何条目级拆解去重。"""
+    merged = merge_founding_segment("", ["甲句。", "乙句。\n乙二句。"])
+    assert merge_founding_segment(merged, ["甲句。", "乙句。\n乙二句。"]) == (
+        merged + "\n甲句。\n乙句。\n乙二句。"
+    )
+    # 同批候选间全等仍去重；候选与整个旧段全等仍跳过（补酿整段重报不重复记账）。
+    assert merge_founding_segment(merged, [merged]) == merged
+
+
 def test_merge_founding_segment_never_infers_by_lines():
     """判词类①机械反例（冻结）：按行拆分＋集合推断会把整段候选误删。
 
@@ -618,13 +632,14 @@ def test_apply_db_error_propagates_loudly_not_disguised_as_llm_failure(game):
 
 
 def test_mark_failure_after_llm_failure_propagates_loudly(game):
-    """LLM 单条失败本身合法降级，但降级留痕的 pending 写若遇 DB 错误同样响亮上抛。"""
+    """LLM 单条失败（声明类型 LLMUnavailable）本身合法降级，但降级留痕的 pending
+    写若遇 DB 错误同样响亮上抛。"""
     db, state, _ = game
     _add_edge(db, state, source="温体仁", target="周延儒", kind="结怨",
               context="温体仁当殿讦周延儒。", origin="audience:turn-1")
 
     def failing_brew(payload_json: str) -> str:
-        raise RuntimeError("酿制裁判失手")
+        raise LLMUnavailable("酿制裁判接口不可用")
 
     def boom(*args, **kwargs):
         raise sqlite3.OperationalError("pending 库不可写")
@@ -632,6 +647,25 @@ def test_mark_failure_after_llm_failure_propagates_loudly(game):
     db.mark_relation_brew_pending = boom
     with pytest.raises(sqlite3.OperationalError, match="pending 库不可写"):
         run_month_end_relation_brew(db, state, failing_brew)
+
+
+def test_brew_program_error_propagates_loudly_not_degraded(game):
+    """判词残留项②：_brew_one 宽吞拆类——brew_fn 内的程序错（KeyError 等非 LLM
+    失败声明类型）不得被吞成单条降级留痕，必须响亮上抛（ADR 0005）；durable
+    claim 已在册，恢复凭据不丢。"""
+    db, state, _ = game
+    _add_edge(db, state, source="温体仁", target="周延儒", kind="结怨",
+              context="温体仁当殿讦周延儒。", origin="audience:turn-1")
+
+    def buggy_brew(payload_json: str) -> str:
+        raise KeyError("酿制手程序错误")
+
+    with pytest.raises(KeyError, match="酿制手程序错误"):
+        run_month_end_relation_brew(db, state, buggy_brew)
+    # 响亮上扑而非降级：无 degraded 留痕；认领先行的 pending 凭据已持久在册。
+    assert [(row["source"], row["target"]) for row in db.get_relation_brew_pending()] == [
+        ("温体仁", "周延儒")
+    ]
 
 
 def test_settle_aborts_loudly_when_brew_prepare_db_fails(game):
