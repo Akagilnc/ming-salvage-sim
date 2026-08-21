@@ -1763,6 +1763,7 @@ def test_run_pi_flags_thinking_and_stdout(monkeypatch):
     assert out == body and n == 1
     cmd = captured["cmd"]
     assert "-p" in cmd or "--print" in cmd
+    assert "--no-tools" in cmd  # #1456：禁内置工具，防 prompt 注入驱动 read/bash/edit/write
     assert "--model" in cmd and cmd[cmd.index("--model") + 1] == "openai/gpt-4o"
     # pi --help：--thinking off|minimal|low|medium|high|xhigh|max；抽象 medium 直传
     assert "--thinking" in cmd and cmd[cmd.index("--thinking") + 1] == "medium"
