@@ -507,6 +507,19 @@ def test_writer_stores_whitespace_context_byte_identical(game):
         )
 
 
+def test_writer_rejects_non_string_context(game):
+    """S1 写缝直接验收：context 非 str（dict/bytes）立即 ValueError 且零行落库。"""
+    import pytest
+    db, state, _ = game
+    for bad in ({"句": "伪语境"}, b"bytes-context"):
+        with pytest.raises(ValueError, match="语境必须为字符串"):
+            db.record_relation_edge_event(
+                source="甲", target="乙", event_kind="把柄",
+                context=bad, origin="settle:f1-nonstr", turn=state.turn,
+            )
+    assert _edge_rows(db, source="甲", target="乙") == []
+
+
 # ── P5 并行装配：新模块并入同一 executor，不串行 ────────────────────
 
 
@@ -535,7 +548,7 @@ def test_relations_module_joins_parallel_extraction(read_game, monkeypatch):
             return _CANNED[_module_of(tag)]
         return prompt
 
-    db, state, content = read_game
+    db, state, _content = read_game
     monkeypatch.setattr(sim, "run_agent_text", _fake_run)
     agents = {m: object() for m in EXTRACTION_MODULES}
     merged, localized, _inputs = sim.extract_scores_by_modules_with_agno(

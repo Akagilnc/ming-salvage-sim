@@ -19879,7 +19879,8 @@ class GameDB:
         target = str(target or "").strip()
         # #633 F1（庭裁 r1）：strip 只作非空谓词，存储值一律原样（含首尾空白与换行）；
         # 禁任何长度 clamp/裁剪/替换/归一——机械验收=全链字节相等。
-        context = str(context or "")
+        if not isinstance(context, str):
+            raise ValueError("边事件语境必须为字符串")
         if not source or not target:
             raise ValueError("边事件 source/target 不能为空")
         if not context.strip():
