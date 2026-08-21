@@ -127,6 +127,71 @@ def test_modify_target_from_stub_id_not_message_literal(game, monkeypatch):
     assert f"[{id1}]" in prompt and f"[{id2}]" in prompt
 
 
+def test_modify_does_not_claim_success_when_row_left_pending(game, monkeypatch):
+    """#1509：UPDATE 窗口间行已离开 pending → 不得虚报已修改。
+
+    模拟读后写前 status 被并发改走：WHERE status='pending' 命中 0 行时，
+    响应不得带 pending_action_id，库内 payload 保持原样。
+    """
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    pid = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name,
+        target_id=None,
+        payload={
+            "title": "密察关宁", "content": "密察关宁欠饷", "assignee": name,
+            "tags": ["关宁"], "deadline_months": 3,
+        },
+    )
+    original = db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?", (pid,),
+    ).fetchone()[0]
+
+    real_execute = db.conn.execute
+
+    def _race_then_update(sql, params=None):
+        sql_s = str(sql)
+        if (
+            "UPDATE pending_actions SET payload_json" in sql_s
+            and "status='pending'" in sql_s
+        ):
+            # 同调用读写窗口：UPDATE 前把行踢出 pending
+            real_execute(
+                "UPDATE pending_actions SET status='held_over' WHERE id=?",
+                (int(params[1]),),
+            )
+        return real_execute(sql, params) if params is not None else real_execute(sql)
+
+    monkeypatch.setattr(db.conn, "execute", _race_then_update)
+    monkeypatch.setattr(
+        cb, "_run_backend_for_config",
+        lambda *a, **k: (json.dumps({"确认": "修改"}, ensure_ascii=False), 1),
+    )
+    monkeypatch.setattr(
+        cb, "_extract_secret_order",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            AssertionError("P5: 修改不得二次串行 _extract_secret_order"),
+        ),
+    )
+
+    out = GameSession.apply_cli_conversation_actions(
+        _sess(db, state), ch,
+        player_message="修改：只查饷银去向，不查动向",
+        answer="臣遵旨改。",
+        has_directive=False, secret_order_id=None,
+    )
+    # 库未接受 → 不得声称修改成功
+    assert not out.get("pending_action_id"), out
+    row = db.conn.execute(
+        "SELECT payload_json, status FROM pending_actions WHERE id=?", (pid,),
+    ).fetchone()
+    assert row[0] == original
+    assert row[1] == "held_over"
+    # 确认族仍提前返回，不落新建
+    assert "directive_confirmation_ambiguous" not in out
+
+
 def test_modify_multi_without_target_id_is_ambiguous(game, monkeypatch):
     """多候选 + 修改但无合法目标编号 → ambiguity，两道都不改。"""
     db, state, content = game
