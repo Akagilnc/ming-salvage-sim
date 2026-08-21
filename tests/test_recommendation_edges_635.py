@@ -216,3 +216,130 @@ def test_appointment_without_recommendation_writes_no_edges(game):
     _commit_and_promulgate(db, state, content, action_id)
 
     assert _recommendation_origins(db) == []
+
+
+# ---------------------------------------------------------------------------
+# PR #1519 庭裁 Y1/Y2/Y3：工具受理点唯一准入 + 生产链逐字透传真入口回归。
+
+import inspect
+import json
+
+from ming_sim.models import CourtContext
+from ming_sim.session import GameSession
+from ming_sim.tools import build_minister_tools
+
+
+def _light_session(db, state, content):
+    """轻量 GameSession：仅复用 _stage_appointment_candidate 真 staging 缝。"""
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    return sess
+
+
+def _recommend_tool(character, context):
+    tools = build_minister_tools(character, context)
+    return next(t for t in tools if getattr(t, "__name__", "") == "recommend_person")
+
+
+def test_recommend_person_reason_is_contract_required(game):
+    """Y1/Y3：reason 是工具契约必填参数——无默认值，缺失在调用层即拒。
+
+    全空白由受理点空白谓词拒绝；二者都不产生 __pending_recommendation__。"""
+    db, state, content = game
+    recommender = _pick_recommender(content)
+    row = db.list_recommendation_candidates(state, recommender.name)[0]
+    tool = _recommend_tool(recommender, CourtContext(state=state, db=db))
+
+    param = inspect.signature(tool).parameters["reason"]
+    assert param.default is inspect.Parameter.empty
+    with pytest.raises(TypeError):
+        tool(name=row["name"], target_office="巡盐御史")
+
+    for bad in ("", "   ", " \n\t "):
+        out = tool(name=row["name"], target_office="巡盐御史", reason=bad)
+        assert out.startswith("荐人失败：")
+        assert "__pending_recommendation__" not in out
+
+
+def test_blank_reason_never_forms_durable_payload(game):
+    """Y1/Y3：全空白荐词明确失败后，真实结果处理不产任何 durable 载荷——
+    非标记结果不接 staging，pending_actions 与 decree_dossiers 均无该案。"""
+    db, state, content = game
+    recommender = _pick_recommender(content)
+    row = db.list_recommendation_candidates(state, recommender.name)[0]
+    sess = _light_session(db, state, content)
+    tool = _recommend_tool(recommender, CourtContext(state=state, db=db))
+
+    out = tool(name=row["name"], target_office="巡盐御史", reason="\n  ")
+    assert out.startswith("荐人失败：")
+
+    # 会话分发只对 __pending_recommendation__ 前缀接 staging；失败串即使
+    # 直递 staging 缝也零入档。
+    assert not out.startswith("__pending_recommendation__")
+    assert sess._stage_appointment_candidate(out, recommender, "准奏") == 0
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM pending_actions").fetchone()[0] == 0
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM decree_dossiers").fetchone()[0] == 0
+    assert db.list_recommendation_events(state, recommender.name) == []
+
+
+def test_full_chain_tool_reason_verbatim_to_both_legs(game):
+    """Y2 全真链：build_minister_tools→recommend_person（原句含首尾空白/换行）
+    →_stage_appointment_candidate→commit_pending_actions→apply_dossier_verdicts，
+    recommendation_events.reason 与两腿 context 字节一致。"""
+    db, state, content = game
+    recommender = _pick_recommender(content)
+    row = db.list_recommendation_candidates(state, recommender.name)[0]
+    reason = "  其旧任治河有实绩，\n堪当巡盐之任。 "
+    sess = _light_session(db, state, content)
+    tool = _recommend_tool(recommender, CourtContext(state=state, db=db))
+
+    out = tool(name=row["name"], target_office="巡盐御史", reason=reason)
+    assert out.startswith("__pending_recommendation__")
+    payload = json.loads(out.removeprefix("__pending_recommendation__"))
+    assert payload["reason"] == reason
+
+    action_id = sess._stage_appointment_candidate(
+        out.removeprefix("__pending_recommendation__").strip(),
+        recommender, "准奏")
+    assert action_id > 0
+
+    _commit_and_promulgate(db, state, content, action_id)
+
+    event = db.list_recommendation_events(state, recommender.name)[0]
+    assert event["reason"] == reason
+    legs = [e for e in db.get_relation_edge_events()
+            if str(e["origin"]).startswith(f"recommendation:{event['id']}:")]
+    assert len(legs) == 2
+    assert all(e["context"] == reason for e in legs)
+
+
+def test_rejected_blank_call_does_not_poison_same_turn(game):
+    """Y1：坏调用被工具拒绝后，同轮正常荐人照常落地，兄弟案不受牵连。"""
+    db, state, content = game
+    recommender = _pick_recommender(content)
+    row = db.list_recommendation_candidates(state, recommender.name)[0]
+    sess = _light_session(db, state, content)
+    tool = _recommend_tool(recommender, CourtContext(state=state, db=db))
+
+    bad = tool(name=row["name"], target_office="巡盐御史", reason=" ")
+    assert bad.startswith("荐人失败：")
+    good = tool(name=row["name"], target_office="巡盐御史", reason="边才可用")
+    assert good.startswith("__pending_recommendation__")
+
+    action_id = sess._stage_appointment_candidate(
+        good.removeprefix("__pending_recommendation__").strip(),
+        recommender, "准奏")
+    assert action_id > 0
+
+    _commit_and_promulgate(db, state, content, action_id)
+
+    events = db.list_recommendation_events(state, recommender.name)
+    assert len(events) == 1
+    assert events[0]["reason"] == "边才可用"
+    legs = [e for e in db.get_relation_edge_events()
+            if str(e["origin"]).startswith(f"recommendation:{events[0]['id']}:")]
+    assert {e["event_kind"] for e in legs} == {"恩义", "知遇"}
