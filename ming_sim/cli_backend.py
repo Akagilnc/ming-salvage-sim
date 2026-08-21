@@ -2478,14 +2478,31 @@ def extract_confirmation_intent(
     minister_reply: str,
     pending_summaries: List[str],
     llm_config: Any = None,
-) -> str:
+) -> Dict[str, Any]:
     """皇帝本轮对【上一轮经大臣领命确认、尚未落库的暂存动作】是应允/拒绝/留中/修改/未表态。
     对话确认(ADR 0006 重设计)：应允 → 当场 commit，拒绝 → 丢，留中 → held_over 档，
     修改 → 原地更新同一候选内容（#1376 owner：改内容后仍走确认/默认准），无 → 留。
-    失败/无 → 「无」。#525：留中为第三态，豁免默认准，不成案。
+    失败/无 → confirmation=「无」。#525：留中为第三态，豁免默认准，不成案。
     确认判读只许结构化 LLM JSON 枚举（ADR 0028 2026-07-23 / ADR 0142）；
-    禁自由散文 regex/词表快路（准/不准/作罢/算了…）。结构性前缀/端点路由在调用方。"""
-    summ = "；".join(pending_summaries) or "（无）"
+    禁自由散文 regex/词表快路（准/不准/作罢/算了…）。结构性前缀/端点路由在调用方。
+
+    返回 {"confirmation": 应允|拒绝|留中|修改|无, "target_ids": [合法候选 id...]}。
+    #1509：同一次 confirmation JSON 可选「目标编号」——修改多候选时由调用方按编号过滤；
+    编号只接受摘要里方括号列出的合法 id，非法/空由调用方作含糊，不在此机械读玩家散文。
+    """
+    by_id: Dict[int, str] = {}
+    listing_parts: List[str] = []
+    for s in pending_summaries or []:
+        text = str(s or "").strip()
+        m = re.match(r"^\[(\d+)\]\s*(.*)$", text)
+        if m:
+            pid = int(m.group(1))
+            rest = (m.group(2) or "").strip()
+            by_id[pid] = rest
+            listing_parts.append(f"  [{pid}] {rest[:40]}")
+        elif text:
+            listing_parts.append(f"  {text[:40]}")
+    listing = "\n".join(listing_parts) if listing_parts else "（无）"
     prompt = (
         "你是信息抽取器，不扮演。皇帝上一轮经大臣领命确认后，有几条【尚未落库的暂存政务动作】"
         "待皇帝定夺。读皇帝这句话，判断他对这些暂存动作的态度：\n"
@@ -2494,8 +2511,11 @@ def extract_confirmation_intent(
         "  留中=留中/留中不发/先搁置不颁（挂起，非拒绝）；\n"
         "  修改=要求改/更正/收窄/扩充该暂存内容（未应允也未拒绝，继续改同一候选）；\n"
         "  无=没提这些、继续说别的、含糊未表态。\n"
-        "只输出一个 JSON（无代码围栏、无多余字）：{\"确认\":\"应允|拒绝|留中|修改|无\"}。语义判断，别拘字面。\n\n"
-        "【待皇帝定夺的暂存动作】" + summ + "\n"
+        "只输出一个 JSON（无代码围栏、无多余字）：\n"
+        '{"确认":"应允|拒绝|留中|修改|无","目标编号":[方括号里的候选编号...]}。\n'
+        "指向具体某道（含修改第几道/某道）就填其编号；单道可留空目标编号；"
+        "多道修改未指明哪道=确认仍为修改、目标编号留空。语义判断，别拘字面。\n\n"
+        "【待皇帝定夺的暂存动作】\n" + listing + "\n"
         "【皇帝】" + (player_message or "（无）") + "\n"
         "【大臣回话】" + (minister_reply or "（无）") + "\n"
     )
@@ -2505,8 +2525,19 @@ def extract_confirmation_intent(
     except Exception as exc:  # 抽取失败不阻断对话；当未表态，暂存留到颁诏(算同意)
         _log(f"确认意图抽取失败：{exc}")
     obj = _loads_lenient(raw) or {}
+    if not isinstance(obj, dict):
+        obj = {}
     v = str(obj.get("确认") or "无").strip()
-    return v if v in {"应允", "拒绝", "留中", "修改", "无"} else "无"
+    if v not in {"应允", "拒绝", "留中", "修改", "无"}:
+        v = "无"
+    raw_targets = obj.get("目标编号") or []
+    target_ids: List[int] = []
+    if isinstance(raw_targets, list):
+        for t in raw_targets:
+            digits = "".join(ch for ch in str(t) if ch.isdigit())
+            if digits and int(digits) in by_id and int(digits) not in target_ids:
+                target_ids.append(int(digits))
+    return {"confirmation": v, "target_ids": target_ids}
 
 
 def extract_directive_confirmation(
