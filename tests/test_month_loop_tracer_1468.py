@@ -4,9 +4,12 @@
 本文件从真实 HTTP 入口走玩家基本循环，仅在最外层 LLM 接缝 deterministic stub
 （不 mock 内部函数 / 结算核 / 收夜编排）。
 
-主 tracer：new_game → 召对开夜/回话/收夜 → 拟旨 → POST /api/decree/issue
-→ 月+1 → 再一月。断言 turn+2 与 year/period 跨年安全月序 +2、无 409 死锁、
+主 tracer：new_game → 召对开夜/回话/收夜 → 拟旨 → POST /api/decree/issue/stream
+（消费 SSE 到终态）→ 月+1 → 再一月。起点置十一月以真跨 year rollover
+（year+1 且 period 回 1）。断言 turn+2 与 year/period 跨年安全月序 +2、无 409 死锁、
 无裸 500、闸/账双向等量（成功过月 count==len(pending)==0）。
+至少一轮 chat 返回后不预排空尾随写，直接拟旨/颁诏，用 Event 卡住 stub 尾随写
+完成时机以钉「颁诏受理 vs 尾随写」接缝（禁 sleep 竞猜）。
 
 #1353 fold-in 钉：
 - 植入欠账后一次过月动作成功（流内处理、无 409、无 CTA、账清、月+1）
@@ -17,6 +20,8 @@
 
 from __future__ import annotations
 
+import json
+import threading
 import time
 from types import SimpleNamespace
 
@@ -31,6 +36,7 @@ import ming_sim.mindreading as mindreading_mod
 import ming_sim.session as session_mod
 import web_app
 from ming_sim import audience_night as an
+from ming_sim.session_write_queue import _is_barrier_ticket, get_session_write_queue
 
 
 # ── outermost LLM seams only ─────────────────────────────────────────────
@@ -219,6 +225,73 @@ def _wait_pending_writes(game, *, timeout_s: float = 2.0) -> None:
     )
 
 
+def _install_trail_hold(game, release: threading.Event):
+    """卡住读心/抽取尾随写完成时机（Event 控制，禁 sleep 竞猜）。
+
+    返回 (restore_fn,)——race 轮结束后还原真方法。
+    """
+    real_mind = game._trail_mindreading_after_reply
+    real_extract = game._trail_extraction_after_reply
+
+    def _held_mind(*args, **kwargs):
+        assert release.wait(timeout=5.0), "mind trail hold timed out"
+        return real_mind(*args, **kwargs)
+
+    def _held_extract(*args, **kwargs):
+        assert release.wait(timeout=5.0), "extract trail hold timed out"
+        return real_extract(*args, **kwargs)
+
+    game._trail_mindreading_after_reply = _held_mind
+    game._trail_extraction_after_reply = _held_extract
+
+    def _restore() -> None:
+        game._trail_mindreading_after_reply = real_mind
+        game._trail_extraction_after_reply = real_extract
+
+    return _restore
+
+
+def _arm_barrier_open_event(game):
+    """包装 session queue 的 barrier claim/open 接缝：票入 _open 后 wait_prior 时置 Event。
+
+    与 test_web_audience_night_498 同形——只观察既有 wait_prior 接缝，不改生产、不加钩子。
+    返回 (barrier_open_event, restore_fn)。
+    """
+    q = get_session_write_queue(game)
+    barrier_open = threading.Event()
+    real_wait_prior = q.wait_prior
+
+    def _observe_wait_prior(ticket):
+        # barrier() 先把票写入 _open 再 wait_prior——此处即 claim/open 接缝。
+        if _is_barrier_ticket(ticket):
+            barrier_open.set()
+        return real_wait_prior(ticket)
+
+    q.wait_prior = _observe_wait_prior  # type: ignore[method-assign]
+
+    def _restore() -> None:
+        q.wait_prior = real_wait_prior  # type: ignore[method-assign]
+
+    return barrier_open, _restore
+
+
+def _release_trails_when_barrier_open(
+    barrier_open: threading.Event, release: threading.Event,
+) -> None:
+    """侧线程：显式等待并断言 barrier 真打开后，再放行 stub 尾随写。
+
+    禁 deadline/sleep 轮询；禁『未见 barrier 也放行』。
+    """
+
+    def _run() -> None:
+        assert barrier_open.wait(timeout=5.0), (
+            "barrier ticket never claimed/opened; refusing unconditional trail release"
+        )
+        release.set()
+
+    threading.Thread(target=_run, daemon=True, name="trail-release-on-barrier").start()
+
+
 def _turn_of(state: dict) -> int:
     turn = state.get("turn") or {}
     return int(turn.get("turn") or 0)
@@ -246,75 +319,193 @@ def _pending_payload(client: TestClient) -> dict:
     return body
 
 
-def _play_one_month(client: TestClient, *, minister: str, month_label: str) -> int:
-    """召对 → 拟旨 → 颁诏结算。返回推进后的 turn。"""
+def _parse_sse(text: str) -> list[dict]:
+    """解析 SSE 文本为 [{event, data}, ...]（与仓内其他 ASGI tracer 同形）。"""
+    events: list[dict] = []
+    for block in (text or "").strip().split("\n\n"):
+        cur: dict = {}
+        for line in block.splitlines():
+            if line.startswith("event:"):
+                cur["event"] = line[len("event:"):].strip()
+            elif line.startswith("data:"):
+                cur["data"] = line[len("data:"):].strip()
+        if cur:
+            events.append(cur)
+    return events
+
+
+def _choices_from_decisions(decisions: list) -> list[dict]:
+    """按契约从 d['options'] 取真实 option → {label, hint?, note?, dossier_*}。"""
+    choices: list[dict] = []
+    for d in decisions:
+        opts = d.get("options") or []
+        assert opts, f"decision missing options: {d!r}"
+        opt0 = opts[0]
+        if isinstance(opt0, dict):
+            choice: dict = {"label": str(opt0.get("label") or "准")}
+            if opt0.get("hint") is not None:
+                choice["hint"] = opt0.get("hint")
+            if opt0.get("note") is not None:
+                choice["note"] = opt0.get("note")
+            if "dossier_id" in opt0:
+                choice["dossier_id"] = opt0.get("dossier_id")
+            if "dossier_decision" in opt0:
+                choice["dossier_decision"] = opt0.get("dossier_decision")
+            choices.append(choice)
+        else:
+            choices.append({"label": str(opt0)})
+    return choices
+
+
+def _post_issue_stream(
+    client: TestClient, *, expected_turn: int, step: str,
+) -> dict:
+    """玩家真入口：POST /api/decree/issue/stream，消费 SSE 到终态。
+
+    返回归一化 body：done → payload；decisions → payload + awaiting_decision=True。
+    event:error 且 status_code=409 → 死锁断言红；其它 error 亦红。
+    """
+    resp = client.post(
+        "/api/decree/issue/stream",
+        json={"expected_turn": expected_turn},
+    )
+    _assert_not_bare_500(resp, step=step)
+    assert resp.status_code == 200, f"{step} → {resp.status_code}: {resp.text}"
+    # 流式入口 HTTP 层 200；业务失败走 event:error（含 409 令牌/锁语义）。
+    events = _parse_sse(resp.text)
+    assert events, f"{step}: empty SSE body={resp.text!r}"
+    terminal = events[-1]
+    ev = terminal.get("event")
+    raw = terminal.get("data") or "{}"
+    try:
+        data = json.loads(raw) if isinstance(raw, str) else raw
+    except json.JSONDecodeError:
+        data = {"message": raw}
+    if ev == "error":
+        status = data.get("status_code") if isinstance(data, dict) else None
+        assert status != 409, (
+            f"{step}: 409 deadlock on issue/stream; body={resp.text}"
+        )
+        raise AssertionError(f"{step}: stream error event: {data!r}; sse={resp.text!r}")
+    if ev == "decisions":
+        assert isinstance(data, dict), f"{step}: decisions payload not dict: {data!r}"
+        return {**data, "awaiting_decision": True}
+    if ev == "done":
+        assert isinstance(data, dict), f"{step}: done payload not dict: {data!r}"
+        return data
+    raise AssertionError(
+        f"{step}: unexpected terminal SSE event {ev!r}; body={resp.text!r}"
+    )
+
+
+def _resolve_decisions_via_stream(
+    client: TestClient, decisions: list, *, step: str,
+) -> None:
+    """亲裁续跑：按 {label,hint?} 契约提交，消费 resolve SSE 到 done。"""
+    choices = _choices_from_decisions(decisions)
+    resolve = client.post(
+        "/api/decree/resolve_decisions/stream",
+        json={"choices": choices},
+    )
+    _assert_not_bare_500(resolve, step=step)
+    assert resolve.status_code == 200, f"{step} → {resolve.status_code}: {resolve.text}"
+    assert "event: error" not in resolve.text, f"{step} error SSE: {resolve.text}"
+    assert "event: done" in resolve.text, f"{step} missing done: {resolve.text}"
+
+
+def _play_one_month(
+    client: TestClient,
+    *,
+    minister: str,
+    month_label: str,
+    race_trailing_writes: bool = False,
+) -> int:
+    """召对 → 拟旨 → 流式颁诏结算。返回推进后的 turn。
+
+    race_trailing_writes=True：chat 返回后不预排空尾随写，直接拟旨/颁诏；
+    用 Event 卡住 stub 尾随完成时机，屏障开后放行——钉真实竞态窗。
+    """
     state = _get_state(client)
     turn_before = _turn_of(state)
     assert state["turn"]["phase"] not in (
         "settling", "awaiting_decision",
     ), f"{month_label}: unexpected phase before month play: {state['turn']!r}"
 
-    chat = client.post(
-        f"/api/ministers/{minister}/chat",
-        json={"message": f"边饷如何？本月{month_label}召对。"},
-    )
-    _assert_not_bare_500(chat, step=f"{month_label} chat")
-    assert chat.status_code == 200, f"{month_label} chat → {chat.status_code}: {chat.text}"
-    answer = str((chat.json() or {}).get("answer") or "")
-    assert answer, f"{month_label}: empty minister answer"
-
     game = web_app.web_game
     assert game is not None
-    # 召对 epilogue 尾随仍可能持 write_gate；拟旨/颁诏前必须放空（短轮询，非真超时窗）。
-    _wait_pending_writes(game)
 
-    directive = client.post(
-        "/api/directives",
-        json={"text": f"着户部清核辽饷（{month_label}）。", "notes": ""},
-    )
-    _assert_not_bare_500(directive, step=f"{month_label} 拟旨")
-    assert directive.status_code == 200, (
-        f"{month_label} 拟旨 → {directive.status_code}: {directive.text}"
-    )
-    dirs = (directive.json() or {}).get("directives") or []
-    assert dirs, f"{month_label}: directive list empty after POST"
+    trail_release: threading.Event | None = None
+    barrier_open: threading.Event | None = None
+    restore_trails = None
+    restore_barrier_signal = None
+    if race_trailing_writes:
+        trail_release = threading.Event()
+        restore_trails = _install_trail_hold(game, trail_release)
+        barrier_open, restore_barrier_signal = _arm_barrier_open_event(game)
 
-    _wait_pending_writes(game)
-    issue = client.post(
-        "/api/decree/issue",
-        json={"expected_turn": turn_before},
-    )
-    _assert_not_bare_500(issue, step=f"{month_label} issue")
-    assert issue.status_code != 409, (
-        f"{month_label}: 409 deadlock on issue; body={issue.text}"
-    )
-    assert issue.status_code == 200, (
-        f"{month_label} issue → {issue.status_code}: {issue.text}"
-    )
-    body = issue.json()
-    # 若 simulator canned 仍吐决策点，最短续跑：空批不得卡死主链。
-    if body.get("awaiting_decision"):
-        decisions = body.get("decisions") or []
-        # canned 叙事无 <<DECISION>> → 不应 awaiting；若 awaiting 空列表也属异常。
-        assert decisions, (
-            f"{month_label}: awaiting_decision with empty decisions: {body!r}"
+    try:
+        chat = client.post(
+            f"/api/ministers/{minister}/chat",
+            json={"message": f"边饷如何？本月{month_label}召对。"},
         )
-        # 最短：按首选项自动批红经真实 resolve 入口
-        choices = []
-        for d in decisions:
-            opts = d.get("options") or ["准"]
-            choices.append({
-                "title": d.get("title") or d.get("id"),
-                "choice": opts[0] if isinstance(opts[0], str) else str(opts[0]),
-            })
-        # resolve stream 是 SSE；同步 resolve 路径若无，走 stream 消费 done
-        resolve = client.post(
-            "/api/decree/resolve_decisions/stream",
-            json={"choices": choices},
+        _assert_not_bare_500(chat, step=f"{month_label} chat")
+        assert chat.status_code == 200, (
+            f"{month_label} chat → {chat.status_code}: {chat.text}"
         )
-        _assert_not_bare_500(resolve, step=f"{month_label} resolve_decisions")
-        assert resolve.status_code == 200, resolve.text
-        assert "event: error" not in resolve.text, resolve.text
+        answer = str((chat.json() or {}).get("answer") or "")
+        assert answer, f"{month_label}: empty minister answer"
+
+        if race_trailing_writes:
+            # 竞态窗：chat 已回但尾随票仍在——禁止预排空。
+            pending_now = int(getattr(game, "_pending_writes_count", 0) or 0)
+            assert pending_now > 0, (
+                f"{month_label}: expected in-flight trailing writes after chat, "
+                f"got count={pending_now}"
+            )
+            assert barrier_open is not None and trail_release is not None
+            _release_trails_when_barrier_open(barrier_open, trail_release)
+        else:
+            # 非竞态轮：拟旨/颁诏前放空尾随（短轮询，非真超时窗）。
+            _wait_pending_writes(game)
+
+        directive = client.post(
+            "/api/directives",
+            json={"text": f"着户部清核辽饷（{month_label}）。", "notes": ""},
+        )
+        _assert_not_bare_500(directive, step=f"{month_label} 拟旨")
+        assert directive.status_code == 200, (
+            f"{month_label} 拟旨 → {directive.status_code}: {directive.text}"
+        )
+        dirs = (directive.json() or {}).get("directives") or []
+        assert dirs, f"{month_label}: directive list empty after POST"
+
+        if not race_trailing_writes:
+            _wait_pending_writes(game)
+
+        body = _post_issue_stream(
+            client, expected_turn=turn_before, step=f"{month_label} issue/stream",
+        )
+        if race_trailing_writes:
+            # 主链结束后再钉一次：屏障票必须真打开过（非超时放行）。
+            assert barrier_open is not None and barrier_open.is_set(), (
+                f"{month_label}: issue/stream finished without barrier ticket open"
+            )
+        # 若 simulator canned 仍吐决策点，最短续跑：空批不得卡死主链。
+        if body.get("awaiting_decision"):
+            decisions = body.get("decisions") or []
+            assert decisions, (
+                f"{month_label}: awaiting_decision with empty decisions: {body!r}"
+            )
+            _resolve_decisions_via_stream(
+                client, decisions, step=f"{month_label} resolve_decisions",
+            )
+    finally:
+        # 禁无条件 trail_release.set()：仅 _release_trails_when_barrier_open
+        # 在观察到 barrier_open 后才可置位；finally 只还原实例方法。
+        if restore_trails is not None:
+            restore_trails()
+        if restore_barrier_signal is not None:
+            restore_barrier_signal()
 
     _wait_pending_writes(game)
     after = _get_state(client)
@@ -339,11 +530,14 @@ def _play_one_month(client: TestClient, *, minister: str, month_label: str) -> i
     return turn_after
 
 
-# ── 主 tracer：两整月 ────────────────────────────────────────────────────
+# ── 主 tracer：两整月（起点十一月 → 真跨年） ────────────────────────────
 
 
 def test_month_loop_two_months_via_http_entry(tracer_client):
-    """HTTP 真入口起局走两个整月：turn+2 且 year/period 月序+2、无 409、闸/账双向清零。"""
+    """HTTP 真入口起局走两个整月：turn+2 且 year rollover（period 回 1）、无 409、闸/账双向清零。
+
+    M1 保留 post-chat 尾随写竞态窗（Event 控 stub）；M2 正常排空。
+    """
     client = tracer_client
     t0 = time.perf_counter()
 
@@ -352,29 +546,50 @@ def test_month_loop_two_months_via_http_entry(tracer_client):
     assert new.status_code == 200, new.text
     state0 = (new.json() or {}).get("state") or {}
     turn0 = _turn_of(state0)
-    ord0 = _month_ord_of(state0)
     assert turn0 >= 1, state0.get("turn")
-    assert ord0 > 0, state0.get("turn")
     minister = _pick_active_minister(state0)
 
     game = web_app.web_game
     assert game is not None
     _install_canned_minister(game)
 
-    turn1 = _play_one_month(client, minister=minister, month_label="M1")
+    # 真跨年：新档默认 period=10；推到 11 月起走两月 → year+1 / period=1。
+    # （只推 M1/M2 从 10 起会停在 12 月，year rollover 根本不执行。）
+    game.state.period = 11
+    game.db.save_state(game.state)
+    state0 = _get_state(client)
+    ord0 = _month_ord_of(state0)
+    year0 = int((state0.get("turn") or {}).get("year") or 0)
+    period0 = int((state0.get("turn") or {}).get("period") or 0)
+    assert period0 == 11, state0.get("turn")
+    assert ord0 > 0, state0.get("turn")
+
+    # M1：chat 后不预排空尾随写，直接拟旨/流式颁诏（竞态窗）。
+    turn1 = _play_one_month(
+        client, minister=minister, month_label="M1", race_trailing_writes=True,
+    )
     assert turn1 == turn0 + 1
 
     # 第二月：registry 仍挂 canned（begin_turn 不重建 registry.get 绑定）
     _install_canned_minister(web_app.web_game)
-    turn2 = _play_one_month(client, minister=minister, month_label="M2")
+    turn2 = _play_one_month(
+        client, minister=minister, month_label="M2", race_trailing_writes=False,
+    )
     assert turn2 == turn0 + 2
 
-    # 年月投影跨年钉：冻结 calendar 只让 turn 自增须红（mutation 自验）。
+    # 年月投影跨年钉：必须真执行 12→1 的 year+1（禁只靠 ord 算术蒙混）。
     state_end = _get_state(client)
+    end_turn = state_end.get("turn") or {}
     assert _turn_of(state_end) == turn0 + 2
+    assert int(end_turn.get("year") or 0) == year0 + 1, (
+        f"year must roll +1: start={state0.get('turn')!r} end={end_turn!r}"
+    )
+    assert int(end_turn.get("period") or 0) == 1, (
+        f"period must wrap to 1 after Dec: start={state0.get('turn')!r} end={end_turn!r}"
+    )
     assert _month_ord_of(state_end) == ord0 + 2, (
         f"calendar must advance +2 months (year-safe): "
-        f"start={state0.get('turn')!r} end={state_end.get('turn')!r} "
+        f"start={state0.get('turn')!r} end={end_turn!r} "
         f"ord {ord0} → {_month_ord_of(state_end)}"
     )
 
@@ -423,33 +638,16 @@ def test_issue_with_extraction_debt_succeeds_once(tracer_client):
     _assert_not_bare_500(directive, step="debt-ok 拟旨")
     assert directive.status_code == 200, directive.text
 
-    issue = client.post("/api/decree/issue", json={"expected_turn": turn0})
-    _assert_not_bare_500(issue, step="debt-ok issue")
-    assert issue.status_code != 409, (
-        f"fold-in forbids debt-class 409; body={issue.text}"
+    body = _post_issue_stream(
+        client, expected_turn=turn0, step="debt-ok issue/stream",
     )
-    assert CLI_RUNNER_PLAYER_MESSAGE not in issue.text
-    assert issue.status_code == 200, (
-        f"debt-ok issue → {issue.status_code}: {issue.text}"
-    )
-    body = issue.json()
+    assert CLI_RUNNER_PLAYER_MESSAGE not in json.dumps(body, ensure_ascii=False)
     if body.get("awaiting_decision"):
         decisions = body.get("decisions") or []
         assert decisions, f"awaiting_decision empty: {body!r}"
-        choices = []
-        for d in decisions:
-            opts = d.get("options") or ["准"]
-            choices.append({
-                "title": d.get("title") or d.get("id"),
-                "choice": opts[0] if isinstance(opts[0], str) else str(opts[0]),
-            })
-        resolve = client.post(
-            "/api/decree/resolve_decisions/stream",
-            json={"choices": choices},
+        _resolve_decisions_via_stream(
+            client, decisions, step="debt-ok resolve",
         )
-        _assert_not_bare_500(resolve, step="debt-ok resolve")
-        assert resolve.status_code == 200, resolve.text
-        assert "event: error" not in resolve.text, resolve.text
 
     _wait_pending_writes(game)
     after = _get_state(client)
@@ -473,7 +671,10 @@ def test_issue_with_extraction_debt_succeeds_once(tracer_client):
 
 
 def test_issue_extraction_llm_dead_single_source_not_cta(tracer_client, monkeypatch):
-    """#1353 fold-in：抽取 LLM 死透 → 失败单源（通传未达），非待补 CTA/409；夜可重按。"""
+    """#1353 fold-in：抽取 LLM 死透 → 失败单源（通传未达），非待补 CTA/409；夜可重按。
+
+    非流式兼容口轻钉：结构化 HTTP 400/412 + detail 单源（流式主链另由主 tracer 覆盖）。
+    """
     from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
 
     client = tracer_client
