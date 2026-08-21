@@ -238,6 +238,29 @@ def _payload_owned_dossier_for_origin(db: GameDB, origin_ref: object) -> Optiona
     return {**row, "payload": payload}
 
 
+def _extractor_echo_of_applied_army_pay(
+    db: GameDB, state: GameState, move: Dict[str, object],
+) -> bool:
+    """#1503 单写者：颁布缝已落的拨饷，extractor 不得再以盘面自发/他源补饷二扣。"""
+    if str(move.get("purpose") or "").strip() != "补饷":
+        return False
+    if str(move.get("target_kind") or "").strip() != "army":
+        return False
+    target_id = str(move.get("target_id") or "").strip()
+    if not target_id:
+        return False
+    row = db.conn.execute(
+        """
+        SELECT 1 FROM economy_ledger
+        WHERE purpose='补饷' AND target_kind='army' AND target_id=?
+          AND origin_ref LIKE 'dossier:%' AND turn=?
+        LIMIT 1
+        """,
+        (target_id, int(state.turn)),
+    ).fetchone()
+    return row is not None
+
+
 def _canonical_appointment_fields(
     payload: Dict[str, object], *, current_office_type: str = "", llm_config=None,
 ) -> tuple[str, str, str]:
@@ -7385,6 +7408,8 @@ def apply_score_extraction(
     for move in extracted.get("economy_moves") or []:
         if not isinstance(move, dict):
             economy_moves.append(move)
+            continue
+        if _extractor_echo_of_applied_army_pay(db, state, move):
             continue
         origin_ref = str(move.get("origin_ref") or "").strip()
         if not origin_ref.startswith("dossier:"):

@@ -455,3 +455,68 @@ def test_extractor_cannot_second_write_army_pay_for_payload_dossier(game):
     assert int(state.metrics["国库"]) == treasury_before - 10
     assert len(db.list_economy_moves_for_dossier(dossier["id"])) == 1
     assert _army_row(db)["arrears"] == pytest.approx(arrears_mid)
+
+
+def test_extractor_spontaneous_pay_does_not_double_debit_closed_grant(game):
+    """颁布即终局后案卷不在 extractor 输入；盘面自发补饷不得二扣。"""
+    db, state, content = game
+    _set_guanning_arrears(db, 40, central=40, province=0)
+    state.metrics["国库"] = max(int(state.metrics["国库"]), 100)
+    treasury_before = int(state.metrics["国库"])
+
+    ctx = _stage_xiexang(db, state.turn, amount=10, target_id="guanning")
+    dossier = _close_night_dossier(db, state, content, ctx.out["pending_action_id"])
+    _promulgate(db, state, content, dossier["id"])
+    restored = db.get_decree_dossier(dossier["id"])
+    assert restored["status"] == "closed"
+    visible_ids = {int(row["id"]) for row in db.list_decree_dossiers_for_simulation(state.turn)}
+    assert int(dossier["id"]) not in visible_ids
+    arrears_mid = _army_row(db)["arrears"]
+
+    apply_score_extraction(
+        db, state,
+        {
+            "economy_moves": [{
+                "account": "国库",
+                "delta": -10,
+                "category": "补饷",
+                "reason": "邸报已拨关宁，extractor 按盘面自发再写",
+                "purpose": "补饷",
+                "target_kind": "army",
+                "target_id": "guanning",
+                "origin_ref": "盘面自发",
+            }],
+        },
+        content=content,
+    )
+    assert int(state.metrics["国库"]) == treasury_before - 10
+    assert _army_row(db)["arrears"] == pytest.approx(arrears_mid)
+    assert len(db.list_economy_moves_for_dossier(dossier["id"])) == 1
+
+
+def test_spontaneous_pay_still_lands_without_army_pay_grant(game):
+    """无拨饷案卷时，盘面自发补饷仍走 extractor 轨。"""
+    db, state, content = game
+    _set_guanning_arrears(db, 40, central=40, province=0)
+    state.metrics["国库"] = max(int(state.metrics["国库"]), 100)
+    treasury_before = int(state.metrics["国库"])
+    before = _army_row(db)
+
+    apply_score_extraction(
+        db, state,
+        {
+            "economy_moves": [{
+                "account": "国库",
+                "delta": -10,
+                "category": "补饷",
+                "reason": "缴获银补关宁欠饷",
+                "purpose": "补饷",
+                "target_kind": "army",
+                "target_id": "guanning",
+                "origin_ref": "盘面自发",
+            }],
+        },
+        content=content,
+    )
+    assert int(state.metrics["国库"]) == treasury_before - 10
+    assert _army_row(db)["arrears"] == pytest.approx(before["arrears"] - 10)
