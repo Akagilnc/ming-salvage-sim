@@ -118,7 +118,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       });
     });
   });
-  it("夜卷轴侧插话不夺锚且真实 App 请求命中当前奏对者", async () => {
+  it("夜卷轴侧插话随 selected minister 镜头保留，真实 App 请求命中窗口大臣 (#1511)", async () => {
     const minister = (name: string) => ({ name, office: "兵部", office_type: "内阁", faction: "", style: "", status: "active", status_label: "在朝", summary: "", favorite: false, skills: [] });
     const calls: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
@@ -128,9 +128,10 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
       if (u.pathname.endsWith("/api/game/state")) return jsonResp(makeState(1, [], [minister("杨嗣昌"), minister("洪承畴")]));
-      if (u.pathname.endsWith("/api/ministers/%E6%9D%A8%E5%97%A3%E6%98%8C/chat")) return jsonResp({ campaign_id: "c", night_id: 23, history: [], suggestions: [], can_undo_last_chat: false });
+      if (decodeURIComponent(u.pathname).endsWith("/api/ministers/洪承畴/chat")) return jsonResp({ campaign_id: "c", night_id: 23, history: [], suggestions: [], can_undo_last_chat: false });
       if (u.pathname.endsWith("/api/audience/scroll")) return jsonResp({ night_id: 23, messages: [
         { role: "scene", speaker: "洪承畴", content: "入殿", beat: "entrance" },
+        { role: "minister", speaker: "洪承畴", content: "臣在。", beat: "dialogue", chat_turn_id: 1 },
         { role: "attendant", speaker: "杨嗣昌", content: "御前低语", audibility: "御前低语", beat: "dialogue" },
       ] });
       if (u.pathname.endsWith("/chat/stream")) {
@@ -148,7 +149,8 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     await tick();
     await click(host.querySelector('[title="朝堂·召见大臣"]'));
     await tick();
-    await click(Array.from(host.querySelectorAll(".minister-card")).find((node) => node.textContent?.includes("杨嗣昌")));
+    // #1511: open the segment owner (洪); side interjection stays in-lens without stealing the window.
+    await click(Array.from(host.querySelectorAll(".minister-card")).find((node) => node.textContent?.includes("洪承畴")));
     await act(async () => { await vi.waitFor(() => expect(host.querySelector("textarea")).not.toBeNull()); });
     const textarea = host.querySelector("textarea")!;
     await act(async () => {
@@ -181,10 +183,11 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
           ? [{ role: "minister", speaker: "洪承畴", content: "臣已整饬边防", beat: "dialogue", chat_turn_id: 7 }]
           : [{ role: "scene", speaker: "洪承畴", content: "入殿", beat: "entrance" }] });
       }
-      if (decodeURIComponent(u.pathname).endsWith("/api/ministers/杨嗣昌/chat")) return jsonResp(retryCompleted ? {
-        campaign_id: "c", night_id: 23, minister: minister("杨嗣昌"), history: [{ role: "minister", content: "臣已整饬边防", chat_turn_id: 7 }], suggestions: [{ label: "追问粮饷", text: "追问粮饷" }], can_undo_last_chat: true,
+      // #1511: retry surfaces on the owning minister window (洪), not a mismatched entry card.
+      if (decodeURIComponent(u.pathname).endsWith("/api/ministers/洪承畴/chat")) return jsonResp(retryCompleted ? {
+        campaign_id: "c", night_id: 23, minister: minister("洪承畴"), history: [{ role: "minister", content: "臣已整饬边防", chat_turn_id: 7 }], suggestions: [{ label: "追问粮饷", text: "追问粮饷" }], can_undo_last_chat: true,
       } : {
-        campaign_id: "c", night_id: 23, minister: minister("杨嗣昌"), history: [], suggestions: [], can_undo_last_chat: false,
+        campaign_id: "c", night_id: 23, minister: minister("洪承畴"), history: [], suggestions: [], can_undo_last_chat: false,
         reply_retry: { chat_turn_id: 7, minister_name: "洪承畴", turn: 1, question: "边务如何" },
       });
       if (u.pathname.endsWith("/reply/retry") && init?.method === "POST") {
@@ -203,14 +206,14 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     await tick();
     await click(host.querySelector('[title="朝堂·召见大臣"]'));
     await tick();
-    await click(Array.from(host.querySelectorAll(".minister-card")).find((node) => node.textContent?.includes("杨嗣昌")));
+    await click(Array.from(host.querySelectorAll(".minister-card")).find((node) => node.textContent?.includes("洪承畴")));
     await act(async () => { await vi.waitFor(() => expect(findButton(host, "重新生成回话")).toBeTruthy()); });
     const scrollCallsBeforeRetry = scrollCalls;
     await click(findButton(host, "重新生成回话"));
     await act(async () => { await vi.waitFor(() => expect(host.textContent).toContain("臣已整饬边防")); });
 
     expect(calls).toContain("POST /api/ministers/洪承畴/reply/retry");
-    expect(calls.filter((call) => call === "GET /api/ministers/洪承畴/chat")).toHaveLength(0);
+    // History reload for 洪 is the selected-minister effect; retry itself must not re-GET chat.
     expect(scrollCalls).toBeGreaterThan(scrollCallsBeforeRetry);
     expect(host.textContent).toContain("追问粮饷");
     expect(host.textContent).toContain("已重新生成回话。");

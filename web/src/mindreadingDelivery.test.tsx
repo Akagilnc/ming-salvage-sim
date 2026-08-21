@@ -116,6 +116,7 @@ describe("读心投递（#499 经真实 useAudienceChat 生产控制器）", () 
           night_id: 24,
           messages: !ended ? [] : [
             { role: "scene", speaker: "", content: "新落账场景", chat_turn_id: 8 },
+            { role: "minister", speaker: "温体仁", content: "臣遵旨。", beat: "dialogue", chat_turn_id: 8 },
           ],
         });
       }

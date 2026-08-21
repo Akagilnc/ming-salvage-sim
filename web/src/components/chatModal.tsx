@@ -2,6 +2,7 @@ import React from "react";
 import { Loader2, Lock, RotateCcw, Send, Star, X } from "lucide-react";
 import { MinisterPortrait } from "./hud";
 import { api } from "../api";
+import { filterScrollForSelectedMinister } from "../ministerScrollLens";
 import { ScrollMessages, portraitSources } from "./scrollMessages";
 import type {
   AudienceScrollMessage,
@@ -120,9 +121,25 @@ export function ChatModal({
   const effectiveScrollState = snapshotStillCurrent(scrollState) ? scrollState : { kind: "loading" as const };
   // The night scroll is the sole live authority. Personal chat history is only the legacy fallback;
   // mixing it here reintroduces cross-night records and snapshot-difference heuristics.
+  // #1511: open-night branch applies a pure selected-minister lens — never dump the campaign-wide scroll.
+  // Half-turn claim is window-local presentation only (replyRetry / in-flight pendingIdentity).
+  const claimedTurnId = replyRetry?.chat_turn_id
+    ?? (
+      pendingIdentity
+      && pendingIdentity.campaign_id === currentCampaignId
+      && pendingIdentity.night_id === currentNightId
+        ? pendingIdentity.chat_turn_id
+        : null
+    );
   const displayMessages: Array<ChatDisplayMessage | AudienceScrollMessage> = scrollMode === "legacy" || (effectiveScrollState.kind === "none" && currentNightId === 0)
     ? [...chat]
-    : effectiveScrollState.kind === "night" ? effectiveScrollState.messages.filter((message) => !failedInThisScroll(message)) : [];
+    : effectiveScrollState.kind === "night"
+      ? filterScrollForSelectedMinister(
+        effectiveScrollState.messages.filter((message) => !failedInThisScroll(message)),
+        minister.name,
+        { claimedTurnId },
+      )
+      : [];
 
   React.useEffect(() => {
     let alive = true;
@@ -188,8 +205,10 @@ export function ChatModal({
   }
   const { primary: portraitPrimary, fallback: portraitFallback } = portraitSources(currentMinister, portraitPrefix);
   const visibleSecretOrders = secretOrders.filter((order) => order.minister_name === currentMinister.name);
-  const audienceType = scrollMode === "audience"
-    ? displayMessages.find((message): message is AudienceScrollMessage => "container" in message)?.container?.audience_type
+  // Night-level audience_type lives on the raw scroll container — not the filtered lens.
+  // Blank selected-minister windows must still show 召法.
+  const audienceType = scrollMode === "audience" && effectiveScrollState.kind === "night"
+    ? effectiveScrollState.messages.find((message) => message.container?.audience_type)?.container?.audience_type ?? ""
     : "";
 
   React.useEffect(() => {
