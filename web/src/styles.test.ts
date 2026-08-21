@@ -124,4 +124,18 @@ describe("#1480 / #1499 hideTitle 单行 1fr 不误伤有标题栏 modal-bg-chat
       .filter((b) => /grid-template-rows/.test(b));
     expect(unscoped).toHaveLength(0);
   });
+
+  it("基础 .fullscreen-modal 正向钉两行网格 auto + minmax(0,1fr)", () => {
+    // 有标题栏默认：首行 auto 吃 header，正文落 minmax(0,1fr)。bare 覆盖不得抹掉此默认。
+    // 只读 modals.css 顶层真源——拼接全库会把媒体查询/后裔选择器里的同名块误认作基础规则。
+    const modalStyles = readFileSync(`${stylesDir}/modals.css`, "utf8");
+    const base = [...modalStyles.matchAll(/(?:^|})\s*\.fullscreen-modal\s*\{[^}]*\}/g)]
+      .map((m) => m[0])
+      .filter((b) => /grid-template-rows/.test(b));
+    const ok = base.some((b) =>
+      /grid-template-rows:\s*auto\s+minmax\(\s*0\s*,\s*1fr\s*\)\s*;/.test(b),
+    );
+    expect(base.length).toBeGreaterThan(0);
+    expect(ok).toBe(true);
+  });
 });
