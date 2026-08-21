@@ -10706,6 +10706,8 @@ class GameDB:
                     else:
                         normalized["execution_surface"] = surface
                     normalized.pop("delta", None)
+                # #1503：拨饷/协饷类 — 成案即结构化补饷载荷；缺字段 fail-loud，不猜散文。
+                normalized = self._normalize_army_pay_grant_payload(normalized)
         elif action in {
             "assignment", "authorization", "secret_authorization", "military_order",
         }:
@@ -12603,6 +12605,108 @@ class GameDB:
     def _grant_allocation_is_honorific(payload: Optional[Dict[str, object]]) -> bool:
         return str((payload or {}).get("grant_action") or "").strip() in {"加衔", "荫叙"}
 
+    @staticmethod
+    def _is_army_pay_grant_payload(payload: Optional[Dict[str, object]]) -> bool:
+        """#1503：拨饷/协饷类 = 显式 grant_action=协饷 或 purpose=补饷（禁 army 通用升格）。"""
+        p = payload or {}
+        grant_action = str(p.get("grant_action") or "").strip()
+        purpose = str(p.get("purpose") or "").strip()
+        return grant_action == "协饷" or purpose == "补饷"
+
+    def _normalize_army_pay_grant_payload(
+        self, payload: Dict[str, object],
+    ) -> Dict[str, object]:
+        """#1503：拨饷类成案载荷 — amount/account/purpose=补饷/army target；缺则响亮。"""
+        if not self._is_army_pay_grant_payload(payload):
+            return payload
+        if self._grant_allocation_is_honorific(payload):
+            return payload
+        normalized = dict(payload)
+        # 月度协饷建科目，不走一次性补饷销欠缝。
+        if self._grant_allocation_is_monthly(normalized):
+            return normalized
+        try:
+            amount = strict_int(normalized.get("amount"), accept_numeric_strings=False)
+        except ValueError:
+            amount = 0
+        account = str(normalized.get("account") or "").strip()
+        target_kind = str(normalized.get("target_kind") or "").strip()
+        target_id = str(normalized.get("target_id") or "").strip()
+        missing = []
+        if amount <= 0:
+            missing.append("amount")
+        if account not in {"国库", "内库"}:
+            missing.append("account")
+        if target_kind != "army":
+            missing.append("target_kind=army")
+        if not target_id:
+            missing.append("target_id")
+        if missing:
+            raise ValueError(
+                "拨饷旨意缺少结构化字段：" + "/".join(missing)
+                + "（不猜散文）"
+            )
+        normalized["amount"] = amount
+        normalized["account"] = account
+        normalized["purpose"] = "补饷"
+        normalized["target_kind"] = "army"
+        normalized["target_id"] = target_id
+        if not str(normalized.get("grant_action") or "").strip():
+            normalized["grant_action"] = "协饷"
+        # #1503：非月度拨饷强制 immediate。覆盖 normalize 前置插入的 in_transit 默认，
+        # 以及旧 pending/恢复载荷残留的在途面——在途只留叙事，不进机械对账轨。
+        normalized["execution_surface"] = "immediate"
+        return normalized
+
+    def _apply_army_pay_grant_effect(
+        self, state: GameState, row, payload: Dict[str, object], dossier_id: int,
+    ) -> int:
+        """#1503：颁布缝一次消费拨饷载荷 — 扣库+销欠同事务（ADR 0023 clamp）。"""
+        from ming_sim.flows import _apply_economy_list
+
+        amount = int(payload.get("amount") or 0)
+        if amount <= 0:
+            raise ValueError("拨饷案卷 amount 必须为正数")
+        account = str(
+            payload.get("account") or payload.get("target_account") or ""
+        ).strip()
+        if account not in {"国库", "内库"}:
+            raise ValueError("拨饷案卷 account 仅可为国库或内库")
+        target_id = str(
+            payload.get("target_id") or row.get("target_id") or ""
+        ).strip()
+        if str(payload.get("target_kind") or row.get("target_kind") or "") != "army" or not target_id:
+            raise ValueError("拨饷案卷须指定 target_kind=army 与 target_id")
+        origin_ref = f"dossier:{int(dossier_id)}"
+        # 幂等：同案已有补饷流水则不二扣（ready 重放 / 重复 settle 护栏）。
+        existing = [
+            m for m in self.list_economy_moves_for_dossier(int(dossier_id))
+            if str(m.get("purpose") or "") == "补饷"
+        ]
+        if existing:
+            return abs(int(existing[0].get("delta") or 0))
+        move = {
+            "account": account,
+            "delta": -amount,
+            "category": str(payload.get("category") or "奉旨拨饷"),
+            "reason": str(payload.get("reason") or row["decree_text"]),
+            "purpose": "补饷",
+            "target_kind": "army",
+            "target_id": target_id,
+            "origin_ref": origin_ref,
+        }
+        results = _apply_economy_list(
+            self, state, [move], commit=False, require_origin=False,
+        )
+        spent = 0
+        for item in results:
+            if not isinstance(item, dict):
+                continue
+            if item.get("rejected"):
+                raise ValueError(str(item.get("reason") or "拨饷落账被拒"))
+            spent += abs(int(item.get("delta") or 0))
+        return spent
+
     def _create_grant_fiscal_item(
         self, state: GameState, payload: Dict[str, object], dossier_id: int,
         *, account: str, amount: int, text: str,
@@ -12693,6 +12797,14 @@ class GameDB:
             raise ValueError("案卷 action_type/decree_text 不能为空")
         if action not in self._DOSSIER_ACTION_TYPES:
             raise ValueError(f"案卷 action_type 非法：{action}")
+        # #1503：拨饷类成案即规范化补饷载荷（缺字段 fail-loud）。
+        if action == "grant_allocation":
+            # target_* 可能只在行级参数、尚未入 payload — 先并入再校验。
+            if not str(normalized_payload.get("target_kind") or "").strip() and target_kind:
+                normalized_payload["target_kind"] = str(target_kind).strip()
+            if not str(normalized_payload.get("target_id") or "").strip() and target_id:
+                normalized_payload["target_id"] = str(target_id).strip()
+            normalized_payload = self._normalize_army_pay_grant_payload(normalized_payload)
         canonical_payload = normalized_payload
         # Staging validates against the same policy later consumed by review,
         # simulation and materialization.  In particular, callers cannot invent
@@ -12702,8 +12814,12 @@ class GameDB:
         supplied_surface = str(canonical_payload.get("execution_surface") or "").strip()
         if action != "grant_allocation" and supplied_surface and supplied_surface != policy["execution_surface"]:
             raise ValueError(f"{action} execution_surface 与案卷动作策略不符")
-        canonical_target_kind = str(target_kind or "").strip()
-        canonical_target_id = str(target_id or "").strip()
+        canonical_target_kind = str(
+            target_kind or canonical_payload.get("target_kind") or ""
+        ).strip()
+        canonical_target_id = str(
+            target_id or canonical_payload.get("target_id") or ""
+        ).strip()
         immediate_allocation = (
             action == "grant_allocation" and policy["effect_owner"] == "immediate"
         )
@@ -12783,6 +12899,16 @@ class GameDB:
                 self._create_grant_fiscal_item(
                     state, canonical_payload, dossier_id,
                     account="内库", amount=allocation_amount, text=text,
+                )
+            elif self._is_army_pay_grant_payload(canonical_payload):
+                # #1503：内帑拨饷成案即扣库+销欠（豁免颁布关仍走补饷缝）。
+                row_proxy = {
+                    "decree_text": text,
+                    "target_kind": canonical_target_kind,
+                    "target_id": canonical_target_id,
+                }
+                self._apply_army_pay_grant_effect(
+                    state, row_proxy, canonical_payload, dossier_id,
                 )
             else:
                 self.record_issue_economy_move(
@@ -13225,6 +13351,46 @@ class GameDB:
             )
             decisions.append(item)
         return decisions
+
+    def list_closed_army_pay_dossiers_for_provenance(
+        self, turn: int,
+    ) -> List[Dict[str, object]]:
+        """#1503：本回合已关闭的拨饷/协饷案卷，供 extractor provenance 保留 dossier 身份。
+
+        immediate 拨饷颁布即 close，不再进入 list_decree_dossiers_for_simulation；
+        若不把 origin_ref=dossier:<id> 送回 extractor 输入，回声只能落成「盘面自发」。
+        此读缝只服务 provenance，不重开执行权、不改模拟可见集。
+        """
+        rows = self.conn.execute(
+            """
+            SELECT d.*
+            FROM decree_dossiers d
+            WHERE d.status='closed'
+              AND d.closed_turn=?
+              AND d.action_type='grant_allocation'
+              AND d.promulgation_decision='promulgated'
+            ORDER BY d.id
+            """,
+            (int(turn),),
+        ).fetchall()
+        out: List[Dict[str, object]] = []
+        for row in rows:
+            try:
+                payload = json.loads(str(row["payload_json"] or "{}"))
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+            if not self._is_army_pay_grant_payload(payload):
+                continue
+            # 仅保留本回合已有 dossier 源补饷流水的案卷（已消费身份）。
+            if not any(
+                str(m.get("purpose") or "") == "补饷"
+                for m in self.list_economy_moves_for_dossier(int(row["id"]))
+            ):
+                continue
+            out.append(self._dossier_row(row))
+        return out
 
     def list_decree_dossiers_for_simulation(self, turn: int) -> List[Dict[str, object]]:
         """本月新生/重判案卷及所有未结案执行中案卷。"""
@@ -13703,31 +13869,56 @@ class GameDB:
                     amount = int(payload.get("amount") or 0)
                     if amount <= 0:
                         raise ValueError("拨帑案卷 amount 必须为正数")
-                    actual = self.record_issue_economy_move(
-                        state,
-                        str(payload.get("account") or payload.get("target_account") or ""),
-                        -amount,
-                        str(payload.get("category") or "奉旨拨帑"),
-                        str(payload.get("reason") or row["decree_text"]),
-                        purpose=str(payload.get("purpose") or "") or None,
-                        target_kind=str(payload.get("target_kind") or "") or None,
-                        target_id=str(payload.get("target_id") or "") or None,
-                        origin_ref=f"dossier:{dossier_id}",
-                        commit=False,
-                    )
-                    if actual != -amount:
-                        if self._dossier_has_execution_surface(
-                            row["action_type"], payload,
-                        ):
-                            self.transition_decree_dossier(
-                                dossier_id, "executing", commit=False,
-                            )
-                        self.record_dossier_execution(
-                            dossier_id, "failed",
-                            f"拨帑不足额：应拨{amount}两，实拨{abs(actual)}两",
-                            state.turn, close=True, commit=False,
+                    # #1503：拨饷/协饷走补饷销欠缝（ADR 0023 clamp）；其它拨帑仍面额扣库。
+                    if self._is_army_pay_grant_payload(payload):
+                        spent = self._apply_army_pay_grant_effect(
+                            state, row, payload, dossier_id,
                         )
-                        return
+                        # 欠资（库银不足且军仍欠）记 failed；超欠 clamp 军已清则仍 fulfilled。
+                        if spent < amount:
+                            target_id = str(
+                                payload.get("target_id") or row.get("target_id") or ""
+                            ).strip()
+                            army = self.conn.execute(
+                                "SELECT arrears FROM armies WHERE id=?",
+                                (target_id,),
+                            ).fetchone()
+                            still_owed = (
+                                float(army["arrears"] or 0) if army is not None else 0.0
+                            )
+                            if still_owed > 0 or spent <= 0:
+                                self.record_dossier_execution(
+                                    dossier_id, "failed",
+                                    f"拨饷不足额：应拨{amount}两，实拨{spent}两",
+                                    state.turn, close=True, commit=False,
+                                )
+                                return
+                    else:
+                        actual = self.record_issue_economy_move(
+                            state,
+                            str(payload.get("account") or payload.get("target_account") or ""),
+                            -amount,
+                            str(payload.get("category") or "奉旨拨帑"),
+                            str(payload.get("reason") or row["decree_text"]),
+                            purpose=str(payload.get("purpose") or "") or None,
+                            target_kind=str(payload.get("target_kind") or "") or None,
+                            target_id=str(payload.get("target_id") or "") or None,
+                            origin_ref=f"dossier:{dossier_id}",
+                            commit=False,
+                        )
+                        if actual != -amount:
+                            if self._dossier_has_execution_surface(
+                                row["action_type"], payload,
+                            ):
+                                self.transition_decree_dossier(
+                                    dossier_id, "executing", commit=False,
+                                )
+                            self.record_dossier_execution(
+                                dossier_id, "failed",
+                                f"拨帑不足额：应拨{amount}两，实拨{abs(actual)}两",
+                                state.turn, close=True, commit=False,
+                            )
+                            return
             elif row["action_type"] == "punishment":
                 # #517 / ADR 0055：结构化惩处效果自案卷物化，判决后才落人物/钱粮。
                 self._apply_punishment_verdict_effect(
