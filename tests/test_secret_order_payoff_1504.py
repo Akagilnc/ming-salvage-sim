@@ -17,11 +17,14 @@ import pytest
 
 from ming_sim.covert_progress import (
     FIDELITY_STATES,
+    build_minister_snapshot,
     clamp_fidelity_to_floor,
+    compute_floor_for_minister,
     compute_willingness_floor,
     decide_secret_order_settlement,
     derive_monthly_covert_world_effects,
     progress_units_for_state,
+    seed_guilt_is_active,
     target_progress_units,
     apply_monthly_covert_actual_progress,
     settle_due_secret_orders,
@@ -118,6 +121,72 @@ def test_target_units_min_one_when_due():
     assert target_progress_units(deadline_span=3, due_turn=10) == 3.0
     assert target_progress_units(deadline_span=0, due_turn=5) == 1.0
     assert target_progress_units(deadline_span=6, due_turn=0) == 0.0
+
+
+def test_blank_seed_guilt_json_does_not_count_as_blood_debt():
+    """characters.json 无/无 落库为 JSON 字符串，不得当血债下拉底档。"""
+    kwargs = dict(loyalty=80, identity=40, satisfaction=70)
+    assert compute_willingness_floor(**kwargs, seed_guilt="") == "忠实"
+    assert compute_willingness_floor(
+        **kwargs, seed_guilt='{"crime": "无", "severity": "无"}',
+    ) == "忠实"
+    assert compute_willingness_floor(
+        **kwargs, seed_guilt={"crime": "无", "severity": "无"},
+    ) == "忠实"
+    assert compute_willingness_floor(**kwargs, seed_guilt="{}") == "忠实"
+    assert not seed_guilt_is_active('{"crime": "无", "severity": "无"}')
+    # 有坐实指控仍下拉
+    assert compute_willingness_floor(**kwargs, seed_guilt="血债") == "打折"
+    assert compute_willingness_floor(
+        **kwargs, seed_guilt='{"crime": "党附", "severity": "轻"}',
+    ) == "打折"
+
+
+def test_opening_clean_record_floor_ignores_blank_guilt_json(game):
+    """开局韩爌（无/无 JSON）底档须与无血债计算一致，月度实进度不得被打成 0。"""
+    db, state, _ = game
+    name = "韩爌"
+    raw = db.conn.execute(
+        "SELECT seed_guilt FROM characters WHERE name=?", (name,),
+    ).fetchone()
+    assert raw is not None
+    assert "无" in str(raw["seed_guilt"])
+    snap = build_minister_snapshot(db, name)
+    intended = compute_willingness_floor(
+        loyalty=int(snap["loyalty"]),
+        identity=int(snap["identity"]),
+        satisfaction=int(snap["satisfaction"]),
+        seed_guilt="",
+    )
+    assert compute_floor_for_minister(db, name) == intended
+    oid = db.create_secret_order(
+        state, name, "密查", "查案", [], deadline_months=1,
+    )
+    out = apply_monthly_covert_actual_progress(
+        db, state, selections=None, commit=True,
+    )
+    row = next(r for r in out if r["order_id"] == oid)
+    assert row["fidelity"] == intended
+    assert row["units"] == progress_units_for_state(intended)
+
+
+def test_snapshot_keeps_zero_loyalty(game):
+    """loyalty=0 不得被 ``or 50`` 抬成中性，否则反噬底档被洗成打折。"""
+    db, state, _ = game
+    name = _minister(db)
+    db.conn.execute(
+        "UPDATE characters SET loyalty=0, seed_guilt='' WHERE name=?",
+        (name,),
+    )
+    db.conn.commit()
+    snap = build_minister_snapshot(db, name)
+    assert snap["loyalty"] == 0
+    assert compute_floor_for_minister(db, name) == compute_willingness_floor(
+        loyalty=0,
+        identity=int(snap["identity"]),
+        satisfaction=int(snap["satisfaction"]),
+        seed_guilt="",
+    )
 
 
 # ── 实况容器 ──────────────────────────────────────────────────────────
