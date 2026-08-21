@@ -270,13 +270,12 @@ def _recovered_grouped(value: object) -> Dict[str, object]:
 
 
 def _select_secret_orders_for_sim(db: GameDB, cap: int = 20) -> List[Dict[str, object]]:
-    """选注入月末推演的密令：active 为主；legacy pending_review 迁移窗全保（#1504 不再新产）。
+    """选注入月末推演的密令：仅 active（#1504：pending_review 已一次迁 active+到期标记）。
 
-    到期结案改 settle 尾部机械对账，推演侧只需叙事/执行态软判，不再依赖 pending 核议槽位。
+    到期结案改 settle 尾部机械对账；「待核议」分组现只承载 due_commitment ACK（见 augment）。
     """
-    pending = db.list_secret_orders(status="pending_review")
     active = db.list_secret_orders(status="active")
-    return pending + active[: max(0, cap - len(pending))]
+    return active[: max(0, int(cap))]
 
 
 def augment_secret_orders_with_due_commitments(

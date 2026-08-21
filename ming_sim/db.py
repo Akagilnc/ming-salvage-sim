@@ -2049,7 +2049,7 @@ class GameDB:
             "decree_dossier_link_rejections", "pending_action_id", "INTEGER"
         )
         self.ensure_column("secret_orders", "sim_note", "TEXT NOT NULL DEFAULT ''")
-        # 密令期限：0=无硬期限；到 due_turn 时自动转入待核议，由推演当月判 done/failed。
+        # 密令期限：0=无硬期限；due_turn>0 且 ≤当前回合时，settle 尾部按实进度对账派生 done/failed（#1504）。
         self.ensure_column("secret_orders", "due_turn", "INTEGER NOT NULL DEFAULT 0")
         if self.ensure_column(
             "secret_orders", "deadline_span", "INTEGER NOT NULL DEFAULT 0"
@@ -2059,6 +2059,8 @@ class GameDB:
                 "MAX(COALESCE(due_turn, 0)-COALESCE(turn_issued, 0), 0)"
             )
         self.ensure_column("secret_orders", "excluded_names", "TEXT NOT NULL DEFAULT '[]'")
+        # #1504 SURVEY §5.2 F2：旧档 pending_review 一次迁 active+到期标记（含 due_turn=0）。
+        self._migrate_legacy_pending_review_secret_orders()
         # #566/#883: secret monthly reports stay private on the order itself.
         # #619 adds a separate physical general track (dossier_reported_progress);
         # the retired shared table name remains forbidden (no shared table+flag).
@@ -10574,6 +10576,55 @@ class GameDB:
         return int(row["id"]) if row is not None else 0
 
     # ── #571 旨意案卷公共接口 ──────────────────────────────────────
+
+    def _migrate_legacy_pending_review_secret_orders(self) -> None:
+        """#1504 SURVEY §5.2 F2：旧档 pending_review → active + 到期标记（一次确定）。
+
+        必须覆盖 due_turn=0：对账选择器要求 due_turn>0，否则旧行永不结案。
+        迁移后结算/注入不再长期并行消费 pending_review。due_commitment ACK 不经本表。
+        """
+        try:
+            rows = self.conn.execute(
+                """
+                SELECT id, due_turn, turn_issued, result
+                FROM secret_orders
+                WHERE status='pending_review'
+                ORDER BY id
+                """
+            ).fetchall()
+        except Exception:
+            return
+        if not rows:
+            return
+        gs = self.conn.execute("SELECT turn FROM game_state LIMIT 1").fetchone()
+        current_turn = int(gs["turn"] if gs is not None else 1) or 1
+        stamp = "〔系统〕[到期迁移] 旧档 pending_review 已迁 active，待实进度对账"
+        for row in rows:
+            due = int(row["due_turn"] or 0)
+            issued = int(row["turn_issued"] or 0)
+            # due_turn=0 或不合法：落到「可当月对账」——max(issued, current)，且不超过 current
+            if due <= 0:
+                due = current_turn if current_turn > 0 else max(issued, 1)
+            if due > current_turn > 0:
+                due = current_turn
+            prev = str(row["result"] or "")
+            if "[到期迁移]" in prev:
+                new_result = prev
+            else:
+                lines = [ln for ln in prev.split("\n") if ln.strip()]
+                lines.append(stamp)
+                new_result = "\n".join(lines)
+            self.conn.execute(
+                """
+                UPDATE secret_orders
+                SET status='active',
+                    due_turn=?,
+                    result=?,
+                    updated_at=CURRENT_TIMESTAMP
+                WHERE id=? AND status='pending_review'
+                """,
+                (int(due), new_result, int(row["id"])),
+            )
 
     def _migrate_legacy_secret_order_dossiers(self) -> None:
         """旧密令单向补建案卷；唯一索引使重复开库幂等。"""
