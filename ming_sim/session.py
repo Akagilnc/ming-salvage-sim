@@ -2482,6 +2482,10 @@ class GameSession:
                 staged_payload[key] = value
         recommendation = data.get("recommendation")
         if isinstance(recommendation, dict):
+            # #635：荐词是双边语境。空 reason 若入准旨，apply_dossier_verdicts
+            # 会在结算事务里 ValueError，整月颁布批次回滚（含无关案卷）。
+            if not str(staged_payload.get("reason") or "").strip():
+                return 0
             staged_payload["recommendation"] = recommendation
         return self.db.stage_pending_action(
             self.state.turn,

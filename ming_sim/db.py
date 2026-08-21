@@ -16186,6 +16186,14 @@ class GameDB:
             staged_payload["name"] = name
             staged_payload["_office_action"] = str(pa["action"])
             staged_payload["_minister_name"] = str(pa.get("minister_name") or "")
+            # #635：荐人案缺非空荐词不得入准旨。否则顺颁时 _commit_office_action
+            # 响亮抛错，apply_dossier_verdicts / settle_with_delta 整事务 abort，
+            # 已存 pending verdict 重放会把该月结算钉死。
+            if (
+                isinstance(staged_payload.get("recommendation"), dict)
+                and not str(staged_payload.get("reason") or "").strip()
+            ):
+                return False
             self.create_decree_dossier(
                 state,
                 action_type=(

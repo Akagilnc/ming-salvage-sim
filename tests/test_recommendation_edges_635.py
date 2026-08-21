@@ -107,21 +107,81 @@ def test_unapproved_appointment_writes_zero_edges(game):
     assert _recommendation_origins(db) == []
 
 
-def test_empty_reason_fails_loud_and_rolls_back_everything(game):
-    """r3：reason 缺失/空 → 任命与双边同事务 fail-loud 回滚，不落任命、不落边。"""
+def test_empty_reason_is_rejected_before_proposed_dossier(game):
+    """空荐词不得入准旨：commit_pending_actions 标 failed，不建 appointment 案卷。
+
+    若放行到 apply_dossier_verdicts，_commit_office_action 的 ValueError 会把
+    整月颁布/结算事务 abort；已存 pending verdict 重放会把该月钉死。
+    """
     db, state, content = game
     recommender = _pick_recommender(content)
     row = db.list_recommendation_candidates(state, recommender.name)[0]
     action_id = _stage_recommendation(db, state, recommender.name, row, "巡盐御史", "   ")
 
-    with pytest.raises(ValueError):
-        _commit_and_promulgate(db, state, content, action_id)
+    result = db.commit_pending_actions(
+        state, content=content, registry=None, action_ids=[action_id])
+    assert result == []
+    failed = db.list_pending_actions(state.turn, status="failed")
+    assert any(int(item["id"]) == action_id for item in failed)
+    proposed = [
+        item for item in db.list_decree_dossiers(status="proposed")
+        if item.get("action_type") == "appointment"
+    ]
+    assert proposed == []
+    assert db.list_recommendation_events(state, recommender.name) == []
+    assert _recommendation_origins(db) == []
+    char_row = db.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (row["name"],)).fetchone()
+    assert char_row["office"] != "巡盐御史"
+
+
+def test_commit_office_action_empty_reason_still_fails_loud(game):
+    """写界仍 fail-loud：直接物化空荐词任命，不落官、不落边。"""
+    db, state, content = game
+    recommender = _pick_recommender(content)
+    row = db.list_recommendation_candidates(state, recommender.name)[0]
+    pa = {
+        "id": 1, "kind": "office", "action": "任命",
+        "minister_name": recommender.name,
+    }
+    payload = {
+        "name": row["name"], "office": "巡盐御史",
+        "faction": row["faction"], "reason": "   ",
+        "recommendation": {"candidate": row, "recommender": recommender.name},
+    }
+
+    with pytest.raises(ValueError, match="荐人双边缺非空荐词语境"):
+        db._commit_office_action(state, pa, payload, content, None)
 
     assert db.list_recommendation_events(state, recommender.name) == []
     assert _recommendation_origins(db) == []
     char_row = db.conn.execute(
         "SELECT office FROM characters WHERE name=?", (row["name"],)).fetchone()
     assert char_row["office"] != "巡盐御史"
+
+
+def test_stage_appointment_candidate_refuses_recommendation_without_reason(game):
+    """召对暂存口：荐人载荷缺荐词直接拒绝，不入 pending。"""
+    import json
+
+    from ming_sim.session import GameSession
+
+    db, state, content = game
+    recommender = _pick_recommender(content)
+    row = db.list_recommendation_candidates(state, recommender.name)[0]
+
+    class _Stub:
+        def __init__(self):
+            self.db = db
+            self.state = state
+
+    payload = json.dumps({
+        "name": row["name"], "office": "巡盐御史", "reason": "   ",
+        "recommendation": {"candidate": row, "recommender": recommender.name},
+    }, ensure_ascii=False)
+    assert GameSession._stage_appointment_candidate(
+        _Stub(), payload, recommender, "") == 0
+    assert db.list_pending_actions(state.turn) == []
 
 
 def test_second_leg_failure_rolls_back_everything(game, monkeypatch):

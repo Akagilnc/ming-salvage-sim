@@ -777,18 +777,24 @@ def build_minister_tools(character: Character, context: CourtContext,
         """传召另一位大臣入殿。name 填大臣姓名。"""
         return f"__summon__{name}"
 
-    def recommend_person(name: str, target_office: str, reason: str = "") -> str:
-        """具名荐人并交给皇帝确认；只可荐本人的网络/见闻切片中已有的人。"""
+    def recommend_person(name: str, target_office: str, reason: str) -> str:
+        """具名荐人并交给皇帝确认；只可荐本人的网络/见闻切片中已有的人。
+
+        reason：荐词原句，非空必填（#635 双边语境；空词不得入准旨，否则颁诏/结算会整批 abort）。
+        """
         target = str(name or "").strip()
         office = str(target_office or "").strip()
+        text = str(reason or "").strip()
         row = next((item for item in context.db.list_recommendation_candidates(
             context.state, character.name) if item["name"] == target), None)
         if row is None:
             return "荐人失败：此人不在本大臣的派系/见闻可及切片内。"
         if not office:
             return "荐人失败：须说明拟授的目标差事。"
+        if not text:
+            return "荐人失败：须具名荐词，说明何以举荐此人。"
         payload = json.dumps({
-            "name": target, "office": office, "reason": str(reason or "").strip(),
+            "name": target, "office": office, "reason": text,
             "faction": row["faction"], "replaces": "",
             "recommendation": {
                 "candidate_kind": row["candidate_kind"],
