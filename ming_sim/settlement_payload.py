@@ -220,6 +220,7 @@ def group_secret_orders_for_sim(
     **不当字段进 LLM 输入**（#48：status 不进 LLM——否则下游叙事/UI 会冒出
     「孙承宗密旨（active）」）。条目保留
     id/minister_name/title/content[:120]/turn_issued/due_turn/progress/sim_note，不含 status。
+    #1504：待核议组主要承载 due_commitment 与 legacy pending；密令结案不再由 LLM 产出。
     done/failed/cancelled 是裁决输出、无注入需求，落到此函数时忽略不进任何组。
 
     #883：本分组只喂 personnel_secret extractor 独立 rail；simulator 公共轨不收密令正文，
@@ -269,9 +270,10 @@ def _recovered_grouped(value: object) -> Dict[str, object]:
 
 
 def _select_secret_orders_for_sim(db: GameDB, cap: int = 20) -> List[Dict[str, object]]:
-    """选注入月末推演的密令：**pending_review 全进**（到期密令本回合须给 done/failed 裁决，被截断会
-    永久卡住不结案）+ active 填满剩余预算（cap）。修 #108：旧码 `(active + pending_review)[:cap]`
-    在 active 满载 cap 时把所有 pending_review 整体切掉、饿死核议。pending_review 即便超 cap 也全保。"""
+    """选注入月末推演的密令：active 为主；legacy pending_review 迁移窗全保（#1504 不再新产）。
+
+    到期结案改 settle 尾部机械对账，推演侧只需叙事/执行态软判，不再依赖 pending 核议槽位。
+    """
     pending = db.list_secret_orders(status="pending_review")
     active = db.list_secret_orders(status="active")
     return pending + active[: max(0, cap - len(pending))]

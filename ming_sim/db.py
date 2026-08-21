@@ -1511,6 +1511,22 @@ class GameDB:
             );
             CREATE INDEX IF NOT EXISTS idx_loophole_exposures_dossier
                 ON dossier_loophole_exposures(dossier_id, turn, id);
+            -- #1504 / ADR 0073+0120: covert 实况进度容器（非 0058 奏报；origin 纪律可累加）。
+            CREATE TABLE IF NOT EXISTS dossier_actual_progress (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                dossier_id INTEGER NOT NULL,
+                turn INTEGER NOT NULL,
+                units REAL NOT NULL,
+                fidelity_state TEXT NOT NULL,
+                floor_state TEXT NOT NULL,
+                note TEXT NOT NULL DEFAULT '',
+                origin_ref TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(dossier_id, turn),
+                FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_dossier_actual_progress_dossier
+                ON dossier_actual_progress(dossier_id, turn, id);
             -- #627 / ADR 0077 ID-12: faction denunciation entries (independent carrier).
             -- Truth bottom lives in origin marks (#619 compose_report_origin); payload holds
             -- fork exposure. Never write dossier_loophole_exposures from this path.
@@ -18104,6 +18120,88 @@ class GameDB:
             self.list_fiscal_effects_for_dossier(int(dossier_id))
         )
 
+    def record_dossier_actual_progress(
+        self,
+        dossier_id: int,
+        turn: int,
+        *,
+        units: float,
+        fidelity_state: str,
+        floor_state: str,
+        note: str = "",
+        commit: bool = True,
+    ) -> Dict[str, object]:
+        """#1504 实况轨月度进度（0073）。禁与 dossier_progress_json/sim_note 混写。"""
+        did = int(dossier_id)
+        origin = f"dossier:{did}"
+        self.conn.execute(
+            """
+            INSERT INTO dossier_actual_progress
+                (dossier_id, turn, units, fidelity_state, floor_state, note, origin_ref)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(dossier_id, turn) DO UPDATE SET
+                units=excluded.units,
+                fidelity_state=excluded.fidelity_state,
+                floor_state=excluded.floor_state,
+                note=excluded.note,
+                origin_ref=excluded.origin_ref
+            """,
+            (
+                did,
+                int(turn),
+                float(units),
+                str(fidelity_state),
+                str(floor_state),
+                str(note or "")[:240],
+                origin,
+            ),
+        )
+        if commit and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0:
+            self.conn.commit()
+        row = self.conn.execute(
+            "SELECT * FROM dossier_actual_progress WHERE dossier_id=? AND turn=?",
+            (did, int(turn)),
+        ).fetchone()
+        return dict(row) if row is not None else {
+            "dossier_id": did,
+            "turn": int(turn),
+            "units": float(units),
+            "fidelity_state": str(fidelity_state),
+            "floor_state": str(floor_state),
+            "note": str(note or "")[:240],
+            "origin_ref": origin,
+        }
+
+    def list_dossier_actual_progress(self, dossier_id: int) -> List[Dict[str, object]]:
+        rows = self.conn.execute(
+            "SELECT * FROM dossier_actual_progress WHERE dossier_id=? ORDER BY turn, id",
+            (int(dossier_id),),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def sum_dossier_actual_progress_units(self, dossier_id: int) -> float:
+        row = self.conn.execute(
+            "SELECT COALESCE(SUM(units), 0) AS total FROM dossier_actual_progress WHERE dossier_id=?",
+            (int(dossier_id),),
+        ).fetchone()
+        return float(row["total"] if row is not None else 0.0)
+
+    def list_dossier_actual_rail(self, dossier_id: int) -> List[Dict[str, object]]:
+        """实况合并读：durable_effects + actual_progress（due_review 形参数化共用）。
+
+        不把 0058 奏报并入。actual_progress 行标 rail='actual_progress'。
+        """
+        out: List[Dict[str, object]] = []
+        for item in self.list_dossier_durable_effects(int(dossier_id)):
+            row = dict(item)
+            row.setdefault("rail", "durable_effect")
+            out.append(row)
+        for item in self.list_dossier_actual_progress(int(dossier_id)):
+            row = dict(item)
+            row["rail"] = "actual_progress"
+            out.append(row)
+        return out
+
     def dossier_has_beyond_intent(self, dossier_id: int) -> bool:
         """#1260 单源：案卷是否含任何旨外 durable effect（economy 或 fiscal）。
 
@@ -19187,6 +19285,7 @@ class GameDB:
                 "id": int(r["id"]),
                 "turn_issued": int(r["turn_issued"]),
                 "due_turn": int(r["due_turn"] if "due_turn" in r.keys() else 0),
+                "deadline_span": int(r["deadline_span"] if "deadline_span" in r.keys() else 0),
                 "year_issued": int(r["year_issued"]),
                 "period_issued": int(r["period_issued"]),
                 "minister_name": r["minister_name"],
@@ -19284,14 +19383,17 @@ class GameDB:
         tlog(f"[secret_order] close id={order_id} status={status}")
 
     def submit_secret_order_for_review(self, order_id: int, claim: str, year: int, period: int) -> bool:
-        """大臣提交密令待推演核议：active → pending_review。
-        claim 按月戳追加进 result 时间线（与 progress 同列，但带 "[提交核议]" 标记），
-        让推演看时同时知道大臣自述。仅 active 状态可提交。"""
+        """#1504：大臣自认办结 → 缩 due_turn 至当月，月末机械对账；不再进 pending_review 核议链。
+
+        claim 按月戳追加进 result（奏报/陈词轨），不入实况对账真源。仅 active 可提交。
+        """
         row = self.conn.execute(
-            "SELECT status FROM secret_orders WHERE id = ?", (int(order_id),)
+            "SELECT status, turn_issued FROM secret_orders WHERE id = ?", (int(order_id),)
         ).fetchone()
         if not row or row["status"] != "active":
             return False
+        turn_row = self.conn.execute("SELECT turn FROM game_state WHERE id=1").fetchone()
+        current_turn = int(turn_row["turn"]) if turn_row is not None else int(row["turn_issued"] or 0)
         stamp = f"〔{period_label(year, period)}〕[提交核议] "
         note = (claim or "").strip()
         prev = self.conn.execute(
@@ -19303,13 +19405,13 @@ class GameDB:
             self.conn.execute(
                 """
                 UPDATE secret_orders
-                SET status = 'pending_review', result = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
+                SET due_turn = ?, result = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND status = 'active'
                 """,
-                ("\n".join(lines), int(order_id)),
+                (current_turn, "\n".join(lines), int(order_id)),
             )
             self.mark_secret_order_in_progress(int(order_id), commit=False)
-        tlog(f"[secret_order] submit_for_review id={order_id} claim={note[:60]!r}")
+        tlog(f"[secret_order] submit_for_review id={order_id} due_now claim={note[:60]!r}")
         return True
 
     def _has_secret_order_period_line(self, order_id: int, column: str, year: int, period: int) -> bool:
@@ -19436,7 +19538,7 @@ class GameDB:
         deadline_months: int = 1,
         reason: str = "",
     ) -> Dict[str, object]:
-        """缩短 active 密令期限。deadline_months<=0 表示本月立即送核议。"""
+        """缩短 active 密令期限。deadline_months<=0 表示本月到期对账（#1504 不再 pending_review）。"""
         row = self.conn.execute(
             "SELECT id, title, status, result, due_turn FROM secret_orders WHERE id = ?",
             (int(order_id),),
@@ -19457,17 +19559,17 @@ class GameDB:
         lines = [ln for ln in prev.split("\n") if ln.strip()]
         with atomic(self):
             if months <= 0:
-                lines.append(f"{stamp}[奉旨即核] {why}；本月即移交密旨核议。")
+                lines.append(f"{stamp}[奉旨即核] {why}；本月到期按实进度对账。")
                 self.conn.execute(
                     """
                     UPDATE secret_orders
-                    SET status = 'pending_review', due_turn = ?, deadline_span = 0,
+                    SET due_turn = ?, deadline_span = 0,
                         result = ?, updated_at=CURRENT_TIMESTAMP
                     WHERE id = ?
                     """,
                     (int(state.turn), "\n".join(lines), int(order_id)),
                 )
-                status = "pending_review"
+                status = "active"
                 due_turn = int(state.turn)
             else:
                 due_turn = target_turn if old_due <= 0 else min(old_due, target_turn)
@@ -19508,7 +19610,10 @@ class GameDB:
         }
 
     def auto_submit_due_secret_orders(self, state: GameState) -> List[Dict[str, object]]:
-        """把到期 active 密令自动转入 pending_review，保证当月推演必须给终判。"""
+        """#1504：到期只打「期限届满」陈词戳，保持 active；结案改 settle 尾部机械对账。
+
+        不再翻 pending_review（拆 LLM secret_order_closes 核议消费链）。
+        """
         rows = self.conn.execute(
             """
             SELECT id, title, result FROM secret_orders
@@ -19521,23 +19626,30 @@ class GameDB:
         with atomic(self):
             for row in rows:
                 stamp = f"〔{period_label(state.year, state.period)}〕[期限届满] "
-                note = "御限已至，移交月末密旨核议；据既有查办、风声与盘面定成败。"
+                note = "御限已至，本月结算按实进度对账定成败（不入核议链）。"
                 prev = row["result"] or ""
                 lines = [ln for ln in prev.split("\n") if ln.strip()]
                 if not any("[期限届满]" in ln for ln in lines):
                     lines.append(f"{stamp}{note}")
-                self.conn.execute(
-                    """
-                    UPDATE secret_orders
-                    SET status = 'pending_review', result = ?, updated_at = CURRENT_TIMESTAMP
-                    WHERE id = ?
-                    """,
-                    ("\n".join(lines), int(row["id"])),
-                )
+                    self.conn.execute(
+                        """
+                        UPDATE secret_orders
+                        SET result = ?, updated_at = CURRENT_TIMESTAMP
+                        WHERE id = ? AND status = 'active'
+                        """,
+                        ("\n".join(lines), int(row["id"])),
+                    )
                 self.mark_secret_order_in_progress(int(row["id"]), commit=False)
-                submitted.append({"id": int(row["id"]), "title": row["title"]})
+                submitted.append({
+                    "id": int(row["id"]),
+                    "title": row["title"],
+                    "status": "active",
+                })
         if rows:
-            tlog(f"[secret_order] auto_submit_due count={len(submitted)} ids={[x['id'] for x in submitted]}")
+            tlog(
+                f"[secret_order] due_stamp count={len(submitted)} "
+                f"ids={[x['id'] for x in submitted]} (no pending_review)"
+            )
         return submitted
 
     def get_secret_orders_by_keywords(

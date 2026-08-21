@@ -16,7 +16,7 @@ export function SecretOrdersModal({
   const [selectedOrder, setSelectedOrder] = React.useState<SecretOrder | null>(null);
   const statusLabel: Record<string, string> = {
     active: "进行中",
-    pending_review: "待核议",
+    pending_review: "遗留待对账",
     done: "已完成",
     failed: "已失败",
     cancelled: "已撤销",
@@ -30,7 +30,7 @@ export function SecretOrdersModal({
   };
   const tabs: { key: typeof tab; label: string }[] = [
     { key: "active",         label: `进行中 (${orders.filter(o => o.status === "active").length})` },
-    { key: "pending_review", label: `待核议 (${orders.filter(o => o.status === "pending_review").length})` },
+    { key: "pending_review", label: `遗留待对账 (${orders.filter(o => o.status === "pending_review").length})` },
     { key: "done",           label: `已完成 (${orders.filter(o => o.status === "done").length})` },
     { key: "failed",         label: `已失败 (${orders.filter(o => o.status === "failed").length})` },
     { key: "all",            label: `全部 (${orders.length})` },
