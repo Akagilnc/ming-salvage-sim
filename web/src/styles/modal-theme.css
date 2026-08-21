@@ -145,6 +145,20 @@
   height: 28px;
 }
 
+/* #1480：hideTitle（.modal-header-bare 绝对定位）脱离 grid 后，正文须落在唯一 1fr 行
+   （默认 auto minmax(0,1fr) 会把唯一流内子项放进 auto 行 → 长转录/高侧栏溢出）。
+   召对 modal-bg-chat 恒 hideTitle；与 #1398 邸报单行 1fr 同形。 */
+.modal-bg-chat.fullscreen-modal {
+  grid-template-rows: minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+}
+.modal-bg-chat.fullscreen-modal > .chat-full-grid {
+  min-height: 0;
+  max-height: 100%;
+  overflow: hidden;
+}
+
 /* #1475：召对 hideTitle 悬浮关闭钮——浅底可见，不占横幅轨 */
 .modal-bg-chat .modal-header-bare .icon-button {
   width: 40px;
