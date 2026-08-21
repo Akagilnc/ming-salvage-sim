@@ -153,4 +153,59 @@ describe("filterScrollForSelectedMinister (#1511 lens)", () => {
     expect(filterScrollForSelectedMinister(scroll, "许誉卿")).toEqual([]);
     expect(filterScrollForSelectedMinister(scroll, "洪承畴").length).toBeGreaterThan(0);
   });
+
+  it("具名 divider 段内后续他臣正式 turn：前臣窗移除、后臣窗完整、无 turn 殿侧插话仍随软段", () => {
+    const scroll: AudienceScrollMessage[] = [
+      msg({ role: "scene", speaker: "洪承畴", content: "", beat: "divider", soft_boundary: true }),
+      msg({ role: "scene", speaker: "洪承畴", content: "洪承畴趋入殿中。", beat: "entrance" }),
+      msg({ role: "user", speaker: "朕", content: "边务如何？", beat: "dialogue", chat_turn_id: 1 }),
+      msg({ role: "minister", speaker: "洪承畴", content: "臣自三边来。", beat: "dialogue", chat_turn_id: 1 }),
+      // Formal later turn by another minister inside the same named soft segment
+      msg({ role: "user", speaker: "朕", content: "杨卿以为如何？", beat: "dialogue", chat_turn_id: 2 }),
+      msg({ role: "minister", speaker: "杨嗣昌", content: "臣以为当先清饷。", beat: "dialogue", chat_turn_id: 2 }),
+      msg({ role: "attendant", speaker: "王承恩", content: "杨部神色郑重。", beat: "aside", chat_turn_id: 2 }),
+      // No-turn side interjection still rides the soft segment
+      msg({ role: "minister", speaker: "孙传庭", content: "殿侧容臣插一句。", beat: "dialogue" }),
+      msg({ role: "scene", speaker: "", content: "", beat: "divider", soft_boundary: true }),
+    ];
+
+    const hong = filterScrollForSelectedMinister(scroll, "洪承畴");
+    expect(hong.map((m) => m.content)).toEqual([
+      "",
+      "洪承畴趋入殿中。",
+      "边务如何？",
+      "臣自三边来。",
+      "殿侧容臣插一句。",
+      "",
+    ]);
+    expect(hong.some((m) => m.content.includes("杨"))).toBe(false);
+    expect(hong.some((m) => m.content === "杨部神色郑重。")).toBe(false);
+
+    const yang = filterScrollForSelectedMinister(scroll, "杨嗣昌");
+    expect(yang.map((m) => m.content)).toEqual([
+      "杨卿以为如何？",
+      "臣以为当先清饷。",
+      "杨部神色郑重。",
+    ]);
+    expect(yang.some((m) => m.content === "臣自三边来。")).toBe(false);
+    expect(yang.some((m) => m.content === "洪承畴趋入殿中。")).toBe(false);
+    expect(yang.some((m) => m.content === "殿侧容臣插一句。")).toBe(false);
+  });
+
+  it("半轮 claim：无 minister 气泡的 user 问话按 claimedTurnId 留在本窗", () => {
+    const scroll: AudienceScrollMessage[] = [
+      msg({ role: "user", speaker: "朕", content: "辽饷何解？", beat: "dialogue", chat_turn_id: 12 }),
+      msg({ role: "user", speaker: "朕", content: "他臣密令", beat: "dialogue", chat_turn_id: 11 }),
+      msg({ role: "minister", speaker: "洪承畴", content: "臣领旨。", beat: "dialogue", chat_turn_id: 11 }),
+    ];
+    // Without claim, half-turn user is orphan and must not leak.
+    expect(filterScrollForSelectedMinister(scroll, "许誉卿")).toEqual([]);
+    expect(
+      filterScrollForSelectedMinister(scroll, "许誉卿", { claimedTurnId: 12 }).map((m) => m.content),
+    ).toEqual(["辽饷何解？"]);
+    // Claim must not override an already-named minister owner on another turn.
+    expect(
+      filterScrollForSelectedMinister(scroll, "许誉卿", { claimedTurnId: 11 }).map((m) => m.content),
+    ).toEqual([]);
+  });
 });

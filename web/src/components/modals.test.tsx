@@ -59,6 +59,8 @@ function renderModal(props: {
   onRetryFailure?: (failure: PendingActionFailure) => void;
   replyRetry?: { chat_turn_id: number; question: string } | null;
   onRetryReply?: (ministerName: string) => void;
+  pendingUserMessage?: string;
+  pendingIdentity?: { campaign_id: string; night_id: number; chat_turn_id: number } | null;
   suggestions?: Suggestion[];
   secretOrders?: React.ComponentProps<typeof ChatModal>["secretOrders"];
   onSend?: (ministerName: string, text?: string) => void;
@@ -112,8 +114,8 @@ function renderModal(props: {
         busy={props.busy ?? ""}
         chat={chat}
         suggestions={props.suggestions ?? []}
-        pendingUserMessage=""
-        pendingIdentity={null}
+        pendingUserMessage={props.pendingUserMessage ?? ""}
+        pendingIdentity={props.pendingIdentity ?? null}
         failedIdentity={null}
         streamingMinisterMessage={props.streamingMinisterMessage ?? ""}
         chatNotice=""
@@ -1114,6 +1116,43 @@ describe("ChatModal — selected-minister night lens (#1511)", () => {
     expect(document.body.textContent).not.toContain("臣领旨");
     expect(document.body.textContent).not.toContain("神色凝重");
     expect(document.querySelector(".minister-side h2")?.textContent).toBe("许誉卿");
+  });
+
+  it("空白选臣窗仍从原卷显示夜级召法，不依赖过滤后消息", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, messages: nightScroll }) }));
+    renderModal({ minister: xu, ministers: [hong, xu], portraitPrefix: "minister_", currentNightId: 23 });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    // Lens is empty for 许, but audience_type is a night-container attribute on the raw scroll.
+    expect(document.body.textContent).toContain("请陛下问话");
+    expect(document.body.textContent).not.toContain("密令：整饬边备");
+    expect(document.querySelector(".audience-type-label")?.textContent).toBe("召对");
+  });
+
+  it("半轮 replyRetry：保留同 turn user 气泡且不重复 pending 气泡", async () => {
+    const halfTurnScroll = [
+      { role: "user", speaker: "朕", content: "辽饷何解？", beat: "dialogue", chat_turn_id: 12, audibility: "殿上公开", time: null, soft_boundary: false, highlights: [], container: { time_of_day: "戌时", location: "乾清宫", audience_type: "召对" } },
+      // Other minister full turn must not leak into this window.
+      ...nightScroll,
+    ];
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, messages: halfTurnScroll }) }));
+    renderModal({
+      minister: xu,
+      ministers: [hong, xu],
+      portraitPrefix: "minister_",
+      currentNightId: 23,
+      replyRetry: { chat_turn_id: 12, question: "辽饷何解？" },
+      pendingUserMessage: "辽饷何解？",
+      pendingIdentity: { campaign_id: "test-campaign", night_id: 23, chat_turn_id: 12 },
+    });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(document.body.textContent).toContain("辽饷何解？");
+    expect(document.body.textContent).not.toContain("密令：整饬边备");
+    expect(document.body.textContent).not.toContain("臣领旨");
+    // Single user bubble — claimed persisted turn suppresses the synthetic pending duplicate.
+    const userBubbles = Array.from(document.querySelectorAll(".chat-message.user"));
+    expect(userBubbles).toHaveLength(1);
+    expect(userBubbles[0]?.textContent).toContain("辽饷何解？");
+    expect(userBubbles[0]?.classList.contains("pending")).toBe(false);
   });
 
   it("切回有记录大臣：语义轮完整含朕问/回话/递话", async () => {
