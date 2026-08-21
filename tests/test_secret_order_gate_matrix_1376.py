@@ -113,9 +113,15 @@ def _tree_fingerprint(snapshot: TreeSnapshot) -> str:
     return h.hexdigest()
 
 
-# 平台 harness 在 books/*/runs/* 下持续落 session 日志；整树仍扫描，
-# 断言 diff 时仅将该运行时噪声归因，不整目录跳过 books/cases/ops/taishi。
-_HARNESS_RUNTIME_PATH_RE = re.compile(r"^books/.*/runs/")
+# 平台 harness 运行时路径（并发 pi 落盘，非产品写入；内容均为 type=session jsonl / ledger）：
+# - books/<book>/runs/* session 日志
+# - books/<book>/navigator/* navigator session（parentSession→runs）
+# - books/<book>/auditor-roles/* auditor session（parentSession→runs）
+# - books/<book>/waiting.jsonl activation ledger
+# 整树仍扫描；断言 diff 仅归因上述噪声，不跳过 books/cases/ops/taishi/issues。
+_HARNESS_RUNTIME_PATH_RE = re.compile(
+    r"^books/[^/]+/(?:runs/|navigator/|auditor-roles/|waiting\.jsonl$)"
+)
 
 
 def _snapshot_delta(before: TreeSnapshot, after: TreeSnapshot) -> set[str]:
@@ -136,7 +142,8 @@ def assert_real_home_untouched(before: Dict[str, TreeSnapshot]) -> None:
     ak_delta = _non_harness_delta(before["ak_roles"], after_ak)
     data_delta = _snapshot_delta(before["ming_data"], after_data)
     assert not ak_delta, (
-        f"零写核验失败：真实 ~/.ak-roles 被写入（非整树 skip；已剔除 books/*/runs/ harness 噪声）: "
+        f"零写核验失败：真实 ~/.ak-roles 被写入"
+        f"（非整树 skip；已剔除 books/*/{{runs,navigator,auditor-roles,waiting.jsonl}} harness 噪声）: "
         f"{sorted(ak_delta)[:20]!r}"
     )
     assert not data_delta, (
@@ -162,13 +169,21 @@ def test_zero_write_oracle_catches_same_path_rewrite(tmp_path):
     """最小自验：同路径等长改写 + 恢复 mtime 仍被内容摘要检出（元数据指纹会漏）。"""
     root = tmp_path / "zw_tree"
     (root / "books" / "Ming_LLM" / "runs" / "sess").mkdir(parents=True)
+    (root / "books" / "Ming_LLM" / "navigator" / "hash").mkdir(parents=True)
+    (root / "books" / "Ming_LLM" / "auditor-roles").mkdir(parents=True)
     (root / "books" / "Ming_LLM" / "cases").mkdir(parents=True)
     kept = root / "kept.txt"
     case_f = root / "books" / "Ming_LLM" / "cases" / "note.txt"
     run_f = root / "books" / "Ming_LLM" / "runs" / "sess" / "log.txt"
+    nav_f = root / "books" / "Ming_LLM" / "navigator" / "hash" / "sess.jsonl"
+    aud_f = root / "books" / "Ming_LLM" / "auditor-roles" / "sess.jsonl"
+    wait_f = root / "books" / "Ming_LLM" / "waiting.jsonl"
     kept.write_bytes(b"AAAA")
     case_f.write_bytes(b"CCCC")
     run_f.write_bytes(b"RRRR")
+    nav_f.write_bytes(b"NNNN")
+    aud_f.write_bytes(b"AAAA")
+    wait_f.write_bytes(b"WWWW")
     before = _tree_paths(root)
     kept_stat = os.lstat(kept)
     kept_atime_ns = getattr(kept_stat, "st_atime_ns", int(kept_stat.st_atime * 1_000_000_000))
@@ -189,25 +204,38 @@ def test_zero_write_oracle_catches_same_path_rewrite(tmp_path):
     assert before["kept.txt"] != after_rewrite["kept.txt"]
     assert _tree_fingerprint(before) != _tree_fingerprint(after_rewrite)
 
-    # harness runs 路径可归因过滤；其它目录（含 books/*/cases）不得跳过
-    case_stat = os.lstat(case_f)
-    case_atime_ns = getattr(case_stat, "st_atime_ns", int(case_stat.st_atime * 1_000_000_000))
-    case_mtime_ns = int(case_stat.st_mtime_ns)
-    run_stat = os.lstat(run_f)
-    run_atime_ns = getattr(run_stat, "st_atime_ns", int(run_stat.st_atime * 1_000_000_000))
-    run_mtime_ns = int(run_stat.st_mtime_ns)
-    case_f.write_bytes(b"DDDD")
-    os.utime(case_f, ns=(case_atime_ns, case_mtime_ns))
-    run_f.write_bytes(b"SSSS")
-    os.utime(run_f, ns=(run_atime_ns, run_mtime_ns))
+    # harness runs/navigator/auditor-roles/waiting 可归因过滤；其它目录（含 books/*/cases）不得跳过
+    def _touch_eq(path: Path, data: bytes) -> None:
+        st = os.lstat(path)
+        atime_ns = getattr(st, "st_atime_ns", int(st.st_atime * 1_000_000_000))
+        mtime_ns = int(st.st_mtime_ns)
+        path.write_bytes(data)
+        os.utime(path, ns=(atime_ns, mtime_ns))
+
+    _touch_eq(case_f, b"DDDD")
+    _touch_eq(run_f, b"SSSS")
+    _touch_eq(nav_f, b"OOOO")
+    _touch_eq(aud_f, b"BBBB")
+    _touch_eq(wait_f, b"XXXX")
     after_mixed = _tree_paths(root)
     mixed = _non_harness_delta(after_rewrite, after_mixed)
     assert "books/Ming_LLM/cases/note.txt" in mixed, (
-        f"非 runs 目录改写不得被 harness 归因吞掉: delta={sorted(mixed)!r}"
+        f"非 harness 目录改写不得被归因吞掉: delta={sorted(mixed)!r}"
     )
     assert not any(_HARNESS_RUNTIME_PATH_RE.match(p) for p in mixed), (
-        f"books/*/runs/ 噪声应被归因过滤: delta={sorted(mixed)!r}"
+        f"books/*/{{runs,navigator,auditor-roles,waiting.jsonl}} 噪声应被归因过滤: "
+        f"delta={sorted(mixed)!r}"
     )
+    # 显式钉四类 harness 路径被过滤（raw delta 含之，non_harness 不含）
+    raw_mixed = _snapshot_delta(after_rewrite, after_mixed)
+    for harness_rel in (
+        "books/Ming_LLM/runs/sess/log.txt",
+        "books/Ming_LLM/navigator/hash/sess.jsonl",
+        "books/Ming_LLM/auditor-roles/sess.jsonl",
+        "books/Ming_LLM/waiting.jsonl",
+    ):
+        assert harness_rel in raw_mixed, f"自验前提：{harness_rel} 须在 raw delta"
+        assert harness_rel not in mixed, f"{harness_rel} 须被 harness 归因过滤"
 
 
 # ── LLM / 结算边界 stub ────────────────────────────────────────────────

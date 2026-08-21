@@ -1295,9 +1295,8 @@ class GameSession:
             }
             if named:
                 payload["target_ids"] = list(named)
+            # target_ids 仅经 payload→normalize_one_candidate 单一路径保留（#1509）
             cand = normalize_one_candidate(payload, soft=False)
-            if named:
-                cand["target_ids"] = list(named)
             return [cand]
         return candidates
 
