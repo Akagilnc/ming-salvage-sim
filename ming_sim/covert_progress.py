@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
 # 四态：索引越大越重（只准加重 = 索引只增不减）
@@ -65,12 +66,47 @@ def progress_units_for_state(state: object) -> float:
     return float(PROGRESS_UNITS[name])
 
 
+def seed_guilt_counts_as_debt(seed_guilt: object) -> bool:
+    """结构化 guilt 口径（与 mindreading._seed_guilt_text 同形）：
+
+    - {"crime":"无","severity":"无"} / {"crime":"无"} → 清白
+    - 空/NULL → 清白
+    - 非空非 JSON 旧串 → 仍计血债（测试/legacy）
+    - 其余有 crime 坐实 → 血债
+    """
+    if seed_guilt is None:
+        return False
+    if isinstance(seed_guilt, Mapping):
+        guilt: object = seed_guilt
+    else:
+        text = str(seed_guilt).strip()
+        if not text:
+            return False
+        try:
+            parsed = json.loads(text)
+        except (TypeError, ValueError):
+            return True
+        if not isinstance(parsed, Mapping):
+            return True
+        guilt = parsed
+    crime = str(guilt.get("crime") or "无").strip() or "无"
+    severity = str(guilt.get("severity") or "无").strip() or "无"
+    return not (crime == "无" and severity == "无")
+
+
+def _int_axis(value: object, default: int = 50) -> int:
+    """轴值：仅 NULL/缺省才回落；0 是合法值（禁 `x or default`）。"""
+    if value is None:
+        return int(default)
+    return int(value)
+
+
 def compute_willingness_floor(
     *,
     loyalty: int,
     identity: int,
     satisfaction: int,
-    seed_guilt: str = "",
+    seed_guilt: object = "",
 ) -> str:
     """0116 意愿轴机械底档（纯函数，可 golden）。
 
@@ -84,7 +120,7 @@ def compute_willingness_floor(
     score = 0.55 * loy + 0.35 * sat + 0.10 * (100 - ident)
     if ident >= 70 and loy < 55:
         score -= 18.0
-    if str(seed_guilt or "").strip():
+    if seed_guilt_counts_as_debt(seed_guilt):
         score -= 12.0
     if score >= 70.0:
         return "忠实"
@@ -118,12 +154,12 @@ def decide_secret_order_settlement(review_input: Mapping[str, object]) -> Dict[s
     """到期交付缺口对账——与 due_review.decide_due_review_verdict 同形精神：
 
     - 只读实况轨 Σ（actual_units），不读 progress_json / sim_note 作真源
-    - 表报仅可入 note，不得翻实账归因
+    - status/outcome/Σ 结构化存储；note 仅机面审计，不得作玩家正文（P7）
+    - 表报仅可入机面 note，不得翻实账归因
     - 交付缺口 → failed；已交付 → done
     """
     actual = float(review_input.get("actual_units") or 0.0)
     target = float(review_input.get("target_units") or 0.0)
-    criterion = str(review_input.get("criterion_text") or "").strip() or "密令差务"
     has_reports = bool(review_input.get("has_reports"))
     origin = str(review_input.get("origin_context") or "").strip()
 
@@ -131,15 +167,15 @@ def decide_secret_order_settlement(review_input: Mapping[str, object]) -> Dict[s
     if delivered:
         status = "done"
         outcome = "fulfilled"
-        note = f"到期对账：{criterion}实进度已交付（Σ={actual:g}/目标{target:g}）"
+        note = f"machine_settle delivered Σ={actual:g}/{target:g}"
     else:
         status = "failed"
         outcome = "failed"
-        note = f"到期对账：{criterion}交付缺口（Σ={actual:g}/目标{target:g}）"
+        note = f"machine_settle gap Σ={actual:g}/{target:g}"
         if has_reports:
-            note = f"{note}；表报有之、不翻实账"
+            note = f"{note};表报有之、不翻实账"
     if origin:
-        note = f"{note}（{origin}）"
+        note = f"{note} ({origin})"
     return {
         "status": status,
         "outcome": outcome,
@@ -152,11 +188,28 @@ def decide_secret_order_settlement(review_input: Mapping[str, object]) -> Dict[s
     }
 
 
+def player_facing_secret_order_close_text(
+    order: Mapping[str, object],
+    reports: Sequence[Mapping[str, object]],
+) -> str:
+    """玩家可见结案正文：复用既有 result 时间线或 0058/personnel_secret 奏报，不造模板。"""
+    existing = str(order.get("result") or "").strip()
+    if existing:
+        return existing
+    for item in reversed(list(reports or [])):
+        if not isinstance(item, Mapping):
+            continue
+        text = str(item.get("memorial_text") or "").strip()
+        if text:
+            return text
+    return ""
+
+
 def build_minister_snapshot(db: Any, minister_name: str) -> Dict[str, object]:
     """读 DB 快照装配意愿轴输入（extractor 前可 golden）。"""
     name = str(minister_name or "").strip()
     row = db.conn.execute(
-        "SELECT loyalty, identity, faction, seed_guilt FROM characters WHERE name=?",
+        "SELECT loyalty, identity, faction, seed_guilt, status FROM characters WHERE name=?",
         (name,),
     ).fetchone()
     if row is None:
@@ -167,6 +220,8 @@ def build_minister_snapshot(db: Any, minister_name: str) -> Dict[str, object]:
             "faction": "",
             "satisfaction": 50,
             "seed_guilt": "",
+            "status": "",
+            "present": False,
         }
     faction = str(row["faction"] or "")
     sat = 50
@@ -175,14 +230,26 @@ def build_minister_snapshot(db: Any, minister_name: str) -> Dict[str, object]:
             sat = int(db.faction_satisfaction(faction))
         except Exception:
             sat = 50
+    seed_raw: object = ""
+    if "seed_guilt" in row.keys() and row["seed_guilt"] is not None:
+        seed_raw = row["seed_guilt"]
+    status = str(row["status"] or "") if "status" in row.keys() else ""
     return {
         "minister_name": name,
-        "loyalty": int(row["loyalty"] or 50),
-        "identity": int(row["identity"] or 50),
+        "loyalty": _int_axis(row["loyalty"], 50),
+        "identity": _int_axis(row["identity"], 50),
         "faction": faction,
         "satisfaction": int(sat),
-        "seed_guilt": str(row["seed_guilt"] or "") if "seed_guilt" in row.keys() else "",
+        "seed_guilt": seed_raw,
+        "status": status,
+        "present": True,
     }
+
+
+def minister_eligible_for_monthly_covert(db: Any, minister_name: str) -> bool:
+    """承办资格：人物行存在且 characters.status==active（复用既有状态，不新建表）。"""
+    snap = build_minister_snapshot(db, minister_name)
+    return bool(snap.get("present")) and str(snap.get("status") or "") == "active"
 
 
 def compute_floor_for_minister(db: Any, minister_name: str) -> str:
@@ -436,6 +503,7 @@ def apply_monthly_covert_actual_progress(
     与 apply_score_extraction 同 atomic 调用（commit=False）。
     不读/不写 dossier_progress_json；奏报仍走既有 0058 路径。
     旧档 pending_review 已由 DB 一次迁移为 active，本函数只扫 active。
+    资格：发令月（turn_issued==current）不计进度；承办缺行/非 active 不写进度不派生后果。
     """
     orders = list(db.list_secret_orders(status="active"))
     by_sel = _selection_map(selections)
@@ -443,6 +511,17 @@ def apply_monthly_covert_actual_progress(
     turn = int(state.turn)
     for order in orders:
         oid = int(order["id"])
+        # 发令月不计进度（收窄扫描集合，非平行护栏）
+        if int(order.get("turn_issued") or 0) == turn:
+            continue
+        minister = str(order.get("minister_name") or "")
+        if not minister_eligible_for_monthly_covert(db, minister):
+            applied.append({
+                "order_id": oid,
+                "skipped": True,
+                "reason": "承办人不在场或非 active",
+            })
+            continue
         dossier = db.get_dossier_for_secret_order(oid)
         if dossier is None:
             applied.append({
@@ -458,7 +537,7 @@ def apply_monthly_covert_actual_progress(
             "SELECT id FROM dossier_actual_progress WHERE dossier_id=? AND turn=?",
             (did, turn),
         ).fetchone()
-        floor = compute_floor_for_minister(db, str(order.get("minister_name") or ""))
+        floor = compute_floor_for_minister(db, minister)
         sel = by_sel.get(oid) or {}
         selected = sel.get("fidelity", sel.get("执行态", sel.get("state")))
         fidelity = clamp_fidelity_to_floor(floor, selected)
@@ -480,10 +559,10 @@ def apply_monthly_covert_actual_progress(
 
         world: Dict[str, object] = {}
         if prior is None:
-            ctx = _minister_world_context(db, str(order.get("minister_name") or ""))
+            ctx = _minister_world_context(db, minister)
             package = derive_monthly_covert_world_effects(
                 fidelity=fidelity,
-                minister_name=str(order.get("minister_name") or ""),
+                minister_name=minister,
                 dossier_id=did,
                 faction=str(ctx.get("faction") or ""),
                 region_id=str(ctx.get("region_id") or ""),
@@ -524,7 +603,10 @@ def settle_due_secret_orders(
     *,
     commit: bool = False,
 ) -> List[Dict[str, object]]:
-    """settle_with_delta 尾部：当月实况已落后，只读实况轨对账并 close。"""
+    """settle_with_delta 尾部：当月实况已落后，只读实况轨对账并 close。
+
+    玩家正文复用既有 result/0058 奏报；机面 note 含 Σ 但不写入 result（P7）。
+    """
     results: List[Dict[str, object]] = []
     for order in list_due_secret_orders_for_settlement(db, state):
         oid = int(order["id"])
@@ -559,10 +641,11 @@ def settle_due_secret_orders(
             "has_reports": bool(reports),
             "origin_context": f"secret_order:{oid}",
         })
+        player_text = player_facing_secret_order_close_text(order, reports)
         db.close_secret_order(
             oid,
             str(verdict["status"]),
-            str(verdict["note"]),
+            player_text,
             int(state.turn),
             commit=False,
         )
@@ -571,7 +654,8 @@ def settle_due_secret_orders(
             "dossier_id": did,
             "status": verdict["status"],
             "outcome": verdict["outcome"],
-            "result": verdict["note"],
+            "result": player_text,
+            "note": verdict["note"],
             "actual_units": actual,
             "target_units": target,
             "delivered": bool(verdict["delivered"]),

@@ -10579,15 +10579,19 @@ class GameDB:
     # ── #571 旨意案卷公共接口 ──────────────────────────────────────
 
     def _migrate_legacy_pending_review_secret_orders(self) -> None:
-        """#1504 SURVEY §5.2 F2：旧档 pending_review → active + 到期标记（一次确定）。
+        """#1504 SURVEY §5.2 F2：旧档 pending_review → active + 未来实况窗口（一次确定）。
 
         必须覆盖 due_turn=0：对账选择器要求 due_turn>0，否则旧行永不结案。
-        迁移后结算/注入不再长期并行消费 pending_review。due_commitment ACK 不经本表。
+        迁 active 后按尚缺 target units 设未来对账窗，禁止 due<=current 空实况立即判败。
+        已有 actual 行只补剩余窗口；禁从 dossier_progress_json/sim_note 回填实况；
+        禁复活 pending_review 核议消费链。due_commitment ACK 不经本表。
         """
+        import math
+
         try:
             rows = self.conn.execute(
                 """
-                SELECT id, due_turn, turn_issued, result
+                SELECT id, due_turn, turn_issued, deadline_span, result
                 FROM secret_orders
                 WHERE status='pending_review'
                 ORDER BY id
@@ -10601,13 +10605,36 @@ class GameDB:
         current_turn = int(gs["turn"] if gs is not None else 1) or 1
         stamp = "〔系统〕[到期迁移] 旧档 pending_review 已迁 active，待实进度对账"
         for row in rows:
+            oid = int(row["id"])
             due = int(row["due_turn"] or 0)
             issued = int(row["turn_issued"] or 0)
-            # due_turn=0 或不合法：落到「可当月对账」——max(issued, current)，且不超过 current
-            if due <= 0:
-                due = current_turn if current_turn > 0 else max(issued, 1)
-            if due > current_turn > 0:
-                due = current_turn
+            span = int(row["deadline_span"] or 0)
+            # 目标 Σ：有期限按 span；span=0 的旧令至少 1 个实况单位
+            target = float(max(span, 1))
+            actual = 0.0
+            try:
+                dossier = self.get_dossier_for_secret_order(oid)
+                if dossier is not None:
+                    # 只读实况轨；绝不从 progress_json/sim_note 回填
+                    actual = float(self.sum_dossier_actual_progress_units(int(dossier["id"])))
+            except Exception:
+                actual = 0.0
+            remaining = target - actual
+            if remaining <= 1e-9:
+                # 实况已交付：当月可对账结 done
+                need_due = current_turn
+            else:
+                months_needed = max(1, int(math.ceil(remaining - 1e-9)))
+                # 发令月不计进度：若 turn_issued==current，窗口从下月起算
+                if issued >= current_turn:
+                    need_due = current_turn + months_needed
+                else:
+                    need_due = current_turn + months_needed - 1
+            # 已有更远 due 则保留；绝不把未来窗压成 current 立即失败
+            if due > need_due:
+                new_due = due
+            else:
+                new_due = max(need_due, 1)
             prev = str(row["result"] or "")
             if "[到期迁移]" in prev:
                 new_result = prev
@@ -10615,7 +10642,6 @@ class GameDB:
                 lines = [ln for ln in prev.split("\n") if ln.strip()]
                 lines.append(stamp)
                 new_result = "\n".join(lines)
-            oid = int(row["id"])
             self.conn.execute(
                 """
                 UPDATE secret_orders
@@ -10625,7 +10651,7 @@ class GameDB:
                     updated_at=CURRENT_TIMESTAMP
                 WHERE id=? AND status='pending_review'
                 """,
-                (int(due), new_result, oid),
+                (int(new_due), new_result, oid),
             )
             # 核议中本就在办：保持/补齐案卷 executing（幂等）
             try:
@@ -19386,32 +19412,42 @@ class GameDB:
     ) -> None:
         def close_in_current_transaction() -> None:
             dossier = self.get_dossier_for_secret_order(int(order_id))
-            has_progress_chain = bool(
-                dossier is not None
-                and self.list_dossier_progress(int(dossier["id"]))
+            reports = (
+                self.list_dossier_progress(int(dossier["id"]))
+                if dossier is not None else []
             )
+            has_progress_chain = bool(reports)
+            close_text = str(result or "")
             self.conn.execute(
                 """
                 UPDATE secret_orders
                 SET status = ?, result = ?, turn_closed = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
-                (status, result, turn_closed, int(order_id)),
+                (status, close_text, turn_closed, int(order_id)),
             )
             if dossier is not None and dossier["status"] != "closed":
                 if dossier["status"] == "promulgated":
                     self.transition_decree_dossier(
                         int(dossier["id"]), "executing", commit=False,
                     )
-                if has_progress_chain:
-                    self.record_dossier_progress(
-                        int(dossier["id"]), int(turn_closed), "结案",
-                        str(result), is_terminal=True, commit=False,
-                    )
+                # 仅当结案正文是新增玩家叙事时追加终奏；不复写/复制既有 0058 奏报（P7）
+                if has_progress_chain and close_text.strip():
+                    last_memorial = ""
+                    for item in reversed(reports):
+                        text = str(item.get("memorial_text") or "").strip()
+                        if text:
+                            last_memorial = text
+                            break
+                    if close_text.strip() != last_memorial:
+                        self.record_dossier_progress(
+                            int(dossier["id"]), int(turn_closed), "结案",
+                            close_text, is_terminal=True, commit=False,
+                        )
                 self.record_dossier_execution(
                     int(dossier["id"]),
                     "fulfilled" if str(status) == "done" else "failed",
-                    str(result), int(turn_closed),
+                    close_text, int(turn_closed),
                     close=True, commit=False,
                 )
 
