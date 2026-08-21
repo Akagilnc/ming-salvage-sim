@@ -195,8 +195,11 @@ def test_actual_progress_container_separate_from_reported_rail(game):
     assert db.list_dossier_actual_rail(did)  # 含 actual_progress 行
 
 
-def test_reported_progress_never_enters_settlement_books(game):
-    """表报灌满 + 实况为空 → 到期 failed；实账不被表报翻盘。"""
+def test_settle_due_reads_actual_rail_only_report_does_not_flip_verdict(game):
+    """窄接缝：settle_due_secret_orders 只读 actual rail；奏报灌满不翻 verdict。
+
+    真入口下表报背离见 test_settle_gap_failed_and_reported_divergence。
+    """
     db, state, _ = game
     name = _minister(db)
     _set_axes(db, name, loyalty=20, identity=80)
@@ -533,12 +536,14 @@ def test_judge_selection_cannot_lighten_floor(game):
 
 
 def test_derive_world_effects_by_fidelity_origin():
-    """clamp 后四态机械派生人物/钱粮/局势包，一律 origin_ref=dossier:N。"""
+    """clamp 后四态机械派生人物/钱粮/地区包，一律 origin_ref=dossier:N。
+
+    不派生 皇威 metric / faction satisfaction（applier 无 origin 落点）。
+    """
     pkg = derive_monthly_covert_world_effects(
         fidelity="忠实",
         minister_name="袁崇焕",
         dossier_id=17,
-        faction="东林",
         region_id="beijing",
         title="密查",
     )
@@ -547,22 +552,22 @@ def test_derive_world_effects_by_fidelity_origin():
     assert pkg["人物变更"][0]["origin_ref"] == "dossier:17"
     assert pkg["economy_moves"][0]["delta"] == -3
     assert pkg["economy_moves"][0]["origin_ref"] == "dossier:17"
-    # 忠实不伤局势/派系
-    assert pkg["metric_delta"] == {}
-    assert pkg["faction_delta"] == {}
+    # 忠实无地区动乱；包内不产出 metric/faction 键
+    assert pkg.get("region_delta") == {}
+    assert "metric_delta" not in pkg
+    assert "faction_delta" not in pkg
 
     backlash = derive_monthly_covert_world_effects(
         fidelity="反噬",
         minister_name="袁崇焕",
         dossier_id=9,
-        faction="东林",
         region_id="beijing",
         title="反噬案",
     )
     assert backlash["人物变更"][0]["loyalty"] == -2
     assert backlash["economy_moves"] == []
-    assert backlash["metric_delta"].get("皇威") == -1
-    assert backlash["faction_delta"]["东林"]["satisfaction"] == -2
+    assert "metric_delta" not in backlash
+    assert "faction_delta" not in backlash
     assert backlash["region_delta"]["beijing"]["unrest"] == 2
     assert backlash["region_delta"]["beijing"]["origin_ref"] == "dossier:9"
 
