@@ -28,6 +28,8 @@ def _empty_module_json(module: str) -> str:
         return '{"局势推进": [], "新立局势": [], "事件结局": {}, "撤销局势": [], "结案局势": []}'
     if module == "personnel_secret":
         return '{"人物变更": [], "密令副作用": [], "密令结案": [], "崇祯结局": {}}'
+    if module == "relations":
+        return '{"大臣互动": []}'
     raise AssertionError(module)
 
 

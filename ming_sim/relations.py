@@ -29,6 +29,34 @@ CREDIT_DIRECTION = {
 _ROUND_RE = re.compile(r"(?:^|[|/:; ])round[=: -](\d+)(?:$|[|/:; ])", re.I)
 _TURN_RE = re.compile(r"(?:^|[|/:; ])turn[=: -](\d+)(?:$|[|/:; ])", re.I)
 
+# #633 结算口：非旨意自然演化的互动来源哨兵（与 shared canonical 同一哨兵字面）。
+SETTLEMENT_ORIGIN_SENTINEL = "盘面自发"
+
+
+def settlement_edge_origin(origin_ref: object, kind: str) -> str:
+    """#633 结算口唯一 origin 拼装器：``{来源引用}:relation:{类目}``。
+
+    bind_origin_round 在写口内再附 ``|round:N``（N=当前回合），TD-1 的 origin 回指
+    由既有绑定机制承担，此处不重复拼 round。禁在调用侧另拼第二套 origin。"""
+    base = str(origin_ref or "").strip() or SETTLEMENT_ORIGIN_SENTINEL
+    return f"{base}:relation:{validate_edge_kind(kind)}"
+
+
+def _capture_target_names(raw: object) -> list[str]:
+    """受动者归一：接受单名或名单；去空白、去空、去重，保序。"""
+    if isinstance(raw, str):
+        candidates: list[Any] = [raw]
+    elif isinstance(raw, (list, tuple)):
+        candidates = list(raw)
+    else:
+        return []
+    out: list[str] = []
+    for candidate in candidates:
+        name = str(candidate or "").strip()
+        if name and name not in out:
+            out.append(name)
+    return out
+
 
 def validate_edge_kind(event_kind: Any) -> str:
     kind = str(event_kind or "").strip()
@@ -98,3 +126,87 @@ def credit_event_to_edge(record: Mapping[str, Any]) -> dict[str, Any]:
 
 def credit_events_as_edges(records: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
     return [credit_event_to_edge(record) for record in records]
+
+
+# ── #633 结算口（ADR 0082）：邸报大臣互动 → 边事件当场落库 ──────────────
+
+
+def _capture_one_interaction(
+    db: Any, state: Any, item: Mapping[str, Any], turn: int,
+) -> list[dict[str, Any]]:
+    kind = validate_edge_kind(item.get("类目") or item.get("kind"))
+    if kind not in MINISTER_EDGE_KINDS:
+        raise ValueError(f"结算口只收大臣侧类目，得 {kind!r}（君臣类目归 0079 写端）")
+    source = str(item.get("施动者") or item.get("source") or "").strip()
+    if not source:
+        raise ValueError("施动者不能为空")
+    raw_targets = (
+        item["受动者"] if item.get("受动者") is not None else item.get("target")
+    )
+    targets = [name for name in _capture_target_names(raw_targets) if name != source]
+    if not targets:
+        raise ValueError("受动者不能为空")
+    raw_context = (
+        item["语境"] if item.get("语境") is not None else item.get("context")
+    )
+    context = str(raw_context or "")
+    # F1：strip 只作非空谓词；存储值原样交写口（字节相等验收靠这条不加工）。
+    if not context.strip():
+        raise ValueError("边事件语境不能为空")
+    origin = settlement_edge_origin(
+        item.get("来源引用") if item.get("来源引用") is not None else item.get("origin_ref"),
+        kind,
+    )
+    out: list[dict[str, Any]] = []
+    for target in targets:
+        # r2 F2 基数：每「施动者→受动者」有序对恰一行；N 方联名=牵头者→各联署者
+        # N-1 行；联署者互不写边、不做对称翻倍——由这个机械展开保证。
+        edge_id = int(db.record_relation_edge_event(
+            source=source,
+            target=target,
+            event_kind=kind,
+            context=context,
+            origin=origin,
+            turn=turn,
+            year=int(state.year),
+            period=int(state.period),
+        ))
+        out.append({
+            "source": source, "target": target, "event_kind": kind,
+            "origin": origin, "edge_id": edge_id,
+        })
+    return out
+
+
+def resolve_relation_edge_events_from_extraction(
+    db: Any, state: Any, extracted: Any,
+) -> list[dict[str, Any]]:
+    """#633 结算口真入口（resolve_credit_events_from_extraction 先例）。
+
+    消费 extractor delta 的 ``relation_edge_events`` section，经 record_relation_edge_event
+    唯一写口当场落库（TD-1）；尊重调用方事务（apply_score_extraction atomic 内）。
+    类目 fail-closed 限大臣侧九类；坏项逐条拒收留痕（category=invalid_relation_event），
+    不猜测修正；捕获为空时零事件零副作用。重复项由表 UNIQUE
+    (source,target,event_kind,context,origin) 幂等吸收，重放不双记。"""
+    results: list[dict[str, Any]] = []
+    if not isinstance(extracted, Mapping):
+        return results
+    items = extracted.get("relation_edge_events")
+    if not isinstance(items, list):
+        return results
+    turn = int(getattr(state, "turn", 0) or 0)
+    for item in items:
+        if not isinstance(item, Mapping):
+            results.append({
+                "rejected": True, "category": "invalid_shape", "item": item,
+                "reason": "大臣互动项必须为对象",
+            })
+            continue
+        try:
+            results.extend(_capture_one_interaction(db, state, item, turn))
+        except (TypeError, ValueError) as exc:
+            results.append({
+                "rejected": True, "category": "invalid_relation_event",
+                "reason": str(exc), "item": dict(item),
+            })
+    return results

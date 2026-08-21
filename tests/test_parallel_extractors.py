@@ -17,6 +17,7 @@ _CANNED = {
     "military_external": '{"new_armies": []}',
     "issues": '{"new_issues": []}',
     "personnel_secret": '{"secret_order_updates": []}',
+    "relations": '{"大臣互动": []}',
 }
 
 

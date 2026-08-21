@@ -630,7 +630,10 @@ def test_closed_army_pay_dossier_keeps_origin_in_extractor_input(game):
 
     # 负向：其余 extractor 不因本修复新增 closed 拨饷案卷输入面。
     non_internal = tuple(m for m in EXTRACTION_MODULES if m != "internal")
-    assert non_internal == ("military_external", "issues", "personnel_secret")
+    # #633：relations 并入后同受此负向门（不吃 closed 拨饷 provenance）。
+    assert non_internal == (
+        "military_external", "issues", "personnel_secret", "relations",
+    )
     for module in non_internal:
         other = build_extractor_shared_context(
             db, state, narrative="", decree_text="", module=module,
