@@ -9,7 +9,9 @@ import {
   routeRetryDecisions,
 } from "./decisionRouting";
 import { forwardSteamEvents } from "./steamEvents";
-import type { GameState, PendingActionFailure, PendingDecision } from "./types";
+import type {
+  DecisionChoice, GameState, PendingActionFailure, PendingDecision,
+} from "./types";
 
 // 颁诏结算流：盖玺颁诏 / 退朝 / HITL 决策点续裁 / 失败重拉，共用 SSE 推演进度区。
 // 结算完成一律整页刷新，草案/对话/局势/closed 弹窗全部按新 state 重新初始化。
@@ -131,7 +133,8 @@ export function useSettlementFlow({
 
   // 皇帝亲裁完所有决策点 / phase2 续跑：走 resolve_decisions/stream。
   // choices 按决策点 idx 顺序；all-decided 续跑可传 []——服务端幂等保留已存 choice。
-  const submitDecisions = async (choices: { label?: string; hint?: string; note?: string }[]) => {
+  // dossier 批红 choice 须带回 dossier_id / dossier_decision（#1490）；勿收窄剥字段。
+  const submitDecisions = async (choices: DecisionChoice[]) => {
     setPendingDecisions([]);
     setDecisionFailures([]);
     setBusy("月末结算");
