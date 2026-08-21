@@ -594,8 +594,42 @@ def test_extractor_cannot_second_write_army_pay_for_payload_dossier(game):
     assert _army_row(db)["arrears"] == pytest.approx(arrears_mid)
 
 
-def test_extractor_panmian_zifa_cannot_double_debit_after_immediate_pay(game):
-    """单写者：immediate 结案后 extractor 以盘面自发补饷不得二扣。"""
+def test_closed_army_pay_dossier_keeps_origin_in_extractor_input(game):
+    """#1503 provenance：immediate 结案后 extractor 输入仍见 dossier:<id>。"""
+    from ming_sim.simulation import build_extractor_shared_context
+
+    db, state, content = game
+    _set_guanning_arrears(db, 40, central=40, province=0)
+    state.metrics["国库"] = max(int(state.metrics["国库"]), 100)
+
+    ctx = _stage_xiexang(db, state.turn, amount=10, target_id="guanning")
+    dossier = _close_night_dossier(db, state, content, ctx.out["pending_action_id"])
+    did = int(dossier["id"])
+    _promulgate(db, state, content, did)
+    closed = db.get_decree_dossier(did)
+    assert closed["status"] == "closed"
+    assert closed["execution_outcome"] == "fulfilled"
+    # 模拟可见集可不再含 closed；extractor 输入接缝必须保留身份。
+    assert did not in {
+        int(r["id"]) for r in db.list_decree_dossiers_for_simulation(state.turn)
+    }
+    assert did in {
+        int(r["id"])
+        for r in db.list_closed_army_pay_dossiers_for_provenance(state.turn)
+    }
+
+    payload = build_extractor_shared_context(
+        db, state, narrative="", decree_text="", module="internal",
+    )
+    slim = payload.get("decree_dossiers") or []
+    hit = next((r for r in slim if int(r["id"]) == did), None)
+    assert hit is not None
+    assert hit["origin_ref"] == f"dossier:{did}"
+    assert hit["action_type"] == "grant_allocation"
+
+
+def test_independent_panmian_zifa_pay_lands_alongside_decree_pay(game):
+    """负向：同军同回合『旨意补饷 + 独立盘面自发补饷』两笔都应落。"""
     db, state, content = game
     _set_guanning_arrears(db, 40, central=40, province=0)
     state.metrics["国库"] = max(int(state.metrics["国库"]), 100)
@@ -603,22 +637,20 @@ def test_extractor_panmian_zifa_cannot_double_debit_after_immediate_pay(game):
 
     ctx = _stage_xiexang(db, state.turn, amount=10, target_id="guanning")
     dossier = _close_night_dossier(db, state, content, ctx.out["pending_action_id"])
-    _promulgate(db, state, content, dossier["id"])
+    did = int(dossier["id"])
+    _promulgate(db, state, content, did)
     assert int(state.metrics["国库"]) == treasury_before - 10
     arrears_mid = _army_row(db)["arrears"]
-    closed = db.get_decree_dossier(dossier["id"])
-    assert closed["status"] == "closed"
-    assert closed["execution_outcome"] == "fulfilled"
 
-    # 关闭案卷不在 extractor 输入时，合法 provenance 只剩「盘面自发」。
+    # 独立盘面自发（非案卷回声）：不得被 army+turn 宽去重吞掉。
     applied = apply_score_extraction(
         db, state,
         {
             "economy_moves": [{
                 "account": "国库",
-                "delta": -10,
+                "delta": -5,
                 "category": "补饷",
-                "reason": "邸报叙已拨关宁（应被单写者滤掉）",
+                "reason": "边镇自筹另笔补饷（独立于旨意）",
                 "purpose": "补饷",
                 "target_kind": "army",
                 "target_id": "guanning",
@@ -627,8 +659,57 @@ def test_extractor_panmian_zifa_cannot_double_debit_after_immediate_pay(game):
         },
         content=content,
     )
+    eco = [m for m in (applied.get("economy_moves") or []) if not m.get("rejected")]
+    assert any(int(m.get("delta") or 0) == -5 for m in eco)
+    assert int(state.metrics["国库"]) == treasury_before - 15
+    assert len(db.list_economy_moves_for_dossier(did)) == 1
+    assert _army_row(db)["arrears"] == pytest.approx(arrears_mid - 5)
+    ledger = [
+        dict(r) for r in db.conn.execute(
+            """
+            SELECT origin_ref, delta FROM economy_ledger
+            WHERE purpose='补饷' AND target_id='guanning' AND turn=?
+            ORDER BY id
+            """,
+            (state.turn,),
+        ).fetchall()
+    ]
+    assert {str(r["origin_ref"]) for r in ledger} == {f"dossier:{did}", "盘面自发"}
+    assert sorted(int(r["delta"]) for r in ledger) == [-10, -5]
+
+
+def test_extractor_echo_with_dossier_origin_still_single_writer_after_close(game):
+    """单写者：结案后 extractor 以 origin_ref=dossier:<id> 回声仍不得二扣。"""
+    db, state, content = game
+    _set_guanning_arrears(db, 40, central=40, province=0)
+    state.metrics["国库"] = max(int(state.metrics["国库"]), 100)
+    treasury_before = int(state.metrics["国库"])
+
+    ctx = _stage_xiexang(db, state.turn, amount=10, target_id="guanning")
+    dossier = _close_night_dossier(db, state, content, ctx.out["pending_action_id"])
+    did = int(dossier["id"])
+    _promulgate(db, state, content, did)
+    arrears_mid = _army_row(db)["arrears"]
+    assert db.get_decree_dossier(did)["status"] == "closed"
+
+    applied = apply_score_extraction(
+        db, state,
+        {
+            "economy_moves": [{
+                "account": "国库",
+                "delta": -10,
+                "category": "补饷",
+                "reason": "邸报叙已拨关宁（dossier 回声应被 provenance 滤掉）",
+                "purpose": "补饷",
+                "target_kind": "army",
+                "target_id": "guanning",
+                "origin_ref": f"dossier:{did}",
+            }],
+        },
+        content=content,
+    )
     eco = applied.get("economy_moves") or []
     assert all(int(m.get("delta") or 0) == 0 or m.get("rejected") for m in eco) or eco == []
     assert int(state.metrics["国库"]) == treasury_before - 10
-    assert len(db.list_economy_moves_for_dossier(dossier["id"])) == 1
+    assert len(db.list_economy_moves_for_dossier(did)) == 1
     assert _army_row(db)["arrears"] == pytest.approx(arrears_mid)

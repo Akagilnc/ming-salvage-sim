@@ -238,25 +238,6 @@ def _payload_owned_dossier_for_origin(db: GameDB, origin_ref: object) -> Optiona
     return {**row, "payload": payload}
 
 
-def _army_has_dossier_pay_ledger_this_turn(
-    db: GameDB, turn: int, army_id: str,
-) -> bool:
-    """#1503：本回合该军是否已有 dossier 源补饷流水（颁布缝单写者已落账）。"""
-    tid = str(army_id or "").strip()
-    if not tid:
-        return False
-    row = db.conn.execute(
-        """
-        SELECT 1 FROM economy_ledger
-        WHERE turn=? AND purpose='补饷' AND target_kind='army' AND target_id=?
-          AND origin_ref LIKE 'dossier:%'
-        LIMIT 1
-        """,
-        (int(turn), tid),
-    ).fetchone()
-    return row is not None
-
-
 def _canonical_appointment_fields(
     payload: Dict[str, object], *, current_office_type: str = "", llm_config=None,
 ) -> tuple[str, str, str]:
@@ -7408,23 +7389,9 @@ def apply_score_extraction(
         origin_ref = str(
             move.get("origin_ref") or move.get("来源引用") or ""
         ).strip()
-        purpose = str(move.get("purpose") or move.get("用途") or "").strip()
-        target_kind = str(
-            move.get("target_kind") or move.get("目标类型") or ""
-        ).strip()
-        target_id = str(
-            move.get("target_id") or move.get("目标编号") or ""
-        ).strip()
-        # #1503 单写者：本回合该军已有 dossier 源补饷流水（颁布缝已落账）时，
-        # extractor 不论 origin_ref=dossier:<id> 还是「盘面自发」均不得再写补饷。
-        # 关闭案卷不在 extractor 输入时，只能靠 ledger 机械去重，不能靠 prompt。
-        if (
-            purpose == "补饷"
-            and target_id
-            and (not target_kind or target_kind == "army")
-            and _army_has_dossier_pay_ledger_this_turn(db, state.turn, target_id)
-        ):
-            continue
+        # #1503 单写者：仅按 origin_ref=dossier:<id> 复用既有 payload 案卷 provenance
+        # 判重（_payload_owned_dossier_for_origin）。不得按 army+turn 吞掉同回合
+        # 独立「盘面自发」补饷；已消费案卷身份由 extractor 输入接缝保留。
         if not origin_ref.startswith("dossier:"):
             economy_moves.append(move)
             continue
