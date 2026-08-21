@@ -149,6 +149,38 @@ describe("ArmyDrawer presentation", () => {
     expect(host.textContent).toContain("欠饷约15万两");
     expect(host.textContent).not.toContain("12.5万两");
   });
+
+  it("#1501 does not render static army status sentence", () => {
+    const statusSentence = "宁锦守线尚可，欠饷严重，主动大举出击风险极高。";
+    const host = renderArmyDrawer({
+      id: "guanning",
+      name: "关宁军 / 宁锦防线",
+      station: "辽东 / 宁远锦州",
+      theater: "辽东",
+      commander: "祖大寿",
+      controller: "祖大寿",
+      troop_type: "边军",
+      manpower: 72000,
+      army_needed: 12,
+      supply: 38,
+      morale: 52,
+      training: 68,
+      equipment: 62,
+      arrears: 60,
+      mobility: 48,
+      loyalty: 55,
+      status: statusSentence,
+      owner_power: "ming",
+    });
+
+    // 即使 props 仍带旧 status，军牌 DOM 不得渲染之；欠饷栏仍在
+    expect(host.textContent).not.toContain(statusSentence);
+    expect(host.textContent).not.toContain("欠饷严重");
+    expect(host.textContent).not.toMatch(/状态/);
+    expect(host.textContent).toMatch(/欠饷/);
+    // 欠饷真数呈现路径保留（约数格式由 formatArmyArrears 负责）
+    expect(host.querySelector(".right-drawer-detail")).toBeTruthy();
+  });
 });
 
 describe("朝堂空 layout 合法态（#1290/#1332）", () => {
