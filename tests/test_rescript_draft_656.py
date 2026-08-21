@@ -231,6 +231,7 @@ def test_payload_projection_strips_gameplay_bare_quantities():
         "issue_id": 42, "kind": "situation", "title": "陕西告饥",
         "状态": "流民渐聚", "进度": "未见起色",
         "局势走向": -7,
+        "end_turn": 48,                     # 顶层 gameplay 裸量（真实 shape 可带）
         f"当前每{TURN_UNIT}效果": {"metrics": {"民心": -1},
             "economy": [{"account": "国库", "delta": -500,
                          "category": "赈济压力", "reason": "陕西救灾支拨"}]},
@@ -238,6 +239,7 @@ def test_payload_projection_strips_gameplay_bare_quantities():
         f"上{TURN_UNIT}推进": {"delta_bar": 12, "narrative": "抚臣发帑赈济"},
         "commitment_progress": {"months_elapsed": 3, "paid_total": 150,
                                 "remaining_to_goal": "距达标仍有差距"},
+        "未知嵌套": {"深层数值": 999, "深层文字": "某处告急"},  # 未知字段也不得穿透裸量
         "结案条件": "灾情平复",
     }]}
     payload = build_rescript_draft_payload(state, "邸报正文", simulator_payload,
@@ -245,21 +247,39 @@ def test_payload_projection_strips_gameplay_bare_quantities():
     issues = payload["active_issues"]
     assert len(issues) == 1
     issue = issues[0]
+    # 机械负向判据：除契约所需 issue_id 外，投影输出不含任何 int/float（含顶层与
+    # 未知嵌套 gameplay 裸量）。
+    def _assert_no_bare_numbers(node: object, path: str) -> None:
+        if isinstance(node, bool):
+            return
+        if isinstance(node, (int, float)):
+            raise AssertionError(f"投影泄露裸量 {node!r} 于 {path}")
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if path == "" and key == "issue_id":
+                    continue
+                _assert_no_bare_numbers(value, f"{path}.{key}")
+        if isinstance(node, list):
+            for idx, value in enumerate(node):
+                _assert_no_bare_numbers(value, f"{path}[{idx}]")
+
+    _assert_no_bare_numbers(issue, "")
     assert issue["issue_id"] == 42                      # 权威绑定快照保留
     assert issue["状态"] == "流民渐聚"                   # 定性文字保留
     assert "局势走向" not in issue                       # inertia 裸量剥除
+    assert "end_turn" not in issue                      # 顶层 gameplay 裸量剥除
     effect = issue[f"当前每{TURN_UNIT}效果"]
     assert "metrics" not in effect                      # 数值 delta 整体消失
     econ = effect["economy"][0]
-    assert "delta" not in econ                          # 裸量 delta 剥除
     assert econ["category"] == "赈济压力"               # 谁受影响、何类负担的文字保留
-    assert issue["成功效果"] is None                     # 全裸量效果洗后为空即整体去掉
+    assert "成功效果" not in issue                       # 全裸量效果洗后为空即整体去掉
     advance = issue[f"上{TURN_UNIT}推进"]
     assert "delta_bar" not in advance
     assert advance["narrative"] == "抚臣发帑赈济"        # 推进叙事保留
     progress = issue["commitment_progress"]
     assert "months_elapsed" not in progress and "paid_total" not in progress
     assert progress == {"remaining_to_goal": "距达标仍有差距"}  # 定性档位保留
+    assert issue["未知嵌套"] == {"深层文字": "某处告急"}  # 未知嵌套裸量剥除、文字保留
     # 纪年契约字段照旧
     assert payload["turn"]["year"] == 1630 and payload["turn"]["reign_period_label"]
 
