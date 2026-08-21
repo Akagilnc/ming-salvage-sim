@@ -5,6 +5,7 @@ import { AudienceArchiveModal } from "./audienceArchiveModal";
 import { ChatModal } from "./chatModal";
 import { EdictModal } from "./edictModal";
 import { HistoryDetailView, HistoryModal } from "./historyModal";
+import { FullscreenModal } from "./hud";
 import { ReportModal } from "./reportModal";
 import { parseLeadingStageDirection } from "../format";
 import type { BudgetAccount, ChatMessage, GameState, Minister, PendingActionFailure, Suggestion } from "../types";
@@ -1066,6 +1067,45 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
 
     await act(async () => { await Promise.resolve(); });
     expect(document.body.textContent).toContain("宫中旧话照常");
+  });
+});
+
+describe("#1480 / #1499 FullscreenModal modal-layout-bare 只随 hideTitle", () => {
+  it("hideTitle 挂 modal-layout-bare；起居注有可见标题栏不挂", async () => {
+    const bareHost = document.createElement("div");
+    document.body.appendChild(bareHost);
+    const bareRoot = createRoot(bareHost);
+    mountedRoots.push({ root: bareRoot, host: bareHost });
+    act(() => {
+      bareRoot.render(
+        <FullscreenModal title="召对：周延儒" subtitle="内阁首辅" bgClass="modal-bg-chat" hideTitle onClose={() => {}}>
+          <div className="chat-full-grid">长转录正文</div>
+        </FullscreenModal>,
+      );
+    });
+    const bareModal = bareHost.querySelector(".fullscreen-modal.modal-bg-chat");
+    expect(bareModal).not.toBeNull();
+    expect(bareModal!.classList.contains("modal-layout-bare")).toBe(true);
+    expect(bareHost.querySelector(".modal-header-bare")).not.toBeNull();
+    expect(bareHost.querySelector(".modal-title")).toBeNull();
+
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ turns: [] }),
+    }));
+    const archiveHost = document.createElement("div");
+    document.body.appendChild(archiveHost);
+    const archiveRoot = createRoot(archiveHost);
+    mountedRoots.push({ root: archiveRoot, host: archiveHost });
+    await act(async () => {
+      archiveRoot.render(<AudienceArchiveModal ministers={[]} onClose={() => {}} />);
+      await Promise.resolve();
+    });
+    const archiveModal = archiveHost.querySelector(".fullscreen-modal.modal-bg-chat");
+    expect(archiveModal).not.toBeNull();
+    expect(archiveModal!.classList.contains("modal-layout-bare")).toBe(false);
+    expect(archiveHost.querySelector(".modal-header-bare")).toBeNull();
+    expect(archiveHost.querySelector(".modal-title h1")?.textContent).toContain("起居注");
   });
 });
 
