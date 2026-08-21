@@ -32,41 +32,47 @@ _TURN_RE = re.compile(r"(?:^|[|/:; ])turn[=: -](\d+)(?:$|[|/:; ])", re.I)
 # #633 结算口：非旨意自然演化的互动来源哨兵（与 shared canonical 同一哨兵字面）。
 SETTLEMENT_ORIGIN_SENTINEL = "盘面自发"
 
+# 结算口 dossier 来源的精确字面形态：dossier:<正整数>，零空白零变体。
+_DOSSIER_ORIGIN_RE = re.compile(r"dossier:[1-9][0-9]*")
+
 
 def settlement_edge_origin(origin_ref: object, kind: str) -> str:
     """#633 结算口唯一 origin 拼装器：``{来源引用}:relation:{类目}``。
 
-    来源须为非空字符串且已过 ``GameDB.effect_origin_rejection`` 守门（守门由
-    ``_validated_settlement_origin`` 在调用侧先行）；缺失或非字符串形状在此
-    诚实报错，不再静默默认成「盘面自发」。bind_origin_round 在写口内再附
+    来源须为非空字符串且已过 ``_validated_settlement_origin`` 精确 canonical
+    守门（调用侧先行）；缺失或非字符串形状在此诚实报错，不再静默默认成
+    「盘面自发」。本拼装器不做独立 strip 搭救：来源值原样进入 origin，空白
+    只作非空谓词（与 F1 context 同一纪律）。bind_origin_round 在写口内再附
     ``|round:N``（N=当前回合），TD-1 的 origin 回指由既有绑定机制承担，此处
     不重复拼 round。禁在调用侧另拼第二套 origin。"""
     if not isinstance(origin_ref, str):
         raise ValueError(f"来源引用必须为字符串，得 {type(origin_ref).__name__}")
-    base = origin_ref.strip()
-    if not base:
+    if not origin_ref.strip():
         raise ValueError("效果缺 origin_ref；盘面自然演化须显式标为「盘面自发」")
-    return f"{base}:relation:{validate_edge_kind(kind)}"
+    return f"{origin_ref}:relation:{validate_edge_kind(kind)}"
 
 
 def _validated_settlement_origin(db: Any, origin_ref: object) -> str:
-    """结算口 provenance 守门：只收精确「盘面自发」或已颁且授权效果的案卷引用。
+    """结算口 provenance 守门：只收**精确 canonical 值**——原始值恰为「盘面自发」
+    哨兵字面，或恰为已颁且授权效果的 ``dossier:<id>`` 字面。
 
-    复用 GameDB.effect_origin_rejection 既有拒收 API；拒绝缺失、伪前缀、未知/
-    未授权案卷与自带 round/turn 的伪造值（origin_round 一律由当前回合同步绑定，
-    TD-1 不容伪造）。非法形状按失败诚实报错，不猜测修正。"""
+    不做任何归一（ADR 0015 显式优于推断）：带首尾空白的变体（" 盘面自发 "、
+    "\n盘面自发\t"、空白包裹的 dossier 引用）一律逐项拒收留痕，不 strip 后
+    放行。精确匹配同时封死自带 round/turn 的伪造值（origin_round 一律由当前
+    回合同步绑定，TD-1 不容伪造）；案卷授权核验复用
+    GameDB.effect_origin_rejection 既有 API，不另立平行守门。"""
     if not isinstance(origin_ref, str):
         raise ValueError(f"来源引用必须为字符串，得 {type(origin_ref).__name__}")
-    value = origin_ref.strip()
-    if not value:
-        raise ValueError("效果缺 origin_ref；盘面自然演化须显式标为「盘面自发」")
-    if _ROUND_RE.search(value) or _TURN_RE.search(value):
+    if origin_ref == SETTLEMENT_ORIGIN_SENTINEL:
+        return origin_ref
+    if not _DOSSIER_ORIGIN_RE.fullmatch(origin_ref):
         raise ValueError(
-            f"来源引用不得自带回合绑定（origin_round 由当前回合强制）：{value}"
+            f"来源引用非法（只收精确「{SETTLEMENT_ORIGIN_SENTINEL}」或已授权"
+            f" dossier:<id>，不归一首尾空白）：{origin_ref!r}"
         )
-    if db.effect_origin_rejection(value) is not None:
-        raise ValueError(f"origin_ref 非法：{value}")
-    return value
+    if db.effect_origin_rejection(origin_ref) is not None:
+        raise ValueError(f"origin_ref 非法：{origin_ref}")
+    return origin_ref
 
 
 def validate_edge_kind(event_kind: Any) -> str:
