@@ -20,6 +20,24 @@ def _map_nodes(db):
     return web_app.WebGame.map_nodes(rt)
 
 
+def test_liaodong_station_prefix_excludes_flank_gateway_outer():
+    """#1448/#1401 同根：station startswith「辽东」不得吞 侧翼/门户/外线。
+
+    seed 里这三词在 theater 字段；若落入 station，宽前缀会把外线军误挂 liaodong。
+    """
+    rt = object.__new__(web_app.WebGame)
+    belong = web_app.WebGame._army_belongs_to_theater
+    base = {"id": "x", "name": "x", "station": "", "theater": ""}
+    # 正例：关宁形 station
+    assert belong(rt, {**base, "station": "辽东 / 宁远锦州", "theater": "辽东"}, "liaodong")
+    assert belong(rt, {**base, "station": "辽东/宁远", "theater": ""}, "liaodong")
+    assert belong(rt, {**base, "station": "辽东", "theater": ""}, "liaodong")
+    # 反例：侧翼/门户/外线（无论在 station 或仅 theater 非精确「辽东」）
+    for bad in ("辽东侧翼", "辽东门户", "辽东外线"):
+        assert not belong(rt, {**base, "station": bad, "theater": ""}, "liaodong"), bad
+        assert not belong(rt, {**base, "station": "", "theater": bad}, "liaodong"), bad
+
+
 def test_map_nodes_no_double_army_hang(game):
     """#1401：theater 优先挂；未命中再 region——一军不得双挂。"""
     db, _state, _content = game
