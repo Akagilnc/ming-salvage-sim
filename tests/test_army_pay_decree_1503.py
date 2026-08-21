@@ -134,7 +134,11 @@ def test_army_pay_missing_fields_fail_loud_at_admission(game):
     """字段缺失 fail-loud：不猜散文、不成案、不落账。"""
     db, state, content = game
     treasury_before = int(state.metrics["国库"])
-    with pytest.raises(ValueError, match="拨饷|amount|account|target"):
+    before_ids = {int(d["id"]) for d in db.list_decree_dossiers()}
+    with pytest.raises(
+        ValueError,
+        match=r"^拨饷旨意缺少结构化字段：amount/account（不猜散文）$",
+    ):
         db.create_decree_dossier(
             state,
             action_type="grant_allocation",
@@ -144,16 +148,106 @@ def test_army_pay_missing_fields_fail_loud_at_admission(game):
             payload={
                 "dossier_action_type": "grant_allocation",
                 "grant_action": "协饷",
-                # 缺 amount / account / purpose
+                # 缺 amount / account（purpose 由 normalize 补）
             },
             status="proposed",
             commit=False,
         )
     assert int(state.metrics["国库"]) == treasury_before
-    assert db.list_decree_dossiers() == [] or all(
-        d.get("action_type") != "grant_allocation" or "协饷" not in str(d.get("payload_json") or "")
-        for d in db.list_decree_dossiers()
+    after = db.list_decree_dossiers()
+    new_grants = [
+        d for d in after
+        if int(d["id"]) not in before_ids and d.get("action_type") == "grant_allocation"
+    ]
+    assert new_grants == []
+
+
+def test_xiexang_incomplete_payload_rejected_before_pending(game):
+    """入 pending 前拒不完整协饷载荷（缺 amount/非法 target）。"""
+    db, state, content = game
+    from ming_sim.action_materialize import stage_grant_allocation_candidate
+
+    actor = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
+    ).fetchone()["name"]
+    before_pending = db.list_pending_actions(state.turn, minister_name=actor)
+
+    with pytest.raises(ValueError, match=r"协饷旨意缺少正数 amount"):
+        stage_grant_allocation_candidate(
+            db, state.turn, actor,
+            text="臣请协饷。",
+            grant_action="协饷",
+            target_kind="army",
+            target_id="guanning",
+            amount=0,
+            account="国库",
+        )
+    with pytest.raises(ValueError, match=r"协饷旨意 target 无法解析为军队"):
+        stage_grant_allocation_candidate(
+            db, state.turn, actor,
+            text="臣请协饷辽东。",
+            grant_action="协饷",
+            target_kind="army",
+            target_id="liaodong",
+            amount=15,
+            account="国库",
+        )
+    with pytest.raises(ValueError, match=r"target_kind 须为 army"):
+        stage_grant_allocation_candidate(
+            db, state.turn, actor,
+            text="臣请协饷。",
+            grant_action="协饷",
+            target_kind="region",
+            target_id="guanning",
+            amount=15,
+            account="国库",
+        )
+    after_pending = db.list_pending_actions(state.turn, minister_name=actor)
+    assert len(after_pending) == len(before_pending)
+
+
+def test_revise_away_from_xiexang_clears_pay_only_fields(game):
+    """改案离开协饷时清 purpose/immediate，不得残留销欠语义。"""
+    db, state, content = game
+    from ming_sim.action_materialize import stage_grant_allocation_candidate
+
+    actor = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
+    ).fetchone()["name"]
+    first_id = stage_grant_allocation_candidate(
+        db, state.turn, actor,
+        text="臣请协饷关宁十五万。",
+        grant_action="协饷",
+        target_kind="army",
+        target_id="guanning",
+        amount=15,
+        account="国库",
     )
+    assert first_id > 0
+    pending = json.loads(db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?", (first_id,),
+    ).fetchone()["payload_json"])
+    assert pending["purpose"] == "补饷"
+    assert pending.get("execution_surface") == "immediate"
+
+    updated = stage_grant_allocation_candidate(
+        db, state.turn, actor,
+        text="臣请改拨军械项目经费十万。",
+        grant_action="项目经费",
+        target_kind="army",
+        target_id="guanning",
+        amount=10,
+        account="国库",
+        target_candidate=str(first_id),
+    )
+    assert updated == first_id
+    revised = json.loads(db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?", (first_id,),
+    ).fetchone()["payload_json"])
+    assert revised["grant_action"] == "项目经费"
+    assert revised.get("purpose") in (None, "")
+    assert not db._is_army_pay_grant_payload(revised)
+    assert revised.get("execution_surface") != "immediate" or revised.get("purpose") != "补饷"
 
 
 # ── ② 颁布缝一次消费：扣库+销欠同回合 ────────────────────────────
@@ -313,7 +407,7 @@ def test_xiexang_clamp_when_amount_exceeds_arrears(game):
 
 
 def test_xiexang_clamp_when_treasury_short(game):
-    """国库不足时实扣=库余额（既有 record 路径 clamp）。"""
+    """国库不足时实扣=库余额，且执行格记不足额 failed（非 fulfilled）。"""
     db, state, content = game
     _set_guanning_arrears(db, 60, central=60, province=0)
     state.metrics["国库"] = 5
@@ -328,6 +422,49 @@ def test_xiexang_clamp_when_treasury_short(game):
     assert spent == 5
     assert int(state.metrics["国库"]) == 0
     assert _army_row(db)["arrears"] == pytest.approx(60 - spent)
+    closed = db.get_decree_dossier(dossier["id"])
+    assert closed["status"] == "closed"
+    assert closed["execution_outcome"] == "failed"
+    assert "不足额" in str(closed.get("execution_note") or "")
+
+
+def test_army_pay_forces_immediate_over_inherited_in_transit(game):
+    """拨饷覆盖继承的 in_transit 默认；不得进月度在途对账轨。"""
+    db, state, content = game
+    _set_guanning_arrears(db, 40, central=40, province=0)
+    state.metrics["国库"] = max(int(state.metrics["国库"]), 50)
+
+    dossier_id = db.create_decree_dossier(
+        state,
+        action_type="grant_allocation",
+        decree_text="拨关宁军饷十万两。",
+        target_kind="army",
+        target_id="guanning",
+        payload={
+            "grant_action": "协饷",
+            "purpose": "补饷",
+            "amount": 10,
+            "account": "国库",
+            "target_kind": "army",
+            "target_id": "guanning",
+            # 模拟旧 pending / normalize 前置插入的在途默认
+            "execution_surface": "in_transit",
+        },
+    )
+    row = db.get_decree_dossier(dossier_id)
+    payload = json.loads(row["payload_json"])
+    assert payload["execution_surface"] == "immediate"
+
+    _promulgate(db, state, content, dossier_id)
+    closed = db.get_decree_dossier(dossier_id)
+    assert closed["status"] == "closed"
+    assert closed["execution_outcome"] == "fulfilled"
+    # 已结案的 immediate 不得出现在在途对账扫描面
+    open_ids = {
+        int(t["dossier_id"])
+        for t in db.list_monthly_grant_reconciliation_targets()
+    }
+    assert dossier_id not in open_ids
 
 
 # ── 负向：非拨饷不误落；extractor 单写者 ─────────────────────────
@@ -446,6 +583,46 @@ def test_extractor_cannot_second_write_army_pay_for_payload_dossier(game):
                 "target_kind": "army",
                 "target_id": "guanning",
                 "origin_ref": f"dossier:{dossier['id']}",
+            }],
+        },
+        content=content,
+    )
+    eco = applied.get("economy_moves") or []
+    assert all(int(m.get("delta") or 0) == 0 or m.get("rejected") for m in eco) or eco == []
+    assert int(state.metrics["国库"]) == treasury_before - 10
+    assert len(db.list_economy_moves_for_dossier(dossier["id"])) == 1
+    assert _army_row(db)["arrears"] == pytest.approx(arrears_mid)
+
+
+def test_extractor_panmian_zifa_cannot_double_debit_after_immediate_pay(game):
+    """单写者：immediate 结案后 extractor 以盘面自发补饷不得二扣。"""
+    db, state, content = game
+    _set_guanning_arrears(db, 40, central=40, province=0)
+    state.metrics["国库"] = max(int(state.metrics["国库"]), 100)
+    treasury_before = int(state.metrics["国库"])
+
+    ctx = _stage_xiexang(db, state.turn, amount=10, target_id="guanning")
+    dossier = _close_night_dossier(db, state, content, ctx.out["pending_action_id"])
+    _promulgate(db, state, content, dossier["id"])
+    assert int(state.metrics["国库"]) == treasury_before - 10
+    arrears_mid = _army_row(db)["arrears"]
+    closed = db.get_decree_dossier(dossier["id"])
+    assert closed["status"] == "closed"
+    assert closed["execution_outcome"] == "fulfilled"
+
+    # 关闭案卷不在 extractor 输入时，合法 provenance 只剩「盘面自发」。
+    applied = apply_score_extraction(
+        db, state,
+        {
+            "economy_moves": [{
+                "account": "国库",
+                "delta": -10,
+                "category": "补饷",
+                "reason": "邸报叙已拨关宁（应被单写者滤掉）",
+                "purpose": "补饷",
+                "target_kind": "army",
+                "target_id": "guanning",
+                "origin_ref": "盘面自发",
             }],
         },
         content=content,

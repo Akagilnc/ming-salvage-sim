@@ -991,11 +991,34 @@ def _grant_target(intent: Dict[str, Any]) -> Tuple[str, str]:
     if action == "项目经费":
         return "issue", target_id or name or action
     if action == "协饷":
-        return "army", target_id or name or action
+        # 仅抛原始 target 文本；army id 解析在 stage 前完成，禁止把 region 标签硬改 army。
+        return "army", target_id or name
     if action == "赈灾":
         kind = "region" if target_id and target_id != action else "issue"
         return kind, target_id or name or action
     return "issue", target_id or name or action
+
+
+def _resolve_xiexang_army_id(db: Any, raw_target: str) -> str:
+    """#1503：协饷 target 必须解析为真实 army id；region/散文不得静默升格。"""
+    tid = str(raw_target or "").strip()
+    if not tid:
+        return ""
+    row = db.conn.execute("SELECT id FROM armies WHERE id=?", (tid,)).fetchone()
+    if row is not None:
+        return str(row["id"])
+    content = getattr(db, "content", None)
+    armies = getattr(content, "armies", None) if content is not None else None
+    if armies:
+        from ming_sim.matching import match_army_id_from_text
+        matched = match_army_id_from_text(tid, armies)
+        if matched:
+            hit = db.conn.execute(
+                "SELECT id FROM armies WHERE id=?", (matched,),
+            ).fetchone()
+            if hit is not None:
+                return str(hit["id"])
+    return ""
 
 
 def stage_grant_allocation_candidate(
@@ -1084,11 +1107,38 @@ def stage_grant_allocation_candidate(
         staged["amount"] = n
     # #1503：仅显式协饷成案带 purpose=补饷；army 对象的军械/筑城/项目经费不得升格销欠。
     if action == "协饷":
+        # 入 pending 前 fail-loud：缺字段/非军目标不得静默写残载荷。
+        if n <= 0:
+            raise ValueError("协饷旨意缺少正数 amount（不猜散文）")
+        if account not in {"国库", "内库"}:
+            raise ValueError("协饷旨意缺少合法 account（不猜散文）")
+        if kind and kind != "army":
+            raise ValueError(
+                f"协饷旨意 target_kind 须为 army，不得为 {kind!r}（不猜散文）"
+            )
+        army_id = _resolve_xiexang_army_id(db, target)
+        if not army_id:
+            raise ValueError(
+                f"协饷旨意 target 无法解析为军队：{target!r}（不猜散文）"
+            )
+        if cadence and cadence not in {"一次性", "每月"}:
+            raise ValueError("协饷旨意 cadence 非法（不猜散文）")
+        if not cadence:
+            staged["cadence"] = "一次性"
+            cadence = "一次性"
+        staged["amount"] = n
+        staged["account"] = account
         staged["purpose"] = "补饷"
         staged["target_kind"] = "army"
+        staged["target_id"] = army_id
         if cadence != "每月":
             # 颁布即扣库+销欠；在途只留叙事，不进机械对账轨。
             staged["execution_surface"] = "immediate"
+    else:
+        # 改案离开协饷时显式清 pay-only 残留，防止 merge 保留 purpose/immediate。
+        staged["purpose"] = ""
+        if "execution_surface" not in staged:
+            staged["execution_surface"] = ""
     if existing_id:
         return db.update_directive_candidate(existing_id, staged)
     return db.stage_directive_candidate(int(turn), minister_name, payload=staged)

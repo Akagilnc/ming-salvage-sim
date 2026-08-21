@@ -712,11 +712,13 @@ def test_grant_target_field_carries_region_project_army_through_normalize(game):
     ).fetchone()["name"]
 
     cases = (
-        ("赈灾", "陕西", "region"),
-        ("项目经费", "运河疏浚", "issue"),
-        ("协饷", "辽东边军", "army"),
+        # (action, classifier_target, expected_kind, expected_staged_target)
+        # #1503：协饷 stage 前解析为真实 army id；赈灾/项目保持原文。
+        ("赈灾", "陕西", "region", "陕西"),
+        ("项目经费", "运河疏浚", "issue", "运河疏浚"),
+        ("协饷", "辽东边军", "army", "guanning"),
     )
-    for action, target, expected_kind in cases:
+    for action, target, expected_kind, expected_staged in cases:
         payload = {
             "动作类型": "恩赏·拨帑",
             "恩赏拨帑": action,
@@ -740,7 +742,7 @@ def test_grant_target_field_carries_region_project_army_through_normalize(game):
             "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
         ).fetchone()["payload_json"])
         assert staged["grant_action"] == action
-        assert staged["target_id"] == target
+        assert staged["target_id"] == expected_staged
         assert staged["target_kind"] == expected_kind
 
 
