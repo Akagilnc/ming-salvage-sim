@@ -2,6 +2,7 @@ import React from "react";
 import { Loader2, Lock, RotateCcw, Send, Star, X } from "lucide-react";
 import { MinisterPortrait } from "./hud";
 import { api } from "../api";
+import { filterScrollForSelectedMinister } from "../ministerScrollLens";
 import { ScrollMessages, portraitSources } from "./scrollMessages";
 import type {
   AudienceScrollMessage,
@@ -120,9 +121,15 @@ export function ChatModal({
   const effectiveScrollState = snapshotStillCurrent(scrollState) ? scrollState : { kind: "loading" as const };
   // The night scroll is the sole live authority. Personal chat history is only the legacy fallback;
   // mixing it here reintroduces cross-night records and snapshot-difference heuristics.
+  // #1511: open-night branch applies a pure selected-minister lens — never dump the campaign-wide scroll.
   const displayMessages: Array<ChatDisplayMessage | AudienceScrollMessage> = scrollMode === "legacy" || (effectiveScrollState.kind === "none" && currentNightId === 0)
     ? [...chat]
-    : effectiveScrollState.kind === "night" ? effectiveScrollState.messages.filter((message) => !failedInThisScroll(message)) : [];
+    : effectiveScrollState.kind === "night"
+      ? filterScrollForSelectedMinister(
+        effectiveScrollState.messages.filter((message) => !failedInThisScroll(message)),
+        minister.name,
+      )
+      : [];
 
   React.useEffect(() => {
     let alive = true;
