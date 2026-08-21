@@ -32,7 +32,6 @@ function makeRegion(overrides: Partial<Region> = {}): Region {
     name: "辽东",
     kind: "边镇",
     population: 100,
-    population_wan: 100,
     public_support: 50,
     unrest: 20,
     natural_disaster: "无",
@@ -62,17 +61,12 @@ function makeNode(region: Region): MapNode {
   };
 }
 
-describe("NodeIntel #648 population projection", () => {
-  it("renders 约 N 万口 qualitative label, not a bare N万", () => {
-    const host = renderNodeIntel(makeNode(makeRegion({ population_wan: 720 })));
-    expect(host.textContent).toContain("约720万口");
-    expect(host.textContent).not.toMatch(/[^约]720万/);
-  });
-
-  it("renders 不足一万口 when population_wan <= 0 (never undefined万)", () => {
-    const host = renderNodeIntel(makeNode(makeRegion({ population_wan: 0 })));
-    expect(host.textContent).toContain("不足一万口");
-    expect(host.textContent).not.toContain("undefined万");
+describe("NodeIntel #648 population (P7: LLM 长文，无 UI 模板)", () => {
+  it("never renders fixed population strings (约N万口 / 不足一万口)", () => {
+    const host = renderNodeIntel(makeNode(makeRegion({ population: 7200000 })));
+    expect(host.textContent).not.toContain("万口");
+    expect(host.textContent).not.toContain("不足一万");
+    expect(host.textContent).not.toContain("undefined");
   });
 });
 

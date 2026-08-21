@@ -1,7 +1,7 @@
 import React from "react";
 import { Eraser, MapPinned, Move, Pencil, RotateCcw, Shield, ZoomIn, ZoomOut } from "lucide-react";
 import { EXTERNAL_PATH_GROUPS, MAP_VIEW_BOX, REGION_PATH_GROUPS } from "../mapPaths";
-import { formatArmyArrears, labelPower, populationWanKou, qualitativeArmyStat } from "../format";
+import { formatArmyArrears, labelPower, qualitativeArmyStat } from "../format";
 import type { ExternalPathRenderItem, MapNode, RegionPathRenderItem, SvgLabelPosition, TerrainTransform } from "../types";
 
 export const MING_MAP_COLOR = "#4f8a57";
@@ -781,7 +781,7 @@ export function NodeIntel({ node }: { node: MapNode }) {
       {region ? (
         <table className="intel-table">
           <tbody>
-            <tr><th>人口</th><td>{populationWanKou(region.population_wan)}</td><th>田亩</th><td>{region.registered_land}万亩</td></tr>
+            <tr><th>田亩</th><td colSpan={3}>{region.registered_land}万亩</td></tr>
             <tr><th>民心</th><td>{region.public_support}</td><th>动乱</th><td>{region.unrest}</td></tr>
             <tr><th>粮食</th><td>{region.grain_security}</td><th>月税</th><td>{region.tax_per_turn}万/月</td></tr>
             <tr><th>归属</th><td>{labelPower(region.controlled_by || "ming")}</td><th>类型</th><td>{region.kind}</td></tr>

@@ -44,7 +44,6 @@ from starlette.concurrency import run_in_threadpool
 
 from ming_sim.applier import atomic
 from ming_sim.constants import ROOT_DIR
-from ming_sim.db import POPULATION_UNIT_PERSONS
 from ming_sim.paths import bundled_path, user_data_path, user_data_dir
 from ming_sim.exceptions import ExitGame, LLMUnavailable, SettlementAbort
 from ming_sim.llm_config import (
@@ -1125,18 +1124,6 @@ class WebGame:
             if int(row["id"]) in visible_ids
         ]
 
-    def regions_display_payload(self) -> List[Dict[str, Any]]:
-        """#648（AC1/F4）：web 玩家面地区人口按存档口径投影为万级展示值。
-
-        新档（DB 标「人」）population 为裸人数 → ÷10⁴ 得万口；无标旧档（万人）原值。
-        机面字段 population 原样保留不動，仅新增 population_wan 供 TS 渲染「N万」。"""
-        rows = self.db.region_payload()
-        persons = self.db.population_unit == POPULATION_UNIT_PERSONS
-        for row in rows:
-            pop = int(row["population"])
-            row["population_wan"] = pop // 10000 if persons else pop
-        return rows
-
     def map_nodes(self) -> List[Dict[str, Any]]:
         """地图节点投影。#1401：一军一挂（theater 关键词优先，未命中再 region 首命中）；
         与 region 同 id 的 theater 合入带 region 字段的 theater 节点，禁无名/双 id。
@@ -1162,10 +1149,10 @@ class WebGame:
             "xuan_da": (50.49, 40.08), "shanhaiguan": (55.52, 42.84),
         }
         armies = self.db.army_payload(danger_order=True)
-        # #648：地图节点 region 与地区抽屉共享同一存档感知人口投影
-        # （regions_display_payload：新档 population_wan=人÷10⁴，旧档原值），
-        # 机面 population 原样保留；不得另开第二真源。
-        regions = self.regions_display_payload()
+        # #648：玩家面人口呈现走既批路径——simulator seam featured input +
+        # LLM 长出叙事；web 直显模板已按 P7 删除，地图节点只回单一
+        # db.region_payload()（机面 population），不再有第二套 UI 投影。
+        regions = self.db.region_payload()
         # 一军一挂：theater 关键词优先（命中不进 region claimed）；未命中再 region 首命中
         claimed_army_ids: set[str] = set()
         theater_armies: Dict[str, List[Dict[str, Any]]] = {
@@ -1524,7 +1511,7 @@ class WebGame:
             "victory_status": self.session.victory(),
             "ending": self.ending_payload(),
             "events": [],
-            "regions": self.regions_display_payload(),
+            "regions": self.db.region_payload(),
             "armies": self.db.army_payload(),
             "map_nodes": self.map_nodes(),
             "ministers": [

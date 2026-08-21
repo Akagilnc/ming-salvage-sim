@@ -264,54 +264,54 @@ def test_class_delta_displaced_accepts_sat_lev_population_face_removed(game):
     assert row2["population"] == SHAANXI_POP
 
 
-# ── web 玩家面展示投影（AC1：无裸大数直出给皇帝）─────────────────────────────
+# ── web 玩家面：UI 直显模板已删（P7），机面 population 单一真源 ───────────────
 
-def _web_runtime(db, state, content):
-    """轻壳 WebGame：仅挂 regions_display_payload 所需缝（同 test_army_card_status_1501 风格）。"""
+def test_web_region_payload_has_no_population_wan_projection(game):
+    """W1（P7）：web 地区载荷不再有 population_wan 直显投影——玩家面人口
+    呈现走 simulator seam featured input + LLM 长出叙事，UI 无固定模板；
+    地图节点与地区载荷同源 db.region_payload()（机面 population 原样）。"""
     from types import SimpleNamespace
 
     import web_app
 
+    new_db, new_state, content = game
     runtime = object.__new__(web_app.WebGame)
-    runtime.session = SimpleNamespace(db=db, state=state, content=content)
-    return runtime
+    runtime.session = SimpleNamespace(db=new_db, state=new_state, content=content)
+
+    regions = runtime.db.region_payload()
+    assert all("population_wan" not in row for row in regions)
+    bz = next(r for r in regions if r["id"] == "beizhili")
+    assert bz["population"] == BEIZHILI_POP_PERSONS  # 机面单一真源，不動
+
+    nodes = {n["id"]: n for n in runtime.map_nodes()}
+    node_bz = nodes["beizhili"]["region"]
+    assert "population_wan" not in node_bz
+    assert node_bz["population"] == BEIZHILI_POP_PERSONS
 
 
-def test_web_region_display_population_wan_by_save_unit(game, legacy_game, tmp_path):
-    """web 地区人口展示值：新档（人）÷10⁴ 出万口；旧档（万人）原值。机面字段原样保留。"""
-    from types import SimpleNamespace
+# ── W2：新档 region_detail/inspect_region sub-万分支 ─────────────────────────
 
-    new_db, new_state, content = game
-    runtime = _web_runtime(new_db, new_state, content)
-    rows = {r["id"]: r for r in runtime.regions_display_payload()}
-    assert rows["beizhili"]["population_wan"] == 720
-    assert rows["beizhili"]["population"] == BEIZHILI_POP_PERSONS  # 机面不動
+def test_new_save_region_detail_sub_wan_population_label(game):
+    """新档人口 0—9999 不得报「约0万口」；与 simulation 投影同口径「不足一万口」。"""
+    db, _, _ = game
+    for persons, expected in (
+        (0, "人口不足一万口"),
+        (9999, "人口不足一万口"),
+        (10000, "人口约1万口"),
+    ):
+        db.conn.execute(
+            "UPDATE regions SET population=? WHERE id='beizhili'", (persons,)
+        )
+        detail = db.region_detail("北直隶", qualitative=True)
+        assert expected in detail, persons
+        assert "约0万口" not in detail, persons
 
-    old_db, _old_state = legacy_game
-    old_runtime = _web_runtime(old_db, _old_state, content)
-    old_rows = {r["id"]: r for r in old_runtime.regions_display_payload()}
-    assert old_rows["beizhili"]["population_wan"] == 720
-    assert old_rows["beizhili"]["population"] == 720
 
-
-def test_web_map_nodes_share_save_aware_population_projection(game, legacy_game):
-    """#648 类2：地图节点 region 与地区抽屉共享同一存档感知人口投影。
-
-    map_nodes 不得直取 db.region_payload()——否则 node.region 缺 population_wan，
-    前端渲染 undefined万；机面 population 字段仍原样保留。"""
-    new_db, new_state, content = game
-    nodes = {n["id"]: n for n in _web_runtime(new_db, new_state, content).map_nodes()}
-    bz = nodes["beizhili"]["region"]
-    assert bz["population_wan"] == 720
-    assert bz["population"] == BEIZHILI_POP_PERSONS  # 机面不動
-
-    old_db, old_state = legacy_game
-    old_nodes = {
-        n["id"]: n for n in _web_runtime(old_db, old_state, game[2]).map_nodes()
-    }
-    old_bz = old_nodes["beizhili"]["region"]
-    assert old_bz["population_wan"] == 720
-    assert old_bz["population"] == 720
+def test_legacy_region_detail_population_untouched(legacy_game):
+    """旧档「人口N万人」原样，不加换算层。"""
+    db, _ = legacy_game
+    detail = db.region_detail("北直隶", qualitative=True)
+    assert "人口720万人" in detail
 
 
 # ── on_restore 收复单位接缝（ADR 0088：content 静态真源已全线「人」）───────────
