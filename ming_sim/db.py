@@ -16472,9 +16472,10 @@ class GameDB:
             if isinstance(recommendation, dict):
                 # #635 荐人口（庭裁 r3）：荐词（payload.reason 原句）是双边的一句
                 # 语境，非空必填；缺失即在调用方事务内 fail-loud，任命与双边一并
-                # 回滚（ADR 0079/0082 零模板、P1 失败诚实）。
-                recommendation_reason = str(payload.get("reason") or "").strip()
-                if not recommendation_reason:
+                # 回滚（ADR 0079/0082 零模板、P1 失败诚实）。原句逐字透传，
+                # 只以 strip 判空、不裁剪持久化文本。
+                recommendation_reason = str(payload.get("reason") or "")
+                if not recommendation_reason.strip():
                     raise ValueError("荐人双边缺非空荐词语境：payload.reason 必填")
                 from ming_sim.recommendations import record_recommendation_edges
                 with atomic(self):
@@ -19890,10 +19891,12 @@ class GameDB:
         game_state 行即可。"""
         source = str(source or "").strip()
         target = str(target or "").strip()
-        context = str(context or "").strip()
+        # 语境是叙事原句，写口零改字（ADR 0079/0080/0142）：只以 strip 判空，
+        # 持久化与下传保持逐字原文。
+        context = str(context or "")
         if not source or not target:
             raise ValueError("边事件 source/target 不能为空")
-        if not context:
+        if not context.strip():
             raise ValueError("边事件语境不能为空")
         kind = validate_edge_kind(event_kind)
         evidence_flag = normalize_evidence(evidence)
@@ -19911,21 +19914,6 @@ class GameDB:
         effective_year = int(year if year is not None else default_year)
         effective_period = int(period if period is not None else default_period)
         bound_origin, origin_round = bind_origin_round(origin, effective_turn)
-        # 幂等身份只锚稳定 origin（|round 后缀前的裸串）+端点+腿别，不含可变
-        # context（#635 r1 F2：不得依赖可变 context 判重）；同 origin 重放返回
-        # 既有行原 id，原 context 不被改写。
-        bare_origin = bound_origin.split("|", 1)[0]
-        existing = self.conn.execute(
-            """
-            SELECT id FROM relation_edge_events
-            WHERE source = ? AND target = ? AND event_kind = ?
-              AND (origin = ? OR origin LIKE ?)
-            ORDER BY id LIMIT 1
-            """,
-            (source, target, kind, bound_origin, f"{bare_origin}|%"),
-        ).fetchone()
-        if existing is not None:
-            return int(existing["id"])
         self.conn.execute(
             """
             INSERT OR IGNORE INTO relation_edge_events
@@ -19943,9 +19931,9 @@ class GameDB:
         row = self.conn.execute(
             """
             SELECT id FROM relation_edge_events
-            WHERE source = ? AND target = ? AND event_kind = ? AND origin = ?
+            WHERE source = ? AND target = ? AND event_kind = ? AND context = ? AND origin = ?
             """,
-            (source, target, kind, bound_origin),
+            (source, target, kind, context, bound_origin),
         ).fetchone()
         return int(row["id"])
 

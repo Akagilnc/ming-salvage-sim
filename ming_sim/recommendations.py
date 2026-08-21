@@ -193,26 +193,49 @@ def record_recommendation_edges(db: Any, state: Any, recommender: str,
     边1：荐主→被荐人 kind=`恩义`；边2：君(EMPEROR_NODE)→荐主 kind=`知遇`。
     context=荐词原句逐字透传，非空必填（空则响亮拒绝，零模板宪法）。
     幂等锚=origin `recommendation:{event_id}:{恩义|知遇}`，写口自动追加
-    `|round:{turn}` 后缀；重放同一事件 id 不重写。
+    `|round:{turn}` 后缀；重放同一事件 id 不重写。荐人专属的稳定 origin
+    判重归本语义拥有者（与 credit_events::_existing_edge_id 同构），通用写口
+    record_relation_edge_event 保持精确事件身份，不为单一消费者扩权。
     """
-    text = str(reason or "").strip()
-    if not text:
+    # 荐词原句逐字透传，只以 strip 判空，不裁剪持久化文本。
+    text = str(reason or "")
+    if not text.strip():
         raise ValueError("荐人双边缺非空荐词语境：reason 必填、逐字透传")
     source = str(recommender or "").strip()
     target = str(candidate or "").strip()
     if not source or not target:
         raise ValueError("荐人双边荐主/被荐人不能为空")
     turn, year, period = int(state.turn), int(state.year), int(state.period)
-    grace = db.record_relation_edge_event(
-        source=source, target=target, event_kind="恩义", context=text,
-        origin=f"recommendation:{int(event_id)}:恩义",
-        turn=turn, year=year, period=period,
-    )
-    zhiyu = db.record_relation_edge_event(
-        source=EMPEROR_NODE, target=source, event_kind="知遇", context=text,
-        origin=f"recommendation:{int(event_id)}:知遇",
-        turn=turn, year=year, period=period,
-    )
+
+    def _existing_leg_id(leg_kind: str, leg_source: str, leg_target: str) -> int | None:
+        """荐人专属幂等：稳定 origin（|round 后缀前）+端点+腿别，跨回合、
+        忽略可变 context；命中即返回原 id，不重写。"""
+        base = f"recommendation:{int(event_id)}:{leg_kind}"
+        row = db.conn.execute(
+            """
+            SELECT id FROM relation_edge_events
+            WHERE source = ? AND target = ? AND event_kind = ?
+              AND (origin = ? OR origin LIKE ?)
+            ORDER BY id LIMIT 1
+            """,
+            (leg_source, leg_target, leg_kind, base, f"{base}|%"),
+        ).fetchone()
+        return int(row["id"]) if row is not None else None
+
+    grace = _existing_leg_id("恩义", source, target)
+    if grace is None:
+        grace = db.record_relation_edge_event(
+            source=source, target=target, event_kind="恩义", context=text,
+            origin=f"recommendation:{int(event_id)}:恩义",
+            turn=turn, year=year, period=period,
+        )
+    zhiyu = _existing_leg_id("知遇", EMPEROR_NODE, source)
+    if zhiyu is None:
+        zhiyu = db.record_relation_edge_event(
+            source=EMPEROR_NODE, target=source, event_kind="知遇", context=text,
+            origin=f"recommendation:{int(event_id)}:知遇",
+            turn=turn, year=year, period=period,
+        )
     return grace, zhiyu
 
 

@@ -150,6 +150,25 @@ def test_second_leg_failure_rolls_back_everything(game, monkeypatch):
     assert char_row["office"] != "巡盐御史"
 
 
+def test_real_entry_persists_raw_reason_verbatim(game):
+    """r3 逐字透传：真实入口荐词带首尾空白/换行，事件 reason 与两腿 context
+    均字节不变落库（写口零改字，只以 strip 判空）。"""
+    db, state, content = game
+    recommender = _pick_recommender(content)
+    row = db.list_recommendation_candidates(state, recommender.name)[0]
+    reason = "  荐其旧任有实绩，堪当巡盐之任。\n"
+    action_id = _stage_recommendation(db, state, recommender.name, row, "巡盐御史", reason)
+
+    _commit_and_promulgate(db, state, content, action_id)
+
+    event = db.list_recommendation_events(state, recommender.name)[0]
+    assert event["reason"] == reason
+    legs = [e for e in db.get_relation_edge_events()
+            if str(e["origin"]).startswith(f"recommendation:{event['id']}:")]
+    assert len(legs) == 2
+    assert all(e["context"] == reason for e in legs)
+
+
 def test_replay_same_event_with_changed_reason_stays_two_rows(game):
     """r1 F2：幂等身份只锚稳定 origin（recommendation:{id}:{腿别}+|round 口径），
     不含可变 context——同 event_id 换荐词重放，恒 2 行且原文不被改写。"""
