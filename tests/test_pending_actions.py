@@ -206,12 +206,12 @@ def test_secret_order_rush_intent_preserves_zero_deadline(game, monkeypatch):
     row = db.conn.execute(
         "SELECT status, due_turn FROM secret_orders WHERE id=?", (oid,)
     ).fetchone()
-    assert row["status"] == "pending_review"
+    assert row["status"] == "active"  # #1504：不再 pending_review
     assert row["due_turn"] == state.turn
 
 
 def test_secret_order_rush_deadline_zero_commits_immediate_review(game):
-    """暂存催办 deadline_months=0 表示本月即核，commit 时不能被缺省值改成 1。"""
+    """暂存催办 deadline_months=0 表示本月到期对账，commit 时不能被缺省值改成 1。"""
     db, state, content = game
     name = _active_minister_name(db, content)
     oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=6)
@@ -225,16 +225,16 @@ def test_secret_order_rush_deadline_zero_commits_immediate_review(game):
     row = db.conn.execute(
         "SELECT status, due_turn FROM secret_orders WHERE id=?", (oid,)
     ).fetchone()
-    assert row["status"] == "pending_review"
+    assert row["status"] == "active"  # #1504
     assert row["due_turn"] == state.turn
 
 
 def test_secret_order_submit_intent_stages_and_commits(game, monkeypatch):
-    """提交核议过闸门:召对暂存(status 仍 active),颁诏 commit 才转 pending_review。"""
+    """提交核议过闸门:召对暂存(status 仍 active),颁诏 commit 缩 due 至当月（#1504 不对 pending_review）。"""
     db, state, content = game
     name = _active_minister_name(db, content)
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
-    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=0)
+    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=6)
 
     monkeypatch.setattr(cb, "_run_backend_for_config",
                         lambda prompt, llm_config=None, tag="": (json.dumps(
@@ -248,7 +248,12 @@ def test_secret_order_submit_intent_stages_and_commits(game, monkeypatch):
     assert db.conn.execute("SELECT status FROM secret_orders WHERE id=?", (oid,)).fetchone()["status"] == "active"
 
     db.commit_pending_actions(state)
-    assert db.conn.execute("SELECT status FROM secret_orders WHERE id=?", (oid,)).fetchone()["status"] == "pending_review"
+    row = db.conn.execute(
+        "SELECT status, due_turn, result FROM secret_orders WHERE id=?", (oid,),
+    ).fetchone()
+    assert row["status"] == "active"
+    assert int(row["due_turn"]) == int(state.turn)
+    assert "[提交核议]" in (row["result"] or "")
 
 
 def test_secret_order_progress_intent_stages_and_commits(game, monkeypatch):
@@ -1139,33 +1144,40 @@ def content_consort_candidates(game):
 
 
 def test_commit_does_not_crash_when_action_raises(game):
-    """CMR P0:同回合先 提交核议(转 pending_review)再 催办 同一密令,颁诏 commit 时 rush 对
-    非 active 抛 ValueError——commit 不得崩整个结算;抛错的那条标 failed(不留 pending 成孤儿)。"""
+    """CMR P0:同回合先结案再催办同一密令——rush 对非 active 抛错；commit 不得崩整批。
+
+    #1504 提交核议不再翻 pending_review，故本用例以 done 终态模拟非 active 目标。
+    """
     db, state, content = game
     name = _active_minister_name(db, content)
     oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=6)
-    # 模拟两召对:先暂存提交核议,再暂存催办(两者召对期都读到 active 真实状态)
-    db.stage_pending_action(state.turn, kind="secret_order", action="提交核议",
-                            minister_name=name, target_id=oid, payload={"claim": "办结"})
+    db.conn.execute(
+        "UPDATE secret_orders SET status='done', turn_closed=? WHERE id=?",
+        (state.turn, oid),
+    )
+    db.conn.commit()
     db.stage_pending_action(state.turn, kind="secret_order", action="催办",
                             minister_name=name, target_id=oid, payload={"reason": "加急"})
 
     applied = db.commit_pending_actions(state)   # 不得抛
 
-    # 提交核议落了(状态 pending_review),催办因非 active 抛错→标 failed、不留 pending 孤儿、不崩
-    assert db.conn.execute("SELECT status FROM secret_orders WHERE id=?", (oid,)).fetchone()["status"] == "pending_review"
-    assert {a["action"] for a in applied} == {"提交核议"}
+    assert db.conn.execute("SELECT status FROM secret_orders WHERE id=?", (oid,)).fetchone()["status"] == "done"
+    assert applied == []
     assert db.list_pending_actions(state.turn) == []
     assert [p["action"] for p in db.list_pending_actions(state.turn, status="failed")] == ["催办"]
 
 
 def test_no_stage_for_non_active_target(game, monkeypatch):
-    """CMR R2:目标非 active(pending_review)时,会话写动作不 stage(否则只会成孤儿暂存行)。"""
+    """CMR R2:目标非 active（已结案）时,会话写动作不 stage(否则只会成孤儿暂存行)。"""
     db, state, content = game
     name = _active_minister_name(db, content)
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
     oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=0)
-    db.submit_secret_order_for_review(oid, "已呈", state.year, state.period)   # active → pending_review
+    db.conn.execute(
+        "UPDATE secret_orders SET status='done', turn_closed=? WHERE id=?",
+        (state.turn, oid),
+    )
+    db.conn.commit()  # #1504：非 active 用终态；submit 不再产 pending_review
     monkeypatch.setattr(cb, "_run_backend_for_config",
                         lambda prompt, llm_config=None, tag="": (json.dumps(
                             {"密令动作": "更新", "目标密令编号": 0, "新标题": "改"}, ensure_ascii=False), 1))

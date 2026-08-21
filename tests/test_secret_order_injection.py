@@ -1,7 +1,6 @@
-"""#108：密令注入月末推演时 pending_review 全进，不被满载 active 的整体 [:cap] 截断饿死。
+"""#108 保留：legacy pending_review 注入不被满载 active 截断（#1504 迁移窗仍全保）。
 
-pending_review = 到期密令，本回合必须给 done/failed 裁决；被截断会永久卡住不结案。
-旧码 `(active + pending_review)[:20]` 在 active 满 20 时把所有 pending_review 切掉。
+#1504 后不再新产 pending_review 作结案链；选择器仍全保遗留 pending + active 填 cap。
 """
 from __future__ import annotations
 
