@@ -12606,14 +12606,11 @@ class GameDB:
 
     @staticmethod
     def _is_army_pay_grant_payload(payload: Optional[Dict[str, object]]) -> bool:
-        """#1503：拨饷/协饷类 = 结构化补饷载荷（颁布扣库+销欠）。"""
+        """#1503：拨饷/协饷类 = 显式 grant_action=协饷 或 purpose=补饷（禁 army 通用升格）。"""
         p = payload or {}
         grant_action = str(p.get("grant_action") or "").strip()
         purpose = str(p.get("purpose") or "").strip()
-        target_kind = str(p.get("target_kind") or "").strip()
-        if grant_action == "协饷" or purpose == "补饷":
-            return True
-        return target_kind == "army" and grant_action not in {"加衔", "荫叙", "赏赉", "发内帑"}
+        return grant_action == "协饷" or purpose == "补饷"
 
     def _normalize_army_pay_grant_payload(
         self, payload: Dict[str, object],

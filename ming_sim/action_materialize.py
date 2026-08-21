@@ -495,24 +495,6 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
         for field_name in mechanical_fields:
             if draft_res.get(field_name) not in (None, ""):
                 semantic_payload[field_name] = draft_res[field_name]
-        # #1503：拟旨抽到 army+金额结构化字段 → 拨饷类收成 grant_allocation/协饷/补饷。
-        # 全文不算结构化载荷；仅显式字段齐全时升格，缺字段留给 admission fail-loud。
-        try:
-            _amt = int(semantic_payload.get("amount") or 0)
-        except (TypeError, ValueError):
-            _amt = 0
-        _acct = str(semantic_payload.get("account") or "").strip()
-        _tk = str(semantic_payload.get("target_kind") or "").strip()
-        _tid = str(semantic_payload.get("target_id") or "").strip()
-        if _amt > 0 and _acct in {"国库", "内库"} and _tk == "army" and _tid:
-            semantic_payload["dossier_action_type"] = "grant_allocation"
-            semantic_payload["grant_action"] = str(
-                semantic_payload.get("grant_action") or "协饷"
-            ).strip() or "协饷"
-            semantic_payload["purpose"] = "补饷"
-            semantic_payload["execution_surface"] = str(
-                semantic_payload.get("execution_surface") or "immediate"
-            ).strip() or "immediate"
         # #568：点策 origin 走既有 source_chat_turn_id 填值路径（directive 成案消费）
         try:
             origin_pin = int(draft_res.get("source_chat_turn_id") or 0)
@@ -1100,8 +1082,8 @@ def stage_grant_allocation_candidate(
         n = 0
     if n > 0:
         staged["amount"] = n
-    # #1503：协饷/拨饷类成案即带 purpose=补饷（颁布缝销欠）；字段齐备性由 admission 响亮校验。
-    if action == "协饷" or kind == "army":
+    # #1503：仅显式协饷成案带 purpose=补饷；army 对象的军械/筑城/项目经费不得升格销欠。
+    if action == "协饷":
         staged["purpose"] = "补饷"
         staged["target_kind"] = "army"
         if cadence != "每月":

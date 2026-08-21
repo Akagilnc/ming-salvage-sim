@@ -366,6 +366,61 @@ def test_non_army_grant_does_not_clear_arrears(game):
     assert _army_row(db)["arrears"] == pytest.approx(before["arrears"])
 
 
+@pytest.mark.parametrize("grant_action,message,reply", [
+    ("项目经费", "拨关宁军械项目经费十万两。", "臣请户部发帑十万两作军械项目经费。"),
+    ("项目经费", "拨关宁筑城经费十万两。", "臣请户部发帑十万两作筑城经费。"),
+])
+def test_army_target_non_pay_grant_does_not_clear_arrears(
+    game, grant_action, message, reply,
+):
+    """army 对象的军械/筑城/项目经费：可扣库，不得升格协饷销欠。"""
+    db, state, content = game
+    _set_guanning_arrears(db, 60, central=60, province=0)
+    before = _army_row(db)
+    state.metrics["国库"] = max(int(state.metrics["国库"]), 100)
+    treasury_before = int(state.metrics["国库"])
+
+    actor = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
+    ).fetchone()["name"]
+    # 显式 army 目标 + 非协饷 grant_action：不得因 army+金额+账户升格补饷。
+    from ming_sim.action_materialize import stage_grant_allocation_candidate
+    pending_id = stage_grant_allocation_candidate(
+        db, state.turn, actor,
+        text=reply,
+        grant_action=grant_action,
+        target_kind="army",
+        target_id="guanning",
+        emperor_text=message,
+        amount=10,
+        account="国库",
+    )
+    assert pending_id > 0
+    pending = json.loads(db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
+    ).fetchone()["payload_json"])
+    assert pending.get("purpose") != "补饷"
+    assert pending.get("grant_action") == grant_action
+    assert not db._is_army_pay_grant_payload(pending)
+
+    dossier = _close_night_dossier(db, state, content, pending_id)
+    payload = json.loads(dossier["payload_json"])
+    assert payload.get("purpose") != "补饷"
+    assert not db._is_army_pay_grant_payload(payload)
+
+    _promulgate(db, state, content, dossier["id"])
+
+    moves = db.list_economy_moves_for_dossier(dossier["id"])
+    assert moves and int(moves[0]["delta"]) == -10
+    assert moves[0].get("purpose") != "补饷"
+    assert int(state.metrics["国库"]) == treasury_before - 10
+    # 根因：不得因 army 目标误销欠饷
+    assert _army_row(db)["arrears"] == pytest.approx(before["arrears"])
+    assert _army_row(db)["central_pay_arrears"] == pytest.approx(
+        before["central_pay_arrears"]
+    )
+
+
 def test_extractor_cannot_second_write_army_pay_for_payload_dossier(game):
     """单写者机械检查：payload 案卷颁布后 extractor 补饷不得二扣。"""
     db, state, content = game
