@@ -2851,14 +2851,8 @@ class GameSession:
                 if str(d.get("status") or "") == "decided":
                     continue
                 options = d.get("options") or []
-                # 识别批红轨：event_id 前缀，或 options 自带 dossier 能力字段
-                # （防 bind 误解绑后校验被跳过，#1490 接收端病灶）。
-                is_dossier = str(d.get("event_id") or "").startswith("dossier:") or any(
-                    isinstance(option, dict)
-                    and option.get("dossier_decision") is not None
-                    for option in options
-                )
-                if not is_dossier:
+                # 批红轨真源：event_id 的 dossier: 前缀（bind 已保此前缀，#1490）。
+                if not str(d.get("event_id") or "").startswith("dossier:"):
                     continue
                 idx = int(d["idx"])
                 choice = choices[idx] if idx < len(choices) else None
