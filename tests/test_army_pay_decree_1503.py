@@ -641,6 +641,86 @@ def test_closed_army_pay_dossier_keeps_origin_in_extractor_input(game):
         )
 
 
+def test_closed_army_pay_provenance_injects_when_decree_dossiers_prepassed(game):
+    """#1507-F1：生产 settle 预传 decree_dossiers（list，非 None）时 internal 仍须注入。
+
+    旧门 `decree_dossiers is None` 在 decree.py 必传 list 下永假，provenance 死门。
+    """
+    from ming_sim.simulation import build_extractor_shared_context
+
+    db, state, content = game
+    _set_guanning_arrears(db, 40, central=40, province=0)
+    state.metrics["国库"] = max(int(state.metrics["国库"]), 100)
+
+    ctx = _stage_xiexang(db, state.turn, amount=10, target_id="guanning")
+    dossier = _close_night_dossier(db, state, content, ctx.out["pending_action_id"])
+    did = int(dossier["id"])
+    _promulgate(db, state, content, did)
+    assert db.get_decree_dossier(did)["status"] == "closed"
+
+    # 生产同形：预传模拟可见集（closed 拨饷已不在内；或显式空 list）
+    sim_rows = list(db.list_decree_dossiers_for_simulation(state.turn))
+    assert did not in {int(r["id"]) for r in sim_rows}
+
+    for prepassed in (sim_rows, []):
+        payload = build_extractor_shared_context(
+            db, state, narrative="", decree_text="",
+            module="internal", decree_dossiers=prepassed,
+        )
+        hit = next(
+            (r for r in (payload.get("decree_dossiers") or []) if int(r["id"]) == did),
+            None,
+        )
+        assert hit is not None, f"prepassed={prepassed!r} 须注入 closed 拨饷 provenance"
+        assert hit["origin_ref"] == f"dossier:{did}"
+
+        # 非 internal 预传同 list 仍不得吃 closed 拨饷
+        other = build_extractor_shared_context(
+            db, state, narrative="", decree_text="",
+            module="issues", decree_dossiers=prepassed,
+        )
+        other_ids = {int(r["id"]) for r in (other.get("decree_dossiers") or [])}
+        assert did not in other_ids
+
+
+def test_army_pay_already_cleared_spent_zero_is_fulfilled(game):
+    """#1507-F5：颁布时军已清（spent=0, still_owed=0）记 fulfilled，非 failed。"""
+    db, state, content = game
+    _set_guanning_arrears(db, 15, central=15, province=0)
+    state.metrics["国库"] = max(int(state.metrics["国库"]), 100)
+
+    ctx = _stage_xiexang(db, state.turn, amount=15, target_id="guanning")
+    dossier = _close_night_dossier(db, state, content, ctx.out["pending_action_id"])
+    did = int(dossier["id"])
+
+    # staging 与颁布之间：独立盘面自发补饷已把欠饷清零
+    apply_score_extraction(
+        db, state,
+        {
+            "economy_moves": [{
+                "account": "国库",
+                "delta": -15,
+                "category": "补饷",
+                "reason": "同回合盘面自发先清",
+                "purpose": "补饷",
+                "target_kind": "army",
+                "target_id": "guanning",
+                "origin_ref": "盘面自发",
+            }],
+        },
+        content=content,
+    )
+    assert _army_row(db)["arrears"] == pytest.approx(0)
+
+    _promulgate(db, state, content, did)
+    closed = db.get_decree_dossier(did)
+    assert closed["status"] == "closed"
+    assert closed["execution_outcome"] == "fulfilled", closed
+    # clamp 到 0：本案无补饷流水（或 spent=0），不得记不足额 failed
+    note = str(closed.get("execution_note") or "")
+    assert "不足额" not in note
+
+
 def test_independent_panmian_zifa_pay_lands_alongside_decree_pay(game):
     """负向：同军同回合『旨意补饷 + 独立盘面自发补饷』两笔都应落。"""
     db, state, content = game
