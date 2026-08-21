@@ -24,7 +24,6 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from ming_sim.agents import parse_agent_json, run_agent_text
-from ming_sim.constants import TURN_UNIT
 from ming_sim.db import GameDB
 from ming_sim.error_pack import error_packs_root
 from ming_sim.models import GameState, reign_period_label
@@ -49,10 +48,6 @@ def select_triage_actor(db: GameDB) -> Optional[Dict[str, str]]:
                 "faction": str(row["faction"] or ""),
             }
     return None
-
-
-_EFFECT_KEYS = (f"当前每{TURN_UNIT}效果", "成功效果", "失败效果")
-_ADVANCE_KEY = f"上{TURN_UNIT}推进"
 
 
 def _strip_bare_quantities(value: object) -> Optional[object]:
@@ -83,24 +78,19 @@ def _strip_bare_quantities(value: object) -> Optional[object]:
 def _project_issue_qualitatively(issue: object) -> Optional[Dict[str, object]]:
     """单条 issue 的票拟输入侧定性投影（P4 / ADR 0143 唯一通道）。
 
-    剥 gameplay 裸量：`局势走向` inertia、效果 delta、上月推进 delta_bar、待办
-    数值进度（months_elapsed/paid_total/remaining 等）；保留契约所需 issue_id 与
-    定性文字（状态档位、结案条件、推进叙事）。simulator 共用投影不动——只在票拟
-    payload 出口收窄。
+    整条 issue 递归剥 gameplay 裸量（不枚举字段——枚举必有遗漏面），仅显式保留
+    绑定所需 issue_id；剥净后的空容器一并去掉。保留定性文字（状态档位、结案条件、
+    推进叙事）。simulator 共用投影不动——只在票拟 payload 出口收窄。
     """
     if not isinstance(issue, dict):
         return None
-    row = dict(issue)
-    row.pop("局势走向", None)
-    for key in (*_EFFECT_KEYS, "commitment_progress"):
-        if key in row:
-            row[key] = _strip_bare_quantities(row[key])
-    advance = row.get(_ADVANCE_KEY)
-    if isinstance(advance, dict) and "delta_bar" in advance:
-        adv = dict(advance)
-        adv.pop("delta_bar", None)
-        row[_ADVANCE_KEY] = adv
-    return row
+    projected = _strip_bare_quantities(issue)
+    row: Dict[str, object] = {}
+    if "issue_id" in issue:
+        row["issue_id"] = issue["issue_id"]
+    if isinstance(projected, dict):
+        row.update(projected)
+    return row or None
 
 
 def build_rescript_draft_payload(
