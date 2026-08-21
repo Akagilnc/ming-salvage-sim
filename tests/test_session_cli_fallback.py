@@ -658,7 +658,8 @@ def test_confirmation_mixed_rejection_and_approval_cues_uses_semantic_extractor(
         llm_config=SimpleNamespace(channel="api"),
     )
 
-    assert result == "应允"
+    assert result["confirmation"] == "应允"
+    assert result["target_ids"] == []
     assert calls and calls[0][1] == "confirmation"
 
 
@@ -679,7 +680,8 @@ def test_confirmation_question_with_approval_words_uses_semantic_extractor(monke
         llm_config=SimpleNamespace(channel="api"),
     )
 
-    assert result == "无"
+    assert result["confirmation"] == "无"
+    assert result["target_ids"] == []
     assert calls and calls[0][1] == "confirmation"
 
 
@@ -700,7 +702,8 @@ def test_confirmation_negated_approval_phrase_is_rejection(monkeypatch):
         llm_config=SimpleNamespace(channel="api"),
     )
 
-    assert result == "拒绝"
+    assert result["confirmation"] == "拒绝"
+    assert result["target_ids"] == []
     assert calls and calls[0][1] == "confirmation"
 
 
@@ -721,7 +724,8 @@ def test_confirmation_soft_negated_approval_phrase_is_rejection(monkeypatch):
         llm_config=SimpleNamespace(channel="api"),
     )
 
-    assert result == "拒绝"
+    assert result["confirmation"] == "拒绝"
+    assert result["target_ids"] == []
     assert calls and calls[0][1] == "confirmation"
 
 
@@ -740,7 +744,8 @@ def test_confirmation_negated_approval_no_wordlist_when_extractor_fails(monkeypa
         llm_config=SimpleNamespace(channel="api"),
     )
 
-    assert result == "无"
+    assert result["confirmation"] == "无"
+    assert result["target_ids"] == []
 
 
 def test_confirmation_bubi_zhaoban_no_wordlist_when_extractor_fails(monkeypatch):
@@ -758,7 +763,8 @@ def test_confirmation_bubi_zhaoban_no_wordlist_when_extractor_fails(monkeypatch)
         llm_config=SimpleNamespace(channel="api"),
     )
 
-    assert result == "无"
+    assert result["confirmation"] == "无"
+    assert result["target_ids"] == []
 
 
 def test_mixed_directive_and_secret_confirmation_commits_both(game):

@@ -1,4 +1,7 @@
-"""#1509 online findings：密令「修改」确认缝——点名/保字段/P5 无二调/非密令不吞/去前缀。"""
+"""#1509 online findings：密令「修改」确认缝——点名/保字段/P5 无二调/非密令不吞/去前缀。
+
+r2：目标编号取自同次 confirmation 结构化 JSON stub，不从消息字面机械解析。
+"""
 
 from __future__ import annotations
 
@@ -8,7 +11,6 @@ import types
 import ming_sim.cli_backend as cb
 from ming_sim.session import (
     GameSession,
-    _resolve_secret_modify_targets,
     _strip_secret_amendment_prefix,
 )
 
@@ -45,9 +47,15 @@ def test_strip_amendment_prefix():
     assert _strip_secret_amendment_prefix("只查饷银") == "只查饷银"
 
 
-def test_resolve_multi_secret_modify_targets(game):
+def test_modify_target_from_stub_id_not_message_literal(game, monkeypatch):
+    """#1509 r2：目标取自 confirmation stub 编号，而非消息字面「第二道」/title。
+
+    消息写「修改第二道」且含第二道 title 线索；stub 却返回第一道 id → 只改第一道。
+    若仍走消息机械解析会误改第二道，本测必红。
+    """
     db, state, content = game
     name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
     id1 = db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=name,
         target_id=None,
@@ -64,13 +72,105 @@ def test_resolve_multi_secret_modify_targets(game):
             "tags": ["蒙古"], "deadline_months": 2,
         },
     )
-    rows = [p for p in db.list_pending_actions(state.turn) if p["kind"] == "secret_order"]
-    assert _resolve_secret_modify_targets(rows, "修改：都改成只查饷银") is None
-    got = _resolve_secret_modify_targets(rows, "修改第二道：只查饷银")
-    assert got and int(got[0]["id"]) == id2
-    got = _resolve_secret_modify_targets(rows, "修改：暗结蒙古那道改成缓议")
-    assert got and int(got[0]["id"]) == id2
-    assert id1 and id2
+    assert id1 != id2
+
+    captured_prompts: list = []
+
+    def _stub_backend(prompt, llm_config=None, tag=""):
+        captured_prompts.append((tag, prompt))
+        # 故意与消息字面「第二道」「暗结蒙古」相反：点名第一道
+        return (
+            json.dumps(
+                {"确认": "修改", "目标编号": [id1]},
+                ensure_ascii=False,
+            ),
+            1,
+        )
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _stub_backend)
+    monkeypatch.setattr(
+        cb, "_extract_secret_order",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            AssertionError("P5: 修改不得二次串行 _extract_secret_order"),
+        ),
+    )
+
+    out = GameSession.apply_cli_conversation_actions(
+        _sess(db, state), ch,
+        # 字面「第二道」+ 第二道 title——旧机械 resolver 会选 id2
+        player_message="修改第二道：暗结蒙古那道改成只查饷银去向",
+        answer="臣遵旨改。",
+        has_directive=False, secret_order_id=None,
+    )
+    assert "directive_confirmation_ambiguous" not in out
+
+    p1 = json.loads(
+        db.conn.execute(
+            "SELECT payload_json FROM pending_actions WHERE id=?", (id1,),
+        ).fetchone()[0]
+    )
+    p2 = json.loads(
+        db.conn.execute(
+            "SELECT payload_json FROM pending_actions WHERE id=?", (id2,),
+        ).fetchone()[0]
+    )
+    # stub 点名 id1 → 第一道改、第二道不动（反证非消息字面）
+    # 去前缀后材料：_strip 吃掉「修改第二道：」
+    assert p1["content"] == "暗结蒙古那道改成只查饷银去向"
+    assert p2["content"] == "暗结蒙古诸部"
+    assert p2["title"] == "暗结蒙古"
+    # confirmation 列表须带方括号 id，供 stub/LLM 合法编号校验
+    assert captured_prompts and captured_prompts[0][0] == "confirmation"
+    prompt = captured_prompts[0][1]
+    assert f"[{id1}]" in prompt and f"[{id2}]" in prompt
+
+
+def test_modify_multi_without_target_id_is_ambiguous(game, monkeypatch):
+    """多候选 + 修改但无合法目标编号 → ambiguity，两道都不改。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    id1 = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name,
+        target_id=None,
+        payload={
+            "title": "密察关宁", "content": "密察关宁欠饷", "assignee": name,
+            "tags": ["关宁"], "deadline_months": 3,
+        },
+    )
+    id2 = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name,
+        target_id=None,
+        payload={
+            "title": "暗结蒙古", "content": "暗结蒙古诸部", "assignee": name,
+            "tags": ["蒙古"], "deadline_months": 2,
+        },
+    )
+    monkeypatch.setattr(
+        cb, "_run_backend_for_config",
+        lambda *a, **k: (json.dumps({"确认": "修改", "目标编号": []}, ensure_ascii=False), 1),
+    )
+    out = GameSession.apply_cli_conversation_actions(
+        _sess(db, state), ch,
+        player_message="修改：都改成只查饷银",
+        answer="臣请皇上明示改哪一道。",
+        has_directive=False, secret_order_id=None,
+    )
+    amb = out.get("directive_confirmation_ambiguous") or {}
+    cands = {int(c["id"]) for c in (amb.get("candidates") or [])}
+    assert cands == {id1, id2}
+    p1 = json.loads(
+        db.conn.execute(
+            "SELECT payload_json FROM pending_actions WHERE id=?", (id1,),
+        ).fetchone()[0]
+    )
+    p2 = json.loads(
+        db.conn.execute(
+            "SELECT payload_json FROM pending_actions WHERE id=?", (id2,),
+        ).fetchone()[0]
+    )
+    assert p1["content"] == "密察关宁欠饷"
+    assert p2["content"] == "暗结蒙古诸部"
 
 
 def test_modify_preserves_fields_targets_one_no_second_extract(game, monkeypatch):
@@ -107,7 +207,11 @@ def test_modify_preserves_fields_targets_one_no_second_extract(game, monkeypatch
     monkeypatch.setattr(cb, "_extract_secret_order", _boom)
     monkeypatch.setattr(
         cb, "_run_backend_for_config",
-        lambda *a, **k: (json.dumps({"确认": "修改"}, ensure_ascii=False), 1),
+        # 目标编号显式点名 id2（不靠消息「第二道」）
+        lambda *a, **k: (
+            json.dumps({"确认": "修改", "目标编号": [id2]}, ensure_ascii=False),
+            1,
+        ),
     )
 
     GameSession.apply_cli_conversation_actions(
@@ -170,3 +274,28 @@ def test_non_secret_modify_does_not_swallow_directive(game, monkeypatch):
     pend = [p for p in db.list_pending_actions(state.turn) if p["kind"] == "directive"]
     assert len(pend) == 1
     assert int(pend[0]["id"]) == did
+
+
+def test_extract_confirmation_intent_returns_target_ids(monkeypatch):
+    """confirmation JSON 契约：确认枚举 + 合法目标编号（非法 id 丢弃）。"""
+    def _semantic(prompt, llm_config=None, tag=""):
+        assert tag == "confirmation"
+        assert "[42]" in prompt and "[99]" in prompt
+        return (
+            json.dumps(
+                {"确认": "修改", "目标编号": [42, 7, "99"]},
+                ensure_ascii=False,
+            ),
+            1,
+        )
+
+    monkeypatch.setattr(cb, "_run_json_extractor_for_config", _semantic)
+    result = cb.extract_confirmation_intent(
+        player_message="修改第二道：只查饷银",
+        minister_reply="臣候旨。",
+        pending_summaries=["[42] 新建密令：密察关宁", "[99] 新建密令：暗结蒙古"],
+        llm_config=types.SimpleNamespace(channel="api"),
+    )
+    assert result["confirmation"] == "修改"
+    # 7 不在合法集合；42/99 保留
+    assert result["target_ids"] == [42, 99]

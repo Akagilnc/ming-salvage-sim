@@ -578,7 +578,11 @@ def _pending_action_brief(pa: Dict[str, Any]) -> str:
                 return f"交办「{title[:30]}」"
         text = str(payload.get("text") or "")
         return f"草拟圣旨：{text[:30]}"
-    return f"{action}密令"
+    # secret_order：带 title/content 线索，供 confirmation 列表区分多候选（#1509）
+    title = str(payload.get("title") or "").strip()
+    content = str(payload.get("content") or "").strip()
+    cue = title or content[:30]
+    return f"{action}密令" + (f"：{cue}" if cue else "")
 
 
 def _confirmation_targets_for_message(pending_actions: List[Dict[str, Any]], message: str) -> List[Dict[str, Any]]:
@@ -614,13 +618,7 @@ _AMEND_PREFIXES = ("修改：", "修改:", "改：", "改:")
 _AMEND_ORDINAL_PREFIX_RE = re.compile(
     r"^(?:修改|改)\s*第[一二三四五六七八九十百零0-9]+(?:道|条|件|个)?\s*[：:]\s*"
 )
-_SECRET_MODIFY_ORDINAL_RE = re.compile(
-    r"第([一二三四五六七八九十百零0-9]+)(?:道|条|件|个)?"
-)
-_SECRET_MODIFY_ORDINAL_MAP = {
-    "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5,
-    "六": 6, "七": 7, "八": 8, "九": 9, "十": 10,
-}
+_CONFIRM_ENUM = frozenset({"应允", "拒绝", "留中", "修改", "无"})
 
 
 def _strip_secret_amendment_prefix(message: str) -> str:
@@ -635,60 +633,37 @@ def _strip_secret_amendment_prefix(message: str) -> str:
     return text
 
 
-def _ordinal_from_token(token: str) -> Optional[int]:
-    raw = (token or "").strip()
-    if not raw:
-        return None
-    if raw.isdigit():
-        return int(raw)
-    if raw in _SECRET_MODIFY_ORDINAL_MAP:
-        return _SECRET_MODIFY_ORDINAL_MAP[raw]
-    return None
+def _coerce_confirmation_result(raw: Any) -> Tuple[str, List[int]]:
+    """Normalize extract_confirmation_intent / stub → (确认枚举, 合法目标 id 列表)。
 
-
-def _resolve_secret_modify_targets(
-    targets: List[Dict[str, Any]], message: str,
-) -> Optional[List[Dict[str, Any]]]:
-    """Pick which secret_order/新建 candidate a 修改 round may rewrite.
-
-    Single candidate → that one. Multiple → ordinal / id / title·content cue;
-    None = ambiguous (must not silently rewrite the whole family).
+    生产契约返回 dict；既有测试 stub 可仍返回纯字符串（目标 id 视为空）。
     """
-    if not targets:
-        return []
-    if len(targets) == 1:
-        return list(targets)
-    ordered = sorted(targets, key=lambda p: int(p.get("id") or 0))
-    text = message or ""
-    m = _SECRET_MODIFY_ORDINAL_RE.search(text)
-    if m:
-        idx = _ordinal_from_token(m.group(1))
-        if idx is not None and 1 <= idx <= len(ordered):
-            return [ordered[idx - 1]]
-    by_id = {int(p.get("id") or 0): p for p in ordered}
-    id_hits = [
-        by_id[i] for i in by_id
-        if i > 0 and re.search(rf"(?<!\d){i}(?!\d)", text)
-    ]
-    if len(id_hits) == 1:
-        return id_hits
-    content_hits: List[Dict[str, Any]] = []
-    for p in ordered:
-        try:
-            payload = json.loads(p.get("payload_json") or "{}")
-        except (TypeError, ValueError):
-            payload = {}
-        if not isinstance(payload, dict):
-            payload = {}
-        cues = [
-            str(payload.get("title") or "").strip(),
-            str(payload.get("content") or "").strip(),
-        ]
-        if any(c and len(c) >= 2 and c in text for c in cues):
-            content_hits.append(p)
-    if len(content_hits) == 1:
-        return content_hits
-    return None
+    if isinstance(raw, str):
+        v = raw.strip()
+        return (v if v in _CONFIRM_ENUM else "无"), []
+    if isinstance(raw, dict):
+        v = str(raw.get("confirmation") or raw.get("确认") or "无").strip()
+        if v not in _CONFIRM_ENUM:
+            v = "无"
+        tids: List[int] = []
+        for key in ("target_ids", "目标编号"):
+            blob = raw.get(key)
+            if blob is None:
+                continue
+            seq = blob if isinstance(blob, list) else [blob]
+            for t in seq:
+                try:
+                    i = int(t)
+                except (TypeError, ValueError):
+                    digits = "".join(ch for ch in str(t) if ch.isdigit())
+                    if not digits:
+                        continue
+                    i = int(digits)
+                if i > 0 and i not in tids:
+                    tids.append(i)
+            break
+        return v, tids
+    return "无", []
 
 
 def _pending_action_failure_payload(pa: Dict[str, Any], state: Optional[GameState] = None) -> Dict[str, Any]:
@@ -1302,9 +1277,15 @@ class GameSession:
         confirm_targets = _confirmation_targets_for_message(pend_for_minister, message_text)
         if not confirm_targets:
             return candidates
-        summaries = [_pending_action_brief(p) for p in confirm_targets]
-        confirm = extract_confirmation_intent(
-            player_message, reply, summaries, llm_config=getattr(self, "llm_config", None))
+        summaries = [
+            f"[{int(p['id'])}] {_pending_action_brief(p)}" for p in confirm_targets
+        ]
+        confirm, _named = _coerce_confirmation_result(
+            extract_confirmation_intent(
+                player_message, reply, summaries,
+                llm_config=getattr(self, "llm_config", None),
+            )
+        )
         # #1376：修改同属确认族（原地改候选，屏蔽同轮新建推断）
         if confirm in ("应允", "拒绝", "留中", "修改"):
             cand = normalize_one_candidate(
@@ -1778,7 +1759,10 @@ class GameSession:
         directive_confirm_targets = [p for p in confirm_targets if p["kind"] == "directive"]
         if confirm_targets and not explicit_prefixed:
             confirm_action_ids = {int(p["id"]) for p in confirm_targets}
-            summaries = [_pending_action_brief(p) for p in confirm_targets]
+            summaries = [
+                f"[{int(p['id'])}] {_pending_action_brief(p)}" for p in confirm_targets
+            ]
+            confirm_named_ids: List[int] = []
             if intent is not None:
                 confirm = (
                     str(intent.get("confirmation") or "无")
@@ -1788,8 +1772,10 @@ class GameSession:
                 if confirm not in ("应允", "拒绝", "留中", "修改", "无"):
                     confirm = "无"
             else:
-                confirm = extract_confirmation_intent(
-                    player_message, reply, summaries, llm_config=llm_config)
+                confirm, confirm_named_ids = _coerce_confirmation_result(
+                    extract_confirmation_intent(
+                        player_message, reply, summaries, llm_config=llm_config)
+                )
             # 多道并存（#502 AC4/AC5）：≥2 道 directive 候选时，口头准驳/留中须指向具体某道。
             # 点名指认 → 只作用那几道 + 清全组待澄清标（含糊 episode 了结）；否则（含糊/无/
             # 空指向）一律按含糊处置——结构化含糊态 + 追问 + 标待澄清 + **本轮不再 stage 新拟旨**，
@@ -1924,6 +1910,8 @@ class GameSession:
                 # 仅 secret_order/新建；非密令整改不得吞掉既有 kind 物化缝（回落 confirm=无）。
                 # P5：不二次串行 _extract_secret_order——正文取去前缀御旨材料，元数据仅在
                 # 修改句显式给出时覆盖（保留未提及字段）。
+                # #1509：多候选目标只信同次 confirmation JSON 的合法「目标编号」，
+                # 禁 regex/序数/title 机械读玩家散文；无唯一合法编号 → ambiguity。
                 from ming_sim.cli_backend import (
                     _extract_imperative_assignee,
                     _secret_metadata_from_command,
@@ -1939,19 +1927,28 @@ class GameSession:
                     # 非密令「修改」：不提前 return，放行既有 directive/office 等补充路径。
                     confirm = "无"
                 else:
-                    resolved = _resolve_secret_modify_targets(secret_new, player_message)
-                    if resolved is None:
-                        # 多 pending 未点名：含糊追问，禁止静默改写全家。
-                        out["directive_confirmation_ambiguous"] = {
-                            "candidates": [
-                                {
-                                    "id": int(p["id"]),
-                                    "summary": _pending_action_brief(p),
-                                }
-                                for p in secret_new
-                            ],
+                    if len(secret_new) == 1:
+                        resolved = list(secret_new)
+                    else:
+                        allowed = {int(p["id"]) for p in secret_new}
+                        named_set = {
+                            i for i in confirm_named_ids if i in allowed
                         }
-                        return out
+                        if not named_set:
+                            # 多 pending 无合法编号：含糊追问，禁止静默改写全家。
+                            out["directive_confirmation_ambiguous"] = {
+                                "candidates": [
+                                    {
+                                        "id": int(p["id"]),
+                                        "summary": _pending_action_brief(p),
+                                    }
+                                    for p in secret_new
+                                ],
+                            }
+                            return out
+                        resolved = [
+                            p for p in secret_new if int(p["id"]) in named_set
+                        ]
                     material = _strip_secret_amendment_prefix(player_message)
                     meta_tags, meta_deadline = _secret_metadata_from_command(material)
                     named_assignee = _extract_imperative_assignee(material)
