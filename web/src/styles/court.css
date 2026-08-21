@@ -539,12 +539,18 @@
 
 /* #1454：拟诏台层底部留出命令安全区——desk-footer 不得挡 HUD 拟诏木牌。
    台开时木牌降为「收起」开关，须可点；hud2-stage 有 transform 叠层上下文，
-   单靠抬木牌 z-index 压不过本层，故缩 layer 底边（同 #1342 抽屉口径）。 */
+   单靠抬木牌 z-index 压不过本层，故缩 layer 底边（同 #1342 抽屉口径）。
+   #1458：安全区跟随 stage 实际边界——固定 22vh 在方/竖视口会盖住木牌
+   （800×800 时 stage 居中 letterbox，木牌 y≈519–600，22vh 洞从 624 才开始）。
+   stageH 与 .hud2-stage 同构；木牌顶≈stageTop+76.5%·stageH
+   → bottom = 50vh - 0.265·stageH（16:9 满高≈23.5vh）。
+   其余底栏命令的误点由 #1458 blocked 单机制收口，与本洞相容。 */
 .fullscreen-layer.edict-safe-cmd {
   top: 0;
   right: 0;
   left: 0;
-  bottom: max(148px, 22vh);
+  --hud2-stage-h: min(100vh, calc(100vw * 1440 / 2560));
+  bottom: max(148px, calc(50vh - 0.265 * var(--hud2-stage-h)));
 }
 
 .fullscreen-scrim {
