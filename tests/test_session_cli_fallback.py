@@ -580,7 +580,7 @@ def test_propose_directive_tool_arguments_stages_draft(game):
     assert dossiers[0]["mode"] == "midzhi"
 
 
-def test_api_channel_rejects_existing_pending_action(game):
+def test_api_channel_rejects_existing_pending_action(game, monkeypatch):
     """API/function-call 通道已暂存动作后，下一句拒绝也必须删除 pending，不能早退默认同意。"""
     db, state, _ = game
     minister = "魏忠贤"
@@ -593,6 +593,11 @@ def test_api_channel_rejects_existing_pending_action(game):
             "tags": [],
             "deadline_months": 0,
         },
+    )
+    monkeypatch.setattr(
+        cb,
+        "_run_json_extractor_for_config",
+        lambda *a, **k: (json.dumps({"确认": "拒绝"}, ensure_ascii=False), 1),
     )
 
     GameSession.apply_cli_conversation_actions(
@@ -678,8 +683,16 @@ def test_confirmation_question_with_approval_words_uses_semantic_extractor(monke
     assert calls and calls[0][1] == "confirmation"
 
 
-def test_confirmation_negated_approval_phrase_is_rejection():
-    """“不可照办”不能因包含“照办”走快路误判应允。"""
+def test_confirmation_negated_approval_phrase_is_rejection(monkeypatch):
+    """“不可照办”由结构化 LLM 枚举判拒绝，不靠含“照办”的词表快路。"""
+    calls = []
+
+    def _semantic_confirmation(prompt, llm_config=None, tag=""):
+        calls.append((prompt, tag))
+        return (json.dumps({"确认": "拒绝"}, ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cb, "_run_json_extractor_for_config", _semantic_confirmation)
+
     result = cb.extract_confirmation_intent(
         player_message="不可照办。",
         minister_reply="臣候旨。",
@@ -688,10 +701,19 @@ def test_confirmation_negated_approval_phrase_is_rejection():
     )
 
     assert result == "拒绝"
+    assert calls and calls[0][1] == "confirmation"
 
 
-def test_confirmation_soft_negated_approval_phrase_is_rejection():
-    """“先别照办”也是否定确认，不能因包含“照办”走快路误判应允。"""
+def test_confirmation_soft_negated_approval_phrase_is_rejection(monkeypatch):
+    """“先别照办”由结构化 LLM 枚举判拒绝，不靠词表快路。"""
+    calls = []
+
+    def _semantic_confirmation(prompt, llm_config=None, tag=""):
+        calls.append((prompt, tag))
+        return (json.dumps({"确认": "拒绝"}, ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cb, "_run_json_extractor_for_config", _semantic_confirmation)
+
     result = cb.extract_confirmation_intent(
         player_message="先别照办。",
         minister_reply="臣候旨。",
@@ -700,9 +722,11 @@ def test_confirmation_soft_negated_approval_phrase_is_rejection():
     )
 
     assert result == "拒绝"
+    assert calls and calls[0][1] == "confirmation"
 
 
-def test_confirmation_negated_approval_rejects_when_extractor_fails(monkeypatch):
+def test_confirmation_negated_approval_no_wordlist_when_extractor_fails(monkeypatch):
+    """抽取失败 → 「无」；禁词表快路在 extractor down 时顶替拒绝。"""
     monkeypatch.setattr(
         cb,
         "_run_json_extractor_for_config",
@@ -716,10 +740,11 @@ def test_confirmation_negated_approval_rejects_when_extractor_fails(monkeypatch)
         llm_config=SimpleNamespace(channel="api"),
     )
 
-    assert result == "拒绝"
+    assert result == "无"
 
 
-def test_confirmation_bubi_zhaoban_rejects_when_extractor_fails(monkeypatch):
+def test_confirmation_bubi_zhaoban_no_wordlist_when_extractor_fails(monkeypatch):
+    """抽取失败 → 「无」；“不必照办”亦不得词表快路顶替。"""
     monkeypatch.setattr(
         cb,
         "_run_json_extractor_for_config",
@@ -733,7 +758,7 @@ def test_confirmation_bubi_zhaoban_rejects_when_extractor_fails(monkeypatch):
         llm_config=SimpleNamespace(channel="api"),
     )
 
-    assert result == "拒绝"
+    assert result == "无"
 
 
 def test_mixed_directive_and_secret_confirmation_commits_both(game):
@@ -1321,7 +1346,7 @@ def test_secret_prefix_ignores_mismatched_directive_tool_output(game, monkeypatc
     assert pending[0]["kind"] == "secret_order"
 
 
-def test_confirmation_commit_only_visible_pending_ids(game):
+def test_confirmation_commit_only_visible_pending_ids(game, monkeypatch):
     """同句新 stage 的动作即便同大臣同 kind，也不能被本句确认顺手提交。"""
     db, state, _content = game
     minister = "毕自严"
@@ -1334,6 +1359,11 @@ def test_confirmation_commit_only_visible_pending_ids(game):
         state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
         payload={"title": "同句新令", "content": "同句新令内容", "assignee": minister,
                  "tags": [], "deadline_months": 0},
+    )
+    monkeypatch.setattr(
+        cb,
+        "_run_json_extractor_for_config",
+        lambda *a, **k: (json.dumps({"确认": "应允"}, ensure_ascii=False), 1),
     )
 
     GameSession.apply_cli_conversation_actions(
@@ -1357,7 +1387,7 @@ def test_confirmation_commit_only_visible_pending_ids(game):
     assert pending_ids == [new_id]
 
 
-def test_confirmation_reject_only_visible_pending_ids(game):
+def test_confirmation_reject_only_visible_pending_ids(game, monkeypatch):
     """拒绝确认也只能丢本轮开始前可见的 pending，不能删同句新 stage。"""
     db, state, _content = game
     minister = "毕自严"
@@ -1370,6 +1400,11 @@ def test_confirmation_reject_only_visible_pending_ids(game):
         state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
         payload={"title": "同句新令", "content": "同句新令内容", "assignee": minister,
                  "tags": [], "deadline_months": 0},
+    )
+    monkeypatch.setattr(
+        cb,
+        "_run_json_extractor_for_config",
+        lambda *a, **k: (json.dumps({"确认": "拒绝"}, ensure_ascii=False), 1),
     )
 
     GameSession.apply_cli_conversation_actions(

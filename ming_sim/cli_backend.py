@@ -2483,47 +2483,8 @@ def extract_confirmation_intent(
     对话确认(ADR 0006 重设计)：应允 → 当场 commit，拒绝 → 丢，留中 → held_over 档，
     修改 → 原地更新同一候选内容（#1376 owner：改内容后仍走确认/默认准），无 → 留。
     失败/无 → 「无」。#525：留中为第三态，豁免默认准，不成案。
-    语义判断经 LLM 结构化判词（ADR 0142）；禁生产词表扫「修改」。"""
-    compact = re.sub(r"[\s，,。.!！?？；;：:、]+", "", player_message or "")
-    if compact:
-        reject_hit = any(
-            token in compact
-            for token in (
-                "不准", "不允", "不许", "拒绝", "作罢", "罢了", "不必", "撤了", "撤回", "再议", "算了",
-                "不照办", "不可照办", "勿照办", "毋照办", "不要照办",
-            )
-        )
-        approval_stems = ("准奏", "照准", "准了", "照办", "依卿", "如此")
-        negated_approval_hit = any(
-            token in compact
-            for token in (
-                "不便如此", "不可如此", "不要如此",
-                "不必如此", "不用如此", "无须如此",
-            )
-        ) or any(
-            f"{negator}{stem}" in compact
-            for negator in (
-                "不", "不可", "不要", "勿", "毋", "别", "莫",
-                "不必", "不用", "无须", "不能", "不得", "无法", "难以", "暂缓",
-            )
-            for stem in approval_stems
-        )
-        approve_hit = (
-            compact in {"准", "可", "允", "好", "行", "善"}
-            or any(token in compact for token in ("准奏", "照准", "准了", "照办", "依卿", "便如此", "就这么办"))
-        ) and not negated_approval_hit
-        approval_needs_semantic_check = approve_hit and any(
-            token in compact
-            for token in (
-                "若", "如果", "倘若", "假若",
-                "如何", "怎样", "怎么", "吗", "么",
-                "是否", "可否", "能否", "可不可以", "能不能", "要不要",
-            )
-        )
-        if (reject_hit or negated_approval_hit) and not approve_hit:
-            return "拒绝"
-        if approve_hit and not reject_hit and not approval_needs_semantic_check:
-            return "应允"
+    确认判读只许结构化 LLM JSON 枚举（ADR 0028 2026-07-23 / ADR 0142）；
+    禁自由散文 regex/词表快路（准/不准/作罢/算了…）。结构性前缀/端点路由在调用方。"""
     summ = "；".join(pending_summaries) or "（无）"
     prompt = (
         "你是信息抽取器，不扮演。皇帝上一轮经大臣领命确认后，有几条【尚未落库的暂存政务动作】"
