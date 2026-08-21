@@ -1,13 +1,18 @@
-"""#1483 — engine 侧 extractor/simulator 输入保留阈值比对所需精确数值。
+"""#1483 — engine 阈值输入与 P4 叙事输入分界。
 
-P4 只管玩家可见面；modular extractor 与 season_simulator 规则输入是 engine 管线。
-走真实装配：build_simulator_payload + build_extractor_shared_context(module=issues)。
+① simulator factions_brief：定性投影 + leverage<=30 语义记号（代码预计算），禁裸数。
+② issues extractor_context：保留 current_state/regions/active_issues 裸数；
+   其余 economy/military/personnel 模块不吃这三字段全量拷贝。
+走真实装配：build_simulator_payload + build_extractor_shared_context。
 """
 
 from __future__ import annotations
 
-from ming_sim.qualitative import power_band
+from ming_sim.qualitative import power_band, satisfaction_band
 from ming_sim.simulation import (
+    EXTRACTION_MODULES,
+    _LEVERAGE_BELOW_SUPPRESSION_MARK,
+    _LEVERAGE_SUPPRESSION_LINE,
     build_extractor_shared_context,
     build_simulator_payload,
 )
@@ -16,8 +21,12 @@ _SENT_MINXIN = 55
 _SENT_HUANGWEI = 25
 _SENT_BAR = 72
 _SENT_REGION_PS = 48
+_SENT_SAT = 32
 _SENT_LEV_LOW = 25   # leverage<=30 规则内侧
 _SENT_LEV_MID = 35   # 同属「偏弱」band（20–39），但 >30
+
+_THRESHOLD_FIELDS = ("current_state", "regions", "active_issues")
+_NON_ISSUES_MODULES = tuple(m for m in EXTRACTION_MODULES if m != "issues")
 
 
 def _plant(db, state) -> tuple[str, str]:
@@ -25,6 +34,7 @@ def _plant(db, state) -> tuple[str, str]:
     state.metrics["民心"] = _SENT_MINXIN
     state.metrics["皇威"] = _SENT_HUANGWEI
     db.conn.execute("UPDATE regions SET public_support=?", (_SENT_REGION_PS,))
+    db.conn.execute("UPDATE factions SET satisfaction=?", (_SENT_SAT,))
     names = [
         str(r["name"])
         for r in db.conn.execute("SELECT name FROM factions ORDER BY name").fetchall()
@@ -51,13 +61,14 @@ def _plant(db, state) -> tuple[str, str]:
         fail_condition="unrest>80",
     )
     db.conn.commit()
-    # 前提：25 与 35 在玩家面 band 表上不可区分——否则 P2 无刀口。
+    # 前提：25 与 35 在玩家面 band 表上不可区分——否则语义记号无刀口。
     assert power_band(_SENT_LEV_LOW) == power_band(_SENT_LEV_MID)
+    assert _SENT_LEV_LOW <= _LEVERAGE_SUPPRESSION_LINE < _SENT_LEV_MID
     return low_name, mid_name
 
 
 def test_issues_extractor_context_keeps_threshold_numerics(game):
-    """P1：modular issues extractor_context 保留 current_state/regions/active_issues 裸数。"""
+    """issues 模块 extractor_context 保留 current_state/regions/active_issues 裸数。"""
     db, state, _content = game
     _plant(db, state)
 
@@ -89,21 +100,50 @@ def test_issues_extractor_context_keeps_threshold_numerics(game):
     assert "民心>60" in str(pinned.get("resolve_condition") or "")
 
 
-def test_simulator_factions_brief_keeps_exact_leverage_for_lte30_rule(game):
-    """P2：simulator factions_brief 保留精确 leverage，25 与 35 可区分（≤30 规则输入）。"""
+def test_threshold_numerics_only_for_issues_module(game):
+    """P2：三字段只对 module=='issues' 供给；其余 extractor 模块无全量拷贝。"""
+    db, state, _content = game
+    _plant(db, state)
+
+    issues_ctx = build_extractor_shared_context(
+        db, state, "邸报正文", "测试诏", module="issues", decree_dossiers=[],
+    )
+    for key in _THRESHOLD_FIELDS:
+        assert key in issues_ctx, f"issues 必须有 {key}"
+
+    assert _NON_ISSUES_MODULES, "EXTRACTION_MODULES 应含非 issues 模块"
+    for module in _NON_ISSUES_MODULES:
+        ctx = build_extractor_shared_context(
+            db, state, "邸报正文", "测试诏", module=module, decree_dossiers=[],
+        )
+        for key in _THRESHOLD_FIELDS:
+            assert key not in ctx, (
+                f"module={module!r} 不应吃 {key} 全量拷贝；keys={sorted(ctx)}"
+            )
+
+
+def test_simulator_factions_brief_qualitative_with_suppression_mark(game):
+    """P1 双向：factions_brief 无裸数 + leverage<=30 含语义记号（代码预计算）。"""
     db, state, _content = game
     low_name, mid_name = _plant(db, state)
 
     payload = build_simulator_payload(state, db, "测试诏", "")
     brief = str(payload["factions_brief"])
 
-    assert f"势力{_SENT_LEV_LOW}" in brief, (
-        f"leverage={_SENT_LEV_LOW} 必须原样可见，否则 season_simulator "
-        f"leverage<=30 规则无法命中；got: {brief!r}"
-    )
-    assert f"势力{_SENT_LEV_MID}" in brief, (
-        f"leverage={_SENT_LEV_MID} 必须原样可见，与 {_SENT_LEV_LOW} 区分；got: {brief!r}"
-    )
-    # 同一 band 字不足以区分——精确值必须同时在场
-    assert power_band(_SENT_LEV_LOW) == power_band(_SENT_LEV_MID)
+    # —— 无裸数（P4 叙事输入）——
+    assert f"势力{_SENT_LEV_LOW}" not in brief
+    assert f"势力{_SENT_LEV_MID}" not in brief
+    assert f"满意{_SENT_SAT}" not in brief
+    # 定性档仍在
+    assert f"势力{power_band(_SENT_LEV_LOW)}" in brief
+    assert f"满意{satisfaction_band(_SENT_SAT)}" in brief
+
+    # —— 含语义记号；仅 <=30 侧带标（同 band 的 35 不带）——
+    assert _LEVERAGE_BELOW_SUPPRESSION_MARK in brief
     assert low_name in brief and mid_name in brief
+    # 按分号切段，钉 low 段有标、mid 段无标
+    segments = [s for s in brief.split("；") if s]
+    low_seg = next(s for s in segments if s.startswith(low_name))
+    mid_seg = next(s for s in segments if s.startswith(mid_name))
+    assert _LEVERAGE_BELOW_SUPPRESSION_MARK in low_seg, low_seg
+    assert _LEVERAGE_BELOW_SUPPRESSION_MARK not in mid_seg, mid_seg
