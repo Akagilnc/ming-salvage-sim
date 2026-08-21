@@ -1126,7 +1126,7 @@ describe("ChatModal — selected-minister night lens (#1511)", () => {
     expect(document.querySelector(".minister-side h2")?.textContent).toBe("洪承畴");
   });
 
-  it("洪→许→洪 乱序 GET：切臣后旧镜头立即不可见，迟到响应不覆盖最终窗口", async () => {
+  it("洪→许→洪 乱序 GET：已显洪卷切臣即刻不可见，迟到响应不覆盖最终窗口", async () => {
     type Gate = { resolve: (value: unknown) => void };
     const gates: Gate[] = [];
     const fetchMock = vi.fn().mockImplementation(() => new Promise((resolve) => {
@@ -1143,26 +1143,47 @@ describe("ChatModal — selected-minister night lens (#1511)", () => {
       registerMinisterUpdate: (update) => { setMinister = update; },
     });
 
-    // First fetch for 洪 still pending — switch 洪→许→洪 quickly.
-    await act(async () => { setMinister(xu); await Promise.resolve(); });
-    expect(document.body.textContent).not.toContain("臣领旨");
-    expect(document.querySelector(".minister-side h2")?.textContent).toBe("许誉卿");
-
-    await act(async () => { setMinister(hong); await Promise.resolve(); });
-    expect(document.querySelector(".minister-side h2")?.textContent).toBe("洪承畴");
-
-    // Out-of-order: resolve 许's stale fetch, then an older 洪 fetch, then the final 洪 fetch.
-    expect(gates.length).toBeGreaterThanOrEqual(3);
+    // ① First Hong GET must complete so an already-rendered Hong lens is on screen.
+    expect(gates.length).toBe(1);
     await act(async () => {
-      gates[1]!.resolve({ ok: true, json: async () => ({ night_id: 23, messages: nightScroll }) });
+      gates[0]!.resolve({ ok: true, json: async () => ({ night_id: 23, messages: nightScroll }) });
       await Promise.resolve(); await Promise.resolve();
     });
-    // Still on final 洪 window; even if stale 许 response applied to retained night snapshot,
-    // lens key is selected 洪 so content may show — but 许 sidebar must not return.
+    expect(document.body.textContent).toContain("臣领旨");
+    expect(document.body.textContent).toContain("密令：整饬边备");
+    expect(document.body.textContent).toContain("神色凝重");
+    expect(document.querySelector(".minister-side h2")?.textContent).toBe("洪承畴");
+
+    // ② 洪→许: retained night authority re-lenses immediately — old Hong content gone before Xu GET returns.
+    await act(async () => { setMinister(xu); });
+    expect(document.body.textContent).not.toContain("臣领旨");
+    expect(document.body.textContent).not.toContain("密令：整饬边备");
+    expect(document.body.textContent).not.toContain("神色凝重");
+    expect(document.querySelector(".minister-side h2")?.textContent).toBe("许誉卿");
+
+    // ③ 许→洪 then 洪→许→洪 again so three GETs stay in flight and complete out of order.
+    await act(async () => { setMinister(hong); });
+    await act(async () => { setMinister(xu); });
+    await act(async () => { setMinister(hong); });
+    // gates: [0]=initial Hong (done), [1]=Xu, [2]=Hong, [3]=Xu, [4]=final Hong
+    expect(gates.length).toBeGreaterThanOrEqual(5);
+    const staleXu = gates[1]!;
+    const staleHong = gates[2]!;
+    const finalHong = gates[gates.length - 1]!;
+    expect(document.querySelector(".minister-side h2")?.textContent).toBe("洪承畴");
+
+    // Out-of-order: stale 许, then a superseded 洪 with alien content, then the live final 洪.
+    await act(async () => {
+      staleXu.resolve({ ok: true, json: async () => ({ night_id: 23, messages: [
+        { role: "minister", speaker: "许誉卿", content: "许窗迟到整卷不得回灌", beat: "dialogue", chat_turn_id: 99, audibility: "殿上公开", time: null, soft_boundary: false, highlights: [], container: { time_of_day: "戌时", location: "乾清宫", audience_type: "召对" } },
+      ] }) });
+      await Promise.resolve(); await Promise.resolve();
+    });
+    expect(document.body.textContent).not.toContain("许窗迟到整卷不得回灌");
     expect(document.querySelector(".minister-side h2")?.textContent).toBe("洪承畴");
 
     await act(async () => {
-      gates[0]!.resolve({ ok: true, json: async () => ({ night_id: 23, messages: [
+      staleHong.resolve({ ok: true, json: async () => ({ night_id: 23, messages: [
         { ...nightScroll[0], content: "迟到旧洪卷不应单独定镜" },
         nightScroll[1],
         nightScroll[2],
@@ -1173,12 +1194,14 @@ describe("ChatModal — selected-minister night lens (#1511)", () => {
     expect(document.querySelector(".minister-side h2")?.textContent).toBe("洪承畴");
 
     await act(async () => {
-      gates[gates.length - 1]!.resolve({ ok: true, json: async () => ({ night_id: 23, messages: nightScroll }) });
+      finalHong.resolve({ ok: true, json: async () => ({ night_id: 23, messages: nightScroll }) });
       await Promise.resolve(); await Promise.resolve();
     });
     expect(document.body.textContent).toContain("臣领旨");
     expect(document.body.textContent).toContain("密令：整饬边备");
     expect(document.body.textContent).not.toContain("请陛下问话");
+    expect(document.body.textContent).not.toContain("迟到旧洪卷不应单独定镜");
+    expect(document.body.textContent).not.toContain("许窗迟到整卷不得回灌");
     expect(document.querySelector(".minister-side h2")?.textContent).toBe("洪承畴");
   });
 });
