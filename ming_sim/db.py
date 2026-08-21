@@ -10591,7 +10591,7 @@ class GameDB:
         try:
             rows = self.conn.execute(
                 """
-                SELECT id, due_turn, turn_issued, deadline_span, result
+                SELECT id, due_turn, turn_issued, deadline_span
                 FROM secret_orders
                 WHERE status='pending_review'
                 ORDER BY id
@@ -10603,7 +10603,6 @@ class GameDB:
             return
         gs = self.conn.execute("SELECT turn FROM game_state LIMIT 1").fetchone()
         current_turn = int(gs["turn"] if gs is not None else 1) or 1
-        stamp = "〔系统〕[到期迁移] 旧档 pending_review 已迁 active，待实进度对账"
         for row in rows:
             oid = int(row["id"])
             due = int(row["due_turn"] or 0)
@@ -10635,23 +10634,16 @@ class GameDB:
                 new_due = due
             else:
                 new_due = max(need_due, 1)
-            prev = str(row["result"] or "")
-            if "[到期迁移]" in prev:
-                new_result = prev
-            else:
-                lines = [ln for ln in prev.split("\n") if ln.strip()]
-                lines.append(stamp)
-                new_result = "\n".join(lines)
+            # 只改结构化 status/due；result 原样保留（P7：不写机械迁移模板）
             self.conn.execute(
                 """
                 UPDATE secret_orders
                 SET status='active',
                     due_turn=?,
-                    result=?,
                     updated_at=CURRENT_TIMESTAMP
                 WHERE id=? AND status='pending_review'
                 """,
-                (int(new_due), new_result, oid),
+                (int(new_due), oid),
             )
             # 核议中本就在办：保持/补齐案卷 executing（幂等）
             try:
