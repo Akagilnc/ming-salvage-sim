@@ -407,10 +407,11 @@ def test_secret_content_structured_assembly_keeps_completion(monkeypatch):
         "臣当密访关宁诸将，核其欠饷册籍，三月内据实回奏。"
     )
     extracted = f"{task}\n方法：密访核册"
+    # 御旨仅任务句（已被 extractor 内容覆盖）；标签/期限走结构化键，不进正文拼装
     so = _resolve_secret(
         monkeypatch,
         answer,
-        f"密令如下：{task}\n标签：关宁, 欠饷\n期限：3月\n方法：密访核册",
+        f"密令如下：{task}",
         default="李若琏",
         payload=_so_json(
             标题=task, 内容=extracted, 承办人="李若琏", 期限月数=3, 标签=["关宁", "欠饷"],
@@ -418,12 +419,11 @@ def test_secret_content_structured_assembly_keeps_completion(monkeypatch):
     )
     assert so is not None
     body = so["content"]
-    assert task in body
-    assert body == extracted or task in body
-    # 补全字段保留（结构化 + 正文方法）
+    # #1436：夹具已给完整 extractor 内容；须精确相等，禁 contains 放行夹带
+    assert body == extracted
+    # 补全字段保留（结构化键，非正文自由拼装）
     assert so["deadline_months"] == 3
     assert "关宁" in so["tags"] and "欠饷" in so["tags"]
-    assert "密访" in body or "核" in body
     assert so["assignee"] == "李若琏"
     # reply 独有答奏不因回话而进入（extractor 未携带）
     assert answer not in body
