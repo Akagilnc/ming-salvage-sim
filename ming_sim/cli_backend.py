@@ -805,6 +805,7 @@ def _run_pi(
     实测旗标（pi --help / 0.84.1）：
     - `-p/--print` 非交互 process-and-exit；
     - `--mode text` 默认纯文（显式钉死，避 json/rpc）；
+    - `--no-tools` 关内置 read/bash/edit/write（#1456：游戏/玩家文本不可注入驱动工具）；
     - `--model` 支持 provider/id 与可选 `:<thinking>` 后缀；
     - `--thinking` 独立档 off/minimal/low/medium/high/xhigh/max——抽象 off/low/medium/high 直传；
     - 干净答案在 stdout，诊断在 stderr——只取 stdout；
@@ -812,7 +813,7 @@ def _run_pi(
     """
     cmd = [
         _resolve_cli_bin("pi", _PI_BIN),
-        "-p", "--mode", "text",
+        "-p", "--mode", "text", "--no-tools",
     ]
     if model:
         cmd.extend(["--model", model])
