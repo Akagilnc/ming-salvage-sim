@@ -20,6 +20,46 @@ def _map_nodes(db):
     return web_app.WebGame.map_nodes(rt)
 
 
+def test_map_nodes_dynamic_liaodong_outer_station_not_on_liaodong(game):
+    """#1448/#1497：动态军 station=辽东外线 穿 map_nodes 真路径不得进 liaodong。
+
+    theater 白名单 alone 不够——region 回退用地区名分段「辽东」仍会把
+    辽东侧翼/门户/外线 误挂；须与 theater 共用同一 station 真源。
+    """
+    db, _state, _content = game
+    # 正例对照：关宁形 station 仍归 liaodong（theater 白名单路径）
+    db.conn.execute(
+        "INSERT INTO armies (id, name, station, theater, commander, controller, troop_type, "
+        "manpower, supply, morale, training, equipment, arrears, mobility, "
+        "loyalty, salary_rate, status, owner_power) "
+        "VALUES ('dyn_liaodong_core', '试关宁形', '辽东 / 宁远锦州', '', 'x', 'ming', '边', "
+        "1000, 50, 50, 50, 50, 0, 50, 50, 1.0, '试', 'ming')"
+    )
+    # 反例：三前缀落入 station（seed 里在 theater 字段；动态/调防可进 station）
+    for i, bad in enumerate(("辽东侧翼", "辽东门户", "辽东外线")):
+        db.conn.execute(
+            "INSERT INTO armies (id, name, station, theater, commander, controller, troop_type, "
+            "manpower, supply, morale, training, equipment, arrears, mobility, "
+            "loyalty, salary_rate, status, owner_power) "
+            "VALUES (?, ?, ?, '', 'x', 'houjin', '骑', "
+            "1000, 50, 50, 50, 50, 0, 50, 50, 1.0, '试', 'houjin')",
+            (f"dyn_liaodong_bad_{i}", f"试{bad}", bad),
+        )
+    db.conn.commit()
+
+    nodes = _map_nodes(db)
+    by_id = {str(n["id"]): n for n in nodes}
+    liaodong_ids = {str(a["id"]) for a in (by_id["liaodong"].get("armies") or [])}
+    assert "dyn_liaodong_core" in liaodong_ids, (
+        f"关宁形 station 应进 liaodong；armies={sorted(liaodong_ids)}"
+    )
+    for i, bad in enumerate(("辽东侧翼", "辽东门户", "辽东外线")):
+        aid = f"dyn_liaodong_bad_{i}"
+        assert aid not in liaodong_ids, (
+            f"station={bad!r} 不得经 map_nodes 进 liaodong；armies={sorted(liaodong_ids)}"
+        )
+
+
 def test_map_nodes_no_double_army_hang(game):
     """#1401：theater 优先挂；未命中再 region——一军不得双挂。"""
     db, _state, _content = game

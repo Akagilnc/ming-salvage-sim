@@ -155,6 +155,54 @@ def test_create_chat_model_off_reasoning_keeps_minimal_for_legacy_o1(monkeypatch
     assert model.reasoning_effort == "minimal"
 
 
+@pytest.mark.parametrize("model_id", ["o3-mini", "o4-mini", "o3", "o4-mini-high"])
+def test_create_chat_model_off_reasoning_keeps_minimal_for_o3_o4(monkeypatch, model_id):
+    """#1461：o3/o4 关思考须发 minimal；none 会被不支持的 provider 拒。"""
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    cfg = LLMConfig(
+        api_key="sk-test",
+        base_url="https://api.example.com/v1",
+        model=model_id,
+        channel="api",
+        reasoning_strength="off",
+    )
+
+    model = create_chat_model(cfg)
+
+    assert model.reasoning_effort == "minimal", model_id
+
+
+def test_create_chat_model_strips_provider_prefix_for_reasoning_family(monkeypatch):
+    """#1461：openai/gpt-5.x 带 provider 前缀仍须识别为推理族（剥前缀后判）。"""
+    from ming_sim.llm_config import supports_openai_reasoning_effort
+
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    assert supports_openai_reasoning_effort("openai/gpt-5.4")
+    assert supports_openai_reasoning_effort("openai/o3-mini")
+    assert supports_openai_reasoning_effort("openai/o4-mini")
+    assert not supports_openai_reasoning_effort("openai/gpt-4o")
+
+    cfg = LLMConfig(
+        api_key="sk-test",
+        base_url="https://api.example.com/v1",
+        model="openai/o3-mini",
+        channel="api",
+        reasoning_strength="off",
+    )
+    model = create_chat_model(cfg)
+    assert model.reasoning_effort == "minimal"
+
+    cfg5 = LLMConfig(
+        api_key="sk-test",
+        base_url="https://api.example.com/v1",
+        model="openai/gpt-5.4",
+        channel="api",
+        reasoning_strength="off",
+    )
+    model5 = create_chat_model(cfg5)
+    assert model5.reasoning_effort == "none"
+
+
 def test_create_chat_model_never_injects_max_tokens(monkeypatch):
     """#1472：create_chat_model 构造 kwargs 永不含 max_tokens（官方上限）。"""
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
@@ -489,8 +537,11 @@ def test_verify_llm_available_api_empty_content_none_passes(monkeypatch):
     verify_llm_available(_api_cfg())
 
 
-def test_verify_llm_available_api_empty_content_error_status_passes(monkeypatch):
-    """extract_agent_text 若因空文+ERROR status 抛错，烟测路须捕之判过。"""
+def test_verify_llm_available_api_empty_content_error_status_raises(monkeypatch):
+    """#1455：status=ERROR 且空 content 仍是权威失败——设置页不得判连通成功。
+
+    空正文不能证明只是推理 token 耗尽；token 耗尽须另据结束原因识别（无错误 status）。
+    """
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
     class EmptyErrorOutput:
@@ -505,7 +556,9 @@ def test_verify_llm_available_api_empty_content_error_status_passes(monkeypatch)
             return EmptyErrorOutput()
 
     monkeypatch.setattr(llm_model, "Agent", FakeAgent)
-    verify_llm_available(_api_cfg())
+    with pytest.raises(LLMUnavailable) as ei:
+        verify_llm_available(_api_cfg())
+    assert ei.value.code == "llm_run_error"
 
 
 def test_verify_llm_available_api_http_401_still_raises(monkeypatch):

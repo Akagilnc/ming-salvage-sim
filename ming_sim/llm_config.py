@@ -166,8 +166,17 @@ def provider_extra_body(base_url: str) -> Optional[Dict[str, object]]:
     return None
 
 
+def openai_model_id_without_provider(model: str) -> str:
+    """剥 provider 前缀（openai/gpt-5.x → gpt-5.x），供推理族识别。"""
+    model_id = (model or "").strip().lower()
+    if "/" in model_id:
+        model_id = model_id.rsplit("/", 1)[-1]
+    return model_id
+
+
 def supports_openai_reasoning_effort(model: str) -> bool:
-    model_id = model.lower()
+    # #1461：任意 OpenAI 兼容配置可能带 provider 前缀（openai/gpt-5.x）
+    model_id = openai_model_id_without_provider(model)
     return model_id.startswith(("o1", "o3", "o4", "gpt-5"))
 
 

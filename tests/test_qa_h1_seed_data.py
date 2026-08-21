@@ -114,7 +114,12 @@ def test_seed_army_firearms_differentiated_within_p2_caps():
 
 
 def test_fresh_seed_army_equipment_and_commanders_wire_through(content):
-    """开局贯通：DB 军队火器/炮与统帅名分与 seed 一致；统帅人物卡状态不自相矛盾。"""
+    """开局贯通：DB 军队火器/炮与统帅名分与 seed 一致；统帅人物卡状态不自相矛盾。
+
+    #1426：全量 id 集 + 每军 commander/controller/firearm/cannon 四字段对照 seed，
+    禁只抽查关宁/东江而放过其它军误映射。
+    """
+    seed_by_id = {item["id"]: item for item in _armies_seed()}
     fd, path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
     db = None
@@ -128,6 +133,16 @@ def test_fresh_seed_army_equipment_and_commanders_wire_through(content):
                 "FROM armies"
             ).fetchall()
         }
+        assert set(rows) == set(seed_by_id), (
+            f"army id 集不一致 missing={set(seed_by_id)-set(rows)} "
+            f"extra={set(rows)-set(seed_by_id)}"
+        )
+        for aid, seed in seed_by_id.items():
+            row = rows[aid]
+            assert row["commander"] == seed.get("commander", ""), aid
+            assert row["controller"] == seed.get("controller", ""), aid
+            assert int(row["firearm_equipment"]) == int(seed.get("firearm_equipment", 0)), aid
+            assert int(row["cannon_equipment"]) == int(seed.get("cannon_equipment", 0)), aid
         g = rows["guanning"]
         assert "袁崇焕" not in g["commander"]
         assert int(g["cannon_equipment"]) >= 4

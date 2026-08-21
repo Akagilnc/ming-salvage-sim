@@ -481,16 +481,28 @@ def _session_stub(db, content):
 
 
 def test_shi_kefa_not_in_summonable_court_roster(read_game):
-    """#1317：史可法 office=诸生/未仕，不得以在朝身份入可召名册。
+    """#1317/#1462：史可法 office=诸生/未仕，不得以在朝身份入可召名册。
+
+    #1462：debut_year=0 表示开局即在场，不得标 offstage（否则 apply_historical_debuts
+    永不激活，人才池/朝堂双排除且无法按姓名铨选发现）。在场态靠 office_type='未仕'
+    可召资格过滤挡召见；任命写路径仍可入仕。
 
     接缝：list_ministers + can_summon + visible_in_court 三面同拒。
-    同型先例：郑成功/张煌言等诸生童生 offstage（非钱谦益——钱为罢居礼部）。
     """
     db, _state, content = read_game
     assert "史可法" in content.characters, "seed 须含史可法"
     ch = content.characters["史可法"]
     assert ch.office_type == "未仕"
     assert "诸生" in (ch.office or "")
+    # #1462：开局即在场（debut_year 默认 0），status 须 active
+    assert int(getattr(ch, "debut_year", 0) or 0) == 0
+    assert ch.status == "active", ch.status
+    row = db.conn.execute(
+        "SELECT status, debut_year FROM characters WHERE name=?", ("史可法",),
+    ).fetchone()
+    assert row is not None
+    assert row["status"] == "active"
+    assert int(row["debut_year"] or 0) == 0
 
     sess = _session_stub(db, content)
     names = {v.name for v in sess.list_ministers()}

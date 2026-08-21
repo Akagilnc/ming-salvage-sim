@@ -39,15 +39,24 @@ def _hist_event(eid, gate):
 def _restore_yuan_as_guanning_commander(db, content):
     """起复并任命袁崇焕掌关宁——mao_wenlong gate 前置（seed 关宁已非袁统帅）。
 
-    同步 DB armies.commander 与 content 绑定对象；退出时还原 content.armies，
-    避免 session 共享 content 泄漏（不回退 seed 统帅口径）。
+    同步 DB armies.commander 与 content 绑定对象；退出时还原 content 与 DB 行
+    （#1426：finally 只还 content 会泄漏 active 袁崇焕 + 关宁 commander）。
     """
     yuan = content.characters.get("袁崇焕")
     army = content.armies.get("guanning")
     prev_yuan_status = yuan.status if yuan is not None else None
     prev_commander = army.commander if army is not None else None
+    db_yuan = db.conn.execute(
+        "SELECT status FROM characters WHERE name=?", ("袁崇焕",),
+    ).fetchone()
+    db_army = db.conn.execute(
+        "SELECT commander FROM armies WHERE id=?", ("guanning",),
+    ).fetchone()
+    prev_db_yuan_status = db_yuan["status"] if db_yuan is not None else None
+    prev_db_commander = db_army["commander"] if db_army is not None else None
     db.conn.execute("UPDATE characters SET status=? WHERE name=?", ("active", "袁崇焕"))
     db.conn.execute("UPDATE armies SET commander=? WHERE id=?", ("袁崇焕", "guanning"))
+    db.conn.commit()
     if yuan is not None:
         yuan.status = "active"
     if army is not None:
@@ -59,6 +68,17 @@ def _restore_yuan_as_guanning_commander(db, content):
             yuan.status = prev_yuan_status
         if army is not None:
             army.commander = prev_commander
+        if prev_db_yuan_status is not None:
+            db.conn.execute(
+                "UPDATE characters SET status=? WHERE name=?",
+                (prev_db_yuan_status, "袁崇焕"),
+            )
+        if prev_db_commander is not None:
+            db.conn.execute(
+                "UPDATE armies SET commander=? WHERE id=?",
+                (prev_db_commander, "guanning"),
+            )
+        db.conn.commit()
 
 
 def test_gated_historical_event_excluded_when_unsatisfied(game):
