@@ -232,7 +232,12 @@ export type BudgetAccount = {
 
 export type Budget = Record<"国库" | "内库", BudgetAccount>;
 
-export type DossierDecision = "promulgated" | "rejected" | "force_promulgated";
+export type DossierDecision =
+  | "promulgated"
+  | "rejected"
+  | "force_promulgated"
+  | "withdrawn"
+  | "hold";
 
 export type DecisionChoice = {
   label?: string;

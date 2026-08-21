@@ -2810,7 +2810,8 @@ class GameSession:
         self, choices: List[Dict[str, object]], on_event=None, cheat_directive: str = ""
     ) -> str:
         """皇帝亲裁完决策点，续跑 phase2 结算。choices 按决策点 idx 顺序，每项
-        {label, hint?, note?}；先回写到 pending_decisions.choice，再读回拼进 narrative。
+        {label, hint?, note?}；dossier 批红另须带 dossier_id/dossier_decision（#1490）。
+        先回写到 pending_decisions.choice，再读回拼进 narrative。
         要求当前处于 awaiting_decision 态。返回完整结算报告，置 issued。"""
         if self.current_phase() != TurnPhase.AWAITING_DECISION:
             raise ValueError("当前不在待裁决策阶段，无法提交亲裁。")
@@ -2843,17 +2844,24 @@ class GameSession:
         if not ready_replay:
             # Dossier rescript choices are capability-bearing options.  Validate the
             # complete batch before persisting any decision so malformed/cross-dossier
-            # payloads leave the retry state untouched.
+            # payloads leave the retry state untouched（非法载荷绝不落 decided，#1490）。
             # #1418 r2：已 decided 行（崩溃安全先写后跑）不得被空/异载荷覆写——
             # phase2 续跑重发 resolve 时保留账上 choice，校验与回写均跳过。
             for d in stored:
                 if str(d.get("status") or "") == "decided":
                     continue
-                if not str(d.get("event_id") or "").startswith("dossier:"):
+                options = d.get("options") or []
+                # 识别批红轨：event_id 前缀，或 options 自带 dossier 能力字段
+                # （防 bind 误解绑后校验被跳过，#1490 接收端病灶）。
+                is_dossier = str(d.get("event_id") or "").startswith("dossier:") or any(
+                    isinstance(option, dict)
+                    and option.get("dossier_decision") is not None
+                    for option in options
+                )
+                if not is_dossier:
                     continue
                 idx = int(d["idx"])
                 choice = choices[idx] if idx < len(choices) else None
-                options = d.get("options") or []
                 allowed = {
                     (option.get("dossier_id"), option.get("dossier_decision"))
                     for option in options if isinstance(option, dict)
