@@ -453,6 +453,108 @@ def test_classify_prompt_allows_draft_and_appointment_coexistence(monkeypatch):
     )
 
 
+def test_classify_api_channel_uses_json_dispatcher_not_cli_throat(monkeypatch):
+    """#1502：API channel 预分类必须走 _run_json_extractor_for_config（API 抽取），
+    不得撞 _run_backend_for_config 的「显式 API channel 未启用本地 CLI backend」。
+    否则生产 API 召对 classifier 恒 []，任免永远进不了 materialize。
+    """
+    captured: dict = {}
+
+    def _forbidden_cli(*_args, **_kwargs):
+        raise AssertionError(
+            "API classify must not call CLI-only _run_backend_for_config"
+        )
+
+    def _api_extract(prompt, llm_config=None, tag=""):
+        captured["tag"] = tag
+        captured["channel"] = getattr(llm_config, "channel", "")
+        captured["prompt"] = prompt
+        return (json.dumps([
+            {"动作类型": "拟旨"},
+            {
+                "动作类型": "任免",
+                "任免动作": "任命",
+                "姓名": "袁崇焕",
+                "官职": "兵部右侍郎兼都察院右佥都御史督师蓟辽",
+            },
+        ], ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _forbidden_cli)
+    monkeypatch.setattr(cb, "_run_api_for_config", _api_extract)
+    cfg = types.SimpleNamespace(channel="api")
+    result = cb.classify_cli_action_intent(
+        "着起复袁崇焕，以兵部右侍郎兼都察院右佥都御史督师蓟辽",
+        llm_config=cfg,
+    )
+    assert captured.get("tag") == "action_intent"
+    assert captured.get("channel") == "api"
+    kinds = sorted(str(c.get("kind") or "") for c in result)
+    assert "appointment" in kinds and "draft" in kinds, (
+        f"API classify 须产出 draft+appointment，实际={result!r}"
+    )
+    appt = next(c for c in result if c.get("kind") == "appointment")
+    assert appt.get("appoint_action") == "任命"
+    assert appt.get("name") == "袁崇焕"
+
+
+def test_api_start_classify_finish_apply_stages_office_via_api_backend(
+    game, monkeypatch,
+):
+    """#1502 生产缝：API 并行预分类经 API 抽取器产出 appointment，apply 须 stage office。"""
+    db, state, content = game
+    ch = _minister_wang_shaohui(db, content)
+
+    def _forbidden_cli(*_args, **_kwargs):
+        raise AssertionError(
+            "API production classify/apply must not call CLI-only backend"
+        )
+
+    def _api_extract(prompt, llm_config=None, tag=""):
+        if tag == "action_intent":
+            return (json.dumps([
+                {"动作类型": "拟旨"},
+                {
+                    "动作类型": "任免",
+                    "任免动作": "任命",
+                    "姓名": "袁崇焕",
+                    "官职": "辽东巡抚",
+                },
+            ], ensure_ascii=False), 1)
+        if tag == "draft_intent":
+            return (json.dumps({
+                "拟旨意图": "拟旨",
+                "动作类型": "special_decree",
+                "目标类型": "character",
+                "目标ID": "袁崇焕",
+            }, ensure_ascii=False), 1)
+        return ("{}", 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _forbidden_cli)
+    monkeypatch.setattr(cb, "_run_api_for_config", _api_extract)
+    sess = _fake_api_session(db, state, content)
+    fut = GameSession._start_cli_action_intent(
+        sess, ch, "着起复袁崇焕为辽东巡抚，着吏部拟旨。",
+    )
+    assert fut is not None
+    preclassified = GameSession._finish_cli_action_intent(sess, fut)
+    assert preclassified is not None
+    kinds = sorted(str(c.get("kind") or "") for c in preclassified)
+    assert "appointment" in kinds, f"API classifier 须产出 appointment，实际={preclassified!r}"
+
+    GameSession.apply_cli_conversation_actions(
+        sess, ch,
+        player_message="着起复袁崇焕为辽东巡抚，着吏部拟旨。",
+        answer="奉天承运皇帝诏曰，起复袁崇焕为辽东巡抚，钦此。",
+        has_directive=False, secret_order_id=None,
+        preclassified_intent=preclassified,
+    )
+    pending = db.list_pending_actions(state.turn)
+    office_rows = [p for p in pending if p["kind"] == "office"]
+    assert office_rows, f"#1502 API 真缝须 stage office，实际 kinds={[p['kind'] for p in pending]}"
+    assert json.loads(office_rows[0]["payload_json"]).get("name") == "袁崇焕"
+    assert db.get_character_status("袁崇焕")[0] == "offstage"
+
+
 def test_api_pure_appointment_does_not_force_directive(game, monkeypatch):
     """#1502 负例：纯任免不强造 directive。"""
     db, state, content = game
