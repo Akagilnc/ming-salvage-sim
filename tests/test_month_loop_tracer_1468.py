@@ -500,8 +500,8 @@ def _play_one_month(
                 client, decisions, step=f"{month_label} resolve_decisions",
             )
     finally:
-        if trail_release is not None:
-            trail_release.set()  # 安全网：异常路径也放行，避免挂线程
+        # 禁无条件 trail_release.set()：仅 _release_trails_when_barrier_open
+        # 在观察到 barrier_open 后才可置位；finally 只还原实例方法。
         if restore_trails is not None:
             restore_trails()
         if restore_barrier_signal is not None:
