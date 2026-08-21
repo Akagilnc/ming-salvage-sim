@@ -40,6 +40,16 @@ describe("#1454 拟诏台不得挡底栏拟诏木牌", () => {
     // 不得 inset:0 把收起木牌盖死在 desk-footer 下
     expect(layer).not.toMatch(/inset:\s*0/);
   });
+
+  it("#1458 安全区跟随 hud2-stage 实际底边，方/竖视口不盖收起木牌", () => {
+    // 固定 22vh 在 800×800 时 layer 底边 y=624，而 stage 居中后木牌约 y=519–600，整块被盖。
+    // 安全区须按 stage 高度/letterbox 计算（与 .hud2-stage 的 min(100vh, 100vw*1440/2560) 同构）。
+    const layer = styles.match(/\.fullscreen-layer\.edict-safe-cmd\s*\{[^}]*\}/)?.[0] || "";
+    expect(layer).toMatch(/--hud2-stage-h|1440\s*\/\s*2560|76\.5/);
+    expect(layer).toMatch(/bottom:\s*max\(/);
+    // 不得只剩与 stage 无关的裸 22vh
+    expect(layer.replace(/\/\*[^*]*\*\//g, "")).not.toMatch(/bottom:\s*max\(\s*148px\s*,\s*22vh\s*\)/);
+  });
 });
 
 describe("#1352 地图驻军表头不拆字", () => {
