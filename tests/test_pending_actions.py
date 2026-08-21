@@ -1144,27 +1144,45 @@ def content_consort_candidates(game):
 
 
 def test_commit_does_not_crash_when_action_raises(game):
-    """CMR P0:同回合先结案再催办同一密令——rush 对非 active 抛错；commit 不得崩整批。
+    """CMR P0:同批次一成一败——失败动作不得崩整批，成功动作仍落库。
 
-    #1504 提交核议不再翻 pending_review，故本用例以 done 终态模拟非 active 目标。
+    #1504 提交核议不再翻 pending_review；等价竞争：已结案密令上的催办失败 +
+    另一 active 密令的更新成功，同一次 commit_pending_actions。
     """
     db, state, content = game
     name = _active_minister_name(db, content)
-    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=6)
+    oid_done = db.create_secret_order(state, name, "已结标题", "已结内容", [], deadline_months=6)
+    oid_live = db.create_secret_order(state, name, "在办标题", "在办内容", [], deadline_months=6)
     db.conn.execute(
         "UPDATE secret_orders SET status='done', turn_closed=? WHERE id=?",
-        (state.turn, oid),
+        (state.turn, oid_done),
     )
     db.conn.commit()
-    db.stage_pending_action(state.turn, kind="secret_order", action="催办",
-                            minister_name=name, target_id=oid, payload={"reason": "加急"})
+    db.stage_pending_action(
+        state.turn, kind="secret_order", action="催办",
+        minister_name=name, target_id=oid_done, payload={"reason": "加急"},
+    )
+    db.stage_pending_action(
+        state.turn, kind="secret_order", action="更新",
+        minister_name=name, target_id=oid_live,
+        payload={"new_title": "同批已改", "new_content": "同批新内容"},
+    )
 
     applied = db.commit_pending_actions(state)   # 不得抛
 
-    assert db.conn.execute("SELECT status FROM secret_orders WHERE id=?", (oid,)).fetchone()["status"] == "done"
-    assert applied == []
+    assert db.conn.execute(
+        "SELECT status FROM secret_orders WHERE id=?", (oid_done,)
+    ).fetchone()["status"] == "done"
+    live = db.conn.execute(
+        "SELECT title, content FROM secret_orders WHERE id=?", (oid_live,)
+    ).fetchone()
+    assert live["title"] == "同批已改"
+    assert live["content"] == "同批新内容"
+    assert any(a.get("action") == "更新" and int(a.get("target_id") or 0) == oid_live for a in applied)
+    assert not any(a.get("action") == "催办" for a in applied)
     assert db.list_pending_actions(state.turn) == []
-    assert [p["action"] for p in db.list_pending_actions(state.turn, status="failed")] == ["催办"]
+    failed_actions = [p["action"] for p in db.list_pending_actions(state.turn, status="failed")]
+    assert "催办" in failed_actions
 
 
 def test_no_stage_for_non_active_target(game, monkeypatch):
