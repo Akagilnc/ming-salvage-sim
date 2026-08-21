@@ -39,7 +39,9 @@ def test_select_only_active_after_migration(game):
     ).fetchone()
     assert row["status"] == "active"
     assert int(row["due_turn"]) > 0
-    assert "[到期迁移]" in (row["result"] or "")
+    # 迁移只改 status/due，不写机械模板进玩家 result
+    assert "[到期迁移]" not in (row["result"] or "")
+    assert "〔系统〕" not in (row["result"] or "")
 
     sel = _select_secret_orders_for_sim(db, cap=20)
     assert all(o["status"] == "active" for o in sel)
