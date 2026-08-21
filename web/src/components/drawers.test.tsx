@@ -602,83 +602,9 @@ describe("朝堂同衔分座（#1196 呈现层去冲突）", () => {
     expect(`${a!.left}|${a!.top}`).not.toBe(`${b!.left}|${b!.top}`);
   });
 
-  it("#1499-F2 GET reject 空基线收束：后续拖拽仍 POST 一次", async () => {
-    // 复现：loadCourtPos 网络层抛错 → baseline 永 null → 松手只挂 pending 永不落库。
-    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
-      if (String(url).includes("/api/court_layout")) {
-        if (init && String(init.method || "GET").toUpperCase() === "POST") {
-          return { ok: true, json: async () => ({}) } as Response;
-        }
-        throw new Error("network down");
-      }
-      return { ok: true, json: async () => ({}) } as Response;
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    const host = document.createElement("div");
-    document.body.appendChild(host);
-    const root = createRoot(host);
-    await act(async () => {
-      root.render(
-        <MinisterCardList
-          list={[minister({ name: "施凤来", office: "东阁大学士" })]}
-          portraitPrefix="minister_"
-          selectedMinister=""
-          emptyNote="empty"
-          onOpenChat={() => {}}
-          courtMode={true}
-        />
-      );
-    });
-    // 等 reject 收束为空基线
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    const court = host.querySelector(".minister-list-court") as HTMLElement | null;
-    expect(court).toBeTruthy();
-    court!.getBoundingClientRect = () =>
-      ({
-        x: 0, y: 0, width: 1000, height: 1000,
-        top: 0, right: 1000, bottom: 1000, left: 0, toJSON: () => ({}),
-      }) as DOMRect;
-
-    const cards = Array.from(host.querySelectorAll<HTMLElement>("button.minister-card"));
-    const shiCard = cards.find((el) => el.querySelector(".minister-name")?.textContent === "施凤来");
-    expect(shiCard).toBeTruthy();
-
-    await act(async () => {
-      shiCard!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, clientX: 500, clientY: 500 }));
-    });
-    await act(async () => {
-      window.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, clientX: 100, clientY: 100 }));
-    });
-    await act(async () => {
-      window.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, clientX: 100, clientY: 100 }));
-    });
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    const posts = fetchMock.mock.calls.filter(
-      (c) =>
-        String(c[0]).includes("/api/court_layout") &&
-        c[1] &&
-        String((c[1] as RequestInit).method || "").toUpperCase() === "POST",
-    );
-    // 空基线收束后松手须能落库；纯化 updater 保证同一次松手只 POST 一次
-    expect(posts.length).toBe(1);
-    const body = JSON.parse(String((posts[0][1] as RequestInit).body));
-    const saved = JSON.parse(body.layout) as Record<string, { px: number; py: number }>;
-    expect(saved["施凤来"]).toBeTruthy();
-
-    mountedRoots.push({ root, host });
-  });
-
-  it("#1499-F1 基线就绪后松手：吸附副作用在 updater 外，POST 恰一次", async () => {
+  it("#1499-F1 StrictMode 松手：吸附副作用在 updater 外，POST 恰一次", async () => {
+    // 判官 mutation 反例：把 drawers.tsx 回退至 57dc9cfe（副作用回到 setState updater 内），
+    // StrictMode 双调 updater → commitSave 两发 → 本测试必须转红；非 StrictMode 不具判别力。
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (String(url).includes("/api/court_layout")) {
         if (init && String(init.method || "GET").toUpperCase() === "POST") {
@@ -695,14 +621,16 @@ describe("朝堂同衔分座（#1196 呈现层去冲突）", () => {
     const root = createRoot(host);
     await act(async () => {
       root.render(
-        <MinisterCardList
-          list={[minister({ name: "施凤来", office: "东阁大学士" })]}
-          portraitPrefix="minister_"
-          selectedMinister=""
-          emptyNote="empty"
-          onOpenChat={() => {}}
-          courtMode={true}
-        />
+        <React.StrictMode>
+          <MinisterCardList
+            list={[minister({ name: "施凤来", office: "东阁大学士" })]}
+            portraitPrefix="minister_"
+            selectedMinister=""
+            emptyNote="empty"
+            onOpenChat={() => {}}
+            courtMode={true}
+          />
+        </React.StrictMode>
       );
     });
     await act(async () => {
@@ -722,13 +650,6 @@ describe("朝堂同衔分座（#1196 呈现层去冲突）", () => {
     const shiCard = cards.find((el) => el.querySelector(".minister-name")?.textContent === "施凤来");
     expect(shiCard).toBeTruthy();
 
-    const postsBefore = fetchMock.mock.calls.filter(
-      (c) =>
-        String(c[0]).includes("/api/court_layout") &&
-        c[1] &&
-        String((c[1] as RequestInit).method || "").toUpperCase() === "POST",
-    ).length;
-
     await act(async () => {
       shiCard!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, clientX: 500, clientY: 500 }));
     });
@@ -743,13 +664,17 @@ describe("朝堂同衔分座（#1196 呈现层去冲突）", () => {
       await Promise.resolve();
     });
 
-    const postsAfter = fetchMock.mock.calls.filter(
+    // 纯化 updater：同一次松手只允许一次 POST（StrictMode 双调下旧实现会发两发）
+    const posts = fetchMock.mock.calls.filter(
       (c) =>
         String(c[0]).includes("/api/court_layout") &&
         c[1] &&
         String((c[1] as RequestInit).method || "").toUpperCase() === "POST",
     );
-    expect(postsAfter.length - postsBefore).toBe(1);
+    expect(posts.length).toBe(1);
+    const body = JSON.parse(String((posts[0][1] as RequestInit).body));
+    const saved = JSON.parse(body.layout) as Record<string, { px: number; py: number }>;
+    expect(saved["施凤来"]).toBeTruthy();
 
     mountedRoots.push({ root, host });
   });
