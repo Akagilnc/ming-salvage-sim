@@ -777,8 +777,13 @@ def build_minister_tools(character: Character, context: CourtContext,
         """传召另一位大臣入殿。name 填大臣姓名。"""
         return f"__summon__{name}"
 
-    def recommend_person(name: str, target_office: str, reason: str = "") -> str:
-        """具名荐人并交给皇帝确认；只可荐本人的网络/见闻切片中已有的人。"""
+    # #635 荐人准入唯一所有者（庭裁 Y1/Y3）：reason 为工具契约必填参数，
+    # 缺失/全空白在受理点响亮拒绝、绝不形成 __pending_recommendation__；
+    # strip 仅作判空谓词，荐词原句逐字透传不裁剪（Y2）。
+    def recommend_person(name: str, target_office: str, reason: str) -> str:
+        """具名荐人并交给皇帝确认；只可荐本人的网络/见闻切片中已有的人。
+
+        reason 是荐词原句（非空必填），逐字落库不作任何删改。"""
         target = str(name or "").strip()
         office = str(target_office or "").strip()
         row = next((item for item in context.db.list_recommendation_candidates(
@@ -787,8 +792,11 @@ def build_minister_tools(character: Character, context: CourtContext,
             return "荐人失败：此人不在本大臣的派系/见闻可及切片内。"
         if not office:
             return "荐人失败：须说明拟授的目标差事。"
+        recommendation_reason = "" if reason is None else str(reason)
+        if not recommendation_reason.strip():
+            return "荐人失败：须附非空荐词缘由（reason），缺失或全空白不予受理。"
         payload = json.dumps({
-            "name": target, "office": office, "reason": str(reason or "").strip(),
+            "name": target, "office": office, "reason": recommendation_reason,
             "faction": row["faction"], "replaces": "",
             "recommendation": {
                 "candidate_kind": row["candidate_kind"],

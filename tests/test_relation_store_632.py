@@ -154,6 +154,29 @@ def test_relation_edges_survive_restore(game, tmp_path):
         restored.close()
 
 
+def test_distinct_pipe_origins_are_never_merged(game):
+    """通用写口身份=精确 origin 全串（含 |round 后缀）+端点+类目+context。
+    合法不同 origin（同端点/kind，首个 `|` 后非 round）各落一行，append-only
+    真源不得静默吞并事件（#635 r2：荐人专属稳定 origin 判重归其 helper，
+    不得扩权到全局写口）。"""
+    db, state, _ = game
+    first_id = db.record_relation_edge_event(
+        source="毕自严", target="王绍徽", event_kind="站台",
+        context="同一对端点的第一个独立事件。",
+        origin="foo|a", turn=state.turn,
+    )
+    second_id = db.record_relation_edge_event(
+        source="毕自严", target="王绍徽", event_kind="站台",
+        context="同一对端点的第二个独立事件。",
+        origin="foo|b", turn=state.turn,
+    )
+    assert first_id != second_id
+    rows = db.get_relation_edge_events(source="毕自严", target="王绍徽")
+    assert len(rows) == 2
+    assert {row["origin"] for row in rows} == {"foo|a|round:%d" % int(state.turn),
+                                                "foo|b|round:%d" % int(state.turn)}
+
+
 def test_record_relation_edge_event_respects_caller_owned_transaction(game):
     """PR #804 P2:调用方已开事务时,record_relation_edge_event 不得提前 commit。
 
