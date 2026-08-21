@@ -73,19 +73,21 @@ describe("NodeIntel monthly tax display", () => {
 
 describe("NodeIntel #1401 theater naming", () => {
   it("shows region.name when theater carries region (liaodong pin)", () => {
-    const region = makeRegion({ id: "liaodong", name: "辽东 / 宁锦" });
+    // name/label 必须可区分：若误先渲染 label，本断言应红（#1448）
+    const region = makeRegion({ id: "liaodong", name: "辽东省名-优先" });
     const node: MapNode = {
       id: "liaodong",
       kind: "theater",
       x: 57.76,
       y: 42.21,
-      label: "辽东 / 宁锦",
+      label: "theater-label-不应先显",
       risk: 120,
       region,
       armies: [],
     };
     const host = renderNodeIntel(node);
-    expect(host.textContent).toContain("辽东 / 宁锦");
+    expect(host.textContent).toContain("辽东省名-优先");
+    expect(host.textContent).not.toContain("theater-label-不应先显");
   });
 
   it("falls back to label when theater has no region", () => {

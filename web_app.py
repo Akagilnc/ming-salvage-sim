@@ -1263,8 +1263,11 @@ class WebGame:
         if theater_id == "liaodong":
             station = str(army.get("station") or "")
             theater = str(army.get("theater") or "")
-            # 关宁等：theater 恰为「辽东」或 station 以「辽东」起首（不含侧翼/门户/外线）
-            if theater == "辽东" or station.startswith("辽东"):
+            # 关宁等：theater 恰为「辽东」；station 仅白名单「辽东」本体/「辽东 /…」
+            # （#1448/#1401 同根：startswith("辽东") 会把 辽东侧翼/门户/外线 误吞进 liaodong）
+            if theater == "辽东":
+                return True
+            if station == "辽东" or station.startswith("辽东 /") or station.startswith("辽东/"):
                 return True
         return False
 
