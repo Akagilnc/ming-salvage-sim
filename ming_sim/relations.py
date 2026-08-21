@@ -33,7 +33,7 @@ _TURN_RE = re.compile(r"(?:^|[|/:; ])turn[=: -](\d+)(?:$|[|/:; ])", re.I)
 SETTLEMENT_ORIGIN_SENTINEL = "盘面自发"
 
 # 结算口 dossier 来源的精确字面形态：dossier:<正整数>，零空白零变体。
-_DOSSIER_ORIGIN_RE = re.compile(r"dossier:[1-9][0-9]*")
+_DOSSIER_ORIGIN_RE = re.compile(r"dossier:(?P<id>[1-9][0-9]*)")
 
 
 def settlement_edge_origin(origin_ref: object, kind: str) -> str:
@@ -52,9 +52,16 @@ def settlement_edge_origin(origin_ref: object, kind: str) -> str:
     return f"{origin_ref}:relation:{validate_edge_kind(kind)}"
 
 
-def _validated_settlement_origin(db: Any, origin_ref: object) -> str:
+def _validated_settlement_origin(
+    db: Any, origin_ref: object, allowed_dossier_ids: Any = None,
+) -> str:
     """结算口 provenance 守门：只收**精确 canonical 值**——原始值恰为「盘面自发」
     哨兵字面，或恰为已颁且授权效果的 ``dossier:<id>`` 字面。
+
+    dossier 引用受**双重闭集合取**（V2）：id 须属本批冻结输入
+    ``allowed_dossier_ids``（apply_score_extraction 既有 dossier_ids_at_input，
+    None/缺集/非集合一律按空闭集 fail-closed，不从 live DB 重建），且经既有
+    GameDB.effect_origin_rejection 授权。盘面自发不受该集合影响。
 
     不做任何归一（ADR 0015 显式优于推断）：带首尾空白的变体（" 盘面自发 "、
     "\n盘面自发\t"、空白包裹的 dossier 引用）一律逐项拒收留痕，不 strip 后
@@ -65,14 +72,45 @@ def _validated_settlement_origin(db: Any, origin_ref: object) -> str:
         raise ValueError(f"来源引用必须为字符串，得 {type(origin_ref).__name__}")
     if origin_ref == SETTLEMENT_ORIGIN_SENTINEL:
         return origin_ref
-    if not _DOSSIER_ORIGIN_RE.fullmatch(origin_ref):
+    match = _DOSSIER_ORIGIN_RE.fullmatch(origin_ref)
+    if match is None:
         raise ValueError(
             f"来源引用非法（只收精确「{SETTLEMENT_ORIGIN_SENTINEL}」或已授权"
             f" dossier:<id>，不归一首尾空白）：{origin_ref!r}"
         )
+    frozen_ids = (
+        allowed_dossier_ids
+        if isinstance(allowed_dossier_ids, (set, frozenset)) else set()
+    )
+    if int(match.group("id")) not in frozen_ids:
+        raise ValueError(
+            f"来源案卷不在本批冻结输入（dossier 闭集拒收）：{origin_ref}"
+        )
     if db.effect_origin_rejection(origin_ref) is not None:
         raise ValueError(f"origin_ref 非法：{origin_ref}")
     return origin_ref
+
+
+def _validated_settlement_endpoints(
+    db: Any, state: Any, source: str, targets: list[str],
+) -> None:
+    """结算口端点守门（V1）：大臣边两端须为当前在朝合格大臣。
+
+    复用 GameDB.current_court_roster_rows 既有 canonical 名册投影（不另立
+    第二名册、不下沉到通用写口——ADR 0081 君臣边与 seed 仍由该写口合法承载
+    皇帝节点）：幻觉名/错字/未登场/已退场者及「皇帝」节点一律逐项拒收留痕。
+    在任何边写入前整项校验 source 与全部 targets：同一互动含任一非法端点时
+    零边写入，不做部分落库（ADR 0015 坏项不牵连好项、好项也不被坏项拖写）。"""
+    wanted = [source, *targets]
+    qualified = {
+        row["name"] for row in db.current_court_roster_rows(state, wanted)
+    }
+    illegal = [name for name in wanted if name not in qualified]
+    if illegal:
+        raise ValueError(
+            "边端点须为当前在朝合格大臣（皇帝节点与不在名册者逐项拒收）："
+            f"{illegal!r}"
+        )
 
 
 def validate_edge_kind(event_kind: Any) -> str:
@@ -150,6 +188,7 @@ def credit_events_as_edges(records: Iterable[Mapping[str, Any]]) -> list[dict[st
 
 def _capture_one_interaction(
     db: Any, state: Any, item: Mapping[str, Any], turn: int,
+    allowed_dossier_ids: Any = None,
 ) -> list[dict[str, Any]]:
     kind = validate_edge_kind(item.get("类目") or item.get("kind"))
     if kind not in MINISTER_EDGE_KINDS:
@@ -200,9 +239,12 @@ def _capture_one_interaction(
         _validated_settlement_origin(
             db,
             item.get("来源引用") if item.get("来源引用") is not None else item.get("origin_ref"),
+            allowed_dossier_ids,
         ),
         kind,
     )
+    # V1：端点整项校验在任何边写入前完成——含坏端点的互动零边写入。
+    _validated_settlement_endpoints(db, state, source, targets)
     out: list[dict[str, Any]] = []
     for target in targets:
         # r2 F2 基数：每「施动者→受动者」有序对恰一行；N 方联名=牵头者→各联署者
@@ -226,11 +268,14 @@ def _capture_one_interaction(
 
 def resolve_relation_edge_events_from_extraction(
     db: Any, state: Any, extracted: Any,
+    dossier_ids_at_input: Any = None,
 ) -> list[dict[str, Any]]:
     """#633 结算口真入口（resolve_credit_events_from_extraction 先例）。
 
     消费 extractor delta 的 ``relation_edge_events`` section，经 record_relation_edge_event
     唯一写口当场落库（TD-1）；尊重调用方事务（apply_score_extraction atomic 内）。
+    dossier 来源受本批冻结输入闭集（dossier_ids_at_input，None/缺集按空闭集
+    fail-closed）与既有 effect_origin_rejection 双重合取；端点经既有名册投影校验。
     类目 fail-closed 限大臣侧九类；坏项逐条拒收留痕（category=invalid_relation_event），
     不猜测修正；捕获为空时零事件零副作用。重复项由表 UNIQUE
     (source,target,event_kind,context,origin) 幂等吸收，重放不双记。"""
@@ -249,7 +294,9 @@ def resolve_relation_edge_events_from_extraction(
             })
             continue
         try:
-            results.extend(_capture_one_interaction(db, state, item, turn))
+            results.extend(_capture_one_interaction(
+                db, state, item, turn, dossier_ids_at_input,
+            ))
         except (TypeError, ValueError) as exc:
             results.append({
                 "rejected": True, "category": "invalid_relation_event",
