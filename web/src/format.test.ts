@@ -1,5 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { stripOrganicMarkdown } from "./format";
+import { populationWanKou, stripOrganicMarkdown } from "./format";
+
+describe("populationWanKou (#648)", () => {
+  it("projects wan-scale population as qualitative 约 N 万口", () => {
+    expect(populationWanKou(720)).toBe("约720万口");
+    expect(populationWanKou(1)).toBe("约1万口");
+  });
+
+  it("renders 不足一万口 for sub-10k (or invalid) values instead of a bare number", () => {
+    expect(populationWanKou(0)).toBe("不足一万口");
+    expect(populationWanKou(-3)).toBe("不足一万口");
+    expect(populationWanKou(Number.NaN)).toBe("不足一万口");
+  });
+});
 
 describe("stripOrganicMarkdown", () => {
   it("removes bold, italic, and list markers without changing the words", () => {
