@@ -79,3 +79,17 @@ describe("#1475 召对顶栏回收版面", () => {
     expect(fatBlocks.length > 0 || bareOk).toBe(true);
   });
 });
+
+describe("#1480 hideTitle 时 chat 落入 minmax(0,1fr) 行", () => {
+  it("modal-bg-chat 在 bare 头下用单行 1fr，避免 ChatModal 落进 auto 行溢出", () => {
+    // .modal-header-bare 绝对定位脱离 grid 后，默认 auto minmax(0,1fr) 会把唯一子项
+    // ChatModal 放进第一行 auto——长转录/高侧栏溢出。邸报已用单行 1fr；召对同形。
+    const chatModal = [...styles.matchAll(/[^{.]*\.modal-bg-chat(?:\.fullscreen-modal)?[^{}]*\{[^}]*\}/g)]
+      .map((m) => m[0])
+      .filter((b) => /grid-template-rows/.test(b));
+    const ok = chatModal.some((b) => /grid-template-rows:\s*minmax\(\s*0\s*,\s*1fr\s*\)\s*;/.test(b)
+      && !/grid-template-rows:\s*auto/.test(b));
+    expect(chatModal.length).toBeGreaterThan(0);
+    expect(ok).toBe(true);
+  });
+});
