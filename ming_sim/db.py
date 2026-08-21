@@ -16470,16 +16470,29 @@ class GameDB:
             # a failure while recording cannot leave the appointment adopted
             # without its auditable recommendation.
             if isinstance(recommendation, dict):
+                # #635 荐人口（庭裁 r3）：荐词（payload.reason 原句）是双边的一句
+                # 语境，非空必填；缺失即在调用方事务内 fail-loud，任命与双边一并
+                # 回滚（ADR 0079/0082 零模板、P1 失败诚实）。
+                recommendation_reason = str(payload.get("reason") or "").strip()
+                if not recommendation_reason:
+                    raise ValueError("荐人双边缺非空荐词语境：payload.reason 必填")
+                from ming_sim.recommendations import record_recommendation_edges
                 with atomic(self):
                     res = apply_office_appointment(
                         self, state, content, registry, name, office,
-                        reason=reason, new_office_type=office_type,
+                        reason=recommendation_reason, new_office_type=office_type,
                         faction=faction, appointment_tenure=appointment_tenure,
                         llm_config=self.llm_config, commit=False)
                     accepted = not res.get("rejected")
                     if accepted:
-                        self.record_recommendation(
-                            state, recommender, staged_candidate, office, reason,
+                        event_id = self.record_recommendation(
+                            state, recommender, staged_candidate, office,
+                            recommendation_reason,
+                        )
+                        record_recommendation_edges(
+                            self, state, recommender,
+                            str(staged_candidate.get("name") or ""),
+                            event_id, recommendation_reason,
                         )
                     return accepted
             res = apply_office_appointment(
