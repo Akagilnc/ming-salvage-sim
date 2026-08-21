@@ -3037,7 +3037,10 @@ class GameSession:
             for d in stored:
                 if str(d.get("status") or "") == "decided":
                     continue
-                # 批红轨：options 含合法能力对（#1492 A / #1494；bind 亦同此识别）。
+                # 批红轨：event_id dossier: 前缀 AND options 含合法能力对
+                # （与 bind / phase2 _chosen_rescript_actions 合取谓词同形，#1494-F1）。
+                if not str(d.get("event_id") or "").startswith("dossier:"):
+                    continue
                 if not decision_has_rescript_capability(d):
                     continue
                 options = [
