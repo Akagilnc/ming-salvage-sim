@@ -1243,7 +1243,9 @@ def classify_cli_action_intent(
     )
     raw = ""
     try:
-        raw, _ = _run_backend_for_config(prompt, llm_config, tag="action_intent")
+        # 跨通道 JSON 抽取：API → _run_api_for_config；其余 → CLI backend。
+        # 不得直调 _run_backend_for_config（显式 API 会抛，classify 捕后返 []）。
+        raw, _ = _run_json_extractor_for_config(prompt, llm_config, tag="action_intent")
     except Exception as exc:
         _log(f"召对动作意图判断失败：{exc}")
         return []
