@@ -2479,9 +2479,11 @@ def extract_confirmation_intent(
     pending_summaries: List[str],
     llm_config: Any = None,
 ) -> str:
-    """皇帝本轮对【上一轮经大臣领命确认、尚未落库的暂存动作】是应允/拒绝/留中/未表态。
-    对话确认(ADR 0006 重设计)：应允 → 当场 commit，拒绝 → 丢，留中 → held_over 档，无 → 留。
-    失败/无 → 「无」。#525：留中为第三态，豁免默认准，不成案。"""
+    """皇帝本轮对【上一轮经大臣领命确认、尚未落库的暂存动作】是应允/拒绝/留中/修改/未表态。
+    对话确认(ADR 0006 重设计)：应允 → 当场 commit，拒绝 → 丢，留中 → held_over 档，
+    修改 → 原地更新同一候选内容（#1376 owner：改内容后仍走确认/默认准），无 → 留。
+    失败/无 → 「无」。#525：留中为第三态，豁免默认准，不成案。
+    语义判断经 LLM 结构化判词（ADR 0142）；禁生产词表扫「修改」。"""
     compact = re.sub(r"[\s，,。.!！?？；;：:、]+", "", player_message or "")
     if compact:
         reject_hit = any(
@@ -2529,8 +2531,9 @@ def extract_confirmation_intent(
         "  应允=准/可/照办/就这么办/依卿所奏/便如此；\n"
         "  拒绝=不必/罢了/再议/不准/作罢/算了；\n"
         "  留中=留中/留中不发/先搁置不颁（挂起，非拒绝）；\n"
+        "  修改=要求改/更正/收窄/扩充该暂存内容（未应允也未拒绝，继续改同一候选）；\n"
         "  无=没提这些、继续说别的、含糊未表态。\n"
-        "只输出一个 JSON（无代码围栏、无多余字）：{\"确认\":\"应允|拒绝|留中|无\"}。语义判断，别拘字面。\n\n"
+        "只输出一个 JSON（无代码围栏、无多余字）：{\"确认\":\"应允|拒绝|留中|修改|无\"}。语义判断，别拘字面。\n\n"
         "【待皇帝定夺的暂存动作】" + summ + "\n"
         "【皇帝】" + (player_message or "（无）") + "\n"
         "【大臣回话】" + (minister_reply or "（无）") + "\n"
@@ -2542,7 +2545,7 @@ def extract_confirmation_intent(
         _log(f"确认意图抽取失败：{exc}")
     obj = _loads_lenient(raw) or {}
     v = str(obj.get("确认") or "无").strip()
-    return v if v in {"应允", "拒绝", "留中", "无"} else "无"
+    return v if v in {"应允", "拒绝", "留中", "修改", "无"} else "无"
 
 
 def extract_directive_confirmation(
