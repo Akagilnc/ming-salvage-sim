@@ -15717,8 +15717,23 @@ class GameDB:
                 finally:
                     self.conn.execute(f"RELEASE {savepoint}")
             if ok:
-                applied.append({"id": pa["id"], "kind": pa["kind"], "action": pa["action"],
-                                "target_id": pa["target_id"]})
+                item: Dict[str, object] = {
+                    "id": pa["id"],
+                    "kind": pa["kind"],
+                    "action": pa["action"],
+                    "target_id": pa["target_id"],
+                }
+                # #1376：新建密令落库后把真实 order id 回传确认面（stage 时 target_id 为空）。
+                if pa["kind"] == "secret_order" and str(pa["action"] or "") == "新建":
+                    row = self.conn.execute(
+                        "SELECT secret_order_id FROM decree_dossiers "
+                        "WHERE pending_action_id=? AND secret_order_id IS NOT NULL "
+                        "ORDER BY id DESC LIMIT 1",
+                        (int(pa["id"]),),
+                    ).fetchone()
+                    if row is not None and row["secret_order_id"] is not None:
+                        item["secret_order_id"] = int(row["secret_order_id"])
+                applied.append(item)
         return applied
 
     def retry_failed_pending_action(

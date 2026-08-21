@@ -244,7 +244,7 @@ def test_pending_secret_order_count_zero_without_staged(read_game):
 def test_pending_secret_order_count_reflects_staged_candidate(game):
     """正向：staged secret_order 候选如实入 pending_secret_order_count 与 pending_count。
 
-    确认闸门不动：secret_orders 表仍空（落库在收夜/退朝 commit）。
+    确认前闸门：secret_orders 表仍空（应允后才直写落地，见下条 #1376）。
     """
     from ming_sim.session import GameSession
 
@@ -278,3 +278,84 @@ def test_pending_secret_order_count_reflects_staged_candidate(game):
     assert payload["pending_count"] == 1
     # 闸门：尚未落真实密令表
     assert db.list_secret_orders() == []
+
+
+def test_confirm_secret_order_http_returns_id_and_list_visible(game, monkeypatch):
+    """#1376：召对确认密令后 secret_order_id 非 0，且立刻 GET /api/secret_orders 可见。
+
+    接缝：真实 HTTP 入口 POST /api/ministers/{name}/chat（确认句）+
+    GET /api/secret_orders。session.chat 只 canned 回奏文本，确认→落库走生产
+    apply_cli_conversation_actions（内容已在 pending payload 定文，落行不需 LLM）。
+    """
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = content.characters.get(name)
+    if ch is None or getattr(ch, "name", None) != name:
+        ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+
+    pending_id = db.stage_pending_action(
+        state.turn,
+        kind="secret_order",
+        action="新建",
+        minister_name=name,
+        target_id=None,
+        payload={
+            "title": "暗查辽饷",
+            "content": "密查辽东军饷侵冒。",
+            "assignee": name,
+            "tags": ["辽饷"],
+            "deadline_months": 3,
+        },
+    )
+    assert pending_id > 0
+    assert db.list_secret_orders() == []
+
+    def _session_chat(minister_name, message, *, chat_turn_id=0):
+        del minister_name, chat_turn_id
+        result = ChatTurnResult(answer="臣即密办。")
+        # 与 session.chat 非流式工具后落点同缝：确认句 → apply → 应允即落地。
+        sess = SimpleNamespace(
+            db=db,
+            state=state,
+            content=content,
+            llm_config=SimpleNamespace(channel="cli"),
+            registry=None,
+            _active_chat_turn_id=0,
+        )
+        res = GameSession.apply_cli_conversation_actions(
+            sess,
+            ch,
+            message,
+            result.answer,
+            has_directive=False,
+            secret_order_id=None,
+            preclassified_intent=[{"kind": "confirmation", "confirmation": "应允"}],
+            confirm_target_ids={int(pending_id)},
+        )
+        if res.get("secret_order_id"):
+            result.secret_order_id = int(res["secret_order_id"])
+        if res.get("pending_action_id"):
+            result.pending_action_id = int(res["pending_action_id"])
+        if res.get("pending_action_failures"):
+            result.pending_action_failures = list(res["pending_action_failures"])
+        return result
+
+    runtime = _webgame_shell(db, state, content, session_chat=_session_chat)
+    monkeypatch.setattr(web_app, "web_game", runtime)
+    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
+
+    chat_result = asyncio.run(
+        web_app.api_chat(name, web_app.ChatRequest(message="准，就这么办"))
+    )
+    oid = int(chat_result.get("secret_order_id") or 0)
+    assert oid > 0, (
+        f"#1376 确认后 secret_order_id 须非 0，got {chat_result!r}"
+    )
+
+    listing = asyncio.run(web_app.api_secret_orders())
+    ids = {int(o["id"]) for o in (listing.get("orders") or [])}
+    assert oid in ids, (
+        f"#1376 确认返回后 GET /api/secret_orders 须立刻可见 id={oid}，got {listing!r}"
+    )
+    # 应允即落地：暂存不再挂 pending
+    assert db.list_pending_actions(state.turn) == []
