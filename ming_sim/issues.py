@@ -8292,6 +8292,13 @@ def apply_score_extraction(
         db, state, _credit_applied, commit=False,
     )
 
+    # #633 / ADR 0082 结算口：邸报大臣互动 → 边事件，同 atomic 当场落库（TD-1）。
+    # 走 record_relation_edge_event 唯一写口；坏项逐条拒收留痕，不阻塞其它 section。
+    from ming_sim.relations import resolve_relation_edge_events_from_extraction
+    relation_edge_event_resolutions = resolve_relation_edge_events_from_extraction(
+        db, state, extracted,
+    )
+
     state.clamp()
     return {
         "metric_delta": applied_metric,
@@ -8315,6 +8322,7 @@ def apply_score_extraction(
         "secret_dossier_participants": secret_dossier_participant_results,
         "breach_plea_resolutions": breach_plea_resolutions,
         "credit_event_resolutions": credit_event_resolutions,
+        "relation_edge_event_resolutions": relation_edge_event_resolutions,
         "authority_changes": authority_change_results,
         "world_advance": extracted.get("world_advance") or {},
         "fiscal_changes": applied_fiscal,

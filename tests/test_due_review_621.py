@@ -563,10 +563,12 @@ def test_three_beat_timing_todo_then_scene_then_slot(game):
 
 
 def test_extraction_modules_cardinality_unchanged():
+    # #633：relations（关系档房）并入既有并发装配（五模块同一 executor）；
+    # 本测试原意是钉 due_review 未增删 extractor 槽，随 #633 授权扩为五模块。
     assert EXTRACTION_MODULES == (
-        "internal", "military_external", "issues", "personnel_secret",
+        "internal", "military_external", "issues", "personnel_secret", "relations",
     )
-    assert len(EXTRACTION_MODULES) == 4
+    assert len(EXTRACTION_MODULES) == 5
 
 
 def test_due_review_settle_does_not_pause_or_decision(game):
