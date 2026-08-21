@@ -1,47 +1,55 @@
-"""#108：密令注入月末推演时 pending_review 全进，不被满载 active 的整体 [:cap] 截断饿死。
+"""#1504：密令注入选择器只扫 active；legacy pending_review 由开库一次迁移消化。
 
-pending_review = 到期密令，本回合必须给 done/failed 裁决；被截断会永久卡住不结案。
-旧码 `(active + pending_review)[:20]` 在 active 满 20 时把所有 pending_review 切掉。
+due_commitment ACK 仍走 augment → 待核议分组，不经 secret_orders 表 status。
 """
 from __future__ import annotations
 
+from ming_sim.db import GameDB
 from ming_sim.decree import _select_secret_orders_for_sim
+from ming_sim.settlement_payload import (
+    augment_secret_orders_with_due_commitments,
+    group_secret_orders_for_sim,
+)
 
 
-def _insert_order(db, state, title, status):
+def _insert_order(db, state, title, status, *, due_turn=0):
     db.conn.execute(
         "INSERT INTO secret_orders (turn_issued,due_turn,year_issued,period_issued,"
         "minister_name,title,content,tags,importance,status) VALUES (?,?,?,?,?,?,?,?,?,?)",
-        (state.turn, 0, state.year, state.period, "测试臣", title, "x", "[]", 4, status))
+        (state.turn, int(due_turn), state.year, state.period, "测试臣", title, "x", "[]", 4, status),
+    )
 
 
-def test_pending_review_not_starved_by_full_active(game):
-    """20 条 active（满载）+ 1 条 pending_review → pending_review 仍进推演（#108）。"""
-    db, state, _content = game
-    db.conn.execute("DELETE FROM secret_orders")  # 临时库，清净构造满载场景
-    for i in range(20):
-        _insert_order(db, state, f"active令{i}", "active")
-    _insert_order(db, state, "待核议令甲", "pending_review")
-    db.conn.commit()
-    sel = _select_secret_orders_for_sim(db, cap=20)
-    titles = [o["title"] for o in sel]
-    assert "待核议令甲" in titles, "pending_review 被满载 active 饿死（#108）"
-    assert sum(1 for o in sel if o["status"] == "pending_review") == 1
-
-
-def test_all_pending_review_kept_even_over_cap(game):
-    """pending_review 超 cap 也全保（本回合都须核议，绝不截断）。"""
-    db, state, _content = game
+def test_select_only_active_after_migration(game):
+    """选择器不再长期并行保 pending_review；开库迁移后只见 active。"""
+    db, state, content = game
     db.conn.execute("DELETE FROM secret_orders")
-    for i in range(22):
-        _insert_order(db, state, f"待核议令{i}", "pending_review")
+    for i in range(5):
+        _insert_order(db, state, f"active令{i}", "active")
+    _insert_order(db, state, "旧待核议", "pending_review", due_turn=0)
     db.conn.commit()
+
+    # 同连接未再跑 open 迁移：手动调用一次确定迁移
+    db._migrate_legacy_pending_review_secret_orders()
+    db.conn.commit()
+
+    row = db.conn.execute(
+        "SELECT status, due_turn, result FROM secret_orders WHERE title=?",
+        ("旧待核议",),
+    ).fetchone()
+    assert row["status"] == "active"
+    assert int(row["due_turn"]) > 0
+    # 迁移只改 status/due，不写机械模板进玩家 result
+    assert "[到期迁移]" not in (row["result"] or "")
+    assert "〔系统〕" not in (row["result"] or "")
+
     sel = _select_secret_orders_for_sim(db, cap=20)
-    assert sum(1 for o in sel if o["status"] == "pending_review") == 22
+    assert all(o["status"] == "active" for o in sel)
+    assert "旧待核议" in [o["title"] for o in sel]
 
 
-def test_active_capped_when_no_pending(game):
-    """无 pending 时 active 仍受 cap 限制（payload 预算不破）。"""
+def test_active_capped(game):
+    """active 受 cap 限制（payload 预算不破）。"""
     db, state, _content = game
     db.conn.execute("DELETE FROM secret_orders")
     for i in range(25):
@@ -49,18 +57,41 @@ def test_active_capped_when_no_pending(game):
     db.conn.commit()
     sel = _select_secret_orders_for_sim(db, cap=20)
     assert len(sel) == 20
+    assert all(o["status"] == "active" for o in sel)
 
 
-def test_active_fills_remaining_budget_after_pending(game):
-    """pending 占预算后 active 填满剩余：5 pending + 20 active, cap=20 → 5 pending + 15 active = 20。"""
-    db, state, _content = game
+def test_reopen_migrates_pending_review_due_zero(game):
+    """重开 GameDB：due_turn=0 的 pending_review 迁 active 并得未来实况窗（不立即 due）。"""
+    db, state, content = game
     db.conn.execute("DELETE FROM secret_orders")
-    for i in range(20):
-        _insert_order(db, state, f"active令{i}", "active")
-    for i in range(5):
-        _insert_order(db, state, f"待核议令{i}", "pending_review")
+    _insert_order(db, state, "零期核议", "pending_review", due_turn=0)
     db.conn.commit()
-    sel = _select_secret_orders_for_sim(db, cap=20)
-    assert sum(1 for o in sel if o["status"] == "pending_review") == 5  # pending 全进
-    assert sum(1 for o in sel if o["status"] == "active") == 15        # active 填满剩余
-    assert len(sel) == 20                                              # 预算不破
+    path = db.path
+    db.close()
+
+    db2 = GameDB(path, content)
+    try:
+        state2 = db2.load_state()
+        row = db2.conn.execute(
+            "SELECT status, due_turn FROM secret_orders WHERE title=?",
+            ("零期核议",),
+        ).fetchone()
+        assert row["status"] == "active"
+        assert int(row["due_turn"]) > 0
+        # 尚缺 target 时给未来窗，禁止 due<=current 空实况即死
+        assert int(row["due_turn"]) > int(state2.turn)
+    finally:
+        db2.close()
+
+
+def test_due_commitment_ack_channel_untouched(game):
+    """due_commitment 仍进「待核议」分组（承诺 ACK），不依赖 secret_orders.pending_review。"""
+    db, state, _content = game
+    # 无密令时 augment 仍应返回分组结构
+    grouped = group_secret_orders_for_sim([])
+    out = augment_secret_orders_with_due_commitments(grouped, db, state)
+    assert "在办" in out and "待核议" in out
+    # 条目若有，必须带 entry_kind
+    for item in out.get("待核议") or []:
+        if item.get("entry_kind") == "due_commitment":
+            assert "issue_id" in item

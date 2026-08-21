@@ -2556,7 +2556,7 @@ class WebGame:
                             tool_pending_action_id = coalesce_pending_action_id(
                                 tool_pending_action_id, staged_id,
                             )
-                # 密令结案不再走大臣工具，由月末推演 + extractor 写入
+                # 密令结案不再走大臣工具：月末 settle 按实进度对账派生 done/failed（#1504）
         # CLI 后端（agy/codex）：玩家用拟旨/密令按钮（消息带前缀）时，把大臣这句回话原文入档。
         # CLI 后端会话落地走共享真源 session.apply_cli_conversation_actions(同 session.chat 非流式路径)，
         # 杜绝 web/CLI 两边逻辑漂移（CMR F3 / codexC-1）。

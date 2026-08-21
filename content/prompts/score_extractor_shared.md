@@ -53,7 +53,7 @@ force_json 模式下你**只能输出最终 JSON**，不得吐出思考文本。
 | `结案局势` | array，每项 `{"局势编号":整数,"原因":"resolved\|failed\|acknowledged","叙述":"..."}` | 本{{TURN_UNIT}}结案/失败；`acknowledged` 仅用于到期待裁承诺已被皇帝裁决确认 |
 | `人物变更` | array，每项必须含 `{"name":"...","动作":"任命\|罢黜\|调任\|处置\|易主\|册封\|行止\|评定","来源引用":"..."}`；按动作补 `office`/`office_type`/`status`/`new_power`/`location`/`transit_to`/`loyalty`/`reason` | ADR0009 人事档案单一入口；`location`/`transit_to` 必须来自 `region_ids`，`评定.loyalty` 是忠诚增量 |
 | `密令副作用` | array，每项 `{"密令编号":整数,"推演备注":"...","泄漏结论":boolean}`（泄漏结论可省略） | `在办` 组密令副作用；情节已实际公开（disclosed）才为 true |
-| `密令结案` | array，每项 `{"密令编号":整数,"状态":"done\|failed","结果":"..."}` | `待核议` 组密令结案 |
+| `密令执行态` | array，每项 `{"密令编号":整数,"执行态":"忠实\|打折\|阳奉阴违\|反噬","备注":"..."}` | 在办密令带内选态（≥`covert_exec_floors` 底档，只准加重）；结案不由本字段 |
 
 ## 通用字段白名单
 

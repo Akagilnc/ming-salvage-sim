@@ -1119,11 +1119,11 @@ def resolve_directives(
         tlog(f"[memory/chapters] 失败，跳过：{exc}")
 
     # 密令期限到期送核议已挪进 pre_settle 事务（ADR 0008 S4）——此处不再单独调用，
-    # 否则二次写在 pre_settle 提交后散落事务外。下面只读注入推演（含 pending_review）。
+    # 否则二次写在 pre_settle 提交后散落事务外。下面只读注入推演（active 密令）。
 
-    # 密令注入推演：active + pending_review 都要进（pending_review 需推演本月核议判 done/failed）
+    # 密令注入推演：仅 active（legacy pending_review 开库一次迁）；结案改 settle 对账（#1504）
     try:
-        active_orders = _select_secret_orders_for_sim(db)  # pending_review 全进，不被 active 饿死（#108）
+        active_orders = _select_secret_orders_for_sim(db)  # 仅 active；due_commitment 另由 augment 进待核议
         # 分组承载、剥英文 status：simulator/extractor 收到的密令零英文 enum（#48）。
         secret_orders_for_sim = group_secret_orders_for_sim(active_orders)
         secret_orders_for_sim = augment_secret_orders_with_due_commitments(secret_orders_for_sim, db, state)
@@ -1888,11 +1888,11 @@ def pre_settle(
                 ]
             if auto_triggered:
                 tlog(f"[AUTO-TRIGGER] 本回合程序硬立项 {len(auto_triggered)} 条：{[t.get('title') for t in auto_triggered]}")
-            # 密令期限：到期 active 自动转 pending_review，保证本月核议一锤定音。
+            # #1504：到期密令只打期限戳，保持 active；结案在 settle 尾部机械对账。
             # 推演前的确定性写，挪入前半段事务（原在 resolve_directives，ADR 0008 S4）。
             due_orders = db.auto_submit_due_secret_orders(state)
             if due_orders:
-                tlog(f"[secret_order] 到期送核议 {due_orders}")
+                tlog(f"[secret_order] 到期待对账 {due_orders}")
             # 完成相位：同事务内落 settling（崩在上面任一步=全回滚=相位未变）。
             state.turn_phase = TurnPhase.SETTLING.value
             db.save_state(state)
@@ -2182,6 +2182,16 @@ def _settle_after_extract_body(
         applied = delta_applier(db, state, extracted, content, registry)
     else:
         applied = apply_score_extraction(db, state, extracted, content=content, registry=registry)
+    # #1504：当月 covert 实况进度与 apply 同一 atomic（0073 实况轨；不读奏报）。
+    from ming_sim.covert_progress import (
+        apply_monthly_covert_actual_progress,
+        parse_covert_exec_selections,
+    )
+    applied["covert_actual_progress"] = apply_monthly_covert_actual_progress(
+        db, state,
+        selections=parse_covert_exec_selections(extracted),
+        commit=False,
+    )
     if collector is not None:
         # 桥接：各 section 内嵌的拒收项（{"rejected": True, ...}）收进收集器并在
         # 事务内 flush——delta_applier 闭包签名不动（ADR 决定 8 原地迁入）。section
@@ -2232,6 +2242,12 @@ def _settle_after_extract_body(
     # kind 分派：仅 staged 终裁；哭谏 pending 保留。
     from ming_sim.due_review import apply_pending_due_reviews
     apply_pending_due_reviews(db, state, commit=False)
+
+    # #1504：当月实况已落后 → 到期密令只读实况轨缺口对账（替换 secret_order_closes）。
+    from ming_sim.covert_progress import settle_due_secret_orders
+    applied["secret_order_settlements"] = settle_due_secret_orders(
+        db, state, commit=False,
+    )
 
     # #623 / ADR 0075：承诺 due 到 → 挽留条目失效关闭（不走坚持撤分档）。
     from ming_sim.breach_plea import (

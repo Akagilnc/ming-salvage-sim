@@ -250,16 +250,16 @@ def build_secret_order_brief(character: Character, context: CourtContext) -> str
     lines = [
         "【你身上还在办的密令】",
         "★ 皇帝问进度时调 `report_secret_order_progress(order_id, progress=本月新一步进展)`：有 progress 时先暂存待确认，确认后落档；若只想查看历史则留空 progress；同月补充会修正本月行。",
-        "★ 皇帝催办/加急时调 `rush_secret_order(order_id, deadline_months=1/3/0, reason=催办缘由)`：1=下月核议，3=三月内核议，0=本月即核。",
-        "★ 自认任务办到位时调 `submit_secret_order_for_review(order_id, claim=自述办结陈词)`：转入待核议状态，等推演月末判 done/failed。",
+        "★ 皇帝催办/加急时调 `rush_secret_order(order_id, deadline_months=1/3/0, reason=催办缘由)`：1=下月到期，3=三月内到期，0=本月到期对账。",
+        "★ 自认任务办到位时调 `submit_secret_order_for_review(order_id, claim=自述办结陈词)`：缩期限至本月，月末按实进度对账。",
         "★ progress / claim 写具体事实：派谁去、查到什么、摸到哪一层、下一步指向谁。空话「待实据到手」不算。",
-        "★ 大臣无权直接判 done/failed——结案权全归推演。提交后该月不再可推进。",
+        "★ 大臣无权直接判 done/failed——结案由月末实进度对账派生。",
         "在册密令：",
     ]
     for o in orders:
         status = o.get("status", "active")
         if status == "pending_review":
-            tag = "⏳ 已提交待核议（本月不再可动，等推演月末定夺）"
+            tag = "⏳ 遗留待核议（月末按实进度对账）"
         else:
             advanced = context.db._has_secret_order_period_line(
                 int(o["id"]), "result", context.state.year, context.state.period
