@@ -13126,6 +13126,18 @@ class GameDB:
             raise ValueError("案卷 action_type/decree_text 不能为空")
         if action not in self._DOSSIER_ACTION_TYPES:
             raise ValueError(f"案卷 action_type 非法：{action}")
+        # #653 / ADR 0090：偿还序 override 旨载荷成案点先验（fail-loud 拒整道旨）——
+        # 非法键形/值域/幻影 region 在收夜即响亮拒，不等到颁布关才炸。与物化点共
+        # prepare_pay_order_entries 同一验形（禁两套漂移）。
+        if action == "pay_order_override":
+            from ming_sim.pay_order import prepare_pay_order_entries
+            entries = normalized_payload.get("entries")
+            if not isinstance(entries, list) or not entries:
+                raise ValueError("pay_order_override 案卷 payload.entries 须为非空列表")
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    raise ValueError(f"pay_order_override entry 非字典：{entry!r}")
+            prepare_pay_order_entries(self, entries)
         # #1503：拨饷类成案即规范化补饷载荷（缺字段 fail-loud）。
         if action == "grant_allocation":
             # target_* 可能只在行级参数、尚未入 payload — 先并入再校验。
@@ -14250,6 +14262,14 @@ class GameDB:
                                 state.turn, close=True, commit=False,
                             )
                             return
+            elif row["action_type"] == "pay_order_override":
+                # #653 / ADR 0055/0090：偿还序 override＋折发旨判后物化——顺颁/强颁
+                # 走 materialize_pay_order_decree 唯一入口（真实案卷资格＋颁布门校验、
+                # 整批先验后写 fail-loud、stale until 清理）；打回在上方 decision 分支
+                # 早退零写。物化落在结算尾段 atomic 内（apply_dossier_verdicts 在
+                # settle_with_delta 事务内、本月 fixed flow 已结束后）→ 自下一次结算起
+                # 生效，当月已按旧序完成的结算不追溯（F1.3）。
+                self._apply_pay_order_override_effect(state, row, payload, dossier_id)
             elif row["action_type"] == "punishment":
                 # #517 / ADR 0055：结构化惩处效果自案卷物化，判决后才落人物/钱粮。
                 self._apply_punishment_verdict_effect(
@@ -15416,6 +15436,29 @@ class GameDB:
             )
             return
         raise ValueError(f"惩处案卷动作无法物化：{punish_action}")
+
+    def _apply_pay_order_override_effect(
+        self, state: GameState, row, payload: Dict[str, object], dossier_id: int,
+    ) -> None:
+        """#653 / ADR 0090：pay_order_override 案卷顺颁/强颁后自载荷物化 fiscal_config。
+
+        唯一物化入口＝materialize_pay_order_decree（内部再验真实案卷资格＋颁布门）；
+        打回案卷不进本分支（效果跟判决走，零写入）。物化即效果已落地（无执行判定面）
+        → fulfilled 直达终局，与 punishment/pacification 同款 terminal 分支。"""
+        from ming_sim.pay_order import materialize_pay_order_decree
+        entries = payload.get("entries")
+        if not isinstance(entries, list) or not entries:
+            raise ValueError("pay_order_override 案卷 payload.entries 须为非空列表")
+        materialize_pay_order_decree(
+            self,
+            turn=int(state.turn),
+            entries=entries,
+            origin_ref=f"dossier:{int(dossier_id)}",
+            reason=str(row["decree_text"] or "")[:240],
+            commit=False,
+        )
+        # 终局由 dispatcher 尾部通用 terminal 分支统一写（fulfilled 颁布即终局），
+        # 与 punishment/pacification 同款：效果 applier 不自带 close。
 
     def apply_dossier_verdicts(
         self, state: GameState, verdicts: Iterable[Dict[str, object]], *,

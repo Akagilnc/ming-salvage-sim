@@ -95,6 +95,49 @@ class FiscalConservationError(AssertionError):
     """守恒 oracle 失败 = settlement 算错（bug）。fail-loud，调用方不得落库（港口锁）。"""
 
 
+# ── #653 独立 oracle 专用重算（FISCAL_PROVINCE_SUBSTRATE 宪制：与落账路径零共享）──
+# 落账走 _resolve_order_param/_effective_dues/haircut_due；oracle 走下面两个独立实现。
+# 两套并存是有意的冗余：同一 bug 不可能同时逃过两套不同代码，mutation 测试靠此变红。
+
+def _oracle_order(p: Dict[str, Any], key: str, default: tuple) -> tuple:
+    """oracle 侧序参重算：独立于落账的 _resolve_order_param。"""
+    raw = p.get(key)
+    if raw is None:
+        return tuple(default)
+    if isinstance(raw, str) or not isinstance(raw, (list, tuple)):
+        raise ValueError(f"param {key} 非 list/tuple")
+    items = tuple(raw)
+    if len(items) != len(default) or set(items) != set(default) or len(set(items)) != len(items):
+        raise ValueError(f"param {key} 须为 {default} 的完整无重复排列：{raw!r}")
+    return items
+
+
+def _oracle_effective_dues(p: Dict[str, Any]) -> Dict[str, float]:
+    """oracle 侧折后应得重算：独立于落账的 _effective_dues/haircut_due。
+    折发语义同律（floor(Due×bp/10000)、bp=10000 或缺省=无折），但代码自成一路。"""
+    raw_h = p.get("due_haircut_bp")
+    haircuts: Dict[str, int] = {}
+    if raw_h is not None:
+        if not isinstance(raw_h, dict):
+            raise ValueError(f"param due_haircut_bp 非字典：{raw_h!r}")
+        for hk, bp in raw_h.items():
+            if hk not in _DUE_KEYS:
+                raise ValueError(f"due_haircut_bp 含未知科目 {hk}")
+            if isinstance(bp, bool) or not isinstance(bp, int):
+                raise ValueError(f"due_haircut_bp[{hk}] 非整数：{bp!r}")
+            if not (0 < bp <= 10000):
+                raise ValueError(f"due_haircut_bp[{hk}] 须在 (0,10000]：{bp}")
+            if bp != 10000:
+                haircuts[hk] = bp
+    out: Dict[str, float] = {}
+    for h in _DUE_KEYS:
+        _due = p["Due"]
+        d = float(_due.get(h, 0.0)) if isinstance(_due, dict) else 0.0
+        bp = haircuts.get(h)
+        out[h] = float(math.floor(d * bp / 10000)) if bp is not None else d
+    return out
+
+
 @dataclass
 class FiscalTickResult:
     """settle_tick 产出：新省级财政末态 + 当 tick 流水分解（供邸报/裁判消费，§9）。"""
@@ -387,10 +430,13 @@ def _assert_conservation(
     _zf_o = p.get("正赋应征")
     正赋_o = _zf_o if _zf_o is not None else round(官民田_o * p.get("正赋亩额", 0) / 12, 4)
     三饷 = p["三饷应征"]
-    # ── ② 债务 per-account 独立 oracle（#653：同源重放 override 序＋折后应得）──
-    o_due_order = _resolve_order_param(p, "due_order", _DUE_KEYS)
-    o_arrears_order = _resolve_order_param(p, "arrears_order", _ARREARS_KEYS)
-    o_eff_due = _effective_dues(p)
+    # ── ② 债务 per-account 独立 oracle（#653 FISCAL_PROVINCE_SUBSTRATE 宪制：
+    # 独立重算 override 序与折后应得，不调用落账同款的 _resolve_order_param /
+    # _effective_dues / haircut_due——同源共函则实现错处两达一致仍绿，oracle 失效。
+    # 此处的验形/折算逻辑独立成文，故意不共享实现）──
+    o_due_order = _oracle_order(p, "due_order", _DUE_KEYS)
+    o_arrears_order = _oracle_order(p, "arrears_order", _ARREARS_KEYS)
+    o_eff_due = _oracle_effective_dues(p)
     o_pool = max(0.0, 省内可支)
     o_paid = {}
     for h in o_due_order:

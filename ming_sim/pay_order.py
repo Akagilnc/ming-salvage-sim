@@ -16,9 +16,10 @@
   ``#source`` > 裸键；同一（科目×省×饷源）恰取一个胜出键。
 - **期限**：物化时同写伴随键 ``<完整键名>_until_turn``（INTEGER 绝对 turn）；读取端
   ``turn > until`` → 该形状退出格律（按次特定者或默认取值；键与 provenance 保留）。
-- **hub 恒先不可 override**（r2 宪法边界）：本模块只解析省内池两序＋折发；hub tier
-  （京运补＋中央军饷，0023 D9 合并 k）不读这些键。``#central`` 形状的键合法存在、
-  可解析、可到期，但当前无结算消费者（中央侧不受影响，r4 golden① 口径）。
+- **hub 恒先不可 override**（r2 宪法边界）：hub tier 的 tier 序与 0023 D9 合并 k 分母
+  不读 priority 键、不被 override；``#central`` 折发键只改写中央份额 Due **输入值**
+  （flows 读端按 r3 全序取胜出键、floor 折算，余数=免除不入欠），hub 恒先、合并 k
+  公式与中央旧欠不自动偿还（0023 D7③）一律不动。
 
 持久化**只**经 fiscal_config 行＋``record_fiscal_config_change``（immutable
 provenance、origin_ref=dossier:<id>），禁第二份旨意真源或新表（F1.2）。
@@ -161,6 +162,45 @@ def _resolve_priority(
     )
 
 
+def resolve_haircut_winning_key(
+    config: Dict[str, int],
+    subject: str,
+    region_id: str,
+    turn: int,
+    source: str,
+) -> Optional[str]:
+    """r3 全序取胜出键名：@region#source > @region > #source > 裸键；到期形状退出。
+    region_id 为空（无属地军）时 @region 两形不参与。无胜出键 → None。"""
+    rid = str(region_id or "").strip()
+    candidates = (
+        f"{HAIRCUT_FAMILY}{subject}@{rid}#{source}",
+        f"{HAIRCUT_FAMILY}{subject}@{rid}",
+        f"{HAIRCUT_FAMILY}{subject}#{source}",
+        f"{HAIRCUT_FAMILY}{subject}",
+    )
+    best: Tuple[int, str] = (-1, "")  # (specificity, key)
+    for key in candidates:
+        if not _live(config, key, turn):
+            continue
+        spec = parse_override_key(key).specificity
+        if spec > best[0]:
+            best = (spec, key)
+    return best[1] or None
+
+
+def resolve_haircut_bp(
+    config: Dict[str, int],
+    subject: str,
+    region_id: str,
+    turn: int,
+    source: str,
+) -> Optional[int]:
+    """按 r3 全序取该（科目×省×饷源）胜出键的折发万分数；无胜出键 → None。
+    省内池结算消费 source='province'；中央份额 Due 消费 source='central'（flows 读端）。"""
+    key = resolve_haircut_winning_key(config, subject, region_id, turn, source)
+    return int(config[key]) if key is not None else None
+
+
 def _resolve_haircut_bp(
     config: Dict[str, int],
     subject: str,
@@ -168,23 +208,8 @@ def _resolve_haircut_bp(
     turn: int,
     source: str,
 ) -> Optional[int]:
-    """r3 全序取胜出键：@region#source > @region > #source > 裸键；到期形状退出。"""
-    candidates = (
-        f"{HAIRCUT_FAMILY}{subject}@{region_id}#{source}",
-        f"{HAIRCUT_FAMILY}{subject}@{region_id}",
-        f"{HAIRCUT_FAMILY}{subject}#{source}",
-        f"{HAIRCUT_FAMILY}{subject}",
-    )
-    best: Tuple[int, int] = (-1, 0)  # (specificity, value)
-    found = False
-    for key in candidates:
-        if not _live(config, key, turn):
-            continue
-        spec = parse_override_key(key).specificity
-        if spec > best[0]:
-            best = (spec, int(config[key]))
-            found = True
-    return best[1] if found else None
+    """r3 全序取胜出键（resolve_haircut_bp 别名，模块内沿旧名）。"""
+    return resolve_haircut_bp(config, subject, region_id, turn, source)
 
 
 def resolve_pay_order_overrides(
@@ -212,8 +237,8 @@ def resolve_pay_order_overrides(
     )
     haircut_bp: Dict[str, int] = {}
     for subject in DUE_SUBJECTS:
-        # 省内池结算消费 province 侧；中央侧（hub tier）恒先不可 override、无消费者
-        # （r2 宪法边界），此处不解析进结算参数。
+        # 省内池结算消费 province 侧；中央侧（hub tier）由 flows 读端按
+        # resolve_haircut_bp(source='central') 独立取胜出键（只改 Due 输入值）。
         bp = _resolve_haircut_bp(config, subject, region_id, turn, "province")
         if bp is not None and bp != 10000:
             haircut_bp[subject] = bp
@@ -233,28 +258,12 @@ def haircut_due(due: float, bp: int) -> Tuple[float, float]:
     return effective, float(due) - effective
 
 
-def materialize_pay_order_decree(
-    db: Any,
-    *,
-    turn: int,
-    entries: List[Dict[str, Any]],
-    origin_ref: str,
-    reason: str = "",
-    commit: bool = True,
-) -> List[Dict[str, Any]]:
-    """一道 override 旨的唯一次物化入口（F1.2/F1.3）。
-
-    entries：``[{"key": <override 键>, "value": <int>, "until_turn": <int|None>}, ...]``。
-    整批先验后写（非法形状/值域/幻影 region → ValueError，**零写入**＝非法旨不得
-    物化 config）；写 fiscal_config 行（缺则 INSERT、有则 UPDATE，kind='override'）
-    ＋期限伴随键 ``<完整键名>_until_turn``；每写一键留一行 ``fiscal_config_changes``
-    provenance（origin_ref 必须形如 dossier:<id>）。不删键、不静默合并（同维冲突由
-    后旨覆写前旨＝last-write-wins，两次写入各留一行）。
-    """
-    origin = str(origin_ref or "").strip()
-    if not origin.startswith("dossier:") or not origin[len("dossier:"):]:
-        raise PayOrderKeyError(f"override 旨 origin_ref 须形如 dossier:<id>：{origin_ref!r}")
-    turn = int(turn)
+def prepare_pay_order_entries(
+    db: Any, entries: List[Dict[str, Any]],
+) -> List[Tuple[str, int, Optional[int]]]:
+    """整道旨载荷先验后写（fail-loud、零副作用）：键形白名单、值域、同道重复键、
+    幻影 region 一律 ValueError 拒**整道旨**。成案点（create_decree_dossier staging）
+    与物化点（materialize_pay_order_decree）共此同一验形，禁两套漂移。"""
     seen: set[str] = set()
     prepared: List[Tuple[str, int, Optional[int]]] = []
     for entry in entries:
@@ -281,6 +290,51 @@ def materialize_pay_order_decree(
                 # r4：不新增 alias、不造虚拟 region——幻影 region_id fail-loud 拒写整道旨
                 raise PayOrderKeyError(f"override 键 {key!r}：region_id {parsed.region!r} 不存在（禁 alias/虚拟 region）")
         prepared.append((key, int(value), until))
+    return prepared
+
+
+def materialize_pay_order_decree(
+    db: Any,
+    *,
+    turn: int,
+    entries: List[Dict[str, Any]],
+    origin_ref: str,
+    reason: str = "",
+    commit: bool = True,
+) -> List[Dict[str, Any]]:
+    """一道 override 旨的唯一次物化入口（F1.2/F1.3，ADR 0055 判后物化缝）。
+
+    只可由颁布关调用：origin_ref 必须指到**真实存在的 pay_order_override 案卷**，
+    且该案卷已过合法颁布门（顺颁/强颁，dossier_authorizes_effects）；打回案卷零写入
+    （效果跟判决走，本函数根本不会被调）。entries：
+    ``[{"key": <override 键>, "value": <int>, "until_turn": <int|None>}, ...]``。
+    整批先验后写（非法形状/值域/幻影 region → ValueError，**零写入**＝非法旨不得
+    物化 config）；写 fiscal_config 行（缺则 INSERT、有则 UPDATE，kind='override'）
+    ＋期限伴随键 ``<完整键名>_until_turn``；每写一键留一行 ``fiscal_config_changes``
+    provenance。不删键、不静默合并（同维冲突由后旨覆写前旨＝last-write-wins，两次
+    写入各留一行）。
+
+    **覆写清旧期限（F1.4 stale until）**：新旨无期限（永久）覆写旧有期限键时，同事务
+    清除遗留 ``<键>_until_turn`` 行——否则旧期限仍使新永久旨到期。清除走既有
+    ``fiscal_config_tombstones`` append-only 审计＋一行 provenance，不增表。
+    """
+    origin = str(origin_ref or "").strip()
+    if not origin.startswith("dossier:") or not origin[len("dossier:"):]:
+        raise PayOrderKeyError(f"override 旨 origin_ref 须形如 dossier:<id>：{origin_ref!r}")
+    dossier_id = int(origin[len("dossier:"):])
+    dossier = db.get_decree_dossier(dossier_id)
+    if dossier is None:
+        raise PayOrderKeyError(f"override 旨案卷不存在：{origin}")
+    if str(dossier.get("action_type") or "") != "pay_order_override":
+        raise PayOrderKeyError(
+            f"override 旨案卷 action_type 非法：{dossier.get('action_type')!r}（须 pay_order_override）"
+        )
+    if not db.dossier_authorizes_effects(dossier_id):
+        raise PayOrderKeyError(
+            f"override 旨案卷 {origin} 未过合法颁布门（顺颁/强颁），禁物化 config"
+        )
+    turn = int(turn)
+    prepared = prepare_pay_order_entries(db, entries)
 
     written: List[Dict[str, Any]] = []
     current = db.get_fiscal_config()
@@ -298,8 +352,8 @@ def materialize_pay_order_decree(
             origin_ref=origin, reason=reason,
         )
         written.append({"key": key, "old": old, "new": value, "until_turn": until})
+        until_key = f"{key}{_UNTIL_SUFFIX}"
         if until is not None:
-            until_key = f"{key}{_UNTIL_SUFFIX}"
             old_until = int(current.get(until_key, 0))
             db.conn.execute(
                 "INSERT INTO fiscal_config (key, value, kind, note) VALUES (?, ?, 'override', ?) "
@@ -314,6 +368,23 @@ def materialize_pay_order_decree(
                 origin_ref=origin, reason=reason,
             )
             written[-1]["until_key"] = until_key
+        elif until_key in current:
+            # F1.4 stale until：永久旨覆写旧有期限键 → 同事务清遗留伴随键，
+            # 否则旧期限仍使新旨过期。tombstone append-only 审计＋一行 provenance，不增表。
+            stale_until = int(current[until_key])
+            db.conn.execute(
+                "INSERT INTO fiscal_config_tombstones"
+                " (removed_turn, key, value, kind, origin_ref, reason, beyond_intent)"
+                " VALUES (?, ?, ?, 'override', ?, ?, 0)",
+                (turn, until_key, stale_until, origin,
+                 "永久旨覆写清旧期限（#653 F1.4 stale until）"[:240]),
+            )
+            db.conn.execute("DELETE FROM fiscal_config WHERE key = ?", (until_key,))
+            db.record_fiscal_config_change(
+                turn=turn, key=until_key, old_value=stale_until, new_value=0,
+                origin_ref=origin, reason="永久旨覆写清旧期限（stale until 清除）",
+            )
+            written[-1]["cleared_until_key"] = until_key
     if commit and owns:
         db.conn.commit()
     return written
