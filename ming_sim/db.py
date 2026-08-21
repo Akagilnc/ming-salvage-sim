@@ -6718,7 +6718,8 @@ class GameDB:
                     "loyalty": int(row["loyalty"]),
                     "firearm_equipment": int(row["firearm_equipment"]),
                     "cannon_equipment": int(row["cannon_equipment"]),
-                    "status": row["status"],
+                    # #1501：军牌专属投影停携静态 status 句（欠饷栏真数是唯一欠饷呈现源）；
+                    # DB armies.status 与共享读者 army_report 仍保留原句，不在此投影。
                     "owner_power": row["owner_power"],
                 }
             )

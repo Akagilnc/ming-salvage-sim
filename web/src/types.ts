@@ -38,7 +38,8 @@ export type Army = {
   arrears: number;
   mobility: number;
   loyalty: number;
-  status: string;
+  // #1501：军牌 payload 停携 status；可选以兼容旧夹具/非军牌路径
+  status?: string;
   owner_power?: string;
 };
 
