@@ -660,6 +660,44 @@ def test_multi_target_with_blank_or_self_member_rejects_whole_item_zero_edges(
     assert _triplets(rows) == {("毕自严", "王绍徽", "协作")}
 
 
+@pytest.mark.parametrize(
+    ("targets", "label", "reason_fragment"),
+    [
+        ([], "空列表", "受动者不能为空"),
+        (["温体仁", "   "], "全无效", "受动者不能为"),
+    ],
+)
+def test_empty_or_all_invalid_targets_reject_whole_item_zero_edges(
+    game, targets, label, reason_fragment,
+):
+    """V10：受动者列表为空（含全无效成员被拒后为空的等价情形）——整项
+    fail-closed 拒收留痕，不得静默零写冒充成功；同批独立好互动照落。"""
+    db, state, content = game
+    out = apply_score_extraction(
+        db, state,
+        {
+            "relation_edge_events": [
+                {"施动者": "温体仁", "受动者": targets,
+                 "类目": "联名", "语境": f"{label}受动者的联名互动。",
+                 "来源引用": "盘面自发"},
+                {"施动者": "毕自严", "受动者": "王绍徽", "类目": "协作",
+                 "语境": "同批好项照常落。", "来源引用": "盘面自发"},
+            ],
+        },
+        content=content,
+    )
+    res = out["relation_edge_event_resolutions"]
+    rejected = [r for r in res if r.get("rejected")]
+    # 空列表项产生且仅产生一条 invalid_relation_event 留痕
+    assert len(rejected) == 1
+    assert rejected[0]["category"] == "invalid_relation_event"
+    assert rejected[0]["item"]["施动者"] == "温体仁"
+    assert reason_fragment in rejected[0]["reason"]
+    # 坏项零边写入；同批独立好互动不受牵连照常落库
+    rows = _edge_rows(db)
+    assert _triplets(rows) == {("毕自严", "王绍徽", "协作")}
+
+
 def test_valid_roster_endpoints_still_land_after_endpoint_gate(game):
     """两个合格在朝大臣的合法边照常落库（端点守门不误伤）。"""
     db, state, content = game

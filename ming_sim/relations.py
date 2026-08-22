@@ -232,6 +232,10 @@ def _capture_one_interaction(
         if name not in seen:
             seen.add(name)
             targets.append(name)
+    # V10：空受动者列表（或全无效成员被拒后为空的等价情形）整项 fail-closed
+    # 拒收——shape 垃圾按既有 extractor 契约拒收，不得静默零写冒充成功。
+    if not targets:
+        raise ValueError("受动者不能为空")
     raw_context = (
         item["语境"] if item.get("语境") is not None else item.get("context")
     )
