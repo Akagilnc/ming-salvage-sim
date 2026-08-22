@@ -122,13 +122,24 @@ def test_cli_no_edict_runs_private_monthly_extractor_and_restores_history(game, 
     def session():
         sess = GameSession.__new__(GameSession)
         sess.db, sess.state, sess.content = db, state, content
-        sess.registry = sess.llm_config = sess.agno_db = None
+        sess.registry = sess.agno_db = None
+        # 生产 CLI 的 session 恒有真 LLMConfig；票拟腿（#656 B3）在 fan-out 内真实
+        # 构造 create_rescript_draft_agent(llm_config, …)，llm_config=None 属程序错。
+        # 这里给真实可构造配置：api 通道指本机必拒连端口——运行时走 typed
+        # LLMUnavailable 缝响亮降级无头版，零真网、不吞任何程序错。
+        from ming_sim.llm_config import LLMConfig as _LLMConfig
+        sess.llm_config = _LLMConfig(
+            api_key="", base_url="http://127.0.0.1:1/v1",
+            model="offline-test", channel="api",
+        )
         sess.deaths_this_turn, sess.debuts_this_turn = [], []
         sess.last_decree = sess.last_report = ""
         sess._decree_draft_fingerprint = ()
         sess._scene_registry = None
         sess._beat_generator = None
         sess.auto_save = lambda *a, **k: None
+        from ming_sim.agents import bind_content as _bind_agents_content
+        _bind_agents_content(sess.content)
         return sess
 
     turns = []
