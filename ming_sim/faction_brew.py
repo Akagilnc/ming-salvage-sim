@@ -122,6 +122,9 @@ def build_faction_brew_input(
         "year": int(year),
         "period": int(period),
         "stance_segment": str(summary["stance_segment"]) if summary else "",
+        # source/target 为 relation_edge_events 既有列的只读透传（#637 codex P2）：
+        # context 不含参与方名字时（如收权·罢差），方向事实只能靠结构字段携带；
+        # 纯数据字段，不在此拼接任何散文（ADR 0142：给数据不给话术）。
         "new_events": [
             {
                 "event_kind": event["event_kind"],
@@ -129,6 +132,8 @@ def build_faction_brew_input(
                 "origin": event["origin"],
                 "year": int(event["year"]),
                 "period": int(event["period"]),
+                "source": event["source"],
+                "target": event["target"],
             }
             for event in new_events
         ],
