@@ -319,24 +319,35 @@ def test_new_save_unit_is_persons(game):
 # ── effect_brief 机器面事实摘要（F1 §1.5，随档口径措辞）───────────────────────
 
 def test_effect_brief_persons_unit_wording():
+    """新档（人口径）：省名（非裸 region_id）+ N 口文案。"""
     brief = effect_brief({"population_transfers": [{
         "source": "农民@shaanxi", "target": "流民@shaanxi", "amount": 3000,
-        "reason": "加派", "region_id": "shaanxi", "population_unit": "人",
+        "reason": "加派", "region_id": "shaanxi", "region_name": "陕西",
+        "population_unit": "人",
     }]})
-    assert "陕西" or True in brief  # region_id 出现在摘要中
-    assert "农民流失3000口为流民（加派）" in brief
+    assert "陕西农民流失3000口为流民（加派）" in brief  # 省名真源＝applied.region_name
+    assert "shaanxi" not in brief
     assert "万口" not in brief
 
 
 def test_effect_brief_wan_unit_wording_and_reflux():
+    """legacy 档（万口径）：N 万口文案；回流句省名同样落汉字。"""
     brief = effect_brief({"population_transfers": [
         {"source": "农民@shaanxi", "target": "流民@shaanxi", "amount": 3,
-         "reason": "灾害", "region_id": "shaanxi", "population_unit": "万人"},
+         "reason": "灾害", "region_id": "shaanxi", "region_name": "陕西",
+         "population_unit": "万人"},
         {"source": "流民@henan", "target": "农民@henan", "amount": 5,
-         "reason": "回流", "region_id": "henan", "population_unit": "万人"},
+         "reason": "回流", "region_id": "henan", "region_name": "河南",
+         "population_unit": "万人"},
     ]})
-    assert "农民流失3万口为流民（灾害）" in brief
-    assert "流民5万口归农（回流）" in brief
+    assert "陕西农民流失3万口为流民（灾害）" in brief
+    assert "河南流民5万口归农（回流）" in brief
+    # 旧留痕无 region_name 槽时退回 region_id，不炸
+    fallback = effect_brief({"population_transfers": [{
+        "source": "农民@shaanxi", "target": "流民@shaanxi", "amount": 3,
+        "reason": "灾害", "region_id": "shaanxi", "population_unit": "万人",
+    }]})
+    assert "shaanxi农民流失3万口为流民（灾害）" in fallback
 
 
 def test_effect_brief_ignores_rejected_transfers():
@@ -471,8 +482,74 @@ def test_mutation_oracle_four_mutations_all_bitten(game):
     m3[("士绅", "shaanxi")] += 4000
     with pytest.raises(AssertionError):
         _conservation_oracle(before, m3, [record])
-    # ④ 混刻度：申报 4000 人、实际按万口径动了 4000 万
-    m4 = dict(before)
-    m4[("农民", "shaanxi")] -= 40000000
+    # ④ 混刻度：两腿都按错误倍率（万口径）等量增减——总量仍守恒，
+    #    守恒 oracle 不炸，只能靠逐腿 amount/单位断言咬住（判词 F3：混刻度变异
+    #    不得先被不守恒/单侧写短路，必须独立证明会被咬）。
+    m4 = dict(after)
+    m4[("农民", "shaanxi")] = before[("农民", "shaanxi")] - 40000000
+    m4[("流民", "shaanxi")] = before[("流民", "shaanxi")] + 40000000
+    assert sum(m4.values()) == sum(before.values())  # 混刻度 mutant 自身守恒
     with pytest.raises(AssertionError):
         _conservation_oracle(before, m4, [record])
+
+
+# ── F1 闭环：真实 extractor 契约（prompt 中文 shape → canonicalize → apply）───
+
+def test_exact_prompt_shape_canonicalizes_and_lands(game):
+    """prompt（score_extractor_shared.md:44 / internal.md:89）教的真实中文 shape
+    （源/目标/数额/原因/来源引用）经 canonicalize_extraction（生产管线同缝，
+    _sanitize_module_output 同一真源）后必须落账，不得被白名单拒收
+    （判词 F1：字段契约未闭环则真产出字段会被丢/拒）。"""
+    db, state, content = game
+    from ming_sim.simulation import canonicalize_extraction
+    applied = apply_score_extraction(
+        db, state,
+        canonicalize_extraction({
+            "人口转移": [{
+                "源": "农民@shaanxi", "目标": "流民@shaanxi", "数额": 3000,
+                "原因": "加派", "来源引用": "盘面自发",
+            }],
+        }),
+        content, None,
+    )
+    assert not applied["population_transfers_rejections"]
+    rec = applied["population_transfers"][0]
+    assert rec["amount"] == 3000 and rec["reason"] == "加派"
+    assert rec["region_name"] == "陕西"
+    assert _pop(db, "农民", "shaanxi") == FARMER_SHAANXI - 3000
+    assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI + 3000
+
+
+def test_prompts_teach_reason_label_matching_alias_table():
+    """契约单真源：两份 prompt 的 人口转移 字段 shape 必须用 ITEM_FIELD_ALIASES
+    已收的中文标签「原因」，不得再教别名表外的「缘由」（否则 canonicalize 保留
+    缘由、白名单逐项拒收——#649 判词 F1 本症）；接口层 TSV 指针同步在列。"""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for rel in ("content/prompts/score_extractor_shared.md",
+                "content/prompts/score_extractor_internal.md"):
+        with open(os.path.join(root, rel), encoding="utf-8") as fh:
+            lines = [ln for ln in fh if "人口转移" in ln]
+        assert lines, f"{rel}: 缺 人口转移 契约行"
+        for ln in lines:
+            assert "缘由" not in ln, f"{rel}: 人口转移 行仍教别名表外的 缘由：{ln!r}"
+        assert any("原因" in ln for ln in lines), f"{rel}: 人口转移 行未教 原因 标签"
+    shared = open(os.path.join(root, "content/prompts/score_extractor_shared.md"),
+                  encoding="utf-8").read()
+    assert "class_population_balances" in shared
+
+
+def test_internal_extractor_context_has_province_population_tsv(game):
+    """接口层 TSV（判词 F1）：internal extractor 专属输入面带按 class@region_id
+    键合的省级人口余额＋本档 population_unit；非 internal 模块不吃
+    （不进玩家可感 simulator 数表）。"""
+    from ming_sim.simulation import build_extractor_shared_context
+    db, state, content = game
+    ctx = build_extractor_shared_context(db, state, "", "", module="internal")
+    tsv = ctx["class_population_balances"]
+    assert tsv["cols"] == ["class_region", "population", "population_unit"]
+    rows = dict(r for r in zip(tsv["cols"], next(
+        row for row in tsv["rows"] if row[0] == "农民@shaanxi")))
+    assert rows["population"] == FARMER_SHAANXI
+    assert rows["population_unit"] == POPULATION_UNIT_PERSONS
+    other = build_extractor_shared_context(db, state, "", "", module="issues")
+    assert "class_population_balances" not in other
