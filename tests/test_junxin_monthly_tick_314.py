@@ -248,6 +248,82 @@ def test_substrate_hub_path_loyalty_tier(game):
     assert log is not None and int(log["delta"]) == -5, "hub 路同事务写 loyalty 日志"
 
 
+def test_substrate_hub_pure_province_source_loyalty_regression(game):
+    """处方3a 纯省源 1.0/0.0 — 旧 hub 只遍历 central_pay_share>0，纯省军永冻。
+
+    manpower=10000 salary_rate=1.0 needed=1 province_pay_arrears=3 central=0，
+    足额国库后跑一次 apply_fixed_period_flows，断言 loyalty -5 且 loyalty 日志仅一条、
+    reason 为累计欠饷逾三月（不含“中央军饷足额”）。旧码纯省永冻 0 变化 FAIL。
+    """
+    db, state, _ = game
+    aid = "fujian_navy"  # 种子纯省源 fujian 1.0/0.0
+    _silence_other_armies(db, keep=(aid,))
+    db.conn.execute(
+        """
+        UPDATE armies
+        SET owner_power='ming', is_tusi=0, self_funded_pay=0,
+            manpower=10000, salary_rate=1.0, loyalty=50, morale=50,
+            province_pay_share=1.0, central_pay_share=0.0,
+            pay_source_region='fujian',
+            province_pay_arrears=3.0, central_pay_arrears=0, arrears=3.0
+        WHERE id=?
+        """,
+        (aid,),
+    )
+    db.conn.commit()
+    db.conn.execute("DELETE FROM army_logs WHERE army_id=?", (aid,))
+    db.conn.commit()
+    state.metrics["国库"] = 10 ** 9
+    apply_fixed_period_flows(db, state)
+    assert _loyalty_of(db, aid) == 45, "纯省源欠 3 月结算后 loyalty 应 -5"
+    logs = db.conn.execute(
+        "SELECT delta, reason FROM army_logs WHERE army_id=? AND field='loyalty' ORDER BY id",
+        (aid,),
+    ).fetchall()
+    assert len(logs) == 1, f"忠诚日志应仅一条，实得 {len(logs)}"
+    assert int(logs[0]["delta"]) == -5
+    reason = str(logs[0]["reason"])
+    assert "累计欠饷逾三月" in reason, f"reason 应为累计原因，实得 {reason!r}"
+    assert "中央军饷足额" not in reason, f"累计原因不得含中央军饷足额，实得 {reason!r}"
+
+
+def test_substrate_hub_hybrid_source_loyalty_regression(game):
+    """处方3b 混合 0.55/0.45 — 旧 hub 在省结算前按上月省欠分档、reason 复用当月 shortfall。
+
+    同 a 的 arrears/国库条件，断言同 a。旧码因时序/复用原因导致 reason 含“中央军饷足额”FAIL。
+    """
+    db, state, _ = game
+    aid = "xuan_da"  # 种子混合 shanxi 0.55/0.45
+    _silence_other_armies(db, keep=(aid,))
+    db.conn.execute(
+        """
+        UPDATE armies
+        SET owner_power='ming', is_tusi=0, self_funded_pay=0,
+            manpower=10000, salary_rate=1.0, loyalty=50, morale=50,
+            province_pay_share=0.55, central_pay_share=0.45,
+            pay_source_region='shanxi',
+            province_pay_arrears=3.0, central_pay_arrears=0, arrears=3.0
+        WHERE id=?
+        """,
+        (aid,),
+    )
+    db.conn.commit()
+    db.conn.execute("DELETE FROM army_logs WHERE army_id=?", (aid,))
+    db.conn.commit()
+    state.metrics["国库"] = 10 ** 9
+    apply_fixed_period_flows(db, state)
+    assert _loyalty_of(db, aid) == 45, "混合省源欠 3 月结算后 loyalty 应 -5"
+    logs = db.conn.execute(
+        "SELECT delta, reason FROM army_logs WHERE army_id=? AND field='loyalty' ORDER BY id",
+        (aid,),
+    ).fetchall()
+    assert len(logs) == 1, f"忠诚日志应仅一条，实得 {len(logs)}"
+    assert int(logs[0]["delta"]) == -5
+    reason = str(logs[0]["reason"])
+    assert "累计欠饷逾三月" in reason, f"reason 应为累计原因，实得 {reason!r}"
+    assert "中央军饷足额" not in reason, f"累计原因不得含中央军饷足额，实得 {reason!r}"
+
+
 def test_zero_manpower_army_no_crash_no_tick(game):
     # ⑦ 零兵残军 needed<=0 → continue 短路：不除零、loyalty 不动。
     db, state, _ = game
