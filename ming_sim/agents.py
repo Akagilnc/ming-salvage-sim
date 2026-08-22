@@ -673,6 +673,29 @@ def create_ending_summary_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Age
     )
 
 
+def create_faction_brew_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
+    """派系态势酿制裁判（#637 S6）：派系级定性聚合摘要，输出 {stance_segment} JSON。
+    一次性，不持久化；与关系酿制同一受管批次、每条工作项一个实例（批内并行各自
+    独享，不共享运行态）。三不碰（ADR 0084）：不写派系真源、不动满意度/影响力、
+    不建认同度。"""
+    del agno_db
+    ctx = _ctx()
+    return Agent(
+        name="派系态势酿制裁判",
+        id="faction-brew",
+        model=create_chat_model(
+            llm_config,
+            temperature=0.4,
+            top_p=0.85,
+            enable_thinking=False,
+            force_json_output=True,
+        ),
+        instructions=[ctx.game_world_prompt, ctx.faction_brew_prompt],
+        add_history_to_context=False,
+        markdown=False,
+    )
+
+
 def create_relation_brew_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
     """关系酿制裁判（#636 S5）：两段式摘要增量重酿，输出 {new_foundings, recent_segment} JSON。
     一次性，不持久化；每条关系一个实例（批内并行各自独享，不共享运行态）。"""
