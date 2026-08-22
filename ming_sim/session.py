@@ -2476,7 +2476,13 @@ class GameSession:
             "reason": "理由",
             "replaces": "腾缺",
         }
-        for key in ("office_type", "faction", "reason", "replaces"):
+        # #635 r3/Y2：荐词原句逐字搬运，strip 仅作判空谓词、不成为持久化值。
+        # 此处不设第二道荐词非空准入（唯一所有者在 recommend_person）；
+        # 绕过/旧坏载荷由 db.py 物化期 r3 守门同事务回滚。
+        raw_reason = data.get("reason") or data.get(metadata_aliases["reason"])
+        if isinstance(raw_reason, str) and raw_reason.strip():
+            staged_payload["reason"] = raw_reason
+        for key in ("office_type", "faction", "replaces"):
             value = str(data.get(key) or data.get(metadata_aliases[key]) or "").strip()
             if value:
                 staged_payload[key] = value

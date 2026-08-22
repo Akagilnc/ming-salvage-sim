@@ -781,7 +781,7 @@ export function NodeIntel({ node }: { node: MapNode }) {
       {region ? (
         <table className="intel-table">
           <tbody>
-            <tr><th>人口</th><td>{region.population}万</td><th>田亩</th><td>{region.registered_land}万亩</td></tr>
+            <tr><th>田亩</th><td colSpan={3}>{region.registered_land}万亩</td></tr>
             <tr><th>民心</th><td>{region.public_support}</td><th>动乱</th><td>{region.unrest}</td></tr>
             <tr><th>粮食</th><td>{region.grain_security}</td><th>月税</th><td>{region.tax_per_turn}万/月</td></tr>
             <tr><th>归属</th><td>{labelPower(region.controlled_by || "ming")}</td><th>类型</th><td>{region.kind}</td></tr>
