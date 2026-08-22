@@ -2,8 +2,8 @@
 
 **真相源**：`ming_sim/simulation.py`（`EMPTY_EXTRACTION` / `MODULE_FIELDS` / `_clean_*`）+ `ming_sim/issues.py`（落库守门）+ `ming_sim/constants.py`（白名单）。
 
-用途：每回合月末，我以裁判身份产一份 delta JSON，由 driver 喂 `apply_score_extraction(db, state, extracted)` 落库。**未知顶层字段会响亮中止；已知 section 内值不合法的条目逐项拒收留痕。** 必须查表，不要凭"我以为"。
-v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、未知顶层字段）过不了 `validate_delta_shape`，结算会响亮中止（SettlementAbort + 诊断错误包），不再静默吞——产出前自查顶层字段集（与 `EMPTY_EXTRACTION` 对齐），别指望守门人帮忙兜。
+用途：每回合月末，我以裁判身份产一份 delta JSON，由 driver 喂 `apply_score_extraction(db, state, extracted)` 落库。**分层校验（ADR 0015 r4 终态）**：顶层非 dict（连 section 都拆不出）才整份重产；未知顶层 key＝可拆 section → 按段拒收留痕，其余 section 照落，**不整份退**；已知 section 内值/项不合法逐项拒收留痕。必须查表，不要凭"我以为"。
+产出前自查顶层字段集（与 `EMPTY_EXTRACTION` 对齐）：未知 key 不再响亮中止，但会被整段拒收留痕、白产一段——别指望守门人帮忙猜拼写。
 
 ## ADR 0055 效果分工线与 origin 槽
 
@@ -20,6 +20,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
   "economy_moves":    [],  // list[一次性收支]
   "faction_delta":    {},  // dict[派系名 -> int]
   "class_delta":      {},  // dict[阶级名 或 阶级@省id -> {satisfaction/leverage: int}]
+  "population_transfers": [],  // list[人口守恒转移记录]（#649/0087：单记录双写，源阶级减 N、目标阶级增 N）
   "region_delta":     {},  // dict[region_id -> {字段:数值}]
   "fiscal_changes":   [],  // 改某项月度收支额度
   "fiscal_creates":   [],  // 新立月度收支（新税/新俸）
@@ -57,7 +58,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 }
 ```
 
-中英文 key 都吃（`钱粮收支`==`economy_moves`），别名表见 `simulation.py:TOP_LEVEL_ALIASES`。**未知顶层 key 按本文开头的唯一规则，经 `validate_delta_shape` 响亮中止。** item 字段同样有中英双语别名表（`ITEM_FIELD_ALIASES`）。
+中英文 key 都吃（`钱粮收支`==`economy_moves`），别名表见 `simulation.py:TOP_LEVEL_ALIASES`（人口转移亦收 `人口转移` / `流民转移`）。**未知顶层 key 按本文开头的分层规则：按段拒收留痕、其余照落，不整份退（ADR 0015 r4）。** item 字段同样有中英双语别名表（`ITEM_FIELD_ALIASES`）。
 
 ---
 
@@ -91,8 +92,23 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 ### `class_delta` — 阶级满意度变化
 - 合法 key：`<class_name>` 或 `<class_name>@<region_id>`（如 `农民@shaanxi`；含第八阶级 `流民@<region_id>`，#648）
 - `class_name` 在 `content/classes.json` 里：农民 / 士绅 / 官僚 / 军户 / 商人 / 匠户 / 宗藩 / 流民
-- value：dict，只收 `satisfaction` / `leverage` 两个字段；字段值为 int 增量。**无 population 更新面**（F1/#648）：一切人口变化留给确定性人口守恒转移 applier（0087/#649，两侧同减同增、带 origin），LLM delta 不得单边改人口；写 `population` 字段不生效
+- value：dict，只收 `satisfaction` / `leverage` 两个字段；字段值为 int 增量。**无 population 更新面**：写 `population` 键 → 该 item 以 `invalid_enum` **整项拒收**（#649 §1.4 升格，非静默忽略）；一切人口变化只走下方 `population_transfers` 守恒转移原语
 - 非 dict 的阶级 item（包括扁平 int）不合法，按 item 逐项以 `invalid_enum` 拒收留痕；同一 `class_delta` 中其它合法 item 仍照常落库
+
+### `population_transfers` — 人口守恒转移（#649/ADR 0087）
+
+canonical 段形＝list，每条记录**同时表达两条腿**：applier 读一条合法记录后在同一事务内源阶级减 N、目标阶级增 N（单记录双写；LLM 禁提交双腿 delta，系统不建配平器）。中英别名：`人口转移` / `流民转移`。
+
+| 字段 | 约束 |
+|---|---|
+| `source` | `<class_name>@<region_id>` 省级行（如 `农民@shaanxi`）；全国行（region_id 空）不合法 |
+| `target` | 同上；须与 source **同 region_id**（跨省在途归 #475 预留，本契约不做） |
+| `amount` | 正整数（严格 int，拒数字串/float/bool）；单位随存档 `population_unit`（新档「人」、legacy「万」），全线禁混刻度 |
+| `reason` | 枚举×方向矩阵：`加派`/`摊派`/`灾害`＝农民→流民；`兵灾`＝农民→流民、军户→流民；`逃亡`＝军户→流民；`回流`＝流民→农民。方向出阵即拒 |
+| `origin_ref` | **必填** `dossier:<id>`（须存在且已颁）或精确哨兵 `盘面自发`——来源追溯契约与 `reason` 机制枚举两槽并存、职责互斥 |
+
+- 逐项拒收面（坏项留痕、同批合法项照落，ADR 0015/0008）：方向出阵、reason 枚举外、amount 非严格 int/≤0/超源余额、region 未知或两侧不同省、source/target 触全国行、origin_ref 缺失/伪前缀/未颁案卷、白名单外字段（任何形式的绝对值覆写均不合法——人口只经本原语守恒变动，禁凭空造人/单侧写）。
+- item 字段中英别名：`源`/`源阶级`→source、`目标`/`目标阶级`→target、`数额`/`口数`→amount、`原因`→reason（prompt 中文 shape 教 `原因`，与 `ITEM_FIELD_ALIASES` 单一真源；勿另教别名表外标签如「缘由」）。接口层：internal extractor 专属输入面带按 class@region_id 键合的省级人口余额＋本档 population_unit 的 `class_population_balances` TSV（不进玩家可感 simulator 数表）。
 
 ### `region_delta` — 地区变化
 - 每个 region value 必填 `origin_ref`（已颁 `dossier:<id>` 或 `盘面自发`）；该字段不作为地区属性处理。
@@ -405,7 +421,7 @@ personnel_secret 模块产出；settle 内经 `record_monthly_dossier_progress` 
 
 | 模块 | 顶层字段 |
 |---|---|
-| `internal` | `metric_delta` `economy_moves` `faction_delta` `class_delta` `region_delta` `fiscal_changes` `fiscal_creates` `fiscal_removes` |
+| `internal` | `metric_delta` `economy_moves` `faction_delta` `class_delta` `population_transfers` `region_delta` `fiscal_changes` `fiscal_creates` `fiscal_removes` |
 | `military_external` | `army_delta` `new_armies` `power_updates` `world_advance` |
 | `issues` | `issue_advances` `new_issues` `事件结局` `cancels` `close_issues` `dossier_executions` `dossier_participants` `authority_changes` `dossier_reconciliations` `faction_denunciations` |
 | `personnel_secret` | `人物变更` `secret_order_updates` `covert_exec_selections` `dossier_progress_reports` `secret_dossier_participants` `emperor_fate` |

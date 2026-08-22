@@ -261,6 +261,19 @@ ECONOMY_TARGET_KINDS = {
     "army",   # 给某支军（仅补饷场景必填，target_id = army_id）
 }
 
+# 人口守恒转移（#649/ADR 0087）：reason 枚举 × 合法方向对矩阵。
+# 方向出阵即拒（invalid_enum）；跨省在途归 #475 预留；流民→贼兵源＝LLM 软判吃池顶，
+# 不走确定性转移账、不设 reason 项（0087）。canonical 白名单字段见 DELTA_SCHEMA.md。
+POPULATION_TRANSFER_REASONS: dict[str, frozenset[tuple[str, str]]] = {
+    "加派": frozenset({("农民", "流民")}),          # 0087／0089 明渠
+    "摊派": frozenset({("农民", "流民")}),          # 0087／0089 暗渠（0072 变形特例合流入池）
+    "灾害": frozenset({("农民", "流民")}),          # 0087
+    "兵灾": frozenset({("农民", "流民"), ("军户", "流民")}),  # 0087
+    "逃亡": frozenset({("军户", "流民")}),          # 0087（军户逃亡）
+    "回流": frozenset({("流民", "农民")}),          # 0087 出口／PRD US4 破局窄路（赈济招抚归农）
+}
+POPULATION_TRANSFER_FIELDS = frozenset({"source", "target", "amount", "reason", "origin_ref"})
+
 # trigger_gate key 语法（content.py load 校验 + issues._eval_gate_key 求值共用，DRY，#12 Q3 fail-loud）：
 # bare key（无 "."）须是已知 metric；点分 key 首段须是合法表名、末段可为聚合函数。
 GATE_METRIC_KEYS = ("国库", "内库", "民心", "皇威")
