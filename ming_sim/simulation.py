@@ -15,7 +15,7 @@ from ming_sim.agents import parse_agent_json, run_agent_stream_text, run_agent_t
 from ming_sim.commitment_backlash import build_backlash_narrative_features
 from ming_sim.constants import TURN_UNIT
 from ming_sim.context import historical_anchor_for_month, victory_status
-from ming_sim.db import GameDB
+from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS
 from ming_sim.issues import (
     commitment_condition_role,
     commitment_display_text,
@@ -390,11 +390,30 @@ def _simulator_factions_brief(db: GameDB) -> str:
     return "；".join(parts)
 
 
-def _project_simulator_region_row(row: Dict[str, object]) -> Dict[str, object]:
-    """#1356: region public_support（民心）走 qualitative 单源；可数物照旧。"""
+def _population_wan_kou_label(persons: int) -> str:
+    """ADR 0088/#648 玩家面投影：裸人数 → 「约N万口」定性（P4）。
+
+    这是 LLM 输入的特征化投影（同 satisfaction_band 族），非玩家直出文本模板；
+    叙事由 simulator 从此正向长出，严禁事后对 LLM 产文换算/改写（0142 零删改）。"""
+    wan = int(persons) // 10000
+    if wan <= 0:
+        return "不足一万口"
+    return f"约{wan}万口"
+
+
+def _project_simulator_region_row(
+    row: Dict[str, object], population_unit: str
+) -> Dict[str, object]:
+    """#1356: region public_support（民心）走 qualitative 单源；可数物照旧。
+
+    #648（ADR 0088/F2）：新档（人）region population 在玩家可感 LLM 输入侧投影为
+    「约N万口」定性——机面（extractor payload TSV）仍出裸人数；无标旧档（万人）
+    沿 legacy 原样输出，不加换算。"""
     projected = dict(row)
     if "public_support" in projected:
         projected["public_support"] = public_support_band(projected["public_support"])
+    if population_unit == POPULATION_UNIT_PERSONS and "population" in projected:
+        projected["population"] = _population_wan_kou_label(int(projected["population"]))
     return projected
 
 
@@ -589,7 +608,8 @@ def build_simulator_payload(
         for ev in gather_candidate_events(state, db)
     ]
     region_rows = [
-        _project_simulator_region_row(dict(r))
+        # #648：按档口径传单位——新档玩家面投影「约N万口」，旧档万人原样。
+        _project_simulator_region_row(dict(r), db.population_unit)
         for r in db.conn.execute(
             "SELECT name,kind,population,public_support,unrest,natural_disaster,"
             "human_disaster,registered_land,hidden_land,tax_per_turn,grain_security,"
@@ -1163,6 +1183,9 @@ def build_extractor_shared_context(
         + "另补：校验用 id 集（region_ids/army_ids/class_names/power_ids）、"
         "fiscal_config、offstage_ministers（离场名册，court_roster 不含，任命查重用）。"
     )
+    # #648（ADR 0088/F4）：人口数量字段写端单位契约按档口径——新档「人」（与军队
+    # 人数/manpower 同刻度），无标旧档「万人」legacy。判别只读本档 DB 持久标记。
+    slim["population_unit"] = db.population_unit
     return slim
 
 
