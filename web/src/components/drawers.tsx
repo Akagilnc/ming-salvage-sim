@@ -453,7 +453,7 @@ export function RegionDrawer({
           </div>
           <table className="intel-table">
             <tbody>
-              <tr><th>人口</th><td>{selected.population}万</td><th>田亩</th><td>{selected.registered_land}万亩</td></tr>
+              <tr><th>田亩</th><td colSpan={3}>{selected.registered_land}万亩</td></tr>
               <tr><th>民心</th><td>{selected.public_support}</td><th>动乱</th><td>{selected.unrest}</td></tr>
               <tr><th>粮食</th><td>{selected.grain_security}</td><th>月税</th><td>{selected.tax_per_turn}万</td></tr>
               <tr><th>士绅阻力</th><td>{selected.gentry_resistance}</td><th>边防压力</th><td>{selected.military_pressure}</td></tr>

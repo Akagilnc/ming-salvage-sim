@@ -67,6 +67,13 @@ from ming_sim.token_stats import tlog
 
 CURRENT_RESOLVE_CONTRACT_VERSION = 1
 
+# ADR 0088 / #648：人口存储单位口径。content 静态人口量已全线「人」（与 armies.manpower
+# 同刻度）；存档口径判别持久化在 DB 内（save_meta 表），新档 seed 落「人」标，
+# 无标旧档一律判「万人」legacy——不得读 content 元信息判别（其不随档持久化）。
+POPULATION_UNIT_PERSONS = "人"
+POPULATION_UNIT_WAN = "万人"
+_POPULATION_UNIT_KEY = "population_unit"
+
 # 落库字段白名单（模块级常量化——避免在 apply_region_deltas / apply_army_deltas /
 # create_armies_from_extraction 的内循环每项重算同一常量集合，cmr PR2 R1 gemini perf）。
 _REGION_DIRECT_TUPLE = REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS + REGION_TEXT_FIELDS
@@ -1953,6 +1960,37 @@ class GameDB:
 
             CREATE INDEX IF NOT EXISTS idx_relation_edges_person
             ON relation_edge_events(source, target, event_kind, id);
+
+            -- #636 关系摘要层 S5：两段式摘要（奠基段机械只增不改＋近况段整段重酿，ID-9）。
+            -- 零数值强度字段（P4/ADR 0083）；结构字段首发集＝有向关系对、维度标记、
+            -- 奠基段、近况段、最近事件回指（last_event_id 水位）、最后重酿回合。
+            CREATE TABLE IF NOT EXISTS relation_summaries (
+                source TEXT NOT NULL,
+                target TEXT NOT NULL,
+                dimension TEXT NOT NULL CHECK (dimension IN ('君臣', '大臣')),
+                founding_segment TEXT NOT NULL DEFAULT '',
+                recent_segment TEXT NOT NULL DEFAULT '',
+                last_event_id INTEGER NOT NULL DEFAULT 0,
+                last_brewed_turn INTEGER NOT NULL DEFAULT 0,
+                last_brewed_year INTEGER NOT NULL DEFAULT 0,
+                last_brewed_period INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (source, target)
+            );
+
+            -- #636 S5（庭裁 r1 F1＋r2/r3 F1）：relation_brew_pending 双角色——
+            -- ① settled 年月入选关系的 durable claim（认领先行，酿造前落盘提交，
+            -- 与本月边事件同结算事务生死）；② 酿制失败月的持久 pending-backlog。
+            -- 成功路径＝摘要写入与 pending 清除同一 DB 事务原子落定（庭裁 r2 F1，ADR 0008 一脉）。
+            CREATE TABLE IF NOT EXISTS relation_brew_pending (
+                source TEXT NOT NULL,
+                target TEXT NOT NULL,
+                year INTEGER NOT NULL,
+                period INTEGER NOT NULL,
+                reason TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (source, target)
+            );
             """.replace("__AUTHORITY_PRIVILEGES__", AUTHORITY_PRIVILEGE_SQL_IN)
         )
         self._migrate_building_logs_to_durable_audit()
@@ -2278,6 +2316,16 @@ class GameDB:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        # #648（ADR 0088）：存档级持久元数据；人口单位口径判别标（population_unit）落此，
+        # 无标旧档一律判「万人」legacy，不读 content 元信息。
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS save_meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+            """
+        )
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_decree_dossiers_executor "
             "ON decree_dossiers(executor_kind, executor_id, status)"
@@ -3222,6 +3270,35 @@ class GameDB:
             ),
         )
 
+    @property
+    def population_unit(self) -> str:
+        """本档人口存储单位口径（ADR 0088/#648）：新档「人」，无标旧档一律「万人」。
+
+        判别只读存档 DB 内的持久标记（save_meta），不读 content 元信息（其不随档
+        持久化，0088 明文禁止）。旧档不迁移、读写按档口径走 legacy。"""
+        row = self.conn.execute(
+            "SELECT value FROM save_meta WHERE key = ?", (_POPULATION_UNIT_KEY,)
+        ).fetchone()
+        return str(row[0]) if row else POPULATION_UNIT_WAN
+
+    def _mark_population_unit_persons(self) -> None:
+        """新档 classes 首次 seed 时落持久人口单位标「人」（commit 由 seed_static_data 末尾统一提交）。"""
+        self.conn.execute(
+            "INSERT OR REPLACE INTO save_meta (key, value) VALUES (?, ?)",
+            (_POPULATION_UNIT_KEY, POPULATION_UNIT_PERSONS),
+        )
+
+    def scale_content_population_to_save_unit(self, value: int) -> int:
+        """content 静态人口量（事件 effect 等）已全线「人」；落本档前按存档口径换算。
+
+        新档（人）原样；无标旧档（万人）÷10⁴——迁移后 content 人口值均为 10⁴ 整倍数，
+        整除无损（F4 禁的是对旧档读写加通用有损换算层；此处是 content→档的唯一确定性
+        口径接缝，非通用层）。"""
+        value = int(value)
+        if self.population_unit == POPULATION_UNIT_PERSONS:
+            return value
+        return value // 10000
+
     def seed_static_data(self) -> None:
         self._ensure_office_type_parents()
 
@@ -3299,6 +3376,9 @@ class GameDB:
                     (faction.name, faction.satisfaction, faction.leverage, faction.agenda),
                 )
         if not self.table_has_rows("classes"):
+            # ADR 0088/#648：classes 首次 seed = 新档 cutover 点，落持久人口单位标「人」。
+            # 旧档表已有行（万人口径）不重 seed、不落标 → population_unit 恒判「万人」legacy。
+            self._mark_population_unit_persons()
             for cls in self.content.classes.values():
                 self.conn.execute(
                     """
@@ -6268,9 +6348,23 @@ class GameDB:
         held = ""
         if str(row["controlled_by"]) != "ming":
             held = f"，控制权：已为{self.power_display_name(row['controlled_by'])}所据（非大明辖治）"
+        # ADR 0088/#648：人口展示按档口径——新档（人）玩家面投影「约N万口」（P4），
+        # 不足一万口不定性为 0（与 simulation._population_wan_kou_label 同口径）；
+        # 机面裸人数；无标旧档沿万人 legacy 原样，不加换算层。
+        persons_unit = self.population_unit == POPULATION_UNIT_PERSONS
+
+        def _wan_kou_label(persons: int) -> str:
+            wan = int(persons) // 10000
+            return "不足一万口" if wan <= 0 else f"约{wan}万口"
+
+        pop_qual = (
+            f"人口{_wan_kou_label(int(row['population']))}" if persons_unit
+            else f"人口{row['population']}万人"
+        )
+        pop_raw = f"人口{row['population']}人" if persons_unit else f"人口{row['population']}万人"
         if qualitative:
             return (
-                f"{row['name']}（{row['kind']}）{held}：人口{row['population']}万人，"
+                f"{row['name']}（{row['kind']}）{held}：{pop_qual}，"
                 f"{_public_support_description(row['public_support'])}，"
                 f"{_unrest_description(row['unrest'])}，粮食{row['grain_security']}万石，"
                 f"田亩{row['registered_land']}万亩，隐田{row['hidden_land']}万亩，"
@@ -6282,7 +6376,7 @@ class GameDB:
                 f"人祸：{row['human_disaster']}；状态：{row['status']}"
             )
         return (
-            f"{row['name']}（{row['kind']}）{held}：人口{row['population']}万人，"
+            f"{row['name']}（{row['kind']}）{held}：{pop_raw}，"
             f"民心{row['public_support']}，动乱{row['unrest']}，粮食{row['grain_security']}万石，"
             f"田亩{row['registered_land']}万亩，隐田{row['hidden_land']}万亩，"
             f"账面税收{format_money(monthly_amount(int(row['tax_per_turn'])))}/{TURN_UNIT}，"
@@ -6666,7 +6760,12 @@ class GameDB:
                 continue
             old_val = row[raw_field]
             if raw_field in (REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS):
-                new_val: object = int(value)
+                # #648（ADR 0088）：on_restore 是 content 静态真源→存档接缝，population
+                # 已全线「人」，落本档前按存档口径换算（新档原样；无标旧档无损÷10⁴）。
+                new_val: object = (
+                    self.scale_content_population_to_save_unit(value)
+                    if raw_field == "population" else int(value)
+                )
             else:
                 new_val = str(value)
             if str(old_val) == str(new_val):
@@ -16565,16 +16664,30 @@ class GameDB:
             # a failure while recording cannot leave the appointment adopted
             # without its auditable recommendation.
             if isinstance(recommendation, dict):
+                # #635 荐人口（庭裁 r3）：荐词（payload.reason 原句）是双边的一句
+                # 语境，非空必填；缺失即在调用方事务内 fail-loud，任命与双边一并
+                # 回滚（ADR 0079/0082 零模板、P1 失败诚实）。原句逐字透传，
+                # 只以 strip 判空、不裁剪持久化文本。
+                recommendation_reason = str(payload.get("reason") or "")
+                if not recommendation_reason.strip():
+                    raise ValueError("荐人双边缺非空荐词语境：payload.reason 必填")
+                from ming_sim.recommendations import record_recommendation_edges
                 with atomic(self):
                     res = apply_office_appointment(
                         self, state, content, registry, name, office,
-                        reason=reason, new_office_type=office_type,
+                        reason=recommendation_reason, new_office_type=office_type,
                         faction=faction, appointment_tenure=appointment_tenure,
                         llm_config=self.llm_config, commit=False)
                     accepted = not res.get("rejected")
                     if accepted:
-                        self.record_recommendation(
-                            state, recommender, staged_candidate, office, reason,
+                        event_id = self.record_recommendation(
+                            state, recommender, staged_candidate, office,
+                            recommendation_reason,
+                        )
+                        record_recommendation_edges(
+                            self, state, recommender,
+                            str(staged_candidate.get("name") or ""),
+                            event_id, recommendation_reason,
                         )
                     return accepted
             res = apply_office_appointment(
@@ -19972,10 +20085,12 @@ class GameDB:
         game_state 行即可。"""
         source = str(source or "").strip()
         target = str(target or "").strip()
-        context = str(context or "").strip()
+        # 语境是叙事原句，写口零改字（ADR 0079/0080/0142）：只以 strip 判空，
+        # 持久化与下传保持逐字原文。
+        context = str(context or "")
         if not source or not target:
             raise ValueError("边事件 source/target 不能为空")
-        if not context:
+        if not context.strip():
             raise ValueError("边事件语境不能为空")
         kind = validate_edge_kind(event_kind)
         evidence_flag = normalize_evidence(evidence)
@@ -20061,6 +20176,150 @@ class GameDB:
     def read_credit_events_as_edges(self, records: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """0079 读侧契约适配；只返回边，不把 fixture 写入 0079 或本表。"""
         return credit_events_as_edges(records)
+
+    # ------------------------------------------------------------------
+    # #636 关系摘要层 S5：两段式存储＋月末增量重酿腿的持久化接缝。
+    # 摘要文本机械原样存取（LLM 自由文本零删改，CLAUDE.md P6/ADR 0142）；
+    # 奠基段只增不改、近况段覆盖式幂等由 apply 路机械保证。
+    # ------------------------------------------------------------------
+
+    def get_relation_summary(self, source: str, target: str) -> Optional[Dict[str, Any]]:
+        row = self.conn.execute(
+            "SELECT * FROM relation_summaries WHERE source = ? AND target = ?",
+            (str(source), str(target)),
+        ).fetchone()
+        return dict(row) if row is not None else None
+
+    def get_relation_summaries(self) -> List[Dict[str, Any]]:
+        rows = self.conn.execute(
+            "SELECT * FROM relation_summaries ORDER BY source, target"
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def apply_relation_brew_result(
+        self,
+        *,
+        source: str,
+        target: str,
+        dimension: str,
+        founding_segment: str,
+        recent_segment: str,
+        last_event_id: int,
+        turn: int,
+        year: int,
+        period: int,
+    ) -> None:
+        """摘要落定＋该关系 pending 清除在同一 DB 事务内原子落定（庭裁 r2 F1）。
+
+        近况段覆盖式幂等（禁半量累积）；奠基段由调用方拼好只增不改的结果传入。
+        任意缝失败→整体回滚→pending 保留→下次结算补酿。"""
+        if dimension not in ("君臣", "大臣"):
+            raise ValueError(f"未知关系维度: {dimension!r}")
+        owns = self.owns_transaction()
+        try:
+            self.conn.execute(
+                """
+                INSERT INTO relation_summaries
+                    (source, target, dimension, founding_segment, recent_segment,
+                     last_event_id, last_brewed_turn, last_brewed_year, last_brewed_period)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(source, target) DO UPDATE SET
+                    dimension = excluded.dimension,
+                    founding_segment = excluded.founding_segment,
+                    recent_segment = excluded.recent_segment,
+                    last_event_id = excluded.last_event_id,
+                    last_brewed_turn = excluded.last_brewed_turn,
+                    last_brewed_year = excluded.last_brewed_year,
+                    last_brewed_period = excluded.last_brewed_period,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (
+                    str(source), str(target), dimension,
+                    str(founding_segment), str(recent_segment),
+                    int(last_event_id), int(turn), int(year), int(period),
+                ),
+            )
+            self.conn.execute(
+                "DELETE FROM relation_brew_pending WHERE source = ? AND target = ?",
+                (str(source), str(target)),
+            )
+            if owns:
+                self.conn.commit()
+        except Exception:
+            # 故障注入验收缝（庭裁 r3 F1①）：摘要已写、事务未提交即崩→整体回滚，
+            # pending 仍在、摘要读回＝崩前旧值。
+            if owns:
+                try:
+                    self.conn.rollback()
+                except Exception:
+                    pass
+            raise
+
+    def mark_relation_brew_pending(
+        self,
+        *,
+        source: str,
+        target: str,
+        year: int,
+        period: int,
+        reason: str = "",
+    ) -> None:
+        """酿制失败的月份进持久 pending-backlog（庭裁 r1 F1）；保旧摘要、不阻塞结算。"""
+        owns = self.owns_transaction()
+        try:
+            self.conn.execute(
+                """
+                INSERT INTO relation_brew_pending (source, target, year, period, reason)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(source, target) DO UPDATE SET
+                    year = excluded.year,
+                    period = excluded.period,
+                    reason = excluded.reason
+                """,
+                (str(source), str(target), int(year), int(period), str(reason)),
+            )
+            if owns:
+                self.conn.commit()
+        except Exception:
+            if owns:
+                try:
+                    self.conn.rollback()
+                except Exception:
+                    pass
+            raise
+
+    def claim_relation_brew_targets(self, *, year: int, period: int) -> int:
+        """settled 年月入选关系先作 durable claim（庭裁 r2/r3 F1）。
+
+        选中＝该年月新增边事件（id 在摘要水位之上）；已在册的 pending 原样保留
+        （不覆盖原失败月份/原因）。事务归属与 mark_relation_brew_pending 一致：
+        settle 事务内（atomic_depth>0）不提前 commit，认领与本月边事件同生共死——
+        任意缝崩溃→两者一并回滚→重启重放再认领；独立调用则自成一体提交。
+        返回本次新认领的关系数。"""
+        owns = self.owns_transaction()
+        cur = self.conn.execute(
+            """
+            INSERT INTO relation_brew_pending (source, target, year, period, reason)
+            SELECT e.source, e.target, ?, ?, '月末新事件认领'
+            FROM relation_edge_events AS e
+            LEFT JOIN relation_summaries AS s
+                ON s.source = e.source AND s.target = e.target
+            WHERE e.year = ? AND e.period = ?
+              AND e.id > COALESCE(s.last_event_id, 0)
+            GROUP BY e.source, e.target
+            ON CONFLICT(source, target) DO NOTHING
+            """,
+            (int(year), int(period), int(year), int(period)),
+        )
+        if owns:
+            self.conn.commit()
+        return max(int(cur.rowcount or 0), 0)
+
+    def get_relation_brew_pending(self) -> List[Dict[str, Any]]:
+        rows = self.conn.execute(
+            "SELECT * FROM relation_brew_pending ORDER BY source, target"
+        ).fetchall()
+        return [dict(row) for row in rows]
 
     def close(self) -> None:
         self.conn.close()

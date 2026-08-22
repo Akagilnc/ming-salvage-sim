@@ -86,9 +86,9 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 - 值：int 增量，作用于 `satisfaction`。改 `leverage` 用 `power_updates`/正文叙事，不在此处。
 
 ### `class_delta` — 阶级满意度变化
-- 合法 key：`<class_name>` 或 `<class_name>@<region_id>`（如 `农民@shaanxi`）
-- `class_name` 在 `content/classes.json` 里：农民 / 士绅 / 官僚 / 军户 / 商人 / 匠户 / 宗藩
-- value：dict，只收 `satisfaction` / `leverage` 两个字段；字段值为 int 增量
+- 合法 key：`<class_name>` 或 `<class_name>@<region_id>`（如 `农民@shaanxi`；含第八阶级 `流民@<region_id>`，#648）
+- `class_name` 在 `content/classes.json` 里：农民 / 士绅 / 官僚 / 军户 / 商人 / 匠户 / 宗藩 / 流民
+- value：dict，只收 `satisfaction` / `leverage` 两个字段；字段值为 int 增量。**无 population 更新面**（F1/#648）：一切人口变化留给确定性人口守恒转移 applier（0087/#649，两侧同减同增、带 origin），LLM delta 不得单边改人口；写 `population` 字段不生效
 - 非 dict 的阶级 item（包括扁平 int）不合法，按 item 逐项以 `invalid_enum` 拒收留痕；同一 `class_delta` 中其它合法 item 仍照常落库
 
 ### `region_delta` — 地区变化
@@ -96,7 +96,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 - key：region_id（如 `beizhili` / `shaanxi` / `liaodong` 等，看 `content/regions.json` id 列）
 - value：dict，字段（来自 `REGION_*` 常量）：
   - score（0-100，int）：`public_support` `unrest` `gentry_resistance` `military_pressure`
-  - quantity（int）：`population` `registered_land` `hidden_land` `tax_per_turn` `grain_security`
+  - quantity（int）：`population` `registered_land` `hidden_land` `tax_per_turn` `grain_security`；**单位契约（ADR 0088/#648）**：`population` 以「人」计，与 armies `manpower` 同刻度；旧档按档口径为「万人」——写端以 extractor 输入 `population_unit` 为准，勿混刻度
   - special quantity（int 增量）：`cannon`（城防炮，落库时按 `city_level×8` 上限 clamp 并留痕）
   - text：`natural_disaster` `human_disaster` `status`
   - `controlled_by`：必须是 `powers.id` 中存在的非空势力 id（`null`/空白/未知 id 逐项拒收留痕）
