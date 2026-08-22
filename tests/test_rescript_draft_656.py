@@ -16,6 +16,7 @@ import ming_sim.rescript_draft as rescript_mod
 from ming_sim.constants import TURN_UNIT
 from ming_sim.db import GameDB
 from ming_sim.decree import _settle_after_narrative, persist_resolve_context
+from ming_sim.error_pack import clear_for_resimulation
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.rescript_draft import (
     build_rescript_draft_payload,
@@ -150,9 +151,11 @@ def test_rescript_draft_idx_continues_after_decision_rows(game):
             {"label": "甲", "hint": ""}, {"label": "乙", "hint": ""}]},
     ])
     rows = db.list_pending_decisions(turn)
-    assert [r["idx"] for r in rows] == [0, 1, 2]
-    assert rows[0]["kind"] == "decision"
-    assert rows[2]["kind"] == "rescript_draft"
+    # A6 后 HITL 缝只回 decision 行；draft 续编经 list_rescript_drafts 验证
+    assert [r["idx"] for r in rows] == [0, 1]
+    assert all(r["kind"] == "decision" for r in rows)
+    drafts = db.list_rescript_drafts()
+    assert [d["idx"] for d in drafts] == [2]  # 与 decision 行共占 (turn, idx) 主键续编
 
 
 def test_clear_pending_decisions_keeps_rescript_drafts(game):
@@ -168,8 +171,11 @@ def test_clear_pending_decisions_keeps_rescript_drafts(game):
             {"label": "甲", "hint": ""}, {"label": "乙", "hint": ""}]},
     ])
     db.clear_pending_decisions(turn)
-    # decision 行清；draft 行仍在案头（跨月留存，list 同表可读）
-    rows = db.list_pending_decisions(turn)
+    # decision 行清；draft 行仍在案头（跨月留存）。A6 后 draft 不经
+    # list_pending_decisions 读，直接验表。
+    rows = db.conn.execute(
+        "SELECT kind FROM pending_decisions WHERE turn=?", (turn,)
+    ).fetchall()
     assert [r["kind"] for r in rows] == ["rescript_draft"]
     assert [d["title"] for d in db.list_rescript_drafts()] == ["急务"]
 
@@ -183,6 +189,39 @@ def test_save_rescript_drafts_overwrites_not_duplicates(game):
                 {"label": "甲", "hint": ""}, {"label": "乙", "hint": ""}]},
         ])
     assert len(db.list_rescript_drafts()) == 1
+
+
+def test_repeated_overwrite_keeps_stable_synthetic_ids(game):
+    """A3 判词：先删后算 idx——相同 decision 盘面重复覆写得到相同 idx 与
+    `urgent:{turn}:{idx}` 合成身份，不随被删旧行漂移；无 UUID/映射账。"""
+    db, state, _content = game
+    turn = state.turn
+    db.save_pending_decisions(turn, [
+        {"title": "抉择一", "context": "c", "options": [
+            {"label": "a", "hint": ""}, {"label": "b", "hint": ""}]},
+        {"title": "抉择二", "context": "c", "options": [
+            {"label": "a", "hint": ""}, {"label": "b", "hint": ""}]},
+    ])
+
+    def _drafts(title_a: str, title_b: str) -> list:
+        return [
+            {"title": title_a, "context": "导语甲", "options": [
+                {"label": "甲", "hint": ""}, {"label": "乙", "hint": ""}]},
+            {"title": title_b, "context": "导语乙", "options": [
+                {"label": "甲", "hint": ""}, {"label": "乙", "hint": ""}]},
+        ]
+
+    db.save_rescript_drafts(turn, _drafts("急务甲", "急务乙"))
+    first = db.list_rescript_drafts()
+    assert [d["event_id"] for d in first] == [f"urgent:{turn}:2", f"urgent:{turn}:3"]
+    # 同盘面覆写：行被替换、合成身份不变
+    db.save_rescript_drafts(turn, _drafts("改拟甲", "改拟乙"))
+    second = db.list_rescript_drafts()
+    assert [d["title"] for d in second] == ["改拟甲", "改拟乙"]  # 确证替换发生
+    assert [d["event_id"] for d in second] == [f"urgent:{turn}:2", f"urgent:{turn}:3"]
+    # decision 行 idx 不受影响
+    decisions = db.list_pending_decisions(turn)
+    assert [d["idx"] for d in decisions] == [0, 1]
 
 
 # ---------------------------------------------------------------------------
@@ -219,67 +258,52 @@ def test_validate_and_persist_preserve_whitespace_verbatim(game):
     assert row["options"] == drafts[0]["options"]
 
 
-def test_payload_projection_strips_gameplay_bare_quantities():
-    """P4 / ADR 0143 输入侧投影唯一通道：票拟 active_issues 不含 gameplay 裸量
-    （局势走向 inertia、效果 delta、上月推进 delta_bar、待办数值进度），保留契约所需
-    issue_id 与定性文字。simulator 共用投影不动——只在票拟 payload 出口收窄。"""
+def test_payload_projection_excludes_machine_condition_fields():
+    """A4 判词：票拟 issue 投影是字段白名单——只携绑定 issue_id 与明确的定性/
+    叙事文字；机器契约字段（resolve/fail/stop condition 及中文别名）整体不进票拟
+    输入，seed_events 的 public_support >60 / unrest <30 阈值串零穿透；未知字段
+    不透传（删除「任意字符串全透传」根因，零字符串扫描/擦洗）。"""
     from ming_sim.models import GameState
 
     state = GameState.__new__(GameState)
     state.year, state.period, state.turn = 1630, 4, 40
+    resolve_cond = ("陕西 public_support（地方民心）>60 且 unrest（动乱值）<30，"
+                    "且驻陕官军/边军已能压制叛军即可结案")
     simulator_payload = {"active_issues": [{
         "issue_id": 42, "kind": "situation", "title": "陕西告饥",
         "状态": "流民渐聚", "进度": "未见起色",
-        "局势走向": -7,
-        "end_turn": 48,                     # 顶层 gameplay 裸量（真实 shape 可带）
+        "局势走向": -7, "end_turn": 48,
+        "结案条件": resolve_cond,
+        "resolve_condition": resolve_cond,
+        "fail_condition": "陕西流寇成股（万人以上）攻破州县",
+        "stop_condition": "民力已竭",
         f"当前每{TURN_UNIT}效果": {"metrics": {"民心": -1},
-            "economy": [{"account": "国库", "delta": -500,
-                         "category": "赈济压力", "reason": "陕西救灾支拨"}]},
-        "成功效果": {"metrics": {"皇威": 5}},
+            "economy": [{"account": "国库", "delta": -500}]},
         f"上{TURN_UNIT}推进": {"delta_bar": 12, "narrative": "抚臣发帑赈济"},
         "commitment_progress": {"months_elapsed": 3, "paid_total": 150,
                                 "remaining_to_goal": "距达标仍有差距"},
-        "未知嵌套": {"深层数值": 999, "深层文字": "某处告急"},  # 未知字段也不得穿透裸量
-        "结案条件": "灾情平复",
+        "未知嵌套": {"深层文字": "某处告急", "阈值": "public_support >60"},
     }]}
     payload = build_rescript_draft_payload(state, "邸报正文", simulator_payload,
                                            {"name": "首辅", "office": "内阁首辅", "faction": "阉党"})
     issues = payload["active_issues"]
     assert len(issues) == 1
     issue = issues[0]
-    # 机械负向判据：除契约所需 issue_id 外，投影输出不含任何 int/float（含顶层与
-    # 未知嵌套 gameplay 裸量）。
-    def _assert_no_bare_numbers(node: object, path: str) -> None:
-        if isinstance(node, bool):
-            return
-        if isinstance(node, (int, float)):
-            raise AssertionError(f"投影泄露裸量 {node!r} 于 {path}")
-        if isinstance(node, dict):
-            for key, value in node.items():
-                if path == "" and key == "issue_id":
-                    continue
-                _assert_no_bare_numbers(value, f"{path}.{key}")
-        if isinstance(node, list):
-            for idx, value in enumerate(node):
-                _assert_no_bare_numbers(value, f"{path}[{idx}]")
-
-    _assert_no_bare_numbers(issue, "")
+    # 白名单内：绑定 id 与定性/叙事文字
     assert issue["issue_id"] == 42                      # 权威绑定快照保留
-    assert issue["状态"] == "流民渐聚"                   # 定性文字保留
-    assert "局势走向" not in issue                       # inertia 裸量剥除
-    assert "end_turn" not in issue                      # 顶层 gameplay 裸量剥除
-    effect = issue[f"当前每{TURN_UNIT}效果"]
-    assert "metrics" not in effect                      # 数值 delta 整体消失
-    econ = effect["economy"][0]
-    assert econ["category"] == "赈济压力"               # 谁受影响、何类负担的文字保留
-    assert "成功效果" not in issue                       # 全裸量效果洗后为空即整体去掉
-    advance = issue[f"上{TURN_UNIT}推进"]
-    assert "delta_bar" not in advance
-    assert advance["narrative"] == "抚臣发帑赈济"        # 推进叙事保留
-    progress = issue["commitment_progress"]
-    assert "months_elapsed" not in progress and "paid_total" not in progress
-    assert progress == {"remaining_to_goal": "距达标仍有差距"}  # 定性档位保留
-    assert issue["未知嵌套"] == {"深层文字": "某处告急"}  # 未知嵌套裸量剥除、文字保留
+    assert issue["title"] == "陕西告饥"
+    assert issue["状态"] == "流民渐聚"                   # 定性叙事保留
+    assert issue["进度"] == "未见起色"                   # 定性档位保留
+    # 白名单外字段整体不透传（含机器契约条件与任意未知嵌套）
+    for field in ("kind", "局势走向", "end_turn", "结案条件", "resolve_condition",
+                  "fail_condition", "stop_condition", f"当前每{TURN_UNIT}效果",
+                  f"上{TURN_UNIT}推进", "commitment_progress", "未知嵌套"):
+        assert field not in issue, field
+    # 机械负向判据：seed_events 阈值串零穿透整个 payload（含邸报正文之外的一切 slot）
+    serialized = json.dumps(payload, ensure_ascii=False)
+    assert ">60" not in serialized
+    assert "<30" not in serialized
+    assert "万人以上" not in serialized
     # 纪年契约字段照旧
     assert payload["turn"]["year"] == 1630 and payload["turn"]["reign_period_label"]
 
@@ -334,11 +358,16 @@ def _valid_item(i: int) -> dict:
     }
 
 
-def test_validate_items_caps_at_five():
-    drafts = validate_rescript_draft_items(
-        {"items": [_valid_item(i) for i in range(7)]}, set())
-    assert len(drafts) == 5  # 上限截断（确定性）
-    assert all(d["title"].startswith("条目") for d in drafts)
+def test_validate_items_over_limit_fails_whole_batch():
+    """A1 判词：处理条目前校验 items 总数——超 5 条即 ValueError 整批失败，
+    零截断零保留（不 slice、不静默丢弃后项）。6 条全合法与第 6 条非法同判。"""
+    six_legal = [_valid_item(i) for i in range(6)]
+    with pytest.raises(ValueError):
+        validate_rescript_draft_items({"items": six_legal}, set())
+    sixth_illegal = [_valid_item(i) for i in range(5)]
+    sixth_illegal.append({"title": "缺导语"})
+    with pytest.raises(ValueError):
+        validate_rescript_draft_items({"items": sixth_illegal}, set())
 
 
 @pytest.mark.parametrize("mutate", [
@@ -457,7 +486,10 @@ def test_settlement_persists_drafts_verbatim_and_survives_clear(game, monkeypatc
     assert row["actor_office"] == "内阁首辅"
     assert row["actor_faction"] == "阉党"
     # phase2 已跑完（clear 已按 kind 过滤）→ decision 行清、draft 行跨月留存
-    rows = db.list_pending_decisions(turn)
+    # （A6 后 draft 不经 list_pending_decisions 读，直接验表）
+    rows = db.conn.execute(
+        "SELECT kind FROM pending_decisions WHERE turn=?", (turn,)
+    ).fetchall()
     assert [r["kind"] for r in rows] == ["rescript_draft"]
     assert db.get_resolve_context(turn) is None
     # 全量邸报不被裁剪：turn_extractions.narrative 原文照存（落库前文仍用原始 narrative）
@@ -577,6 +609,88 @@ def test_mixed_batch_shape_failure_degrades_whole_month(game, monkeypatch, tmp_p
     assert state.turn == turn + 1            # 结算不中止、回合照常推进
 
 
+def test_over_limit_legal_batch_degrades_whole_month_zero_rows(game, monkeypatch, tmp_path):
+    """A1 回归（6 条全合法）：超限＝整月响亮降级——零行落库、降级附记在、结算不中止
+    （不截断保留前五条成部分头版）。"""
+    import ming_sim.rescript_draft as rescript_draft
+    import ming_sim.simulation as simulation
+
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    _stub_settle_agents(monkeypatch)
+    _retire_existing_actors(db)
+    _add_character(db, "测试首辅", "内阁首辅", "阉党")
+
+    draft_raw = json.dumps({"items": [
+        {"issue_id": 42, "title": f"条目{i}", "context": f"导语{i}，赈济不可缓。",
+         "options": [{"label": "发帑赈济", "hint": "所安者饥民"},
+                     {"label": "缓议加派", "hint": "所拂者小农"}]}
+        for i in range(6)  # 6 条全合法，仍超上限 → 整批失败
+    ]}, ensure_ascii=False)
+
+    def _fake_run(agent, prompt, tag):
+        if tag == "rescript-draft":
+            return draft_raw
+        return _CANNED
+
+    monkeypatch.setattr(simulation, "run_agent_text", _fake_run)
+    monkeypatch.setattr(rescript_draft, "run_agent_text", _fake_run)
+
+    turn = state.turn
+    _settle_after_narrative(
+        state, db, None, None,
+        decree_text="诏", narrative="邸报",
+        simulator_payload={"active_issues": [{"issue_id": 42, "title": "陕西告饥"}]},
+        relevant_memories=[], secret_orders={},
+        before_turn=turn, _emit=lambda *a: None, content=content,
+    )
+    assert db.list_rescript_drafts() == []   # 零行落库：第六条不再被静默截丢
+    note = tmp_path / "error_packs" / "rescript_draft_degraded" / f"turn{turn}.json"
+    assert note.is_file()                    # 降级附记在（响亮而非静默）
+    assert "超上限" in note.read_text(encoding="utf-8")
+    assert state.turn == turn + 1            # 结算不中止、回合照常推进
+
+
+def test_sixth_item_illegal_degrades_whole_month_zero_rows(game, monkeypatch, tmp_path):
+    """A1 回归（第 6 条非法）：前 5 条合法也不保留——整月降级零行落库。"""
+    import ming_sim.rescript_draft as rescript_draft
+    import ming_sim.simulation as simulation
+
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    _stub_settle_agents(monkeypatch)
+    _retire_existing_actors(db)
+    _add_character(db, "测试首辅", "内阁首辅", "阉党")
+
+    items = [{"issue_id": 42, "title": f"条目{i}", "context": f"导语{i}。",
+              "options": [{"label": "甲拟", "hint": "所安者饥民"},
+                          {"label": "乙拟", "hint": "所拂者小农"}]}
+             for i in range(5)]
+    items.append({"title": "缺导语第六条"})  # 第 6 条非法
+    draft_raw = json.dumps({"items": items}, ensure_ascii=False)
+
+    def _fake_run(agent, prompt, tag):
+        if tag == "rescript-draft":
+            return draft_raw
+        return _CANNED
+
+    monkeypatch.setattr(simulation, "run_agent_text", _fake_run)
+    monkeypatch.setattr(rescript_draft, "run_agent_text", _fake_run)
+
+    turn = state.turn
+    _settle_after_narrative(
+        state, db, None, None,
+        decree_text="诏", narrative="邸报",
+        simulator_payload={"active_issues": [{"issue_id": 42, "title": "陕西告饥"}]},
+        relevant_memories=[], secret_orders={},
+        before_turn=turn, _emit=lambda *a: None, content=content,
+    )
+    assert db.list_rescript_drafts() == []   # 零行落库：前五条合法项不成部分头版
+    note = tmp_path / "error_packs" / "rescript_draft_degraded" / f"turn{turn}.json"
+    assert note.is_file()
+    assert state.turn == turn + 1
+
+
 # ---------------------------------------------------------------------------
 # F1.3/F2.5 崩溃恢复：不重跑票拟步（持久层读回）＋restore 往返无损
 # ---------------------------------------------------------------------------
@@ -686,3 +800,122 @@ def test_restore_roundtrip_at_awaiting_pause_has_no_draft_rows(game):
         os.remove(path)
         if os.path.exists(f"{path}_agno.db"):
             os.remove(f"{path}_agno.db")
+
+
+# ---------------------------------------------------------------------------
+# A2 重模拟作废：陈旧票拟与 ready context 降级同生死
+# ---------------------------------------------------------------------------
+
+def _ready_with_drafts(db, state, drafts):
+    persist_resolve_context(
+        db, state.turn, {},
+        decree_text="诏", narrative="邸报",
+        simulator_payload={}, secret_orders=[], relevant_memories=[],
+        rescript_drafts=drafts,
+    )
+
+
+def _draft_rows(title: str) -> list:
+    return [{"title": title, "context": "旧导语", "options": [
+        {"label": "甲", "hint": ""}, {"label": "乙", "hint": ""}],
+        "actor_name": "测试首辅", "actor_office": "内阁首辅", "actor_faction": "阉党",
+    }]
+
+
+def test_resimulation_clear_invalidates_stale_drafts(game):
+    """A2 判词：ready→clear 作废动作清该 turn 陈旧票拟行；phase1 context 与
+    decision 行保留。重跑结果为空列表时不得残留旧票拟冒充新头版。"""
+    db, state, content = game
+    turn = state.turn
+    db.save_pending_decisions(turn, [
+        {"title": "抉择", "context": "c", "options": [
+            {"label": "a", "hint": ""}, {"label": "b", "hint": ""}]},
+    ])
+    _ready_with_drafts(db, state, _draft_rows("陈旧急务"))
+    assert [d["title"] for d in db.list_rescript_drafts()] == ["陈旧急务"]
+
+    clear_for_resimulation(db, turn)
+
+    # 陈旧票拟行已清；decision 行不动；phase1 context 降级保留（非删行）
+    assert db.list_rescript_drafts() == []
+    rows = db.list_pending_decisions(turn)
+    assert [r["title"] for r in rows] == ["抉择"]
+    ctx = db.get_resolve_context(turn)
+    assert ctx is not None and ctx.get("extracted") is None
+
+    # 重跑结果为空列表（本月确无急务）→ 零残留
+    persist_resolve_context(
+        db, turn, {}, decree_text="诏", narrative="邸报新",
+        simulator_payload={}, secret_orders=[], relevant_memories=[],
+        rescript_drafts=[],
+    )
+    assert db.list_rescript_drafts() == []
+
+
+def test_resimulation_clear_degraded_rerun_leaves_no_stale_drafts(game):
+    """A2 回归（降级 None）：重跑票拟步降级返回 None 时，旧票拟不得存活。"""
+    db, state, _content = game
+    turn = state.turn
+    _ready_with_drafts(db, state, _draft_rows("陈旧急务"))
+    clear_for_resimulation(db, turn)
+    # 重跑降级：persist 不携 rescript_drafts（None）
+    persist_resolve_context(
+        db, turn, {}, decree_text="诏", narrative="邸报新",
+        simulator_payload={}, secret_orders=[], relevant_memories=[],
+    )
+    assert db.get_resolve_context(turn) is not None
+    assert db.list_rescript_drafts() == []   # 无头版，而非旧版冒充
+
+
+def test_resimulation_clear_new_results_fully_replace_old_drafts(game):
+    """A2 回归（新列表）：重跑产出新票拟时只有新行，旧行零残留。"""
+    db, state, _content = game
+    turn = state.turn
+    _ready_with_drafts(db, state, _draft_rows("陈旧急务"))
+    clear_for_resimulation(db, turn)
+    persist_resolve_context(
+        db, turn, {}, decree_text="诏", narrative="邸报新",
+        simulator_payload={}, secret_orders=[], relevant_memories=[],
+        rescript_drafts=_draft_rows("新急务"),
+    )
+    assert [d["title"] for d in db.list_rescript_drafts()] == ["新急务"]
+
+
+# ---------------------------------------------------------------------------
+# A6 HITL envelope 单缝：persist-then-abort 后票拟不进亲裁/刷新/submit 消费面
+# ---------------------------------------------------------------------------
+
+def test_persist_then_abort_draft_never_enters_hitl_envelope(game):
+    """A6 判词：list_pending_decisions 只回 kind='decision'——web 投影不暴露
+    draft、resume 旧行为不变、submit 式逐行标 decided 不触碰 draft 行。"""
+    from ming_sim.session import GameSession
+
+    db, state, _content = game
+    turn = state.turn
+    db.save_pending_decisions(turn, [
+        {"title": "抉择", "context": "c", "options": [
+            {"label": "a", "hint": ""}, {"label": "b", "hint": ""}]},
+    ])
+    _ready_with_drafts(db, state, _draft_rows("急务"))
+    # persist-then-abort 形状：ready ctx＋decision 与 draft 同回合并存
+
+    rows = db.list_pending_decisions(turn)
+    assert [r["kind"] for r in rows] == ["decision"]
+    assert [d["title"] for d in db.list_rescript_drafts()] == ["急务"]  # 票拟仍留 #657 批红面
+
+    # web 投影单缝（session.pending_decisions 直读同一 DB 缝）：不暴露 draft
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    projected = sess.pending_decisions()
+    assert [d["title"] for d in projected] == ["抉择"]
+
+    # submit 式回写按 list_pending_decisions 逐行标 decided——draft 不在其中
+    for r in projected:
+        db.conn.execute(
+            "UPDATE pending_decisions SET choice_json=?, status='decided' WHERE turn=? AND idx=?",
+            ('{"label":"a"}', turn, r["idx"]),
+        )
+    db.conn.commit()
+    drafts = {d["title"]: d["status"] for d in db.list_rescript_drafts()}
+    assert drafts["急务"] == "pending"   # 票拟不被误标 decided
