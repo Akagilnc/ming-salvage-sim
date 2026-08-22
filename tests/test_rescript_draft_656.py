@@ -18,7 +18,7 @@ from ming_sim.constants import TURN_UNIT
 from ming_sim.db import GameDB
 from ming_sim.decree import _settle_after_narrative, persist_resolve_context
 from ming_sim.error_pack import clear_for_resimulation
-from ming_sim.exceptions import SettlementAbort
+from ming_sim.exceptions import LLMUnavailable, SettlementAbort
 from ming_sim.rescript_draft import (
     build_rescript_draft_payload,
     generate_rescript_draft,
@@ -72,6 +72,14 @@ def test_triage_actor_falls_back_to_eunuch_director(game):
     _add_character(db, "测试掌印", "司礼监掌印太监", "阉党", office_type="内廷")
     actor = select_triage_actor(db)
     assert actor is not None and actor["name"] == "测试掌印"
+
+
+def test_triage_actor_negative_yumajian_zhangyin_never_selected(game):
+    """r2 裁决 B1 负例：御马监掌印太监与票拟/批红职权无关，不得顶补分拣 actor。"""
+    db, _state, _content = game
+    _retire_existing_actors(db)
+    _add_character(db, "御马监掌印", "御马监掌印太监", "阉党", office_type="内廷")
+    assert select_triage_actor(db) is None
 
 
 def test_triage_actor_duplicate_hits_deterministic_order(game):
@@ -404,13 +412,48 @@ def test_validate_items_rejects_illegal_top_level():
         validate_rescript_draft_items("不是 JSON object", set())
 
 
+def _legal_item() -> dict:
+    return {
+        "title": "陕西告饥",
+        "context": "秦地赤旱千里。",
+        "options": [
+            {"label": "发帑赈济", "hint": "所安者饥民"},
+            {"label": "缓征加赈", "hint": "先赈后征"},
+        ],
+    }
+
+
+def test_validate_items_rejects_unknown_item_field_whole_batch():
+    """r2 裁决 B2：item 层多产的未知自由文本字段不得接受后静默省略——整批 shape 错。"""
+    item = _legal_item()
+    item["extra"] = "模型多写的合法自由文本"
+    with pytest.raises(ValueError, match="未知字段"):
+        validate_rescript_draft_items({"items": [item]}, set())
+
+
+def test_validate_items_rejects_unknown_option_field_whole_batch():
+    """r2 裁决 B2：option 层未知字段同样不得静默省略——整批 shape 错。"""
+    item = _legal_item()
+    item["options"][0]["extra_option"] = "模型多写的合法自由文本"
+    with pytest.raises(ValueError, match="未知字段"):
+        validate_rescript_draft_items({"items": [item]}, set())
+
+
+def test_validate_items_accepts_optional_issue_id_binding_key():
+    """issue_id 是唯一豁免的可选绑定键，白名单收窄不得误伤既有绑定路。"""
+    item = _legal_item()
+    item["issue_id"] = 42
+    drafts = validate_rescript_draft_items({"items": [item]}, {42})
+    assert drafts[0]["event_id"] == "issue:42"
+
+
 def test_generate_rescript_draft_degrades_loudly_without_raising(game, monkeypatch, tmp_path):
-    """F2.5 响亮降级：LLM/解析失败 → tlog＋附记，返回 None，绝不抛。"""
+    """F2.5 响亮降级（r2 B3 收窄后）：typed LLMUnavailable → tlog＋附记，返回 None，不抛。"""
     db, state, _content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
 
     def _boom(agent, prompt, tag):
-        raise RuntimeError("LLM 不可用")
+        raise LLMUnavailable("LLM 不可用")
 
     monkeypatch.setattr(rescript_mod, "run_agent_text", _boom)
     payload = {"active_issues": [], "gazette": "邸报", "triage_actor": {}, "turn": {}}
@@ -418,6 +461,23 @@ def test_generate_rescript_draft_degrades_loudly_without_raising(game, monkeypat
     note = tmp_path / "error_packs" / "rescript_draft_degraded" / f"turn{state.turn}.json"
     assert note.is_file()
     assert "LLM 不可用" in note.read_text(encoding="utf-8")
+
+
+def test_generate_rescript_draft_program_error_propagates(game, monkeypatch):
+    """r2 裁决 B3 / ADR 0005：程序错不得以「非承重支路」为由吞成降级。
+    validator 抛 RuntimeError（代码故障）必须响亮上抛——票拟业务降级 ≠ 代码故障降级。"""
+    db, state, _content = game
+
+    def _buggy_validate(data, ids):
+        raise RuntimeError("programmer bug sentinel")
+
+    monkeypatch.setattr(rescript_mod, "run_agent_text", lambda a, p, tag: "{\"items\": []}")
+    monkeypatch.setattr(rescript_mod, "validate_rescript_draft_items", _buggy_validate)
+    payload = {
+        "active_issues": [], "gazette": "邸报", "triage_actor": {}, "turn": {},
+    }
+    with pytest.raises(RuntimeError, match="programmer bug sentinel"):
+        generate_rescript_draft(object(), payload, state.turn)
 
 
 # ---------------------------------------------------------------------------

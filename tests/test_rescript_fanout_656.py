@@ -54,6 +54,24 @@ def test_phase2_fanout_five_legs_meet_at_barrier(game, monkeypatch):
     assert box["draft"] == "draft-prompt"
 
 
+def test_side_leg_program_error_propagates_via_future(game, monkeypatch):
+    """r2 裁决 B3 / ADR 0005：side_leg 程序错经 Future 汇合响亮上抛，不得提交后弃之。"""
+    import pytest as _pytest
+
+    db, state, _content = game
+    monkeypatch.setattr(simulation, "run_agent_text", lambda agent, prompt, tag: _CANNED)
+
+    def _buggy_leg() -> None:
+        raise RuntimeError("side leg programmer bug")
+
+    with _pytest.raises(RuntimeError, match="side leg programmer bug"):
+        extract_scores_by_modules_with_agno(
+            {m: object() for m in EXTRACTION_MODULES}, db, state, "邸报",
+            parallel=True,
+            side_leg=_buggy_leg,
+        )
+
+
 def test_settle_wires_rescript_draft_into_single_fanout(game, monkeypatch):
     """接线证明：_settle_after_narrative 把唯一票拟 companion 腿交进与四 extractor 同一个
     fan-out 调用（side_leg 单腿接缝、parallel=True），不另起串行 LLM 步。"""

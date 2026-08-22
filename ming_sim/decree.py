@@ -1563,27 +1563,26 @@ def _settle_after_narrative(
     if triage_actor is None:
         tlog("[rescript] 无在任首辅／掌印，本月无头版（全量邸报照旧）。")
     else:
-        try:
+        def _rescript_draft_leg() -> None:
+            # agent/payload 构造是纯程序逻辑（ADR 0005 / r2 裁决 B3）：其错误属代码
+            # 侧错，不在票拟业务降级面内——在腿内构造，程序错经 side_future.result()
+            # 响亮上抛，不再宽吞成无头版。
+            # 自降级契约：业务失败（typed LLMUnavailable/LLMContractError/ValueError）
+            # 内部响亮降级返回 None；程序错响亮上抛（B3）。actor 身份随行落 payload
+            # （F3.2）：分拣人事实钉进每条票拟行，任免后可机械断言。结果写入闭包持有
+            # 的 draft_cell，供 persist 与重跑真源同事务读回（F2.5）。
             draft_agent = create_rescript_draft_agent(llm_config, agno_db)
             draft_payload = build_rescript_draft_payload(
                 state, narrative, simulator_payload, triage_actor,
             )
-
-            def _rescript_draft_leg() -> None:
-                # 自降级契约：内部响亮降级返回 None，绝不抛（F2.5）。
-                # actor 身份随行落 payload（F3.2）：分拣人事实钉进每条票拟行，任免后可机械断言。
-                # 结果写入闭包持有的 draft_cell，供 persist 与重跑真源同事务读回（F2.5）。
-                drafts = generate_rescript_draft(draft_agent, draft_payload, before_turn)
-                if drafts:
-                    for d in drafts:
-                        d["actor_name"] = triage_actor["name"]
-                        d["actor_office"] = triage_actor["office"]
-                        d["actor_faction"] = triage_actor["faction"]
-                draft_cell["drafts"] = drafts
-        except Exception as exc:  # noqa: BLE001 — 票拟步不可用＝响亮降级无头版，不耦合关键路（F2.5）
-            tlog(f"[rescript] 票拟生成步构造失败，本月视作无头版：{exc}")
-        else:
-            side_leg = _rescript_draft_leg
+            drafts = generate_rescript_draft(draft_agent, draft_payload, before_turn)
+            if drafts:
+                for d in drafts:
+                    d["actor_name"] = triage_actor["name"]
+                    d["actor_office"] = triage_actor["office"]
+                    d["actor_faction"] = triage_actor["faction"]
+            draft_cell["drafts"] = drafts
+        side_leg = _rescript_draft_leg
     try:
         tlog("结算 3/4 抽取（模块 module）")
         extractors = {

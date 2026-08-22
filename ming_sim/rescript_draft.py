@@ -2,7 +2,8 @@
 
 分拣人唯一规则（票面 F3.1，纯确定性读取现有 office/faction、不新增中立排序器）：
   1. 主分拣人＝内阁首辅（active 明臣 office LIKE '%首辅%'）；
-  2. 缺位顶补＝司礼监掌印（office LIKE '%掌印%'）；
+  2. 缺位顶补＝司礼监掌印（office LIKE '%司礼监掌印%'；r2 裁决 B1：`%掌印%`
+     会误吞御马监掌印等无关衙门掌印，角色破面——收窄为司礼监掌印）；
   3. 多行命中按 gatekeeper 先例 ORDER BY office_type,office,name 取第一；
   4. 双双缺位＝本月无分拣、无头版（全量邸报照旧可读）；
   5. 首辅与掌印同时在位时首辅分拣、掌印不参与。
@@ -26,6 +27,7 @@ from typing import Any, Dict, List, Optional
 from ming_sim.agents import parse_agent_json, run_agent_text
 from ming_sim.db import GameDB
 from ming_sim.error_pack import error_packs_root
+from ming_sim.exceptions import LLMContractError, LLMUnavailable
 from ming_sim.models import GameState, reign_period_label
 from ming_sim.token_stats import tlog
 
@@ -33,8 +35,12 @@ MAX_RESCRIPT_DRAFTS = 5
 
 
 def select_triage_actor(db: GameDB) -> Optional[Dict[str, str]]:
-    """F3.1 唯一分拣人选择规则：首辅优先、掌印顶补、重复命中取第一、双双缺位回 None。"""
-    for office_pattern in ("%首辅%", "%掌印%"):
+    """F3.1 唯一分拣人选择规则：首辅优先、司礼监掌印顶补、重复命中取第一、双双缺位回 None。
+
+    r2 裁决 B1（票面 F3.1「司礼监掌印」明文＋P3 角色保真）：兜底不得用宽模式
+    `%掌印%`——御马监掌印太监与票拟/批红职权无关，不得成为分拣 actor。
+    """
+    for office_pattern in ("%首辅%", "%司礼监掌印%"):
         row = db.conn.execute(
             "SELECT name,office,faction FROM characters "
             "WHERE status='active' AND power_id='ming' AND office LIKE ? "
@@ -49,6 +55,9 @@ def select_triage_actor(db: GameDB) -> Optional[Dict[str, str]]:
             }
     return None
 
+
+_ITEM_ALLOWED_KEYS = frozenset({"title", "context", "options", "issue_id"})
+_OPTION_ALLOWED_KEYS = frozenset({"label", "hint"})
 
 _RESCRIPT_ISSUE_TEXT_FIELDS = ("title", "状态", "进度", "待办未解进度")
 
@@ -124,6 +133,9 @@ def validate_rescript_draft_items(
     - 自由文本零删改（CLAUDE.md P6 / F3.3）：strip 只作判空的临时值，落库一律原文；
     - 处理条目前先校验 items 总数：超过 MAX_RESCRIPT_DRAFTS 即 raise ValueError
       整批响亮降级（#656 A1：不截断、不静默丢弃后项、不保留前五条，F2.5）；
+    - item/option 层白名单外未知字段 → raise ValueError 整批失败（r2 B2：接受后
+      静默省略＝删 LLM 产文，违反 F3.3 零删改——未知键属 shape 错，走整月降级；
+      issue_id 是唯一豁免的可选绑定键）；
     - event_id 只采信出现在权威盘面里的 issue_id 回指（bind 同款纪律）；其余留给
       落库层合成 `urgent:{turn}:{idx}`。
     """
@@ -145,6 +157,11 @@ def validate_rescript_draft_items(
     for raw in items:
         if not isinstance(raw, dict):
             raise ValueError("票拟条目非 object（整批失败，F2.5）")
+        unknown = set(raw) - _ITEM_ALLOWED_KEYS
+        if unknown:
+            raise ValueError(
+                f"票拟条目含未知字段（整批 shape 错，F2.5/F3.3 零删改不静默省略）：{sorted(unknown)}"
+            )
         title = _required_text(raw, "title")
         context = _required_text(raw, "context")
         raw_opts = raw.get("options")
@@ -154,6 +171,12 @@ def validate_rescript_draft_items(
         for opt in raw_opts:
             if not isinstance(opt, dict):
                 raise ValueError(f"票拟 option 非 object（整批失败，F2.2）：{title!r}")
+            unknown_opt = set(opt) - _OPTION_ALLOWED_KEYS
+            if unknown_opt:
+                raise ValueError(
+                    f"票拟 option 含未知字段（整批 shape 错，F2.5/F3.3 零删改不静默省略）："
+                    f"{title!r} {sorted(unknown_opt)}"
+                )
             options.append({
                 "label": _required_text(opt, "label"),
                 "hint": _required_text(opt, "hint"),
@@ -209,19 +232,32 @@ def generate_rescript_draft(
 ) -> Optional[List[Dict[str, object]]]:
     """phase2 第五路：跑一次票拟生成 LLM 调用并校验 shape。
 
-    响亮降级契约（F2.5）：任何失败（LLM 异常 / 输出非法）→ tlog 留痕＋诊断目录附记，
-    返回 None，本月视作无头版；**绝不抛**——结算本体零依赖票拟，中止会把非承重并行
-    支路耦合进关键路。
+    响亮降级契约（F2.5）按错误归属拆缝（r2 裁决 B3 / ADR 0005 / relation_brew 同款
+    先例）：业务降级面只收声明类型——LLM 调用缝只收 typed LLMUnavailable；解析/shape
+    校验缝只收 LLMContractError/ValueError。命中即 tlog 留痕＋诊断目录附记，返回 None，
+    本月视作无头版。程序错（RuntimeError/KeyError/TypeError 等）**响亮上抛**——票拟
+    业务降级 ≠ 代码故障降级，不再以「非承重支路」为由吞程序错误。
     """
-    try:
-        payload_json = json.dumps(payload, ensure_ascii=False, sort_keys=False)
-        tlog(f"[rescript] user payload total={len(payload_json)} chars (~{len(payload_json)//1.5:.0f} tok)")
-        raw = run_agent_text(agent, payload_json, tag="rescript-draft")
-        data = parse_agent_json(raw, "急务票拟生成")
-        drafts = validate_rescript_draft_items(data, _board_issue_ids(payload.get("active_issues")))
-        tlog(f"[rescript] 票拟生成 {len(drafts)} 条。")
-        return drafts
-    except Exception as exc:  # noqa: BLE001 — 响亮降级（F2.5），不中止结算
+    # payload 序列化是纯程序逻辑：其错误属代码侧错（ADR 0005），不在降级面内，响亮上抛。
+    payload_json = json.dumps(payload, ensure_ascii=False, sort_keys=False)
+    tlog(f"[rescript] user payload total={len(payload_json)} chars (~{len(payload_json)//1.5:.0f} tok)")
+
+    def _degrade(exc: Exception) -> None:
         tlog(f"[rescript] 票拟生成失败，本月视作无头版：{exc}")
         _write_degraded_note(turn, str(exc))
+
+    try:
+        raw = run_agent_text(agent, payload_json, tag="rescript-draft")
+    except LLMUnavailable as exc:  # LLM 调用缝：只收 typed 声明，程序错上抛
+        _degrade(exc)
         return None
+    try:
+        data = parse_agent_json(raw, "急务票拟生成")
+        drafts = validate_rescript_draft_items(
+            data, _board_issue_ids(payload.get("active_issues"))
+        )
+    except (LLMContractError, ValueError) as exc:  # 解析/shape 缝：只收契约违约
+        _degrade(exc)
+        return None
+    tlog(f"[rescript] 票拟生成 {len(drafts)} 条。")
+    return drafts

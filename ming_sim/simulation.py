@@ -1701,15 +1701,18 @@ def extract_scores_by_modules_with_agno(
         # （sanitizer 单实例不并发、确定性）。任一模块抛错在收 result 时原样上抛
         # （with 块先等齐在跑线程再传播）→ 与串行同样触发上层 SettlementAbort。
         # #656：票拟 companion 腿同池提交——五路共享唯一 fan-out 点，任一腿完成前
-        # 五腿均已起跑；侧腿自降级绝不抛、结果由调用方闭包持有。
+        # 五腿均已起跑；侧腿业务失败自降级返回 None，程序错经 Future 汇合响亮上抛。
         from concurrent.futures import ThreadPoolExecutor
         leg_count = len(EXTRACTION_MODULES) + (1 if side_leg is not None else 0)
         tlog(f"[extractor] 并发抽取 {leg_count} 腿（wall-clock≈最慢单个）")
         with ThreadPoolExecutor(max_workers=leg_count) as pool:
             raw_futures = [pool.submit(_run_raw, m) for m in EXTRACTION_MODULES]
-            if side_leg is not None:
-                pool.submit(side_leg)
+            side_future = pool.submit(side_leg) if side_leg is not None else None
             raws = [f.result() for f in raw_futures]
+            if side_future is not None:
+                # 汇合侧腿 Future（r2 B3）：程序错经 result() 响亮上抛（ADR 0005），
+                # 不再提交后弃之——side_leg 异常静默蒸发＝代码故障被吞。
+                side_future.result()
         for module, raw in zip(EXTRACTION_MODULES, raws):
             module_outputs[module] = _parse_module(module, raw)
     else:
