@@ -671,3 +671,24 @@ def create_ending_summary_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Age
         add_history_to_context=False,
         markdown=False,
     )
+
+
+def create_relation_brew_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
+    """关系酿制裁判（#636 S5）：两段式摘要增量重酿，输出 {new_foundings, recent_segment} JSON。
+    一次性，不持久化；每条关系一个实例（批内并行各自独享，不共享运行态）。"""
+    del agno_db
+    ctx = _ctx()
+    return Agent(
+        name="关系酿制裁判",
+        id="relation-brew",
+        model=create_chat_model(
+            llm_config,
+            temperature=0.4,
+            top_p=0.85,
+            enable_thinking=False,
+            force_json_output=True,
+        ),
+        instructions=[ctx.game_world_prompt, ctx.relation_brew_prompt],
+        add_history_to_context=False,
+        markdown=False,
+    )
