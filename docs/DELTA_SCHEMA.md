@@ -50,7 +50,10 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
   "secret_order_closes":        [],  // #1504 退役（拒收）；结案改 settle 对账
   "covert_exec_selections":     [],  // #1504 密令带内选态
   "dossier_progress_reports":   [],  // 长差密令逐月密奏（#566 / ADR 0058）
-  "emperor_fate":               null // "abdicate" | "suicide" | null
+  "emperor_fate":               null, // "abdicate" | "suicide" | null
+
+  // ── relations 模块（#633 / ADR 0082 结算口）──
+  "relation_edge_events": [],  // 大臣互动边事件；每项 {施动者, 受动者(单名或名单), 类目, 语境, 来源引用}
 }
 ```
 
@@ -389,6 +392,13 @@ personnel_secret 模块产出；settle 内经 `record_monthly_dossier_progress` 
 - 顶层标量，不是 list/dict
 - 三选一：`"abdicate"` / `"suicide"` / `null`
 
+### `relation_edge_events` — 大臣互动边事件（#633 / ADR 0082 结算口）
+- 每项：`{"施动者": str, "受动者": str 或 [str], "类目": 九类之一, "语境": str, "来源引用": "dossier:<id>\|盘面自发"}`
+- `类目` 只收大臣侧九类：`荐引`/`恩义`/`结怨`/`站台`/`使绊`/`联名`/`连坐`/`把柄`/`协作`；君臣类目（兑现所托等）不归本 section
+- 方向=施动者→受动者；联名/协作由邸报叙事定牵头方（牵头者为施动者）；写端按「施动者→每位受动者」各记一行，不做对称翻倍，联署者之间不写边
+- `语境` 不能为空白；存储原样（含首尾空白与换行，#633 F1）
+- 坏项（非 dict/未知类目/空语境/缺施受动者）逐条拒收留痕，不阻塞其它项
+
 ---
 
 ## 模块归属（仅参考，driver 现在合并产出，不分模块）
@@ -399,6 +409,7 @@ personnel_secret 模块产出；settle 内经 `record_monthly_dossier_progress` 
 | `military_external` | `army_delta` `new_armies` `power_updates` `world_advance` |
 | `issues` | `issue_advances` `new_issues` `事件结局` `cancels` `close_issues` `dossier_executions` `dossier_participants` `authority_changes` `dossier_reconciliations` `faction_denunciations` |
 | `personnel_secret` | `人物变更` `secret_order_updates` `covert_exec_selections` `dossier_progress_reports` `secret_dossier_participants` `emperor_fate` |
+| `relations` | `relation_edge_events` |
 
 ---
 

@@ -19990,9 +19990,11 @@ class GameDB:
         game_state 行即可。"""
         source = str(source or "").strip()
         target = str(target or "").strip()
-        # 语境是叙事原句，写口零改字（ADR 0079/0080/0142）：只以 strip 判空，
-        # 持久化与下传保持逐字原文。
-        context = str(context or "")
+        # #633 F1（庭裁 r1）：strip 只作非空谓词，存储值一律原样（含首尾空白与换行）；
+        # 禁任何长度 clamp/裁剪/替换/归一——机械验收=全链字节相等。
+        # 与 main #635 零改字同向：只以 strip 判空，非 str 立即 ValueError（不 str() 强转）。
+        if not isinstance(context, str):
+            raise ValueError("边事件语境必须为字符串")
         if not source or not target:
             raise ValueError("边事件 source/target 不能为空")
         if not context.strip():

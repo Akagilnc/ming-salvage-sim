@@ -78,6 +78,7 @@ TOP_LEVEL_ALIASES = {
     "密令结案": "secret_order_closes",
     "密令执行态": "covert_exec_selections",
     "崇祯结局": "emperor_fate",
+    "大臣互动": "relation_edge_events",
 }
 TOP_LEVEL_LABELS = {value: key for key, value in TOP_LEVEL_ALIASES.items()}
 
@@ -776,7 +777,9 @@ def simulate_season_with_payload(
     return raw.strip(), payload
 
 
-EXTRACTION_MODULES = ("internal", "military_external", "issues", "personnel_secret")
+# #633：relations（关系档房）并入同一并发装配——五模块共享同一 ThreadPoolExecutor，
+# 不另建第二套编排。
+EXTRACTION_MODULES = ("internal", "military_external", "issues", "personnel_secret", "relations")
 
 EMPTY_EXTRACTION: Dict[str, object] = {
     "metric_delta": {},
@@ -812,6 +815,7 @@ EMPTY_EXTRACTION: Dict[str, object] = {
     "authority_changes": [],
     "dossier_progress_reports": [],
     "emperor_fate": None,  # 崇祯结局：abdicate(退位/禅让)/suicide(自尽/殉国)/null(无)
+    "relation_edge_events": [],  # #633/ADR 0082 结算口：邸报大臣互动边事件
 }
 
 MODULE_FIELDS: Dict[str, set[str]] = {
@@ -826,6 +830,8 @@ MODULE_FIELDS: Dict[str, set[str]] = {
         "人物变更", "new_issues", "secret_order_updates", "covert_exec_selections",
         "dossier_progress_reports", "secret_dossier_participants", "emperor_fate",
     },
+    # #633：关系档房独占边事件槽；错放进其它模块由白名单 misroute 留痕剔除。
+    "relations": {"relation_edge_events"},
 }
 
 # 字段 → 首要所属模块反向图。`new_issues` 由 issues 主持，同时允许 personnel_secret
