@@ -15,6 +15,8 @@ spike_settle_tick 式 oracle：喂逐月发饷序列 → 断言 loyalty 逐月�
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from ming_sim.flows import army_loyalty_tick_delta, apply_fixed_period_flows
@@ -246,6 +248,60 @@ def test_substrate_hub_path_loyalty_tier(game):
         "SELECT delta FROM army_logs WHERE army_id=? AND field='loyalty' "
         "ORDER BY id DESC LIMIT 1", (KEG,)).fetchone()
     assert log is not None and int(log["delta"]) == -5, "hub 路同事务写 loyalty 日志"
+
+
+def test_province_path_loyalty_tick_on_combined_arrears(game):
+    # 同构 #287：纯省源军不进 hub SELECT（central_pay_share=0），军心须在
+    # _apply_region_army_pay_tick 与 morale 同缝 tick。breakdown 缺失=欠饷存量不动。
+    db, state, _ = game
+    _silence_other_armies(db, keep=(KEG,))
+    db.conn.execute(
+        "UPDATE armies SET owner_power='ming', is_tusi=0, self_funded_pay=0, "
+        "pay_source_region='shaanxi', province_pay_share=1.0, central_pay_share=0.0, "
+        "manpower=10000, salary_rate=1.0, loyalty=50, morale=50, "
+        "province_pay_arrears=3.0, central_pay_arrears=0, arrears=3.0 "
+        "WHERE id=?", (KEG,))
+    db.conn.commit()
+    pay_rows = db._army_pay_source_rows_for_region("shaanxi")
+    keg_row = next(r for r in pay_rows if r["id"] == KEG)
+    db._apply_region_army_pay_tick([keg_row], SimpleNamespace(breakdown=None))
+    assert _loyalty_of(db, KEG) == 45, "省路欠 3 月 → -5"
+    log = db.conn.execute(
+        "SELECT delta FROM army_logs WHERE army_id=? AND field='loyalty' "
+        "ORDER BY id DESC LIMIT 1", (KEG,)).fetchone()
+    assert log is not None and int(log["delta"]) == -5, "省路同事务写 loyalty 日志"
+
+
+def test_substrate_hub_province_only_army_loyalty_ticks(game):
+    # 新档 substrate_hub：南京/闽广水师 seed 为 100% 省源。hub SELECT 要求
+    # central_pay_share>0，漏接则军心永冻。种子 30 月欠抗省 waterfall 偿还噪声。
+    db, state, _ = game
+    _silence_other_armies(db, keep=(KEG,))
+    db.conn.execute(
+        "UPDATE armies SET owner_power='ming', is_tusi=0, self_funded_pay=0, "
+        "pay_source_region='shaanxi', province_pay_share=1.0, central_pay_share=0.0, "
+        "manpower=10000, salary_rate=1.0, loyalty=50, morale=50, "
+        "province_pay_arrears=30.0, central_pay_arrears=0, arrears=30.0 "
+        "WHERE id=?", (KEG,))
+    db.conn.commit()
+    _run_months(db, state, 1)
+    assert _loyalty_of(db, KEG) == 45, "纯省源军须走省路 tick，不得被 hub SELECT 漏掉"
+
+
+def test_mixed_share_army_loyalty_ticks_once_not_twice(game):
+    # 混合饷源：hub 须把 loyalty 让给省路（与 morale 同构），否则两路各 -5 双扣。
+    db, state, _ = game
+    _silence_other_armies(db, keep=(KEG,))
+    db.conn.execute(
+        "UPDATE armies SET owner_power='ming', is_tusi=0, self_funded_pay=0, "
+        "pay_source_region='shaanxi', province_pay_share=0.65, central_pay_share=0.35, "
+        "manpower=10000, salary_rate=1.0, loyalty=50, morale=50, "
+        "province_pay_arrears=20.0, central_pay_arrears=10.0, arrears=30.0 "
+        "WHERE id=?", (KEG,))
+    db.conn.commit()
+    _run_months(db, state, 1)
+    loyalty = _loyalty_of(db, KEG)
+    assert loyalty == 45, f"混合饷源只应 tick 一次，得 {loyalty}（双 tick 会到 40）"
 
 
 def test_zero_manpower_army_no_crash_no_tick(game):
