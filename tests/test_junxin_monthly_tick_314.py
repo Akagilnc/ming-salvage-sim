@@ -89,9 +89,10 @@ def _seed_arrears_months(db, aid, months, needed):
 
 
 @pytest.mark.parametrize("arrears,needed,expected", [
-    (0.0, 1, 5),     # ① 满饷 → +5
-    (0.9, 1, 5),     # 不足 1 月（零头）仍满饷档 → +5
-    (1.0, 1, 0),     # ② 欠 1 月 → dead-band 0
+    (0.0, 1, 5),     # ① 满饷（arrears==0）→ +5
+    (0.01, 1, 0),    # 分数欠饷 0.01 月：非满饷 → 半欠不回血（dead-band 0）
+    (0.9, 1, 0),     # 分数欠饷 0.9 月：零头也是欠、半欠不回血（dead-band 0，ADR 0025 D2）
+    (1.0, 1, 0),     # ② 恰好欠 1 月 → dead-band 0
     (2.0, 1, 0),     # ② 欠 2 月 → dead-band 0
     (2.99, 1, 0),
     (3.0, 1, -5),    # ③ 欠满 3 月 → -5
@@ -103,6 +104,20 @@ def test_loyalty_tick_delta_tiers(arrears, needed, expected):
 
 def test_loyalty_tick_delta_zero_needed_no_div_zero():
     assert army_loyalty_tick_delta(50.0, 0) == 0
+
+
+def test_fractional_arrears_no_recovery(game):
+    # 负例：半欠不回血（ADR 0025 D2「不清欠则不脱困」）。种子欠 0.5×needed、足额发饷后
+    # arrears 不变仍为分数欠饷 → loyalty 机械不动（不得 +5）。
+    db, state, _ = game
+    _use_legacy_fiscal_engine(db)
+    _silence_other_armies(db)
+    _setup_army(db, KEG, loyalty=50)
+    db.conn.commit()
+    _seed_arrears_months(db, KEG, 0.5, needed=1)
+    _run_months(db, state, 2)
+    assert _arrears_of(db, KEG) == pytest.approx(0.5), "足额发饷月不动旧欠"
+    assert _loyalty_of(db, KEG) == 50, "半欠月 loyalty 不回血不流失（dead-band）"
 
 
 # ── 结算 tick 轨迹 oracle（legacy 路 seam） ───────────────────────────────
