@@ -31,8 +31,20 @@ def project_relation_ledger(db: Any, *, viewer: Optional[str] = None) -> List[Di
     """按授权参数投影关系账读面（#640 单一读取接缝，庭裁 r1 F2）。
 
     viewer=None → 全知判官机面（ID-12）；viewer=人名 → 角色视角，参与即知
-    （边任一端为该人即可见）。返回形态＝可见边的五字段 DTO 列表，按
-    (source, target) 字典序稳定排序。"""
+    （边任一端为该人即可见）。空白（空串/纯空白）viewer 非法，抛 ValueError
+    ——绝不静默当全知或当任意角色（fail-closed）。返回形态＝可见边的五字段
+    DTO 列表，按 (source, target) 字典序稳定排序。"""
+    # 授权边界 fail-closed（冻结票面“非参与者默认不可见”/ADR 0034）：仅
+    # viewer is None 可进全知机面；非 None 的空白 viewer 是 malformed 授权
+    # 参数，绝不静默当全知或当任意角色，直接拒绝。有效人名一律参与边过滤。
+    if viewer is None:
+        name = None
+    else:
+        name = str(viewer).strip()
+        if not name:
+            raise ValueError(
+                "viewer 必须为 None（全知机面）或有效人名；空白授权参数拒绝（fail-closed）"
+            )
     pairs = {
         (str(row["source"]), str(row["target"]))
         for row in db.get_relation_summaries()
@@ -41,8 +53,7 @@ def project_relation_ledger(db: Any, *, viewer: Optional[str] = None) -> List[Di
         "SELECT DISTINCT source, target FROM relation_edge_events"
     ).fetchall():
         pairs.add((str(row["source"]), str(row["target"])))
-    name = None if viewer is None else str(viewer).strip()
-    if name:
+    if name is not None:
         pairs = {pair for pair in pairs if name in pair}
     return [_relation_dto(db, source, target) for source, target in sorted(pairs)]
 
