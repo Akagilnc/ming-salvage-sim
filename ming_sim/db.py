@@ -10375,11 +10375,17 @@ class GameDB:
         self.conn.commit()
 
     def list_pending_decisions(self, turn: int) -> List[Dict[str, object]]:
-        """读本回合决策点（按 idx）。options 反序列化；choice 为已选则带出。"""
+        """读本回合决策点（按 idx）——HITL envelope 唯一读取缝。
+
+        #656 A6：谓词收窄到 kind='decision'——persist-then-abort 后落库的
+        rescript_draft 票拟行不再混进亲裁/刷新/all-decided/submit 消费面
+        （急务只经 list_rescript_drafts 读，批红面归 #657）；调用方不再重复过滤。
+        options 反序列化；choice 为已选则带出。
+        """
         rows = self.conn.execute(
             "SELECT idx, event_id, title, context, rejection_reason, opposition, "
             "options_json, choice_json, status, kind, actor_name, actor_office, actor_faction "
-            "FROM pending_decisions WHERE turn = ? ORDER BY idx",
+            "FROM pending_decisions WHERE turn = ? AND kind = 'decision' ORDER BY idx",
             (int(turn),),
         ).fetchall()
         out: List[Dict[str, object]] = []
@@ -10425,19 +10431,23 @@ class GameDB:
         """#656 / ADR 0093 前半：急务票拟行（kind='rescript_draft'）覆写本回合。
 
         与 save_pending_decisions 同款先清后插（只清同 kind，不碰 decision 行）；
-        idx 从本回合现有最大 idx 之后续编（与 decision 行共占 (turn, idx) 主键不撞）。
-        event_id 缺失的急务在此确定性合成 `urgent:{turn}:{idx}`（票面 F2.2）。
+        idx 从本回合保留的 decision 行最大 idx 之后续编（与 decision 行共占
+        (turn, idx) 主键不撞）。event_id 缺失的急务在此确定性合成 `urgent:{turn}:{idx}`
+        （票面 F2.2）。
         只写 conn 不 commit——提交交调用方事务（与 persist_resolve_context 同事务序列，F2.5）。
         """
+        # 先删后算 idx（#656 A3）：起始 idx 只由保留的 decision 行决定——相同
+        # decision 盘面重复覆写得到相同 idx 与 `urgent:{turn}:{idx}`，合成身份不随
+        # 被删旧行漂移。不新增 UUID/映射账。
+        self.conn.execute(
+            "DELETE FROM pending_decisions WHERE turn = ? AND kind = 'rescript_draft'",
+            (int(turn),),
+        )
         row = self.conn.execute(
             "SELECT COALESCE(MAX(idx) + 1, 0) FROM pending_decisions WHERE turn = ?",
             (int(turn),),
         ).fetchone()
         idx = int(row[0] or 0)
-        self.conn.execute(
-            "DELETE FROM pending_decisions WHERE turn = ? AND kind = 'rescript_draft'",
-            (int(turn),),
-        )
         for d in drafts:
             actor_name = str(d.get("actor_name") or "")
             actor_office = str(d.get("actor_office") or "")

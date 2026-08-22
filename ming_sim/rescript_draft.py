@@ -50,46 +50,28 @@ def select_triage_actor(db: GameDB) -> Optional[Dict[str, str]]:
     return None
 
 
-def _strip_bare_quantities(value: object) -> Optional[object]:
-    """递归剥离 gameplay 裸量（int/float；bool 是语义标志不剥），保留定性文字与结构。
-
-    0143 输入侧投影：剥净后的空容器一并去掉——票拟输入里只留 ID、纪年与文字事实
-    （P4：皇帝无表，票拟官也不看裸数）。
-    """
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return None
-    if isinstance(value, dict):
-        cleaned = {
-            key: stripped for key, item in value.items()
-            if (stripped := _strip_bare_quantities(item)) is not None
-        }
-        return cleaned or None
-    if isinstance(value, list):
-        cleaned = [
-            stripped for item in value
-            if (stripped := _strip_bare_quantities(item)) is not None
-        ]
-        return cleaned or None
-    return value
+_RESCRIPT_ISSUE_TEXT_FIELDS = ("title", "状态", "进度", "待办未解进度")
 
 
 def _project_issue_qualitatively(issue: object) -> Optional[Dict[str, object]]:
-    """单条 issue 的票拟输入侧定性投影（P4 / ADR 0143 唯一通道）。
+    """单条 issue 的票拟输入侧定性投影（P4 / ADR 0142/0143 唯一通道）。
 
-    整条 issue 递归剥 gameplay 裸量（不枚举字段——枚举必有遗漏面），仅显式保留
-    绑定所需 issue_id；剥净后的空容器一并去掉。保留定性文字（状态档位、结案条件、
-    推进叙事）。simulator 共用投影不动——只在票拟 payload 出口收窄。
+    字段白名单收窄（#656 A4 判词边界）：只携绑定所需 issue_id 与明确的定性/叙事
+    文字字段；resolve_condition/fail_condition/stop_condition（含「结案条件」「失败
+    条件」别名）等机器契约字段一律不进票拟输入——机器阈值串（如 seed_events 的
+    public_support >60 / unrest <30）随所属字段整体消失，不做任何字符串内扫描/
+    解析/替换。白名单外的未知字段（含任意嵌套结构）不透传——删除「任意字符串全
+    透传」的根因。simulator 共用投影不动——只在票拟 payload 出口收窄。
     """
     if not isinstance(issue, dict):
         return None
-    projected = _strip_bare_quantities(issue)
     row: Dict[str, object] = {}
     if "issue_id" in issue:
         row["issue_id"] = issue["issue_id"]
-    if isinstance(projected, dict):
-        row.update(projected)
+    for field in _RESCRIPT_ISSUE_TEXT_FIELDS:
+        value = issue.get(field)
+        if isinstance(value, str) and value.strip():
+            row[field] = value
     return row or None
 
 
@@ -140,12 +122,18 @@ def validate_rescript_draft_items(
       不得保留合法项形成部分头版，不得把缺失洗成空串）；合法 `items=[]` 仍是
       「本月无急务」；
     - 自由文本零删改（CLAUDE.md P6 / F3.3）：strip 只作判空的临时值，落库一律原文；
-    - 超出上限截前 MAX 条（确定性）；
+    - 处理条目前先校验 items 总数：超过 MAX_RESCRIPT_DRAFTS 即 raise ValueError
+      整批响亮降级（#656 A1：不截断、不静默丢弃后项、不保留前五条，F2.5）；
     - event_id 只采信出现在权威盘面里的 issue_id 回指（bind 同款纪律）；其余留给
       落库层合成 `urgent:{turn}:{idx}`。
     """
     if not isinstance(data, dict) or not isinstance(data.get("items"), list):
         raise ValueError("票拟生成输出顶层非法：须为 {\"items\":[...]}")
+    items = data["items"]
+    if len(items) > MAX_RESCRIPT_DRAFTS:
+        raise ValueError(
+            f"票拟条目超上限：{len(items)} 条 > {MAX_RESCRIPT_DRAFTS}（整批失败，F2.5）"
+        )
 
     def _required_text(item: Dict[str, object], field: str) -> str:
         value = item.get(field)
@@ -154,9 +142,7 @@ def validate_rescript_draft_items(
         return value  # 原样返回，零删改（F3.3）
 
     drafts: List[Dict[str, object]] = []
-    for raw in data["items"]:
-        if len(drafts) >= MAX_RESCRIPT_DRAFTS:
-            break
+    for raw in items:
         if not isinstance(raw, dict):
             raise ValueError("票拟条目非 object（整批失败，F2.5）")
         title = _required_text(raw, "title")

@@ -2463,12 +2463,10 @@ def resolve_decisions_phase2(
         )
         db.clear_pending_decisions(before_turn)
         return result.report
-    decisions = [
-        d for d in db.list_pending_decisions(state.turn)
-        # #656：只取 simulator 决策块行为；rescript_draft 行（本月票拟）不进亲裁指令、
-        # 不是批红案卷动作，留给后续回合批红面（#657）。
-        if str(d.get("kind") or "decision") == "decision"
-    ]
+    # #656 A6：list_pending_decisions 已在 DB 缝收窄 kind='decision'——rescript_draft
+    # 行（本月票拟）不再出现在任何 HITL envelope 消费面，无需调用方重复过滤；
+    # 批红案卷动作仍由 _chosen_rescript_actions 按 dossier: 前缀自筛，行为零变。
+    decisions = db.list_pending_decisions(state.turn)
     decision_directive = _format_decision_directive(decisions)
     rescript_actions = _chosen_rescript_actions(decisions)
     # #48 / #883 恢复端闭环：HITL 续跑复用存档的 narrative + simulator_payload（不重推演）。

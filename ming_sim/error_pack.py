@@ -236,6 +236,15 @@ def clear_for_resimulation(db: Any, turn: int) -> None:
         "UPDATE rejection_reports SET resimulation_invalidated=1 WHERE turn=?",
         (int(turn),),
     )
+    # #656 A2：重模拟作废与陈旧票拟同生死——ready context 降级的同一作废动作里，
+    # 清掉该 turn 已持久化的 kind='rescript_draft' 行（ADR 0008 决定 6「清 LLM 段
+    # 产出」：票拟行是 LLM 段产出）。否则重跑若抽取为空／降级／分拣人缺位，旧票拟
+    # 会残留并冒充本月头版。phase1 context 与 decision 行不动；复用现表，不建 tombstone。
+    db.conn.execute(
+        "DELETE FROM pending_decisions WHERE turn = ? AND kind = 'rescript_draft'",
+        (int(turn),),
+    )
+    db.conn.commit()
     if ctx is None:
         return
     db.save_resolve_context(
