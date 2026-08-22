@@ -308,7 +308,10 @@ def build_fiscal_fact_brief(db: Any) -> List[Dict[str, Any]]:
 
     # ⑥ 官俸欠/宗禄欠当回合 NewDebt/Repaid 流量（#653 F2.3 owner 拍板）：省级结算桥
     #    同事务补记进 region_logs（复用现有结算留痕载体，禁新表）的本回合分量——
-    #    NewDebt>0=受损、Repaid>0=偿还受益（value 取反入受益符号域）。restore 后
+    #    符号域契约（受损正/受益负）：NewDebt 行留痕 delta=+amount，直接投影
+    #    value=delta>0 入受损符号域；Repaid 行留痕 delta=-amount，直接投影
+    #    value=delta<0 入受益符号域（owner r5「Repaid 取反受益」即以留痕负号
+    #    落实，此处不再二次取反）。restore 后
     #    region_logs 随档恢复，投影可重建（E2E 在案）。
     flow_rows = db.conn.execute(
         "SELECT id, region_id, field, delta FROM region_logs "
@@ -333,7 +336,7 @@ def build_fiscal_fact_brief(db: Any) -> List[Dict[str, Any]]:
             "region": str(row["region_id"]),
             "metric": "欠禄额",
             "window_turns": 1,
-            "value": delta if flow == "NewDebt" else -delta,
+            "value": delta,
             "origin_ref": f"region_logs:{int(row['id'])}",
             "affected_class": FACT_CLASS_MAP[claim[:-1]],
             "detail": f"省池_{claim}_{flow}",

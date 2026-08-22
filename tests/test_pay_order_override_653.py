@@ -450,6 +450,49 @@ def test_haircut_param_bad_values_raise():
 
 # ═══════════════ F2 六源纯投影 ═══════════════
 
+def test_f23_region_logs_flow_sign_domain_repaid_negative(game):
+    """F2.3 ⑥段符号域契约（受损正/受益负）：waterfall 下单 tick 内 NewDebt
+    （Pool 不足）与 Repaid（surplus>0）互斥，故同回合双省盘面——shaanxi 短缺盘
+    产 NewDebt、henan 有 surplus 盘产 Repaid；投影按 turn 聚合两域符号一次咬死：
+    Repaid 行 value<0 入受益符号域、NewDebt 行 value>0 受损域。
+    db.py 留痕 Repaid delta=-amount（负），⑥段直接投影不再二次取反。"""
+    db, _state, _content = game
+    _pin_shortfall_board(db, "shaanxi")
+    debt_res = db.settle_province_tick("shaanxi")
+    new_debt = debt_res.breakdown.get("NewDebt") or {}
+    assert any(abs(float(new_debt.get(c, 0) or 0)) > 1e-9 for c in ("官俸欠", "宗禄欠")), \
+        "短缺盘必须有实际新增欠流量，否则用例空转"
+
+    import json
+
+    row = db.conn.execute(
+        "SELECT fiscal FROM regions WHERE id='henan'"
+    ).fetchone()
+    fiscal = json.loads(str(row["fiscal"]))
+    st, p = fiscal["settle"]["st"], fiscal["settle"]["p"]
+    st["军饷欠"] = 0.0   # 清零：waterfall 偿旧欠按旨序，军饷欠在位会先吃光 surplus
+    st["官俸欠"] = 2.0
+    st["宗禄欠"] = 3.0
+    p["拨付gross"] = 40.0   # 省内可支 >> Due → surplus 偿旧欠
+    p["Due"] = {"军饷": 10.0, "官俸": 2.0, "宗禄": 3.0, "赈济": 1.0}
+    db.conn.execute(
+        "UPDATE regions SET fiscal=? WHERE id='henan'",
+        (json.dumps(fiscal, ensure_ascii=False),),
+    )
+    repaid_res = db.settle_province_tick("henan")
+    repaid = repaid_res.breakdown.get("Repaid") or {}
+    assert any(abs(float(repaid.get(c, 0) or 0)) > 1e-9 for c in ("官俸欠", "宗禄欠")), \
+        "盈余盘必须有实际偿还流量，否则用例空转"
+
+    entries = build_fiscal_fact_brief(db)
+    flows = [e for e in entries if str(e["detail"]).startswith("省池_")]
+    repaid_rows = [e for e in flows if str(e["detail"]).endswith("_Repaid")]
+    debt_rows = [e for e in flows if str(e["detail"]).endswith("_NewDebt")]
+    assert repaid_rows and debt_rows
+    assert all(e["value"] < 0 for e in repaid_rows), repaid_rows
+    assert all(e["value"] > 0 for e in debt_rows), debt_rows
+
+
 def test_fiscal_fact_brief_pure_projection_deterministic_tsv(read_game):
     db, _state, _content = read_game
     e1 = build_fiscal_fact_brief(db)
