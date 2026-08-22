@@ -589,17 +589,20 @@ def army_pay_morale_delta(total_due: float, current_shortfall: float, opening_ar
 
 
 def army_loyalty_tick_delta(new_arrears: float, full_needed: int) -> int:
-    """#314 军心月度 tick：欠饷月数 = floor(合计 arrears / army_needed(月应发))，分档确定性增量。
+    """#314 军心月度 tick：+5 严格系于 arrears==0；floor 只用于 dead-band 与 ≥3 月分档。
 
-    arrears==0（满饷）→ loyalty +5 回血；0<欠<3 月 → 0（dead-band，短欠忍得住）；
+    ADR 0025 D2：满饷（合计 arrears==0）→ loyalty +5 回血；半欠不回血——
+    0<arrears 且 floor(arrears/needed)<3 → 0（dead-band，短欠忍得住、守「不清欠则不脱困」）；
     floor≥3 月 → -5（欠到第 3 月起逐月流失）。clamp 由调用方落库时做（[0,100]）。
+    满饷判据带 1e-9 浮点容差（对齐 army_pay_morale_delta 口径），不把零头欠饷当满饷。
     full_needed<=0 不除零（零兵残军短路，调用方 continue）。
     """
     if full_needed <= 0:
         return 0
-    months_in_arrears = math.floor(max(0.0, float(new_arrears)) / full_needed)
-    if months_in_arrears <= 0:
+    arrears = max(0.0, float(new_arrears))
+    if arrears <= 1e-9:
         return 5
+    months_in_arrears = math.floor(arrears / full_needed)
     if months_in_arrears < 3:
         return 0
     return -5
