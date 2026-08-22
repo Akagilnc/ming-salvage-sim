@@ -220,3 +220,10 @@ def test_td7_local_marker_negative_assertion(ledger):
     for dto in projection:
         assert "event_kind" not in dto
         assert set(dto.keys()) == FROZEN_DTO_WHITELIST
+
+
+def test_missing_viewer_rejected(ledger):
+    """漏传 viewer（keyword-only 必填）不被接受，绝不静默落全知机面。"""
+    db, _ = ledger
+    with pytest.raises(TypeError):
+        project_relation_ledger(db)

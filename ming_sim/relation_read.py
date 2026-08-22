@@ -22,15 +22,16 @@ updated_at_period＝更新纪年语义标识（天启七年十月式，非裸 tu
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from ming_sim.models import reign_period_label
 
 
-def project_relation_ledger(db: Any, *, viewer: Optional[str] = None) -> List[Dict[str, str]]:
+def project_relation_ledger(db: Any, *, viewer: str | None) -> List[Dict[str, str]]:
     """按授权参数投影关系账读面（#640 单一读取接缝，庭裁 r1 F2）。
 
-    viewer=None → 全知判官机面（ID-12）；viewer=人名 → 角色视角，参与即知
+    viewer 为必填 keyword-only 参数：全知判官机面（ID-12）必须显式传
+    ``viewer=None``；viewer=人名 → 角色视角，参与即知
     （边任一端为该人即可见）。空白（空串/纯空白）viewer 非法，抛 ValueError
     ——绝不静默当全知或当任意角色（fail-closed）。返回形态＝可见边的五字段
     DTO 列表，按 (source, target) 字典序稳定排序。"""
