@@ -86,6 +86,24 @@ def test_role_view_cuts_by_either_end_participation(ledger):
     assert [(d["source"], d["target"]) for d in cui_view] == [("王绍徽", "崔呈秀")]
 
 
+def test_blank_viewer_fails_closed_not_omniscient(ledger):
+    """空白 viewer fail-closed（判卷修复）：空串/纯空白是 malformed 授权参数，
+
+    绝不静默当全知（与 None 同态）也不当任意角色；直接拒绝。
+    """
+    db, _ = ledger
+    with pytest.raises(ValueError):
+        project_relation_ledger(db, viewer="")
+    with pytest.raises(ValueError):
+        project_relation_ledger(db, viewer="   ")
+    # 全知面仍只认显式 None，且未被空白态污染：仍读到全部三对边。
+    judge_pairs = {(d["source"], d["target"]) for d in project_relation_ledger(db, viewer=None)}
+    assert len(judge_pairs) == 3
+    # 有效人名（含首尾空白的规范化输入）始终执行参与边过滤，不受影响。
+    jia_view = project_relation_ledger(db, viewer="  王绍徽  ")
+    assert [(d["source"], d["target"]) for d in jia_view] == [("王绍徽", "崔呈秀")]
+
+
 def test_empty_ledger_projects_empty(ledger):
     """无账行为可辨：零边零摘要时空投影；有账后非空且含酿制产物。"""
     db, _ = ledger
