@@ -869,6 +869,7 @@ class GameContent:
                 "military_external": load_text_asset("prompts/score_extractor_military_external.md"),
                 "issues": load_text_asset("prompts/score_extractor_issues.md"),
                 "personnel_secret": load_text_asset("prompts/score_extractor_personnel_secret.md"),
+                "relations": load_text_asset("prompts/score_extractor_relations.md"),
             },
             chapter_memory_prompt=load_text_asset("prompts/chapter_memory.md"),
             ending_summary_prompt=load_text_asset("prompts/ending_summary.md"),
