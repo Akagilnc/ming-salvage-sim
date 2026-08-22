@@ -96,14 +96,20 @@ def collect_new_edge_events_for_faction(
     """水位之上的涉派新边事件（TD-4 同构：重酿输入必含新事件；翻转可回溯）。
 
     任一端 canonical 投影命中该派即涉派（庭裁 r1 F1：任一端口径，含皇帝端
-    另一端命中的君臣边）。"""
+    另一端命中的君臣边）。返回行附带 source_faction/target_faction 现算投影
+    （皇帝端与表外党籍显式 None，不猜不建映射）。"""
     projection = project_character_factions(db)
-    return [
-        row
-        for row in db.get_relation_edge_events()
-        if int(row["id"]) > int(watermark)
-        and faction in (projection.get(row["source"]), projection.get(row["target"]))
-    ]
+    enriched: List[Dict[str, Any]] = []
+    for row in db.get_relation_edge_events():
+        if int(row["id"]) <= int(watermark):
+            continue
+        if faction not in (projection.get(row["source"]), projection.get(row["target"])):
+            continue
+        enriched_row = dict(row)
+        enriched_row["source_faction"] = projection.get(row["source"])
+        enriched_row["target_faction"] = projection.get(row["target"])
+        enriched.append(enriched_row)
+    return enriched
 
 
 def build_faction_brew_input(
@@ -114,29 +120,53 @@ def build_faction_brew_input(
     summary: Any,
     new_events: List[Dict[str, Any]],
     has_pending: bool,
+    db: Any = None,
+    character_factions: Any = None,
 ) -> Dict[str, Any]:
-    """单派的酿制输入（旧态势段＋涉派新边事件＋当前年月，ADR 0083/0084 口径）。"""
+    """单派的酿制输入（旧态势段＋涉派新边事件＋当前年月，ADR 0083/0084 口径）。
+
+    新增 source_faction/target_faction 纯数据字段（庭裁 r1 F1＋F2 缝合）：
+    取 project_character_factions() 现算投影，皇帝端与表外党籍显式 None，不猜
+    不建映射表；禁任何拼接串（ADR 0142/P6，给数据不给话术）。若调用方已通过
+    collect_new_edge_events_for_faction 取数，事件行自带两字段则直接透传；
+    否则若显式传入 db/character_factions 则现算，否则按 None 兜底（显式 null）。
+    """
+    # 现算投影（若提供）：优先显式映射，其次 db 现算；未提供则依赖事件自带或 None。
+    projection: Any = None
+    if character_factions is not None:
+        projection = dict(character_factions)
+    elif db is not None:
+        projection = project_character_factions(db)
+    new_events_projected: List[Dict[str, Any]] = []
+    for event in new_events:
+        if projection is not None:
+            sf = projection.get(event["source"])
+            tf = projection.get(event["target"])
+        else:
+            sf = event.get("source_faction") if "source_faction" in event else None
+            tf = event.get("target_faction") if "target_faction" in event else None
+        new_events_projected.append({
+            "event_kind": event["event_kind"],
+            "context": event["context"],
+            "origin": event["origin"],
+            "year": int(event["year"]),
+            "period": int(event["period"]),
+            "source": event["source"],
+            "target": event["target"],
+            "source_faction": sf,
+            "target_faction": tf,
+        })
     return {
         "view": VIEW_FACTION_STANCE,
         "faction": faction,
         "year": int(year),
         "period": int(period),
         "stance_segment": str(summary["stance_segment"]) if summary else "",
-        # source/target 为 relation_edge_events 既有列的只读透传（#637 codex P2）：
-        # context 不含参与方名字时（如收权·罢差），方向事实只能靠结构字段携带；
-        # 纯数据字段，不在此拼接任何散文（ADR 0142：给数据不给话术）。
-        "new_events": [
-            {
-                "event_kind": event["event_kind"],
-                "context": event["context"],
-                "origin": event["origin"],
-                "year": int(event["year"]),
-                "period": int(event["period"]),
-                "source": event["source"],
-                "target": event["target"],
-            }
-            for event in new_events
-        ],
+        # source/target/source_faction/target_faction 为 relation_edge_events 既有列
+        # 与现算投影的只读透传（#637 缝合 P2）：context 不含参与方名字时（如收权·罢
+        # 差），方向事实只能靠结构字段携带；纯数据字段，不在此拼接任何散文（ADR 0142：
+        # 给数据不给话术）。皇帝端不在 characters 表→显式 null，表外党籍亦显式 null。
+        "new_events": new_events_projected,
         "has_pending_failure": bool(has_pending),
     }
 
