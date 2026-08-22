@@ -48,6 +48,8 @@ TOP_LEVEL_ALIASES = {
     "裁撤月度收支": "fiscal_removes",
     "派系变化": "faction_delta",
     "阶级变化": "class_delta",
+    "人口转移": "population_transfers",
+    "流民转移": "population_transfers",
     "地区变化": "region_delta",
     "军队变化": "army_delta",
     "势力变化": "power_updates",
@@ -101,6 +103,13 @@ ITEM_FIELD_ALIASES = {
     "inertia_delta": "inertia_delta", "惯性增量": "inertia_delta",
     "origin_kind": "origin_kind", "来源类型": "origin_kind",
     "origin_ref": "origin_ref", "来源引用": "origin_ref", "诏书引用": "origin_ref",
+    # #649 人口守恒转移 item 字段（canonical 白名单见 constants.POPULATION_TRANSFER_FIELDS）
+    "source": "source", "源": "source", "源阶级": "source",
+    "target": "target", "目标": "target", "目标阶级": "target",
+    "amount": "amount", "数额": "amount", "口数": "amount",
+    # #649 §1.4：class_delta 人口键 canonical 化，使 _apply_class_dict population guard
+    # 对中英文拼写统一整项拒收（人口只经 population_transfers 守恒转移变动）。
+    "population": "population", "人口": "population",
     # #622：旨外恶果/受益同列标记（效果行注解，非平行轨）
     # #1260：别名表全仓一份——flows/due_review 读端改调 read_beyond_intent_raw，禁手抄子集。
     "beyond_intent": "beyond_intent", "旨外": "beyond_intent",
@@ -786,6 +795,7 @@ EMPTY_EXTRACTION: Dict[str, object] = {
     "economy_moves": [],
     "faction_delta": {},
     "class_delta": {},
+    "population_transfers": [],  # #649/0087：人口守恒转移（单记录双写，源减目标增）
     "region_delta": {},
     "army_delta": {},
     "new_armies": [],
@@ -819,7 +829,7 @@ EMPTY_EXTRACTION: Dict[str, object] = {
 }
 
 MODULE_FIELDS: Dict[str, set[str]] = {
-    "internal": {"metric_delta", "economy_moves", "faction_delta", "class_delta", "region_delta", "fiscal_changes", "fiscal_creates", "fiscal_removes"},
+    "internal": {"metric_delta", "economy_moves", "faction_delta", "class_delta", "population_transfers", "region_delta", "fiscal_changes", "fiscal_creates", "fiscal_removes"},
     "military_external": {"army_delta", "new_armies", "power_updates", "world_advance"},
     "issues": {
         "issue_advances", "new_issues", "事件结局", "cancels", "close_issues",
@@ -1100,6 +1110,21 @@ def build_extractor_shared_context(
                 extra.append(row)
         if extra:
             authorized_dossiers = list(authorized_dossiers) + extra
+        # #649 F1（判词）：internal extractor 专属机器输入面——按 class@region_id 键合的
+        # 省级阶级人口余额 TSV（population_transfers 守恒转移的源天花板）＋本档
+        # population_unit 列。仅 internal 模块可见，不进玩家可感 simulator 数表
+        # （classes_brief 保持定性档）。
+        slim["class_population_balances"] = _auto_table([
+            {
+                "class_region": f"{r['name']}@{r['region_id']}",
+                "population": int(r["population"]),
+                "population_unit": db.population_unit,
+            }
+            for r in db.conn.execute(
+                "SELECT name, region_id, population FROM classes "
+                "WHERE region_id <> '' ORDER BY name, region_id"
+            ).fetchall()
+        ])
     # #613：执行格读端字段随案卷进 extractor；优先沿用推演装配已写字段，缺则现场补投影。
     from ming_sim.decree import execution_side_read_fields
 

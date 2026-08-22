@@ -352,12 +352,18 @@ def test_apply_score_extraction_tolerates_null_field(read_game):
     I.apply_score_extraction(db, state, {"region_delta": None, "army_delta": None})
 
 
-def test_apply_score_extraction_rejects_unknown_top_level_key(read_game):
-    """#57:落库核拒未知顶层 key(拼写错=静默无效落库)。用 canonicalize 之后仍不在 schema 的
-    真·未知 key(非中文别名——别名会被 _canonicalize_extraction 映射成合法 key,Red Team RT-C)。"""
-    db, state, _ = read_game
-    with pytest.raises(ValueError):
-        I.apply_score_extraction(db, state, {"region_delta_typo": {"shanxi": {"unrest": 5}}})
+def test_apply_score_extraction_rejects_unknown_top_level_key(game):
+    """#57 起源、#649 r4 分层终态改钉：未知顶层 key（拼写错，canonicalize 后仍不在 schema）
+    ＝可拆 section → 按段拒收留痕、其余 section 照落，不整份 ValueError（ADR 0015）。"""
+    db, state, _ = game
+    applied = I.apply_score_extraction(
+        db, state, {"region_delta_typo": {"shanxi": {"unrest": 5}}, "metric_delta": {"民心": 1}},
+    )
+    shape = [r for r in applied["validate_shape_rejections"]
+             if "region_delta_typo" in str(r.get("reason"))]
+    assert shape and shape[0]["rejected"] is True
+    assert shape[0]["item"] == {"raw_value": {"shanxi": {"unrest": 5}}}
+    assert applied["metric_delta"].get("民心") == 1  # 其余 section 不受累
 
 
 def test_resolve_army_delta_reinforces_existing(game):
