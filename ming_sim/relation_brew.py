@@ -31,7 +31,6 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from ming_sim.agents import parse_agent_json
 from ming_sim.exceptions import LLMContractError, LLMUnavailable
 from ming_sim.models import GameState
 from ming_sim.relations import EMPEROR_NODE
@@ -143,10 +142,21 @@ def parse_brew_output(raw: str, stage: str = "关系酿制") -> Dict[str, Any]:
     """酿制输出契约：{"new_foundings": [...], "recent_segment": "..."}。
 
     只验形不验义、零长度管辖（庭裁 r1 F2/r3 F2）：recent_segment 原样存储，
-    不截断不 clamp；new_foundings 逐句原样追加。"""
-    parsed = parse_agent_json(raw, stage)
+    不截断不 clamp；new_foundings 逐句原样追加。
+
+    酿制专用严格解析边界（庭裁 Z1）：raw 必须本身就是唯一、完整、合法的 JSON
+    object——不复用 parse_agent_json 的 fence 剥离/控制字节正则清洗/首对象截取
+    等任何修补。重复对象拼接、未转义控制字节、前后杂文等畸形产出一律契约错
+    拒收（LLMContractError），沿单条降级保旧摘要与 pending；绝不把改写/择取后
+    的散文当模型产出落库（ADR 0142 零删改）。其它调用方不受影响。"""
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as error:
+        raise LLMContractError(
+            f"{stage} 输出不是唯一、完整、合法的 JSON object：{error}\n原始输出：{raw[:800]}"
+        ) from error
     if not isinstance(parsed, dict):
-        raise ValueError(f"{stage}: 酿制输出顶层不是 object")
+        raise LLMContractError(f"{stage} 酿制输出顶层不是 object\n原始输出：{raw[:800]}")
     recent = parsed.get(RECENT_KEY)
     if not isinstance(recent, str):
         raise ValueError(f"{stage}: {RECENT_KEY} 缺失或不是字符串")
@@ -204,13 +214,11 @@ class MonthEndRelationBrewLeg:
         settled_turn: Optional[int] = None,
         settled_year: Optional[int] = None,
         settled_period: Optional[int] = None,
-        max_workers: int = 4,
         parallel: bool = True,
     ) -> None:
         self._db = db
         self._brew_fn = brew_fn
         self._parallel = bool(parallel)
-        self._max_workers = int(max_workers)
         # settled 年月快照：生产路径由 decree 在 next_period 之前取定传入；直调
         # （测试/探针）回落构造时的 state——此时 state 仍指被结算的那个月。
         self.turn = int(settled_turn) if settled_turn is not None else int(state.turn)
@@ -284,7 +292,9 @@ class MonthEndRelationBrewLeg:
             self.outcomes = []
             return
         if self._parallel and len(self.jobs) > 1:
-            workers = max(1, min(int(self._max_workers), len(self.jobs)))
+            # 批内条目间无依赖必并行（P5）：worker 数按本批实际 jobs 数定容——
+            # 不设任何固定上限（庭裁 Z2 删默认 max_workers=4），第 5+ 条不再排队。
+            workers = len(self.jobs)
             tlog(f"[relation-brew] 批内并行酿制 {len(self.jobs)} 条关系（workers={workers}）")
             with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="relation-brew") as pool:
                 self.outcomes = list(pool.map(self._brew_one, self.jobs))
@@ -335,7 +345,6 @@ def run_month_end_relation_brew(
     state: GameState,
     brew_fn: Callable[[str], str],
     *,
-    max_workers: int = 4,
     parallel: bool = True,
     settled_turn: Optional[int] = None,
     settled_year: Optional[int] = None,
@@ -350,7 +359,6 @@ def run_month_end_relation_brew(
         settled_turn=settled_turn,
         settled_year=settled_year,
         settled_period=settled_period,
-        max_workers=max_workers,
         parallel=parallel,
     )
     if not leg.prepare():
