@@ -1,11 +1,12 @@
-"""#656 / ADR 0093 前半：phase2 五路 fan-out 并发 oracle（庭裁修正案 r3）。
+"""#656 / ADR 0093 前半：phase2 N+1 路 fan-out 并发 oracle（庭裁修正案 r3）。
 
-唯一并发 oracle＝计数=5 受控 barrier：五路（四 extractor＋票拟生成）LLM 调用替换为
-受控 fake 腿，每腿起跑即到 barrier 会合，全部五腿到齐后才放行任一腿完成。任何实现若
+唯一并发 oracle＝计数=N+1 受控 barrier：N extractor＋票拟生成（side_leg）LLM 调用替换为
+受控 fake 腿，每腿起跑即到 barrier 会合，全部 N+1 腿到齐后才放行任一腿完成。任何实现若
 存在先跑完某腿再起下一腿的串行段（含前缀串行），barrier 永不齐 → 超时失败。
 禁生产计时状态/标志：barrier 与 fake 全在测试夹具内，生产代码零感知。
 
-墙钟契约（r2 表述照录）：fan-out 段总时长 ≈ max(票拟, 四 extractor)＋常数开销。
+墙钟契约（r2 表述照录）：fan-out 段总时长 ≈ max(票拟, N extractor)＋常数开销。
+其中 N = len(EXTRACTION_MODULES)，随档房增减自适应（#633 relations 档房后 N=5→6 腿）。
 """
 from __future__ import annotations
 
@@ -18,13 +19,15 @@ _CANNED = '{"economy_moves": [], "new_armies": [], "new_issues": [], "secret_ord
 
 
 def test_phase2_fanout_five_legs_meet_at_barrier(game, monkeypatch):
-    """r3 oracle：五腿全部在任一腿完成前已起跑＝真五路 fan-out。
+    """r3 oracle：N+1 腿全部在任一腿完成前已起跑＝真 N+1 路 fan-out。
 
-    串行形（逐腿跑、先完成后起）永远凑不齐 count=5 → Barrier 超时 BrokenBarrierError
-    → 测试失败；真五路启动则统一释放。单腿接缝：腿结果由闭包持有（box）。
+    串行形（逐腿跑、先完成后起）永远凑不齐 count=N+1 → Barrier 超时 BrokenBarrierError
+    → 测试失败；真 N+1 路启动则统一释放。单腿接缝：腿结果由闭包持有（box）。
+    N = len(EXTRACTION_MODULES)，随档房增减自适应；硬编码 5 在 relations 档房后已失配→CI BrokenBarrierError。
     """
     db, state, _content = game
-    barrier = threading.Barrier(5)
+    expected_legs = len(EXTRACTION_MODULES) + 1
+    barrier = threading.Barrier(expected_legs)
     started: list[str] = []
     lock = threading.Lock()
 
@@ -49,7 +52,7 @@ def test_phase2_fanout_five_legs_meet_at_barrier(game, monkeypatch):
         parallel=True,
         side_leg=_side_leg,
     )
-    assert len(started) == 5
+    assert len(started) == expected_legs
     assert set(started) == {f"extractor/{m}" for m in EXTRACTION_MODULES} | {"rescript-draft"}
     assert box["draft"] == "draft-prompt"
 
