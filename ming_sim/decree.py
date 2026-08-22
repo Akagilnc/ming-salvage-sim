@@ -23,6 +23,7 @@ from ming_sim.agents import (
     create_ending_summary_agent,
     create_json_sanitizer_agent,
     create_relation_brew_agent,
+    create_faction_brew_agent,
     create_score_extractor_module_agent,
     create_season_simulator_agent,
     parse_agent_json,
@@ -41,6 +42,7 @@ from ming_sim.error_pack import (
     write_error_pack,
 )
 from ming_sim.exceptions import LLMContractError, LLMUnavailable, SettlementAbort
+from ming_sim.faction_brew import VIEW_FACTION_STANCE
 from ming_sim.flows import apply_fixed_period_flows, raise_fixed_period_flow_abort_if_needed
 from ming_sim.issues import (
     apply_event_terminal_states,
@@ -1923,7 +1925,15 @@ def _make_relation_brew_runner(
     def _create(state: GameState, db: GameDB, *, settled_turn: int, settled_year: int,
                 settled_period: int) -> MonthEndRelationBrewLeg:
         def _brew_fn(payload_json: str) -> str:
-            agent = create_relation_brew_agent(llm_config, agno_db)
+            # 同批双契约分派（#637 S6，庭裁 r1 F2：同一受管批次不建第二编排腿）：
+            # 派系工作项走派系态势裁判，关系工作项走关系酿制裁判。payload 是本腿
+            # 自产的确定性 JSON；解析炸属程序错，响亮上抛（ADR 0005）。
+            payload = json.loads(payload_json)
+            agent = (
+                create_faction_brew_agent(llm_config, agno_db)
+                if payload.get("view") == VIEW_FACTION_STANCE
+                else create_relation_brew_agent(llm_config, agno_db)
+            )
             try:
                 return run_agent_text(agent, payload_json, tag="relation-brew")
             except (APITimeoutError, APIConnectionError, APIStatusError) as error:
