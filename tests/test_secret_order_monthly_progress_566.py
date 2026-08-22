@@ -131,6 +131,7 @@ def test_cli_no_edict_runs_private_monthly_extractor_and_restores_history(game, 
         sess.llm_config = _LLMConfig(
             api_key="", base_url="http://127.0.0.1:1/v1",
             model="offline-test", channel="api",
+            timeout_seconds=2,
         )
         sess.deaths_this_turn, sess.debuts_this_turn = [], []
         sess.last_decree = sess.last_report = ""
