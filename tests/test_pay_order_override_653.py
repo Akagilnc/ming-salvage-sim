@@ -907,6 +907,44 @@ def test_fact_brief_per_source_windows_and_region_attribution(game):
     ).fetchone()) == 0
 
 
+def test_fact_brief_zero_need_army_region_attribution_not_gated(game):
+    """零需残军（manpower=0 携历史欠，0023 D6/D11）属地归因不被 need 门误删：
+    月需=0 只短路欠饷月数计算（不做除法），army 仍入 region_of_army 册——
+    其省源偿欠受益事实照常带 pay_source_region 归因，不落成无属地。"""
+    from ming_sim.flows import army_needed
+
+    db, state, _content = game
+    turn = db._current_settle_turn()
+    db.conn.execute(
+        "UPDATE armies SET manpower=0, province_pay_arrears=5.0"
+        " WHERE id='shaanxi_army'"
+    )
+    db.conn.execute(
+        "INSERT INTO army_logs (turn, year, period, army_id, field, old_value,"
+        " new_value, delta, reason, actor)"
+        " VALUES (?, 1, 1, 'shaanxi_army', 'province_pay_arrears', '5.0',"
+        " '2.0', -3.0, '按省份额欠余额占比偿还', '户部')",
+        (turn,),
+    )
+    db.conn.commit()
+    assert army_needed(db.conn.execute(
+        "SELECT owner_power, manpower, salary_rate FROM armies WHERE id='shaanxi_army'"
+    ).fetchone()) == 0
+    entries = build_fiscal_fact_brief(db)
+    # 零分母军不出欠饷月数窗
+    assert not any(
+        e["subject_id"] == "shaanxi_army" and e["metric"] == "分源欠饷月数"
+        for e in entries
+    )
+    # 但属地归因在案：偿欠受益事实带 pay_source_region，非空串
+    repaid = [
+        e for e in entries
+        if e["subject_id"] == "shaanxi_army" and e["detail"] == "省源偿欠"
+    ]
+    assert repaid and repaid[0]["value"] == pytest.approx(-3.0)
+    assert repaid[0]["region"] == "shaanxi"
+
+
 def test_fact_brief_central_haircut_floor_per_army_matches_real_accounting(game):
     """多军同省中央折发：投影复用 flows._central_dues_with_haircut 唯一读端——每军各自
     floor（账实同舍入），禁先聚省再舍入。beizhili 三军 raw=9.0/4.0/7.2、bp=5000：

@@ -194,12 +194,15 @@ def build_fiscal_fact_brief(db: Any) -> List[Dict[str, Any]]:
     for row in army_rows:
         if str(row["owner_power"]) != "ming":
             continue
-        need = army_needed(row)
-        if need <= 0:
-            continue  # 零分母：该军该月不计欠饷月数（0023 D6/D11 口径）
         army_id = str(row["id"])
         army_region = str(row["pay_source_region"] or "").strip()
+        # 属地归因先于 need 门：月需=0（土司自养/零需残军，0023 D6/D11）只短路
+        # 欠饷月数计算，不把该军逐出 region_of_army 册——否则其后 ③省源偿欠/
+        # ④补发/⑤中央折发的属地归因全部落空。
         region_of_army[army_id] = army_region
+        need = army_needed(row)
+        if need <= 0:
+            continue  # 零分母：该军该月不计欠饷月数（不做除法）
         for source, col in (("province", "province_pay_arrears"), ("central", "central_pay_arrears")):
             arrears = float(row[col] or 0)
             if not math.isfinite(arrears) or arrears <= 0:
