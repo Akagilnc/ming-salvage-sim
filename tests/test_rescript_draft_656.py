@@ -1025,3 +1025,78 @@ def test_persist_then_abort_draft_never_enters_hitl_envelope(game):
     db.conn.commit()
     drafts = {d["title"]: d["status"] for d in db.list_rescript_drafts()}
     assert drafts["急务"] == "pending"   # 票拟不被误标 decided
+
+
+# ---------------------------------------------------------------------------
+# PR #1521 r3：三条 shape 拒收负例（顶层未知字段 / 畸形 JSON / lone surrogate）
+# ---------------------------------------------------------------------------
+
+def test_r3_top_level_unknown_field_rejects_whole_batch():
+    """r3-1 顶层 exact-key：多余 summary 等未知顶层键一律整批 ValueError。"""
+    data = {
+        "items": [{
+            "title": "陕西告饥", "context": "秦地赤旱千里。",
+            "options": [{"label": "发帑赈济", "hint": "所安者饥民"},
+                        {"label": "缓征", "hint": "先赈后征"}],
+        }],
+        "summary": "臣请圣裁",
+    }
+    with pytest.raises(ValueError, match="未知字段"):
+        validate_rescript_draft_items(data, set())
+
+
+def test_r3_strict_parse_control_char_raises_contract_error():
+    """r3-2 strict 解析：含非法控制字符的 raw 不做清洗，直解失败抛 LLMContractError。"""
+    from ming_sim.rescript_draft import _parse_rescript_json_strict
+    from ming_sim.exceptions import LLMContractError
+    # 控制字符 \x01 在 JSON 字符串内非法，必须触发 JSONDecodeError→LLMContractError
+    raw = '{"items": [{"title": "a\x01b", "context": "c", "options": [{"label": "l1", "hint": "h1"}, {"label": "l2", "hint": "h2"}]}]}'
+    with pytest.raises(LLMContractError, match="不是合法 JSON"):
+        _parse_rescript_json_strict(raw)
+
+
+def test_r3_strict_parse_concatenated_objects_raises_contract_error():
+    """r3-2 strict 解析：拼接对象不截首块，直解失败抛 LLMContractError。"""
+    from ming_sim.rescript_draft import _parse_rescript_json_strict
+    from ming_sim.exceptions import LLMContractError
+    raw = '{"items": [{"title": "甲", "context": "c", "options": [{"label": "a", "hint": "h1"}, {"label": "b", "hint": "h2"}]}]}{"items": []}'
+    with pytest.raises(LLMContractError, match="不是合法 JSON"):
+        _parse_rescript_json_strict(raw)
+
+
+def test_r3_strict_parse_degrades_via_generate(game, monkeypatch, tmp_path):
+    """r3-2 集成：畸形 JSON 经 generate 降级为无头月而非静默修复。"""
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    payload = {"active_issues": [], "gazette": "邸报", "triage_actor": {}, "turn": {}}
+    # 拼接对象 raw
+    raw = '{"items": [{"title": "甲", "context": "c", "options": [{"label": "a", "hint": "h"}, {"label": "b", "hint": "h2"}]}]}{"items": []}'
+    monkeypatch.setattr(rescript_mod, "run_agent_text", lambda a, p, tag: raw)
+    # 假设 turn 取自 fixture? 用固定值避免依赖
+    turn = 99
+    assert generate_rescript_draft(object(), payload, turn) is None
+    note = tmp_path / "error_packs" / "rescript_draft_degraded" / f"turn{turn}.json"
+    assert note.is_file()
+
+
+def test_r3_lone_surrogate_field_rejects_whole_batch():
+    """r3-3 UTF-8 合约：lone surrogate 在 validate 即整批 ValueError，正常中文仍通过。"""
+    # lone surrogate \ud800 经 json 逃逸可解但不可 UTF-8 编码
+    bad_title = "\ud800"
+    data = {
+        "items": [{
+            "title": bad_title, "context": "秦地赤旱千里。",
+            "options": [{"label": "发帑赈济", "hint": "所安者饥民"},
+                        {"label": "缓征", "hint": "先赈后征"}],
+        }]
+    }
+    with pytest.raises(ValueError, match="不可编码字符"):
+        validate_rescript_draft_items(data, set())
+    # 正常中文与约数家产表述仍通过
+    good = {
+        "items": [{
+            "title": "陕西约有三万家产待赈济", "context": "秦地赤旱，百姓约有万户流离。",
+            "options": [{"label": "发帑赈济", "hint": "所安者饥民"},
+                        {"label": "缓征", "hint": "先赈后征"}],
+        }]
+    }
+    assert len(validate_rescript_draft_items(good, set())) == 1
