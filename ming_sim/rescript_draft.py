@@ -24,7 +24,8 @@ import json
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from ming_sim.agents import parse_agent_json, run_agent_text
+from ming_sim.agents import run_agent_text
+from ming_sim.assets import strip_json_fence
 from ming_sim.db import GameDB
 from ming_sim.error_pack import error_packs_root
 from ming_sim.exceptions import LLMContractError, LLMUnavailable
@@ -56,8 +57,33 @@ def select_triage_actor(db: GameDB) -> Optional[Dict[str, str]]:
     return None
 
 
+_TOP_ALLOWED_KEYS = frozenset({"items"})
 _ITEM_ALLOWED_KEYS = frozenset({"title", "context", "options", "issue_id"})
 _OPTION_ALLOWED_KEYS = frozenset({"label", "hint"})
+
+
+def _assert_utf8(s: str, field: str) -> None:
+    try:
+        s.encode("utf-8")
+    except UnicodeEncodeError as exc:  # noqa: BLE001
+        raise ValueError(
+            f"票拟字段含 SQLite 不可编码字符（整批 shape 错，F2.5）：{field} {exc}"
+        ) from exc
+
+
+def _parse_rescript_json_strict(raw: str) -> Dict[str, Any]:
+    text = strip_json_fence(raw)
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise LLMContractError(
+            f"急务票拟生成 输出不是合法 JSON：{exc}\n原始输出：{raw[:800]}"
+        ) from exc
+    if not isinstance(data, dict):
+        raise LLMContractError(
+            f"急务票拟生成 输出不是合法 JSON：顶层必须是 JSON object\n原始输出：{raw[:800]}"
+        )
+    return data
 
 _RESCRIPT_ISSUE_TEXT_FIELDS = ("title", "状态", "进度", "待办未解进度")
 
@@ -141,6 +167,11 @@ def validate_rescript_draft_items(
     """
     if not isinstance(data, dict) or not isinstance(data.get("items"), list):
         raise ValueError("票拟生成输出顶层非法：须为 {\"items\":[...]}")
+    unknown_top = set(data) - _TOP_ALLOWED_KEYS
+    if unknown_top:
+        raise ValueError(
+            f"票拟顶层含未知字段（整批 shape 错，F2.5/F3.3）：{sorted(unknown_top)}"
+        )
     items = data["items"]
     if len(items) > MAX_RESCRIPT_DRAFTS:
         raise ValueError(
@@ -151,6 +182,7 @@ def validate_rescript_draft_items(
         value = item.get(field)
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"票拟条目缺必需字段或为空白：{field}")
+        _assert_utf8(value, field)
         return value  # 原样返回，零删改（F3.3）
 
     drafts: List[Dict[str, object]] = []
@@ -181,6 +213,13 @@ def validate_rescript_draft_items(
                 "label": _required_text(opt, "label"),
                 "hint": _required_text(opt, "hint"),
             })
+        # options_json 序列化前再校验 ensure_ascii=False 场景的可编码性
+        try:
+            json.dumps(options, ensure_ascii=False).encode("utf-8")
+        except UnicodeEncodeError as exc:  # noqa: BLE001
+            raise ValueError(
+                f"票拟字段含 SQLite 不可编码字符（整批 shape 错，F2.5）：options {exc}"
+            ) from exc
         draft: Dict[str, object] = {"title": title, "context": context, "options": options}
         # 权威快照为准：只认喂给 LLM 的 issue 盘面里真实存在的 issue_id（不信回显）。
         issue_id = raw.get("issue_id")
@@ -252,7 +291,7 @@ def generate_rescript_draft(
         _degrade(exc)
         return None
     try:
-        data = parse_agent_json(raw, "急务票拟生成")
+        data = _parse_rescript_json_strict(raw)
         drafts = validate_rescript_draft_items(
             data, _board_issue_ids(payload.get("active_issues"))
         )
