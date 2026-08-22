@@ -1,6 +1,7 @@
-"""关系摘要层 S5：月末增量重酿腿（#636，ADR 0080/0083 一脉）。
+"""关系摘要层 S5＋派系态势摘要层 S6：月末增量重酿腿（#636/#637，ADR 0080/0083/0084 一脉）。
 
-两段式摘要＝奠基段（机械保留、只增不改）＋近况段（每次增量重酿整段重写）。
+两段式摘要＝奠基段（机械保留、只增不改）＋近况段（每次增量重酿整段重写）；
+派系态势＝per-派系定性聚合摘要（ADR 0084，工作项同批并入本腿，庭裁 r1 F2）。
 本模块只负责选中判据、酿制输入/输出契约与持久化编排；不解析 LLM 自由散文的
 语义（ADR 0142）——结构化后果只走显式 JSON 契约通道；对产出零裁剪零 clamp
 （庭裁 r1 F2），长度约束只走 prompt 正向输入契约。
@@ -32,6 +33,14 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ming_sim.exceptions import LLMContractError, LLMUnavailable
+from ming_sim.faction_brew import (
+    KIND_FACTION,
+    STANCE_KEY,
+    build_faction_brew_input,
+    collect_new_edge_events_for_faction,
+    parse_faction_stance_output,
+    select_faction_brew_targets,
+)
 from ming_sim.models import GameState
 from ming_sim.relations import EMPEROR_NODE
 from ming_sim.token_stats import tlog
@@ -234,18 +243,29 @@ class MonthEndRelationBrewLeg:
         }
 
     def prepare(self) -> bool:
-        """DB 相：选中＋认领先行＋备料。有入选关系返回 True（可启酿），否则 False。
+        """DB 相：选中＋认领先行＋备料。有入选工作项返回 True（可启酿），否则 False。
 
-        认领先行（庭裁 r2/r3 F1）：入选关系在酿造开始前先把 pending 落盘——生产
-        路径在结算事务内与本月边事件同生共死；任意缝崩溃→pending 在册→下次结算
-        补酿；pending 不靠失败后 catch 补记。本相任何 DB/schema/程序错误响亮上抛
-        （ADR 0005/0008）：无 durable claim 就开酿会让失败月失去恢复凭据，宁可不酿。"""
+        入选＝关系对（#636 判据）∪ 派系（#637 S6 涉派判据），同批同命（ID-10：
+        关系摘要与派系摘要同批增量酿）。认领先行（庭裁 r2/r3 F1）：入选工作项在
+        酿造开始前先把 pending 落盘——两条 claim 走同一 durable claim 机制
+        （庭裁 r1 F2：不建第二套）；生产路径在结算事务内与本月边事件同生共死；
+        任意缝崩溃→pending 在册→下次结算补酿；pending 不靠失败后 catch 补记。
+        本相任何 DB/schema/程序错误响亮上抛（ADR 0005/0008）：无 durable claim
+        就开酿会让失败月失去恢复凭据，宁可不酿。"""
         targets = select_brew_targets(self._db, year=self.year, period=self.period)
-        self.report["selected"] = len(targets)
-        if not targets:
+        faction_targets = select_faction_brew_targets(
+            self._db, year=self.year, period=self.period
+        )
+        self.report["selected"] = len(targets) + len(faction_targets)
+        if not targets and not faction_targets:
             return False
-        self._db.claim_relation_brew_targets(year=self.year, period=self.period)
+        if targets:
+            self._db.claim_relation_brew_targets(year=self.year, period=self.period)
+        if faction_targets:
+            self._db.claim_faction_brew_targets(year=self.year, period=self.period)
         # 输入先串行备好（纯计算、确定性，不含 LLM 调用），brew() 才能零 DB 并行。
+        # 批内条目无依赖必并行（P5）：关系对与派系工作项混排同一批，关系在前、
+        # 派系在后（各自按序，确定性）。
         jobs: List[Dict[str, Any]] = []
         for item in targets:
             new_events = collect_new_edge_events(
@@ -254,10 +274,25 @@ class MonthEndRelationBrewLeg:
             )
             jobs.append({
                 **item,
+                "item_kind": "关系",
                 "new_events": new_events,
                 "input": build_brew_input(
                     source=item["source"], target=item["target"],
                     dimension=item["dimension"], year=self.year, period=self.period,
+                    summary=item["summary"], new_events=new_events,
+                    has_pending=item["has_pending"],
+                ),
+            })
+        for item in faction_targets:
+            new_events = collect_new_edge_events_for_faction(
+                self._db, faction=item["faction"], watermark=item["watermark"],
+            )
+            jobs.append({
+                **item,
+                "item_kind": KIND_FACTION,
+                "new_events": new_events,
+                "input": build_faction_brew_input(
+                    faction=item["faction"], year=self.year, period=self.period,
                     summary=item["summary"], new_events=new_events,
                     has_pending=item["has_pending"],
                 ),
@@ -280,7 +315,11 @@ class MonthEndRelationBrewLeg:
         except LLMUnavailable as exc:
             return job, None, exc
         try:
-            parsed = parse_brew_output(raw)
+            parsed = (
+                parse_faction_stance_output(raw)
+                if job["item_kind"] == KIND_FACTION
+                else parse_brew_output(raw)
+            )
         except (LLMContractError, ValueError) as exc:
             return job, None, exc
         return job, parsed, None
@@ -295,7 +334,7 @@ class MonthEndRelationBrewLeg:
             # 批内条目间无依赖必并行（P5）：worker 数按本批实际 jobs 数定容——
             # 不设任何固定上限（庭裁 Z2 删默认 max_workers=4），第 5+ 条不再排队。
             workers = len(self.jobs)
-            tlog(f"[relation-brew] 批内并行酿制 {len(self.jobs)} 条关系（workers={workers}）")
+            tlog(f"[relation-brew] 批内并行酿制 {len(self.jobs)} 项关系/派系（workers={workers}）")
             with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="relation-brew") as pool:
                 self.outcomes = list(pool.map(self._brew_one, self.jobs))
         else:
@@ -309,6 +348,34 @@ class MonthEndRelationBrewLeg:
         响亮处置而非就地吞掉。"""
         report = self.report
         for job, parsed, exc in self.outcomes:
+            if job["item_kind"] == KIND_FACTION:
+                faction = job["faction"]
+                if exc is not None or parsed is None:
+                    reason = str(exc) if exc is not None else "空结果"
+                    tlog(f"[relation-brew] {faction} 态势酿制失败降级（保旧摘要）：{reason}")
+                    # 认领先行下 pending 已持久在册（不靠此处补记）；本写只刷新失败原因。
+                    self._db.mark_faction_brew_pending(
+                        faction=faction, year=self.year, period=self.period,
+                        reason=reason,
+                    )
+                    report["degraded"].append({"faction": faction, "reason": reason})
+                    continue
+                # 成功路径：态势摘要写入＋pending 清除同一 DB 事务原子落定（与关系腿
+                # 同构）。水位推进到本批最大涉派事件 id；写面仅态势表与 pending 行，
+                # 绝不触 factions 真源数值列（三不碰，F3）。
+                last_event_id = max(
+                    [int(event["id"]) for event in job["new_events"]]
+                    + [int(job["watermark"])]
+                )
+                self._db.apply_faction_brew_result(
+                    faction=faction,
+                    stance_segment=parsed[STANCE_KEY],
+                    last_event_id=last_event_id,
+                    turn=self.turn, year=self.year, period=self.period,
+                )
+                report["brewed"].append({"faction": faction})
+                tlog(f"[relation-brew] {faction} 态势酿制落定（pending 同事务清除）")
+                continue
             source, target = job["source"], job["target"]
             if exc is not None or parsed is None:
                 reason = str(exc) if exc is not None else "空结果"

@@ -789,6 +789,7 @@ class GameContent:
     chapter_memory_prompt: str = ""
     ending_summary_prompt: str = ""
     relation_brew_prompt: str = ""
+    faction_brew_prompt: str = ""
 
     fiscal_items: List[Dict[str, object]] = field(default_factory=list)
 
@@ -873,4 +874,5 @@ class GameContent:
             chapter_memory_prompt=load_text_asset("prompts/chapter_memory.md"),
             ending_summary_prompt=load_text_asset("prompts/ending_summary.md"),
             relation_brew_prompt=load_text_asset("prompts/relation_brew.md"),
+            faction_brew_prompt=load_text_asset("prompts/faction_brew.md"),
         )

@@ -26,6 +26,7 @@ import pytest
 from openai import APIConnectionError, APITimeoutError
 
 import ming_sim.decree as decree_module
+from ming_sim.faction_brew import STANCE_KEY, VIEW_FACTION_STANCE
 from ming_sim.db import GameDB
 from ming_sim.decree import SettlementAbort, settle_with_delta
 from ming_sim.exceptions import LLMUnavailable
@@ -49,13 +50,25 @@ def _add_edge(db, state, *, source, target, kind, context, origin):
 
 
 def _brew_fn_factory(calls):
-    """确定性假酿制手：记录每次收到的 payload，按序返回脚本化输出。"""
+    """确定性假酿制手：记录每次收到的 payload，按条目身份分队列脚本化输出。
+
+    #637 同批双契约：关系工作项按序弹 outputs（原语义不变）；派系工作项按序弹
+    stances、未备则用默认合法态势产出——批内派系腿静默成功，不劫持关系脚本、
+    也不留派系 pending 噪声污染后续月份的选中判据。"""
 
     def _brew(payload_json: str) -> str:
-        calls.append(json.loads(payload_json))
-        script = _brew.outputs.pop(0) if getattr(_brew, "outputs", None) else {
-            FOUNDINGS_KEY: [], RECENT_KEY: "无事近况。",
-        }
+        payload = json.loads(payload_json)
+        calls.append(payload)
+        if payload.get("view") == VIEW_FACTION_STANCE:
+            stances = getattr(_brew, "stances", None)
+            script = (
+                dict(stances.pop(0)) if stances else {STANCE_KEY: "派系态势重酿。"}
+            )
+        else:
+            outputs = getattr(_brew, "outputs", None)
+            script = outputs.pop(0) if outputs else {
+                FOUNDINGS_KEY: [], RECENT_KEY: "无事近况。",
+            }
         return json.dumps(script, ensure_ascii=False)
 
     return _brew
@@ -77,7 +90,8 @@ def test_founding_segment_survives_consecutive_brews_byte_identical(game):
                                recent="杨嗣昌蒙知遇之恩。")]
 
     report = run_month_end_relation_brew(db, state, brew_fn)
-    assert report["selected"] == 1 and len(report["brewed"]) == 1
+    # 同批新事实：杨嗣昌党籍投影皇党（factions 表现存）→ 关系对＋皇党两个工作项。
+    assert report["selected"] == 2 and len(report["brewed"]) == 2
 
     first = db.get_relation_summary(EMPEROR_NODE, "杨嗣昌")
     assert first["dimension"] == "君臣"
@@ -143,7 +157,8 @@ def test_flip_brew_input_must_contain_new_edge_events(game):
     brew_fn = _brew_fn_factory(calls)
     brew_fn.outputs = [_script(recent="钱谦益蒙知遇。")]
     run_month_end_month = run_month_end_relation_brew(db, state, brew_fn)
-    assert len(run_month_end_month["brewed"]) == 1
+    # 同批新事实：钱谦益党籍投影东林 → 关系对＋东林。
+    assert len(run_month_end_month["brewed"]) == 2
 
     # 语义翻转月：新辜负事件入账后重酿，酿制输入必含该新事件。
     flip_id = _add_edge(db, state, source=EMPEROR_NODE, target="钱谦益", kind="辜负",
@@ -152,8 +167,10 @@ def test_flip_brew_input_must_contain_new_edge_events(game):
     brew_fn.outputs = [_script(recent="钱谦益因哭谏被拒而离心。")]
     run_month_end_relation_brew(db, state, brew_fn)
 
-    assert len(calls) == 1
-    payload = calls[0]
+    # 同批含东林派系工作项：翻转判据只辖关系腿的调用缝。
+    relation_calls = [c for c in calls if "view" not in c]
+    assert len(relation_calls) == 1
+    payload = relation_calls[0]
     assert payload["new_events"] and payload["new_events"][0]["context"] == "钱谦益哭谏被拒，圣眷转衰。"
     assert payload["new_events"][0]["event_kind"] == "辜负"
     assert payload["recent_segment"] == "钱谦益蒙知遇。"
@@ -173,7 +190,8 @@ def test_failed_month_degrades_to_pending_and_rebrews_next_month(game):
         raise LLMUnavailable("酿制裁判接口不可用")
 
     report = run_month_end_relation_brew(db, state, failing_brew)
-    assert report["selected"] == 1 and report["degraded"]
+    # 同批新事实：温/周均皇党 → 关系对＋皇党，双双降级。
+    assert report["selected"] == 2 and report["degraded"]
 
     # 保旧摘要（本就无摘要）、事件不丢、pending 持久在册。
     assert db.get_relation_summary("温体仁", "周延儒") is None
@@ -189,8 +207,9 @@ def test_failed_month_degrades_to_pending_and_rebrews_next_month(game):
     brew_fn.outputs = [_script(recent="温周结怨，朝堂侧目。")]
     report = run_month_end_relation_brew(db, state, brew_fn)
 
-    assert report["selected"] == 1 and len(report["brewed"]) == 1
-    assert calls and calls[0]["has_pending_failure"] is True
+    assert report["selected"] == 2 and len(report["brewed"]) == 2
+    relation_calls = [c for c in calls if "view" not in c]
+    assert relation_calls and relation_calls[0]["has_pending_failure"] is True
     assert db.get_relation_brew_pending() == []
     summary = db.get_relation_summary("温体仁", "周延儒")
     assert summary["recent_segment"] == "温周结怨，朝堂侧目。"
@@ -242,8 +261,9 @@ def _recent_brew(recent):
 
 if mode == "A":
     # 故障 A「摘要已写、事务未提交即崩」：次月新边事件先落库（正常提交），随后
-    # 第 1 次 commit＝认领（须先持久），第 2 次 commit＝apply 落定提交——不提交、
-    # 直接 SIGKILL。崩溃点之后任何写（含宽 catch 补记）都不可能发生。
+    # 第 1、2 次 commit＝关系/派系两笔认领（须先持久，#637 同批），第 3 次
+    # commit＝apply 落定提交——不提交、直接 SIGKILL。崩溃点之后任何写（含宽
+    # catch 补记）都不可能发生。
     state.turn += 1
     state.period += 1
     db.record_relation_edge_event(
@@ -256,7 +276,7 @@ if mode == "A":
 
     def crashing_commit():
         commits["n"] += 1
-        if commits["n"] >= 2:
+        if commits["n"] >= 3:
             os.kill(os.getpid(), signal.SIGKILL)
         original_commit()
 
@@ -336,8 +356,9 @@ def test_fault_a_uncommitted_summary_crash_keeps_pending_and_old_summary(game):
     calls.clear()
     brew_fn.outputs = [_script(recent="洪承畴请饷被驳，心怨。")]
     report = run_month_end_relation_brew(db, state, brew_fn)
-    assert len(report["brewed"]) == 1
-    assert len(calls) == 1
+    # 同批新事实：洪承畴党籍投影中立（factions 表现存）→ 关系对＋中立，补酿恰一次。
+    assert len(report["brewed"]) == 2
+    assert len(calls) == 2
     assert db.get_relation_brew_pending() == []
     assert db.get_relation_summary("洪承畴", EMPEROR_NODE)["recent_segment"] == "洪承畴请饷被驳，心怨。"
 
@@ -366,9 +387,9 @@ def test_fault_b_pending_mark_lost_still_selected_and_brewed_once(game):
     brew_fn.outputs = [_script(recent="孙传庭困守乏饷，怨望渐深。")]
     report = run_month_end_relation_brew(db, state, brew_fn)
 
-    assert report["selected"] == 1
-    assert len(calls) == 1
-    assert len(report["brewed"]) == 1
+    assert report["selected"] == 2
+    assert len(calls) == 2
+    assert len(report["brewed"]) == 2
     assert db.get_relation_summary("孙传庭", EMPEROR_NODE)["recent_segment"] == (
         "孙传庭困守乏饷，怨望渐深。"
     )
@@ -473,10 +494,13 @@ def test_settle_brew_overlaps_chapter_and_joins_before_persist(game):
     brew_turns: list = []
 
     def brew_fn(payload_json: str) -> str:
+        payload = json.loads(payload_json)
         brew_turns.append(int(state.turn))  # 事务内启酿：state 尚未被 next_period 推进
         started.set()
         if not release.wait(timeout=10):
             raise RuntimeError("chapter 未与酿制重叠（串行实现）")
+        if payload.get("view") == VIEW_FACTION_STANCE:
+            return json.dumps({STANCE_KEY: "西学态势在案。"}, ensure_ascii=False)
         return json.dumps(_script(recent="协作在案。"), ensure_ascii=False)
 
     def runner(settle_state, settle_db, *, settled_turn, settled_year, settled_period):
@@ -500,7 +524,8 @@ def test_settle_brew_overlaps_chapter_and_joins_before_persist(game):
 
     assert state.turn == before_turn + 1
     # 重叠证明：brew 在事务内（next_period 前）启酿、且与 chapter 互等通过。
-    assert brew_turns == [before_turn]
+    # 同批新事实：徐光启党籍投影西学 → 关系对＋西学两条工作项同批同缝启酿。
+    assert set(brew_turns) == {before_turn}
     summary = db.get_relation_summary("徐光启", EMPEROR_NODE)
     assert summary["recent_segment"] == "协作在案。"
     assert (summary["last_brewed_year"], summary["last_brewed_period"]) == (
@@ -534,9 +559,10 @@ def test_settle_brew_leg_records_settled_month_not_advanced_month(game):
     )
 
     assert state.turn == before_turn + 1  # state 已被推进，但落款不得跟着走
-    assert len(calls) == 1
-    payload = calls[0]
-    assert (payload["year"], payload["period"]) == (settled_year, settled_period)
+    # 同批新事实：徐光启投影西学 → 关系对＋西学；两腿落款都须是结算月快照。
+    assert len(calls) == 2
+    for payload in calls:
+        assert (payload["year"], payload["period"]) == (settled_year, settled_period)
     summary = db.get_relation_summary("徐光启", EMPEROR_NODE)
     assert (summary["last_brewed_year"], summary["last_brewed_period"]) == (
         settled_year, settled_period,
@@ -704,7 +730,8 @@ def test_parse_seam_value_error_degrades_single_item(game):
         return json.dumps({FOUNDINGS_KEY: []}, ensure_ascii=False)
 
     report = run_month_end_relation_brew(db, state, malformed_brew)
-    assert report["selected"] == 1 and report["degraded"]
+    # 同批新事实：温/周均皇党 → 关系对＋皇党，双双单条降级。
+    assert report["selected"] == 2 and report["degraded"]
     assert report["brewed"] == []
     # 保旧摘要（本就无摘要）、事件不丢、pending 持久在册。
     assert db.get_relation_summary("温体仁", "周延儒") is None
@@ -806,7 +833,7 @@ def test_duplicate_json_objects_rejected_not_first_object_picked(game):
         )
 
     report = run_month_end_relation_brew(db, state, duplicated_brew)
-    assert report["selected"] == 1 and report["degraded"] and report["brewed"] == []
+    assert report["selected"] == 2 and report["degraded"] and report["brewed"] == []
     second = db.get_relation_summary(EMPEROR_NODE, "杨嗣昌")
     # 拒收而非择取：旧摘要（含奠基段与近况段）字节不变。
     assert second["founding_segment"] == first["founding_segment"]
@@ -829,7 +856,7 @@ def test_unescaped_control_byte_rejected_not_stripped(game):
         return '{"' + FOUNDINGS_KEY + '": [], "' + RECENT_KEY + '": "甲\x01乙"}'
 
     report = run_month_end_relation_brew(db, state, control_byte_brew)
-    assert report["selected"] == 1 and report["degraded"] and report["brewed"] == []
+    assert report["selected"] == 2 and report["degraded"] and report["brewed"] == []
     assert db.get_relation_summary(EMPEROR_NODE, "杨嗣昌") is None
     assert [(row["source"], row["target"]) for row in db.get_relation_brew_pending()] == [
         (EMPEROR_NODE, "杨嗣昌")
@@ -881,6 +908,7 @@ def _brew_runner_leg(game, monkeypatch, provider_error):
               context="温体仁当殿讦周延儒。", origin="audience:turn-1")
 
     monkeypatch.setattr(decree_module, "create_relation_brew_agent", lambda cfg, adb: object())
+    monkeypatch.setattr(decree_module, "create_faction_brew_agent", lambda cfg, adb: object())
 
     def failing_run(agent, prompt, tag):
         raise provider_error
@@ -917,7 +945,9 @@ def test_provider_known_fault_translates_to_typed_single_degradation(game, monke
 
     report = leg.persist()
     source, target = job["source"], job["target"]
-    assert report["degraded"] == [{"source": source, "target": target, "reason": str(exc)}]
+    # 同批新事实：关系条目在前、派系条目（温/周均皇党）在后，双双 typed 单条降级。
+    assert report["degraded"][0] == {"source": source, "target": target, "reason": str(exc)}
+    assert report["degraded"][1]["faction"] == "皇党"
     assert report["brewed"] == []
     assert db.get_relation_summary(source, target) is None
     assert [(row["source"], row["target"]) for row in db.get_relation_brew_pending()] == [
