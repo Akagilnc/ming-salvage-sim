@@ -1101,6 +1101,21 @@ def build_extractor_shared_context(
                 extra.append(row)
         if extra:
             authorized_dossiers = list(authorized_dossiers) + extra
+        # #649 F1（判词）：internal extractor 专属机器输入面——按 class@region_id 键合的
+        # 省级阶级人口余额 TSV（population_transfers 守恒转移的源天花板）＋本档
+        # population_unit 列。仅 internal 模块可见，不进玩家可感 simulator 数表
+        # （classes_brief 保持定性档）。
+        slim["class_population_balances"] = _auto_table([
+            {
+                "class_region": f"{r['name']}@{r['region_id']}",
+                "population": int(r["population"]),
+                "population_unit": db.population_unit,
+            }
+            for r in db.conn.execute(
+                "SELECT name, region_id, population FROM classes "
+                "WHERE region_id <> '' ORDER BY name, region_id"
+            ).fetchall()
+        ])
     # #613：执行格读端字段随案卷进 extractor；优先沿用推演装配已写字段，缺则现场补投影。
     from ming_sim.decree import execution_side_read_fields
 

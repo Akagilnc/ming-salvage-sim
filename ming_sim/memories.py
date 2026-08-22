@@ -222,7 +222,9 @@ def effect_brief(applied: Dict[str, object]) -> str:
     if transfers:
         transfer_bits = []
         for t in transfers[:3]:
-            region = str(t.get("region_id") or "")
+            # #649 F2：省名随 applied 记录（applier 落 region_name，真源＝regions 表）；
+            # 旧留痕无此槽时退回 region_id，不炸。
+            region = str(t.get("region_name") or t.get("region_id") or "")
             src_cls = str(t.get("source") or "").split("@", 1)[0]
             dst_cls = str(t.get("target") or "").split("@", 1)[0]
             reason = str(t.get("reason") or "")

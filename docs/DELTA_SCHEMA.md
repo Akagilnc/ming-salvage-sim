@@ -105,7 +105,7 @@ canonical 段形＝list，每条记录**同时表达两条腿**：applier 读一
 | `origin_ref` | **必填** `dossier:<id>`（须存在且已颁）或精确哨兵 `盘面自发`——来源追溯契约与 `reason` 机制枚举两槽并存、职责互斥 |
 
 - 逐项拒收面（坏项留痕、同批合法项照落，ADR 0015/0008）：方向出阵、reason 枚举外、amount 非严格 int/≤0/超源余额、region 未知或两侧不同省、source/target 触全国行、origin_ref 缺失/伪前缀/未颁案卷、白名单外字段（任何形式的绝对值覆写均不合法——人口只经本原语守恒变动，禁凭空造人/单侧写）。
-- item 字段中英别名：`源`/`源阶级`→source、`目标`/`目标阶级`→target、`数额`/`口数`→amount。
+- item 字段中英别名：`源`/`源阶级`→source、`目标`/`目标阶级`→target、`数额`/`口数`→amount、`原因`→reason（prompt 中文 shape 教 `原因`，与 `ITEM_FIELD_ALIASES` 单一真源；勿另教别名表外标签如「缘由」）。接口层：internal extractor 专属输入面带按 class@region_id 键合的省级人口余额＋本档 population_unit 的 `class_population_balances` TSV（不进玩家可感 simulator 数表）。
 
 ### `region_delta` — 地区变化
 - 每个 region value 必填 `origin_ref`（已颁 `dossier:<id>` 或 `盘面自发`）；该字段不作为地区属性处理。
