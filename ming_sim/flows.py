@@ -608,6 +608,17 @@ def army_loyalty_tick_delta(new_arrears: float, full_needed: int) -> int:
     return -5
 
 
+def _army_loyalty_reason(new_arrears: float, full_needed: int) -> str:
+    """#314 军心日志专用原因：按累计欠饷档位生成，不复用当月 shortfall reason_tag。"""
+    arrears = max(0.0, float(new_arrears))
+    if arrears <= 1e-9:
+        return f"{TURN_UNIT}满饷—军心回升"
+    months = math.floor(arrears / full_needed) if full_needed > 0 else 0
+    if months >= 3:
+        return f"{TURN_UNIT}累计欠饷逾三月—军心低落"
+    return f"{TURN_UNIT}累计欠饷{months}月—死区"
+
+
 class _HubOutboundResult(NamedTuple):
     """Substrate hub top-tier outbound allocation for this fixed-flow tick."""
     k: float
@@ -1312,7 +1323,6 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
             shortfall = max(0.0, needed - pay_current)
             old_arrears = float(row["arrears"] or 0)
             old_morale = int(row["morale"])
-            old_loyalty = int(row["loyalty"])
 
             old_central_arrears = float(row["central_pay_arrears"] or 0)
             province_arrears = float(row["province_pay_arrears"] or 0)
@@ -1320,11 +1330,6 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
             new_arrears = max(0.0, province_arrears + central_arrears)
             db._current_month_central_pay_shortfalls[army_id] = shortfall
             db._current_month_pay_opening_arrears[army_id] = old_arrears
-
-            # #314 军心月度 tick：欠饷月数按合计 arrears ÷ 月应发(全量 needed，非中央份额) 分档。
-            # 本路 SELECT 已滤 ming+非土司+非自养；needed<=0 已上方 continue 短路。
-            loyalty_delta = army_loyalty_tick_delta(new_arrears, full_needed)
-            new_loyalty = max(0, min(100, old_loyalty + loyalty_delta))
 
             province_pay_share = float(row["province_pay_share"] or 0)
             if province_pay_share > 0:
@@ -1336,11 +1341,11 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
             db.conn.execute(
                 """
                 UPDATE armies
-                SET central_pay_arrears = ?, arrears = ?, morale = ?, loyalty = ?,
+                SET central_pay_arrears = ?, arrears = ?, morale = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
-                (central_arrears, new_arrears, new_morale, new_loyalty, army_id),
+                (central_arrears, new_arrears, new_morale, army_id),
             )
             if shortfall > 0:
                 reason_tag = (
@@ -1359,9 +1364,6 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                      reason_tag),
                     (state.turn, state.year, state.period, army_id,
                      "morale", str(old_morale), str(new_morale), new_morale - old_morale,
-                     reason_tag),
-                    (state.turn, state.year, state.period, army_id,
-                     "loyalty", str(old_loyalty), str(new_loyalty), new_loyalty - old_loyalty,
                      reason_tag),
                 ],
             )
@@ -1453,6 +1455,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                 )
             else:
                 reason_tag = f"{TURN_UNIT}军饷足额"
+            loyalty_reason = _army_loyalty_reason(new_arrears, needed)
             db.conn.executemany(
                 """INSERT INTO army_logs
                    (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
@@ -1466,7 +1469,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                      reason_tag),
                     (state.turn, state.year, state.period, army_id,
                      "loyalty", str(old_loyalty), str(new_loyalty), new_loyalty - old_loyalty,
-                     reason_tag),
+                     loyalty_reason),
                 ],
             )
             flows.append({
@@ -1602,6 +1605,51 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                     "human_loss": taicang_human_loss,
                     "sink_loss": taicang_sink_loss,
                 })
+            # ── #314 军心月度 tick（substrate_hub 统一，省级+中央结算后）──────────
+            if db.is_substrate_hub_fiscal_engine_enabled():
+                loyalty_rows = db.conn.execute(
+                    """
+                    SELECT id, name, manpower, salary_rate, owner_power,
+                           arrears, province_pay_arrears, central_pay_arrears,
+                           loyalty, is_tusi, self_funded_pay
+                    FROM armies
+                    WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0
+                    """
+                ).fetchall()
+                for lr in loyalty_rows:
+                    full_needed_loyalty = army_needed(lr)
+                    if full_needed_loyalty <= 0:
+                        continue
+                    army_id_loyalty = str(lr["id"])
+                    old_loyalty_val = int(lr["loyalty"])
+                    new_arrears_loyalty = float(lr["arrears"] or 0)
+                    # 防御：若 arrears 列滞后，以两源合计为准
+                    try:
+                        prov = float(lr["province_pay_arrears"] or 0)
+                        cent = float(lr["central_pay_arrears"] or 0)
+                        combined = prov + cent
+                        if abs(combined - new_arrears_loyalty) > 1e-6:
+                            new_arrears_loyalty = max(0.0, combined)
+                    except Exception:
+                        pass
+                    loyalty_delta_unified = army_loyalty_tick_delta(new_arrears_loyalty, full_needed_loyalty)
+                    new_loyalty_val = max(0, min(100, old_loyalty_val + loyalty_delta_unified))
+                    if new_loyalty_val == old_loyalty_val and loyalty_delta_unified == 0:
+                        # 仍需写日志以保持审计完整性？与 legacy/hub 旧有行为对齐：始终写 loyalty 行
+                        pass
+                    db.conn.execute(
+                        "UPDATE armies SET loyalty = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                        (new_loyalty_val, army_id_loyalty),
+                    )
+                    loyalty_reason_unified = _army_loyalty_reason(new_arrears_loyalty, full_needed_loyalty)
+                    db.conn.execute(
+                        """INSERT INTO army_logs
+                           (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, '户部')""",
+                        (state.turn, state.year, state.period, army_id_loyalty,
+                         "loyalty", str(old_loyalty_val), str(new_loyalty_val),
+                         new_loyalty_val - old_loyalty_val, loyalty_reason_unified),
+                    )
         if pay_source_cutover:
             db._reconcile_central_army_pay_arrears_container()
             try:
