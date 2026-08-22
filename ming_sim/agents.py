@@ -633,6 +633,27 @@ def create_json_sanitizer_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Age
     )
 
 
+def create_rescript_draft_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
+    """#656 / ADR 0093 前半：急务分拣＋票拟生成官（phase2 第五路）。一次性，不持久化。"""
+    del agno_db
+    ctx = _ctx()
+    cfg = _llm_for_role(llm_config, "extractor")
+    return Agent(
+        name="急务票拟官",
+        id="rescript-drafter",
+        model=create_chat_model(
+            cfg,
+            temperature=0.4,
+            top_p=0.9,
+            enable_thinking=False,
+            force_json_output=True,
+        ),
+        instructions=[ctx.game_world_prompt, ctx.rescript_draft_prompt],
+        add_history_to_context=False,
+        markdown=False,
+    )
+
+
 def create_chapter_memory_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
     """章节记忆：把本回合诏书+邸报+落库效果浓缩成 {body, tags} JSON（body 叙事，tags 召回标签）。
     一次性，不持久化。"""

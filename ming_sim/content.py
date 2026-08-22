@@ -788,6 +788,7 @@ class GameContent:
     score_extractor_module_prompts: Dict[str, str] = field(default_factory=dict)
     chapter_memory_prompt: str = ""
     ending_summary_prompt: str = ""
+    rescript_draft_prompt: str = ""
     relation_brew_prompt: str = ""
     faction_brew_prompt: str = ""
 
@@ -874,6 +875,7 @@ class GameContent:
             },
             chapter_memory_prompt=load_text_asset("prompts/chapter_memory.md"),
             ending_summary_prompt=load_text_asset("prompts/ending_summary.md"),
+            rescript_draft_prompt=load_text_asset("prompts/rescript_draft.md"),
             relation_brew_prompt=load_text_asset("prompts/relation_brew.md"),
             faction_brew_prompt=load_text_asset("prompts/faction_brew.md"),
         )
