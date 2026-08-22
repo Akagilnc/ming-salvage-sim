@@ -1149,6 +1149,9 @@ class WebGame:
             "xuan_da": (50.49, 40.08), "shanhaiguan": (55.52, 42.84),
         }
         armies = self.db.army_payload(danger_order=True)
+        # #648：玩家面人口呈现走既批路径——simulator seam featured input +
+        # LLM 长出叙事；web 直显模板已按 P7 删除，地图节点只回单一
+        # db.region_payload()（机面 population），不再有第二套 UI 投影。
         regions = self.db.region_payload()
         # 一军一挂：theater 关键词优先（命中不进 region claimed）；未命中再 region 首命中
         claimed_army_ids: set[str] = set()

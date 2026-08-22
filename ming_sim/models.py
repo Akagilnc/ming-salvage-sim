@@ -505,9 +505,9 @@ class SocialClass:
     region_id="" 表示全国汇总；非空表示该省切片（key 与 regions.id 对应）。
     机制：lev 高 + sat 低 → 易触发该省/该阶级骚乱事件，由 LLM 在推演中判定。
     """
-    name: str            # 农民/士绅/官僚/军户/商人/匠户/宗藩
+    name: str            # 农民/士绅/官僚/军户/商人/匠户/宗藩/流民
     region_id: str       # "" = 全国汇总；否则匹配 regions.id
-    population: int      # 万人（粗估，全国汇总=各省合计的参考值）
+    population: int      # 人（ADR 0088，与 manpower 同刻度；全国汇总=各省合计的参考值）
     satisfaction: int    # 0-100
     leverage: int        # 0-100
     agenda: str          # 一句话诉求

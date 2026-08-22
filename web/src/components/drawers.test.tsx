@@ -1,8 +1,8 @@
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ArmyDrawer, MinisterCardList } from "./drawers";
-import type { Army, Minister } from "../types";
+import { ArmyDrawer, MinisterCardList, RegionDrawer } from "./drawers";
+import type { Army, Minister, Region } from "../types";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -19,6 +19,47 @@ function renderArmyDrawer(army: Army) {
         open={true}
         selectedArmyId={army.id}
         onSelectArmy={() => {}}
+        onClose={() => {}}
+      />
+    )
+  );
+  mountedRoots.push({ root, host });
+  return host;
+}
+
+function makeRegion(overrides: Partial<Region> = {}): Region {
+  return {
+    id: "beizhili",
+    name: "北直隶",
+    kind: "两京",
+    population: 7200000,
+    public_support: 50,
+    unrest: 20,
+    natural_disaster: "无",
+    human_disaster: "无",
+    registered_land: 200,
+    hidden_land: 0,
+    tax_per_turn: 1,
+    grain_security: 40,
+    gentry_resistance: 30,
+    military_pressure: 70,
+    status: "平",
+    controlled_by: "ming",
+    ...overrides,
+  };
+}
+
+function renderRegionDrawer(regions: Region[]) {
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  act(() =>
+    root.render(
+      <RegionDrawer
+        regions={regions}
+        open={true}
+        selectedRegionId={regions[0].id}
+        onSelectRegion={() => {}}
         onClose={() => {}}
       />
     )
@@ -180,6 +221,15 @@ describe("ArmyDrawer presentation", () => {
     expect(host.textContent).toMatch(/欠饷/);
     // 欠饷真数呈现路径保留（约数格式由 formatArmyArrears 负责）
     expect(host.querySelector(".right-drawer-detail")).toBeTruthy();
+  });
+});
+
+describe("RegionDrawer #648 population (P7: LLM 长文，无 UI 模板)", () => {
+  it("never renders fixed population strings (约N万口 / 不足一万口)", () => {
+    const host = renderRegionDrawer([makeRegion({ population: 7200000 })]);
+    expect(host.textContent).not.toContain("万口");
+    expect(host.textContent).not.toContain("不足一万");
+    expect(host.textContent).not.toContain("undefined");
   });
 });
 
