@@ -21,11 +21,15 @@ issue 盘面事实，不新建 issue。event_id 绑定走 bind_decisions_to_cand
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from openai import APIConnectionError, APIStatusError, APITimeoutError
+
 from ming_sim.agents import run_agent_text
 from ming_sim.assets import strip_json_fence
+from ming_sim.llm_model import llm_unavailable_from_error
 from ming_sim.db import GameDB
 from ming_sim.error_pack import error_packs_root
 from ming_sim.exceptions import LLMContractError, LLMUnavailable
@@ -72,7 +76,19 @@ def _assert_utf8(s: str, field: str) -> None:
 
 
 def _parse_rescript_json_strict(raw: str) -> Dict[str, Any]:
-    text = strip_json_fence(raw)
+    # r4 P1：围栏外 prose 必须走整批 shape 降级——容忍恰好覆盖全响应的单层围栏，
+    # 围栏外任何非空白字符 → LLMContractError 整批降级；不得改 strip_json_fence 全局语义。
+    match = re.search(r"```(?:json)?\s*(.*?)```", raw, re.S)
+    if match:
+        before = raw[: match.start()]
+        after = raw[match.end() :]
+        if before.strip() or after.strip():
+            raise LLMContractError(
+                f"急务票拟生成 输出含围栏外文字（整批 shape 错，F2.5）：围栏外含 prose，按票面应走整批降级\n原始输出：{raw[:800]}"
+            )
+        text = match.group(1).strip()
+    else:
+        text = raw.strip()
     try:
         data = json.loads(text)
     except json.JSONDecodeError as exc:
@@ -287,6 +303,9 @@ def generate_rescript_draft(
 
     try:
         raw = run_agent_text(agent, payload_json, tag="rescript-draft")
+    except (APITimeoutError, APIConnectionError, APIStatusError) as error:  # 窄捕 provider 已知故障→译 typed（照抄 decree.py:1975 Z3 缝）
+        _degrade(llm_unavailable_from_error(error, "急务票拟生成"))
+        return None
     except LLMUnavailable as exc:  # LLM 调用缝：只收 typed 声明，程序错上抛
         _degrade(exc)
         return None

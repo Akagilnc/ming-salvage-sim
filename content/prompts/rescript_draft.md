@@ -26,7 +26,7 @@
 
 只输出一个 JSON object：
 
-```
+```json
 {"items":[{"issue_id":123,"title":"陕西告饥","context":"……","options":[{"label":"……","hint":"……"},{"label":"……","hint":"……"}]}]}
 ```
 

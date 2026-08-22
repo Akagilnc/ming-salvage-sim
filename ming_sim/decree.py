@@ -1486,6 +1486,13 @@ def persist_resolve_context(
         # extractor 中止则整个事务回滚，票拟一并回滚不落、重试重生成。
         if isinstance(rescript_drafts, list) and rescript_drafts:
             db.save_rescript_drafts(turn, rescript_drafts)
+        elif rescript_drafts is None or (isinstance(rescript_drafts, list) and len(rescript_drafts) == 0):
+            # r4 p3：空/None 时同一事务内 DELETE 本回合 kind='rescript_draft' 行，
+            # 防同回合二次 persist 残留上一 attempt 的行（F2.5 context⟺票拟对应）。
+            db.conn.execute(
+                "DELETE FROM pending_decisions WHERE turn = ? AND kind = 'rescript_draft'",
+                (int(turn),),
+            )
     _mirror_rejections_after_commit(db, collector)
     return cleaned
 

@@ -572,10 +572,16 @@ def test_extractor_abort_rolls_back_drafts(game, monkeypatch, tmp_path):
     _retire_existing_actors(db)
     _add_character(db, "测试首辅", "内阁首辅", "阉党")
 
+    draft_raw = json.dumps({"items": [{
+        "title": "陕西告饥", "context": "秦地赤旱千里。",
+        "options": [{"label": "发帑赈济", "hint": "所安者饥民"},
+                    {"label": "缓议加派", "hint": "所拂者小农"}],
+    }]}, ensure_ascii=False)
+
     def _fake_run(agent, prompt, tag):
         if tag.startswith("extractor/"):
             raise RuntimeError("extractor boom")
-        return json.dumps({"items": []}, ensure_ascii=False)
+        return draft_raw
 
     monkeypatch.setattr(simulation, "run_agent_text", _fake_run)
     monkeypatch.setattr(rescript_draft, "run_agent_text", _fake_run)
