@@ -265,6 +265,31 @@ def test_class_delta_population_key_upgraded_to_per_item_rejection(game):
     assert farmer["satisfaction"] == 32 - 3        # 其余合法项照常落库
 
 
+def test_class_delta_chinese_population_key_upgraded_to_per_item_rejection(game):
+    """#649 C3/C4：中文形 {"满意":1,"人口":3000} 经 canonicalize 后 population guard
+    统一整项拒收（invalid_enum），满意度与人口均不变；同批合法项照落。"""
+    db, state, content = game
+    applied = apply_score_extraction(db, state, {
+        "class_delta": {
+            "农民@shaanxi": {"满意": 1, "人口": 3000},
+            "农民": {"满意": -2},
+        },
+    }, content, None)
+    rejections = applied["class_delta_rejections"]
+    assert len(rejections) == 1
+    assert rejections[0]["category"] == "invalid_enum"
+    assert "population" in rejections[0]["reason"]
+    row = db.conn.execute(
+        "SELECT population, satisfaction FROM classes WHERE name='农民' AND region_id='shaanxi'"
+    ).fetchone()
+    assert row["population"] == FARMER_SHAANXI
+    assert row["satisfaction"] == 12               # 整 item 拒收，满意也不落
+    farmer = db.conn.execute(
+        "SELECT satisfaction FROM classes WHERE name='农民' AND region_id=''"
+    ).fetchone()
+    assert farmer["satisfaction"] == 32 - 2        # 同批合法项不受累
+
+
 def test_unknown_top_level_key_now_per_section_rejection_not_abort(game):
     """r4 分层终态：未知顶层 key=可拆 section → 按段拒收留痕不整份退（ADR0015 待施工纠正面）。"""
     db, state, content = game

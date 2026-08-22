@@ -1727,7 +1727,7 @@ def _apply_population_transfers(
     transfers: object,
     *,
     commit: bool = True,
-) -> DeltaApplyResult:
+) -> Tuple[List[Dict[str, object]], List[Dict[str, object]]]:
     """#649/ADR 0087：人口守恒转移原语（delta 段 population_transfers 的唯一落库核）。
 
     canonical 段形＝转移记录 list；每条记录**同时表达两条腿**（源阶级减 N、目标阶级
@@ -1744,6 +1744,8 @@ def _apply_population_transfers(
 
     返回 (applied list, rejections list)：前者供 effect_brief/turn_extractions 留痕，
     后者由顶层置于 "population_transfers_rejections" 段、桥接自动收。
+    不复用 DeltaApplyResult（其 applied 声明为 dict、文档限定 faction/class）；
+    本核 applied 为转移记录 list，直接声明窄类型（#649 C2）。
     """
     from ming_sim.constants import POPULATION_TRANSFER_FIELDS, POPULATION_TRANSFER_REASONS
 
@@ -1888,7 +1890,7 @@ def _apply_population_transfers(
         })
     if commit:
         db.conn.commit()
-    return DeltaApplyResult(applied, rejected)
+    return applied, rejected
 
 
 def _apply_class_dict(
@@ -1909,10 +1911,16 @@ def _apply_class_dict(
     返回 (已落 delta dict, 拒收项列表)：前者供 web 「阶级变化」面板，后者由顶层置于
     "class_delta_rejections" 段、桥接自动收。
     """
+    # #649 C3/C4：字段名先经 ITEM_FIELD_ALIASES 单一真源 canonical 化（满意→satisfaction、
+    # 人口→population），使 population guard 对中英文拼写统一整项拒收，不在本层手抄别名分支。
+    from ming_sim.simulation import _canonical_item_fields
+
     cleaned: Dict[str, Dict[str, int]] = {}
     rejected: List[Dict[str, object]] = []
     class_delta = class_delta if isinstance(class_delta, dict) else {}  # #117 同类：真值非 dict 守卫
     for key, fields in class_delta.items():
+        if isinstance(fields, dict):
+            fields = _canonical_item_fields(fields)
         if not isinstance(fields, dict):
             rejected.append({
                 "name": str(key), "rejected": True, "category": "invalid_enum",

@@ -106,6 +106,9 @@ ITEM_FIELD_ALIASES = {
     "source": "source", "源": "source", "源阶级": "source",
     "target": "target", "目标": "target", "目标阶级": "target",
     "amount": "amount", "数额": "amount", "口数": "amount",
+    # #649 §1.4：class_delta 人口键 canonical 化，使 _apply_class_dict population guard
+    # 对中英文拼写统一整项拒收（人口只经 population_transfers 守恒转移变动）。
+    "population": "population", "人口": "population",
     # #622：旨外恶果/受益同列标记（效果行注解，非平行轨）
     # #1260：别名表全仓一份——flows/due_review 读端改调 read_beyond_intent_raw，禁手抄子集。
     "beyond_intent": "beyond_intent", "旨外": "beyond_intent",
