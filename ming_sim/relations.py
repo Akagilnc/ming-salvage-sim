@@ -219,15 +219,19 @@ def _capture_one_interaction(
         candidates = list(raw_targets)
     else:
         raise ValueError("受动者必须为字符串或字符串列表")
+    # V9：成员合法性校验先于过滤/去重/写入——空白或自指成员使整条互动
+    # fail-closed 拒收（与端点守门同语义），不静默丢弃坏成员保留其余落边。
     seen: set[str] = set()
     targets: list[str] = []
     for candidate in candidates:
         name = candidate.strip()
-        if name and name != source and name not in seen:
+        if not name:
+            raise ValueError("受动者不能为空")
+        if name == source:
+            raise ValueError(f"受动者不能为施动者自身：{source!r}")
+        if name not in seen:
             seen.add(name)
             targets.append(name)
-    if not targets:
-        raise ValueError("受动者不能为空")
     raw_context = (
         item["语境"] if item.get("语境") is not None else item.get("context")
     )

@@ -624,6 +624,42 @@ def test_multi_target_with_one_bad_endpoint_writes_zero_edges_for_item(game):
     assert _triplets(rows) == {("毕自严", "王绍徽", "协作")}
 
 
+@pytest.mark.parametrize(
+    ("targets", "bad_member"),
+    [
+        (["周延儒", "   "], "空白"),
+        (["周延儒", "温体仁"], "自指"),
+    ],
+)
+def test_multi_target_with_blank_or_self_member_rejects_whole_item_zero_edges(
+    game, targets, bad_member,
+):
+    """V9：多 target 项混入空白/自指成员——整项 fail-closed 拒收留痕，
+    不静默丢坏成员保留其余落边；同批独立好互动照落（ADR 0015 隔离）。"""
+    db, state, content = game
+    out = apply_score_extraction(
+        db, state,
+        {
+            "relation_edge_events": [
+                {"施动者": "温体仁", "受动者": targets,
+                 "类目": "联名", "语境": f"联名混入{bad_member}联署者。",
+                 "来源引用": "盘面自发"},
+                {"施动者": "毕自严", "受动者": "王绍徽", "类目": "协作",
+                 "语境": "同批好项照常落。", "来源引用": "盘面自发"},
+            ],
+        },
+        content=content,
+    )
+    res = out["relation_edge_event_resolutions"]
+    rejected = [r for r in res if r.get("rejected")]
+    assert len(rejected) == 1
+    assert rejected[0]["category"] == "invalid_relation_event"
+    assert rejected[0]["item"]["施动者"] == "温体仁"
+    # 坏项整项零写入（合法成员周延儒也不部分落库）；好项隔离不受牵连
+    rows = _edge_rows(db)
+    assert _triplets(rows) == {("毕自严", "王绍徽", "协作")}
+
+
 def test_valid_roster_endpoints_still_land_after_endpoint_gate(game):
     """两个合格在朝大臣的合法边照常落库（端点守门不误伤）。"""
     db, state, content = game
