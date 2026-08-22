@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from ming_sim.applier import safe_json_dumps
+from ming_sim.applier import atomic, safe_json_dumps
 from ming_sim.paths import bundled_path, user_data_dir
 
 
@@ -209,55 +209,60 @@ def clear_for_resimulation(db: Any, turn: int) -> None:
 
     **settling 相位不清**：pre_settle 前半段确实提交了（固定财政 + 暂存动作），重推演
     只重跑 LLM 段，前半段不可重跑（否则二次 tick）。
+
+    **单事务原子性**（#656 A2-r4）：rejection 作废标记、该 turn 陈旧票拟行删除、
+    ready context 降级同处一个 `applier.atomic(db)`——中途任何一步失败（如降级写
+    异常）整体回滚，不留「票拟已删、ready 真源仍在」的半作废状态。atomic 内
+    commit 全部暂停，由最外层统一落定。
     """
     ctx = db.get_resolve_context(int(turn))
-    db.conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS rejection_reports (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            turn INTEGER NOT NULL,
-            section TEXT NOT NULL,
-            item_json TEXT NOT NULL,
-            reason TEXT NOT NULL,
-            category TEXT NOT NULL,
-            source TEXT NOT NULL,
-            attempt INTEGER NOT NULL DEFAULT 1,
-            resimulation_invalidated INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-        )
-        """
-    )
-    cols = {str(row[1]) for row in db.conn.execute("PRAGMA table_info(rejection_reports)").fetchall()}
-    if "resimulation_invalidated" not in cols:
+    with atomic(db):
         db.conn.execute(
-            "ALTER TABLE rejection_reports ADD COLUMN resimulation_invalidated INTEGER NOT NULL DEFAULT 0"
+            """
+            CREATE TABLE IF NOT EXISTS rejection_reports (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                turn INTEGER NOT NULL,
+                section TEXT NOT NULL,
+                item_json TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                category TEXT NOT NULL,
+                source TEXT NOT NULL,
+                attempt INTEGER NOT NULL DEFAULT 1,
+                resimulation_invalidated INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
         )
-    db.conn.execute(
-        "UPDATE rejection_reports SET resimulation_invalidated=1 WHERE turn=?",
-        (int(turn),),
-    )
-    # #656 A2：重模拟作废与陈旧票拟同生死——ready context 降级的同一作废动作里，
-    # 清掉该 turn 已持久化的 kind='rescript_draft' 行（ADR 0008 决定 6「清 LLM 段
-    # 产出」：票拟行是 LLM 段产出）。否则重跑若抽取为空／降级／分拣人缺位，旧票拟
-    # 会残留并冒充本月头版。phase1 context 与 decision 行不动；复用现表，不建 tombstone。
-    db.conn.execute(
-        "DELETE FROM pending_decisions WHERE turn = ? AND kind = 'rescript_draft'",
-        (int(turn),),
-    )
-    db.conn.commit()
-    if ctx is None:
-        return
-    db.save_resolve_context(
-        int(turn),
-        str(ctx.get("decree_text") or ""),
-        str(ctx.get("narrative") or ""),
-        ctx.get("simulator_payload") if isinstance(ctx.get("simulator_payload"), dict) else {},
-        # 分组承载是 dict（#48）；兼容在途旧 list 形状的 ctx，二者都透传。
-        secret_orders=ctx.get("secret_orders") if isinstance(ctx.get("secret_orders"), (list, dict)) else {},
-        relevant_memories=ctx.get("relevant_memories") if isinstance(ctx.get("relevant_memories"), list) else [],
-        # 拒收来源随降级保留（#144 cmr r1）：source 是 phase1 持久字段，重抽后
-        # 恢复重放仍需原始 provenance 判玩家可见性；不回传会被默认 system_simulation
-        # 盖掉原 player_decree/hitl_decision，使降级路径静默吞掉玩家可见提示。
-        source=str(ctx.get("source") or "system_simulation"),
-        # 不传 extracted → upsert ready=0：LLM 段产出清除，phase1 字段保留。
-    )
+        cols = {str(row[1]) for row in db.conn.execute("PRAGMA table_info(rejection_reports)").fetchall()}
+        if "resimulation_invalidated" not in cols:
+            db.conn.execute(
+                "ALTER TABLE rejection_reports ADD COLUMN resimulation_invalidated INTEGER NOT NULL DEFAULT 0"
+            )
+        db.conn.execute(
+            "UPDATE rejection_reports SET resimulation_invalidated=1 WHERE turn=?",
+            (int(turn),),
+        )
+        # #656 A2：重模拟作废与陈旧票拟同生死——ready context 降级的同一作废动作里，
+        # 清掉该 turn 已持久化的 kind='rescript_draft' 行（ADR 0008 决定 6「清 LLM 段
+        # 产出」：票拟行是 LLM 段产出）。否则重跑若抽取为空／降级／分拣人缺位，旧票拟
+        # 会残留并冒充本月头版。phase1 context 与 decision 行不动；复用现表，不建 tombstone。
+        db.conn.execute(
+            "DELETE FROM pending_decisions WHERE turn = ? AND kind = 'rescript_draft'",
+            (int(turn),),
+        )
+        if ctx is None:
+            return
+        db.save_resolve_context(
+            int(turn),
+            str(ctx.get("decree_text") or ""),
+            str(ctx.get("narrative") or ""),
+            ctx.get("simulator_payload") if isinstance(ctx.get("simulator_payload"), dict) else {},
+            # 分组承载是 dict（#48）；兼容在途旧 list 形状的 ctx，二者都透传。
+            secret_orders=ctx.get("secret_orders") if isinstance(ctx.get("secret_orders"), (list, dict)) else {},
+            relevant_memories=ctx.get("relevant_memories") if isinstance(ctx.get("relevant_memories"), list) else [],
+            # 拒收来源随降级保留（#144 cmr r1）：source 是 phase1 持久字段，重抽后
+            # 恢复重放仍需原始 provenance 判玩家可见性；不回传会被默认 system_simulation
+            # 盖掉原 player_decree/hitl_decision，使降级路径静默吞掉玩家可见提示。
+            source=str(ctx.get("source") or "system_simulation"),
+            # 不传 extracted → upsert ready=0：LLM 段产出清除，phase1 字段保留。
+        )
