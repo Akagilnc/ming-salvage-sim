@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 import ming_sim.rescript_draft as rescript_mod
+from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
 from ming_sim.constants import TURN_UNIT
 from ming_sim.db import GameDB
 from ming_sim.decree import _settle_after_narrative, persist_resolve_context
@@ -865,6 +866,51 @@ def test_resimulation_clear_degraded_rerun_leaves_no_stale_drafts(game):
     )
     assert db.get_resolve_context(turn) is not None
     assert db.list_rescript_drafts() == []   # 无头版，而非旧版冒充
+
+
+def test_resimulation_clear_atomic_on_downgrade_write_failure(game, monkeypatch):
+    """A2-r4 判词（故障注入）：作废动作单事务——context 降级写失败时，draft 删除、
+    rejection 作废标记与 ready 降级一并回滚；不得留下「ready 真源仍在、配套票拟
+    已删」的半作废状态。decision 行不受影响。"""
+    db, state, _content = game
+    turn = state.turn
+    db.save_pending_decisions(turn, [
+        {"title": "抉择", "context": "c", "options": [
+            {"label": "a", "hint": ""}, {"label": "b", "hint": ""}]},
+    ])
+    _ready_with_drafts(db, state, _draft_rows("陈旧急务"))
+    # 预置一条该 turn 的拒收记录，验证作废标记同样随事务回滚。
+    collector = RejectionCollector(attempt=1)
+    collector.record("issues", RejectedItem(
+        item={"issue_id": "i1"}, reason="幻觉 id",
+        category="hallucinated_id", source=Provenance.system_simulation,
+    ), turn)
+    collector.flush_to_db(db)
+    db.conn.commit()
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("注入：降级写失败")
+
+    monkeypatch.setattr(db, "save_resolve_context", _boom)
+    with pytest.raises(RuntimeError, match="注入：降级写失败"):
+        clear_for_resimulation(db, turn)
+
+    # 全回滚：draft 仍在、rejection 未被作废、ctx 仍 ready、decision 行不动。
+    assert [d["title"] for d in db.list_rescript_drafts()] == ["陈旧急务"]
+    row = db.conn.execute(
+        "SELECT resimulation_invalidated FROM rejection_reports WHERE turn=?", (turn,)
+    ).fetchone()
+    assert row is not None and row[0] == 0
+    ctx = db.get_resolve_context(turn)
+    assert ctx is not None and ctx.get("extracted") is not None
+    assert [r["title"] for r in db.list_pending_decisions(turn)] == ["抉择"]
+
+    # 注入解除后重跑成功路径：三路陈旧清零语义照常成立。
+    monkeypatch.undo()
+    clear_for_resimulation(db, turn)
+    assert db.list_rescript_drafts() == []
+    ctx = db.get_resolve_context(turn)
+    assert ctx is not None and ctx.get("extracted") is None
 
 
 def test_resimulation_clear_new_results_fully_replace_old_drafts(game):
