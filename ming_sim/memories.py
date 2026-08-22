@@ -17,7 +17,7 @@ from agno.agent import Agent
 
 from ming_sim.agents import run_agent_text
 from ming_sim.assets import strip_json_fence
-from ming_sim.db import GameDB
+from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS
 from ming_sim.models import GameState, reign_period_label
 from ming_sim.token_stats import tlog
 
@@ -211,6 +211,30 @@ def effect_brief(applied: Dict[str, object]) -> str:
         if status_changes:
             names = "、".join(_short(s.get("name"), 8) for s in status_changes[:3])
             parts.append(f"处分：{names}")
+
+    # #649 人口守恒转移：机器面事实摘要（「某省农民流失 N 口为流民（加派）」式），
+    # 单位措辞随落档 population_unit（新档 N 口／legacy N 万口）。仅作章节记忆/接口层
+    # LLM 输入的事实摘要，不复活任何 UI 固定人口模板（P4/P7，#648 W1 已删者不复辟）。
+    transfers = [
+        t for t in (applied.get("population_transfers") or [])
+        if isinstance(t, dict) and not t.get("rejected")
+    ]
+    if transfers:
+        transfer_bits = []
+        for t in transfers[:3]:
+            region = str(t.get("region_id") or "")
+            src_cls = str(t.get("source") or "").split("@", 1)[0]
+            dst_cls = str(t.get("target") or "").split("@", 1)[0]
+            reason = str(t.get("reason") or "")
+            amount = t.get("amount")
+            unit = str(t.get("population_unit") or "")
+            qty = f"{amount}口" if unit == POPULATION_UNIT_PERSONS else f"{amount}万口"
+            if reason == "回流":
+                transfer_bits.append(f"{region}流民{qty}归农（{reason}）")
+            else:
+                transfer_bits.append(f"{region}{src_cls}流失{qty}为{dst_cls}（{reason}）")
+        if transfer_bits:
+            parts.append("、".join(transfer_bits))
 
     return "；".join(parts) or "盘面无显著结构化变化"
 

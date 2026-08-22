@@ -86,13 +86,20 @@ def test_run_settle_records_non_dict_nested_value(game):
     assert '"entity_id": "shanxi"' in row["item_json"]
 
 
-def test_run_settle_rejects_unknown_toplevel_key(read_game):
-    """未知顶层 key(拼写错,如 地区变更↔地区变化)响亮报错,不静默无效推进(codex-P1b)。"""
-    db, state, content = read_game
+def test_run_settle_rejects_unknown_toplevel_key(game):
+    """未知顶层 key（拼写错，如 地区变更↔地区变化）：#649 r4 分层终态改钉——可拆 section
+    按段拒收留痕（ADR 0015），不整份 ValueError；turn 照常推进，拒收行落 rejection_reports。"""
+    db, state, content = game
     before = state.turn
-    with pytest.raises(ValueError):
-        run_settle(db, state, content, {"地区变更": {"shanxi": {"动乱": 5}}})
-    assert state.turn == before
+    run_settle(db, state, content, {"地区变更": {"shanxi": {"动乱": 5}}})
+    assert state.turn == before + 1
+    row = db.conn.execute(
+        "SELECT section, category, item_json FROM rejection_reports WHERE turn=? AND section='地区变更'",
+        (before,),
+    ).fetchone()
+    assert row is not None
+    assert row["category"] == "invalid_shape"
+    assert '"raw_value"' in row["item_json"]
 
 
 def test_run_settle_records_non_dict_module_value(game):
