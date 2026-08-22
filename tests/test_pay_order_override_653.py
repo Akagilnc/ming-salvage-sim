@@ -1252,3 +1252,65 @@ def test_lifecycle_e2e_rejected_then_force_via_settlement_pipeline(game, monkeyp
     assert (after_t1["st"]["宗禄欠"] - after_t["st"]["宗禄欠"]) < (
         month_t.new_st["宗禄欠"] - opening["st"]["宗禄欠"]
     )
+
+
+# ═══════════════ F2.3（owner 拍板 r5）：官俸欠/宗禄欠当回合流量持久留痕 ═══════════════
+
+def test_claim_flow_logs_persisted_in_settle_bridge_and_restore_e2e(game):
+    """省级结算桥同事务把 官俸欠/宗禄欠 当回合 NewDebt/Repaid 流量补记进 region_logs
+    （复用现有结算留痕载体，零新表）；fiscal_fact_brief 补这两科目本回合分量；
+    关闭重开 DB（restore）后投影逐字节可恢复。"""
+    from ming_sim.db import GameDB
+
+    db, state, content = game
+    _pin_shortfall_board(db, "shaanxi")
+    result = db.settle_province_tick("shaanxi")
+    db.conn.commit()
+
+    # 桥同事务落痕：行集＝breakdown 两科目非零流量（零流量不写行）；本盘面
+    # 省内池不足、无 surplus → Repaid 全零不写，NewDebt 行在案。
+    expect_flows = {
+        (f"settle_{claim}_{flow}", float(source[claim]))
+        for flow, source in (("NewDebt", result.breakdown["NewDebt"]),
+                             ("Repaid", result.breakdown["Repaid"]))
+        for claim in ("官俸欠", "宗禄欠") if abs(float(source[claim])) > 1e-9
+    }
+    assert expect_flows, "盘面应至少产生一笔非零官俸/宗禄欠流量"
+    rows = db.conn.execute(
+        "SELECT field, delta, turn, region_id, actor, origin_ref FROM region_logs "
+        "WHERE field LIKE 'settle_%' ORDER BY id"
+    ).fetchall()
+    assert {(r["field"], float(r["delta"])) for r in rows} == expect_flows
+    assert all(r["turn"] == state.turn and r["region_id"] == "shaanxi" for r in rows)
+    assert all(r["actor"] == "户部" and r["origin_ref"] == "region:shaanxi:settle_tick"
+               for r in rows)
+
+    # 投影：两科目本回合分量进 fact brief（metric=欠禄额 族，detail 区分；
+    # NewDebt>0 受损、Repaid<0 受益符号域）
+    entries = [e for e in build_fiscal_fact_brief(db) if e["detail"].startswith("省池_")]
+    assert {(e["detail"], e["value"]) for e in entries} == {
+        (detail, float(value) if detail.endswith("_NewDebt") else -float(value))
+        for detail, value in {
+            f"省池_{claim}_{flow}": source[claim]
+            for flow, source in (("NewDebt", result.breakdown["NewDebt"]),
+                                 ("Repaid", result.breakdown["Repaid"]))
+            for claim in ("官俸欠", "宗禄欠") if abs(float(source[claim])) > 1e-9
+        }.items()
+    }
+    assert all(e["metric"] == "欠禄额" and e["affected_class"] in {"官僚", "宗藩"}
+               and e["window_turns"] == 1 for e in entries)
+    before_tsv = format_fiscal_fact_brief_tsv(
+        [e for e in build_fiscal_fact_brief(db)],
+    )
+
+    # restore E2E：关闭重开同一档文件，留痕随档恢复、投影逐字节一致
+    path = db.path
+    db.close()
+    db2 = GameDB(path, content)
+    try:
+        after_tsv = format_fiscal_fact_brief_tsv(
+            [e for e in build_fiscal_fact_brief(db2)],
+        )
+        assert after_tsv == before_tsv
+    finally:
+        db2.close()

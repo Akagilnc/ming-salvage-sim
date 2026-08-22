@@ -305,6 +305,39 @@ def build_fiscal_fact_brief(db: Any) -> List[Dict[str, Any]]:
             "affected_class": FACT_CLASS_MAP["军饷"],
             "detail": "折发_军饷#central",
         })
+
+    # ⑥ 官俸欠/宗禄欠当回合 NewDebt/Repaid 流量（#653 F2.3 owner 拍板）：省级结算桥
+    #    同事务补记进 region_logs（复用现有结算留痕载体，禁新表）的本回合分量——
+    #    NewDebt>0=受损、Repaid>0=偿还受益（value 取反入受益符号域）。restore 后
+    #    region_logs 随档恢复，投影可重建（E2E 在案）。
+    flow_rows = db.conn.execute(
+        "SELECT id, region_id, field, delta FROM region_logs "
+        "WHERE turn = ? AND field IN "
+        "('settle_官俸欠_NewDebt', 'settle_官俸欠_Repaid', "
+        " 'settle_宗禄欠_NewDebt', 'settle_宗禄欠_Repaid') ORDER BY id",
+        (turn,),
+    ).fetchall()
+    for row in flow_rows:
+        try:
+            delta = float(row["delta"] or 0)
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(delta) or abs(delta) <= 1e-9:
+            continue
+        field = str(row["field"])
+        claim = field[len("settle_"):field.rindex("_")]
+        flow = field[field.rindex("_") + 1:]
+        entries.append({
+            "subject_kind": "region",
+            "subject_id": str(row["region_id"]),
+            "region": str(row["region_id"]),
+            "metric": "欠禄额",
+            "window_turns": 1,
+            "value": delta if flow == "NewDebt" else -delta,
+            "origin_ref": f"region_logs:{int(row['id'])}",
+            "affected_class": FACT_CLASS_MAP[claim[:-1]],
+            "detail": f"省池_{claim}_{flow}",
+        })
     return entries
 
 

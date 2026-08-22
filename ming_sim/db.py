@@ -2931,7 +2931,54 @@ class GameDB:
             "UPDATE regions SET fiscal = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (json.dumps(fiscal, ensure_ascii=False), region_id),
         )
+        self._record_claim_flow_logs(region_id, result)
         return result
+
+    def _record_claim_flow_logs(self, region_id: str, result: Any) -> None:
+        """#653 F2.3（owner 拍板 r5）：省级结算桥同事务补记 官俸欠/宗禄欠 当回合
+        NewDebt/Repaid 流量——复用现有结算留痕载体 region_logs（禁新表/平行推算器/
+        第二 ledger），restore E2E 可恢复。军饷欠不经此缝（已有 per-source army 对账
+        双累加器＋army_logs 留痕，0023）；零流量不写行。本方法只写 conn，提交归调用方
+        事务边界（与 settle UPDATE 同事务、全有或全无）。"""
+        breakdown = result.breakdown or {}
+        new_debt = breakdown.get("NewDebt") or {}
+        repaid = breakdown.get("Repaid") or {}
+        state_row = self.conn.execute(
+            "SELECT turn, year, period FROM game_state WHERE id = 1"
+        ).fetchone()
+        if state_row is None:
+            state = self.load_state("")
+            log_turn, log_year, log_period = state.turn, state.year, state.period
+        else:
+            log_turn = int(state_row["turn"])
+            log_year = int(state_row["year"])
+            log_period = int(state_row["period"])
+        origin_ref = f"region:{region_id}:settle_tick"
+        for claim in ("官俸欠", "宗禄欠"):
+            for flow, source in (("NewDebt", new_debt), ("Repaid", repaid)):
+                try:
+                    amount = float(source.get(claim, 0) or 0)
+                except (TypeError, ValueError):
+                    amount = 0.0
+                if not math.isfinite(amount) or abs(amount) <= 1e-9:
+                    continue
+                old_v = float(result.new_st.get(claim, 0) or 0)
+                # 流量方向：NewDebt 增欠、Repaid 偿还；region_logs.delta 记有符号流量，
+                # old/new_value 记月末 CLAIM 存量两端（留痕语义与其余 region_logs 一致）。
+                delta = amount if flow == "NewDebt" else -amount
+                self.conn.execute(
+                    "INSERT INTO region_logs (turn, year, period, region_id, field, "
+                    "old_value, new_value, delta, reason, event_id, edict_id, actor, origin_ref) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)",
+                    (
+                        log_turn, log_year, log_period, region_id,
+                        f"settle_{claim}_{flow}",
+                        str(old_v - delta), str(old_v), delta,
+                        f"{TURN_UNIT}省池结算{'新增欠' if flow == 'NewDebt' else '偿旧欠'}"
+                        f"{format_wanliang_amount(amount)}万两",
+                        "户部", origin_ref,
+                    ),
+                )
 
     def scale_tian_fu(self, ratio: float, commit: bool = True) -> int:
         """田赋无独立字段（=tax_per_turn 减辽饷/盐税/商税的残差）。按 ratio 缩放田赋部分：
