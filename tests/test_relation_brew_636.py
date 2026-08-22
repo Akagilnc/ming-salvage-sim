@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import hashlib
+import httpx
 import json
 import os
 import signal
@@ -22,7 +23,9 @@ import sys
 import threading
 
 import pytest
+from openai import APIConnectionError, APITimeoutError
 
+import ming_sim.decree as decree_module
 from ming_sim.db import GameDB
 from ming_sim.decree import SettlementAbort, settle_with_delta
 from ming_sim.exceptions import LLMUnavailable
@@ -773,3 +776,150 @@ def test_relation_dimension_marks_emperor_edges():
     assert relation_dimension(EMPEROR_NODE, "杨嗣昌") == "君臣"
     assert relation_dimension("杨嗣昌", EMPEROR_NODE) == "君臣"
     assert relation_dimension("毕自严", "王绍徽") == "大臣"
+
+
+# -------------------------------- 庭裁 Z1：畸形酿制产出严格拒收（不修补不改写）
+
+
+def test_duplicate_json_objects_rejected_not_first_object_picked(game):
+    """庭裁 Z1 机械反例①：模型重复拼接两个完整 JSON object 时，共享解析器
+    parse_agent_json 的「截首个平衡对象」修补会把改写后的首对象当模型产出落库。
+    酿制专用边界必须整包契约错拒收：单条降级、旧摘要字节不变、pending 在册。"""
+    db, state, _ = game
+    _add_edge(db, state, source=EMPEROR_NODE, target="杨嗣昌", kind="知遇",
+              context="越次一召，擢杨嗣昌于五品郎中。", origin="audience:turn-1")
+    brew_fn = _brew_fn_factory([])
+    brew_fn.outputs = [_script(foundings=["越次一召，擢杨嗣昌于五品郎中。"], recent="原文一")]
+    run_month_end_relation_brew(db, state, brew_fn)
+    first = db.get_relation_summary(EMPEROR_NODE, "杨嗣昌")
+    assert first["recent_segment"] == "原文一"
+
+    state.turn += 1
+    state.period += 1
+    _add_edge(db, state, source=EMPEROR_NODE, target="杨嗣昌", kind="辜负",
+              context="所请被驳。", origin="audience:turn-2")
+
+    def duplicated_brew(payload_json: str) -> str:
+        return (
+            json.dumps(_script(recent="原文一"), ensure_ascii=False)
+            + json.dumps(_script(recent="原文二"), ensure_ascii=False)
+        )
+
+    report = run_month_end_relation_brew(db, state, duplicated_brew)
+    assert report["selected"] == 1 and report["degraded"] and report["brewed"] == []
+    second = db.get_relation_summary(EMPEROR_NODE, "杨嗣昌")
+    # 拒收而非择取：旧摘要（含奠基段与近况段）字节不变。
+    assert second["founding_segment"] == first["founding_segment"]
+    assert second["recent_segment"] == first["recent_segment"]
+    assert [(row["source"], row["target"]) for row in db.get_relation_brew_pending()] == [
+        (EMPEROR_NODE, "杨嗣昌")
+    ]
+
+
+def test_unescaped_control_byte_rejected_not_stripped(game):
+    """庭裁 Z1 机械反例②：recent_segment 内含未转义 U+0001 控制字节的输出，
+    共享解析器的 control-char 正则清洗会静默删字节后接受为「甲乙」——必须契约
+    错拒收（零删改），单条降级留痕。"""
+    db, state, _ = game
+    _add_edge(db, state, source=EMPEROR_NODE, target="杨嗣昌", kind="知遇",
+              context="越次一召，擢杨嗣昌于五品郎中。", origin="audience:turn-1")
+
+    def control_byte_brew(payload_json: str) -> str:
+        # 手拼 raw：内嵌未转义控制字节（json.dumps 会转义成 \u0001，不能用它）。
+        return '{"' + FOUNDINGS_KEY + '": [], "' + RECENT_KEY + '": "甲\x01乙"}'
+
+    report = run_month_end_relation_brew(db, state, control_byte_brew)
+    assert report["selected"] == 1 and report["degraded"] and report["brewed"] == []
+    assert db.get_relation_summary(EMPEROR_NODE, "杨嗣昌") is None
+    assert [(row["source"], row["target"]) for row in db.get_relation_brew_pending()] == [
+        (EMPEROR_NODE, "杨嗣昌")
+    ]
+
+
+# -------------------------------- 庭裁 Z2：删固定 max_workers=4，按批定容
+
+
+def test_batch_of_five_relations_all_enter_call_seam_concurrently(game):
+    """庭裁 Z2：worker 数按本批实际 jobs 数定容，不设固定 4 上限——5 条独立
+    关系同批时第 5 条必须能与前四条同时进入调用缝（串行或固定上限实现会在
+    Barrier 处超时破裂）。不新增速率限制/信号量/配额等任何护栏。"""
+    db, state, _ = game
+    pairs = [("甲", "乙"), ("丙", "丁"), ("戊", "己"), ("庚", "辛"), ("壬", "癸")]
+    for source, target in pairs:
+        _add_edge(db, state, source=source, target=target, kind="协作",
+                  context=f"{source}与{target}当场协作。", origin=f"audience:{source}{target}")
+
+    barrier = threading.Barrier(len(pairs), timeout=10)
+    threads: list = []
+
+    def parallel_brew(payload_json: str) -> str:
+        payload = json.loads(payload_json)
+        threads.append(threading.current_thread().name)
+        barrier.wait()  # 第 5 条排不到缝即在此超时破裂
+        return json.dumps(
+            _script(recent=f"{payload['source']}与{payload['target']}协作在案。"),
+            ensure_ascii=False,
+        )
+
+    report = run_month_end_relation_brew(db, state, parallel_brew, parallel=True)
+    assert len(report["brewed"]) == 5
+    assert len(set(threads)) == 5
+    for source, target in pairs:
+        assert db.get_relation_summary(source, target)["recent_segment"] == (
+            f"{source}与{target}协作在案。"
+        )
+
+
+# ------------------- 庭裁 Z3：生产 provider 已知故障译 typed 单条降级
+
+
+def _brew_runner_leg(game, monkeypatch, provider_error):
+    """经生产注入工厂 _make_relation_brew_runner 构造真实闭包，把 provider 调用
+    替换为抛指定已知异常；返回已 prepare 的 Leg。"""
+    db, state, _ = game
+    _add_edge(db, state, source="温体仁", target="周延儒", kind="结怨",
+              context="温体仁当殿讦周延儒。", origin="audience:turn-1")
+
+    monkeypatch.setattr(decree_module, "create_relation_brew_agent", lambda cfg, adb: object())
+
+    def failing_run(agent, prompt, tag):
+        raise provider_error
+
+    monkeypatch.setattr(decree_module, "run_agent_text", failing_run)
+    runner = decree_module._make_relation_brew_runner(None, None)
+    leg = runner(
+        state, db,
+        settled_turn=int(state.turn),
+        settled_year=int(state.year),
+        settled_period=int(state.period),
+    )
+    assert leg.prepare()
+    return db, leg
+
+
+@pytest.mark.parametrize("error_factory", [
+    lambda: APITimeoutError(request=httpx.Request("POST", "https://llm.invalid/v1")),
+    lambda: APIConnectionError(request=httpx.Request("POST", "https://llm.invalid/v1")),
+], ids=["timeout", "connection"])
+def test_provider_known_fault_translates_to_typed_single_degradation(game, monkeypatch, error_factory):
+    """庭裁 Z3：生产 provider 直抛的超时/连接异常在调用适配缝译成声明类型
+    LLMUnavailable（保留 cause），_brew_one 依法单条降级：旧摘要不变、pending
+    保留、结算不因该条报程序错。KeyError/ValueError 程序错不在捕获列，照旧
+    响亮（既有测试钉死）。"""
+    provider_error = error_factory()
+    db, leg = _brew_runner_leg(game, monkeypatch, provider_error)
+    leg.brew()
+    # 译型保留 cause：outcomes 里是 LLMUnavailable，原异常挂在 __cause__。
+    job, parsed, exc = leg.outcomes[0]
+    assert exc is not None and parsed is None
+    assert isinstance(exc, LLMUnavailable)
+    assert isinstance(exc.__cause__, type(provider_error))
+
+    report = leg.persist()
+    source, target = job["source"], job["target"]
+    assert report["degraded"] == [{"source": source, "target": target, "reason": str(exc)}]
+    assert report["brewed"] == []
+    assert db.get_relation_summary(source, target) is None
+    assert [(row["source"], row["target"]) for row in db.get_relation_brew_pending()] == [
+        (source, target)
+    ]

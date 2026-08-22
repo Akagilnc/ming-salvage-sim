@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Dict, Iterator, List, Mapping, Optional, Protocol, Sequence
 
 from agno.db.sqlite import SqliteDb
+from openai import APIConnectionError, APIStatusError, APITimeoutError
 
 from ming_sim.agents import (
     _dump_llm_messages,
@@ -1923,7 +1924,15 @@ def _make_relation_brew_runner(
                 settled_period: int) -> MonthEndRelationBrewLeg:
         def _brew_fn(payload_json: str) -> str:
             agent = create_relation_brew_agent(llm_config, agno_db)
-            return run_agent_text(agent, payload_json, tag="relation-brew")
+            try:
+                return run_agent_text(agent, payload_json, tag="relation-brew")
+            except (APITimeoutError, APIConnectionError, APIStatusError) as error:
+                # 生产 provider 调用适配缝（庭裁 Z3）：只捕实际 provider 的已知
+                # 超时/连接/HTTP 异常，复用 llm_unavailable_from_error 译成声明
+                # 类型 LLMUnavailable（保留原异常为 cause），_brew_one 调用段
+                # 依法单条降级留痕。不宽吞 Exception：KeyError/ValueError 等
+                # 程序错照旧响亮上抛（ADR 0008）。
+                raise llm_unavailable_from_error(error, "关系酿制") from error
 
         return MonthEndRelationBrewLeg(
             db, state, _brew_fn,
