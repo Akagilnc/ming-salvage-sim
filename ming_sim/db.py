@@ -4243,7 +4243,7 @@ class GameDB:
         out: List[Dict[str, float | str]] = []
         rows = self.conn.execute(
             """
-            SELECT id, name, manpower, salary_rate, owner_power, pay_source_region, morale,
+            SELECT id, name, manpower, salary_rate, owner_power, pay_source_region, morale, loyalty,
                    province_pay_share, central_pay_share, province_pay_arrears,
                    central_pay_arrears, is_tusi, self_funded_pay
             FROM armies
@@ -4266,6 +4266,7 @@ class GameDB:
                 "due": army_needed(row) * float(row["province_pay_share"] or 0),
                 "total_due": army_needed(row),
                 "morale": float(row["morale"]),
+                "loyalty": int(row["loyalty"]),
                 "province_pay_arrears": float(row["province_pay_arrears"] or 0),
                 "central_pay_arrears": float(row["central_pay_arrears"] or 0),
             })
@@ -4377,7 +4378,7 @@ class GameDB:
     ) -> None:
         if not pay_rows:
             return
-        from ming_sim.flows import army_pay_morale_delta
+        from ming_sim.flows import army_loyalty_tick_delta, army_pay_morale_delta
 
         breakdown = result.breakdown or {}
         new_debt = float((breakdown.get("NewDebt") or {}).get("军饷欠", 0) or 0)
@@ -4449,17 +4450,29 @@ class GameDB:
                 )
             )
             old_morale = int(row["morale"])
+            old_loyalty = int(row["loyalty"])
             total_due = float(row["total_due"])
             morale_delta = army_pay_morale_delta(total_due, total_shortfall, old_total_arrears)
             new_morale = max(0, min(100, old_morale + morale_delta))
+            # #314：省份额军的军心与 morale 同缝、用两源结算后合计欠饷分档。
+            loyalty_delta = army_loyalty_tick_delta(
+                province_arrears + central_arrears, total_due
+            )
+            new_loyalty = max(0, min(100, old_loyalty + loyalty_delta))
             self.conn.execute(
                 """
                 UPDATE armies
-                SET province_pay_arrears = ?, arrears = ?, morale = ?,
+                SET province_pay_arrears = ?, arrears = ?, morale = ?, loyalty = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
-                (province_arrears, province_arrears + central_arrears, new_morale, army_id),
+                (
+                    province_arrears,
+                    province_arrears + central_arrears,
+                    new_morale,
+                    new_loyalty,
+                    army_id,
+                ),
             )
             province_delta = province_arrears - old_province_arrears
             reason = f"{TURN_UNIT}省源军饷分账"
@@ -4503,6 +4516,20 @@ class GameDB:
                     (
                         log_turn, log_year, log_period, army_id,
                         str(old_morale), str(new_morale), morale_actual_delta, reason,
+                    ),
+                )
+            loyalty_actual_delta = new_loyalty - old_loyalty
+            if loyalty_actual_delta != 0:
+                self.conn.execute(
+                    """
+                    INSERT INTO army_logs
+                    (turn, year, period, army_id, field, old_value, new_value, delta,
+                     reason, event_id, edict_id, actor)
+                    VALUES (?, ?, ?, ?, 'loyalty', ?, ?, ?, ?, NULL, NULL, '户部')
+                    """,
+                    (
+                        log_turn, log_year, log_period, army_id,
+                        str(old_loyalty), str(new_loyalty), loyalty_actual_delta, reason,
                     ),
                 )
 

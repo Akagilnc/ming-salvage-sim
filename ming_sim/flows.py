@@ -1321,17 +1321,18 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
             db._current_month_central_pay_shortfalls[army_id] = shortfall
             db._current_month_pay_opening_arrears[army_id] = old_arrears
 
-            # #314 军心月度 tick：欠饷月数按合计 arrears ÷ 月应发(全量 needed，非中央份额) 分档。
+            # #314 军心月度 tick：与 #287 morale 同构——纯中央军本路 tick；
+            # 有省份额的军让给 _apply_region_army_pay_tick（两源结算后用合计欠饷）。
             # 本路 SELECT 已滤 ming+非土司+非自养；needed<=0 已上方 continue 短路。
-            loyalty_delta = army_loyalty_tick_delta(new_arrears, full_needed)
-            new_loyalty = max(0, min(100, old_loyalty + loyalty_delta))
-
             province_pay_share = float(row["province_pay_share"] or 0)
             if province_pay_share > 0:
                 morale_delta = 0
+                loyalty_delta = 0
             else:
                 morale_delta = army_pay_morale_delta(full_needed, shortfall, old_arrears)
+                loyalty_delta = army_loyalty_tick_delta(new_arrears, full_needed)
             new_morale = max(0, min(100, old_morale + morale_delta))
+            new_loyalty = max(0, min(100, old_loyalty + loyalty_delta))
 
             db.conn.execute(
                 """
