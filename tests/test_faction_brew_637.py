@@ -24,6 +24,8 @@ from ming_sim.exceptions import LLMUnavailable
 from ming_sim.faction_brew import (
     STANCE_KEY,
     VIEW_FACTION_STANCE,
+    build_faction_brew_input,
+    collect_new_edge_events_for_faction,
     project_character_factions,
     select_faction_brew_targets,
 )
@@ -367,3 +369,138 @@ def test_zero_writes_to_factions_numeric_columns_across_all_seams(game):
     run_month_end_relation_brew(db, state, _dual_brew_fn_factory([]))
     assert db.get_faction_brew_pending() == []
     assert _faction_rows(db) == before
+
+
+# ------------- #637 codex P2：new_events 必须保留 source/target 结构字段
+
+def _minister(db):
+    return str(db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
+        "ORDER BY name LIMIT 1"
+    ).fetchone()["name"])
+
+
+def _eligible_dossier(db, state, holder, *, target_kind="issue", target_id="清丈田亩"):
+    """真实 effect-eligible 案卷（同 #611 测试口径）作授权变更来源。"""
+    dossier_id = db.create_decree_dossier(
+        state,
+        action_type="authorization",
+        decree_text="授以便宜行事之权",
+        target_kind=target_kind,
+        target_id=target_id,
+        executor_kind="character",
+        executor_id=holder,
+        participants=[
+            {"character_id": holder, "tier": "主办", "role": "承办"},
+        ],
+        payload={"mode": "ordinary"},
+    )
+    db.record_dossier_decision(dossier_id, "promulgated")
+    assert db.dossier_authorizes_effects(dossier_id)
+    return db.get_decree_dossier(dossier_id)
+
+
+def test_new_events_preserve_source_target_equal_to_db_rows(game):
+    """(a) 机械断言：每条 new_events 的 source/target 与 DB 行相等。"""
+    db, state, content = game
+    holder_a, holder_b = _minister(db), "王绍徽"
+    _add_edge(db, state, source=holder_a, target=holder_b, kind="结怨",
+              context=f"{holder_a}当殿讦{holder_b}。", origin="audience:turn-1")
+    targets = select_faction_brew_targets(
+        db, year=int(state.year), period=int(state.period),
+    )
+    assert targets
+    for target in targets:
+        events = collect_new_edge_events_for_faction(
+            db, faction=target["faction"], watermark=target["watermark"],
+        )
+        payload = build_faction_brew_input(
+            faction=target["faction"], year=int(state.year),
+            period=int(state.period), summary=target["summary"],
+            new_events=events, has_pending=target["has_pending"],
+        )
+        for projected, row in zip(payload["new_events"], events):
+            assert projected["source"] == row["source"]
+            assert projected["target"] == row["target"]
+
+
+def test_authority_revoke_edge_reaches_holder_faction_with_emperor_target(game):
+    """(b) 本 finding 原始缺陷用例：复刻收权·罢差路径（经 issues.py 落一条
+    holder→EMPEROR 结怨边，context 不含参与方名字），断言该事件进入该 holder
+    党籍派的酿制输入且 target==EMPEROR_NODE——方向事实只能靠 source/target。"""
+    from ming_sim import issues as issue_engine
+
+    db, state, content = game
+    holder = _minister(db)
+    projection = project_character_factions(db)
+    holder_faction = projection[holder]
+    domain = "issue:清丈田亩"
+    grant_dossier = _eligible_dossier(db, state, holder)
+    grant_result = issue_engine.apply_score_extraction(db, state, {
+        "authority_changes": [{
+            "动作": "授予", "holder_id": holder, "privilege": "便宜行事",
+            "scope": domain, "dossier_id": grant_dossier["id"],
+        }],
+    }, content=content)["authority_changes"][0]
+    assert grant_result.get("rejected") is not True
+    authority_id = int(grant_result["authority_id"])
+
+    revoke_dossier = _eligible_dossier(db, state, holder, target_id="收权清丈")
+    revoke_result = issue_engine.apply_score_extraction(db, state, {
+        "authority_changes": [{
+            "动作": "收回", "authority_id": authority_id,
+            "dossier_id": revoke_dossier["id"],
+        }],
+    }, content=content)["authority_changes"][0]
+    assert revoke_result.get("rejected") is not True
+
+    # DB 里确实落了 holder→EMPEROR 的结怨边（context 只有权限名＋辖域）。
+    edges = db.get_relation_edge_events(
+        source=holder, target=EMPEROR_NODE, event_kind="结怨",
+    )
+    assert len(edges) == 1
+    assert edges[0]["context"] == f"收权·罢差·便宜行事·{domain}"
+
+    targets = select_faction_brew_targets(
+        db, year=int(state.year), period=int(state.period),
+    )
+    assert [row["faction"] for row in targets] == [holder_faction]
+
+    calls: list = []
+    run_month_end_relation_brew(db, state, _dual_brew_fn_factory(calls))
+    payloads = [
+        payload for payload in calls if payload.get("view") == VIEW_FACTION_STANCE
+    ]
+    assert len(payloads) == 1
+    matching = [
+        item for item in payloads[0]["new_events"]
+        if item["origin"].startswith(f"authority_revoke:{authority_id}")
+    ]
+    assert len(matching) == 1
+    assert matching[0]["source"] == holder
+    assert matching[0]["target"] == EMPEROR_NODE
+
+
+def test_new_event_fields_are_pure_data_no_prose_composition(game):
+    """(c) 新增字段为纯数据、无任何拼接散文（ADR 0142：给数据不给话术）。"""
+    db, state, _ = game
+    _add_edge(db, state, source="温体仁", target=EMPEROR_NODE, kind="结怨",
+              context="收权·罢差·便宜行事·issue:清丈田亩", origin="audience:turn-1")
+    targets = select_faction_brew_targets(
+        db, year=int(state.year), period=int(state.period),
+    )
+    assert targets
+    events = collect_new_edge_events_for_faction(
+        db, faction=targets[0]["faction"], watermark=targets[0]["watermark"],
+    )
+    payload = build_faction_brew_input(
+        faction=targets[0]["faction"], year=int(state.year),
+        period=int(state.period), summary=targets[0]["summary"],
+        new_events=events, has_pending=targets[0]["has_pending"],
+    )
+    for item in payload["new_events"]:
+        # 新增字段值必须与 DB 列逐字节相同——非任何 "{source}（{faction}）与{target}…" 式拼接串。
+        row = next(r for r in events if r["origin"] == item["origin"])
+        assert item["source"] == row["source"]
+        assert item["target"] == row["target"]
+        assert isinstance(item["source"], str) and isinstance(item["target"], str)
