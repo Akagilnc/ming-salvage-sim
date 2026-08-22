@@ -588,6 +588,23 @@ def army_pay_morale_delta(total_due: float, current_shortfall: float, opening_ar
     return 0
 
 
+def army_loyalty_tick_delta(new_arrears: float, full_needed: int) -> int:
+    """#314 军心月度 tick：欠饷月数 = floor(合计 arrears / army_needed(月应发))，分档确定性增量。
+
+    arrears==0（满饷）→ loyalty +5 回血；0<欠<3 月 → 0（dead-band，短欠忍得住）；
+    floor≥3 月 → -5（欠到第 3 月起逐月流失）。clamp 由调用方落库时做（[0,100]）。
+    full_needed<=0 不除零（零兵残军短路，调用方 continue）。
+    """
+    if full_needed <= 0:
+        return 0
+    months_in_arrears = math.floor(max(0.0, float(new_arrears)) / full_needed)
+    if months_in_arrears <= 0:
+        return 5
+    if months_in_arrears < 3:
+        return 0
+    return -5
+
+
 class _HubOutboundResult(NamedTuple):
     """Substrate hub top-tier outbound allocation for this fixed-flow tick."""
     k: float
@@ -1194,7 +1211,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
         db._current_month_pay_opening_arrears = {}
         army_rows_raw = db.conn.execute(
             """
-            SELECT id, name, manpower, salary_rate, owner_power, arrears, morale,
+            SELECT id, name, manpower, salary_rate, owner_power, arrears, morale, loyalty,
                    pay_source_region, province_pay_share, central_pay_share,
                    province_pay_arrears, central_pay_arrears, is_tusi, self_funded_pay
             FROM armies
@@ -1292,6 +1309,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
             shortfall = max(0.0, needed - pay_current)
             old_arrears = float(row["arrears"] or 0)
             old_morale = int(row["morale"])
+            old_loyalty = int(row["loyalty"])
 
             old_central_arrears = float(row["central_pay_arrears"] or 0)
             province_arrears = float(row["province_pay_arrears"] or 0)
@@ -1299,6 +1317,11 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
             new_arrears = max(0.0, province_arrears + central_arrears)
             db._current_month_central_pay_shortfalls[army_id] = shortfall
             db._current_month_pay_opening_arrears[army_id] = old_arrears
+
+            # #314 军心月度 tick：欠饷月数按合计 arrears ÷ 月应发(全量 needed，非中央份额) 分档。
+            # 本路 SELECT 已滤 ming+非土司+非自养；needed<=0 已上方 continue 短路。
+            loyalty_delta = army_loyalty_tick_delta(new_arrears, full_needed)
+            new_loyalty = max(0, min(100, old_loyalty + loyalty_delta))
 
             province_pay_share = float(row["province_pay_share"] or 0)
             if province_pay_share > 0:
@@ -1310,11 +1333,11 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
             db.conn.execute(
                 """
                 UPDATE armies
-                SET central_pay_arrears = ?, arrears = ?, morale = ?,
+                SET central_pay_arrears = ?, arrears = ?, morale = ?, loyalty = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
-                (central_arrears, new_arrears, new_morale, army_id),
+                (central_arrears, new_arrears, new_morale, new_loyalty, army_id),
             )
             if shortfall > 0:
                 reason_tag = (
@@ -1333,6 +1356,9 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                      reason_tag),
                     (state.turn, state.year, state.period, army_id,
                      "morale", str(old_morale), str(new_morale), new_morale - old_morale,
+                     reason_tag),
+                    (state.turn, state.year, state.period, army_id,
+                     "loyalty", str(old_loyalty), str(new_loyalty), new_loyalty - old_loyalty,
                      reason_tag),
                 ],
             )
@@ -1373,7 +1399,8 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
     if db.fiscal_engine() == "legacy":
         army_rows_raw = db.conn.execute(
             # #44 army_needed 需 manpower/salary_rate/owner_power（应发挂钩兵力派生）
-            "SELECT id, name, manpower, salary_rate, owner_power, arrears, morale FROM armies"
+            "SELECT id, name, manpower, salary_rate, owner_power, arrears, morale, loyalty, "
+            "is_tusi, self_funded_pay FROM armies"
         ).fetchall()
         if not army_rows_raw:
             raise SystemExit("fiscal_tick: armies 表无数据，中止。")
@@ -1403,9 +1430,18 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
             morale_delta = army_pay_morale_delta(needed, shortfall, old_arrears)
             new_morale = max(0, min(100, old_morale + morale_delta))
 
+            # #314 军心月度 tick：仅 ming 且非土司非自养军；欠饷月数=floor(合计 arrears/needed)。
+            old_loyalty = int(row["loyalty"])
+            if str(row["owner_power"]) == "ming" and not bool(row["is_tusi"]) \
+                    and not bool(row["self_funded_pay"]):
+                loyalty_delta = army_loyalty_tick_delta(new_arrears, needed)
+            else:
+                loyalty_delta = 0
+            new_loyalty = max(0, min(100, old_loyalty + loyalty_delta))
+
             db.conn.execute(
-                "UPDATE armies SET arrears = ?, morale = ? WHERE id = ?",
-                (new_arrears, new_morale, army_id),
+                "UPDATE armies SET arrears = ?, morale = ?, loyalty = ? WHERE id = ?",
+                (new_arrears, new_morale, new_loyalty, army_id),
             )
             if shortfall > 0:
                 reason_tag = (
@@ -1424,6 +1460,9 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                      reason_tag),
                     (state.turn, state.year, state.period, army_id,
                      "morale", str(old_morale), str(new_morale), new_morale - old_morale,
+                     reason_tag),
+                    (state.turn, state.year, state.period, army_id,
+                     "loyalty", str(old_loyalty), str(new_loyalty), new_loyalty - old_loyalty,
                      reason_tag),
                 ],
             )
