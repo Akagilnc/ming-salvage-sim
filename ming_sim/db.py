@@ -16882,6 +16882,7 @@ class GameDB:
             self.set_character_status(state, key, "dismissed", reason="奉旨罢黜")
             ch = content.characters.get(key)
             if ch is not None:
+                ch.status = "dismissed"
                 ch.office = ""   # set_character_status 已清 DB office,内存须跟上(roster 读 c.office)
             self.set_character_transit(key, content=content)
             # 对话确认回合中落库,刷 Agent 让被罢者本回合后续不再以旧活跃态被召对(线上 gemini)。

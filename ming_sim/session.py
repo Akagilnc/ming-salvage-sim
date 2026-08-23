@@ -511,6 +511,7 @@ def apply_appointment(
                 reason=f"{office}改授{name}，原任去职",
                 commit=commit,
             )
+            old.status = "dismissed"
             db.set_character_transit(replaces, content=content, commit=commit)
             displaced = replaces
 
