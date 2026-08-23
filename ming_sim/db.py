@@ -978,6 +978,7 @@ class GameDB:
                 arrears INTEGER NOT NULL,
                 province_pay_arrears REAL NOT NULL DEFAULT 0,
                 central_pay_arrears REAL NOT NULL DEFAULT 0,
+                consecutive_pay_shortfall_months INTEGER NOT NULL DEFAULT 0,
                 pay_source_region TEXT NOT NULL DEFAULT '',
                 province_pay_share REAL NOT NULL DEFAULT 0,
                 central_pay_share REAL NOT NULL DEFAULT 0,
@@ -2033,6 +2034,7 @@ class GameDB:
         self.ensure_column("armies", "owner_power", "TEXT NOT NULL DEFAULT 'ming'")
         self.ensure_column("armies", "province_pay_arrears", "REAL NOT NULL DEFAULT 0")
         self.ensure_column("armies", "central_pay_arrears", "REAL NOT NULL DEFAULT 0")
+        self.ensure_column("armies", "consecutive_pay_shortfall_months", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("armies", "pay_source_region", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("armies", "province_pay_share", "REAL NOT NULL DEFAULT 0")
         self.ensure_column("armies", "central_pay_share", "REAL NOT NULL DEFAULT 0")
@@ -4492,10 +4494,13 @@ class GameDB:
                 """
                 UPDATE armies
                 SET province_pay_arrears = ?, arrears = ?, morale = ?,
+                    consecutive_pay_shortfall_months = CASE
+                        WHEN ? > 1e-9 THEN consecutive_pay_shortfall_months + 1 ELSE 0 END,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
-                (province_arrears, province_arrears + central_arrears, new_morale, army_id),
+                (province_arrears, province_arrears + central_arrears, new_morale,
+                 total_shortfall, army_id),
             )
             province_delta = province_arrears - old_province_arrears
             reason = f"{TURN_UNIT}省源军饷分账"

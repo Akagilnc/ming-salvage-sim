@@ -28,16 +28,21 @@ def _bound_case(db, state):
     return did, str(army["id"]), pay
 
 
-def test_candidate_is_bound_to_concrete_dossier_army_and_three_real_months(game):
+def test_candidate_reports_continuous_shortfall_fact_without_duration_gate(game):
     db, state, _ = game
     did, army_id, pay = _bound_case(db, state)
-    candidates = build_covert_levy_candidates(db)
-    assert candidates == [pytest.approx({
-        "dossier_id": did, "army_id": army_id, "arrears": pay * 3,
-        "monthly_pay": pay, "suspended_months": 3.0,
-    })]
-    db.conn.execute("UPDATE armies SET arrears=? WHERE id=?", (pay * 2.99, army_id))
-    assert build_covert_levy_candidates(db) == []
+    db.conn.execute(
+        """UPDATE armies
+           SET arrears=?, consecutive_pay_shortfall_months=1 WHERE id=?""",
+        (pay * 2.99, army_id),
+    )
+
+    assert build_covert_levy_candidates(db) == [{
+        "dossier_id": did,
+        "army_id": army_id,
+        "arrears": pytest.approx(pay * 2.99),
+        "consecutive_pay_shortfall_months": 1,
+    }]
 
 
 def test_structured_verdict_splits_report_from_canonical_actual_effects(game):
