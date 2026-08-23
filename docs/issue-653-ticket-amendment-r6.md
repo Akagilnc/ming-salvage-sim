@@ -10,3 +10,9 @@
 - **F3.2 验收三断言①（r6 修订版）**：零新增 LLM 调用、extractor 模块集合与开工 head 动态计数逐字一致、既有全部 extractor 仍 parallel=True；②③原文不动。
 
 **修法二（F1.6 残留冲突条款显式废止）**：r1 案 F1.6「省池与中央 hub 共同服从旨意」句中「全国 override 进 hub tier」一语**废止**——hub tier（京运补＋中央军饷）依 r2 双池两序**恒最先且不可 override**（0023 D9 合并 k 分母不变）；同句「0023 D9 合并 k 分母与 hub outbound 守恒不变式不动」照旧保留。F1.6 验收表无需改动（表内本无 hub override 案例）；F1.0–F1.5 及 r2–r5 全部不动。
+
+## 庭裁修正案 r7（最新 owner 裁决：撤销财政方向票面限制）
+
+F3.2 已按最新裁决直接改写为「LLM 综合归因与可断言边界」：`fiscal_fact_brief` 继续作为账本事实输入，但最终 `class_delta.satisfaction` 由既有 internal extractor 结合财政、事件、任免等同回合事实判断。仅含单一财政受损事实的最小盘面仍须证明事实包进入 internal extractor，但不再断言输出方向。
+
+r1 F3.2 中以财政受损/受益强制净值方向、把方向不符视为错误并二次处理的条款，以及验收②对应断言，全部废止；冻结验收映射已同步改写。实现不得扩 `class_delta` schema，不得拆增财政/其它分量，不得新增 LLM 调用或为财政方向增加 retry/clamp。F3.1 的事实包、r6 动态 extractor 不变式及 P4 定性叙事边界保持不变。
