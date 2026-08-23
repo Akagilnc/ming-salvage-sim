@@ -1948,11 +1948,19 @@ def test_region_army_pay_tick_treats_missing_breakdown_as_no_delta(fresh_db):
     assert after["morale"] == before["morale"]
 
 
-def test_region_army_morale_haircut_denominator_includes_standalone_funnel(fresh_db):
-    # 真实省结算链：军行兼有省/中央饷源，省池军饷 Due 另含 standalone funnel；
-    # 省份额全欠时，D11 分母必须包含完整 14，而非只拿军行省份额。
+def test_region_army_morale_haircut_denominator_includes_standalone_funnel(fresh_game):
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    state.metrics["国库"] = 2
+    db.save_state(state)
+    _set_all_settle_grants(db, 0)
     _write_settle(
-        fresh_db, "shaanxi", {
+        db, "liaodong", {
+            "_meta": {
+                "postures": ["纯军饷漏斗"],
+                "standalone_military_pay_due": 10,
+            },
             "st": {
                 "省库库银": 0, "C_地方截留": 0, "C_中饱": 0,
                 "C_漂没": 0, "C_eff损耗": 0, "民欠旧赋": 0,
@@ -1967,27 +1975,41 @@ def test_region_army_morale_haircut_denominator_includes_standalone_funnel(fresh
             },
         },
     )
-    fresh_db.conn.execute(
-        "UPDATE armies SET self_funded_pay=1, is_tusi=1, province_pay_share=0, "
-        "central_pay_share=0, pay_source_region='', morale=80"
+    db.conn.execute("UPDATE buildings SET output_amount=0, maintenance=0")
+    _zero_non_meta_fiscal_config(db)
+    _set_fiscal_config_value(db, "due_haircut_bp_军饷@liaodong#province", 5000)
+    _set_fiscal_config_value(db, "due_haircut_bp_军饷@liaodong#central", 5000)
+    db.conn.execute(
+        "UPDATE regions SET tax_per_turn=0, fiscal=json_set(fiscal, "
+        "'$.huang_tian',0,'$.liao_xiang',0,'$.salt_tax',0,'$.commerce_tax',0)"
     )
-    fresh_db.conn.execute(
+    db.conn.execute(
+        "UPDATE armies SET self_funded_pay=1, is_tusi=1, province_pay_share=0, "
+        "central_pay_share=0, pay_source_region='', province_pay_arrears=0, "
+        "central_pay_arrears=0, arrears=0, morale=80"
+    )
+    db.conn.execute(
         "UPDATE armies SET self_funded_pay=0, is_tusi=0, owner_power='ming', "
-        "pay_source_region='shaanxi', province_pay_share=.4, central_pay_share=.6, "
+        "pay_source_region='liaodong', province_pay_share=.4, central_pay_share=.6, "
         "province_pay_arrears=0, central_pay_arrears=0, arrears=0, morale=80, "
         "manpower=10000, salary_rate=10 WHERE id='guanning'"
     )
-    fresh_db.conn.commit()
+    db.conn.commit()
 
-    result = fresh_db.settle_province_tick("shaanxi")
-    army = fresh_db.conn.execute(
-        "SELECT morale, province_pay_arrears, central_pay_share FROM armies "
-        "WHERE id='guanning'"
+    flow_rows = flows_mod.apply_fixed_period_flows(db, state)
+
+    central = next(row for row in flow_rows if row.get("category") == "中央军饷")
+    army = db.conn.execute(
+        "SELECT morale, province_pay_arrears, central_pay_arrears "
+        "FROM armies WHERE id='guanning'"
     ).fetchone()
-    assert result.breakdown["NewDebt"]["军饷欠"] == pytest.approx(4)
-    assert army["central_pay_share"] == pytest.approx(.6)
-    assert army["province_pay_arrears"] == pytest.approx(4)
-    assert army["morale"] == 72
+    settle = _read_settle(db, "liaodong")
+    assert settle["st"]["军饷欠"] == pytest.approx(7)
+    assert army["province_pay_arrears"] == pytest.approx(2)
+    assert central["needed"] == pytest.approx(3)
+    assert central["shortfall"] == pytest.approx(1)
+    assert army["central_pay_arrears"] == pytest.approx(1)
+    assert army["morale"] == 75
 
 
 def test_fixed_flows_substrate_hub_failure_rolls_back_cutover_writes(fresh_game, monkeypatch):
