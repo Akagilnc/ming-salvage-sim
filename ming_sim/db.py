@@ -10543,16 +10543,38 @@ class GameDB:
 
     # ── HITL 决策点 ─────────────────────────────────────────────────────
     def save_pending_decisions(self, turn: int, decisions: List[Dict[str, object]]) -> None:
-        """覆写本回合待裁决策点（先清后插），idx 按列表顺序。choice 初始空（待皇帝选）。"""
-        self.conn.execute("DELETE FROM pending_decisions WHERE turn = ?", (int(turn),))
+        """覆写本回合待裁 decision 行（先清后插），idx 按列表顺序。choice 初始空（待皇帝选）。
+
+        #656 A6/F2 不变式：只清只写 kind='decision'（与 clear_pending_decisions/
+        save_rescript_drafts 同款按 kind 收窄）——'rescript_draft' 票拟行跨月留存，
+        不被 decision 盘面覆写连带清除。
+        """
+        turn = int(turn)
+        # 两种 kind 共用 (turn, idx) 主键。先把保留的 draft 搬到负数暂存区，
+        # 删除旧 decisions 后再按新盘面长度接续重排；draft 的内容与 event_id
+        # 均不改，decision 数量增减也不会与旧 draft idx 相撞。
+        self.conn.execute(
+            "UPDATE pending_decisions SET idx = -idx - 1 "
+            "WHERE turn = ? AND kind = 'rescript_draft'",
+            (turn,),
+        )
+        draft_rows = self.conn.execute(
+            "SELECT idx FROM pending_decisions "
+            "WHERE turn = ? AND kind = 'rescript_draft' ORDER BY idx DESC",
+            (turn,),
+        ).fetchall()
+        self.conn.execute(
+            "DELETE FROM pending_decisions WHERE turn = ? AND kind = 'decision'",
+            (turn,),
+        )
         for idx, d in enumerate(decisions):
             self.conn.execute(
                 """INSERT INTO pending_decisions
                    (turn, idx, event_id, title, context, rejection_reason, opposition,
-                    options_json, choice_json, status)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', 'pending')""",
+                    options_json, choice_json, status, kind)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', 'pending', 'decision')""",
                 (
-                    int(turn), idx,
+                    turn, idx,
                     str(d.get("event_id") or ""),
                     str(d.get("title") or ""),
                     str(d.get("context") or ""),
@@ -10560,6 +10582,11 @@ class GameDB:
                     str(d.get("opposition") or ""),
                     json.dumps(d.get("options") or [], ensure_ascii=False),
                 ),
+            )
+        for offset, row in enumerate(draft_rows):
+            self.conn.execute(
+                "UPDATE pending_decisions SET idx = ? WHERE turn = ? AND idx = ?",
+                (len(decisions) + offset, turn, int(row["idx"])),
             )
         self.conn.commit()
 
