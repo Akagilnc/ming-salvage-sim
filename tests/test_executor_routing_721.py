@@ -12,6 +12,7 @@ from ming_sim.action_materialize import (
     stage_assignment_candidate,
     stage_punishment_candidate,
 )
+from ming_sim.db import atomic
 from ming_sim.decree import pre_settle
 from ming_sim.executor_routing import (
     classify_execution_coverage,
@@ -368,6 +369,42 @@ def test_draft_batch_isolates_routing_rejection(env, monkeypatch, tmp_path):
     assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers WHERE directive_id=?", (good,)).fetchone()[0] == 1
     assert db.conn.execute("SELECT COUNT(*) FROM rejection_reports").fetchone()[0] == 1
     assert mirror.exists()
+
+
+@pytest.mark.parametrize("owner", ["confirm", "batch"])
+def test_directive_routing_rejection_rolls_back_with_outer_owner(
+    env, monkeypatch, tmp_path, owner,
+):
+    db, state, _ = env
+    mirror = tmp_path / f"{owner}-rollback.jsonl"
+    monkeypatch.setattr("ming_sim.error_pack.rejections_jsonl_path", lambda: str(mirror))
+    status = "pending" if owner == "confirm" else "draft"
+    directive_id = db.add_directive(
+        state, None, "修仙", "test", status=status,
+        dossier_payload=_directive_payload("修仙"),
+    )
+
+    with pytest.raises(RuntimeError, match="force outer rollback"):
+        with atomic(db):
+            if owner == "confirm":
+                db.confirm_directive(directive_id, state)
+            else:
+                db.ensure_dossiers_for_draft_directives(state)
+            raise RuntimeError("force outer rollback")
+
+    assert db.conn.execute(
+        "SELECT status FROM turn_directives WHERE id=?", (directive_id,),
+    ).fetchone()[0] == status
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM decree_dossiers WHERE directive_id=?", (directive_id,),
+    ).fetchone()[0] == 0
+    table = db.conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='rejection_reports'"
+    ).fetchone()
+    assert table is None or db.conn.execute(
+        "SELECT COUNT(*) FROM rejection_reports"
+    ).fetchone()[0] == 0
+    assert not mirror.exists()
 
 
 @pytest.mark.parametrize("action", ["assignment", "military_order"])
