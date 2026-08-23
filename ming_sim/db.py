@@ -986,6 +986,8 @@ class GameDB:
                 self_funded_pay INTEGER NOT NULL DEFAULT 0,
                 mutiny_status TEXT NOT NULL DEFAULT '',
                 is_mutinied INTEGER NOT NULL DEFAULT 0 CHECK(is_mutinied IN (0, 1)),
+                mutiny_count INTEGER NOT NULL DEFAULT 0,
+                mutiny_probation INTEGER NOT NULL DEFAULT 0,
                 mobility INTEGER NOT NULL,
                 loyalty INTEGER NOT NULL,
                 firearm_equipment INTEGER NOT NULL DEFAULT 0,
@@ -2043,6 +2045,8 @@ class GameDB:
         self.ensure_column("armies", "self_funded_pay", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("armies", "mutiny_status", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("armies", "is_mutinied", "INTEGER NOT NULL DEFAULT 0 CHECK(is_mutinied IN (0, 1))")
+        self.ensure_column("armies", "mutiny_count", "INTEGER NOT NULL DEFAULT 0")
+        self.ensure_column("armies", "mutiny_probation", "INTEGER NOT NULL DEFAULT 0")
         # 火器装备(鸟铳,野战+守城)/大炮装备(红夷炮,守城攻城、不利野战)：simulator 软判用的两条军备轴
         self.ensure_column("armies", "firearm_equipment", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("armies", "cannon_equipment", "INTEGER NOT NULL DEFAULT 0")
