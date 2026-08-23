@@ -376,6 +376,8 @@ def _world(
     result: Dict[str, str] = {"public": "登基伊始，朝廷暂无前回合奏报。"}
 
     visible_domains = _visible_domains(db, office_type)
+    from ming_sim.population_pressure import regional_displaced_pressure_brief
+
     # Build only the current-state rails that this office is entitled to read.
     # Besides keeping the returned projection scoped, this prevents a future
     # report implementation from leaking a sensitive cross-domain payload via
@@ -383,7 +385,10 @@ def _world(
     report_builders = {
         "treasury": lambda: db.treasury_report(state),
         "military": lambda: db.army_report(limit=30),
-        "regional": lambda: db.region_report(limit=10),
+        "regional": lambda: "\n".join((
+            db.region_report(limit=10),
+            f"省级流民态势：{regional_displaced_pressure_brief(db)}",
+        )),
         "personnel": lambda: db.faction_report(audience=True),
         "construction": lambda: db.buildings_report(qualitative=True),
         "security": lambda: db.power_report(exclude_self=True, audience=True),
