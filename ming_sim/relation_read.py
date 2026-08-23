@@ -83,12 +83,16 @@ def _relation_dto(db: Any, source: str, target: str) -> Dict[str, str]:
         event_label = reign_period_label(int(latest["year"]), int(latest["period"]))
         # 最近原始事件语境原文＋纪年回指；语境本身逐字原样（写口已零改字）。
         recent_context = f"{latest['context']}（{event_label}）"
-    if summary_row is not None:
+    if (
+        summary_row is not None
+        and int(summary_row["last_brewed_year"]) != 0
+        and 1 <= int(summary_row["last_brewed_period"]) <= 12
+    ):
         updated_at_period = reign_period_label(
             int(summary_row["last_brewed_year"]), int(summary_row["last_brewed_period"])
         )
     elif events:
-        # 未酿先读（事件已在流水、摘要未落定）：更新纪年回落最近事件时点。
+        # seed 初始摘要与未酿关系均无合法酿制时钟：回落最近事件时点。
         latest = max(events, key=lambda event: int(event["id"]))
         updated_at_period = reign_period_label(int(latest["year"]), int(latest["period"]))
 

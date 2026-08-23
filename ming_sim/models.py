@@ -576,6 +576,9 @@ class Army:
     is_tusi: int = 0
     self_funded_pay: int = 0
     mutiny_status: str = ""
+    is_mutinied: int = 0
+    mutiny_count: int = 0
+    mutiny_probation: int = 0
 
 
 @dataclass
@@ -698,7 +701,8 @@ def _chinese_era_ordinal(n: int) -> str:
 def reign_period_label(year: int, month: int) -> str:
     """西历年月 → 年号纪年呈现（天启七年十月 / 崇祯元年正月 / 崇祯二年三月）。
 
-    映射：year≤1627 → 天启（1621=元年）；year≥1628 → 崇祯（1628=元年）。
+    映射：1621..1627 → 天启（1621=元年）；year≥1628 → 崇祯（1628=元年）；
+    1621 前回落公历标签，不伪造年号。
     元年不写「1年」；月份用正/二/…/十二，与票面「十月」「正月」口径对齐。
     """
     y = int(year)
@@ -708,9 +712,11 @@ def reign_period_label(year: int, month: int) -> str:
     if y >= _CHONGZHEN_EPOCH_YEAR:
         era = "崇祯"
         ordinal = y - _CHONGZHEN_EPOCH_YEAR + 1
-    else:
+    elif y >= _TIANQI_EPOCH_YEAR:
         era = "天启"
         ordinal = y - _TIANQI_EPOCH_YEAR + 1
+    else:
+        return f"公历{y}年{_CN_MONTH_ORDINAL[m]}月"
     return f"{era}{_chinese_era_ordinal(ordinal)}年{_CN_MONTH_ORDINAL[m]}月"
 
 
