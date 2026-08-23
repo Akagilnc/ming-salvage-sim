@@ -129,9 +129,12 @@ def test_ac1_shortfall_suspension_trigger_gate_boundary(game):
     assert any(f["army_id"] == ARMY_ID for f in factor["suspended_armies"])
     assert factor["suspended_months_gate"] == COVERT_LEVY_SUSPENDED_MONTHS
 
-    # 触发因子并入 0072 判官输入面（键只在满足时出现）
+    # 无案卷的合成 todo 不得被 A 军污染；显式相关财政 scope 才取得 A 军事实。
     review_input = build_due_review_input(db, _review_todo())
-    assert review_input["covert_levy_trigger"]["suspended_armies"]
+    assert "covert_levy_trigger" not in review_input
+    scoped = build_covert_levy_trigger_factor(db, scope_text="陕西边军军饷筹措")
+    assert scoped and scoped["suspended_armies"][0]["army_id"] == ARMY_ID
+    assert build_covert_levy_trigger_factor(db, scope_text="京营军饷筹措") is None
 
 
 # ── ② AC2+AC3+AC5 两本账 tracer ───────────────────────────────────────
@@ -143,6 +146,8 @@ def test_ac2_ac3_dual_ledger_booking_merges_pool_and_restores(game, tmp_path):
     db, state, content = game
     needed = _prime_eligible_army(db)
     dossier_id = _executing_policy(db, state, token="covert-651")
+    db.conn.execute("UPDATE decree_dossiers SET decree_text=? WHERE id=?", ("陕西边军军饷筹措", dossier_id))
+    db.conn.commit()
     handler = _active_character(db)
 
     # 戒条(a)：奏报侧「已筹措」由承办 LLM 长出——此处经公开奏报写轨代承办陈词
@@ -155,7 +160,7 @@ def test_ac2_ac3_dual_ledger_booking_merges_pool_and_restores(game, tmp_path):
     booked = book_covert_levy_case(
         db, state,
         dossier_id=int(dossier_id), army_id=ARMY_ID, region_id=REGION_ID,
-        handler_character_id=handler,
+        handler_name=handler,
         displaced_amount=3000, squeezed_silver=5,
     )
     assert booked.get("rejected") is False, booked
@@ -188,14 +193,14 @@ def test_ac2_ac3_dual_ledger_booking_merges_pool_and_restores(game, tmp_path):
     case = get_covert_levy_case(db, case_id)
     assert case["status"] == "active"
     assert case["dossier_id"] == int(dossier_id) and case["army_id"] == ARMY_ID
-    assert case["region_id"] == REGION_ID and case["handler_character_id"] == handler
+    assert case["region_id"] == REGION_ID and case["handler_name"] == handler
     assert case["displaced_amount"] == 3000 and case["squeezed_silver"] == 5
 
     # 一案一活跃暗账：重复落账响亮拒绝、世界不变
     dup = book_covert_levy_case(
         db, state,
         dossier_id=int(dossier_id), army_id=ARMY_ID, region_id=REGION_ID,
-        handler_character_id=handler,
+        handler_name=handler,
         displaced_amount=1, squeezed_silver=1,
     )
     assert dup.get("rejected") is True
@@ -213,7 +218,7 @@ def test_ac2_ac3_dual_ledger_booking_merges_pool_and_restores(game, tmp_path):
         assert r_moves and r_moves[0]["beyond_intent"] is True
         r_case = get_covert_levy_case(restored, case_id)
         assert r_case["status"] == "active"
-        assert r_case["handler_character_id"] == handler
+        assert r_case["handler_name"] == handler
     finally:
         restored.close()
     assert _world_fingerprint(db) == fp_after
@@ -224,10 +229,12 @@ def test_ac2_ac3_dual_ledger_booking_merges_pool_and_restores(game, tmp_path):
 
 def _book(db, state, token: str, handler: str, *, displaced=100, silver=1):
     dossier_id = _executing_policy(db, state, token=token)
+    db.conn.execute("UPDATE decree_dossiers SET decree_text=? WHERE id=?", (f"陕西边军军饷筹措·{token}", dossier_id))
+    db.conn.commit()
     out = book_covert_levy_case(
         db, state,
         dossier_id=int(dossier_id), army_id=ARMY_ID, region_id=REGION_ID,
-        handler_character_id=handler,
+        handler_name=handler,
         displaced_amount=displaced, squeezed_silver=silver,
     )
     assert out.get("rejected") is False, out
@@ -287,16 +294,24 @@ def test_ac4_exposure_channels_then_three_dispositions_book_costs(game):
     early = apply_covert_levy_disposition(db, state, case_a, "禁摊派")
     assert early.get("rejected") is True and "未暴露" in early["reason"]
 
-    # 素案随后也有了奏报 → 分叉成立，同样可被暴露（奏报面 vs 实况账机械读出）
+    # 素案随后有奏报和真实检举，二者俱全才可暴露；无信号的 B 仍不得伪称民变。
     _memorialize(db, state, d_a)
+    db.conn.execute(
+        """INSERT INTO faction_denunciations
+           (turn, accuser_name, accuser_faction, subject_name, subject_faction,
+            target_dossier_id, origin, payload_json, memorial_text)
+           VALUES (?, '温体仁', '阉党', '承办官', '朝堂', ?, '检举', '{}', '臣劾暗中摊派')""",
+        (state.turn, d_a),
+    )
+    db.conn.commit()
     late = refresh_covert_levy_exposures(db, state)
     assert [int(e["case_id"]) for e in late] == [case_a]
-    assert late[0]["exposed_channel"] == "民变自长"
+    assert late[0]["exposed_channel"] == "政敌检举"
+    assert get_covert_levy_case(db, case_b)["status"] == "active"
 
-    # 暴露：三通道各自命中、通道留痕（AC4 任一通道）
+    # 暴露：真实检举与稽核分别命中、通道留痕。
     exposed = {int(e["case_id"]): e for e in exposed}
-    assert set(exposed) == {case_b, case_c, case_d}
-    assert exposed[case_b]["exposed_channel"] == "民变自长"
+    assert set(exposed) == {case_c, case_d}
     assert exposed[case_c]["exposed_channel"] == "政敌检举"
     assert exposed[case_d]["exposed_channel"] == "稽核"
     assert all(int(e["exposed_turn"]) == int(state.turn) for e in exposed.values())
@@ -319,10 +334,12 @@ def test_ac4_exposure_channels_then_three_dispositions_book_costs(game):
     factor = build_covert_levy_trigger_factor(db)
     assert any(f["army_id"] == ARMY_ID for f in factor["suspended_armies"])
     d_f = _executing_policy(db, state, token="cl-f")
+    db.conn.execute("UPDATE decree_dossiers SET decree_text='陕西边军军饷筹措' WHERE id=?", (d_f,))
+    db.conn.commit()
     banned = book_covert_levy_case(
         db, state,
         dossier_id=int(d_f), army_id=ARMY_ID, region_id=REGION_ID,
-        handler_character_id=handler_a, displaced_amount=1, squeezed_silver=1,
+        handler_name=handler_a, displaced_amount=1, squeezed_silver=1,
     )
     assert banned.get("rejected") is True and "禁摊派" in banned["reason"]
     cost_kinds_a = [
