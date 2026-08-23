@@ -25,6 +25,8 @@ from ming_sim.issues import apply_historical_fiscal_rates, apply_score_extractio
 import ming_sim.issues as issues
 from ming_sim.memories import effect_brief
 import ming_sim.memories as memories
+from ming_sim.knowledge import build_character_knowledge
+from ming_sim.simulation import build_simulator_payload
 
 # ── 独立 oracle（content 冻结 seed 字面，非实现推导）──────────────────────────
 FARMER_SHAANXI = 6000000      # content/classes.json 农民@shaanxi（人）
@@ -307,6 +309,32 @@ def test_settlement_drives_deterministic_pool_inflow(game):
     assert _pop(db, "流民", "shaanxi") == pool_before + want
 
 
+def test_phase2_reopen_consumes_old_levy_once_and_records_it(game):
+    """pre_settle 后进程消失也不丢月效；phase2 事务同时写人口与 extraction。"""
+    db, state, content = game
+    apply_score_extraction(db, state, {
+        "surcharge_decrees": [_decree(db, state, monthly_amount=10.0)],
+    }, content, None)
+    want = _expected_inflow_persons(10.0, SHAANXI_SUPPORT)
+    before_turn = state.turn
+    before = _pop(db, "流民", "shaanxi")
+    pre_settle(state, db, content=content)
+    assert _pop(db, "流民", "shaanxi") == before
+
+    path = db.path
+    db.close()
+    reopened = GameDB(path, content)
+    restored = reopened.load_state()
+    _settle_with_delta(
+        restored, reopened, {}, before_turn=before_turn, content=content,
+    )
+    assert _pop(reopened, "流民", "shaanxi") == before + want
+    applied = reopened.get_turn_extraction(before_turn)["extractor_output"]
+    transfers = [item for item in applied["population_transfers"] if item.get("reason") == "加派"]
+    assert len(transfers) == 1
+    assert transfers[0]["amount"] == want
+
+
 def test_ming_province_without_fiscal_base_is_not_a_levy_member(game):
     """合法无 settle 基座的明省自然出列，不阻断空 delta；无账人口不动。"""
     db, state, content = game
@@ -370,9 +398,10 @@ def test_levy_ledger_corruption_fails_loud(game, corruption):
         db.conn.execute("DELETE FROM classes WHERE name='流民' AND region_id='shaanxi'")
     db.conn.commit()
 
-    with pytest.raises(ValueError) as caught:
+    with pytest.raises((ValueError, SettlementAbort)) as caught:
         _settle_month(state, db, {}, before_turn=state.turn, content=content)
-    assert "shaanxi" in str(caught.value)
+    detail = " ".join(str(item) for item in (caught.value, caught.value.__cause__))
+    assert "shaanxi" in detail
 
 
 def test_accumulated_monthly_effect_uses_ledger_origin_not_latest_decree(game):
@@ -427,6 +456,36 @@ def test_levy_fact_enters_existing_public_read_chain_and_writer_keeps_free_next_
         item.get("body", "") for item in db.get_character_knowledge(state, "温体仁")["public_events"]
     )
     assert free_body in public_read
+
+
+def test_production_inputs_project_qualitative_regional_displaced_trend(game):
+    db, state, content = game
+    apply_score_extraction(db, state, {
+        "surcharge_decrees": [_decree(db, state, monthly_amount=10.0)],
+    }, content, None)
+    turn = state.turn
+    _settle_month(state, db, {}, before_turn=turn, content=content)
+    want = _expected_inflow_persons(10.0, SHAANXI_SUPPORT)
+
+    payload_text = str(build_simulator_payload(state, db, "", "")["classes_brief"])
+    assert "陕西：流民压力" in payload_text
+    assert "近月上升" in payload_text
+    assert str(want) not in payload_text
+
+    regional_text = None
+    nonregional_text = None
+    for character in content.characters.values():
+        if db.get_character_status(character.name)[0] != "active":
+            continue
+        world = build_character_knowledge(db, state, character.name)["world"]
+        if "regional" in world and regional_text is None:
+            regional_text = str(world["regional"])
+        if "regional" not in world and nonregional_text is None:
+            nonregional_text = str(world)
+    assert regional_text is not None and "陕西：流民压力" in regional_text
+    assert "近月上升" in regional_text
+    assert nonregional_text is not None and "省级流民态势" not in nonregional_text
+    assert str(want) not in regional_text
 
 
 def test_effect_brief_carries_levy_echo_fact(game):

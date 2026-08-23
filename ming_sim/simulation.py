@@ -661,7 +661,10 @@ def build_simulator_payload(
             raw.pop(field)
         court_rows.append(raw)
     court_roster = _auto_table(court_rows)
+    from ming_sim.population_pressure import regional_displaced_pressure_brief
+
     reign_label = reign_period_label(state.year, state.period)
+    displaced_pressure = regional_displaced_pressure_brief(db)
     return {
         "year": state.year,
         "period": state.period,
@@ -687,8 +690,11 @@ def build_simulator_payload(
         # #1483：factions_brief 回定性（P4 叙事输入）；leverage<=30 由代码预计算
         # 成「势力已跌破压制线」语义记号，禁裸数进混合调用。
         "factions_brief": _simulator_factions_brief(db),
-        # 阶级总览 audience 定性；高压预警过滤在 SQL 侧用裸数。
-        "classes_brief": db.class_report(audience=True),
+        # 阶级总览及省级流民压力均为定性只读投影，不暴露省级人数。
+        "classes_brief": "\n".join((
+            db.class_report(audience=True),
+            f"省级流民态势：{displaced_pressure}",
+        )),
         "powers_brief": db.power_report(exclude_self=True),
         "active_issues": issues_payload,
         "candidate_events": candidate_events,
