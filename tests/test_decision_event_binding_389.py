@@ -62,3 +62,30 @@ def test_no_snapshot_returns_decisions_unchanged():
         [{"title": "t", "event_id": "x"}], None)[0]["event_id"] == "x"
     assert "event_id" not in bind_decisions_to_candidate_events(
         [{"title": "t"}], {"other": 1})[0]
+
+
+def test_impeachment_surge_candidate_id_is_not_an_event_ledger_id():
+    """#655 动态弹劾潮候选混进 candidate_events 后，simulator 按 season_simulator
+    契约回显其 id 时，不得被当成事件账 id 采信——否则 submit_decisions →
+    record_event_decision_choice → _ensure_event_parent 对未定义事件 ValueError，
+    亲裁提交整笔回滚，回合卡在 awaiting_decision。"""
+    surge_id = "impeachment_surge:commitment:5:deformation_exposure:东林"
+    snapshot = {"candidate_events": [
+        {"id": "mao_wenlong", "title": "毛文龙裁断"},
+        {
+            "id": surge_id,
+            "origin_kind": "impeachment_surge",
+            "title": "",
+            "faction_id": "东林",
+        },
+    ]}
+    echoed = bind_decisions_to_candidate_events(
+        [{"title": "准劾温体仁", "event_id": surge_id, "options": []}],
+        snapshot,
+    )
+    assert "event_id" not in echoed[0]
+    real = bind_decisions_to_candidate_events(
+        [{"title": "是否罢毛帅", "event_id": "mao_wenlong"}],
+        snapshot,
+    )
+    assert real[0]["event_id"] == "mao_wenlong"

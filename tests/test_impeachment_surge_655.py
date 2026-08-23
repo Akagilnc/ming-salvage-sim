@@ -206,3 +206,14 @@ def test_transformed_candidate_fails_closed_outside_window_or_without_liability(
     db.conn.execute("UPDATE decree_dossiers SET closed_turn=?,participant_roster='[]' WHERE id=?", (state.turn, did))
     db.conn.commit()
     assert gather_impeachment_surge_candidates(state, db) == []
+
+
+def test_hitl_submit_does_not_fail_loud_on_surge_candidate_event_id(game):
+    """亲裁提交不得因弹劾潮候选 id 走事件账父行守卫而 ValueError 卡死回合。"""
+    db, state = game[:2]
+    _candidate_world(db, state)
+    candidate = gather_impeachment_surge_candidates(state, db)[0]
+    db.record_event_decision_choice(state, candidate["id"], {"label": "准劾"})
+    assert db.conn.execute(
+        "SELECT 1 FROM event_triggers WHERE event_id=?", (candidate["id"],)
+    ).fetchone() is None
