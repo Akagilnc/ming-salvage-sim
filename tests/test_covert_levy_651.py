@@ -267,6 +267,31 @@ def test_tacit_and_prohibition_use_real_canonical_identity_and_are_idempotent(ga
     assert settle_exposure_from_canonical_actions(db, state, tacit) == 1
 
 
+def test_tacit_settles_from_applied_economy_move_identity(game, monkeypatch):
+    """钱粮旨外实况是生产默许的主路径；applied 必须带回 origin_ref 才能结账。"""
+    db, state, content = game
+    did, _, _, _ = _bound_case(db, state)
+    _exposed_todo(db, state, monkeypatch, did)
+    origin = f"dossier:{did}"
+    tacit = apply_score_extraction(db, state, {
+        "population_transfers": [{
+            "source": "农民@shaanxi", "target": "流民@shaanxi", "amount": 1,
+            "reason": "摊派", "origin_ref": origin,
+        }],
+        "economy_moves": [{
+            "account": "国库", "delta": 1, "origin_ref": origin, "beyond_intent": True,
+        }],
+    }, content, None, dossier_ids_at_input={did})
+    assert tacit["population_transfers"] and tacit["economy_moves"]
+    assert not tacit["economy_moves"][0].get("rejected")
+    assert tacit["economy_moves"][0].get("origin_ref") == origin
+    assert tacit["economy_moves"][0].get("beyond_intent") is True
+    assert settle_exposure_from_canonical_actions(db, state, {
+        **tacit, "economy_moves": [],
+    }) == 0
+    assert settle_exposure_from_canonical_actions(db, state, tacit) == 1
+
+
 def test_prohibition_consumes_immediately_when_arrears_are_already_zero(game, monkeypatch):
     db, state, _ = game
     did, _, army_id, _ = _bound_case(db, state)
