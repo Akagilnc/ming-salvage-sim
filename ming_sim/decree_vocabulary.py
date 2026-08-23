@@ -60,6 +60,17 @@ def dossier_action_policy(action_type: object, payload=None):
     """Return canonical policy, including the documented inner-treasury exemption."""
     action = str(action_type or "")
     policy = dict(DOSSIER_ACTION_POLICY[action])
+    if action == "punishment":
+        from ming_sim.action_clusters import cluster_by_kind
+
+        payload = payload or {}
+        cluster = cluster_by_kind("punishment")
+        field = next((f for f in cluster.fields if f.name == "punish_action"), None) if cluster else None
+        subtype = str(payload.get("punish_action") or "").strip()
+        if field is not None and field.execution_coverage is not None:
+            policy["execution_surface"] = (
+                "in_transit" if field.execution_coverage.get(subtype) == "strike" else "terminal"
+            )
     if action == "grant_allocation":
         payload = payload or {}
         grant_action = str(payload.get("grant_action") or "").strip()
@@ -186,7 +197,7 @@ def terminal_report_facade(
 SIM_DOSSIER_COMMON_KEYS = frozenset({
     "id", "action_type", "status",
     "decision", "outcome", "note",
-    "mode", "stigma", "participant_roster", "links",
+    "mode", "stigma", "participant_roster", "links", "execution_signal",
     "due_turn", "created_turn", "promulgated_turn",
     "target_kind", "target_id", "executor_kind", "executor_id",
     # #613 执行侧任别读端（与 #569 固定键投影同面）

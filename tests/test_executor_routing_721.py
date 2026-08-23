@@ -6,6 +6,7 @@ import json
 
 import pytest
 
+from ming_sim.action_clusters import cluster_by_kind
 from ming_sim.action_materialize import punish_actions_effective
 from ming_sim.executor_routing import (
     classify_execution_coverage,
@@ -49,10 +50,11 @@ def test_structured_top_level_coverage(action, expected):
 
 @pytest.mark.parametrize("punish_action", sorted(punish_actions_effective()))
 def test_punishment_coverage_reads_canonical_subtype(punish_action):
-    expected = "strike" if punish_action in {"拿问下狱", "拿问去职"} else None
+    cluster = cluster_by_kind("punishment")
+    spec = next(field for field in cluster.fields if field.name == "punish_action")
     assert classify_execution_coverage(
         "punishment", {"punish_action": punish_action},
-    ) == expected
+    ) == spec.execution_coverage[punish_action]
 
 
 @pytest.mark.parametrize("payload", [{}, {"punish_action": ""}, {"punish_action": "抄家"}])
@@ -108,6 +110,33 @@ def test_existing_delegated_lead_is_preserved_not_demoted(env):
     assert ("毕自严", "主办") in tiers
 
 
+def test_production_assignee_is_named_route(env):
+    db, state, _ = env
+    dossier_id = _create(
+        db, state, category=None, payload={"assignee_id": "陈新甲"},
+    )
+    leads = [
+        e["character_id"] for e in db.get_decree_dossier(dossier_id)["participant_roster"]
+        if e["tier"] == "主办"
+    ]
+    assert leads == ["陈新甲"]
+
+
+def test_idle_signal_persists_and_restores(env):
+    db, state, content = env
+    db.conn.execute("UPDATE characters SET status='dismissed' WHERE office_type='户部'")
+    dossier_id = _create(db, state, category="清丈")
+    assert db.get_decree_dossier(dossier_id)["execution_signal"]["code"] == "idle_start"
+    path = db.path
+    db.close()
+    from ming_sim.db import GameDB
+    restored = GameDB(path, content)
+    try:
+        assert restored.get_decree_dossier(dossier_id)["execution_signal"]["chain"] == "户部"
+    finally:
+        restored.close()
+
+
 def test_appointment_routes_to_appointee_at_creation(env):
     db, state, _ = env
     dossier_id = _create(db, state, action="appointment", category=None, target="陈新甲")
@@ -140,6 +169,7 @@ def test_unmapped_rejection_rolls_back_with_uncommitted_dossier(env):
     ("payload_json", "{"),
     ("participant_roster", "{"),
     ("participant_roster", "{}"),
+    ("extension_json", "["),
 ])
 def test_restore_malformed_durable_json_fails_loud(env, column, bad):
     db, state, _ = env

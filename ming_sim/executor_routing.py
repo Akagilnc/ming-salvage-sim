@@ -19,9 +19,6 @@ from typing import Any, Dict, List, Mapping, Optional
 
 _COVERAGE_APPOINTMENT = frozenset({"appointment", "acting_appointment"})
 _COVERAGE_MULTI_MONTH = frozenset({"assignment", "military_order"})
-# 当前 canonical punishment schema 尚无 execution-class 元数据。依 0116/0117
-# 收窄到明确含「拿问」这一结构化差务的既有枚举；不得由 punishment 顶层或旨文扩张。
-_STRIKE_PUNISH_ACTIONS = frozenset({"拿问下狱", "拿问去职"})
 
 
 def classify_execution_coverage(
@@ -34,9 +31,13 @@ def classify_execution_coverage(
     if action in _COVERAGE_MULTI_MONTH:
         return "multi_month"
     if action == "punishment":
+        from ming_sim.action_clusters import cluster_by_kind
+
         punish_action = str((payload or {}).get("punish_action") or "").strip()
-        if punish_action in _STRIKE_PUNISH_ACTIONS:
-            return "strike"
+        cluster = cluster_by_kind("punishment")
+        field = next((f for f in cluster.fields if f.name == "punish_action"), None) if cluster else None
+        if field is not None and field.execution_coverage is not None:
+            return field.execution_coverage.get(punish_action)
     return None
 
 
@@ -156,7 +157,14 @@ def resolve_lead_executors(
             "rejection": None,
         }
 
-    # ② 点将优先：主办行且 delegator_id 为空＝皇帝直点；多人＝多主办
+    # ② 点将优先：规范化 assignee 是生产点将；0053 roster 是同义结构入口。
+    assignee = str(canonical_payload.get("assignee_id") or "").strip()
+    if assignee:
+        return {
+            "coverage": coverage, "route": "named", "office_type": "",
+            "leads": [assignee], "downgrade_step": "", "signal": None,
+            "rejection": None,
+        }
     roster = participant_roster if isinstance(participant_roster, list) else []
     named: List[str] = []
     seen: set = set()
