@@ -61,11 +61,25 @@ def test_twelve_consecutive_full_pay_months_redeem_once_and_raise_cap(game, fisc
     db.conn.commit()
     _set_arrears(db, fiscal_path, 0)
 
-    row = _tick(db, state)
-
-    assert tuple(row[k] for k in (
+    first = _tick(db, state)
+    assert tuple(first[k] for k in (
         "loyalty", "mutiny_count", "mutiny_probation", "full_pay_streak", "redemption_count"
     )) == (70, 2, 1, 0, 1)
+
+    second = _tick(db, state)
+    assert tuple(second[k] for k in (
+        "loyalty", "mutiny_probation", "full_pay_streak", "redemption_count"
+    )) == (70, 0, 1, 1)
+
+    for redemption_count, expected_cap in ((2, 80), (3, 90), (4, 100)):
+        db.conn.execute(
+            "UPDATE armies SET loyalty=100,full_pay_streak=11 WHERE id=?", (ARMY,)
+        )
+        db.conn.commit()
+        redeemed = _tick(db, state)
+        assert tuple(redeemed[k] for k in (
+            "loyalty", "full_pay_streak", "redemption_count"
+        )) == (expected_cap, 0, redemption_count)
 
 
 @pytest.mark.parametrize("fiscal_path", PATHS)
