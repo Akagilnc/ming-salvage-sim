@@ -10483,9 +10483,23 @@ class GameDB:
         save_rescript_drafts 同款按 kind 收窄）——'rescript_draft' 票拟行跨月留存，
         不被 decision 盘面覆写连带清除。
         """
+        turn = int(turn)
+        # 两种 kind 共用 (turn, idx) 主键。先把保留的 draft 搬到负数暂存区，
+        # 删除旧 decisions 后再按新盘面长度接续重排；draft 的内容与 event_id
+        # 均不改，decision 数量增减也不会与旧 draft idx 相撞。
+        self.conn.execute(
+            "UPDATE pending_decisions SET idx = -idx - 1 "
+            "WHERE turn = ? AND kind = 'rescript_draft'",
+            (turn,),
+        )
+        draft_rows = self.conn.execute(
+            "SELECT idx FROM pending_decisions "
+            "WHERE turn = ? AND kind = 'rescript_draft' ORDER BY idx DESC",
+            (turn,),
+        ).fetchall()
         self.conn.execute(
             "DELETE FROM pending_decisions WHERE turn = ? AND kind = 'decision'",
-            (int(turn),),
+            (turn,),
         )
         for idx, d in enumerate(decisions):
             self.conn.execute(
@@ -10494,7 +10508,7 @@ class GameDB:
                     options_json, choice_json, status, kind)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', 'pending', 'decision')""",
                 (
-                    int(turn), idx,
+                    turn, idx,
                     str(d.get("event_id") or ""),
                     str(d.get("title") or ""),
                     str(d.get("context") or ""),
@@ -10502,6 +10516,11 @@ class GameDB:
                     str(d.get("opposition") or ""),
                     json.dumps(d.get("options") or [], ensure_ascii=False),
                 ),
+            )
+        for offset, row in enumerate(draft_rows):
+            self.conn.execute(
+                "UPDATE pending_decisions SET idx = ? WHERE turn = ? AND idx = ?",
+                (len(decisions) + offset, turn, int(row["idx"])),
             )
         self.conn.commit()
 

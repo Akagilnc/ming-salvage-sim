@@ -201,18 +201,25 @@ def test_save_pending_decisions_keeps_rescript_drafts(game):
             {"label": "a", "hint": ""}, {"label": "b", "hint": ""}]},
     ])
     db.save_rescript_drafts(turn, [
-        {"title": "急务", "context": "", "options": [
-            {"label": "甲", "hint": ""}, {"label": "乙", "hint": ""}]},
+        {"title": "急务", "context": "待票拟", "options": [
+            {"label": "甲", "hint": "一"}, {"label": "乙", "hint": "二"}]},
     ])
+    draft_before = db.list_rescript_drafts()[0]
     db.save_pending_decisions(turn, [
-        {"title": "抉择改", "context": "c2", "options": [
+        {"title": "抉择改一", "context": "c2", "options": [
             {"label": "a", "hint": ""}, {"label": "b", "hint": ""}]},
+        {"title": "抉择改二", "context": "c3", "options": [
+            {"label": "c", "hint": ""}, {"label": "d", "hint": ""}]},
     ])
-    # decision 盘面已覆写为新内容；draft 行不被该写者清除（跨月留存）
+    # decision 由一条增长为两条时仍完整覆写；draft 行重排但身份和内容不变。
     rows = db.list_pending_decisions(turn)
-    assert [r["title"] for r in rows] == ["抉择改"]
+    assert [r["title"] for r in rows] == ["抉择改一", "抉择改二"]
+    assert [r["idx"] for r in rows] == [0, 1]
     assert all(r["kind"] == "decision" for r in rows)
-    assert [d["title"] for d in db.list_rescript_drafts()] == ["急务"]
+    draft_after = db.list_rescript_drafts()[0]
+    assert draft_after["idx"] == 2
+    for field in ("event_id", "title", "context", "options"):
+        assert draft_after[field] == draft_before[field]
 
 
 def test_save_rescript_drafts_overwrites_not_duplicates(game):
