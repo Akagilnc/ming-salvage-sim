@@ -21,14 +21,12 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from ming_sim.constants import DEFAULT_OPENING_PERIOD, DEFAULT_OPENING_YEAR
 from ming_sim.paths import bundled_path
 from ming_sim.relation_brew import merge_founding_segment, relation_dimension
 from ming_sim.relations import validate_edge_kind
 
 SEED_DOC_PARTS = ("content", "relation_seed.json")
-
-_DEFAULT_OPENING_YEAR = 1627
-_DEFAULT_OPENING_PERIOD = 10
 
 
 def pregame_turn(year: int, period: int) -> int:
@@ -42,7 +40,7 @@ def pregame_turn(year: int, period: int) -> int:
     m = _as_int(period, "seed 时间戳月份")
     if not 1 <= m <= 12:
         raise ValueError(f"seed 时间戳月份非法（须 1..12）：{period!r}")
-    return (y - _DEFAULT_OPENING_YEAR) * 12 + (m - _DEFAULT_OPENING_PERIOD)
+    return (y - DEFAULT_OPENING_YEAR) * 12 + (m - DEFAULT_OPENING_PERIOD)
 
 
 def _as_int(value: Any, label: str) -> int:
@@ -116,6 +114,8 @@ def validate_seed_document(
             raise ValueError(f"seed summaries[{index}] 必须是 object")
         source = _non_empty_str(item.get("source"), f"seed summaries[{index}].source")
         target = _non_empty_str(item.get("target"), f"seed summaries[{index}].target")
+        if source == target:
+            raise ValueError(f"seed summaries[{index}] 有向对两端不得相同：{source!r}")
         lines = item.get("founding_lines", [])
         if not isinstance(lines, list) or any(not isinstance(x, str) for x in lines):
             raise ValueError(f"seed summaries[{index}].founding_lines 必须是字符串列表")
