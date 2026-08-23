@@ -33,7 +33,7 @@ from ming_sim.db import (
     normalize_office,
     resolve_office_type_preserving_title,
 )
-from ming_sim.applier import Provenance
+from ming_sim.applier import Provenance, atomic
 from ming_sim.decree import (
     ResolveResult,
     _provenance_from_stored,
@@ -800,6 +800,9 @@ class GameSession:
         # No dedicated scene executor (C6 rejected); open/enter share the action-intent pool.
         self._scene_registry = ChatTurnSceneRegistry(_CLI_ACTION_INTENT_EXECUTOR)
         self.db = GameDB(db_path, content=self.content, llm_config=llm_config)
+        # #638 S7：新开档判据必须在 load_state 建 game_state 行之前取（行在＝旧档，
+        # 关系 seed 导入一律不触；验收条「只对新开档生效，旧档不受影响」的机械口径）。
+        fresh_save = not self.db.has_state()
         # 接档载入阶段计时（#84）：原为零日志盲区，群友以为死机；逐阶段 tlog 用时，
         # 自部署者在 server 控制台看得见进度、定位慢阶段。
         from ming_sim.token_stats import tlog
@@ -811,9 +814,29 @@ class GameSession:
         self.agno_db = create_agno_db(db_path)
         _t, _e = time.monotonic(), time.monotonic() - _t
         tlog(f"[载入] 2/4 官职同步 + agno {_e:.1f}s")
-        self.state = self.db.load_state(start_ym)
+        # 新档的 game_state 与关系 seed 必须同成同败：load_state 内部虽有多个
+        # commit，atomic 会统一推迟到 seed 校验及落库全部成功之后。旧档仍只载入。
+        with atomic(self.db):
+            self.state = self.db.load_state(start_ym)
+            # #638 S7：新开档导入关系 seed（ADR 0086 机械面）：奠基边事件（开局前时间戳）
+            # ＋可选初始摘要。边走 record_relation_edge_event 唯一写口、摘要只落奠基段
+            # 且水位留 0（seed 边照常进日后首次月末酿制输入）；重复导入幂等不双写。
+            seed_report = None
+            if fresh_save:
+                from ming_sim.relation_seed import import_bundled_relationship_seed
+                seed_report = import_bundled_relationship_seed(
+                    self.db,
+                    opening_year=int(self.state.year),
+                    opening_period=int(self.state.period),
+                )
         _t, _e = time.monotonic(), time.monotonic() - _t
         tlog(f"[载入] 3/4 状态载入 {_e:.1f}s")
+        if seed_report:
+            tlog(
+                "[载入] 关系 seed 导入："
+                f"{seed_report['events_imported']}/{seed_report['events_total']} 笔奠基边事件，"
+                f"{seed_report['summaries_written']} 份初始摘要"
+            )
         # 开局负面帝国修正：新档补全、旧档补缺、已达消除条件的不补/清残。不立 issue、不进推演。
         sync_opening_legacies(self.db, self.state)
         tlog(f"[载入] 4/4 开局修正 {time.monotonic() - _t:.1f}s")

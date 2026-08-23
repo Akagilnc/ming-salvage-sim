@@ -21,6 +21,7 @@
   "faction_delta":    {},  // dict[派系名 -> int]
   "class_delta":      {},  // dict[阶级名 或 阶级@省id -> {satisfaction/leverage: int}]
   "population_transfers": [],  // list[人口守恒转移记录]（#649/0087：单记录双写，源阶级减 N、目标阶级增 N）
+  "surcharge_decrees": [],  // list[加派旨]（#650/0089 明渠：逐省累积账当回合落库，月额万两、负=停征/蠲免）
   "region_delta":     {},  // dict[region_id -> {字段:数值}]
   "fiscal_changes":   [],  // 改某项月度收支额度
   "fiscal_creates":   [],  // 新立月度收支（新税/新俸）
@@ -110,6 +111,22 @@ canonical 段形＝list，每条记录**同时表达两条腿**：applier 读一
 - 逐项拒收面（坏项留痕、同批合法项照落，ADR 0015/0008）：方向出阵、reason 枚举外、amount 非严格 int/≤0/超实时源余额、region 未知或两侧不同省、source/target 触全国行、origin_ref 缺失/伪前缀/未颁案卷、白名单外字段（任何形式的绝对值覆写均不合法——人口只经本原语守恒变动，禁凭空造人/单侧写）。
 - 灾害／兵灾入口（#662/S14）：发生与否及具体量级由 internal extractor 依据既有盘面（region `natural_disaster`/`human_disaster` 字段、military_pressure 定性档、活跃局势 issue）、`class_population_balances` 与 `population_unit` 软判；无事实支撑不得申报该 reason（无灾不入）。代码仅校验上述物理不变量并守恒记账，不建引擎侧自动触发（与 extractor 无双驱动并存）。origin 标即 `reason` 枚举本身，无第二 origin 字段；与加派/摊派入口合流同一 classes 行池账，下游只认账不认来源。
 - item 字段中英别名：`源`/`源阶级`→source、`目标`/`目标阶级`→target、`数额`/`口数`→amount、`原因`→reason（prompt 中文 shape 教 `原因`，与 `ITEM_FIELD_ALIASES` 单一真源；勿另教别名表外标签如「缘由」）。接口层：internal extractor 专属输入面带按 class@region_id 键合的省级人口余额＋本档 population_unit 的 `class_population_balances` TSV（不进玩家可感 simulator 数表）。
+
+### `surcharge_decrees` — 下旨加派（#650/ADR 0089 明渠）
+
+canonical 段形＝list，每项落一道加派旨：逐省累积账当回合落库（P1），钱面由饷率通道折入三饷应征（真征收），民面由结算按账机械驱动农民→流民入池（确定性口径、clamp，非 LLM 报数——**禁再为同一道加派另报 `population_transfers`**，环后半段只认账不认来源）。
+
+| 字段 | 约束 |
+|---|---|
+| `region_id` | 明省且已有 settle 财政基座，并同时物化 `农民@region_id`、`流民@region_id` 两条省级人口行（未知省/非明省/无基座或人口池逐项拒收留痕） |
+| `monthly_amount` | **必填**数值（万两/月增量）：正＝加派累加；负＝停征/蠲免减账；账面钳 ≥0；显式 0＝静默无操作不落；缺失＝`invalid_enum` 逐项拒收 |
+| `reason` | 可选 ≤120 字 |
+| `origin_ref` | **必填且仅接受**具有效果资格的 `dossier:<正整数>`（案卷须存在且已颁或强颁）；不得使用 `盘面自发` |
+
+- item 字段中英别名：`地区编号`→region_id、`月增额`/`月额`→monthly_amount。
+- 同批 `(origin_ref, region_id)` 仅首项成功，重复项逐项拒收。
+- 仅 `substrate_hub` 且 `population_unit='人'` 的新人口池档可写入、消费；legacy 或无人口单位标记的旧档拒收且不迁移。历史正账若农民/流民两行皆无则安全出列，仅缺一行视为损坏并 fail-loud。
+- 无旨不入账：段空＝累积账不动；停征后入池止（出口回流归 S5 #652）。
 
 ### `region_delta` — 地区变化
 - 每个 region value 必填 `origin_ref`（已颁 `dossier:<id>` 或 `盘面自发`）；该字段不作为地区属性处理。
@@ -424,7 +441,7 @@ personnel_secret 模块产出；settle 内经 `record_monthly_dossier_progress` 
 
 | 模块 | 顶层字段 |
 |---|---|
-| `internal` | `metric_delta` `economy_moves` `faction_delta` `class_delta` `population_transfers` `region_delta` `fiscal_changes` `fiscal_creates` `fiscal_removes` |
+| `internal` | `metric_delta` `economy_moves` `faction_delta` `class_delta` `population_transfers` `surcharge_decrees` `region_delta` `fiscal_changes` `fiscal_creates` `fiscal_removes` |
 | `military_external` | `army_delta` `new_armies` `power_updates` `world_advance` |
 | `issues` | `issue_advances` `new_issues` `事件结局` `cancels` `close_issues` `dossier_executions` `dossier_participants` `authority_changes` `dossier_reconciliations` `faction_denunciations` |
 | `personnel_secret` | `人物变更` `secret_order_updates` `covert_exec_selections` `dossier_progress_reports` `secret_dossier_participants` `emperor_fate` |
