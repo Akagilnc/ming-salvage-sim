@@ -616,6 +616,14 @@ def build_simulator_payload(
         }
         for ev in gather_candidate_events(state, db)
     ]
+    # 灾害／兵灾软判既要求 simulator 给出确定人数，又由结算层按来源省级余额
+    # 复核比例上限；因此同一结算前余额必须在叙事输入可见，不能只藏在 extractor。
+    class_population_balances = _auto_table([
+        dict(r) for r in db.conn.execute(
+            "SELECT name,region_id,population FROM classes "
+            "WHERE region_id IS NOT NULL ORDER BY region_id,name"
+        ).fetchall()
+    ])
     region_rows = [
         # #648：按档口径传单位——新档玩家面投影「约N万口」，旧档万人原样。
         _project_simulator_region_row(dict(r), db.population_unit)
@@ -686,6 +694,8 @@ def build_simulator_payload(
         "factions_brief": _simulator_factions_brief(db),
         # 阶级总览 audience 定性；高压预警过滤在 SQL 侧用裸数。
         "classes_brief": db.class_report(audience=True),
+        # 机面专用于灾害／兵灾确定人数与比例上限；玩家回响仍只读定性 classes_brief。
+        "class_population_balances": class_population_balances,
         "powers_brief": db.power_report(exclude_self=True),
         "active_issues": issues_payload,
         "candidate_events": candidate_events,
