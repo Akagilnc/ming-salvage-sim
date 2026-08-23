@@ -650,13 +650,17 @@ class ChatTurnSceneRegistry:
         )
         self._submit(int(chat_turn_id), [(exit_id, inputs)], beat_generator)
 
-    def start_auxiliary(self, chat_turn_id: int, task: Callable[[], Any]) -> None:
-        """Attach a non-scene close sibling to the existing future bucket."""
+    def start_relation_judge_provider(
+        self, chat_turn_id: int, task: Callable[[], Any],
+    ) -> Future:
+        """Attach the provider-only judge phase to the close bucket."""
         if not chat_turn_id:
-            return
+            raise ValueError("relation judge provider requires close chat turn")
         with self._lock:
             bucket = self._futures.setdefault(int(chat_turn_id), [])
-            bucket.append(self._executor.submit(lambda: (0, task())))
+            future = self._executor.submit(lambda: (-1, task()))
+            bucket.append(future)
+            return future
 
     def start_close(
         self,

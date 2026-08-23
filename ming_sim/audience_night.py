@@ -1285,23 +1285,43 @@ def close_night(
             _cleanup_close_scene_early(early_exc)
         raise
 
-    # Start the judge as a sibling in the existing close registry before ordinary
-    # catch-up, so its provider wait overlaps story/endorsement/close-scene work.
-    def _run_close_judge() -> str:
-        from ming_sim.relation_judge import run_summon_relation_judge
-        result = run_summon_relation_judge(
-            db, state, llm_config=llm_config, write_gate=write_gate,
-            night_id=int(night_id), allowed_endpoint_names=source_night_roster,
-        )
-        if isinstance(result, dict) and result.get("degraded"):
-            logger.warning("relation judge sweep degraded night_id=%s: %s", night_id, result["degraded"])
-        return ""
-
-    judge_started = bool(close_ctid and reg is not None and hasattr(reg, "start_auxiliary"))
-    if judge_started:
-        reg.start_auxiliary(int(close_ctid), _run_close_judge)
-    else:
-        _run_close_judge()
+    # Prepare on the owner thread; only the gate-free provider call enters the
+    # existing close bucket. Finalization happens after that bucket is joined.
+    from ming_sim.relation_judge import (
+        PreparedRelationJudge, abandon_summon_relation_judge,
+        finalize_summon_relation_judge, invoke_summon_relation_judge_provider,
+        prepare_summon_relation_judge,
+    )
+    judge_prepared = prepare_summon_relation_judge(
+        db, state, write_gate=write_gate, night_id=int(night_id),
+        allowed_endpoint_names=source_night_roster,
+    )
+    judge_future = None
+    if isinstance(judge_prepared, PreparedRelationJudge):
+        if not close_ctid and reg is not None:
+            with gate:
+                close_ctid = int(db.create_chat_turn(
+                    state, "收夜", "close-judge", 0, night_id=int(night_id),
+                ))
+                close_scaffold_owned = True
+                close_started = True
+        if reg is not None and hasattr(reg, "start_relation_judge_provider"):
+            judge_future = reg.start_relation_judge_provider(
+                int(close_ctid),
+                lambda: invoke_summon_relation_judge_provider(
+                    judge_prepared, llm_config=llm_config,
+                ),
+            )
+        else:
+            # Library callers without a session registry still use the split phases;
+            # importantly, only the provider call runs gate-free here.
+            judge_provider_result = invoke_summon_relation_judge_provider(
+                judge_prepared, llm_config=llm_config,
+            )
+            judge_result = finalize_summon_relation_judge(
+                judge_prepared, judge_provider_result, write_gate=write_gate,
+            )
+            judge_prepared = judge_result
 
     # ── Phase 2: gate-free ordinary catch-up + endorsement-only LLM ────────
     # Ordinary story drain (LLM outside settle lock). CLOSING restore drain =
@@ -1314,6 +1334,8 @@ def close_night(
         )
     except Exception as drain_exc:
         from ming_sim.exceptions import LLMUnavailable
+        if isinstance(judge_prepared, PreparedRelationJudge):
+            abandon_summon_relation_judge(judge_prepared)
 
         cleanup_exc: BaseException | None = None
         if close_started and reg is not None:
@@ -1392,6 +1414,20 @@ def close_night(
                 close_body = str(joined_body)
         except Exception as exc:
             join_exc = exc
+
+    if judge_future is not None and join_exc is not None:
+        abandon_summon_relation_judge(judge_prepared)
+
+    if judge_future is not None and join_exc is None:
+        _marker, judge_provider_result = judge_future.result()
+        judge_result = finalize_summon_relation_judge(
+            judge_prepared, judge_provider_result, write_gate=write_gate,
+        )
+        if judge_result.get("degraded"):
+            logger.warning(
+                "relation judge sweep degraded night_id=%s: %s",
+                night_id, judge_result["degraded"],
+            )
 
     if primary_exc is not None or join_exc is not None:
         with gate:

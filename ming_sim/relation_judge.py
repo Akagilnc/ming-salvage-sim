@@ -23,6 +23,7 @@ from __future__ import annotations
 import logging
 import threading
 from contextlib import nullcontext
+from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Optional
 
 from ming_sim.applier import atomic
@@ -59,7 +60,12 @@ def _transcript_line(turn_row: Mapping[str, Any]) -> str:
     )
 
 
-def build_relation_judge_prompt(db: Any, turn_rows: List[Mapping[str, Any]]) -> str:
+def build_relation_judge_prompt(
+    db: Any,
+    turn_rows: List[Mapping[str, Any]],
+    *,
+    output_target_turn_ids: Optional[set[int]] = None,
+) -> str:
     """组判官输入面：已完成对话记录＋账本全知机面（ID-12 单一接缝）。
 
     全知机面必须显式传 ``viewer=None``（#640 冻结契约）；角色裁切面绝不在此混用。
@@ -68,6 +74,8 @@ def build_relation_judge_prompt(db: Any, turn_rows: List[Mapping[str, Any]]) -> 
     from ming_sim import relation_read
 
     transcript = "\n\n".join(_transcript_line(row) for row in turn_rows)
+    targets = set(output_target_turn_ids or {int(row.get("id") or 0) for row in turn_rows})
+    target_face = "、".join(f"#{turn_id}" for turn_id in sorted(targets)) or "（无）"
     ledger = relation_read.project_relation_ledger(db, viewer=None)
     if ledger:
         lines = [
@@ -86,6 +94,8 @@ def build_relation_judge_prompt(db: Any, turn_rows: List[Mapping[str, Any]]) -> 
         f"{transcript}\n\n"
         "【关系账全知机面（判官专用）】\n"
         f"{ledger_face}\n\n"
+        f"【本批允许产出的源轮 ID】{target_face}\n"
+        "上方完整对话仅供理解；只能为本批允许 ID 产出事件，已判历史轮不得再次产出。\n\n"
         "【输出】只输出一个 JSON object；每项的源轮必须是该事件实际发生的轮号：\n"
         '{"events":[{"源轮":12,"施动者":"甲","受动者":"乙","类目":"站台","语境":"一句话记该当面事件"}]}\n'
         "类目限：站台、结怨、协作、联名、荐引、恩义、使绊、连坐、把柄。\n"
@@ -193,96 +203,117 @@ def _resolve_one_event(
     return out
 
 
-def run_summon_relation_judge(
-    db: Any,
-    state: Any,
-    *,
-    llm_config: Any = None,
-    write_gate: Any = None,
-    agent: Any = None,
-    night_id: Optional[int] = None,
+@dataclass
+class PreparedRelationJudge:
+    db: Any
+    state: Any
+    window: List[Mapping[str, Any]]
+    context_rows: List[Mapping[str, Any]]
+    prompt: str
+    allowed_endpoint_names: set[str]
+    flight_key: int
+
+
+def prepare_summon_relation_judge(
+    db: Any, state: Any, *, write_gate: Any = None, night_id: Optional[int] = None,
     allowed_endpoint_names: Optional[set[str]] = None,
-) -> Dict[str, Any]:
-    """一拍判官腿：解窗 → 组面 → LLM → 逐项落库 → 标水位。
-
-    DB 读（窗口/对话/账面/存活复查/写入/标记）一律短持 ``write_gate``（共享 conn
-    禁闸外裸读，#1353 同纪律）；LLM 在闸外（与抽取同形）。返回：
-
-    - ``{"skipped": "no_window"}``——窗口为空，零 LLM 零副作用；
-    - ``{"skipped": "judge_in_flight"}``——同库已有判官拍在飞；
-    - ``{"skipped": "turn_retired"}``——写入前存活复查发现窗口内有轮被撤/失败，
-      整批零写入零标记（ADR 0038 终结异步残余）；
-    - ``{"degraded": reason}``——判官 LLM 失败/坏输出，响亮降级留痕、窗口保持开放
-      （漏判不阻塞召对主链，ADR 0005 不宽吞：logger.warning 留痕）；
-    - 正常——``{"judged_turn_ids", "origin", "edges", "written", "rejected"}``。
-    """
+) -> PreparedRelationJudge | Dict[str, Any]:
+    """Claim and prepare all DB-backed judge input; provider futures never touch DB/gate."""
     key = id(db)
     with _single_flight_lock:
         if key in _in_flight:
             return {"skipped": "judge_in_flight"}
         _in_flight[key] = db
+    gate = write_gate if write_gate is not None else nullcontext()
     try:
-        gate = write_gate if write_gate is not None else nullcontext()
-        # 1. 解窗（短持 gate）
         with gate:
-            window = (
-                db.list_unjudged_completed_chat_turns(night_id=night_id)
-                if hasattr(db, "list_unjudged_completed_chat_turns") else []
-            )
-        if not window:
-            return {"skipped": "no_window"}
-        batch_night_id = int(window[0].get("night_id") or 0)
-        # Prompt context includes already-judged preceding turns, while only `window`
-        # remains eligible for output/watermark.
-        with gate:
-            context_rows = (
-                db.list_relation_judge_context(batch_night_id, max(int(r["id"]) for r in window))
-                if hasattr(db, "list_relation_judge_context") else window
-            )
+            window = db.list_unjudged_completed_chat_turns(night_id=night_id)
+            if not window:
+                _release_flight(key)
+                return {"skipped": "no_window"}
+            batch_night_id = int(window[0].get("night_id") or 0)
+            context_rows = db.list_relation_judge_context(
+                batch_night_id, max(int(row["id"]) for row in window),
+            ) if hasattr(db, "list_relation_judge_context") else window
             hydrated = [_hydrate_turn(db, row) for row in context_rows]
-            prompt = build_relation_judge_prompt(db, hydrated)
-        # 3. LLM 在闸外；失败降级留痕不抛（漏判不阻塞主链）。
-        # llm_config 未配置且未注入替身 → 零 LLM 快速降级（与「无票零 LLM」同纪律）。
-        try:
-            local_agent = agent
-            if local_agent is None:
-                if not llm_config:
-                    raise LLMUnavailable("llm_config 未配置", code="relation_judge_offline")
-                from ming_sim.agents import create_relation_judge_agent
+            target_ids = {int(row["id"]) for row in window}
+            prompt = build_relation_judge_prompt(
+                db, hydrated, output_target_turn_ids=target_ids,
+            )
+        allowed = set(allowed_endpoint_names or ())
+        allowed.update(str(row.get("minister_name") or "") for row in context_rows)
+        return PreparedRelationJudge(db, state, window, context_rows, prompt, allowed, key)
+    except BaseException:
+        _release_flight(key)
+        raise
 
-                local_agent = create_relation_judge_agent(llm_config)
-            output = local_agent.run(prompt)
-            raw = extract_agent_text(output) if output is not None else ""
-            if not raw and output is not None and hasattr(output, "content"):
-                raw = str(getattr(output, "content") or "")
-            items = parse_relation_judge_output(raw)
-        except (LLMContractError, LLMUnavailable, TypeError, ValueError) as exc:
-            logger.warning("relation judge degraded (contract/unavailable): %s", exc)
-            return {"degraded": str(exc), "judged_turn_ids": []}
-        except Exception as exc:
-            logger.warning("relation judge degraded: %s", exc, exc_info=True)
-            return {"degraded": str(exc), "judged_turn_ids": []}
-        # 4. 存活复查＋落库＋标水位（短持 gate；同一 gate 内原子观察）
+
+def invoke_summon_relation_judge_provider(
+    prepared: PreparedRelationJudge, *, llm_config: Any = None, agent: Any = None,
+) -> List[Any] | Dict[str, Any]:
+    """Provider-only phase: safe to run in the close scene executor."""
+    try:
+        local_agent = agent
+        if local_agent is None:
+            if not llm_config:
+                raise LLMUnavailable("llm_config 未配置", code="relation_judge_offline")
+            from ming_sim.agents import create_relation_judge_agent
+            local_agent = create_relation_judge_agent(llm_config)
+        output = local_agent.run(prepared.prompt)
+        raw = extract_agent_text(output) if output is not None else ""
+        if not raw and output is not None and hasattr(output, "content"):
+            raw = str(getattr(output, "content") or "")
+        return parse_relation_judge_output(raw)
+    except Exception as exc:
+        logger.warning("relation judge degraded: %s", exc, exc_info=True)
+        return {"degraded": str(exc), "judged_turn_ids": []}
+
+
+def _release_flight(key: int) -> None:
+    with _single_flight_lock:
+        _in_flight.pop(key, None)
+
+
+def abandon_summon_relation_judge(prepared: PreparedRelationJudge) -> None:
+    """Release a prepared claim when the owning close lifecycle is abandoned."""
+    _release_flight(prepared.flight_key)
+
+
+def finalize_summon_relation_judge(
+    prepared: PreparedRelationJudge, provider_result: List[Any] | Dict[str, Any], *,
+    write_gate: Any = None,
+) -> Dict[str, Any]:
+    """Validate and persist provider output on the owning thread under short gate holds."""
+    # Reuse the canonical wrapper's write phase by supplying a precomputed agent is
+    # deliberately avoided: this function is filled below by the shared finalizer.
+    return _finalize_prepared(prepared, provider_result, write_gate=write_gate)
+
+
+def _finalize_prepared(
+    prepared: PreparedRelationJudge, provider_result: List[Any] | Dict[str, Any], *,
+    write_gate: Any = None,
+) -> Dict[str, Any]:
+    key, db, state = prepared.flight_key, prepared.db, prepared.state
+    try:
+        if isinstance(provider_result, dict):
+            return provider_result
+        items = provider_result
+        gate = write_gate if write_gate is not None else nullcontext()
+        window = prepared.window
         with gate:
-            survivors = _live_window_turns(db, window)
-            if len(survivors) != len(window):
+            if len(_live_window_turns(db, window)) != len(window):
                 return {"skipped": "turn_retired"}
             window_turn_ids = {int(row["id"]) for row in window}
-            # Eligibility is a source-night fact, not the mutable live court roster.
-            allowed = set(allowed_endpoint_names or ())
-            allowed.update(str(row.get("minister_name") or "") for row in context_rows)
+            allowed = set(prepared.allowed_endpoint_names)
+            batch_night_id = int(window[0].get("night_id") or 0)
             if batch_night_id > 0:
                 from ming_sim.audience_night import persons_entered_tonight
-                entered = persons_entered_tonight(db, batch_night_id)
-                allowed.update(entered)
+                allowed.update(persons_entered_tonight(db, batch_night_id))
             else:
-                # Old pre-night saves have no persisted attendance ledger.
                 allowed.update(row["name"] for row in db.current_court_roster_rows(state))
             turn_rows = {int(row["id"]): row for row in window}
             written: List[Dict[str, Any]] = []
             rejected: List[Dict[str, Any]] = []
-            # 边写与水位是一个恢复单元：任一异常须同时回滚，不能留下已落边、未进水位
-            # 的 crash gap。canonical writer 内部 commit 由 atomic 暂停。
             with atomic(db):
                 blocked_turn_ids: set[int] = set()
                 block_all = False
@@ -318,13 +349,28 @@ def run_summon_relation_judge(
         return {
             "judged_turn_ids": sorted(done_ids),
             "origins": sorted({row["origin"] for row in written}),
-            "edges": len(written),
-            "written": written,
-            "rejected": rejected,
+            "edges": len(written), "written": written, "rejected": rejected,
         }
     finally:
-        with _single_flight_lock:
-            _in_flight.pop(key, None)
+        _release_flight(key)
+
+
+def run_summon_relation_judge(
+    db: Any, state: Any, *, llm_config: Any = None, write_gate: Any = None,
+    agent: Any = None, night_id: Optional[int] = None,
+    allowed_endpoint_names: Optional[set[str]] = None,
+) -> Dict[str, Any]:
+    """Canonical synchronous composition of prepare → provider → finalize."""
+    prepared = prepare_summon_relation_judge(
+        db, state, write_gate=write_gate, night_id=night_id,
+        allowed_endpoint_names=allowed_endpoint_names,
+    )
+    if isinstance(prepared, dict):
+        return prepared
+    result = invoke_summon_relation_judge_provider(
+        prepared, llm_config=llm_config, agent=agent,
+    )
+    return finalize_summon_relation_judge(prepared, result, write_gate=write_gate)
 
 
 def _hydrate_turn(db: Any, row: Mapping[str, Any]) -> Dict[str, Any]:
