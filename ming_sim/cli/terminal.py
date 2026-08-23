@@ -180,9 +180,12 @@ def choose_minister(session: GameSession) -> Optional[Character]:
                 return candidate
         # 召对总闸 can_summon（含宗藩拒 + 非 active 拒）——按名/编号/模糊任一路解析到的人都过此闸，
         # 与 web /chat、LLM summon 工具同口径集中守（cmr R6：CLI 选臣菜单原先只查 status、漏宗藩）。
-        ok, reason = session.can_summon(candidate)
-        if not ok:
-            print(reason)
+        decision = session.consume_audience_admission(
+            candidate,
+            origin_id=f"cli:initial:{session.state.turn}:{candidate.name}",
+        )
+        if not decision.allowed:
+            print(decision.reason)
             continue
         return candidate
 

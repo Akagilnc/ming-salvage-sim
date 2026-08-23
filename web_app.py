@@ -1873,6 +1873,12 @@ class WebGame:
                     if self._audience_turn_in_flight(minister_name):
                         raise HTTPException(status_code=409, detail=f"{minister_name}上一轮回奏仍在进行，请稍候再问。")
                     accepted_turn = int(self.state.turn)
+                    admission = self.session.consume_audience_admission(
+                        self.session._character(minister_name),
+                        origin_id=f"web:chat:{accepted_turn}:{minister_name}",
+                    )
+                    if not admission.allowed:
+                        raise HTTPException(status_code=409, detail=admission.reason)
                     if self._persistent_chat_minister(minister_name):
                         chat_turn_id, before_snapshot = self._start_chat_turn(minister_name)
                     self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})
@@ -2411,10 +2417,15 @@ class WebGame:
                         except ValueError:
                             target = None
                         if target is not None:
-                            ok, _reason = self.session.can_summon(target)
-                            if ok:
+                            decision = self.session.consume_audience_admission(
+                                target,
+                                origin_id=f"web:tool:{int(chat_turn_id or 0)}:{target.name}",
+                            )
+                            if decision.allowed:
                                 court_action = "summon"
                                 next_minister = target.name
+                            elif decision.reason:
+                                answer = answer + "\n\n" + decision.reason
                 elif tool_name == "dismiss_minister" or res == "__dismiss__":
                     court_action = "dismiss"
                     # AC1（#500）/#506 L1：令退同源落账绑本轮。#542：流中已 start_exit
@@ -3069,6 +3080,14 @@ class WebGame:
                 yield {"type": "error", "message": f"{minister_name}上一轮回奏仍在进行，请稍候再问。"}
                 return
             accepted_turn = int(self.state.turn)
+            admission = self.session.consume_audience_admission(
+                self.session._character(minister_name),
+                origin_id=f"web:stream:{accepted_turn}:{minister_name}",
+            )
+            if not admission.allowed:
+                self._complete_pending_write(pending_ticket)
+                yield {"type": "error", "message": admission.reason}
+                return
             if self._persistent_chat_minister(minister_name):
                 chat_turn_id, before_snapshot = self._start_chat_turn(minister_name)
             self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})
