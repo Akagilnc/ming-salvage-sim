@@ -285,7 +285,7 @@ def generate_rescript_draft(
     payload: Dict[str, object],
     turn: int,
 ) -> Optional[List[Dict[str, object]]]:
-    """phase2 第五路：跑一次票拟生成 LLM 调用并校验 shape。
+    """phase2 fan-out 第 N+1 路（N=同池 extractor 模块数）：跑一次票拟生成 LLM 调用并校验 shape。
 
     响亮降级契约（F2.5）按错误归属拆缝（r2 裁决 B3 / ADR 0005 / relation_brew 同款
     先例）：业务降级面只收声明类型——LLM 调用缝只收 typed LLMUnavailable；解析/shape
@@ -303,7 +303,7 @@ def generate_rescript_draft(
 
     try:
         raw = run_agent_text(agent, payload_json, tag="rescript-draft")
-    except (APITimeoutError, APIConnectionError, APIStatusError) as error:  # 窄捕 provider 已知故障→译 typed（照抄 decree.py:1975 Z3 缝）
+    except (APITimeoutError, APIConnectionError, APIStatusError) as error:  # 窄捕 provider 已知故障→译 typed（照抄 decree.py:1991 Z3 缝）
         _degrade(llm_unavailable_from_error(error, "急务票拟生成"))
         return None
     except LLMUnavailable as exc:  # LLM 调用缝：只收 typed 声明，程序错上抛
