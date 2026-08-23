@@ -7478,24 +7478,13 @@ def apply_score_extraction(
         extracted.get("faction_delta") or {},
         commit=commit_now,
     )
-    # #653 F3.2：阶级 satisfaction 吃账本硬约束——受损/受益符号域以本回合财政事实
-    # 投影（F2 六源纯投影）为准；归因对象＝brief 中列明的受损/受益事实分量，无涉
-    # 事实的阶级不约束。违反符号域的 item clamp 到合法域边界 0 并留痕（clamp 记录
-    # rejected=False、不进拒收报告）。代码只供事实包与 clamp，不替阶级定最终幅度。
-    from ming_sim.fiscal_fact_brief import (
-        build_fiscal_fact_brief,
-        clamp_class_delta_to_fact_signs,
-    )
-    _class_delta_raw, _sign_clamp_records = clamp_class_delta_to_fact_signs(
-        extracted.get("class_delta") or {},
-        build_fiscal_fact_brief(db),
-    )
+    # #653 F3.2：财政事实只作为 internal extractor 的输入证据；最终方向与幅度由
+    # LLM 结合事件、任免等同回合事实综合判断，沿用既有 class_delta 契约原样接收。
     applied_classes, class_rejections = _apply_class_dict(
         db,
-        _class_delta_raw,
+        extracted.get("class_delta") or {},
         commit=commit_now,
     )
-    class_rejections.extend(_sign_clamp_records)
     # 3.5) population_transfers：人口守恒转移原语（#649/0087）——单记录双写，
     # 源阶级减 N、目标阶级增 N 同事务原子；逐项拒收面见 flows._apply_population_transfers。
     applied_transfers, transfer_rejections = _apply_population_transfers(

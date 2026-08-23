@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""#653 F2/F3——财政事实＝既有真源的纯投影 ＋ class_delta 符号域硬约束。
+"""#653 F2/F3——财政事实＝既有真源的纯投影与 LLM 综合归因输入。
 
 F2（纯投影，零新表零新账）：三 metric 与被折发/被欠/被补发资源事实全部投影自
-F2.1 既有真源的**本回合分量**（禁把长期存量当本回合受损喂 clamp），各源：
+F2.1 既有真源的**本回合分量**（禁把长期存量误作本回合事实），各源：
   ① regions.fiscal settle st/p（明控省）：三饷当月实征流（加派量＝三饷应征×
     (1−逋赋率)）、赈济未敷 unmet_relief（settle_tick 每 tick 落进 st 的当月流量，
     §9 口径）、省内池折发免除额的 Due 基数；坏 fiscal JSON / 缺 settle 基座 →
@@ -32,11 +32,8 @@ origin_ref, affected_class, detail}；metric ∈ {分源欠饷月数, 加派量,
 
 确定性排序：regions 按 id、armies 按 rowid、饷源 province→central、补发行按 ledger id。
 
-F3.2（不得反向的可断言归因）：归因对象＝本回合 fact brief 中列明的受损/受益事实分量，
-不是整回合净值。**地域精确匹配**：带 @region 切片的 class_delta 键只受同省事实约束
-（陕西受损事实不得反向钳制 官僚@henan）；裸 class 键（全国面）受该阶级任意地域事实
-约束。违反符号域的 item clamp 到合法域边界 0 并留痕。代码只供事实包、clamp、记账，
-不替阶级决定最终幅度。
+F3.2：本摘要作为账本事实输入；最终 class_delta 由 internal extractor 结合财政、事件、
+任免等同回合事实综合判断，代码不约束 satisfaction 的方向或幅度。
 """
 from __future__ import annotations
 
@@ -368,100 +365,3 @@ def _fmt_num(v: Any) -> str:
     if f == int(f):
         return str(int(f))
     return repr(f)
-
-
-def clamp_class_delta_to_fact_signs(
-    class_delta: Any,
-    fact_entries: List[Dict[str, Any]],
-) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
-    """F3.2 符号域硬约束：受损阶级 satisfaction 必须 ≤0、受益阶级 ≥0（无涉阶级不约束）。
-
-    归因对象＝fact_entries 中列明的受损/受益事实（value>0=受损；value<0=受益），
-    匹配规则（地域精确，防跨省钳制）：
-    - region 级事实（subject_kind=region）按 subject_id 对省；
-    - army 级事实按条目 region（=pay_source_region）对省——同省 scoped 键受约束、
-      跨省不约束；无属地（region=''）军事实只约束全国面裸 class 键；
-    - 带 ``@region`` 切片的 delta 键：只受同省事实约束——陕西受损事实不得钳制
-      官僚@henan；
-    - 裸 class 键（全国面）：受该阶级任意地域/军事实约束。
-    违反符号域的 item clamp 到合法域边界 0 并留痕（rejected=False 的 clamp 记录）。
-    纯函数；class_delta 非 dict 原样返回（形状拒收归既有 sanitize 契约管）。
-    """
-    if not isinstance(class_delta, dict) or not fact_entries:
-        return class_delta, []
-    damaged_national: set[str] = set()
-    benefited_national: set[str] = set()
-    damaged_by_region: Dict[str, set[str]] = {}
-    benefited_by_region: Dict[str, set[str]] = {}
-    for e in fact_entries:
-        cls = str(e.get("affected_class") or "")
-        if not cls:
-            continue
-        try:
-            v = float(e.get("value", 0))
-        except (TypeError, ValueError):
-            continue
-        if v == 0:
-            continue
-        kind = str(e.get("subject_kind") or "")
-        sid = str(e.get("subject_id") or "")
-        reg = str(e.get("region") or "")
-        if kind == "region" and sid:
-            bucket_d = damaged_by_region.setdefault(sid, set())
-            bucket_b = benefited_by_region.setdefault(sid, set())
-            (bucket_d if v > 0 else bucket_b).add(cls)
-        elif reg:
-            # army 级事实带属地：同省 scoped 键受约束（F3.2 地域精确）
-            bucket_d = damaged_by_region.setdefault(reg, set())
-            bucket_b = benefited_by_region.setdefault(reg, set())
-            (bucket_d if v > 0 else bucket_b).add(cls)
-        else:
-            # 无属地军级/其它主体事实无省切片可对齐，只约束全国面裸 class 键
-            (damaged_national if v > 0 else benefited_national).add(cls)
-    # 裸 class 键（全国面）受该阶级任意地域/军事实约束；@region 切片键只受同省事实。
-    damaged_anywhere = damaged_national | {
-        c for s in damaged_by_region.values() for c in s
-    }
-    benefited_anywhere = benefited_national | {
-        c for s in benefited_by_region.values() for c in s
-    }
-
-    clamped = dict(class_delta)
-    records: List[Dict[str, Any]] = []
-    for key, fields in class_delta.items():
-        raw_key = str(key)
-        base, _, region = raw_key.partition("@")
-        if not isinstance(fields, dict) or "satisfaction" not in fields:
-            continue
-        raw = fields.get("satisfaction")
-        if isinstance(raw, bool) or not isinstance(raw, int):
-            continue  # 脏值归既有逐项拒收契约，不在符号域层处理
-        violated = False
-        benefit_side = False
-        if region:
-            if base in damaged_by_region.get(region, set()) and raw > 0:
-                violated = True
-            elif base in benefited_by_region.get(region, set()) and raw < 0:
-                violated = benefit_side = True
-        else:
-            if base in damaged_anywhere and raw > 0:
-                violated = True
-            elif base in benefited_anywhere and raw < 0:
-                violated = benefit_side = True
-        if not violated:
-            continue
-        new = dict(fields)
-        new["satisfaction"] = 0
-        clamped[key] = new
-        direction = "为财政受益方" if benefit_side else "为财政受损方"
-        bound = "不得为负" if benefit_side else "不得为正"
-        records.append({
-            "name": raw_key, "rejected": False, "clamped": True,
-            "category": "sign_clamp", "field": "satisfaction",
-            "from": raw, "to": 0,
-            "reason": (
-                f"账本硬约束：{base}{('@' + region) if region else ''} 本回合{direction}"
-                f"（fact brief 在案），satisfaction {bound}，已 clamp 至 0"
-            ),
-        })
-    return clamped, records
