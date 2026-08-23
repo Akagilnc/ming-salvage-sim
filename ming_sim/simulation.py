@@ -1157,6 +1157,12 @@ def build_extractor_shared_context(
             full = db.get_decree_dossier(int(row["id"])) or row
             entry.update(execution_side_read_fields(db, state, full))
         if module == "issues":
+            # #651 monthly pay truth follows the same authorized dossier rail.
+            if "army_pay_fact" in row:
+                entry["army_pay_fact"] = row["army_pay_fact"]
+            else:
+                from ming_sim.covert_levy import army_pay_fact_for_dossier
+                entry["army_pay_fact"] = army_pay_fact_for_dossier(db, int(row["id"]))
             # 监督事实底注入执行格面（只读；缺则现场读 DB）。
             if all(key in row for key in SUPERVISION_SURFACE_KEYS):
                 for key in SUPERVISION_SURFACE_KEYS:

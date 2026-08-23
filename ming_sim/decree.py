@@ -795,6 +795,10 @@ def _project_one_dossier_for_simulator(
             db.build_supervision_judge_surface(int(row["id"]))
         )
     )
+    # #651: expose durable monthly pay truth before execution is judged; this
+    # remains a field of the canonical dossier rather than a parallel wrapper.
+    from ming_sim.covert_levy import army_pay_fact_for_dossier
+    projected["army_pay_fact"] = army_pay_fact_for_dossier(db, int(row["id"]))
     if track == "narrative":
         projected["decree_text"] = str(row.get("decree_text") or "")
         expected = SIM_DOSSIER_NARRATIVE_KEYS
@@ -2394,8 +2398,8 @@ def _settle_after_extract_body(
 
     # #651：普通旨只骑既有 canonical 字段结账；三路揭破仍写唯一 todo 表。
     from ming_sim.covert_levy import settle_exposure_from_canonical_actions, write_exposure_todos
-    applied["covert_levy_exposure_settlements"] = settle_exposure_from_canonical_actions(db, state, extracted)
-    applied["covert_levy_exposures"] = write_exposure_todos(db, state, extracted)
+    applied["covert_levy_exposure_settlements"] = settle_exposure_from_canonical_actions(db, state, applied)
+    applied["covert_levy_exposures"] = write_exposure_todos(db, state, applied)
 
     # #621 / ADR 0076：经召对窗后的 pending todo → 正式复核落格并消费（三拍第 3 拍）。
     # 须在本 settle 写新 todo 之前：只消费 created_turn < 当前 turn 者，保留本拍新写给次回合。

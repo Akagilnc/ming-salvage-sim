@@ -1,6 +1,10 @@
-from ming_sim.covert_levy import ENTRY_KIND, army_pay_fact_for_dossier, write_exposure_todos
+from ming_sim.covert_levy import (
+    ENTRY_KIND, army_pay_fact_for_dossier,
+    settle_exposure_from_canonical_actions, write_exposure_todos,
+)
+from ming_sim.decree import project_dossiers_for_simulator
 from ming_sim.due_review import audience_todo_lane, build_due_review_input, list_due_review_scenes
-from ming_sim.simulation import EMPTY_EXTRACTION, MODULE_FIELDS
+from ming_sim.simulation import EMPTY_EXTRACTION, MODULE_FIELDS, build_extractor_shared_context
 
 
 def _bound_case(db, state):
@@ -51,7 +55,49 @@ def test_exposure_uses_single_dispatcher_and_projects_exact_case(game, monkeypat
     assert scene["kind"] == ENTRY_KIND
     assert scene["dossier_id"] == did and scene["executor_id"] == executor
     assert scene["channels"] == ["稽核"]
+    assert scene["scene_text"] == ""  # audience LLM receives facts, not a fixed memorial
     assert build_due_review_input(db, todo)["commitment_ref"] == issue_id
+
+
+def test_pay_fact_reaches_both_production_judge_inputs(game):
+    db, state, _ = game
+    did, _, army_id, _ = _bound_case(db, state)
+    db.conn.execute(
+        "UPDATE armies SET arrears=9, consecutive_pay_shortfall_months=3 WHERE id=?", (army_id,)
+    )
+    rows = [dict(r) for r in db.list_decree_dossiers_for_simulation(state.turn)]
+    simulator = project_dossiers_for_simulator(rows, db, state)
+    sim_row = next(row for row in simulator if row["id"] == did)
+    assert sim_row["army_pay_fact"]["consecutive_pay_shortfall_months"] == 3
+    issues = build_extractor_shared_context(
+        db, state, "", "", module="issues", decree_dossiers=simulator,
+    )
+    issue_row = next(row for row in issues["decree_dossiers"] if row["id"] == did)
+    assert issue_row["army_pay_fact"] == sim_row["army_pay_fact"]
+
+
+def test_rejected_canonical_results_neither_consume_nor_create_channel(game, monkeypatch):
+    db, state, _ = game
+    did, _, _, _ = _bound_case(db, state)
+    monkeypatch.setattr(db, "read_dossier_fork_state", lambda dossier_id: {
+        "dossier_id": dossier_id, "fork": True, "reported_bands": [],
+        "execution_outcome": "transformed", "actual_effect_count": 1, "beyond_intent": True,
+    })
+    db.conn.execute(
+        "INSERT INTO decree_dossier_links(source_dossier_id,target_dossier_id,relation_type,note) "
+        "VALUES (?,?, '稽核','查账')", (did, did),
+    )
+    assert write_exposure_todos(db, state, {}) == 1
+    rejected = {
+        "dossier_executions": [{"rejected": True, "item": {"dossier_id": did, "outcome": "failed"}}],
+        "population_transfers": [{"rejected": True, "origin_ref": f"dossier:{did}", "reason": "摊派"}],
+    }
+    assert settle_exposure_from_canonical_actions(db, state, rejected) == 0
+    assert db.list_next_audience_todos(status="pending")
+    # With no audit/denunciation, a rejected transfer cannot manufacture unrest exposure.
+    db.conn.execute("DELETE FROM next_audience_todos")
+    db.conn.execute("DELETE FROM decree_dossier_links")
+    assert write_exposure_todos(db, state, rejected) == 0
 
 
 def test_population_transfer_is_the_self_grown_unrest_channel(game, monkeypatch):
