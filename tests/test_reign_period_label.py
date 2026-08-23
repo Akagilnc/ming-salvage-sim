@@ -9,6 +9,10 @@ from __future__ import annotations
 from ming_sim.models import reign_period_label
 
 
+def test_pre_tianqi_year_uses_honest_calendar_fallback():
+    assert reign_period_label(1620, 1) == "公历1620年正月"
+
+
 def test_opening_1627_is_tianqi_seventh_year_tenth_month():
     """开局 1627/10 → 天启七年十月（票 #1325/#1346 症状对症）。"""
     assert reign_period_label(1627, 10) == "天启七年十月"
