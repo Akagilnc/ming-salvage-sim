@@ -33,12 +33,13 @@ from ming_sim.decree_vocabulary import (
     DOSSIER_ACTION_TYPES, DIRECTIVE_ACTION_TYPES, dossier_action_policy,
 )
 from ming_sim.matching import match_army_id_from_text, match_region_id_from_text
+from ming_sim.exceptions import LLMContractError
+from ming_sim.intelligence import OFFICE_SLOTS
 from ming_sim.models import (
     FRONT_HALF_DONE_PHASES, Character, Event, GameState, is_vassal_prince,
     loads_effect_dict, monthly_amount, period_label, reign_period_label,
 )
-from ming_sim.exceptions import LLMContractError
-from ming_sim.intelligence import OFFICE_SLOTS
+from ming_sim.relations import SUMMON_EDGE_ORIGIN_PREFIX
 from ming_sim.participant_roster import (
     participant_roster_names,
     project_execution_liability_parties,
@@ -2221,6 +2222,9 @@ class GameDB:
         )
         # #501 叙事抽取水位 + 抽取账溯源/在场效果/时序键（旧档补列，schema 升级非 fallback）。
         self.ensure_column("chat_turns", "extract_status", "TEXT NOT NULL DEFAULT ''")
+        # #634 召对判官已判水位（ADR 0082）：''=未判 / 'done'=已判落库。逐轮标记即水位，
+        # 撤回轮翻 undone 后天然出窗（水位回退），无平行水位表。
+        self.ensure_column("chat_turns", "relation_judge_status", "TEXT NOT NULL DEFAULT ''")
         # #506 轮级撤销：undo_chat_turn 写 undone_at；旧档 chat_turns 建于该列进 CREATE 之前
         # 时缺列，undo 的 UPDATE 会 OperationalError（no such column: undone_at）→ 整撤回回滚。
         self.ensure_column("chat_turns", "undone_at", "TEXT")
@@ -8845,6 +8849,51 @@ class GameDB:
         ).fetchone()
         return str(row["mindreading_status"] or "") if row is not None else ""
 
+    # ----- #634 召对判官水位（ADR 0082：逐轮标记即水位，无平行水位表）-----
+
+    def list_unjudged_completed_chat_turns(self) -> List[Dict[str, Any]]:
+        """#634 判官窗口：已完成（active 且有回话入档）且判官未判的对话轮，id 升序。
+
+        generating / failed / interrupted / undone 不进窗——在飞轮由下一拍或收夜扫尾
+        捕获（ADR 0082 时序），撤回轮翻 undone 后天然出窗（水位回退语义）。
+        全库口径（不限夜）：扫尾降级留下的欠账在任何后续机会都能被补判，不因夜关永久丢失。
+        """
+        rows = self.conn.execute(
+            """
+            SELECT * FROM chat_turns
+            WHERE status = 'active'
+              AND minister_message_id IS NOT NULL AND minister_message_id > 0
+              AND relation_judge_status = ''
+            ORDER BY id ASC
+            """,
+        ).fetchall()
+        return [self._row_dict(r) for r in rows]
+
+    def mark_relation_judge_done(self, chat_turn_ids: Iterable[int]) -> None:
+        """把本拍已落库的窗口轮标 'done'；只从 '' 转入，不覆盖其它终态。"""
+        ids = [int(i) for i in chat_turn_ids]
+        if not ids:
+            return
+        placeholders = ",".join("?" for _ in ids)
+        self.conn.execute(
+            f"UPDATE chat_turns SET relation_judge_status = 'done' "
+            f"WHERE id IN ({placeholders}) AND relation_judge_status = ''",
+            ids,
+        )
+        self.conn.commit()
+
+    def delete_relation_edge_events_for_chat_turn(self, chat_turn_id: int) -> int:
+        """撤回联动（ADR 0038 白名单③）：删该轮源绑定的召对边事件行，返回删除数。
+
+        事务归属调用方：undo_chat_turn 在其原子块内调（禁提前 commit）；origin 的
+        chat_turn 段是唯一的源轮绑定真源（relation_judge.summon_edge_origin 拼装）。
+        """
+        cur = self.conn.execute(
+            "DELETE FROM relation_edge_events WHERE origin LIKE ?",
+            (f"{SUMMON_EDGE_ORIGIN_PREFIX}|chat_turn:{int(chat_turn_id)}|%",),
+        )
+        return int(cur.rowcount)
+
     # ----- #501 叙事抽取落账（水位 + 原子落账 + 补跑真源）-----
 
     def get_story_extract_status(self, chat_turn_id: int) -> str:
@@ -9458,6 +9507,9 @@ class GameDB:
                 "DELETE FROM mindreading_records WHERE chat_turn_id = ?",
                 (int(chat_turn_id),),
             )
+            # #634 撤回联动（ADR 0038 白名单③）：删该轮源绑定的召对边事件；undone 轮
+            # 天然出判官窗口（status != active），水位随逐轮标记失效自动回退。
+            self.delete_relation_edge_events_for_chat_turn(chat_turn_id)
             # #506：删该轮所产故事账——抽取账走 source_chat_turn_id、该轮 attach 创建的
             # 入殿等口令账走 origin_chat_turn_id。晚落的补跑抽取账也按 source 删（不受
             # 前像快照时刻限制）；开夜/员额/收夜等框架账 origin==0、不随本轮撤。撤回后

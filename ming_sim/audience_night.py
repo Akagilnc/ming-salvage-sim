@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import time
 from datetime import datetime, timezone
 from collections.abc import Mapping
@@ -20,6 +21,8 @@ from ming_sim.error_pack import error_packs_root
 from ming_sim.mindreading import is_inner_court_attendant
 from ming_sim.models import GameState
 from ming_sim.participant_roster import is_non_person_participant_name
+
+logger = logging.getLogger(__name__)
 
 # ── 引擎侧口令标签常量（ADR 0035：确定性写读）──────────────────────────
 TAG_OPEN_NIGHT = "开夜"
@@ -154,9 +157,13 @@ _CLOSE_COMMIT_KINDS_FINAL = frozenset({"consort"})
 # 后果一律走 ADR 0006 待确认暂存、收夜才提交。每项映射其直写落地的真实盘面表；新增任何
 # 夜内直写必须过设计审、显式扩本表，否则撤回逆转不净。〔白名单第三项「召对口关系边事件」
 # 随 #479/ADR 0082 另片过审，不在本片。〕
+# 夜内真实盘面直写白名单（ADR 0038 防坑不变式；#506 AC3）。第三项「召对口关系边
+# 事件」随 #634/ADR 0082 落地：判官拍与收夜扫尾当场落库，边事件带源轮绑定
+# （origin chat_turn 段），撤回按轮删＋水位回退，逆转干净。
 NIGHT_DIRECT_WRITE_WHITELIST: Dict[str, frozenset] = {
     "密令落地": frozenset({"secret_orders", "secret_order_briefs"}),
     "未在册人物入册": frozenset({"characters", "character_offices"}),
+    "召对口关系边事件": frozenset({"relation_edge_events"}),
 }
 
 # 夜内结构化写可能触及、且属真实盘面（非暂存/候选层）的表全集——审计据此判越权：落在此集
@@ -164,7 +171,7 @@ NIGHT_DIRECT_WRITE_WHITELIST: Dict[str, frozenset] = {
 # 待确认层、收夜才提交，不算真实盘面直写，不在此集。
 _REAL_BOARD_TABLES = frozenset({
     "characters", "character_offices", "consort_traits", "factions",
-    "secret_orders", "secret_order_briefs",
+    "secret_orders", "secret_order_briefs", "relation_edge_events",
 })
 
 
@@ -1284,6 +1291,19 @@ def close_night(
             db, int(night_id), llm_config=llm_config, write_gate=write_gate,
             extractor_agent=extractor_agent,
         )
+        # #634 收夜扫尾（ADR 0082 有界尾调用）：补判判官水位后残段——回话内新生
+        # 事件在召对结束前完成落库。降级（LLM 失败/坏输出）不阻关窗：响亮留痕、
+        # 窗口保持开放，欠账由任何后续拍/扫尾机会全局补判（判官漏判不阻塞主链；
+        # 对话原文持久，无内容丢失面）。
+        from ming_sim.relation_judge import run_summon_relation_judge
+        sweep_res = run_summon_relation_judge(
+            db, state, llm_config=llm_config, write_gate=write_gate,
+        )
+        if isinstance(sweep_res, dict) and sweep_res.get("degraded"):
+            logger.warning(
+                "relation judge sweep degraded night_id=%s: %s",
+                int(night_id), sweep_res.get("degraded"),
+            )
     except Exception as drain_exc:
         from ming_sim.exceptions import LLMUnavailable
 
