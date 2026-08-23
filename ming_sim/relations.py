@@ -32,6 +32,12 @@ _TURN_RE = re.compile(r"(?:^|[|/:; ])turn[=: -](\d+)(?:$|[|/:; ])", re.I)
 # #633 结算口：非旨意自然演化的互动来源哨兵（与 shared canonical 同一哨兵字面）。
 SETTLEMENT_ORIGIN_SENTINEL = "盘面自发"
 
+# #634 召对口（ADR 0082）：召对判官边事件 origin 前缀。完整 origin 由
+# relation_judge.summon_edge_origin 拼装为 ``{前缀}|chat_turn:{轮 id}``，写口
+# bind_origin_round 再附 ``|round:N``——源轮绑定供撤回按轮删（ADR 0038 白名单③），
+# round 段承担 TD-1 回指。禁在调用侧另拼第二套 origin。
+SUMMON_EDGE_ORIGIN_PREFIX = "召对判官"
+
 # 结算口 dossier 来源的精确字面形态：dossier:<正整数>，零空白零变体。
 _DOSSIER_ORIGIN_RE = re.compile(r"dossier:(?P<id>[1-9][0-9]*)")
 
