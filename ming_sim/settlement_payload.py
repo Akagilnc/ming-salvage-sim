@@ -176,6 +176,13 @@ def bind_decisions_to_candidate_events(
         title = str(item.get("title") or "").strip()
         if not event_id:
             continue
+        # #655 弹劾潮候选复用 candidate_events 输入面，但不是事件账条目。
+        # 采信其 id 会让 HITL 提交走 _ensure_event_parent 对未定义事件 ValueError。
+        if (
+            str(item.get("origin_kind") or "").strip() == "impeachment_surge"
+            or event_id.startswith("impeachment_surge:")
+        ):
+            continue
         candidate_ids.add(event_id)
         if title:
             title_to_ids.setdefault(title, []).append(event_id)

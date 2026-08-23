@@ -17777,6 +17777,9 @@ class GameDB:
         eid = str(event_id or "").strip()
         if not eid:
             return
+        # 弹劾潮候选 id 不是 events 表条目；父行守卫会 ValueError 卡死亲裁提交。
+        if eid.startswith("impeachment_surge:"):
+            return
         self._ensure_event_parent(eid)
         payload = json.dumps(choice if isinstance(choice, dict) else {}, ensure_ascii=False)
         label = str((choice or {}).get("label") or "")[:200] if isinstance(choice, dict) else ""
