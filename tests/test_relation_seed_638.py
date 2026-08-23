@@ -57,7 +57,8 @@ def test_seed_document_validation_is_fail_closed():
 
     base = {
         "source": "甲", "target": "乙", "event_kind": "结怨",
-        "context": "一句语境。", "origin": "seed:test", "year": 1625, "period": 4,
+        "context": "一句语境。", "origin": "seed:test", "evidence": False,
+        "year": 1625, "period": 4,
     }
 
     def _doc(event_overrides=None, **top):
@@ -65,6 +66,11 @@ def test_seed_document_validation_is_fail_closed():
         doc.update(top)
         return doc
 
+    for invalid in ({}, {"summaries": []}, {"events": []}):
+        with pytest.raises(ValueError, match="events"):
+            validate_seed_document(invalid, opening_year=1627, opening_period=10)
+    with pytest.raises(ValueError, match="evidence"):
+        validate_seed_document(_doc({"evidence": 1}), opening_year=1627, opening_period=10)
     with pytest.raises(ValueError, match="未知边事件类目"):
         validate_seed_document(_doc({"event_kind": "发明的类目"}), opening_year=1627, opening_period=10)
     with pytest.raises(ValueError, match="早于开局"):
@@ -86,6 +92,21 @@ def test_seed_document_validation_is_fail_closed():
     # 合法文档归一：turn 刻度非正、词表过验。
     normalized = validate_seed_document(_doc(), opening_year=1627, opening_period=10)
     assert normalized["events"][0]["turn"] == pregame_turn(1625, 4) < 0
+
+
+def test_fresh_seed_summary_is_readable_with_seed_event_clock(fresh_session):
+    """未酿 seed 摘要保留零水位，并以对应 seed 事件提供合法读面纪年。"""
+    from ming_sim.relation_read import project_relation_ledger
+
+    sess, _content = fresh_session
+    summary = sess.db.get_relation_summary("皇帝", "王承恩")
+    assert int(summary["last_event_id"]) == 0
+    for viewer in (None, "皇帝"):
+        dto = next(
+            row for row in project_relation_ledger(sess.db, viewer=viewer)
+            if (row["source"], row["target"]) == ("皇帝", "王承恩")
+        )
+        assert dto["updated_at_period"] == "天启六年二月"
 
 
 def test_seeded_pair_flows_into_month_end_brew_selection(fresh_session):
@@ -183,6 +204,32 @@ def test_missing_bundled_seed_fails_new_save_and_retry_imports(tmp_path, monkeyp
     try:
         assert sess.db.has_savegame() is True
         assert sess.db.get_relation_edge_events()
+    finally:
+        sess.close()
+
+
+def test_invalid_bundled_seed_rolls_back_new_save_and_can_retry(tmp_path, monkeypatch):
+    """空 seed 在写入前拒绝，不烧 fresh 判据；恢复合法资源后同 DB 可重试。"""
+    import ming_sim.relation_seed as seed_mod
+
+    original_load = seed_mod.load_bundled_seed_document
+    monkeypatch.setattr(seed_mod, "load_bundled_seed_document", lambda: {"events": []})
+    db_path = str(tmp_path / "invalid-seed.db")
+    content = GameContent.load()
+    cfg = LLMConfig(api_key="", base_url="http://unused", model="unused")
+    with pytest.raises(ValueError, match="events"):
+        GameSession(db_path=db_path, llm_config=cfg, content=content)
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM game_state").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM relation_edge_events").fetchone()[0] == 0
+
+    monkeypatch.setattr(seed_mod, "load_bundled_seed_document", original_load)
+    sess = GameSession(db_path=db_path, llm_config=cfg, content=content)
+    try:
+        evidence = sess.db.get_relation_edge_events(
+            source="崔呈秀", target="田尔耕", evidence=True
+        )
+        assert evidence and all(row["evidence"] is True for row in evidence)
     finally:
         sess.close()
 

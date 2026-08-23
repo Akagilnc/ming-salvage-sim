@@ -63,17 +63,20 @@ def validate_seed_document(
 ) -> Dict[str, Any]:
     """fail-closed 校验并归一 seed 文档；任何违约整份 ValueError 拒收。
 
-    文档形状：{"events": [...], "summaries": [...]}（两键均可缺省为空表）。
-    events 项＝有向对（source/target）＋受控词表 event_kind＋一句故事级语境
-    context＋origin 回指＋开局前时间戳 year/period（严格早于开局）。summaries
+    文档形状：{"events": [...], "summaries": [...]}（events 必须为非空列表，
+    summaries 可缺省为空表）。events 项＝有向对（source/target）＋受控词表
+    event_kind＋一句故事级语境 context＋origin 回指＋开局前时间戳 year/period
+    （严格早于开局）＋字面布尔 evidence。summaries
     项＝关系对＋founding_lines 字符串列表（奠基段初始素材）。"""
     if not isinstance(doc, dict):
         raise ValueError(f"seed 文档顶层必须是 object，得 {type(doc).__name__}")
     opening = (_as_int(opening_year, "开局年份"), _as_int(opening_period, "开局月份"))
 
-    raw_events = doc.get("events", [])
-    if not isinstance(raw_events, list):
-        raise ValueError("seed 文档 events 必须是列表")
+    if "events" not in doc:
+        raise ValueError("seed 文档必须包含 events")
+    raw_events = doc["events"]
+    if not isinstance(raw_events, list) or not raw_events:
+        raise ValueError("seed 文档 events 必须是非空列表")
     events: List[Dict[str, Any]] = []
     for index, item in enumerate(raw_events):
         if not isinstance(item, dict):
@@ -85,6 +88,9 @@ def validate_seed_document(
         kind = validate_edge_kind(item.get("event_kind"))
         context = _non_empty_str(item.get("context"), f"seed events[{index}].context")
         origin = _non_empty_str(item.get("origin"), f"seed events[{index}].origin")
+        evidence = item.get("evidence")
+        if not isinstance(evidence, bool):
+            raise ValueError(f"seed events[{index}].evidence 必须是布尔值")
         year = _as_int(item.get("year"), f"seed events[{index}].year")
         period = _as_int(item.get("period"), f"seed events[{index}].period")
         if not 1 <= period <= 12:
@@ -100,6 +106,7 @@ def validate_seed_document(
             "event_kind": kind,
             "context": context,
             "origin": origin,
+            "evidence": evidence,
             "year": year,
             "period": period,
             "turn": pregame_turn(year, period),
@@ -156,6 +163,7 @@ def import_relationship_seed(
             event_kind=event["event_kind"],
             context=event["context"],
             origin=event["origin"],
+            evidence=event["evidence"],
             turn=event["turn"],
             year=event["year"],
             period=event["period"],
