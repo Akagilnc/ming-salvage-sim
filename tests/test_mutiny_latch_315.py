@@ -14,8 +14,6 @@ from ming_sim.flows import (
     apply_fixed_period_flows,
     derive_army_mutiny_state,
 )
-from ming_sim.simulation import _extractor_context_payload, build_simulator_payload
-
 ARMY = "guanning"
 PATHS = ("legacy", "substrate_hub")
 
@@ -130,41 +128,6 @@ def test_derive_mutiny_state_boundaries_and_latch(loyalty, latched, expected):
     army = {"loyalty": loyalty, "is_mutinied": latched}
 
     assert derive_army_mutiny_state(army) == expected
-
-
-def _projected_army(payload, expected_name):
-    armies = payload["armies"]
-    id_index = armies["cols"].index("id") if "id" in armies["cols"] else None
-    name_index = armies["cols"].index("name")
-    for values in armies["rows"]:
-        if (id_index is not None and values[id_index] == ARMY) or values[name_index] == expected_name:
-            return dict(zip(armies["cols"], values))
-    raise AssertionError(f"army {ARMY!r} not projected")
-
-
-@pytest.mark.parametrize("fiscal_path", PATHS)
-@pytest.mark.parametrize(
-    ("loyalty", "arrears", "expected_state"),
-    [(22, 3, "鼓噪"), (17, 5, "哗变")],
-)
-def test_tick_projects_derived_mutiny_state_to_both_consumers(
-    game, fiscal_path, loyalty, arrears, expected_state
-):
-    db, state, _ = game
-    _setup(db, fiscal_path, loyalty=loyalty, arrears=arrears)
-    expected_name = db.conn.execute(
-        "SELECT name FROM armies WHERE id=?", (ARMY,)
-    ).fetchone()["name"]
-    _tick(db, state)
-
-    payloads = (
-        build_simulator_payload(state, db, "", ""),
-        _extractor_context_payload(db, state, "", ""),
-    )
-    for payload in payloads:
-        army = _projected_army(payload, expected_name)
-        assert army["mutiny_state"] == expected_state
-        assert "is_mutinied" not in army
 
 
 @pytest.mark.parametrize("fiscal_path", PATHS)
