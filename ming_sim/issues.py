@@ -7126,6 +7126,17 @@ def _apply_dossier_participant_items(
 SURCHARGE_DECREE_FIELDS = frozenset({"region_id", "monthly_amount", "reason", "origin_ref"})
 
 
+def _surcharge_population_pool_members(db: GameDB, region_id: str) -> set[str]:
+    """Return the materialized provincial rows that make up a surcharge pool."""
+    return {
+        str(row["name"])
+        for row in db.conn.execute(
+            "SELECT name FROM classes WHERE region_id=? AND name IN ('农民', '流民')",
+            (region_id,),
+        ).fetchall()
+    }
+
+
 def _apply_surcharge_decrees(
     db: GameDB,
     state: GameState,
@@ -7199,6 +7210,12 @@ def _apply_surcharge_decrees(
                 f"surcharge_decrees {region_id!r} 无 settle 财政基座，逐省累积账无处落",
             )
             continue
+        if db.population_unit != POPULATION_UNIT_PERSONS:
+            _reject("missing_ref", "surcharge_decrees 仅适用于 population_unit='人' 的人口池档")
+            continue
+        if _surcharge_population_pool_members(db, region_id) != {"农民", "流民"}:
+            _reject("missing_ref", f"surcharge_decrees {region_id!r} 缺农民/流民省级人口池")
+            continue
         raw_amount = item.get("monthly_amount")
         if raw_amount is None:
             _reject("invalid_enum", "surcharge_decrees monthly_amount 缺失")
@@ -7266,7 +7283,8 @@ def _apply_levy_driven_transfers(
     （reason=加派；累积账月效统一使用 `盘面自发`，不伪归最后一道改账旨）。基线 ≤0 或折算后
     ≤0 的省零入池——停加派/蠲免后入池止（AC5；出口回流归 S5 #652）。
     """
-    if not db.is_substrate_hub_fiscal_engine_enabled():
+    if (not db.is_substrate_hub_fiscal_engine_enabled()
+            or db.population_unit != POPULATION_UNIT_PERSONS):
         return [], []
     records: List[Dict[str, object]] = []
     rows = db.conn.execute(
@@ -7296,12 +7314,13 @@ def _apply_levy_driven_transfers(
         base = max(0.0, float(raw))
         if base <= 0:
             continue
-        if db.conn.execute(
-            "SELECT 1 FROM classes WHERE name='农民' AND region_id=?", (region_id,)
-        ).fetchone() is None or db.conn.execute(
-            "SELECT 1 FROM classes WHERE name='流民' AND region_id=?", (region_id,)
-        ).fetchone() is None:
-            raise ValueError(f"{region_id} 有正加派账但缺农民/流民省级人口行")
+        pool_members = _surcharge_population_pool_members(db, region_id)
+        if not pool_members:
+            # Pre-contract ledgers may exist on fiscal provinces outside the population
+            # substrate.  They have no population effect and must not soft-lock saves.
+            continue
+        if pool_members != {"农民", "流民"}:
+            raise ValueError(f"{region_id} 有正加派账但仅有部分农民/流民省级人口行")
         support = max(0, min(100, int(row["public_support"] or 0)))
         raw_persons = base * LEVY_DISPLACEMENT_RATE * (100 - support) / 100.0
         amount = int(round(raw_persons))

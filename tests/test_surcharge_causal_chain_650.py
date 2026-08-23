@@ -25,6 +25,7 @@ from ming_sim.issues import apply_historical_fiscal_rates, apply_score_extractio
 import ming_sim.issues as issues
 from ming_sim.memories import effect_brief
 import ming_sim.memories as memories
+from ming_sim.population_pressure import regional_displaced_pressure_brief
 from ming_sim.knowledge import build_character_knowledge
 from ming_sim.simulation import build_simulator_payload
 
@@ -376,6 +377,25 @@ def test_phase2_reopen_consumes_old_levy_once_and_records_it(game, monkeypatch):
     assert resumed.state.turn_phase == TurnPhase.ISSUED.value
 
 
+def test_province_without_population_pool_rejects_surcharge_and_old_ledger_exits(game):
+    """辽东无人口池：新旨不落账，历史毒账也不得让下月 soft-lock。"""
+    db, state, content = game
+    applied = apply_score_extraction(db, state, {
+        "surcharge_decrees": [_decree(db, state, region_id="liaodong", monthly_amount=10.0)],
+    }, content, None)
+    assert not applied["surcharge_decrees"]
+    assert applied["surcharge_decrees_rejections"][0]["category"] == "missing_ref"
+
+    fiscal = json.loads(db.conn.execute(
+        "SELECT fiscal FROM regions WHERE id='liaodong'"
+    ).fetchone()[0])
+    fiscal["settle"].setdefault("_meta", {})["加派基线"] = 10.0
+    db.conn.execute("UPDATE regions SET fiscal=? WHERE id='liaodong'",
+                    (json.dumps(fiscal, ensure_ascii=False),))
+    db.conn.commit()
+    apply_score_extraction(db, state, {}, content, None)
+
+
 def test_ming_province_without_fiscal_base_is_not_a_levy_member(game):
     """合法无 settle 基座的明省自然出列，不阻断空 delta；无账人口不动。"""
     db, state, content = game
@@ -470,8 +490,8 @@ def test_accumulated_monthly_effect_uses_ledger_origin_not_latest_decree(game):
 
 # ── AC3：真实玩家回响链（结构化事实输入→自由叙事原样持久化→召对读链）──────────
 
-def test_levy_fact_enters_existing_public_read_chain_and_writer_keeps_free_next_report(game):
-    """连续两月真实结算：首月机器事实进逐来源读链；次月既有 writer 原样保存自由邸报。"""
+def test_exact_levy_fact_stays_out_of_public_read_chain_and_free_report_enters_it(game):
+    """精确机械人数不进公开链；既有 writer 的自由邸报原样进入公开读链。"""
     db, state, content = game
     first_turn = state.turn
     _settle_month(
@@ -510,7 +530,7 @@ def test_production_inputs_project_qualitative_regional_displaced_trend(game):
 
     payload_text = str(build_simulator_payload(state, db, "", "")["classes_brief"])
     assert "陕西：流民压力" in payload_text
-    assert "近月因加派而上升" in payload_text
+    assert "近月上升，期间加派致流民流入" in payload_text
     assert str(want) not in payload_text
 
     regional_text = None
@@ -524,9 +544,38 @@ def test_production_inputs_project_qualitative_regional_displaced_trend(game):
         if "regional" not in world and nonregional_text is None:
             nonregional_text = str(world)
     assert regional_text is not None and "陕西：流民压力" in regional_text
-    assert "近月因加派而上升" in regional_text
+    assert "近月上升，期间加派致流民流入" in regional_text
     assert nonregional_text is not None and "省级流民态势" not in nonregional_text
     assert str(want) not in regional_text
+
+
+def test_displaced_trend_separates_total_direction_from_levy_cause(game):
+    db, state, _ = game
+    db.save_turn_extraction(
+        state, decree_text="", narrative="", extractor_input="{}",
+        extractor_output=json.dumps({"population_transfers": [
+            {"source": "农民@shaanxi", "target": "流民@shaanxi", "amount": 1, "reason": "加派"},
+            {"source": "农民@shaanxi", "target": "流民@shaanxi", "amount": 100, "reason": "灾害"},
+        ]}, ensure_ascii=False),
+    )
+    brief = regional_displaced_pressure_brief(db)
+    assert "陕西：流民压力" in brief
+    assert "近月上升，期间加派致流民流入" in brief
+    assert "因加派而上升" not in brief
+
+
+def test_displaced_trend_does_not_call_post_levy_return_an_increase(game):
+    db, state, _ = game
+    db.save_turn_extraction(
+        state, decree_text="", narrative="", extractor_input="{}",
+        extractor_output=json.dumps({"population_transfers": [
+            {"source": "农民@shaanxi", "target": "流民@shaanxi", "amount": 1, "reason": "加派"},
+            {"source": "流民@shaanxi", "target": "农民@shaanxi", "amount": 10, "reason": "回流"},
+        ]}, ensure_ascii=False),
+    )
+    brief = regional_displaced_pressure_brief(db)
+    assert "陕西：流民压力" in brief and "近月回落" in brief
+    assert "因加派而上升" not in brief
 
 
 def test_effect_brief_carries_levy_echo_fact(game):
@@ -560,6 +609,33 @@ def legacy_game(content, tmp_path):
     db = _make_legacy_db(content, str(tmp_path / "legacy650.db"))
     state = db.load_state()
     yield db, state, content
+
+
+def test_unmarked_cutover_save_rejects_and_never_consumes_surcharge(game):
+    """旧档即使迁移到 substrate fiscal，也不冒充 persons 池消费历史账。"""
+    db, state, content = game
+    db.conn.execute("DELETE FROM save_meta WHERE key='population_unit'")
+    db.conn.execute("DELETE FROM fiscal_config WHERE key='__fiscal_engine'")
+    db.conn.execute("UPDATE fiscal_config SET value=1 WHERE key='__army_pay_source_cutover'")
+    fiscal = json.loads(db.conn.execute(
+        "SELECT fiscal FROM regions WHERE id='shaanxi'"
+    ).fetchone()[0])
+    fiscal["settle"].setdefault("_meta", {})["加派基线"] = 10.0
+    db.conn.execute("UPDATE regions SET fiscal=? WHERE id='shaanxi'",
+                    (json.dumps(fiscal, ensure_ascii=False),))
+    db.conn.commit()
+    path = db.path
+    db.close()
+    db = GameDB(path, content)
+    state = db.load_state()
+    before = _pop(db, "农民", "shaanxi")
+
+    applied = apply_score_extraction(db, state, {
+        "surcharge_decrees": [_decree(db, state, monthly_amount=10.0)],
+    }, content, None)
+    assert not applied["surcharge_decrees"]
+    assert applied["surcharge_decrees_rejections"][0]["category"] == "missing_ref"
+    assert _pop(db, "农民", "shaanxi") == before
 
 
 def test_legacy_fiscal_engine_rejects_surcharge_and_never_consumes_it(legacy_game):

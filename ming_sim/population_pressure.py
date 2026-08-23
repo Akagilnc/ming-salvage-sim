@@ -27,7 +27,7 @@ def regional_displaced_pressure_brief(db: Any, *, recent_turns: int = 3) -> str:
     ).fetchone()[0])
     first_turn = max(0, latest_turn - max(1, int(recent_turns)) + 1)
     net_by_region: dict[str, int] = {}
-    levy_inflow_regions: set[str] = set()
+    levy_net_by_region: dict[str, int] = {}
     if latest_turn >= 0:
         for turn in range(first_turn, latest_turn + 1):
             extraction = db.get_turn_extraction(turn) or {}
@@ -45,11 +45,13 @@ def regional_displaced_pressure_brief(db: Any, *, recent_turns: int = 3) -> str:
                 if target.startswith("流民@"):
                     region_id = target.split("@", 1)[1]
                     net_by_region[region_id] = net_by_region.get(region_id, 0) + amount
-                    if item.get("reason") == "加派" and amount > 0:
-                        levy_inflow_regions.add(region_id)
+                    if item.get("reason") == "加派":
+                        levy_net_by_region[region_id] = levy_net_by_region.get(region_id, 0) + amount
                 if source.startswith("流民@"):
                     region_id = source.split("@", 1)[1]
                     net_by_region[region_id] = net_by_region.get(region_id, 0) - amount
+                    if item.get("reason") == "加派":
+                        levy_net_by_region[region_id] = levy_net_by_region.get(region_id, 0) - amount
 
     result: list[str] = []
     for row in rows:
@@ -58,10 +60,8 @@ def regional_displaced_pressure_brief(db: Any, *, recent_turns: int = 3) -> str:
         ratio = displaced / total if total > 0 else 0.0
         pressure = "高" if ratio >= 0.10 else "中" if ratio >= 0.03 else "低"
         net = net_by_region.get(str(row["id"]), 0)
-        trend = (
-            "因加派而上升"
-            if net > 0 and str(row["id"]) in levy_inflow_regions
-            else "上升" if net > 0 else "回落" if net < 0 else "平稳"
-        )
-        result.append(f"{row['name']}：流民压力{pressure}，近月{trend}")
+        trend = "上升" if net > 0 else "回落" if net < 0 else "平稳"
+        levy_net = levy_net_by_region.get(str(row["id"]), 0)
+        levy_echo = "，期间加派致流民流入" if levy_net > 0 else ""
+        result.append(f"{row['name']}：流民压力{pressure}，近月{trend}{levy_echo}")
     return "；".join(result)
