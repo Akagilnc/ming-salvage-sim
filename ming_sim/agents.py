@@ -389,6 +389,26 @@ def create_mindreading_agent(llm_config: LLMConfig) -> Agent:
     )
 
 
+def create_relation_judge_agent(llm_config: LLMConfig) -> Agent:
+    """#634 召对关系判官（ADR 0082 召对口）：与回话并行的独立机器面短调用。
+
+    读已完成对话记录＋账本全知机面，识别当面边事件。逐拍 prompt 是输出契约
+    的唯一真源；factory 只声明职责与事实边界，避免多轮字段随两份提示漂移。"""
+    return Agent(
+        name="召对关系判官",
+        id="relation-judge",
+        model=create_chat_model(llm_config, temperature=0.2),
+        instructions=[
+            "你是召对关系判官。读召对至今已完成的对话记录和当前关系账，"
+            "识别当面发生的大臣↔大臣边事件（当面站台作保、表态、结怨、协作等）。",
+            "只记对话里真实演出的情节：不虚构、不引申、不从旧账翻旧账；"
+            "语境尽量取原文片段。严格遵循本次调用给出的输出契约。",
+        ],
+        add_history_to_context=False,
+        markdown=False,
+    )
+
+
 def create_highlight_judge_agent(llm_config: LLMConfig) -> Agent:
     """#544 / ADR 0045：大臣奏对高亮判官——生成完成后的独立机器面短调用。"""
     return Agent(

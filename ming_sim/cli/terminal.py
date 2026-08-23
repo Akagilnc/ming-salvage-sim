@@ -6,7 +6,9 @@ play_turn 状态机搬入此处；GameSession 持游戏状态，terminal 只做 
 
 from __future__ import annotations
 
+import logging
 import re
+import threading
 from typing import List, Optional
 
 from ming_sim.applier import atomic
@@ -28,6 +30,8 @@ from ming_sim.session import (
     _pending_action_failure_payload,
 )
 from ming_sim.skills import print_all_skill_cards, print_skill_card, skill_display_name
+
+logger = logging.getLogger(__name__)
 
 _STATUS_LABEL = {
     "active": "在朝",
@@ -470,6 +474,8 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> No
     if not db.reopen_interrupted_chat_turn_for_retry(chat_turn_id):
         print(f"{minister_name}上一轮回奏仍在进行，请稍候再问。\n")
         return
+    # #634：重试回话同形——判官拍先于重新生成派发（与回话并行）。
+    _dispatch_relation_judge_cli(session, chat_turn_id)
     try:
         session.start_chat_turn_scene(minister_name, chat_turn_id)
         result = session.chat(minister_name, question, chat_turn_id=chat_turn_id)
@@ -562,6 +568,53 @@ def _trail_extraction_after_reply_cli(
             q.complete(ticket)
 
 
+def _dispatch_relation_judge_cli(session: GameSession, chat_turn_id: int) -> None:
+    """#634 / ADR 0082：CLI 召对判官拍派发——与回话生成并行的 daemon 线程。
+
+    派发先于回话（不依赖本轮回话输出，TD-9 零额外等待）；写经票据执行 seam
+    （与 Web 生产同形）。LLM 失败降级留痕不抛——判官漏判不阻塞召对主链。
+    """
+    if not chat_turn_id:
+        return
+    q = None
+    try:
+        from ming_sim.session_write_queue import get_session_write_queue
+        q = get_session_write_queue(session)
+    except Exception:
+        logger.exception("relation judge queue resolution degraded chat_turn_id=%s", chat_turn_id)
+        return
+
+    # Admission belongs to the dispatcher: a close barrier must see the worker
+    # before Thread.start, exactly as the Web spawner does.
+    ticket = q.claim(key=("turn", int(chat_turn_id)))
+    if ticket is None:
+        return
+
+    def _run() -> None:
+        try:
+            from ming_sim.relation_judge import run_summon_relation_judge
+            run_summon_relation_judge(
+                session.db, session.state,
+                llm_config=getattr(session, "llm_config", None),
+                write_gate=q.ticketed_gate(ticket),
+            )
+        except Exception:
+            # 核心 LLM 降级在 run_summon_relation_judge；到此是外围基础设施故障，
+            # 仍不得打断对话，但必须响亮留痕。
+            logger.exception("relation judge worker degraded chat_turn_id=%s", chat_turn_id)
+        finally:
+            q.complete(ticket)
+
+    thread = threading.Thread(
+        target=_run, daemon=True, name="cli-audience-relation-judge",
+    )
+    try:
+        thread.start()
+    except Exception:
+        q.complete(ticket)
+        logger.exception("relation judge thread start degraded chat_turn_id=%s", chat_turn_id)
+
+
 def minister_chat(session: GameSession, character: Character) -> str:
     """与一位大臣对话。返回 'dismiss' | 'court_break' | 'summon:<name>'。"""
     other = next((n for n in session.content.characters if n != character.name), character.name)
@@ -647,6 +700,8 @@ def minister_chat(session: GameSession, character: Character) -> str:
                     session.db.update_chat_turn_messages(
                         chat_turn_id, user_message_id=user_message_id,
                     )
+            # #634：判官拍先于回话派发（与回话生成并行，TD-9）。
+            _dispatch_relation_judge_cli(session, chat_turn_id)
             result = (
                 session.chat(character.name, question, chat_turn_id=chat_turn_id)
                 if chat_turn_id else session.chat(character.name, question)
