@@ -55,10 +55,15 @@ def settle_exposure_from_canonical_actions(db: Any, state: Any, applied: Mapping
                 actors.add(str(participant.get("character_id") or "").strip())
         actors.discard("")
         successful = lambda x: isinstance(x, Mapping) and not x.get("rejected")
-        stopped = any(
-            successful(x) and int(x.get("dossier_id") or 0) == did
-            and x.get("outcome") == "failed"
-            for x in applied.get("dossier_executions") or []
+        # The exposed execution is already terminal.  A prohibition is therefore
+        # represented by a newly applied, case-bound canonical effect which stops
+        # the covert levy, while the army's durable pay gap remains outstanding.
+        pay_fact = army_pay_fact_for_dossier(db, did) or {}
+        stopped = bool(float(pay_fact.get("arrears") or 0) > 0) and any(
+            successful(x) and x.get("origin_ref") == origin
+            and not bool(x.get("beyond_intent"))
+            for key in ("economy_moves", "fiscal_changes")
+            for x in applied.get(key) or []
         )
         levy_transfer = any(
             successful(x) and x.get("origin_ref") == origin and x.get("reason") == "摊派"
@@ -79,7 +84,7 @@ def settle_exposure_from_canonical_actions(db: Any, state: Any, applied: Mapping
             successful(x)
             and str(x.get("origin") or "").startswith(f"{origin}:relation:")
             and ({str(x.get("source") or ""), str(x.get("target") or "")} & actors)
-            for x in applied.get("relation_edge_events") or []
+            for x in applied.get("relation_edge_event_resolutions") or []
         )
         decisions = [
             name for name, matched in (
