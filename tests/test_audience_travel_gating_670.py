@@ -96,6 +96,35 @@ def test_fresh_summon_origin_is_idempotent_and_projects_kind(game):
     }]
 
 
+def test_fresh_summon_departs_via_canonical_applier_only_when_night_closes(game):
+    db, state, content = game
+    person = _set_place(game, "洪承畴", location="shaanxi")
+    night_id = int(an.open_night(db, state)["id"])
+    an.record_summon_fresh(db, night_id, person.name, origin_id="command:close-1")
+
+    before = db.conn.execute(
+        "SELECT location, transit_to FROM characters WHERE name=?", (person.name,)
+    ).fetchone()
+    assert (before["location"], before["transit_to"]) == ("shaanxi", "")
+
+    an.close_night(db, state, night_id=night_id, content=content)
+
+    after = db.conn.execute(
+        "SELECT location, transit_to FROM characters WHERE name=?", (person.name,)
+    ).fetchone()
+    assert (after["location"], after["transit_to"]) == ("shaanxi", "beizhili")
+    assert an.list_unsettled_summons(db) == []
+
+    # Closed-night replay is a no-op and cannot reset the canonical departure clock.
+    started = db.conn.execute(
+        "SELECT transit_start_turn FROM characters WHERE name=?", (person.name,)
+    ).fetchone()["transit_start_turn"]
+    assert an.close_night(db, state, night_id=night_id, content=content)["already"] is True
+    assert db.conn.execute(
+        "SELECT transit_start_turn FROM characters WHERE name=?", (person.name,)
+    ).fetchone()["transit_start_turn"] == started
+
+
 def test_fresh_seed_closes_ticket_670_named_locations(content):
     expected = {
         **{name: "beizhili" for name in "韩爌 张瑞图 来宗道 施凤来 黄立极 王绍徽 毕自严 郭允厚 杨嗣昌 温体仁 钱龙锡 刘鸿训 钱谦益 李标 孙承宗 崔呈秀 王在晋 徐光启 徐应秋 袁可立 周延儒 倪元璐 黄道周 曹化淳 王体乾 王承恩 魏忠贤 田尔耕 许显纯 李若琏 客氏 周皇后 周贵人 田贵妃 袁贵妃 慧妃 懿安皇后 高起潜 孙元化 许誉卿 乔允升".split()},
