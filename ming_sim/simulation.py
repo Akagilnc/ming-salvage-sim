@@ -585,6 +585,8 @@ def build_simulator_payload(
     # #883: due commitments are public review work, unlike actual secret
     # orders.  Keep them on a separately named public rail; never pre-load
     # secret-order prose into the monthly judge.
+    from ming_sim.audience_night import list_arrived_unsettled_summons
+
     grouped_orders = augment_secret_orders_with_due_commitments(secret_orders, db, state)
     # Trust augment's Dict[str, list] contract — shape errors must fail loud.
     due_commitments = [
@@ -716,6 +718,9 @@ def build_simulator_payload(
         # LLM nudge：在途人物列表（#346）。simulator 优先产叙事到任（行止+location），
         # 代码在 pre_settle 中兜底强制（≥2月未到 → 强制；此 nudge 鼓励 LLM 主动叙事）。
         "transit_nudge": _build_transit_nudge(db, state),
+        # #670: machine facts for the existing monthly judge.  Only arrivals
+        # qualify; the judge remains free to narrate and extract the next leg.
+        "unsettled_arrived_summons": list_arrived_unsettled_summons(db),
         # #627：政敌检举供事实（零新增串行调用；不携真伪位/quota/烈度）
         "faction_denunciation_facts": db.build_faction_denunciation_facts(),
         # #626：承诺所系反噬——硬门只落结构化事实；玩家文案由叙事步从此特征包长出
