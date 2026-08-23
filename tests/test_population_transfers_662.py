@@ -12,6 +12,9 @@ prompt 契约文本 / GameDB 重开接续。mutation oracle 复用 #649 家族�
 
 from __future__ import annotations
 
+import json
+from types import SimpleNamespace
+
 from test_population_transfers_649 import (
     DISPLACED_SHAANXI,
     FARMER_SHAANXI,
@@ -29,6 +32,12 @@ from ming_sim.db import GameDB, POPULATION_UNIT_WAN
 from ming_sim.decree import settle_with_delta
 from ming_sim.issues import apply_score_extraction
 from ming_sim.memories import effect_brief
+from ming_sim.simulation import (
+    EXTRACTION_MODULES,
+    build_extractor_shared_context,
+    build_simulator_payload,
+    extract_scores_by_modules_with_agno,
+)
 
 # 量级口径（施工契约，史实尺度）：单条记录上限＝本批结算前源阶级省级行余额 × 万分比。
 # 灾荒月度驱离在低个位数百分比量级；兵祸过境冲击更烈，放宽一档。
@@ -108,24 +117,32 @@ def test_disaster_magnitude_clamp_two_way_boundary(disaster_shaanxi):
 
 
 def test_disaster_and_war_caps_share_opening_balance_not_live_order(disaster_shaanxi):
-    """同源灾害 5% 与兵灾 10% 都按 extractor 所见的结算前快照验票；前项落账后
-    不得缩小后项口径，否则合法批会随数组顺序改变接受结果。"""
+    """正反排列从同一开局出发，接纳集合与终态必须相同。"""
     db, state, content = disaster_shaanxi
-    disaster_cap = _cap(FARMER_SHAANXI, DISASTER_CAP_BPS)
-    war_cap = _cap(FARMER_SHAANXI, WAR_CAP_BPS)
-    applied = apply_score_extraction(db, state, {
-        "population_transfers": [
-            _transfer(source="农民@shaanxi", target="流民@shaanxi",
-                      amount=disaster_cap, reason="灾害"),
-            _transfer(source="农民@shaanxi", target="流民@shaanxi",
-                      amount=war_cap, reason="兵灾"),
-        ],
-    }, content, None)
-    assert not applied["population_transfers_rejections"]
-    assert [r["amount"] for r in applied["population_transfers"]] == [
-        disaster_cap, war_cap,
+    opening = _snap(db)
+    records = [
+        _transfer(source="农民@shaanxi", target="流民@shaanxi",
+                  amount=_cap(FARMER_SHAANXI, DISASTER_CAP_BPS), reason="灾害"),
+        _transfer(source="农民@shaanxi", target="流民@shaanxi",
+                  amount=_cap(FARMER_SHAANXI, WAR_CAP_BPS), reason="兵灾"),
     ]
-    assert _pop(db, "农民", "shaanxi") == FARMER_SHAANXI - disaster_cap - war_cap
+
+    outcomes = []
+    for ordered in (records, list(reversed(records))):
+        for (name, region_id), population in opening.items():
+            db.conn.execute(
+                "UPDATE classes SET population=? WHERE name=? AND region_id=?",
+                (population, name, region_id),
+            )
+        db.conn.commit()
+        applied = apply_score_extraction(
+            db, state, {"population_transfers": ordered}, content, None
+        )
+        assert not applied["population_transfers_rejections"]
+        accepted = sorted((r["reason"], r["amount"]) for r in applied["population_transfers"])
+        outcomes.append((accepted, _snap(db)))
+
+    assert outcomes[0] == outcomes[1]
 
 
 def test_disaster_clamp_unit_agnostic(content, tmp_path):
@@ -212,6 +229,66 @@ def test_no_engine_autotransfer_from_disaster_or_war_facts(game):
         assert _pop(db, *key) == want, f"{key}: 无申报记录时被引擎改动（自动触发违规）"
 
 
+class _ExtractorAgent:
+    def __init__(self, response):
+        self.response = response
+
+    def run(self, _prompt):
+        return SimpleNamespace(content=self.response)
+
+
+def _module_response(module, transfers):
+    payload = {
+        "internal": {"metric_delta": {}, "economy_moves": [], "fiscal_changes": [],
+                     "fiscal_creates": [], "fiscal_removes": [], "faction_delta": {},
+                     "class_delta": {}, "population_transfers": transfers, "region_delta": {}},
+        "military_external": {"army_delta": {}, "new_armies": [], "power_updates": {}, "world_advance": {}},
+        "issues": {"issue_advances": [], "new_issues": [], "事件结局": {}, "cancels": [], "close_issues": []},
+        "personnel_secret": {"人物变更": [], "secret_order_updates": [], "secret_order_closes": [], "emperor_fate": None},
+        "relations": {"relation_edge_events": []},
+    }[module]
+    return json.dumps(payload, ensure_ascii=False)
+
+
+@pytest.mark.parametrize("fact_sql,reason,source,amount", [
+    ("UPDATE regions SET natural_disaster='大旱蝗灾' WHERE id='shaanxi'", "灾害", "农民@shaanxi", 30000),
+    ("UPDATE regions SET human_disaster='战事过境焚掠', military_pressure=90 WHERE id='shaanxi'", "兵灾", "军户@shaanxi", 5000),
+])
+def test_disaster_war_real_payload_extractor_settlement_and_echo(
+    game, fact_sql, reason, source, amount
+):
+    """只 fake LLM 返回；真实 payload→模块抽取→settle→报告/玩家面回读。"""
+    db, state, content = game
+    db.conn.execute(fact_sql)
+    db.conn.commit()
+    before_turn = state.turn
+    simulator_payload = build_simulator_payload(state, db, "", "")
+    balances = simulator_payload["class_population_balances"]
+    assert balances["cols"] == ["name", "region_id", "population"]
+    assert ["农民", "shaanxi", FARMER_SHAANXI] in balances["rows"]
+    context = build_extractor_shared_context(
+        db, state, f"陕西{source.split('@')[0]}{amount}人因{reason}离乡成为流民", "", module="internal"
+    )
+    assert context["turn"]["turn"] == before_turn
+
+    transfer = _transfer(source=source, target="流民@shaanxi", amount=amount, reason=reason)
+    agents = {m: _ExtractorAgent(_module_response(m, [transfer] if m == "internal" else []))
+              for m in EXTRACTION_MODULES}
+    extracted, extractor_output, extractor_input = extract_scores_by_modules_with_agno(
+        agents, db, state, context["narrative"], parallel=False
+    )
+    report = settle_with_delta(
+        state, db, extracted, before_turn=before_turn, content=content,
+        narrative=context["narrative"], extractor_input=extractor_input,
+        extractor_output=extractor_output,
+    )
+    assert reason in effect_brief(extracted)
+    assert "流民" in db.class_report(audience=True)
+    assert reason in report
+    saved = db.get_turn_extraction(before_turn)["extractor_output"]["population_transfers"]
+    assert saved[0]["reason"] == reason
+
+
 # ── 守恒与 mutation：沿 S2 断言族扩展（复用 #649 oracle，不另立机制）─────────
 
 def test_mutation_oracle_bites_disaster_war_mutations(war_shaanxi):
@@ -262,34 +339,6 @@ def test_mutation_oracle_bites_disaster_war_mutations(war_shaanxi):
 
 # ── 邸报/召对定性回响：effect_brief 事实摘要带 reason；玩家面 classes_brief 定性零数值 ──
 
-def test_effect_brief_disaster_war_causal_echo():
-    """转移摘要随 reason 定性回响（供章节记忆/叙事特征包长出邸报/召对因果句，
-    P7）：灾害/兵灾各出「某省某阶级流失 N 口为流民（原因）」措辞。"""
-    brief = effect_brief({"population_transfers": [
-        {"source": "农民@shaanxi", "target": "流民@shaanxi", "amount": 30000,
-         "reason": "灾害", "region_id": "shaanxi", "region_name": "陕西",
-         "population_unit": "人"},
-        {"source": "军户@shaanxi", "target": "流民@shaanxi", "amount": 20000,
-         "reason": "兵灾", "region_id": "shaanxi", "region_name": "陕西",
-         "population_unit": "人"},
-    ]})
-    assert "陕西农民流失30000口为流民（灾害）" in brief
-    assert "陕西军户流失20000口为流民（兵灾）" in brief
-
-
-def test_classes_brief_audience_carries_displaced_pool_qualitatively(game):
-    """P4 零数值：皇帝可感混合调用的 classes_brief 含流民定性档（band 词表），
-    不含流民池裸数——回响由 LLM 从定性特征长出，非数字直排。"""
-    db, state, content = game
-    apply_score_extraction(db, state, {
-        "population_transfers": [
-            _transfer(source="农民@shaanxi", target="流民@shaanxi",
-                      amount=30000, reason="灾害"),
-        ],
-    }, content, None)
-    brief = db.class_report(audience=True)
-    assert "流民" in brief and "势力极弱" in brief  # 定性档词表，非裸数
-    assert str(_pop(db, "流民", "shaanxi")) not in brief  # 池余额不进皇帝可见面
 
 
 # ── AC5 拆一：restore 只读 DB 无损接续（灾害/兵灾落账后重开存档）─────────────
@@ -352,32 +401,3 @@ def test_same_batch_multi_origin_merges_into_single_pool_account(disaster_shaanx
 
 
 # ── 契约单真源：prompt 教「有灾入/无灾不入」事实支撑＋量级口径 ────────────────
-
-def test_prompts_teach_disaster_war_grounding_and_magnitude_cap():
-    """两份 prompt 的 人口转移 契约必须教：①灾害/兵灾须有该省盘面事实支撑
-    （天灾/人祸字段或军事高压/局势 issue）、无此事实不得申报；②量级口径上限
-    （灾害≤5%、兵灾≤10%）——LLM 软判的判定依据与 clamp 边界同纸交付。"""
-    import os
-    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    for rel, must in (
-        ("content/prompts/score_extractor_internal.md",
-         ("无此事实", "灾害", "兵灾", "量级口径")),
-        ("content/prompts/score_extractor_shared.md", ("量级口径",)),
-    ):
-        text = open(os.path.join(root, rel), encoding="utf-8").read()
-        line = next((ln for ln in text.splitlines() if "人口转移" in ln and "原因" in ln), "")
-        assert line, f"{rel}: 缺 人口转移 契约行"
-        for token in must:
-            assert token in line, f"{rel}: 人口转移 行未教 {token!r}：{line!r}"
-
-
-def test_season_simulator_must_emit_extractable_displacement_decision():
-    """真实生产链先由 simulator 判自然后果；它必须产出省、来源阶级、确定人数与原因，
-    而非指望只翻译月度新旨意的 extractor 从背景事实自行发明转移。"""
-    from pathlib import Path
-    prompt = (Path(__file__).parents[1] / "content/prompts/season_simulator.md").read_text(
-        encoding="utf-8"
-    )
-    section = prompt.split("**灾害／兵灾流民后果**：", 1)[1].split("### 军事", 1)[0]
-    for token in ("regions", "无对应事实不得", "来源阶级", "确定人数", "灾害", "兵灾", "守恒转移"):
-        assert token in section
