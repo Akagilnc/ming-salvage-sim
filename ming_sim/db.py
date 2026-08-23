@@ -791,6 +791,8 @@ class GameDB:
                 power_id TEXT NOT NULL DEFAULT 'ming',
                 location TEXT NOT NULL DEFAULT '',
                 transit_to TEXT NOT NULL DEFAULT '',
+                transit_distance_remaining REAL,
+                transit_speed_factor REAL,
                 transit_start_turn INTEGER NOT NULL DEFAULT 0,
                 identity INTEGER NOT NULL DEFAULT 50,
                 seed_guilt TEXT NOT NULL DEFAULT ''
@@ -2062,6 +2064,8 @@ class GameDB:
         self.ensure_column("characters", "power_id", "TEXT NOT NULL DEFAULT 'ming'")
         self.ensure_column("characters", "location", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("characters", "transit_to", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column("characters", "transit_distance_remaining", "REAL")
+        self.ensure_column("characters", "transit_speed_factor", "REAL")
         self.ensure_column("characters", "transit_start_turn", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("issues", "resolve_condition", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("issues", "fail_condition", "TEXT NOT NULL DEFAULT ''")
@@ -5011,7 +5015,8 @@ class GameDB:
         if ousted:
             self.conn.execute(
                 "UPDATE characters SET status=?, status_reason=?, "
-                "status_changed_turn=?, office='', transit_to='', transit_start_turn=0, reason_code=? WHERE name=?",
+                "status_changed_turn=?, office='', transit_to='', transit_distance_remaining=NULL, "
+                "transit_speed_factor=NULL, transit_start_turn=0, reason_code=? WHERE name=?",
                 (status, reason[:200], state.turn, reason_code_value, name),
             )
         else:

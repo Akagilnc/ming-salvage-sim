@@ -25,6 +25,7 @@ from ming_sim.constants import (
 )
 from ming_sim.content import GameContent
 from ming_sim.context import victory_status
+from ming_sim.distance import DistanceMatrix
 from ming_sim.db import (
     GameDB,
     POPULATION_UNIT_PERSONS,
@@ -5812,7 +5813,8 @@ def _displace_duplicate_offices(
         if fully_displaced:
             db.conn.execute(
                 "UPDATE characters SET office=?, office_type=?, status_reason=?, reason_code=?, "
-                "transit_to='', transit_start_turn=0 WHERE name=?",
+                "transit_to='', transit_distance_remaining=NULL, transit_speed_factor=NULL, "
+                "transit_start_turn=0 WHERE name=?",
                 (new_holder_office, new_type, "被顶替", "被顶替", row["name"]),
             )
         else:
@@ -5828,6 +5830,8 @@ def _displace_duplicate_offices(
                 ch.status_reason = "被顶替"
                 ch.reason_code = "被顶替"
                 ch.transit_to = ""
+                ch.transit_distance_remaining = None
+                ch.transit_speed_factor = None
     # #9 cmr R1：被顶替者的 office_type 经上方裸 UPDATE 改了（全顶替→身名分=0 权重），绕过了
     # set_character_office 钩子，故其所属派系（常与新任者异派系）的 leverage 须在此补重算，否则
     # 残留偏高、违 #9 不变式。新任者自身派系已由 set_character_office 钩子重算，这里只补被顶替者。
@@ -6862,6 +6866,8 @@ def _apply_person_changes(
                     ch.office_type = "身名分"
                     ch.status = "active"
                     ch.transit_to = ""
+                    ch.transit_distance_remaining = None
+                    ch.transit_speed_factor = None
                     ch.reason_code = ""
                     ch.status_reason = str(item.get("reason") or "")
                 # 易主后人仍 active（在新主任事，持身名分=降臣/归附），不变式1 不破；清原 reason_code/
@@ -6869,7 +6875,8 @@ def _apply_person_changes(
                 # status_changed_turn 记本回合（易主即状态变更）。
                 db.conn.execute(
                     "UPDATE characters SET office=?, office_type=?, status='active', "
-                    "reason_code='', status_reason=?, status_changed_turn=?, transit_to='', transit_start_turn=0 WHERE name=?",
+                    "reason_code='', status_reason=?, status_changed_turn=?, transit_to='', "
+                    "transit_distance_remaining=NULL, transit_speed_factor=NULL, transit_start_turn=0 WHERE name=?",
                     (new_title, "身名分", str(item.get("reason") or ""), state.turn, name),
                 )
                 if commit_person_change:
@@ -6947,8 +6954,9 @@ def _apply_person_changes(
                 applied.append(rejected(item, "非既有人物", "hallucinated_id"))
                 continue
             row = db.conn.execute(
-                "SELECT status, location, transit_to, transit_start_turn "
-                "FROM characters WHERE name=?", (name,)
+                "SELECT status, location, transit_to, transit_distance_remaining, "
+                "transit_speed_factor, transit_start_turn FROM characters WHERE name=?",
+                (name,),
             ).fetchone()
             if row is None:
                 applied.append(rejected(item, "非既有人物", "hallucinated_id"))
@@ -6974,7 +6982,29 @@ def _apply_person_changes(
                     break
             else:
                 location = new_location or str(row["location"] or "")
-                if location == str(row["location"] or "") and transit_to == str(row["transit_to"] or ""):
+                previous_destination = str(row["transit_to"] or "")
+                if transit_to and previous_destination == transit_to:
+                    continue
+                if transit_to and previous_destination and previous_destination != transit_to:
+                    applied.append(rejected(item, "在途人物不可改道", "invalid_transition"))
+                    continue
+                tone = str(item.get("行程语气") or "常行").strip()
+                speed_by_tone = {"常行": 1.0, "加急": 1.5, "星夜兼程": 2.0}
+                if tone not in speed_by_tone:
+                    applied.append(rejected(item, "行程语气不在闭合枚举", "invalid_enum"))
+                    continue
+                distance = None
+                speed = None
+                if transit_to:
+                    matrix = DistanceMatrix.from_file("content/distance_matrix.json")
+                    distance = matrix.travel_time(location, transit_to)
+                    if distance < 0 or (location != transit_to and distance <= 0):
+                        raise ValueError(f"invalid baked travel time: {location!r} -> {transit_to!r}")
+                    if distance == 0:
+                        location, transit_to = transit_to, ""
+                    else:
+                        speed = speed_by_tone[tone]
+                if location == str(row["location"] or "") and transit_to == previous_destination:
                     continue
                 origin_error = origin_rejected(item)
                 if origin_error:
@@ -6996,8 +7026,9 @@ def _apply_person_changes(
                 else:
                     new_transit_start_turn = 0
                 db.conn.execute(
-                    "UPDATE characters SET location=?, transit_to=?, transit_start_turn=? WHERE name=?",
-                    (location, transit_to, new_transit_start_turn, name),
+                    "UPDATE characters SET location=?, transit_to=?, transit_distance_remaining=?, "
+                    "transit_speed_factor=?, transit_start_turn=? WHERE name=?",
+                    (location, transit_to, distance, speed, new_transit_start_turn, name),
                 )
                 if commit_person_change:
                     db.conn.commit()
@@ -7005,6 +7036,8 @@ def _apply_person_changes(
                     ch = content.characters[name]
                     ch.location = location
                     ch.transit_to = transit_to
+                    ch.transit_distance_remaining = distance
+                    ch.transit_speed_factor = speed
                 applied.append(
                     result := {
                         "name": name,

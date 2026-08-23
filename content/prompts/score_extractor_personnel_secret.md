@@ -75,8 +75,9 @@
 ### 行止（去向/在途）
 
 - 启程、赴任、移驻、抵达都写 `人物变更` 的 `行止`。
-- 字段：`name`、`动作:"行止"`，并至少填 `location` 或 `transit_to` 之一。
-- `location` / `transit_to` 填 input `region_ids` 里的英文 id（region 标识符，非其中文显示名）。
+- 启程字段固定为 `name`、`动作:"行止"`、`transit_to`，可选 `行程语气`；不得输出距离或速度数值。
+- `行程语气` 只可为 `常行` / `加急` / `星夜兼程`：从旨文修饰抽取，无修饰默认 `常行`。
+- `location` / `transit_to` 填 input `region_ids` 里的英文 id（region 标识符，非其中文显示名）；起讫无法解析为合法 id 时不产机械行止项，只保留叙事。
 - `transit_to` 非空表示在途；抵达某地时填 `location` 并把 `transit_to` 留空。
 
 ### 评定（忠诚软判）
