@@ -368,6 +368,107 @@ def test_prohibition_blocks_every_covert_write_but_preserves_ordinary_legs(game)
     assert db.conn.execute("SELECT arrears FROM armies WHERE id=?", (army_id,)).fetchone()[0] == 6
 
 
+def test_prohibition_neutralizes_once_with_zero_receipt_and_partial_clamp(game, monkeypatch):
+    db, state, content = game
+    did, _, _, _ = _bound_case(db, state)
+    other, _, _, _ = _bound_case(db, state)
+    _exposed_todo(db, state, monkeypatch, did)
+    key = "禁令反冲_base"
+    apply_score_extraction(db, state, {"fiscal_creates": [{
+        "key": key, "account": "国库", "direction": "income", "init_value": 5,
+        "origin_ref": f"dossier:{other}",
+    }]}, content, None, dossier_ids_at_input={other})
+    apply_score_extraction(db, state, {"fiscal_changes": [
+        {"key": key, "delta": 4, "origin_ref": f"dossier:{did}", "beyond_intent": True},
+        {"key": key, "delta": -8, "origin_ref": f"dossier:{other}"},
+    ]}, content, None, dossier_ids_at_input={did, other})
+    prohibition = _promulgated_prohibition(db, state, did)
+
+    assert settle_exposure_from_canonical_actions(db, state, {}) == 1
+    assert db.get_fiscal_config()[key] == 0  # only one point remained, so rollback clamps
+    receipts = db.conn.execute(
+        "SELECT * FROM fiscal_config_changes WHERE origin_ref=? AND key=?",
+        (f"dossier:{prohibition}", key),
+    ).fetchall()
+    assert len(receipts) == 1 and receipts[0]["old_value"] == 1 and receipts[0]["new_value"] == 0
+
+    # A second key whose contribution is already fully displaced still gets a zero receipt.
+    did2, _, _, _ = _bound_case(db, state)
+    _exposed_todo(db, state, monkeypatch, did2)
+    key2 = "零值回执_base"
+    apply_score_extraction(db, state, {"fiscal_creates": [{
+        "key": key2, "account": "国库", "direction": "income", "init_value": 1,
+        "origin_ref": f"dossier:{other}",
+    }], "fiscal_changes": [
+        {"key": key2, "delta": 2, "origin_ref": f"dossier:{did2}", "beyond_intent": True},
+        {"key": key2, "delta": -3, "origin_ref": f"dossier:{other}"},
+    ]}, content, None, dossier_ids_at_input={did2, other})
+    prohibition2 = _promulgated_prohibition(db, state, did2)
+    assert settle_exposure_from_canonical_actions(db, state, {}) == 1
+    zero = db.conn.execute(
+        "SELECT old_value,new_value FROM fiscal_config_changes WHERE origin_ref=? AND key=?",
+        (f"dossier:{prohibition2}", key2),
+    ).fetchall()
+    assert [(row["old_value"], row["new_value"]) for row in zero] == [(0, 0)]
+    apply_score_extraction(db, state, {"fiscal_changes": [{
+        "key": key2, "delta": 3, "origin_ref": f"dossier:{other}",
+    }]}, content, None, dossier_ids_at_input={other})
+    assert settle_exposure_from_canonical_actions(db, state, {}) == 0
+    assert db.get_fiscal_config()[key2] == 3
+
+
+def test_prohibition_uses_only_current_canonical_incarnation(game, monkeypatch):
+    db, state, content = game
+    did, _, _, _ = _bound_case(db, state)
+    other, _, _, _ = _bound_case(db, state)
+    _exposed_todo(db, state, monkeypatch, did)
+    origin, other_origin = f"dossier:{did}", f"dossier:{other}"
+    key = "转世税_base"
+    apply_score_extraction(db, state, {"fiscal_creates": [{
+        "key": key, "account": "国库", "direction": "income", "init_value": 3,
+        "origin_ref": other_origin,
+    }], "fiscal_changes": [{
+        "key": key, "delta": 4, "origin_ref": origin, "beyond_intent": True,
+    }]}, content, None, dossier_ids_at_input={did, other})
+    state.turn += 1  # the old incarnation predates the canonical replacement batch
+    # Production's canonical order is remove -> create -> change in one extraction.
+    apply_score_extraction(db, state, {
+        "fiscal_removes": [{"key": key, "origin_ref": other_origin}],
+        "fiscal_creates": [{
+            "key": key, "account": "国库", "direction": "income", "init_value": 10,
+            "origin_ref": other_origin,
+        }],
+        "fiscal_changes": [{
+            "key": key, "delta": 2, "origin_ref": origin, "beyond_intent": True,
+        }],
+    }, content, None, dossier_ids_at_input={did, other})
+    _promulgated_prohibition(db, state, did)
+    assert settle_exposure_from_canonical_actions(db, state, {}) == 1
+    assert db.get_fiscal_config()[key] == 10
+
+
+def test_prohibition_removes_live_covert_creation_without_rewriting_history(game, monkeypatch):
+    db, state, content = game
+    did, _, _, _ = _bound_case(db, state)
+    _exposed_todo(db, state, monkeypatch, did)
+    origin = f"dossier:{did}"
+    apply_score_extraction(db, state, {"fiscal_creates": [{
+        "key": "暗渠新项_rate", "account": "国库", "direction": "income", "init_value": 6,
+        "origin_ref": origin, "beyond_intent": True,
+    }]}, content, None, dossier_ids_at_input={did})
+    before = list(db.list_fiscal_effects_for_dossier(did))
+    prohibition = _promulgated_prohibition(db, state, did)
+
+    assert settle_exposure_from_canonical_actions(db, state, {}) == 1
+    assert "暗渠新项_base" not in db.get_fiscal_config()
+    assert list(db.list_fiscal_effects_for_dossier(did)) == before
+    tombstones = db.conn.execute(
+        "SELECT key FROM fiscal_config_tombstones WHERE origin_ref=? ORDER BY key",
+        (f"dossier:{prohibition}",),
+    ).fetchall()
+    assert [row["key"] for row in tombstones] == ["暗渠新项_base", "暗渠新项_rate"]
+
+
 def test_population_transfer_is_the_self_grown_unrest_channel(game, monkeypatch):
     db, state, _ = game
     did, _, _, _ = _bound_case(db, state)
