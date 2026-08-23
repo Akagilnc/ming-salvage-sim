@@ -608,8 +608,8 @@ def army_loyalty_tick_delta(new_arrears: float, full_needed: int) -> int:
     return -5
 
 
-def derive_army_morale_state(army) -> str:
-    """实时派生军心档；持久 latch 优先覆盖 loyalty 档（ADR 0025 D3/D4）。"""
+def derive_army_mutiny_state(army) -> str:
+    """实时派生哗变状态；持久 latch 优先覆盖 loyalty 档（ADR 0025 D3/D4）。"""
     if bool(army["is_mutinied"]):
         return "哗变"
     loyalty = int(army["loyalty"])
