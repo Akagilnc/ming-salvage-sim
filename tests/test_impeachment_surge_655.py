@@ -2,6 +2,8 @@
 
 Confirmed seams: build_simulator_payload candidate_events; apply_issue_tracker_output new_issues.
 """
+import json
+
 import ming_sim.agents as agents_mod
 from ming_sim.issues import apply_issue_tracker_output, gather_impeachment_surge_candidates
 from ming_sim.models import LLMConfig
@@ -120,26 +122,38 @@ def test_dynamic_apply_rejects_blank_title_wrong_faction_and_outside_target(game
     assert db.conn.execute("SELECT COUNT(*) FROM issues WHERE origin_kind='impeachment_surge'").fetchone()[0] == 0
 
 
-def test_dynamic_apply_rejects_invalid_tier_without_losing_valid_sibling(game):
+def test_dynamic_apply_rejects_invalid_roster_fields_without_losing_valid_sibling(game):
     db, state = game[:2]
     _, owner, _ = _candidate_world(db, state)
+    delegator = db.conn.execute(
+        "SELECT name FROM characters WHERE name<>? ORDER BY name LIMIT 1", (owner,)
+    ).fetchone()["name"]
     candidate = gather_impeachment_surge_candidates(state, db)[0]
     base = {"origin_kind": "impeachment_surge", "candidate_id": candidate["id"],
             "faction_hint": candidate["faction_id"],
             "participant_roster": [{"character_id": owner, "tier": "主办"}],
-            "title": "合法题名", "stage_text": "合法案情"}
+            "title": "  合法题名  ", "stage_text": "合法案情"}
+    valid_roster = [{"character_id": owner, "tier": "主办",
+                     "role": "具疏弹劾", "delegator_id": delegator}]
 
     result = apply_issue_tracker_output(db, state, {"new_issues": [
         dict(base, participant_roster=[{"character_id": owner, "tier": "首犯"}]),
-        base,
+        dict(base, participant_roster=[{"character_id": owner, "tier": "主办",
+                                        "role": {"bad": "shape"}}]),
+        dict(base, participant_roster=[{"character_id": owner, "tier": "主办",
+                                        "delegator_id": ["bad"]}]),
+        dict(base, participant_roster=[{"character_id": owner, "tier": "主办",
+                                        "delegator_id": "不存在"}]),
+        dict(base, participant_roster=valid_roster),
     ]})["new_issues"]
 
-    assert result[0]["rejected"] is True
-    assert result[1]["rejected"] is False
-    rows = db.conn.execute(
-        "SELECT title,stage_text FROM issues WHERE origin_kind='impeachment_surge'"
-    ).fetchall()
-    assert [(row["title"], row["stage_text"]) for row in rows] == [("合法题名", "合法案情")]
+    assert all(item["rejected"] is True for item in result[:4])
+    assert result[4]["rejected"] is False
+    row = db.conn.execute(
+        "SELECT title,stage_text,participant_roster FROM issues WHERE origin_kind='impeachment_surge'"
+    ).fetchone()
+    assert (row["title"], row["stage_text"]) == ("  合法题名  ", "合法案情")
+    assert json.loads(row["participant_roster"]) == valid_roster
 
 
 def test_dynamic_apply_rejects_non_text_free_fields_without_coercion(game):
