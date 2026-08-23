@@ -1405,7 +1405,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
         army_rows_raw = db.conn.execute(
             # #44 army_needed 需 manpower/salary_rate/owner_power（应发挂钩兵力派生）
             "SELECT id, name, manpower, salary_rate, owner_power, arrears, morale, loyalty, "
-            "is_tusi, self_funded_pay FROM armies"
+            "consecutive_pay_shortfall_months, is_tusi, self_funded_pay FROM armies"
         ).fetchall()
         if not army_rows_raw:
             raise SystemExit("fiscal_tick: armies 表无数据，中止。")
@@ -1444,9 +1444,16 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                 loyalty_delta = 0
             new_loyalty = max(0, min(100, old_loyalty + loyalty_delta))
 
+            shortfall_months = (
+                int(row["consecutive_pay_shortfall_months"] or 0) + 1
+                if shortfall > 1e-9 else 0
+            )
             db.conn.execute(
-                "UPDATE armies SET arrears = ?, morale = ?, loyalty = ? WHERE id = ?",
-                (new_arrears, new_morale, new_loyalty, army_id),
+                """UPDATE armies
+                   SET arrears = ?, morale = ?, loyalty = ?,
+                       consecutive_pay_shortfall_months = ?
+                   WHERE id = ?""",
+                (new_arrears, new_morale, new_loyalty, shortfall_months, army_id),
             )
             if shortfall > 0:
                 reason_tag = (

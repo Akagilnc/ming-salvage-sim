@@ -20,22 +20,26 @@ def _issue_for_dossier(db: Any, dossier_id: int) -> int:
 
 
 def build_covert_levy_candidates(db: Any) -> List[Dict[str, object]]:
-    """只装配案卷明确指向的军队及该军真实欠饷；满三月才向判官暴露候选键。"""
+    """装配案卷所指军队的欠饷事实；是否形成摊派完全交给判官。"""
     rows = db.conn.execute(
-        """SELECT d.id dossier_id,d.target_id army_id,a.arrears,a.manpower,a.salary_rate
+        """SELECT d.id dossier_id,d.target_id army_id,a.arrears,
+                  a.consecutive_pay_shortfall_months
            FROM decree_dossiers d JOIN armies a ON a.id=d.target_id
            WHERE d.status='executing' AND d.target_kind='army' ORDER BY d.id"""
     ).fetchall()
     out: List[Dict[str, object]] = []
     for row in rows:
-        pay = float(row["manpower"] or 0) * float(row["salary_rate"] or 0) / 10000.0
-        arrears = float(row["arrears"] or 0)
-        months = arrears / pay if pay > 0 else 0.0
         did = int(row["dossier_id"])
-        if months < 3.0 or _issue_for_dossier(db, did) <= 0:
+        if _issue_for_dossier(db, did) <= 0:
             continue
-        out.append({"dossier_id": did, "army_id": str(row["army_id"]),
-                    "arrears": arrears, "monthly_pay": pay, "suspended_months": months})
+        out.append({
+            "dossier_id": did,
+            "army_id": str(row["army_id"]),
+            "arrears": float(row["arrears"] or 0),
+            "consecutive_pay_shortfall_months": int(
+                row["consecutive_pay_shortfall_months"] or 0
+            ),
+        })
     return out
 
 
