@@ -75,6 +75,7 @@ from ming_sim.session import (
     coalesce_pending_action_id,
 )
 from ming_sim.audience_pipeline import run_mindreading_for_turn
+from ming_sim.relation_judge import run_summon_relation_judge
 from ming_sim.highlight_judge import (
     DEFAULT_HIGHLIGHT_JUDGE_TIMEOUT_S,
     run_highlight_judge,
@@ -1880,6 +1881,8 @@ class WebGame:
                         if chat_turn_id:
                             self.db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
                 chat_signature = inspect.signature(self.session.chat)
+                # #634 P5：判官拍与回话并行发出（先于回话生成，TD-9 零额外等待）。
+                self._dispatch_relation_judge(chat_turn_id)
                 try:
                     chat_signature.bind(minister_name, text, chat_turn_id=chat_turn_id)
                 except TypeError:
@@ -2049,6 +2052,8 @@ class WebGame:
                     # reopen 后、session.chat 前，成功后记 diff 供撤回、失败时回滚，杜绝双 stage/粘滞。
                     before_snapshot = self.db.capture_chat_rollback_snapshot()
                     self.session.start_chat_turn_scene(minister_name, chat_turn_id)
+                # #634 P5：重试同形——判官拍与回话并行发出（不依赖本轮回话）。
+                self._dispatch_relation_judge(chat_turn_id)
                 result = self.session.chat(minister_name, question, chat_turn_id=chat_turn_id)
                 proposed = None
                 if result.proposed_directive is not None:
@@ -2616,6 +2621,55 @@ class WebGame:
             "directive_ambiguous": directive_ambiguous,
         }
 
+    def _dispatch_relation_judge(self, chat_turn_id: Any) -> Optional[threading.Thread]:
+        """启动关系判官旁路；基础设施失败只响亮降级，不得阻塞回话主链。"""
+        if not chat_turn_id:
+            return None
+        try:
+            return self._spawn_pending_write_thread(
+                self._trail_relation_judge_beat,
+                (),
+                "audience-p5-relation-judge",
+                ticket_key=("turn", int(chat_turn_id)),
+            )
+        except Exception:
+            logger.exception(
+                "relation judge dispatch degraded chat_turn_id=%s", chat_turn_id,
+            )
+            return None
+
+    def _trail_relation_judge_beat(
+        self, *, pending_ticket: Optional[WriteTicket] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """#634 / ADR 0082：召对判官拍——P5 并行记账腿。
+
+        派发先于回话生成（不依赖本轮回话输出，TD-9 零额外等待）；判读窗口＝已判
+        水位后的已完成轮。LLM 失败降级留痕不抛（漏判不阻塞召对主链）；写库经票据
+        执行 seam。#1353：spawn 路票据由 spawner finally 归还；直接调用无票时自领自还。
+        """
+        own_ticket = False
+        try:
+            if pending_ticket is None:
+                pending_ticket = self._mark_pending_write()
+                own_ticket = pending_ticket is not None
+            if pending_ticket is None:
+                return None
+            if pending_ticket.cancelled or pending_ticket._done:
+                return None
+            return run_summon_relation_judge(
+                self.db, self.state,
+                llm_config=getattr(self.session, "llm_config", None),
+                write_gate=self._ticketed_write_gate(pending_ticket),
+            )
+        except TicketCancelled:
+            return None
+        except Exception:
+            logger.exception("relation judge worker degraded")
+            return None
+        finally:
+            if own_ticket:
+                self._complete_pending_write(pending_ticket)
+
     def _trail_mindreading_after_reply(
         self,
         minister_name: str,
@@ -3107,6 +3161,10 @@ class WebGame:
                     # 由 _audience_prompt_for_message 单次落地，不在此重复发起。
                     character = self.session._character(minister_name)
                     action_intent_future = self.session._start_cli_action_intent(character, text)
+
+                    # #634 P5：召对判官拍——唯一不依赖本轮回话输出的记账腿，与回话
+                    # 生成并行发出（TD-9 零额外等待）；写库经自有票据，join 于收夜前。
+                    self._dispatch_relation_judge(chat_turn_id)
 
                     # LLM 在无锁窗口跑；落库/会话动作再抢 write_gate（#498 AC10）
                     payload = self._chat_stream_payload(

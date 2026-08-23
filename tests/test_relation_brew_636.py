@@ -489,14 +489,14 @@ def test_settle_brew_overlaps_chapter_and_joins_before_persist(game):
     _add_edge(db, state, source="徐光启", target=EMPEROR_NODE, kind="协作",
               context="徐光启与皇上当场协作。", origin="audience:turn-1")
 
-    started = threading.Event()
+    started = threading.Barrier(3, timeout=10)  # 两个酿制 worker ＋ chapter
     release = threading.Event()
     brew_turns: list = []
 
     def brew_fn(payload_json: str) -> str:
         payload = json.loads(payload_json)
         brew_turns.append(int(state.turn))  # 事务内启酿：state 尚未被 next_period 推进
-        started.set()
+        started.wait()
         if not release.wait(timeout=10):
             raise RuntimeError("chapter 未与酿制重叠（串行实现）")
         if payload.get("view") == VIEW_FACTION_STANCE:
@@ -512,7 +512,7 @@ def test_settle_brew_overlaps_chapter_and_joins_before_persist(game):
         )
 
     def chapter(db_, s, decree_text, narrative, applied):
-        assert started.wait(timeout=10), "酿制未与 chapter 重叠（串行实现）"
+        started.wait()  # 两个工作项均已在 next_period 前读取 state.turn
         release.set()
 
     before_turn = state.turn

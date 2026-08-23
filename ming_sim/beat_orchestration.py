@@ -650,6 +650,18 @@ class ChatTurnSceneRegistry:
         )
         self._submit(int(chat_turn_id), [(exit_id, inputs)], beat_generator)
 
+    def start_relation_judge_provider(
+        self, chat_turn_id: int, task: Callable[[], Any],
+    ) -> Future:
+        """Attach the provider-only judge phase to the close bucket."""
+        if not chat_turn_id:
+            raise ValueError("relation judge provider requires close chat turn")
+        with self._lock:
+            bucket = self._futures.setdefault(int(chat_turn_id), [])
+            future = self._executor.submit(lambda: (-1, task()))
+            bucket.append(future)
+            return future
+
     def start_close(
         self,
         db: Any,
@@ -786,8 +798,11 @@ def join_close_scene_on_registry(
     try:
         generated = scene_registry.join(ctid)
         body = ""
-        for _entry_id, text in generated:
-            if text:
+        for entry_id, text in generated:
+            # The close bucket also carries provider-only siblings (relation judge
+            # marker=-1).  Only the close scene owns marker 0 and may supply the
+            # player-facing ledger body.
+            if int(entry_id) == 0 and text:
                 body = str(text)
                 break
         if scaffold_owned and hasattr(db, "conn") and getattr(db, "conn", None) is not None:
