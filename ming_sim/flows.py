@@ -609,15 +609,21 @@ def army_loyalty_tick_delta(new_arrears: float, full_needed: int) -> int:
 
 
 def derive_army_mutiny_state(army) -> str:
-    """实时派生哗变状态；持久 latch 优先覆盖 loyalty 档（ADR 0025 D3/D4）。"""
+    """实时派生哗变状态；持久 latch 与察看期优先覆盖 loyalty 档。"""
     if bool(army["is_mutinied"]):
         return "哗变"
     loyalty = int(army["loyalty"])
-    if loyalty >= 60:
+    probation = int(army["mutiny_probation"]) if "mutiny_probation" in army.keys() else 0
+    if loyalty >= 60 and probation <= 0:
         return "正常"
     if loyalty >= 40:
         return "不满"
     return "鼓噪"
+
+
+def mutiny_loyalty_cap(mutiny_count: int, redemption_count: int = 0) -> int:
+    """ADR 0025 D6 唯一军心上限真源；#316 尚无持久 redemption_count。"""
+    return max(60, min(100, 100 - 20 * int(mutiny_count) + 10 * int(redemption_count)))
 
 
 def _next_mutiny_latch(*, loyalty: int, arrears: float, needed: int, current: int) -> int:
@@ -628,6 +634,30 @@ def _next_mutiny_latch(*, loyalty: int, arrears: float, needed: int, current: in
     if current:
         return 0 if loyalty >= 40 and arrears_retired else 1
     return 1 if loyalty < 20 and not arrears_retired else 0
+
+
+def _advance_mutiny(
+    *, loyalty: int, arrears: float, needed: int, current: int,
+    count: int, probation: int,
+) -> Tuple[int, int, int, int]:
+    """月末哗变唯一转移：边沿计振、察看期与 cap 同步落定。"""
+    old_latched = int(bool(current))
+    new_latched = _next_mutiny_latch(
+        loyalty=loyalty, arrears=arrears, needed=needed, current=old_latched
+    )
+    new_count = max(0, min(3, int(count)))
+    new_probation = max(0, int(probation))
+    entered = not old_latched and bool(new_latched)
+    if entered:
+        new_count = min(3, new_count + 1)
+        if new_count == 2:
+            new_probation = 3
+        elif new_count >= 3:
+            new_probation = 0
+    elif not new_latched and arrears <= 1e-9 and new_probation > 0:
+        new_probation -= 1
+    capped_loyalty = min(int(loyalty), mutiny_loyalty_cap(new_count, redemption_count=0))
+    return capped_loyalty, int(new_latched), new_count, new_probation
 
 
 def _army_loyalty_reason(new_arrears: float, full_needed: int) -> str:
@@ -1427,7 +1457,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
         army_rows_raw = db.conn.execute(
             # #44 army_needed 需 manpower/salary_rate/owner_power（应发挂钩兵力派生）
             "SELECT id, name, manpower, salary_rate, owner_power, arrears, morale, loyalty, "
-            "is_tusi, self_funded_pay, is_mutinied FROM armies"
+            "is_tusi, self_funded_pay, is_mutinied, mutiny_count, mutiny_probation FROM armies"
         ).fetchall()
         if not army_rows_raw:
             raise SystemExit("fiscal_tick: armies 表无数据，中止。")
@@ -1456,6 +1486,8 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
             new_arrears = max(0.0, old_arrears + shortfall)
             morale_delta = army_pay_morale_delta(needed, shortfall, old_arrears)
             new_morale = max(0, min(100, old_morale + morale_delta))
+            old_mutiny_count = int(row["mutiny_count"])
+            old_mutiny_probation = int(row["mutiny_probation"])
 
             # #314 军心月度 tick：仅 ming 且非土司非自养军；欠饷月数=floor(合计 arrears/needed)。
             old_loyalty = int(row["loyalty"])
@@ -1463,17 +1495,27 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                     and not bool(row["self_funded_pay"]):
                 loyalty_delta = army_loyalty_tick_delta(new_arrears, needed)
                 new_loyalty = max(0, min(100, old_loyalty + loyalty_delta))
-                new_is_mutinied = _next_mutiny_latch(
+                (
+                    new_loyalty,
+                    new_is_mutinied,
+                    new_mutiny_count,
+                    new_mutiny_probation,
+                ) = _advance_mutiny(
                     loyalty=new_loyalty, arrears=new_arrears, needed=needed,
-                    current=int(row["is_mutinied"]),
+                    current=int(row["is_mutinied"]), count=int(row["mutiny_count"]),
+                    probation=int(row["mutiny_probation"]),
                 )
             else:
                 new_loyalty = old_loyalty
                 new_is_mutinied = int(row["is_mutinied"])
+                new_mutiny_count = int(row["mutiny_count"])
+                new_mutiny_probation = int(row["mutiny_probation"])
 
             db.conn.execute(
-                "UPDATE armies SET arrears = ?, morale = ?, loyalty = ?, is_mutinied = ? WHERE id = ?",
-                (new_arrears, new_morale, new_loyalty, new_is_mutinied, army_id),
+                """UPDATE armies SET arrears = ?, morale = ?, loyalty = ?, is_mutinied = ?,
+                   mutiny_count = ?, mutiny_probation = ? WHERE id = ?""",
+                (new_arrears, new_morale, new_loyalty, new_is_mutinied,
+                 new_mutiny_count, new_mutiny_probation, army_id),
             )
             if shortfall > 0:
                 reason_tag = (
@@ -1497,6 +1539,12 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                     (state.turn, state.year, state.period, army_id,
                      "loyalty", str(old_loyalty), str(new_loyalty), new_loyalty - old_loyalty,
                      loyalty_reason),
+                    (state.turn, state.year, state.period, army_id,
+                     "mutiny_count", str(old_mutiny_count), str(new_mutiny_count),
+                     new_mutiny_count - old_mutiny_count, loyalty_reason),
+                    (state.turn, state.year, state.period, army_id,
+                     "mutiny_probation", str(old_mutiny_probation), str(new_mutiny_probation),
+                     new_mutiny_probation - old_mutiny_probation, loyalty_reason),
                 ],
             )
             flows.append({
@@ -1638,7 +1686,8 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                     """
                     SELECT id, name, manpower, salary_rate, owner_power,
                            arrears, province_pay_arrears, central_pay_arrears,
-                           loyalty, is_tusi, self_funded_pay, is_mutinied
+                           loyalty, is_tusi, self_funded_pay, is_mutinied,
+                           mutiny_count, mutiny_probation
                     FROM armies
                     WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0
                     """
@@ -1649,6 +1698,8 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                         continue
                     army_id_loyalty = str(lr["id"])
                     old_loyalty_val = int(lr["loyalty"])
+                    old_mutiny_count_val = int(lr["mutiny_count"])
+                    old_mutiny_probation_val = int(lr["mutiny_probation"])
                     new_arrears_loyalty = float(lr["arrears"] or 0)
                     # 防御：若 arrears 列滞后，以两源合计为准
                     try:
@@ -1661,25 +1712,42 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                         pass
                     loyalty_delta_unified = army_loyalty_tick_delta(new_arrears_loyalty, full_needed_loyalty)
                     new_loyalty_val = max(0, min(100, old_loyalty_val + loyalty_delta_unified))
-                    new_is_mutinied_val = _next_mutiny_latch(
+                    (
+                        new_loyalty_val,
+                        new_is_mutinied_val,
+                        new_mutiny_count_val,
+                        new_mutiny_probation_val,
+                    ) = _advance_mutiny(
                         loyalty=new_loyalty_val, arrears=new_arrears_loyalty,
                         needed=full_needed_loyalty, current=int(lr["is_mutinied"]),
+                        count=int(lr["mutiny_count"]),
+                        probation=int(lr["mutiny_probation"]),
                     )
                     if new_loyalty_val == old_loyalty_val and loyalty_delta_unified == 0:
                         # 仍需写日志以保持审计完整性？与 legacy/hub 旧有行为对齐：始终写 loyalty 行
                         pass
                     db.conn.execute(
-                        "UPDATE armies SET loyalty = ?, is_mutinied = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                        (new_loyalty_val, new_is_mutinied_val, army_id_loyalty),
+                        """UPDATE armies SET loyalty = ?, is_mutinied = ?, mutiny_count = ?,
+                           mutiny_probation = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?""",
+                        (new_loyalty_val, new_is_mutinied_val, new_mutiny_count_val,
+                         new_mutiny_probation_val, army_id_loyalty),
                     )
                     loyalty_reason_unified = _army_loyalty_reason(new_arrears_loyalty, full_needed_loyalty)
-                    db.conn.execute(
+                    db.conn.executemany(
                         """INSERT INTO army_logs
                            (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, '户部')""",
-                        (state.turn, state.year, state.period, army_id_loyalty,
-                         "loyalty", str(old_loyalty_val), str(new_loyalty_val),
-                         new_loyalty_val - old_loyalty_val, loyalty_reason_unified),
+                        [
+                            (state.turn, state.year, state.period, army_id_loyalty,
+                             "loyalty", str(old_loyalty_val), str(new_loyalty_val),
+                             new_loyalty_val - old_loyalty_val, loyalty_reason_unified),
+                            (state.turn, state.year, state.period, army_id_loyalty,
+                             "mutiny_count", str(old_mutiny_count_val), str(new_mutiny_count_val),
+                             new_mutiny_count_val - old_mutiny_count_val, loyalty_reason_unified),
+                            (state.turn, state.year, state.period, army_id_loyalty,
+                             "mutiny_probation", str(old_mutiny_probation_val), str(new_mutiny_probation_val),
+                             new_mutiny_probation_val - old_mutiny_probation_val, loyalty_reason_unified),
+                        ],
                     )
         if pay_source_cutover:
             db._reconcile_central_army_pay_arrears_container()
