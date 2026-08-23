@@ -1,3 +1,6 @@
+import shutil
+import sys
+
 import pytest
 
 from ming_sim import issues
@@ -45,6 +48,53 @@ def test_departure_rejects_nonfinite_distance_before_ledger_write(game, monkeypa
     ).fetchone())
     assert after_db == before_db
     assert tuple(getattr(character, field, 0) for field in fields) == before_memory
+
+
+def test_departure_reads_matrix_from_frozen_bundle_outside_cwd(game, monkeypatch, tmp_path):
+    db, state, content = game
+    name = _active(db)
+    db.conn.execute("UPDATE characters SET location='beizhili' WHERE name=?", (name,))
+    content.characters[name].location = "beizhili"
+    bundle = tmp_path / "bundle"
+    (bundle / "content").mkdir(parents=True)
+    shutil.copy("content/distance_matrix.json", bundle / "content" / "distance_matrix.json")
+    elsewhere = tmp_path / "cwd"
+    elsewhere.mkdir()
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "_MEIPASS", str(bundle), raising=False)
+    monkeypatch.chdir(elsewhere)
+
+    issues.apply_score_extraction(db, state, {"人物变更": [{
+        "name": name, "origin_ref": "盘面自发", "动作": "行止", "transit_to": "liaodong",
+    }]}, content=content)
+
+    assert db.conn.execute(
+        "SELECT transit_to FROM characters WHERE name=?", (name,)
+    ).fetchone()["transit_to"] == "liaodong"
+
+
+@pytest.mark.parametrize("payload", [
+    {"location": "liaodong"},
+    {"location": "beizhili", "transit_to": "liaodong"},
+])
+def test_departure_rejects_location_shapes_without_mutation(game, payload):
+    db, state, content = game
+    name = _active(db)
+    before = tuple(db.conn.execute(
+        "SELECT location, transit_to, transit_distance_remaining, transit_speed_factor, transit_start_turn "
+        "FROM characters WHERE name=?", (name,),
+    ).fetchone())
+
+    result = issues.apply_score_extraction(db, state, {"人物变更": [{
+        "name": name, "origin_ref": "盘面自发", "动作": "行止", **payload,
+    }]}, content=content)
+
+    after = tuple(db.conn.execute(
+        "SELECT location, transit_to, transit_distance_remaining, transit_speed_factor, transit_start_turn "
+        "FROM characters WHERE name=?", (name,),
+    ).fetchone())
+    assert after == before
+    assert result["applied_person_changes"][0]["category"] == "invalid_transition"
 
 
 def test_departure_persists_matrix_distance_and_urgent_factor(game):

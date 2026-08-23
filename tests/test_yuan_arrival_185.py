@@ -38,6 +38,7 @@ transit_to 仍残留——即本测试真测清空链、非 no-op 断言。
 from __future__ import annotations
 
 import ming_sim.issues as issues
+from ming_sim.decree import force_transit_arrivals
 from tests.conftest import active_ming_character
 
 DEST = "liaodong"
@@ -96,18 +97,16 @@ def test_yuan_arrears_paid_then_arrives_e2e(game):
                         "target_id": ARMY_ID,
                     }
                 ],
-                "人物变更": [
-                    {
-                        "origin_ref": "盘面自发", "name": name,
-                        "动作": "行止",
-                        "location": DEST,
-                        "transit_to": "",
-                        "reason": "欠饷补齐，关宁军心稍安，赴辽到任",
-                    }
-                ],
+                "人物变更": [],
             },
             content=content,
         )
+
+        db.conn.execute(
+            "UPDATE characters SET transit_start_turn=? WHERE name=?",
+            (state.turn - 2, name),
+        )
+        assert force_transit_arrivals(db, state, content) == [{"name": name, "location": DEST}]
 
         # 前置条件经引擎真满足：关宁军欠饷已补齐（arrears 扣减到 0）
         new_arrears = int(
@@ -138,15 +137,7 @@ def test_yuan_arrears_paid_then_arrives_e2e(game):
             "到任后 content 镜像 transit_to 应同步清空（c2f1ef8/7f7583a/cddcd76 修的就是这层不一致）"
         )
 
-        # 行止抵达 delta 确被落库应用（非拒收）
-        person_results = applied.get("applied_person_changes", [])
-        assert any(
-            r.get("name") == name
-            and r.get("动作") == "行止"
-            and r.get("location") == DEST
-            and r.get("transit_to") == ""
-            for r in person_results
-        ), f"到任 行止 应落库为 location={DEST}/transit_to=''，实测 {person_results}"
+        assert applied.get("applied_person_changes", []) == []
     finally:
         # 精确回滚内存镜像：transit_to 原本不存在则删除，避免留下"幽灵属性"污染同批用例
         content.characters[name].location = old_location
