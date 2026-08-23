@@ -310,7 +310,64 @@ def test_unmapped_rejection_rolls_back_with_uncommitted_dossier(env):
     assert _create(db, state, category="修仙", commit=False) == 0
     db.conn.rollback()
     assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0] == 0
-    assert db.conn.execute("SELECT COUNT(*) FROM rejection_reports").fetchone()[0] == 0
+    table = db.conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='rejection_reports'"
+    ).fetchone()
+    assert table is None or db.conn.execute(
+        "SELECT COUNT(*) FROM rejection_reports"
+    ).fetchone()[0] == 0
+
+
+def _directive_payload(category):
+    return {
+        "dossier_action_type": "assignment",
+        "target_kind": "issue",
+        "target_id": f"route-{category}",
+        "transaction_category": category,
+    }
+
+
+def test_confirm_directive_consumes_routing_rejection(env, monkeypatch, tmp_path):
+    db, state, _ = env
+    mirror = tmp_path / "confirm.jsonl"
+    monkeypatch.setattr("ming_sim.error_pack.rejections_jsonl_path", lambda: str(mirror))
+    bad = db.add_directive(
+        state, None, "修仙", "test", status="pending",
+        dossier_payload=_directive_payload("修仙"),
+    )
+    good = db.add_directive(
+        state, None, "清丈", "test", status="pending",
+        dossier_payload=_directive_payload("清丈"),
+    )
+
+    db.confirm_directive(bad, state)
+    db.confirm_directive(good, state)
+
+    assert db.conn.execute("SELECT status FROM turn_directives WHERE id=?", (bad,)).fetchone()[0] == "rejected"
+    assert db.conn.execute("SELECT status FROM turn_directives WHERE id=?", (good,)).fetchone()[0] == "draft"
+    assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers WHERE directive_id=?", (bad,)).fetchone()[0] == 0
+    assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers WHERE directive_id=?", (good,)).fetchone()[0] == 1
+    assert db.conn.execute("SELECT COUNT(*) FROM rejection_reports").fetchone()[0] == 1
+    assert json.loads(mirror.read_text(encoding="utf-8"))["category"] == "duty_route_unmapped"
+
+
+def test_draft_batch_isolates_routing_rejection(env, monkeypatch, tmp_path):
+    db, state, _ = env
+    mirror = tmp_path / "batch.jsonl"
+    monkeypatch.setattr("ming_sim.error_pack.rejections_jsonl_path", lambda: str(mirror))
+    bad = db.add_directive(state, None, "修仙", "test", dossier_payload=_directive_payload("修仙"))
+    good = db.add_directive(state, None, "清丈", "test", dossier_payload=_directive_payload("清丈"))
+
+    db.ensure_dossiers_for_draft_directives(state)
+
+    statuses = dict(db.conn.execute(
+        "SELECT id,status FROM turn_directives WHERE id IN (?,?)", (bad, good),
+    ).fetchall())
+    assert statuses == {bad: "rejected", good: "draft"}
+    assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers WHERE directive_id=?", (bad,)).fetchone()[0] == 0
+    assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers WHERE directive_id=?", (good,)).fetchone()[0] == 1
+    assert db.conn.execute("SELECT COUNT(*) FROM rejection_reports").fetchone()[0] == 1
+    assert mirror.exists()
 
 
 @pytest.mark.parametrize("action", ["assignment", "military_order"])
