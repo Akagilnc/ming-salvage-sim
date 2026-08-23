@@ -710,6 +710,7 @@ def apply_persist_revoke_tail(
     apply_0056: bool,
     commitment_ref: int = 0,
     authority_source_dossier_id: int = 0,
+    revoke_dossier_id: int = 0,
 ) -> Dict[str, object]:
     """坚持后落地 = 立即 revoke 路径效果 − 票面明文推迟项。
 
@@ -722,6 +723,16 @@ def apply_persist_revoke_tail(
     breach_applied = False
     guofu_from_0056: Set[str] = set()
     did = int(target_dossier_id or 0)
+    restored_overrides: List[Dict[str, object]] = []
+    if did > 0 and int(revoke_dossier_id or 0) > 0:
+        from ming_sim.pay_order import restore_pay_order_override
+        restored_overrides = restore_pay_order_override(
+            db,
+            turn=int(state.turn),
+            target_dossier_id=did,
+            revoke_dossier_id=int(revoke_dossier_id),
+            reason=reason,
+        )
     if apply_0056 and did > 0:
         breach_applied = bool(
             db.breach_decree_dossier(
@@ -753,6 +764,7 @@ def apply_persist_revoke_tail(
         "guofu_from_0056": guofu_from_0056,
         "authority_reclaims": auth_rows,
         "stopped_issue_ids": stopped,
+        "restored_pay_order_overrides": restored_overrides,
     }
 
 
@@ -798,6 +810,7 @@ def finalize_persist(
     title = str(row["title"] if row is not None else meta.get("commitment_title") or "")
     origin_ref = str(row["origin_ref"] if row is not None else "")
     target_dossier_id = int(meta.get("target_dossier_id") or 0)
+    revoke_dossier_id = int(meta.get("revoke_dossier_id") or 0)
     if target_dossier_id <= 0:
         parsed = parse_dossier_id(origin_ref)
         target_dossier_id = int(parsed or 0)
@@ -829,6 +842,7 @@ def finalize_persist(
         reason=reason,
         apply_0056=apply_0056,
         commitment_ref=commitment_ref,
+        revoke_dossier_id=revoke_dossier_id,
     )
     breach_applied = bool(tail.get("breach_0056"))
 
@@ -1352,6 +1366,7 @@ def try_defer_revoke_to_breach_plea(
     *,
     target_dossier_id: int,
     target_issue_id: int = 0,
+    revoke_dossier_id: int = 0,
     reason: str = "",
     commit: bool = False,
 ) -> Optional[Dict[str, object]]:
@@ -1395,7 +1410,10 @@ def try_defer_revoke_to_breach_plea(
                 f"主办泣血陈情：皇上欲撤「{title}」之旨，"
                 f"臣的信心一半是皇爷给的，求陛下收回成命。"
             ),
-            extra={"deferred_revoke": True},
+            extra={
+                "deferred_revoke": True,
+                "revoke_dossier_id": int(revoke_dossier_id or 0),
+            },
         )
         if tid:
             written.append(tid)

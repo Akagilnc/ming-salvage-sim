@@ -379,6 +379,61 @@ def materialize_pay_order_decree(
     return written
 
 
+def restore_pay_order_override(
+    db: Any,
+    *,
+    turn: int,
+    target_dossier_id: int,
+    revoke_dossier_id: int,
+    reason: str = "",
+) -> List[Dict[str, Any]]:
+    """真实 revoke 尾接缝：按目标 override 载荷写回默认，并清期限伴随键。
+
+    provenance 属撤销案卷；目标案卷只提供其曾占用的 canonical keys。此函数不经过
+    materialize（后者依法只接受 pay_order_override origin），也不提交事务。
+    """
+    target = db.get_decree_dossier(int(target_dossier_id))
+    revoke = db.get_decree_dossier(int(revoke_dossier_id))
+    if target is None or str(target.get("action_type") or "") != "pay_order_override":
+        return []
+    if revoke is None or str(revoke.get("action_type") or "") != "revoke_decree":
+        raise PayOrderKeyError("恢复 override 须由真实 revoke_decree 案卷发起")
+    payload = target.get("payload")
+    if payload is None:
+        payload = target.get("payload_json")
+    if isinstance(payload, str):
+        import json
+        payload = json.loads(payload)
+    entries = payload.get("entries") if isinstance(payload, dict) else None
+    prepared = prepare_pay_order_entries(db, entries)
+    origin = f"dossier:{int(revoke_dossier_id)}"
+    current = db.get_fiscal_config()
+    written: List[Dict[str, Any]] = []
+    for key, _value, _until in prepared:
+        old = int(current.get(key, _default_of(key)))
+        new = _default_of(key)
+        db.conn.execute(
+            "INSERT INTO fiscal_config (key,value,kind,note,origin_ref) "
+            "VALUES (?,?,'override',?,?) ON CONFLICT(key) DO UPDATE SET "
+            "value=excluded.value, origin_ref=excluded.origin_ref",
+            (key, new, "撤销 override 恢复祖制（#653）", origin),
+        )
+        db.record_fiscal_config_change(
+            turn=int(turn), key=key, old_value=old, new_value=new,
+            origin_ref=origin, reason=reason or "撤销 override 旨，恢复祖制默认",
+        )
+        until_key = f"{key}{_UNTIL_SUFFIX}"
+        if until_key in current:
+            old_until = int(current[until_key])
+            db.conn.execute("DELETE FROM fiscal_config WHERE key=?", (until_key,))
+            db.record_fiscal_config_change(
+                turn=int(turn), key=until_key, old_value=old_until, new_value=0,
+                origin_ref=origin, reason="撤销 override 旨，清除期限伴随键",
+            )
+        written.append({"key": key, "old": old, "new": new})
+    return written
+
+
 def revoke_pay_order_decree(
     db: Any,
     *,

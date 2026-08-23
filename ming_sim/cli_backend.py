@@ -1951,6 +1951,37 @@ def _apply_validated_roster_to_extract_result(
     return out
 
 
+def _pay_order_grounding_facts(content: Any, db: Any = None) -> str:
+    """把既有 canonical 地区与结算时点直接教授抽取器；不建立第二映射。"""
+    regions = getattr(content, "regions", None) if content is not None else None
+    lines = []
+    for key, region in (regions or {}).items():
+        rid = str(getattr(region, "id", None) or key or "").strip()
+        name = str(getattr(region, "name", None) or "").strip()
+        if rid and name:
+            lines.append(f"{name}=@{rid}")
+    timing = ""
+    if db is not None:
+        state = db.conn.execute(
+            "SELECT turn, year, period FROM game_state WHERE id=1"
+        ).fetchone()
+        if state is not None:
+            timing = (
+                f"当前结算时点：turn={int(state['turn'])}，"
+                f"{int(state['year'])}年{int(state['period'])}月。"
+                "相对期限须换算为绝对 until_turn；期限 N 月按 active-through 语义写 "
+                "until_turn=当前 turn+N-1。\n"
+            )
+    if not lines and not timing:
+        return ""
+    return (
+        "【pay_order_override 接地事实】地区只能直接使用下列 canonical id，禁别名/自造：\n"
+        + "、".join(lines) + "\n" + timing
+        + "priority 数字越小越先；默认军饷/官俸/宗禄/赈济=10/20/30/40，"
+          "并列按该默认次序稳定排列。该动作 entries 必须非空。\n"
+    )
+
+
 def extract_draft_intent_with_roster_heal(
     player_message: Optional[str],
     minister_reply: str,
@@ -1981,6 +2012,7 @@ def extract_draft_intent_with_roster_heal(
             minister_reply,
             llm_config=llm_config,
             content=content,
+            pay_order_facts=_pay_order_grounding_facts(content, db),
             correction_feedback=correction,
             **extract_kwargs,
         )
@@ -2068,6 +2100,7 @@ def extract_draft_intent(
     draft_count: int = 1,
     content: Any = None,
     correction_feedback: str = "",
+    pay_order_facts: str = "",
 ) -> Dict[str, Any]:
     """LLM 判皇帝本轮是否在口头请大臣拟旨（非显式前缀），返回拟旨意图 + 草案文本 + 目标候选。
     失败/无 → {"draft_action": "无", "draft_text": "", "target_candidate": ""}。
@@ -2098,12 +2131,14 @@ def extract_draft_intent(
             '{"正文":"第一道完整旨稿","动作类型":"policy","目标类型":"issue","目标ID":"...",'
             '"颁布方式":"普通|中旨直发"},'
             f'{{"正文":"……共 {draft_count} 道","动作类型":"military_order","目标类型":"army",'
-            '"目标ID":"...","金额":null,"账户":"","执行面":"immediate|in_transit",'
+            '"目标ID":"...","entries":[{"key":"due_priority_军饷@shaanxi","value":40,"until_turn":12}],'
+            '"金额":null,"账户":"","执行面":"immediate|in_transit",'
             '"承办人":"...","期限月数":3,"颁布方式":"普通|中旨直发",'
             '"参与人":[{"character_id":"规范名","tier":"主办|协办|知情","role":"本案职分","delegator_id":null}]}]}\n'
             "不得把同一段文字复制成多道；不得遗漏皇帝要求的任一道拟旨事项。\n\n"
             + correction_block
             + roster_facts
+            + pay_order_facts
             + "【皇帝】" + (player_message or "（无）") + "\n"
             + "【大臣完整回话】" + (minister_reply or "（无）") + "\n"
         )
@@ -2151,8 +2186,14 @@ def extract_draft_intent(
             }
             # #653：pay_order_override 结构化载荷（entries）随草案整道转交，
             # 成案点/物化点共 prepare_pay_order_entries 同一验形。
-            if value.get("entries") is not None:
-                mechanical["entries"] = value.get("entries")
+            entries = value.get("entries")
+            if action == "pay_order_override" and (
+                not isinstance(entries, list) or not entries
+            ):
+                invalid_batch = True
+                break
+            if entries is not None:
+                mechanical["entries"] = entries
             drafts.append({
                 "draft_action": "拟旨", "draft_text": text,
                 "dossier_action_type": action, "target_kind": target_kind,
@@ -2242,6 +2283,7 @@ def extract_draft_intent(
         "判定要点：皇帝明确让大臣拟旨/起草圣旨→拟旨；仅商议/问询/催办/评论不算。语义判断，别拘字面。\n\n"
         + correction_block
         + roster_facts
+        + pay_order_facts
         + draft_context
         + candidates_context
         + "【皇帝】" + (player_message or "（无）") + "\n"
@@ -2279,6 +2321,10 @@ def extract_draft_intent(
         mechanical["mode"] = mode
     merged = str(obj.get("合并草案") or "").strip()
     if _action == "无":
+        return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
+    if dossier_action == "pay_order_override" and (
+        not isinstance(mechanical["entries"], list) or not mechanical["entries"]
+    ):
         return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
     if not _candidates:
         # 无候选：沿用单条语义——补充模式合并、否则大臣回话即草案。

@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 import json
 import math
-from typing import Dict, List, NamedTuple, Optional, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
 from ming_sim.assets import format_wanliang_amount
 from ming_sim.constants import SALARY_RATE_ANCHOR, TURN_UNIT
@@ -1275,6 +1275,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
     pay_source_cutover = db.is_army_pay_source_cutover_enabled()
     if db.is_substrate_hub_fiscal_engine_enabled():
         db._current_month_central_pay_shortfalls = {}
+        db._current_month_central_pay_dues = {}
         db._current_month_pay_opening_arrears = {}
         army_rows_raw = db.conn.execute(
             """
@@ -1381,6 +1382,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
             central_arrears = max(0.0, old_central_arrears + shortfall)
             new_arrears = max(0.0, province_arrears + central_arrears)
             db._current_month_central_pay_shortfalls[army_id] = shortfall
+            db._current_month_central_pay_dues[army_id] = needed
             db._current_month_pay_opening_arrears[army_id] = old_arrears
 
             province_pay_share = float(row["province_pay_share"] or 0)

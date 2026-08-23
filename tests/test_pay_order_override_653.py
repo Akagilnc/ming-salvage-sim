@@ -355,26 +355,32 @@ def test_golden5_expiry_and_revoke_restore_byte_identical_default(game):
     assert db.get_fiscal_config()["due_priority_官俸@shaanxi"] == DEFAULT_DUE_PRIORITY["官俸"]
 
 
-def test_golden6_rejected_decree_zero_config_write(game):
-    """⑥打回的折发旨：零 config 写入、结算照默认序（0055 效果跟判决走）。
-
-    物化唯一入口＝materialize_pay_order_decree；打回判决不调它 → 零写入。
-    本例钉死：无物化调用时 config/provenance 零变化，且结算与无旨基线一致。
-    """
+def test_real_revoke_decree_restores_override_and_clears_expiry(game):
     db, state, _content = game
-    before_cfg = db.get_fiscal_config()
-    before_rows = db.conn.execute(
-        "SELECT COUNT(*) c FROM fiscal_config_changes").fetchone()["c"]
-    # ……（打回路径：不调用 materialize_pay_order_decree）……
-    assert db.get_fiscal_config() == before_cfg
-    assert db.conn.execute(
-        "SELECT COUNT(*) c FROM fiscal_config_changes").fetchone()["c"] == before_rows
-    # 结算照默认序（与纯函数无旨基线逐字节一致）
-    settle = _opening_settle(db, "shaanxi")
-    expected = settle_tick(copy.deepcopy(settle["st"]), copy.deepcopy(settle["p"]), [])
-    res = db.settle_province_tick("shaanxi")
-    assert res.new_st == expected.new_st
-    assert res.breakdown == expected.breakdown
+    target = _override_dossier(db, state, [{
+        "key": "due_priority_军饷@shaanxi", "value": 40,
+        "until_turn": db._current_settle_turn() + 2,
+    }])
+    db.apply_dossier_promulgation(state, target, "promulgated")
+    revoke = db.create_decree_dossier(
+        state,
+        action_type="revoke_decree",
+        decree_text="撤回前旨",
+        target_kind="dossier",
+        target_id=str(target),
+        payload={"revoke_target_dossier_id": target},
+    )
+    db.apply_dossier_promulgation(state, revoke, "promulgated")
+    cfg = db.get_fiscal_config()
+    assert cfg["due_priority_军饷@shaanxi"] == DEFAULT_DUE_PRIORITY["军饷"]
+    assert "due_priority_军饷@shaanxi_until_turn" not in cfg
+    changes = db.conn.execute(
+        "SELECT key, origin_ref FROM fiscal_config_changes WHERE origin_ref=? ORDER BY id",
+        (f"dossier:{revoke}",),
+    ).fetchall()
+    assert [row["key"] for row in changes] == [
+        "due_priority_军饷@shaanxi", "due_priority_军饷@shaanxi_until_turn",
+    ]
 
 
 def test_golden7_replay_determinism(game):
@@ -651,7 +657,7 @@ def test_fiscal_fact_brief_present_but_malformed_fails_loud(game, bad_fiscal):
     """F2①：fiscal/settle key 已存在但容器或 st/p 畸形仍响亮失败。"""
     db, _state, _content = game
     db.conn.execute("UPDATE regions SET fiscal=? WHERE id='henan'", (bad_fiscal,))
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="fiscal_fact_brief"):
         build_fiscal_fact_brief(db)
 
 
@@ -917,7 +923,11 @@ def test_central_hub_tier_order_and_old_arrears_unchanged_by_haircut(game):
     from ming_sim import flows as flows_mod
     apply_src = inspect.getsource(flows_mod.apply_fixed_period_flows)
     assert "old_central_arrears + shortfall" in apply_src
-    assert "min(" not in [l for l in apply_src.splitlines() if "central_arrears =" in l][0]
+    central_arrears_assignment = next(
+        line for line in apply_src.splitlines()
+        if "central_arrears = max(0.0, old_central_arrears + shortfall)" in line
+    )
+    assert "min(" not in central_arrears_assignment
 
 
 # ═══════════════ 独立 oracle 宪制 mutation 自验 ═══════════════

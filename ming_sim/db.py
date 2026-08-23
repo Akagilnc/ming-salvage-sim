@@ -4554,7 +4554,19 @@ class GameDB:
                 )
             )
             old_morale = int(row["morale"])
-            total_due = float(row["total_due"])
+            # D11 分母须为两源本月折后总应发。省侧按本次 settle 的军饷
+            # 免除比例回算每军折后份额；中央侧由 flows 唯一折算后经月桥传入。
+            raw_province_due_total = sum(float(item["due"]) for item in pay_rows)
+            effective_province_due_total = max(
+                0.0,
+                raw_province_due_total - float(breakdown.get("haircut_军饷", 0.0) or 0.0),
+            )
+            province_due = (
+                float(row["due"]) * effective_province_due_total / raw_province_due_total
+                if raw_province_due_total > 0 else 0.0
+            )
+            central_dues = getattr(self, "_current_month_central_pay_dues", {})
+            total_due = province_due + float(central_dues.get(army_id, 0.0))
             morale_delta = army_pay_morale_delta(total_due, total_shortfall, old_total_arrears)
             new_morale = max(0, min(100, old_morale + morale_delta))
             self.conn.execute(
@@ -6492,6 +6504,8 @@ class GameDB:
             FROM region_logs rl
             JOIN regions r ON r.id = rl.region_id
             WHERE rl.turn = ?
+              AND rl.field NOT LIKE 'settle_官俸欠_%'
+              AND rl.field NOT LIKE 'settle_宗禄欠_%'
             ORDER BY rl.id
             LIMIT ?
             """,
@@ -15246,6 +15260,7 @@ class GameDB:
             self, state,
             target_dossier_id=int(target_dossier_id),
             target_issue_id=int(target_issue_id or 0),
+            revoke_dossier_id=int(dossier_id),
             reason=reason,
             commit=False,
         )
@@ -15260,6 +15275,7 @@ class GameDB:
             apply_0056=True,
             commitment_ref=int(target_issue_id or 0),
             authority_source_dossier_id=int(dossier_id),
+            revoke_dossier_id=int(dossier_id),
         )
 
     def _apply_military_order_verdict_effect(
