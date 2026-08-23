@@ -180,7 +180,8 @@ def test_real_assignment_stage_preserves_category_without_speaker_as_assignee(en
     )
     db.commit_pending_actions(state, content=content, action_ids=[pending_id])
     dossier = db.conn.execute(
-        "SELECT id,payload_json FROM decree_dossiers WHERE pending_action_id=?", (pending_id,),
+        "SELECT id,payload_json,executor_id FROM decree_dossiers WHERE pending_action_id=?",
+        (pending_id,),
     ).fetchone()
     assert json.loads(dossier["payload_json"])["transaction_category"] == "清丈"
     leads = [
@@ -188,6 +189,44 @@ def test_real_assignment_stage_preserves_category_without_speaker_as_assignee(en
         if item["tier"] == "主办"
     ]
     assert leads == ["毕自严"]
+    assert dossier["executor_id"] == "毕自严"
+
+
+def test_classified_assignment_promulgation_uses_routed_lead(env):
+    """职司路由钉主办后，顺颁必须能物化 initiative，不能因空 executor_id 炸整批判决。"""
+    db, state, content = env
+    dossier_id = _create(db, state, category="清丈")
+    assert db.conn.execute(
+        "SELECT executor_id FROM decree_dossiers WHERE id=?", (dossier_id,),
+    ).fetchone()["executor_id"] == "毕自严"
+    db.apply_dossier_verdicts(
+        state, [{"dossier_id": dossier_id, "decision": "promulgated"}],
+        content=content,
+    )
+    assert db.get_decree_dossier(dossier_id)["status"] == "executing"
+    initiative = db.conn.execute(
+        "SELECT participant_roster FROM issues WHERE kind='initiative' AND origin_ref=?",
+        (f"dossier:{dossier_id}",),
+    ).fetchone()
+    assert initiative is not None
+    assert json.loads(initiative["participant_roster"])[0]["character_id"] == "毕自严"
+
+
+def test_vacancy_idle_assignment_promulgates_without_executor(env):
+    """户部出缺＝怠办起步：顺颁不得因缺少 executor 中止，也不该凭空建 initiative。"""
+    db, state, content = env
+    db.conn.execute("UPDATE characters SET status='dismissed' WHERE office_type='户部'")
+    dossier_id = _create(db, state, category="清丈")
+    assert db.get_decree_dossier(dossier_id)["execution_signal"]["code"] == "idle_start"
+    db.apply_dossier_verdicts(
+        state, [{"dossier_id": dossier_id, "decision": "promulgated"}],
+        content=content,
+    )
+    assert db.get_decree_dossier(dossier_id)["status"] == "executing"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM issues WHERE kind='initiative' AND origin_ref=?",
+        (f"dossier:{dossier_id}",),
+    ).fetchone()[0] == 0
 
 
 def test_real_punishment_stage_preserves_category(env):
