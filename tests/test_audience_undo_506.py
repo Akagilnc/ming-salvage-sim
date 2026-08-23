@@ -176,12 +176,14 @@ def test_settle_extraction_skips_dead_round_but_writes_live_round(game):
 # ── AC3：夜内真实盘面直写走可枚举白名单；越权直写被审计咬住 ──────────────────────
 
 
-def test_night_direct_write_whitelist_enumerates_two_items():
+def test_night_direct_write_whitelist_enumerates_three_items():
     wl = an.NIGHT_DIRECT_WRITE_WHITELIST
-    # 白名单恰两项（密令落地、未在册人物入册）——新增夜内直写须过设计审、显式扩表。
-    assert set(wl) == {"密令落地", "未在册人物入册"}
+    # 白名单恰三项（#634 落地 ADR 0038 白名单③「召对口关系边事件」）——
+    # 新增夜内直写仍须过设计审、显式扩表。
+    assert set(wl) == {"密令落地", "未在册人物入册", "召对口关系边事件"}
     assert wl["密令落地"] == frozenset({"secret_orders", "secret_order_briefs"})
     assert wl["未在册人物入册"] == frozenset({"characters", "character_offices"})
+    assert wl["召对口关系边事件"] == frozenset({"relation_edge_events"})
 
 
 def test_audit_passes_whitelisted_and_catches_unwhitelisted_night_write(game):
