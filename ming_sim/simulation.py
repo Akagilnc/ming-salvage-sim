@@ -1204,10 +1204,10 @@ def build_extractor_shared_context(
         # #626：反噬事实包仅 issues 档房（与 #625 监督三键同格门控）；
         # 不在 _extractor_context_payload 无门副本，避免非 issues 模块误读。
         slim["commitment_backlash_facts"] = build_backlash_narrative_features(db)
-        # Dynamic issue candidates belong only to this extractor.  Keeping them
-        # out of simulator_payload prevents event binding/HITL from treating an
-        # issue proposal as a generic event decision.
-        slim["impeachment_surge_candidates"] = gather_impeachment_surge_candidates(state, db)
+        # The issues extractor consumes the same canonical candidate_events key
+        # as its prompt.  This private module payload remains outside simulator
+        # decision binding and HITL.
+        slim["candidate_events"] = gather_impeachment_surge_candidates(state, db)
     slim["_dedup_note"] = (
         "盘面、诏书、在朝大臣、势力/派系/阶级态势已在 system 的 simulator_payload 中给出"
         "（盘面表 regions/armies/buildings 走 TSV；court_roster 即在朝大臣；"

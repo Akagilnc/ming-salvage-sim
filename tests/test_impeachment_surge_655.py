@@ -7,7 +7,7 @@ import json
 import ming_sim.agents as agents_mod
 from ming_sim.issues import apply_issue_tracker_output, gather_impeachment_surge_candidates
 from ming_sim.models import LLMConfig
-from ming_sim.simulation import build_simulator_payload
+from ming_sim.simulation import build_extractor_shared_context, build_simulator_payload
 
 
 def _candidate_world(db, state):
@@ -49,6 +49,9 @@ def test_transformed_fact_is_projected_as_namespaced_candidate(game):
     payload = build_simulator_payload(state, db, "", "")
     assert item not in payload["candidate_events"]
     assert all(not str(event["id"]).startswith("impeachment_surge:") for event in payload["candidate_events"])
+    issues_context = build_extractor_shared_context(db, state, "", "", module="issues")
+    assert item in issues_context["candidate_events"]
+    assert "impeachment_surge_candidates" not in issues_context
     facts = db.build_faction_denunciation_facts()
     assert all(int(row["dossier_id"]) != did for row in facts["forked_dossiers"])
 
@@ -78,7 +81,7 @@ def test_production_issues_agent_carries_dynamic_source_contract_to_apply(game, 
     output = {"new_issues": [{
         "origin_kind": "impeachment_surge", "candidate_id": candidate["id"],
         "faction_hint": candidate["faction_id"],
-        "participant_roster": [{"character_id": owner, "tier": "主办"}],
+        "target_roster": [owner],
         "title": "御史自拟弹章", "stage_text": "清丈案牵连渐明。",
     }]}
     accepted = apply_issue_tracker_output(db, state, output)["new_issues"][0]
@@ -98,7 +101,7 @@ def test_apply_accepts_only_current_candidate_closed_target_and_free_text(game):
     output = {"new_issues": [{
         "origin_kind": "impeachment_surge", "candidate_id": candidate["id"],
         "faction_hint": candidate["faction_id"],
-        "participant_roster": [{"character_id": owner, "tier": "主办"}],
+        "target_roster": [owner],
         "title": "  自由题名  ", "stage_text": "原样案情。",
     }]}
     result = apply_issue_tracker_output(db, state, output)
@@ -119,47 +122,40 @@ def test_dynamic_apply_rejects_blank_title_wrong_faction_and_outside_target(game
     candidate = gather_impeachment_surge_candidates(state, db)[0]
     base = {"origin_kind": "impeachment_surge", "candidate_id": candidate["id"],
             "faction_hint": candidate["faction_id"],
-            "participant_roster": [{"character_id": owner, "tier": "主办"}],
+            "target_roster": [owner],
             "title": "题", "stage_text": "情"}
     bad = [dict(base, title="  "), dict(base, faction_hint="伪派"),
-           dict(base, participant_roster=[{"character_id": "不存在", "tier": "主办"}])]
+           dict(base, target_roster=["不存在"])]
     result = apply_issue_tracker_output(db, state, {"new_issues": bad})["new_issues"]
     assert all(item["rejected"] for item in result)
     assert db.conn.execute("SELECT COUNT(*) FROM issues WHERE origin_kind='impeachment_surge'").fetchone()[0] == 0
 
 
-def test_dynamic_apply_rejects_invalid_roster_fields_without_losing_valid_sibling(game):
+def test_dynamic_targets_are_roleless_deduplicated_without_participant_roles(game):
     db, state = game[:2]
     _, owner, _ = _candidate_world(db, state)
-    delegator = db.conn.execute(
-        "SELECT name FROM characters WHERE name<>? ORDER BY name LIMIT 1", (owner,)
-    ).fetchone()["name"]
     candidate = gather_impeachment_surge_candidates(state, db)[0]
     base = {"origin_kind": "impeachment_surge", "candidate_id": candidate["id"],
-            "faction_hint": candidate["faction_id"],
-            "participant_roster": [{"character_id": owner, "tier": "主办"}],
-            "title": "  合法题名  ", "stage_text": "合法案情"}
-    valid_roster = [{"character_id": owner, "tier": "主办",
-                     "role": "  具疏弹劾  ", "delegator_id": delegator}]
+            "faction_hint": candidate["faction_id"], "title": "合法题名", "stage_text": "合法案情"}
 
     result = apply_issue_tracker_output(db, state, {"new_issues": [
-        dict(base, participant_roster=[{"character_id": owner, "tier": "首犯"}]),
-        dict(base, participant_roster=[{"character_id": owner, "tier": "主办",
-                                        "role": {"bad": "shape"}}]),
-        dict(base, participant_roster=[{"character_id": owner, "tier": "主办",
-                                        "delegator_id": ["bad"]}]),
-        dict(base, participant_roster=[{"character_id": owner, "tier": "主办",
-                                        "delegator_id": "不存在"}]),
-        dict(base, participant_roster=valid_roster),
+        dict(base, target_roster=[{"character_id": owner, "tier": "主办"}]),
+        dict(base, target_roster=[owner, owner]),
     ]})["new_issues"]
 
-    assert all(item["rejected"] is True for item in result[:4])
-    assert result[4]["rejected"] is False
+    assert result[0]["rejected"] is True
+    assert result[1]["rejected"] is False
     row = db.conn.execute(
-        "SELECT title,stage_text,participant_roster FROM issues WHERE origin_kind='impeachment_surge'"
+        "SELECT participants,participant_roster,target_roster FROM issues WHERE origin_kind='impeachment_surge'"
     ).fetchone()
-    assert (row["title"], row["stage_text"]) == ("  合法题名  ", "合法案情")
-    assert json.loads(row["participant_roster"]) == valid_roster
+    assert json.loads(row["participants"]) == []
+    assert json.loads(row["participant_roster"]) == []
+    assert json.loads(row["target_roster"]) == [owner]
+    knowledge = db.conn.execute(
+        "SELECT participant_roster FROM character_knowledge_sources WHERE source_id=?",
+        (f"issue:{result[1]['issue_id']}",),
+    ).fetchone()
+    assert json.loads(knowledge["participant_roster"]) == []
 
 
 def test_dynamic_apply_rejects_non_text_free_fields_without_coercion(game):
@@ -168,7 +164,7 @@ def test_dynamic_apply_rejects_non_text_free_fields_without_coercion(game):
     candidate = gather_impeachment_surge_candidates(state, db)[0]
     base = {"origin_kind": "impeachment_surge", "candidate_id": candidate["id"],
             "faction_hint": candidate["faction_id"],
-            "participant_roster": [{"character_id": owner, "tier": "主办"}],
+            "target_roster": [owner],
             "title": "题", "stage_text": "情"}
 
     result = apply_issue_tracker_output(db, state, {"new_issues": [
@@ -193,7 +189,7 @@ def test_leverage_boundary_and_authoritative_input_snapshot(game):
     db.conn.commit()
     item = {"origin_kind": "impeachment_surge", "candidate_id": candidate["id"],
             "faction_hint": candidate["faction_id"],
-            "participant_roster": [{"character_id": owner, "tier": "主办"}],
+            "target_roster": [owner],
             "title": "发难", "stage_text": "案情"}
     rejected = apply_issue_tracker_output(
         db, state, {"new_issues": [item]}, candidate_event_ids_at_input=set(),
