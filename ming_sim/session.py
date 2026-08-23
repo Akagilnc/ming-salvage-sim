@@ -1099,8 +1099,13 @@ class GameSession:
             result = AudienceAdmission.IN_CAPITAL
         else:
             result = AudienceAdmission.SUMMON_FRESH
+        reason = ""
+        if result is AudienceAdmission.SUMMON_FRESH:
+            reason = f"已传召{character.name}赴京；人在场外，本回合不能入殿。"
+        elif result is AudienceAdmission.SUMMON_IN_TRANSIT:
+            reason = f"已向在途的{character.name}传召；须先抵原目的地，本回合不能入殿。"
         return AudienceAdmissionDecision(
-            result, location=location, transit_to=transit_to,
+            result, reason=reason, location=location, transit_to=transit_to,
             allowed=result is AudienceAdmission.IN_CAPITAL,
         )
 
@@ -1569,10 +1574,15 @@ class GameSession:
                     except ValueError:
                         target = None
                     if target is not None:
-                        ok, _reason = self.can_summon(target)
-                        if ok:
+                        decision = self.consume_audience_admission(
+                            target,
+                            origin_id=f"session:tool:{int(chat_turn_id or 0)}:{target.name}",
+                        )
+                        if decision.allowed:
                             result.court_action = "summon"
                             result.next_minister = target.name
+                        elif decision.reason:
+                            result.answer = result.answer + "\n\n" + decision.reason
             elif tool_name == "propose_directive" or tool_result.startswith("__pending_directive__"):
                 if confirmation_turn or explicit_secret_prefix:
                     continue
