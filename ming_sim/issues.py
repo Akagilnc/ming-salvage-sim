@@ -7006,7 +7006,7 @@ def _apply_person_changes(
                 if transit_to:
                     matrix = DistanceMatrix.from_file("content/distance_matrix.json")
                     distance = matrix.travel_time(location, transit_to)
-                    if distance < 0 or (location != transit_to and distance <= 0):
+                    if not math.isfinite(distance) or distance < 0 or (location != transit_to and distance <= 0):
                         raise ValueError(f"invalid baked travel time: {location!r} -> {transit_to!r}")
                     if distance == 0:
                         location, transit_to = transit_to, ""
