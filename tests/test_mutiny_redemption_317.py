@@ -102,17 +102,17 @@ def test_full_pay_streak_can_be_saved_in_peace_and_partial_pay_resets_it(game, f
 
 
 @pytest.mark.parametrize(
-    ("redemption_count", "expected_loyalty"),
-    ((1, 70), (0, 60)),
+    ("redemption_count", "initial_loyalty", "expected_loyalty"),
+    ((1, 60, 70), (0, 60, 60), (5, 100, 100)),
 )
 def test_army_delta_clamps_loyalty_to_dynamic_mutiny_cap(
-    game, redemption_count, expected_loyalty
+    game, redemption_count, initial_loyalty, expected_loyalty
 ):
     db, state, _ = game
     db.conn.execute(
-        """UPDATE armies SET loyalty=60,mutiny_count=2,redemption_count=?
+        """UPDATE armies SET loyalty=?,mutiny_count=2,redemption_count=?
            WHERE id=?""",
-        (redemption_count, ARMY),
+        (initial_loyalty, redemption_count, ARMY),
     )
     db.conn.commit()
     event = type("Event", (), {"id": "test", "title": "军心变更"})()
