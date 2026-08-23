@@ -76,6 +76,14 @@ def test_seed_document_validation_is_fail_closed():
         validate_seed_document(_doc({"context": "   "}), opening_year=1627, opening_period=10)
     with pytest.raises(ValueError, match="两端不得相同"):
         validate_seed_document(_doc({"target": "甲"}), opening_year=1627, opening_period=10)
+    with pytest.raises(ValueError, match="两端不得相同"):
+        validate_seed_document(
+            _doc(summaries=[{
+                "source": "甲", "target": "甲", "founding_lines": ["自指废行。"],
+            }]),
+            opening_year=1627,
+            opening_period=10,
+        )
     # 合法文档归一：turn 刻度非正、词表过验。
     normalized = validate_seed_document(_doc(), opening_year=1627, opening_period=10)
     assert normalized["events"][0]["turn"] == pregame_turn(1625, 4) < 0
@@ -114,8 +122,10 @@ def test_seeded_pair_flows_into_month_end_brew_selection(fresh_session):
 
 def test_pregame_turn_scale_matches_load_state_mapping():
     """开局前刻度：默认开局前一月＝-1；与 start_ym 映射式同锚（1627.10=开局 turn 1）。"""
+    from ming_sim.constants import DEFAULT_OPENING_PERIOD, DEFAULT_OPENING_YEAR
     from ming_sim.relation_seed import pregame_turn
 
+    assert (DEFAULT_OPENING_YEAR, DEFAULT_OPENING_PERIOD) == (1627, 10)
     assert pregame_turn(1627, 9) == -1
     assert pregame_turn(1627, 1) == -9
     assert pregame_turn(1625, 4) == (1625 - 1627) * 12 + (4 - 10)
@@ -171,15 +181,47 @@ def test_repeated_import_is_idempotent_no_double_write(fresh_session):
         assert int(after_row["last_event_id"]) == int(before_row["last_event_id"])
 
 
-def test_existing_save_is_never_touched_by_seed_import(game):
-    """旧档不受影响：game_state 行已存在的存档，构造/载入一律不触发 seed 导入。"""
-    db, state, _content = game
-    from ming_sim.relation_seed import import_bundled_relationship_seed
+def test_existing_save_is_never_touched_by_seed_import(game, monkeypatch):
+    """旧档不受影响：真实构造 GameSession 后，关系流水/摘要逐字段不变且无导入日志。"""
+    import ming_sim.cli_backend as _cb
+    import ming_sim.llm_model as llm_mod
+    import ming_sim.token_stats as token_stats
 
-    # 生产缝的机械口径：has_savegame 为真 → GameSession 不调导入器。
+    db, _state, content = game
     assert db.has_savegame() is True
-    # 导入器自身对旧档也不隐式改写——显式调用才写入，此处只验判据口径。
-    assert db.get_relation_edge_events() == []
+    events_before = [tuple(row) for row in db.conn.execute(
+        "SELECT * FROM relation_edge_events ORDER BY id"
+    ).fetchall()]
+    summaries_before = [tuple(row) for row in db.conn.execute(
+        "SELECT * FROM relation_summaries ORDER BY source, target"
+    ).fetchall()]
+    db_path = db.path
+    db.close()
+
+    monkeypatch.setattr(
+        llm_mod, "verify_llm_available",
+        lambda cfg: (_ for _ in ()).throw(AssertionError("读旧档不得验证 LLM")),
+    )
+    monkeypatch.setattr(
+        _cb, "_run_backend_for_config",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("读旧档不得调用 LLM")),
+    )
+    logs = []
+    monkeypatch.setattr(token_stats, "tlog", logs.append)
+    cfg = LLMConfig(api_key="", base_url="http://unused", model="unused")
+    sess = GameSession(db_path=db_path, llm_config=cfg, content=content)
+    try:
+        events_after = [tuple(row) for row in sess.db.conn.execute(
+            "SELECT * FROM relation_edge_events ORDER BY id"
+        ).fetchall()]
+        summaries_after = [tuple(row) for row in sess.db.conn.execute(
+            "SELECT * FROM relation_summaries ORDER BY source, target"
+        ).fetchall()]
+        assert events_after == events_before
+        assert summaries_after == summaries_before
+        assert not any("关系 seed 导入" in message for message in logs)
+    finally:
+        sess.close()
 
 
 def test_new_save_seed_founding_events_enter_founding_segment(fresh_session):
