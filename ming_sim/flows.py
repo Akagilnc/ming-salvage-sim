@@ -1054,8 +1054,7 @@ def _apply_economy_list(
         beyond_raw = read_beyond_intent_raw(move)
         from ming_sim.covert_levy import stopped_covert_effect
         if stopped_covert_effect(
-            db, origin_ref=effective_origin_ref,
-            beyond_intent=beyond_raw, reason=move.get("reason"),
+            db, origin_ref=effective_origin_ref, beyond_intent=beyond_raw,
         ):
             applied.append({
                 "account": account, "rejected": True, "category": "forbidden_effect",
@@ -1947,10 +1946,15 @@ def _apply_population_transfers(
             _reject("invalid_enum", f"population_transfers amount 须为正整数：{amount!r}")
             continue
         origin_ref = str(item.get("origin_ref") or "").strip()
-        from ming_sim.covert_levy import stopped_covert_effect
-        if stopped_covert_effect(
-            db, origin_ref=origin_ref, reason=reason,
-        ):
+        from ming_sim.covert_levy import active_prohibition_dossier
+        prohibited_population_levy = False
+        if reason == "摊派" and origin_ref.startswith("dossier:"):
+            raw_dossier_id = origin_ref.removeprefix("dossier:")
+            prohibited_population_levy = (
+                raw_dossier_id.isdigit()
+                and active_prohibition_dossier(db, int(raw_dossier_id)) is not None
+            )
+        if prohibited_population_levy:
             _reject("forbidden_effect", "该旧案暗渠摊派已奉旨禁绝")
             continue
         origin_error = db.effect_origin_rejection(origin_ref)

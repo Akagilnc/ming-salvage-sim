@@ -25,7 +25,7 @@ def active_prohibition_dossier(db: Any, exposed_dossier_id: int) -> Dict[str, ob
 
 
 def stopped_covert_effect(
-    db: Any, *, origin_ref: object, beyond_intent: object = False, reason: object = "",
+    db: Any, *, origin_ref: object, beyond_intent: object = False,
 ) -> bool:
     """True only for a post-prohibition covert leg owned by the targeted old dossier."""
     origin = str(origin_ref or "").strip()
@@ -36,7 +36,7 @@ def stopped_covert_effect(
         return False
     from ming_sim.simulation import read_beyond_intent_raw
     beyond = db.coerce_beyond_intent_flag(read_beyond_intent_raw({"beyond_intent": beyond_intent}))
-    if not beyond and str(reason or "").strip() != "摊派":
+    if not beyond:
         return False
     return active_prohibition_dossier(db, int(raw_id)) is not None
 
@@ -94,10 +94,7 @@ def settle_exposure_from_canonical_actions(db: Any, state: Any, applied: Mapping
         # Identity is the successfully promulgated case-bound dossier, never an
         # unrelated fiscal receipt with a convenient shape.
         pay_fact = army_pay_fact_for_dossier(db, did) or {}
-        stopped = (
-            bool(float(pay_fact.get("arrears") or 0) > 0)
-            and active_prohibition_dossier(db, did) is not None
-        )
+        stopped = active_prohibition_dossier(db, did) is not None
         levy_transfer = any(
             successful(x) and x.get("origin_ref") == origin and x.get("reason") == "摊派"
             for x in applied.get("population_transfers") or []
@@ -129,11 +126,14 @@ def settle_exposure_from_canonical_actions(db: Any, state: Any, applied: Mapping
             continue
         decision = decisions[0]
         # 禁令的真实后果是欠饷缺口继续顶在御前，故保留同一 pending 行而非造第二 dispatcher。
-        status = "pending" if decision == "禁摊派" else "consumed"
+        reopened = (
+            decision == "禁摊派" and float(pay_fact.get("arrears") or 0) > 0
+        )
+        status = "pending" if reopened else "consumed"
         db.mark_next_audience_todo_status(
             int(todo["id"]), status,
             payload_patch={"decision": decision, "decided_turn": int(state.turn),
-                           "shortfall_reopened": decision == "禁摊派"}, commit=False,
+                           "shortfall_reopened": reopened}, commit=False,
         )
         consumed += 1
     return consumed
