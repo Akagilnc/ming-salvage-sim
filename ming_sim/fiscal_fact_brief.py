@@ -4,8 +4,8 @@
 
 F2（纯投影，零新表零新账）：三 metric 与被折发/被欠/被补发资源事实全部投影自
 F2.1 既有真源的**本回合分量**（禁把长期存量误作本回合事实），各源：
-  ① regions.fiscal settle st/p（明控省）：三饷当月实征流（加派量＝三饷应征×
-    (1−逋赋率)）、赈济未敷 unmet_relief（settle_tick 每 tick 落进 st 的当月流量，
+  ① regions.fiscal settle st/p（明控省）：三饷当月加派流（加派量＝
+    max(0, 三饷应征−民欠新增)）、赈济未敷 unmet_relief（settle_tick 每 tick 落进 st 的当月流量，
     §9 口径）、省内池折发免除额的 Due 基数；坏 fiscal JSON / 缺 settle 基座 →
     ValueError 响亮失败（ADR 0005，禁静默 continue）。
   ② armies.province_pay_arrears/central_pay_arrears（0023 per-source 双累加器）：
@@ -104,6 +104,83 @@ def _ming_settle_bases(db: Any) -> List[Tuple[str, Dict[str, Any], Dict[str, Any
     return out
 
 
+def _priority_override_origin(db: Any, config: Dict[str, int], region_id: str, turn: int) -> str:
+    """返回改变该省当前 Due 序的在位旨 provenance；无序变更返回空。"""
+    from ming_sim.pay_order import DEFAULT_DUE_PRIORITY, DUE_SUBJECTS
+
+    candidates: List[str] = []
+    for subject in DUE_SUBJECTS:
+        for key in (f"due_priority_{subject}@{region_id}", f"due_priority_{subject}"):
+            until = config.get(f"{key}_until_turn")
+            if key in config and (until is None or turn <= int(until)):
+                if int(config[key]) != DEFAULT_DUE_PRIORITY[subject]:
+                    candidates.append(key)
+                break
+    if not candidates:
+        return ""
+    placeholders = ",".join("?" for _ in candidates)
+    row = db.conn.execute(
+        f"SELECT origin_ref FROM fiscal_config_changes WHERE key IN ({placeholders}) "
+        "ORDER BY id DESC LIMIT 1", tuple(candidates),
+    ).fetchone()
+    return str(row["origin_ref"] or "") if row is not None else ""
+
+
+def _pay_order_displacement_entries(
+    db: Any, config: Dict[str, int], region_id: str, st: Dict[str, Any],
+    p: Dict[str, Any], turn: int,
+) -> List[Dict[str, Any]]:
+    """以既有当月欠流量反演实付，再按同一总实付重放祖制序，投影旨序新增受损。"""
+    from ming_sim.pay_order import DEFAULT_DUE_PRIORITY, DUE_SUBJECTS, haircut_due, resolve_pay_order_overrides
+
+    resolved = resolve_pay_order_overrides(config, region_id, turn)
+    default_order = tuple(sorted(DUE_SUBJECTS, key=DEFAULT_DUE_PRIORITY.__getitem__))
+    if resolved is None or resolved.due_order == default_order:
+        return []
+    origin = _priority_override_origin(db, config, region_id, turn)
+    if not origin:
+        return []
+    due_map = p.get("Due") if isinstance(p.get("Due"), dict) else {}
+    dues = {s: max(0.0, float(due_map.get(s, 0) or 0)) for s in DUE_SUBJECTS}
+    for subject, bp in resolved.haircut_bp.items():
+        dues[subject] = haircut_due(dues[subject], int(bp))[0]
+    unpaid = {s: 0.0 for s in DUE_SUBJECTS}
+    rows = db.conn.execute(
+        "SELECT field, delta FROM region_logs WHERE turn=? AND region_id=? "
+        "AND field IN ('settle_官俸欠_NewDebt','settle_宗禄欠_NewDebt')",
+        (turn, region_id),
+    ).fetchall()
+    for row in rows:
+        subject = "官俸" if "官俸欠" in str(row["field"]) else "宗禄"
+        unpaid[subject] += max(0.0, float(row["delta"] or 0))
+    army = db.conn.execute(
+        "SELECT COALESCE(SUM(CASE WHEN CAST(new_value AS REAL)>CAST(old_value AS REAL) "
+        "THEN CAST(new_value AS REAL)-CAST(old_value AS REAL) ELSE 0 END),0) AS v "
+        "FROM army_logs WHERE turn=? AND field='province_pay_arrears' AND army_id IN "
+        "(SELECT id FROM armies WHERE pay_source_region=?)", (turn, region_id),
+    ).fetchone()
+    unpaid["军饷"] = float(army["v"] or 0)
+    unpaid["赈济"] = max(0.0, float(st.get("unmet_relief", 0) or 0))
+    actual_paid = {s: max(0.0, dues[s] - min(dues[s], unpaid[s])) for s in DUE_SUBJECTS}
+    pool = sum(actual_paid.values())
+    default_paid: Dict[str, float] = {}
+    for subject in default_order:
+        default_paid[subject] = min(dues[subject], pool)
+        pool -= default_paid[subject]
+    out: List[Dict[str, Any]] = []
+    for subject in default_order:
+        displaced = default_paid[subject] - actual_paid[subject]
+        if displaced <= 1e-9:
+            continue
+        out.append({
+            "subject_kind": "region", "subject_id": region_id, "region": region_id,
+            "metric": "欠禄额", "window_turns": 1, "value": displaced,
+            "origin_ref": origin, "affected_class": FACT_CLASS_MAP[subject],
+            "detail": f"旨序让位_{subject}",
+        })
+    return out
+
+
 def build_fiscal_fact_brief(db: Any) -> List[Dict[str, Any]]:
     """纯投影：财政事实摘要条目列表（确定性、只读 DB、零写入、零新表）。
 
@@ -124,8 +201,11 @@ def build_fiscal_fact_brief(db: Any) -> List[Dict[str, Any]]:
     # ① 明控省基座：加派量当月流 ＋ 赈济未敷（unmet_relief）＋ 省内池折发免除（受损）
     for region_id, st, p in _ming_settle_bases(db):
         levy_rate = float(p.get("三饷应征", 0) or 0)
-        bf = float(p.get("逋赋率", 0) or 0)
-        levy_flow = levy_rate * (1.0 - bf)  # 当月实际落在小农头上的加派流量
+        regular_due = float(p.get("正赋应征", 0) or 0)
+        new_civil_arrears = (regular_due + levy_rate) * float(p.get("逋赋率", 0) or 0)
+        # 票面 F2.2：严格投影 settle_tick breakdown 的
+        # 民欠新增=(正赋应征+三饷应征)×逋赋率，再与三饷应征作差。
+        levy_flow = max(0.0, levy_rate - new_civil_arrears)
         if math.isfinite(levy_flow) and levy_flow > 0:
             entries.append({
                 "subject_kind": "region",
@@ -136,7 +216,7 @@ def build_fiscal_fact_brief(db: Any) -> List[Dict[str, Any]]:
                 "value": levy_flow,
                 "origin_ref": f"region:{region_id}:settle.p.三饷应征",
                 "affected_class": "农民",
-                "detail": "三饷当月实征",
+                "detail": "三饷加派净额",
             })
         # unmet_relief：settle_tick 每 tick 写进 st 的当月赈济未敷流量（§9 输出给裁判），
         # 全额支付月份自动归零——天然本回合化，无陈旧残留。
@@ -179,6 +259,10 @@ def build_fiscal_fact_brief(db: Any) -> List[Dict[str, Any]]:
                     "affected_class": FACT_CLASS_MAP[subject],
                     "detail": f"折发_{subject}",
                 })
+
+    # 付款序资源归因：只用上述既有 Due、当月欠流量和旨 provenance 做纯投影。
+    for region_id, st, p in _ming_settle_bases(db):
+        entries.extend(_pay_order_displacement_entries(db, config, region_id, st, p, turn))
 
     # ② 分源欠饷月数（army 级，带属地 region）：ceil(分源现欠/月需)——0023 per-source
     #    双累加器本身就是分源持久投影面（F2.2 备选口径），零分母短路（0023 D6/D11）。

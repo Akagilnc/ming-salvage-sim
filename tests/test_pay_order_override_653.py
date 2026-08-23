@@ -507,19 +507,50 @@ def test_fiscal_fact_brief_pure_projection_deterministic_tsv(read_game):
         # 属地归因不变量：region 级=subject_id；army 级=pay_source_region 或空
         if e["subject_kind"] == "region":
             assert e["region"] == e["subject_id"]
-    # 开局陕西三饷当月实征在案 → 加派量条目＝当月流（应征×(1−逋赋率)），非配置面值
-    levy = [e for e in e1 if e["metric"] == "加派量" and e["subject_id"] == "shaanxi"]
-    assert levy and levy[0]["affected_class"] == "农民"
-    settle = _opening_settle(db, "shaanxi")
-    expected_flow = float(settle["p"]["三饷应征"]) * (1.0 - float(settle["p"]["逋赋率"]))
-    assert levy[0]["value"] == pytest.approx(expected_flow)
-    assert levy[0]["value"] != pytest.approx(float(settle["p"]["三饷应征"]))  # 陕赋率 0.45
     tsv = format_fiscal_fact_brief_tsv(e1)
     assert tsv.splitlines()[0] == (
         "subject_kind\tsubject_id\tregion\tmetric\twindow_turns\tvalue\taffected_class\tdetail"
     )
-    assert (f"region\tshaanxi\tshaanxi\t加派量\t1\t{levy[0]['value']}\t农民\t三饷当月实征" in tsv)
     assert format_fiscal_fact_brief_tsv(e2) == tsv
+
+
+def test_fact_brief_levy_uses_civil_arrears_breakdown_relation(game):
+    """正赋非零时，加派量=三饷应征−民欠新增，区别于三饷×(1−逋赋率)捷径。"""
+    import json
+
+    db, _state, _content = game
+    row = db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()
+    fiscal = json.loads(row["fiscal"])
+    fiscal["settle"]["p"].update({"正赋应征": 8.0, "三饷应征": 20.0, "逋赋率": 0.25})
+    db.conn.execute("UPDATE regions SET fiscal=? WHERE id='shaanxi'", (json.dumps(fiscal, ensure_ascii=False),))
+    levy = next(e for e in build_fiscal_fact_brief(db)
+                if e["metric"] == "加派量" and e["subject_id"] == "shaanxi")
+    assert levy["value"] == pytest.approx(13.0)  # 20 - (8+20)*.25
+    assert levy["value"] != pytest.approx(15.0)  # 被废止的 20*(1-.25)
+    assert levy["detail"] == "三饷加派净额"
+
+
+def test_fact_brief_attributes_priority_displacement_to_dossier(game):
+    """同一实付总额按祖制序重放，只报告因旨让位新增受损的对象、差额和案卷。"""
+    db, state, content = game
+    _pin_shortfall_board(db, "shaanxi")
+    did = _override_dossier(db, state, [{"key": "due_priority_军饷@shaanxi", "value": 40}])
+    db.apply_dossier_promulgation(state, did, "promulgated")
+    db.settle_province_tick("shaanxi")
+    displaced = [e for e in build_fiscal_fact_brief(db) if e["detail"].startswith("旨序让位_")]
+    assert [(e["affected_class"], e["value"], e["origin_ref"]) for e in displaced] == [
+        ("军户", pytest.approx(0.97), f"dossier:{did}"),
+    ]
+    from ming_sim.db import GameDB
+    path = db.path
+    db.conn.commit()
+    db.close()
+    restored = GameDB(path, content)
+    try:
+        assert [e for e in build_fiscal_fact_brief(restored)
+                if e["detail"].startswith("旨序让位_")] == displaced
+    finally:
+        restored.close()
 
 
 def test_fiscal_fact_brief_bad_json_fails_loud(game):
