@@ -64,12 +64,24 @@ def read_shortfall_suspension_facts(db: Any) -> List[Dict[str, object]]:
     return facts
 
 
-def build_covert_levy_trigger_factor(db: Any) -> Dict[str, object] | None:
-    """触发因子：无悬置军 → None（判官输入面键不出现）；有 → 特征化事实包。
+def build_covert_levy_trigger_factor(
+    db: Any, *, scope_text: str = "",
+) -> Dict[str, object] | None:
+    """返回与当前财政 Due 明确绑定的缺口事实；无关 Due 绝不见全军欠饷。
 
-    只供事实（欠饷月数/应发），不代 LLM 判结果、不带系统词进呈现面（P6/P7）。
+    ``scope_text`` 是当前 commitment 的题名、阶段准则、原诺和案卷正文的闭集。
+    财政语义与军队名（或 id）必须同时命中；这避免 A 军欠饷授权 B 军或清丈等
+    无关案卷。空 scope 保留给后台全局告警读端，不得用于判官或写端授权。
     """
     facts = read_shortfall_suspension_facts(db)
+    text = str(scope_text or "").strip()
+    if text:
+        if not any(token in text for token in ("军饷", "欠饷", "筹饷", "摊派", "加派")):
+            return None
+        facts = [
+            fact for fact in facts
+            if str(fact["army_id"]) in text or str(fact["army_name"]) in text
+        ]
     if not facts:
         return None
     return {
@@ -96,7 +108,16 @@ def _exposure_channel(db: Any, dossier_id: int) -> str:
     for link in db.list_dossier_links(int(dossier_id), direction="incoming"):
         if str(link.get("relation_type") or "").strip() == "稽核":
             return "稽核"
-    return "民变自长"
+    # 民变必须有真实事件底料，不能把“未找到另外两路”伪装成民变。
+    dossier = db.get_decree_dossier(int(dossier_id)) or {}
+    haystack = " ".join(str(dossier.get(k) or "") for k in ("decree_text", "target_id"))
+    hit = db.conn.execute(
+        "SELECT 1 FROM events e JOIN event_triggers t ON t.event_id=e.id "
+        "WHERE e.kind IN ('民变','抗税','流寇') "
+        "AND (e.title LIKE ? OR e.summary LIKE ?) LIMIT 1",
+        (f"%{haystack}%", f"%{haystack}%"),
+    ).fetchone() if haystack else None
+    return "民变自长" if hit is not None else ""
 
 
 def refresh_covert_levy_exposures(
@@ -118,6 +139,8 @@ def refresh_covert_levy_exposures(
         if not fork["fork"]:
             continue
         channel = _exposure_channel(db, int(row["dossier_id"]))
+        if not channel:
+            continue
         db.conn.execute(
             "UPDATE covert_levy_cases SET status='exposed', exposed_turn=?, "
             "exposed_channel=? WHERE id=?",
@@ -166,7 +189,7 @@ def apply_covert_levy_disposition(
     if str(case["status"]) != _CASE_STATUS_EXPOSED:
         return {"rejected": True, "reason": f"案件未暴露，不可处置（status={case['status']}）"}
     dossier_id = int(case["dossier_id"])
-    handler = str(case["handler_character_id"])
+    handler = str(case["handler_name"])
     reason_text = f"暗渠摊派处置·{disposition}（{case['army_name'] if 'army_name' in case else case['army_id']}转嫁{case['region_id']}）"
 
     if commit and not db.conn.in_transaction:
@@ -223,6 +246,48 @@ def apply_covert_levy_disposition(
 # ── 落账核：两本账＋案件行 ────────────────────────────────────────
 
 
+def settle_covert_levy_from_due(
+    db: Any, state: Any, review_input: Dict[str, object], *, commit: bool = False,
+) -> Dict[str, object] | None:
+    """0072 到期复核的生产接缝：有承办奏报且相关军费缺口悬置时落实况轨。
+
+    奏报必须已由既有 progress rail 产生；本接缝不代 LLM 写陈词。金额只取欠饷
+    事实和省内可转移人口的保守确定值，因而 restore 后可由两条既有账完整重放。
+    """
+    factor = review_input.get("covert_levy_trigger")
+    reports = list(review_input.get("progress_reports") or [])
+    dossier_id = review_input.get("dossier_id")
+    if not isinstance(factor, dict) or not reports or dossier_id is None:
+        return None
+    facts = list(factor.get("suspended_armies") or [])
+    if not facts:
+        return None
+    fact = facts[0]
+    army_id = str(fact["army_id"])
+    army = db.conn.execute(
+        "SELECT station FROM armies WHERE id=?", (army_id,),
+    ).fetchone()
+    region_id = str(army["station"] or "") if army is not None else ""
+    if db.conn.execute("SELECT 1 FROM regions WHERE id=?", (region_id,)).fetchone() is None:
+        return None
+    host = dict(review_input.get("host") or {})
+    handler = str(host.get("name") or "")
+    if not handler:
+        return None
+    arrears = max(1, int(float(fact.get("arrears") or 0)))
+    farmer = db.conn.execute(
+        "SELECT population FROM classes WHERE name='农民' AND region_id=?", (region_id,),
+    ).fetchone()
+    if farmer is None or int(farmer[0]) <= 0:
+        return None
+    return book_covert_levy_case(
+        db, state, dossier_id=int(dossier_id), army_id=army_id,
+        region_id=region_id, handler_name=handler,
+        displaced_amount=min(int(farmer[0]), max(1, arrears * 100)),
+        squeezed_silver=arrears, commit=commit,
+    )
+
+
 def get_covert_levy_case(db: Any, case_id: int) -> Dict[str, object] | None:
     row = db.conn.execute(
         "SELECT * FROM covert_levy_cases WHERE id=?", (int(case_id),)
@@ -237,7 +302,7 @@ def book_covert_levy_case(
     dossier_id: int,
     army_id: str,
     region_id: str,
-    handler_character_id: str,
+    handler_name: str,
     displaced_amount: int,
     squeezed_silver: int,
     commit: bool = True,
@@ -256,10 +321,19 @@ def book_covert_levy_case(
     from ming_sim.decree import atomic_and_reload
     from ming_sim.flows import _apply_population_transfers
 
-    if build_covert_levy_trigger_factor(db) is None:
-        return {"rejected": True, "reason": "缺口未悬置，暗渠不可触发"}
-    if db.get_decree_dossier(int(dossier_id)) is None:
+    dossier = db.get_decree_dossier(int(dossier_id))
+    if dossier is None:
         return {"rejected": True, "reason": f"案卷不存在：{dossier_id}"}
+    scope_text = " ".join(
+        str(dossier.get(key) or "")
+        for key in ("decree_text", "target_id", "action_type")
+    )
+    trigger = build_covert_levy_trigger_factor(db, scope_text=scope_text)
+    eligible_ids = {
+        str(item["army_id"]) for item in (trigger or {}).get("suspended_armies", [])
+    }
+    if str(army_id) not in eligible_ids:
+        return {"rejected": True, "reason": "本案未绑定该军缺口，暗渠不可触发"}
     army_row = db.conn.execute(
         "SELECT id, name FROM armies WHERE id=?", (str(army_id),)
     ).fetchone()
@@ -270,10 +344,10 @@ def book_covert_levy_case(
     ).fetchone() is None:
         return {"rejected": True, "reason": f"未知省份：{region_id!r}"}
     handler_row = db.conn.execute(
-        "SELECT status FROM characters WHERE name=?", (str(handler_character_id),)
+        "SELECT status FROM characters WHERE name=?", (str(handler_name),)
     ).fetchone()
     if handler_row is None or str(handler_row["status"] or "") == "dead":
-        return {"rejected": True, "reason": f"经手人不可用：{handler_character_id!r}"}
+        return {"rejected": True, "reason": f"经手人不可用：{handler_name!r}"}
     for name, value in (("displaced_amount", displaced_amount), ("squeezed_silver", squeezed_silver)):
         if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
             return {"rejected": True, "reason": f"{name} 须为正整数：{value!r}"}
@@ -301,11 +375,11 @@ def book_covert_levy_case(
     with transaction:
         cur = db.conn.execute(
             """INSERT INTO covert_levy_cases
-               (dossier_id, army_id, region_id, handler_character_id,
+               (dossier_id, army_id, region_id, handler_name,
                 displaced_amount, squeezed_silver, status, created_turn)
                VALUES (?, ?, ?, ?, ?, ?, 'active', ?)""",
             (int(dossier_id), str(army_id), str(region_id),
-             str(handler_character_id), int(displaced_amount),
+             str(handler_name), int(displaced_amount),
              int(squeezed_silver), int(state.turn)),
         )
         case_id = int(cur.lastrowid)

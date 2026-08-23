@@ -1563,7 +1563,7 @@ class GameDB:
                 dossier_id INTEGER NOT NULL,
                 army_id TEXT NOT NULL,
                 region_id TEXT NOT NULL,
-                handler_character_id TEXT NOT NULL,
+                handler_name TEXT NOT NULL,
                 displaced_amount INTEGER NOT NULL,
                 squeezed_silver INTEGER NOT NULL,
                 status TEXT NOT NULL DEFAULT 'active'
