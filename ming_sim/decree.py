@@ -73,7 +73,7 @@ from ming_sim.decree_vocabulary import (
     qualitative_dossier_outcome,
     qualitative_promulgation_slot,
 )
-from ming_sim.memories import build_timeline, record_chapter_memory
+from ming_sim.memories import build_timeline, effect_brief, record_chapter_memory
 from ming_sim.rescript_draft import (
     build_rescript_draft_payload,
     generate_rescript_draft,
@@ -620,6 +620,29 @@ def _candidate_event_ids_from_simulator_payload(simulator_payload: object) -> Op
         for item in raw
         if isinstance(item, dict) and str(item.get("id") or "").strip()
     }
+
+
+def _record_public_transfer_effect_sources(
+    db: GameDB, state: GameState, applied: Mapping[str, object], *, commit: bool = False,
+) -> None:
+    """Materialize public mechanical transfer facts at their source boundary.
+
+    The applied ledger is authoritative only after all settlement effects have
+    finished.  Keeping each fact source-scoped lets later public simulators and
+    audiences read it without treating an aggregate chapter as authorization.
+    """
+    transfers = [
+        item for item in (applied.get("population_transfers") or [])
+        if isinstance(item, dict) and not item.get("rejected")
+        and item.get("reason") == "加派"
+    ]
+    for index, item in enumerate(transfers):
+        body = effect_brief({"population_transfers": [item]})
+        db.record_public_knowledge_event(
+            state, "加派民情", body,
+            source_id=f"settlement:population_transfer:{state.turn}:{index}",
+            commit=commit,
+        )
 
 
 def _record_settlement_narrative_sources(
@@ -2428,6 +2451,9 @@ def _settle_after_extract_body(
     # record_log(sim 下月前文)在 inertia 前已跑、不带此提示噪声。提示极简、不暴露明细（明细落 DB/jsonl）。
     if _has_durable_player_visible_rejection(db, before_turn):
         narrative = narrative + "\n\n有司奏：所拟之事有窒碍未行者，已录档待酌。"
+    # 已落库 applied 至此定型：把公开机械后果写入既有逐来源知识缝，供后续月份
+    # 的 simulator/召对读取；不以章节或邸报 aggregate 反授权。
+    _record_public_transfer_effect_sources(db, state, applied, commit=False)
     # #976: release held pure-public audience chat (non-withheld) before
     # archive materialization so 参与即知 lands without secret-origin rows.
     db.release_held_audience_knowledge(commit=False)

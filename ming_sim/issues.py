@@ -7262,6 +7262,10 @@ def _apply_levy_driven_transfers(
         if not isinstance(fiscal, dict):
             raise ValueError(f"{region_id}.fiscal 必须是 object，无法结算加派账")
         settle = fiscal.get("settle")
+        # 财政月效的动态成员只包括已有 settle 基座的明省；legacy/内容扩展中
+        # 合法的无基座省自然出列，不能让任意 delta apply 因此失败。
+        if settle is None:
+            continue
         if not isinstance(settle, dict):
             raise ValueError(f"{region_id}.fiscal.settle 必须是 object，无法结算加派账")
         meta = settle.get("_meta")

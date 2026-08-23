@@ -208,6 +208,22 @@ def test_settlement_drives_deterministic_pool_inflow(game):
     assert _pop(db, "流民", "shaanxi") == pool_before + want
 
 
+def test_ming_province_without_fiscal_base_is_not_a_levy_member(game):
+    """合法无 settle 基座的明省自然出列，不阻断空 delta；无账人口不动。"""
+    db, state, content = game
+    fiscal = json.loads(db.conn.execute(
+        "SELECT fiscal FROM regions WHERE id='henan'"
+    ).fetchone()[0])
+    fiscal.pop("settle", None)
+    db.conn.execute("UPDATE regions SET fiscal=? WHERE id='henan'",
+                    (json.dumps(fiscal, ensure_ascii=False),))
+    db.conn.commit()
+    before = _pop(db, "流民", "henan")
+    applied = apply_score_extraction(db, state, {}, content, None)
+    assert not [r for r in applied["population_transfers"] if r.get("region_id") == "henan"]
+    assert _pop(db, "流民", "henan") == before
+
+
 def test_zero_base_province_gets_no_transfer(game):
     """无账（基线 0）省份零入池——停征后入池止的机制面。"""
     db, state, content = game
@@ -276,42 +292,33 @@ def test_accumulated_monthly_effect_uses_ledger_origin_not_latest_decree(game):
 
 # ── AC3：真实玩家回响链（结构化事实输入→自由叙事原样持久化→召对读链）──────────
 
-def test_chapter_player_channel_receives_levy_fact_and_persists_free_narrative(game, monkeypatch):
+def test_levy_fact_enters_existing_public_read_chain_and_writer_keeps_free_next_report(game):
+    """连续两月真实结算：首月机器事实进逐来源读链；次月既有 writer 原样保存自由邸报。"""
     db, state, content = game
-    seen = []
-    free_body = "陕西流民渐起，关中贼势暗流潜滋。"
-
-    def fake_run(_agent, payload, **_kwargs):
-        seen.append(json.loads(payload))
-        return json.dumps({"body": free_body, "tags": ["陕西", "流民"]}, ensure_ascii=False)
-
-    monkeypatch.setattr(memories, "run_agent_text", fake_run)
-    real_save_chapter = db.save_chapter_memory
-
-    def save_public_llm_body(state_arg, title, body, tags=None, **kwargs):
-        # 本例的 fake LLM 只读公开输入；令既有 archive writer 走其公开 aggregate 分支，
-        # 不让 fixture 预置来源 counterpart 覆盖要验证的自由输出。
-        return real_save_chapter(state_arg, title, body, tags, knowledge_items=None,
-                                 public_body=None, commit=kwargs.get("commit", True))
-
-    monkeypatch.setattr(db, "save_chapter_memory", save_public_llm_body)
-    before_turn = state.turn
-
-    def record_public_chapter(d, s, dt, nr, ap):
-        return memories.record_chapter_memory(object(), d, s, dt, nr, ap)
-
+    first_turn = state.turn
     settle_with_delta(
         state, db, {"surcharge_decrees": [_decree(monthly_amount=10.0)]},
-        before_turn=before_turn, content=content, narrative="陕西加派月报。",
-        chapter_recorder=record_public_chapter,
+        before_turn=first_turn, content=content, narrative="陕西加派月报。",
     )
-
     want = _expected_inflow_persons(10.0, SHAANXI_SUPPORT)
-    assert f"陕西农民流失{want}口为流民（加派）" in seen[0]["effect_brief"]
-    chapter = next(c for c in db.list_chapter_memories() if c["turn"] == before_turn)
-    assert chapter["body"] == free_body
-    # decree 的召对准备链直接以 list_chapter_memories 读取最近章节。
-    assert free_body in db.list_chapter_memories(upto_turn=state.turn, recent=6)[-1]["body"]
+    fact = f"陕西农民流失{want}口为流民（加派）"
+    public_read = " ".join(
+        item.get("body", "") for item in db.get_character_knowledge(state, "温体仁")["public_events"]
+    )
+    assert fact in public_read
+
+    free_body = "陕西流民渐起，关中贼势暗流潜滋。"
+    second_turn = state.turn
+    # 此处 narrative 代表既有 player-facing simulator 的自由输出；archive writer 未替换。
+    settle_with_delta(
+        state, db, {"surcharge_decrees": [_decree(monthly_amount=-10.0)]},
+        before_turn=second_turn, content=content, narrative=free_body,
+    )
+    assert db.get_turn_report(second_turn) == free_body
+    public_read = " ".join(
+        item.get("body", "") for item in db.get_character_knowledge(state, "温体仁")["public_events"]
+    )
+    assert free_body in public_read
 
 
 def test_effect_brief_carries_levy_echo_fact(game):
