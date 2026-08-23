@@ -252,15 +252,20 @@ def test_class_delta_displaced_accepts_sat_lev_population_face_removed(game):
     assert row["leverage"] == DEFAULT_LEV + 2
     assert row["population"] == SHAANXI_POP  # 人口不经 class delta 触碰（留给 #649 转移账）
 
-    # population 字段即使混进合法 key 的 item 也被忽略（无更新面，非静默改账）
-    apply_score_extraction(db, state, {
+    # population 字段混进合法 key 的 item：#649 §1.4 升格——整项逐项拒收（原静默忽略），
+    # 人口不被触碰，同 item 的 sat 也不落（拒收面＝整个 item）。
+    applied = apply_score_extraction(db, state, {
         "class_delta": {"流民@shaanxi": {"satisfaction": 1, "population": 123456}},
     }, content, None)
+    rejections = applied["class_delta_rejections"]
+    assert len(rejections) == 1
+    assert rejections[0]["category"] == "invalid_enum"
+    assert "population_transfers" in rejections[0]["reason"]  # 指向合法入口
     row2 = db.conn.execute(
         "SELECT population, satisfaction FROM classes "
         "WHERE name='流民' AND region_id='shaanxi'"
     ).fetchone()
-    assert row2["satisfaction"] == SHAANXI_SAT - 5 + 1
+    assert row2["satisfaction"] == SHAANXI_SAT - 5  # 混写 population 的 item 整项不落
     assert row2["population"] == SHAANXI_POP
 
 

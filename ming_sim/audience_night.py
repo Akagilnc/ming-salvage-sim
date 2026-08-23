@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import time
 from datetime import datetime, timezone
 from collections.abc import Mapping
@@ -20,6 +21,8 @@ from ming_sim.error_pack import error_packs_root
 from ming_sim.mindreading import is_inner_court_attendant
 from ming_sim.models import GameState
 from ming_sim.participant_roster import is_non_person_participant_name
+
+logger = logging.getLogger(__name__)
 
 # ── 引擎侧口令标签常量（ADR 0035：确定性写读）──────────────────────────
 TAG_OPEN_NIGHT = "开夜"
@@ -154,9 +157,13 @@ _CLOSE_COMMIT_KINDS_FINAL = frozenset({"consort"})
 # 后果一律走 ADR 0006 待确认暂存、收夜才提交。每项映射其直写落地的真实盘面表；新增任何
 # 夜内直写必须过设计审、显式扩本表，否则撤回逆转不净。〔白名单第三项「召对口关系边事件」
 # 随 #479/ADR 0082 另片过审，不在本片。〕
+# 夜内真实盘面直写白名单（ADR 0038 防坑不变式；#506 AC3）。第三项「召对口关系边
+# 事件」随 #634/ADR 0082 落地：判官拍与收夜扫尾当场落库，边事件带源轮绑定
+# （origin chat_turn 段），撤回按轮删＋水位回退，逆转干净。
 NIGHT_DIRECT_WRITE_WHITELIST: Dict[str, frozenset] = {
     "密令落地": frozenset({"secret_orders", "secret_order_briefs"}),
     "未在册人物入册": frozenset({"characters", "character_offices"}),
+    "召对口关系边事件": frozenset({"relation_edge_events"}),
 }
 
 # 夜内结构化写可能触及、且属真实盘面（非暂存/候选层）的表全集——审计据此判越权：落在此集
@@ -164,7 +171,7 @@ NIGHT_DIRECT_WRITE_WHITELIST: Dict[str, frozenset] = {
 # 待确认层、收夜才提交，不算真实盘面直写，不在此集。
 _REAL_BOARD_TABLES = frozenset({
     "characters", "character_offices", "consort_traits", "factions",
-    "secret_orders", "secret_order_briefs",
+    "secret_orders", "secret_order_briefs", "relation_edge_events",
 })
 
 
@@ -1147,6 +1154,9 @@ def close_night(
 
     with gate:
         night = get_night(db, night_id)
+        source_night_roster = {
+            row["name"] for row in db.current_court_roster_rows(state)
+        }
     if night is None:
         raise AudienceNightError(f"夜不存在：{night_id}", code="night_not_found")
     if night["status"] == NIGHT_STATUS_CLOSED:
@@ -1275,6 +1285,44 @@ def close_night(
             _cleanup_close_scene_early(early_exc)
         raise
 
+    # Prepare on the owner thread; only the gate-free provider call enters the
+    # existing close bucket. Finalization happens after that bucket is joined.
+    from ming_sim.relation_judge import (
+        PreparedRelationJudge, abandon_summon_relation_judge,
+        finalize_summon_relation_judge, invoke_summon_relation_judge_provider,
+        prepare_summon_relation_judge,
+    )
+    judge_prepared = prepare_summon_relation_judge(
+        db, state, write_gate=write_gate, night_id=int(night_id),
+        allowed_endpoint_names=source_night_roster,
+    )
+    judge_future = None
+    if isinstance(judge_prepared, PreparedRelationJudge):
+        if not close_ctid and reg is not None:
+            with gate:
+                close_ctid = int(db.create_chat_turn(
+                    state, "收夜", "close-judge", 0, night_id=int(night_id),
+                ))
+                close_scaffold_owned = True
+                close_started = True
+        if reg is not None and hasattr(reg, "start_relation_judge_provider"):
+            judge_future = reg.start_relation_judge_provider(
+                int(close_ctid),
+                lambda: invoke_summon_relation_judge_provider(
+                    judge_prepared, llm_config=llm_config,
+                ),
+            )
+        else:
+            # Library callers without a session registry still use the split phases;
+            # importantly, only the provider call runs gate-free here.
+            judge_provider_result = invoke_summon_relation_judge_provider(
+                judge_prepared, llm_config=llm_config,
+            )
+            judge_result = finalize_summon_relation_judge(
+                judge_prepared, judge_provider_result, write_gate=write_gate,
+            )
+            judge_prepared = judge_result
+
     # ── Phase 2: gate-free ordinary catch-up + endorsement-only LLM ────────
     # Ordinary story drain (LLM outside settle lock). CLOSING restore drain =
     # ADR 0036 崩溃恢复口；OPEN 期 join 已汇合在飞 owner，此处只清真欠账。
@@ -1286,6 +1334,8 @@ def close_night(
         )
     except Exception as drain_exc:
         from ming_sim.exceptions import LLMUnavailable
+        if isinstance(judge_prepared, PreparedRelationJudge):
+            abandon_summon_relation_judge(judge_prepared)
 
         cleanup_exc: BaseException | None = None
         if close_started and reg is not None:
@@ -1364,6 +1414,20 @@ def close_night(
                 close_body = str(joined_body)
         except Exception as exc:
             join_exc = exc
+
+    if judge_future is not None and join_exc is not None:
+        abandon_summon_relation_judge(judge_prepared)
+
+    if judge_future is not None and join_exc is None:
+        _marker, judge_provider_result = judge_future.result()
+        judge_result = finalize_summon_relation_judge(
+            judge_prepared, judge_provider_result, write_gate=write_gate,
+        )
+        if judge_result.get("degraded"):
+            logger.warning(
+                "relation judge sweep degraded night_id=%s: %s",
+                night_id, judge_result["degraded"],
+            )
 
     if primary_exc is not None or join_exc is not None:
         with gate:

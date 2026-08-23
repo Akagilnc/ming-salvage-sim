@@ -588,6 +588,37 @@ def army_pay_morale_delta(total_due: float, current_shortfall: float, opening_ar
     return 0
 
 
+def army_loyalty_tick_delta(new_arrears: float, full_needed: int) -> int:
+    """#314 军心月度 tick：+5 严格系于 arrears==0；floor 只用于 dead-band 与 ≥3 月分档。
+
+    ADR 0025 D2：满饷（合计 arrears==0）→ loyalty +5 回血；半欠不回血——
+    0<arrears 且 floor(arrears/needed)<3 → 0（dead-band，短欠忍得住、守「不清欠则不脱困」）；
+    floor≥3 月 → -5（欠到第 3 月起逐月流失）。clamp 由调用方落库时做（[0,100]）。
+    满饷判据带 1e-9 浮点容差（对齐 army_pay_morale_delta 口径），不把零头欠饷当满饷。
+    full_needed<=0 不除零（零兵残军短路，调用方 continue）。
+    """
+    if full_needed <= 0:
+        return 0
+    arrears = max(0.0, float(new_arrears))
+    if arrears <= 1e-9:
+        return 5
+    months_in_arrears = math.floor(arrears / full_needed)
+    if months_in_arrears < 3:
+        return 0
+    return -5
+
+
+def _army_loyalty_reason(new_arrears: float, full_needed: int) -> str:
+    """#314 军心日志专用原因：按累计欠饷档位生成，不复用当月 shortfall reason_tag。"""
+    arrears = max(0.0, float(new_arrears))
+    if arrears <= 1e-9:
+        return f"{TURN_UNIT}满饷—军心回升"
+    months = math.floor(arrears / full_needed) if full_needed > 0 else 0
+    if months >= 3:
+        return f"{TURN_UNIT}累计欠饷逾三月—军心低落"
+    return f"{TURN_UNIT}累计欠饷{months}月—死区"
+
+
 class _HubOutboundResult(NamedTuple):
     """Substrate hub top-tier outbound allocation for this fixed-flow tick."""
     k: float
@@ -1194,7 +1225,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
         db._current_month_pay_opening_arrears = {}
         army_rows_raw = db.conn.execute(
             """
-            SELECT id, name, manpower, salary_rate, owner_power, arrears, morale,
+            SELECT id, name, manpower, salary_rate, owner_power, arrears, morale, loyalty,
                    pay_source_region, province_pay_share, central_pay_share,
                    province_pay_arrears, central_pay_arrears, is_tusi, self_funded_pay
             FROM armies
@@ -1373,7 +1404,8 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
     if db.fiscal_engine() == "legacy":
         army_rows_raw = db.conn.execute(
             # #44 army_needed 需 manpower/salary_rate/owner_power（应发挂钩兵力派生）
-            "SELECT id, name, manpower, salary_rate, owner_power, arrears, morale FROM armies"
+            "SELECT id, name, manpower, salary_rate, owner_power, arrears, morale, loyalty, "
+            "is_tusi, self_funded_pay FROM armies"
         ).fetchall()
         if not army_rows_raw:
             raise SystemExit("fiscal_tick: armies 表无数据，中止。")
@@ -1403,9 +1435,18 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
             morale_delta = army_pay_morale_delta(needed, shortfall, old_arrears)
             new_morale = max(0, min(100, old_morale + morale_delta))
 
+            # #314 军心月度 tick：仅 ming 且非土司非自养军；欠饷月数=floor(合计 arrears/needed)。
+            old_loyalty = int(row["loyalty"])
+            if str(row["owner_power"]) == "ming" and not bool(row["is_tusi"]) \
+                    and not bool(row["self_funded_pay"]):
+                loyalty_delta = army_loyalty_tick_delta(new_arrears, needed)
+            else:
+                loyalty_delta = 0
+            new_loyalty = max(0, min(100, old_loyalty + loyalty_delta))
+
             db.conn.execute(
-                "UPDATE armies SET arrears = ?, morale = ? WHERE id = ?",
-                (new_arrears, new_morale, army_id),
+                "UPDATE armies SET arrears = ?, morale = ?, loyalty = ? WHERE id = ?",
+                (new_arrears, new_morale, new_loyalty, army_id),
             )
             if shortfall > 0:
                 reason_tag = (
@@ -1414,6 +1455,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                 )
             else:
                 reason_tag = f"{TURN_UNIT}军饷足额"
+            loyalty_reason = _army_loyalty_reason(new_arrears, needed)
             db.conn.executemany(
                 """INSERT INTO army_logs
                    (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
@@ -1425,6 +1467,9 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                     (state.turn, state.year, state.period, army_id,
                      "morale", str(old_morale), str(new_morale), new_morale - old_morale,
                      reason_tag),
+                    (state.turn, state.year, state.period, army_id,
+                     "loyalty", str(old_loyalty), str(new_loyalty), new_loyalty - old_loyalty,
+                     loyalty_reason),
                 ],
             )
             flows.append({
@@ -1560,6 +1605,51 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                     "human_loss": taicang_human_loss,
                     "sink_loss": taicang_sink_loss,
                 })
+            # ── #314 军心月度 tick（substrate_hub 统一，省级+中央结算后）──────────
+            if db.is_substrate_hub_fiscal_engine_enabled():
+                loyalty_rows = db.conn.execute(
+                    """
+                    SELECT id, name, manpower, salary_rate, owner_power,
+                           arrears, province_pay_arrears, central_pay_arrears,
+                           loyalty, is_tusi, self_funded_pay
+                    FROM armies
+                    WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0
+                    """
+                ).fetchall()
+                for lr in loyalty_rows:
+                    full_needed_loyalty = army_needed(lr)
+                    if full_needed_loyalty <= 0:
+                        continue
+                    army_id_loyalty = str(lr["id"])
+                    old_loyalty_val = int(lr["loyalty"])
+                    new_arrears_loyalty = float(lr["arrears"] or 0)
+                    # 防御：若 arrears 列滞后，以两源合计为准
+                    try:
+                        prov = float(lr["province_pay_arrears"] or 0)
+                        cent = float(lr["central_pay_arrears"] or 0)
+                        combined = prov + cent
+                        if abs(combined - new_arrears_loyalty) > 1e-6:
+                            new_arrears_loyalty = max(0.0, combined)
+                    except Exception:
+                        pass
+                    loyalty_delta_unified = army_loyalty_tick_delta(new_arrears_loyalty, full_needed_loyalty)
+                    new_loyalty_val = max(0, min(100, old_loyalty_val + loyalty_delta_unified))
+                    if new_loyalty_val == old_loyalty_val and loyalty_delta_unified == 0:
+                        # 仍需写日志以保持审计完整性？与 legacy/hub 旧有行为对齐：始终写 loyalty 行
+                        pass
+                    db.conn.execute(
+                        "UPDATE armies SET loyalty = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                        (new_loyalty_val, army_id_loyalty),
+                    )
+                    loyalty_reason_unified = _army_loyalty_reason(new_arrears_loyalty, full_needed_loyalty)
+                    db.conn.execute(
+                        """INSERT INTO army_logs
+                           (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, '户部')""",
+                        (state.turn, state.year, state.period, army_id_loyalty,
+                         "loyalty", str(old_loyalty_val), str(new_loyalty_val),
+                         new_loyalty_val - old_loyalty_val, loyalty_reason_unified),
+                    )
         if pay_source_cutover:
             db._reconcile_central_army_pay_arrears_container()
             try:
@@ -1722,6 +1812,180 @@ def _apply_faction_dict(
     return DeltaApplyResult(cleaned, rejected)
 
 
+def _apply_population_transfers(
+    db: GameDB,
+    transfers: object,
+    *,
+    commit: bool = True,
+) -> Tuple[List[Dict[str, object]], List[Dict[str, object]]]:
+    """#649/ADR 0087：人口守恒转移原语（delta 段 population_transfers 的唯一落库核）。
+
+    canonical 段形＝转移记录 list；每条记录**同时表达两条腿**（源阶级减 N、目标阶级
+    增 N），本核读一条合法记录后在同一事务内机械完成两次写——LLM 不提交双腿，
+    系统不建配平器（单记录双写从形状上消灭合法路径的单侧变动）。两侧更新复用调用方
+    事务边界（settle 后半段 atomic），本核只在无外层事务时自行 commit。
+
+    校验分层（ADR 0015，r4 终态）：section 非 list 已由 sanitize_delta_shape 拒段；
+    list 内坏记录逐项拒收留痕（非 dict 项按 0015 F1 {'raw_value':…} 包装），好记录照落。
+    逐项拒收面：方向不在矩阵（constants.POPULATION_TRANSFER_REASONS）；reason 枚举
+    非法；amount 非 int/≤0/超源余额；region 未知或两侧不同省；source/target 触及全国
+    行；origin_ref 缺失/伪前缀/未颁案卷；白名单外字段。数据拒收永不中止事务；代码
+    异常照常上抛由 applier.atomic 回滚（两轴分立）。
+
+    返回 (applied list, rejections list)：前者供 effect_brief/turn_extractions 留痕，
+    后者由顶层置于 "population_transfers_rejections" 段、桥接自动收。
+    不复用 DeltaApplyResult（其 applied 声明为 dict、文档限定 faction/class）；
+    本核 applied 为转移记录 list，直接声明窄类型（#649 C2）。
+    """
+    from ming_sim.constants import (
+        POPULATION_TRANSFER_FIELDS,
+        POPULATION_TRANSFER_REASONS,
+    )
+
+    applied: List[Dict[str, object]] = []
+    rejected: List[Dict[str, object]] = []
+    items = transfers if isinstance(transfers, list) else []
+    population_unit = db.population_unit
+    for item in items:
+        if not isinstance(item, dict):
+            rejected.append({
+                "rejected": True, "category": "invalid_shape",
+                "reason": "population_transfers 项必须是 object(dict)",
+                "item": {"raw_value": item},
+            })
+            continue
+
+        def _reject(category: str, reason: str) -> None:
+            rejected.append({
+                "rejected": True, "category": category,
+                "reason": reason, "item": item,
+            })
+
+        extra = sorted(set(item) - POPULATION_TRANSFER_FIELDS)
+        if extra:
+            _reject(
+                "invalid_enum",
+                f"population_transfers 白名单外字段 {extra}（绝对值覆写不合法；"
+                "人口只经单记录守恒转移变动）",
+            )
+            continue
+        source = str(item.get("source") or "").strip()
+        target = str(item.get("target") or "").strip()
+        if source.count("@") != 1 or target.count("@") != 1:
+            _reject(
+                "invalid_shape",
+                f"source/target 须为 阶级@region_id 省级行：{source!r} / {target!r}",
+            )
+            continue
+        src_cls, src_region = (part.strip() for part in source.split("@", 1))
+        dst_cls, dst_region = (part.strip() for part in target.split("@", 1))
+        if not src_cls or not dst_cls or not src_region or not dst_region:
+            _reject(
+                "invalid_shape",
+                f"source/target 须为非空 阶级@region_id 省级行（全国行不合法）：{source!r} / {target!r}",
+            )
+            continue
+        if src_region != dst_region:
+            _reject(
+                "invalid_shape",
+                f"跨省转移本票不做（#475 预留）：{source!r} → {target!r} 须同省",
+            )
+            continue
+        if db.conn.execute("SELECT 1 FROM regions WHERE id=?", (src_region,)).fetchone() is None:
+            _reject("missing_ref", f"population_transfers 未知 region_id：{src_region!r}")
+            continue
+        reason = str(item.get("reason") or "").strip()
+        matrix = POPULATION_TRANSFER_REASONS.get(reason)
+        if matrix is None:
+            _reject(
+                "invalid_enum",
+                f"population_transfers reason 非法（枚举：{'/'.join(POPULATION_TRANSFER_REASONS)}）：{reason!r}",
+            )
+            continue
+        if (src_cls, dst_cls) not in matrix:
+            _reject(
+                "invalid_enum",
+                f"population_transfers 方向出阵：reason={reason} 不允许 {src_cls}→{dst_cls}"
+                f"（合法：{'、'.join(f'{a}→{b}' for a, b in sorted(matrix))}）",
+            )
+            continue
+        raw_amount = item.get("amount")
+        try:
+            # 数量契约＝严格 int（含拒无损整数串）：extractor 提示明令直接输出数字，
+            # 转移账不沿用 fiscal 的整数串宽容（#649 票面：amount 非 int 即拒）。
+            amount = _strict_int(raw_amount, accept_numeric_strings=False)
+        except (TypeError, ValueError):
+            _reject("invalid_enum", f"population_transfers amount 非整数：{raw_amount!r}")
+            continue
+        if amount <= 0:
+            _reject("invalid_enum", f"population_transfers amount 须为正整数：{amount!r}")
+            continue
+        origin_ref = str(item.get("origin_ref") or "").strip()
+        origin_error = db.effect_origin_rejection(origin_ref)
+        if origin_error:
+            rejected.append({
+                "rejected": True,
+                "category": origin_error["category"],
+                "reason": f"population_transfers {origin_error['reason']}",
+                "item": item,
+            })
+            continue
+        src_row = db.conn.execute(
+            "SELECT population FROM classes WHERE name=? AND region_id=?",
+            (src_cls, src_region),
+        ).fetchone()
+        dst_row = db.conn.execute(
+            "SELECT population FROM classes WHERE name=? AND region_id=?",
+            (dst_cls, dst_region),
+        ).fetchone()
+        if src_row is None or dst_row is None:
+            missing = source if src_row is None else target
+            _reject(
+                "missing_ref",
+                f"population_transfers 查无此阶级省级行「{missing}」"
+                f"（流民池＝classes 省级行，全国行不参与守恒主账）",
+            )
+            continue
+        if int(src_row["population"]) < amount:
+            _reject(
+                "invalid_enum",
+                f"population_transfers 超源余额：{source!r} 现有 "
+                f"{src_row['population']}（{population_unit}口径）< amount {amount}；"
+                "源阶级省级行是硬天花板，禁凭空造人",
+            )
+            continue
+        # 单记录双写：同一事务内源减目标增，任一腿失败整体回滚（ADR 0008 决定 2）。
+        db.conn.execute(
+            "UPDATE classes SET population = population - ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE name=? AND region_id=?",
+            (amount, src_cls, src_region),
+        )
+        db.conn.execute(
+            "UPDATE classes SET population = population + ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE name=? AND region_id=?",
+            (amount, dst_cls, dst_region),
+        )
+        region_name = str(db.conn.execute(
+            "SELECT name FROM regions WHERE id=?", (src_region,)
+        ).fetchone()["name"] or "")
+        applied.append({
+            "source": source,
+            "target": target,
+            "amount": amount,
+            "reason": reason,
+            "origin_ref": origin_ref,
+            "region_id": src_region,
+            # #649 F2（判词）：省名随 applied 记录入摘要——effect_brief 输出「陕西…」
+            # 而非裸 region_id；真源＝既有 regions 表，不另建映射。
+            "region_name": region_name,
+            # 落档口径随存档持久标（F3）：effect_brief 措辞与下游对账以此为唯一单位解释。
+            "population_unit": population_unit,
+        })
+    if commit:
+        db.conn.commit()
+    return applied, rejected
+
+
 def _apply_class_dict(
     db: GameDB,
     class_delta: Dict[str, object],
@@ -1733,18 +1997,37 @@ def _apply_class_dict(
 
     逐项拒收契约（ADR 0008 决定 1，#14/#63）：字段值非整数（含 bool/float）→
     invalid_enum 逐项拒收；查无此阶级名由 db.adjust_classes 返 missing_ref。
+    #649 §1.4 升格：value 内出现 population 键 → 该 item 整项以 invalid_enum 拒收
+    留痕（原为静默忽略；合法转移入口开通后，静默通道不得存活），其余 sat/lev 合法
+    item 不受累——一切人口变化走 population_transfers 守恒原语。二级真值非 dict
+    （如 {"农民": 0}）同样逐项拒收。
     返回 (已落 delta dict, 拒收项列表)：前者供 web 「阶级变化」面板，后者由顶层置于
-    "class_delta_rejections" 段、桥接自动收。二级真值非 dict（如 {"农民": 0}）同样
-    逐项拒收。
+    "class_delta_rejections" 段、桥接自动收。
     """
+    # #649 C3/C4：字段名先经 ITEM_FIELD_ALIASES 单一真源 canonical 化（满意→satisfaction、
+    # 人口→population），使 population guard 对中英文拼写统一整项拒收，不在本层手抄别名分支。
+    from ming_sim.simulation import _canonical_item_fields
+
     cleaned: Dict[str, Dict[str, int]] = {}
     rejected: List[Dict[str, object]] = []
     class_delta = class_delta if isinstance(class_delta, dict) else {}  # #117 同类：真值非 dict 守卫
     for key, fields in class_delta.items():
+        if isinstance(fields, dict):
+            fields = _canonical_item_fields(fields)
         if not isinstance(fields, dict):
             rejected.append({
                 "name": str(key), "rejected": True, "category": "invalid_enum",
                 "reason": f"「{key}」阶级变化须为对象：{fields!r}",
+                "item": {str(key): fields},
+            })
+            continue
+        if "population" in fields:
+            rejected.append({
+                "name": str(key), "rejected": True, "category": "invalid_enum",
+                "reason": (
+                    f"「{key}」class_delta 无 population 更新面：写 population 整项拒收，"
+                    "人口只经 population_transfers 守恒转移变动（#649/0087，单记录双写）"
+                ),
                 "item": {str(key): fields},
             })
             continue

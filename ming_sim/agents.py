@@ -389,6 +389,26 @@ def create_mindreading_agent(llm_config: LLMConfig) -> Agent:
     )
 
 
+def create_relation_judge_agent(llm_config: LLMConfig) -> Agent:
+    """#634 召对关系判官（ADR 0082 召对口）：与回话并行的独立机器面短调用。
+
+    读已完成对话记录＋账本全知机面，识别当面边事件。逐拍 prompt 是输出契约
+    的唯一真源；factory 只声明职责与事实边界，避免多轮字段随两份提示漂移。"""
+    return Agent(
+        name="召对关系判官",
+        id="relation-judge",
+        model=create_chat_model(llm_config, temperature=0.2),
+        instructions=[
+            "你是召对关系判官。读召对至今已完成的对话记录和当前关系账，"
+            "识别当面发生的大臣↔大臣边事件（当面站台作保、表态、结怨、协作等）。",
+            "只记对话里真实演出的情节：不虚构、不引申、不从旧账翻旧账；"
+            "语境尽量取原文片段。严格遵循本次调用给出的输出契约。",
+        ],
+        add_history_to_context=False,
+        markdown=False,
+    )
+
+
 def create_highlight_judge_agent(llm_config: LLMConfig) -> Agent:
     """#544 / ADR 0045：大臣奏对高亮判官——生成完成后的独立机器面短调用。"""
     return Agent(
@@ -633,6 +653,27 @@ def create_json_sanitizer_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Age
     )
 
 
+def create_rescript_draft_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
+    """#656 / ADR 0093 前半：急务分拣＋票拟生成官（phase2 fan-out 第 N+1 路，N=extractor 模块数）。一次性，不持久化。"""
+    del agno_db
+    ctx = _ctx()
+    cfg = _llm_for_role(llm_config, "extractor")
+    return Agent(
+        name="急务票拟官",
+        id="rescript-drafter",
+        model=create_chat_model(
+            cfg,
+            temperature=0.4,
+            top_p=0.9,
+            enable_thinking=False,
+            force_json_output=True,
+        ),
+        instructions=[ctx.game_world_prompt, ctx.rescript_draft_prompt],
+        add_history_to_context=False,
+        markdown=False,
+    )
+
+
 def create_chapter_memory_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
     """章节记忆：把本回合诏书+邸报+落库效果浓缩成 {body, tags} JSON（body 叙事，tags 召回标签）。
     一次性，不持久化。"""
@@ -668,6 +709,29 @@ def create_ending_summary_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Age
             enable_thinking=True,
         ),
         instructions=[ctx.game_world_prompt, ctx.ending_summary_prompt],
+        add_history_to_context=False,
+        markdown=False,
+    )
+
+
+def create_faction_brew_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
+    """派系态势酿制裁判（#637 S6）：派系级定性聚合摘要，输出 {stance_segment} JSON。
+    一次性，不持久化；与关系酿制同一受管批次、每条工作项一个实例（批内并行各自
+    独享，不共享运行态）。三不碰（ADR 0084）：不写派系真源、不动满意度/影响力、
+    不建认同度。"""
+    del agno_db
+    ctx = _ctx()
+    return Agent(
+        name="派系态势酿制裁判",
+        id="faction-brew",
+        model=create_chat_model(
+            llm_config,
+            temperature=0.4,
+            top_p=0.85,
+            enable_thinking=False,
+            force_json_output=True,
+        ),
+        instructions=[ctx.game_world_prompt, ctx.faction_brew_prompt],
         add_history_to_context=False,
         markdown=False,
     )
