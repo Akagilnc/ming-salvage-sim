@@ -50,6 +50,8 @@ TOP_LEVEL_ALIASES = {
     "阶级变化": "class_delta",
     "人口转移": "population_transfers",
     "流民转移": "population_transfers",
+    "加派": "surcharge_decrees",
+    "加派旨": "surcharge_decrees",
     "地区变化": "region_delta",
     "军队变化": "army_delta",
     "势力变化": "power_updates",
@@ -142,6 +144,7 @@ ITEM_FIELD_ALIASES = {
     "armies": "armies", "军队": "armies",
     "action": "action", "动作": "action",
     "region_id": "region_id", "地区编号": "region_id",
+    "monthly_amount": "monthly_amount", "月增额": "monthly_amount", "月额": "monthly_amount",
     "building_id": "building_id", "建筑编号": "building_id",
     "category": "category", "类别": "category",
     "level": "level", "等级": "level",
@@ -658,7 +661,10 @@ def build_simulator_payload(
             raw.pop(field)
         court_rows.append(raw)
     court_roster = _auto_table(court_rows)
+    from ming_sim.population_pressure import regional_displaced_pressure_brief
+
     reign_label = reign_period_label(state.year, state.period)
+    displaced_pressure = regional_displaced_pressure_brief(db)
     return {
         "year": state.year,
         "period": state.period,
@@ -684,8 +690,11 @@ def build_simulator_payload(
         # #1483：factions_brief 回定性（P4 叙事输入）；leverage<=30 由代码预计算
         # 成「势力已跌破压制线」语义记号，禁裸数进混合调用。
         "factions_brief": _simulator_factions_brief(db),
-        # 阶级总览 audience 定性；高压预警过滤在 SQL 侧用裸数。
-        "classes_brief": db.class_report(audience=True),
+        # 阶级总览及省级流民压力均为定性只读投影，不暴露省级人数。
+        "classes_brief": "\n".join((
+            db.class_report(audience=True),
+            f"省级流民态势：{displaced_pressure}",
+        )),
         "powers_brief": db.power_report(exclude_self=True),
         "active_issues": issues_payload,
         "candidate_events": candidate_events,
@@ -796,6 +805,7 @@ EMPTY_EXTRACTION: Dict[str, object] = {
     "faction_delta": {},
     "class_delta": {},
     "population_transfers": [],  # #649/0087：人口守恒转移（单记录双写，源减目标增）
+    "surcharge_decrees": [],  # #650/0089 明渠：下旨加派（逐省累积账，月额万两、负=停征）
     "region_delta": {},
     "army_delta": {},
     "new_armies": [],
@@ -829,7 +839,7 @@ EMPTY_EXTRACTION: Dict[str, object] = {
 }
 
 MODULE_FIELDS: Dict[str, set[str]] = {
-    "internal": {"metric_delta", "economy_moves", "faction_delta", "class_delta", "population_transfers", "region_delta", "fiscal_changes", "fiscal_creates", "fiscal_removes"},
+    "internal": {"metric_delta", "economy_moves", "faction_delta", "class_delta", "population_transfers", "surcharge_decrees", "region_delta", "fiscal_changes", "fiscal_creates", "fiscal_removes"},
     "military_external": {"army_delta", "new_armies", "power_updates", "world_advance"},
     "issues": {
         "issue_advances", "new_issues", "事件结局", "cancels", "close_issues",
