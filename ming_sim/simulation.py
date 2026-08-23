@@ -22,6 +22,7 @@ from ming_sim.issues import (
     commitment_progress_payload,
     fiscal_levy_memorial_estimates,
     gather_candidate_events,
+    gather_impeachment_surge_candidates,
     issue_to_payload,
     normalize_event_outcome_labels_or_error,
 )
@@ -616,6 +617,7 @@ def build_simulator_payload(
         }
         for ev in gather_candidate_events(state, db)
     ]
+    candidate_events.extend(gather_impeachment_surge_candidates(state, db))
     region_rows = [
         # #648：按档口径传单位——新档玩家面投影「约N万口」，旧档万人原样。
         _project_simulator_region_row(dict(r), db.population_unit)

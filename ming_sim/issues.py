@@ -28,6 +28,7 @@ from ming_sim.context import victory_status
 from ming_sim.db import (
     GameDB,
     POPULATION_UNIT_PERSONS,
+    _LEVERAGE_FACTIONS,
     _approx_wanliang,
     infer_office_type_from_office,
     normalize_office,
@@ -52,6 +53,7 @@ from ming_sim.flows import (
     _strict_int,
 )
 from ming_sim.models import Event, GameState, effect_dict_has_work, is_vassal_prince, loads_effect_dict
+from ming_sim.participant_roster import project_execution_liability_parties
 from ming_sim.person_archive_contract import (
     PERSON_ALLEGIANCE_CHANGE_WAYS,
     PERSON_IDENTITY_TITLES,
@@ -2515,6 +2517,95 @@ def _gate_passed(gate: Dict[str, str], metrics: Dict[str, int], db: GameDB) -> b
         if op == "==" and not val == num:
             return False
     return True
+
+
+def gather_impeachment_surge_candidates(state: GameState, db: GameDB) -> List[Dict[str, object]]:
+    """Project canonical dynamic candidates from transformed dossier facts.
+
+    Other disaster legs deliberately have no adapter until their owning producers
+    provide a durable occurrence and responsibility interface.
+    """
+    facts = db.build_faction_denunciation_facts()
+    situations = {
+        str(item.get("faction") or ""): item
+        for item in facts.get("faction_situations", [])
+        if isinstance(item, dict)
+    }
+    personas_by_faction: Dict[str, List[Dict[str, object]]] = {}
+    for item in facts.get("character_personas", []):
+        if isinstance(item, dict):
+            personas_by_faction.setdefault(str(item.get("faction") or ""), []).append(item)
+
+    rows = db.conn.execute(
+        "SELECT id,closed_turn,participant_roster FROM decree_dossiers "
+        "WHERE execution_outcome='transformed' AND closed_turn BETWEEN ? AND ? ORDER BY id",
+        (max(0, int(state.turn) - 1), int(state.turn)),
+    ).fetchall()
+    candidates: List[Dict[str, object]] = []
+    for row in rows:
+        try:
+            roster = json.loads(str(row["participant_roster"] or "[]"))
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(roster, list) or not roster:
+            continue
+        participant_ids = [
+            str(item.get("character_id") or "").strip()
+            for item in roster if isinstance(item, dict) and str(item.get("character_id") or "").strip()
+        ]
+        if len(participant_ids) != len(roster) or not participant_ids:
+            continue
+        liability = project_execution_liability_parties(roster)
+        responsible_ids = [str(item.get("character_id") or "").strip() for item in liability]
+        if not responsible_ids:
+            continue
+        all_ids = list(dict.fromkeys(participant_ids + responsible_ids))
+        placeholders = ",".join("?" for _ in all_ids)
+        chars = db.conn.execute(
+            f"SELECT name,faction,status FROM characters WHERE name IN ({placeholders})", all_ids,
+        ).fetchall()
+        char_by_name = {str(item["name"]): item for item in chars}
+        if any(
+            name not in char_by_name
+            or str(char_by_name[name]["status"] or "") != "active"
+            or not str(char_by_name[name]["faction"] or "").strip()
+            for name in all_ids
+        ):
+            continue
+        responsible_factions = list(dict.fromkeys(
+            str(char_by_name[name]["faction"]) for name in responsible_ids
+        ))
+        origin_ref = f"commitment:{int(row['id'])}:deformation_exposure"
+        for faction in sorted(_LEVERAGE_FACTIONS):
+            if faction in responsible_factions or db.faction_leverage(faction) < 60:
+                continue
+            situation = situations.get(faction)
+            personas = personas_by_faction.get(faction, [])
+            if not situation or not personas:
+                continue
+            if db.conn.execute(
+                "SELECT 1 FROM issues WHERE origin_kind='impeachment_surge' "
+                "AND origin_ref=? AND faction_hint=? LIMIT 1", (origin_ref, faction),
+            ).fetchone():
+                continue
+            candidate_id = f"impeachment_surge:{origin_ref}:{faction}"
+            candidates.append({
+                "id": candidate_id,
+                "origin_kind": "impeachment_surge",
+                "origin_ref": origin_ref,
+                "source_kind": "deformation_exposure",
+                "occurred_turn": int(row["closed_turn"]),
+                "faction_id": faction,
+                "faction_persona": {
+                    "faction_situations": [dict(situation)],
+                    "character_personas": [dict(item) for item in personas],
+                },
+                "eligible_target_ids": participant_ids,
+                "participant_ids": participant_ids,
+                "responsible_person_ids": responsible_ids,
+                "responsible_faction_ids": responsible_factions,
+            })
+    return candidates
 
 
 def gather_candidate_events(state: GameState, db: GameDB) -> List[Event]:
@@ -5000,10 +5091,8 @@ def apply_issue_tracker_output(
             "narrative": narrative,
         })
 
-    # 2) new_issues：接两种来源——
-    #    decree     —— 玩家诏书强推，由 LLM 给字段新立 issue
-    #    event_pool —— 预设事件（EVENTS/SEED_EVENTS）被推演判定触发，按预设 event 立 issue
-    #    其它来源一律拒。
+    # 2) new_issues：接三种来源——decree、静态 event_pool，以及
+    #    当前输入事实可重验的动态 impeachment_surge。其它来源一律拒。
     initiative_active = db.count_active_initiatives()
     for ni in tracker_output.get("new_issues", []) or []:
         if not isinstance(ni, dict):
@@ -5018,6 +5107,57 @@ def apply_issue_tracker_output(
             continue
         title = str(ni.get("title") or "")
         origin_kind = str(ni.get("origin_kind") or "").lower()
+        if origin_kind == "impeachment_surge":
+            candidate_id = str(ni.get("candidate_id") or "").strip()
+            candidates = {
+                str(item["id"]): item
+                for item in gather_impeachment_surge_candidates(state, db)
+            }
+            candidate = candidates.get(candidate_id)
+            roster = ni.get("participant_roster")
+            target_ids = []
+            if isinstance(roster, list):
+                target_ids = [
+                    str(item.get("character_id") or "").strip()
+                    for item in roster if isinstance(item, dict)
+                ]
+            reason = ""
+            if candidate is None:
+                reason = "动态候选不存在、陈旧或已消费"
+            elif candidate_snapshot_authoritative and candidate_id not in candidate_event_ids:
+                reason = "动态候选不在本次 LLM 输入快照"
+            elif not title.strip():
+                reason = "弹劾潮 title 缺失或空白"
+            elif str(ni.get("faction_hint") or "").strip() != candidate["faction_id"]:
+                reason = "弹劾潮 faction_hint 与候选派系不符"
+            elif not target_ids or len(target_ids) != len(roster):
+                reason = "弹劾潮 participant_roster 须为非空人物名单"
+            elif not set(target_ids).issubset(set(candidate["eligible_target_ids"])):
+                reason = "弹劾潮标靶越过 eligible_target_ids 闭集"
+            if reason:
+                applied_new.append({
+                    "id": candidate_id, "title": title, "rejected": True,
+                    "reason": reason, "item": ni,
+                })
+                continue
+            issue_id = db.insert_issue(
+                state,
+                kind="situation",
+                title=title,
+                origin_kind="impeachment_surge",
+                origin_ref=str(candidate["origin_ref"]),
+                bar_value=40,
+                stage_text=str(ni.get("stage_text") or ""),
+                faction_hint=str(candidate["faction_id"]),
+                participants=roster,
+                cancellable="never",
+                commit=not external_transaction,
+            )
+            applied_new.append({
+                "id": candidate_id, "issue_id": issue_id, "kind": "situation",
+                "title": title, "rejected": False,
+            })
+            continue
         if origin_kind == "event_pool":
             # 预设事件触发：id 必须是真实预设 event，照预设字段立 issue（不用 LLM 给的字段）
             event_id = str(ni.get("id") or ni.get("origin_ref") or "").strip()

@@ -12393,6 +12393,7 @@ class GameDB:
                    executor_kind, participant_roster, status
             FROM decree_dossiers
             WHERE status IN ('promulgated', 'executing')
+               OR (status='closed' AND execution_outcome='transformed')
             ORDER BY id
             """
         ).fetchall()
@@ -12403,11 +12404,19 @@ class GameDB:
         for row in rows:
             dossier_id = int(row["id"])
             fork_state = self.read_dossier_fork_state(dossier_id)
-            if not fork_state["fork"]:
-                continue
             dossier = dict(row)
             subject_name = resolve_dossier_owner_name(dossier) or ""
             subject_faction, _ = character_faction_integrity(self, subject_name)
+            # #655 reuses this canonical persona projection for every durable
+            # transformed execution fact; forked_dossiers itself remains the
+            # narrower denunciation/fork list.
+            if str(row["execution_outcome"] or "") == "transformed":
+                if subject_name:
+                    subject_names.add(subject_name)
+                if subject_faction:
+                    subject_factions.add(subject_faction)
+            if not fork_state["fork"]:
+                continue
             case_summary = str(row["decree_text"] or "").strip()
             if len(case_summary) > 48:
                 case_summary = case_summary[:48]
