@@ -43,12 +43,12 @@
     {
       "source": "魏忠贤",
       "target": "崔呈秀",
-      "event_kind": "撑腰",
-      "context": "崔呈秀遭御史弹劾后转而投附魏忠贤，替其编造《天鉴》《同志》诸录、罗织清流，遂被倚为外廷羽翼。",
+      "event_kind": "荐引",
+      "context": "魏忠贤矫中旨重新起用原已拟戍的崔呈秀为御史；崔呈秀随后编造《天鉴》《同志》诸录献给魏忠贤，成为其外廷爪牙。",
       "origin": "seed:founding:wei-cui-patronage",
       "evidence": false,
-      "year": 1624,
-      "period": 12
+      "year": 1625,
+      "period": 1
     },
     {
       "source": "崔呈秀",
@@ -113,8 +113,8 @@
     {
       "source": "魏忠贤",
       "target": "郭允厚",
-      "event_kind": "撑腰",
-      "context": "郭允厚任户部尚书时曲意承奉魏忠贤，为阉党兴建生祠等事调度钱粮，因而被魏氏留任财计要职。",
+      "event_kind": "荐引",
+      "context": "魏忠贤矫中旨召用例转科道，将郭允厚擢为太仆少卿；郭允厚由此进入其外廷爪牙之列。",
       "origin": "seed:founding:wei-guoyunhou-finance",
       "evidence": false,
       "year": 1626,
@@ -123,12 +123,12 @@
     {
       "source": "王体乾",
       "target": "魏忠贤",
-      "event_kind": "撑腰",
-      "context": "王体乾掌司礼监时与魏忠贤相结，利用掌印与批红之便替其遮护传奉，使魏氏得以内外用事。",
+      "event_kind": "站台",
+      "context": "杨涟上疏弹劾魏忠贤后，王体乾与客氏力为保持，并令魏广微调旨切责杨涟，公开替魏忠贤遮护。",
       "origin": "seed:founding:wangtiqian-wei-support",
       "evidence": false,
-      "year": 1621,
-      "period": 1
+      "year": 1624,
+      "period": 6
     },
     {
       "source": "魏忠贤",
