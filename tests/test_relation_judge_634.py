@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import threading
 from types import SimpleNamespace
@@ -92,6 +93,22 @@ def _event_items(source, target, kind, context):
 # ── ID-12：判官输入面＝全知机面单一接缝 ──────────────────────────────
 
 
+def test_factory_defers_output_contract_to_per_beat_prompt(game):
+    """多轮字段契约只有逐拍 prompt 一份真源，factory 不再发布平行旧 shape。"""
+    factory_source = inspect.getsource(agents_mod.create_relation_judge_agent)
+    assert '"events"' not in factory_source
+    assert "严格遵循本次调用给出的输出契约" in factory_source
+
+    db, state, _content = game
+    a, _b = _roster_names(db, state)
+    first = _make_turn(db, state, a, "先问", "先答")
+    second = _make_turn(db, state, a, "再问", "再答")
+    prompt = build_relation_judge_prompt(db, db.list_unjudged_completed_chat_turns())
+    assert '"源轮":12' in prompt
+    assert f"轮 #{first}" in prompt and f"轮 #{second}" in prompt
+    assert "每项的源轮必须是该事件实际发生的轮号" in prompt
+
+
 def test_judge_prompt_contains_ledger_face_with_and_without_accounts(game):
     """ID-12①：判官上下文含账本读面；有账与无账行为可辨。"""
     db, state, content = game
@@ -161,6 +178,25 @@ def test_beat_judge_writes_directed_edge_same_round(game):
     # r1 F1：context 经 canonical 写口字节原样
     assert row["context"] == f"{a}当面替{b}站台。"
     assert _judge_status(db, ctid) == "done"
+
+
+def test_bidirectional_grudge_keeps_two_explicit_directed_events(game):
+    """双向结怨来自两项事实，各恰一行；单项有向边不会被写端自动镜像。"""
+    db, state, _content = game
+    a, b = _roster_names(db, state)
+    ctid = _make_turn(db, state, a, "当面对质", "二人互相斥责")
+    res = _run(db, state, _CannedJudge({"events": [
+        {"源轮": ctid, "施动者": a, "受动者": b, "类目": "结怨", "语境": "甲斥乙。"},
+        {"源轮": ctid, "施动者": b, "受动者": a, "类目": "结怨", "语境": "乙斥甲。"},
+    ]}))
+    assert not res.get("degraded")
+    rows = db.get_relation_edge_events(event_kind="结怨")
+    assert [(r["source"], r["target"], r["context"]) for r in rows] == [
+        (a, b, "甲斥乙。"), (b, a, "乙斥甲。"),
+    ]
+    assert {r["origin"] for r in rows} == {
+        summon_edge_origin(ctid) + f"|round:{state.turn}",
+    }
 
 
 def test_multiparty_event_is_lead_to_each_participant_only(game):
