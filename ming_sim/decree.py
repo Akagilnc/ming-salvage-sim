@@ -30,7 +30,10 @@ from ming_sim.agents import (
     parse_agent_json,
     run_agent_text,
 )
-from ming_sim.applier import Provenance, RejectedItem, RejectionCollector, atomic
+from ming_sim.applier import (
+    Provenance, RejectedItem, RejectionCollector, atomic,
+    mirror_rejections_after_commit,
+)
 from ming_sim.constants import TURN_UNIT
 from ming_sim.context import ENDING_LABELS, ENDING_ONGOING, ENDING_TIMEOUT, victory_status
 from ming_sim.db import GameDB
@@ -1074,7 +1077,7 @@ def resolve_directives(
                     state.turn,
                 )
             collector.flush_to_db(db)
-        _mirror_rejections_after_commit(db, collector)
+        mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
         try:
             pack_path = write_error_pack(
                 db, state, exc=exc, extracted=None,
@@ -1411,30 +1414,6 @@ def _replay_settle(
     return report
 
 
-def _mirror_rejections_after_commit(db: GameDB, collector: RejectionCollector) -> None:
-    """Mirror flushed rejection rows only after the owning transaction commits.
-
-    validate-layer collectors in persist_resolve_context may run under an outer
-    atomic owner (driver.run_settle). In that case the local collector would go
-    out of scope before _atomic_depth returns to 0, so register a post-commit
-    callback on the shared connection instead of mirroring early.
-    """
-    def _mirror() -> None:
-        try:
-            collector.mirror_to_jsonl(rejections_jsonl_path())
-        except Exception as mirror_exc:
-            tlog(f"[rejection] jsonl 镜像失败（DB 行已落，仅副本丢失）：{mirror_exc}")
-
-    if getattr(db.conn, "_atomic_depth", 0) == 0:
-        _mirror()
-        return
-    callbacks = getattr(db.conn, "_runtime_commit_callbacks", None)
-    if callbacks is None:
-        callbacks = []
-        db.conn._runtime_commit_callbacks = callbacks
-    callbacks.append(_mirror)
-
-
 def persist_resolve_context(
     db: GameDB,
     turn: int,
@@ -1497,7 +1476,7 @@ def persist_resolve_context(
                 "DELETE FROM pending_decisions WHERE turn = ? AND kind = 'rescript_draft'",
                 (int(turn),),
             )
-    _mirror_rejections_after_commit(db, collector)
+    mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
     return cleaned
 
 
@@ -1968,11 +1947,7 @@ def pre_settle(
     except BaseException as exc:
         raise_fixed_period_flow_abort_if_needed(db, state, exc)
         raise
-    if getattr(db.conn, "_atomic_depth", 0) == 0:
-        try:
-            collector.mirror_to_jsonl(rejections_jsonl_path())
-        except Exception as mirror_exc:
-            tlog(f"[rejection] jsonl 镜像失败（DB 行已落，仅副本丢失）：{mirror_exc}")
+    mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
     return auto_triggered
 
 
@@ -2198,15 +2173,8 @@ def settle_with_delta(
             settlement_abort_message(pack_path),
             turn=before_turn, stage="settle", error_pack_path=pack_path,
         ) from exc
-    # commit 已成功（atomic 正常退出）才镜像——jsonl 是可回收副本，DB 为真源（决定 5/7）。
-    # 嵌套守门与异常路对称（cmr S0 r1）：depth>0 时本层退出并未真 commit，先写镜像=
-    # 外层回滚后留「DB 无行、jsonl 有行」孤儿；嵌套场景放弃镜像（丢的只是可回收副本）。
-    # 镜像失败不回滚结算：吞 Exception 记日志（行已在 DB）。
-    if getattr(db.conn, "_atomic_depth", 0) == 0:
-        try:
-            collector.mirror_to_jsonl(rejections_jsonl_path())
-        except Exception as mirror_exc:
-            tlog(f"[rejection] jsonl 镜像失败（DB 行已落，仅副本丢失）：{mirror_exc}")
+    # JSONL follows the real outer transaction outcome; DB remains truth.
+    mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
     # #636 S5 月末酿制腿收尾（判词类②）：结算事务已提交，摘要持久化前 join。
     # brew() 内仅单条 LLM 调用/输出契约失败降级留痕；persist 内 apply/mark 的
     # DB/schema/程序错误响亮上抛（ADR 0005/0008）——腿级宽吞已删。

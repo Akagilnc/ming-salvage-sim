@@ -118,16 +118,39 @@ def test_existing_delegated_lead_is_preserved_not_demoted(env):
     assert ("毕自严", "主办") in tiers
 
 
-def test_production_assignee_is_named_route(env):
+@pytest.mark.parametrize("payload", [
+    {"assignee_id": "陈新甲"},
+    {"assignee": "陈新甲"},
+])
+def test_production_assignee_is_named_route(env, payload):
     db, state, _ = env
-    dossier_id = _create(
-        db, state, category=None, payload={"assignee_id": "陈新甲"},
-    )
+    dossier_id = _create(db, state, category=None, payload=payload)
+    dossier = db.get_decree_dossier(dossier_id)
     leads = [
-        e["character_id"] for e in db.get_decree_dossier(dossier_id)["participant_roster"]
+        e["character_id"] for e in dossier["participant_roster"]
         if e["tier"] == "主办"
     ]
     assert leads == ["陈新甲"]
+    persisted_payload = json.loads(dossier["payload_json"])
+    assert persisted_payload["assignee_id"] == "陈新甲"
+    assert "assignee" not in persisted_payload
+
+
+def test_legacy_character_executor_migrates_without_overriding_roster(env):
+    db, state, _ = env
+    legacy_id = db.create_decree_dossier(
+        state, action_type="assignment", decree_text="旧式直点",
+        target_kind="issue", target_id="legacy", executor_kind="character",
+        executor_id="陈新甲", payload={},
+    )
+    roster_id = db.create_decree_dossier(
+        state, action_type="assignment", decree_text="名册优先",
+        target_kind="issue", target_id="roster", executor_kind="character",
+        executor_id="陈新甲", payload={},
+        participants=[{"character_id": "毕自严", "tier": "主办"}],
+    )
+    assert resolve_dossier_owner_name(db.get_decree_dossier(legacy_id)) == "陈新甲"
+    assert resolve_dossier_owner_name(db.get_decree_dossier(roster_id)) == "毕自严"
 
 
 def test_canonical_owner_precedes_legacy_with_history_fallback():
@@ -369,6 +392,34 @@ def test_draft_batch_isolates_routing_rejection(env, monkeypatch, tmp_path):
     assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers WHERE directive_id=?", (good,)).fetchone()[0] == 1
     assert db.conn.execute("SELECT COUNT(*) FROM rejection_reports").fetchone()[0] == 1
     assert mirror.exists()
+
+
+def test_rolled_back_collector_reuse_does_not_mirror_orphan(env, monkeypatch, tmp_path):
+    from ming_sim.applier import Provenance, RejectedItem, RejectionCollector, mirror_rejections_after_commit
+
+    db, _, _ = env
+    mirror = tmp_path / "collector-reuse.jsonl"
+    collector = RejectionCollector()
+    item = lambda marker: RejectedItem(
+        item={"marker": marker}, reason="test", category="duty_route_unmapped",
+        source=Provenance.player_decree,
+    )
+    with pytest.raises(RuntimeError, match="rollback first"):
+        with atomic(db):
+            collector.record("executor_routing", item("rolled-back"), 1)
+            collector.flush_to_db(db)
+            mirror_rejections_after_commit(db, collector, lambda: str(mirror))
+            raise RuntimeError("rollback first")
+
+    with atomic(db):
+        collector.record("executor_routing", item("committed"), 1)
+        collector.flush_to_db(db)
+        mirror_rejections_after_commit(db, collector, lambda: str(mirror))
+
+    rows = [json.loads(line) for line in mirror.read_text(encoding="utf-8").splitlines()]
+    assert [json.loads(row["item_json"])["marker"] for row in rows] == ["committed"]
+    assert db.conn._runtime_commit_callbacks == []
+    assert db.conn._runtime_rollback_callbacks == []
 
 
 @pytest.mark.parametrize("owner", ["confirm", "batch"])
