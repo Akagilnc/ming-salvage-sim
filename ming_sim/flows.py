@@ -1335,6 +1335,15 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
             if province_pay_share > 0:
                 morale_delta = 0
             else:
+                # Pure-central armies never enter the province substrate applier,
+                # so this is their existing monthly settlement owner seam.
+                db.conn.execute(
+                    """UPDATE armies
+                       SET consecutive_pay_shortfall_months = CASE
+                           WHEN ? > 1e-9 THEN consecutive_pay_shortfall_months + 1 ELSE 0 END
+                       WHERE id = ?""",
+                    (shortfall, army_id),
+                )
                 morale_delta = army_pay_morale_delta(full_needed, shortfall, old_arrears)
             new_morale = max(0, min(100, old_morale + morale_delta))
 

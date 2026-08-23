@@ -49,8 +49,8 @@ def build_covert_levy_candidates(db: Any) -> List[Dict[str, object]]:
     return out
 
 
-def settle_exposure_from_canonical_actions(db: Any, state: Any, extracted: Mapping[str, object]) -> int:
-    """普通下旨只凭既有 canonical 字段命中待办；无精确案卷引用则不消费。"""
+def settle_exposure_from_canonical_actions(db: Any, state: Any, applied: Mapping[str, object]) -> int:
+    """只凭 canonical applier 已成功落库的结果消费待办。"""
     consumed = 0
     for todo in db.list_next_audience_todos(status="pending"):
         if todo.get("entry_kind") != ENTRY_KIND:
@@ -65,16 +65,20 @@ def settle_exposure_from_canonical_actions(db: Any, state: Any, extracted: Mappi
         actors.discard("")
         decision = ""
         # 禁摊派骑案卷执行格；默许骑 #622/#649 实况；查办骑人物处置。
-        if any(isinstance(x, Mapping) and x.get("dossier_id") == did and x.get("outcome") == "failed"
-               for x in extracted.get("dossier_executions") or []):
+        if any(isinstance(x, Mapping) and not x.get("rejected")
+               and int(x.get("dossier_id") or 0) == did and x.get("outcome") == "failed"
+               for x in applied.get("dossier_executions") or []):
             decision = "禁摊派"
-        if any(isinstance(x, Mapping) and x.get("origin_ref") == origin
+        if any(isinstance(x, Mapping) and not x.get("rejected")
+               and x.get("origin_ref") == origin
                for key in ("economy_moves", "fiscal_changes", "population_transfers")
-               for x in extracted.get(key) or []):
+               for x in applied.get(key) or []):
             decision = "默许"
-        if any(isinstance(x, Mapping) and x.get("origin_ref") == origin
+        person_changes = list(applied.get("applied_person_changes") or [])
+        person_changes += list((applied.get("issue_summary") or {}).get("applied_person_changes") or [])
+        if any(isinstance(x, Mapping) and not x.get("rejected")
                and x.get("动作") in {"处置", "罢黜"} and str(x.get("name") or "") in actors
-               for x in extracted.get("人物变更") or []):
+               for x in person_changes):
             decision = "查办"
         if decision:
             db.mark_next_audience_todo_status(
@@ -86,10 +90,13 @@ def settle_exposure_from_canonical_actions(db: Any, state: Any, extracted: Mappi
 
 
 def write_exposure_todos(
-    db: Any, state: Any, extracted: Mapping[str, object] | None = None,
+    db: Any, state: Any, applied: Mapping[str, object] | None = None,
 ) -> int:
-    """由稽核、检举、#649 民变实况三路写同一待办。"""
-    transfers = list((extracted or {}).get("population_transfers") or [])
+    """由稽核、检举、已成功落库的 #649 民变实况三路写同一待办。"""
+    transfers = [
+        item for item in (applied or {}).get("population_transfers") or []
+        if isinstance(item, Mapping) and not item.get("rejected")
+    ]
     written = 0
     for row in db.conn.execute("SELECT id FROM decree_dossiers ORDER BY id").fetchall():
         did = int(row["id"])

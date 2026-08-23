@@ -300,6 +300,10 @@ def project_due_review_scene(
     )
     entry_kind = str(todo.get("entry_kind") or ENTRY_KIND_STAGED)
     scene_kind = "covert_levy_exposure" if audience_todo_lane(entry_kind) == _AUDIENCE_LANE_COVERT_LEVY else "due_review"
+    # Covert exposure is rendered by the existing audience LLM from the facts
+    # below; unlike ordinary due review it must not inject a fixed memorial.
+    if scene_kind == "covert_levy_exposure":
+        scene_text = ""
     return {
         "kind": scene_kind,
         "entry_kind": entry_kind,
