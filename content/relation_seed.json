@@ -1,0 +1,41 @@
+{
+  "seed_version": 1,
+  "events": [
+    {
+      "source": "魏忠贤",
+      "target": "杨涟",
+      "event_kind": "结怨",
+      "context": "天启四年六月杨涟上疏劾魏忠贤二十四大罪，魏忠贤矫旨切责、视若死敌，次年借李实诬疏把杨涟构陷入狱拷毙——东林血债由此结死。",
+      "origin": "seed:founding:yanglian-24-crimes",
+      "year": 1624,
+      "period": 6
+    },
+    {
+      "source": "崔呈秀",
+      "target": "田尔耕",
+      "event_kind": "把柄",
+      "context": "崔呈秀替田尔耕盖印掩护赃私，短处处攥在对方手里，阉党魁首与爪牙之间彼此握着把柄、共系一绳。",
+      "origin": "seed:founding:cui-tian-cover",
+      "year": 1627,
+      "period": 3
+    },
+    {
+      "source": "皇帝",
+      "target": "王承恩",
+      "event_kind": "知遇",
+      "context": "王承恩自信邸潜邸随侍至今，起居冷暖皆其亲手打理；潜邸旧人的君臣情分自幼年积下，非一日之寒。",
+      "origin": "seed:founding:wangchengen-xindi",
+      "year": 1626,
+      "period": 2
+    }
+  ],
+  "summaries": [
+    {
+      "source": "皇帝",
+      "target": "王承恩",
+      "founding_lines": [
+        "王承恩为信邸潜邸旧人，随侍多年、忠谨而有心计，是皇上身边最贴身可信之人。"
+      ]
+    }
+  ]
+}

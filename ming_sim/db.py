@@ -20209,6 +20209,56 @@ class GameDB:
     # 奠基段只增不改、近况段覆盖式幂等由 apply 路机械保证。
     # ------------------------------------------------------------------
 
+    def has_savegame(self) -> bool:
+        """存档是否已存在（game_state 行在）——#638 新开档判据的唯一机械口径。
+
+        load_state 首次建行前后是 fresh/旧档的分水岭；调用方必须在 load_state
+        之前取此判据。"""
+        return self.conn.execute(
+            "SELECT 1 FROM game_state WHERE id = 1"
+        ).fetchone() is not None
+
+    def apply_seed_founding_segment(
+        self,
+        *,
+        source: str,
+        target: str,
+        dimension: str,
+        founding_segment: str,
+    ) -> None:
+        """#638 S7：seed 可选初始摘要落奠基段（只增不改；近况段/水位不动）。
+
+        与 apply_relation_brew_result 的差异：本写只碰奠基段——近况段留空、
+        last_event_id 留 0，seed 边因此仍在水位之上，该对首次真实月末酿制照常
+        收取 seed 边作输入语境（ADR 0086 同一套酿制，不另立第二套腿）。幂等：
+        同内容重放由调用方 merge_founding_segment 字节等去重保证字节不变。"""
+        if dimension not in ("君臣", "大臣"):
+            raise ValueError(f"未知关系维度: {dimension!r}")
+        owns = self.owns_transaction()
+        try:
+            self.conn.execute(
+                """
+                INSERT INTO relation_summaries
+                    (source, target, dimension, founding_segment, recent_segment,
+                     last_event_id, last_brewed_turn, last_brewed_year, last_brewed_period)
+                VALUES (?, ?, ?, ?, '', 0, 0, 0, 0)
+                ON CONFLICT(source, target) DO UPDATE SET
+                    dimension = excluded.dimension,
+                    founding_segment = excluded.founding_segment,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (str(source), str(target), dimension, str(founding_segment)),
+            )
+            if owns:
+                self.conn.commit()
+        except Exception:
+            if owns:
+                try:
+                    self.conn.rollback()
+                except Exception:
+                    pass
+            raise
+
     def get_relation_summary(self, source: str, target: str) -> Optional[Dict[str, Any]]:
         row = self.conn.execute(
             "SELECT * FROM relation_summaries WHERE source = ? AND target = ?",
