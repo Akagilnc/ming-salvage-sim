@@ -1444,7 +1444,7 @@ def persist_resolve_context(
     secret_orders: Dict[str, object],
     relevant_memories: List[Dict],
     source: Provenance = Provenance.system_simulation,
-    rescript_drafts: object = None,
+    rescript_drafts: Optional[List[Dict[str, object]]] = None,
 ) -> Dict[str, object]:
     """ADR 0008 S2：每回合进入结算后半段前无条件持久化 resolve_context（extractor delta + 叙事）。
 
@@ -1562,7 +1562,7 @@ def _settle_after_narrative(
     sanitizer = create_json_sanitizer_agent(llm_config, agno_db)
     extractor_input = ""
     extractor_output = ""
-    # #656 / ADR 0093 前半：phase2 五路 fan-out 的第五路＝票拟生成（F1.3 唯一并行刀口）。
+    # #656 / ADR 0093 前半：phase2 fan-out 的第 N+1 路（N=extractor 模块数）＝票拟生成（F1.3 唯一并行刀口）。
     # 输入只读邸报正文＋分拣人事实＋既有 issue 盘面投影，零依赖任何 extractor 输出。
     # 分拣人缺位（首辅掌印均不在任）＝本月无头版，全量邸报照旧可读（F3.1）。
     # 单腿接缝：腿结果由闭包持有（draft_cell），无外部可变结果容器、无串行备选形态。
@@ -1604,7 +1604,7 @@ def _settle_after_narrative(
             )
             for module in EXTRACTION_MODULES
         }
-        # 月末 4 个互不依赖 extractor 一律并发（wall-clock≈最慢单个）；合并/落库仍串行单事务（ADR 0008）。
+        # 月末全部互不依赖 extractor 一律并发（wall-clock≈最慢单个）；合并/落库仍串行单事务（ADR 0008）。
         # 不按 runner/模型保留串行——owner 2026-08-20：编排器日常并行 N 条 grok 零问题。
         extracted, extractor_output, extractor_input = extract_scores_by_modules_with_agno(
             extractors, db, state, effective_narrative, decree_text=executable_decree_text, sanitizer=sanitizer,
