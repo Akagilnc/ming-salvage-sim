@@ -22,6 +22,7 @@ from ming_sim.decree import settle_with_delta
 from ming_sim.issues import apply_historical_fiscal_rates, apply_score_extraction
 import ming_sim.issues as issues
 from ming_sim.memories import effect_brief
+import ming_sim.memories as memories
 
 # ── 独立 oracle（content 冻结 seed 字面，非实现推导）──────────────────────────
 FARMER_SHAANXI = 6000000      # content/classes.json 农民@shaanxi（人）
@@ -79,7 +80,7 @@ def test_decree_lands_accumulated_ledger_same_turn(game):
 
     meta = _settle_payload(db, "shaanxi")["_meta"]
     assert meta["加派基线"] == pytest.approx(10.0)
-    assert meta["加派基线源"] == "盘面自发"
+    assert "加派基线源" not in meta
 
 
 def test_no_decree_no_ledger_entry(game):
@@ -127,6 +128,26 @@ def test_decree_bad_items_rejected_individually(game):
     assert len(applied["surcharge_decrees"]) == 1
     assert len(applied["surcharge_decrees_rejections"]) == 4
     assert _settle_payload(db, "shaanxi")["_meta"]["加派基线"] == pytest.approx(10.0)
+
+
+def test_rejection_bucket_is_not_persisted_to_player_visible_extraction(game):
+    """真实 settle 保留内部拒收报告，但玩家可见 extraction 不泄露拒收桶或坏项。"""
+    db, state, content = game
+    before_turn = state.turn
+    settle_with_delta(state, db, {
+        "surcharge_decrees": [
+            _decree(monthly_amount=3.0),
+            _decree(region_id="mars", monthly_amount=1.0),
+        ],
+    }, before_turn=before_turn, content=content)
+
+    assert db.conn.execute(
+        "SELECT 1 FROM rejection_reports WHERE turn=? AND section='surcharge_decrees_rejections'",
+        (before_turn,),
+    ).fetchone() is not None
+    visible = db.get_turn_extraction(before_turn)["extractor_output"]
+    assert "surcharge_decrees_rejections" not in visible
+    assert "mars" not in json.dumps(visible, ensure_ascii=False)
 
 
 def test_chinese_aliases_canonicalize(game):
@@ -211,7 +232,87 @@ def test_inflow_clamped_to_farmer_balance(game):
     assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI + 500
 
 
-# ── AC3：回响断言面＝effect_brief 输入侧事实平面（ADR 0143，不钉散文）────────
+# ── 持久累积账损坏须 fail-loud，月效来源不得伪归最后一道旨 ───────────────────
+
+@pytest.mark.parametrize("corruption", ["bad_json", "bad_base", "missing_pool"])
+def test_levy_ledger_corruption_fails_loud(game, corruption):
+    db, state, content = game
+    apply_score_extraction(db, state, {
+        "surcharge_decrees": [_decree(monthly_amount=10.0)],
+    }, content, None)
+    if corruption == "bad_json":
+        db.conn.execute("UPDATE regions SET fiscal='{' WHERE id='shaanxi'")
+    elif corruption == "bad_base":
+        fiscal = json.loads(db.conn.execute(
+            "SELECT fiscal FROM regions WHERE id='shaanxi'"
+        ).fetchone()[0])
+        fiscal["settle"]["_meta"]["加派基线"] = "十万两"
+        db.conn.execute("UPDATE regions SET fiscal=? WHERE id='shaanxi'",
+                        (json.dumps(fiscal, ensure_ascii=False),))
+    else:
+        db.conn.execute("DELETE FROM classes WHERE name='流民' AND region_id='shaanxi'")
+    db.conn.commit()
+
+    with pytest.raises(ValueError, match="shaanxi"):
+        apply_score_extraction(db, state, {}, content, None)
+
+
+def test_accumulated_monthly_effect_uses_ledger_origin_not_latest_decree(game):
+    db, state, content = game
+    first = db.create_decree_dossier(state, action_type="policy", decree_text="陕西加派", target_kind="region", target_id="shaanxi")
+    second = db.create_decree_dossier(state, action_type="policy", decree_text="陕西续派", target_kind="region", target_id="shaanxi")
+    db.record_dossier_decision(first, "promulgated")
+    db.record_dossier_decision(second, "promulgated")
+    applied = apply_score_extraction(db, state, {
+        "surcharge_decrees": [
+            _decree(monthly_amount=4.0, origin_ref=f"dossier:{first}"),
+            _decree(monthly_amount=6.0, origin_ref=f"dossier:{second}"),
+        ],
+    }, content, None)
+    transfer = next(r for r in applied["population_transfers"] if r["reason"] == "加派")
+    assert transfer["origin_ref"] == "盘面自发"
+    assert "加派基线源" not in _settle_payload(db, "shaanxi")["_meta"]
+
+
+# ── AC3：真实玩家回响链（结构化事实输入→自由叙事原样持久化→召对读链）──────────
+
+def test_chapter_player_channel_receives_levy_fact_and_persists_free_narrative(game, monkeypatch):
+    db, state, content = game
+    seen = []
+    free_body = "陕西流民渐起，关中贼势暗流潜滋。"
+
+    def fake_run(_agent, payload, **_kwargs):
+        seen.append(json.loads(payload))
+        return json.dumps({"body": free_body, "tags": ["陕西", "流民"]}, ensure_ascii=False)
+
+    monkeypatch.setattr(memories, "run_agent_text", fake_run)
+    real_save_chapter = db.save_chapter_memory
+
+    def save_public_llm_body(state_arg, title, body, tags=None, **kwargs):
+        # 本例的 fake LLM 只读公开输入；令既有 archive writer 走其公开 aggregate 分支，
+        # 不让 fixture 预置来源 counterpart 覆盖要验证的自由输出。
+        return real_save_chapter(state_arg, title, body, tags, knowledge_items=None,
+                                 public_body=None, commit=kwargs.get("commit", True))
+
+    monkeypatch.setattr(db, "save_chapter_memory", save_public_llm_body)
+    before_turn = state.turn
+
+    def record_public_chapter(d, s, dt, nr, ap):
+        return memories.record_chapter_memory(object(), d, s, dt, nr, ap)
+
+    settle_with_delta(
+        state, db, {"surcharge_decrees": [_decree(monthly_amount=10.0)]},
+        before_turn=before_turn, content=content, narrative="陕西加派月报。",
+        chapter_recorder=record_public_chapter,
+    )
+
+    want = _expected_inflow_persons(10.0, SHAANXI_SUPPORT)
+    assert f"陕西农民流失{want}口为流民（加派）" in seen[0]["effect_brief"]
+    chapter = next(c for c in db.list_chapter_memories() if c["turn"] == before_turn)
+    assert chapter["body"] == free_body
+    # decree 的召对准备链直接以 list_chapter_memories 读取最近章节。
+    assert free_body in db.list_chapter_memories(upto_turn=state.turn, recent=6)[-1]["body"]
+
 
 def test_effect_brief_carries_levy_echo_fact(game):
     db, state, content = game

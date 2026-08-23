@@ -1271,10 +1271,9 @@ _SETTLE_META_LIAO_SEED_KEY = "辽饷九厘基线"
 _SETTLE_META_JIAO_SEED_KEY = "剿饷基线"
 _SETTLE_META_LIAN_SEED_KEY = "练饷基线"
 _SETTLE_META_LAND_DENOMINATOR_KEY = "饷率田亩分母基线"
-# #650/0089 明渠：下旨加派逐省累积账（万两/月，负额停征/蠲免、钳 ≥0）＋旨源标。
+# #650/0089 明渠：下旨加派逐省累积账（万两/月，负额停征/蠲免、钳 ≥0）。
 # 与 #649 饷率 seed 同址（settle._meta），restore 只读 DB 无损接续（P1）。
 _SETTLE_META_JIAPIAI_KEY = "加派基线"
-_SETTLE_META_JIAPIAI_ORIGIN_KEY = "加派基线源"
 _FISCAL_LEVY_PROVISIONAL_KEYS = {
     _SETTLE_META_BASE_TRANSPORT_KEY,
     _SETTLE_META_LIAO_SEED_KEY,
@@ -7139,7 +7138,7 @@ def _apply_surcharge_decrees(
     canonical 段形＝list，每项 {region_id, monthly_amount, reason?, origin_ref}：
     monthly_amount 为月额增量（万两/月，带符号——正＝加派累加，负＝停征/蠲免），
     落在 regions.fiscal.settle._meta「加派基线」上（与 #649 饷率 seed 同址，
-    钳制 ≥0），旨源标存「加派基线源」。钱面由 _apply_fiscal_levy_targets 把
+    钳制 ≥0）。钱面由 _apply_fiscal_levy_targets 把
     基线折入三饷应征/起运定额（明选有明账，公开代价＝真征收）；民面由
     _apply_levy_driven_transfers 按账机械入池。无旨不入账：段空＝账不动。
 
@@ -7217,7 +7216,6 @@ def _apply_surcharge_decrees(
         old = max(0.0, float(meta.get(_SETTLE_META_JIAPIAI_KEY, 0) or 0))
         new = max(0.0, old + amount)  # 负额停征/蠲免，账面钳 ≥0
         meta[_SETTLE_META_JIAPIAI_KEY] = new
-        meta[_SETTLE_META_JIAPIAI_ORIGIN_KEY] = origin_ref
         settle["_meta"] = meta
         db.conn.execute(
             "UPDATE regions SET fiscal = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -7247,7 +7245,7 @@ def _apply_levy_driven_transfers(
     入池(存档单位) = 基线 × LEVY_DISPLACEMENT_RATE(人/万两·月) × (100−民心)/100，
     随存档 population_unit 换算（legacy 万口径 sub-万不可表达，四舍五入到万口），
     钳到农民@省余额后再交 _apply_population_transfers 守恒原语落账
-    （reason=加派、origin 打旨源标；无旨源标退 盘面自发 哨兵）。基线 ≤0 或折算后
+    （reason=加派；累积账月效统一使用 `盘面自发`，不伪归最后一道改账旨）。基线 ≤0 或折算后
     ≤0 的省零入池——停加派/蠲免后入池止（AC5；出口回流归 S5 #652）。
     """
     persons_unit = db.population_unit == POPULATION_UNIT_PERSONS
@@ -7259,15 +7257,20 @@ def _apply_levy_driven_transfers(
         region_id = str(row["id"])
         try:
             fiscal = json.loads(str(row["fiscal"] or "{}"))
-        except (TypeError, ValueError):
-            continue
-        settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
-        meta = settle.get("_meta") if isinstance(settle, dict) else None
-        base = 0.0
-        if isinstance(meta, dict):
-            raw = meta.get(_SETTLE_META_JIAPIAI_KEY, 0)
-            if not isinstance(raw, bool) and isinstance(raw, (int, float)):
-                base = max(0.0, float(raw))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{region_id}.fiscal 持久 JSON 损坏，无法结算加派账") from exc
+        if not isinstance(fiscal, dict):
+            raise ValueError(f"{region_id}.fiscal 必须是 object，无法结算加派账")
+        settle = fiscal.get("settle")
+        if not isinstance(settle, dict):
+            raise ValueError(f"{region_id}.fiscal.settle 必须是 object，无法结算加派账")
+        meta = settle.get("_meta")
+        if meta is not None and not isinstance(meta, dict):
+            raise ValueError(f"{region_id}.fiscal.settle._meta 必须是 object，无法结算加派账")
+        raw = meta.get(_SETTLE_META_JIAPIAI_KEY, 0) if meta is not None else 0
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)) or not math.isfinite(float(raw)):
+            raise ValueError(f"{region_id}.settle._meta.{_SETTLE_META_JIAPIAI_KEY} 必须是有限数值")
+        base = max(0.0, float(raw))
         if base <= 0:
             continue
         if db.conn.execute(
@@ -7275,7 +7278,7 @@ def _apply_levy_driven_transfers(
         ).fetchone() is None or db.conn.execute(
             "SELECT 1 FROM classes WHERE name='流民' AND region_id=?", (region_id,)
         ).fetchone() is None:
-            continue  # 无阶级省级行：无池可入，静默出列（守恒主账不涉该省）
+            raise ValueError(f"{region_id} 有正加派账但缺农民/流民省级人口行")
         support = max(0, min(100, int(row["public_support"] or 0)))
         raw_persons = base * LEVY_DISPLACEMENT_RATE * (100 - support) / 100.0
         amount = int(round(raw_persons)) if persons_unit else int(round(raw_persons / 10000.0))
@@ -7287,17 +7290,13 @@ def _apply_levy_driven_transfers(
         amount = min(amount, balance)  # clamp：原语超余额即拒，先钳免噪音
         if amount <= 0:
             continue
-        origin_ref = "盘面自发"
-        if isinstance(meta, dict):
-            stored = str(meta.get(_SETTLE_META_JIAPIAI_ORIGIN_KEY, "") or "").strip()
-            if stored:
-                origin_ref = stored
         records.append({
             "source": f"农民@{region_id}",
             "target": f"流民@{region_id}",
             "amount": amount,
             "reason": "加派",
-            "origin_ref": origin_ref,
+            # 月度后果来自累积账，不伪归因给最后一道改变账额的旨。
+            "origin_ref": "盘面自发",
         })
     if not records:
         return [], []
