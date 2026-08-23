@@ -136,21 +136,28 @@ def test_production_assignee_is_named_route(env, payload):
     assert "assignee" not in persisted_payload
 
 
-def test_legacy_character_executor_migrates_without_overriding_roster(env):
+@pytest.mark.parametrize("action", ["assignment", "military_order"])
+def test_legacy_character_executor_migrates_without_overriding_roster(env, action):
     db, state, _ = env
     legacy_id = db.create_decree_dossier(
-        state, action_type="assignment", decree_text="旧式直点",
+        state, action_type=action, decree_text="旧式直点",
         target_kind="issue", target_id="legacy", executor_kind="character",
         executor_id="陈新甲", payload={},
     )
     roster_id = db.create_decree_dossier(
-        state, action_type="assignment", decree_text="名册优先",
+        state, action_type=action, decree_text="名册优先",
         target_kind="issue", target_id="roster", executor_kind="character",
         executor_id="陈新甲", payload={},
         participants=[{"character_id": "毕自严", "tier": "主办"}],
     )
-    assert resolve_dossier_owner_name(db.get_decree_dossier(legacy_id)) == "陈新甲"
-    assert resolve_dossier_owner_name(db.get_decree_dossier(roster_id)) == "毕自严"
+    legacy_roster = db.get_decree_dossier(legacy_id)["participant_roster"]
+    existing_roster = db.get_decree_dossier(roster_id)["participant_roster"]
+    assert [
+        item["character_id"] for item in legacy_roster if item["tier"] == "主办"
+    ] == ["陈新甲"]
+    assert [
+        item["character_id"] for item in existing_roster if item["tier"] == "主办"
+    ] == ["毕自严"]
 
 
 def test_canonical_owner_precedes_legacy_with_history_fallback():
