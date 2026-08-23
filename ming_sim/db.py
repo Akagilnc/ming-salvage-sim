@@ -11447,9 +11447,11 @@ class GameDB:
         out["stigma"] = stigma
         try:
             roster = json.loads(out.get("participant_roster") or "[]")
-        except (TypeError, ValueError):
-            roster = []
-        out["participant_roster"] = roster if isinstance(roster, list) else []
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"案卷#{out['id']} participant_roster 无效") from exc
+        if not isinstance(roster, list):
+            raise ValueError(f"案卷#{out['id']} participant_roster 非列表")
+        out["participant_roster"] = roster
         return out
 
     # #619 / ADR 0073 reported-progress origin namespace (ID-11 open append).
@@ -13280,6 +13282,60 @@ class GameDB:
         roster = self._normalize_participant_roster(roster_source, strict_structured=True)
         self._validate_participant_roster_references(roster)
         self._validate_dossier_delegations(roster)
+
+        # #721：承办路由属于 canonical 成案核，首次 INSERT 前只补内存 roster，
+        # 最终仍由同一 INSERT 写一次；不存在成案后 JSON/UPDATE 平行写口。
+        from ming_sim.executor_routing import resolve_lead_executors
+        route = resolve_lead_executors(
+            self.conn, action_type=action, target_id=canonical_target_id,
+            payload=canonical_payload, participant_roster=roster,
+        )
+        existing_leads = {
+            str(item.get("character_id") or "").strip()
+            for item in roster if item.get("tier") == "主办"
+        }
+        for lead in route["leads"]:
+            if lead in existing_leads:
+                continue
+            # 任命候选可在成案时尚未进入 characters；0053 的人物外键真源
+            # 不容为承办路由放宽。当前法源下只填已在册者，待有 durable 的
+            # future-person 键形后再覆盖新臣任命，禁止另造平行身份轴。
+            if action in {"appointment", "acting_appointment"} and self.conn.execute(
+                "SELECT 1 FROM characters WHERE name=?", (lead,),
+            ).fetchone() is None:
+                continue
+            roster.append({
+                "character_id": lead, "tier": "主办", "role": "",
+                "delegator_id": None,
+            })
+            existing_leads.add(lead)
+        # 自动补入者与调用方名单共走 0053 的引用、委派链单一校验口。
+        roster = self._normalize_participant_roster(roster, strict_structured=True)
+        self._validate_participant_roster_references(roster)
+        self._validate_dossier_delegations(roster)
+
+        rejection_collector = None
+        if route["rejection"] is not None:
+            from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
+            rejection_collector = RejectionCollector()
+            rejection_collector.record(
+                "executor_routing",
+                RejectedItem(
+                    item={
+                        "action_type": action,
+                        "transaction_category": str(
+                            canonical_payload.get("transaction_category") or ""
+                        ).strip(),
+                        "target_kind": canonical_target_kind,
+                        "target_id": canonical_target_id,
+                    },
+                    reason="事务类别未命中承办职司映射",
+                    category="duty_route_unmapped",
+                    source=Provenance.player_decree,
+                ),
+                int(state.turn),
+            )
+            rejection_collector.flush_to_db(self)
         cur = self.conn.execute(
             """
             INSERT INTO decree_dossiers
@@ -13334,6 +13390,10 @@ class GameDB:
                 source_id=f"decree_dossier:{dossier_id}", commit=False,
             )
         self._commit_dossier_write(commit)
+        if commit and rejection_collector is not None:
+            # 文件镜像只发生在 DB commit 成功后；DB 始终是分析真源。
+            from ming_sim.error_pack import rejections_jsonl_path
+            rejection_collector.mirror_to_jsonl(rejections_jsonl_path())
         return dossier_id
 
     @staticmethod

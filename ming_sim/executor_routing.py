@@ -12,7 +12,6 @@
 
 from __future__ import annotations
 
-import json
 import sqlite3
 from typing import Any, Dict, List, Mapping, Optional
 
@@ -20,19 +19,24 @@ from typing import Any, Dict, List, Mapping, Optional
 
 _COVERAGE_APPOINTMENT = frozenset({"appointment", "acting_appointment"})
 _COVERAGE_MULTI_MONTH = frozenset({"assignment", "military_order"})
-_COVERAGE_STRIKE = frozenset({"punishment"})
+# 当前 canonical punishment schema 尚无 execution-class 元数据。依 0116/0117
+# 收窄到明确含「拿问」这一结构化差务的既有枚举；不得由 punishment 顶层或旨文扩张。
+_STRIKE_PUNISH_ACTIONS = frozenset({"拿问下狱", "拿问去职"})
 
 
-def classify_execution_coverage(action_type: object) -> Optional[str]:
-    """凡颁出后需人承办的旨意入执行层：multi_month/strike/appointment；
-    立即 delta 与叙事类（赏赐/开仓/招抚等无「人承办」语义者）返回 None 排除。"""
+def classify_execution_coverage(
+    action_type: object, payload: Optional[Mapping[str, object]] = None,
+) -> Optional[str]:
+    """只读 canonical 动作及结构化细类判别执行覆盖域，不解析旨文。"""
     action = str(action_type or "").strip()
     if action in _COVERAGE_APPOINTMENT:
         return "appointment"
     if action in _COVERAGE_MULTI_MONTH:
         return "multi_month"
-    if action in _COVERAGE_STRIKE:
-        return "strike"
+    if action == "punishment":
+        punish_action = str((payload or {}).get("punish_action") or "").strip()
+        if punish_action in _STRIKE_PUNISH_ACTIONS:
+            return "strike"
     return None
 
 
@@ -113,7 +117,7 @@ def resolve_lead_executors(
     *,
     action_type: object = "",
     target_id: object = "",
-    transaction_category: object = "",
+    payload: Optional[Mapping[str, object]] = None,
     participant_roster: object = None,
 ) -> Dict[str, object]:
     """确定性双源路由（ADR 0117 净新契约 a）：返回结构化路由结果。
@@ -121,7 +125,13 @@ def resolve_lead_executors(
     leads 有序去重；signal.code='idle_start'＝怠办起步（缺位链穷尽或任免无
     被任命者），rejection 非 None＝映射未命中 fail-loud（两者互斥、不同时落）。
     """
-    coverage = classify_execution_coverage(action_type)
+    canonical_payload = payload or {}
+    coverage = classify_execution_coverage(action_type, canonical_payload)
+    if coverage is None:
+        return {
+            "coverage": None, "route": "excluded", "office_type": "", "leads": [],
+            "downgrade_step": "", "signal": None, "rejection": None,
+        }
 
     # ① 任免：执行主体＝被任命者本人
     if coverage == "appointment":
@@ -171,7 +181,7 @@ def resolve_lead_executors(
         }
 
     # ③ 职司表兜底：事务类别（结构化闭集 token）→ 职司 → 在任主官
-    category = str(transaction_category or "").strip()
+    category = str(canonical_payload.get("transaction_category") or "").strip()
     office_type = duty_route_office_type(category)
     if office_type is None:
         # 未命中映射 ＝ 归口缺口，fail-loud 进 rejections；不是怠办起步。
@@ -213,62 +223,3 @@ def resolve_lead_executors(
         },
         "rejection": None,
     }
-
-
-# ── 落库绑定：主办档写回 participant_roster（幂等；restore 只读 DB 接续）──
-
-
-def apply_lead_binding(conn: sqlite3.Connection, dossier_id: int) -> Dict[str, object]:
-    """按已存案卷解析主办并写回 decree_dossiers.participant_roster（0053 档，
-    不另建承办人字段）。幂等：已在主办档的人不重复写入；commit 归调用方事务。"""
-    row = conn.execute(
-        "SELECT action_type, target_id, payload_json, participant_roster"
-        " FROM decree_dossiers WHERE id=?",
-        (int(dossier_id),),
-    ).fetchone()
-    if row is None:
-        raise ValueError(f"decree_dossier {dossier_id} 不存在")
-    try:
-        payload = json.loads(row["payload_json"] or "{}")
-    except (TypeError, ValueError):
-        payload = {}
-    try:
-        roster = json.loads(row["participant_roster"] or "[]")
-    except (TypeError, ValueError):
-        roster = []
-    result = resolve_lead_executors(
-        conn,
-        action_type=row["action_type"],
-        target_id=row["target_id"],
-        transaction_category=str(payload.get("transaction_category") or ""),
-        participant_roster=roster,
-    )
-    # 0053 语义：大臣遣（delegator_id 非空）≠ 皇帝点将。路由未走 named 时，
-    # 既有被遣主办行降档为协办（保留人及委派链，不静默删除），主办档唯一归
-    # 本路由结果；named 路由则原样保留。
-    changed = False
-    if result["route"] != "named":
-        for entry in roster:
-            if (
-                isinstance(entry, dict)
-                and str(entry.get("tier") or "").strip() == "主办"
-                and str(entry.get("delegator_id") or "").strip()
-            ):
-                entry["tier"] = "协办"
-                changed = True
-    existing = {
-        str(e.get("character_id") or "").strip()
-        for e in roster
-        if isinstance(e, dict) and str(e.get("tier") or "").strip() == "主办"
-    }
-    for lead in result["leads"]:
-        if lead not in existing:
-            roster.append({"tier": "主办", "character_id": lead, "delegator_id": ""})
-            changed = True
-    if changed:
-        conn.execute(
-            "UPDATE decree_dossiers SET participant_roster=?, updated_at=CURRENT_TIMESTAMP"
-            " WHERE id=?",
-            (json.dumps(roster, ensure_ascii=False), int(dossier_id)),
-        )
-    return result
