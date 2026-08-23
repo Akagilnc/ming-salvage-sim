@@ -93,11 +93,14 @@ def _holders_in_office(conn: sqlite3.Connection, office_type: str) -> List[sqlit
 def _downgrade_chain(conn: sqlite3.Connection, office_type: str) -> tuple:
     """主官→署理降档，确定性（同名序 tie-break）。命中返回 (name, step)。"""
     rows = _holders_in_office(conn, office_type)
+    acting_tenures = {"署理", "兼署"}
     chiefs = [
         r["name"]
         for r in rows
         if any(s in (r["office"] or "") for s in _duty_table().get("chief_stems", []))
         and "署理" not in (r["office"] or "")
+        and "兼署" not in (r["office"] or "")
+        and r["tenure"] not in acting_tenures
     ]
     if chiefs:
         return chiefs[0], "主官"
@@ -105,7 +108,8 @@ def _downgrade_chain(conn: sqlite3.Connection, office_type: str) -> tuple:
         r["name"]
         for r in rows
         if "署理" in (r["office"] or "")
-        or r["tenure"] == "署理"
+        or "兼署" in (r["office"] or "")
+        or r["tenure"] in acting_tenures
         or any(s in (r["office"] or "") for s in _duty_table().get("deputy_stems", []))
     ]
     if deputies:

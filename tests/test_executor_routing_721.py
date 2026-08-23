@@ -18,6 +18,7 @@ from ming_sim.executor_routing import (
     duty_route_office_type,
     resolve_lead_executors,
 )
+from ming_sim.participant_roster import resolve_dossier_owner_name
 from tests.dossier_test_helpers import promulgate_proposed_appointments
 
 
@@ -126,6 +127,51 @@ def test_production_assignee_is_named_route(env):
         if e["tier"] == "主办"
     ]
     assert leads == ["陈新甲"]
+
+
+def test_canonical_owner_precedes_legacy_with_history_fallback():
+    assert resolve_dossier_owner_name({
+        "executor_kind": "character", "executor_id": "旧承办",
+        "participant_roster": [{"tier": "主办", "character_id": "新主办"}],
+    }) == "新主办"
+    assert resolve_dossier_owner_name({
+        "executor_kind": "character", "executor_id": "旧承办",
+        "participant_roster": [],
+    }) == "旧承办"
+    assert resolve_dossier_owner_name({"participant_roster": []}) == ""
+
+
+def test_acting_tenure_never_preempts_true_chief(env):
+    db, _, _ = env
+    rows = db.conn.execute(
+        "SELECT name FROM characters WHERE office_type='户部' AND status='active' ORDER BY name LIMIT 2"
+    ).fetchall()
+    assert len(rows) == 2
+    acting, chief = rows[0]["name"], rows[1]["name"]
+    db.conn.execute("UPDATE characters SET office='户部尚书' WHERE name IN (?,?)", (acting, chief))
+    db.conn.execute("UPDATE character_offices SET appointment_tenure='兼署' WHERE character_name=?", (acting,))
+    db.conn.execute("UPDATE character_offices SET appointment_tenure='真除' WHERE character_name=?", (chief,))
+    result = resolve_lead_executors(
+        db.conn, action_type="assignment", payload={"transaction_category": "清丈"},
+    )
+    assert result["leads"] == [chief]
+    assert result["downgrade_step"] == "主官"
+
+
+@pytest.mark.parametrize("tenure", ["署理", "兼署"])
+def test_acting_tenures_share_downgrade_band(env, tenure):
+    db, _, _ = env
+    holder = db.conn.execute(
+        "SELECT name FROM characters WHERE office_type='户部' AND status='active' ORDER BY name LIMIT 1"
+    ).fetchone()["name"]
+    db.conn.execute("UPDATE characters SET status='dismissed' WHERE office_type='户部' AND name<>?", (holder,))
+    db.conn.execute("UPDATE characters SET office='户部尚书' WHERE name=?", (holder,))
+    db.conn.execute("UPDATE character_offices SET appointment_tenure=? WHERE character_name=?", (tenure, holder))
+    result = resolve_lead_executors(
+        db.conn, action_type="assignment", payload={"transaction_category": "清丈"},
+    )
+    assert result["leads"] == [holder]
+    assert result["downgrade_step"] == "署理降档"
 
 
 def test_idle_signal_persists_and_restores(env):
@@ -261,10 +307,26 @@ def test_punishment_stage_rejects_unmapped_category_before_pending_or_dossier(en
 
 def test_unmapped_rejection_rolls_back_with_uncommitted_dossier(env):
     db, state, _ = env
-    _create(db, state, category="修仙", commit=False)
+    assert _create(db, state, category="修仙", commit=False) == 0
     db.conn.rollback()
     assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0] == 0
     assert db.conn.execute("SELECT COUNT(*) FROM rejection_reports").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("action", ["assignment", "military_order"])
+def test_idle_promulgation_keeps_executing_without_pre_materialization(env, action):
+    db, state, content = env
+    db.conn.execute("UPDATE characters SET status='dismissed' WHERE office_type='户部'")
+    before_issues = db.conn.execute("SELECT COUNT(*) FROM issues").fetchone()[0]
+    dossier_id = _create(
+        db, state, action=action, category="清丈",
+        payload={"title": "怠办测试", "target_id": "不存在军队", "station": "辽东"},
+    )
+    db.apply_dossier_promulgation(state, dossier_id, "promulgated", content=content)
+    dossier = db.get_decree_dossier(dossier_id)
+    assert dossier["status"] == "executing"
+    assert dossier.get("outcome") is None
+    assert db.conn.execute("SELECT COUNT(*) FROM issues").fetchone()[0] == before_issues
 
 
 @pytest.mark.parametrize("column,bad", [

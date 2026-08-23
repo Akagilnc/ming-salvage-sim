@@ -13359,6 +13359,16 @@ class GameDB:
                 int(state.turn),
             )
             rejection_collector.flush_to_db(self)
+            # Admission rejection owns this item: no dossier or downstream
+            # knowledge/allocation rows may be materialized.
+            self._commit_dossier_write(commit)
+            if commit and owns_rejection_collector:
+                from ming_sim.error_pack import rejections_jsonl_path
+                try:
+                    rejection_collector.mirror_to_jsonl(rejections_jsonl_path())
+                except Exception as mirror_exc:
+                    tlog(f"[rejection] jsonl 镜像失败（DB 行已落，仅副本丢失）：{mirror_exc}")
+            return 0
         durable_extension = dict(extension or {})
         signal = route.get("signal")
         if signal is not None:
@@ -14272,6 +14282,18 @@ class GameDB:
             if not isinstance(payload, dict):
                 raise ValueError("案卷 payload 非对象")
             policy = dossier_action_policy(row["action_type"], payload)
+            signal = row.get("execution_signal") or {}
+            if (
+                row["action_type"] in {"assignment", "military_order"}
+                and isinstance(signal, dict)
+                and signal.get("code") == "idle_start"
+            ):
+                # Durable vacancy signal starts an executing dossier, but may
+                # not pre-materialize work or invent a terminal outcome.
+                self.transition_decree_dossier(
+                    dossier_id, "executing", commit=False,
+                )
+                return
             # Narrative-owned effects are deliberately left to the
             # simulator/extractor; immediate-owned effects were staged before
             # this gate.  Only payload-owned actions enter this dispatcher.
@@ -14504,8 +14526,6 @@ class GameDB:
                     state, row, payload, dossier_id,
                 )
             elif row["action_type"] == "assignment":
-                if not str(row.get("executor_id") or ""):
-                    raise ValueError("交办案卷缺少 executor")
                 # #520 / ADR 0055：交办机械效果=initiative，顺颁后落；cap 逐项软拒。
                 if not self._apply_assignment_verdict_effect(
                     state, row, payload, dossier_id,
@@ -15273,12 +15293,8 @@ class GameDB:
         reason = str(
             payload.get("text") or row.get("decree_text") or "军令调遣"
         )
-        actor = str(
-            row.get("executor_id")
-            or payload.get("assignee_id")
-            or payload.get("assignee")
-            or ""
-        ).strip()
+        from ming_sim.participant_roster import resolve_dossier_owner_name
+        actor = resolve_dossier_owner_name(row)
 
         self._apply_military_order_station_effect(
             state,
@@ -15404,14 +15420,10 @@ class GameDB:
             apply_score_extraction,
         )
 
-        owner = str(
-            row.get("executor_id")
-            or payload.get("assignee_id")
-            or payload.get("assignee")
-            or ""
-        ).strip()
+        from ming_sim.participant_roster import resolve_dossier_owner_name
+        owner = resolve_dossier_owner_name(row)
         if not owner:
-            raise ValueError("交办案卷缺少 executor")
+            raise ValueError("交办案卷缺少主办")
 
         title = str(
             payload.get("title") or row.get("decree_text") or payload.get("text") or ""
