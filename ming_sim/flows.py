@@ -608,6 +608,28 @@ def army_loyalty_tick_delta(new_arrears: float, full_needed: int) -> int:
     return -5
 
 
+def derive_army_mutiny_state(army) -> str:
+    """实时派生哗变状态；持久 latch 优先覆盖 loyalty 档（ADR 0025 D3/D4）。"""
+    if bool(army["is_mutinied"]):
+        return "哗变"
+    loyalty = int(army["loyalty"])
+    if loyalty >= 60:
+        return "正常"
+    if loyalty >= 40:
+        return "不满"
+    return "鼓噪"
+
+
+def _next_mutiny_latch(*, loyalty: int, arrears: float, needed: int, current: int) -> int:
+    """tick 后判闩：入闩 <20 且欠逾四月；解闩须 >=40 且欠饷退到四月内。"""
+    if needed <= 0:
+        return int(bool(current))
+    arrears_retired = max(0.0, float(arrears)) <= 4 * needed
+    if current:
+        return 0 if loyalty >= 40 and arrears_retired else 1
+    return 1 if loyalty < 20 and not arrears_retired else 0
+
+
 def _army_loyalty_reason(new_arrears: float, full_needed: int) -> str:
     """#314 军心日志专用原因：按累计欠饷档位生成，不复用当月 shortfall reason_tag。"""
     arrears = max(0.0, float(new_arrears))
@@ -1437,7 +1459,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
         army_rows_raw = db.conn.execute(
             # #44 army_needed 需 manpower/salary_rate/owner_power（应发挂钩兵力派生）
             "SELECT id, name, manpower, salary_rate, owner_power, arrears, morale, loyalty, "
-            "is_tusi, self_funded_pay FROM armies"
+            "is_tusi, self_funded_pay, is_mutinied FROM armies"
         ).fetchall()
         if not army_rows_raw:
             raise SystemExit("fiscal_tick: armies 表无数据，中止。")
@@ -1472,13 +1494,18 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
             if str(row["owner_power"]) == "ming" and not bool(row["is_tusi"]) \
                     and not bool(row["self_funded_pay"]):
                 loyalty_delta = army_loyalty_tick_delta(new_arrears, needed)
+                new_loyalty = max(0, min(100, old_loyalty + loyalty_delta))
+                new_is_mutinied = _next_mutiny_latch(
+                    loyalty=new_loyalty, arrears=new_arrears, needed=needed,
+                    current=int(row["is_mutinied"]),
+                )
             else:
-                loyalty_delta = 0
-            new_loyalty = max(0, min(100, old_loyalty + loyalty_delta))
+                new_loyalty = old_loyalty
+                new_is_mutinied = int(row["is_mutinied"])
 
             db.conn.execute(
-                "UPDATE armies SET arrears = ?, morale = ?, loyalty = ? WHERE id = ?",
-                (new_arrears, new_morale, new_loyalty, army_id),
+                "UPDATE armies SET arrears = ?, morale = ?, loyalty = ?, is_mutinied = ? WHERE id = ?",
+                (new_arrears, new_morale, new_loyalty, new_is_mutinied, army_id),
             )
             if shortfall > 0:
                 reason_tag = (
@@ -1643,7 +1670,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                     """
                     SELECT id, name, manpower, salary_rate, owner_power,
                            arrears, province_pay_arrears, central_pay_arrears,
-                           loyalty, is_tusi, self_funded_pay
+                           loyalty, is_tusi, self_funded_pay, is_mutinied
                     FROM armies
                     WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0
                     """
@@ -1666,12 +1693,16 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                         pass
                     loyalty_delta_unified = army_loyalty_tick_delta(new_arrears_loyalty, full_needed_loyalty)
                     new_loyalty_val = max(0, min(100, old_loyalty_val + loyalty_delta_unified))
+                    new_is_mutinied_val = _next_mutiny_latch(
+                        loyalty=new_loyalty_val, arrears=new_arrears_loyalty,
+                        needed=full_needed_loyalty, current=int(lr["is_mutinied"]),
+                    )
                     if new_loyalty_val == old_loyalty_val and loyalty_delta_unified == 0:
                         # 仍需写日志以保持审计完整性？与 legacy/hub 旧有行为对齐：始终写 loyalty 行
                         pass
                     db.conn.execute(
-                        "UPDATE armies SET loyalty = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                        (new_loyalty_val, army_id_loyalty),
+                        "UPDATE armies SET loyalty = ?, is_mutinied = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                        (new_loyalty_val, new_is_mutinied_val, army_id_loyalty),
                     )
                     loyalty_reason_unified = _army_loyalty_reason(new_arrears_loyalty, full_needed_loyalty)
                     db.conn.execute(
