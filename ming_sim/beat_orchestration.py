@@ -326,6 +326,10 @@ def create_llm_beat_generator(llm_config: Any) -> BeatGenerator:
         label = str(inputs.reign_period_label or "").strip()
         if inputs.beat_kind in (BEAT_OPEN, BEAT_ENTER) and label:
             materials["当期年月"] = label
+        # Structured living facts belong only to the open-beat LLM materials.
+        # The deterministic fallback remains fixed prose and must not expand.
+        if inputs.beat_kind == BEAT_OPEN and inputs.audience_scenes:
+            materials["待呈御前的结构化场面事实"] = inputs.audience_scenes
         return extract_agent_text(agent.run(json.dumps(materials, ensure_ascii=False)))
 
     return generate

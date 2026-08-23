@@ -88,7 +88,7 @@ def test_rejected_canonical_results_neither_consume_nor_create_channel(game, mon
     db, state, _ = game
     did, _, _, _ = _bound_case(db, state)
     monkeypatch.setattr(db, "read_dossier_fork_state", lambda dossier_id: {
-        "dossier_id": dossier_id, "fork": True, "reported_bands": [],
+        "dossier_id": dossier_id, "fork": True, "reported_bands": ["有成"],
         "execution_outcome": "transformed", "actual_effect_count": 1, "beyond_intent": True,
     })
     db.conn.execute(
@@ -108,12 +108,17 @@ def test_rejected_canonical_results_neither_consume_nor_create_channel(game, mon
     assert write_exposure_todos(db, state, rejected) == 0
 
 
-def test_fork_requires_report_transformed_and_real_beyond_intent_effect(game):
+def test_covert_consumer_requires_real_beyond_intent_effect_without_narrowing_generic_fork(game):
     db, state, _ = game
     did, _, _, _ = _bound_case(db, state)
     db.record_dossier_progress(did, state.turn, "有成", "饷事已有眉目", commit=False)
     db.record_dossier_execution(did, "transformed", "暗中摊派", state.turn, close=False, commit=False)
-    assert db.read_dossier_fork_state(did)["fork"] is False
+    assert db.read_dossier_fork_state(did)["fork"] is True  # shared #622/#627 contract
+    db.conn.execute(
+        "INSERT INTO decree_dossier_links(source_dossier_id,target_dossier_id,relation_type,note) "
+        "VALUES (?,?, '稽核','查账')", (did, did),
+    )
+    assert write_exposure_todos(db, state) == 0  # #651 additionally requires actual effect
 
 
 def test_dispositions_require_their_complete_canonical_consequence(game, monkeypatch):
@@ -135,15 +140,37 @@ def test_dispositions_require_their_complete_canonical_consequence(game, monkeyp
         {"name": executor, "动作": "处置"}]}) == 0
     assert settle_exposure_from_canonical_actions(db, state, {
         "applied_person_changes": [{"name": executor, "动作": "处置"}],
-        "relation_edge_events": [{"source": executor, "target": "朝臣", "origin_ref": origin}],
+        "relation_edge_events": [{"source": executor, "target": "朝臣",
+                                  "origin": f"{origin}:relation:结怨|round:{state.turn}"}],
     }) == 1
+
+
+def test_prohibition_reopens_shortfall_once_without_reoffering_dispositions(game, monkeypatch):
+    db, state, _ = game
+    did, _, _, _ = _bound_case(db, state)
+    monkeypatch.setattr(db, "read_dossier_fork_state", lambda dossier_id: {
+        "dossier_id": dossier_id, "fork": True, "reported_bands": ["有成"],
+        "execution_outcome": "transformed", "actual_effect_count": 1, "beyond_intent": True,
+    })
+    db.conn.execute(
+        "INSERT INTO decree_dossier_links(source_dossier_id,target_dossier_id,relation_type,note) "
+        "VALUES (?,?, '稽核','查账')", (did, did),
+    )
+    assert write_exposure_todos(db, state) == 1
+    applied = {"dossier_executions": [{"dossier_id": did, "outcome": "failed"}]}
+    assert settle_exposure_from_canonical_actions(db, state, applied) == 1
+    assert settle_exposure_from_canonical_actions(db, state, applied) == 0
+    scene = list_due_review_scenes(db, state)[0]
+    assert scene["decision"] == "禁摊派"
+    assert scene["shortfall_reopened"] is True
+    assert scene["available_dispositions"] == []
 
 
 def test_population_transfer_is_the_self_grown_unrest_channel(game, monkeypatch):
     db, state, _ = game
     did, _, _, _ = _bound_case(db, state)
     monkeypatch.setattr(db, "read_dossier_fork_state", lambda dossier_id: {
-        "dossier_id": dossier_id, "fork": True, "reported_bands": [],
+        "dossier_id": dossier_id, "fork": True, "reported_bands": ["有成"],
         "execution_outcome": "transformed", "actual_effect_count": 1, "beyond_intent": True,
     })
     extracted = {"population_transfers": [{
