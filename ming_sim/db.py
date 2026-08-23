@@ -1556,6 +1556,30 @@ class GameDB:
                 ON faction_denunciations(turn, id);
             CREATE INDEX IF NOT EXISTS idx_faction_denunciations_target
                 ON faction_denunciations(target_dossier_id, turn, id);
+            -- #651/ADR 0089：暗渠摊派案件行（处置状态唯一载体；两本账本体仍分居
+            -- economy_ledger/classes，此处只记案件面——一案一活跃暗账、暴露与处置状态）。
+            CREATE TABLE IF NOT EXISTS covert_levy_cases (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                dossier_id INTEGER NOT NULL,
+                army_id TEXT NOT NULL,
+                region_id TEXT NOT NULL,
+                handler_character_id TEXT NOT NULL,
+                displaced_amount INTEGER NOT NULL,
+                squeezed_silver INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'active'
+                    CHECK(status IN ('active','exposed','disposed')),
+                disposition TEXT
+                    CHECK(disposition IS NULL OR disposition IN ('禁摊派','默许','查办')),
+                exposed_turn INTEGER,
+                exposed_channel TEXT,
+                disposed_turn INTEGER,
+                created_turn INTEGER NOT NULL,
+                FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_covert_levy_cases_dossier
+                ON covert_levy_cases(dossier_id, id);
+            CREATE INDEX IF NOT EXISTS idx_covert_levy_cases_army
+                ON covert_levy_cases(army_id, status);
             -- ADR 0056: existence of this append-only rail is the idempotency key;
             -- stigma_json is deliberately not used as a cost guard.
             CREATE TABLE IF NOT EXISTS decree_cost_events (
