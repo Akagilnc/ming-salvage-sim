@@ -9,8 +9,8 @@
 """
 from __future__ import annotations
 
-import os
-import tempfile
+from pathlib import Path
+import sqlite3
 
 import pytest
 
@@ -159,9 +159,64 @@ def test_earliest_legal_start_imports_only_earlier_seed_events(tmp_path, monkeyp
         sess.close()
 
 
+def test_missing_bundled_seed_fails_new_save_and_retry_imports(tmp_path, monkeypatch):
+    """必需 bundled seed 缺失时新档响亮失败，恢复后同 DB 可重试。"""
+    import ming_sim.cli_backend as cli_backend
+    import ming_sim.llm_model as llm_mod
+    from ming_sim.paths import bundled_path
+    from ming_sim.relation_seed import SEED_DOC_PARTS
+
+    monkeypatch.setattr(llm_mod, "verify_llm_available", lambda cfg: None)
+    monkeypatch.setattr(cli_backend, "_run_backend_for_config", lambda *args, **kwargs: "")
+    seed_path = Path(bundled_path(*SEED_DOC_PARTS))
+    displaced_path = tmp_path / seed_path.name
+    db_path = str(tmp_path / "missing-seed.db")
+    content = GameContent.load()
+    cfg = LLMConfig(api_key="", base_url="http://unused", model="unused")
+
+    seed_path.replace(displaced_path)
+    try:
+        with pytest.raises(FileNotFoundError):
+            GameSession(db_path=db_path, llm_config=cfg, content=content)
+        with sqlite3.connect(db_path) as conn:
+            assert conn.execute("SELECT COUNT(*) FROM game_state").fetchone()[0] == 0
+    finally:
+        displaced_path.replace(seed_path)
+
+    sess = GameSession(db_path=db_path, llm_config=cfg, content=content)
+    try:
+        assert sess.db.has_savegame() is True
+        assert sess.db.get_relation_edge_events()
+    finally:
+        sess.close()
+
+
+def test_seed_founding_write_does_not_swallow_execute_error_with_bad_rollback():
+    """窄写口不擅自 rollback；因此 rollback 故障不能遮蔽原始写入异常。"""
+    from ming_sim.db import GameDB
+
+    class FailingConnection:
+        def execute(self, *args, **kwargs):
+            raise RuntimeError("injected write failure")
+
+        def rollback(self):
+            raise AssertionError("写口不得拥有 rollback")
+
+    class FakeDB:
+        conn = FailingConnection()
+
+        @staticmethod
+        def owns_transaction():
+            return True
+
+    with pytest.raises(RuntimeError, match="injected write failure"):
+        GameDB.apply_seed_founding_segment(
+            FakeDB(), source="甲", target="乙", dimension="大臣", founding_segment="旧事"
+        )
+
+
 def test_seed_failure_rolls_back_new_save_and_retry_imports(tmp_path, monkeypatch):
     """seed 初始化失败不得烧掉 fresh 判据；修复故障后同 DB 可正常重开。"""
-    import sqlite3
     import ming_sim.cli_backend as cli_backend
     import ming_sim.llm_model as llm_mod
     import ming_sim.relation_seed as seed_mod
@@ -223,7 +278,7 @@ def test_repeated_import_is_idempotent_no_double_write(fresh_session):
     report = import_bundled_relationship_seed(
         sess.db, opening_year=int(state.year), opening_period=int(state.period)
     )
-    assert report is not None and doc is not None
+    assert doc
     assert report["events_imported"] == 0, f"重复导入新写了边事件：{report}"
     assert report["events_total"] == len(events_before)
 

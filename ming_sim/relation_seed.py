@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from ming_sim.constants import DEFAULT_OPENING_PERIOD, DEFAULT_OPENING_YEAR
 from ming_sim.paths import bundled_path
@@ -129,11 +129,9 @@ def validate_seed_document(
     return {"events": events, "summaries": summaries}
 
 
-def load_bundled_seed_document() -> Optional[dict]:
-    """读 bundled 样例 seed 文档；文件不存在＝本仓未带 seed，返回 None 不报错。"""
+def load_bundled_seed_document() -> dict:
+    """读取必需的 bundled seed 文档；缺失或损坏时响亮失败。"""
     path = Path(bundled_path(*SEED_DOC_PARTS))
-    if not path.is_file():
-        return None
     return json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -189,11 +187,9 @@ def import_relationship_seed(
 
 def import_bundled_relationship_seed(
     db: Any, *, opening_year: int, opening_period: int
-) -> Optional[Dict[str, Any]]:
-    """新开档入口：读 bundled 样例 seed 并导入；无 seed 文件返回 None 零副作用。"""
+) -> Dict[str, Any]:
+    """新开档入口：读取必需的 bundled seed 并导入。"""
     doc = load_bundled_seed_document()
-    if doc is None:
-        return None
     return import_relationship_seed(
         db, doc, opening_year=opening_year, opening_period=opening_period
     )

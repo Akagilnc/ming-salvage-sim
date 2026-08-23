@@ -20241,29 +20241,21 @@ class GameDB:
         if dimension not in ("君臣", "大臣"):
             raise ValueError(f"未知关系维度: {dimension!r}")
         owns = self.owns_transaction()
-        try:
-            self.conn.execute(
-                """
-                INSERT INTO relation_summaries
-                    (source, target, dimension, founding_segment, recent_segment,
-                     last_event_id, last_brewed_turn, last_brewed_year, last_brewed_period)
-                VALUES (?, ?, ?, ?, '', 0, 0, 0, 0)
-                ON CONFLICT(source, target) DO UPDATE SET
-                    dimension = excluded.dimension,
-                    founding_segment = excluded.founding_segment,
-                    updated_at = CURRENT_TIMESTAMP
-                """,
-                (str(source), str(target), dimension, str(founding_segment)),
-            )
-            if owns:
-                self.conn.commit()
-        except Exception:
-            if owns:
-                try:
-                    self.conn.rollback()
-                except Exception:
-                    pass
-            raise
+        self.conn.execute(
+            """
+            INSERT INTO relation_summaries
+                (source, target, dimension, founding_segment, recent_segment,
+                 last_event_id, last_brewed_turn, last_brewed_year, last_brewed_period)
+            VALUES (?, ?, ?, ?, '', 0, 0, 0, 0)
+            ON CONFLICT(source, target) DO UPDATE SET
+                dimension = excluded.dimension,
+                founding_segment = excluded.founding_segment,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (str(source), str(target), dimension, str(founding_segment)),
+        )
+        if owns:
+            self.conn.commit()
 
     def get_relation_summary(self, source: str, target: str) -> Optional[Dict[str, Any]]:
         row = self.conn.execute(
