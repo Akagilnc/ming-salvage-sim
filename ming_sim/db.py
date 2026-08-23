@@ -16382,6 +16382,23 @@ class GameDB:
             with cm:
                 savepoint = f"pending_action_apply_{int(pa['id'])}"
                 ok = False
+                office_memory_key = None
+                office_memory_before = None
+                office_memory_had_key = False
+                if pa["kind"] == "office" and content is not None:
+                    office_memory_key = str(payload.get("name") or "").strip()
+                    if office_memory_key:
+                        office_memory_had_key = office_memory_key in content.characters
+                        office_memory_before = content.characters.get(office_memory_key)
+
+                def restore_office_memory() -> None:
+                    if not office_memory_key:
+                        return
+                    if office_memory_had_key:
+                        content.characters[office_memory_key] = office_memory_before
+                    else:
+                        content.characters.pop(office_memory_key, None)
+
                 self.conn.execute(f"SAVEPOINT {savepoint}")
                 try:
                     ok = self._apply_pending_action(
@@ -16392,12 +16409,14 @@ class GameDB:
                             "UPDATE pending_actions SET status='committed' WHERE id=?", (int(pa["id"]),))
                     else:
                         self.conn.execute(f"ROLLBACK TO {savepoint}")
+                        restore_office_memory()
                         # 落不了的(目标已转 pending_review、未知动作、坏 payload)标 failed,不留 pending——
                         # 否则回合推进后成旧回合不可见死行,永不再处理(ship-pre CMR codex)。
                         self.conn.execute(
                             "UPDATE pending_actions SET status='failed' WHERE id=?", (int(pa["id"]),))
                 except Exception as exc:
                     self.conn.execute(f"ROLLBACK TO {savepoint}")
+                    restore_office_memory()
                     rejection = getattr(exc, "dossier_link_rejection", None)
                     if rejection is not None:
                         self._record_dossier_link_rejection(
@@ -16604,15 +16623,16 @@ class GameDB:
                 # 授官/激活仍只由顺颁后的
                 # _commit_office_action -> apply_office_appointment 完成。
                 from ming_sim.models import Character
+                character = Character(
+                    name=name, office="待选", office_type="未仕",
+                    faction=str(payload.get("faction") or "中立").strip() or "中立",
+                    aliases=[], personal_skills=[], loyalty=50, ability=50,
+                    integrity=50, courage=50, style="", power_id="ming",
+                    status="offstage",
+                )
+                content.characters[name] = character
                 self.add_character(
-                    state,
-                    Character(
-                        name=name, office="待选", office_type="未仕",
-                        faction=str(payload.get("faction") or "中立").strip() or "中立",
-                        aliases=[], personal_skills=[], loyalty=50, ability=50,
-                        integrity=50, courage=50, style="", power_id="ming",
-                        status="offstage",
-                    ),
+                    state, character,
                     source="任命准旨身份登记", commit=False,
                 )
             staged_payload = dict(payload)
