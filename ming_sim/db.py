@@ -17584,8 +17584,11 @@ class GameDB:
         commit: bool = True,
     ) -> None:
         self._ensure_event_parent(event_id)
-        if target_dossier_id is not None and self.get_decree_dossier(int(target_dossier_id)) is None:
-            raise ValueError(f"事件绑定的案卷不存在：{target_dossier_id}")
+        if target_dossier_id is not None:
+            if type(target_dossier_id) is not int or target_dossier_id <= 0:
+                raise ValueError(f"事件绑定的案卷 ID 非法：{target_dossier_id}")
+            if self.get_decree_dossier(target_dossier_id) is None:
+                raise ValueError(f"事件绑定的案卷不存在：{target_dossier_id}")
         self.conn.execute(
             f"""
             INSERT INTO event_triggers
