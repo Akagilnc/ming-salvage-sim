@@ -50,6 +50,40 @@ def test_audience_admission_keeps_blank_fail_open_and_reuses_basic_qualification
     assert "已故" in decision.reason
 
 
+def test_audience_admission_records_offsite_summon_before_allowing_audience(game):
+    sess = _session(game)
+    db, state, _content = game
+    remote = _set_place(game, "洪承畴", location="shaanxi")
+    moving = _set_place(game, "孙传庭", location="shaanxi", transit_to="henan")
+
+    fresh = sess.consume_audience_admission(remote, origin_id="web:request-1", state=state)
+    transit = sess.consume_audience_admission(moving, origin_id="cli:switch-1", state=state)
+
+    assert fresh.result is AudienceAdmission.SUMMON_FRESH
+    assert transit.result is AudienceAdmission.SUMMON_IN_TRANSIT
+    assert fresh.allowed is False and transit.allowed is False
+    assert {row["origin_id"]: row["kind"] for row in an.list_unsettled_summons(db)} == {
+        "web:request-1": "fresh",
+        "cli:switch-1": "in_transit",
+    }
+
+
+def test_audience_admission_records_nothing_for_capital_or_disqualified_person(game):
+    sess = _session(game)
+    db, state, _content = game
+    capital = _set_place(game, "毕自严", location="beizhili")
+    dead = _set_place(game, "洪承畴", location="shaanxi")
+    db.set_character_status(state, dead.name, "dead", reason="测试")
+
+    assert sess.consume_audience_admission(
+        capital, origin_id="web:capital", state=state,
+    ).allowed is True
+    assert sess.consume_audience_admission(
+        dead, origin_id="web:dead", state=state,
+    ).allowed is False
+    assert an.list_unsettled_summons(db) == []
+
+
 def test_in_transit_summon_origin_is_idempotent_and_restorable(game):
     db, state, _content = game
     night_id = int(an.open_night(db, state)["id"])
