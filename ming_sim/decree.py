@@ -623,29 +623,6 @@ def _candidate_event_ids_from_simulator_payload(simulator_payload: object) -> Op
     }
 
 
-def _record_public_transfer_effect_sources(
-    db: GameDB, state: GameState, applied: Mapping[str, object], *, commit: bool = False,
-) -> None:
-    """Materialize public mechanical transfer facts at their source boundary.
-
-    The applied ledger is authoritative only after all settlement effects have
-    finished.  Keeping each fact source-scoped lets later public simulators and
-    audiences read it without treating an aggregate chapter as authorization.
-    """
-    transfers = [
-        item for item in (applied.get("population_transfers") or [])
-        if isinstance(item, dict) and not item.get("rejected")
-        and item.get("reason") == "加派"
-    ]
-    for index, item in enumerate(transfers):
-        body = effect_brief({"population_transfers": [item]})
-        db.record_public_knowledge_event(
-            state, "加派民情", body,
-            source_id=f"settlement:population_transfer:{state.turn}:{index}",
-            commit=commit,
-        )
-
-
 def _record_settlement_narrative_sources(
     db: GameDB, state: GameState, narrative: str, *, commit: bool = False,
 ) -> None:
@@ -1921,6 +1898,9 @@ def pre_settle(
             if committed:
                 tlog(f"[pending_actions] 颁诏批量落库 {len(committed)} 条：{[(c['kind'], c['action']) for c in committed]}")
             fiscal_levies = apply_historical_fiscal_rates(state, db, commit=False)
+            # 月初旧账的财政与人口后果同在前括号消费；本月 extractor 改账从下月生效。
+            levy_applied, levy_rejected = _apply_levy_driven_transfers(db, commit=False)
+            setattr(state, "_pre_settle_levy_effects", (levy_applied, levy_rejected))
             if fiscal_levies:
                 tlog(
                     f"[fiscal-levy] 本回合饷率事件前置落账 {len(fiscal_levies)} 条："
@@ -2361,11 +2341,13 @@ def _settle_after_extract_body(
         applied = delta_applier(db, state, extracted, content, registry)
     else:
         applied = apply_score_extraction(db, state, extracted, content=content, registry=registry)
-    # #650/0089：持久加派账的月效只属于月结缝。通用 delta applier 仅落本批
-    # 显式转移，避免召对/DB 辅助写口在同 turn 重复消费常设账。
-    levy_applied, levy_rejected = _apply_levy_driven_transfers(db, commit=False)
+    # #650/0089：月初旧账已在 pre_settle 与财政 tick 同快照消费；这里只把
+    # 机械结果并回 extraction 留痕，不再读本月 extractor 刚改过的账。
+    levy_applied, levy_rejected = getattr(state, "_pre_settle_levy_effects", ([], []))
     applied.setdefault("population_transfers", []).extend(levy_applied)
     applied.setdefault("population_transfers_rejections", []).extend(levy_rejected)
+    if hasattr(state, "_pre_settle_levy_effects"):
+        delattr(state, "_pre_settle_levy_effects")
     # #1504：当月 covert 实况进度与 apply 同一 atomic（0073 实况轨；不读奏报）。
     from ming_sim.covert_progress import (
         apply_monthly_covert_actual_progress,
@@ -2457,9 +2439,8 @@ def _settle_after_extract_body(
     # record_log(sim 下月前文)在 inertia 前已跑、不带此提示噪声。提示极简、不暴露明细（明细落 DB/jsonl）。
     if _has_durable_player_visible_rejection(db, before_turn):
         narrative = narrative + "\n\n有司奏：所拟之事有窒碍未行者，已录档待酌。"
-    # 已落库 applied 至此定型：把公开机械后果写入既有逐来源知识缝，供后续月份
-    # 的 simulator/召对读取；不以章节或邸报 aggregate 反授权。
-    _record_public_transfer_effect_sources(db, state, applied, commit=False)
+    # 机械人口真相只留在 extraction/applied 内账；公开回响由下方既有邸报来源承担，
+    # 不再把精确人数强制广播为所有角色的公共知识。
     # #976: release held pure-public audience chat (non-withheld) before
     # archive materialization so 参与即知 lands without secret-origin rows.
     db.release_held_audience_knowledge(commit=False)
