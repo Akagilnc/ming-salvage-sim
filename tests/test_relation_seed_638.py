@@ -45,10 +45,7 @@ def fresh_session(tmp_path, monkeypatch):
     try:
         yield sess, content
     finally:
-        try:
-            sess.close()
-        except Exception:
-            pass
+        sess.close()
 
 
 def test_seed_document_validation_is_fail_closed():
