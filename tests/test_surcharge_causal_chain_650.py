@@ -135,6 +135,38 @@ def test_repeated_decrees_accumulate_and_negative_stops(game):
     assert _settle_payload(db, "shaanxi")["_meta"]["加派基线"] == pytest.approx(0.0)
 
 
+def test_military_funnel_region_without_class_rows_is_rejected_not_aborted(game):
+    """辽东/皮岛：明控且有 settle 基座，但无农民/流民省级行。
+
+    加派旨若落账，月结机械入池会因缺人口行 fail-loud，整月 atomic 回滚后
+    同一 delta 重试必再炸＝颁诏卡死。此类边镇不是入池成员，须逐项拒收。
+    """
+    db, state, content = game
+    assert db.conn.execute(
+        "SELECT 1 FROM classes WHERE name='农民' AND region_id='liaodong'"
+    ).fetchone() is None
+    before_turn = state.turn
+    settle_with_delta(state, db, {
+        "surcharge_decrees": [
+            _decree(db, state, region_id="liaodong", monthly_amount=10.0),
+            _decree(db, state, monthly_amount=4.0),
+        ],
+    }, before_turn=before_turn, content=content)
+    applied = db.get_turn_extraction(before_turn)["extractor_output"]
+    assert [r["region_id"] for r in applied["surcharge_decrees"]] == ["shaanxi"]
+    assert any(
+        "liaodong" in str(row["reason"])
+        for row in db.conn.execute(
+            "SELECT reason FROM rejection_reports WHERE turn=? AND section='surcharge_decrees_rejections'",
+            (before_turn,),
+        ).fetchall()
+    )
+    liaodong_meta = _settle_payload(db, "liaodong").get("_meta") or {}
+    assert liaodong_meta.get("加派基线") in (None, 0, 0.0)
+    assert _settle_payload(db, "shaanxi")["_meta"]["加派基线"] == pytest.approx(4.0)
+    assert state.turn == before_turn + 1
+
+
 def test_decree_bad_items_rejected_individually(game):
     """坏项逐项拒收留痕、好项照落（ADR 0015/0008 两轴分立）。"""
     db, state, content = game
@@ -269,6 +301,28 @@ def test_settlement_drives_deterministic_pool_inflow(game):
     assert rec["origin_ref"] == "盘面自发"
     assert _pop(db, "农民", "shaanxi") == farmer_before - want
     assert _pop(db, "流民", "shaanxi") == pool_before + want
+
+
+def test_leftover_jiapai_on_military_funnel_does_not_abort_settlement(game):
+    """已落在无人口行边镇上的加派账不得令月结 fail-loud；该区出列入池。"""
+    db, state, content = game
+    fiscal = json.loads(db.conn.execute(
+        "SELECT fiscal FROM regions WHERE id='liaodong'"
+    ).fetchone()[0])
+    fiscal["settle"].setdefault("_meta", {})["加派基线"] = 10.0
+    db.conn.execute(
+        "UPDATE regions SET fiscal=? WHERE id='liaodong'",
+        (json.dumps(fiscal, ensure_ascii=False),),
+    )
+    db.conn.commit()
+    before_turn = state.turn
+    settle_with_delta(state, db, {}, before_turn=before_turn, content=content)
+    applied = db.get_turn_extraction(before_turn)["extractor_output"]
+    assert not [
+        r for r in applied["population_transfers"]
+        if r.get("reason") == "加派" and r.get("region_id") == "liaodong"
+    ]
+    assert state.turn == before_turn + 1
 
 
 def test_ming_province_without_fiscal_base_is_not_a_levy_member(game):
