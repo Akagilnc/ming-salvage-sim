@@ -1,6 +1,7 @@
 """#670 召对 travel-gating 的公开 admission 与 fresh seed 契约。"""
 
 from ming_sim.session import AudienceAdmission, GameSession
+from ming_sim import audience_night as an
 
 
 def _session(game):
@@ -45,6 +46,33 @@ def test_audience_admission_keeps_blank_fail_open_and_reuses_basic_qualification
     decision = sess.admit_audience(dead)
     assert decision.result is None
     assert "已故" in decision.reason
+
+
+def test_in_transit_summon_origin_is_idempotent_and_restorable(game):
+    db, state, _content = game
+    night_id = int(an.open_night(db, state)["id"])
+
+    first = an.record_summon_in_transit(
+        db, night_id, "洪承畴", origin_id="command:42",
+    )
+    again = an.record_summon_in_transit(
+        db, night_id, "洪承畴", origin_id="command:42",
+    )
+
+    assert again == first
+    assert an.list_unsettled_summons(db) == [{
+        "entry_id": first,
+        "night_id": night_id,
+        "person_name": "洪承畴",
+        "origin_id": "command:42",
+        "kind": "in_transit",
+    }]
+    # The projection is rebuilt exclusively from the durable story ledger.
+    assert an.list_unsettled_summons(db) == an.list_unsettled_summons(db)
+
+    assert an.settle_summon_origin(db, "command:42") is True
+    assert an.settle_summon_origin(db, "command:42") is False
+    assert an.list_unsettled_summons(db) == []
 
 
 def test_fresh_seed_closes_ticket_670_named_locations(content):

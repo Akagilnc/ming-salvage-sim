@@ -93,6 +93,9 @@ def engine_command_mingfa_publication_ids(
 # 进出账（ADR 0035：TAG_ENTER/TAG_EXIT 是机器承重的在场效果标识「进/出」）
 TAG_EXIT = "告退"          # 出：离场；确定性「令 X 退下」口令落此账
 TAG_IN_TRANSIT = "传召在途"  # 账在人不在场：传召已发、人在途（不落在场效果）
+TAG_SUMMON_UNSETTLED = "传召未结"
+TAG_SUMMON_SETTLED = "传召结清"
+_SUMMON_ORIGIN_PREFIX = "传召源#"
 # #526 / #471 S10：留侍叙事账标签——非进/出，不驱动在场（口径回灌 #500）
 TAG_STAY_ATTEND = "留侍"
 
@@ -1598,6 +1601,59 @@ def ensure_open_night_for_audience(
     return open_night(db, state, time_of_day=time_of_day, location=location, body=body)
 
 
+def _summon_origin_tag(origin_id: object) -> str:
+    origin = str(origin_id or "").strip()
+    return f"{_SUMMON_ORIGIN_PREFIX}{origin}" if origin else ""
+
+
+def list_unsettled_summons(db: Any) -> List[Dict[str, Any]]:
+    """从故事账确定性投影未结传召；不解析自由叙事正文。"""
+    rows = db.conn.execute(
+        "SELECT id, night_id, person_names, tags FROM story_ledger_entries ORDER BY id"
+    ).fetchall()
+    projected: List[Dict[str, Any]] = []
+    for row in rows:
+        tags = json.loads(row["tags"] or "[]")
+        if TAG_SUMMON_UNSETTLED not in tags or TAG_SUMMON_SETTLED in tags:
+            continue
+        origin = next(
+            (str(tag)[len(_SUMMON_ORIGIN_PREFIX):] for tag in tags
+             if str(tag).startswith(_SUMMON_ORIGIN_PREFIX)),
+            "",
+        )
+        names = json.loads(row["person_names"] or "[]")
+        if not origin or not names:
+            continue
+        projected.append({
+            "entry_id": int(row["id"]), "night_id": int(row["night_id"]),
+            "person_name": str(names[0]), "origin_id": origin,
+            "kind": "in_transit" if TAG_IN_TRANSIT in tags else "fresh",
+        })
+    return projected
+
+
+def settle_summon_origin(db: Any, origin_id: object) -> bool:
+    """成功写入续程后按 origin 结清；重复结清为幂等 no-op。"""
+    origin = str(origin_id or "").strip()
+    matches = [item for item in list_unsettled_summons(db) if item["origin_id"] == origin]
+    if not matches:
+        return False
+    for item in matches:
+        row = db.conn.execute(
+            "SELECT tags FROM story_ledger_entries WHERE id=?", (item["entry_id"],)
+        ).fetchone()
+        tags = json.loads(row["tags"] or "[]")
+        tags = [tag for tag in tags if tag != TAG_SUMMON_UNSETTLED]
+        tags.append(TAG_SUMMON_SETTLED)
+        db.conn.execute(
+            "UPDATE story_ledger_entries SET tags=? WHERE id=?",
+            (json.dumps(tags, ensure_ascii=False), item["entry_id"]),
+        )
+    if _should_commit(db):
+        db.conn.commit()
+    return True
+
+
 def record_summon_in_transit(
     db: Any,
     night_id: int,
@@ -1605,18 +1661,27 @@ def record_summon_in_transit(
     *,
     method: str = METHOD_CHUANZHAO,
     body: str = "",
+    origin_id: object = "",
 ) -> int:
-    """落传召在途账：账在人不在场——传召已发、人在途，不落在场效果。"""
+    """落传召在途账；带 origin 时，同一人物同一未结 origin 幂等。"""
     name = str(person_name or "").strip()
     if not name:
         raise AudienceNightError("传召人名不能为空", code="empty_person")
     method = _validate_summon_method(method, default=METHOD_CHUANZHAO)
+    origin_tag = _summon_origin_tag(origin_id)
+    if origin_tag:
+        for item in list_unsettled_summons(db):
+            if item["person_name"] == name and item["origin_id"] == str(origin_id).strip():
+                return int(item["entry_id"])
+    tags = [TAG_IN_TRANSIT, method]
+    if origin_tag:
+        tags.extend([TAG_SUMMON_UNSETTLED, origin_tag])
     return append_ledger_entry(
         db, night_id,
         person_names=[name],
         audibility=AUDIBILITY_PUBLIC,
         body=body or f"传召{name}，在途未至。",
-        tags=[TAG_IN_TRANSIT, method],
+        tags=tags,
     )
 
 
