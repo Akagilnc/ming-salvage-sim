@@ -19,6 +19,7 @@ import pytest
 
 from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS, POPULATION_UNIT_WAN
 from ming_sim.decree import settle_with_delta
+from ming_sim.exceptions import SettlementAbort
 from ming_sim.issues import apply_historical_fiscal_rates, apply_score_extraction
 import ming_sim.issues as issues
 from ming_sim.memories import effect_brief
@@ -49,9 +50,15 @@ def _settle_payload(db: GameDB, region_id: str) -> dict:
     return json.loads(str(row["fiscal"] or "{}"))["settle"]
 
 
-def _decree(region_id="shaanxi", monthly_amount=10.0, **kw):
-    item = {"region_id": region_id, "monthly_amount": monthly_amount,
-            "origin_ref": "盘面自发"}
+def _decree(db: GameDB, state, region_id="shaanxi", monthly_amount=10.0, **kw):
+    if "origin_ref" not in kw:
+        dossier_id = db.create_decree_dossier(
+            state, action_type="policy", decree_text=f"{region_id}加派",
+            target_kind="region", target_id=region_id,
+        )
+        db.record_dossier_decision(dossier_id, "promulgated")
+        kw["origin_ref"] = f"dossier:{dossier_id}"
+    item = {"region_id": region_id, "monthly_amount": monthly_amount}
     item.update(kw)
     return item
 
@@ -70,7 +77,7 @@ def test_decree_lands_accumulated_ledger_same_turn(game):
     assert "_meta" not in before or before["_meta"].get("加派基线") is None
 
     applied = apply_score_extraction(db, state, {
-        "surcharge_decrees": [_decree(monthly_amount=10.0)],
+        "surcharge_decrees": [_decree(db, state,monthly_amount=10.0)],
     }, content, None)
     assert not applied["surcharge_decrees_rejections"]
     rec = applied["surcharge_decrees"][0]
@@ -96,19 +103,19 @@ def test_repeated_decrees_accumulate_and_negative_stops(game):
     """多道旨逐月累加；负额（停征/蠲免）减账且钳制 ≥0。"""
     db, state, content = game
     apply_score_extraction(db, state, {
-        "surcharge_decrees": [_decree(monthly_amount=8.0), _decree(monthly_amount=10.0),
-                              _decree(region_id="henan", monthly_amount=5.0)],
+        "surcharge_decrees": [_decree(db, state,monthly_amount=8.0), _decree(db, state,monthly_amount=10.0),
+                              _decree(db, state,region_id="henan", monthly_amount=5.0)],
     }, content, None)
     assert _settle_payload(db, "shaanxi")["_meta"]["加派基线"] == pytest.approx(18.0)
     assert _settle_payload(db, "henan")["_meta"]["加派基线"] == pytest.approx(5.0)
 
     apply_score_extraction(db, state, {
-        "surcharge_decrees": [_decree(monthly_amount=-5.0)],
+        "surcharge_decrees": [_decree(db, state,monthly_amount=-5.0)],
     }, content, None)
     assert _settle_payload(db, "shaanxi")["_meta"]["加派基线"] == pytest.approx(13.0)
 
     apply_score_extraction(db, state, {
-        "surcharge_decrees": [_decree(monthly_amount=-99.0)],  # 蠲免全停
+        "surcharge_decrees": [_decree(db, state,monthly_amount=-99.0)],  # 蠲免全停
     }, content, None)
     assert _settle_payload(db, "shaanxi")["_meta"]["加派基线"] == pytest.approx(0.0)
 
@@ -118,16 +125,53 @@ def test_decree_bad_items_rejected_individually(game):
     db, state, content = game
     applied = apply_score_extraction(db, state, {
         "surcharge_decrees": [
-            _decree(),                                    # 好项
-            _decree(region_id="mars", monthly_amount=1.0),  # 未知省
+            _decree(db, state,),                                    # 好项
+            _decree(db, state,region_id="mars", monthly_amount=1.0),  # 未知省
             {"region_id": "shaanxi", "monthly_amount": True, "origin_ref": "盘面自发"},
             {"region_id": "shaanxi", "monthly_amount": 1.0},  # 缺 origin_ref
-            _decree(monthly_amount=1.0, extra="白名单外"),
+            _decree(db, state,monthly_amount=1.0, extra="白名单外"),
         ],
     }, content, None)
     assert len(applied["surcharge_decrees"]) == 1
     assert len(applied["surcharge_decrees_rejections"]) == 4
     assert _settle_payload(db, "shaanxi")["_meta"]["加派基线"] == pytest.approx(10.0)
+
+
+def test_surcharge_origin_requires_effect_eligible_materialized_dossier(game):
+    db, state, content = game
+    proposed = db.create_decree_dossier(
+        state, action_type="policy", decree_text="拟加派", target_kind="region",
+        target_id="shaanxi",
+    )
+    promulgated = db.create_decree_dossier(
+        state, action_type="policy", decree_text="准加派", target_kind="region",
+        target_id="shaanxi",
+    )
+    db.record_dossier_decision(promulgated, "promulgated")
+    items = [
+        _decree(db, state, monthly_amount=2.0, origin_ref=f"dossier:{promulgated}"),
+        _decree(db, state, monthly_amount=7.0, origin_ref=f"dossier:{proposed}"),
+        _decree(db, state, monthly_amount=7.0, origin_ref="dossier:999999"),
+        _decree(db, state, monthly_amount=7.0, origin_ref="event:1"),
+        _decree(db, state, monthly_amount=7.0, origin_ref=""),
+        _decree(db, state, monthly_amount=7.0, origin_ref="盘面自发"),
+    ]
+    applied = apply_score_extraction(db, state, {"surcharge_decrees": items}, content, None)
+    assert len(applied["surcharge_decrees"]) == 1
+    assert len(applied["surcharge_decrees_rejections"]) == 5
+    assert _settle_payload(db, "shaanxi")["_meta"]["加派基线"] == pytest.approx(2.0)
+
+
+def test_repeated_delta_apply_does_not_consume_levy_ledger(game):
+    db, state, content = game
+    apply_score_extraction(db, state, {
+        "surcharge_decrees": [_decree(db, state, monthly_amount=10.0)],
+    }, content, None)
+    before = _pop(db, "流民", "shaanxi")
+    for delta in ({}, {}, {"metric_delta": {"皇威": 1}}):
+        applied = apply_score_extraction(db, state, delta, content, None)
+        assert not [r for r in applied["population_transfers"] if r.get("reason") == "加派"]
+    assert _pop(db, "流民", "shaanxi") == before
 
 
 def test_rejection_bucket_is_not_persisted_to_player_visible_extraction(game):
@@ -136,8 +180,8 @@ def test_rejection_bucket_is_not_persisted_to_player_visible_extraction(game):
     before_turn = state.turn
     settle_with_delta(state, db, {
         "surcharge_decrees": [
-            _decree(monthly_amount=3.0),
-            _decree(region_id="mars", monthly_amount=1.0),
+            _decree(db, state,monthly_amount=3.0),
+            _decree(db, state,region_id="mars", monthly_amount=1.0),
         ],
     }, before_turn=before_turn, content=content)
 
@@ -154,8 +198,10 @@ def test_chinese_aliases_canonicalize(game):
     """中文别名（加派／月增额）经 canonicalize_extraction（生产管线同缝）归一后照落。"""
     db, state, content = game
     from ming_sim.simulation import canonicalize_extraction
+    decree = _decree(db, state, monthly_amount=6.0)
     applied = apply_score_extraction(db, state, canonicalize_extraction({
-        "加派": [{"地区编号": "shaanxi", "月增额": 6.0, "来源引用": "盘面自发"}],
+        "加派": [{"地区编号": "shaanxi", "月增额": 6.0,
+                 "来源引用": decree["origin_ref"]}],
     }), content, None)
     assert not applied["surcharge_decrees_rejections"]
     assert _settle_payload(db, "shaanxi")["_meta"]["加派基线"] == pytest.approx(6.0)
@@ -171,7 +217,7 @@ def test_levy_pass_folds_jiapai_into_sanxiang_targets(game):
     db.save_state(state)
 
     apply_score_extraction(db, state, {
-        "surcharge_decrees": [_decree(monthly_amount=10.0)],
+        "surcharge_decrees": [_decree(db, state,monthly_amount=10.0)],
     }, content, None)
     apply_historical_fiscal_rates(state, db)
 
@@ -188,14 +234,16 @@ def test_settlement_drives_deterministic_pool_inflow(game):
     """有账省份结算即按确定性口径入池（clamp 前的期望值独立 oracle 可算）；无账省不动。"""
     db, state, content = game
     apply_score_extraction(db, state, {
-        "surcharge_decrees": [_decree(monthly_amount=10.0)],
+        "surcharge_decrees": [_decree(db, state,monthly_amount=10.0)],
     }, content, None)
 
     want = _expected_inflow_persons(10.0, SHAANXI_SUPPORT)
     assert want > 0
     farmer_before, pool_before = _pop(db, "农民", "shaanxi"), _pop(db, "流民", "shaanxi")
 
-    applied = apply_score_extraction(db, state, {}, content, None)  # 本月无新旨
+    before_turn = state.turn
+    settle_with_delta(state, db, {}, before_turn=before_turn, content=content)  # 本月无新旨
+    applied = db.get_turn_extraction(before_turn)["extractor_output"]
     recs = [r for r in applied["population_transfers"]
             if r.get("reason") == "加派" and r.get("region_id") == "shaanxi"]
     assert len(recs) == 1
@@ -240,9 +288,11 @@ def test_inflow_clamped_to_farmer_balance(game):
     db.conn.execute("UPDATE classes SET population=500 WHERE name='农民' AND region_id='shaanxi'")
     db.conn.commit()
     apply_score_extraction(db, state, {
-        "surcharge_decrees": [_decree(monthly_amount=1000.0)],
+        "surcharge_decrees": [_decree(db, state,monthly_amount=1000.0)],
     }, content, None)
-    applied = apply_score_extraction(db, state, {}, content, None)
+    before_turn = state.turn
+    settle_with_delta(state, db, {}, before_turn=before_turn, content=content)
+    applied = db.get_turn_extraction(before_turn)["extractor_output"]
     assert not [r for r in applied["population_transfers"] if r.get("rejected")]
     assert _pop(db, "农民", "shaanxi") == 0
     assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI + 500
@@ -254,7 +304,7 @@ def test_inflow_clamped_to_farmer_balance(game):
 def test_levy_ledger_corruption_fails_loud(game, corruption):
     db, state, content = game
     apply_score_extraction(db, state, {
-        "surcharge_decrees": [_decree(monthly_amount=10.0)],
+        "surcharge_decrees": [_decree(db, state,monthly_amount=10.0)],
     }, content, None)
     if corruption == "bad_json":
         db.conn.execute("UPDATE regions SET fiscal='{' WHERE id='shaanxi'")
@@ -269,8 +319,10 @@ def test_levy_ledger_corruption_fails_loud(game, corruption):
         db.conn.execute("DELETE FROM classes WHERE name='流民' AND region_id='shaanxi'")
     db.conn.commit()
 
-    with pytest.raises(ValueError, match="shaanxi"):
-        apply_score_extraction(db, state, {}, content, None)
+    with pytest.raises(SettlementAbort) as caught:
+        settle_with_delta(state, db, {}, before_turn=state.turn, content=content)
+    assert isinstance(caught.value.__cause__, ValueError)
+    assert "shaanxi" in str(caught.value.__cause__)
 
 
 def test_accumulated_monthly_effect_uses_ledger_origin_not_latest_decree(game):
@@ -279,12 +331,14 @@ def test_accumulated_monthly_effect_uses_ledger_origin_not_latest_decree(game):
     second = db.create_decree_dossier(state, action_type="policy", decree_text="陕西续派", target_kind="region", target_id="shaanxi")
     db.record_dossier_decision(first, "promulgated")
     db.record_dossier_decision(second, "promulgated")
-    applied = apply_score_extraction(db, state, {
+    before_turn = state.turn
+    settle_with_delta(state, db, {
         "surcharge_decrees": [
-            _decree(monthly_amount=4.0, origin_ref=f"dossier:{first}"),
-            _decree(monthly_amount=6.0, origin_ref=f"dossier:{second}"),
+            _decree(db, state,monthly_amount=4.0, origin_ref=f"dossier:{first}"),
+            _decree(db, state,monthly_amount=6.0, origin_ref=f"dossier:{second}"),
         ],
-    }, content, None)
+    }, before_turn=before_turn, content=content)
+    applied = db.get_turn_extraction(before_turn)["extractor_output"]
     transfer = next(r for r in applied["population_transfers"] if r["reason"] == "加派")
     assert transfer["origin_ref"] == "盘面自发"
     assert "加派基线源" not in _settle_payload(db, "shaanxi")["_meta"]
@@ -297,7 +351,7 @@ def test_levy_fact_enters_existing_public_read_chain_and_writer_keeps_free_next_
     db, state, content = game
     first_turn = state.turn
     settle_with_delta(
-        state, db, {"surcharge_decrees": [_decree(monthly_amount=10.0)]},
+        state, db, {"surcharge_decrees": [_decree(db, state,monthly_amount=10.0)]},
         before_turn=first_turn, content=content, narrative="陕西加派月报。",
     )
     want = _expected_inflow_persons(10.0, SHAANXI_SUPPORT)
@@ -311,7 +365,7 @@ def test_levy_fact_enters_existing_public_read_chain_and_writer_keeps_free_next_
     second_turn = state.turn
     # 此处 narrative 代表既有 player-facing simulator 的自由输出；archive writer 未替换。
     settle_with_delta(
-        state, db, {"surcharge_decrees": [_decree(monthly_amount=-10.0)]},
+        state, db, {"surcharge_decrees": [_decree(db, state,monthly_amount=-10.0)]},
         before_turn=second_turn, content=content, narrative=free_body,
     )
     assert db.get_turn_report(second_turn) == free_body
@@ -323,9 +377,11 @@ def test_levy_fact_enters_existing_public_read_chain_and_writer_keeps_free_next_
 
 def test_effect_brief_carries_levy_echo_fact(game):
     db, state, content = game
-    applied = apply_score_extraction(db, state, {
-        "surcharge_decrees": [_decree(monthly_amount=10.0)],
-    }, content, None)
+    before_turn = state.turn
+    settle_with_delta(state, db, {
+        "surcharge_decrees": [_decree(db, state,monthly_amount=10.0)],
+    }, before_turn=before_turn, content=content)
+    applied = db.get_turn_extraction(before_turn)["extractor_output"]
     brief = effect_brief(applied)
     want = _expected_inflow_persons(10.0, SHAANXI_SUPPORT)
     assert f"陕西农民流失{want}口为流民（加派）" in brief
@@ -353,9 +409,11 @@ def legacy_game(content, tmp_path):
 def test_legacy_wan_unit_inflow_scaled_to_save_unit(legacy_game):
     db, state, content = legacy_game
     apply_score_extraction(db, state, {
-        "surcharge_decrees": [_decree(monthly_amount=50.0)],
+        "surcharge_decrees": [_decree(db, state,monthly_amount=50.0)],
     }, content, None)
-    applied = apply_score_extraction(db, state, {}, content, None)
+    before_turn = state.turn
+    settle_with_delta(state, db, {}, before_turn=before_turn, content=content)
+    applied = db.get_turn_extraction(before_turn)["extractor_output"]
     recs = [r for r in applied["population_transfers"]
             if r.get("reason") == "加派" and r.get("region_id") == "shaanxi"]
     assert len(recs) == 1
@@ -373,7 +431,7 @@ def test_e2e_shaanxi_decree_pool_rises_restore_resumes_stop_halts(game):
     # 第 1 月：下旨加派
     before_turn = state.turn
     applied = settle_with_delta(state, db, {
-        "surcharge_decrees": [_decree(monthly_amount=10.0)],
+        "surcharge_decrees": [_decree(db, state,monthly_amount=10.0)],
     }, before_turn=before_turn, content=content)
     pool_m1 = _pop(db, "流民", "shaanxi")
     want_m1 = _expected_inflow_persons(10.0, SHAANXI_SUPPORT)
@@ -400,7 +458,7 @@ def test_e2e_shaanxi_decree_pool_rises_restore_resumes_stop_halts(game):
     # 第 3 月：停征（蠲免全停）→ 入池止
     before_turn = state.turn
     settle_with_delta(state, db, {
-        "surcharge_decrees": [_decree(monthly_amount=-10.0)],
+        "surcharge_decrees": [_decree(db, state,monthly_amount=-10.0)],
     }, before_turn=before_turn, content=content)
     assert _settle_payload(db, "shaanxi")["_meta"]["加派基线"] == pytest.approx(0.0)
     pool_m3 = _pop(db, "流民", "shaanxi")

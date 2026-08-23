@@ -50,6 +50,7 @@ from ming_sim.issues import (
     apply_historical_fiscal_rates,
     apply_issue_inertia_and_ongoing,
     apply_score_extraction,
+    _apply_levy_driven_transfers,
     auto_trigger_seed_issues,
     clear_gated_legacies,
     sanitize_delta_shape,
@@ -2360,6 +2361,11 @@ def _settle_after_extract_body(
         applied = delta_applier(db, state, extracted, content, registry)
     else:
         applied = apply_score_extraction(db, state, extracted, content=content, registry=registry)
+    # #650/0089：持久加派账的月效只属于月结缝。通用 delta applier 仅落本批
+    # 显式转移，避免召对/DB 辅助写口在同 turn 重复消费常设账。
+    levy_applied, levy_rejected = _apply_levy_driven_transfers(db, commit=False)
+    applied.setdefault("population_transfers", []).extend(levy_applied)
+    applied.setdefault("population_transfers_rejections", []).extend(levy_rejected)
     # #1504：当月 covert 实况进度与 apply 同一 atomic（0073 实况轨；不读奏报）。
     from ming_sim.covert_progress import (
         apply_monthly_covert_actual_progress,

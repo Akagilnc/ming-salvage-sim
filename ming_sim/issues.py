@@ -7204,6 +7204,15 @@ def _apply_surcharge_decrees(
         if amount == 0:
             continue  # 无操作不落拒（同 fiscal_changes 0-delta 口径）
         origin_ref = str(item.get("origin_ref") or "").strip()
+        dossier_match = re.fullmatch(r"dossier:([1-9][0-9]*)", origin_ref)
+        if dossier_match is None:
+            _reject("missing_ref", "surcharge_decrees origin_ref 必须引用已物化旨意 dossier:<正整数>")
+            continue
+        dossier_id = int(dossier_match.group(1))
+        if (db.get_decree_dossier(dossier_id) is None
+                or not db.dossier_authorizes_effects(dossier_id)):
+            _reject("missing_ref", f"surcharge_decrees 案卷未颁、未强颁或不存在：{origin_ref}")
+            continue
         origin_error = db.effect_origin_rejection(origin_ref)
         if origin_error:
             _reject(origin_error["category"], f"surcharge_decrees {origin_error['reason']}")
@@ -7695,11 +7704,6 @@ def apply_score_extraction(
         extracted.get("population_transfers") or [],
         commit=commit_now,
     )
-    # 3.55) 环后半段只认账（0089）：加派累积账驱动的确定性入池并入同一 applied 段——
-    # effect_brief/turn_extractions 免费获得「某省农民流失 N 口为流民（加派）」事实摘要。
-    _mech_applied, _mech_rejected = _apply_levy_driven_transfers(db, commit=commit_now)
-    applied_transfers.extend(_mech_applied)
-    transfer_rejections.extend(_mech_rejected)
     # 4) new_armies → region_delta / army_delta (复用旧 db 方法)
     region_deltas_raw = extracted.get("region_delta") or {}
     army_deltas_raw = extracted.get("army_delta") or {}
