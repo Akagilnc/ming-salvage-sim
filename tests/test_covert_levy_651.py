@@ -1,96 +1,70 @@
-import pytest
-
-from ming_sim.issues import apply_score_extraction
-from ming_sim.covert_levy import (
-    ENTRY_KIND,
-    apply_structured_decisions,
-    build_covert_levy_candidates,
-    materialize_structured_verdicts,
-    write_exposure_todos,
-)
+from ming_sim.covert_levy import ENTRY_KIND, army_pay_fact_for_dossier, write_exposure_todos
+from ming_sim.due_review import audience_todo_lane, build_due_review_input, list_due_review_scenes
+from ming_sim.simulation import EMPTY_EXTRACTION, MODULE_FIELDS
 
 
 def _bound_case(db, state):
-    army = db.conn.execute(
-        "SELECT id,manpower,salary_rate FROM armies WHERE manpower>0 AND salary_rate>0 LIMIT 1"
-    ).fetchone()
+    army = db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()
+    executor = db.conn.execute("SELECT name FROM characters WHERE status='active' LIMIT 1").fetchone()[0]
     did = db.create_decree_dossier(
         state, action_type="special_decree", decree_text="整饬边军",
-        target_kind="army", target_id=army["id"],
+        target_kind="army", target_id=army["id"], executor_kind="character", executor_id=executor,
     )
     db.conn.execute("UPDATE decree_dossiers SET status='executing' WHERE id=?", (did,))
-    db.conn.execute(
+    cur = db.conn.execute(
         "INSERT INTO issues(kind,title,origin_ref,origin_turn,commitment_kind) VALUES ('差务','边军事',?,?, 'promise')",
         (f"dossier:{did}", state.turn),
     )
-    pay = float(army["manpower"]) * float(army["salary_rate"]) / 10000.0
-    db.conn.execute("UPDATE armies SET arrears=? WHERE id=?", (pay * 3, army["id"]))
-    return did, str(army["id"]), pay
+    return did, int(cur.lastrowid), str(army["id"]), str(executor)
 
 
-def test_candidate_reports_continuous_shortfall_fact_without_duration_gate(game):
+def test_pay_fact_uses_monthly_durable_counter_and_no_new_extractor_wrapper(game):
     db, state, _ = game
-    did, army_id, pay = _bound_case(db, state)
+    did, _, army_id, _ = _bound_case(db, state)
     db.conn.execute(
-        """UPDATE armies
-           SET arrears=?, consecutive_pay_shortfall_months=1 WHERE id=?""",
-        (pay * 2.99, army_id),
+        "UPDATE armies SET arrears=7, consecutive_pay_shortfall_months=2 WHERE id=?", (army_id,)
     )
+    assert army_pay_fact_for_dossier(db, did) == {
+        "army_id": army_id, "arrears": 7.0, "consecutive_pay_shortfall_months": 2,
+    }
+    assert "covert_levy_verdicts" not in EMPTY_EXTRACTION
+    assert "covert_levy_decisions" not in EMPTY_EXTRACTION
+    assert all("covert_levy_verdicts" not in fields and "covert_levy_decisions" not in fields
+               for fields in MODULE_FIELDS.values())
 
-    assert build_covert_levy_candidates(db) == [{
-        "dossier_id": did,
-        "army_id": army_id,
-        "arrears": pytest.approx(pay * 2.99),
-        "consecutive_pay_shortfall_months": 1,
-    }]
 
-
-def test_structured_verdict_splits_report_from_canonical_actual_effects(game):
+def test_exposure_uses_single_dispatcher_and_projects_exact_case(game, monkeypatch):
     db, state, _ = game
-    did, _, _ = _bound_case(db, state)
-    extracted = {"covert_levy_verdicts": [{
-        "dossier_id": did, "formed": True,
-        "report": {"progress_band": "有成", "memorial_text": "军饷已有着落"},
-        "economy_move": {"account": "内库", "delta": 2, "category": "地方输纳", "reason": "解饷"},
-        "population_transfer": {"source": "农民@shaanxi", "target": "流民@shaanxi", "amount": 1},
-    }]}
-    materialize_structured_verdicts(db, state, extracted)
-    assert db.list_dossier_progress(did)[-1]["memorial_text"] == "军饷已有着落"
-    assert extracted["economy_moves"][0]["beyond_intent"] is True
-    assert extracted["economy_moves"][0]["origin_ref"] == f"dossier:{did}"
-    assert extracted["population_transfers"][0]["reason"] == "摊派"
-    assert extracted["population_transfers"][0]["origin_ref"] == f"dossier:{did}"
-    applied = apply_score_extraction(db, state, extracted, content=None, registry=None)
-    assert not applied["population_transfers_rejections"]
-    assert applied["population_transfers"][0]["reason"] == "摊派"
-
-
-def test_exposure_requires_fork_and_real_channel_then_decision_consumes_exact_case(game, monkeypatch):
-    db, state, _ = game
-    did, _, _ = _bound_case(db, state)
+    did, issue_id, _, executor = _bound_case(db, state)
     monkeypatch.setattr(db, "read_dossier_fork_state", lambda dossier_id: {
         "dossier_id": dossier_id, "fork": True, "reported_bands": ["有成"],
         "execution_outcome": "transformed", "actual_effect_count": 1, "beyond_intent": True,
     })
-    assert write_exposure_todos(db, state) == 0  # fork alone is not disclosure
     db.conn.execute(
         "INSERT INTO decree_dossier_links(source_dossier_id,target_dossier_id,relation_type,note) VALUES (?,?, '稽核','查账')",
         (did, did),
     )
     assert write_exposure_todos(db, state) == 1
-    assert write_exposure_todos(db, state) == 0
     todo = db.list_next_audience_todos(status="pending")[0]
-    assert todo["entry_kind"] == ENTRY_KIND
-    assert todo["payload_json"]["dossier_id"] == did
-    assert todo["payload_json"]["channels"] == ["稽核"]
+    assert audience_todo_lane(ENTRY_KIND) == "covert_levy"
+    scene = list_due_review_scenes(db, state)[0]
+    assert scene["kind"] == ENTRY_KIND
+    assert scene["dossier_id"] == did and scene["executor_id"] == executor
+    assert scene["channels"] == ["稽核"]
+    assert build_due_review_input(db, todo)["commitment_ref"] == issue_id
 
-    apply_structured_decisions(db, state, {"covert_levy_decisions": [
-        {"dossier_id": did, "decision": "禁摊派"}
-    ]})
-    assert not db.list_next_audience_todos(status="pending")
-    consumed = db.list_next_audience_todos(status="consumed")[0]
-    assert consumed["payload_json"]["decision"] == "禁摊派"
-    with pytest.raises(ValueError, match="无待裁"):
-        apply_structured_decisions(db, state, {"covert_levy_decisions": [
-            {"dossier_id": did, "decision": "默许"}
-        ]})
+
+def test_population_transfer_is_the_self_grown_unrest_channel(game, monkeypatch):
+    db, state, _ = game
+    did, _, _, _ = _bound_case(db, state)
+    monkeypatch.setattr(db, "read_dossier_fork_state", lambda dossier_id: {
+        "dossier_id": dossier_id, "fork": True, "reported_bands": [],
+        "execution_outcome": "transformed", "actual_effect_count": 1, "beyond_intent": True,
+    })
+    extracted = {"population_transfers": [{
+        "origin_ref": f"dossier:{did}", "reason": "摊派", "source": "农民@shaanxi",
+        "target": "流民@shaanxi", "amount": 1,
+    }]}
+    assert write_exposure_todos(db, state, extracted) == 1
+    todo = db.list_next_audience_todos(status="pending")[0]
+    assert todo["payload_json"]["channels"] == ["民变自长"]

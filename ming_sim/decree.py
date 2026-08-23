@@ -2325,14 +2325,6 @@ def _settle_after_extract_body(
     db.accept_faction_denunciations(
         state, extracted.get("faction_denunciations"), commit=False,
     )
-    # #651：普通下旨三选先消费持久待裁；判官结构化输出再装入 canonical applier。
-    # 二者均在同一 settle transaction，任何错案/坏 shape 都整段回滚。
-    from ming_sim.covert_levy import (
-        apply_structured_decisions,
-        materialize_structured_verdicts,
-    )
-    apply_structured_decisions(db, state, extracted)
-    materialize_structured_verdicts(db, state, extracted)
     # #567：在途拨帑月度机械对账（被护侧真源）；与 #566 进展分轨，不扩 0058。
     db.record_monthly_grant_reconciliations(
         before_turn, extracted.get("dossier_reconciliations"),
@@ -2400,9 +2392,10 @@ def _settle_after_extract_body(
             before_turn, source)
         collector.flush_to_db(db)
 
-    # #651：三路写端与 canonical effects 均已落后才聚合揭破；todo 与本月效果原子。
-    from ming_sim.covert_levy import write_exposure_todos
-    applied["covert_levy_exposures"] = write_exposure_todos(db, state)
+    # #651：普通旨只骑既有 canonical 字段结账；三路揭破仍写唯一 todo 表。
+    from ming_sim.covert_levy import settle_exposure_from_canonical_actions, write_exposure_todos
+    applied["covert_levy_exposure_settlements"] = settle_exposure_from_canonical_actions(db, state, extracted)
+    applied["covert_levy_exposures"] = write_exposure_todos(db, state, extracted)
 
     # #621 / ADR 0076：经召对窗后的 pending todo → 正式复核落格并消费（三拍第 3 拍）。
     # 须在本 settle 写新 todo 之前：只消费 created_turn < 当前 turn 者，保留本拍新写给次回合。
