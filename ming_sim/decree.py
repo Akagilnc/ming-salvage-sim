@@ -779,6 +779,7 @@ def _project_one_dossier_for_simulator(
         "stigma": list(stigma),
         "participant_roster": list(roster),
         "links": _simulator_dossier_links(row, db),
+        "execution_signal": row.get("execution_signal"),
         "due_turn": int(row.get("due_turn") or 0),
         "created_turn": int(row.get("created_turn") or 0),
         "promulgated_turn": _simulator_promulgated_turn(row, db),
@@ -2116,7 +2117,10 @@ def settle_with_delta(
             # 已 commit=无操作）——恢复/phase2 重抽路在此获得覆盖，且与结算同生死：
             # 事务外 commit 的话重放炸时结算回滚而动作及其真表副作用留存=跨事务半写
             # （cmr S7 r4，claude+codex 两面同根）。
-            db.commit_pending_actions(state, content=content, registry=registry)
+            db.commit_pending_actions(
+                state, content=content, registry=registry,
+                rejection_collector=collector,
+            )
             if dossier_verdicts:
                 db.apply_dossier_verdicts(
                     state, dossier_verdicts, content=content, registry=registry,

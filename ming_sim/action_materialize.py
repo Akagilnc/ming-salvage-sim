@@ -2844,6 +2844,10 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
             "交办·责成", "assignment", EFFECT_MATERIALIZE, priority=56,
             fields=(
                 FieldSpec("title", "标题", None, "", max_len=80),
+                FieldSpec(
+                    "transaction_category", "事务类别",
+                    frozenset({"钱粮", "清丈", "督赈", "缉拿", "缉捕", "河工"}), "",
+                ),
                 # owner=当前召对大臣；不设 assignee/name 改派字段（#520 r2）
                 # 与 grant/pacification 共享 target_id：事项锚（跨轮强化身份）
                 FieldSpec("target_id", "目标", None, "", max_len=80),
@@ -2922,6 +2926,11 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                         "无", "拿问下狱", "拿问去职", "赐死", "廷杖", "罚俸",
                         "削籍", "放归", "昭雪", "流放",
                     }), "无",
+                    execution_coverage={
+                        "拿问下狱": "strike", "拿问去职": "strike",
+                        "赐死": None, "廷杖": None, "罚俸": None, "削籍": None,
+                        "放归": None, "昭雪": None, "流放": None, "无": None,
+                    },
                 ),
                 FieldSpec("name", "姓名", None, "", max_len=20),
                 # 与 pacification/grant_allocation 共享 target_id 中文键（#518 契约）
@@ -2939,6 +2948,10 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
             fields=(
                 # 与 grant/pacification 共享 target_id：既有军队稳定 id
                 FieldSpec("target_id", "目标", None, "", max_len=80),
+                FieldSpec(
+                    "transaction_category", "事务类别",
+                    frozenset({"钱粮", "清丈", "督赈", "缉拿", "缉捕", "河工"}), "",
+                ),
                 # 承办人 / 责任军将（admission 映 assignee_id）
                 FieldSpec("name", "姓名", None, "", max_len=20),
                 FieldSpec("station", "驻地", None, "", max_len=80),

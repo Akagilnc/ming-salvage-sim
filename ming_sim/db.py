@@ -11452,6 +11452,16 @@ class GameDB:
         if not isinstance(roster, list):
             raise ValueError(f"案卷#{out['id']} participant_roster 非列表")
         out["participant_roster"] = roster
+        try:
+            extension = json.loads(out.get("extension_json") or "{}")
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"案卷#{out['id']} extension_json 无效") from exc
+        if not isinstance(extension, dict):
+            raise ValueError(f"案卷#{out['id']} extension_json 非对象")
+        signal = extension.get("execution_signal")
+        if signal is not None and not isinstance(signal, dict):
+            raise ValueError(f"案卷#{out['id']} execution_signal 非对象")
+        out["execution_signal"] = signal
         return out
 
     # #619 / ADR 0073 reported-progress origin namespace (ID-11 open append).
@@ -13184,6 +13194,7 @@ class GameDB:
         extension: Optional[Dict[str, object]] = None,
         participants: Optional[Iterable[object]] = None,
         commit: bool = True,
+        rejection_collector=None,
         _issued_secret_order: bool = False,
     ) -> int:
         """在成案点落一条独立案卷；幂等键只使用真实 (>0) 来源 id。"""
@@ -13314,10 +13325,11 @@ class GameDB:
         self._validate_participant_roster_references(roster)
         self._validate_dossier_delegations(roster)
 
-        rejection_collector = None
+        owns_rejection_collector = rejection_collector is None
         if route["rejection"] is not None:
             from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
-            rejection_collector = RejectionCollector()
+            if rejection_collector is None:
+                rejection_collector = RejectionCollector()
             rejection_collector.record(
                 "executor_routing",
                 RejectedItem(
@@ -13336,6 +13348,12 @@ class GameDB:
                 int(state.turn),
             )
             rejection_collector.flush_to_db(self)
+        durable_extension = dict(extension or {})
+        signal = route.get("signal")
+        if signal is not None:
+            if "execution_signal" in durable_extension:
+                raise ValueError("案卷 extension execution_signal 冲突")
+            durable_extension["execution_signal"] = signal
         cur = self.conn.execute(
             """
             INSERT INTO decree_dossiers
@@ -13353,7 +13371,7 @@ class GameDB:
                 None if secret_order_id is None else int(secret_order_id),
                 text, json.dumps(canonical_payload, ensure_ascii=False), status,
                 max(0, int(due_turn or 0)),
-                json.dumps(extension or {}, ensure_ascii=False),
+                json.dumps(durable_extension, ensure_ascii=False),
                 json.dumps(roster, ensure_ascii=False),
                 int(state.turn), int(state.year), int(state.period),
             ),
@@ -13390,7 +13408,7 @@ class GameDB:
                 source_id=f"decree_dossier:{dossier_id}", commit=False,
             )
         self._commit_dossier_write(commit)
-        if commit and rejection_collector is not None:
+        if commit and owns_rejection_collector and rejection_collector is not None:
             # 文件镜像只发生在 DB commit 成功后；DB 始终是分析真源。
             from ming_sim.error_pack import rejections_jsonl_path
             rejection_collector.mirror_to_jsonl(rejections_jsonl_path())
@@ -16282,6 +16300,7 @@ class GameDB:
         self, state: GameState, *, content=None, registry=None, minister_name=None,
         kind_filter: Optional[str] = None, kind_filter_exclude: Optional[str] = None,
         directive_status: str = "draft", action_ids: Optional[Iterable[int]] = None,
+        rejection_collector=None,
     ) -> List[Dict[str, object]]:
         """颁诏:把本回合 pending 暂存的结构化写动作批量落到真实表(不拒绝即允许),
         按 id 序(=操作发生序)apply。落得了标 committed、落不了标 failed(都不留 pending,
@@ -16303,6 +16322,10 @@ class GameDB:
             raise ValueError("kind_filter and kind_filter_exclude are mutually exclusive")
         if directive_status not in ("draft", "pending"):
             raise ValueError("directive_status must be 'draft' or 'pending'")
+        from ming_sim.applier import RejectionCollector
+        owns_rejection_collector = rejection_collector is None
+        if rejection_collector is None:
+            rejection_collector = RejectionCollector()
         applied: List[Dict[str, object]] = []
         rows = self.list_pending_actions(
             int(state.turn), status="pending", minister_name=minister_name)
@@ -16338,7 +16361,8 @@ class GameDB:
                 payload["_canonical_pending_directive"] = True
                 committed = self._commit_conversational_draft(
                     state, pa, payload, content=content, registry=registry,
-                    directive_status=directive_status)
+                    directive_status=directive_status,
+                    rejection_collector=rejection_collector)
                 if committed is not None:
                     applied.append(committed)
                 continue
@@ -16357,7 +16381,8 @@ class GameDB:
                 self.conn.execute(f"SAVEPOINT {savepoint}")
                 try:
                     ok = self._apply_pending_action(
-                        state, pa, payload, content=content, registry=registry)
+                        state, pa, payload, content=content, registry=registry,
+                        rejection_collector=rejection_collector)
                     if ok:
                         self.conn.execute(
                             "UPDATE pending_actions SET status='committed' WHERE id=?", (int(pa["id"]),))
@@ -16398,6 +16423,9 @@ class GameDB:
                     if row is not None and row["secret_order_id"] is not None:
                         item["secret_order_id"] = int(row["secret_order_id"])
                 applied.append(item)
+        if owns_transaction and owns_rejection_collector:
+            from ming_sim.error_pack import rejections_jsonl_path
+            rejection_collector.mirror_to_jsonl(rejections_jsonl_path())
         return applied
 
     def retry_failed_pending_action(
@@ -16488,6 +16516,7 @@ class GameDB:
     def _commit_conversational_draft(
         self, state: GameState, pa: Dict[str, object], payload: Dict[str, object],
         *, content=None, registry=None, directive_status: str = "draft",
+        rejection_collector=None,
     ) -> Optional[Dict[str, object]]:
         """提交一条对话式拟旨暂存，并让 draft 行与 pending 状态同事务落定。"""
         owns_transaction = not (
@@ -16504,7 +16533,8 @@ class GameDB:
                     payload_for_apply = dict(payload)
                     payload_for_apply["_directive_status"] = directive_status
                     ok = self._apply_pending_action(
-                        state, pa, payload_for_apply, content=content, registry=registry)
+                        state, pa, payload_for_apply, content=content, registry=registry,
+                        rejection_collector=rejection_collector)
                     if ok:
                         self.conn.execute(
                             "UPDATE pending_actions SET status='committed' WHERE id=?",
@@ -16530,7 +16560,7 @@ class GameDB:
 
     def _apply_pending_action(
         self, state: GameState, pa: Dict[str, object], payload: Dict[str, object],
-        *, content=None, registry=None,
+        *, content=None, registry=None, rejection_collector=None,
     ) -> bool:
         """把单条暂存动作落到真实表。未知 kind/action 或目标非 active 不落、返 False(由
         commit_pending_actions 标 failed,不静默丢——终态失败,不再重试)。
@@ -16581,6 +16611,7 @@ class GameDB:
                 payload=staged_payload,
                 status="proposed",
                 commit=False,
+                rejection_collector=rejection_collector,
             )
             return True
         if pa["kind"] == "secret_order":
@@ -16788,6 +16819,7 @@ class GameDB:
                     status="proposed",
                     due_turn=int(payload.get("due_turn") or 0),
                     commit=False,
+                    rejection_collector=rejection_collector,
                 )
             return True
         return False
