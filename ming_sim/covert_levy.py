@@ -94,7 +94,15 @@ def settle_exposure_from_canonical_actions(db: Any, state: Any, applied: Mapping
         # Identity is the successfully promulgated case-bound dossier, never an
         # unrelated fiscal receipt with a convenient shape.
         pay_fact = army_pay_fact_for_dossier(db, did) or {}
-        stopped = active_prohibition_dossier(db, did) is not None
+        prohibition = active_prohibition_dossier(db, did)
+        stopped = prohibition is not None
+        if prohibition is not None:
+            # The canonical prohibition owns the durable, idempotent rollback receipt.
+            from ming_sim.issues import neutralize_covert_fiscal_effects
+            neutralize_covert_fiscal_effects(
+                db, state, exposed_dossier_id=did,
+                prohibition_dossier_id=int(prohibition["id"]),
+            )
         levy_transfer = any(
             successful(x) and x.get("origin_ref") == origin and x.get("reason") == "摊派"
             for x in applied.get("population_transfers") or []

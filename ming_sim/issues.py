@@ -7344,6 +7344,114 @@ def _apply_levy_driven_transfers(
     return _apply_population_transfers(db, records, commit=commit)
 
 
+_COVERT_NEUTRALIZATION_REASON = "禁摊派：一次性撤销旧案暗渠财政效果"
+
+
+def _write_fiscal_config_change(
+    db: Any, *, turn: int, key: str, old_value: int, new_value: int,
+    origin_ref: str, reason: str, beyond_intent: object = 0,
+) -> None:
+    """Canonical fiscal change writer shared by extraction and prohibition rollback."""
+    db.validate_fiscal_config_value(key, new_value)
+    db.set_fiscal_config(key, new_value, commit=False)
+    db.conn.execute("UPDATE fiscal_config SET origin_ref=? WHERE key=?", (origin_ref, key))
+    db.record_fiscal_config_change(
+        turn=turn, key=key, old_value=old_value, new_value=new_value,
+        origin_ref=origin_ref, reason=reason, beyond_intent=beyond_intent,
+    )
+    stem = db._stem_of(key)
+    if stem in db._DYNAMIC_REGION_FIELD or stem == "田赋":
+        ratio = (new_value / old_value) if old_value > 0 else (1.0 if new_value == 0 else 0.0)
+        if stem == "田赋":
+            db.scale_tian_fu(ratio, commit=False)
+        else:
+            db.apply_dynamic_fiscal_scale(stem, ratio, commit=False)
+
+
+def neutralize_covert_fiscal_effects(
+    db: Any, state: Any, *, exposed_dossier_id: int, prohibition_dossier_id: int,
+) -> int:
+    """Undo one old case's beyond-intent fiscal contribution, once per live incarnation."""
+    old_origin = f"dossier:{int(exposed_dossier_id)}"
+    receipt_origin = f"dossier:{int(prohibition_dossier_id)}"
+    rows = db.list_fiscal_effects_for_dossier(int(exposed_dossier_id))
+    raw_keys = {str(row.get("key") or "").strip() for row in rows if row.get("beyond_intent")}
+    keys: set[str] = set()
+    for raw_key in raw_keys:
+        stem = db._stem_of(raw_key)
+        if not stem:
+            continue
+        if raw_key.endswith(("_base", "_rate")):
+            keys.add(raw_key)
+        else:
+            keys.add(f"{stem}_base")
+
+    written = 0
+    for key in sorted(keys):
+        stem = db._stem_of(key)
+        base_key, rate_key = f"{stem}_base", f"{stem}_rate"
+        receipt = db.conn.execute(
+            """SELECT 1 FROM fiscal_config_changes
+               WHERE origin_ref=? AND key=? AND reason=? LIMIT 1""",
+            (receipt_origin, key, _COVERT_NEUTRALIZATION_REASON),
+        ).fetchone()
+        if receipt is None:
+            receipt = db.conn.execute(
+                """SELECT 1 FROM fiscal_config_tombstones
+                   WHERE origin_ref=? AND key IN (?, ?) AND reason=? LIMIT 1""",
+                (receipt_origin, base_key, rate_key, _COVERT_NEUTRALIZATION_REASON),
+            ).fetchone()
+        if receipt is not None:
+            continue
+
+        current = db.get_fiscal_config().get(key)
+        if current is None:
+            continue
+        latest_remove = db.conn.execute(
+            "SELECT removed_turn turn,id FROM fiscal_config_tombstones WHERE key=? ORDER BY removed_turn DESC,id DESC LIMIT 1",
+            (key,),
+        ).fetchone()
+        latest_create = db.conn.execute(
+            "SELECT turn,id,origin_ref,beyond_intent FROM fiscal_config_creations WHERE key=? ORDER BY turn DESC,id DESC LIMIT 1",
+            (key,),
+        ).fetchone()
+        remove_mark = (int(latest_remove["turn"]), 0, int(latest_remove["id"])) if latest_remove else (-1, -1, -1)
+        create_mark = (int(latest_create["turn"]), 1, int(latest_create["id"])) if latest_create else (-1, -1, -1)
+        start = max(remove_mark, create_mark)
+
+        if (
+            latest_create is not None and create_mark > remove_mark
+            and str(latest_create["origin_ref"]) == old_origin
+            and bool(db.coerce_beyond_intent_flag(latest_create["beyond_intent"]))
+        ):
+            if key != base_key:
+                continue
+            if db.remove_fiscal_item(
+                key, commit=False, origin_ref=receipt_origin,
+                reason=_COVERT_NEUTRALIZATION_REASON, turn=int(state.turn),
+            ) is not None:
+                written += 1
+            continue
+
+        contribution = 0
+        for row in db.conn.execute(
+            """SELECT id,turn,delta,beyond_intent FROM fiscal_config_changes
+               WHERE key=? AND origin_ref=? ORDER BY turn,id""",
+            (key, old_origin),
+        ).fetchall():
+            mark = (int(row["turn"]), 2, int(row["id"]))
+            if mark > start and bool(db.coerce_beyond_intent_flag(row["beyond_intent"])):
+                contribution += int(row["delta"])
+        floor = db.fiscal_config_minimum_value(key) or 0
+        new_value = max(int(floor), int(current) - max(0, contribution))
+        _write_fiscal_config_change(
+            db, turn=int(state.turn), key=key, old_value=int(current), new_value=new_value,
+            origin_ref=receipt_origin, reason=_COVERT_NEUTRALIZATION_REASON,
+        )
+        written += 1
+    return written
+
+
 def apply_score_extraction(
     db: GameDB,
     state: GameState,
@@ -8391,22 +8499,11 @@ def apply_score_extraction(
                 "category": "invalid_enum", "item": change,
             })
             continue
-        db.set_fiscal_config(key, new_val, commit=False)
-        db.conn.execute("UPDATE fiscal_config SET origin_ref=? WHERE key=?", (origin_ref, key))
-        db.record_fiscal_config_change(
-            turn=state.turn, key=key, old_value=current, new_value=new_val,
+        _write_fiscal_config_change(
+            db, turn=state.turn, key=key, old_value=current, new_value=new_val,
             origin_ref=origin_ref, reason=str(change.get("reason") or ""),
             beyond_intent=change.get("beyond_intent"),
         )
-        # dynamic 税（辽饷/盐税/商税/田赋）实收走 region.fiscal，改 fiscal_config 不生效；
-        # 按 new/old 比例同步缩放各省实收字段，使调额当真改变下月入账。皇庄读 config，无需联动。
-        stem = db._stem_of(key)
-        if stem in db._DYNAMIC_REGION_FIELD or stem == "田赋":
-            ratio = (new_val / current) if current > 0 else (1.0 if new_val == 0 else 0.0)
-            if stem == "田赋":
-                db.scale_tian_fu(ratio, commit=False)
-            else:
-                db.apply_dynamic_fiscal_scale(stem, ratio, commit=False)
         applied_fiscal.append({
             "key": key, "old": current, "new": new_val, "delta": delta,
             "reason": str(change.get("reason") or ""),
