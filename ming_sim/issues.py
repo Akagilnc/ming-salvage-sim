@@ -2993,18 +2993,27 @@ def _admit_transit_departure(
     if tone not in speed_by_tone:
         return None, ("行程语气不在闭合枚举", "invalid_enum")
     previous_destination = str(row.get("transit_to") or "")
-    if previous_destination == transit_to:
-        return None, None
-    if previous_destination:
+    if previous_destination and previous_destination != transit_to:
         return None, ("在途人物不可改道", "invalid_transition")
     location = str(row.get("location") or "")
     if location not in valid_regions:
         return None, None
+    matrix = DistanceMatrix.from_file(bundled_path("content", "distance_matrix.json"))
+    distance = matrix.travel_time(location, transit_to)
+    if not math.isfinite(distance) or distance < 0 or (location != transit_to and distance <= 0):
+        raise ValueError(f"invalid baked travel time: {location!r} -> {transit_to!r}")
+    terminal_location = transit_to if distance == 0 else location
+    terminal_transit_to = "" if distance == 0 else transit_to
     return {
-        "location": location,
-        "transit_to": transit_to,
+        "location": terminal_location,
+        "transit_to": terminal_transit_to,
+        "distance": distance,
         "tone": tone,
-        "speed": speed_by_tone[tone],
+        "speed": None if distance == 0 else speed_by_tone[tone],
+        "material": (
+            terminal_location != location
+            or terminal_transit_to != previous_destination
+        ),
     }, None
 
 
@@ -4601,6 +4610,18 @@ def _strategic_event_result_preflight_error(
                             )
             if action != "行止":
                 continue
+            row = db.conn.execute(
+                "SELECT status, location, transit_to FROM characters WHERE name = ?",
+                (name,),
+            ).fetchone()
+            if row is not None:
+                departure, departure_error = _admit_transit_departure(
+                    item,
+                    dict(row),
+                    _load_pending_gate_valid_regions(db),
+                )
+                if departure_error is None and departure is not None and not departure["material"]:
+                    return _noop_error("person", name, action, departure)
         snapshot = _snapshot_person_write_state(db, content)
         results: List[Dict[str, object]] = []
         db.conn.execute("SAVEPOINT strategic_person_result_preflight")
@@ -6984,13 +7005,10 @@ def _apply_person_changes(
                 continue
             location = str(departure["location"])
             transit_to = str(departure["transit_to"])
-            matrix = DistanceMatrix.from_file(bundled_path("content", "distance_matrix.json"))
-            distance = matrix.travel_time(location, transit_to)
-            if not math.isfinite(distance) or distance < 0 or (location != transit_to and distance <= 0):
-                raise ValueError(f"invalid baked travel time: {location!r} -> {transit_to!r}")
+            distance = departure["distance"]
             speed = departure["speed"]
-            if distance == 0:
-                location, transit_to, speed = transit_to, "", None
+            if not departure["material"]:
+                continue
             origin_error = origin_rejected(item)
             if origin_error:
                 applied.append(origin_error)

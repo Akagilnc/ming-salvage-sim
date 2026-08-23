@@ -2197,6 +2197,57 @@ def test_strategic_event_army_clamp_noop_does_not_mark_event_triggered(game):
     ).fetchone()["manpower"] == 0
 
 
+def test_strategic_event_same_place_departure_is_canonical_noop(game):
+    """#667：合法同地行止按共享 canonical 终态在 preflight 判为无变化。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1638
+    state.period = 9
+    db.conn.execute(
+        "UPDATE characters SET status='active', location='beizhili', transit_to='' WHERE name='卢象升'"
+    )
+    content.characters["卢象升"].location = "beizhili"
+    content.characters["卢象升"].transit_to = ""
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{"origin_kind": "event_pool", "id": "wuyin_lubian"}],
+            "人物变更": [{
+                "origin_ref": "盘面自发", "name": "卢象升", "动作": "行止",
+                "transit_to": "beizhili", "reason": "戊寅虏变后留镇北直隶",
+            }],
+        },
+        content=content,
+    )
+
+    rejected_issue = out["issue_summary"]["new_issues"][0]
+    assert rejected_issue["rejected"] is True
+    assert "无真实世界状态变化" in rejected_issue["reason"]
+    assert not db.has_event_triggered("wuyin_lubian")
+
+
+def test_pending_gate_uses_same_place_canonical_terminal_state(game):
+    """#667：同地行止真实终态不在途，pending gate 不得投影出 transit_to。"""
+    db, _state, content = game
+    db.conn.execute(
+        "UPDATE characters SET status='active', location='liaodong', transit_to='' WHERE name='毛文龙'"
+    )
+    ev = Event(
+        id="__test_same_place_departure__", title="同地终态", kind="朝议", summary="x",
+        urgency=1, severity=1, credibility=100, interests=[], audiences=[],
+        event_type="situation", trigger_gate={"character.毛文龙.transit_to": "!= liaodong"},
+    )
+
+    assert issues._pending_person_changes_block_event_gate(
+        ev,
+        [{"name": "毛文龙", "动作": "行止", "transit_to": "liaodong"}],
+        db,
+        content=content,
+    ) is False
+
+
 @pytest.mark.parametrize(
     "travel",
     [
