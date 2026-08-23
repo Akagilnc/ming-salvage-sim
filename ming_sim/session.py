@@ -15,6 +15,7 @@ import time
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ming_sim.agents import bind_content as _bind_agents
@@ -106,6 +107,22 @@ def prune_auto_saves(saves_dir: str, campaign_id: str, keep_turns: int = AUTO_SA
 # TurnPhase 单一真源已下沉 models.py（decree 也要用，import session 会循环）；
 # 此处 re-export 保持旧 import 路径（terminal/web_app/tests 的 from session import TurnPhase）兼容。
 from ming_sim.models import FRONT_HALF_DONE_PHASES, TurnPhase  # noqa: F401  (re-export)
+
+
+class AudienceAdmission(str, Enum):
+    """召对入口唯一的地点分流结果（#670 / ADR 0096）。"""
+
+    IN_CAPITAL = "IN_CAPITAL"
+    SUMMON_FRESH = "SUMMON_FRESH"
+    SUMMON_IN_TRANSIT = "SUMMON_IN_TRANSIT"
+
+
+@dataclass(frozen=True)
+class AudienceAdmissionDecision:
+    result: Optional[AudienceAdmission]
+    reason: str = ""
+    location: str = ""
+    transit_to: str = ""
 
 
 @dataclass
@@ -1062,6 +1079,26 @@ class GameSession:
         if not _is_summonable_court_minister(character, power_id=power_id):
             return (False, f"{character.name}尚未入仕，非朝廷命官，无法召见。")
         return (True, "")
+
+    def admit_audience(self, character: Character) -> AudienceAdmissionDecision:
+        """先复用人物资格，再从 DB 权威行止投影作召对地点分流。"""
+        eligible, reason = self.can_summon(character)
+        if not eligible:
+            return AudienceAdmissionDecision(None, reason=reason)
+        row = self.db.conn.execute(
+            "SELECT location, transit_to FROM characters WHERE name=?",
+            (character.name,),
+        ).fetchone()
+        # 临时人物没有盘面行；与旧档 blank 一样 fail-open，不扩大正式人物资格。
+        location = str(row["location"] or "") if row is not None else ""
+        transit_to = str(row["transit_to"] or "") if row is not None else ""
+        if transit_to:
+            result = AudienceAdmission.SUMMON_IN_TRANSIT
+        elif not location or location == "beizhili":
+            result = AudienceAdmission.IN_CAPITAL
+        else:
+            result = AudienceAdmission.SUMMON_FRESH
+        return AudienceAdmissionDecision(result, location=location, transit_to=transit_to)
 
     def _start_cli_action_intent(self, character: Character, message: str) -> Optional[Future]:
         """召对动作判断只读皇帝消息，可与大臣回话并发。

@@ -73,7 +73,8 @@
       "seed_guilt": {
         "crime": "无",
         "severity": "无"
-      }
+      },
+      "location": "beizhili"
     },
     {
       "name": "张瑞图",
@@ -104,7 +105,8 @@
       "seed_guilt": {
         "crime": "内阁大学士,为魏生祠书匾书额、党附(无血债)",
         "severity": "轻"
-      }
+      },
+      "location": "beizhili"
     },
     {
       "name": "来宗道",
@@ -134,7 +136,8 @@
       "seed_guilt": {
         "crime": "礼书东阁大学士,附逆阁臣、署名颂功、不能谏阻(无血债)",
         "severity": "轻"
-      }
+      },
+      "location": "beizhili"
     },
     {
       "name": "施凤来",
@@ -165,7 +168,8 @@
       "seed_guilt": {
         "crime": "内阁次辅,庸附取容、阁中阿附、不能谏阻(无血债)",
         "severity": "轻"
-      }
+      },
+      "location": "beizhili"
     },
     {
       "name": "黄立极",
@@ -196,7 +200,8 @@
       "seed_guilt": {
         "crime": "内阁首辅,魏当国时首揆、票拟多顺魏意、署颂(身为首辅而附逆,但无直接血债故仍列五等)",
         "severity": "中"
-      }
+      },
+      "location": "beizhili"
     },
     {
       "name": "王绍徽",
@@ -227,7 +232,8 @@
       "seed_guilt": {
         "crime": "吏部尚书,作《东林点将录》献魏以编排东林、罗织正人之具(构陷正人之罪可坐)",
         "severity": "重"
-      }
+      },
+      "location": "beizhili"
     },
     {
       "name": "毕自严",
@@ -259,7 +265,8 @@
       "seed_guilt": {
         "crime": "无",
         "severity": "无"
-      }
+      },
+      "location": "beizhili"
     },
     {
       "name": "郭允厚",
@@ -289,7 +296,8 @@
         "severity": "中"
       },
       "identity": 45,
-      "power_id": "ming"
+      "power_id": "ming",
+      "location": "beizhili"
     },
     {
       "name": "张缙彦",
@@ -352,7 +360,8 @@
       "seed_guilt": {
         "crime": "无(『四正六隅十面网』主抚之争议是数年后事,不预判)",
         "severity": "无"
-      }
+      },
+      "location": "beizhili"
     },
     {
       "name": "温体仁",
@@ -383,7 +392,8 @@
       "seed_guilt": {
         "crime": "无(品性污点:工心计、枚卜案讦钱谦益以自进、柄国专务逢迎不引正人——《明史》列奸臣传,属品性污点非可坐之现行罪)",
         "severity": "无"
-      }
+      },
+      "location": "beizhili"
     },
     {
       "name": "钱龙锡",
@@ -413,7 +423,8 @@
       "seed_guilt": {
         "crime": "无",
         "severity": "无"
-      }
+      },
+      "location": "beizhili"
     },
     {
       "name": "刘鸿训",
@@ -443,7 +454,8 @@
       "seed_guilt": {
         "crime": "无",
         "severity": "无"
-      }
+      },
+      "location": "beizhili"
     },
     {
       "name": "钱谦益",
@@ -473,7 +485,8 @@
       "seed_guilt": {
         "crime": "枚卜之争/钱柄之议中结党营私、植党排异;科场关节(钱千秋舞弊案)之讦——属轻度污点非血债,此刻无重罪可坐",
         "severity": "轻"
-      }
+      },
+      "location": "beizhili"
     },
     {
       "name": "李标",
@@ -503,7 +516,8 @@
       "seed_guilt": {
         "crime": "无",
         "severity": "无"
-      }
+      },
+      "location": "beizhili"
     },
     {
       "name": "孙承宗",
@@ -535,7 +549,8 @@
       "seed_guilt": {
         "crime": "无",
         "severity": "无"
-      }
+      },
+      "location": "beizhili"
     },
     {
       "name": "崔呈秀",
@@ -567,7 +582,8 @@
       "seed_guilt": {
         "crime": "兵书兼左都御史、五虎之首,纳贿构陷正人、为魏谋主(贪墨与构陷皆坐实)",
         "severity": "重"
-      }
+      },
+      "location": "beizhili"
     },
     {
       "name": "王在晋",
@@ -597,7 +613,8 @@
       "seed_guilt": {
         "crime": "无(主『修筑重关』之议与孙承宗辽东战略分歧属政见之争非罪)",
         "severity": "无"
-      }
+      },
+      "location": "beizhili"
     },
     {
       "name": "徐光启",
@@ -628,7 +645,8 @@
       "seed_guilt": {
         "crime": "无",
         "severity": "无"
-      }
+      },
+      "location": "beizhili"
     },
     {
       "name": "李之藻",
@@ -693,7 +711,8 @@
       "status": "active",
       "debut_year": 1627,
       "debut_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "location": "beizhili"
     },
     {
       "name": "汤若望",
@@ -756,7 +775,8 @@
       "seed_guilt": {
         "crime": "无",
         "severity": "无"
-      }
+      },
+      "location": "beizhili"
     },
     {
       "name": "周延儒",
@@ -786,7 +806,8 @@
       "seed_guilt": {
         "crime": "无(品性污点:投机贪权、与温体仁合谋排钱谦益——《明史》列奸臣传,属品性污点非可坐之现行罪;首辅任内贪纵赐死是后事)",
         "severity": "无"
-      }
+      },
+      "location": "beizhili"
     },
     {
       "name": "倪元璐",
@@ -816,7 +837,8 @@
       "seed_guilt": {
         "crime": "无",
         "severity": "无"
-      }
+      },
+      "location": "beizhili"
     },
     {
       "name": "黄道周",
@@ -847,7 +869,8 @@
       "seed_guilt": {
         "crime": "无",
         "severity": "无"
-      }
+      },
+      "location": "beizhili"
     },
     {
       "name": "曹化淳",
@@ -878,7 +901,8 @@
       "seed_guilt": {
         "crime": "无",
         "severity": "无"
-      }
+      },
+      "location": "beizhili"
     },
     {
       "name": "王体乾",
@@ -908,7 +932,8 @@
       "seed_guilt": {
         "crime": "司礼监掌印,名位在魏之上而实附魏、党附中枢(非血手;定案时因回护天启/张皇后获网开、未与魏同诛,减罪)",
         "severity": "中"
-      }
+      },
+      "location": "beizhili"
     },
     {
       "name": "王承恩",
@@ -939,7 +964,8 @@
       "seed_guilt": {
         "crime": "无",
         "severity": "无"
-      }
+      },
+      "location": "beizhili"
     },
     {
       "name": "魏忠贤",
@@ -972,7 +998,8 @@
       "seed_guilt": {
         "crime": "乱政矫诏、构陷东林六君子/七君子、专擅东厂缇骑、立生祠秽政(皆史载可坐实,非罗织)",
         "severity": "重"
-      }
+      },
+      "location": "beizhili"
     },
     {
       "name": "田尔耕",
@@ -1005,7 +1032,8 @@
       "seed_guilt": {
         "crime": "锦衣卫都督、五彪之首,缇骑酷刑、害六君子/七君子(手上有血)",
         "severity": "重"
-      }
+      },
+      "location": "beizhili"
     },
     {
       "name": "许显纯",
@@ -1035,7 +1063,8 @@
       "seed_guilt": {
         "crime": "北镇抚司理刑,亲手拷杀杨涟、左光斗等六君子,屈打成招(血债最直)",
         "severity": "重"
-      }
+      },
+      "location": "beizhili"
     },
     {
       "name": "李若琏",
@@ -1065,7 +1094,8 @@
       "seed_guilt": {
         "crime": "无",
         "severity": "无"
-      }
+      },
+      "location": "beizhili"
     },
     {
       "name": "客氏",
@@ -1095,7 +1125,8 @@
       "seed_guilt": {
         "crime": "奉圣夫人与魏表里乱宫、秽乱宫闱、害皇嗣妃嫔(史载坐实)",
         "severity": "重"
-      }
+      },
+      "location": "beizhili"
     },
     {
       "name": "袁崇焕",
@@ -1125,7 +1156,8 @@
       "seed_guilt": {
         "crime": "无",
         "severity": "无"
-      }
+      },
+      "location": "guangdong"
     },
     {
       "name": "曹文诏",
@@ -1155,7 +1187,8 @@
       "seed_guilt": {
         "crime": "无",
         "severity": "无"
-      }
+      },
+      "location": "shaanxi"
     },
     {
       "name": "祖大寿",
@@ -1186,7 +1219,8 @@
       "seed_guilt": {
         "crime": "无(大凌河诈降、再叛、终降清皆后事,坚决不预坐)",
         "severity": "无"
-      }
+      },
+      "location": "liaodong"
     },
     {
       "name": "满桂",
@@ -1216,7 +1250,8 @@
       "seed_guilt": {
         "crime": "无",
         "severity": "无"
-      }
+      },
+      "location": "shanxi"
     },
     {
       "name": "赵率教",
@@ -1246,7 +1281,8 @@
       "seed_guilt": {
         "crime": "无",
         "severity": "无"
-      }
+      },
+      "location": "liaodong"
     },
     {
       "name": "王之臣",
@@ -1276,7 +1312,8 @@
       "seed_guilt": {
         "crime": "无",
         "severity": "无"
-      }
+      },
+      "location": "liaodong"
     },
     {
       "name": "毛文龙",
@@ -1338,7 +1375,8 @@
       "seed_guilt": {
         "crime": "蓟辽总督,首倡为魏建生祠、献祠最力者之一(谀颂阿附,无直接血债)",
         "severity": "中"
-      }
+      },
+      "location": "liaodong"
     },
     {
       "name": "洪承畴",
@@ -1368,7 +1406,8 @@
       "seed_guilt": {
         "crime": "无(松锦战败后降清是崇祯十五年后事,铁律不预坐;此刻陕西督粮参政忠勤明臣)",
         "severity": "无"
-      }
+      },
+      "location": "shaanxi"
     },
     {
       "name": "孙传庭",
@@ -1398,7 +1437,8 @@
       "seed_guilt": {
         "crime": "无",
         "severity": "无"
-      }
+      },
+      "location": "shaanxi"
     },
     {
       "name": "胡廷宴",
@@ -1462,7 +1502,8 @@
         "severity": "中"
       },
       "identity": 42,
-      "power_id": "ming"
+      "power_id": "ming",
+      "location": "shaanxi"
     },
     {
       "name": "卢象升",
@@ -1492,7 +1533,8 @@
       "seed_guilt": {
         "crime": "无",
         "severity": "无"
-      }
+      },
+      "location": "nanzhili"
     },
     {
       "name": "史可法",
@@ -1552,7 +1594,8 @@
       "summary": "皇后，端庄贤德，母仪天下，时常规谏圣上。",
       "debut_year": 0,
       "debut_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "location": "beizhili"
     },
     {
       "name": "周贵人",
@@ -1580,7 +1623,8 @@
       "summary": "贵人，精明干练，善于周旋，有时为娘家打探消息。",
       "debut_year": 0,
       "debut_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "location": "beizhili"
     },
     {
       "name": "田贵妃",
@@ -1609,7 +1653,8 @@
       "summary": "贵妃，娇媚善宠，专擅圣心，善歌舞，偶为外戚进言。",
       "debut_year": 0,
       "debut_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "location": "beizhili"
     },
     {
       "name": "袁贵妃",
@@ -1637,7 +1682,8 @@
       "summary": "贵妃，沉静内敛，守分安命，不争宠，深得崇祯敬重。",
       "debut_year": 0,
       "debut_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "location": "beizhili"
     },
     {
       "name": "慧妃",
@@ -1665,7 +1711,8 @@
       "summary": "妃，年轻纯真，侍奉温柔，无争宠之心。",
       "debut_year": 0,
       "debut_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "location": "beizhili"
     },
     {
       "name": "皇太极",
@@ -3384,7 +3431,7 @@
       "debut_year": 0,
       "debut_month": 0,
       "power_id": "ming",
-      "location": "京师"
+      "location": "beizhili"
     },
     {
       "name": "韩一良",
@@ -3453,8 +3500,15 @@
       "office": "刑部尚书",
       "office_type": "刑部",
       "faction": "中立",
-      "aliases": ["乔允升", "乔尚书"],
-      "personal_skills": ["刑名审谳", "狱案覆核", "律例持守"],
+      "aliases": [
+        "乔允升",
+        "乔尚书"
+      ],
+      "personal_skills": [
+        "刑名审谳",
+        "狱案覆核",
+        "律例持守"
+      ],
       "loyalty": 58,
       "ability": 67,
       "integrity": 66,
@@ -3466,7 +3520,7 @@
       "status": "active",
       "summary": "天启末任刑部尚书，熟谙刑名与狱案覆核。",
       "power_id": "ming",
-      "location": "beijing"
+      "location": "beizhili"
     }
   ]
 }
