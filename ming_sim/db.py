@@ -13212,6 +13212,12 @@ class GameDB:
         action = str(action_type or "").strip()
         text = str(decree_text or "").strip()
         normalized_payload = dict(payload or {})
+        canonical_assignee = str(normalized_payload.get("assignee_id") or "").strip()
+        if not canonical_assignee:
+            canonical_assignee = str(normalized_payload.get("assignee") or "").strip()
+        if canonical_assignee:
+            normalized_payload["assignee_id"] = canonical_assignee
+        normalized_payload.pop("assignee", None)
         normalized_payload["mode"] = self._normalize_dossier_mode(
             normalized_payload["mode"] if "mode" in normalized_payload else "ordinary"
         )
@@ -13299,9 +13305,24 @@ class GameDB:
             if origin is not None:
                 source_turn_id = int(origin["chat_turn_id"])
         roster_source = participants
-        if roster_source is None and isinstance(payload, dict):
-            roster_source = payload.get("participant_roster") or payload.get("participants")
+        if roster_source is None:
+            roster_source = (
+                canonical_payload.get("participant_roster")
+                or canonical_payload.get("participants")
+            )
         roster = self._normalize_participant_roster(roster_source, strict_structured=True)
+        has_canonical_lead = any(item.get("tier") == "主办" for item in roster)
+        if (
+            action in {"assignment", "military_order"}
+            and not canonical_assignee
+            and not has_canonical_lead
+            and str(executor_kind or "").strip() in {"", "character"}
+            and str(executor_id or "").strip()
+        ):
+            roster.append({
+                "character_id": str(executor_id).strip(), "tier": "主办", "role": "",
+                "delegator_id": None,
+            })
         self._validate_participant_roster_references(roster)
         self._validate_dossier_delegations(roster)
 
@@ -13366,11 +13387,11 @@ class GameDB:
                 rejection_collector.flush_to_db(self)
             self._commit_dossier_write(commit)
             if commit and owns_rejection_collector:
+                from ming_sim.applier import mirror_rejections_after_commit
                 from ming_sim.error_pack import rejections_jsonl_path
-                try:
-                    rejection_collector.mirror_to_jsonl(rejections_jsonl_path())
-                except Exception as mirror_exc:
-                    tlog(f"[rejection] jsonl 镜像失败（DB 行已落，仅副本丢失）：{mirror_exc}")
+                mirror_rejections_after_commit(
+                    self, rejection_collector, rejections_jsonl_path,
+                )
             return 0
         durable_extension = dict(extension or {})
         signal = route.get("signal")
@@ -13433,12 +13454,11 @@ class GameDB:
             )
         self._commit_dossier_write(commit)
         if commit and owns_rejection_collector and rejection_collector is not None:
-            # 文件镜像只发生在 DB commit 成功后；DB 始终是分析真源。
+            from ming_sim.applier import mirror_rejections_after_commit
             from ming_sim.error_pack import rejections_jsonl_path
-            try:
-                rejection_collector.mirror_to_jsonl(rejections_jsonl_path())
-            except Exception as mirror_exc:
-                tlog(f"[rejection] jsonl 镜像失败（DB 行已落，仅副本丢失）：{mirror_exc}")
+            mirror_rejections_after_commit(
+                self, rejection_collector, rejections_jsonl_path,
+            )
         return dossier_id
 
     @staticmethod
@@ -16473,11 +16493,11 @@ class GameDB:
                         item["secret_order_id"] = int(row["secret_order_id"])
                 applied.append(item)
         if owns_transaction and owns_rejection_collector:
+            from ming_sim.applier import mirror_rejections_after_commit
             from ming_sim.error_pack import rejections_jsonl_path
-            try:
-                rejection_collector.mirror_to_jsonl(rejections_jsonl_path())
-            except Exception as mirror_exc:
-                tlog(f"[rejection] jsonl 镜像失败（DB 行已落，仅副本丢失）：{mirror_exc}")
+            mirror_rejections_after_commit(
+                self, rejection_collector, rejections_jsonl_path,
+            )
         return applied
 
     def retry_failed_pending_action(
@@ -17627,12 +17647,9 @@ class GameDB:
                         (int(directive_id),),
                     )
             collector.flush_to_db(self)
-        if getattr(self.conn, "_atomic_depth", 0) == 0:
-            from ming_sim.error_pack import rejections_jsonl_path
-            try:
-                collector.mirror_to_jsonl(rejections_jsonl_path())
-            except Exception as mirror_exc:
-                tlog(f"[rejection] jsonl 镜像失败（DB 行已落，仅副本丢失）：{mirror_exc}")
+        from ming_sim.applier import mirror_rejections_after_commit
+        from ming_sim.error_pack import rejections_jsonl_path
+        mirror_rejections_after_commit(self, collector, rejections_jsonl_path)
 
     def ensure_dossiers_for_draft_directives(self, state: GameState) -> None:
         """结束边界成案：只读最新 draft 正文/载荷，按 directive_id 幂等创建。"""
@@ -17652,12 +17669,9 @@ class GameDB:
                         (int(row["id"]),),
                     )
             collector.flush_to_db(self)
-        if getattr(self.conn, "_atomic_depth", 0) == 0:
-            from ming_sim.error_pack import rejections_jsonl_path
-            try:
-                collector.mirror_to_jsonl(rejections_jsonl_path())
-            except Exception as mirror_exc:
-                tlog(f"[rejection] jsonl 镜像失败（DB 行已落，仅副本丢失）：{mirror_exc}")
+        from ming_sim.applier import mirror_rejections_after_commit
+        from ming_sim.error_pack import rejections_jsonl_path
+        mirror_rejections_after_commit(self, collector, rejections_jsonl_path)
 
     def reject_directive(self, directive_id: int) -> None:
         """皇帝驳回大臣拟旨：pending → rejected。"""
