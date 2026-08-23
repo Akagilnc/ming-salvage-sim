@@ -4933,6 +4933,7 @@ def apply_issue_tracker_output(
     allow_legacy_partial_power_for_gates: bool = False,
     candidate_event_ids_at_input: Optional[set[str]] = None,
     candidate_event_ids_authoritative: bool = False,
+    impeachment_surge_candidates_at_input: Optional[List[Dict[str, object]]] = None,
     event_result_delta_event_ids: Optional[set[str]] = None,
     defer_event_trigger_ids: Optional[set[str]] = None,
 ) -> Dict[str, object]:
@@ -5122,10 +5123,12 @@ def apply_issue_tracker_output(
         origin_kind = str(ni.get("origin_kind") or "").lower()
         if origin_kind == "impeachment_surge":
             candidate_id = str(ni.get("candidate_id") or "").strip()
-            candidates = {
-                str(item["id"]): item
-                for item in gather_impeachment_surge_candidates(state, db)
-            }
+            surge_candidates = (
+                impeachment_surge_candidates_at_input
+                if impeachment_surge_candidates_at_input is not None
+                else gather_impeachment_surge_candidates(state, db)
+            )
+            candidates = {str(item["id"]): item for item in surge_candidates}
             candidate = candidates.get(candidate_id)
             roster = ni.get("participant_roster")
             stage_text = ni.get("stage_text")
@@ -5163,9 +5166,11 @@ def apply_issue_tracker_output(
                     target_ids.append(character_id.strip())
             reason = ""
             if candidate is None:
-                reason = "动态候选不存在、陈旧或已消费"
-            elif candidate_snapshot_authoritative and candidate_id not in candidate_event_ids:
-                reason = "动态候选不在本次 LLM 输入快照"
+                reason = (
+                    "动态候选不在本次 LLM 输入快照"
+                    if impeachment_surge_candidates_at_input is not None
+                    else "动态候选不存在、陈旧或已消费"
+                )
             elif not isinstance(raw_title, str) or not raw_title.strip():
                 reason = "弹劾潮 title 须为非空文本"
             elif not isinstance(stage_text, str):
@@ -5189,6 +5194,8 @@ def apply_issue_tracker_output(
                 origin_kind="impeachment_surge",
                 origin_ref=str(candidate["origin_ref"]),
                 bar_value=40,
+                bar_good_meaning="",
+                bar_bad_meaning="",
                 stage_text=stage_text,
                 faction_hint=str(candidate["faction_id"]),
                 participants=roster,
@@ -7522,6 +7529,7 @@ def apply_score_extraction(
     registry=None,
     llm_config: Any = None,
     candidate_event_ids_at_input: Optional[set[str]] = None,
+    impeachment_surge_candidates_at_input: Optional[List[Dict[str, object]]] = None,
     dossier_ids_at_input: Optional[set[int]] = None,
     secret_dossier_ids_at_input: Optional[set[int]] = None,
 ) -> Dict[str, object]:
@@ -8025,6 +8033,7 @@ def apply_score_extraction(
         allow_legacy_partial_power_for_gates=legacy_person_mode,
         candidate_event_ids_at_input=candidate_event_ids_at_input,
         candidate_event_ids_authoritative=candidate_event_ids_authoritative,
+        impeachment_surge_candidates_at_input=impeachment_surge_candidates_at_input,
         event_result_delta_event_ids=strategic_event_result_delta_event_ids,
         defer_event_trigger_ids=strategic_event_pool_ids)
 

@@ -12520,6 +12520,10 @@ class GameDB:
                     subject_names.add(subject_name)
                 if subject_faction:
                     subject_factions.add(subject_faction)
+            # Closed transformed dossiers are a persona source for #655, not
+            # open generic denunciation forks.
+            if str(row["status"] or "") == "closed":
+                continue
             if not fork_state["fork"]:
                 continue
             case_summary = str(row["decree_text"] or "").strip()

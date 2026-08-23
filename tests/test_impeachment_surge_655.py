@@ -46,7 +46,11 @@ def test_transformed_fact_is_projected_as_namespaced_candidate(game):
     assert item["responsible_person_ids"] == [owner]
     assert owner_faction in item["responsible_faction_ids"]
     assert item["faction_persona"]["character_personas"]
-    assert item in build_simulator_payload(state, db, "", "")["candidate_events"]
+    payload = build_simulator_payload(state, db, "", "")
+    assert item not in payload["candidate_events"]
+    assert all(not str(event["id"]).startswith("impeachment_surge:") for event in payload["candidate_events"])
+    facts = db.build_faction_denunciation_facts()
+    assert all(int(row["dossier_id"]) != did for row in facts["forked_dossiers"])
 
 
 def test_production_issues_agent_carries_dynamic_source_contract_to_apply(game, content, monkeypatch):
@@ -83,6 +87,8 @@ def test_production_issues_agent_carries_dynamic_source_contract_to_apply(game, 
     assert row["origin_ref"] == f"commitment:{did}:deformation_exposure"
     assert row["title"] == "御史自拟弹章"
     assert row["stage_text"] == "清丈案牵连渐明。"
+    assert row["bar_good_meaning"] == ""
+    assert row["bar_bad_meaning"] == ""
 
 
 def test_apply_accepts_only_current_candidate_closed_target_and_free_text(game):
@@ -192,9 +198,17 @@ def test_leverage_boundary_and_authoritative_input_snapshot(game):
     rejected = apply_issue_tracker_output(
         db, state, {"new_issues": [item]}, candidate_event_ids_at_input=set(),
         candidate_event_ids_authoritative=True,
+        impeachment_surge_candidates_at_input=[],
     )["new_issues"][0]
     assert rejected["rejected"] is True
     assert "输入快照" in rejected["reason"]
+
+    accepted = apply_issue_tracker_output(
+        db, state, {"new_issues": [item]}, candidate_event_ids_at_input=set(),
+        candidate_event_ids_authoritative=True,
+        impeachment_surge_candidates_at_input=[candidate],
+    )["new_issues"][0]
+    assert accepted["rejected"] is False
 
 
 def test_transformed_candidate_fails_closed_outside_window_or_without_liability(game):
