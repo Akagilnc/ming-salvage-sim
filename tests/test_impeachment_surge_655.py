@@ -134,7 +134,7 @@ def test_dynamic_apply_rejects_invalid_roster_fields_without_losing_valid_siblin
             "participant_roster": [{"character_id": owner, "tier": "主办"}],
             "title": "  合法题名  ", "stage_text": "合法案情"}
     valid_roster = [{"character_id": owner, "tier": "主办",
-                     "role": "具疏弹劾", "delegator_id": delegator}]
+                     "role": "  具疏弹劾  ", "delegator_id": delegator}]
 
     result = apply_issue_tracker_output(db, state, {"new_issues": [
         dict(base, participant_roster=[{"character_id": owner, "tier": "首犯"}]),
