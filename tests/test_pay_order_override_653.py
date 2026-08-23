@@ -385,20 +385,36 @@ def test_real_revoke_decree_restores_override_and_clears_expiry(game):
 
 def test_turn_region_summary_claim_audit_rows_do_not_consume_limit(game):
     db, state, _content = game
-    values = []
-    for index in range(12):
-        values.append((state.turn, state.year, state.period, "shaanxi",
-                       f"settle_官俸欠_{index}", "0", "1", 1, "内部账"))
-    values.append((state.turn, state.year, state.period, "shaanxi",
-                   "unrest", "1", "2", 1, "民变事实"))
-    db.conn.executemany(
+    _pin_shortfall_board(db, "shaanxi")
+    # 零可用省银，令真实 settle 同时写出官俸欠与宗禄欠两家族。
+    import json as _json
+    row = db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()
+    fiscal = _json.loads(row["fiscal"])
+    fiscal["settle"]["st"]["省库库银"] = 0
+    fiscal["settle"]["p"].update(
+        {"正赋应征": 0, "三饷应征": 0, "起运定额": 0, "拨付gross": 0}
+    )
+    db.conn.execute(
+        "UPDATE regions SET fiscal=? WHERE id='shaanxi'",
+        (_json.dumps(fiscal, ensure_ascii=False),),
+    )
+    db.settle_province_tick("shaanxi")
+    claim_rows = db.conn.execute(
+        "SELECT field, reason FROM region_logs WHERE turn=? AND region_id='shaanxi' "
+        "AND field LIKE 'settle_%欠_%' ORDER BY id", (state.turn,),
+    ).fetchall()
+    assert {row["field"].split("_")[1] for row in claim_rows} >= {"官俸欠", "宗禄欠"}
+
+    db.conn.execute(
         "INSERT INTO region_logs "
         "(turn,year,period,region_id,field,old_value,new_value,delta,reason) "
-        "VALUES (?,?,?,?,?,?,?,?,?)", values,
+        "VALUES (?,?,?,?,?,?,?,?,?)",
+        (state.turn, state.year, state.period, "shaanxi",
+         "unrest", "1", "2", 1, "民变事实"),
     )
     summary = db.turn_region_summary(state.turn, limit=1)
     assert "民变事实" in summary
-    assert "内部账" not in summary
+    assert not any(row["reason"] in summary for row in claim_rows)
 
 
 def test_deferred_real_revoke_restores_override_only_after_persist(game):

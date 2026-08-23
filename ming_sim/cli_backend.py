@@ -1968,9 +1968,7 @@ def _pay_order_grounding_facts(content: Any, db: Any = None) -> str:
         if state is not None:
             timing = (
                 f"当前结算时点：turn={int(state['turn'])}，"
-                f"{int(state['year'])}年{int(state['period'])}月。"
-                "相对期限须换算为绝对 until_turn；期限 N 月按 active-through 语义写 "
-                "until_turn=当前 turn+N-1。\n"
+                f"{int(state['year'])}年{int(state['period'])}月。\n"
             )
     if not lines and not timing:
         return ""
@@ -1995,12 +1993,19 @@ def _ground_relative_pay_order_deadlines(result: Dict[str, Any], db: Any) -> Dic
         if not isinstance(item, dict) or item.get("dossier_action_type") != "pay_order_override":
             continue
         for entry in item.get("entries") or []:
-            if not isinstance(entry, dict) or "duration_months" not in entry:
+            if not isinstance(entry, dict):
                 continue
-            duration = entry.pop("duration_months")
-            if isinstance(duration, bool) or not isinstance(duration, int) or duration <= 0:
-                raise ValueError(f"override 相对期限 duration_months 须为正整数：{duration!r}")
-            entry["until_turn"] = current_turn + duration - 1
+            if "duration_months" in entry:
+                duration = entry.pop("duration_months")
+                if isinstance(duration, bool) or not isinstance(duration, int) or duration <= 0:
+                    raise ValueError(f"override 相对期限 duration_months 须为正整数：{duration!r}")
+                entry["until_turn"] = current_turn + duration - 1
+            elif "until_turn" in entry and (
+                isinstance(entry["until_turn"], bool)
+                or not isinstance(entry["until_turn"], int)
+                or entry["until_turn"] < current_turn
+            ):
+                raise ValueError(f"override until_turn 已过期或无效：{entry['until_turn']!r}")
     return result
 
 
@@ -2256,7 +2261,7 @@ def extract_draft_intent(
         'revoke_decree|revoke_authority|dismiss_assignment|military_order|'
         'pay_order_override",\n'
         '  "entries": [],              // 仅 pay_order_override：偿还序/折发调整清单，\n'
-        '                             // 形如 [{"key":"due_haircut_bp_宗禄","value":5000,"until_turn":null}]；\n'
+        '                             // 形如 [{"key":"due_haircut_bp_宗禄","value":5000,"duration_months":3}]；\n'
         '                             // key∈due_priority_<科目>[@省]/arrears_priority_<欠科目>[@省]/'
         'due_haircut_bp_<科目>[@省][#province|#central]；haircut 值=万分数(0,10000]；非该动作留 []\n'
         '  "目标类型": "policy|character|office|army|region|issue|account",\n'

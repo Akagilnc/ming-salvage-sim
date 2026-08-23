@@ -1949,27 +1949,45 @@ def test_region_army_pay_tick_treats_missing_breakdown_as_no_delta(fresh_db):
 
 
 def test_region_army_morale_haircut_denominator_includes_standalone_funnel(fresh_db):
-    pay_row = dict(fresh_db._army_pay_source_rows_for_region("shaanxi")[0])
-    army_id = str(pay_row["id"])
-    pay_row.update(
-        due=1.0, province_pay_arrears=0.0, central_pay_arrears=0.0, morale=80,
+    # 真实省结算链：军行兼有省/中央饷源，省池军饷 Due 另含 standalone funnel；
+    # 省份额全欠时，D11 分母必须包含完整 14，而非只拿军行省份额。
+    _write_settle(
+        fresh_db, "shaanxi", {
+            "st": {
+                "省库库银": 0, "C_地方截留": 0, "C_中饱": 0,
+                "C_漂没": 0, "C_eff损耗": 0, "民欠旧赋": 0,
+                "军饷欠": 0, "官俸欠": 0, "宗禄欠": 0,
+                "官民田": 0, "隐田": 0,
+            },
+            "p": {
+                "正赋应征": 0, "三饷应征": 0, "火耗率": 0,
+                "逋赋率": 0, "起运定额": 0, "拨付gross": 0,
+                "中饱率": 0, "漂没率": 0,
+                "Due": {"军饷": 14, "官俸": 0, "宗禄": 0, "赈济": 0},
+            },
+        },
     )
     fresh_db.conn.execute(
-        "UPDATE armies SET morale=80, province_pay_arrears=0, "
-        "central_pay_arrears=0, arrears=0 WHERE id=?", (army_id,),
+        "UPDATE armies SET self_funded_pay=1, is_tusi=1, province_pay_share=0, "
+        "central_pay_share=0, pay_source_region='', morale=80"
     )
-    result = SimpleNamespace(breakdown={
-        "NewDebt": {"军饷欠": 8.0}, "Repaid": {"军饷欠": 0.0},
-        "action还": {"军饷欠": 0.0}, "haircut_军饷": 8.0,
-    })
-    fresh_db._apply_region_army_pay_tick(
-        [pay_row], result,
-        {"due": 14.0, "province_pay_arrears": 0.0},
+    fresh_db.conn.execute(
+        "UPDATE armies SET self_funded_pay=0, is_tusi=0, owner_power='ming', "
+        "pay_source_region='shaanxi', province_pay_share=.4, central_pay_share=.6, "
+        "province_pay_arrears=0, central_pay_arrears=0, arrears=0, morale=80, "
+        "manpower=10000, salary_rate=10 WHERE id='guanning'"
     )
-    morale = fresh_db.conn.execute(
-        "SELECT morale FROM armies WHERE id=?", (army_id,),
-    ).fetchone()["morale"]
-    assert morale == 72
+    fresh_db.conn.commit()
+
+    result = fresh_db.settle_province_tick("shaanxi")
+    army = fresh_db.conn.execute(
+        "SELECT morale, province_pay_arrears, central_pay_share FROM armies "
+        "WHERE id='guanning'"
+    ).fetchone()
+    assert result.breakdown["NewDebt"]["军饷欠"] == pytest.approx(4)
+    assert army["central_pay_share"] == pytest.approx(.6)
+    assert army["province_pay_arrears"] == pytest.approx(4)
+    assert army["morale"] == 72
 
 
 def test_fixed_flows_substrate_hub_failure_rolls_back_cutover_writes(fresh_game, monkeypatch):
