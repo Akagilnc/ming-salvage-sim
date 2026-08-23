@@ -1837,7 +1837,11 @@ def _apply_population_transfers(
     不复用 DeltaApplyResult（其 applied 声明为 dict、文档限定 faction/class）；
     本核 applied 为转移记录 list，直接声明窄类型（#649 C2）。
     """
-    from ming_sim.constants import POPULATION_TRANSFER_FIELDS, POPULATION_TRANSFER_REASONS
+    from ming_sim.constants import (
+        POPULATION_TRANSFER_FIELDS,
+        POPULATION_TRANSFER_MAGNITUDE_BPS,
+        POPULATION_TRANSFER_REASONS,
+    )
 
     applied: List[Dict[str, object]] = []
     rejected: List[Dict[str, object]] = []
@@ -1951,6 +1955,20 @@ def _apply_population_transfers(
                 "源阶级省级行是硬天花板，禁凭空造人",
             )
             continue
+        # #662（S14）：灾害／兵灾量级口径 clamp——单条上限＝源余额×万分比（floor）。
+        # 只压这两个人口入口；发生与量级的判定在 LLM 软判，代码只 clamp＋记账。
+        cap_bps = POPULATION_TRANSFER_MAGNITUDE_BPS.get(reason)
+        if cap_bps is not None:
+            cap = int(src_row["population"]) * cap_bps // 10000
+            if amount > cap:
+                _reject(
+                    "invalid_enum",
+                    f"population_transfers 超量级口径：reason={reason} 单条上限＝"
+                    f"源余额 {src_row['population']}×{cap_bps / 10000:g}={cap}"
+                    f"（{population_unit}口径），申报 {amount}；"
+                    "超源余额与超口径均整项拒收、两腿不动",
+                )
+                continue
         # 单记录双写：同一事务内源减目标增，任一腿失败整体回滚（ADR 0008 决定 2）。
         db.conn.execute(
             "UPDATE classes SET population = population - ?, updated_at = CURRENT_TIMESTAMP "
