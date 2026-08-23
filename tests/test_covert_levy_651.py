@@ -1,3 +1,5 @@
+import json
+
 from ming_sim.covert_levy import (
     ENTRY_KIND, PROHIBITION_ACTION, active_prohibition_dossier,
     army_pay_fact_for_dossier, settle_exposure_from_canonical_actions,
@@ -234,8 +236,15 @@ def test_tacit_and_prohibition_use_real_canonical_identity_and_are_idempotent(ga
     assert scene["decision"] == "禁摊派" and scene["shortfall_reopened"] is True
     assert scene["available_dispositions"] == []
     beat = assemble_beat_inputs(db, state, beat_kind=BEAT_OPEN)
-    assert beat.audience_scenes and '"available_dispositions": []' in beat.audience_scenes[0]
-    assert f'"arrears": 10.0' in beat.audience_scenes[0]
+    assert beat.audience_scenes
+    reminder = json.loads(beat.audience_scenes[0])
+    assert reminder["decision"] == "禁摊派"
+    assert reminder["army_pay_fact"]["arrears"] == 10.0
+    assert reminder["available_dispositions"] == []
+    assert {
+        "criterion_text", "channels", "fork", "gap_text", "statement_text",
+        "origin_context", "scene_text",
+    }.isdisjoint(reminder)
 
     # Reuse the same fixture for tacit permission: both canonical legs are required.
     did2, _, _, _ = _bound_case(db, state)
