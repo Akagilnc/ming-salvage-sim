@@ -68,6 +68,9 @@ class _FakeSession:
     def _character(self, minister_name: str):
         return self.content.characters[minister_name]
 
+    def consume_audience_admission(self, character, *, origin_id):
+        return SimpleNamespace(allowed=True, reason="")
+
     def _start_cli_action_intent(self, character, text):
         return None
 
