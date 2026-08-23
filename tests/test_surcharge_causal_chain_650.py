@@ -309,8 +309,13 @@ def test_settlement_drives_deterministic_pool_inflow(game):
     assert _pop(db, "流民", "shaanxi") == pool_before + want
 
 
-def test_phase2_reopen_consumes_old_levy_once_and_records_it(game):
-    """pre_settle 后进程消失也不丢月效；phase2 事务同时写人口与 extraction。"""
+def test_phase2_reopen_consumes_old_levy_once_and_records_it(game, monkeypatch):
+    """phase2 后段失败整批回滚；ready 真源跨进程恢复后恰好重放一次。"""
+    import ming_sim.decree as decree_mod
+    from ming_sim.applier import Provenance
+    from ming_sim.models import LLMConfig, TurnPhase
+    from ming_sim.session import GameSession
+
     db, state, content = game
     apply_score_extraction(db, state, {
         "surcharge_decrees": [_decree(db, state, monthly_amount=10.0)],
@@ -319,20 +324,56 @@ def test_phase2_reopen_consumes_old_levy_once_and_records_it(game):
     before_turn = state.turn
     before = _pop(db, "流民", "shaanxi")
     pre_settle(state, db, content=content)
+    persist_resolve_context = decree_mod.persist_resolve_context
+    persist_resolve_context(
+        db, before_turn, {}, decree_text="测试诏", narrative="测试邸报",
+        simulator_payload={}, secret_orders={}, relevant_memories=[],
+        source=Provenance.system_simulation,
+    )
+    assert state.turn_phase == TurnPhase.SETTLING.value
+
+    real_apply = decree_mod.apply_score_extraction
+    attempts = 0
+
+    def fail_after_apply(*args, **kwargs):
+        nonlocal attempts
+        applied = real_apply(*args, **kwargs)
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("phase2 after levy transfer")
+        return applied
+
+    monkeypatch.setattr(decree_mod, "apply_score_extraction", fail_after_apply)
+    cfg = LLMConfig(api_key="", base_url="http://unused", model="unused")
+    session = object.__new__(GameSession)
+    session.db, session.state, session.content = db, state, content
+    session.llm_config, session.agno_db, session.registry = cfg, None, None
+    session.last_decree = session.last_report = ""
+
+    with pytest.raises(SettlementAbort):
+        session.resolve_turn()
     assert _pop(db, "流民", "shaanxi") == before
+    assert db.get_turn_extraction(before_turn) is None
+    assert db.get_resolve_context(before_turn)["extracted"] == {}
 
     path = db.path
     db.close()
     reopened = GameDB(path, content)
     restored = reopened.load_state()
-    _settle_with_delta(
-        restored, reopened, {}, before_turn=before_turn, content=content,
-    )
+    resumed = object.__new__(GameSession)
+    resumed.db, resumed.state, resumed.content = reopened, restored, content
+    resumed.llm_config, resumed.agno_db, resumed.registry = cfg, None, None
+    resumed.last_decree = resumed.last_report = ""
+    resumed.resolve_turn()
+
     assert _pop(reopened, "流民", "shaanxi") == before + want
     applied = reopened.get_turn_extraction(before_turn)["extractor_output"]
     transfers = [item for item in applied["population_transfers"] if item.get("reason") == "加派"]
     assert len(transfers) == 1
     assert transfers[0]["amount"] == want
+    assert reopened.get_resolve_context(before_turn) is None
+    assert resumed.state.turn == before_turn + 1
+    assert resumed.state.turn_phase == TurnPhase.ISSUED.value
 
 
 def test_ming_province_without_fiscal_base_is_not_a_levy_member(game):
@@ -469,7 +510,7 @@ def test_production_inputs_project_qualitative_regional_displaced_trend(game):
 
     payload_text = str(build_simulator_payload(state, db, "", "")["classes_brief"])
     assert "陕西：流民压力" in payload_text
-    assert "近月上升" in payload_text
+    assert "近月因加派而上升" in payload_text
     assert str(want) not in payload_text
 
     regional_text = None
@@ -483,7 +524,7 @@ def test_production_inputs_project_qualitative_regional_displaced_trend(game):
         if "regional" not in world and nonregional_text is None:
             nonregional_text = str(world)
     assert regional_text is not None and "陕西：流民压力" in regional_text
-    assert "近月上升" in regional_text
+    assert "近月因加派而上升" in regional_text
     assert nonregional_text is not None and "省级流民态势" not in nonregional_text
     assert str(want) not in regional_text
 
