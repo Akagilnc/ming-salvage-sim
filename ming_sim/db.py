@@ -27,6 +27,7 @@ from ming_sim.constants import (
     POWER_FIELD_ALIASES, POWER_TEXT_FIELDS, MONEY_UNIT, REGION_FIELD_LABELS, REGION_QUANTITY_FIELDS,
     FISCAL_SCORE_FIELDS, REGION_FIELD_ALIASES, REGION_SCORE_FIELDS, REGION_TEXT_FIELDS,
     DOSSIER_LINK_TYPES, SALARY_RATE_ANCHOR, TURN_UNIT,
+    DEFAULT_OPENING_PERIOD, DEFAULT_OPENING_YEAR,
 )
 from ming_sim.content import GameContent
 from ming_sim.decree_vocabulary import (
@@ -4830,7 +4831,10 @@ class GameDB:
                     raise SystemExit(f"--start-ym 格式非法：{start_ym!r}，应为 YYYY.MM（如 1629.04）。")
                 if not (1627 <= y <= 1644 and 1 <= m <= 12):
                     raise SystemExit(f"--start-ym 超范围：{start_ym!r}，年须 1627-1644、月 1-12。")
-                state.turn = (y - 1627) * 12 + (m - 10) + 1
+                state.turn = (
+                    (y - DEFAULT_OPENING_YEAR) * 12
+                    + (m - DEFAULT_OPENING_PERIOD) + 1
+                )
                 state.year, state.period = y, m
                 print(f"[调试] 跳到 {y}年{m}月起手（turn={state.turn}）。")
             self.save_state(state)
@@ -20228,7 +20232,9 @@ class GameDB:
                 int(state_row["turn"]), int(state_row["year"]), int(state_row["period"]),
             )
         else:
-            default_turn, default_year, default_period = 1, 1627, 10
+            default_turn, default_year, default_period = (
+                1, DEFAULT_OPENING_YEAR, DEFAULT_OPENING_PERIOD,
+            )
         effective_turn = int(turn if turn is not None else default_turn)
         effective_year = int(year if year is not None else default_year)
         effective_period = int(period if period is not None else default_period)
@@ -20307,6 +20313,39 @@ class GameDB:
     # 摘要文本机械原样存取（LLM 自由文本零删改，CLAUDE.md P6/ADR 0142）；
     # 奠基段只增不改、近况段覆盖式幂等由 apply 路机械保证。
     # ------------------------------------------------------------------
+
+    def apply_seed_founding_segment(
+        self,
+        *,
+        source: str,
+        target: str,
+        dimension: str,
+        founding_segment: str,
+    ) -> None:
+        """#638 S7：seed 可选初始摘要落奠基段（只增不改；近况段/水位不动）。
+
+        与 apply_relation_brew_result 的差异：本写只碰奠基段——近况段留空、
+        last_event_id 留 0，seed 边因此仍在水位之上，该对首次真实月末酿制照常
+        收取 seed 边作输入语境（ADR 0086 同一套酿制，不另立第二套腿）。幂等：
+        同内容重放由调用方 merge_founding_segment 字节等去重保证字节不变。"""
+        if dimension not in ("君臣", "大臣"):
+            raise ValueError(f"未知关系维度: {dimension!r}")
+        owns = self.owns_transaction()
+        self.conn.execute(
+            """
+            INSERT INTO relation_summaries
+                (source, target, dimension, founding_segment, recent_segment,
+                 last_event_id, last_brewed_turn, last_brewed_year, last_brewed_period)
+            VALUES (?, ?, ?, ?, '', 0, 0, 0, 0)
+            ON CONFLICT(source, target) DO UPDATE SET
+                dimension = excluded.dimension,
+                founding_segment = excluded.founding_segment,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (str(source), str(target), dimension, str(founding_segment)),
+        )
+        if owns:
+            self.conn.commit()
 
     def get_relation_summary(self, source: str, target: str) -> Optional[Dict[str, Any]]:
         row = self.conn.execute(
