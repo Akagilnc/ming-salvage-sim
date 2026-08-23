@@ -30,7 +30,7 @@ from ming_sim.decree import settle_with_delta
 from ming_sim.issues import apply_score_extraction
 from ming_sim.memories import effect_brief
 
-# 量级口径（施工契约，史实尺度）：单条记录上限＝源阶级省级行当前余额 × 万分比。
+# 量级口径（施工契约，史实尺度）：单条记录上限＝本批结算前源阶级省级行余额 × 万分比。
 # 灾荒月度驱离在低个位数百分比量级；兵祸过境冲击更烈，放宽一档。
 DISASTER_CAP_BPS = 500   # 灾害 ≤ 5%
 WAR_CAP_BPS = 1000       # 兵灾 ≤ 10%
@@ -105,6 +105,27 @@ def test_disaster_magnitude_clamp_two_way_boundary(disaster_shaanxi):
     assert len(recs) == 1 and recs[0]["amount"] == cap
     assert _pop(db, "农民", "shaanxi") == FARMER_SHAANXI - cap
     assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI + cap
+
+
+def test_disaster_and_war_caps_share_opening_balance_not_live_order(disaster_shaanxi):
+    """同源灾害 5% 与兵灾 10% 都按 extractor 所见的结算前快照验票；前项落账后
+    不得缩小后项口径，否则合法批会随数组顺序改变接受结果。"""
+    db, state, content = disaster_shaanxi
+    disaster_cap = _cap(FARMER_SHAANXI, DISASTER_CAP_BPS)
+    war_cap = _cap(FARMER_SHAANXI, WAR_CAP_BPS)
+    applied = apply_score_extraction(db, state, {
+        "population_transfers": [
+            _transfer(source="农民@shaanxi", target="流民@shaanxi",
+                      amount=disaster_cap, reason="灾害"),
+            _transfer(source="农民@shaanxi", target="流民@shaanxi",
+                      amount=war_cap, reason="兵灾"),
+        ],
+    }, content, None)
+    assert not applied["population_transfers_rejections"]
+    assert [r["amount"] for r in applied["population_transfers"]] == [
+        disaster_cap, war_cap,
+    ]
+    assert _pop(db, "农民", "shaanxi") == FARMER_SHAANXI - disaster_cap - war_cap
 
 
 def test_disaster_clamp_unit_agnostic(content, tmp_path):
@@ -348,3 +369,15 @@ def test_prompts_teach_disaster_war_grounding_and_magnitude_cap():
         assert line, f"{rel}: 缺 人口转移 契约行"
         for token in must:
             assert token in line, f"{rel}: 人口转移 行未教 {token!r}：{line!r}"
+
+
+def test_season_simulator_must_emit_extractable_displacement_decision():
+    """真实生产链先由 simulator 判自然后果；它必须产出省、来源阶级、确定人数与原因，
+    而非指望只翻译月度新旨意的 extractor 从背景事实自行发明转移。"""
+    from pathlib import Path
+    prompt = (Path(__file__).parents[1] / "content/prompts/season_simulator.md").read_text(
+        encoding="utf-8"
+    )
+    section = prompt.split("**灾害／兵灾流民后果**：", 1)[1].split("### 军事", 1)[0]
+    for token in ("regions", "无对应事实不得", "来源阶级", "确定人数", "灾害", "兵灾", "守恒转移"):
+        assert token in section

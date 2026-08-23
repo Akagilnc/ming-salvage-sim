@@ -1847,6 +1847,14 @@ def _apply_population_transfers(
     rejected: List[Dict[str, object]] = []
     items = transfers if isinstance(transfers, list) else []
     population_unit = db.population_unit
+    # 量级票面以 extractor 所见的本批结算前余额为准；活余额仍单独充当守恒天花板。
+    # 两者分开，避免同源多条合法记录因排列顺序改变而互相缩小口径。
+    opening_balances = {
+        (str(row["name"]), str(row["region_id"])): int(row["population"])
+        for row in db.conn.execute(
+            "SELECT name, region_id, population FROM classes WHERE region_id IS NOT NULL"
+        ).fetchall()
+    }
     for item in items:
         if not isinstance(item, dict):
             rejected.append({
@@ -1955,16 +1963,17 @@ def _apply_population_transfers(
                 "源阶级省级行是硬天花板，禁凭空造人",
             )
             continue
-        # #662（S14）：灾害／兵灾量级口径 clamp——单条上限＝源余额×万分比（floor）。
-        # 只压这两个人口入口；发生与量级的判定在 LLM 软判，代码只 clamp＋记账。
+        # #662（S14）：灾害／兵灾量级口径 clamp——单条上限＝本批结算前源余额×万分比（floor）。
+        # 活余额只管累计守恒；口径使用同一输入快照，故同源记录交换次序不改变逐条合法性。
         cap_bps = POPULATION_TRANSFER_MAGNITUDE_BPS.get(reason)
         if cap_bps is not None:
-            cap = int(src_row["population"]) * cap_bps // 10000
+            opening_balance = opening_balances[(src_cls, src_region)]
+            cap = opening_balance * cap_bps // 10000
             if amount > cap:
                 _reject(
                     "invalid_enum",
                     f"population_transfers 超量级口径：reason={reason} 单条上限＝"
-                    f"源余额 {src_row['population']}×{cap_bps / 10000:g}={cap}"
+                    f"结算前源余额 {opening_balance}×{cap_bps / 10000:g}={cap}"
                     f"（{population_unit}口径），申报 {amount}；"
                     "超源余额与超口径均整项拒收、两腿不动",
                 )
