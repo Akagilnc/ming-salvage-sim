@@ -116,11 +116,7 @@ def test_yuan_arrears_paid_then_arrives_e2e(game):
 
 
 def test_arrival_clearing_is_not_noop_negative_control(game):
-    """负控：证明本测试真测「抵达清 transit_to」链、非 no-op。
-
-    若只补饷、不投抵达 行止 delta，则人不会自己到任：transit_to 仍残留、location 仍非目的地。
-    这反证主用例里「transit_to 被清空」确实是抵达 行止 delta 干的事（链真在跑），
-    不是测了个永真断言。"""
+    """负控：只补饷而不调用引擎到达器时，人物仍保持在途。"""
     db, state, content = game
     name = active_ming_character(db, content)
     old_location = content.characters[name].location
@@ -142,7 +138,7 @@ def test_arrival_clearing_is_not_noop_negative_control(game):
             ]
         )
 
-        # 只补饷、**不**投抵达 行止 —— 模拟「条件满足了但 simulator 没产抵达」
+        # 只补饷，不调用 force_transit_arrivals。
         issues.apply_score_extraction(
             db,
             state,
@@ -164,9 +160,9 @@ def test_arrival_clearing_is_not_noop_negative_control(game):
         still = db.conn.execute(
             "SELECT location, transit_to FROM characters WHERE name=?", (name,)
         ).fetchone()
-        # 没有抵达 delta，人就不会自己到任：transit_to 仍在、location 仍非目的地
-        assert still["transit_to"] == DEST, "只补饷不投抵达，不应自己清 transit_to（否则主用例是 no-op）"
-        assert still["location"] != DEST, "只补饷不投抵达，不应自己到任"
+        # 引擎到达器未运行，transit_to 仍在、location 仍非目的地。
+        assert still["transit_to"] == DEST, "只补饷不应自己清 transit_to（否则主用例是 no-op）"
+        assert still["location"] != DEST, "只补饷不应自己到任"
     finally:
         # 精确回滚（同上）：原无 transit_to 则删除，不留幽灵属性
         content.characters[name].location = old_location
