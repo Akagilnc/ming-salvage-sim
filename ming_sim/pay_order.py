@@ -201,17 +201,6 @@ def resolve_haircut_bp(
     return int(config[key]) if key is not None else None
 
 
-def _resolve_haircut_bp(
-    config: Dict[str, int],
-    subject: str,
-    region_id: str,
-    turn: int,
-    source: str,
-) -> Optional[int]:
-    """r3 全序取胜出键（resolve_haircut_bp 别名，模块内沿旧名）。"""
-    return resolve_haircut_bp(config, subject, region_id, turn, source)
-
-
 def resolve_pay_order_overrides(
     config: Dict[str, int],
     region_id: str,
@@ -239,7 +228,7 @@ def resolve_pay_order_overrides(
     for subject in DUE_SUBJECTS:
         # 省内池结算消费 province 侧；中央侧（hub tier）由 flows 读端按
         # resolve_haircut_bp(source='central') 独立取胜出键（只改 Due 输入值）。
-        bp = _resolve_haircut_bp(config, subject, region_id, turn, "province")
+        bp = resolve_haircut_bp(config, subject, region_id, turn, "province")
         if bp is not None and bp != 10000:
             haircut_bp[subject] = bp
     return ResolvedPayOrder(
