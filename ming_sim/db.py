@@ -4989,6 +4989,44 @@ class GameDB:
             except Exception as exc:
                 print(f"[WARN] 开局危机落库失败：{exc}；跳过 {ev.title}")
 
+    def set_character_transit(
+        self,
+        name: str,
+        *,
+        transit_to: str = "",
+        distance_remaining: float | None = None,
+        speed_factor: float | None = None,
+        start_turn: int = 0,
+        location: str | None = None,
+        content=None,
+        commit: bool = True,
+    ) -> None:
+        """Write the complete transit ledger and its in-memory mirror at one seam."""
+        assignments = (
+            "transit_to=?, transit_distance_remaining=?, transit_speed_factor=?, "
+            "transit_start_turn=?"
+        )
+        values: tuple[object, ...] = (
+            transit_to, distance_remaining, speed_factor, start_turn,
+        )
+        if location is not None:
+            assignments = "location=?, " + assignments
+            values = (location,) + values
+        self.conn.execute(
+            f"UPDATE characters SET {assignments} WHERE name=?",
+            values + (name,),
+        )
+        if content is not None and name in content.characters:
+            character = content.characters[name]
+            if location is not None:
+                character.location = location
+            character.transit_to = transit_to
+            character.transit_distance_remaining = distance_remaining
+            character.transit_speed_factor = speed_factor
+            character.transit_start_turn = start_turn
+        if commit:
+            self.conn.commit()
+
     def set_character_status(
         self,
         state: GameState,
@@ -5015,10 +5053,10 @@ class GameDB:
         if ousted:
             self.conn.execute(
                 "UPDATE characters SET status=?, status_reason=?, "
-                "status_changed_turn=?, office='', transit_to='', transit_distance_remaining=NULL, "
-                "transit_speed_factor=NULL, transit_start_turn=0, reason_code=? WHERE name=?",
+                "status_changed_turn=?, office='', reason_code=? WHERE name=?",
                 (status, reason[:200], state.turn, reason_code_value, name),
             )
+            self.set_character_transit(name, commit=False)
         else:
             self.conn.execute(
                 "UPDATE characters SET status=?, status_reason=?, status_changed_turn=?, reason_code=? WHERE name=?",

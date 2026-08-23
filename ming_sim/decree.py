@@ -1824,20 +1824,9 @@ def force_transit_arrivals(
     for row in overdue:
         name = str(row["name"])
         dest = str(row["transit_to"])
-        db.conn.execute(
-            "UPDATE characters SET location=?, transit_to='', transit_distance_remaining=NULL, "
-            "transit_speed_factor=NULL, transit_start_turn=0 WHERE name=?",
-            (dest, name),
+        db.set_character_transit(
+            name, location=dest, content=content, commit=False,
         )
-        if content is not None and name in content.characters:
-            ch = content.characters[name]
-            ch.location = dest
-            ch.transit_to = ""
-            ch.transit_distance_remaining = None
-            ch.transit_speed_factor = None
-            # 镜像 DB 清掉的行止时钟，保持内存/DB 一致（同回合内存读不到陈旧 start turn）
-            if hasattr(ch, "transit_start_turn"):
-                ch.transit_start_turn = 0
         forced.append({"name": name, "location": dest})
     if commit:
         db.conn.commit()

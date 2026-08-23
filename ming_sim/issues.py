@@ -5812,11 +5812,10 @@ def _displace_duplicate_offices(
         )
         if fully_displaced:
             db.conn.execute(
-                "UPDATE characters SET office=?, office_type=?, status_reason=?, reason_code=?, "
-                "transit_to='', transit_distance_remaining=NULL, transit_speed_factor=NULL, "
-                "transit_start_turn=0 WHERE name=?",
+                "UPDATE characters SET office=?, office_type=?, status_reason=?, reason_code=? WHERE name=?",
                 (new_holder_office, new_type, "被顶替", "被顶替", row["name"]),
             )
+            db.set_character_transit(str(row["name"]), content=content, commit=False)
         else:
             db.conn.execute(
                 "UPDATE characters SET office=?, office_type=? WHERE name=?",
@@ -5829,9 +5828,6 @@ def _displace_duplicate_offices(
             if fully_displaced:
                 ch.status_reason = "被顶替"
                 ch.reason_code = "被顶替"
-                ch.transit_to = ""
-                ch.transit_distance_remaining = None
-                ch.transit_speed_factor = None
     # #9 cmr R1：被顶替者的 office_type 经上方裸 UPDATE 改了（全顶替→身名分=0 权重），绕过了
     # set_character_office 钩子，故其所属派系（常与新任者异派系）的 leverage 须在此补重算，否则
     # 残留偏高、违 #9 不变式。新任者自身派系已由 set_character_office 钩子重算，这里只补被顶替者。
@@ -5858,7 +5854,8 @@ def _snapshot_person_write_state(db: GameDB, content: Optional[GameContent]):
         dict(row)
         for row in db.conn.execute(
             "SELECT name, status, office, office_type, status_reason, "
-            "status_changed_turn, reason_code, transit_to, transit_start_turn FROM characters"
+            "status_changed_turn, reason_code, transit_to, transit_distance_remaining, "
+            "transit_speed_factor, transit_start_turn FROM characters"
         ).fetchall()
     ]
     office_rows = [
@@ -5935,22 +5932,26 @@ def _restore_person_write_state(
             db.conn.execute("DELETE FROM characters WHERE name=?", (name,))
     db.conn.executemany(
         "UPDATE characters SET status=?, office=?, office_type=?, status_reason=?, "
-        "status_changed_turn=?, reason_code=?, transit_to=?, transit_start_turn=? WHERE name=?",
+        "status_changed_turn=?, reason_code=? WHERE name=?",
         [
             (
-                row["status"],
-                row["office"],
-                row["office_type"],
-                row["status_reason"],
-                row["status_changed_turn"],
-                row["reason_code"],
-                row["transit_to"],
-                row.get("transit_start_turn", 0),
-                row["name"],
+                row["status"], row["office"], row["office_type"],
+                row["status_reason"], row["status_changed_turn"],
+                row["reason_code"], row["name"],
             )
             for row in character_rows
         ],
     )
+    for row in character_rows:
+        db.set_character_transit(
+            str(row["name"]),
+            transit_to=str(row["transit_to"] or ""),
+            distance_remaining=row.get("transit_distance_remaining"),
+            speed_factor=row.get("transit_speed_factor"),
+            start_turn=int(row.get("transit_start_turn", 0) or 0),
+            content=content,
+            commit=False,
+        )
     db.conn.executemany(
         "INSERT INTO character_offices "
         "(character_name, office_title, office_type, source, dossier_id, "
@@ -6289,7 +6290,8 @@ def _apply_person_changes(
     def character_row(name: str):
         return db.conn.execute(
             "SELECT name, status, office, office_type, power_id, status_reason, "
-            "status_changed_turn, reason_code, transit_to, transit_start_turn "
+            "status_changed_turn, reason_code, transit_to, transit_distance_remaining, "
+            "transit_speed_factor, transit_start_turn "
             "FROM characters WHERE name=?",
             (name,),
         ).fetchone()
@@ -6509,7 +6511,7 @@ def _apply_person_changes(
                 ch.reason_code = str(reason_code or "")
                 if status in {"offstage", "dismissed", "imprisoned", "exiled", "retired", "dead"}:
                     ch.office = ""
-                    ch.transit_to = ""
+                    db.set_character_transit(name, content=content, commit=False)
             result = {
                 "name": name,
                 "动作": action,
@@ -6644,7 +6646,7 @@ def _apply_person_changes(
                         ch = content.characters[name]
                         ch.status = release_status
                         ch.office = ""
-                        ch.transit_to = ""
+                        db.set_character_transit(name, content=content, commit=False)
                 release_result = {
                     "name": name,
                     "动作": "处置",
@@ -6678,8 +6680,7 @@ def _apply_person_changes(
                     # 否则留「transit_to 非空 + start=0」被兜底当 legacy-overdue 误判（CMR r2 防御）。
                     db.conn.execute(
                         "UPDATE characters SET status=?, office=?, office_type=?, "
-                        "status_reason=?, status_changed_turn=?, reason_code=?, transit_to=?, "
-                        "transit_start_turn=? WHERE name=?",
+                        "status_reason=?, status_changed_turn=?, reason_code=? WHERE name=?",
                         (
                             row["status"],
                             row["office"],
@@ -6687,8 +6688,6 @@ def _apply_person_changes(
                             row["status_reason"],
                             row["status_changed_turn"],
                             row["reason_code"],
-                            row["transit_to"],
-                            row["transit_start_turn"],
                             name,
                         ),
                     )
@@ -6699,7 +6698,15 @@ def _apply_person_changes(
                         ch.status = str(row["status"] or "")
                         ch.office = str(row["office"] or "")
                         ch.office_type = str(row["office_type"] or ch.office_type)
-                        ch.transit_to = str(row["transit_to"] or "")
+                        db.set_character_transit(
+                            name,
+                            transit_to=str(row["transit_to"] or ""),
+                            distance_remaining=row["transit_distance_remaining"],
+                            speed_factor=row["transit_speed_factor"],
+                            start_turn=int(row["transit_start_turn"] or 0),
+                            content=content,
+                            commit=False,
+                        )
                         # 对称 DB 侧回滚（上方 UPDATE 已还原全 7 字段）：内存也还原缘由/码，
                         # 守三面同步（决定6），免前置步刷过内存缘由后此路回滚留脏值（PR#106 R2 gemini）。
                         ch.status_reason = str(row["status_reason"] or "")
@@ -6865,9 +6872,6 @@ def _apply_person_changes(
                     ch.office = new_title
                     ch.office_type = "身名分"
                     ch.status = "active"
-                    ch.transit_to = ""
-                    ch.transit_distance_remaining = None
-                    ch.transit_speed_factor = None
                     ch.reason_code = ""
                     ch.status_reason = str(item.get("reason") or "")
                 # 易主后人仍 active（在新主任事，持身名分=降臣/归附），不变式1 不破；清原 reason_code/
@@ -6875,10 +6879,10 @@ def _apply_person_changes(
                 # status_changed_turn 记本回合（易主即状态变更）。
                 db.conn.execute(
                     "UPDATE characters SET office=?, office_type=?, status='active', "
-                    "reason_code='', status_reason=?, status_changed_turn=?, transit_to='', "
-                    "transit_distance_remaining=NULL, transit_speed_factor=NULL, transit_start_turn=0 WHERE name=?",
+                    "reason_code='', status_reason=?, status_changed_turn=? WHERE name=?",
                     (new_title, "身名分", str(item.get("reason") or ""), state.turn, name),
                 )
+                db.set_character_transit(name, content=content, commit=False)
                 if commit_person_change:
                     db.conn.commit()
                 wrapped = {"动作": action, "方式": way, "反噬": backlash, **result}
@@ -6983,15 +6987,17 @@ def _apply_person_changes(
             else:
                 location = new_location or str(row["location"] or "")
                 previous_destination = str(row["transit_to"] or "")
+                tone = str(item.get("行程语气") or "常行").strip()
+                speed_by_tone = {"常行": 1.0, "加急": 1.5, "星夜兼程": 2.0}
+                if tone not in speed_by_tone:
+                    applied.append(rejected(item, "行程语气不在闭合枚举", "invalid_enum"))
+                    continue
                 if transit_to and previous_destination == transit_to:
                     continue
                 if transit_to and previous_destination and previous_destination != transit_to:
                     applied.append(rejected(item, "在途人物不可改道", "invalid_transition"))
                     continue
-                tone = str(item.get("行程语气") or "常行").strip()
-                speed_by_tone = {"常行": 1.0, "加急": 1.5, "星夜兼程": 2.0}
-                if tone not in speed_by_tone:
-                    applied.append(rejected(item, "行程语气不在闭合枚举", "invalid_enum"))
+                if transit_to and not location:
                     continue
                 distance = None
                 speed = None
@@ -7025,19 +7031,16 @@ def _apply_person_changes(
                         new_transit_start_turn = state.turn
                 else:
                     new_transit_start_turn = 0
-                db.conn.execute(
-                    "UPDATE characters SET location=?, transit_to=?, transit_distance_remaining=?, "
-                    "transit_speed_factor=?, transit_start_turn=? WHERE name=?",
-                    (location, transit_to, distance, speed, new_transit_start_turn, name),
+                db.set_character_transit(
+                    name,
+                    location=location,
+                    transit_to=transit_to,
+                    distance_remaining=distance,
+                    speed_factor=speed,
+                    start_turn=new_transit_start_turn,
+                    content=content,
+                    commit=commit_person_change,
                 )
-                if commit_person_change:
-                    db.conn.commit()
-                if content is not None and name in content.characters:
-                    ch = content.characters[name]
-                    ch.location = location
-                    ch.transit_to = transit_to
-                    ch.transit_distance_remaining = distance
-                    ch.transit_speed_factor = speed
                 applied.append(
                     result := {
                         "name": name,

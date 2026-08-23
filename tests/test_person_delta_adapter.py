@@ -2096,6 +2096,9 @@ def test_apply_score_extraction_applies_person_travel_and_exposes_transit_to(gam
     old_transit_to = getattr(content.characters[name], "transit_to", "")
 
     try:
+        db.conn.execute("UPDATE characters SET location='beizhili' WHERE name=?", (name,))
+        content.characters[name].location = "beizhili"
+        old_location = "beizhili"
         applied = issues.apply_score_extraction(
             db,
             state,
