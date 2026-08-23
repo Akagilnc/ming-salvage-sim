@@ -123,6 +123,7 @@ class AudienceAdmissionDecision:
     reason: str = ""
     location: str = ""
     transit_to: str = ""
+    allowed: bool = False
 
 
 @dataclass
@@ -1098,7 +1099,49 @@ class GameSession:
             result = AudienceAdmission.IN_CAPITAL
         else:
             result = AudienceAdmission.SUMMON_FRESH
-        return AudienceAdmissionDecision(result, location=location, transit_to=transit_to)
+        return AudienceAdmissionDecision(
+            result, location=location, transit_to=transit_to,
+            allowed=result is AudienceAdmission.IN_CAPITAL,
+        )
+
+    def consume_audience_admission(
+        self,
+        character: Character,
+        *,
+        origin_id: str,
+        state: Optional[GameState] = None,
+    ) -> AudienceAdmissionDecision:
+        """Consume the shared audience gate before any turn/entrance/reply is created.
+
+        Offsite people get a durable story-ledger summons instead of entering the
+        audience.  Ledger failures propagate, so callers cannot accidentally proceed.
+        """
+        decision = self.admit_audience(character)
+        if decision.result not in {
+            AudienceAdmission.SUMMON_FRESH,
+            AudienceAdmission.SUMMON_IN_TRANSIT,
+        }:
+            return decision
+        if not str(origin_id or "").strip():
+            raise ValueError("传召 origin_id 不能为空。")
+        from ming_sim.audience_night import (
+            get_open_night, open_night, record_summon_fresh,
+            record_summon_in_transit,
+        )
+        active_state = state or getattr(self, "state", None)
+        if active_state is None:
+            raise ValueError("传召须有当前局面。")
+        night = get_open_night(self.db) or open_night(self.db, active_state)
+        recorder = (
+            record_summon_fresh
+            if decision.result is AudienceAdmission.SUMMON_FRESH
+            else record_summon_in_transit
+        )
+        recorder(
+            self.db, int(night["id"]), character.name,
+            origin_id=str(origin_id).strip(),
+        )
+        return decision
 
     def _start_cli_action_intent(self, character: Character, message: str) -> Optional[Future]:
         """召对动作判断只读皇帝消息，可与大臣回话并发。
