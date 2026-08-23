@@ -624,7 +624,7 @@ def _next_mutiny_latch(*, loyalty: int, arrears: float, needed: int, current: in
     """tick 后判闩：入闩 <20 且欠逾四月；解闩须 >=40 且欠饷退到四月内。"""
     if needed <= 0:
         return int(bool(current))
-    arrears_retired = max(0.0, float(arrears)) <= 4 * needed + 1e-9
+    arrears_retired = max(0.0, float(arrears)) <= 4 * needed
     if current:
         return 0 if loyalty >= 40 and arrears_retired else 1
     return 1 if loyalty < 20 and not arrears_retired else 0
