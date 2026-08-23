@@ -7139,7 +7139,6 @@ def _surcharge_population_pool_members(db: GameDB, region_id: str) -> set[str]:
 
 def _apply_surcharge_decrees(
     db: GameDB,
-    state: GameState,
     items: object,
     *,
     commit: bool = True,
@@ -7721,7 +7720,6 @@ def apply_score_extraction(
     # 3.45) surcharge_decrees：明渠加派旨落逐省累积账（#650/0089，P1）。
     applied_surcharges, surcharge_rejections = _apply_surcharge_decrees(
         db,
-        state,
         extracted.get("surcharge_decrees") or [],
         commit=commit_now,
     )

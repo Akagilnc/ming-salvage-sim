@@ -74,7 +74,7 @@ from ming_sim.decree_vocabulary import (
     qualitative_dossier_outcome,
     qualitative_promulgation_slot,
 )
-from ming_sim.memories import build_timeline, effect_brief, record_chapter_memory
+from ming_sim.memories import build_timeline, record_chapter_memory
 from ming_sim.rescript_draft import (
     build_rescript_draft_payload,
     generate_rescript_draft,

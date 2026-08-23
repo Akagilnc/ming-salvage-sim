@@ -18,13 +18,12 @@ from pathlib import Path
 
 import pytest
 
-from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS, POPULATION_UNIT_WAN
+from ming_sim.db import GameDB
 from ming_sim.decree import pre_settle, settle_with_delta as _settle_with_delta
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.issues import apply_historical_fiscal_rates, apply_score_extraction
 import ming_sim.issues as issues
 from ming_sim.memories import effect_brief
-import ming_sim.memories as memories
 from ming_sim.population_pressure import regional_displaced_pressure_brief
 from ming_sim.knowledge import build_character_knowledge
 from ming_sim.simulation import build_simulator_payload
