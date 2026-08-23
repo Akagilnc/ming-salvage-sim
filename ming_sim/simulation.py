@@ -48,6 +48,8 @@ TOP_LEVEL_ALIASES = {
     "裁撤月度收支": "fiscal_removes",
     "派系变化": "faction_delta",
     "阶级变化": "class_delta",
+    "人口转移": "population_transfers",
+    "流民转移": "population_transfers",
     "地区变化": "region_delta",
     "军队变化": "army_delta",
     "势力变化": "power_updates",
@@ -101,6 +103,13 @@ ITEM_FIELD_ALIASES = {
     "inertia_delta": "inertia_delta", "惯性增量": "inertia_delta",
     "origin_kind": "origin_kind", "来源类型": "origin_kind",
     "origin_ref": "origin_ref", "来源引用": "origin_ref", "诏书引用": "origin_ref",
+    # #649 人口守恒转移 item 字段（canonical 白名单见 constants.POPULATION_TRANSFER_FIELDS）
+    "source": "source", "源": "source", "源阶级": "source",
+    "target": "target", "目标": "target", "目标阶级": "target",
+    "amount": "amount", "数额": "amount", "口数": "amount",
+    # #649 §1.4：class_delta 人口键 canonical 化，使 _apply_class_dict population guard
+    # 对中英文拼写统一整项拒收（人口只经 population_transfers 守恒转移变动）。
+    "population": "population", "人口": "population",
     # #622：旨外恶果/受益同列标记（效果行注解，非平行轨）
     # #1260：别名表全仓一份——flows/due_review 读端改调 read_beyond_intent_raw，禁手抄子集。
     "beyond_intent": "beyond_intent", "旨外": "beyond_intent",
@@ -777,7 +786,7 @@ def simulate_season_with_payload(
     return raw.strip(), payload
 
 
-# #633：relations（关系档房）并入同一并发装配——五模块共享同一 ThreadPoolExecutor，
+# #633：relations（关系档房）并入同一并发装配——各模块共享同一 ThreadPoolExecutor，
 # 不另建第二套编排。
 EXTRACTION_MODULES = ("internal", "military_external", "issues", "personnel_secret", "relations")
 
@@ -786,6 +795,7 @@ EMPTY_EXTRACTION: Dict[str, object] = {
     "economy_moves": [],
     "faction_delta": {},
     "class_delta": {},
+    "population_transfers": [],  # #649/0087：人口守恒转移（单记录双写，源减目标增）
     "region_delta": {},
     "army_delta": {},
     "new_armies": [],
@@ -819,7 +829,7 @@ EMPTY_EXTRACTION: Dict[str, object] = {
 }
 
 MODULE_FIELDS: Dict[str, set[str]] = {
-    "internal": {"metric_delta", "economy_moves", "faction_delta", "class_delta", "region_delta", "fiscal_changes", "fiscal_creates", "fiscal_removes"},
+    "internal": {"metric_delta", "economy_moves", "faction_delta", "class_delta", "population_transfers", "region_delta", "fiscal_changes", "fiscal_creates", "fiscal_removes"},
     "military_external": {"army_delta", "new_armies", "power_updates", "world_advance"},
     "issues": {
         "issue_advances", "new_issues", "事件结局", "cancels", "close_issues",
@@ -1100,6 +1110,21 @@ def build_extractor_shared_context(
                 extra.append(row)
         if extra:
             authorized_dossiers = list(authorized_dossiers) + extra
+        # #649 F1（判词）：internal extractor 专属机器输入面——按 class@region_id 键合的
+        # 省级阶级人口余额 TSV（population_transfers 守恒转移的源天花板）＋本档
+        # population_unit 列。仅 internal 模块可见，不进玩家可感 simulator 数表
+        # （classes_brief 保持定性档）。
+        slim["class_population_balances"] = _auto_table([
+            {
+                "class_region": f"{r['name']}@{r['region_id']}",
+                "population": int(r["population"]),
+                "population_unit": db.population_unit,
+            }
+            for r in db.conn.execute(
+                "SELECT name, region_id, population FROM classes "
+                "WHERE region_id <> '' ORDER BY name, region_id"
+            ).fetchall()
+        ])
     # #613：执行格读端字段随案卷进 extractor；优先沿用推演装配已写字段，缺则现场补投影。
     from ming_sim.decree import execution_side_read_fields
 
@@ -1657,13 +1682,21 @@ def extract_scores_by_modules_with_agno(
     secret_orders: Optional[Dict[str, object]] = None,
     parallel: bool = False,
     event_outcome_retry_limit: int = 1,
+    side_leg: Optional[Callable[[], object]] = None,
 ) -> tuple[Dict[str, object], str, str]:
-    """四模块结算 extractor：内政财政、军务外势、局势、人事密令。
+    """结算 extractor：按 EXTRACTION_MODULES 逐模块（内政财政、军务外势、局势、人事密令、关系）。
 
-    parallel=True：4 个互不依赖的 extractor LLM 调用并发跑，wall-clock≈最慢单个而非串行总和。
+    parallel=True：N 个互不依赖的 extractor LLM 调用并发跑（N=len(EXTRACTION_MODULES)），
+    wall-clock≈最慢单个而非串行总和。
     解析/sanitizer/合并仍串行按模块顺序——确定性不变、sanitizer 单实例不并发、输出与串行版字节一致。
     落库（apply_score_extraction）在本函数之外，仍串行单事务（ADR 0008）。
-    调用方（decree 月末 settle）一律 parallel=True，不按 runner/模型退串行。"""
+    调用方（decree 月末 settle）一律 parallel=True，不按 runner/模型退串行。
+
+    #656 / ADR 0093 前半：side_leg＝与全部 extractor 同池并发的唯一票拟 companion 腿
+    （phase2 fan-out 的第 N+1 路，N=len(EXTRACTION_MODULES)）。最小单腿接缝：腿可调用体契约＝自降级绝不抛
+    （非承重支路不耦合进关键路，F2.5），结果由调用方闭包持有；只存在于 parallel
+    并发路径（同交一个 ThreadPoolExecutor，任一腿完成前全部腿均已起跑），无串行备选
+    生产形态。"""
     base_payload = _extractor_context_payload(
         db, state, narrative, decree_text,
         relevant_memories=relevant_memories,
@@ -1696,18 +1729,29 @@ def extract_scores_by_modules_with_agno(
         return _sanitize_module_output(module, parsed)
 
     if parallel and len(EXTRACTION_MODULES) > 1:
-        # CLI 后端：4 个 LLM 调用并发取 raw（ThreadPoolExecutor.map 保序），再串行按模块顺序
-        # 解析/sanitizer/净化（sanitizer 单实例不并发、确定性）。任一模块抛错经 map 迭代原样上抛
+        # CLI 后端：N 个 LLM 调用并发取 raw，再串行按模块顺序解析/sanitizer/净化
+        # （sanitizer 单实例不并发、确定性）。任一模块抛错在收 result 时原样上抛
         # （with 块先等齐在跑线程再传播）→ 与串行同样触发上层 SettlementAbort。
+        # #656：票拟 companion 腿同池提交——全腿共享唯一 fan-out 点，任一腿完成前
+        # 所有腿均已起跑；侧腿业务失败自降级返回 None，程序错经 result() 上抛
+        # （extractor 腿先抛则其异常先行传播，SettlementAbort 照旧中止整月）。
         from concurrent.futures import ThreadPoolExecutor
-        tlog(f"[extractor] 并发抽取 {len(EXTRACTION_MODULES)} 模块（wall-clock≈最慢单个）")
-        with ThreadPoolExecutor(max_workers=len(EXTRACTION_MODULES)) as pool:
-            raws = list(pool.map(_run_raw, EXTRACTION_MODULES))
+        leg_count = len(EXTRACTION_MODULES) + (1 if side_leg is not None else 0)
+        tlog(f"[extractor] 并发抽取 {leg_count} 腿（wall-clock≈最慢单个）")
+        with ThreadPoolExecutor(max_workers=leg_count) as pool:
+            raw_futures = [pool.submit(_run_raw, m) for m in EXTRACTION_MODULES]
+            side_future = pool.submit(side_leg) if side_leg is not None else None
+            raws = [f.result() for f in raw_futures]
+            if side_future is not None:
+                # 汇合侧腿 Future（r2 B3）：程序错经 result() 响亮上抛（ADR 0005），
+                # 不再提交后弃之——side_leg 异常静默蒸发＝代码故障被吞。
+                side_future.result()
         for module, raw in zip(EXTRACTION_MODULES, raws):
             module_outputs[module] = _parse_module(module, raw)
     else:
         # 串行（形态1/api 默认）：保持 run→parse 逐模块交错的原貌——含「run 失败即停、不跑后续」
-        # 的旧时机，行为字节级不变（cmr #83 codex：并行不改串行路径）。
+        # 的旧时机，行为字节级不变（cmr #83 codex：并行不改串行路径）。侧腿只属于并发路径，
+        # 串行形态不存在票拟腿（r3：phase2 并发 fan-out 是唯一授权形态）。
         for module in EXTRACTION_MODULES:
             module_outputs[module] = _parse_module(module, _run_raw(module))
 

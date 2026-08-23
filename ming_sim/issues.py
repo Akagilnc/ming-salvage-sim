@@ -47,6 +47,7 @@ from ming_sim.flows import (
     _apply_economy_list,
     _apply_faction_dict,
     _apply_metric_dict,
+    _apply_population_transfers,
     army_needed,
     _strict_int,
 )
@@ -6002,13 +6003,13 @@ _NESTED_DICT_FIELDS = frozenset({"region_delta", "army_delta", "power_updates"})
 
 
 def sanitize_delta_shape(extracted: dict) -> tuple[dict, list[tuple[str, dict, str]]]:
-    """Return (cleaned_delta, validate-layer rejections) per ADR 0015.
+    """Return (cleaned_delta, validate-layer rejections) per ADR 0015 (r4 终态)。
 
-    Unknown top-level keys / non-dict top-level payloads still fail loud because
-    no section can be safely split. Split-capable section/list/entity shape
-    defects are removed item-by-item and returned as rejection records. Flat
-    faction integers remain legal; flat class items reach the class adapter and
-    are rejected per item as ``invalid_enum`` under the #564 contract.
+    分层终态（#649 票面 r3/r4）：顶层非 dict（连 section 都拆不出）仍 fail loud 整份
+    重产；未知顶层 key＝可拆 section → 按段拒收留痕不整份退（原整份 ValueError 属
+    ADR 0015 待施工纠正面，#649 纠正）；section/list/entity shape 缺陷逐项移除并
+    返回拒收记录。Flat faction integers remain legal; flat class items reach the
+    class adapter and are rejected per item as ``invalid_enum`` under the #564 contract.
     """
     from ming_sim.simulation import EMPTY_EXTRACTION  # 懒 import 避 issues↔simulation 循环
 
@@ -6020,10 +6021,14 @@ def sanitize_delta_shape(extracted: dict) -> tuple[dict, list[tuple[str, dict, s
         if key == "_module_rejections":
             continue
         if key not in EMPTY_EXTRACTION:
-            raise ValueError(
-                f"未知 delta 顶层字段「{key}」(canonicalize 后)；疑拼写错(如 地区变更↔地区变化)，"
-                "apply 不会消费它 = 静默无效。请改用合法 key。"
+            # ADR 0015 r4：未知顶层 key＝可拆 section，拒该段留痕、其余段照落，不整份退。
+            cleaned.pop(key, None)
+            rejections.append(
+                (key, {"raw_value": value},
+                 f"未知 delta 顶层字段「{key}」(canonicalize 后)；疑拼写错(如 地区变更↔地区变化)。"
+                 "apply 不会消费它＝静默无效，按段拒收留痕（ADR 0015），请改用合法 key。")
             )
+            continue
         if value is None:
             continue
         expected = EMPTY_EXTRACTION[key]
@@ -7478,6 +7483,13 @@ def apply_score_extraction(
         extracted.get("class_delta") or {},
         commit=commit_now,
     )
+    # 3.5) population_transfers：人口守恒转移原语（#649/0087）——单记录双写，
+    # 源阶级减 N、目标阶级增 N 同事务原子；逐项拒收面见 flows._apply_population_transfers。
+    applied_transfers, transfer_rejections = _apply_population_transfers(
+        db,
+        extracted.get("population_transfers") or [],
+        commit=commit_now,
+    )
     # 4) new_armies → region_delta / army_delta (复用旧 db 方法)
     region_deltas_raw = extracted.get("region_delta") or {}
     army_deltas_raw = extracted.get("army_delta") or {}
@@ -8358,10 +8370,12 @@ def apply_score_extraction(
         "economy_moves_rejections": economy_rejections,  # 拒收独立段（#14 cmr r1）；玩家可见输出会 pop
         "faction_delta": applied_factions,
         "class_delta": applied_classes,
+        "population_transfers": applied_transfers,
         # 拒收项独立段（list）：供 _collect_inline_rejections 扫记 rejection_reports；
         # 与上面 *_delta（dict，web 面板数据）分开，互不污染（cmr r1，#14/#63）。
         "faction_delta_rejections": faction_rejections,
         "class_delta_rejections": class_rejections,
+        "population_transfers_rejections": transfer_rejections,
         "region_changes": region_changes,
         "army_changes": army_changes,
         "created_armies": created_armies,

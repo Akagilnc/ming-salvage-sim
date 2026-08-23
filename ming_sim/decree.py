@@ -22,7 +22,9 @@ from ming_sim.agents import (
     create_promulgation_judge_agent,
     create_ending_summary_agent,
     create_json_sanitizer_agent,
+    create_rescript_draft_agent,
     create_relation_brew_agent,
+    create_faction_brew_agent,
     create_score_extractor_module_agent,
     create_season_simulator_agent,
     parse_agent_json,
@@ -41,6 +43,7 @@ from ming_sim.error_pack import (
     write_error_pack,
 )
 from ming_sim.exceptions import LLMContractError, LLMUnavailable, SettlementAbort
+from ming_sim.faction_brew import VIEW_FACTION_STANCE
 from ming_sim.flows import apply_fixed_period_flows, raise_fixed_period_flow_abort_if_needed
 from ming_sim.issues import (
     apply_event_terminal_states,
@@ -71,6 +74,11 @@ from ming_sim.decree_vocabulary import (
     qualitative_promulgation_slot,
 )
 from ming_sim.memories import build_timeline, record_chapter_memory
+from ming_sim.rescript_draft import (
+    build_rescript_draft_payload,
+    generate_rescript_draft,
+    select_triage_actor,
+)
 from ming_sim.relation_brew import MonthEndRelationBrewLeg
 from ming_sim.simulation import (
     EXTRACTION_MODULES,
@@ -1436,6 +1444,7 @@ def persist_resolve_context(
     secret_orders: Dict[str, object],
     relevant_memories: List[Dict],
     source: Provenance = Provenance.system_simulation,
+    rescript_drafts: Optional[List[Dict[str, object]]] = None,
 ) -> Dict[str, object]:
     """ADR 0008 S2：每回合进入结算后半段前无条件持久化 resolve_context（extractor delta + 叙事）。
 
@@ -1474,6 +1483,18 @@ def persist_resolve_context(
             secret_orders=secret_orders, relevant_memories=relevant_memories,
             extracted=cleaned, source=Provenance(source).value,
         )
+        # #656 / F2.5：急务票拟行与重跑真源同一事务——ready context 存在 ⟺ 票拟已落
+        # （生成成功时）。崩溃恢复从持久层读回，不重跑已完成的票拟步（F1.3）；
+        # extractor 中止则整个事务回滚，票拟一并回滚不落、重试重生成。
+        if isinstance(rescript_drafts, list) and rescript_drafts:
+            db.save_rescript_drafts(turn, rescript_drafts)
+        elif rescript_drafts is None or (isinstance(rescript_drafts, list) and len(rescript_drafts) == 0):
+            # r4 p3：空/None 时同一事务内 DELETE 本回合 kind='rescript_draft' 行，
+            # 防同回合二次 persist 残留上一 attempt 的行（F2.5 context⟺票拟对应）。
+            db.conn.execute(
+                "DELETE FROM pending_decisions WHERE turn = ? AND kind = 'rescript_draft'",
+                (int(turn),),
+            )
     _mirror_rejections_after_commit(db, collector)
     return cleaned
 
@@ -1541,6 +1562,36 @@ def _settle_after_narrative(
     sanitizer = create_json_sanitizer_agent(llm_config, agno_db)
     extractor_input = ""
     extractor_output = ""
+    # #656 / ADR 0093 前半：phase2 fan-out 的第 N+1 路（N=extractor 模块数）＝票拟生成（F1.3 唯一并行刀口）。
+    # 输入只读邸报正文＋分拣人事实＋既有 issue 盘面投影，零依赖任何 extractor 输出。
+    # 分拣人缺位（首辅掌印均不在任）＝本月无头版，全量邸报照旧可读（F3.1）。
+    # 单腿接缝：腿结果由闭包持有（draft_cell），无外部可变结果容器、无串行备选形态。
+    draft_cell: Dict[str, object] = {}
+    side_leg: Optional[Callable[[], object]] = None
+    triage_actor = select_triage_actor(db)
+    if triage_actor is None:
+        tlog("[rescript] 无在任首辅／掌印，本月无头版（全量邸报照旧）。")
+    else:
+        def _rescript_draft_leg() -> None:
+            # agent/payload 构造是纯程序逻辑（ADR 0005 / r2 裁决 B3）：其错误属代码
+            # 侧错，不在票拟业务降级面内——在腿内构造，程序错经 side_future.result()
+            # 响亮上抛，不再宽吞成无头版。
+            # 自降级契约：业务失败（typed LLMUnavailable/LLMContractError/ValueError）
+            # 内部响亮降级返回 None；程序错响亮上抛（B3）。actor 身份随行落 payload
+            # （F3.2）：分拣人事实钉进每条票拟行，任免后可机械断言。结果写入闭包持有
+            # 的 draft_cell，供 persist 与重跑真源同事务读回（F2.5）。
+            draft_agent = create_rescript_draft_agent(llm_config, agno_db)
+            draft_payload = build_rescript_draft_payload(
+                state, narrative, simulator_payload, triage_actor,
+            )
+            drafts = generate_rescript_draft(draft_agent, draft_payload, before_turn)
+            if drafts:
+                for d in drafts:
+                    d["actor_name"] = triage_actor["name"]
+                    d["actor_office"] = triage_actor["office"]
+                    d["actor_faction"] = triage_actor["faction"]
+            draft_cell["drafts"] = drafts
+        side_leg = _rescript_draft_leg
     try:
         tlog("结算 3/4 抽取（模块 module）")
         extractors = {
@@ -1553,13 +1604,14 @@ def _settle_after_narrative(
             )
             for module in EXTRACTION_MODULES
         }
-        # 月末 4 个互不依赖 extractor 一律并发（wall-clock≈最慢单个）；合并/落库仍串行单事务（ADR 0008）。
+        # 月末全部互不依赖 extractor 一律并发（wall-clock≈最慢单个）；合并/落库仍串行单事务（ADR 0008）。
         # 不按 runner/模型保留串行——owner 2026-08-20：编排器日常并行 N 条 grok 零问题。
         extracted, extractor_output, extractor_input = extract_scores_by_modules_with_agno(
             extractors, db, state, effective_narrative, decree_text=executable_decree_text, sanitizer=sanitizer,
             relevant_memories=relevant_memories,
             secret_orders=secret_orders_for_sim,
             parallel=True,
+            side_leg=side_leg,
         )
         # 拆不出 section 的 extractor 产物（顶层非 dict / 未知顶层 key）仍属 extractor 失败：
         # 在 try 内验形，让它走 pack+SettlementAbort 路。ADR0015 下可拆 section/list/entity
@@ -1600,6 +1652,7 @@ def _settle_after_narrative(
         secret_orders=secret_orders_for_sim,
         relevant_memories=relevant_memories,
         source=source,  # #146 A：来源贯穿进 ctx，崩溃恢复重抽从 ctx['source'] 继承、不丢
+        rescript_drafts=draft_cell.get("drafts"),  # #656：与重跑真源同事务（F2.5，闭包持有）
     )
 
     # 后括号确定性结算核：与探针 driver 共用同一段（ADR 0004）。章节记忆 / 结局总评
@@ -1923,7 +1976,15 @@ def _make_relation_brew_runner(
     def _create(state: GameState, db: GameDB, *, settled_turn: int, settled_year: int,
                 settled_period: int) -> MonthEndRelationBrewLeg:
         def _brew_fn(payload_json: str) -> str:
-            agent = create_relation_brew_agent(llm_config, agno_db)
+            # 同批双契约分派（#637 S6，庭裁 r1 F2：同一受管批次不建第二编排腿）：
+            # 派系工作项走派系态势裁判，关系工作项走关系酿制裁判。payload 是本腿
+            # 自产的确定性 JSON；解析炸属程序错，响亮上抛（ADR 0005）。
+            payload = json.loads(payload_json)
+            agent = (
+                create_faction_brew_agent(llm_config, agno_db)
+                if payload.get("view") == VIEW_FACTION_STANCE
+                else create_relation_brew_agent(llm_config, agno_db)
+            )
             try:
                 return run_agent_text(agent, payload_json, tag="relation-brew")
             except (APITimeoutError, APIConnectionError, APIStatusError) as error:
@@ -2521,6 +2582,9 @@ def resolve_decisions_phase2(
         )
         db.clear_pending_decisions(before_turn)
         return result.report
+    # #656 A6：list_pending_decisions 已在 DB 缝收窄 kind='decision'——rescript_draft
+    # 行（本月票拟）不再出现在任何 HITL envelope 消费面，无需调用方重复过滤；
+    # 批红案卷动作仍由 _chosen_rescript_actions 按 dossier: 前缀自筛，行为零变。
     decisions = db.list_pending_decisions(state.turn)
     decision_directive = _format_decision_directive(decisions)
     rescript_actions = _chosen_rescript_actions(decisions)

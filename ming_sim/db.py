@@ -33,12 +33,13 @@ from ming_sim.decree_vocabulary import (
     DOSSIER_ACTION_TYPES, DIRECTIVE_ACTION_TYPES, dossier_action_policy,
 )
 from ming_sim.matching import match_army_id_from_text, match_region_id_from_text
+from ming_sim.exceptions import LLMContractError
+from ming_sim.intelligence import OFFICE_SLOTS
 from ming_sim.models import (
     FRONT_HALF_DONE_PHASES, Character, Event, GameState, is_vassal_prince,
     loads_effect_dict, monthly_amount, period_label, reign_period_label,
 )
-from ming_sim.exceptions import LLMContractError
-from ming_sim.intelligence import OFFICE_SLOTS
+from ming_sim.relations import SUMMON_EDGE_ORIGIN_PREFIX
 from ming_sim.participant_roster import (
     participant_roster_names,
     project_execution_liability_parties,
@@ -1982,6 +1983,10 @@ class GameDB:
             -- ① settled 年月入选关系的 durable claim（认领先行，酿造前落盘提交，
             -- 与本月边事件同结算事务生死）；② 酿制失败月的持久 pending-backlog。
             -- 成功路径＝摘要写入与 pending 清除同一 DB 事务原子落定（庭裁 r2 F1，ADR 0008 一脉）。
+            -- #637 S6（庭裁 r1 F2）：最小泛化既有 durable brew-claim 身份——item_kind
+            -- 区分关系对与派系工作项，使两者共用同一 claim/watermark/apply+clear 所有者；
+            -- 不旁建第二套 faction_pending 表。派系行＝item_kind='派系'、source=''、
+            -- target=派系名（不把派系名伪装成关系对——身份由 item_kind 显式钉死）。
             CREATE TABLE IF NOT EXISTS relation_brew_pending (
                 source TEXT NOT NULL,
                 target TEXT NOT NULL,
@@ -1989,9 +1994,29 @@ class GameDB:
                 period INTEGER NOT NULL,
                 reason TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                item_kind TEXT NOT NULL DEFAULT '关系',
                 PRIMARY KEY (source, target)
             );
+
+            -- #637 S6（ADR 0084）：派系态势摘要——边流之上的派系级定性聚合视图。
+            -- 三不碰：不写 factions 真源数值、不动满意度/影响力、不建认同度；
+            -- 零数值强度字段（P4/ADR 0083 一脉）。粒度＝per-派系一份（内含对他派
+            -- 与对帝的态势描述），派系对级细分不首发（ID-10）。水位语义与
+            -- relation_summaries.last_event_id 同构（F2 稳定性判据共用接缝）。
+            CREATE TABLE IF NOT EXISTS faction_stance_summaries (
+                faction TEXT PRIMARY KEY,
+                stance_segment TEXT NOT NULL DEFAULT '',
+                last_event_id INTEGER NOT NULL DEFAULT 0,
+                last_brewed_turn INTEGER NOT NULL DEFAULT 0,
+                last_brewed_year INTEGER NOT NULL DEFAULT 0,
+                last_brewed_period INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
             """.replace("__AUTHORITY_PRIVILEGES__", AUTHORITY_PRIVILEGE_SQL_IN)
+        )
+        # #637 S6：老档迁移——relation_brew_pending 泛化身份列（新档建表已含，此处幂等）。
+        self.ensure_column(
+            "relation_brew_pending", "item_kind", "TEXT NOT NULL DEFAULT '关系'"
         )
         self._migrate_building_logs_to_durable_audit()
         self._ensure_office_type_parents()
@@ -2076,6 +2101,14 @@ class GameDB:
         self.ensure_column("pending_decisions", "event_id", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("pending_decisions", "rejection_reason", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("pending_decisions", "opposition", "TEXT NOT NULL DEFAULT ''")
+        # #656 / ADR 0093 前半：kind 扩列（最小扩展，ensure_column 先例同款）。
+        # 'decision'=既有 simulator 决策块行为一字不变；'rescript_draft'=急务票拟行
+        # （phase2 产生、跨月留存待 #657 六动作裁决）。actor 三列＝分拣/票拟 actor 身份
+        # 投影随行落库（票面 F3.2：任免后 actor 变更可机械断言）。
+        self.ensure_column("pending_decisions", "kind", "TEXT NOT NULL DEFAULT 'decision'")
+        self.ensure_column("pending_decisions", "actor_name", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column("pending_decisions", "actor_office", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column("pending_decisions", "actor_faction", "TEXT NOT NULL DEFAULT ''")
         self._backfill_event_triggers_from_event_pool_issues()
         # 步骤7：回合阶段（旧库迁移，schema 升级非 fallback）
         self.ensure_column("game_state", "turn_phase", "TEXT NOT NULL DEFAULT 'summoning'")
@@ -2189,6 +2222,9 @@ class GameDB:
         )
         # #501 叙事抽取水位 + 抽取账溯源/在场效果/时序键（旧档补列，schema 升级非 fallback）。
         self.ensure_column("chat_turns", "extract_status", "TEXT NOT NULL DEFAULT ''")
+        # #634 召对判官已判水位（ADR 0082）：''=未判 / 'done'=已判落库。逐轮标记即水位，
+        # 撤回轮翻 undone 后天然出窗（水位回退），无平行水位表。
+        self.ensure_column("chat_turns", "relation_judge_status", "TEXT NOT NULL DEFAULT ''")
         # #506 轮级撤销：undo_chat_turn 写 undone_at；旧档 chat_turns 建于该列进 CREATE 之前
         # 时缺列，undo 的 UPDATE 会 OperationalError（no such column: undone_at）→ 整撤回回滚。
         self.ensure_column("chat_turns", "undone_at", "TEXT")
@@ -8813,6 +8849,71 @@ class GameDB:
         ).fetchone()
         return str(row["mindreading_status"] or "") if row is not None else ""
 
+    # ----- #634 召对判官水位（ADR 0082：逐轮标记即水位，无平行水位表）-----
+
+    def list_unjudged_completed_chat_turns(
+        self, night_id: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Return one night's unjudged output targets, never a cross-night window.
+
+        Without an explicit night, the oldest outstanding turn chooses the batch.
+        Legacy ``night_id=0`` is an ordinary, isolated batch of its own.
+        """
+        nid = int(night_id) if night_id is not None else None
+        if nid is None:
+            first = self.conn.execute(
+                """SELECT night_id FROM chat_turns
+                   WHERE status='active' AND minister_message_id > 0
+                     AND relation_judge_status=''
+                   ORDER BY id LIMIT 1""",
+            ).fetchone()
+            if first is None:
+                return []
+            nid = int(first["night_id"] or 0)
+        rows = self.conn.execute(
+            """SELECT * FROM chat_turns
+               WHERE status='active' AND minister_message_id > 0
+                 AND relation_judge_status='' AND night_id=?
+               ORDER BY id""",
+            (nid,),
+        ).fetchall()
+        return [self._row_dict(r) for r in rows]
+
+    def list_relation_judge_context(self, night_id: int, through_id: int) -> List[Dict[str, Any]]:
+        """Completed active context for a night through this batch's high-water turn."""
+        rows = self.conn.execute(
+            """SELECT * FROM chat_turns
+               WHERE status='active' AND minister_message_id > 0
+                 AND night_id=? AND id <= ? ORDER BY id""",
+            (int(night_id), int(through_id)),
+        ).fetchall()
+        return [self._row_dict(r) for r in rows]
+
+    def mark_relation_judge_done(self, chat_turn_ids: Iterable[int]) -> None:
+        """把本拍已落库的窗口轮标 'done'；只从 '' 转入，不覆盖其它终态。"""
+        ids = [int(i) for i in chat_turn_ids]
+        if not ids:
+            return
+        placeholders = ",".join("?" for _ in ids)
+        self.conn.execute(
+            f"UPDATE chat_turns SET relation_judge_status = 'done' "
+            f"WHERE id IN ({placeholders}) AND relation_judge_status = ''",
+            ids,
+        )
+        self.conn.commit()
+
+    def delete_relation_edge_events_for_chat_turn(self, chat_turn_id: int) -> int:
+        """撤回联动（ADR 0038 白名单③）：删该轮源绑定的召对边事件行，返回删除数。
+
+        事务归属调用方：undo_chat_turn 在其原子块内调（禁提前 commit）；origin 的
+        chat_turn 段是唯一的源轮绑定真源（relation_judge.summon_edge_origin 拼装）。
+        """
+        cur = self.conn.execute(
+            "DELETE FROM relation_edge_events WHERE origin LIKE ?",
+            (f"{SUMMON_EDGE_ORIGIN_PREFIX}|chat_turn:{int(chat_turn_id)}|%",),
+        )
+        return int(cur.rowcount)
+
     # ----- #501 叙事抽取落账（水位 + 原子落账 + 补跑真源）-----
 
     def get_story_extract_status(self, chat_turn_id: int) -> str:
@@ -9426,6 +9527,9 @@ class GameDB:
                 "DELETE FROM mindreading_records WHERE chat_turn_id = ?",
                 (int(chat_turn_id),),
             )
+            # #634 撤回联动（ADR 0038 白名单③）：删该轮源绑定的召对边事件；undone 轮
+            # 天然出判官窗口（status != active），水位随逐轮标记失效自动回退。
+            self.delete_relation_edge_events_for_chat_turn(chat_turn_id)
             # #506：删该轮所产故事账——抽取账走 source_chat_turn_id、该轮 attach 创建的
             # 入殿等口令账走 origin_chat_turn_id。晚落的补跑抽取账也按 source 删（不受
             # 前像快照时刻限制）；开夜/员额/收夜等框架账 origin==0、不随本轮撤。撤回后
@@ -10445,16 +10549,38 @@ class GameDB:
 
     # ── HITL 决策点 ─────────────────────────────────────────────────────
     def save_pending_decisions(self, turn: int, decisions: List[Dict[str, object]]) -> None:
-        """覆写本回合待裁决策点（先清后插），idx 按列表顺序。choice 初始空（待皇帝选）。"""
-        self.conn.execute("DELETE FROM pending_decisions WHERE turn = ?", (int(turn),))
+        """覆写本回合待裁 decision 行（先清后插），idx 按列表顺序。choice 初始空（待皇帝选）。
+
+        #656 A6/F2 不变式：只清只写 kind='decision'（与 clear_pending_decisions/
+        save_rescript_drafts 同款按 kind 收窄）——'rescript_draft' 票拟行跨月留存，
+        不被 decision 盘面覆写连带清除。
+        """
+        turn = int(turn)
+        # 两种 kind 共用 (turn, idx) 主键。先把保留的 draft 搬到负数暂存区，
+        # 删除旧 decisions 后再按新盘面长度接续重排；draft 的内容与 event_id
+        # 均不改，decision 数量增减也不会与旧 draft idx 相撞。
+        self.conn.execute(
+            "UPDATE pending_decisions SET idx = -idx - 1 "
+            "WHERE turn = ? AND kind = 'rescript_draft'",
+            (turn,),
+        )
+        draft_rows = self.conn.execute(
+            "SELECT idx FROM pending_decisions "
+            "WHERE turn = ? AND kind = 'rescript_draft' ORDER BY idx DESC",
+            (turn,),
+        ).fetchall()
+        self.conn.execute(
+            "DELETE FROM pending_decisions WHERE turn = ? AND kind = 'decision'",
+            (turn,),
+        )
         for idx, d in enumerate(decisions):
             self.conn.execute(
                 """INSERT INTO pending_decisions
                    (turn, idx, event_id, title, context, rejection_reason, opposition,
-                    options_json, choice_json, status)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', 'pending')""",
+                    options_json, choice_json, status, kind)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', 'pending', 'decision')""",
                 (
-                    int(turn), idx,
+                    turn, idx,
                     str(d.get("event_id") or ""),
                     str(d.get("title") or ""),
                     str(d.get("context") or ""),
@@ -10463,14 +10589,25 @@ class GameDB:
                     json.dumps(d.get("options") or [], ensure_ascii=False),
                 ),
             )
+        for offset, row in enumerate(draft_rows):
+            self.conn.execute(
+                "UPDATE pending_decisions SET idx = ? WHERE turn = ? AND idx = ?",
+                (len(decisions) + offset, turn, int(row["idx"])),
+            )
         self.conn.commit()
 
     def list_pending_decisions(self, turn: int) -> List[Dict[str, object]]:
-        """读本回合决策点（按 idx）。options 反序列化；choice 为已选则带出。"""
+        """读本回合决策点（按 idx）——HITL envelope 唯一读取缝。
+
+        #656 A6：谓词收窄到 kind='decision'——persist-then-abort 后落库的
+        rescript_draft 票拟行不再混进亲裁/刷新/all-decided/submit 消费面
+        （急务只经 list_rescript_drafts 读，批红面归 #657）；调用方不再重复过滤。
+        options 反序列化；choice 为已选则带出。
+        """
         rows = self.conn.execute(
             "SELECT idx, event_id, title, context, rejection_reason, opposition, "
-            "options_json, choice_json, status "
-            "FROM pending_decisions WHERE turn = ? ORDER BY idx",
+            "options_json, choice_json, status, kind, actor_name, actor_office, actor_faction "
+            "FROM pending_decisions WHERE turn = ? AND kind = 'decision' ORDER BY idx",
             (int(turn),),
         ).fetchall()
         out: List[Dict[str, object]] = []
@@ -10496,12 +10633,93 @@ class GameDB:
                 "options": options if isinstance(options, list) else [],
                 "choice": choice,
                 "status": r["status"],
+                "kind": r["kind"] or "decision",
+                "actor_name": r["actor_name"],
+                "actor_office": r["actor_office"],
+                "actor_faction": r["actor_faction"],
             })
         return out
 
     def clear_pending_decisions(self, turn: int) -> None:
-        self.conn.execute("DELETE FROM pending_decisions WHERE turn = ?", (int(turn),))
+        """#656：按 kind 过滤——只清 'decision' 行（既有生命周期一字不变）；
+        'rescript_draft' 行跨月留存，终态清理归 #657 六动作裁决路径。"""
+        self.conn.execute(
+            "DELETE FROM pending_decisions WHERE turn = ? AND kind = 'decision'",
+            (int(turn),),
+        )
         self.conn.commit()
+
+    def save_rescript_drafts(self, turn: int, drafts: List[Dict[str, object]]) -> None:
+        """#656 / ADR 0093 前半：急务票拟行（kind='rescript_draft'）覆写本回合。
+
+        与 save_pending_decisions 同款先清后插（只清同 kind，不碰 decision 行）；
+        idx 从本回合保留的 decision 行最大 idx 之后续编（与 decision 行共占
+        (turn, idx) 主键不撞）。event_id 缺失的急务在此确定性合成 `urgent:{turn}:{idx}`
+        （票面 F2.2）。
+        只写 conn 不 commit——提交交调用方事务（与 persist_resolve_context 同事务序列，F2.5）。
+        """
+        # 先删后算 idx（#656 A3）：起始 idx 只由保留的 decision 行决定——相同
+        # decision 盘面重复覆写得到相同 idx 与 `urgent:{turn}:{idx}`，合成身份不随
+        # 被删旧行漂移。不新增 UUID/映射账。
+        self.conn.execute(
+            "DELETE FROM pending_decisions WHERE turn = ? AND kind = 'rescript_draft'",
+            (int(turn),),
+        )
+        row = self.conn.execute(
+            "SELECT COALESCE(MAX(idx) + 1, 0) FROM pending_decisions WHERE turn = ?",
+            (int(turn),),
+        ).fetchone()
+        idx = int(row[0] or 0)
+        for d in drafts:
+            actor_name = str(d.get("actor_name") or "")
+            actor_office = str(d.get("actor_office") or "")
+            actor_faction = str(d.get("actor_faction") or "")
+            event_id = str(d.get("event_id") or "").strip()
+            if not event_id:
+                event_id = f"urgent:{int(turn)}:{idx}"
+            self.conn.execute(
+                """INSERT INTO pending_decisions
+                   (turn, idx, event_id, title, context, options_json, choice_json,
+                    status, kind, actor_name, actor_office, actor_faction)
+                   VALUES (?, ?, ?, ?, ?, ?, '', 'pending', 'rescript_draft', ?, ?, ?)""",
+                (
+                    int(turn), idx,
+                    event_id,
+                    str(d.get("title") or ""),
+                    str(d.get("context") or ""),
+                    json.dumps(d.get("options") or [], ensure_ascii=False),
+                    actor_name, actor_office, actor_faction,
+                ),
+            )
+            idx += 1
+
+    def list_rescript_drafts(self) -> List[Dict[str, object]]:
+        """#656：全部急务票拟行（kind='rescript_draft'），跨月留存待 #657 批红面消费。"""
+        rows = self.conn.execute(
+            "SELECT turn, idx, event_id, title, context, options_json, status, "
+            "actor_name, actor_office, actor_faction "
+            "FROM pending_decisions WHERE kind = 'rescript_draft' ORDER BY turn, idx"
+        ).fetchall()
+        out: List[Dict[str, object]] = []
+        for r in rows:
+            try:
+                options = json.loads(r["options_json"] or "[]")
+            except Exception as exc:
+                tlog(f"[db] options_json 损坏，回空：{exc}")  # #14 surface
+                options = []
+            out.append({
+                "turn": int(r["turn"]),
+                "idx": int(r["idx"]),
+                "event_id": r["event_id"],
+                "title": r["title"],
+                "context": r["context"],
+                "options": options if isinstance(options, list) else [],
+                "status": r["status"],
+                "actor_name": r["actor_name"],
+                "actor_office": r["actor_office"],
+                "actor_faction": r["actor_faction"],
+            })
+        return out
 
     # ── 动作闸门：结构化聊天写动作暂存(ADR 0006) ──────────────────────────
     def _latest_held_user_chat_message_id(
@@ -20223,10 +20441,164 @@ class GameDB:
         return max(int(cur.rowcount or 0), 0)
 
     def get_relation_brew_pending(self) -> List[Dict[str, Any]]:
+        """关系对 pending（#636 语义原样）：只回 item_kind='关系' 的行。"""
         rows = self.conn.execute(
-            "SELECT * FROM relation_brew_pending ORDER BY source, target"
+            "SELECT * FROM relation_brew_pending WHERE item_kind = '关系' "
+            "ORDER BY source, target"
         ).fetchall()
         return [dict(row) for row in rows]
+
+    # ------------------------------------------------------------------
+    # #637 派系态势摘要 S6：持久化接缝（ADR 0084）。
+    # 复用 #636 单一 durable claim/watermark/apply+clear 所有者（庭裁 r1 F2）：
+    # pending 走同一 relation_brew_pending 表（item_kind='派系' 身份），apply 与
+    # pending 清除同事务原子落定，与 apply_relation_brew_result 同构。
+    # ------------------------------------------------------------------
+
+    def get_faction_stance_summaries(self) -> List[Dict[str, Any]]:
+        rows = self.conn.execute(
+            "SELECT * FROM faction_stance_summaries ORDER BY faction"
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_faction_stance_summary(self, faction: str) -> Optional[Dict[str, Any]]:
+        row = self.conn.execute(
+            "SELECT * FROM faction_stance_summaries WHERE faction = ?",
+            (str(faction),),
+        ).fetchone()
+        return dict(row) if row is not None else None
+
+    def claim_faction_brew_targets(self, *, year: int, period: int) -> int:
+        """settled 年月涉派派系先作 durable claim（庭裁 r1 F2：复用既有认领机制）。
+
+        选中＝canonical 党籍投影命中现存 factions 集合的涉派新事件（庭裁 r1 F1：
+        任一端 characters.faction 归一后命中该派；表外党籍不入、不猜映射——投影
+        即 JOIN 本身，不持久化任何映射表）。已在册的 pending 原样保留。事务归属与
+        claim_relation_brew_targets 一致：settle 事务内不提前 commit，认领与本月
+        边事件同生共死；独立调用则自成一体提交。返回本次新认领的派系数。"""
+        owns = self.owns_transaction()
+        cur = self.conn.execute(
+            """
+            INSERT INTO relation_brew_pending
+                (source, target, year, period, reason, item_kind)
+            SELECT DISTINCT '', c.faction, ?, ?, '月末涉派新事件认领', '派系'
+            FROM relation_edge_events AS e
+            JOIN characters AS c ON c.name = e.source OR c.name = e.target
+            JOIN factions AS f ON f.name = c.faction
+            LEFT JOIN faction_stance_summaries AS s ON s.faction = c.faction
+            WHERE e.year = ? AND e.period = ?
+              AND e.id > COALESCE(s.last_event_id, 0)
+            ON CONFLICT(source, target) DO NOTHING
+            """,
+            (int(year), int(period), int(year), int(period)),
+        )
+        if owns:
+            self.conn.commit()
+        return max(int(cur.rowcount or 0), 0)
+
+    def get_faction_brew_pending(self) -> List[Dict[str, Any]]:
+        """派系工作项 pending：item_kind='派系' 行，target 即派系名。"""
+        rows = self.conn.execute(
+            "SELECT * FROM relation_brew_pending WHERE item_kind = '派系' "
+            "ORDER BY target"
+        ).fetchall()
+        return [
+            {
+                "faction": row["target"],
+                "year": row["year"],
+                "period": row["period"],
+                "reason": row["reason"],
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
+
+    def mark_faction_brew_pending(
+        self,
+        *,
+        faction: str,
+        year: int,
+        period: int,
+        reason: str = "",
+    ) -> None:
+        """派系酿制失败月进持久 pending-backlog（同表同机制，保旧摘要、不阻塞结算）。"""
+        owns = self.owns_transaction()
+        try:
+            self.conn.execute(
+                """
+                INSERT INTO relation_brew_pending
+                    (source, target, year, period, reason, item_kind)
+                VALUES ('', ?, ?, ?, ?, '派系')
+                ON CONFLICT(source, target) DO UPDATE SET
+                    year = excluded.year,
+                    period = excluded.period,
+                    reason = excluded.reason
+                """,
+                (str(faction), int(year), int(period), str(reason)),
+            )
+            if owns:
+                self.conn.commit()
+        except Exception:
+            if owns:
+                try:
+                    self.conn.rollback()
+                except Exception:
+                    pass
+            raise
+
+    def apply_faction_brew_result(
+        self,
+        *,
+        faction: str,
+        stance_segment: str,
+        last_event_id: int,
+        turn: int,
+        year: int,
+        period: int,
+    ) -> None:
+        """派系态势摘要落定＋该派 pending 清除在同一 DB 事务内原子落定。
+
+        态势段覆盖式幂等；水位推进到本批最大事件 id。任意缝失败→整体回滚→
+        pending 保留→下次结算补酿。唯一写面＝faction_stance_summaries 与
+        relation_brew_pending（item_kind='派系'）；绝不触 factions 真源数值列
+        （三不碰红线，F3 零写观察面）。"""
+        owns = self.owns_transaction()
+        try:
+            self.conn.execute(
+                """
+                INSERT INTO faction_stance_summaries
+                    (faction, stance_segment, last_event_id,
+                     last_brewed_turn, last_brewed_year, last_brewed_period)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(faction) DO UPDATE SET
+                    stance_segment = excluded.stance_segment,
+                    last_event_id = excluded.last_event_id,
+                    last_brewed_turn = excluded.last_brewed_turn,
+                    last_brewed_year = excluded.last_brewed_year,
+                    last_brewed_period = excluded.last_brewed_period,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (
+                    str(faction), str(stance_segment), int(last_event_id),
+                    int(turn), int(year), int(period),
+                ),
+            )
+            self.conn.execute(
+                "DELETE FROM relation_brew_pending "
+                "WHERE item_kind = '派系' AND target = ?",
+                (str(faction),),
+            )
+            if owns:
+                self.conn.commit()
+        except Exception:
+            # 故障注入验收缝（与 apply_relation_brew_result 同构）：摘要已写、
+            # 事务未提交即崩→整体回滚，pending 仍在、摘要读回＝崩前旧值。
+            if owns:
+                try:
+                    self.conn.rollback()
+                except Exception:
+                    pass
+            raise
 
     def close(self) -> None:
         self.conn.close()
