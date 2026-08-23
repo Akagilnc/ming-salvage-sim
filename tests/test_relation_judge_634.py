@@ -25,6 +25,9 @@ import ming_sim.audience_night as an
 import ming_sim.relation_read as relation_read_mod
 from ming_sim.relation_judge import (
     build_relation_judge_prompt,
+    finalize_summon_relation_judge,
+    invoke_summon_relation_judge_provider,
+    prepare_summon_relation_judge,
     run_summon_relation_judge,
     summon_edge_origin,
 )
@@ -445,3 +448,159 @@ def test_close_night_sweep_covers_residual_before_closed(game, monkeypatch):
 
 def test_summon_edge_origin_shape():
     assert summon_edge_origin(7) == "召对判官|chat_turn:7"
+
+
+# ── 收夜真实路径补强：上下文/批目标/恢复边界 ─────────────────────────
+
+
+def test_prompt_context_keeps_judged_turn_but_names_only_open_output_target(game):
+    db, state, _ = game
+    a, _ = _roster_names(db, state)
+    old = _make_turn(db, state, a, "先议", "臣提议")
+    db.mark_relation_judge_done({old})
+    new = _make_turn(db, state, a, "再议", "臣附议")
+    prepared = prepare_summon_relation_judge(db, state, write_gate=threading.Lock())
+    try:
+        assert f"轮 #{old}" in prepared.prompt and f"轮 #{new}" in prepared.prompt
+        assert f"【本批允许产出的源轮 ID】#{new}" in prepared.prompt
+        assert f"【本批允许产出的源轮 ID】#{old}" not in prepared.prompt
+    finally:
+        finalize_summon_relation_judge(prepared, [], write_gate=threading.Lock())
+
+
+def test_night_scoped_backlog_does_not_mix_later_night(game):
+    db, state, _ = game
+    a, _ = _roster_names(db, state)
+    first_night = int(an.open_night(db, state)["id"])
+    first = _make_turn(db, state, a, "夜一", "欠判", night_id=first_night)
+    db.conn.execute("UPDATE audience_nights SET status='closed' WHERE id=?", (first_night,))
+    db.conn.commit()
+    second_night = int(an.open_night(db, state)["id"])
+    second = _make_turn(db, state, a, "夜二", "后判", night_id=second_night)
+    res = run_summon_relation_judge(
+        db, state, agent=_CannedJudge({"events": []}), write_gate=threading.Lock(), night_id=second_night,
+    )
+    assert res["judged_turn_ids"] == [second]
+    assert _judge_status(db, first) == "" and _judge_status(db, second) == "done"
+
+
+def test_late_judgment_writes_source_turn_calendar_not_live_calendar(game):
+    db, state, _ = game
+    a, b = _roster_names(db, state)
+    ctid = _make_turn(db, state, a, "旧月", "当面协作")
+    source_year, source_period, source_turn = state.year, state.period, state.turn
+    state.year += 1
+    state.period = 3
+    state.turn += 9
+    _run(db, state, _CannedJudge({"events": [{
+        "源轮": ctid, "施动者": a, "受动者": b, "类目": "协作", "语境": "旧月事实",
+    }]}))
+    row = db.get_relation_edge_events(source=a, target=b)[0]
+    assert (row["year"], row["period"], row["turn"]) == (source_year, source_period, source_turn)
+
+
+def test_source_night_roster_survives_live_roster_change(game):
+    db, state, _ = game
+    a, b = _roster_names(db, state)
+    night_id = int(an.open_night(db, state)["id"])
+    ctid = _make_turn(db, state, a, "任免前", "为同僚站台", night_id=night_id)
+    res = run_summon_relation_judge(
+        db, state, agent=_CannedJudge({"events": [{
+            "源轮": ctid, "施动者": a, "受动者": b, "类目": "站台", "语境": "源夜在场",
+        }]}), write_gate=threading.Lock(), night_id=night_id, allowed_endpoint_names={a, b},
+    )
+    assert res["edges"] == 1
+
+
+def test_noncanonical_source_turn_is_rejected_without_advancing_watermark(game):
+    db, state, _ = game
+    a, b = _roster_names(db, state)
+    ctid = _make_turn(db, state, a, "问", "答")
+    res = _run(db, state, _CannedJudge({"events": [{
+        "源轮": f"{ctid}.0", "施动者": a, "受动者": b, "类目": "协作", "语境": "坏 id",
+    }]}))
+    assert res["judged_turn_ids"] == [] and _judge_status(db, ctid) == ""
+
+
+def test_attributable_rejection_keeps_only_its_source_open(game):
+    db, state, _ = game
+    a, b = _roster_names(db, state)
+    good = _make_turn(db, state, a, "一", "答")
+    bad = _make_turn(db, state, a, "二", "答")
+    res = _run(db, state, _CannedJudge({"events": [
+        {"源轮": good, "施动者": a, "受动者": b, "类目": "协作", "语境": "合法"},
+        {"源轮": bad, "施动者": a, "受动者": "查无此人", "类目": "协作", "语境": "拒收"},
+    ]}))
+    assert res["judged_turn_ids"] == [good]
+    assert (_judge_status(db, good), _judge_status(db, bad)) == ("done", "")
+
+
+def test_split_provider_phase_never_holds_runtime_gate(game):
+    db, state, _ = game
+    a, _ = _roster_names(db, state)
+    _make_turn(db, state, a, "问", "答")
+    gate = threading.Lock()
+    prepared = prepare_summon_relation_judge(db, state, write_gate=gate)
+
+    class _GateProbe:
+        def run(self, _prompt):
+            assert gate.acquire(blocking=False)
+            gate.release()
+            return SimpleNamespace(content='{"events":[]}')
+
+    result = invoke_summon_relation_judge_provider(prepared, agent=_GateProbe())
+    assert finalize_summon_relation_judge(prepared, result, write_gate=gate)["edges"] == 0
+
+
+def test_cli_dispatch_claims_ticket_before_thread_start_and_returns_it_on_start_failure(monkeypatch):
+    import ming_sim.cli.terminal as terminal
+    import ming_sim.session_write_queue as queue_mod
+
+    order = []
+
+    class _Queue:
+        def claim(self, *, key):
+            order.append(("claim", key))
+            return "ticket"
+
+        def complete(self, ticket):
+            order.append(("complete", ticket))
+
+    class _Thread:
+        def __init__(self, **_kwargs):
+            pass
+
+        def start(self):
+            order.append(("start", None))
+            raise RuntimeError("thread unavailable")
+
+    monkeypatch.setattr(queue_mod, "get_session_write_queue", lambda _session: _Queue())
+    monkeypatch.setattr(terminal.threading, "Thread", _Thread)
+    terminal._dispatch_relation_judge_cli(SimpleNamespace(), 73)
+    assert order == [
+        ("claim", ("turn", 73)), ("start", None), ("complete", "ticket"),
+    ]
+
+
+def test_split_finalize_waits_for_provider_result_before_watermark(game):
+    db, state, _ = game
+    a, _ = _roster_names(db, state)
+    ctid = _make_turn(db, state, a, "问", "答")
+    prepared = prepare_summon_relation_judge(db, state, write_gate=threading.Lock())
+    entered, release = threading.Event(), threading.Event()
+
+    class _Blocking:
+        def run(self, _prompt):
+            entered.set()
+            release.wait(2)
+            return SimpleNamespace(content='{"events":[]}')
+
+    box = {}
+    worker = threading.Thread(target=lambda: box.setdefault(
+        "result", invoke_summon_relation_judge_provider(prepared, agent=_Blocking()),
+    ))
+    worker.start()
+    assert entered.wait(1) and _judge_status(db, ctid) == ""
+    release.set(); worker.join(2)
+    finalize_summon_relation_judge(prepared, box["result"], write_gate=threading.Lock())
+    assert _judge_status(db, ctid) == "done"
