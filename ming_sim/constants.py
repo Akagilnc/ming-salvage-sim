@@ -17,6 +17,11 @@ MONEY_UNIT = "万两"
 ECONOMY_ACCOUNTS = ("国库", "内库")
 SCORE_METRICS = ("民心", "皇威")
 
+# 默认开局时点是回合坐标的单一锚点：load_state 的调试跳月、seed 开局前刻度与
+# 无 game_state 时的边事件默认时点必须共同引用，避免三处字面量漂移。
+DEFAULT_OPENING_YEAR = 1627
+DEFAULT_OPENING_PERIOD = 10
+
 # 案卷关联的 Python 权威枚举；DDL CHECK 仅保留为持久层约束。
 DOSSIER_LINK_TYPES = frozenset({"护卫", "稽核", "接应"})
 
@@ -273,6 +278,11 @@ POPULATION_TRANSFER_REASONS: dict[str, frozenset[tuple[str, str]]] = {
     "回流": frozenset({("流民", "农民")}),          # 0087 出口／PRD US4 破局窄路（赈济招抚归农）
 }
 POPULATION_TRANSFER_FIELDS = frozenset({"source", "target", "amount", "reason", "origin_ref"})
+
+# 0089 明渠：加派→流民月折算率（人/(万两·月)，民心归零基准；确定性口径，#650 AC2）。
+# 实际入池 = 加派基线(万两) × 本率 × (100 − 该省民心)/100，随存档 population_unit 换算、
+# 钳到农民余额（代码只 clamp 不判胜负，P6/0087 applier 机械转移）。
+LEVY_DISPLACEMENT_RATE = 2000.0
 
 # trigger_gate key 语法（content.py load 校验 + issues._eval_gate_key 求值共用，DRY，#12 Q3 fail-loud）：
 # bare key（无 "."）须是已知 metric；点分 key 首段须是合法表名、末段可为聚合函数。

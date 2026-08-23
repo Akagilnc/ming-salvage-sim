@@ -413,6 +413,7 @@ def _player_visible_extractor_output(applied: object) -> object:
     visible.pop("faction_delta_rejections", None)
     visible.pop("class_delta_rejections", None)
     visible.pop("population_transfers_rejections", None)  # #649：转移拒收段不进皇帝可见呈现
+    visible.pop("surcharge_decrees_rejections", None)  # #650：加派旨拒收仅供内部诊断
     visible.pop("economy_moves_rejections", None)
     visible.pop("validate_shape_rejections", None)
     visible.pop("module_misroute_rejections", None)

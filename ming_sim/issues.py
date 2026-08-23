@@ -22,6 +22,7 @@ from ming_sim.constants import (
     BUILDING_SCORE_FIELDS, BUILDING_QUANTITY_FIELDS, BUILDING_TEXT_FIELDS,
     POWER_SCORE_FIELDS, POWER_TEXT_FIELDS, CHARACTER_TEXT_FIELDS,
     REGION_FIELD_ALIASES, ARMY_FIELD_ALIASES, POWER_FIELD_ALIASES, GATE_TABLES,
+    LEVY_DISPLACEMENT_RATE,
 )
 from ming_sim.content import GameContent
 from ming_sim.context import victory_status
@@ -1271,6 +1272,9 @@ _SETTLE_META_LIAO_SEED_KEY = "辽饷九厘基线"
 _SETTLE_META_JIAO_SEED_KEY = "剿饷基线"
 _SETTLE_META_LIAN_SEED_KEY = "练饷基线"
 _SETTLE_META_LAND_DENOMINATOR_KEY = "饷率田亩分母基线"
+# #650/0089 明渠：下旨加派逐省累积账（万两/月，负额停征/蠲免、钳 ≥0）。
+# 与 #649 饷率 seed 同址（settle._meta），restore 只读 DB 无损接续（P1）。
+_SETTLE_META_JIAPIAI_KEY = "加派基线"
 _FISCAL_LEVY_PROVISIONAL_KEYS = {
     _SETTLE_META_BASE_TRANSPORT_KEY,
     _SETTLE_META_LIAO_SEED_KEY,
@@ -1606,7 +1610,16 @@ def _apply_fiscal_levy_targets(
         target_liao = liao_seed * (_LIAO_LEVY_RISE_FACTOR if liao_rise_approved else 1.0)
         target_jiao = jiao_seed if jiao_in_force else 0.0
         target_lian = lian_seed if lian_levy_approved else 0.0
-        target_sanxiang = target_liao + target_jiao + target_lian
+        # #650/0089 明渠：皇帝下旨加派逐省累积账（settle._meta「加派基线」）计入在征饷集——
+        # 明选有明账，公开代价＝钱真被征上来；负额已在落账时钳 ≥0，停征即止收。
+        jiapai_base = (
+            max(0.0, _as_float(
+                meta[_SETTLE_META_JIAPIAI_KEY],
+                ctx=f"{region_id}.settle._meta.{_SETTLE_META_JIAPIAI_KEY}",
+            ))
+            if _SETTLE_META_JIAPIAI_KEY in meta else 0.0
+        )
+        target_sanxiang = target_liao + target_jiao + target_lian + jiapai_base
         raw_sanxiang = p.get("三饷应征")
         raw_transport = p.get("起运定额")
         current_targets_stored = _is_stored_number(raw_sanxiang) and _is_stored_number(raw_transport)
@@ -7148,6 +7161,227 @@ def _apply_dossier_participant_items(
     return results
 
 
+SURCHARGE_DECREE_FIELDS = frozenset({"region_id", "monthly_amount", "reason", "origin_ref"})
+
+
+def _surcharge_population_pool_members(db: GameDB, region_id: str) -> set[str]:
+    """Return the materialized provincial rows that make up a surcharge pool."""
+    return {
+        str(row["name"])
+        for row in db.conn.execute(
+            "SELECT name FROM classes WHERE region_id=? AND name IN ('农民', '流民')",
+            (region_id,),
+        ).fetchall()
+    }
+
+
+def _apply_surcharge_decrees(
+    db: GameDB,
+    items: object,
+    *,
+    commit: bool = True,
+) -> Tuple[List[Dict[str, object]], List[Dict[str, object]]]:
+    """#650/0089 明渠：下旨加派 → 逐省加派量累积账当回合落库（P1）。
+
+    canonical 段形＝list，每项 {region_id, monthly_amount, reason?, origin_ref}：
+    monthly_amount 为月额增量（万两/月，带符号——正＝加派累加，负＝停征/蠲免），
+    落在 regions.fiscal.settle._meta「加派基线」上（与 #649 饷率 seed 同址，
+    钳制 ≥0）。钱面由 _apply_fiscal_levy_targets 把
+    基线折入三饷应征/起运定额（明选有明账，公开代价＝真征收）；民面由
+    _apply_levy_driven_transfers 按账机械入池。无旨不入账：段空＝账不动。
+
+    逐项拒收面（ADR 0015/0008）：非 dict 项；region 未知/非明省/无 settle 基座；
+    monthly_amount 非 bool 非有限数值或为 0（无操作不落，同 fiscal_changes 口径）；
+    origin_ref 缺失/伪前缀/未颁案卷（复用 effect_origin_rejection 单一真源）；
+    白名单外字段。坏项留痕、好项照落；数据拒收不中止事务。
+    """
+    applied: List[Dict[str, object]] = []
+    rejected: List[Dict[str, object]] = []
+    if not db.is_substrate_hub_fiscal_engine_enabled():
+        for item in (items if isinstance(items, list) else []):
+            rejected.append({
+                "rejected": True, "category": "invalid_enum",
+                "reason": "surcharge_decrees 仅适用于 substrate_hub 财政档",
+                "item": item if isinstance(item, dict) else {"raw_value": item},
+            })
+        return applied, rejected
+    claimed_origins: set[tuple[str, str]] = set()
+    for item in (items if isinstance(items, list) else []):
+        if not isinstance(item, dict):
+            rejected.append({
+                "rejected": True, "category": "invalid_shape",
+                "reason": "surcharge_decrees 项必须是 object(dict)",
+                "item": {"raw_value": item},
+            })
+            continue
+
+        def _reject(category: str, reason: str) -> None:
+            rejected.append({
+                "rejected": True, "category": category,
+                "reason": reason, "item": item,
+            })
+
+        extra = sorted(set(item) - SURCHARGE_DECREE_FIELDS)
+        if extra:
+            _reject(
+                "invalid_enum",
+                f"surcharge_decrees 白名单外字段 {extra}（合法字段：region_id/monthly_amount/reason/origin_ref）",
+            )
+            continue
+        region_id = str(item.get("region_id") or "").strip()
+        row = db.conn.execute(
+            "SELECT controlled_by, fiscal FROM regions WHERE id=?", (region_id,)
+        ).fetchone() if region_id else None
+        if row is None:
+            _reject("missing_ref", f"surcharge_decrees 未知 region_id：{region_id!r}")
+            continue
+        if str(row["controlled_by"] or "") != "ming":
+            _reject("missing_ref", f"surcharge_decrees 非明省不可加派：{region_id!r}")
+            continue
+        fiscal = json.loads(str(row["fiscal"] or "{}"))
+        settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
+        if not (isinstance(settle, dict) and isinstance(settle.get("st"), dict)
+                and isinstance(settle.get("p"), dict)):
+            _reject(
+                "missing_ref",
+                f"surcharge_decrees {region_id!r} 无 settle 财政基座，逐省累积账无处落",
+            )
+            continue
+        if db.population_unit != POPULATION_UNIT_PERSONS:
+            _reject("missing_ref", "surcharge_decrees 仅适用于 population_unit='人' 的人口池档")
+            continue
+        if _surcharge_population_pool_members(db, region_id) != {"农民", "流民"}:
+            _reject("missing_ref", f"surcharge_decrees {region_id!r} 缺农民/流民省级人口池")
+            continue
+        raw_amount = item.get("monthly_amount")
+        if raw_amount is None:
+            _reject("invalid_enum", "surcharge_decrees monthly_amount 缺失")
+            continue
+        if isinstance(raw_amount, bool) or not isinstance(raw_amount, (int, float)):
+            _reject("invalid_enum", f"surcharge_decrees monthly_amount 非数值：{raw_amount!r}")
+            continue
+        amount = float(raw_amount)
+        if not math.isfinite(amount):
+            _reject("invalid_enum", f"surcharge_decrees monthly_amount 非有限值(NaN/inf)：{raw_amount!r}")
+            continue
+        if amount == 0:
+            continue  # 无操作不落拒（同 fiscal_changes 0-delta 口径）
+        origin_ref = str(item.get("origin_ref") or "").strip()
+        dossier_match = re.fullmatch(r"dossier:([1-9][0-9]*)", origin_ref)
+        if dossier_match is None:
+            _reject("missing_ref", "surcharge_decrees origin_ref 必须引用已物化旨意 dossier:<正整数>")
+            continue
+        origin_error = db.effect_origin_rejection(origin_ref)
+        if origin_error:
+            _reject(origin_error["category"], f"surcharge_decrees {origin_error['reason']}")
+            continue
+        claim = (origin_ref, region_id)
+        if claim in claimed_origins:
+            _reject("invalid_enum", "surcharge_decrees 同批同一旨意与省份只能成功一次")
+            continue
+        reason = str(item.get("reason") or "").strip()
+        if len(reason) > 120:
+            _reject("invalid_enum", f"surcharge_decrees reason 超 120 字：{reason!r}")
+            continue
+        meta = dict(settle.get("_meta") or {})
+        old = max(0.0, float(meta.get(_SETTLE_META_JIAPIAI_KEY, 0) or 0))
+        new = max(0.0, old + amount)  # 负额停征/蠲免，账面钳 ≥0
+        meta[_SETTLE_META_JIAPIAI_KEY] = new
+        settle["_meta"] = meta
+        db.conn.execute(
+            "UPDATE regions SET fiscal = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (json.dumps(fiscal, ensure_ascii=False), region_id),
+        )
+        claimed_origins.add(claim)
+        applied.append({
+            "region_id": region_id,
+            "monthly_amount": amount,
+            "reason": reason,
+            "origin_ref": origin_ref,
+            "加派基线": new,
+        })
+    if commit and not db.conn.in_transaction:
+        db.conn.commit()
+    return applied, rejected
+
+
+def _apply_levy_driven_transfers(
+    db: GameDB,
+    *,
+    commit: bool = True,
+) -> Tuple[List[Dict[str, object]], List[Dict[str, object]]]:
+    """#650/0089 环后半段：结算按账机械驱动农民→流民入池（0087「applier 机械转移」，
+    P6 代码只供事实＋clamp）。
+
+    口径（AC2 确定性可断言）：每明省读 settle._meta「加派基线」(万两/月)，
+    入池(人) = 基线 × LEVY_DISPLACEMENT_RATE(人/万两·月) × (100−民心)/100。
+    本机制只在 substrate_hub 新财政档启用；legacy 档不接受也不消费加派账。
+    结果钳到农民@省余额后再交 _apply_population_transfers 守恒原语落账
+    （reason=加派；累积账月效统一使用 `盘面自发`，不伪归最后一道改账旨）。基线 ≤0 或折算后
+    ≤0 的省零入池——停加派/蠲免后入池止（AC5；出口回流归 S5 #652）。
+    """
+    if (not db.is_substrate_hub_fiscal_engine_enabled()
+            or db.population_unit != POPULATION_UNIT_PERSONS):
+        return [], []
+    records: List[Dict[str, object]] = []
+    rows = db.conn.execute(
+        "SELECT id, fiscal, public_support FROM regions WHERE controlled_by='ming' ORDER BY id"
+    ).fetchall()
+    for row in rows:
+        region_id = str(row["id"])
+        try:
+            fiscal = json.loads(str(row["fiscal"] or "{}"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{region_id}.fiscal 持久 JSON 损坏，无法结算加派账") from exc
+        if not isinstance(fiscal, dict):
+            raise ValueError(f"{region_id}.fiscal 必须是 object，无法结算加派账")
+        settle = fiscal.get("settle")
+        # 财政月效的动态成员只包括已有 settle 基座的明省；legacy/内容扩展中
+        # 合法的无基座省自然出列，不能让任意 delta apply 因此失败。
+        if settle is None:
+            continue
+        if not isinstance(settle, dict):
+            raise ValueError(f"{region_id}.fiscal.settle 必须是 object，无法结算加派账")
+        meta = settle.get("_meta")
+        if meta is not None and not isinstance(meta, dict):
+            raise ValueError(f"{region_id}.fiscal.settle._meta 必须是 object，无法结算加派账")
+        raw = meta.get(_SETTLE_META_JIAPIAI_KEY, 0) if meta is not None else 0
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)) or not math.isfinite(float(raw)):
+            raise ValueError(f"{region_id}.settle._meta.{_SETTLE_META_JIAPIAI_KEY} 必须是有限数值")
+        base = max(0.0, float(raw))
+        if base <= 0:
+            continue
+        pool_members = _surcharge_population_pool_members(db, region_id)
+        if not pool_members:
+            # Pre-contract ledgers may exist on fiscal provinces outside the population
+            # substrate.  They have no population effect and must not soft-lock saves.
+            continue
+        if pool_members != {"农民", "流民"}:
+            raise ValueError(f"{region_id} 有正加派账但仅有部分农民/流民省级人口行")
+        support = max(0, min(100, int(row["public_support"] or 0)))
+        raw_persons = base * LEVY_DISPLACEMENT_RATE * (100 - support) / 100.0
+        amount = int(round(raw_persons))
+        if amount <= 0:
+            continue
+        balance = int(db.conn.execute(
+            "SELECT population FROM classes WHERE name='农民' AND region_id=?", (region_id,)
+        ).fetchone()["population"])
+        amount = min(amount, balance)  # clamp：原语超余额即拒，先钳免噪音
+        if amount <= 0:
+            continue
+        records.append({
+            "source": f"农民@{region_id}",
+            "target": f"流民@{region_id}",
+            "amount": amount,
+            "reason": "加派",
+            # 月度后果来自累积账，不伪归因给最后一道改变账额的旨。
+            "origin_ref": "盘面自发",
+        })
+    if not records:
+        return [], []
+    return _apply_population_transfers(db, records, commit=commit)
+
+
 def apply_score_extraction(
     db: GameDB,
     state: GameState,
@@ -7521,13 +7755,36 @@ def apply_score_extraction(
         extracted.get("class_delta") or {},
         commit=commit_now,
     )
-    # 3.5) population_transfers：人口守恒转移原语（#649/0087）——单记录双写，
-    # 源阶级减 N、目标阶级增 N 同事务原子；逐项拒收面见 flows._apply_population_transfers。
-    applied_transfers, transfer_rejections = _apply_population_transfers(
+    # 3.45) surcharge_decrees：明渠加派旨落逐省累积账（#650/0089，P1）。
+    applied_surcharges, surcharge_rejections = _apply_surcharge_decrees(
         db,
-        extracted.get("population_transfers") or [],
+        extracted.get("surcharge_decrees") or [],
         commit=commit_now,
     )
+    # 3.5) population_transfers：人口守恒转移原语（#649/0087）——单记录双写，
+    # 源阶级减 N、目标阶级增 N 同事务原子；逐项拒收面见 flows._apply_population_transfers。
+    surcharge_claims = {
+        (str(item.get("origin_ref") or ""), str(item.get("region_id") or ""))
+        for item in applied_surcharges
+    }
+    transfer_items: list[object] = []
+    transfer_rejections: list[Dict[str, object]] = []
+    for item in (extracted.get("population_transfers") or []):
+        source = str(item.get("source") or "") if isinstance(item, dict) else ""
+        region_id = source.rpartition("@")[2]
+        claim = (str(item.get("origin_ref") or ""), region_id) if isinstance(item, dict) else ("", "")
+        if isinstance(item, dict) and item.get("reason") == "加派" and claim in surcharge_claims:
+            transfer_rejections.append({
+                "rejected": True, "category": "invalid_enum",
+                "reason": "同一道加派旨的人口后果已由加派账唯一拥有",
+                "item": item,
+            })
+        else:
+            transfer_items.append(item)
+    applied_transfers, primitive_rejections = _apply_population_transfers(
+        db, transfer_items, commit=commit_now,
+    )
+    transfer_rejections.extend(primitive_rejections)
     # 4) new_armies → region_delta / army_delta (复用旧 db 方法)
     region_deltas_raw = extracted.get("region_delta") or {}
     army_deltas_raw = extracted.get("army_delta") or {}
@@ -8409,6 +8666,8 @@ def apply_score_extraction(
         "faction_delta": applied_factions,
         "class_delta": applied_classes,
         "population_transfers": applied_transfers,
+        "surcharge_decrees": applied_surcharges,
+        "surcharge_decrees_rejections": surcharge_rejections,
         # 拒收项独立段（list）：供 _collect_inline_rejections 扫记 rejection_reports；
         # 与上面 *_delta（dict，web 面板数据）分开，互不污染（cmr r1，#14/#63）。
         "faction_delta_rejections": faction_rejections,
