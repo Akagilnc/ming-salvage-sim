@@ -5105,7 +5105,7 @@ def apply_issue_tracker_output(
                 "reason": f"new_issues 条目非对象（应为 dict）：{ni!r}", "item": ni,
             })
             continue
-        title = str(ni.get("title") or "")
+        raw_title = ni.get("title")
         origin_kind = str(ni.get("origin_kind") or "").lower()
         if origin_kind == "impeachment_surge":
             candidate_id = str(ni.get("candidate_id") or "").strip()
@@ -5115,23 +5115,39 @@ def apply_issue_tracker_output(
             }
             candidate = candidates.get(candidate_id)
             roster = ni.get("participant_roster")
-            target_ids = []
-            if isinstance(roster, list):
-                target_ids = [
-                    str(item.get("character_id") or "").strip()
-                    for item in roster if isinstance(item, dict)
-                ]
+            stage_text = ni.get("stage_text")
+            title = raw_title if isinstance(raw_title, str) else ""
+            target_ids: List[str] = []
+            roster_shape_valid = isinstance(roster, list) and bool(roster)
+            if roster_shape_valid:
+                for item in roster:
+                    if not isinstance(item, dict):
+                        roster_shape_valid = False
+                        break
+                    character_id = item.get("character_id")
+                    tier = item.get("tier")
+                    if (
+                        not isinstance(character_id, str)
+                        or not character_id.strip()
+                        or not isinstance(tier, str)
+                        or tier not in {"主办", "协办", "知情"}
+                    ):
+                        roster_shape_valid = False
+                        break
+                    target_ids.append(character_id.strip())
             reason = ""
             if candidate is None:
                 reason = "动态候选不存在、陈旧或已消费"
             elif candidate_snapshot_authoritative and candidate_id not in candidate_event_ids:
                 reason = "动态候选不在本次 LLM 输入快照"
-            elif not title.strip():
-                reason = "弹劾潮 title 缺失或空白"
+            elif not isinstance(raw_title, str) or not raw_title.strip():
+                reason = "弹劾潮 title 须为非空文本"
+            elif not isinstance(stage_text, str):
+                reason = "弹劾潮 stage_text 须为文本"
             elif str(ni.get("faction_hint") or "").strip() != candidate["faction_id"]:
                 reason = "弹劾潮 faction_hint 与候选派系不符"
-            elif not target_ids or len(target_ids) != len(roster):
-                reason = "弹劾潮 participant_roster 须为非空人物名单"
+            elif not roster_shape_valid:
+                reason = "弹劾潮 participant_roster 须为非空合法结构化人物名单"
             elif not set(target_ids).issubset(set(candidate["eligible_target_ids"])):
                 reason = "弹劾潮标靶越过 eligible_target_ids 闭集"
             if reason:
@@ -5147,7 +5163,7 @@ def apply_issue_tracker_output(
                 origin_kind="impeachment_surge",
                 origin_ref=str(candidate["origin_ref"]),
                 bar_value=40,
-                stage_text=str(ni.get("stage_text") or ""),
+                stage_text=stage_text,
                 faction_hint=str(candidate["faction_id"]),
                 participants=roster,
                 cancellable="never",
@@ -5158,6 +5174,7 @@ def apply_issue_tracker_output(
                 "title": title, "rejected": False,
             })
             continue
+        title = str(raw_title or "")
         if origin_kind == "event_pool":
             # 预设事件触发：id 必须是真实预设 event，照预设字段立 issue（不用 LLM 给的字段）
             event_id = str(ni.get("id") or ni.get("origin_ref") or "").strip()

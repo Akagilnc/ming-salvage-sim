@@ -120,6 +120,48 @@ def test_dynamic_apply_rejects_blank_title_wrong_faction_and_outside_target(game
     assert db.conn.execute("SELECT COUNT(*) FROM issues WHERE origin_kind='impeachment_surge'").fetchone()[0] == 0
 
 
+def test_dynamic_apply_rejects_invalid_tier_without_losing_valid_sibling(game):
+    db, state = game[:2]
+    _, owner, _ = _candidate_world(db, state)
+    candidate = gather_impeachment_surge_candidates(state, db)[0]
+    base = {"origin_kind": "impeachment_surge", "candidate_id": candidate["id"],
+            "faction_hint": candidate["faction_id"],
+            "participant_roster": [{"character_id": owner, "tier": "主办"}],
+            "title": "合法题名", "stage_text": "合法案情"}
+
+    result = apply_issue_tracker_output(db, state, {"new_issues": [
+        dict(base, participant_roster=[{"character_id": owner, "tier": "首犯"}]),
+        base,
+    ]})["new_issues"]
+
+    assert result[0]["rejected"] is True
+    assert result[1]["rejected"] is False
+    rows = db.conn.execute(
+        "SELECT title,stage_text FROM issues WHERE origin_kind='impeachment_surge'"
+    ).fetchall()
+    assert [(row["title"], row["stage_text"]) for row in rows] == [("合法题名", "合法案情")]
+
+
+def test_dynamic_apply_rejects_non_text_free_fields_without_coercion(game):
+    db, state = game[:2]
+    _, owner, _ = _candidate_world(db, state)
+    candidate = gather_impeachment_surge_candidates(state, db)[0]
+    base = {"origin_kind": "impeachment_surge", "candidate_id": candidate["id"],
+            "faction_hint": candidate["faction_id"],
+            "participant_roster": [{"character_id": owner, "tier": "主办"}],
+            "title": "题", "stage_text": "情"}
+
+    result = apply_issue_tracker_output(db, state, {"new_issues": [
+        dict(base, title={"bad": "shape"}),
+        dict(base, stage_text=["bad"]),
+    ]})["new_issues"]
+
+    assert all(item["rejected"] for item in result)
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM issues WHERE origin_kind='impeachment_surge'"
+    ).fetchone()[0] == 0
+
+
 def test_leverage_boundary_and_authoritative_input_snapshot(game):
     db, state = game[:2]
     _, owner, owner_faction = _candidate_world(db, state)
