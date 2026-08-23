@@ -1635,6 +1635,31 @@ def list_unsettled_summons(db: Any) -> List[Dict[str, Any]]:
     return projected
 
 
+def list_arrived_unsettled_summons(db: Any) -> List[Dict[str, Any]]:
+    """Project in-transit summons whose original journey has now completed."""
+    arrived: List[Dict[str, Any]] = []
+    for item in list_unsettled_summons(db):
+        if item["kind"] != "in_transit":
+            continue
+        row = db.conn.execute(
+            "SELECT location, transit_to FROM characters WHERE name=?",
+            (item["person_name"],),
+        ).fetchone()
+        if row is None or str(row["transit_to"] or "").strip():
+            continue
+        destination = str(row["location"] or "").strip()
+        if not destination:
+            continue
+        arrived.append({
+            "person_name": item["person_name"],
+            "original_destination": destination,
+            "origin_id": item["origin_id"],
+            "source_entry_id": item["entry_id"],
+            "required_fact": "抵原地后续赴京",
+        })
+    return arrived
+
+
 def settle_summon_origin(db: Any, origin_id: object) -> bool:
     """成功写入续程后按 origin 结清；重复结清为幂等 no-op。"""
     origin = str(origin_id or "").strip()
