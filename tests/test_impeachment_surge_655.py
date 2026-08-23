@@ -5,7 +5,8 @@ Confirmed seams: build_simulator_payload candidate_events; apply_issue_tracker_o
 import json
 
 import ming_sim.agents as agents_mod
-from ming_sim.issues import apply_issue_tracker_output, gather_impeachment_surge_candidates
+from ming_sim.db import GameDB
+from ming_sim.issues import apply_issue_tracker_output, gather_impeachment_surge_candidates, issue_to_payload
 from ming_sim.models import LLMConfig
 from ming_sim.simulation import build_extractor_shared_context, build_simulator_payload
 
@@ -156,6 +157,51 @@ def test_dynamic_targets_are_roleless_deduplicated_without_participant_roles(gam
         (f"issue:{result[1]['issue_id']}",),
     ).fetchone()
     assert json.loads(knowledge["participant_roster"]) == []
+
+
+def test_dynamic_apply_deduplicates_same_candidate_within_input_snapshot(game):
+    db, state = game[:2]
+    _, owner, _ = _candidate_world(db, state)
+    candidate = gather_impeachment_surge_candidates(state, db)[0]
+    item = {"origin_kind": "impeachment_surge", "candidate_id": candidate["id"],
+            "faction_hint": candidate["faction_id"], "target_roster": [owner],
+            "title": "同批弹章", "stage_text": "同一候选重复输出"}
+
+    result = apply_issue_tracker_output(
+        db, state, {"new_issues": [item, item]},
+        impeachment_surge_candidates_at_input=[candidate],
+    )["new_issues"]
+
+    assert result[0]["rejected"] is False
+    assert result[1]["rejected"] is True
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM issues WHERE origin_kind='impeachment_surge'"
+    ).fetchone()[0] == 1
+
+
+def test_target_roster_survives_generic_issue_restore(game, content):
+    db, state = game[:2]
+    _, owner, _ = _candidate_world(db, state)
+    candidate = gather_impeachment_surge_candidates(state, db)[0]
+    item = {"origin_kind": "impeachment_surge", "candidate_id": candidate["id"],
+            "faction_hint": candidate["faction_id"], "target_roster": [owner],
+            "title": "恢复标靶", "stage_text": "关库后仍可读"}
+    issue_id = apply_issue_tracker_output(
+        db, state, {"new_issues": [item]},
+        impeachment_surge_candidates_at_input=[candidate],
+    )["new_issues"][0]["issue_id"]
+    path = db.conn.execute("PRAGMA database_list").fetchone()[2]
+    db.close()
+
+    restored = GameDB(path, content)
+    try:
+        row = restored.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
+        payload = issue_to_payload(row, [])
+        assert payload["target_roster"] == [owner]
+        assert json.loads(row["participants"]) == []
+        assert json.loads(row["participant_roster"]) == []
+    finally:
+        restored.close()
 
 
 def test_dynamic_apply_rejects_non_text_free_fields_without_coercion(game):

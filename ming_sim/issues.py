@@ -1170,6 +1170,10 @@ def issue_to_payload(
     commitment_kind = row["commitment_kind"] if "commitment_kind" in keys else ""
     stop_condition = row["stop_condition"] if "stop_condition" in keys else ""
     end_turn = int(row["end_turn"]) if "end_turn" in keys else 0
+    target_roster = (
+        json.loads(str(row["target_roster"] or "[]"))
+        if "target_roster" in keys else []
+    )
     payload = {
         "issue_id": int(row["id"]),
         "kind": row["kind"],
@@ -1183,6 +1187,7 @@ def issue_to_payload(
         "结案条件": resolve_cond or "(未填)",
         "失败条件": fail_cond or "(未填)",
         "cancellable": row["cancellable"],
+        "target_roster": target_roster,
         f"上{TURN_UNIT}推进": (
             {
                 "delta_bar": int(recent_advances[0]["delta_bar"]),
@@ -5108,6 +5113,7 @@ def apply_issue_tracker_output(
     # 2) new_issues：接三种来源——decree、静态 event_pool，以及
     #    当前输入事实可重验的动态 impeachment_surge。其它来源一律拒。
     initiative_active = db.count_active_initiatives()
+    consumed_surge_candidates: set[tuple[str, str]] = set()
     for ni in tracker_output.get("new_issues", []) or []:
         if not isinstance(ni, dict):
             # 非 dict 项（new_issues:[null]/标量）：ni.get 会抛 AttributeError。真实 settle 路
@@ -5155,6 +5161,8 @@ def apply_issue_tracker_output(
                 reason = "弹劾潮 stage_text 须为文本"
             elif str(ni.get("faction_hint") or "").strip() != candidate["faction_id"]:
                 reason = "弹劾潮 faction_hint 与候选派系不符"
+            elif (str(candidate["origin_ref"]), str(candidate["faction_id"])) in consumed_surge_candidates:
+                reason = "弹劾潮候选已在本次调用内消费"
             elif not roster_shape_valid:
                 reason = "弹劾潮 target_roster 须为非空人物身份列表"
             elif not set(target_ids).issubset(set(candidate["eligible_target_ids"])):
@@ -5180,6 +5188,9 @@ def apply_issue_tracker_output(
                 target_roster=target_ids,
                 cancellable="never",
                 commit=not external_transaction,
+            )
+            consumed_surge_candidates.add(
+                (str(candidate["origin_ref"]), str(candidate["faction_id"]))
             )
             applied_new.append({
                 "id": candidate_id, "issue_id": issue_id, "kind": "situation",
