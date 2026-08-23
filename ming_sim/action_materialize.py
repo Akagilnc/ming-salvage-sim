@@ -23,6 +23,7 @@ from ming_sim.action_clusters import (
     cluster_by_kind,
     install_action_catalog,
     materialize_clusters_ordered,
+    validate_action_candidate_shape,
 )
 
 
@@ -881,6 +882,11 @@ def stage_punishment_candidate(
     }
     category = str(transaction_category or "").strip()
     if category:
+        valid, _ = validate_action_candidate_shape(
+            {"kind": "punishment", "transaction_category": category}
+        )
+        if not valid:
+            return 0
         staged["transaction_category"] = category
     try:
         n = int(amount) if amount is not None and amount != "" else 0

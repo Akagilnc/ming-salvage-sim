@@ -218,17 +218,17 @@ def test_pre_settle_owns_rejection_mirror(env, monkeypatch, tmp_path):
     assert json.loads(mirror.read_text(encoding="utf-8"))["category"] == "duty_route_unmapped"
 
 
-def test_unmapped_route_uses_canonical_rejection_report(env, monkeypatch, tmp_path):
+def test_punishment_stage_rejects_unmapped_category_before_pending_or_dossier(env):
     db, state, _ = env
-    mirror = tmp_path / "rejections.jsonl"
-    monkeypatch.setattr("ming_sim.error_pack.rejections_jsonl_path", lambda: str(mirror))
-    _create(db, state, category="修仙")
-    row = db.conn.execute(
-        "SELECT section,category,item_json FROM rejection_reports ORDER BY id DESC LIMIT 1"
-    ).fetchone()
-    assert (row["section"], row["category"]) == ("executor_routing", "duty_route_unmapped")
-    assert json.loads(row["item_json"])["transaction_category"] == "修仙"
-    assert json.loads(mirror.read_text(encoding="utf-8"))["category"] == "duty_route_unmapped"
+    pending_before = db.conn.execute("SELECT COUNT(*) FROM pending_actions").fetchone()[0]
+    dossiers_before = db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0]
+    pending_id = stage_punishment_candidate(
+        db, state.turn, "陈新甲", text="拿问下狱", target_id="毕自严",
+        punish_action="拿问下狱", transaction_category="修仙",
+    )
+    assert pending_id == 0
+    assert db.conn.execute("SELECT COUNT(*) FROM pending_actions").fetchone()[0] == pending_before
+    assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0] == dossiers_before
 
 
 def test_unmapped_rejection_rolls_back_with_uncommitted_dossier(env):
