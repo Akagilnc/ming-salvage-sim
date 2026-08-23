@@ -20314,15 +20314,6 @@ class GameDB:
     # 奠基段只增不改、近况段覆盖式幂等由 apply 路机械保证。
     # ------------------------------------------------------------------
 
-    def has_savegame(self) -> bool:
-        """存档是否已存在（game_state 行在）——#638 新开档判据的唯一机械口径。
-
-        load_state 首次建行前后是 fresh/旧档的分水岭；调用方必须在 load_state
-        之前取此判据。"""
-        return self.conn.execute(
-            "SELECT 1 FROM game_state WHERE id = 1"
-        ).fetchone() is not None
-
     def apply_seed_founding_segment(
         self,
         *,

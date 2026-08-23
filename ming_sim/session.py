@@ -800,7 +800,7 @@ class GameSession:
         self.db = GameDB(db_path, content=self.content, llm_config=llm_config)
         # #638 S7：新开档判据必须在 load_state 建 game_state 行之前取（行在＝旧档，
         # 关系 seed 导入一律不触；验收条「只对新开档生效，旧档不受影响」的机械口径）。
-        fresh_save = not self.db.has_savegame()
+        fresh_save = not self.db.has_state()
         # 接档载入阶段计时（#84）：原为零日志盲区，群友以为死机；逐阶段 tlog 用时，
         # 自部署者在 server 控制台看得见进度、定位慢阶段。
         from ming_sim.token_stats import tlog
