@@ -113,6 +113,7 @@ def _priority_override_origin(
 
     causal_keys: List[str] = []
     for changed_subject in DUE_SUBJECTS:
+        counterfactual = dict(config)
         for key in (
             f"due_priority_{changed_subject}@{region_id}",
             f"due_priority_{changed_subject}",
@@ -121,8 +122,7 @@ def _priority_override_origin(
             if key not in config or (until is not None and turn > int(until)):
                 continue
             if int(config[key]) != DEFAULT_DUE_PRIORITY[changed_subject]:
-                counterfactual = dict(config)
-                counterfactual[key] = DEFAULT_DUE_PRIORITY[changed_subject]
+                counterfactual.pop(key)
                 resolved = resolve_pay_order_overrides(counterfactual, region_id, turn)
                 order = resolved.due_order if resolved is not None else tuple(
                     sorted(DUE_SUBJECTS, key=DEFAULT_DUE_PRIORITY.__getitem__)
@@ -140,7 +140,6 @@ def _priority_override_origin(
                     remaining -= default_paid[subject]
                 if default_paid[displaced_subject] - paid[displaced_subject] < displaced - 1e-9:
                     causal_keys.append(key)
-            break
     if not causal_keys:
         return ""
     placeholders = ",".join("?" for _ in causal_keys)

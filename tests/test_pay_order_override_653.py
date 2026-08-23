@@ -581,6 +581,30 @@ def test_fact_brief_attributes_priority_displacement_to_dossier(game):
         restored.close()
 
 
+def test_fact_brief_priority_provenance_falls_back_to_nationwide_scope(game):
+    """撤回局部胜出键后应回落全国键，并归因于真正造成让位的全国旨。"""
+    db, state, _content = game
+    _pin_shortfall_board(db, "shaanxi")
+    nationwide = _override_dossier(
+        db, state, [{"key": "due_priority_军饷", "value": 40}],
+        text="全国边饷居末",
+    )
+    db.apply_dossier_promulgation(state, nationwide, "promulgated")
+    local = _override_dossier(
+        db, state, [{"key": "due_priority_军饷@shaanxi", "value": 39}],
+        text="陕西局部微调但实序不变",
+    )
+    db.apply_dossier_promulgation(state, local, "promulgated")
+    db.settle_province_tick("shaanxi")
+
+    displaced = [
+        e for e in build_fiscal_fact_brief(db) if e["detail"] == "旨序让位_军饷"
+    ]
+    assert len(displaced) == 1
+    assert displaced[0]["origin_ref"] == f"dossier:{nationwide}"
+    assert displaced[0]["origin_ref"] != f"dossier:{local}"
+
+
 def test_fact_brief_priority_provenance_ignores_later_noncausal_dossier(game):
     """后旨若不再改变实序，不得抢走先旨造成的让位 provenance。"""
     db, state, _content = game
