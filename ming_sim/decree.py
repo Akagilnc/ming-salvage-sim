@@ -853,13 +853,7 @@ def project_dossiers_for_simulator(
         # command/target context without re-materializing.
         just_promulgated_payload = (
             policy["effect_owner"] == "payload"
-            and (
-                policy.get("execution_surface") == "terminal"
-                or (
-                    str(row.get("action_type") or "") == "punishment"
-                    and policy.get("execution_surface") == "in_transit"
-                )
-            )
+            and policy.get("execution_surface") == "terminal"
             and str(row.get("settlement_verdict") or "") == "promulgated"
         )
         if admitted and (

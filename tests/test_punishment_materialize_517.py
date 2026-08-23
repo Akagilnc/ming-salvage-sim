@@ -61,6 +61,7 @@ def _stage_punishment(db, turn, target, *, action="拿问下狱", amount=0, mess
     payload = {
         "kind": "punishment",
         "punish_action": action,
+        "transaction_category": "缉拿",
         "name": target,
     }
     if amount:
@@ -298,6 +299,7 @@ def test_scripted_punishment_stages_via_apply_then_close_night(game, monkeypatch
     sess = _bind_apply(db, state, content)
     scripted = candidates_from_classifier_payload({
         "kind": "punishment", "punish_action": "拿问下狱", "name": target.name,
+        "transaction_category": "缉拿",
     }, soft=False)
     out = sess.apply_cli_conversation_actions(
         actor, f"将{target.name}拿问下狱。",
