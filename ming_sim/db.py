@@ -18678,7 +18678,8 @@ class GameDB:
                 if strict_structured and tier_value is None:
                     raise ValueError("参与人物 tier 必须显式提供")
                 tier = str(tier_value or ("" if strict_structured else "知情")).strip()
-                role = str(value.get("role") or value.get("职分") or "").strip()
+                raw_role = str(value.get("role") or value.get("职分") or "")
+                role = raw_role if raw_role.strip() else ""
                 delegator = str(value.get("delegator_id") or value.get("delegator") or "").strip()
             else:
                 if strict_structured:
