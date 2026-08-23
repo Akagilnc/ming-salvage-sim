@@ -576,6 +576,7 @@ class Army:
     is_tusi: int = 0
     self_funded_pay: int = 0
     mutiny_status: str = ""
+    is_mutinied: int = 0
 
 
 @dataclass
