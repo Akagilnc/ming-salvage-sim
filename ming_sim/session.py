@@ -2288,7 +2288,7 @@ class GameSession:
                     character.name,
                     player_message,
                 )
-            if not res.get("suppress_confirmation_cue"):
+            if res.get("requires_confirmation", True):
                 result.answer = GameSession._ensure_confirmation_cue(result.answer or "")
         if res.get("pending_action_failures"):
             # Preserve tool-stage diagnostics (e.g. #522 招抚未知/歧义) then append

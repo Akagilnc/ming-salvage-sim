@@ -1155,10 +1155,11 @@ def _apply_economy_list(
                     origin_ref=effective_origin_ref,
                     beyond_intent=beyond_raw,
                 )
-                entry = {"account": account, "delta": -spent, "reason": reason}
-                if db.coerce_beyond_intent_flag(beyond_raw):
-                    entry["beyond_intent"] = True
-                applied.append(entry)
+                from ming_sim.covert_levy import canonical_fiscal_result
+                applied.append(canonical_fiscal_result(
+                    db, move, applied=spent != 0,
+                    account=account, delta=-spent, reason=reason,
+                ))
                 continue
             applied.append({
                 "account": account,
@@ -1201,10 +1202,11 @@ def _apply_economy_list(
                         f"{row['name']}已无欠饷，"
                         f"{format_wanliang_amount(abs(delta))}万两未拨"
                     )
-                applied.append({
-                    "account": account, "delta": 0,
-                    "reason": reason_text,
-                })
+                from ming_sim.covert_levy import canonical_fiscal_result
+                applied.append(canonical_fiscal_result(
+                    db, move, applied=False,
+                    account=account, delta=0, reason=reason_text,
+                ))
                 continue
             spent = _pay_single_army_arrears(
                 db, state, row, account, min(abs(delta), payable_arrears), category,
@@ -1217,10 +1219,11 @@ def _apply_economy_list(
                     db._reconcile_central_army_pay_arrears_container()
                 if commit:
                     db.conn.commit()
-                entry = {"account": account, "delta": -spent, "reason": reason}
-                if db.coerce_beyond_intent_flag(beyond_raw):
-                    entry["beyond_intent"] = True
-                applied.append(entry)
+                from ming_sim.covert_levy import canonical_fiscal_result
+                applied.append(canonical_fiscal_result(
+                    db, move, applied=True,
+                    account=account, delta=-spent, reason=reason,
+                ))
             continue
 
         # ── 常规扣账（其它/无 purpose）─────────────────────────────────────────
@@ -1236,10 +1239,11 @@ def _apply_economy_list(
             commit=commit,
         )
         if actual:
-            entry = {"account": account, "delta": actual, "reason": reason}
-            if db.coerce_beyond_intent_flag(beyond_raw):
-                entry["beyond_intent"] = True
-            applied.append(entry)
+            from ming_sim.covert_levy import canonical_fiscal_result
+            applied.append(canonical_fiscal_result(
+                db, move, applied=True,
+                account=account, delta=actual, reason=reason,
+            ))
     return applied
 
 
