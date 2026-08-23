@@ -1156,6 +1156,8 @@ def _apply_economy_list(
                     beyond_intent=beyond_raw,
                 )
                 entry = {"account": account, "delta": -spent, "reason": reason}
+                if effective_origin_ref:
+                    entry["origin_ref"] = effective_origin_ref
                 if db.coerce_beyond_intent_flag(beyond_raw):
                     entry["beyond_intent"] = True
                 applied.append(entry)
@@ -1218,6 +1220,8 @@ def _apply_economy_list(
                 if commit:
                     db.conn.commit()
                 entry = {"account": account, "delta": -spent, "reason": reason}
+                if effective_origin_ref:
+                    entry["origin_ref"] = effective_origin_ref
                 if db.coerce_beyond_intent_flag(beyond_raw):
                     entry["beyond_intent"] = True
                 applied.append(entry)
@@ -1237,6 +1241,8 @@ def _apply_economy_list(
         )
         if actual:
             entry = {"account": account, "delta": actual, "reason": reason}
+            if effective_origin_ref:
+                entry["origin_ref"] = effective_origin_ref
             if db.coerce_beyond_intent_flag(beyond_raw):
                 entry["beyond_intent"] = True
             applied.append(entry)
