@@ -33,6 +33,14 @@ _ARREARS_KEYS = ("军饷欠", "官俸欠", "宗禄欠")
 _DEBT_OF_DUE = {"军饷": "军饷欠", "官俸": "官俸欠", "宗禄": "宗禄欠"}
 
 
+def regular_assessment(official_land: float, p: Dict[str, Any]) -> float:
+    """正赋应征纯计算真源：直设优先，否则按官民田与亩额派生。"""
+    configured = p.get("正赋应征")
+    return float(configured) if configured is not None else round(
+        float(official_land) * float(p.get("正赋亩额", 0)) / 12, 4
+    )
+
+
 def _resolve_order_param(p: Dict[str, Any], key: str, default: tuple) -> tuple:
     """#653 override 序参（p[key]）验形：缺省=祖制默认序；在位必须是合法排列，
     否则 ValueError（fail-loud）。返回定长 tuple 供结算与 oracle 同源消费。"""
@@ -316,8 +324,7 @@ def settle_tick(
             r["蠲免"] += mj
 
     # ── ②③④⑦ 应征/火耗/实征/民欠 ──
-    _zf = p.get("正赋应征")  # None 视为未设（走亩额派生），防 None*float TypeError
-    正赋 = _zf if _zf is not None else round(官民田 * p.get("正赋亩额", 0) / 12, 4)
+    正赋 = regular_assessment(官民田, p)
     三饷 = p["三饷应征"]
     fh = p["火耗率"]
     bf = p["逋赋率"]

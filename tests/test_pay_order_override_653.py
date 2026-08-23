@@ -530,6 +530,34 @@ def test_fact_brief_levy_uses_civil_arrears_breakdown_relation(game):
     assert levy["detail"] == "三饷加派净额"
 
 
+def test_fact_brief_levy_derives_regular_assessment_like_settle_tick(game):
+    """正赋未直设时复用亩额派生真源，不能把 None 静默当零。"""
+    import json
+
+    db, _state, _content = game
+    row = db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()
+    fiscal = json.loads(row["fiscal"])
+    fiscal["settle"]["st"]["官民田"] = 100.0
+    fiscal["settle"]["p"].update({
+        "正赋应征": None, "正赋亩额": 1.2, "三饷应征": 20.0, "逋赋率": 0.25,
+    })
+    db.conn.execute(
+        "UPDATE regions SET fiscal=? WHERE id='shaanxi'",
+        (json.dumps(fiscal, ensure_ascii=False),),
+    )
+    projected = next(
+        e for e in build_fiscal_fact_brief(db)
+        if e["metric"] == "加派量" and e["subject_id"] == "shaanxi"
+    )
+    settled = settle_tick(
+        copy.deepcopy(fiscal["settle"]["st"]),
+        copy.deepcopy(fiscal["settle"]["p"]),
+        [],
+    )
+    assert settled.breakdown["民欠新增"] == pytest.approx(7.5)
+    assert projected["value"] == pytest.approx(12.5)
+
+
 def test_fact_brief_attributes_priority_displacement_to_dossier(game):
     """同一实付总额按祖制序重放，只报告因旨让位新增受损的对象、差额和案卷。"""
     db, state, content = game
@@ -551,6 +579,30 @@ def test_fact_brief_attributes_priority_displacement_to_dossier(game):
                 if e["detail"].startswith("旨序让位_")] == displaced
     finally:
         restored.close()
+
+
+def test_fact_brief_priority_provenance_ignores_later_noncausal_dossier(game):
+    """后旨若不再改变实序，不得抢走先旨造成的让位 provenance。"""
+    db, state, _content = game
+    _pin_shortfall_board(db, "shaanxi")
+    causal = _override_dossier(
+        db, state, [{"key": "due_priority_军饷@shaanxi", "value": 40}],
+        text="边饷居末",
+    )
+    db.apply_dossier_promulgation(state, causal, "promulgated")
+    noncausal = _override_dossier(
+        db, state, [{"key": "due_priority_官俸@shaanxi", "value": 19}],
+        text="官俸微调但实序不变",
+    )
+    db.apply_dossier_promulgation(state, noncausal, "promulgated")
+    db.settle_province_tick("shaanxi")
+
+    displaced = [
+        e for e in build_fiscal_fact_brief(db) if e["detail"] == "旨序让位_军饷"
+    ]
+    assert len(displaced) == 1
+    assert displaced[0]["origin_ref"] == f"dossier:{causal}"
+    assert displaced[0]["origin_ref"] != f"dossier:{noncausal}"
 
 
 def test_fiscal_fact_brief_bad_json_fails_loud(game):

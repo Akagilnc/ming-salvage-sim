@@ -104,24 +104,49 @@ def _ming_settle_bases(db: Any) -> List[Tuple[str, Dict[str, Any], Dict[str, Any
     return out
 
 
-def _priority_override_origin(db: Any, config: Dict[str, int], region_id: str, turn: int) -> str:
-    """返回改变该省当前 Due 序的在位旨 provenance；无序变更返回空。"""
-    from ming_sim.pay_order import DEFAULT_DUE_PRIORITY, DUE_SUBJECTS
+def _priority_override_origin(
+    db: Any, config: Dict[str, int], region_id: str, turn: int,
+    displaced_subject: str, displaced: float, dues: Dict[str, float], pool: float,
+) -> str:
+    """逐键反事实找出确实造成该科目让位的在位旨，并返回其 provenance。"""
+    from ming_sim.pay_order import DEFAULT_DUE_PRIORITY, DUE_SUBJECTS, resolve_pay_order_overrides
 
-    candidates: List[str] = []
-    for subject in DUE_SUBJECTS:
-        for key in (f"due_priority_{subject}@{region_id}", f"due_priority_{subject}"):
+    causal_keys: List[str] = []
+    for changed_subject in DUE_SUBJECTS:
+        for key in (
+            f"due_priority_{changed_subject}@{region_id}",
+            f"due_priority_{changed_subject}",
+        ):
             until = config.get(f"{key}_until_turn")
-            if key in config and (until is None or turn <= int(until)):
-                if int(config[key]) != DEFAULT_DUE_PRIORITY[subject]:
-                    candidates.append(key)
-                break
-    if not candidates:
+            if key not in config or (until is not None and turn > int(until)):
+                continue
+            if int(config[key]) != DEFAULT_DUE_PRIORITY[changed_subject]:
+                counterfactual = dict(config)
+                counterfactual[key] = DEFAULT_DUE_PRIORITY[changed_subject]
+                resolved = resolve_pay_order_overrides(counterfactual, region_id, turn)
+                order = resolved.due_order if resolved is not None else tuple(
+                    sorted(DUE_SUBJECTS, key=DEFAULT_DUE_PRIORITY.__getitem__)
+                )
+                remaining = pool
+                paid = {}
+                for subject in order:
+                    paid[subject] = min(dues[subject], remaining)
+                    remaining -= paid[subject]
+                default_order = tuple(sorted(DUE_SUBJECTS, key=DEFAULT_DUE_PRIORITY.__getitem__))
+                remaining = pool
+                default_paid = {}
+                for subject in default_order:
+                    default_paid[subject] = min(dues[subject], remaining)
+                    remaining -= default_paid[subject]
+                if default_paid[displaced_subject] - paid[displaced_subject] < displaced - 1e-9:
+                    causal_keys.append(key)
+            break
+    if not causal_keys:
         return ""
-    placeholders = ",".join("?" for _ in candidates)
+    placeholders = ",".join("?" for _ in causal_keys)
     row = db.conn.execute(
         f"SELECT origin_ref FROM fiscal_config_changes WHERE key IN ({placeholders}) "
-        "ORDER BY id DESC LIMIT 1", tuple(candidates),
+        "ORDER BY id DESC LIMIT 1", tuple(causal_keys),
     ).fetchone()
     return str(row["origin_ref"] or "") if row is not None else ""
 
@@ -136,9 +161,6 @@ def _pay_order_displacement_entries(
     resolved = resolve_pay_order_overrides(config, region_id, turn)
     default_order = tuple(sorted(DUE_SUBJECTS, key=DEFAULT_DUE_PRIORITY.__getitem__))
     if resolved is None or resolved.due_order == default_order:
-        return []
-    origin = _priority_override_origin(db, config, region_id, turn)
-    if not origin:
         return []
     due_map = p.get("Due") if isinstance(p.get("Due"), dict) else {}
     dues = {s: max(0.0, float(due_map.get(s, 0) or 0)) for s in DUE_SUBJECTS}
@@ -172,12 +194,17 @@ def _pay_order_displacement_entries(
         displaced = default_paid[subject] - actual_paid[subject]
         if displaced <= 1e-9:
             continue
-        out.append({
-            "subject_kind": "region", "subject_id": region_id, "region": region_id,
-            "metric": "欠禄额", "window_turns": 1, "value": displaced,
-            "origin_ref": origin, "affected_class": FACT_CLASS_MAP[subject],
-            "detail": f"旨序让位_{subject}",
-        })
+        origin = _priority_override_origin(
+            db, config, region_id, turn, subject, displaced, dues,
+            sum(actual_paid.values()),
+        )
+        if origin:
+            out.append({
+                "subject_kind": "region", "subject_id": region_id, "region": region_id,
+                "metric": "欠禄额", "window_turns": 1, "value": displaced,
+                "origin_ref": origin, "affected_class": FACT_CLASS_MAP[subject],
+                "detail": f"旨序让位_{subject}",
+            })
     return out
 
 
@@ -200,8 +227,10 @@ def build_fiscal_fact_brief(db: Any) -> List[Dict[str, Any]]:
 
     # ① 明控省基座：加派量当月流 ＋ 赈济未敷（unmet_relief）＋ 省内池折发免除（受损）
     for region_id, st, p in _ming_settle_bases(db):
+        from ming_sim.fiscal_tick import regular_assessment
+
         levy_rate = float(p.get("三饷应征", 0) or 0)
-        regular_due = float(p.get("正赋应征", 0) or 0)
+        regular_due = regular_assessment(float(st.get("官民田", 0) or 0), p)
         new_civil_arrears = (regular_due + levy_rate) * float(p.get("逋赋率", 0) or 0)
         # 票面 F2.2：严格投影 settle_tick breakdown 的
         # 民欠新增=(正赋应征+三饷应征)×逋赋率，再与三饷应征作差。
