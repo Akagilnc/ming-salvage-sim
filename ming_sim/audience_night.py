@@ -1654,6 +1654,37 @@ def settle_summon_origin(db: Any, origin_id: object) -> bool:
     return True
 
 
+def record_summon_fresh(
+    db: Any,
+    night_id: int,
+    person_name: str,
+    *,
+    method: str = METHOD_CHUANZHAO,
+    body: str = "",
+    origin_id: object = "",
+) -> int:
+    """落 fresh 场外传召账；同一人物同一未结 origin 幂等。"""
+    name = str(person_name or "").strip()
+    if not name:
+        raise AudienceNightError("传召人名不能为空", code="empty_person")
+    method = _validate_summon_method(method, default=METHOD_CHUANZHAO)
+    origin_tag = _summon_origin_tag(origin_id)
+    if origin_tag:
+        for item in list_unsettled_summons(db):
+            if item["person_name"] == name and item["origin_id"] == str(origin_id).strip():
+                return int(item["entry_id"])
+    tags = [method]
+    if origin_tag:
+        tags.extend([TAG_SUMMON_UNSETTLED, origin_tag])
+    return append_ledger_entry(
+        db, night_id,
+        person_names=[name],
+        audibility=AUDIBILITY_PUBLIC,
+        body=body or f"传召{name}赴京候见。",
+        tags=tags,
+    )
+
+
 def record_summon_in_transit(
     db: Any,
     night_id: int,
