@@ -274,6 +274,11 @@ POPULATION_TRANSFER_REASONS: dict[str, frozenset[tuple[str, str]]] = {
 }
 POPULATION_TRANSFER_FIELDS = frozenset({"source", "target", "amount", "reason", "origin_ref"})
 
+# 0089 明渠：加派→流民月折算率（人/(万两·月)，民心归零基准；确定性口径，#650 AC2）。
+# 实际入池 = 加派基线(万两) × 本率 × (100 − 该省民心)/100，随存档 population_unit 换算、
+# 钳到农民余额（代码只 clamp 不判胜负，P6/0087 applier 机械转移）。
+LEVY_DISPLACEMENT_RATE = 2000.0
+
 # trigger_gate key 语法（content.py load 校验 + issues._eval_gate_key 求值共用，DRY，#12 Q3 fail-loud）：
 # bare key（无 "."）须是已知 metric；点分 key 首段须是合法表名、末段可为聚合函数。
 GATE_METRIC_KEYS = ("国库", "内库", "民心", "皇威")

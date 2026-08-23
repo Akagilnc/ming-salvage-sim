@@ -50,6 +50,8 @@ TOP_LEVEL_ALIASES = {
     "阶级变化": "class_delta",
     "人口转移": "population_transfers",
     "流民转移": "population_transfers",
+    "加派": "surcharge_decrees",
+    "加派旨": "surcharge_decrees",
     "地区变化": "region_delta",
     "军队变化": "army_delta",
     "势力变化": "power_updates",
@@ -142,6 +144,7 @@ ITEM_FIELD_ALIASES = {
     "armies": "armies", "军队": "armies",
     "action": "action", "动作": "action",
     "region_id": "region_id", "地区编号": "region_id",
+    "monthly_amount": "monthly_amount", "月增额": "monthly_amount", "月额": "monthly_amount",
     "building_id": "building_id", "建筑编号": "building_id",
     "category": "category", "类别": "category",
     "level": "level", "等级": "level",
@@ -796,6 +799,7 @@ EMPTY_EXTRACTION: Dict[str, object] = {
     "faction_delta": {},
     "class_delta": {},
     "population_transfers": [],  # #649/0087：人口守恒转移（单记录双写，源减目标增）
+    "surcharge_decrees": [],  # #650/0089 明渠：下旨加派（逐省累积账，月额万两、负=停征）
     "region_delta": {},
     "army_delta": {},
     "new_armies": [],
@@ -829,7 +833,7 @@ EMPTY_EXTRACTION: Dict[str, object] = {
 }
 
 MODULE_FIELDS: Dict[str, set[str]] = {
-    "internal": {"metric_delta", "economy_moves", "faction_delta", "class_delta", "population_transfers", "region_delta", "fiscal_changes", "fiscal_creates", "fiscal_removes"},
+    "internal": {"metric_delta", "economy_moves", "faction_delta", "class_delta", "population_transfers", "surcharge_decrees", "region_delta", "fiscal_changes", "fiscal_creates", "fiscal_removes"},
     "military_external": {"army_delta", "new_armies", "power_updates", "world_advance"},
     "issues": {
         "issue_advances", "new_issues", "事件结局", "cancels", "close_issues",
