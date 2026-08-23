@@ -7149,6 +7149,15 @@ def _apply_surcharge_decrees(
     """
     applied: List[Dict[str, object]] = []
     rejected: List[Dict[str, object]] = []
+    if not db.is_substrate_hub_fiscal_engine_enabled():
+        for item in (items if isinstance(items, list) else []):
+            rejected.append({
+                "rejected": True, "category": "invalid_enum",
+                "reason": "surcharge_decrees 仅适用于 substrate_hub 财政档",
+                "item": item if isinstance(item, dict) else {"raw_value": item},
+            })
+        return applied, rejected
+    claimed_origins: set[tuple[str, str]] = set()
     for item in (items if isinstance(items, list) else []):
         if not isinstance(item, dict):
             rejected.append({
@@ -7212,6 +7221,10 @@ def _apply_surcharge_decrees(
         if origin_error:
             _reject(origin_error["category"], f"surcharge_decrees {origin_error['reason']}")
             continue
+        claim = (origin_ref, region_id)
+        if claim in claimed_origins:
+            _reject("invalid_enum", "surcharge_decrees 同批同一旨意与省份只能成功一次")
+            continue
         reason = str(item.get("reason") or "").strip()
         if len(reason) > 120:
             _reject("invalid_enum", f"surcharge_decrees reason 超 120 字：{reason!r}")
@@ -7225,6 +7238,7 @@ def _apply_surcharge_decrees(
             "UPDATE regions SET fiscal = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (json.dumps(fiscal, ensure_ascii=False), region_id),
         )
+        claimed_origins.add(claim)
         applied.append({
             "region_id": region_id,
             "monthly_amount": amount,
@@ -7246,13 +7260,14 @@ def _apply_levy_driven_transfers(
     P6 代码只供事实＋clamp）。
 
     口径（AC2 确定性可断言）：每明省读 settle._meta「加派基线」(万两/月)，
-    入池(存档单位) = 基线 × LEVY_DISPLACEMENT_RATE(人/万两·月) × (100−民心)/100，
-    随存档 population_unit 换算（legacy 万口径 sub-万不可表达，四舍五入到万口），
-    钳到农民@省余额后再交 _apply_population_transfers 守恒原语落账
+    入池(人) = 基线 × LEVY_DISPLACEMENT_RATE(人/万两·月) × (100−民心)/100。
+    本机制只在 substrate_hub 新财政档启用；legacy 档不接受也不消费加派账。
+    结果钳到农民@省余额后再交 _apply_population_transfers 守恒原语落账
     （reason=加派；累积账月效统一使用 `盘面自发`，不伪归最后一道改账旨）。基线 ≤0 或折算后
     ≤0 的省零入池——停加派/蠲免后入池止（AC5；出口回流归 S5 #652）。
     """
-    persons_unit = db.population_unit == POPULATION_UNIT_PERSONS
+    if not db.is_substrate_hub_fiscal_engine_enabled():
+        return [], []
     records: List[Dict[str, object]] = []
     rows = db.conn.execute(
         "SELECT id, fiscal, public_support FROM regions WHERE controlled_by='ming' ORDER BY id"
@@ -7289,7 +7304,7 @@ def _apply_levy_driven_transfers(
             raise ValueError(f"{region_id} 有正加派账但缺农民/流民省级人口行")
         support = max(0, min(100, int(row["public_support"] or 0)))
         raw_persons = base * LEVY_DISPLACEMENT_RATE * (100 - support) / 100.0
-        amount = int(round(raw_persons)) if persons_unit else int(round(raw_persons / 10000.0))
+        amount = int(round(raw_persons))
         if amount <= 0:
             continue
         balance = int(db.conn.execute(
@@ -7684,8 +7699,7 @@ def apply_score_extraction(
         extracted.get("class_delta") or {},
         commit=commit_now,
     )
-    # 3.45) surcharge_decrees：明渠加派旨落逐省累积账（#650/0089，P1）——先于机械入池，
-    # 使同月下旨当月即按账驱动转移（无旨不入账）。
+    # 3.45) surcharge_decrees：明渠加派旨落逐省累积账（#650/0089，P1）。
     applied_surcharges, surcharge_rejections = _apply_surcharge_decrees(
         db,
         state,
@@ -7694,11 +7708,28 @@ def apply_score_extraction(
     )
     # 3.5) population_transfers：人口守恒转移原语（#649/0087）——单记录双写，
     # 源阶级减 N、目标阶级增 N 同事务原子；逐项拒收面见 flows._apply_population_transfers。
-    applied_transfers, transfer_rejections = _apply_population_transfers(
-        db,
-        extracted.get("population_transfers") or [],
-        commit=commit_now,
+    surcharge_claims = {
+        (str(item.get("origin_ref") or ""), str(item.get("region_id") or ""))
+        for item in applied_surcharges
+    }
+    transfer_items: list[object] = []
+    transfer_rejections: list[Dict[str, object]] = []
+    for item in (extracted.get("population_transfers") or []):
+        source = str(item.get("source") or "") if isinstance(item, dict) else ""
+        region_id = source.rpartition("@")[2]
+        claim = (str(item.get("origin_ref") or ""), region_id) if isinstance(item, dict) else ("", "")
+        if isinstance(item, dict) and item.get("reason") == "加派" and claim in surcharge_claims:
+            transfer_rejections.append({
+                "rejected": True, "category": "invalid_enum",
+                "reason": "同一道加派旨的人口后果已由加派账唯一拥有",
+                "item": item,
+            })
+        else:
+            transfer_items.append(item)
+    applied_transfers, primitive_rejections = _apply_population_transfers(
+        db, transfer_items, commit=commit_now,
     )
+    transfer_rejections.extend(primitive_rejections)
     # 4) new_armies → region_delta / army_delta (复用旧 db 方法)
     region_deltas_raw = extracted.get("region_delta") or {}
     army_deltas_raw = extracted.get("army_delta") or {}
