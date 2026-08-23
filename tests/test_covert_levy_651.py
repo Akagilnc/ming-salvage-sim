@@ -242,9 +242,10 @@ def test_tacit_and_prohibition_use_real_canonical_identity_and_are_idempotent(ga
     assert reminder["army_pay_fact"]["arrears"] == 10.0
     assert reminder["available_dispositions"] == []
     assert {
-        "criterion_text", "channels", "fork", "gap_text", "statement_text",
-        "origin_context", "scene_text",
+        "kind", "entry_kind", "criterion_text", "channels", "fork", "gap_text",
+        "statement_text", "origin_context", "scene_text",
     }.isdisjoint(reminder)
+    assert ENTRY_KIND not in beat.audience_scenes[0]
 
     # Reuse the same fixture for tacit permission: both canonical legs are required.
     did2, _, _, _ = _bound_case(db, state)

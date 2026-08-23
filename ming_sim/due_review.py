@@ -310,8 +310,6 @@ def project_due_review_scene(
         # A prohibition reminder is a fresh shortfall projection, not a replay
         # of the already-settled exposure and its adjudication materials.
         return {
-            "kind": scene_kind,
-            "entry_kind": entry_kind,
             "todo_id": int(todo["id"]),
             "commitment_ref": int(todo["commitment_ref"]),
             "stage_idx": int(todo["stage_idx"]),
