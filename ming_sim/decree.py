@@ -50,6 +50,7 @@ from ming_sim.issues import (
     apply_historical_fiscal_rates,
     apply_issue_inertia_and_ongoing,
     apply_score_extraction,
+    _apply_levy_driven_transfers,
     auto_trigger_seed_issues,
     clear_gated_legacies,
     sanitize_delta_shape,
@@ -2333,10 +2334,15 @@ def _settle_after_extract_body(
     db.record_monthly_loophole_exposures_from_reconciliations(
         before_turn, commit=False,
     )
+    # #650/0089：先消费月初已提交的旧账，再应用本月 extractor 改账；两者与
+    # extraction 留痕同属本 phase2 atomic，跨进程恢复无需易失桥且可整体重放。
+    levy_applied, levy_rejected = _apply_levy_driven_transfers(db, commit=False)
     if delta_applier is not None:
         applied = delta_applier(db, state, extracted, content, registry)
     else:
         applied = apply_score_extraction(db, state, extracted, content=content, registry=registry)
+    applied.setdefault("population_transfers", []).extend(levy_applied)
+    applied.setdefault("population_transfers_rejections", []).extend(levy_rejected)
     # #1504：当月 covert 实况进度与 apply 同一 atomic（0073 实况轨；不读奏报）。
     from ming_sim.covert_progress import (
         apply_monthly_covert_actual_progress,
@@ -2428,6 +2434,8 @@ def _settle_after_extract_body(
     # record_log(sim 下月前文)在 inertia 前已跑、不带此提示噪声。提示极简、不暴露明细（明细落 DB/jsonl）。
     if _has_durable_player_visible_rejection(db, before_turn):
         narrative = narrative + "\n\n有司奏：所拟之事有窒碍未行者，已录档待酌。"
+    # 机械人口真相只留在 extraction/applied 内账；公开回响由下方既有邸报来源承担，
+    # 不再把精确人数强制广播为所有角色的公共知识。
     # #976: release held pure-public audience chat (non-withheld) before
     # archive materialization so 参与即知 lands without secret-origin rows.
     db.release_held_audience_knowledge(commit=False)
