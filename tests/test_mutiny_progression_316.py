@@ -68,13 +68,27 @@ def test_repeated_mutiny_persists_count_cap_and_probation(game, fiscal_path):
     second = _tick(db, state)
     assert tuple(second[k] for k in ("is_mutinied", "mutiny_count", "mutiny_probation")) == (1, 2, 3)
 
-    # 入闩期间即使满饷也不消耗察看期；解闩的满饷当月才首次递减。
+    # 入闩期间即使满饷也不消耗察看期；解闩时第二振 cap=60，满饷才递减。
     _set(db, fiscal_path, loyalty=20, arrears=0, latched=1)
     assert _tick(db, state)["mutiny_probation"] == 3
-    _set(db, fiscal_path, loyalty=35, arrears=0, latched=1)
+    _set(db, fiscal_path, loyalty=95, arrears=0, latched=1)
     probation = _tick(db, state)
-    assert tuple(probation[k] for k in ("loyalty", "is_mutinied", "mutiny_count", "mutiny_probation")) == (40, 0, 2, 2)
+    assert tuple(probation[k] for k in ("loyalty", "is_mutinied", "mutiny_count", "mutiny_probation")) == (60, 0, 2, 2)
     assert derive_army_mutiny_state(probation) == "不满"
+
+    # 解闩后的非满饷月不减；连续满饷归零后且 loyalty>=60 才恢复正常。
+    _set(db, fiscal_path, loyalty=60, arrears=1, latched=0)
+    partial_pay = _tick(db, state)
+    assert tuple(partial_pay[k] for k in ("loyalty", "is_mutinied", "mutiny_probation")) == (60, 0, 2)
+    assert derive_army_mutiny_state(partial_pay) == "不满"
+    _set(db, fiscal_path, loyalty=55, arrears=0, latched=0)
+    full_pay_1 = _tick(db, state)
+    assert tuple(full_pay_1[k] for k in ("loyalty", "mutiny_probation")) == (60, 1)
+    assert derive_army_mutiny_state(full_pay_1) == "不满"
+    _set(db, fiscal_path, loyalty=55, arrears=0, latched=0)
+    full_pay_2 = _tick(db, state)
+    assert tuple(full_pay_2[k] for k in ("loyalty", "mutiny_probation")) == (60, 0)
+    assert derive_army_mutiny_state(full_pay_2) == "正常"
 
     # 察看期重入是第三振，但本片不提前执行 #318 的转流寇。
     _set(db, fiscal_path, loyalty=19, arrears=5, latched=0)
@@ -97,8 +111,9 @@ def test_mutiny_count_is_capped_at_three(game, fiscal_path):
     assert row["loyalty"] == 14  # third-strike cap remains 60, no extra penalty
 
 
-def test_old_save_migrates_and_mutiny_progress_survives_reopen(game, tmp_path):
-    db, _, content = game
+@pytest.mark.parametrize("fiscal_path", PATHS)
+def test_old_save_migrates_and_mutiny_progress_survives_reopen(game, tmp_path, fiscal_path):
+    db, state, content = game
     path = str(tmp_path / "old-save.db")
     copied = sqlite3.connect(path)
     db.conn.backup(copied)
@@ -114,7 +129,7 @@ def test_old_save_migrates_and_mutiny_progress_survives_reopen(game, tmp_path):
     ).fetchone()
     assert tuple(defaults) == (0, 0)
     migrated.conn.execute(
-        "UPDATE armies SET loyalty=60,is_mutinied=0,mutiny_count=2,mutiny_probation=2 WHERE id=?",
+        "UPDATE armies SET loyalty=95,is_mutinied=1,mutiny_count=2,mutiny_probation=2 WHERE id=?",
         (ARMY,),
     )
     migrated.conn.commit()
@@ -122,11 +137,15 @@ def test_old_save_migrates_and_mutiny_progress_survives_reopen(game, tmp_path):
 
     reopened = GameDB(path, content)
     try:
-        restored = reopened.conn.execute(
-            "SELECT loyalty,is_mutinied,mutiny_count,mutiny_probation FROM armies WHERE id=?",
-            (ARMY,),
-        ).fetchone()
-        assert tuple(restored) == (60, 0, 2, 2)
+        _configure(reopened, fiscal_path)
+        _set(reopened, fiscal_path, loyalty=95, arrears=0, latched=1)
+        restored = _tick(reopened, state)
+        assert tuple(restored[k] for k in ("loyalty", "is_mutinied", "mutiny_count", "mutiny_probation")) == (60, 0, 2, 1)
         assert derive_army_mutiny_state(restored) == "不满"
+
+        _set(reopened, fiscal_path, loyalty=55, arrears=0, latched=0)
+        recovered = _tick(reopened, state)
+        assert tuple(recovered[k] for k in ("loyalty", "is_mutinied", "mutiny_count", "mutiny_probation")) == (60, 0, 2, 0)
+        assert derive_army_mutiny_state(recovered) == "正常"
     finally:
         reopened.close()
