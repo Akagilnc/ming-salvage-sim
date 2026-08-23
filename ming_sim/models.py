@@ -387,6 +387,7 @@ class Character:
     transit_to: str = ""
     transit_distance_remaining: float | None = None
     transit_speed_factor: float | None = None
+    transit_start_turn: int = 0
     birth_year: int = 0  # 历史生年（公历，0=未填）
     historical_death_year: int = 0  # 历史卒年（公历，0=未填）
     historical_death_month: int = 0  # 1-12，0=未指定

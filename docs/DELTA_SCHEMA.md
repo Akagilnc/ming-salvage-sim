@@ -407,9 +407,9 @@ personnel_secret 模块产出；settle 内经 `record_monthly_dossier_progress` 
 | `处置` | `status` | `子动作` / `reason_code` | 状态迁移：下狱、流放、致仕、放归、赐死、卒、起复、昭雪、夺情等 |
 | `易主` | `new_power` / `方式` / `反噬` | `new_title` | `方式` ∈ `主动投敌` / `被俘而降` / `主动归附`；`反噬` 为内嵌派系/势力反应；legacy 翻译才可用 `不明` |
 | `册封` | `office` | `office_type` | 后宫 candidate 出边；落选走 `处置(status=offstage, reason_code=落选)` |
-| `行止` | `transit_to`（抵达时可用 `location`） | `行程语气`、`reason_code` | 启程唯一 payload 为 `动作:"行止"` + `transit_to`；语气闭合枚举 `常行`/`加急`/`星夜兼程`，默认常行；引擎据矩阵持久化剩余距离及 1.0/1.5/2.0 系数，extractor 不得提供数值 |
+| `行止` | 非空 `transit_to` | `行程语气`、`reason_code` | 唯一 payload 为 `动作:"行止"` + `transit_to`；不得提供 `location`；语气闭合枚举 `常行`/`加急`/`星夜兼程`，默认常行；引擎据矩阵持久化剩余距离及 1.0/1.5/2.0 系数，extractor 不得提供数值 |
 
-行止任一端无法解析为 canonical region 时不产机械项、仅保留叙事；显式非法 region/语气逐项拒收。矩阵缺键或非正的非对角值属于系统契约故障，响亮失败并由事务回滚。同 region 直接落位而不进入在途；同目的地重复幂等且不重置账；在途改道拒收。迁出 active 或抵达时 `transit_to`、剩余距离、速度系数成对清空。
+行止任一端无法解析为 canonical region 时不产机械项、仅保留叙事；显式非法 region/语气逐项拒收。canonical 非对角矩阵值为 NaN、+∞、-∞、缺键或非正值均属于系统契约故障，写前响亮失败并由事务回滚。同 region 直接落位而不进入在途；同目的地重复幂等且不重置账；在途改道拒收。迁出 active 时完整清空在途账；抵达仅由引擎事实写路产生，不接受人物变更 payload 抵达。
 | `评定` | `loyalty` | — | 人物忠诚软判增量（integer，非新值），用于安抚/离心等叙事裁判后的结构化数值变化 |
 
 `任别` 只收 `真除` / `署理` / `兼署` / `加衔`；缺省按 `真除`，用于兼容旧档且不重判历史任命。非法值逐项拒收留痕。

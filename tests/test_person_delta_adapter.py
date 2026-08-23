@@ -925,6 +925,49 @@ def test_apply_score_extraction_materializes_derived_release_before_appointment(
         content.characters[name].office = old_office
 
 
+def test_rejected_derived_appointment_durably_restores_complete_person_state(game, monkeypatch):
+    import sqlite3
+
+    db, state, content = game
+    name = active_ming_character(db, content)
+    db.set_character_status(state, name, "imprisoned", "旧案在押", reason_code="下狱")
+    db.set_character_transit(
+        name, transit_to="liaodong", distance_remaining=1.25,
+        speed_factor=1.5, start_turn=7, content=content,
+    )
+    before = tuple(db.conn.execute(
+        "SELECT status, office, office_type, status_reason, status_changed_turn, reason_code, "
+        "transit_to, transit_distance_remaining, transit_speed_factor, transit_start_turn "
+        "FROM characters WHERE name=?", (name,),
+    ).fetchone())
+    monkeypatch.setattr(issues, "apply_office_appointment", lambda *args, **kwargs: {
+        "name": name, "rejected": True, "category": "appointment_rejected",
+    })
+
+    issues.apply_score_extraction(db, state, {"人物变更": [{
+        "name": name, "origin_ref": "盘面自发", "动作": "任命", "office": "陕西总督",
+    }]}, content=content)
+
+    path = db.conn.execute("PRAGMA database_list").fetchone()[2]
+    other = sqlite3.connect(path)
+    try:
+        durable = other.execute(
+            "SELECT status, office, office_type, status_reason, status_changed_turn, reason_code, "
+            "transit_to, transit_distance_remaining, transit_speed_factor, transit_start_turn "
+            "FROM characters WHERE name=?", (name,),
+        ).fetchone()
+    finally:
+        other.close()
+    assert tuple(durable) == before
+    character = content.characters[name]
+    assert (
+        character.status, character.office, character.office_type,
+        character.status_reason, character.reason_code, character.transit_to,
+        character.transit_distance_remaining, character.transit_speed_factor,
+        character.transit_start_turn,
+    ) == (before[0], before[1], before[2], before[3], before[5], *before[6:])
+
+
 def test_apply_score_extraction_materializes_displaced_holder_as_talent_pool_change(game):
     db, state, content = game
     names = [
@@ -2474,7 +2517,7 @@ def test_apply_score_extraction_rejects_invalid_person_travel(game):
             "name": "孔有德",
             "origin_ref": "盘面自发", "动作": "行止",
             "rejected": True,
-            "reason": "location 或 transit_to 缺失",
+            "reason": "transit_to 缺失",
             "category": "missing_field",
             "item": {"name": "孔有德", "origin_ref": "盘面自发", "动作": "行止"},
         },

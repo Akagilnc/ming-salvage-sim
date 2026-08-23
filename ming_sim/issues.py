@@ -27,6 +27,7 @@ from ming_sim.constants import (
 from ming_sim.content import GameContent
 from ming_sim.context import victory_status
 from ming_sim.distance import DistanceMatrix
+from ming_sim.paths import bundled_path
 from ming_sim.db import (
     GameDB,
     POPULATION_UNIT_PERSONS,
@@ -2972,6 +2973,41 @@ def _load_pending_gate_valid_regions(db: GameDB) -> set[str]:
     }
 
 
+def _admit_transit_departure(
+    item: Dict[str, object],
+    row: Dict[str, object],
+    valid_regions: set[str],
+) -> tuple[Optional[Dict[str, object]], Optional[tuple[str, str]]]:
+    """Return the canonical, write-free departure projection or its item rejection."""
+    if "location" in item:
+        return None, ("行止只接受 transit_to 启程", "invalid_transition")
+    transit_to = str(item.get("transit_to") or "").strip()
+    if not transit_to:
+        return None, ("transit_to 缺失", "missing_field")
+    if str(row.get("status") or "active") != "active":
+        return None, ("行止 仅适用于 active 人物", "invalid_transition")
+    if transit_to not in valid_regions:
+        return None, ("transit_to 地区不存在", "missing_ref")
+    tone = str(item.get("行程语气") or "常行").strip()
+    speed_by_tone = {"常行": 1.0, "加急": 1.5, "星夜兼程": 2.0}
+    if tone not in speed_by_tone:
+        return None, ("行程语气不在闭合枚举", "invalid_enum")
+    previous_destination = str(row.get("transit_to") or "")
+    if previous_destination == transit_to:
+        return None, None
+    if previous_destination:
+        return None, ("在途人物不可改道", "invalid_transition")
+    location = str(row.get("location") or "")
+    if location not in valid_regions:
+        return None, None
+    return {
+        "location": location,
+        "transit_to": transit_to,
+        "tone": tone,
+        "speed": speed_by_tone[tone],
+    }, None
+
+
 def _pending_person_changes_block_event_gate(
     ev: Event,
     pending_person_changes: List[Dict[str, object]],
@@ -3134,21 +3170,11 @@ def _pending_person_changes_block_event_gate(
             overlay(name, "office", "")
             overlay(name, "transit_to", "")
         elif action == "行止":
-            if cur_status != "active":
+            departure, _error = _admit_transit_departure(item, row, valid_regions)
+            if departure is None:
                 continue
-            new_location = str(item.get("location") or "").strip()
-            transit_to = str(item.get("transit_to") or "").strip()
-            if not new_location and not transit_to:
-                continue
-            valid = True
-            for region_id in (new_location, transit_to):
-                if region_id and region_id not in valid_regions:
-                    valid = False
-                    break
-            if not valid:
-                continue
-            overlay(name, "location", new_location or row_value(row, "location"))
-            overlay(name, "transit_to", transit_to)
+            overlay(name, "location", departure["location"])
+            overlay(name, "transit_to", departure["transit_to"])
         elif action == "易主":
             way = str(item.get("方式") or item.get("way") or "").strip()
             backlash = item.get("反噬", item.get("backlash"))
@@ -6653,7 +6679,7 @@ def _apply_person_changes(
                         release_status,
                         derive_label,
                         reason_code="",
-                        commit=commit_person_change,
+                        commit=False,
                     )
                     if content is not None and name in content.characters:
                         ch = content.characters[name]
@@ -6682,7 +6708,7 @@ def _apply_person_changes(
                 faction=str(item.get("faction") or "中立"),
                 appointment_tenure=appointment_tenure,
                 llm_config=llm_config,
-                commit=commit_person_change,
+                commit=False if derive_label else commit_person_change,
             )
             wrapped = {"动作": effective_action, **result}
             if derive_label:
@@ -6693,47 +6719,41 @@ def _apply_person_changes(
                     # 否则留「transit_to 非空 + start=0」被兜底当 legacy-overdue 误判（CMR r2 防御）。
                     db.conn.execute(
                         "UPDATE characters SET status=?, office=?, office_type=?, "
-                        "status_reason=?, status_changed_turn=?, reason_code=? WHERE name=?",
+                        "status_reason=?, status_changed_turn=?, reason_code=?, transit_to=?, "
+                        "transit_distance_remaining=?, transit_speed_factor=?, transit_start_turn=? "
+                        "WHERE name=?",
                         (
-                            row["status"],
-                            row["office"],
-                            row["office_type"],
-                            row["status_reason"],
-                            row["status_changed_turn"],
-                            row["reason_code"],
-                            name,
+                            row["status"], row["office"], row["office_type"],
+                            row["status_reason"], row["status_changed_turn"], row["reason_code"],
+                            row["transit_to"], row["transit_distance_remaining"],
+                            row["transit_speed_factor"], row["transit_start_turn"], name,
                         ),
                     )
-                    if commit_person_change:
-                        db.conn.commit()
                     if content is not None and name in content.characters:
                         ch = content.characters[name]
                         ch.status = str(row["status"] or "")
                         ch.office = str(row["office"] or "")
                         ch.office_type = str(row["office_type"] or ch.office_type)
-                        db.set_character_transit(
-                            name,
-                            transit_to=str(row["transit_to"] or ""),
-                            distance_remaining=row["transit_distance_remaining"],
-                            speed_factor=row["transit_speed_factor"],
-                            start_turn=int(row["transit_start_turn"] or 0),
-                            content=content,
-                            commit=False,
-                        )
+                        ch.transit_to = str(row["transit_to"] or "")
+                        ch.transit_distance_remaining = row["transit_distance_remaining"]
+                        ch.transit_speed_factor = row["transit_speed_factor"]
+                        ch.transit_start_turn = int(row["transit_start_turn"] or 0)
                         # 对称 DB 侧回滚（上方 UPDATE 已还原全 7 字段）：内存也还原缘由/码，
                         # 守三面同步（决定6），免前置步刷过内存缘由后此路回滚留脏值（PR#106 R2 gemini）。
                         ch.status_reason = str(row["status_reason"] or "")
                         ch.reason_code = str(row["reason_code"] or "")
                 else:
                     applied.append(release_result)
-                    log_applied(release_result, item)
+                    log_applied(release_result, item, commit=False)
             elif transition.startswith("normalize:"):
                 wrapped["normalized"] = f"{action}->{effective_action}"
             applied.append(wrapped)
-            log_applied(wrapped, item)
+            log_applied(wrapped, item, commit=False if derive_label else None)
             for displacement_result in displaced_talent_pool_results(wrapped.get("displaced")):
                 applied.append(displacement_result)
-                log_applied(displacement_result, item)
+                log_applied(displacement_result, item, commit=False if derive_label else None)
+            if derive_label and commit_person_change:
+                db.conn.commit()
             continue
 
         if action == "易主":
@@ -6962,11 +6982,6 @@ def _apply_person_changes(
             continue
 
         if action == "行止":
-            new_location = str(item.get("location") or "").strip()
-            transit_to = str(item.get("transit_to") or "").strip()
-            if not new_location and not transit_to:
-                applied.append(rejected(item, "location 或 transit_to 缺失", "missing_field"))
-                continue
             if content is not None and name not in content.characters:
                 applied.append(rejected(item, "非既有人物", "hallucinated_id"))
                 continue
@@ -6978,93 +6993,46 @@ def _apply_person_changes(
             if row is None:
                 applied.append(rejected(item, "非既有人物", "hallucinated_id"))
                 continue
-            if row["status"] != "active":
-                applied.append(
-                    rejected(item, "行止 仅适用于 active 人物", "invalid_transition")
-                )
+            valid_regions = _load_pending_gate_valid_regions(db)
+            departure, error = _admit_transit_departure(item, dict(row), valid_regions)
+            if error is not None:
+                applied.append(rejected(item, error[0], error[1]))
                 continue
-            for field_name, region_id in (
-                ("location", new_location),
-                ("transit_to", transit_to),
-            ):
-                if not region_id:
-                    continue
-                region_row = db.conn.execute(
-                    "SELECT 1 FROM regions WHERE id=?", (region_id,)
-                ).fetchone()
-                if region_row is None:
-                    applied.append(
-                        rejected(item, f"{field_name} 地区不存在", "missing_ref")
-                    )
-                    break
-            else:
-                location = new_location or str(row["location"] or "")
-                previous_destination = str(row["transit_to"] or "")
-                tone = str(item.get("行程语气") or "常行").strip()
-                speed_by_tone = {"常行": 1.0, "加急": 1.5, "星夜兼程": 2.0}
-                if tone not in speed_by_tone:
-                    applied.append(rejected(item, "行程语气不在闭合枚举", "invalid_enum"))
-                    continue
-                if transit_to and previous_destination == transit_to:
-                    continue
-                if transit_to and previous_destination and previous_destination != transit_to:
-                    applied.append(rejected(item, "在途人物不可改道", "invalid_transition"))
-                    continue
-                if transit_to and db.conn.execute(
-                    "SELECT 1 FROM regions WHERE id=?", (location,)
-                ).fetchone() is None:
-                    continue
-                distance = None
-                speed = None
-                if transit_to:
-                    matrix = DistanceMatrix.from_file("content/distance_matrix.json")
-                    distance = matrix.travel_time(location, transit_to)
-                    if not math.isfinite(distance) or distance < 0 or (location != transit_to and distance <= 0):
-                        raise ValueError(f"invalid baked travel time: {location!r} -> {transit_to!r}")
-                    if distance == 0:
-                        location, transit_to = transit_to, ""
-                    else:
-                        speed = speed_by_tone[tone]
-                if location == str(row["location"] or "") and transit_to == previous_destination:
-                    continue
-                origin_error = origin_rejected(item)
-                if origin_error:
-                    applied.append(origin_error)
-                    continue
-                # transit_start_turn 记启程回合，供 force_transit_arrivals 计在途时长。
-                # re-emit 同一在途目的地时保留原启程回合，否则逐月刷新会使
-                # `turn - start >= 2` 永不成立、兜底失效、永久在途（CMR P2 / #346）。
-                # 保留须含 prev_start==0 的旧数据哨兵：0 表「启程未知，按超期处理」，
-                # 同目的地 re-emit 不得把它刷成 state.turn，否则旧数据反被「洗白」成
-                # 新在途、逃过 force_transit_arrivals 的 0 兜底（CMR 跨片复审）。
-                if transit_to:
-                    prev_transit_to = str(row["transit_to"] or "")
-                    prev_start = int(row["transit_start_turn"] or 0)
-                    if transit_to == prev_transit_to:
-                        new_transit_start_turn = prev_start
-                    else:
-                        new_transit_start_turn = state.turn
-                else:
-                    new_transit_start_turn = 0
-                db.set_character_transit(
-                    name,
-                    location=location,
-                    transit_to=transit_to,
-                    distance_remaining=distance,
-                    speed_factor=speed,
-                    start_turn=new_transit_start_turn,
-                    content=content,
-                    commit=commit_person_change,
-                )
-                applied.append(
-                    result := {
-                        "name": name,
-                        "动作": action,
-                        "location": location,
-                        "transit_to": transit_to,
-                    }
-                )
-                log_applied(result, item)
+            if departure is None:
+                continue
+            location = str(departure["location"])
+            transit_to = str(departure["transit_to"])
+            matrix = DistanceMatrix.from_file(bundled_path("content", "distance_matrix.json"))
+            distance = matrix.travel_time(location, transit_to)
+            if not math.isfinite(distance) or distance < 0 or (location != transit_to and distance <= 0):
+                raise ValueError(f"invalid baked travel time: {location!r} -> {transit_to!r}")
+            speed = departure["speed"]
+            if distance == 0:
+                location, transit_to, speed = transit_to, "", None
+            origin_error = origin_rejected(item)
+            if origin_error:
+                applied.append(origin_error)
+                continue
+            new_transit_start_turn = state.turn if transit_to else 0
+            db.set_character_transit(
+                name,
+                location=location,
+                transit_to=transit_to,
+                distance_remaining=distance,
+                speed_factor=speed,
+                start_turn=new_transit_start_turn,
+                content=content,
+                commit=commit_person_change,
+            )
+            applied.append(
+                result := {
+                    "name": name,
+                    "动作": action,
+                    "location": location,
+                    "transit_to": transit_to,
+                }
+            )
+            log_applied(result, item)
             continue
 
         applied.append(

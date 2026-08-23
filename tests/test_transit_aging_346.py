@@ -167,16 +167,13 @@ def test_行止_sets_transit_start_turn(game):
     )
 
 
-def test_行止_arrival_clears_transit_start_turn(game):
-    """行止 抵达（transit_to=''）后 transit_start_turn 应清零。"""
+def test_行止_payload_cannot_write_arrival(game):
+    """抵达是 force_transit_arrivals 独占的引擎事实，人物变更不得平行落位。"""
     db, state, content = game
     name = active_ming_character(db, content)
-
-    # 先置为在途
     _set_transit(db, name, DEST, transit_start_turn=99)
 
-    # 再抵达
-    issues.apply_score_extraction(
+    result = issues.apply_score_extraction(
         db,
         state,
         {"人物变更": [{"origin_ref": "盘面自发", "name": name, "动作": "行止", "location": DEST, "transit_to": ""}]},
@@ -186,8 +183,8 @@ def test_行止_arrival_clears_transit_start_turn(game):
     row = db.conn.execute(
         "SELECT transit_to, transit_start_turn FROM characters WHERE name=?", (name,)
     ).fetchone()
-    assert row["transit_to"] == "", "抵达后 transit_to 应被清空"
-    assert row["transit_start_turn"] == 0, "抵达后 transit_start_turn 应清零"
+    assert tuple(row) == (DEST, 99)
+    assert result["applied_person_changes"][0]["category"] == "invalid_transition"
 
 
 # ── 6b) 重复 re-emit 同一 transit_to 不刷新 transit_start_turn（CMR P2）──────
