@@ -1,5 +1,4 @@
 {
-  "seed_version": 1,
   "events": [
     {
       "source": "魏忠贤",
@@ -7,6 +6,7 @@
       "event_kind": "结怨",
       "context": "天启四年六月杨涟上疏劾魏忠贤二十四大罪，魏忠贤矫旨切责、视若死敌，次年借李实诬疏把杨涟构陷入狱拷毙——东林血债由此结死。",
       "origin": "seed:founding:yanglian-24-crimes",
+      "evidence": false,
       "year": 1624,
       "period": 6
     },
@@ -16,6 +16,7 @@
       "event_kind": "把柄",
       "context": "崔呈秀替田尔耕盖印掩护赃私，短处处攥在对方手里，阉党魁首与爪牙之间彼此握着把柄、共系一绳。",
       "origin": "seed:founding:cui-tian-cover",
+      "evidence": true,
       "year": 1626,
       "period": 12
     },
@@ -25,6 +26,7 @@
       "event_kind": "知遇",
       "context": "王承恩自信邸潜邸随侍至今，起居冷暖皆其亲手打理；潜邸旧人的君臣情分自幼年积下，非一日之寒。",
       "origin": "seed:founding:wangchengen-xindi",
+      "evidence": false,
       "year": 1626,
       "period": 2
     }
