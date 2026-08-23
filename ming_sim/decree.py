@@ -1964,6 +1964,7 @@ def pre_settle(
             # 完成相位：同事务内落 settling（崩在上面任一步=全回滚=相位未变）。
             state.turn_phase = TurnPhase.SETTLING.value
             db.save_state(state)
+            collector.flush_to_db(db)
     except BaseException as exc:
         raise_fixed_period_flow_abort_if_needed(db, state, exc)
         raise

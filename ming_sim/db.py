@@ -13358,9 +13358,12 @@ class GameDB:
                 ),
                 int(state.turn),
             )
-            rejection_collector.flush_to_db(self)
             # Admission rejection owns this item: no dossier or downstream
-            # knowledge/allocation rows may be materialized.
+            # knowledge/allocation rows may be materialized.  An external
+            # collector is flushed by its transaction owner; the canonical
+            # kernel must not outlive that owner's rollback boundary.
+            if commit and owns_rejection_collector:
+                rejection_collector.flush_to_db(self)
             self._commit_dossier_write(commit)
             if commit and owns_rejection_collector:
                 from ming_sim.error_pack import rejections_jsonl_path
@@ -16450,6 +16453,7 @@ class GameDB:
                         "UPDATE pending_actions SET status='failed' WHERE id=?", (int(pa["id"]),))
                 finally:
                     self.conn.execute(f"RELEASE {savepoint}")
+                rejection_collector.flush_to_db(self)
             if ok:
                 item: Dict[str, object] = {
                     "id": pa["id"],
@@ -16601,6 +16605,7 @@ class GameDB:
                     raise
                 finally:
                     self.conn.execute(f"RELEASE {savepoint}")
+                rejection_collector.flush_to_db(self)
         except Exception as exc:
             tlog(f"[pending_actions] 落库异常 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
             raise
@@ -16663,7 +16668,7 @@ class GameDB:
             staged_payload["name"] = name
             staged_payload["_office_action"] = str(pa["action"])
             staged_payload["_minister_name"] = str(pa.get("minister_name") or "")
-            self.create_decree_dossier(
+            dossier_id = self.create_decree_dossier(
                 state,
                 action_type=(
                     "dismiss_assignment"
@@ -16683,7 +16688,7 @@ class GameDB:
                 commit=False,
                 rejection_collector=rejection_collector,
             )
-            return True
+            return dossier_id != 0
         if pa["kind"] == "secret_order":
             oid = pa["target_id"]
             if pa["action"] == "新建":
@@ -16874,7 +16879,7 @@ class GameDB:
             if status == "draft":
                 action_type = self._directive_dossier_action_type(payload)
                 executor_kind, executor_id = self._directive_executor(action_type, payload)
-                self.create_decree_dossier(
+                dossier_id = self.create_decree_dossier(
                     state,
                     action_type=action_type,
                     decree_text=text,
@@ -16891,6 +16896,8 @@ class GameDB:
                     commit=False,
                     rejection_collector=rejection_collector,
                 )
+                if dossier_id == 0:
+                    return False
             return True
         return False
 
@@ -17510,6 +17517,7 @@ class GameDB:
     def _ensure_directive_dossier(
         self, state: GameState, directive_id: int, text: str,
         payload: Optional[Dict[str, object]] = None, *, commit: bool = True,
+        rejection_collector=None,
     ) -> int:
         """旧式/新式旨稿共用的幂等成案口；未知语义明确落叙事旨。"""
         structured = dict(payload or {})
@@ -17549,6 +17557,7 @@ class GameDB:
             payload=structured,
             due_turn=int(structured.get("due_turn") or 0),
             commit=commit,
+            rejection_collector=rejection_collector,
         )
 
     def list_directives(
@@ -17588,6 +17597,8 @@ class GameDB:
 
     def confirm_directive(self, directive_id: int, state: GameState) -> None:
         """大臣拟旨经皇帝核定：pending → draft（进入颁诏候选池）。"""
+        from ming_sim.applier import RejectionCollector
+        collector = RejectionCollector()
         with atomic(self):
             changed = self.conn.execute(
                 """
@@ -17604,19 +17615,49 @@ class GameDB:
             if row is None:
                 raise KeyError(f"旨稿不存在：{directive_id}")
             if int(changed.rowcount or 0) > 0:
-                self._ensure_directive_dossier(
+                dossier_id = self._ensure_directive_dossier(
                     state, int(directive_id), str(row["text"]),
                     self.read_directive_dossier_payload(row), commit=False,
+                    rejection_collector=collector,
                 )
+                if dossier_id == 0:
+                    self.conn.execute(
+                        "UPDATE turn_directives SET status='rejected', "
+                        "updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                        (int(directive_id),),
+                    )
+            collector.flush_to_db(self)
+        if getattr(self.conn, "_atomic_depth", 0) == 0:
+            from ming_sim.error_pack import rejections_jsonl_path
+            try:
+                collector.mirror_to_jsonl(rejections_jsonl_path())
+            except Exception as mirror_exc:
+                tlog(f"[rejection] jsonl 镜像失败（DB 行已落，仅副本丢失）：{mirror_exc}")
 
     def ensure_dossiers_for_draft_directives(self, state: GameState) -> None:
         """结束边界成案：只读最新 draft 正文/载荷，按 directive_id 幂等创建。"""
+        from ming_sim.applier import RejectionCollector
+        collector = RejectionCollector()
         with atomic(self):
             for row in self.list_directives(state, statuses=("draft",)):
-                self._ensure_directive_dossier(
+                dossier_id = self._ensure_directive_dossier(
                     state, int(row["id"]), str(row["text"]),
                     self.read_directive_dossier_payload(row), commit=False,
+                    rejection_collector=collector,
                 )
+                if dossier_id == 0:
+                    self.conn.execute(
+                        "UPDATE turn_directives SET status='rejected', "
+                        "updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                        (int(row["id"]),),
+                    )
+            collector.flush_to_db(self)
+        if getattr(self.conn, "_atomic_depth", 0) == 0:
+            from ming_sim.error_pack import rejections_jsonl_path
+            try:
+                collector.mirror_to_jsonl(rejections_jsonl_path())
+            except Exception as mirror_exc:
+                tlog(f"[rejection] jsonl 镜像失败（DB 行已落，仅副本丢失）：{mirror_exc}")
 
     def reject_directive(self, directive_id: int) -> None:
         """皇帝驳回大臣拟旨：pending → rejected。"""
