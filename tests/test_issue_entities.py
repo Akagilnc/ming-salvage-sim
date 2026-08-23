@@ -175,6 +175,9 @@ def test_resolve_applies_unified_person_change_effect(game):
     old_transit_to = content.characters[name].transit_to
 
     try:
+        db.conn.execute("UPDATE characters SET location='beizhili' WHERE name=?", (name,))
+        content.characters[name].location = "beizhili"
+        old_location = "beizhili"
         tolerated = I._apply_issue_entities(
             db,
             state,

@@ -509,10 +509,9 @@ def apply_appointment(
             db.set_character_status(
                 state, replaces, "dismissed",
                 reason=f"{office}改授{name}，原任去职",
+                content=content,
                 commit=commit,
             )
-            old.status = "dismissed"
-            old.transit_to = ""
             displaced = replaces
 
     faction = "后宫" if is_consort else str(data.get("faction") or "中立").strip()
@@ -704,7 +703,8 @@ def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: O
                loyalty, ability, integrity, courage, style, identity, seed_guilt,
                birth_year, historical_death_year, historical_death_month,
                debut_year, debut_month, status, status_reason, reason_code,
-               portrait_id, power_id, location, transit_to, summary
+               portrait_id, power_id, location, transit_to,
+               transit_distance_remaining, transit_speed_factor, transit_start_turn, summary
         FROM characters
         """
     ).fetchall()
@@ -762,6 +762,9 @@ def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: O
             power_id=row["power_id"],
             location=row["location"],
             transit_to=row["transit_to"] or "",
+            transit_distance_remaining=row["transit_distance_remaining"],
+            transit_speed_factor=row["transit_speed_factor"],
+            transit_start_turn=int(row["transit_start_turn"] or 0),
             portrait_id=row["portrait_id"],
             summary=row["summary"],
             identity=int(row["identity"]),

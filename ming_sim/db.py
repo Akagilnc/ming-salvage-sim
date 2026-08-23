@@ -792,6 +792,8 @@ class GameDB:
                 power_id TEXT NOT NULL DEFAULT 'ming',
                 location TEXT NOT NULL DEFAULT '',
                 transit_to TEXT NOT NULL DEFAULT '',
+                transit_distance_remaining REAL,
+                transit_speed_factor REAL,
                 transit_start_turn INTEGER NOT NULL DEFAULT 0,
                 identity INTEGER NOT NULL DEFAULT 50,
                 seed_guilt TEXT NOT NULL DEFAULT ''
@@ -2069,6 +2071,8 @@ class GameDB:
         self.ensure_column("characters", "power_id", "TEXT NOT NULL DEFAULT 'ming'")
         self.ensure_column("characters", "location", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("characters", "transit_to", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column("characters", "transit_distance_remaining", "REAL")
+        self.ensure_column("characters", "transit_speed_factor", "REAL")
         self.ensure_column("characters", "transit_start_turn", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("issues", "resolve_condition", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("issues", "fail_condition", "TEXT NOT NULL DEFAULT ''")
@@ -4995,6 +4999,44 @@ class GameDB:
             except Exception as exc:
                 print(f"[WARN] 开局危机落库失败：{exc}；跳过 {ev.title}")
 
+    def set_character_transit(
+        self,
+        name: str,
+        *,
+        transit_to: str = "",
+        distance_remaining: float | None = None,
+        speed_factor: float | None = None,
+        start_turn: int = 0,
+        location: str | None = None,
+        content=None,
+        commit: bool = True,
+    ) -> None:
+        """Write the complete transit ledger and its in-memory mirror at one seam."""
+        assignments = (
+            "transit_to=?, transit_distance_remaining=?, transit_speed_factor=?, "
+            "transit_start_turn=?"
+        )
+        values: tuple[object, ...] = (
+            transit_to, distance_remaining, speed_factor, start_turn,
+        )
+        if location is not None:
+            assignments = "location=?, " + assignments
+            values = (location,) + values
+        self.conn.execute(
+            f"UPDATE characters SET {assignments} WHERE name=?",
+            values + (name,),
+        )
+        if content is not None and name in content.characters:
+            character = content.characters[name]
+            if location is not None:
+                character.location = location
+            character.transit_to = transit_to
+            character.transit_distance_remaining = distance_remaining
+            character.transit_speed_factor = speed_factor
+            character.transit_start_turn = start_turn
+        if commit:
+            self.conn.commit()
+
     def set_character_status(
         self,
         state: GameState,
@@ -5003,6 +5045,7 @@ class GameDB:
         reason: str = "",
         reason_code: str | None = None,
         commit: bool = True,
+        content=None,
     ) -> None:
         """改人物状态：active/offstage/dismissed/imprisoned/exiled/retired/dead。
         大臣走 characters 表；后宫（consorts）走内存对象 + consort_traits 备档。
@@ -5021,14 +5064,22 @@ class GameDB:
         if ousted:
             self.conn.execute(
                 "UPDATE characters SET status=?, status_reason=?, "
-                "status_changed_turn=?, office='', transit_to='', transit_start_turn=0, reason_code=? WHERE name=?",
+                "status_changed_turn=?, office='', reason_code=? WHERE name=?",
                 (status, reason[:200], state.turn, reason_code_value, name),
             )
+            self.set_character_transit(name, content=content, commit=False)
         else:
             self.conn.execute(
                 "UPDATE characters SET status=?, status_reason=?, status_changed_turn=?, reason_code=? WHERE name=?",
                 (status, reason[:200], state.turn, reason_code_value, name),
             )
+        if content is not None and name in content.characters:
+            character = content.characters[name]
+            character.status = status
+            character.status_reason = reason[:200]
+            character.reason_code = reason_code_value
+            if ousted:
+                character.office = ""
         # #9：状态变更后全重算该人物所属朝堂派系 leverage（绝对值、读当前所有在朝成员 → 无漂移）。
         if prev is not None:
             self.recompute_faction_leverage(str(prev["faction"] or ""))
@@ -5486,7 +5537,8 @@ class GameDB:
                 continue
             name = r["name"]
             self.set_character_status(
-                state, name, "dead", f"历史卒于 {year}年{month or '?'}月", reason_code="历史卒"
+                state, name, "dead", f"历史卒于 {year}年{month or '?'}月",
+                reason_code="历史卒", content=self.content,
             )
             self.record_person_log(
                 state, name, "处置",
@@ -5521,7 +5573,8 @@ class GameDB:
                 continue
             name = r["name"]
             self.set_character_status(
-                state, name, "active", f"历史登场 {year}年{month or '?'}月", reason_code="登场"
+                state, name, "active", f"历史登场 {year}年{month or '?'}月",
+                reason_code="登场", content=self.content,
             )
             self.record_person_log(
                 state, name, "处置",
@@ -15460,13 +15513,8 @@ class GameDB:
                     f"宥赦不可回迁：{target} 当前状态={current_status or '(空)'}"
                 )
             self.set_character_status(
-                state, target, "active", reason, reason_code="", commit=False,
+                state, target, "active", reason, reason_code="", content=content, commit=False,
             )
-            if content is not None and target in content.characters:
-                ch = content.characters[target]
-                ch.status = "active"
-                ch.status_reason = reason
-                ch.reason_code = ""
             self.record_person_log(
                 state, target, "处置", payload_summary=punish_action,
                 source="punishment", origin_ref=origin_ref, commit=False,
@@ -16840,12 +16888,9 @@ class GameDB:
             _ch_key = content.characters.get(key)  # key 来自 _find_existing_minister 必在册，.get 防御一致（R2 gemini）
             if _ch_key is not None and is_vassal_prince(_ch_key):
                 return False
-            self.set_character_status(state, key, "dismissed", reason="奉旨罢黜")
-            ch = content.characters.get(key)
-            if ch is not None:
-                ch.status = "dismissed"
-                ch.office = ""   # set_character_status 已清 DB office,内存须跟上(roster 读 c.office)
-                ch.transit_to = ""
+            self.set_character_status(
+                state, key, "dismissed", reason="奉旨罢黜", content=content,
+            )
             # 对话确认回合中落库,刷 Agent 让被罢者本回合后续不再以旧活跃态被召对(线上 gemini)。
             if registry is not None:
                 registry.refresh(key)

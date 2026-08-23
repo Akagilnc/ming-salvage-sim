@@ -1146,7 +1146,8 @@ def build_extractor_tools(context: CourtContext):
                             内廷俸_base/内廷俸_rate/妃嫔_base/妃嫔_rate
         人物变更            ADR0009 人事档案唯一生产入口；每项必须含 name、动作、origin_ref。
                             动作∈任命/罢黜/调任/处置/易主/册封/行止/评定；按动作补 office、
-                            office_type、status、new_power、location、transit_to、loyalty、reason。
+                            office_type、status、new_power、loyalty、reason；行止只补非空 transit_to 启程，
+                            不得提交 location，抵达只由引擎 force_transit_arrivals 处理。
 
         ══ 档位判定标准 ══
         极端：屠戮全族/抄家灭门/决定性战胜败  bar±40~50  metric±20~30  faction±20~40
