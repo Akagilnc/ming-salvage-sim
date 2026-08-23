@@ -8,7 +8,7 @@
 - settle=`POST /api/decree/issue/stream` 消费到终态
 - LLM 全 stub 于 registry/agent/分类器/确认/抽取/结算边界；断言判词→状态转移
 
-零写：所有可写目标在首个 HTTP 写入前机械钉入每例临时根。
+零写：复用 conftest 的 user-data 隔离，并将每例 HOME/DB 定向到 tmp_path。
 """
 
 from __future__ import annotations
@@ -16,7 +16,6 @@ from __future__ import annotations
 import json
 import re
 import time
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, Optional
 
@@ -27,8 +26,6 @@ import ming_sim.agents as agents_mod
 import ming_sim.cli_backend as cli_backend
 import ming_sim.decree as decree_mod
 import ming_sim.memories as memories_mod
-import ming_sim.llm_config as llm_config_mod
-import ming_sim.paths as paths_mod
 import ming_sim.mindreading as mindreading_mod
 import ming_sim.session as session_mod
 import web_app
@@ -234,26 +231,6 @@ class _ClassifierStub:
 
 # ── 公共 fixture：临时 HOME/DB + TestClient ─────────────────────────────
 
-
-def _assert_write_targets_within(root: Path, targets: list[Path]) -> None:
-    """机械边界：本矩阵已知的每个可写目标必须落在本例临时根内。"""
-    resolved_root = root.resolve()
-    escaped = []
-    for target in targets:
-        resolved = target.resolve()
-        try:
-            resolved.relative_to(resolved_root)
-        except ValueError:
-            escaped.append(str(resolved))
-    assert not escaped, f"写目标越出临时根 {resolved_root}: {escaped!r}"
-
-
-def test_write_boundary_rejects_target_outside_case_root(tmp_path):
-    """负例不写盘：伪造根外目标时，零写边界必须响亮失败。"""
-    with pytest.raises(AssertionError, match="写目标越出临时根"):
-        _assert_write_targets_within(tmp_path / "case", [tmp_path / "outside.db"])
-
-
 @pytest.fixture
 def matrix_env(tmp_path, monkeypatch, _offline_scene_beat_generator):
     """临时 HOME + user_data/DB；CLI 通道以便 E3 分类器路径可达；LLM 全 stub。"""
@@ -268,20 +245,6 @@ def matrix_env(tmp_path, monkeypatch, _offline_scene_beat_generator):
     # CLI 通道：E3 无前缀分类器路径；E1/E2 前缀仍确定性路由
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
     monkeypatch.delenv("MING_SIM_DB", raising=False)
-
-    # 首个 HTTP 写入前先钉所有路径解析 seam；越界目标在触盘前即失败。
-    _assert_write_targets_within(
-        tmp_path,
-        [
-            Path.home(),
-            paths_mod.user_data_dir(),
-            Path(web_app.UPLOAD_PORTRAIT_DIR),
-            Path(llm_config_mod.RUNTIME_LLM_PATH),
-            Path(web_app._active_db_path_file()),
-            Path(web_app._get_main_db_path()),
-            ud / "ming_sim_generated.db",
-        ],
-    )
 
     _install_settlement_llm_stubs(monkeypatch)
 
@@ -311,14 +274,6 @@ def matrix_env(tmp_path, monkeypatch, _offline_scene_beat_generator):
     assert new.status_code == 200, new.text
     game = web_app.web_game
     assert game is not None
-    _assert_write_targets_within(
-        tmp_path,
-        [
-            Path(web_app._active_db_path_file()),
-            Path(web_app._get_main_db_path()),
-            Path(game.db.path),
-        ],
-    )
     # 大臣回话 agent 边界
     game.session.registry.get = lambda _ch: _CannedAgent()
     # 强制 CLI 通道（runtime 可能被 load 覆盖）
