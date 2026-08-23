@@ -75,6 +75,27 @@ def test_in_transit_summon_origin_is_idempotent_and_restorable(game):
     assert an.list_unsettled_summons(db) == []
 
 
+def test_fresh_summon_origin_is_idempotent_and_projects_kind(game):
+    db, state, _content = game
+    night_id = int(an.open_night(db, state)["id"])
+
+    first = an.record_summon_fresh(
+        db, night_id, "洪承畴", origin_id="command:43",
+    )
+    again = an.record_summon_fresh(
+        db, night_id, "洪承畴", origin_id="command:43",
+    )
+
+    assert again == first
+    assert an.list_unsettled_summons(db) == [{
+        "entry_id": first,
+        "night_id": night_id,
+        "person_name": "洪承畴",
+        "origin_id": "command:43",
+        "kind": "fresh",
+    }]
+
+
 def test_fresh_seed_closes_ticket_670_named_locations(content):
     expected = {
         **{name: "beizhili" for name in "韩爌 张瑞图 来宗道 施凤来 黄立极 王绍徽 毕自严 郭允厚 杨嗣昌 温体仁 钱龙锡 刘鸿训 钱谦益 李标 孙承宗 崔呈秀 王在晋 徐光启 徐应秋 袁可立 周延儒 倪元璐 黄道周 曹化淳 王体乾 王承恩 魏忠贤 田尔耕 许显纯 李若琏 客氏 周皇后 周贵人 田贵妃 袁贵妃 慧妃 懿安皇后 高起潜 孙元化 许誉卿 乔允升".split()},
