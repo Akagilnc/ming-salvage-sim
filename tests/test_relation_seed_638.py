@@ -9,7 +9,6 @@
 """
 from __future__ import annotations
 
-from pathlib import Path
 import sqlite3
 
 import pytest
@@ -163,26 +162,23 @@ def test_missing_bundled_seed_fails_new_save_and_retry_imports(tmp_path, monkeyp
     """必需 bundled seed 缺失时新档响亮失败，恢复后同 DB 可重试。"""
     import ming_sim.cli_backend as cli_backend
     import ming_sim.llm_model as llm_mod
-    from ming_sim.paths import bundled_path
-    from ming_sim.relation_seed import SEED_DOC_PARTS
+    import ming_sim.relation_seed as seed_mod
 
     monkeypatch.setattr(llm_mod, "verify_llm_available", lambda cfg: None)
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", lambda *args, **kwargs: "")
-    seed_path = Path(bundled_path(*SEED_DOC_PARTS))
-    displaced_path = tmp_path / seed_path.name
+    original_bundled_path = seed_mod.bundled_path
+    missing_seed_path = tmp_path / "missing" / "relation_seed.json"
+    monkeypatch.setattr(seed_mod, "bundled_path", lambda *parts: str(missing_seed_path))
     db_path = str(tmp_path / "missing-seed.db")
     content = GameContent.load()
     cfg = LLMConfig(api_key="", base_url="http://unused", model="unused")
 
-    seed_path.replace(displaced_path)
-    try:
-        with pytest.raises(FileNotFoundError):
-            GameSession(db_path=db_path, llm_config=cfg, content=content)
-        with sqlite3.connect(db_path) as conn:
-            assert conn.execute("SELECT COUNT(*) FROM game_state").fetchone()[0] == 0
-    finally:
-        displaced_path.replace(seed_path)
+    with pytest.raises(FileNotFoundError):
+        GameSession(db_path=db_path, llm_config=cfg, content=content)
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM game_state").fetchone()[0] == 0
 
+    monkeypatch.setattr(seed_mod, "bundled_path", original_bundled_path)
     sess = GameSession(db_path=db_path, llm_config=cfg, content=content)
     try:
         assert sess.db.has_savegame() is True
