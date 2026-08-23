@@ -100,6 +100,8 @@ def validate_seed_document(
             raise ValueError(f"seed events[{index}].evidence 必须是布尔值")
         year = _as_int(item.get("year"), f"seed events[{index}].year")
         period = _as_int(item.get("period"), f"seed events[{index}].period")
+        if year < 1:
+            raise ValueError(f"seed events[{index}].year 非法（须 >= 1）：{year!r}")
         if not 1 <= period <= 12:
             raise ValueError(f"seed events[{index}].period 非法（须 1..12）：{period!r}")
         if (year, period) >= opening:
