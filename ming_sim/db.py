@@ -4556,7 +4556,7 @@ class GameDB:
             old_morale = int(row["morale"])
             # D11 分母须为两源本月折后总应发。省侧按本次 settle 的军饷
             # 免除比例回算每军折后份额；中央侧由 flows 唯一折算后经月桥传入。
-            raw_province_due_total = sum(float(item["due"]) for item in pay_rows)
+            raw_province_due_total = sum(due_by_component.values())
             effective_province_due_total = max(
                 0.0,
                 raw_province_due_total - float(breakdown.get("haircut_军饷", 0.0) or 0.0),

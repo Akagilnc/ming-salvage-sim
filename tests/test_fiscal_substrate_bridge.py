@@ -1948,6 +1948,30 @@ def test_region_army_pay_tick_treats_missing_breakdown_as_no_delta(fresh_db):
     assert after["morale"] == before["morale"]
 
 
+def test_region_army_morale_haircut_denominator_includes_standalone_funnel(fresh_db):
+    pay_row = dict(fresh_db._army_pay_source_rows_for_region("shaanxi")[0])
+    army_id = str(pay_row["id"])
+    pay_row.update(
+        due=1.0, province_pay_arrears=0.0, central_pay_arrears=0.0, morale=80,
+    )
+    fresh_db.conn.execute(
+        "UPDATE armies SET morale=80, province_pay_arrears=0, "
+        "central_pay_arrears=0, arrears=0 WHERE id=?", (army_id,),
+    )
+    result = SimpleNamespace(breakdown={
+        "NewDebt": {"军饷欠": 8.0}, "Repaid": {"军饷欠": 0.0},
+        "action还": {"军饷欠": 0.0}, "haircut_军饷": 8.0,
+    })
+    fresh_db._apply_region_army_pay_tick(
+        [pay_row], result,
+        {"due": 14.0, "province_pay_arrears": 0.0},
+    )
+    morale = fresh_db.conn.execute(
+        "SELECT morale FROM armies WHERE id=?", (army_id,),
+    ).fetchone()["morale"]
+    assert morale == 72
+
+
 def test_fixed_flows_substrate_hub_failure_rolls_back_cutover_writes(fresh_game, monkeypatch):
     import ming_sim.flows as flows_mod
 

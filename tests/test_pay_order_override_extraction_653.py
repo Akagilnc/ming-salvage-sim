@@ -3,28 +3,35 @@ import json
 import ming_sim.cli_backend as cli_backend
 
 
-def test_single_pay_order_capture_requires_entries_and_teaches_canonical_context(game, monkeypatch):
+def test_single_pay_order_capture_grounds_relative_deadline_at_current_turn(game, monkeypatch):
     db, _state, content = game
     prompts = []
+    db.conn.execute("UPDATE game_state SET turn=7 WHERE id=1")
 
     def fake(prompt, *_args, **_kwargs):
         prompts.append(prompt)
         return json.dumps({
             "拟旨意图": "拟旨",
             "动作类型": "pay_order_override",
-            "entries": [{"key": "due_priority_军饷@shaanxi", "value": 40, "until_turn": 3}],
+            "entries": [
+                {"key": "due_priority_军饷@shaanxi", "value": 40, "duration_months": 3},
+                {"key": "due_priority_官俸@shaanxi", "value": 10, "duration_months": 3},
+            ],
             "目标类型": "account",
             "目标ID": "pay_order",
             "颁布方式": "普通",
         }, ensure_ascii=False), {}
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", fake)
-    result = cli_backend.extract_draft_intent_with_roster_heal(
-        "拟旨让陕西边饷居末三个月", "臣已拟妥", db=db, content=content,
+    result = cli_backend.capture_manual_directive_payload(
+        "拟旨让陕西边饷居末、官俸优先三个月", None, db=db, content=content,
     )
-    assert result["entries"][0]["key"] == "due_priority_军饷@shaanxi"
+    assert result["entries"] == [
+        {"key": "due_priority_军饷@shaanxi", "value": 40, "until_turn": 9},
+        {"key": "due_priority_官俸@shaanxi", "value": 10, "until_turn": 9},
+    ]
     assert "陕西=@shaanxi" in prompts[0]
-    assert "until_turn=当前 turn+N-1" in prompts[0]
+    assert "相对期限只填 duration_months=N" in prompts[0]
     assert "默认军饷/官俸/宗禄/赈济=10/20/30/40" in prompts[0]
 
 

@@ -383,6 +383,64 @@ def test_real_revoke_decree_restores_override_and_clears_expiry(game):
     ]
 
 
+def test_turn_region_summary_claim_audit_rows_do_not_consume_limit(game):
+    db, state, _content = game
+    values = []
+    for index in range(12):
+        values.append((state.turn, state.year, state.period, "shaanxi",
+                       f"settle_官俸欠_{index}", "0", "1", 1, "内部账"))
+    values.append((state.turn, state.year, state.period, "shaanxi",
+                   "unrest", "1", "2", 1, "民变事实"))
+    db.conn.executemany(
+        "INSERT INTO region_logs "
+        "(turn,year,period,region_id,field,old_value,new_value,delta,reason) "
+        "VALUES (?,?,?,?,?,?,?,?,?)", values,
+    )
+    summary = db.turn_region_summary(state.turn, limit=1)
+    assert "民变事实" in summary
+    assert "内部账" not in summary
+
+
+def test_deferred_real_revoke_restores_override_only_after_persist(game):
+    from ming_sim.breach_plea import decode_plea_meta, finalize_persist
+
+    db, state, _content = game
+    until = db._current_settle_turn() + 3
+    target = _override_dossier(db, state, [{
+        "key": "due_priority_军饷@shaanxi", "value": 40, "until_turn": until,
+    }])
+    db.apply_dossier_promulgation(state, target, "promulgated")
+    issue_id = db.insert_issue(
+        state, kind="initiative", title="边饷次序之诺", origin_kind="decree",
+        origin_ref=f"dossier:{target}", cancellable="decree",
+        commitment_kind="until_stop", bar_value=10, stage_text="在办",
+        ongoing_effects={}, end_turn=state.turn + 12,
+    )
+    revoke = db.create_decree_dossier(
+        state, action_type="revoke_decree", decree_text="撤回前旨",
+        target_kind="issue", target_id=str(issue_id),
+        payload={"revoke_target_issue_id": issue_id, "revoke_target_dossier_id": target},
+    )
+    db.apply_dossier_promulgation(state, revoke, "promulgated")
+    cfg = db.get_fiscal_config()
+    assert cfg["due_priority_军饷@shaanxi"] == 40
+    assert cfg["due_priority_军饷@shaanxi_until_turn"] == until
+    todo = next(
+        todo for todo in db.list_next_audience_todos(status="pending")
+        if decode_plea_meta(todo.get("origin_context")).get("revoke_dossier_id") == revoke
+    )
+    result = finalize_persist(db, state, todo, commit=True)
+    assert result["decision"] == "persist"
+    cfg = db.get_fiscal_config()
+    assert cfg["due_priority_军饷@shaanxi"] == DEFAULT_DUE_PRIORITY["军饷"]
+    assert "due_priority_军饷@shaanxi_until_turn" not in cfg
+    origins = {row["origin_ref"] for row in db.conn.execute(
+        "SELECT origin_ref FROM fiscal_config_changes "
+        "WHERE key LIKE 'due_priority_军饷@shaanxi%' ORDER BY id DESC LIMIT 2"
+    )}
+    assert origins == {f"dossier:{revoke}"}
+
+
 def test_golden7_replay_determinism(game):
     """⑦restore 后任意月重放结果一致；纯函数同输入同输出。"""
     db, state, _content = game
