@@ -1465,6 +1465,9 @@ def close_night(
                 detail={"night_id": int(night_id), "cursor": fault_cursor},
             )
         if cursor < CLOSE_STEP_FINALIZE:
+            commit_fresh_summons_for_night(
+                db, state, int(night_id), content=content, registry=registry,
+            )
             _commit_night_approved(
                 db, state, int(night_id),
                 kinds=_CLOSE_COMMIT_KINDS_FINAL,
@@ -1683,6 +1686,57 @@ def record_summon_fresh(
         body=body or f"传召{name}赴京候见。",
         tags=tags,
     )
+
+
+def commit_fresh_summons_for_night(
+    db: Any,
+    state: GameState,
+    night_id: int,
+    *,
+    content: Any = None,
+    registry: Any = None,
+) -> List[str]:
+    """收夜以 canonical 人物变更 applier 启程，并在同一事务按 origin 结清。"""
+    pending = [
+        item for item in list_unsettled_summons(db)
+        if item["kind"] == "fresh" and int(item["night_id"]) == int(night_id)
+    ]
+    if not pending:
+        return []
+    from ming_sim.decree import atomic_and_reload
+    from ming_sim.issues import apply_score_extraction
+
+    origins: List[str] = []
+    with atomic_and_reload(db, state, content=content, registry=registry):
+        for item in pending:
+            origin = str(item["origin_id"])
+            applied = apply_score_extraction(
+                db,
+                state,
+                {"人物变更": [{
+                    "name": item["person_name"],
+                    "动作": "行止",
+                    "transit_to": "beizhili",
+                    # Canonical applier only admits its established provenance vocabulary;
+                    # the summon origin remains machine-linked in the story ledger.
+                    "origin_ref": "盘面自发",
+                }]},
+                content=content,
+                registry=registry,
+            )
+            results = list(applied.get("applied_person_changes") or [])
+            if not results or any(result.get("rejected") for result in results):
+                raise AudienceNightError(
+                    f"传召启程未落定：{item['person_name']}",
+                    code="summon_departure_rejected",
+                    detail={"origin_id": origin, "results": results},
+                )
+            if not settle_summon_origin(db, origin):
+                raise AudienceNightError(
+                    f"传召源账未结：{origin}", code="summon_settle_failed",
+                )
+            origins.append(origin)
+    return origins
 
 
 def record_summon_in_transit(
