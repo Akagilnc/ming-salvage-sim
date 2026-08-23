@@ -9,6 +9,8 @@ DOSSIER_ACTION_TYPES = frozenset({
     "secret_order", "special_decree",
     "revoke_decree", "punishment", "pacification", "referral",
     "revoke_authority", "dismiss_assignment",
+    # #651: a case-bound, payload-owned terminal order; never infer it from effects.
+    "prohibit_covert_levy",
 })
 
 DIRECTIVE_ACTION_TYPES = DOSSIER_ACTION_TYPES - {"appointment", "secret_order"}
@@ -37,6 +39,7 @@ _DOSSIER_TERMINAL_ACTIONS = frozenset({
     "punishment",
     # #523：收权/撤回成命顺颁即终局（authority_changes / breach）。
     "revoke_authority", "revoke_decree",
+    "prohibit_covert_levy",
 })
 
 DOSSIER_ACTION_POLICY = {

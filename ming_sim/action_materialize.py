@@ -2786,6 +2786,38 @@ def _pending_office_brief(row: Dict[str, Any]) -> str:
     return name or office or f"pending:{row.get('id')}"
 
 
+def _materialize_prohibit_covert_levy(ctx: MaterializeCtx) -> None:
+    """Bind natural language to the one exposed case currently before the throne."""
+    if ctx.intent_kind != "prohibit_covert_levy" or not ctx.intent:
+        return
+    from ming_sim.audience_night import mark_actions_night_approved
+    from ming_sim.covert_levy import PROHIBITION_ACTION
+    from ming_sim.due_review import list_due_review_scenes
+
+    scene = next(
+        (item for item in list_due_review_scenes(ctx.session.db, ctx.session.state)
+         if item.get("kind") == "covert_levy_exposure" and not item.get("decision")),
+        None,
+    )
+    if scene is None:
+        return
+    dossier_id = int(scene["dossier_id"])
+    payload = {
+        "text": ctx.player_message.strip(),
+        "actor": str(ctx.character.name),
+        "dossier_action_type": PROHIBITION_ACTION,
+        "target_kind": "dossier",
+        "target_id": str(dossier_id),
+        "mode": "ordinary",
+    }
+    pending_id = ctx.session.db.stage_directive_candidate(
+        int(ctx.session.state.turn), str(ctx.character.name), payload=payload,
+    )
+    mark_actions_night_approved(ctx.session.db, [pending_id])
+    ctx.out["pending_action_id"] = pending_id
+    ctx.out["suppress_confirmation_cue"] = True
+
+
 def _build_catalog() -> Tuple[ActionCluster, ...]:
     """单一登记定义：label/kind/effect/fields/materialize_fn 同表。"""
     secret_fn = _materialize_secret_and_cultivate
@@ -2827,6 +2859,11 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
             "拟旨", "draft", EFFECT_MATERIALIZE, priority=50,
             fields=(),
             materialize_fn=_materialize_draft,
+        ),
+        ActionCluster(
+            "禁绝暗渠摊派", "prohibit_covert_levy", EFFECT_MATERIALIZE, priority=54,
+            fields=(),
+            materialize_fn=_materialize_prohibit_covert_levy,
         ),
         ActionCluster(
             "招抚", "pacification", EFFECT_MATERIALIZE, priority=55,

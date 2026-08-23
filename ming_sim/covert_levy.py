@@ -8,6 +8,37 @@ from __future__ import annotations
 from typing import Any, Dict, List, Mapping
 
 ENTRY_KIND = "covert_levy_exposure"
+PROHIBITION_ACTION = "prohibit_covert_levy"
+
+
+def active_prohibition_dossier(db: Any, exposed_dossier_id: int) -> Dict[str, object] | None:
+    """Return the canonical, effective order which stops one exposed case."""
+    row = db.conn.execute(
+        """SELECT * FROM decree_dossiers
+           WHERE action_type=? AND target_kind='dossier' AND target_id=?
+             AND status IN ('promulgated','closed')
+             AND COALESCE(promulgation_decision,'') IN ('promulgated','force_promulgated')
+           ORDER BY id LIMIT 1""",
+        (PROHIBITION_ACTION, str(int(exposed_dossier_id))),
+    ).fetchone()
+    return dict(row) if row is not None else None
+
+
+def stopped_covert_effect(
+    db: Any, *, origin_ref: object, beyond_intent: object = False, reason: object = "",
+) -> bool:
+    """True only for a post-prohibition covert leg owned by the targeted old dossier."""
+    origin = str(origin_ref or "").strip()
+    if not origin.startswith("dossier:"):
+        return False
+    raw_id = origin.removeprefix("dossier:")
+    if not raw_id.isdigit():
+        return False
+    from ming_sim.simulation import read_beyond_intent_raw
+    beyond = db.coerce_beyond_intent_flag(read_beyond_intent_raw({"beyond_intent": beyond_intent}))
+    if not beyond and str(reason or "").strip() != "摊派":
+        return False
+    return active_prohibition_dossier(db, int(raw_id)) is not None
 
 
 def _issue_for_dossier(db: Any, dossier_id: int) -> int:
@@ -42,11 +73,16 @@ def settle_exposure_from_canonical_actions(db: Any, state: Any, applied: Mapping
         if todo.get("entry_kind") != ENTRY_KIND:
             continue
         payload = todo.get("payload_json") or {}
-        # A pending prohibition remains the single durable shortfall reminder,
-        # but a recorded disposition is terminal for this dispatcher.
+        did = int(payload.get("dossier_id") or 0)
+        # The same row remains the durable reminder only while the real gap exists.
+        if payload.get("decision") == "禁摊派":
+            pay_fact = army_pay_fact_for_dossier(db, did) or {}
+            if float(pay_fact.get("arrears") or 0) <= 0:
+                db.mark_next_audience_todo_status(int(todo["id"]), "consumed", commit=False)
+                consumed += 1
+            continue
         if payload.get("decision"):
             continue
-        did = int(payload.get("dossier_id") or 0)
         origin = f"dossier:{did}"
         dossier = db.get_decree_dossier(did) or {}
         actors = {str(dossier.get("executor_id") or "").strip()}
@@ -55,15 +91,12 @@ def settle_exposure_from_canonical_actions(db: Any, state: Any, applied: Mapping
                 actors.add(str(participant.get("character_id") or "").strip())
         actors.discard("")
         successful = lambda x: isinstance(x, Mapping) and not x.get("rejected")
-        # The exposed execution is already terminal.  A prohibition is therefore
-        # represented by a newly applied, case-bound canonical effect which stops
-        # the covert levy, while the army's durable pay gap remains outstanding.
+        # Identity is the successfully promulgated case-bound dossier, never an
+        # unrelated fiscal receipt with a convenient shape.
         pay_fact = army_pay_fact_for_dossier(db, did) or {}
-        stopped = bool(float(pay_fact.get("arrears") or 0) > 0) and any(
-            successful(x) and x.get("origin_ref") == origin
-            and not bool(x.get("beyond_intent"))
-            for key in ("economy_moves", "fiscal_changes")
-            for x in applied.get(key) or []
+        stopped = (
+            bool(float(pay_fact.get("arrears") or 0) > 0)
+            and active_prohibition_dossier(db, did) is not None
         )
         levy_transfer = any(
             successful(x) and x.get("origin_ref") == origin and x.get("reason") == "摊派"

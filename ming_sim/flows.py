@@ -1052,6 +1052,16 @@ def _apply_economy_list(
         # #1260：别名读取收敛 simulation 单源（嵌套通道不经 cleaner，须吃全套别名）。
         from ming_sim.simulation import read_beyond_intent_raw
         beyond_raw = read_beyond_intent_raw(move)
+        from ming_sim.covert_levy import stopped_covert_effect
+        if stopped_covert_effect(
+            db, origin_ref=effective_origin_ref,
+            beyond_intent=beyond_raw, reason=move.get("reason"),
+        ):
+            applied.append({
+                "account": account, "rejected": True, "category": "forbidden_effect",
+                "reason": "该旧案暗渠摊派已奉旨禁绝", "item": move,
+            })
+            continue
         raw_purpose = str(move.get("purpose") or "").strip()
         raw_target_kind = str(move.get("target_kind") or "").strip()
         raw_target_id = str(move.get("target_id") or "").strip()
@@ -1937,6 +1947,12 @@ def _apply_population_transfers(
             _reject("invalid_enum", f"population_transfers amount 须为正整数：{amount!r}")
             continue
         origin_ref = str(item.get("origin_ref") or "").strip()
+        from ming_sim.covert_levy import stopped_covert_effect
+        if stopped_covert_effect(
+            db, origin_ref=origin_ref, reason=reason,
+        ):
+            _reject("forbidden_effect", "该旧案暗渠摊派已奉旨禁绝")
+            continue
         origin_error = db.effect_origin_rejection(origin_ref)
         if origin_error:
             rejected.append({
