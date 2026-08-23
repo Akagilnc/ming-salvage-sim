@@ -1,30 +1,48 @@
-"""#315 — 四档军心派生与哗变 latch 滞回（ADR 0025 D3/D4）。
+"""#315 — 四档哗变状态派生与 latch 滞回（ADR 0025 D3/D4）。
 
 seam = 月末确定性结算 tick（apply_fixed_period_flows）。
-oracle 逐月断言 (loyalty, is_mutinied, derive_army_morale_state)。
+oracle 逐月断言 (loyalty, is_mutinied, derive_army_mutiny_state)。
 """
 from __future__ import annotations
 
-from ming_sim.flows import apply_fixed_period_flows, derive_army_morale_state
+import pytest
+
+from ming_sim.flows import apply_fixed_period_flows, derive_army_mutiny_state
 
 ARMY = "guanning"
+PATHS = ("legacy", "substrate_hub")
 
 
-def _legacy(db):
+def _configure_fiscal_path(db, fiscal_path: str):
+    value = 0 if fiscal_path == "legacy" else 1
     for key in ("__army_pay_source_cutover", "__fiscal_engine"):
         db.conn.execute(
-            "INSERT INTO fiscal_config(key,value,kind,note) VALUES (?,0,'meta','test') "
+            "INSERT INTO fiscal_config(key,value,kind,note) VALUES (?,?,'meta','test') "
             "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            (key,),
+            (key, value),
         )
 
 
-def _setup(db, *, loyalty: int, arrears: float, latched: int = 0):
+def _setup(db, fiscal_path: str, *, loyalty: int, arrears: float, latched: int = 0):
+    _configure_fiscal_path(db, fiscal_path)
     db.conn.execute("UPDATE armies SET manpower=0")
+    # hub 走全中央饷源；总欠与分源欠同步，确保结算确实从 hub 真源重算 latch。
+    central_arrears = arrears if fiscal_path == "substrate_hub" else 0
     db.conn.execute(
         """UPDATE armies SET owner_power='ming', is_tusi=0, self_funded_pay=0,
-           manpower=10000, salary_rate=1, loyalty=?, arrears=?, is_mutinied=? WHERE id=?""",
-        (loyalty, arrears, latched, ARMY),
+           manpower=10000, salary_rate=1, loyalty=?, arrears=?, is_mutinied=?,
+           province_pay_share=0, central_pay_share=1,
+           province_pay_arrears=0, central_pay_arrears=? WHERE id=?""",
+        (loyalty, arrears, latched, central_arrears, ARMY),
+    )
+    db.conn.commit()
+
+
+def _set_arrears(db, fiscal_path: str, arrears: float):
+    central_arrears = arrears if fiscal_path == "substrate_hub" else 0
+    db.conn.execute(
+        "UPDATE armies SET arrears=?, province_pay_arrears=0, central_pay_arrears=? WHERE id=?",
+        (arrears, central_arrears, ARMY),
     )
     db.conn.commit()
 
@@ -35,42 +53,41 @@ def _tick(db, state):
     row = db.conn.execute(
         "SELECT loyalty, is_mutinied, arrears FROM armies WHERE id=?", (ARMY,)
     ).fetchone()
-    return int(row["loyalty"]), int(row["is_mutinied"]), derive_army_morale_state(row)
+    return int(row["loyalty"]), int(row["is_mutinied"]), derive_army_mutiny_state(row)
 
 
-def test_arrears_spiral_enters_mutiny_only_after_both_conditions(game):
+@pytest.mark.parametrize("fiscal_path", PATHS)
+def test_arrears_spiral_enters_mutiny_only_after_both_conditions(game, fiscal_path):
     db, state, _ = game
-    _legacy(db)
-    _setup(db, loyalty=22, arrears=3)
+    _setup(db, fiscal_path, loyalty=22, arrears=3)
 
     assert _tick(db, state)[:3] == (17, 0, "鼓噪")  # <20 alone, only 3 months owed
-    db.conn.execute("UPDATE armies SET arrears=5 WHERE id=?", (ARMY,))
-    db.conn.commit()
+    _set_arrears(db, fiscal_path, 5)
     assert _tick(db, state)[:3] == (12, 1, "哗变")
 
 
-def test_mutiny_stays_latched_while_loyalty_recovers_below_40(game):
+@pytest.mark.parametrize("fiscal_path", PATHS)
+def test_mutiny_stays_latched_while_loyalty_recovers_below_40(game, fiscal_path):
     db, state, _ = game
-    _legacy(db)
-    _setup(db, loyalty=20, arrears=0, latched=1)
+    _setup(db, fiscal_path, loyalty=20, arrears=0, latched=1)
 
     trajectory = [_tick(db, state) for _ in range(3)]
-    assert [(loyalty, latch, band) for loyalty, latch, band in trajectory] == [
+    assert trajectory == [
         (25, 1, "哗变"), (30, 1, "哗变"), (35, 1, "哗变")
     ]
 
 
-def test_mutiny_exits_at_40_only_when_arrears_have_retired(game):
+@pytest.mark.parametrize("fiscal_path", PATHS)
+def test_mutiny_exits_at_40_only_when_arrears_have_retired(game, fiscal_path):
     db, state, _ = game
-    _legacy(db)
-    _setup(db, loyalty=35, arrears=0, latched=1)
+    _setup(db, fiscal_path, loyalty=35, arrears=0, latched=1)
 
     assert _tick(db, state)[:3] == (40, 0, "不满")
 
 
-def test_raised_loyalty_alone_does_not_release_latch(game):
+@pytest.mark.parametrize("fiscal_path", PATHS)
+def test_raised_loyalty_alone_does_not_release_latch(game, fiscal_path):
     db, state, _ = game
-    _legacy(db)
-    _setup(db, loyalty=40, arrears=5, latched=1)
+    _setup(db, fiscal_path, loyalty=40, arrears=5, latched=1)
 
     assert _tick(db, state)[:3] == (35, 1, "哗变")
