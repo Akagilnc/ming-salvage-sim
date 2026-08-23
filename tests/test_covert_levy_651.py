@@ -97,7 +97,8 @@ def test_natural_prohibition_binds_only_current_case_and_is_night_approved(game,
     assert payload["dossier_action_type"] == PROHIBITION_ACTION
     assert payload["target_kind"] == "dossier" and payload["target_id"] == str(first)
     assert pending["night_approved"] == 1
-    assert ctx.out["suppress_confirmation_cue"] is True
+    assert ctx.out["requires_confirmation"] is False
+    assert "suppress_confirmation_cue" not in ctx.out
 
 
 def test_pay_fact_reaches_both_production_judge_inputs(game):
@@ -260,7 +261,8 @@ def test_tacit_and_prohibition_use_real_canonical_identity_and_are_idempotent(ga
             "key": key, "delta": 1, "origin_ref": origin2, "beyond_intent": True,
         }],
     }, content, None, dossier_ids_at_input={did2})
-    assert tacit["population_transfers"] and tacit["fiscal_changes"]
+    assert tacit["population_transfers"] and tacit["fiscal_changes"], tacit["fiscal_changes"]
+    assert tacit["fiscal_changes"][0]["applied"] is True, tacit["fiscal_changes"]
     assert settle_exposure_from_canonical_actions(db, state, {
         **tacit, "fiscal_changes": [],
     }) == 0
@@ -467,6 +469,97 @@ def test_prohibition_removes_live_covert_creation_without_rewriting_history(game
         (f"dossier:{prohibition}",),
     ).fetchall()
     assert [row["key"] for row in tombstones] == ["暗渠新项_base", "暗渠新项_rate"]
+
+
+def test_zero_pay_receipts_are_not_durable_tacit_effects(game, monkeypatch):
+    from ming_sim.flows import _apply_economy_list
+
+    db, state, _ = game
+    did, _, army_id, _ = _bound_case(db, state)
+    _exposed_todo(db, state, monkeypatch, did)
+    db.conn.execute("UPDATE armies SET arrears=0")
+    origin = f"dossier:{did}"
+    directed = _apply_economy_list(db, state, [{
+        "account": "国库", "delta": -2, "purpose": "补饷",
+        "target_kind": "army", "target_id": army_id,
+        "origin_ref": origin, "beyond_intent": True,
+    }], commit=False, require_origin=True)
+    pooled = _apply_economy_list(db, state, [{
+        "account": "国库", "delta": -2, "purpose": "补饷",
+        "origin_ref": origin, "beyond_intent": True,
+    }], commit=False, allow_pay_arrears_pool=True, require_origin=True)
+    assert directed[0]["applied"] is False and pooled[0]["applied"] is False
+    assert settle_exposure_from_canonical_actions(db, state, {
+        "economy_moves": directed + pooled,
+        "population_transfers": [{"origin_ref": origin, "reason": "摊派"}],
+    }) == 0
+
+
+def test_force_promulgated_history_is_the_canonical_prohibition_authority(game):
+    db, state, _ = game
+    exposed, _, _, _ = _bound_case(db, state)
+    prohibition = db.create_decree_dossier(
+        state, action_type=PROHIBITION_ACTION, decree_text="禁绝摊派",
+        target_kind="dossier", target_id=exposed,
+        executor_kind="character", executor_id="王承恩",
+    )
+    db.conn.execute(
+        "INSERT INTO decree_dossier_decisions "
+        "(dossier_id,turn,decision,blocked_layer,rescript_action,reason) "
+        "VALUES (?,?,'rejected','','force_promulgated','fixture')",
+        (prohibition, state.turn),
+    )
+    db.conn.execute(
+        "UPDATE decree_dossiers SET status='closed', promulgation_decision='rejected' WHERE id=?",
+        (prohibition,),
+    )
+    assert db.dossier_authorizes_effects(prohibition) is True
+    assert active_prohibition_dossier(db, exposed)["id"] == prohibition
+
+
+def test_false_denunciation_is_not_retroactively_made_true_by_current_fork(game, monkeypatch):
+    from ming_sim.supervision import compose_denunciation_origin
+
+    db, state, _ = game
+    did, _, _, _ = _bound_case(db, state)
+    monkeypatch.setattr(db, "read_dossier_fork_state", lambda dossier_id: {
+        "dossier_id": dossier_id, "fork": True, "reported_bands": ["有成"],
+        "execution_outcome": "transformed", "actual_effect_count": 1, "beyond_intent": True,
+    })
+    values = (state.turn, "甲", "阉党", "乙", "东林", did, compose_denunciation_origin(is_true=False), "{}", "诬告")
+    db.conn.execute(
+        "INSERT INTO faction_denunciations(turn,accuser_name,accuser_faction,subject_name,"
+        "subject_faction,target_dossier_id,origin,payload_json,memorial_text) VALUES (?,?,?,?,?,?,?,?,?)",
+        values,
+    )
+    assert write_exposure_todos(db, state) == 0
+    db.conn.execute(
+        "INSERT INTO faction_denunciations(turn,accuser_name,accuser_faction,subject_name,"
+        "subject_faction,target_dossier_id,origin,payload_json,memorial_text) VALUES (?,?,?,?,?,?,?,?,?)",
+        (*values[:6], compose_denunciation_origin(is_true=True), "{}", "真举"),
+    )
+    assert write_exposure_todos(db, state) == 1
+
+
+def test_current_reopened_reminder_prevents_binding_a_later_exposure(game, monkeypatch):
+    db, state, _ = game
+    first, _, first_army, actor = _bound_case(db, state)
+    _exposed_todo(db, state, monkeypatch, first)
+    db.conn.execute("UPDATE armies SET arrears=5 WHERE id=?", (first_army,))
+    _promulgated_prohibition(db, state, first)
+    assert settle_exposure_from_canonical_actions(db, state, {}) == 1
+    second, _, _, _ = _bound_case(db, state)
+    _exposed_todo(db, state, monkeypatch, second)
+    ctx = MaterializeCtx(
+        session=SimpleNamespace(db=db, state=state), character=SimpleNamespace(name=actor),
+        player_message="禁绝摊派", reply="臣领旨", message_text="禁绝摊派",
+        explicit_prefixed=False, has_directive=False, pend_for_minister=[], out={},
+        intent=None, intent_kind="none", llm_config=None,
+        intent_candidates=candidates_from_classifier_payload([{"kind": "prohibit_covert_levy"}], soft=False),
+    )
+    run_materialize_pipeline(ctx)
+    assert "pending_action_id" not in ctx.out
+    assert str(first) in assemble_beat_inputs(db, state, beat_kind=BEAT_OPEN).audience_scenes[0]
 
 
 def test_population_transfer_is_the_self_grown_unrest_channel(game, monkeypatch):

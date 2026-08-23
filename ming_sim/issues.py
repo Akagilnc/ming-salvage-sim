@@ -8290,9 +8290,11 @@ def apply_score_extraction(
                 "category": "missing_ref", "item": remove,
             })
             continue
-        applied_fiscal_removes.append({
-            "key": removed_key, "reason": str(remove.get("reason") or ""),
-        })
+        from ming_sim.covert_levy import canonical_fiscal_result
+        applied_fiscal_removes.append(canonical_fiscal_result(
+            db, remove, applied=True,
+            key=removed_key, reason=str(remove.get("reason") or ""),
+        ))
 
     # 6.5) fiscal_creates：推演凭空新立月固定收支项（税是其一种）。先于 fiscal_changes，
     #      使同{月}「新立关税 + 立即调率」可一气落地。
@@ -8390,11 +8392,13 @@ def apply_score_extraction(
                 "category": "invalid_enum", "item": create,
             })
             continue
-        applied_fiscal_creates.append({
-            "key": new_key, "account": account, "direction": direction,
-            "display": display, "init_value": max(0, init_value),
-            "reason": str(create.get("reason") or ""),
-        })
+        from ming_sim.covert_levy import canonical_fiscal_result
+        applied_fiscal_creates.append(canonical_fiscal_result(
+            db, create, applied=True,
+            key=new_key, account=account, direction=direction,
+            display=display, init_value=max(0, init_value),
+            reason=str(create.get("reason") or ""),
+        ))
 
     # 7) fiscal_changes：调整月度固定收支系数
     applied_fiscal: List[Dict[str, object]] = []
@@ -8504,12 +8508,12 @@ def apply_score_extraction(
             origin_ref=origin_ref, reason=str(change.get("reason") or ""),
             beyond_intent=change.get("beyond_intent"),
         )
-        applied_fiscal.append({
-            "key": key, "old": current, "new": new_val, "delta": delta,
-            "reason": str(change.get("reason") or ""),
-            "origin_ref": origin_ref,
-            "beyond_intent": bool(change.get("beyond_intent")),
-        })
+        from ming_sim.covert_levy import canonical_fiscal_result
+        applied_fiscal.append(canonical_fiscal_result(
+            db, change, applied=new_val != current,
+            key=key, old=current, new=new_val, delta=delta,
+            reason=str(change.get("reason") or ""),
+        ))
     for loss_pair, final_values in loss_pair_final_by_pair.items():
         pair_changes = [
             change for change in deferred_loss_pair_changes
@@ -8538,16 +8542,13 @@ def apply_score_extraction(
                 beyond_intent=change["item"].get("beyond_intent")
                 if isinstance(change.get("item"), dict) else 0,
             )
-            applied_fiscal.append({
-                "key": change["key"],
-                "old": change["old"],
-                "new": change["new"],
-                "delta": change["delta"],
-                "reason": change["reason"],
-                "origin_ref": change["origin_ref"],
-                "beyond_intent": bool(change["item"].get("beyond_intent"))
-                if isinstance(change.get("item"), dict) else False,
-            })
+            from ming_sim.covert_levy import canonical_fiscal_result
+            source = change["item"] if isinstance(change.get("item"), dict) else {}
+            applied_fiscal.append(canonical_fiscal_result(
+                db, source, applied=change["new"] != change["old"],
+                key=change["key"], old=change["old"], new=change["new"],
+                delta=change["delta"], reason=change["reason"],
+            ))
     successful_authority_changes = [
         item for item in authority_change_results
         if isinstance(item, dict) and item.get("rejected") is not True

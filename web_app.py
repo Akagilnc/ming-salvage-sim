@@ -2593,7 +2593,7 @@ class WebGame:
                     character.name,
                     text,
                 )
-            if not res.get("suppress_confirmation_cue"):
+            if res.get("requires_confirmation", True):
                 answer = GameSession._ensure_confirmation_cue(answer)
         # #502 AC5：多道准驳含糊 → 结构化含糊态透进 chat payload + 大臣当场追问哪一道（表面契约可达）。
         directive_ambiguous = res.get("directive_confirmation_ambiguous")

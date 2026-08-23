@@ -233,13 +233,8 @@ def assemble_beat_inputs(
 
     audience_scenes: Tuple[str, ...] = ()
     if beat_kind == BEAT_OPEN:
-        from ming_sim.due_review import list_due_review_scenes
-        current = next(
-            (scene for scene in list_due_review_scenes(db, state)
-             if scene.get("kind") == "covert_levy_exposure"
-             or scene.get("shortfall_reopened") is True),
-            None,
-        )
+        from ming_sim.due_review import current_audience_scene
+        current = current_audience_scene(db, state)
         audience_scenes = (() if current is None else (
             json.dumps(current, ensure_ascii=False, sort_keys=True),
         ))

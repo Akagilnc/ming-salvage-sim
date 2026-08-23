@@ -12,16 +12,33 @@ PROHIBITION_ACTION = "prohibit_covert_levy"
 
 
 def active_prohibition_dossier(db: Any, exposed_dossier_id: int) -> Dict[str, object] | None:
-    """Return the canonical, effective order which stops one exposed case."""
-    row = db.conn.execute(
+    """Return the first canonical dossier which authorizes this prohibition."""
+    rows = db.conn.execute(
         """SELECT * FROM decree_dossiers
            WHERE action_type=? AND target_kind='dossier' AND target_id=?
              AND status IN ('promulgated','closed')
-             AND COALESCE(promulgation_decision,'') IN ('promulgated','force_promulgated')
-           ORDER BY id LIMIT 1""",
+           ORDER BY id""",
         (PROHIBITION_ACTION, str(int(exposed_dossier_id))),
-    ).fetchone()
-    return dict(row) if row is not None else None
+    ).fetchall()
+    for row in rows:
+        item = dict(row)
+        if db.dossier_authorizes_effects(int(item["id"])):
+            return item
+    return None
+
+
+def canonical_fiscal_result(
+    db: Any, source: Mapping[str, object], *, applied: bool, **result: object,
+) -> Dict[str, object]:
+    """Build the shared receipt identity for every canonical fiscal applier."""
+    from ming_sim.simulation import read_beyond_intent_raw
+
+    result["origin_ref"] = str(source.get("origin_ref") or "").strip()
+    result["beyond_intent"] = bool(
+        db.coerce_beyond_intent_flag(read_beyond_intent_raw(source))
+    )
+    result["applied"] = bool(applied)
+    return result
 
 
 def stopped_covert_effect(
@@ -108,8 +125,9 @@ def settle_exposure_from_canonical_actions(db: Any, state: Any, applied: Mapping
             for x in applied.get("population_transfers") or []
         )
         covert_effect = any(
-            successful(x) and x.get("origin_ref") == origin and bool(x.get("beyond_intent"))
-            for key in ("economy_moves", "fiscal_changes")
+            successful(x) and x.get("applied") is True
+            and x.get("origin_ref") == origin and x.get("beyond_intent") is True
+            for key in ("economy_moves", "fiscal_changes", "fiscal_creates", "fiscal_removes")
             for x in applied.get(key) or []
         )
         person_changes = list(applied.get("applied_person_changes") or [])
@@ -175,9 +193,11 @@ def write_exposure_todos(
             (did,),
         ).fetchone() is not None:
             channels.append("稽核")
-        if db.conn.execute(
-            "SELECT 1 FROM faction_denunciations WHERE target_dossier_id=? LIMIT 1", (did,)
-        ).fetchone() is not None:
+        from ming_sim.supervision import ORIGIN_MARK_DENUNCIATION_TRUE, origin_has_mark
+        denunciations = db.conn.execute(
+            "SELECT origin FROM faction_denunciations WHERE target_dossier_id=?", (did,)
+        ).fetchall()
+        if any(origin_has_mark(row["origin"], ORIGIN_MARK_DENUNCIATION_TRUE) for row in denunciations):
             channels.append("检举")
         origin = f"dossier:{did}"
         if any(
