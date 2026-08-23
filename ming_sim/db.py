@@ -1100,8 +1100,10 @@ class GameDB:
                 terminal_state TEXT NOT NULL DEFAULT 'triggered',
                 terminal_reason TEXT NOT NULL DEFAULT '',
                 choice_json TEXT NOT NULL DEFAULT '',
+                target_dossier_id INTEGER,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY(event_id) REFERENCES events(id)
+                FOREIGN KEY(event_id) REFERENCES events(id),
+                FOREIGN KEY(target_dossier_id) REFERENCES decree_dossiers(id) ON DELETE RESTRICT
             );
 
             CREATE TABLE IF NOT EXISTS turn_logs (
@@ -1556,30 +1558,6 @@ class GameDB:
                 ON faction_denunciations(turn, id);
             CREATE INDEX IF NOT EXISTS idx_faction_denunciations_target
                 ON faction_denunciations(target_dossier_id, turn, id);
-            -- #651/ADR 0089：暗渠摊派案件行（处置状态唯一载体；两本账本体仍分居
-            -- economy_ledger/classes，此处只记案件面——一案一活跃暗账、暴露与处置状态）。
-            CREATE TABLE IF NOT EXISTS covert_levy_cases (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                dossier_id INTEGER NOT NULL,
-                army_id TEXT NOT NULL,
-                region_id TEXT NOT NULL,
-                handler_name TEXT NOT NULL,
-                displaced_amount INTEGER NOT NULL,
-                squeezed_silver INTEGER NOT NULL,
-                status TEXT NOT NULL DEFAULT 'active'
-                    CHECK(status IN ('active','exposed','disposed')),
-                disposition TEXT
-                    CHECK(disposition IS NULL OR disposition IN ('禁摊派','默许','查办')),
-                exposed_turn INTEGER,
-                exposed_channel TEXT,
-                disposed_turn INTEGER,
-                created_turn INTEGER NOT NULL,
-                FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
-            );
-            CREATE INDEX IF NOT EXISTS idx_covert_levy_cases_dossier
-                ON covert_levy_cases(dossier_id, id);
-            CREATE INDEX IF NOT EXISTS idx_covert_levy_cases_army
-                ON covert_levy_cases(army_id, status);
             -- ADR 0056: existence of this append-only rail is the idempotency key;
             -- stigma_json is deliberately not used as a cost guard.
             CREATE TABLE IF NOT EXISTS decree_cost_events (
@@ -2121,6 +2099,8 @@ class GameDB:
         self.ensure_column("event_triggers", "terminal_state", "TEXT NOT NULL DEFAULT 'triggered'")
         self.ensure_column("event_triggers", "terminal_reason", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("event_triggers", "choice_json", "TEXT NOT NULL DEFAULT ''")
+        # #651/ADR 0089：离散事件与被暴露案卷在事件发生真源钉键；禁标题/摘要反查。
+        self.ensure_column("event_triggers", "target_dossier_id", "INTEGER")
         self.ensure_column("pending_decisions", "event_id", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("pending_decisions", "rejection_reason", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("pending_decisions", "opposition", "TEXT NOT NULL DEFAULT ''")
@@ -17587,7 +17567,10 @@ class GameDB:
                     WHEN COALESCE(event_triggers.terminal_state, '') = ''
                     THEN {pending_reason_expr}
 {reason_fill}                    ELSE event_triggers.terminal_reason
-                END
+                END,
+                target_dossier_id = COALESCE(
+                    event_triggers.target_dossier_id, excluded.target_dossier_id
+                )
         """
 
     def mark_event_triggered(
@@ -17597,18 +17580,22 @@ class GameDB:
         source: str = "simulation",
         *,
         terminal_reason: str = "",
+        target_dossier_id: int | None = None,
         commit: bool = True,
     ) -> None:
         self._ensure_event_parent(event_id)
+        if target_dossier_id is not None and self.get_decree_dossier(int(target_dossier_id)) is None:
+            raise ValueError(f"事件绑定的案卷不存在：{target_dossier_id}")
         self.conn.execute(
             f"""
             INSERT INTO event_triggers
-                (event_id, turn, year, period, source, terminal_state, terminal_reason)
-            VALUES (?, ?, ?, ?, ?, 'triggered', ?)
+                (event_id, turn, year, period, source, terminal_state, terminal_reason, target_dossier_id)
+            VALUES (?, ?, ?, ?, ?, 'triggered', ?, ?)
             ON CONFLICT(event_id) DO UPDATE SET
                 {self._event_terminal_upgrade_assignments(fill_triggered_reason=True)}
             """,
-            (event_id, state.turn, state.year, state.period, source, str(terminal_reason or "")[:200]),
+            (event_id, state.turn, state.year, state.period, source,
+             str(terminal_reason or "")[:200], target_dossier_id),
         )
         if commit:
             self.conn.commit()

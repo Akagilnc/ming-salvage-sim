@@ -216,22 +216,7 @@ def build_due_review_input(db: Any, todo: Dict[str, object]) -> Dict[str, object
         supervision_history=supervision_history,
         opportunity_band=opportunity_band,
     )
-    # #651/ADR 0089：暗渠摊派触发因子并入判官输入面（#622 AC5 门控同构：
-    # 缺口悬置事实不满足则键不出现，绝不触发）。
-    from ming_sim.covert_levy import build_covert_levy_trigger_factor
-    dossier = branch.get("dossier") or {}
-    covert_scope = " ".join((
-        str(meta.get("title") or ""),
-        str(todo.get("criterion_text") or ""),
-        str(todo.get("origin_context") or ""),
-        str(dossier.get("decree_text") or ""),
-        str(dossier.get("target_id") or ""),
-    ))
-    covert_levy_trigger = build_covert_levy_trigger_factor(
-        db, scope_text=covert_scope,
-    ) if branch["branch"] == "dossier" else None
-
-    review_input: Dict[str, object] = {
+    return {
         "todo": dict(todo),
         "commitment_ref": commitment_ref,
         "stage_idx": stage_idx,
@@ -255,9 +240,6 @@ def build_due_review_input(db: Any, todo: Dict[str, object]) -> Dict[str, object
         "opportunity_band": opportunity_band,
         "distortion_tendency": distortion_tendency,
     }
-    if covert_levy_trigger is not None:
-        review_input["covert_levy_trigger"] = covert_levy_trigger
-    return review_input
 
 
 def _strip_banned(text: str) -> str:
@@ -573,12 +555,6 @@ def apply_due_review_for_todo(
         }
 
     inp = build_due_review_input(db, todo)
-    # #651：0089 是 0072 的财政特例，落账必须由正式到期复核生产链消费，
-    # 而不是留给测试/脚本直调。写入后重建读面，让同一次终裁机械看到实况轨。
-    from ming_sim.covert_levy import settle_covert_levy_from_due
-    covert_booking = settle_covert_levy_from_due(db, state, inp, commit=False)
-    if covert_booking is not None and not covert_booking.get("rejected"):
-        inp = build_due_review_input(db, todo)
     verdict = decide_due_review_verdict(inp)
     scene = project_due_review_scene(db, todo, review_input=inp)
     branch = str(inp.get("branch") or "no_dossier")
@@ -606,7 +582,6 @@ def apply_due_review_for_todo(
         "mid_stage": bool(verdict.get("mid_stage")),
         "verdict": verdict,
         "execution": exec_result,
-        "covert_levy_booking": covert_booking,
         "scene": scene,
         "consumed": bool(consumed),
     }
@@ -634,9 +609,6 @@ def apply_pending_due_reviews(
         results.append(
             apply_due_review_for_todo(db, state, todo, commit=False)
         )
-    # 暴露同样挂在月结生产链；只有三种真实信号之一成立才会翻案。
-    from ming_sim.covert_levy import refresh_covert_levy_exposures
-    refresh_covert_levy_exposures(db, state, commit=False)
     if commit and results:
         db.conn.commit()
     return results
