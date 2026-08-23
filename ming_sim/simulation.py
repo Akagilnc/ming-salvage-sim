@@ -513,19 +513,17 @@ def _army_rows_with_needed(
     db: GameDB, select_sql: str, drop: tuple[str, ...] = ("salary_rate",),
 ) -> List[Dict[str, object]]:
     """#173 cmr（codex high + Claude medium concur）：simulator/extractor 盘面军队行加引擎实扣
-    army_needed 列（裁判/审计大臣读的「月饷」真源）并派生 mutiny_state。select_sql 须含
-    owner_power/manpower/salary_rate/is_mutinied 供计算；drop 列仅用于算、不进盘面（默认
-    salary_rate；调用方原本无 owner_power 的也一并 drop 以最小化盘面列变化）。持久 latch
-    is_mutinied 只参与派生、不外泄。#173：maintenance_per_turn 列已删，盘面不再含维护费。"""
-    from ming_sim.flows import army_needed, derive_army_mutiny_state
+    army_needed 列（裁判/审计大臣读的「月饷」真源）。select_sql 须含 owner_power/manpower/salary_rate
+    供 army_needed 计算；drop 列仅用于算、不进盘面（默认 salary_rate；调用方原本无 owner_power 的也一并
+    drop 以最小化盘面列变化）。#173：maintenance_per_turn 列已删，盘面不再含维护费。"""
+    from ming_sim.flows import army_needed
     if isinstance(drop, str):  # 防御：误传单字符串会被 for 逐字符迭代（线上 gemini）
         drop = (drop,)
     out: List[Dict[str, object]] = []
     for r in db.conn.execute(select_sql).fetchall():
         d = dict(r)
         d["army_needed"] = army_needed(r)
-        d["mutiny_state"] = derive_army_mutiny_state(r)
-        for c in (*drop, "is_mutinied"):
+        for c in drop:
             d.pop(c, None)
         out.append(d)
     return out
@@ -632,7 +630,7 @@ def build_simulator_payload(
         db,
         "SELECT name,station,theater,commander,controller,troop_type,manpower,"
         "supply,morale,training,equipment,arrears,mobility,"
-        "loyalty,firearm_equipment,cannon_equipment,status,owner_power,salary_rate,is_mutinied "
+        "loyalty,firearm_equipment,cannon_equipment,status,owner_power,salary_rate "
         "FROM armies ORDER BY id",
     )
     # 在朝名单 = 目前当官的（active）：simulator 在朝盘面 + 任命查重。可起复者（居家/致仕/
@@ -934,7 +932,7 @@ def _extractor_context_payload(
         db,
         "SELECT id,name,station,theater,commander,controller,troop_type,manpower,"
         "supply,morale,training,equipment,arrears,mobility,"
-        "loyalty,status,owner_power,salary_rate,is_mutinied FROM armies ORDER BY id",
+        "loyalty,status,owner_power,salary_rate FROM armies ORDER BY id",
         drop=("salary_rate", "owner_power"),  # extractor 盘面原无 owner_power，只新增 army_needed 列
     )
     active_ministers = [
