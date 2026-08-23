@@ -21,6 +21,11 @@ from tests.conftest import active_ming_character
 DEST = "liaodong"
 
 
+def _set_departure_origin(db, content, name: str) -> None:
+    db.conn.execute("UPDATE characters SET location='beizhili' WHERE name=?", (name,))
+    content.characters[name].location = "beizhili"
+
+
 def _set_transit(db, name: str, transit_to: str, transit_start_turn: int) -> None:
     db.conn.execute(
         "UPDATE characters SET transit_to=?, transit_start_turn=? WHERE name=?",
@@ -144,6 +149,7 @@ def test_行止_sets_transit_start_turn(game):
     """apply_score_extraction 处理 行止 时，写入 transit_to 同时记录 transit_start_turn=当前回合。"""
     db, state, content = game
     name = active_ming_character(db, content)
+    _set_departure_origin(db, content, name)
 
     issues.apply_score_extraction(
         db,
@@ -195,6 +201,7 @@ def test_行止_reemit_same_dest_preserves_start_turn(game):
     """
     db, state, content = game
     name = active_ming_character(db, content)
+    _set_departure_origin(db, content, name)
 
     # 第 3 月启程赴 DEST
     state.turn = 3
@@ -229,10 +236,11 @@ def test_行止_reemit_same_dest_preserves_start_turn(game):
     )
 
 
-def test_行止_change_dest_resets_start_turn(game):
-    """切换 transit_to 目的地时，transit_start_turn 应按新目的地重置为当前回合。"""
+def test_行止_change_dest_is_rejected(game):
+    """在途人物不可改道，原 transit ledger 保持不变。"""
     db, state, content = game
     name = active_ming_character(db, content)
+    _set_departure_origin(db, content, name)
 
     state.turn = 3
     issues.apply_score_extraction(
@@ -241,9 +249,8 @@ def test_行止_change_dest_resets_start_turn(game):
         content=content,
     )
 
-    # 改道去 shandong：新启程回合应记为第 6 月
     state.turn = 6
-    issues.apply_score_extraction(
+    results = issues.apply_score_extraction(
         db, state,
         {"人物变更": [{"origin_ref": "盘面自发", "name": name, "动作": "行止", "transit_to": "shandong"}]},
         content=content,
@@ -251,10 +258,9 @@ def test_行止_change_dest_resets_start_turn(game):
     row = db.conn.execute(
         "SELECT transit_to, transit_start_turn FROM characters WHERE name=?", (name,)
     ).fetchone()
-    assert row["transit_to"] == "shandong"
-    assert row["transit_start_turn"] == 6, (
-        f"改道后启程回合应重置为 6，实测 {row['transit_start_turn']}"
-    )
+    assert row["transit_to"] == DEST
+    assert row["transit_start_turn"] == 3
+    assert results["applied_person_changes"][0]["category"] == "invalid_transition"
 
 
 def test_行止_reemit_same_dest_preserves_legacy_zero_start(game):

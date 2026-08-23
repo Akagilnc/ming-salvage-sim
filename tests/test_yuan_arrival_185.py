@@ -54,6 +54,8 @@ def test_yuan_arrears_paid_then_arrives_e2e(game):
 
     try:
         # ── 1) 在途态：transit_to=liaodong，关宁军欠饷 > 0 ──────────────────────
+        db.conn.execute("UPDATE characters SET location='beizhili' WHERE name=?", (name,))
+        content.characters[name].location = "beizhili"
         issues.apply_score_extraction(
             db,
             state,
@@ -167,6 +169,8 @@ def test_arrival_clearing_is_not_noop_negative_control(game):
     old_transit_to = getattr(content.characters[name], "transit_to", "")
 
     try:
+        db.conn.execute("UPDATE characters SET location='beizhili' WHERE name=?", (name,))
+        content.characters[name].location = "beizhili"
         issues.apply_score_extraction(
             db,
             state,
