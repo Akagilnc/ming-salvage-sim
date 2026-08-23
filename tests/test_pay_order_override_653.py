@@ -3,7 +3,7 @@
 """#653 / ADR 0090 偿还序 override ＋ Due 折发系数＋阶级怨气喂判。
 
 票面（冻结票面含 r1–r4 修正案）验收表 golden ①–⑦ ＋ r4 canonical region goldens
-＋ F2 六源纯投影 TSV 断言 ＋ F3 符号域 clamp / 零第5调用断言。
+＋ F2 六源纯投影 TSV 断言 ＋ F3 综合归因输入 / 零新增调用断言。
 """
 from __future__ import annotations
 
@@ -16,7 +16,6 @@ from ming_sim.fiscal_tick import settle_tick
 from ming_sim.fiscal_fact_brief import (
     FACT_METRICS,
     build_fiscal_fact_brief,
-    clamp_class_delta_to_fact_signs,
     format_fiscal_fact_brief_tsv,
 )
 from ming_sim.pay_order import (
@@ -570,55 +569,15 @@ def test_fiscal_fact_brief_haircut_and_relief_facts(game):
     assert relief[0]["origin_ref"] == f"dossier:{did}"
 
 
-# ═══════════════ F3 符号域硬约束 ═══════════════
+# ═══════════════ F3 LLM 综合归因边界 ═══════════════
 
-def test_sign_clamp_damaged_class_cannot_gain():
-    facts = [{
-        "subject_kind": "region", "subject_id": "shaanxi", "metric": "欠禄额",
-        "window_turns": 0, "value": 12.0, "origin_ref": "",
-        "affected_class": "官僚", "detail": "官俸欠",
-    }]
-    delta = {"官僚": {"satisfaction": 5}, "农民": {"satisfaction": 4}}
-    clamped, records = clamp_class_delta_to_fact_signs(delta, facts)
-    assert clamped["官僚"]["satisfaction"] == 0      # 受损方为正→非法输出被 clamp
-    assert clamped["农民"]["satisfaction"] == 4      # 无涉事实的阶级不受约束
-    assert records and records[0] == {
-        "name": "官僚", "rejected": False, "clamped": True,
-        "category": "sign_clamp", "field": "satisfaction",
-        "from": 5, "to": 0,
-        "reason": records[0]["reason"],
-    }
-    assert "clamp 至 0" in records[0]["reason"]
-
-
-def test_sign_clamp_scoped_key_matched_by_base_name():
-    facts = [{
-        "subject_kind": "region", "subject_id": "shaanxi", "metric": "欠禄额",
-        "window_turns": 0, "value": 3.0, "origin_ref": "",
-        "affected_class": "宗藩", "detail": "宗禄欠",
-    }]
-    delta = {"宗藩@shaanxi": {"satisfaction": 2, "leverage": 1}}
-    clamped, records = clamp_class_delta_to_fact_signs(delta, facts)
-    assert clamped["宗藩@shaanxi"]["satisfaction"] == 0
-    assert clamped["宗藩@shaanxi"]["leverage"] == 1   # 非 satisfaction 字段不动
-    assert len(records) == 1
-
-
-def test_sign_clamp_negative_satisfaction_without_damage_passes_through():
-    # 盘面无财政受损事实 → 符号域不约束，负 satisfaction 原样通过
-    clamped, records = clamp_class_delta_to_fact_signs(
-        {"官僚": {"satisfaction": -3}}, [],
-    )
-    assert clamped == {"官僚": {"satisfaction": -3}}
-    assert records == []
-
-
-def test_extraction_modules_unchanged_four_parallel():
-    """F3 三断言之①：无第 5 个 LLM 调用、四 extractor 仍 parallel——模块清单一字不动，
+def test_extraction_modules_unchanged_parallel():
+    """F3 三断言之①：零新增 LLM 调用——模块清单与开工 head 动态一致，
     class_delta 仍由 internal 槽独占。"""
     from ming_sim.simulation import EXTRACTION_MODULES, MODULE_FIELDS
-    assert EXTRACTION_MODULES == ("internal", "military_external", "issues", "personnel_secret")
-    assert len(EXTRACTION_MODULES) == 4
+    baseline_modules = tuple(MODULE_FIELDS)
+    assert EXTRACTION_MODULES == baseline_modules
+    assert len(EXTRACTION_MODULES) == len(baseline_modules)
     assert "class_delta" in MODULE_FIELDS["internal"]
     assert sum("class_delta" in fields for fields in MODULE_FIELDS.values()) == 1
 
@@ -634,11 +593,8 @@ def test_simulator_payload_contains_fiscal_fact_brief(game):
     assert brief == build_fiscal_fact_brief(db)
 
 
-def test_apply_score_extraction_clamps_against_ledger(game):
-    """端到端：apply_score_extraction 的 class_delta 受损阶级为正 → 被 clamp 落 0 并留痕。
-
-    最小盘面：单一受损事实＝陕西军省源欠饷（per-source 双累加器现值，F2.4 映射 军户）。
-    """
+def test_apply_score_extraction_accepts_llm_direction_with_fiscal_loss(game):
+    """F3.2：单一财政受损事实在案时，LLM 综合判断的正向 satisfaction 原样接收。"""
     from ming_sim.issues import apply_score_extraction
 
     db, state, _content = game
@@ -647,47 +603,12 @@ def test_apply_score_extraction_clamps_against_ledger(game):
         "arrears = 12.0 + central_pay_arrears WHERE id = 'shaanxi_army'"
     )
     db.conn.commit()
-    extracted = {"class_delta": {"军户": {"satisfaction": 9}}}
-    applied = apply_score_extraction(db, state, copy.deepcopy(extracted))
-    clamps = [
-        r for r in applied["class_delta_rejections"]
-        if r.get("category") == "sign_clamp"
-    ]
-    assert clamps and clamps[0]["name"] == "军户"
-    assert applied["class_delta"].get("军户", {}).get("satisfaction", 0) <= 0
-
-
-def test_sign_clamp_region_precise_no_cross_province_clamp():
-    """F3.2 地域精确（judge class③）：陕西受损事实不得钳制 官僚@henan；
-    同省 官僚@shaanxi 与全国面裸 官僚 仍受约束。"""
-    facts = [{
-        "subject_kind": "region", "subject_id": "shaanxi", "metric": "欠禄额",
-        "window_turns": 0, "value": 12.0, "origin_ref": "region:shaanxi:settle.st.官俸欠",
-        "affected_class": "官僚", "detail": "官俸欠",
-    }]
-    delta = {
-        "官僚@shaanxi": {"satisfaction": 5},
-        "官僚@henan": {"satisfaction": 7},   # 跨省：不得被陕西事实 clamp
-        "官僚": {"satisfaction": 3},         # 全国面：受任意地域事实约束
-    }
-    clamped, records = clamp_class_delta_to_fact_signs(delta, facts)
-    assert clamped["官僚@shaanxi"]["satisfaction"] == 0
-    assert clamped["官僚@henan"]["satisfaction"] == 7    # 原样保留
-    assert clamped["官僚"]["satisfaction"] == 0
-    assert {r["name"] for r in records} == {"官僚@shaanxi", "官僚"}
-
-
-def test_sign_clamp_beneficiary_cannot_lose():
-    """受益方（补发，负值事实）satisfaction 不得为负 → 非法输出 clamp 至 0。"""
-    facts = [{
-        "subject_kind": "army", "subject_id": "jingying", "metric": "欠禄额",
-        "window_turns": 0, "value": -30.0, "origin_ref": "economy_ledger:1",
-        "affected_class": "军户", "detail": "补发_奉旨拨饷",
-    }]
-    delta = {"军户": {"satisfaction": -4}}
-    clamped, records = clamp_class_delta_to_fact_signs(delta, facts)
-    assert clamped["军户"]["satisfaction"] == 0
-    assert records and "不得为负" in records[0]["reason"]
+    assert build_fiscal_fact_brief(db)
+    applied = apply_score_extraction(
+        db, state, {"class_delta": {"军户": {"satisfaction": 9}}}
+    )
+    assert applied["class_delta"]["军户"]["satisfaction"] == 9
+    assert applied["class_delta_rejections"] == []
 
 
 # ═══════════════ F1 颁布生命周期 E2E（ADR 0055 判后物化缝）═══════════════
@@ -1082,27 +1003,6 @@ def test_fact_brief_long_term_stock_not_fed_as_turn_damage(game):
     entries = build_fiscal_fact_brief(db)
     assert not [e for e in entries if e["affected_class"] == "官僚"]
     assert not [e for e in entries if e["affected_class"] == "宗藩"]
-
-
-def test_sign_clamp_scoped_key_constrained_by_same_province_army_fact():
-    """同省应约束／跨省不约束：army 级事实带属地 region → 同省 scoped 键受钳、
-    他省 scoped 键原样、全国面裸键受任意地域事实约束。"""
-    facts = [{
-        "subject_kind": "army", "subject_id": "shaanxi_army", "region": "shaanxi",
-        "metric": "分源欠饷月数", "window_turns": 3, "value": 25.0,
-        "origin_ref": "armies:shaanxi_army.province_pay_arrears",
-        "affected_class": "军户", "detail": "province",
-    }]
-    delta = {
-        "军户@shaanxi": {"satisfaction": 6},
-        "军户@henan": {"satisfaction": 7},   # 跨省：不得被陕西军事实 clamp
-        "军户": {"satisfaction": 5},         # 全国面：受约束
-    }
-    clamped, records = clamp_class_delta_to_fact_signs(delta, facts)
-    assert clamped["军户@shaanxi"]["satisfaction"] == 0
-    assert clamped["军户@henan"]["satisfaction"] == 7
-    assert clamped["军户"]["satisfaction"] == 0
-    assert {r["name"] for r in records} == {"军户@shaanxi", "军户"}
 
 
 # ═══════════════ 真实玩家生产入口 E2E（capture→成案→pre_settle/settle_with_delta）═══
