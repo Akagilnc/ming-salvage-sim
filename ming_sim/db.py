@@ -10477,14 +10477,22 @@ class GameDB:
 
     # ── HITL 决策点 ─────────────────────────────────────────────────────
     def save_pending_decisions(self, turn: int, decisions: List[Dict[str, object]]) -> None:
-        """覆写本回合待裁决策点（先清后插），idx 按列表顺序。choice 初始空（待皇帝选）。"""
-        self.conn.execute("DELETE FROM pending_decisions WHERE turn = ?", (int(turn),))
+        """覆写本回合待裁 decision 行（先清后插），idx 按列表顺序。choice 初始空（待皇帝选）。
+
+        #656 A6/F2 不变式：只清只写 kind='decision'（与 clear_pending_decisions/
+        save_rescript_drafts 同款按 kind 收窄）——'rescript_draft' 票拟行跨月留存，
+        不被 decision 盘面覆写连带清除。
+        """
+        self.conn.execute(
+            "DELETE FROM pending_decisions WHERE turn = ? AND kind = 'decision'",
+            (int(turn),),
+        )
         for idx, d in enumerate(decisions):
             self.conn.execute(
                 """INSERT INTO pending_decisions
                    (turn, idx, event_id, title, context, rejection_reason, opposition,
-                    options_json, choice_json, status)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', 'pending')""",
+                    options_json, choice_json, status, kind)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', 'pending', 'decision')""",
                 (
                     int(turn), idx,
                     str(d.get("event_id") or ""),
