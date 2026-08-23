@@ -709,6 +709,10 @@ def build_simulator_payload(
         "transit_nudge": _build_transit_nudge(db, state),
         # #627：政敌检举供事实（零新增串行调用；不携真伪位/quota/烈度）
         "faction_denunciation_facts": db.build_faction_denunciation_facts(),
+        # #651：仅结构化硬门成立时出现；判官可输出 covert_levy_verdicts，代码不代判。
+        "covert_levy_candidates": __import__(
+            "ming_sim.covert_levy", fromlist=["build_covert_levy_candidates"]
+        ).build_covert_levy_candidates(db),
         # #626：承诺所系反噬——硬门只落结构化事实；玩家文案由叙事步从此特征包长出
         "commitment_backlash_facts": build_backlash_narrative_features(db),
         "data_note": (
@@ -822,6 +826,8 @@ EMPTY_EXTRACTION: Dict[str, object] = {
     "secret_dossier_participants": [],
     "dossier_reconciliations": [],
     "faction_denunciations": [],
+    "covert_levy_verdicts": [],
+    "covert_levy_decisions": [],
     "authority_changes": [],
     "dossier_progress_reports": [],
     "emperor_fate": None,  # 崇祯结局：abdicate(退位/禅让)/suicide(自尽/殉国)/null(无)
@@ -834,7 +840,8 @@ MODULE_FIELDS: Dict[str, set[str]] = {
     "issues": {
         "issue_advances", "new_issues", "事件结局", "cancels", "close_issues",
         "dossier_executions", "dossier_participants", "dossier_reconciliations",
-        "faction_denunciations", "authority_changes",
+        "faction_denunciations", "covert_levy_verdicts", "covert_levy_decisions",
+        "authority_changes",
     },
     "personnel_secret": {
         "人物变更", "new_issues", "secret_order_updates", "covert_exec_selections",
