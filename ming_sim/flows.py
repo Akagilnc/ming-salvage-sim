@@ -1869,7 +1869,10 @@ def _apply_population_transfers(
     不复用 DeltaApplyResult（其 applied 声明为 dict、文档限定 faction/class）；
     本核 applied 为转移记录 list，直接声明窄类型（#649 C2）。
     """
-    from ming_sim.constants import POPULATION_TRANSFER_FIELDS, POPULATION_TRANSFER_REASONS
+    from ming_sim.constants import (
+        POPULATION_TRANSFER_FIELDS,
+        POPULATION_TRANSFER_REASONS,
+    )
 
     applied: List[Dict[str, object]] = []
     rejected: List[Dict[str, object]] = []
