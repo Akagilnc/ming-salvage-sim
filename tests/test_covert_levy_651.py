@@ -51,6 +51,12 @@ def test_event_trigger_binding_is_optional_but_invalid_binding_fails_loud(game):
     with pytest.raises(ValueError, match="案卷不存在"):
         db.mark_event_triggered(state, "bad-binding", target_dossier_id=999999)
 
+    for invalid_id in (True, 0, -1, "1"):
+        with pytest.raises(ValueError, match="案卷 ID 非法"):
+            db.mark_event_triggered(
+                state, "bad-binding", target_dossier_id=invalid_id  # type: ignore[arg-type]
+            )
+
 
 def test_event_terminal_upgrade_keeps_first_structured_binding(game):
     db, state, _ = game
