@@ -131,6 +131,66 @@ def test_pregame_turn_scale_matches_load_state_mapping():
     assert pregame_turn(1625, 4) == (1625 - 1627) * 12 + (4 - 10)
 
 
+def test_earliest_legal_start_imports_only_earlier_seed_events(tmp_path, monkeypatch):
+    """db.py 接受的最早开局也必须能完成真实新档初始化。"""
+    import ming_sim.cli_backend as cli_backend
+    import ming_sim.llm_model as llm_mod
+
+    monkeypatch.setattr(
+        llm_mod, "verify_llm_available",
+        lambda cfg: (_ for _ in ()).throw(AssertionError("新档构造不得验证 LLM")),
+    )
+    monkeypatch.setattr(
+        cli_backend, "_run_backend_for_config",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("新档构造不得调用 LLM")),
+    )
+    content = GameContent.load()
+    cfg = LLMConfig(api_key="", base_url="http://unused", model="unused")
+    sess = GameSession(
+        db_path=str(tmp_path / "earliest.db"), llm_config=cfg,
+        content=content, start_ym="1627.01",
+    )
+    try:
+        assert (int(sess.state.year), int(sess.state.period)) == (1627, 1)
+        events = sess.db.get_relation_edge_events()
+        assert events
+        assert all((int(row["year"]), int(row["period"])) < (1627, 1) for row in events)
+    finally:
+        sess.close()
+
+
+def test_seed_failure_rolls_back_new_save_and_retry_imports(tmp_path, monkeypatch):
+    """seed 初始化失败不得烧掉 fresh 判据；修复故障后同 DB 可正常重开。"""
+    import sqlite3
+    import ming_sim.cli_backend as cli_backend
+    import ming_sim.llm_model as llm_mod
+    import ming_sim.relation_seed as seed_mod
+
+    monkeypatch.setattr(llm_mod, "verify_llm_available", lambda cfg: None)
+    monkeypatch.setattr(cli_backend, "_run_backend_for_config", lambda *args, **kwargs: "")
+    original_import = seed_mod.import_bundled_relationship_seed
+    monkeypatch.setattr(
+        seed_mod, "import_bundled_relationship_seed",
+        lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("injected seed failure")),
+    )
+    db_path = str(tmp_path / "retry.db")
+    content = GameContent.load()
+    cfg = LLMConfig(api_key="", base_url="http://unused", model="unused")
+    with pytest.raises(ValueError, match="injected seed failure"):
+        GameSession(db_path=db_path, llm_config=cfg, content=content)
+
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM game_state").fetchone()[0] == 0
+
+    monkeypatch.setattr(seed_mod, "import_bundled_relationship_seed", original_import)
+    sess = GameSession(db_path=db_path, llm_config=cfg, content=content)
+    try:
+        assert sess.db.has_savegame() is True
+        assert sess.db.get_relation_edge_events()
+    finally:
+        sess.close()
+
+
 def test_new_save_imports_sample_seed_ledger_queryable_and_pregame(fresh_session):
     """新开档导入样例 seed：流水可查、时间戳早于开局（验收条①前半）。"""
     sess, _content = fresh_session
