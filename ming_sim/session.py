@@ -511,8 +511,7 @@ def apply_appointment(
                 reason=f"{office}改授{name}，原任去职",
                 commit=commit,
             )
-            old.status = "dismissed"
-            old.transit_to = ""
+            db.set_character_transit(replaces, content=content, commit=commit)
             displaced = replaces
 
     faction = "后宫" if is_consort else str(data.get("faction") or "中立").strip()
