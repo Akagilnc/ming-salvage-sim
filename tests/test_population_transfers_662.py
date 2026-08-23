@@ -2,7 +2,7 @@
 
 canonical＝ADR 0087 + #662 票庭判词（run 01a02d40-244d-7e4c-8386-5af682d584a2）施工边界：
 - 发生与量级判定＝LLM 软判吃既有盘面（region 天灾/人祸字段、military_pressure 定性档、
-  活跃局势 issue）；代码侧只做量级口径 clamp＋守恒记账，禁引擎侧自动触发（无双驱动）；
+  活跃局势 issue）及阶级余额与人口单位；代码侧只守物理不变量，禁引擎侧自动触发（无双驱动）；
 - origin 分立＝reason 枚举「灾害」／「兵灾」（落库字段即 reason，无第二 origin 字段）；
 - 与加派/摊派入口合流同一本账：同一 classes 省级行池＋同一原语，下游只认账不认来源；
 - 邸报/召对定性回响走既有 effect_brief／classes_brief 特征面（P4 零数值）。
@@ -20,7 +20,6 @@ from test_population_transfers_649 import (
     FARMER_SHAANXI,
     _conservation_oracle,
     _global_population,
-    _make_legacy_db,
     _pop,
     _snap,
     _transfer,
@@ -28,7 +27,7 @@ from test_population_transfers_649 import (
 
 import pytest
 
-from ming_sim.db import GameDB, POPULATION_UNIT_WAN
+from ming_sim.db import GameDB
 from ming_sim.decree import settle_with_delta
 from ming_sim.issues import apply_score_extraction
 from ming_sim.memories import effect_brief
@@ -39,16 +38,6 @@ from ming_sim.simulation import (
     extract_scores_by_modules_with_agno,
     simulate_season_with_payload,
 )
-
-# 量级口径（施工契约，史实尺度）：单条记录上限＝本批结算前源阶级省级行余额 × 万分比。
-# 灾荒月度驱离在低个位数百分比量级；兵祸过境冲击更烈，放宽一档。
-DISASTER_CAP_BPS = 500   # 灾害 ≤ 5%
-WAR_CAP_BPS = 1000       # 兵灾 ≤ 10%
-
-
-def _cap(balance: int, bps: int) -> int:
-    return balance * bps // 10000
-
 
 @pytest.fixture
 def disaster_shaanxi(game):
@@ -73,10 +62,10 @@ def war_shaanxi(game):
     return db, state, content
 
 
-# ── 灾害入池：有灾入（正测）＋量级口径双向边界 ──────────────────────────────
+# ── 灾害入池：有灾入（正测）──────────────────────────────────────────────
 
 def test_disaster_entry_lands_with_region_disaster_fact(disaster_shaanxi):
-    """灾情事实满足口径＋LLM 申报灾害转移 → 按省守恒落账（origin 标＝reason 枚举）。"""
+    """灾情事实存在且 LLM 申报灾害转移 → 按省守恒落账（origin 标＝reason 枚举）。"""
     db, state, content = disaster_shaanxi
     total_before = _global_population(db)
     applied = apply_score_extraction(db, state, {
@@ -94,83 +83,34 @@ def test_disaster_entry_lands_with_region_disaster_fact(disaster_shaanxi):
     assert _global_population(db) == total_before  # 守恒
 
 
-def test_disaster_magnitude_clamp_two_way_boundary(disaster_shaanxi):
-    """口径 clamp 双向：amount＝上限（floor(源余额×5%)）落账；上限+1 整项拒收、
-    两腿分毫不动。"""
-    db, state, content = disaster_shaanxi
-    cap = _cap(FARMER_SHAANXI, DISASTER_CAP_BPS)
+def test_disaster_and_war_amounts_above_old_caps_land_and_conserve(war_shaanxi):
+    """具体量级由 extractor 软判；超过旧固定比例但未超过实时源余额时照常守恒落账。"""
+    db, state, content = war_shaanxi
+    garrison_before = _pop(db, "军户", "shaanxi")
+    disaster_amount = FARMER_SHAANXI * 6 // 100
+    war_amount = garrison_before * 11 // 100
+    total_before = _global_population(db)
     applied = apply_score_extraction(db, state, {
         "population_transfers": [
             _transfer(source="农民@shaanxi", target="流民@shaanxi",
-                      amount=cap + 1, reason="灾害"),
-            _transfer(source="农民@shaanxi", target="流民@shaanxi",
-                      amount=cap, reason="灾害"),
+                      amount=disaster_amount, reason="灾害"),
+            _transfer(source="军户@shaanxi", target="流民@shaanxi",
+                      amount=war_amount, reason="兵灾"),
         ],
     }, content, None)
-    rejections = applied["population_transfers_rejections"]
-    assert len(rejections) == 1
-    assert rejections[0]["category"] == "invalid_enum"
-    assert "量级口径" in rejections[0]["reason"]
-    recs = applied["population_transfers"]
-    assert len(recs) == 1 and recs[0]["amount"] == cap
-    assert _pop(db, "农民", "shaanxi") == FARMER_SHAANXI - cap
-    assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI + cap
+    assert not applied["population_transfers_rejections"]
+    assert _pop(db, "农民", "shaanxi") == FARMER_SHAANXI - disaster_amount
+    assert _pop(db, "军户", "shaanxi") == garrison_before - war_amount
+    assert _pop(db, "流民", "shaanxi") == (
+        DISPLACED_SHAANXI + disaster_amount + war_amount
+    )
+    assert _global_population(db) == total_before
 
 
-def test_disaster_and_war_caps_share_opening_balance_not_live_order(disaster_shaanxi):
-    """正反排列从同一开局出发，接纳集合与终态必须相同。"""
-    db, state, content = disaster_shaanxi
-    opening = _snap(db)
-    records = [
-        _transfer(source="农民@shaanxi", target="流民@shaanxi",
-                  amount=_cap(FARMER_SHAANXI, DISASTER_CAP_BPS), reason="灾害"),
-        _transfer(source="农民@shaanxi", target="流民@shaanxi",
-                  amount=_cap(FARMER_SHAANXI, WAR_CAP_BPS), reason="兵灾"),
-    ]
-
-    outcomes = []
-    for ordered in (records, list(reversed(records))):
-        for (name, region_id), population in opening.items():
-            db.conn.execute(
-                "UPDATE classes SET population=? WHERE name=? AND region_id=?",
-                (population, name, region_id),
-            )
-        db.conn.commit()
-        applied = apply_score_extraction(
-            db, state, {"population_transfers": ordered}, content, None
-        )
-        assert not applied["population_transfers_rejections"]
-        accepted = sorted((r["reason"], r["amount"]) for r in applied["population_transfers"])
-        outcomes.append((accepted, _snap(db)))
-
-    assert outcomes[0] == outcomes[1]
-
-
-def test_disaster_clamp_unit_agnostic(content, tmp_path):
-    """clamp 按源余额比例计算、与存档刻度无关：legacy 万口径档同样吃 5% 上限。"""
-    path = str(tmp_path / "legacy662.db")
-    db = _make_legacy_db(content, path)
-    try:
-        assert db.population_unit == POPULATION_UNIT_WAN
-        legacy_farmers = _pop(db, "农民", "shaanxi")
-        cap = _cap(legacy_farmers, DISASTER_CAP_BPS)
-        applied = apply_score_extraction(db, db.load_state(), {
-            "population_transfers": [
-                _transfer(source="农民@shaanxi", target="流民@shaanxi",
-                          amount=cap + 1, reason="灾害"),
-            ],
-        }, content, None)
-        assert len(applied["population_transfers_rejections"]) == 1
-        assert "量级口径" in applied["population_transfers_rejections"][0]["reason"]
-        assert _pop(db, "农民", "shaanxi") == legacy_farmers
-    finally:
-        db.close()
-
-
-# ── 兵灾入池：农民/军户双腿 ＋ 口径 ──────────────────────────────────────────
+# ── 兵灾入池：农民/军户双腿 ────────────────────────────────────────────────
 
 def test_war_entry_lands_farmer_and_garrison_legs(war_shaanxi):
-    """兵祸事实满足口径 → 农民腿与军户腿各自守恒落账（origin 标＝reason 兵灾）。"""
+    """兵祸事实存在 → 农民腿与军户腿各自守恒落账（origin 标＝reason 兵灾）。"""
     db, state, content = war_shaanxi
     garrison_before = _pop(db, "军户", "shaanxi")
     total_before = _global_population(db)
@@ -188,25 +128,6 @@ def test_war_entry_lands_farmer_and_garrison_legs(war_shaanxi):
     assert _pop(db, "军户", "shaanxi") == garrison_before - 5000
     assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI + 25000
     assert _global_population(db) == total_before
-
-
-def test_war_magnitude_clamp_garrison_leg(war_shaanxi):
-    """军户腿同样吃兵灾口径：超 floor(军户余额×10%) 整项拒收；农民腿合法项照落。"""
-    db, state, content = war_shaanxi
-    garrison = _pop(db, "军户", "shaanxi")
-    cap = _cap(garrison, WAR_CAP_BPS)
-    applied = apply_score_extraction(db, state, {
-        "population_transfers": [
-            _transfer(source="军户@shaanxi", target="流民@shaanxi",
-                      amount=cap + 1, reason="兵灾"),
-            _transfer(source="农民@shaanxi", target="流民@shaanxi",
-                      amount=1000, reason="兵灾"),
-        ],
-    }, content, None)
-    rejections = applied["population_transfers_rejections"]
-    assert len(rejections) == 1 and "量级口径" in rejections[0]["reason"]
-    assert _pop(db, "军户", "shaanxi") == garrison  # 拒收项两腿不动
-    assert _pop(db, "农民", "shaanxi") == FARMER_SHAANXI - 1000
 
 
 # ── 双向边界·反测：无灾不入——事实本身永不自发移人（禁引擎侧自动触发）───────
@@ -428,4 +349,4 @@ def test_same_batch_multi_origin_merges_into_single_pool_account(disaster_shaanx
     assert _global_population(db) == total_before  # 全局守恒不变式
 
 
-# ── 契约单真源：prompt 教「有灾入/无灾不入」事实支撑＋量级口径 ────────────────
+# ── 契约单真源：prompt 教「有灾入/无灾不入」事实支撑 ────────────────────────
