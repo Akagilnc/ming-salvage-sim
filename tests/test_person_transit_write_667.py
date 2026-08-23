@@ -9,6 +9,44 @@ def _active(db):
     return db.conn.execute("SELECT name FROM characters WHERE status='active' LIMIT 1").fetchone()["name"]
 
 
+@pytest.mark.parametrize("invalid_distance", [float("nan"), float("inf"), float("-inf")])
+def test_departure_rejects_nonfinite_distance_before_ledger_write(game, monkeypatch, invalid_distance):
+    db, state, content = game
+    name = _active(db)
+    db.conn.execute("UPDATE characters SET location='beizhili' WHERE name=?", (name,))
+    content.characters[name].location = "beizhili"
+    fields = (
+        "transit_to", "transit_distance_remaining", "transit_speed_factor", "transit_start_turn",
+    )
+    before_db = tuple(db.conn.execute(
+        "SELECT transit_to, transit_distance_remaining, transit_speed_factor, transit_start_turn "
+        "FROM characters WHERE name=?", (name,),
+    ).fetchone())
+    character = content.characters[name]
+    before_memory = tuple(getattr(character, field, 0) for field in fields)
+
+    class InvalidMatrix:
+        def travel_time(self, origin, destination):
+            return invalid_distance
+
+    monkeypatch.setattr(
+        issues.DistanceMatrix, "from_file", classmethod(lambda cls, path: InvalidMatrix()),
+    )
+
+    with pytest.raises(ValueError, match="invalid baked travel time"):
+        issues.apply_score_extraction(db, state, {"人物变更": [{
+            "name": name, "origin_ref": "盘面自发", "动作": "行止",
+            "transit_to": "liaodong",
+        }]}, content=content)
+
+    after_db = tuple(db.conn.execute(
+        "SELECT transit_to, transit_distance_remaining, transit_speed_factor, transit_start_turn "
+        "FROM characters WHERE name=?", (name,),
+    ).fetchone())
+    assert after_db == before_db
+    assert tuple(getattr(character, field, 0) for field in fields) == before_memory
+
+
 def test_departure_persists_matrix_distance_and_urgent_factor(game):
     db, state, content = game
     name = _active(db)
