@@ -6,8 +6,9 @@ F2（纯投影，零新表零新账）：三 metric 与被折发/被欠/被补�
 F2.1 既有真源的**本回合分量**（禁把长期存量误作本回合事实），各源：
   ① regions.fiscal settle st/p（明控省）：三饷当月加派流（加派量＝
     max(0, 三饷应征−民欠新增)）、赈济未敷 unmet_relief（settle_tick 每 tick 落进 st 的当月流量，
-    §9 口径）、省内池折发免除额的 Due 基数；坏 fiscal JSON / 缺 settle 基座 →
-    ValueError 响亮失败（ADR 0005，禁静默 continue）。
+    §9 口径）、省内池折发免除额的 Due 基数；无 settle 键的明控省按 shadow spine 出列
+    （旧档 / 外域收复）；坏 fiscal JSON / settle 键在位但 st/p 残缺 →
+    ValueError 响亮失败（ADR 0005）。
   ② armies.province_pay_arrears/central_pay_arrears（0023 per-source 双累加器）：
     分源欠饷月数＝ceil(分源现欠/月需)——双累加器本身即分源持久投影面（F2.2 备选
     口径，禁 source-agnostic 总 arrears 伪窗口）；零分母短路（月需=0 不计、不做
@@ -76,7 +77,13 @@ def _config_origin_ref(db: Any, winning_key: str) -> str:
 
 
 def _ming_settle_bases(db: Any) -> List[Tuple[str, Dict[str, Any], Dict[str, Any]]]:
-    """① 明控省 settle st/p 基座（id 升序）。坏 JSON/结构 ValueError 响亮失败（0005）。"""
+    """① 明控省 settle st/p 基座（id 升序）。
+
+    无 settle 键＝既有合法态（旧档 / 外域收复），与
+    ``settle_ming_province_substrate_ticks`` / ``_project_substrate_hub_remittance``
+    同一 shadow spine：出列、不投影。坏 JSON、非字典 fiscal、或 settle 键在位但
+    st/p 残缺 → ValueError 响亮失败（ADR 0005）。
+    """
     out: List[Tuple[str, Dict[str, Any], Dict[str, Any]]] = []
     rows = db.conn.execute(
         "SELECT id, fiscal FROM regions WHERE controlled_by = 'ming' ORDER BY id"
@@ -91,9 +98,11 @@ def _ming_settle_bases(db: Any) -> List[Tuple[str, Dict[str, Any], Dict[str, Any
             ) from exc
         if not isinstance(fiscal, dict):
             raise ValueError(f"fiscal_fact_brief：region {region_id} fiscal 非字典")
+        if "settle" not in fiscal:
+            continue
         settle = fiscal.get("settle")
         if not isinstance(settle, dict):
-            raise ValueError(f"fiscal_fact_brief：region {region_id} 无 settle 财政基座")
+            raise ValueError(f"fiscal_fact_brief：region {region_id} settle 非字典")
         st = settle.get("st")
         p = settle.get("p")
         if not isinstance(st, dict) or not isinstance(p, dict):

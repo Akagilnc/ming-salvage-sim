@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import math
 
 import pytest
@@ -630,18 +631,39 @@ def test_fact_brief_priority_provenance_ignores_later_noncausal_dossier(game):
 
 
 def test_fiscal_fact_brief_bad_json_fails_loud(game):
-    """F2①：坏 fiscal JSON / 缺 settle 基座 → ValueError 响亮失败，禁静默 continue（ADR 0005）。"""
+    """F2①：坏 fiscal JSON / 残缺 settle 容器 → ValueError 响亮失败（ADR 0005）。
+
+    无 settle 键的明控省是既有合法态（旧档 / 外域收复），由
+    ``test_fiscal_fact_brief_skips_ming_region_without_settle`` 覆盖，不在此当坏基座。
+    """
     db, _state, _content = game
     row = db.conn.execute("SELECT fiscal FROM regions WHERE id='henan'").fetchone()
     original = row["fiscal"]
     db.conn.execute("UPDATE regions SET fiscal='{bad json' WHERE id='henan'")
     with pytest.raises(ValueError):
         build_fiscal_fact_brief(db)
-    db.conn.execute("UPDATE regions SET fiscal='{}' WHERE id='henan'")
-    with pytest.raises(ValueError):
+    db.conn.execute("UPDATE regions SET fiscal='{\"settle\": {}}' WHERE id='henan'")
+    with pytest.raises(ValueError, match="settle.st/p"):
         build_fiscal_fact_brief(db)
     db.conn.execute("UPDATE regions SET fiscal=? WHERE id='henan'", (original,))
     build_fiscal_fact_brief(db)  # 复原后照常
+
+
+def test_fiscal_fact_brief_skips_ming_region_without_settle(game):
+    """明控但无 settle 的省（外域收复 / 旧档）不得掀翻月末 simulator payload。
+
+    与 settle_ming_province_substrate_ticks / _project_substrate_hub_remittance
+    同一 shadow spine：无 settle 键出列；有 settle 的明控省照常投影。
+    """
+    db, _state, _content = game
+    db.conn.execute("UPDATE regions SET controlled_by = 'ming' WHERE id = 'taiwan'")
+    db.conn.commit()
+    fiscal = db.conn.execute("SELECT fiscal FROM regions WHERE id='taiwan'").fetchone()["fiscal"]
+    assert "settle" not in json.loads(str(fiscal or "{}"))
+
+    entries = build_fiscal_fact_brief(db)
+    assert isinstance(entries, list)
+    assert all(e.get("region") != "taiwan" for e in entries)
 
 
 def test_fiscal_fact_brief_haircut_and_relief_facts(game):
