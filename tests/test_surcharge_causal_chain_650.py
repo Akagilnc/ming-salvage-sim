@@ -393,7 +393,15 @@ def test_province_without_population_pool_rejects_surcharge_and_old_ledger_exits
     db.conn.execute("UPDATE regions SET fiscal=? WHERE id='liaodong'",
                     (json.dumps(fiscal, ensure_ascii=False),))
     db.conn.commit()
-    apply_score_extraction(db, state, {}, content, None)
+    before_turn = state.turn
+    farmer_before = _pop(db, "农民", "liaodong")
+    displaced_before = _pop(db, "流民", "liaodong")
+
+    _settle_month(state, db, {}, before_turn=before_turn, content=content)
+
+    assert state.turn == before_turn + 1
+    assert _pop(db, "农民", "liaodong") == farmer_before
+    assert _pop(db, "流民", "liaodong") == displaced_before
 
 
 def test_ming_province_without_fiscal_base_is_not_a_levy_member(game):
@@ -574,7 +582,7 @@ def test_displaced_trend_does_not_call_post_levy_return_an_increase(game):
         ]}, ensure_ascii=False),
     )
     brief = regional_displaced_pressure_brief(db)
-    assert "陕西：流民压力" in brief and "近月回落" in brief
+    assert "陕西：流民压力低，近月回落，期间加派致流民流入" in brief
     assert "因加派而上升" not in brief
 
 
@@ -628,14 +636,21 @@ def test_unmarked_cutover_save_rejects_and_never_consumes_surcharge(game):
     db.close()
     db = GameDB(path, content)
     state = db.load_state()
-    before = _pop(db, "农民", "shaanxi")
+    farmer_before = _pop(db, "农民", "shaanxi")
+    displaced_before = _pop(db, "流民", "shaanxi")
+    before_turn = state.turn
 
     applied = apply_score_extraction(db, state, {
         "surcharge_decrees": [_decree(db, state, monthly_amount=10.0)],
     }, content, None)
     assert not applied["surcharge_decrees"]
     assert applied["surcharge_decrees_rejections"][0]["category"] == "missing_ref"
-    assert _pop(db, "农民", "shaanxi") == before
+
+    _settle_month(state, db, {}, before_turn=before_turn, content=content)
+
+    assert state.turn == before_turn + 1
+    assert _pop(db, "农民", "shaanxi") == farmer_before
+    assert _pop(db, "流民", "shaanxi") == displaced_before
 
 
 def test_legacy_fiscal_engine_rejects_surcharge_and_never_consumes_it(legacy_game):
