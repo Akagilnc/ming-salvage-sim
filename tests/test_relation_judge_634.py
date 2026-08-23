@@ -18,10 +18,12 @@ from __future__ import annotations
 import inspect
 import json
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 import ming_sim.agents as agents_mod
 import ming_sim.audience_night as an
+import ming_sim.beat_orchestration as beats
 import ming_sim.relation_read as relation_read_mod
 from ming_sim.relation_judge import (
     build_relation_judge_prompt,
@@ -499,17 +501,122 @@ def test_late_judgment_writes_source_turn_calendar_not_live_calendar(game):
     assert (row["year"], row["period"], row["turn"]) == (source_year, source_period, source_turn)
 
 
-def test_source_night_roster_survives_live_roster_change(game):
+def test_close_judge_result_cannot_become_player_facing_close_body(game, monkeypatch):
+    """同桶判官结果只供 finalize；无 scene 时收夜账仍走既有 fallback。"""
     db, state, _ = game
     a, b = _roster_names(db, state)
     night_id = int(an.open_night(db, state)["id"])
-    ctid = _make_turn(db, state, a, "任免前", "为同僚站台", night_id=night_id)
-    res = run_summon_relation_judge(
-        db, state, agent=_CannedJudge({"events": [{
-            "源轮": ctid, "施动者": a, "受动者": b, "类目": "站台", "语境": "源夜在场",
-        }]}), write_gate=threading.Lock(), night_id=night_id, allowed_endpoint_names={a, b},
+    ctid = _make_turn(db, state, a, "退朝前", "为同僚站台", night_id=night_id)
+    db.conn.execute("UPDATE chat_turns SET extract_status='done' WHERE id=?", (ctid,))
+    db.conn.commit()
+    events = _event_items(a, b, "站台", "源夜当面站台")
+    monkeypatch.setattr(
+        agents_mod, "create_relation_judge_agent", lambda _cfg: _CannedJudge(events),
     )
-    assert res["edges"] == 1
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        registry = beats.ChatTurnSceneRegistry(executor)
+        result = an.close_night(
+            db, state, night_id=night_id, llm_config=object(), scene_registry=registry,
+        )
+    assert result["closed"] is True
+    assert len(db.get_relation_edge_events(source=a, target=b)) == 1
+    close_entry = next(
+        row for row in an.list_ledger(db, night_id)
+        if an.TAG_CLOSE_NIGHT in row["tags"]
+    )
+    assert close_entry["body"] == "退朝，召对到此。"
+    assert "events" not in close_entry["body"] and "[" not in close_entry["body"]
+
+
+def test_close_waits_for_overlapping_judge_provider_before_closed(game, monkeypatch):
+    """判官 provider 复用 close 桶并与 scene sibling 重叠，统一 join 后才 CLOSED。"""
+    db, state, _ = game
+    a, _ = _roster_names(db, state)
+    night_id = int(an.open_night(db, state)["id"])
+    ctid = _make_turn(db, state, a, "问", "答", night_id=night_id)
+    db.conn.execute("UPDATE chat_turns SET extract_status='done' WHERE id=?", (ctid,))
+    db.conn.commit()
+    judge_entered = threading.Event()
+    scene_entered = threading.Event()
+    release_judge = threading.Event()
+    closing_seen = threading.Event()
+
+    class _BlockingJudge:
+        def run(self, _prompt):
+            judge_entered.set()
+            assert scene_entered.wait(5)
+            assert release_judge.wait(5)
+            return SimpleNamespace(content='{"events":[]}')
+
+    def close_scene(_inputs):
+        scene_entered.set()
+        assert judge_entered.wait(5)
+        return "诸臣退殿。"
+
+    monkeypatch.setattr(
+        agents_mod, "create_relation_judge_agent", lambda _cfg: _BlockingJudge(),
+    )
+    box = {}
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        registry = beats.ChatTurnSceneRegistry(executor)
+        worker = threading.Thread(target=lambda: box.setdefault("result", an.close_night(
+            db, state, night_id=night_id, llm_config=object(),
+            beat_generator=close_scene, scene_registry=registry,
+            on_closing=closing_seen.set,
+        )))
+        worker.start()
+        assert closing_seen.wait(2) and judge_entered.wait(2) and scene_entered.wait(2)
+        assert worker.is_alive()
+        release_judge.set()
+        worker.join(3)
+        assert not worker.is_alive()
+    assert box["result"]["closed"] is True
+    assert an.get_night(db, night_id)["status"] == an.NIGHT_STATUS_CLOSED
+
+
+def test_source_night_roster_survives_phase1_live_roster_change(game, monkeypatch):
+    db, state, content = game
+    a, b = _roster_names(db, state)
+    night_id = int(an.open_night(db, state)["id"])
+    ctid = _make_turn(db, state, a, "任免前", "为同僚站台", night_id=night_id)
+    db.conn.execute("UPDATE chat_turns SET extract_status='done' WHERE id=?", (ctid,))
+    pending_id = db.stage_pending_action(
+        state.turn, kind="office", action="罢免", minister_name=b,
+        payload={"name": b},
+    )
+    db.mark_pending_night_approved([pending_id], night_id=night_id)
+    db.conn.commit()
+    monkeypatch.setattr(
+        agents_mod, "create_relation_judge_agent",
+        lambda _cfg: _CannedJudge({"events": [{
+            "源轮": ctid, "施动者": a, "受动者": b, "类目": "站台", "语境": "源夜在场",
+        }]}),
+    )
+    class _NoEndorsements:
+        def run(self, _materials):
+            return '{"endorsements":[]}'
+
+    def materialize_after_office_commit(step, _night):
+        if step == an.CLOSE_STEP_COMMIT_OFFICE:
+            row = db.conn.execute(
+                "SELECT status FROM pending_actions WHERE id=?", (pending_id,),
+            ).fetchone()
+            assert row["status"] == "committed"
+            # Model the same-night office verdict taking the endpoint off the live
+            # roster after close_night has captured its source-night eligibility.
+            db.set_character_status(state, b, "dismissed", reason="奉旨罢黜")
+            content.characters[b].status = "dismissed"
+            content.characters[b].office = ""
+
+    result = an.close_night(
+        db, state, night_id=night_id, body="退朝。", content=content,
+        llm_config=object(), write_gate=threading.Lock(),
+        endorsement_extractor_agent=_NoEndorsements(),
+        on_step=materialize_after_office_commit,
+    )
+    assert result["closed"] is True
+    assert b not in {row["name"] for row in db.current_court_roster_rows(state)}
+    assert len(db.get_relation_edge_events(source=a, target=b)) == 1
 
 
 def test_noncanonical_source_turn_is_rejected_without_advancing_watermark(game):
