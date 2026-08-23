@@ -1491,6 +1491,7 @@ class GameSession:
                             target_id=args.get("target_id"),
                             name=args.get("name"),
                             amount=args.get("amount"),
+                            transaction_category=args.get("transaction_category"),
                         ),
                     )
                     if stage_failures:
@@ -2335,6 +2336,7 @@ class GameSession:
         target_id: object = None,
         name: object = None,
         amount: object = None,
+        transaction_category: object = None,
     ) -> int:
         """API/stream/CLI tool propose_directive → structured candidate seam (#522/#517).
 
@@ -2424,6 +2426,7 @@ class GameSession:
                 punish_action=action,
                 emperor_text=message_text,
                 amount=n if action == "罚俸" else 0,
+                transaction_category=transaction_category,
             )
             if not pending_id:
                 failure = {

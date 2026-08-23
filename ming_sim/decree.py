@@ -848,15 +848,21 @@ def project_dossiers_for_simulator(
                 )
             )
             continue
-        # In-transit executing work, and just-promulgated payload-owned terminal
-        # effects (惩处/招抚等), need command/target context without re-materializing.
-        just_promulgated_terminal = (
+        # In-transit executing work and just-promulgated payload-owned work need
+        # command/target context without re-materializing.
+        just_promulgated_payload = (
             policy["effect_owner"] == "payload"
-            and policy.get("execution_surface") == "terminal"
+            and (
+                policy.get("execution_surface") == "terminal"
+                or (
+                    str(row.get("action_type") or "") == "punishment"
+                    and policy.get("execution_surface") == "in_transit"
+                )
+            )
             and str(row.get("settlement_verdict") or "") == "promulgated"
         )
         if admitted and (
-            str(row.get("status") or "") == "executing" or just_promulgated_terminal
+            str(row.get("status") or "") == "executing" or just_promulgated_payload
         ):
             execution_summary: Dict[str, object] = {
                 "command": str(row.get("decree_text") or "").strip(),
@@ -1889,12 +1895,19 @@ def pre_settle(
     # atomic + 最外层回滚后从 DB 重载（ADR 0008 决定 3 第三条）：apply_fixed_period_flows 直改了
     # state.metrics（flows.py:192）、尾部 turn_phase 已被赋 settling，脏 settling 会被下次 pre_settle
     # 守门跳过=该月财政永久丢（cmr S4 r1 F4）。嵌套时跳过 reload，由最外层拥有者处理。见 atomic_and_reload。
+    collector = RejectionCollector()
     try:
-        with atomic_and_reload(db, state, content=content, registry=registry):
+        with atomic_and_reload(
+            db, state, content=content, registry=registry,
+            on_error=lambda _exc: collector.reset(),
+        ):
             # 动作闸门(ADR 0006)：颁诏最前批量落库本回合暂存的结构化聊天写动作（密令更新/催办/任免/…），
             # 在跑 LLM 结算管线前，使 simulator/extractor 读到的盘面与旧「召对期直写」时序一致。
             # driver 路径无聊天暂存 → 空 no-op。幂等（committed 行不重跑）。
-            committed = db.commit_pending_actions(state, content=content, registry=registry)
+            committed = db.commit_pending_actions(
+                state, content=content, registry=registry,
+                rejection_collector=collector,
+            )
             if committed:
                 tlog(f"[pending_actions] 颁诏批量落库 {len(committed)} 条：{[(c['kind'], c['action']) for c in committed]}")
             fiscal_levies = apply_historical_fiscal_rates(state, db, commit=False)
@@ -1959,6 +1972,11 @@ def pre_settle(
     except BaseException as exc:
         raise_fixed_period_flow_abort_if_needed(db, state, exc)
         raise
+    if getattr(db.conn, "_atomic_depth", 0) == 0:
+        try:
+            collector.mirror_to_jsonl(rejections_jsonl_path())
+        except Exception as mirror_exc:
+            tlog(f"[rejection] jsonl 镜像失败（DB 行已落，仅副本丢失）：{mirror_exc}")
     return auto_triggered
 
 
