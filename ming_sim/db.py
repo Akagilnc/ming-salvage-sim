@@ -5045,6 +5045,7 @@ class GameDB:
         reason: str = "",
         reason_code: str | None = None,
         commit: bool = True,
+        content=None,
     ) -> None:
         """改人物状态：active/offstage/dismissed/imprisoned/exiled/retired/dead。
         大臣走 characters 表；后宫（consorts）走内存对象 + consort_traits 备档。
@@ -5066,12 +5067,19 @@ class GameDB:
                 "status_changed_turn=?, office='', reason_code=? WHERE name=?",
                 (status, reason[:200], state.turn, reason_code_value, name),
             )
-            self.set_character_transit(name, commit=False)
+            self.set_character_transit(name, content=content, commit=False)
         else:
             self.conn.execute(
                 "UPDATE characters SET status=?, status_reason=?, status_changed_turn=?, reason_code=? WHERE name=?",
                 (status, reason[:200], state.turn, reason_code_value, name),
             )
+        if content is not None and name in content.characters:
+            character = content.characters[name]
+            character.status = status
+            character.status_reason = reason[:200]
+            character.reason_code = reason_code_value
+            if ousted:
+                character.office = ""
         # #9：状态变更后全重算该人物所属朝堂派系 leverage（绝对值、读当前所有在朝成员 → 无漂移）。
         if prev is not None:
             self.recompute_faction_leverage(str(prev["faction"] or ""))
@@ -5529,7 +5537,8 @@ class GameDB:
                 continue
             name = r["name"]
             self.set_character_status(
-                state, name, "dead", f"历史卒于 {year}年{month or '?'}月", reason_code="历史卒"
+                state, name, "dead", f"历史卒于 {year}年{month or '?'}月",
+                reason_code="历史卒", content=self.content,
             )
             self.record_person_log(
                 state, name, "处置",
@@ -5564,7 +5573,8 @@ class GameDB:
                 continue
             name = r["name"]
             self.set_character_status(
-                state, name, "active", f"历史登场 {year}年{month or '?'}月", reason_code="登场"
+                state, name, "active", f"历史登场 {year}年{month or '?'}月",
+                reason_code="登场", content=self.content,
             )
             self.record_person_log(
                 state, name, "处置",
@@ -15503,13 +15513,8 @@ class GameDB:
                     f"宥赦不可回迁：{target} 当前状态={current_status or '(空)'}"
                 )
             self.set_character_status(
-                state, target, "active", reason, reason_code="", commit=False,
+                state, target, "active", reason, reason_code="", content=content, commit=False,
             )
-            if content is not None and target in content.characters:
-                ch = content.characters[target]
-                ch.status = "active"
-                ch.status_reason = reason
-                ch.reason_code = ""
             self.record_person_log(
                 state, target, "处置", payload_summary=punish_action,
                 source="punishment", origin_ref=origin_ref, commit=False,
@@ -16883,12 +16888,9 @@ class GameDB:
             _ch_key = content.characters.get(key)  # key 来自 _find_existing_minister 必在册，.get 防御一致（R2 gemini）
             if _ch_key is not None and is_vassal_prince(_ch_key):
                 return False
-            self.set_character_status(state, key, "dismissed", reason="奉旨罢黜")
-            ch = content.characters.get(key)
-            if ch is not None:
-                ch.status = "dismissed"
-                ch.office = ""   # set_character_status 已清 DB office,内存须跟上(roster 读 c.office)
-            self.set_character_transit(key, content=content)
+            self.set_character_status(
+                state, key, "dismissed", reason="奉旨罢黜", content=content,
+            )
             # 对话确认回合中落库,刷 Agent 让被罢者本回合后续不再以旧活跃态被召对(线上 gemini)。
             if registry is not None:
                 registry.refresh(key)

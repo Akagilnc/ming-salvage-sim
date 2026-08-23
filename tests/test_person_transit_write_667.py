@@ -4,6 +4,7 @@ import sys
 import pytest
 
 from ming_sim import issues
+from ming_sim.issues import apply_office_appointment
 from ming_sim.decree import reload_state_from_db
 from ming_sim.session import apply_appointment
 
@@ -184,6 +185,41 @@ def test_status_exit_clears_complete_transit_ledger(game, exit_path):
         character.transit_speed_factor,
         character.transit_start_turn,
     ) == ("dismissed", "", None, None, 0)
+
+
+@pytest.mark.parametrize(
+    ("starting_status", "appointment_reason", "expected_reason"),
+    [
+        ("active", "调任测试", ""),
+        ("dismissed", "起复测试", "起复测试"),
+    ],
+)
+def test_office_appointment_keeps_status_reason_mirrored(
+    game, starting_status, appointment_reason, expected_reason,
+):
+    db, state, content = game
+    name = _active(db)
+    character = content.characters[name]
+    db.conn.execute(
+        "UPDATE characters SET status=?, status_reason='旧缘由', reason_code='旧代码' WHERE name=?",
+        (starting_status, name),
+    )
+    character.status = starting_status
+    character.status_reason = "旧缘由"
+    character.reason_code = "旧代码"
+
+    result = apply_office_appointment(
+        db, state, content, None, name, "兵部尚书", reason=appointment_reason,
+    )
+
+    assert not result.get("rejected")
+    row = db.conn.execute(
+        "SELECT status, status_reason, reason_code FROM characters WHERE name=?", (name,),
+    ).fetchone()
+    assert tuple(row) == ("active", expected_reason, "")
+    assert (character.status, character.status_reason, character.reason_code) == (
+        "active", expected_reason, "",
+    )
 
 
 def test_invalid_tone_is_rejected_before_same_destination_idempotence(game):

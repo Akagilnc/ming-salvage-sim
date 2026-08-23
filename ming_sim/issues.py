@@ -6184,6 +6184,7 @@ def apply_office_appointment(
                     name,
                     "active",
                     reason[:200] or "诏书任命",
+                    content=content,
                     commit=commit,
                 )
             with _appointment_tenure_scope(db, appointment_tenure):
@@ -6197,22 +6198,15 @@ def apply_office_appointment(
                     "UPDATE characters SET status_reason='', reason_code='' WHERE name=?",
                     (name,),
                 )
+                if content is not None and name in content.characters:
+                    content.characters[name].status_reason = ""
+                    content.characters[name].reason_code = ""
                 if commit:
                     db.conn.commit()
             displaced_parts = _displace_duplicate_offices(
                 db, content, name, new_office, commit=commit
             )
             ch = content.characters[name]
-            ch.status = "active"
-            # 三面同步（决定6）：DB 写已定 status_reason/reason_code（active 路上方清空；
-            # 非 active 起复路由 set_character_status 写入起复缘由）——回读刷回内存 Character，
-            # 否则非 active 起复后内存滞留旧削籍/下狱缘由，DB 与内存不一致（5b r3 codex-b R1）。
-            _reason_row = db.conn.execute(
-                "SELECT status_reason, reason_code FROM characters WHERE name=?", (name,)
-            ).fetchone()
-            if _reason_row is not None:
-                ch.status_reason = str(_reason_row["status_reason"] or "")
-                ch.reason_code = str(_reason_row["reason_code"] or "")
             ch.office = new_office
             ch.office_type = new_office_type
             if registry is not None:
@@ -6544,16 +6538,9 @@ def _apply_person_changes(
                 status,
                 reason_text,
                 reason_code=reason_code if reason_code else None,
+                content=content,
                 commit=commit_person_change,
             )
-            if content is not None and name in content.characters:
-                ch = content.characters[name]
-                ch.status = status
-                ch.status_reason = reason_text
-                ch.reason_code = str(reason_code or "")
-                if status in {"offstage", "dismissed", "imprisoned", "exiled", "retired", "dead"}:
-                    ch.office = ""
-                    db.set_character_transit(name, content=content, commit=False)
             result = {
                 "name": name,
                 "动作": action,
@@ -6682,13 +6669,9 @@ def _apply_person_changes(
                         release_status,
                         derive_label,
                         reason_code="",
+                        content=content,
                         commit=False,
                     )
-                    if content is not None and name in content.characters:
-                        ch = content.characters[name]
-                        ch.status = release_status
-                        ch.office = ""
-                        db.set_character_transit(name, content=content, commit=False)
                 release_result = {
                     "name": name,
                     "动作": "处置",
