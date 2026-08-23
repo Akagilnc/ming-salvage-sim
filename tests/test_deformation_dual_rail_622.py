@@ -267,6 +267,10 @@ def test_ac5_audit_fork_signal_present_only_with_audit_link(game):
         target_id, state.turn, "已竣", "清丈全完、加派如额",
         is_terminal=False, commit=True,
     )
+    db.record_dossier_execution(
+        target_id, "transformed", "奏报与旨外实况相左", state.turn,
+        close=False, commit=True,
+    )
     db.record_issue_economy_move(
         state, "国库", 5, "浮收", "借旨行私",
         origin_ref=f"dossier:{target_id}", beyond_intent=True, commit=True,

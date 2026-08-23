@@ -5,6 +5,7 @@ from ming_sim.covert_levy import (
 from ming_sim.decree import project_dossiers_for_simulator
 from ming_sim.due_review import audience_todo_lane, build_due_review_input, list_due_review_scenes
 from ming_sim.simulation import EMPTY_EXTRACTION, MODULE_FIELDS, build_extractor_shared_context
+from ming_sim.beat_orchestration import assemble_beat_inputs, BEAT_OPEN
 
 
 def _bound_case(db, state):
@@ -56,6 +57,8 @@ def test_exposure_uses_single_dispatcher_and_projects_exact_case(game, monkeypat
     assert scene["dossier_id"] == did and scene["executor_id"] == executor
     assert scene["channels"] == ["稽核"]
     assert scene["scene_text"] == ""  # audience LLM receives facts, not a fixed memorial
+    beat = assemble_beat_inputs(db, state, beat_kind=BEAT_OPEN)
+    assert beat.audience_scenes and f'"dossier_id": {did}' in beat.audience_scenes[0]
     assert build_due_review_input(db, todo)["commitment_ref"] == issue_id
 
 
@@ -74,6 +77,11 @@ def test_pay_fact_reaches_both_production_judge_inputs(game):
     )
     issue_row = next(row for row in issues["decree_dossiers"] if row["id"] == did)
     assert issue_row["army_pay_fact"] == sim_row["army_pay_fact"]
+    internal = build_extractor_shared_context(
+        db, state, "", "", module="internal", decree_dossiers=simulator,
+    )
+    internal_row = next(row for row in internal["decree_dossiers"] if row["id"] == did)
+    assert internal_row["army_pay_fact"] == sim_row["army_pay_fact"]
 
 
 def test_rejected_canonical_results_neither_consume_nor_create_channel(game, monkeypatch):
@@ -98,6 +106,37 @@ def test_rejected_canonical_results_neither_consume_nor_create_channel(game, mon
     db.conn.execute("DELETE FROM next_audience_todos")
     db.conn.execute("DELETE FROM decree_dossier_links")
     assert write_exposure_todos(db, state, rejected) == 0
+
+
+def test_fork_requires_report_transformed_and_real_beyond_intent_effect(game):
+    db, state, _ = game
+    did, _, _, _ = _bound_case(db, state)
+    db.record_dossier_progress(did, state.turn, "有成", "饷事已有眉目", commit=False)
+    db.record_dossier_execution(did, "transformed", "暗中摊派", state.turn, close=False, commit=False)
+    assert db.read_dossier_fork_state(did)["fork"] is False
+
+
+def test_dispositions_require_their_complete_canonical_consequence(game, monkeypatch):
+    db, state, _ = game
+    did, _, _, executor = _bound_case(db, state)
+    monkeypatch.setattr(db, "read_dossier_fork_state", lambda dossier_id: {
+        "dossier_id": dossier_id, "fork": True, "reported_bands": ["有成"],
+        "execution_outcome": "transformed", "actual_effect_count": 1, "beyond_intent": True,
+    })
+    db.conn.execute("INSERT INTO decree_dossier_links(source_dossier_id,target_dossier_id,relation_type,note) VALUES (?,?, '稽核','查账')", (did, did))
+    assert write_exposure_todos(db, state) == 1
+    origin = f"dossier:{did}"
+    # A transfer alone is not tacit permission: the same case needs a durable beyond-intent leg.
+    assert settle_exposure_from_canonical_actions(db, state, {"population_transfers": [
+        {"origin_ref": origin, "reason": "摊派"}]}) == 0
+    assert db.list_next_audience_todos(status="pending")
+    # Investigation needs both a disposition of the case actor and its relationship/event cost.
+    assert settle_exposure_from_canonical_actions(db, state, {"applied_person_changes": [
+        {"name": executor, "动作": "处置"}]}) == 0
+    assert settle_exposure_from_canonical_actions(db, state, {
+        "applied_person_changes": [{"name": executor, "动作": "处置"}],
+        "relation_edge_events": [{"source": executor, "target": "朝臣", "origin_ref": origin}],
+    }) == 1
 
 
 def test_population_transfer_is_the_self_grown_unrest_channel(game, monkeypatch):
