@@ -629,19 +629,54 @@ def test_fact_brief_priority_provenance_ignores_later_noncausal_dossier(game):
     assert displaced[0]["origin_ref"] != f"dossier:{noncausal}"
 
 
-def test_fiscal_fact_brief_bad_json_fails_loud(game):
-    """F2①：坏 fiscal JSON / 缺 settle 基座 → ValueError 响亮失败，禁静默 continue（ADR 0005）。"""
+def test_fiscal_fact_brief_missing_settle_key_exits_dynamic_membership(game):
+    """F2①：合法 fiscal dict 缺 settle key 是合法非成员，不产该省事实。"""
     db, _state, _content = game
-    row = db.conn.execute("SELECT fiscal FROM regions WHERE id='henan'").fetchone()
-    original = row["fiscal"]
+    db.conn.execute("UPDATE regions SET fiscal='{}' WHERE id='henan'")
+    entries = build_fiscal_fact_brief(db)
+    assert not any(
+        e["subject_kind"] == "region" and e["subject_id"] == "henan"
+        for e in entries
+    )
+
+
+@pytest.mark.parametrize("bad_fiscal", [
+    "[]",
+    '{"settle": null}',
+    '{"settle": []}',
+    '{"settle": {"st": [], "p": {}}}',
+    '{"settle": {"st": {}, "p": []}}',
+])
+def test_fiscal_fact_brief_present_but_malformed_fails_loud(game, bad_fiscal):
+    """F2①：fiscal/settle key 已存在但容器或 st/p 畸形仍响亮失败。"""
+    db, _state, _content = game
+    db.conn.execute("UPDATE regions SET fiscal=? WHERE id='henan'", (bad_fiscal,))
+    with pytest.raises(ValueError):
+        build_fiscal_fact_brief(db)
+
+
+def test_fiscal_fact_brief_bad_json_fails_loud(game):
+    """F2①：坏 fiscal JSON 仍响亮失败（ADR 0005）。"""
+    db, _state, _content = game
     db.conn.execute("UPDATE regions SET fiscal='{bad json' WHERE id='henan'")
     with pytest.raises(ValueError):
         build_fiscal_fact_brief(db)
-    db.conn.execute("UPDATE regions SET fiscal='{}' WHERE id='henan'")
-    with pytest.raises(ValueError):
-        build_fiscal_fact_brief(db)
-    db.conn.execute("UPDATE regions SET fiscal=? WHERE id='henan'", (original,))
-    build_fiscal_fact_brief(db)  # 复原后照常
+
+
+def test_simulator_payload_accepts_recaptured_region_without_settle(game):
+    """真实 payload：收复/legacy 明控省缺基座时合法出列，不阻断月末推演。"""
+    from ming_sim.simulation import build_simulator_payload
+
+    db, state, _content = game
+    db.conn.execute(
+        "UPDATE regions SET controlled_by='ming', fiscal='{}' WHERE id='taiwan'"
+    )
+    payload = build_simulator_payload(state, db, "", "")
+    assert isinstance(payload["fiscal_fact_brief"], list)
+    assert not any(
+        e["subject_kind"] == "region" and e["subject_id"] == "taiwan"
+        for e in payload["fiscal_fact_brief"]
+    )
 
 
 def test_fiscal_fact_brief_haircut_and_relief_facts(game):
