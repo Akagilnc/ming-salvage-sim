@@ -8,14 +8,12 @@
 - settle=`POST /api/decree/issue/stream` 消费到终态
 - LLM 全 stub 于 registry/agent/分类器/确认/抽取/结算边界；断言判词→状态转移
 
-零写：模块级 autouse 钉真实 `~/.ak-roles` 与 `~/WorkSpace/Ming_LLM/data` 前后指纹不变。
+零写：所有可写目标在首个 HTTP 写入前机械钉入每例临时根。
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
-import os
 import re
 import time
 from pathlib import Path
@@ -29,6 +27,8 @@ import ming_sim.agents as agents_mod
 import ming_sim.cli_backend as cli_backend
 import ming_sim.decree as decree_mod
 import ming_sim.memories as memories_mod
+import ming_sim.llm_config as llm_config_mod
+import ming_sim.paths as paths_mod
 import ming_sim.mindreading as mindreading_mod
 import ming_sim.session as session_mod
 import web_app
@@ -55,188 +55,6 @@ S3_REJECT = {
     "E2S3": "朕再思之，不必查了",
     "E3S3": "算了",
 }
-
-# ── 真实 HOME 零写核验（模块级；HOME 被测例改写前钉死真路径）──────────
-
-# 模块 import 时钉死真实家目录（fixtures 改 HOME 之前）
-_REAL_HOME = Path(os.environ.get("HOME") or os.path.expanduser("~")).resolve()
-_REAL_AK_ROLES = (_REAL_HOME / ".ak-roles").resolve()
-_REAL_MING_DATA = (_REAL_HOME / "WorkSpace" / "Ming_LLM" / "data").resolve()
-
-
-# 内容摘要指纹：逐文件流式分块 sha256（防 GB 级全文载入）。
-# 元数据 (size/mtime/ctime) 漏检「等长改写后恢复 mtime」；内容摘要咬住真实写入。
-_CONTENT_HASH_CHUNK = 1024 * 1024  # 1 MiB 分块
-FileDigest = str  # hex sha256 of file bytes
-TreeSnapshot = Dict[str, FileDigest]
-
-
-def _file_content_digest(path: Path) -> FileDigest:
-    """流式分块 hash：不把整文件读入内存。"""
-    h = hashlib.sha256()
-    with open(path, "rb") as fh:
-        while True:
-            chunk = fh.read(_CONTENT_HASH_CHUNK)
-            if not chunk:
-                break
-            h.update(chunk)
-    return h.hexdigest()
-
-
-def _tree_paths(root: Path) -> TreeSnapshot:
-    """整树相对路径→内容摘要：os.walk 全覆盖，不跳 books/cases/ops/taishi 子目录。"""
-    if not root.is_dir():
-        return {}
-    root_res = root.resolve()
-    entries: TreeSnapshot = {}
-    for dirpath, _dirnames, filenames in os.walk(root_res, topdown=True):
-        rel_dir = str(Path(dirpath).resolve().relative_to(root_res)).replace(os.sep, "/")
-        if rel_dir == ".":
-            rel_dir = ""
-        for name in filenames:
-            rel = f"{rel_dir}/{name}".lstrip("/") if rel_dir else name
-            full = Path(dirpath) / name
-            try:
-                entries[rel] = _file_content_digest(full)
-            except OSError:
-                entries[rel] = "unreadable"
-    return entries
-
-
-def _tree_fingerprint(snapshot: TreeSnapshot) -> str:
-    """票面语义：sha256(sorted path + content-digest)——全树内容指纹。"""
-    h = hashlib.sha256()
-    for rel in sorted(snapshot):
-        line = f"{rel}\t{snapshot[rel]}"
-        h.update(line.encode("utf-8", "surrogateescape"))
-        h.update(b"\n")
-    return h.hexdigest()
-
-
-# 平台 harness 运行时路径（并发 pi 落盘，非产品写入；内容均为 type=session jsonl / ledger）：
-# - books/<book>/runs/* session 日志
-# - books/<book>/navigator/* navigator session（parentSession→runs）
-# - books/<book>/auditor-roles/* auditor session（parentSession→runs）
-# - books/<book>/waiting.jsonl activation ledger
-# 整树仍扫描；断言 diff 仅归因上述噪声，不跳过 books/cases/ops/taishi/issues。
-_HARNESS_RUNTIME_PATH_RE = re.compile(
-    r"^books/[^/]+/(?:runs/|navigator/|auditor-roles/|waiting\.jsonl$)"
-)
-
-
-def _snapshot_delta(before: TreeSnapshot, after: TreeSnapshot) -> set[str]:
-    """新增/删除/同路径内容摘要变化的相对路径。"""
-    keys = set(before) | set(after)
-    return {p for p in keys if before.get(p) != after.get(p)}
-
-
-def _non_harness_delta(before: TreeSnapshot, after: TreeSnapshot) -> set[str]:
-    delta = _snapshot_delta(before, after)
-    return {p for p in delta if not _HARNESS_RUNTIME_PATH_RE.match(p)}
-
-
-def assert_real_home_untouched(before: Dict[str, TreeSnapshot]) -> None:
-    """真实断言：两条生产路径整树内容摘要在非 harness-runtime 面上未变。"""
-    after_ak = _tree_paths(_REAL_AK_ROLES)
-    after_data = _tree_paths(_REAL_MING_DATA)
-    ak_delta = _non_harness_delta(before["ak_roles"], after_ak)
-    data_delta = _snapshot_delta(before["ming_data"], after_data)
-    assert not ak_delta, (
-        f"零写核验失败：真实 ~/.ak-roles 被写入"
-        f"（非整树 skip；已剔除 books/*/{{runs,navigator,auditor-roles,waiting.jsonl}} harness 噪声）: "
-        f"{sorted(ak_delta)[:20]!r}"
-    )
-    assert not data_delta, (
-        f"零写核验失败：真实 ~/WorkSpace/Ming_LLM/data 被写入: "
-        f"{sorted(data_delta)[:20]!r}"
-    )
-    # 指纹对照（整树，含 runs）供审计；失败以 delta 为准
-    _ = (_tree_fingerprint(before["ak_roles"]), _tree_fingerprint(after_ak))
-
-
-@pytest.fixture(autouse=True)
-def _zero_write_real_home():
-    """模块级 autouse：每格前后核验真实 HOME 整树内容摘要零写。"""
-    before = {
-        "ak_roles": _tree_paths(_REAL_AK_ROLES),
-        "ming_data": _tree_paths(_REAL_MING_DATA),
-    }
-    yield
-    assert_real_home_untouched(before)
-
-
-def test_zero_write_oracle_catches_same_path_rewrite(tmp_path):
-    """最小自验：同路径等长改写 + 恢复 mtime 仍被内容摘要检出（元数据指纹会漏）。"""
-    root = tmp_path / "zw_tree"
-    (root / "books" / "Ming_LLM" / "runs" / "sess").mkdir(parents=True)
-    (root / "books" / "Ming_LLM" / "navigator" / "hash").mkdir(parents=True)
-    (root / "books" / "Ming_LLM" / "auditor-roles").mkdir(parents=True)
-    (root / "books" / "Ming_LLM" / "cases").mkdir(parents=True)
-    kept = root / "kept.txt"
-    case_f = root / "books" / "Ming_LLM" / "cases" / "note.txt"
-    run_f = root / "books" / "Ming_LLM" / "runs" / "sess" / "log.txt"
-    nav_f = root / "books" / "Ming_LLM" / "navigator" / "hash" / "sess.jsonl"
-    aud_f = root / "books" / "Ming_LLM" / "auditor-roles" / "sess.jsonl"
-    wait_f = root / "books" / "Ming_LLM" / "waiting.jsonl"
-    kept.write_bytes(b"AAAA")
-    case_f.write_bytes(b"CCCC")
-    run_f.write_bytes(b"RRRR")
-    nav_f.write_bytes(b"NNNN")
-    aud_f.write_bytes(b"AAAA")
-    wait_f.write_bytes(b"WWWW")
-    before = _tree_paths(root)
-    kept_stat = os.lstat(kept)
-    kept_atime_ns = getattr(kept_stat, "st_atime_ns", int(kept_stat.st_atime * 1_000_000_000))
-    kept_mtime_ns = int(kept_stat.st_mtime_ns)
-
-    # 同路径、等长覆写后恢复 mtime：路径集合与元数据可不变，内容摘要须变
-    kept.write_bytes(b"BBBB")
-    os.utime(kept, ns=(kept_atime_ns, kept_mtime_ns))
-    after_stat = os.lstat(kept)
-    assert int(after_stat.st_size) == int(kept_stat.st_size), "自验前提：等长改写"
-    assert int(after_stat.st_mtime_ns) == kept_mtime_ns, "自验前提：mtime 已恢复"
-    after_rewrite = _tree_paths(root)
-    assert set(before) == set(after_rewrite), "自验前提：等长覆写不得增删路径"
-    rewrite_delta = _snapshot_delta(before, after_rewrite)
-    assert "kept.txt" in rewrite_delta, (
-        f"同路径等长改写+恢复 mtime 须被内容摘要捕获: delta={sorted(rewrite_delta)!r}"
-    )
-    assert before["kept.txt"] != after_rewrite["kept.txt"]
-    assert _tree_fingerprint(before) != _tree_fingerprint(after_rewrite)
-
-    # harness runs/navigator/auditor-roles/waiting 可归因过滤；其它目录（含 books/*/cases）不得跳过
-    def _touch_eq(path: Path, data: bytes) -> None:
-        st = os.lstat(path)
-        atime_ns = getattr(st, "st_atime_ns", int(st.st_atime * 1_000_000_000))
-        mtime_ns = int(st.st_mtime_ns)
-        path.write_bytes(data)
-        os.utime(path, ns=(atime_ns, mtime_ns))
-
-    _touch_eq(case_f, b"DDDD")
-    _touch_eq(run_f, b"SSSS")
-    _touch_eq(nav_f, b"OOOO")
-    _touch_eq(aud_f, b"BBBB")
-    _touch_eq(wait_f, b"XXXX")
-    after_mixed = _tree_paths(root)
-    mixed = _non_harness_delta(after_rewrite, after_mixed)
-    assert "books/Ming_LLM/cases/note.txt" in mixed, (
-        f"非 harness 目录改写不得被归因吞掉: delta={sorted(mixed)!r}"
-    )
-    assert not any(_HARNESS_RUNTIME_PATH_RE.match(p) for p in mixed), (
-        f"books/*/{{runs,navigator,auditor-roles,waiting.jsonl}} 噪声应被归因过滤: "
-        f"delta={sorted(mixed)!r}"
-    )
-    # 显式钉四类 harness 路径被过滤（raw delta 含之，non_harness 不含）
-    raw_mixed = _snapshot_delta(after_rewrite, after_mixed)
-    for harness_rel in (
-        "books/Ming_LLM/runs/sess/log.txt",
-        "books/Ming_LLM/navigator/hash/sess.jsonl",
-        "books/Ming_LLM/auditor-roles/sess.jsonl",
-        "books/Ming_LLM/waiting.jsonl",
-    ):
-        assert harness_rel in raw_mixed, f"自验前提：{harness_rel} 须在 raw delta"
-        assert harness_rel not in mixed, f"{harness_rel} 须被 harness 归因过滤"
-
 
 # ── LLM / 结算边界 stub ────────────────────────────────────────────────
 
@@ -417,6 +235,25 @@ class _ClassifierStub:
 # ── 公共 fixture：临时 HOME/DB + TestClient ─────────────────────────────
 
 
+def _assert_write_targets_within(root: Path, targets: list[Path]) -> None:
+    """机械边界：本矩阵已知的每个可写目标必须落在本例临时根内。"""
+    resolved_root = root.resolve()
+    escaped = []
+    for target in targets:
+        resolved = target.resolve()
+        try:
+            resolved.relative_to(resolved_root)
+        except ValueError:
+            escaped.append(str(resolved))
+    assert not escaped, f"写目标越出临时根 {resolved_root}: {escaped!r}"
+
+
+def test_write_boundary_rejects_target_outside_case_root(tmp_path):
+    """负例不写盘：伪造根外目标时，零写边界必须响亮失败。"""
+    with pytest.raises(AssertionError, match="写目标越出临时根"):
+        _assert_write_targets_within(tmp_path / "case", [tmp_path / "outside.db"])
+
+
 @pytest.fixture
 def matrix_env(tmp_path, monkeypatch, _offline_scene_beat_generator):
     """临时 HOME + user_data/DB；CLI 通道以便 E3 分类器路径可达；LLM 全 stub。"""
@@ -431,6 +268,20 @@ def matrix_env(tmp_path, monkeypatch, _offline_scene_beat_generator):
     # CLI 通道：E3 无前缀分类器路径；E1/E2 前缀仍确定性路由
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
     monkeypatch.delenv("MING_SIM_DB", raising=False)
+
+    # 首个 HTTP 写入前先钉所有路径解析 seam；越界目标在触盘前即失败。
+    _assert_write_targets_within(
+        tmp_path,
+        [
+            Path.home(),
+            paths_mod.user_data_dir(),
+            Path(web_app.UPLOAD_PORTRAIT_DIR),
+            Path(llm_config_mod.RUNTIME_LLM_PATH),
+            Path(web_app._active_db_path_file()),
+            Path(web_app._get_main_db_path()),
+            ud / "ming_sim_generated.db",
+        ],
+    )
 
     _install_settlement_llm_stubs(monkeypatch)
 
@@ -460,6 +311,14 @@ def matrix_env(tmp_path, monkeypatch, _offline_scene_beat_generator):
     assert new.status_code == 200, new.text
     game = web_app.web_game
     assert game is not None
+    _assert_write_targets_within(
+        tmp_path,
+        [
+            Path(web_app._active_db_path_file()),
+            Path(web_app._get_main_db_path()),
+            Path(game.db.path),
+        ],
+    )
     # 大臣回话 agent 边界
     game.session.registry.get = lambda _ch: _CannedAgent()
     # 强制 CLI 通道（runtime 可能被 load 覆盖）
