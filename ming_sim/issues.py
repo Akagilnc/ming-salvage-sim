@@ -4601,24 +4601,6 @@ def _strategic_event_result_preflight_error(
                             )
             if action != "行止":
                 continue
-            row = db.conn.execute(
-                "SELECT location, transit_to FROM characters WHERE name = ?",
-                (name,),
-            ).fetchone()
-            if row is None:
-                continue
-            new_location = str(item.get("location") or "").strip()
-            new_transit_to = str(item.get("transit_to") or "").strip()
-            old_location = str(row["location"] or "")
-            old_transit_to = str(row["transit_to"] or "")
-            target_location = new_location or old_location
-            if target_location == old_location and new_transit_to == old_transit_to:
-                return _noop_error(
-                    "person",
-                    name,
-                    "行止",
-                    {"location": target_location, "transit_to": new_transit_to},
-                )
         snapshot = _snapshot_person_write_state(db, content)
         results: List[Dict[str, object]] = []
         db.conn.execute("SAVEPOINT strategic_person_result_preflight")
