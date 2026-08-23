@@ -580,6 +580,8 @@ class Army:
     self_funded_pay: int = 0
     mutiny_status: str = ""
     is_mutinied: int = 0
+    mutiny_count: int = 0
+    mutiny_probation: int = 0
 
 
 @dataclass
