@@ -74,6 +74,11 @@ def test_seed_document_validation_is_fail_closed():
         validate_seed_document(_doc({"year": 1627, "period": 10}), opening_year=1627, opening_period=10)
     with pytest.raises(ValueError, match="早于开局"):
         validate_seed_document(_doc({"year": 1628, "period": 1}), opening_year=1627, opening_period=10)
+    for invalid_year in (0, -1):
+        with pytest.raises(ValueError, match=r"year 非法（须 >= 1）"):
+            validate_seed_document(
+                _doc({"year": invalid_year}), opening_year=1627, opening_period=10
+            )
     with pytest.raises(ValueError, match="context"):
         validate_seed_document(_doc({"context": "   "}), opening_year=1627, opening_period=10)
     with pytest.raises(ValueError, match="两端不得相同"):
@@ -99,6 +104,10 @@ def test_seed_document_validation_is_fail_closed():
     # 合法文档归一：turn 刻度非正、词表过验。
     normalized = validate_seed_document(_doc(), opening_year=1627, opening_period=10)
     assert normalized["events"][0]["turn"] == pregame_turn(1625, 4) < 0
+    earliest = validate_seed_document(
+        _doc({"year": 1, "period": 1}), opening_year=1627, opening_period=10
+    )
+    assert earliest["events"][0]["year"] == 1
 
     duplicate = _doc(summaries=[
         {"source": "甲", "target": "乙", "founding_lines": ["一"]},
