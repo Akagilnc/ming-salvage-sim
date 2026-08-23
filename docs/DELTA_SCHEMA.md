@@ -113,7 +113,7 @@ canonical 段形＝list，每条记录**同时表达两条腿**：applier 读一
 
 ### `surcharge_decrees` — 下旨加派（#650/ADR 0089 明渠）
 
-canonical 段形＝list，每项落一道加派旨：逐省累积账当回合落库（P1），钱面由饷率通道折入三鴗应征（真征收），民面由结算按账机械驱动农民→流民入池（确定性口径、clamp，非 LLM 报数——**禁再为同一道加派另报 `population_transfers`**，环后半段只认账不认来源）。
+canonical 段形＝list，每项落一道加派旨：逐省累积账当回合落库（P1），钱面由饷率通道折入三饷应征（真征收），民面由结算按账机械驱动农民→流民入池（确定性口径、clamp，非 LLM 报数——**禁再为同一道加派另报 `population_transfers`**，环后半段只认账不认来源）。
 
 | 字段 | 约束 |
 |---|---|
@@ -122,7 +122,7 @@ canonical 段形＝list，每项落一道加派旨：逐省累积账当回合落
 | `reason` | 可选 ≤120 字 |
 | `origin_ref` | **必填** `dossier:<id>`（须存在且已颁）或精确哨兵 `盘面自发` |
 
-- item 字段中英别名：`地区编号`/`省份`→region_id、`月增额`/`月额`→monthly_amount。
+- item 字段中英别名：`地区编号`→region_id、`月增额`/`月额`→monthly_amount。
 - 无旨不入账：段空＝累积账不动；停征后入池止（出口回流归 S5 #652）。
 
 ### `region_delta` — 地区变化
