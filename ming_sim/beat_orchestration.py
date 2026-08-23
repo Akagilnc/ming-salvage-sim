@@ -236,7 +236,7 @@ def assemble_beat_inputs(
         from ming_sim.due_review import list_due_review_scenes
         current = next(
             (scene for scene in list_due_review_scenes(db, state)
-             if scene.get("kind") == "covert_levy_exposure" and not scene.get("decision")),
+             if scene.get("kind") == "covert_levy_exposure"),
             None,
         )
         audience_scenes = (() if current is None else (

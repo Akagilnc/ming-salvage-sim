@@ -7904,6 +7904,15 @@ def apply_score_extraction(
         if origin_error:
             applied_fiscal_removes.append({**origin_error, "item": remove})
             continue
+        from ming_sim.covert_levy import stopped_covert_effect
+        if stopped_covert_effect(
+            db, origin_ref=origin_ref, beyond_intent=remove.get("beyond_intent"),
+        ):
+            applied_fiscal_removes.append({
+                "rejected": True, "category": "forbidden_effect",
+                "reason": "该旧案暗渠摊派已奉旨禁绝", "item": remove,
+            })
+            continue
         removed_key = db.remove_fiscal_item(
             key, commit=commit_now, origin_ref=origin_ref,
             reason=str(remove.get("reason") or ""), turn=state.turn,
@@ -7965,6 +7974,15 @@ def apply_score_extraction(
         origin_error = db.effect_origin_rejection(origin_ref)
         if origin_error:
             applied_fiscal_creates.append({**origin_error, "item": create})
+            continue
+        from ming_sim.covert_levy import stopped_covert_effect
+        if stopped_covert_effect(
+            db, origin_ref=origin_ref, beyond_intent=create.get("beyond_intent"),
+        ):
+            applied_fiscal_creates.append({
+                "rejected": True, "category": "forbidden_effect",
+                "reason": "该旧案暗渠摊派已奉旨禁绝", "item": create,
+            })
             continue
         # Dedup is a business rule, not an authorization gate.  It must only see
         # a shape-valid, canonically authorized carrier; otherwise it can hide a
@@ -8069,8 +8087,7 @@ def apply_score_extraction(
         origin_ref = str(change.get("origin_ref") or "").strip()
         from ming_sim.covert_levy import stopped_covert_effect
         if stopped_covert_effect(
-            db, origin_ref=origin_ref,
-            beyond_intent=change.get("beyond_intent"), reason=change.get("reason"),
+            db, origin_ref=origin_ref, beyond_intent=change.get("beyond_intent"),
         ):
             applied_fiscal.append({
                 "rejected": True, "category": "forbidden_effect",
