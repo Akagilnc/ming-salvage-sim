@@ -44,6 +44,7 @@ from ming_sim.relations import SUMMON_EDGE_ORIGIN_PREFIX
 from ming_sim.participant_roster import (
     participant_roster_names,
     project_execution_liability_parties,
+    resolve_dossier_owner_name,
 )
 from ming_sim.person_archive_contract import PERSON_TITLE_KINDS
 from ming_sim.qualitative import (
@@ -13332,6 +13333,21 @@ class GameDB:
         self._validate_participant_roster_references(roster)
         self._validate_dossier_delegations(roster)
 
+        # #721：职司路由只补 0053 主办档；顺颁/initiative 仍读 executor_id。
+        # 分类交办故意不带 assignee，必须在同一 INSERT 把首名主办回写成承办人，
+        # 否则 apply_dossier_promulgation 以空 executor 响亮中止整批判决。
+        canonical_executor_kind = str(executor_kind or "").strip()
+        canonical_executor_id = str(executor_id or "").strip()
+        if not canonical_executor_id:
+            for item in roster:
+                if str(item.get("tier") or "").strip() != "主办":
+                    continue
+                lead_name = str(item.get("character_id") or "").strip()
+                if lead_name:
+                    canonical_executor_kind = canonical_executor_kind or "character"
+                    canonical_executor_id = lead_name
+                    break
+
         owns_rejection_collector = rejection_collector is None
         if route["rejection"] is not None:
             from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
@@ -13372,7 +13388,7 @@ class GameDB:
             """,
             (
                 action, canonical_target_kind, canonical_target_id,
-                str(executor_kind or ""), str(executor_id or ""),
+                canonical_executor_kind, canonical_executor_id,
                 source_turn_id, int(pending_action_id or 0),
                 None if int(directive_id or 0) <= 0 else int(directive_id),
                 None if secret_order_id is None else int(secret_order_id),
@@ -14500,10 +14516,17 @@ class GameDB:
                     state, row, payload, dossier_id,
                 )
             elif row["action_type"] == "assignment":
-                if not str(row.get("executor_id") or ""):
+                owner = resolve_dossier_owner_name(row)
+                signal = row.get("execution_signal") or {}
+                idle_start = (
+                    isinstance(signal, dict)
+                    and str(signal.get("code") or "") == "idle_start"
+                )
+                if not owner and not idle_start:
                     raise ValueError("交办案卷缺少 executor")
                 # #520 / ADR 0055：交办机械效果=initiative，顺颁后落；cap 逐项软拒。
-                if not self._apply_assignment_verdict_effect(
+                # ADR 0117 缺位怠办起步：无人可承则不建 initiative，落入 executing。
+                if owner and not self._apply_assignment_verdict_effect(
                     state, row, payload, dossier_id,
                 ):
                     return
@@ -15400,12 +15423,13 @@ class GameDB:
             apply_score_extraction,
         )
 
-        owner = str(
-            row.get("executor_id")
-            or payload.get("assignee_id")
-            or payload.get("assignee")
-            or ""
-        ).strip()
+        owner = resolve_dossier_owner_name(row)
+        if not owner:
+            owner = str(
+                payload.get("assignee_id")
+                or payload.get("assignee")
+                or ""
+            ).strip()
         if not owner:
             raise ValueError("交办案卷缺少 executor")
 
