@@ -1154,6 +1154,9 @@ def close_night(
 
     with gate:
         night = get_night(db, night_id)
+        source_night_roster = {
+            row["name"] for row in db.current_court_roster_rows(state)
+        }
     if night is None:
         raise AudienceNightError(f"夜不存在：{night_id}", code="night_not_found")
     if night["status"] == NIGHT_STATUS_CLOSED:
@@ -1282,6 +1285,24 @@ def close_night(
             _cleanup_close_scene_early(early_exc)
         raise
 
+    # Start the judge as a sibling in the existing close registry before ordinary
+    # catch-up, so its provider wait overlaps story/endorsement/close-scene work.
+    def _run_close_judge() -> str:
+        from ming_sim.relation_judge import run_summon_relation_judge
+        result = run_summon_relation_judge(
+            db, state, llm_config=llm_config, write_gate=write_gate,
+            night_id=int(night_id), allowed_endpoint_names=source_night_roster,
+        )
+        if isinstance(result, dict) and result.get("degraded"):
+            logger.warning("relation judge sweep degraded night_id=%s: %s", night_id, result["degraded"])
+        return ""
+
+    judge_started = bool(close_ctid and reg is not None and hasattr(reg, "start_auxiliary"))
+    if judge_started:
+        reg.start_auxiliary(int(close_ctid), _run_close_judge)
+    else:
+        _run_close_judge()
+
     # ── Phase 2: gate-free ordinary catch-up + endorsement-only LLM ────────
     # Ordinary story drain (LLM outside settle lock). CLOSING restore drain =
     # ADR 0036 崩溃恢复口；OPEN 期 join 已汇合在飞 owner，此处只清真欠账。
@@ -1291,19 +1312,6 @@ def close_night(
             db, int(night_id), llm_config=llm_config, write_gate=write_gate,
             extractor_agent=extractor_agent,
         )
-        # #634 收夜扫尾（ADR 0082 有界尾调用）：补判判官水位后残段——回话内新生
-        # 事件在召对结束前完成落库。降级（LLM 失败/坏输出）不阻关窗：响亮留痕、
-        # 窗口保持开放，欠账由任何后续拍/扫尾机会全局补判（判官漏判不阻塞主链；
-        # 对话原文持久，无内容丢失面）。
-        from ming_sim.relation_judge import run_summon_relation_judge
-        sweep_res = run_summon_relation_judge(
-            db, state, llm_config=llm_config, write_gate=write_gate,
-        )
-        if isinstance(sweep_res, dict) and sweep_res.get("degraded"):
-            logger.warning(
-                "relation judge sweep degraded night_id=%s: %s",
-                int(night_id), sweep_res.get("degraded"),
-            )
     except Exception as drain_exc:
         from ming_sim.exceptions import LLMUnavailable
 

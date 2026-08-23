@@ -8851,21 +8851,41 @@ class GameDB:
 
     # ----- #634 召对判官水位（ADR 0082：逐轮标记即水位，无平行水位表）-----
 
-    def list_unjudged_completed_chat_turns(self) -> List[Dict[str, Any]]:
-        """#634 判官窗口：已完成（active 且有回话入档）且判官未判的对话轮，id 升序。
+    def list_unjudged_completed_chat_turns(
+        self, night_id: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Return one night's unjudged output targets, never a cross-night window.
 
-        generating / failed / interrupted / undone 不进窗——在飞轮由下一拍或收夜扫尾
-        捕获（ADR 0082 时序），撤回轮翻 undone 后天然出窗（水位回退语义）。
-        全库口径（不限夜）：扫尾降级留下的欠账在任何后续机会都能被补判，不因夜关永久丢失。
+        Without an explicit night, the oldest outstanding turn chooses the batch.
+        Legacy ``night_id=0`` is an ordinary, isolated batch of its own.
         """
+        nid = int(night_id) if night_id is not None else None
+        if nid is None:
+            first = self.conn.execute(
+                """SELECT night_id FROM chat_turns
+                   WHERE status='active' AND minister_message_id > 0
+                     AND relation_judge_status=''
+                   ORDER BY id LIMIT 1""",
+            ).fetchone()
+            if first is None:
+                return []
+            nid = int(first["night_id"] or 0)
         rows = self.conn.execute(
-            """
-            SELECT * FROM chat_turns
-            WHERE status = 'active'
-              AND minister_message_id IS NOT NULL AND minister_message_id > 0
-              AND relation_judge_status = ''
-            ORDER BY id ASC
-            """,
+            """SELECT * FROM chat_turns
+               WHERE status='active' AND minister_message_id > 0
+                 AND relation_judge_status='' AND night_id=?
+               ORDER BY id""",
+            (nid,),
+        ).fetchall()
+        return [self._row_dict(r) for r in rows]
+
+    def list_relation_judge_context(self, night_id: int, through_id: int) -> List[Dict[str, Any]]:
+        """Completed active context for a night through this batch's high-water turn."""
+        rows = self.conn.execute(
+            """SELECT * FROM chat_turns
+               WHERE status='active' AND minister_message_id > 0
+                 AND night_id=? AND id <= ? ORDER BY id""",
+            (int(night_id), int(through_id)),
         ).fetchall()
         return [self._row_dict(r) for r in rows]
 
