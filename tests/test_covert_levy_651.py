@@ -1,12 +1,16 @@
 from ming_sim.covert_levy import (
-    ENTRY_KIND, army_pay_fact_for_dossier,
-    settle_exposure_from_canonical_actions, write_exposure_todos,
+    ENTRY_KIND, PROHIBITION_ACTION, active_prohibition_dossier,
+    army_pay_fact_for_dossier, settle_exposure_from_canonical_actions,
+    write_exposure_todos,
 )
 from ming_sim.decree import project_dossiers_for_simulator
 from ming_sim.issues import apply_score_extraction
 from ming_sim.due_review import audience_todo_lane, build_due_review_input, list_due_review_scenes
 from ming_sim.simulation import EMPTY_EXTRACTION, MODULE_FIELDS, build_extractor_shared_context
 from ming_sim.beat_orchestration import assemble_beat_inputs, BEAT_OPEN
+from ming_sim.action_clusters import candidates_from_classifier_payload
+from ming_sim.action_materialize import MaterializeCtx, run_materialize_pipeline
+from types import SimpleNamespace
 
 
 def _bound_case(db, state):
@@ -61,6 +65,37 @@ def test_exposure_uses_single_dispatcher_and_projects_exact_case(game, monkeypat
     beat = assemble_beat_inputs(db, state, beat_kind=BEAT_OPEN)
     assert beat.audience_scenes and f'"dossier_id": {did}' in beat.audience_scenes[0]
     assert build_due_review_input(db, todo)["commitment_ref"] == issue_id
+
+
+def test_natural_prohibition_binds_only_current_case_and_is_night_approved(game, monkeypatch):
+    db, state, _ = game
+    first, _, first_army, actor = _bound_case(db, state)
+    second, _, _, _ = _bound_case(db, state)
+    _exposed_todo(db, state, monkeypatch, first)
+    _exposed_todo(db, state, monkeypatch, second)
+    db.conn.execute("UPDATE armies SET arrears=5 WHERE id=?", (first_army,))
+    candidates = candidates_from_classifier_payload(
+        [{"kind": "prohibit_covert_levy"}], soft=False,
+    )
+    ctx = MaterializeCtx(
+        session=SimpleNamespace(db=db, state=state),
+        character=SimpleNamespace(name=actor),
+        player_message="此等借饷扰民之举，即刻禁绝。", reply="臣领旨。",
+        message_text="此等借饷扰民之举，即刻禁绝。", explicit_prefixed=False,
+        has_directive=False, pend_for_minister=[], out={}, intent=None,
+        intent_kind="none", llm_config=None, intent_candidates=candidates,
+    )
+    run_materialize_pipeline(ctx)
+    pending = db.conn.execute(
+        "SELECT payload_json,night_approved FROM pending_actions WHERE id=?",
+        (ctx.out["pending_action_id"],),
+    ).fetchone()
+    import json
+    payload = json.loads(pending["payload_json"])
+    assert payload["dossier_action_type"] == PROHIBITION_ACTION
+    assert payload["target_kind"] == "dossier" and payload["target_id"] == str(first)
+    assert pending["night_approved"] == 1
+    assert ctx.out["suppress_confirmation_cue"] is True
 
 
 def test_pay_fact_reaches_both_production_judge_inputs(game):
@@ -164,7 +199,20 @@ def test_dispositions_consume_only_real_canonical_complete_legs(game, monkeypatc
     assert settle_exposure_from_canonical_actions(db, state, complete) == 1
 
 
-def test_tacit_and_prohibition_use_real_applier_receipts_and_are_idempotent(game, monkeypatch):
+def _promulgated_prohibition(db, state, exposed_id):
+    prohibition_id = db.create_decree_dossier(
+        state, action_type=PROHIBITION_ACTION, decree_text="严禁借饷摊派于民",
+        target_kind="dossier", target_id=exposed_id,
+        executor_kind="character", executor_id="王承恩",
+    )
+    db.conn.execute(
+        "UPDATE decree_dossiers SET status='closed', promulgation_decision='promulgated' WHERE id=?",
+        (prohibition_id,),
+    )
+    return prohibition_id
+
+
+def test_tacit_and_prohibition_use_real_canonical_identity_and_are_idempotent(game, monkeypatch):
     db, state, content = game
     did, _, army_id, _ = _bound_case(db, state)
     _exposed_todo(db, state, monkeypatch, did)
@@ -172,13 +220,16 @@ def test_tacit_and_prohibition_use_real_applier_receipts_and_are_idempotent(game
     key = next(iter(db.get_fiscal_config()))
     db.conn.execute("UPDATE armies SET arrears=10 WHERE id=?", (army_id,))
 
-    # A canonical stop effect can legally bind the closed source dossier; no second execution is written.
-    stopped = apply_score_extraction(db, state, {"fiscal_changes": [{
+    # An unrelated ordinary fiscal receipt must not impersonate the terminal order.
+    unrelated = apply_score_extraction(db, state, {"fiscal_changes": [{
         "key": key, "delta": 1, "origin_ref": origin, "beyond_intent": False,
     }]}, content, None)
-    assert stopped["fiscal_changes"][0]["origin_ref"] == origin
-    assert settle_exposure_from_canonical_actions(db, state, stopped) == 1
-    assert settle_exposure_from_canonical_actions(db, state, stopped) == 0
+    assert unrelated["fiscal_changes"] and not unrelated["fiscal_changes"][0].get("rejected")
+    assert settle_exposure_from_canonical_actions(db, state, unrelated) == 0
+    prohibition_id = _promulgated_prohibition(db, state, did)
+    assert active_prohibition_dossier(db, did)["id"] == prohibition_id
+    assert settle_exposure_from_canonical_actions(db, state, {}) == 1
+    assert settle_exposure_from_canonical_actions(db, state, {}) == 0
     scene = list_due_review_scenes(db, state)[0]
     assert scene["decision"] == "禁摊派" and scene["shortfall_reopened"] is True
     assert scene["available_dispositions"] == []
@@ -201,6 +252,31 @@ def test_tacit_and_prohibition_use_real_applier_receipts_and_are_idempotent(game
         **tacit, "fiscal_changes": [],
     }) == 0
     assert settle_exposure_from_canonical_actions(db, state, tacit) == 1
+
+
+def test_prohibition_blocks_only_new_covert_legs_from_its_target(game):
+    db, state, content = game
+    did, _, _, _ = _bound_case(db, state)
+    other_did, _, _, _ = _bound_case(db, state)
+    _promulgated_prohibition(db, state, did)
+    key = next(iter(db.get_fiscal_config()))
+    extracted = {
+        "fiscal_changes": [
+            {"key": key, "delta": 1, "origin_ref": f"dossier:{did}", "beyond_intent": True},
+            {"key": key, "delta": 1, "origin_ref": f"dossier:{other_did}", "beyond_intent": True},
+        ],
+        "population_transfers": [{
+            "source": "农民@shaanxi", "target": "流民@shaanxi", "amount": 1,
+            "reason": "摊派", "origin_ref": f"dossier:{did}",
+        }],
+    }
+    result = apply_score_extraction(
+        db, state, extracted, content, None, dossier_ids_at_input={did, other_did},
+    )
+    assert result["fiscal_changes"][0]["category"] == "forbidden_effect"
+    assert not result["fiscal_changes"][1].get("rejected")
+    assert result["population_transfers"] == []
+    assert result["population_transfers_rejections"][0]["category"] == "forbidden_effect"
 
 
 def test_population_transfer_is_the_self_grown_unrest_channel(game, monkeypatch):

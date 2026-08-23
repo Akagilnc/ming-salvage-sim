@@ -8067,6 +8067,16 @@ def apply_score_extraction(
             })
             continue
         origin_ref = str(change.get("origin_ref") or "").strip()
+        from ming_sim.covert_levy import stopped_covert_effect
+        if stopped_covert_effect(
+            db, origin_ref=origin_ref,
+            beyond_intent=change.get("beyond_intent"), reason=change.get("reason"),
+        ):
+            applied_fiscal.append({
+                "rejected": True, "category": "forbidden_effect",
+                "reason": "该旧案暗渠摊派已奉旨禁绝", "item": change,
+            })
+            continue
         origin_error = db.effect_origin_rejection(origin_ref)
         if origin_error:
             applied_fiscal.append({**origin_error, "item": change})

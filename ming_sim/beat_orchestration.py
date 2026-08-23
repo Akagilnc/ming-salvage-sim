@@ -234,11 +234,14 @@ def assemble_beat_inputs(
     audience_scenes: Tuple[str, ...] = ()
     if beat_kind == BEAT_OPEN:
         from ming_sim.due_review import list_due_review_scenes
-        audience_scenes = tuple(
-            json.dumps(scene, ensure_ascii=False, sort_keys=True)
-            for scene in list_due_review_scenes(db, state)
-            if scene.get("kind") == "covert_levy_exposure"
+        current = next(
+            (scene for scene in list_due_review_scenes(db, state)
+             if scene.get("kind") == "covert_levy_exposure" and not scene.get("decision")),
+            None,
         )
+        audience_scenes = (() if current is None else (
+            json.dumps(current, ensure_ascii=False, sort_keys=True),
+        ))
 
     return BeatInputs(
         beat_kind=beat_kind,
