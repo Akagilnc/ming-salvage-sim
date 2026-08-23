@@ -1131,11 +1131,6 @@ def build_extractor_tools(context: CourtContext):
                               stop_condition 只收 dict，如 {"army.guanning.arrears":"<=0"}；
                               承诺落库后自动 inertia=0,cancellable="decree"
                             来源(b) origin_kind:"event_pool"——只两字段：origin_kind+"id"(从candidate_events选)
-                            来源(c) candidate_events 中 origin_kind:"impeachment_surge" 的动态发难候选——
-                              发难派系角色按 faction_persona 自主决定是否输出、标靶与归因；不输出即不发难。
-                              输出只含 origin_kind:"impeachment_surge",candidate_id(候选 id),
-                              faction_hint(候选 faction_id),participant_roster(标靶，须从 eligible_target_ids 选),
-                              title,stage_text；title/stage_text 自由生成，不复写候选事实字段。
                             一锤子事（当回合即办结）不立局势，直接落metric_delta等
         cancels             撤销局势 [{issue_id,applied_cost,narrative}]
         close_issues        结案/失败/到期待裁承诺ACK [{issue_id,reason(resolved/failed/acknowledged),narrative}]
