@@ -78,6 +78,16 @@ def test_seed_document_validation_is_fail_closed():
         validate_seed_document(_doc({"context": "   "}), opening_year=1627, opening_period=10)
     with pytest.raises(ValueError, match="两端不得相同"):
         validate_seed_document(_doc({"target": "甲"}), opening_year=1627, opening_period=10)
+    for field in ("source", "target"):
+        with pytest.raises(ValueError, match="首尾空白"):
+            validate_seed_document(_doc({field: " 甲"}), opening_year=1627, opening_period=10)
+        with pytest.raises(ValueError, match="首尾空白"):
+            validate_seed_document(
+                _doc(summaries=[{
+                    "source": "甲", "target": "乙 ", "founding_lines": [],
+                }]),
+                opening_year=1627, opening_period=10,
+            )
     with pytest.raises(ValueError, match="两端不得相同"):
         validate_seed_document(
             _doc(summaries=[{
@@ -89,6 +99,13 @@ def test_seed_document_validation_is_fail_closed():
     # 合法文档归一：turn 刻度非正、词表过验。
     normalized = validate_seed_document(_doc(), opening_year=1627, opening_period=10)
     assert normalized["events"][0]["turn"] == pregame_turn(1625, 4) < 0
+
+    duplicate = _doc(summaries=[
+        {"source": "甲", "target": "乙", "founding_lines": ["一"]},
+        {"source": "甲", "target": "乙", "founding_lines": ["二"]},
+    ])
+    with pytest.raises(ValueError, match="有向对重复"):
+        validate_seed_document(duplicate, opening_year=1627, opening_period=10)
 
 
 def test_fresh_seed_summary_is_readable_with_seed_event_clock(fresh_session):
@@ -300,6 +317,40 @@ def test_new_save_imports_sample_seed_ledger_queryable_and_pregame(fresh_session
         assert int(event["turn"]) <= 0, f"seed 边事件 turn 落进游戏内刻度：{dict(event)}"
 
 
+def test_reverse_chronological_seed_keeps_latest_event_readable(fresh_session):
+    """逆序素材按史时稳定写入，最大 id 和五字段读 DTO 都仍以 1626 为最近。"""
+    from ming_sim.relation_read import project_relation_ledger
+    from ming_sim.relation_seed import import_relationship_seed
+
+    sess, _content = fresh_session
+    doc = {"events": [
+        {"source": "甲", "target": "乙", "event_kind": "结怨", "context": "后事。",
+         "origin": "seed:later", "evidence": False, "year": 1626, "period": 2},
+        {"source": "甲", "target": "乙", "event_kind": "结怨", "context": "前事。",
+         "origin": "seed:earlier", "evidence": False, "year": 1625, "period": 2},
+    ]}
+    import_relationship_seed(sess.db, doc, opening_year=1627, opening_period=10)
+    rows = sess.db.get_relation_edge_events(source="甲", target="乙")
+    assert [(row["year"], row["period"]) for row in rows] == [(1625, 2), (1626, 2)]
+    dto = next(row for row in project_relation_ledger(sess.db, viewer=None) if row["source"] == "甲")
+    assert dto["recent_context"] == "后事。（天启六年二月）"
+    assert dto["updated_at_period"] == "天启六年二月"
+
+
+def test_pre_tianqi_seed_event_projects_honest_calendar_label(fresh_session):
+    from ming_sim.relation_read import project_relation_ledger
+    from ming_sim.relation_seed import import_relationship_seed
+
+    sess, _content = fresh_session
+    doc = {"events": [{
+        "source": "丙", "target": "丁", "event_kind": "结怨", "context": "旧事。",
+        "origin": "seed:1620", "evidence": False, "year": 1620, "period": 1,
+    }]}
+    import_relationship_seed(sess.db, doc, opening_year=1627, opening_period=10)
+    dto = next(row for row in project_relation_ledger(sess.db, viewer=None) if row["source"] == "丙")
+    assert dto["updated_at_period"] == "公历1620年正月"
+
+
 def test_repeated_import_is_idempotent_no_double_write(fresh_session):
     """导入幂等：同一文档重复导入不双写（验收条③）。"""
     sess, _content = fresh_session
@@ -334,6 +385,35 @@ def test_repeated_import_is_idempotent_no_double_write(fresh_session):
         assert after_row["founding_segment"] == before_row["founding_segment"]
         assert after_row["recent_segment"] == before_row["recent_segment"]
         assert int(after_row["last_event_id"]) == int(before_row["last_event_id"])
+
+
+def test_seed_replay_does_not_overwrite_later_brew_summary(fresh_session):
+    """已有摘要即 no-op：brew 追加后的全部摘要字段不得被 seed 重放改回。"""
+    from ming_sim.relation_seed import import_relationship_seed
+
+    sess, _content = fresh_session
+    source, target = "皇帝", "王承恩"
+    old = sess.db.get_relation_summary(source, target)
+    sess.db.apply_relation_brew_result(
+        source=source, target=target, dimension=old["dimension"],
+        founding_segment=str(old["founding_segment"]) + "\n后添奠基。",
+        recent_segment="后来近况。", last_event_id=17,
+        turn=8, year=1628, period=5,
+    )
+    before = sess.db.get_relation_summary(source, target)
+    doc = {
+        "events": [{
+            "source": source, "target": target, "event_kind": "恩义", "context": "信邸旧事。",
+            "origin": "seed:replay-check", "evidence": True, "year": 1626, "period": 2,
+        }],
+        "summaries": [{"source": source, "target": target, "founding_lines": ["信邸旧事。"]}],
+    }
+    first = import_relationship_seed(sess.db, doc, opening_year=1627, opening_period=10)
+    events_after_first = len(sess.db.get_relation_edge_events())
+    second = import_relationship_seed(sess.db, doc, opening_year=1627, opening_period=10)
+    assert first["summaries_written"] == second["summaries_written"] == 0
+    assert len(sess.db.get_relation_edge_events()) == events_after_first
+    assert sess.db.get_relation_summary(source, target) == before
 
 
 def test_existing_save_is_never_touched_by_seed_import(game, monkeypatch):

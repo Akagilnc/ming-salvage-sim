@@ -58,6 +58,13 @@ def _non_empty_str(value: Any, label: str) -> str:
     return value
 
 
+def _identifier(value: Any, label: str) -> str:
+    identifier = _non_empty_str(value, label)
+    if identifier != identifier.strip():
+        raise ValueError(f"{label}不得含首尾空白")
+    return identifier
+
+
 def validate_seed_document(
     doc: Any, *, opening_year: int, opening_period: int
 ) -> Dict[str, Any]:
@@ -81,8 +88,8 @@ def validate_seed_document(
     for index, item in enumerate(raw_events):
         if not isinstance(item, dict):
             raise ValueError(f"seed events[{index}] 必须是 object")
-        source = _non_empty_str(item.get("source"), f"seed events[{index}].source")
-        target = _non_empty_str(item.get("target"), f"seed events[{index}].target")
+        source = _identifier(item.get("source"), f"seed events[{index}].source")
+        target = _identifier(item.get("target"), f"seed events[{index}].target")
         if source == target:
             raise ValueError(f"seed events[{index}] 有向对两端不得相同：{source!r}")
         kind = validate_edge_kind(item.get("event_kind"))
@@ -112,17 +119,25 @@ def validate_seed_document(
             "turn": pregame_turn(year, period),
         })
 
+    # 流水 id 是“最近事件”的既有读序；稳定排序既按史时写入，也保留同月素材次序。
+    events.sort(key=lambda event: (event["year"], event["period"]))
+
     raw_summaries = doc.get("summaries", [])
     if not isinstance(raw_summaries, list):
         raise ValueError("seed 文档 summaries 必须是列表")
     summaries: List[Dict[str, Any]] = []
+    summary_pairs = set()
     for index, item in enumerate(raw_summaries):
         if not isinstance(item, dict):
             raise ValueError(f"seed summaries[{index}] 必须是 object")
-        source = _non_empty_str(item.get("source"), f"seed summaries[{index}].source")
-        target = _non_empty_str(item.get("target"), f"seed summaries[{index}].target")
+        source = _identifier(item.get("source"), f"seed summaries[{index}].source")
+        target = _identifier(item.get("target"), f"seed summaries[{index}].target")
         if source == target:
             raise ValueError(f"seed summaries[{index}] 有向对两端不得相同：{source!r}")
+        pair = (source, target)
+        if pair in summary_pairs:
+            raise ValueError(f"seed summaries[{index}] 有向对重复：{source!r}→{target!r}")
+        summary_pairs.add(pair)
         lines = item.get("founding_lines", [])
         if not isinstance(lines, list) or any(not isinstance(x, str) for x in lines):
             raise ValueError(f"seed summaries[{index}].founding_lines 必须是字符串列表")
@@ -174,16 +189,12 @@ def import_relationship_seed(
     summaries_written = 0
     for summary in validated["summaries"]:
         existing = db.get_relation_summary(summary["source"], summary["target"])
-        old_founding = (
-            str(existing["founding_segment"]) if existing is not None else ""
-        )
-        merged = merge_founding_segment(old_founding, summary["founding_lines"])
-        if merged != old_founding or existing is None:
+        if existing is None:
             db.apply_seed_founding_segment(
                 source=summary["source"],
                 target=summary["target"],
                 dimension=summary["dimension"],
-                founding_segment=merged,
+                founding_segment=merge_founding_segment("", summary["founding_lines"]),
             )
             summaries_written += 1
     return {
