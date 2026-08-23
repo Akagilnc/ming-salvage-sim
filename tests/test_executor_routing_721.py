@@ -18,6 +18,7 @@ from ming_sim.executor_routing import (
     duty_route_office_type,
     resolve_lead_executors,
 )
+from tests.dossier_test_helpers import promulgate_proposed_appointments
 
 
 @pytest.fixture
@@ -159,9 +160,12 @@ def test_new_appointee_identity_exists_before_promulgation_and_leads_dossier(env
     db.commit_pending_actions(state, content=content, action_ids=[pending_id])
 
     person = db.conn.execute(
-        "SELECT office,office_type,status FROM characters WHERE name=?", (name,),
+        """SELECT office,office_type,status,faction,loyalty,ability,integrity,courage,style
+           FROM characters WHERE name=?""", (name,),
     ).fetchone()
-    assert tuple(person) == ("待选", "未仕", "offstage")
+    assert tuple(person) == (
+        "待选", "未仕", "offstage", "中立", 60, 55, 60, 50, "新任未详",
+    )
     dossier = db.conn.execute(
         "SELECT id FROM decree_dossiers WHERE pending_action_id=?", (pending_id,),
     ).fetchone()
@@ -170,6 +174,30 @@ def test_new_appointee_identity_exists_before_promulgation_and_leads_dossier(env
         if item["tier"] == "主办"
     ]
     assert leads == [name]
+
+    promulgate_proposed_appointments(db, state, content)
+    appointed = db.conn.execute(
+        """SELECT office,office_type,status,faction,loyalty,ability,integrity,courage,style
+           FROM characters WHERE name=?""", (name,),
+    ).fetchone()
+    assert tuple(appointed) == (
+        "户部主事", "户部", "active", "中立", 60, 55, 60, 50, "新任未详",
+    )
+
+
+def test_unknown_appointee_normalizes_unrecognized_faction(env):
+    db, state, content = env
+    name = "测试异派新臣"
+    pending_id = db.stage_pending_action(
+        state.turn, kind="office", action="任命", minister_name="毕自严",
+        target_id=None, payload={"name": name, "office": "户部主事", "faction": "不存在派"},
+    )
+    db.commit_pending_actions(state, content=content, action_ids=[pending_id])
+
+    person = db.conn.execute(
+        "SELECT faction FROM characters WHERE name=?", (name,),
+    ).fetchone()
+    assert person["faction"] == "中立"
 
 
 def test_real_assignment_stage_preserves_category_without_speaker_as_assignee(env):
