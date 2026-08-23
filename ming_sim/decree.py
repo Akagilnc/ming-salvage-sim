@@ -1898,9 +1898,6 @@ def pre_settle(
             if committed:
                 tlog(f"[pending_actions] 颁诏批量落库 {len(committed)} 条：{[(c['kind'], c['action']) for c in committed]}")
             fiscal_levies = apply_historical_fiscal_rates(state, db, commit=False)
-            # 月初旧账的财政与人口后果同在前括号消费；本月 extractor 改账从下月生效。
-            levy_applied, levy_rejected = _apply_levy_driven_transfers(db, commit=False)
-            setattr(state, "_pre_settle_levy_effects", (levy_applied, levy_rejected))
             if fiscal_levies:
                 tlog(
                     f"[fiscal-levy] 本回合饷率事件前置落账 {len(fiscal_levies)} 条："
@@ -2337,17 +2334,15 @@ def _settle_after_extract_body(
     db.record_monthly_loophole_exposures_from_reconciliations(
         before_turn, commit=False,
     )
+    # #650/0089：先消费月初已提交的旧账，再应用本月 extractor 改账；两者与
+    # extraction 留痕同属本 phase2 atomic，跨进程恢复无需易失桥且可整体重放。
+    levy_applied, levy_rejected = _apply_levy_driven_transfers(db, commit=False)
     if delta_applier is not None:
         applied = delta_applier(db, state, extracted, content, registry)
     else:
         applied = apply_score_extraction(db, state, extracted, content=content, registry=registry)
-    # #650/0089：月初旧账已在 pre_settle 与财政 tick 同快照消费；这里只把
-    # 机械结果并回 extraction 留痕，不再读本月 extractor 刚改过的账。
-    levy_applied, levy_rejected = getattr(state, "_pre_settle_levy_effects", ([], []))
     applied.setdefault("population_transfers", []).extend(levy_applied)
     applied.setdefault("population_transfers_rejections", []).extend(levy_rejected)
-    if hasattr(state, "_pre_settle_levy_effects"):
-        delattr(state, "_pre_settle_levy_effects")
     # #1504：当月 covert 实况进度与 apply 同一 atomic（0073 实况轨；不读奏报）。
     from ming_sim.covert_progress import (
         apply_monthly_covert_actual_progress,
