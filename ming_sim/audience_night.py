@@ -1660,6 +1660,32 @@ def list_arrived_unsettled_summons(db: Any) -> List[Dict[str, Any]]:
     return arrived
 
 
+def settle_applied_arrived_summons(
+    db: Any, applied: Dict[str, Any],
+) -> List[str]:
+    """结清已由 canonical applier 成功续启赴京的在途召旨。"""
+    accepted = {
+        str(item.get("name") or item.get("人物") or "").strip()
+        for item in (applied.get("applied_person_changes") or [])
+        if isinstance(item, dict)
+        and not item.get("rejected")
+        and str(item.get("transit_to") or item.get("去向") or "").strip() == "beizhili"
+    }
+    if not accepted:
+        return []
+    settled: List[str] = []
+    for item in list_unsettled_summons(db):
+        # Only the monthly judge receives in-transit origins; a successful canonical
+        # continuation has already changed transit_to, so the post-apply projection
+        # can no longer classify it as arrived.
+        if item["kind"] != "in_transit" or item["person_name"] not in accepted:
+            continue
+        origin = str(item["origin_id"])
+        if settle_summon_origin(db, origin):
+            settled.append(origin)
+    return settled
+
+
 def settle_summon_origin(db: Any, origin_id: object) -> bool:
     """成功写入续程后按 origin 结清；重复结清为幂等 no-op。"""
     origin = str(origin_id or "").strip()
