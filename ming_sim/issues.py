@@ -5126,11 +5126,24 @@ def apply_issue_tracker_output(
                         break
                     character_id = item.get("character_id")
                     tier = item.get("tier")
+                    role = item.get("role")
+                    delegator_id = item.get("delegator_id")
                     if (
                         not isinstance(character_id, str)
                         or not character_id.strip()
                         or not isinstance(tier, str)
                         or tier not in {"主办", "协办", "知情"}
+                        or ("role" in item and not isinstance(role, str))
+                        or (
+                            delegator_id not in (None, "")
+                            and (
+                                not isinstance(delegator_id, str)
+                                or db.conn.execute(
+                                    "SELECT 1 FROM characters WHERE name=?",
+                                    (delegator_id,),
+                                ).fetchone() is None
+                            )
+                        )
                     ):
                         roster_shape_valid = False
                         break
