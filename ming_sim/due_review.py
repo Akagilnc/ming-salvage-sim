@@ -216,7 +216,12 @@ def build_due_review_input(db: Any, todo: Dict[str, object]) -> Dict[str, object
         supervision_history=supervision_history,
         opportunity_band=opportunity_band,
     )
-    return {
+    # #651/ADR 0089：暗渠摊派触发因子并入判官输入面（#622 AC5 门控同构：
+    # 缺口悬置事实不满足则键不出现，绝不触发）。
+    from ming_sim.covert_levy import build_covert_levy_trigger_factor
+    covert_levy_trigger = build_covert_levy_trigger_factor(db)
+
+    review_input: Dict[str, object] = {
         "todo": dict(todo),
         "commitment_ref": commitment_ref,
         "stage_idx": stage_idx,
@@ -240,6 +245,9 @@ def build_due_review_input(db: Any, todo: Dict[str, object]) -> Dict[str, object
         "opportunity_band": opportunity_band,
         "distortion_tendency": distortion_tendency,
     }
+    if covert_levy_trigger is not None:
+        review_input["covert_levy_trigger"] = covert_levy_trigger
+    return review_input
 
 
 def _strip_banned(text: str) -> str:
