@@ -634,7 +634,7 @@ def create_json_sanitizer_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Age
 
 
 def create_rescript_draft_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
-    """#656 / ADR 0093 前半：急务分拣＋票拟生成官（phase2 第五路）。一次性，不持久化。"""
+    """#656 / ADR 0093 前半：急务分拣＋票拟生成官（phase2 fan-out 第 N+1 路，N=extractor 模块数）。一次性，不持久化。"""
     del agno_db
     ctx = _ctx()
     cfg = _llm_for_role(llm_config, "extractor")
