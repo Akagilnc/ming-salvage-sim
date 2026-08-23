@@ -6,6 +6,7 @@ play_turn 状态机搬入此处；GameSession 持游戏状态，terminal 只做 
 
 from __future__ import annotations
 
+import logging
 import re
 import threading
 from typing import List, Optional
@@ -29,6 +30,8 @@ from ming_sim.session import (
     _pending_action_failure_payload,
 )
 from ming_sim.skills import print_all_skill_cards, print_skill_card, skill_display_name
+
+logger = logging.getLogger(__name__)
 
 _STATUS_LABEL = {
     "active": "在朝",
@@ -578,6 +581,7 @@ def _dispatch_relation_judge_cli(session: GameSession, chat_turn_id: int) -> Non
         from ming_sim.session_write_queue import get_session_write_queue
         q = get_session_write_queue(session)
     except Exception:
+        logger.exception("relation judge queue resolution degraded chat_turn_id=%s", chat_turn_id)
         return
 
     def _run() -> None:
@@ -593,14 +597,20 @@ def _dispatch_relation_judge_cli(session: GameSession, chat_turn_id: int) -> Non
                 write_gate=q.ticketed_gate(ticket),
             )
         except Exception:
-            pass  # 降级边界在 run_summon_relation_judge 内；到此=外围故障，不锁档不打断对话
+            # 核心 LLM 降级在 run_summon_relation_judge；到此是外围基础设施故障，
+            # 仍不得打断对话，但必须响亮留痕。
+            logger.exception("relation judge worker degraded chat_turn_id=%s", chat_turn_id)
         finally:
             if ticket is not None:
                 q.complete(ticket)
 
-    threading.Thread(
+    thread = threading.Thread(
         target=_run, daemon=True, name="cli-audience-relation-judge",
-    ).start()
+    )
+    try:
+        thread.start()
+    except Exception:
+        logger.exception("relation judge thread start degraded chat_turn_id=%s", chat_turn_id)
 
 
 def minister_chat(session: GameSession, character: Character) -> str:
