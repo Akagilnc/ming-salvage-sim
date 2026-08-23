@@ -189,6 +189,32 @@ def test_clear_pending_decisions_keeps_rescript_drafts(game):
     assert [d["title"] for d in db.list_rescript_drafts()] == ["急务"]
 
 
+def test_save_pending_decisions_keeps_rescript_drafts(game):
+    """判修 C2（run 01a02d20）：save_pending_decisions 与 clear/save_rescript_drafts
+    同款按 kind 收窄——decision 盘面覆写只清只写 kind='decision'。
+    生产危险路：phase1 落 decision → phase2 落票拟 → 同回合重结算再覆
+    decision 盘面，旧写者不得连带清除 rescript_draft 行（F2/A6 不变式闭合）。"""
+    db, state, _content = game
+    turn = state.turn
+    db.save_pending_decisions(turn, [
+        {"title": "抉择", "context": "c", "options": [
+            {"label": "a", "hint": ""}, {"label": "b", "hint": ""}]},
+    ])
+    db.save_rescript_drafts(turn, [
+        {"title": "急务", "context": "", "options": [
+            {"label": "甲", "hint": ""}, {"label": "乙", "hint": ""}]},
+    ])
+    db.save_pending_decisions(turn, [
+        {"title": "抉择改", "context": "c2", "options": [
+            {"label": "a", "hint": ""}, {"label": "b", "hint": ""}]},
+    ])
+    # decision 盘面已覆写为新内容；draft 行不被该写者清除（跨月留存）
+    rows = db.list_pending_decisions(turn)
+    assert [r["title"] for r in rows] == ["抉择改"]
+    assert all(r["kind"] == "decision" for r in rows)
+    assert [d["title"] for d in db.list_rescript_drafts()] == ["急务"]
+
+
 def test_save_rescript_drafts_overwrites_not_duplicates(game):
     db, state, _content = game
     turn = state.turn
