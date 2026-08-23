@@ -9,7 +9,7 @@ from typing import Dict, List, NamedTuple, Optional, Tuple
 
 from ming_sim.assets import format_wanliang_amount
 from ming_sim.constants import SALARY_RATE_ANCHOR, TURN_UNIT
-from ming_sim.db import GameDB
+from ming_sim.db import GameDB, mutiny_loyalty_cap
 from ming_sim.error_pack import settlement_abort_message, write_error_pack
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.models import GameState
@@ -619,11 +619,6 @@ def derive_army_mutiny_state(army) -> str:
     if loyalty >= 40:
         return "不满"
     return "鼓噪"
-
-
-def mutiny_loyalty_cap(mutiny_count: int, redemption_count: int = 0) -> int:
-    """ADR 0025 D6 唯一军心上限真源。"""
-    return max(60, min(100, 100 - 20 * int(mutiny_count) + 10 * int(redemption_count)))
 
 
 def _next_mutiny_latch(*, loyalty: int, arrears: float, needed: int, current: int) -> int:

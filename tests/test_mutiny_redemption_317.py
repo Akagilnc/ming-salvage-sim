@@ -87,6 +87,32 @@ def test_full_pay_streak_can_be_saved_in_peace_and_partial_pay_resets_it(game, f
     assert tuple(resumed[k] for k in ("full_pay_streak", "redemption_count")) == (1, 0)
 
 
+@pytest.mark.parametrize(
+    ("redemption_count", "expected_loyalty"),
+    ((1, 70), (0, 60)),
+)
+def test_army_delta_clamps_loyalty_to_dynamic_mutiny_cap(
+    game, redemption_count, expected_loyalty
+):
+    db, state, _ = game
+    db.conn.execute(
+        """UPDATE armies SET loyalty=60,mutiny_count=2,redemption_count=?
+           WHERE id=?""",
+        (redemption_count, ARMY),
+    )
+    db.conn.commit()
+    event = type("Event", (), {"id": "test", "title": "军心变更"})()
+
+    db.apply_army_deltas(
+        state, event, None, "测试", {ARMY: {"loyalty": 40}}
+    )
+
+    loyalty = db.conn.execute(
+        "SELECT loyalty FROM armies WHERE id=?", (ARMY,)
+    ).fetchone()["loyalty"]
+    assert loyalty == expected_loyalty
+
+
 @pytest.mark.parametrize("fiscal_path", PATHS)
 def test_redemption_progress_migrates_and_survives_reopen(game, tmp_path, fiscal_path):
     db, state, content = game

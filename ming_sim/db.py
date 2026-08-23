@@ -89,6 +89,11 @@ _ARMY_PAY_SOURCE_DELTA_FIELDS = frozenset((
 _COMMITMENT_STOP_CONDITION_RE = re.compile(r"character\.[^.]+\.loyalty\s*(?:>=|>)\s*\d+")
 
 
+def mutiny_loyalty_cap(mutiny_count: int, redemption_count: int = 0) -> int:
+    """ADR 0025 D6 唯一军心上限真源。"""
+    return max(60, min(100, 100 - 20 * int(mutiny_count) + 10 * int(redemption_count)))
+
+
 def _seed_guilt_storage_value(value: object) -> str:
     """Serialize the content-layer guilt mapping into the existing DB TEXT column."""
     if isinstance(value, Mapping):
@@ -7237,7 +7242,11 @@ class GameDB:
                                    .get(army_id) or {}).get(field, 0) or 0)
                     if net_pct:
                         delta = self.apply_legacy_pct(delta, net_pct)
-                    new_value = max(0, min(100, int(old_value) + delta))
+                    upper_bound = (
+                        mutiny_loyalty_cap(row["mutiny_count"], row["redemption_count"])
+                        if field == "loyalty" else 100
+                    )
+                    new_value = max(0, min(upper_bound, int(old_value) + delta))
                     actual_delta = new_value - int(old_value)
                     if actual_delta == 0:
                         continue
