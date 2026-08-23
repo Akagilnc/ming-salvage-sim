@@ -1100,10 +1100,8 @@ class GameDB:
                 terminal_state TEXT NOT NULL DEFAULT 'triggered',
                 terminal_reason TEXT NOT NULL DEFAULT '',
                 choice_json TEXT NOT NULL DEFAULT '',
-                target_dossier_id INTEGER,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY(event_id) REFERENCES events(id),
-                FOREIGN KEY(target_dossier_id) REFERENCES decree_dossiers(id) ON DELETE RESTRICT
+                FOREIGN KEY(event_id) REFERENCES events(id)
             );
 
             CREATE TABLE IF NOT EXISTS turn_logs (
@@ -2099,8 +2097,6 @@ class GameDB:
         self.ensure_column("event_triggers", "terminal_state", "TEXT NOT NULL DEFAULT 'triggered'")
         self.ensure_column("event_triggers", "terminal_reason", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("event_triggers", "choice_json", "TEXT NOT NULL DEFAULT ''")
-        # #651/ADR 0089：离散事件与被暴露案卷在事件发生真源钉键；禁标题/摘要反查。
-        self.ensure_column("event_triggers", "target_dossier_id", "INTEGER")
         self.ensure_column("pending_decisions", "event_id", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("pending_decisions", "rejection_reason", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("pending_decisions", "opposition", "TEXT NOT NULL DEFAULT ''")
@@ -17567,10 +17563,7 @@ class GameDB:
                     WHEN COALESCE(event_triggers.terminal_state, '') = ''
                     THEN {pending_reason_expr}
 {reason_fill}                    ELSE event_triggers.terminal_reason
-                END,
-                target_dossier_id = COALESCE(
-                    event_triggers.target_dossier_id, excluded.target_dossier_id
-                )
+                END
         """
 
     def mark_event_triggered(
@@ -17580,25 +17573,18 @@ class GameDB:
         source: str = "simulation",
         *,
         terminal_reason: str = "",
-        target_dossier_id: int | None = None,
         commit: bool = True,
     ) -> None:
         self._ensure_event_parent(event_id)
-        if target_dossier_id is not None:
-            if type(target_dossier_id) is not int or target_dossier_id <= 0:
-                raise ValueError(f"事件绑定的案卷 ID 非法：{target_dossier_id}")
-            if self.get_decree_dossier(target_dossier_id) is None:
-                raise ValueError(f"事件绑定的案卷不存在：{target_dossier_id}")
         self.conn.execute(
             f"""
             INSERT INTO event_triggers
-                (event_id, turn, year, period, source, terminal_state, terminal_reason, target_dossier_id)
-            VALUES (?, ?, ?, ?, ?, 'triggered', ?, ?)
+                (event_id, turn, year, period, source, terminal_state, terminal_reason)
+            VALUES (?, ?, ?, ?, ?, 'triggered', ?)
             ON CONFLICT(event_id) DO UPDATE SET
                 {self._event_terminal_upgrade_assignments(fill_triggered_reason=True)}
             """,
-            (event_id, state.turn, state.year, state.period, source,
-             str(terminal_reason or "")[:200], target_dossier_id),
+            (event_id, state.turn, state.year, state.period, source, str(terminal_reason or "")[:200]),
         )
         if commit:
             self.conn.commit()

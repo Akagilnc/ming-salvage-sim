@@ -119,8 +119,6 @@ def write_exposure_todos(db: Any, state: Any) -> int:
         if audit is not None: channels.append("稽核")
         den = db.conn.execute("SELECT 1 FROM faction_denunciations WHERE target_dossier_id=? LIMIT 1", (did,)).fetchone()
         if den is not None: channels.append("检举")
-        event = db.conn.execute("SELECT 1 FROM event_triggers WHERE target_dossier_id=? LIMIT 1", (did,)).fetchone()
-        if event is not None: channels.append("民变")
         if not channels:
             continue
         issue_id = _issue_for_dossier(db, did)
