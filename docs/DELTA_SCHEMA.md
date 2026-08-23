@@ -107,7 +107,8 @@ canonical 段形＝list，每条记录**同时表达两条腿**：applier 读一
 | `reason` | 枚举×方向矩阵：`加派`/`摊派`/`灾害`＝农民→流民；`兵灾`＝农民→流民、军户→流民；`逃亡`＝军户→流民；`回流`＝流民→农民。方向出阵即拒 |
 | `origin_ref` | **必填** `dossier:<id>`（须存在且已颁）或精确哨兵 `盘面自发`——来源追溯契约与 `reason` 机制枚举两槽并存、职责互斥 |
 
-- 逐项拒收面（坏项留痕、同批合法项照落，ADR 0015/0008）：方向出阵、reason 枚举外、amount 非严格 int/≤0/超源余额、region 未知或两侧不同省、source/target 触全国行、origin_ref 缺失/伪前缀/未颁案卷、白名单外字段（任何形式的绝对值覆写均不合法——人口只经本原语守恒变动，禁凭空造人/单侧写）。
+- 逐项拒收面（坏项留痕、同批合法项照落，ADR 0015/0008）：方向出阵、reason 枚举外、amount 非严格 int/≤0/超源余额、超量级口径（#662：`灾害` 单条＞floor(源余额×5%)、`兵灾` ＞×10%，万分比系数见 `POPULATION_TRANSFER_MAGNITUDE_BPS`，与存档刻度无关）、region 未知或两侧不同省、source/target 触全国行、origin_ref 缺失/伪前缀/未颁案卷、白名单外字段（任何形式的绝对值覆写均不合法——人口只经本原语守恒变动，禁凭空造人/单侧写）。
+- 灾害／兵灾入口（#662/S14）：发生与否及具体量级＝LLM 软判吃既有盘面（region `natural_disaster`/`human_disaster` 字段、military_pressure 定性档、活跃局势 issue）；无事实支撑不得申报该 reason（无灾不入）。代码侧只做量级口径 clamp＋守恒记账，不建引擎侧自动触发（与 extractor 无双驱动并存）。origin 标即 `reason` 枚举本身，无第二 origin 字段；与加派/摊派入口合流同一 classes 行池账，下游只认账不认来源。
 - item 字段中英别名：`源`/`源阶级`→source、`目标`/`目标阶级`→target、`数额`/`口数`→amount、`原因`→reason（prompt 中文 shape 教 `原因`，与 `ITEM_FIELD_ALIASES` 单一真源；勿另教别名表外标签如「缘由」）。接口层：internal extractor 专属输入面带按 class@region_id 键合的省级人口余额＋本档 population_unit 的 `class_population_balances` TSV（不进玩家可感 simulator 数表）。
 
 ### `region_delta` — 地区变化

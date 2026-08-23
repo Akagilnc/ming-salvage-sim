@@ -274,6 +274,18 @@ POPULATION_TRANSFER_REASONS: dict[str, frozenset[tuple[str, str]]] = {
 }
 POPULATION_TRANSFER_FIELDS = frozenset({"source", "target", "amount", "reason", "origin_ref"})
 
+# #662（S14/ADR 0087）：灾害／兵灾入池的量级口径——单条转移记录上限＝
+# floor(源阶级省级行当前余额 × 万分比/10000)。发生与否及具体量级仍＝LLM 软判吃既有
+# 盘面（region 天灾/人祸字段、military_pressure 定性档、活跃局势 issue）；代码只在此
+# 做确定性 clamp＋记账，不代角色决断（P6）、不建引擎侧自动触发（与 extractor 无双驱动）。
+# 史实尺度：灾荒月度驱离在低个位数百分比量级（5%）；兵祸过境冲击更烈，放宽一档（10%）。
+# 整数万分比而非浮点系数：cap 计算纯整型、跨档位（人/万）刻度无关。仅压本票两入口；
+# 加派/摊派/逃亡/回流口径归各自票面。
+POPULATION_TRANSFER_MAGNITUDE_BPS: dict[str, int] = {
+    "灾害": 500,
+    "兵灾": 1000,
+}
+
 # trigger_gate key 语法（content.py load 校验 + issues._eval_gate_key 求值共用，DRY，#12 Q3 fail-loud）：
 # bare key（无 "."）须是已知 metric；点分 key 首段须是合法表名、末段可为聚合函数。
 GATE_METRIC_KEYS = ("国库", "内库", "民心", "皇威")

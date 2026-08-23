@@ -4,6 +4,9 @@
 
 ## [未发布]
 
+### Added
+- **#662 灾害/兵灾驱动入池**：流民池补齐 0087 四入口中天灾与兵祸两入口——发生与量级＝LLM 软判吃既有盘面（region 天灾/人祸字段、military_pressure 高压档、活跃局势 issue），代码侧只做量级口径 clamp（灾害单条≤源省阶级余额×5%、兵灾≤×10%，整数万分比 `POPULATION_TRANSFER_MAGNITUDE_BPS`、与存档刻度无关）＋守恒记账；超口径整项拒收留痕，无事实不申报（无灾不入），不建引擎侧自动触发（与 extractor 无双驱动）。邸报/召对因果回响走既有 effect_brief／classes_brief 定性特征面（P4 零数值）；restore 只读 DB 接续，与加派/摊派入口合流同一本账。
+
 ## [0.46.0.0] - 2026-07-31
 
 ### Fixed
