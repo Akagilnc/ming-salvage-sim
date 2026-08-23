@@ -2,6 +2,8 @@
 
 from ming_sim.session import AudienceAdmission, GameSession
 from ming_sim import audience_night as an
+from ming_sim.decree import force_transit_arrivals
+from ming_sim.simulation import build_simulator_payload
 
 
 def _session(game):
@@ -123,6 +125,32 @@ def test_fresh_summon_departs_via_canonical_applier_only_when_night_closes(game)
     assert db.conn.execute(
         "SELECT transit_start_turn FROM characters WHERE name=?", (person.name,)
     ).fetchone()["transit_start_turn"] == started
+
+
+def test_monthly_judge_receives_arrived_unsettled_summon_facts(game):
+    db, state, content = game
+    person = _set_place(game, "洪承畴", location="shaanxi", transit_to="henan")
+    db.conn.execute(
+        "UPDATE characters SET transit_start_turn=0 WHERE name=?", (person.name,)
+    )
+    db.conn.commit()
+    night_id = int(an.open_night(db, state)["id"])
+    entry_id = an.record_summon_in_transit(
+        db, night_id, person.name, origin_id="command:arrived-1",
+    )
+
+    assert force_transit_arrivals(db, state, content) == [
+        {"name": person.name, "location": "henan"}
+    ]
+    payload = build_simulator_payload(state, db, "", "")
+
+    assert payload["unsettled_arrived_summons"] == [{
+        "person_name": person.name,
+        "original_destination": "henan",
+        "origin_id": "command:arrived-1",
+        "source_entry_id": entry_id,
+        "required_fact": "抵原地后续赴京",
+    }]
 
 
 def test_fresh_seed_closes_ticket_670_named_locations(content):
