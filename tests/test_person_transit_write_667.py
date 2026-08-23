@@ -122,17 +122,18 @@ def test_status_exit_clears_complete_transit_ledger(game, exit_path):
         ) is True
 
     row = db.conn.execute(
-        "SELECT transit_to, transit_distance_remaining, transit_speed_factor, transit_start_turn "
+        "SELECT status, transit_to, transit_distance_remaining, transit_speed_factor, transit_start_turn "
         "FROM characters WHERE name=?", (name,),
     ).fetchone()
-    assert tuple(row) == ("", None, None, 0)
+    assert tuple(row) == ("dismissed", "", None, None, 0)
     character = content.characters[name]
     assert (
+        character.status,
         character.transit_to,
         character.transit_distance_remaining,
         character.transit_speed_factor,
         character.transit_start_turn,
-    ) == ("", None, None, 0)
+    ) == ("dismissed", "", None, None, 0)
 
 
 def test_invalid_tone_is_rejected_before_same_destination_idempotence(game):
