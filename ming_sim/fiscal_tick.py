@@ -84,7 +84,7 @@ def _raw_due(p: Dict[str, Any], h: str) -> float:
 
 
 def _effective_dues(p: Dict[str, Any]) -> Dict[str, float]:
-    ""#653 折发改写 Due 应得额：floor(Due×bp/10000)；余数=免除额（不入 CLAIM 不积欠）。"""
+    """#653 折发改写 Due 应得额：floor(Due×bp/10000)；余数=免除额（不入 CLAIM 不积欠）。"""
     from .pay_order import haircut_due
 
     haircuts = _resolve_haircut_param(p)
@@ -193,6 +193,20 @@ def settle_tick(
     C0 = {k: cash[k] for k in CASH_KEYS if k.startswith("C_")}
     claim0 = dict(claim)
     cash_in = cash_out = 0.0
+    # Due 在任何折算消费前验形，避免坏容器先逃成 TypeError/AttributeError。
+    _due = p["Due"]
+    if isinstance(_due, bool) or not isinstance(_due, dict):
+        raise ValueError("Due 非字典")
+    for hk, dv in _due.items():
+        if hk not in _DUE_KEYS:
+            raise ValueError(f"Due 含未知科目 {hk}")
+        if isinstance(dv, bool) or not isinstance(dv, (int, float)):
+            raise ValueError(f"Due[{hk}] 非数值")
+        if not math.isfinite(float(dv)):
+            raise ValueError(f"Due[{hk}] 非有限值(NaN/inf)")
+        if float(dv) < 0:
+            raise ValueError(f"Due[{hk}] 为负")
+
     # ── #653 偿还序 override ＋ Due 折发系数（ADR 0090）：缺省=祖制默认序、无折 ──
     due_order = _resolve_order_param(p, "due_order", _DUE_KEYS)
     arrears_order = _resolve_order_param(p, "arrears_order", _ARREARS_KEYS)
@@ -271,18 +285,6 @@ def settle_tick(
     # 正赋应征=None（启用亩额派生）时 正赋亩额 须 >0，否则 正赋 静默算成 0（违 fail-loud，PR#110 gemini）
     if p.get("正赋应征") is None and p.get("正赋亩额", 0) <= 0:
         raise ValueError("正赋应征=None(亩额派生) 须 正赋亩额>0")
-    _due = p["Due"]  # presence 已在必填检查（line 62）；此处验形：Due 非 dict（None/list/数值）→
-    if isinstance(_due, bool) or not isinstance(_due, dict):  # ValueError，否则下方 .items()/.get() 抛
-        raise ValueError("Due 非字典")  # AttributeError 逃逸调用方隔离（flows 只 catch ValueError/守恒破）炸 pre_settle（cmr ship-pre P1）
-    for hk, dv in _due.items():
-        if hk not in _DUE_KEYS:
-            raise ValueError(f"Due 含未知科目 {hk}")
-        if isinstance(dv, bool) or not isinstance(dv, (int, float)):
-            raise ValueError(f"Due[{hk}] 非数值")
-        if not math.isfinite(float(dv)):
-            raise ValueError(f"Due[{hk}] 非有限值(NaN/inf)")
-        if dv < 0:
-            raise ValueError(f"Due[{hk}] 为负")
     # ── ⓪ action 相位：先算 k（超预算按库存比例缩），再按 k 执行 ──
     Stock_start = cash["省库库银"]
     ΣCost = sum(a.get("cost", 0) for a in actions if a.get("cost", 0) > 0)
