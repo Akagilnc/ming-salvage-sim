@@ -17,6 +17,11 @@ MONEY_UNIT = "万两"
 ECONOMY_ACCOUNTS = ("国库", "内库")
 SCORE_METRICS = ("民心", "皇威")
 
+# 默认开局时点是回合坐标的单一锚点：load_state 的调试跳月、seed 开局前刻度与
+# 无 game_state 时的边事件默认时点必须共同引用，避免三处字面量漂移。
+DEFAULT_OPENING_YEAR = 1627
+DEFAULT_OPENING_PERIOD = 10
+
 # 案卷关联的 Python 权威枚举；DDL CHECK 仅保留为持久层约束。
 DOSSIER_LINK_TYPES = frozenset({"护卫", "稽核", "接应"})
 
