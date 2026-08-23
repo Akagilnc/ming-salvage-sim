@@ -300,6 +300,8 @@ def project_due_review_scene(
     )
     entry_kind = str(todo.get("entry_kind") or ENTRY_KIND_STAGED)
     scene_kind = "covert_levy_exposure" if audience_todo_lane(entry_kind) == _AUDIENCE_LANE_COVERT_LEVY else "due_review"
+    payload = todo.get("payload_json") or {}
+    reopened = scene_kind == "covert_levy_exposure" and bool(payload.get("shortfall_reopened"))
     # Covert exposure is rendered by the existing audience LLM from the facts
     # below; unlike ordinary due review it must not inject a fixed memorial.
     if scene_kind == "covert_levy_exposure":
@@ -320,10 +322,12 @@ def project_due_review_scene(
         "branch": str(inp.get("branch") or "no_dossier"),
         "dossier_id": inp.get("dossier_id"),
         "executor_id": str((inp.get("dossier") or {}).get("executor_id") or ""),
-        "channels": list((todo.get("payload_json") or {}).get("channels") or []),
-        "fork": dict((todo.get("payload_json") or {}).get("fork") or {}),
+        "channels": list(payload.get("channels") or []),
+        "fork": dict(payload.get("fork") or {}),
         "army_pay_fact": inp.get("army_pay_fact"),
-        "available_dispositions": ["禁摊派", "默许", "查办"],
+        "decision": str(payload.get("decision") or ""),
+        "shortfall_reopened": reopened,
+        "available_dispositions": [] if reopened else ["禁摊派", "默许", "查办"],
     }
 
 

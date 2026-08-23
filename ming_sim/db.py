@@ -17960,8 +17960,8 @@ class GameDB:
     ) -> bool:
         """#621 P3：待办消费单写口 pending→consumed/rolled。
 
-        幂等：目标态已是 status 或非 pending 源态 → False 且不改行。
-        payload_patch：可选 dict，并入既有 payload_json（#626 判决痕迹等同缝落账）。
+        幂等：目标态已是 status 且无 payload_patch，或非 pending 源态 → False。
+        payload_patch：可选 dict，并入既有 payload_json；允许 pending 原位落判决痕迹。
         commit=False 可入外层事务。
         """
         allowed = {"consumed", "rolled", "pending"}
@@ -17983,10 +17983,10 @@ class GameDB:
         if row is None:
             return False
         current = str(row["status"] or "")
-        if current == new_status:
+        if current == new_status and patch is None:
             return False
-        # 消费/滚存仅自 pending；已消费不得被 pending 复活
-        if new_status == "pending":
+        # pending 原位更新只用于在同一 durable todo 落 payload 事实；无 patch 不复活。
+        if new_status == "pending" and current != "pending":
             return False
         if current != "pending":
             return False

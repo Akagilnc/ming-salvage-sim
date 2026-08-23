@@ -142,14 +142,16 @@ def is_reported_actual_fork(
     beyond_intent: bool,
     execution_outcome: object,
 ) -> bool:
-    """#622/#627 fork 单源：奏报、transformed 执行格、旨外实况三轨缺一不可。"""
+    """#622/#627 fork 判据单源：有奏报且奏报与旨外实况或偏离执行格分叉。"""
     bands = [
         str(b).strip()
         for b in (reported_bands or ())
         if str(b or "").strip()
     ]
     outcome = str(execution_outcome or "").strip()
-    return bool(bands) and outcome == "transformed" and bool(beyond_intent)
+    return bool(bands) and (
+        bool(beyond_intent) or outcome not in {"", "fulfilled", "executing"}
+    )
 
 
 def derive_denunciation_is_true(*, fork: bool) -> bool:

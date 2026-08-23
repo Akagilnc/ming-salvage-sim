@@ -41,7 +41,12 @@ def settle_exposure_from_canonical_actions(db: Any, state: Any, applied: Mapping
     for todo in db.list_next_audience_todos(status="pending"):
         if todo.get("entry_kind") != ENTRY_KIND:
             continue
-        did = int((todo.get("payload_json") or {}).get("dossier_id") or 0)
+        payload = todo.get("payload_json") or {}
+        # A pending prohibition remains the single durable shortfall reminder,
+        # but a recorded disposition is terminal for this dispatcher.
+        if payload.get("decision"):
+            continue
+        did = int(payload.get("dossier_id") or 0)
         origin = f"dossier:{did}"
         dossier = db.get_decree_dossier(did) or {}
         actors = {str(dossier.get("executor_id") or "").strip()}
@@ -71,7 +76,8 @@ def settle_exposure_from_canonical_actions(db: Any, state: Any, applied: Mapping
             and str(x.get("name") or "") in actors for x in person_changes
         )
         paid_cost = any(
-            successful(x) and x.get("origin_ref") == origin
+            successful(x)
+            and str(x.get("origin") or "").startswith(f"{origin}:relation:")
             and ({str(x.get("source") or ""), str(x.get("target") or "")} & actors)
             for x in applied.get("relation_edge_events") or []
         )
@@ -107,7 +113,15 @@ def write_exposure_todos(
     for row in db.conn.execute("SELECT id FROM decree_dossiers ORDER BY id").fetchall():
         did = int(row["id"])
         fork = db.read_dossier_fork_state(did)
-        if not fork["fork"]:
+        # #651's covert channel is narrower than the shared #622/#627 fork:
+        # report, transformed execution, and a canonical beyond-intent effect
+        # must all exist.  Keep this conjunction at the consumer seam.
+        if not (
+            fork["fork"]
+            and str(fork.get("execution_outcome") or "") == "transformed"
+            and bool(fork.get("beyond_intent"))
+            and int(fork.get("actual_effect_count") or 0) > 0
+        ):
             continue
         channels: List[str] = []
         if db.conn.execute(
