@@ -24,7 +24,12 @@ def test_characters_table_has_person_archive_fields(read_game):
 
     assert "reason_code" in cols
     assert "transit_to" in cols
+    assert {"transit_distance_remaining", "transit_speed_factor"} <= cols
     info = _column_info(db, "characters")
+    for name in ("transit_distance_remaining", "transit_speed_factor"):
+        assert info[name]["type"] == "REAL"
+        assert info[name]["notnull"] == 0
+        assert info[name]["dflt_value"] is None
     for name in ("reason_code", "transit_to"):
         assert info[name]["type"] == "TEXT"
         assert info[name]["notnull"] == 1
