@@ -153,6 +153,31 @@ def test_monthly_judge_receives_arrived_unsettled_summon_facts(game):
     }]
 
 
+def test_arrived_summon_settles_only_after_canonical_applier_success(game):
+    db, state, content = game
+    person = _set_place(game, "洪承畴", location="henan")
+    night_id = int(an.open_night(db, state)["id"])
+    an.record_summon_in_transit(
+        db, night_id, person.name, origin_id="command:continue-1",
+    )
+
+    # Judge/extractor failure (no accepted person change) preserves the durable retry.
+    assert an.settle_applied_arrived_summons(db, {}) == []
+    assert [row["origin_id"] for row in an.list_unsettled_summons(db)] == [
+        "command:continue-1"
+    ]
+
+    from ming_sim.issues import apply_score_extraction
+    applied = apply_score_extraction(db, state, {"人物变更": [{
+        "name": person.name, "动作": "行止", "transit_to": "beizhili",
+        "origin_ref": "盘面自发",
+    }]}, content=content)
+
+    assert an.settle_applied_arrived_summons(db, applied) == ["command:continue-1"]
+    assert an.list_unsettled_summons(db) == []
+    assert an.settle_applied_arrived_summons(db, applied) == []
+
+
 def test_fresh_seed_closes_ticket_670_named_locations(content):
     expected = {
         **{name: "beizhili" for name in "韩爌 张瑞图 来宗道 施凤来 黄立极 王绍徽 毕自严 郭允厚 杨嗣昌 温体仁 钱龙锡 刘鸿训 钱谦益 李标 孙承宗 崔呈秀 王在晋 徐光启 徐应秋 袁可立 周延儒 倪元璐 黄道周 曹化淳 王体乾 王承恩 魏忠贤 田尔耕 许显纯 李若琏 客氏 周皇后 周贵人 田贵妃 袁贵妃 慧妃 懿安皇后 高起潜 孙元化 许誉卿 乔允升".split()},
