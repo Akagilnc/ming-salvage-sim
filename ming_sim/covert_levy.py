@@ -35,20 +35,6 @@ def army_pay_fact_for_dossier(db: Any, dossier_id: int) -> Dict[str, object] | N
     }
 
 
-def build_covert_levy_candidates(db: Any) -> List[Dict[str, object]]:
-    """兼容读端：候选只是案卷事实，不是生产协议。"""
-    out: List[Dict[str, object]] = []
-    rows = db.conn.execute(
-        "SELECT id FROM decree_dossiers WHERE status='executing' ORDER BY id"
-    ).fetchall()
-    for row in rows:
-        did = int(row["id"])
-        fact = army_pay_fact_for_dossier(db, did)
-        if fact is not None and _issue_for_dossier(db, did) > 0:
-            out.append({"dossier_id": did, **fact})
-    return out
-
-
 def settle_exposure_from_canonical_actions(db: Any, state: Any, applied: Mapping[str, object]) -> int:
     """只凭 canonical applier 已成功落库的结果消费待办。"""
     consumed = 0
@@ -63,29 +49,49 @@ def settle_exposure_from_canonical_actions(db: Any, state: Any, applied: Mapping
             if isinstance(participant, Mapping) and participant.get("tier") in {"主办", "协办"}:
                 actors.add(str(participant.get("character_id") or "").strip())
         actors.discard("")
-        decision = ""
-        # 禁摊派骑案卷执行格；默许骑 #622/#649 实况；查办骑人物处置。
-        if any(isinstance(x, Mapping) and not x.get("rejected")
-               and int(x.get("dossier_id") or 0) == did and x.get("outcome") == "failed"
-               for x in applied.get("dossier_executions") or []):
-            decision = "禁摊派"
-        if any(isinstance(x, Mapping) and not x.get("rejected")
-               and x.get("origin_ref") == origin
-               for key in ("economy_moves", "fiscal_changes", "population_transfers")
-               for x in applied.get(key) or []):
-            decision = "默许"
+        successful = lambda x: isinstance(x, Mapping) and not x.get("rejected")
+        stopped = any(
+            successful(x) and int(x.get("dossier_id") or 0) == did
+            and x.get("outcome") == "failed"
+            for x in applied.get("dossier_executions") or []
+        )
+        levy_transfer = any(
+            successful(x) and x.get("origin_ref") == origin and x.get("reason") == "摊派"
+            for x in applied.get("population_transfers") or []
+        )
+        covert_effect = any(
+            successful(x) and x.get("origin_ref") == origin and bool(x.get("beyond_intent"))
+            for key in ("economy_moves", "fiscal_changes")
+            for x in applied.get(key) or []
+        )
         person_changes = list(applied.get("applied_person_changes") or [])
         person_changes += list((applied.get("issue_summary") or {}).get("applied_person_changes") or [])
-        if any(isinstance(x, Mapping) and not x.get("rejected")
-               and x.get("动作") in {"处置", "罢黜"} and str(x.get("name") or "") in actors
-               for x in person_changes):
-            decision = "查办"
-        if decision:
-            db.mark_next_audience_todo_status(
-                int(todo["id"]), "consumed",
-                payload_patch={"decision": decision, "decided_turn": int(state.turn)}, commit=False,
-            )
-            consumed += 1
+        punished = any(
+            successful(x) and x.get("动作") in {"处置", "罢黜"}
+            and str(x.get("name") or "") in actors for x in person_changes
+        )
+        paid_cost = any(
+            successful(x) and x.get("origin_ref") == origin
+            and ({str(x.get("source") or ""), str(x.get("target") or "")} & actors)
+            for x in applied.get("relation_edge_events") or []
+        )
+        decisions = [
+            name for name, matched in (
+                ("禁摊派", stopped), ("默许", levy_transfer and covert_effect),
+                ("查办", punished and paid_cost),
+            ) if matched
+        ]
+        if len(decisions) != 1:
+            continue
+        decision = decisions[0]
+        # 禁令的真实后果是欠饷缺口继续顶在御前，故保留同一 pending 行而非造第二 dispatcher。
+        status = "pending" if decision == "禁摊派" else "consumed"
+        db.mark_next_audience_todo_status(
+            int(todo["id"]), status,
+            payload_patch={"decision": decision, "decided_turn": int(state.turn),
+                           "shortfall_reopened": decision == "禁摊派"}, commit=False,
+        )
+        consumed += 1
     return consumed
 
 
@@ -117,7 +123,7 @@ def write_exposure_todos(
         if any(
             isinstance(item, Mapping)
             and item.get("origin_ref") == origin
-            and item.get("reason") in {"摊派", "灾害", "兵灾"}
+            and item.get("reason") == "摊派"
             for item in transfers
         ):
             channels.append("民变自长")
