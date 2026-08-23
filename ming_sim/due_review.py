@@ -306,6 +306,23 @@ def project_due_review_scene(
     # below; unlike ordinary due review it must not inject a fixed memorial.
     if scene_kind == "covert_levy_exposure":
         scene_text = ""
+    if reopened:
+        # A prohibition reminder is a fresh shortfall projection, not a replay
+        # of the already-settled exposure and its adjudication materials.
+        return {
+            "kind": scene_kind,
+            "entry_kind": entry_kind,
+            "todo_id": int(todo["id"]),
+            "commitment_ref": int(todo["commitment_ref"]),
+            "stage_idx": int(todo["stage_idx"]),
+            "due_turn": int(todo.get("due_turn") or 0),
+            "dossier_id": inp.get("dossier_id"),
+            "executor_id": str((inp.get("dossier") or {}).get("executor_id") or ""),
+            "army_pay_fact": inp.get("army_pay_fact"),
+            "decision": str(payload.get("decision") or ""),
+            "shortfall_reopened": True,
+            "available_dispositions": [],
+        }
     return {
         "kind": scene_kind,
         "entry_kind": entry_kind,
