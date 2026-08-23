@@ -1462,13 +1462,14 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
             if str(row["owner_power"]) == "ming" and not bool(row["is_tusi"]) \
                     and not bool(row["self_funded_pay"]):
                 loyalty_delta = army_loyalty_tick_delta(new_arrears, needed)
+                new_loyalty = max(0, min(100, old_loyalty + loyalty_delta))
+                new_is_mutinied = _next_mutiny_latch(
+                    loyalty=new_loyalty, arrears=new_arrears, needed=needed,
+                    current=int(row["is_mutinied"]),
+                )
             else:
-                loyalty_delta = 0
-            new_loyalty = max(0, min(100, old_loyalty + loyalty_delta))
-            new_is_mutinied = _next_mutiny_latch(
-                loyalty=new_loyalty, arrears=new_arrears, needed=needed,
-                current=int(row["is_mutinied"]),
-            )
+                new_loyalty = old_loyalty
+                new_is_mutinied = int(row["is_mutinied"])
 
             db.conn.execute(
                 "UPDATE armies SET arrears = ?, morale = ?, loyalty = ?, is_mutinied = ? WHERE id = ?",

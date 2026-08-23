@@ -30,17 +30,32 @@ def _configure_fiscal_path(db, fiscal_path: str):
         )
 
 
-def _setup(db, fiscal_path: str, *, loyalty: int, arrears: float, latched: int = 0):
+def _setup(
+    db,
+    fiscal_path: str,
+    *,
+    loyalty: int,
+    arrears: float,
+    latched: int = 0,
+    is_tusi: int = 0,
+    self_funded_pay: int = 0,
+):
     _configure_fiscal_path(db, fiscal_path)
+    if fiscal_path == "substrate_hub" and (is_tusi or self_funded_pay):
+        # Exercise the substrate_hub loyalty seam without the later pay-source
+        # conservation rule, which requires exempt armies to carry no arrears.
+        db.conn.execute(
+            "UPDATE fiscal_config SET value=0 WHERE key='__army_pay_source_cutover'"
+        )
     db.conn.execute("UPDATE armies SET manpower=0")
     # hub 走全中央饷源；总欠与分源欠同步，确保结算确实从 hub 真源重算 latch。
     central_arrears = arrears if fiscal_path == "substrate_hub" else 0
     db.conn.execute(
-        """UPDATE armies SET owner_power='ming', is_tusi=0, self_funded_pay=0,
+        """UPDATE armies SET owner_power='ming', is_tusi=?, self_funded_pay=?,
            manpower=10000, salary_rate=1, loyalty=?, arrears=?, is_mutinied=?,
            province_pay_share=0, central_pay_share=1,
            province_pay_arrears=0, central_pay_arrears=? WHERE id=?""",
-        (loyalty, arrears, latched, central_arrears, ARMY),
+        (is_tusi, self_funded_pay, loyalty, arrears, latched, central_arrears, ARMY),
     )
     db.conn.commit()
 
@@ -150,6 +165,25 @@ def test_tick_projects_derived_mutiny_state_to_both_consumers(
         army = _projected_army(payload, expected_name)
         assert army["mutiny_state"] == expected_state
         assert "is_mutinied" not in army
+
+
+@pytest.mark.parametrize("fiscal_path", PATHS)
+@pytest.mark.parametrize(
+    ("exemption", "flags"),
+    [("tusi", {"is_tusi": 1}), ("self_funded", {"self_funded_pay": 1})],
+)
+@pytest.mark.parametrize(
+    ("loyalty", "arrears", "latched"),
+    [(10, 5, 0), (45, 0, 1)],
+    ids=("would-enter", "would-exit"),
+)
+def test_exempt_armies_preserve_mutiny_latch(
+    game, fiscal_path, exemption, flags, loyalty, arrears, latched
+):
+    db, state, _ = game
+    _setup(db, fiscal_path, loyalty=loyalty, arrears=arrears, latched=latched, **flags)
+
+    assert _tick(db, state)[1] == latched, exemption
 
 
 def test_mutiny_latch_uses_strict_four_month_arrears_boundary():
