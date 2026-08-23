@@ -584,12 +584,14 @@ def _dispatch_relation_judge_cli(session: GameSession, chat_turn_id: int) -> Non
         logger.exception("relation judge queue resolution degraded chat_turn_id=%s", chat_turn_id)
         return
 
+    # Admission belongs to the dispatcher: a close barrier must see the worker
+    # before Thread.start, exactly as the Web spawner does.
+    ticket = q.claim(key=("turn", int(chat_turn_id)))
+    if ticket is None:
+        return
+
     def _run() -> None:
-        ticket = None
         try:
-            ticket = q.claim(key=("turn", int(chat_turn_id)))
-            if ticket is None:
-                return
             from ming_sim.relation_judge import run_summon_relation_judge
             run_summon_relation_judge(
                 session.db, session.state,
@@ -601,8 +603,7 @@ def _dispatch_relation_judge_cli(session: GameSession, chat_turn_id: int) -> Non
             # 仍不得打断对话，但必须响亮留痕。
             logger.exception("relation judge worker degraded chat_turn_id=%s", chat_turn_id)
         finally:
-            if ticket is not None:
-                q.complete(ticket)
+            q.complete(ticket)
 
     thread = threading.Thread(
         target=_run, daemon=True, name="cli-audience-relation-judge",
@@ -610,6 +611,7 @@ def _dispatch_relation_judge_cli(session: GameSession, chat_turn_id: int) -> Non
     try:
         thread.start()
     except Exception:
+        q.complete(ticket)
         logger.exception("relation judge thread start degraded chat_turn_id=%s", chat_turn_id)
 
 

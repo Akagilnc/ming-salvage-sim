@@ -106,9 +106,20 @@ def parse_relation_judge_output(raw: str) -> List[Any]:
     return list(data["events"])
 
 
+def _canonical_turn_id(value: Any) -> int:
+    """Accept only JSON integers or their canonical unsigned decimal spelling."""
+    if isinstance(value, bool):
+        raise ValueError("源轮必须为本窗口对话轮 id")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value and value == str(int(value)) and value.isdecimal():
+        return int(value)
+    raise ValueError("源轮必须为 canonical 十进制整数")
+
+
 def _resolve_one_event(
     db: Any, state: Any, item: Any, allowed_endpoint_names: Any,
-    window_turn_ids: set[int],
+    window_turn_ids: set[int], turn_rows: Mapping[int, Mapping[str, Any]],
 ) -> List[Dict[str, Any]]:
     """校验并落库单个判官事件项；坏项 ValueError 上抛（逐项拒收留痕，好项不受牵连）。
 
@@ -122,12 +133,7 @@ def _resolve_one_event(
     if raw_turn_id is None and len(window_turn_ids) == 1:
         chat_turn_id = next(iter(window_turn_ids))
     else:
-        if isinstance(raw_turn_id, bool):
-            raise ValueError("源轮必须为本窗口对话轮 id")
-        try:
-            chat_turn_id = int(raw_turn_id)
-        except (TypeError, ValueError):
-            raise ValueError("源轮必须为本窗口对话轮 id") from None
+        chat_turn_id = _canonical_turn_id(raw_turn_id)
     if chat_turn_id not in window_turn_ids:
         raise ValueError(f"源轮不在本次判读窗口：{chat_turn_id!r}")
     origin = summon_edge_origin(chat_turn_id)
@@ -172,9 +178,13 @@ def _resolve_one_event(
         )
     out: List[Dict[str, Any]] = []
     for target in targets:
+        source_turn = turn_rows[chat_turn_id]
         edge_id = int(db.record_relation_edge_event(
             source=source, target=target, event_kind=kind,
             context=raw_context, origin=origin,
+            turn=int(source_turn.get("turn") or 0),
+            year=int(source_turn.get("year") or 0),
+            period=int(source_turn.get("period") or 0),
         ))
         out.append({
             "source": source, "target": target, "event_kind": kind,
@@ -190,6 +200,8 @@ def run_summon_relation_judge(
     llm_config: Any = None,
     write_gate: Any = None,
     agent: Any = None,
+    night_id: Optional[int] = None,
+    allowed_endpoint_names: Optional[set[str]] = None,
 ) -> Dict[str, Any]:
     """一拍判官腿：解窗 → 组面 → LLM → 逐项落库 → 标水位。
 
@@ -214,14 +226,20 @@ def run_summon_relation_judge(
         # 1. 解窗（短持 gate）
         with gate:
             window = (
-                db.list_unjudged_completed_chat_turns()
+                db.list_unjudged_completed_chat_turns(night_id=night_id)
                 if hasattr(db, "list_unjudged_completed_chat_turns") else []
             )
         if not window:
             return {"skipped": "no_window"}
-        # 2. 组输入面（短持 gate：对话与关系账均经共享 conn 读）
+        batch_night_id = int(window[0].get("night_id") or 0)
+        # Prompt context includes already-judged preceding turns, while only `window`
+        # remains eligible for output/watermark.
         with gate:
-            hydrated = [_hydrate_turn(db, row) for row in window]
+            context_rows = (
+                db.list_relation_judge_context(batch_night_id, max(int(r["id"]) for r in window))
+                if hasattr(db, "list_relation_judge_context") else window
+            )
+            hydrated = [_hydrate_turn(db, row) for row in context_rows]
             prompt = build_relation_judge_prompt(db, hydrated)
         # 3. LLM 在闸外；失败降级留痕不抛（漏判不阻塞主链）。
         # llm_config 未配置且未注入替身 → 零 LLM 快速降级（与「无票零 LLM」同纪律）。
@@ -250,29 +268,55 @@ def run_summon_relation_judge(
             if len(survivors) != len(window):
                 return {"skipped": "turn_retired"}
             window_turn_ids = {int(row["id"]) for row in window}
-            allowed = {
-                row["name"] for row in db.current_court_roster_rows(state)
-            }
+            # Eligibility is a source-night fact, not the mutable live court roster.
+            allowed = set(allowed_endpoint_names or ())
+            allowed.update(str(row.get("minister_name") or "") for row in context_rows)
+            if batch_night_id > 0:
+                from ming_sim.audience_night import persons_entered_tonight
+                entered = persons_entered_tonight(db, batch_night_id)
+                allowed.update(entered)
+            else:
+                # Old pre-night saves have no persisted attendance ledger.
+                allowed.update(row["name"] for row in db.current_court_roster_rows(state))
+            turn_rows = {int(row["id"]): row for row in window}
             written: List[Dict[str, Any]] = []
             rejected: List[Dict[str, Any]] = []
             # 边写与水位是一个恢复单元：任一异常须同时回滚，不能留下已落边、未进水位
             # 的 crash gap。canonical writer 内部 commit 由 atomic 暂停。
             with atomic(db):
+                blocked_turn_ids: set[int] = set()
+                block_all = False
                 for item in items:
+                    attributed_id: Optional[int] = None
+                    if isinstance(item, Mapping):
+                        raw_id = item.get("源轮", item.get("chat_turn_id"))
+                        if raw_id is None and len(window_turn_ids) == 1:
+                            attributed_id = next(iter(window_turn_ids))
+                        else:
+                            try:
+                                candidate = _canonical_turn_id(raw_id)
+                                if candidate in window_turn_ids:
+                                    attributed_id = candidate
+                            except ValueError:
+                                pass
                     try:
                         written.extend(_resolve_one_event(
-                            db, state, item, allowed, window_turn_ids,
+                            db, state, item, allowed, window_turn_ids, turn_rows,
                         ))
                     except (TypeError, ValueError) as exc:
+                        if attributed_id is None:
+                            block_all = True
+                        else:
+                            blocked_turn_ids.add(attributed_id)
                         rejected.append({
                             "rejected": True, "category": "invalid_relation_event",
-                            "reason": str(exc), "item": (
-                                dict(item) if isinstance(item, Mapping) else repr(item)
-                            ),
+                            "reason": str(exc), "source_turn_id": attributed_id,
+                            "item": dict(item) if isinstance(item, Mapping) else repr(item),
                         })
-                db.mark_relation_judge_done(window_turn_ids)
+                done_ids = set() if block_all else window_turn_ids - blocked_turn_ids
+                db.mark_relation_judge_done(done_ids)
         return {
-            "judged_turn_ids": sorted(window_turn_ids),
+            "judged_turn_ids": sorted(done_ids),
             "origins": sorted({row["origin"] for row in written}),
             "edges": len(written),
             "written": written,
