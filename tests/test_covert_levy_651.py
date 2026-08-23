@@ -3,6 +3,7 @@ from ming_sim.covert_levy import (
     settle_exposure_from_canonical_actions, write_exposure_todos,
 )
 from ming_sim.decree import project_dossiers_for_simulator
+from ming_sim.issues import apply_score_extraction
 from ming_sim.due_review import audience_todo_lane, build_due_review_input, list_due_review_scenes
 from ming_sim.simulation import EMPTY_EXTRACTION, MODULE_FIELDS, build_extractor_shared_context
 from ming_sim.beat_orchestration import assemble_beat_inputs, BEAT_OPEN
@@ -121,33 +122,12 @@ def test_covert_consumer_requires_real_beyond_intent_effect_without_narrowing_ge
     assert write_exposure_todos(db, state) == 0  # #651 additionally requires actual effect
 
 
-def test_dispositions_require_their_complete_canonical_consequence(game, monkeypatch):
-    db, state, _ = game
-    did, _, _, executor = _bound_case(db, state)
-    monkeypatch.setattr(db, "read_dossier_fork_state", lambda dossier_id: {
-        "dossier_id": dossier_id, "fork": True, "reported_bands": ["有成"],
-        "execution_outcome": "transformed", "actual_effect_count": 1, "beyond_intent": True,
-    })
-    db.conn.execute("INSERT INTO decree_dossier_links(source_dossier_id,target_dossier_id,relation_type,note) VALUES (?,?, '稽核','查账')", (did, did))
-    assert write_exposure_todos(db, state) == 1
-    origin = f"dossier:{did}"
-    # A transfer alone is not tacit permission: the same case needs a durable beyond-intent leg.
-    assert settle_exposure_from_canonical_actions(db, state, {"population_transfers": [
-        {"origin_ref": origin, "reason": "摊派"}]}) == 0
-    assert db.list_next_audience_todos(status="pending")
-    # Investigation needs both a disposition of the case actor and its relationship/event cost.
-    assert settle_exposure_from_canonical_actions(db, state, {"applied_person_changes": [
-        {"name": executor, "动作": "处置"}]}) == 0
-    assert settle_exposure_from_canonical_actions(db, state, {
-        "applied_person_changes": [{"name": executor, "动作": "处置"}],
-        "relation_edge_events": [{"source": executor, "target": "朝臣",
-                                  "origin": f"{origin}:relation:结怨|round:{state.turn}"}],
-    }) == 1
-
-
-def test_prohibition_reopens_shortfall_once_without_reoffering_dispositions(game, monkeypatch):
-    db, state, _ = game
-    did, _, _, _ = _bound_case(db, state)
+def _exposed_todo(db, state, monkeypatch, did):
+    db.conn.execute(
+        "UPDATE decree_dossiers SET promulgation_decision='promulgated' WHERE id=?", (did,)
+    )
+    db.record_dossier_progress(did, state.turn, "有成", "军饷已有着落", commit=False)
+    db.record_dossier_execution(did, "transformed", "暗中摊派", state.turn, close=True, commit=False)
     monkeypatch.setattr(db, "read_dossier_fork_state", lambda dossier_id: {
         "dossier_id": dossier_id, "fork": True, "reported_bands": ["有成"],
         "execution_outcome": "transformed", "actual_effect_count": 1, "beyond_intent": True,
@@ -157,13 +137,70 @@ def test_prohibition_reopens_shortfall_once_without_reoffering_dispositions(game
         "VALUES (?,?, '稽核','查账')", (did, did),
     )
     assert write_exposure_todos(db, state) == 1
-    applied = {"dossier_executions": [{"dossier_id": did, "outcome": "failed"}]}
-    assert settle_exposure_from_canonical_actions(db, state, applied) == 1
-    assert settle_exposure_from_canonical_actions(db, state, applied) == 0
+
+
+def test_dispositions_consume_only_real_canonical_complete_legs(game, monkeypatch):
+    db, state, content = game
+    did, _, army_id, executor = _bound_case(db, state)
+    _exposed_todo(db, state, monkeypatch, did)
+    origin = f"dossier:{did}"
+    other = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND name<>? LIMIT 1", (executor,)
+    ).fetchone()[0]
+
+    # 查办：关系代价单独成功仍不结算；人物腿也真实成功后才结算。
+    partial = apply_score_extraction(db, state, {"relation_edge_events": [{
+        "来源引用": origin, "施动者": executor, "受动者": [other],
+        "类目": "结怨", "语境": "查办暗渠触动同僚",
+    }]}, content, None, dossier_ids_at_input={did})
+    assert partial["relation_edge_event_resolutions"]
+    assert not partial["relation_edge_event_resolutions"][0].get("rejected")
+    assert settle_exposure_from_canonical_actions(db, state, partial) == 0
+    complete = apply_score_extraction(db, state, {"人物变更": [{
+        "origin_ref": origin, "name": executor, "动作": "处置", "status": "dismissed",
+    }]}, content, None, dossier_ids_at_input={did})
+    complete["relation_edge_event_resolutions"] = partial["relation_edge_event_resolutions"]
+    assert complete["applied_person_changes"]
+    assert settle_exposure_from_canonical_actions(db, state, complete) == 1
+
+
+def test_tacit_and_prohibition_use_real_applier_receipts_and_are_idempotent(game, monkeypatch):
+    db, state, content = game
+    did, _, army_id, _ = _bound_case(db, state)
+    _exposed_todo(db, state, monkeypatch, did)
+    origin = f"dossier:{did}"
+    key = next(iter(db.get_fiscal_config()))
+    db.conn.execute("UPDATE armies SET arrears=10 WHERE id=?", (army_id,))
+
+    # A canonical stop effect can legally bind the closed source dossier; no second execution is written.
+    stopped = apply_score_extraction(db, state, {"fiscal_changes": [{
+        "key": key, "delta": 1, "origin_ref": origin, "beyond_intent": False,
+    }]}, content, None)
+    assert stopped["fiscal_changes"][0]["origin_ref"] == origin
+    assert settle_exposure_from_canonical_actions(db, state, stopped) == 1
+    assert settle_exposure_from_canonical_actions(db, state, stopped) == 0
     scene = list_due_review_scenes(db, state)[0]
-    assert scene["decision"] == "禁摊派"
-    assert scene["shortfall_reopened"] is True
+    assert scene["decision"] == "禁摊派" and scene["shortfall_reopened"] is True
     assert scene["available_dispositions"] == []
+
+    # Reuse the same fixture for tacit permission: both canonical legs are required.
+    did2, _, _, _ = _bound_case(db, state)
+    _exposed_todo(db, state, monkeypatch, did2)
+    origin2 = f"dossier:{did2}"
+    tacit = apply_score_extraction(db, state, {
+        "population_transfers": [{
+            "source": "农民@shaanxi", "target": "流民@shaanxi", "amount": 1,
+            "reason": "摊派", "origin_ref": origin2,
+        }],
+        "fiscal_changes": [{
+            "key": key, "delta": 1, "origin_ref": origin2, "beyond_intent": True,
+        }],
+    }, content, None, dossier_ids_at_input={did2})
+    assert tacit["population_transfers"] and tacit["fiscal_changes"]
+    assert settle_exposure_from_canonical_actions(db, state, {
+        **tacit, "fiscal_changes": [],
+    }) == 0
+    assert settle_exposure_from_canonical_actions(db, state, tacit) == 1
 
 
 def test_population_transfer_is_the_self_grown_unrest_channel(game, monkeypatch):

@@ -8126,6 +8126,8 @@ def apply_score_extraction(
         applied_fiscal.append({
             "key": key, "old": current, "new": new_val, "delta": delta,
             "reason": str(change.get("reason") or ""),
+            "origin_ref": origin_ref,
+            "beyond_intent": bool(change.get("beyond_intent")),
         })
     for loss_pair, final_values in loss_pair_final_by_pair.items():
         pair_changes = [
@@ -8161,6 +8163,9 @@ def apply_score_extraction(
                 "new": change["new"],
                 "delta": change["delta"],
                 "reason": change["reason"],
+                "origin_ref": change["origin_ref"],
+                "beyond_intent": bool(change["item"].get("beyond_intent"))
+                if isinstance(change.get("item"), dict) else False,
             })
     successful_authority_changes = [
         item for item in authority_change_results
