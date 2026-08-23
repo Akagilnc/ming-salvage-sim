@@ -16,3 +16,7 @@
 F3.2 已按最新裁决直接改写为「LLM 综合归因与可断言边界」：`fiscal_fact_brief` 继续作为账本事实输入，但最终 `class_delta.satisfaction` 由既有 internal extractor 结合财政、事件、任免等同回合事实判断。仅含单一财政受损事实的最小盘面仍须证明事实包进入 internal extractor，但不再断言输出方向。
 
 r1 F3.2 中以财政受损/受益强制净值方向、把方向不符视为错误并二次处理的条款，以及验收②对应断言，全部废止；冻结验收映射已同步改写。实现不得扩 `class_delta` schema，不得拆增财政/其它分量，不得新增 LLM 调用或为财政方向增加 retry/clamp。F3.1 的事实包、r6 动态 extractor 不变式及 P4 定性叙事边界保持不变。
+
+## 庭裁修正案 r8（动态成员缺 `settle` key 口径校正）
+
+F2① 的省级事实投影成员与 ADR 0019 一致：仅投影「明控且已有 `settle` key」的省。合法 fiscal dict 完全缺少 `settle` key（包括收复台湾/建州及 legacy 存档形状）是合法非成员，直接出列，不得阻断 simulator payload。`settle` key 已存在但值非 dict，或其 `st`/`p` 非 dict，仍属坏结构并按 ADR 0005 响亮失败；坏 fiscal JSON 与非 dict fiscal 同样响亮失败。旧契约中“缺 settle 基座必须失败”的过宽措辞废止。
