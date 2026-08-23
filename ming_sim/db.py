@@ -16629,12 +16629,14 @@ class GameDB:
                 # 授官/激活仍只由顺颁后的
                 # _commit_office_action -> apply_office_appointment 完成。
                 from ming_sim.models import Character
+                from ming_sim.session import canonical_new_appointment_person_fields
                 character = Character(
                     name=name, office="待选", office_type="未仕",
-                    faction=str(payload.get("faction") or "中立").strip() or "中立",
-                    aliases=[], personal_skills=[], loyalty=50, ability=50,
-                    integrity=50, courage=50, style="", power_id="ming",
+                    aliases=[], personal_skills=[], power_id="ming",
                     status="offstage",
+                    **canonical_new_appointment_person_fields(
+                        content, payload.get("faction"),
+                    ),
                 )
                 content.characters[name] = character
                 self.add_character(
