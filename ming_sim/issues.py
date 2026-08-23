@@ -5130,40 +5130,18 @@ def apply_issue_tracker_output(
             )
             candidates = {str(item["id"]): item for item in surge_candidates}
             candidate = candidates.get(candidate_id)
-            roster = ni.get("participant_roster")
+            roster = ni.get("target_roster")
             stage_text = ni.get("stage_text")
             title = raw_title if isinstance(raw_title, str) else ""
-            target_ids: List[str] = []
-            roster_shape_valid = isinstance(roster, list) and bool(roster)
-            if roster_shape_valid:
-                for item in roster:
-                    if not isinstance(item, dict):
-                        roster_shape_valid = False
-                        break
-                    character_id = item.get("character_id")
-                    tier = item.get("tier")
-                    role = item.get("role")
-                    delegator_id = item.get("delegator_id")
-                    if (
-                        not isinstance(character_id, str)
-                        or not character_id.strip()
-                        or not isinstance(tier, str)
-                        or tier not in {"主办", "协办", "知情"}
-                        or ("role" in item and not isinstance(role, str))
-                        or (
-                            delegator_id not in (None, "")
-                            and (
-                                not isinstance(delegator_id, str)
-                                or db.conn.execute(
-                                    "SELECT 1 FROM characters WHERE name=?",
-                                    (delegator_id,),
-                                ).fetchone() is None
-                            )
-                        )
-                    ):
-                        roster_shape_valid = False
-                        break
-                    target_ids.append(character_id.strip())
+            roster_shape_valid = (
+                isinstance(roster, list)
+                and bool(roster)
+                and all(isinstance(character_id, str) and character_id.strip() for character_id in roster)
+            )
+            target_ids = (
+                list(dict.fromkeys(character_id.strip() for character_id in roster))
+                if roster_shape_valid else []
+            )
             reason = ""
             if candidate is None:
                 reason = (
@@ -5178,7 +5156,7 @@ def apply_issue_tracker_output(
             elif str(ni.get("faction_hint") or "").strip() != candidate["faction_id"]:
                 reason = "弹劾潮 faction_hint 与候选派系不符"
             elif not roster_shape_valid:
-                reason = "弹劾潮 participant_roster 须为非空合法结构化人物名单"
+                reason = "弹劾潮 target_roster 须为非空人物身份列表"
             elif not set(target_ids).issubset(set(candidate["eligible_target_ids"])):
                 reason = "弹劾潮标靶越过 eligible_target_ids 闭集"
             if reason:
@@ -5198,7 +5176,8 @@ def apply_issue_tracker_output(
                 bar_bad_meaning="",
                 stage_text=stage_text,
                 faction_hint=str(candidate["faction_id"]),
-                participants=roster,
+                participants=[],
+                target_roster=target_ids,
                 cancellable="never",
                 commit=not external_transaction,
             )

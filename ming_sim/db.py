@@ -1734,6 +1734,7 @@ class GameDB:
                 tags TEXT NOT NULL DEFAULT '[]',
                 participants TEXT NOT NULL DEFAULT '[]',
                 participant_roster TEXT NOT NULL DEFAULT '[]',
+                target_roster TEXT NOT NULL DEFAULT '[]',
                 ongoing_effects TEXT NOT NULL DEFAULT '{}',
                 cancellable TEXT NOT NULL DEFAULT 'never',
                 cancel_cost TEXT NOT NULL DEFAULT '{}',
@@ -2145,6 +2146,7 @@ class GameDB:
             "character_knowledge_events", "excluded_names", "TEXT NOT NULL DEFAULT '[]'")
         self.ensure_column("issues", "participants", "TEXT NOT NULL DEFAULT '[]'")
         self.ensure_column("issues", "participant_roster", "TEXT NOT NULL DEFAULT '[]'")
+        self.ensure_column("issues", "target_roster", "TEXT NOT NULL DEFAULT '[]'")
         self.ensure_column("secret_orders", "excluded_targets", "TEXT NOT NULL DEFAULT '{}'")
         # #976: audience chat hold-and-release — held until classification release.
         # held | released | withheld | private
@@ -18048,6 +18050,7 @@ class GameDB:
         faction_hint: str = "",
         tags: List[str] | None = None,
         participants: Iterable[str] | str | None = None,
+        target_roster: Iterable[str] | None = None,
         ongoing_effects: Dict[str, object] | None = None,
         cancellable: str = "never",
         cancel_cost: Dict[str, object] | None = None,
@@ -18074,6 +18077,10 @@ class GameDB:
         phase = self._derive_issue_phase(bar_value)
         participant_roster = self._normalize_participant_roster(participants)
         participant_names = [item["character_id"] for item in participant_roster]
+        normalized_targets = list(dict.fromkeys(
+            str(character_id).strip() for character_id in (target_roster or [])
+            if str(character_id).strip()
+        ))
         from ming_sim.staged_commitment import stages_to_json
         # 字符串面经 stages_to_json 正确解析或响亮拒绝，禁止 char-iterate 静默存 []
         stages_blob = stages_to_json([] if stages_json is None else stages_json)
@@ -18083,10 +18090,10 @@ class GameDB:
                 kind, title, origin_kind, origin_ref, origin_turn,
                 bar_value, bar_good_meaning, bar_bad_meaning, inertia,
                 phase, stage_text, status, severity, region_hint, faction_hint,
-                tags, participants, participant_roster, ongoing_effects, cancellable, cancel_cost,
+                tags, participants, participant_roster, target_roster, ongoing_effects, cancellable, cancel_cost,
                 effect_on_resolve, effect_on_fail, resolve_condition, fail_condition,
                 end_turn, stop_condition, commitment_kind, stages_json, last_advance_turn
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 sanitize_sqlite_text(kind), sanitize_sqlite_text(title),
@@ -18097,6 +18104,7 @@ class GameDB:
                 safe_json_dumps(tags or [], ensure_ascii=False),
                 safe_json_dumps(participant_names, ensure_ascii=False),
                 safe_json_dumps(participant_roster, ensure_ascii=False),
+                safe_json_dumps(normalized_targets, ensure_ascii=False),
                 safe_json_dumps(ongoing_effects or {}, ensure_ascii=False),
                 sanitize_sqlite_text(cancellable),
                 safe_json_dumps(cancel_cost or {}, ensure_ascii=False),
