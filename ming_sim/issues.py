@@ -6997,7 +6997,9 @@ def _apply_person_changes(
                 if transit_to and previous_destination and previous_destination != transit_to:
                     applied.append(rejected(item, "在途人物不可改道", "invalid_transition"))
                     continue
-                if transit_to and not location:
+                if transit_to and db.conn.execute(
+                    "SELECT 1 FROM regions WHERE id=?", (location,)
+                ).fetchone() is None:
                     continue
                 distance = None
                 speed = None
