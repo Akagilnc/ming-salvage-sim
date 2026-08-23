@@ -32,11 +32,12 @@ from ming_sim.db import GameDB, POPULATION_UNIT_WAN
 from ming_sim.decree import settle_with_delta
 from ming_sim.issues import apply_score_extraction
 from ming_sim.memories import effect_brief
+from ming_sim.agents import build_simulator_context
 from ming_sim.simulation import (
     EXTRACTION_MODULES,
     build_extractor_shared_context,
-    build_simulator_payload,
     extract_scores_by_modules_with_agno,
+    simulate_season_with_payload,
 )
 
 # 量级口径（施工契约，史实尺度）：单条记录上限＝本批结算前源阶级省级行余额 × 万分比。
@@ -237,6 +238,10 @@ class _ExtractorAgent:
         return SimpleNamespace(content=self.response)
 
 
+class _SimulatorAgent(_ExtractorAgent):
+    """不接受 stream 参数，令真实 simulator runner 走其普通 run 兼容支路。"""
+
+
 def _module_response(module, transfers):
     payload = {
         "internal": {"metric_delta": {}, "economy_moves": [], "fiscal_changes": [],
@@ -262,13 +267,19 @@ def test_disaster_war_real_payload_extractor_settlement_and_echo(
     db.conn.execute(fact_sql)
     db.conn.commit()
     before_turn = state.turn
-    simulator_payload = build_simulator_payload(state, db, "", "")
-    balances = simulator_payload["class_population_balances"]
-    assert balances["cols"] == ["name", "region_id", "population"]
-    assert ["农民", "shaanxi", FARMER_SHAANXI] in balances["rows"]
-    context = build_extractor_shared_context(
-        db, state, f"陕西{source.split('@')[0]}{amount}人因{reason}离乡成为流民", "", module="internal"
+    qualitative = f"陕西{source.split('@')[0]}因{reason}离乡，流民渐多"
+    narrative, simulator_payload = simulate_season_with_payload(
+        _SimulatorAgent(qualitative), state, db, "", ""
     )
+    assert narrative == qualitative
+    assert "class_population_balances" not in simulator_payload
+    rendered = build_simulator_context(simulator_payload)
+    assert "class_population_balances" not in rendered
+    assert str(FARMER_SHAANXI) not in rendered
+    context = build_extractor_shared_context(db, state, narrative, "", module="internal")
+    balances = context["class_population_balances"]
+    assert balances["cols"] == ["class_region", "population", "population_unit"]
+    assert any(row[:2] == ["农民@shaanxi", FARMER_SHAANXI] for row in balances["rows"])
     assert context["turn"]["turn"] == before_turn
 
     transfer = _transfer(source=source, target="流民@shaanxi", amount=amount, reason=reason)
@@ -287,6 +298,23 @@ def test_disaster_war_real_payload_extractor_settlement_and_echo(
     assert reason in report
     saved = db.get_turn_extraction(before_turn)["extractor_output"]["population_transfers"]
     assert saved[0]["reason"] == reason
+
+
+def test_no_disaster_war_fact_real_simulation_and_extraction_declares_nothing(game):
+    """无事实反例也走真实 simulator/extractor 接缝：定性叙事不造灾，档房不申报，DB 不动。"""
+    db, state, _content = game
+    before = _snap(db)
+    narrative, payload = simulate_season_with_payload(
+        _SimulatorAgent("本月各省安靖，无灾无兵祸，百姓安土。"), state, db, "", ""
+    )
+    context = build_extractor_shared_context(db, state, narrative, "", module="internal")
+    agents = {m: _ExtractorAgent(_module_response(m, [])) for m in EXTRACTION_MODULES}
+    extracted, _, _ = extract_scores_by_modules_with_agno(
+        agents, db, state, context["narrative"], parallel=False
+    )
+    assert "class_population_balances" not in payload
+    assert extracted["population_transfers"] == []
+    assert _snap(db) == before
 
 
 # ── 守恒与 mutation：沿 S2 断言族扩展（复用 #649 oracle，不另立机制）─────────
