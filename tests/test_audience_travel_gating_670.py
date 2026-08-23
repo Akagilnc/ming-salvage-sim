@@ -84,6 +84,25 @@ def test_audience_admission_records_nothing_for_capital_or_disqualified_person(g
     assert an.list_unsettled_summons(db) == []
 
 
+def test_cli_initial_selection_records_remote_summon_without_returning_minister(game, monkeypatch):
+    from ming_sim.cli import terminal
+
+    sess = _session(game)
+    db, state, _content = game
+    sess.state = state
+    _set_place(game, "洪承畴", location="shaanxi")
+    answers = iter(["洪承畴", "quit"])
+    notices = []
+    monkeypatch.setattr("builtins.input", lambda *_a, **_k: next(answers))
+    monkeypatch.setattr("builtins.print", lambda *args, **_k: notices.append(" ".join(map(str, args))))
+
+    assert terminal.choose_minister(sess) is None
+    assert [(row["person_name"], row["origin_id"]) for row in an.list_unsettled_summons(db)] == [
+        ("洪承畴", f"cli:initial:{state.turn}:洪承畴"),
+    ]
+    assert any("赴京" in line and "不能入殿" in line for line in notices)
+
+
 def test_in_transit_summon_origin_is_idempotent_and_restorable(game):
     db, state, _content = game
     night_id = int(an.open_night(db, state)["id"])
