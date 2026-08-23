@@ -7208,11 +7208,6 @@ def _apply_surcharge_decrees(
         if dossier_match is None:
             _reject("missing_ref", "surcharge_decrees origin_ref 必须引用已物化旨意 dossier:<正整数>")
             continue
-        dossier_id = int(dossier_match.group(1))
-        if (db.get_decree_dossier(dossier_id) is None
-                or not db.dossier_authorizes_effects(dossier_id)):
-            _reject("missing_ref", f"surcharge_decrees 案卷未颁、未强颁或不存在：{origin_ref}")
-            continue
         origin_error = db.effect_origin_rejection(origin_ref)
         if origin_error:
             _reject(origin_error["category"], f"surcharge_decrees {origin_error['reason']}")
