@@ -64,8 +64,9 @@ hermes proxy 当 OpenAI 兼容后端：`hermes proxy start --provider nous|xai`�
 
 **本仓测试分级政策真源**：
 
-- **切片轮次**（逐片 implement / fixer 自检；评审核 coder 回执里的聚焦测试证据，不以复跑全量 suite 为复核手段）＝ **聚焦测试**（本片触及的测试）。Python 侧无 typecheck 工具链，owner 2026-08-15 拍：暂不装，以后有需要单独实现；Web/TS 侧类型检查照 CI 既有 tsc + vite build。
-- **家族/批次收尾**＝在**最终待合并状态**执行一次全量 suite；若执行失败或随后产生修复 commit，必须在新的最终状态重跑。**最终状态绿灯**后，才可作为 **merge 前门槛**。无家族/批次上下文的单切片或单 session 改动，**其自身即一个批次**——merge 前同样在最终状态跑一次全量到绿。
+- **切片轮次** 推荐逐片 implement / fixer 聚焦测试；不以复跑全量 suite 为必须复核手段。
+- **聚焦测试** 本片触及的测试。
+- **家族/批次收尾**＝在**最终待合并状态**执行一次全量 suite。
 - **CI**（`.github/workflows/ci.yml`）覆盖 **Python 全量 pytest + Web 构建/类型检查**（`tsc` + vite build），**不含 Web vitest**；本政策如实描述既有覆盖面，不改 CI 机制、不把 vitest 加进 CI。
 
 正向口径：切片只跑聚焦；全量在最终待合并状态跑到绿（失败/修复后重跑）。同构于仓外 `ak-pi-workflow-roles` 司天家族测试策略（该仓 #215 provenance）；worker prompt / reviewer 验收面属外部编排器仓，由其维护，本仓不改。
