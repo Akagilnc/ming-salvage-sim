@@ -1978,8 +1978,30 @@ def _pay_order_grounding_facts(content: Any, db: Any = None) -> str:
         "【pay_order_override 接地事实】地区只能直接使用下列 canonical id，禁别名/自造：\n"
         + "、".join(lines) + "\n" + timing
         + "priority 数字越小越先；默认军饷/官俸/宗禄/赈济=10/20/30/40，"
-          "并列按该默认次序稳定排列。该动作 entries 必须非空。\n"
+          "并列按该默认次序稳定排列。相对期限只填 duration_months=N，"
+          "不要自行计算 until_turn；该动作 entries 必须非空。\n"
     )
+
+
+def _ground_relative_pay_order_deadlines(result: Dict[str, Any], db: Any) -> Dict[str, Any]:
+    """在既有抽取适配缝把结构化相对月数落成 active-through 绝对 turn。"""
+    row = db.conn.execute("SELECT turn FROM game_state WHERE id=1").fetchone()
+    if row is None:
+        return result
+    current_turn = int(row["turn"])
+    drafts = result.get("drafts")
+    items = drafts if isinstance(drafts, list) else [result]
+    for item in items:
+        if not isinstance(item, dict) or item.get("dossier_action_type") != "pay_order_override":
+            continue
+        for entry in item.get("entries") or []:
+            if not isinstance(entry, dict) or "duration_months" not in entry:
+                continue
+            duration = entry.pop("duration_months")
+            if isinstance(duration, bool) or not isinstance(duration, int) or duration <= 0:
+                raise ValueError(f"override 相对期限 duration_months 须为正整数：{duration!r}")
+            entry["until_turn"] = current_turn + duration - 1
+    return result
 
 
 def extract_draft_intent_with_roster_heal(
@@ -2016,6 +2038,8 @@ def extract_draft_intent_with_roster_heal(
             correction_feedback=correction,
             **extract_kwargs,
         )
+        if db is not None:
+            result = _ground_relative_pay_order_deadlines(result, db)
         if db is None or content is None:
             return result
         has_roster_field = (
@@ -2131,7 +2155,7 @@ def extract_draft_intent(
             '{"正文":"第一道完整旨稿","动作类型":"policy","目标类型":"issue","目标ID":"...",'
             '"颁布方式":"普通|中旨直发"},'
             f'{{"正文":"……共 {draft_count} 道","动作类型":"military_order","目标类型":"army",'
-            '"目标ID":"...","entries":[{"key":"due_priority_军饷@shaanxi","value":40,"until_turn":12}],'
+            '"目标ID":"...","entries":[{"key":"due_priority_军饷@shaanxi","value":40,"duration_months":3}],'
             '"金额":null,"账户":"","执行面":"immediate|in_transit",'
             '"承办人":"...","期限月数":3,"颁布方式":"普通|中旨直发",'
             '"参与人":[{"character_id":"规范名","tier":"主办|协办|知情","role":"本案职分","delegator_id":null}]}]}\n'
