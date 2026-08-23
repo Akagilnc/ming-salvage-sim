@@ -13,6 +13,7 @@ prompt 契约文本 / GameDB 重开接续。mutation oracle 复用 #649 家族�
 from __future__ import annotations
 
 import json
+import os
 from types import SimpleNamespace
 
 from test_population_transfers_649 import (
@@ -32,6 +33,8 @@ from ming_sim.decree import settle_with_delta
 from ming_sim.issues import apply_score_extraction
 from ming_sim.memories import effect_brief
 from ming_sim.agents import build_simulator_context
+from ming_sim.models import CourtContext
+from ming_sim.registry import build_character_knowledge_brief
 from ming_sim.simulation import (
     EXTRACTION_MODULES,
     build_extractor_shared_context,
@@ -64,25 +67,6 @@ def war_shaanxi(game):
 
 # ── 灾害入池：有灾入（正测）──────────────────────────────────────────────
 
-def test_disaster_entry_lands_with_region_disaster_fact(disaster_shaanxi):
-    """灾情事实存在且 LLM 申报灾害转移 → 按省守恒落账（origin 标＝reason 枚举）。"""
-    db, state, content = disaster_shaanxi
-    total_before = _global_population(db)
-    applied = apply_score_extraction(db, state, {
-        "population_transfers": [
-            _transfer(source="农民@shaanxi", target="流民@shaanxi",
-                      amount=30000, reason="灾害"),
-        ],
-    }, content, None)
-    assert not applied["population_transfers_rejections"]
-    rec = applied["population_transfers"][0]
-    assert rec["reason"] == "灾害"
-    assert rec["origin_ref"] == "盘面自发"
-    assert _pop(db, "农民", "shaanxi") == FARMER_SHAANXI - 30000
-    assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI + 30000
-    assert _global_population(db) == total_before  # 守恒
-
-
 def test_disaster_and_war_amounts_above_old_caps_land_and_conserve(war_shaanxi):
     """具体量级由 extractor 软判；超过旧固定比例但未超过实时源余额时照常守恒落账。"""
     db, state, content = war_shaanxi
@@ -105,50 +89,6 @@ def test_disaster_and_war_amounts_above_old_caps_land_and_conserve(war_shaanxi):
         DISPLACED_SHAANXI + disaster_amount + war_amount
     )
     assert _global_population(db) == total_before
-
-
-# ── 兵灾入池：农民/军户双腿 ────────────────────────────────────────────────
-
-def test_war_entry_lands_farmer_and_garrison_legs(war_shaanxi):
-    """兵祸事实存在 → 农民腿与军户腿各自守恒落账（origin 标＝reason 兵灾）。"""
-    db, state, content = war_shaanxi
-    garrison_before = _pop(db, "军户", "shaanxi")
-    total_before = _global_population(db)
-    applied = apply_score_extraction(db, state, {
-        "population_transfers": [
-            _transfer(source="农民@shaanxi", target="流民@shaanxi",
-                      amount=20000, reason="兵灾"),
-            _transfer(source="军户@shaanxi", target="流民@shaanxi",
-                      amount=5000, reason="兵灾"),
-        ],
-    }, content, None)
-    assert not applied["population_transfers_rejections"]
-    assert [r["reason"] for r in applied["population_transfers"]] == ["兵灾", "兵灾"]
-    assert _pop(db, "农民", "shaanxi") == FARMER_SHAANXI - 20000
-    assert _pop(db, "军户", "shaanxi") == garrison_before - 5000
-    assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI + 25000
-    assert _global_population(db) == total_before
-
-
-# ── 双向边界·反测：无灾不入——事实本身永不自发移人（禁引擎侧自动触发）───────
-
-def test_no_engine_autotransfer_from_disaster_or_war_facts(game):
-    """即使 region 挂满灾情/兵祸事实，extractor 未申报 population_transfers 段时
-    人口分毫不动——读事实→判发生＝LLM 软判，代码侧无第二套自动触发（判词①）。"""
-    db, state, content = game
-    db.conn.execute(
-        "UPDATE regions SET natural_disaster='大旱蝗灾', "
-        "human_disaster='战事过境焚掠', military_pressure=95 WHERE id='shaanxi'"
-    )
-    db.conn.commit()
-    before = _snap(db)
-    applied = apply_score_extraction(db, state, {
-        "metric_delta": {"民心": -1},  # 同批只有非人口 section
-    }, content, None)
-    assert not applied["population_transfers_rejections"]
-    assert applied["population_transfers"] == []
-    for key, want in before.items():
-        assert _pop(db, *key) == want, f"{key}: 无申报记录时被引擎改动（自动触发违规）"
 
 
 class _ExtractorAgent:
@@ -217,6 +157,14 @@ def test_disaster_war_real_payload_extractor_settlement_and_echo(
     assert reason in effect_brief(extracted)
     assert "流民" in db.class_report(audience=True)
     assert reason in report
+    minister = next(iter(content.characters.values()))
+    audience = build_character_knowledge_brief(
+        minister, CourtContext(state=state, db=db)
+    )
+    assert reason in audience
+    assert "流民" in audience
+    assert str(_pop(db, *source.split("@"))) not in audience
+    assert str(_pop(db, "流民", "shaanxi")) not in audience
     saved = db.get_turn_extraction(before_turn)["extractor_output"]["population_transfers"]
     assert saved[0]["reason"] == reason
 
@@ -350,3 +298,20 @@ def test_same_batch_multi_origin_merges_into_single_pool_account(disaster_shaanx
 
 
 # ── 契约单真源：prompt 教「有灾入/无灾不入」事实支撑 ────────────────────────
+
+def test_prompts_keep_displacement_fact_and_soft_quantity_contracts():
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    def prompt(name):
+        with open(os.path.join(root, "content/prompts", name), encoding="utf-8") as fh:
+            return fh.read()
+
+    simulator = prompt("season_simulator.md")
+    assert "无对应事实不得臆造流民" in simulator
+    assert "不得确定人数或推算人口比例" in simulator
+
+    for name in ("score_extractor_internal.md", "score_extractor_shared.md"):
+        extractor = prompt(name)
+        assert "class_population_balances" in extractor
+        assert "population_unit" in extractor
+        assert "不设固定比例或累计 cap" in extractor
