@@ -7,7 +7,12 @@ import json
 import pytest
 
 from ming_sim.action_clusters import cluster_by_kind
-from ming_sim.action_materialize import punish_actions_effective
+from ming_sim.action_materialize import (
+    punish_actions_effective,
+    stage_assignment_candidate,
+    stage_punishment_candidate,
+)
+from ming_sim.decree import pre_settle
 from ming_sim.executor_routing import (
     classify_execution_coverage,
     duty_route_office_type,
@@ -142,6 +147,75 @@ def test_appointment_routes_to_appointee_at_creation(env):
     dossier_id = _create(db, state, action="appointment", category=None, target="陈新甲")
     leads = [e["character_id"] for e in db.get_decree_dossier(dossier_id)["participant_roster"] if e["tier"] == "主办"]
     assert leads == ["陈新甲"]
+
+
+def test_new_appointee_identity_exists_before_promulgation_and_leads_dossier(env):
+    db, state, content = env
+    name = "测试新臣"
+    pending_id = db.stage_pending_action(
+        state.turn, kind="office", action="任命", minister_name="毕自严",
+        target_id=None, payload={"name": name, "office": "户部主事", "faction": "中立"},
+    )
+    db.commit_pending_actions(state, content=content, action_ids=[pending_id])
+
+    person = db.conn.execute(
+        "SELECT office,office_type,status FROM characters WHERE name=?", (name,),
+    ).fetchone()
+    assert tuple(person) == ("待选", "未仕", "offstage")
+    dossier = db.conn.execute(
+        "SELECT id FROM decree_dossiers WHERE pending_action_id=?", (pending_id,),
+    ).fetchone()
+    leads = [
+        item["character_id"] for item in db.get_decree_dossier(dossier["id"])["participant_roster"]
+        if item["tier"] == "主办"
+    ]
+    assert leads == [name]
+
+
+def test_real_assignment_stage_preserves_category_without_speaker_as_assignee(env):
+    db, state, content = env
+    pending_id = stage_assignment_candidate(
+        db, state.turn, "陈新甲", text="清丈天下田亩", title="清丈田亩",
+        transaction_category="清丈",
+    )
+    db.commit_pending_actions(state, content=content, action_ids=[pending_id])
+    dossier = db.conn.execute(
+        "SELECT id,payload_json FROM decree_dossiers WHERE pending_action_id=?", (pending_id,),
+    ).fetchone()
+    assert json.loads(dossier["payload_json"])["transaction_category"] == "清丈"
+    leads = [
+        item["character_id"] for item in db.get_decree_dossier(dossier["id"])["participant_roster"]
+        if item["tier"] == "主办"
+    ]
+    assert leads == ["毕自严"]
+
+
+def test_real_punishment_stage_preserves_category(env):
+    db, state, content = env
+    pending_id = stage_punishment_candidate(
+        db, state.turn, "陈新甲", text="拿问下狱", target_id="毕自严",
+        punish_action="拿问下狱", transaction_category="缉拿",
+    )
+    db.commit_pending_actions(state, content=content, action_ids=[pending_id])
+    payload = json.loads(db.conn.execute(
+        "SELECT payload_json FROM decree_dossiers WHERE pending_action_id=?", (pending_id,),
+    ).fetchone()["payload_json"])
+    assert payload["transaction_category"] == "缉拿"
+
+
+def test_pre_settle_owns_rejection_mirror(env, monkeypatch, tmp_path):
+    db, state, content = env
+    mirror = tmp_path / "pre-settle-rejections.jsonl"
+    monkeypatch.setattr("ming_sim.decree.rejections_jsonl_path", lambda: str(mirror))
+    stage_assignment_candidate(
+        db, state.turn, "陈新甲", text="修仙", title="修仙",
+        transaction_category="修仙",
+    )
+    pre_settle(state, db, content=content)
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM rejection_reports WHERE section='executor_routing'",
+    ).fetchone()[0] == 1
+    assert json.loads(mirror.read_text(encoding="utf-8"))["category"] == "duty_route_unmapped"
 
 
 def test_unmapped_route_uses_canonical_rejection_report(env, monkeypatch, tmp_path):

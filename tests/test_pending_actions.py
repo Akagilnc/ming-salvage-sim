@@ -2076,7 +2076,7 @@ def test_dialogue_affirm_commits_office_now(game, monkeypatch):
 
 
 def test_commit_new_office_action_restores_when_post_create_helper_raises(game, monkeypatch):
-    """新任建档后 helper 抛错 → pending 标 failed,但新臣不得半落库进 DB/content。"""
+    """顺颁授官 helper 抛错：授官回滚，准旨阶段的未生效身份仍供案卷引用。"""
     db, state, content = game
     new_name = "测试新臣半落库"
     content.characters.pop(new_name, None)
@@ -2100,10 +2100,12 @@ def test_commit_new_office_action_restores_when_post_create_helper_raises(game, 
     assert any(item["kind"] == "office" for item in applied)
     with pytest.raises(ValueError, match="任免案卷载荷物化失败"):
         promulgate_proposed_appointments(db, state, content)
-    assert db.conn.execute(
-        "SELECT name FROM characters WHERE name=?", (new_name,)
-    ).fetchone() is None
-    assert new_name not in content.characters
+    identity = db.conn.execute(
+        "SELECT office,office_type,status FROM characters WHERE name=?", (new_name,)
+    ).fetchone()
+    assert tuple(identity) == ("待选", "未仕", "offstage")
+    assert content.characters[new_name].status == "offstage"
+    assert content.characters[new_name].office_type == "未仕"
 
 
 # ── 任免 commit 补全(CMR R1 P1/P2):升迁调任既有官 / 罢免清内存 office / 纳妃带 office_type ──

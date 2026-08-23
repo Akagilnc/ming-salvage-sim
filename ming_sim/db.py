@@ -11129,9 +11129,10 @@ class GameDB:
             if assignee and content is not None:
                 from ming_sim.session import _find_existing_minister
                 assignee = _find_existing_minister(content, assignee, self) or ""
-            if not assignee:
+            if not assignee and action in {"authorization", "secret_authorization"}:
                 raise ValueError(f"{action} 旨意缺少 canonical assignee")
-            normalized["assignee_id"] = assignee
+            if assignee:
+                normalized["assignee_id"] = assignee
             normalized.pop("assignee", None)
             # Authorization identity and applicability live exclusively in
             # authority_records; legacy dossier payload ids are not retained.
@@ -13411,7 +13412,10 @@ class GameDB:
         if commit and owns_rejection_collector and rejection_collector is not None:
             # 文件镜像只发生在 DB commit 成功后；DB 始终是分析真源。
             from ming_sim.error_pack import rejections_jsonl_path
-            rejection_collector.mirror_to_jsonl(rejections_jsonl_path())
+            try:
+                rejection_collector.mirror_to_jsonl(rejections_jsonl_path())
+            except Exception as mirror_exc:
+                tlog(f"[rejection] jsonl 镜像失败（DB 行已落，仅副本丢失）：{mirror_exc}")
         return dossier_id
 
     @staticmethod
@@ -16425,7 +16429,10 @@ class GameDB:
                 applied.append(item)
         if owns_transaction and owns_rejection_collector:
             from ming_sim.error_pack import rejections_jsonl_path
-            rejection_collector.mirror_to_jsonl(rejections_jsonl_path())
+            try:
+                rejection_collector.mirror_to_jsonl(rejections_jsonl_path())
+            except Exception as mirror_exc:
+                tlog(f"[rejection] jsonl 镜像失败（DB 行已落，仅副本丢失）：{mirror_exc}")
         return applied
 
     def retry_failed_pending_action(
@@ -16589,6 +16596,25 @@ class GameDB:
                 return False
             if canonical:
                 name = canonical
+            elif (
+                pa["action"] == "任命"
+                and infer_office_type_from_office(office, "", self.llm_config) != "后宫"
+            ):
+                # 任命准旨成案前只登记朝臣身份；后宫仍走既有纳妃核。
+                # 授官/激活仍只由顺颁后的
+                # _commit_office_action -> apply_office_appointment 完成。
+                from ming_sim.models import Character
+                self.add_character(
+                    state,
+                    Character(
+                        name=name, office="待选", office_type="未仕",
+                        faction=str(payload.get("faction") or "中立").strip() or "中立",
+                        aliases=[], personal_skills=[], loyalty=50, ability=50,
+                        integrity=50, courage=50, style="", power_id="ming",
+                        status="offstage",
+                    ),
+                    source="任命准旨身份登记", commit=False,
+                )
             staged_payload = dict(payload)
             staged_payload["name"] = name
             staged_payload["_office_action"] = str(pa["action"])
