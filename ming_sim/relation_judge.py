@@ -25,6 +25,7 @@ import threading
 from contextlib import nullcontext
 from typing import Any, Dict, List, Mapping, Optional
 
+from ming_sim.applier import atomic
 from ming_sim.exceptions import LLMContractError, LLMUnavailable
 from ming_sim.llm_model import extract_agent_text
 from ming_sim.relations import (
@@ -85,8 +86,8 @@ def build_relation_judge_prompt(db: Any, turn_rows: List[Mapping[str, Any]]) -> 
         f"{transcript}\n\n"
         "【关系账全知机面（判官专用）】\n"
         f"{ledger_face}\n\n"
-        "【输出】只输出一个 JSON object：\n"
-        '{"events":[{"施动者":"甲","受动者":"乙","类目":"站台","语境":"一句话记该当面事件"}]}\n'
+        "【输出】只输出一个 JSON object；每项的源轮必须是该事件实际发生的轮号：\n"
+        '{"events":[{"源轮":12,"施动者":"甲","受动者":"乙","类目":"站台","语境":"一句话记该当面事件"}]}\n'
         "类目限：站台、结怨、协作、联名、荐引、恩义、使绊、连坐、把柄。\n"
         "施动者→受动者为事件方向；多方事件由牵头者对各方各出一项；"
         "受动者可为字符串数组。\n"
@@ -107,7 +108,7 @@ def parse_relation_judge_output(raw: str) -> List[Any]:
 
 def _resolve_one_event(
     db: Any, state: Any, item: Any, allowed_endpoint_names: Any,
-    origin: str,
+    window_turn_ids: set[int],
 ) -> List[Dict[str, Any]]:
     """校验并落库单个判官事件项；坏项 ValueError 上抛（逐项拒收留痕，好项不受牵连）。
 
@@ -115,6 +116,21 @@ def _resolve_one_event(
     来源拼装器换用 summon_edge_origin（源轮绑定到触发轮 id）。"""
     if not isinstance(item, Mapping):
         raise ValueError("判官事件项必须为对象")
+    raw_turn_id = item.get("源轮", item.get("chat_turn_id"))
+    # 单轮窗口不存在归因歧义，兼容模型偶发漏字段；多轮窗口必须明确源轮，绝不再
+    # 统一绑到最大轮。
+    if raw_turn_id is None and len(window_turn_ids) == 1:
+        chat_turn_id = next(iter(window_turn_ids))
+    else:
+        if isinstance(raw_turn_id, bool):
+            raise ValueError("源轮必须为本窗口对话轮 id")
+        try:
+            chat_turn_id = int(raw_turn_id)
+        except (TypeError, ValueError):
+            raise ValueError("源轮必须为本窗口对话轮 id") from None
+    if chat_turn_id not in window_turn_ids:
+        raise ValueError(f"源轮不在本次判读窗口：{chat_turn_id!r}")
+    origin = summon_edge_origin(chat_turn_id)
     kind = validate_edge_kind(item.get("类目") or item.get("kind"))
     if kind not in MINISTER_EDGE_KINDS:
         raise ValueError(f"召对口只收大臣侧类目，得 {kind!r}（君臣类目归 0079 写端）")
@@ -233,27 +249,31 @@ def run_summon_relation_judge(
             survivors = _live_window_turns(db, window)
             if len(survivors) != len(window):
                 return {"skipped": "turn_retired"}
-            attribution = max(int(row["id"]) for row in window)
-            origin = summon_edge_origin(attribution)
+            window_turn_ids = {int(row["id"]) for row in window}
             allowed = {
                 row["name"] for row in db.current_court_roster_rows(state)
             }
             written: List[Dict[str, Any]] = []
             rejected: List[Dict[str, Any]] = []
-            for item in items:
-                try:
-                    written.extend(_resolve_one_event(db, state, item, allowed, origin))
-                except (TypeError, ValueError) as exc:
-                    rejected.append({
-                        "rejected": True, "category": "invalid_relation_event",
-                        "reason": str(exc), "item": (
-                            dict(item) if isinstance(item, Mapping) else repr(item)
-                        ),
-                    })
-            db.mark_relation_judge_done([int(row["id"]) for row in window])
+            # 边写与水位是一个恢复单元：任一异常须同时回滚，不能留下已落边、未进水位
+            # 的 crash gap。canonical writer 内部 commit 由 atomic 暂停。
+            with atomic(db):
+                for item in items:
+                    try:
+                        written.extend(_resolve_one_event(
+                            db, state, item, allowed, window_turn_ids,
+                        ))
+                    except (TypeError, ValueError) as exc:
+                        rejected.append({
+                            "rejected": True, "category": "invalid_relation_event",
+                            "reason": str(exc), "item": (
+                                dict(item) if isinstance(item, Mapping) else repr(item)
+                            ),
+                        })
+                db.mark_relation_judge_done(window_turn_ids)
         return {
-            "judged_turn_ids": [int(row["id"]) for row in window],
-            "origin": origin,
+            "judged_turn_ids": sorted(window_turn_ids),
+            "origins": sorted({row["origin"] for row in written}),
             "edges": len(written),
             "written": written,
             "rejected": rejected,

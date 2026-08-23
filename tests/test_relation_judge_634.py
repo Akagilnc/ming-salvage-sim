@@ -197,6 +197,43 @@ def test_context_stored_byte_identical_through_judge_chain(game):
 # ── 已判水位＋写口幂等（0082 / r2 F2③）─────────────────────────────
 
 
+def test_multi_turn_events_keep_distinct_source_origins_for_independent_undo(game):
+    """多轮批判读按真实源轮归因；撤一轮不得误删另一轮事实。"""
+    db, state, content = game
+    a, b = _roster_names(db, state)
+    first = _make_turn(db, state, a, "先议", "先表态")
+    second = _make_turn(db, state, b, "再议", "再表态")
+    agent = _CannedJudge({"events": [
+        {"源轮": first, "施动者": a, "受动者": b, "类目": "站台", "语境": "第一轮。"},
+        {"源轮": second, "施动者": b, "受动者": a, "类目": "结怨", "语境": "第二轮。"},
+    ]})
+    res = _run(db, state, agent)
+    assert res["origins"] == [summon_edge_origin(first), summon_edge_origin(second)]
+    db.undo_chat_turn(second)
+    rows = db.get_relation_edge_events()
+    assert [(r["source"], r["target"], r["context"]) for r in rows] == [(a, b, "第一轮。")]
+    db.undo_chat_turn(first)
+    assert db.get_relation_edge_events() == []
+
+
+def test_event_and_watermark_rollback_together_on_crash(game, monkeypatch):
+    """边写后、水位提交前崩溃时，两者作为一个恢复单元全部回滚。"""
+    db, state, content = game
+    a, b = _roster_names(db, state)
+    ctid = _make_turn(db, state, a, "问", "答")
+    real_mark = db.mark_relation_judge_done
+
+    def crash(_ids):
+        raise RuntimeError("injected crash before watermark")
+
+    monkeypatch.setattr(db, "mark_relation_judge_done", crash)
+    with pytest.raises(RuntimeError, match="injected crash"):
+        _run(db, state, _CannedJudge(_event_items(a, b, "协作", "原子事件。")))
+    assert db.get_relation_edge_events() == []
+    assert _judge_status(db, ctid) == ""
+    monkeypatch.setattr(db, "mark_relation_judge_done", real_mark)
+
+
 def test_watermark_prevents_rejudging_and_replay_is_absorbed(game):
     db, state, content = game
     a, b = _roster_names(db, state)
