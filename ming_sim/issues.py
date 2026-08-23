@@ -7143,6 +7143,7 @@ def _apply_surcharge_decrees(
     _apply_levy_driven_transfers 按账机械入池。无旨不入账：段空＝账不动。
 
     逐项拒收面（ADR 0015/0008）：非 dict 项；region 未知/非明省/无 settle 基座；
+    无农民/流民省级人口行（边镇军饷漏斗等不是入池成员；落账会令月结 fail-loud 卡死）；
     monthly_amount 非 bool 非有限数值或为 0（无操作不落，同 fiscal_changes 口径）；
     origin_ref 缺失/伪前缀/未颁案卷（复用 effect_origin_rejection 单一真源）；
     白名单外字段。坏项留痕、好项照落；数据拒收不中止事务。
@@ -7188,6 +7189,18 @@ def _apply_surcharge_decrees(
             _reject(
                 "missing_ref",
                 f"surcharge_decrees {region_id!r} 无 settle 财政基座，逐省累积账无处落",
+            )
+            continue
+        has_farmer = db.conn.execute(
+            "SELECT 1 FROM classes WHERE name='农民' AND region_id=?", (region_id,)
+        ).fetchone() is not None
+        has_displaced = db.conn.execute(
+            "SELECT 1 FROM classes WHERE name='流民' AND region_id=?", (region_id,)
+        ).fetchone() is not None
+        if not has_farmer or not has_displaced:
+            _reject(
+                "missing_ref",
+                f"surcharge_decrees {region_id!r} 无农民/流民省级人口行，不是加派入池成员",
             )
             continue
         raw_amount = item.get("monthly_amount")
@@ -7281,11 +7294,16 @@ def _apply_levy_driven_transfers(
         base = max(0.0, float(raw))
         if base <= 0:
             continue
-        if db.conn.execute(
+        has_farmer = db.conn.execute(
             "SELECT 1 FROM classes WHERE name='农民' AND region_id=?", (region_id,)
-        ).fetchone() is None or db.conn.execute(
+        ).fetchone() is not None
+        has_displaced = db.conn.execute(
             "SELECT 1 FROM classes WHERE name='流民' AND region_id=?", (region_id,)
-        ).fetchone() is None:
+        ).fetchone() is not None
+        if not has_farmer and not has_displaced:
+            # 边镇军饷漏斗等合法无人口行的明控区：不是入池成员，与无基座省同出列。
+            continue
+        if not has_farmer or not has_displaced:
             raise ValueError(f"{region_id} 有正加派账但缺农民/流民省级人口行")
         support = max(0, min(100, int(row["public_support"] or 0)))
         raw_persons = base * LEVY_DISPLACEMENT_RATE * (100 - support) / 100.0
