@@ -71,6 +71,12 @@ def test_repeated_mutiny_persists_count_cap_and_probation(game, fiscal_path):
     # 入闩期间即使满饷也不消耗察看期；解闩时第二振 cap=60，满饷才递减。
     _set(db, fiscal_path, loyalty=20, arrears=0, latched=1)
     assert _tick(db, state)["mutiny_probation"] == 3
+
+    # 同 tick 解闩但仍非满饷时，察看期不得提前消耗。
+    _set(db, fiscal_path, loyalty=60, arrears=1, latched=1)
+    partial_release = _tick(db, state)
+    assert tuple(partial_release[k] for k in ("loyalty", "is_mutinied", "mutiny_probation")) == (60, 0, 3)
+
     _set(db, fiscal_path, loyalty=95, arrears=0, latched=1)
     probation = _tick(db, state)
     assert tuple(probation[k] for k in ("loyalty", "is_mutinied", "mutiny_count", "mutiny_probation")) == (60, 0, 2, 2)
