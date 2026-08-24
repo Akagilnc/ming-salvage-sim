@@ -11,7 +11,7 @@ import json
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Iterator, List
+from typing import Any, Callable, Iterator, List
 
 
 def sanitize_sqlite_text(value: Any) -> Any:
@@ -374,3 +374,36 @@ class RejectionCollector:
         检 _buffer + _flushed：报告组装在事务内、commit/mirror 前，拒收已 record 可能已 flush 未 mirror。"""
         _visible = {Provenance.player_decree.value, Provenance.hitl_decision.value}
         return any(row["source"] in _visible for row in (*self._buffer, *self._flushed))
+
+
+def mirror_rejections_after_commit(
+    db: Any,
+    collector: RejectionCollector,
+    path_provider: Callable[[], str],
+) -> None:
+    """Mirror a collector at its real transaction outcome boundary.
+
+    A nested owner registers both terminal actions on the shared connection:
+    commit mirrors the flushed snapshot, while rollback clears it so reusing the
+    collector cannot leak rolled-back rows into a later JSONL mirror.
+    """
+    def _mirror() -> None:
+        try:
+            collector.mirror_to_jsonl(path_provider())
+        except Exception as mirror_exc:
+            from ming_sim.token_stats import tlog
+            tlog(f"[rejection] jsonl 镜像失败（DB 行已落，仅副本丢失）：{mirror_exc}")
+
+    if getattr(db.conn, "_atomic_depth", 0) == 0:
+        _mirror()
+        return
+    commit_callbacks = getattr(db.conn, "_runtime_commit_callbacks", None)
+    if commit_callbacks is None:
+        commit_callbacks = []
+        db.conn._runtime_commit_callbacks = commit_callbacks
+    rollback_callbacks = getattr(db.conn, "_runtime_rollback_callbacks", None)
+    if rollback_callbacks is None:
+        rollback_callbacks = []
+        db.conn._runtime_rollback_callbacks = rollback_callbacks
+    commit_callbacks.append(_mirror)
+    rollback_callbacks.append(collector.reset)
