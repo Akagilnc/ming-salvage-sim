@@ -243,13 +243,16 @@ def _format_class_slice(value: object) -> str:
 
 
 def _dutang_fields(conn, region_id: str) -> Tuple[object, object]:
+    """督抚三态：无 slot=无记录；有 slot 无 holder=出缺；有 holder 读人物。"""
     row = conn.execute(
         "SELECT holder_name FROM office_vacancies "
         "WHERE region_id=? AND office_type='督抚' "
         "ORDER BY sort_order ASC, office_title ASC LIMIT 1",
         (region_id,),
     ).fetchone()
-    if row is None or not str(row["holder_name"] or "").strip():
+    if row is None:
+        return NO_RECORD, NO_RECORD
+    if not str(row["holder_name"] or "").strip():
         return VACANT, VACANT
     holder = str(row["holder_name"])
     ch = conn.execute(
@@ -276,26 +279,38 @@ def _bandit_strength(conn, region_id: str) -> object:
 
 
 def _disaster_rows(conn, region_id: str) -> List[Dict[str, object]]:
-    kinds = tuple(sorted(DISASTER_KINDS))
-    placeholders = ",".join("?" for _ in kinds)
+    """D1：灾种真源＝tags ∩ DISASTER_KINDS；durable kind 固定 situation。"""
+    import json
+
     rows = conn.execute(
-        f"""
-        SELECT id, title, kind, severity, region_hint
+        """
+        SELECT id, title, kind, severity, region_hint, tags
         FROM issues
-        WHERE status='active' AND kind IN ({placeholders}) AND region_hint=?
+        WHERE status='active' AND kind='situation' AND region_hint=?
         ORDER BY severity DESC, id ASC
         """,
-        (*kinds, region_id),
+        (region_id,),
     ).fetchall()
-    return [
-        {
+    stable = tuple(sorted(DISASTER_KINDS))
+    out: List[Dict[str, object]] = []
+    for r in rows:
+        try:
+            tags = json.loads(r["tags"] or "[]")
+        except (TypeError, ValueError):
+            tags = []
+        if not isinstance(tags, list):
+            tags = []
+        tag_set = {str(t).strip() for t in tags if str(t).strip()}
+        hit = [k for k in stable if k in tag_set]
+        if not hit:
+            continue
+        out.append({
             "id": int(r["id"]),
             "title": str(r["title"] or ""),
-            "kind": str(r["kind"] or ""),
+            "kind": hit[0],
             "severity": int(r["severity"] or 0),
-        }
-        for r in rows
-    ]
+        })
+    return out
 
 
 def _owner_open_counts(conn) -> Dict[str, int]:
