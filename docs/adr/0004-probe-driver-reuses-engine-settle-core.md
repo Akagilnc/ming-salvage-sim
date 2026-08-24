@@ -15,7 +15,8 @@ Status: accepted
 ## Consequences
 
 - decree.py 做行为不变的 extract-method：真实流程改成 `pre_settle → simulator → extractor → settle_with_delta`。
-- `driver.py` = `pre_settle → [我产叙事+delta] → settle_with_delta(我的delta) → dump`，三子命令 `state` / `settle --delta <json>` / `dump`。
+- 前半段再抽共享 `prepare_resolve_front_half`（pre_settle + ready=0 占位，含 transit_arrivals handoff）；引擎 `resolve_directives` 与探针 driver 同 seam（#668）。
+- `driver.py` 显式两阶段 CLI/Python：`prepare` → `[我产叙事+delta]` → `settle --delta` → `dump`（另保留 `state`）。禁止一站式「先收 narrative 再首次跑前半段」；未 prepare 的 settle 响亮失败。
 - **CLAUDE.md「结算编排骨架」里"driver 照此复刻"一句作废**，改述为"driver 复用 `settle_with_delta`，与真实流程同核"。实现时同步改 CLAUDE.md / SETTLEMENT_FLOW.md。
 - 结算脊柱从此只有一份；探针不会和生产结算悄悄分叉。
 - 先做这条（抽核 + driver），#4 城防炮即可经此核 TDD 验证，确立实现顺序。

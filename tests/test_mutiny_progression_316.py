@@ -96,10 +96,10 @@ def test_repeated_mutiny_persists_count_cap_and_probation(game, fiscal_path):
     assert tuple(full_pay_2[k] for k in ("loyalty", "mutiny_probation")) == (60, 0)
     assert derive_army_mutiny_state(full_pay_2) == "正常"
 
-    # 察看期重入是第三振，但本片不提前执行 #318 的转流寇。
+    # 察看期重入是第三振 → #318 同事务经 adapter 转流寇（清 latch）。
     _set(db, fiscal_path, loyalty=19, arrears=5, latched=0)
     third = _tick(db, state)
-    assert tuple(third[k] for k in ("is_mutinied", "mutiny_count", "mutiny_probation", "owner_power")) == (1, 3, 0, "ming")
+    assert tuple(third[k] for k in ("is_mutinied", "mutiny_count", "mutiny_probation", "owner_power")) == (0, 3, 0, "bandits")
 
 
 @pytest.mark.parametrize("fiscal_path", PATHS)
@@ -115,6 +115,9 @@ def test_mutiny_count_is_capped_at_three(game, fiscal_path):
 
     assert row["mutiny_count"] == 3
     assert row["loyalty"] == 14  # third-strike cap remains 60, no extra penalty
+    # count 已达 3 再进闩：#318 转流寇，不叠第四振
+    assert row["owner_power"] == "bandits"
+    assert row["is_mutinied"] == 0
 
 
 @pytest.mark.parametrize("fiscal_path", PATHS)

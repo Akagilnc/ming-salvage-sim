@@ -8,6 +8,19 @@ from __future__ import annotations
 from tests.conftest import game as game  # noqa: F401
 
 
+def prepare_then_settle(db, state, content, raw_delta, **kwargs):
+    """Test glue: explicit driver prepare → settle (not a production one-shot rail)."""
+    from driver import run_prepare, run_settle
+
+    prep_kw = {}
+    if "registry" in kwargs:
+        prep_kw["registry"] = kwargs["registry"]
+    if "source" in kwargs:
+        prep_kw["source"] = kwargs["source"]
+    run_prepare(db, state, content, **prep_kw)
+    return run_settle(db, state, content, raw_delta, **kwargs)
+
+
 def rejection_rows(db, turn, section=None, *, columns="section, reason, category, source"):
     query = (
         f"SELECT {columns} FROM rejection_reports"

@@ -17,7 +17,8 @@ from ming_sim.db import GameDB
 import ming_sim.issues as issues_mod
 from ming_sim.models import LLMConfig
 from ming_sim.session import GameSession
-from driver import run_settle, open_game
+from driver import open_game
+from tests.section_rejection_helpers import prepare_then_settle as run_settle
 
 
 def _shaanxi_settle(db):

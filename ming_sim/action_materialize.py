@@ -493,6 +493,8 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
             "dossier_action_type", "target_kind", "target_id", "mode", "amount", "account",
             "execution_surface", "assignee", "deadline_months", "punish_action",
             "locality_scope",
+            # #653：pay_order_override 结构化载荷随拟旨草案整道入 staging payload。
+            "entries",
         )
         for field_name in mechanical_fields:
             if draft_res.get(field_name) not in (None, ""):

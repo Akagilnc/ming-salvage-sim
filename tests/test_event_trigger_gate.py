@@ -2197,6 +2197,128 @@ def test_strategic_event_army_clamp_noop_does_not_mark_event_triggered(game):
     ).fetchone()["manpower"] == 0
 
 
+def test_strategic_event_loyalty_mixed_alias_nets_once_and_soft_clamps(game):
+    """#320 战略接缝：同军同事件 {loyalty:+50, 军心:-100} 净合计后软钳 -15，预检通过且只落一笔。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 11
+    db.conn.execute(
+        """UPDATE armies SET loyalty=?, mutiny_count=0, redemption_count=0,
+           is_mutinied=0, mutiny_probation=0 WHERE id=?""",
+        (100, "jingying"),
+    )
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
+            "事件结局": {"jisi_lubian": "入塞被遏"},
+            # 有序载荷：先正后负；预检不得按首叶 +50 误判 no-op
+            "army_delta": {
+                "jingying": {
+                    "origin_ref": "盘面自发",
+                    "loyalty": 50,
+                    "军心": -100,
+                    "reason": "己巳之变勤王军心净挫",
+                }
+            },
+        },
+        content=content,
+    )
+
+    assert out["issue_summary"]["new_issues"][0]["rejected"] is False
+    assert db.has_event_triggered("jisi_lubian")
+    assert db.conn.execute(
+        "SELECT loyalty FROM armies WHERE id = ?", ("jingying",)
+    ).fetchone()["loyalty"] == 85
+    loyalty_logs = db.conn.execute(
+        """SELECT field, old_value, new_value, delta FROM army_logs
+           WHERE army_id=? AND field='loyalty' ORDER BY id""",
+        ("jingying",),
+    ).fetchall()
+    assert len(loyalty_logs) == 1
+    assert int(loyalty_logs[0]["delta"]) == -15
+    assert int(loyalty_logs[0]["old_value"]) == 100
+    assert int(loyalty_logs[0]["new_value"]) == 85
+
+
+def test_strategic_event_loyalty_net_zero_alias_pair_is_noop(game):
+    """#320 战略接缝：净零 {loyalty:+50, 军心:-50} 仍拒收无真实世界状态变化。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 11
+    db.conn.execute(
+        """UPDATE armies SET loyalty=?, mutiny_count=0, redemption_count=0 WHERE id=?""",
+        (70, "jingying"),
+    )
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
+            "事件结局": {"jisi_lubian": "入塞被遏"},
+            "army_delta": {
+                "jingying": {
+                    "origin_ref": "盘面自发",
+                    "loyalty": 50,
+                    "军心": -50,
+                    "reason": "己巳之变军心对冲净零",
+                }
+            },
+        },
+        content=content,
+    )
+
+    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+    assert "无真实世界状态变化" in out["issue_summary"]["new_issues"][0]["reason"]
+    assert not db.has_event_triggered("jisi_lubian")
+    assert db.conn.execute(
+        "SELECT loyalty FROM armies WHERE id = ?", ("jingying",)
+    ).fetchone()["loyalty"] == 70
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM army_logs WHERE army_id=? AND field='loyalty'",
+        ("jingying",),
+    ).fetchone()[0] == 0
+
+
+def test_strategic_event_loyalty_illegal_leaf_still_rejects_envelope(game):
+    """#320 战略接缝：loyalty 合法叶夹带非法叶仍整组拒收，主账不半落。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 11
+    db.conn.execute("UPDATE armies SET loyalty = ? WHERE id = ?", (80, "jingying"))
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
+            "事件结局": {"jisi_lubian": "入塞被遏"},
+            "army_delta": {
+                "jingying": {
+                    "origin_ref": "盘面自发",
+                    "loyalty": -20,
+                    "morale": 3.5,  # 非整数：逐叶拒
+                    "reason": "己巳之变脏战果",
+                }
+            },
+        },
+        content=content,
+    )
+
+    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+    assert "值非整数" in out["issue_summary"]["new_issues"][0]["reason"]
+    assert not db.has_event_triggered("jisi_lubian")
+    assert db.conn.execute(
+        "SELECT loyalty FROM armies WHERE id = ?", ("jingying",)
+    ).fetchone()["loyalty"] == 80
+
+
 def test_strategic_event_same_place_departure_is_canonical_noop(game):
     """#667：合法同地行止按共享 canonical 终态在 preflight 判为无变化。"""
     db, state, content = game
