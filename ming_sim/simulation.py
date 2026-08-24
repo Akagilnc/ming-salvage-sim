@@ -817,7 +817,7 @@ def build_simulator_payload(
         # #668/0095：本 tick 引擎刚抵达的事实集合（非仍在途者）；durable 真源在
         # pending_resolve_context.simulator_payload.transit_arrivals，由调用方注入。
         "transit_arrivals": list(transit_arrivals or []),
-        # #669/0095：仍在途者的月数语义特征（非裸账）；#673 判官清单复用同一 projector。
+        # #669/0095：仍在途者的月数语义特征（非裸账）。
         "transit_semantics": project_transit_semantics(
             db,
             state,
@@ -1180,6 +1180,7 @@ def build_extractor_shared_context(
     secret_orders: Optional[Dict[str, object]] = None,
     module: str = "",
     decree_dossiers: Optional[List[Dict[str, object]]] = None,
+    transit_semantics: Optional[List[Dict[str, object]]] = None,
 ) -> Dict[str, object]:
     """供模块 extractor 放入 system 前缀的共同结算补充上下文。
 
@@ -1322,9 +1323,12 @@ def build_extractor_shared_context(
         # #626：反噬事实包仅 issues 档房（与 #625 监督三键同格门控）；
         # 不在 _extractor_context_payload 无门副本，避免非 issues 模块误读。
         slim["commitment_backlash_facts"] = build_backlash_narrative_features(db)
-        # #654：带宽/阻力两轴清单——纯机 issues extractor 私有面（P4：不进 simulator）。
+        # #654/#673：带宽/阻力两轴清单——纯机 issues extractor 私有面（P4：不进 simulator）。
+        # transit_semantics 必须是 phase1 payload 既成 list 对象引用（is 同一对象）。
         from ming_sim.execution_pressure import build_execution_two_axis_surface
-        slim["execution_two_axis"] = build_execution_two_axis_surface(db, state.turn)
+        slim["execution_two_axis"] = build_execution_two_axis_surface(
+            db, state.turn, transit_semantics=transit_semantics,
+        )
         # The issues extractor consumes the same canonical candidate_events key
         # as its prompt.  This private module payload remains outside simulator
         # decision binding and HITL.
