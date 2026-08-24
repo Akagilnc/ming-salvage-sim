@@ -28,12 +28,14 @@ def active_prohibition_dossier(db: Any, exposed_dossier_id: int) -> Dict[str, ob
 
 
 def canonical_fiscal_result(
-    db: Any, source: Mapping[str, object], *, applied: bool, **result: object,
+    db: Any, source: Mapping[str, object], *, applied: bool,
+    effective_origin_ref: object | None = None, **result: object,
 ) -> Dict[str, object]:
     """Build the shared receipt identity for every canonical fiscal applier."""
     from ming_sim.simulation import read_beyond_intent_raw
 
-    result["origin_ref"] = str(source.get("origin_ref") or "").strip()
+    origin = source.get("origin_ref") if effective_origin_ref is None else effective_origin_ref
+    result["origin_ref"] = str(origin or "").strip()
     result["beyond_intent"] = bool(
         db.coerce_beyond_intent_flag(read_beyond_intent_raw(source))
     )
