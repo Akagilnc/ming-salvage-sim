@@ -353,8 +353,8 @@ def test_pending_directive_commit_creates_turn_directive(game):
     assert persisted == 1
 
 
-def test_pending_directive_commit_failure_propagates_and_rolls_back_outer_atomic(game, monkeypatch):
-    """外层 atomic 中提交对话式拟旨若中途异常，异常必须冒泡，draft 与 pending 回填一起回滚。"""
+def test_pending_directive_commit_failure_is_savepoint_isolated_marks_failed(game, monkeypatch):
+    """#654 路1：directive 成案异常经 SAVEPOINT 隔离——不冒泡崩外层 atomic、无 directive 残行、pending=failed。"""
     from ming_sim.applier import atomic
 
     db, state, content = game
@@ -377,7 +377,6 @@ def test_pending_directive_commit_failure_propagates_and_rolls_back_outer_atomic
 
     monkeypatch.setattr(db, "_apply_pending_action", _boom_after_draft)
 
-    # #654 路1：directive 成案异常不崩外层结算——SAVEPOINT 回滚后标 failed
     with atomic(db):
         db.commit_pending_actions(state, kind_filter="directive")
 
