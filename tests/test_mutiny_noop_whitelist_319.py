@@ -31,6 +31,23 @@ DENY_SNAPSHOT_FIELDS = (
     "manpower",
 )
 
+# cutover-on 饷源写缝字段（非 owner_power；owner 仍走 #318 唯一 adapter）
+PAY_SOURCE_DENY_FIELDS = (
+    "pay_source_region",
+    "province_pay_share",
+    "central_pay_share",
+    "is_tusi",
+    "self_funded_pay",
+)
+
+PAY_SOURCE_DENY_DELTA = {
+    "pay_source_region": "beizhili",
+    "province_pay_share": 1,
+    "central_pay_share": 0,
+    "is_tusi": 1,
+    "self_funded_pay": 1,
+}
+
 
 def _configure(db, fiscal_path: str) -> None:
     value = 0 if fiscal_path == "legacy" else 1
@@ -331,3 +348,89 @@ def test_apply_score_extraction_respects_latched_field_gate(game):
     assert after["loyalty"] == before["loyalty"] + 5
     assert after["station"] == before["station"]
     assert after["status"] == before["status"]
+
+
+def test_latched_cutover_denies_pay_source_fields(game):
+    """cutover-on：latched 军饷源五字段一律静默 no-op（写缝入口复用 latch 门）。"""
+    db, state, _ = game
+    _configure(db, "substrate_hub")
+    _set(db, "substrate_hub", loyalty=30, arrears=5, latched=1, mutiny_count=1)
+    before = _snapshot(db, PAY_SOURCE_DENY_FIELDS)
+
+    db.apply_army_deltas(
+        state, _event(), None, "测试", {ARMY: dict(PAY_SOURCE_DENY_DELTA)}
+    )
+
+    after = _snapshot(db, PAY_SOURCE_DENY_FIELDS)
+    assert after == before
+
+
+def test_latched_cutover_mixed_item_pay_source_deny_whitelist_apply(game):
+    """混合 item：饷源不变；manpower 严格负 / loyalty 正仍按白名单落。"""
+    db, state, _ = game
+    _configure(db, "substrate_hub")
+    _set(
+        db,
+        "substrate_hub",
+        loyalty=30,
+        arrears=5,
+        latched=1,
+        mutiny_count=1,
+        manpower=10000,
+    )
+    before_pay = _snapshot(db, PAY_SOURCE_DENY_FIELDS)
+    before_mp = _row(db, "manpower", "loyalty")
+
+    db.apply_army_deltas(
+        state,
+        _event(),
+        None,
+        "测试",
+        {
+            ARMY: {
+                **PAY_SOURCE_DENY_DELTA,
+                "manpower": -100,
+                "loyalty": 5,
+            }
+        },
+    )
+
+    after_pay = _snapshot(db, PAY_SOURCE_DENY_FIELDS)
+    after_mp = _row(db, "manpower", "loyalty")
+    assert after_pay == before_pay
+    assert after_mp["manpower"] == before_mp["manpower"] - 100
+    assert after_mp["loyalty"] == before_mp["loyalty"] + 5
+
+
+def test_non_latched_cutover_pay_source_fields_still_write(game):
+    """对照：非 latched + cutover-on 饷源仍可写，防误伤生产路径。"""
+    db, state, _ = game
+    _configure(db, "substrate_hub")
+    _set(
+        db,
+        "substrate_hub",
+        loyalty=70,
+        arrears=0,
+        latched=0,
+        mutiny_count=0,
+        manpower=10000,
+    )
+
+    db.apply_army_deltas(
+        state,
+        _event(),
+        None,
+        "测试",
+        {
+            ARMY: {
+                "pay_source_region": "beizhili",
+                "province_pay_share": 1,
+                "central_pay_share": 0,
+            }
+        },
+    )
+
+    after = _row(db, "pay_source_region", "province_pay_share", "central_pay_share")
+    assert after["pay_source_region"] == "beizhili"
+    assert float(after["province_pay_share"]) == pytest.approx(1.0)
+    assert float(after["central_pay_share"]) == pytest.approx(0.0)
