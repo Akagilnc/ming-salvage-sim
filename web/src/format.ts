@@ -35,19 +35,27 @@ export const approximatePayMonths = (arrears: number, monthlyPay: number) => {
   return years <= 1 ? "，逾一年军饷" : `，约${years}年军饷`;
 };
 
-export const formatArmyArrears = (army: Pick<Army, "arrears" | "army_needed">) => {
-  const arrears = Number(army.arrears || 0);
-  if (arrears <= 0) return "无欠饷";
-  return `${approximateWanliang(arrears)}${approximatePayMonths(arrears, Number(army.army_needed || 0))}`;
+/** #321：欠饷只消费后端 arrears_text，不再二次 map 裸数。 */
+export const formatArmyArrears = (army: Pick<Army, "arrears_text">) =>
+  String(army.arrears_text || "无欠饷");
+
+/** #321：欠饷色阶只据 arrears_text；不得回灌 raw arrears / army_needed。 */
+export const arrearsToneFromText = (arrearsText: string) => {
+  const text = String(arrearsText || "").trim();
+  if (!text || text === "无欠饷") return "";
+  if (text.includes("年") || text.includes("半年") || text.includes("数月")) return "danger";
+  if (text.includes("月")) return "warn";
+  // 有欠饷总额但不足一月等粗档
+  if (text.startsWith("欠饷") || text.includes("万两")) return "warn";
+  return "";
 };
 
+// #321：morale/loyalty 二次词表已删；仅保留仍吃 numeric 的轴（training/equipment/supply/mobility）。
 const ARMY_QUALITATIVE_WORDS: Record<string, [string, string, string, string, string]> = {
   supply: ["断绝", "匮乏", "吃紧", "尚可", "充足"],
-  morale: ["涣散", "低迷", "不振", "尚稳", "高昂"],
   training: ["散漫", "生疏", "粗疏", "尚可", "精熟"],
   equipment: ["残破", "简陋", "短缺", "尚可", "精良"],
   mobility: ["迟滞", "缓慢", "受限", "尚可", "灵便"],
-  loyalty: ["危殆", "浮动", "不稳", "尚稳", "稳固"],
 };
 
 export const qualitativeArmyStat = (field: string, value: number) => {

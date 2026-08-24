@@ -410,6 +410,35 @@ def _army_arrears_report_text(row: sqlite3.Row, monthly_pay: object) -> str:
     return _approx_wanliang(row["arrears"]) + _approx_pay_months(row["arrears"], monthly_pay)
 
 
+def _player_army_situation(row, monthly_pay: object) -> Dict[str, str]:
+    """#321 玩家军心/士气/欠饷唯一投影：复用 derive + qualitative/arrears helper。
+
+    mutiny_tier 六档：哗变/鼓噪/不满/一般/优秀/死忠。
+    derive 非「正常」时直接复用其档名；仅「正常」再按 L 切一般/优秀/死忠。
+    """
+    from ming_sim.flows import derive_army_mutiny_state
+
+    derived = derive_army_mutiny_state(row)
+    if derived == "正常":
+        try:
+            loyalty = int(row["loyalty"] or 0)
+        except (TypeError, ValueError):
+            loyalty = 0
+        if loyalty >= 80:
+            mutiny_tier = "死忠"
+        elif loyalty >= 70:
+            mutiny_tier = "优秀"
+        else:
+            mutiny_tier = "一般"
+    else:
+        mutiny_tier = derived
+    return {
+        "mutiny_tier": mutiny_tier,
+        "morale_text": _qualitative_army_stat("morale", row["morale"]),
+        "arrears_text": _army_arrears_report_text(row, monthly_pay),
+    }
+
+
 def _is_commitment_stop_condition(resolve_condition: object) -> bool:
     return bool(_COMMITMENT_STOP_CONDITION_RE.fullmatch(str(resolve_condition or "").strip()))
 
@@ -7254,6 +7283,8 @@ class GameDB:
     def army_payload(self, limit: int | None = None, danger_order: bool = False) -> List[Dict[str, object]]:
         payload: List[Dict[str, object]] = []
         for row in self.army_rows(limit=limit, danger_order=danger_order):
+            pay = self._army_pay(row)
+            sit = _player_army_situation(row, pay)
             payload.append(
                 {
                     "id": row["id"],
@@ -7265,18 +7296,18 @@ class GameDB:
                     "troop_type": row["troop_type"],
                     "manpower": int(row["manpower"]),
                     # #173：引擎实扣月应发（呈现层「月饷」唯一真源）。维护费列已删。
-                    "army_needed": self._army_pay(row),
+                    "army_needed": pay,
                     "supply": int(row["supply"]),
-                    "morale": int(row["morale"]),
+                    # #321：军心/士气/欠饷走玩家投影字符串；禁 raw morale/loyalty/arrears。
+                    "morale_text": sit["morale_text"],
                     "training": int(row["training"]),
                     "equipment": int(row["equipment"]),
-                    # #1363：只读投影收整到一位小数，杜绝 IEEE 残渣进 API
-                    "arrears": round(float(row["arrears"] or 0), 1),
+                    "arrears_text": sit["arrears_text"],
                     "mobility": int(row["mobility"]),
-                    "loyalty": int(row["loyalty"]),
+                    "mutiny_tier": sit["mutiny_tier"],
                     "firearm_equipment": int(row["firearm_equipment"]),
                     "cannon_equipment": int(row["cannon_equipment"]),
-                    # #1501：军牌专属投影停携静态 status 句（欠饷栏真数是唯一欠饷呈现源）；
+                    # #1501：军牌专属投影停携静态 status 句；
                     # DB armies.status 与共享读者 army_report 仍保留原句，不在此投影。
                     "owner_power": row["owner_power"],
                 }
@@ -7293,14 +7324,14 @@ class GameDB:
         parts = []
         for row in rows:
             pay = self._army_pay(row)
-            arr_text = _army_arrears_report_text(row, pay)
+            sit = _player_army_situation(row, pay)
             parts.append(
                 f"{row['name']}：驻{row['station']}，兵{row['manpower']}，"
                 f"饷{format_money(monthly_amount(pay))} /{TURN_UNIT}，"
                 f"{_qualitative_army_stat('supply', row['supply'])}，"
-                f"{_qualitative_army_stat('morale', row['morale'])}，"
+                f"{sit['morale_text']}，{sit['mutiny_tier']}，"
                 f"火器：{_qualitative_army_stat('equipment', row['firearm_equipment']).removeprefix('装备：')}，"
-                f"炮{row['cannon_equipment']}门，{arr_text}，{row['status']}"
+                f"炮{row['cannon_equipment']}门，{sit['arrears_text']}，{row['status']}"
             )
         return (
             f"军队警讯：{'；'.join(parts)}。"
@@ -7322,18 +7353,18 @@ class GameDB:
         if row is None:
             raise ValueError(f"未找到军队：{raw_name}")
         pay = self._army_pay(row)  # #173：月饷取引擎实扣应发
-        arr_text = _army_arrears_report_text(row, pay)
+        sit = _player_army_situation(row, pay)
         return (
             f"{row['name']}：驻扎地{row['station']}，统帅{row['commander']}，"
             f"兵种{row['troop_type']}，人数{row['manpower']}人，"
             f"月应发军饷{format_money(monthly_amount(pay))} /{TURN_UNIT}，"
             f"{_qualitative_army_stat('supply', row['supply'])}，"
-            f"{_qualitative_army_stat('morale', row['morale'])}，"
+            f"{sit['morale_text']}，"
             f"{_qualitative_army_stat('training', row['training'])}，"
             f"{_qualitative_army_stat('equipment', row['equipment'])}，"
             f"火器{row['firearm_equipment']}，随军大炮{row['cannon_equipment']}门，"
-            f"{arr_text}，{_qualitative_army_stat('mobility', row['mobility'])}，"
-            f"{_qualitative_army_stat('loyalty', row['loyalty'])}。"
+            f"{sit['arrears_text']}，{_qualitative_army_stat('mobility', row['mobility'])}，"
+            f"{sit['mutiny_tier']}。"
             f"状态：{row['status']}"
         )
 
@@ -7366,20 +7397,20 @@ class GameDB:
         for row in rows:
             # #173：月饷取引擎实扣应发 army_needed（替退役 maintenance_per_turn）。全按月度，不除 3。
             monthly_pay = self._army_pay(row)
-            arrears_text = _army_arrears_report_text(row, monthly_pay)
+            sit = _player_army_situation(row, monthly_pay)
             if str(row["owner_power"]) == "ming":
-                # 列序见表头。兵力/月饷/欠饷为真钱；补给…忠诚以奏报定性呈现。
+                # 列序见表头。兵力/月饷为真钱；士气/军心/欠饷走 #321 玩家投影。
                 own.append(
                     "|".join(str(x) for x in (
                         row["name"], row["station"], row["commander"], row["troop_type"],
                         row["manpower"], monthly_pay,
                         _qualitative_army_stat("supply", row["supply"]),
-                        _qualitative_army_stat("morale", row["morale"]),
+                        sit["morale_text"],
                         _qualitative_army_stat("training", row["training"]),
                         _qualitative_army_stat("equipment", row["equipment"]),
                         _qualitative_army_stat("mobility", row["mobility"]),
-                        _qualitative_army_stat("loyalty", row["loyalty"]),
-                        arrears_text, row["status"],
+                        sit["mutiny_tier"],
+                        sit["arrears_text"], row["status"],
                         f"火器：{_qualitative_army_stat('equipment', row['firearm_equipment']).removeprefix('装备：')}"
                         if qualitative_equipment else row["firearm_equipment"],
                         row["cannon_equipment"],

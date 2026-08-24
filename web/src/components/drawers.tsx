@@ -1,7 +1,7 @@
 import React from "react";
 import { Crown, Landmark, MapPinned, ScrollText, Star, Swords, X } from "lucide-react";
 import { MinisterPortrait, PortraitUploadButton, RightDrawer, cacheBust, courtSlots, loadCourtPos, saveCourtPos, snapToSlot } from "./hud";
-import { formatArmyArrears, formatMoney, formatSignedMoney, qualitativeArmyStat } from "../format";
+import { arrearsToneFromText, formatArmyArrears, formatMoney, formatSignedMoney, qualitativeArmyStat } from "../format";
 import { settlementClosedReason } from "../settlementPresentation";
 import type { Army, Building, GameState, MapNode, Minister, Region } from "../types";
 
@@ -350,13 +350,8 @@ export function ArmyDrawer({
   const mingArmies = armies.filter((a) => (a.owner_power || "ming") === "ming");
   const filtered = q ? mingArmies.filter((a) => a.name.includes(q) || a.station.includes(q) || a.commander.includes(q)) : mingArmies;
   const selected = mingArmies.find((a) => a.id === selectedArmyId) || null;
-  const arrearsTone = (army: Army) => {
-    const pay = army.army_needed; // #173 欠饷月数按引擎实扣月应发；0 饷军不造假分母（同后端 pay>0 判）
-    const months = pay > 0 ? army.arrears / pay : 0;
-    if (months >= 3) return "danger";
-    if (months >= 1) return "warn";
-    return "";
-  };
+  // #321：色阶只消费 arrears_text，禁止 raw arrears / army_needed 回灌。
+  const arrearsTone = (army: Army) => arrearsToneFromText(army.arrears_text);
   return (
     <RightDrawer open={open} onClose={onClose} title="军队" icon={<Swords size={17} />} extraClass="right-drawer-army">
       <div className="right-drawer-search">
@@ -388,9 +383,9 @@ export function ArmyDrawer({
               <tr><th>驻地</th><td>{selected.station}</td><th>战区</th><td>{selected.theater}</td></tr>
               <tr><th>统帅</th><td>{selected.commander || "—"}</td><th>兵种</th><td>{selected.troop_type}</td></tr>
               <tr><th>兵力</th><td>{selected.manpower}</td><th>月饷</th><td>{selected.army_needed}万</td></tr>
-              <tr><th>士气</th><td>{qualitativeArmyStat("morale", selected.morale)}</td><th>操练</th><td>{qualitativeArmyStat("training", selected.training)}</td></tr>
+              <tr><th>士气</th><td>{selected.morale_text}</td><th>操练</th><td>{qualitativeArmyStat("training", selected.training)}</td></tr>
               <tr><th>军械</th><td>{qualitativeArmyStat("equipment", selected.equipment)}</td><th>补给</th><td>{qualitativeArmyStat("supply", selected.supply)}</td></tr>
-              <tr><th>机动</th><td>{qualitativeArmyStat("mobility", selected.mobility)}</td><th>忠诚</th><td>{qualitativeArmyStat("loyalty", selected.loyalty)}</td></tr>
+              <tr><th>机动</th><td>{qualitativeArmyStat("mobility", selected.mobility)}</td><th>忠诚</th><td>{selected.mutiny_tier}</td></tr>
               <tr><th>欠饷</th><td colSpan={3}>
                 {formatArmyArrears(selected)}
               </td></tr>

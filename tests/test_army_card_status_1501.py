@@ -29,7 +29,7 @@ from ming_sim.tools import build_board_query_tools, build_minister_tools
 _GUANNING_STATUS = "宁锦守线尚可，欠饷严重，主动大举出击风险极高。"
 _GUANNING_ID = "guanning"
 
-# army_payload 投影完整键集（#1501：唯一允许相对旧投影的差异＝删除 status 键）。
+# army_payload 投影完整键集（#1501 删 status；#321 军心/士气/欠饷改三字符串键）。
 _ARMY_PAYLOAD_KEYS = frozenset(
     {
         "id",
@@ -42,12 +42,12 @@ _ARMY_PAYLOAD_KEYS = frozenset(
         "manpower",
         "army_needed",
         "supply",
-        "morale",
+        "morale_text",
         "training",
         "equipment",
-        "arrears",
+        "arrears_text",
         "mobility",
-        "loyalty",
+        "mutiny_tier",
         "firearm_equipment",
         "cannon_equipment",
         "owner_power",
@@ -80,6 +80,10 @@ def _assert_text_keeps_statuses(text: str, statuses: list[str], label: str) -> N
 
 def _expected_army_card_from_row(db, row) -> dict:
     """由 DB 行机械重建军牌投影（含历史 status 键），供「其余字段不变」对照。"""
+    from ming_sim.db import _player_army_situation
+
+    pay = db._army_pay(row)
+    sit = _player_army_situation(row, pay)
     return {
         "id": row["id"],
         "name": row["name"],
@@ -89,17 +93,17 @@ def _expected_army_card_from_row(db, row) -> dict:
         "controller": row["controller"],
         "troop_type": row["troop_type"],
         "manpower": int(row["manpower"]),
-        "army_needed": db._army_pay(row),
+        "army_needed": pay,
         "supply": int(row["supply"]),
-        "morale": int(row["morale"]),
+        "morale_text": sit["morale_text"],
         "training": int(row["training"]),
         "equipment": int(row["equipment"]),
-        "arrears": round(float(row["arrears"] or 0), 1),
+        "arrears_text": sit["arrears_text"],
         "mobility": int(row["mobility"]),
-        "loyalty": int(row["loyalty"]),
+        "mutiny_tier": sit["mutiny_tier"],
         "firearm_equipment": int(row["firearm_equipment"]),
         "cannon_equipment": int(row["cannon_equipment"]),
-        "status": row["status"],  # 旧投影曾携；#1501 唯一允许删除
+        "status": row["status"],  # 旧投影曾携；#1501 允许删除
         "owner_power": row["owner_power"],
     }
 
@@ -130,7 +134,7 @@ def _web_runtime(db, state, content):
 
 
 def test_army_payload_omits_static_status_keeps_arrears(read_game):
-    """军牌出口：army_payload 不含 status；完整键集/逐字段对照（唯一差异=删 status）。"""
+    """军牌出口：army_payload 不含 status；完整键集/逐字段对照（#321 欠饷走 arrears_text）。"""
     db, _state, _ = read_game
     seed_status = _guanning_db_status(db)
 
@@ -144,13 +148,14 @@ def test_army_payload_omits_static_status_keeps_arrears(read_game):
         legacy = _expected_army_card_from_row(db, row)
         expected = {k: v for k, v in legacy.items() if k != "status"}
 
-        # 完整键集：恰好等于旧投影去掉 status
+        # 完整键集：恰好等于投影契约（无 status / 无 raw morale|loyalty|arrears）
         assert set(card.keys()) == set(expected.keys()) == _ARMY_PAYLOAD_KEYS, (
             f"{army_id}: payload 键集偏离。"
             f" extra={set(card.keys()) - _ARMY_PAYLOAD_KEYS!r}"
             f" missing={_ARMY_PAYLOAD_KEYS - set(card.keys())!r}"
         )
         assert "status" not in card
+        assert {"morale", "loyalty", "arrears"}.isdisjoint(card.keys())
 
         # 逐字段机械对照（唯一允许差异已在 expected 中删除 status）
         for key, value in expected.items():
@@ -164,11 +169,13 @@ def test_army_payload_omits_static_status_keeps_arrears(read_game):
             joined = " ".join(str(v) for v in card.values())
             assert st not in joined
 
-    # 病灶样本：关宁欠饷真数仍在，status 句不在
+    # 病灶样本：关宁欠饷奏报文案仍在，status 句不在
+    from ming_sim.db import _player_army_situation
+
     guanning = by_id[_GUANNING_ID]
-    assert guanning["arrears"] == pytest.approx(
-        round(float(rows_by_id[_GUANNING_ID]["arrears"] or 0), 1), abs=0.05
-    )
+    g_row = rows_by_id[_GUANNING_ID]
+    expected_arr = _player_army_situation(g_row, db._army_pay(g_row))["arrears_text"]
+    assert guanning["arrears_text"] == expected_arr
     assert seed_status not in " ".join(str(v) for v in guanning.values())
     assert "欠饷严重" not in " ".join(str(v) for v in guanning.values())
 

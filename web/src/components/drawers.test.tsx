@@ -137,7 +137,7 @@ afterEach(() => {
 });
 
 describe("ArmyDrawer presentation", () => {
-  it("shows approximate total arrears and qualitative abstract stats", () => {
+  it("shows backend arrears_text and mutiny_tier / morale_text directly", () => {
     const host = renderArmyDrawer({
       id: "denglai",
       name: "登莱兵与水师",
@@ -149,23 +149,27 @@ describe("ArmyDrawer presentation", () => {
       manpower: 26000,
       army_needed: 4,
       supply: 73,
-      morale: 73,
+      morale_text: "士气：尚稳",
       training: 73,
       equipment: 73,
-      arrears: 63,
+      arrears_text: "欠饷约60万两，数月军饷",
       mobility: 73,
-      loyalty: 73,
+      mutiny_tier: "优秀",
       status: "可支援辽东和海运",
       owner_power: "ming",
     });
 
-    expect(host.textContent).toContain("欠饷约60万两");
-    expect(host.textContent).toContain("忠诚尚稳");
+    expect(host.textContent).toContain("欠饷约60万两，数月军饷");
+    expect(host.textContent).toContain("士气：尚稳");
+    expect(host.textContent).toContain("优秀");
     expect(host.textContent).not.toContain("63万两");
     expect(host.textContent).not.toContain("忠诚73");
+    // 旧 loyalty 五档词不得回潮
+    expect(host.textContent).not.toContain("尚稳稳固");
+    expect(host.textContent).not.toMatch(/危殆|浮动|不稳|稳固/);
   });
 
-  it("renders fractional payload arrears with half-step approximation", () => {
+  it("renders fractional payload arrears_text without raw 12.5", () => {
     const host = renderArmyDrawer({
       id: "denglai",
       name: "登莱兵与水师",
@@ -177,12 +181,12 @@ describe("ArmyDrawer presentation", () => {
       manpower: 26000,
       army_needed: 4,
       supply: 73,
-      morale: 73,
+      morale_text: "士气：尚稳",
       training: 73,
       equipment: 73,
-      arrears: 12.5,
+      arrears_text: "欠饷约15万两，约两月军饷",
       mobility: 73,
-      loyalty: 73,
+      mutiny_tier: "优秀",
       status: "可支援辽东和海运",
       owner_power: "ming",
     });
@@ -204,12 +208,12 @@ describe("ArmyDrawer presentation", () => {
       manpower: 72000,
       army_needed: 12,
       supply: 38,
-      morale: 52,
+      morale_text: "士气：不振",
       training: 68,
       equipment: 62,
-      arrears: 60,
+      arrears_text: "欠饷约60万两，数月军饷",
       mobility: 48,
-      loyalty: 55,
+      mutiny_tier: "不满",
       status: statusSentence,
       owner_power: "ming",
     });
@@ -219,7 +223,8 @@ describe("ArmyDrawer presentation", () => {
     expect(host.textContent).not.toContain("欠饷严重");
     expect(host.textContent).not.toMatch(/状态/);
     expect(host.textContent).toMatch(/欠饷/);
-    // 欠饷真数呈现路径保留（约数格式由 formatArmyArrears 负责）
+    // #321：欠饷只消费 arrears_text
+    expect(host.textContent).toContain("欠饷约60万两，数月军饷");
     expect(host.querySelector(".right-drawer-detail")).toBeTruthy();
   });
 });
