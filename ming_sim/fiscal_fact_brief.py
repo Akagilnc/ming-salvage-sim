@@ -137,13 +137,18 @@ def _priority_override_origin_for(
     """逐键反事实找出确实造成该科目让位的在位旨，并返回其 provenance。
 
     due / arrears 共用：参数化 subjects、默认优先级、键前缀与解析序选取。
+
+    F2.2：每科目只检测与 ``pay_order._resolve_priority`` 同序的**胜出在位键**
+    （``@region`` 先于全国裸键）；shadow 全国键不得进入 causal 候选。反事实将
+    胜出键值置为默认优先级（而非 pop 回落 shadow），避免过度决定下 origin 空串。
     """
     from ming_sim.pay_order import resolve_pay_order_overrides
 
     causal_keys: List[str] = []
     default_order = tuple(sorted(subjects, key=default_priority.__getitem__))
     for changed_subject in subjects:
-        counterfactual = dict(config)
+        # 胜出在位键：scoped 特定度优先，否则全国裸键（与 _resolve_priority 同序）。
+        winning_key = None
         for key in (
             f"{key_prefix}_{changed_subject}@{region_id}",
             f"{key_prefix}_{changed_subject}",
@@ -151,14 +156,21 @@ def _priority_override_origin_for(
             until = config.get(f"{key}_until_turn")
             if key not in config or (until is not None and turn > int(until)):
                 continue
-            if int(config[key]) != default_priority[changed_subject]:
-                counterfactual.pop(key)
-                resolved = resolve_pay_order_overrides(counterfactual, region_id, turn)
-                order = order_of(resolved) if resolved is not None else default_order
-                paid = _waterfall_allocate(order, claims, pool)
-                default_paid = _waterfall_allocate(default_order, claims, pool)
-                if default_paid[displaced_subject] - paid[displaced_subject] < displaced - 1e-9:
-                    causal_keys.append(key)
+            winning_key = key
+            break
+        if winning_key is None:
+            continue
+        if int(config[winning_key]) == default_priority[changed_subject]:
+            continue
+        # 独立副本：中和胜出键效力，不 pop 以免 shadow 全国键顶上掩盖归因。
+        counterfactual = dict(config)
+        counterfactual[winning_key] = default_priority[changed_subject]
+        resolved = resolve_pay_order_overrides(counterfactual, region_id, turn)
+        order = order_of(resolved) if resolved is not None else default_order
+        paid = _waterfall_allocate(order, claims, pool)
+        default_paid = _waterfall_allocate(default_order, claims, pool)
+        if default_paid[displaced_subject] - paid[displaced_subject] < displaced - 1e-9:
+            causal_keys.append(winning_key)
     if not causal_keys:
         return ""
     placeholders = ",".join("?" for _ in causal_keys)
