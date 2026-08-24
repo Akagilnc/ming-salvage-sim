@@ -3,7 +3,7 @@
 真缝：
 - army_logs.reason → turn_army_summary / previous_summary 路径上的欠发文案
 - 省源分账 reason / turn_army_summary delta（#1383 残余）
-- API armies.arrears 只读投影（#1363 同源呈现面）
+- API armies.arrears_text approximate 投影；raw arrears 键缺席（#1363 同源呈现面）
 - budget「各军军饷」vs army_report「应发」呈现口径标注
 """
 
@@ -230,7 +230,7 @@ def test_province_pay_split_reason_and_summary_have_no_float_garbage(game):
     )
 
 
-def test_army_payload_arrears_projection_rounds_to_one_decimal(game):
+def test_army_payload_arrears_text_is_approximate_not_raw(game):
     """#321：API armies.arrears_text 为 approximate 奏报；禁 raw 数与浮点残渣。"""
     from ming_sim.db import _player_army_situation
 
