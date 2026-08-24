@@ -276,85 +276,6 @@ def _resolve_target_faction_identity(
     return faction, identity
 
 
-def _compute_punishment_deltas(
-    *,
-    turn: int,
-    axis: str,
-    penalty_type: str,
-    crime_weight: int,
-    identity: int,
-    reason_code: Optional[str],
-    source: Optional[str],
-) -> Dict[str, Dict[str, Any]]:
-    """栈内算 Δ；不接收/回传派生 faction，不组装可外传写载荷。"""
-    severity = SEVERITY_BASE[penalty_type]
-    mismatch = max(0, severity - crime_weight)
-    # D2-4：金额用 raw 失称度；整数 legitimacy_pct 仅审计落库
-    leg_raw = _clamp(10.0 + 90.0 * mismatch / severity, 10.0, 100.0)
-    legitimacy_pct = int(round(leg_raw))
-    k_id = _clamp(identity / 100.0, 0.0, 1.0)
-    direct = int(round(severity * leg_raw / 100.0))
-    # ADR 原式：禁止先 round(direct) 再乘
-    kinship = int(round(severity * leg_raw / 100.0 * 0.3 * k_id))
-    planned: Dict[str, Dict[str, Any]] = {}
-    common = {
-        "turn": turn,
-        "reason_code": reason_code,
-        "source": source,
-    }
-    if direct > 0:
-        planned["direct"] = {
-            **common,
-            "axis": axis,
-            "base": severity,
-            "legitimacy_pct": legitimacy_pct,
-            "amount": direct,
-        }
-    if kinship > 0:
-        planned["kinship"] = {
-            **common,
-            "axis": axis,
-            "base": severity,
-            "legitimacy_pct": legitimacy_pct,
-            "amount": kinship,
-        }
-    if penalty_type == "廷杖":
-        planned["overdraw"] = {
-            **common,
-            "axis": None,
-            "base": None,
-            "legitimacy_pct": None,
-            "amount": 1,
-        }
-    return planned
-
-
-def _compute_detection_deltas(
-    *,
-    turn: int,
-    axis: str,
-    alert_severity: int,
-    identity: int,
-    source: Optional[str],
-) -> Dict[str, Dict[str, Any]]:
-    """栈内算 Δ；leg=100 写死；不接收/回传派生 faction。"""
-    legitimacy_pct = 100
-    k_id = _clamp(identity / 100.0, 0.0, 1.0)
-    kinship = int(round(alert_severity * 0.3 * k_id))
-    planned: Dict[str, Dict[str, Any]] = {}
-    if kinship > 0:
-        planned["kinship"] = {
-            "turn": turn,
-            "reason_code": None,
-            "source": source,
-            "axis": axis,
-            "base": int(alert_severity),
-            "legitimacy_pct": legitimacy_pct,
-            "amount": kinship,
-        }
-    return planned
-
-
 def _load_namespace(conn: Any, idem_base: str) -> Dict[str, Any]:
     keys = [f"{idem_base}|{k}" for k in sorted(LEGAL_KINDS)]
     placeholders = ",".join("?" for _ in keys)
@@ -425,34 +346,68 @@ def _accrue_centrifuge(
     with atomic(db):
         conn = db.conn
         faction, identity = _resolve_target_faction_identity(conn, target, turn=turn)
+        planned: Dict[str, Dict[str, Any]] = {}
         if mode == _MODE_PUNISHMENT:
             assert penalty_type is not None and crime_weight is not None
-            deltas = _compute_punishment_deltas(
-                turn=turn,
-                axis=axis,
-                penalty_type=penalty_type,
-                crime_weight=crime_weight,
-                identity=identity,
-                reason_code=reason_code,
-                source=source,
-            )
+            severity = SEVERITY_BASE[penalty_type]
+            mismatch = max(0, severity - crime_weight)
+            # D2-4：金额用 raw 失称度；整数 legitimacy_pct 仅审计落库
+            leg_raw = _clamp(10.0 + 90.0 * mismatch / severity, 10.0, 100.0)
+            legitimacy_pct = int(round(leg_raw))
+            k_id = _clamp(identity / 100.0, 0.0, 1.0)
+            direct = int(round(severity * leg_raw / 100.0))
+            # ADR 原式：禁止先 round(direct) 再乘
+            kinship = int(round(severity * leg_raw / 100.0 * 0.3 * k_id))
+            common = {
+                "turn": turn,
+                "faction": faction,
+                "source_name": target,
+                "reason_code": reason_code,
+                "source": source,
+            }
+            if direct > 0:
+                planned["direct"] = {
+                    **common,
+                    "axis": axis,
+                    "base": severity,
+                    "legitimacy_pct": legitimacy_pct,
+                    "amount": direct,
+                }
+            if kinship > 0:
+                planned["kinship"] = {
+                    **common,
+                    "axis": axis,
+                    "base": severity,
+                    "legitimacy_pct": legitimacy_pct,
+                    "amount": kinship,
+                }
+            if penalty_type == "廷杖":
+                planned["overdraw"] = {
+                    **common,
+                    "axis": None,
+                    "base": None,
+                    "legitimacy_pct": None,
+                    "amount": 1,
+                }
         elif mode == _MODE_DETECTION:
             assert alert_severity is not None
-            deltas = _compute_detection_deltas(
-                turn=turn,
-                axis=axis,
-                alert_severity=alert_severity,
-                identity=identity,
-                source=source,
-            )
+            legitimacy_pct = 100
+            k_id = _clamp(identity / 100.0, 0.0, 1.0)
+            kinship = int(round(alert_severity * 0.3 * k_id))
+            if kinship > 0:
+                planned["kinship"] = {
+                    "turn": turn,
+                    "faction": faction,
+                    "source_name": target,
+                    "reason_code": None,
+                    "source": source,
+                    "axis": axis,
+                    "base": int(alert_severity),
+                    "legitimacy_pct": legitimacy_pct,
+                    "amount": kinship,
+                }
         else:
             raise _abort(turn, f"unknown centrifuge mode: {mode!r}")
-
-        # 核内已解析值并入比对/落库行（compute 不组装 faction/source_name）
-        planned: Dict[str, Dict[str, Any]] = {
-            kind: {**delta, "faction": faction, "source_name": target}
-            for kind, delta in deltas.items()
-        }
 
         planned_kinds: Set[str] = set(planned)
         existing = _load_namespace(conn, idem_base)
