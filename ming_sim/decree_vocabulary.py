@@ -14,6 +14,8 @@ DOSSIER_ACTION_TYPES = frozenset({
     # 判后物化轨）；打回零写。fiscal_config 键族是唯一持久真源，案卷只是颁布门与
     # provenance origin_ref（dossier:<id>），非第二旨意真源。
     "pay_order_override",
+    # #651: a case-bound, payload-owned terminal order; never infer it from effects.
+    "prohibit_covert_levy",
 })
 
 DIRECTIVE_ACTION_TYPES = DOSSIER_ACTION_TYPES - {"appointment", "secret_order"}
@@ -45,6 +47,7 @@ _DOSSIER_TERMINAL_ACTIONS = frozenset({
     "revoke_authority", "revoke_decree",
     # #653：偿还序/折发旨顺颁即物化 config、效果已落地（无执行判定面）→ 终局。
     "pay_order_override",
+    "prohibit_covert_levy",
 })
 
 DOSSIER_ACTION_POLICY = {
@@ -194,7 +197,7 @@ def terminal_report_facade(
 SIM_DOSSIER_COMMON_KEYS = frozenset({
     "id", "action_type", "status",
     "decision", "outcome", "note",
-    "mode", "stigma", "participant_roster", "links",
+    "mode", "stigma", "participant_roster", "links", "execution_signal",
     "due_turn", "created_turn", "promulgated_turn",
     "target_kind", "target_id", "executor_kind", "executor_id",
     # #613 执行侧任别读端（与 #569 固定键投影同面）
@@ -203,6 +206,8 @@ SIM_DOSSIER_COMMON_KEYS = frozenset({
     # #625 / ADR 0077 监督事实底只读注入（解 A）
     "supervision_history", "loophole_exposures",
     "transformation_tendency_facts",
+    # #651 monthly pay truth rides the existing dossier judge surface.
+    "army_pay_fact",
 })
 SIM_DOSSIER_NARRATIVE_KEYS = SIM_DOSSIER_COMMON_KEYS | {"decree_text"}
 SIM_DOSSIER_EXECUTION_KEYS = SIM_DOSSIER_COMMON_KEYS | {"execution_summary"}

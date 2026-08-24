@@ -26,9 +26,12 @@ from ming_sim.constants import (
 )
 from ming_sim.content import GameContent
 from ming_sim.context import victory_status
+from ming_sim.distance import DistanceMatrix
+from ming_sim.paths import bundled_path
 from ming_sim.db import (
     GameDB,
     POPULATION_UNIT_PERSONS,
+    _LEVERAGE_FACTIONS,
     _approx_wanliang,
     infer_office_type_from_office,
     normalize_office,
@@ -53,6 +56,7 @@ from ming_sim.flows import (
     _strict_int,
 )
 from ming_sim.models import Event, GameState, effect_dict_has_work, is_vassal_prince, loads_effect_dict
+from ming_sim.participant_roster import project_execution_liability_parties
 from ming_sim.person_archive_contract import (
     PERSON_ALLEGIANCE_CHANGE_WAYS,
     PERSON_IDENTITY_TITLES,
@@ -1168,6 +1172,10 @@ def issue_to_payload(
     commitment_kind = row["commitment_kind"] if "commitment_kind" in keys else ""
     stop_condition = row["stop_condition"] if "stop_condition" in keys else ""
     end_turn = int(row["end_turn"]) if "end_turn" in keys else 0
+    target_roster = (
+        json.loads(str(row["target_roster"] or "[]"))
+        if "target_roster" in keys else []
+    )
     payload = {
         "issue_id": int(row["id"]),
         "kind": row["kind"],
@@ -1181,6 +1189,7 @@ def issue_to_payload(
         "结案条件": resolve_cond or "(未填)",
         "失败条件": fail_cond or "(未填)",
         "cancellable": row["cancellable"],
+        "target_roster": target_roster,
         f"上{TURN_UNIT}推进": (
             {
                 "delta_bar": int(recent_advances[0]["delta_bar"]),
@@ -2530,6 +2539,136 @@ def _gate_passed(gate: Dict[str, str], metrics: Dict[str, int], db: GameDB) -> b
     return True
 
 
+def gather_impeachment_surge_candidates(state: GameState, db: GameDB) -> List[Dict[str, object]]:
+    """Project canonical dynamic candidates from transformed dossier facts.
+
+    Other disaster legs deliberately have no adapter until their owning producers
+    provide a durable occurrence and responsibility interface.
+    """
+    facts = db.build_faction_denunciation_facts()
+    situations = {
+        str(item.get("faction") or ""): item
+        for item in facts.get("faction_situations", [])
+        if isinstance(item, dict)
+    }
+    personas_by_faction: Dict[str, List[Dict[str, object]]] = {}
+    for item in facts.get("character_personas", []):
+        if isinstance(item, dict):
+            personas_by_faction.setdefault(str(item.get("faction") or ""), []).append(item)
+
+    rows = db.conn.execute(
+        "SELECT id,closed_turn,participant_roster,decree_text,execution_note,execution_outcome "
+        "FROM decree_dossiers "
+        "WHERE execution_outcome='transformed' AND closed_turn BETWEEN ? AND ? ORDER BY id",
+        (max(0, int(state.turn) - 1), int(state.turn)),
+    ).fetchall()
+    candidates: List[Dict[str, object]] = []
+    for row in rows:
+        did = int(row["id"])
+        # #622/#1260 单源：仅有旨外 durable 的变形才构成 deformation_exposure。
+        if not db.dossier_has_beyond_intent(did):
+            continue
+        try:
+            roster = json.loads(str(row["participant_roster"] or "[]"))
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(roster, list) or not roster:
+            continue
+        participant_ids = [
+            str(item.get("character_id") or "").strip()
+            for item in roster if isinstance(item, dict) and str(item.get("character_id") or "").strip()
+        ]
+        if len(participant_ids) != len(roster) or not participant_ids:
+            continue
+        liability = project_execution_liability_parties(roster)
+        responsible_ids = [
+            str(item.get("character_id") or "").strip() for item in liability
+            if str(item.get("character_id") or "").strip()
+        ]
+        if not responsible_ids:
+            continue
+        # 存在门只看责任集；知情/协办离场不得 any() 否决整卷。
+        placeholders = ",".join("?" for _ in responsible_ids)
+        chars = db.conn.execute(
+            f"SELECT name,faction,status FROM characters WHERE name IN ({placeholders})",
+            responsible_ids,
+        ).fetchall()
+        char_by_name = {str(item["name"]): item for item in chars}
+        if any(
+            name not in char_by_name
+            or str(char_by_name[name]["status"] or "") != "active"
+            or not str(char_by_name[name]["faction"] or "").strip()
+            for name in responsible_ids
+        ):
+            continue
+        responsible_factions = list(dict.fromkeys(
+            str(char_by_name[name]["faction"]) for name in responsible_ids
+        ))
+        # 闭集：在朝 participant ∪ 在朝 responsible（含仅 delegator_id 连坐）。
+        union_ids = list(dict.fromkeys([*participant_ids, *responsible_ids]))
+        missing = [name for name in union_ids if name not in char_by_name]
+        if missing:
+            missing_ph = ",".join("?" for _ in missing)
+            for item in db.conn.execute(
+                f"SELECT name,faction,status FROM characters WHERE name IN ({missing_ph})",
+                missing,
+            ).fetchall():
+                char_by_name[str(item["name"])] = item
+        eligible_target_ids = [
+            name for name in union_ids
+            if name in char_by_name
+            and str(char_by_name[name]["status"] or "") == "active"
+            and str(char_by_name[name]["faction"] or "").strip()
+        ]
+        if not eligible_target_ids:
+            continue
+        fork_state = db.read_dossier_fork_state(did)
+        beyond_intent_effects = [
+            dict(effect)
+            for effect in db.list_dossier_durable_effects(did)
+            if bool(effect.get("beyond_intent"))
+        ]
+        origin_ref = f"commitment:{did}:deformation_exposure"
+        for faction in sorted(_LEVERAGE_FACTIONS):
+            if faction in responsible_factions or db.faction_leverage(faction) < 60:
+                continue
+            situation = situations.get(faction)
+            personas = personas_by_faction.get(faction, [])
+            if not situation or not personas:
+                continue
+            if db.conn.execute(
+                "SELECT 1 FROM issues WHERE origin_kind='impeachment_surge' "
+                "AND origin_ref=? AND faction_hint=? LIMIT 1", (origin_ref, faction),
+            ).fetchone():
+                continue
+            candidate_id = f"impeachment_surge:{origin_ref}:{faction}"
+            candidates.append({
+                "id": candidate_id,
+                "origin_kind": "impeachment_surge",
+                "origin_ref": origin_ref,
+                "source_kind": "deformation_exposure",
+                "occurred_turn": int(row["closed_turn"]),
+                "faction_id": faction,
+                "faction_persona": {
+                    "faction_situations": [dict(situation)],
+                    "character_personas": [dict(item) for item in personas],
+                },
+                "eligible_target_ids": eligible_target_ids,
+                "participant_ids": participant_ids,
+                "responsible_person_ids": responsible_ids,
+                "responsible_faction_ids": responsible_factions,
+                "dossier_id": did,
+                "decree_text": str(row["decree_text"] or "").strip(),
+                "execution_note": str(row["execution_note"] or "").strip(),
+                "execution_outcome": str(row["execution_outcome"] or "").strip(),
+                "beyond_intent": True,
+                "reported_bands": list(fork_state.get("reported_bands") or []),
+                "actual_effect_count": int(fork_state.get("actual_effect_count") or 0),
+                "beyond_intent_effects": beyond_intent_effects,
+            })
+    return candidates
+
+
 def gather_candidate_events(state: GameState, db: GameDB) -> List[Event]:
     """程序筛选：历史锚定事件按 trigger 时间到点、seed 情势按 trigger_gate 达标，
     都排除已触发过的。返回的候选清单交推演 agent 因果判定是否真触发。"""
@@ -2971,6 +3110,50 @@ def _load_pending_gate_valid_regions(db: GameDB) -> set[str]:
     }
 
 
+def _admit_transit_departure(
+    item: Dict[str, object],
+    row: Dict[str, object],
+    valid_regions: set[str],
+) -> tuple[Optional[Dict[str, object]], Optional[tuple[str, str]]]:
+    """Return the canonical, write-free departure projection or its item rejection."""
+    if "location" in item:
+        return None, ("行止只接受 transit_to 启程", "invalid_transition")
+    transit_to = str(item.get("transit_to") or "").strip()
+    if not transit_to:
+        return None, ("transit_to 缺失", "missing_field")
+    if str(row.get("status") or "active") != "active":
+        return None, ("行止 仅适用于 active 人物", "invalid_transition")
+    if transit_to not in valid_regions:
+        return None, ("transit_to 地区不存在", "missing_ref")
+    tone = str(item.get("行程语气") or "常行").strip()
+    speed_by_tone = {"常行": 1.0, "加急": 1.5, "星夜兼程": 2.0}
+    if tone not in speed_by_tone:
+        return None, ("行程语气不在闭合枚举", "invalid_enum")
+    previous_destination = str(row.get("transit_to") or "")
+    if previous_destination and previous_destination != transit_to:
+        return None, ("在途人物不可改道", "invalid_transition")
+    location = str(row.get("location") or "")
+    if location not in valid_regions:
+        return None, None
+    matrix = DistanceMatrix.from_file(bundled_path("content", "distance_matrix.json"))
+    distance = matrix.travel_time(location, transit_to)
+    if not math.isfinite(distance) or distance < 0 or (location != transit_to and distance <= 0):
+        raise ValueError(f"invalid baked travel time: {location!r} -> {transit_to!r}")
+    terminal_location = transit_to if distance == 0 else location
+    terminal_transit_to = "" if distance == 0 else transit_to
+    return {
+        "location": terminal_location,
+        "transit_to": terminal_transit_to,
+        "distance": distance,
+        "tone": tone,
+        "speed": None if distance == 0 else speed_by_tone[tone],
+        "material": (
+            terminal_location != location
+            or terminal_transit_to != previous_destination
+        ),
+    }, None
+
+
 def _pending_person_changes_block_event_gate(
     ev: Event,
     pending_person_changes: List[Dict[str, object]],
@@ -3133,21 +3316,11 @@ def _pending_person_changes_block_event_gate(
             overlay(name, "office", "")
             overlay(name, "transit_to", "")
         elif action == "行止":
-            if cur_status != "active":
+            departure, _error = _admit_transit_departure(item, row, valid_regions)
+            if departure is None:
                 continue
-            new_location = str(item.get("location") or "").strip()
-            transit_to = str(item.get("transit_to") or "").strip()
-            if not new_location and not transit_to:
-                continue
-            valid = True
-            for region_id in (new_location, transit_to):
-                if region_id and region_id not in valid_regions:
-                    valid = False
-                    break
-            if not valid:
-                continue
-            overlay(name, "location", new_location or row_value(row, "location"))
-            overlay(name, "transit_to", transit_to)
+            overlay(name, "location", departure["location"])
+            overlay(name, "transit_to", departure["transit_to"])
         elif action == "易主":
             way = str(item.get("方式") or item.get("way") or "").strip()
             backlash = item.get("反噬", item.get("backlash"))
@@ -4575,23 +4748,17 @@ def _strategic_event_result_preflight_error(
             if action != "行止":
                 continue
             row = db.conn.execute(
-                "SELECT location, transit_to FROM characters WHERE name = ?",
+                "SELECT status, location, transit_to FROM characters WHERE name = ?",
                 (name,),
             ).fetchone()
-            if row is None:
-                continue
-            new_location = str(item.get("location") or "").strip()
-            new_transit_to = str(item.get("transit_to") or "").strip()
-            old_location = str(row["location"] or "")
-            old_transit_to = str(row["transit_to"] or "")
-            target_location = new_location or old_location
-            if target_location == old_location and new_transit_to == old_transit_to:
-                return _noop_error(
-                    "person",
-                    name,
-                    "行止",
-                    {"location": target_location, "transit_to": new_transit_to},
+            if row is not None:
+                departure, departure_error = _admit_transit_departure(
+                    item,
+                    dict(row),
+                    _load_pending_gate_valid_regions(db),
                 )
+                if departure_error is None and departure is not None and not departure["material"]:
+                    return _noop_error("person", name, action, departure)
         snapshot = _snapshot_person_write_state(db, content)
         results: List[Dict[str, object]] = []
         db.conn.execute("SAVEPOINT strategic_person_result_preflight")
@@ -4842,6 +5009,7 @@ def apply_issue_tracker_output(
     allow_legacy_partial_power_for_gates: bool = False,
     candidate_event_ids_at_input: Optional[set[str]] = None,
     candidate_event_ids_authoritative: bool = False,
+    impeachment_surge_candidates_at_input: Optional[List[Dict[str, object]]] = None,
     event_result_delta_event_ids: Optional[set[str]] = None,
     defer_event_trigger_ids: Optional[set[str]] = None,
 ) -> Dict[str, object]:
@@ -5013,11 +5181,10 @@ def apply_issue_tracker_output(
             "narrative": narrative,
         })
 
-    # 2) new_issues：接两种来源——
-    #    decree     —— 玩家诏书强推，由 LLM 给字段新立 issue
-    #    event_pool —— 预设事件（EVENTS/SEED_EVENTS）被推演判定触发，按预设 event 立 issue
-    #    其它来源一律拒。
+    # 2) new_issues：接三种来源——decree、静态 event_pool，以及
+    #    当前输入事实可重验的动态 impeachment_surge。其它来源一律拒。
     initiative_active = db.count_active_initiatives()
+    consumed_surge_candidates: set[tuple[str, str]] = set()
     for ni in tracker_output.get("new_issues", []) or []:
         if not isinstance(ni, dict):
             # 非 dict 项（new_issues:[null]/标量）：ni.get 会抛 AttributeError。真实 settle 路
@@ -5029,8 +5196,79 @@ def apply_issue_tracker_output(
                 "reason": f"new_issues 条目非对象（应为 dict）：{ni!r}", "item": ni,
             })
             continue
-        title = str(ni.get("title") or "")
+        raw_title = ni.get("title")
         origin_kind = str(ni.get("origin_kind") or "").lower()
+        if origin_kind == "impeachment_surge":
+            candidate_id = str(ni.get("candidate_id") or "").strip()
+            surge_candidates = (
+                impeachment_surge_candidates_at_input
+                if impeachment_surge_candidates_at_input is not None
+                else gather_impeachment_surge_candidates(state, db)
+            )
+            candidates = {str(item["id"]): item for item in surge_candidates}
+            candidate = candidates.get(candidate_id)
+            roster = ni.get("target_roster")
+            stage_text = ni.get("stage_text")
+            title = raw_title if isinstance(raw_title, str) else ""
+            roster_shape_valid = (
+                isinstance(roster, list)
+                and bool(roster)
+                and all(isinstance(character_id, str) and character_id.strip() for character_id in roster)
+            )
+            target_ids = (
+                list(dict.fromkeys(character_id.strip() for character_id in roster))
+                if roster_shape_valid else []
+            )
+            reason = ""
+            if candidate is None:
+                reason = (
+                    "动态候选不在本次 LLM 输入快照"
+                    if impeachment_surge_candidates_at_input is not None
+                    else "动态候选不存在、陈旧或已消费"
+                )
+            elif not isinstance(raw_title, str) or not raw_title.strip():
+                reason = "弹劾潮 title 须为非空文本"
+            elif not isinstance(stage_text, str):
+                reason = "弹劾潮 stage_text 须为文本"
+            elif str(ni.get("faction_hint") or "").strip() != candidate["faction_id"]:
+                reason = "弹劾潮 faction_hint 与候选派系不符"
+            elif (str(candidate["origin_ref"]), str(candidate["faction_id"])) in consumed_surge_candidates:
+                reason = "弹劾潮候选已在本次调用内消费"
+            elif not roster_shape_valid:
+                reason = "弹劾潮 target_roster 须为非空人物身份列表"
+            elif not set(target_ids).issubset(set(candidate["eligible_target_ids"])):
+                reason = "弹劾潮标靶越过 eligible_target_ids 闭集"
+            if reason:
+                applied_new.append({
+                    "id": candidate_id, "title": title, "rejected": True,
+                    "reason": reason, "item": ni,
+                })
+                continue
+            issue_id = db.insert_issue(
+                state,
+                kind="situation",
+                title=title,
+                origin_kind="impeachment_surge",
+                origin_ref=str(candidate["origin_ref"]),
+                bar_value=40,
+                bar_good_meaning="",
+                bar_bad_meaning="",
+                stage_text=stage_text,
+                faction_hint=str(candidate["faction_id"]),
+                participants=[],
+                target_roster=target_ids,
+                cancellable="never",
+                commit=not external_transaction,
+            )
+            consumed_surge_candidates.add(
+                (str(candidate["origin_ref"]), str(candidate["faction_id"]))
+            )
+            applied_new.append({
+                "id": candidate_id, "issue_id": issue_id, "kind": "situation",
+                "title": title, "rejected": False,
+            })
+            continue
+        title = str(raw_title or "")
         if origin_kind == "event_pool":
             # 预设事件触发：id 必须是真实预设 event，照预设字段立 issue（不用 LLM 给的字段）
             event_id = str(ni.get("id") or ni.get("origin_ref") or "").strip()
@@ -5824,10 +6062,10 @@ def _displace_duplicate_offices(
         )
         if fully_displaced:
             db.conn.execute(
-                "UPDATE characters SET office=?, office_type=?, status_reason=?, reason_code=?, "
-                "transit_to='', transit_start_turn=0 WHERE name=?",
+                "UPDATE characters SET office=?, office_type=?, status_reason=?, reason_code=? WHERE name=?",
                 (new_holder_office, new_type, "被顶替", "被顶替", row["name"]),
             )
+            db.set_character_transit(str(row["name"]), content=content, commit=False)
         else:
             db.conn.execute(
                 "UPDATE characters SET office=?, office_type=? WHERE name=?",
@@ -5840,7 +6078,6 @@ def _displace_duplicate_offices(
             if fully_displaced:
                 ch.status_reason = "被顶替"
                 ch.reason_code = "被顶替"
-                ch.transit_to = ""
     # #9 cmr R1：被顶替者的 office_type 经上方裸 UPDATE 改了（全顶替→身名分=0 权重），绕过了
     # set_character_office 钩子，故其所属派系（常与新任者异派系）的 leverage 须在此补重算，否则
     # 残留偏高、违 #9 不变式。新任者自身派系已由 set_character_office 钩子重算，这里只补被顶替者。
@@ -5867,7 +6104,8 @@ def _snapshot_person_write_state(db: GameDB, content: Optional[GameContent]):
         dict(row)
         for row in db.conn.execute(
             "SELECT name, status, office, office_type, status_reason, "
-            "status_changed_turn, reason_code, transit_to, transit_start_turn FROM characters"
+            "status_changed_turn, reason_code, transit_to, transit_distance_remaining, "
+            "transit_speed_factor, transit_start_turn FROM characters"
         ).fetchall()
     ]
     office_rows = [
@@ -5944,22 +6182,26 @@ def _restore_person_write_state(
             db.conn.execute("DELETE FROM characters WHERE name=?", (name,))
     db.conn.executemany(
         "UPDATE characters SET status=?, office=?, office_type=?, status_reason=?, "
-        "status_changed_turn=?, reason_code=?, transit_to=?, transit_start_turn=? WHERE name=?",
+        "status_changed_turn=?, reason_code=? WHERE name=?",
         [
             (
-                row["status"],
-                row["office"],
-                row["office_type"],
-                row["status_reason"],
-                row["status_changed_turn"],
-                row["reason_code"],
-                row["transit_to"],
-                row.get("transit_start_turn", 0),
-                row["name"],
+                row["status"], row["office"], row["office_type"],
+                row["status_reason"], row["status_changed_turn"],
+                row["reason_code"], row["name"],
             )
             for row in character_rows
         ],
     )
+    for row in character_rows:
+        db.set_character_transit(
+            str(row["name"]),
+            transit_to=str(row["transit_to"] or ""),
+            distance_remaining=row.get("transit_distance_remaining"),
+            speed_factor=row.get("transit_speed_factor"),
+            start_turn=int(row.get("transit_start_turn", 0) or 0),
+            content=content,
+            commit=False,
+        )
     db.conn.executemany(
         "INSERT INTO character_offices "
         "(character_name, office_title, office_type, source, dossier_id, "
@@ -6150,6 +6392,7 @@ def apply_office_appointment(
                     name,
                     "active",
                     reason[:200] or "诏书任命",
+                    content=content,
                     commit=commit,
                 )
             with _appointment_tenure_scope(db, appointment_tenure):
@@ -6163,22 +6406,15 @@ def apply_office_appointment(
                     "UPDATE characters SET status_reason='', reason_code='' WHERE name=?",
                     (name,),
                 )
+                if content is not None and name in content.characters:
+                    content.characters[name].status_reason = ""
+                    content.characters[name].reason_code = ""
                 if commit:
                     db.conn.commit()
             displaced_parts = _displace_duplicate_offices(
                 db, content, name, new_office, commit=commit
             )
             ch = content.characters[name]
-            ch.status = "active"
-            # 三面同步（决定6）：DB 写已定 status_reason/reason_code（active 路上方清空；
-            # 非 active 起复路由 set_character_status 写入起复缘由）——回读刷回内存 Character，
-            # 否则非 active 起复后内存滞留旧削籍/下狱缘由，DB 与内存不一致（5b r3 codex-b R1）。
-            _reason_row = db.conn.execute(
-                "SELECT status_reason, reason_code FROM characters WHERE name=?", (name,)
-            ).fetchone()
-            if _reason_row is not None:
-                ch.status_reason = str(_reason_row["status_reason"] or "")
-                ch.reason_code = str(_reason_row["reason_code"] or "")
             ch.office = new_office
             ch.office_type = new_office_type
             if registry is not None:
@@ -6298,7 +6534,8 @@ def _apply_person_changes(
     def character_row(name: str):
         return db.conn.execute(
             "SELECT name, status, office, office_type, power_id, status_reason, "
-            "status_changed_turn, reason_code, transit_to, transit_start_turn "
+            "status_changed_turn, reason_code, transit_to, transit_distance_remaining, "
+            "transit_speed_factor, transit_start_turn "
             "FROM characters WHERE name=?",
             (name,),
         ).fetchone()
@@ -6509,16 +6746,9 @@ def _apply_person_changes(
                 status,
                 reason_text,
                 reason_code=reason_code if reason_code else None,
+                content=content,
                 commit=commit_person_change,
             )
-            if content is not None and name in content.characters:
-                ch = content.characters[name]
-                ch.status = status
-                ch.status_reason = reason_text
-                ch.reason_code = str(reason_code or "")
-                if status in {"offstage", "dismissed", "imprisoned", "exiled", "retired", "dead"}:
-                    ch.office = ""
-                    ch.transit_to = ""
             result = {
                 "name": name,
                 "动作": action,
@@ -6647,13 +6877,9 @@ def _apply_person_changes(
                         release_status,
                         derive_label,
                         reason_code="",
-                        commit=commit_person_change,
+                        content=content,
+                        commit=False,
                     )
-                    if content is not None and name in content.characters:
-                        ch = content.characters[name]
-                        ch.status = release_status
-                        ch.office = ""
-                        ch.transit_to = ""
                 release_result = {
                     "name": name,
                     "动作": "处置",
@@ -6676,7 +6902,7 @@ def _apply_person_changes(
                 faction=str(item.get("faction") or "中立"),
                 appointment_tenure=appointment_tenure,
                 llm_config=llm_config,
-                commit=commit_person_change,
+                commit=False if derive_label else commit_person_change,
             )
             wrapped = {"动作": effective_action, **result}
             if derive_label:
@@ -6688,41 +6914,40 @@ def _apply_person_changes(
                     db.conn.execute(
                         "UPDATE characters SET status=?, office=?, office_type=?, "
                         "status_reason=?, status_changed_turn=?, reason_code=?, transit_to=?, "
-                        "transit_start_turn=? WHERE name=?",
+                        "transit_distance_remaining=?, transit_speed_factor=?, transit_start_turn=? "
+                        "WHERE name=?",
                         (
-                            row["status"],
-                            row["office"],
-                            row["office_type"],
-                            row["status_reason"],
-                            row["status_changed_turn"],
-                            row["reason_code"],
-                            row["transit_to"],
-                            row["transit_start_turn"],
-                            name,
+                            row["status"], row["office"], row["office_type"],
+                            row["status_reason"], row["status_changed_turn"], row["reason_code"],
+                            row["transit_to"], row["transit_distance_remaining"],
+                            row["transit_speed_factor"], row["transit_start_turn"], name,
                         ),
                     )
-                    if commit_person_change:
-                        db.conn.commit()
                     if content is not None and name in content.characters:
                         ch = content.characters[name]
                         ch.status = str(row["status"] or "")
                         ch.office = str(row["office"] or "")
                         ch.office_type = str(row["office_type"] or ch.office_type)
                         ch.transit_to = str(row["transit_to"] or "")
+                        ch.transit_distance_remaining = row["transit_distance_remaining"]
+                        ch.transit_speed_factor = row["transit_speed_factor"]
+                        ch.transit_start_turn = int(row["transit_start_turn"] or 0)
                         # 对称 DB 侧回滚（上方 UPDATE 已还原全 7 字段）：内存也还原缘由/码，
                         # 守三面同步（决定6），免前置步刷过内存缘由后此路回滚留脏值（PR#106 R2 gemini）。
                         ch.status_reason = str(row["status_reason"] or "")
                         ch.reason_code = str(row["reason_code"] or "")
                 else:
                     applied.append(release_result)
-                    log_applied(release_result, item)
+                    log_applied(release_result, item, commit=False)
             elif transition.startswith("normalize:"):
                 wrapped["normalized"] = f"{action}->{effective_action}"
             applied.append(wrapped)
-            log_applied(wrapped, item)
+            log_applied(wrapped, item, commit=False if derive_label else None)
             for displacement_result in displaced_talent_pool_results(wrapped.get("displaced")):
                 applied.append(displacement_result)
-                log_applied(displacement_result, item)
+                log_applied(displacement_result, item, commit=False if derive_label else None)
+            if derive_label and commit_person_change:
+                db.conn.commit()
             continue
 
         if action == "易主":
@@ -6874,7 +7099,6 @@ def _apply_person_changes(
                     ch.office = new_title
                     ch.office_type = "身名分"
                     ch.status = "active"
-                    ch.transit_to = ""
                     ch.reason_code = ""
                     ch.status_reason = str(item.get("reason") or "")
                 # 易主后人仍 active（在新主任事，持身名分=降臣/归附），不变式1 不破；清原 reason_code/
@@ -6882,9 +7106,10 @@ def _apply_person_changes(
                 # status_changed_turn 记本回合（易主即状态变更）。
                 db.conn.execute(
                     "UPDATE characters SET office=?, office_type=?, status='active', "
-                    "reason_code='', status_reason=?, status_changed_turn=?, transit_to='', transit_start_turn=0 WHERE name=?",
+                    "reason_code='', status_reason=?, status_changed_turn=? WHERE name=?",
                     (new_title, "身名分", str(item.get("reason") or ""), state.turn, name),
                 )
+                db.set_character_transit(name, content=content, commit=False)
                 if commit_person_change:
                     db.conn.commit()
                 wrapped = {"动作": action, "方式": way, "反噬": backlash, **result}
@@ -6951,82 +7176,54 @@ def _apply_person_changes(
             continue
 
         if action == "行止":
-            new_location = str(item.get("location") or "").strip()
-            transit_to = str(item.get("transit_to") or "").strip()
-            if not new_location and not transit_to:
-                applied.append(rejected(item, "location 或 transit_to 缺失", "missing_field"))
-                continue
             if content is not None and name not in content.characters:
                 applied.append(rejected(item, "非既有人物", "hallucinated_id"))
                 continue
             row = db.conn.execute(
-                "SELECT status, location, transit_to, transit_start_turn "
-                "FROM characters WHERE name=?", (name,)
+                "SELECT status, location, transit_to, transit_distance_remaining, "
+                "transit_speed_factor, transit_start_turn FROM characters WHERE name=?",
+                (name,),
             ).fetchone()
             if row is None:
                 applied.append(rejected(item, "非既有人物", "hallucinated_id"))
                 continue
-            if row["status"] != "active":
-                applied.append(
-                    rejected(item, "行止 仅适用于 active 人物", "invalid_transition")
-                )
+            valid_regions = _load_pending_gate_valid_regions(db)
+            departure, error = _admit_transit_departure(item, dict(row), valid_regions)
+            if error is not None:
+                applied.append(rejected(item, error[0], error[1]))
                 continue
-            for field_name, region_id in (
-                ("location", new_location),
-                ("transit_to", transit_to),
-            ):
-                if not region_id:
-                    continue
-                region_row = db.conn.execute(
-                    "SELECT 1 FROM regions WHERE id=?", (region_id,)
-                ).fetchone()
-                if region_row is None:
-                    applied.append(
-                        rejected(item, f"{field_name} 地区不存在", "missing_ref")
-                    )
-                    break
-            else:
-                location = new_location or str(row["location"] or "")
-                if location == str(row["location"] or "") and transit_to == str(row["transit_to"] or ""):
-                    continue
-                origin_error = origin_rejected(item)
-                if origin_error:
-                    applied.append(origin_error)
-                    continue
-                # transit_start_turn 记启程回合，供 force_transit_arrivals 计在途时长。
-                # re-emit 同一在途目的地时保留原启程回合，否则逐月刷新会使
-                # `turn - start >= 2` 永不成立、兜底失效、永久在途（CMR P2 / #346）。
-                # 保留须含 prev_start==0 的旧数据哨兵：0 表「启程未知，按超期处理」，
-                # 同目的地 re-emit 不得把它刷成 state.turn，否则旧数据反被「洗白」成
-                # 新在途、逃过 force_transit_arrivals 的 0 兜底（CMR 跨片复审）。
-                if transit_to:
-                    prev_transit_to = str(row["transit_to"] or "")
-                    prev_start = int(row["transit_start_turn"] or 0)
-                    if transit_to == prev_transit_to:
-                        new_transit_start_turn = prev_start
-                    else:
-                        new_transit_start_turn = state.turn
-                else:
-                    new_transit_start_turn = 0
-                db.conn.execute(
-                    "UPDATE characters SET location=?, transit_to=?, transit_start_turn=? WHERE name=?",
-                    (location, transit_to, new_transit_start_turn, name),
-                )
-                if commit_person_change:
-                    db.conn.commit()
-                if content is not None and name in content.characters:
-                    ch = content.characters[name]
-                    ch.location = location
-                    ch.transit_to = transit_to
-                applied.append(
-                    result := {
-                        "name": name,
-                        "动作": action,
-                        "location": location,
-                        "transit_to": transit_to,
-                    }
-                )
-                log_applied(result, item)
+            if departure is None:
+                continue
+            location = str(departure["location"])
+            transit_to = str(departure["transit_to"])
+            distance = departure["distance"]
+            speed = departure["speed"]
+            if not departure["material"]:
+                continue
+            origin_error = origin_rejected(item)
+            if origin_error:
+                applied.append(origin_error)
+                continue
+            new_transit_start_turn = state.turn if transit_to else 0
+            db.set_character_transit(
+                name,
+                location=location,
+                transit_to=transit_to,
+                distance_remaining=distance,
+                speed_factor=speed,
+                start_turn=new_transit_start_turn,
+                content=content,
+                commit=commit_person_change,
+            )
+            applied.append(
+                result := {
+                    "name": name,
+                    "动作": action,
+                    "location": location,
+                    "transit_to": transit_to,
+                }
+            )
+            log_applied(result, item)
             continue
 
         applied.append(
@@ -7344,6 +7541,114 @@ def _apply_levy_driven_transfers(
     return _apply_population_transfers(db, records, commit=commit)
 
 
+_COVERT_NEUTRALIZATION_REASON = "禁摊派：一次性撤销旧案暗渠财政效果"
+
+
+def _write_fiscal_config_change(
+    db: Any, *, turn: int, key: str, old_value: int, new_value: int,
+    origin_ref: str, reason: str, beyond_intent: object = 0,
+) -> None:
+    """Canonical fiscal change writer shared by extraction and prohibition rollback."""
+    db.validate_fiscal_config_value(key, new_value)
+    db.set_fiscal_config(key, new_value, commit=False)
+    db.conn.execute("UPDATE fiscal_config SET origin_ref=? WHERE key=?", (origin_ref, key))
+    db.record_fiscal_config_change(
+        turn=turn, key=key, old_value=old_value, new_value=new_value,
+        origin_ref=origin_ref, reason=reason, beyond_intent=beyond_intent,
+    )
+    stem = db._stem_of(key)
+    if stem in db._DYNAMIC_REGION_FIELD or stem == "田赋":
+        ratio = (new_value / old_value) if old_value > 0 else (1.0 if new_value == 0 else 0.0)
+        if stem == "田赋":
+            db.scale_tian_fu(ratio, commit=False)
+        else:
+            db.apply_dynamic_fiscal_scale(stem, ratio, commit=False)
+
+
+def neutralize_covert_fiscal_effects(
+    db: Any, state: Any, *, exposed_dossier_id: int, prohibition_dossier_id: int,
+) -> int:
+    """Undo one old case's beyond-intent fiscal contribution, once per live incarnation."""
+    old_origin = f"dossier:{int(exposed_dossier_id)}"
+    receipt_origin = f"dossier:{int(prohibition_dossier_id)}"
+    rows = db.list_fiscal_effects_for_dossier(int(exposed_dossier_id))
+    raw_keys = {str(row.get("key") or "").strip() for row in rows if row.get("beyond_intent")}
+    keys: set[str] = set()
+    for raw_key in raw_keys:
+        stem = db._stem_of(raw_key)
+        if not stem:
+            continue
+        if raw_key.endswith(("_base", "_rate")):
+            keys.add(raw_key)
+        else:
+            keys.add(f"{stem}_base")
+
+    written = 0
+    for key in sorted(keys):
+        stem = db._stem_of(key)
+        base_key, rate_key = f"{stem}_base", f"{stem}_rate"
+        receipt = db.conn.execute(
+            """SELECT 1 FROM fiscal_config_changes
+               WHERE origin_ref=? AND key=? AND reason=? LIMIT 1""",
+            (receipt_origin, key, _COVERT_NEUTRALIZATION_REASON),
+        ).fetchone()
+        if receipt is None:
+            receipt = db.conn.execute(
+                """SELECT 1 FROM fiscal_config_tombstones
+                   WHERE origin_ref=? AND key IN (?, ?) AND reason=? LIMIT 1""",
+                (receipt_origin, base_key, rate_key, _COVERT_NEUTRALIZATION_REASON),
+            ).fetchone()
+        if receipt is not None:
+            continue
+
+        current = db.get_fiscal_config().get(key)
+        if current is None:
+            continue
+        latest_remove = db.conn.execute(
+            "SELECT removed_turn turn,id FROM fiscal_config_tombstones WHERE key=? ORDER BY removed_turn DESC,id DESC LIMIT 1",
+            (key,),
+        ).fetchone()
+        latest_create = db.conn.execute(
+            "SELECT turn,id,origin_ref,beyond_intent FROM fiscal_config_creations WHERE key=? ORDER BY turn DESC,id DESC LIMIT 1",
+            (key,),
+        ).fetchone()
+        remove_mark = (int(latest_remove["turn"]), 0, int(latest_remove["id"])) if latest_remove else (-1, -1, -1)
+        create_mark = (int(latest_create["turn"]), 1, int(latest_create["id"])) if latest_create else (-1, -1, -1)
+        start = max(remove_mark, create_mark)
+
+        if (
+            latest_create is not None and create_mark > remove_mark
+            and str(latest_create["origin_ref"]) == old_origin
+            and bool(db.coerce_beyond_intent_flag(latest_create["beyond_intent"]))
+        ):
+            if key != base_key:
+                continue
+            if db.remove_fiscal_item(
+                key, commit=False, origin_ref=receipt_origin,
+                reason=_COVERT_NEUTRALIZATION_REASON, turn=int(state.turn),
+            ) is not None:
+                written += 1
+            continue
+
+        contribution = 0
+        for row in db.conn.execute(
+            """SELECT id,turn,delta,beyond_intent FROM fiscal_config_changes
+               WHERE key=? AND origin_ref=? ORDER BY turn,id""",
+            (key, old_origin),
+        ).fetchall():
+            mark = (int(row["turn"]), 2, int(row["id"]))
+            if mark > start and bool(db.coerce_beyond_intent_flag(row["beyond_intent"])):
+                contribution += int(row["delta"])
+        floor = db.fiscal_config_minimum_value(key) or 0
+        new_value = max(int(floor), int(current) - max(0, contribution))
+        _write_fiscal_config_change(
+            db, turn=int(state.turn), key=key, old_value=int(current), new_value=new_value,
+            origin_ref=receipt_origin, reason=_COVERT_NEUTRALIZATION_REASON,
+        )
+        written += 1
+    return written
+
+
 def apply_score_extraction(
     db: GameDB,
     state: GameState,
@@ -7352,6 +7657,7 @@ def apply_score_extraction(
     registry=None,
     llm_config: Any = None,
     candidate_event_ids_at_input: Optional[set[str]] = None,
+    impeachment_surge_candidates_at_input: Optional[List[Dict[str, object]]] = None,
     dossier_ids_at_input: Optional[set[int]] = None,
     secret_dossier_ids_at_input: Optional[set[int]] = None,
 ) -> Dict[str, object]:
@@ -7857,6 +8163,7 @@ def apply_score_extraction(
         allow_legacy_partial_power_for_gates=legacy_person_mode,
         candidate_event_ids_at_input=candidate_event_ids_at_input,
         candidate_event_ids_authoritative=candidate_event_ids_authoritative,
+        impeachment_surge_candidates_at_input=impeachment_surge_candidates_at_input,
         event_result_delta_event_ids=strategic_event_result_delta_event_ids,
         defer_event_trigger_ids=strategic_event_pool_ids)
 
@@ -8163,6 +8470,15 @@ def apply_score_extraction(
         if origin_error:
             applied_fiscal_removes.append({**origin_error, "item": remove})
             continue
+        from ming_sim.covert_levy import stopped_covert_effect
+        if stopped_covert_effect(
+            db, origin_ref=origin_ref, beyond_intent=remove.get("beyond_intent"),
+        ):
+            applied_fiscal_removes.append({
+                "rejected": True, "category": "forbidden_effect",
+                "reason": "该旧案暗渠摊派已奉旨禁绝", "item": remove,
+            })
+            continue
         removed_key = db.remove_fiscal_item(
             key, commit=commit_now, origin_ref=origin_ref,
             reason=str(remove.get("reason") or ""), turn=state.turn,
@@ -8175,9 +8491,11 @@ def apply_score_extraction(
                 "category": "missing_ref", "item": remove,
             })
             continue
-        applied_fiscal_removes.append({
-            "key": removed_key, "reason": str(remove.get("reason") or ""),
-        })
+        from ming_sim.covert_levy import canonical_fiscal_result
+        applied_fiscal_removes.append(canonical_fiscal_result(
+            db, remove, applied=True,
+            key=removed_key, reason=str(remove.get("reason") or ""),
+        ))
 
     # 6.5) fiscal_creates：推演凭空新立月固定收支项（税是其一种）。先于 fiscal_changes，
     #      使同{月}「新立关税 + 立即调率」可一气落地。
@@ -8225,6 +8543,15 @@ def apply_score_extraction(
         if origin_error:
             applied_fiscal_creates.append({**origin_error, "item": create})
             continue
+        from ming_sim.covert_levy import stopped_covert_effect
+        if stopped_covert_effect(
+            db, origin_ref=origin_ref, beyond_intent=create.get("beyond_intent"),
+        ):
+            applied_fiscal_creates.append({
+                "rejected": True, "category": "forbidden_effect",
+                "reason": "该旧案暗渠摊派已奉旨禁绝", "item": create,
+            })
+            continue
         # Dedup is a business rule, not an authorization gate.  It must only see
         # a shape-valid, canonically authorized carrier; otherwise it can hide a
         # missing/forged origin behind deduped_commitment_carrier.
@@ -8266,11 +8593,13 @@ def apply_score_extraction(
                 "category": "invalid_enum", "item": create,
             })
             continue
-        applied_fiscal_creates.append({
-            "key": new_key, "account": account, "direction": direction,
-            "display": display, "init_value": max(0, init_value),
-            "reason": str(create.get("reason") or ""),
-        })
+        from ming_sim.covert_levy import canonical_fiscal_result
+        applied_fiscal_creates.append(canonical_fiscal_result(
+            db, create, applied=True,
+            key=new_key, account=account, direction=direction,
+            display=display, init_value=max(0, init_value),
+            reason=str(create.get("reason") or ""),
+        ))
 
     # 7) fiscal_changes：调整月度固定收支系数
     applied_fiscal: List[Dict[str, object]] = []
@@ -8326,6 +8655,15 @@ def apply_score_extraction(
             })
             continue
         origin_ref = str(change.get("origin_ref") or "").strip()
+        from ming_sim.covert_levy import stopped_covert_effect
+        if stopped_covert_effect(
+            db, origin_ref=origin_ref, beyond_intent=change.get("beyond_intent"),
+        ):
+            applied_fiscal.append({
+                "rejected": True, "category": "forbidden_effect",
+                "reason": "该旧案暗渠摊派已奉旨禁绝", "item": change,
+            })
+            continue
         origin_error = db.effect_origin_rejection(origin_ref)
         if origin_error:
             applied_fiscal.append({**origin_error, "item": change})
@@ -8366,26 +8704,17 @@ def apply_score_extraction(
                 "category": "invalid_enum", "item": change,
             })
             continue
-        db.set_fiscal_config(key, new_val, commit=False)
-        db.conn.execute("UPDATE fiscal_config SET origin_ref=? WHERE key=?", (origin_ref, key))
-        db.record_fiscal_config_change(
-            turn=state.turn, key=key, old_value=current, new_value=new_val,
+        _write_fiscal_config_change(
+            db, turn=state.turn, key=key, old_value=current, new_value=new_val,
             origin_ref=origin_ref, reason=str(change.get("reason") or ""),
             beyond_intent=change.get("beyond_intent"),
         )
-        # dynamic 税（辽饷/盐税/商税/田赋）实收走 region.fiscal，改 fiscal_config 不生效；
-        # 按 new/old 比例同步缩放各省实收字段，使调额当真改变下月入账。皇庄读 config，无需联动。
-        stem = db._stem_of(key)
-        if stem in db._DYNAMIC_REGION_FIELD or stem == "田赋":
-            ratio = (new_val / current) if current > 0 else (1.0 if new_val == 0 else 0.0)
-            if stem == "田赋":
-                db.scale_tian_fu(ratio, commit=False)
-            else:
-                db.apply_dynamic_fiscal_scale(stem, ratio, commit=False)
-        applied_fiscal.append({
-            "key": key, "old": current, "new": new_val, "delta": delta,
-            "reason": str(change.get("reason") or ""),
-        })
+        from ming_sim.covert_levy import canonical_fiscal_result
+        applied_fiscal.append(canonical_fiscal_result(
+            db, change, applied=new_val != current,
+            key=key, old=current, new=new_val, delta=delta,
+            reason=str(change.get("reason") or ""),
+        ))
     for loss_pair, final_values in loss_pair_final_by_pair.items():
         pair_changes = [
             change for change in deferred_loss_pair_changes
@@ -8414,13 +8743,13 @@ def apply_score_extraction(
                 beyond_intent=change["item"].get("beyond_intent")
                 if isinstance(change.get("item"), dict) else 0,
             )
-            applied_fiscal.append({
-                "key": change["key"],
-                "old": change["old"],
-                "new": change["new"],
-                "delta": change["delta"],
-                "reason": change["reason"],
-            })
+            from ming_sim.covert_levy import canonical_fiscal_result
+            source = change["item"] if isinstance(change.get("item"), dict) else {}
+            applied_fiscal.append(canonical_fiscal_result(
+                db, source, applied=change["new"] != change["old"],
+                key=change["key"], old=change["old"], new=change["new"],
+                delta=change["delta"], reason=change["reason"],
+            ))
     successful_authority_changes = [
         item for item in authority_change_results
         if isinstance(item, dict) and item.get("rejected") is not True

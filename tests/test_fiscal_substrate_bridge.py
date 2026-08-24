@@ -3041,7 +3041,10 @@ def test_economy_pay_arrears_from_central_account_splits_by_current_debt_ratio(f
         """
     ).fetchone()
 
-    assert applied == [{"account": "国库", "delta": -5, "reason": "测试补饷"}]
+    assert applied == [{
+        "account": "国库", "delta": -5, "reason": "测试补饷",
+        "origin_ref": "", "beyond_intent": False, "applied": True,
+    }]
     assert after_army["province_pay_arrears"] == pytest.approx(
         before_army["province_pay_arrears"] - expected_province_pay, abs=1e-6
     )
@@ -3100,7 +3103,10 @@ def test_economy_pay_arrears_from_central_account_can_repay_pure_province_source
         """
     ).fetchone()
 
-    assert applied == [{"account": "国库", "delta": -3, "reason": "测试纯省源补饷"}]
+    assert applied == [{
+        "account": "国库", "delta": -3, "reason": "测试纯省源补饷",
+        "origin_ref": "", "beyond_intent": False, "applied": True,
+    }]
     assert after_army["province_pay_arrears"] == pytest.approx(
         before_army["province_pay_arrears"] - 3, abs=1e-6
     )
@@ -3221,7 +3227,10 @@ def test_economy_pay_arrears_clamps_integer_spend_and_preserves_tail(fresh_db):
         """
     ).fetchone()
 
-    assert applied == [{"account": "国库", "delta": -3, "reason": "测试小数欠饷不超扣"}]
+    assert applied == [{
+        "account": "国库", "delta": -3, "reason": "测试小数欠饷不超扣",
+        "origin_ref": "", "beyond_intent": False, "applied": True,
+    }]
     assert ledger_row["delta"] == -3
     assert row["province_pay_arrears"] == pytest.approx(0.3)
     assert row["central_pay_arrears"] == pytest.approx(0.2)
