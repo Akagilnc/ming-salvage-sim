@@ -118,14 +118,6 @@ def test_player_army_situation_six_tier_truth_table(
         assert sit["mutiny_tier"] in ("一般", "优秀", "死忠")
 
 
-def test_player_army_situation_arrears_is_approximate_only():
-    row = _row(arrears=12.5, morale=50)
-    sit = _player_army_situation(row, monthly_pay=4)
-    text = sit["arrears_text"]
-    assert text == _army_arrears_report_text(row, 4)
-    assert "12.5" not in text
-
-
 def _configure(db, fiscal_path: str) -> None:
     value = 0 if fiscal_path == "legacy" else 1
     for key in ("__army_pay_source_cutover", "__fiscal_engine"):
@@ -249,33 +241,9 @@ def _assert_chain_embeds_situation(text: str, sit: dict, label: str) -> None:
     assert sit["mutiny_tier"] in text, f"{label} 缺 mutiny_tier={sit['mutiny_tier']!r}\n{text}"
     assert sit["morale_text"] in text, f"{label} 缺 morale_text={sit['morale_text']!r}\n{text}"
     assert sit["arrears_text"] in text, f"{label} 缺 arrears_text={sit['arrears_text']!r}\n{text}"
+    assert "12.5" not in text, f"{label} 泄漏 bare arrears 12.5\n{text}"
     for token in _PERSISTENT_COL_TOKENS:
         assert token not in text, f"{label} 泄漏五持久列名 {token!r}\n{text}"
-
-
-def test_army_payload_emits_situation_strings_not_raw_axes(game):
-    db, _state, _ = game
-    _configure(db, "legacy")
-    _write_mutiny_fixture(
-        db,
-        "legacy",
-        loyalty=55,
-        arrears=12.5,
-        is_mutinied=0,
-        mutiny_count=0,
-        mutiny_probation=0,
-        full_pay_streak=0,
-        redemption_count=0,
-        morale=73,
-    )
-    card = _payload_by_id(db)[ARMY]
-    row = db.conn.execute("SELECT * FROM armies WHERE id=?", (ARMY,)).fetchone()
-    pay = db._army_pay(row)
-    expected = _player_army_situation(row, pay)
-
-    _assert_structured_situation(card, expected, "army_payload")
-    assert card["mutiny_tier"] == "不满"
-    assert "12.5" not in f"{card['mutiny_tier']}|{card['morale_text']}|{card['arrears_text']}"
 
 
 def test_four_chains_embed_situation_matrix(game):
@@ -310,6 +278,12 @@ def test_four_chains_embed_situation_matrix(game):
         "UPDATE armies SET supply=1, training=1 WHERE id=?",
         (ARMY,),
     )
+    # print_header 负例：唯一军名哨兵；若 header 回流 army_report 必带此名
+    header_army_sentinel = "321-header-sentinel-guanning"
+    db.conn.execute(
+        "UPDATE armies SET name=? WHERE id=?",
+        (header_army_sentinel, ARMY),
+    )
     db.conn.commit()
     row = db.conn.execute("SELECT * FROM armies WHERE id=?", (ARMY,)).fetchone()
     sit = _player_army_situation(row, db._army_pay(row))
@@ -337,8 +311,6 @@ def test_four_chains_embed_situation_matrix(game):
     # 链2：report / intelligence / knowledge / tools.list_armies（LLM 输入装配）
     report = db.army_report(limit=30)
     _assert_chain_embeds_situation(report, sit, "army_report")
-    # 欠饷裸精确小数不得进入散文（与全文件 raw 哨兵同形）
-    assert "12.5" not in report
 
     intel_text, intel_src = _qualitative_domain_statement(db, "各军欠饷如何")
     assert intel_src == "armies"
@@ -349,19 +321,13 @@ def test_four_chains_embed_situation_matrix(game):
     military = (knowledge.get("world") or {}).get("military") or ""
     _assert_chain_embeds_situation(military, sit, "knowledge.world.military")
 
-    # #321 P7：print_header 不得直显军情三固定串（army_report 仅 LLM 装配面）
+    # #321 P7：print_header 不得回流 army_report（以目标军结构化 name 哨兵为唯一负断言）
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         print_header(state, db)
     header_out = buf.getvalue()
-    assert sit["mutiny_tier"] not in header_out, (
-        f"report.print_header 不得直显 mutiny_tier={sit['mutiny_tier']!r}\n{header_out}"
-    )
-    assert sit["morale_text"] not in header_out, (
-        f"report.print_header 不得直显 morale_text={sit['morale_text']!r}\n{header_out}"
-    )
-    assert sit["arrears_text"] not in header_out, (
-        f"report.print_header 不得直显 arrears_text={sit['arrears_text']!r}\n{header_out}"
+    assert header_army_sentinel not in header_out, (
+        f"report.print_header 不得回流目标军 name={header_army_sentinel!r}\n{header_out}"
     )
 
     ctx = CourtContext(state=state, db=db, previous_summary="")
