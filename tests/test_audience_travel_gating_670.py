@@ -180,6 +180,49 @@ def test_fresh_summon_departs_via_canonical_applier_only_when_night_closes(game)
     ).fetchone()["transit_start_turn"] == started
 
 
+def test_fresh_summon_applier_failure_rolls_back_and_close_retry_is_safe(game, monkeypatch):
+    db, state, content = game
+    person = _set_place(game, "洪承畴", location="shaanxi")
+    night_id = int(an.open_night(db, state)["id"])
+    an.record_summon_fresh(db, night_id, person.name, origin_id="command:retry-1")
+
+    from ming_sim import issues
+    real_apply = issues.apply_score_extraction
+    attempts = 0
+
+    def fail_once(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("injected canonical applier failure")
+        return real_apply(*args, **kwargs)
+
+    monkeypatch.setattr(issues, "apply_score_extraction", fail_once)
+
+    try:
+        an.close_night(db, state, night_id=night_id, content=content)
+    except RuntimeError as exc:
+        assert str(exc) == "injected canonical applier failure"
+    else:
+        raise AssertionError("canonical applier failure must abort close")
+
+    failed = db.conn.execute(
+        "SELECT location, transit_to FROM characters WHERE name=?", (person.name,)
+    ).fetchone()
+    assert (failed["location"], failed["transit_to"]) == ("shaanxi", "")
+    assert [row["origin_id"] for row in an.list_unsettled_summons(db)] == [
+        "command:retry-1"
+    ]
+
+    result = an.close_night(db, state, night_id=night_id, content=content)
+    retried = db.conn.execute(
+        "SELECT location, transit_to FROM characters WHERE name=?", (person.name,)
+    ).fetchone()
+    assert result["closed"] is True
+    assert (retried["location"], retried["transit_to"]) == ("shaanxi", "beizhili")
+    assert an.list_unsettled_summons(db) == []
+
+
 def test_monthly_judge_receives_arrived_unsettled_summon_facts(game):
     db, state, content = game
     person = _set_place(game, "洪承畴", location="shaanxi", transit_to="henan")
