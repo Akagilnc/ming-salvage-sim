@@ -28,9 +28,20 @@
 
 月末奏章若出现皇帝原旨未点名、由现有主办/协办自行拉入办差的新人物，输出 `{"案卷编号":12,"人物":"规范名","档位":"主办|协办|知情","职分":"本案职分","委派人":"拉他入案的大臣规范名"}`。只追加 `extractor_context.decree_dossiers` 中已有案卷的新参与人；不得重写或省略旧名单。知情人也按 `知情` 档记录。
 
+## 差务两轴清单（#654 / ADR 0092）
+
+`extractor_context.execution_two_axis` 是纯机接口层清单（确定性、零 LLM），只在本 issues 档房可见，不进玩家盘面。
+
+- **带宽轴（忙→拖磨）**：按主办看 `owner_open_count`×`owner_ability`=`owner_load`；按省看 `province_open_count`。在办定义＝案卷 `status=executing`。负荷高、省内差务扎堆时，执行更易拖磨、延宕。
+- **阻力轴（顶→变形）**：`gentry_resistance` 与士绅切片（`gentry_slice`）并列；官僚盘＝`officials_slice`＋督抚 `dutang_faction`/`dutang_integrity`（出缺如实）；流寇治安＝`bandit_pressure`＋`bandit_strength`。阻力高时更易变形/顶着干。
+- **灾情占用**：`disaster_rows` 已按严重度置顶（severity DESC, id ASC）。有灾时新差默认让路或强推变形↑——软判，清单只供事实。
+- **距离档 `distance_semantic_band`**：承办人 location×差务 region 的语义量级（本省当地／邻近一月／中途二三月／边远三月以上）。值为「不参与」时（非属地、承办人无驻地、在途）不要用距离加重拖磨。
+- **0116 收口**：两轴只是执行格带内加重输入面；只准加重不准减轻；不重算意愿轴底档、不另立终值、不扩枚举。
+- 党派因子沿用既有 0072 输入，清单不重列。
+
 ## 案卷执行
 
-`extractor_context.decree_dossiers` 中 `status:"executing"` 的案卷会跨月持续出现。每案含 `appointment_tenure`（承办任别）与 `held_authorities`/`distortion_weight`（号令力读端）：号令力真除＞兼署＞署理＞加衔，权重越高越易走样。另含 `#625` 监督事实底只读面：`supervision_history`（稽核在场史，含 `consecutive_months` 连号派生、`auditor_integrity_band`、`faction_relation`、`auditor_tenure`）、`loophole_exposures`（空子暴露史，类键=`action_type`+`execution_form`）、`transformation_tendency_facts`（变形倾向观察槽，定性事实、无钝化分数）。
+`extractor_context.decree_dossiers` 中 `status:"executing"` 的案卷会跨月持续出现。军队目标的 `army_pay_fact` 是月结真值：只在奏章已经明确判定补饷奉行变形成地方暗渠摊派时，案卷执行写 `transformed`。本档房只拥有执行格；同案钱粮、财政与人口实况由并行内政财政档房从同一奏章抽取，本档房严禁代写，亦不得自行补判或另造 verdict/decision 包装。每案含 `appointment_tenure`（承办任别）与 `held_authorities`/`distortion_weight`（号令力读端）：号令力真除＞兼署＞署理＞加衔，权重越高越易走样。另含 `#625` 监督事实底只读面：`supervision_history`（稽核在场史，含 `consecutive_months` 连号派生、`auditor_integrity_band`、`faction_relation`、`auditor_tenure`）、`loophole_exposures`（空子暴露史，类键=`action_type`+`execution_form`）、`transformation_tendency_facts`（变形倾向观察槽，定性事实、无钝化分数）。
 
 **人身条件化判官口径（读事实软判，禁写「钝化/陋规化」等系统词入说明）**：
 - **庸吏久任合流**：稽核 `auditor_integrity_band` 属操守多亏/未稳/平常，且同路连月在场越久（`consecutive_months` 高、同派纠葛深），执行越易走样——满约一年同路挂满时，结局倾 `degraded`/`transformed`（表报仍可粉饰）。
@@ -85,10 +96,11 @@
 `participant_roster`）数组；每项使用 `{"character_id":"人物规范名","tier":"主办|协办|知情","role":"职分"}`。
 不要输出 Python 字典字符串，也不要把整段人物对象塞进名字字段。没有明确参与人时填 `[]`。
 
-`新立局势` 只允许两个来源：
+`新立局势` 只允许三个来源：
 
 1. `来源类型:"decree"`：诏书明文启动的长期工程、改革、案、清丈、招抚等多回合事项。必须给全字段：`类型`/`标题`/`来源类型`/`当前进度`/`预计月数`/`阶段`/`解决条件`/`失败条件`/`持续效果`/`解决效果`/`失败效果`/`可撤销`。
 2. `来源类型:"event_pool"`：邸报写明已浮现的候选事件。只填 `来源类型` 和 `编号`，且 `编号` 必须来自 input 的 `candidate_events`。
+3. `candidate_events` 中 `origin_kind:"impeachment_surge"` 的动态发难候选：发难派系角色依据 `faction_persona` 自主决定是否发难；不输出即不发难。发难时只输出 `origin_kind:"impeachment_surge"`、`candidate_id`（候选 `id`）、`faction_hint`（候选 `faction_id`）、`target_roster`、`title`、`stage_text`；`target_roster` 是无角色的去重人物身份列表，标靶必须来自候选 `eligible_target_ids`，不得输出 tier/role/delegator_id。`title` 与 `stage_text` 由角色自由生成，不复写候选事实字段。
 
 **圣旨承诺 form①（每月 X 直到补齐）必须立承诺 issue**：若诏书含「今后每月/按月/逐月拨付 X，直到补齐欠饷/补足某条件」这类持续承诺，不要写成一次性钱粮，也不要只推进旧 issue；写 `新立局势` 的 `来源类型:"decree"`、`类型:"initiative"`，并显式带承诺字段：
 - `origin_ref`：只能从 `extractor_context.decree_dossiers` 选择本承诺所属行的

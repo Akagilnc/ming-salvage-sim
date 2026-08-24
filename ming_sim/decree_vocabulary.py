@@ -9,9 +9,27 @@ DOSSIER_ACTION_TYPES = frozenset({
     "secret_order", "special_decree",
     "revoke_decree", "punishment", "pacification", "referral",
     "revoke_authority", "dismiss_assignment",
+    # #653 / ADR 0090：偿还序 override＋Due 折发系数旨——payload-owned，顺颁/强颁后
+    # 自案卷载荷经 materialize_pay_order_decree 唯一入口物化 fiscal_config（ADR 0055
+    # 判后物化轨）；打回零写。fiscal_config 键族是唯一持久真源，案卷只是颁布门与
+    # provenance origin_ref（dossier:<id>），非第二旨意真源。
+    "pay_order_override",
+    # #651: a case-bound, payload-owned terminal order; never infer it from effects.
+    "prohibit_covert_levy",
 })
 
 DIRECTIVE_ACTION_TYPES = DOSSIER_ACTION_TYPES - {"appointment", "secret_order"}
+
+# Ming #654 / owner A：旨意 target_kind 唯一八值真源（含结构目标 dossier）。
+# durable normalization / producer / locality oracle 共引；禁第二份枚举。
+TARGET_KINDS = frozenset({
+    "policy", "character", "office", "army", "region", "issue", "account",
+    "dossier",
+})
+
+# Ming #654：属地 fan-out 资格动作白名单。闭合枚举、import 期 assert 子集关系。
+NATIONAL_FANOUT_ACTION_TYPES = frozenset({"policy", "special_decree"})
+assert NATIONAL_FANOUT_ACTION_TYPES <= DIRECTIVE_ACTION_TYPES
 
 # ADR 0055 / #560: the single policy source for dossier admission and effect
 # timing.  Consumers must not infer these properties from ad-hoc action sets.
@@ -24,6 +42,7 @@ _DOSSIER_NARRATIVE_ACTIONS = frozenset({
     # pacification / punishment: payload-owned — 顺颁后自案卷物化（#522/#517 / ADR 0055）
     # revoke_authority / revoke_decree: payload-owned — #523 / ADR 0055 判后物化
     # referral: payload-owned — #524 下议 initiative 顺颁后落（ADR 0055）
+    # pay_order_override: payload-owned — #653 判后物化 fiscal_config（ADR 0055/0090）
 })
 _DOSSIER_EXTERNAL_REVIEW_EXEMPT = frozenset({
     "secret_order", "secret_authorization", "secret_investigation", "protection",
@@ -37,6 +56,9 @@ _DOSSIER_TERMINAL_ACTIONS = frozenset({
     "punishment",
     # #523：收权/撤回成命顺颁即终局（authority_changes / breach）。
     "revoke_authority", "revoke_decree",
+    # #653：偿还序/折发旨顺颁即物化 config、效果已落地（无执行判定面）→ 终局。
+    "pay_order_override",
+    "prohibit_covert_levy",
 })
 
 DOSSIER_ACTION_POLICY = {
@@ -186,7 +208,7 @@ def terminal_report_facade(
 SIM_DOSSIER_COMMON_KEYS = frozenset({
     "id", "action_type", "status",
     "decision", "outcome", "note",
-    "mode", "stigma", "participant_roster", "links",
+    "mode", "stigma", "participant_roster", "links", "execution_signal",
     "due_turn", "created_turn", "promulgated_turn",
     "target_kind", "target_id", "executor_kind", "executor_id",
     # #613 执行侧任别读端（与 #569 固定键投影同面）
@@ -195,6 +217,8 @@ SIM_DOSSIER_COMMON_KEYS = frozenset({
     # #625 / ADR 0077 监督事实底只读注入（解 A）
     "supervision_history", "loophole_exposures",
     "transformation_tendency_facts",
+    # #651 monthly pay truth rides the existing dossier judge surface.
+    "army_pay_fact",
 })
 SIM_DOSSIER_NARRATIVE_KEYS = SIM_DOSSIER_COMMON_KEYS | {"decree_text"}
 SIM_DOSSIER_EXECUTION_KEYS = SIM_DOSSIER_COMMON_KEYS | {"execution_summary"}

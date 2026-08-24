@@ -97,7 +97,8 @@
 
   3. db.save_resolve_context(decree_text, ready=0) # 诏书原文占位真源：跨进程恢复不丢玩家手改稿
      与 2 同一外层 atomic 提交：settling 相位与 context 行同生共死（回滚时一并 reload 刷内存）。
-     （driver 路无 ready=0 占位，pre_settle 后直接存 ready=1，见 8.5）
+     driver 与引擎共用 `prepare_resolve_front_half`：`driver prepare` 写入 ready=0（含 transit_arrivals handoff），
+     外部据已提交盘面产叙事+delta 后再 `driver settle --delta` 升 ready=1（见 8.5）。
 
   4. chapter_memories = db.list_chapter_memories(upto_turn=state.turn, recent=6)
      secret_orders = group_secret_orders_for_sim(active + legacy pending_review 行)  # 分中文键两组；#1504 结案不靠 pending 核议
@@ -134,7 +135,11 @@
   8.5 persist_resolve_context(db, before_turn, extracted, ...)
      - 先过 validate_delta_shape（毒 payload 不得钉进重试真源），再存 ready=1
      - 跨进程恢复的重跑真源：崩溃后直接重放落库，不再花一次 LLM 重推演
-     - driver 路：run_settle 把 pre_settle + persist_resolve_context(ready=1) 包进同一 atomic，settle 前提交
+     - driver 路（两阶段，禁一站式）：
+       1) `run_prepare` → 共享 `prepare_resolve_front_half`（pre_settle + ready=0 + transit_arrivals）
+       2) 外部产 narrative+delta（可读已提交盘面与 arrivals handoff）
+       3) `run_settle` 只消费同 turn settling+ready=0：合并案卷键∪既有 transit_arrivals → ready=1 → settle_with_delta
+       未 prepare 的 settle 响亮失败且零写；settling+ready=1 崩溃重入只读 context，不二次 tick
 
   ── 后半段 settle_with_delta：整段单一 atomic 事务，9–16 全有或全无 ──
   9. applied = apply_score_extraction(db, state, delta, content=content, registry=None)
@@ -224,7 +229,7 @@ session.advance_without_decree / POST /api/decree/advance_without_edict:
 - **推进尾同款**（settle_with_delta / simulator 失败 fallback 仍归 settle 核）：atomic 内同笔做完「清 resolve_context → next_period → 相位复位 summoning → save_state」。#1274：无旨月推进只经 settle_with_delta（decree.advance_without_edict 空壳已删）。
 - **回滚后必 reload**：事务回滚只回 SQLite，内存副作用（metrics 直加 / 脏 settling 相位）必须 `reload_state_from_db` 刷净——脏 settling 被 pre_settle 守门跳过=下月财政永久丢。atomic 体内禁止 reload（读到未提交脏写）；嵌套时只有最外层回滚后才重载。
 - **毒 payload 不入真源**：`persist_resolve_context` 前必过 `validate_delta_shape`；shape 垃圾走 SettlementAbort+错误包，不许静默吞、也不许钉进 ready=1 重试真源。
-- **settling 可见 ⟹ context 行可见**：settling 相位与 resolve_context 行（引擎 ready=0 占位 / driver ready=1）必须同一事务提交，两边（resolve_directives / run_settle）都不许拆成两笔——拆了就是「相位卡 settling、恢复入口无米下锅、玩家手改旨意原文蒸发」。
+- **settling 可见 ⟹ context 行可见**：settling 相位与 resolve_context 行（引擎/driver 共用 prepare 的 ready=0 占位）必须同一事务提交；driver settle 再把 ready=0 升 ready=1。prepare 不许拆成两笔——拆了就是「相位卡 settling、恢复入口无米下锅、玩家手改旨意原文蒸发」。
 
 ## 已知接口层（确定性↔我，别让我自己数数）
 

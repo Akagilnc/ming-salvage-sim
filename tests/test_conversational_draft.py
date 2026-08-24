@@ -353,8 +353,8 @@ def test_pending_directive_commit_creates_turn_directive(game):
     assert persisted == 1
 
 
-def test_pending_directive_commit_failure_propagates_and_rolls_back_outer_atomic(game, monkeypatch):
-    """外层 atomic 中提交对话式拟旨若中途异常，异常必须冒泡，draft 与 pending 回填一起回滚。"""
+def test_pending_directive_commit_failure_is_savepoint_isolated_marks_failed(game, monkeypatch):
+    """#654 路1：directive 成案异常经 SAVEPOINT 隔离——不冒泡崩外层 atomic、无 directive 残行、pending=failed。"""
     from ming_sim.applier import atomic
 
     db, state, content = game
@@ -365,16 +365,20 @@ def test_pending_directive_commit_failure_propagates_and_rolls_back_outer_atomic
     )
     original_apply = db._apply_pending_action
 
-    def _boom_after_draft(state_arg, pa, payload, *, content=None, registry=None):
+    def _boom_after_draft(
+        state_arg, pa, payload, *, content=None, registry=None,
+        rejection_collector=None,
+    ):
         assert original_apply(
-            state_arg, pa, payload, content=content, registry=registry) is True
+            state_arg, pa, payload, content=content, registry=registry,
+            rejection_collector=rejection_collector,
+        ) is True
         raise RuntimeError("directive commit boom")
 
     monkeypatch.setattr(db, "_apply_pending_action", _boom_after_draft)
 
-    with pytest.raises(RuntimeError, match="directive commit boom"):
-        with atomic(db):
-            db.commit_pending_actions(state, kind_filter="directive")
+    with atomic(db):
+        db.commit_pending_actions(state, kind_filter="directive")
 
     assert db.conn.execute(
         "SELECT COUNT(*) FROM turn_directives WHERE turn=?", (state.turn,)).fetchone()[0] == 0
@@ -382,7 +386,7 @@ def test_pending_directive_commit_failure_propagates_and_rolls_back_outer_atomic
         "SELECT status, committed_directive_id FROM pending_actions WHERE turn=?",
         (state.turn,),
     ).fetchone()
-    assert row["status"] == "pending"
+    assert row["status"] == "failed"
     assert int(row["committed_directive_id"] or 0) == 0
 
 
@@ -1583,8 +1587,8 @@ def test_commit_directive_rolls_back_draft_when_bookkeeping_update_fails(game):
     )
     db.conn.commit()
 
-    with pytest.raises(sqlite3.IntegrityError, match="simulated committed_directive_id failure"):
-        db.commit_pending_actions(state, kind_filter="directive")
+    # #654 路1：回填失败经 SAVEPOINT 吞没 → failed，不留 orphan draft
+    db.commit_pending_actions(state, kind_filter="directive")
 
     assert db.conn.execute(
         "SELECT COUNT(*) FROM turn_directives WHERE turn=?", (state.turn,)
@@ -1593,7 +1597,7 @@ def test_commit_directive_rolls_back_draft_when_bookkeeping_update_fails(game):
         "SELECT status, committed_directive_id FROM pending_actions WHERE turn=?",
         (state.turn,),
     ).fetchone()
-    assert status["status"] == "pending"
+    assert status["status"] == "failed"
     assert int(status["committed_directive_id"] or 0) == 0
 
 
@@ -2010,3 +2014,75 @@ def test_normal_undo_keeps_valid_decree(read_game, monkeypatch):
     # 没有 committed draft 被删
     sess.note_chat_rollback(deleted_committed_draft_ids=[])
     assert sess.last_decree == "诏书：保留有效稿", "普通撤回不得清掉有效诏书稿"
+
+
+def test_extract_draft_intent_no_skips_invalid_action_type(monkeypatch):
+    """#654 H：拟旨意图=无 + 非法动作类型 → 空稿不抛。"""
+    import ming_sim.cli_backend as cb
+
+    monkeypatch.setattr(
+        cb, "_run_backend_for_config",
+        lambda *a, **k: ('{"拟旨意图":"无","动作类型":"not_a_real_action"}', None),
+    )
+    result = cb.extract_draft_intent("今日只是问策。", "臣以为当暂缓。")
+    assert result == {"draft_action": "无", "draft_text": "", "target_candidate": ""}
+
+
+def test_extract_draft_intent_yes_still_validates_action_type(monkeypatch):
+    """#654 H：拟旨意图=拟旨 + 非法类型仍 ValueError。"""
+    import ming_sim.cli_backend as cb
+
+    monkeypatch.setattr(
+        cb, "_run_backend_for_config",
+        lambda *a, **k: ('{"拟旨意图":"拟旨","动作类型":"not_a_real_action","目标类型":"policy","目标ID":"x"}', None),
+    )
+    with pytest.raises(ValueError, match="动作类型"):
+        cb.extract_draft_intent("拟旨吧", "臣遵旨草诏。")
+
+
+def test_draft_guidance_includes_dossier_both_paths(monkeypatch):
+    """#654 B：单旨与多旨 prompt guidance 均含 dossier。"""
+    import ming_sim.cli_backend as cb
+
+    captured = []
+
+    def _capture(prompt, *a, **k):
+        captured.append(prompt)
+        if "成品旨稿" in prompt:
+            return ('{"成品旨稿":[]}', None)
+        return ('{"拟旨意图":"无"}', None)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _capture)
+    cb.extract_draft_intent("拟旨吧", "臣拟。")
+    cb.extract_draft_intent("拟两道", "臣拟。", draft_count=2)
+    assert len(captured) == 2
+    guidance = cb._draft_target_kind_guidance()
+    assert "dossier" in guidance
+    for prompt in captured:
+        assert guidance in prompt
+        assert "dossier" in prompt
+
+
+def test_multi_draft_prompt_separates_military_order_and_entries(monkeypatch):
+    """#654/#653：多旨示例 military_order 不焊 entries；entries 仅 pay_order 说明保留。"""
+    import ming_sim.cli_backend as cb
+
+    captured = []
+
+    def _capture(prompt, *a, **k):
+        captured.append(prompt)
+        return ('{"成品旨稿":[]}', None)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _capture)
+    cb.extract_draft_intent("拟两道", "臣拟。", draft_count=2)
+    assert len(captured) == 1
+    prompt = captured[0]
+    assert "military_order" in prompt
+    assert '"目标类型":"army"' in prompt
+    assert "施行范围" in prompt
+    assert "entries 仅 pay_order_override" in prompt
+    assert "due_priority_军饷@shaanxi" in prompt
+    # 示例 JSON（entries 说明行之前）不得出现 entries 键；军令与偿还序分列
+    before_guide = prompt.split("entries 仅 pay_order_override", 1)[0]
+    assert "military_order" in before_guide
+    assert "entries" not in before_guide

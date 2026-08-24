@@ -40,5 +40,9 @@ def test_production_tool_guidance_only_names_canonical_person_writer(game):
     for builder in (build_board_query_tools, build_simulator_tools, build_extractor_tools):
         guidance = "\n".join((tool.__doc__ or "") for tool in builder(context))
         assert "人物变更" in guidance
+        if builder is build_extractor_tools:
+            assert "行止只补非空 transit_to 启程" in guidance
+            assert "不得提交 location" in guidance
+            assert "抵达只由引擎倒数 tick 处理" in guidance
         for legacy_key in LEGACY_PERSON_KEYS:
             assert legacy_key not in guidance, (builder.__name__, legacy_key)

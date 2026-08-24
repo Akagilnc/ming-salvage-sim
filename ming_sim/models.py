@@ -385,6 +385,9 @@ class Character:
     power_id: str
     location: str = ""
     transit_to: str = ""
+    transit_distance_remaining: float | None = None
+    transit_speed_factor: float | None = None
+    transit_start_turn: int = 0
     birth_year: int = 0  # 历史生年（公历，0=未填）
     historical_death_year: int = 0  # 历史卒年（公历，0=未填）
     historical_death_month: int = 0  # 1-12，0=未指定
@@ -576,6 +579,9 @@ class Army:
     is_tusi: int = 0
     self_funded_pay: int = 0
     mutiny_status: str = ""
+    is_mutinied: int = 0
+    mutiny_count: int = 0
+    mutiny_probation: int = 0
 
 
 @dataclass
