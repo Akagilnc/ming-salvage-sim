@@ -1,8 +1,8 @@
 """#1376 密令确认闸验证矩阵（v4.3）：3 入口 × 3 语义 = 9 格 + V3 回归。
 
 接缝（票面钉）：
-- E1=`POST /api/ministers/王之臣/chat` 正文「密令如下：密察关宁欠饷」
-- E2=`POST /api/ministers/王之臣/secret_order` 结构化载荷
+- E1=`POST /api/ministers/毕自严/chat` 正文「密令如下：密察关宁欠饷」
+- E2=`POST /api/ministers/毕自严/secret_order` 结构化载荷
 - E3=`POST .../chat` 无前缀 + 分类器 stub 结构化密令判词
 - S1 过月默认准 / S2 修改后准或过月 / S3 拒绝后过月不复活
 - settle=`POST /api/decree/issue/stream` 消费到终态
@@ -33,7 +33,8 @@ from ming_sim import audience_night as an
 
 # ── 矩阵常量（票面原轨）────────────────────────────────────────────────
 
-MINISTER = "王之臣"
+# #670：王之臣 seed 在辽东，普通 /chat 依法 409；矩阵测确认闸语义，改用在京可召朝臣。
+MINISTER = "毕自严"
 E1_MESSAGE = "密令如下：密察关宁欠饷"
 E2_TITLE = "密察关宁欠饷"
 E2_CONTENT = "密察关宁欠饷"
@@ -290,7 +291,7 @@ def matrix_env(tmp_path, monkeypatch, _offline_scene_beat_generator):
                 }
             )
 
-    # 王之臣必须可召
+    # 毕自严必须可召（在京）
     ministers = (new.json() or {}).get("state", {}).get("ministers") or []
     names = {str(m.get("name") or "") for m in ministers if isinstance(m, dict)}
     if MINISTER not in names:

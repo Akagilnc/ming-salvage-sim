@@ -8,6 +8,7 @@ from ming_sim import cli_backend
 from ming_sim.session import GameSession
 from ming_sim.skills import bind_content as bind_skills_content
 from tests.dossier_test_helpers import rejected_verdict as _rejected_verdict
+from tests.web_audience_test_doubles import HallAdmissionSessionMixin
 from web_app import WebGame
 
 
@@ -321,7 +322,7 @@ def test_real_web_stream_pending_commit_traces_only_confirmed_visible_links(
             yield SimpleNamespace(event="RunContent", content="臣明确确认护卫辽东补饷。")
             yield RunOutput()
 
-    class Session:
+    class Session(HallAdmissionSessionMixin):
         llm_config = SimpleNamespace(channel="api")
         temporary_characters = set()
 

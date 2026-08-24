@@ -9,6 +9,7 @@ import time
 from types import SimpleNamespace
 
 import web_app
+from tests.web_audience_test_doubles import HallAdmissionSessionMixin
 
 
 class _RunContent:
@@ -56,7 +57,7 @@ class _FakeRegistry:
         return self.agent
 
 
-class _FakeSession:
+class _FakeSession(HallAdmissionSessionMixin):
     temporary_characters = set()
 
     def __init__(self, character, agent: _FakeAgent, state, db):
@@ -67,9 +68,6 @@ class _FakeSession:
 
     def _character(self, minister_name: str):
         return self.content.characters[minister_name]
-
-    def consume_audience_admission(self, character, *, origin_id):
-        return SimpleNamespace(allowed=True, reason="")
 
     def _start_cli_action_intent(self, character, text):
         return None

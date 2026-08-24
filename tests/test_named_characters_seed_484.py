@@ -95,7 +95,7 @@ def test_r6_xu_yingqiu_uses_verified_ministry_line_and_opening_status():
     assert character.status == "active"
     assert character.debut_year == 1627
     assert character.debut_month == 0
-    assert character.location == ""
+    assert character.location == "beizhili"
 
 
 def test_r4_loader_rejects_seed_guilt_list(monkeypatch):

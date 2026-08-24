@@ -32,6 +32,7 @@ from ming_sim import audience_night as an
 from ming_sim.exceptions import ExitGame, LLMUnavailable
 from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
 from ming_sim.session import GameSession, TurnPhase
+from tests.web_audience_test_doubles import minister_double
 from tests.test_audience_extraction_501 import (
     _BoomAgent,
     _FactsAgent,
@@ -1040,7 +1041,9 @@ def test_stream_close_pending_extraction_emits_error_not_hang(web_game, monkeypa
     from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
 
     game = web_game
-    minister = next(iter(game.content.characters))
+    # 临时大臣：can_summon 直通；office_type 齐全，真 admission 不炸
+    minister = "测试殿上大臣"
+    game.session.temporary_characters[minister] = minister_double(minister)
     # prologue 最小：持久大臣路径需要 chat turn；用 session stub 简化
     events: list[dict] = []
 
@@ -1057,7 +1060,6 @@ def test_stream_close_pending_extraction_emits_error_not_hang(web_game, monkeypa
             )
 
     game.session.registry.get = lambda _ch: _Agent()
-    game.session._character = lambda name: SimpleNamespace(name=name)
     game.session.join_chat_turn_scene = lambda *_a, **_k: []
     game.session.persist_chat_turn_scene = lambda *_a, **_k: None
     game.session.abandon_chat_turn_scene = lambda *_a, **_k: None

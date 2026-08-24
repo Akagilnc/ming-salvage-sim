@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 import web_app
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
+from tests.web_audience_test_doubles import install_hall_admission, minister_double
 
 
 def _assert_write_path_free(runtime, *, timeout: float = 1.0) -> None:
@@ -80,7 +81,7 @@ class _FailingPrologueDB:
 
 
 def _base_runtime(db):
-    character = SimpleNamespace(name="测试大臣")
+    character = minister_double("测试大臣")
     state = SimpleNamespace(turn=1, year=1628, period=1, turn_phase="summoning")
     runtime = object.__new__(web_app.WebGame)
     runtime._write_gate = threading.Lock()
@@ -90,14 +91,15 @@ def _base_runtime(db):
     runtime._runtime_write_queue = lambda: runtime._write_queue  # type: ignore
     runtime._mark_pending_write = lambda key=None: runtime._write_queue.claim(key=key or ("pending",))  # type: ignore
     runtime._complete_pending_write = lambda ticket=None: runtime._write_queue.complete(ticket)  # type: ignore
-    runtime.session = SimpleNamespace(
+    runtime.session = install_hall_admission(SimpleNamespace(
         temporary_characters=set(),
         content=SimpleNamespace(characters={character.name: character}),
         state=state,
         db=db,
         close=lambda: None,
         abandon_chat_turn_scene=lambda *_a, **_k: None,
-    )
+        _character=lambda name: character,
+    ))
     runtime.chat_history = {character.name: []}
     runtime._persistent_chat_minister = lambda name: True
     runtime._audience_turn_in_flight = lambda name: False
@@ -264,7 +266,7 @@ def test_worker_cleanup_failure_still_emits_error_and_releases_gate():
     runtime, minister = _base_runtime(db)
     agent = _StreamCrashAgent()
     runtime.session.registry = SimpleNamespace(get=lambda _c: agent)
-    runtime.session._character = lambda name: SimpleNamespace(name=minister)
+    runtime.session._character = lambda name: minister_double(minister)
     runtime.session._start_cli_action_intent = lambda *_a, **_k: None
 
     gen = runtime.chat_stream(minister, "辽东军情如何？")
@@ -287,7 +289,7 @@ def test_worker_cleanup_double_failure_emits_original_error_end_and_logs(caplog)
     runtime, minister = _base_runtime(db)
     agent = _StreamCrashAgent()
     runtime.session.registry = SimpleNamespace(get=lambda _c: agent)
-    runtime.session._character = lambda name: SimpleNamespace(name=minister)
+    runtime.session._character = lambda name: minister_double(minister)
     runtime.session._start_cli_action_intent = lambda *_a, **_k: None
 
     abandon_calls: list[int] = []
@@ -353,7 +355,7 @@ def test_worker_postprocess_exception_emits_error_end():
     db = _WorkerPathDB()
     runtime, minister = _base_runtime(db)
     runtime.session.registry = SimpleNamespace(get=lambda _c: None)
-    runtime.session._character = lambda name: SimpleNamespace(name=minister)
+    runtime.session._character = lambda name: minister_double(minister)
     runtime.session._start_cli_action_intent = lambda *_a, **_k: None
     runtime.session.abandon_chat_turn_scene = lambda *_a, **_k: None
     runtime.session.close_night_after_chat_if_needed = None
@@ -450,7 +452,7 @@ def _runtime_for_nonstream_chat(*, start_scene=None, append_error=None, abandon_
             restored.append(int(chat_turn_id))
 
     db = _DB()
-    character = SimpleNamespace(name="测试大臣")
+    character = minister_double("测试大臣")
     state = SimpleNamespace(turn=1, year=1628, period=1, turn_phase="summoning")
 
     def _start_scene(minister_name, chat_turn_id):
@@ -471,7 +473,7 @@ def _runtime_for_nonstream_chat(*, start_scene=None, append_error=None, abandon_
     runtime._runtime_write_queue = lambda: runtime._write_queue  # type: ignore
     runtime._mark_pending_write = lambda key=None: runtime._write_queue.claim(key=key or ("pending",))  # type: ignore
     runtime._complete_pending_write = lambda ticket=None: runtime._write_queue.complete(ticket)  # type: ignore
-    runtime.session = SimpleNamespace(
+    runtime.session = install_hall_admission(SimpleNamespace(
         temporary_characters=set(),
         content=SimpleNamespace(characters={character.name: character}),
         state=state,
@@ -482,10 +484,11 @@ def _runtime_for_nonstream_chat(*, start_scene=None, append_error=None, abandon_
         join_chat_turn_scene=lambda *_a, **_k: [],
         persist_chat_turn_scene=lambda *_a, **_k: None,
         abandon_chat_turn_scene=_abandon,
+        _character=lambda name: character,
         chat=lambda *a, **k: (_ for _ in ()).throw(
             RuntimeError("session.chat should not run")
         ),
-    )
+    ))
     runtime.chat_history = {character.name: []}
     runtime._persistent_chat_minister = lambda name: True
     runtime._audience_turn_in_flight = lambda name: False
@@ -679,7 +682,7 @@ def test_chat_stream_run_error_event_sse_diegetic_via_web_entry(monkeypatch):
     db = _WorkerPathDB()
     runtime, minister = _base_runtime(db)
     runtime.session.registry = SimpleNamespace(get=lambda _c: _RunErrorAgent())
-    runtime.session._character = lambda name: SimpleNamespace(name=minister)
+    runtime.session._character = lambda name: minister_double(minister)
     runtime.session._start_cli_action_intent = lambda *_a, **_k: None
 
     monkeypatch.setattr(web_app, "_require_active_minister", lambda _n: None)
