@@ -14,12 +14,36 @@ from __future__ import annotations
 import json
 import os
 import shutil
+from pathlib import Path
 
 import pytest
 
 import driver
 from driver import run_settle
+from ming_sim.distance import DistanceMatrix
 from tests.conftest import active_ming_character
+
+_ROOT = Path(__file__).resolve().parents[1]
+_MATRIX = DistanceMatrix.from_file(_ROOT / "content/distance_matrix.json")
+
+
+def _transit_ledger(db, name: str):
+    return db.conn.execute(
+        "SELECT location, transit_to, transit_distance_remaining, "
+        "transit_speed_factor, transit_start_turn FROM characters WHERE name=?",
+        (name,),
+    ).fetchone()
+
+
+def _mirror_ledger(content, name: str):
+    ch = content.characters[name]
+    return (
+        ch.location,
+        ch.transit_to,
+        ch.transit_distance_remaining,
+        ch.transit_speed_factor,
+        ch.transit_start_turn,
+    )
 
 
 def test_cli_settle_rejects_non_dict_envelope_delta(game, tmp_path):
@@ -597,3 +621,65 @@ def test_run_settle_system_source_rejection_stays_silent(game):
         {"人物变更": [{"origin_ref": "盘面自发", "name": "查无此人乙", "动作": "任命", "office": "首辅", "reason": "测试"}]},
         source=Provenance.system_simulation)
     assert "有司奏" not in report, "系统推演来源的拒收对玩家安静"
+
+
+# ── #668 F3：driver pre_settle 须同步 content 在途镜像 ────────────────────────
+
+
+def test_run_settle_transit_arrival_syncs_db_and_content_mirror(game):
+    """河南→北直隶常速、start_turn=turn-1：run_settle 抵达后 DB 与 content 四量一致且清账。"""
+    db, state, content = game
+    name = active_ming_character(db, content)
+    origin, dest = "henan", "beizhili"
+    r0 = _MATRIX.travel_time(origin, dest)
+    assert r0 <= 1.0
+    db.set_character_transit(
+        name,
+        location=origin,
+        transit_to=dest,
+        distance_remaining=r0,
+        speed_factor=1.0,
+        start_turn=int(state.turn) - 1,
+        content=content,
+    )
+
+    run_settle(db, state, content, None)
+
+    row = _transit_ledger(db, name)
+    assert tuple(row) == (dest, "", None, None, 0)
+    assert _mirror_ledger(content, name) == (dest, "", None, None, 0)
+
+
+def test_run_settle_in_transit_remaining_syncs_db_and_content_mirror(game):
+    """河南→辽东 N≥2、start_turn=turn-1：run_settle 后仍在途，remaining 已减且 DB=content。"""
+    db, state, content = game
+    name = active_ming_character(db, content)
+    origin, dest = "henan", "liaodong"
+    r0 = _MATRIX.travel_time(origin, dest)
+    assert r0 > 1.0, "路线须使首减后仍在途"
+    start_turn = int(state.turn) - 1
+    db.set_character_transit(
+        name,
+        location=origin,
+        transit_to=dest,
+        distance_remaining=r0,
+        speed_factor=1.0,
+        start_turn=start_turn,
+        content=content,
+    )
+
+    run_settle(db, state, content, None)
+
+    expected_remaining = r0 - 1.0
+    row = _transit_ledger(db, name)
+    assert row["location"] == origin
+    assert row["transit_to"] == dest
+    assert row["transit_distance_remaining"] == pytest.approx(expected_remaining)
+    assert row["transit_speed_factor"] == pytest.approx(1.0)
+    assert row["transit_start_turn"] == start_turn
+    ch = content.characters[name]
+    assert ch.location == origin
+    assert ch.transit_to == dest
+    assert ch.transit_distance_remaining == pytest.approx(row["transit_distance_remaining"])
+    assert ch.transit_speed_factor == pytest.approx(row["transit_speed_factor"])
+    assert ch.transit_start_turn == row["transit_start_turn"]
