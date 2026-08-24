@@ -978,6 +978,7 @@ def test_extractor_commitment_backlash_facts_gated_to_issues_module(game):
 
     issues_ctx = build_extractor_shared_context(
         db, state, "邸报", "", module="issues",
+        transit_semantics=[],
     )
     assert "commitment_backlash_facts" in issues_ctx
     assert issues_ctx["commitment_backlash_facts"]
