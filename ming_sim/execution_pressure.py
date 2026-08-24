@@ -358,14 +358,7 @@ def _province_open_counts(conn) -> Dict[str, int]:
 
 def _in_transit_name_index(transit_semantics: Sequence[object]) -> set:
     """派生 name 成员索引（查找结构，非第二真源 collection）。"""
-    names: set = set()
-    for item in transit_semantics:
-        if not isinstance(item, Mapping):
-            continue
-        name = str(item.get("name") or "").strip()
-        if name:
-            names.add(name)
-    return names
+    return {str(item["name"]).strip() for item in transit_semantics}
 
 
 def _duty_arrival_status(
@@ -385,6 +378,102 @@ def _duty_arrival_status(
     if loc == rid:
         return "已到差"
     return "尚未到差"
+
+
+def _project_owner_arrival_for_region(
+    *,
+    rid: str,
+    owner_names: Sequence[str],
+    char_rows: Mapping[str, object],
+    owner_counts: Mapping[str, int],
+    matrix: DistanceMatrix,
+    in_transit_names: set,
+) -> Tuple[List[Dict[str, object]], List[Dict[str, object]]]:
+    """一省主办行 + 到差态行投影（builder 局部职责）。"""
+    owner_rows: List[Dict[str, object]] = []
+    arrival_rows: List[Dict[str, object]] = []
+    for name in owner_names:
+        ch = char_rows.get(name)
+        ability = int(ch["ability"]) if ch is not None else 0
+        open_count = int(owner_counts.get(name, 0))
+        loc = str(ch["location"] or "") if ch is not None else ""
+        transit = str(ch["transit_to"] or "") if ch is not None else ""
+        if rid == "":
+            dist = ABSENT
+        else:
+            dist = distance_semantic_band(
+                owner_location=loc,
+                region_id=rid,
+                transit_to=transit,
+                matrix=matrix,
+            )
+        owner_rows.append({
+            "owner_name": name,
+            "owner_open_count": open_count,
+            "owner_ability": ability,
+            "owner_load": open_count * ability,
+            "distance_semantic_band": dist,
+        })
+        status = _duty_arrival_status(
+            owner_name=name,
+            location=loc,
+            duty_region_id=rid,
+            in_transit_names=in_transit_names,
+        )
+        if status is not None:
+            arrival_rows.append({
+                "owner_name": name,
+                "duty_region_id": rid,
+                "duty_arrival_status": status,
+            })
+    return owner_rows, arrival_rows
+
+
+def _assemble_province_block(
+    conn,
+    rid: str,
+    owner_rows: Sequence[Mapping[str, object]],
+    arrival_rows: Sequence[Mapping[str, object]],
+    province_counts: Mapping[str, int],
+) -> Dict[str, object]:
+    """单省 block 装配（哨兵块 vs 读 regions / 切片 / 督抚 / 贼 / 灾）。"""
+    if rid == "":
+        return {
+            "region_id": "",
+            "province_open_count": ABSENT,
+            "gentry_resistance": ABSENT,
+            "gentry_slice": ABSENT,
+            "officials_slice": ABSENT,
+            "dutang_faction": ABSENT,
+            "dutang_integrity": ABSENT,
+            "bandit_pressure": ABSENT,
+            "bandit_strength": ABSENT,
+            "disaster_rows": [],
+            "owners": list(owner_rows),
+            "arrival_rows": list(arrival_rows),
+        }
+
+    reg = conn.execute(
+        "SELECT gentry_resistance, military_pressure FROM regions WHERE id=?",
+        (rid,),
+    ).fetchone()
+    gentry_res = int(reg["gentry_resistance"]) if reg is not None else 0
+    bandit_pressure = int(reg["military_pressure"]) if reg is not None else 0
+    dutang_faction, dutang_integrity = _dutang_fields(conn, rid)
+    return {
+        "region_id": rid,
+        "province_open_count": int(province_counts.get(rid, 0)),
+        "gentry_resistance": gentry_res,
+        "gentry_slice": _class_slice(conn, "士绅", rid),
+        "officials_slice": _class_slice(conn, "官僚", rid),
+        "dutang_faction": dutang_faction,
+        "dutang_integrity": dutang_integrity,
+        "bandit_pressure": bandit_pressure,
+        "bandit_strength": _bandit_strength(conn, rid),
+        "disaster_rows": _disaster_rows(conn, rid),
+        "owners": list(owner_rows),
+        "arrival_rows": list(arrival_rows),
+    }
 
 
 def build_execution_two_axis_surface(
@@ -439,82 +528,19 @@ def build_execution_two_axis_surface(
 
     provinces: List[Dict[str, object]] = []
     for rid in region_ids:
-        owner_names = owners_by_region.get(rid, [])
-        owner_rows: List[Dict[str, object]] = []
-        arrival_rows: List[Dict[str, object]] = []
-        for name in owner_names:
-            ch = char_rows.get(name)
-            ability = int(ch["ability"]) if ch is not None else 0
-            open_count = int(owner_counts.get(name, 0))
-            loc = str(ch["location"] or "") if ch is not None else ""
-            transit = str(ch["transit_to"] or "") if ch is not None else ""
-            if rid == "":
-                dist = ABSENT
-            else:
-                dist = distance_semantic_band(
-                    owner_location=loc,
-                    region_id=rid,
-                    transit_to=transit,
-                    matrix=matrix,
-                )
-            owner_rows.append({
-                "owner_name": name,
-                "owner_open_count": open_count,
-                "owner_ability": ability,
-                "owner_load": open_count * ability,
-                "distance_semantic_band": dist,
-            })
-            status = _duty_arrival_status(
-                owner_name=name,
-                location=loc,
-                duty_region_id=rid,
-                in_transit_names=in_transit_names,
-            )
-            if status is not None:
-                arrival_rows.append({
-                    "owner_name": name,
-                    "duty_region_id": rid,
-                    "duty_arrival_status": status,
-                })
-
-        if rid == "":
-            provinces.append({
-                "region_id": "",
-                "province_open_count": ABSENT,
-                "gentry_resistance": ABSENT,
-                "gentry_slice": ABSENT,
-                "officials_slice": ABSENT,
-                "dutang_faction": ABSENT,
-                "dutang_integrity": ABSENT,
-                "bandit_pressure": ABSENT,
-                "bandit_strength": ABSENT,
-                "disaster_rows": [],
-                "owners": owner_rows,
-                "arrival_rows": arrival_rows,
-            })
-            continue
-
-        reg = conn.execute(
-            "SELECT gentry_resistance, military_pressure FROM regions WHERE id=?",
-            (rid,),
-        ).fetchone()
-        gentry_res = int(reg["gentry_resistance"]) if reg is not None else 0
-        bandit_pressure = int(reg["military_pressure"]) if reg is not None else 0
-        dutang_faction, dutang_integrity = _dutang_fields(conn, rid)
-        provinces.append({
-            "region_id": rid,
-            "province_open_count": int(province_counts.get(rid, 0)),
-            "gentry_resistance": gentry_res,
-            "gentry_slice": _class_slice(conn, "士绅", rid),
-            "officials_slice": _class_slice(conn, "官僚", rid),
-            "dutang_faction": dutang_faction,
-            "dutang_integrity": dutang_integrity,
-            "bandit_pressure": bandit_pressure,
-            "bandit_strength": _bandit_strength(conn, rid),
-            "disaster_rows": _disaster_rows(conn, rid),
-            "owners": owner_rows,
-            "arrival_rows": arrival_rows,
-        })
+        owner_rows, arrival_rows = _project_owner_arrival_for_region(
+            rid=rid,
+            owner_names=owners_by_region.get(rid, []),
+            char_rows=char_rows,
+            owner_counts=owner_counts,
+            matrix=matrix,
+            in_transit_names=in_transit_names,
+        )
+        provinces.append(
+            _assemble_province_block(
+                conn, rid, owner_rows, arrival_rows, province_counts,
+            ),
+        )
 
     tsv = _render_two_axis_tsv(provinces)
     return {
