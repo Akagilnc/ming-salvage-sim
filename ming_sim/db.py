@@ -11468,11 +11468,12 @@ class GameDB:
                     f"军令引用未入库军队 '{target_id}'（成案前须存在）"
                 )
             normalized["target_kind"] = "army"
-        # #654：locality_scope 三值 durable 归一。七值属地矩阵 + 结构 kind dossier
-        # （撤回成命既有 target_kind，不入 21 格）。region 缺省不暗升 single。
-        from ming_sim.execution_pressure import TARGET_KINDS, normalize_locality_scope
+        # #654 / owner A：locality_scope 三值 durable 归一；八值 target_kind 闭集直校验
+        # （含结构目标 dossier）。region 缺省不暗升 single。
+        from ming_sim.decree_vocabulary import TARGET_KINDS
+        from ming_sim.execution_pressure import normalize_locality_scope
         final_kind = str(normalized.get("target_kind") or "").strip()
-        if final_kind not in TARGET_KINDS and final_kind != "dossier":
+        if final_kind not in TARGET_KINDS:
             raise ValueError(f"target_kind 非法：{final_kind!r}")
         normalized["target_kind"] = final_kind
         normalized["locality_scope"] = normalize_locality_scope(

@@ -2325,8 +2325,8 @@ MANUAL_DIRECTIVE_CAPTURE_TIMEOUT_S = 30.0
 
 
 
-# 七值 target_kind 真源在 execution_pressure.TARGET_KINDS（#654 禁双定义）
-from ming_sim.execution_pressure import TARGET_KINDS as _VALID_DRAFT_TARGET_KINDS
+# 八值 target_kind 真源在 decree_vocabulary.TARGET_KINDS（#654 / owner A 禁双定义）
+from ming_sim.decree_vocabulary import TARGET_KINDS as _VALID_DRAFT_TARGET_KINDS
 _VALID_LOCALITY_SCOPE_ZH = frozenset({"无", "全国", "单省"})
 
 

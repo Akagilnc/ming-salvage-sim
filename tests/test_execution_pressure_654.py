@@ -7,7 +7,7 @@ import re
 
 import pytest
 
-from ming_sim.decree_vocabulary import NATIONAL_FANOUT_ACTION_TYPES
+from ming_sim.decree_vocabulary import NATIONAL_FANOUT_ACTION_TYPES, TARGET_KINDS
 from ming_sim.distance import DistanceMatrix
 from ming_sim.execution_pressure import (
     ABSENT,
@@ -15,6 +15,7 @@ from ming_sim.execution_pressure import (
     BAND_LOCAL,
     BAND_MID,
     BAND_NEAR,
+    TARGET_KINDS as EP_TARGET_KINDS,
     build_execution_two_axis_surface,
     distance_semantic_band,
     fold_distance_band,
@@ -547,6 +548,18 @@ def test_normalize_payload_locality_and_target_kind(env):
         "mode": "ordinary",
     })
     assert out["locality_scope"] == "national"
+    # owner A：dossier 为 canonical 八值成员，合法 none 归一
+    dossier_out = db._normalize_directive_dossier_payload({
+        "dossier_action_type": "revoke_decree",
+        "target_kind": "dossier",
+        "target_id": "42",
+        "revoke_target_dossier_id": 42,
+        "locality_scope": "无",
+        "mode": "ordinary",
+    })
+    assert dossier_out["target_kind"] == "dossier"
+    assert dossier_out["locality_scope"] == "none"
+    assert int(dossier_out["revoke_target_dossier_id"]) == 42
     with pytest.raises(ValueError):
         db._normalize_directive_dossier_payload({
             "dossier_action_type": "policy",
@@ -965,7 +978,7 @@ def test_national_vs_per_province_two_axis_equivalence(env):
         assert surface_a[rid]["owners"] == surface_b[rid]["owners"]
 
 
-# ── 21 格 locality 矩阵（参数化）──────────────────────────────────
+# ── 8×3 locality 矩阵（参数化）──────────────────────────────────
 
 
 @pytest.mark.parametrize(
@@ -998,6 +1011,11 @@ def test_national_vs_per_province_two_axis_equivalence(env):
         ("region", "national", "policy", "fail"),
         ("region", "none", "policy", "fail"),
         ("region", "single", "policy", "R1"),
+        # dossier 三格：仅 none → 单行 ''；single/national fail-loud
+        ("dossier", "none", "revoke_decree", "empty"),
+        ("dossier", "single", "revoke_decree", "fail"),
+        ("dossier", "national", "revoke_decree", "fail"),
+        ("dossier", None, "revoke_decree", "empty"),
         # 缺省 scope（normalize → none）
         ("policy", None, "policy", "empty"),
         ("region", None, "policy", "fail"),
@@ -1008,7 +1026,7 @@ def test_national_vs_per_province_two_axis_equivalence(env):
         ("policy", "national", "assignment", "fail"),
     ],
 )
-def test_locality_matrix_21_and_unknown(env, target_kind, scope, action, expect):
+def test_locality_matrix_8x3_and_unknown(env, target_kind, scope, action, expect):
     db, _, content = env
     payload = {"target_kind": target_kind, "target_id": "shaanxi" if target_kind == "region" else "x"}
     if scope is not None:
@@ -1144,11 +1162,131 @@ def test_two_axis_tsv_province_block_golden(env):
     assert "毕自严" in owner_blob and "杨嗣昌" in owner_blob
 
 
-def test_cli_target_kinds_accepts_canonical_seven():
-    """producer 与 durable 共七值：合法通过、法外 fail-loud（不测 import 身份）。"""
+def test_cli_target_kinds_accepts_canonical_eight():
+    """producer 与 durable 共八值（含 dossier）：合法通过、法外 fail-loud。"""
     from ming_sim import cli_backend as cb
-    from ming_sim.execution_pressure import TARGET_KINDS
+    assert TARGET_KINDS is EP_TARGET_KINDS
+    assert "dossier" in TARGET_KINDS
+    assert TARGET_KINDS == frozenset({
+        "policy", "character", "office", "army", "region", "issue", "account",
+        "dossier",
+    })
     for kind in sorted(TARGET_KINDS):
         assert cb._coerce_draft_target_kind(kind) == kind
     with pytest.raises(ValueError):
         cb._coerce_draft_target_kind("not_a_real_kind")
+
+
+def test_revoke_decree_523_producer_durable_oracle_chain(env):
+    """#523 producer→durable→oracle：dossier 目标恰落一条 region_id='' 案卷。
+
+    owner A：八值成员、dossier 三格、unknown 拒绝、revoke identity 保留。
+    """
+    import ming_sim.action_materialize  # noqa: F401 -- installs package catalog
+    from ming_sim.action_materialize import stage_revoke_decree_candidate
+
+    db, state, content = env
+    holder = str(db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
+        "ORDER BY name LIMIT 1"
+    ).fetchone()["name"])
+
+    # 已颁可撤成命（目标身份）
+    target_id = db.create_decree_dossier(
+        state,
+        action_type="policy",
+        decree_text="河工成命",
+        target_kind="issue",
+        target_id="河工成命",
+        executor_kind="character",
+        executor_id=holder,
+        participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
+        payload={
+            "mode": "ordinary", "text": "河工成命",
+            "target_kind": "issue", "target_id": "河工成命",
+            "locality_scope": "none",
+        },
+    )
+    db.apply_dossier_promulgation(state, target_id, "promulgated")
+
+    # 1) #523 真实 producer
+    pending_id = stage_revoke_decree_candidate(
+        db,
+        state.turn,
+        holder,
+        text=f"前旨作废，撤回案卷{target_id}。",
+        target_id=str(target_id),
+        target_kind="dossier",
+    )
+    assert pending_id
+    pending_row = db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
+    ).fetchone()
+    pending = json.loads(pending_row["payload_json"])
+    assert pending["dossier_action_type"] == "revoke_decree"
+    assert pending["target_kind"] == "dossier"
+    assert int(pending["revoke_target_dossier_id"]) == int(target_id)
+    assert pending["target_kind"] in TARGET_KINDS
+
+    # 2) durable normalization 闭集直校验（无 dossier 暗例外）
+    normalized = db._normalize_directive_dossier_payload(
+        pending, content=content, current_turn=int(state.turn),
+    )
+    assert normalized["target_kind"] == "dossier"
+    assert normalized["locality_scope"] == "none"
+    assert int(normalized["revoke_target_dossier_id"]) == int(target_id)
+
+    # 3) 真实收夜成案入口（commit_pending_actions → normalize → create_decree_dossiers）
+    before = db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers").fetchone()["n"]
+    db.commit_pending_actions(state, content=content, action_ids=[pending_id])
+    revoke_rows = [
+        d for d in db.list_decree_dossiers()
+        if int(d.get("pending_action_id") or 0) == int(pending_id)
+    ]
+    assert len(revoke_rows) == 1
+    after = db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers").fetchone()["n"]
+    assert after == before + 1
+    row = revoke_rows[0]
+    assert row["region_id"] == ""
+    assert row["action_type"] == "revoke_decree"
+    assert row["target_kind"] == "dossier"
+    assert str(row["target_id"]) == str(target_id)
+    stored = json.loads(str(row.get("payload_json") or "{}"))
+    assert int(stored.get("revoke_target_dossier_id") or 0) == int(target_id)
+    assert stored.get("target_kind") == "dossier"
+
+    # 4) dossier 三格 + unknown 拒绝（与矩阵同契约）
+    assert resolve_dossier_region_ids(
+        db.conn,
+        action_type="revoke_decree",
+        payload={"target_kind": "dossier", "target_id": str(target_id),
+                 "locality_scope": "none"},
+    ) == [""]
+    with pytest.raises(ValueError):
+        resolve_dossier_region_ids(
+            db.conn,
+            action_type="revoke_decree",
+            payload={"target_kind": "dossier", "target_id": str(target_id),
+                     "locality_scope": "single"},
+        )
+    with pytest.raises(ValueError):
+        resolve_dossier_region_ids(
+            db.conn,
+            action_type="revoke_decree",
+            payload={"target_kind": "dossier", "target_id": str(target_id),
+                     "locality_scope": "national"},
+        )
+    with pytest.raises(ValueError):
+        resolve_dossier_region_ids(
+            db.conn,
+            action_type="policy",
+            payload={"target_kind": "not_a_kind", "target_id": "x",
+                     "locality_scope": "none"},
+        )
+    with pytest.raises(ValueError):
+        db._normalize_directive_dossier_payload({
+            "dossier_action_type": "policy",
+            "target_kind": "not_a_kind",
+            "target_id": "x",
+            "mode": "ordinary",
+        })
