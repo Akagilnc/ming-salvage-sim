@@ -2149,9 +2149,12 @@ def extract_draft_intent(
                     ("期限月数", "deadline_months"),
                 )
             }
-            mechanical["locality_scope"] = _coerce_draft_locality_scope(value.get("施行范围"))
-            # multi 路目标类型同样 fail-loud
-            target_kind = _coerce_draft_target_kind(target_kind)
+            try:
+                mechanical["locality_scope"] = _coerce_draft_locality_scope(value.get("施行范围"))
+                target_kind = _coerce_draft_target_kind(target_kind)
+            except ValueError:
+                invalid_batch = True
+                break
             drafts.append({
                 "draft_action": "拟旨", "draft_text": text,
                 "dossier_action_type": action, "target_kind": target_kind,
@@ -2254,6 +2257,9 @@ def extract_draft_intent(
         obj = {}
     _raw = str(obj.get("拟旨意图") or "无").strip()
     _action = _raw if _raw in {"无", "拟旨"} else "无"
+    if _action == "无":
+        # 无拟旨不得先校验机械枚举：LLM 常把 schema 的「无|全国|单省」原样填回。
+        return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
     dossier_action = str(obj.get("动作类型") or "special_decree").strip()
     if dossier_action == "acting_appointment":
         # #529 与多旨同：署理交回既有人事候选链，不经草案 acting_appointment。
@@ -2274,8 +2280,6 @@ def extract_draft_intent(
     if mode is not None:
         mechanical["mode"] = mode
     merged = str(obj.get("合并草案") or "").strip()
-    if _action == "无":
-        return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
     if not _candidates:
         # 无候选：沿用单条语义——补充模式合并、否则大臣回话即草案。
         if _supplement_mode:

@@ -38,6 +38,11 @@ BAND_LOCAL = "本省当地，全程旬月可至"
 BAND_NEAR = "邻近之地，全程约一月量级"
 BAND_MID = "中途之程，全程约二三月量级"
 BAND_FAR = "边远之途，全程约三月以上量级"
+# seed / 口语驻地 → 矩阵节点。未列入的非法节点仍走 D6。
+_LOCATION_ALIASES = {
+    "京师": "beizhili",
+    "beijing": "beizhili",
+}
 
 
 def normalize_locality_scope(raw: object) -> str:
@@ -75,6 +80,11 @@ def fold_distance_band(travel_months: float) -> str:
     return BAND_FAR
 
 
+def _canonical_owner_location(location: object) -> str:
+    text = str(location or "").strip()
+    return _LOCATION_ALIASES.get(text, text)
+
+
 def distance_semantic_band(
     *,
     owner_location: str,
@@ -86,7 +96,7 @@ def distance_semantic_band(
     rid = str(region_id or "").strip()
     if not rid:
         return ABSENT  # D1
-    loc = str(owner_location or "").strip()
+    loc = _canonical_owner_location(owner_location)
     if not loc:
         return ABSENT  # D2
     if str(transit_to or "").strip():
@@ -397,17 +407,23 @@ def build_execution_two_axis_surface(db, turn: int = 0) -> Dict[str, object]:
             ch = char_rows.get(name)
             ability = int(ch["ability"]) if ch is not None else 0
             open_count = int(owner_counts.get(name, 0))
-            loc = str(ch["location"] or "") if ch is not None else ""
+            loc = _canonical_owner_location(
+                str(ch["location"] or "") if ch is not None else "",
+            )
             transit = str(ch["transit_to"] or "") if ch is not None else ""
             if rid == "":
                 dist = ABSENT
             else:
-                dist = distance_semantic_band(
-                    owner_location=loc,
-                    region_id=rid,
-                    transit_to=transit,
-                    matrix=matrix,
-                )
+                try:
+                    dist = distance_semantic_band(
+                        owner_location=loc,
+                        region_id=rid,
+                        transit_to=transit,
+                        matrix=matrix,
+                    )
+                except KeyError:
+                    # 结算读面：未知驻地按不参与，禁把 D6 响亮项抬成月末崩。
+                    dist = ABSENT
             owner_rows.append({
                 "owner_name": name,
                 "owner_open_count": open_count,

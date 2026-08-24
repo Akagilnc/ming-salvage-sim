@@ -1340,6 +1340,21 @@ def test_extract_draft_intent_no_intent_returns_empty_draft_text(monkeypatch):
     assert result == {"draft_action": "无", "draft_text": "", "target_candidate": ""}
 
 
+def test_extract_draft_intent_no_intent_ignores_dirty_mechanical_fields(monkeypatch):
+    """无拟旨时不得先校验 动作/目标/施行范围。LLM 常把 schema 枚举串原样填回。"""
+    def _no_intent_dirty(prompt, llm_config=None, tag=""):
+        return (json.dumps({
+            "拟旨意图": "无",
+            "动作类型": "policy|assignment|military_order",
+            "目标类型": "人物",
+            "施行范围": "无|全国|单省",
+        }, ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _no_intent_dirty)
+    result = cb.extract_draft_intent("今日只是问策。", "臣以为当暂缓。")
+    assert result == {"draft_action": "无", "draft_text": "", "target_candidate": ""}
+
+
 # ── ⑬ session.py 补充模式 existing_draft_text 提取的 JSON 兜底（894-899）─────────
 
 def test_supplement_existing_draft_text_swallows_malformed_payload_json(game, monkeypatch):
