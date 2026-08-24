@@ -180,12 +180,14 @@ def test_rollback_purges_content_character_ghost(game, monkeypatch):
         "SELECT status FROM pending_actions WHERE turn=? AND kind='office'",
         (state.turn,)).fetchone()
     assert row is not None and row["status"] == "committed"  # 合法任免不被误拒
-    assert db.conn.execute(
-        "SELECT name FROM characters WHERE name=?", (new_name,)).fetchone() is None
+    identity = db.conn.execute(
+        "SELECT office,office_type,status FROM characters WHERE name=?", (new_name,)
+    ).fetchone()
+    assert tuple(identity) == ("待选", "未仕", "offstage")
     dossiers = db.list_decree_dossiers(
         status="proposed", target_kind="character", target_id=new_name
     )
-    assert len(dossiers) == 1  # 成案已 durable；颁布判决前仍不改人物盘面
+    assert len(dossiers) == 1  # 成案与未生效身份 durable；颁布前仍未授官/激活
 
 
 def test_reload_skipped_inside_nested_atomic(game, monkeypatch):
