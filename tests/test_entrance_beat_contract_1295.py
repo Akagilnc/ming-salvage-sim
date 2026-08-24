@@ -145,6 +145,23 @@ def test_entrance_materials_exclude_player_utterance(game, monkeypatch):
     assert "玩家专属问话标记1295" not in blob
 
 
+def test_open_beat_llm_receives_structured_scene_and_generated_body_is_ledgered(game, monkeypatch):
+    db, state, _ = game
+    capture: dict = {}
+    probe = _load_fresh_beat_module(monkeypatch, capture=capture)
+    facts = ('{"dossier_id": 651, "channels": ["稽核"], "scene_text": ""}',)
+    body = probe.create_llm_beat_generator(object())(
+        BeatInputs(beat_kind=BEAT_OPEN, time_of_day="戌时", location="乾清宫",
+                   audience_scenes=facts)
+    )
+    payload = json.loads(capture["prompts"][0])
+    assert payload["待呈御前的结构化场面事实"] == list(facts)
+    night = an.open_night(db, state, time_of_day="戌时", location="乾清宫", body=body)
+    opening = next(row for row in an.list_ledger(db, night["id"])
+                   if an.TAG_OPEN_NIGHT in row["tags"])
+    assert opening["body"] == "【入殿气象】帘外风动。"
+
+
 def test_open_beat_instructions_share_no_preenact_contract(monkeypatch):
     """开场与入殿共用同一 instructions 契约（不按 kind 分叉模板文案）。"""
     capture: dict = {}

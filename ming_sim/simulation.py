@@ -1167,6 +1167,14 @@ def build_extractor_shared_context(
             # Need full dossier shape for projection (executor/roster/target).
             full = db.get_decree_dossier(int(row["id"])) or row
             entry.update(execution_side_read_fields(db, state, full))
+        if module in {"issues", "internal"}:
+            # #651: both parallel owners read the simulator's one judgment source;
+            # issues owns execution, internal owns the resulting fiscal/population facts.
+            if "army_pay_fact" in row:
+                entry["army_pay_fact"] = row["army_pay_fact"]
+            else:
+                from ming_sim.covert_levy import army_pay_fact_for_dossier
+                entry["army_pay_fact"] = army_pay_fact_for_dossier(db, int(row["id"]))
         if module == "issues":
             # 监督事实底注入执行格面（只读；缺则现场读 DB）。
             if all(key in row for key in SUPERVISION_SURFACE_KEYS):
