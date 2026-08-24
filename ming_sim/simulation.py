@@ -1294,6 +1294,8 @@ def build_extractor_shared_context(
                         db.build_supervision_judge_surface(int(row["id"]))
                     )
                 )
+            # #654：属地投影仅 issues 模块；他模块禁见 region_id 键。
+            entry["region_id"] = str(row.get("region_id") or "")
         slim_dossiers.append(entry)
     slim["decree_dossiers"] = slim_dossiers
     if module == "personnel_secret":
@@ -1320,6 +1322,9 @@ def build_extractor_shared_context(
         # #626：反噬事实包仅 issues 档房（与 #625 监督三键同格门控）；
         # 不在 _extractor_context_payload 无门副本，避免非 issues 模块误读。
         slim["commitment_backlash_facts"] = build_backlash_narrative_features(db)
+        # #654：带宽/阻力两轴清单——纯机 issues extractor 私有面（P4：不进 simulator）。
+        from ming_sim.execution_pressure import build_execution_two_axis_surface
+        slim["execution_two_axis"] = build_execution_two_axis_surface(db, state.turn)
         # The issues extractor consumes the same canonical candidate_events key
         # as its prompt.  This private module payload remains outside simulator
         # decision binding and HITL.

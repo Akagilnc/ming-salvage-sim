@@ -21,7 +21,7 @@ def region_aliases(region: Region) -> List[str]:
         if part.strip():
             aliases.append(part.strip())
     special = {
-        "beizhili": ["北直隶", "京师", "北京", "顺天", "直隶"],
+        "beizhili": ["北直隶", "京师", "北京", "beijing", "顺天", "直隶"],
         "nanzhili": ["南直隶", "南京", "江南", "应天", "南都"],
         "shaanxi": ["陕西", "陕地", "西安"],
         "huguang": ["湖广", "荆楚"],
@@ -39,6 +39,30 @@ def region_aliases(region: Region) -> List[str]:
         seen.add(key)
         unique.append(alias)
     return unique
+
+
+def canonical_region_id_exact(
+    raw: object, regions: Dict[str, Region],
+) -> Optional[str]:
+    """location 写缝专用：仅 compact 精确等值（id/name/region_aliases）。
+
+    空串 → ''；未知非空 → None（调用方 fail-loud）。
+    禁止子串/模糊；不调用 match_region_id_from_text。
+    """
+    if raw is None:
+        return ""
+    text = str(raw).strip()
+    if not text:
+        return ""
+    key = compact_name(text)
+    if not key:
+        return ""
+    for region in regions.values():
+        candidates = [region.id, region.name, *region_aliases(region)]
+        for alias in candidates:
+            if compact_name(alias) == key:
+                return region.id
+    return None
 
 
 def match_region_id_from_text(text: str, regions: Dict[str, Region]) -> Optional[str]:

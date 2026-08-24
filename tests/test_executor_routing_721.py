@@ -493,3 +493,48 @@ def test_restore_malformed_durable_json_fails_loud(env, column, bad):
     db.conn.execute(f"UPDATE decree_dossiers SET {column}=? WHERE id=?", (bad, dossier_id))
     with pytest.raises(ValueError, match=column):
         db.get_decree_dossier(dossier_id)
+
+
+def test_national_fanout_reuses_central_bi_ziyan(env):
+    """#654 R2：national 未点将真实 seed → 15×毕自严；单省空链不回退。"""
+    from ming_sim.execution_pressure import ming_province_ids
+
+    db, state, _ = env
+    provinces = ming_province_ids(db.conn)
+    payload = {
+        "target_kind": "policy",
+        "target_id": "清丈天下田亩",
+        "locality_scope": "national",
+        "transaction_category": "清丈",
+    }
+    ids = db.create_decree_dossiers(
+        state,
+        action_type="policy",
+        decree_text="清丈天下田亩",
+        target_kind="policy",
+        target_id="清丈天下田亩",
+        payload=payload,
+        commit=True,
+    )
+    assert len(ids) == 15
+    leads = []
+    for did in ids:
+        row = db.get_decree_dossier(did)
+        own = [e["character_id"] for e in row["participant_roster"] if e.get("tier") == "主办"]
+        assert own == ["毕自严"]
+        leads.append(own[0])
+    assert leads == ["毕自严"] * 15
+
+    single = resolve_lead_executors(
+        db.conn,
+        action_type="policy",
+        payload={
+            "transaction_category": "清丈",
+            "locality_scope": "single",
+            "target_kind": "region",
+            "target_id": "shaanxi",
+        },
+        region_id="shaanxi",
+    )
+    assert single["leads"] == []
+    assert (single.get("signal") or {}).get("code") == "idle_start"
