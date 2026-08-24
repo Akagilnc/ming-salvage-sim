@@ -97,8 +97,7 @@ def test_natural_prohibition_binds_only_current_case_and_is_night_approved(game,
     assert payload["dossier_action_type"] == PROHIBITION_ACTION
     assert payload["target_kind"] == "dossier" and payload["target_id"] == str(first)
     assert pending["night_approved"] == 1
-    assert ctx.out["requires_confirmation"] is False
-    assert "suppress_confirmation_cue" not in ctx.out
+    assert set(ctx.out) == {"pending_action_id"}
 
 
 def test_pay_fact_reaches_both_production_judge_inputs(game):

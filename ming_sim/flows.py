@@ -1158,6 +1158,7 @@ def _apply_economy_list(
                 from ming_sim.covert_levy import canonical_fiscal_result
                 applied.append(canonical_fiscal_result(
                     db, move, applied=spent != 0,
+                    effective_origin_ref=effective_origin_ref,
                     account=account, delta=-spent, reason=reason,
                 ))
                 continue
@@ -1205,6 +1206,7 @@ def _apply_economy_list(
                 from ming_sim.covert_levy import canonical_fiscal_result
                 applied.append(canonical_fiscal_result(
                     db, move, applied=False,
+                    effective_origin_ref=effective_origin_ref,
                     account=account, delta=0, reason=reason_text,
                 ))
                 continue
@@ -1222,6 +1224,7 @@ def _apply_economy_list(
                 from ming_sim.covert_levy import canonical_fiscal_result
                 applied.append(canonical_fiscal_result(
                     db, move, applied=True,
+                    effective_origin_ref=effective_origin_ref,
                     account=account, delta=-spent, reason=reason,
                 ))
             continue
@@ -1242,6 +1245,7 @@ def _apply_economy_list(
             from ming_sim.covert_levy import canonical_fiscal_result
             applied.append(canonical_fiscal_result(
                 db, move, applied=True,
+                effective_origin_ref=effective_origin_ref,
                 account=account, delta=actual, reason=reason,
             ))
     return applied

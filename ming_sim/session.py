@@ -2115,18 +2115,6 @@ class GameSession:
         return out
 
     @staticmethod
-    def _ensure_confirmation_cue(answer: str) -> str:
-        """Pending chat actions must visibly ask the emperor to approve/reject."""
-        text = (answer or "").strip()
-        if not text:
-            return "臣已拟妥，请陛下定夺准驳。"
-        if any(term in text for term in (
-            "定夺", "准驳", "准否", "准不准", "请旨", "是否准",
-        )):
-            return text
-        return text + "\n请陛下定夺准驳。"
-
-    @staticmethod
     def _ensure_unknown_participant_report_cue(answer: str, report: str) -> str:
         """#1274 V-1：附上 LLM 已产的查无此人回禀（报告正文本身禁在此写死台词）。"""
         text = (answer or "").strip()
@@ -2288,8 +2276,6 @@ class GameSession:
                     character.name,
                     player_message,
                 )
-            if res.get("requires_confirmation", True):
-                result.answer = GameSession._ensure_confirmation_cue(result.answer or "")
         if res.get("pending_action_failures"):
             # Preserve tool-stage diagnostics (e.g. #522 招抚未知/歧义) then append
             # confirmation-commit failures from the shared CLI seam.

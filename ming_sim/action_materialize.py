@@ -78,27 +78,6 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
     secret/cultivate/draft/appointment 字面量分叉。
     同一 callable 只跑一次（secret/cultivate 共享 extract 缝）。
     """
-    before_ids = {
-        int(row["id"])
-        for row in ctx.session.db.list_pending_actions(int(ctx.session.state.turn))
-    }
-
-    def derive_confirmation_requirement() -> None:
-        staged_ids = [
-            int(row["id"])
-            for row in ctx.session.db.list_pending_actions(int(ctx.session.state.turn))
-            if int(row["id"]) not in before_ids
-        ]
-        if staged_ids:
-            placeholders = ",".join("?" for _ in staged_ids)
-            rows = ctx.session.db.conn.execute(
-                f"SELECT night_approved FROM pending_actions WHERE id IN ({placeholders})",
-                tuple(staged_ids),
-            ).fetchall()
-            ctx.out["requires_confirmation"] = any(
-                not bool(row["night_approved"]) for row in rows
-            )
-
     if ctx.intent_candidates:
         # classifier 的列表契约逐项消费；confirmation 仍在 session 上游按 primary
         # 裁决并提前返回。每项复用登记行自带的同一 handler，不复制 kind 分支。
@@ -139,7 +118,6 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
         # #1380：拟旨优先后仍须并行 office（仅 LLM 分类路；前缀路禁，见 #344 US3）
         if _draft_path_took_effect(ctx) and not ctx.explicit_prefixed:
             parallel_stage_office_from_appointment_intent(ctx)
-        derive_confirmation_requirement()
         return
 
     seen: set = set()
@@ -154,7 +132,6 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
     # test_decree_prefix_appointment_not_double_staged）；禁并行 LLM 抽取。
     if _draft_path_took_effect(ctx) and not ctx.explicit_prefixed:
         parallel_stage_office_from_appointment_intent(ctx)
-    derive_confirmation_requirement()
 
 
 # ── handlers（委派既有 stage，不另造落库）────────────────────────────

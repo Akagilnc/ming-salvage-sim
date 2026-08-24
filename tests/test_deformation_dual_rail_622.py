@@ -512,15 +512,19 @@ def test_apply_economy_list_directed_pay_arrears_echoes_beyond_intent(game):
             "target_id": army_id,
             "category": "补饷",
             "reason": "定向补饷旨外",
+            "origin_ref": "dossier:item",
             "beyond_intent": True,
         }],
+        origin_ref="dossier:parent",
         commit=True,
     )
     assert applied and applied[0].get("beyond_intent") is True, applied
     assert applied[0]["delta"] == -10
+    assert applied[0]["origin_ref"] == "dossier:parent"
+    assert applied[0]["applied"] is True
 
     row = db.conn.execute(
-        "SELECT beyond_intent, purpose, target_id FROM economy_ledger "
+        "SELECT beyond_intent, purpose, target_id, origin_ref FROM economy_ledger "
         "WHERE id > ? ORDER BY id DESC LIMIT 1",
         (ledger_before,),
     ).fetchone()
@@ -528,8 +532,9 @@ def test_apply_economy_list_directed_pay_arrears_echoes_beyond_intent(game):
     assert int(row["beyond_intent"]) == 1
     assert row["purpose"] == "补饷"
     assert row["target_id"] == army_id
+    assert row["origin_ref"] == "dossier:parent"
 
-    # 反向锚：不带标记 → ledger=0，回执不回响 beyond_intent
+    # 反向锚：不带标记 → ledger=0，canonical 回执为 false/空来源
     applied_plain = _apply_economy_list(
         db,
         state,
@@ -544,7 +549,9 @@ def test_apply_economy_list_directed_pay_arrears_echoes_beyond_intent(game):
         }],
         commit=True,
     )
-    assert applied_plain and "beyond_intent" not in applied_plain[0], applied_plain
+    assert applied_plain and applied_plain[0]["beyond_intent"] is False, applied_plain
+    assert applied_plain[0]["origin_ref"] == ""
+    assert applied_plain[0]["applied"] is True
     plain_row = db.conn.execute(
         "SELECT beyond_intent FROM economy_ledger WHERE reason=? ORDER BY id DESC LIMIT 1",
         ("定向补饷无标记",),
@@ -568,7 +575,9 @@ def test_apply_economy_list_directed_pay_arrears_echoes_beyond_intent(game):
         }],
         commit=True,
     )
-    assert applied_bad and "beyond_intent" not in applied_bad[0], applied_bad
+    assert applied_bad and applied_bad[0]["beyond_intent"] is False, applied_bad
+    assert applied_bad[0]["origin_ref"] == ""
+    assert applied_bad[0]["applied"] is True
     bad_row = db.conn.execute(
         "SELECT beyond_intent FROM economy_ledger WHERE reason=? ORDER BY id DESC LIMIT 1",
         ("定向补饷畸形",),
