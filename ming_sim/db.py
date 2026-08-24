@@ -986,6 +986,7 @@ class GameDB:
                 arrears INTEGER NOT NULL,
                 province_pay_arrears REAL NOT NULL DEFAULT 0,
                 central_pay_arrears REAL NOT NULL DEFAULT 0,
+                consecutive_pay_shortfall_months INTEGER NOT NULL DEFAULT 0,
                 pay_source_region TEXT NOT NULL DEFAULT '',
                 province_pay_share REAL NOT NULL DEFAULT 0,
                 central_pay_share REAL NOT NULL DEFAULT 0,
@@ -2047,6 +2048,7 @@ class GameDB:
         self.ensure_column("armies", "owner_power", "TEXT NOT NULL DEFAULT 'ming'")
         self.ensure_column("armies", "province_pay_arrears", "REAL NOT NULL DEFAULT 0")
         self.ensure_column("armies", "central_pay_arrears", "REAL NOT NULL DEFAULT 0")
+        self.ensure_column("armies", "consecutive_pay_shortfall_months", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("armies", "pay_source_region", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("armies", "province_pay_share", "REAL NOT NULL DEFAULT 0")
         self.ensure_column("armies", "central_pay_share", "REAL NOT NULL DEFAULT 0")
@@ -4514,10 +4516,13 @@ class GameDB:
                 """
                 UPDATE armies
                 SET province_pay_arrears = ?, arrears = ?, morale = ?,
+                    consecutive_pay_shortfall_months = CASE
+                        WHEN ? > 1e-9 THEN consecutive_pay_shortfall_months + 1 ELSE 0 END,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
-                (province_arrears, province_arrears + central_arrears, new_morale, army_id),
+                (province_arrears, province_arrears + central_arrears, new_morale,
+                 total_shortfall, army_id),
             )
             province_delta = province_arrears - old_province_arrears
             reason = f"{TURN_UNIT}省源军饷分账"
@@ -18245,8 +18250,8 @@ class GameDB:
     ) -> bool:
         """#621 P3：待办消费单写口 pending→consumed/rolled。
 
-        幂等：目标态已是 status 或非 pending 源态 → False 且不改行。
-        payload_patch：可选 dict，并入既有 payload_json（#626 判决痕迹等同缝落账）。
+        幂等：目标态已是 status 且无 payload_patch，或非 pending 源态 → False。
+        payload_patch：可选 dict，并入既有 payload_json；允许 pending 原位落判决痕迹。
         commit=False 可入外层事务。
         """
         allowed = {"consumed", "rolled", "pending"}
@@ -18268,10 +18273,10 @@ class GameDB:
         if row is None:
             return False
         current = str(row["status"] or "")
-        if current == new_status:
+        if current == new_status and patch is None:
             return False
-        # 消费/滚存仅自 pending；已消费不得被 pending 复活
-        if new_status == "pending":
+        # pending 原位更新只用于在同一 durable todo 落 payload 事实；无 patch 不复活。
+        if new_status == "pending" and current != "pending":
             return False
         if current != "pending":
             return False
