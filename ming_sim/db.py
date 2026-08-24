@@ -115,6 +115,50 @@ def mutiny_loyalty_cap(mutiny_count: int, redemption_count: int = 0) -> int:
 LOYALTY_SOFT_ADJUST_MAX = 15
 
 
+def fold_loyalty_alias_delta(raw_changes: Mapping[str, object]) -> int | None:
+    """同军同事件 loyalty 规范键/别名合法整数净合计。
+
+    仅合计 alias→loyalty 且合法整数的叶；bool/float/非 int 不并入（非法叶仍由调用方逐叶拒收）。
+    无任何合法 loyalty 叶时返回 None。
+    """
+    loyalty_canonical_delta: int | None = None
+    for raw_field, value in raw_changes.items():
+        if ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip()) != "loyalty":
+            continue
+        try:
+            if isinstance(value, bool) or isinstance(value, float):
+                raise ValueError("非整数 delta")
+            leaf = int(value)
+        except (TypeError, ValueError):
+            continue
+        loyalty_canonical_delta = (
+            leaf if loyalty_canonical_delta is None else loyalty_canonical_delta + leaf
+        )
+    return loyalty_canonical_delta
+
+
+def compute_loyalty_soft_adjust(
+    old: int,
+    net_delta: int,
+    *,
+    net_pct: int = 0,
+    mutiny_count: int = 0,
+    redemption_count: int = 0,
+) -> tuple[int, int]:
+    """唯一 loyalty 软调纯计算真源。
+
+    顺序：net → legacy pct → ±LOYALTY_SOFT_ADJUST_MAX → mutiny_loyalty_cap 上界
+    → [0, cap] → (new_value, actual_delta)。写核与战略预检共用，禁止平行公式。
+    """
+    delta = int(net_delta)
+    if net_pct:
+        delta = GameDB.apply_legacy_pct(delta, int(net_pct))
+    delta = max(-LOYALTY_SOFT_ADJUST_MAX, min(LOYALTY_SOFT_ADJUST_MAX, delta))
+    upper_bound = mutiny_loyalty_cap(mutiny_count, redemption_count)
+    new_value = max(0, min(upper_bound, int(old) + delta))
+    return new_value, new_value - int(old)
+
+
 def _seed_guilt_storage_value(value: object) -> str:
     """Serialize the content-layer guilt mapping into the existing DB TEXT column."""
     if isinstance(value, Mapping):
@@ -7434,19 +7478,7 @@ class GameDB:
                             row = current_row
             # #320：同军同事件内 loyalty 规范键与别名只消费一次——先合计合法整数增量，
             # 通用环内落地一次 ±15 软钳，避免 {loyalty:50, 军心:50} 双键绕过单事件预算。
-            loyalty_canonical_delta: int | None = None
-            for _lf, _lv in raw_changes.items():
-                if ARMY_FIELD_ALIASES.get(str(_lf).strip(), str(_lf).strip()) != "loyalty":
-                    continue
-                try:
-                    if isinstance(_lv, bool) or isinstance(_lv, float):
-                        raise ValueError("非整数 delta")
-                    _li = int(_lv)
-                except (TypeError, ValueError):
-                    continue  # 非法值仍走下方逐项拒收，不并入合计
-                loyalty_canonical_delta = (
-                    _li if loyalty_canonical_delta is None else loyalty_canonical_delta + _li
-                )
+            loyalty_canonical_delta = fold_loyalty_alias_delta(raw_changes)
             loyalty_soft_consumed = False
             for raw_field, value in raw_changes.items():
                 field = ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
@@ -7625,31 +7657,37 @@ class GameDB:
                         if loyalty_soft_consumed:
                             continue
                         loyalty_soft_consumed = True
-                        delta = int(
+                        net_delta = int(
                             loyalty_canonical_delta
                             if loyalty_canonical_delta is not None
                             else value
                         )
+                        net_pct = int(((self.legacy_modifiers(state).get("armies") or {})
+                                       .get(army_id) or {}).get(field, 0) or 0)
+                        new_value, actual_delta = compute_loyalty_soft_adjust(
+                            int(old_value),
+                            net_delta,
+                            net_pct=net_pct,
+                            mutiny_count=int(row["mutiny_count"] or 0),
+                            redemption_count=int(row["redemption_count"] or 0),
+                        )
+                        if actual_delta == 0:
+                            continue
+                        stored_new = new_value
+                        log_delta = actual_delta
                     else:
                         delta = int(value)
-                    # 遗产百分比修正：该军该字段若有 active 遗产修正符，先放大/缩小 delta
-                    net_pct = int(((self.legacy_modifiers(state).get("armies") or {})
-                                   .get(army_id) or {}).get(field, 0) or 0)
-                    if net_pct:
-                        delta = self.apply_legacy_pct(delta, net_pct)
-                    # #320：loyalty 软调全路径 ±15（pct 后、cap 前）；无来源豁免肢
-                    if field == "loyalty":
-                        delta = max(-LOYALTY_SOFT_ADJUST_MAX, min(LOYALTY_SOFT_ADJUST_MAX, delta))
-                    upper_bound = (
-                        mutiny_loyalty_cap(row["mutiny_count"], row["redemption_count"])
-                        if field == "loyalty" else 100
-                    )
-                    new_value = max(0, min(upper_bound, int(old_value) + delta))
-                    actual_delta = new_value - int(old_value)
-                    if actual_delta == 0:
-                        continue
-                    stored_new = new_value
-                    log_delta = actual_delta
+                        # 遗产百分比修正：该军该字段若有 active 遗产修正符，先放大/缩小 delta
+                        net_pct = int(((self.legacy_modifiers(state).get("armies") or {})
+                                       .get(army_id) or {}).get(field, 0) or 0)
+                        if net_pct:
+                            delta = self.apply_legacy_pct(delta, net_pct)
+                        new_value = max(0, min(100, int(old_value) + delta))
+                        actual_delta = new_value - int(old_value)
+                        if actual_delta == 0:
+                            continue
+                        stored_new = new_value
+                        log_delta = actual_delta
                 elif field == "manpower":
                     delta = int(value)
                     new_value = max(0, int(old_value) + delta)
