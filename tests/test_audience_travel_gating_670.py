@@ -300,7 +300,14 @@ def test_fresh_summon_applier_failure_rolls_back_and_close_retry_is_safe(game, m
 
 
 def test_arrived_summon_continuation_survives_failed_apply_across_months(game, monkeypatch):
-    """#670 T-D：抵原地 payload 见抵达 → 续启 applier 失败跨月仍未结 → 成功才结。"""
+    """#670 T-D：抵原地 payload 见抵达 → settle_with_delta 续启失败跨月仍未结 → 成功才结。
+
+    经月度生产缝 settle_with_delta（_settle_after_extract_body 在 applier 成功后结清）；
+    成功路径禁止手调 settle_applied_arrived_summons。
+    """
+    import ming_sim.decree as decree_mod
+    from ming_sim.decree import settle_with_delta
+
     db, state, content = game
     person = _set_place(
         game, "洪承畴", location="shaanxi", transit_to="henan", transit_start_turn=0,
@@ -326,8 +333,7 @@ def test_arrived_summon_continuation_survives_failed_apply_across_months(game, m
     assert _travel_row(db, person.name)["location"] == "henan"
     assert _travel_row(db, person.name)["transit_to"] == ""
 
-    from ming_sim import issues
-    real_apply = issues.apply_score_extraction
+    real_apply = decree_mod.apply_score_extraction
     attempts = 0
     continuation = {"人物变更": [{
         "name": person.name, "动作": "行止", "transit_to": "beizhili",
@@ -341,24 +347,32 @@ def test_arrived_summon_continuation_survives_failed_apply_across_months(game, m
             raise RuntimeError("injected continuation applier failure")
         return real_apply(*args, **kwargs)
 
-    monkeypatch.setattr(issues, "apply_score_extraction", fail_once)
-    with pytest.raises(RuntimeError, match="injected continuation applier failure"):
-        issues.apply_score_extraction(db, state, continuation, content=content)
+    monkeypatch.setattr(decree_mod, "apply_score_extraction", fail_once)
+    failed_turn = int(state.turn)
+    from ming_sim.exceptions import SettlementAbort
+    with pytest.raises(SettlementAbort) as excinfo:
+        settle_with_delta(
+            state, db, continuation, before_turn=failed_turn, content=content,
+        )
+    assert isinstance(excinfo.value.__cause__, RuntimeError)
+    assert "injected continuation applier failure" in str(excinfo.value.__cause__)
 
     assert [row["origin_id"] for row in an.list_unsettled_summons(db)] == [origin]
-    assert an.settle_applied_arrived_summons(db, {}) == []
     assert _travel_row(db, person.name)["location"] == "henan"
     assert _travel_row(db, person.name)["transit_to"] == ""
+    assert int(state.turn) == failed_turn
 
+    # 跨月保留：失败路径 atomic 回滚不吞结清；推月后 payload 仍见抵达。
     state.turn = int(state.turn) + 1
     next_payload = build_simulator_payload(state, db, "", "")
     assert next_payload["unsettled_arrived_summons"] == [arrived_fact]
     assert _travel_row(db, person.name)["location"] == "henan"
 
-    applied = issues.apply_score_extraction(db, state, continuation, content=content)
-    assert an.settle_applied_arrived_summons(db, applied) == [origin]
+    # 成功月：只经 settle_with_delta；结清证明不得手调 helper。
+    settle_with_delta(
+        state, db, continuation, before_turn=int(state.turn), content=content,
+    )
     assert an.list_unsettled_summons(db) == []
-    assert an.settle_applied_arrived_summons(db, applied) == []
     after = _travel_row(db, person.name)
     assert after["location"] == "henan"
     assert after["transit_to"] == "beizhili"
