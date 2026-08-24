@@ -34,7 +34,7 @@ import ming_sim.issues as issues_mod
 from ming_sim.issues import apply_score_extraction, validate_delta_shape as _validate_delta_shape
 from ming_sim.content import GameContent
 from ming_sim.db import GameDB
-from ming_sim.models import FRONT_HALF_DONE_PHASES, LLMConfig
+from ming_sim.models import LLMConfig, TurnPhase
 from ming_sim.simulation import canonicalize_extraction
 from ming_sim.token_stats import tlog
 
@@ -116,10 +116,14 @@ def _dump_board(db, state) -> None:
 
 
 def _require_prepared_context(db, state):
-    """settle 门禁：同 turn 须已 prepare（FRONT_HALF_DONE + resolve context）。零写。"""
-    if state.turn_phase not in FRONT_HALF_DONE_PHASES:
+    """settle 门禁：仅 settling + 同 turn resolve context。零写。
+
+    不得用 FRONT_HALF_DONE_PHASES：其中含 awaiting_decision，会绕过 HITL 暂停。
+    """
+    if state.turn_phase != TurnPhase.SETTLING.value:
         raise ValueError(
-            "须先调用 driver prepare（前半段未完成）。"
+            "须先调用 driver prepare（仅 settling 可 settle；"
+            f"当前相位={state.turn_phase!r}）。"
             "法定顺序：prepare → 产叙事+delta → settle --delta"
         )
     ctx = db.get_resolve_context(int(state.turn))

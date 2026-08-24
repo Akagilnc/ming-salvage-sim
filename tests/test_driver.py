@@ -21,6 +21,7 @@ import pytest
 
 import driver
 from driver import run_prepare, run_settle
+from ming_sim.applier import Provenance
 from ming_sim.distance import DistanceMatrix
 from ming_sim.models import TurnPhase
 from tests.conftest import active_ming_character
@@ -951,3 +952,157 @@ def test_two_phase_delta_validation_and_advance_preserved(game):
     assert state.turn == before + 1
     with pytest.raises(ValueError):
         run_settle(db, state, content, "not-a-dict")
+
+
+def test_prepare_ready0_reentry_preserves_context_bytes(game, monkeypatch):
+    """ready0 二次 prepare：完整 context/arrivals 不变，不二次 tick/财政。"""
+    import ming_sim.decree as decree_mod
+    import copy
+
+    db, state, content = game
+    name = active_ming_character(db, content)
+    origin, dest = "henan", "beizhili"
+    r0 = _MATRIX.travel_time(origin, dest)
+    assert r0 <= 1.0
+    db.set_character_transit(
+        name,
+        location=origin,
+        transit_to=dest,
+        distance_remaining=r0,
+        speed_factor=1.0,
+        start_turn=int(state.turn) - 1,
+        content=content,
+    )
+    turn = state.turn
+    tick_calls = {"n": 0}
+    real_tick = decree_mod.tick_transit_arrivals
+
+    def _count_tick(*a, **k):
+        tick_calls["n"] += 1
+        return real_tick(*a, **k)
+
+    monkeypatch.setattr(decree_mod, "tick_transit_arrivals", _count_tick)
+
+    arrivals1 = run_prepare(
+        db, state, content,
+        decree_text="御笔原诏",
+        source=Provenance.hitl_decision,
+    )
+    ctx1 = copy.deepcopy(db.get_resolve_context(turn))
+    ledger1 = db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (turn,)
+    ).fetchone()[0]
+    ticks1 = tick_calls["n"]
+    assert ticks1 == 1
+    assert ctx1["decree_text"] == "御笔原诏"
+    assert ctx1["source"] == Provenance.hitl_decision.value
+    assert ctx1["extracted"] is None
+    assert arrivals1 == [{"name": name, "location": dest}]
+
+    arrivals2 = run_prepare(db, state, content)  # 默认空诏 + player_decree
+    ctx2 = db.get_resolve_context(turn)
+    assert arrivals2 == arrivals1
+    assert ctx2 == ctx1
+    assert tick_calls["n"] == ticks1
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (turn,)
+    ).fetchone()[0] == ledger1
+
+
+def test_prepare_ready1_reentry_preserves_crash_truth(game, monkeypatch):
+    """ready1 apply 崩溃真源后误调 prepare：不降级、不丢载荷。"""
+    import copy
+
+    db, state, content = game
+    name = active_ming_character(db, content)
+    origin, dest = "henan", "beizhili"
+    r0 = _MATRIX.travel_time(origin, dest)
+    db.set_character_transit(
+        name,
+        location=origin,
+        transit_to=dest,
+        distance_remaining=r0,
+        speed_factor=1.0,
+        start_turn=int(state.turn) - 1,
+        content=content,
+    )
+    lead = name
+    dossier_id = db.create_decree_dossier(
+        state, action_type="assignment", decree_text="命修历。",
+        target_kind="issue", target_id="calendar-668-ready1",
+        participants=[{"character_id": lead, "tier": "主办"}],
+    )
+    turn = state.turn
+    run_prepare(
+        db, state, content,
+        decree_text="御笔原诏",
+        source=Provenance.hitl_decision,
+    )
+    monkeypatch.setattr(
+        driver, "settle_with_delta",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("stop-after-ready1")),
+    )
+    with pytest.raises(RuntimeError, match="stop-after-ready1"):
+        run_settle(
+            db, state, content, {"地区变化": {"shanxi": {"origin_ref": "盘面自发", "动乱": 1}}},
+            narrative="邸报正文", decree_text="御笔原诏",
+        )
+    ctx_ready1 = copy.deepcopy(db.get_resolve_context(turn))
+    assert isinstance(ctx_ready1["extracted"], dict)
+    assert ctx_ready1["resolve_contract_version"] >= 1
+    assert ctx_ready1["narrative"] == "邸报正文"
+    assert ctx_ready1["decree_text"] == "御笔原诏"
+    assert {"id": dossier_id} in ctx_ready1["simulator_payload"]["decree_dossiers"]
+    assert ctx_ready1["simulator_payload"]["transit_arrivals"] == [
+        {"name": name, "location": dest}
+    ]
+
+    run_prepare(db, state, content)  # 误调：不得降级 ready1 真源
+    ctx_after = db.get_resolve_context(turn)
+    assert ctx_after == ctx_ready1
+    assert isinstance(ctx_after["extracted"], dict)
+    assert ctx_after["resolve_contract_version"] == ctx_ready1["resolve_contract_version"]
+    assert ctx_after["narrative"] == "邸报正文"
+    assert ctx_after["simulator_payload"]["decree_dossiers"] == (
+        ctx_ready1["simulator_payload"]["decree_dossiers"]
+    )
+
+
+def test_settle_rejects_awaiting_decision_zero_writes(game):
+    """awaiting_decision 调 driver settle：响亮 ValueError，turn/phase/context/ledger 零写。"""
+    db, state, content = game
+    turn = state.turn
+    run_prepare(
+        db, state, content,
+        decree_text="御笔原诏",
+        source=Provenance.hitl_decision,
+    )
+    ctx_before = db.get_resolve_context(turn)
+    assert ctx_before is not None
+    ledger_before = db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (turn,)
+    ).fetchone()[0]
+    unrest_before = db.conn.execute(
+        "SELECT unrest FROM regions WHERE id='shanxi'"
+    ).fetchone()[0]
+
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
+
+    with pytest.raises(ValueError, match="settling|prepare"):
+        run_settle(
+            db, state, content,
+            {"地区变化": {"shanxi": {"origin_ref": "盘面自发", "动乱": 9}}},
+            narrative="绕过 HITL",
+        )
+
+    assert state.turn == turn
+    assert state.turn_phase == TurnPhase.AWAITING_DECISION.value
+    assert db.load_state().turn_phase == TurnPhase.AWAITING_DECISION.value
+    assert db.get_resolve_context(turn) == ctx_before
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (turn,)
+    ).fetchone()[0] == ledger_before
+    assert db.conn.execute(
+        "SELECT unrest FROM regions WHERE id='shanxi'"
+    ).fetchone()[0] == unrest_before
