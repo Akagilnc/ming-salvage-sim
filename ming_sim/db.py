@@ -2151,11 +2151,54 @@ class GameDB:
                 last_brewed_period INTEGER NOT NULL DEFAULT 0,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
+
+            -- #690 / ADR 0011-2：血债棘轮 substrate（log 真源 + sparse 缓存）
+            CREATE TABLE IF NOT EXISTS faction_axis_debt (
+                faction TEXT NOT NULL REFERENCES factions(name),
+                axis TEXT NOT NULL CHECK (axis IN (
+                    '礼法名节','既得利益','实务事功','皇权依附','华夷战和','民本恤民'
+                )),
+                blood_debt INTEGER NOT NULL DEFAULT 0 CHECK (blood_debt >= 0),
+                wariness INTEGER NOT NULL DEFAULT 0 CHECK (wariness >= 0),
+                PRIMARY KEY (faction, axis)
+            );
+
+            CREATE TABLE IF NOT EXISTS centrifuge_log (
+                id INTEGER PRIMARY KEY,
+                turn INTEGER NOT NULL,
+                faction TEXT NOT NULL REFERENCES factions(name),
+                axis TEXT CHECK (
+                    axis IS NULL OR axis IN (
+                        '礼法名节','既得利益','实务事功','皇权依附','华夷战和','民本恤民'
+                    )
+                ),
+                kind TEXT NOT NULL CHECK (kind IN ('direct','kinship','overdraw')),
+                base INTEGER,
+                legitimacy_pct INTEGER,
+                amount INTEGER NOT NULL CHECK (amount > 0),
+                source_name TEXT,
+                reason_code TEXT,
+                source TEXT,
+                idem_key TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                CHECK (
+                    (kind = 'overdraw' AND axis IS NULL AND base IS NULL
+                     AND legitimacy_pct IS NULL)
+                    OR (kind IN ('direct','kinship') AND axis IS NOT NULL
+                        AND base IS NOT NULL AND legitimacy_pct IS NOT NULL)
+                )
+            );
             """.replace("__AUTHORITY_PRIVILEGES__", AUTHORITY_PRIVILEGE_SQL_IN)
         )
         # #637 S6：老档迁移——relation_brew_pending 泛化身份列（新档建表已含，此处幂等）。
         self.ensure_column(
             "relation_brew_pending", "item_kind", "TEXT NOT NULL DEFAULT '关系'"
+        )
+        # #690 / ADR 0011-2：逐派皇权透支账（廷杖侧第一刀；老档 ensure_column 迁移）
+        self.ensure_column(
+            "factions",
+            "edict_overdraw",
+            "INTEGER NOT NULL DEFAULT 0 CHECK (edict_overdraw >= 0)",
         )
         self._migrate_building_logs_to_durable_audit()
         self._ensure_office_type_parents()
