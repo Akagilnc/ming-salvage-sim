@@ -1838,8 +1838,10 @@ def record_summon_fresh(
     origin_id: object = "",
     origin_chat_turn_id: int = 0,
 ) -> int:
-    """落 fresh 场外传召账；同一人物任意未结 fresh 只保留一段（通道 origin 仅审计标签）。
+    """落 fresh 场外传召账；带 origin 时，同一人物同一未结 origin 幂等。
 
+    不同 origin 各留独立 ledger 行及各自 origin_chat_turn_id，供逐轮撤回；
+    收夜启程仍由 commit_fresh_summons_for_night 按人聚合一次。
     默认 body 为空：机器事实只在 tags；玩家可见句由既有 LLM 特征路径生成（P7）。
     """
     name = str(person_name or "").strip()
@@ -1847,10 +1849,11 @@ def record_summon_fresh(
         raise AudienceNightError("传召人名不能为空", code="empty_person")
     method = _validate_summon_method(method, default=METHOD_CHUANZHAO)
     origin_tag = _summon_origin_tag(origin_id)
-    # #670：同人未结 fresh 只一段启程——再消费（即便通道 origin 不同）复用已有 entry。
-    for item in list_unsettled_summons(db):
-        if item["person_name"] == name and item["kind"] == "fresh":
-            return int(item["entry_id"])
+    # #670 / ADR 0096：同人+同 origin 幂等；跨 origin 不得共享行（撤一轮不得误删另一轮）。
+    if origin_tag:
+        for item in list_unsettled_summons(db):
+            if item["person_name"] == name and item["origin_id"] == str(origin_id).strip():
+                return int(item["entry_id"])
     tags = [method]
     if origin_tag:
         tags.extend([TAG_SUMMON_UNSETTLED, origin_tag])
