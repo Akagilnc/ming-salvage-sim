@@ -2230,6 +2230,11 @@ class GameDB:
         self.ensure_column("pending_decisions", "actor_name", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("pending_decisions", "actor_office", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("pending_decisions", "actor_faction", "TEXT NOT NULL DEFAULT ''")
+        # #657：改票轮次与 append-only 全史；默认 0 / '[]' 兼容旧行。
+        self.ensure_column(
+            "pending_decisions", "revision_round", "INTEGER NOT NULL DEFAULT 0")
+        self.ensure_column(
+            "pending_decisions", "prior_options_json", "TEXT NOT NULL DEFAULT '[]'")
         self._backfill_event_triggers_from_event_pool_issues()
         # 步骤7：回合阶段（旧库迁移，schema 升级非 fallback）
         self.ensure_column("game_state", "turn_phase", "TEXT NOT NULL DEFAULT 'summoning'")
@@ -2365,6 +2370,13 @@ class GameDB:
         self.ensure_column(
             "story_ledger_entries", "presence_effect", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("story_ledger_entries", "order_key", "REAL")
+        # #657：召见垫位/消费 origin 领域身份；空串不参与 partial UNIQUE。
+        self.ensure_column(
+            "story_ledger_entries", "origin_ref", "TEXT NOT NULL DEFAULT ''")
+        self.conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_ledger_origin_ref "
+            "ON story_ledger_entries(origin_ref) WHERE origin_ref != ''"
+        )
         self.ensure_column(
             "audience_nights", "next_event_seq", "INTEGER NOT NULL DEFAULT 0")
         # #612 endorsement-bound is CLOSE_STEPS/close_commit_cursor — no parallel column.
@@ -11274,10 +11286,12 @@ class GameDB:
         rescript_draft 票拟行不再混进亲裁/刷新/all-decided/submit 消费面
         （急务只经 list_rescript_drafts 读，批红面归 #657）；调用方不再重复过滤。
         options 反序列化；choice 为已选则带出。
+        #657：补 revision_round / prior_options_json 投影。
         """
         rows = self.conn.execute(
             "SELECT idx, event_id, title, context, rejection_reason, opposition, "
-            "options_json, choice_json, status, kind, actor_name, actor_office, actor_faction "
+            "options_json, choice_json, status, kind, actor_name, actor_office, actor_faction, "
+            "revision_round, prior_options_json "
             "FROM pending_decisions WHERE turn = ? AND kind = 'decision' ORDER BY idx",
             (int(turn),),
         ).fetchall()
@@ -11294,6 +11308,11 @@ class GameDB:
             except Exception as exc:
                 tlog(f"[db] choice_json 损坏，回 None（idx={r['idx']}）：{exc}")  # #14 surface
                 choice = None
+            try:
+                prior = json.loads(r["prior_options_json"] or "[]")
+            except Exception as exc:
+                tlog(f"[db] prior_options_json 损坏，回空：{exc}")  # #14 surface
+                prior = []
             out.append({
                 "idx": int(r["idx"]),
                 "event_id": r["event_id"],
@@ -11308,6 +11327,8 @@ class GameDB:
                 "actor_name": r["actor_name"],
                 "actor_office": r["actor_office"],
                 "actor_faction": r["actor_faction"],
+                "revision_round": int(r["revision_round"] or 0),
+                "prior_options_json": prior if isinstance(prior, list) else [],
             })
         return out
 
@@ -11365,10 +11386,13 @@ class GameDB:
             idx += 1
 
     def list_rescript_drafts(self) -> List[Dict[str, object]]:
-        """#656：全部急务票拟行（kind='rescript_draft'），跨月留存待 #657 批红面消费。"""
+        """#656：全部急务票拟行（kind='rescript_draft'），跨月留存待 #657 批红面消费。
+
+        #657：补 choice / revision_round / prior_options_json 投影（list 面保留）。
+        """
         rows = self.conn.execute(
-            "SELECT turn, idx, event_id, title, context, options_json, status, "
-            "actor_name, actor_office, actor_faction "
+            "SELECT turn, idx, event_id, title, context, options_json, choice_json, status, "
+            "actor_name, actor_office, actor_faction, revision_round, prior_options_json "
             "FROM pending_decisions WHERE kind = 'rescript_draft' ORDER BY turn, idx"
         ).fetchall()
         out: List[Dict[str, object]] = []
@@ -11378,6 +11402,17 @@ class GameDB:
             except Exception as exc:
                 tlog(f"[db] options_json 损坏，回空：{exc}")  # #14 surface
                 options = []
+            choice_raw = (r["choice_json"] or "").strip()
+            try:
+                choice = json.loads(choice_raw) if choice_raw else None
+            except Exception as exc:
+                tlog(f"[db] choice_json 损坏，回 None（draft turn={r['turn']} idx={r['idx']}）：{exc}")
+                choice = None
+            try:
+                prior = json.loads(r["prior_options_json"] or "[]")
+            except Exception as exc:
+                tlog(f"[db] prior_options_json 损坏，回空：{exc}")  # #14 surface
+                prior = []
             out.append({
                 "turn": int(r["turn"]),
                 "idx": int(r["idx"]),
@@ -11385,10 +11420,85 @@ class GameDB:
                 "title": r["title"],
                 "context": r["context"],
                 "options": options if isinstance(options, list) else [],
+                "choice": choice,
                 "status": r["status"],
                 "actor_name": r["actor_name"],
                 "actor_office": r["actor_office"],
                 "actor_faction": r["actor_faction"],
+                "revision_round": int(r["revision_round"] or 0),
+                "prior_options_json": prior if isinstance(prior, list) else [],
+            })
+        return out
+
+    def list_rescript_desk(self, turn: int) -> List[Dict[str, object]]:
+        """#657 批红案头唯一合并读出口。
+
+        序：全部 pending 急务（跨月）ORDER BY turn, idx → 本月 pending decision ORDER BY idx。
+        投影含 decision_key="{kind}:{source_turn}:{idx}"、options、choice、revision_round、
+        status、actor；**不**持久窗 id/集合摘要/窗版本。
+        list_rescript_drafts / list_pending_decisions 调用面保留；本方法是批红合并出口。
+        """
+        turn = int(turn)
+        rows = self.conn.execute(
+            """
+            SELECT turn, idx, event_id, title, context, rejection_reason, opposition,
+                   options_json, choice_json, status, kind,
+                   actor_name, actor_office, actor_faction,
+                   revision_round, prior_options_json
+            FROM pending_decisions
+            WHERE status = 'pending'
+              AND (
+                    kind = 'rescript_draft'
+                    OR (kind = 'decision' AND turn = ?)
+                  )
+            ORDER BY
+              CASE kind WHEN 'rescript_draft' THEN 0 ELSE 1 END,
+              turn, idx
+            """,
+            (turn,),
+        ).fetchall()
+        out: List[Dict[str, object]] = []
+        for r in rows:
+            kind = str(r["kind"] or "decision")
+            source_turn = int(r["turn"])
+            idx = int(r["idx"])
+            try:
+                options = json.loads(r["options_json"] or "[]")
+            except Exception as exc:
+                tlog(f"[db] options_json 损坏，回空：{exc}")  # #14 surface
+                options = []
+            if not isinstance(options, list):
+                options = []
+            choice_raw = (r["choice_json"] or "").strip()
+            try:
+                choice = json.loads(choice_raw) if choice_raw else None
+            except Exception as exc:
+                tlog(f"[db] choice_json 损坏，回 None（desk {kind}:{source_turn}:{idx}）：{exc}")
+                choice = None
+            try:
+                prior = json.loads(r["prior_options_json"] or "[]")
+            except Exception as exc:
+                tlog(f"[db] prior_options_json 损坏，回空：{exc}")  # #14 surface
+                prior = []
+            out.append({
+                "decision_key": f"{kind}:{source_turn}:{idx}",
+                "kind": kind,
+                "source_turn": source_turn,
+                "turn": source_turn,
+                "idx": idx,
+                "event_id": r["event_id"],
+                "title": r["title"],
+                "context": r["context"],
+                "rejection_reason": r["rejection_reason"] if "rejection_reason" in r.keys() else "",
+                "opposition": r["opposition"] if "opposition" in r.keys() else "",
+                "options": options,
+                "choice": choice,
+                "status": r["status"],
+                "actor_name": r["actor_name"],
+                "actor_office": r["actor_office"],
+                "actor_faction": r["actor_faction"],
+                "revision_round": int(r["revision_round"] or 0),
+                "prior_options_json": prior if isinstance(prior, list) else [],
             })
         return out
 
