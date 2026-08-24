@@ -512,19 +512,24 @@ def compute_budget_lines(
 
 
 def _substrate_hub_budget_army_pay(db: GameDB, state: GameState) -> int:
-    """Return the fixed-budget army-pay outflow for substrate_hub saves."""
+    """Return the fixed-budget army-pay outflow for substrate_hub saves.
+
+    与 ``apply_fixed_period_flows`` 同源：按 ``ARMY_SALARY_PRIORITY`` 编序后走
+    ``_central_dues_with_haircut`` 折后 Due，再交 ``_compute_substrate_hub_outbound``。
+    """
     rows = db.conn.execute(
         """
-        SELECT id, manpower, salary_rate, owner_power, central_pay_share
+        SELECT id, manpower, salary_rate, owner_power, central_pay_share,
+               pay_source_region
         FROM armies
         WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0
           AND central_pay_share > 0
         """
     ).fetchall()
-    central_due_by_army = {
-        str(row["id"]): army_needed(row) * float(row["central_pay_share"] or 0)
-        for row in rows
-    }
+    army_map = {str(r["id"]): r for r in rows}
+    ordered = [army_map[k] for k in ARMY_SALARY_PRIORITY if k in army_map]
+    ordered += [r for r in rows if str(r["id"]) not in ARMY_SALARY_PRIORITY]
+    central_due_by_army, _exempts = _central_dues_with_haircut(db, state, ordered)
     hub_outbound = _compute_substrate_hub_outbound(
         db,
         max(0.0, float(state.metrics.get("国库", 0) or 0)),
