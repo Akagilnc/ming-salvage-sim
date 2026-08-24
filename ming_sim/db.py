@@ -89,6 +89,11 @@ _ARMY_PAY_SOURCE_DELTA_FIELDS = frozenset((
 _COMMITMENT_STOP_CONDITION_RE = re.compile(r"character\.[^.]+\.loyalty\s*(?:>=|>)\s*\d+")
 
 
+def mutiny_loyalty_cap(mutiny_count: int, redemption_count: int = 0) -> int:
+    """ADR 0025 D6 唯一军心上限真源。"""
+    return max(60, min(100, 100 - 20 * int(mutiny_count) + 10 * int(redemption_count)))
+
+
 def _seed_guilt_storage_value(value: object) -> str:
     """Serialize the content-layer guilt mapping into the existing DB TEXT column."""
     if isinstance(value, Mapping):
@@ -990,6 +995,8 @@ class GameDB:
                 is_mutinied INTEGER NOT NULL DEFAULT 0 CHECK(is_mutinied IN (0, 1)),
                 mutiny_count INTEGER NOT NULL DEFAULT 0,
                 mutiny_probation INTEGER NOT NULL DEFAULT 0,
+                full_pay_streak INTEGER NOT NULL DEFAULT 0,
+                redemption_count INTEGER NOT NULL DEFAULT 0,
                 mobility INTEGER NOT NULL,
                 loyalty INTEGER NOT NULL,
                 firearm_equipment INTEGER NOT NULL DEFAULT 0,
@@ -2048,6 +2055,8 @@ class GameDB:
         self.ensure_column("armies", "is_mutinied", "INTEGER NOT NULL DEFAULT 0 CHECK(is_mutinied IN (0, 1))")
         self.ensure_column("armies", "mutiny_count", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("armies", "mutiny_probation", "INTEGER NOT NULL DEFAULT 0")
+        self.ensure_column("armies", "full_pay_streak", "INTEGER NOT NULL DEFAULT 0")
+        self.ensure_column("armies", "redemption_count", "INTEGER NOT NULL DEFAULT 0")
         # 火器装备(鸟铳,野战+守城)/大炮装备(红夷炮,守城攻城、不利野战)：simulator 软判用的两条军备轴
         self.ensure_column("armies", "firearm_equipment", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("armies", "cannon_equipment", "INTEGER NOT NULL DEFAULT 0")
@@ -7286,7 +7295,11 @@ class GameDB:
                                    .get(army_id) or {}).get(field, 0) or 0)
                     if net_pct:
                         delta = self.apply_legacy_pct(delta, net_pct)
-                    new_value = max(0, min(100, int(old_value) + delta))
+                    upper_bound = (
+                        mutiny_loyalty_cap(row["mutiny_count"], row["redemption_count"])
+                        if field == "loyalty" else 100
+                    )
+                    new_value = max(0, min(upper_bound, int(old_value) + delta))
                     actual_delta = new_value - int(old_value)
                     if actual_delta == 0:
                         continue
