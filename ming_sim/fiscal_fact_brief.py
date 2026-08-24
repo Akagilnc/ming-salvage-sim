@@ -157,6 +157,17 @@ def _pay_order_displacement_entries(
     db: Any, config: Dict[str, int], region_id: str, st: Dict[str, Any],
     p: Dict[str, Any], turn: int,
 ) -> List[Dict[str, Any]]:
+    """due_priority 与 arrears_priority 两路反事实让位投影（F1.6/F2.2）。"""
+    out: List[Dict[str, Any]] = []
+    out.extend(_due_order_displacement_entries(db, config, region_id, st, p, turn))
+    out.extend(_arrears_order_displacement_entries(db, config, region_id, st, turn))
+    return out
+
+
+def _due_order_displacement_entries(
+    db: Any, config: Dict[str, int], region_id: str, st: Dict[str, Any],
+    p: Dict[str, Any], turn: int,
+) -> List[Dict[str, Any]]:
     """以既有当月欠流量反演实付，再按同一总实付重放祖制序，投影旨序新增受损。"""
     from ming_sim.pay_order import DEFAULT_DUE_PRIORITY, DUE_SUBJECTS, haircut_due, resolve_pay_order_overrides
 
@@ -206,6 +217,120 @@ def _pay_order_displacement_entries(
                 "metric": "欠禄额", "window_turns": 1, "value": displaced,
                 "origin_ref": origin, "affected_class": FACT_CLASS_MAP[subject],
                 "detail": f"旨序让位_{subject}",
+            })
+    return out
+
+
+def _arrears_priority_override_origin(
+    db: Any, config: Dict[str, int], region_id: str, turn: int,
+    displaced_subject: str, displaced: float, claims: Dict[str, float], pool: float,
+) -> str:
+    """逐键反事实找出确实造成该旧欠科目让位的在位旨，并返回其 provenance。"""
+    from ming_sim.pay_order import (
+        ARREARS_SUBJECTS, DEFAULT_ARREARS_PRIORITY, resolve_pay_order_overrides,
+    )
+
+    causal_keys: List[str] = []
+    default_order = tuple(sorted(ARREARS_SUBJECTS, key=DEFAULT_ARREARS_PRIORITY.__getitem__))
+    for changed_subject in ARREARS_SUBJECTS:
+        counterfactual = dict(config)
+        for key in (
+            f"arrears_priority_{changed_subject}@{region_id}",
+            f"arrears_priority_{changed_subject}",
+        ):
+            until = config.get(f"{key}_until_turn")
+            if key not in config or (until is not None and turn > int(until)):
+                continue
+            if int(config[key]) != DEFAULT_ARREARS_PRIORITY[changed_subject]:
+                counterfactual.pop(key)
+                resolved = resolve_pay_order_overrides(counterfactual, region_id, turn)
+                order = resolved.arrears_order if resolved is not None else default_order
+                remaining = pool
+                paid: Dict[str, float] = {}
+                for subject in order:
+                    paid[subject] = min(claims[subject], remaining)
+                    remaining -= paid[subject]
+                remaining = pool
+                default_paid: Dict[str, float] = {}
+                for subject in default_order:
+                    default_paid[subject] = min(claims[subject], remaining)
+                    remaining -= default_paid[subject]
+                if default_paid[displaced_subject] - paid[displaced_subject] < displaced - 1e-9:
+                    causal_keys.append(key)
+    if not causal_keys:
+        return ""
+    placeholders = ",".join("?" for _ in causal_keys)
+    row = db.conn.execute(
+        f"SELECT origin_ref FROM fiscal_config_changes WHERE key IN ({placeholders}) "
+        "ORDER BY id DESC LIMIT 1", tuple(causal_keys),
+    ).fetchone()
+    return str(row["origin_ref"] or "") if row is not None else ""
+
+
+def _arrears_order_displacement_entries(
+    db: Any, config: Dict[str, int], region_id: str, st: Dict[str, Any], turn: int,
+) -> List[Dict[str, Any]]:
+    """以当月 Repaid/省池旧欠流量反演实偿，再按同一总实偿重放祖制旧欠序，投影让位。
+
+    F1.6-③ / F2.2：只报因 arrears_priority 让位新增受损与胜出旨 origin_ref。
+    不扩 schema、不新表；复用 region_logs Repaid 与 army_logs 省池旧欠流量。
+    """
+    from ming_sim.pay_order import (
+        ARREARS_SUBJECTS, DEFAULT_ARREARS_PRIORITY, resolve_pay_order_overrides,
+    )
+
+    resolved = resolve_pay_order_overrides(config, region_id, turn)
+    default_order = tuple(sorted(ARREARS_SUBJECTS, key=DEFAULT_ARREARS_PRIORITY.__getitem__))
+    if resolved is None or resolved.arrears_order == default_order:
+        return []
+
+    actual_repaid = {s: 0.0 for s in ARREARS_SUBJECTS}
+    rows = db.conn.execute(
+        "SELECT field, delta FROM region_logs WHERE turn=? AND region_id=? "
+        "AND field IN ('settle_官俸欠_Repaid','settle_宗禄欠_Repaid')",
+        (turn, region_id),
+    ).fetchall()
+    for row in rows:
+        subject = "官俸欠" if "官俸欠" in str(row["field"]) else "宗禄欠"
+        # Repaid 留痕 delta 为负；取绝对值作实偿流量
+        actual_repaid[subject] += max(0.0, -float(row["delta"] or 0))
+    army = db.conn.execute(
+        "SELECT COALESCE(SUM(CASE WHEN CAST(old_value AS REAL)>CAST(new_value AS REAL) "
+        "THEN CAST(old_value AS REAL)-CAST(new_value AS REAL) ELSE 0 END),0) AS v "
+        "FROM army_logs WHERE turn=? AND field='province_pay_arrears' AND army_id IN "
+        "(SELECT id FROM armies WHERE pay_source_region=?)", (turn, region_id),
+    ).fetchone()
+    actual_repaid["军饷欠"] = float(army["v"] or 0)
+
+    # 偿前 CLAIM = 月末存量 + 当月实偿（action 补饷已在 settle 前扣，不入本瀑布）
+    claims = {
+        s: max(0.0, float(st.get(s, 0) or 0) + actual_repaid[s])
+        for s in ARREARS_SUBJECTS
+    }
+    pool = sum(actual_repaid.values())
+    if pool <= 1e-9:
+        return []
+    default_repaid: Dict[str, float] = {}
+    remaining = pool
+    for subject in default_order:
+        default_repaid[subject] = min(claims[subject], remaining)
+        remaining -= default_repaid[subject]
+
+    arrears_class = {"军饷欠": "军户", "官俸欠": "官僚", "宗禄欠": "宗藩"}
+    out: List[Dict[str, Any]] = []
+    for subject in default_order:
+        displaced = default_repaid[subject] - actual_repaid[subject]
+        if displaced <= 1e-9:
+            continue
+        origin = _arrears_priority_override_origin(
+            db, config, region_id, turn, subject, displaced, claims, pool,
+        )
+        if origin:
+            out.append({
+                "subject_kind": "region", "subject_id": region_id, "region": region_id,
+                "metric": "欠禄额", "window_turns": 1, "value": displaced,
+                "origin_ref": origin, "affected_class": arrears_class[subject],
+                "detail": f"旧欠序让位_{subject}",
             })
     return out
 

@@ -356,6 +356,7 @@ def test_golden5_expiry_and_revoke_restore_byte_identical_default(game):
 
 
 def test_real_revoke_decree_restores_override_and_clears_expiry(game):
+    """撤销使目标形状退出格律（删键），期限伴随键一并清除；读取回落祖制默认。"""
     db, state, _content = game
     target = _override_dossier(db, state, [{
         "key": "due_priority_军饷@shaanxi", "value": 40,
@@ -372,13 +373,22 @@ def test_real_revoke_decree_restores_override_and_clears_expiry(game):
     )
     db.apply_dossier_promulgation(state, revoke, "promulgated")
     cfg = db.get_fiscal_config()
-    assert cfg["due_priority_军饷@shaanxi"] == DEFAULT_DUE_PRIORITY["军饷"]
+    # 形状退出格律：键不在位（对齐到期 _live），禁留 live 默认值
+    assert "due_priority_军饷@shaanxi" not in cfg
     assert "due_priority_军饷@shaanxi_until_turn" not in cfg
+    assert resolve_pay_order_overrides(cfg, "shaanxi", db._current_settle_turn()) is None
     changes = db.conn.execute(
         "SELECT key, origin_ref FROM fiscal_config_changes WHERE origin_ref=? ORDER BY id",
         (f"dossier:{revoke}",),
     ).fetchall()
     assert [row["key"] for row in changes] == [
+        "due_priority_军饷@shaanxi", "due_priority_军饷@shaanxi_until_turn",
+    ]
+    tomb = db.conn.execute(
+        "SELECT key FROM fiscal_config_tombstones WHERE origin_ref=? ORDER BY id",
+        (f"dossier:{revoke}",),
+    ).fetchall()
+    assert [row["key"] for row in tomb] == [
         "due_priority_军饷@shaanxi", "due_priority_军饷@shaanxi_until_turn",
     ]
 
@@ -448,7 +458,7 @@ def test_deferred_real_revoke_restores_override_only_after_persist(game):
     result = finalize_persist(db, state, todo, commit=True)
     assert result["decision"] == "persist"
     cfg = db.get_fiscal_config()
-    assert cfg["due_priority_军饷@shaanxi"] == DEFAULT_DUE_PRIORITY["军饷"]
+    assert "due_priority_军饷@shaanxi" not in cfg
     assert "due_priority_军饷@shaanxi_until_turn" not in cfg
     origins = {row["origin_ref"] for row in db.conn.execute(
         "SELECT origin_ref FROM fiscal_config_changes "
@@ -659,6 +669,148 @@ def test_fact_brief_attributes_priority_displacement_to_dossier(game):
                 if e["detail"].startswith("旨序让位_")] == displaced
     finally:
         restored.close()
+
+
+def test_revoke_later_same_dim_decree_not_stomped(game):
+    """Codex-11/revoke_shape_exit①：同维后旨在位时撤前旨，不改该键。"""
+    db, state, _content = game
+    first = _override_dossier(
+        db, state, [{"key": "due_priority_军饷@shaanxi", "value": 40}],
+        text="前旨边饷居末",
+    )
+    db.apply_dossier_promulgation(state, first, "promulgated")
+    second = _override_dossier(
+        db, state, [{"key": "due_priority_军饷@shaanxi", "value": 5}],
+        text="后旨边饷最前",
+    )
+    db.apply_dossier_promulgation(state, second, "promulgated")
+    assert db.get_fiscal_config()["due_priority_军饷@shaanxi"] == 5
+    revoke = db.create_decree_dossier(
+        state, action_type="revoke_decree", decree_text="撤回前旨",
+        target_kind="dossier", target_id=str(first),
+        payload={"revoke_target_dossier_id": first},
+    )
+    db.apply_dossier_promulgation(state, revoke, "promulgated")
+    cfg = db.get_fiscal_config()
+    assert cfg["due_priority_军饷@shaanxi"] == 5  # 后旨 last-write 保全
+    row = db.conn.execute(
+        "SELECT origin_ref FROM fiscal_config WHERE key='due_priority_军饷@shaanxi'"
+    ).fetchone()
+    assert row["origin_ref"] == f"dossier:{second}"
+    # 撤销未写任何该键 change
+    stomps = db.conn.execute(
+        "SELECT 1 FROM fiscal_config_changes WHERE origin_ref=? AND key='due_priority_军饷@shaanxi'",
+        (f"dossier:{revoke}",),
+    ).fetchone()
+    assert stomps is None
+
+
+def test_revoke_provincial_falls_back_to_nationwide(game):
+    """Codex-11/revoke_shape_exit②：全国+省域并存时撤省域后该省回落全国键。"""
+    db, state, _content = game
+    nation = _override_dossier(
+        db, state, [{"key": "due_priority_军饷", "value": 35}],
+        text="全国边饷居后",
+    )
+    db.apply_dossier_promulgation(state, nation, "promulgated")
+    local = _override_dossier(
+        db, state, [{"key": "due_priority_军饷@shaanxi", "value": 50}],
+        text="陕西边饷居末",
+    )
+    db.apply_dossier_promulgation(state, local, "promulgated")
+    turn = db._current_settle_turn()
+    before = resolve_pay_order_overrides(db.get_fiscal_config(), "shaanxi", turn)
+    assert before is not None and before.due_order.index("军饷") == 3  # 省域50居末
+    revoke = db.create_decree_dossier(
+        state, action_type="revoke_decree", decree_text="撤陕西旨",
+        target_kind="dossier", target_id=str(local),
+        payload={"revoke_target_dossier_id": local},
+    )
+    db.apply_dossier_promulgation(state, revoke, "promulgated")
+    cfg = db.get_fiscal_config()
+    assert "due_priority_军饷@shaanxi" not in cfg  # 省域形状退出，禁留 live 默认
+    assert cfg["due_priority_军饷"] == 35  # 全国键仍在位
+    after = resolve_pay_order_overrides(cfg, "shaanxi", turn)
+    assert after is not None
+    # 回落全国键 value=35：军饷与宗禄(30)后、在赈济(40)前 → 官俸/宗禄/军饷/赈济
+    assert after.due_order == ("官俸", "宗禄", "军饷", "赈济")
+    # 对照：河南无省域键，同读全国键
+    assert resolve_pay_order_overrides(cfg, "henan", turn).due_order == after.due_order
+
+
+def test_fact_brief_attributes_arrears_order_displacement_to_dossier(game):
+    """Codex-12：旧欠序让位反事实——只报因 arrears_priority 让位新增受损与案卷。"""
+    import json as _json
+
+    db, state, _content = game
+    # 切断陕西军省源份额：Due.军饷/军饷欠 由 army 派生归零，瀑布只在官俸欠/宗禄欠间争 surplus。
+    db.conn.execute(
+        "UPDATE armies SET province_pay_share=0, province_pay_arrears=0, "
+        "arrears=central_pay_arrears WHERE pay_source_region='shaanxi'"
+    )
+    # 省内可支≈实征10；Due=官俸3+宗禄4.07+赈济1=8.07 → surplus≈1.93
+    # 默认旧欠序（军饷欠=0）先还官俸欠；旨把宗禄欠提到最前 → 官俸欠让位。
+    st = {
+        "省库库银": 0.0, "C_地方截留": 0.0, "C_中饱": 0.0, "C_漂没": 0.0,
+        "C_eff损耗": 0.0, "民欠旧赋": 0.0, "军饷欠": 0.0, "官俸欠": 5.0,
+        "宗禄欠": 5.0, "官民田": 100.0, "隐田": 50.0,
+    }
+    p = {
+        "正赋应征": 8.0, "三饷应征": 2.0, "火耗率": 0.1, "逋赋率": 0.0,
+        "起运定额": 0.0, "漂没率": 0.0, "中饱率": 0.0, "拨付gross": 0.0,
+        "Due": {"军饷": 0.0, "官俸": 3.0, "宗禄": 4.07, "赈济": 1.0},
+    }
+    row = db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()
+    fiscal = _json.loads(row["fiscal"])
+    fiscal["settle"]["st"] = st
+    fiscal["settle"]["p"] = p
+    db.conn.execute(
+        "UPDATE regions SET fiscal=? WHERE id='shaanxi'",
+        (_json.dumps(fiscal, ensure_ascii=False),),
+    )
+    db.conn.commit()
+    did = _override_dossier(
+        db, state, [{"key": "arrears_priority_宗禄欠@shaanxi", "value": 5}],
+        text="旧欠先偿宗禄",
+    )
+    db.apply_dossier_promulgation(state, did, "promulgated")
+    result = db.settle_province_tick("shaanxi")
+    repaid = result.breakdown["Repaid"]
+    assert repaid["宗禄欠"] == pytest.approx(1.93)
+    assert repaid["官俸欠"] == pytest.approx(0.0)
+    assert repaid["军饷欠"] == pytest.approx(0.0)
+    displaced = [
+        e for e in build_fiscal_fact_brief(db) if e["detail"].startswith("旧欠序让位_")
+    ]
+    assert [(e["detail"], e["affected_class"], e["value"], e["origin_ref"])
+            for e in displaced] == [
+        ("旧欠序让位_官俸欠", "官僚", pytest.approx(1.93), f"dossier:{did}"),
+    ]
+    # 无 due_order 改动时不得混入旨序让位条目
+    assert not [
+        e for e in build_fiscal_fact_brief(db) if e["detail"].startswith("旨序让位_")
+    ]
+
+
+def test_legacy_engine_pay_order_materialize_fails_loud_not_fulfilled(game):
+    """Codex-10/legacy_no_consumer：legacy 引擎物化 fail-loud，案卷不得标 fulfilled。"""
+    db, state, _content = game
+    db.conn.execute(
+        "INSERT INTO fiscal_config (key, value, kind, note) "
+        "VALUES ('__fiscal_engine', 0, 'meta', 'test legacy engine') "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value, note=excluded.note"
+    )
+    db.conn.commit()
+    assert db.fiscal_engine() == "legacy"
+    did = _override_dossier(
+        db, state, [{"key": "due_priority_军饷@shaanxi", "value": 40}],
+    )
+    with pytest.raises(ValueError, match="legacy"):
+        db.apply_dossier_promulgation(state, did, "promulgated")
+    assert "due_priority_军饷@shaanxi" not in db.get_fiscal_config()
+    dossier = db.get_decree_dossier(did)
+    assert dossier["status"] != "closed"
+    assert str(dossier.get("execution_outcome") or "") != "fulfilled"
 
 
 def test_fact_brief_priority_provenance_falls_back_to_nationwide_scope(game):
