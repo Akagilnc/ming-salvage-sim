@@ -170,14 +170,14 @@ def choose_minister(session: GameSession) -> Optional[Character]:
                 print("这句话能对应多位大臣，请再说具体一点，或直接输编号。")
                 continue
         if candidate is None:
+            # #670：未知/未注册人物不得临时旁路入殿；须 ADR 0038 持久入册后再走 admission。
             try:
-                candidate, is_temporary = session.summon_character(raw, None)
+                candidate, _is_temporary = session.summon_character(
+                    raw, None, allow_temporary=False,
+                )
             except ValueError:
                 print("请输入有效编号或姓名。")
                 continue
-            if is_temporary:
-                print(f"临时传{candidate.name}入殿。\n")
-                return candidate
         # 召对总闸 can_summon（含宗藩拒 + 非 active 拒）——按名/编号/模糊任一路解析到的人都过此闸，
         # 与 web /chat、LLM summon 工具同口径集中守（cmr R6：CLI 选臣菜单原先只查 status、漏宗藩）。
         decision = session.consume_audience_admission(
@@ -406,9 +406,14 @@ def _handle_court_command(
     )
     if summon_m:
         name_fragment = summon_m.group(1)
-        target, is_temporary = session.summon_character(name_fragment, current)
-        if is_temporary:
-            return f"summon-temp:{target.name}"
+        # #670：未知/未注册人物不得临时旁路入殿；须 ADR 0038 持久入册后再走 admission。
+        try:
+            target, _is_temporary = session.summon_character(
+                name_fragment, current, allow_temporary=False,
+            )
+        except ValueError:
+            print("人物未建档，须先补档后方可召见。\n")
+            return "handled"
         # #670：夜内换人与初选同吃 consume_audience_admission；场外/在途只落传召账，不返 summon:。
         decision = session.consume_audience_admission(
             target,

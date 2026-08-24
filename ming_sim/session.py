@@ -1066,8 +1066,9 @@ class GameSession:
         return (self._temporary_character(clean_name), True)
 
     def can_summon(self, character: Character) -> Tuple[bool, str]:
+        # #670 / ADR 0038：临时内存人物不得自动获朝臣资格；须先持久入册再过本闸与 admission。
         if character.name in self.temporary_characters:
-            return (True, "")
+            return (False, f"{character.name}未入本局人物档，须先补档后方可召见。")
         # 宗藩（就藩宗室）非朝堂命官，不可召见——与 web _require_active_minister / 各 roster 同口径
         # （PR#121 隐藏宗藩）。can_summon 是 summon_minister 工具链（session + web 流式两路）的共用闸，
         # 集中守此一处即覆盖两路，否则裁判可绕列表按名召宗藩（cmr R4 cross-section）。
@@ -1110,10 +1111,15 @@ class GameSession:
             "SELECT location, transit_to FROM characters WHERE name=?",
             (character.name,),
         ).fetchone()
-        # 临时人物没有盘面行；与旧档 blank 一样 fail-open，不扩大正式人物资格。
-        raw_location = str(row["location"] or "") if row is not None else ""
+        # #670：无 DB 行不得 blank fail-open 入殿；在册空 location 仍 fail-open 在京。
+        if row is None:
+            return AudienceAdmissionDecision(
+                None,
+                reason=f"{character.name}未入本局人物档，须先补档后方可召见。",
+            )
+        raw_location = str(row["location"] or "")
         location = canonicalize_location_region_id(raw_location)
-        transit_to = str(row["transit_to"] or "") if row is not None else ""
+        transit_to = str(row["transit_to"] or "")
         if transit_to:
             result = AudienceAdmission.SUMMON_IN_TRANSIT
         elif not location or location == "beizhili":
