@@ -11,25 +11,49 @@ from ming_sim.models import LLMConfig
 from ming_sim.simulation import build_extractor_shared_context, build_simulator_payload
 
 
-def _candidate_world(db, state):
+def _candidate_world(db, state, *, participants=None, execution_note="名实已乖，旨外受益"):
     chars = db.conn.execute(
         "SELECT name,faction FROM characters WHERE status='active' AND COALESCE(faction,'')<>'' ORDER BY name"
     ).fetchall()
     owner = next(row for row in chars if row["faction"])
+    roster = participants or [{"character_id": owner["name"], "tier": "主办"}]
     did = db.create_decree_dossier(
         state, action_type="policy", decree_text="清丈", target_kind="issue", target_id="land",
         executor_kind="character", executor_id=owner["name"],
-        participants=[{"character_id": owner["name"], "tier": "主办"}],
+        participants=roster,
     )
     db.conn.execute(
-        "UPDATE decree_dossiers SET status='closed',execution_outcome='transformed',closed_turn=? WHERE id=?",
-        (state.turn, did),
+        "UPDATE decree_dossiers SET status='closed',execution_outcome='transformed',"
+        "execution_note=?,closed_turn=? WHERE id=?",
+        (execution_note, state.turn, did),
+    )
+    # #622 旨外 durable：deformation_exposure 入门附加门（与 backlash AC1 同构）。
+    db.record_issue_economy_move(
+        state,
+        account="国库",
+        delta=8,
+        category="地方浮收",
+        reason="借清丈之名额外加派",
+        origin_ref=f"dossier:{did}",
+        beyond_intent=True,
+        commit=False,
     )
     db.conn.execute(
         "UPDATE factions SET leverage=60 WHERE name<>?", (owner["faction"],),
     )
     db.conn.commit()
     return did, str(owner["name"]), str(owner["faction"])
+
+
+def _active_pair(db, owner_name):
+    """Return two active characters with faction, distinct from owner when possible."""
+    rows = db.conn.execute(
+        "SELECT name,faction FROM characters "
+        "WHERE status='active' AND COALESCE(faction,'')<>'' ORDER BY name"
+    ).fetchall()
+    others = [row for row in rows if str(row["name"]) != owner_name]
+    assert len(others) >= 2, "fixture needs ≥2 non-owner active courtiers"
+    return str(others[0]["name"]), str(others[1]["name"])
 
 
 def test_transformed_fact_is_projected_as_namespaced_candidate(game):
@@ -45,8 +69,17 @@ def test_transformed_fact_is_projected_as_namespaced_candidate(game):
     assert item["occurred_turn"] == state.turn
     assert item["participant_ids"] == [owner]
     assert item["responsible_person_ids"] == [owner]
+    assert owner in item["eligible_target_ids"]
     assert owner_faction in item["responsible_faction_ids"]
     assert item["faction_persona"]["character_personas"]
+    assert item["dossier_id"] == did
+    assert item["decree_text"] == "清丈"
+    assert item["execution_note"] == "名实已乖，旨外受益"
+    assert item["execution_outcome"] == "transformed"
+    assert item["beyond_intent"] is True
+    assert item["actual_effect_count"] >= 1
+    assert item["beyond_intent_effects"]
+    assert all(bool(effect.get("beyond_intent")) for effect in item["beyond_intent_effects"])
     payload = build_simulator_payload(state, db, "", "")
     assert item not in payload["candidate_events"]
     assert all(not str(event["id"]).startswith("impeachment_surge:") for event in payload["candidate_events"])
@@ -55,6 +88,91 @@ def test_transformed_fact_is_projected_as_namespaced_candidate(game):
     assert "impeachment_surge_candidates" not in issues_context
     facts = db.build_faction_denunciation_facts()
     assert all(int(row["dossier_id"]) != did for row in facts["forked_dossiers"])
+
+
+def test_transformed_without_beyond_intent_yields_no_surge_candidate(game):
+    """transformed ∧ ¬beyond → gather 零候选（与 backlash AC1 同构，钉 surge 腿）。"""
+    db, state = game[:2]
+    chars = db.conn.execute(
+        "SELECT name,faction FROM characters WHERE status='active' AND COALESCE(faction,'')<>'' ORDER BY name"
+    ).fetchall()
+    owner = next(row for row in chars if row["faction"])
+    did = db.create_decree_dossier(
+        state, action_type="policy", decree_text="清丈", target_kind="issue", target_id="land",
+        executor_kind="character", executor_id=owner["name"],
+        participants=[{"character_id": owner["name"], "tier": "主办"}],
+    )
+    db.conn.execute(
+        "UPDATE decree_dossiers SET status='closed',execution_outcome='transformed',"
+        "execution_note=?,closed_turn=? WHERE id=?",
+        ("名实已乖（无旨外账）", state.turn, did),
+    )
+    db.conn.execute(
+        "UPDATE factions SET leverage=60 WHERE name<>?", (owner["faction"],),
+    )
+    db.conn.commit()
+    assert not db.dossier_has_beyond_intent(did)
+    assert gather_impeachment_surge_candidates(state, db) == []
+
+
+def test_delegator_only_responsible_is_eligible_target(game):
+    """仅以 delegator_id 入账的次责人须进 eligible / responsible，即使不在 participant 行。
+
+    create 写界要求委派人同案主办/协办；此处直接写 roster，钉 gather 读端连坐投影
+    （与 #565 cmr R3：读端按 delegator_id 上溯、不要求其占 character_id 行）。
+    """
+    db, state = game[:2]
+    did, owner, _ = _candidate_world(db, state)
+    aide, delegator = _active_pair(db, owner)
+    roster = [
+        {"character_id": owner, "tier": "主办"},
+        {"character_id": aide, "tier": "协办", "delegator_id": delegator},
+    ]
+    db.conn.execute(
+        "UPDATE decree_dossiers SET participant_roster=? WHERE id=?",
+        (json.dumps(roster, ensure_ascii=False), did),
+    )
+    db.conn.commit()
+
+    candidates = gather_impeachment_surge_candidates(state, db)
+    assert candidates
+    item = candidates[0]
+    assert item["dossier_id"] == did
+    assert item["participant_ids"] == [owner, aide]
+    assert delegator not in item["participant_ids"]
+    assert delegator in item["responsible_person_ids"]
+    assert delegator in item["eligible_target_ids"]
+    # 协办本人非责任人：可在 eligible（在朝），但不得进 responsible。
+    assert aide not in item["responsible_person_ids"]
+
+
+def test_knower_departure_does_not_veto_active_responsible_dossier(game):
+    """知情离场/无派系只从闭集剔除，不得否决责任人仍在朝的卷。"""
+    db, state = game[:2]
+    chars = db.conn.execute(
+        "SELECT name,faction FROM characters WHERE status='active' AND COALESCE(faction,'')<>'' ORDER BY name"
+    ).fetchall()
+    owner = next(row for row in chars if row["faction"])
+    knower, _ = _active_pair(db, str(owner["name"]))
+    did, owner_name, _ = _candidate_world(
+        db,
+        state,
+        participants=[
+            {"character_id": owner["name"], "tier": "主办"},
+            {"character_id": knower, "tier": "知情"},
+        ],
+    )
+    db.conn.execute("UPDATE characters SET status='dead' WHERE name=?", (knower,))
+    db.conn.commit()
+
+    candidates = gather_impeachment_surge_candidates(state, db)
+    assert candidates
+    item = candidates[0]
+    assert item["dossier_id"] == did
+    assert owner_name in item["eligible_target_ids"]
+    assert knower not in item["eligible_target_ids"]
+    assert knower in item["participant_ids"]
+    assert knower not in item["responsible_person_ids"]
 
 
 def test_production_issues_agent_carries_dynamic_source_contract_to_apply(game, content, monkeypatch):

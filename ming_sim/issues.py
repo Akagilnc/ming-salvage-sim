@@ -2555,12 +2555,17 @@ def gather_impeachment_surge_candidates(state: GameState, db: GameDB) -> List[Di
             personas_by_faction.setdefault(str(item.get("faction") or ""), []).append(item)
 
     rows = db.conn.execute(
-        "SELECT id,closed_turn,participant_roster FROM decree_dossiers "
+        "SELECT id,closed_turn,participant_roster,decree_text,execution_note,execution_outcome "
+        "FROM decree_dossiers "
         "WHERE execution_outcome='transformed' AND closed_turn BETWEEN ? AND ? ORDER BY id",
         (max(0, int(state.turn) - 1), int(state.turn)),
     ).fetchall()
     candidates: List[Dict[str, object]] = []
     for row in rows:
+        did = int(row["id"])
+        # #622/#1260 单源：仅有旨外 durable 的变形才构成 deformation_exposure。
+        if not db.dossier_has_beyond_intent(did):
+            continue
         try:
             roster = json.loads(str(row["participant_roster"] or "[]"))
         except (TypeError, ValueError):
@@ -2574,26 +2579,54 @@ def gather_impeachment_surge_candidates(state: GameState, db: GameDB) -> List[Di
         if len(participant_ids) != len(roster) or not participant_ids:
             continue
         liability = project_execution_liability_parties(roster)
-        responsible_ids = [str(item.get("character_id") or "").strip() for item in liability]
+        responsible_ids = [
+            str(item.get("character_id") or "").strip() for item in liability
+            if str(item.get("character_id") or "").strip()
+        ]
         if not responsible_ids:
             continue
-        all_ids = list(dict.fromkeys(participant_ids + responsible_ids))
-        placeholders = ",".join("?" for _ in all_ids)
+        # 存在门只看责任集；知情/协办离场不得 any() 否决整卷。
+        placeholders = ",".join("?" for _ in responsible_ids)
         chars = db.conn.execute(
-            f"SELECT name,faction,status FROM characters WHERE name IN ({placeholders})", all_ids,
+            f"SELECT name,faction,status FROM characters WHERE name IN ({placeholders})",
+            responsible_ids,
         ).fetchall()
         char_by_name = {str(item["name"]): item for item in chars}
         if any(
             name not in char_by_name
             or str(char_by_name[name]["status"] or "") != "active"
             or not str(char_by_name[name]["faction"] or "").strip()
-            for name in all_ids
+            for name in responsible_ids
         ):
             continue
         responsible_factions = list(dict.fromkeys(
             str(char_by_name[name]["faction"]) for name in responsible_ids
         ))
-        origin_ref = f"commitment:{int(row['id'])}:deformation_exposure"
+        # 闭集：在朝 participant ∪ 在朝 responsible（含仅 delegator_id 连坐）。
+        union_ids = list(dict.fromkeys([*participant_ids, *responsible_ids]))
+        missing = [name for name in union_ids if name not in char_by_name]
+        if missing:
+            missing_ph = ",".join("?" for _ in missing)
+            for item in db.conn.execute(
+                f"SELECT name,faction,status FROM characters WHERE name IN ({missing_ph})",
+                missing,
+            ).fetchall():
+                char_by_name[str(item["name"])] = item
+        eligible_target_ids = [
+            name for name in union_ids
+            if name in char_by_name
+            and str(char_by_name[name]["status"] or "") == "active"
+            and str(char_by_name[name]["faction"] or "").strip()
+        ]
+        if not eligible_target_ids:
+            continue
+        fork_state = db.read_dossier_fork_state(did)
+        beyond_intent_effects = [
+            dict(effect)
+            for effect in db.list_dossier_durable_effects(did)
+            if bool(effect.get("beyond_intent"))
+        ]
+        origin_ref = f"commitment:{did}:deformation_exposure"
         for faction in sorted(_LEVERAGE_FACTIONS):
             if faction in responsible_factions or db.faction_leverage(faction) < 60:
                 continue
@@ -2618,10 +2651,18 @@ def gather_impeachment_surge_candidates(state: GameState, db: GameDB) -> List[Di
                     "faction_situations": [dict(situation)],
                     "character_personas": [dict(item) for item in personas],
                 },
-                "eligible_target_ids": participant_ids,
+                "eligible_target_ids": eligible_target_ids,
                 "participant_ids": participant_ids,
                 "responsible_person_ids": responsible_ids,
                 "responsible_faction_ids": responsible_factions,
+                "dossier_id": did,
+                "decree_text": str(row["decree_text"] or "").strip(),
+                "execution_note": str(row["execution_note"] or "").strip(),
+                "execution_outcome": str(row["execution_outcome"] or "").strip(),
+                "beyond_intent": True,
+                "reported_bands": list(fork_state.get("reported_bands") or []),
+                "actual_effect_count": int(fork_state.get("actual_effect_count") or 0),
+                "beyond_intent_effects": beyond_intent_effects,
             })
     return candidates
 
