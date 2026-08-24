@@ -86,6 +86,23 @@ _ARMY_PAY_SOURCE_DELTA_FIELDS = frozenset((
     "owner_power", "pay_source_region", "province_pay_share", "central_pay_share",
     "is_tusi", "self_funded_pay",
 ))
+_ARMY_OWNER_TRANSITION_PAY_KEYS = (
+    "pay_source_region", "province_pay_share", "central_pay_share",
+    "is_tusi", "self_funded_pay",
+)
+_SENTINEL = object()  # transition_army_owner_power 可选饷源参数「未提供」哨兵
+
+
+def _army_owner_transition_pay_kwargs(normalized: Mapping[str, object]) -> Dict[str, object]:
+    """从规范化 delta 组装 transition_army_owner_power 饷源/自养 kwargs。
+
+    键出现 → 实值；未出现 → _SENTINEL（adapter 回落行内 / 缺饷源 fail-loud）。
+    cutover-on `_apply_army_pay_source_delta` 与 cutover-off owner 分支共用，防再分叉。
+    """
+    return {
+        key: (normalized[key] if key in normalized else _SENTINEL)
+        for key in _ARMY_OWNER_TRANSITION_PAY_KEYS
+    }
 _COMMITMENT_STOP_CONDITION_RE = re.compile(r"character\.[^.]+\.loyalty\s*(?:>=|>)\s*\d+")
 
 
@@ -4115,6 +4132,251 @@ class GameDB:
                 or not isinstance(settle.get("p"), dict):
             raise ValueError(f"army {army_id} pay_source_region 无 settle st/p 基座：{pay_source_region}")
 
+    def transition_army_owner_power(
+        self,
+        state: GameState,
+        row: sqlite3.Row,
+        new_owner: str,
+        *,
+        reason: str,
+        actor: str,
+        event_id: object = None,
+        edict_id: int | None = None,
+        origin_ref: str = "",
+        require_origin: bool = False,
+        pay_source_region: object = _SENTINEL,
+        province_pay_share: object = _SENTINEL,
+        central_pay_share: object = _SENTINEL,
+        is_tusi: object = _SENTINEL,
+        self_funded_pay: object = _SENTINEL,
+        latched_escape: str | None = None,
+        raw_item: Dict[str, object] | None = None,
+    ) -> List[Dict[str, object]]:
+        """唯一生产 owner_power 转出口（ADR 0025 D5/D7 + #318）。
+
+        同事务顺序：核销欠饷 → 清 is_mutinied/probation → 改 owner。
+        空来源对 1/2 振 latched 军 owner-OUT = 拒收；仅 latched_escape='third_strike'
+        （确定性第 3 振）可转出。mutiny_count>=3 不得回 ming。
+        """
+        changes: List[Dict[str, object]] = []
+        army_id = str(row["id"])
+        old_owner = str(row["owner_power"] or "").strip()
+        owner_power = str(new_owner or "").strip()
+        item = raw_item if raw_item is not None else {"army_id": army_id}
+
+        if not owner_power:
+            changes.append({
+                "army": row["name"], "field": "owner_power",
+                "rejected": True, "category": "invalid_enum",
+                "reason": "owner_power 不得为空",
+                "item": item,
+            })
+            return changes
+
+        owner_exists = self.conn.execute(
+            "SELECT 1 FROM powers WHERE id = ?", (owner_power,)
+        ).fetchone()
+        if owner_exists is None:
+            changes.append({
+                "army": row["name"], "field": "owner_power",
+                "rejected": True, "category": "hallucinated_id",
+                "reason": f"army_delta owner_power '{owner_power}' 不在 powers 表",
+                "item": item,
+            })
+            return changes
+
+        if owner_power == old_owner:
+            return changes
+
+        # 空来源：1/2 振 latched 倒戈一律拒收（#318 无 trusted_event_id 生产路径）
+        if bool(row["is_mutinied"]) and latched_escape != "third_strike":
+            changes.append({
+                "army": row["name"], "field": "owner_power",
+                "rejected": True, "category": "invalid_enum",
+                "reason": "哗变锁存军空来源不得改归属（仅第3振确定性转流寇）",
+                "item": item,
+            })
+            return changes
+
+        mutiny_count = int(row["mutiny_count"] or 0)
+        if owner_power == "ming" and mutiny_count >= 3:
+            changes.append({
+                "army": row["name"], "field": "owner_power",
+                "rejected": True, "category": "invalid_enum",
+                "reason": "mutiny_count>=3 永久流寇不可回明；招安须另建新军",
+                "item": item,
+            })
+            return changes
+
+        old_source = str(row["pay_source_region"] or "")
+        try:
+            if pay_source_region is _SENTINEL:
+                pay_source_region_val = str(row["pay_source_region"] or "").strip()
+            else:
+                pay_source_region_val = str(pay_source_region or "").strip()
+            if province_pay_share is _SENTINEL:
+                province_share = _coerce_pay_source_float(row["province_pay_share"])
+            else:
+                province_share = _coerce_pay_source_float(province_pay_share)
+            if central_pay_share is _SENTINEL:
+                central_share = _coerce_pay_source_float(row["central_pay_share"])
+            else:
+                central_share = _coerce_pay_source_float(central_pay_share)
+            if is_tusi is _SENTINEL:
+                is_tusi_val = bool(row["is_tusi"])
+            else:
+                is_tusi_val = _coerce_bool_flag(is_tusi)
+            if self_funded_pay is _SENTINEL:
+                self_funded_val = bool(row["self_funded_pay"])
+            else:
+                self_funded_val = _coerce_bool_flag(self_funded_pay)
+
+            province_arrears = float(row["province_pay_arrears"] or 0)
+            central_arrears = float(row["central_pay_arrears"] or 0)
+            total_arrears = float(row["arrears"] or 0)
+            if self.is_army_pay_source_cutover_enabled():
+                total_arrears = max(total_arrears, province_arrears + central_arrears)
+
+            exempt = owner_power != "ming" or is_tusi_val or self_funded_val
+            if exempt:
+                pay_source_region_val = ""
+                province_share = central_share = 0.0
+                province_arrears = central_arrears = 0.0
+                total_arrears = 0.0
+            self._validate_pay_source_values(
+                army_id, owner_power, pay_source_region_val, province_share, central_share,
+                is_tusi_val, self_funded_val, province_arrears, central_arrears,
+            )
+            if pay_source_region_val:
+                self._require_valid_pay_source_region(army_id, pay_source_region_val)
+        except (TypeError, ValueError) as exc:
+            changes.append({
+                "army": row["name"], "field": "pay_source",
+                "rejected": True, "category": "invalid_enum",
+                "reason": f"army_delta 饷源字段非法：{exc}",
+                "item": item,
+            })
+            return changes
+
+        origin_error = self.effect_origin_rejection(origin_ref) if require_origin else None
+        if origin_error:
+            changes.append({
+                "army": row["name"], "field": "owner_power", **origin_error,
+                "item": item,
+            })
+            return changes
+
+        old_values = {
+            "owner_power": old_owner,
+            "pay_source_region": old_source,
+            "province_pay_share": float(row["province_pay_share"] or 0),
+            "central_pay_share": float(row["central_pay_share"] or 0),
+            "is_tusi": int(row["is_tusi"] or 0),
+            "self_funded_pay": int(row["self_funded_pay"] or 0),
+            "province_pay_arrears": float(row["province_pay_arrears"] or 0),
+            "central_pay_arrears": float(row["central_pay_arrears"] or 0),
+            "arrears": float(row["arrears"] or 0),
+            "is_mutinied": int(row["is_mutinied"] or 0),
+            "mutiny_probation": int(row["mutiny_probation"] or 0),
+        }
+        new_values = {
+            "owner_power": owner_power,
+            "pay_source_region": pay_source_region_val,
+            "province_pay_share": province_share,
+            "central_pay_share": central_share,
+            "is_tusi": 1 if is_tusi_val else 0,
+            "self_funded_pay": 1 if self_funded_val else 0,
+            "province_pay_arrears": province_arrears,
+            "central_pay_arrears": central_arrears,
+            "arrears": (
+                province_arrears + central_arrears
+                if self.is_army_pay_source_cutover_enabled() or exempt
+                else total_arrears
+            ),
+            "is_mutinied": 0,
+            "mutiny_probation": 0,
+        }
+        if exempt:
+            new_values["arrears"] = 0.0
+
+        # ① 核销欠饷（先于清 latch / 改 owner）
+        wrote_writeoff = (
+            old_owner == "ming"
+            and owner_power != "ming"
+            and float(old_values["arrears"] or 0) > 1e-9
+        )
+        if wrote_writeoff:
+            self.conn.execute(
+                """
+                INSERT INTO army_logs
+                (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor, origin_ref)
+                VALUES (?, ?, ?, ?, 'arrears', ?, '0.0', ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    state.turn, state.year, state.period, army_id,
+                    str(old_values["arrears"]), -float(old_values["arrears"]),
+                    f"owner易主核销：{reason}",
+                    event_id, edict_id, actor, origin_ref,
+                ),
+            )
+
+        # ②+③ 清 latch/probation + 改 owner（唯一生产 UPDATE owner_power）
+        self.conn.execute(
+            """
+            UPDATE armies
+            SET owner_power = ?, pay_source_region = ?,
+                province_pay_share = ?, central_pay_share = ?,
+                is_tusi = ?, self_funded_pay = ?,
+                province_pay_arrears = ?, central_pay_arrears = ?,
+                arrears = ?, is_mutinied = 0, mutiny_probation = 0,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (
+                owner_power, pay_source_region_val, province_share, central_share,
+                1 if is_tusi_val else 0, 1 if self_funded_val else 0,
+                new_values["province_pay_arrears"], new_values["central_pay_arrears"],
+                new_values["arrears"], army_id,
+            ),
+        )
+
+        log_fields = [
+            "is_mutinied", "mutiny_probation",
+            "owner_power", "pay_source_region", "province_pay_share", "central_pay_share",
+            "is_tusi", "self_funded_pay", "province_pay_arrears", "central_pay_arrears",
+        ]
+        if not wrote_writeoff:
+            log_fields.append("arrears")
+        for field in log_fields:
+            if old_values[field] == new_values[field]:
+                continue
+            self.conn.execute(
+                """
+                INSERT INTO army_logs
+                (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor, origin_ref)
+                VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)
+                """,
+                (
+                    state.turn, state.year, state.period, army_id, field,
+                    str(old_values[field]), str(new_values[field]), reason,
+                    event_id, edict_id, actor, origin_ref,
+                ),
+            )
+            changes.append({
+                "army": row["name"], "field": field,
+                "label": ARMY_FIELD_LABELS.get(field, field),
+                "old": old_values[field], "new": new_values[field],
+                "delta": None, "reason": reason,
+            })
+
+        if self.is_army_pay_source_cutover_enabled():
+            if old_source != pay_source_region_val:
+                self._reconcile_army_pay_source_region_container(old_source)
+            self._reconcile_army_pay_source_region_container(pay_source_region_val)
+            self._reconcile_central_army_pay_arrears_container()
+            self.assert_army_pay_source_container_conservation()
+        return changes
+
     def _apply_army_pay_source_delta(
         self,
         state: GameState,
@@ -4137,21 +4399,27 @@ class GameDB:
             return
 
         army_id = str(row["id"])
+        # owner 变更一律经唯一 adapter（含空来源 latched 拒收 / 第3振不可回明）
         if "owner_power" in normalized:
             proposed_owner = str(normalized.get("owner_power") or "").strip()
-            owner_exists = self.conn.execute(
-                "SELECT 1 FROM powers WHERE id = ?", (proposed_owner,)
-            ).fetchone()
-            if owner_exists is None:
-                changes.append({
-                    "army": row["name"], "field": "owner_power",
-                    "rejected": True, "category": "hallucinated_id",
-                    "reason": f"army_delta owner_power '{proposed_owner}' 不在 powers 表",
-                    "item": {"army_id": army_id, "changes": raw_changes},
-                })
+            if proposed_owner != str(row["owner_power"] or "").strip():
+                changes.extend(self.transition_army_owner_power(
+                    state,
+                    row,
+                    proposed_owner,
+                    reason=reason,
+                    actor=actor,
+                    event_id=event.id,
+                    edict_id=edict_id,
+                    origin_ref=origin_ref,
+                    require_origin=require_origin,
+                    **_army_owner_transition_pay_kwargs(normalized),
+                    raw_item={"army_id": army_id, "changes": raw_changes},
+                ))
                 return
+
         old_source = str(row["pay_source_region"] or "")
-        owner_power = str(normalized.get("owner_power", row["owner_power"]) or "").strip()
+        owner_power = str(row["owner_power"] or "").strip()
         pay_source_region = str(normalized.get("pay_source_region", row["pay_source_region"]) or "").strip()
         try:
             province_share = _coerce_pay_source_float(
@@ -4172,8 +4440,7 @@ class GameDB:
             central_arrears = float(row["central_pay_arrears"] or 0)
             exempt = owner_power != "ming" or is_tusi or self_funded
             exempt_by_ming_flag = (
-                str(row["owner_power"] or "") == "ming"
-                and owner_power == "ming"
+                owner_power == "ming"
                 and not bool(row["is_tusi"])
                 and not bool(row["self_funded_pay"])
                 and (is_tusi or self_funded)
@@ -4202,7 +4469,6 @@ class GameDB:
             return
 
         old_values = {
-            "owner_power": row["owner_power"],
             "pay_source_region": row["pay_source_region"],
             "province_pay_share": float(row["province_pay_share"] or 0),
             "central_pay_share": float(row["central_pay_share"] or 0),
@@ -4213,7 +4479,6 @@ class GameDB:
             "arrears": float(row["arrears"] or 0),
         }
         new_values = {
-            "owner_power": owner_power,
             "pay_source_region": pay_source_region,
             "province_pay_share": province_share,
             "central_pay_share": central_share,
@@ -4233,32 +4498,12 @@ class GameDB:
                 "item": {"army_id": army_id, "changes": raw_changes},
             })
             return
-        wrote_owner_transfer_writeoff = (
-            str(old_values["owner_power"]) == "ming"
-            and owner_power != "ming"
-            and float(old_values["arrears"] or 0) > 1e-9
-            and float(new_values["arrears"] or 0) == 0.0
-        )
-        if wrote_owner_transfer_writeoff:
-            self.conn.execute(
-                """
-                INSERT INTO army_logs
-                (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor, origin_ref)
-                VALUES (?, ?, ?, ?, 'arrears', ?, '0.0', ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    state.turn, state.year, state.period, army_id,
-                    str(old_values["arrears"]), -float(old_values["arrears"]),
-                    f"owner易主核销：{reason}",
-                    event.id, edict_id, actor, origin_ref,
-                ),
-            )
-            changed_fields = [field for field in changed_fields if field != "arrears"]
 
+        # 饷源-only 路径：不触 owner_power（唯一 owner 写口 = transition_army_owner_power）
         self.conn.execute(
             """
             UPDATE armies
-            SET owner_power = ?, pay_source_region = ?,
+            SET pay_source_region = ?,
                 province_pay_share = ?, central_pay_share = ?,
                 is_tusi = ?, self_funded_pay = ?,
                 province_pay_arrears = ?, central_pay_arrears = ?,
@@ -4266,7 +4511,7 @@ class GameDB:
             WHERE id = ?
             """,
             (
-                owner_power, pay_source_region, province_share, central_share,
+                pay_source_region, province_share, central_share,
                 1 if is_tusi else 0, 1 if self_funded else 0,
                 province_arrears, central_arrears, province_arrears + central_arrears,
                 army_id,
@@ -7142,17 +7387,75 @@ class GameDB:
                 })
                 continue
             reason = str(raw_changes.get("reason") or raw_changes.get("原因") or event.title).strip()[:80]
+            # cutover-off 已消费的 owner/D6 兄弟键：禁止通用环再打非法字段
+            consumed_pay_source_fields: frozenset[str] = frozenset()
             if self.is_army_pay_source_cutover_enabled():
                 self._apply_army_pay_source_delta(
                     state, event, edict_id, actor, row, raw_changes, reason, changes,
                     origin_ref=origin_ref, require_origin=require_origin,
                 )
                 row = self.conn.execute("SELECT * FROM armies WHERE id = ?", (army_id,)).fetchone()
+            else:
+                # #318：cutover-off owner 变更与 cutover-on 对齐——同条 D6 兄弟字段
+                # 一并交给唯一 adapter；不重入 _apply_army_pay_source_delta（其后半是
+                # 饷源-only/容器对账，属 cutover 专属）。
+                normalized = {
+                    ARMY_FIELD_ALIASES.get(str(k).strip(), str(k).strip()): v
+                    for k, v in raw_changes.items()
+                }
+                if "owner_power" in normalized:
+                    proposed_owner = str(normalized.get("owner_power") or "").strip()
+                    if proposed_owner != str(row["owner_power"] or "").strip():
+                        changes.extend(self.transition_army_owner_power(
+                            state,
+                            row,
+                            proposed_owner,
+                            reason=reason,
+                            actor=actor,
+                            event_id=event.id,
+                            edict_id=edict_id,
+                            origin_ref=origin_ref,
+                            require_origin=require_origin,
+                            **_army_owner_transition_pay_kwargs(normalized),
+                            raw_item={"army_id": army_id, "changes": raw_changes},
+                        ))
+                        consumed_pay_source_fields = frozenset(
+                            {"owner_power"}
+                            | _ARMY_PAY_SOURCE_DELTA_FIELDS.intersection(normalized)
+                        )
+                        current_row = self.conn.execute(
+                            "SELECT * FROM armies WHERE id = ?", (army_id,)
+                        ).fetchone()
+                        if current_row is not None:
+                            row = current_row
             for raw_field, value in raw_changes.items():
                 field = ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
                 if field in ("reason", "origin_ref"):
                     continue
                 if self.is_army_pay_source_cutover_enabled() and field in _ARMY_PAY_SOURCE_DELTA_FIELDS:
+                    continue
+                if field in consumed_pay_source_fields:
+                    continue
+                # #318：cutover 关闭时 owner_power 仍须经唯一 adapter，禁止 text 直写旁路
+                # （同 owner no-op / 未在上方预消费的残余路径）
+                if field == "owner_power":
+                    current_row = self.conn.execute(
+                        "SELECT * FROM armies WHERE id = ?", (army_id,)
+                    ).fetchone()
+                    if current_row is None:
+                        continue
+                    changes.extend(self.transition_army_owner_power(
+                        state,
+                        current_row,
+                        str(value or "").strip(),
+                        reason=reason,
+                        actor=actor,
+                        event_id=event.id,
+                        edict_id=edict_id,
+                        origin_ref=origin_ref,
+                        require_origin=require_origin,
+                        raw_item={"army_id": army_id, "changes": raw_changes},
+                    ))
                     continue
                 if field not in _ARMY_VALID_SET:
                     # ADR 0008 决定 1:LLM 引用非法军队字段 = 逐项拒收留痕(invalid_enum),
