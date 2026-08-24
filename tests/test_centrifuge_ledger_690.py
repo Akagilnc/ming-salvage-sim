@@ -155,6 +155,55 @@ def test_t2_kinship_uses_unrounded_formula(game):
     assert int(rows["kinship"]["amount"]) != 0
 
 
+def test_t2b_legitimacy_uses_raw_for_amounts(game):
+    """D2-4：leg_raw 算金额；整数 legitimacy_pct 仅审计。
+
+    廷杖40/cw6 → leg_raw=86.5 → pct=86，direct=round(34.6)=35（错式用 86 得 34）。
+    廷杖40/cw1/id98 → kinship=round(11.466…)=11（错式用 98 整数 leg 得 12）。
+    """
+    from ming_sim.centrifuge_ledger import accrue_blood_debt
+
+    db, state, _content = game
+
+    accrue_blood_debt(
+        db=db,
+        turn=state.turn,
+        target=_TARGET_ARMY,
+        axis=_AXIS,
+        penalty_type="廷杖",
+        crime_weight=6,
+        idem_base="t2b|direct35",
+    )
+    direct_rows = _direct_rows(db, idem_base="t2b|direct35")
+    assert len(direct_rows) == 1
+    assert int(direct_rows[0]["legitimacy_pct"]) == 86
+    assert int(direct_rows[0]["amount"]) == 35
+
+    # 崔呈秀 identity=98
+    assert (
+        db.conn.execute(
+            "SELECT identity FROM characters WHERE name=?", (_TARGET_EUNUCH,)
+        ).fetchone()["identity"]
+        == 98
+    )
+    accrue_blood_debt(
+        db=db,
+        turn=state.turn,
+        target=_TARGET_EUNUCH,
+        axis=_AXIS,
+        penalty_type="廷杖",
+        crime_weight=1,
+        idem_base="t2b|kinship11",
+    )
+    kin = next(
+        r
+        for r in _log_rows(db)
+        if r["idem_key"] == "t2b|kinship11|kinship"
+    )
+    assert int(kin["legitimacy_pct"]) == 98
+    assert int(kin["amount"]) == 11
+
+
 # ---------------------------------------------------------------------------
 # T3 — Δ=0 且命名空间无 durable → 合法零写
 # ---------------------------------------------------------------------------
@@ -299,6 +348,50 @@ def test_t6_bad_target_aborts_with_zero_write(game, bad_target):
             penalty_type="抄家",
             crime_weight=70,
             idem_base=f"t6|{bad_target!r}",
+        )
+    assert _snapshot(db) == before
+
+
+@pytest.mark.parametrize(
+    "raw_identity,expected_typeof",
+    [
+        (80.5, "real"),  # 旧 int(80.5)==80 静默截断
+        ("8_0", "text"),  # 旧 int("8_0")==80；ASCII '80' 会被 affinity 吞成 integer，禁用
+    ],
+)
+def test_t6b_non_int_identity_aborts_with_zero_write(
+    game, raw_identity, expected_typeof
+):
+    """strict-int：可达 REAL/TEXT 先 typeof，再公开 API Abort + 三账零写。
+
+    不可达（不伪测）：NULL 被 NOT NULL 阻断；bool 经 ? 绑定读回 int；
+    ASCII '80' 被 INTEGER affinity 存成 integer。
+    """
+    from ming_sim.centrifuge_ledger import accrue_blood_debt
+
+    db, state, _content = game
+    # 绕过 _set_identity 的 int() 强制，直写 characters.identity
+    db.conn.execute(
+        "UPDATE characters SET identity=? WHERE name=?",
+        (raw_identity, _TARGET_ARMY),
+    )
+    db.conn.commit()
+    stored = db.conn.execute(
+        "SELECT typeof(identity) AS t FROM characters WHERE name=?",
+        (_TARGET_ARMY,),
+    ).fetchone()
+    assert str(stored["t"]) == expected_typeof
+
+    before = _snapshot(db)
+    with pytest.raises(SettlementAbort):
+        accrue_blood_debt(
+            db=db,
+            turn=state.turn,
+            target=_TARGET_ARMY,
+            axis=_AXIS,
+            penalty_type="抄家",
+            crime_weight=70,
+            idem_base=f"t6b|{expected_typeof}",
         )
     assert _snapshot(db) == before
 
@@ -728,6 +821,20 @@ def test_t12_restore_preserves_tables_and_rebuild(tmp_path, content):
 # ---------------------------------------------------------------------------
 
 
+def _collect_typed_keys(obj: Any, *, _out: set[str] | None = None) -> set[str]:
+    """递归收集真实 payload 的 typed dict keys；不解析自由文本。"""
+    if _out is None:
+        _out = set()
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            _out.add(str(key))
+            _collect_typed_keys(value, _out=_out)
+    elif isinstance(obj, (list, tuple)):
+        for item in obj:
+            _collect_typed_keys(item, _out=_out)
+    return _out
+
+
 def test_t13_p4_surfaces_do_not_feed_new_fields(game):
     db, state, content = game
     faction = _faction_of(db, _TARGET_EUNUCH)
@@ -781,7 +888,20 @@ def test_t13_p4_surfaces_do_not_feed_new_fields(game):
         _SENTINEL_AMOUNT,
         _SENTINEL_BASE,
     )
-    # 契约只钉专有字段名 + 植入 sentinel；不锁 amount/base 等常见词自由文本子串。
+    # typed-key 面：六字段名均不得出现在真实 payload 的 dict keys 上
+    forbidden_keys = (
+        "blood_debt",
+        "wariness",
+        "edict_overdraw",
+        "legitimacy_pct",
+        "amount",
+        "base",
+    )
+    typed_keys = _collect_typed_keys(payload)
+    for name in forbidden_keys:
+        assert name not in typed_keys
+
+    # 文本 surface：四专有名 + 六 sentinel；禁止对 amount/base 做自由文本子串盯文
     unique_names = (
         "blood_debt",
         "wariness",
