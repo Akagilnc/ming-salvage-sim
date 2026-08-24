@@ -1740,6 +1740,37 @@ def list_arrived_unsettled_summons(db: Any) -> List[Dict[str, Any]]:
     return _one_per_person(arrived)
 
 
+def settle_applied_arrived_summons(
+    db: Any, applied: Dict[str, Any],
+) -> List[str]:
+    """结清已由 canonical applier 成功续启赴京的在途召旨。
+
+    只认 applied_person_changes 中未拒收且 transit_to=beizhili 的成功行止；
+    同人全部 kind=in_transit 未结 origin 一并结清。失败/空 applied 为 no-op。
+    外层 settle atomic 使行止与结清同成同败（_should_commit 已为 False）。
+    """
+    accepted = {
+        str(item.get("name") or item.get("人物") or "").strip()
+        for item in (applied.get("applied_person_changes") or [])
+        if isinstance(item, dict)
+        and not item.get("rejected")
+        and str(item.get("transit_to") or item.get("去向") or "").strip() == "beizhili"
+    }
+    accepted.discard("")
+    if not accepted:
+        return []
+    settled: List[str] = []
+    for item in list_unsettled_summons(db):
+        # 月度判官只收 in_transit origin；成功续启后 transit_to 已变，
+        # 后置投影不再是 arrived，故按 person∈accepted 结清。
+        if item["kind"] != "in_transit" or item["person_name"] not in accepted:
+            continue
+        origin = str(item["origin_id"])
+        if settle_summon_origin(db, origin):
+            settled.append(origin)
+    return settled
+
+
 def _mark_summon_entries_in_transit(db: Any, items: Sequence[Dict[str, Any]]) -> None:
     """启程成功后把未结 fresh 账标为在途；保留 TAG_SUMMON_UNSETTLED 与 origin。"""
     for item in items:
@@ -1767,7 +1798,8 @@ def settle_summon_origin(
     """按 origin 结清未结传召；重复结清为幂等 no-op。
 
     结清点：宣入/在京 admission 消费；人物非 active 退役；
-    候见中 active 再奉旨离京（canonical 行止写缝）。
+    候见中 active 再奉旨离京（canonical 行止写缝）；
+    续启 applier 成功后按 origin（settle_applied_arrived_summons）。
     commit 由调用方事务所有权决定（与 append_story_ledger 同形）；
     行止接缝须传 commit=commit_person_change，避免 SAVEPOINT/外层事务中擅自提交。
     """
