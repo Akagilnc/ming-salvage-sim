@@ -2438,6 +2438,7 @@ def test_session_manual_directive_keeps_structured_action_at_submission(
                 "dossier_action_type": "assignment",
                 "target_kind": "region",
                 "target_id": "河南",
+                "locality_scope": "single",
                 "assignee": _active_minister(session.db),
             },
         )
@@ -2555,9 +2556,17 @@ def test_allocation_rejects_unknown_economy_account_before_dossier_birth(game):
         },
     )
 
-    with pytest.raises(ValueError, match="account"):
-        db.ensure_dossiers_for_draft_directives(state)
+    # #654 路3：成案失败记 rejection、保持 draft，不向外抛
+    db.ensure_dossiers_for_draft_directives(state)
     assert db.get_dossier_for_directive(directive_id) is None
+    status = db.conn.execute(
+        "SELECT status FROM turn_directives WHERE id=?", (directive_id,),
+    ).fetchone()["status"]
+    assert status == "draft"
+    rej = db.conn.execute(
+        "SELECT reason FROM rejection_reports WHERE section='directive_locality'",
+    ).fetchall()
+    assert any("account" in str(r["reason"]) for r in rej)
 
 
 def test_underfunded_in_transit_allocation_closes_from_execution_state(game):
@@ -2572,6 +2581,9 @@ def test_underfunded_in_transit_allocation_closes_from_execution_state(game):
         payload={
             "account": "国库", "amount": 10,
             "execution_surface": "in_transit",
+            "locality_scope": "single",
+            "target_kind": "region",
+            "target_id": "shaanxi",
         },
     )
 
@@ -2628,9 +2640,17 @@ def test_incomplete_mechanical_directive_is_rejected_instead_of_retyped(
     directive_id = db.add_directive(
         state, None, "不完整机械旨意", "手动新增", dossier_payload=payload,
     )
-    with pytest.raises(ValueError):
-        db.ensure_dossiers_for_draft_directives(state)
+    # #654 路3：校验失败不抛穿；零行 + draft/rejection
+    db.ensure_dossiers_for_draft_directives(state)
     assert db.get_dossier_for_directive(directive_id) is None
+    status = db.conn.execute(
+        "SELECT status FROM turn_directives WHERE id=?", (directive_id,),
+    ).fetchone()["status"]
+    assert status == "draft"
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM rejection_reports "
+        "WHERE section='directive_locality'",
+    ).fetchone()["n"] >= 1
 
 
 def test_mechanical_directive_missing_target_fails_loudly_at_real_entry(game):
@@ -2645,9 +2665,20 @@ def test_mechanical_directive_missing_target_fails_loudly_at_real_entry(game):
             "execution_surface": "immediate",
         },
     )
-    with pytest.raises(ValueError, match="canonical target"):
-        db.ensure_dossiers_for_draft_directives(state)
+    # #654 路3：缺 canonical target → rejection，不抛穿
+    db.ensure_dossiers_for_draft_directives(state)
     assert db.get_dossier_for_directive(directive_id) is None
+    status = db.conn.execute(
+        "SELECT status FROM turn_directives WHERE id=?", (directive_id,),
+    ).fetchone()["status"]
+    assert status == "draft"
+    reasons = [
+        str(r["reason"])
+        for r in db.conn.execute(
+            "SELECT reason FROM rejection_reports WHERE section='directive_locality'",
+        ).fetchall()
+    ]
+    assert any("canonical target" in r or "target" in r for r in reasons)
 
 
 def test_secret_order_commitment_origin_maps_to_its_own_dossier(game):
@@ -2767,6 +2798,10 @@ def test_executing_dossier_stays_visible_and_extractor_can_close_it(game):
         target_kind="region", target_id="shaanxi",
         executor_kind="character", executor_id=_active_minister(db),
         due_turn=state.turn + 3,
+        payload={
+            "target_kind": "region", "target_id": "shaanxi",
+            "locality_scope": "single",
+        },
     )
     db.apply_dossier_verdicts(
         state, [{"dossier_id": dossier_id, "decision": "promulgated"}],
@@ -3233,9 +3268,20 @@ def test_secret_authorization_rejects_missing_assignee_without_grant(game):
     directive_id = db.add_directive(
         state, None, "残缺密授权", "player_decree", dossier_payload=payload,
     )
-    with pytest.raises(ValueError, match="canonical assignee"):
-        db.ensure_dossiers_for_draft_directives(state)
+    # #654 路3：缺 assignee → rejection 保持 draft，不抛穿
+    db.ensure_dossiers_for_draft_directives(state)
     assert db.get_dossier_for_directive(directive_id) is None
+    status = db.conn.execute(
+        "SELECT status FROM turn_directives WHERE id=?", (directive_id,),
+    ).fetchone()["status"]
+    assert status == "draft"
+    reasons = [
+        str(r["reason"])
+        for r in db.conn.execute(
+            "SELECT reason FROM rejection_reports WHERE section='directive_locality'",
+        ).fetchall()
+    ]
+    assert any("assignee" in r for r in reasons)
     assert db.conn.execute("SELECT COUNT(*) FROM skill_grants").fetchone()[0] == before
     assert db.conn.execute(
         "SELECT COUNT(*) FROM skill_grants WHERE TRIM(character_name)='' OR TRIM(skill_id)=''"
@@ -3253,6 +3299,9 @@ def test_in_transit_allocation_requires_execution_verdict(game):
         payload={
             "account": "国库", "amount": 10,
             "execution_surface": "in_transit",
+            "locality_scope": "single",
+            "target_kind": "region",
+            "target_id": "shaanxi",
         },
     )
     db.apply_dossier_verdicts(

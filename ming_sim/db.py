@@ -11469,18 +11469,15 @@ class GameDB:
                 )
             normalized["target_kind"] = "army"
         # #654：target_kind 七值 + locality_scope 三值 durable 归一（成案唯一结构边界）
+        # region 缺省 scope 不暗升 single——组合矩阵由 oracle fail-loud（r3-B.4 / r4-B）
         from ming_sim.execution_pressure import TARGET_KINDS, normalize_locality_scope
         final_kind = str(normalized.get("target_kind") or "").strip()
         if final_kind not in TARGET_KINDS:
             raise ValueError(f"target_kind 非法：{final_kind!r}")
         normalized["target_kind"] = final_kind
-        # region 目标未显式申报 scope → 默认 single（旧载荷迁移；显式 none 仍 fail-loud）
-        raw_scope = normalized.get("locality_scope")
-        scope_declared = raw_scope is not None and str(raw_scope).strip() != ""
-        if final_kind == "region" and not scope_declared:
-            normalized["locality_scope"] = "single"
-        else:
-            normalized["locality_scope"] = normalize_locality_scope(raw_scope)
+        normalized["locality_scope"] = normalize_locality_scope(
+            normalized.get("locality_scope"),
+        )
         return normalized
 
     def _find_pacification_target(self, content, name: str) -> Optional[str]:
@@ -13383,11 +13380,13 @@ class GameDB:
         rejection_collector=None,
         _issued_secret_order: bool = False,
     ) -> List[int]:
-        """#654 批量成案 ABI：national fan-out → N 行；否则单元素列表。
+        """#654 批量成案 ABI：Plan → Validate-all → Write-once。
 
-        与 create_decree_dossier 共享单行内核。directive 三路成案点改调本函数。
+        national fan-out → N 行；与 create_decree_dossier 共享单行内核。
+        任一省路由/校验失败 → 整旨零行；复合键按 (source, region_id) 逐项查补。
         """
         from ming_sim.execution_pressure import resolve_dossier_region_ids
+        from ming_sim.executor_routing import resolve_lead_executors
 
         payload_map = dict(payload or {})
         # target_* 以行级参数为准并入 payload，供 oracle 读取
@@ -13398,20 +13397,9 @@ class GameDB:
         if not str(payload_map.get("dossier_action_type") or "").strip():
             payload_map["dossier_action_type"] = str(action_type or "").strip()
 
-        # 密令不 fan-out
+        # 密令不 fan-out；既有行整批返回
         if secret_order_id is not None:
             region_ids = [""]
-        else:
-            regions_content = getattr(self.content, "regions", None) if self.content else None
-            region_ids = resolve_dossier_region_ids(
-                self.conn,
-                action_type=str(action_type or "").strip(),
-                payload=payload_map,
-                regions_content=regions_content,
-            )
-
-        # 幂等：directive / pending 键下若已有行，返回全集（确定序）
-        if secret_order_id is not None:
             existing = self.conn.execute(
                 "SELECT id FROM decree_dossiers WHERE secret_order_id=? "
                 "ORDER BY region_id, id",
@@ -13419,24 +13407,27 @@ class GameDB:
             ).fetchall()
             if existing:
                 return [int(r["id"]) for r in existing]
-        elif int(directive_id or 0) > 0:
-            existing = self.conn.execute(
-                "SELECT id FROM decree_dossiers WHERE directive_id=? "
-                "ORDER BY region_id, id",
-                (int(directive_id),),
-            ).fetchall()
-            if existing:
-                return [int(r["id"]) for r in existing]
-        elif int(pending_action_id or 0) > 0:
-            existing = self.conn.execute(
-                "SELECT id FROM decree_dossiers WHERE pending_action_id=? "
-                "ORDER BY region_id, id",
-                (int(pending_action_id),),
-            ).fetchall()
-            if existing:
-                return [int(r["id"]) for r in existing]
+        else:
+            regions_content = getattr(self.content, "regions", None) if self.content else None
+            # appointment 等历史行级 target_kind=person：仅 oracle 视作 character，不改 durable 载荷
+            oracle_payload = dict(payload_map)
+            if str(oracle_payload.get("target_kind") or "").strip() == "person":
+                oracle_payload["target_kind"] = "character"
+            region_ids = resolve_dossier_region_ids(
+                self.conn,
+                action_type=str(action_type or "").strip(),
+                payload=oracle_payload,
+                regions_content=regions_content,
+            )
 
-        # 点将名单：fan-out 时 N 行共用同一主办；未点将则逐省 resolve
+        # 点将名单：与单行内核同序归一 assignee 别名 / 旧式 executor 迁入，再判 named
+        canonical_assignee = str(payload_map.get("assignee_id") or "").strip()
+        if not canonical_assignee:
+            canonical_assignee = str(payload_map.get("assignee") or "").strip()
+        if canonical_assignee:
+            payload_map["assignee_id"] = canonical_assignee
+        payload_map.pop("assignee", None)
+
         base_roster_source = participants
         if base_roster_source is None:
             base_roster_source = (
@@ -13446,6 +13437,22 @@ class GameDB:
         base_roster = self._normalize_participant_roster(
             base_roster_source, strict_structured=True,
         )
+        has_canonical_lead = any(item.get("tier") == "主办" for item in base_roster)
+        action_key = str(action_type or "").strip()
+        if (
+            action_key in {"assignment", "military_order"}
+            and not canonical_assignee
+            and not has_canonical_lead
+            and str(executor_kind or "").strip() in {"", "character"}
+            and str(executor_id or "").strip()
+        ):
+            base_roster.append({
+                "character_id": str(executor_id).strip(), "tier": "主办",
+                "role": "", "delegator_id": None,
+            })
+            base_roster = self._normalize_participant_roster(
+                base_roster, strict_structured=True,
+            )
         named_leads = [
             str(item.get("character_id") or "").strip()
             for item in base_roster
@@ -13453,19 +13460,18 @@ class GameDB:
             and str(item.get("character_id") or "").strip()
             and not str(item.get("delegator_id") or "").strip()
         ]
-        if not named_leads:
-            assignee = str(payload_map.get("assignee_id") or "").strip()
-            if assignee:
-                named_leads = [assignee]
+        if not named_leads and canonical_assignee:
+            named_leads = [canonical_assignee]
 
-        ids: List[int] = []
+        # ① 完整逐省 plan（零写库）
+        plan: List[Dict[str, object]] = []
         for rid in region_ids:
             row_payload = dict(payload_map)
             row_participants = list(base_roster)
             row_executor_kind = str(executor_kind or "")
             row_executor_id = executor_id
+            row_extension = dict(extension or {})
             if named_leads:
-                # 点将：各子行同一主办名单
                 existing_names = {
                     str(i.get("character_id") or "").strip()
                     for i in row_participants if i.get("tier") == "主办"
@@ -13477,42 +13483,23 @@ class GameDB:
                             "role": "", "delegator_id": None,
                         })
                         existing_names.add(lead)
-                row_executor_kind = row_executor_kind or "character"
-                row_executor_id = row_executor_id or named_leads[0]
-            elif len(region_ids) > 1:
-                # 未点将 + fan-out：逐省职司路由（0117 真实 resolver）
-                from ming_sim.executor_routing import resolve_lead_executors
+                # 不在 bulk 层替 caller 填 executor_*：policy 等非执行类保持空 executor
+                # （与单行内核 / _directive_executor 分工一致）；名单已入 roster。
+                route: Dict[str, object] = {
+                    "coverage": None, "route": "named", "office_type": "",
+                    "leads": list(named_leads), "downgrade_step": "",
+                    "signal": None, "rejection": None,
+                }
+            else:
+                # 逐省真实 0117 路由（region_id 接缝；policy national 升 multi_month）
                 route = resolve_lead_executors(
                     self.conn,
                     action_type=action_type,
                     target_id=str(target_id or row_payload.get("target_id") or ""),
                     payload=row_payload,
                     participant_roster=row_participants,
+                    region_id=str(rid or ""),
                 )
-                if route.get("rejection") is not None:
-                    # 整旨零行：写入 rejection，返回 []（与单行 create 返 0 同语义）
-                    from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
-                    coll = rejection_collector if rejection_collector is not None else RejectionCollector()
-                    coll.record(
-                        "executor_routing",
-                        RejectedItem(
-                            item={
-                                "action_type": str(action_type),
-                                "region_id": rid,
-                                "transaction_category": str(
-                                    row_payload.get("transaction_category") or ""
-                                ).strip(),
-                            },
-                            reason="事务类别未命中承办职司映射",
-                            category="duty_route_unmapped",
-                            source=Provenance.player_decree,
-                        ),
-                        int(state.turn),
-                    )
-                    if rejection_collector is None and commit:
-                        coll.flush_to_db(self)
-                        self._commit_dossier_write(True)
-                    return []
                 for lead in route.get("leads") or []:
                     row_participants.append({
                         "character_id": str(lead), "tier": "主办",
@@ -13521,38 +13508,143 @@ class GameDB:
                 if route.get("leads"):
                     row_executor_kind = "character"
                     row_executor_id = str(route["leads"][0])
+                signal = route.get("signal")
+                if signal is not None and "execution_signal" not in row_extension:
+                    row_extension["execution_signal"] = signal
+            plan.append({
+                "region_id": str(rid or ""),
+                "route": route,
+                "participants": row_participants,
+                "executor_kind": row_executor_kind,
+                "executor_id": row_executor_id,
+                "payload": row_payload,
+                "extension": row_extension,
+            })
 
+        # ② 全量验证：任一省 rejection → 整旨零行（首个 INSERT 前）
+        rejected_entry = next(
+            (p for p in plan if (p.get("route") or {}).get("rejection") is not None),
+            None,
+        )
+        if rejected_entry is not None:
+            from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
+            route = rejected_entry["route"]  # type: ignore[index]
+            rid = str(rejected_entry.get("region_id") or "")
+            coll = rejection_collector if rejection_collector is not None else RejectionCollector()
+            coll.record(
+                "executor_routing",
+                RejectedItem(
+                    item={
+                        "action_type": str(action_type),
+                        "region_id": rid,
+                        "transaction_category": str(
+                            payload_map.get("transaction_category") or ""
+                        ).strip(),
+                    },
+                    reason="事务类别未命中承办职司映射",
+                    category="duty_route_unmapped",
+                    source=Provenance.player_decree,
+                ),
+                int(state.turn),
+            )
+            if rejection_collector is None and commit:
+                coll.flush_to_db(self)
+                self._commit_dossier_write(True)
+            return []
+
+        # 校验名单引用（写库前）；失败上抛由三路成案点各自终态处理
+        for entry in plan:
+            roster = self._normalize_participant_roster(
+                entry["participants"], strict_structured=True,
+            )
+            self._validate_participant_roster_references(roster)
+            self._validate_dossier_delegations(roster)
+            entry["participants"] = roster
+
+        # ③ 复合键逐 (source, region_id) 查补（删「任一既存即返回」）
+        existing_by_region: Dict[str, int] = {}
+        if secret_order_id is None and int(directive_id or 0) > 0:
+            for row in self.conn.execute(
+                "SELECT id, region_id FROM decree_dossiers WHERE directive_id=? "
+                "ORDER BY region_id, id",
+                (int(directive_id),),
+            ).fetchall():
+                key = str(row["region_id"] or "")
+                if key not in existing_by_region:
+                    existing_by_region[key] = int(row["id"])
+        elif secret_order_id is None and int(pending_action_id or 0) > 0:
+            for row in self.conn.execute(
+                "SELECT id, region_id FROM decree_dossiers WHERE pending_action_id=? "
+                "ORDER BY region_id, id",
+                (int(pending_action_id),),
+            ).fetchall():
+                key = str(row["region_id"] or "")
+                if key not in existing_by_region:
+                    existing_by_region[key] = int(row["id"])
+
+        # ④ 一次写入：仅 missing；commit 一次；返回 existing∪new 确定序
+        new_ids_by_region: Dict[str, int] = {}
+        for entry in plan:
+            rid = str(entry["region_id"] or "")
+            if rid in existing_by_region:
+                continue
             did = self._create_decree_dossier_row(
                 state,
                 action_type=action_type,
                 decree_text=decree_text,
-                target_kind=target_kind or str(row_payload.get("target_kind") or ""),
-                target_id=target_id if target_id not in (None, "") else row_payload.get("target_id") or "",
-                executor_kind=row_executor_kind,
-                executor_id=row_executor_id,
+                target_kind=target_kind or str(entry["payload"].get("target_kind") or ""),  # type: ignore[union-attr]
+                target_id=(
+                    target_id if target_id not in (None, "")
+                    else entry["payload"].get("target_id") or ""  # type: ignore[union-attr]
+                ),
+                executor_kind=str(entry.get("executor_kind") or ""),
+                executor_id=entry.get("executor_id"),
                 source_chat_turn_id=source_chat_turn_id,
                 pending_action_id=pending_action_id,
                 directive_id=directive_id,
                 secret_order_id=secret_order_id,
-                payload=row_payload,
+                payload=entry["payload"],  # type: ignore[arg-type]
                 status=status,
                 due_turn=due_turn,
-                extension=extension,
-                participants=row_participants,
-                commit=False,  # 批量末尾一次 commit
+                extension=entry.get("extension") or None,  # type: ignore[arg-type]
+                participants=entry["participants"],  # type: ignore[arg-type]
+                commit=False,
                 rejection_collector=rejection_collector,
                 _issued_secret_order=_issued_secret_order,
-                region_id=str(rid or ""),
-                _skip_lead_route=bool(named_leads) or len(region_ids) > 1,
+                region_id=rid,
+                _skip_lead_route=True,
             )
             if did == 0:
-                # 内核路由 rejection：若尚无已落行则整旨 []；若 fan-out 中途失败则响亮
-                if ids:
+                # 内核仍拒绝：整旨不得残留部分行
+                if existing_by_region or new_ids_by_region:
                     raise ValueError("案卷成案被承办路由拒绝，整旨零行")
                 return []
-            ids.append(int(did))
+            new_ids_by_region[rid] = int(did)
+
         self._commit_dossier_write(commit)
-        return ids
+
+        merged: Dict[str, int] = dict(existing_by_region)
+        merged.update(new_ids_by_region)
+        # 按 plan 的 region 序，同 region 以 id 稳定
+        ordered: List[int] = []
+        seen_ids: set = set()
+        for entry in plan:
+            rid = str(entry["region_id"] or "")
+            did = merged.get(rid)
+            if did is not None and did not in seen_ids:
+                ordered.append(int(did))
+                seen_ids.add(int(did))
+        # 若有既有多余 region 行（期望集外），按 region_id,id 附于末
+        extras = sorted(
+            (
+                (rid, did) for rid, did in existing_by_region.items()
+                if did not in seen_ids
+            ),
+            key=lambda item: (item[0], item[1]),
+        )
+        for _, did in extras:
+            ordered.append(int(did))
+        return ordered
 
     def _create_decree_dossier_row(
         self,
@@ -13715,7 +13807,8 @@ class GameDB:
 
         # #721：承办路由属于 canonical 成案核，首次 INSERT 前只补内存 roster，
         # 最终仍由同一 INSERT 写一次；不存在成案后 JSON/UPDATE 平行写口。
-        # #654 fan-out 路径已在 bulk 层逐省 resolve，此处跳过避免重复。
+        # #654 bulk 层已 Plan/Validate 并逐省 resolve，此处 _skip_lead_route 避免重复；
+        # 单行直落路径仍走 resolver，并传 region_id 接缝。
         from ming_sim.executor_routing import resolve_lead_executors
         if _skip_lead_route:
             route = {
@@ -13726,6 +13819,7 @@ class GameDB:
             route = resolve_lead_executors(
                 self.conn, action_type=action, target_id=canonical_target_id,
                 payload=canonical_payload, participant_roster=roster,
+                region_id=region_id,
             )
         existing_leads = {
             str(item.get("character_id") or "").strip()
@@ -18087,10 +18181,11 @@ class GameDB:
                         )
                 except Exception as exc:
                     self.conn.execute(f"ROLLBACK TO {sp}")
+                    # P6：rejection 只存 directive_id，不裁剪/快照 LLM 旨文
                     collector.record(
                         "directive_locality",
                         RejectedItem(
-                            item={"directive_id": did, "text": str(row["text"])[:80]},
+                            item={"directive_id": did},
                             reason=str(exc),
                             category="locality_fanout_failed",
                             source=Provenance.player_decree,
