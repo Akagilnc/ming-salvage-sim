@@ -7216,35 +7216,65 @@ def _apply_person_changes(
                 applied.append(origin_error)
                 continue
             new_transit_start_turn = state.turn if transit_to else 0
-            db.set_character_transit(
-                name,
-                location=location,
-                transit_to=transit_to,
-                distance_remaining=distance,
-                speed_factor=speed,
-                start_turn=new_transit_start_turn,
-                content=content,
-                commit=commit_person_change,
-            )
-            applied.append(
-                result := {
-                    "name": name,
-                    "动作": action,
-                    "location": location,
-                    "transit_to": transit_to,
-                }
-            )
-            log_applied(result, item)
-            # 候见中再奉旨离京：在既有 canonical 行止写缝结清，防抵非京后复活续赴京。
-            if waiting_posture and (
+            result = {
+                "name": name,
+                "动作": action,
+                "location": location,
+                "transit_to": transit_to,
+            }
+            # 候见中再奉旨离京：行止 + person_log + 召旨结清须同一原子单元，
+            # 防结清失败后留下已启程人物与未结 origin（#670 / ADR 0009）。
+            leave_waiting = waiting_posture and (
                 bool(str(transit_to or "").strip())
                 or not is_capital_location(location)
-            ):
-                from ming_sim.audience_night import settle_unsettled_summons_for_person
+            )
+            if leave_waiting:
+                own_tx = commit_person_change
+                if own_tx:
+                    _register_runtime_rollback_snapshot(
+                        db, state, content, registry,
+                    )
 
-                settle_unsettled_summons_for_person(
-                    db, name, commit=commit_person_change,
+                def _write_leave_waiting() -> None:
+                    db.set_character_transit(
+                        name,
+                        location=location,
+                        transit_to=transit_to,
+                        distance_remaining=distance,
+                        speed_factor=speed,
+                        start_turn=new_transit_start_turn,
+                        content=content,
+                        commit=False,
+                    )
+                    applied.append(result)
+                    log_applied(result, item, commit=False)
+                    from ming_sim.audience_night import (
+                        settle_unsettled_summons_for_person,
+                    )
+
+                    settle_unsettled_summons_for_person(
+                        db, name, commit=False,
+                    )
+
+                if own_tx:
+                    with atomic(db):
+                        _write_leave_waiting()
+                else:
+                    # 外层事务/SAVEPOINT 拥有所有权：不在本缝起 atomic。
+                    _write_leave_waiting()
+            else:
+                db.set_character_transit(
+                    name,
+                    location=location,
+                    transit_to=transit_to,
+                    distance_remaining=distance,
+                    speed_factor=speed,
+                    start_turn=new_transit_start_turn,
+                    content=content,
+                    commit=commit_person_change,
                 )
+                applied.append(result)
+                log_applied(result, item)
             continue
 
         applied.append(
