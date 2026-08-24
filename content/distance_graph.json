@@ -7,7 +7,7 @@
     "nanzhili": {"name": "南直隶 / 南京", "weight": 1.2},
     "shandong": {"name": "山东", "weight": 1.0},
     "shanxi": {"name": "山西", "weight": 1.4},
-    "henan": {"name": "河南", "weight": 1.1},
+    "henan": {"name": "河南", "weight": 1.0},
     "shaanxi": {"name": "陕西", "weight": 1.8},
     "zhejiang": {"name": "浙江", "weight": 0.7},
     "jiangxi": {"name": "江西", "weight": 0.4},
