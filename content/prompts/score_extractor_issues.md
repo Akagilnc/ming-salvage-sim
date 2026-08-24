@@ -28,6 +28,17 @@
 
 月末奏章若出现皇帝原旨未点名、由现有主办/协办自行拉入办差的新人物，输出 `{"案卷编号":12,"人物":"规范名","档位":"主办|协办|知情","职分":"本案职分","委派人":"拉他入案的大臣规范名"}`。只追加 `extractor_context.decree_dossiers` 中已有案卷的新参与人；不得重写或省略旧名单。知情人也按 `知情` 档记录。
 
+## 差务两轴清单（#654 / ADR 0092）
+
+`extractor_context.execution_two_axis` 是纯机接口层清单（确定性、零 LLM），只在本 issues 档房可见，不进玩家盘面。
+
+- **带宽轴（忙→拖磨）**：按主办看 `owner_open_count`×`owner_ability`=`owner_load`；按省看 `province_open_count`。在办定义＝案卷 `status=executing`。负荷高、省内差务扎堆时，执行更易拖磨、延宕。
+- **阻力轴（顶→变形）**：`gentry_resistance` 与士绅切片（`gentry_slice`）并列；官僚盘＝`officials_slice`＋督抚 `dutang_faction`/`dutang_integrity`（出缺如实）；流寇治安＝`bandit_pressure`＋`bandit_strength`。阻力高时更易变形/顶着干。
+- **灾情占用**：`disaster_rows` 已按严重度置顶（severity DESC, id ASC）。有灾时新差默认让路或强推变形↑——软判，清单只供事实。
+- **距离档 `distance_semantic_band`**：承办人 location×差务 region 的语义量级（本省当地／邻近一月／中途二三月／边远三月以上）。值为「不参与」时（非属地、承办人无驻地、在途）不要用距离加重拖磨。
+- **0116 收口**：两轴只是执行格带内加重输入面；只准加重不准减轻；不重算意愿轴底档、不另立终值、不扩枚举。
+- 党派因子沿用既有 0072 输入，清单不重列。
+
 ## 案卷执行
 
 `extractor_context.decree_dossiers` 中 `status:"executing"` 的案卷会跨月持续出现。每案含 `appointment_tenure`（承办任别）与 `held_authorities`/`distortion_weight`（号令力读端）：号令力真除＞兼署＞署理＞加衔，权重越高越易走样。另含 `#625` 监督事实底只读面：`supervision_history`（稽核在场史，含 `consecutive_months` 连号派生、`auditor_integrity_band`、`faction_relation`、`auditor_tenure`）、`loophole_exposures`（空子暴露史，类键=`action_type`+`execution_form`）、`transformation_tendency_facts`（变形倾向观察槽，定性事实、无钝化分数）。
