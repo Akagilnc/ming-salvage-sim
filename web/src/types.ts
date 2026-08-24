@@ -32,12 +32,13 @@ export type Army = {
   manpower: number;
   army_needed: number; // #173 引擎实扣月应发(万两)=ceil(manpower×salary_rate/10000)，月饷呈现真源(维护费列已删)
   supply: number;
-  morale: number;
+  // #321：军心/士气/欠饷由后端玩家投影直出字符串，禁 raw 数与前端二次 map
+  morale_text: string;
   training: number;
   equipment: number;
-  arrears: number;
+  arrears_text: string;
   mobility: number;
-  loyalty: number;
+  mutiny_tier: string;
   // #1501：军牌 payload 停携 status；可选以兼容旧夹具/非军牌路径
   status?: string;
   owner_power?: string;
@@ -494,6 +495,8 @@ export type ChatResponse = {
   pending_action_failures?: PendingActionFailure[];
   // #502 AC5：多道准驳含糊态（候选 id/摘要）供前端展示大臣追问哪一道；无则缺席/null。
   directive_confirmation_ambiguous?: DirectiveConfirmationAmbiguous | null;
+  // #670：成功记召机面控制码（SUMMON_FRESH / SUMMON_IN_TRANSIT）；禁止写入 setError/danger note。
+  admission?: string;
 };
 
 export type DirectiveConfirmationAmbiguous = {

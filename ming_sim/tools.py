@@ -894,8 +894,7 @@ def build_board_query_tools(context: CourtContext):
         return context.db.army_report(limit=8)
 
     def inspect_army(army: str) -> str:
-        """查某支军队详细数值：supply/morale/training/equipment/firearm_equipment/cannon_equipment/
-        arrears/mobility/loyalty/manpower/army_needed（月应发军饷=引擎实扣）/station/commander/controller/troop_type/status。
+        """查某支军队军情奏报：军心/士气/欠饷为定性奏报；兵额/月饷/驻地/统帅/兵种/状态等为世界事实。
         army 可传军队名（如"关宁军"）或 army_id（如"guanning"），两者均支持；动态新建军同样可查。"""
         # army_detail 已统一按 DB id/name 直查 + 静态别名兜底 + SELECT* 渲染(含火器/随军大炮)，
         # 直接复用，不再各写一份窄 SELECT fallback（CMR codexB/C：army render 单一真源）。

@@ -673,6 +673,11 @@ def build_simulator_payload(
     # #883: due commitments are public review work, unlike actual secret
     # orders.  Keep them on a separately named public rail; never pre-load
     # secret-order prose into the monthly judge.
+    from ming_sim.audience_night import (
+        list_arrived_unsettled_summons,
+        list_waiting_audience_summons,
+    )
+
     grouped_orders = augment_secret_orders_with_due_commitments(secret_orders, db, state)
     # Trust augment's Dict[str, list] contract — shape errors must fail loud.
     due_commitments = [
@@ -823,6 +828,10 @@ def build_simulator_payload(
             state,
             DistanceMatrix.from_file(bundled_path("content", "distance_matrix.json")),
         ),
+        # #670: machine facts for the existing monthly judge.
+        # arrivals → 续赴京；waiting_audience → 抵京候见（只读投影，非法固定句）。
+        "unsettled_arrived_summons": list_arrived_unsettled_summons(db),
+        "waiting_audience": list_waiting_audience_summons(db),
         # #627：政敌检举供事实（零新增串行调用；不携真伪位/quota/烈度）
         "faction_denunciation_facts": db.build_faction_denunciation_facts(),
         # #626：承诺所系反噬——硬门只落结构化事实；玩家文案由叙事步从此特征包长出
@@ -835,6 +844,8 @@ def build_simulator_payload(
             "已确认抵达的人物（name+location），请据此演出到任，勿改 location/在途账。"
             "transit_semantics 为仍在途人物的在途语义特征（name/目的地/月数语义）；"
             "仅据该字段所给语义演出在途情形。"
+            "unsettled_arrived_summons 为原程已抵非京、须续赴京的未结传召机器事实；"
+            "waiting_audience 为已抵京候见、尚未宣入消费的未结传召机器事实。"
             "faction_denunciation_facts 为派系恩怨/分叉案卷/处境/个性事实包，供朝堂弹劾叙事取材，不含真伪位。"
             "commitment_backlash_facts 为承诺所系反噬结构化事实包（源类/承诺链接/metrics），"
             "供叙事长出玩家可见文案；含与 #625 反制 bar 用语区分约束，不含成句模板。"

@@ -137,7 +137,8 @@ afterEach(() => {
 });
 
 describe("ArmyDrawer presentation", () => {
-  it("shows approximate total arrears and qualitative abstract stats", () => {
+  // #321 P7：军情三键 ABI 仍可入 props，DOM 不得直显固定串；保留兵力/月饷世界事实
+  it("keeps world facts and never renders situation three-key strings", () => {
     const host = renderArmyDrawer({
       id: "denglai",
       name: "登莱兵与水师",
@@ -149,23 +150,27 @@ describe("ArmyDrawer presentation", () => {
       manpower: 26000,
       army_needed: 4,
       supply: 73,
-      morale: 73,
+      morale_text: "士气：尚稳",
       training: 73,
       equipment: 73,
-      arrears: 63,
+      arrears_text: "欠饷约60万两，数月军饷",
       mobility: 73,
-      loyalty: 73,
+      mutiny_tier: "优秀",
       status: "可支援辽东和海运",
       owner_power: "ming",
     });
 
-    expect(host.textContent).toContain("欠饷约60万两");
-    expect(host.textContent).toContain("忠诚尚稳");
+    expect(host.textContent).toContain("登莱兵与水师");
+    expect(host.textContent).toContain("26000");
+    expect(host.textContent).toContain("4万");
+    expect(host.textContent).not.toContain("欠饷约60万两，数月军饷");
+    expect(host.textContent).not.toContain("士气：尚稳");
+    expect(host.textContent).not.toContain("优秀");
     expect(host.textContent).not.toContain("63万两");
     expect(host.textContent).not.toContain("忠诚73");
   });
 
-  it("renders fractional payload arrears with half-step approximation", () => {
+  it("does not render fractional arrears_text or raw 12.5", () => {
     const host = renderArmyDrawer({
       id: "denglai",
       name: "登莱兵与水师",
@@ -177,17 +182,18 @@ describe("ArmyDrawer presentation", () => {
       manpower: 26000,
       army_needed: 4,
       supply: 73,
-      morale: 73,
+      morale_text: "士气：尚稳",
       training: 73,
       equipment: 73,
-      arrears: 12.5,
+      arrears_text: "欠饷约15万两，约两月军饷",
       mobility: 73,
-      loyalty: 73,
+      mutiny_tier: "优秀",
       status: "可支援辽东和海运",
       owner_power: "ming",
     });
 
-    expect(host.textContent).toContain("欠饷约15万两");
+    expect(host.textContent).not.toContain("欠饷约15万两");
+    expect(host.textContent).not.toContain("约两月军饷");
     expect(host.textContent).not.toContain("12.5万两");
   });
 
@@ -204,22 +210,23 @@ describe("ArmyDrawer presentation", () => {
       manpower: 72000,
       army_needed: 12,
       supply: 38,
-      morale: 52,
+      morale_text: "士气：不振",
       training: 68,
       equipment: 62,
-      arrears: 60,
+      arrears_text: "欠饷约60万两，数月军饷",
       mobility: 48,
-      loyalty: 55,
+      mutiny_tier: "不满",
       status: statusSentence,
       owner_power: "ming",
     });
 
-    // 即使 props 仍带旧 status，军牌 DOM 不得渲染之；欠饷栏仍在
+    // 即使 props 仍带旧 status / 军情三键，军牌 DOM 不得渲染之
     expect(host.textContent).not.toContain(statusSentence);
     expect(host.textContent).not.toContain("欠饷严重");
     expect(host.textContent).not.toMatch(/状态/);
-    expect(host.textContent).toMatch(/欠饷/);
-    // 欠饷真数呈现路径保留（约数格式由 formatArmyArrears 负责）
+    expect(host.textContent).not.toContain("欠饷约60万两，数月军饷");
+    expect(host.textContent).not.toContain("士气：不振");
+    expect(host.textContent).not.toContain("不满");
     expect(host.querySelector(".right-drawer-detail")).toBeTruthy();
   });
 });

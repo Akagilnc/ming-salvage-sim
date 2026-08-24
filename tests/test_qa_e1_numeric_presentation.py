@@ -3,7 +3,7 @@
 真缝：
 - army_logs.reason → turn_army_summary / previous_summary 路径上的欠发文案
 - 省源分账 reason / turn_army_summary delta（#1383 残余）
-- API armies.arrears 只读投影（#1363 同源呈现面）
+- API armies.arrears_text approximate 投影；raw arrears 键缺席（#1363 同源呈现面）
 - budget「各军军饷」vs army_report「应发」呈现口径标注
 """
 
@@ -230,44 +230,24 @@ def test_province_pay_split_reason_and_summary_have_no_float_garbage(game):
     )
 
 
-def test_army_payload_arrears_projection_rounds_to_one_decimal(game):
-    """#1363：API armies.arrears 只读投影收整，杜绝原始浮点残渣。"""
+def test_army_payload_arrears_text_is_approximate_not_raw(game):
+    """#321：API armies.arrears_text 为 approximate 奏报；禁 raw 键与 IEEE 残渣。"""
     db, _state, _ = game
     row = db.conn.execute(
         "SELECT id FROM armies WHERE owner_power='ming' ORDER BY id LIMIT 1"
     ).fetchone()
     army_id = row["id"]
-
-    # IEEE 残渣 + 多位小数摊分 + 零值/负值分支（生产：round(float(x or 0), 1)）
-    samples = (
-        (1.2000000000000002, 1.2),
-        (1.5217391304347827, 1.5),
-        (12.5, 12.5),
-        (11.978260869565217, 12.0),
-        (0, 0.0),
-        (-1.234, -1.2),
+    # 唯一 residue 样本：须命中 _FLOAT_GARBAGE（≥3 位小数）；12.5 一位小数对此正则惰性
+    raw = 1.2000000000000002
+    db.conn.execute(
+        "UPDATE armies SET arrears=?, province_pay_arrears=?, central_pay_arrears=0 WHERE id=?",
+        (raw, raw, army_id),
     )
-    for raw, expected in samples:
-        db.conn.execute(
-            "UPDATE armies SET arrears=?, province_pay_arrears=?, central_pay_arrears=0 WHERE id=?",
-            (raw, raw, army_id),
-        )
-        db.conn.commit()
-        payload = {army["id"]: army for army in db.army_payload()}
-        got = payload[army_id]["arrears"]
-        assert got == expected, f"raw={raw!r} → arrears 投影应得 {expected!r}，得 {got!r}"
-        text = repr(got) if isinstance(got, float) else str(got)
-        assert not _FLOAT_GARBAGE.search(text), f"arrears 投影仍含浮点残渣：{got!r}"
-
-    # None → or 0 回落：列 NOT NULL 不可直写，替身 row 走 army_payload 同一投影式
-    base = db.conn.execute("SELECT * FROM armies WHERE id=?", (army_id,)).fetchone()
-    none_row = {key: base[key] for key in base.keys()}
-    none_row["arrears"] = None
-    original_rows = db.army_rows
-    try:
-        db.army_rows = lambda limit=None, danger_order=False: [none_row]  # type: ignore[method-assign]
-        payload = {army["id"]: army for army in db.army_payload()}
-        got = payload[army_id]["arrears"]
-        assert got == 0.0, f"raw=None → arrears 投影应得 0.0，得 {got!r}"
-    finally:
-        db.army_rows = original_rows  # type: ignore[method-assign]
+    db.conn.commit()
+    card = {army["id"]: army for army in db.army_payload()}[army_id]
+    assert "arrears" not in card
+    arrears_text = card["arrears_text"]
+    assert isinstance(arrears_text, str) and arrears_text
+    assert not _FLOAT_GARBAGE.search(arrears_text), (
+        f"arrears_text 含 IEEE 残渣：{arrears_text!r}"
+    )

@@ -12,6 +12,7 @@ import ming_sim.cli_backend as cb
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.session import GameSession
 from ming_sim.skills import bind_content as bind_skills_content
+from tests.web_audience_test_doubles import HallAdmissionSessionMixin
 from web_app import WebGame
 
 
@@ -67,7 +68,7 @@ class _FakeRegistry:
         return None
 
 
-class _FakeSession:
+class _FakeSession(HallAdmissionSessionMixin):
     def __init__(self, db, state, content, agent: _FakeAgent) -> None:
         self.db = db
         self.state = state

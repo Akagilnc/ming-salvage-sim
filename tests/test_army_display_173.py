@@ -62,7 +62,7 @@ def test_army_public_exits_approx_arrears_and_hide_split_accounts(game):
     # 受控裸分 token：不与兵额/合计饷银等合法可数事实混淆
     scores = dict(loyalty=67, supply=69, morale=61, training=59, equipment=53, mobility=47)
     db.conn.execute(
-        "UPDATE armies SET arrears=63, province_pay_arrears=17, central_pay_arrears=46,"
+        "UPDATE armies SET arrears=12.5, province_pay_arrears=17, central_pay_arrears=46,"
         "manpower=20000, cannon_equipment=0, firearm_equipment=0,"
         "loyalty=?, supply=?, morale=?, training=?, equipment=?, mobility=? WHERE id=?",
         (*scores.values(), row["id"]),
@@ -75,7 +75,8 @@ def test_army_public_exits_approx_arrears_and_hide_split_accounts(game):
     seg = next(p for p in report.split("：", 1)[-1].split("；") if p.startswith(name + "："))
     exits = (detail, seg, roster)
     joined = "\n".join(exits)
-    assert name in detail and "63" not in joined
+    # 欠饷裸精确小数不得进入真实出口（与 #321 raw 哨兵同形）
+    assert name in detail and "12.5" not in joined
     for forbidden in ("province_pay_arrears", "central_pay_arrears", "省份额欠", "中央份额欠"):
         assert forbidden not in joined
     db.conn.execute(
@@ -112,8 +113,10 @@ def test_army_arrears_presentation_rounds_half_steps_up(game):
     assert _arrears_fact(25) == _arrears_fact(30) != _arrears_fact(15)
 
 
-def test_army_payload_preserves_fractional_arrears_for_web_rendering(game):
-    """#305 cmr：web 只读 army_payload；12.5 万两不可被截成 12。"""
+def test_army_payload_exposes_approx_arrears_text_not_raw(game):
+    """#321：web 只读 army_payload.arrears_text approximate；numeric arrears 键缺席；raw 12.5 不裸出。"""
+    from ming_sim.db import _player_army_situation
+
     db, _state, _ = game
     row = db.conn.execute(
         "SELECT id FROM armies WHERE owner_power='ming' ORDER BY id LIMIT 1"
@@ -128,8 +131,12 @@ def test_army_payload_preserves_fractional_arrears_for_web_rendering(game):
     )
     db.conn.commit()
 
+    full = db.conn.execute("SELECT * FROM armies WHERE id=?", (row["id"],)).fetchone()
+    expected = _player_army_situation(full, db._army_pay(full))["arrears_text"]
     payload = {army["id"]: army for army in db.army_payload()}
-    assert payload[row["id"]]["arrears"] == pytest.approx(12.5)
+    assert "arrears" not in payload[row["id"]]
+    assert payload[row["id"]]["arrears_text"] == expected
+    assert "12.5" not in expected
 
 
 def test_simulator_payload_exposes_army_needed(game):
