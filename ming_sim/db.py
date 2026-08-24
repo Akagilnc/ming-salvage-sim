@@ -111,6 +111,10 @@ def mutiny_loyalty_cap(mutiny_count: int, redemption_count: int = 0) -> int:
     return max(60, min(100, 100 - 20 * int(mutiny_count) + 10 * int(redemption_count)))
 
 
+# #320 / ADR 0025 D2：extractor loyalty 软调单事件 |Δ| 上限（全路径、无豁免）。
+LOYALTY_SOFT_ADJUST_MAX = 15
+
+
 def _seed_guilt_storage_value(value: object) -> str:
     """Serialize the content-layer guilt mapping into the existing DB TEXT column."""
     if isinstance(value, Mapping):
@@ -7605,6 +7609,9 @@ class GameDB:
                                    .get(army_id) or {}).get(field, 0) or 0)
                     if net_pct:
                         delta = self.apply_legacy_pct(delta, net_pct)
+                    # #320：loyalty 软调全路径 ±15（pct 后、cap 前）；无来源豁免肢
+                    if field == "loyalty":
+                        delta = max(-LOYALTY_SOFT_ADJUST_MAX, min(LOYALTY_SOFT_ADJUST_MAX, delta))
                     upper_bound = (
                         mutiny_loyalty_cap(row["mutiny_count"], row["redemption_count"])
                         if field == "loyalty" else 100
