@@ -13,6 +13,13 @@ DOSSIER_ACTION_TYPES = frozenset({
 
 DIRECTIVE_ACTION_TYPES = DOSSIER_ACTION_TYPES - {"appointment", "secret_order"}
 
+# Ming #654 / owner A：旨意 target_kind 唯一八值真源（含结构目标 dossier）。
+# durable normalization / producer / locality oracle 共引；禁第二份枚举。
+TARGET_KINDS = frozenset({
+    "policy", "character", "office", "army", "region", "issue", "account",
+    "dossier",
+})
+
 # Ming #654：属地 fan-out 资格动作白名单。闭合枚举、import 期 assert 子集关系。
 NATIONAL_FANOUT_ACTION_TYPES = frozenset({"policy", "special_decree"})
 assert NATIONAL_FANOUT_ACTION_TYPES <= DIRECTIVE_ACTION_TYPES

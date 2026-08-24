@@ -10,15 +10,12 @@ from __future__ import annotations
 import math
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
-from ming_sim.decree_vocabulary import NATIONAL_FANOUT_ACTION_TYPES
+from ming_sim.decree_vocabulary import NATIONAL_FANOUT_ACTION_TYPES, TARGET_KINDS
 from ming_sim.distance import DistanceMatrix
 from ming_sim.matching import match_region_id_from_text
 from ming_sim.paths import bundled_path
 
-# 七值 target_kind 单一真源（durable / producer 共引）
-TARGET_KINDS = frozenset({
-    "policy", "character", "office", "army", "region", "issue", "account",
-})
+# TARGET_KINDS：八值真源在 decree_vocabulary；此处 re-export 保兼容。
 # 归一后合法 locality_scope 闭集
 LOCALITY_SCOPES = frozenset({"national", "single", "none"})
 _SCOPE_ALIASES = {
@@ -174,18 +171,11 @@ def resolve_dossier_region_ids(
     scope = normalize_locality_scope(raw_scope)
     target_id = str(payload.get("target_id") or "").strip()
 
-    # 结构目标（撤回成命等）：不入属地 21 格；仅 none → 单行
-    if target_kind == "dossier":
-        if scope != "none":
-            raise ValueError(
-                f"target_kind=dossier 与 locality_scope={scope!r} 矛盾（须 none）"
-            )
-        return [""]
-
+    # 八值成员校验先于 8×3 矩阵分派（owner A：无成员校验前旁路）
     if target_kind not in TARGET_KINDS:
         raise ValueError(f"target_kind 非法：{target_kind!r}")
 
-    # r4-B 21 格：R1 = region ∧ single
+    # r4-B / owner A 8×3：R1 = region ∧ single；dossier 仅 none → 单行 ''
     if target_kind == "region":
         if scope != "single":
             raise ValueError(
@@ -195,13 +185,20 @@ def resolve_dossier_region_ids(
             conn, target_id, regions_content=regions_content,
         )]
 
+    if target_kind == "dossier":
+        if scope != "none":
+            raise ValueError(
+                f"target_kind=dossier 与 locality_scope={scope!r} 矛盾（须 none）"
+            )
+        return [""]
+
     if scope == "single":
         raise ValueError(
             f"locality_scope=single 只配 region 目标，得 target_kind={target_kind!r}"
         )
 
     if scope == "national":
-        if target_kind in {"character", "office", "army"}:
+        if target_kind in {"character", "office", "army", "dossier"}:
             raise ValueError(
                 f"target_kind={target_kind!r} 不得 national fan-out"
             )
