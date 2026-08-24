@@ -9,6 +9,11 @@ DOSSIER_ACTION_TYPES = frozenset({
     "secret_order", "special_decree",
     "revoke_decree", "punishment", "pacification", "referral",
     "revoke_authority", "dismiss_assignment",
+    # #653 / ADR 0090：偿还序 override＋Due 折发系数旨——payload-owned，顺颁/强颁后
+    # 自案卷载荷经 materialize_pay_order_decree 唯一入口物化 fiscal_config（ADR 0055
+    # 判后物化轨）；打回零写。fiscal_config 键族是唯一持久真源，案卷只是颁布门与
+    # provenance origin_ref（dossier:<id>），非第二旨意真源。
+    "pay_order_override",
     # #651: a case-bound, payload-owned terminal order; never infer it from effects.
     "prohibit_covert_levy",
 })
@@ -26,6 +31,7 @@ _DOSSIER_NARRATIVE_ACTIONS = frozenset({
     # pacification / punishment: payload-owned — 顺颁后自案卷物化（#522/#517 / ADR 0055）
     # revoke_authority / revoke_decree: payload-owned — #523 / ADR 0055 判后物化
     # referral: payload-owned — #524 下议 initiative 顺颁后落（ADR 0055）
+    # pay_order_override: payload-owned — #653 判后物化 fiscal_config（ADR 0055/0090）
 })
 _DOSSIER_EXTERNAL_REVIEW_EXEMPT = frozenset({
     "secret_order", "secret_authorization", "secret_investigation", "protection",
@@ -39,6 +45,8 @@ _DOSSIER_TERMINAL_ACTIONS = frozenset({
     "punishment",
     # #523：收权/撤回成命顺颁即终局（authority_changes / breach）。
     "revoke_authority", "revoke_decree",
+    # #653：偿还序/折发旨顺颁即物化 config、效果已落地（无执行判定面）→ 终局。
+    "pay_order_override",
     "prohibit_covert_levy",
 })
 
