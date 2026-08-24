@@ -911,6 +911,216 @@ def test_tool_summon_does_not_splice_gate_reason_into_llm_answer(game, monkeypat
     )
 
 
+
+def test_session_register_unlisted_summon_after_uses_admission(game, monkeypatch):
+    """#670：非流式补档 summon_after 落 DB 后走共享 admission；不可召 office_type 不换人。"""
+    import json
+    import ming_sim.session as session_mod
+
+    db, state, content = game
+    capital = _set_place(game, "毕自严", location="beizhili")
+    eligible_name = "补档可召甲"
+    ineligible_name = "补档宗藩乙"
+    assert eligible_name not in content.characters
+    assert ineligible_name not in content.characters
+
+    def _make_sess(tool_name, payload):
+        class _Agent:
+            def run(self, _message):
+                return SimpleNamespace(
+                    content="臣请补档。",
+                    tools=[SimpleNamespace(
+                        tool_name=tool_name,
+                        result=f"__pending_unlisted_person__{payload}",
+                        arguments=json.loads(payload),
+                    )],
+                )
+
+        sess = GameSession.__new__(GameSession)
+        sess.db = db
+        sess.state = state
+        sess.content = content
+        sess.temporary_characters = {}
+        sess.registry = SimpleNamespace(
+            get=lambda _character: _Agent(),
+            build_draft_line=lambda: "无",
+            register=lambda _ch: None,
+        )
+        sess.llm_config = SimpleNamespace(channel="api")
+        sess._retrieve_memories_for_message = lambda text: text
+        sess._audience_prompt_for_message = lambda message, *a, **k: message
+        sess._start_cli_action_intent = lambda *_a, **_k: None
+        sess._finish_cli_action_intent = lambda *_a, **_k: None
+        sess._recognize_audience_command_verdict = lambda *_a, **_k: None
+        sess._apply_audience_command_verdict = lambda *a, **k: None
+        sess._confirmation_intent_for_preexisting_pending = lambda *a, **k: None
+        sess._scene_registry = SimpleNamespace(
+            start_open_enter=lambda *a, **k: None,
+            start_exit=lambda *a, **k: None,
+            join=lambda *_a, **_k: [],
+            abandon=lambda *_a, **_k: None,
+        )
+        return sess
+
+    monkeypatch.setattr(session_mod, "_dump_llm_messages", lambda *a, **k: None)
+
+    # 可召 office_type：admission 时 DB 行须已存在，且 allowed → 换人。
+    eligible_payload = json.dumps({
+        "name": eligible_name,
+        "office": "兵部主事",
+        "office_type": "文官",
+        "summon_after": True,
+    }, ensure_ascii=False)
+    sess = _make_sess("register_unlisted_person", eligible_payload)
+    seen_db: list[bool] = []
+    real_consume = GameSession.consume_audience_admission
+
+    def _spy(self, character, *, origin_id, state=None, origin_chat_turn_id=0):
+        row = self.db.conn.execute(
+            "SELECT name, office_type, location FROM characters WHERE name=?",
+            (character.name,),
+        ).fetchone()
+        seen_db.append(row is not None and str(row["name"]) == character.name)
+        return real_consume(
+            self, character, origin_id=origin_id, state=state,
+            origin_chat_turn_id=origin_chat_turn_id,
+        )
+
+    monkeypatch.setattr(GameSession, "consume_audience_admission", _spy)
+    result = sess.chat(capital.name, f"补档{eligible_name}")
+    assert result.registered_minister == eligible_name
+    assert seen_db == [True], "admission 调用时补档 DB 行须已落下"
+    assert result.court_action == "summon"
+    assert result.next_minister == eligible_name
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM characters WHERE name=?", (eligible_name,),
+    ).fetchone()["n"] == 1
+
+    # 不可召 office_type（宗藩）：仍落档，admission 见 DB 行，但不换人。
+    ineligible_payload = json.dumps({
+        "name": ineligible_name,
+        "office": "秦王",
+        "office_type": "宗藩",
+        "summon_after": True,
+    }, ensure_ascii=False)
+    sess2 = _make_sess("register_unlisted_person", ineligible_payload)
+    seen_db.clear()
+    result2 = sess2.chat(capital.name, f"补档{ineligible_name}")
+    assert result2.registered_minister == ineligible_name
+    assert seen_db == [True], "不可召补档 admission 时 DB 行亦须已存在"
+    assert not result2.court_action
+    assert not result2.next_minister
+    assert db.conn.execute(
+        "SELECT office_type FROM characters WHERE name=?", (ineligible_name,),
+    ).fetchone()["office_type"] == "宗藩"
+
+
+def test_web_register_unlisted_summon_after_uses_admission(game, monkeypatch):
+    """#670：流式补档 summon_after 落 DB 后走共享 admission；不可召 office_type 不换人。"""
+    import json
+    from tests.test_audience_background import ToolExec, _FakeAgent, _web_game
+
+    db, state, content = game
+    capital = _set_place(game, "毕自严", location="beizhili")
+    eligible_name = "流式补档可召丙"
+    ineligible_name = "流式补档宗藩丁"
+    assert eligible_name not in content.characters
+    assert ineligible_name not in content.characters
+
+    def _bind_real_admission(web_game):
+        # FakeSession 用 set；生产补档路径 temporary_characters.pop 需要 mapping。
+        web_game.session.temporary_characters = {}
+        web_game.session._proposal_blocked = GameSession._proposal_blocked
+        # FakeRegistry 仅有 get/refresh；补档路径会 registry.register。
+        web_game.session.registry.register = lambda _ch: None
+        web_game.session._apply_unlisted_person_registration = (
+            lambda payload: GameSession._apply_unlisted_person_registration(
+                web_game.session, payload,
+            )
+        )
+        web_game.session.can_summon = (
+            lambda character: GameSession.can_summon(web_game.session, character)
+        )
+        web_game.session.admit_audience = (
+            lambda character: GameSession.admit_audience(web_game.session, character)
+        )
+        seen_db: list[bool] = []
+
+        def _consume(character, *, origin_id, state=None, origin_chat_turn_id=0):
+            row = web_game.session.db.conn.execute(
+                "SELECT name FROM characters WHERE name=?", (character.name,),
+            ).fetchone()
+            seen_db.append(row is not None and str(row["name"]) == character.name)
+            return GameSession.consume_audience_admission(
+                web_game.session, character, origin_id=origin_id,
+                state=state or web_game.session.state,
+                origin_chat_turn_id=origin_chat_turn_id,
+            )
+
+        web_game.session.consume_audience_admission = _consume
+        return seen_db
+
+    # 可召：admission 见 DB 行且换人。
+    eligible_payload = json.dumps({
+        "name": eligible_name,
+        "office": "户部主事",
+        "office_type": "文官",
+        "summon_after": True,
+    }, ensure_ascii=False)
+    agent = _FakeAgent(
+        tools=[ToolExec("register_unlisted_person", f"__pending_unlisted_person__{eligible_payload}")],
+        chunks=["臣请补档。"],
+    )
+    web_game = _web_game(db, state, content, agent)
+    seen_db = _bind_real_admission(web_game)
+    interpreted = web_game._chat_stream_interpret_tools(
+        capital.name,
+        f"补档{eligible_name}",
+        capital,
+        "臣请补档。",
+        SimpleNamespace(tools=agent.tools),
+        None,
+        0,
+    )
+    assert interpreted["registered"] == eligible_name
+    assert seen_db == [True], "流式 admission 调用时补档 DB 行须已落下"
+    assert interpreted["court_action"] == "summon"
+    assert interpreted["next_minister"] == eligible_name
+
+    # 不可召宗藩：落档、admission 见行、不换人。
+    ineligible_payload = json.dumps({
+        "name": ineligible_name,
+        "office": "秦王",
+        "office_type": "宗藩",
+        "summon_after": True,
+    }, ensure_ascii=False)
+    agent2 = _FakeAgent(
+        tools=[ToolExec(
+            "register_unlisted_person",
+            f"__pending_unlisted_person__{ineligible_payload}",
+        )],
+        chunks=["臣请补档。"],
+    )
+    web_game2 = _web_game(db, state, content, agent2)
+    seen_db2 = _bind_real_admission(web_game2)
+    interpreted2 = web_game2._chat_stream_interpret_tools(
+        capital.name,
+        f"补档{ineligible_name}",
+        capital,
+        "臣请补档。",
+        SimpleNamespace(tools=agent2.tools),
+        None,
+        0,
+    )
+    assert interpreted2["registered"] == ineligible_name
+    assert seen_db2 == [True], "流式不可召补档 admission 时 DB 行亦须已存在"
+    assert not interpreted2["court_action"]
+    assert not interpreted2["next_minister"]
+    assert db.conn.execute(
+        "SELECT office_type FROM characters WHERE name=?", (ineligible_name,),
+    ).fetchone()["office_type"] == "宗藩"
+
+
 def test_web_chat_hall_admission_allows_capital_and_blocks_offsite(game):
     """#670 T-A：Web.chat——blank/beizhili 开殿；场外/在途成功记召静默 200，不调回话。"""
     db, state, content = game

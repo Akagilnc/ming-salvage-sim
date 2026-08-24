@@ -1669,9 +1669,18 @@ class GameSession:
                 if registered:
                     result.registered_minister = registered
                     result.refresh_ministers.append(registered)
+                    # #670 / ADR 0038+0096：补档已落 DB 后须走共享 admission；仅 allowed 换人。
                     if summon_after:
-                        result.court_action = "summon"
-                        result.next_minister = registered
+                        target = self.content.characters.get(registered)
+                        if target is not None:
+                            decision = self.consume_audience_admission(
+                                target,
+                                origin_id=f"session:tool:{int(chat_turn_id or 0)}:{target.name}",
+                                origin_chat_turn_id=int(chat_turn_id or 0),
+                            )
+                            if decision.allowed:
+                                result.court_action = "summon"
+                                result.next_minister = target.name
             elif (
                 tool_name == "rush_staged_commitment"
                 or tool_result.startswith("__commitment_rush__")
