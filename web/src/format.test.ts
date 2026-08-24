@@ -1,5 +1,25 @@
 import { describe, expect, it } from "vitest";
-import { stripOrganicMarkdown } from "./format";
+import { arrearsToneFromText, formatArmyArrears, stripOrganicMarkdown } from "./format";
+
+describe("formatArmyArrears / arrearsToneFromText", () => {
+  // 覆盖后端 _approx_wanliang + _approx_pay_months 现有文案桶；色阶对齐旧 months 阈值。
+  it.each([
+    { arrears_text: "无欠饷", tone: "" },
+    { arrears_text: "欠饷不足十万两，不足一月军饷", tone: "" },
+    { arrears_text: "欠饷约15万两，不足一月军饷", tone: "" },
+    { arrears_text: "欠饷约60万两", tone: "" }, // pay<=0：有总额、无月数后缀
+    { arrears_text: "欠饷不足十万两", tone: "" }, // pay<=0 小额
+    { arrears_text: "欠饷约15万两，约两月军饷", tone: "warn" },
+    { arrears_text: "欠饷不足十万两，约两月军饷", tone: "warn" },
+    { arrears_text: "欠饷约60万两，数月军饷", tone: "danger" },
+    { arrears_text: "欠饷约100万两，约半年军饷", tone: "danger" },
+    { arrears_text: "欠饷约200万两，逾一年军饷", tone: "danger" },
+    { arrears_text: "欠饷约500万两，约2年军饷", tone: "danger" },
+  ] as const)("exact passthrough + tone for $arrears_text → $tone", ({ arrears_text, tone }) => {
+    expect(formatArmyArrears({ arrears_text })).toBe(arrears_text);
+    expect(arrearsToneFromText(arrears_text)).toBe(tone);
+  });
+});
 
 describe("stripOrganicMarkdown", () => {
   it("removes bold, italic, and list markers without changing the words", () => {
