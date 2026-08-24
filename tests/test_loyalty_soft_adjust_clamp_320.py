@@ -164,3 +164,35 @@ def test_junxin_alias_also_soft_clamped(game):
     _apply(db, state, {"军心": 50})
 
     assert _loyalty(db) == 55
+
+
+def test_canonical_and_alias_same_event_do_not_double_count_positive(game):
+    """p2：同事件 {loyalty:50, 军心:50} 不得累计绕过；净软调 |Σδ|≤15 → 70+15=85。"""
+    db, state, _ = game
+    _set_loyalty(db, loyalty=70)
+
+    changes = _apply(db, state, {"loyalty": 50, "军心": 50})
+
+    assert _loyalty(db) == 85
+    assert _loyalty(db) != 100
+    loyalty_changes = [c for c in changes if c.get("field") == "loyalty" and not c.get("rejected")]
+    assert len(loyalty_changes) == 1
+    assert loyalty_changes[0]["delta"] == 15
+    assert loyalty_changes[0]["old"] == 70
+    assert loyalty_changes[0]["new"] == 85
+
+
+def test_canonical_and_alias_same_event_do_not_double_count_negative(game):
+    """p2 对称：同事件 {loyalty:-50, 军心:-50} 净软调 ≥ -15 → 70-15=55（非 40）。"""
+    db, state, _ = game
+    _set_loyalty(db, loyalty=70)
+
+    changes = _apply(db, state, {"loyalty": -50, "军心": -50})
+
+    assert _loyalty(db) == 55
+    assert _loyalty(db) != 40
+    loyalty_changes = [c for c in changes if c.get("field") == "loyalty" and not c.get("rejected")]
+    assert len(loyalty_changes) == 1
+    assert loyalty_changes[0]["delta"] == -15
+    assert loyalty_changes[0]["old"] == 70
+    assert loyalty_changes[0]["new"] == 55

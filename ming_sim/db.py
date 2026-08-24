@@ -7432,6 +7432,22 @@ class GameDB:
                         ).fetchone()
                         if current_row is not None:
                             row = current_row
+            # #320：同军同事件内 loyalty 规范键与别名只消费一次——先合计合法整数增量，
+            # 通用环内落地一次 ±15 软钳，避免 {loyalty:50, 军心:50} 双键绕过单事件预算。
+            loyalty_canonical_delta: int | None = None
+            for _lf, _lv in raw_changes.items():
+                if ARMY_FIELD_ALIASES.get(str(_lf).strip(), str(_lf).strip()) != "loyalty":
+                    continue
+                try:
+                    if isinstance(_lv, bool) or isinstance(_lv, float):
+                        raise ValueError("非整数 delta")
+                    _li = int(_lv)
+                except (TypeError, ValueError):
+                    continue  # 非法值仍走下方逐项拒收，不并入合计
+                loyalty_canonical_delta = (
+                    _li if loyalty_canonical_delta is None else loyalty_canonical_delta + _li
+                )
+            loyalty_soft_consumed = False
             for raw_field, value in raw_changes.items():
                 field = ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
                 if field in ("reason", "origin_ref"):
@@ -7603,7 +7619,19 @@ class GameDB:
                     stored_new = new_value
                     log_delta = actual_delta
                 elif field in ARMY_SCORE_FIELDS:
-                    delta = int(value)
+                    if field == "loyalty":
+                        # 合法 loyalty 别名已在环前合计；非法叶子仍在上方逐项拒收。
+                        # 同事件同军只落地一次，后续别名 key 跳过（不写库、不二次打日志）。
+                        if loyalty_soft_consumed:
+                            continue
+                        loyalty_soft_consumed = True
+                        delta = int(
+                            loyalty_canonical_delta
+                            if loyalty_canonical_delta is not None
+                            else value
+                        )
+                    else:
+                        delta = int(value)
                     # 遗产百分比修正：该军该字段若有 active 遗产修正符，先放大/缩小 delta
                     net_pct = int(((self.legacy_modifiers(state).get("armies") or {})
                                    .get(army_id) or {}).get(field, 0) or 0)
