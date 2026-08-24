@@ -1883,7 +1883,12 @@ class WebGame:
                             origin_id=f"web:chat:{accepted_turn}:{minister_name}",
                         )
                         if not admission.allowed:
-                            raise HTTPException(status_code=409, detail=admission.reason)
+                            # 资格失败用 reason；成功记召无固定承旨句，detail 只带结构化枚举。
+                            detail = admission.reason or (
+                                admission.result.value
+                                if admission.result is not None else ""
+                            )
+                            raise HTTPException(status_code=409, detail=detail)
                     if self._persistent_chat_minister(minister_name):
                         chat_turn_id, before_snapshot = self._start_chat_turn(minister_name)
                     self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})
@@ -3091,7 +3096,12 @@ class WebGame:
             )
             if not admission.allowed:
                 self._complete_pending_write(pending_ticket)
-                yield {"type": "error", "message": admission.reason}
+                # 资格失败用 reason；成功记召无固定承旨句，message 只带结构化枚举。
+                message = admission.reason or (
+                    admission.result.value
+                    if admission.result is not None else ""
+                )
+                yield {"type": "error", "message": message}
                 return
             if self._persistent_chat_minister(minister_name):
                 chat_turn_id, before_snapshot = self._start_chat_turn(minister_name)

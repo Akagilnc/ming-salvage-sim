@@ -153,7 +153,10 @@ def test_cli_initial_selection_records_remote_summon_without_returning_minister(
     assert [(row["person_name"], row["origin_id"]) for row in an.list_unsettled_summons(db)] == [
         ("洪承畴", f"cli:initial:{state.turn}:洪承畴"),
     ]
-    assert any("赴京" in line and "不能入殿" in line for line in notices)
+    # 成功记召不喷固定承旨句；资格失败仍可经 reason 打印。
+    joined = "\n".join(notices)
+    assert "赴京" not in joined and "不能入殿" not in joined
+    assert "已传召" not in joined
 
 
 def test_in_transit_summon_origin_is_idempotent_and_restorable(game):
@@ -234,6 +237,114 @@ def test_fresh_summon_origin_is_idempotent_and_projects_kind(game):
         "origin_id": "command:43",
         "kind": "fresh",
     }]
+
+
+def test_multi_origin_same_person_dedupes_consumer_projections_not_ledger(game):
+    """#670：同人多 origin ledger 独立保留；arrived/waiting 消费端每人一份。"""
+    db, state, content = game
+    sess = _session(game)
+    sess.state = state
+    person = _set_place(
+        game, "洪承畴", location="shaanxi", transit_to="henan", transit_start_turn=0,
+    )
+    origin_chat = "web:chat:1"
+    origin_tool = "web:tool:2"
+
+    first = sess.consume_audience_admission(
+        person, origin_id=origin_chat, state=state,
+    )
+    second = sess.consume_audience_admission(
+        person, origin_id=origin_tool, state=state,
+    )
+    assert first.result is AudienceAdmission.SUMMON_IN_TRANSIT
+    assert second.result is AudienceAdmission.SUMMON_IN_TRANSIT
+    # 成功记召无固定承旨句。
+    assert first.reason == "" and second.reason == ""
+
+    unsettled = an.list_unsettled_summons(db)
+    assert len(unsettled) == 2
+    assert {row["origin_id"] for row in unsettled} == {origin_chat, origin_tool}
+    first_entry = next(row for row in unsettled if row["origin_id"] == origin_chat)
+    second_entry = next(row for row in unsettled if row["origin_id"] == origin_tool)
+
+    # 抵非京 → arrived 每人 1 条（最早 origin），ledger 仍 2 行。
+    assert force_transit_arrivals(db, state, content) == [
+        {"name": person.name, "location": "henan"},
+    ]
+    arrived = an.list_arrived_unsettled_summons(db)
+    assert arrived == [{
+        "person_name": person.name,
+        "original_destination": "henan",
+        "origin_id": origin_chat,
+        "source_entry_id": first_entry["entry_id"],
+        "required_fact": "抵原地后续赴京",
+    }]
+    payload = build_simulator_payload(state, db, "", "")
+    assert payload["unsettled_arrived_summons"] == arrived
+    assert len(an.list_unsettled_summons(db)) == 2
+
+    # 结清其一 origin 后另一仍未结，投影仍 1 人份。
+    assert an.settle_summon_origin(db, origin_chat) is True
+    remaining = an.list_unsettled_summons(db)
+    assert [row["origin_id"] for row in remaining] == [origin_tool]
+    arrived_after = an.list_arrived_unsettled_summons(db)
+    assert arrived_after == [{
+        "person_name": person.name,
+        "original_destination": "henan",
+        "origin_id": origin_tool,
+        "source_entry_id": second_entry["entry_id"],
+        "required_fact": "抵原地后续赴京",
+    }]
+
+    # 续赴京并抵京 → waiting 每人 1 条；再结清最后 origin 后清空。
+    from ming_sim.decree import settle_with_delta
+
+    settle_with_delta(
+        state, db,
+        {"人物变更": [{
+            "name": person.name, "动作": "行止", "transit_to": "beizhili",
+            "origin_ref": "盘面自发",
+        }]},
+        before_turn=int(state.turn), content=content,
+    )
+    db.conn.execute(
+        "UPDATE characters SET location=?, transit_to='', transit_distance_remaining=NULL, "
+        "transit_speed_factor=NULL WHERE name=?",
+        ("beizhili", person.name),
+    )
+    db.conn.commit()
+    waiting = an.list_waiting_audience_summons(db)
+    assert waiting == [{
+        "person_name": person.name,
+        "origin_id": origin_tool,
+        "source_entry_id": second_entry["entry_id"],
+        "location": "beizhili",
+    }]
+    assert build_simulator_payload(state, db, "", "")["waiting_audience"] == waiting
+    # 再补一个同人 waiting origin，投影仍只 1 条；结清其一后另一仍在。
+    night = an.get_open_night(db) or an.open_night(db, state)
+    extra_origin = "web:chat:9"
+    extra_id = an.record_summon_in_transit(
+        db, int(night["id"]), person.name, origin_id=extra_origin,
+    )
+    waiting_two = an.list_waiting_audience_summons(db)
+    assert len(an.list_unsettled_summons(db)) == 2
+    assert waiting_two == [{
+        "person_name": person.name,
+        "origin_id": origin_tool,
+        "source_entry_id": second_entry["entry_id"],
+        "location": "beizhili",
+    }]
+    assert an.settle_summon_origin(db, origin_tool) is True
+    assert an.list_waiting_audience_summons(db) == [{
+        "person_name": person.name,
+        "origin_id": extra_origin,
+        "source_entry_id": extra_id,
+        "location": "beizhili",
+    }]
+    assert an.settle_summon_origin(db, extra_origin) is True
+    assert an.list_unsettled_summons(db) == []
+    assert an.list_waiting_audience_summons(db) == []
 
 
 def test_fresh_summon_departs_via_canonical_applier_only_when_night_closes(game):
@@ -561,7 +672,10 @@ def test_cli_midflow_summon_consumes_admission_without_entering(game, monkeypatc
     outcome = terminal._handle_court_command(sess, "传洪承畴来", current)
 
     assert outcome == "handled"
-    assert any("赴京" in line and "不能入殿" in line for line in notices)
+    # 成功记召不喷固定承旨句，仍 handled 不入殿。
+    joined = "\n".join(notices)
+    assert "赴京" not in joined and "不能入殿" not in joined
+    assert "已传召" not in joined
     assert [row["origin_id"] for row in an.list_unsettled_summons(db)] == [
         f"cli:midflow:{state.turn}:洪承畴",
     ]
@@ -699,13 +813,18 @@ def test_web_chat_hall_admission_allows_capital_and_blocks_offsite(game):
     with pytest.raises(HTTPException) as remote_exc:
         runtime.chat(remote.name, "传洪承畴来。")
     assert remote_exc.value.status_code == 409
-    assert "赴京" in str(remote_exc.value.detail) and "不能入殿" in str(remote_exc.value.detail)
+    # 成功记召 detail 只带结构化枚举，无固定承旨中文。
+    assert remote_exc.value.detail == AudienceAdmission.SUMMON_FRESH.value
+    assert "赴京" not in str(remote_exc.value.detail)
+    assert "不能入殿" not in str(remote_exc.value.detail)
     assert chat_calls == [capital.name, capital.name]
 
     with pytest.raises(HTTPException) as moving_exc:
         runtime.chat(moving.name, "传孙传庭来。")
     assert moving_exc.value.status_code == 409
-    assert "在途" in str(moving_exc.value.detail) and "不能入殿" in str(moving_exc.value.detail)
+    assert moving_exc.value.detail == AudienceAdmission.SUMMON_IN_TRANSIT.value
+    assert "在途" not in str(moving_exc.value.detail)
+    assert "不能入殿" not in str(moving_exc.value.detail)
     assert chat_calls == [capital.name, capital.name]
     assert _chat_message_count(db) == allowed_msgs
     assert _travel_row(db, moving.name) == moving_before
