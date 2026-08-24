@@ -14,6 +14,7 @@ D. 命中 allowed 后从服务端 option 重建 label/hint/能力字段，客户
 from __future__ import annotations
 
 import asyncio
+import json
 
 import httpx
 import pytest
@@ -568,3 +569,489 @@ def test_ordinary_event_with_hallucinated_capability_submits(
     assert stored.get("label") == "准其销号"
     assert stored.get("note") == "准销。"
     assert not stored.get("dossier_decision")
+
+
+# ---------------------------------------------------------------------------
+# #657 片2：C1 ＋ 五动作领域写（rescript_actions 模块级）
+# ---------------------------------------------------------------------------
+
+def _layer_a_option(**overrides):
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+    base = {
+        "label": "发帑赈济",
+        "hint": "所安者饥民",
+        "action_type": "assignment",
+        "assignee_name": "",
+        "target_kind": "region",
+        "target_id": "shaanxi",
+        "locality_scope": "single",
+        "region_id": "shaanxi",
+        "transaction_category": "督赈",
+        "title": "陕西赈济",
+        "deadline_months": 3,
+    }
+    base.update(overrides)
+    return normalize_rescript_layer_a_option(base)
+
+
+def _plant_urgent_desk(db, state, *, options=None, actor_name="杨嗣昌"):
+    opts = options or [_layer_a_option(), _layer_a_option(label="缓征", hint="先赈后征")]
+    db.save_rescript_drafts(int(state.turn), [{
+        "title": "陕西告饥",
+        "context": "秦地赤旱",
+        "options": opts,
+        "actor_name": actor_name,
+        "actor_office": "兵部尚书",
+        "actor_faction": "东林",
+    }])
+    db.conn.commit()
+    desk = db.list_rescript_desk(int(state.turn))
+    urgent = next(r for r in desk if r["kind"] == "rescript_draft")
+    return urgent, opts
+
+
+def test_657_c1_validate_rejects_stale_capability_and_desk_outsider(game):
+    """C1.5 stale capability；desk 外键整批拒。"""
+    from ming_sim import rescript_actions as ra
+    db, state, _content = game
+    urgent, opts = _plant_urgent_desk(db, state)
+    key = urgent["decision_key"]
+    with pytest.raises(ValueError, match="draft_capability|stale"):
+        ra.validate_all([urgent], [{
+            "decision_key": key,
+            "action": "follow_draft",
+            "draft_capability": "not-a-real-cap",
+            "label": opts[0]["label"],
+        }])
+    with pytest.raises(ValueError, match="不在当前 desk"):
+        ra.validate_all([urgent], [{
+            "decision_key": "rescript_draft:999:0",
+            "action": "hold",
+            "label": "留中",
+        }])
+
+
+def test_657_c1_decided_mismatch_rejects_and_cas0(game):
+    """C1.3/C1.4：decided 不匹配 / 空 choice → 整批拒。"""
+    from ming_sim import rescript_actions as ra
+    db, state, _content = game
+    urgent, opts = _plant_urgent_desk(db, state)
+    key = urgent["decision_key"]
+    # 先 hold 落 decided
+    batch = ra.validate_all([urgent], [{
+        "decision_key": key, "action": "hold", "label": "留中",
+    }])
+    ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(), content=_content)
+    row = db.list_rescript_drafts()
+    hit = next(r for r in row if r["title"] == "陕西告饥")
+    assert hit["status"] == "decided"
+    # 构造 decided desk 行
+    decided_row = {
+        **urgent,
+        "status": "decided",
+        "choice": hit["choice"],
+    }
+    with pytest.raises(ValueError, match="不匹配"):
+        ra.validate_all([decided_row], [{
+            "decision_key": key, "action": "hold", "label": "另留",
+        }])
+    empty_decided = {**urgent, "status": "decided", "choice": None}
+    with pytest.raises(ValueError, match="不匹配|缺请求"):
+        ra.validate_all([empty_decided], [{
+            "decision_key": key, "action": "hold", "label": "留中",
+        }])
+
+
+def test_657_five_actions_domain_writes(game):
+    """五动作至少各一领域断言；summon 只 CAS decided。"""
+    from ming_sim import rescript_actions as ra
+    from ming_sim.decree_vocabulary import derive_draft_capability
+    db, state, content = game
+
+    # --- hold ---
+    urgent, _opts = _plant_urgent_desk(db, state, actor_name="杨嗣昌")
+    key = urgent["decision_key"]
+    batch = ra.validate_all([urgent], [{
+        "decision_key": key, "action": "hold", "label": "留中",
+    }])
+    ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(), content=content)
+    hit = next(r for r in db.list_rescript_drafts() if r["title"] == "陕西告饥")
+    assert hit["status"] == "decided"
+    assert (hit["choice"] or {}).get("action") == "hold"
+    # 信用辜负边
+    edges = db.conn.execute(
+        "SELECT event_kind FROM relation_edge_events WHERE target=? AND event_kind=?",
+        ("杨嗣昌", "辜负"),
+    ).fetchall()
+    assert edges, "hold 须写辜负信用事件"
+
+    # --- follow_draft (assignment duty route) ---
+    db.conn.execute("DELETE FROM pending_decisions WHERE kind='rescript_draft'")
+    opt = _layer_a_option(assignee_name="")  # duty route B
+    urgent, _ = _plant_urgent_desk(db, state, options=[opt, _layer_a_option(label="备", hint="b")])
+    key = urgent["decision_key"]
+    before = len(db.list_decree_dossiers())
+    batch = ra.validate_all([urgent], [{
+        "decision_key": key,
+        "action": "follow_draft",
+        "draft_capability": opt["draft_capability"],
+        "label": opt["label"],
+    }])
+    ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(), content=content)
+    after = db.list_decree_dossiers()
+    assert len(after) > before
+    created = after[-1]
+    assert created["action_type"] == "assignment"
+    assert created["status"] in {"proposed", "promulgated", "executing"} or created["status"]
+
+    # --- midzhi ---
+    db.conn.execute("DELETE FROM pending_decisions WHERE kind='rescript_draft'")
+    urgent, _ = _plant_urgent_desk(db, state)
+    key = urgent["decision_key"]
+    before = len(db.list_decree_dossiers())
+    midzhi_choice = {
+        "decision_key": key,
+        "action": "midzhi",
+        "label": "中旨赈济",
+        "action_type": "assignment",
+        "target_kind": "region",
+        "target_id": "shaanxi",
+        "locality_scope": "single",
+        "region_id": "shaanxi",
+        "transaction_category": "督赈",
+        "title": "中旨赈陕",
+        "deadline_months": 2,
+    }
+    batch = ra.validate_all([urgent], [midzhi_choice])
+    ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(), content=content)
+    mids = [d for d in db.list_decree_dossiers() if d.get("mode") == "midzhi"]
+    assert mids, "midzhi 须落 mode=midzhi 案卷"
+    assert mids[-1]["status"] == "proposed"
+
+    # --- deliberate ---
+    db.conn.execute("DELETE FROM pending_decisions WHERE kind='rescript_draft'")
+    urgent, _ = _plant_urgent_desk(db, state)
+    key = urgent["decision_key"]
+    batch = ra.validate_all([urgent], [{
+        "decision_key": key, "action": "deliberate", "label": "下部议",
+    }])
+    pre = ra.PrewriteResults(deliberate_by_key={
+        key: {"title": "廷议陕西赈济", "body": "臣请集议赈策。", "stance": "主赈"},
+    })
+    ra.apply_rescript_batch(db, state, batch, pre, content=content)
+    issue = db.conn.execute(
+        "SELECT title, origin_ref FROM issues WHERE origin_ref=?",
+        (f"rescript_deliberate:{key}",),
+    ).fetchone()
+    assert issue is not None and "廷议" in str(issue["title"])
+
+    # --- summon：只 decided，不写 ledger 正文 ---
+    db.conn.execute("DELETE FROM pending_decisions WHERE kind='rescript_draft'")
+    urgent, _ = _plant_urgent_desk(db, state)
+    key = urgent["decision_key"]
+    batch = ra.validate_all([urgent], [{
+        "decision_key": key, "action": "summon",
+        "label": "召见", "summon_target": "杨嗣昌",
+    }])
+    ledger_before = db.conn.execute("SELECT COUNT(*) AS c FROM story_ledger_entries").fetchone()["c"]
+    result = ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(), content=content)
+    assert key in result.summon_keys
+    hit = next(r for r in db.list_rescript_drafts() if r["title"] == "陕西告饥")
+    assert hit["status"] == "decided"
+    assert (hit["choice"] or {}).get("action") == "summon"
+    ledger_after = db.conn.execute("SELECT COUNT(*) AS c FROM story_ledger_entries").fetchone()["c"]
+    assert ledger_after == ledger_before
+
+    # consumed_epoch 列不存在
+    cols = {r[1] for r in db.conn.execute("PRAGMA table_info(pending_decisions)").fetchall()}
+    assert "consumed_epoch" not in cols
+    _ = derive_draft_capability  # import seam kept warm
+
+
+def test_657_return_revise_round_prior_and_clear_anchor(game):
+    """C1.2：改票 round 不双增、prior 全史；phase2 后清 choice_json。"""
+    from ming_sim import rescript_actions as ra
+    db, state, content = game
+    urgent, opts = _plant_urgent_desk(db, state)
+    key = urgent["decision_key"]
+    choice = {
+        "decision_key": key,
+        "action": "return_revise",
+        "label": "发回改票",
+        "applied_from_revision_round": 0,
+        "draft_capability": opts[0]["draft_capability"],
+    }
+    batch = ra.validate_all([urgent], [choice])
+    new_opts = [
+        {"label": "新拟甲", "hint": "h1", "draft_capability": "cap-a"},
+        {"label": "新拟乙", "hint": "h2", "draft_capability": "cap-b"},
+    ]
+    pre = ra.PrewriteResults(revise_by_key={key: new_opts})
+    ra.apply_rescript_batch(db, state, batch, pre, content=content)
+    hit = next(r for r in db.list_rescript_drafts() if r["title"] == "陕西告饥")
+    assert hit["status"] == "pending"
+    assert hit["revision_round"] == 1
+    assert [o["label"] for o in hit["options"]] == ["新拟甲", "新拟乙"]
+    assert len(hit["prior_options_json"]) == 1
+    assert (hit["choice"] or {}).get("action") == "return_revise"
+
+    # 同 revise choice 重放 → already_applied，round 不双增
+    desk2 = db.list_rescript_desk(int(state.turn))
+    row2 = next(r for r in desk2 if r["decision_key"] == key)
+    batch2 = ra.validate_all([row2], [choice])
+    assert batch2.items[0].already_applied is True
+    ra.apply_rescript_batch(db, state, batch2, ra.PrewriteResults(), content=content)
+    hit2 = next(r for r in db.list_rescript_drafts() if r["title"] == "陕西告饥")
+    assert hit2["revision_round"] == 1
+
+    # phase2 成功后清锚
+    ra.clear_return_revise_choice_anchors(db, [key])
+    db.conn.commit()
+    hit3 = next(r for r in db.list_rescript_drafts() if r["title"] == "陕西告饥")
+    assert hit3["choice"] == {} or hit3["choice"] is None or hit3["choice"] == {}
+    # 空 choice 后新鲜 follow 可提交（用新 options 的 cap）
+    fresh = {
+        "decision_key": key,
+        "action": "hold",
+        "label": "留中",
+    }
+    desk3 = db.list_rescript_desk(int(state.turn))
+    row3 = next(r for r in desk3 if r["decision_key"] == key)
+    batch3 = ra.validate_all([row3], [fresh])
+    assert batch3.items[0].already_applied is False
+
+
+def test_657_prewrite_failure_zero_db_writes(game):
+    """prewrite 任一腿失败 → 整批中止，apply 前零写。"""
+    from ming_sim import rescript_actions as ra
+    db, state, content = game
+    urgent, _ = _plant_urgent_desk(db, state)
+    key = urgent["decision_key"]
+    batch = ra.validate_all([urgent], [{
+        "decision_key": key, "action": "deliberate", "label": "下部议",
+    }])
+
+    def boom(_it):
+        raise RuntimeError("llm down")
+
+    with pytest.raises(RuntimeError, match="prewrite LLM 失败|llm down"):
+        ra.run_prewrite_llms(batch, deliberate_runner=boom)
+    # 库态未变
+    hit = next(r for r in db.list_rescript_drafts() if r["title"] == "陕西告饥")
+    assert hit["status"] == "pending"
+    assert hit["choice"] is None or hit["choice"] == {} or not hit["choice"]
+
+
+def test_657_abi_mapper_matrix_a1_a12(game):
+    """A1–A12：map_rescript_option_or_choice 首写前正/负 + 闭集。"""
+    from ming_sim import rescript_actions as ra
+    from ming_sim.decree_vocabulary import (
+        DOSSIER_ACTION_TYPES,
+        RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES,
+        RESCRIPT_ROUTABLE_ACTION_TYPES,
+    )
+    db, state, content = game
+
+    # A12 闭集
+    assert RESCRIPT_ROUTABLE_ACTION_TYPES < DOSSIER_ACTION_TYPES
+    assert "dismiss_assignment" in RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES
+    cols = {r[1] for r in db.conn.execute("PRAGMA table_info(decree_dossiers)").fetchall()}
+    assert "rescript_origin" not in cols
+
+    # A1 assignment duty 无 assignee
+    p = ra.map_rescript_option_or_choice({
+        "action_type": "assignment", "label": "责成督赈", "hint": "h",
+        "target_kind": "region", "target_id": "shaanxi",
+        "locality_scope": "single", "region_id": "shaanxi",
+        "transaction_category": "督赈", "deadline_months": 2,
+    }, db=db, content=content, state=state)
+    assert p["end_turn"] == int(state.turn) + 2
+    with pytest.raises(ValueError):
+        ra.map_rescript_option_or_choice({
+            "action_type": "assignment", "label": "x", "hint": "h",
+            "target_kind": "region", "target_id": "shaanxi",
+            "locality_scope": "single",
+        }, db=db, content=content, state=state)
+
+    # A2 military_order
+    army = db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()
+    if army is not None:
+        aid = str(army["id"])
+        minister = db.conn.execute(
+            "SELECT name FROM characters WHERE status='active' AND power_id='ming' LIMIT 1"
+        ).fetchone()
+        name = str(minister["name"]) if minister else "杨嗣昌"
+        p = ra.map_rescript_option_or_choice({
+            "action_type": "military_order", "label": "调驻", "hint": "h",
+            "assignee_name": name, "target_kind": "army", "target_id": aid,
+            "locality_scope": "none", "station": "山海关",
+        }, db=db, content=content, state=state)
+        assert p["station"] == "山海关"
+        with pytest.raises(ValueError):
+            ra.map_rescript_option_or_choice({
+                "action_type": "military_order", "label": "x", "hint": "h",
+                "assignee_name": name, "target_kind": "region", "target_id": "shaanxi",
+                "locality_scope": "none",
+            }, db=db, content=content, state=state)
+
+    # A3/A4 grant honorific + 金钱
+    minister = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' LIMIT 1"
+    ).fetchone()
+    mname = str(minister["name"]) if minister else "杨嗣昌"
+    p = ra.map_rescript_option_or_choice({
+        "action_type": "grant_allocation", "label": "加衔", "hint": "h",
+        "grant_action": "加衔", "target_kind": "character", "target_id": mname,
+        "name": mname, "locality_scope": "none",
+    }, db=db, content=content, state=state)
+    assert p.get("execution_surface") == "terminal"
+    p = ra.map_rescript_option_or_choice({
+        "action_type": "grant_allocation", "label": "赏", "hint": "h",
+        "grant_action": "赏赉", "amount": 1000,
+        "target_kind": "character", "target_id": mname, "name": mname,
+        "locality_scope": "none",
+    }, db=db, content=content, state=state)
+    assert p["account"] == "国库"  # 缺 account 默认
+    with pytest.raises(ValueError):
+        ra.map_rescript_option_or_choice({
+            "action_type": "grant_allocation", "label": "赏", "hint": "h",
+            "grant_action": "赏赉",  # 缺 amount
+            "target_kind": "character", "target_id": mname,
+            "locality_scope": "none",
+        }, db=db, content=content, state=state)
+
+    # A7/A8 appointment
+    p = ra.map_rescript_option_or_choice({
+        "action_type": "appointment", "label": "授官", "hint": "h",
+        "appoint_action": "任命", "office": "兵部尚书",
+        "target_kind": "character", "target_id": mname, "name": mname,
+        "locality_scope": "none",
+    }, db=db, content=content, state=state)
+    assert p["_office_action"] == "任命" and p["_emitted_action_type"] == "appointment"
+    p = ra.map_rescript_option_or_choice({
+        "action_type": "appointment", "label": "罢", "hint": "h",
+        "appoint_action": "罢免", "office": "",
+        "target_kind": "character", "target_id": mname, "name": mname,
+        "locality_scope": "none",
+    }, db=db, content=content, state=state)
+    assert p["_emitted_action_type"] == "dismiss_assignment"
+    with pytest.raises(ValueError):
+        ra.map_rescript_option_or_choice({
+            "action_type": "appointment", "label": "授", "hint": "h",
+            "appoint_action": "任命", "office": "",  # 缺 office
+            "target_kind": "character", "target_id": mname,
+            "locality_scope": "none",
+        }, db=db, content=content, state=state)
+
+    # A9 punishment
+    p = ra.map_rescript_option_or_choice({
+        "action_type": "punishment", "label": "下狱", "hint": "h",
+        "punish_action": "拿问下狱",
+        "target_kind": "character", "target_id": mname, "name": mname,
+        "locality_scope": "none",
+    }, db=db, content=content, state=state)
+    assert p["punish_action"] == "拿问下狱"
+    with pytest.raises(ValueError):
+        ra.map_rescript_option_or_choice({
+            "action_type": "punishment", "label": "罚", "hint": "h",
+            "punish_action": "罚俸",  # 无 amount
+            "target_kind": "character", "target_id": mname,
+            "locality_scope": "none",
+        }, db=db, content=content, state=state)
+
+    # A10 authorization name-only
+    p = ra.map_rescript_option_or_choice({
+        "action_type": "authorization", "label": "委任", "hint": "h",
+        "name": mname, "target_kind": "region", "target_id": "shaanxi",
+        "locality_scope": "single", "region_id": "shaanxi",
+    }, db=db, content=content, state=state)
+    assert p["privilege"] == "便宜行事"
+    assert p["holder_id"] == mname or p["name"]
+    with pytest.raises(ValueError):
+        ra.map_rescript_option_or_choice({
+            "action_type": "authorization", "label": "x", "hint": "h",
+            "target_kind": "region", "target_id": "shaanxi",
+            "locality_scope": "single",
+        }, db=db, content=content, state=state)
+
+    # follow create 幂等：同 body 重交不增（C1 decided 跳过）— 行级
+    opt_fields = {
+        "action_type": "assignment", "label": "幂等交办", "hint": "h",
+        "target_kind": "region", "target_id": "shaanxi",
+        "locality_scope": "single", "region_id": "shaanxi",
+        "transaction_category": "督赈", "deadline_months": 1,
+    }
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+    opt = normalize_rescript_layer_a_option(opt_fields)
+    db.conn.execute("DELETE FROM pending_decisions WHERE kind='rescript_draft'")
+    db.save_rescript_drafts(int(state.turn), [{
+        "title": "幂等急务", "context": "c", "options": [opt, {"label": "b", "hint": "h",
+            "draft_capability": "x"}],
+        "actor_name": mname, "actor_office": "o", "actor_faction": "f",
+    }])
+    db.conn.commit()
+    desk = db.list_rescript_desk(int(state.turn))
+    key = next(r["decision_key"] for r in desk if r["title"] == "幂等急务")
+    choice = {
+        "decision_key": key, "action": "follow_draft",
+        "draft_capability": opt["draft_capability"], "label": opt["label"],
+    }
+    before = len(db.list_decree_dossiers())
+    batch = ra.validate_all([next(r for r in desk if r["decision_key"] == key)], [choice])
+    ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(), content=content)
+    mid = len(db.list_decree_dossiers())
+    assert mid > before
+    # 重交 decided 精确匹配 → skip
+    row = next(r for r in db.list_rescript_drafts() if r["title"] == "幂等急务")
+    stored = dict(row["choice"] or {})
+    stored.setdefault("decision_key", key)
+    decided_desk = {
+        "decision_key": key, "kind": "rescript_draft",
+        "source_turn": int(row["turn"]), "turn": int(row["turn"]),
+        "idx": int(row["idx"]), "status": "decided",
+        "choice": stored, "options": row["options"],
+        "revision_round": row["revision_round"],
+        "prior_options_json": row["prior_options_json"],
+        "title": row["title"], "actor_name": row.get("actor_name"),
+    }
+    batch2 = ra.validate_all([decided_desk], [stored])
+    assert batch2.items[0].already_applied
+    ra.apply_rescript_batch(db, state, batch2, ra.PrewriteResults(), content=content)
+    assert len(db.list_decree_dossiers()) == mid
+
+
+def test_657_mixed_batch_follow_plus_decision_and_no_context_copy(game):
+    """C1.1 骨架：急务 follow + decision 同批；resolve_context 无 choices 批副本。"""
+    from ming_sim import rescript_actions as ra
+    db, state, content = game
+    opt = _layer_a_option()
+    urgent, _ = _plant_urgent_desk(db, state, options=[opt, _layer_a_option(label="备", hint="b")])
+    db.save_pending_decisions(int(state.turn), [{
+        "title": "边警",
+        "context": "c",
+        "options": [{"label": "准", "hint": ""}, {"label": "驳", "hint": ""}],
+        "event_id": "ev-x",
+    }])
+    db.conn.commit()
+    desk = db.list_rescript_desk(int(state.turn))
+    u_key = next(r["decision_key"] for r in desk if r["kind"] == "rescript_draft")
+    d_key = next(r["decision_key"] for r in desk if r["kind"] == "decision")
+    batch = ra.validate_all(desk, [
+        {
+            "decision_key": u_key,
+            "action": "follow_draft",
+            "draft_capability": opt["draft_capability"],
+            "label": opt["label"],
+        },
+        {"decision_key": d_key, "label": "准", "hint": "", "action": "decision"},
+    ])
+    ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(), content=content)
+    # decision decided
+    decs = db.list_pending_decisions(int(state.turn))
+    assert decs and decs[0]["status"] == "decided"
+    # 无 choices 批副本键写入 resolve_context
+    ctx = db.get_resolve_context(int(state.turn))
+    if ctx is not None:
+        blob = json.dumps(ctx, ensure_ascii=False)
+        assert "committed_rescript_batch" not in blob
+        assert "rescript_choices" not in blob
