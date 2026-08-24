@@ -2426,6 +2426,7 @@ class WebGame:
                             decision = self.session.consume_audience_admission(
                                 target,
                                 origin_id=f"web:tool:{int(chat_turn_id or 0)}:{target.name}",
+                                origin_chat_turn_id=int(chat_turn_id or 0),
                             )
                             if decision.allowed:
                                 court_action = "summon"

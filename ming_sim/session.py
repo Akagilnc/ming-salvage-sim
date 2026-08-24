@@ -1101,6 +1101,8 @@ class GameSession:
 
     def admit_audience(self, character: Character) -> AudienceAdmissionDecision:
         """先复用人物资格，再从 DB 权威行止投影作召对地点分流。"""
+        from ming_sim.matching import canonicalize_location_region_id
+
         eligible, reason = self.can_summon(character)
         if not eligible:
             return AudienceAdmissionDecision(None, reason=reason)
@@ -1109,7 +1111,8 @@ class GameSession:
             (character.name,),
         ).fetchone()
         # 临时人物没有盘面行；与旧档 blank 一样 fail-open，不扩大正式人物资格。
-        location = str(row["location"] or "") if row is not None else ""
+        raw_location = str(row["location"] or "") if row is not None else ""
+        location = canonicalize_location_region_id(raw_location)
         transit_to = str(row["transit_to"] or "") if row is not None else ""
         if transit_to:
             result = AudienceAdmission.SUMMON_IN_TRANSIT
@@ -1133,13 +1136,25 @@ class GameSession:
         *,
         origin_id: str,
         state: Optional[GameState] = None,
+        origin_chat_turn_id: int = 0,
     ) -> AudienceAdmissionDecision:
         """Consume the shared audience gate before any turn/entrance/reply is created.
 
         Offsite people get a durable story-ledger summons instead of entering the
         audience.  Ledger failures propagate, so callers cannot accidentally proceed.
+        在京放行时结清该人未结传召（候见→宣入）。开夜与传召账同事务全成全败。
         """
+        from ming_sim.applier import atomic
+        from ming_sim.audience_night import (
+            get_open_night, open_night, record_summon_fresh,
+            record_summon_in_transit, settle_unsettled_summons_for_person,
+        )
+
         decision = self.admit_audience(character)
+        if decision.result is AudienceAdmission.IN_CAPITAL:
+            with atomic(self.db):
+                settle_unsettled_summons_for_person(self.db, character.name)
+            return decision
         if decision.result not in {
             AudienceAdmission.SUMMON_FRESH,
             AudienceAdmission.SUMMON_IN_TRANSIT,
@@ -1147,23 +1162,21 @@ class GameSession:
             return decision
         if not str(origin_id or "").strip():
             raise ValueError("传召 origin_id 不能为空。")
-        from ming_sim.audience_night import (
-            get_open_night, open_night, record_summon_fresh,
-            record_summon_in_transit,
-        )
         active_state = state or getattr(self, "state", None)
         if active_state is None:
             raise ValueError("传召须有当前局面。")
-        night = get_open_night(self.db) or open_night(self.db, active_state)
         recorder = (
             record_summon_fresh
             if decision.result is AudienceAdmission.SUMMON_FRESH
             else record_summon_in_transit
         )
-        recorder(
-            self.db, int(night["id"]), character.name,
-            origin_id=str(origin_id).strip(),
-        )
+        with atomic(self.db):
+            night = get_open_night(self.db) or open_night(self.db, active_state)
+            recorder(
+                self.db, int(night["id"]), character.name,
+                origin_id=str(origin_id).strip(),
+                origin_chat_turn_id=int(origin_chat_turn_id or 0),
+            )
         return decision
 
     def _start_cli_action_intent(self, character: Character, message: str) -> Optional[Future]:
@@ -1595,6 +1608,7 @@ class GameSession:
                         decision = self.consume_audience_admission(
                             target,
                             origin_id=f"session:tool:{int(chat_turn_id or 0)}:{target.name}",
+                            origin_chat_turn_id=int(chat_turn_id or 0),
                         )
                         if decision.allowed:
                             result.court_action = "summon"

@@ -17,9 +17,10 @@ def allow_hall_admission(
     *,
     origin_id: str,
     state: Optional[Any] = None,
+    origin_chat_turn_id: int = 0,
 ) -> AudienceAdmissionDecision:
     """殿上测试放行：与 test_web_chat_serialization_393 已绿契约同形。"""
-    del character, origin_id, state
+    del character, origin_id, state, origin_chat_turn_id
     return AudienceAdmissionDecision(
         AudienceAdmission.IN_CAPITAL,
         reason="",

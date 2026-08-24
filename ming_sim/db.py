@@ -2086,6 +2086,8 @@ class GameDB:
         self.ensure_column("characters", "transit_distance_remaining", "REAL")
         self.ensure_column("characters", "transit_speed_factor", "REAL")
         self.ensure_column("characters", "transit_start_turn", "INTEGER NOT NULL DEFAULT 0")
+        # #670：旧档京师别名一次写回 region_id，避免只读兼容、canonical 行止仍拒收。
+        self._migrate_character_location_aliases()
         self.ensure_column("issues", "resolve_condition", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("issues", "fail_condition", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("issues", "end_turn", "INTEGER NOT NULL DEFAULT 0")
@@ -4666,6 +4668,29 @@ class GameDB:
                 (ch.debut_year, ch.debut_month, name),
             )
         self.conn.commit()
+
+    def _migrate_character_location_aliases(self) -> None:
+        """#670：把 characters.location 的京师等特殊别名写回 region_id（幂等）。"""
+        if not self.table_has_rows("characters"):
+            return
+        from ming_sim.matching import location_alias_rewrites
+
+        changed = False
+        for alias, region_id in location_alias_rewrites():
+            cur = self.conn.execute(
+                "UPDATE characters SET location=? WHERE location=?",
+                (region_id, alias),
+            )
+            if int(cur.rowcount or 0) > 0:
+                changed = True
+        if not changed:
+            return
+        self.conn.commit()
+        # 同步内存 content，避免读 DB 已 canonical、content 仍挂旧别名。
+        for row in self.conn.execute("SELECT name, location FROM characters").fetchall():
+            name = str(row["name"] or "")
+            if name and name in self.content.characters:
+                self.content.characters[name].location = str(row["location"] or "")
 
     def _migrate_character_identity_seed(self) -> None:
         """Bring pre-identity saves onto the approved roster without rewriting play."""
