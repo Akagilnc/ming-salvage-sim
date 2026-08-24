@@ -2062,3 +2062,28 @@ def test_draft_guidance_includes_dossier_both_paths(monkeypatch):
     for prompt in captured:
         assert guidance in prompt
         assert "dossier" in prompt
+
+
+def test_multi_draft_prompt_separates_military_order_and_entries(monkeypatch):
+    """#654/#653：多旨示例 military_order 不焊 entries；entries 仅 pay_order 说明保留。"""
+    import ming_sim.cli_backend as cb
+
+    captured = []
+
+    def _capture(prompt, *a, **k):
+        captured.append(prompt)
+        return ('{"成品旨稿":[]}', None)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _capture)
+    cb.extract_draft_intent("拟两道", "臣拟。", draft_count=2)
+    assert len(captured) == 1
+    prompt = captured[0]
+    assert "military_order" in prompt
+    assert '"目标类型":"army"' in prompt
+    assert "施行范围" in prompt
+    assert "entries 仅 pay_order_override" in prompt
+    assert "due_priority_军饷@shaanxi" in prompt
+    # 示例 JSON（entries 说明行之前）不得出现 entries 键；军令与偿还序分列
+    before_guide = prompt.split("entries 仅 pay_order_override", 1)[0]
+    assert "military_order" in before_guide
+    assert "entries" not in before_guide

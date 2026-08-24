@@ -313,31 +313,39 @@ def _disaster_rows(conn, region_id: str) -> List[Dict[str, object]]:
     return out
 
 
-def _owner_open_counts(conn) -> Dict[str, int]:
-    """status=executing 案卷上主办档（去重计人）→ 在办数。"""
-    rows = conn.execute(
-        "SELECT id, participant_roster FROM decree_dossiers WHERE status='executing'",
-    ).fetchall()
-    counts: Dict[str, int] = {}
+def _host_leads_from_roster(raw: object) -> List[str]:
+    """participant_roster → 主办 character_id 列表（保序去重；解码失败→[]）。"""
     import json
-    for row in rows:
-        try:
-            roster = json.loads(row["participant_roster"] or "[]")
-        except (TypeError, ValueError):
-            roster = []
-        if not isinstance(roster, list):
+    try:
+        roster = json.loads(raw or "[]") if not isinstance(raw, list) else raw
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(roster, list):
+        return []
+    leads: List[str] = []
+    seen: set = set()
+    for item in roster:
+        if not isinstance(item, dict):
             continue
-        seen = set()
-        for item in roster:
-            if not isinstance(item, dict):
-                continue
-            if str(item.get("tier") or "").strip() != "主办":
-                continue
-            name = str(item.get("character_id") or "").strip()
-            if name and name not in seen:
-                seen.add(name)
-                counts[name] = counts.get(name, 0) + 1
-    return counts
+        if str(item.get("tier") or "").strip() != "主办":
+            continue
+        name = str(item.get("character_id") or "").strip()
+        if name and name not in seen:
+            seen.add(name)
+            leads.append(name)
+    return leads
+
+
+def _load_executing_host_leads(conn) -> List[Tuple[str, List[str]]]:
+    """一次装载 executing 案卷的 (region_id, 主办 leads)。"""
+    rows = conn.execute(
+        "SELECT region_id, participant_roster FROM decree_dossiers "
+        "WHERE status='executing' ORDER BY region_id, id",
+    ).fetchall()
+    return [
+        (str(row["region_id"] or ""), _host_leads_from_roster(row["participant_roster"]))
+        for row in rows
+    ]
 
 
 def _province_open_counts(conn) -> Dict[str, int]:
@@ -357,8 +365,21 @@ def build_execution_two_axis_surface(db, turn: int = 0) -> Dict[str, object]:
     del turn  # 清单只读当前 executing 态，不按 turn 过滤
     conn = db.conn
     matrix = _load_distance_matrix()
-    owner_counts = _owner_open_counts(conn)
     province_counts = _province_open_counts(conn)
+
+    # executing roster 一次装载 → owner 负荷 + 按省主办两路派生
+    executing_leads = _load_executing_host_leads(conn)
+    owner_counts: Dict[str, int] = {}
+    owners_by_region: Dict[str, List[str]] = {}
+    for rid, leads in executing_leads:
+        for name in leads:
+            owner_counts[name] = owner_counts.get(name, 0) + 1
+        bucket = owners_by_region.setdefault(rid, [])
+        seen = set(bucket)
+        for name in leads:
+            if name not in seen:
+                seen.add(name)
+                bucket.append(name)
 
     # 角色能力/位置一次拉取
     char_rows = {
@@ -377,32 +398,6 @@ def build_execution_two_axis_surface(db, turn: int = 0) -> Dict[str, object]:
             "WHERE status='executing' ORDER BY region_id",
         ).fetchall()
     ]
-
-    # 各省主办集合（从 executing 案卷展开）
-    import json
-    owners_by_region: Dict[str, List[str]] = {}
-    for row in conn.execute(
-        "SELECT region_id, participant_roster FROM decree_dossiers "
-        "WHERE status='executing' ORDER BY region_id, id",
-    ).fetchall():
-        rid = str(row["region_id"] or "")
-        try:
-            roster = json.loads(row["participant_roster"] or "[]")
-        except (TypeError, ValueError):
-            roster = []
-        bucket = owners_by_region.setdefault(rid, [])
-        seen = set(bucket)
-        if not isinstance(roster, list):
-            continue
-        for item in roster:
-            if not isinstance(item, dict):
-                continue
-            if str(item.get("tier") or "").strip() != "主办":
-                continue
-            name = str(item.get("character_id") or "").strip()
-            if name and name not in seen:
-                seen.add(name)
-                bucket.append(name)
 
     provinces: List[Dict[str, object]] = []
     for rid in region_ids:
