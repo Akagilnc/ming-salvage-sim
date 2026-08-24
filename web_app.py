@@ -1803,6 +1803,7 @@ class WebGame:
     def chat(self, minister_name: str, message: str) -> Dict[str, Any]:
         # #498 AC10：LLM 生成不持 write_gate，使颁诏入口可观测 in-flight 并有界超时；
         # 仅 prologue/epilogue 写库持锁。
+        # #670 / ADR 0096：殿上入口——自持闸 prologue 内消费 admission（与 chat_stream 同口径）。
         return self._chat_core(minister_name, message, gate_already_held=False)
 
     def _chat_with_write_gate_held(self, minister_name: str, message: str) -> Dict[str, Any]:
@@ -1811,6 +1812,7 @@ class WebGame:
         与 `chat()` 同语义，但不得再 acquire 非可重入 Lock（会死锁）。
         此兼容路径在外层闸内跑完整轮（含 LLM）；公开 chat/chat_stream 仍按 AC10
         在生成期放闸。
+        #670：密疏只受 _require_active_minister/can_summon，不走殿上 admission。
         """
         return self._chat_core(minister_name, message, gate_already_held=True)
 
@@ -1873,12 +1875,15 @@ class WebGame:
                     if self._audience_turn_in_flight(minister_name):
                         raise HTTPException(status_code=409, detail=f"{minister_name}上一轮回奏仍在进行，请稍候再问。")
                     accepted_turn = int(self.state.turn)
-                    admission = self.session.consume_audience_admission(
-                        self.session._character(minister_name),
-                        origin_id=f"web:chat:{accepted_turn}:{minister_name}",
-                    )
-                    if not admission.allowed:
-                        raise HTTPException(status_code=409, detail=admission.reason)
+                    # #670：殿上 chat 自持闸时消费 admission；密疏兼容路（gate_already_held）不消费。
+                    # 闸只管殿上召对——书信/密疏只受基础资格（_require_active_minister/can_summon）。
+                    if not gate_already_held:
+                        admission = self.session.consume_audience_admission(
+                            self.session._character(minister_name),
+                            origin_id=f"web:chat:{accepted_turn}:{minister_name}",
+                        )
+                        if not admission.allowed:
+                            raise HTTPException(status_code=409, detail=admission.reason)
                     if self._persistent_chat_minister(minister_name):
                         chat_turn_id, before_snapshot = self._start_chat_turn(minister_name)
                     self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})
@@ -2424,8 +2429,7 @@ class WebGame:
                             if decision.allowed:
                                 court_action = "summon"
                                 next_minister = target.name
-                            elif decision.reason:
-                                answer = answer + "\n\n" + decision.reason
+                            # #670 P6'/P7：拒入殿只不设 court_action/next_minister；闸文不进 LLM answer。
                 elif tool_name == "dismiss_minister" or res == "__dismiss__":
                     court_action = "dismiss"
                     # AC1（#500）/#506 L1：令退同源落账绑本轮。#542：流中已 start_exit

@@ -1581,8 +1581,7 @@ class GameSession:
                         if decision.allowed:
                             result.court_action = "summon"
                             result.next_minister = target.name
-                        elif decision.reason:
-                            result.answer = result.answer + "\n\n" + decision.reason
+                        # #670 P6'/P7：拒入殿只不设 court_action/next_minister；闸文不进 LLM answer。
             elif tool_name == "propose_directive" or tool_result.startswith("__pending_directive__"):
                 if confirmation_turn or explicit_secret_prefix:
                     continue

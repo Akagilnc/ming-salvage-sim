@@ -1717,16 +1717,16 @@ def record_summon_fresh(
     body: str = "",
     origin_id: object = "",
 ) -> int:
-    """落 fresh 场外传召账；同一人物同一未结 origin 幂等。"""
+    """落 fresh 场外传召账；同一人物任意未结 fresh 只保留一段（通道 origin 仅审计标签）。"""
     name = str(person_name or "").strip()
     if not name:
         raise AudienceNightError("传召人名不能为空", code="empty_person")
     method = _validate_summon_method(method, default=METHOD_CHUANZHAO)
     origin_tag = _summon_origin_tag(origin_id)
-    if origin_tag:
-        for item in list_unsettled_summons(db):
-            if item["person_name"] == name and item["origin_id"] == str(origin_id).strip():
-                return int(item["entry_id"])
+    # #670：同人未结 fresh 只一段启程——再消费（即便通道 origin 不同）复用已有 entry。
+    for item in list_unsettled_summons(db):
+        if item["person_name"] == name and item["kind"] == "fresh":
+            return int(item["entry_id"])
     tags = [method]
     if origin_tag:
         tags.extend([TAG_SUMMON_UNSETTLED, origin_tag])
@@ -1747,7 +1747,7 @@ def commit_fresh_summons_for_night(
     content: Any = None,
     registry: Any = None,
 ) -> List[str]:
-    """收夜以 canonical 人物变更 applier 启程，并在同一事务按 origin 结清。"""
+    """收夜按人一次 canonical 启程，并结清该人全部未结 fresh origin。"""
     pending = [
         item for item in list_unsettled_summons(db)
         if item["kind"] == "fresh" and int(item["night_id"]) == int(night_id)
@@ -1757,15 +1757,19 @@ def commit_fresh_summons_for_night(
     from ming_sim.decree import atomic_and_reload
     from ming_sim.issues import apply_score_extraction
 
+    # 历史多 origin 未结账：按人分组，apply 一次后结清该人全部 origin（兼容重试）。
+    by_person: Dict[str, List[Dict[str, Any]]] = {}
+    for item in pending:
+        by_person.setdefault(str(item["person_name"]), []).append(item)
+
     origins: List[str] = []
     with atomic_and_reload(db, state, content=content, registry=registry):
-        for item in pending:
-            origin = str(item["origin_id"])
+        for person_name, items in by_person.items():
             applied = apply_score_extraction(
                 db,
                 state,
                 {"人物变更": [{
-                    "name": item["person_name"],
+                    "name": person_name,
                     "动作": "行止",
                     "transit_to": "beizhili",
                     # Canonical applier only admits its established provenance vocabulary;
@@ -1778,15 +1782,20 @@ def commit_fresh_summons_for_night(
             results = list(applied.get("applied_person_changes") or [])
             if not results or any(result.get("rejected") for result in results):
                 raise AudienceNightError(
-                    f"传召启程未落定：{item['person_name']}",
+                    f"传召启程未落定：{person_name}",
                     code="summon_departure_rejected",
-                    detail={"origin_id": origin, "results": results},
+                    detail={
+                        "origin_id": str(items[0]["origin_id"]),
+                        "results": results,
+                    },
                 )
-            if not settle_summon_origin(db, origin):
-                raise AudienceNightError(
-                    f"传召源账未结：{origin}", code="summon_settle_failed",
-                )
-            origins.append(origin)
+            for item in items:
+                origin = str(item["origin_id"])
+                if not settle_summon_origin(db, origin):
+                    raise AudienceNightError(
+                        f"传召源账未结：{origin}", code="summon_settle_failed",
+                    )
+                origins.append(origin)
     return origins
 
 
