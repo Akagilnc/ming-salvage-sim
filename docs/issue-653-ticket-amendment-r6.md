@@ -1,6 +1,6 @@
 # #653 票面修正案 r6（2026-08-22 票庭 r6，run 01a02d61-71b0…@judge fix_now 两单）
 
-> 本文件为 GitHub issue #653 庭裁修正案 r6 的仓内审计副本（apply 腿 run 结算载体）。票面正文以 https://github.com/Akagilnc/ming-salvage-sim/issues/653 为准。均为票面文本级修复、零范围变更；本节修订 r1 案 F3.1/F3.2 相应措辞并显式废止 F1.6 一残留短语。
+> 本文件为 GitHub issue #653 庭裁修正案 r6–r8 的仓内审计副本（apply 腿 run 结算载体）。票面正文以 https://github.com/Akagilnc/ming-salvage-sim/issues/653 为准（r8 已同步入 issue body）。均为票面文本级修复、零范围变更；本节修订 r1 案 F3.1/F3.2 相应措辞并显式废止 F1.6 一残留短语。
 
 ## 庭裁修正案 r6（2026-08-22 票庭 r6，run 01a02d61-71b0…@judge fix_now 两单，均为票面文本级修复、零范围变更；本节修订 r1 案 F3.1/F3.2 相应措辞并显式废止 F1.6 一残留短语）
 
