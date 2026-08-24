@@ -999,18 +999,13 @@ tests/test_transaction_boundary.py	test_commit_failure_at_atomic_exit_rolls_back
 tests/test_transaction_boundary.py	test_ddl_after_swallowed_conn_context_does_not_escape	509	writable isolation required: line 516 invokes execute(DROP TABLE IF EXISTS rejection_reports)
 tests/test_transaction_boundary.py	test_ddl_after_explicit_midatomic_rollback_does_not_escape	536	writable isolation required: line 539 invokes execute(DROP TABLE IF EXISTS rejection_reports)
 tests/test_transaction_boundary.py	test_begin_failure_at_entry_restores_flags	558	writable isolation required: line 571 invokes atomic
-tests/test_transit_aging_346.py	test_force_transit_arrivals_forces_overdue	35	writable isolation required at line 39: in-memory state/content mutation: state.turn
-tests/test_transit_aging_346.py	test_force_transit_arrivals_skips_fresh_transit	59	writable isolation required at line 63: in-memory state/content mutation: state.turn
-tests/test_transit_aging_346.py	test_force_transit_arrivals_skips_one_month	80	writable isolation required at line 84: in-memory state/content mutation: state.turn
-tests/test_transit_aging_346.py	test_force_transit_arrivals_legacy_zero_start	101	writable isolation required at line 107: production mutation/isolation call: force_transit_arrivals
-tests/test_transit_aging_346.py	test_force_transit_arrivals_syncs_content_mirror	122	writable isolation required at line 126: in-memory state/content mutation: state.turn
-tests/test_transit_aging_346.py	test_行止_sets_transit_start_turn	143	writable isolation required: line 148 invokes apply_score_extraction
-tests/test_transit_aging_346.py	test_行止_arrival_clears_transit_start_turn	164	writable isolation required: line 173 invokes apply_score_extraction
-tests/test_transit_aging_346.py	test_行止_reemit_same_dest_preserves_start_turn	190	writable isolation required: line 201 invokes apply_score_extraction
-tests/test_transit_aging_346.py	test_行止_change_dest_resets_start_turn	232	writable isolation required: line 238 invokes apply_score_extraction
-tests/test_transit_aging_346.py	test_行止_reemit_same_dest_preserves_legacy_zero_start	260	writable isolation required: line 273 invokes apply_score_extraction
-tests/test_transit_aging_346.py	test_pre_settle_forces_arrival_before_terminal_states	294	writable isolation required: line 320 invokes execute(UPDATE characters SET location='beizhili', transit_to='liaodong', transi)
-tests/test_transit_aging_346.py	test_snapshot_restore_preserves_transit_start_turn	344	writable isolation required: line 362 invokes execute(UPDATE characters SET transit_start_turn=0 WHERE name=?)
+tests/test_transit_aging_346.py	test_行止_sets_transit_start_turn	49	writable isolation required: line 55 invokes apply_score_extraction
+tests/test_transit_aging_346.py	test_行止_payload_cannot_write_arrival	74	writable isolation required: line 80 invokes apply_score_extraction
+tests/test_transit_aging_346.py	test_行止_reemit_same_dest_preserves_start_turn	95	writable isolation required: line 102 invokes apply_score_extraction
+tests/test_transit_aging_346.py	test_行止_change_dest_is_rejected	128	writable isolation required: line 135 invokes apply_score_extraction
+tests/test_transit_aging_346.py	test_pre_settle_ticks_arrival_before_terminal_states	158	writable isolation required: line 191 invokes pre_settle
+tests/test_transit_aging_346.py	test_tick_does_not_arrive_when_remaining_still_positive	206	writable isolation required at line 214: in-memory state/content mutation: state.turn
+tests/test_transit_aging_346.py	test_snapshot_restore_preserves_transit_start_turn	229	writable isolation required: line 234 invokes execute(UPDATE characters SET transit_to=?, transit_start_turn=?, )
 tests/test_web_budget_payload.py	test_budget_payload_filters_central_army_pay_fixed_flow	7	writable isolation required: line 12 invokes record_issue_economy_move
 tests/test_web_budget_payload.py	test_budget_payload_filters_real_substrate_hub_fixed_flow	23	writable isolation required: line 30 invokes save_state
 tests/test_web_court_visibility.py	test_active_non_ming_character_not_in_court	33	writable isolation required: line 45 invokes set_character_status
