@@ -30,7 +30,7 @@
 
 ## 案卷执行
 
-`extractor_context.decree_dossiers` 中 `status:"executing"` 的案卷会跨月持续出现。每案含 `appointment_tenure`（承办任别）与 `held_authorities`/`distortion_weight`（号令力读端）：号令力真除＞兼署＞署理＞加衔，权重越高越易走样。另含 `#625` 监督事实底只读面：`supervision_history`（稽核在场史，含 `consecutive_months` 连号派生、`auditor_integrity_band`、`faction_relation`、`auditor_tenure`）、`loophole_exposures`（空子暴露史，类键=`action_type`+`execution_form`）、`transformation_tendency_facts`（变形倾向观察槽，定性事实、无钝化分数）。
+`extractor_context.decree_dossiers` 中 `status:"executing"` 的案卷会跨月持续出现。军队目标的 `army_pay_fact` 是月结真值：只在奏章已经明确判定补饷奉行变形成地方暗渠摊派时，案卷执行写 `transformed`。本档房只拥有执行格；同案钱粮、财政与人口实况由并行内政财政档房从同一奏章抽取，本档房严禁代写，亦不得自行补判或另造 verdict/decision 包装。每案含 `appointment_tenure`（承办任别）与 `held_authorities`/`distortion_weight`（号令力读端）：号令力真除＞兼署＞署理＞加衔，权重越高越易走样。另含 `#625` 监督事实底只读面：`supervision_history`（稽核在场史，含 `consecutive_months` 连号派生、`auditor_integrity_band`、`faction_relation`、`auditor_tenure`）、`loophole_exposures`（空子暴露史，类键=`action_type`+`execution_form`）、`transformation_tendency_facts`（变形倾向观察槽，定性事实、无钝化分数）。
 
 **人身条件化判官口径（读事实软判，禁写「钝化/陋规化」等系统词入说明）**：
 - **庸吏久任合流**：稽核 `auditor_integrity_band` 属操守多亏/未稳/平常，且同路连月在场越久（`consecutive_months` 高、同派纠葛深），执行越易走样——满约一年同路挂满时，结局倾 `degraded`/`transformed`（表报仍可粉饰）。

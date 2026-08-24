@@ -141,12 +141,6 @@ def _cli_stage_secret_from_prefix(
     return (row, captured) if capture_prompt else row
 
 
-def _assert_confirmation_cue_appended(seed: str, answer: str) -> None:
-    """准驳提示：只钉『回话被追加』结构（exact cue 文案由 keep 案 tracer）。"""
-    assert answer.startswith(seed)
-    assert answer[len(seed):]
-
-
 def test_draft_prefix_with_active_secret_order_runs_zero_llm(game, monkeypatch):
     """#344「按钮前缀路零 LLM」(US3)：玩家用『拟旨如下：』前缀、且该大臣有 active 密令时，
     旧的会话密令抽取器(extract_minister_actions, LLM)不得被触发——前缀已由 resolve_minister_actions
@@ -174,8 +168,8 @@ def test_draft_prefix_with_active_secret_order_runs_zero_llm(game, monkeypatch):
     assert result.secret_order_id is None
 
 
-def test_staged_action_reply_gets_confirmation_cue(game, monkeypatch):
-    """#412/#413 completeness: staged chat actions must visibly ask the emperor to approve/reject."""
+def test_staged_action_preserves_llm_reply(game, monkeypatch):
+    """Staging is structured state and must not rewrite the LLM reply."""
     db, state, _ = game
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
     who = "确认提示承办官"
@@ -189,11 +183,11 @@ def test_staged_action_reply_gets_confirmation_cue(game, monkeypatch):
         "拟旨如下：着户部清核辽饷。")
 
     assert result.pending_action_id
-    _assert_confirmation_cue_appended(seed, result.answer)
+    assert result.answer == seed
 
 
-def test_tool_call_pending_directive_reply_gets_confirmation_cue(read_game):
-    """#412: agno/tool-call staged directives also need the visible approval cue."""
+def test_tool_call_pending_directive_preserves_llm_reply(read_game):
+    """Tool-staged directives do not rewrite the model's words."""
     db, state, _ = read_game
     result = _result()
     result.pending_action_id = 42
@@ -204,11 +198,11 @@ def test_tool_call_pending_directive_reply_gets_confirmation_cue(read_game):
         "请拟旨发银赈陕西。")
 
     assert result.pending_action_id == 42
-    assert "请陛下定夺准驳" in result.answer
+    assert result.answer == "臣领旨。"
 
 
-def test_tool_call_pending_secret_order_reply_gets_confirmation_cue(read_game):
-    """#413: agno/tool-call staged secret orders also need the visible approval cue."""
+def test_tool_call_pending_secret_order_preserves_llm_reply(read_game):
+    """Tool-staged secret orders do not rewrite the model's words."""
     db, state, _ = read_game
     result = _result()
     result.pending_action_id = 43
@@ -219,13 +213,7 @@ def test_tool_call_pending_secret_order_reply_gets_confirmation_cue(read_game):
         "密查辽饷侵冒。")
 
     assert result.pending_action_id == 43
-    assert "请陛下定夺准驳" in result.answer
-
-
-def test_generic_please_your_majesty_does_not_suppress_confirmation_cue():
-    seed = "臣已拟妥，请陛下放心。"
-    answer = GameSession._ensure_confirmation_cue(seed)
-    _assert_confirmation_cue_appended(seed, answer)
+    assert result.answer == "臣领密旨。"
 
 
 def test_tool_call_staged_new_secret_order_merges_emperor_not_reply(game, monkeypatch):
@@ -2448,7 +2436,7 @@ def test_draft_prefix_stages_directive(game, monkeypatch):
     pending = db.list_pending_actions(state.turn)
     assert len(pending) == 1 and pending[0]["kind"] == "directive"
     assert json.loads(pending[0]["payload_json"])["text"] == seed
-    _assert_confirmation_cue_appended(seed, result.answer)
+    assert result.answer == seed
     assert db.conn.execute(
         "SELECT COUNT(*) FROM turn_directives WHERE turn=?", (state.turn,)
     ).fetchone()[0] == 0
@@ -2470,7 +2458,7 @@ def test_runtime_cli_channel_without_env_stages_directive(game, monkeypatch):
     pending = db.list_pending_actions(state.turn)
     assert len(pending) == 1 and pending[0]["kind"] == "directive"
     assert json.loads(pending[0]["payload_json"])["text"] == seed
-    _assert_confirmation_cue_appended(seed, result.answer)
+    assert result.answer == seed
     assert db.conn.execute(
         "SELECT COUNT(*) FROM turn_directives WHERE turn=?", (state.turn,)
     ).fetchone()[0] == 0

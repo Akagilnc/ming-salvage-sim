@@ -922,7 +922,6 @@ def _wire_web_game(db, state, content, agent, monkeypatch) -> WebGame:
         "_audience_prompt_for_message",
         "_stage_appointment_candidate",
         "_merge_staged_new_secret_order_content",
-        "_ensure_confirmation_cue",
     ):
         if hasattr(GameSession, name):
             setattr(sess, name, types.MethodType(getattr(GameSession, name), sess))
