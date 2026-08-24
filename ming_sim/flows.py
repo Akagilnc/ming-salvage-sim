@@ -1536,12 +1536,27 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
 
     _apply_budget_lines(skip_substrate_hub_lines=db.is_substrate_hub_fiscal_engine_enabled())
 
-    # ── #318 零兵哗变闩全军归一（legacy/hub 分叉前一次；不挂资格子集）──
-    for _zm_row in db.conn.execute(
-        "SELECT id, manpower, salary_rate, owner_power, is_mutinied FROM armies"
+    # ── #318 分叉前全军归一（legacy/hub 前一次；不挂资格子集）──
+    # 1) 零兵先清闩（防误转流寇） 2) 旧存档第三振正兵力在 advance 可解闩前转出
+    for _pre_row in db.conn.execute(
+        "SELECT id, manpower, salary_rate, owner_power, is_mutinied, mutiny_count "
+        "FROM armies"
     ).fetchall():
-        if army_needed(_zm_row) <= 0:
-            _clear_zero_manpower_mutiny_latch(db, state, _zm_row)
+        if army_needed(_pre_row) <= 0:
+            _clear_zero_manpower_mutiny_latch(db, state, _pre_row)
+            continue
+        if (
+            str(_pre_row["owner_power"] or "") == "ming"
+            and int(_pre_row["is_mutinied"] or 0)
+            and int(_pre_row["mutiny_count"] or 0) >= 3
+        ):
+            _maybe_third_strike_defect(
+                db,
+                state,
+                army_id=str(_pre_row["id"]),
+                new_latched=1,
+                new_mutiny_count=int(_pre_row["mutiny_count"] or 0),
+            )
 
     # ── legacy 各军军饷（按优先级，先发当月；不足挂 arrears 累计万两）──
     if db.fiscal_engine() == "legacy":

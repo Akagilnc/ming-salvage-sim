@@ -517,6 +517,77 @@ def test_persisted_third_strike_defects_next_tick_once(game, fiscal_path):
     assert len(owner_logs2) == 1
 
 
+@pytest.mark.parametrize("fiscal_path", PATHS)
+def test_persisted_third_strike_defects_on_recovery_boundary(game, fiscal_path):
+    """恢复边界：loyalty=35+满饷会解闩，须在 advance 前转出，不得逃过第三振。"""
+    db, state, _ = game
+    _configure(db, fiscal_path)
+    _set(
+        db, fiscal_path, loyalty=35, arrears=0, latched=1,
+        mutiny_count=3, mutiny_probation=0, manpower=10000,
+    )
+
+    first = _tick(db, state)
+    assert first["owner_power"] in BANDIT_POWERS
+    assert first["is_mutinied"] == 0
+    assert first["mutiny_count"] == 3
+    owner_logs = [
+        log for log in _logs(db, ("owner_power",)) if log["field"] == "owner_power"
+    ]
+    assert len(owner_logs) == 1
+    owner_after = first["owner_power"]
+
+    second = _tick(db, state)
+    assert second["owner_power"] == owner_after
+    assert second["mutiny_count"] == 3
+    owner_logs2 = [
+        log for log in _logs(db, ("owner_power",)) if log["field"] == "owner_power"
+    ]
+    assert len(owner_logs2) == 1
+
+
+@pytest.mark.parametrize(
+    "identity",
+    (
+        {"is_tusi": 1, "self_funded_pay": 0},
+        {"is_tusi": 0, "self_funded_pay": 1},
+    ),
+    ids=("tusi", "self_funded"),
+)
+def test_hub_excluded_persisted_third_strike_defects_once(game, identity):
+    """hub 资格外脏第三振正兵力：分叉前全军缝仍一次转出（不受 WHERE 子集过滤）。"""
+    db, state, _ = game
+    _configure(db, "substrate_hub")
+    _set(
+        db, "substrate_hub", loyalty=35, arrears=0, latched=1,
+        mutiny_count=3, mutiny_probation=0, manpower=10000,
+    )
+    db.conn.execute(
+        """UPDATE armies SET is_tusi=?, self_funded_pay=?,
+           pay_source_region='', province_pay_share=0, central_pay_share=0,
+           province_pay_arrears=0, central_pay_arrears=0, arrears=0
+           WHERE id=?""",
+        (identity["is_tusi"], identity["self_funded_pay"], ARMY),
+    )
+    db.conn.commit()
+
+    first = _tick(db, state)
+    assert first["owner_power"] in BANDIT_POWERS
+    assert first["is_mutinied"] == 0
+    assert first["mutiny_count"] == 3
+    owner_logs = [
+        log for log in _logs(db, ("owner_power",)) if log["field"] == "owner_power"
+    ]
+    assert len(owner_logs) == 1
+
+    second = _tick(db, state)
+    assert second["owner_power"] == first["owner_power"]
+    owner_logs2 = [
+        log for log in _logs(db, ("owner_power",)) if log["field"] == "owner_power"
+    ]
+    assert len(owner_logs2) == 1
+
+
 def test_single_production_zero_manpower_clear_callsite():
     """生产清闩 helper 仅分叉前一处调用（两 branch-local 已删）。"""
     import inspect
@@ -527,6 +598,11 @@ def test_single_production_zero_manpower_clear_callsite():
     src = inspect.getsource(flows_mod.apply_fixed_period_flows)
     calls = re.findall(r"_clear_zero_manpower_mutiny_latch\(", src)
     assert len(calls) == 1
+    # 旧态第三振与零兵清闩同缝：pre-fork 循环内调用 helper，非 branch-local 复制 gate
+    assert "_maybe_third_strike_defect(" in src
+    pre_fork = src.split("if db.fiscal_engine() == \"legacy\":", 1)[0]
+    assert "_clear_zero_manpower_mutiny_latch(" in pre_fork
+    assert "_maybe_third_strike_defect(" in pre_fork
 
 
 def test_single_production_owner_power_updater_exists():
