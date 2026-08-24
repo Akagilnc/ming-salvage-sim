@@ -15,6 +15,7 @@ import time
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ming_sim.agents import bind_content as _bind_agents
@@ -106,6 +107,23 @@ def prune_auto_saves(saves_dir: str, campaign_id: str, keep_turns: int = AUTO_SA
 # TurnPhase 单一真源已下沉 models.py（decree 也要用，import session 会循环）；
 # 此处 re-export 保持旧 import 路径（terminal/web_app/tests 的 from session import TurnPhase）兼容。
 from ming_sim.models import FRONT_HALF_DONE_PHASES, TurnPhase  # noqa: F401  (re-export)
+
+
+class AudienceAdmission(str, Enum):
+    """召对入口唯一的地点分流结果（#670 / ADR 0096）。"""
+
+    IN_CAPITAL = "IN_CAPITAL"
+    SUMMON_FRESH = "SUMMON_FRESH"
+    SUMMON_IN_TRANSIT = "SUMMON_IN_TRANSIT"
+
+
+@dataclass(frozen=True)
+class AudienceAdmissionDecision:
+    result: Optional[AudienceAdmission]
+    reason: str = ""
+    location: str = ""
+    transit_to: str = ""
+    allowed: bool = False
 
 
 @dataclass
@@ -1048,8 +1066,9 @@ class GameSession:
         return (self._temporary_character(clean_name), True)
 
     def can_summon(self, character: Character) -> Tuple[bool, str]:
+        # #670 / ADR 0038：临时内存人物不得自动获朝臣资格；须先持久入册再过本闸与 admission。
         if character.name in self.temporary_characters:
-            return (True, "")
+            return (False, f"{character.name}未入本局人物档，须先补档后方可召见。")
         # 宗藩（就藩宗室）非朝堂命官，不可召见——与 web _require_active_minister / 各 roster 同口径
         # （PR#121 隐藏宗藩）。can_summon 是 summon_minister 工具链（session + web 流式两路）的共用闸，
         # 集中守此一处即覆盖两路，否则裁判可绕列表按名召宗藩（cmr R4 cross-section）。
@@ -1080,6 +1099,88 @@ class GameSession:
         if not _is_summonable_court_minister(character, power_id=power_id):
             return (False, f"{character.name}尚未入仕，非朝廷命官，无法召见。")
         return (True, "")
+
+    def admit_audience(self, character: Character) -> AudienceAdmissionDecision:
+        """先复用人物资格，再从 DB 权威行止投影作召对地点分流。"""
+        from ming_sim.matching import canonicalize_location_region_id
+
+        eligible, reason = self.can_summon(character)
+        if not eligible:
+            return AudienceAdmissionDecision(None, reason=reason)
+        row = self.db.conn.execute(
+            "SELECT location, transit_to FROM characters WHERE name=?",
+            (character.name,),
+        ).fetchone()
+        # #670：无 DB 行不得 blank fail-open 入殿；在册空 location 仍 fail-open 在京。
+        if row is None:
+            return AudienceAdmissionDecision(
+                None,
+                reason=f"{character.name}未入本局人物档，须先补档后方可召见。",
+            )
+        raw_location = str(row["location"] or "")
+        location = canonicalize_location_region_id(raw_location)
+        transit_to = str(row["transit_to"] or "")
+        if transit_to:
+            result = AudienceAdmission.SUMMON_IN_TRANSIT
+        elif not location or location == "beizhili":
+            result = AudienceAdmission.IN_CAPITAL
+        else:
+            result = AudienceAdmission.SUMMON_FRESH
+        # 成功记召不写固定承旨句；玩家经故事账 tags / 月度机器事实与 LLM 自由生成得知。
+        # 资格失败仍走 can_summon 的非空 reason。
+        return AudienceAdmissionDecision(
+            result, reason="", location=location, transit_to=transit_to,
+            allowed=result is AudienceAdmission.IN_CAPITAL,
+        )
+
+    def consume_audience_admission(
+        self,
+        character: Character,
+        *,
+        origin_id: str,
+        state: Optional[GameState] = None,
+        origin_chat_turn_id: int = 0,
+    ) -> AudienceAdmissionDecision:
+        """Consume the shared audience gate before any turn/entrance/reply is created.
+
+        Offsite people get a durable story-ledger summons instead of entering the
+        audience.  Ledger failures propagate, so callers cannot accidentally proceed.
+        在京放行时结清该人未结传召（候见→宣入）。开夜与传召账同事务全成全败。
+        """
+        from ming_sim.applier import atomic
+        from ming_sim.audience_night import (
+            get_open_night, open_night, record_summon_fresh,
+            record_summon_in_transit, settle_unsettled_summons_for_person,
+        )
+
+        decision = self.admit_audience(character)
+        if decision.result is AudienceAdmission.IN_CAPITAL:
+            with atomic(self.db):
+                settle_unsettled_summons_for_person(self.db, character.name)
+            return decision
+        if decision.result not in {
+            AudienceAdmission.SUMMON_FRESH,
+            AudienceAdmission.SUMMON_IN_TRANSIT,
+        }:
+            return decision
+        if not str(origin_id or "").strip():
+            raise ValueError("传召 origin_id 不能为空。")
+        active_state = state or getattr(self, "state", None)
+        if active_state is None:
+            raise ValueError("传召须有当前局面。")
+        recorder = (
+            record_summon_fresh
+            if decision.result is AudienceAdmission.SUMMON_FRESH
+            else record_summon_in_transit
+        )
+        with atomic(self.db):
+            night = get_open_night(self.db) or open_night(self.db, active_state)
+            recorder(
+                self.db, int(night["id"]), character.name,
+                origin_id=str(origin_id).strip(),
+                origin_chat_turn_id=int(origin_chat_turn_id or 0),
+            )
+        return decision
 
     def _start_cli_action_intent(self, character: Character, message: str) -> Optional[Future]:
         """召对动作判断只读皇帝消息，可与大臣回话并发。
@@ -1507,10 +1608,15 @@ class GameSession:
                     except ValueError:
                         target = None
                     if target is not None:
-                        ok, _reason = self.can_summon(target)
-                        if ok:
+                        decision = self.consume_audience_admission(
+                            target,
+                            origin_id=f"session:tool:{int(chat_turn_id or 0)}:{target.name}",
+                            origin_chat_turn_id=int(chat_turn_id or 0),
+                        )
+                        if decision.allowed:
                             result.court_action = "summon"
                             result.next_minister = target.name
+                        # #670 P6'/P7：拒入殿只不设 court_action/next_minister；闸文不进 LLM answer。
             elif tool_name == "propose_directive" or tool_result.startswith("__pending_directive__"):
                 if confirmation_turn or explicit_secret_prefix:
                     continue
@@ -1563,9 +1669,18 @@ class GameSession:
                 if registered:
                     result.registered_minister = registered
                     result.refresh_ministers.append(registered)
+                    # #670 / ADR 0038+0096：补档已落 DB 后须走共享 admission；仅 allowed 换人。
                     if summon_after:
-                        result.court_action = "summon"
-                        result.next_minister = registered
+                        target = self.content.characters.get(registered)
+                        if target is not None:
+                            decision = self.consume_audience_admission(
+                                target,
+                                origin_id=f"session:tool:{int(chat_turn_id or 0)}:{target.name}",
+                                origin_chat_turn_id=int(chat_turn_id or 0),
+                            )
+                            if decision.allowed:
+                                result.court_action = "summon"
+                                result.next_minister = target.name
             elif (
                 tool_name == "rush_staged_commitment"
                 or tool_result.startswith("__commitment_rush__")

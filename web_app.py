@@ -70,6 +70,7 @@ from ming_sim.issues import _format_issue_ongoing, commitment_display_text, comm
 from ming_sim.session import GameSession
 from ming_sim.session import (
     AUTO_SAVE_PREFIX,
+    AudienceAdmission,
     _is_summonable_court_minister,
     _pending_action_failure_payload,
     coalesce_pending_action_id,
@@ -1800,9 +1801,51 @@ class WebGame:
         if getattr(self.state, "turn_phase", None) in FRONT_HALF_DONE_PHASES:
             raise HTTPException(status_code=409, detail="月末结算/亲裁进行中，暂不能召对。")
 
+    def _summon_admission_success_payload(
+        self, minister_name: str, admission_result: str,
+    ) -> Dict[str, Any]:
+        """#670：成功记召静默载荷——不建轮、不落消息、不调回话/LLM。
+
+        admission 为机面控制码，客户端不得写入玩家错误区。
+        """
+        character = self.session._character(minister_name)
+        open_night = None
+        if hasattr(self.db, "conn"):
+            from ming_sim.audience_night import get_open_night
+            open_night = get_open_night(self.db)
+        return {
+            "minister": minister_name,
+            "answer": "",
+            "campaign_id": (
+                str(self.db.kv_get("campaign_id") or "")
+                if hasattr(self.db, "kv_get") else ""
+            ),
+            "night_id": int(open_night["id"]) if open_night else 0,
+            "history": self.chat_projection(minister_name),
+            "chat_turn_id": 0,
+            "minister_message_id": 0,
+            "court_action": "",
+            "next_minister": "",
+            "proposed_directive": None,
+            "appointed_minister": "",
+            "registered_minister": "",
+            "displaced_minister": "",
+            "secret_order_id": 0,
+            "pending_action_id": 0,
+            "pending_action_failures": [],
+            "directive_confirmation_ambiguous": None,
+            "directives": [self.directive_payload(row) for row in self.directive_rows()],
+            "pending_count": self.session.pending_count(),
+            "suggestions": self.suggestions_for(character),
+            "can_undo_last_chat": self.can_undo_last_chat(minister_name),
+            # 机面字段：不渲染；前端 refresh 故事账/卷轴即可。
+            "admission": str(admission_result or ""),
+        }
+
     def chat(self, minister_name: str, message: str) -> Dict[str, Any]:
         # #498 AC10：LLM 生成不持 write_gate，使颁诏入口可观测 in-flight 并有界超时；
         # 仅 prologue/epilogue 写库持锁。
+        # #670 / ADR 0096：殿上入口——自持闸 prologue 内消费 admission（与 chat_stream 同口径）。
         return self._chat_core(minister_name, message, gate_already_held=False)
 
     def _chat_with_write_gate_held(self, minister_name: str, message: str) -> Dict[str, Any]:
@@ -1811,6 +1854,7 @@ class WebGame:
         与 `chat()` 同语义，但不得再 acquire 非可重入 Lock（会死锁）。
         此兼容路径在外层闸内跑完整轮（含 LLM）；公开 chat/chat_stream 仍按 AC10
         在生成期放闸。
+        #670：密疏只受 _require_active_minister/can_summon，不走殿上 admission。
         """
         return self._chat_core(minister_name, message, gate_already_held=True)
 
@@ -1873,6 +1917,34 @@ class WebGame:
                     if self._audience_turn_in_flight(minister_name):
                         raise HTTPException(status_code=409, detail=f"{minister_name}上一轮回奏仍在进行，请稍候再问。")
                     accepted_turn = int(self.state.turn)
+                    # #670：殿上 chat 自持闸时消费 admission；密疏兼容路（gate_already_held）不消费。
+                    # 闸只管殿上召对——书信/密疏只受基础资格（_require_active_minister/can_summon）。
+                    if not gate_already_held:
+                        admission = self.session.consume_audience_admission(
+                            self.session._character(minister_name),
+                            origin_id=f"web:chat:{accepted_turn}:{minister_name}",
+                        )
+                        if not admission.allowed:
+                            # 资格失败：非空 reason → 409 错误通道。
+                            # 成功记召（SUMMON_* + 空 reason）：静默 200，退出玩家错误通道。
+                            if admission.reason:
+                                raise HTTPException(
+                                    status_code=409, detail=admission.reason,
+                                )
+                            if admission.result in (
+                                AudienceAdmission.SUMMON_FRESH,
+                                AudienceAdmission.SUMMON_IN_TRANSIT,
+                            ):
+                                return self._summon_admission_success_payload(
+                                    minister_name, admission.result.value,
+                                )
+                            raise HTTPException(
+                                status_code=409,
+                                detail=(
+                                    admission.result.value
+                                    if admission.result is not None else ""
+                                ),
+                            )
                     if self._persistent_chat_minister(minister_name):
                         chat_turn_id, before_snapshot = self._start_chat_turn(minister_name)
                     self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})
@@ -2396,9 +2468,18 @@ class WebGame:
                         args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
                         payload_json = json.dumps(args, ensure_ascii=False)
                     registered, summon_after = self.session._apply_unlisted_person_registration(payload_json)
+                    # #670 / ADR 0038+0096：补档已落 DB 后须走共享 admission；仅 allowed 换人。
                     if registered and summon_after:
-                        court_action = "summon"
-                        next_minister = registered
+                        target = self.session.content.characters.get(registered)
+                        if target is not None:
+                            decision = self.session.consume_audience_admission(
+                                target,
+                                origin_id=f"web:tool:{int(chat_turn_id or 0)}:{target.name}",
+                                origin_chat_turn_id=int(chat_turn_id or 0),
+                            )
+                            if decision.allowed:
+                                court_action = "summon"
+                                next_minister = target.name
                 elif tool_name == "summon_minister" or res.startswith("__summon__"):
                     target_name = res.removeprefix("__summon__").strip()
                     if not target_name:
@@ -2412,10 +2493,15 @@ class WebGame:
                         except ValueError:
                             target = None
                         if target is not None:
-                            ok, _reason = self.session.can_summon(target)
-                            if ok:
+                            decision = self.session.consume_audience_admission(
+                                target,
+                                origin_id=f"web:tool:{int(chat_turn_id or 0)}:{target.name}",
+                                origin_chat_turn_id=int(chat_turn_id or 0),
+                            )
+                            if decision.allowed:
                                 court_action = "summon"
                                 next_minister = target.name
+                            # #670 P6'/P7：拒入殿只不设 court_action/next_minister；闸文不进 LLM answer。
                 elif tool_name == "dismiss_minister" or res == "__dismiss__":
                     court_action = "dismiss"
                     # AC1（#500）/#506 L1：令退同源落账绑本轮。#542：流中已 start_exit
@@ -3069,6 +3155,36 @@ class WebGame:
                 yield {"type": "error", "message": f"{minister_name}上一轮回奏仍在进行，请稍候再问。"}
                 return
             accepted_turn = int(self.state.turn)
+            admission = self.session.consume_audience_admission(
+                self.session._character(minister_name),
+                origin_id=f"web:stream:{accepted_turn}:{minister_name}",
+            )
+            if not admission.allowed:
+                self._complete_pending_write(pending_ticket)
+                pending_ticket = None
+                # 资格失败：非空 reason → SSE error。
+                # 成功记召：done+end 静默载荷，禁止 error 事件进玩家错误通道。
+                if admission.reason:
+                    yield {"type": "error", "message": admission.reason}
+                    return
+                if admission.result in (
+                    AudienceAdmission.SUMMON_FRESH,
+                    AudienceAdmission.SUMMON_IN_TRANSIT,
+                ):
+                    payload = self._summon_admission_success_payload(
+                        minister_name, admission.result.value,
+                    )
+                    yield {"type": "done", "payload": payload}
+                    yield {"type": "end"}
+                    return
+                yield {
+                    "type": "error",
+                    "message": (
+                        admission.result.value
+                        if admission.result is not None else ""
+                    ),
+                }
+                return
             if self._persistent_chat_minister(minister_name):
                 chat_turn_id, before_snapshot = self._start_chat_turn(minister_name)
             self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})

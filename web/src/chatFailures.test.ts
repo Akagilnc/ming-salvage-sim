@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { normalizeApiError } from "./api";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { normalizeApiError, streamChat } from "./api";
 import { mergePendingActionFailures, refreshRetriedPendingActionFailures } from "./chatFailures";
 import type { PendingActionFailure } from "./types";
 
@@ -89,5 +89,54 @@ describe("normalizeApiError", () => {
       code: undefined,
       pending_action_failures,
     });
+  });
+});
+
+describe("#670 streamChat 成功记召退出错误通道", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("done+end 携带 admission 机面码时不抛错、不走 error 事件", async () => {
+    const payload = {
+      answer: "",
+      campaign_id: "c1",
+      night_id: 7,
+      chat_turn_id: 0,
+      history: [],
+      suggestions: [],
+      directives: [],
+      admission: "SUMMON_FRESH",
+    };
+    const body =
+      `event: done\ndata: ${JSON.stringify(payload)}\n\n` +
+      `event: end\ndata: {}\n\n`;
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(body, {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" },
+    })));
+
+    const deltas: string[] = [];
+    let sawError = false;
+    const done = await streamChat("洪承畴", "传来。", (d) => deltas.push(d), {
+      onDone: (p) => {
+        // 机面 admission 可达 onDone（刷盘），但不得被当作错误文案。
+        expect(p.admission).toBe("SUMMON_FRESH");
+        expect(p.answer).toBe("");
+        expect(String(p.answer)).not.toContain("SUMMON_");
+        expect(String(p.answer)).not.toContain("赴京");
+        expect(String(p.answer)).not.toContain("不能入殿");
+      },
+    }).catch((err) => {
+      sawError = true;
+      throw err;
+    });
+
+    expect(sawError).toBe(false);
+    expect(deltas).toEqual([]);
+    expect(done.admission).toBe("SUMMON_FRESH");
+    expect(done.answer).toBe("");
+    // 消费端契约：成功记召不经 ApiRequestError / error 事件进 danger note。
+    expect(String(done.answer || "")).not.toMatch(/SUMMON_|赴京|在途|不能入殿/);
   });
 });
