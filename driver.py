@@ -161,7 +161,7 @@ def run_settle(db, state, content, raw_delta, *, narrative="", decree_text="", r
     )
     # 「settling 已提交、context 未落」的窗口=违背「settling ⟹ context 可见」不变式。
     with atomic_and_reload(db, state, content=content, registry=registry):
-        pre_settle(state, db)
+        pre_settle(state, db, content=content)
         extracted = persist_resolve_context(
             db, before_turn, extracted,
             decree_text=decree_text, narrative=narrative,
