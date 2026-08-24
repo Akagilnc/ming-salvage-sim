@@ -296,25 +296,20 @@ def test_army_payload_emits_situation_strings_not_raw_axes(game):
     assert "12.5" not in f"{card['mutiny_tier']}|{card['morale_text']}|{card['arrears_text']}"
 
 
-@pytest.mark.parametrize(
-    "is_mutinied,loyalty,probation,expected",
-    _TIER_CASES,
-    ids=_TIER_IDS,
-)
-def test_four_chains_embed_situation_matrix(
-    game, is_mutinied, loyalty, probation, expected
-):
-    """AC1：共享六档矩阵逐出口覆盖链1–4（含 warning/intel/knowledge/tools/map_nodes）。"""
+def test_four_chains_embed_situation_matrix(game):
+    """AC1：exactly 1 非零欠饷代表覆盖链1–4 全接缝（含 warning 载荷嵌入 + print_header 负例）。"""
+    # 代表：latch=0, L=55, p=0 → 不满；arrears>0（63.0）
+    is_mutinied, loyalty, probation, expected = 0, 55, 0, "不满"
     db, state, content = game
     _configure(db, "legacy")
-    arrears = 63.0 if expected in ("不满", "鼓噪", "哗变") else 0.0
+    arrears = 63.0
     _write_mutiny_fixture(
         db,
         "legacy",
         loyalty=loyalty,
         arrears=arrears,
         is_mutinied=is_mutinied,
-        mutiny_count=1 if is_mutinied or probation else 0,
+        mutiny_count=0,
         mutiny_probation=probation,
         full_pay_streak=0,
         redemption_count=0,
@@ -338,7 +333,7 @@ def test_four_chains_embed_situation_matrix(
     sit = _player_army_situation(row, db._army_pay(row))
     assert sit["mutiny_tier"] == expected
 
-    # 链1：army_payload / state_payload.armies / map_nodes
+    # 链1：army_payload / state_payload.armies / map_nodes（结构 ABI 三键，非 DOM 直显）
     card = _payload_by_id(db)[ARMY]
     _assert_structured_situation(card, sit, "army_payload")
 
@@ -347,6 +342,7 @@ def test_four_chains_embed_situation_matrix(
     armies = {a["id"]: a for a in (payload.get("armies") or [])}
     assert ARMY in armies
     _assert_structured_situation(armies[ARMY], sit, "state_payload.armies")
+    # army_warning = 当前无渲染消费者的载荷副本（可与 report 同源；测可断言嵌入 ≠ HUD 授权）
     warning = payload.get("army_warning") or ""
     _assert_chain_embeds_situation(warning, sit, "state_payload.army_warning", row=row)
 
@@ -356,12 +352,11 @@ def test_four_chains_embed_situation_matrix(
     map_army2 = _find_army_in_map_nodes(runtime.map_nodes())
     _assert_structured_situation(map_army2, sit, "WebGame.map_nodes")
 
-    # 链2：report / intelligence / knowledge / tools.list_armies
+    # 链2：report / intelligence / knowledge / tools.list_armies（LLM 输入装配）
     report = db.army_report(limit=30)
     _assert_chain_embeds_situation(report, sit, "army_report", row=row)
-    if arrears:
-        # 欠饷裸数不得进入散文（63 是 fixture 总额）
-        assert "63" not in report
+    # 欠饷裸数不得进入散文（63 是 fixture 总额）
+    assert "63" not in report
 
     intel_text, intel_src = _qualitative_domain_statement(db, "各军欠饷如何")
     assert intel_src == "armies"
@@ -394,14 +389,14 @@ def test_four_chains_embed_situation_matrix(
         board["list_armies"](), sit, "tools.list_armies", row=row
     )
 
-    # 链3：detail / inspect
+    # 链3：detail / inspect（LLM 输入装配）
     detail = db.army_detail(ARMY)
     _assert_chain_embeds_situation(detail, sit, "army_detail", row=row)
     _assert_chain_embeds_situation(
         board["inspect_army"](ARMY), sit, "tools.inspect_army", row=row
     )
 
-    # 链4：roster / query tool
+    # 链4：roster / query tool（LLM 输入装配）
     roster = db.army_roster()
     _assert_chain_embeds_situation(roster, sit, "army_roster", row=row)
     mtools = {

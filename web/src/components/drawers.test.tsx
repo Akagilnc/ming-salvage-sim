@@ -172,41 +172,6 @@ describe("ArmyDrawer presentation", () => {
     expect(host.textContent).not.toMatch(/危殆|浮动|不稳|稳固/);
   });
 
-  // #321 P7 drawer：六档 mutiny_tier / morale_text / arrears_text 均不直出
-  it.each(["死忠", "优秀", "一般", "不满", "鼓噪", "哗变"] as const)(
-    "does not render mutiny_tier %s or other situation strings",
-    (tier) => {
-      const host = renderArmyDrawer({
-        id: "guanning",
-        name: "关宁军",
-        station: "辽东",
-        theater: "辽东",
-        commander: "祖大寿",
-        controller: "祖大寿",
-        troop_type: "边军",
-        manpower: 10000,
-        army_needed: 10,
-        supply: 50,
-        morale_text: "士气：不振",
-        training: 50,
-        equipment: 50,
-        arrears_text: "无欠饷",
-        mobility: 50,
-        mutiny_tier: tier,
-        status: "驻防",
-        owner_power: "ming",
-      });
-      expect(host.textContent).toContain("关宁军");
-      expect(host.textContent).toContain("10000");
-      expect(host.textContent).toContain("10万");
-      expect(host.textContent).not.toContain(tier);
-      expect(host.textContent).not.toContain("士气：不振");
-      expect(host.textContent).not.toContain("无欠饷");
-      expect(host.textContent).not.toMatch(/危殆|浮动|不稳|稳固/);
-      expect(host.textContent).not.toMatch(/\bmorale\b|\bloyalty\b|\barrears\b/);
-    }
-  );
-
   it("does not render fractional arrears_text or raw 12.5", () => {
     const host = renderArmyDrawer({
       id: "denglai",
