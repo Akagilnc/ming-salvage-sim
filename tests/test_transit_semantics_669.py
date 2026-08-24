@@ -203,6 +203,32 @@ def test_corrupt_empty_location_fails_loud(game):
         _corrupt_and_project(db, state, name, location="")
 
 
+@pytest.mark.parametrize("location", [" beizhili", "beizhili ", " "])
+def test_corrupt_whitespace_location_fails_loud(game, location):
+    """#669 r1：端点 raw 不 strip；空白损坏须 fail-loud，不得修成矩阵合法键。"""
+    db, state, content = game
+    name = active_ming_character(db, content)
+    _put_in_transit(
+        db, content, name, origin="beizhili", dest="liaodong",
+        speed_factor=1.0, start_turn=state.turn,
+    )
+    with pytest.raises((ValueError, KeyError)):
+        _corrupt_and_project(db, state, name, location=location)
+
+
+@pytest.mark.parametrize("transit_to", ["liaodong ", " liaodong", " "])
+def test_corrupt_whitespace_transit_to_fails_loud(game, transit_to):
+    """#669 r1：端点 raw 不 strip；空白损坏须 fail-loud，不得修成矩阵合法键。"""
+    db, state, content = game
+    name = active_ming_character(db, content)
+    _put_in_transit(
+        db, content, name, origin="beizhili", dest="liaodong",
+        speed_factor=1.0, start_turn=state.turn,
+    )
+    with pytest.raises((ValueError, KeyError)):
+        _corrupt_and_project(db, state, name, transit_to=transit_to)
+
+
 def test_corrupt_unknown_endpoint_fails_loud(game):
     db, state, content = game
     name = active_ming_character(db, content)
@@ -297,6 +323,12 @@ def test_payload_and_context_wire_transit_semantics(game):
     }]
     assert set(rows[0]) == {"name", "transit_to", "semantic"}
     assert "在途语义" in payload["data_note"]
+    # #669 r1 / P4：transit_semantics 段只给正向事实指引，不新增反向禁令
+    ts_idx = payload["data_note"].index("transit_semantics")
+    next_field = payload["data_note"].find("faction_denunciation_facts", ts_idx)
+    ts_clause = payload["data_note"][ts_idx:next_field if next_field >= 0 else None]
+    assert "勿改" not in ts_clause
+    assert "勿自算" not in ts_clause
 
     ctx = build_simulator_context(payload)
     assert rows[0]["semantic"] in ctx

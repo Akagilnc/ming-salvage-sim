@@ -586,8 +586,8 @@ def project_transit_semantics(
     out: List[Dict[str, object]] = []
     for row in rows:
         name = str(row["name"] or "")
-        location = str(row["location"] or "").strip()
-        transit_to = str(row["transit_to"] or "").strip()
+        location = str(row["location"] or "")
+        transit_to = str(row["transit_to"] or "")
         if not location or not transit_to:
             raise ValueError(
                 f"transit_semantics corrupt endpoints for {name!r}: "
@@ -833,8 +833,8 @@ def build_simulator_payload(
             "（含 powers_brief/factions_brief/classes_brief 叙述串、active_issues 等）。"
             "due_commitments 是本月待复核的公开承诺（公开轨）。transit_arrivals 为本月引擎"
             "已确认抵达的人物（name+location），请据此演出到任，勿改 location/在途账。"
-            "transit_semantics 为仍在途人物的在途语义特征（name/目的地/月数语义），非裸账，"
-            "勿改 location/在途账，勿自算剩余距离或抵达月。"
+            "transit_semantics 为仍在途人物的在途语义特征（name/目的地/月数语义）；"
+            "仅据该字段所给语义演出在途情形。"
             "faction_denunciation_facts 为派系恩怨/分叉案卷/处境/个性事实包，供朝堂弹劾叙事取材，不含真伪位。"
             "commitment_backlash_facts 为承诺所系反噬结构化事实包（源类/承诺链接/metrics），"
             "供叙事长出玩家可见文案；含与 #625 反制 bar 用语区分约束，不含成句模板。"
