@@ -512,14 +512,46 @@ def test_issue_639_seed_owner_audit_corrections(fresh_session):
     assert "生祠" not in yan["context"]
     assert "潜结" in yan["context"] and "兵部右侍郎" in yan["context"]
     assert (yan["year"], yan["period"]) == (1625, 6)
-    # 李从心：济宁生祠在天启七年八月；无开局前材料则删，不得伪造成 1626.12 既成
+    # 李从心：禁天启七年生祠倒填；改魏→李荐引（点名/题本关照），不得复用 works origin
     assert not any(
         str(row["origin"]).startswith("seed:founding:wei-licongxin-works")
         for row in events
     )
-    assert not any(
-        row["source"] == "李从心" or row["target"] == "李从心" for row in events
+    licongxin_edges = [
+        row for row in events
+        if row["source"] == "李从心" or row["target"] == "李从心"
+    ]
+    assert len(licongxin_edges) == 1
+    li = licongxin_edges[0]
+    assert (li["source"], li["target"], li["event_kind"]) == ("魏忠贤", "李从心", "荐引")
+    assert str(li["origin"]).startswith("seed:founding:wei-licongxin-patronage")
+    assert "生祠" not in li["context"]
+    assert any(tok in li["context"] for tok in ("点名", "题本", "升迁"))
+    assert li["evidence"] is False
+
+    # ADR 0086 三硬锚：盟誓 / 拦升迁 / 私怨（盟誓禁「多年」倒填）
+    oath = by_origin_prefix("seed:founding:wei-cui-oath")
+    assert (oath["source"], oath["target"], oath["event_kind"]) == (
+        "魏忠贤", "崔呈秀", "恩义",
     )
+    assert "盟誓" in oath["context"]
+    assert "多年" not in oath["context"]
+    assert oath["evidence"] is False
+    assert (int(oath["year"]), int(oath["period"])) == (1625, 6)
+
+    block = by_origin_prefix("seed:founding:tian-liruolian-block")
+    assert (block["source"], block["target"], block["event_kind"]) == (
+        "田尔耕", "李若琏", "使绊",
+    )
+    assert "升迁" in block["context"]
+    assert block["evidence"] is False
+
+    grudge = by_origin_prefix("seed:founding:maoyujian-tian-grudge")
+    assert (grudge["source"], grudge["target"], grudge["event_kind"]) == (
+        "毛羽健", "田尔耕", "结怨",
+    )
+    assert "私怨" in grudge["context"] or "姐夫" in grudge["context"]
+    assert grudge["evidence"] is False
 
     # 施/张：史载依媚/生祠碑，不作魏荐引入阁
     shi = by_origin_prefix("seed:founding:wei-shifenglai-promotion")
@@ -549,3 +581,16 @@ def test_issue_639_seed_owner_audit_corrections(fresh_session):
     # 全部 seed 边不得把无核材料标成 evidence:true；且须兼容最早开局 1627.1
     assert all(row["evidence"] is False for row in events)
     assert all((int(row["year"]), int(row["period"])) < (1627, 1) for row in events)
+
+    # 修后精确计数：18+4 事件；魏→崔双事件合并故全知 pair=21
+    assert len(events) == 22
+    from ming_sim.relation_read import project_relation_ledger
+
+    projection = project_relation_ledger(sess.db, viewer=None)
+    assert len(projection) == 21
+    wei_cui = next(
+        row for row in projection
+        if row["source"] == "魏忠贤" and row["target"] == "崔呈秀"
+    )
+    assert "盟誓" in wei_cui["recent_context"]
+    assert "多年" not in wei_cui["recent_context"]

@@ -179,6 +179,46 @@
       "evidence": false,
       "year": 1626,
       "period": 12
+    },
+    {
+      "source": "魏忠贤",
+      "target": "崔呈秀",
+      "event_kind": "恩义",
+      "context": "崔呈秀投附后，魏忠贤与之盟誓相倚，许以奥援，倚为外廷腹心。",
+      "origin": "seed:founding:wei-cui-oath",
+      "evidence": false,
+      "year": 1625,
+      "period": 6
+    },
+    {
+      "source": "田尔耕",
+      "target": "李若琏",
+      "event_kind": "使绊",
+      "context": "田尔耕掌锦衣卫时拦着李若琏升迁，信邸旧人与阉党爪牙在厂卫内结下升迁之怨。",
+      "origin": "seed:founding:tian-liruolian-block",
+      "evidence": false,
+      "year": 1626,
+      "period": 6
+    },
+    {
+      "source": "毛羽健",
+      "target": "田尔耕",
+      "event_kind": "结怨",
+      "context": "杨涟诏狱时毛羽健姐夫被牵连入狱，自此与田尔耕结下私怨。",
+      "origin": "seed:founding:maoyujian-tian-grudge",
+      "evidence": false,
+      "year": 1625,
+      "period": 8
+    },
+    {
+      "source": "魏忠贤",
+      "target": "李从心",
+      "event_kind": "荐引",
+      "context": "魏忠贤以同乡故旧，在司礼监点名关照、批过李从心题本，为其升迁开路。",
+      "origin": "seed:founding:wei-licongxin-patronage",
+      "evidence": false,
+      "year": 1625,
+      "period": 6
     }
   ],
   "summaries": [
