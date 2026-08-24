@@ -1020,6 +1020,108 @@ def test_657_abi_mapper_matrix_a1_a12(game):
     assert len(db.list_decree_dossiers()) == mid
 
 
+def test_657_s10_http_five_actions_and_1490_no_regress(web_game, monkeypatch):
+    """S10：依拟/改票/中旨/廷议/留中 各 ≥1 真 HTTP；#1490 不回归。"""
+    from ming_sim.models import TurnPhase
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+
+    db, state = web_game.db, web_game.state
+    opt = normalize_rescript_layer_a_option({
+        "label": "发帑赈济", "hint": "所安者饥民",
+        "action_type": "assignment", "assignee_name": "",
+        "target_kind": "region", "target_id": "shaanxi",
+        "locality_scope": "single", "region_id": "shaanxi",
+        "transaction_category": "督赈", "deadline_months": 2,
+    })
+
+    def _phase2(_state, _db, *_a, **_k):
+        _db.clear_pending_decisions(int(_state.turn))
+        return "邸报：批红已落。"
+
+    monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _phase2)
+
+    cases = [
+        ("hold", {"action": "hold", "label": "留中"}),
+        ("follow_draft", {
+            "action": "follow_draft", "label": opt["label"],
+            "draft_capability": opt["draft_capability"],
+        }),
+        ("midzhi", {
+            "action": "midzhi", "label": "中旨",
+            "action_type": "assignment",
+            "target_kind": "region", "target_id": "shaanxi",
+            "locality_scope": "single", "region_id": "shaanxi",
+            "transaction_category": "督赈", "deadline_months": 1,
+        }),
+        ("deliberate", {"action": "deliberate", "label": "下部议"}),
+        ("return_revise", {"action": "return_revise", "label": "发回改票"}),
+    ]
+
+    for name, choice_body in cases:
+        db.conn.execute("DELETE FROM pending_decisions")
+        db.conn.commit()
+        db.save_rescript_drafts(int(state.turn), [{
+            "title": f"急务-{name}", "context": "c",
+            "options": [opt, {"label": "备", "hint": "h", "draft_capability": "x"}],
+            "actor_name": "杨嗣昌", "actor_office": "兵部尚书", "actor_faction": "东林",
+        }])
+        db.save_resolve_context(
+            int(state.turn), "诏", "邸报", {"candidate_events": []},
+            secret_orders=[], relevant_memories=[],
+        )
+        state.turn_phase = TurnPhase.AWAITING_DECISION.value
+        db.save_state(state)
+        # web_game.state 与 db 同对象链；显式同步相位避免 refresh 后残留 ISSUED
+        web_game.state.turn_phase = TurnPhase.AWAITING_DECISION.value
+        web_game.session.state.turn_phase = TurnPhase.AWAITING_DECISION.value
+        desk = db.list_rescript_desk(int(state.turn))
+        key = desk[0]["decision_key"]
+        choice = {**choice_body, "decision_key": key}
+
+        if name == "deliberate":
+            # prewrite LLM：mock session runner via run_prewrite path
+            import ming_sim.rescript_actions as ra
+
+            real_run = ra.run_prewrite_llms
+
+            def _fake_prewrite(batch, **kwargs):
+                return ra.PrewriteResults(deliberate_by_key={
+                    key: {"title": "廷议", "body": "臣请集议。", "stance": "主赈"},
+                })
+
+            monkeypatch.setattr(ra, "run_prewrite_llms", _fake_prewrite)
+        if name == "return_revise":
+            import ming_sim.rescript_actions as ra
+
+            def _fake_prewrite_rev(batch, **kwargs):
+                return ra.PrewriteResults(revise_by_key={
+                    key: [
+                        {"label": "新甲", "hint": "h1", "draft_capability": "n1"},
+                        {"label": "新乙", "hint": "h2", "draft_capability": "n2"},
+                    ],
+                })
+
+            monkeypatch.setattr(ra, "run_prewrite_llms", _fake_prewrite_rev)
+
+        r = asyncio.run(_post_resolve([choice]))
+        assert r.status_code == 200, f"{name}: {r.text}"
+        assert "event: error" not in r.text, f"{name}: {r.text}"
+        assert "event: done" in r.text, f"{name}: {r.text}"
+
+    # #1490 不回归：dossier 批红仍可用
+    db.conn.execute("DELETE FROM pending_decisions")
+    db.conn.commit()
+    dossier_id = _plant_dossier_awaiting(db, state)
+    web_game.state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    web_game.session.state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    full = {
+        "label": "强颁", "hint": "以中旨强行颁出", "note": "准。",
+        "dossier_id": dossier_id, "dossier_decision": "force_promulgated",
+    }
+    r = asyncio.run(_post_resolve([full]))
+    assert r.status_code == 200 and "event: done" in r.text, r.text
+
+
 def test_657_mixed_batch_follow_plus_decision_and_no_context_copy(game):
     """C1.1 骨架：急务 follow + decision 同批；resolve_context 无 choices 批副本。"""
     from ming_sim import rescript_actions as ra

@@ -240,12 +240,42 @@ export type DossierDecision =
   | "withdrawn"
   | "hold";
 
+/** #657 急务六动作 */
+export type RescriptDeskAction =
+  | "follow_draft"
+  | "return_revise"
+  | "midzhi"
+  | "deliberate"
+  | "hold"
+  | "summon";
+
 export type DecisionChoice = {
   label?: string;
   hint?: string;
   note?: string;
   dossier_id?: number | null;
   dossier_decision?: DossierDecision;
+  /** #657 案头行键 */
+  decision_key?: string;
+  /** #657 急务动作 */
+  action?: RescriptDeskAction | string;
+  draft_capability?: string;
+  summon_target?: string;
+  action_type?: string;
+  target_kind?: string;
+  target_id?: string;
+  locality_scope?: string;
+  region_id?: string;
+  transaction_category?: string;
+  assignee_name?: string;
+  grant_action?: string;
+  amount?: number;
+  account?: string;
+  appoint_action?: string;
+  office?: string;
+  name?: string;
+  punish_action?: string;
+  privilege?: string;
 };
 
 export type DecisionOption = {
@@ -253,6 +283,16 @@ export type DecisionOption = {
   hint: string;
   dossier_id?: number;
   dossier_decision?: DossierDecision;
+  /** #657 层 A 票拟字段 */
+  draft_capability?: string;
+  action_type?: string;
+  assignee_name?: string;
+  target_kind?: string;
+  target_id?: string;
+  locality_scope?: string;
+  region_id?: string;
+  transaction_category?: string;
+  [key: string]: unknown;
 };
 
 export type PendingDecision = {
@@ -265,6 +305,15 @@ export type PendingDecision = {
   options: DecisionOption[];
   choice?: DecisionChoice | null;
   status?: string;
+  /** #657 案头 */
+  kind?: "decision" | "rescript_draft" | string;
+  decision_key?: string;
+  source_turn?: number;
+  turn?: number;
+  revision_round?: number;
+  actor_name?: string;
+  actor_office?: string;
+  actor_faction?: string;
 };
 
 export type GameState = {

@@ -569,4 +569,72 @@ describe("DecisionModal #1202 seal-is-confirm first screen + pick affordance", (
     expect(document.querySelector(".decision-hint-line")?.textContent).toContain("此疏须择一票拟。");
     cleanupDossier();
   });
+
+  it("#657 同页两类 + 六动作可点 + 留中默认", () => {
+    const mixed: PendingDecision[] = [
+      {
+        idx: 0,
+        kind: "rescript_draft",
+        decision_key: "rescript_draft:1:0",
+        title: "陕西告饥",
+        context: "秦地赤旱",
+        actor_name: "杨嗣昌",
+        options: [
+          {
+            label: "发帑赈济", hint: "所安者饥民",
+            draft_capability: "cap1", action_type: "assignment",
+            target_kind: "region", target_id: "shaanxi",
+            locality_scope: "single", region_id: "shaanxi",
+            transaction_category: "督赈",
+          },
+          { label: "缓征", hint: "h", draft_capability: "cap2" },
+        ],
+      },
+      {
+        idx: 1,
+        kind: "decision",
+        decision_key: "decision:1:1",
+        title: "打回件",
+        context: "科臣封驳",
+        options: [
+          { label: "准", hint: "" },
+          { label: "驳", hint: "" },
+        ],
+      },
+    ];
+    const onResolve = vi.fn();
+    const cleanup = render(<DecisionModal decisions={mixed} onResolve={onResolve} />);
+    const confirmBtn = () => document.querySelector<HTMLButtonElement>(".decision-confirm")!;
+    // 急务六钮
+    const six = document.querySelector("[data-testid='rescript-six-actions']");
+    expect(six).toBeTruthy();
+    const actions = Array.from(document.querySelectorAll("[data-action]")).map(
+      (el) => el.getAttribute("data-action"),
+    );
+    expect(actions).toEqual([
+      "follow_draft", "return_revise", "midzhi", "deliberate", "hold", "summon",
+    ]);
+    // 留中可点并落印推进
+    act(() => {
+      (document.querySelector('[data-action="hold"]') as HTMLButtonElement).click();
+    });
+    expect(confirmBtn().disabled).toBe(false);
+    act(() => confirmBtn().click());
+    // 第二疏 decision
+    expect(document.getElementById("decision-page-title")).toBeTruthy();
+    act(() => {
+      const opt = Array.from(document.querySelectorAll(".decision-option")).find(
+        (b) => b.textContent?.includes("准"),
+      ) as HTMLButtonElement;
+      opt.click();
+    });
+    act(() => confirmBtn().click());
+    expect(onResolve).toHaveBeenCalledTimes(1);
+    const payload = onResolve.mock.calls[0][0];
+    expect(payload[0].action).toBe("hold");
+    expect(payload[0].decision_key).toBe("rescript_draft:1:0");
+    expect(payload[1].label).toBe("准");
+    expect(payload[1].decision_key).toBe("decision:1:1");
+    cleanup();
+  });
 });
