@@ -397,19 +397,24 @@ def _handle_court_command(
         return "dismiss"
 
     # 召见（传/召/宣/叫 开头）
+    # 量词须写 `{1,12}`；`{1,12?}` 会被解析成字面 `{1,1` + 可选 `2` + `}`，永远匹配失败。
     summon_m = re.match(
-        r"^(?:传召|传|召|宣|叫|带)(.{1,12?})(?:来|到|入殿|上殿|面圣|见我)$",
+        r"^(?:传召|传|召|宣|叫|带)(.{1,12})(?:来|到|入殿|上殿|面圣|见我)$",
         raw,
     )
     if summon_m:
         name_fragment = summon_m.group(1)
         target, is_temporary = session.summon_character(name_fragment, current)
-        ok, reason = session.can_summon(target)
-        if not ok:
-            print(reason + "\n")
-            return "handled"
         if is_temporary:
             return f"summon-temp:{target.name}"
+        # #670：夜内换人与初选同吃 consume_audience_admission；场外/在途只落传召账，不返 summon:。
+        decision = session.consume_audience_admission(
+            target,
+            origin_id=f"cli:midflow:{session.state.turn}:{target.name}",
+        )
+        if not decision.allowed:
+            print(decision.reason + "\n")
+            return "handled"
         return f"summon:{target.name}"
 
     # 授予授权
