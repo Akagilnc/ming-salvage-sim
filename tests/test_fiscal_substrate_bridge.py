@@ -1948,6 +1948,70 @@ def test_region_army_pay_tick_treats_missing_breakdown_as_no_delta(fresh_db):
     assert after["morale"] == before["morale"]
 
 
+def test_region_army_morale_haircut_denominator_includes_standalone_funnel(fresh_game):
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    state.metrics["国库"] = 2
+    db.save_state(state)
+    _set_all_settle_grants(db, 0)
+    _write_settle(
+        db, "liaodong", {
+            "_meta": {
+                "postures": ["纯军饷漏斗"],
+                "standalone_military_pay_due": 10,
+            },
+            "st": {
+                "省库库银": 0, "C_地方截留": 0, "C_中饱": 0,
+                "C_漂没": 0, "C_eff损耗": 0, "民欠旧赋": 0,
+                "军饷欠": 0, "官俸欠": 0, "宗禄欠": 0,
+                "官民田": 0, "隐田": 0,
+            },
+            "p": {
+                "正赋应征": 0, "三饷应征": 0, "火耗率": 0,
+                "逋赋率": 0, "起运定额": 0, "拨付gross": 0,
+                "中饱率": 0, "漂没率": 0,
+                "Due": {"军饷": 14, "官俸": 0, "宗禄": 0, "赈济": 0},
+            },
+        },
+    )
+    db.conn.execute("UPDATE buildings SET output_amount=0, maintenance=0")
+    _zero_non_meta_fiscal_config(db)
+    _set_fiscal_config_value(db, "due_haircut_bp_军饷@liaodong#province", 5000)
+    _set_fiscal_config_value(db, "due_haircut_bp_军饷@liaodong#central", 5000)
+    db.conn.execute(
+        "UPDATE regions SET tax_per_turn=0, fiscal=json_set(fiscal, "
+        "'$.huang_tian',0,'$.liao_xiang',0,'$.salt_tax',0,'$.commerce_tax',0)"
+    )
+    db.conn.execute(
+        "UPDATE armies SET self_funded_pay=1, is_tusi=1, province_pay_share=0, "
+        "central_pay_share=0, pay_source_region='', province_pay_arrears=0, "
+        "central_pay_arrears=0, arrears=0, morale=80"
+    )
+    db.conn.execute(
+        "UPDATE armies SET self_funded_pay=0, is_tusi=0, owner_power='ming', "
+        "pay_source_region='liaodong', province_pay_share=.4, central_pay_share=.6, "
+        "province_pay_arrears=0, central_pay_arrears=0, arrears=0, morale=80, "
+        "manpower=10000, salary_rate=10 WHERE id='guanning'"
+    )
+    db.conn.commit()
+
+    flow_rows = flows_mod.apply_fixed_period_flows(db, state)
+
+    central = next(row for row in flow_rows if row.get("category") == "中央军饷")
+    army = db.conn.execute(
+        "SELECT morale, province_pay_arrears, central_pay_arrears "
+        "FROM armies WHERE id='guanning'"
+    ).fetchone()
+    settle = _read_settle(db, "liaodong")
+    assert settle["st"]["军饷欠"] == pytest.approx(7)
+    assert army["province_pay_arrears"] == pytest.approx(2)
+    assert central["needed"] == pytest.approx(3)
+    assert central["shortfall"] == pytest.approx(1)
+    assert army["central_pay_arrears"] == pytest.approx(1)
+    assert army["morale"] == 75
+
+
 def test_fixed_flows_substrate_hub_failure_rolls_back_cutover_writes(fresh_game, monkeypatch):
     import ming_sim.flows as flows_mod
 
@@ -2089,6 +2153,78 @@ def test_budget_lines_read_fiscal_engine_gate_for_army_pay(fresh_game):
         ).fetchall()
     )
     assert legacy_pay == legacy_expected
+
+
+def test_substrate_hub_budget_army_pay_uses_central_haircut_due(fresh_game):
+    """预算「各军军饷」须复用 _central_dues_with_haircut 折后 Due，与真实 hub 结算对齐。"""
+    import ming_sim.flows as flows_mod
+    from ming_sim.flows import (
+        ARMY_SALARY_PRIORITY,
+        _central_dues_with_haircut,
+        _compute_substrate_hub_outbound,
+        army_needed,
+    )
+
+    db, state = fresh_game
+    # 国库充足，使 outbound 不被现金截断主导
+    state.metrics["国库"] = 10_000
+    db.save_state(state)
+    _set_all_settle_grants(db, 0)
+    db.conn.execute("UPDATE buildings SET output_amount=0, maintenance=0")
+    _zero_non_meta_fiscal_config(db)
+    db.conn.execute(
+        "UPDATE regions SET tax_per_turn=0, fiscal=json_set(fiscal, "
+        "'$.huang_tian',0,'$.liao_xiang',0,'$.salt_tax',0,'$.commerce_tax',0)"
+    )
+    db.conn.execute(
+        "UPDATE armies SET self_funded_pay=1, is_tusi=1, province_pay_share=0, "
+        "central_pay_share=0, pay_source_region='', province_pay_arrears=0, "
+        "central_pay_arrears=0, arrears=0"
+    )
+    db.conn.execute(
+        "UPDATE armies SET self_funded_pay=0, is_tusi=0, owner_power='ming', "
+        "pay_source_region='shaanxi', province_pay_share=0, central_pay_share=1, "
+        "province_pay_arrears=0, central_pay_arrears=0, arrears=0, "
+        "manpower=10000, salary_rate=10 WHERE id='guanning'"
+    )
+    _set_fiscal_config_value(db, "due_haircut_bp_军饷@shaanxi#central", 5000)
+    db.conn.commit()
+
+    army_row = db.conn.execute(
+        "SELECT id, manpower, salary_rate, owner_power, central_pay_share, "
+        "pay_source_region FROM armies WHERE id='guanning'"
+    ).fetchone()
+    nominal_due = army_needed(army_row) * float(army_row["central_pay_share"] or 0)
+    assert nominal_due == pytest.approx(10.0)
+
+    rows = db.conn.execute(
+        "SELECT id, manpower, salary_rate, owner_power, central_pay_share, "
+        "pay_source_region FROM armies WHERE owner_power='ming' AND is_tusi=0 "
+        "AND self_funded_pay=0 AND central_pay_share>0"
+    ).fetchall()
+    army_map = {str(r["id"]): r for r in rows}
+    ordered = [army_map[k] for k in ARMY_SALARY_PRIORITY if k in army_map]
+    ordered += [r for r in rows if str(r["id"]) not in ARMY_SALARY_PRIORITY]
+    haircut_dues, _ = _central_dues_with_haircut(db, state, ordered)
+    assert haircut_dues["guanning"] == pytest.approx(5.0)
+    hub = _compute_substrate_hub_outbound(
+        db, max(0.0, float(state.metrics.get("国库", 0) or 0)), haircut_dues,
+    )
+    expected = int(
+        hub.jingyun_paid_total + hub.central_paid_total + hub.central_transport_loss
+    )
+    assert expected < int(nominal_due)
+
+    budget = flows_mod.compute_budget_lines(db, state)
+    budget_pay = next(
+        row["amount"] for row in budget["国库"]["expense"] if row["name"] == "各军军饷"
+    )
+    assert budget_pay == expected
+    assert budget_pay < int(nominal_due)
+
+    flow_rows = flows_mod.apply_fixed_period_flows(db, state)
+    hub_row = next(row for row in flow_rows if row.get("category") == "边饷hub")
+    assert int(hub_row["paid"]) == budget_pay
 
 
 def test_pre_s6_cutover_save_without_fiscal_engine_migrates_to_substrate_hub(fresh_db):

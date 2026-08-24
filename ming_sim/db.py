@@ -2867,6 +2867,13 @@ class GameDB:
         fiscal = json.loads(str(row["fiscal"] or "{}"))
         return self._settle_province_tick_from_fiscal(region_id, fiscal, actions or [])
 
+    def _current_settle_turn(self) -> int:
+        """#653 override 期限判定用的当前绝对 turn（game_state 单行真源；无行=0＝永不到期）。"""
+        row = self.conn.execute(
+            "SELECT turn FROM game_state WHERE id = 1"
+        ).fetchone()
+        return int(row["turn"]) if row is not None and row["turn"] is not None else 0
+
     def settle_ming_province_substrate_ticks(
         self,
         actions_by_region: Optional[Dict[str, List[Dict[str, Any]]]] = None,
@@ -2945,6 +2952,18 @@ class GameDB:
         if p_overrides:
             tick_p = dict(tick_p)
             tick_p.update(p_overrides)
+        # ── #653 / ADR 0090：偿还序 override ＋ 折发系数读取端（r2/r3 表示法）──
+        # 无在位 override 键 → resolve 返 None → 零合并，结算逐字节走默认路径（回归不破）。
+        from ming_sim.pay_order import resolve_pay_order_overrides
+        overrides = resolve_pay_order_overrides(
+            self.get_fiscal_config(), region_id, self._current_settle_turn()
+        )
+        if overrides is not None:
+            tick_p = dict(tick_p)
+            tick_p["due_order"] = list(overrides.due_order)
+            tick_p["arrears_order"] = list(overrides.arrears_order)
+            if overrides.haircut_bp:
+                tick_p["due_haircut_bp"] = dict(overrides.haircut_bp)
         result = settle_tick(settle["st"], tick_p, actions)  # raise→下方不执行（港口锁）
         if pay_rows:
             self._apply_region_army_pay_tick(pay_rows, result, standalone_pay_component)
@@ -2957,7 +2976,54 @@ class GameDB:
             "UPDATE regions SET fiscal = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (json.dumps(fiscal, ensure_ascii=False), region_id),
         )
+        self._record_claim_flow_logs(region_id, result)
         return result
+
+    def _record_claim_flow_logs(self, region_id: str, result: Any) -> None:
+        """#653 F2.3（owner 拍板 r5）：省级结算桥同事务补记 官俸欠/宗禄欠 当回合
+        NewDebt/Repaid 流量——复用现有结算留痕载体 region_logs（禁新表/平行推算器/
+        第二 ledger），restore E2E 可恢复。军饷欠不经此缝（已有 per-source army 对账
+        双累加器＋army_logs 留痕，0023）；零流量不写行。本方法只写 conn，提交归调用方
+        事务边界（与 settle UPDATE 同事务、全有或全无）。"""
+        breakdown = result.breakdown or {}
+        new_debt = breakdown.get("NewDebt") or {}
+        repaid = breakdown.get("Repaid") or {}
+        state_row = self.conn.execute(
+            "SELECT turn, year, period FROM game_state WHERE id = 1"
+        ).fetchone()
+        if state_row is None:
+            state = self.load_state("")
+            log_turn, log_year, log_period = state.turn, state.year, state.period
+        else:
+            log_turn = int(state_row["turn"])
+            log_year = int(state_row["year"])
+            log_period = int(state_row["period"])
+        origin_ref = f"region:{region_id}:settle_tick"
+        for claim in ("官俸欠", "宗禄欠"):
+            for flow, source in (("NewDebt", new_debt), ("Repaid", repaid)):
+                try:
+                    amount = float(source.get(claim, 0) or 0)
+                except (TypeError, ValueError):
+                    amount = 0.0
+                if not math.isfinite(amount) or abs(amount) <= 1e-9:
+                    continue
+                old_v = float(result.new_st.get(claim, 0) or 0)
+                # 流量方向：NewDebt 增欠、Repaid 偿还；region_logs.delta 记有符号流量，
+                # old/new_value 记月末 CLAIM 存量两端（留痕语义与其余 region_logs 一致）。
+                delta = amount if flow == "NewDebt" else -amount
+                self.conn.execute(
+                    "INSERT INTO region_logs (turn, year, period, region_id, field, "
+                    "old_value, new_value, delta, reason, event_id, edict_id, actor, origin_ref) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)",
+                    (
+                        log_turn, log_year, log_period, region_id,
+                        f"settle_{claim}_{flow}",
+                        str(old_v - delta), str(old_v), delta,
+                        f"{TURN_UNIT}省池结算{'新增欠' if flow == 'NewDebt' else '偿旧欠'}"
+                        f"{format_wanliang_amount(amount)}万两",
+                        "户部", origin_ref,
+                    ),
+                )
 
     def scale_tian_fu(self, ratio: float, commit: bool = True) -> int:
         """田赋无独立字段（=tax_per_turn 减辽饷/盐税/商税的残差）。按 ratio 缩放田赋部分：
@@ -4754,7 +4820,19 @@ class GameDB:
                 )
             )
             old_morale = int(row["morale"])
-            total_due = float(row["total_due"])
+            # D11 分母须为两源本月折后总应发。省侧按本次 settle 的军饷
+            # 免除比例回算每军折后份额；中央侧由 flows 唯一折算后经月桥传入。
+            raw_province_due_total = sum(due_by_component.values())
+            effective_province_due_total = max(
+                0.0,
+                raw_province_due_total - float(breakdown.get("haircut_军饷", 0.0) or 0.0),
+            )
+            province_due = (
+                float(row["due"]) * effective_province_due_total / raw_province_due_total
+                if raw_province_due_total > 0 else 0.0
+            )
+            central_dues = getattr(self, "_current_month_central_pay_dues", {})
+            total_due = province_due + float(central_dues.get(army_id, 0.0))
             morale_delta = army_pay_morale_delta(total_due, total_shortfall, old_total_arrears)
             new_morale = max(0, min(100, old_morale + morale_delta))
             self.conn.execute(
@@ -6744,6 +6822,8 @@ class GameDB:
             FROM region_logs rl
             JOIN regions r ON r.id = rl.region_id
             WHERE rl.turn = ?
+              AND rl.field NOT LIKE 'settle_官俸欠_%'
+              AND rl.field NOT LIKE 'settle_宗禄欠_%'
             ORDER BY rl.id
             LIMIT ?
             """,
@@ -11503,6 +11583,12 @@ class GameDB:
                     normalized.pop("delta", None)
                 # #1503：拨饷/协饷类 — 成案即结构化补饷载荷；缺字段 fail-loud，不猜散文。
                 normalized = self._normalize_army_pay_grant_payload(normalized)
+        elif action == "pay_order_override":
+            # #653：结构化载荷 presence 在指令归一边界先验（键形/值域/幻影 region
+            # 仍由成案点与物化点共 prepare_pay_order_entries 同一验形，不在此重复）。
+            entries = normalized.get("entries")
+            if not isinstance(entries, list) or not entries:
+                raise ValueError("pay_order_override 旨意缺少 entries 结构化载荷")
         elif action in {
             "assignment", "authorization", "secret_authorization", "military_order",
         }:
@@ -13625,6 +13711,18 @@ class GameDB:
             raise ValueError("案卷 action_type/decree_text 不能为空")
         if action not in self._DOSSIER_ACTION_TYPES:
             raise ValueError(f"案卷 action_type 非法：{action}")
+        # #653 / ADR 0090：偿还序 override 旨载荷成案点先验（fail-loud 拒整道旨）——
+        # 非法键形/值域/幻影 region 在收夜即响亮拒，不等到颁布关才炸。与物化点共
+        # prepare_pay_order_entries 同一验形（禁两套漂移）。
+        if action == "pay_order_override":
+            from ming_sim.pay_order import prepare_pay_order_entries
+            entries = normalized_payload.get("entries")
+            if not isinstance(entries, list) or not entries:
+                raise ValueError("pay_order_override 案卷 payload.entries 须为非空列表")
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    raise ValueError(f"pay_order_override entry 非字典：{entry!r}")
+            prepare_pay_order_entries(self, entries)
         # #1503：拨饷类成案即规范化补饷载荷（缺字段 fail-loud）。
         if action == "grant_allocation":
             # target_* 可能只在行级参数、尚未入 payload — 先并入再校验。
@@ -14856,6 +14954,14 @@ class GameDB:
                                 state.turn, close=True, commit=False,
                             )
                             return
+            elif row["action_type"] == "pay_order_override":
+                # #653 / ADR 0055/0090：偿还序 override＋折发旨判后物化——顺颁/强颁
+                # 走 materialize_pay_order_decree 唯一入口（真实案卷资格＋颁布门校验、
+                # 整批先验后写 fail-loud、stale until 清理）；打回在上方 decision 分支
+                # 早退零写。物化落在结算尾段 atomic 内（apply_dossier_verdicts 在
+                # settle_with_delta 事务内、本月 fixed flow 已结束后）→ 自下一次结算起
+                # 生效，当月已按旧序完成的结算不追溯（F1.3）。
+                self._apply_pay_order_override_effect(state, row, payload, dossier_id)
             elif row["action_type"] == "punishment":
                 # #517 / ADR 0055：结构化惩处效果自案卷物化，判决后才落人物/钱粮。
                 self._apply_punishment_verdict_effect(
@@ -15672,6 +15778,7 @@ class GameDB:
             self, state,
             target_dossier_id=int(target_dossier_id),
             target_issue_id=int(target_issue_id or 0),
+            revoke_dossier_id=int(dossier_id),
             reason=reason,
             commit=False,
         )
@@ -15686,6 +15793,7 @@ class GameDB:
             apply_0056=True,
             commitment_ref=int(target_issue_id or 0),
             authority_source_dossier_id=int(dossier_id),
+            revoke_dossier_id=int(dossier_id),
         )
 
     def _apply_military_order_verdict_effect(
@@ -16007,6 +16115,29 @@ class GameDB:
             )
             return
         raise ValueError(f"惩处案卷动作无法物化：{punish_action}")
+
+    def _apply_pay_order_override_effect(
+        self, state: GameState, row, payload: Dict[str, object], dossier_id: int,
+    ) -> None:
+        """#653 / ADR 0090：pay_order_override 案卷顺颁/强颁后自载荷物化 fiscal_config。
+
+        唯一物化入口＝materialize_pay_order_decree（内部再验真实案卷资格＋颁布门）；
+        打回案卷不进本分支（效果跟判决走，零写入）。物化即效果已落地（无执行判定面）
+        → fulfilled 直达终局，与 punishment/pacification 同款 terminal 分支。"""
+        from ming_sim.pay_order import materialize_pay_order_decree
+        entries = payload.get("entries")
+        if not isinstance(entries, list) or not entries:
+            raise ValueError("pay_order_override 案卷 payload.entries 须为非空列表")
+        materialize_pay_order_decree(
+            self,
+            turn=int(state.turn),
+            entries=entries,
+            origin_ref=f"dossier:{int(dossier_id)}",
+            reason=str(row["decree_text"] or "")[:240],
+            commit=False,
+        )
+        # 终局由 dispatcher 尾部通用 terminal 分支统一写（fulfilled 颁布即终局），
+        # 与 punishment/pacification 同款：效果 applier 不自带 close。
 
     def apply_dossier_verdicts(
         self, state: GameState, verdicts: Iterable[Dict[str, object]], *,
