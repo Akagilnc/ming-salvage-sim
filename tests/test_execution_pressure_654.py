@@ -113,6 +113,53 @@ def test_distance_d6_missing_matrix_node_fail_loud():
         )
 
 
+def test_two_axis_seed_capital_alias_locations_do_not_crash_settlement(env):
+    """Seed 主办 location=beijing/京师 不在距离矩阵节点里。
+
+    月末 issues extractor 会调 build_execution_two_axis_surface；KeyError 会
+    把整月结算炸死。点将乔允升承办单省差即触发。
+    """
+    db, state, _ = env
+    row = db.conn.execute(
+        "SELECT name, location FROM characters WHERE name='乔允升'",
+    ).fetchone()
+    assert row is not None
+    assert str(row["location"] or "") == "beijing"
+
+    did = db.create_decree_dossier(
+        state,
+        action_type="assignment",
+        decree_text="着刑部尚书乔允升往陕西查狱",
+        target_kind="region",
+        target_id="shaanxi",
+        payload={
+            "target_kind": "region",
+            "target_id": "shaanxi",
+            "locality_scope": "single",
+            "assignee_id": "乔允升",
+            "participant_roster": [
+                {"character_id": "乔允升", "tier": "主办", "role": "", "delegator_id": None},
+            ],
+        },
+        participants=[
+            {"character_id": "乔允升", "tier": "主办", "role": "", "delegator_id": None},
+        ],
+    )
+    _promote_executing(db, did, "shaanxi")
+
+    surface = build_execution_two_axis_surface(db, state.turn)
+    shaanxi = next(p for p in surface["provinces"] if p["region_id"] == "shaanxi")
+    owners = {o["owner_name"]: o for o in shaanxi["owners"]}
+    assert "乔允升" in owners
+    # 京师/beijing ≡ 北直隶：陕西差为中途档，且不得响亮 KeyError。
+    assert owners["乔允升"]["distance_semantic_band"] == BAND_MID
+
+    ctx = build_extractor_shared_context(
+        db, state, narrative="", decree_text="", module="issues",
+    )
+    assert "execution_two_axis" in ctx
+
+
 def test_no_placeholder_673_wording_in_module_source():
     from pathlib import Path
     src = Path("ming_sim/execution_pressure.py").read_text(encoding="utf-8")
