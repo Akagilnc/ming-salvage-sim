@@ -492,6 +492,9 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
         mechanical_fields = (
             "dossier_action_type", "target_kind", "target_id", "mode", "amount", "account",
             "execution_surface", "assignee", "deadline_months", "punish_action",
+            "locality_scope",
+            # #653：pay_order_override 结构化载荷随拟旨草案整道入 staging payload。
+            "entries",
         )
         for field_name in mechanical_fields:
             if draft_res.get(field_name) not in (None, ""):
@@ -1106,6 +1109,8 @@ def stage_grant_allocation_candidate(
         "grant_action": action,
         "mode": mode,
     }
+    # #654：每次完整写出 locality_scope，region→非 region 改草须覆盖 merge 旧 single
+    staged["locality_scope"] = "single" if kind == "region" else "none"
     if account in {"国库", "内库"}:
         staged["account"] = account
     if cadence in {"一次性", "每月"}:
@@ -1837,6 +1842,8 @@ def stage_authorization_candidate(
         "scope": scope_key,
         "mode": mode,
     }
+    # #654：每次完整写出 locality_scope，region→非 region 改草须覆盖 merge 旧 single
+    staged["locality_scope"] = "single" if kind == "region" else "none"
     if existing_id:
         return db.update_directive_candidate(existing_id, staged)
     return db.stage_directive_candidate(int(turn), minister_name, payload=staged)

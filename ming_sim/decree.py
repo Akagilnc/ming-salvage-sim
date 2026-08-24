@@ -959,34 +959,16 @@ def resolve_directives(
 
     # 草案内容已由拟诏合并进 decree_text，simulator 只读 decree_text，不再单传逐条草案。
 
-    # 1) 前括号确定性结算：固定月度财政 tick + auto_trigger 硬立 seed 情势（均在 LLM 推演前）。
-    #    与探针 driver 共用同一段（ADR 0004）。
-    #
-    # 诏书占位真源（ship-pre r5）：pre_settle 成功后立即把 decree_text 落为 ready=0
-    # 占位——begin_turn 会清内存 last_decree，跨进程恢复的 no-ready fallthrough 没有
-    # 此行就只能用 LLM 从草案重新生成，玩家手改的原诏蒸发。HITL/ready persist 后续
-    # 同键 upsert，settle 尾 clear 收掉。
-    #
-    # 占位与 settling 相位同事务可见（PR #90 R1 codex P2）：外层 atomic 把 pre_settle
-    # 的内层事务并入（flat 可重入），崩在「settling 已提交、占位未落」的窗口不再可能
-    # ——要么两者都见，要么整段回滚重来。恢复重推演路重进时 pre_settle 幂等守门
-    # 早退、占位同键 upsert，语义不变。
-    # pre_settle 自己的 atomic 在此嵌套（depth>0）时跳过 reload，由本层（最外层）真回滚后
-    # 重载刷净内存；reload 再炸链上抛。见 atomic_and_reload。
-    try:
-        with atomic_and_reload(db, state, content=content, registry=registry):
-            auto_triggered = pre_settle(
-                state, db, on_stage=lambda label: _emit("stage", label),
-                content=content, registry=registry,
-                scene_registry=scene_registry)
-            db.save_resolve_context(
-                state.turn, decree_text, "", {},
-                secret_orders={}, relevant_memories=[],   # #48：占位用分组承载的空 dict（旋即被真存覆盖）
-                source=Provenance(source).value,    # #146 A：皇帝下旨回合默认 player（被真存同值覆盖）；恢复 fallthrough 穿透 ctx 真源。Provenance(source).value 归一(兼容 enum/合法值串)、与 persist_resolve_context 一致(gemini R5)
-            )
-    except BaseException as exc:
-        raise_fixed_period_flow_abort_if_needed(db, state, exc)
-        raise
+    # 1) 前括号确定性结算：与探针 driver 共用 prepare_resolve_front_half（ADR 0004 / #668）。
+    prepare_resolve_front_half(
+        state, db,
+        decree_text=decree_text,
+        content=content,
+        registry=registry,
+        scene_registry=scene_registry,
+        source=source,
+        on_stage=lambda label: _emit("stage", label),
+    )
 
     proposed_dossiers = db.list_decree_dossiers(status="proposed")
     verdict_rows: List[Dict[str, object]] = []
@@ -1160,6 +1142,18 @@ def resolve_directives(
     tlog("结算 2/4 推演 agent（月末邸报）")
     _emit("stage", "推演月末邸报")
     previous_narrative = db.previous_turn_summary(state) or ""
+    # #668：transit_arrivals 只读 pending_resolve_context 占位键（首跑与 settling 恢复同一真源；不重跑 tick）。
+    durable_arrivals: List[Dict[str, object]] = []
+    resolve_placeholder = db.get_resolve_context(state.turn)
+    if isinstance(resolve_placeholder, dict):
+        prev_sim = resolve_placeholder.get("simulator_payload")
+        if isinstance(prev_sim, dict):
+            raw_arrivals = prev_sim.get("transit_arrivals")
+            if isinstance(raw_arrivals, list):
+                durable_arrivals = [
+                    item for item in raw_arrivals
+                    if isinstance(item, dict)
+                ]
     simulator_payload = build_simulator_payload(
         state, db, executable_decree_text, previous_narrative,
         deaths_this_turn=deaths_this_turn,
@@ -1167,6 +1161,7 @@ def resolve_directives(
         relevant_memories=relevant_memories,
         secret_orders=secret_orders_for_sim,
         decree_dossiers=dossier_payload,
+        transit_arrivals=durable_arrivals,
     )
     simulator_payload["dossier_verdicts"] = verdict_rows
     simulator_payload["promulgation_instruction"] = (
@@ -1785,48 +1780,129 @@ def atomic_and_reload(
         raise
 
 
-def force_transit_arrivals(
+def tick_transit_arrivals(
     db: GameDB,
     state: GameState,
     content=None,
     *,
     commit: bool = True,
 ) -> List[Dict[str, object]]:
-    """确定性在途兜底：在途 ≥2 回合（或旧数据 transit_start_turn=0）→ 强制到任。
+    """0095/#668 确定性在途倒数：active 在途者 remaining -= 1.0 * speed_factor；≤0 当月抵达。
 
-    ADR 0009 决策 5 明确靠叙事自然到任（行止+location）；本函数为兜底——simulator 未能
-    在 2 个月内产到任叙事时，程序强制 transit_to→location、清 transit_to。
-    旧数据 transit_start_turn=0 视为「启程时间未知，按超期处理」。
-    返回被强制到任的人物列表（[{"name": ..., "location": ...}, ...]）。
+    只处理新档完整四量（transit_to + remaining + factor）；缺量旧行不特判、不迁移。
+    抵达经唯一写缝 set_character_transit 整账清零；返回本 tick 抵达列表
+    （[{"name", "location"}, ...]，按 name 稳定序）。
 
-    commit=False 时不提交——由外层事务（如 pre_settle 的 atomic_and_reload）统一提交，
-    确保不提前截断外层事务、破坏回滚原子性（P1 issue: inner commit() inside atomic block）。
+    commit=False 时不提交——由外层事务（如 pre_settle 的 atomic_and_reload）统一提交。
     """
-    current_turn = state.turn
-    overdue = db.conn.execute(
-        "SELECT name, transit_to FROM characters "
-        "WHERE COALESCE(transit_to, '') != '' "
-        "AND (transit_start_turn = 0 OR ? - transit_start_turn >= 2)",
-        (current_turn,),
+    current_turn = int(state.turn)
+    rows = db.conn.execute(
+        "SELECT name, transit_to, transit_distance_remaining, transit_speed_factor, "
+        "transit_start_turn FROM characters "
+        "WHERE status='active' AND COALESCE(transit_to, '') != '' "
+        "AND transit_distance_remaining IS NOT NULL "
+        "AND transit_speed_factor IS NOT NULL "
+        "ORDER BY name"
     ).fetchall()
-    if not overdue:
-        return []
-    forced: List[Dict[str, object]] = []
-    for row in overdue:
+    arrivals: List[Dict[str, object]] = []
+    for row in rows:
         name = str(row["name"])
         dest = str(row["transit_to"])
-        db.set_character_transit(
-            name, location=dest, content=content, commit=False,
-        )
-        forced.append({"name": name, "location": dest})
+        remaining = float(row["transit_distance_remaining"])
+        factor = float(row["transit_speed_factor"])
+        start_turn = int(row["transit_start_turn"] or 0)
+        # F2：启程当月只落账、当月不减；次月起首减。
+        if start_turn >= current_turn:
+            continue
+        new_remaining = remaining - 1.0 * factor
+        if new_remaining <= 0:
+            db.set_character_transit(
+                name, location=dest, content=content, commit=False,
+            )
+            arrivals.append({"name": name, "location": dest})
+        else:
+            db.set_character_transit(
+                name,
+                transit_to=dest,
+                distance_remaining=new_remaining,
+                speed_factor=factor,
+                start_turn=start_turn,
+                content=content,
+                commit=False,
+            )
     if commit:
         db.conn.commit()
-    return forced
+    return arrivals
+
+
+def prepare_resolve_front_half(
+    state: GameState,
+    db: GameDB,
+    *,
+    decree_text: str = "",
+    content=None,
+    registry=None,
+    scene_registry=None,
+    source: object = Provenance.player_decree,
+    on_stage: Optional[Callable[[str], None]] = None,
+) -> List[Dict[str, object]]:
+    """共享前半段 seam（ADR 0004 / #668）：pre_settle + ready=0 占位（含 transit_arrivals）。
+
+    resolve_directives 与 driver.prepare 共用此 helper。外层 atomic 使 settling 相位与
+    ready=0 context 同生共死。已有 context 的 FRONT_HALF_DONE 重入只读返回既有
+    transit_arrivals，禁止 placeholder upsert 覆写 durable 真源（ready=0 原诏/source
+    与 ready=1 崩溃重放载荷），不二次 tick/财政。返回本回合 `transit_arrivals`
+    （无抵达 = `[]`）。
+    """
+    # 已有-context 重入：只读既有真源。save_resolve_context 是整行 upsert，placeholder
+    # 默认空字段会冲掉 ready=0 原诏/source 与 ready=1 extracted/contract/narrative。
+    if state.turn_phase in FRONT_HALF_DONE_PHASES:
+        existing = db.get_resolve_context(int(state.turn))
+        if existing is not None:
+            payload = existing.get("simulator_payload")
+            if isinstance(payload, dict) and isinstance(payload.get("transit_arrivals"), list):
+                return list(payload["transit_arrivals"])
+            return []
+
+    # 诏书占位真源（ship-pre r5）：pre_settle 成功后立即把 decree_text 落为 ready=0
+    # 占位——begin_turn 会清内存 last_decree，跨进程恢复的 no-ready fallthrough 没有
+    # 此行就只能用 LLM 从草案重新生成，玩家手改的原诏蒸发。HITL/ready persist 后续
+    # 同键 upsert，settle 尾 clear 收掉。
+    #
+    # 占位与 settling 相位同事务可见（PR #90 R1 codex P2）：外层 atomic 把 pre_settle
+    # 的内层事务并入（flat 可重入），崩在「settling 已提交、占位未落」的窗口不再可能
+    # ——要么两者都见，要么整段回滚重来。
+    try:
+        transit_arrivals_box: List[Dict[str, object]] = []
+        with atomic_and_reload(db, state, content=content, registry=registry):
+            pre_settle(
+                state, db, on_stage=on_stage,
+                content=content, registry=registry,
+                scene_registry=scene_registry,
+                transit_arrivals_out=transit_arrivals_box,
+            )
+            # #668：transit_arrivals 与 ready=0 占位同外层 atomic 写入。
+            placeholder_payload = {"transit_arrivals": list(transit_arrivals_box)}
+            db.save_resolve_context(
+                state.turn, decree_text, "", placeholder_payload,
+                secret_orders={}, relevant_memories=[],  # #48：占位用分组承载的空 dict（旋即被真存覆盖）
+                source=Provenance(source).value,  # #146 A：归一 enum/合法值串
+            )
+    except BaseException as exc:
+        raise_fixed_period_flow_abort_if_needed(db, state, exc)
+        raise
+
+    ctx = db.get_resolve_context(int(state.turn))
+    payload = ctx.get("simulator_payload") if isinstance(ctx, dict) else None
+    if isinstance(payload, dict) and isinstance(payload.get("transit_arrivals"), list):
+        return list(payload["transit_arrivals"])
+    return list(transit_arrivals_box)
 
 
 def pre_settle(
     state: GameState, db: GameDB, *, on_stage=None, content=None, registry=None,
     scene_registry=None,
+    transit_arrivals_out: Optional[List[Dict[str, object]]] = None,
 ) -> List[Dict[str, object]]:
     """确定性结算「前括号」：固定月度财政 tick + auto_trigger 硬立 seed 情势，均在 LLM 推演前。
 
@@ -1853,6 +1929,8 @@ def pre_settle(
     #   早退路在事务外 commit 会让重推演路上 extractor 再炸时动作已提交而回合未推进。
     if state.turn_phase in FRONT_HALF_DONE_PHASES:
         return []
+    if transit_arrivals_out is not None:
+        transit_arrivals_out.clear()
     auto_triggered: List[Dict[str, object]] = []
     # #498：颁诏遇开夜 → 顺势自动收夜（王承恩代宣）；在飞回话 fail-closed 中止，不进 settling。
     # 放在 atomic 外：收夜提交与错误包独立；成功后 pre_settle 事务内 commit_pending 仍幂等。
@@ -1897,14 +1975,15 @@ def pre_settle(
                 on_stage("固定月度财政入账")
             # 落账副作用；明细不再进 simulator payload（欠饷哗变走前置事件/issue）
             apply_fixed_period_flows(db, state)
-            # 在途兜底：在途 ≥2 回合（或旧数据 transit_start_turn=0）的人物强制到任，
-            # 确保 LLM 漏产到任叙事时不永久在途（ADR 0009 决策5 = 叙事优先；此为代码兜底）。
-            # 必须先于 apply_event_terminal_states / auto_trigger_seed_issues：二者按 character.X.location
-            # 等门控判事件终态/硬立项，超期在途赴门控地的人物若未先到任，门控读旧 location 不达标 →
-            # person-core 事件被误判 avoided 永久作废、兜底形同虚设（CMR r2 P2）。
-            forced_arrivals = force_transit_arrivals(db, state, content, commit=False)
-            if forced_arrivals:
-                tlog(f"[transit-aging] 强制到任 {len(forced_arrivals)} 人：{[f['name'] for f in forced_arrivals]}")
+            # 0095/#668 在途倒数 tick：remaining -= 1.0*factor，≤0 引擎抵达。
+            # 必须先于 apply_event_terminal_states / auto_trigger_seed_issues：门控读 location 前
+            # 在途者须先完成本月抵达（decree 既有顺序约束）。
+            arrivals = tick_transit_arrivals(db, state, content, commit=False)
+            if transit_arrivals_out is not None:
+                transit_arrivals_out.clear()
+                transit_arrivals_out.extend(arrivals)
+            if arrivals:
+                tlog(f"[transit-tick] 本月抵达 {len(arrivals)} 人：{[a['name'] for a in arrivals]}")
             terminalized = apply_event_terminal_states(state, db, commit=False)
             if terminalized:
                 tlog(f"[event_terminal] 本回合事件终态落账 {len(terminalized)} 条：{[(t['id'], t['terminal_state']) for t in terminalized]}")

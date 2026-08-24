@@ -98,6 +98,30 @@ def region_aliases(region: Region) -> List[str]:
     return unique
 
 
+def canonical_region_id_exact(
+    raw: object, regions: Dict[str, Region],
+) -> Optional[str]:
+    """location 写缝专用：仅 compact 精确等值（id/name/region_aliases）。
+
+    空串 → ''；未知非空 → None（调用方 fail-loud）。
+    禁止子串/模糊；不调用 match_region_id_from_text。
+    """
+    if raw is None:
+        return ""
+    text = str(raw).strip()
+    if not text:
+        return ""
+    key = compact_name(text)
+    if not key:
+        return ""
+    for region in regions.values():
+        candidates = [region.id, region.name, *region_aliases(region)]
+        for alias in candidates:
+            if compact_name(alias) == key:
+                return region.id
+    return None
+
+
 def match_region_id_from_text(text: str, regions: Dict[str, Region]) -> Optional[str]:
     cleaned = compact_name(text)
     if not cleaned:

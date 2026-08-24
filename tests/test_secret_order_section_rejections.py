@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from functools import partial
 
-from driver import run_settle
+from tests.section_rejection_helpers import prepare_then_settle as run_settle
 from ming_sim import issues
 from tests.section_rejection_helpers import game, rejection_rows
 

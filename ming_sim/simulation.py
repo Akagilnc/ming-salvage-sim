@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import json
 import copy
+import json
+import math
 import re
 import sqlite3
 from types import SimpleNamespace
@@ -16,6 +17,8 @@ from ming_sim.commitment_backlash import build_backlash_narrative_features
 from ming_sim.constants import TURN_UNIT
 from ming_sim.context import historical_anchor_for_month, victory_status
 from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS
+from ming_sim.distance import DistanceMatrix
+from ming_sim.fiscal_fact_brief import build_fiscal_fact_brief
 from ming_sim.issues import (
     commitment_condition_role,
     commitment_display_text,
@@ -27,6 +30,7 @@ from ming_sim.issues import (
     normalize_event_outcome_labels_or_error,
 )
 from ming_sim.models import GameState, loads_effect_dict, reign_period_label
+from ming_sim.paths import bundled_path
 from ming_sim.qualitative import (
     imperial_authority_band,
     power_band,
@@ -533,24 +537,6 @@ def _army_rows_with_needed(
     return out
 
 
-def _build_transit_nudge(db: "GameDB", state: "GameState") -> List[Dict[str, object]]:
-    """在途人物 nudge 列表，供 simulator 优先叙事到任（#346）。"""
-    rows = db.conn.execute(
-        "SELECT name, transit_to, transit_start_turn FROM characters "
-        "WHERE COALESCE(transit_to, '') != '' AND status='active'"
-    ).fetchall()
-    result: List[Dict[str, object]] = []
-    for row in rows:
-        start = int(row["transit_start_turn"] or 0)
-        months = (state.turn - start) if start > 0 else 0
-        result.append({
-            "name": str(row["name"]),
-            "transit_to": str(row["transit_to"]),
-            "months_in_transit": months,
-        })
-    return result
-
-
 def project_monthly_progress_for_simulator(db: GameDB) -> List[Dict[str, object]]:
     """#569 A1: public-safe monthly progress from the #566 true source.
 
@@ -572,6 +558,106 @@ def project_monthly_progress_for_simulator(db: GameDB) -> List[Dict[str, object]
     return out
 
 
+_TRANSIT_SPEED_SEMANTICS = {
+    1.0: "",
+    1.5: "〔行速语态：快马加鞭〕",
+    2.0: "〔行速语态：星夜兼程〕",
+}
+
+
+def project_transit_semantics(
+    db: GameDB,
+    state: GameState,
+    matrix: DistanceMatrix,
+) -> List[Dict[str, object]]:
+    """#669 / ADR 0095: pure in-transit month-semantics projector for simulator.
+
+    Reads the transit ledger, derives M/T month features, never exposes remaining/
+    speed_factor/total/ETA. Corrupt ledger rows fail loud (no skip, no half-row).
+    Empty in-transit set → []. Stable order = name ASC, transit_to ASC.
+    """
+    rows = db.conn.execute(
+        "SELECT name, location, transit_to, "
+        "transit_distance_remaining, transit_speed_factor, transit_start_turn "
+        "FROM characters "
+        "WHERE status='active' AND COALESCE(transit_to,'') != '' "
+        "ORDER BY name ASC, transit_to ASC"
+    ).fetchall()
+    out: List[Dict[str, object]] = []
+    for row in rows:
+        name = str(row["name"] or "")
+        location = str(row["location"] or "")
+        transit_to = str(row["transit_to"] or "")
+        if not location or not transit_to:
+            raise ValueError(
+                f"transit_semantics corrupt endpoints for {name!r}: "
+                f"location={location!r} transit_to={transit_to!r}"
+            )
+        try:
+            d0 = float(matrix.travel_time(location, transit_to))
+        except (KeyError, ValueError, TypeError) as err:
+            raise KeyError(
+                f"transit_semantics unresolvable route for {name!r}: "
+                f"{location!r} -> {transit_to!r}"
+            ) from err
+
+        remaining_raw = row["transit_distance_remaining"]
+        try:
+            remaining = float(remaining_raw)
+        except (TypeError, ValueError) as err:
+            raise ValueError(
+                f"transit_semantics corrupt remaining for {name!r}: {remaining_raw!r}"
+            ) from err
+        if not math.isfinite(remaining) or remaining <= 0:
+            raise ValueError(
+                f"transit_semantics corrupt remaining for {name!r}: {remaining_raw!r}"
+            )
+
+        factor_raw = row["transit_speed_factor"]
+        try:
+            factor = float(factor_raw)
+        except (TypeError, ValueError) as err:
+            raise ValueError(
+                f"transit_semantics corrupt speed_factor for {name!r}: {factor_raw!r}"
+            ) from err
+        # Exact membership only — no approximate tolerance (P4 / 0095).
+        if factor not in _TRANSIT_SPEED_SEMANTICS:
+            raise ValueError(
+                f"transit_semantics corrupt speed_factor for {name!r}: {factor_raw!r}"
+            )
+
+        start_raw = row["transit_start_turn"]
+        if isinstance(start_raw, bool) or not isinstance(start_raw, (int, float)):
+            raise ValueError(
+                f"transit_semantics corrupt start_turn for {name!r}: {start_raw!r}"
+            )
+        if isinstance(start_raw, float) and not start_raw.is_integer():
+            raise ValueError(
+                f"transit_semantics corrupt start_turn for {name!r}: {start_raw!r}"
+            )
+        start_turn = int(start_raw)
+        if start_turn <= 0:
+            raise ValueError(
+                f"transit_semantics corrupt start_turn for {name!r}: {start_raw!r}"
+            )
+        if start_turn > int(state.turn):
+            raise ValueError(
+                f"transit_semantics future start_turn for {name!r}: "
+                f"{start_turn} > turn {state.turn}"
+            )
+
+        months_in_transit = max(0, int(state.turn) - start_turn)
+        total_months = max(1, math.ceil(d0 / factor - 1e-9))
+        prefix = _TRANSIT_SPEED_SEMANTICS[factor]
+        semantic = f"{prefix}已在途 {months_in_transit} 月，全程约 {total_months} 月"
+        out.append({
+            "name": name,
+            "transit_to": transit_to,
+            "semantic": semantic,
+        })
+    return out
+
+
 def build_simulator_payload(
     state: GameState,
     db: GameDB,
@@ -582,6 +668,7 @@ def build_simulator_payload(
     relevant_memories: Optional[List[Dict[str, object]]] = None,
     secret_orders: Optional[Dict[str, object]] = None,
     decree_dossiers: Optional[List[Dict[str, object]]] = None,
+    transit_arrivals: Optional[List[Dict[str, object]]] = None,
 ) -> Dict[str, object]:
     # #883: due commitments are public review work, unlike actual secret
     # orders.  Keep them on a separately named public rail; never pre-load
@@ -635,13 +722,22 @@ def build_simulator_payload(
             "json_extract(fiscal,'$.corruption') as corruption FROM regions ORDER BY id"
         ).fetchall()
     ]
+    from ming_sim.flows import derive_army_mutiny_state
+
     army_rows = _army_rows_with_needed(
         db,
         "SELECT name,station,theater,commander,controller,troop_type,manpower,"
         "supply,morale,training,equipment,arrears,mobility,"
-        "loyalty,firearm_equipment,cannon_equipment,status,owner_power,salary_rate "
+        "loyalty,firearm_equipment,cannon_equipment,status,owner_power,salary_rate,"
+        "is_mutinied,mutiny_probation "
         "FROM armies ORDER BY id",
     )
+    # #318 D8：0 战力 = simulator 机读派生 flag（canonical latch / derive），不算胜负
+    for _army in army_rows:
+        _mutiny_state = derive_army_mutiny_state(_army)
+        _army["zero_combat"] = _mutiny_state == "哗变"
+        _army.pop("is_mutinied", None)
+        _army.pop("mutiny_probation", None)
     # 在朝名单 = 目前当官的（active）：simulator 在朝盘面 + 任命查重。可起复者（居家/致仕/
     # 削籍）走 offstage_ministers 人才池，在押/流放者两份都不在（玩家下旨决定去留）。旧 status!=
     # 'offstage' 会把削籍/致仕/在押者也混进在朝名单、与人才池双重曝光自相矛盾。注：大臣 system 的
@@ -705,6 +801,10 @@ def build_simulator_payload(
         "active_issues": issues_payload,
         "candidate_events": candidate_events,
         "fiscal_levy_memorial_estimates": fiscal_levy_memorial_estimates(state, db),
+        # #653 F3.1：财政事实摘要（F2 六源纯投影）喂 simulator——被亏方怨气定性叙事由
+        # 既有 simulator 自由长出，零新增 LLM 调用；阶级 satisfaction 变动仍只由
+        # internal extractor 的 class_delta 槽产出（EXTRACTION_MODULES 一字不动）。
+        "fiscal_fact_brief": build_fiscal_fact_brief(db),
         "previous_narrative_tail": previous_narrative[-1500:] if previous_narrative else "",
         "historical_anchor": historical_anchor_for_month(state.year, state.period),
         "victory_status": victory_status(db, state),
@@ -719,9 +819,15 @@ def build_simulator_payload(
         "debuts_this_turn": debuts_this_turn or [],
         "relevant_memories": relevant_memories or [],
         "due_commitments": due_commitments,
-        # LLM nudge：在途人物列表（#346）。simulator 优先产叙事到任（行止+location），
-        # 代码在 pre_settle 中兜底强制（≥2月未到 → 强制；此 nudge 鼓励 LLM 主动叙事）。
-        "transit_nudge": _build_transit_nudge(db, state),
+        # #668/0095：本 tick 引擎刚抵达的事实集合（非仍在途者）；durable 真源在
+        # pending_resolve_context.simulator_payload.transit_arrivals，由调用方注入。
+        "transit_arrivals": list(transit_arrivals or []),
+        # #669/0095：仍在途者的月数语义特征（非裸账）；#673 判官清单复用同一 projector。
+        "transit_semantics": project_transit_semantics(
+            db,
+            state,
+            DistanceMatrix.from_file(bundled_path("content", "distance_matrix.json")),
+        ),
         # #670: machine facts for the existing monthly judge.
         # arrivals → 续赴京；waiting_audience → 抵京候见（只读投影，非法固定句）。
         "unsettled_arrived_summons": list_arrived_unsettled_summons(db),
@@ -734,8 +840,10 @@ def build_simulator_payload(
             "盘面表（buildings/court_roster/armies/regions）在本输入的开头以 TSV 文本块给出"
             "（首行列名、tab 分隔、每行一条记录），不在本 JSON 内；本 JSON 只含其余字段"
             "（含 powers_brief/factions_brief/classes_brief 叙述串、active_issues 等）。"
-            "due_commitments 是本月待复核的公开承诺（公开轨）。transit_nudge 为当前在途"
-            "（transit_to 非空）人物，months_in_transit ≥1 者按惯例本月应抵达，请优先产行止叙事。"
+            "due_commitments 是本月待复核的公开承诺（公开轨）。transit_arrivals 为本月引擎"
+            "已确认抵达的人物（name+location），请据此演出到任，勿改 location/在途账。"
+            "transit_semantics 为仍在途人物的在途语义特征（name/目的地/月数语义）；"
+            "仅据该字段所给语义演出在途情形。"
             "unsettled_arrived_summons 为原程已抵非京、须续赴京的未结传召机器事实；"
             "waiting_audience 为已抵京候见、尚未宣入消费的未结传召机器事实。"
             "faction_denunciation_facts 为派系恩怨/分叉案卷/处境/个性事实包，供朝堂弹劾叙事取材，不含真伪位。"
@@ -1197,6 +1305,8 @@ def build_extractor_shared_context(
                         db.build_supervision_judge_surface(int(row["id"]))
                     )
                 )
+            # #654：属地投影仅 issues 模块；他模块禁见 region_id 键。
+            entry["region_id"] = str(row.get("region_id") or "")
         slim_dossiers.append(entry)
     slim["decree_dossiers"] = slim_dossiers
     if module == "personnel_secret":
@@ -1223,6 +1333,9 @@ def build_extractor_shared_context(
         # #626：反噬事实包仅 issues 档房（与 #625 监督三键同格门控）；
         # 不在 _extractor_context_payload 无门副本，避免非 issues 模块误读。
         slim["commitment_backlash_facts"] = build_backlash_narrative_features(db)
+        # #654：带宽/阻力两轴清单——纯机 issues extractor 私有面（P4：不进 simulator）。
+        from ming_sim.execution_pressure import build_execution_two_axis_surface
+        slim["execution_two_axis"] = build_execution_two_axis_surface(db, state.turn)
         # The issues extractor consumes the same canonical candidate_events key
         # as its prompt.  This private module payload remains outside simulator
         # decision binding and HITL.
