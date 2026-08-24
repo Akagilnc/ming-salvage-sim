@@ -4561,13 +4561,11 @@ class GameDB:
                 ))
                 return
 
-        # #319 ADR 0025 D4①：latched 军非 owner 饷源字段 deny-by-default。
-        # 写缝在主环 latch 门之前、且主环对 _ARMY_PAY_SOURCE_DELTA_FIELDS 直接
-        # continue，故既有字段效果门看不到本缝；在此复用同一 latch 语义，
-        # 静默 no-op，不新开平行门/第二 adapter。真 owner 变更已由上方 return。
-        if bool(row["is_mutinied"]):
-            return
-
+        # #319 ADR 0025 D4①：先拒脏输入（fail-loud / invalid_enum），校验通过后
+        # 再对 latched 军非 owner 饷源字段静默 no-op。写缝在主环 latch 门之前、
+        # 且主环对 _ARMY_PAY_SOURCE_DELTA_FIELDS 直接 continue，故既有字段效果门
+        # 看不到本缝；在此复用同一 latch 语义，不新开平行门/第二 adapter。
+        # 真 owner 变更已由上方 return。禁止把 latch return 前移到校验之前。
         old_source = str(row["pay_source_region"] or "")
         owner_power = str(row["owner_power"] or "").strip()
         pay_source_region = str(normalized.get("pay_source_region", row["pay_source_region"]) or "").strip()
@@ -4616,6 +4614,10 @@ class GameDB:
                 "reason": f"army_delta 饷源字段非法：{exc}",
                 "item": {"army_id": army_id, "changes": raw_changes},
             })
+            return
+
+        # 合法且被 deny 的饷源字段：静默 no-op，不写库、不留 rejected
+        if bool(row["is_mutinied"]):
             return
 
         old_values = {

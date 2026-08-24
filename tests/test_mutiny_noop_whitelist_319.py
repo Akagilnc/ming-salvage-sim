@@ -502,6 +502,48 @@ def test_latched_cutover_denies_pay_source_fields(game, pay_delta):
     assert after == before
 
 
+def test_latched_cutover_rejects_invalid_pay_source_share(game):
+    """cutover-on + latched：畸形 share 须 invalid_enum 拒收留痕，不得被 latch 静默吞没。"""
+    db, state, _ = game
+    _configure(db, "substrate_hub")
+    _set(db, "substrate_hub", loyalty=30, arrears=0, latched=1, mutiny_count=1)
+    before = _snapshot(db, PAY_SOURCE_DENY_FIELDS)
+    bad = {"province_pay_share": 0.3, "central_pay_share": 0.3}
+
+    changes = db.apply_army_deltas(
+        state, _event(), None, "测试", {ARMY: dict(bad)}
+    )
+
+    rejected = [
+        c for c in changes
+        if c.get("rejected") and c.get("category") == "invalid_enum"
+    ]
+    assert rejected, f"畸形 share 应 invalid_enum 拒收：{changes}"
+    assert any("饷源比例和必须为 1" in str(c.get("reason") or "") for c in rejected)
+    assert _snapshot(db, PAY_SOURCE_DENY_FIELDS) == before
+
+
+def test_latched_cutover_rejects_unknown_pay_source_region(game):
+    """cutover-on + latched：不存在 region 须 invalid_enum 拒收留痕，快照不变。"""
+    db, state, _ = game
+    _configure(db, "substrate_hub")
+    _set(db, "substrate_hub", loyalty=30, arrears=0, latched=1, mutiny_count=1)
+    before = _snapshot(db, PAY_SOURCE_DENY_FIELDS)
+    bad = {"pay_source_region": "no_such_region_319"}
+
+    changes = db.apply_army_deltas(
+        state, _event(), None, "测试", {ARMY: dict(bad)}
+    )
+
+    rejected = [
+        c for c in changes
+        if c.get("rejected") and c.get("category") == "invalid_enum"
+    ]
+    assert rejected, f"不存在 region 应 invalid_enum 拒收：{changes}"
+    assert any("未入库" in str(c.get("reason") or "") for c in rejected)
+    assert _snapshot(db, PAY_SOURCE_DENY_FIELDS) == before
+
+
 @pytest.mark.parametrize("pay_delta", PAY_SOURCE_LEGAL_DELTAS)
 def test_latched_cutover_mixed_item_pay_source_deny_whitelist_apply(game, pay_delta):
     """混合 item：合法饷源半边不变；manpower 严格负 / loyalty 正仍按白名单落。"""

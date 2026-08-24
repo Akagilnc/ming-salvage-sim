@@ -37,7 +37,6 @@ from ming_sim.db import (
     fold_loyalty_alias_delta,
     infer_office_type_from_office,
     latched_army_field_effect_permitted,
-    mutiny_loyalty_cap,
     normalize_office,
     resolve_office_type_preserving_title,
 )
@@ -4543,17 +4542,12 @@ def _strategic_event_result_preflight_error(
         if field == "reason":
             return ""
         # #319：latched 静默 no-op 与写缝同口径——战略信封预检须拒整封，不得半落兄弟结果。
+        # loyalty 不进此函数：caller 对 field=="loyalty" 先 continue，再走
+        # fold_loyalty_alias_delta + latched_army_field_effect_permitted +
+        # compute_loyalty_soft_adjust；勿在此再堆 loyalty 专属预测（死分支）。
         if bool(row["is_mutinied"]):
             if field == "manpower":
                 if not latched_army_field_effect_permitted(field, value):
-                    return _noop_error("army", army_id, raw_field, value)
-            elif field == "loyalty":
-                delta = int(value)
-                net_pct = int(((legacy_mods.get("armies") or {})
-                               .get(army_id) or {}).get(field, 0) or 0)
-                if net_pct:
-                    delta = db.apply_legacy_pct(delta, net_pct)
-                if not latched_army_field_effect_permitted(field, value, effect_delta=delta):
                     return _noop_error("army", army_id, raw_field, value)
             else:
                 return _noop_error("army", army_id, raw_field, value)
@@ -4574,12 +4568,7 @@ def _strategic_event_result_preflight_error(
                            .get(army_id) or {}).get(field, 0) or 0)
             if net_pct:
                 delta = db.apply_legacy_pct(delta, net_pct)
-            # #319：loyalty 落库预测与写缝同构，复用 mutiny_loyalty_cap 唯一真源
-            upper_bound = (
-                mutiny_loyalty_cap(row["mutiny_count"], row["redemption_count"])
-                if field == "loyalty" else 100
-            )
-            if max(0, min(upper_bound, old_value + delta)) == old_value:
+            if max(0, min(100, old_value + delta)) == old_value:
                 return _noop_error("army", army_id, raw_field, value)
             return ""
         if field in ARMY_QUANTITY_FIELDS:
