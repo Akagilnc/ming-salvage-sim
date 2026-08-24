@@ -814,7 +814,7 @@ def test_legacy_engine_pay_order_materialize_fails_loud_not_fulfilled(game):
 
 
 def test_fact_brief_priority_provenance_falls_back_to_nationwide_scope(game):
-    """撤回局部胜出键后应回落全国键，并归因于真正造成让位的全国旨。"""
+    """真实撤回局部胜出键后应回落全国键，并归因于真正造成让位的全国旨。"""
     db, state, _content = game
     _pin_shortfall_board(db, "shaanxi")
     nationwide = _override_dossier(
@@ -824,9 +824,17 @@ def test_fact_brief_priority_provenance_falls_back_to_nationwide_scope(game):
     db.apply_dossier_promulgation(state, nationwide, "promulgated")
     local = _override_dossier(
         db, state, [{"key": "due_priority_军饷@shaanxi", "value": 39}],
-        text="陕西局部微调但实序不变",
+        text="陕西局部边饷居后",
     )
     db.apply_dossier_promulgation(state, local, "promulgated")
+    revoke = db.create_decree_dossier(
+        state, action_type="revoke_decree", decree_text="撤陕西局部旨",
+        target_kind="dossier", target_id=str(local),
+        payload={"revoke_target_dossier_id": local},
+    )
+    db.apply_dossier_promulgation(state, revoke, "promulgated")
+    assert "due_priority_军饷@shaanxi" not in db.get_fiscal_config()
+    assert db.get_fiscal_config()["due_priority_军饷"] == 40
     db.settle_province_tick("shaanxi")
 
     displaced = [
@@ -835,6 +843,77 @@ def test_fact_brief_priority_provenance_falls_back_to_nationwide_scope(game):
     assert len(displaced) == 1
     assert displaced[0]["origin_ref"] == f"dossier:{nationwide}"
     assert displaced[0]["origin_ref"] != f"dossier:{local}"
+
+
+def test_fact_brief_priority_provenance_prefers_winning_scoped_over_later_nationwide(game):
+    """全国键先写、scoped 后写且两者皆能造成让位时，provenance 须收口胜出 scoped 键。"""
+    db, state, _content = game
+    _pin_shortfall_board(db, "shaanxi")
+    nationwide = _override_dossier(
+        db, state, [{"key": "due_priority_军饷", "value": 40}],
+        text="全国边饷居末",
+    )
+    db.apply_dossier_promulgation(state, nationwide, "promulgated")
+    scoped = _override_dossier(
+        db, state, [{"key": "due_priority_军饷@shaanxi", "value": 40}],
+        text="陕西边饷居末",
+    )
+    db.apply_dossier_promulgation(state, scoped, "promulgated")
+    db.settle_province_tick("shaanxi")
+
+    displaced = [
+        e for e in build_fiscal_fact_brief(db) if e["detail"] == "旨序让位_军饷"
+    ]
+    assert len(displaced) == 1
+    assert displaced[0]["origin_ref"] == f"dossier:{scoped}"
+    assert displaced[0]["origin_ref"] != f"dossier:{nationwide}"
+
+
+def test_fact_brief_arrears_provenance_prefers_winning_scoped_over_nationwide(game):
+    """旧欠序：scoped 胜出时 provenance 不得被较晚/并存的全国键抢走。"""
+    import json as _json
+
+    db, state, _content = game
+    db.conn.execute(
+        "UPDATE armies SET province_pay_share=0, province_pay_arrears=0, "
+        "arrears=central_pay_arrears WHERE pay_source_region='shaanxi'"
+    )
+    st = {
+        "省库库银": 0.0, "C_地方截留": 0.0, "C_中饱": 0.0, "C_漂没": 0.0,
+        "C_eff损耗": 0.0, "民欠旧赋": 0.0, "军饷欠": 0.0, "官俸欠": 5.0,
+        "宗禄欠": 5.0, "官民田": 100.0, "隐田": 50.0,
+    }
+    p = {
+        "正赋应征": 8.0, "三饷应征": 2.0, "火耗率": 0.1, "逋赋率": 0.0,
+        "起运定额": 0.0, "漂没率": 0.0, "中饱率": 0.0, "拨付gross": 0.0,
+        "Due": {"军饷": 0.0, "官俸": 3.0, "宗禄": 4.07, "赈济": 1.0},
+    }
+    row = db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()
+    fiscal = _json.loads(row["fiscal"])
+    fiscal["settle"]["st"] = st
+    fiscal["settle"]["p"] = p
+    db.conn.execute(
+        "UPDATE regions SET fiscal=? WHERE id='shaanxi'",
+        (_json.dumps(fiscal, ensure_ascii=False),),
+    )
+    db.conn.commit()
+    nationwide = _override_dossier(
+        db, state, [{"key": "arrears_priority_宗禄欠", "value": 5}],
+        text="全国旧欠先偿宗禄",
+    )
+    db.apply_dossier_promulgation(state, nationwide, "promulgated")
+    scoped = _override_dossier(
+        db, state, [{"key": "arrears_priority_宗禄欠@shaanxi", "value": 5}],
+        text="陕西旧欠先偿宗禄",
+    )
+    db.apply_dossier_promulgation(state, scoped, "promulgated")
+    db.settle_province_tick("shaanxi")
+    displaced = [
+        e for e in build_fiscal_fact_brief(db) if e["detail"] == "旧欠序让位_官俸欠"
+    ]
+    assert len(displaced) == 1
+    assert displaced[0]["origin_ref"] == f"dossier:{scoped}"
+    assert displaced[0]["origin_ref"] != f"dossier:{nationwide}"
 
 
 def test_fact_brief_priority_provenance_ignores_later_noncausal_dossier(game):
