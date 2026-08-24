@@ -300,13 +300,15 @@ def test_non_latched_generic_owner_change_still_works_via_adapter(game):
     assert writeoff["id"] < owner_log["id"]
 
 
-def test_transfer_to_ming_rejects_mutiny_count_ge_3(game):
+@pytest.mark.parametrize("cutover", (0, 1))
+def test_transfer_to_ming_rejects_mutiny_count_ge_3(game, cutover):
     db, state, _ = game
     _configure(db, "substrate_hub")
     db.conn.execute(
         "INSERT INTO fiscal_config(key,value,kind,note) VALUES "
-        "('__army_pay_source_cutover',1,'meta','test') "
-        "ON CONFLICT(key) DO UPDATE SET value=excluded.value"
+        "('__army_pay_source_cutover',?,'meta','test') "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        (cutover,),
     )
     db.conn.execute(
         """UPDATE armies SET owner_power='bandits', mutiny_count=3, is_mutinied=0,
@@ -341,13 +343,16 @@ def test_transfer_to_ming_rejects_mutiny_count_ge_3(game):
     assert any(c.get("rejected") for c in changes)
 
 
-def test_transfer_to_ming_requires_d6_pay_source(game):
+@pytest.mark.parametrize("cutover", (0, 1))
+def test_transfer_to_ming_requires_d6_pay_source(game, cutover):
+    """外军 mutiny<3 同条合法 D6 → ming：cutover 开/关均原子成功；缺饷源均拒。"""
     db, state, _ = game
     _configure(db, "substrate_hub")
     db.conn.execute(
         "INSERT INTO fiscal_config(key,value,kind,note) VALUES "
-        "('__army_pay_source_cutover',1,'meta','test') "
-        "ON CONFLICT(key) DO UPDATE SET value=excluded.value"
+        "('__army_pay_source_cutover',?,'meta','test') "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        (cutover,),
     )
     db.conn.execute(
         """UPDATE armies SET owner_power='houjin', mutiny_count=0, is_mutinied=0,
@@ -393,6 +398,8 @@ def test_transfer_to_ming_requires_d6_pay_source(game):
     assert not any(c.get("rejected") for c in ok)
     assert row["owner_power"] == "ming"
     assert row["pay_source_region"] == "liaodong"
+    assert float(row["province_pay_share"] or 0) == pytest.approx(0.0)
+    assert float(row["central_pay_share"] or 0) == pytest.approx(1.0)
 
 
 def test_simulator_payload_derives_zero_combat_from_mutiny_latch(game):
