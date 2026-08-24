@@ -131,10 +131,10 @@ def test_settle_none_branch_legacy_env_enriches(game, monkeypatch):
 
 def test_driver_run_settle_records_malformed_delta(game):
     """ADR0015：driver.run_settle 对可拆畸形 delta 逐项拒收留痕，净化后继续。"""
-    import driver
+    from tests.section_rejection_helpers import prepare_then_settle
     db, state, content = game
     turn = state.turn
-    driver.run_settle(db, state, content, {
+    prepare_then_settle(db, state, content, {
         "metric_delta": {"国库": 50},
         "region_delta": {"shanxi": "not-a-dict"},
     })
@@ -146,7 +146,7 @@ def test_driver_run_settle_deterministic_under_legacy_env(game, monkeypatch):
     """#54:探针 driver(run_settle)即便设了 MING_SIM_LLM_BACKEND 也**绝不** spawn CLI
     enrichment——dialogue-Claude 已自产完整 delta,落库核不得再起第二个 LLM(ADR-0004)。
     注入确定性 applier 使 cli_backend_active 恒 False,enrich 不被调用、国策效果不落 floor。"""
-    import driver
+    from tests.section_rejection_helpers import prepare_then_settle
     db, state, content = game
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
     called = []
@@ -154,7 +154,7 @@ def test_driver_run_settle_deterministic_under_legacy_env(game, monkeypatch):
                         lambda *a, **k: called.append((a, k)) or {
                             "effect_on_resolve": {}, "ongoing_effects": {}, "effect_on_fail": {}})
 
-    driver.run_settle(
+    prepare_then_settle(
         db, state, content,
         {"new_issues": [{"origin_kind": "decree", "origin_ref": _decree_origin(db, state), "title": "driver确定性国策", "kind": "initiative"}]},
         narrative="本月邸报。",
