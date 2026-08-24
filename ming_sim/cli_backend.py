@@ -2255,6 +2255,9 @@ def extract_draft_intent(
     _raw = str(obj.get("拟旨意图") or "无").strip()
     _action = _raw if _raw in {"无", "拟旨"} else "无"
     dossier_action = str(obj.get("动作类型") or "special_decree").strip()
+    if dossier_action == "acting_appointment":
+        # #529 与多旨同：署理交回既有人事候选链，不经草案 acting_appointment。
+        return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
     if dossier_action not in DRAFT_ACTION_TYPES:
         raise ValueError(f"动作类型非法：{dossier_action!r}")
     _tk_raw = obj.get("目标类型")
