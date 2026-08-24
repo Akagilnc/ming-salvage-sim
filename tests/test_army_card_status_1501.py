@@ -4,15 +4,14 @@
 - army_payload（web 军牌）停止携带 status；其余字段完整键集/逐字段机械对照
 - 军牌前端不渲染状态句（前端单测另钉）
 - 共享出口逐点真实调用：army_report / tools.list_armies / intelligence /
-  knowledge / report.print_header / state_payload.army_warning /
+  knowledge / state_payload.army_warning /
   army_detail / army_roster，仍含原 status（禁以直调 army_report 顶替消费点）
+  （#321 P7：print_header 已拆除 army_report 直显，不再作为 status 消费点）
 - DB armies.status 零改写；欠饷栏真数不动
 """
 
 from __future__ import annotations
 
-import contextlib
-import io
 from types import SimpleNamespace
 
 import pytest
@@ -21,7 +20,6 @@ import web_app
 from ming_sim.intelligence import _qualitative_domain_statement
 from ming_sim.knowledge import build_character_knowledge
 from ming_sim.models import CourtContext
-from ming_sim.report import print_header
 from ming_sim.tools import build_board_query_tools, build_minister_tools
 
 
@@ -225,16 +223,7 @@ def test_shared_consumers_still_surface_status(read_game):
     )
     assert seed_status in military
 
-    # 4) report.print_header → 真实打印缝（army_report limit=3 入 stdout）
-    buf = io.StringIO()
-    with contextlib.redirect_stdout(buf):
-        print_header(state, db)
-    header_out = buf.getvalue()
-    _assert_text_keeps_statuses(
-        header_out, _danger_top_statuses(db, 3), "report.print_header"
-    )
-
-    # 5) state_payload.army_warning → 真实 WebGame.state_payload 键
+    # 4) state_payload.army_warning → 真实 WebGame.state_payload 键
     payload = web_app.WebGame.state_payload(_web_runtime(db, state, content))
     army_warning = payload.get("army_warning") or ""
     _assert_text_keeps_statuses(
@@ -244,7 +233,7 @@ def test_shared_consumers_still_surface_status(read_game):
     for card in payload.get("armies") or []:
         assert "status" not in card or card.get("status") in (None, "")
 
-    # 6) army_detail → 真实详情缝（关宁全量，必含 seed status）
+    # 5) army_detail → 真实详情缝（关宁全量，必含 seed status）
     detail = db.army_detail(_GUANNING_ID)
     assert seed_status in detail, f"army_detail 缺关宁 status\n{detail!r}"
     assert "欠饷严重" in detail
@@ -252,7 +241,7 @@ def test_shared_consumers_still_surface_status(read_game):
     inspect_text = board_tools["inspect_army"](_GUANNING_ID)
     assert seed_status in inspect_text
 
-    # 7) army_roster → 真实名册缝（全表，含各军 status）
+    # 6) army_roster → 真实名册缝（全表，含各军 status）
     roster = db.army_roster()
     all_statuses = [
         str(row["status"] or "").strip()

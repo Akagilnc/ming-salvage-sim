@@ -2,7 +2,7 @@ import React from "react";
 import MarkdownIt from "markdown-it";
 import type Token from "markdown-it/lib/token.mjs";
 import type StateInline from "markdown-it/lib/rules_inline/state_inline.mjs";
-import type { Army, GameState, LegacyEffect, MapNode } from "./types";
+import type { GameState, LegacyEffect, MapNode } from "./types";
 
 export const scoreTone = (value: number, inverse = false) => {
   const danger = inverse ? value >= 65 : value <= 38;
@@ -16,20 +16,8 @@ export const formatMoney = (value: number) => `${value}万两`;
 
 export const formatSignedMoney = (value: number) => `${value > 0 ? "+" : ""}${formatMoney(value)}`;
 
-/** #321：欠饷只消费后端必填 arrears_text，原样直出，不伪造缺省。 */
-export const formatArmyArrears = (army: Pick<Army, "arrears_text">) => army.arrears_text;
-
-/** #321：欠饷色阶只据 arrears_text；对齐旧 months 阈值与后端 _approx_pay_months 文案桶。
- * 无欠饷 / 不足一月 / pay<=0 无月数后缀 → 不着色；约两月 → warn；数月/半年/年级 → danger。
- */
-export const arrearsToneFromText = (arrearsText: string) => {
-  const text = arrearsText.trim();
-  if (text.includes("数月") || text.includes("半年") || text.includes("年")) return "danger";
-  if (text.includes("约两月")) return "warn";
-  return "";
-};
-
-// #321：morale/loyalty 二次词表已删；仅保留仍吃 numeric 的轴（training/equipment/supply/mobility）。
+// #321 P7：formatArmyArrears / arrearsToneFromText 已随 drawer/map 直显拆除删除。
+// morale/loyalty 二次词表已删；仅保留仍吃 numeric 的轴（training/equipment/supply/mobility）。
 const ARMY_QUALITATIVE_WORDS: Record<string, [string, string, string, string, string]> = {
   supply: ["断绝", "匮乏", "吃紧", "尚可", "充足"],
   training: ["散漫", "生疏", "粗疏", "尚可", "精熟"],

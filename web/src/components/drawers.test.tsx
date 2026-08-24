@@ -137,7 +137,8 @@ afterEach(() => {
 });
 
 describe("ArmyDrawer presentation", () => {
-  it("shows backend arrears_text and mutiny_tier / morale_text directly", () => {
+  // #321 P7：军情三键 ABI 仍可入 props，DOM 不得直显固定串；保留兵力/月饷世界事实
+  it("keeps world facts and never renders situation three-key strings", () => {
     const host = renderArmyDrawer({
       id: "denglai",
       name: "登莱兵与水师",
@@ -159,19 +160,21 @@ describe("ArmyDrawer presentation", () => {
       owner_power: "ming",
     });
 
-    expect(host.textContent).toContain("欠饷约60万两，数月军饷");
-    expect(host.textContent).toContain("士气：尚稳");
-    expect(host.textContent).toContain("优秀");
+    expect(host.textContent).toContain("登莱兵与水师");
+    expect(host.textContent).toContain("26000");
+    expect(host.textContent).toContain("4万");
+    expect(host.textContent).not.toContain("欠饷约60万两，数月军饷");
+    expect(host.textContent).not.toContain("士气：尚稳");
+    expect(host.textContent).not.toContain("优秀");
     expect(host.textContent).not.toContain("63万两");
     expect(host.textContent).not.toContain("忠诚73");
     // 旧 loyalty 五档词不得回潮
-    expect(host.textContent).not.toContain("尚稳稳固");
     expect(host.textContent).not.toMatch(/危殆|浮动|不稳|稳固/);
   });
 
-  // #321 AC1 链1 drawer：六档 mutiny_tier 直出，无二次 map / raw 轴
+  // #321 P7 drawer：六档 mutiny_tier / morale_text / arrears_text 均不直出
   it.each(["死忠", "优秀", "一般", "不满", "鼓噪", "哗变"] as const)(
-    "renders mutiny_tier %s verbatim without loyalty remap",
+    "does not render mutiny_tier %s or other situation strings",
     (tier) => {
       const host = renderArmyDrawer({
         id: "guanning",
@@ -193,15 +196,18 @@ describe("ArmyDrawer presentation", () => {
         status: "驻防",
         owner_power: "ming",
       });
-      expect(host.textContent).toContain(tier);
-      expect(host.textContent).toContain("士气：不振");
-      expect(host.textContent).toContain("无欠饷");
+      expect(host.textContent).toContain("关宁军");
+      expect(host.textContent).toContain("10000");
+      expect(host.textContent).toContain("10万");
+      expect(host.textContent).not.toContain(tier);
+      expect(host.textContent).not.toContain("士气：不振");
+      expect(host.textContent).not.toContain("无欠饷");
       expect(host.textContent).not.toMatch(/危殆|浮动|不稳|稳固/);
       expect(host.textContent).not.toMatch(/\bmorale\b|\bloyalty\b|\barrears\b/);
     }
   );
 
-  it("renders fractional payload arrears_text without raw 12.5", () => {
+  it("does not render fractional arrears_text or raw 12.5", () => {
     const host = renderArmyDrawer({
       id: "denglai",
       name: "登莱兵与水师",
@@ -223,7 +229,8 @@ describe("ArmyDrawer presentation", () => {
       owner_power: "ming",
     });
 
-    expect(host.textContent).toContain("欠饷约15万两");
+    expect(host.textContent).not.toContain("欠饷约15万两");
+    expect(host.textContent).not.toContain("约两月军饷");
     expect(host.textContent).not.toContain("12.5万两");
   });
 
@@ -250,13 +257,13 @@ describe("ArmyDrawer presentation", () => {
       owner_power: "ming",
     });
 
-    // 即使 props 仍带旧 status，军牌 DOM 不得渲染之；欠饷栏仍在
+    // 即使 props 仍带旧 status / 军情三键，军牌 DOM 不得渲染之
     expect(host.textContent).not.toContain(statusSentence);
     expect(host.textContent).not.toContain("欠饷严重");
     expect(host.textContent).not.toMatch(/状态/);
-    expect(host.textContent).toMatch(/欠饷/);
-    // #321：欠饷只消费 arrears_text
-    expect(host.textContent).toContain("欠饷约60万两，数月军饷");
+    expect(host.textContent).not.toContain("欠饷约60万两，数月军饷");
+    expect(host.textContent).not.toContain("士气：不振");
+    expect(host.textContent).not.toContain("不满");
     expect(host.querySelector(".right-drawer-detail")).toBeTruthy();
   });
 });
