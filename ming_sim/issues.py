@@ -7187,6 +7187,17 @@ def _apply_person_changes(
             if row is None:
                 applied.append(rejected(item, "非既有人物", "hallucinated_id"))
                 continue
+            from ming_sim.matching import is_capital_location
+
+            prior_status = str(row["status"] or "active").strip() or "active"
+            prior_transit = str(row["transit_to"] or "").strip()
+            prior_location = str(row["location"] or "").strip()
+            # ADR 0096：候见不变式（行止前）——active ∧ 在京 ∧ 无 transit。
+            waiting_posture = (
+                prior_status == "active"
+                and not prior_transit
+                and is_capital_location(prior_location)
+            )
             valid_regions = _load_pending_gate_valid_regions(db)
             departure, error = _admit_transit_departure(item, dict(row), valid_regions)
             if error is not None:
@@ -7224,6 +7235,14 @@ def _apply_person_changes(
                 }
             )
             log_applied(result, item)
+            # 候见中再奉旨离京：在既有 canonical 行止写缝结清，防抵非京后复活续赴京。
+            if waiting_posture and (
+                bool(str(transit_to or "").strip())
+                or not is_capital_location(location)
+            ):
+                from ming_sim.audience_night import settle_unsettled_summons_for_person
+
+                settle_unsettled_summons_for_person(db, name)
             continue
 
         applied.append(

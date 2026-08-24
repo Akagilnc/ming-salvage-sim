@@ -63,16 +63,20 @@ def is_capital_location(location: str) -> bool:
 
 
 def location_alias_rewrites() -> List[Tuple[str, str]]:
-    """(alias_token, region_id) 对，供旧档 location 一次写回；不含 id 自身。"""
+    """(alias_token, region_id) 对，供旧档 location 一次写回。
+
+    #670：仅京师 capital 兼容集合（beizhili 别名）；region 文本匹配仍用全量
+    REGION_SPECIAL_ALIASES，不在此扩写非京旧档 location。
+    """
     out: List[Tuple[str, str]] = []
     seen: set[str] = set()
-    for region_id, aliases in REGION_SPECIAL_ALIASES.items():
-        for alias in aliases:
-            token = str(alias).strip()
-            if not token or token == region_id or token in seen:
-                continue
-            seen.add(token)
-            out.append((token, region_id))
+    region_id = "beizhili"
+    for alias in REGION_SPECIAL_ALIASES.get(region_id, ()):
+        token = str(alias).strip()
+        if not token or token == region_id or token in seen:
+            continue
+        seen.add(token)
+        out.append((token, region_id))
     return out
 
 

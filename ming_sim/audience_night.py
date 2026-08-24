@@ -1609,6 +1609,29 @@ def _summon_origin_tag(origin_id: object) -> str:
     return f"{_SUMMON_ORIGIN_PREFIX}{origin}" if origin else ""
 
 
+def _project_unsettled_summon_kind(
+    db: Any, tags: Sequence[Any], person_name: str,
+) -> str:
+    """故事账 tags × 权威行止 → fresh | in_transit | waiting（只读推导，不落新 tag）。"""
+    if TAG_IN_TRANSIT not in tags:
+        return "fresh"
+    from ming_sim.matching import is_capital_location
+
+    row = db.conn.execute(
+        "SELECT location, transit_to, status FROM characters WHERE name=?",
+        (person_name,),
+    ).fetchone()
+    if row is None:
+        return "in_transit"
+    status = str(row["status"] or "active").strip() or "active"
+    transit_to = str(row["transit_to"] or "").strip()
+    location = str(row["location"] or "").strip()
+    # ADR 0096 候见：在途 tag 且 active、无 transit、已在京 → waiting。
+    if status == "active" and not transit_to and is_capital_location(location):
+        return "waiting"
+    return "in_transit"
+
+
 def list_unsettled_summons(db: Any) -> List[Dict[str, Any]]:
     """从故事账确定性投影未结传召；不解析自由叙事正文。"""
     rows = db.conn.execute(
@@ -1627,18 +1650,44 @@ def list_unsettled_summons(db: Any) -> List[Dict[str, Any]]:
         names = json.loads(row["person_names"] or "[]")
         if not origin or not names:
             continue
+        person_name = str(names[0])
         projected.append({
             "entry_id": int(row["id"]), "night_id": int(row["night_id"]),
-            "person_name": str(names[0]), "origin_id": origin,
-            "kind": "in_transit" if TAG_IN_TRANSIT in tags else "fresh",
+            "person_name": person_name, "origin_id": origin,
+            "kind": _project_unsettled_summon_kind(db, tags, person_name),
         })
     return projected
+
+
+def list_waiting_audience_summons(db: Any) -> List[Dict[str, Any]]:
+    """未结候见投影：list_unsettled 中 kind=waiting 的薄封装（非第二真源）。"""
+    from ming_sim.matching import is_capital_location
+
+    waiting: List[Dict[str, Any]] = []
+    for item in list_unsettled_summons(db):
+        if item["kind"] != "waiting":
+            continue
+        row = db.conn.execute(
+            "SELECT location FROM characters WHERE name=?",
+            (item["person_name"],),
+        ).fetchone()
+        location = str(row["location"] or "").strip() if row is not None else ""
+        # 防御：kind 已判定 waiting；location 仍回填权威行止供汇总读端。
+        if location and not is_capital_location(location):
+            location = ""
+        waiting.append({
+            "person_name": item["person_name"],
+            "origin_id": item["origin_id"],
+            "source_entry_id": item["entry_id"],
+            "location": location,
+        })
+    return waiting
 
 
 def list_arrived_unsettled_summons(db: Any) -> List[Dict[str, Any]]:
     """Project in-transit summons whose original non-capital journey has completed.
 
-    在京抵达保持未结候见，不进续程 payload；inactive 由 retire 结清，不投续程。
+    waiting（抵京候见）不进续程 payload；inactive 由 retire 结清，不投续程。
     """
     from ming_sim.matching import is_capital_location
 
@@ -1658,7 +1707,7 @@ def list_arrived_unsettled_summons(db: Any) -> List[Dict[str, Any]]:
         destination = str(row["location"] or "").strip()
         if not destination:
             continue
-        # 已在京师 → 候见，不制造同地续程。
+        # kind=in_transit 已排除 capital waiting；此处再挡一层同地续程。
         if is_capital_location(destination):
             continue
         arrived.append({
@@ -1695,7 +1744,8 @@ def _mark_summon_entries_in_transit(db: Any, items: Sequence[Dict[str, Any]]) ->
 def settle_summon_origin(db: Any, origin_id: object) -> bool:
     """按 origin 结清未结传召；重复结清为幂等 no-op。
 
-    结清点仅两处：宣入/在京 admission 消费；人物非 active 退役。
+    结清点：宣入/在京 admission 消费；人物非 active 退役；
+    候见中 active 再奉旨离京（canonical 行止写缝）。
     """
     origin = str(origin_id or "").strip()
     matches = [item for item in list_unsettled_summons(db) if item["origin_id"] == origin]
