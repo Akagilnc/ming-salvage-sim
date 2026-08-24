@@ -62,6 +62,7 @@ assert not any(
 _AUDIENCE_LANE_STAGED = "staged"
 _AUDIENCE_LANE_BREACH_PLEA = "breach_plea"
 _AUDIENCE_LANE_URGE = "urge"
+_AUDIENCE_LANE_COVERT_LEVY = "covert_levy"
 _AUDIENCE_LANE_UNKNOWN = "unknown"
 
 # #624 四缝白名单钉：仅 staged 进 due-review 终裁（由分派矩阵派生，非平行谓词）
@@ -82,6 +83,8 @@ def audience_todo_lane(entry_kind: object) -> str:
         return _AUDIENCE_LANE_BREACH_PLEA
     if kind in (ENTRY_KIND_RUSH_REMONSTRANCE, ENTRY_KIND_GRACE_PLEA):
         return _AUDIENCE_LANE_URGE
+    if kind == "covert_levy_exposure":
+        return _AUDIENCE_LANE_COVERT_LEVY
     return _AUDIENCE_LANE_UNKNOWN
 
 
@@ -216,6 +219,10 @@ def build_due_review_input(db: Any, todo: Dict[str, object]) -> Dict[str, object
         supervision_history=supervision_history,
         opportunity_band=opportunity_band,
     )
+    army_pay_fact = None
+    if branch["dossier_id"] is not None:
+        from ming_sim.covert_levy import army_pay_fact_for_dossier
+        army_pay_fact = army_pay_fact_for_dossier(db, int(branch["dossier_id"]))
     return {
         "todo": dict(todo),
         "commitment_ref": commitment_ref,
@@ -232,6 +239,7 @@ def build_due_review_input(db: Any, todo: Dict[str, object]) -> Dict[str, object
         "dossier": branch["dossier"],
         "progress_reports": progress_reports,
         "durable_effects": durable_effects,
+        "army_pay_fact": army_pay_fact,
         "urge_history": urge_history,
         "supervision_history": supervision_history,
         "loophole_exposures": loophole_exposures,
@@ -290,9 +298,32 @@ def project_due_review_scene(
     scene_text = _strip_banned(
         f"{phase_hint}：{origin_bit}{gap_text}。{statement_text}"
     )
+    entry_kind = str(todo.get("entry_kind") or ENTRY_KIND_STAGED)
+    scene_kind = "covert_levy_exposure" if audience_todo_lane(entry_kind) == _AUDIENCE_LANE_COVERT_LEVY else "due_review"
+    payload = todo.get("payload_json") or {}
+    reopened = scene_kind == "covert_levy_exposure" and bool(payload.get("shortfall_reopened"))
+    # Covert exposure is rendered by the existing audience LLM from the facts
+    # below; unlike ordinary due review it must not inject a fixed memorial.
+    if scene_kind == "covert_levy_exposure":
+        scene_text = ""
+    if reopened:
+        # A prohibition reminder is a fresh shortfall projection, not a replay
+        # of the already-settled exposure and its adjudication materials.
+        return {
+            "todo_id": int(todo["id"]),
+            "commitment_ref": int(todo["commitment_ref"]),
+            "stage_idx": int(todo["stage_idx"]),
+            "due_turn": int(todo.get("due_turn") or 0),
+            "dossier_id": inp.get("dossier_id"),
+            "executor_id": str((inp.get("dossier") or {}).get("executor_id") or ""),
+            "army_pay_fact": inp.get("army_pay_fact"),
+            "decision": str(payload.get("decision") or ""),
+            "shortfall_reopened": True,
+            "available_dispositions": [],
+        }
     return {
-        "kind": "due_review",
-        "entry_kind": str(todo.get("entry_kind") or ENTRY_KIND_STAGED),
+        "kind": scene_kind,
+        "entry_kind": entry_kind,
         "todo_id": int(todo["id"]),
         "commitment_ref": int(todo["commitment_ref"]),
         "stage_idx": int(todo["stage_idx"]),
@@ -305,6 +336,13 @@ def project_due_review_scene(
         "scene_text": scene_text,
         "branch": str(inp.get("branch") or "no_dossier"),
         "dossier_id": inp.get("dossier_id"),
+        "executor_id": str((inp.get("dossier") or {}).get("executor_id") or ""),
+        "channels": list(payload.get("channels") or []),
+        "fork": dict(payload.get("fork") or {}),
+        "army_pay_fact": inp.get("army_pay_fact"),
+        "decision": str(payload.get("decision") or ""),
+        "shortfall_reopened": reopened,
+        "available_dispositions": [] if reopened else ["禁摊派", "默许", "查办"],
     }
 
 
@@ -321,12 +359,21 @@ def list_due_review_scenes(
     scenes: List[Dict[str, object]] = []
     for todo in todos:
         lane = audience_todo_lane(todo.get("entry_kind"))
-        if lane == _AUDIENCE_LANE_STAGED:
+        if lane in (_AUDIENCE_LANE_STAGED, _AUDIENCE_LANE_COVERT_LEVY):
             scenes.append(project_due_review_scene(db, todo))
         elif lane == _AUDIENCE_LANE_BREACH_PLEA:
             scenes.append(project_breach_plea_scene(db, todo))
         # urge / unknown：不投影为 due-review 场面
     return scenes
+
+
+def current_audience_scene(db: Any, state: Any = None) -> Dict[str, object] | None:
+    """Return the one due-review scene currently presented to the sovereign."""
+    return next((
+        scene for scene in list_due_review_scenes(db, state)
+        if scene.get("kind") == "covert_levy_exposure"
+        or scene.get("shortfall_reopened") is True
+    ), None)
 
 
 def _add_owned_dossier(
@@ -602,8 +649,8 @@ def apply_pending_due_reviews(
         if int(todo.get("created_turn") or 0) >= turn:
             continue
         lane = audience_todo_lane(todo.get("entry_kind"))
-        if lane == _AUDIENCE_LANE_URGE:
-            # #624 通道自管消费；不进 due-review apply 结果集
+        if lane in (_AUDIENCE_LANE_URGE, _AUDIENCE_LANE_COVERT_LEVY):
+            # 通道由普通下旨的 canonical 动作结账；不得被 staged 终裁误消费。
             continue
         # staged / breach_plea / unknown → apply_due_review_for_todo 内分派
         results.append(

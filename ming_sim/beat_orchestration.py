@@ -73,6 +73,7 @@ class BeatInputs:
     court_tension: str = ""          # 当下朝局张力（定性，见闻内切片）
     prior_appearances: Tuple[str, ...] = ()  # 前次入殿与奏对账目
     public_layer: Tuple[str, ...] = ()       # 本夜公开层账（该知扩散取数）
+    audience_scenes: Tuple[str, ...] = ()    # 待顶出场面的结构化在世事实（由开夜内容生成自然呈现）
     # #1294/#1313 r4：当期权威年号（天启七年十月…），in-world 特征；不钉 scene 不改散文
     reign_period_label: str = ""
 
@@ -230,6 +231,14 @@ def assemble_beat_inputs(
 
             era_label = _reign_period_label(int(year), int(period))
 
+    audience_scenes: Tuple[str, ...] = ()
+    if beat_kind == BEAT_OPEN:
+        from ming_sim.due_review import current_audience_scene
+        current = current_audience_scene(db, state)
+        audience_scenes = (() if current is None else (
+            json.dumps(current, ensure_ascii=False, sort_keys=True),
+        ))
+
     return BeatInputs(
         beat_kind=beat_kind,
         time_of_day=str(time_of_day or ""),
@@ -243,6 +252,7 @@ def assemble_beat_inputs(
         public_layer=tuple(extra_public_layer) + _public_layer_bodies(
             db, night_id, before_entry_id=prior_bound,
         ),
+        audience_scenes=audience_scenes,
         reign_period_label=era_label,
     )
 
@@ -315,6 +325,10 @@ def create_llm_beat_generator(llm_config: Any) -> BeatGenerator:
         label = str(inputs.reign_period_label or "").strip()
         if inputs.beat_kind in (BEAT_OPEN, BEAT_ENTER) and label:
             materials["当期年月"] = label
+        # Structured living facts belong only to the open-beat LLM materials.
+        # The deterministic fallback remains fixed prose and must not expand.
+        if inputs.beat_kind == BEAT_OPEN and inputs.audience_scenes:
+            materials["待呈御前的结构化场面事实"] = inputs.audience_scenes
         return extract_agent_text(agent.run(json.dumps(materials, ensure_ascii=False)))
 
     return generate
