@@ -29,11 +29,125 @@ CASH_KEYS = ["省库库银", "C_地方截留", "C_中饱", "C_漂没", "C_eff损
 CLAIM_KEYS = ["民欠旧赋", "军饷欠", "官俸欠", "宗禄欠"]
 KNOWN_ACTIONS = {"补饷", "清丈", "挪借火耗", "追赃", "清欠", "蠲免", "营建"}
 _DUE_KEYS = ("军饷", "官俸", "宗禄", "赈济")
+_ARREARS_KEYS = ("军饷欠", "官俸欠", "宗禄欠")
 _DEBT_OF_DUE = {"军饷": "军饷欠", "官俸": "官俸欠", "宗禄": "宗禄欠"}
+
+
+def regular_assessment(official_land: float, p: Dict[str, Any]) -> float:
+    """正赋应征纯计算真源：直设优先，否则按官民田与亩额派生。"""
+    configured = p.get("正赋应征")
+    return float(configured) if configured is not None else round(
+        float(official_land) * float(p.get("正赋亩额", 0)) / 12, 4
+    )
+
+
+def _resolve_order_param(p: Dict[str, Any], key: str, default: tuple) -> tuple:
+    """#653 override 序参（p[key]）验形：缺省=祖制默认序；在位必须是合法排列，
+    否则 ValueError（fail-loud）。返回定长 tuple 供结算与 oracle 同源消费。"""
+    raw = p.get(key)
+    if raw is None:
+        return default
+    if isinstance(raw, str) or not isinstance(raw, (list, tuple)):
+        raise ValueError(f"param {key} 非 list/tuple")
+    if any(not isinstance(item, str) for item in raw):
+        raise ValueError(f"param {key} 须为 {default} 的完整无重复排列：{raw!r}")
+    if len(raw) != len(default) or set(raw) != set(default) or len(set(raw)) != len(raw):
+        raise ValueError(f"param {key} 须为 {default} 的完整无重复排列：{raw!r}")
+    return tuple(raw)
+
+
+def _resolve_haircut_param(p: Dict[str, Any]) -> Dict[str, int]:
+    """#653 折发系数参（p["due_haircut_bp"]）：{科目: 万分数}，域 (0,10000]，越界 fail-loud。
+    缺省/空 dict=无折（逐字节默认路径）。"""
+    raw = p.get("due_haircut_bp")
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"param due_haircut_bp 非字典：{raw!r}")
+    out: Dict[str, int] = {}
+    for hk, bp in raw.items():
+        if hk not in _DUE_KEYS:
+            raise ValueError(f"due_haircut_bp 含未知科目 {hk}")
+        if isinstance(bp, bool) or not isinstance(bp, int):
+            raise ValueError(f"due_haircut_bp[{hk}] 非整数：{bp!r}")
+        if not (0 < bp <= 10000):
+            raise ValueError(f"due_haircut_bp[{hk}] 须在 (0,10000]：{bp}")
+        if bp != 10000:
+            out[hk] = bp
+    return out
+
+
+def _raw_due(p: Dict[str, Any], h: str) -> float:
+    """原始 Due 读数（坏 Due 验形归既有 ValueError，此处防 AttributeError 逃逸隔离）。"""
+    _due = p["Due"]
+    if not isinstance(_due, dict):
+        return 0.0
+    return float(_due.get(h, 0.0))
+
+
+def _effective_dues(p: Dict[str, Any]) -> Dict[str, float]:
+    """#653 折发改写 Due 应得额：floor(Due×bp/10000)；余数=免除额（不入 CLAIM 不积欠）。"""
+    from .pay_order import haircut_due
+
+    haircuts = _resolve_haircut_param(p)
+    eff: Dict[str, float] = {}
+    for h in _DUE_KEYS:
+        d = _raw_due(p, h)
+        bp = haircuts.get(h)
+        if bp is None:
+            eff[h] = d
+        else:
+            eff[h], _exempt = haircut_due(d, bp)
+    return eff
 
 
 class FiscalConservationError(AssertionError):
     """守恒 oracle 失败 = settlement 算错（bug）。fail-loud，调用方不得落库（港口锁）。"""
+
+
+# ── #653 独立 oracle 专用重算（FISCAL_PROVINCE_SUBSTRATE 宪制：与落账路径零共享）──
+# 落账走 _resolve_order_param/_effective_dues/haircut_due；oracle 走下面两个独立实现。
+# 两套并存是有意的冗余：同一 bug 不可能同时逃过两套不同代码，mutation 测试靠此变红。
+
+def _oracle_order(p: Dict[str, Any], key: str, default: tuple) -> tuple:
+    """oracle 侧序参重算：独立于落账的 _resolve_order_param。"""
+    raw = p.get(key)
+    if raw is None:
+        return tuple(default)
+    if isinstance(raw, str) or not isinstance(raw, (list, tuple)):
+        raise ValueError(f"param {key} 非 list/tuple")
+    if any(not isinstance(item, str) for item in raw):
+        raise ValueError(f"param {key} 须为 {default} 的完整无重复排列：{raw!r}")
+    items = tuple(raw)
+    if len(items) != len(default) or set(items) != set(default) or len(set(items)) != len(items):
+        raise ValueError(f"param {key} 须为 {default} 的完整无重复排列：{raw!r}")
+    return items
+
+
+def _oracle_effective_dues(p: Dict[str, Any]) -> Dict[str, float]:
+    """oracle 侧折后应得重算：独立于落账的 _effective_dues/haircut_due。
+    折发语义同律（floor(Due×bp/10000)、bp=10000 或缺省=无折），但代码自成一路。"""
+    raw_h = p.get("due_haircut_bp")
+    haircuts: Dict[str, int] = {}
+    if raw_h is not None:
+        if not isinstance(raw_h, dict):
+            raise ValueError(f"param due_haircut_bp 非字典：{raw_h!r}")
+        for hk, bp in raw_h.items():
+            if hk not in _DUE_KEYS:
+                raise ValueError(f"due_haircut_bp 含未知科目 {hk}")
+            if isinstance(bp, bool) or not isinstance(bp, int):
+                raise ValueError(f"due_haircut_bp[{hk}] 非整数：{bp!r}")
+            if not (0 < bp <= 10000):
+                raise ValueError(f"due_haircut_bp[{hk}] 须在 (0,10000]：{bp}")
+            if bp != 10000:
+                haircuts[hk] = bp
+    out: Dict[str, float] = {}
+    for h in _DUE_KEYS:
+        _due = p["Due"]
+        d = float(_due.get(h, 0.0)) if isinstance(_due, dict) else 0.0
+        bp = haircuts.get(h)
+        out[h] = float(math.floor(d * bp / 10000)) if bp is not None else d
+    return out
 
 
 @dataclass
@@ -83,12 +197,35 @@ def settle_tick(
     C0 = {k: cash[k] for k in CASH_KEYS if k.startswith("C_")}
     claim0 = dict(claim)
     cash_in = cash_out = 0.0
+    # Due 在任何折算消费前验形，避免坏容器先逃成 TypeError/AttributeError。
+    _due = p["Due"]
+    if isinstance(_due, bool) or not isinstance(_due, dict):
+        raise ValueError("Due 非字典")
+    for hk, dv in _due.items():
+        if hk not in _DUE_KEYS:
+            raise ValueError(f"Due 含未知科目 {hk}")
+        if isinstance(dv, bool) or not isinstance(dv, (int, float)):
+            raise ValueError(f"Due[{hk}] 非数值")
+        if not math.isfinite(float(dv)):
+            raise ValueError(f"Due[{hk}] 非有限值(NaN/inf)")
+        if float(dv) < 0:
+            raise ValueError(f"Due[{hk}] 为负")
+
+    # ── #653 偿还序 override ＋ Due 折发系数（ADR 0090）：缺省=祖制默认序、无折 ──
+    due_order = _resolve_order_param(p, "due_order", _DUE_KEYS)
+    arrears_order = _resolve_order_param(p, "arrears_order", _ARREARS_KEYS)
+    _haircut_bp = _resolve_haircut_param(p)  # 验形 fail-loud；实际折算走 _effective_dues
+    eff_due = _effective_dues(p)
+
     r: Dict[str, Any] = dict(
         实征=0, 火耗实收=0, 清欠=0, 拨付gross=0, 起运到京=0, 实付=0, 偿旧欠=0, 行政补饷=0,
         漂没=0, 中饱=0, 民欠新增=0, 蠲免=0, unmet_relief=0,
         NewDebt={"军饷欠": 0, "官俸欠": 0, "宗禄欠": 0},
         Repaid={"军饷欠": 0, "官俸欠": 0, "宗禄欠": 0},
         action还={"军饷欠": 0},
+        # #653 流水分解新字段：per-科目实付分账（TSV 断言实付序）＋折发免除额
+        实付分账={h: 0.0 for h in _DUE_KEYS},
+        **{f"haircut_{h}": _raw_due(p, h) - eff_due[h] for h in _DUE_KEYS},
     )
 
     def xfer_internal(frm: str, to: str, amount: float, eff: float = 1.0) -> float:
@@ -152,18 +289,6 @@ def settle_tick(
     # 正赋应征=None（启用亩额派生）时 正赋亩额 须 >0，否则 正赋 静默算成 0（违 fail-loud，PR#110 gemini）
     if p.get("正赋应征") is None and p.get("正赋亩额", 0) <= 0:
         raise ValueError("正赋应征=None(亩额派生) 须 正赋亩额>0")
-    _due = p["Due"]  # presence 已在必填检查（line 62）；此处验形：Due 非 dict（None/list/数值）→
-    if isinstance(_due, bool) or not isinstance(_due, dict):  # ValueError，否则下方 .items()/.get() 抛
-        raise ValueError("Due 非字典")  # AttributeError 逃逸调用方隔离（flows 只 catch ValueError/守恒破）炸 pre_settle（cmr ship-pre P1）
-    for hk, dv in _due.items():
-        if hk not in _DUE_KEYS:
-            raise ValueError(f"Due 含未知科目 {hk}")
-        if isinstance(dv, bool) or not isinstance(dv, (int, float)):
-            raise ValueError(f"Due[{hk}] 非数值")
-        if not math.isfinite(float(dv)):
-            raise ValueError(f"Due[{hk}] 非有限值(NaN/inf)")
-        if dv < 0:
-            raise ValueError(f"Due[{hk}] 为负")
     # ── ⓪ action 相位：先算 k（超预算按库存比例缩），再按 k 执行 ──
     Stock_start = cash["省库库银"]
     ΣCost = sum(a.get("cost", 0) for a in actions if a.get("cost", 0) > 0)
@@ -205,8 +330,7 @@ def settle_tick(
             r["蠲免"] += mj
 
     # ── ②③④⑦ 应征/火耗/实征/民欠 ──
-    _zf = p.get("正赋应征")  # None 视为未设（走亩额派生），防 None*float TypeError
-    正赋 = _zf if _zf is not None else round(官民田 * p.get("正赋亩额", 0) / 12, 4)
+    正赋 = regular_assessment(官民田, p)
     三饷 = p["三饷应征"]
     fh = p["火耗率"]
     bf = p["逋赋率"]
@@ -247,12 +371,13 @@ def settle_tick(
     if 省内可支 < -EPS:  # 防御层：入口拦 + k-clamp 后合法输入不可达
         raise ValueError(f"省内可支为负({省内可支})：省库实质透支，支付环禁入")
     Pool = max(0.0, 省内可支)  # k-clamp float 尘埃(~1e-16)清零，防 min(Pool,d)<0 静默造债
-    for h in _DUE_KEYS:
-        d = p["Due"].get(h, 0.0)
+    for h in due_order:  # #653：override 在位时按旨序付款；缺省=祖制 _DUE_KEYS 序
+        d = eff_due[h]  # #653：折后应得额入付（折减部分=免除，不入 CLAIM）
         pay = min(Pool, d)
         Pool -= pay
         cash_out += pay
         r["实付"] += pay
+        r["实付分账"][h] += pay
         nd = d - pay
         if h == "赈济":
             r["unmet_relief"] = nd  # 赈济不积欠，但输出未满足给 LLM（§9）
@@ -261,7 +386,7 @@ def settle_tick(
             claim[ck] += nd
             r["NewDebt"][ck] += nd
     surplus = Pool
-    for c in ("军饷欠", "官俸欠", "宗禄欠"):
+    for c in arrears_order:  # #653：override 在位时按旨序偿旧欠；缺省=祖制 waterfall 序
         rep = min(surplus, claim[c])
         claim[c] -= rep
         surplus -= rep
@@ -318,18 +443,24 @@ def _assert_conservation(
     _zf_o = p.get("正赋应征")
     正赋_o = _zf_o if _zf_o is not None else round(官民田_o * p.get("正赋亩额", 0) / 12, 4)
     三饷 = p["三饷应征"]
-    # ── ② 债务 per-account 独立 oracle ──
+    # ── ② 债务 per-account 独立 oracle（#653 FISCAL_PROVINCE_SUBSTRATE 宪制：
+    # 独立重算 override 序与折后应得，不调用落账同款的 _resolve_order_param /
+    # _effective_dues / haircut_due——同源共函则实现错处两达一致仍绿，oracle 失效。
+    # 此处的验形/折算逻辑独立成文，故意不共享实现）──
+    o_due_order = _oracle_order(p, "due_order", _DUE_KEYS)
+    o_arrears_order = _oracle_order(p, "arrears_order", _ARREARS_KEYS)
+    o_eff_due = _oracle_effective_dues(p)
     o_pool = max(0.0, 省内可支)
     o_paid = {}
-    for h in _DUE_KEYS:
-        d = p["Due"].get(h, 0.0)
+    for h in o_due_order:
+        d = o_eff_due[h]
         pay = min(o_pool, d)
         o_pool -= pay
         o_paid[h] = pay
     o_nd = {
-        "军饷欠": p["Due"].get("军饷", 0) - o_paid["军饷"],
-        "官俸欠": p["Due"].get("官俸", 0) - o_paid["官俸"],
-        "宗禄欠": p["Due"].get("宗禄", 0) - o_paid["宗禄"],
+        "军饷欠": o_eff_due.get("军饷", 0) - o_paid.get("军饷", 0),
+        "官俸欠": o_eff_due.get("官俸", 0) - o_paid.get("官俸", 0),
+        "宗禄欠": o_eff_due.get("宗禄", 0) - o_paid.get("宗禄", 0),
     }
     o_a还 = {"军饷欠": 0.0}
     for a in actions:
@@ -340,7 +471,7 @@ def _assert_conservation(
             )
     o_S = o_pool
     o_rep = {}
-    for c in ("军饷欠", "官俸欠", "宗禄欠"):
+    for c in o_arrears_order:
         bal = claim0[c] - o_a还.get(c, 0) + o_nd[c]
         x = min(o_S, bal)
         o_rep[c] = x

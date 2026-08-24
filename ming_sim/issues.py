@@ -8018,6 +8018,8 @@ def apply_score_extraction(
         extracted.get("faction_delta") or {},
         commit=commit_now,
     )
+    # #653 F3.2：财政事实只作为 internal extractor 的输入证据；最终方向与幅度由
+    # LLM 结合事件、任免等同回合事实综合判断，沿用既有 class_delta 契约原样接收。
     applied_classes, class_rejections = _apply_class_dict(
         db,
         extracted.get("class_delta") or {},
