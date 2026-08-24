@@ -7,7 +7,7 @@
   knowledge / state_payload.army_warning /
   army_detail / army_roster，仍含原 status（禁以直调 army_report 顶替消费点）
   （#321 P7：print_header 已拆除 army_report 直显，不再作为 status 消费点）
-- DB armies.status 零改写；欠饷栏真数不动
+- DB armies.status 零改写；payload 用 arrears_text approximate，省略 raw arrears
 """
 
 from __future__ import annotations
@@ -131,8 +131,8 @@ def _web_runtime(db, state, content):
     return runtime
 
 
-def test_army_payload_omits_static_status_keeps_arrears(read_game):
-    """军牌出口：army_payload 不含 status；完整键集/逐字段对照（#321 欠饷走 arrears_text）。"""
+def test_army_payload_omits_static_status_exposes_arrears_text(read_game):
+    """军牌出口：army_payload 无 status、无 raw arrears 键；arrears_text 在场；完整键集/逐字段对照。"""
     db, _state, _ = read_game
     seed_status = _guanning_db_status(db)
 

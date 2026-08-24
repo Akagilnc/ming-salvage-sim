@@ -113,8 +113,8 @@ def test_army_arrears_presentation_rounds_half_steps_up(game):
     assert _arrears_fact(25) == _arrears_fact(30) != _arrears_fact(15)
 
 
-def test_army_payload_preserves_fractional_arrears_for_web_rendering(game):
-    """#321：web 只读 army_payload.arrears_text；12.5 走 approximate 奏报，不裸出 12.5。"""
+def test_army_payload_exposes_approx_arrears_text_not_raw(game):
+    """#321：web 只读 army_payload.arrears_text approximate；numeric arrears 键缺席；raw 12.5 不裸出。"""
     from ming_sim.db import _player_army_situation
 
     db, _state, _ = game
