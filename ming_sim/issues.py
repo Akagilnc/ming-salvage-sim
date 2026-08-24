@@ -34,6 +34,7 @@ from ming_sim.db import (
     _LEVERAGE_FACTIONS,
     _approx_wanliang,
     infer_office_type_from_office,
+    latched_army_field_effect_permitted,
     normalize_office,
     resolve_office_type_preserving_title,
 )
@@ -4538,6 +4539,21 @@ def _strategic_event_result_preflight_error(
         field = ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
         if field == "reason":
             return ""
+        # #319：latched 静默 no-op 与写缝同口径——战略信封预检须拒整封，不得半落兄弟结果。
+        if bool(row["is_mutinied"]):
+            if field == "manpower":
+                if not latched_army_field_effect_permitted(field, value):
+                    return _noop_error("army", army_id, raw_field, value)
+            elif field == "loyalty":
+                delta = int(value)
+                net_pct = int(((legacy_mods.get("armies") or {})
+                               .get(army_id) or {}).get(field, 0) or 0)
+                if net_pct:
+                    delta = db.apply_legacy_pct(delta, net_pct)
+                if not latched_army_field_effect_permitted(field, value, effect_delta=delta):
+                    return _noop_error("army", army_id, raw_field, value)
+            else:
+                return _noop_error("army", army_id, raw_field, value)
         if field == "cannon_equipment":
             old_value = int(row[field])
             if max(0, min(12, old_value + int(value))) == old_value:

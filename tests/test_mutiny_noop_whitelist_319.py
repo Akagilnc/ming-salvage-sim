@@ -196,6 +196,79 @@ def test_latched_loyalty_positive_applies_negative_noop(game):
     assert _row(db, "loyalty")["loyalty"] == 45
 
 
+def test_latched_loyalty_raw_positive_noop_when_legacy_flips_effect_sign(game):
+    """#319 P2：latched loyalty 以 post-modifier 实际方向为准；legacy 将 +20 翻成 -1 不得降。"""
+    db, state, _ = game
+    _configure(db, "legacy")
+    _set(db, "legacy", loyalty=30, arrears=5, latched=1, mutiny_count=1)
+    # 21 × -5% → net_pct=-105；apply_legacy_pct(+20,-105) → -1
+    for i in range(21):
+        db.insert_legacy(
+            state,
+            name=f"loyalty-drag-{i}",
+            modifiers={"armies": {ARMY: {"loyalty": -5}}},
+        )
+
+    db.apply_army_deltas(
+        state, _event(), None, "测试", {ARMY: {"loyalty": 20}}
+    )
+
+    assert _row(db, "loyalty")["loyalty"] == 30
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM army_logs WHERE army_id=? AND field='loyalty'",
+        (ARMY,),
+    ).fetchone()[0] == 0
+
+
+def test_latched_loyalty_legacy_flip_preflight_rejects_strategic_envelope(game):
+    """#319 P2 预检同口径：legacy 翻负的 latched loyalty 不得靠 material 门半落兄弟结果。"""
+    db, state, content = game
+    issue_engine.bind_content(content)
+    state.year = 1629
+    state.period = 11
+    _configure(db, "legacy")
+    _set(db, "legacy", loyalty=30, arrears=5, latched=1, mutiny_count=1)
+    for i in range(21):
+        db.insert_legacy(
+            state,
+            name=f"jisi-loyalty-drag-{i}",
+            modifiers={"armies": {ARMY: {"loyalty": -5}}},
+        )
+    db.conn.execute("UPDATE regions SET military_pressure = ? WHERE id = ?", (20, "beizhili"))
+    before_loyalty = _row(db, "loyalty")["loyalty"]
+
+    out = issue_engine.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
+            "事件结局": {"jisi_lubian": "入塞被遏"},
+            "region_delta": {
+                "beizhili": {
+                    "origin_ref": "盘面自发",
+                    "military_pressure": 35,
+                    "reason": "己巳之变软判敌逼京畿",
+                }
+            },
+            "army_delta": {
+                ARMY: {
+                    "origin_ref": "盘面自发",
+                    "loyalty": 20,
+                    "reason": "己巳之变安抚哗变军",
+                }
+            },
+        },
+        content=content,
+    )
+
+    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+    assert not db.has_event_triggered("jisi_lubian")
+    assert db.conn.execute(
+        "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)
+    ).fetchone()["military_pressure"] == 20
+    assert _row(db, "loyalty")["loyalty"] == before_loyalty
+
+
 def test_latched_mixed_item_allows_and_denies_per_field(game):
     db, state, _ = game
     _configure(db, "legacy")
@@ -418,8 +491,9 @@ def test_latched_cutover_mixed_item_pay_source_deny_whitelist_apply(game, pay_de
     assert after_mp["loyalty"] == before_mp["loyalty"] + 5
 
 
-def test_non_latched_cutover_pay_source_fields_still_write(game):
-    """对照：非 latched + cutover-on 饷源仍可写，防误伤生产路径。"""
+@pytest.mark.parametrize("pay_delta", PAY_SOURCE_LEGAL_DELTAS)
+def test_non_latched_cutover_pay_source_fields_still_write(game, pay_delta):
+    """对照：非 latched + cutover-on 四组合法饷源均可持久落库，防误伤生产路径。"""
     db, state, _ = game
     _configure(db, "substrate_hub")
     _set(
@@ -437,16 +511,15 @@ def test_non_latched_cutover_pay_source_fields_still_write(game):
         _event(),
         None,
         "测试",
-        {
-            ARMY: {
-                "pay_source_region": "beizhili",
-                "province_pay_share": 1,
-                "central_pay_share": 0,
-            }
-        },
+        {ARMY: dict(pay_delta)},
     )
 
-    after = _row(db, "pay_source_region", "province_pay_share", "central_pay_share")
-    assert after["pay_source_region"] == "beizhili"
-    assert float(after["province_pay_share"]) == pytest.approx(1.0)
-    assert float(after["central_pay_share"]) == pytest.approx(0.0)
+    after = _row(db, *PAY_SOURCE_DENY_FIELDS)
+    for key, expected in pay_delta.items():
+        if key in ("province_pay_share", "central_pay_share"):
+            assert float(after[key]) == pytest.approx(float(expected))
+        elif key in ("is_tusi", "self_funded_pay"):
+            assert int(after[key]) == int(expected)
+            assert bool(after[key]) is bool(expected)
+        else:
+            assert after[key] == expected

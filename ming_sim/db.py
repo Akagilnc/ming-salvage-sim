@@ -111,6 +111,35 @@ def mutiny_loyalty_cap(mutiny_count: int, redemption_count: int = 0) -> int:
     return max(60, min(100, 100 - 20 * int(mutiny_count) + 10 * int(redemption_count)))
 
 
+def latched_army_field_effect_permitted(
+    field: str,
+    raw_value: object,
+    *,
+    effect_delta: int | None = None,
+) -> bool:
+    """#319 ADR 0025 D4①：latched 军字段-效果白名单（写缝与战略 preflight 共用）。
+
+    - manpower：仅 raw 严格负
+    - loyalty：raw 严格正，且若已算 post-modifier effect 则 effect 也须严格正
+    - 其余字段：一律不准
+    """
+    if field == "manpower":
+        try:
+            return int(raw_value) < 0
+        except (TypeError, ValueError):
+            return False
+    if field == "loyalty":
+        try:
+            if int(raw_value) <= 0:
+                return False
+        except (TypeError, ValueError):
+            return False
+        if effect_delta is None:
+            return True
+        return int(effect_delta) > 0
+    return False
+
+
 def _seed_guilt_storage_value(value: object) -> str:
     """Serialize the content-layer guilt mapping into the existing DB TEXT column."""
     if isinstance(value, Mapping):
@@ -7502,18 +7531,11 @@ class GameDB:
                 if current_row is not None:
                     row = current_row
                 # #319 ADR 0025 D4①：latched 军字段-效果 deny-by-default。
-                # 白名单：manpower 严格负增量、loyalty 正增量；其余已归一可写字段静默 no-op。
-                # owner_power 已由上方 adapter 处理，不重入本门。门在类型/合法字段校验之后，
-                # 避免把 invalid_enum 伪装成 mutiny no-op。
-                if bool(row["is_mutinied"]):
-                    if field == "manpower":
-                        if int(value) >= 0:
-                            continue
-                    elif field == "loyalty":
-                        if int(value) <= 0:
-                            continue
-                    else:
-                        continue
+                # 白名单：manpower 严格负增量、loyalty 正 raw（post-mod 方向见 score 分支）；
+                # 其余已归一可写字段静默 no-op。owner_power 已由上方 adapter 处理，不重入本门。
+                # 门在类型/合法字段校验之后，避免把 invalid_enum 伪装成 mutiny no-op。
+                if bool(row["is_mutinied"]) and not latched_army_field_effect_permitted(field, value):
+                    continue
                 old_value = row[field]
                 if field == "arrears":
                     if self.is_army_pay_source_cutover_enabled():
@@ -7625,6 +7647,11 @@ class GameDB:
                                    .get(army_id) or {}).get(field, 0) or 0)
                     if net_pct:
                         delta = self.apply_legacy_pct(delta, net_pct)
+                    # #319：latched loyalty 以 post-modifier 实际方向为准；legacy 翻负则静默 no-op
+                    if bool(row["is_mutinied"]) and not latched_army_field_effect_permitted(
+                        field, value, effect_delta=delta
+                    ):
+                        continue
                     upper_bound = (
                         mutiny_loyalty_cap(row["mutiny_count"], row["redemption_count"])
                         if field == "loyalty" else 100
