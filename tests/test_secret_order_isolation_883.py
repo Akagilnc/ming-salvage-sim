@@ -828,6 +828,7 @@ def test_883_public_llm_contexts_never_preload_secret_orders(game):
     public_contexts = [
         build_extractor_shared_context(
             db, state, "", "", secret_orders=secret_orders, module=module,
+            transit_semantics=simulator_payload["transit_semantics"],
         )
         for module in ("internal", "military_external", "issues")
     ]
@@ -844,7 +845,10 @@ def test_883_public_llm_contexts_never_preload_secret_orders(game):
     default_sim = build_simulator_payload(state, db, "", "")
     assert "secret_orders" not in default_sim
     for module in ("internal", "military_external", "issues"):
-        ctx = build_extractor_shared_context(db, state, "", "", module=module)
+        ctx = build_extractor_shared_context(
+            db, state, "", "", module=module,
+            transit_semantics=default_sim["transit_semantics"],
+        )
         assert "secret_orders" not in ctx
 
 

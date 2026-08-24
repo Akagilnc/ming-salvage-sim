@@ -218,7 +218,7 @@ def _settle_capturing_parallel(game, monkeypatch, cfg):
     monkeypatch.setattr(decree, "extract_scores_by_modules_with_agno", _capture)
     decree._settle_after_narrative(
         state, db, None, cfg, decree_text="试旨", narrative="本月邸报。",
-        simulator_payload={}, relevant_memories=[], secret_orders=[],
+        simulator_payload={"transit_semantics": []}, relevant_memories=[], secret_orders=[],
         before_turn=state.turn, _emit=lambda *a, **k: None, content=content, registry=None)
     return captured.get("parallel")
 

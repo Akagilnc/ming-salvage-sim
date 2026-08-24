@@ -637,6 +637,7 @@ def test_closed_army_pay_dossier_keeps_origin_in_extractor_input(game):
     for module in non_internal:
         other = build_extractor_shared_context(
             db, state, narrative="", decree_text="", module=module,
+            transit_semantics=[],
         )
         other_ids = {int(r["id"]) for r in (other.get("decree_dossiers") or [])}
         assert did not in other_ids, (
@@ -681,6 +682,7 @@ def test_closed_army_pay_provenance_injects_when_decree_dossiers_prepassed(game)
         other = build_extractor_shared_context(
             db, state, narrative="", decree_text="",
             module="issues", decree_dossiers=prepassed,
+            transit_semantics=[],
         )
         other_ids = {int(r["id"]) for r in (other.get("decree_dossiers") or [])}
         assert did not in other_ids
