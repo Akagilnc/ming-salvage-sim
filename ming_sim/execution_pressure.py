@@ -356,16 +356,143 @@ def _province_open_counts(conn) -> Dict[str, int]:
     return {str(r["region_id"] or ""): int(r["n"]) for r in rows}
 
 
-def build_execution_two_axis_surface(db, turn: int = 0) -> Dict[str, object]:
+def _in_transit_name_index(transit_semantics: Sequence[object]) -> set:
+    """派生 name 成员索引（查找结构，非第二真源 collection）。"""
+    return {str(item["name"]).strip() for item in transit_semantics}
+
+
+def _duty_arrival_status(
+    *,
+    owner_name: str,
+    location: str,
+    duty_region_id: str,
+    in_transit_names: set,
+) -> Optional[str]:
+    """#673 r3 B：在途 / 已到差 / 尚未到差；空端省略（返回 None）。"""
+    if owner_name in in_transit_names:
+        return "在途"
+    loc = str(location or "").strip()
+    rid = str(duty_region_id or "").strip()
+    if not loc or not rid:
+        return None
+    if loc == rid:
+        return "已到差"
+    return "尚未到差"
+
+
+def _project_owner_arrival_for_region(
+    *,
+    rid: str,
+    owner_names: Sequence[str],
+    char_rows: Mapping[str, object],
+    owner_counts: Mapping[str, int],
+    matrix: DistanceMatrix,
+    in_transit_names: set,
+) -> Tuple[List[Dict[str, object]], List[Dict[str, object]]]:
+    """一省主办行 + 到差态行投影（builder 局部职责）。"""
+    owner_rows: List[Dict[str, object]] = []
+    arrival_rows: List[Dict[str, object]] = []
+    for name in owner_names:
+        ch = char_rows.get(name)
+        ability = int(ch["ability"]) if ch is not None else 0
+        open_count = int(owner_counts.get(name, 0))
+        loc = str(ch["location"] or "") if ch is not None else ""
+        transit = str(ch["transit_to"] or "") if ch is not None else ""
+        if rid == "":
+            dist = ABSENT
+        else:
+            dist = distance_semantic_band(
+                owner_location=loc,
+                region_id=rid,
+                transit_to=transit,
+                matrix=matrix,
+            )
+        owner_rows.append({
+            "owner_name": name,
+            "owner_open_count": open_count,
+            "owner_ability": ability,
+            "owner_load": open_count * ability,
+            "distance_semantic_band": dist,
+        })
+        status = _duty_arrival_status(
+            owner_name=name,
+            location=loc,
+            duty_region_id=rid,
+            in_transit_names=in_transit_names,
+        )
+        if status is not None:
+            arrival_rows.append({
+                "owner_name": name,
+                "duty_region_id": rid,
+                "duty_arrival_status": status,
+            })
+    return owner_rows, arrival_rows
+
+
+def _assemble_province_block(
+    conn,
+    rid: str,
+    owner_rows: Sequence[Mapping[str, object]],
+    arrival_rows: Sequence[Mapping[str, object]],
+    province_counts: Mapping[str, int],
+) -> Dict[str, object]:
+    """单省 block 装配（哨兵块 vs 读 regions / 切片 / 督抚 / 贼 / 灾）。"""
+    if rid == "":
+        return {
+            "region_id": "",
+            "province_open_count": ABSENT,
+            "gentry_resistance": ABSENT,
+            "gentry_slice": ABSENT,
+            "officials_slice": ABSENT,
+            "dutang_faction": ABSENT,
+            "dutang_integrity": ABSENT,
+            "bandit_pressure": ABSENT,
+            "bandit_strength": ABSENT,
+            "disaster_rows": [],
+            "owners": list(owner_rows),
+            "arrival_rows": list(arrival_rows),
+        }
+
+    reg = conn.execute(
+        "SELECT gentry_resistance, military_pressure FROM regions WHERE id=?",
+        (rid,),
+    ).fetchone()
+    gentry_res = int(reg["gentry_resistance"]) if reg is not None else 0
+    bandit_pressure = int(reg["military_pressure"]) if reg is not None else 0
+    dutang_faction, dutang_integrity = _dutang_fields(conn, rid)
+    return {
+        "region_id": rid,
+        "province_open_count": int(province_counts.get(rid, 0)),
+        "gentry_resistance": gentry_res,
+        "gentry_slice": _class_slice(conn, "士绅", rid),
+        "officials_slice": _class_slice(conn, "官僚", rid),
+        "dutang_faction": dutang_faction,
+        "dutang_integrity": dutang_integrity,
+        "bandit_pressure": bandit_pressure,
+        "bandit_strength": _bandit_strength(conn, rid),
+        "disaster_rows": _disaster_rows(conn, rid),
+        "owners": list(owner_rows),
+        "arrival_rows": list(arrival_rows),
+    }
+
+
+def build_execution_two_axis_surface(
+    db,
+    turn: int = 0,
+    *,
+    transit_semantics: Sequence[object],
+) -> Dict[str, object]:
     """接口层纯函数：DB 状态 → 两轴清单（结构化 + TSV 文本）。
 
     只读；零 LLM / 零时钟 / 零随机。turn 保留签名位（调用方对齐），不参与计算。
     builder 内一次装载距离矩阵并经参下传（r3-A.1）。
+    transit_semantics：phase1 既成 collection 引用（#669）；必需形参，无默认回落。
     """
     del turn  # 清单只读当前 executing 态，不按 turn 过滤
     conn = db.conn
     matrix = _load_distance_matrix()
     province_counts = _province_open_counts(conn)
+    in_transit_names = _in_transit_name_index(transit_semantics)
 
     # executing roster 一次装载 → owner 负荷 + 按省主办两路派生
     executing_leads = _load_executing_host_leads(conn)
@@ -401,67 +528,19 @@ def build_execution_two_axis_surface(db, turn: int = 0) -> Dict[str, object]:
 
     provinces: List[Dict[str, object]] = []
     for rid in region_ids:
-        owner_names = owners_by_region.get(rid, [])
-        owner_rows: List[Dict[str, object]] = []
-        for name in owner_names:
-            ch = char_rows.get(name)
-            ability = int(ch["ability"]) if ch is not None else 0
-            open_count = int(owner_counts.get(name, 0))
-            loc = str(ch["location"] or "") if ch is not None else ""
-            transit = str(ch["transit_to"] or "") if ch is not None else ""
-            if rid == "":
-                dist = ABSENT
-            else:
-                dist = distance_semantic_band(
-                    owner_location=loc,
-                    region_id=rid,
-                    transit_to=transit,
-                    matrix=matrix,
-                )
-            owner_rows.append({
-                "owner_name": name,
-                "owner_open_count": open_count,
-                "owner_ability": ability,
-                "owner_load": open_count * ability,
-                "distance_semantic_band": dist,
-            })
-
-        if rid == "":
-            provinces.append({
-                "region_id": "",
-                "province_open_count": ABSENT,
-                "gentry_resistance": ABSENT,
-                "gentry_slice": ABSENT,
-                "officials_slice": ABSENT,
-                "dutang_faction": ABSENT,
-                "dutang_integrity": ABSENT,
-                "bandit_pressure": ABSENT,
-                "bandit_strength": ABSENT,
-                "disaster_rows": [],
-                "owners": owner_rows,
-            })
-            continue
-
-        reg = conn.execute(
-            "SELECT gentry_resistance, military_pressure FROM regions WHERE id=?",
-            (rid,),
-        ).fetchone()
-        gentry_res = int(reg["gentry_resistance"]) if reg is not None else 0
-        bandit_pressure = int(reg["military_pressure"]) if reg is not None else 0
-        dutang_faction, dutang_integrity = _dutang_fields(conn, rid)
-        provinces.append({
-            "region_id": rid,
-            "province_open_count": int(province_counts.get(rid, 0)),
-            "gentry_resistance": gentry_res,
-            "gentry_slice": _class_slice(conn, "士绅", rid),
-            "officials_slice": _class_slice(conn, "官僚", rid),
-            "dutang_faction": dutang_faction,
-            "dutang_integrity": dutang_integrity,
-            "bandit_pressure": bandit_pressure,
-            "bandit_strength": _bandit_strength(conn, rid),
-            "disaster_rows": _disaster_rows(conn, rid),
-            "owners": owner_rows,
-        })
+        owner_rows, arrival_rows = _project_owner_arrival_for_region(
+            rid=rid,
+            owner_names=owners_by_region.get(rid, []),
+            char_rows=char_rows,
+            owner_counts=owner_counts,
+            matrix=matrix,
+            in_transit_names=in_transit_names,
+        )
+        provinces.append(
+            _assemble_province_block(
+                conn, rid, owner_rows, arrival_rows, province_counts,
+            ),
+        )
 
     tsv = _render_two_axis_tsv(provinces)
     return {
@@ -482,16 +561,16 @@ def _escape_tsv_cell(value: object) -> str:
 
 
 def _tsv_data_row(cells: Sequence[object]) -> str:
-    """Join one 19-cell data row with per-cell transport escaping."""
+    """Join one 20-cell data row with per-cell transport escaping."""
     return "\t".join(_escape_tsv_cell(c) for c in cells)
 
 
 def _render_two_axis_tsv(provinces: Sequence[Mapping[str, object]]) -> str:
-    """一省一块投影：灾情行 → 省盘（含阶层切片）→ 主办行；无全局三段重排。"""
+    """一省一块投影：灾情行 → 省盘 → 主办行 → 到差态行；无全局重排。20 列 ABI。"""
     header = (
         "行类\t省\t省在办数\t士绅阻力\t流寇压力\t贼强度\t督抚派系\t督抚操守"
         "\t士绅盘\t官僚盘\t主办\t在办数\t能力\t负荷\t距离档"
-        "\t灾情id\t灾种\t严重度\t标题"
+        "\t灾情id\t灾种\t严重度\t标题\t到差态"
     )
     lines: List[str] = [
         "## 差务两轴清单（TSV；带宽=忙→拖磨，阻力=顶→变形）",
@@ -514,6 +593,7 @@ def _render_two_axis_tsv(provinces: Sequence[Mapping[str, object]]) -> str:
                     str(dis.get("kind") or ""),
                     str(dis.get("severity")),
                     str(dis.get("title") or ""),
+                    "",  # 到差态
                 ])
             )
         # ② 省摘要行（含 gentry_slice / officials_slice）
@@ -531,6 +611,7 @@ def _render_two_axis_tsv(provinces: Sequence[Mapping[str, object]]) -> str:
                 _format_class_slice(block.get("officials_slice")),
                 "", "", "", "", "",
                 "", "", "", "",
+                "",  # 到差态
             ])
         )
         # ③ 主办行
@@ -549,6 +630,21 @@ def _render_two_axis_tsv(provinces: Sequence[Mapping[str, object]]) -> str:
                     str(own.get("owner_load")),
                     str(own.get("distance_semantic_band") or ""),
                     "", "", "", "",
+                    "",  # 到差态
+                ])
+            )
+        # ④ 到差态行（与 arrival_rows 1:1；仅填 省/主办/到差态）
+        for arr in block.get("arrival_rows") or []:
+            lines.append(
+                _tsv_data_row([
+                    "到差态",
+                    rid,
+                    "", "", "", "", "", "",
+                    "", "",
+                    str(arr.get("owner_name") or ""),
+                    "", "", "", "",
+                    "", "", "", "",
+                    str(arr.get("duty_arrival_status") or ""),
                 ])
             )
     return "\n".join(lines)

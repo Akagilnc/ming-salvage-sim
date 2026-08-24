@@ -7238,6 +7238,17 @@ def _apply_person_changes(
             if row is None:
                 applied.append(rejected(item, "非既有人物", "hallucinated_id"))
                 continue
+            from ming_sim.matching import is_capital_location
+
+            prior_status = str(row["status"] or "active").strip() or "active"
+            prior_transit = str(row["transit_to"] or "").strip()
+            prior_location = str(row["location"] or "").strip()
+            # ADR 0096：候见不变式（行止前）——active ∧ 在京 ∧ 无 transit。
+            waiting_posture = (
+                prior_status == "active"
+                and not prior_transit
+                and is_capital_location(prior_location)
+            )
             valid_regions = _load_pending_gate_valid_regions(db)
             departure, error = _admit_transit_departure(item, dict(row), valid_regions)
             if error is not None:
@@ -7256,25 +7267,65 @@ def _apply_person_changes(
                 applied.append(origin_error)
                 continue
             new_transit_start_turn = state.turn if transit_to else 0
-            db.set_character_transit(
-                name,
-                location=location,
-                transit_to=transit_to,
-                distance_remaining=distance,
-                speed_factor=speed,
-                start_turn=new_transit_start_turn,
-                content=content,
-                commit=commit_person_change,
+            result = {
+                "name": name,
+                "动作": action,
+                "location": location,
+                "transit_to": transit_to,
+            }
+            # 候见中再奉旨离京：行止 + person_log + 召旨结清须同一原子单元，
+            # 防结清失败后留下已启程人物与未结 origin（#670 / ADR 0009）。
+            leave_waiting = waiting_posture and (
+                bool(str(transit_to or "").strip())
+                or not is_capital_location(location)
             )
-            applied.append(
-                result := {
-                    "name": name,
-                    "动作": action,
-                    "location": location,
-                    "transit_to": transit_to,
-                }
-            )
-            log_applied(result, item)
+            if leave_waiting:
+                own_tx = commit_person_change
+                if own_tx:
+                    _register_runtime_rollback_snapshot(
+                        db, state, content, registry,
+                    )
+
+                def _write_leave_waiting() -> None:
+                    db.set_character_transit(
+                        name,
+                        location=location,
+                        transit_to=transit_to,
+                        distance_remaining=distance,
+                        speed_factor=speed,
+                        start_turn=new_transit_start_turn,
+                        content=content,
+                        commit=False,
+                    )
+                    applied.append(result)
+                    log_applied(result, item, commit=False)
+                    from ming_sim.audience_night import (
+                        settle_unsettled_summons_for_person,
+                    )
+
+                    settle_unsettled_summons_for_person(
+                        db, name, commit=False,
+                    )
+
+                if own_tx:
+                    with atomic(db):
+                        _write_leave_waiting()
+                else:
+                    # 外层事务/SAVEPOINT 拥有所有权：不在本缝起 atomic。
+                    _write_leave_waiting()
+            else:
+                db.set_character_transit(
+                    name,
+                    location=location,
+                    transit_to=transit_to,
+                    distance_remaining=distance,
+                    speed_factor=speed,
+                    start_turn=new_transit_start_turn,
+                    content=content,
+                    commit=commit_person_change,
+                )
+                applied.append(result)
+                log_applied(result, item)
             continue
 
         applied.append(

@@ -18,6 +18,7 @@ import pytest
 import ming_sim.cli_backend as cb
 from ming_sim.session import GameSession
 import ming_sim.audience_night as an
+from tests.web_audience_test_doubles import HallAdmissionSessionMixin, minister_double
 
 _POLICY_FIELDS = {
     "dossier_action_type": "policy",
@@ -600,9 +601,9 @@ def test_nonstream_web_chat_surfaces_ambiguous():
         {"id": 12, "summary": "草拟圣旨：着兵部核饷军械"},
     ]}
 
-    class _Sess:
+    class _Sess(HallAdmissionSessionMixin):
         temporary_characters = {name}
-        content = SimpleNamespace(characters={name: SimpleNamespace(name=name)})
+        content = SimpleNamespace(characters={name: minister_double(name)})
         state = SimpleNamespace(turn=1, turn_phase="")
         db = SimpleNamespace()
 
@@ -659,9 +660,9 @@ def test_nonstream_web_chat_no_ambiguous_key_is_none():
 
     name = "王承恩"
 
-    class _Sess:
+    class _Sess(HallAdmissionSessionMixin):
         temporary_characters = {name}
-        content = SimpleNamespace(characters={name: SimpleNamespace(name=name)})
+        content = SimpleNamespace(characters={name: minister_double(name)})
         state = SimpleNamespace(turn=1, turn_phase="")
         db = SimpleNamespace()
 

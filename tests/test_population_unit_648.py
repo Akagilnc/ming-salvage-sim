@@ -211,7 +211,10 @@ def test_prompt_contract_new_save_persons(game):
     assert beizhili[pop_col] == "约720万口"
 
     # 机面（extractor issues 档阈值裸数视图）：裸人数
-    issues_ctx = build_extractor_shared_context(db, state, "邸报", "诏文", module="issues")
+    issues_ctx = build_extractor_shared_context(
+        db, state, "邸报", "诏文", module="issues",
+        transit_semantics=payload["transit_semantics"],
+    )
     issue_region_rows = issues_ctx["regions"]["rows"]
     issue_cols = issues_ctx["regions"]["cols"]
     bz = next(r for r in issue_region_rows if r[issue_cols.index("id")] == "beizhili")
