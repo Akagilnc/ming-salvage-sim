@@ -584,39 +584,29 @@ def test_secret_order_path_does_not_consume_audience_admission(game, monkeypatch
 
 
 def test_multi_origin_fresh_closes_once_per_person_and_retries(game, monkeypatch):
-    """#670 T2：同人多通道 origin 收夜只一段启程；applier 失败后同输入可重试。"""
+    """#670 T2：同人多 origin 各留 ledger 行；收夜按人只一段启程；applier 失败可重试。"""
     db, state, content = game
     person = _set_place(game, "洪承畴", location="shaanxi")
     night_id = int(an.open_night(db, state)["id"])
+    origin_web = "web:chat:1:洪承畴"
+    origin_cli = "cli:initial:1:洪承畴"
 
     first = an.record_summon_fresh(
-        db, night_id, person.name, origin_id="web:chat:1:洪承畴",
+        db, night_id, person.name, origin_id=origin_web,
     )
     second = an.record_summon_fresh(
-        db, night_id, person.name, origin_id="cli:initial:1:洪承畴",
+        db, night_id, person.name, origin_id=origin_cli,
     )
-    assert second == first
-    assert an.list_unsettled_summons(db) == [{
-        "entry_id": first,
-        "night_id": night_id,
-        "person_name": person.name,
-        "origin_id": "web:chat:1:洪承畴",
-        "kind": "fresh",
-    }]
-
-    # 历史已落的双 origin 未结账：按人 apply 一次后全部标在途，origin 仍未结。
-    an.append_ledger_entry(
-        db, night_id,
-        person_names=[person.name],
-        audibility=an.AUDIBILITY_PUBLIC,
-        body="",
-        tags=[
-            an.METHOD_CHUANZHAO,
-            an.TAG_SUMMON_UNSETTLED,
-            an._summon_origin_tag("cli:initial:1:洪承畴"),
-        ],
-    )
-    assert len(an.list_unsettled_summons(db)) == 2
+    # 不同 origin 各一行；同 origin 再消费才幂等复用。
+    assert second != first
+    assert an.record_summon_fresh(
+        db, night_id, person.name, origin_id=origin_web,
+    ) == first
+    unsettled_before = an.list_unsettled_summons(db)
+    assert len(unsettled_before) == 2
+    assert {row["origin_id"] for row in unsettled_before} == {origin_web, origin_cli}
+    assert {row["kind"] for row in unsettled_before} == {"fresh"}
+    assert {row["entry_id"] for row in unsettled_before} == {first, second}
 
     from ming_sim import issues
     real_apply = issues.apply_score_extraction
@@ -648,11 +638,79 @@ def test_multi_origin_fresh_closes_once_per_person_and_retries(game, monkeypatch
     unsettled = an.list_unsettled_summons(db)
     assert len(unsettled) == 2
     assert {row["kind"] for row in unsettled} == {"in_transit"}
-    assert {row["origin_id"] for row in unsettled} == {
-        "web:chat:1:洪承畴", "cli:initial:1:洪承畴",
-    }
+    assert {row["origin_id"] for row in unsettled} == {origin_web, origin_cli}
     # apply 一次（失败）+ 一次（成功）；不得按 origin 二次 apply。
     assert attempts == 2
+
+
+def test_multi_origin_fresh_independent_retract_and_single_departure(game, monkeypatch):
+    """#670：同人两 fresh 源轮独立撤回；两轮都存活收夜只一次行止。"""
+    db, state, content = game
+    person = _set_place(game, "洪承畴", location="shaanxi")
+    night_id = int(an.open_night(db, state)["id"])
+    origin_a = "web:tool:first"
+    origin_b = "web:tool:second"
+
+    # 两源轮绑各自 chat_turn，模拟 fail_chat_turn 按 origin_chat_turn_id 独立清理。
+    _n1, turn_a = an.attach_chat_turn_to_night(db, state, "毕自严")
+    _n2, turn_b = an.attach_chat_turn_to_night(db, state, "毕自严")
+    entry_a = an.record_summon_fresh(
+        db, night_id, person.name,
+        origin_id=origin_a, origin_chat_turn_id=int(turn_a),
+    )
+    entry_b = an.record_summon_fresh(
+        db, night_id, person.name,
+        origin_id=origin_b, origin_chat_turn_id=int(turn_b),
+    )
+    assert entry_a != entry_b
+    assert {
+        row["origin_id"] for row in an.list_unsettled_summons(db)
+    } == {origin_a, origin_b}
+
+    # 撤/失败清理首轮：第二轮事实仍在。
+    db.fail_chat_turn(int(turn_a))
+    remaining = an.list_unsettled_summons(db)
+    assert len(remaining) == 1
+    assert remaining[0]["origin_id"] == origin_b
+    assert remaining[0]["entry_id"] == entry_b
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM story_ledger_entries WHERE id=?", (entry_a,)
+    ).fetchone()["n"] == 0
+
+    # 再清另一轮才空。
+    db.fail_chat_turn(int(turn_b))
+    assert an.list_unsettled_summons(db) == []
+
+    # 两轮都存活时收夜只产生一次行止（一次 apply）。
+    entry_a2 = an.record_summon_fresh(
+        db, night_id, person.name, origin_id=origin_a,
+    )
+    entry_b2 = an.record_summon_fresh(
+        db, night_id, person.name, origin_id=origin_b,
+    )
+    assert entry_a2 != entry_b2
+    from ming_sim import issues
+    real_apply = issues.apply_score_extraction
+    apply_calls = 0
+
+    def count_apply(*args, **kwargs):
+        nonlocal apply_calls
+        apply_calls += 1
+        return real_apply(*args, **kwargs)
+
+    monkeypatch.setattr(issues, "apply_score_extraction", count_apply)
+    result = an.close_night(db, state, night_id=night_id, content=content)
+    assert result["closed"] is True
+    assert apply_calls == 1
+    after = db.conn.execute(
+        "SELECT location, transit_to FROM characters WHERE name=?", (person.name,)
+    ).fetchone()
+    assert (after["location"], after["transit_to"]) == ("shaanxi", "beizhili")
+    unsettled = an.list_unsettled_summons(db)
+    assert len(unsettled) == 2
+    assert {row["kind"] for row in unsettled} == {"in_transit"}
+    assert {row["origin_id"] for row in unsettled} == {origin_a, origin_b}
+
 
 
 def test_cli_midflow_summon_consumes_admission_without_entering(game, monkeypatch):
