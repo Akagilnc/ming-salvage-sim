@@ -249,10 +249,10 @@ def test_invalid_bundled_seed_rolls_back_new_save_and_can_retry(tmp_path, monkey
     monkeypatch.setattr(seed_mod, "load_bundled_seed_document", original_load)
     sess = GameSession(db_path=db_path, llm_config=cfg, content=content)
     try:
-        evidence = sess.db.get_relation_edge_events(
-            source="崔呈秀", target="田尔耕", evidence=True
-        )
-        assert evidence and all(row["evidence"] is True for row in evidence)
+        # 恢复合法 seed 后同 DB 可重试；盖印把柄为游戏/野史边，不得 evidence:true。
+        cover = sess.db.get_relation_edge_events(source="崔呈秀", target="田尔耕")
+        assert cover and all(row["evidence"] is False for row in cover)
+        assert any(row["event_kind"] == "把柄" for row in cover)
     finally:
         sess.close()
 
@@ -482,3 +482,63 @@ def test_new_save_seed_founding_events_enter_founding_segment(fresh_session):
     assert founding.strip(), "奠基段为空：可选初始摘要未落"
     assert str(row["recent_segment"]) == "", "seed 导入不得写近况段（近况段归月末酿制）"
     assert int(row["last_event_id"]) == 0, "seed 导入不得推进水位（同一套酿制判据）"
+
+
+def test_issue_639_seed_owner_audit_corrections(fresh_session):
+    """#639 owner 裁决：史料确错改正；野史可留但不得 evidence:true；根本冲突删除。"""
+    sess, _content = fresh_session
+    events = [dict(row) for row in sess.db.get_relation_edge_events()]
+
+    def by_origin_prefix(prefix: str) -> dict:
+        matches = [row for row in events if str(row["origin"]).startswith(prefix)]
+        assert len(matches) == 1, f"origin prefix {prefix!r} -> {matches!r}"
+        return matches[0]
+
+    # 野史/见闻把柄不得伪装成可核硬史实
+    cover = by_origin_prefix("seed:founding:cui-tian-cover")
+    assert cover["evidence"] is False
+    assert cover["event_kind"] == "把柄"
+
+    # 史料日期确错：崔夜投魏＝天启四年九月；黄立极入阁＝五年八月
+    cui = by_origin_prefix("seed:founding:cui-wei-submission")
+    assert (cui["year"], cui["period"]) == (1624, 9)
+    assert "乞为养子" in cui["context"]
+    huang = by_origin_prefix("seed:founding:wei-huangliji-promotion")
+    assert (huang["year"], huang["period"]) == (1625, 8)
+
+    # 方向冲突：生祠是阎/李→魏献媚（非魏撑腰）；时间戳须早于最早合法开局 1627.1
+    yan = by_origin_prefix("seed:founding:wei-yanmingtai-shrine")
+    assert (yan["source"], yan["target"]) == ("阎鸣泰", "魏忠贤")
+    assert (int(yan["year"]), int(yan["period"])) < (1627, 1)
+    li = by_origin_prefix("seed:founding:wei-licongxin-works")
+    assert (li["source"], li["target"]) == ("李从心", "魏忠贤")
+    assert (int(li["year"]), int(li["period"])) < (1627, 1)
+
+    # 施/张：史载依媚/生祠碑，不作魏荐引入阁
+    shi = by_origin_prefix("seed:founding:wei-shifenglai-promotion")
+    assert (shi["source"], shi["target"], shi["event_kind"]) == ("施凤来", "魏忠贤", "站台")
+    assert (shi["year"], shi["period"]) == (1626, 8)
+    zhang = by_origin_prefix("seed:founding:wei-zhangruitu-promotion")
+    assert (zhang["source"], zhang["target"], zhang["event_kind"]) == (
+        "张瑞图", "魏忠贤", "站台",
+    )
+
+    # 来宗道 1627.11 入阁晚于开局——删除伪天启末魏荐引入阁；保留开局前依附野史边
+    assert not any(
+        str(row["origin"]).startswith("seed:founding:wei-laizongdao-promotion")
+        for row in events
+    )
+    lai = by_origin_prefix("seed:founding:laizongdao-wei-attach")
+    assert (lai["source"], lai["target"]) == ("来宗道", "魏忠贤")
+    assert "入阁" not in lai["context"]
+
+    # 信邸边：潜邸旧人可留；不得把「新君即位」伪造成 1626 年事实
+    for prefix in ("seed:founding:liruolian-xindi", "seed:founding:caohuachun-xindi"):
+        row = by_origin_prefix(prefix)
+        assert row["source"] == "皇帝"
+        assert "即位" not in row["context"]
+        assert (int(row["year"]), int(row["period"])) < (1627, 1)
+
+    # 全部 seed 边不得把无核材料标成 evidence:true；且须兼容最早开局 1627.1
+    assert all(row["evidence"] is False for row in events)
+    assert all((int(row["year"]), int(row["period"])) < (1627, 1) for row in events)
