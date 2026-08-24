@@ -1835,26 +1835,6 @@ def tick_transit_arrivals(
     return arrivals
 
 
-def _ready0_payload_with_transit_arrivals(
-    db: GameDB,
-    turn: int,
-    *,
-    transit_arrivals: List[Dict[str, object]],
-    front_half_was_done: bool,
-) -> Dict[str, object]:
-    """pre_settle 后 ready=0 占位 payload：首跑写入 transit_arrivals；settling 重入合并保留。"""
-    if front_half_was_done:
-        prev = db.get_resolve_context(int(turn))
-        prev_payload = (
-            prev.get("simulator_payload")
-            if isinstance(prev, dict) else None
-        )
-        if isinstance(prev_payload, dict) and "transit_arrivals" in prev_payload:
-            return {"transit_arrivals": prev_payload["transit_arrivals"]}
-        return {}
-    return {"transit_arrivals": list(transit_arrivals)}
-
-
 def prepare_resolve_front_half(
     state: GameState,
     db: GameDB,
@@ -1902,11 +1882,7 @@ def prepare_resolve_front_half(
                 transit_arrivals_out=transit_arrivals_box,
             )
             # #668：transit_arrivals 与 ready=0 占位同外层 atomic 写入。
-            placeholder_payload = _ready0_payload_with_transit_arrivals(
-                db, state.turn,
-                transit_arrivals=transit_arrivals_box,
-                front_half_was_done=False,
-            )
+            placeholder_payload = {"transit_arrivals": list(transit_arrivals_box)}
             db.save_resolve_context(
                 state.turn, decree_text, "", placeholder_payload,
                 secret_orders={}, relevant_memories=[],  # #48：占位用分组承载的空 dict（旋即被真存覆盖）
