@@ -1,7 +1,7 @@
 import React from "react";
 import { Eraser, MapPinned, Move, Pencil, RotateCcw, Shield, ZoomIn, ZoomOut } from "lucide-react";
 import { EXTERNAL_PATH_GROUPS, MAP_VIEW_BOX, REGION_PATH_GROUPS } from "../mapPaths";
-import { formatArmyArrears, labelPower, qualitativeArmyStat } from "../format";
+import { formatArmyArrears, labelPower } from "../format";
 import type { ExternalPathRenderItem, MapNode, RegionPathRenderItem, SvgLabelPosition, TerrainTransform } from "../types";
 
 export const MING_MAP_COLOR = "#4f8a57";
@@ -822,7 +822,7 @@ export function NodeIntel({ node }: { node: MapNode }) {
                   <td>{army.troop_type}</td>
                   <td className="intel-num">{army.manpower}</td>
                   <td className="intel-num">{pay}万</td>
-                  <td className="intel-stat">{qualitativeArmyStat("morale", army.morale)}</td>
+                  <td className="intel-stat">{army.morale_text}</td>
                   <td>{formatArmyArrears(army)}</td>
                 </tr>
               );

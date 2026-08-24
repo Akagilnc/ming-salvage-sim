@@ -434,6 +434,44 @@ def test_simulator_payload_derives_zero_combat_from_mutiny_latch(game):
     assert by_name2.get("zero_combat") is False
 
 
+@pytest.mark.parametrize(
+    "morale,loyalty,latched,expect_zero",
+    (
+        (90, 15, 1, True),   # 高 morale / 低 loyalty + latch → zero_combat
+        (10, 85, 0, False),  # 低 morale / 高 loyalty 未闩 → 可战
+    ),
+    ids=("high_morale_low_loyalty_latched", "low_morale_high_loyalty_clear"),
+)
+def test_simulator_zero_combat_cross_morale_loyalty_axes(
+    game, morale, loyalty, latched, expect_zero
+):
+    """#321：机器面仍 raw morale/loyalty + zero_combat；双轴交叉不翻 ABI。"""
+    db, state, _ = game
+    _configure(db, "legacy")
+    _set(db, "legacy", loyalty=loyalty, arrears=5 if latched else 0, latched=latched)
+    db.conn.execute("UPDATE armies SET morale=? WHERE id=?", (morale, ARMY))
+    db.conn.commit()
+
+    def _army_dicts(payload_armies):
+        if isinstance(payload_armies, dict) and "rows" in payload_armies:
+            cols = payload_armies.get("cols") or payload_armies.get("columns") or []
+            return [dict(zip(cols, row)) for row in payload_armies["rows"]]
+        return list(payload_armies)
+
+    payload = build_simulator_payload(state, db, decree_text="", previous_narrative="")
+    rows = _army_dicts(payload["armies"])
+    army = next(
+        r for r in rows
+        if "关宁" in str(r.get("name", "")) or str(r.get("id", "")) == ARMY
+    )
+    assert int(army["morale"]) == morale
+    assert int(army["loyalty"]) == loyalty
+    assert army.get("zero_combat") is expect_zero
+    assert "is_mutinied" not in army
+    assert "mutiny_tier" not in army
+    assert "morale_text" not in army
+
+
 def test_season_simulator_prompt_defines_zero_combat_noncombat():
     """ADR 0025 D8：zero_combat 须在军事软判规则有正向明文（不可投入战斗/非战斗）。"""
     from pathlib import Path

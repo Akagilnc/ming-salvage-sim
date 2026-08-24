@@ -113,7 +113,9 @@ def test_army_arrears_presentation_rounds_half_steps_up(game):
 
 
 def test_army_payload_preserves_fractional_arrears_for_web_rendering(game):
-    """#305 cmr：web 只读 army_payload；12.5 万两不可被截成 12。"""
+    """#321：web 只读 army_payload.arrears_text；12.5 走 approximate 奏报，不裸出 12.5。"""
+    from ming_sim.db import _player_army_situation
+
     db, _state, _ = game
     row = db.conn.execute(
         "SELECT id FROM armies WHERE owner_power='ming' ORDER BY id LIMIT 1"
@@ -128,8 +130,12 @@ def test_army_payload_preserves_fractional_arrears_for_web_rendering(game):
     )
     db.conn.commit()
 
+    full = db.conn.execute("SELECT * FROM armies WHERE id=?", (row["id"],)).fetchone()
+    expected = _player_army_situation(full, db._army_pay(full))["arrears_text"]
     payload = {army["id"]: army for army in db.army_payload()}
-    assert payload[row["id"]]["arrears"] == pytest.approx(12.5)
+    assert "arrears" not in payload[row["id"]]
+    assert payload[row["id"]]["arrears_text"] == expected
+    assert "12.5" not in expected
 
 
 def test_simulator_payload_exposes_army_needed(game):

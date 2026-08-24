@@ -231,33 +231,40 @@ def test_province_pay_split_reason_and_summary_have_no_float_garbage(game):
 
 
 def test_army_payload_arrears_projection_rounds_to_one_decimal(game):
-    """#1363：API armies.arrears 只读投影收整，杜绝原始浮点残渣。"""
+    """#321：API armies.arrears_text 为 approximate 奏报；禁 raw 数与浮点残渣。"""
+    from ming_sim.db import _player_army_situation
+
     db, _state, _ = game
     row = db.conn.execute(
         "SELECT id FROM armies WHERE owner_power='ming' ORDER BY id LIMIT 1"
     ).fetchone()
     army_id = row["id"]
 
-    # IEEE 残渣 + 多位小数摊分 + 零值/负值分支（生产：round(float(x or 0), 1)）
     samples = (
-        (1.2000000000000002, 1.2),
-        (1.5217391304347827, 1.5),
-        (12.5, 12.5),
-        (11.978260869565217, 12.0),
-        (0, 0.0),
-        (-1.234, -1.2),
+        1.2000000000000002,
+        1.5217391304347827,
+        12.5,
+        11.978260869565217,
+        0,
+        -1.234,
     )
-    for raw, expected in samples:
+    for raw in samples:
         db.conn.execute(
             "UPDATE armies SET arrears=?, province_pay_arrears=?, central_pay_arrears=0 WHERE id=?",
             (raw, raw, army_id),
         )
         db.conn.commit()
+        full = db.conn.execute("SELECT * FROM armies WHERE id=?", (army_id,)).fetchone()
+        expected = _player_army_situation(full, db._army_pay(full))["arrears_text"]
         payload = {army["id"]: army for army in db.army_payload()}
-        got = payload[army_id]["arrears"]
-        assert got == expected, f"raw={raw!r} → arrears 投影应得 {expected!r}，得 {got!r}"
-        text = repr(got) if isinstance(got, float) else str(got)
-        assert not _FLOAT_GARBAGE.search(text), f"arrears 投影仍含浮点残渣：{got!r}"
+        card = payload[army_id]
+        assert "arrears" not in card
+        got = card["arrears_text"]
+        assert got == expected, f"raw={raw!r} → arrears_text 应得 {expected!r}，得 {got!r}"
+        assert not _FLOAT_GARBAGE.search(got), f"arrears_text 仍含浮点残渣：{got!r}"
+        # 原始精确小数不得裸出
+        if isinstance(raw, float) and raw != int(raw):
+            assert str(raw) not in got
 
     # None → or 0 回落：列 NOT NULL 不可直写，替身 row 走 army_payload 同一投影式
     base = db.conn.execute("SELECT * FROM armies WHERE id=?", (army_id,)).fetchone()
@@ -267,7 +274,7 @@ def test_army_payload_arrears_projection_rounds_to_one_decimal(game):
     try:
         db.army_rows = lambda limit=None, danger_order=False: [none_row]  # type: ignore[method-assign]
         payload = {army["id"]: army for army in db.army_payload()}
-        got = payload[army_id]["arrears"]
-        assert got == 0.0, f"raw=None → arrears 投影应得 0.0，得 {got!r}"
+        got = payload[army_id]["arrears_text"]
+        assert got == "无欠饷", f"raw=None → arrears_text 应得 无欠饷，得 {got!r}"
     finally:
         db.army_rows = original_rows  # type: ignore[method-assign]
