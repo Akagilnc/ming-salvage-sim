@@ -359,8 +359,8 @@ def test_driver_settle_freezes_dossier_roster_authority_at_input(game, monkeypat
     created = {}
     real_pre_settle = driver.pre_settle
 
-    def create_during_settle(state_arg, db_arg):
-        real_pre_settle(state_arg, db_arg)
+    def create_during_settle(state_arg, db_arg, *, content=None):
+        real_pre_settle(state_arg, db_arg, content=content)
         created["id"] = db_arg.create_decree_dossier(
             state_arg, action_type="assignment", decree_text="同批新案。",
             target_kind="issue", target_id="same-batch",
