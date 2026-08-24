@@ -7494,6 +7494,19 @@ class GameDB:
                 ).fetchone()
                 if current_row is not None:
                     row = current_row
+                # #319 ADR 0025 D4①：latched 军字段-效果 deny-by-default。
+                # 白名单：manpower 严格负增量、loyalty 正增量；其余已归一可写字段静默 no-op。
+                # owner_power 已由上方 adapter 处理，不重入本门。门在类型/合法字段校验之后，
+                # 避免把 invalid_enum 伪装成 mutiny no-op。
+                if bool(row["is_mutinied"]):
+                    if field == "manpower":
+                        if int(value) >= 0:
+                            continue
+                    elif field == "loyalty":
+                        if int(value) <= 0:
+                            continue
+                    else:
+                        continue
                 old_value = row[field]
                 if field == "arrears":
                     if self.is_army_pay_source_cutover_enabled():
