@@ -300,10 +300,14 @@ def test_fresh_summon_applier_failure_rolls_back_and_close_retry_is_safe(game, m
 
 
 def test_arrived_summon_continuation_survives_failed_apply_across_months(game, monkeypatch):
-    """#670 T-D：抵原地 payload 见抵达 → settle_with_delta 续启失败跨月仍未结 → 成功才结。
+    """#670 T-D：抵原地 payload 见抵达 → 失败月 / 无续启成功月 / 续启成功月三段 settle_with_delta。
 
-    经月度生产缝 settle_with_delta（_settle_after_extract_body 在 applier 成功后结清）；
-    成功路径禁止手调 settle_applied_arrived_summons。
+    1. 失败月：续启 delta 经 settle_with_delta 触发 SettlementAbort；turn 不变；origin/抵达/行止未动。
+    2. 无续启成功月：空 delta 经 settle_with_delta 推进一月；未结 origin 与抵达事实仍在，
+       行止仍 henan/空 transit。若 settle_applied_arrived_summons 在任一成功月无视
+       applied_person_changes 清掉在途 origin，本段必须失败。
+    3. 续启成功月：canonical 行止 delta 经 settle_with_delta 才自动结清 origin。
+    三段均禁止手推 turn、禁止手调 settle_applied_arrived_summons。
     """
     import ming_sim.decree as decree_mod
     from ming_sim.decree import settle_with_delta
@@ -362,13 +366,17 @@ def test_arrived_summon_continuation_survives_failed_apply_across_months(game, m
     assert _travel_row(db, person.name)["transit_to"] == ""
     assert int(state.turn) == failed_turn
 
-    # 跨月保留：失败路径 atomic 回滚不吞结清；推月后 payload 仍见抵达。
-    state.turn = int(state.turn) + 1
+    # 无续启成功月：公开生产缝空 delta 推进一月；不得手推 turn / 手调结清。
+    noop_turn = int(state.turn)
+    settle_with_delta(state, db, {}, before_turn=noop_turn, content=content)
+    assert int(state.turn) == noop_turn + 1
+    assert [row["origin_id"] for row in an.list_unsettled_summons(db)] == [origin]
     next_payload = build_simulator_payload(state, db, "", "")
     assert next_payload["unsettled_arrived_summons"] == [arrived_fact]
     assert _travel_row(db, person.name)["location"] == "henan"
+    assert _travel_row(db, person.name)["transit_to"] == ""
 
-    # 成功月：只经 settle_with_delta；结清证明不得手调 helper。
+    # 续启成功月：只经 settle_with_delta；结清证明不得手调 helper。
     settle_with_delta(
         state, db, continuation, before_turn=int(state.turn), content=content,
     )
@@ -376,7 +384,7 @@ def test_arrived_summon_continuation_survives_failed_apply_across_months(game, m
     after = _travel_row(db, person.name)
     assert after["location"] == "henan"
     assert after["transit_to"] == "beizhili"
-    assert attempts == 2
+    assert attempts == 3
 
 
 def test_fresh_seed_closes_ticket_670_named_locations(content):
