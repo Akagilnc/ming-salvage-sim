@@ -1427,6 +1427,14 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
             # #653：折发后中央份额应得额（无折＝原值）；morale 公式不变，只吃折后 Due。
             needed = max(0.0, central_due_by_army.get(army_id, 0.0))
             if needed <= 0:
+                # #651×#653：合法折发可使有效 Due floor=0。纯中央军不进省 applier，
+                # 本缝是其连续缺口计数唯一 owner——零有效 Due 月亦按「本月缺口=0」归零。
+                # 不入 shortfall/due 月桥、不改 central_pay_arrears、不跑 morale/流水。
+                if float(row["province_pay_share"] or 0) <= 0:
+                    db.conn.execute(
+                        "UPDATE armies SET consecutive_pay_shortfall_months = 0 WHERE id = ?",
+                        (army_id,),
+                    )
                 continue
             pay_current = min(needed, hub_outbound.central_paid_by_army.get(army_id, 0.0))
             shortfall = max(0.0, needed - pay_current)

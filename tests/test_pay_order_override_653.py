@@ -1219,6 +1219,56 @@ def test_central_due_haircut_consumer(game):
     # 免除不入欠：欠发只按折后应得计（shortfall 上界即折后 due）
 
 
+def test_pure_central_zero_haircut_due_clears_shortfall_counter(game):
+    """#651×#653：纯中央军合法折发后 Due floor=0 须归零连续缺口计数，且不自动还旧欠。"""
+    from ming_sim.flows import (
+        _central_dues_with_haircut,
+        apply_fixed_period_flows,
+        army_needed,
+    )
+
+    db, state, _content = game
+    assert db.is_substrate_hub_fiscal_engine_enabled()
+
+    army = db.conn.execute(
+        "SELECT id, manpower, salary_rate, owner_power, central_pay_share, "
+        "province_pay_share, pay_source_region, central_pay_arrears, arrears "
+        "FROM armies WHERE id = 'jingying'"
+    ).fetchone()
+    assert float(army["province_pay_share"] or 0) <= 0
+    assert float(army["central_pay_share"] or 0) > 0
+    old_central_arrears = float(army["central_pay_arrears"] or 0)
+    assert old_central_arrears > 0
+    old_arrears = float(army["arrears"] or 0)
+    assert old_arrears > 0
+
+    db.conn.execute(
+        "UPDATE armies SET consecutive_pay_shortfall_months = 3 WHERE id = 'jingying'"
+    )
+    db.conn.commit()
+
+    did = _override_dossier(
+        db, state, [{"key": "due_haircut_bp_军饷#central", "value": 1}],
+    )
+    db.apply_dossier_promulgation(state, did, "promulgated")
+
+    dues, _exempt = _central_dues_with_haircut(db, state, [army])
+    raw_due = army_needed(army) * float(army["central_pay_share"] or 0)
+    assert raw_due > 0
+    assert dues["jingying"] == pytest.approx(0.0)
+
+    apply_fixed_period_flows(db, state)
+
+    after = db.conn.execute(
+        "SELECT consecutive_pay_shortfall_months, central_pay_arrears, arrears "
+        "FROM armies WHERE id = 'jingying'"
+    ).fetchone()
+    assert int(after["consecutive_pay_shortfall_months"] or 0) == 0
+    # 中央旧欠不因零 Due 月自动偿还（ADR 0023 D7③ / #653 边界）
+    assert float(after["central_pay_arrears"] or 0) == pytest.approx(old_central_arrears)
+    assert float(after["arrears"] or 0) == pytest.approx(old_arrears)
+
+
 def test_central_hub_tier_order_and_old_arrears_unchanged_by_haircut(game):
     """宪法边界 golden：hub tier 序/D9 合并 k 公式/中央旧欠不自动偿还均不被折发改写。"""
     import inspect
