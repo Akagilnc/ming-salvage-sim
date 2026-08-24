@@ -84,21 +84,21 @@
       "source": "施凤来",
       "target": "魏忠贤",
       "event_kind": "站台",
-      "context": "施凤来于天启六年秋入阁后依媚取容，在内阁承顺魏忠贤意旨，久居机要。",
+      "context": "施凤来于天启六年七月入阁后依媚取容，在内阁承顺魏忠贤意旨，久居机要。",
       "origin": "seed:founding:wei-shifenglai-promotion",
       "evidence": false,
       "year": 1626,
-      "period": 8
+      "period": 7
     },
     {
       "source": "张瑞图",
       "target": "魏忠贤",
       "event_kind": "站台",
-      "context": "张瑞图于天启六年秋入阁后依附魏忠贤，并为魏氏生祠撰写碑文，借阉党声势保有相位。",
+      "context": "张瑞图于天启六年七月入阁后依附魏忠贤，并为魏氏生祠手书碑文，借阉党声势保有相位。",
       "origin": "seed:founding:wei-zhangruitu-promotion",
       "evidence": false,
       "year": 1626,
-      "period": 8
+      "period": 7
     },
     {
       "source": "来宗道",
@@ -114,17 +114,17 @@
       "source": "魏忠贤",
       "target": "郭允厚",
       "event_kind": "荐引",
-      "context": "魏忠贤矫中旨召用例转科道，将郭允厚擢为太仆少卿；郭允厚由此进入其外廷爪牙之列。",
+      "context": "天启四年十二月，魏忠贤矫中旨召用例转科道，将郭允厚擢为太仆少卿；郭允厚由此进入其外廷爪牙之列。",
       "origin": "seed:founding:wei-guoyunhou-finance",
       "evidence": false,
-      "year": 1626,
-      "period": 8
+      "year": 1624,
+      "period": 12
     },
     {
       "source": "王体乾",
       "target": "魏忠贤",
       "event_kind": "站台",
-      "context": "杨涟上疏弹劾魏忠贤后，王体乾与客氏力为保持，并令魏广微调旨切责杨涟，公开替魏忠贤遮护。",
+      "context": "杨涟上疏弹劾魏忠贤后，王体乾与客氏力为翼护，朝中旋有严旨切责杨涟，公开替魏忠贤遮护。",
       "origin": "seed:founding:wangtiqian-wei-support",
       "evidence": false,
       "year": 1624,

@@ -553,14 +553,30 @@ def test_issue_639_seed_owner_audit_corrections(fresh_session):
     assert "私怨" in grudge["context"] or "姐夫" in grudge["context"]
     assert grudge["evidence"] is False
 
-    # 施/张：史载依媚/生祠碑，不作魏荐引入阁
+    # 施/张：史载依媚/生祠碑，不作魏荐引入阁；入阁月=六年七月
     shi = by_origin_prefix("seed:founding:wei-shifenglai-promotion")
     assert (shi["source"], shi["target"], shi["event_kind"]) == ("施凤来", "魏忠贤", "站台")
-    assert (shi["year"], shi["period"]) == (1626, 8)
+    assert (shi["year"], shi["period"]) == (1626, 7)
+    assert "七月" in shi["context"]
     zhang = by_origin_prefix("seed:founding:wei-zhangruitu-promotion")
     assert (zhang["source"], zhang["target"], zhang["event_kind"]) == (
         "张瑞图", "魏忠贤", "站台",
     )
+    assert (zhang["year"], zhang["period"]) == (1626, 7)
+    assert "手书" in zhang["context"] or "书丹" in zhang["context"]
+    assert "撰写" not in zhang["context"]
+
+    # 郭允厚：矫旨擢太仆少卿＝天启四年十二月（韩爌致仕次月）
+    guo = by_origin_prefix("seed:founding:wei-guoyunhou-finance")
+    assert (guo["source"], guo["target"], guo["event_kind"]) == ("魏忠贤", "郭允厚", "荐引")
+    assert (guo["year"], guo["period"]) == (1624, 12)
+
+    # 王体乾：翼护/保持语义；不得把调旨主语安在王
+    wang = by_origin_prefix("seed:founding:wangtiqian-wei-support")
+    assert (wang["source"], wang["target"], wang["event_kind"]) == ("王体乾", "魏忠贤", "站台")
+    assert (wang["year"], wang["period"]) == (1624, 6)
+    assert "令魏广微" not in wang["context"]
+    assert "翼护" in wang["context"] or "保持" in wang["context"]
 
     # 来宗道 1627.11 入阁晚于开局——删除伪天启末魏荐引入阁；保留开局前依附野史边
     assert not any(
