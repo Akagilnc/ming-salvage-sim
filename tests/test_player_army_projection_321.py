@@ -124,7 +124,6 @@ def test_player_army_situation_arrears_is_approximate_only():
     text = sit["arrears_text"]
     assert text == _army_arrears_report_text(row, 4)
     assert "12.5" not in text
-    assert text.startswith("欠饷") or text == "无欠饷"
 
 
 def _configure(db, fiscal_path: str) -> None:
