@@ -268,24 +268,17 @@ def _resolve_target_faction_identity(
     if fac_row is None:
         raise _abort(turn, f"派生 faction 不在 factions 表：{faction!r}")
     identity = row["identity"]
-    if isinstance(identity, bool) or not isinstance(identity, int):
-        # sqlite 可能给 int；拒绝非 int
-        try:
-            if identity is None:
-                raise TypeError
-            identity = int(identity)
-        except (TypeError, ValueError) as exc:
-            raise _abort(turn, f"派生 identity 非 int：{row['identity']!r}") from exc
+    # 仅 strict int（排除 bool）；禁止 int() 静默截断 REAL/TEXT
+    if not isinstance(identity, int) or isinstance(identity, bool):
+        raise _abort(turn, f"派生 identity 非 int：{identity!r}")
     if identity < 0 or identity > 100:
         raise _abort(turn, f"派生 identity 越界：{identity}")
-    return faction, int(identity)
+    return faction, identity
 
 
-def _compute_punishment_payloads(
+def _compute_punishment_deltas(
     *,
     turn: int,
-    faction: str,
-    target: str,
     axis: str,
     penalty_type: str,
     crime_weight: int,
@@ -293,20 +286,19 @@ def _compute_punishment_payloads(
     reason_code: Optional[str],
     source: Optional[str],
 ) -> Dict[str, Dict[str, Any]]:
+    """栈内算 Δ；不接收/回传派生 faction，不组装可外传写载荷。"""
     severity = SEVERITY_BASE[penalty_type]
     mismatch = max(0, severity - crime_weight)
-    legitimacy_pct = int(
-        round(_clamp(10.0 + 90.0 * mismatch / severity, 10.0, 100.0))
-    )
+    # D2-4：金额用 raw 失称度；整数 legitimacy_pct 仅审计落库
+    leg_raw = _clamp(10.0 + 90.0 * mismatch / severity, 10.0, 100.0)
+    legitimacy_pct = int(round(leg_raw))
     k_id = _clamp(identity / 100.0, 0.0, 1.0)
-    direct = int(round(severity * legitimacy_pct / 100.0))
+    direct = int(round(severity * leg_raw / 100.0))
     # ADR 原式：禁止先 round(direct) 再乘
-    kinship = int(round(severity * legitimacy_pct / 100.0 * 0.3 * k_id))
+    kinship = int(round(severity * leg_raw / 100.0 * 0.3 * k_id))
     planned: Dict[str, Dict[str, Any]] = {}
     common = {
         "turn": turn,
-        "faction": faction,
-        "source_name": target,
         "reason_code": reason_code,
         "source": source,
     }
@@ -337,16 +329,15 @@ def _compute_punishment_payloads(
     return planned
 
 
-def _compute_detection_payloads(
+def _compute_detection_deltas(
     *,
     turn: int,
-    faction: str,
-    target: str,
     axis: str,
     alert_severity: int,
     identity: int,
     source: Optional[str],
 ) -> Dict[str, Dict[str, Any]]:
+    """栈内算 Δ；leg=100 写死；不接收/回传派生 faction。"""
     legitimacy_pct = 100
     k_id = _clamp(identity / 100.0, 0.0, 1.0)
     kinship = int(round(alert_severity * 0.3 * k_id))
@@ -354,8 +345,6 @@ def _compute_detection_payloads(
     if kinship > 0:
         planned["kinship"] = {
             "turn": turn,
-            "faction": faction,
-            "source_name": target,
             "reason_code": None,
             "source": source,
             "axis": axis,
@@ -414,82 +403,6 @@ def _payloads_match(durable_row: Any, payload: Dict[str, Any], *, kind: str) -> 
     return True
 
 
-def _apply_writes(
-    conn: Any,
-    *,
-    idem_base: str,
-    planned: Dict[str, Dict[str, Any]],
-) -> None:
-    for kind, payload in planned.items():
-        idem_key = f"{idem_base}|{kind}"
-        conn.execute(
-            """
-            INSERT INTO centrifuge_log(
-                turn, faction, axis, kind, base, legitimacy_pct, amount,
-                source_name, reason_code, source, idem_key
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                payload["turn"],
-                payload["faction"],
-                payload["axis"],
-                kind,
-                payload["base"],
-                payload["legitimacy_pct"],
-                payload["amount"],
-                payload["source_name"],
-                payload["reason_code"],
-                payload["source"],
-                idem_key,
-            ),
-        )
-        if kind == "direct":
-            _upsert_debt(
-                conn,
-                faction=payload["faction"],
-                axis=payload["axis"],
-                blood_delta=int(payload["amount"]),
-                wariness_delta=0,
-            )
-        elif kind == "kinship":
-            _upsert_debt(
-                conn,
-                faction=payload["faction"],
-                axis=payload["axis"],
-                blood_delta=0,
-                wariness_delta=int(payload["amount"]),
-            )
-        elif kind == "overdraw":
-            conn.execute(
-                """
-                UPDATE factions
-                SET edict_overdraw = edict_overdraw + ?
-                WHERE name = ?
-                """,
-                (int(payload["amount"]), payload["faction"]),
-            )
-
-
-def _upsert_debt(
-    conn: Any,
-    *,
-    faction: str,
-    axis: str,
-    blood_delta: int,
-    wariness_delta: int,
-) -> None:
-    conn.execute(
-        """
-        INSERT INTO faction_axis_debt(faction, axis, blood_debt, wariness)
-        VALUES (?, ?, ?, ?)
-        ON CONFLICT(faction, axis) DO UPDATE SET
-            blood_debt = blood_debt + excluded.blood_debt,
-            wariness = wariness + excluded.wariness
-        """,
-        (faction, axis, blood_delta, wariness_delta),
-    )
-
-
 def _accrue_centrifuge(
     *,
     db: Any,
@@ -504,16 +417,18 @@ def _accrue_centrifuge(
     reason_code: Optional[str],
     source: Optional[str],
 ) -> None:
-    """唯一正常 accrue/append 写核。形参不含 faction/identity/planned_*。"""
+    """唯一正常 accrue/append 写核。形参不含 faction/identity/planned_*。
+
+    同一 atomic 内：精确解析 target → 栈内算 Δ → 幂等三态 → 直写 log/cache/overdraw。
+    无第二 planned 写缝；写时用核内已解析 faction/identity。
+    """
     with atomic(db):
         conn = db.conn
         faction, identity = _resolve_target_faction_identity(conn, target, turn=turn)
         if mode == _MODE_PUNISHMENT:
             assert penalty_type is not None and crime_weight is not None
-            planned = _compute_punishment_payloads(
+            deltas = _compute_punishment_deltas(
                 turn=turn,
-                faction=faction,
-                target=target,
                 axis=axis,
                 penalty_type=penalty_type,
                 crime_weight=crime_weight,
@@ -523,10 +438,8 @@ def _accrue_centrifuge(
             )
         elif mode == _MODE_DETECTION:
             assert alert_severity is not None
-            planned = _compute_detection_payloads(
+            deltas = _compute_detection_deltas(
                 turn=turn,
-                faction=faction,
-                target=target,
                 axis=axis,
                 alert_severity=alert_severity,
                 identity=identity,
@@ -535,14 +448,17 @@ def _accrue_centrifuge(
         else:
             raise _abort(turn, f"unknown centrifuge mode: {mode!r}")
 
+        # 核内已解析值并入比对/落库行（compute 不组装 faction/source_name）
+        planned: Dict[str, Dict[str, Any]] = {
+            kind: {**delta, "faction": faction, "source_name": target}
+            for kind, delta in deltas.items()
+        }
+
         planned_kinds: Set[str] = set(planned)
         existing = _load_namespace(conn, idem_base)
         durable_kinds: Set[str] = set(existing)
 
         if durable_kinds == set() and planned_kinds == set():
-            return
-        if durable_kinds == set():
-            _apply_writes(conn, idem_base=idem_base, planned=planned)
             return
         if durable_kinds == planned_kinds:
             for kind in planned_kinds:
@@ -552,8 +468,63 @@ def _accrue_centrifuge(
                         f"centrifuge idem payload mismatch under {idem_base!r} kind={kind}",
                     )
             return
-        raise _abort(
-            turn,
-            f"centrifuge idem kind-set mismatch under {idem_base!r}: "
-            f"durable={sorted(durable_kinds)} planned={sorted(planned_kinds)}",
-        )
+        if durable_kinds != set():
+            raise _abort(
+                turn,
+                f"centrifuge idem kind-set mismatch under {idem_base!r}: "
+                f"durable={sorted(durable_kinds)} planned={sorted(planned_kinds)}",
+            )
+
+        # durable 空且 planned 非空：直写三账（唯一写缝）
+        for kind, payload in planned.items():
+            idem_key = f"{idem_base}|{kind}"
+            conn.execute(
+                """
+                INSERT INTO centrifuge_log(
+                    turn, faction, axis, kind, base, legitimacy_pct, amount,
+                    source_name, reason_code, source, idem_key
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    payload["turn"],
+                    faction,
+                    payload["axis"],
+                    kind,
+                    payload["base"],
+                    payload["legitimacy_pct"],
+                    payload["amount"],
+                    target,
+                    payload["reason_code"],
+                    payload["source"],
+                    idem_key,
+                ),
+            )
+            if kind == "direct":
+                conn.execute(
+                    """
+                    INSERT INTO faction_axis_debt(faction, axis, blood_debt, wariness)
+                    VALUES (?, ?, ?, 0)
+                    ON CONFLICT(faction, axis) DO UPDATE SET
+                        blood_debt = blood_debt + excluded.blood_debt
+                    """,
+                    (faction, payload["axis"], int(payload["amount"])),
+                )
+            elif kind == "kinship":
+                conn.execute(
+                    """
+                    INSERT INTO faction_axis_debt(faction, axis, blood_debt, wariness)
+                    VALUES (?, ?, 0, ?)
+                    ON CONFLICT(faction, axis) DO UPDATE SET
+                        wariness = wariness + excluded.wariness
+                    """,
+                    (faction, payload["axis"], int(payload["amount"])),
+                )
+            elif kind == "overdraw":
+                conn.execute(
+                    """
+                    UPDATE factions
+                    SET edict_overdraw = edict_overdraw + ?
+                    WHERE name = ?
+                    """,
+                    (int(payload["amount"]), faction),
+                )
