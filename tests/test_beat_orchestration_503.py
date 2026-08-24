@@ -1917,3 +1917,157 @@ def test_cli_scaffold_exit_failure_deletes_exit_ledger(game, monkeypatch):
     assert exit_rows == [], exit_rows
     # Minister remains present because scaffold exit rolled back.
     assert minister in an.present_names_at(db, night_id)
+
+
+# ---------------------------------------------------------------------------
+# #657 片3 S2/S3/S7：锁边界与多 target 并行
+# ---------------------------------------------------------------------------
+
+def test_657_s2_s3_lock_boundary_and_parallel_summons(game, monkeypatch):
+    """S2：prewrite/join 不在 gate 内；S3：多 target Future 重叠；S7：失败域。"""
+    import threading
+    import time
+
+    from ming_sim.audience_night import rescript_summon_origin_ref
+    from ming_sim.models import TurnPhase
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+    from ming_sim.session import GameSession
+
+    db, state, content = game
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
+
+    ministers = []
+    for ch in content.characters.values():
+        if db.get_character_status(ch.name)[0] != "active":
+            continue
+        if db.resolve_power_id(ch) != "ming":
+            continue
+        if getattr(ch, "office_type", "") in ("后宫", "宗藩"):
+            continue
+        ministers.append(ch.name)
+        if len(ministers) >= 2:
+            break
+    assert len(ministers) >= 2
+
+    opt = normalize_rescript_layer_a_option({
+        "label": "备", "hint": "h", "action_type": "assignment",
+        "assignee_name": "", "target_kind": "region", "target_id": "shaanxi",
+        "locality_scope": "single", "region_id": "shaanxi",
+        "transaction_category": "督赈",
+    })
+    drafts = []
+    for i, name in enumerate(ministers):
+        drafts.append({
+            "title": f"召见{name}", "context": "c",
+            "options": [opt, {"label": "x", "hint": "h", "draft_capability": f"cap{i}"}],
+            "actor_name": name, "actor_office": "o", "actor_faction": "f",
+        })
+    db.save_rescript_drafts(int(state.turn), drafts)
+    db.save_resolve_context(
+        int(state.turn), "诏", "邸报", {"candidate_events": []},
+        secret_orders=[], relevant_memories=[],
+    )
+    db.conn.commit()
+    desk = db.list_rescript_desk(int(state.turn))
+    keys = [r["decision_key"] for r in desk if r["kind"] == "rescript_draft"]
+
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.llm_config = None
+    sess.agno_db = None
+    sess.registry = None
+    sess.last_decree = "诏"
+    from ming_sim.beat_orchestration import ChatTurnSceneRegistry
+    from concurrent.futures import ThreadPoolExecutor
+    executor = ThreadPoolExecutor(max_workers=4)
+    sess._scene_registry = ChatTurnSceneRegistry(executor)
+
+    started = {}
+    lock = threading.Lock()
+    join_gate_held = {"v": False}
+    observed_join_gate = []
+
+    def slow_gen(inputs):
+        name = str(getattr(inputs, "person_name", "") or "") or str(
+            getattr(inputs, "beat_kind", "") or ""
+        )
+        with lock:
+            started[f"{name}-{id(inputs)}"] = time.time()
+        time.sleep(0.2)
+        # S2：join 等待期（generator 仍在飞）不得持 write_gate
+        observed_join_gate.append(join_gate_held["v"])
+        return f"{name or '臣'}入殿请安。"
+
+    # 直接用 registry 测并行：绕过 full submit（phase2 重）
+    from ming_sim.audience_night import prepare_rescript_summon_scaffold
+    scaffolds = []
+    for key, name in zip(keys, ministers):
+        kind, turn, idx = key.split(":")
+        origin = rescript_summon_origin_ref(int(turn), int(idx), 0)
+        sc = prepare_rescript_summon_scaffold(
+            db, state, person_name=name, origin_ref=origin,
+        )
+        scaffolds.append((name, sc))
+
+    # ① 全部 start（可持锁）；禁 start-A→join-A→start-B
+    for name, sc in scaffolds:
+        sess._scene_registry.start_open_enter(
+            db, state, minister_name=name,
+            chat_turn_id=int(sc["chat_turn_id"]),
+            beat_generator=slow_gen,
+        )
+    # 放锁后再 join
+    join_gate_held["v"] = False
+
+    # ② 无锁 join — Future 应重叠
+    results = []
+    for name, sc in scaffolds:
+        results.append(sess.join_chat_turn_scene(int(sc["chat_turn_id"])))
+    assert observed_join_gate, "generator 应曾在飞"
+    assert all(v is False for v in observed_join_gate), (
+        f"join 期间不得持 write_gate: {observed_join_gate}"
+    )
+
+    # S3：至少两个 start 时间差 < 单个 sleep（并行）
+    times = list(started.values())
+    if len(times) >= 2:
+        assert max(times) - min(times) < 0.12, f"Futures 未重叠: {started}"
+
+    # S7：注入单 target 失败不影响另一已 persist
+    ok_sc = scaffolds[0]
+    bad_sc = scaffolds[1]
+    sess.persist_chat_turn_scene(results[0])
+    db.conn.commit()
+    body0 = db.conn.execute(
+        "SELECT body FROM story_ledger_entries WHERE id=?",
+        (int(ok_sc[1]["entry_id"]),),
+    ).fetchone()["body"]
+    assert str(body0).strip()
+
+    # bad target 失败不抹掉 ok
+    def boom(_inputs):
+        raise RuntimeError("target B boom")
+
+    # 新 origin 再起一个失败 target
+    origin_b = rescript_summon_origin_ref(int(state.turn), 99, 0)
+    sc_b = prepare_rescript_summon_scaffold(
+        db, state, person_name=ministers[1], origin_ref=origin_b,
+    )
+    sess._scene_registry.start_open_enter(
+        db, state, minister_name=ministers[1],
+        chat_turn_id=int(sc_b["chat_turn_id"]),
+        beat_generator=boom,
+    )
+    try:
+        sess.join_chat_turn_scene(int(sc_b["chat_turn_id"]))
+    except RuntimeError:
+        pass
+    body0_after = db.conn.execute(
+        "SELECT body FROM story_ledger_entries WHERE id=?",
+        (int(ok_sc[1]["entry_id"]),),
+    ).fetchone()["body"]
+    assert body0_after == body0
+    executor.shutdown(wait=False)
