@@ -56,6 +56,7 @@ from ming_sim.issues import (
     _apply_levy_driven_transfers,
     auto_trigger_seed_issues,
     clear_gated_legacies,
+    gather_impeachment_surge_candidates,
     sanitize_delta_shape,
     validate_delta_shape,
 )
@@ -1400,6 +1401,7 @@ def _replay_settle(
         delta_applier=lambda d, s, ex, ct, rg: apply_score_extraction(
             d, s, ex, content=ct, registry=rg, llm_config=llm_config,
             candidate_event_ids_at_input=_candidate_event_ids_from_simulator_payload(simulator_payload),
+            impeachment_surge_candidates_at_input=gather_impeachment_surge_candidates(s, d),
             dossier_ids_at_input=_dossier_ids_from_simulator_payload(simulator_payload),
             secret_dossier_ids_at_input=secret_dossier_ids_from_secret_orders(d, secret_orders),
         ),
@@ -1540,6 +1542,9 @@ def _settle_after_narrative(
         )
         for module in EXTRACTION_MODULES
     }
+    # Capture the same dynamic input given to the issues extractor.  Same-batch
+    # mutations during apply must not retrospectively veto the role decision.
+    impeachment_surge_candidates_at_input = gather_impeachment_surge_candidates(state, db)
     sanitizer = create_json_sanitizer_agent(llm_config, agno_db)
     extractor_input = ""
     extractor_output = ""
@@ -1662,6 +1667,7 @@ def _settle_after_narrative(
         delta_applier=lambda d, s, ex, ct, rg: apply_score_extraction(
             d, s, ex, content=ct, registry=rg, llm_config=llm_config,
             candidate_event_ids_at_input=_candidate_event_ids_from_simulator_payload(simulator_payload),
+            impeachment_surge_candidates_at_input=impeachment_surge_candidates_at_input,
             dossier_ids_at_input=_dossier_ids_from_simulator_payload(simulator_payload),
             secret_dossier_ids_at_input=secret_dossier_ids_from_secret_orders(d, secret_orders_for_sim),
         ),

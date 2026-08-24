@@ -22,6 +22,7 @@ from ming_sim.issues import (
     commitment_progress_payload,
     fiscal_levy_memorial_estimates,
     gather_candidate_events,
+    gather_impeachment_surge_candidates,
     issue_to_payload,
     normalize_event_outcome_labels_or_error,
 )
@@ -1203,6 +1204,10 @@ def build_extractor_shared_context(
         # #626：反噬事实包仅 issues 档房（与 #625 监督三键同格门控）；
         # 不在 _extractor_context_payload 无门副本，避免非 issues 模块误读。
         slim["commitment_backlash_facts"] = build_backlash_narrative_features(db)
+        # The issues extractor consumes the same canonical candidate_events key
+        # as its prompt.  This private module payload remains outside simulator
+        # decision binding and HITL.
+        slim["candidate_events"] = gather_impeachment_surge_candidates(state, db)
     slim["_dedup_note"] = (
         "盘面、诏书、在朝大臣、势力/派系/阶级态势已在 system 的 simulator_payload 中给出"
         "（盘面表 regions/armies/buildings 走 TSV；court_roster 即在朝大臣；"

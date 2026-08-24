@@ -1745,6 +1745,7 @@ class GameDB:
                 tags TEXT NOT NULL DEFAULT '[]',
                 participants TEXT NOT NULL DEFAULT '[]',
                 participant_roster TEXT NOT NULL DEFAULT '[]',
+                target_roster TEXT NOT NULL DEFAULT '[]',
                 ongoing_effects TEXT NOT NULL DEFAULT '{}',
                 cancellable TEXT NOT NULL DEFAULT 'never',
                 cancel_cost TEXT NOT NULL DEFAULT '{}',
@@ -2162,6 +2163,7 @@ class GameDB:
             "character_knowledge_events", "excluded_names", "TEXT NOT NULL DEFAULT '[]'")
         self.ensure_column("issues", "participants", "TEXT NOT NULL DEFAULT '[]'")
         self.ensure_column("issues", "participant_roster", "TEXT NOT NULL DEFAULT '[]'")
+        self.ensure_column("issues", "target_roster", "TEXT NOT NULL DEFAULT '[]'")
         self.ensure_column("secret_orders", "excluded_targets", "TEXT NOT NULL DEFAULT '{}'")
         # #976: audience chat hold-and-release — held until classification release.
         # held | released | withheld | private
@@ -12581,6 +12583,7 @@ class GameDB:
                    executor_kind, participant_roster, status
             FROM decree_dossiers
             WHERE status IN ('promulgated', 'executing')
+               OR (status='closed' AND execution_outcome='transformed')
             ORDER BY id
             """
         ).fetchall()
@@ -12591,11 +12594,23 @@ class GameDB:
         for row in rows:
             dossier_id = int(row["id"])
             fork_state = self.read_dossier_fork_state(dossier_id)
-            if not fork_state["fork"]:
-                continue
             dossier = dict(row)
             subject_name = resolve_dossier_owner_name(dossier) or ""
             subject_faction, _ = character_faction_integrity(self, subject_name)
+            # #655 reuses this canonical persona projection for every durable
+            # transformed execution fact; forked_dossiers itself remains the
+            # narrower denunciation/fork list.
+            if str(row["execution_outcome"] or "") == "transformed":
+                if subject_name:
+                    subject_names.add(subject_name)
+                if subject_faction:
+                    subject_factions.add(subject_faction)
+            # Closed transformed dossiers are a persona source for #655, not
+            # open generic denunciation forks.
+            if str(row["status"] or "") == "closed":
+                continue
+            if not fork_state["fork"]:
+                continue
             case_summary = str(row["decree_text"] or "").strip()
             if len(case_summary) > 48:
                 case_summary = case_summary[:48]
@@ -18304,6 +18319,7 @@ class GameDB:
         faction_hint: str = "",
         tags: List[str] | None = None,
         participants: Iterable[str] | str | None = None,
+        target_roster: Iterable[str] | None = None,
         ongoing_effects: Dict[str, object] | None = None,
         cancellable: str = "never",
         cancel_cost: Dict[str, object] | None = None,
@@ -18330,6 +18346,10 @@ class GameDB:
         phase = self._derive_issue_phase(bar_value)
         participant_roster = self._normalize_participant_roster(participants)
         participant_names = [item["character_id"] for item in participant_roster]
+        normalized_targets = list(dict.fromkeys(
+            str(character_id).strip() for character_id in (target_roster or [])
+            if str(character_id).strip()
+        ))
         from ming_sim.staged_commitment import stages_to_json
         # 字符串面经 stages_to_json 正确解析或响亮拒绝，禁止 char-iterate 静默存 []
         stages_blob = stages_to_json([] if stages_json is None else stages_json)
@@ -18339,10 +18359,10 @@ class GameDB:
                 kind, title, origin_kind, origin_ref, origin_turn,
                 bar_value, bar_good_meaning, bar_bad_meaning, inertia,
                 phase, stage_text, status, severity, region_hint, faction_hint,
-                tags, participants, participant_roster, ongoing_effects, cancellable, cancel_cost,
+                tags, participants, participant_roster, target_roster, ongoing_effects, cancellable, cancel_cost,
                 effect_on_resolve, effect_on_fail, resolve_condition, fail_condition,
                 end_turn, stop_condition, commitment_kind, stages_json, last_advance_turn
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 sanitize_sqlite_text(kind), sanitize_sqlite_text(title),
@@ -18353,6 +18373,7 @@ class GameDB:
                 safe_json_dumps(tags or [], ensure_ascii=False),
                 safe_json_dumps(participant_names, ensure_ascii=False),
                 safe_json_dumps(participant_roster, ensure_ascii=False),
+                safe_json_dumps(normalized_targets, ensure_ascii=False),
                 safe_json_dumps(ongoing_effects or {}, ensure_ascii=False),
                 sanitize_sqlite_text(cancellable),
                 safe_json_dumps(cancel_cost or {}, ensure_ascii=False),
@@ -18944,7 +18965,8 @@ class GameDB:
                 if strict_structured and tier_value is None:
                     raise ValueError("参与人物 tier 必须显式提供")
                 tier = str(tier_value or ("" if strict_structured else "知情")).strip()
-                role = str(value.get("role") or value.get("职分") or "").strip()
+                raw_role = str(value.get("role") or value.get("职分") or "")
+                role = raw_role if raw_role.strip() else ""
                 delegator = str(value.get("delegator_id") or value.get("delegator") or "").strip()
             else:
                 if strict_structured:
