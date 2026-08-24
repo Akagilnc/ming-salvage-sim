@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 
+from ming_sim.db import GameDB
 from ming_sim.session import AudienceAdmission, ChatTurnResult, GameSession
 from ming_sim import audience_night as an
 from ming_sim.decree import force_transit_arrivals
@@ -20,14 +22,58 @@ def _session(game):
     return sess
 
 
-def _set_place(game, name, *, location, transit_to=""):
+def _set_place(game, name, *, location, transit_to="", transit_start_turn=None):
     db, _state, content = game
-    db.conn.execute(
-        "UPDATE characters SET location=?, transit_to=? WHERE name=?",
-        (location, transit_to, name),
-    )
+    if transit_start_turn is None:
+        db.conn.execute(
+            "UPDATE characters SET location=?, transit_to=? WHERE name=?",
+            (location, transit_to, name),
+        )
+    else:
+        db.conn.execute(
+            "UPDATE characters SET location=?, transit_to=?, transit_start_turn=? WHERE name=?",
+            (location, transit_to, transit_start_turn, name),
+        )
     db.conn.commit()
     return content.characters[name]
+
+
+def _travel_row(db, name):
+    row = db.conn.execute(
+        "SELECT location, transit_to, transit_start_turn FROM characters WHERE name=?",
+        (name,),
+    ).fetchone()
+    return {
+        "location": row["location"],
+        "transit_to": row["transit_to"],
+        "transit_start_turn": row["transit_start_turn"],
+    }
+
+
+def _chat_message_count(db):
+    return int(db.conn.execute("SELECT COUNT(*) AS n FROM chat_messages").fetchone()["n"])
+
+
+def _chat_turn_count(db):
+    return int(db.conn.execute("SELECT COUNT(*) AS n FROM chat_turns").fetchone()["n"])
+
+
+def _web_hall_runtime(db, state, content, *, session_chat):
+    """#670：常规 Web.chat（gate_already_held=False）殿上入口壳；挂真 admission。"""
+    from tests.test_qa_c3_secret_order_path_1357_1376 import (
+        webgame_shell_for_secret_order,
+    )
+
+    runtime = webgame_shell_for_secret_order(
+        db, state, content, session_chat=session_chat,
+    )
+    runtime.session.admit_audience = MethodType(
+        GameSession.admit_audience, runtime.session,
+    )
+    runtime.session.consume_audience_admission = MethodType(
+        GameSession.consume_audience_admission, runtime.session,
+    )
+    return runtime
 
 
 def test_audience_admission_distinguishes_capital_fresh_and_existing_transit(game):
@@ -111,30 +157,53 @@ def test_cli_initial_selection_records_remote_summon_without_returning_minister(
 
 
 def test_in_transit_summon_origin_is_idempotent_and_restorable(game):
-    db, state, _content = game
-    night_id = int(an.open_night(db, state)["id"])
-
-    first = an.record_summon_in_transit(
-        db, night_id, "洪承畴", origin_id="command:42",
+    """#670 T-B：在途 admission 不改道/不重置；关库重开投影一致；同 origin 仍幂等。"""
+    db, state, content = game
+    sess = _session(game)
+    sess.state = state
+    person = _set_place(
+        game, "洪承畴", location="shaanxi", transit_to="henan", transit_start_turn=3,
     )
-    again = an.record_summon_in_transit(
-        db, night_id, "洪承畴", origin_id="command:42",
-    )
+    before_travel = _travel_row(db, person.name)
+    origin = "command:42"
 
-    assert again == first
-    assert an.list_unsettled_summons(db) == [{
-        "entry_id": first,
-        "night_id": night_id,
-        "person_name": "洪承畴",
-        "origin_id": "command:42",
+    first = sess.consume_audience_admission(person, origin_id=origin, state=state)
+    again = sess.consume_audience_admission(person, origin_id=origin, state=state)
+    assert first.result is AudienceAdmission.SUMMON_IN_TRANSIT
+    assert again.result is AudienceAdmission.SUMMON_IN_TRANSIT
+    assert _travel_row(db, person.name) == before_travel
+
+    unsettled = an.list_unsettled_summons(db)
+    assert len(unsettled) == 1
+    assert unsettled[0] == {
+        "entry_id": unsettled[0]["entry_id"],
+        "night_id": unsettled[0]["night_id"],
+        "person_name": person.name,
+        "origin_id": origin,
         "kind": "in_transit",
-    }]
-    # The projection is rebuilt exclusively from the durable story ledger.
-    assert an.list_unsettled_summons(db) == an.list_unsettled_summons(db)
+    }
+    entry_id = int(unsettled[0]["entry_id"])
+    before_close = list(unsettled)
 
-    assert an.settle_summon_origin(db, "command:42") is True
-    assert an.settle_summon_origin(db, "command:42") is False
-    assert an.list_unsettled_summons(db) == []
+    path = db.path
+    db.close()
+    restored = GameDB(path, content)
+    try:
+        assert an.list_unsettled_summons(restored) == before_close
+        assert _travel_row(restored, person.name) == before_travel
+
+        night = an.get_open_night(restored) or an.open_night(restored, state)
+        again_id = an.record_summon_in_transit(
+            restored, int(night["id"]), person.name, origin_id=origin,
+        )
+        assert again_id == entry_id
+        assert an.list_unsettled_summons(restored) == before_close
+
+        assert an.settle_summon_origin(restored, origin) is True
+        assert an.settle_summon_origin(restored, origin) is False
+        assert an.list_unsettled_summons(restored) == []
+    finally:
+        restored.close()
 
 
 def test_fresh_summon_origin_is_idempotent_and_projects_kind(game):
@@ -230,55 +299,70 @@ def test_fresh_summon_applier_failure_rolls_back_and_close_retry_is_safe(game, m
     assert an.list_unsettled_summons(db) == []
 
 
-def test_monthly_judge_receives_arrived_unsettled_summon_facts(game):
+def test_arrived_summon_continuation_survives_failed_apply_across_months(game, monkeypatch):
+    """#670 T-D：抵原地 payload 见抵达 → 续启 applier 失败跨月仍未结 → 成功才结。"""
     db, state, content = game
-    person = _set_place(game, "洪承畴", location="shaanxi", transit_to="henan")
-    db.conn.execute(
-        "UPDATE characters SET transit_start_turn=0 WHERE name=?", (person.name,)
+    person = _set_place(
+        game, "洪承畴", location="shaanxi", transit_to="henan", transit_start_turn=0,
     )
-    db.conn.commit()
     night_id = int(an.open_night(db, state)["id"])
+    origin = "command:arrived-1"
     entry_id = an.record_summon_in_transit(
-        db, night_id, person.name, origin_id="command:arrived-1",
+        db, night_id, person.name, origin_id=origin,
     )
 
     assert force_transit_arrivals(db, state, content) == [
         {"name": person.name, "location": "henan"}
     ]
-    payload = build_simulator_payload(state, db, "", "")
-
-    assert payload["unsettled_arrived_summons"] == [{
+    arrived_fact = {
         "person_name": person.name,
         "original_destination": "henan",
-        "origin_id": "command:arrived-1",
+        "origin_id": origin,
         "source_entry_id": entry_id,
         "required_fact": "抵原地后续赴京",
-    }]
+    }
+    payload = build_simulator_payload(state, db, "", "")
+    assert payload["unsettled_arrived_summons"] == [arrived_fact]
+    assert _travel_row(db, person.name)["location"] == "henan"
+    assert _travel_row(db, person.name)["transit_to"] == ""
 
-
-def test_arrived_summon_settles_only_after_canonical_applier_success(game):
-    db, state, content = game
-    person = _set_place(game, "洪承畴", location="henan")
-    night_id = int(an.open_night(db, state)["id"])
-    an.record_summon_in_transit(
-        db, night_id, person.name, origin_id="command:continue-1",
-    )
-
-    # Judge/extractor failure (no accepted person change) preserves the durable retry.
-    assert an.settle_applied_arrived_summons(db, {}) == []
-    assert [row["origin_id"] for row in an.list_unsettled_summons(db)] == [
-        "command:continue-1"
-    ]
-
-    from ming_sim.issues import apply_score_extraction
-    applied = apply_score_extraction(db, state, {"人物变更": [{
+    from ming_sim import issues
+    real_apply = issues.apply_score_extraction
+    attempts = 0
+    continuation = {"人物变更": [{
         "name": person.name, "动作": "行止", "transit_to": "beizhili",
         "origin_ref": "盘面自发",
-    }]}, content=content)
+    }]}
 
-    assert an.settle_applied_arrived_summons(db, applied) == ["command:continue-1"]
+    def fail_once(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("injected continuation applier failure")
+        return real_apply(*args, **kwargs)
+
+    monkeypatch.setattr(issues, "apply_score_extraction", fail_once)
+    with pytest.raises(RuntimeError, match="injected continuation applier failure"):
+        issues.apply_score_extraction(db, state, continuation, content=content)
+
+    assert [row["origin_id"] for row in an.list_unsettled_summons(db)] == [origin]
+    assert an.settle_applied_arrived_summons(db, {}) == []
+    assert _travel_row(db, person.name)["location"] == "henan"
+    assert _travel_row(db, person.name)["transit_to"] == ""
+
+    state.turn = int(state.turn) + 1
+    next_payload = build_simulator_payload(state, db, "", "")
+    assert next_payload["unsettled_arrived_summons"] == [arrived_fact]
+    assert _travel_row(db, person.name)["location"] == "henan"
+
+    applied = issues.apply_score_extraction(db, state, continuation, content=content)
+    assert an.settle_applied_arrived_summons(db, applied) == [origin]
     assert an.list_unsettled_summons(db) == []
     assert an.settle_applied_arrived_summons(db, applied) == []
+    after = _travel_row(db, person.name)
+    assert after["location"] == "henan"
+    assert after["transit_to"] == "beizhili"
+    assert attempts == 2
 
 
 def test_fresh_seed_closes_ticket_670_named_locations(content):
@@ -529,3 +613,87 @@ def test_tool_summon_does_not_splice_gate_reason_into_llm_answer(game, monkeypat
         row["person_name"] == remote.name and row["kind"] == "fresh"
         for row in an.list_unsettled_summons(db)
     )
+
+
+def test_web_chat_hall_admission_allows_capital_and_blocks_offsite(game):
+    """#670 T-A：Web.chat 真入口——blank/beizhili 即时开殿；场外/在途 409 且不调回话。"""
+    db, state, content = game
+    capital = _set_place(game, "毕自严", location="beizhili")
+    remote = _set_place(game, "洪承畴", location="shaanxi")
+    moving = _set_place(
+        game, "孙传庭", location="shaanxi", transit_to="henan", transit_start_turn=2,
+    )
+    moving_before = _travel_row(db, moving.name)
+    chat_calls: list[str] = []
+
+    def _session_chat(minister_name, message, *, chat_turn_id=0):
+        chat_calls.append(minister_name)
+        return ChatTurnResult(answer=f"{minister_name}入对。", pending_action_id=0, secret_order_id=0)
+
+    runtime = _web_hall_runtime(db, state, content, session_chat=_session_chat)
+
+    beizhili_payload = runtime.chat(capital.name, "户部钱粮如何？")
+    assert beizhili_payload["answer"] == f"{capital.name}入对。"
+    assert chat_calls == [capital.name]
+
+    _set_place(game, capital.name, location="")
+    blank_payload = runtime.chat(capital.name, "再问一句。")
+    assert blank_payload["answer"] == f"{capital.name}入对。"
+    assert chat_calls == [capital.name, capital.name]
+
+    allowed_msgs = _chat_message_count(db)
+    with pytest.raises(HTTPException) as remote_exc:
+        runtime.chat(remote.name, "传洪承畴来。")
+    assert remote_exc.value.status_code == 409
+    assert "赴京" in str(remote_exc.value.detail) and "不能入殿" in str(remote_exc.value.detail)
+    assert chat_calls == [capital.name, capital.name]
+
+    with pytest.raises(HTTPException) as moving_exc:
+        runtime.chat(moving.name, "传孙传庭来。")
+    assert moving_exc.value.status_code == 409
+    assert "在途" in str(moving_exc.value.detail) and "不能入殿" in str(moving_exc.value.detail)
+    assert chat_calls == [capital.name, capital.name]
+    assert _chat_message_count(db) == allowed_msgs
+    assert _travel_row(db, moving.name) == moving_before
+
+    by_origin = {row["origin_id"]: row for row in an.list_unsettled_summons(db)}
+    assert by_origin[f"web:chat:{state.turn}:{remote.name}"]["kind"] == "fresh"
+    assert by_origin[f"web:chat:{state.turn}:{moving.name}"]["kind"] == "in_transit"
+
+
+def test_web_chat_ledger_append_failure_has_no_side_effects(game, monkeypatch):
+    """#670 T-C：故事账 append 失败 → 零 chat turn/消息、零殿账、零行止写、不调回话。"""
+    db, state, content = game
+    remote = _set_place(game, "洪承畴", location="shaanxi")
+    moving = _set_place(
+        game, "孙传庭", location="shaanxi", transit_to="henan", transit_start_turn=4,
+    )
+    remote_before = _travel_row(db, remote.name)
+    moving_before = _travel_row(db, moving.name)
+    an.open_night(db, state)  # 先开夜，使失败落在 summon recorder 而非 open_night
+    before_msgs = _chat_message_count(db)
+    before_turns = _chat_turn_count(db)
+    chat_calls: list[str] = []
+
+    def _session_chat(minister_name, message, *, chat_turn_id=0):
+        chat_calls.append(minister_name)
+        return ChatTurnResult(answer="不应到达。", pending_action_id=0, secret_order_id=0)
+
+    runtime = _web_hall_runtime(db, state, content, session_chat=_session_chat)
+
+    def boom(*_a, **_k):
+        raise RuntimeError("injected ledger append failure")
+
+    monkeypatch.setattr(an, "append_ledger_entry", boom)
+
+    with pytest.raises(RuntimeError, match="injected ledger append failure"):
+        runtime.chat(remote.name, "传洪承畴。")
+    with pytest.raises(RuntimeError, match="injected ledger append failure"):
+        runtime.chat(moving.name, "传孙传庭。")
+
+    assert chat_calls == []
+    assert an.list_unsettled_summons(db) == []
+    assert _chat_message_count(db) == before_msgs
+    assert _chat_turn_count(db) == before_turns
+    assert _travel_row(db, remote.name) == remote_before
+    assert _travel_row(db, moving.name) == moving_before
