@@ -280,11 +280,11 @@ def test_army_payload_emits_situation_strings_not_raw_axes(game):
 
 def test_four_chains_embed_situation_matrix(game):
     """AC1：exactly 1 非零欠饷代表覆盖链1–4 全接缝（含 warning 载荷嵌入 + print_header 负例）。"""
-    # 代表：latch=0, L=55, p=0 → 不满；arrears>0（63.0）
+    # 代表：latch=0, L=55, p=0 → 不满；arrears>0（精确小数 12.5）
     is_mutinied, loyalty, probation, expected = 0, 55, 0, "不满"
     db, state, content = game
     _configure(db, "legacy")
-    arrears = 63.0
+    arrears = 12.5
     _write_mutiny_fixture(
         db,
         "legacy",
@@ -337,8 +337,8 @@ def test_four_chains_embed_situation_matrix(game):
     # 链2：report / intelligence / knowledge / tools.list_armies（LLM 输入装配）
     report = db.army_report(limit=30)
     _assert_chain_embeds_situation(report, sit, "army_report")
-    # 欠饷裸数不得进入散文（63 是 fixture 总额）
-    assert "63" not in report
+    # 欠饷裸精确小数不得进入散文（与全文件 raw 哨兵同形）
+    assert "12.5" not in report
 
     intel_text, intel_src = _qualitative_domain_statement(db, "各军欠饷如何")
     assert intel_src == "armies"

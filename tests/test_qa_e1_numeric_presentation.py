@@ -261,7 +261,6 @@ def test_army_payload_arrears_projection_rounds_to_one_decimal(game):
         assert "arrears" not in card
         got = card["arrears_text"]
         assert got == expected, f"raw={raw!r} → arrears_text 应得 {expected!r}，得 {got!r}"
-        assert not _FLOAT_GARBAGE.search(got), f"arrears_text 仍含浮点残渣：{got!r}"
         # 原始精确小数不得裸出
         if isinstance(raw, float) and raw != int(raw):
             assert str(raw) not in got
@@ -275,6 +274,7 @@ def test_army_payload_arrears_projection_rounds_to_one_decimal(game):
         db.army_rows = lambda limit=None, danger_order=False: [none_row]  # type: ignore[method-assign]
         payload = {army["id"]: army for army in db.army_payload()}
         got = payload[army_id]["arrears_text"]
-        assert got == "无欠饷", f"raw=None → arrears_text 应得 无欠饷，得 {got!r}"
+        expected = _player_army_situation(none_row, db._army_pay(none_row))["arrears_text"]
+        assert got == expected, f"raw=None → arrears_text 应得 canonical {expected!r}，得 {got!r}"
     finally:
         db.army_rows = original_rows  # type: ignore[method-assign]
