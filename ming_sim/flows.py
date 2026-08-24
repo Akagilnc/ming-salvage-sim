@@ -702,13 +702,15 @@ def _maybe_third_strike_defect(
     state: "GameState",
     *,
     army_id: str,
-    old_latched: int,
     new_latched: int,
     new_mutiny_count: int,
 ) -> bool:
-    """第 3 振 0→1 进闩边沿：经唯一 owner adapter 转流寇。返回是否已转出。"""
-    entered = (not int(old_latched)) and bool(new_latched)
-    if not (entered and int(new_mutiny_count) >= 3):
+    """第 3 振 latched 且 count>=3 的明军：经唯一 owner adapter 转流寇。返回是否已转出。
+
+    按当前态归一（含本 tick 0→1 升 3 与旧存档已 latched+count>=3），
+    不要求本 tick 边沿；adapter 成功后清闩改 owner，下 tick 天然幂等。
+    """
+    if not (bool(new_latched) and int(new_mutiny_count) >= 3):
         return False
     row = db.conn.execute("SELECT * FROM armies WHERE id = ?", (army_id,)).fetchone()
     if row is None:
@@ -1534,6 +1536,13 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
 
     _apply_budget_lines(skip_substrate_hub_lines=db.is_substrate_hub_fiscal_engine_enabled())
 
+    # ── #318 零兵哗变闩全军归一（legacy/hub 分叉前一次；不挂资格子集）──
+    for _zm_row in db.conn.execute(
+        "SELECT id, manpower, salary_rate, owner_power, is_mutinied FROM armies"
+    ).fetchall():
+        if army_needed(_zm_row) <= 0:
+            _clear_zero_manpower_mutiny_latch(db, state, _zm_row)
+
     # ── legacy 各军军饷（按优先级，先发当月；不足挂 arrears 累计万两）──
     if db.fiscal_engine() == "legacy":
         army_rows_raw = db.conn.execute(
@@ -1553,8 +1562,6 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
             name = str(row["name"])
             needed = army_needed(row)  # #44 应发挂钩兵力(ceil(manpower×salary_rate/10000)，仅 ming)
             if needed <= 0:
-                # #318：零兵 latched 残军须在 continue 前清闩+审计，不误触第三振
-                _clear_zero_manpower_mutiny_latch(db, state, row)
                 continue
             available = max(0, int(state.metrics["国库"]))
             pay_current = min(needed, available)
@@ -1650,7 +1657,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                 ],
             )
             _maybe_third_strike_defect(
-                db, state, army_id=army_id, old_latched=old_is_mutinied,
+                db, state, army_id=army_id,
                 new_latched=new_is_mutinied, new_mutiny_count=new_mutiny_count,
             )
             flows.append({
@@ -1801,8 +1808,6 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                 for lr in loyalty_rows:
                     full_needed_loyalty = army_needed(lr)
                     if full_needed_loyalty <= 0:
-                        # #318：零兵 latched 残军须在 continue 前清闩+审计，不误触第三振
-                        _clear_zero_manpower_mutiny_latch(db, state, lr)
                         continue
                     army_id_loyalty = str(lr["id"])
                     old_loyalty_val = int(lr["loyalty"])
@@ -1866,7 +1871,6 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                     )
                     _maybe_third_strike_defect(
                         db, state, army_id=army_id_loyalty,
-                        old_latched=old_is_mutinied_val,
                         new_latched=new_is_mutinied_val,
                         new_mutiny_count=new_mutiny_count_val,
                     )

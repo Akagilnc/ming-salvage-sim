@@ -434,6 +434,101 @@ def test_simulator_payload_derives_zero_combat_from_mutiny_latch(game):
     assert by_name2.get("zero_combat") is False
 
 
+def test_season_simulator_prompt_defines_zero_combat_noncombat():
+    """ADR 0025 D8：zero_combat 须在军事软判规则有正向明文（不可投入战斗/非战斗）。"""
+    from pathlib import Path
+
+    prompt = (Path(__file__).resolve().parents[1] / "content/prompts/season_simulator.md").read_text(
+        encoding="utf-8"
+    )
+    assert "zero_combat" in prompt
+    assert "不可投入战斗" in prompt or "非战斗" in prompt
+
+
+@pytest.mark.parametrize("fiscal_path", PATHS)
+@pytest.mark.parametrize(
+    "identity",
+    (
+        {"is_tusi": 1, "self_funded_pay": 0},
+        {"is_tusi": 0, "self_funded_pay": 1},
+    ),
+    ids=("tusi", "self_funded"),
+)
+def test_hub_excluded_zero_manpower_latched_clears_once(game, fiscal_path, identity):
+    """hub 资格外（土司/自养）零兵旧闩：分叉前全军归一仍清闩，且仅一条清闩审计。"""
+    db, state, _ = game
+    _configure(db, fiscal_path)
+    _set(
+        db, fiscal_path, loyalty=10, arrears=0, latched=1,
+        mutiny_count=2, mutiny_probation=3, manpower=0,
+    )
+    # 豁免军双累加器/份额须为 0（cutover 守恒）；本测只钉清闩，不测发饷
+    db.conn.execute(
+        """UPDATE armies SET is_tusi=?, self_funded_pay=?,
+           pay_source_region='', province_pay_share=0, central_pay_share=0,
+           province_pay_arrears=0, central_pay_arrears=0, arrears=0
+           WHERE id=?""",
+        (identity["is_tusi"], identity["self_funded_pay"], ARMY),
+    )
+    db.conn.commit()
+
+    row = _tick(db, state)
+
+    assert row["is_mutinied"] == 0
+    assert row["mutiny_count"] == 2
+    assert row["owner_power"] == "ming"
+    clear_logs = [
+        log
+        for log in _logs(db, ("is_mutinied",))
+        if str(log["old_value"]) in {"1", "True"}
+        and str(log["new_value"]) in {"0", "False"}
+        and "零兵" in str(log["reason"])
+    ]
+    assert len(clear_logs) == 1
+
+
+@pytest.mark.parametrize("fiscal_path", PATHS)
+def test_persisted_third_strike_defects_next_tick_once(game, fiscal_path):
+    """父版可持久 (latched=1,count=3,ming)：下一 tick 恰好一次核销→清闩→bandits。"""
+    db, state, _ = game
+    _configure(db, fiscal_path)
+    _set(
+        db, fiscal_path, loyalty=10, arrears=5, latched=1,
+        mutiny_count=3, mutiny_probation=0, manpower=10000,
+    )
+
+    first = _tick(db, state)
+    assert first["owner_power"] in BANDIT_POWERS
+    assert first["is_mutinied"] == 0
+    assert first["mutiny_count"] == 3
+    assert float(first["arrears"]) == pytest.approx(0)
+    owner_logs = [
+        log for log in _logs(db, ("owner_power",)) if log["field"] == "owner_power"
+    ]
+    assert len(owner_logs) == 1
+    owner_after = first["owner_power"]
+
+    second = _tick(db, state)
+    assert second["owner_power"] == owner_after
+    assert second["mutiny_count"] == 3
+    owner_logs2 = [
+        log for log in _logs(db, ("owner_power",)) if log["field"] == "owner_power"
+    ]
+    assert len(owner_logs2) == 1
+
+
+def test_single_production_zero_manpower_clear_callsite():
+    """生产清闩 helper 仅分叉前一处调用（两 branch-local 已删）。"""
+    import inspect
+    import re
+
+    import ming_sim.flows as flows_mod
+
+    src = inspect.getsource(flows_mod.apply_fixed_period_flows)
+    calls = re.findall(r"_clear_zero_manpower_mutiny_latch\(", src)
+    assert len(calls) == 1
+
+
 def test_single_production_owner_power_updater_exists():
     """仓内生产 UPDATE owner_power 只经 transition_army_owner_power 一处。"""
     import inspect
