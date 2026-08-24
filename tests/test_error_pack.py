@@ -44,7 +44,7 @@ def test_extractor_failure_raises_settlement_abort(game, monkeypatch, tmp_path):
     with pytest.raises(SettlementAbort) as ei:
         decree_mod._settle_after_narrative(
             state, db, None, None,
-            "减赋诏", "本月邸报……", {"k": "v"}, [], [],
+            "减赋诏", "本月邸报……", {"k": "v", "transit_semantics": []}, [], [],
             before, lambda *a: None,
             content=content, registry=None,
         )
@@ -62,7 +62,7 @@ def test_error_pack_written_with_five_files(game, monkeypatch, tmp_path):
     with pytest.raises(SettlementAbort) as ei:
         decree_mod._settle_after_narrative(
             state, db, None, None,
-            "减赋诏", "本月邸报……", {"k": "v"}, [], [],
+            "减赋诏", "本月邸报……", {"k": "v", "transit_semantics": []}, [], [],
             before, lambda *a: None,
             content=content, registry=None,
         )
@@ -98,7 +98,7 @@ def test_abort_leaves_no_db_settlement_writes(game, monkeypatch, tmp_path):
     with pytest.raises(SettlementAbort):
         decree_mod._settle_after_narrative(
             state, db, None, None,
-            "减赋诏", "本月邸报……", {"k": "v"}, [], [],
+            "减赋诏", "本月邸报……", {"k": "v", "transit_semantics": []}, [], [],
             before, lambda *a: None,
             content=content, registry=None,
         )
@@ -153,7 +153,7 @@ def test_pack_write_failure_does_not_mask_original(game, monkeypatch, tmp_path):
     with pytest.raises(BaseException) as ei:
         decree_mod._settle_after_narrative(
             state, db, None, None,
-            "减赋诏", "本月邸报……", {"k": "v"}, [], [],
+            "减赋诏", "本月邸报……", {"k": "v", "transit_semantics": []}, [], [],
             before, lambda *a: None,
             content=content, registry=None,
         )
@@ -355,7 +355,7 @@ def test_shape_garbage_extractor_product_is_sanitized_and_recorded(game, monkeyp
     turn = state.turn
     report = dm._settle_after_narrative(
         state, db, None, None,
-        "诏", "邸报", {}, [], [],
+        "诏", "邸报", {"transit_semantics": []}, [], [],
         turn, lambda *a: None,
         content=content, registry=None,
     )
