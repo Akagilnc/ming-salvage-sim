@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -96,131 +95,116 @@ def _owner_dist(block, owner: str) -> str:
     )
 
 
-# ── B×G 矩阵：直调 surface，显式 collection 夹具 ──────────────────
+# ── B×G 矩阵：直调 surface，显式 collection 夹具（参数化压缩） ─────
 
 
-def test_arrival_in_transit_to_duty_region(env):
-    """在途本差 → 到差态=在途；距离仍 D3 不参与。"""
+@pytest.mark.parametrize(
+    "case,location,transit_to,region_id,collection,expect_status,expect_dist,multi",
+    [
+        (
+            "in_transit_duty",
+            "beizhili", "shaanxi", "shaanxi",
+            [{"name": "毕自严", "transit_to": "shaanxi", "semantic": "x"}],
+            "在途", ABSENT, False,
+        ),
+        (
+            "in_transit_elsewhere",
+            "beizhili", "henan", "shaanxi",
+            [{"name": "毕自严", "transit_to": "henan", "semantic": "x"}],
+            "在途", ABSENT, False,
+        ),
+        (
+            "not_in_transit_elsewhere",
+            "beizhili", "", "shaanxi",
+            [],
+            "尚未到差", BAND_MID, False,
+        ),
+        (
+            "same_province_arrived",
+            "shaanxi", "", "shaanxi",
+            [],
+            "已到差", BAND_LOCAL, False,
+        ),
+        (
+            "empty_location_omits",
+            "", "", "shaanxi",
+            [],
+            None, ABSENT, False,
+        ),
+        (
+            "empty_region_omits",
+            "beizhili", "", "",
+            [],
+            None, ABSENT, False,
+        ),
+        (
+            "multi_province_independent",
+            "shaanxi", "", "shaanxi",
+            [],
+            "已到差", None, True,
+        ),
+    ],
+    ids=[
+        "in_transit_duty",
+        "in_transit_elsewhere",
+        "not_in_transit_elsewhere",
+        "same_province_arrived",
+        "empty_location_omits",
+        "empty_region_omits",
+        "multi_province_independent",
+    ],
+)
+def test_arrival_matrix_cases(
+    env, case, location, transit_to, region_id, collection,
+    expect_status, expect_dist, multi,
+):
+    """B/G 矩阵：在途/到差/省略/跨省独立——共享 setup，按表断言。"""
     db, state, _ = env
     owner = "毕自严"
-    _set_char(db, owner, location="beizhili", transit_to="shaanxi")
-    _make_executing_dossier(db, state, owner=owner, region_id="shaanxi", tag="t-duty")
-    collection = [{"name": owner, "transit_to": "shaanxi", "semantic": "x"}]
+    _set_char(db, owner, location=location, transit_to=transit_to)
+    _make_executing_dossier(
+        db, state, owner=owner, region_id=region_id, tag=f"m-{case}",
+    )
+    if multi:
+        _make_executing_dossier(
+            db, state, owner=owner, region_id="henan", tag=f"m-{case}-hn",
+        )
 
     surface = build_execution_two_axis_surface(
         db, state.turn, transit_semantics=collection,
     )
-    block = _block(surface, "shaanxi")
-    row = _arrival_by_owner(block)[owner]
-    assert set(row) == {"owner_name", "duty_region_id", "duty_arrival_status"}
-    assert row == {
-        "owner_name": owner,
-        "duty_region_id": "shaanxi",
-        "duty_arrival_status": "在途",
-    }
-    assert _owner_dist(block, owner) == ABSENT
 
+    if multi:
+        sx = _arrival_by_owner(_block(surface, "shaanxi"))[owner]
+        hn = _arrival_by_owner(_block(surface, "henan"))[owner]
+        assert sx["duty_arrival_status"] == "已到差"
+        assert sx["duty_region_id"] == "shaanxi"
+        assert hn["duty_arrival_status"] == "尚未到差"
+        assert hn["duty_region_id"] == "henan"
+        return
 
-def test_arrival_in_transit_elsewhere(env):
-    """在途别处（transit_to ≠ 差务地）仍按 name 命中 → 在途；距离不参与。"""
-    db, state, _ = env
-    owner = "毕自严"
-    _set_char(db, owner, location="beizhili", transit_to="henan")
-    _make_executing_dossier(db, state, owner=owner, region_id="shaanxi", tag="t-else")
-    collection = [{"name": owner, "transit_to": "henan", "semantic": "x"}]
+    block = _block(surface, region_id)
+    arrivals = _arrival_by_owner(block)
+    if expect_status is None:
+        assert owner not in arrivals
+        assert all(r["owner_name"] != owner for r in block.get("arrival_rows") or [])
+    else:
+        row = arrivals[owner]
+        assert set(row) == {"owner_name", "duty_region_id", "duty_arrival_status"}
+        assert row["duty_arrival_status"] == expect_status
+        assert row["duty_region_id"] == region_id
+        if expect_status == "在途" and case == "in_transit_duty":
+            assert row == {
+                "owner_name": owner,
+                "duty_region_id": "shaanxi",
+                "duty_arrival_status": "在途",
+            }
 
-    surface = build_execution_two_axis_surface(
-        db, state.turn, transit_semantics=collection,
-    )
-    block = _block(surface, "shaanxi")
-    assert _arrival_by_owner(block)[owner]["duty_arrival_status"] == "在途"
-    assert _owner_dist(block, owner) == ABSENT
-
-
-def test_arrival_not_in_transit_elsewhere(env):
-    """非在途异地 → 尚未到差 + #654 对应距离档。"""
-    db, state, _ = env
-    owner = "毕自严"
-    _set_char(db, owner, location="beizhili", transit_to="")
-    _make_executing_dossier(db, state, owner=owner, region_id="shaanxi", tag="away")
-
-    surface = build_execution_two_axis_surface(
-        db, state.turn, transit_semantics=[],
-    )
-    block = _block(surface, "shaanxi")
-    assert _arrival_by_owner(block)[owner]["duty_arrival_status"] == "尚未到差"
-    assert _owner_dist(block, owner) == BAND_MID  # beizhili→shaanxi 2.5
-
-
-def test_arrival_same_province_arrived(env):
-    """同地 → 已到差 + BAND_LOCAL；不得与近/中/远并存。"""
-    db, state, _ = env
-    owner = "毕自严"
-    _set_char(db, owner, location="shaanxi", transit_to="")
-    _make_executing_dossier(db, state, owner=owner, region_id="shaanxi", tag="local")
-
-    surface = build_execution_two_axis_surface(
-        db, state.turn, transit_semantics=[],
-    )
-    block = _block(surface, "shaanxi")
-    assert _arrival_by_owner(block)[owner]["duty_arrival_status"] == "已到差"
-    dist = _owner_dist(block, owner)
-    assert dist == BAND_LOCAL
-    assert dist not in {BAND_NEAR, BAND_MID, BAND_FAR}
-
-
-def test_arrival_empty_location_omits_row(env):
-    """location=='' → 无该到差态行（无哨兵）。"""
-    db, state, _ = env
-    owner = "毕自严"
-    _set_char(db, owner, location="", transit_to="")
-    _make_executing_dossier(db, state, owner=owner, region_id="shaanxi", tag="no-loc")
-
-    surface = build_execution_two_axis_surface(
-        db, state.turn, transit_semantics=[],
-    )
-    block = _block(surface, "shaanxi")
-    assert owner not in _arrival_by_owner(block)
-    assert all(r["owner_name"] != owner for r in block.get("arrival_rows") or [])
-    # 距离仍走 #654 D2
-    assert _owner_dist(block, owner) == ABSENT
-
-
-def test_arrival_empty_region_omits_row(env):
-    """region_id==''（非属地）→ 无到差态行；距离 D1 不参与。"""
-    db, state, _ = env
-    owner = "毕自严"
-    _set_char(db, owner, location="beizhili", transit_to="")
-    _make_executing_dossier(db, state, owner=owner, region_id="", tag="no-rid")
-
-    surface = build_execution_two_axis_surface(
-        db, state.turn, transit_semantics=[],
-    )
-    block = _block(surface, "")
-    assert block.get("arrival_rows") == []
-    assert all(
-        o["owner_name"] != owner or o["distance_semantic_band"] == ABSENT
-        for o in block["owners"]
-    )
-
-
-def test_arrival_same_owner_multi_province_independent(env):
-    """同主办跨多省 → 每省独立一行。"""
-    db, state, _ = env
-    owner = "毕自严"
-    _set_char(db, owner, location="shaanxi", transit_to="")
-    _make_executing_dossier(db, state, owner=owner, region_id="shaanxi", tag="p-sx")
-    _make_executing_dossier(db, state, owner=owner, region_id="henan", tag="p-hn")
-
-    surface = build_execution_two_axis_surface(
-        db, state.turn, transit_semantics=[],
-    )
-    sx = _arrival_by_owner(_block(surface, "shaanxi"))[owner]
-    hn = _arrival_by_owner(_block(surface, "henan"))[owner]
-    assert sx["duty_arrival_status"] == "已到差"
-    assert sx["duty_region_id"] == "shaanxi"
-    assert hn["duty_arrival_status"] == "尚未到差"
-    assert hn["duty_region_id"] == "henan"
+    if expect_dist is not None:
+        dist = _owner_dist(block, owner)
+        assert dist == expect_dist
+        if expect_dist == BAND_LOCAL:
+            assert dist not in {BAND_NEAR, BAND_MID, BAND_FAR}
 
 
 def test_surface_requires_transit_semantics_kwarg(env):
@@ -306,12 +290,14 @@ def test_tsv_header_exactly_20_cols_and_arrival_rows(env):
     assert kinds == ["灾情", "省盘", "主办", "到差态"]
 
 
-# ── F′ 真 phase1→phase2 装配（禁假绿）────────────────────────────
+# ── F′ 真 phase1→phase2 装配（经 _settle_after_narrative）──────────
 
 
-def test_phase1_phase2_same_transit_semantics_object_and_single_projector(env):
-    """真 payload → context：projector 恰一次；入参 is 同一对象；在途可按 name 关联。"""
-    db, state, _ = env
+def test_phase1_phase2_same_transit_semantics_object_and_single_projector(env, monkeypatch):
+    """真 payload → 真实 settle → 真 context：is 同一对象；projector 恰一次；在途可关联。"""
+    import ming_sim.decree as decree_mod
+
+    db, state, content = env
     owner = "毕自严"
     # 真实在途账，让 phase1 projector 产出非空 collection
     db.set_character_transit(
@@ -332,13 +318,31 @@ def test_phase1_phase2_same_transit_semantics_object_and_single_projector(env):
         call_count["n"] += 1
         return real_project(db_, state_, matrix)
 
+    # 贵 LLM 全 stub；禁止 stub build_extractor_shared_context 本体为假实现
+    monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
+    monkeypatch.setattr(
+        decree_mod, "create_score_extractor_module_agent", lambda *a, **k: object(),
+    )
+    monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
+    monkeypatch.setattr(decree_mod, "record_chapter_memory", lambda *a, **k: None)
+    monkeypatch.setattr(decree_mod, "create_ending_summary_agent", lambda *a, **k: None)
+    monkeypatch.setattr(decree_mod, "create_rescript_draft_agent", lambda *a, **k: object())
+    monkeypatch.setattr(
+        decree_mod, "extract_scores_by_modules_with_agno",
+        lambda *a, **k: ({}, "extractor-out", "extractor-in"),
+    )
+
+    real_build_ctx = decree_mod.build_extractor_shared_context
     captured: dict = {}
 
-    def _capture_surface(db_, turn=0, *, transit_semantics):
-        captured["transit_semantics"] = transit_semantics
-        return build_execution_two_axis_surface(
-            db_, turn, transit_semantics=transit_semantics,
-        )
+    def _wrap_ctx(*args, **kwargs):
+        ctx = real_build_ctx(*args, **kwargs)
+        if kwargs.get("module") == "issues":
+            captured["transit_semantics"] = kwargs.get("transit_semantics")
+            captured["ctx"] = ctx
+        return ctx
+
+    monkeypatch.setattr(decree_mod, "build_extractor_shared_context", _wrap_ctx)
 
     with patch(
         "ming_sim.simulation.project_transit_semantics", side_effect=_spy,
@@ -351,71 +355,28 @@ def test_phase1_phase2_same_transit_semantics_object_and_single_projector(env):
         assert isinstance(C, list)
         assert any(r.get("name") == owner for r in C)
 
-        with patch(
-            "ming_sim.execution_pressure.build_execution_two_axis_surface",
-            side_effect=_capture_surface,
-        ):
-            # 模拟 phase2：把 payload 内既成对象原样下传
-            ctx = build_extractor_shared_context(
-                db, state, narrative="n", decree_text="d",
-                module="issues",
-                transit_semantics=payload["transit_semantics"],
-            )
+        # 真实 phase2 装配缝（非孤立直调 context）
+        decree_mod._settle_after_narrative(
+            state, db, None, None,
+            decree_text="d", narrative="n",
+            simulator_payload=payload,
+            relevant_memories=[], secret_orders={},
+            before_turn=state.turn, _emit=lambda *a: None, content=content,
+        )
 
+    assert "ctx" in captured, "issues 模块未调用真实 build_extractor_shared_context"
     # 装配缝收到同一 list 对象
     assert captured["transit_semantics"] is payload["transit_semantics"]
     assert captured["transit_semantics"] is C
-    # projector 全链仍恰一次（context 不得再投影）
+    # projector 全链仍恰一次（context / settle 不得再投影）
     assert call_count["n"] == 1
 
-    surface = ctx["execution_two_axis"]
+    surface = captured["ctx"]["execution_two_axis"]
     block = _block(surface, "shaanxi")
     arr = _arrival_by_owner(block)[owner]
     assert arr["duty_arrival_status"] == "在途"
     # 到差「在途」行的 owner_name 可在同一 collection 按 name 关联
     assert any(r.get("name") == arr["owner_name"] for r in C)
-
-
-def test_poison_projector_isolated_old_path_not_accepted(env):
-    """禁止：poison projector 后孤立旧 builder 未传同对象仍绿。"""
-    db, state, _ = env
-    owner = "毕自严"
-    db.set_character_transit(
-        owner,
-        location="beizhili",
-        transit_to="shaanxi",
-        distance_remaining=2.0,
-        speed_factor=1.0,
-        start_turn=max(1, int(state.turn) - 1),
-        commit=True,
-    )
-    _make_executing_dossier(db, state, owner=owner, region_id="shaanxi", tag="poison")
-
-    payload = build_simulator_payload(
-        state, db, decree_text="d", previous_narrative="n",
-    )
-    C = payload["transit_semantics"]
-    assert any(r.get("name") == owner for r in C)
-
-    def _poison(*_a, **_k):
-        raise AssertionError("second project_transit_semantics call forbidden")
-
-    with patch(
-        "ming_sim.simulation.project_transit_semantics", side_effect=_poison,
-    ):
-        # 正确路径：传同一对象，不触发 projector
-        ctx = build_extractor_shared_context(
-            db, state, narrative="n", decree_text="d",
-            module="issues",
-            transit_semantics=C,
-        )
-    assert _arrival_by_owner(
-        _block(ctx["execution_two_axis"], "shaanxi"),
-    )[owner]["duty_arrival_status"] == "在途"
-
-    # 错误路径：不传 collection 且 surface 缺参 → 必须失败（不得静默绿）
-    with pytest.raises(TypeError):
-        build_execution_two_axis_surface(db, state.turn)
 
 
 # ── 门控回归 / H 删旧 ─────────────────────────────────────────────
