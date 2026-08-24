@@ -49,6 +49,8 @@ def _resolve_order_param(p: Dict[str, Any], key: str, default: tuple) -> tuple:
         return default
     if isinstance(raw, str) or not isinstance(raw, (list, tuple)):
         raise ValueError(f"param {key} 非 list/tuple")
+    if any(not isinstance(item, str) for item in raw):
+        raise ValueError(f"param {key} 须为 {default} 的完整无重复排列：{raw!r}")
     if len(raw) != len(default) or set(raw) != set(default) or len(set(raw)) != len(raw):
         raise ValueError(f"param {key} 须为 {default} 的完整无重复排列：{raw!r}")
     return tuple(raw)
@@ -114,6 +116,8 @@ def _oracle_order(p: Dict[str, Any], key: str, default: tuple) -> tuple:
         return tuple(default)
     if isinstance(raw, str) or not isinstance(raw, (list, tuple)):
         raise ValueError(f"param {key} 非 list/tuple")
+    if any(not isinstance(item, str) for item in raw):
+        raise ValueError(f"param {key} 须为 {default} 的完整无重复排列：{raw!r}")
     items = tuple(raw)
     if len(items) != len(default) or set(items) != set(default) or len(set(items)) != len(items):
         raise ValueError(f"param {key} 须为 {default} 的完整无重复排列：{raw!r}")

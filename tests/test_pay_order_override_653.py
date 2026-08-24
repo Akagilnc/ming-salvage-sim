@@ -513,12 +513,17 @@ def _opening_settle(db, region_id):
     ["军饷", "官俸", "宗禄", "赈济", "军饷"],
     ["军饷", "官俸", "官俸", "赈济"],
     "军饷,官俸,宗禄,赈济",
+    [["军饷"], "官俸", "宗禄", "赈济"],  # unhashable 元素不得泄漏 TypeError
 ])
 def test_due_order_bad_shapes_raise(bad):
     st, p = _board()
     p["due_order"] = bad
     with pytest.raises(ValueError):
         settle_tick(st, p, [])
+    # oracle 路径对称：同样锁在 ValueError 域
+    from ming_sim.fiscal_tick import _DUE_KEYS, _oracle_order
+    with pytest.raises(ValueError):
+        _oracle_order({"due_order": bad}, "due_order", _DUE_KEYS)
 
 
 def test_haircut_param_bad_values_raise():
