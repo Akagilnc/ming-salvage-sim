@@ -2468,9 +2468,18 @@ class WebGame:
                         args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
                         payload_json = json.dumps(args, ensure_ascii=False)
                     registered, summon_after = self.session._apply_unlisted_person_registration(payload_json)
+                    # #670 / ADR 0038+0096：补档已落 DB 后须走共享 admission；仅 allowed 换人。
                     if registered and summon_after:
-                        court_action = "summon"
-                        next_minister = registered
+                        target = self.session.content.characters.get(registered)
+                        if target is not None:
+                            decision = self.session.consume_audience_admission(
+                                target,
+                                origin_id=f"web:tool:{int(chat_turn_id or 0)}:{target.name}",
+                                origin_chat_turn_id=int(chat_turn_id or 0),
+                            )
+                            if decision.allowed:
+                                court_action = "summon"
+                                next_minister = target.name
                 elif tool_name == "summon_minister" or res.startswith("__summon__"):
                     target_name = res.removeprefix("__summon__").strip()
                     if not target_name:
