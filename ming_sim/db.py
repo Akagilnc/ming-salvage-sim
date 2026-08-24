@@ -111,6 +111,35 @@ def mutiny_loyalty_cap(mutiny_count: int, redemption_count: int = 0) -> int:
     return max(60, min(100, 100 - 20 * int(mutiny_count) + 10 * int(redemption_count)))
 
 
+def latched_army_field_effect_permitted(
+    field: str,
+    raw_value: object,
+    *,
+    effect_delta: int | None = None,
+) -> bool:
+    """#319 ADR 0025 D4①：latched 军字段-效果白名单（写缝与战略 preflight 共用）。
+
+    - manpower：仅 raw 严格负
+    - loyalty：raw 严格正，且若已算 post-modifier effect 则 effect 也须严格正
+    - 其余字段：一律不准
+    """
+    if field == "manpower":
+        try:
+            return int(raw_value) < 0
+        except (TypeError, ValueError):
+            return False
+    if field == "loyalty":
+        try:
+            if int(raw_value) <= 0:
+                return False
+        except (TypeError, ValueError):
+            return False
+        if effect_delta is None:
+            return True
+        return int(effect_delta) > 0
+    return False
+
+
 # #320 / ADR 0025 D2：extractor loyalty 软调单事件 |Δ| 上限（全路径、无豁免）。
 LOYALTY_SOFT_ADJUST_MAX = 15
 
@@ -4532,6 +4561,11 @@ class GameDB:
                 ))
                 return
 
+        # #319 ADR 0025 D4①：先拒脏输入（fail-loud / invalid_enum），校验通过后
+        # 再对 latched 军非 owner 饷源字段静默 no-op。写缝在主环 latch 门之前、
+        # 且主环对 _ARMY_PAY_SOURCE_DELTA_FIELDS 直接 continue，故既有字段效果门
+        # 看不到本缝；在此复用同一 latch 语义，不新开平行门/第二 adapter。
+        # 真 owner 变更已由上方 return。禁止把 latch return 前移到校验之前。
         old_source = str(row["pay_source_region"] or "")
         owner_power = str(row["owner_power"] or "").strip()
         pay_source_region = str(normalized.get("pay_source_region", row["pay_source_region"]) or "").strip()
@@ -4580,6 +4614,10 @@ class GameDB:
                 "reason": f"army_delta 饷源字段非法：{exc}",
                 "item": {"army_id": army_id, "changes": raw_changes},
             })
+            return
+
+        # 合法且被 deny 的饷源字段：静默 no-op，不写库、不留 rejected
+        if bool(row["is_mutinied"]):
             return
 
         old_values = {
@@ -7626,6 +7664,12 @@ class GameDB:
                 ).fetchone()
                 if current_row is not None:
                     row = current_row
+                # #319 ADR 0025 D4①：latched 军字段-效果 deny-by-default。
+                # 白名单：manpower 严格负增量、loyalty 正 raw（post-mod 方向见 score 分支）；
+                # 其余已归一可写字段静默 no-op。owner_power 已由上方 adapter 处理，不重入本门。
+                # 门在类型/合法字段校验之后，避免把 invalid_enum 伪装成 mutiny no-op。
+                if bool(row["is_mutinied"]) and not latched_army_field_effect_permitted(field, value):
+                    continue
                 old_value = row[field]
                 if field == "arrears":
                     if self.is_army_pay_source_cutover_enabled():
@@ -7744,6 +7788,16 @@ class GameDB:
                         )
                         net_pct = int(((self.legacy_modifiers(state).get("armies") or {})
                                        .get(army_id) or {}).get(field, 0) or 0)
+                        # #319：latched loyalty 以 post-modifier 实际方向为准（与 soft-adjust
+                        # 同序先套 legacy pct）；legacy 翻负 / 净合计非正则静默 no-op。
+                        effect_delta = int(net_delta)
+                        if net_pct:
+                            effect_delta = self.apply_legacy_pct(effect_delta, net_pct)
+                        if bool(row["is_mutinied"]) and not latched_army_field_effect_permitted(
+                            field, net_delta, effect_delta=effect_delta
+                        ):
+                            continue
+                        # #320：±15 alias fold 与动态 cap 同一写缝
                         new_value, actual_delta = compute_loyalty_soft_adjust(
                             int(old_value),
                             net_delta,
@@ -7762,6 +7816,8 @@ class GameDB:
                                        .get(army_id) or {}).get(field, 0) or 0)
                         if net_pct:
                             delta = self.apply_legacy_pct(delta, net_pct)
+                        # #319：latched 非 loyalty score 字段已由环前 deny-by-default 门裁掉；
+                        # 此处仅非 latched / 已放行路径的普通 0-100 clamp。
                         new_value = max(0, min(100, int(old_value) + delta))
                         actual_delta = new_value - int(old_value)
                         if actual_delta == 0:

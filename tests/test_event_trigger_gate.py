@@ -1048,6 +1048,52 @@ def test_strategic_event_result_delta_is_all_or_nothing_on_rejected_item(game):
     assert any(item.get("rejected") for item in out["army_changes"])
 
 
+def test_strategic_event_latched_army_deny_rejects_whole_envelope(game):
+    """#319 P1：latched 军 morale 将被写缝静默 no-op 时，战略预检须拒整封（含兄弟地区战果）。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 11
+    db.conn.execute("UPDATE regions SET military_pressure = ? WHERE id = ?", (20, "beizhili"))
+    db.conn.execute(
+        "UPDATE armies SET morale = ?, is_mutinied = 1 WHERE id = ?",
+        (50, "jingying"),
+    )
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
+            "事件结局": {"jisi_lubian": "入塞被遏"},
+            "region_delta": {
+                "beizhili": {
+                    "origin_ref": "盘面自发",
+                    "military_pressure": 35,
+                    "reason": "己巳之变软判敌逼京畿",
+                }
+            },
+            "army_delta": {
+                "jingying": {
+                    "origin_ref": "盘面自发",
+                    "morale": -8,
+                    "reason": "己巳之变勤王战损",
+                }
+            },
+        },
+        content=content,
+    )
+
+    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
+    assert not db.has_event_triggered("jisi_lubian")
+    assert db.conn.execute(
+        "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)
+    ).fetchone()["military_pressure"] == 20
+    assert db.conn.execute(
+        "SELECT morale, is_mutinied FROM armies WHERE id = ?", ("jingying",)
+    ).fetchone()["morale"] == 50
+
+
 def test_strategic_event_missing_origin_rejects_whole_result_envelope(game):
     """ADR0014/#558：来源拒收也必须在战略战果预检中令整个信封原子失败。"""
     db, state, content = game
