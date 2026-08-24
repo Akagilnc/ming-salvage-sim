@@ -1636,19 +1636,30 @@ def list_unsettled_summons(db: Any) -> List[Dict[str, Any]]:
 
 
 def list_arrived_unsettled_summons(db: Any) -> List[Dict[str, Any]]:
-    """Project in-transit summons whose original journey has now completed."""
+    """Project in-transit summons whose original non-capital journey has completed.
+
+    在京抵达保持未结候见，不进续程 payload；inactive 由 retire 结清，不投续程。
+    """
+    from ming_sim.matching import is_capital_location
+
     arrived: List[Dict[str, Any]] = []
     for item in list_unsettled_summons(db):
         if item["kind"] != "in_transit":
             continue
         row = db.conn.execute(
-            "SELECT location, transit_to FROM characters WHERE name=?",
+            "SELECT location, transit_to, status FROM characters WHERE name=?",
             (item["person_name"],),
         ).fetchone()
         if row is None or str(row["transit_to"] or "").strip():
             continue
+        status = str(row["status"] or "active").strip() or "active"
+        if status != "active":
+            continue
         destination = str(row["location"] or "").strip()
         if not destination:
+            continue
+        # 已在京师 → 候见，不制造同地续程。
+        if is_capital_location(destination):
             continue
         arrived.append({
             "person_name": item["person_name"],
@@ -1660,34 +1671,32 @@ def list_arrived_unsettled_summons(db: Any) -> List[Dict[str, Any]]:
     return arrived
 
 
-def settle_applied_arrived_summons(
-    db: Any, applied: Dict[str, Any],
-) -> List[str]:
-    """结清已由 canonical applier 成功续启赴京的在途召旨。"""
-    accepted = {
-        str(item.get("name") or item.get("人物") or "").strip()
-        for item in (applied.get("applied_person_changes") or [])
-        if isinstance(item, dict)
-        and not item.get("rejected")
-        and str(item.get("transit_to") or item.get("去向") or "").strip() == "beizhili"
-    }
-    if not accepted:
-        return []
-    settled: List[str] = []
-    for item in list_unsettled_summons(db):
-        # Only the monthly judge receives in-transit origins; a successful canonical
-        # continuation has already changed transit_to, so the post-apply projection
-        # can no longer classify it as arrived.
-        if item["kind"] != "in_transit" or item["person_name"] not in accepted:
+def _mark_summon_entries_in_transit(db: Any, items: Sequence[Dict[str, Any]]) -> None:
+    """启程成功后把未结 fresh 账标为在途；保留 TAG_SUMMON_UNSETTLED 与 origin。"""
+    for item in items:
+        entry_id = int(item["entry_id"])
+        row = db.conn.execute(
+            "SELECT tags FROM story_ledger_entries WHERE id=?", (entry_id,)
+        ).fetchone()
+        if row is None:
             continue
-        origin = str(item["origin_id"])
-        if settle_summon_origin(db, origin):
-            settled.append(origin)
-    return settled
+        tags = json.loads(row["tags"] or "[]")
+        if TAG_IN_TRANSIT in tags:
+            continue
+        tags.append(TAG_IN_TRANSIT)
+        db.conn.execute(
+            "UPDATE story_ledger_entries SET tags=? WHERE id=?",
+            (json.dumps(tags, ensure_ascii=False), entry_id),
+        )
+    if _should_commit(db):
+        db.conn.commit()
 
 
 def settle_summon_origin(db: Any, origin_id: object) -> bool:
-    """成功写入续程后按 origin 结清；重复结清为幂等 no-op。"""
+    """按 origin 结清未结传召；重复结清为幂等 no-op。
+
+    结清点仅两处：宣入/在京 admission 消费；人物非 active 退役。
+    """
     origin = str(origin_id or "").strip()
     matches = [item for item in list_unsettled_summons(db) if item["origin_id"] == origin]
     if not matches:
@@ -1708,6 +1717,38 @@ def settle_summon_origin(db: Any, origin_id: object) -> bool:
     return True
 
 
+def retire_unsettled_summons_for_inactive(db: Any) -> List[str]:
+    """人物已非 active 时确定性结清其全部未结传召（ADR 0096 / ADR 0009）。"""
+    settled: List[str] = []
+    for item in list(list_unsettled_summons(db)):
+        row = db.conn.execute(
+            "SELECT status FROM characters WHERE name=?",
+            (item["person_name"],),
+        ).fetchone()
+        status = str(row["status"] or "active").strip() or "active" if row is not None else "active"
+        if status == "active":
+            continue
+        origin = str(item["origin_id"])
+        if settle_summon_origin(db, origin):
+            settled.append(origin)
+    return settled
+
+
+def settle_unsettled_summons_for_person(db: Any, person_name: str) -> List[str]:
+    """宣入/在京 admission：结清该人全部未结传召 origin。"""
+    name = str(person_name or "").strip()
+    if not name:
+        return []
+    settled: List[str] = []
+    for item in list(list_unsettled_summons(db)):
+        if item["person_name"] != name:
+            continue
+        origin = str(item["origin_id"])
+        if settle_summon_origin(db, origin):
+            settled.append(origin)
+    return settled
+
+
 def record_summon_fresh(
     db: Any,
     night_id: int,
@@ -1716,8 +1757,12 @@ def record_summon_fresh(
     method: str = METHOD_CHUANZHAO,
     body: str = "",
     origin_id: object = "",
+    origin_chat_turn_id: int = 0,
 ) -> int:
-    """落 fresh 场外传召账；同一人物任意未结 fresh 只保留一段（通道 origin 仅审计标签）。"""
+    """落 fresh 场外传召账；同一人物任意未结 fresh 只保留一段（通道 origin 仅审计标签）。
+
+    默认 body 为空：机器事实只在 tags；玩家可见句由既有 LLM 特征路径生成（P7）。
+    """
     name = str(person_name or "").strip()
     if not name:
         raise AudienceNightError("传召人名不能为空", code="empty_person")
@@ -1734,8 +1779,9 @@ def record_summon_fresh(
         db, night_id,
         person_names=[name],
         audibility=AUDIBILITY_PUBLIC,
-        body=body or f"传召{name}赴京候见。",
+        body=str(body or ""),
         tags=tags,
+        origin_chat_turn_id=int(origin_chat_turn_id or 0),
     )
 
 
@@ -1747,7 +1793,7 @@ def commit_fresh_summons_for_night(
     content: Any = None,
     registry: Any = None,
 ) -> List[str]:
-    """收夜按人一次 canonical 启程，并结清该人全部未结 fresh origin。"""
+    """收夜按人一次 canonical 启程；成功后标在途，origin 保持未结候见关联。"""
     pending = [
         item for item in list_unsettled_summons(db)
         if item["kind"] == "fresh" and int(item["night_id"]) == int(night_id)
@@ -1757,7 +1803,7 @@ def commit_fresh_summons_for_night(
     from ming_sim.decree import atomic_and_reload
     from ming_sim.issues import apply_score_extraction
 
-    # 历史多 origin 未结账：按人分组，apply 一次后结清该人全部 origin（兼容重试）。
+    # 历史多 origin 未结账：按人分组，apply 一次后全部标在途（兼容重试）。
     by_person: Dict[str, List[Dict[str, Any]]] = {}
     for item in pending:
         by_person.setdefault(str(item["person_name"]), []).append(item)
@@ -1789,13 +1835,9 @@ def commit_fresh_summons_for_night(
                         "results": results,
                     },
                 )
+            _mark_summon_entries_in_transit(db, items)
             for item in items:
-                origin = str(item["origin_id"])
-                if not settle_summon_origin(db, origin):
-                    raise AudienceNightError(
-                        f"传召源账未结：{origin}", code="summon_settle_failed",
-                    )
-                origins.append(origin)
+                origins.append(str(item["origin_id"]))
     return origins
 
 
@@ -1807,8 +1849,12 @@ def record_summon_in_transit(
     method: str = METHOD_CHUANZHAO,
     body: str = "",
     origin_id: object = "",
+    origin_chat_turn_id: int = 0,
 ) -> int:
-    """落传召在途账；带 origin 时，同一人物同一未结 origin 幂等。"""
+    """落传召在途账；带 origin 时，同一人物同一未结 origin 幂等。
+
+    默认 body 为空：机器事实只在 tags（P7）。
+    """
     name = str(person_name or "").strip()
     if not name:
         raise AudienceNightError("传召人名不能为空", code="empty_person")
@@ -1825,8 +1871,9 @@ def record_summon_in_transit(
         db, night_id,
         person_names=[name],
         audibility=AUDIBILITY_PUBLIC,
-        body=body or f"传召{name}，在途未至。",
+        body=str(body or ""),
         tags=tags,
+        origin_chat_turn_id=int(origin_chat_turn_id or 0),
     )
 
 

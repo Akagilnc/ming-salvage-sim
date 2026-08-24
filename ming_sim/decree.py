@@ -2328,10 +2328,9 @@ def _settle_after_extract_body(
         applied = delta_applier(db, state, extracted, content, registry)
     else:
         applied = apply_score_extraction(db, state, extracted, content=content, registry=registry)
-    # #670：判官所产续程只有在 canonical applier 已成功后才按故事账 origin 结清；
-    # 本函数外层 atomic 使行止与结清同成同败，恢复重放亦只读 durable 投影。
-    from ming_sim.audience_night import settle_applied_arrived_summons
-    applied["settled_summon_origins"] = settle_applied_arrived_summons(db, applied)
+    # #670：续程成功不结清 origin（候见关联保持到宣入）；月结只退役非 active 未结传召。
+    from ming_sim.audience_night import retire_unsettled_summons_for_inactive
+    applied["retired_summon_origins"] = retire_unsettled_summons_for_inactive(db)
     applied.setdefault("population_transfers", []).extend(levy_applied)
     applied.setdefault("population_transfers_rejections", []).extend(levy_rejected)
     # #1504：当月 covert 实况进度与 apply 同一 atomic（0073 实况轨；不读奏报）。

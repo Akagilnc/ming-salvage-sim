@@ -15,21 +15,73 @@ def compact_name(value: str) -> str:
     return re.sub(r"[\s/／、，。,.：:；;（）()《》<>-]+", "", value)
 
 
+# 单一真源：region_aliases / 旧档 location 归一 / 在京判断共用，禁止他处再抄一份。
+REGION_SPECIAL_ALIASES: Dict[str, Tuple[str, ...]] = {
+    "beizhili": ("北直隶", "京师", "北京", "beijing", "顺天", "直隶"),
+    "nanzhili": ("南直隶", "南京", "江南", "应天", "南都"),
+    "shaanxi": ("陕西", "陕地", "西安"),
+    "huguang": ("湖广", "荆楚"),
+    "fujian": ("福建", "闽地"),
+    "guangdong": ("广东", "粤地"),
+    "guangxi": ("广西", "桂地"),
+}
+
+
+def resolve_special_region_alias(token: str) -> Optional[str]:
+    """Exact id or special-alias token → region_id；未知返回 None（不模糊匹配）。"""
+    raw = str(token or "").strip()
+    if not raw:
+        return None
+    if raw in REGION_SPECIAL_ALIASES:
+        return raw
+    key = compact_name(raw)
+    if not key:
+        return None
+    if key in REGION_SPECIAL_ALIASES:
+        return key
+    for region_id, aliases in REGION_SPECIAL_ALIASES.items():
+        if key == compact_name(region_id):
+            return region_id
+        for alias in aliases:
+            if key == compact_name(alias):
+                return region_id
+    return None
+
+
+def canonicalize_location_region_id(location: str) -> str:
+    """人物 location 归一：空串保持空；特殊别名写回 region_id；其余原样。"""
+    raw = str(location or "").strip()
+    if not raw:
+        return ""
+    resolved = resolve_special_region_alias(raw)
+    return resolved if resolved is not None else raw
+
+
+def is_capital_location(location: str) -> bool:
+    """明确在京（beizhili 或其别名）。空 location 不算在京——fail-open 仅 admission 自决。"""
+    return canonicalize_location_region_id(location) == "beizhili"
+
+
+def location_alias_rewrites() -> List[Tuple[str, str]]:
+    """(alias_token, region_id) 对，供旧档 location 一次写回；不含 id 自身。"""
+    out: List[Tuple[str, str]] = []
+    seen: set[str] = set()
+    for region_id, aliases in REGION_SPECIAL_ALIASES.items():
+        for alias in aliases:
+            token = str(alias).strip()
+            if not token or token == region_id or token in seen:
+                continue
+            seen.add(token)
+            out.append((token, region_id))
+    return out
+
+
 def region_aliases(region: Region) -> List[str]:
     aliases = [region.id, region.name, compact_name(region.name)]
     for part in re.split(r"\s*/\s*|\s*／\s*", region.name):
         if part.strip():
             aliases.append(part.strip())
-    special = {
-        "beizhili": ["北直隶", "京师", "北京", "顺天", "直隶"],
-        "nanzhili": ["南直隶", "南京", "江南", "应天", "南都"],
-        "shaanxi": ["陕西", "陕地", "西安"],
-        "huguang": ["湖广", "荆楚"],
-        "fujian": ["福建", "闽地"],
-        "guangdong": ["广东", "粤地"],
-        "guangxi": ["广西", "桂地"],
-    }
-    aliases.extend(special.get(region.id, []))
+    aliases.extend(REGION_SPECIAL_ALIASES.get(region.id, ()))
     unique: List[str] = []
     seen: set = set()
     for alias in aliases:
