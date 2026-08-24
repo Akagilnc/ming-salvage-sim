@@ -329,7 +329,8 @@ def test_recovery_entry_resimulates_legacy_commitment_without_origin(game, monke
                 "title": "旧档承诺", "commitment_kind": "until_stop",
                 "stop_condition": {"type": "manual"},
             }],
-        }, decree_text="旧诏", narrative="旧叙事", simulator_payload={},
+        }, decree_text="旧诏", narrative="旧叙事",
+        simulator_payload={"transit_semantics": []},
         secret_orders=[], relevant_memories=[],
     )
     # Simulate a ready row written before the current replay contract existed.
@@ -344,7 +345,7 @@ def test_recovery_entry_resimulates_legacy_commitment_without_origin(game, monke
     monkeypatch.setattr(dm, "create_json_sanitizer_agent", lambda *a, **k: None)
     monkeypatch.setattr(dm, "create_score_extractor_module_agent", lambda *a, **k: None)
     monkeypatch.setattr(dm, "build_extractor_shared_context", lambda *a, **k: "ctx")
-    monkeypatch.setattr(dm, "simulate_season_with_payload", lambda *a, **k: ("重推演", {}))
+    monkeypatch.setattr(dm, "simulate_season_with_payload", lambda *a, **k: ("重推演", {"transit_semantics": []}))
     monkeypatch.setattr(dm, "extract_scores_by_modules_with_agno", lambda *a, **k: ({}, "o", "i"))
 
     result = _recovery_session(db, state, content, monkeypatch).resolve_turn()
@@ -570,7 +571,7 @@ def test_poison_replay_clears_context_for_resimulation(game, monkeypatch, tmp_pa
     monkeypatch.setattr(dm, "create_score_extractor_module_agent", lambda *a, **k: None)
     monkeypatch.setattr(dm, "build_extractor_shared_context", lambda *a, **k: "ctx")
     monkeypatch.setattr(dm, "simulate_season_with_payload",
-                        lambda *a, **k: ("重新推演邸报。", {}))
+                        lambda *a, **k: ("重新推演邸报。", {"transit_semantics": []}))
     monkeypatch.setattr(dm, "extract_scores_by_modules_with_agno",
                         lambda *a, **k: ({"metric_delta": {"民心": -1}}, "o", "i"))
     sess2 = _recovery_session(db, state, content, monkeypatch)
@@ -1045,7 +1046,8 @@ def test_hitl_poison_replay_downgrades_context_then_reextracts(game, monkeypatch
     dm.persist_resolve_context(
         db, turn, {"metric_delta": {"民心": -3}},
         decree_text="HITL诏", narrative="裁断后邸报",
-        simulator_payload={"k": "v"}, secret_orders=[], relevant_memories=[],
+        simulator_payload={"k": "v", "transit_semantics": []},
+        secret_orders=[], relevant_memories=[],
     )
     db.save_pending_decisions(turn, [{
         "title": "辽东战和", "context": "c",
@@ -1137,7 +1139,8 @@ def test_hitl_reextract_branch_commits_pending(game, monkeypatch, tmp_path):
     turn = state.turn
     dm.pre_settle(state, db, content=content)
     # 非 ready context（如降级后）+ awaiting：重试走重抽分支
-    db.save_resolve_context(turn, "HITL诏", "裁断后邸报", {},
+    db.save_resolve_context(turn, "HITL诏", "裁断后邸报",
+                            {"transit_semantics": []},
                             secret_orders=[], relevant_memories=[])
     db.save_pending_decisions(turn, [{
         "title": "辽东战和", "context": "c",
@@ -1230,7 +1233,7 @@ def test_resim_path_does_not_preconsume_pending(game, monkeypatch, tmp_path):
     monkeypatch.setattr(dm, "create_score_extractor_module_agent", lambda *a, **k: None)
     monkeypatch.setattr(dm, "build_extractor_shared_context", lambda *a, **k: "ctx")
     monkeypatch.setattr(dm, "simulate_season_with_payload",
-                        lambda *a, **k: ("重新推演邸报。", {}))
+                        lambda *a, **k: ("重新推演邸报。", {"transit_semantics": []}))
 
     def _extract_boom(*a, **k):
         raise RuntimeError("extractor crash on resim")
@@ -1473,7 +1476,7 @@ def test_noready_recovery_uses_persisted_decree(game, monkeypatch):
     monkeypatch.setattr(dm, "create_score_extractor_module_agent", lambda *a, **k: None)
     monkeypatch.setattr(dm, "build_extractor_shared_context", lambda *a, **k: "ctx")
     monkeypatch.setattr(dm, "simulate_season_with_payload",
-                        lambda *a, **k: ("恢复推演邸报。", {}))
+                        lambda *a, **k: ("恢复推演邸报。", {"transit_semantics": []}))
     monkeypatch.setattr(dm, "extract_scores_by_modules_with_agno",
                         lambda *a, **k: ({"metric_delta": {"民心": -1}}, "o", "i"))
 

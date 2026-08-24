@@ -492,7 +492,9 @@ def test_two_axis_owner_load_and_province_count(env):
         )
         _promote_executing(db, did, "shaanxi")
 
-    surface = build_execution_two_axis_surface(db, state.turn)
+    surface = build_execution_two_axis_surface(
+        db, state.turn, transit_semantics=[],
+    )
     shaanxi = next(p for p in surface["provinces"] if p["region_id"] == "shaanxi")
     assert shaanxi["province_open_count"] == 10
     owners = {o["owner_name"]: o for o in shaanxi["owners"]}
@@ -549,7 +551,9 @@ def test_two_axis_disaster_pinned_top_order(env):
         ],
     )
     _promote_executing(db, did, "shaanxi")
-    surface = build_execution_two_axis_surface(db, state.turn)
+    surface = build_execution_two_axis_surface(
+        db, state.turn, transit_semantics=[],
+    )
     shaanxi = next(p for p in surface["provinces"] if p["region_id"] == "shaanxi")
     titles = [d["title"] for d in shaanxi["disaster_rows"]]
     assert titles == ["重灾", "轻灾"]
@@ -573,18 +577,19 @@ def test_two_axis_only_in_issues_extractor_not_simulator(env):
     )
     _promote_executing(db, did, "shaanxi")
 
+    sim = build_simulator_payload(state, db, decree_text="d", previous_narrative="n")
     issues_ctx = build_extractor_shared_context(
         db, state, narrative="n", decree_text="d", module="issues",
+        transit_semantics=sim["transit_semantics"],
     )
     assert "execution_two_axis" in issues_ctx
     assert "owner_ability" in json.dumps(issues_ctx["execution_two_axis"], ensure_ascii=False)
 
     other = build_extractor_shared_context(
         db, state, narrative="n", decree_text="d", module="internal",
+        transit_semantics=sim["transit_semantics"],
     )
     assert "execution_two_axis" not in other
-
-    sim = build_simulator_payload(state, db, decree_text="d", previous_narrative="n")
     assert "execution_two_axis" not in sim
     # 裸 ability 不得进 simulator
     dumped = json.dumps(sim, ensure_ascii=False)
@@ -978,7 +983,9 @@ def test_national_vs_per_province_two_axis_equivalence(env):
                     (int(row["id"]),),
                 )
         db.conn.commit()
-        surface = build_execution_two_axis_surface(db, state.turn)
+        surface = build_execution_two_axis_surface(
+            db, state.turn, transit_semantics=[],
+        )
         out = {}
         for block in surface["provinces"]:
             rid = block["region_id"]
@@ -1204,7 +1211,9 @@ def test_two_axis_tsv_province_block_golden(env):
     )
     _promote_executing(db, did2, "shaanxi")
 
-    surface = build_execution_two_axis_surface(db, state.turn)
+    surface = build_execution_two_axis_surface(
+        db, state.turn, transit_semantics=[],
+    )
     tsv = surface["tsv"]
     assert "gentry_slice" in tsv or "士绅盘" in tsv
     assert "officials_slice" in tsv or "官僚盘" in tsv
@@ -1218,8 +1227,8 @@ def test_two_axis_tsv_province_block_golden(env):
     assert kinds.index("灾情") < kinds.index("省盘")
     first_owner = next(i for i, k in enumerate(kinds) if k == "主办")
     assert kinds.index("省盘") < first_owner
-    # 重灾先于轻灾
-    disaster_titles = [ln.split("\t")[-1] for ln in lines if ln.startswith("灾情")]
+    # 重灾先于轻灾（标题仍在第 19 列 / 0-based 18；第 20 列为到差态空串）
+    disaster_titles = [ln.split("\t")[18] for ln in lines if ln.startswith("灾情")]
     assert disaster_titles[0] == "重灾"
     # 切片紧凑串或哨兵出现在省盘行
     province_line = next(ln for ln in lines if ln.startswith("省盘"))
@@ -1230,7 +1239,7 @@ def test_two_axis_tsv_province_block_golden(env):
 
 
 def test_two_axis_tsv_transport_framing_three_text_entrances():
-    """#654 TSV framing：title/owner_name/dutang_faction 控制符不破 19 列 ABI。
+    """#654/#673 TSV framing：title/owner_name/dutang_faction 控制符不破 20 列 ABI。
 
     纯调 _render_two_axis_tsv；逐物理行验列数，禁靠行类前缀过滤（伪行可任意开头）。
     """
@@ -1278,17 +1287,19 @@ def test_two_axis_tsv_transport_framing_three_text_entrances():
 
     tsv = _render_two_axis_tsv(provinces)
     physical = tsv.splitlines()
-    # 导语 + header + 灾×2 + 省盘×1 + 主办×1 = 6 物理行（无分裂残行）
+    # 导语 + header + 灾×2 + 省盘×1 + 主办×1 = 6 物理行（无分裂残行；无 arrival_rows）
     assert len(physical) == 6, physical
     assert physical[0].startswith("##")
     header = physical[1]
-    assert len(header.split("\t")) == 19
+    assert len(header.split("\t")) == 20
+    assert header.endswith("\t到差态")
 
     data_lines = physical[2:]
     assert len(data_lines) == 4
     for ln in data_lines:
         cells = ln.split("\t")
-        assert len(cells) == 19, (len(cells), ln)
+        assert len(cells) == 20, (len(cells), ln)
+        assert cells[19] == ""  # 旧行第 20 列空
         # 单元格内无 raw TAB/LF/CR（split 已按 TAB；行内亦不得含 LF/CR）
         assert "\n" not in ln and "\r" not in ln
         for cell in cells:
@@ -1354,7 +1365,7 @@ def test_two_axis_tsv_transport_framing_three_text_entrances():
     cr_phys = cr_tsv.splitlines()
     assert len(cr_phys) == 5  # 导语+header+灾+省+主办
     for ln in cr_phys[2:]:
-        assert len(ln.split("\t")) == 19
+        assert len(ln.split("\t")) == 20
         assert "\r" not in ln
     assert "\\r" in cr_tsv
 
@@ -1393,7 +1404,9 @@ def test_two_axis_tsv_escape_noop_on_clean_cells():
     tsv = _render_two_axis_tsv(provinces)
     lines = tsv.splitlines()
     assert len(lines) == 5
-    assert lines[2].endswith("\t" + clean)
+    # 标题在第 19 列；第 20 列到差态为空
+    assert lines[2].split("\t")[18] == clean
+    assert lines[2].split("\t")[19] == ""
     assert "毕自严" in lines[4]
     assert "东林" in lines[3]
     # 无额外 escape 产物
@@ -1559,8 +1572,10 @@ def test_issues_only_region_id_projection(env):
         ],
     )
     _promote_executing(db, did, "shaanxi")
+    sim = build_simulator_payload(state, db, decree_text="d", previous_narrative="n")
     issues_ctx = build_extractor_shared_context(
         db, state, narrative="n", decree_text="d", module="issues",
+        transit_semantics=sim["transit_semantics"],
     )
     dossiers = issues_ctx["decree_dossiers"]
     assert dossiers and "region_id" in dossiers[0]
@@ -1568,6 +1583,7 @@ def test_issues_only_region_id_projection(env):
     for module in ("internal", "personnel_secret", "military_external"):
         other = build_extractor_shared_context(
             db, state, narrative="n", decree_text="d", module=module,
+            transit_semantics=sim["transit_semantics"],
         )
         for row in other.get("decree_dossiers") or []:
             assert "region_id" not in row, module

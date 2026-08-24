@@ -621,7 +621,8 @@ def test_resimulation_inherits_player_source_from_ctx(game, monkeypatch, tmp_pat
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     turn = state.turn
     # phase1：皇帝下旨暂停存 ctx（source=player_decree, ready=0 占位）+ 决策点
-    db.save_resolve_context(turn, "减赋诏", "本月邸报。", {},
+    db.save_resolve_context(turn, "减赋诏", "本月邸报。",
+                            {"transit_semantics": []},
                             secret_orders={}, relevant_memories=[],
                             source=Provenance.player_decree.value)
     db.save_pending_decisions(turn, [{"title": "T", "options": ["a", "b"], "chosen": "a"}])
@@ -685,7 +686,8 @@ def test_system_rejection_stays_silent_and_keeps_system_provenance(game, monkeyp
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     turn = state.turn
     # phase1：无旨自演变暂停存 ctx（source=system_simulation, ready=0 占位）+ 决策点
-    db.save_resolve_context(turn, "", "本月邸报。", {},
+    db.save_resolve_context(turn, "", "本月邸报。",
+                            {"transit_semantics": []},
                             secret_orders={}, relevant_memories=[],
                             source=Provenance.system_simulation.value)
     db.save_pending_decisions(turn, [{"title": "T", "options": ["a", "b"], "chosen": "a"}])
