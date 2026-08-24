@@ -810,8 +810,8 @@ export function NodeIntel({ node }: { node: MapNode }) {
       {node.armies.length ? (
         <table className="intel-table intel-table--garrison">
           <thead>
-            {/* #1352：表头与军队列表口径对齐；兵力/月饷不缩位、不拆字 */}
-            <tr><th>番号</th><th>兵种</th><th>兵力</th><th>月饷</th><th>士气</th><th>欠饷</th></tr>
+            {/* #1352：表头与军队列表口径对齐；兵力/月饷不缩位、不拆字；#321 军心直出 mutiny_tier */}
+            <tr><th>番号</th><th>兵种</th><th>兵力</th><th>月饷</th><th>士气</th><th>军心</th><th>欠饷</th></tr>
           </thead>
           <tbody>
             {node.armies.map((army) => {
@@ -823,6 +823,7 @@ export function NodeIntel({ node }: { node: MapNode }) {
                   <td className="intel-num">{army.manpower}</td>
                   <td className="intel-num">{pay}万</td>
                   <td className="intel-stat">{army.morale_text}</td>
+                  <td className="intel-stat">{army.mutiny_tier}</td>
                   <td>{formatArmyArrears(army)}</td>
                 </tr>
               );
