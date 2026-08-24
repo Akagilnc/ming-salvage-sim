@@ -32,12 +32,13 @@ export type Army = {
   manpower: number;
   army_needed: number; // #173 引擎实扣月应发(万两)=ceil(manpower×salary_rate/10000)，月饷呈现真源(维护费列已删)
   supply: number;
-  morale: number;
+  // #321：军心/士气/欠饷由后端玩家投影直出字符串，禁 raw 数与前端二次 map
+  morale_text: string;
   training: number;
   equipment: number;
-  arrears: number;
+  arrears_text: string;
   mobility: number;
-  loyalty: number;
+  mutiny_tier: string;
   // #1501：军牌 payload 停携 status；可选以兼容旧夹具/非军牌路径
   status?: string;
   owner_power?: string;

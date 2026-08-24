@@ -696,7 +696,27 @@ const settlementBaseState = (phase: string, extra: Record<string, unknown> = {})
   victory_status: { status: "", summary: "" }, ending: null,
   events: [{ id: 1, title: "月初题本" }],
   regions: [{ id: "r1", name: MIDCOURSE_REGION }],
-  armies: [{ id: "a1", name: MIDCOURSE_ARMY }],
+  // #321：共享 App 夹具须满足 Army exact ABI（含必填 arrears_text/morale_text/mutiny_tier）
+  armies: [{
+    id: "a1",
+    name: MIDCOURSE_ARMY,
+    station: "辽东",
+    theater: "辽东",
+    commander: "边将",
+    controller: "兵部",
+    troop_type: "边军",
+    manpower: 10000,
+    army_needed: 10,
+    supply: 50,
+    morale_text: "士气：不振",
+    training: 50,
+    equipment: 50,
+    arrears_text: "无欠饷",
+    mobility: 50,
+    mutiny_tier: "一般",
+    status: "驻防",
+    owner_power: "ming",
+  }],
   map_nodes: [{
     id: "liaodong", name: "辽东", kind: "region", label: "辽东",
     buildings: [{

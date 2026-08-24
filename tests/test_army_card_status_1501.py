@@ -4,15 +4,14 @@
 - army_payload（web 军牌）停止携带 status；其余字段完整键集/逐字段机械对照
 - 军牌前端不渲染状态句（前端单测另钉）
 - 共享出口逐点真实调用：army_report / tools.list_armies / intelligence /
-  knowledge / report.print_header / state_payload.army_warning /
+  knowledge / state_payload.army_warning /
   army_detail / army_roster，仍含原 status（禁以直调 army_report 顶替消费点）
-- DB armies.status 零改写；欠饷栏真数不动
+  （#321 P7：print_header 已拆除 army_report 直显，不再作为 status 消费点）
+- DB armies.status 零改写；payload 用 arrears_text approximate，省略 raw arrears
 """
 
 from __future__ import annotations
 
-import contextlib
-import io
 from types import SimpleNamespace
 
 import pytest
@@ -21,7 +20,6 @@ import web_app
 from ming_sim.intelligence import _qualitative_domain_statement
 from ming_sim.knowledge import build_character_knowledge
 from ming_sim.models import CourtContext
-from ming_sim.report import print_header
 from ming_sim.tools import build_board_query_tools, build_minister_tools
 
 
@@ -29,7 +27,7 @@ from ming_sim.tools import build_board_query_tools, build_minister_tools
 _GUANNING_STATUS = "宁锦守线尚可，欠饷严重，主动大举出击风险极高。"
 _GUANNING_ID = "guanning"
 
-# army_payload 投影完整键集（#1501：唯一允许相对旧投影的差异＝删除 status 键）。
+# army_payload 投影完整键集（#1501 删 status；#321 军心/士气/欠饷改三字符串键）。
 _ARMY_PAYLOAD_KEYS = frozenset(
     {
         "id",
@@ -42,12 +40,12 @@ _ARMY_PAYLOAD_KEYS = frozenset(
         "manpower",
         "army_needed",
         "supply",
-        "morale",
+        "morale_text",
         "training",
         "equipment",
-        "arrears",
+        "arrears_text",
         "mobility",
-        "loyalty",
+        "mutiny_tier",
         "firearm_equipment",
         "cannon_equipment",
         "owner_power",
@@ -80,6 +78,10 @@ def _assert_text_keeps_statuses(text: str, statuses: list[str], label: str) -> N
 
 def _expected_army_card_from_row(db, row) -> dict:
     """由 DB 行机械重建军牌投影（含历史 status 键），供「其余字段不变」对照。"""
+    from ming_sim.db import _player_army_situation
+
+    pay = db._army_pay(row)
+    sit = _player_army_situation(row, pay)
     return {
         "id": row["id"],
         "name": row["name"],
@@ -89,17 +91,17 @@ def _expected_army_card_from_row(db, row) -> dict:
         "controller": row["controller"],
         "troop_type": row["troop_type"],
         "manpower": int(row["manpower"]),
-        "army_needed": db._army_pay(row),
+        "army_needed": pay,
         "supply": int(row["supply"]),
-        "morale": int(row["morale"]),
+        "morale_text": sit["morale_text"],
         "training": int(row["training"]),
         "equipment": int(row["equipment"]),
-        "arrears": round(float(row["arrears"] or 0), 1),
+        "arrears_text": sit["arrears_text"],
         "mobility": int(row["mobility"]),
-        "loyalty": int(row["loyalty"]),
+        "mutiny_tier": sit["mutiny_tier"],
         "firearm_equipment": int(row["firearm_equipment"]),
         "cannon_equipment": int(row["cannon_equipment"]),
-        "status": row["status"],  # 旧投影曾携；#1501 唯一允许删除
+        "status": row["status"],  # 旧投影曾携；#1501 允许删除
         "owner_power": row["owner_power"],
     }
 
@@ -129,8 +131,8 @@ def _web_runtime(db, state, content):
     return runtime
 
 
-def test_army_payload_omits_static_status_keeps_arrears(read_game):
-    """军牌出口：army_payload 不含 status；完整键集/逐字段对照（唯一差异=删 status）。"""
+def test_army_payload_omits_static_status_exposes_arrears_text(read_game):
+    """军牌出口：army_payload 无 status、无 raw arrears 键；arrears_text 在场；完整键集/逐字段对照。"""
     db, _state, _ = read_game
     seed_status = _guanning_db_status(db)
 
@@ -144,13 +146,14 @@ def test_army_payload_omits_static_status_keeps_arrears(read_game):
         legacy = _expected_army_card_from_row(db, row)
         expected = {k: v for k, v in legacy.items() if k != "status"}
 
-        # 完整键集：恰好等于旧投影去掉 status
+        # 完整键集：恰好等于投影契约（无 status / 无 raw morale|loyalty|arrears）
         assert set(card.keys()) == set(expected.keys()) == _ARMY_PAYLOAD_KEYS, (
             f"{army_id}: payload 键集偏离。"
             f" extra={set(card.keys()) - _ARMY_PAYLOAD_KEYS!r}"
             f" missing={_ARMY_PAYLOAD_KEYS - set(card.keys())!r}"
         )
         assert "status" not in card
+        assert {"morale", "loyalty", "arrears"}.isdisjoint(card.keys())
 
         # 逐字段机械对照（唯一允许差异已在 expected 中删除 status）
         for key, value in expected.items():
@@ -164,11 +167,13 @@ def test_army_payload_omits_static_status_keeps_arrears(read_game):
             joined = " ".join(str(v) for v in card.values())
             assert st not in joined
 
-    # 病灶样本：关宁欠饷真数仍在，status 句不在
+    # 病灶样本：关宁欠饷奏报文案仍在，status 句不在
+    from ming_sim.db import _player_army_situation
+
     guanning = by_id[_GUANNING_ID]
-    assert guanning["arrears"] == pytest.approx(
-        round(float(rows_by_id[_GUANNING_ID]["arrears"] or 0), 1), abs=0.05
-    )
+    g_row = rows_by_id[_GUANNING_ID]
+    expected_arr = _player_army_situation(g_row, db._army_pay(g_row))["arrears_text"]
+    assert guanning["arrears_text"] == expected_arr
     assert seed_status not in " ".join(str(v) for v in guanning.values())
     assert "欠饷严重" not in " ".join(str(v) for v in guanning.values())
 
@@ -218,16 +223,7 @@ def test_shared_consumers_still_surface_status(read_game):
     )
     assert seed_status in military
 
-    # 4) report.print_header → 真实打印缝（army_report limit=3 入 stdout）
-    buf = io.StringIO()
-    with contextlib.redirect_stdout(buf):
-        print_header(state, db)
-    header_out = buf.getvalue()
-    _assert_text_keeps_statuses(
-        header_out, _danger_top_statuses(db, 3), "report.print_header"
-    )
-
-    # 5) state_payload.army_warning → 真实 WebGame.state_payload 键
+    # 4) state_payload.army_warning → 真实 WebGame.state_payload 键
     payload = web_app.WebGame.state_payload(_web_runtime(db, state, content))
     army_warning = payload.get("army_warning") or ""
     _assert_text_keeps_statuses(
@@ -237,7 +233,7 @@ def test_shared_consumers_still_surface_status(read_game):
     for card in payload.get("armies") or []:
         assert "status" not in card or card.get("status") in (None, "")
 
-    # 6) army_detail → 真实详情缝（关宁全量，必含 seed status）
+    # 5) army_detail → 真实详情缝（关宁全量，必含 seed status）
     detail = db.army_detail(_GUANNING_ID)
     assert seed_status in detail, f"army_detail 缺关宁 status\n{detail!r}"
     assert "欠饷严重" in detail
@@ -245,7 +241,7 @@ def test_shared_consumers_still_surface_status(read_game):
     inspect_text = board_tools["inspect_army"](_GUANNING_ID)
     assert seed_status in inspect_text
 
-    # 7) army_roster → 真实名册缝（全表，含各军 status）
+    # 6) army_roster → 真实名册缝（全表，含各军 status）
     roster = db.army_roster()
     all_statuses = [
         str(row["status"] or "").strip()
