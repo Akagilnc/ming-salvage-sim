@@ -2363,6 +2363,7 @@ class WebGame:
                                 target_id=args.get("target_id"),
                                 name=args.get("name"),
                                 amount=args.get("amount"),
+                                transaction_category=args.get("transaction_category"),
                             ),
                         )
                         if stage_failures:

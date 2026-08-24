@@ -6,6 +6,7 @@ import sqlite3
 from ming_sim.content import load_character_content
 from ming_sim.db import GameDB
 from ming_sim.models import Character
+from ming_sim.session import _sync_offices_from_db_impl
 
 
 def _columns(db, table):
@@ -24,7 +25,12 @@ def test_characters_table_has_person_archive_fields(read_game):
 
     assert "reason_code" in cols
     assert "transit_to" in cols
+    assert {"transit_distance_remaining", "transit_speed_factor"} <= cols
     info = _column_info(db, "characters")
+    for name in ("transit_distance_remaining", "transit_speed_factor"):
+        assert info[name]["type"] == "REAL"
+        assert info[name]["notnull"] == 0
+        assert info[name]["dflt_value"] is None
     for name in ("reason_code", "transit_to"):
         assert info[name]["type"] == "TEXT"
         assert info[name]["notnull"] == 1
@@ -124,6 +130,26 @@ def test_add_character_persists_transit_to(game):
         "SELECT location, transit_to FROM characters WHERE name=?", (character.name,)
     ).fetchone()
     assert dict(row) == {"location": "beizhili", "transit_to": "liaodong"}
+
+
+def test_reload_restores_complete_transit_ledger_from_db(game):
+    db, _, content = game
+    name = db.conn.execute("SELECT name FROM characters LIMIT 1").fetchone()["name"]
+    db.conn.execute(
+        "UPDATE characters SET transit_to='liaodong', transit_distance_remaining=1.25, "
+        "transit_speed_factor=1.5, transit_start_turn=7 WHERE name=?",
+        (name,),
+    )
+
+    _sync_offices_from_db_impl(content, db)
+
+    character = content.characters[name]
+    assert (
+        character.transit_to,
+        character.transit_distance_remaining,
+        character.transit_speed_factor,
+        character.transit_start_turn,
+    ) == ("liaodong", 1.25, 1.5, 7)
 
 
 def test_old_save_schema_is_upgraded_for_person_archive_fields(tmp_path, content):
