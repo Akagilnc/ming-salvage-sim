@@ -16,6 +16,7 @@ from ming_sim.commitment_backlash import build_backlash_narrative_features
 from ming_sim.constants import TURN_UNIT
 from ming_sim.context import historical_anchor_for_month, victory_status
 from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS
+from ming_sim.fiscal_fact_brief import build_fiscal_fact_brief
 from ming_sim.issues import (
     commitment_condition_role,
     commitment_display_text,
@@ -533,24 +534,6 @@ def _army_rows_with_needed(
     return out
 
 
-def _build_transit_nudge(db: "GameDB", state: "GameState") -> List[Dict[str, object]]:
-    """在途人物 nudge 列表，供 simulator 优先叙事到任（#346）。"""
-    rows = db.conn.execute(
-        "SELECT name, transit_to, transit_start_turn FROM characters "
-        "WHERE COALESCE(transit_to, '') != '' AND status='active'"
-    ).fetchall()
-    result: List[Dict[str, object]] = []
-    for row in rows:
-        start = int(row["transit_start_turn"] or 0)
-        months = (state.turn - start) if start > 0 else 0
-        result.append({
-            "name": str(row["name"]),
-            "transit_to": str(row["transit_to"]),
-            "months_in_transit": months,
-        })
-    return result
-
-
 def project_monthly_progress_for_simulator(db: GameDB) -> List[Dict[str, object]]:
     """#569 A1: public-safe monthly progress from the #566 true source.
 
@@ -582,6 +565,7 @@ def build_simulator_payload(
     relevant_memories: Optional[List[Dict[str, object]]] = None,
     secret_orders: Optional[Dict[str, object]] = None,
     decree_dossiers: Optional[List[Dict[str, object]]] = None,
+    transit_arrivals: Optional[List[Dict[str, object]]] = None,
 ) -> Dict[str, object]:
     # #883: due commitments are public review work, unlike actual secret
     # orders.  Keep them on a separately named public rail; never pre-load
@@ -630,13 +614,22 @@ def build_simulator_payload(
             "json_extract(fiscal,'$.corruption') as corruption FROM regions ORDER BY id"
         ).fetchall()
     ]
+    from ming_sim.flows import derive_army_mutiny_state
+
     army_rows = _army_rows_with_needed(
         db,
         "SELECT name,station,theater,commander,controller,troop_type,manpower,"
         "supply,morale,training,equipment,arrears,mobility,"
-        "loyalty,firearm_equipment,cannon_equipment,status,owner_power,salary_rate "
+        "loyalty,firearm_equipment,cannon_equipment,status,owner_power,salary_rate,"
+        "is_mutinied,mutiny_probation "
         "FROM armies ORDER BY id",
     )
+    # #318 D8：0 战力 = simulator 机读派生 flag（canonical latch / derive），不算胜负
+    for _army in army_rows:
+        _mutiny_state = derive_army_mutiny_state(_army)
+        _army["zero_combat"] = _mutiny_state == "哗变"
+        _army.pop("is_mutinied", None)
+        _army.pop("mutiny_probation", None)
     # 在朝名单 = 目前当官的（active）：simulator 在朝盘面 + 任命查重。可起复者（居家/致仕/
     # 削籍）走 offstage_ministers 人才池，在押/流放者两份都不在（玩家下旨决定去留）。旧 status!=
     # 'offstage' 会把削籍/致仕/在押者也混进在朝名单、与人才池双重曝光自相矛盾。注：大臣 system 的
@@ -700,6 +693,10 @@ def build_simulator_payload(
         "active_issues": issues_payload,
         "candidate_events": candidate_events,
         "fiscal_levy_memorial_estimates": fiscal_levy_memorial_estimates(state, db),
+        # #653 F3.1：财政事实摘要（F2 六源纯投影）喂 simulator——被亏方怨气定性叙事由
+        # 既有 simulator 自由长出，零新增 LLM 调用；阶级 satisfaction 变动仍只由
+        # internal extractor 的 class_delta 槽产出（EXTRACTION_MODULES 一字不动）。
+        "fiscal_fact_brief": build_fiscal_fact_brief(db),
         "previous_narrative_tail": previous_narrative[-1500:] if previous_narrative else "",
         "historical_anchor": historical_anchor_for_month(state.year, state.period),
         "victory_status": victory_status(db, state),
@@ -714,9 +711,9 @@ def build_simulator_payload(
         "debuts_this_turn": debuts_this_turn or [],
         "relevant_memories": relevant_memories or [],
         "due_commitments": due_commitments,
-        # LLM nudge：在途人物列表（#346）。simulator 优先产叙事到任（行止+location），
-        # 代码在 pre_settle 中兜底强制（≥2月未到 → 强制；此 nudge 鼓励 LLM 主动叙事）。
-        "transit_nudge": _build_transit_nudge(db, state),
+        # #668/0095：本 tick 引擎刚抵达的事实集合（非仍在途者）；durable 真源在
+        # pending_resolve_context.simulator_payload.transit_arrivals，由调用方注入。
+        "transit_arrivals": list(transit_arrivals or []),
         # #627：政敌检举供事实（零新增串行调用；不携真伪位/quota/烈度）
         "faction_denunciation_facts": db.build_faction_denunciation_facts(),
         # #626：承诺所系反噬——硬门只落结构化事实；玩家文案由叙事步从此特征包长出
@@ -725,8 +722,8 @@ def build_simulator_payload(
             "盘面表（buildings/court_roster/armies/regions）在本输入的开头以 TSV 文本块给出"
             "（首行列名、tab 分隔、每行一条记录），不在本 JSON 内；本 JSON 只含其余字段"
             "（含 powers_brief/factions_brief/classes_brief 叙述串、active_issues 等）。"
-            "due_commitments 是本月待复核的公开承诺（公开轨）。transit_nudge 为当前在途"
-            "（transit_to 非空）人物，months_in_transit ≥1 者按惯例本月应抵达，请优先产行止叙事。"
+            "due_commitments 是本月待复核的公开承诺（公开轨）。transit_arrivals 为本月引擎"
+            "已确认抵达的人物（name+location），请据此演出到任，勿改 location/在途账。"
             "faction_denunciation_facts 为派系恩怨/分叉案卷/处境/个性事实包，供朝堂弹劾叙事取材，不含真伪位。"
             "commitment_backlash_facts 为承诺所系反噬结构化事实包（源类/承诺链接/metrics），"
             "供叙事长出玩家可见文案；含与 #625 反制 bar 用语区分约束，不含成句模板。"

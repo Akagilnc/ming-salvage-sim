@@ -356,21 +356,18 @@ def test_driver_settle_freezes_dossier_roster_authority_at_input(game, monkeypat
         row["id"] for row in db.list_decree_dossiers()
         if row["secret_order_id"] == secret_order_id
     )
+    # prepare first; freeze happens at settle start (post-pre_settle, engine-aligned).
+    driver.run_prepare(db, state, content)
     created = {}
-    real_pre_settle = driver.pre_settle
-
-    def create_during_settle(state_arg, db_arg):
-        real_pre_settle(state_arg, db_arg)
-        created["id"] = db_arg.create_decree_dossier(
-            state_arg, action_type="assignment", decree_text="同批新案。",
-            target_kind="issue", target_id="same-batch",
-            participants=[{"character_id": lead, "tier": "主办"}],
-        )
-
-    monkeypatch.setattr(driver, "pre_settle", create_during_settle)
     real_persist = driver.persist_resolve_context
 
     def persist_with_same_batch_item(db_arg, turn, extracted, **kwargs):
+        # Create after freeze: must not expand roster-write authority.
+        created["id"] = db_arg.create_decree_dossier(
+            state, action_type="assignment", decree_text="同批新案。",
+            target_kind="issue", target_id="same-batch",
+            participants=[{"character_id": lead, "tier": "主办"}],
+        )
         extracted["dossier_participants"].append({
             "dossier_id": created["id"], "character_id": worker,
             "tier": "协办", "delegator_id": lead,
@@ -448,6 +445,7 @@ def test_driver_crash_persists_frozen_dossier_authority_for_replay(game, monkeyp
     )
 
     with pytest.raises(RuntimeError, match="crash after ready"):
+        driver.run_prepare(db, state, content)
         driver.run_settle(db, state, content, delta)
 
     ctx = db.get_resolve_context(state.turn)
