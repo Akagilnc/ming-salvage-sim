@@ -62,25 +62,6 @@ def is_capital_location(location: str) -> bool:
     return canonicalize_location_region_id(location) == "beizhili"
 
 
-def location_alias_rewrites() -> List[Tuple[str, str]]:
-    """(alias_token, region_id) 对，供旧档 location 一次写回。
-
-    #670：仅获准四值 京师/北京/beijing/北直隶 → beizhili。
-    REGION_SPECIAL_ALIASES 全文/地区匹配可含顺天/直隶，不得藉此扩大存档迁移。
-    """
-    out: List[Tuple[str, str]] = []
-    seen: set[str] = set()
-    region_id = "beizhili"
-    # 显式白名单：与票面/既裁四值对齐，不遍历 REGION_SPECIAL_ALIASES 全表。
-    for alias in ("京师", "北京", "beijing", "北直隶"):
-        token = str(alias).strip()
-        if not token or token == region_id or token in seen:
-            continue
-        seen.add(token)
-        out.append((token, region_id))
-    return out
-
-
 def region_aliases(region: Region) -> List[str]:
     aliases = [region.id, region.name, compact_name(region.name)]
     for part in re.split(r"\s*/\s*|\s*／\s*", region.name):

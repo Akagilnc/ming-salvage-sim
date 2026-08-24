@@ -170,6 +170,35 @@ def test_cli_initial_selection_records_remote_summon_without_returning_minister(
     assert "已传召" not in joined
 
 
+def test_cli_initial_selection_rejects_unknown_unregistered_person(game, monkeypatch):
+    """#670：CLI 初选未知人物不得临时旁路入殿，须 ADR 0038 持久入册后再 admission。"""
+    from ming_sim.cli import terminal
+
+    sess = _session(game)
+    db, state, _content = game
+    sess.state = state
+    unknown = "乌有先生甲"
+    assert unknown not in sess.content.characters
+    answers = iter([unknown, "quit"])
+    notices: list[str] = []
+    monkeypatch.setattr("builtins.input", lambda *_a, **_k: next(answers))
+    monkeypatch.setattr(
+        "builtins.print", lambda *args, **_k: notices.append(" ".join(map(str, args))),
+    )
+
+    assert terminal.choose_minister(sess) is None
+    assert unknown not in sess.temporary_characters
+    assert an.list_unsettled_summons(db) == []
+    assert _chat_turn_count(db) == 0
+    assert _chat_message_count(db) == 0
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM characters WHERE name=?", (unknown,),
+    ).fetchone()["n"] == 0
+    joined = "\n".join(notices)
+    assert "临时传" not in joined
+    assert "入殿" not in joined
+
+
 def test_in_transit_summon_origin_is_idempotent_and_restorable(game):
     """#670 T-B：在途 admission 不改道/不重置；关库重开投影一致；同 origin 仍幂等。"""
     db, state, content = game
@@ -747,6 +776,37 @@ def test_cli_midflow_summon_consumes_admission_without_entering(game, monkeypatc
     assert [row["origin_id"] for row in an.list_unsettled_summons(db)] == [
         f"cli:midflow:{state.turn}:洪承畴",
     ]
+
+
+def test_cli_midflow_summon_rejects_unknown_unregistered_person(game, monkeypatch):
+    """#670：CLI 夜内换人未知人物不得 summon-temp 旁路，须 ADR 0038 持久入册后再 admission。"""
+    from ming_sim.cli import terminal
+
+    sess = _session(game)
+    db, state, _content = game
+    sess.state = state
+    current = _set_place(game, "毕自严", location="beizhili")
+    unknown = "乌有先生乙"
+    assert unknown not in sess.content.characters
+    notices: list[str] = []
+    monkeypatch.setattr(
+        "builtins.print", lambda *args, **_k: notices.append(" ".join(map(str, args))),
+    )
+
+    outcome = terminal._handle_court_command(sess, f"传{unknown}来", current)
+
+    assert outcome == "handled"
+    assert unknown not in sess.temporary_characters
+    assert an.list_unsettled_summons(db) == []
+    assert _chat_turn_count(db) == 0
+    assert _chat_message_count(db) == 0
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM characters WHERE name=?", (unknown,),
+    ).fetchone()["n"] == 0
+    joined = "\n".join(notices)
+    assert "summon" not in outcome
+    assert "临时传" not in joined
+    assert "未建档" in joined or "补档" in joined
 
 
 def test_tool_summon_does_not_splice_gate_reason_into_llm_answer(game, monkeypatch):
