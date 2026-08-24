@@ -20,6 +20,7 @@ import pytest
 
 import web_app
 from ming_sim import audience_night as an
+from tests.web_audience_test_doubles import HallAdmissionSessionMixin, minister_double
 from ming_sim import beat_orchestration as bo
 from ming_sim.beat_orchestration import (
     BEAT_CLOSE,
@@ -123,14 +124,17 @@ def test_web_retry_failed_scene_drain_does_not_hold_write_gate(game):
     db.conn.commit()
     drain_entered, release_drain = threading.Event(), threading.Event()
 
-    class _Session:
+    class _Session(HallAdmissionSessionMixin):
         temporary_characters: set = set()
 
         def __init__(self):
             self.db, self.state = db, state
             self.content = SimpleNamespace(
-                characters={minister: SimpleNamespace(name=minister)},
+                characters={minister: minister_double(minister)},
             )
+
+        def _character(self, name):
+            return self.content.characters[name]
 
         def start_chat_turn_scene(self, *_a, **_k): return None
         def join_chat_turn_scene(self, *_a, **_k): return []
@@ -1394,15 +1398,15 @@ def test_stream_join_and_abandon_do_not_hold_write_gate(monkeypatch):
             raise RuntimeError("stream boom")
             yield  # pragma: no cover
 
-    class _Session:
+    class _Session(HallAdmissionSessionMixin):
         temporary_characters: set = set()
 
         def __init__(self):
             self.content = SimpleNamespace(
-                characters={minister: SimpleNamespace(name=minister)},
+                characters={minister: minister_double(minister)},
             )
             self.registry = SimpleNamespace(get=lambda _c: _AgentOk())
-            self._character = lambda name: SimpleNamespace(name=name)
+            self._character = lambda name: minister_double(name)
             self._start_cli_action_intent = lambda *_a, **_k: None
             self._finish_cli_action_intent = lambda *_a, **_k: None
             self.apply_cli_conversation_actions = lambda *_a, **_k: {
@@ -1468,7 +1472,7 @@ def test_stream_join_and_abandon_do_not_hold_write_gate(monkeypatch):
     session.db = db
     session.state = state
     session.content = SimpleNamespace(
-        characters={minister: SimpleNamespace(name=minister)},
+        characters={minister: minister_double(minister)},
     )
     rt = object.__new__(web_app.WebGame)
     object.__setattr__(rt, "session", session)

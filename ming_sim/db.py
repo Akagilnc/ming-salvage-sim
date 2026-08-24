@@ -5521,6 +5521,7 @@ class GameDB:
                 distance_remaining=row["transit_distance_remaining"],
                 speed_factor=row["transit_speed_factor"],
                 start_turn=int(row["transit_start_turn"] or 0),
+                content=self.content,
                 commit=False,
             )
             changed = True
