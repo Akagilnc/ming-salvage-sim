@@ -89,6 +89,11 @@ _ARMY_PAY_SOURCE_DELTA_FIELDS = frozenset((
 _COMMITMENT_STOP_CONDITION_RE = re.compile(r"character\.[^.]+\.loyalty\s*(?:>=|>)\s*\d+")
 
 
+def mutiny_loyalty_cap(mutiny_count: int, redemption_count: int = 0) -> int:
+    """ADR 0025 D6 唯一军心上限真源。"""
+    return max(60, min(100, 100 - 20 * int(mutiny_count) + 10 * int(redemption_count)))
+
+
 def _seed_guilt_storage_value(value: object) -> str:
     """Serialize the content-layer guilt mapping into the existing DB TEXT column."""
     if isinstance(value, Mapping):
@@ -792,6 +797,8 @@ class GameDB:
                 power_id TEXT NOT NULL DEFAULT 'ming',
                 location TEXT NOT NULL DEFAULT '',
                 transit_to TEXT NOT NULL DEFAULT '',
+                transit_distance_remaining REAL,
+                transit_speed_factor REAL,
                 transit_start_turn INTEGER NOT NULL DEFAULT 0,
                 identity INTEGER NOT NULL DEFAULT 50,
                 seed_guilt TEXT NOT NULL DEFAULT ''
@@ -988,6 +995,8 @@ class GameDB:
                 is_mutinied INTEGER NOT NULL DEFAULT 0 CHECK(is_mutinied IN (0, 1)),
                 mutiny_count INTEGER NOT NULL DEFAULT 0,
                 mutiny_probation INTEGER NOT NULL DEFAULT 0,
+                full_pay_streak INTEGER NOT NULL DEFAULT 0,
+                redemption_count INTEGER NOT NULL DEFAULT 0,
                 mobility INTEGER NOT NULL,
                 loyalty INTEGER NOT NULL,
                 firearm_equipment INTEGER NOT NULL DEFAULT 0,
@@ -2046,6 +2055,8 @@ class GameDB:
         self.ensure_column("armies", "is_mutinied", "INTEGER NOT NULL DEFAULT 0 CHECK(is_mutinied IN (0, 1))")
         self.ensure_column("armies", "mutiny_count", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("armies", "mutiny_probation", "INTEGER NOT NULL DEFAULT 0")
+        self.ensure_column("armies", "full_pay_streak", "INTEGER NOT NULL DEFAULT 0")
+        self.ensure_column("armies", "redemption_count", "INTEGER NOT NULL DEFAULT 0")
         # 火器装备(鸟铳,野战+守城)/大炮装备(红夷炮,守城攻城、不利野战)：simulator 软判用的两条军备轴
         self.ensure_column("armies", "firearm_equipment", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("armies", "cannon_equipment", "INTEGER NOT NULL DEFAULT 0")
@@ -2069,6 +2080,8 @@ class GameDB:
         self.ensure_column("characters", "power_id", "TEXT NOT NULL DEFAULT 'ming'")
         self.ensure_column("characters", "location", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("characters", "transit_to", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column("characters", "transit_distance_remaining", "REAL")
+        self.ensure_column("characters", "transit_speed_factor", "REAL")
         self.ensure_column("characters", "transit_start_turn", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("issues", "resolve_condition", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("issues", "fail_condition", "TEXT NOT NULL DEFAULT ''")
@@ -4995,6 +5008,44 @@ class GameDB:
             except Exception as exc:
                 print(f"[WARN] 开局危机落库失败：{exc}；跳过 {ev.title}")
 
+    def set_character_transit(
+        self,
+        name: str,
+        *,
+        transit_to: str = "",
+        distance_remaining: float | None = None,
+        speed_factor: float | None = None,
+        start_turn: int = 0,
+        location: str | None = None,
+        content=None,
+        commit: bool = True,
+    ) -> None:
+        """Write the complete transit ledger and its in-memory mirror at one seam."""
+        assignments = (
+            "transit_to=?, transit_distance_remaining=?, transit_speed_factor=?, "
+            "transit_start_turn=?"
+        )
+        values: tuple[object, ...] = (
+            transit_to, distance_remaining, speed_factor, start_turn,
+        )
+        if location is not None:
+            assignments = "location=?, " + assignments
+            values = (location,) + values
+        self.conn.execute(
+            f"UPDATE characters SET {assignments} WHERE name=?",
+            values + (name,),
+        )
+        if content is not None and name in content.characters:
+            character = content.characters[name]
+            if location is not None:
+                character.location = location
+            character.transit_to = transit_to
+            character.transit_distance_remaining = distance_remaining
+            character.transit_speed_factor = speed_factor
+            character.transit_start_turn = start_turn
+        if commit:
+            self.conn.commit()
+
     def set_character_status(
         self,
         state: GameState,
@@ -5003,6 +5054,7 @@ class GameDB:
         reason: str = "",
         reason_code: str | None = None,
         commit: bool = True,
+        content=None,
     ) -> None:
         """改人物状态：active/offstage/dismissed/imprisoned/exiled/retired/dead。
         大臣走 characters 表；后宫（consorts）走内存对象 + consort_traits 备档。
@@ -5021,14 +5073,22 @@ class GameDB:
         if ousted:
             self.conn.execute(
                 "UPDATE characters SET status=?, status_reason=?, "
-                "status_changed_turn=?, office='', transit_to='', transit_start_turn=0, reason_code=? WHERE name=?",
+                "status_changed_turn=?, office='', reason_code=? WHERE name=?",
                 (status, reason[:200], state.turn, reason_code_value, name),
             )
+            self.set_character_transit(name, content=content, commit=False)
         else:
             self.conn.execute(
                 "UPDATE characters SET status=?, status_reason=?, status_changed_turn=?, reason_code=? WHERE name=?",
                 (status, reason[:200], state.turn, reason_code_value, name),
             )
+        if content is not None and name in content.characters:
+            character = content.characters[name]
+            character.status = status
+            character.status_reason = reason[:200]
+            character.reason_code = reason_code_value
+            if ousted:
+                character.office = ""
         # #9：状态变更后全重算该人物所属朝堂派系 leverage（绝对值、读当前所有在朝成员 → 无漂移）。
         if prev is not None:
             self.recompute_faction_leverage(str(prev["faction"] or ""))
@@ -5486,7 +5546,8 @@ class GameDB:
                 continue
             name = r["name"]
             self.set_character_status(
-                state, name, "dead", f"历史卒于 {year}年{month or '?'}月", reason_code="历史卒"
+                state, name, "dead", f"历史卒于 {year}年{month or '?'}月",
+                reason_code="历史卒", content=self.content,
             )
             self.record_person_log(
                 state, name, "处置",
@@ -5521,7 +5582,8 @@ class GameDB:
                 continue
             name = r["name"]
             self.set_character_status(
-                state, name, "active", f"历史登场 {year}年{month or '?'}月", reason_code="登场"
+                state, name, "active", f"历史登场 {year}年{month or '?'}月",
+                reason_code="登场", content=self.content,
             )
             self.record_person_log(
                 state, name, "处置",
@@ -7233,7 +7295,11 @@ class GameDB:
                                    .get(army_id) or {}).get(field, 0) or 0)
                     if net_pct:
                         delta = self.apply_legacy_pct(delta, net_pct)
-                    new_value = max(0, min(100, int(old_value) + delta))
+                    upper_bound = (
+                        mutiny_loyalty_cap(row["mutiny_count"], row["redemption_count"])
+                        if field == "loyalty" else 100
+                    )
+                    new_value = max(0, min(upper_bound, int(old_value) + delta))
                     actual_delta = new_value - int(old_value)
                     if actual_delta == 0:
                         continue
@@ -11139,9 +11205,10 @@ class GameDB:
             if assignee and content is not None:
                 from ming_sim.session import _find_existing_minister
                 assignee = _find_existing_minister(content, assignee, self) or ""
-            if not assignee:
+            if not assignee and action in {"authorization", "secret_authorization"}:
                 raise ValueError(f"{action} 旨意缺少 canonical assignee")
-            normalized["assignee_id"] = assignee
+            if assignee:
+                normalized["assignee_id"] = assignee
             normalized.pop("assignee", None)
             # Authorization identity and applicability live exclusively in
             # authority_records; legacy dossier payload ids are not retained.
@@ -11457,9 +11524,21 @@ class GameDB:
         out["stigma"] = stigma
         try:
             roster = json.loads(out.get("participant_roster") or "[]")
-        except (TypeError, ValueError):
-            roster = []
-        out["participant_roster"] = roster if isinstance(roster, list) else []
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"案卷#{out['id']} participant_roster 无效") from exc
+        if not isinstance(roster, list):
+            raise ValueError(f"案卷#{out['id']} participant_roster 非列表")
+        out["participant_roster"] = roster
+        try:
+            extension = json.loads(out.get("extension_json") or "{}")
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"案卷#{out['id']} extension_json 无效") from exc
+        if not isinstance(extension, dict):
+            raise ValueError(f"案卷#{out['id']} extension_json 非对象")
+        signal = extension.get("execution_signal")
+        if signal is not None and not isinstance(signal, dict):
+            raise ValueError(f"案卷#{out['id']} execution_signal 非对象")
+        out["execution_signal"] = signal
         return out
 
     # #619 / ADR 0073 reported-progress origin namespace (ID-11 open append).
@@ -13192,12 +13271,19 @@ class GameDB:
         extension: Optional[Dict[str, object]] = None,
         participants: Optional[Iterable[object]] = None,
         commit: bool = True,
+        rejection_collector=None,
         _issued_secret_order: bool = False,
     ) -> int:
         """在成案点落一条独立案卷；幂等键只使用真实 (>0) 来源 id。"""
         action = str(action_type or "").strip()
         text = str(decree_text or "").strip()
         normalized_payload = dict(payload or {})
+        canonical_assignee = str(normalized_payload.get("assignee_id") or "").strip()
+        if not canonical_assignee:
+            canonical_assignee = str(normalized_payload.get("assignee") or "").strip()
+        if canonical_assignee:
+            normalized_payload["assignee_id"] = canonical_assignee
+        normalized_payload.pop("assignee", None)
         normalized_payload["mode"] = self._normalize_dossier_mode(
             normalized_payload["mode"] if "mode" in normalized_payload else "ordinary"
         )
@@ -13285,11 +13371,100 @@ class GameDB:
             if origin is not None:
                 source_turn_id = int(origin["chat_turn_id"])
         roster_source = participants
-        if roster_source is None and isinstance(payload, dict):
-            roster_source = payload.get("participant_roster") or payload.get("participants")
+        if roster_source is None:
+            roster_source = (
+                canonical_payload.get("participant_roster")
+                or canonical_payload.get("participants")
+            )
         roster = self._normalize_participant_roster(roster_source, strict_structured=True)
+        has_canonical_lead = any(item.get("tier") == "主办" for item in roster)
+        if (
+            action in {"assignment", "military_order"}
+            and not canonical_assignee
+            and not has_canonical_lead
+            and str(executor_kind or "").strip() in {"", "character"}
+            and str(executor_id or "").strip()
+        ):
+            roster.append({
+                "character_id": str(executor_id).strip(), "tier": "主办", "role": "",
+                "delegator_id": None,
+            })
         self._validate_participant_roster_references(roster)
         self._validate_dossier_delegations(roster)
+
+        # #721：承办路由属于 canonical 成案核，首次 INSERT 前只补内存 roster，
+        # 最终仍由同一 INSERT 写一次；不存在成案后 JSON/UPDATE 平行写口。
+        from ming_sim.executor_routing import resolve_lead_executors
+        route = resolve_lead_executors(
+            self.conn, action_type=action, target_id=canonical_target_id,
+            payload=canonical_payload, participant_roster=roster,
+        )
+        existing_leads = {
+            str(item.get("character_id") or "").strip()
+            for item in roster if item.get("tier") == "主办"
+        }
+        for lead in route["leads"]:
+            if lead in existing_leads:
+                continue
+            # 任命候选可在成案时尚未进入 characters；0053 的人物外键真源
+            # 不容为承办路由放宽。当前法源下只填已在册者，待有 durable 的
+            # future-person 键形后再覆盖新臣任命，禁止另造平行身份轴。
+            if action in {"appointment", "acting_appointment"} and self.conn.execute(
+                "SELECT 1 FROM characters WHERE name=?", (lead,),
+            ).fetchone() is None:
+                continue
+            roster.append({
+                "character_id": lead, "tier": "主办", "role": "",
+                "delegator_id": None,
+            })
+            existing_leads.add(lead)
+        # 自动补入者与调用方名单共走 0053 的引用、委派链单一校验口。
+        roster = self._normalize_participant_roster(roster, strict_structured=True)
+        self._validate_participant_roster_references(roster)
+        self._validate_dossier_delegations(roster)
+
+        owns_rejection_collector = rejection_collector is None
+        if route["rejection"] is not None:
+            from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
+            if rejection_collector is None:
+                rejection_collector = RejectionCollector()
+            rejection_collector.record(
+                "executor_routing",
+                RejectedItem(
+                    item={
+                        "action_type": action,
+                        "transaction_category": str(
+                            canonical_payload.get("transaction_category") or ""
+                        ).strip(),
+                        "target_kind": canonical_target_kind,
+                        "target_id": canonical_target_id,
+                    },
+                    reason="事务类别未命中承办职司映射",
+                    category="duty_route_unmapped",
+                    source=Provenance.player_decree,
+                ),
+                int(state.turn),
+            )
+            # Admission rejection owns this item: no dossier or downstream
+            # knowledge/allocation rows may be materialized.  An external
+            # collector is flushed by its transaction owner; the canonical
+            # kernel must not outlive that owner's rollback boundary.
+            if commit and owns_rejection_collector:
+                rejection_collector.flush_to_db(self)
+            self._commit_dossier_write(commit)
+            if commit and owns_rejection_collector:
+                from ming_sim.applier import mirror_rejections_after_commit
+                from ming_sim.error_pack import rejections_jsonl_path
+                mirror_rejections_after_commit(
+                    self, rejection_collector, rejections_jsonl_path,
+                )
+            return 0
+        durable_extension = dict(extension or {})
+        signal = route.get("signal")
+        if signal is not None:
+            if "execution_signal" in durable_extension:
+                raise ValueError("案卷 extension execution_signal 冲突")
+            durable_extension["execution_signal"] = signal
         cur = self.conn.execute(
             """
             INSERT INTO decree_dossiers
@@ -13307,7 +13482,7 @@ class GameDB:
                 None if secret_order_id is None else int(secret_order_id),
                 text, json.dumps(canonical_payload, ensure_ascii=False), status,
                 max(0, int(due_turn or 0)),
-                json.dumps(extension or {}, ensure_ascii=False),
+                json.dumps(durable_extension, ensure_ascii=False),
                 json.dumps(roster, ensure_ascii=False),
                 int(state.turn), int(state.year), int(state.period),
             ),
@@ -13344,6 +13519,12 @@ class GameDB:
                 source_id=f"decree_dossier:{dossier_id}", commit=False,
             )
         self._commit_dossier_write(commit)
+        if commit and owns_rejection_collector and rejection_collector is not None:
+            from ming_sim.applier import mirror_rejections_after_commit
+            from ming_sim.error_pack import rejections_jsonl_path
+            mirror_rejections_after_commit(
+                self, rejection_collector, rejections_jsonl_path,
+            )
         return dossier_id
 
     @staticmethod
@@ -14190,6 +14371,18 @@ class GameDB:
             if not isinstance(payload, dict):
                 raise ValueError("案卷 payload 非对象")
             policy = dossier_action_policy(row["action_type"], payload)
+            signal = row.get("execution_signal") or {}
+            if (
+                row["action_type"] in {"assignment", "military_order"}
+                and isinstance(signal, dict)
+                and signal.get("code") == "idle_start"
+            ):
+                # Durable vacancy signal starts an executing dossier, but may
+                # not pre-materialize work or invent a terminal outcome.
+                self.transition_decree_dossier(
+                    dossier_id, "executing", commit=False,
+                )
+                return
             # Narrative-owned effects are deliberately left to the
             # simulator/extractor; immediate-owned effects were staged before
             # this gate.  Only payload-owned actions enter this dispatcher.
@@ -14422,8 +14615,6 @@ class GameDB:
                     state, row, payload, dossier_id,
                 )
             elif row["action_type"] == "assignment":
-                if not str(row.get("executor_id") or ""):
-                    raise ValueError("交办案卷缺少 executor")
                 # #520 / ADR 0055：交办机械效果=initiative，顺颁后落；cap 逐项软拒。
                 if not self._apply_assignment_verdict_effect(
                     state, row, payload, dossier_id,
@@ -15191,12 +15382,8 @@ class GameDB:
         reason = str(
             payload.get("text") or row.get("decree_text") or "军令调遣"
         )
-        actor = str(
-            row.get("executor_id")
-            or payload.get("assignee_id")
-            or payload.get("assignee")
-            or ""
-        ).strip()
+        from ming_sim.participant_roster import resolve_dossier_owner_name
+        actor = resolve_dossier_owner_name(row)
 
         self._apply_military_order_station_effect(
             state,
@@ -15322,14 +15509,10 @@ class GameDB:
             apply_score_extraction,
         )
 
-        owner = str(
-            row.get("executor_id")
-            or payload.get("assignee_id")
-            or payload.get("assignee")
-            or ""
-        ).strip()
+        from ming_sim.participant_roster import resolve_dossier_owner_name
+        owner = resolve_dossier_owner_name(row)
         if not owner:
-            raise ValueError("交办案卷缺少 executor")
+            raise ValueError("交办案卷缺少主办")
 
         title = str(
             payload.get("title") or row.get("decree_text") or payload.get("text") or ""
@@ -15460,13 +15643,8 @@ class GameDB:
                     f"宥赦不可回迁：{target} 当前状态={current_status or '(空)'}"
                 )
             self.set_character_status(
-                state, target, "active", reason, reason_code="", commit=False,
+                state, target, "active", reason, reason_code="", content=content, commit=False,
             )
-            if content is not None and target in content.characters:
-                ch = content.characters[target]
-                ch.status = "active"
-                ch.status_reason = reason
-                ch.reason_code = ""
             self.record_person_log(
                 state, target, "处置", payload_summary=punish_action,
                 source="punishment", origin_ref=origin_ref, commit=False,
@@ -16232,6 +16410,7 @@ class GameDB:
         self, state: GameState, *, content=None, registry=None, minister_name=None,
         kind_filter: Optional[str] = None, kind_filter_exclude: Optional[str] = None,
         directive_status: str = "draft", action_ids: Optional[Iterable[int]] = None,
+        rejection_collector=None,
     ) -> List[Dict[str, object]]:
         """颁诏:把本回合 pending 暂存的结构化写动作批量落到真实表(不拒绝即允许),
         按 id 序(=操作发生序)apply。落得了标 committed、落不了标 failed(都不留 pending,
@@ -16253,6 +16432,10 @@ class GameDB:
             raise ValueError("kind_filter and kind_filter_exclude are mutually exclusive")
         if directive_status not in ("draft", "pending"):
             raise ValueError("directive_status must be 'draft' or 'pending'")
+        from ming_sim.applier import RejectionCollector
+        owns_rejection_collector = rejection_collector is None
+        if rejection_collector is None:
+            rejection_collector = RejectionCollector()
         applied: List[Dict[str, object]] = []
         rows = self.list_pending_actions(
             int(state.turn), status="pending", minister_name=minister_name)
@@ -16288,7 +16471,8 @@ class GameDB:
                 payload["_canonical_pending_directive"] = True
                 committed = self._commit_conversational_draft(
                     state, pa, payload, content=content, registry=registry,
-                    directive_status=directive_status)
+                    directive_status=directive_status,
+                    rejection_collector=rejection_collector)
                 if committed is not None:
                     applied.append(committed)
                 continue
@@ -16304,21 +16488,41 @@ class GameDB:
             with cm:
                 savepoint = f"pending_action_apply_{int(pa['id'])}"
                 ok = False
+                office_memory_key = None
+                office_memory_before = None
+                office_memory_had_key = False
+                if pa["kind"] == "office" and content is not None:
+                    office_memory_key = str(payload.get("name") or "").strip()
+                    if office_memory_key:
+                        office_memory_had_key = office_memory_key in content.characters
+                        office_memory_before = content.characters.get(office_memory_key)
+
+                def restore_office_memory() -> None:
+                    if not office_memory_key:
+                        return
+                    if office_memory_had_key:
+                        content.characters[office_memory_key] = office_memory_before
+                    else:
+                        content.characters.pop(office_memory_key, None)
+
                 self.conn.execute(f"SAVEPOINT {savepoint}")
                 try:
                     ok = self._apply_pending_action(
-                        state, pa, payload, content=content, registry=registry)
+                        state, pa, payload, content=content, registry=registry,
+                        rejection_collector=rejection_collector)
                     if ok:
                         self.conn.execute(
                             "UPDATE pending_actions SET status='committed' WHERE id=?", (int(pa["id"]),))
                     else:
                         self.conn.execute(f"ROLLBACK TO {savepoint}")
+                        restore_office_memory()
                         # 落不了的(目标已转 pending_review、未知动作、坏 payload)标 failed,不留 pending——
                         # 否则回合推进后成旧回合不可见死行,永不再处理(ship-pre CMR codex)。
                         self.conn.execute(
                             "UPDATE pending_actions SET status='failed' WHERE id=?", (int(pa["id"]),))
                 except Exception as exc:
                     self.conn.execute(f"ROLLBACK TO {savepoint}")
+                    restore_office_memory()
                     rejection = getattr(exc, "dossier_link_rejection", None)
                     if rejection is not None:
                         self._record_dossier_link_rejection(
@@ -16330,6 +16534,7 @@ class GameDB:
                         "UPDATE pending_actions SET status='failed' WHERE id=?", (int(pa["id"]),))
                 finally:
                     self.conn.execute(f"RELEASE {savepoint}")
+                rejection_collector.flush_to_db(self)
             if ok:
                 item: Dict[str, object] = {
                     "id": pa["id"],
@@ -16348,6 +16553,12 @@ class GameDB:
                     if row is not None and row["secret_order_id"] is not None:
                         item["secret_order_id"] = int(row["secret_order_id"])
                 applied.append(item)
+        if owns_transaction and owns_rejection_collector:
+            from ming_sim.applier import mirror_rejections_after_commit
+            from ming_sim.error_pack import rejections_jsonl_path
+            mirror_rejections_after_commit(
+                self, rejection_collector, rejections_jsonl_path,
+            )
         return applied
 
     def retry_failed_pending_action(
@@ -16438,6 +16649,7 @@ class GameDB:
     def _commit_conversational_draft(
         self, state: GameState, pa: Dict[str, object], payload: Dict[str, object],
         *, content=None, registry=None, directive_status: str = "draft",
+        rejection_collector=None,
     ) -> Optional[Dict[str, object]]:
         """提交一条对话式拟旨暂存，并让 draft 行与 pending 状态同事务落定。"""
         owns_transaction = not (
@@ -16454,7 +16666,8 @@ class GameDB:
                     payload_for_apply = dict(payload)
                     payload_for_apply["_directive_status"] = directive_status
                     ok = self._apply_pending_action(
-                        state, pa, payload_for_apply, content=content, registry=registry)
+                        state, pa, payload_for_apply, content=content, registry=registry,
+                        rejection_collector=rejection_collector)
                     if ok:
                         self.conn.execute(
                             "UPDATE pending_actions SET status='committed' WHERE id=?",
@@ -16473,6 +16686,7 @@ class GameDB:
                     raise
                 finally:
                     self.conn.execute(f"RELEASE {savepoint}")
+                rejection_collector.flush_to_db(self)
         except Exception as exc:
             tlog(f"[pending_actions] 落库异常 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
             raise
@@ -16480,7 +16694,7 @@ class GameDB:
 
     def _apply_pending_action(
         self, state: GameState, pa: Dict[str, object], payload: Dict[str, object],
-        *, content=None, registry=None,
+        *, content=None, registry=None, rejection_collector=None,
     ) -> bool:
         """把单条暂存动作落到真实表。未知 kind/action 或目标非 active 不落、返 False(由
         commit_pending_actions 标 failed,不静默丢——终态失败,不再重试)。
@@ -16509,11 +16723,33 @@ class GameDB:
                 return False
             if canonical:
                 name = canonical
+            elif (
+                pa["action"] == "任命"
+                and infer_office_type_from_office(office, "", self.llm_config) != "后宫"
+            ):
+                # 任命准旨成案前只登记朝臣身份；后宫仍走既有纳妃核。
+                # 授官/激活仍只由顺颁后的
+                # _commit_office_action -> apply_office_appointment 完成。
+                from ming_sim.models import Character
+                from ming_sim.session import canonical_new_appointment_person_fields
+                character = Character(
+                    name=name, office="待选", office_type="未仕",
+                    aliases=[], personal_skills=[], power_id="ming",
+                    status="offstage",
+                    **canonical_new_appointment_person_fields(
+                        content, payload.get("faction"),
+                    ),
+                )
+                content.characters[name] = character
+                self.add_character(
+                    state, character,
+                    source="任命准旨身份登记", commit=False,
+                )
             staged_payload = dict(payload)
             staged_payload["name"] = name
             staged_payload["_office_action"] = str(pa["action"])
             staged_payload["_minister_name"] = str(pa.get("minister_name") or "")
-            self.create_decree_dossier(
+            dossier_id = self.create_decree_dossier(
                 state,
                 action_type=(
                     "dismiss_assignment"
@@ -16531,8 +16767,9 @@ class GameDB:
                 payload=staged_payload,
                 status="proposed",
                 commit=False,
+                rejection_collector=rejection_collector,
             )
-            return True
+            return dossier_id != 0
         if pa["kind"] == "secret_order":
             oid = pa["target_id"]
             if pa["action"] == "新建":
@@ -16723,7 +16960,7 @@ class GameDB:
             if status == "draft":
                 action_type = self._directive_dossier_action_type(payload)
                 executor_kind, executor_id = self._directive_executor(action_type, payload)
-                self.create_decree_dossier(
+                dossier_id = self.create_decree_dossier(
                     state,
                     action_type=action_type,
                     decree_text=text,
@@ -16738,7 +16975,10 @@ class GameDB:
                     status="proposed",
                     due_turn=int(payload.get("due_turn") or 0),
                     commit=False,
+                    rejection_collector=rejection_collector,
                 )
+                if dossier_id == 0:
+                    return False
             return True
         return False
 
@@ -16840,12 +17080,9 @@ class GameDB:
             _ch_key = content.characters.get(key)  # key 来自 _find_existing_minister 必在册，.get 防御一致（R2 gemini）
             if _ch_key is not None and is_vassal_prince(_ch_key):
                 return False
-            self.set_character_status(state, key, "dismissed", reason="奉旨罢黜")
-            ch = content.characters.get(key)
-            if ch is not None:
-                ch.status = "dismissed"
-                ch.office = ""   # set_character_status 已清 DB office,内存须跟上(roster 读 c.office)
-                ch.transit_to = ""
+            self.set_character_status(
+                state, key, "dismissed", reason="奉旨罢黜", content=content,
+            )
             # 对话确认回合中落库,刷 Agent 让被罢者本回合后续不再以旧活跃态被召对(线上 gemini)。
             if registry is not None:
                 registry.refresh(key)
@@ -17358,6 +17595,7 @@ class GameDB:
     def _ensure_directive_dossier(
         self, state: GameState, directive_id: int, text: str,
         payload: Optional[Dict[str, object]] = None, *, commit: bool = True,
+        rejection_collector=None,
     ) -> int:
         """旧式/新式旨稿共用的幂等成案口；未知语义明确落叙事旨。"""
         structured = dict(payload or {})
@@ -17397,6 +17635,7 @@ class GameDB:
             payload=structured,
             due_turn=int(structured.get("due_turn") or 0),
             commit=commit,
+            rejection_collector=rejection_collector,
         )
 
     def list_directives(
@@ -17436,6 +17675,8 @@ class GameDB:
 
     def confirm_directive(self, directive_id: int, state: GameState) -> None:
         """大臣拟旨经皇帝核定：pending → draft（进入颁诏候选池）。"""
+        from ming_sim.applier import RejectionCollector
+        collector = RejectionCollector()
         with atomic(self):
             changed = self.conn.execute(
                 """
@@ -17452,19 +17693,43 @@ class GameDB:
             if row is None:
                 raise KeyError(f"旨稿不存在：{directive_id}")
             if int(changed.rowcount or 0) > 0:
-                self._ensure_directive_dossier(
+                dossier_id = self._ensure_directive_dossier(
                     state, int(directive_id), str(row["text"]),
                     self.read_directive_dossier_payload(row), commit=False,
+                    rejection_collector=collector,
                 )
+                if dossier_id == 0:
+                    self.conn.execute(
+                        "UPDATE turn_directives SET status='rejected', "
+                        "updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                        (int(directive_id),),
+                    )
+            collector.flush_to_db(self)
+        from ming_sim.applier import mirror_rejections_after_commit
+        from ming_sim.error_pack import rejections_jsonl_path
+        mirror_rejections_after_commit(self, collector, rejections_jsonl_path)
 
     def ensure_dossiers_for_draft_directives(self, state: GameState) -> None:
         """结束边界成案：只读最新 draft 正文/载荷，按 directive_id 幂等创建。"""
+        from ming_sim.applier import RejectionCollector
+        collector = RejectionCollector()
         with atomic(self):
             for row in self.list_directives(state, statuses=("draft",)):
-                self._ensure_directive_dossier(
+                dossier_id = self._ensure_directive_dossier(
                     state, int(row["id"]), str(row["text"]),
                     self.read_directive_dossier_payload(row), commit=False,
+                    rejection_collector=collector,
                 )
+                if dossier_id == 0:
+                    self.conn.execute(
+                        "UPDATE turn_directives SET status='rejected', "
+                        "updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                        (int(row["id"]),),
+                    )
+            collector.flush_to_db(self)
+        from ming_sim.applier import mirror_rejections_after_commit
+        from ming_sim.error_pack import rejections_jsonl_path
+        mirror_rejections_after_commit(self, collector, rejections_jsonl_path)
 
     def reject_directive(self, directive_id: int) -> None:
         """皇帝驳回大臣拟旨：pending → rejected。"""

@@ -404,6 +404,26 @@ def _cancel_staged_opposing_office(
     return None
 
 
+def canonical_new_appointment_person_fields(
+    content: GameContent,
+    faction: object,
+    *,
+    is_consort: bool = False,
+) -> Dict[str, object]:
+    """Return the single canonical identity defaults for a newly appointed person."""
+    normalized_faction = "后宫" if is_consort else str(faction or "中立").strip()
+    if not is_consort and normalized_faction not in content.factions:
+        normalized_faction = "中立"
+    return {
+        "faction": normalized_faction,
+        "loyalty": 60,
+        "ability": 55,
+        "integrity": 60,
+        "courage": 50,
+        "style": "新入宫闱" if is_consort else "新任未详",
+    }
+
+
 def apply_appointment(
     db: GameDB,
     state: GameState,
@@ -509,26 +529,23 @@ def apply_appointment(
             db.set_character_status(
                 state, replaces, "dismissed",
                 reason=f"{office}改授{name}，原任去职",
+                content=content,
                 commit=commit,
             )
-            old.status = "dismissed"
-            old.transit_to = ""
             displaced = replaces
 
-    faction = "后宫" if is_consort else str(data.get("faction") or "中立").strip()
-    if not is_consort and faction not in content.factions:
-        faction = "中立"
+    person_fields = canonical_new_appointment_person_fields(
+        content, data.get("faction"), is_consort=is_consort,
+    )
     character = Character(
         name=name,
         office=office,
         office_type=office_type,
-        faction=faction,
         aliases=[],
         personal_skills=[],
-        loyalty=60, ability=55, integrity=60, courage=50,
-        style="新入宫闱" if is_consort else "新任未详",
         power_id="ming",
         status="active",
+        **person_fields,
     )
     content.characters[name] = character
     db.add_character(state, character, llm_config=llm_config, commit=commit)
@@ -704,7 +721,8 @@ def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: O
                loyalty, ability, integrity, courage, style, identity, seed_guilt,
                birth_year, historical_death_year, historical_death_month,
                debut_year, debut_month, status, status_reason, reason_code,
-               portrait_id, power_id, location, transit_to, summary
+               portrait_id, power_id, location, transit_to,
+               transit_distance_remaining, transit_speed_factor, transit_start_turn, summary
         FROM characters
         """
     ).fetchall()
@@ -762,6 +780,9 @@ def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: O
             power_id=row["power_id"],
             location=row["location"],
             transit_to=row["transit_to"] or "",
+            transit_distance_remaining=row["transit_distance_remaining"],
+            transit_speed_factor=row["transit_speed_factor"],
+            transit_start_turn=int(row["transit_start_turn"] or 0),
             portrait_id=row["portrait_id"],
             summary=row["summary"],
             identity=int(row["identity"]),
@@ -1514,6 +1535,7 @@ class GameSession:
                             target_id=args.get("target_id"),
                             name=args.get("name"),
                             amount=args.get("amount"),
+                            transaction_category=args.get("transaction_category"),
                         ),
                     )
                     if stage_failures:
@@ -2358,6 +2380,7 @@ class GameSession:
         target_id: object = None,
         name: object = None,
         amount: object = None,
+        transaction_category: object = None,
     ) -> int:
         """API/stream/CLI tool propose_directive → structured candidate seam (#522/#517).
 
@@ -2447,6 +2470,7 @@ class GameSession:
                 punish_action=action,
                 emperor_text=message_text,
                 amount=n if action == "罚俸" else 0,
+                transaction_category=transaction_category,
             )
             if not pending_id:
                 failure = {
