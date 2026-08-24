@@ -463,7 +463,9 @@ def _crash_resolve_before_simulator_and_recover(
     assert ctx["extracted"] is None
     assert ctx["simulator_payload"]["transit_arrivals"] == expected_arrivals
 
-    db2 = GameDB(db.path, content)
+    reopen_path = db.path
+    db.close()
+    db2 = GameDB(reopen_path, content)
     try:
         state2 = db2.load_state()
         assert state2.turn_phase == TurnPhase.SETTLING.value
