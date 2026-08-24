@@ -2161,10 +2161,12 @@ def extract_draft_intent(
             f'"目标类型":"{_draft_target_kind_guidance()}","目标ID":"...",'
             '"颁布方式":"普通|中旨直发","施行范围":"无|全国|单省"},'
             f'{{"正文":"……共 {draft_count} 道","动作类型":"military_order","目标类型":"army",'
-            '"目标ID":"...","entries":[{"key":"due_priority_军饷@shaanxi","value":40,"duration_months":3}],'
-            '"金额":null,"账户":"","执行面":"immediate|in_transit",'
+            '"目标ID":"...","金额":null,"账户":"","执行面":"immediate|in_transit",'
             '"承办人":"...","期限月数":3,"颁布方式":"普通|中旨直发","施行范围":"无",'
             '"参与人":[{"character_id":"规范名","tier":"主办|协办|知情","role":"本案职分","delegator_id":null}]}]}\n'
+            'entries 仅 pay_order_override 非空，形如 '
+            '[{"key":"due_priority_军饷@shaanxi","value":40,"duration_months":3}]；'
+            'military_order 等非该动作不写或 []。\n'
             "不得把同一段文字复制成多道；不得遗漏皇帝要求的任一道拟旨事项。\n\n"
             + correction_block
             + roster_facts

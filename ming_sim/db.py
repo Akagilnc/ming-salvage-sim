@@ -13998,8 +13998,9 @@ class GameDB:
                             "role": "", "delegator_id": None,
                         })
                         existing_names.add(lead)
-                # 不在 bulk 层替 caller 填 executor_*：policy 等非执行类保持空 executor
-                # （与单行内核 / _directive_executor 分工一致）；名单已入 roster。
+                # 与 duty-route 对称：0053 首名主办同步写 executor_*（#654 / ADR 0117）
+                row_executor_kind = "character"
+                row_executor_id = str(named_leads[0])
                 route: Dict[str, object] = {
                     "coverage": None, "route": "named", "office_type": "",
                     "leads": list(named_leads), "downgrade_step": "",

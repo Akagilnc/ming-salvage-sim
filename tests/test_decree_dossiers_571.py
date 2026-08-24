@@ -832,7 +832,9 @@ def test_assignment_promulgation_tracks_executor_until_terminal_state(game):
 @pytest.mark.parametrize("entry", ("pending_commit", "confirm"))
 @pytest.mark.parametrize(
     ("action_type", "expected_executor_kind"),
-    (("military_order", "character"), ("policy", "")),
+    # #654：点将/assignee 入 named_leads 后与 duty-route 对称写 executor_*
+    # （含 policy；不再依赖 _directive_executor 白名单空落）
+    (("military_order", "character"), ("policy", "character")),
 )
 def test_directive_assignee_projects_to_executor_only_for_executable_types(
     game, entry, action_type, expected_executor_kind,

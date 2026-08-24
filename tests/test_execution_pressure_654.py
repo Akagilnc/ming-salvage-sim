@@ -290,12 +290,14 @@ def test_national_fanout_creates_n_rows_idempotent(env):
     rows = db.list_dossiers_for_directive(directive_id)
     assert len(rows) == len(provinces)
     assert [r["region_id"] for r in rows] == provinces
-    # 点将：N 行同名主办
+    # 点将：N 行同名主办，且 executor_* 与首名主办同步（#654 named-lead 断根）
     for r in rows:
         leads = [
             e["character_id"] for e in r["participant_roster"] if e.get("tier") == "主办"
         ]
         assert leads == ["毕自严"]
+        assert r["executor_kind"] == "character"
+        assert r["executor_id"] == "毕自严"
 
     # 幂等重放
     ids2 = db.create_decree_dossiers(
@@ -310,6 +312,56 @@ def test_national_fanout_creates_n_rows_idempotent(env):
     )
     assert ids2 == ids
     assert len(db.list_dossiers_for_directive(directive_id)) == len(provinces)
+
+
+def test_named_lead_bulk_single_region_syncs_executor(env):
+    """#654：非 fan-out 批量入口点将亦同步 executor_*（与 national 同根）。"""
+    db, state, _ = env
+    payload = {
+        "target_kind": "region",
+        "target_id": "shaanxi",
+        "locality_scope": "single",
+        "dossier_action_type": "policy",
+        "assignee_id": "毕自严",
+        "participant_roster": [
+            {"character_id": "毕自严", "tier": "主办", "role": "", "delegator_id": None},
+        ],
+    }
+    cur = db.conn.execute(
+        """
+        INSERT INTO turn_directives
+        (turn, year, period, event_id, actor, skill_id, text, source, status,
+         notes, dossier_payload_json)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?)
+        """,
+        (
+            state.turn, state.year, state.period, None, "毕自严", "",
+            "陕西清丈", "test", "draft", "",
+            json.dumps(payload, ensure_ascii=False),
+        ),
+    )
+    directive_id = int(cur.lastrowid)
+    db.conn.commit()
+
+    ids = db.create_decree_dossiers(
+        state,
+        action_type="policy",
+        decree_text="陕西清丈",
+        target_kind="region",
+        target_id="shaanxi",
+        directive_id=directive_id,
+        payload=payload,
+        commit=True,
+    )
+    assert len(ids) == 1
+    row = db.list_dossiers_for_directive(directive_id)[0]
+    assert row["region_id"] == "shaanxi"
+    leads = [
+        e["character_id"] for e in row["participant_roster"] if e.get("tier") == "主办"
+    ]
+    assert leads == ["毕自严"]
+    assert row["executor_kind"] == "character"
+    assert row["executor_id"] == "毕自严"
 
 
 def test_create_decree_dossier_int_abi_single_row(env):
