@@ -40,13 +40,26 @@ PAY_SOURCE_DENY_FIELDS = (
     "self_funded_pay",
 )
 
-PAY_SOURCE_DENY_DELTA = {
-    "pay_source_region": "beizhili",
-    "province_pay_share": 1,
-    "central_pay_share": 0,
-    "is_tusi": 1,
-    "self_funded_pay": 1,
-}
+# 各组各自合法、可实际落库（arrears=0 时）；禁止复合 is_tusi/self_funded
+# 与欠饷同批——那会触发既有整项校验拒收，遮蔽 latch 写缝回归。
+PAY_SOURCE_LEGAL_DELTAS = (
+    pytest.param(
+        {"pay_source_region": "beizhili"},
+        id="region",
+    ),
+    pytest.param(
+        {"province_pay_share": 0.25, "central_pay_share": 0.75},
+        id="shares",
+    ),
+    pytest.param(
+        {"is_tusi": 1},
+        id="is_tusi",
+    ),
+    pytest.param(
+        {"self_funded_pay": 1},
+        id="self_funded_pay",
+    ),
+)
 
 
 def _configure(db, fiscal_path: str) -> None:
@@ -350,30 +363,33 @@ def test_apply_score_extraction_respects_latched_field_gate(game):
     assert after["status"] == before["status"]
 
 
-def test_latched_cutover_denies_pay_source_fields(game):
-    """cutover-on：latched 军饷源五字段一律静默 no-op（写缝入口复用 latch 门）。"""
+@pytest.mark.parametrize("pay_delta", PAY_SOURCE_LEGAL_DELTAS)
+def test_latched_cutover_denies_pay_source_fields(game, pay_delta):
+    """cutover-on：latched 军各组合法饷源输入一律静默 no-op（写缝入口复用 latch 门）。"""
     db, state, _ = game
     _configure(db, "substrate_hub")
-    _set(db, "substrate_hub", loyalty=30, arrears=5, latched=1, mutiny_count=1)
+    # arrears=0：各组输入在无 latch 门时均可真实落库，避免校验假绿
+    _set(db, "substrate_hub", loyalty=30, arrears=0, latched=1, mutiny_count=1)
     before = _snapshot(db, PAY_SOURCE_DENY_FIELDS)
 
     db.apply_army_deltas(
-        state, _event(), None, "测试", {ARMY: dict(PAY_SOURCE_DENY_DELTA)}
+        state, _event(), None, "测试", {ARMY: dict(pay_delta)}
     )
 
     after = _snapshot(db, PAY_SOURCE_DENY_FIELDS)
     assert after == before
 
 
-def test_latched_cutover_mixed_item_pay_source_deny_whitelist_apply(game):
-    """混合 item：饷源不变；manpower 严格负 / loyalty 正仍按白名单落。"""
+@pytest.mark.parametrize("pay_delta", PAY_SOURCE_LEGAL_DELTAS)
+def test_latched_cutover_mixed_item_pay_source_deny_whitelist_apply(game, pay_delta):
+    """混合 item：合法饷源半边不变；manpower 严格负 / loyalty 正仍按白名单落。"""
     db, state, _ = game
     _configure(db, "substrate_hub")
     _set(
         db,
         "substrate_hub",
         loyalty=30,
-        arrears=5,
+        arrears=0,
         latched=1,
         mutiny_count=1,
         manpower=10000,
@@ -388,7 +404,7 @@ def test_latched_cutover_mixed_item_pay_source_deny_whitelist_apply(game):
         "测试",
         {
             ARMY: {
-                **PAY_SOURCE_DENY_DELTA,
+                **pay_delta,
                 "manpower": -100,
                 "loyalty": 5,
             }
