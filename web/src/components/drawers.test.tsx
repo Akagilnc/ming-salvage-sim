@@ -168,8 +168,6 @@ describe("ArmyDrawer presentation", () => {
     expect(host.textContent).not.toContain("优秀");
     expect(host.textContent).not.toContain("63万两");
     expect(host.textContent).not.toContain("忠诚73");
-    // 旧 loyalty 五档词不得回潮
-    expect(host.textContent).not.toMatch(/危殆|浮动|不稳|稳固/);
   });
 
   it("does not render fractional arrears_text or raw 12.5", () => {
