@@ -3384,7 +3384,7 @@
       "debut_year": 0,
       "debut_month": 0,
       "power_id": "ming",
-      "location": "京师"
+      "location": "beizhili"
     },
     {
       "name": "韩一良",
@@ -3414,7 +3414,7 @@
       "debut_year": 1628,
       "debut_month": 0,
       "power_id": "ming",
-      "location": "京师"
+      "location": "beizhili"
     },
     {
       "name": "朱术桂",
@@ -3453,8 +3453,15 @@
       "office": "刑部尚书",
       "office_type": "刑部",
       "faction": "中立",
-      "aliases": ["乔允升", "乔尚书"],
-      "personal_skills": ["刑名审谳", "狱案覆核", "律例持守"],
+      "aliases": [
+        "乔允升",
+        "乔尚书"
+      ],
+      "personal_skills": [
+        "刑名审谳",
+        "狱案覆核",
+        "律例持守"
+      ],
       "loyalty": 58,
       "ability": 67,
       "integrity": 66,
@@ -3466,7 +3473,7 @@
       "status": "active",
       "summary": "天启末任刑部尚书，熟谙刑名与狱案覆核。",
       "power_id": "ming",
-      "location": "beijing"
+      "location": "beizhili"
     }
   ]
 }

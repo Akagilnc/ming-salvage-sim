@@ -2088,6 +2088,8 @@ class GameDB:
         self.ensure_column("characters", "transit_distance_remaining", "REAL")
         self.ensure_column("characters", "transit_speed_factor", "REAL")
         self.ensure_column("characters", "transit_start_turn", "INTEGER NOT NULL DEFAULT 0")
+        # #654 G：location/transit 五列齐备后具名幂等迁移（精确别名→canonical；未知 fail-loud）
+        self._migrate_character_location_aliases()
         self.ensure_column("issues", "resolve_condition", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("issues", "fail_condition", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("issues", "end_turn", "INTEGER NOT NULL DEFAULT 0")
@@ -5035,6 +5037,58 @@ class GameDB:
             except Exception as exc:
                 print(f"[WARN] 开局危机落库失败：{exc}；跳过 {ev.title}")
 
+    def _canonicalize_character_location(self, raw: object) -> str:
+        """#654 G：location 唯一写缝归一——精确 compact 等值；未知非空 fail-loud。"""
+        from ming_sim.matching import canonical_region_id_exact
+
+        text = "" if raw is None else str(raw)
+        if not text.strip():
+            return ""
+        regions = getattr(self.content, "regions", None) or {}
+        hit = canonical_region_id_exact(text, regions)
+        if hit is None:
+            raise ValueError(f"character location 未知：{text!r}")
+        return hit
+
+    def _migrate_character_location_aliases(self) -> None:
+        """#654 G：幂等扫描 characters.location；精确别名→canonical；全字段回传 transit。"""
+        rows = self.conn.execute(
+            "SELECT name, location, transit_to, transit_distance_remaining, "
+            "transit_speed_factor, transit_start_turn FROM characters"
+        ).fetchall()
+        if not rows:
+            return
+        from ming_sim.matching import canonical_region_id_exact
+
+        regions = getattr(self.content, "regions", None) or {}
+        changed = False
+        for row in rows:
+            raw = str(row["location"] or "")
+            if not raw.strip():
+                continue
+            # 已是 canonical id → skip
+            if raw in regions:
+                continue
+            hit = canonical_region_id_exact(raw, regions)
+            if hit is None:
+                raise ValueError(
+                    f"开档 location 未知别名：name={row['name']!r} location={raw!r}"
+                )
+            if hit == raw:
+                continue
+            self.set_character_transit(
+                str(row["name"]),
+                location=hit,
+                transit_to=str(row["transit_to"] or ""),
+                distance_remaining=row["transit_distance_remaining"],
+                speed_factor=row["transit_speed_factor"],
+                start_turn=int(row["transit_start_turn"] or 0),
+                commit=False,
+            )
+            changed = True
+        if changed:
+            self.conn.commit()
+
     def set_character_transit(
         self,
         name: str,
@@ -5056,6 +5110,7 @@ class GameDB:
             transit_to, distance_remaining, speed_factor, start_turn,
         )
         if location is not None:
+            location = self._canonicalize_character_location(location)
             assignments = "location=?, " + assignments
             values = (location,) + values
         self.conn.execute(

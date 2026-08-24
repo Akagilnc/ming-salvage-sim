@@ -1186,6 +1186,8 @@ def build_extractor_shared_context(
                         db.build_supervision_judge_surface(int(row["id"]))
                     )
                 )
+            # #654：属地投影仅 issues 模块；他模块禁见 region_id 键。
+            entry["region_id"] = str(row.get("region_id") or "")
         slim_dossiers.append(entry)
     slim["decree_dossiers"] = slim_dossiers
     if module == "personnel_secret":

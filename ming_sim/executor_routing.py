@@ -248,6 +248,17 @@ def resolve_lead_executors(
             },
         }
     holder, step = _downgrade_chain(conn, office_type, region_id=rid)
+    # #654 R2：仅 national 省域空链 → 复用同一中央降档链（允许多省同一主官）。
+    # 单省 / 非 national 不回退，避免通用 region fallback。
+    if not holder and rid:
+        from ming_sim.execution_pressure import normalize_locality_scope
+
+        try:
+            scope = normalize_locality_scope(canonical_payload.get("locality_scope"))
+        except ValueError:
+            scope = ""
+        if scope == "national":
+            holder, step = _downgrade_chain(conn, office_type, region_id="")
     if holder:
         return {
             "coverage": coverage,

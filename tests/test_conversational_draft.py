@@ -2015,3 +2015,50 @@ def test_normal_undo_keeps_valid_decree(read_game, monkeypatch):
     # 没有 committed draft 被删
     sess.note_chat_rollback(deleted_committed_draft_ids=[])
     assert sess.last_decree == "诏书：保留有效稿", "普通撤回不得清掉有效诏书稿"
+
+
+def test_extract_draft_intent_no_skips_invalid_action_type(monkeypatch):
+    """#654 H：拟旨意图=无 + 非法动作类型 → 空稿不抛。"""
+    import ming_sim.cli_backend as cb
+
+    monkeypatch.setattr(
+        cb, "_run_backend_for_config",
+        lambda *a, **k: ('{"拟旨意图":"无","动作类型":"not_a_real_action"}', None),
+    )
+    result = cb.extract_draft_intent("今日只是问策。", "臣以为当暂缓。")
+    assert result == {"draft_action": "无", "draft_text": "", "target_candidate": ""}
+
+
+def test_extract_draft_intent_yes_still_validates_action_type(monkeypatch):
+    """#654 H：拟旨意图=拟旨 + 非法类型仍 ValueError。"""
+    import ming_sim.cli_backend as cb
+
+    monkeypatch.setattr(
+        cb, "_run_backend_for_config",
+        lambda *a, **k: ('{"拟旨意图":"拟旨","动作类型":"not_a_real_action","目标类型":"policy","目标ID":"x"}', None),
+    )
+    with pytest.raises(ValueError, match="动作类型"):
+        cb.extract_draft_intent("拟旨吧", "臣遵旨草诏。")
+
+
+def test_draft_guidance_includes_dossier_both_paths(monkeypatch):
+    """#654 B：单旨与多旨 prompt guidance 均含 dossier。"""
+    import ming_sim.cli_backend as cb
+
+    captured = []
+
+    def _capture(prompt, *a, **k):
+        captured.append(prompt)
+        if "成品旨稿" in prompt:
+            return ('{"成品旨稿":[]}', None)
+        return ('{"拟旨意图":"无"}', None)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _capture)
+    cb.extract_draft_intent("拟旨吧", "臣拟。")
+    cb.extract_draft_intent("拟两道", "臣拟。", draft_count=2)
+    assert len(captured) == 2
+    guidance = cb._draft_target_kind_guidance()
+    assert "dossier" in guidance
+    for prompt in captured:
+        assert guidance in prompt
+        assert "dossier" in prompt

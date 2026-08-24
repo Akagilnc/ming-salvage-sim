@@ -1841,6 +1841,9 @@ def stage_authorization_candidate(
         "scope": scope_key,
         "mode": mode,
     }
+    # #654：authorization 镜像 grant——region 目标显式 single（禁 DB/oracle 暗升）
+    if kind == "region":
+        staged["locality_scope"] = "single"
     if existing_id:
         return db.update_directive_candidate(existing_id, staged)
     return db.stage_directive_candidate(int(turn), minister_name, payload=staged)

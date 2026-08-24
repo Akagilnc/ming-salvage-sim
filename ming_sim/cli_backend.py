@@ -2095,9 +2095,11 @@ def extract_draft_intent(
             f"拟了内容。请从完整语义中整理出恰好 {draft_count} 道彼此可区分、可独立暂存的成品旨稿。"
             "只输出一个 JSON 对象（无代码围栏、无多余字）：\n"
             '{"成品旨稿": ['
-            '{"正文":"第一道完整旨稿","动作类型":"policy","目标类型":"issue","目标ID":"...",'
+            '{"正文":"第一道完整旨稿","动作类型":"policy",'
+            f'"目标类型":"{_draft_target_kind_guidance()}","目标ID":"...",'
             '"颁布方式":"普通|中旨直发","施行范围":"无|全国|单省"},'
-            f'{{"正文":"……共 {draft_count} 道","动作类型":"military_order","目标类型":"army",'
+            f'{{"正文":"……共 {draft_count} 道","动作类型":"military_order",'
+            f'"目标类型":"{_draft_target_kind_guidance()}",'
             '"目标ID":"...","金额":null,"账户":"","执行面":"immediate|in_transit",'
             '"承办人":"...","期限月数":3,"颁布方式":"普通|中旨直发","施行范围":"无",'
             '"参与人":[{"character_id":"规范名","tier":"主办|协办|知情","role":"本案职分","delegator_id":null}]}]}\n'
@@ -2188,7 +2190,7 @@ def extract_draft_intent(
         'grant_allocation|authorization|secret_authorization|secret_investigation|'
         'protection|strategy_selection|punishment|pacification|referral|'
         'revoke_decree|revoke_authority|dismiss_assignment|military_order",\n'
-        '  "目标类型": "policy|character|office|army|region|issue|account",\n'
+        f'  "目标类型": "{_draft_target_kind_guidance()}",\n'
         '  "目标ID": "",\n'
         '  "颁布方式": "普通|中旨直发", // 皇帝预先声明中旨直发时选后者\n'
         '  "金额": null,             // 奉旨拨付额填正整数；非拨帑留 null\n'
@@ -2254,6 +2256,9 @@ def extract_draft_intent(
         obj = {}
     _raw = str(obj.get("拟旨意图") or "无").strip()
     _action = _raw if _raw in {"无", "拟旨"} else "无"
+    # #654 H：无意图立即短路，不跑 acting/动作类型/target_kind 校验。
+    if _action == "无":
+        return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
     dossier_action = str(obj.get("动作类型") or "special_decree").strip()
     if dossier_action == "acting_appointment":
         # #529 与多旨同：署理交回既有人事候选链，不经草案 acting_appointment。
@@ -2274,8 +2279,6 @@ def extract_draft_intent(
     if mode is not None:
         mechanical["mode"] = mode
     merged = str(obj.get("合并草案") or "").strip()
-    if _action == "无":
-        return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
     if not _candidates:
         # 无候选：沿用单条语义——补充模式合并、否则大臣回话即草案。
         if _supplement_mode:
@@ -2328,6 +2331,12 @@ MANUAL_DIRECTIVE_CAPTURE_TIMEOUT_S = 30.0
 # 八值 target_kind 真源在 decree_vocabulary.TARGET_KINDS（#654 / owner A 禁双定义）
 from ming_sim.decree_vocabulary import TARGET_KINDS as _VALID_DRAFT_TARGET_KINDS
 _VALID_LOCALITY_SCOPE_ZH = frozenset({"无", "全国", "单省"})
+# 单旨/多旨 prompt 共用一段闭集 guidance（定序派生，禁手写七值）
+_DRAFT_TARGET_KIND_GUIDANCE = "|".join(sorted(_VALID_DRAFT_TARGET_KINDS))
+
+
+def _draft_target_kind_guidance() -> str:
+    return _DRAFT_TARGET_KIND_GUIDANCE
 
 
 def _coerce_draft_target_kind(raw: object) -> str:

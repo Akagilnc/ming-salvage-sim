@@ -460,23 +460,23 @@ def test_two_axis_owner_load_and_province_count(env):
 
 def test_two_axis_disaster_pinned_top_order(env):
     db, state, _ = env
-    # 灾情族 kind 由事件涌现轨写入；直插 DB 钉置顶序（insert_issue 仅 situation/initiative）
-    for title, kind, sev in (("轻灾", "灾情", 20), ("重灾", "饥荒", 80)):
-        db.conn.execute(
-            """
-            INSERT INTO issues
-            (kind, title, origin_kind, origin_ref, origin_turn, bar_value,
-             bar_good_meaning, bar_bad_meaning, inertia, phase, stage_text,
-             status, severity, region_hint, cancellable)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-            """,
-            (
-                kind, title, "test", "", int(state.turn), 10,
-                "缓", "剧", 0, "stalemate", "s",
-                "active", sev, "shaanxi", "never",
-            ),
+    # D1：durable kind=situation；灾种真源=tags ∩ DISASTER_KINDS
+    for title, tag, sev in (("轻灾", "灾情", 20), ("重灾", "饥荒", 80)):
+        db.insert_issue(
+            state,
+            kind="situation",
+            title=title,
+            origin_kind="test",
+            severity=sev,
+            region_hint="shaanxi",
+            tags=[tag],
+            bar_value=10,
+            bar_good_meaning="缓",
+            bar_bad_meaning="剧",
+            stage_text="s",
+            cancellable="never",
+            commit=True,
         )
-    db.conn.commit()
     did = db.create_decree_dossier(
         state,
         action_type="assignment",
@@ -618,44 +618,10 @@ def _insert_directive(db, state, *, text: str, payload: dict, status: str = "dra
     return int(cur.lastrowid)
 
 
-def _seed_provincial_hubu(db, state, provinces):
-    """每省一名户部主官（尚书 stem），location=省 id；真实 resolver 可逐省命中。"""
-    from ming_sim.models import Character
-
-    names = []
-    for i, rid in enumerate(provinces):
-        name = f"清丈使{i:02d}"
-        names.append(name)
-        db.add_character(
-            state,
-            Character(
-                name=name,
-                office="户部尚书",
-                office_type="户部",
-                faction="中立",
-                aliases=[],
-                personal_skills=[],
-                loyalty=50,
-                ability=60,
-                integrity=50,
-                courage=50,
-                style="稳健",
-                power_id="ming",
-                location=rid,
-                status="active",
-            ),
-            source="test-654",
-            commit=False,
-        )
-    db.conn.commit()
-    return names
-
-
-def test_unnamed_national_fanout_fifteen_distinct_duty_leads(env):
-    """未点将 15 省：transaction_category 命中 duty_routes → 逐省真实主办互异。"""
+def test_unnamed_national_fanout_fifteen_bi_ziyan_leads(env):
+    """R2：真实 seed 未点将 national → 15 子案主办字面均为「毕自严」。"""
     db, state, _ = env
     provinces = ming_province_ids(db.conn)
-    holders = _seed_provincial_hubu(db, state, provinces)
     payload = {
         "target_kind": "policy",
         "target_id": "清丈天下田亩",
@@ -682,21 +648,29 @@ def test_unnamed_national_fanout_fifteen_distinct_duty_leads(env):
         own = [e["character_id"] for e in r["participant_roster"] if e.get("tier") == "主办"]
         assert len(own) == 1
         leads.append(own[0])
-    assert leads == holders
-    assert len(set(leads)) == 15
+    assert leads == ["毕自严"] * 15
+    # 辅证：中央空 rid 职司链首位（assignment 有 multi_month coverage）
+    from ming_sim.executor_routing import resolve_lead_executors
+    central = resolve_lead_executors(
+        db.conn,
+        action_type="assignment",
+        payload={"transaction_category": "清丈"},
+        region_id="",
+    )
+    assert central["leads"] == ["毕自严"]
 
 
 def test_partial_replay_fills_missing_regions_only(env):
     """partial replay：先插真子集 → bulk 补齐全集；每 (directive, region) 恰一行、id 稳定。"""
     db, state, _ = env
     provinces = ming_province_ids(db.conn)
-    _seed_provincial_hubu(db, state, provinces)
     payload = {
         "target_kind": "policy",
         "target_id": "清丈天下田亩",
         "locality_scope": "national",
         "dossier_action_type": "policy",
         "transaction_category": "清丈",
+        "assignee_id": "毕自严",
     }
     did = _insert_directive(db, state, text="清丈天下田亩", payload=payload)
     # 先只落期望集真子集（前 3 省）
@@ -747,14 +721,13 @@ def test_partial_replay_fills_missing_regions_only(env):
 def test_validate_all_unmapped_zero_rows_before_insert(env):
     """任一省映射失败 → 首个 INSERT 前整旨零行。"""
     db, state, _ = env
-    provinces = ming_province_ids(db.conn)
-    _seed_provincial_hubu(db, state, provinces)
     payload = {
         "target_kind": "policy",
         "target_id": "清丈天下田亩",
         "locality_scope": "national",
         "dossier_action_type": "policy",
         "transaction_category": "修仙",  # 未映射
+        "assignee_id": "",  # 显式未点将，走 duty 表
     }
     did = _insert_directive(db, state, text="清丈天下田亩", payload=payload)
     before = db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers").fetchone()["n"]
@@ -900,13 +873,50 @@ def test_path1_conversational_draft_unmapped_marks_failed(env):
 
 
 def test_national_vs_per_province_two_axis_equivalence(env):
-    """1 道 national 旨 vs N 道单省旨 → 两轴承办/属地层逐格相同。"""
+    """R2：(a) national 未点将 → 15×毕自严；(b) 单省未点将无本地对口 → 空链怠办；
+    两侧均点将后再比两轴等价。"""
     db, state, _ = env
     provinces = ming_province_ids(db.conn)
-    holders = _seed_provincial_hubu(db, state, provinces)
+    from ming_sim.executor_routing import resolve_lead_executors
 
+    # (a) national 未点将
+    payload_n = {
+        "target_kind": "policy",
+        "target_id": "清丈-A",
+        "locality_scope": "national",
+        "dossier_action_type": "policy",
+        "transaction_category": "清丈",
+    }
+    did_n = _insert_directive(db, state, text="清丈-A", payload=payload_n)
+    ids_n = db.create_decree_dossiers(
+        state, action_type="policy", decree_text="清丈-A",
+        target_kind="policy", target_id="清丈-A",
+        directive_id=did_n, payload=payload_n, commit=True,
+    )
+    assert len(ids_n) == 15
+    leads_n = []
+    for r in db.list_dossiers_for_directive(did_n):
+        own = [e["character_id"] for e in r["participant_roster"] if e.get("tier") == "主办"]
+        assert own == ["毕自严"]
+        leads_n.append(own[0])
+    assert leads_n == ["毕自严"] * 15
+
+    # (b) 单省未点将、无本地对口 → 空链/怠办（钉无通用 fallback）
+    payload_s = {
+        "target_kind": "region",
+        "target_id": "shaanxi",
+        "locality_scope": "single",
+        "dossier_action_type": "policy",
+        "transaction_category": "清丈",
+    }
+    single = resolve_lead_executors(
+        db.conn, action_type="policy", payload=payload_s, region_id="shaanxi",
+    )
+    assert single["leads"] == []
+    assert (single.get("signal") or {}).get("reason") == "vacancy_chain_exhausted"
+
+    # 两侧均合法点将后再比两轴
     def _leads_surface(directive_ids):
-        # 全部 promote executing 后建表面
         for did in directive_ids:
             for row in db.list_dossiers_for_directive(did):
                 db.conn.execute(
@@ -933,41 +943,43 @@ def test_national_vs_per_province_two_axis_equivalence(env):
             }
         return out
 
-    # A: 一道 national
-    payload_n = {
+    db.conn.execute("UPDATE decree_dossiers SET status='closed'")
+    db.conn.commit()
+
+    payload_n2 = {
         "target_kind": "policy",
-        "target_id": "清丈-A",
+        "target_id": "清丈-B",
         "locality_scope": "national",
         "dossier_action_type": "policy",
         "transaction_category": "清丈",
+        "assignee_id": "毕自严",
     }
-    did_n = _insert_directive(db, state, text="清丈-A", payload=payload_n)
+    did_n2 = _insert_directive(db, state, text="清丈-B", payload=payload_n2)
     db.create_decree_dossiers(
-        state, action_type="policy", decree_text="清丈-A",
-        target_kind="policy", target_id="清丈-A",
-        directive_id=did_n, payload=payload_n, commit=True,
+        state, action_type="policy", decree_text="清丈-B",
+        target_kind="policy", target_id="清丈-B",
+        directive_id=did_n2, payload=payload_n2, commit=True,
     )
-    surface_a = _leads_surface([did_n])
+    surface_a = _leads_surface([did_n2])
 
-    # 清场 executing，改用 N 道单省（新库行）
     db.conn.execute("UPDATE decree_dossiers SET status='closed'")
     db.conn.commit()
 
     dids = []
-    for rid, holder in zip(provinces, holders):
-        payload_s = {
+    for rid in provinces:
+        payload_sp = {
             "target_kind": "region",
             "target_id": rid,
             "locality_scope": "single",
             "dossier_action_type": "policy",
             "transaction_category": "清丈",
-            # 单省未点将：region_id 接缝应解析到该省 holder
+            "assignee_id": "毕自严",
         }
-        did = _insert_directive(db, state, text=f"清丈-{rid}", payload=payload_s)
+        did = _insert_directive(db, state, text=f"清丈-{rid}", payload=payload_sp)
         db.create_decree_dossiers(
             state, action_type="policy", decree_text=f"清丈-{rid}",
             target_kind="region", target_id=rid,
-            directive_id=did, payload=payload_s, commit=True,
+            directive_id=did, payload=payload_sp, commit=True,
         )
         dids.append(did)
     surface_b = _leads_surface(dids)
@@ -1080,21 +1092,22 @@ def test_two_axis_tsv_province_block_golden(env):
     db.conn.execute(
         "UPDATE characters SET location='beizhili', transit_to='' WHERE name='毕自严'",
     )
-    # 两灾 + 一主办案卷
-    for title, kind, sev in (("轻灾", "灾情", 20), ("重灾", "饥荒", 80)):
-        db.conn.execute(
-            """
-            INSERT INTO issues
-            (kind, title, origin_kind, origin_ref, origin_turn, bar_value,
-             bar_good_meaning, bar_bad_meaning, inertia, phase, stage_text,
-             status, severity, region_hint, cancellable)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-            """,
-            (
-                kind, title, "test", "", int(state.turn), 10,
-                "缓", "剧", 0, "stalemate", "s",
-                "active", sev, "shaanxi", "never",
-            ),
+    # 两灾 + 一主办案卷（D1 tags 真源）
+    for title, tag, sev in (("轻灾", "灾情", 20), ("重灾", "饥荒", 80)):
+        db.insert_issue(
+            state,
+            kind="situation",
+            title=title,
+            origin_kind="test",
+            severity=sev,
+            region_hint="shaanxi",
+            tags=[tag],
+            bar_value=10,
+            bar_good_meaning="缓",
+            bar_bad_meaning="剧",
+            stage_text="s",
+            cancellable="never",
+            commit=True,
         )
     did = db.create_decree_dossier(
         state,
@@ -1163,7 +1176,8 @@ def test_two_axis_tsv_province_block_golden(env):
 
 
 def test_cli_target_kinds_accepts_canonical_eight():
-    """producer 与 durable 共八值（含 dossier）：合法通过、法外 fail-loud。"""
+    """producer 与 durable 共八值（含 dossier）：合法通过、法外 fail-loud。
+    单旨/多旨 guidance 均由 TARGET_KINDS 派生，含 dossier、无七值残留。"""
     from ming_sim import cli_backend as cb
     assert TARGET_KINDS is EP_TARGET_KINDS
     assert "dossier" in TARGET_KINDS
@@ -1175,6 +1189,13 @@ def test_cli_target_kinds_accepts_canonical_eight():
         assert cb._coerce_draft_target_kind(kind) == kind
     with pytest.raises(ValueError):
         cb._coerce_draft_target_kind("not_a_real_kind")
+    guidance = cb._draft_target_kind_guidance()
+    assert guidance == "|".join(sorted(TARGET_KINDS))
+    assert "dossier" in guidance
+    # 七值残留（缺 dossier）不得再出现
+    seven = "policy|character|office|army|region|issue|account"
+    assert seven != guidance
+    assert guidance.count("|") == 7  # 八值七分隔
 
 
 def test_revoke_decree_523_producer_durable_oracle_chain(env):
@@ -1290,3 +1311,188 @@ def test_revoke_decree_523_producer_durable_oracle_chain(env):
             "target_id": "x",
             "mode": "ordinary",
         })
+
+
+# ── #654 A–H 断根补测 ─────────────────────────────────────────────
+
+
+def test_issues_only_region_id_projection(env):
+    """C：region_id 仅 issues 模块 slim 投影；internal/personnel_secret 等不见该键。"""
+    db, state, _ = env
+    did = db.create_decree_dossier(
+        state,
+        action_type="assignment",
+        decree_text="陕差",
+        target_kind="issue",
+        target_id="x",
+        payload={
+            "target_kind": "issue", "target_id": "x", "locality_scope": "none",
+            "assignee_id": "毕自严", "transaction_category": "清丈",
+        },
+        participants=[
+            {"character_id": "毕自严", "tier": "主办", "role": "", "delegator_id": None},
+        ],
+    )
+    _promote_executing(db, did, "shaanxi")
+    issues_ctx = build_extractor_shared_context(
+        db, state, narrative="n", decree_text="d", module="issues",
+    )
+    dossiers = issues_ctx["decree_dossiers"]
+    assert dossiers and "region_id" in dossiers[0]
+    assert dossiers[0]["region_id"] == "shaanxi"
+    for module in ("internal", "personnel_secret", "military_external"):
+        other = build_extractor_shared_context(
+            db, state, narrative="n", decree_text="d", module=module,
+        )
+        for row in other.get("decree_dossiers") or []:
+            assert "region_id" not in row, module
+
+
+def test_dutang_three_states(env):
+    """F：无 slot=无记录；有 slot 无 holder=出缺；有 holder=派系/操守。"""
+    from ming_sim.execution_pressure import _dutang_fields, NO_RECORD, VACANT
+    db, state, _ = env
+    # shandong 无督抚 slot
+    assert _dutang_fields(db.conn, "shandong") == (NO_RECORD, NO_RECORD)
+    # shaanxi 有 slot、holder 空
+    fac, integ = _dutang_fields(db.conn, "shaanxi")
+    assert fac == VACANT and integ == VACANT
+    # 视图像：holder 由 characters.office 对齐 office_slots.office_title
+    db.conn.execute(
+        "UPDATE characters SET office='陕西巡抚', office_type='督抚', "
+        "status='active', power_id='ming' WHERE name='毕自严'"
+    )
+    db.conn.commit()
+    fac2, integ2 = _dutang_fields(db.conn, "shaanxi")
+    ch = db.conn.execute(
+        "SELECT faction, integrity FROM characters WHERE name='毕自严'"
+    ).fetchone()
+    assert fac2 == str(ch["faction"] or "")
+    assert integ2 == int(ch["integrity"] or 0)
+
+
+def test_location_canonical_seed_and_write_seam(env, tmp_path):
+    """G：fresh seed 三人 beizhili；写缝别名归一；未知 fail-loud；在途保全。"""
+    import shutil
+    from ming_sim.db import GameDB
+    from ming_sim.matching import canonical_region_id_exact
+    from ming_sim.distance import DistanceMatrix
+    from ming_sim.paths import bundled_path
+
+    db, state, content = env
+    for name in ("乔允升", "许誉卿", "韩一良"):
+        loc = db.conn.execute(
+            "SELECT location FROM characters WHERE name=?", (name,),
+        ).fetchone()["location"]
+        assert loc == "beizhili", name
+    # exact helper
+    assert canonical_region_id_exact("beijing", content.regions) == "beizhili"
+    assert canonical_region_id_exact("京师", content.regions) == "beizhili"
+    assert canonical_region_id_exact("beizhili", content.regions) == "beizhili"
+    assert canonical_region_id_exact("", content.regions) == ""
+    assert canonical_region_id_exact("atlantis", content.regions) is None
+    # distance beizhili→shaanxi 不炸
+    matrix = DistanceMatrix.from_file(bundled_path("content", "distance_matrix.json"))
+    assert matrix.travel_time("beizhili", "shaanxi") > 0
+    # write seam alias + 在途字段按入参保留
+    db.set_character_transit(
+        "毕自严",
+        location="beijing",
+        transit_to="shaanxi",
+        distance_remaining=2.5,
+        speed_factor=1.0,
+        start_turn=3,
+        commit=True,
+    )
+    row = db.conn.execute(
+        "SELECT location, transit_to, transit_distance_remaining, "
+        "transit_speed_factor, transit_start_turn FROM characters WHERE name='毕自严'"
+    ).fetchone()
+    assert row["location"] == "beizhili"
+    assert row["transit_to"] == "shaanxi"
+    assert float(row["transit_distance_remaining"]) == 2.5
+    assert float(row["transit_speed_factor"]) == 1.0
+    assert int(row["transit_start_turn"]) == 3
+    db.set_character_transit("毕自严", location="京师", commit=True)
+    assert db.conn.execute(
+        "SELECT location FROM characters WHERE name='毕自严'"
+    ).fetchone()["location"] == "beizhili"
+    with pytest.raises(ValueError, match="location"):
+        db.set_character_transit("毕自严", location="atlantis", commit=True)
+    # 旧档在途保全：独立副本预置别名 + transit → 开档 migrate 后四字段不变
+    clone = tmp_path / "loc_migrate.db"
+    shutil.copyfile(db.path, clone)
+    # 绕过写缝，直接预置旧别名（模拟旧档）
+    import sqlite3
+    conn = sqlite3.connect(clone)
+    conn.execute(
+        "UPDATE characters SET location='beijing', transit_to='shaanxi', "
+        "transit_distance_remaining=2.5, transit_speed_factor=1.0, "
+        "transit_start_turn=3 WHERE name='毕自严'"
+    )
+    conn.commit()
+    conn.close()
+    restored = GameDB(str(clone), content)
+    try:
+        row = restored.conn.execute(
+            "SELECT location, transit_to, transit_distance_remaining, "
+            "transit_speed_factor, transit_start_turn FROM characters "
+            "WHERE name='毕自严'"
+        ).fetchone()
+        assert row["location"] == "beizhili"
+        assert row["transit_to"] == "shaanxi"
+        assert float(row["transit_distance_remaining"]) == 2.5
+        assert float(row["transit_speed_factor"]) == 1.0
+        assert int(row["transit_start_turn"]) == 3
+    finally:
+        restored.close()
+    # 未知非空开档 fail-loud
+    bad = tmp_path / "loc_bad.db"
+    shutil.copyfile(db.path, bad)
+    conn = sqlite3.connect(bad)
+    conn.execute("UPDATE characters SET location='atlantis' WHERE name='毕自严'")
+    conn.commit()
+    conn.close()
+    with pytest.raises(ValueError, match="location|别名"):
+        GameDB(str(bad), content)
+
+
+def test_authorization_region_gets_single_locality(env):
+    """D：authorization region 目标 producer 写 locality_scope=single。"""
+    import ming_sim.action_materialize  # noqa: F401
+    from ming_sim.action_materialize import stage_authorization_candidate
+
+    db, state, _ = env
+    holder = "毕自严"
+    pending_id = stage_authorization_candidate(
+        db,
+        state.turn,
+        holder,
+        text="准其便宜行事于陕西。",
+        privilege="便宜行事",
+        target_id="shaanxi",
+        target_kind="region",
+    )
+    assert pending_id
+    row = db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
+    ).fetchone()
+    payload = json.loads(row["payload_json"])
+    assert payload["target_kind"] == "region"
+    assert payload["locality_scope"] == "single"
+    # 非 region 不写 single
+    pending2 = stage_authorization_candidate(
+        db,
+        state.turn,
+        holder,
+        text="准其便宜行事。",
+        privilege="便宜行事",
+        target_id=holder,
+        target_kind="character",
+    )
+    assert pending2
+    row2 = db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?", (pending2,),
+    ).fetchone()
+    payload2 = json.loads(row2["payload_json"])
+    assert payload2.get("locality_scope") in (None, "", "none") or "locality_scope" not in payload2 or payload2.get("locality_scope") != "single"
