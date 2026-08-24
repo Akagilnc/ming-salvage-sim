@@ -23,6 +23,7 @@ from ming_sim.action_clusters import (
     cluster_by_kind,
     install_action_catalog,
     materialize_clusters_ordered,
+    validate_action_candidate_shape,
 )
 
 
@@ -829,6 +830,7 @@ def stage_punishment_candidate(
     emperor_text: object = None,
     extracted_mode: object = None,
     amount: object = 0,
+    transaction_category: object = "",
     pend_for_minister: Optional[List[Dict[str, Any]]] = None,
 ) -> int:
     """Shared punishment candidate write: mode + same-target update."""
@@ -878,6 +880,14 @@ def stage_punishment_candidate(
         "punish_action": action,
         "mode": mode,
     }
+    category = str(transaction_category or "").strip()
+    if category:
+        valid, _ = validate_action_candidate_shape(
+            {"kind": "punishment", "transaction_category": category}
+        )
+        if not valid:
+            return 0
+        staged["transaction_category"] = category
     try:
         n = int(amount) if amount is not None and amount != "" else 0
     except (TypeError, ValueError):
@@ -919,6 +929,7 @@ def _materialize_punishment(ctx: MaterializeCtx) -> None:
         emperor_text=ctx.player_message,
         extracted_mode=intent.get("mode"),
         amount=intent.get("amount"),
+        transaction_category=intent.get("transaction_category"),
         pend_for_minister=ctx.pend_for_minister,
     )
     if pending_id:
@@ -1328,6 +1339,7 @@ def stage_assignment_candidate(
     ongoing_effects: object = None,
     stages: object = None,
     target_candidate: object = None,
+    transaction_category: object = "",
     pend_for_minister: Optional[List[Dict[str, Any]]] = None,
 ) -> int:
     """Shared assignment candidate write (#520 / #502).
@@ -1391,9 +1403,15 @@ def stage_assignment_candidate(
         "target_kind": "issue",
         "target_id": matter_id,
         "title": matter_title,
-        "assignee": owner,
         "mode": mode,
     }
+    category = str(transaction_category or "").strip()
+    if category:
+        staged["transaction_category"] = category
+    else:
+        # Legacy unclassified assignments retain their explicit audience owner;
+        # classified production actions route by the canonical duty table.
+        staged["assignee"] = owner
     # 承诺形状保留：until_stop 正常携带；缺 marker 的毒字段也不得在 stage 洗掉，
     # 交既有 initiative 校验在判后接缝拒收（#520 commitment-poison-shape-preservation）。
     kind_raw = str(commitment_kind or "").strip()
@@ -1493,6 +1511,7 @@ def _materialize_assignment(ctx: MaterializeCtx) -> None:
         ongoing_effects=intent.get("ongoing_effects"),
         stages=intent.get("stages"),
         target_candidate=intent.get("target_candidate"),
+        transaction_category=intent.get("transaction_category"),
         pend_for_minister=ctx.pend_for_minister,
     )
     if pending_id:
@@ -1514,6 +1533,7 @@ def stage_military_order_candidate(
     emperor_text: object = None,
     extracted_mode: object = None,
     target_candidate: object = None,
+    transaction_category: object = "",
     pend_for_minister: Optional[List[Dict[str, Any]]] = None,
 ) -> int:
     """Shared military_order candidate write (#521 / #502).
@@ -1530,9 +1550,7 @@ def stage_military_order_candidate(
     body = str(text or "").strip()
     if not body:
         return 0
-    owner = str(assignee or minister_name or "").strip()
-    if not owner:
-        return 0
+    owner = str(assignee or "").strip()
 
     pending_rows = list(pend_for_minister or [])
     if not pending_rows:
@@ -1571,9 +1589,13 @@ def stage_military_order_candidate(
         "dossier_action_type": "military_order",
         "target_kind": "army",
         "target_id": target,
-        "assignee": owner,
         "mode": mode,
     }
+    if owner:
+        staged["assignee"] = owner
+    category = str(transaction_category or "").strip()
+    if category:
+        staged["transaction_category"] = category
     dest = str(station or "").strip()
     if dest:
         staged["station"] = dest
@@ -1615,9 +1637,7 @@ def _materialize_military_order(ctx: MaterializeCtx) -> None:
     target_id = str(intent.get("target_id") or "").strip()
     if not target_id:
         return
-    assignee = str(
-        intent.get("name") or intent.get("assignee") or ctx.character.name or ""
-    ).strip()
+    assignee = str(intent.get("name") or intent.get("assignee") or "").strip()
     body = str(ctx.reply or ctx.player_message or "").strip()
     if not body:
         return
@@ -1635,6 +1655,7 @@ def _materialize_military_order(ctx: MaterializeCtx) -> None:
         emperor_text=ctx.player_message,
         extracted_mode=intent.get("mode"),
         target_candidate=intent.get("target_candidate"),
+        transaction_category=intent.get("transaction_category"),
         pend_for_minister=ctx.pend_for_minister,
     )
     if pending_id:
@@ -2844,6 +2865,10 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
             "交办·责成", "assignment", EFFECT_MATERIALIZE, priority=56,
             fields=(
                 FieldSpec("title", "标题", None, "", max_len=80),
+                FieldSpec(
+                    "transaction_category", "事务类别",
+                    frozenset({"钱粮", "清丈", "督赈", "缉拿", "缉捕", "河工"}), "",
+                ),
                 # owner=当前召对大臣；不设 assignee/name 改派字段（#520 r2）
                 # 与 grant/pacification 共享 target_id：事项锚（跨轮强化身份）
                 FieldSpec("target_id", "目标", None, "", max_len=80),
@@ -2922,11 +2947,20 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                         "无", "拿问下狱", "拿问去职", "赐死", "廷杖", "罚俸",
                         "削籍", "放归", "昭雪", "流放",
                     }), "无",
+                    execution_coverage={
+                        "拿问下狱": "strike", "拿问去职": "strike",
+                        "赐死": None, "廷杖": None, "罚俸": None, "削籍": None,
+                        "放归": None, "昭雪": None, "流放": None, "无": None,
+                    },
                 ),
                 FieldSpec("name", "姓名", None, "", max_len=20),
                 # 与 pacification/grant_allocation 共享 target_id 中文键（#518 契约）
                 FieldSpec("target_id", "目标", None, "", max_len=80),
                 FieldSpec("amount", "金额", None, 0, as_int=True),
+                FieldSpec(
+                    "transaction_category", "事务类别",
+                    frozenset({"钱粮", "清丈", "督赈", "缉拿", "缉捕", "河工"}), "",
+                ),
                 FieldSpec(
                     "mode", "颁布方式",
                     frozenset({"ordinary", "midzhi"}), "",
@@ -2939,6 +2973,10 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
             fields=(
                 # 与 grant/pacification 共享 target_id：既有军队稳定 id
                 FieldSpec("target_id", "目标", None, "", max_len=80),
+                FieldSpec(
+                    "transaction_category", "事务类别",
+                    frozenset({"钱粮", "清丈", "督赈", "缉拿", "缉捕", "河工"}), "",
+                ),
                 # 承办人 / 责任军将（admission 映 assignee_id）
                 FieldSpec("name", "姓名", None, "", max_len=20),
                 FieldSpec("station", "驻地", None, "", max_len=80),

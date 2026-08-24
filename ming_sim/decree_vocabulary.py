@@ -186,7 +186,7 @@ def terminal_report_facade(
 SIM_DOSSIER_COMMON_KEYS = frozenset({
     "id", "action_type", "status",
     "decision", "outcome", "note",
-    "mode", "stigma", "participant_roster", "links",
+    "mode", "stigma", "participant_roster", "links", "execution_signal",
     "due_turn", "created_turn", "promulgated_turn",
     "target_kind", "target_id", "executor_kind", "executor_id",
     # #613 执行侧任别读端（与 #569 固定键投影同面）
