@@ -16,7 +16,7 @@
       "event_kind": "把柄",
       "context": "崔呈秀替田尔耕盖印掩护赃私，短处处攥在对方手里，阉党魁首与爪牙之间彼此握着把柄、共系一绳。",
       "origin": "seed:founding:cui-tian-cover",
-      "evidence": true,
+      "evidence": false,
       "year": 1626,
       "period": 12
     },
@@ -29,6 +29,196 @@
       "evidence": false,
       "year": 1626,
       "period": 2
+    },
+    {
+      "source": "魏忠贤",
+      "target": "客氏",
+      "event_kind": "恩义",
+      "context": "客氏为熹宗乳母，魏忠贤入宫后与她深相结援；宫中风波里几次几乎要了他的命，都仗她在熹宗面前回护，二人内外相倚把持宫禁。",
+      "origin": "seed:founding:wei-ke-alliance",
+      "evidence": false,
+      "year": 1620,
+      "period": 9
+    },
+    {
+      "source": "魏忠贤",
+      "target": "崔呈秀",
+      "event_kind": "荐引",
+      "context": "魏忠贤矫中旨重新起用原已拟戍的崔呈秀为御史；崔呈秀随后编造《天鉴》《同志》诸录献给魏忠贤，成为其外廷爪牙。",
+      "origin": "seed:founding:wei-cui-patronage",
+      "evidence": false,
+      "year": 1625,
+      "period": 1
+    },
+    {
+      "source": "崔呈秀",
+      "target": "魏忠贤",
+      "event_kind": "恩义",
+      "context": "天启四年九月崔呈秀被劾贪污还朝，夜走魏忠贤所叩头乞哀、并乞为养子，尽献党人状，自此为魏氏腹心。",
+      "origin": "seed:founding:cui-wei-submission",
+      "evidence": false,
+      "year": 1624,
+      "period": 9
+    },
+    {
+      "source": "王绍徽",
+      "target": "魏忠贤",
+      "event_kind": "站台",
+      "context": "王绍徽仿《水浒传》天罡地煞编成《东林点将录》，把东林人物逐一列名献给魏忠贤，供阉党按名排陷。",
+      "origin": "seed:founding:wangshaohui-dianjianglu",
+      "evidence": false,
+      "year": 1625,
+      "period": 6
+    },
+    {
+      "source": "魏忠贤",
+      "target": "黄立极",
+      "event_kind": "荐引",
+      "context": "天启五年八月，魏忠贤以同乡故擢黄立极为礼部尚书兼东阁大学士；黄立极由此入阁，相位与魏氏权势相系。",
+      "origin": "seed:founding:wei-huangliji-promotion",
+      "evidence": false,
+      "year": 1625,
+      "period": 8
+    },
+    {
+      "source": "施凤来",
+      "target": "魏忠贤",
+      "event_kind": "站台",
+      "context": "施凤来于天启六年七月入阁后依媚取容，在内阁承顺魏忠贤意旨，久居机要。",
+      "origin": "seed:founding:wei-shifenglai-promotion",
+      "evidence": false,
+      "year": 1626,
+      "period": 7
+    },
+    {
+      "source": "张瑞图",
+      "target": "魏忠贤",
+      "event_kind": "站台",
+      "context": "张瑞图于天启六年七月入阁后依附魏忠贤，并为魏氏生祠手书碑文，借阉党声势保有相位。",
+      "origin": "seed:founding:wei-zhangruitu-promotion",
+      "evidence": false,
+      "year": 1626,
+      "period": 7
+    },
+    {
+      "source": "来宗道",
+      "target": "魏忠贤",
+      "event_kind": "站台",
+      "context": "来宗道在天启朝久官礼部，曲意与阉党周旋，朝士以其依违魏氏门户视之。",
+      "origin": "seed:founding:laizongdao-wei-attach",
+      "evidence": false,
+      "year": 1626,
+      "period": 6
+    },
+    {
+      "source": "魏忠贤",
+      "target": "郭允厚",
+      "event_kind": "荐引",
+      "context": "天启四年十二月，魏忠贤矫中旨召用例转科道，将郭允厚擢为太仆少卿；郭允厚由此进入其外廷爪牙之列。",
+      "origin": "seed:founding:wei-guoyunhou-finance",
+      "evidence": false,
+      "year": 1624,
+      "period": 12
+    },
+    {
+      "source": "王体乾",
+      "target": "魏忠贤",
+      "event_kind": "站台",
+      "context": "杨涟上疏弹劾魏忠贤后，王体乾与客氏力为翼护，朝中旋有严旨切责杨涟，公开替魏忠贤遮护。",
+      "origin": "seed:founding:wangtiqian-wei-support",
+      "evidence": false,
+      "year": 1624,
+      "period": 6
+    },
+    {
+      "source": "魏忠贤",
+      "target": "田尔耕",
+      "event_kind": "撑腰",
+      "context": "田尔耕于天启四年十月掌锦衣卫，为魏忠贤罗织杨涟、左光斗诸狱；魏氏倚之为厂卫爪牙之首。",
+      "origin": "seed:founding:wei-tian-jinyiwei",
+      "evidence": false,
+      "year": 1624,
+      "period": 10
+    },
+    {
+      "source": "田尔耕",
+      "target": "许显纯",
+      "event_kind": "协作",
+      "context": "田尔耕掌锦衣卫、许显纯主北镇抚司刑狱，二人奉魏忠贤之命共同罗织并拷掠杨涟、左光斗诸狱。",
+      "origin": "seed:founding:tian-xu-prison",
+      "evidence": false,
+      "year": 1625,
+      "period": 7
+    },
+    {
+      "source": "阎鸣泰",
+      "target": "魏忠贤",
+      "event_kind": "站台",
+      "context": "魏忠贤窃柄，阎鸣泰潜结之，因获召为兵部右侍郎，以此党附阉门。",
+      "origin": "seed:founding:yanmingtai-wei-attach",
+      "evidence": false,
+      "year": 1625,
+      "period": 6
+    },
+    {
+      "source": "皇帝",
+      "target": "李若琏",
+      "event_kind": "知遇",
+      "context": "李若琏以信邸潜邸旧属随侍宿卫，是信王亲任的锦衣卫官；潜邸情分早于入承大统。",
+      "origin": "seed:founding:liruolian-xindi",
+      "evidence": false,
+      "year": 1626,
+      "period": 12
+    },
+    {
+      "source": "皇帝",
+      "target": "曹化淳",
+      "event_kind": "知遇",
+      "context": "曹化淳早年侍奉信王朱由检，为潜邸旧人；信邸情分在入承大统前已结下。",
+      "origin": "seed:founding:caohuachun-xindi",
+      "evidence": false,
+      "year": 1626,
+      "period": 12
+    },
+    {
+      "source": "魏忠贤",
+      "target": "崔呈秀",
+      "event_kind": "恩义",
+      "context": "崔呈秀投附后，魏忠贤与之盟誓相倚，许以奥援，倚为外廷腹心。",
+      "origin": "seed:founding:wei-cui-oath",
+      "evidence": false,
+      "year": 1625,
+      "period": 6
+    },
+    {
+      "source": "田尔耕",
+      "target": "李若琏",
+      "event_kind": "使绊",
+      "context": "田尔耕掌锦衣卫时拦着李若琏升迁，信邸旧人与阉党爪牙在厂卫内结下升迁之怨。",
+      "origin": "seed:founding:tian-liruolian-block",
+      "evidence": false,
+      "year": 1626,
+      "period": 6
+    },
+    {
+      "source": "毛羽健",
+      "target": "田尔耕",
+      "event_kind": "结怨",
+      "context": "杨涟诏狱时毛羽健姐夫被牵连入狱，自此与田尔耕结下私怨。",
+      "origin": "seed:founding:maoyujian-tian-grudge",
+      "evidence": false,
+      "year": 1625,
+      "period": 8
+    },
+    {
+      "source": "魏忠贤",
+      "target": "李从心",
+      "event_kind": "荐引",
+      "context": "魏忠贤以同乡故旧，在司礼监点名关照、批过李从心题本，为其升迁开路。",
+      "origin": "seed:founding:wei-licongxin-patronage",
+      "evidence": false,
+      "year": 1625,
+      "period": 6
     }
   ],
   "summaries": [
