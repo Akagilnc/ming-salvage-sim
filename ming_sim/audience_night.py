@@ -1659,8 +1659,27 @@ def list_unsettled_summons(db: Any) -> List[Dict[str, Any]]:
     return projected
 
 
+def _one_per_person(items: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """消费端投影：每人只供一份事实；ledger 多 origin 行仍独立保留供撤回。
+
+    输入须已按 entry id 升序（list_unsettled_summons ORDER BY id），保留最早一条。
+    """
+    seen: set[str] = set()
+    out: List[Dict[str, Any]] = []
+    for item in items:
+        name = str(item.get("person_name") or "")
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        out.append(item)
+    return out
+
+
 def list_waiting_audience_summons(db: Any) -> List[Dict[str, Any]]:
-    """未结候见投影：list_unsettled 中 kind=waiting 的薄封装（非第二真源）。"""
+    """未结候见投影：list_unsettled 中 kind=waiting 的薄封装（非第二真源）。
+
+    每人每阶段只向读端供一份候见事实；多 origin ledger 行不合并。
+    """
     from ming_sim.matching import is_capital_location
 
     waiting: List[Dict[str, Any]] = []
@@ -1681,13 +1700,14 @@ def list_waiting_audience_summons(db: Any) -> List[Dict[str, Any]]:
             "source_entry_id": item["entry_id"],
             "location": location,
         })
-    return waiting
+    return _one_per_person(waiting)
 
 
 def list_arrived_unsettled_summons(db: Any) -> List[Dict[str, Any]]:
     """Project in-transit summons whose original non-capital journey has completed.
 
     waiting（抵京候见）不进续程 payload；inactive 由 retire 结清，不投续程。
+    每人每阶段只向读端供一份续赴京事实；多 origin ledger 行不合并。
     """
     from ming_sim.matching import is_capital_location
 
@@ -1717,7 +1737,7 @@ def list_arrived_unsettled_summons(db: Any) -> List[Dict[str, Any]]:
             "source_entry_id": item["entry_id"],
             "required_fact": "抵原地后续赴京",
         })
-    return arrived
+    return _one_per_person(arrived)
 
 
 def _mark_summon_entries_in_transit(db: Any, items: Sequence[Dict[str, Any]]) -> None:
