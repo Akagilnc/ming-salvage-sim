@@ -365,9 +365,14 @@ def test_pending_directive_commit_failure_propagates_and_rolls_back_outer_atomic
     )
     original_apply = db._apply_pending_action
 
-    def _boom_after_draft(state_arg, pa, payload, *, content=None, registry=None):
+    def _boom_after_draft(
+        state_arg, pa, payload, *, content=None, registry=None,
+        rejection_collector=None,
+    ):
         assert original_apply(
-            state_arg, pa, payload, content=content, registry=registry) is True
+            state_arg, pa, payload, content=content, registry=registry,
+            rejection_collector=rejection_collector,
+        ) is True
         raise RuntimeError("directive commit boom")
 
     monkeypatch.setattr(db, "_apply_pending_action", _boom_after_draft)

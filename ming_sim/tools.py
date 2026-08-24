@@ -458,11 +458,13 @@ def build_minister_tools(character: Character, context: CourtContext,
         target_id: str = "",
         name: str = "",
         amount: int = 0,
+        transaction_category: str = "",
     ) -> str:
         """把已定处置方案拟成一道圣旨草稿呈给皇帝审阅。
 
         decree_text 为完整圣旨正文。若本件为惩处，须同时填 ACTION_CLUSTERS 同名
-        结构化字段：punish_action、单一目标（target_id 或 name）、罚俸时正数 amount。
+        结构化字段：punish_action、单一目标（target_id 或 name）、罚俸时正数 amount，
+        以及来自 ACTION_CLUSTERS 的 transaction_category。
         仅在正文讨论廷杖/流放/昭雪等制度、未填结构化字段时，不得当作已决惩处。
         """
         text = (decree_text or "").strip()
@@ -1146,7 +1148,8 @@ def build_extractor_tools(context: CourtContext):
                             内廷俸_base/内廷俸_rate/妃嫔_base/妃嫔_rate
         人物变更            ADR0009 人事档案唯一生产入口；每项必须含 name、动作、origin_ref。
                             动作∈任命/罢黜/调任/处置/易主/册封/行止/评定；按动作补 office、
-                            office_type、status、new_power、location、transit_to、loyalty、reason。
+                            office_type、status、new_power、loyalty、reason；行止只补非空 transit_to 启程，
+                            不得提交 location，抵达只由引擎 force_transit_arrivals 处理。
 
         ══ 档位判定标准 ══
         极端：屠戮全族/抄家灭门/决定性战胜败  bar±40~50  metric±20~30  faction±20~40
