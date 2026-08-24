@@ -7242,7 +7242,9 @@ def _apply_person_changes(
             ):
                 from ming_sim.audience_night import settle_unsettled_summons_for_person
 
-                settle_unsettled_summons_for_person(db, name)
+                settle_unsettled_summons_for_person(
+                    db, name, commit=commit_person_change,
+                )
             continue
 
         applied.append(
