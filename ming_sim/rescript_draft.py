@@ -31,12 +31,83 @@ from ming_sim.agents import run_agent_text
 from ming_sim.assets import strip_json_fence
 from ming_sim.llm_model import llm_unavailable_from_error
 from ming_sim.db import GameDB
+from ming_sim.decree_vocabulary import (
+    RESCRIPT_ROUTABLE_ACTION_TYPES,
+    TARGET_KINDS,
+    derive_draft_capability,
+)
 from ming_sim.error_pack import error_packs_root
 from ming_sim.exceptions import LLMContractError, LLMUnavailable
 from ming_sim.models import GameState, reign_period_label
 from ming_sim.token_stats import tlog
 
 MAX_RESCRIPT_DRAFTS = 5
+
+# #657 C.3 层 A option 必填键（缺一 shape 失败）；draft_capability 由服务端派生写入。
+_LAYER_A_REQUIRED_KEYS = (
+    "label", "hint", "action_type", "target_kind", "target_id", "locality_scope",
+)
+_LAYER_A_PRESENT_KEYS = (
+    "assignee_name", "region_id", "transaction_category",
+)
+_LOCALITY_SCOPES = frozenset({"national", "single", "none"})
+_LOCALITY_ALIASES = {
+    "全国": "national", "全域": "national",
+    "单地": "single", "一地": "single",
+    "无": "none", "无属地": "none",
+}
+
+
+def normalize_rescript_layer_a_option(raw: object) -> Dict[str, object]:
+    """#657 层 A option shape 校验 + 服务端写 draft_capability（不入 dossier payload）。
+
+    分拣主路径（label/hint 两键 LLM 输出）仍走 validate_rescript_draft_items；
+    本函数供批红案头/六动作写前的完整 option 规范化。
+    """
+    if not isinstance(raw, dict):
+        raise ValueError("票拟 option 非 object（层 A shape）")
+    out: Dict[str, object] = {}
+    for key in _LAYER_A_REQUIRED_KEYS:
+        value = raw.get(key)
+        if not isinstance(value, str) or not str(value).strip():
+            raise ValueError(f"票拟 option 缺层 A 必填键或为空白：{key}")
+        out[key] = str(value)
+    action_type = str(out["action_type"]).strip()
+    if action_type not in RESCRIPT_ROUTABLE_ACTION_TYPES:
+        raise ValueError(f"票拟 option.action_type 非七类 routable：{action_type!r}")
+    out["action_type"] = action_type
+    target_kind = str(out["target_kind"]).strip()
+    if target_kind not in TARGET_KINDS:
+        raise ValueError(f"票拟 option.target_kind 非法：{target_kind!r}")
+    out["target_kind"] = target_kind
+    scope_raw = str(out["locality_scope"]).strip()
+    scope = _LOCALITY_ALIASES.get(scope_raw, scope_raw)
+    if scope not in _LOCALITY_SCOPES:
+        raise ValueError(f"票拟 option.locality_scope 非法：{scope_raw!r}")
+    out["locality_scope"] = scope
+    # 键必须在（可空串）
+    for key in _LAYER_A_PRESENT_KEYS:
+        value = raw.get(key, "")
+        out[key] = "" if value is None else str(value)
+    # 其余 capability 闭集字段透传（有则规范化，无则由 derive 填默认）
+    for key, _default in (
+        ("name", ""), ("title", ""), ("commitment_kind", ""),
+        ("stop_condition", ""), ("station", ""), ("office", ""),
+        ("grant_action", ""), ("account", ""), ("cadence", ""),
+        ("execution_surface", ""), ("appoint_action", ""),
+        ("appointment_tenure", ""), ("punish_action", ""),
+        ("privilege", ""), ("summon_target", ""),
+    ):
+        if key in raw and raw[key] is not None:
+            out[key] = str(raw[key])
+    for key in ("end_turn", "deadline_months", "due_turn", "amount"):
+        if key in raw and raw[key] is not None and raw[key] != "":
+            try:
+                out[key] = int(raw[key])  # type: ignore[arg-type]
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"票拟 option.{key} 非法：{raw[key]!r}") from exc
+    out["draft_capability"] = derive_draft_capability(out)
+    return out
 
 
 def select_triage_actor(db: GameDB) -> Optional[Dict[str, str]]:

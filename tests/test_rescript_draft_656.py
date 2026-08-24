@@ -1139,3 +1139,188 @@ def test_r3_lone_surrogate_field_rejects_whole_batch():
         }]
     }
     assert len(validate_rescript_draft_items(good, set())) == 1
+
+
+# ---------------------------------------------------------------------------
+# #657 片1：行事实与案头（schema + 词表 + desk 读）
+# ---------------------------------------------------------------------------
+
+def _pending_columns(db) -> set[str]:
+    return {r[1] for r in db.conn.execute("PRAGMA table_info(pending_decisions)").fetchall()}
+
+
+def _ledger_columns(db) -> set[str]:
+    return {r[1] for r in db.conn.execute("PRAGMA table_info(story_ledger_entries)").fetchall()}
+
+
+def test_657_s1_schema_columns_and_no_banned_fields(game):
+    """片1：revision_round/prior_options_json/origin_ref 列存在；无 consumed_epoch/rescript_origin。"""
+    db, _state, _content = game
+    pending_cols = _pending_columns(db)
+    assert "revision_round" in pending_cols
+    assert "prior_options_json" in pending_cols
+    assert "consumed_epoch" not in pending_cols
+    ledger_cols = _ledger_columns(db)
+    assert "origin_ref" in ledger_cols
+    dossier_cols = {r[1] for r in db.conn.execute("PRAGMA table_info(decree_dossiers)").fetchall()}
+    assert "rescript_origin" not in dossier_cols
+    # partial UNIQUE on non-empty origin_ref
+    idx_sql = [
+        str(r[0]) for r in db.conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_ledger_origin_ref'"
+        ).fetchall()
+    ]
+    assert idx_sql and "origin_ref" in idx_sql[0] and "origin_ref != ''" in idx_sql[0].replace('"', "")
+
+
+def test_657_s1_rescript_closed_sets_subset_of_dossier(game):
+    """A12 前置：双闭集 ⊂ DOSSIER_ACTION_TYPES，且 DOSSIER 不是七值。"""
+    from ming_sim.decree_vocabulary import (
+        DOSSIER_ACTION_TYPES,
+        RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES,
+        RESCRIPT_ROUTABLE_ACTION_TYPES,
+    )
+    assert RESCRIPT_ROUTABLE_ACTION_TYPES <= DOSSIER_ACTION_TYPES
+    assert RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES <= DOSSIER_ACTION_TYPES
+    assert "dismiss_assignment" in RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES
+    assert "dismiss_assignment" not in RESCRIPT_ROUTABLE_ACTION_TYPES
+    assert len(DOSSIER_ACTION_TYPES) > len(RESCRIPT_ROUTABLE_ACTION_TYPES)
+    _ = game  # fixture keeps DB init path green
+
+
+def test_657_s1_derive_draft_capability_stable_and_sensitive():
+    """capability：同字段稳定；闭集任一有效差改变键。"""
+    from ming_sim.decree_vocabulary import derive_draft_capability
+
+    base = {
+        "action_type": "assignment",
+        "label": "发帑赈济",
+        "hint": "所安者饥民",
+        "assignee_name": "杨嗣昌",
+        "target_kind": "region",
+        "target_id": "shaanxi",
+        "transaction_category": "督赈",
+        "locality_scope": "single",
+        "region_id": "shaanxi",
+    }
+    a = derive_draft_capability(base)
+    b = derive_draft_capability(dict(base))
+    assert isinstance(a, str) and a == b and len(a) >= 16
+    # 扰动 label
+    changed = dict(base)
+    changed["label"] = "缓征"
+    assert derive_draft_capability(changed) != a
+    # 扰动 assignee
+    changed2 = dict(base)
+    changed2["assignee_name"] = "洪承畴"
+    assert derive_draft_capability(changed2) != a
+    # 缺键按默认参与派生，不因插入空串而变
+    with_default = dict(base)
+    with_default["summon_target"] = ""
+    assert derive_draft_capability(with_default) == a
+
+
+def test_657_s1_option_shape_stamps_draft_capability():
+    """层 A option 必填键校验；服务端写 draft_capability。"""
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+
+    raw = {
+        "label": "发帑赈济",
+        "hint": "所安者饥民",
+        "action_type": "assignment",
+        "assignee_name": "杨嗣昌",
+        "target_kind": "region",
+        "target_id": "shaanxi",
+        "locality_scope": "single",
+        "region_id": "shaanxi",
+        "transaction_category": "督赈",
+    }
+    opt = normalize_rescript_layer_a_option(raw)
+    assert opt["draft_capability"]
+    assert opt["label"] == "发帑赈济"
+    assert opt["action_type"] == "assignment"
+    # 缺必填键 → 拒
+    with pytest.raises(ValueError):
+        normalize_rescript_layer_a_option({"label": "x", "hint": "y"})
+    with pytest.raises(ValueError):
+        normalize_rescript_layer_a_option({
+            **raw, "action_type": "policy",  # 非七类 routable
+        })
+
+
+def test_657_s1_list_rescript_desk_merges_cross_month_and_decisions(game):
+    """desk：旧急务 ORDER BY turn,idx → 本月 decision；decision_key 与新列投影。"""
+    db, state, _content = game
+    turn = int(state.turn)
+    prior = turn - 1 if turn > 0 else 0
+    # 跨月急务（prior turn）
+    db.conn.execute(
+        "INSERT INTO pending_decisions\n"
+        " (turn, idx, event_id, title, context, options_json, choice_json,\n"
+        "  status, kind, actor_name, actor_office, actor_faction,\n"
+        "  revision_round, prior_options_json)\n"
+        " VALUES (?, 0, 'urgent:old:0', '旧急务甲', '跨月', ?, '',\n"
+        "  'pending', 'rescript_draft', '首辅', '内阁首辅', '东林', 2, ?)",
+        (
+            prior,
+            json.dumps([{"label": "甲", "hint": "h1"}, {"label": "乙", "hint": "h2"}], ensure_ascii=False),
+            json.dumps([[{"label": "旧甲", "hint": "oh"}]], ensure_ascii=False),
+        ),
+    )
+    db.save_rescript_drafts(turn, [{
+        "title": "本月急务",
+        "context": "当月",
+        "options": [{"label": "丙", "hint": "h3"}, {"label": "丁", "hint": "h4"}],
+        "actor_name": "次辅", "actor_office": "内阁次辅", "actor_faction": "阉党",
+    }])
+    db.save_pending_decisions(turn, [{
+        "title": "本月抉择",
+        "context": "decision",
+        "options": [{"label": "准", "hint": ""}, {"label": "驳", "hint": ""}],
+        "event_id": "ev-1",
+    }])
+    # 已 decided 的急务不得入 desk
+    db.conn.execute(
+        "INSERT INTO pending_decisions\n"
+        " (turn, idx, event_id, title, context, options_json, choice_json,\n"
+        "  status, kind, revision_round, prior_options_json)\n"
+        " VALUES (?, 99, 'urgent:done', '已决急务', '', '[]', '{}',\n"
+        "  'decided', 'rescript_draft', 0, '[]')",
+        (prior,),
+    )
+    db.conn.commit()
+
+    desk = db.list_rescript_desk(turn)
+    titles = [row["title"] for row in desk]
+    assert "已决急务" not in titles
+    # 旧急务在前，本月 decision 在急务之后（合并序）
+    assert titles[0] == "旧急务甲"
+    assert "本月急务" in titles
+    assert titles[-1] == "本月抉择" or "本月抉择" in titles
+    # 旧急务 → 本月急务 → 本月 decision
+    assert titles.index("旧急务甲") < titles.index("本月急务") < titles.index("本月抉择")
+
+    old = next(r for r in desk if r["title"] == "旧急务甲")
+    assert old["decision_key"] == f"rescript_draft:{prior}:0"
+    assert old["revision_round"] == 2
+    assert old["status"] == "pending"
+    assert old["actor_name"] == "首辅"
+    assert isinstance(old["prior_options_json"], list)
+    assert old["choice"] is None or old["choice"] == {} or old["choice"] == ""
+
+    dec = next(r for r in desk if r["title"] == "本月抉择")
+    assert dec["decision_key"] == f"decision:{turn}:{dec['idx']}"
+    assert dec["kind"] == "decision"
+
+    # list 补列：list_rescript_drafts / list_pending_decisions 带出新列
+    drafts = db.list_rescript_drafts()
+    hit = next(d for d in drafts if d["title"] == "旧急务甲")
+    assert hit["revision_round"] == 2
+    assert "prior_options_json" in hit
+    decisions = db.list_pending_decisions(turn)
+    assert all("revision_round" in d for d in decisions)
+
+    # #656 不变式：clear/save decision 不碰 rescript_draft
+    db.clear_pending_decisions(turn)
+    assert any(d["title"] == "本月急务" for d in db.list_rescript_drafts())
+    assert any(d["title"] == "旧急务甲" for d in db.list_rescript_desk(turn))
