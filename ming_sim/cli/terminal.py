@@ -170,19 +170,24 @@ def choose_minister(session: GameSession) -> Optional[Character]:
                 print("这句话能对应多位大臣，请再说具体一点，或直接输编号。")
                 continue
         if candidate is None:
+            # #670：未知/未注册人物不得临时旁路入殿；须 ADR 0038 持久入册后再走 admission。
             try:
-                candidate, is_temporary = session.summon_character(raw, None)
+                candidate, _is_temporary = session.summon_character(
+                    raw, None, allow_temporary=False,
+                )
             except ValueError:
                 print("请输入有效编号或姓名。")
                 continue
-            if is_temporary:
-                print(f"临时传{candidate.name}入殿。\n")
-                return candidate
         # 召对总闸 can_summon（含宗藩拒 + 非 active 拒）——按名/编号/模糊任一路解析到的人都过此闸，
         # 与 web /chat、LLM summon 工具同口径集中守（cmr R6：CLI 选臣菜单原先只查 status、漏宗藩）。
-        ok, reason = session.can_summon(candidate)
-        if not ok:
-            print(reason)
+        decision = session.consume_audience_admission(
+            candidate,
+            origin_id=f"cli:initial:{session.state.turn}:{candidate.name}",
+        )
+        if not decision.allowed:
+            # 资格失败仍见 reason；成功记召 reason 为空，不喷固定承旨句。
+            if decision.reason:
+                print(decision.reason)
             continue
         return candidate
 
@@ -394,19 +399,31 @@ def _handle_court_command(
         return "dismiss"
 
     # 召见（传/召/宣/叫 开头）
+    # 量词须写 `{1,12}`；`{1,12?}` 会被解析成字面 `{1,1` + 可选 `2` + `}`，永远匹配失败。
     summon_m = re.match(
-        r"^(?:传召|传|召|宣|叫|带)(.{1,12?})(?:来|到|入殿|上殿|面圣|见我)$",
+        r"^(?:传召|传|召|宣|叫|带)(.{1,12})(?:来|到|入殿|上殿|面圣|见我)$",
         raw,
     )
     if summon_m:
         name_fragment = summon_m.group(1)
-        target, is_temporary = session.summon_character(name_fragment, current)
-        ok, reason = session.can_summon(target)
-        if not ok:
-            print(reason + "\n")
+        # #670：未知/未注册人物不得临时旁路入殿；须 ADR 0038 持久入册后再走 admission。
+        try:
+            target, _is_temporary = session.summon_character(
+                name_fragment, current, allow_temporary=False,
+            )
+        except ValueError:
+            print("人物未建档，须先补档后方可召见。\n")
             return "handled"
-        if is_temporary:
-            return f"summon-temp:{target.name}"
+        # #670：夜内换人与初选同吃 consume_audience_admission；场外/在途只落传召账，不返 summon:。
+        decision = session.consume_audience_admission(
+            target,
+            origin_id=f"cli:midflow:{session.state.turn}:{target.name}",
+        )
+        if not decision.allowed:
+            # 资格失败仍见 reason；成功记召 reason 为空，不喷固定承旨句。
+            if decision.reason:
+                print(decision.reason + "\n")
+            return "handled"
         return f"summon:{target.name}"
 
     # 授予授权
