@@ -656,11 +656,14 @@ def test_fiscal_levy_memorial_estimates_skip_malformed_region_fiscal(game, monke
     pre_settle(state, db, content=content)
     db.conn.execute("UPDATE regions SET fiscal = ? WHERE id = ?", ("[]", "shaanxi"))
     db.conn.commit()
-    payload = build_simulator_payload(state, db, "准户部议，加辽饷以济边军。", "")
-
+    # fiscal_levy 奉献估计自身仍隔离跳过（tlog 留痕）——该行为属 issues 侧消费口。
+    estimates = issues.fiscal_levy_memorial_estimates(state, db)
     assert any("[fiscal-levy] shaanxi fiscal 非字典" in msg for msg in msgs)
-    estimate_ids = {item["event_id"] for item in payload["fiscal_levy_memorial_estimates"]}
-    assert "liao_levy_rise_1631" in estimate_ids
+    assert "liao_levy_rise_1631" in {item["event_id"] for item in estimates}
+    # #653 F2（ADR 0005）：simulator payload 的 fiscal_fact_brief 对坏 fiscal JSON
+    # 响亮失败，不再静默 continue（judge class③ 拍定；隔离跳过仅属 fiscal_levy 口）。
+    with pytest.raises(ValueError, match="fiscal_fact_brief"):
+        build_simulator_payload(state, db, "准户部议，加辽饷以济边军。", "")
 
 
 def test_fiscal_levy_memorial_labels_cumulative_army_arrears_as_wanliang_not_monthly(game):

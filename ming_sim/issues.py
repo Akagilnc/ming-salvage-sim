@@ -33,6 +33,8 @@ from ming_sim.db import (
     POPULATION_UNIT_PERSONS,
     _LEVERAGE_FACTIONS,
     _approx_wanliang,
+    compute_loyalty_soft_adjust,
+    fold_loyalty_alias_delta,
     infer_office_type_from_office,
     latched_army_field_effect_permitted,
     mutiny_loyalty_cap,
@@ -4660,6 +4662,9 @@ def _strategic_event_result_preflight_error(
             return f"战略/外敌事件「{event_title or event_id}」军队战果须为对象：{army_id}"
         if not _change_mentions_strategic_event(raw_changes, event_id):
             return f"战略/外敌事件「{event_title or event_id}」军队战果缺 reason/原因 事件锚点：{army_id}"
+        # #320：loyalty 规范键/别名与写核同语义——先逐叶类型/字段校验，净合计后再一次
+        # 软钳判 no-op；不得按 alias 分项拿旧值独立判 no-op。
+        first_loyalty_raw_field: object | None = None
         for raw_field, value in raw_changes.items():
             field = ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
             if field in ("reason", "origin_ref"):
@@ -4670,9 +4675,44 @@ def _strategic_event_result_preflight_error(
                 err = _int_delta_error("army", army_id, raw_field, value)
                 if err:
                     return err
+            if field == "loyalty":
+                if first_loyalty_raw_field is None:
+                    first_loyalty_raw_field = raw_field
+                continue  # 净合计后统一 no-op 判定
             err = _army_noop_error(army_id, row, raw_field, value)
             if err:
                 return err
+        loyalty_net = fold_loyalty_alias_delta(raw_changes)
+        if loyalty_net is not None:
+            net_pct = int(((legacy_mods.get("armies") or {})
+                           .get(army_id) or {}).get("loyalty", 0) or 0)
+            # #319+#320 同一写缝：post-mod 动态方向门 → ±15/cap 软调；任一步 no-op 则拒整封。
+            effect_delta = int(loyalty_net)
+            if net_pct:
+                effect_delta = db.apply_legacy_pct(effect_delta, net_pct)
+            if bool(row["is_mutinied"]) and not latched_army_field_effect_permitted(
+                "loyalty", loyalty_net, effect_delta=effect_delta
+            ):
+                return _noop_error(
+                    "army",
+                    army_id,
+                    first_loyalty_raw_field if first_loyalty_raw_field is not None else "loyalty",
+                    loyalty_net,
+                )
+            _new_loyalty, actual_delta = compute_loyalty_soft_adjust(
+                int(row["loyalty"]),
+                loyalty_net,
+                net_pct=net_pct,
+                mutiny_count=int(row["mutiny_count"] or 0),
+                redemption_count=int(row["redemption_count"] or 0),
+            )
+            if actual_delta == 0:
+                return _noop_error(
+                    "army",
+                    army_id,
+                    first_loyalty_raw_field if first_loyalty_raw_field is not None else "loyalty",
+                    loyalty_net,
+                )
 
     if power_updates:
         for power_id, raw_changes in power_updates.items():
@@ -8040,6 +8080,8 @@ def apply_score_extraction(
         extracted.get("faction_delta") or {},
         commit=commit_now,
     )
+    # #653 F3.2：财政事实只作为 internal extractor 的输入证据；最终方向与幅度由
+    # LLM 结合事件、任免等同回合事实综合判断，沿用既有 class_delta 契约原样接收。
     applied_classes, class_rejections = _apply_class_dict(
         db,
         extracted.get("class_delta") or {},

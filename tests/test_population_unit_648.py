@@ -328,7 +328,7 @@ JIANZHOU_RESTORE_POP_WAN = 90           # 无标旧档接缝无损 ÷10⁴ 回�
 
 def _settle_region_delta(db, state, content, delta):
     """同 test_section4_rejections 帮手：自发信封形态走真结算路径触发收复。"""
-    from driver import run_settle
+    from tests.section_rejection_helpers import prepare_then_settle as run_settle
 
     for item in (delta.get("region_delta") or {}).values():
         if isinstance(item, dict):

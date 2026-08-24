@@ -14,7 +14,7 @@ class 则只收嵌套字段 dict、扁平 int 逐项拒收。
 
 from __future__ import annotations
 
-from driver import run_settle
+from tests.section_rejection_helpers import prepare_then_settle as run_settle
 from tests.section_rejection_helpers import game, rejection_rows as _rejection_rows
 
 FACTION_REJ_SECTION = "faction_delta_rejections"
