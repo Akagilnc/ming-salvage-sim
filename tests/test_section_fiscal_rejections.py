@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from driver import run_settle as _run_settle
+from tests.section_rejection_helpers import prepare_then_settle as _run_settle
 from tests.section_rejection_helpers import game, rejection_rows as _rejection_rows
 
 

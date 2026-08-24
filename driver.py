@@ -1,8 +1,9 @@
 """探针 driver —— 确定性结算入口（step1）。
 
 形态(1) 我在对话里直接当 runtime+LLM：自产邸报叙事 + 中文 schema 形态的稀疏 delta，
-driver 负责把 delta 规范化后跑引擎的确定性结算核（pre_settle + settle_with_delta），
-绕过引擎自带的 extractor / 章节记忆 LLM 步。真实流程与本 driver 共用同一结算核（ADR 0004）。
+driver 负责把 delta 规范化后跑引擎的确定性结算核。法定顺序（ADR 0004 / #668）：
+`prepare`（pre_settle + ready=0 handoff）→ 外部产叙事+delta → `settle`（ready=1 + settle_with_delta）。
+真实流程与本 driver 共用同一结算核与同一前半段 seam（prepare_resolve_front_half）。
 """
 
 from __future__ import annotations
@@ -16,13 +17,15 @@ from pathlib import Path
 from ming_sim.applier import Provenance
 from ming_sim.context import bind_content
 from ming_sim.decree import (
-    atomic_and_reload,
+    _dossier_ids_from_simulator_payload,
+    _provenance_from_stored,
     persist_resolve_context,
-    pre_settle,
+    prepare_resolve_front_half,
     secret_dossier_ids_from_secret_orders,
     settle_with_delta,
 )
 from ming_sim.settlement_payload import (
+    _recovered_grouped,
     _select_secret_orders_for_sim,
     augment_secret_orders_with_due_commitments,
     group_secret_orders_for_sim,
@@ -31,7 +34,7 @@ import ming_sim.issues as issues_mod
 from ming_sim.issues import apply_score_extraction, validate_delta_shape as _validate_delta_shape
 from ming_sim.content import GameContent
 from ming_sim.db import GameDB
-from ming_sim.models import LLMConfig
+from ming_sim.models import FRONT_HALF_DONE_PHASES, LLMConfig
 from ming_sim.simulation import canonicalize_extraction
 from ming_sim.token_stats import tlog
 
@@ -46,11 +49,9 @@ DEFAULT_DB = str(Path(__file__).resolve().parent / "data" / "probe.db")
 _DETERMINISTIC_LLM = LLMConfig(api_key="", base_url="", model="", channel="api")
 
 # delta 容器/二级类型处理的单一真源已抽到 ming_sim.issues.validate_delta_shape/sanitize_delta_shape(#57/#63):
-# driver 在 pre_settle 前只让不可拆形状（顶层非 dict/未知顶层字段）响亮失败；
+# driver 在升 ready=1 前只让不可拆形状（顶层非 dict/未知顶层字段）响亮失败；
 # 可拆坏项由 persist_resolve_context 逐项拒收留痕并保存净化版，apply_score_extraction 自身也兜底。
-# 注:真实流的 delta 由 extractor 在 pre_settle 之后才产出,故 apply 内的校验拦不住 pre_settle 那段
-# 财政 tick 的半落库——那段的彻底原子化属事务边界(原 issue #3,已由 ADR 0008 落地,见
-# applier.atomic / 下方 run_settle 的 atomic_and_reload),非本校验能廉价覆盖。
+# 前半段财政 tick 的原子化属 prepare 事务边界(ADR 0008 / prepare_resolve_front_half)。
 
 
 def open_game(db_path: str = DEFAULT_DB):
@@ -114,11 +115,61 @@ def _dump_board(db, state) -> None:
         print(f"  {r['id']}：民心{r['public_support']} 动乱{r['unrest']} 城防炮{r['cannon']}门")
 
 
+def _require_prepared_context(db, state):
+    """settle 门禁：同 turn 须已 prepare（FRONT_HALF_DONE + resolve context）。零写。"""
+    if state.turn_phase not in FRONT_HALF_DONE_PHASES:
+        raise ValueError(
+            "须先调用 driver prepare（前半段未完成）。"
+            "法定顺序：prepare → 产叙事+delta → settle --delta"
+        )
+    ctx = db.get_resolve_context(int(state.turn))
+    if ctx is None:
+        raise ValueError(
+            "须先调用 driver prepare（本回合无 pending_resolve_context）。"
+            "法定顺序：prepare → 产叙事+delta → settle --delta"
+        )
+    return ctx
+
+
+def _merge_settle_simulator_payload(ctx, *, dossier_ids_at_input) -> dict:
+    """案卷等完整键 ∪ 既有 ready=0 context 的 transit_arrivals（只读合并，禁整键覆写丢失）。"""
+    prev = ctx.get("simulator_payload") if isinstance(ctx, dict) else None
+    payload: dict = {
+        "decree_dossiers": [
+            {"id": dossier_id} for dossier_id in sorted(dossier_ids_at_input)
+        ],
+    }
+    if isinstance(prev, dict) and "transit_arrivals" in prev:
+        arrivals = prev.get("transit_arrivals")
+        payload["transit_arrivals"] = list(arrivals) if isinstance(arrivals, list) else []
+    else:
+        # prepare 正常路径必写该键；缺键时显式 []，避免叙事侧读到缺失键。
+        payload["transit_arrivals"] = []
+    return payload
+
+
+def run_prepare(db, state, content, *, registry=None, source: Provenance = Provenance.player_decree,
+                decree_text: str = "") -> list:
+    """前半段：共享 prepare seam → settling + ready=0 context。
+
+    唯一 handoff：返回 `pending_resolve_context.simulator_payload.transit_arrivals`
+    （无抵达 = `[]`）。调用方据已提交盘面与 arrivals 产 narrative+delta，再 `run_settle`。
+    """
+    return prepare_resolve_front_half(
+        state, db,
+        decree_text=decree_text,
+        content=content,
+        registry=registry,
+        source=source,
+    )
+
+
 def run_settle(db, state, content, raw_delta, *, narrative="", decree_text="", registry=None,
                source: Provenance = Provenance.player_decree) -> str:
-    """收一份中文 schema 形态的稀疏 delta（+ 我产的邸报 narrative / 诏书 decree_text）→
-    规范化（中文 key→英文 canonical）→ pre_settle（财政 tick + auto_trigger）→
-    settle_with_delta（落库→inertia→结局→推进），推进一回合。返回结算报告文本。
+    """后半段：消费同 turn 已 prepare 的 settling+ready=0 context，升 ready=1 后 settle。
+
+    不再调用 pre_settle；未 prepare 响亮 ValueError 且零写。settling + ready=1 崩溃重入
+    只读既有 context，不二次 prepare/tick。
 
     source 默认 player_decree：探针每回合即皇帝下旨之结算，其落库拒收对玩家可见（邸报给一句
     in-world 提示，ADR 0008 决定 5）。纯世界推演回合可由信封传 source=system_simulation 静默。
@@ -134,45 +185,57 @@ def run_settle(db, state, content, raw_delta, *, narrative="", decree_text="", r
         raw_delta = {}
     if not isinstance(raw_delta, dict):
         raise ValueError(f"delta 必须是 object(dict)，实得 {type(raw_delta).__name__}")
-    extracted = canonicalize_extraction(raw_delta)
-    _validate_delta_shape(extracted)  # 崩前拦畸形/未知字段,避免 pre_settle 动 DB 后半落库(RT-1/P1b)
+
     before_turn = state.turn
-    # 与真实流程同核同位（ADR 0004/0008，引擎也在 pre_settle 后才 persist）：settle 前把
-    # canonical delta 持久化为重跑真源。turn_extractions 在 settle 内部写 applied
-    # 玩家可见结果；崩在 settle 内时若无 context 行，财政已落账而 delta 只活在调用方易失上下文（违 P1）。位置必须在
-    # pre_settle 之后：ready=1 统一意为「前半段已提交，只剩 settle」，恢复入口直入 apply
-    # 不会跳过未跑的财政 tick（cmr S2+S3 r5）。settle 尾部 clear 自然清掉。
-    # 两步同事务（PR #90 R1 codex P2 同窗，与引擎 resolve_directives 同修）：崩在
-    # Freeze the roster-write authority represented by this batch before settlement mutates DB.
-    dossier_ids_at_input = {
-        int(row["id"]) for row in db.list_decree_dossiers_for_simulation(before_turn)
-    }
-    # #1252: freeze secret-order batch the same way decree does — DB select +
-    # group, then derive secret_dossier_ids_at_input. Persist the grouped
-    # secret_orders so recovery can re-derive the closed set (never []).
-    secret_orders_for_sim = group_secret_orders_for_sim(
-        _select_secret_orders_for_sim(db)
-    )
-    secret_orders_for_sim = augment_secret_orders_with_due_commitments(
-        secret_orders_for_sim, db, state,
-    )
-    secret_dossier_ids_at_input = secret_dossier_ids_from_secret_orders(
-        db, secret_orders_for_sim,
-    )
-    # 「settling 已提交、context 未落」的窗口=违背「settling ⟹ context 可见」不变式。
-    with atomic_and_reload(db, state, content=content, registry=registry):
-        pre_settle(state, db, content=content)
+    ctx = _require_prepared_context(db, state)
+
+    # settling + ready=1 崩溃重入：只读 context，不二次 freeze/persist/tick。
+    stored_extracted = ctx.get("extracted")
+    if isinstance(stored_extracted, dict):
+        extracted = stored_extracted
+        narrative = narrative if narrative else str(ctx.get("narrative") or "")
+        decree_text = decree_text if decree_text else str(ctx.get("decree_text") or "")
+        source = _provenance_from_stored(ctx.get("source"))
+        simulator_payload = (
+            ctx.get("simulator_payload")
+            if isinstance(ctx.get("simulator_payload"), dict) else {}
+        )
+        secret_orders_for_sim = _recovered_grouped(ctx.get("secret_orders"))
+        dossier_ids_at_input = _dossier_ids_from_simulator_payload(simulator_payload)
+        secret_dossier_ids_at_input = secret_dossier_ids_from_secret_orders(
+            db, secret_orders_for_sim,
+        )
+    else:
+        # ready=0 → 校验 delta、冻结 closed set、合并 arrivals、升 ready=1。
+        extracted = canonicalize_extraction(raw_delta)
+        _validate_delta_shape(extracted)  # 崩前拦畸形/未知字段
+        # Freeze the roster-write authority after prepare (engine-aligned: post pre_settle).
+        dossier_ids_at_input = {
+            int(row["id"]) for row in db.list_decree_dossiers_for_simulation(before_turn)
+        }
+        # #1252: freeze secret-order batch the same way decree does — DB select +
+        # group, then derive secret_dossier_ids_at_input. Persist the grouped
+        # secret_orders so recovery can re-derive the closed set (never []).
+        secret_orders_for_sim = group_secret_orders_for_sim(
+            _select_secret_orders_for_sim(db)
+        )
+        secret_orders_for_sim = augment_secret_orders_with_due_commitments(
+            secret_orders_for_sim, db, state,
+        )
+        secret_dossier_ids_at_input = secret_dossier_ids_from_secret_orders(
+            db, secret_orders_for_sim,
+        )
+        simulator_payload = _merge_settle_simulator_payload(
+            ctx, dossier_ids_at_input=dossier_ids_at_input,
+        )
         extracted = persist_resolve_context(
             db, before_turn, extracted,
             decree_text=decree_text, narrative=narrative,
-            simulator_payload={
-                "decree_dossiers": [
-                    {"id": dossier_id} for dossier_id in sorted(dossier_ids_at_input)
-                ],
-            },
+            simulator_payload=simulator_payload,
             secret_orders=secret_orders_for_sim, relevant_memories=[],
             source=source,  # 持久化来源，崩溃恢复重放据此还原（#144）
         )
+
     report = settle_with_delta(
         state,
         db,
@@ -200,7 +263,7 @@ def run_settle(db, state, content, raw_delta, *, narrative="", decree_text="", r
 
 
 def main(argv=None, *, game=None) -> int:
-    """CLI 入口：state（打印盘面）/ settle --delta <json>（注入 delta 结算）/ dump（盘面快照）。
+    """CLI 入口：state / prepare / settle --delta <json> / dump。
 
     game=(db,state,content) 可注入（测试用）；否则按 --db 打开存档。
     库层校验抛 ValueError，CLI 在此 catch、打到 stderr、返回退出码 1（不让 ValueError 透到用户）。
@@ -209,7 +272,14 @@ def main(argv=None, *, game=None) -> int:
     parser.add_argument("--db", default=DEFAULT_DB, help="存档路径")
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("state", help="打印当前盘面（回合/纪年/国势）")
-    p_settle = sub.add_parser("settle", help="注入 delta JSON 跑确定性结算并推进一回合")
+    sub.add_parser(
+        "prepare",
+        help="前半段：财政 tick + ready=0 context；stdout 打印 transit_arrivals JSON handoff",
+    )
+    p_settle = sub.add_parser(
+        "settle",
+        help="后半段：注入 delta JSON（须已 prepare）跑确定性结算并推进一回合",
+    )
     p_settle.add_argument("--delta", required=True, help="中文 schema delta 的 JSON 文件路径")
     sub.add_parser("dump", help="盘面快照（回合 + 各地区民心/动乱/城防炮）")
     args = parser.parse_args(argv)
@@ -218,6 +288,14 @@ def main(argv=None, *, game=None) -> int:
 
     if args.cmd == "state":
         _print_state(state)
+        return 0
+    if args.cmd == "prepare":
+        try:
+            arrivals = run_prepare(db, state, content)
+        except ValueError as exc:
+            print(f"prepare 失败：{exc}", file=sys.stderr)
+            return 1
+        print(json.dumps(arrivals, ensure_ascii=False))
         return 0
     if args.cmd == "settle":
         with open(args.delta, encoding="utf-8") as f:
@@ -237,7 +315,7 @@ def main(argv=None, *, game=None) -> int:
                     source = Provenance.player_decree
         else:
             raw_delta, narrative, decree_text = obj, "", ""
-        # run_settle 抛 ValueError（畸形/未知/非 dict delta，含信封 delta 非 object）→ CLI 转退出码。
+        # run_settle 抛 ValueError（未 prepare / 畸形 delta）→ CLI 转退出码。
         try:
             report = run_settle(
                 db, state, content, raw_delta, narrative=narrative, decree_text=decree_text,

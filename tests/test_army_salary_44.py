@@ -339,7 +339,7 @@ def test_non_finite_salary_rate_anchored_not_crash():
 def test_twelve_turns_no_arrears_explosion(game):
     # #44 设计 TDD：开局 12 回合无干预，新升率（京营/陕西/登莱等率升）不过早引爆 arrears→民变链。
     # 结构性重切近对冲（旧 65 → 新 66.5 万/月），开局国库应可持续。run_settle(None) 确定性、无 LLM。
-    from driver import run_settle
+    from tests.section_rejection_helpers import prepare_then_settle as run_settle
     db, state, content = game
     start_turn = state.turn
     for _ in range(12):
