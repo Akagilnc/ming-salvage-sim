@@ -30,7 +30,10 @@ from ming_sim.agents import (
     parse_agent_json,
     run_agent_text,
 )
-from ming_sim.applier import Provenance, RejectedItem, RejectionCollector, atomic
+from ming_sim.applier import (
+    Provenance, RejectedItem, RejectionCollector, atomic,
+    mirror_rejections_after_commit,
+)
 from ming_sim.constants import TURN_UNIT
 from ming_sim.context import ENDING_LABELS, ENDING_ONGOING, ENDING_TIMEOUT, victory_status
 from ming_sim.db import GameDB
@@ -53,6 +56,7 @@ from ming_sim.issues import (
     _apply_levy_driven_transfers,
     auto_trigger_seed_issues,
     clear_gated_legacies,
+    gather_impeachment_surge_candidates,
     sanitize_delta_shape,
     validate_delta_shape,
 )
@@ -780,6 +784,7 @@ def _project_one_dossier_for_simulator(
         "stigma": list(stigma),
         "participant_roster": list(roster),
         "links": _simulator_dossier_links(row, db),
+        "execution_signal": row.get("execution_signal"),
         "due_turn": int(row.get("due_turn") or 0),
         "created_turn": int(row.get("created_turn") or 0),
         "promulgated_turn": _simulator_promulgated_turn(row, db),
@@ -848,15 +853,15 @@ def project_dossiers_for_simulator(
                 )
             )
             continue
-        # In-transit executing work, and just-promulgated payload-owned terminal
-        # effects (惩处/招抚等), need command/target context without re-materializing.
-        just_promulgated_terminal = (
+        # In-transit executing work and just-promulgated payload-owned work need
+        # command/target context without re-materializing.
+        just_promulgated_payload = (
             policy["effect_owner"] == "payload"
             and policy.get("execution_surface") == "terminal"
             and str(row.get("settlement_verdict") or "") == "promulgated"
         )
         if admitted and (
-            str(row.get("status") or "") == "executing" or just_promulgated_terminal
+            str(row.get("status") or "") == "executing" or just_promulgated_payload
         ):
             execution_summary: Dict[str, object] = {
                 "command": str(row.get("decree_text") or "").strip(),
@@ -1073,7 +1078,7 @@ def resolve_directives(
                     state.turn,
                 )
             collector.flush_to_db(db)
-        _mirror_rejections_after_commit(db, collector)
+        mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
         try:
             pack_path = write_error_pack(
                 db, state, exc=exc, extracted=None,
@@ -1396,6 +1401,7 @@ def _replay_settle(
         delta_applier=lambda d, s, ex, ct, rg: apply_score_extraction(
             d, s, ex, content=ct, registry=rg, llm_config=llm_config,
             candidate_event_ids_at_input=_candidate_event_ids_from_simulator_payload(simulator_payload),
+            impeachment_surge_candidates_at_input=gather_impeachment_surge_candidates(s, d),
             dossier_ids_at_input=_dossier_ids_from_simulator_payload(simulator_payload),
             secret_dossier_ids_at_input=secret_dossier_ids_from_secret_orders(d, secret_orders),
         ),
@@ -1408,30 +1414,6 @@ def _replay_settle(
         dossier_rescript_actions=dossier_rescript_actions,
     )
     return report
-
-
-def _mirror_rejections_after_commit(db: GameDB, collector: RejectionCollector) -> None:
-    """Mirror flushed rejection rows only after the owning transaction commits.
-
-    validate-layer collectors in persist_resolve_context may run under an outer
-    atomic owner (driver.run_settle). In that case the local collector would go
-    out of scope before _atomic_depth returns to 0, so register a post-commit
-    callback on the shared connection instead of mirroring early.
-    """
-    def _mirror() -> None:
-        try:
-            collector.mirror_to_jsonl(rejections_jsonl_path())
-        except Exception as mirror_exc:
-            tlog(f"[rejection] jsonl 镜像失败（DB 行已落，仅副本丢失）：{mirror_exc}")
-
-    if getattr(db.conn, "_atomic_depth", 0) == 0:
-        _mirror()
-        return
-    callbacks = getattr(db.conn, "_runtime_commit_callbacks", None)
-    if callbacks is None:
-        callbacks = []
-        db.conn._runtime_commit_callbacks = callbacks
-    callbacks.append(_mirror)
 
 
 def persist_resolve_context(
@@ -1496,7 +1478,7 @@ def persist_resolve_context(
                 "DELETE FROM pending_decisions WHERE turn = ? AND kind = 'rescript_draft'",
                 (int(turn),),
             )
-    _mirror_rejections_after_commit(db, collector)
+    mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
     return cleaned
 
 
@@ -1560,6 +1542,9 @@ def _settle_after_narrative(
         )
         for module in EXTRACTION_MODULES
     }
+    # Capture the same dynamic input given to the issues extractor.  Same-batch
+    # mutations during apply must not retrospectively veto the role decision.
+    impeachment_surge_candidates_at_input = gather_impeachment_surge_candidates(state, db)
     sanitizer = create_json_sanitizer_agent(llm_config, agno_db)
     extractor_input = ""
     extractor_output = ""
@@ -1682,6 +1667,7 @@ def _settle_after_narrative(
         delta_applier=lambda d, s, ex, ct, rg: apply_score_extraction(
             d, s, ex, content=ct, registry=rg, llm_config=llm_config,
             candidate_event_ids_at_input=_candidate_event_ids_from_simulator_payload(simulator_payload),
+            impeachment_surge_candidates_at_input=impeachment_surge_candidates_at_input,
             dossier_ids_at_input=_dossier_ids_from_simulator_payload(simulator_payload),
             secret_dossier_ids_at_input=secret_dossier_ids_from_secret_orders(d, secret_orders_for_sim),
         ),
@@ -1881,12 +1867,19 @@ def pre_settle(
     # atomic + 最外层回滚后从 DB 重载（ADR 0008 决定 3 第三条）：apply_fixed_period_flows 直改了
     # state.metrics（flows.py:192）、尾部 turn_phase 已被赋 settling，脏 settling 会被下次 pre_settle
     # 守门跳过=该月财政永久丢（cmr S4 r1 F4）。嵌套时跳过 reload，由最外层拥有者处理。见 atomic_and_reload。
+    collector = RejectionCollector()
     try:
-        with atomic_and_reload(db, state, content=content, registry=registry):
+        with atomic_and_reload(
+            db, state, content=content, registry=registry,
+            on_error=lambda _exc: collector.reset(),
+        ):
             # 动作闸门(ADR 0006)：颁诏最前批量落库本回合暂存的结构化聊天写动作（密令更新/催办/任免/…），
             # 在跑 LLM 结算管线前，使 simulator/extractor 读到的盘面与旧「召对期直写」时序一致。
             # driver 路径无聊天暂存 → 空 no-op。幂等（committed 行不重跑）。
-            committed = db.commit_pending_actions(state, content=content, registry=registry)
+            committed = db.commit_pending_actions(
+                state, content=content, registry=registry,
+                rejection_collector=collector,
+            )
             if committed:
                 tlog(f"[pending_actions] 颁诏批量落库 {len(committed)} 条：{[(c['kind'], c['action']) for c in committed]}")
             fiscal_levies = apply_historical_fiscal_rates(state, db, commit=False)
@@ -1948,9 +1941,11 @@ def pre_settle(
             # 完成相位：同事务内落 settling（崩在上面任一步=全回滚=相位未变）。
             state.turn_phase = TurnPhase.SETTLING.value
             db.save_state(state)
+            collector.flush_to_db(db)
     except BaseException as exc:
         raise_fixed_period_flow_abort_if_needed(db, state, exc)
         raise
+    mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
     return auto_triggered
 
 
@@ -2109,7 +2104,10 @@ def settle_with_delta(
             # 已 commit=无操作）——恢复/phase2 重抽路在此获得覆盖，且与结算同生死：
             # 事务外 commit 的话重放炸时结算回滚而动作及其真表副作用留存=跨事务半写
             # （cmr S7 r4，claude+codex 两面同根）。
-            db.commit_pending_actions(state, content=content, registry=registry)
+            db.commit_pending_actions(
+                state, content=content, registry=registry,
+                rejection_collector=collector,
+            )
             if dossier_verdicts:
                 db.apply_dossier_verdicts(
                     state, dossier_verdicts, content=content, registry=registry,
@@ -2173,15 +2171,8 @@ def settle_with_delta(
             settlement_abort_message(pack_path),
             turn=before_turn, stage="settle", error_pack_path=pack_path,
         ) from exc
-    # commit 已成功（atomic 正常退出）才镜像——jsonl 是可回收副本，DB 为真源（决定 5/7）。
-    # 嵌套守门与异常路对称（cmr S0 r1）：depth>0 时本层退出并未真 commit，先写镜像=
-    # 外层回滚后留「DB 无行、jsonl 有行」孤儿；嵌套场景放弃镜像（丢的只是可回收副本）。
-    # 镜像失败不回滚结算：吞 Exception 记日志（行已在 DB）。
-    if getattr(db.conn, "_atomic_depth", 0) == 0:
-        try:
-            collector.mirror_to_jsonl(rejections_jsonl_path())
-        except Exception as mirror_exc:
-            tlog(f"[rejection] jsonl 镜像失败（DB 行已落，仅副本丢失）：{mirror_exc}")
+    # JSONL follows the real outer transaction outcome; DB remains truth.
+    mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
     # #636 S5 月末酿制腿收尾（判词类②）：结算事务已提交，摘要持久化前 join。
     # brew() 内仅单条 LLM 调用/输出契约失败降级留痕；persist 内 apply/mark 的
     # DB/schema/程序错误响亮上抛（ADR 0005/0008）——腿级宽吞已删。

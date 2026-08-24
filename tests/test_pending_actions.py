@@ -29,7 +29,8 @@ _POLICY_FIELDS = {
 import web_app
 import ming_sim.cli_backend as cb
 import ming_sim.issues as issues
-from ming_sim.decree import pre_settle
+from ming_sim.db import GameDB
+from ming_sim.decree import pre_settle, reload_state_from_db
 from ming_sim.session import GameSession, TurnPhase, _pending_action_failure_payload
 from tests.dossier_test_helpers import promulgate_proposed_appointments
 
@@ -2066,17 +2067,74 @@ def test_dialogue_affirm_commits_office_now(game, monkeypatch):
         GameSession.apply_cli_conversation_actions(
             sess, ch, player_message="准", answer="臣即拟铨。",
             has_directive=False, secret_order_id=None)
+        identity = db.conn.execute(
+            "SELECT office,office_type,status FROM characters WHERE name=?", (new_name,)
+        ).fetchone()
+        assert tuple(identity) == ("待选", "未仕", "offstage")
+        assert content.characters[new_name].office == "待选"
+        assert content.characters[new_name].status == "offstage"
+        dossier = next(
+            d for d in db.list_decree_dossiers(status="proposed")
+            if d["target_id"] == new_name
+        )
+        assert any(
+            item["character_id"] == new_name and item["tier"] == "主办"
+            for item in dossier["participant_roster"]
+        )
+
         promulgate_proposed_appointments(db, state, content)
         row = db.conn.execute(
-            "SELECT name FROM characters WHERE name=?", (new_name,)).fetchone()
-        assert row is not None and row["name"] == new_name
+            "SELECT office,office_type,status FROM characters WHERE name=?", (new_name,)
+        ).fetchone()
+        assert row["office"] == content.characters[new_name].office == "太常寺卿"
+        assert row["office_type"] == content.characters[new_name].office_type
+        assert row["status"] == content.characters[new_name].status == "active"
         assert db.list_pending_actions(state.turn) == []
+
+        reopened = GameDB(db.path, content)
+        try:
+            restored_state = reopened.load_state()
+            reload_state_from_db(reopened, restored_state, content=content)
+            restored = reopened.conn.execute(
+                "SELECT office,office_type,status FROM characters WHERE name=?", (new_name,)
+            ).fetchone()
+            assert restored["office"] == content.characters[new_name].office == "太常寺卿"
+            assert restored["office_type"] == content.characters[new_name].office_type
+            assert restored["status"] == content.characters[new_name].status == "active"
+        finally:
+            reopened.close()
     finally:
         content.characters.pop(new_name, None)
 
 
+def test_commit_new_office_action_rolls_back_memory_registration(game, monkeypatch):
+    """新臣身份写入内存后成案失败，pending savepoint 对称清除 DB/content 幽灵。"""
+    db, state, content = game
+    new_name = "测试新臣成案失败"
+    content.characters.pop(new_name, None)
+    db.stage_pending_action(
+        state.turn, kind="office", action="任命", minister_name="测试召对",
+        payload={"name": new_name, "office": "陕西总督"},
+    )
+
+    monkeypatch.setattr(
+        db, "create_decree_dossier",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("成案失败")),
+    )
+    assert db.commit_pending_actions(state, content=content, registry=None) == []
+    assert new_name not in content.characters
+    assert db.conn.execute(
+        "SELECT 1 FROM characters WHERE name=?", (new_name,)
+    ).fetchone() is None
+    row = db.conn.execute(
+        "SELECT status FROM pending_actions WHERE kind='office' AND payload_json LIKE ?",
+        (f'%{new_name}%',),
+    ).fetchone()
+    assert row["status"] == "failed"
+
+
 def test_commit_new_office_action_restores_when_post_create_helper_raises(game, monkeypatch):
-    """新任建档后 helper 抛错 → pending 标 failed,但新臣不得半落库进 DB/content。"""
+    """顺颁授官 helper 抛错：授官回滚，准旨阶段的未生效身份仍供案卷引用。"""
     db, state, content = game
     new_name = "测试新臣半落库"
     content.characters.pop(new_name, None)
@@ -2100,10 +2158,12 @@ def test_commit_new_office_action_restores_when_post_create_helper_raises(game, 
     assert any(item["kind"] == "office" for item in applied)
     with pytest.raises(ValueError, match="任免案卷载荷物化失败"):
         promulgate_proposed_appointments(db, state, content)
-    assert db.conn.execute(
-        "SELECT name FROM characters WHERE name=?", (new_name,)
-    ).fetchone() is None
-    assert new_name not in content.characters
+    identity = db.conn.execute(
+        "SELECT office,office_type,status FROM characters WHERE name=?", (new_name,)
+    ).fetchone()
+    assert tuple(identity) == ("待选", "未仕", "offstage")
+    assert content.characters[new_name].status == "offstage"
+    assert content.characters[new_name].office_type == "未仕"
 
 
 # ── 任免 commit 补全(CMR R1 P1/P2):升迁调任既有官 / 罢免清内存 office / 纳妃带 office_type ──

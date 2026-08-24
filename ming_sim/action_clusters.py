@@ -28,6 +28,8 @@ class FieldSpec:
     max_len: Optional[int] = None
     as_int: bool = False
     int_hi: int = 10**9
+    # Optional per-enum execution metadata lives on the canonical field row.
+    execution_coverage: Optional[Mapping[str, Optional[str]]] = None
 
 
 @dataclass(frozen=True)

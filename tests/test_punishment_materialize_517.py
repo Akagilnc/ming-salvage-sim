@@ -11,6 +11,7 @@ Seams:
 
 from __future__ import annotations
 
+import inspect
 import json
 import types
 from types import SimpleNamespace
@@ -20,10 +21,13 @@ import pytest
 import ming_sim.action_materialize  # noqa: F401 -- installs package catalog
 import ming_sim.action_materialize as am
 import ming_sim.cli_backend as cb
+import web_app
 from ming_sim.action_clusters import candidates_from_classifier_payload
 from ming_sim.action_materialize import MaterializeCtx, run_materialize_pipeline
 from ming_sim.decree import reload_state_from_db
+from ming_sim.models import CourtContext
 from ming_sim.session import GameSession
+from ming_sim.tools import build_minister_tools
 from tests.dossier_test_helpers import rejected_verdict as _rejected_verdict
 
 
@@ -57,6 +61,7 @@ def _stage_punishment(db, turn, target, *, action="拿问下狱", amount=0, mess
     payload = {
         "kind": "punishment",
         "punish_action": action,
+        "transaction_category": "缉拿",
         "name": target,
     }
     if amount:
@@ -294,6 +299,7 @@ def test_scripted_punishment_stages_via_apply_then_close_night(game, monkeypatch
     sess = _bind_apply(db, state, content)
     scripted = candidates_from_classifier_payload({
         "kind": "punishment", "punish_action": "拿问下狱", "name": target.name,
+        "transaction_category": "缉拿",
     }, soft=False)
     out = sess.apply_cli_conversation_actions(
         actor, f"将{target.name}拿问下狱。",
@@ -602,6 +608,7 @@ def test_api_tool_punishment_stages_structured_not_special_decree(game):
         failures_out=failures,
         punish_action="拿问下狱",
         target_id=target.name,
+        transaction_category="缉拿",
     )
     assert pending_id > 0
     assert not failures
@@ -609,6 +616,7 @@ def test_api_tool_punishment_stages_structured_not_special_decree(game):
     assert payload["dossier_action_type"] == "punishment"
     assert payload["punish_action"] == "拿问下狱"
     assert payload["target_id"] == target.name
+    assert payload["transaction_category"] == "缉拿"
     assert payload.get("dossier_action_type") != "special_decree"
 
 
@@ -799,3 +807,91 @@ def test_api_tool_args_deliver_punishment_fields_through_chat(game):
     assert payload["punish_action"] == "罚俸"
     assert payload["target_id"] == target.name
     assert int(payload["amount"]) == 120
+
+
+def test_propose_directive_exposes_optional_transaction_category(game):
+    db, state, content = game
+    character = _active_ming(db, content)
+    context = CourtContext(state=state, db=db, previous_summary="")
+    tool = next(
+        item for item in build_minister_tools(character, context)
+        if item.__name__ == "propose_directive"
+    )
+    parameter = inspect.signature(tool).parameters["transaction_category"]
+    assert parameter.default == ""
+
+
+def test_api_tool_invalid_punishment_category_fails_without_side_effects(game):
+    db, state, content = game
+    target = _active_ming(db, content)
+    minister = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' "
+        "AND name!=? LIMIT 1", (target.name,),
+    ).fetchone()["name"]
+    sess = _directive_session(db, state, content)
+    pending_before = db.conn.execute("SELECT COUNT(*) FROM pending_actions").fetchone()[0]
+    dossiers_before = db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0]
+    failures = []
+
+    pending_id = sess._stage_directive_tool_candidate(
+        f"着将{target.name}拿问下狱。", minister, f"拟旨拿问{target.name}。",
+        failures_out=failures, punish_action="拿问下狱", target_id=target.name,
+        transaction_category="修仙",
+    )
+
+    assert pending_id == 0
+    assert failures
+    assert db.conn.execute("SELECT COUNT(*) FROM pending_actions").fetchone()[0] == pending_before
+    assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0] == dossiers_before
+
+
+def test_web_stream_transports_punishment_category_to_real_stage(game):
+    db, state, content = game
+    target = _active_ming(db, content)
+    minister = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' "
+        "AND name!=? LIMIT 1", (target.name,),
+    ).fetchone()["name"]
+    sess = _directive_session(db, state, content)
+    web_game = web_app.WebGame.__new__(web_app.WebGame)
+    web_game.session = sess
+    web_game.chat_history = {name: [] for name in content.characters}
+    web_game.suggestions_for = lambda _character: []
+    web_game.chat_projection = lambda name: list(web_game.chat_history.get(name) or [])
+    web_game.directive_rows = lambda: []
+    web_game.directive_payload = lambda row: row
+    web_game.can_undo_last_chat = lambda _name: False
+    web_game._record_chat_rollback_items = lambda *_a, **_k: None
+    def interpret(category_marker):
+        arguments = {
+            "decree_text": f"着将{target.name}拿问下狱。",
+            "punish_action": "拿问下狱", "target_id": target.name,
+        }
+        if category_marker is not None:
+            arguments["transaction_category"] = category_marker
+        run_output = SimpleNamespace(tools=[SimpleNamespace(
+            tool_name="propose_directive", result="", arguments=arguments,
+        )])
+        return web_app.WebGame._chat_stream_interpret_tools(
+            web_game, minister, f"拟旨拿问{target.name}。", content.characters[minister],
+            "臣已拟旨。", run_output, None, 0,
+        )
+
+    missing = interpret(None)
+    pending_id = int(missing["pending_action_id"])
+    payload = dict(_pending_directive_payloads(db, state.turn, minister))[pending_id]
+    assert "transaction_category" not in payload
+    assert not missing.get("pending_action_failures")
+
+    valid = interpret("缉拿")
+    payload = dict(_pending_directive_payloads(db, state.turn, minister))[pending_id]
+    assert payload["transaction_category"] == "缉拿"
+    assert not valid.get("pending_action_failures")
+
+    pending_before = db.conn.execute("SELECT COUNT(*) FROM pending_actions").fetchone()[0]
+    dossiers_before = db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0]
+    invalid = interpret("修仙")
+    assert invalid.get("pending_action_id") in (0, None)
+    assert invalid.get("pending_action_failures")
+    assert db.conn.execute("SELECT COUNT(*) FROM pending_actions").fetchone()[0] == pending_before
+    assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0] == dossiers_before
