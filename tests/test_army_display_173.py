@@ -62,7 +62,7 @@ def test_army_public_exits_approx_arrears_and_hide_split_accounts(game):
     # 受控裸分 token：不与兵额/合计饷银等合法可数事实混淆
     scores = dict(loyalty=67, supply=69, morale=61, training=59, equipment=53, mobility=47)
     db.conn.execute(
-        "UPDATE armies SET arrears=63, province_pay_arrears=17, central_pay_arrears=46,"
+        "UPDATE armies SET arrears=12.5, province_pay_arrears=17, central_pay_arrears=46,"
         "manpower=20000, cannon_equipment=0, firearm_equipment=0,"
         "loyalty=?, supply=?, morale=?, training=?, equipment=?, mobility=? WHERE id=?",
         (*scores.values(), row["id"]),
@@ -75,7 +75,8 @@ def test_army_public_exits_approx_arrears_and_hide_split_accounts(game):
     seg = next(p for p in report.split("：", 1)[-1].split("；") if p.startswith(name + "："))
     exits = (detail, seg, roster)
     joined = "\n".join(exits)
-    assert name in detail and "63" not in joined
+    # 欠饷裸精确小数不得进入真实出口（与 #321 raw 哨兵同形）
+    assert name in detail and "12.5" not in joined
     for forbidden in ("province_pay_arrears", "central_pay_arrears", "省份额欠", "中央份额欠"):
         assert forbidden not in joined
     db.conn.execute(

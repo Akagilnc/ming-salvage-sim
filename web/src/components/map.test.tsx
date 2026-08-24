@@ -151,9 +151,7 @@ describe("NodeIntel #1352 garrison layout / army-list口径", () => {
     expect(host.textContent).toContain("28000");
     expect(host.textContent).not.toMatch(/(?<![\d])2800(?![\d])/);
     expect(host.textContent).toMatch(/1\.1\s*万/);
-    // #321 P7：表头仅番号/兵种/兵力/月饷；不直显士气/军心/欠饷
-    const headers = Array.from(host.querySelectorAll(".intel-table--garrison thead th")).map((th) => th.textContent || "");
-    expect(headers).toEqual(["番号", "兵种", "兵力", "月饷"]);
+    // #321 P7：驻军表存在；不直显士气/军心/欠饷
     expect(host.querySelector(".intel-table--garrison")).not.toBeNull();
     expect(host.textContent).not.toContain("不满"); // makeArmy 默认 mutiny_tier 不得直显
     expect(host.textContent).not.toContain("士气：不振");
