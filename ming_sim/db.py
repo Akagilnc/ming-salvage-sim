@@ -86,7 +86,23 @@ _ARMY_PAY_SOURCE_DELTA_FIELDS = frozenset((
     "owner_power", "pay_source_region", "province_pay_share", "central_pay_share",
     "is_tusi", "self_funded_pay",
 ))
+_ARMY_OWNER_TRANSITION_PAY_KEYS = (
+    "pay_source_region", "province_pay_share", "central_pay_share",
+    "is_tusi", "self_funded_pay",
+)
 _SENTINEL = object()  # transition_army_owner_power 可选饷源参数「未提供」哨兵
+
+
+def _army_owner_transition_pay_kwargs(normalized: Mapping[str, object]) -> Dict[str, object]:
+    """从规范化 delta 组装 transition_army_owner_power 饷源/自养 kwargs。
+
+    键出现 → 实值；未出现 → _SENTINEL（adapter 回落行内 / 缺饷源 fail-loud）。
+    cutover-on `_apply_army_pay_source_delta` 与 cutover-off owner 分支共用，防再分叉。
+    """
+    return {
+        key: (normalized[key] if key in normalized else _SENTINEL)
+        for key in _ARMY_OWNER_TRANSITION_PAY_KEYS
+    }
 _COMMITMENT_STOP_CONDITION_RE = re.compile(r"character\.[^.]+\.loyalty\s*(?:>=|>)\s*\d+")
 
 
@@ -4393,23 +4409,7 @@ class GameDB:
                     edict_id=edict_id,
                     origin_ref=origin_ref,
                     require_origin=require_origin,
-                    pay_source_region=(
-                        normalized["pay_source_region"]
-                        if "pay_source_region" in normalized else _SENTINEL
-                    ),
-                    province_pay_share=(
-                        normalized["province_pay_share"]
-                        if "province_pay_share" in normalized else _SENTINEL
-                    ),
-                    central_pay_share=(
-                        normalized["central_pay_share"]
-                        if "central_pay_share" in normalized else _SENTINEL
-                    ),
-                    is_tusi=normalized["is_tusi"] if "is_tusi" in normalized else _SENTINEL,
-                    self_funded_pay=(
-                        normalized["self_funded_pay"]
-                        if "self_funded_pay" in normalized else _SENTINEL
-                    ),
+                    **_army_owner_transition_pay_kwargs(normalized),
                     raw_item={"army_id": army_id, "changes": raw_changes},
                 ))
                 return
@@ -7380,19 +7380,57 @@ class GameDB:
                 })
                 continue
             reason = str(raw_changes.get("reason") or raw_changes.get("原因") or event.title).strip()[:80]
+            # cutover-off 已消费的 owner/D6 兄弟键：禁止通用环再打非法字段
+            consumed_pay_source_fields: frozenset[str] = frozenset()
             if self.is_army_pay_source_cutover_enabled():
                 self._apply_army_pay_source_delta(
                     state, event, edict_id, actor, row, raw_changes, reason, changes,
                     origin_ref=origin_ref, require_origin=require_origin,
                 )
                 row = self.conn.execute("SELECT * FROM armies WHERE id = ?", (army_id,)).fetchone()
+            else:
+                # #318：cutover-off owner 变更与 cutover-on 对齐——同条 D6 兄弟字段
+                # 一并交给唯一 adapter；不重入 _apply_army_pay_source_delta（其后半是
+                # 饷源-only/容器对账，属 cutover 专属）。
+                normalized = {
+                    ARMY_FIELD_ALIASES.get(str(k).strip(), str(k).strip()): v
+                    for k, v in raw_changes.items()
+                }
+                if "owner_power" in normalized:
+                    proposed_owner = str(normalized.get("owner_power") or "").strip()
+                    if proposed_owner != str(row["owner_power"] or "").strip():
+                        changes.extend(self.transition_army_owner_power(
+                            state,
+                            row,
+                            proposed_owner,
+                            reason=reason,
+                            actor=actor,
+                            event_id=event.id,
+                            edict_id=edict_id,
+                            origin_ref=origin_ref,
+                            require_origin=require_origin,
+                            **_army_owner_transition_pay_kwargs(normalized),
+                            raw_item={"army_id": army_id, "changes": raw_changes},
+                        ))
+                        consumed_pay_source_fields = frozenset(
+                            {"owner_power"}
+                            | _ARMY_PAY_SOURCE_DELTA_FIELDS.intersection(normalized)
+                        )
+                        current_row = self.conn.execute(
+                            "SELECT * FROM armies WHERE id = ?", (army_id,)
+                        ).fetchone()
+                        if current_row is not None:
+                            row = current_row
             for raw_field, value in raw_changes.items():
                 field = ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
                 if field in ("reason", "origin_ref"):
                     continue
                 if self.is_army_pay_source_cutover_enabled() and field in _ARMY_PAY_SOURCE_DELTA_FIELDS:
                     continue
+                if field in consumed_pay_source_fields:
+                    continue
                 # #318：cutover 关闭时 owner_power 仍须经唯一 adapter，禁止 text 直写旁路
+                # （同 owner no-op / 未在上方预消费的残余路径）
                 if field == "owner_power":
                     current_row = self.conn.execute(
                         "SELECT * FROM armies WHERE id = ?", (army_id,)
