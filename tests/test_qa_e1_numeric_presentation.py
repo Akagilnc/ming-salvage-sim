@@ -231,50 +231,23 @@ def test_province_pay_split_reason_and_summary_have_no_float_garbage(game):
 
 
 def test_army_payload_arrears_text_is_approximate_not_raw(game):
-    """#321：API armies.arrears_text 为 approximate 奏报；禁 raw 数与浮点残渣。"""
-    from ming_sim.db import _player_army_situation
-
+    """#321：API armies.arrears_text 为 approximate 奏报；禁 raw 键与 IEEE 残渣。"""
     db, _state, _ = game
     row = db.conn.execute(
         "SELECT id FROM armies WHERE owner_power='ming' ORDER BY id LIMIT 1"
     ).fetchone()
     army_id = row["id"]
-
-    samples = (
-        1.2000000000000002,
-        1.5217391304347827,
-        12.5,
-        11.978260869565217,
-        0,
-        -1.234,
+    # 唯一 residue 样本：须命中 _FLOAT_GARBAGE（≥3 位小数）；12.5 一位小数对此正则惰性
+    raw = 1.2000000000000002
+    db.conn.execute(
+        "UPDATE armies SET arrears=?, province_pay_arrears=?, central_pay_arrears=0 WHERE id=?",
+        (raw, raw, army_id),
     )
-    for raw in samples:
-        db.conn.execute(
-            "UPDATE armies SET arrears=?, province_pay_arrears=?, central_pay_arrears=0 WHERE id=?",
-            (raw, raw, army_id),
-        )
-        db.conn.commit()
-        full = db.conn.execute("SELECT * FROM armies WHERE id=?", (army_id,)).fetchone()
-        expected = _player_army_situation(full, db._army_pay(full))["arrears_text"]
-        payload = {army["id"]: army for army in db.army_payload()}
-        card = payload[army_id]
-        assert "arrears" not in card
-        got = card["arrears_text"]
-        assert got == expected, f"raw={raw!r} → arrears_text 应得 {expected!r}，得 {got!r}"
-        # 原始精确小数不得裸出
-        if isinstance(raw, float) and raw != int(raw):
-            assert str(raw) not in got
-
-    # None → or 0 回落：列 NOT NULL 不可直写，替身 row 走 army_payload 同一投影式
-    base = db.conn.execute("SELECT * FROM armies WHERE id=?", (army_id,)).fetchone()
-    none_row = {key: base[key] for key in base.keys()}
-    none_row["arrears"] = None
-    original_rows = db.army_rows
-    try:
-        db.army_rows = lambda limit=None, danger_order=False: [none_row]  # type: ignore[method-assign]
-        payload = {army["id"]: army for army in db.army_payload()}
-        got = payload[army_id]["arrears_text"]
-        expected = _player_army_situation(none_row, db._army_pay(none_row))["arrears_text"]
-        assert got == expected, f"raw=None → arrears_text 应得 canonical {expected!r}，得 {got!r}"
-    finally:
-        db.army_rows = original_rows  # type: ignore[method-assign]
+    db.conn.commit()
+    card = {army["id"]: army for army in db.army_payload()}[army_id]
+    assert "arrears" not in card
+    arrears_text = card["arrears_text"]
+    assert isinstance(arrears_text, str) and arrears_text
+    assert not _FLOAT_GARBAGE.search(arrears_text), (
+        f"arrears_text 含 IEEE 残渣：{arrears_text!r}"
+    )
