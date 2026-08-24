@@ -139,7 +139,7 @@ def test_speed_factors_match_f2_oracle_on_differentiated_route(game, speed_facto
     assert tuple(row) == (dest, "", None, None, 0)
 
 
-# ── 4) 链顺序：tick 先于 event terminal ─────────────────────────────────────
+# ── 4) 链顺序：tick 先于 event terminal / seed 门 ─────────────────────────────
 
 
 def test_pre_settle_tick_before_event_terminal_reads_new_location(game):
@@ -179,6 +179,46 @@ def test_pre_settle_tick_before_event_terminal_reads_new_location(game):
         content.events.remove(ev)
 
 
+def test_pre_settle_tick_before_seed_auto_trigger_reads_new_location(game):
+    """F7.4：pre_settle 内 tick 先于 auto_trigger_seed_issues，seed 门读到新 location。"""
+    db, state, content = game
+    import ming_sim.issues as issues
+    issues.bind_content(content)
+    name = active_ming_character(db, content)
+    t0 = state.turn
+    r0 = _put_in_transit(
+        db, content, name, origin="henan", dest="beizhili",
+        speed_factor=1.0, start_turn=t0,
+    )
+    assert _oracle_n(r0, 1.0) == 1
+
+    ev = Event(
+        id="__test_transit_seed_gate_668__", title="测试在途 seed 门控",
+        kind="situation", summary="x", urgency=50, severity=50, credibility=50,
+        interests=[], audiences=[],
+        auto_trigger=True,
+        trigger_gate={
+            f"character.{name}.location": "==beizhili",
+            f"character.{name}.status": "==active",
+        },
+        person_core_subjects=[name],
+    )
+    content.seed_events.append(ev)
+    try:
+        state.turn = t0 + 1
+        state.turn_phase = TurnPhase.REVIEWING.value
+        db.save_state(state)
+        pre_settle(state, db, content=content)
+
+        row = _ledger(db, name)
+        assert row["location"] == "beizhili" and row["transit_to"] == ""
+        issue = db.find_any_issue_by_origin("event_pool", ev.id)
+        assert issue is not None, "seed 门应在 tick 后读新 location 并硬立项"
+        assert issue["status"] == "active"
+    finally:
+        content.seed_events.remove(ev)
+
+
 # ── 5) 中断型 ───────────────────────────────────────────────────────────────
 
 
@@ -207,10 +247,40 @@ def test_ousted_in_transit_stops_countdown_and_never_arrives(game):
     assert tuple(row)[1:] == ("", None, None, 0)
 
 
-# ── 6) restore：只读 DB 续 tick 与连续一致 ──────────────────────────────────
+# ── 6) restore：真关库重开 + 不中断对照 ────────────────────────────────────
 
 
-def test_mid_countdown_save_reopen_continues_identically(game):
+def _transit_frame(db, name: str, arrivals):
+    row = _ledger(db, name)
+    return {
+        "location": row["location"],
+        "transit_to": row["transit_to"],
+        "remaining": row["transit_distance_remaining"],
+        "factor": row["transit_speed_factor"],
+        "start_turn": row["transit_start_turn"],
+        "arrivals": [dict(a) for a in arrivals],
+    }
+
+
+def _assert_transit_frame_equal(got, expected):
+    assert got["location"] == expected["location"]
+    assert got["transit_to"] == expected["transit_to"]
+    assert got["start_turn"] == expected["start_turn"]
+    assert got["arrivals"] == expected["arrivals"]
+    if expected["remaining"] is None:
+        assert got["remaining"] is None
+    else:
+        assert got["remaining"] == pytest.approx(expected["remaining"])
+    if expected["factor"] is None:
+        assert got["factor"] is None
+    else:
+        assert got["factor"] == pytest.approx(expected["factor"])
+
+
+def test_mid_countdown_save_reopen_continues_identically(game, tmp_path):
+    """F6：中途 backup→关库重开后续 tick，与不中断对照轨逐月 location/四量/抵达一致。"""
+    from ming_sim.db import GameDB
+
     db, state, content = game
     name = active_ming_character(db, content)
     origin, dest = "henan", "liaodong"
@@ -221,30 +291,65 @@ def test_mid_countdown_save_reopen_continues_identically(game):
     )
     n = _oracle_n(r0, 1.0)
     assert n >= 3
+    db.save_state(state)
 
-    state.turn = t0 + 1
-    tick_transit_arrivals(db, state, content)
-    mid = dict(_ledger(db, name))
+    initial_backup = tmp_path / "transit_mid_initial.db"
+    db.backup_to(str(initial_backup))
 
-    content.characters[name].location = "junk"
-    content.characters[name].transit_to = ""
-    content.characters[name].transit_distance_remaining = None
-    reload_state_from_db(db, state, content=content)
-    restored = dict(_ledger(db, name))
-    assert restored == mid
-    ch = content.characters[name]
-    assert ch.location == mid["location"]
-    assert ch.transit_to == mid["transit_to"]
-    assert ch.transit_distance_remaining == pytest.approx(mid["transit_distance_remaining"])
-
-    for k in range(2, n + 1):
+    # 对照轨：同初态不中断逐月 tick
+    control: dict[int, dict] = {}
+    for k in range(1, n + 1):
         state.turn = t0 + k
         arrivals = tick_transit_arrivals(db, state, content)
-        if k < n:
-            assert name not in [a["name"] for a in arrivals]
-        else:
-            assert arrivals == [{"name": name, "location": dest}]
-    assert tuple(_ledger(db, name)) == (dest, "", None, None, 0)
+        control[k] = _transit_frame(db, name, arrivals)
+    assert control[n]["arrivals"] == [{"name": name, "location": dest}]
+    assert control[n]["location"] == dest and control[n]["transit_to"] == ""
+
+    # 恢复轨：自初态 backup 另开；中途真关库重开后再续
+    mid_k = max(1, n // 2)
+    assert mid_k < n
+
+    db_r = GameDB(str(initial_backup), content)
+    try:
+        state_r = db_r.load_state()
+        reload_state_from_db(db_r, state_r, content=content)
+        for k in range(1, mid_k + 1):
+            state_r.turn = t0 + k
+            arrivals = tick_transit_arrivals(db_r, state_r, content)
+            _assert_transit_frame_equal(_transit_frame(db_r, name, arrivals), control[k])
+
+        state_r.turn = t0 + mid_k
+        db_r.save_state(state_r)
+        reopen_path = db_r.path
+        db_r.close()
+
+        db2 = GameDB(reopen_path, content)
+        try:
+            state2 = db2.load_state()
+            content.characters[name].location = "junk"
+            content.characters[name].transit_to = ""
+            content.characters[name].transit_distance_remaining = None
+            content.characters[name].transit_speed_factor = None
+            content.characters[name].transit_start_turn = 0
+            reload_state_from_db(db2, state2, content=content)
+            _assert_transit_frame_equal(
+                _transit_frame(db2, name, []),
+                {**control[mid_k], "arrivals": []},
+            )
+
+            for k in range(mid_k + 1, n + 1):
+                state2.turn = t0 + k
+                arrivals = tick_transit_arrivals(db2, state2, content)
+                _assert_transit_frame_equal(_transit_frame(db2, name, arrivals), control[k])
+            assert tuple(_ledger(db2, name)) == (dest, "", None, None, 0)
+        finally:
+            db2.close()
+    except BaseException:
+        try:
+            db_r.close()
+        except Exception:
+            pass
+        raise
 
 
 # ── 7) 拆除：符号零残留 + payload 无 transit_nudge ─────────────────────────
@@ -259,14 +364,21 @@ def test_removed_symbols_have_no_live_residues():
     )
     hits = []
     self_name = Path(__file__).name
+    scan_paths = []
     for base in ("ming_sim", "tests"):
         for path in (ROOT / base).rglob("*.py"):
             if path.name == self_name:
                 continue
-            text = path.read_text(encoding="utf-8")
-            for token in banned:
-                if token in text:
-                    hits.append(f"{path.relative_to(ROOT)}:{token}")
+            scan_paths.append(path)
+    # 现役 fixture 迁移账（非历史 ADR）：旧符号不得残留在 inventory 元数据
+    inventory = ROOT / "tests" / "game_fixture_retained_inventory.tsv"
+    if inventory.is_file():
+        scan_paths.append(inventory)
+    for path in scan_paths:
+        text = path.read_text(encoding="utf-8")
+        for token in banned:
+            if token in text:
+                hits.append(f"{path.relative_to(ROOT)}:{token}")
     assert hits == [], f"live residues: {hits}"
 
 
@@ -290,24 +402,40 @@ def test_simulator_payload_has_arrivals_not_nudge(game):
 # ── 9) pre_settle 已提交 → simulator 前崩溃恢复 ─────────────────────────────
 
 
-def test_pre_settle_placeholder_persists_transit_arrivals_for_recovery(game, monkeypatch):
-    """F4/F6：生产 resolve_directives 缝写入 transit_arrivals；settling 重入只读该键。"""
+def _assert_ledger_match(db, name: str, expected):
+    loc, to, remaining, factor, start_turn = expected
+    row = _ledger(db, name)
+    assert row["location"] == loc
+    assert row["transit_to"] == to
+    assert row["transit_start_turn"] == start_turn
+    if remaining is None:
+        assert row["transit_distance_remaining"] is None
+    else:
+        assert row["transit_distance_remaining"] == pytest.approx(remaining)
+    if factor is None:
+        assert row["transit_speed_factor"] is None
+    else:
+        assert row["transit_speed_factor"] == pytest.approx(factor)
+
+
+def _crash_resolve_before_simulator_and_recover(
+    *, game, monkeypatch, name: str, origin: str, dest: str,
+    speed_factor: float, advance_months: int, expected_arrivals: list,
+    after_pre_settle_ledger,
+):
+    """生产缝：pre_settle+ready0 后 simulator 前崩溃 → settling 重入只读 ctx。"""
     import ming_sim.decree as decree_mod
     from ming_sim.db import GameDB
 
     db, state, content = game
-    name = active_ming_character(db, content)
     t0 = state.turn
     r0 = _put_in_transit(
-        db, content, name, origin="henan", dest="beizhili",
-        speed_factor=1.0, start_turn=t0,
+        db, content, name, origin=origin, dest=dest,
+        speed_factor=speed_factor, start_turn=t0,
     )
-    assert _oracle_n(r0, 1.0) == 1
-
-    state.turn = t0 + 1
+    state.turn = t0 + advance_months
     state.turn_phase = TurnPhase.REVIEWING.value
     db.save_state(state)
-    expected = [{"name": name, "location": "beizhili"}]
 
     tick_calls = {"n": 0}
     real_tick = decree_mod.tick_transit_arrivals
@@ -329,19 +457,18 @@ def test_pre_settle_placeholder_persists_transit_arrivals_for_recovery(game, mon
 
     assert tick_calls["n"] == 1
     assert state.turn_phase == TurnPhase.SETTLING.value
-    assert tuple(_ledger(db, name)) == ("beizhili", "", None, None, 0)
+    _assert_ledger_match(db, name, after_pre_settle_ledger)
     ctx = db.get_resolve_context(state.turn)
     assert ctx is not None
     assert ctx["extracted"] is None
-    assert ctx["simulator_payload"]["transit_arrivals"] == expected
+    assert ctx["simulator_payload"]["transit_arrivals"] == expected_arrivals
 
-    # 跨连接重开（同 path 第二连接，模拟关库再开）
     db2 = GameDB(db.path, content)
     try:
         state2 = db2.load_state()
         assert state2.turn_phase == TurnPhase.SETTLING.value
         reload_state_from_db(db2, state2, content=content)
-        assert tuple(_ledger(db2, name)) == ("beizhili", "", None, None, 0)
+        _assert_ledger_match(db2, name, after_pre_settle_ledger)
 
         captured: dict = {}
         real_build = build_simulator_payload
@@ -370,17 +497,66 @@ def test_pre_settle_placeholder_persists_transit_arrivals_for_recovery(game, mon
             state2, db2, None, None, [object()], "测试诏", content=content,
         )
 
-        # settling 重入不二次 tick；抵达账不被二次改写
         assert tick_calls["n"] == ticks_before_recovery
-        assert tuple(_ledger(db2, name)) == ("beizhili", "", None, None, 0)
-
+        _assert_ledger_match(db2, name, after_pre_settle_ledger)
         assert "payload" in captured
-        assert captured["payload"]["transit_arrivals"] == expected
+        assert captured["payload"]["transit_arrivals"] == expected_arrivals
         assert "transit_nudge" not in captured["payload"]
         names = [row["name"] for row in captured["payload"]["transit_arrivals"]]
         assert names == sorted(set(names))
+        # 无幻影人名：payload 抵达表不得出现盘外名字
+        known = {
+            str(r["name"])
+            for r in db2.conn.execute("SELECT name FROM characters").fetchall()
+        }
+        assert set(names) <= known
+        return r0, t0, captured["payload"]
     finally:
         db2.close()
+
+
+def test_pre_settle_placeholder_persists_transit_arrivals_for_recovery(game, monkeypatch):
+    """F4/F6：生产 resolve_directives 缝写入 transit_arrivals；settling 重入只读该键。"""
+    db, _state, content = game
+    name = active_ming_character(db, content)
+    expected = [{"name": name, "location": "beizhili"}]
+    r0, _t0, _payload = _crash_resolve_before_simulator_and_recover(
+        game=game,
+        monkeypatch=monkeypatch,
+        name=name,
+        origin="henan",
+        dest="beizhili",
+        speed_factor=1.0,
+        advance_months=1,
+        expected_arrivals=expected,
+        after_pre_settle_ledger=("beizhili", "", None, None, 0),
+    )
+    assert _oracle_n(r0, 1.0) == 1
+
+
+def test_pre_settle_no_arrival_month_recovery_keeps_empty_transit_arrivals(game, monkeypatch):
+    """F7.9：无抵达月（在途未到）崩溃恢复 → transit_arrivals=[]，无幻影人名，不二次 tick。"""
+    db, state, content = game
+    name = active_ming_character(db, content)
+    t0 = state.turn
+    r0 = MATRIX.travel_time("henan", "liaodong")
+    assert _oracle_n(r0, 1.0) > 1
+    # 次月首减后仍在途：remaining = r0 - 1.0，location 仍为启程地
+    after = ("henan", "liaodong", r0 - 1.0, 1.0, t0)
+    got_r0, _t0, payload = _crash_resolve_before_simulator_and_recover(
+        game=game,
+        monkeypatch=monkeypatch,
+        name=name,
+        origin="henan",
+        dest="liaodong",
+        speed_factor=1.0,
+        advance_months=1,
+        expected_arrivals=[],
+        after_pre_settle_ledger=after,
+    )
+    assert got_r0 == pytest.approx(r0)
+    assert payload["transit_arrivals"] == []
+    assert name not in json.dumps(payload.get("transit_arrivals"), ensure_ascii=False)
 
 
 def test_arrivals_sorted_by_name_stable(game):
