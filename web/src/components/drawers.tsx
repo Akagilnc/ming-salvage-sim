@@ -1,7 +1,7 @@
 import React from "react";
 import { Crown, Landmark, MapPinned, ScrollText, Star, Swords, X } from "lucide-react";
 import { MinisterPortrait, PortraitUploadButton, RightDrawer, cacheBust, courtSlots, loadCourtPos, saveCourtPos, snapToSlot } from "./hud";
-import { formatArmyArrears, formatMoney, formatSignedMoney, qualitativeArmyStat } from "../format";
+import { formatMoney, formatSignedMoney, qualitativeArmyStat } from "../format";
 import { settlementClosedReason } from "../settlementPresentation";
 import type { Army, Building, GameState, MapNode, Minister, Region } from "../types";
 
@@ -350,13 +350,6 @@ export function ArmyDrawer({
   const mingArmies = armies.filter((a) => (a.owner_power || "ming") === "ming");
   const filtered = q ? mingArmies.filter((a) => a.name.includes(q) || a.station.includes(q) || a.commander.includes(q)) : mingArmies;
   const selected = mingArmies.find((a) => a.id === selectedArmyId) || null;
-  const arrearsTone = (army: Army) => {
-    const pay = army.army_needed; // #173 欠饷月数按引擎实扣月应发；0 饷军不造假分母（同后端 pay>0 判）
-    const months = pay > 0 ? army.arrears / pay : 0;
-    if (months >= 3) return "danger";
-    if (months >= 1) return "warn";
-    return "";
-  };
   return (
     <RightDrawer open={open} onClose={onClose} title="军队" icon={<Swords size={17} />} extraClass="right-drawer-army">
       <div className="right-drawer-search">
@@ -366,7 +359,7 @@ export function ArmyDrawer({
         {filtered.map((army) => (
           <button
             key={army.id}
-            className={`right-drawer-row${selectedArmyId === army.id ? " selected" : ""} ${arrearsTone(army)}`}
+            className={`right-drawer-row${selectedArmyId === army.id ? " selected" : ""}`}
             onClick={() => onSelectArmy(army.id === selectedArmyId ? "" : army.id)}
           >
             <span className="right-drawer-row-name">{army.name}</span>
@@ -388,13 +381,10 @@ export function ArmyDrawer({
               <tr><th>驻地</th><td>{selected.station}</td><th>战区</th><td>{selected.theater}</td></tr>
               <tr><th>统帅</th><td>{selected.commander || "—"}</td><th>兵种</th><td>{selected.troop_type}</td></tr>
               <tr><th>兵力</th><td>{selected.manpower}</td><th>月饷</th><td>{selected.army_needed}万</td></tr>
-              <tr><th>士气</th><td>{qualitativeArmyStat("morale", selected.morale)}</td><th>操练</th><td>{qualitativeArmyStat("training", selected.training)}</td></tr>
-              <tr><th>军械</th><td>{qualitativeArmyStat("equipment", selected.equipment)}</td><th>补给</th><td>{qualitativeArmyStat("supply", selected.supply)}</td></tr>
-              <tr><th>机动</th><td>{qualitativeArmyStat("mobility", selected.mobility)}</td><th>忠诚</th><td>{qualitativeArmyStat("loyalty", selected.loyalty)}</td></tr>
-              <tr><th>欠饷</th><td colSpan={3}>
-                {formatArmyArrears(selected)}
-              </td></tr>
-              {/* #1501：军牌不渲染静态 status 句；欠饷栏真数是唯一欠饷呈现源 */}
+              {/* #321 P7：mutiny_tier/morale_text/arrears_text 不直显；走 LLM 输入链 */}
+              <tr><th>操练</th><td>{qualitativeArmyStat("training", selected.training)}</td><th>军械</th><td>{qualitativeArmyStat("equipment", selected.equipment)}</td></tr>
+              <tr><th>补给</th><td>{qualitativeArmyStat("supply", selected.supply)}</td><th>机动</th><td>{qualitativeArmyStat("mobility", selected.mobility)}</td></tr>
+              {/* #1501：军牌不渲染静态 status 句 */}
             </tbody>
           </table>
         </div>

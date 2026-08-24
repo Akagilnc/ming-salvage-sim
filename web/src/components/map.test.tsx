@@ -127,19 +127,19 @@ describe("NodeIntel #1352 garrison layout / army-list口径", () => {
       manpower: 28000,
       army_needed: 1.1,
       supply: 50,
-      morale: 40,
+      morale_text: "士气：不振",
       training: 45,
       equipment: 50,
-      arrears: 2.2,
+      arrears_text: "欠饷不足十万两，约两月军饷",
       mobility: 40,
-      loyalty: 55,
+      mutiny_tier: "不满",
       status: "驻防",
       owner_power: "ming",
       ...overrides,
     };
   }
 
-  it("驻军表兵力全数呈现且月饷带万，表头士气不拆字 class", () => {
+  it("驻军表兵力全数呈现且月饷带万，表头仅世界事实列", () => {
     const node = makeNode(makeRegion({ name: "山海关", id: "shanhaiguan" }));
     node.armies = [makeArmy()];
     node.label = "山海关";
@@ -151,9 +151,11 @@ describe("NodeIntel #1352 garrison layout / army-list口径", () => {
     expect(host.textContent).toContain("28000");
     expect(host.textContent).not.toMatch(/(?<![\d])2800(?![\d])/);
     expect(host.textContent).toMatch(/1\.1\s*万/);
-    // 表头保留完整「士气」词（布局 class 钉 nowrap，禁拆字）
-    const headers = Array.from(host.querySelectorAll(".intel-table thead th")).map((th) => th.textContent || "");
-    expect(headers.some((h) => h.includes("士气"))).toBe(true);
+    // #321 P7：驻军表存在；不直显士气/军心/欠饷
     expect(host.querySelector(".intel-table--garrison")).not.toBeNull();
+    expect(host.textContent).not.toContain("不满"); // makeArmy 默认 mutiny_tier 不得直显
+    expect(host.textContent).not.toContain("士气：不振");
+    expect(host.textContent).not.toContain("欠饷不足十万两，约两月军饷");
   });
+
 });
