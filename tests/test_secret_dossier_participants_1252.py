@@ -136,6 +136,7 @@ def test_s2_secret_field_appends_via_real_settle_and_recovery_replays(game, monk
             "delegator_id": lead,
         }],
     }
+    driver.run_prepare(db, state, content)
     driver.run_settle(db, state, content, delta)
 
     roster = db.get_decree_dossier(dossier_id)["participant_roster"]
@@ -345,6 +346,7 @@ def test_s2_driver_persists_secret_orders_and_freezes_secret_authority(game, mon
         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("crash after ready")),
     )
     with pytest.raises(RuntimeError, match="crash after ready"):
+        driver.run_prepare(db, state, content)
         driver.run_settle(db, state, content, {
             "secret_dossier_participants": [{
                 "dossier_id": dossier_id, "character_id": worker,

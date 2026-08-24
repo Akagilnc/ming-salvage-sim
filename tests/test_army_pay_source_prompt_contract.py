@@ -1,4 +1,4 @@
-from driver import run_settle
+from tests.section_rejection_helpers import prepare_then_settle as run_settle
 
 
 def test_prompt_compatible_ming_new_army_pay_source_aliases_land(game):
