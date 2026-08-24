@@ -1070,6 +1070,140 @@ def test_waiting_active_departure_settles_and_does_not_revive(game):
     assert an.list_unsettled_summons(db) == []
 
 
+def test_waiting_active_departure_settle_failure_rolls_back_all_four_sides(
+    game, monkeypatch,
+):
+    """#670：无外层事务时结清抛错 → 行止/person_log/故事账/内存镜像均恢复前像。"""
+    from ming_sim import audience_night as an_mod
+    from ming_sim.issues import _apply_person_changes
+
+    db, state, content = game
+    person = _set_place(game, "洪承畴", location="beizhili")
+    night_id = int(an.open_night(db, state)["id"])
+    origin = "command:waiting-atomic-fail-1"
+    entry_id = an.record_summon_in_transit(
+        db, night_id, person.name, origin_id=origin,
+    )
+    before_travel = _travel_row(db, person.name)
+    before_char = content.characters[person.name]
+    before_mirror = {
+        "location": getattr(before_char, "location", ""),
+        "transit_to": getattr(before_char, "transit_to", ""),
+        "transit_distance_remaining": getattr(
+            before_char, "transit_distance_remaining", None,
+        ),
+        "transit_speed_factor": getattr(before_char, "transit_speed_factor", None),
+        "transit_start_turn": getattr(before_char, "transit_start_turn", 0),
+    }
+    before_logs = int(
+        db.conn.execute(
+            "SELECT COUNT(*) AS n FROM person_logs WHERE person_name=?",
+            (person.name,),
+        ).fetchone()["n"]
+    )
+    before_tags = db.conn.execute(
+        "SELECT tags FROM story_ledger_entries WHERE id=?",
+        (entry_id,),
+    ).fetchone()["tags"]
+    before_unsettled = an.list_unsettled_summons(db)
+
+    def boom(*_a, **_k):
+        raise RuntimeError("injected settle failure")
+
+    monkeypatch.setattr(an_mod, "settle_unsettled_summons_for_person", boom)
+
+    with pytest.raises(RuntimeError, match="injected settle failure"):
+        _apply_person_changes(
+            db, state,
+            [{
+                "name": person.name, "动作": "行止", "transit_to": "shaanxi",
+                "origin_ref": "盘面自发",
+            }],
+            content=content,
+        )
+
+    assert _travel_row(db, person.name) == before_travel
+    after_char = content.characters[person.name]
+    assert {
+        "location": getattr(after_char, "location", ""),
+        "transit_to": getattr(after_char, "transit_to", ""),
+        "transit_distance_remaining": getattr(
+            after_char, "transit_distance_remaining", None,
+        ),
+        "transit_speed_factor": getattr(after_char, "transit_speed_factor", None),
+        "transit_start_turn": getattr(after_char, "transit_start_turn", 0),
+    } == before_mirror
+    assert int(
+        db.conn.execute(
+            "SELECT COUNT(*) AS n FROM person_logs WHERE person_name=?",
+            (person.name,),
+        ).fetchone()["n"]
+    ) == before_logs
+    assert db.conn.execute(
+        "SELECT tags FROM story_ledger_entries WHERE id=?",
+        (entry_id,),
+    ).fetchone()["tags"] == before_tags
+    assert an.list_unsettled_summons(db) == before_unsettled
+    assert an.TAG_SUMMON_UNSETTLED in before_tags
+    assert an.TAG_SUMMON_SETTLED not in before_tags
+
+
+def test_waiting_active_departure_commits_transit_log_settle_and_mirror(game):
+    """#670：无外层事务正常离京 → transit/person_log/结清 tags/内存镜像一并提交。"""
+    from ming_sim.issues import _apply_person_changes
+
+    db, state, content = game
+    person = _set_place(game, "洪承畴", location="beizhili")
+    # 对齐内存镜像，避免 fixture 与 DB 前态漂移干扰断言。
+    content.characters[person.name].location = "beizhili"
+    content.characters[person.name].transit_to = ""
+    night_id = int(an.open_night(db, state)["id"])
+    origin = "command:waiting-atomic-ok-1"
+    entry_id = an.record_summon_in_transit(
+        db, night_id, person.name, origin_id=origin,
+    )
+    before_logs = int(
+        db.conn.execute(
+            "SELECT COUNT(*) AS n FROM person_logs WHERE person_name=?",
+            (person.name,),
+        ).fetchone()["n"]
+    )
+
+    results = _apply_person_changes(
+        db, state,
+        [{
+            "name": person.name, "动作": "行止", "transit_to": "shaanxi",
+            "origin_ref": "盘面自发",
+        }],
+        content=content,
+    )
+    assert results and not results[0].get("rejected")
+
+    travel = _travel_row(db, person.name)
+    assert travel["transit_to"] == "shaanxi"
+    assert travel["location"] == "beizhili"
+    mirror = content.characters[person.name]
+    assert getattr(mirror, "transit_to", "") == "shaanxi"
+    assert getattr(mirror, "location", "") == "beizhili"
+    assert int(
+        db.conn.execute(
+            "SELECT COUNT(*) AS n FROM person_logs WHERE person_name=?",
+            (person.name,),
+        ).fetchone()["n"]
+    ) == before_logs + 1
+    assert db.conn.execute(
+        "SELECT 1 AS ok FROM person_logs WHERE person_name=? AND action=? LIMIT 1",
+        (person.name, "行止"),
+    ).fetchone() is not None
+    tags = db.conn.execute(
+        "SELECT tags FROM story_ledger_entries WHERE id=?",
+        (entry_id,),
+    ).fetchone()["tags"]
+    assert an.TAG_SUMMON_SETTLED in tags
+    assert an.TAG_SUMMON_UNSETTLED not in tags
+    assert an.list_unsettled_summons(db) == []
+
+
 def test_waiting_active_departure_respects_strategic_preflight_savepoint(game):
     """#670：战略人物预检 SAVEPOINT 内离京不报错；ROLLBACK 后行止与召旨均原样。"""
     from ming_sim.issues import _apply_person_changes
