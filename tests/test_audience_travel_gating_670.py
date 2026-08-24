@@ -712,7 +712,6 @@ def test_multi_origin_fresh_independent_retract_and_single_departure(game, monke
     assert {row["origin_id"] for row in unsettled} == {origin_a, origin_b}
 
 
-
 def test_cli_midflow_summon_consumes_admission_without_entering(game, monkeypatch):
     """#670 T3：夜内「传X来」场外只打印闸文，不返 summon:、不入殿。"""
     from ming_sim.cli import terminal
@@ -842,7 +841,7 @@ def test_tool_summon_does_not_splice_gate_reason_into_llm_answer(game, monkeypat
 
 
 def test_web_chat_hall_admission_allows_capital_and_blocks_offsite(game):
-    """#670 T-A：Web.chat 真入口——blank/beizhili 即时开殿；场外/在途 409 且不调回话。"""
+    """#670 T-A：Web.chat——blank/beizhili 开殿；场外/在途成功记召静默 200，不调回话。"""
     db, state, content = game
     capital = _set_place(game, "毕自严", location="beizhili")
     remote = _set_place(game, "洪承畴", location="shaanxi")
@@ -868,28 +867,75 @@ def test_web_chat_hall_admission_allows_capital_and_blocks_offsite(game):
     assert chat_calls == [capital.name, capital.name]
 
     allowed_msgs = _chat_message_count(db)
-    with pytest.raises(HTTPException) as remote_exc:
-        runtime.chat(remote.name, "传洪承畴来。")
-    assert remote_exc.value.status_code == 409
-    # 成功记召 detail 只带结构化枚举，无固定承旨中文。
-    assert remote_exc.value.detail == AudienceAdmission.SUMMON_FRESH.value
-    assert "赴京" not in str(remote_exc.value.detail)
-    assert "不能入殿" not in str(remote_exc.value.detail)
+    allowed_turns = _chat_turn_count(db)
+    # 成功记召：200 静默载荷，不 409、不调回话、不建轮/消息；枚举仅机面字段。
+    remote_payload = runtime.chat(remote.name, "传洪承畴来。")
+    assert remote_payload["admission"] == AudienceAdmission.SUMMON_FRESH.value
+    assert remote_payload["answer"] == ""
+    assert remote_payload["chat_turn_id"] == 0
+    assert "赴京" not in str(remote_payload)
+    assert "不能入殿" not in str(remote_payload)
+    assert "SUMMON_FRESH" not in str(remote_payload.get("answer", ""))
     assert chat_calls == [capital.name, capital.name]
 
-    with pytest.raises(HTTPException) as moving_exc:
-        runtime.chat(moving.name, "传孙传庭来。")
-    assert moving_exc.value.status_code == 409
-    assert moving_exc.value.detail == AudienceAdmission.SUMMON_IN_TRANSIT.value
-    assert "在途" not in str(moving_exc.value.detail)
-    assert "不能入殿" not in str(moving_exc.value.detail)
+    moving_payload = runtime.chat(moving.name, "传孙传庭来。")
+    assert moving_payload["admission"] == AudienceAdmission.SUMMON_IN_TRANSIT.value
+    assert moving_payload["answer"] == ""
+    assert moving_payload["chat_turn_id"] == 0
+    assert "在途" not in str(moving_payload)
+    assert "不能入殿" not in str(moving_payload)
     assert chat_calls == [capital.name, capital.name]
     assert _chat_message_count(db) == allowed_msgs
+    assert _chat_turn_count(db) == allowed_turns
     assert _travel_row(db, moving.name) == moving_before
 
     by_origin = {row["origin_id"]: row for row in an.list_unsettled_summons(db)}
     assert by_origin[f"web:chat:{state.turn}:{remote.name}"]["kind"] == "fresh"
     assert by_origin[f"web:chat:{state.turn}:{moving.name}"]["kind"] == "in_transit"
+
+
+def test_web_chat_stream_summon_success_exits_error_channel(game):
+    """#670：chat_stream 成功记召 yield done+end，无 error，不调回话。"""
+    db, state, content = game
+    remote = _set_place(game, "洪承畴", location="shaanxi")
+    moving = _set_place(
+        game, "孙传庭", location="shaanxi", transit_to="henan", transit_start_turn=3,
+    )
+    chat_calls: list[str] = []
+
+    def _session_chat(minister_name, message, *, chat_turn_id=0):
+        chat_calls.append(minister_name)
+        return ChatTurnResult(answer="不应到达。", pending_action_id=0, secret_order_id=0)
+
+    runtime = _web_hall_runtime(db, state, content, session_chat=_session_chat)
+    before_msgs = _chat_message_count(db)
+    before_turns = _chat_turn_count(db)
+
+    def _collect(name, text):
+        events = list(runtime.chat_stream(name, text))
+        types = [ev.get("type") for ev in events]
+        assert "error" not in types
+        assert types == ["done", "end"]
+        payload = events[0].get("payload") or {}
+        assert payload.get("answer") == ""
+        assert payload.get("chat_turn_id") == 0
+        assert "赴京" not in str(payload)
+        assert "在途" not in str(payload)
+        assert "不能入殿" not in str(payload)
+        return payload
+
+    remote_payload = _collect(remote.name, "传洪承畴来。")
+    assert remote_payload["admission"] == AudienceAdmission.SUMMON_FRESH.value
+
+    moving_payload = _collect(moving.name, "传孙传庭来。")
+    assert moving_payload["admission"] == AudienceAdmission.SUMMON_IN_TRANSIT.value
+
+    assert chat_calls == []
+    assert _chat_message_count(db) == before_msgs
+    assert _chat_turn_count(db) == before_turns
+    by_origin = {row["origin_id"]: row for row in an.list_unsettled_summons(db)}
+    assert by_origin[f"web:stream:{state.turn}:{remote.name}"]["kind"] == "fresh"
+    assert by_origin[f"web:stream:{state.turn}:{moving.name}"]["kind"] == "in_transit"
 
 
 def test_web_chat_ledger_append_failure_has_no_side_effects(game, monkeypatch):
