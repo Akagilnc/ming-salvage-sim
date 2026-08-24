@@ -1070,6 +1070,90 @@ def test_waiting_active_departure_settles_and_does_not_revive(game):
     assert an.list_unsettled_summons(db) == []
 
 
+def test_waiting_active_departure_respects_strategic_preflight_savepoint(game):
+    """#670：战略人物预检 SAVEPOINT 内离京不报错；ROLLBACK 后行止与召旨均原样。"""
+    from ming_sim.issues import _apply_person_changes
+
+    db, state, content = game
+    person = _set_place(game, "洪承畴", location="beizhili")
+    night_id = int(an.open_night(db, state)["id"])
+    origin = "command:waiting-preflight-1"
+    entry_id = an.record_summon_in_transit(
+        db, night_id, person.name, origin_id=origin,
+    )
+    before_travel = _travel_row(db, person.name)
+    before_unsettled = an.list_unsettled_summons(db)
+    assert before_unsettled == [{
+        "entry_id": entry_id,
+        "night_id": night_id,
+        "person_name": person.name,
+        "origin_id": origin,
+        "kind": "waiting",
+    }]
+
+    db.conn.execute("BEGIN")
+    db.conn.execute("SAVEPOINT strategic_person_result_preflight")
+    results = _apply_person_changes(
+        db, state,
+        [{
+            "name": person.name, "动作": "行止", "transit_to": "henan",
+            "origin_ref": "盘面自发",
+        }],
+        content=content,
+        external_transaction=True,
+    )
+    assert results and not results[0].get("rejected")
+    # 预检内可见暂态写，但不得 durable commit 掉 SAVEPOINT。
+    assert _travel_row(db, person.name)["transit_to"] == "henan"
+    assert an.list_unsettled_summons(db) == []
+    db.conn.execute("ROLLBACK TO SAVEPOINT strategic_person_result_preflight")
+    db.conn.execute("RELEASE SAVEPOINT strategic_person_result_preflight")
+    db.conn.rollback()
+
+    assert _travel_row(db, person.name) == before_travel
+    assert an.list_unsettled_summons(db) == before_unsettled
+    assert an.list_waiting_audience_summons(db) == [{
+        "person_name": person.name,
+        "origin_id": origin,
+        "source_entry_id": entry_id,
+        "location": "beizhili",
+    }]
+
+
+def test_waiting_active_departure_external_rollback_reverts_transit_and_settle(game):
+    """#670：显式外层事务 rollback 同时撤销行止与召旨结清。"""
+    from ming_sim.issues import _apply_person_changes
+
+    db, state, content = game
+    person = _set_place(game, "洪承畴", location="beizhili")
+    night_id = int(an.open_night(db, state)["id"])
+    origin = "command:waiting-ext-tx-1"
+    entry_id = an.record_summon_in_transit(
+        db, night_id, person.name, origin_id=origin,
+    )
+    before_travel = _travel_row(db, person.name)
+    before_unsettled = an.list_unsettled_summons(db)
+
+    db.conn.execute("BEGIN")
+    results = _apply_person_changes(
+        db, state,
+        [{
+            "name": person.name, "动作": "行止", "transit_to": "shaanxi",
+            "origin_ref": "盘面自发",
+        }],
+        content=content,
+        external_transaction=True,
+    )
+    assert results and not results[0].get("rejected")
+    assert _travel_row(db, person.name)["transit_to"] == "shaanxi"
+    assert an.list_unsettled_summons(db) == []
+    db.conn.rollback()
+
+    assert _travel_row(db, person.name) == before_travel
+    assert an.list_unsettled_summons(db) == before_unsettled
+    assert before_unsettled[0]["entry_id"] == entry_id
+
+
 def test_waiting_projection_survives_restore(game):
     """#670：waiting 态关库重开，list_unsettled / payload 同形。"""
     db, state, content = game
@@ -1128,6 +1212,38 @@ def test_non_capital_location_aliases_are_not_migrated_on_reopen(game):
                 "SELECT location FROM characters WHERE name=?", (name,)
             ).fetchone()
             # 旧档值原样保留；迁移不得批量改写非京 alias。
+            assert row["location"] == alias, name
+    finally:
+        restored.close()
+
+
+def test_shuntian_zhili_aliases_are_not_migrated_on_reopen(game):
+    """#670：顺天/直隶 可作匹配别名，但旧档 location 迁移不得写回。"""
+    from ming_sim.matching import is_capital_location, location_alias_rewrites
+
+    assert location_alias_rewrites() == [
+        ("京师", "beizhili"),
+        ("北京", "beizhili"),
+        ("beijing", "beizhili"),
+        ("北直隶", "beizhili"),
+    ]
+    # 匹配/在京判断仍认顺天/直隶（REGION_SPECIAL_ALIASES 保留）。
+    assert is_capital_location("顺天") is True
+    assert is_capital_location("直隶") is True
+
+    db, _state, content = game
+    samples = {"洪承畴": "顺天", "孙传庭": "直隶"}
+    for name, alias in samples.items():
+        _set_place(game, name, location=alias)
+
+    path = db.path
+    db.close()
+    restored = GameDB(path, content)
+    try:
+        for name, alias in samples.items():
+            row = restored.conn.execute(
+                "SELECT location FROM characters WHERE name=?", (name,)
+            ).fetchone()
             assert row["location"] == alias, name
     finally:
         restored.close()

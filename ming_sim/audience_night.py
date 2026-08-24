@@ -1741,11 +1741,15 @@ def _mark_summon_entries_in_transit(db: Any, items: Sequence[Dict[str, Any]]) ->
         db.conn.commit()
 
 
-def settle_summon_origin(db: Any, origin_id: object) -> bool:
+def settle_summon_origin(
+    db: Any, origin_id: object, *, commit: bool = True,
+) -> bool:
     """按 origin 结清未结传召；重复结清为幂等 no-op。
 
     结清点：宣入/在京 admission 消费；人物非 active 退役；
     候见中 active 再奉旨离京（canonical 行止写缝）。
+    commit 由调用方事务所有权决定（与 append_story_ledger 同形）；
+    行止接缝须传 commit=commit_person_change，避免 SAVEPOINT/外层事务中擅自提交。
     """
     origin = str(origin_id or "").strip()
     matches = [item for item in list_unsettled_summons(db) if item["origin_id"] == origin]
@@ -1762,7 +1766,7 @@ def settle_summon_origin(db: Any, origin_id: object) -> bool:
             "UPDATE story_ledger_entries SET tags=? WHERE id=?",
             (json.dumps(tags, ensure_ascii=False), item["entry_id"]),
         )
-    if _should_commit(db):
+    if commit and _should_commit(db):
         db.conn.commit()
     return True
 
@@ -1784,8 +1788,13 @@ def retire_unsettled_summons_for_inactive(db: Any) -> List[str]:
     return settled
 
 
-def settle_unsettled_summons_for_person(db: Any, person_name: str) -> List[str]:
-    """宣入/在京 admission：结清该人全部未结传召 origin。"""
+def settle_unsettled_summons_for_person(
+    db: Any, person_name: str, *, commit: bool = True,
+) -> List[str]:
+    """宣入/在京 admission：结清该人全部未结传召 origin。
+
+    commit 继承调用方事务所有权；canonical 行止离京接缝须显式传入。
+    """
     name = str(person_name or "").strip()
     if not name:
         return []
@@ -1794,7 +1803,7 @@ def settle_unsettled_summons_for_person(db: Any, person_name: str) -> List[str]:
         if item["person_name"] != name:
             continue
         origin = str(item["origin_id"])
-        if settle_summon_origin(db, origin):
+        if settle_summon_origin(db, origin, commit=commit):
             settled.append(origin)
     return settled
 
