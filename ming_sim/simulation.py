@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import json
 import copy
+import json
+import math
 import re
 import sqlite3
 from types import SimpleNamespace
@@ -16,6 +17,7 @@ from ming_sim.commitment_backlash import build_backlash_narrative_features
 from ming_sim.constants import TURN_UNIT
 from ming_sim.context import historical_anchor_for_month, victory_status
 from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS
+from ming_sim.distance import DistanceMatrix
 from ming_sim.fiscal_fact_brief import build_fiscal_fact_brief
 from ming_sim.issues import (
     commitment_condition_role,
@@ -28,6 +30,7 @@ from ming_sim.issues import (
     normalize_event_outcome_labels_or_error,
 )
 from ming_sim.models import GameState, loads_effect_dict, reign_period_label
+from ming_sim.paths import bundled_path
 from ming_sim.qualitative import (
     imperial_authority_band,
     power_band,
@@ -555,6 +558,106 @@ def project_monthly_progress_for_simulator(db: GameDB) -> List[Dict[str, object]
     return out
 
 
+_TRANSIT_SPEED_SEMANTICS = {
+    1.0: "",
+    1.5: "〔行速语态：快马加鞭〕",
+    2.0: "〔行速语态：星夜兼程〕",
+}
+
+
+def project_transit_semantics(
+    db: GameDB,
+    state: GameState,
+    matrix: DistanceMatrix,
+) -> List[Dict[str, object]]:
+    """#669 / ADR 0095: pure in-transit month-semantics projector for simulator.
+
+    Reads the transit ledger, derives M/T month features, never exposes remaining/
+    speed_factor/total/ETA. Corrupt ledger rows fail loud (no skip, no half-row).
+    Empty in-transit set → []. Stable order = name ASC, transit_to ASC.
+    """
+    rows = db.conn.execute(
+        "SELECT name, location, transit_to, "
+        "transit_distance_remaining, transit_speed_factor, transit_start_turn "
+        "FROM characters "
+        "WHERE status='active' AND COALESCE(transit_to,'') != '' "
+        "ORDER BY name ASC, transit_to ASC"
+    ).fetchall()
+    out: List[Dict[str, object]] = []
+    for row in rows:
+        name = str(row["name"] or "")
+        location = str(row["location"] or "").strip()
+        transit_to = str(row["transit_to"] or "").strip()
+        if not location or not transit_to:
+            raise ValueError(
+                f"transit_semantics corrupt endpoints for {name!r}: "
+                f"location={location!r} transit_to={transit_to!r}"
+            )
+        try:
+            d0 = float(matrix.travel_time(location, transit_to))
+        except (KeyError, ValueError, TypeError) as err:
+            raise KeyError(
+                f"transit_semantics unresolvable route for {name!r}: "
+                f"{location!r} -> {transit_to!r}"
+            ) from err
+
+        remaining_raw = row["transit_distance_remaining"]
+        try:
+            remaining = float(remaining_raw)
+        except (TypeError, ValueError) as err:
+            raise ValueError(
+                f"transit_semantics corrupt remaining for {name!r}: {remaining_raw!r}"
+            ) from err
+        if not math.isfinite(remaining) or remaining <= 0:
+            raise ValueError(
+                f"transit_semantics corrupt remaining for {name!r}: {remaining_raw!r}"
+            )
+
+        factor_raw = row["transit_speed_factor"]
+        try:
+            factor = float(factor_raw)
+        except (TypeError, ValueError) as err:
+            raise ValueError(
+                f"transit_semantics corrupt speed_factor for {name!r}: {factor_raw!r}"
+            ) from err
+        # Exact membership only — no approximate tolerance (P4 / 0095).
+        if factor not in _TRANSIT_SPEED_SEMANTICS:
+            raise ValueError(
+                f"transit_semantics corrupt speed_factor for {name!r}: {factor_raw!r}"
+            )
+
+        start_raw = row["transit_start_turn"]
+        if isinstance(start_raw, bool) or not isinstance(start_raw, (int, float)):
+            raise ValueError(
+                f"transit_semantics corrupt start_turn for {name!r}: {start_raw!r}"
+            )
+        if isinstance(start_raw, float) and not start_raw.is_integer():
+            raise ValueError(
+                f"transit_semantics corrupt start_turn for {name!r}: {start_raw!r}"
+            )
+        start_turn = int(start_raw)
+        if start_turn <= 0:
+            raise ValueError(
+                f"transit_semantics corrupt start_turn for {name!r}: {start_raw!r}"
+            )
+        if start_turn > int(state.turn):
+            raise ValueError(
+                f"transit_semantics future start_turn for {name!r}: "
+                f"{start_turn} > turn {state.turn}"
+            )
+
+        months_in_transit = max(0, int(state.turn) - start_turn)
+        total_months = max(1, math.ceil(d0 / factor - 1e-9))
+        prefix = _TRANSIT_SPEED_SEMANTICS[factor]
+        semantic = f"{prefix}已在途 {months_in_transit} 月，全程约 {total_months} 月"
+        out.append({
+            "name": name,
+            "transit_to": transit_to,
+            "semantic": semantic,
+        })
+    return out
+
+
 def build_simulator_payload(
     state: GameState,
     db: GameDB,
@@ -714,6 +817,12 @@ def build_simulator_payload(
         # #668/0095：本 tick 引擎刚抵达的事实集合（非仍在途者）；durable 真源在
         # pending_resolve_context.simulator_payload.transit_arrivals，由调用方注入。
         "transit_arrivals": list(transit_arrivals or []),
+        # #669/0095：仍在途者的月数语义特征（非裸账）；#673 判官清单复用同一 projector。
+        "transit_semantics": project_transit_semantics(
+            db,
+            state,
+            DistanceMatrix.from_file(bundled_path("content", "distance_matrix.json")),
+        ),
         # #627：政敌检举供事实（零新增串行调用；不携真伪位/quota/烈度）
         "faction_denunciation_facts": db.build_faction_denunciation_facts(),
         # #626：承诺所系反噬——硬门只落结构化事实；玩家文案由叙事步从此特征包长出
@@ -724,6 +833,8 @@ def build_simulator_payload(
             "（含 powers_brief/factions_brief/classes_brief 叙述串、active_issues 等）。"
             "due_commitments 是本月待复核的公开承诺（公开轨）。transit_arrivals 为本月引擎"
             "已确认抵达的人物（name+location），请据此演出到任，勿改 location/在途账。"
+            "transit_semantics 为仍在途人物的在途语义特征（name/目的地/月数语义），非裸账，"
+            "勿改 location/在途账，勿自算剩余距离或抵达月。"
             "faction_denunciation_facts 为派系恩怨/分叉案卷/处境/个性事实包，供朝堂弹劾叙事取材，不含真伪位。"
             "commitment_backlash_facts 为承诺所系反噬结构化事实包（源类/承诺链接/metrics），"
             "供叙事长出玩家可见文案；含与 #625 反制 bar 用语区分约束，不含成句模板。"
