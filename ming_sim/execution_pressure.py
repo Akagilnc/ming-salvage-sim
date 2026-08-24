@@ -170,11 +170,20 @@ def resolve_dossier_region_ids(
     """
     action = str(action_type or "").strip()
     target_kind = str(payload.get("target_kind") or "").strip()
-    if target_kind not in TARGET_KINDS:
-        raise ValueError(f"target_kind 非法：{target_kind!r}")
     raw_scope = payload.get("locality_scope")
     scope = normalize_locality_scope(raw_scope)
     target_id = str(payload.get("target_id") or "").strip()
+
+    # 结构目标（撤回成命等）：不入属地 21 格；仅 none → 单行
+    if target_kind == "dossier":
+        if scope != "none":
+            raise ValueError(
+                f"target_kind=dossier 与 locality_scope={scope!r} 矛盾（须 none）"
+            )
+        return [""]
+
+    if target_kind not in TARGET_KINDS:
+        raise ValueError(f"target_kind 非法：{target_kind!r}")
 
     # r4-B 21 格：R1 = region ∧ single
     if target_kind == "region":

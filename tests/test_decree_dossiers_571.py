@@ -2742,9 +2742,10 @@ def test_draft_extraction_does_not_capture_acting_appointment(monkeypatch, draft
         "命洪承畴暂署兵部尚书", "臣已拟妥", draft_count=draft_count,
     )
 
-    if draft_count == 1:
-        assert result["dossier_action_type"] != "acting_appointment"
-    else:
+    # 单/多旨等价：不捕获 acting_appointment 为草案
+    assert result["draft_action"] == "无"
+    assert result.get("dossier_action_type") != "acting_appointment"
+    if draft_count != 1:
         assert result["drafts"] == []
 
 
@@ -3030,11 +3031,12 @@ def test_inner_treasury_admission_uses_actual_once_and_preserves_surface(
 
 def _complete_session(game):
     """GameSession construction contract on the fixture's real DB/state."""
-    from ming_sim.session import GameSession
+    from ming_sim.session import GameSession, _bind_all_content
 
     db, state, content = game
     session = GameSession.__new__(GameSession)
     session.content = content
+    _bind_all_content(content)
     session.llm_config = None
     session.db = db
     session.agno_db = None
@@ -3214,6 +3216,16 @@ def test_cli_protection_execution_closes_from_next_month_extractor(game, monkeyp
     )
     monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
     monkeypatch.setattr(decree_mod, "record_chapter_memory", lambda *a, **k: None)
+    # 护行颁布会落边事件；本测只钉 dossier 结案，跳过月末酿制 LLM 相
+    class _SkipBrewLeg:
+        def prepare(self):
+            return False
+
+    monkeypatch.setattr(
+        decree_mod,
+        "_make_relation_brew_runner",
+        lambda *_a, **_k: (lambda *_a2, **_k2: _SkipBrewLeg()),
+    )
 
     session.advance_without_decree()
 

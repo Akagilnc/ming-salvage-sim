@@ -492,6 +492,7 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
         mechanical_fields = (
             "dossier_action_type", "target_kind", "target_id", "mode", "amount", "account",
             "execution_surface", "assignee", "deadline_months", "punish_action",
+            "locality_scope",
         )
         for field_name in mechanical_fields:
             if draft_res.get(field_name) not in (None, ""):
@@ -1106,6 +1107,9 @@ def stage_grant_allocation_candidate(
         "grant_action": action,
         "mode": mode,
     }
+    # #654：producer 产 region 目标时显式 single（禁 DB/oracle 暗升）
+    if kind == "region":
+        staged["locality_scope"] = "single"
     if account in {"国库", "内库"}:
         staged["account"] = account
     if cadence in {"一次性", "每月"}:

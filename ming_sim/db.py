@@ -11468,11 +11468,11 @@ class GameDB:
                     f"军令引用未入库军队 '{target_id}'（成案前须存在）"
                 )
             normalized["target_kind"] = "army"
-        # #654：target_kind 七值 + locality_scope 三值 durable 归一（成案唯一结构边界）
-        # region 缺省 scope 不暗升 single——组合矩阵由 oracle fail-loud（r3-B.4 / r4-B）
+        # #654：locality_scope 三值 durable 归一。七值属地矩阵 + 结构 kind dossier
+        # （撤回成命既有 target_kind，不入 21 格）。region 缺省不暗升 single。
         from ming_sim.execution_pressure import TARGET_KINDS, normalize_locality_scope
         final_kind = str(normalized.get("target_kind") or "").strip()
-        if final_kind not in TARGET_KINDS:
+        if final_kind not in TARGET_KINDS and final_kind != "dossier":
             raise ValueError(f"target_kind 非法：{final_kind!r}")
         normalized["target_kind"] = final_kind
         normalized["locality_scope"] = normalize_locality_scope(
@@ -13308,33 +13308,10 @@ class GameDB:
     ) -> int:
         """在成案点落一条独立案卷；幂等键只使用真实 (>0) 来源 id。
 
-        #654：int ABI 保留给非 directive 消费者；共享 create_decree_dossiers 单核。
-        显式 region_id 时直落单行（测试/内部）；否则走 locality oracle。
+        #654：int ABI 给非 directive 消费者，直落单行内核；不经 locality oracle /
+        national fan-out。属地浓度与 fan-out 只来自 r5 三路 create_decree_dossiers。
         """
-        if str(region_id or "").strip() != "":
-            return self._create_decree_dossier_row(
-                state,
-                action_type=action_type,
-                decree_text=decree_text,
-                target_kind=target_kind,
-                target_id=target_id,
-                executor_kind=executor_kind,
-                executor_id=executor_id,
-                source_chat_turn_id=source_chat_turn_id,
-                pending_action_id=pending_action_id,
-                directive_id=directive_id,
-                secret_order_id=secret_order_id,
-                payload=payload,
-                status=status,
-                due_turn=due_turn,
-                extension=extension,
-                participants=participants,
-                commit=commit,
-                rejection_collector=rejection_collector,
-                _issued_secret_order=_issued_secret_order,
-                region_id=str(region_id or ""),
-            )
-        ids = self.create_decree_dossiers(
+        return self._create_decree_dossier_row(
             state,
             action_type=action_type,
             decree_text=decree_text,
@@ -13354,8 +13331,8 @@ class GameDB:
             commit=commit,
             rejection_collector=rejection_collector,
             _issued_secret_order=_issued_secret_order,
+            region_id=str(region_id or ""),
         )
-        return int(ids[0]) if ids else 0
 
     def create_decree_dossiers(
         self,
