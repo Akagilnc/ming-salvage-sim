@@ -1869,9 +1869,21 @@ def prepare_resolve_front_half(
     """共享前半段 seam（ADR 0004 / #668）：pre_settle + ready=0 占位（含 transit_arrivals）。
 
     resolve_directives 与 driver.prepare 共用此 helper。外层 atomic 使 settling 相位与
-    ready=0 context 同生共死；settling 重入走 pre_settle 幂等守门 + arrivals 合并保留，
-    不二次 tick/财政。返回本回合 `transit_arrivals`（无抵达 = `[]`）。
+    ready=0 context 同生共死。已有 context 的 FRONT_HALF_DONE 重入只读返回既有
+    transit_arrivals，禁止 placeholder upsert 覆写 durable 真源（ready=0 原诏/source
+    与 ready=1 崩溃重放载荷），不二次 tick/财政。返回本回合 `transit_arrivals`
+    （无抵达 = `[]`）。
     """
+    # 已有-context 重入：只读既有真源。save_resolve_context 是整行 upsert，placeholder
+    # 默认空字段会冲掉 ready=0 原诏/source 与 ready=1 extracted/contract/narrative。
+    if state.turn_phase in FRONT_HALF_DONE_PHASES:
+        existing = db.get_resolve_context(int(state.turn))
+        if existing is not None:
+            payload = existing.get("simulator_payload")
+            if isinstance(payload, dict) and isinstance(payload.get("transit_arrivals"), list):
+                return list(payload["transit_arrivals"])
+            return []
+
     # 诏书占位真源（ship-pre r5）：pre_settle 成功后立即把 decree_text 落为 ready=0
     # 占位——begin_turn 会清内存 last_decree，跨进程恢复的 no-ready fallthrough 没有
     # 此行就只能用 LLM 从草案重新生成，玩家手改的原诏蒸发。HITL/ready persist 后续
@@ -1879,11 +1891,9 @@ def prepare_resolve_front_half(
     #
     # 占位与 settling 相位同事务可见（PR #90 R1 codex P2）：外层 atomic 把 pre_settle
     # 的内层事务并入（flat 可重入），崩在「settling 已提交、占位未落」的窗口不再可能
-    # ——要么两者都见，要么整段回滚重来。恢复重推演路重进时 pre_settle 幂等守门
-    # 早退、占位同键 upsert，语义不变。
+    # ——要么两者都见，要么整段回滚重来。
     try:
         transit_arrivals_box: List[Dict[str, object]] = []
-        front_half_was_done = state.turn_phase in FRONT_HALF_DONE_PHASES
         with atomic_and_reload(db, state, content=content, registry=registry):
             pre_settle(
                 state, db, on_stage=on_stage,
@@ -1891,11 +1901,11 @@ def prepare_resolve_front_half(
                 scene_registry=scene_registry,
                 transit_arrivals_out=transit_arrivals_box,
             )
-            # #668：transit_arrivals 与 ready=0 占位同外层 atomic 写入；settling 重入合并保留，禁 {} 整键覆写。
+            # #668：transit_arrivals 与 ready=0 占位同外层 atomic 写入。
             placeholder_payload = _ready0_payload_with_transit_arrivals(
                 db, state.turn,
                 transit_arrivals=transit_arrivals_box,
-                front_half_was_done=front_half_was_done,
+                front_half_was_done=False,
             )
             db.save_resolve_context(
                 state.turn, decree_text, "", placeholder_payload,
