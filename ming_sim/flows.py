@@ -1160,6 +1160,15 @@ def _apply_economy_list(
         # #1260：别名读取收敛 simulation 单源（嵌套通道不经 cleaner，须吃全套别名）。
         from ming_sim.simulation import read_beyond_intent_raw
         beyond_raw = read_beyond_intent_raw(move)
+        from ming_sim.covert_levy import stopped_covert_effect
+        if stopped_covert_effect(
+            db, origin_ref=effective_origin_ref, beyond_intent=beyond_raw,
+        ):
+            applied.append({
+                "account": account, "rejected": True, "category": "forbidden_effect",
+                "reason": "该旧案暗渠摊派已奉旨禁绝", "item": move,
+            })
+            continue
         raw_purpose = str(move.get("purpose") or "").strip()
         raw_target_kind = str(move.get("target_kind") or "").strip()
         raw_target_id = str(move.get("target_id") or "").strip()
@@ -1202,10 +1211,12 @@ def _apply_economy_list(
                     origin_ref=effective_origin_ref,
                     beyond_intent=beyond_raw,
                 )
-                entry = {"account": account, "delta": -spent, "reason": reason}
-                if db.coerce_beyond_intent_flag(beyond_raw):
-                    entry["beyond_intent"] = True
-                applied.append(entry)
+                from ming_sim.covert_levy import canonical_fiscal_result
+                applied.append(canonical_fiscal_result(
+                    db, move, applied=spent != 0,
+                    effective_origin_ref=effective_origin_ref,
+                    account=account, delta=-spent, reason=reason,
+                ))
                 continue
             applied.append({
                 "account": account,
@@ -1248,10 +1259,12 @@ def _apply_economy_list(
                         f"{row['name']}已无欠饷，"
                         f"{format_wanliang_amount(abs(delta))}万两未拨"
                     )
-                applied.append({
-                    "account": account, "delta": 0,
-                    "reason": reason_text,
-                })
+                from ming_sim.covert_levy import canonical_fiscal_result
+                applied.append(canonical_fiscal_result(
+                    db, move, applied=False,
+                    effective_origin_ref=effective_origin_ref,
+                    account=account, delta=0, reason=reason_text,
+                ))
                 continue
             spent = _pay_single_army_arrears(
                 db, state, row, account, min(abs(delta), payable_arrears), category,
@@ -1264,10 +1277,12 @@ def _apply_economy_list(
                     db._reconcile_central_army_pay_arrears_container()
                 if commit:
                     db.conn.commit()
-                entry = {"account": account, "delta": -spent, "reason": reason}
-                if db.coerce_beyond_intent_flag(beyond_raw):
-                    entry["beyond_intent"] = True
-                applied.append(entry)
+                from ming_sim.covert_levy import canonical_fiscal_result
+                applied.append(canonical_fiscal_result(
+                    db, move, applied=True,
+                    effective_origin_ref=effective_origin_ref,
+                    account=account, delta=-spent, reason=reason,
+                ))
             continue
 
         # ── 常规扣账（其它/无 purpose）─────────────────────────────────────────
@@ -1283,10 +1298,12 @@ def _apply_economy_list(
             commit=commit,
         )
         if actual:
-            entry = {"account": account, "delta": actual, "reason": reason}
-            if db.coerce_beyond_intent_flag(beyond_raw):
-                entry["beyond_intent"] = True
-            applied.append(entry)
+            from ming_sim.covert_levy import canonical_fiscal_result
+            applied.append(canonical_fiscal_result(
+                db, move, applied=True,
+                effective_origin_ref=effective_origin_ref,
+                account=account, delta=actual, reason=reason,
+            ))
     return applied
 
 
@@ -1443,6 +1460,15 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
             if province_pay_share > 0:
                 morale_delta = 0
             else:
+                # Pure-central armies never enter the province substrate applier,
+                # so this is their existing monthly settlement owner seam.
+                db.conn.execute(
+                    """UPDATE armies
+                       SET consecutive_pay_shortfall_months = CASE
+                           WHEN ? > 1e-9 THEN consecutive_pay_shortfall_months + 1 ELSE 0 END
+                       WHERE id = ?""",
+                    (shortfall, army_id),
+                )
                 morale_delta = army_pay_morale_delta(full_needed, shortfall, old_arrears)
             new_morale = max(0, min(100, old_morale + morale_delta))
 
@@ -1513,8 +1539,8 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
         army_rows_raw = db.conn.execute(
             # #44 army_needed 需 manpower/salary_rate/owner_power（应发挂钩兵力派生）
             "SELECT id, name, manpower, salary_rate, owner_power, arrears, morale, loyalty, "
-            "is_tusi, self_funded_pay, is_mutinied, mutiny_count, mutiny_probation, "
-            "full_pay_streak, redemption_count FROM armies"
+            "consecutive_pay_shortfall_months, is_tusi, self_funded_pay, is_mutinied, "
+            "mutiny_count, mutiny_probation, full_pay_streak, redemption_count FROM armies"
         ).fetchall()
         if not army_rows_raw:
             raise SystemExit("fiscal_tick: armies 表无数据，中止。")
@@ -1577,14 +1603,21 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                 new_full_pay_streak = int(row["full_pay_streak"])
                 new_redemption_count = int(row["redemption_count"])
 
+            shortfall_months = (
+                int(row["consecutive_pay_shortfall_months"] or 0) + 1
+                if shortfall > 1e-9 else 0
+            )
             # 先落军心/振次/欠饷；第 3 振随后经 adapter 核销→清闩→转流寇
             db.conn.execute(
-                """UPDATE armies SET arrears = ?, morale = ?, loyalty = ?, is_mutinied = ?,
-                   mutiny_count = ?, mutiny_probation = ?, full_pay_streak = ?,
-                   redemption_count = ? WHERE id = ?""",
-                (new_arrears, new_morale, new_loyalty, new_is_mutinied,
-                 new_mutiny_count, new_mutiny_probation, new_full_pay_streak,
-                 new_redemption_count, army_id),
+                """UPDATE armies
+                   SET arrears = ?, morale = ?, loyalty = ?,
+                       consecutive_pay_shortfall_months = ?, is_mutinied = ?,
+                       mutiny_count = ?, mutiny_probation = ?,
+                       full_pay_streak = ?, redemption_count = ?
+                   WHERE id = ?""",
+                (new_arrears, new_morale, new_loyalty, shortfall_months,
+                 new_is_mutinied, new_mutiny_count, new_mutiny_probation,
+                 new_full_pay_streak, new_redemption_count, army_id),
             )
             if shortfall > 0:
                 reason_tag = (
@@ -2108,6 +2141,17 @@ def _apply_population_transfers(
             _reject("invalid_enum", f"population_transfers amount 须为正整数：{amount!r}")
             continue
         origin_ref = str(item.get("origin_ref") or "").strip()
+        from ming_sim.covert_levy import active_prohibition_dossier
+        prohibited_population_levy = False
+        if reason == "摊派" and origin_ref.startswith("dossier:"):
+            raw_dossier_id = origin_ref.removeprefix("dossier:")
+            prohibited_population_levy = (
+                raw_dossier_id.isdigit()
+                and active_prohibition_dossier(db, int(raw_dossier_id)) is not None
+            )
+        if prohibited_population_levy:
+            _reject("forbidden_effect", "该旧案暗渠摊派已奉旨禁绝")
+            continue
         origin_error = db.effect_origin_rejection(origin_ref)
         if origin_error:
             rejected.append({
