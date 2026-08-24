@@ -1031,8 +1031,12 @@ def test_resimulation_clear_new_results_fully_replace_old_drafts(game):
 # ---------------------------------------------------------------------------
 
 def test_persist_then_abort_draft_never_enters_hitl_envelope(game):
-    """A6 判词：list_pending_decisions 只回 kind='decision'——web 投影不暴露
-    draft、resume 旧行为不变、submit 式逐行标 decided 不触碰 draft 行。"""
+    """A6+#657：list_pending_decisions 仍只回 decision；批红案头 desk 合并投影含急务。
+
+    #656：decision list 缝不混 draft。
+    #657：session.pending_decisions → list_rescript_desk 同页两类；
+    仅 decision 行标 decided 时 draft 仍 pending（CAS 按 kind）。
+    """
     from ming_sim.session import GameSession
 
     db, state, _content = game
@@ -1046,19 +1050,21 @@ def test_persist_then_abort_draft_never_enters_hitl_envelope(game):
 
     rows = db.list_pending_decisions(turn)
     assert [r["kind"] for r in rows] == ["decision"]
-    assert [d["title"] for d in db.list_rescript_drafts()] == ["急务"]  # 票拟仍留 #657 批红面
+    assert [d["title"] for d in db.list_rescript_drafts()] == ["急务"]
 
-    # web 投影单缝（session.pending_decisions 直读同一 DB 缝）：不暴露 draft
+    # #657 批红案头：web 投影合并急务 + decision
     sess = GameSession.__new__(GameSession)
     sess.db = db
     sess.state = state
     projected = sess.pending_decisions()
-    assert [d["title"] for d in projected] == ["抉择"]
+    titles = [d["title"] for d in projected]
+    assert "急务" in titles and "抉择" in titles
 
-    # submit 式回写按 list_pending_decisions 逐行标 decided——draft 不在其中
-    for r in projected:
+    # 仅 decision 行标 decided——draft 不在 list_pending_decisions 中被误标
+    for r in db.list_pending_decisions(turn):
         db.conn.execute(
-            "UPDATE pending_decisions SET choice_json=?, status='decided' WHERE turn=? AND idx=?",
+            "UPDATE pending_decisions SET choice_json=?, status='decided' "
+            "WHERE turn=? AND idx=? AND kind='decision'",
             ('{"label":"a"}', turn, r["idx"]),
         )
     db.conn.commit()

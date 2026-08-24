@@ -3142,8 +3142,11 @@ class GameSession:
         return result
 
     def pending_decisions(self) -> List[Dict[str, object]]:
-        """本回合待裁/已裁决策点（awaiting_decision 态下供前端弹窗/刷新恢复）。"""
-        return self.db.list_pending_decisions(self.state.turn)
+        """本回合待裁/已裁决策点（awaiting_decision 态下供前端弹窗/刷新恢复）。
+
+        #657：批红案头合并读——急务 rescript_draft ∪ 本月 decision（list_rescript_desk）。
+        """
+        return self.db.list_rescript_desk(int(self.state.turn))
 
     def _assert_awaiting_decision_submit(self) -> None:
         if self.current_phase() != TurnPhase.AWAITING_DECISION:
