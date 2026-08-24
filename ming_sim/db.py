@@ -4418,6 +4418,13 @@ class GameDB:
                 ))
                 return
 
+        # #319 ADR 0025 D4①：latched 军非 owner 饷源字段 deny-by-default。
+        # 写缝在主环 latch 门之前、且主环对 _ARMY_PAY_SOURCE_DELTA_FIELDS 直接
+        # continue，故既有字段效果门看不到本缝；在此复用同一 latch 语义，
+        # 静默 no-op，不新开平行门/第二 adapter。真 owner 变更已由上方 return。
+        if bool(row["is_mutinied"]):
+            return
+
         old_source = str(row["pay_source_region"] or "")
         owner_power = str(row["owner_power"] or "").strip()
         pay_source_region = str(normalized.get("pay_source_region", row["pay_source_region"]) or "").strip()
