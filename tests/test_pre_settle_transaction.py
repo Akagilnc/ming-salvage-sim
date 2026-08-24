@@ -183,7 +183,7 @@ def test_two_consecutive_driver_settles_both_get_fiscal_tick(game):
     settling 推进回合后不复位的话，第二回合 pre_settle 被守门跳过=
     此后每月财政/暂存/密令全静默丢。
     """
-    from driver import run_settle
+    from tests.section_rejection_helpers import prepare_then_settle as run_settle
     db, state, content = game
     t1 = state.turn
     run_settle(db, state, content, {})

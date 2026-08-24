@@ -1951,6 +1951,64 @@ def _apply_validated_roster_to_extract_result(
     return out
 
 
+def _pay_order_grounding_facts(content: Any, db: Any = None) -> str:
+    """把既有 canonical 地区与结算时点直接教授抽取器；不建立第二映射。"""
+    regions = getattr(content, "regions", None) if content is not None else None
+    lines = []
+    for key, region in (regions or {}).items():
+        rid = str(getattr(region, "id", None) or key or "").strip()
+        name = str(getattr(region, "name", None) or "").strip()
+        if rid and name:
+            lines.append(f"{name}=@{rid}")
+    timing = ""
+    if db is not None:
+        state = db.conn.execute(
+            "SELECT turn, year, period FROM game_state WHERE id=1"
+        ).fetchone()
+        if state is not None:
+            timing = (
+                f"当前结算时点：turn={int(state['turn'])}，"
+                f"{int(state['year'])}年{int(state['period'])}月。\n"
+            )
+    if not lines and not timing:
+        return ""
+    return (
+        "【pay_order_override 接地事实】地区只能直接使用下列 canonical id，禁别名/自造：\n"
+        + "、".join(lines) + "\n" + timing
+        + "priority 数字越小越先；默认军饷/官俸/宗禄/赈济=10/20/30/40，"
+          "并列按该默认次序稳定排列。相对期限只填 duration_months=N，"
+          "不要自行计算 until_turn；该动作 entries 必须非空。\n"
+    )
+
+
+def _ground_relative_pay_order_deadlines(result: Dict[str, Any], db: Any) -> Dict[str, Any]:
+    """在既有抽取适配缝把结构化相对月数落成 active-through 绝对 turn。"""
+    row = db.conn.execute("SELECT turn FROM game_state WHERE id=1").fetchone()
+    if row is None:
+        return result
+    current_turn = int(row["turn"])
+    drafts = result.get("drafts")
+    items = drafts if isinstance(drafts, list) else [result]
+    for item in items:
+        if not isinstance(item, dict) or item.get("dossier_action_type") != "pay_order_override":
+            continue
+        for entry in item.get("entries") or []:
+            if not isinstance(entry, dict):
+                continue
+            if "duration_months" in entry:
+                duration = entry.pop("duration_months")
+                if isinstance(duration, bool) or not isinstance(duration, int) or duration <= 0:
+                    raise ValueError(f"override 相对期限 duration_months 须为正整数：{duration!r}")
+                entry["until_turn"] = current_turn + duration - 1
+            elif "until_turn" in entry and (
+                isinstance(entry["until_turn"], bool)
+                or not isinstance(entry["until_turn"], int)
+                or entry["until_turn"] < current_turn
+            ):
+                raise ValueError(f"override until_turn 已过期或无效：{entry['until_turn']!r}")
+    return result
+
+
 def extract_draft_intent_with_roster_heal(
     player_message: Optional[str],
     minister_reply: str,
@@ -1981,9 +2039,12 @@ def extract_draft_intent_with_roster_heal(
             minister_reply,
             llm_config=llm_config,
             content=content,
+            pay_order_facts=_pay_order_grounding_facts(content, db),
             correction_feedback=correction,
             **extract_kwargs,
         )
+        if db is not None:
+            result = _ground_relative_pay_order_deadlines(result, db)
         if db is None or content is None:
             return result
         has_roster_field = (
@@ -2068,6 +2129,7 @@ def extract_draft_intent(
     draft_count: int = 1,
     content: Any = None,
     correction_feedback: str = "",
+    pay_order_facts: str = "",
 ) -> Dict[str, Any]:
     """LLM 判皇帝本轮是否在口头请大臣拟旨（非显式前缀），返回拟旨意图 + 草案文本 + 目标候选。
     失败/无 → {"draft_action": "无", "draft_text": "", "target_candidate": ""}。
@@ -2095,15 +2157,20 @@ def extract_draft_intent(
             f"拟了内容。请从完整语义中整理出恰好 {draft_count} 道彼此可区分、可独立暂存的成品旨稿。"
             "只输出一个 JSON 对象（无代码围栏、无多余字）：\n"
             '{"成品旨稿": ['
-            '{"正文":"第一道完整旨稿","动作类型":"policy","目标类型":"issue","目标ID":"...",'
-            '"颁布方式":"普通|中旨直发"},'
+            '{"正文":"第一道完整旨稿","动作类型":"policy",'
+            f'"目标类型":"{_draft_target_kind_guidance()}","目标ID":"...",'
+            '"颁布方式":"普通|中旨直发","施行范围":"无|全国|单省"},'
             f'{{"正文":"……共 {draft_count} 道","动作类型":"military_order","目标类型":"army",'
             '"目标ID":"...","金额":null,"账户":"","执行面":"immediate|in_transit",'
-            '"承办人":"...","期限月数":3,"颁布方式":"普通|中旨直发",'
+            '"承办人":"...","期限月数":3,"颁布方式":"普通|中旨直发","施行范围":"无",'
             '"参与人":[{"character_id":"规范名","tier":"主办|协办|知情","role":"本案职分","delegator_id":null}]}]}\n'
+            'entries 仅 pay_order_override 非空，形如 '
+            '[{"key":"due_priority_军饷@shaanxi","value":40,"duration_months":3}]；'
+            'military_order 等非该动作不写或 []。\n'
             "不得把同一段文字复制成多道；不得遗漏皇帝要求的任一道拟旨事项。\n\n"
             + correction_block
             + roster_facts
+            + pay_order_facts
             + "【皇帝】" + (player_message or "（无）") + "\n"
             + "【大臣完整回话】" + (minister_reply or "（无）") + "\n"
         )
@@ -2149,6 +2216,19 @@ def extract_draft_intent(
                     ("期限月数", "deadline_months"),
                 )
             }
+            mechanical["locality_scope"] = _coerce_draft_locality_scope(value.get("施行范围"))
+            # multi 路目标类型同样 fail-loud
+            target_kind = _coerce_draft_target_kind(target_kind)
+            # #653：pay_order_override 结构化载荷（entries）随草案整道转交，
+            # 成案点/物化点共 prepare_pay_order_entries 同一验形。
+            entries = value.get("entries")
+            if action == "pay_order_override" and (
+                not isinstance(entries, list) or not entries
+            ):
+                invalid_batch = True
+                break
+            if entries is not None:
+                mechanical["entries"] = entries
             drafts.append({
                 "draft_action": "拟旨", "draft_text": text,
                 "dossier_action_type": action, "target_kind": target_kind,
@@ -2184,8 +2264,13 @@ def extract_draft_intent(
         '  "动作类型": "policy|approve_reject|assignment|'
         'grant_allocation|authorization|secret_authorization|secret_investigation|'
         'protection|strategy_selection|punishment|pacification|referral|'
-        'revoke_decree|revoke_authority|dismiss_assignment|military_order",\n'
-        '  "目标类型": "policy|character|office|army|region|issue|account",\n'
+        'revoke_decree|revoke_authority|dismiss_assignment|military_order|'
+        'pay_order_override",\n'
+        '  "entries": [],              // 仅 pay_order_override：偿还序/折发调整清单，\n'
+        '                             // 形如 [{"key":"due_haircut_bp_宗禄","value":5000,"duration_months":3}]；\n'
+        '                             // key∈due_priority_<科目>[@省]|arrears_priority_<欠科目>[@省]|'
+        'due_haircut_bp_<科目>[@省][#province|#central]；haircut 值=万分数(0,10000]；非该动作留 []\n'
+        f'  "目标类型": "{_draft_target_kind_guidance()}",\n'
         '  "目标ID": "",\n'
         '  "颁布方式": "普通|中旨直发", // 皇帝预先声明中旨直发时选后者\n'
         '  "金额": null,             // 奉旨拨付额填正整数；非拨帑留 null\n'
@@ -2193,6 +2278,7 @@ def extract_draft_intent(
         '  "执行面": "immediate|in_transit", // 仅拨帑：账内即时划转或在途执行\n'
         '  "承办人": "",\n'
         '  "参与人": [{"character_id":"规范名","tier":"主办|协办|知情","role":"本案职分","delegator_id":null}],\n'
+        '  "施行范围": "无|全国|单省", // 全国性政令填全国；明指某省填单省；京内/任免等无属地语义留无\n'
         '  "期限月数": null' + (
             "," if (_candidates or _supplement_mode) else ""
         ) + '           // 军令必填正整数；非军令留 null\n'
@@ -2233,6 +2319,7 @@ def extract_draft_intent(
         "判定要点：皇帝明确让大臣拟旨/起草圣旨→拟旨；仅商议/问询/催办/评论不算。语义判断，别拘字面。\n\n"
         + correction_block
         + roster_facts
+        + pay_order_facts
         + draft_context
         + candidates_context
         + "【皇帝】" + (player_message or "（无）") + "\n"
@@ -2250,24 +2337,35 @@ def extract_draft_intent(
         obj = {}
     _raw = str(obj.get("拟旨意图") or "无").strip()
     _action = _raw if _raw in {"无", "拟旨"} else "无"
+    # #654 H：无意图立即短路，不跑 acting/动作类型/target_kind 校验。
+    if _action == "无":
+        return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
     dossier_action = str(obj.get("动作类型") or "special_decree").strip()
+    if dossier_action == "acting_appointment":
+        # #529 与多旨同：署理交回既有人事候选链，不经草案 acting_appointment。
+        return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
     if dossier_action not in DRAFT_ACTION_TYPES:
-        dossier_action = "special_decree"
-    target_kind = str(obj.get("目标类型") or "policy").strip()
-    if target_kind not in {"policy", "character", "office", "army", "region", "issue", "account"}:
-        target_kind = "policy"
+        raise ValueError(f"动作类型非法：{dossier_action!r}")
+    _tk_raw = obj.get("目标类型")
+    target_kind = _coerce_draft_target_kind(_tk_raw if _tk_raw not in (None, "") else "policy")
     target_id_value = str(obj.get("目标ID") or "").strip()
     mechanical = {
         "amount": obj.get("金额"), "account": obj.get("账户"),
         "execution_surface": obj.get("执行面"),
         "assignee": obj.get("承办人"),
         "deadline_months": obj.get("期限月数"),
+        "locality_scope": _coerce_draft_locality_scope(obj.get("施行范围")),
+        # #653：pay_order_override 结构化载荷随 capture 整道转交（禁旁路）。
+        "entries": obj.get("entries"),
     }
     mode = _directive_mode(obj.get("颁布方式"))
     if mode is not None:
         mechanical["mode"] = mode
     merged = str(obj.get("合并草案") or "").strip()
-    if _action == "无":
+    # #654 H 已在上方对 _action=="无" 短路；此处仅保留 #653 pay_order 验形。
+    if dossier_action == "pay_order_override" and (
+        not isinstance(mechanical["entries"], list) or not mechanical["entries"]
+    ):
         return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
     if not _candidates:
         # 无候选：沿用单条语义——补充模式合并、否则大臣回话即草案。
@@ -2317,12 +2415,43 @@ def extract_draft_intent(
 MANUAL_DIRECTIVE_CAPTURE_TIMEOUT_S = 30.0
 
 
+
+# 八值 target_kind 真源在 decree_vocabulary.TARGET_KINDS（#654 / owner A 禁双定义）
+from ming_sim.decree_vocabulary import TARGET_KINDS as _VALID_DRAFT_TARGET_KINDS
+_VALID_LOCALITY_SCOPE_ZH = frozenset({"无", "全国", "单省"})
+# 单旨/多旨 prompt 共用一段闭集 guidance（定序派生，禁手写七值）
+_DRAFT_TARGET_KIND_GUIDANCE = "|".join(sorted(_VALID_DRAFT_TARGET_KINDS))
+
+
+def _draft_target_kind_guidance() -> str:
+    return _DRAFT_TARGET_KIND_GUIDANCE
+
+
+def _coerce_draft_target_kind(raw: object) -> str:
+    """#654 r3-B.2：非法 target_kind fail-loud，废除静默改 policy。"""
+    kind = str(raw or "").strip()
+    if kind not in _VALID_DRAFT_TARGET_KINDS:
+        raise ValueError(f"目标类型非法：{kind!r}")
+    return kind
+
+
+def _coerce_draft_locality_scope(raw: object) -> str:
+    """抽取面中文三值 → 保留中文供 durable 归一；缺省「无」。"""
+    if raw is None or str(raw).strip() == "":
+        return "无"
+    text = str(raw).strip()
+    if text not in _VALID_LOCALITY_SCOPE_ZH:
+        raise ValueError(f"施行范围非法：{text!r}")
+    return text
+
+
 def _manual_special_decree_payload(mode: str) -> Dict[str, object]:
     return {
         "dossier_action_type": "special_decree",
         "target_kind": "policy",
         "target_id": "manual-directive",
         "mode": mode,
+        "locality_scope": "none",
     }
 
 
@@ -2405,7 +2534,7 @@ def capture_manual_directive_payload(
     }
     for field in (
         "amount", "account", "execution_surface", "assignee",
-        "deadline_months", "participant_roster",
+        "deadline_months", "participant_roster", "locality_scope", "entries",
     ):
         if captured.get(field) not in (None, ""):
             payload[field] = captured[field]

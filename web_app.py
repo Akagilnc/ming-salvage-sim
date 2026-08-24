@@ -2363,6 +2363,7 @@ class WebGame:
                                 target_id=args.get("target_id"),
                                 name=args.get("name"),
                                 amount=args.get("amount"),
+                                transaction_category=args.get("transaction_category"),
                             ),
                         )
                         if stage_failures:
@@ -2593,7 +2594,6 @@ class WebGame:
                     character.name,
                     text,
                 )
-            answer = GameSession._ensure_confirmation_cue(answer)
         # #502 AC5：多道准驳含糊 → 结构化含糊态透进 chat payload + 大臣当场追问哪一道（表面契约可达）。
         directive_ambiguous = res.get("directive_confirmation_ambiguous")
         if directive_ambiguous:

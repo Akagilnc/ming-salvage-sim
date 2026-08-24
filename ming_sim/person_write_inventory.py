@@ -92,10 +92,10 @@ PERSON_WRITE_POINT_INVENTORY = (
         "reason": "任官失败局部恢复的过渡写点，后续随 C1 applier 收口。",
     },
     {
-        "location": "ming_sim/decree.py:force_transit_arrivals",
+        "location": "ming_sim/decree.py:tick_transit_arrivals",
         "owner": "deterministic_settle_path",
         "disposition": "adr0009_exempt",
-        "reason": "#346 在途兜底：≥2月未到任时程序强制 transit_to→location，属确定性结算逻辑（非 LLM 产 delta），豁免于 ADR 0009 person applier 收口。",
+        "reason": "#668/0095 在途倒数 tick：remaining-=速度后 ≤0 时引擎落抵达（location=transit_to、清四量），属确定性结算逻辑（非 LLM 产 delta），豁免于 ADR 0009 person applier 收口。",
     },
     {
         "location": "ming_sim/session.py:apply_appointment:candidate_upgrade",

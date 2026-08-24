@@ -40,14 +40,17 @@ from ming_sim.staged_commitment import (
 
 
 def _promulgated_origin(db, state, token: str) -> str:
+    # 起源夹具只需可颁布案卷 id。用 policy（非 multi_month 覆盖域）避免
+    # #721 assignment 无点将时 duty_route_unmapped 拒成案，也不牵主办撤人边。
     dossier_id = db.create_decree_dossier(
         state,
-        action_type="assignment",
+        action_type="policy",
         decree_text=f"分段承诺：{token}",
         target_kind="issue",
         target_id=token,
         payload={"token": token},
     )
+    assert dossier_id > 0
     db.record_dossier_decision(dossier_id, "promulgated")
     return f"dossier:{dossier_id}"
 
