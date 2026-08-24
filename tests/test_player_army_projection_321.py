@@ -372,10 +372,21 @@ def test_four_chains_embed_situation_matrix(
     military = (knowledge.get("world") or {}).get("military") or ""
     _assert_chain_embeds_situation(military, sit, "knowledge.world.military", row=row)
 
+    # #321 P7：print_header 不得直显军情三固定串（army_report 仅 LLM 装配面）
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         print_header(state, db)
-    _assert_chain_embeds_situation(buf.getvalue(), sit, "report.print_header", row=row)
+    header_out = buf.getvalue()
+    assert sit["mutiny_tier"] not in header_out, (
+        f"report.print_header 不得直显 mutiny_tier={sit['mutiny_tier']!r}\n{header_out}"
+    )
+    assert sit["morale_text"] not in header_out, (
+        f"report.print_header 不得直显 morale_text={sit['morale_text']!r}\n{header_out}"
+    )
+    assert sit["arrears_text"] not in header_out, (
+        f"report.print_header 不得直显 arrears_text={sit['arrears_text']!r}\n{header_out}"
+    )
+    assert "军队警讯" not in header_out, f"report.print_header 不得嵌入 army_report\n{header_out}"
 
     ctx = CourtContext(state=state, db=db, previous_summary="")
     board = {f.__name__: f for f in build_board_query_tools(ctx)}
