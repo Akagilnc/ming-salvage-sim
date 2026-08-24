@@ -56,6 +56,7 @@ from ming_sim.issues import (
     _apply_levy_driven_transfers,
     auto_trigger_seed_issues,
     clear_gated_legacies,
+    gather_impeachment_surge_candidates,
     sanitize_delta_shape,
     validate_delta_shape,
 )
@@ -800,6 +801,10 @@ def _project_one_dossier_for_simulator(
             db.build_supervision_judge_surface(int(row["id"]))
         )
     )
+    # #651: expose durable monthly pay truth before execution is judged; this
+    # remains a field of the canonical dossier rather than a parallel wrapper.
+    from ming_sim.covert_levy import army_pay_fact_for_dossier
+    projected["army_pay_fact"] = army_pay_fact_for_dossier(db, int(row["id"]))
     if track == "narrative":
         projected["decree_text"] = str(row.get("decree_text") or "")
         expected = SIM_DOSSIER_NARRATIVE_KEYS
@@ -1400,6 +1405,7 @@ def _replay_settle(
         delta_applier=lambda d, s, ex, ct, rg: apply_score_extraction(
             d, s, ex, content=ct, registry=rg, llm_config=llm_config,
             candidate_event_ids_at_input=_candidate_event_ids_from_simulator_payload(simulator_payload),
+            impeachment_surge_candidates_at_input=gather_impeachment_surge_candidates(s, d),
             dossier_ids_at_input=_dossier_ids_from_simulator_payload(simulator_payload),
             secret_dossier_ids_at_input=secret_dossier_ids_from_secret_orders(d, secret_orders),
         ),
@@ -1540,6 +1546,9 @@ def _settle_after_narrative(
         )
         for module in EXTRACTION_MODULES
     }
+    # Capture the same dynamic input given to the issues extractor.  Same-batch
+    # mutations during apply must not retrospectively veto the role decision.
+    impeachment_surge_candidates_at_input = gather_impeachment_surge_candidates(state, db)
     sanitizer = create_json_sanitizer_agent(llm_config, agno_db)
     extractor_input = ""
     extractor_output = ""
@@ -1662,6 +1671,7 @@ def _settle_after_narrative(
         delta_applier=lambda d, s, ex, ct, rg: apply_score_extraction(
             d, s, ex, content=ct, registry=rg, llm_config=llm_config,
             candidate_event_ids_at_input=_candidate_event_ids_from_simulator_payload(simulator_payload),
+            impeachment_surge_candidates_at_input=impeachment_surge_candidates_at_input,
             dossier_ids_at_input=_dossier_ids_from_simulator_payload(simulator_payload),
             secret_dossier_ids_at_input=secret_dossier_ids_from_secret_orders(d, secret_orders_for_sim),
         ),
@@ -2374,6 +2384,11 @@ def _settle_after_extract_body(
             collector, inline_rejections,
             before_turn, source)
         collector.flush_to_db(db)
+
+    # #651：普通旨只骑既有 canonical 字段结账；三路揭破仍写唯一 todo 表。
+    from ming_sim.covert_levy import settle_exposure_from_canonical_actions, write_exposure_todos
+    applied["covert_levy_exposure_settlements"] = settle_exposure_from_canonical_actions(db, state, applied)
+    applied["covert_levy_exposures"] = write_exposure_todos(db, state, applied)
 
     # #621 / ADR 0076：经召对窗后的 pending todo → 正式复核落格并消费（三拍第 3 拍）。
     # 须在本 settle 写新 todo 之前：只消费 created_turn < 当前 turn 者，保留本拍新写给次回合。

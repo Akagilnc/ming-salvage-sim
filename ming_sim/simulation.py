@@ -22,6 +22,7 @@ from ming_sim.issues import (
     commitment_progress_payload,
     fiscal_levy_memorial_estimates,
     gather_candidate_events,
+    gather_impeachment_surge_candidates,
     issue_to_payload,
     normalize_event_outcome_labels_or_error,
 )
@@ -1166,6 +1167,14 @@ def build_extractor_shared_context(
             # Need full dossier shape for projection (executor/roster/target).
             full = db.get_decree_dossier(int(row["id"])) or row
             entry.update(execution_side_read_fields(db, state, full))
+        if module in {"issues", "internal"}:
+            # #651: both parallel owners read the simulator's one judgment source;
+            # issues owns execution, internal owns the resulting fiscal/population facts.
+            if "army_pay_fact" in row:
+                entry["army_pay_fact"] = row["army_pay_fact"]
+            else:
+                from ming_sim.covert_levy import army_pay_fact_for_dossier
+                entry["army_pay_fact"] = army_pay_fact_for_dossier(db, int(row["id"]))
         if module == "issues":
             # 监督事实底注入执行格面（只读；缺则现场读 DB）。
             if all(key in row for key in SUPERVISION_SURFACE_KEYS):
@@ -1206,6 +1215,10 @@ def build_extractor_shared_context(
         # #654：带宽/阻力两轴清单——纯机 issues extractor 私有面（P4：不进 simulator）。
         from ming_sim.execution_pressure import build_execution_two_axis_surface
         slim["execution_two_axis"] = build_execution_two_axis_surface(db, state.turn)
+        # The issues extractor consumes the same canonical candidate_events key
+        # as its prompt.  This private module payload remains outside simulator
+        # decision binding and HITL.
+        slim["candidate_events"] = gather_impeachment_surge_candidates(state, db)
     slim["_dedup_note"] = (
         "盘面、诏书、在朝大臣、势力/派系/阶级态势已在 system 的 simulator_payload 中给出"
         "（盘面表 regions/armies/buildings 走 TSV；court_roster 即在朝大臣；"

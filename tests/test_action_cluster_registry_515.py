@@ -726,8 +726,8 @@ def test_real_chat_bidirectional_barrier_parallel_required(
     result = sess.chat(minister.name, utterance)
     assert allow_reply.is_set()
     assert calls == ["classify"]
-    # 有 pending 时 _ensure_confirmation_cue 会追加准驳提示，只钉回话正文。
-    assert reply in (result.answer or "")
+    # Pending state is structured; the model's reply must remain byte-for-byte intact.
+    assert result.answer == reply
 
     secret_rows = [
         r for r in db.list_pending_actions(int(state.turn), minister_name=minister.name)
@@ -834,7 +834,6 @@ def _wire_web_game(db, state, content, agent, monkeypatch) -> WebGame:
         "_audience_prompt_for_message",
         "_stage_appointment_candidate",
         "_merge_staged_new_secret_order_content",
-        "_ensure_confirmation_cue",
     ):
         if hasattr(GameSession, name):
             setattr(sess, name, types.MethodType(getattr(GameSession, name), sess))
