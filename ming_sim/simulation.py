@@ -630,13 +630,22 @@ def build_simulator_payload(
             "json_extract(fiscal,'$.corruption') as corruption FROM regions ORDER BY id"
         ).fetchall()
     ]
+    from ming_sim.flows import derive_army_mutiny_state
+
     army_rows = _army_rows_with_needed(
         db,
         "SELECT name,station,theater,commander,controller,troop_type,manpower,"
         "supply,morale,training,equipment,arrears,mobility,"
-        "loyalty,firearm_equipment,cannon_equipment,status,owner_power,salary_rate "
+        "loyalty,firearm_equipment,cannon_equipment,status,owner_power,salary_rate,"
+        "is_mutinied,mutiny_probation "
         "FROM armies ORDER BY id",
     )
+    # #318 D8：0 战力 = simulator 机读派生 flag（canonical latch / derive），不算胜负
+    for _army in army_rows:
+        _mutiny_state = derive_army_mutiny_state(_army)
+        _army["zero_combat"] = _mutiny_state == "哗变"
+        _army.pop("is_mutinied", None)
+        _army.pop("mutiny_probation", None)
     # 在朝名单 = 目前当官的（active）：simulator 在朝盘面 + 任命查重。可起复者（居家/致仕/
     # 削籍）走 offstage_ministers 人才池，在押/流放者两份都不在（玩家下旨决定去留）。旧 status!=
     # 'offstage' 会把削籍/致仕/在押者也混进在朝名单、与人才池双重曝光自相矛盾。注：大臣 system 的

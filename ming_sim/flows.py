@@ -675,6 +675,60 @@ def _army_loyalty_reason(new_arrears: float, full_needed: int) -> str:
     return f"{TURN_UNIT}累计欠饷{months}月—死区"
 
 
+# #318 第 3 振确定性转出口的合法流寇 power id（非字面「流寇」）
+_THIRD_STRIKE_BANDIT_POWER = "bandits"
+
+
+def _clear_zero_manpower_mutiny_latch(db: "GameDB", state: "GameState", row) -> None:
+    """零兵残军：在 needed<=0 continue 之前清 latch 并写审计（ADR 0025 D5 / #318）。"""
+    if not int(row["is_mutinied"] or 0):
+        return
+    army_id = str(row["id"])
+    db.conn.execute(
+        "UPDATE armies SET is_mutinied = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        (army_id,),
+    )
+    db.conn.execute(
+        """INSERT INTO army_logs
+           (turn, year, period, army_id, field, old_value, new_value, delta, reason,
+            event_id, edict_id, actor)
+           VALUES (?, ?, ?, ?, 'is_mutinied', '1', '0', -1, ?, NULL, NULL, '兵部')""",
+        (state.turn, state.year, state.period, army_id, "零兵残军—无兵不成哗变，清闩"),
+    )
+
+
+def _maybe_third_strike_defect(
+    db: "GameDB",
+    state: "GameState",
+    *,
+    army_id: str,
+    new_latched: int,
+    new_mutiny_count: int,
+) -> bool:
+    """第 3 振 latched 且 count>=3 的明军：经唯一 owner adapter 转流寇。返回是否已转出。
+
+    按当前态归一（含本 tick 0→1 升 3 与旧存档已 latched+count>=3），
+    不要求本 tick 边沿；adapter 成功后清闩改 owner，下 tick 天然幂等。
+    """
+    if not (bool(new_latched) and int(new_mutiny_count) >= 3):
+        return False
+    row = db.conn.execute("SELECT * FROM armies WHERE id = ?", (army_id,)).fetchone()
+    if row is None:
+        return False
+    # 已非明军则不重复转移
+    if str(row["owner_power"] or "") != "ming":
+        return False
+    db.transition_army_owner_power(
+        state,
+        row,
+        _THIRD_STRIKE_BANDIT_POWER,
+        reason="第三振哗变—沦为流寇",
+        actor="兵部",
+        latched_escape="third_strike",
+    )
+    return True
+
+
 class _HubOutboundResult(NamedTuple):
     """Substrate hub top-tier outbound allocation for this fixed-flow tick."""
     k: float
@@ -1482,6 +1536,28 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
 
     _apply_budget_lines(skip_substrate_hub_lines=db.is_substrate_hub_fiscal_engine_enabled())
 
+    # ── #318 分叉前全军归一（legacy/hub 前一次；不挂资格子集）──
+    # 1) 零兵先清闩（防误转流寇） 2) 旧存档第三振正兵力在 advance 可解闩前转出
+    for _pre_row in db.conn.execute(
+        "SELECT id, manpower, salary_rate, owner_power, is_mutinied, mutiny_count "
+        "FROM armies"
+    ).fetchall():
+        if army_needed(_pre_row) <= 0:
+            _clear_zero_manpower_mutiny_latch(db, state, _pre_row)
+            continue
+        if (
+            str(_pre_row["owner_power"] or "") == "ming"
+            and int(_pre_row["is_mutinied"] or 0)
+            and int(_pre_row["mutiny_count"] or 0) >= 3
+        ):
+            _maybe_third_strike_defect(
+                db,
+                state,
+                army_id=str(_pre_row["id"]),
+                new_latched=1,
+                new_mutiny_count=int(_pre_row["mutiny_count"] or 0),
+            )
+
     # ── legacy 各军军饷（按优先级，先发当月；不足挂 arrears 累计万两）──
     if db.fiscal_engine() == "legacy":
         army_rows_raw = db.conn.execute(
@@ -1519,6 +1595,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
             new_morale = max(0, min(100, old_morale + morale_delta))
             old_mutiny_count = int(row["mutiny_count"])
             old_mutiny_probation = int(row["mutiny_probation"])
+            old_is_mutinied = int(row["is_mutinied"])
 
             # #314 军心月度 tick：仅 ming 且非土司非自养军；欠饷月数=floor(合计 arrears/needed)。
             old_loyalty = int(row["loyalty"])
@@ -1535,14 +1612,14 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                     new_redemption_count,
                 ) = _advance_mutiny(
                     loyalty=new_loyalty, arrears=new_arrears, needed=needed,
-                    current=int(row["is_mutinied"]), count=int(row["mutiny_count"]),
+                    current=old_is_mutinied, count=int(row["mutiny_count"]),
                     probation=int(row["mutiny_probation"]),
                     full_pay_streak=int(row["full_pay_streak"]),
                     redemption_count=int(row["redemption_count"]),
                 )
             else:
                 new_loyalty = old_loyalty
-                new_is_mutinied = int(row["is_mutinied"])
+                new_is_mutinied = old_is_mutinied
                 new_mutiny_count = int(row["mutiny_count"])
                 new_mutiny_probation = int(row["mutiny_probation"])
                 new_full_pay_streak = int(row["full_pay_streak"])
@@ -1552,6 +1629,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                 int(row["consecutive_pay_shortfall_months"] or 0) + 1
                 if shortfall > 1e-9 else 0
             )
+            # 先落军心/振次/欠饷；第 3 振随后经 adapter 核销→清闩→转流寇
             db.conn.execute(
                 """UPDATE armies
                    SET arrears = ?, morale = ?, loyalty = ?,
@@ -1592,6 +1670,10 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                      "mutiny_probation", str(old_mutiny_probation), str(new_mutiny_probation),
                      new_mutiny_probation - old_mutiny_probation, loyalty_reason),
                 ],
+            )
+            _maybe_third_strike_defect(
+                db, state, army_id=army_id,
+                new_latched=new_is_mutinied, new_mutiny_count=new_mutiny_count,
             )
             flows.append({
                 "dir": "expense", "account": "国库", "category": "各军军饷",
@@ -1746,6 +1828,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                     old_loyalty_val = int(lr["loyalty"])
                     old_mutiny_count_val = int(lr["mutiny_count"])
                     old_mutiny_probation_val = int(lr["mutiny_probation"])
+                    old_is_mutinied_val = int(lr["is_mutinied"])
                     new_arrears_loyalty = float(lr["arrears"] or 0)
                     # 防御：若 arrears 列滞后，以两源合计为准
                     try:
@@ -1767,7 +1850,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                         new_redemption_count_val,
                     ) = _advance_mutiny(
                         loyalty=new_loyalty_val, arrears=new_arrears_loyalty,
-                        needed=full_needed_loyalty, current=int(lr["is_mutinied"]),
+                        needed=full_needed_loyalty, current=old_is_mutinied_val,
                         count=int(lr["mutiny_count"]),
                         probation=int(lr["mutiny_probation"]),
                         full_pay_streak=int(lr["full_pay_streak"]),
@@ -1800,6 +1883,11 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                              "mutiny_probation", str(old_mutiny_probation_val), str(new_mutiny_probation_val),
                              new_mutiny_probation_val - old_mutiny_probation_val, loyalty_reason_unified),
                         ],
+                    )
+                    _maybe_third_strike_defect(
+                        db, state, army_id=army_id_loyalty,
+                        new_latched=new_is_mutinied_val,
+                        new_mutiny_count=new_mutiny_count_val,
                     )
         if pay_source_cutover:
             db._reconcile_central_army_pay_arrears_container()
