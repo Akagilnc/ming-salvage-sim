@@ -154,21 +154,11 @@
       "source": "阎鸣泰",
       "target": "魏忠贤",
       "event_kind": "站台",
-      "context": "天启末阎鸣泰督蓟辽时争先为魏忠贤建生祠并上疏颂德，以边臣身份公开献媚。",
-      "origin": "seed:founding:wei-yanmingtai-shrine",
+      "context": "魏忠贤窃柄，阎鸣泰潜结之，因获召为兵部右侍郎，以此党附阉门。",
+      "origin": "seed:founding:yanmingtai-wei-attach",
       "evidence": false,
-      "year": 1626,
-      "period": 12
-    },
-    {
-      "source": "李从心",
-      "target": "魏忠贤",
-      "event_kind": "站台",
-      "context": "天启末总河李从心等于济宁为魏忠贤建生祠，以河工大吏身份附和献媚。",
-      "origin": "seed:founding:wei-licongxin-works",
-      "evidence": false,
-      "year": 1626,
-      "period": 12
+      "year": 1625,
+      "period": 6
     },
     {
       "source": "皇帝",

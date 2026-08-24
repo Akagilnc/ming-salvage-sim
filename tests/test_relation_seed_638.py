@@ -506,13 +506,20 @@ def test_issue_639_seed_owner_audit_corrections(fresh_session):
     huang = by_origin_prefix("seed:founding:wei-huangliji-promotion")
     assert (huang["year"], huang["period"]) == (1625, 8)
 
-    # 方向冲突：生祠是阎/李→魏献媚（非魏撑腰）；时间戳须早于最早合法开局 1627.1
-    yan = by_origin_prefix("seed:founding:wei-yanmingtai-shrine")
+    # 阎鸣泰：景忠山生祠在天启七年二月，不得倒填开局前；改用史载潜结/召用
+    yan = by_origin_prefix("seed:founding:yanmingtai-wei-attach")
     assert (yan["source"], yan["target"]) == ("阎鸣泰", "魏忠贤")
-    assert (int(yan["year"]), int(yan["period"])) < (1627, 1)
-    li = by_origin_prefix("seed:founding:wei-licongxin-works")
-    assert (li["source"], li["target"]) == ("李从心", "魏忠贤")
-    assert (int(li["year"]), int(li["period"])) < (1627, 1)
+    assert "生祠" not in yan["context"]
+    assert "潜结" in yan["context"] and "兵部右侍郎" in yan["context"]
+    assert (yan["year"], yan["period"]) == (1625, 6)
+    # 李从心：济宁生祠在天启七年八月；无开局前材料则删，不得伪造成 1626.12 既成
+    assert not any(
+        str(row["origin"]).startswith("seed:founding:wei-licongxin-works")
+        for row in events
+    )
+    assert not any(
+        row["source"] == "李从心" or row["target"] == "李从心" for row in events
+    )
 
     # 施/张：史载依媚/生祠碑，不作魏荐引入阁
     shi = by_origin_prefix("seed:founding:wei-shifenglai-promotion")
