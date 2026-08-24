@@ -525,3 +525,147 @@ def test_load_save_reconciles_interrupted_orphan(web_game):
         "SELECT status FROM chat_turns WHERE id=?", (ct,)
     ).fetchone()["status"] == "interrupted"
     assert [r["question"] for r in game.db.get_interrupted_reply_retries(minister)] == ["剿抚孰先？"]
+
+
+# ---------------------------------------------------------------------------
+# #657 片3 S11–S15：同库三轮 + CAS + 空冲突
+# ---------------------------------------------------------------------------
+
+def test_657_s11_s15_summon_scaffold_matrix(game):
+    """S11 atomic 边界 + S12 同库三轮 + S13 CAS 后再崩 + S14 独立连接 + S15 空冲突非成功。"""
+    import sqlite3
+
+    from ming_sim.applier import atomic
+    from ming_sim.audience_night import (
+        ensure_summon_scaffold_reenterable,
+        prepare_rescript_summon_scaffold,
+        rescript_summon_origin_ref,
+        summon_enter,
+        open_night,
+        TAG_ENTER,
+    )
+
+    db, state, content = game
+    minister = next(
+        ch.name for ch in content.characters.values()
+        if db.get_character_status(ch.name)[0] == "active"
+        and db.resolve_power_id(ch) == "ming"
+        and getattr(ch, "office_type", "") not in ("后宫", "宗藩")
+    )
+
+    # --- S11：atomic 内崩溃零孤儿 ---
+    origin_s = rescript_summon_origin_ref(int(state.turn), 0, 0)
+    night = open_night(db, state, empty_scaffold=True)
+    night_id = int(night["id"])
+    try:
+        with atomic(db):
+            eid = summon_enter(
+                db, night_id, minister,
+                empty_scaffold=True, origin_ref=origin_s, commit=False,
+            )
+            assert eid > 0
+            raise RuntimeError("inject after enter before chat_turn")
+    except RuntimeError:
+        pass
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS c FROM story_ledger_entries WHERE origin_ref=?",
+        (origin_s,),
+    ).fetchone()["c"] == 0
+
+    # 正常新鲜垫位
+    sc = prepare_rescript_summon_scaffold(
+        db, state, person_name=minister, origin_ref=origin_s,
+    )
+    assert sc["consumed"] is False
+    s_entry = int(sc["entry_id"])
+    s_ct = int(sc["chat_turn_id"])
+    assert s_entry > 0 and s_ct > 0
+
+    # --- 构造 U（无关无问话 orphan）与 Q（有问话） ---
+    u_ct = db.create_chat_turn(
+        state, minister, "orphan-u", 0, night_id=night_id, status="generating",
+    )
+    # Q：有 user_message
+    q_ct = db.create_chat_turn(
+        state, minister, "q-turn", 0, night_id=night_id, status="generating",
+    )
+    mid = db.append_chat_message(minister, int(state.turn), "user", "卿意如何？")
+    db.conn.execute(
+        "UPDATE chat_turns SET user_message_id=? WHERE id=?", (int(mid), int(q_ct)),
+    )
+    db.conn.commit()
+
+    # 真 reconcile
+    db.reconcile_interrupted_chat_turns()
+    s_st = db.conn.execute("SELECT status FROM chat_turns WHERE id=?", (s_ct,)).fetchone()["status"]
+    u_st = db.conn.execute("SELECT status FROM chat_turns WHERE id=?", (u_ct,)).fetchone()["status"]
+    q_st = db.conn.execute("SELECT status FROM chat_turns WHERE id=?", (q_ct,)).fetchone()["status"]
+    assert s_st == "failed"
+    assert u_st == "failed"
+    assert q_st == "interrupted"
+
+    # 仅对 S 走 ensure_*
+    ensure_summon_scaffold_reenterable(
+        db, origin_ref=origin_s, entry_id=s_entry, chat_turn_id=s_ct,
+    )
+    s_st2 = db.conn.execute("SELECT status FROM chat_turns WHERE id=?", (s_ct,)).fetchone()["status"]
+    u_st2 = db.conn.execute("SELECT status FROM chat_turns WHERE id=?", (u_ct,)).fetchone()["status"]
+    q_st2 = db.conn.execute("SELECT status FROM chat_turns WHERE id=?", (q_ct,)).fetchone()["status"]
+    assert s_st2 == "generating"
+    assert u_st2 == "failed"
+    assert q_st2 == "interrupted"
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS c FROM story_ledger_entries WHERE origin_ref=?",
+        (origin_s,),
+    ).fetchone()["c"] == 1
+
+    # Q 走 reopen
+    assert db.reopen_interrupted_chat_turn_for_retry(int(q_ct)) is True
+    q_st3 = db.conn.execute("SELECT status FROM chat_turns WHERE id=?", (q_ct,)).fetchone()["status"]
+    assert q_st3 == "generating"
+    u_st3 = db.conn.execute("SELECT status FROM chat_turns WHERE id=?", (u_ct,)).fetchone()["status"]
+    assert u_st3 == "failed"
+
+    # --- S14：独立连接观察 CAS 已提交 ---
+    path = db.conn.execute("PRAGMA database_list").fetchone()
+    # GameDB path
+    db_path = getattr(db, "path", None) or getattr(db, "db_path", None)
+    if not db_path:
+        # fallback: same connection check still proves generating
+        row = db.conn.execute(
+            "SELECT status, user_message_id FROM chat_turns WHERE id=?", (s_ct,),
+        ).fetchone()
+        assert row["status"] == "generating" and row["user_message_id"] is None
+    else:
+        ind = sqlite3.connect(str(db_path))
+        ind.row_factory = sqlite3.Row
+        row = ind.execute(
+            "SELECT status, user_message_id FROM chat_turns WHERE id=?", (s_ct,),
+        ).fetchone()
+        assert row["status"] == "generating" and row["user_message_id"] is None
+        ind.close()
+
+    # --- S13：CAS 后再 reconcile 仍不增行 ---
+    db.reconcile_interrupted_chat_turns()
+    ensure_summon_scaffold_reenterable(
+        db, origin_ref=origin_s, entry_id=s_entry, chat_turn_id=s_ct,
+    )
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS c FROM story_ledger_entries WHERE origin_ref=?",
+        (origin_s,),
+    ).fetchone()["c"] == 1
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS c FROM chat_turns WHERE id=?", (s_ct,),
+    ).fetchone()["c"] == 1
+
+    # --- S15：空 body ≠ consumed；冲突复用 ---
+    body = db.conn.execute(
+        "SELECT body FROM story_ledger_entries WHERE id=?", (s_entry,),
+    ).fetchone()["body"]
+    assert not str(body or "").strip()
+    sc2 = prepare_rescript_summon_scaffold(
+        db, state, person_name=minister, origin_ref=origin_s,
+    )
+    assert sc2["consumed"] is False
+    assert int(sc2["entry_id"]) == s_entry
+    assert int(sc2["chat_turn_id"]) == s_ct

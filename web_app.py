@@ -5301,31 +5301,86 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
             # 锁内 submit_decisions 仍做权威复查——与既有 TOCTOU 双查同款。
             if game.session.current_phase() != TurnPhase.AWAITING_DECISION:
                 raise ValueError("当前不在待裁决策阶段，无法提交亲裁。")
-            # #1374：与 issue/stream 同款受理样板——phase2 窗有核账展示态；
-            # decided 先写后跑的崩溃安全时序仍在 session.submit_decisions 内，不动。
-            # 锁语义 = 阻塞 _game_write_gate（与 issue/stream 同，禁改非阻塞）。
+            # #657 / ADR 0149：PREWRITE 与 ② join 必须在 write_gate 外；
+            # settlement 展示态仍服务 phase2，但持锁窗只盖 ① 与 ③。
             # 终态 __done__ 须在 entry（含 clear）成功后才入队——与 settled_ok 同核。
             terminal: Optional[tuple[str, Any]] = None
-            with _settlement_period_entry(game, write_cm=_game_write_gate):
-                report = game.session.submit_decisions(
-                    body.choices, on_event=on_event, cheat_directive=body.cheat
+            settled_ok = False
+            created_display = False
+            entered = False
+            try:
+                _begin_settlement_entry(game)
+                entered = True
+                created_display = _accept_settlement_period(game)
+                close_gate = _game_write_gate(game)
+                get_session_write_queue(game).barrier(
+                    lambda: _auto_close_open_night_gate_free(
+                        game, inflight_wait_s=0.0, write_gate=close_gate,
+                    ),
                 )
+                session = game.session
+                desk = session.db.list_rescript_desk(int(session.state.turn))
+                has_urgent = any(str(r.get("kind")) == "rescript_draft" for r in desk)
+                keyed = any(
+                    isinstance(c, dict) and str(c.get("decision_key") or "").strip()
+                    for c in (body.choices or [])
+                )
+                if has_urgent or keyed:
+                    # PREWRITE — gate 外
+                    pre = session.prepare_rescript_prewrite(body.choices)
+                    # ① 短写
+                    with _game_write_gate(game):
+                        p1 = session.commit_rescript_phase1(pre)
+                    # ② 无锁 join
+                    joined = session.join_rescript_summons(p1)
+                    # ③ 短写 + phase2
+                    with _game_write_gate(game):
+                        report = session.finish_rescript_phase2(
+                            p1, joined,
+                            on_event=on_event, cheat_directive=body.cheat,
+                        )
+                else:
+                    # #1490 纯 decision：仍可整段短写（无 prewrite/join LLM）
+                    with _game_write_gate(game):
+                        report = session.submit_decisions(
+                            body.choices, on_event=on_event, cheat_directive=body.cheat,
+                        )
                 decree = game.session.last_decree
-                failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
+                failures = _new_secret_order_failure_payloads_for_turn(
+                    game, turn_before, failed_before,
+                )
                 game.refresh_turn()
                 events = [
                     steam_events.add_stat(steam_events.STAT_DECREES_ISSUED),
                     steam_events.add_stat(steam_events.STAT_TURNS_PLAYED),
-                    steam_events.set_stat(steam_events.STAT_MAX_TURN_REACHED, int(game.state.turn)),
+                    steam_events.set_stat(
+                        steam_events.STAT_MAX_TURN_REACHED, int(game.state.turn),
+                    ),
                 ]
                 if not was_ended and game.state.ended:
                     events.append(steam_events.add_stat(steam_events.STAT_ENDINGS_REACHED))
+                # 成功清 orphan 快照（与 _settlement_period_entry 同形）
+                db = getattr(game, "db", None)
+                state = getattr(game, "state", None)
+                if db is not None and state is not None and hasattr(db, "clear_month_open_snapshot"):
+                    from ming_sim.month_open_snapshot import clear_orphan_month_open_snapshot
+                    clear_orphan_month_open_snapshot(db, state)
+                settled_ok = True
                 terminal = ("__done__", _settlement_player_payload(
                     decree=decree,
                     report=report,
                     steam_events=events,
                     pending_action_failures=failures,
                 ))
+            finally:
+                try:
+                    if entered and not settled_ok:
+                        _exit_settlement_display_on_failure(
+                            game, blocking=created_display,
+                        )
+                finally:
+                    if entered:
+                        _end_settlement_entry(game)
             if terminal is not None:
                 ev_queue.put(terminal)
         except ValueError as e:

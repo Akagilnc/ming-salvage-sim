@@ -475,3 +475,63 @@ def test_history_projection_handlers_are_sync_for_sqlite_access():
 
     assert not inspect.iscoroutinefunction(web_app.api_audience_scroll)
     assert not inspect.iscoroutinefunction(web_app.api_history_turns)
+
+
+# ---------------------------------------------------------------------------
+# #657 片3 S4：P7 三写口空垫位不可见
+# ---------------------------------------------------------------------------
+
+def test_657_s4_empty_scaffold_open_enter_roster_not_on_scroll(game):
+    """generator 未完成期：scroll 无空 OPEN/ENTER、无人物锚、无固定开夜/入殿/随侍句。"""
+    from ming_sim.audience_night import (
+        open_night,
+        prepare_rescript_summon_scaffold,
+        read_night_scroll,
+        rescript_summon_origin_ref,
+    )
+
+    db, state, _content = game
+    night = open_night(db, state, empty_scaffold=True)
+    origin = rescript_summon_origin_ref(int(state.turn), 0, 0)
+    prepare_rescript_summon_scaffold(
+        db, state, person_name="杨嗣昌", origin_ref=origin,
+    )
+    scroll = read_night_scroll(db, int(night["id"]))
+    openings = [m for m in scroll if m.get("beat") == "opening"]
+    entrances = [m for m in scroll if m.get("beat") == "entrance"]
+    # 空垫位 OPEN/ENTER 不得投影
+    assert openings == []
+    assert entrances == []
+    joined = "\n".join(str(m.get("content") or "") for m in scroll)
+    assert "召对启" not in joined
+    assert "入殿" not in joined
+    assert "随侍在侧" not in joined
+    # 无人物锚展示（entrance 已空；scene 亦不应挂空垫位人名作入口）
+    assert not any(
+        m.get("beat") == "entrance" and m.get("speaker")
+        for m in scroll
+    )
+
+
+def test_657_s4_success_persist_shows_generator_body_only(game):
+    """成功后 scroll 仅 generator 原文。"""
+    from ming_sim.audience_night import (
+        prepare_rescript_summon_scaffold,
+        read_night_scroll,
+        rescript_summon_origin_ref,
+    )
+    from ming_sim.beat_orchestration import persist_chat_turn_scene
+
+    db, state, _content = game
+    origin = rescript_summon_origin_ref(int(state.turn), 1, 0)
+    sc = prepare_rescript_summon_scaffold(
+        db, state, person_name="杨嗣昌", origin_ref=origin,
+    )
+    gen_body = "杨嗣昌趋步入殿，顿首请安。"
+    persist_chat_turn_scene(db, [(int(sc["entry_id"]), gen_body)])
+    db.conn.commit()
+    scroll = read_night_scroll(db, int(sc["night_id"]))
+    entrances = [m for m in scroll if m.get("beat") == "entrance"]
+    assert any(m.get("content") == gen_body for m in entrances)
+    assert not any("入殿。" == str(m.get("content") or "").strip()[-3:] and "趋步" not in str(m.get("content"))
+                   for m in entrances)
