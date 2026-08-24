@@ -1,7 +1,8 @@
-"""s1 (#10) — driver.run_settle：探针确定性结算入口。
+"""s1 (#10) / #668 — driver 两阶段：prepare → 外部产叙事+delta → settle。
 
-run_settle 收一份**中文 schema 形态**的稀疏 delta（我在对话里产的形态），
-规范化 → pre_settle → settle_with_delta，推进一回合。CLI 子命令是它的薄壳。
+run_prepare 共享 decree.prepare_resolve_front_half（pre_settle + ready=0 + arrivals handoff）；
+run_settle 只消费同 turn settling+ready=0，升 ready=1 后 settle_with_delta。
+CLI 子命令是薄壳。禁止一站式「先收 narrative 再首次跑前半段」。
 
 注：本文件断言 turn_phase 时故意用 raw 字符串（如 "summoning"）而非 TurnPhase.X.value——
 它们 pin 的是**落盘字符串值本身**（DB 持久化的真值），有意 enum 无关：若枚举重命名而
@@ -19,9 +20,11 @@ from pathlib import Path
 import pytest
 
 import driver
-from driver import run_settle
+from driver import run_prepare, run_settle
 from ming_sim.distance import DistanceMatrix
+from ming_sim.models import TurnPhase
 from tests.conftest import active_ming_character
+from tests.section_rejection_helpers import prepare_then_settle
 
 _ROOT = Path(__file__).resolve().parents[1]
 _MATRIX = DistanceMatrix.from_file(_ROOT / "content/distance_matrix.json")
@@ -49,6 +52,7 @@ def _mirror_ledger(content, name: str):
 def test_cli_settle_rejects_non_dict_envelope_delta(game, tmp_path):
     """信封的 delta 不是 object(dict)时,响亮报错(不静默吞成空 delta 照样结算)。"""
     db, state, content = game
+    run_prepare(db, state, content)
     bad = tmp_path / "bad.json"
     bad.write_text(
         json.dumps({"narrative": "x", "delta": "not-a-dict"}), encoding="utf-8"
@@ -71,7 +75,7 @@ def test_run_settle_none_delta_is_empty_turn(game):
     """None = 空回合(本月无变化):不报错、正常推进 turn+1(Sourcery 正向用例)。"""
     db, state, content = game
     before = state.turn
-    run_settle(db, state, content, None)
+    prepare_then_settle(db, state, content, None)
     assert state.turn == before + 1
 
 
@@ -80,7 +84,7 @@ def test_run_settle_logs_chapter_memory_skip(game, capsys):
     审计 tlog，便于事后查「哪回合没记起居注」——章节记忆这条浓缩若对话方某回合忘补=静默缺口（#19）。"""
     db, state, content = game
     before = state.turn
-    run_settle(db, state, content, None)
+    prepare_then_settle(db, state, content, None)
     out = capsys.readouterr().out
     assert "跳过章节记忆" in out
     assert f"turn {before}→{before + 1}" in out  # 精确校验审计回合范围（不松到任意数字误匹配）
@@ -94,7 +98,7 @@ def test_run_settle_no_chapter_skip_audit_when_settle_aborts(game, capsys, monke
         raise RuntimeError("settle 炸了")
     monkeypatch.setattr(driver, "settle_with_delta", _boom)
     with pytest.raises(RuntimeError):
-        run_settle(db, state, content, None)
+        prepare_then_settle(db, state, content, None)
     out = capsys.readouterr().out
     assert "跳过章节记忆" not in out  # 失败回合不留误导审计
 
@@ -103,7 +107,7 @@ def test_run_settle_records_non_dict_nested_value(game):
     """ADR0015：实体→{字段}模块二级值非 dict 时逐实体拒收，回合仍推进。"""
     db, state, content = game
     before = state.turn
-    run_settle(db, state, content, {"地区变化": {"shanxi": "动乱+5"}})
+    prepare_then_settle(db, state, content, {"地区变化": {"shanxi": "动乱+5"}})
     assert state.turn == before + 1
     row = db.conn.execute("SELECT section, item_json FROM rejection_reports WHERE turn=?", (before,)).fetchone()
     assert row["section"] == "region_delta"
@@ -115,7 +119,7 @@ def test_run_settle_rejects_unknown_toplevel_key(game):
     按段拒收留痕（ADR 0015），不整份 ValueError；turn 照常推进，拒收行落 rejection_reports。"""
     db, state, content = game
     before = state.turn
-    run_settle(db, state, content, {"地区变更": {"shanxi": {"动乱": 5}}})
+    prepare_then_settle(db, state, content, {"地区变更": {"shanxi": {"动乱": 5}}})
     assert state.turn == before + 1
     row = db.conn.execute(
         "SELECT section, category, item_json FROM rejection_reports WHERE turn=? AND section='地区变更'",
@@ -130,7 +134,7 @@ def test_run_settle_records_non_dict_module_value(game):
     """ADR0015：畸形 section 值按 section 拒收，非整月 abort。"""
     db, state, content = game
     before = state.turn
-    run_settle(db, state, content, {"国势变化": "foo"})
+    prepare_then_settle(db, state, content, {"国势变化": "foo"})
     assert state.turn == before + 1
     row = db.conn.execute("SELECT section, item_json FROM rejection_reports WHERE turn=?", (before,)).fetchone()
     assert row["section"] == "metric_delta"
@@ -162,7 +166,7 @@ def test_run_settle_normalizes_chinese_delta_and_advances(game):
     ).fetchone()[0]
 
     raw_delta = {"地区变化": {"shanxi": {"origin_ref": "盘面自发", "动乱": 5}}}
-    run_settle(db, state, content, raw_delta)
+    prepare_then_settle(db, state, content, raw_delta)
 
     new_unrest = db.conn.execute(
         "SELECT unrest FROM regions WHERE id='shanxi'"
@@ -178,7 +182,11 @@ def test_run_settle_persists_narrative_and_applied_extraction_trace(saved_game):
     before = state.turn
     narrative = "【邸报·测试】山西动乱微升，余无大事。"
 
-    run_settle(db, state, content, {"地区变化": {"shanxi": {"origin_ref": "盘面自发", "动乱": 1}}}, narrative=narrative)
+    prepare_then_settle(
+        db, state, content,
+        {"地区变化": {"shanxi": {"origin_ref": "盘面自发", "动乱": 1}}},
+        narrative=narrative,
+    )
 
     report = db.conn.execute(
         "SELECT report FROM turn_reports WHERE turn=?", (before,)
@@ -206,7 +214,7 @@ def test_run_settle_persists_applied_person_results_for_player_visible_extractio
     db, state, content = game
     before = state.turn
 
-    run_settle(
+    prepare_then_settle(
         db,
         state,
         content,
@@ -265,7 +273,7 @@ def test_run_settle_preserves_legacy_person_key_order_after_issue_close(game):
     db.conn.commit()
 
     try:
-        run_settle(
+        prepare_then_settle(
             db,
             state,
             content,
@@ -319,7 +327,7 @@ def test_run_settle_preserves_unified_person_key_order_after_issue_close(game):
     db.conn.commit()
 
     try:
-        run_settle(
+        prepare_then_settle(
             db,
             state,
             content,
@@ -357,8 +365,8 @@ def test_cli_state_prints_board(read_game, capsys):
     assert str(state.year) in out
 
 
-def test_cli_settle_applies_delta_file(game, tmp_path, capsys):
-    """`settle --delta <json>` 读中文 delta 文件，落库并推进 turn+1，返回码 0。"""
+def test_cli_prepare_then_settle_applies_delta_file(game, tmp_path, capsys):
+    """`prepare` + `settle --delta <json>`：两阶段 CLI 落库并推进 turn+1。"""
     db, state, content = game
     before = state.turn
     old_unrest = db.conn.execute(
@@ -368,6 +376,13 @@ def test_cli_settle_applies_delta_file(game, tmp_path, capsys):
     delta_file.write_text(
         json.dumps({"地区变化": {"shanxi": {"origin_ref": "盘面自发", "动乱": 3}}}), encoding="utf-8"
     )
+
+    rc_prep = driver.main(["prepare"], game=game)
+    prep_out = capsys.readouterr().out
+    assert rc_prep == 0
+    # tlog 与 handoff 同 stdout：handoff 为最后一行 JSON。
+    handoff_line = [ln for ln in prep_out.splitlines() if ln.strip()][-1]
+    assert json.loads(handoff_line) == []  # 无抵达月 handoff=[]
 
     rc = driver.main(["settle", "--delta", str(delta_file)], game=game)
 
@@ -379,10 +394,34 @@ def test_cli_settle_applies_delta_file(game, tmp_path, capsys):
     assert new_unrest == old_unrest + 3
 
 
+def test_cli_settle_without_prepare_fails_loud(game, tmp_path, capsys):
+    """未 prepare 的 settle CLI 响亮失败、非零退出、零写。"""
+    db, state, content = game
+    before_turn = state.turn
+    before_phase = state.turn_phase
+    before_ledger = db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (before_turn,)
+    ).fetchone()[0]
+    delta_file = tmp_path / "delta.json"
+    delta_file.write_text(json.dumps({}), encoding="utf-8")
+
+    rc = driver.main(["settle", "--delta", str(delta_file)], game=game)
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert "prepare" in err
+    assert state.turn == before_turn
+    assert state.turn_phase == before_phase
+    assert db.get_resolve_context(before_turn) is None
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (before_turn,)
+    ).fetchone()[0] == before_ledger
+
+
 def test_cli_settle_envelope_persists_narrative(game, tmp_path):
     """`settle --delta` 吃信封 {narrative, delta} 时,邸报落 turn_report;裸 delta 仍兼容。"""
     db, state, content = game
     before = state.turn
+    run_prepare(db, state, content)
     narrative = "【邸报·信封测试】京师城防新增红夷炮数门。"
     env_file = tmp_path / "turn.json"
     env_file.write_text(
@@ -416,15 +455,13 @@ def test_run_settle_persists_resolve_context_before_settle(game, monkeypatch, tm
     """崩在 settle 内 → resolve_context 已持久化，delta 有 DB 真源可重放（cmr S2+S3 r3）。
 
     driver 与真实流程同核同语义（ADR 0004/0008）：turn_extractions 在 settle 内部才写，
-    没有 persist 的话 pre_settle 已落账而 delta 只活在调用方易失上下文（违 P1）。
-    S7：settle 整段包 atomic，代码异常上抛后被包成 SettlementAbort(stage="settle")，
-    DB 整体回滚——但 resolve_context 在 settle 之前已 persist（其行随回滚消失？否：persist
-    在 pre_settle 之后、settle 的 atomic 之外单独 commit，故崩在 settle 内时 context 仍在）。
+    没有 persist 的话 ready=1 未落而 delta 只活在调用方易失上下文（违 P1）。
     """
     from ming_sim.exceptions import SettlementAbort
     db, state, content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     before_turn = state.turn
+    run_prepare(db, state, content)
 
     def _boom(*a, **k):
         raise RuntimeError("simulated apply crash")
@@ -447,33 +484,37 @@ def test_run_settle_clears_resolve_context_on_completion(game):
     """正常完成后 context 已清（settle 内 clear 对 driver 同样生效）。"""
     db, state, content = game
     before_turn = state.turn
-    run_settle(db, state, content, {"地区变化": {"shanxi": {"origin_ref": "盘面自发", "动乱": 1}}})
+    prepare_then_settle(
+        db, state, content,
+        {"地区变化": {"shanxi": {"origin_ref": "盘面自发", "动乱": 1}}},
+    )
     assert db.get_resolve_context(before_turn) is None
 
 
-def test_crash_inside_pre_settle_leaves_no_ready_context(game, monkeypatch):
-    """崩在 pre_settle 内 → 不留 ready=1 行（cmr S2+S3 r5）。
+def test_crash_inside_prepare_leaves_no_ready_context(game, monkeypatch):
+    """崩在 prepare/pre_settle 内 → 不留 resolve_context 行（cmr S2+S3 r5）。
 
-    ready=1 须统一意为「前半段已提交，只剩 settle」；persist 在 pre_settle 前的话，
-    崩在 pre_settle 内留下「ready=1 但财政未落」态，恢复入口直入 apply 会跳过
-    pre_settle=整月固定财政静默丢。
+    ready=1 须统一意为「前半段已提交，只剩 settle」；prepare 整段回滚时不得留下
+    「ready 但财政未落」态。
     """
     db, state, content = game
     before_turn = state.turn
 
     def _boom(*a, **k):
         raise RuntimeError("simulated pre_settle crash")
-    monkeypatch.setattr(driver, "pre_settle", _boom)
+    monkeypatch.setattr(driver, "prepare_resolve_front_half", _boom)
 
     with pytest.raises(RuntimeError, match="pre_settle crash"):
-        run_settle(db, state, content, {"地区变化": {"shanxi": {"origin_ref": "盘面自发", "动乱": 1}}})
+        run_prepare(db, state, content)
 
     assert db.get_resolve_context(before_turn) is None
+    assert state.turn_phase != TurnPhase.SETTLING.value
 
 
-def test_persist_crash_rolls_back_pre_settle(game, monkeypatch):
-    """pre_settle 与 ready=1 持久化同事务（PR #90 R1 codex P2 同窗，driver 路）：
-    persist 崩 → 财政/相位整体回滚，不留「settling 而无 context 行」的盘。"""
+def test_prepare_save_crash_rolls_back_pre_settle(game, monkeypatch):
+    """prepare：pre_settle 与 ready=0 占位同事务；save_resolve_context 崩 → 财政/相位整体回滚。"""
+    import ming_sim.decree as decree_mod
+
     db, state, content = game
     turn = state.turn
     before = db.conn.execute(
@@ -481,11 +522,11 @@ def test_persist_crash_rolls_back_pre_settle(game, monkeypatch):
     ).fetchone()[0]
 
     def _boom(*a, **k):
-        raise RuntimeError("persist crash")
-    monkeypatch.setattr(driver, "persist_resolve_context", _boom)
+        raise RuntimeError("prepare save crash")
+    monkeypatch.setattr(decree_mod.GameDB, "save_resolve_context", _boom)
 
-    with pytest.raises(RuntimeError, match="persist crash"):
-        run_settle(db, state, content, {}, narrative="x", decree_text="y")
+    with pytest.raises(RuntimeError, match="prepare save crash"):
+        run_prepare(db, state, content)
 
     assert state.turn == turn
     assert state.turn_phase == "summoning"
@@ -594,8 +635,10 @@ def test_run_settle_player_sourced_rejection_surfaces_diegetic_hint(game):
     且提示**持久化进 turn_report**（web/history/重读都见，非仅即时返回串，codex R1 high）。"""
     db, state, content = game
     before = state.turn
-    report = run_settle(db, state, content,
-        {"人物变更": [{"origin_ref": "盘面自发", "name": "查无此人甲", "动作": "任命", "office": "首辅", "reason": "测试拒收"}]})
+    report = prepare_then_settle(
+        db, state, content,
+        {"人物变更": [{"origin_ref": "盘面自发", "name": "查无此人甲", "动作": "任命", "office": "首辅", "reason": "测试拒收"}]},
+    )
     assert "有司奏" in report, "player_decree 来源的拒收须在邸报给玩家一句提示（决定 5）"
     assert "查无此人甲" not in report, "提示只一句 in-world，不暴露拒收明细（明细进 DB/jsonl）"
     # 持久化：turn_reports（web/history 读它）也须含提示，非仅 run_settle 即时返回
@@ -607,7 +650,10 @@ def test_run_settle_no_rejection_no_hint(game):
     """无拒收 → 无提示（避免噪声）；且不误持久化进 turn_report（Sourcery R1）。"""
     db, state, content = game
     before = state.turn
-    report = run_settle(db, state, content, {"地区变化": {"shanxi": {"origin_ref": "盘面自发", "动乱": 1}}})
+    report = prepare_then_settle(
+        db, state, content,
+        {"地区变化": {"shanxi": {"origin_ref": "盘面自发", "动乱": 1}}},
+    )
     assert "有司奏" not in report
     persisted = db.conn.execute("SELECT report FROM turn_reports WHERE turn=?", (before,)).fetchone()[0]
     assert "有司奏" not in persisted, "无拒收不应把提示误持久化进 turn_report"
@@ -617,9 +663,11 @@ def test_run_settle_system_source_rejection_stays_silent(game):
     """system_simulation 来源的拒收对玩家安静——仅 player_decree/hitl_decision 给提示（决定 5）。"""
     from ming_sim.applier import Provenance
     db, state, content = game
-    report = run_settle(db, state, content,
+    report = prepare_then_settle(
+        db, state, content,
         {"人物变更": [{"origin_ref": "盘面自发", "name": "查无此人乙", "动作": "任命", "office": "首辅", "reason": "测试"}]},
-        source=Provenance.system_simulation)
+        source=Provenance.system_simulation,
+    )
     assert "有司奏" not in report, "系统推演来源的拒收对玩家安静"
 
 
@@ -627,7 +675,7 @@ def test_run_settle_system_source_rejection_stays_silent(game):
 
 
 def test_run_settle_transit_arrival_syncs_db_and_content_mirror(game):
-    """河南→北直隶常速、start_turn=turn-1：run_settle 抵达后 DB 与 content 四量一致且清账。"""
+    """河南→北直隶常速、start_turn=turn-1：prepare/settle 抵达后 DB 与 content 四量一致且清账。"""
     db, state, content = game
     name = active_ming_character(db, content)
     origin, dest = "henan", "beizhili"
@@ -643,7 +691,7 @@ def test_run_settle_transit_arrival_syncs_db_and_content_mirror(game):
         content=content,
     )
 
-    run_settle(db, state, content, None)
+    prepare_then_settle(db, state, content, None)
 
     row = _transit_ledger(db, name)
     assert tuple(row) == (dest, "", None, None, 0)
@@ -651,7 +699,7 @@ def test_run_settle_transit_arrival_syncs_db_and_content_mirror(game):
 
 
 def test_run_settle_in_transit_remaining_syncs_db_and_content_mirror(game):
-    """河南→辽东 N≥2、start_turn=turn-1：run_settle 后仍在途，remaining 已减且 DB=content。"""
+    """河南→辽东 N≥2、start_turn=turn-1：settle 后仍在途，remaining 已减且 DB=content。"""
     db, state, content = game
     name = active_ming_character(db, content)
     origin, dest = "henan", "liaodong"
@@ -668,7 +716,7 @@ def test_run_settle_in_transit_remaining_syncs_db_and_content_mirror(game):
         content=content,
     )
 
-    run_settle(db, state, content, None)
+    prepare_then_settle(db, state, content, None)
 
     expected_remaining = r0 - 1.0
     row = _transit_ledger(db, name)
@@ -683,3 +731,223 @@ def test_run_settle_in_transit_remaining_syncs_db_and_content_mirror(game):
     assert ch.transit_distance_remaining == pytest.approx(row["transit_distance_remaining"])
     assert ch.transit_speed_factor == pytest.approx(row["transit_speed_factor"])
     assert ch.transit_start_turn == row["transit_start_turn"]
+
+
+# ── #668 driver phase-order 验收 A–G ────────────────────────────────────────
+
+
+def test_prepare_before_narrative_file_order_spy(game, tmp_path, monkeypatch):
+    """A：顺序 spy——prepare/tick 完成并交出 arrivals 后，才读/接受 narrative 文件。"""
+    import ming_sim.decree as decree_mod
+
+    db, state, content = game
+    name = active_ming_character(db, content)
+    origin, dest = "henan", "beizhili"
+    r0 = _MATRIX.travel_time(origin, dest)
+    assert r0 <= 1.0
+    db.set_character_transit(
+        name,
+        location=origin,
+        transit_to=dest,
+        distance_remaining=r0,
+        speed_factor=1.0,
+        start_turn=int(state.turn) - 1,
+        content=content,
+    )
+
+    events: list[str] = []
+    real_tick = decree_mod.tick_transit_arrivals
+
+    def _spy_tick(*a, **k):
+        events.append("tick")
+        return real_tick(*a, **k)
+
+    monkeypatch.setattr(decree_mod, "tick_transit_arrivals", _spy_tick)
+
+    arrivals = run_prepare(db, state, content)
+    events.append("prepare_done")
+    assert arrivals == [{"name": name, "location": dest}]
+
+    narrative_path = tmp_path / "narrative.json"
+    # 外部生成：仅在 prepare 之后才写/读 narrative 文件
+    events.append("write_narrative")
+    narrative_path.write_text(
+        json.dumps({
+            "narrative": f"【邸报】{name}已抵{dest}。",
+            "delta": {},
+        }, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    events.append("read_narrative")
+    envelope = json.loads(narrative_path.read_text(encoding="utf-8"))
+    run_settle(
+        db, state, content, envelope["delta"],
+        narrative=envelope["narrative"],
+    )
+    events.append("settle_done")
+
+    assert events == [
+        "tick", "prepare_done", "write_narrative", "read_narrative", "settle_done",
+    ]
+
+
+def test_prepare_arrival_handoff_matches_db_content_and_ready0(game):
+    """B：本月抵达时 prepare 输出、DB、content、ready=0 context 四者一致。"""
+    db, state, content = game
+    name = active_ming_character(db, content)
+    origin, dest = "henan", "beizhili"
+    r0 = _MATRIX.travel_time(origin, dest)
+    assert r0 <= 1.0
+    db.set_character_transit(
+        name,
+        location=origin,
+        transit_to=dest,
+        distance_remaining=r0,
+        speed_factor=1.0,
+        start_turn=int(state.turn) - 1,
+        content=content,
+    )
+    turn = state.turn
+    arrivals = run_prepare(db, state, content)
+    expected = [{"name": name, "location": dest}]
+    assert arrivals == expected
+    assert tuple(_transit_ledger(db, name)) == (dest, "", None, None, 0)
+    assert _mirror_ledger(content, name) == (dest, "", None, None, 0)
+    ctx = db.get_resolve_context(turn)
+    assert ctx is not None
+    assert ctx["extracted"] is None  # ready=0
+    assert ctx["simulator_payload"]["transit_arrivals"] == expected
+    assert state.turn_phase == TurnPhase.SETTLING.value
+
+
+def test_settle_promotes_ready1_keeps_arrivals_and_dossiers(game, monkeypatch):
+    """C：settle 升 ready=1 后 transit_arrivals 与案卷键并存。"""
+    db, state, content = game
+    name = active_ming_character(db, content)
+    origin, dest = "henan", "beizhili"
+    r0 = _MATRIX.travel_time(origin, dest)
+    db.set_character_transit(
+        name,
+        location=origin,
+        transit_to=dest,
+        distance_remaining=r0,
+        speed_factor=1.0,
+        start_turn=int(state.turn) - 1,
+        content=content,
+    )
+    lead = name
+    dossier_id = db.create_decree_dossier(
+        state, action_type="assignment", decree_text="命修历。",
+        target_kind="issue", target_id="calendar-668",
+        participants=[{"character_id": lead, "tier": "主办"}],
+    )
+    turn = state.turn
+    run_prepare(db, state, content)
+
+    captured = {}
+    real_persist = driver.persist_resolve_context
+
+    def _capture(db_arg, t, extracted, **kwargs):
+        captured["payload"] = kwargs.get("simulator_payload")
+        return real_persist(db_arg, t, extracted, **kwargs)
+
+    monkeypatch.setattr(driver, "persist_resolve_context", _capture)
+    monkeypatch.setattr(
+        driver, "settle_with_delta",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("stop-after-ready1")),
+    )
+    with pytest.raises(RuntimeError, match="stop-after-ready1"):
+        run_settle(db, state, content, {}, narrative="抵达可写进邸报")
+
+    payload = captured["payload"]
+    assert payload["transit_arrivals"] == [{"name": name, "location": dest}]
+    assert {"id": dossier_id} in payload["decree_dossiers"]
+    ctx = db.get_resolve_context(turn)
+    assert isinstance(ctx["extracted"], dict)  # ready=1
+    assert ctx["simulator_payload"]["transit_arrivals"] == payload["transit_arrivals"]
+    assert ctx["simulator_payload"]["decree_dossiers"] == payload["decree_dossiers"]
+
+
+def test_prepare_crash_reopen_settle_no_second_tick(game, monkeypatch, tmp_path):
+    """D：prepare 后崩溃重开再 settle：不二次 tick/财政。"""
+    import ming_sim.decree as decree_mod
+    from ming_sim.db import GameDB
+    from ming_sim.context import bind_content
+    import ming_sim.issues as issues_mod
+
+    db, state, content = game
+    turn = state.turn
+    tick_calls = {"n": 0}
+    real_tick = decree_mod.tick_transit_arrivals
+
+    def _count_tick(*a, **k):
+        tick_calls["n"] += 1
+        return real_tick(*a, **k)
+
+    monkeypatch.setattr(decree_mod, "tick_transit_arrivals", _count_tick)
+    arrivals = run_prepare(db, state, content)
+    assert tick_calls["n"] == 1
+    ledger_after_prepare = db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (turn,)
+    ).fetchone()[0]
+    assert ledger_after_prepare > 0
+
+    reopen_path = db.path
+    db.close()
+    bind_content(content)
+    issues_mod.bind_content(content)
+    db2 = GameDB(reopen_path, content)
+    try:
+        state2 = db2.load_state()
+        assert state2.turn_phase == TurnPhase.SETTLING.value
+        ticks_before = tick_calls["n"]
+        assert state2.turn == turn
+        run_settle(db2, state2, content, {}, narrative="恢复后续")
+        assert tick_calls["n"] == ticks_before  # 不二次 tick
+        assert state2.turn == turn + 1
+        assert isinstance(arrivals, list)
+    finally:
+        db2.close()
+
+
+def test_prepare_no_arrival_month_returns_empty_list(game):
+    """E：无抵达月 arrivals=`[]`。"""
+    db, state, content = game
+    arrivals = run_prepare(db, state, content)
+    assert arrivals == []
+    ctx = db.get_resolve_context(state.turn)
+    assert ctx["simulator_payload"]["transit_arrivals"] == []
+
+
+def test_settle_without_prepare_fails_loud_zero_writes(game):
+    """F：未 prepare 的 settle 响亮失败且零写。"""
+    db, state, content = game
+    before_turn = state.turn
+    before_phase = state.turn_phase
+    before_ledger = db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (before_turn,)
+    ).fetchone()[0]
+    with pytest.raises(ValueError, match="prepare"):
+        run_settle(db, state, content, {"地区变化": {"shanxi": {"origin_ref": "盘面自发", "动乱": 1}}})
+    assert state.turn == before_turn
+    assert state.turn_phase == before_phase
+    assert db.get_resolve_context(before_turn) is None
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (before_turn,)
+    ).fetchone()[0] == before_ledger
+    assert db.conn.execute(
+        "SELECT unrest FROM regions WHERE id='shanxi'"
+    ).fetchone()[0] is not None
+
+
+def test_two_phase_delta_validation_and_advance_preserved(game):
+    """G：原 delta 校验/回合推进在两阶段后保持。"""
+    db, state, content = game
+    before = state.turn
+    prepare_then_settle(
+        db, state, content,
+        {"地区变化": {"shanxi": {"origin_ref": "盘面自发", "动乱": 2}}},
+    )
+    assert state.turn == before + 1
+    with pytest.raises(ValueError):
+        run_settle(db, state, content, "not-a-dict")

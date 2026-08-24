@@ -959,44 +959,16 @@ def resolve_directives(
 
     # 草案内容已由拟诏合并进 decree_text，simulator 只读 decree_text，不再单传逐条草案。
 
-    # 1) 前括号确定性结算：固定月度财政 tick + auto_trigger 硬立 seed 情势（均在 LLM 推演前）。
-    #    与探针 driver 共用同一段（ADR 0004）。
-    #
-    # 诏书占位真源（ship-pre r5）：pre_settle 成功后立即把 decree_text 落为 ready=0
-    # 占位——begin_turn 会清内存 last_decree，跨进程恢复的 no-ready fallthrough 没有
-    # 此行就只能用 LLM 从草案重新生成，玩家手改的原诏蒸发。HITL/ready persist 后续
-    # 同键 upsert，settle 尾 clear 收掉。
-    #
-    # 占位与 settling 相位同事务可见（PR #90 R1 codex P2）：外层 atomic 把 pre_settle
-    # 的内层事务并入（flat 可重入），崩在「settling 已提交、占位未落」的窗口不再可能
-    # ——要么两者都见，要么整段回滚重来。恢复重推演路重进时 pre_settle 幂等守门
-    # 早退、占位同键 upsert，语义不变。
-    # pre_settle 自己的 atomic 在此嵌套（depth>0）时跳过 reload，由本层（最外层）真回滚后
-    # 重载刷净内存；reload 再炸链上抛。见 atomic_and_reload。
-    try:
-        transit_arrivals_box: List[Dict[str, object]] = []
-        front_half_was_done = state.turn_phase in FRONT_HALF_DONE_PHASES
-        with atomic_and_reload(db, state, content=content, registry=registry):
-            auto_triggered = pre_settle(
-                state, db, on_stage=lambda label: _emit("stage", label),
-                content=content, registry=registry,
-                scene_registry=scene_registry,
-                transit_arrivals_out=transit_arrivals_box,
-            )
-            # #668：transit_arrivals 与 ready=0 占位同外层 atomic 写入；settling 重入合并保留，禁 {} 整键覆写。
-            placeholder_payload = _ready0_payload_with_transit_arrivals(
-                db, state.turn,
-                transit_arrivals=transit_arrivals_box,
-                front_half_was_done=front_half_was_done,
-            )
-            db.save_resolve_context(
-                state.turn, decree_text, "", placeholder_payload,
-                secret_orders={}, relevant_memories=[],   # #48：占位用分组承载的空 dict（旋即被真存覆盖）
-                source=Provenance(source).value,    # #146 A：皇帝下旨回合默认 player（被真存同值覆盖）；恢复 fallthrough 穿透 ctx 真源。Provenance(source).value 归一(兼容 enum/合法值串)、与 persist_resolve_context 一致(gemini R5)
-            )
-    except BaseException as exc:
-        raise_fixed_period_flow_abort_if_needed(db, state, exc)
-        raise
+    # 1) 前括号确定性结算：与探针 driver 共用 prepare_resolve_front_half（ADR 0004 / #668）。
+    prepare_resolve_front_half(
+        state, db,
+        decree_text=decree_text,
+        content=content,
+        registry=registry,
+        scene_registry=scene_registry,
+        source=source,
+        on_stage=lambda label: _emit("stage", label),
+    )
 
     proposed_dossiers = db.list_decree_dossiers(status="proposed")
     verdict_rows: List[Dict[str, object]] = []
@@ -1881,6 +1853,64 @@ def _ready0_payload_with_transit_arrivals(
             return {"transit_arrivals": prev_payload["transit_arrivals"]}
         return {}
     return {"transit_arrivals": list(transit_arrivals)}
+
+
+def prepare_resolve_front_half(
+    state: GameState,
+    db: GameDB,
+    *,
+    decree_text: str = "",
+    content=None,
+    registry=None,
+    scene_registry=None,
+    source: object = Provenance.player_decree,
+    on_stage: Optional[Callable[[str], None]] = None,
+) -> List[Dict[str, object]]:
+    """共享前半段 seam（ADR 0004 / #668）：pre_settle + ready=0 占位（含 transit_arrivals）。
+
+    resolve_directives 与 driver.prepare 共用此 helper。外层 atomic 使 settling 相位与
+    ready=0 context 同生共死；settling 重入走 pre_settle 幂等守门 + arrivals 合并保留，
+    不二次 tick/财政。返回本回合 `transit_arrivals`（无抵达 = `[]`）。
+    """
+    # 诏书占位真源（ship-pre r5）：pre_settle 成功后立即把 decree_text 落为 ready=0
+    # 占位——begin_turn 会清内存 last_decree，跨进程恢复的 no-ready fallthrough 没有
+    # 此行就只能用 LLM 从草案重新生成，玩家手改的原诏蒸发。HITL/ready persist 后续
+    # 同键 upsert，settle 尾 clear 收掉。
+    #
+    # 占位与 settling 相位同事务可见（PR #90 R1 codex P2）：外层 atomic 把 pre_settle
+    # 的内层事务并入（flat 可重入），崩在「settling 已提交、占位未落」的窗口不再可能
+    # ——要么两者都见，要么整段回滚重来。恢复重推演路重进时 pre_settle 幂等守门
+    # 早退、占位同键 upsert，语义不变。
+    try:
+        transit_arrivals_box: List[Dict[str, object]] = []
+        front_half_was_done = state.turn_phase in FRONT_HALF_DONE_PHASES
+        with atomic_and_reload(db, state, content=content, registry=registry):
+            pre_settle(
+                state, db, on_stage=on_stage,
+                content=content, registry=registry,
+                scene_registry=scene_registry,
+                transit_arrivals_out=transit_arrivals_box,
+            )
+            # #668：transit_arrivals 与 ready=0 占位同外层 atomic 写入；settling 重入合并保留，禁 {} 整键覆写。
+            placeholder_payload = _ready0_payload_with_transit_arrivals(
+                db, state.turn,
+                transit_arrivals=transit_arrivals_box,
+                front_half_was_done=front_half_was_done,
+            )
+            db.save_resolve_context(
+                state.turn, decree_text, "", placeholder_payload,
+                secret_orders={}, relevant_memories=[],  # #48：占位用分组承载的空 dict（旋即被真存覆盖）
+                source=Provenance(source).value,  # #146 A：归一 enum/合法值串
+            )
+    except BaseException as exc:
+        raise_fixed_period_flow_abort_if_needed(db, state, exc)
+        raise
+
+    ctx = db.get_resolve_context(int(state.turn))
+    payload = ctx.get("simulator_payload") if isinstance(ctx, dict) else None
+    if isinstance(payload, dict) and isinstance(payload.get("transit_arrivals"), list):
+        return list(payload["transit_arrivals"])
+    return list(transit_arrivals_box)
 
 
 def pre_settle(

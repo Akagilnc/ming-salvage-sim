@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from driver import run_settle
+from tests.section_rejection_helpers import prepare_then_settle as run_settle
 from ming_sim.constants import REGION_FIELD_LABELS
 from ming_sim.issues import apply_score_extraction
 

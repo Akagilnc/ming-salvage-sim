@@ -54,7 +54,7 @@ def test_driver_validate_rejection_mirrors_jsonl_after_outer_atomic(game, tmp_pa
     """driver.run_settle 的外层事务提交后也要镜像 validate 层拒收 jsonl。"""
     from pathlib import Path
 
-    from driver import run_settle
+    from tests.section_rejection_helpers import prepare_then_settle as run_settle
 
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     db, state, content = game
@@ -86,7 +86,7 @@ def test_driver_validate_rejection_mirrors_jsonl_after_outer_atomic(game, tmp_pa
 
 def test_validate_and_module_rejections_do_not_leak_into_player_visible_extraction(game, tmp_path, monkeypatch):
     """ADR 0015/P4：shape/module 拒收桶是内部信号，不写进玩家可见 extractor_output。"""
-    from driver import run_settle
+    from tests.section_rejection_helpers import prepare_then_settle as run_settle
 
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     db, state, content = game
