@@ -1038,10 +1038,13 @@ def test_catch_up_entry_list_under_gate_ticket_cancelled_empty():
 def test_stream_close_pending_extraction_emits_error_not_hang(web_game, monkeypatch):
     """#1353 r10/r11 / 66nX：流式收夜欠账耗尽须 error+end 双终态，禁永阻。"""
     from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
+    from tests.web_audience_test_doubles import install_hall_admission
 
     game = web_game
+    # 在册在京有资格人物 + 既有 hall admission seam；本测只钉 pending extraction 终态，
+    # 不得依赖 temporary 直通，亦不得放宽生产 temporary 拒绝。
     minister = next(iter(game.content.characters))
-    # prologue 最小：持久大臣路径需要 chat turn；用 session stub 简化
+    install_hall_admission(game.session)
     events: list[dict] = []
 
     class _Agent:
@@ -1057,11 +1060,10 @@ def test_stream_close_pending_extraction_emits_error_not_hang(web_game, monkeypa
             )
 
     game.session.registry.get = lambda _ch: _Agent()
-    game.session._character = lambda name: SimpleNamespace(name=name)
     game.session.join_chat_turn_scene = lambda *_a, **_k: []
     game.session.persist_chat_turn_scene = lambda *_a, **_k: None
     game.session.abandon_chat_turn_scene = lambda *_a, **_k: None
-    # 避免真实开夜/落库依赖：非持久路径（临时角色）或 stub 持久
+    # 避免真实开夜/落库依赖：非持久路径或 stub 持久
     monkeypatch.setattr(game, "_persistent_chat_minister", lambda _n: False)
     monkeypatch.setattr(
         game, "_chat_stream_interpret_tools",

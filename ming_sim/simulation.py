@@ -673,6 +673,11 @@ def build_simulator_payload(
     # #883: due commitments are public review work, unlike actual secret
     # orders.  Keep them on a separately named public rail; never pre-load
     # secret-order prose into the monthly judge.
+    from ming_sim.audience_night import (
+        list_arrived_unsettled_summons,
+        list_waiting_audience_summons,
+    )
+
     grouped_orders = augment_secret_orders_with_due_commitments(secret_orders, db, state)
     # Trust augment's Dict[str, list] contract — shape errors must fail loud.
     due_commitments = [
@@ -817,12 +822,16 @@ def build_simulator_payload(
         # #668/0095：本 tick 引擎刚抵达的事实集合（非仍在途者）；durable 真源在
         # pending_resolve_context.simulator_payload.transit_arrivals，由调用方注入。
         "transit_arrivals": list(transit_arrivals or []),
-        # #669/0095：仍在途者的月数语义特征（非裸账）；#673 判官清单复用同一 projector。
+        # #669/0095：仍在途者的月数语义特征（非裸账）。
         "transit_semantics": project_transit_semantics(
             db,
             state,
             DistanceMatrix.from_file(bundled_path("content", "distance_matrix.json")),
         ),
+        # #670: machine facts for the existing monthly judge.
+        # arrivals → 续赴京；waiting_audience → 抵京候见（只读投影，非法固定句）。
+        "unsettled_arrived_summons": list_arrived_unsettled_summons(db),
+        "waiting_audience": list_waiting_audience_summons(db),
         # #627：政敌检举供事实（零新增串行调用；不携真伪位/quota/烈度）
         "faction_denunciation_facts": db.build_faction_denunciation_facts(),
         # #626：承诺所系反噬——硬门只落结构化事实；玩家文案由叙事步从此特征包长出
@@ -835,6 +844,8 @@ def build_simulator_payload(
             "已确认抵达的人物（name+location），请据此演出到任，勿改 location/在途账。"
             "transit_semantics 为仍在途人物的在途语义特征（name/目的地/月数语义）；"
             "仅据该字段所给语义演出在途情形。"
+            "unsettled_arrived_summons 为原程已抵非京、须续赴京的未结传召机器事实；"
+            "waiting_audience 为已抵京候见、尚未宣入消费的未结传召机器事实。"
             "faction_denunciation_facts 为派系恩怨/分叉案卷/处境/个性事实包，供朝堂弹劾叙事取材，不含真伪位。"
             "commitment_backlash_facts 为承诺所系反噬结构化事实包（源类/承诺链接/metrics），"
             "供叙事长出玩家可见文案；含与 #625 反制 bar 用语区分约束，不含成句模板。"
@@ -1180,6 +1191,7 @@ def build_extractor_shared_context(
     secret_orders: Optional[Dict[str, object]] = None,
     module: str = "",
     decree_dossiers: Optional[List[Dict[str, object]]] = None,
+    transit_semantics: Optional[List[Dict[str, object]]] = None,
 ) -> Dict[str, object]:
     """供模块 extractor 放入 system 前缀的共同结算补充上下文。
 
@@ -1322,9 +1334,12 @@ def build_extractor_shared_context(
         # #626：反噬事实包仅 issues 档房（与 #625 监督三键同格门控）；
         # 不在 _extractor_context_payload 无门副本，避免非 issues 模块误读。
         slim["commitment_backlash_facts"] = build_backlash_narrative_features(db)
-        # #654：带宽/阻力两轴清单——纯机 issues extractor 私有面（P4：不进 simulator）。
+        # #654/#673：带宽/阻力两轴清单——纯机 issues extractor 私有面（P4：不进 simulator）。
+        # transit_semantics 必须是 phase1 payload 既成 list 对象引用（is 同一对象）。
         from ming_sim.execution_pressure import build_execution_two_axis_surface
-        slim["execution_two_axis"] = build_execution_two_axis_surface(db, state.turn)
+        slim["execution_two_axis"] = build_execution_two_axis_surface(
+            db, state.turn, transit_semantics=transit_semantics,
+        )
         # The issues extractor consumes the same canonical candidate_events key
         # as its prompt.  This private module payload remains outside simulator
         # decision binding and HITL.

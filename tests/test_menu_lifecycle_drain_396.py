@@ -10,6 +10,7 @@ import time
 from types import SimpleNamespace
 
 import web_app
+from tests.web_audience_test_doubles import HallAdmissionSessionMixin, minister_double
 
 
 def _wait_for(predicate, timeout: float = 2.0) -> bool:
@@ -516,7 +517,7 @@ class _GapBRegistry:
         return self.agents[character.name]
 
 
-class _GapBSession:
+class _GapBSession(HallAdmissionSessionMixin):
     temporary_characters: set = set()
 
     def __init__(self, characters, agents, state, db):
@@ -611,8 +612,8 @@ def test_drain_waits_for_queued_chat_stream_not_just_gate_holder():
     allow_finish_b = threading.Event()
     closed: list[int] = []
 
-    char_a = SimpleNamespace(name="大臣甲")
-    char_b = SimpleNamespace(name="大臣乙")
+    char_a = minister_double("大臣甲")
+    char_b = minister_double("大臣乙")
     state = SimpleNamespace(turn=1, year=1628, period=1, turn_phase="summoning")
     db = _GapBDB()
 
