@@ -234,7 +234,7 @@ def _drive_settle_after_narrative(db, state, content, monkeypatch, *, extractor_
     with pytest.raises(expected):
         decree_mod._settle_after_narrative(
             state, db, None, None,
-            "减赋诏", "本月邸报……", {"k": "v"}, [], [],
+            "减赋诏", "本月邸报……", {"k": "v", "transit_semantics": []}, [], [],
             before_turn, lambda *a: None,
             content=content, registry=None,
         )

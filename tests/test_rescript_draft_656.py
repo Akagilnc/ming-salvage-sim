@@ -560,7 +560,7 @@ def test_settlement_persists_drafts_verbatim_and_survives_clear(game, monkeypatc
     _settle_after_narrative(
         state, db, None, None,
         decree_text="减赋诏", narrative=narrative,
-        simulator_payload={"active_issues": [{"issue_id": 42, "title": "陕西告饥"}]},
+        simulator_payload={"active_issues": [{"issue_id": 42, "title": "陕西告饥"}], "transit_semantics": []},
         relevant_memories=[], secret_orders={},
         before_turn=turn, _emit=lambda *a: None, content=content,
     )
@@ -623,7 +623,7 @@ def test_extractor_abort_rolls_back_drafts(game, monkeypatch, tmp_path):
         _settle_after_narrative(
             state, db, None, None,
             decree_text="诏", narrative="邸报",
-            simulator_payload={"active_issues": []},
+            simulator_payload={"active_issues": [], "transit_semantics": []},
             relevant_memories=[], secret_orders={},
             before_turn=state.turn, _emit=lambda *a: None, content=content,
         )
@@ -654,7 +654,7 @@ def test_draft_degrade_does_not_abort_settlement(game, monkeypatch, tmp_path):
     _settle_after_narrative(
         state, db, None, None,
         decree_text="诏", narrative="邸报",
-        simulator_payload={"active_issues": []},
+        simulator_payload={"active_issues": [], "transit_semantics": []},
         relevant_memories=[], secret_orders={},
         before_turn=turn, _emit=lambda *a: None, content=content,
     )
@@ -698,7 +698,7 @@ def test_mixed_batch_shape_failure_degrades_whole_month(game, monkeypatch, tmp_p
     _settle_after_narrative(
         state, db, None, None,
         decree_text="诏", narrative="邸报",
-        simulator_payload={"active_issues": [{"issue_id": 42, "title": "陕西告饥"}]},
+        simulator_payload={"active_issues": [{"issue_id": 42, "title": "陕西告饥"}], "transit_semantics": []},
         relevant_memories=[], secret_orders={},
         before_turn=turn, _emit=lambda *a: None, content=content,
     )
@@ -740,7 +740,7 @@ def test_over_limit_legal_batch_degrades_whole_month_zero_rows(game, monkeypatch
     _settle_after_narrative(
         state, db, None, None,
         decree_text="诏", narrative="邸报",
-        simulator_payload={"active_issues": [{"issue_id": 42, "title": "陕西告饥"}]},
+        simulator_payload={"active_issues": [{"issue_id": 42, "title": "陕西告饥"}], "transit_semantics": []},
         relevant_memories=[], secret_orders={},
         before_turn=turn, _emit=lambda *a: None, content=content,
     )
@@ -781,7 +781,7 @@ def test_sixth_item_illegal_degrades_whole_month_zero_rows(game, monkeypatch, tm
     _settle_after_narrative(
         state, db, None, None,
         decree_text="诏", narrative="邸报",
-        simulator_payload={"active_issues": [{"issue_id": 42, "title": "陕西告饥"}]},
+        simulator_payload={"active_issues": [{"issue_id": 42, "title": "陕西告饥"}], "transit_semantics": []},
         relevant_memories=[], secret_orders={},
         before_turn=turn, _emit=lambda *a: None, content=content,
     )

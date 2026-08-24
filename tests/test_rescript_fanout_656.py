@@ -102,7 +102,7 @@ def test_settle_wires_rescript_draft_into_single_fanout(game, monkeypatch):
     decree_mod._settle_after_narrative(
         state, db, None, None,
         decree_text="诏", narrative="邸报",
-        simulator_payload={},
+        simulator_payload={"transit_semantics": []},
         relevant_memories=[], secret_orders={},
         before_turn=state.turn, _emit=lambda *a: None, content=content,
     )

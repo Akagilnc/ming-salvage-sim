@@ -75,7 +75,7 @@ def test_real_flow_injects_channel_enrichment_into_settle(game, monkeypatch):
     decree._settle_after_narrative(
         state, db, None, _cli_cfg(),
         decree_text="试旨", narrative="本月邸报。",
-        simulator_payload={}, relevant_memories=[], secret_orders=[],
+        simulator_payload={"transit_semantics": []}, relevant_memories=[], secret_orders=[],
         before_turn=state.turn, _emit=lambda *a, **k: None,
         content=content, registry=None,
     )
