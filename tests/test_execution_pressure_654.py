@@ -16,6 +16,8 @@ from ming_sim.execution_pressure import (
     BAND_MID,
     BAND_NEAR,
     TARGET_KINDS as EP_TARGET_KINDS,
+    _escape_tsv_cell,
+    _render_two_axis_tsv,
     build_execution_two_axis_surface,
     distance_semantic_band,
     fold_distance_band,
@@ -1225,6 +1227,177 @@ def test_two_axis_tsv_province_block_golden(env):
     # 两主办均在
     owner_blob = "\n".join(ln for ln in lines if ln.startswith("主办"))
     assert "毕自严" in owner_blob and "杨嗣昌" in owner_blob
+
+
+def test_two_axis_tsv_transport_framing_three_text_entrances():
+    """#654 TSV framing：title/owner_name/dutang_faction 控制符不破 19 列 ABI。
+
+    纯调 _render_two_axis_tsv；逐物理行验列数，禁靠行类前缀过滤（伪行可任意开头）。
+    """
+    title_raw = "甲\t伪列\n主办\tx"
+    owner_raw = "乙\t伪\n丙"
+    faction_raw = "甲\t伪\n主办\tx"
+    literal_bs_t = "\\t"  # two chars: backslash + t
+
+    provinces = [
+        {
+            "region_id": "shaanxi",
+            "province_open_count": 1,
+            "gentry_resistance": 0,
+            "bandit_pressure": 0,
+            "bandit_strength": "无",
+            "dutang_faction": faction_raw,
+            "dutang_integrity": "无记录",
+            "gentry_slice": None,
+            "officials_slice": None,
+            "disaster_rows": [
+                {
+                    "id": "d1",
+                    "kind": "灾情",
+                    "severity": 50,
+                    "title": title_raw,
+                },
+                {
+                    "id": "d2",
+                    "kind": "灾情",
+                    "severity": 10,
+                    "title": literal_bs_t,  # distinguish from raw TAB encode
+                },
+            ],
+            "owners": [
+                {
+                    "owner_name": owner_raw,
+                    "owner_open_count": 1,
+                    "owner_ability": 50,
+                    "owner_load": 1.0,
+                    "distance_semantic_band": BAND_LOCAL,
+                },
+            ],
+        }
+    ]
+
+    tsv = _render_two_axis_tsv(provinces)
+    physical = tsv.splitlines()
+    # 导语 + header + 灾×2 + 省盘×1 + 主办×1 = 6 物理行（无分裂残行）
+    assert len(physical) == 6, physical
+    assert physical[0].startswith("##")
+    header = physical[1]
+    assert len(header.split("\t")) == 19
+
+    data_lines = physical[2:]
+    assert len(data_lines) == 4
+    for ln in data_lines:
+        cells = ln.split("\t")
+        assert len(cells) == 19, (len(cells), ln)
+        # 单元格内无 raw TAB/LF/CR（split 已按 TAB；行内亦不得含 LF/CR）
+        assert "\n" not in ln and "\r" not in ln
+        for cell in cells:
+            assert "\t" not in cell
+            assert "\n" not in cell
+            assert "\r" not in cell
+
+    # 可逆可见编码：raw 控制符 → 字面 \t/\n；反斜杠可区分
+    assert "\\t" in tsv and "\\n" in tsv
+    # title 含 raw TAB+LF → 编码后出现 \t 与 \n（非 raw）
+    disaster_title_cell = data_lines[0].split("\t")[18]
+    assert disaster_title_cell == _escape_tsv_cell(title_raw)
+    assert disaster_title_cell == "甲\\t伪列\\n主办\\tx"
+    # 字面 \t（两字符）先翻倍反斜杠 → \\t，与 raw TAB 的 \t 可区分
+    literal_title_cell = data_lines[1].split("\t")[18]
+    assert literal_title_cell == _escape_tsv_cell(literal_bs_t)
+    assert literal_title_cell == "\\\\t"
+    assert literal_title_cell != disaster_title_cell
+
+    faction_cell = data_lines[2].split("\t")[6]
+    assert faction_cell == _escape_tsv_cell(faction_raw)
+    assert faction_cell == "甲\\t伪\\n主办\\tx"
+
+    owner_cell = data_lines[3].split("\t")[10]
+    assert owner_cell == _escape_tsv_cell(owner_raw)
+    assert owner_cell == "乙\\t伪\\n丙"
+
+    # durable/structured 不动：同一 fixture 原值仍含控制符
+    assert provinces[0]["dutang_faction"] is faction_raw
+    assert provinces[0]["dutang_faction"] == "甲\t伪\n主办\tx"
+    assert provinces[0]["disaster_rows"][0]["title"] is title_raw
+    assert provinces[0]["disaster_rows"][0]["title"] == "甲\t伪列\n主办\tx"
+    assert provinces[0]["owners"][0]["owner_name"] is owner_raw
+    assert provinces[0]["owners"][0]["owner_name"] == "乙\t伪\n丙"
+
+    # CR 变体
+    cr_provinces = [
+        {
+            "region_id": "henan",
+            "province_open_count": 0,
+            "gentry_resistance": 0,
+            "bandit_pressure": 0,
+            "bandit_strength": "无",
+            "dutang_faction": "派\r系",
+            "dutang_integrity": "无记录",
+            "gentry_slice": None,
+            "officials_slice": None,
+            "disaster_rows": [
+                {"id": "c1", "kind": "灾情", "severity": 1, "title": "题\r目"},
+            ],
+            "owners": [
+                {
+                    "owner_name": "主\r办",
+                    "owner_open_count": 0,
+                    "owner_ability": 1,
+                    "owner_load": 0.0,
+                    "distance_semantic_band": BAND_NEAR,
+                },
+            ],
+        }
+    ]
+    cr_tsv = _render_two_axis_tsv(cr_provinces)
+    cr_phys = cr_tsv.splitlines()
+    assert len(cr_phys) == 5  # 导语+header+灾+省+主办
+    for ln in cr_phys[2:]:
+        assert len(ln.split("\t")) == 19
+        assert "\r" not in ln
+    assert "\\r" in cr_tsv
+
+
+def test_two_axis_tsv_escape_noop_on_clean_cells():
+    """无控制符时转义 no-op，既有 golden 语义不漂移。"""
+    clean = "陕西饥荒"
+    assert _escape_tsv_cell(clean) == clean
+    assert _escape_tsv_cell(42) == "42"
+    assert _escape_tsv_cell(None) == "None"
+    provinces = [
+        {
+            "region_id": "shaanxi",
+            "province_open_count": 0,
+            "gentry_resistance": 0,
+            "bandit_pressure": 0,
+            "bandit_strength": "无",
+            "dutang_faction": "东林",
+            "dutang_integrity": "无记录",
+            "gentry_slice": None,
+            "officials_slice": None,
+            "disaster_rows": [
+                {"id": "x", "kind": "灾情", "severity": 1, "title": clean},
+            ],
+            "owners": [
+                {
+                    "owner_name": "毕自严",
+                    "owner_open_count": 1,
+                    "owner_ability": 70,
+                    "owner_load": 1.0,
+                    "distance_semantic_band": BAND_LOCAL,
+                },
+            ],
+        }
+    ]
+    tsv = _render_two_axis_tsv(provinces)
+    lines = tsv.splitlines()
+    assert len(lines) == 5
+    assert lines[2].endswith("\t" + clean)
+    assert "毕自严" in lines[4]
+    assert "东林" in lines[3]
+    # 无额外 escape 产物
+    assert "\\t" not in tsv and "\\n" not in tsv and "\\r" not in tsv
 
 
 def test_cli_target_kinds_accepts_canonical_eight():

@@ -470,6 +470,22 @@ def build_execution_two_axis_surface(db, turn: int = 0) -> Dict[str, object]:
     }
 
 
+def _escape_tsv_cell(value: object) -> str:
+    """TSV transport only: reversible encode of field/record separators."""
+    s = str(value)
+    return (
+        s.replace("\\", "\\\\")
+         .replace("\t", "\\t")
+         .replace("\n", "\\n")
+         .replace("\r", "\\r")
+    )
+
+
+def _tsv_data_row(cells: Sequence[object]) -> str:
+    """Join one 19-cell data row with per-cell transport escaping."""
+    return "\t".join(_escape_tsv_cell(c) for c in cells)
+
+
 def _render_two_axis_tsv(provinces: Sequence[Mapping[str, object]]) -> str:
     """一省一块投影：灾情行 → 省盘（含阶层切片）→ 主办行；无全局三段重排。"""
     header = (
@@ -488,7 +504,7 @@ def _render_two_axis_tsv(provinces: Sequence[Mapping[str, object]]) -> str:
             if not isinstance(dis, Mapping):
                 continue
             lines.append(
-                "\t".join([
+                _tsv_data_row([
                     "灾情",
                     rid,
                     "", "", "", "", "", "",
@@ -502,7 +518,7 @@ def _render_two_axis_tsv(provinces: Sequence[Mapping[str, object]]) -> str:
             )
         # ② 省摘要行（含 gentry_slice / officials_slice）
         lines.append(
-            "\t".join([
+            _tsv_data_row([
                 "省盘",
                 rid,
                 str(block.get("province_open_count")),
@@ -522,7 +538,7 @@ def _render_two_axis_tsv(provinces: Sequence[Mapping[str, object]]) -> str:
             if not isinstance(own, Mapping):
                 continue
             lines.append(
-                "\t".join([
+                _tsv_data_row([
                     "主办",
                     rid,
                     "", "", "", "", "", "",
