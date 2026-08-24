@@ -11,7 +11,6 @@ from fastapi import HTTPException
 from ming_sim.db import GameDB
 from ming_sim.session import AudienceAdmission, ChatTurnResult, GameSession
 from ming_sim import audience_night as an
-from ming_sim.decree import force_transit_arrivals
 from ming_sim.simulation import build_simulator_payload
 
 
@@ -36,6 +35,18 @@ def _set_place(game, name, *, location, transit_to="", transit_start_turn=None):
         )
     db.conn.commit()
     return content.characters[name]
+
+
+def _arrive_at_destination(game, name):
+    """Test helper: complete current transit via the unique write seam (no banned symbols)."""
+    db, _state, content = game
+    row = db.conn.execute(
+        "SELECT transit_to FROM characters WHERE name=?", (name,),
+    ).fetchone()
+    dest = str(row["transit_to"] or "")
+    assert dest, f"expected in-transit destination for {name!r}"
+    db.set_character_transit(name, location=dest, content=content, commit=True)
+    return [{"name": name, "location": dest}]
 
 
 def _travel_row(db, name):
@@ -268,7 +279,7 @@ def test_multi_origin_same_person_dedupes_consumer_projections_not_ledger(game):
     second_entry = next(row for row in unsettled if row["origin_id"] == origin_tool)
 
     # 抵非京 → arrived 每人 1 条（最早 origin），ledger 仍 2 行。
-    assert force_transit_arrivals(db, state, content) == [
+    assert _arrive_at_destination(game, person.name) == [
         {"name": person.name, "location": "henan"},
     ]
     arrived = an.list_arrived_unsettled_summons(db)
@@ -449,7 +460,7 @@ def test_arrived_summon_continuation_survives_failed_apply_across_months(game, m
         db, night_id, person.name, origin_id=origin,
     )
 
-    assert force_transit_arrivals(db, state, content) == [
+    assert _arrive_at_destination(game, person.name) == [
         {"name": person.name, "location": "henan"}
     ]
     arrived_fact = {
@@ -1165,7 +1176,7 @@ def test_continuation_arrival_projects_waiting_then_consume(game):
     entry_id = an.record_summon_in_transit(
         db, night_id, person.name, origin_id=origin,
     )
-    assert force_transit_arrivals(db, state, content) == [
+    assert _arrive_at_destination(game, person.name) == [
         {"name": person.name, "location": "henan"}
     ]
     assert an.list_arrived_unsettled_summons(db) == [{
@@ -1545,45 +1556,39 @@ def test_waiting_projection_survives_restore(game):
         restored.close()
 
 
-def test_non_capital_location_aliases_are_not_migrated_on_reopen(game):
-    """#670：非京旧档 location 不被 capital alias 迁移改写。"""
+def test_non_capital_location_aliases_migrate_on_reopen(game):
+    """#654 G / #670 merge B：非京精确别名重开时写回 canonical region_id。"""
     db, _state, content = game
     samples = {
-        "洪承畴": "南京",
-        "孙传庭": "江南",
-        "曹文诏": "西安",
-        "卢象升": "荆楚",
-        "袁崇焕": "闽地",
-        "祖大寿": "粤地",
-        "赵率教": "桂地",
+        "洪承畴": ("南京", "nanzhili"),
+        "孙传庭": ("江南", "nanzhili"),
+        "曹文诏": ("西安", "shaanxi"),
+        "卢象升": ("荆楚", "huguang"),
+        "袁崇焕": ("闽地", "fujian"),
+        "祖大寿": ("粤地", "guangdong"),
+        "赵率教": ("桂地", "guangxi"),
     }
-    for name, alias in samples.items():
+    for name, (alias, _canonical) in samples.items():
         _set_place(game, name, location=alias)
 
     path = db.path
     db.close()
     restored = GameDB(path, content)
     try:
-        for name, alias in samples.items():
+        for name, (_alias, canonical) in samples.items():
             row = restored.conn.execute(
                 "SELECT location FROM characters WHERE name=?", (name,)
             ).fetchone()
-            # 旧档值原样保留；迁移不得批量改写非京 alias。
-            assert row["location"] == alias, name
+            assert row["location"] == canonical, name
+            assert content.characters[name].location == canonical, name
     finally:
         restored.close()
 
 
-def test_shuntian_zhili_aliases_are_not_migrated_on_reopen(game):
-    """#670：顺天/直隶 可作匹配别名，但旧档 location 迁移不得写回。"""
-    from ming_sim.matching import is_capital_location, location_alias_rewrites
+def test_shuntian_zhili_aliases_migrate_on_reopen(game):
+    """#654 G / #670 merge B：顺天/直隶 匹配为在京，重开写回 beizhili。"""
+    from ming_sim.matching import is_capital_location
 
-    assert location_alias_rewrites() == [
-        ("京师", "beizhili"),
-        ("北京", "beizhili"),
-        ("beijing", "beizhili"),
-        ("北直隶", "beizhili"),
-    ]
     # 匹配/在京判断仍认顺天/直隶（REGION_SPECIAL_ALIASES 保留）。
     assert is_capital_location("顺天") is True
     assert is_capital_location("直隶") is True
@@ -1597,11 +1602,12 @@ def test_shuntian_zhili_aliases_are_not_migrated_on_reopen(game):
     db.close()
     restored = GameDB(path, content)
     try:
-        for name, alias in samples.items():
+        for name, _alias in samples.items():
             row = restored.conn.execute(
                 "SELECT location FROM characters WHERE name=?", (name,)
             ).fetchone()
-            assert row["location"] == alias, name
+            assert row["location"] == "beizhili", name
+            assert content.characters[name].location == "beizhili", name
     finally:
         restored.close()
 
@@ -1617,7 +1623,7 @@ def test_inactive_person_skips_continuation_and_retires_on_month(game):
     night_id = int(an.open_night(db, state)["id"])
     origin = "command:inactive-1"
     an.record_summon_in_transit(db, night_id, person.name, origin_id=origin)
-    assert force_transit_arrivals(db, state, content) == [
+    assert _arrive_at_destination(game, person.name) == [
         {"name": person.name, "location": "henan"}
     ]
     # ADR 0009：非 active 清 transit；此处直接标 dismissed 并清 transit。

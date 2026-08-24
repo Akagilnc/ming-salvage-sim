@@ -356,21 +356,18 @@ def test_driver_settle_freezes_dossier_roster_authority_at_input(game, monkeypat
         row["id"] for row in db.list_decree_dossiers()
         if row["secret_order_id"] == secret_order_id
     )
+    # prepare first; freeze happens at settle start (post-pre_settle, engine-aligned).
+    driver.run_prepare(db, state, content)
     created = {}
-    real_pre_settle = driver.pre_settle
-
-    def create_during_settle(state_arg, db_arg):
-        real_pre_settle(state_arg, db_arg)
-        created["id"] = db_arg.create_decree_dossier(
-            state_arg, action_type="assignment", decree_text="同批新案。",
-            target_kind="issue", target_id="same-batch",
-            participants=[{"character_id": lead, "tier": "主办"}],
-        )
-
-    monkeypatch.setattr(driver, "pre_settle", create_during_settle)
     real_persist = driver.persist_resolve_context
 
     def persist_with_same_batch_item(db_arg, turn, extracted, **kwargs):
+        # Create after freeze: must not expand roster-write authority.
+        created["id"] = db_arg.create_decree_dossier(
+            state, action_type="assignment", decree_text="同批新案。",
+            target_kind="issue", target_id="same-batch",
+            participants=[{"character_id": lead, "tier": "主办"}],
+        )
         extracted["dossier_participants"].append({
             "dossier_id": created["id"], "character_id": worker,
             "tier": "协办", "delegator_id": lead,
@@ -448,6 +445,7 @@ def test_driver_crash_persists_frozen_dossier_authority_for_replay(game, monkeyp
     )
 
     with pytest.raises(RuntimeError, match="crash after ready"):
+        driver.run_prepare(db, state, content)
         driver.run_settle(db, state, content, delta)
 
     ctx = db.get_resolve_context(state.turn)
@@ -834,7 +832,9 @@ def test_assignment_promulgation_tracks_executor_until_terminal_state(game):
 @pytest.mark.parametrize("entry", ("pending_commit", "confirm"))
 @pytest.mark.parametrize(
     ("action_type", "expected_executor_kind"),
-    (("military_order", "character"), ("policy", "")),
+    # #654：点将/assignee 入 named_leads 后与 duty-route 对称写 executor_*
+    # （含 policy；不再依赖 _directive_executor 白名单空落）
+    (("military_order", "character"), ("policy", "character")),
 )
 def test_directive_assignee_projects_to_executor_only_for_executable_types(
     game, entry, action_type, expected_executor_kind,
@@ -2438,6 +2438,7 @@ def test_session_manual_directive_keeps_structured_action_at_submission(
                 "dossier_action_type": "assignment",
                 "target_kind": "region",
                 "target_id": "河南",
+                "locality_scope": "single",
                 "assignee": _active_minister(session.db),
             },
         )
@@ -2555,9 +2556,17 @@ def test_allocation_rejects_unknown_economy_account_before_dossier_birth(game):
         },
     )
 
-    with pytest.raises(ValueError, match="account"):
-        db.ensure_dossiers_for_draft_directives(state)
+    # #654 路3：成案失败记 rejection、保持 draft，不向外抛
+    db.ensure_dossiers_for_draft_directives(state)
     assert db.get_dossier_for_directive(directive_id) is None
+    status = db.conn.execute(
+        "SELECT status FROM turn_directives WHERE id=?", (directive_id,),
+    ).fetchone()["status"]
+    assert status == "draft"
+    rej = db.conn.execute(
+        "SELECT reason FROM rejection_reports WHERE section='directive_locality'",
+    ).fetchall()
+    assert any("account" in str(r["reason"]) for r in rej)
 
 
 def test_underfunded_in_transit_allocation_closes_from_execution_state(game):
@@ -2572,6 +2581,9 @@ def test_underfunded_in_transit_allocation_closes_from_execution_state(game):
         payload={
             "account": "国库", "amount": 10,
             "execution_surface": "in_transit",
+            "locality_scope": "single",
+            "target_kind": "region",
+            "target_id": "shaanxi",
         },
     )
 
@@ -2628,9 +2640,17 @@ def test_incomplete_mechanical_directive_is_rejected_instead_of_retyped(
     directive_id = db.add_directive(
         state, None, "不完整机械旨意", "手动新增", dossier_payload=payload,
     )
-    with pytest.raises(ValueError):
-        db.ensure_dossiers_for_draft_directives(state)
+    # #654 路3：校验失败不抛穿；零行 + draft/rejection
+    db.ensure_dossiers_for_draft_directives(state)
     assert db.get_dossier_for_directive(directive_id) is None
+    status = db.conn.execute(
+        "SELECT status FROM turn_directives WHERE id=?", (directive_id,),
+    ).fetchone()["status"]
+    assert status == "draft"
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM rejection_reports "
+        "WHERE section='directive_locality'",
+    ).fetchone()["n"] >= 1
 
 
 def test_mechanical_directive_missing_target_fails_loudly_at_real_entry(game):
@@ -2645,9 +2665,20 @@ def test_mechanical_directive_missing_target_fails_loudly_at_real_entry(game):
             "execution_surface": "immediate",
         },
     )
-    with pytest.raises(ValueError, match="canonical target"):
-        db.ensure_dossiers_for_draft_directives(state)
+    # #654 路3：缺 canonical target → rejection，不抛穿
+    db.ensure_dossiers_for_draft_directives(state)
     assert db.get_dossier_for_directive(directive_id) is None
+    status = db.conn.execute(
+        "SELECT status FROM turn_directives WHERE id=?", (directive_id,),
+    ).fetchone()["status"]
+    assert status == "draft"
+    reasons = [
+        str(r["reason"])
+        for r in db.conn.execute(
+            "SELECT reason FROM rejection_reports WHERE section='directive_locality'",
+        ).fetchall()
+    ]
+    assert any("canonical target" in r or "target" in r for r in reasons)
 
 
 def test_secret_order_commitment_origin_maps_to_its_own_dossier(game):
@@ -2711,9 +2742,10 @@ def test_draft_extraction_does_not_capture_acting_appointment(monkeypatch, draft
         "命洪承畴暂署兵部尚书", "臣已拟妥", draft_count=draft_count,
     )
 
-    if draft_count == 1:
-        assert result["dossier_action_type"] != "acting_appointment"
-    else:
+    # 单/多旨等价：不捕获 acting_appointment 为草案
+    assert result["draft_action"] == "无"
+    assert result.get("dossier_action_type") != "acting_appointment"
+    if draft_count != 1:
         assert result["drafts"] == []
 
 
@@ -2767,6 +2799,10 @@ def test_executing_dossier_stays_visible_and_extractor_can_close_it(game):
         target_kind="region", target_id="shaanxi",
         executor_kind="character", executor_id=_active_minister(db),
         due_turn=state.turn + 3,
+        payload={
+            "target_kind": "region", "target_id": "shaanxi",
+            "locality_scope": "single",
+        },
     )
     db.apply_dossier_verdicts(
         state, [{"dossier_id": dossier_id, "decision": "promulgated"}],
@@ -2995,11 +3031,12 @@ def test_inner_treasury_admission_uses_actual_once_and_preserves_surface(
 
 def _complete_session(game):
     """GameSession construction contract on the fixture's real DB/state."""
-    from ming_sim.session import GameSession
+    from ming_sim.session import GameSession, _bind_all_content
 
     db, state, content = game
     session = GameSession.__new__(GameSession)
     session.content = content
+    _bind_all_content(content)
     session.llm_config = None
     session.db = db
     session.agno_db = None
@@ -3179,6 +3216,16 @@ def test_cli_protection_execution_closes_from_next_month_extractor(game, monkeyp
     )
     monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
     monkeypatch.setattr(decree_mod, "record_chapter_memory", lambda *a, **k: None)
+    # 护行颁布会落边事件；本测只钉 dossier 结案，跳过月末酿制 LLM 相
+    class _SkipBrewLeg:
+        def prepare(self):
+            return False
+
+    monkeypatch.setattr(
+        decree_mod,
+        "_make_relation_brew_runner",
+        lambda *_a, **_k: (lambda *_a2, **_k2: _SkipBrewLeg()),
+    )
 
     session.advance_without_decree()
 
@@ -3233,9 +3280,20 @@ def test_secret_authorization_rejects_missing_assignee_without_grant(game):
     directive_id = db.add_directive(
         state, None, "残缺密授权", "player_decree", dossier_payload=payload,
     )
-    with pytest.raises(ValueError, match="canonical assignee"):
-        db.ensure_dossiers_for_draft_directives(state)
+    # #654 路3：缺 assignee → rejection 保持 draft，不抛穿
+    db.ensure_dossiers_for_draft_directives(state)
     assert db.get_dossier_for_directive(directive_id) is None
+    status = db.conn.execute(
+        "SELECT status FROM turn_directives WHERE id=?", (directive_id,),
+    ).fetchone()["status"]
+    assert status == "draft"
+    reasons = [
+        str(r["reason"])
+        for r in db.conn.execute(
+            "SELECT reason FROM rejection_reports WHERE section='directive_locality'",
+        ).fetchall()
+    ]
+    assert any("assignee" in r for r in reasons)
     assert db.conn.execute("SELECT COUNT(*) FROM skill_grants").fetchone()[0] == before
     assert db.conn.execute(
         "SELECT COUNT(*) FROM skill_grants WHERE TRIM(character_name)='' OR TRIM(skill_id)=''"
@@ -3253,6 +3311,9 @@ def test_in_transit_allocation_requires_execution_verdict(game):
         payload={
             "account": "国库", "amount": 10,
             "execution_surface": "in_transit",
+            "locality_scope": "single",
+            "target_kind": "region",
+            "target_id": "shaanxi",
         },
     )
     db.apply_dossier_verdicts(
