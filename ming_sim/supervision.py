@@ -142,10 +142,7 @@ def is_reported_actual_fork(
     beyond_intent: bool,
     execution_outcome: object,
 ) -> bool:
-    """#622/#627 fork 判据单源：奏报面有 band，且（旨外实况 或 执行格非 fulfilled/executing/空）。
-
-    全库仅此一处表达该谓词；读端（#622 稽核信号 / #627 检举）共调。
-    """
+    """#622/#627 fork 判据单源：有奏报且奏报与旨外实况或偏离执行格分叉。"""
     bands = [
         str(b).strip()
         for b in (reported_bands or ())
