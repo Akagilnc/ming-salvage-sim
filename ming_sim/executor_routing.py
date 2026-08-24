@@ -8,6 +8,7 @@
 未命中映射 ≠ 无人可承：fail-loud 产结构化 rejection 供观测补条目，不落怠办。
 
 签名不接自由文本、无 LLM、判官零指认；同一旨意+同一官职档案 → 同一主办。
+#654：national fan-out 子行经 region_id 接缝解析该省对口在任主官。
 """
 
 from __future__ import annotations
@@ -76,7 +77,26 @@ def duty_route_office_type(category: object) -> Optional[str]:
 # ── 在任者查表＋缺位降档链 ───────────────────────────────────────────
 
 
-def _holders_in_office(conn: sqlite3.Connection, office_type: str) -> List[sqlite3.Row]:
+def _holders_in_office(
+    conn: sqlite3.Connection,
+    office_type: str,
+    *,
+    region_id: str = "",
+) -> List[sqlite3.Row]:
+    rid = str(region_id or "").strip()
+    if rid:
+        return list(
+            conn.execute(
+                "SELECT c.name AS name, c.office AS office,"
+                " COALESCE(co.appointment_tenure, '真除') AS tenure"
+                " FROM characters c LEFT JOIN character_offices co"
+                " ON co.character_name = c.name"
+                " WHERE c.office_type=? AND c.status='active' AND c.power_id='ming'"
+                " AND c.location=?"
+                " ORDER BY c.name",
+                (office_type, rid),
+            )
+        )
     return list(
         conn.execute(
             "SELECT c.name AS name, c.office AS office,"
@@ -90,9 +110,14 @@ def _holders_in_office(conn: sqlite3.Connection, office_type: str) -> List[sqlit
     )
 
 
-def _downgrade_chain(conn: sqlite3.Connection, office_type: str) -> tuple:
+def _downgrade_chain(
+    conn: sqlite3.Connection,
+    office_type: str,
+    *,
+    region_id: str = "",
+) -> tuple:
     """主官→署理降档，确定性（同名序 tie-break）。命中返回 (name, step)。"""
-    rows = _holders_in_office(conn, office_type)
+    rows = _holders_in_office(conn, office_type, region_id=region_id)
     acting_tenures = {"署理", "兼署"}
     chiefs = [
         r["name"]
@@ -124,14 +149,26 @@ def resolve_lead_executors(
     target_id: object = "",
     payload: Optional[Mapping[str, object]] = None,
     participant_roster: object = None,
+    region_id: object = "",
 ) -> Dict[str, object]:
     """确定性双源路由（ADR 0117 净新契约 a）：返回结构化路由结果。
 
     leads 有序去重；signal.code='idle_start'＝怠办起步（缺位链穷尽或任免无
     被任命者），rejection 非 None＝映射未命中 fail-loud（两者互斥、不同时落）。
+
+    region_id 非空时：national fan-out 白名单动作若原 coverage 为空则升 multi_month；
+    职司在任者按 characters.location 过滤到该省。空 region_id 保持中央职司现状。
     """
     canonical_payload = payload or {}
+    action = str(action_type or "").strip()
+    rid = str(region_id or "").strip()
     coverage = classify_execution_coverage(action_type, canonical_payload)
+    # #654：national 子行（region_id 非空）上 policy/special_decree 进入 multi_month；
+    # 无 region_id 的京内 policy 仍 excluded（test_excluded_action_stops_before_duty_routing）。
+    if coverage is None and rid:
+        from ming_sim.decree_vocabulary import NATIONAL_FANOUT_ACTION_TYPES
+        if action in NATIONAL_FANOUT_ACTION_TYPES:
+            coverage = "multi_month"
     if coverage is None:
         return {
             "coverage": None, "route": "excluded", "office_type": "", "leads": [],
@@ -192,7 +229,7 @@ def resolve_lead_executors(
             "rejection": None,
         }
 
-    # ③ 职司表兜底：事务类别（结构化闭集 token）→ 职司 → 在任主官
+    # ③ 职司表兜底：事务类别（结构化闭集 token）→ 职司 → 在任主官（可按省过滤）
     category = str(canonical_payload.get("transaction_category") or "").strip()
     office_type = duty_route_office_type(category)
     if office_type is None:
@@ -210,7 +247,7 @@ def resolve_lead_executors(
                 "category": category,
             },
         }
-    holder, step = _downgrade_chain(conn, office_type)
+    holder, step = _downgrade_chain(conn, office_type, region_id=rid)
     if holder:
         return {
             "coverage": coverage,

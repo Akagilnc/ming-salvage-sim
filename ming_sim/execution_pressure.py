@@ -8,16 +8,18 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from ming_sim.decree_vocabulary import NATIONAL_FANOUT_ACTION_TYPES
 from ming_sim.distance import DistanceMatrix
 from ming_sim.matching import match_region_id_from_text
 from ming_sim.paths import bundled_path
 
+# 七值 target_kind 单一真源（durable / producer 共引）
 TARGET_KINDS = frozenset({
     "policy", "character", "office", "army", "region", "issue", "account",
 })
+# 归一后合法 locality_scope 闭集
 LOCALITY_SCOPES = frozenset({"national", "single", "none"})
 _SCOPE_ALIASES = {
     "全国": "national",
@@ -40,8 +42,6 @@ BAND_NEAR = "邻近之地，全程约一月量级"
 BAND_MID = "中途之程，全程约二三月量级"
 BAND_FAR = "边远之途，全程约三月以上量级"
 
-_DISTANCE_MATRIX: Optional[DistanceMatrix] = None
-
 
 def normalize_locality_scope(raw: object) -> str:
     """{'全国'/'单省'/'无'/缺省 → national/single/none}；枚举外 fail-loud。"""
@@ -51,17 +51,19 @@ def normalize_locality_scope(raw: object) -> str:
     if not text:
         return "none"
     if text in _SCOPE_ALIASES:
-        return _SCOPE_ALIASES[text]
-    raise ValueError(f"locality_scope 非法：{raw!r}")
+        scope = _SCOPE_ALIASES[text]
+    else:
+        scope = text
+    if scope not in LOCALITY_SCOPES:
+        raise ValueError(f"locality_scope 非法：{raw!r}")
+    return scope
 
 
-def _distance_matrix() -> DistanceMatrix:
-    global _DISTANCE_MATRIX
-    if _DISTANCE_MATRIX is None:
-        _DISTANCE_MATRIX = DistanceMatrix.from_file(
-            bundled_path("content", "distance_matrix.json"),
-        )
-    return _DISTANCE_MATRIX
+def _load_distance_matrix() -> DistanceMatrix:
+    """每次调用装载；禁止模块级可变缓存（r3-A.1 / r4-A）。"""
+    return DistanceMatrix.from_file(
+        bundled_path("content", "distance_matrix.json"),
+    )
 
 
 def fold_distance_band(travel_months: float) -> str:
@@ -94,7 +96,8 @@ def distance_semantic_band(
         return ABSENT  # D3
     if loc == rid:
         return BAND_LOCAL  # D4
-    m = matrix if matrix is not None else _distance_matrix()
+    # 未传入 matrix 时函数内局部装载，不写模块全局
+    m = matrix if matrix is not None else _load_distance_matrix()
     return fold_distance_band(m.travel_time(loc, rid))  # D5 / D6
 
 
@@ -163,34 +166,25 @@ def resolve_dossier_region_ids(
     """属地三分 oracle → 本案应落的 region_id 列表（确定序）。
 
     组合校验先于 region 解析（r4-B）。返回 [''] 表示非属地单行。
+    region 缺省 / none / national 一律 fail-loud（无兼容暗升或空串降级）。
     """
     action = str(action_type or "").strip()
     target_kind = str(payload.get("target_kind") or "").strip()
     if target_kind not in TARGET_KINDS:
         raise ValueError(f"target_kind 非法：{target_kind!r}")
     raw_scope = payload.get("locality_scope")
-    scope_declared = raw_scope is not None and str(raw_scope).strip() != ""
     scope = normalize_locality_scope(raw_scope)
     target_id = str(payload.get("target_id") or "").strip()
 
-    # r4-B：组合矩阵；R1 = region∧single
-    # - 显式 single：零命中/歧义 fail-loud
-    # - 未申报 scope 的旧 region 载荷：能解析则落省，不能则 region_id=''（不入属地账，不挡成案）
+    # r4-B 21 格：R1 = region ∧ single
     if target_kind == "region":
-        if scope == "single":
-            return [_resolve_single_region_id(
-                conn, target_id, regions_content=regions_content,
-            )]
-        if scope == "none" and not scope_declared:
-            try:
-                return [_resolve_single_region_id(
-                    conn, target_id, regions_content=regions_content,
-                )]
-            except ValueError:
-                return [""]
-        raise ValueError(
-            f"region 目标与 locality_scope={scope!r} 矛盾（须 single）"
-        )
+        if scope != "single":
+            raise ValueError(
+                f"region 目标与 locality_scope={scope!r} 矛盾（须 single）"
+            )
+        return [_resolve_single_region_id(
+            conn, target_id, regions_content=regions_content,
+        )]
 
     if scope == "single":
         raise ValueError(
@@ -212,7 +206,7 @@ def resolve_dossier_region_ids(
             raise ValueError("全国 fan-out 省集合为空")
         return provinces
 
-    # scope == none
+    # scope == none：policy/issue/account/character/office/army → 单行 ''
     return [""]
 
 
@@ -229,6 +223,17 @@ def _class_slice(conn, name: str, region_id: str) -> object:
         "satisfaction": int(row["satisfaction"]),
         "leverage": int(row["leverage"]),
     }
+
+
+def _format_class_slice(value: object) -> str:
+    """TSV 运输：有记录 → pop/sat/lev；哨兵原样。"""
+    if isinstance(value, Mapping):
+        return (
+            f"{int(value.get('population', 0))}/"
+            f"{int(value.get('satisfaction', 0))}/"
+            f"{int(value.get('leverage', 0))}"
+        )
+    return str(value)
 
 
 def _dutang_fields(conn, region_id: str) -> Tuple[object, object]:
@@ -326,10 +331,11 @@ def build_execution_two_axis_surface(db, turn: int = 0) -> Dict[str, object]:
     """接口层纯函数：DB 状态 → 两轴清单（结构化 + TSV 文本）。
 
     只读；零 LLM / 零时钟 / 零随机。turn 保留签名位（调用方对齐），不参与计算。
+    builder 内一次装载距离矩阵并经参下传（r3-A.1）。
     """
     del turn  # 清单只读当前 executing 态，不按 turn 过滤
     conn = db.conn
-    matrix = _distance_matrix()
+    matrix = _load_distance_matrix()
     owner_counts = _owner_open_counts(conn)
     province_counts = _province_open_counts(conn)
 
@@ -449,21 +455,39 @@ def build_execution_two_axis_surface(db, turn: int = 0) -> Dict[str, object]:
 
 
 def _render_two_axis_tsv(provinces: Sequence[Mapping[str, object]]) -> str:
-    """中文表头 TSV，供 issues extractor prompt 消费。"""
+    """一省一块投影：灾情行 → 省盘（含阶层切片）→ 主办行；无全局三段重排。"""
+    header = (
+        "行类\t省\t省在办数\t士绅阻力\t流寇压力\t贼强度\t督抚派系\t督抚操守"
+        "\t士绅盘\t官僚盘\t主办\t在办数\t能力\t负荷\t距离档"
+        "\t灾情id\t灾种\t严重度\t标题"
+    )
     lines: List[str] = [
         "## 差务两轴清单（TSV；带宽=忙→拖磨，阻力=顶→变形）",
-        "省\t省在办数\t士绅阻力\t流寇压力\t贼强度\t督抚派系\t督抚操守",
-    ]
-    owner_lines: List[str] = [
-        "省\t主办\t在办数\t能力\t负荷\t距离档",
-    ]
-    disaster_lines: List[str] = [
-        "省\t灾情id\t灾种\t严重度\t标题",
+        header,
     ]
     for block in provinces:
         rid = str(block.get("region_id") or "") or "（非属地）"
+        # ① 本省灾情行（builder 已 severity DESC, id ASC）
+        for dis in block.get("disaster_rows") or []:
+            if not isinstance(dis, Mapping):
+                continue
+            lines.append(
+                "\t".join([
+                    "灾情",
+                    rid,
+                    "", "", "", "", "", "",
+                    "", "",
+                    "", "", "", "", "",
+                    str(dis.get("id")),
+                    str(dis.get("kind") or ""),
+                    str(dis.get("severity")),
+                    str(dis.get("title") or ""),
+                ])
+            )
+        # ② 省摘要行（含 gentry_slice / officials_slice）
         lines.append(
             "\t".join([
+                "省盘",
                 rid,
                 str(block.get("province_open_count")),
                 str(block.get("gentry_resistance")),
@@ -471,34 +495,28 @@ def _render_two_axis_tsv(provinces: Sequence[Mapping[str, object]]) -> str:
                 str(block.get("bandit_strength")),
                 str(block.get("dutang_faction")),
                 str(block.get("dutang_integrity")),
+                _format_class_slice(block.get("gentry_slice")),
+                _format_class_slice(block.get("officials_slice")),
+                "", "", "", "", "",
+                "", "", "", "",
             ])
         )
+        # ③ 主办行
         for own in block.get("owners") or []:
             if not isinstance(own, Mapping):
                 continue
-            owner_lines.append(
+            lines.append(
                 "\t".join([
+                    "主办",
                     rid,
+                    "", "", "", "", "", "",
+                    "", "",
                     str(own.get("owner_name") or ""),
                     str(own.get("owner_open_count")),
                     str(own.get("owner_ability")),
                     str(own.get("owner_load")),
                     str(own.get("distance_semantic_band") or ""),
+                    "", "", "", "",
                 ])
             )
-        for dis in block.get("disaster_rows") or []:
-            if not isinstance(dis, Mapping):
-                continue
-            disaster_lines.append(
-                "\t".join([
-                    rid,
-                    str(dis.get("id")),
-                    str(dis.get("kind") or ""),
-                    str(dis.get("severity")),
-                    str(dis.get("title") or ""),
-                ])
-            )
-    parts = ["\n".join(lines), "\n".join(owner_lines)]
-    if len(disaster_lines) > 1:
-        parts.append("\n".join(disaster_lines))
-    return "\n\n".join(parts)
+    return "\n".join(lines)

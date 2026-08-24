@@ -377,9 +377,9 @@ def test_pending_directive_commit_failure_propagates_and_rolls_back_outer_atomic
 
     monkeypatch.setattr(db, "_apply_pending_action", _boom_after_draft)
 
-    with pytest.raises(RuntimeError, match="directive commit boom"):
-        with atomic(db):
-            db.commit_pending_actions(state, kind_filter="directive")
+    # #654 路1：directive 成案异常不崩外层结算——SAVEPOINT 回滚后标 failed
+    with atomic(db):
+        db.commit_pending_actions(state, kind_filter="directive")
 
     assert db.conn.execute(
         "SELECT COUNT(*) FROM turn_directives WHERE turn=?", (state.turn,)).fetchone()[0] == 0
@@ -387,7 +387,7 @@ def test_pending_directive_commit_failure_propagates_and_rolls_back_outer_atomic
         "SELECT status, committed_directive_id FROM pending_actions WHERE turn=?",
         (state.turn,),
     ).fetchone()
-    assert row["status"] == "pending"
+    assert row["status"] == "failed"
     assert int(row["committed_directive_id"] or 0) == 0
 
 
@@ -1588,8 +1588,8 @@ def test_commit_directive_rolls_back_draft_when_bookkeeping_update_fails(game):
     )
     db.conn.commit()
 
-    with pytest.raises(sqlite3.IntegrityError, match="simulated committed_directive_id failure"):
-        db.commit_pending_actions(state, kind_filter="directive")
+    # #654 路1：回填失败经 SAVEPOINT 吞没 → failed，不留 orphan draft
+    db.commit_pending_actions(state, kind_filter="directive")
 
     assert db.conn.execute(
         "SELECT COUNT(*) FROM turn_directives WHERE turn=?", (state.turn,)
@@ -1598,7 +1598,7 @@ def test_commit_directive_rolls_back_draft_when_bookkeeping_update_fails(game):
         "SELECT status, committed_directive_id FROM pending_actions WHERE turn=?",
         (state.turn,),
     ).fetchone()
-    assert status["status"] == "pending"
+    assert status["status"] == "failed"
     assert int(status["committed_directive_id"] or 0) == 0
 
 
