@@ -151,10 +151,12 @@ describe("NodeIntel #1352 garrison layout / army-list口径", () => {
     expect(host.textContent).toContain("28000");
     expect(host.textContent).not.toMatch(/(?<![\d])2800(?![\d])/);
     expect(host.textContent).toMatch(/1\.1\s*万/);
-    // 表头保留完整「士气」词（布局 class 钉 nowrap，禁拆字）
-    const headers = Array.from(host.querySelectorAll(".intel-table thead th")).map((th) => th.textContent || "");
+    // 表头保留完整「士气」「军心」词（布局 class 钉 nowrap，禁拆字）
+    const headers = Array.from(host.querySelectorAll(".intel-table--garrison thead th")).map((th) => th.textContent || "");
     expect(headers.some((h) => h.includes("士气"))).toBe(true);
+    expect(headers.some((h) => h.includes("军心"))).toBe(true);
     expect(host.querySelector(".intel-table--garrison")).not.toBeNull();
+    expect(host.textContent).toContain("不满"); // makeArmy 默认 mutiny_tier
   });
 
   // #321 AC1 链1 map：morale_text / arrears_text 直出，禁 raw 二次 map
@@ -170,8 +172,34 @@ describe("NodeIntel #1352 garrison layout / army-list口径", () => {
       const host = renderNodeIntel(node);
       expect(host.textContent).toContain(morale_text);
       expect(host.textContent).toContain(arrears_text);
+      expect(host.textContent).toContain("哗变");
       expect(host.textContent).not.toMatch(/危殆|浮动|不稳|稳固/);
       expect(host.textContent).not.toContain("12.5");
     }
+  );
+
+  // #321 AC1 链1 map：六档 mutiny_tier 直出，无二次 map / raw 轴 / 旧 loyalty 五档
+  it.each(["死忠", "优秀", "一般", "不满", "鼓噪", "哗变"] as const)(
+    "renders mutiny_tier %s verbatim without loyalty remap",
+    (tier) => {
+      const node = makeNode(makeRegion({ name: "山海关", id: "shanhaiguan" }));
+      node.armies = [
+        makeArmy({
+          mutiny_tier: tier,
+          morale_text: "士气：不振",
+          arrears_text: "无欠饷",
+        }),
+      ];
+      const host = renderNodeIntel(node);
+      expect(host.textContent).toContain(tier);
+      expect(host.textContent).toContain("士气：不振");
+      expect(host.textContent).toContain("无欠饷");
+      const headers = Array.from(host.querySelectorAll(".intel-table--garrison thead th")).map(
+        (th) => th.textContent || "",
+      );
+      expect(headers).toContain("军心");
+      expect(host.textContent).not.toMatch(/危殆|浮动|不稳|稳固/);
+      expect(host.textContent).not.toMatch(/\bmorale\b|\bloyalty\b|\barrears\b/);
+    },
   );
 });
