@@ -685,5 +685,46 @@
         "白丁"
       ]
     }
-  ]
+  ],
+  "duty_routes": {
+    "_doc": "ADR 0117（#721）事务类别→职司确定性映射：offices.json 同族显式扩展数据件（非新机制）。routes 按 priority 首中即胜、无 LLM；category 是机读闭集 token（结构化字段，路由签名不接自由文本）。未命中=归口缺口，调用方 fail-loud 进 rejections（不是怠办）；缺位降档链只辖映射命中但在任者出缺。扩条清单：钱粮/清丈/督赈→户部，缉拿→锦衣卫，缉捕→刑部，河工→工部；chief_stems 含指挥使（锦衣卫主官田尔耕·锦衣卫都指挥使）。",
+    "routes": [
+      {
+        "category": "钱粮",
+        "office_type": "户部"
+      },
+      {
+        "category": "清丈",
+        "office_type": "户部"
+      },
+      {
+        "category": "督赈",
+        "office_type": "户部"
+      },
+      {
+        "category": "缉拿",
+        "office_type": "锦衣卫"
+      },
+      {
+        "category": "缉捕",
+        "office_type": "刑部"
+      },
+      {
+        "category": "河工",
+        "office_type": "工部"
+      }
+    ],
+    "chief_stems": [
+      "尚书",
+      "总督",
+      "都御史",
+      "提督",
+      "掌印",
+      "厂公",
+      "指挥使"
+    ],
+    "deputy_stems": [
+      "侍郎"
+    ]
+  }
 }

@@ -538,13 +538,19 @@ def test_ac4_unified_presence_gate_on_terminal_and_recon_paths(game):
 
 
 def test_owner_identity_single_source_shared_with_tenure():
-    """①归属人单源：executor 优先，否则首名主办；#613 任别共调。"""
-    by_executor = {
+    """①归属人单源：首名 canonical 主办优先，缺档才读 legacy executor；#613 任别共调。"""
+    by_roster_over_executor = {
         "executor_id": "张居正",
         "executor_kind": "character",
         "participant_roster": [{"character_id": "他人", "tier": "主办"}],
     }
-    assert resolve_dossier_owner_name(by_executor) == "张居正"
+    assert resolve_dossier_owner_name(by_roster_over_executor) == "他人"
+    by_legacy_executor = {
+        "executor_id": "张居正",
+        "executor_kind": "character",
+        "participant_roster": [],
+    }
+    assert resolve_dossier_owner_name(by_legacy_executor) == "张居正"
     by_roster = {
         "executor_id": "",
         "executor_kind": "",

@@ -85,10 +85,11 @@
 `participant_roster`）数组；每项使用 `{"character_id":"人物规范名","tier":"主办|协办|知情","role":"职分"}`。
 不要输出 Python 字典字符串，也不要把整段人物对象塞进名字字段。没有明确参与人时填 `[]`。
 
-`新立局势` 只允许两个来源：
+`新立局势` 只允许三个来源：
 
 1. `来源类型:"decree"`：诏书明文启动的长期工程、改革、案、清丈、招抚等多回合事项。必须给全字段：`类型`/`标题`/`来源类型`/`当前进度`/`预计月数`/`阶段`/`解决条件`/`失败条件`/`持续效果`/`解决效果`/`失败效果`/`可撤销`。
 2. `来源类型:"event_pool"`：邸报写明已浮现的候选事件。只填 `来源类型` 和 `编号`，且 `编号` 必须来自 input 的 `candidate_events`。
+3. `candidate_events` 中 `origin_kind:"impeachment_surge"` 的动态发难候选：发难派系角色依据 `faction_persona` 自主决定是否发难；不输出即不发难。发难时只输出 `origin_kind:"impeachment_surge"`、`candidate_id`（候选 `id`）、`faction_hint`（候选 `faction_id`）、`target_roster`、`title`、`stage_text`；`target_roster` 是无角色的去重人物身份列表，标靶必须来自候选 `eligible_target_ids`，不得输出 tier/role/delegator_id。`title` 与 `stage_text` 由角色自由生成，不复写候选事实字段。
 
 **圣旨承诺 form①（每月 X 直到补齐）必须立承诺 issue**：若诏书含「今后每月/按月/逐月拨付 X，直到补齐欠饷/补足某条件」这类持续承诺，不要写成一次性钱粮，也不要只推进旧 issue；写 `新立局势` 的 `来源类型:"decree"`、`类型:"initiative"`，并显式带承诺字段：
 - `origin_ref`：只能从 `extractor_context.decree_dossiers` 选择本承诺所属行的

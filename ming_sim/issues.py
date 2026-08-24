@@ -31,6 +31,7 @@ from ming_sim.paths import bundled_path
 from ming_sim.db import (
     GameDB,
     POPULATION_UNIT_PERSONS,
+    _LEVERAGE_FACTIONS,
     _approx_wanliang,
     infer_office_type_from_office,
     normalize_office,
@@ -55,6 +56,7 @@ from ming_sim.flows import (
     _strict_int,
 )
 from ming_sim.models import Event, GameState, effect_dict_has_work, is_vassal_prince, loads_effect_dict
+from ming_sim.participant_roster import project_execution_liability_parties
 from ming_sim.person_archive_contract import (
     PERSON_ALLEGIANCE_CHANGE_WAYS,
     PERSON_IDENTITY_TITLES,
@@ -1170,6 +1172,10 @@ def issue_to_payload(
     commitment_kind = row["commitment_kind"] if "commitment_kind" in keys else ""
     stop_condition = row["stop_condition"] if "stop_condition" in keys else ""
     end_turn = int(row["end_turn"]) if "end_turn" in keys else 0
+    target_roster = (
+        json.loads(str(row["target_roster"] or "[]"))
+        if "target_roster" in keys else []
+    )
     payload = {
         "issue_id": int(row["id"]),
         "kind": row["kind"],
@@ -1183,6 +1189,7 @@ def issue_to_payload(
         "结案条件": resolve_cond or "(未填)",
         "失败条件": fail_cond or "(未填)",
         "cancellable": row["cancellable"],
+        "target_roster": target_roster,
         f"上{TURN_UNIT}推进": (
             {
                 "delta_bar": int(recent_advances[0]["delta_bar"]),
@@ -2530,6 +2537,136 @@ def _gate_passed(gate: Dict[str, str], metrics: Dict[str, int], db: GameDB) -> b
         if op == "==" and not val == num:
             return False
     return True
+
+
+def gather_impeachment_surge_candidates(state: GameState, db: GameDB) -> List[Dict[str, object]]:
+    """Project canonical dynamic candidates from transformed dossier facts.
+
+    Other disaster legs deliberately have no adapter until their owning producers
+    provide a durable occurrence and responsibility interface.
+    """
+    facts = db.build_faction_denunciation_facts()
+    situations = {
+        str(item.get("faction") or ""): item
+        for item in facts.get("faction_situations", [])
+        if isinstance(item, dict)
+    }
+    personas_by_faction: Dict[str, List[Dict[str, object]]] = {}
+    for item in facts.get("character_personas", []):
+        if isinstance(item, dict):
+            personas_by_faction.setdefault(str(item.get("faction") or ""), []).append(item)
+
+    rows = db.conn.execute(
+        "SELECT id,closed_turn,participant_roster,decree_text,execution_note,execution_outcome "
+        "FROM decree_dossiers "
+        "WHERE execution_outcome='transformed' AND closed_turn BETWEEN ? AND ? ORDER BY id",
+        (max(0, int(state.turn) - 1), int(state.turn)),
+    ).fetchall()
+    candidates: List[Dict[str, object]] = []
+    for row in rows:
+        did = int(row["id"])
+        # #622/#1260 单源：仅有旨外 durable 的变形才构成 deformation_exposure。
+        if not db.dossier_has_beyond_intent(did):
+            continue
+        try:
+            roster = json.loads(str(row["participant_roster"] or "[]"))
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(roster, list) or not roster:
+            continue
+        participant_ids = [
+            str(item.get("character_id") or "").strip()
+            for item in roster if isinstance(item, dict) and str(item.get("character_id") or "").strip()
+        ]
+        if len(participant_ids) != len(roster) or not participant_ids:
+            continue
+        liability = project_execution_liability_parties(roster)
+        responsible_ids = [
+            str(item.get("character_id") or "").strip() for item in liability
+            if str(item.get("character_id") or "").strip()
+        ]
+        if not responsible_ids:
+            continue
+        # 存在门只看责任集；知情/协办离场不得 any() 否决整卷。
+        placeholders = ",".join("?" for _ in responsible_ids)
+        chars = db.conn.execute(
+            f"SELECT name,faction,status FROM characters WHERE name IN ({placeholders})",
+            responsible_ids,
+        ).fetchall()
+        char_by_name = {str(item["name"]): item for item in chars}
+        if any(
+            name not in char_by_name
+            or str(char_by_name[name]["status"] or "") != "active"
+            or not str(char_by_name[name]["faction"] or "").strip()
+            for name in responsible_ids
+        ):
+            continue
+        responsible_factions = list(dict.fromkeys(
+            str(char_by_name[name]["faction"]) for name in responsible_ids
+        ))
+        # 闭集：在朝 participant ∪ 在朝 responsible（含仅 delegator_id 连坐）。
+        union_ids = list(dict.fromkeys([*participant_ids, *responsible_ids]))
+        missing = [name for name in union_ids if name not in char_by_name]
+        if missing:
+            missing_ph = ",".join("?" for _ in missing)
+            for item in db.conn.execute(
+                f"SELECT name,faction,status FROM characters WHERE name IN ({missing_ph})",
+                missing,
+            ).fetchall():
+                char_by_name[str(item["name"])] = item
+        eligible_target_ids = [
+            name for name in union_ids
+            if name in char_by_name
+            and str(char_by_name[name]["status"] or "") == "active"
+            and str(char_by_name[name]["faction"] or "").strip()
+        ]
+        if not eligible_target_ids:
+            continue
+        fork_state = db.read_dossier_fork_state(did)
+        beyond_intent_effects = [
+            dict(effect)
+            for effect in db.list_dossier_durable_effects(did)
+            if bool(effect.get("beyond_intent"))
+        ]
+        origin_ref = f"commitment:{did}:deformation_exposure"
+        for faction in sorted(_LEVERAGE_FACTIONS):
+            if faction in responsible_factions or db.faction_leverage(faction) < 60:
+                continue
+            situation = situations.get(faction)
+            personas = personas_by_faction.get(faction, [])
+            if not situation or not personas:
+                continue
+            if db.conn.execute(
+                "SELECT 1 FROM issues WHERE origin_kind='impeachment_surge' "
+                "AND origin_ref=? AND faction_hint=? LIMIT 1", (origin_ref, faction),
+            ).fetchone():
+                continue
+            candidate_id = f"impeachment_surge:{origin_ref}:{faction}"
+            candidates.append({
+                "id": candidate_id,
+                "origin_kind": "impeachment_surge",
+                "origin_ref": origin_ref,
+                "source_kind": "deformation_exposure",
+                "occurred_turn": int(row["closed_turn"]),
+                "faction_id": faction,
+                "faction_persona": {
+                    "faction_situations": [dict(situation)],
+                    "character_personas": [dict(item) for item in personas],
+                },
+                "eligible_target_ids": eligible_target_ids,
+                "participant_ids": participant_ids,
+                "responsible_person_ids": responsible_ids,
+                "responsible_faction_ids": responsible_factions,
+                "dossier_id": did,
+                "decree_text": str(row["decree_text"] or "").strip(),
+                "execution_note": str(row["execution_note"] or "").strip(),
+                "execution_outcome": str(row["execution_outcome"] or "").strip(),
+                "beyond_intent": True,
+                "reported_bands": list(fork_state.get("reported_bands") or []),
+                "actual_effect_count": int(fork_state.get("actual_effect_count") or 0),
+                "beyond_intent_effects": beyond_intent_effects,
+            })
+    return candidates
 
 
 def gather_candidate_events(state: GameState, db: GameDB) -> List[Event]:
@@ -4872,6 +5009,7 @@ def apply_issue_tracker_output(
     allow_legacy_partial_power_for_gates: bool = False,
     candidate_event_ids_at_input: Optional[set[str]] = None,
     candidate_event_ids_authoritative: bool = False,
+    impeachment_surge_candidates_at_input: Optional[List[Dict[str, object]]] = None,
     event_result_delta_event_ids: Optional[set[str]] = None,
     defer_event_trigger_ids: Optional[set[str]] = None,
 ) -> Dict[str, object]:
@@ -5043,11 +5181,10 @@ def apply_issue_tracker_output(
             "narrative": narrative,
         })
 
-    # 2) new_issues：接两种来源——
-    #    decree     —— 玩家诏书强推，由 LLM 给字段新立 issue
-    #    event_pool —— 预设事件（EVENTS/SEED_EVENTS）被推演判定触发，按预设 event 立 issue
-    #    其它来源一律拒。
+    # 2) new_issues：接三种来源——decree、静态 event_pool，以及
+    #    当前输入事实可重验的动态 impeachment_surge。其它来源一律拒。
     initiative_active = db.count_active_initiatives()
+    consumed_surge_candidates: set[tuple[str, str]] = set()
     for ni in tracker_output.get("new_issues", []) or []:
         if not isinstance(ni, dict):
             # 非 dict 项（new_issues:[null]/标量）：ni.get 会抛 AttributeError。真实 settle 路
@@ -5059,8 +5196,79 @@ def apply_issue_tracker_output(
                 "reason": f"new_issues 条目非对象（应为 dict）：{ni!r}", "item": ni,
             })
             continue
-        title = str(ni.get("title") or "")
+        raw_title = ni.get("title")
         origin_kind = str(ni.get("origin_kind") or "").lower()
+        if origin_kind == "impeachment_surge":
+            candidate_id = str(ni.get("candidate_id") or "").strip()
+            surge_candidates = (
+                impeachment_surge_candidates_at_input
+                if impeachment_surge_candidates_at_input is not None
+                else gather_impeachment_surge_candidates(state, db)
+            )
+            candidates = {str(item["id"]): item for item in surge_candidates}
+            candidate = candidates.get(candidate_id)
+            roster = ni.get("target_roster")
+            stage_text = ni.get("stage_text")
+            title = raw_title if isinstance(raw_title, str) else ""
+            roster_shape_valid = (
+                isinstance(roster, list)
+                and bool(roster)
+                and all(isinstance(character_id, str) and character_id.strip() for character_id in roster)
+            )
+            target_ids = (
+                list(dict.fromkeys(character_id.strip() for character_id in roster))
+                if roster_shape_valid else []
+            )
+            reason = ""
+            if candidate is None:
+                reason = (
+                    "动态候选不在本次 LLM 输入快照"
+                    if impeachment_surge_candidates_at_input is not None
+                    else "动态候选不存在、陈旧或已消费"
+                )
+            elif not isinstance(raw_title, str) or not raw_title.strip():
+                reason = "弹劾潮 title 须为非空文本"
+            elif not isinstance(stage_text, str):
+                reason = "弹劾潮 stage_text 须为文本"
+            elif str(ni.get("faction_hint") or "").strip() != candidate["faction_id"]:
+                reason = "弹劾潮 faction_hint 与候选派系不符"
+            elif (str(candidate["origin_ref"]), str(candidate["faction_id"])) in consumed_surge_candidates:
+                reason = "弹劾潮候选已在本次调用内消费"
+            elif not roster_shape_valid:
+                reason = "弹劾潮 target_roster 须为非空人物身份列表"
+            elif not set(target_ids).issubset(set(candidate["eligible_target_ids"])):
+                reason = "弹劾潮标靶越过 eligible_target_ids 闭集"
+            if reason:
+                applied_new.append({
+                    "id": candidate_id, "title": title, "rejected": True,
+                    "reason": reason, "item": ni,
+                })
+                continue
+            issue_id = db.insert_issue(
+                state,
+                kind="situation",
+                title=title,
+                origin_kind="impeachment_surge",
+                origin_ref=str(candidate["origin_ref"]),
+                bar_value=40,
+                bar_good_meaning="",
+                bar_bad_meaning="",
+                stage_text=stage_text,
+                faction_hint=str(candidate["faction_id"]),
+                participants=[],
+                target_roster=target_ids,
+                cancellable="never",
+                commit=not external_transaction,
+            )
+            consumed_surge_candidates.add(
+                (str(candidate["origin_ref"]), str(candidate["faction_id"]))
+            )
+            applied_new.append({
+                "id": candidate_id, "issue_id": issue_id, "kind": "situation",
+                "title": title, "rejected": False,
+            })
+            continue
+        title = str(raw_title or "")
         if origin_kind == "event_pool":
             # 预设事件触发：id 必须是真实预设 event，照预设字段立 issue（不用 LLM 给的字段）
             event_id = str(ni.get("id") or ni.get("origin_ref") or "").strip()
@@ -7341,6 +7549,7 @@ def apply_score_extraction(
     registry=None,
     llm_config: Any = None,
     candidate_event_ids_at_input: Optional[set[str]] = None,
+    impeachment_surge_candidates_at_input: Optional[List[Dict[str, object]]] = None,
     dossier_ids_at_input: Optional[set[int]] = None,
     secret_dossier_ids_at_input: Optional[set[int]] = None,
 ) -> Dict[str, object]:
@@ -7844,6 +8053,7 @@ def apply_score_extraction(
         allow_legacy_partial_power_for_gates=legacy_person_mode,
         candidate_event_ids_at_input=candidate_event_ids_at_input,
         candidate_event_ids_authoritative=candidate_event_ids_authoritative,
+        impeachment_surge_candidates_at_input=impeachment_surge_candidates_at_input,
         event_result_delta_event_ids=strategic_event_result_delta_event_ids,
         defer_event_trigger_ids=strategic_event_pool_ids)
 
