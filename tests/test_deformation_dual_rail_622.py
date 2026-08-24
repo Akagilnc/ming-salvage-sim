@@ -636,3 +636,173 @@ def test_commitment_pooled_pay_arrears_inherits_beyond_intent(game):
     assert all(r["target_kind"] == "army" for r in rows)
     assert {r["target_id"] for r in rows} <= {"guanning", "xuan_da"}
     assert sum(int(r["delta"]) for r in rows) == -50
+
+
+# ── ⑦ #651 continue：四出口 receipt × outer-first origin 对账矩阵 ─────────
+
+
+def test_apply_economy_list_four_exit_effective_origin_receipt_matrix(game):
+    """四出口 canonical receipt 与 durable ledger 共用 outer-first effective origin。
+
+    出口：池化补饷成功 / 欠饷不足零支出 / 定向补饷成功 / 常规 economy move 成功。
+    组合：outer-only、outer-over-item、双空反向锚。
+    有落账的出口须 receipt.origin_ref/beyond_intent 与 economy_ledger 对账。
+    """
+    db, state, _content = game
+    army_id = "guanning"
+    state.metrics["国库"] = max(int(state.metrics.get("国库") or 0), 500)
+
+    modes = (
+        {
+            "label": "outer_only",
+            "outer": "dossier:outer651",
+            "item_origin": "",
+            "beyond": True,
+            "expect_origin": "dossier:outer651",
+            "expect_beyond": True,
+        },
+        {
+            "label": "outer_over_item",
+            "outer": "dossier:outer651",
+            "item_origin": "dossier:item651",
+            "beyond": True,
+            "expect_origin": "dossier:outer651",
+            "expect_beyond": True,
+        },
+        {
+            "label": "dual_empty",
+            "outer": "",
+            "item_origin": "",
+            "beyond": False,
+            "expect_origin": "",
+            "expect_beyond": False,
+        },
+    )
+
+    def _ledger_max_id() -> int:
+        return int(db.conn.execute("SELECT COALESCE(MAX(id), 0) FROM economy_ledger").fetchone()[0])
+
+    def _ledger_after(before_id: int):
+        return db.conn.execute(
+            "SELECT origin_ref, beyond_intent, delta, purpose, reason "
+            "FROM economy_ledger WHERE id > ? ORDER BY id",
+            (before_id,),
+        ).fetchall()
+
+    def _move_base(reason: str, *, item_origin: str, beyond: bool) -> dict:
+        move = {
+            "account": "国库",
+            "category": "补饷",
+            "reason": reason,
+        }
+        if item_origin:
+            move["origin_ref"] = item_origin
+        if beyond:
+            move["beyond_intent"] = True
+        return move
+
+    def _assert_receipt(receipt: dict, *, expect_origin: str, expect_beyond: bool, applied: bool):
+        assert "origin_ref" in receipt and "beyond_intent" in receipt and "applied" in receipt, receipt
+        assert receipt["origin_ref"] == expect_origin, receipt
+        assert receipt["beyond_intent"] is expect_beyond, receipt
+        assert receipt["applied"] is applied, receipt
+
+    def _assert_ledger_matches(rows, *, expect_origin: str, expect_beyond: bool):
+        assert rows, "须落 durable ledger 才能对账"
+        for row in rows:
+            assert str(row["origin_ref"] or "") == expect_origin, dict(row)
+            assert bool(int(row["beyond_intent"])) is expect_beyond, dict(row)
+
+    for mode in modes:
+        label = mode["label"]
+        outer = mode["outer"]
+        item_origin = mode["item_origin"]
+        beyond = mode["beyond"]
+        expect_origin = mode["expect_origin"]
+        expect_beyond = mode["expect_beyond"]
+
+        # 1) 池化补饷成功
+        _seed_army_arrears(db, army_id, 40)
+        before = _ledger_max_id()
+        pooled_reason = f"池化补饷-{label}"
+        pooled_move = _move_base(pooled_reason, item_origin=item_origin, beyond=beyond)
+        pooled_move["delta"] = -10
+        pooled_move["purpose"] = "补饷"
+        pooled = _apply_economy_list(
+            db, state, [pooled_move],
+            origin_ref=outer,
+            allow_pay_arrears_pool=True,
+            pay_arrears_pool_army_ids=[army_id],
+            commit=True,
+        )
+        assert pooled and len(pooled) == 1, (label, pooled)
+        _assert_receipt(
+            pooled[0], expect_origin=expect_origin, expect_beyond=expect_beyond, applied=True,
+        )
+        assert pooled[0]["delta"] == -10, pooled[0]
+        pooled_rows = [r for r in _ledger_after(before) if pooled_reason in str(r["reason"] or "")]
+        _assert_ledger_matches(pooled_rows, expect_origin=expect_origin, expect_beyond=expect_beyond)
+        assert sum(int(r["delta"]) for r in pooled_rows) == -10
+
+        # 2) 欠饷不足/零支出（定向补饷，无 durable 落账）
+        _seed_army_arrears(db, army_id, 0)
+        before = _ledger_max_id()
+        zero_reason = f"零支出补饷-{label}"
+        zero_move = _move_base(zero_reason, item_origin=item_origin, beyond=beyond)
+        zero_move.update({
+            "delta": -8,
+            "purpose": "补饷",
+            "target_kind": "army",
+            "target_id": army_id,
+        })
+        zeroed = _apply_economy_list(
+            db, state, [zero_move], origin_ref=outer, commit=True,
+        )
+        assert zeroed and len(zeroed) == 1, (label, zeroed)
+        _assert_receipt(
+            zeroed[0], expect_origin=expect_origin, expect_beyond=expect_beyond, applied=False,
+        )
+        assert zeroed[0]["delta"] == 0, zeroed[0]
+        assert _ledger_after(before) == [], (label, [dict(r) for r in _ledger_after(before)])
+
+        # 3) 定向补饷成功
+        _seed_army_arrears(db, army_id, 30)
+        before = _ledger_max_id()
+        directed_reason = f"定向补饷-{label}"
+        directed_move = _move_base(directed_reason, item_origin=item_origin, beyond=beyond)
+        directed_move.update({
+            "delta": -6,
+            "purpose": "补饷",
+            "target_kind": "army",
+            "target_id": army_id,
+        })
+        directed = _apply_economy_list(
+            db, state, [directed_move], origin_ref=outer, commit=True,
+        )
+        assert directed and len(directed) == 1, (label, directed)
+        _assert_receipt(
+            directed[0], expect_origin=expect_origin, expect_beyond=expect_beyond, applied=True,
+        )
+        assert directed[0]["delta"] == -6, directed[0]
+        directed_rows = [r for r in _ledger_after(before) if str(r["reason"] or "") == directed_reason]
+        _assert_ledger_matches(directed_rows, expect_origin=expect_origin, expect_beyond=expect_beyond)
+        assert sum(int(r["delta"]) for r in directed_rows) == -6
+
+        # 4) 常规 economy move 成功
+        before = _ledger_max_id()
+        ordinary_reason = f"常规扣账-{label}"
+        ordinary_move = _move_base(ordinary_reason, item_origin=item_origin, beyond=beyond)
+        ordinary_move["delta"] = -4
+        ordinary_move["category"] = "事项"
+        # 无 purpose/target → 常规扣账出口
+        ordinary = _apply_economy_list(
+            db, state, [ordinary_move], origin_ref=outer, commit=True,
+        )
+        assert ordinary and len(ordinary) == 1, (label, ordinary)
+        _assert_receipt(
+            ordinary[0], expect_origin=expect_origin, expect_beyond=expect_beyond, applied=True,
+        )
+        assert ordinary[0]["delta"] == -4, ordinary[0]
+        ordinary_rows = [r for r in _ledger_after(before) if str(r["reason"] or "") == ordinary_reason]
+        _assert_ledger_matches(ordinary_rows, expect_origin=expect_origin, expect_beyond=expect_beyond)
+        assert sum(int(r["delta"]) for r in ordinary_rows) == -4
