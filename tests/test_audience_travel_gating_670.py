@@ -307,7 +307,7 @@ def test_multi_origin_same_person_dedupes_consumer_projections_not_ledger(game):
         "required_fact": "抵原地后续赴京",
     }]
 
-    # 续赴京并抵京 → waiting 每人 1 条；再结清最后 origin 后清空。
+    # 续赴京成功 → 同人全部 in_transit origin 结清（含尚未手结的 origin_tool）。
     from ming_sim.decree import settle_with_delta
 
     settle_with_delta(
@@ -318,42 +318,43 @@ def test_multi_origin_same_person_dedupes_consumer_projections_not_ledger(game):
         }]},
         before_turn=int(state.turn), content=content,
     )
+    assert an.list_unsettled_summons(db) == []
+    assert an.list_arrived_unsettled_summons(db) == []
+    assert an.list_waiting_audience_summons(db) == []
+
+    # waiting 消费端 dedupe：直接 capital 在途账（不依赖续程后残留 origin）。
     db.conn.execute(
         "UPDATE characters SET location=?, transit_to='', transit_distance_remaining=NULL, "
         "transit_speed_factor=NULL WHERE name=?",
         ("beizhili", person.name),
     )
     db.conn.commit()
+    night = an.get_open_night(db) or an.open_night(db, state)
+    wait_a = "web:chat:wait-a"
+    wait_b = "web:chat:wait-b"
+    id_a = an.record_summon_in_transit(
+        db, int(night["id"]), person.name, origin_id=wait_a,
+    )
+    id_b = an.record_summon_in_transit(
+        db, int(night["id"]), person.name, origin_id=wait_b,
+    )
+    assert len(an.list_unsettled_summons(db)) == 2
     waiting = an.list_waiting_audience_summons(db)
     assert waiting == [{
         "person_name": person.name,
-        "origin_id": origin_tool,
-        "source_entry_id": second_entry["entry_id"],
+        "origin_id": wait_a,
+        "source_entry_id": id_a,
         "location": "beizhili",
     }]
     assert build_simulator_payload(state, db, "", "")["waiting_audience"] == waiting
-    # 再补一个同人 waiting origin，投影仍只 1 条；结清其一后另一仍在。
-    night = an.get_open_night(db) or an.open_night(db, state)
-    extra_origin = "web:chat:9"
-    extra_id = an.record_summon_in_transit(
-        db, int(night["id"]), person.name, origin_id=extra_origin,
-    )
-    waiting_two = an.list_waiting_audience_summons(db)
-    assert len(an.list_unsettled_summons(db)) == 2
-    assert waiting_two == [{
-        "person_name": person.name,
-        "origin_id": origin_tool,
-        "source_entry_id": second_entry["entry_id"],
-        "location": "beizhili",
-    }]
-    assert an.settle_summon_origin(db, origin_tool) is True
+    assert an.settle_summon_origin(db, wait_a) is True
     assert an.list_waiting_audience_summons(db) == [{
         "person_name": person.name,
-        "origin_id": extra_origin,
-        "source_entry_id": extra_id,
+        "origin_id": wait_b,
+        "source_entry_id": id_b,
         "location": "beizhili",
     }]
-    assert an.settle_summon_origin(db, extra_origin) is True
+    assert an.settle_summon_origin(db, wait_b) is True
     assert an.list_unsettled_summons(db) == []
     assert an.list_waiting_audience_summons(db) == []
 
@@ -443,9 +444,10 @@ def test_arrived_summon_continuation_survives_failed_apply_across_months(game, m
 
     1. 失败月：续启 delta 经 settle_with_delta 触发 SettlementAbort；turn 不变；origin/抵达/行止未动。
     2. 无续启成功月：空 delta 经 settle_with_delta 推进一月；未结 origin 与抵达事实仍在，
-       行止仍 henan/空 transit。
-    3. 续启成功月：canonical 行止更新，但 origin **仍未结**（结清只在宣入/非 active）。
-    三段均禁止手推 turn、禁止手调结清 helper。
+       行止仍 henan/空 transit。若 settle_applied_arrived_summons 在任一成功月无视
+       applied_person_changes 清掉在途 origin，本段必须失败。
+    3. 续启成功月：canonical 行止 delta 经 settle_with_delta 才自动结清 origin。
+    三段均禁止手推 turn、禁止手调 settle_applied_arrived_summons。
     """
     import ming_sim.decree as decree_mod
     from ming_sim.decree import settle_with_delta
@@ -514,13 +516,11 @@ def test_arrived_summon_continuation_survives_failed_apply_across_months(game, m
     assert _travel_row(db, person.name)["location"] == "henan"
     assert _travel_row(db, person.name)["transit_to"] == ""
 
-    # 续启成功月：行止更新但 origin 保持未结，直至抵京+宣入。
+    # 续启成功月：只经 settle_with_delta；结清证明不得手调 helper。
     settle_with_delta(
         state, db, continuation, before_turn=int(state.turn), content=content,
     )
-    unsettled = an.list_unsettled_summons(db)
-    assert [row["origin_id"] for row in unsettled] == [origin]
-    assert unsettled[0]["kind"] == "in_transit"
+    assert an.list_unsettled_summons(db) == []
     after = _travel_row(db, person.name)
     assert after["location"] == "henan"
     assert after["transit_to"] == "beizhili"
@@ -1162,12 +1162,15 @@ def test_fresh_departure_arrival_and_capital_consume_lifecycle(game):
     assert build_simulator_payload(state, db, "", "")["waiting_audience"] == []
 
 
-def test_continuation_arrival_projects_waiting_then_consume(game):
-    """#670：抵非京 arrived → 续程 beizhili → 再抵京 waiting → 宣入结清。"""
+def test_continuation_arrival_settles_origin_without_waiting(game):
+    """#670：抵非京 arrived → 续程 beizhili 成功即结清 origin，不再形成该 origin 候见。
+
+    fresh→抵京→候见→宣入 独立路径由 test_fresh_departure_arrival_and_capital_consume_lifecycle
+    与 test_direct_capital_arrival_does_not_queue_continuation 另钉。
+    """
     from ming_sim.decree import settle_with_delta
 
     db, state, content = game
-    sess = _session(game)
     person = _set_place(
         game, "洪承畴", location="shaanxi", transit_to="henan", transit_start_turn=0,
     )
@@ -1196,31 +1199,19 @@ def test_continuation_arrival_projects_waiting_then_consume(game):
         before_turn=int(state.turn), content=content,
     )
     assert _travel_row(db, person.name)["transit_to"] == "beizhili"
-    assert an.list_unsettled_summons(db)[0]["kind"] == "in_transit"
+    assert an.list_unsettled_summons(db) == []
+    assert an.list_arrived_unsettled_summons(db) == []
 
+    # 即便再强制抵京，该 origin 已结清，不得复活为候见。
     db.conn.execute(
         "UPDATE characters SET location=?, transit_to='', transit_distance_remaining=NULL, "
         "transit_speed_factor=NULL WHERE name=?",
         ("beizhili", person.name),
     )
     db.conn.commit()
-    waiting = an.list_unsettled_summons(db)
-    assert len(waiting) == 1
-    assert waiting[0]["kind"] == "waiting"
-    assert waiting[0]["origin_id"] == origin
-    assert an.list_arrived_unsettled_summons(db) == []
-    assert build_simulator_payload(state, db, "", "")["waiting_audience"] == [{
-        "person_name": person.name,
-        "origin_id": origin,
-        "source_entry_id": entry_id,
-        "location": "beizhili",
-    }]
-
-    decision = sess.consume_audience_admission(
-        person, origin_id="web:continue-xuanru", state=state,
-    )
-    assert decision.allowed is True
     assert an.list_unsettled_summons(db) == []
+    assert an.list_waiting_audience_summons(db) == []
+    assert build_simulator_payload(state, db, "", "")["waiting_audience"] == []
 
 
 def test_waiting_inactive_retires_on_month(game):
