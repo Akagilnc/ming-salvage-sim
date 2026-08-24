@@ -26,6 +26,7 @@ from ming_sim.pay_order import (
     parse_override_key,
     resolve_haircut_bp,
     resolve_pay_order_overrides,
+    restore_pay_order_override,
     revoke_pay_order_decree,
 )
 
@@ -391,6 +392,95 @@ def test_real_revoke_decree_restores_override_and_clears_expiry(game):
     assert [row["key"] for row in tomb] == [
         "due_priority_军饷@shaanxi", "due_priority_军饷@shaanxi_until_turn",
     ]
+
+
+def test_proposed_revoke_does_not_restore_override(game):
+    """未颁 revoke：owner seam 响亮拒绝，在位 override/期限/审计零变化。"""
+    db, state, _content = game
+    until = db._current_settle_turn() + 2
+    target = _override_dossier(db, state, [{
+        "key": "due_priority_军饷@shaanxi", "value": 40, "until_turn": until,
+    }])
+    db.apply_dossier_promulgation(state, target, "promulgated")
+    revoke = db.create_decree_dossier(
+        state,
+        action_type="revoke_decree",
+        decree_text="撤回前旨",
+        target_kind="dossier",
+        target_id=str(target),
+        payload={"revoke_target_dossier_id": target},
+    )
+    before_cfg = dict(db.get_fiscal_config())
+    with pytest.raises(PayOrderKeyError, match="未过合法颁布门"):
+        restore_pay_order_override(
+            db,
+            turn=db._current_settle_turn(),
+            target_dossier_id=target,
+            revoke_dossier_id=revoke,
+            reason="未颁不得删 config",
+        )
+    cfg = db.get_fiscal_config()
+    assert cfg["due_priority_军饷@shaanxi"] == 40
+    assert cfg["due_priority_军饷@shaanxi_until_turn"] == until
+    assert cfg["due_priority_军饷@shaanxi"] == before_cfg["due_priority_军饷@shaanxi"]
+    assert cfg["due_priority_军饷@shaanxi_until_turn"] == before_cfg[
+        "due_priority_军饷@shaanxi_until_turn"
+    ]
+    origin = f"dossier:{revoke}"
+    assert db.conn.execute(
+        "SELECT COUNT(*) c FROM fiscal_config_tombstones WHERE origin_ref=?",
+        (origin,),
+    ).fetchone()["c"] == 0
+    assert db.conn.execute(
+        "SELECT COUNT(*) c FROM fiscal_config_changes WHERE origin_ref=?",
+        (origin,),
+    ).fetchone()["c"] == 0
+
+
+def test_rejected_revoke_does_not_restore_override(game):
+    """打回 revoke：owner seam 响亮拒绝，在位 override/期限/审计零变化。"""
+    from dossier_test_helpers import rejected_verdict
+
+    db, state, _content = game
+    until = db._current_settle_turn() + 2
+    target = _override_dossier(db, state, [{
+        "key": "due_priority_军饷@shaanxi", "value": 40, "until_turn": until,
+    }])
+    db.apply_dossier_promulgation(state, target, "promulgated")
+    revoke = db.create_decree_dossier(
+        state,
+        action_type="revoke_decree",
+        decree_text="撤回前旨",
+        target_kind="dossier",
+        target_id=str(target),
+        payload={"revoke_target_dossier_id": target},
+    )
+    db.apply_dossier_verdicts(state, [rejected_verdict(revoke)])
+    before_cfg = dict(db.get_fiscal_config())
+    with pytest.raises(PayOrderKeyError, match="未过合法颁布门"):
+        restore_pay_order_override(
+            db,
+            turn=db._current_settle_turn(),
+            target_dossier_id=target,
+            revoke_dossier_id=revoke,
+            reason="打回不得删 config",
+        )
+    cfg = db.get_fiscal_config()
+    assert cfg["due_priority_军饷@shaanxi"] == 40
+    assert cfg["due_priority_军饷@shaanxi_until_turn"] == until
+    assert cfg["due_priority_军饷@shaanxi"] == before_cfg["due_priority_军饷@shaanxi"]
+    assert cfg["due_priority_军饷@shaanxi_until_turn"] == before_cfg[
+        "due_priority_军饷@shaanxi_until_turn"
+    ]
+    origin = f"dossier:{revoke}"
+    assert db.conn.execute(
+        "SELECT COUNT(*) c FROM fiscal_config_tombstones WHERE origin_ref=?",
+        (origin,),
+    ).fetchone()["c"] == 0
+    assert db.conn.execute(
+        "SELECT COUNT(*) c FROM fiscal_config_changes WHERE origin_ref=?",
+        (origin,),
+    ).fetchone()["c"] == 0
 
 
 def test_turn_region_summary_claim_audit_rows_do_not_consume_limit(game):
@@ -975,7 +1065,7 @@ def test_fiscal_fact_brief_bad_json_fails_loud(game):
     """F2①：坏 fiscal JSON 仍响亮失败（ADR 0005）。"""
     db, _state, _content = game
     db.conn.execute("UPDATE regions SET fiscal='{bad json' WHERE id='henan'")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="fiscal_fact_brief"):
         build_fiscal_fact_brief(db)
 
 

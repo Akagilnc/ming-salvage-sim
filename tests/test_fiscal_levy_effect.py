@@ -662,7 +662,7 @@ def test_fiscal_levy_memorial_estimates_skip_malformed_region_fiscal(game, monke
     assert "liao_levy_rise_1631" in {item["event_id"] for item in estimates}
     # #653 F2（ADR 0005）：simulator payload 的 fiscal_fact_brief 对坏 fiscal JSON
     # 响亮失败，不再静默 continue（judge class③ 拍定；隔离跳过仅属 fiscal_levy 口）。
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="fiscal_fact_brief"):
         build_simulator_payload(state, db, "准户部议，加辽饷以济边军。", "")
 
 

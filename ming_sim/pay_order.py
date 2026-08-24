@@ -408,6 +408,11 @@ def restore_pay_order_override(
         return []
     if revoke is None or str(revoke.get("action_type") or "") != "revoke_decree":
         raise PayOrderKeyError("恢复 override 须由真实 revoke_decree 案卷发起")
+    if not db.dossier_authorizes_effects(int(revoke_dossier_id)):
+        raise PayOrderKeyError(
+            f"恢复 override 的 revoke 案卷 dossier:{int(revoke_dossier_id)} "
+            f"未过合法颁布门（顺颁/强颁），禁删 config"
+        )
     payload = target.get("payload")
     if payload is None:
         payload = target.get("payload_json")
