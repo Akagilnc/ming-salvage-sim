@@ -185,7 +185,9 @@ def choose_minister(session: GameSession) -> Optional[Character]:
             origin_id=f"cli:initial:{session.state.turn}:{candidate.name}",
         )
         if not decision.allowed:
-            print(decision.reason)
+            # 资格失败仍见 reason；成功记召 reason 为空，不喷固定承旨句。
+            if decision.reason:
+                print(decision.reason)
             continue
         return candidate
 
@@ -413,7 +415,9 @@ def _handle_court_command(
             origin_id=f"cli:midflow:{session.state.turn}:{target.name}",
         )
         if not decision.allowed:
-            print(decision.reason + "\n")
+            # 资格失败仍见 reason；成功记召 reason 为空，不喷固定承旨句。
+            if decision.reason:
+                print(decision.reason + "\n")
             return "handled"
         return f"summon:{target.name}"
 

@@ -1120,13 +1120,10 @@ class GameSession:
             result = AudienceAdmission.IN_CAPITAL
         else:
             result = AudienceAdmission.SUMMON_FRESH
-        reason = ""
-        if result is AudienceAdmission.SUMMON_FRESH:
-            reason = f"已传召{character.name}赴京；人在场外，本回合不能入殿。"
-        elif result is AudienceAdmission.SUMMON_IN_TRANSIT:
-            reason = f"已向在途的{character.name}传召；须先抵原目的地，本回合不能入殿。"
+        # 成功记召不写固定承旨句；玩家经故事账 tags / 月度机器事实与 LLM 自由生成得知。
+        # 资格失败仍走 can_summon 的非空 reason。
         return AudienceAdmissionDecision(
-            result, reason=reason, location=location, transit_to=transit_to,
+            result, reason="", location=location, transit_to=transit_to,
             allowed=result is AudienceAdmission.IN_CAPITAL,
         )
 
