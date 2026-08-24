@@ -41,7 +41,7 @@ from __future__ import annotations
 import json
 import math
 from types import SimpleNamespace
-from typing import Any, Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Sequence, Tuple
 
 # 零分母口径（0023 D6/D11）：月需=0（土司自养/零需残军）→ 不计欠饷月数、短路不做除法。
 
@@ -107,40 +107,56 @@ def _ming_settle_bases(db: Any) -> List[Tuple[str, Dict[str, Any], Dict[str, Any
     return out
 
 
-def _priority_override_origin(
-    db: Any, config: Dict[str, int], region_id: str, turn: int,
-    displaced_subject: str, displaced: float, dues: Dict[str, float], pool: float,
+def _waterfall_allocate(
+    order: Sequence[str], claims: Dict[str, float], pool: float,
+) -> Dict[str, float]:
+    """按序 min(claim, remaining) 扣池分配。"""
+    remaining = pool
+    paid: Dict[str, float] = {}
+    for subject in order:
+        paid[subject] = min(claims[subject], remaining)
+        remaining -= paid[subject]
+    return paid
+
+
+def _priority_override_origin_for(
+    db: Any,
+    config: Dict[str, int],
+    region_id: str,
+    turn: int,
+    displaced_subject: str,
+    displaced: float,
+    claims: Dict[str, float],
+    pool: float,
+    *,
+    subjects: Sequence[str],
+    default_priority: Dict[str, int],
+    key_prefix: str,
+    order_of: Callable[[Any], Sequence[str]],
 ) -> str:
-    """逐键反事实找出确实造成该科目让位的在位旨，并返回其 provenance。"""
-    from ming_sim.pay_order import DEFAULT_DUE_PRIORITY, DUE_SUBJECTS, resolve_pay_order_overrides
+    """逐键反事实找出确实造成该科目让位的在位旨，并返回其 provenance。
+
+    due / arrears 共用：参数化 subjects、默认优先级、键前缀与解析序选取。
+    """
+    from ming_sim.pay_order import resolve_pay_order_overrides
 
     causal_keys: List[str] = []
-    for changed_subject in DUE_SUBJECTS:
+    default_order = tuple(sorted(subjects, key=default_priority.__getitem__))
+    for changed_subject in subjects:
         counterfactual = dict(config)
         for key in (
-            f"due_priority_{changed_subject}@{region_id}",
-            f"due_priority_{changed_subject}",
+            f"{key_prefix}_{changed_subject}@{region_id}",
+            f"{key_prefix}_{changed_subject}",
         ):
             until = config.get(f"{key}_until_turn")
             if key not in config or (until is not None and turn > int(until)):
                 continue
-            if int(config[key]) != DEFAULT_DUE_PRIORITY[changed_subject]:
+            if int(config[key]) != default_priority[changed_subject]:
                 counterfactual.pop(key)
                 resolved = resolve_pay_order_overrides(counterfactual, region_id, turn)
-                order = resolved.due_order if resolved is not None else tuple(
-                    sorted(DUE_SUBJECTS, key=DEFAULT_DUE_PRIORITY.__getitem__)
-                )
-                remaining = pool
-                paid = {}
-                for subject in order:
-                    paid[subject] = min(dues[subject], remaining)
-                    remaining -= paid[subject]
-                default_order = tuple(sorted(DUE_SUBJECTS, key=DEFAULT_DUE_PRIORITY.__getitem__))
-                remaining = pool
-                default_paid = {}
-                for subject in default_order:
-                    default_paid[subject] = min(dues[subject], remaining)
-                    remaining -= default_paid[subject]
+                order = order_of(resolved) if resolved is not None else default_order
+                paid = _waterfall_allocate(order, claims, pool)
+                default_paid = _waterfall_allocate(default_order, claims, pool)
                 if default_paid[displaced_subject] - paid[displaced_subject] < displaced - 1e-9:
                     causal_keys.append(key)
     if not causal_keys:
@@ -151,6 +167,22 @@ def _priority_override_origin(
         "ORDER BY id DESC LIMIT 1", tuple(causal_keys),
     ).fetchone()
     return str(row["origin_ref"] or "") if row is not None else ""
+
+
+def _priority_override_origin(
+    db: Any, config: Dict[str, int], region_id: str, turn: int,
+    displaced_subject: str, displaced: float, dues: Dict[str, float], pool: float,
+) -> str:
+    """due_priority 键族：逐键反事实找出造成该科目让位的在位旨 provenance。"""
+    from ming_sim.pay_order import DEFAULT_DUE_PRIORITY, DUE_SUBJECTS
+
+    return _priority_override_origin_for(
+        db, config, region_id, turn, displaced_subject, displaced, dues, pool,
+        subjects=DUE_SUBJECTS,
+        default_priority=DEFAULT_DUE_PRIORITY,
+        key_prefix="due_priority",
+        order_of=lambda resolved: resolved.due_order,
+    )
 
 
 def _pay_order_displacement_entries(
@@ -198,10 +230,7 @@ def _due_order_displacement_entries(
     unpaid["赈济"] = max(0.0, float(st.get("unmet_relief", 0) or 0))
     actual_paid = {s: max(0.0, dues[s] - min(dues[s], unpaid[s])) for s in DUE_SUBJECTS}
     pool = sum(actual_paid.values())
-    default_paid: Dict[str, float] = {}
-    for subject in default_order:
-        default_paid[subject] = min(dues[subject], pool)
-        pool -= default_paid[subject]
+    default_paid = _waterfall_allocate(default_order, dues, pool)
     out: List[Dict[str, Any]] = []
     for subject in default_order:
         displaced = default_paid[subject] - actual_paid[subject]
@@ -219,52 +248,6 @@ def _due_order_displacement_entries(
                 "detail": f"旨序让位_{subject}",
             })
     return out
-
-
-def _arrears_priority_override_origin(
-    db: Any, config: Dict[str, int], region_id: str, turn: int,
-    displaced_subject: str, displaced: float, claims: Dict[str, float], pool: float,
-) -> str:
-    """逐键反事实找出确实造成该旧欠科目让位的在位旨，并返回其 provenance。"""
-    from ming_sim.pay_order import (
-        ARREARS_SUBJECTS, DEFAULT_ARREARS_PRIORITY, resolve_pay_order_overrides,
-    )
-
-    causal_keys: List[str] = []
-    default_order = tuple(sorted(ARREARS_SUBJECTS, key=DEFAULT_ARREARS_PRIORITY.__getitem__))
-    for changed_subject in ARREARS_SUBJECTS:
-        counterfactual = dict(config)
-        for key in (
-            f"arrears_priority_{changed_subject}@{region_id}",
-            f"arrears_priority_{changed_subject}",
-        ):
-            until = config.get(f"{key}_until_turn")
-            if key not in config or (until is not None and turn > int(until)):
-                continue
-            if int(config[key]) != DEFAULT_ARREARS_PRIORITY[changed_subject]:
-                counterfactual.pop(key)
-                resolved = resolve_pay_order_overrides(counterfactual, region_id, turn)
-                order = resolved.arrears_order if resolved is not None else default_order
-                remaining = pool
-                paid: Dict[str, float] = {}
-                for subject in order:
-                    paid[subject] = min(claims[subject], remaining)
-                    remaining -= paid[subject]
-                remaining = pool
-                default_paid: Dict[str, float] = {}
-                for subject in default_order:
-                    default_paid[subject] = min(claims[subject], remaining)
-                    remaining -= default_paid[subject]
-                if default_paid[displaced_subject] - paid[displaced_subject] < displaced - 1e-9:
-                    causal_keys.append(key)
-    if not causal_keys:
-        return ""
-    placeholders = ",".join("?" for _ in causal_keys)
-    row = db.conn.execute(
-        f"SELECT origin_ref FROM fiscal_config_changes WHERE key IN ({placeholders}) "
-        "ORDER BY id DESC LIMIT 1", tuple(causal_keys),
-    ).fetchone()
-    return str(row["origin_ref"] or "") if row is not None else ""
 
 
 def _arrears_order_displacement_entries(
@@ -310,11 +293,7 @@ def _arrears_order_displacement_entries(
     pool = sum(actual_repaid.values())
     if pool <= 1e-9:
         return []
-    default_repaid: Dict[str, float] = {}
-    remaining = pool
-    for subject in default_order:
-        default_repaid[subject] = min(claims[subject], remaining)
-        remaining -= default_repaid[subject]
+    default_repaid = _waterfall_allocate(default_order, claims, pool)
 
     arrears_class = {"军饷欠": "军户", "官俸欠": "官僚", "宗禄欠": "宗藩"}
     out: List[Dict[str, Any]] = []
@@ -322,8 +301,12 @@ def _arrears_order_displacement_entries(
         displaced = default_repaid[subject] - actual_repaid[subject]
         if displaced <= 1e-9:
             continue
-        origin = _arrears_priority_override_origin(
+        origin = _priority_override_origin_for(
             db, config, region_id, turn, subject, displaced, claims, pool,
+            subjects=ARREARS_SUBJECTS,
+            default_priority=DEFAULT_ARREARS_PRIORITY,
+            key_prefix="arrears_priority",
+            order_of=lambda resolved: resolved.arrears_order,
         )
         if origin:
             out.append({
