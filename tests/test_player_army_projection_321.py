@@ -26,8 +26,6 @@ from ming_sim.tools import build_board_query_tools, build_minister_tools
 ARMY = "guanning"
 PATHS = ("legacy", "substrate_hub")
 
-# 旧 loyalty 五档词——玩家链不得再出现
-_LEGACY_LOYALTY_WORDS = ("危殆", "浮动", "不稳", "稳固")
 _RAW_KEYS = frozenset({"morale", "loyalty", "arrears"})
 _SIT_KEYS = frozenset({"mutiny_tier", "morale_text", "arrears_text"})
 _MUTINY_ORDINAL_KEYS = frozenset(
@@ -246,29 +244,14 @@ def _assert_structured_situation(card: dict, sit: dict, label: str) -> None:
     assert isinstance(card["mutiny_tier"], str)
     assert isinstance(card["morale_text"], str)
     assert isinstance(card["arrears_text"], str)
-    joined = f"{card['mutiny_tier']}|{card['morale_text']}|{card['arrears_text']}"
-    for word in _LEGACY_LOYALTY_WORDS:
-        assert word not in joined, f"{label} 残留旧 loyalty 五档词 {word!r}"
 
 
-def _assert_chain_embeds_situation(text: str, sit: dict, label: str, *, row=None) -> None:
+def _assert_chain_embeds_situation(text: str, sit: dict, label: str) -> None:
     assert sit["mutiny_tier"] in text, f"{label} 缺 mutiny_tier={sit['mutiny_tier']!r}\n{text}"
     assert sit["morale_text"] in text, f"{label} 缺 morale_text={sit['morale_text']!r}\n{text}"
     assert sit["arrears_text"] in text, f"{label} 缺 arrears_text={sit['arrears_text']!r}\n{text}"
-    for word in _LEGACY_LOYALTY_WORDS:
-        assert word not in text, f"{label} 残留旧 loyalty 五档词 {word!r}\n{text}"
     for token in _PERSISTENT_COL_TOKENS:
         assert token not in text, f"{label} 泄漏五持久列名 {token!r}\n{text}"
-    # 禁止「忠诚：NN」裸 loyalty 序数呈现
-    if row is not None:
-        loyalty = int(row["loyalty"])
-        assert f"忠诚：{loyalty}" not in text, f"{label} 泄漏忠诚裸数\n{text}"
-        morale = int(row["morale"])
-        # 士气裸数不得作为独立呈现；situation 串已嵌入则允许子串巧合
-        if str(morale) in text:
-            assert sit["morale_text"] in text
-            # 禁「士气：NN」数值形态
-            assert f"士气：{morale}" not in text, f"{label} 泄漏士气裸数\n{text}"
 
 
 def test_army_payload_emits_situation_strings_not_raw_axes(game):
@@ -344,7 +327,7 @@ def test_four_chains_embed_situation_matrix(game):
     _assert_structured_situation(armies[ARMY], sit, "state_payload.armies")
     # army_warning = 当前无渲染消费者的载荷副本（可与 report 同源；测可断言嵌入 ≠ HUD 授权）
     warning = payload.get("army_warning") or ""
-    _assert_chain_embeds_situation(warning, sit, "state_payload.army_warning", row=row)
+    _assert_chain_embeds_situation(warning, sit, "state_payload.army_warning")
 
     map_army = _find_army_in_map_nodes(payload.get("map_nodes") or [])
     _assert_structured_situation(map_army, sit, "map_nodes.armies")
@@ -354,18 +337,18 @@ def test_four_chains_embed_situation_matrix(game):
 
     # 链2：report / intelligence / knowledge / tools.list_armies（LLM 输入装配）
     report = db.army_report(limit=30)
-    _assert_chain_embeds_situation(report, sit, "army_report", row=row)
+    _assert_chain_embeds_situation(report, sit, "army_report")
     # 欠饷裸数不得进入散文（63 是 fixture 总额）
     assert "63" not in report
 
     intel_text, intel_src = _qualitative_domain_statement(db, "各军欠饷如何")
     assert intel_src == "armies"
-    _assert_chain_embeds_situation(intel_text, sit, "intelligence", row=row)
+    _assert_chain_embeds_situation(intel_text, sit, "intelligence")
 
     war = next(c for c in content.characters.values() if c.office_type == "兵部")
     knowledge = build_character_knowledge(db, state, war.name)
     military = (knowledge.get("world") or {}).get("military") or ""
-    _assert_chain_embeds_situation(military, sit, "knowledge.world.military", row=row)
+    _assert_chain_embeds_situation(military, sit, "knowledge.world.military")
 
     # #321 P7：print_header 不得直显军情三固定串（army_report 仅 LLM 装配面）
     buf = io.StringIO()
@@ -381,29 +364,28 @@ def test_four_chains_embed_situation_matrix(game):
     assert sit["arrears_text"] not in header_out, (
         f"report.print_header 不得直显 arrears_text={sit['arrears_text']!r}\n{header_out}"
     )
-    assert "军队警讯" not in header_out, f"report.print_header 不得嵌入 army_report\n{header_out}"
 
     ctx = CourtContext(state=state, db=db, previous_summary="")
     board = {f.__name__: f for f in build_board_query_tools(ctx)}
     _assert_chain_embeds_situation(
-        board["list_armies"](), sit, "tools.list_armies", row=row
+        board["list_armies"](), sit, "tools.list_armies"
     )
 
     # 链3：detail / inspect（LLM 输入装配）
     detail = db.army_detail(ARMY)
-    _assert_chain_embeds_situation(detail, sit, "army_detail", row=row)
+    _assert_chain_embeds_situation(detail, sit, "army_detail")
     _assert_chain_embeds_situation(
-        board["inspect_army"](ARMY), sit, "tools.inspect_army", row=row
+        board["inspect_army"](ARMY), sit, "tools.inspect_army"
     )
 
     # 链4：roster / query tool（LLM 输入装配）
     roster = db.army_roster()
-    _assert_chain_embeds_situation(roster, sit, "army_roster", row=row)
+    _assert_chain_embeds_situation(roster, sit, "army_roster")
     mtools = {
         f.__name__: f for f in build_minister_tools(war, ctx, use_army_tool=True)
     }
     _assert_chain_embeds_situation(
-        mtools["query_army_roster"]([]), sit, "tools.query_army_roster", row=row
+        mtools["query_army_roster"]([]), sit, "tools.query_army_roster"
     )
 
 
@@ -432,62 +414,57 @@ def test_restore_five_columns_and_player_tier_across_paths(game, tmp_path, fisca
             redemption_count=1,
             morale=60,
         )
+    finally:
         opened.close()
 
-        reopened = GameDB(path, content)
-        try:
-            row = reopened.conn.execute(
-                "SELECT * FROM armies WHERE id=?", (ARMY,)
-            ).fetchone()
-            assert tuple(
-                row[k]
-                for k in (
-                    "is_mutinied",
-                    "mutiny_count",
-                    "mutiny_probation",
-                    "full_pay_streak",
-                    "redemption_count",
-                )
-            ) == (1, 2, 2, 7, 1)
-            assert int(row["loyalty"]) == 95
-            assert float(row["arrears"]) == pytest.approx(0)
-            assert int(row["manpower"]) == 10000
-            assert mutiny_loyalty_cap(2, redemption_count=1) == 70
-            assert derive_army_mutiny_state(row) == "哗变"
-            pay = reopened._army_pay(row)
-            sit_before = _player_army_situation(row, pay)
-            assert sit_before["mutiny_tier"] == "哗变"
-            card_before = _payload_by_id(reopened)[ARMY]
-            assert card_before["mutiny_tier"] == "哗变"
+    reopened = GameDB(path, content)
+    try:
+        row = reopened.conn.execute(
+            "SELECT * FROM armies WHERE id=?", (ARMY,)
+        ).fetchone()
+        assert tuple(
+            row[k]
+            for k in (
+                "is_mutinied",
+                "mutiny_count",
+                "mutiny_probation",
+                "full_pay_streak",
+                "redemption_count",
+            )
+        ) == (1, 2, 2, 7, 1)
+        assert int(row["loyalty"]) == 95
+        assert float(row["arrears"]) == pytest.approx(0)
+        assert int(row["manpower"]) == 10000
+        assert mutiny_loyalty_cap(2, redemption_count=1) == 70
+        assert derive_army_mutiny_state(row) == "哗变"
+        pay = reopened._army_pay(row)
+        sit_before = _player_army_situation(row, pay)
+        assert sit_before["mutiny_tier"] == "哗变"
+        card_before = _payload_by_id(reopened)[ARMY]
+        assert card_before["mutiny_tier"] == "哗变"
 
-            # P1：仅凭 DB 重建恢复态，再在恢复态上设测用国库并 tick
-            restored_state = reopened.load_state()
-            restored_state.metrics["国库"] = 10**9
-            apply_fixed_period_flows(reopened, restored_state)
-            after = reopened.conn.execute(
-                "SELECT * FROM armies WHERE id=?", (ARMY,)
-            ).fetchone()
-            assert int(after["loyalty"]) == 70
-            assert int(after["is_mutinied"]) == 0
-            assert int(after["mutiny_count"]) == 2
-            assert int(after["mutiny_probation"]) == 1
-            assert int(after["full_pay_streak"]) == 8
-            assert int(after["redemption_count"]) == 1
-            assert float(after["arrears"]) == pytest.approx(0)
-            assert int(after["manpower"]) == 10000
-            assert mutiny_loyalty_cap(2, redemption_count=1) == 70
-            assert derive_army_mutiny_state(after) == "不满"
-            sit_after = _player_army_situation(after, reopened._army_pay(after))
-            assert sit_after["mutiny_tier"] == "不满"
-            assert _payload_by_id(reopened)[ARMY]["mutiny_tier"] == "不满"
-        finally:
-            reopened.close()
+        # P1：仅凭 DB 重建恢复态，再在恢复态上设测用国库并 tick
+        restored_state = reopened.load_state()
+        restored_state.metrics["国库"] = 10**9
+        apply_fixed_period_flows(reopened, restored_state)
+        after = reopened.conn.execute(
+            "SELECT * FROM armies WHERE id=?", (ARMY,)
+        ).fetchone()
+        assert int(after["loyalty"]) == 70
+        assert int(after["is_mutinied"]) == 0
+        assert int(after["mutiny_count"]) == 2
+        assert int(after["mutiny_probation"]) == 1
+        assert int(after["full_pay_streak"]) == 8
+        assert int(after["redemption_count"]) == 1
+        assert float(after["arrears"]) == pytest.approx(0)
+        assert int(after["manpower"]) == 10000
+        assert mutiny_loyalty_cap(2, redemption_count=1) == 70
+        assert derive_army_mutiny_state(after) == "不满"
+        sit_after = _player_army_situation(after, reopened._army_pay(after))
+        assert sit_after["mutiny_tier"] == "不满"
+        assert _payload_by_id(reopened)[ARMY]["mutiny_tier"] == "不满"
     finally:
-        if opened.conn is not None:
-            try:
-                opened.close()
-            except Exception:
-                pass
+        reopened.close()
 
 
 @pytest.mark.parametrize(

@@ -460,7 +460,6 @@ _ARMY_QUALITATIVE_WORDS: Dict[str, Tuple[str, str, str, str, str]] = {
     "training": ("散漫", "生疏", "粗疏", "尚可", "精熟"),
     "equipment": ("残破", "简陋", "短缺", "尚可", "精良"),
     "mobility": ("迟滞", "缓慢", "受限", "尚可", "灵便"),
-    "loyalty": ("危殆", "浮动", "不稳", "尚稳", "稳固"),
 }
 
 
@@ -7491,7 +7490,7 @@ class GameDB:
                 f"{row['name']}：驻{row['station']}，兵{row['manpower']}，"
                 f"饷{format_money(monthly_amount(pay))} /{TURN_UNIT}，"
                 f"{_qualitative_army_stat('supply', row['supply'])}，"
-                f"{sit['morale_text']}，{sit['mutiny_tier']}，"
+                f"{sit['morale_text']}，军心：{sit['mutiny_tier']}，"
                 f"火器：{_qualitative_army_stat('equipment', row['firearm_equipment']).removeprefix('装备：')}，"
                 f"炮{row['cannon_equipment']}门，{sit['arrears_text']}，{row['status']}"
             )
@@ -7526,7 +7525,7 @@ class GameDB:
             f"{_qualitative_army_stat('equipment', row['equipment'])}，"
             f"火器{row['firearm_equipment']}，随军大炮{row['cannon_equipment']}门，"
             f"{sit['arrears_text']}，{_qualitative_army_stat('mobility', row['mobility'])}，"
-            f"{sit['mutiny_tier']}。"
+            f"军心：{sit['mutiny_tier']}。"
             f"状态：{row['status']}"
         )
 
@@ -7577,9 +7576,9 @@ class GameDB:
         out = [
             "【全军名册（现状以此为准，谈某军欠饷/补给/士气直接据此；欠饷为奏报近似总额，不拆省/中央分账）】",
             (
-                "大明各军（| 分隔，列序＝军名|驻地|统帅|兵种|兵力|月饷万两|补给|士气|训练|装备|机动|忠诚|欠饷奏报|状态|火器|随军大炮；补给…忠诚为定性奏报，火器为定性装备，随军大炮为门数0-12）："
+                "大明各军（| 分隔，列序＝军名|驻地|统帅|兵种|兵力|月饷万两|补给|士气|训练|装备|机动|军心|欠饷奏报|状态|火器|随军大炮；补给…军心为定性奏报，火器为定性装备，随军大炮为门数0-12）："
                 if qualitative_equipment else
-                "大明各军（| 分隔，列序＝军名|驻地|统帅|兵种|兵力|月饷万两|补给|士气|训练|装备|机动|忠诚|欠饷奏报|状态|火器|随军大炮；补给…忠诚为定性奏报，火器为0-100，随军大炮为门数0-12）："
+                "大明各军（| 分隔，列序＝军名|驻地|统帅|兵种|兵力|月饷万两|补给|士气|训练|装备|机动|军心|欠饷奏报|状态|火器|随军大炮；补给…军心为定性奏报，火器为0-100，随军大炮为门数0-12）："
             ),
             *own,
         ]
