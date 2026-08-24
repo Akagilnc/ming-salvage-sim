@@ -1644,11 +1644,13 @@ def _capture_override_decree(game, monkeypatch, text, entries):
     from ming_sim.session import GameSession
 
     db, state, content = game
+    # #653 capture 合同与 extraction 同源：account/pay_order；属地写在 entries 键名。
+    # 合入 #654 后 region 须显式 locality_scope=single，不得靠缺省暗升。
     response = {
         "拟旨意图": "拟旨",
         "动作类型": "pay_order_override",
-        "目标类型": "region",
-        "目标ID": "shaanxi",
+        "目标类型": "account",
+        "目标ID": "pay_order",
         "entries": entries,
     }
 
@@ -1660,7 +1662,7 @@ def _capture_override_decree(game, monkeypatch, text, entries):
         text, None, db=db, content=content,
     )
     assert payload["dossier_action_type"] == "pay_order_override"
-    assert payload["target_kind"] == "region"
+    assert payload["target_kind"] == "account"
     assert payload["entries"] == entries
     session = GameSession.__new__(GameSession)
     session.db = db
