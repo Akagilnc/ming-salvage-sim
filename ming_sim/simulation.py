@@ -1203,6 +1203,9 @@ def build_extractor_shared_context(
         # #626：反噬事实包仅 issues 档房（与 #625 监督三键同格门控）；
         # 不在 _extractor_context_payload 无门副本，避免非 issues 模块误读。
         slim["commitment_backlash_facts"] = build_backlash_narrative_features(db)
+        # #654：带宽/阻力两轴清单——纯机 issues extractor 私有面（P4：不进 simulator）。
+        from ming_sim.execution_pressure import build_execution_two_axis_surface
+        slim["execution_two_axis"] = build_execution_two_axis_surface(db, state.turn)
     slim["_dedup_note"] = (
         "盘面、诏书、在朝大臣、势力/派系/阶级态势已在 system 的 simulator_payload 中给出"
         "（盘面表 regions/armies/buildings 走 TSV；court_roster 即在朝大臣；"

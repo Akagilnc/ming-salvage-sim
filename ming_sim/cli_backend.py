@@ -2096,10 +2096,10 @@ def extract_draft_intent(
             "只输出一个 JSON 对象（无代码围栏、无多余字）：\n"
             '{"成品旨稿": ['
             '{"正文":"第一道完整旨稿","动作类型":"policy","目标类型":"issue","目标ID":"...",'
-            '"颁布方式":"普通|中旨直发"},'
+            '"颁布方式":"普通|中旨直发","施行范围":"无|全国|单省"},'
             f'{{"正文":"……共 {draft_count} 道","动作类型":"military_order","目标类型":"army",'
             '"目标ID":"...","金额":null,"账户":"","执行面":"immediate|in_transit",'
-            '"承办人":"...","期限月数":3,"颁布方式":"普通|中旨直发",'
+            '"承办人":"...","期限月数":3,"颁布方式":"普通|中旨直发","施行范围":"无",'
             '"参与人":[{"character_id":"规范名","tier":"主办|协办|知情","role":"本案职分","delegator_id":null}]}]}\n'
             "不得把同一段文字复制成多道；不得遗漏皇帝要求的任一道拟旨事项。\n\n"
             + correction_block
@@ -2149,6 +2149,9 @@ def extract_draft_intent(
                     ("期限月数", "deadline_months"),
                 )
             }
+            mechanical["locality_scope"] = _coerce_draft_locality_scope(value.get("施行范围"))
+            # multi 路目标类型同样 fail-loud
+            target_kind = _coerce_draft_target_kind(target_kind)
             drafts.append({
                 "draft_action": "拟旨", "draft_text": text,
                 "dossier_action_type": action, "target_kind": target_kind,
@@ -2193,6 +2196,7 @@ def extract_draft_intent(
         '  "执行面": "immediate|in_transit", // 仅拨帑：账内即时划转或在途执行\n'
         '  "承办人": "",\n'
         '  "参与人": [{"character_id":"规范名","tier":"主办|协办|知情","role":"本案职分","delegator_id":null}],\n'
+        '  "施行范围": "无|全国|单省", // 全国性政令填全国；明指某省填单省；京内/任免等无属地语义留无\n'
         '  "期限月数": null' + (
             "," if (_candidates or _supplement_mode) else ""
         ) + '           // 军令必填正整数；非军令留 null\n'
@@ -2252,16 +2256,16 @@ def extract_draft_intent(
     _action = _raw if _raw in {"无", "拟旨"} else "无"
     dossier_action = str(obj.get("动作类型") or "special_decree").strip()
     if dossier_action not in DRAFT_ACTION_TYPES:
-        dossier_action = "special_decree"
-    target_kind = str(obj.get("目标类型") or "policy").strip()
-    if target_kind not in {"policy", "character", "office", "army", "region", "issue", "account"}:
-        target_kind = "policy"
+        raise ValueError(f"动作类型非法：{dossier_action!r}")
+    _tk_raw = obj.get("目标类型")
+    target_kind = _coerce_draft_target_kind(_tk_raw if _tk_raw not in (None, "") else "policy")
     target_id_value = str(obj.get("目标ID") or "").strip()
     mechanical = {
         "amount": obj.get("金额"), "account": obj.get("账户"),
         "execution_surface": obj.get("执行面"),
         "assignee": obj.get("承办人"),
         "deadline_months": obj.get("期限月数"),
+        "locality_scope": _coerce_draft_locality_scope(obj.get("施行范围")),
     }
     mode = _directive_mode(obj.get("颁布方式"))
     if mode is not None:
@@ -2317,12 +2321,38 @@ def extract_draft_intent(
 MANUAL_DIRECTIVE_CAPTURE_TIMEOUT_S = 30.0
 
 
+
+_VALID_DRAFT_TARGET_KINDS = frozenset({
+    "policy", "character", "office", "army", "region", "issue", "account",
+})
+_VALID_LOCALITY_SCOPE_ZH = frozenset({"无", "全国", "单省"})
+
+
+def _coerce_draft_target_kind(raw: object) -> str:
+    """#654 r3-B.2：非法 target_kind fail-loud，废除静默改 policy。"""
+    kind = str(raw or "").strip()
+    if kind not in _VALID_DRAFT_TARGET_KINDS:
+        raise ValueError(f"目标类型非法：{kind!r}")
+    return kind
+
+
+def _coerce_draft_locality_scope(raw: object) -> str:
+    """抽取面中文三值 → 保留中文供 durable 归一；缺省「无」。"""
+    if raw is None or str(raw).strip() == "":
+        return "无"
+    text = str(raw).strip()
+    if text not in _VALID_LOCALITY_SCOPE_ZH:
+        raise ValueError(f"施行范围非法：{text!r}")
+    return text
+
+
 def _manual_special_decree_payload(mode: str) -> Dict[str, object]:
     return {
         "dossier_action_type": "special_decree",
         "target_kind": "policy",
         "target_id": "manual-directive",
         "mode": mode,
+        "locality_scope": "none",
     }
 
 
@@ -2405,7 +2435,7 @@ def capture_manual_directive_payload(
     }
     for field in (
         "amount", "account", "execution_surface", "assignee",
-        "deadline_months", "participant_roster",
+        "deadline_months", "participant_roster", "locality_scope",
     ):
         if captured.get(field) not in (None, ""):
             payload[field] = captured[field]

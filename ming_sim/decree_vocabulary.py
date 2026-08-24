@@ -13,6 +13,10 @@ DOSSIER_ACTION_TYPES = frozenset({
 
 DIRECTIVE_ACTION_TYPES = DOSSIER_ACTION_TYPES - {"appointment", "secret_order"}
 
+# Ming #654：属地 fan-out 资格动作白名单。闭合枚举、import 期 assert 子集关系。
+NATIONAL_FANOUT_ACTION_TYPES = frozenset({"policy", "special_decree"})
+assert NATIONAL_FANOUT_ACTION_TYPES <= DIRECTIVE_ACTION_TYPES
+
 # ADR 0055 / #560: the single policy source for dossier admission and effect
 # timing.  Consumers must not infer these properties from ad-hoc action sets.
 # ``payload`` means a structured effect is materialized after promulgation;
