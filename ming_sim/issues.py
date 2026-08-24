@@ -36,6 +36,7 @@ from ming_sim.db import (
     compute_loyalty_soft_adjust,
     fold_loyalty_alias_delta,
     infer_office_type_from_office,
+    latched_army_field_effect_permitted,
     normalize_office,
     resolve_office_type_preserving_title,
 )
@@ -4540,6 +4541,16 @@ def _strategic_event_result_preflight_error(
         field = ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
         if field == "reason":
             return ""
+        # #319：latched 静默 no-op 与写缝同口径——战略信封预检须拒整封，不得半落兄弟结果。
+        # loyalty 不进此函数：caller 对 field=="loyalty" 先 continue，再走
+        # fold_loyalty_alias_delta + latched_army_field_effect_permitted +
+        # compute_loyalty_soft_adjust；勿在此再堆 loyalty 专属预测（死分支）。
+        if bool(row["is_mutinied"]):
+            if field == "manpower":
+                if not latched_army_field_effect_permitted(field, value):
+                    return _noop_error("army", army_id, raw_field, value)
+            else:
+                return _noop_error("army", army_id, raw_field, value)
         if field == "cannon_equipment":
             old_value = int(row[field])
             if max(0, min(12, old_value + int(value))) == old_value:
@@ -4664,6 +4675,19 @@ def _strategic_event_result_preflight_error(
         if loyalty_net is not None:
             net_pct = int(((legacy_mods.get("armies") or {})
                            .get(army_id) or {}).get("loyalty", 0) or 0)
+            # #319+#320 同一写缝：post-mod 动态方向门 → ±15/cap 软调；任一步 no-op 则拒整封。
+            effect_delta = int(loyalty_net)
+            if net_pct:
+                effect_delta = db.apply_legacy_pct(effect_delta, net_pct)
+            if bool(row["is_mutinied"]) and not latched_army_field_effect_permitted(
+                "loyalty", loyalty_net, effect_delta=effect_delta
+            ):
+                return _noop_error(
+                    "army",
+                    army_id,
+                    first_loyalty_raw_field if first_loyalty_raw_field is not None else "loyalty",
+                    loyalty_net,
+                )
             _new_loyalty, actual_delta = compute_loyalty_soft_adjust(
                 int(row["loyalty"]),
                 loyalty_net,
