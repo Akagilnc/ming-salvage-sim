@@ -635,8 +635,6 @@ def _render_two_axis_tsv(provinces: Sequence[Mapping[str, object]]) -> str:
             )
         # ④ 到差态行（与 arrival_rows 1:1；仅填 省/主办/到差态）
         for arr in block.get("arrival_rows") or []:
-            if not isinstance(arr, Mapping):
-                continue
             lines.append(
                 _tsv_data_row([
                     "到差态",
