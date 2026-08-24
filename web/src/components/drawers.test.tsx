@@ -169,6 +169,38 @@ describe("ArmyDrawer presentation", () => {
     expect(host.textContent).not.toMatch(/危殆|浮动|不稳|稳固/);
   });
 
+  // #321 AC1 链1 drawer：六档 mutiny_tier 直出，无二次 map / raw 轴
+  it.each(["死忠", "优秀", "一般", "不满", "鼓噪", "哗变"] as const)(
+    "renders mutiny_tier %s verbatim without loyalty remap",
+    (tier) => {
+      const host = renderArmyDrawer({
+        id: "guanning",
+        name: "关宁军",
+        station: "辽东",
+        theater: "辽东",
+        commander: "祖大寿",
+        controller: "祖大寿",
+        troop_type: "边军",
+        manpower: 10000,
+        army_needed: 10,
+        supply: 50,
+        morale_text: "士气：不振",
+        training: 50,
+        equipment: 50,
+        arrears_text: "无欠饷",
+        mobility: 50,
+        mutiny_tier: tier,
+        status: "驻防",
+        owner_power: "ming",
+      });
+      expect(host.textContent).toContain(tier);
+      expect(host.textContent).toContain("士气：不振");
+      expect(host.textContent).toContain("无欠饷");
+      expect(host.textContent).not.toMatch(/危殆|浮动|不稳|稳固/);
+      expect(host.textContent).not.toMatch(/\bmorale\b|\bloyalty\b|\barrears\b/);
+    }
+  );
+
   it("renders fractional payload arrears_text without raw 12.5", () => {
     const host = renderArmyDrawer({
       id: "denglai",

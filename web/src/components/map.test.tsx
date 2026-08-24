@@ -156,4 +156,22 @@ describe("NodeIntel #1352 garrison layout / army-list口径", () => {
     expect(headers.some((h) => h.includes("士气"))).toBe(true);
     expect(host.querySelector(".intel-table--garrison")).not.toBeNull();
   });
+
+  // #321 AC1 链1 map：morale_text / arrears_text 直出，禁 raw 二次 map
+  it.each([
+    { morale_text: "士气：高昂", arrears_text: "无欠饷" },
+    { morale_text: "士气：涣散", arrears_text: "欠饷约60万两，数月军饷" },
+    { morale_text: "士气：不振", arrears_text: "欠饷不足十万两，约两月军饷" },
+  ] as const)(
+    "renders backend $morale_text / $arrears_text without remapping",
+    ({ morale_text, arrears_text }) => {
+      const node = makeNode(makeRegion({ name: "山海关", id: "shanhaiguan" }));
+      node.armies = [makeArmy({ morale_text, arrears_text, mutiny_tier: "哗变" })];
+      const host = renderNodeIntel(node);
+      expect(host.textContent).toContain(morale_text);
+      expect(host.textContent).toContain(arrears_text);
+      expect(host.textContent).not.toMatch(/危殆|浮动|不稳|稳固/);
+      expect(host.textContent).not.toContain("12.5");
+    }
+  );
 });

@@ -7532,7 +7532,6 @@ class GameDB:
     def army_roster(
         self,
         filter_names: Optional[List[str]] = None,
-        index_only: bool = False,
         qualitative_equipment: bool = False,
     ) -> str:
         """全军名册；大臣上下文可将火器装备以定性词呈现。"""
@@ -7541,16 +7540,6 @@ class GameDB:
         ).fetchall()
         if filter_names:
             rows = [r for r in rows if r["name"] in filter_names or r["id"] in filter_names]
-        if index_only:
-            # 军队超 30 时用索引：仅显示军名+欠饷+状态，完整信息由 query_army_roster tool 提供
-            lines = []
-            for row in rows:
-                if str(row["owner_power"]) == "ming":
-                    lines.append(f"{row['name']}：{_approx_wanliang(row['arrears'])}，{row['status']}")
-            return (
-                "【全军名册索引（涉及军队欠饷/补给/士气时先调 query_army_roster 查完整信息）】\n"
-                + "\n".join(lines)
-            ) if lines else ""
         if not rows:
             return ""
         own: List[str] = []

@@ -16,25 +16,6 @@ export const formatMoney = (value: number) => `${value}万两`;
 
 export const formatSignedMoney = (value: number) => `${value > 0 ? "+" : ""}${formatMoney(value)}`;
 
-export const approximateWanliang = (value: number) => {
-  const amount = Number.isFinite(value) ? value : 0;
-  if (amount <= 0) return "无欠饷";
-  if (amount < 10) return "不足十万两";
-  const step = amount < 20 ? 5 : 10;
-  return `约${Math.max(1, Math.round(amount / step) * step)}万两`;
-};
-
-export const approximatePayMonths = (arrears: number, monthlyPay: number) => {
-  if (arrears <= 0 || monthlyPay <= 0) return "";
-  const months = arrears / monthlyPay;
-  if (months < 1) return "，不足一月军饷";
-  if (months < 3) return "，约两月军饷";
-  if (months < 6) return "，数月军饷";
-  if (months < 12) return "，约半年军饷";
-  const years = Math.round(months / 12);
-  return years <= 1 ? "，逾一年军饷" : `，约${years}年军饷`;
-};
-
 /** #321：欠饷只消费后端 arrears_text，不再二次 map 裸数。 */
 export const formatArmyArrears = (army: Pick<Army, "arrears_text">) =>
   String(army.arrears_text || "无欠饷");
