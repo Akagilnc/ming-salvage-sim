@@ -322,6 +322,14 @@ def materialize_pay_order_decree(
         raise PayOrderKeyError(
             f"override 旨案卷 {origin} 未过合法颁布门（顺颁/强颁），禁物化 config"
         )
+    # P1 / ADR 0090：legacy 发饷环不读 due_priority/haircut 键——零消费方不得假装已执行。
+    # fail-loud 拒物化；禁另写 legacy 发饷消费者（平行机制）。
+    engine = getattr(db, "fiscal_engine", None)
+    if callable(engine) and engine() == "legacy":
+        raise PayOrderKeyError(
+            "pay_order_override 在 fiscal_engine=legacy 下无结算消费方，禁物化"
+            "（P1：零消费不得标已执行）"
+        )
     turn = int(turn)
     prepared = prepare_pay_order_entries(db, entries)
 
@@ -387,10 +395,12 @@ def restore_pay_order_override(
     revoke_dossier_id: int,
     reason: str = "",
 ) -> List[Dict[str, Any]]:
-    """真实 revoke 尾接缝：按目标 override 载荷写回默认，并清期限伴随键。
+    """真实 revoke 尾接缝：使目标案仍占 provenance 的形状退出格律（删键）。
 
-    provenance 属撤销案卷；目标案卷只提供其曾占用的 canonical keys。此函数不经过
-    materialize（后者依法只接受 pay_order_override origin），也不提交事务。
+    F1.4/r3：撤销只处理当前 origin_ref 仍属被撤案的键——后旨 last-write 不被踩；
+    省域键删后按特定度回落全国键/祖制默认，禁留下 live 的更特定默认值压过次特定
+    在位旨。禁反演上一道 override 值/前旨栈。期限伴随键一并退出。不经 materialize
+    （后者只接受 pay_order_override origin），不提交事务。
     """
     target = db.get_decree_dossier(int(target_dossier_id))
     revoke = db.get_decree_dossier(int(revoke_dossier_id))
@@ -406,31 +416,51 @@ def restore_pay_order_override(
         payload = json.loads(payload)
     entries = payload.get("entries") if isinstance(payload, dict) else None
     prepared = prepare_pay_order_entries(db, entries)
+    target_origin = f"dossier:{int(target_dossier_id)}"
     origin = f"dossier:{int(revoke_dossier_id)}"
-    current = db.get_fiscal_config()
     written: List[Dict[str, Any]] = []
     for key, _value, _until in prepared:
-        old = int(current.get(key, _default_of(key)))
-        new = _default_of(key)
+        row = db.conn.execute(
+            "SELECT value, origin_ref FROM fiscal_config WHERE key = ?", (key,)
+        ).fetchone()
+        if row is None:
+            continue
+        # 同维后旨已覆写 → 当前 provenance 不属于被撤案，不改该键（last-write 保全）
+        if str(row["origin_ref"] or "") != target_origin:
+            continue
+        old = int(row["value"])
         db.conn.execute(
-            "INSERT INTO fiscal_config (key,value,kind,note,origin_ref) "
-            "VALUES (?,?,'override',?,?) ON CONFLICT(key) DO UPDATE SET "
-            "value=excluded.value, origin_ref=excluded.origin_ref",
-            (key, new, "撤销 override 恢复祖制（#653）", origin),
+            "INSERT INTO fiscal_config_tombstones"
+            " (removed_turn, key, value, kind, origin_ref, reason, beyond_intent)"
+            " VALUES (?, ?, ?, 'override', ?, ?, 0)",
+            (int(turn), key, old, origin,
+             (reason or "撤销 override 旨，形状退出格律")[:240]),
         )
+        db.conn.execute("DELETE FROM fiscal_config WHERE key = ?", (key,))
         db.record_fiscal_config_change(
-            turn=int(turn), key=key, old_value=old, new_value=new,
-            origin_ref=origin, reason=reason or "撤销 override 旨，恢复祖制默认",
+            turn=int(turn), key=key, old_value=old, new_value=_default_of(key),
+            origin_ref=origin,
+            reason=reason or "撤销 override 旨，形状退出格律（回落次特定/祖制）",
         )
         until_key = f"{key}{_UNTIL_SUFFIX}"
-        if until_key in current:
-            old_until = int(current[until_key])
+        until_row = db.conn.execute(
+            "SELECT value, origin_ref FROM fiscal_config WHERE key = ?", (until_key,)
+        ).fetchone()
+        if until_row is not None and str(until_row["origin_ref"] or "") == target_origin:
+            old_until = int(until_row["value"])
+            db.conn.execute(
+                "INSERT INTO fiscal_config_tombstones"
+                " (removed_turn, key, value, kind, origin_ref, reason, beyond_intent)"
+                " VALUES (?, ?, ?, 'override', ?, ?, 0)",
+                (int(turn), until_key, old_until, origin,
+                 "撤销 override 旨，清除期限伴随键"[:240]),
+            )
             db.conn.execute("DELETE FROM fiscal_config WHERE key=?", (until_key,))
             db.record_fiscal_config_change(
                 turn=int(turn), key=until_key, old_value=old_until, new_value=0,
                 origin_ref=origin, reason="撤销 override 旨，清除期限伴随键",
             )
-        written.append({"key": key, "old": old, "new": new})
+        written.append({"key": key, "old": old, "new": _default_of(key), "exited": True})
     return written
 
 
