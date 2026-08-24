@@ -24,14 +24,6 @@ from ming_sim.simulation import build_simulator_payload
 _AXIS = "礼法名节"
 _TARGET_EUNUCH = "崔呈秀"  # 阉党 · identity=98
 _TARGET_ARMY = "袁崇焕"  # 军队 · identity=80
-_FIELD_NAMES = (
-    "blood_debt",
-    "wariness",
-    "edict_overdraw",
-    "legitimacy_pct",
-    "amount",
-    "base",
-)
 _SENTINEL_DEBT = 424242
 _SENTINEL_WARINESS = 434343
 _SENTINEL_OVERDRAW = 444444
@@ -789,6 +781,7 @@ def test_t13_p4_surfaces_do_not_feed_new_fields(game):
         _SENTINEL_AMOUNT,
         _SENTINEL_BASE,
     )
+    # 契约只钉专有字段名 + 植入 sentinel；不锁 amount/base 等常见词自由文本子串。
     unique_names = (
         "blood_debt",
         "wariness",
@@ -800,14 +793,6 @@ def test_t13_p4_surfaces_do_not_feed_new_fields(game):
             assert name not in text
         for value in sentinels:
             assert str(value) not in text
-
-    # factions_brief / character / faction_report 无 amount/base 子串；
-    # 全量 ctx 预存 output_amount 列名，只禁独立字段形态与 sentinel。
-    for text in (surfaces[0], surfaces[1], brief, report):
-        assert "amount" not in text
-        assert "base" not in text
-    assert "blood_debt" not in ctx
-    assert "edict_overdraw" not in ctx
 
 
 # ---------------------------------------------------------------------------
