@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from driver import run_settle
+from tests.section_rejection_helpers import prepare_then_settle as run_settle
 from ming_sim.issues import apply_office_appointment
 
 

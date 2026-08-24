@@ -111,6 +111,83 @@ def mutiny_loyalty_cap(mutiny_count: int, redemption_count: int = 0) -> int:
     return max(60, min(100, 100 - 20 * int(mutiny_count) + 10 * int(redemption_count)))
 
 
+def latched_army_field_effect_permitted(
+    field: str,
+    raw_value: object,
+    *,
+    effect_delta: int | None = None,
+) -> bool:
+    """#319 ADR 0025 D4①：latched 军字段-效果白名单（写缝与战略 preflight 共用）。
+
+    - manpower：仅 raw 严格负
+    - loyalty：raw 严格正，且若已算 post-modifier effect 则 effect 也须严格正
+    - 其余字段：一律不准
+    """
+    if field == "manpower":
+        try:
+            return int(raw_value) < 0
+        except (TypeError, ValueError):
+            return False
+    if field == "loyalty":
+        try:
+            if int(raw_value) <= 0:
+                return False
+        except (TypeError, ValueError):
+            return False
+        if effect_delta is None:
+            return True
+        return int(effect_delta) > 0
+    return False
+
+
+# #320 / ADR 0025 D2：extractor loyalty 软调单事件 |Δ| 上限（全路径、无豁免）。
+LOYALTY_SOFT_ADJUST_MAX = 15
+
+
+def fold_loyalty_alias_delta(raw_changes: Mapping[str, object]) -> int | None:
+    """同军同事件 loyalty 规范键/别名合法整数净合计。
+
+    仅合计 alias→loyalty 且合法整数的叶；bool/float/非 int 不并入（非法叶仍由调用方逐叶拒收）。
+    无任何合法 loyalty 叶时返回 None。
+    """
+    loyalty_canonical_delta: int | None = None
+    for raw_field, value in raw_changes.items():
+        if ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip()) != "loyalty":
+            continue
+        try:
+            if isinstance(value, bool) or isinstance(value, float):
+                raise ValueError("非整数 delta")
+            leaf = int(value)
+        except (TypeError, ValueError):
+            continue
+        loyalty_canonical_delta = (
+            leaf if loyalty_canonical_delta is None else loyalty_canonical_delta + leaf
+        )
+    return loyalty_canonical_delta
+
+
+def compute_loyalty_soft_adjust(
+    old: int,
+    net_delta: int,
+    *,
+    net_pct: int = 0,
+    mutiny_count: int = 0,
+    redemption_count: int = 0,
+) -> tuple[int, int]:
+    """唯一 loyalty 软调纯计算真源。
+
+    顺序：net → legacy pct → ±LOYALTY_SOFT_ADJUST_MAX → mutiny_loyalty_cap 上界
+    → [0, cap] → (new_value, actual_delta)。写核与战略预检共用，禁止平行公式。
+    """
+    delta = int(net_delta)
+    if net_pct:
+        delta = GameDB.apply_legacy_pct(delta, int(net_pct))
+    delta = max(-LOYALTY_SOFT_ADJUST_MAX, min(LOYALTY_SOFT_ADJUST_MAX, delta))
+    upper_bound = mutiny_loyalty_cap(mutiny_count, redemption_count)
+    new_value = max(0, min(upper_bound, int(old) + delta))
+    return new_value, new_value - int(old)
+
+
 def _seed_guilt_storage_value(value: object) -> str:
     """Serialize the content-layer guilt mapping into the existing DB TEXT column."""
     if isinstance(value, Mapping):
@@ -1415,6 +1492,7 @@ class GameDB:
                 pending_action_id INTEGER NOT NULL DEFAULT 0,
                 directive_id INTEGER,
                 secret_order_id INTEGER,
+                region_id TEXT NOT NULL DEFAULT '',
                 decree_text TEXT NOT NULL DEFAULT '',
                 payload_json TEXT NOT NULL DEFAULT '{}',
                 status TEXT NOT NULL DEFAULT 'proposed'
@@ -1442,10 +1520,11 @@ class GameDB:
                 FOREIGN KEY(directive_id) REFERENCES turn_directives(id) ON DELETE CASCADE,
                 FOREIGN KEY(secret_order_id) REFERENCES secret_orders(id) ON DELETE CASCADE
             );
+            -- #654：fan-out 幂等键＝(source_id, region_id)；单行 region_id='' 与旧语义等价
             CREATE UNIQUE INDEX IF NOT EXISTS idx_decree_dossiers_pending_action
-                ON decree_dossiers(pending_action_id) WHERE pending_action_id > 0;
+                ON decree_dossiers(pending_action_id, region_id) WHERE pending_action_id > 0;
             CREATE UNIQUE INDEX IF NOT EXISTS idx_decree_dossiers_directive
-                ON decree_dossiers(directive_id) WHERE directive_id > 0;
+                ON decree_dossiers(directive_id, region_id) WHERE directive_id > 0;
             CREATE UNIQUE INDEX IF NOT EXISTS idx_decree_dossiers_secret_order
                 ON decree_dossiers(secret_order_id) WHERE secret_order_id IS NOT NULL;
             CREATE INDEX IF NOT EXISTS idx_decree_dossiers_status
@@ -2132,6 +2211,8 @@ class GameDB:
         self.ensure_column("characters", "transit_distance_remaining", "REAL")
         self.ensure_column("characters", "transit_speed_factor", "REAL")
         self.ensure_column("characters", "transit_start_turn", "INTEGER NOT NULL DEFAULT 0")
+        # #654 G：location/transit 五列齐备后具名幂等迁移（精确别名→canonical；未知 fail-loud）
+        self._migrate_character_location_aliases()
         self.ensure_column("issues", "resolve_condition", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("issues", "fail_condition", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("issues", "end_turn", "INTEGER NOT NULL DEFAULT 0")
@@ -2277,6 +2358,11 @@ class GameDB:
         self.ensure_column(
             "decree_dossiers", "participant_roster", "TEXT NOT NULL DEFAULT '[]'"
         )
+        # #654：属地列 + 复合唯一索引（旧单列索引 DROP 后重建）
+        self.ensure_column(
+            "decree_dossiers", "region_id", "TEXT NOT NULL DEFAULT ''"
+        )
+        self._ensure_decree_dossier_locality_indexes()
         self._backfill_proposed_appointment_break_ranks()
         self._migrate_legacy_secret_order_dossiers()
         # #1504 SURVEY §5.2 F2：须在案卷补建之后——先按 pending_review→executing 建轴，
@@ -3143,6 +3229,19 @@ class GameDB:
             self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
             return True
         return False
+
+    def _ensure_decree_dossier_locality_indexes(self) -> None:
+        """#654：把旧单列 UNIQUE 换成 (source_id, region_id) 复合键；secret_order 不动。"""
+        self.conn.execute("DROP INDEX IF EXISTS idx_decree_dossiers_pending_action")
+        self.conn.execute("DROP INDEX IF EXISTS idx_decree_dossiers_directive")
+        self.conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_decree_dossiers_pending_action "
+            "ON decree_dossiers(pending_action_id, region_id) WHERE pending_action_id > 0"
+        )
+        self.conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_decree_dossiers_directive "
+            "ON decree_dossiers(directive_id, region_id) WHERE directive_id > 0"
+        )
 
     # 城市等级 0-5（静态，史实分级；未列出的地区默认 0=游牧/孤岛/边荒）。
     # 用途：城防大炮上限(city_level×8) + 将来经济/内政。1627 实况，非现代省份概念。
@@ -4513,6 +4612,11 @@ class GameDB:
                 ))
                 return
 
+        # #319 ADR 0025 D4①：先拒脏输入（fail-loud / invalid_enum），校验通过后
+        # 再对 latched 军非 owner 饷源字段静默 no-op。写缝在主环 latch 门之前、
+        # 且主环对 _ARMY_PAY_SOURCE_DELTA_FIELDS 直接 continue，故既有字段效果门
+        # 看不到本缝；在此复用同一 latch 语义，不新开平行门/第二 adapter。
+        # 真 owner 变更已由上方 return。禁止把 latch return 前移到校验之前。
         old_source = str(row["pay_source_region"] or "")
         owner_power = str(row["owner_power"] or "").strip()
         pay_source_region = str(normalized.get("pay_source_region", row["pay_source_region"]) or "").strip()
@@ -4561,6 +4665,10 @@ class GameDB:
                 "reason": f"army_delta 饷源字段非法：{exc}",
                 "item": {"army_id": army_id, "changes": raw_changes},
             })
+            return
+
+        # 合法且被 deny 的饷源字段：静默 no-op，不写库、不留 rejected
+        if bool(row["is_mutinied"]):
             return
 
         old_values = {
@@ -5367,6 +5475,58 @@ class GameDB:
             except Exception as exc:
                 print(f"[WARN] 开局危机落库失败：{exc}；跳过 {ev.title}")
 
+    def _canonicalize_character_location(self, raw: object) -> str:
+        """#654 G：location 唯一写缝归一——精确 compact 等值；未知非空 fail-loud。"""
+        from ming_sim.matching import canonical_region_id_exact
+
+        text = "" if raw is None else str(raw)
+        if not text.strip():
+            return ""
+        regions = getattr(self.content, "regions", None) or {}
+        hit = canonical_region_id_exact(text, regions)
+        if hit is None:
+            raise ValueError(f"character location 未知：{text!r}")
+        return hit
+
+    def _migrate_character_location_aliases(self) -> None:
+        """#654 G：幂等扫描 characters.location；精确别名→canonical；全字段回传 transit。"""
+        rows = self.conn.execute(
+            "SELECT name, location, transit_to, transit_distance_remaining, "
+            "transit_speed_factor, transit_start_turn FROM characters"
+        ).fetchall()
+        if not rows:
+            return
+        from ming_sim.matching import canonical_region_id_exact
+
+        regions = getattr(self.content, "regions", None) or {}
+        changed = False
+        for row in rows:
+            raw = str(row["location"] or "")
+            if not raw.strip():
+                continue
+            # 已是 canonical id → skip
+            if raw in regions:
+                continue
+            hit = canonical_region_id_exact(raw, regions)
+            if hit is None:
+                raise ValueError(
+                    f"开档 location 未知别名：name={row['name']!r} location={raw!r}"
+                )
+            if hit == raw:
+                continue
+            self.set_character_transit(
+                str(row["name"]),
+                location=hit,
+                transit_to=str(row["transit_to"] or ""),
+                distance_remaining=row["transit_distance_remaining"],
+                speed_factor=row["transit_speed_factor"],
+                start_turn=int(row["transit_start_turn"] or 0),
+                commit=False,
+            )
+            changed = True
+        if changed:
+            self.conn.commit()
+
     def set_character_transit(
         self,
         name: str,
@@ -5388,6 +5548,7 @@ class GameDB:
             transit_to, distance_remaining, speed_factor, start_turn,
         )
         if location is not None:
+            location = self._canonicalize_character_location(location)
             assignments = "location=?, " + assignments
             values = (location,) + values
         self.conn.execute(
@@ -7539,6 +7700,10 @@ class GameDB:
                         ).fetchone()
                         if current_row is not None:
                             row = current_row
+            # #320：同军同事件内 loyalty 规范键与别名只消费一次——先合计合法整数增量，
+            # 通用环内落地一次 ±15 软钳，避免 {loyalty:50, 军心:50} 双键绕过单事件预算。
+            loyalty_canonical_delta = fold_loyalty_alias_delta(raw_changes)
+            loyalty_soft_consumed = False
             for raw_field, value in raw_changes.items():
                 field = ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
                 if field in ("reason", "origin_ref"):
@@ -7605,6 +7770,12 @@ class GameDB:
                 ).fetchone()
                 if current_row is not None:
                     row = current_row
+                # #319 ADR 0025 D4①：latched 军字段-效果 deny-by-default。
+                # 白名单：manpower 严格负增量、loyalty 正 raw（post-mod 方向见 score 分支）；
+                # 其余已归一可写字段静默 no-op。owner_power 已由上方 adapter 处理，不重入本门。
+                # 门在类型/合法字段校验之后，避免把 invalid_enum 伪装成 mutiny no-op。
+                if bool(row["is_mutinied"]) and not latched_army_field_effect_permitted(field, value):
+                    continue
                 old_value = row[field]
                 if field == "arrears":
                     if self.is_army_pay_source_cutover_enabled():
@@ -7710,22 +7881,55 @@ class GameDB:
                     stored_new = new_value
                     log_delta = actual_delta
                 elif field in ARMY_SCORE_FIELDS:
-                    delta = int(value)
-                    # 遗产百分比修正：该军该字段若有 active 遗产修正符，先放大/缩小 delta
-                    net_pct = int(((self.legacy_modifiers(state).get("armies") or {})
-                                   .get(army_id) or {}).get(field, 0) or 0)
-                    if net_pct:
-                        delta = self.apply_legacy_pct(delta, net_pct)
-                    upper_bound = (
-                        mutiny_loyalty_cap(row["mutiny_count"], row["redemption_count"])
-                        if field == "loyalty" else 100
-                    )
-                    new_value = max(0, min(upper_bound, int(old_value) + delta))
-                    actual_delta = new_value - int(old_value)
-                    if actual_delta == 0:
-                        continue
-                    stored_new = new_value
-                    log_delta = actual_delta
+                    if field == "loyalty":
+                        # 合法 loyalty 别名已在环前合计；非法叶子仍在上方逐项拒收。
+                        # 同事件同军只落地一次，后续别名 key 跳过（不写库、不二次打日志）。
+                        if loyalty_soft_consumed:
+                            continue
+                        loyalty_soft_consumed = True
+                        net_delta = int(
+                            loyalty_canonical_delta
+                            if loyalty_canonical_delta is not None
+                            else value
+                        )
+                        net_pct = int(((self.legacy_modifiers(state).get("armies") or {})
+                                       .get(army_id) or {}).get(field, 0) or 0)
+                        # #319：latched loyalty 以 post-modifier 实际方向为准（与 soft-adjust
+                        # 同序先套 legacy pct）；legacy 翻负 / 净合计非正则静默 no-op。
+                        effect_delta = int(net_delta)
+                        if net_pct:
+                            effect_delta = self.apply_legacy_pct(effect_delta, net_pct)
+                        if bool(row["is_mutinied"]) and not latched_army_field_effect_permitted(
+                            field, net_delta, effect_delta=effect_delta
+                        ):
+                            continue
+                        # #320：±15 alias fold 与动态 cap 同一写缝
+                        new_value, actual_delta = compute_loyalty_soft_adjust(
+                            int(old_value),
+                            net_delta,
+                            net_pct=net_pct,
+                            mutiny_count=int(row["mutiny_count"] or 0),
+                            redemption_count=int(row["redemption_count"] or 0),
+                        )
+                        if actual_delta == 0:
+                            continue
+                        stored_new = new_value
+                        log_delta = actual_delta
+                    else:
+                        delta = int(value)
+                        # 遗产百分比修正：该军该字段若有 active 遗产修正符，先放大/缩小 delta
+                        net_pct = int(((self.legacy_modifiers(state).get("armies") or {})
+                                       .get(army_id) or {}).get(field, 0) or 0)
+                        if net_pct:
+                            delta = self.apply_legacy_pct(delta, net_pct)
+                        # #319：latched 非 loyalty score 字段已由环前 deny-by-default 门裁掉；
+                        # 此处仅非 latched / 已放行路径的普通 0-100 clamp。
+                        new_value = max(0, min(100, int(old_value) + delta))
+                        actual_delta = new_value - int(old_value)
+                        if actual_delta == 0:
+                            continue
+                        stored_new = new_value
+                        log_delta = actual_delta
                 elif field == "manpower":
                     delta = int(value)
                     new_value = max(0, int(old_value) + delta)
@@ -11875,6 +12079,17 @@ class GameDB:
                     f"军令引用未入库军队 '{target_id}'（成案前须存在）"
                 )
             normalized["target_kind"] = "army"
+        # #654 / owner A：locality_scope 三值 durable 归一；八值 target_kind 闭集直校验
+        # （含结构目标 dossier）。region 缺省不暗升 single。
+        from ming_sim.decree_vocabulary import TARGET_KINDS
+        from ming_sim.execution_pressure import normalize_locality_scope
+        final_kind = str(normalized.get("target_kind") or "").strip()
+        if final_kind not in TARGET_KINDS:
+            raise ValueError(f"target_kind 非法：{final_kind!r}")
+        normalized["target_kind"] = final_kind
+        normalized["locality_scope"] = normalize_locality_scope(
+            normalized.get("locality_scope"),
+        )
         return normalized
 
     def _find_pacification_target(self, content, name: str) -> Optional[str]:
@@ -11924,6 +12139,7 @@ class GameDB:
     def _dossier_row(cls, row: Any) -> Dict[str, object]:
         out = dict(row)
         out["id"] = int(out["id"])
+        out["region_id"] = str(out.get("region_id") or "")
         for key in (
             "source_chat_turn_id", "pending_action_id", "directive_id",
             "due_turn", "created_turn", "created_year", "created_period",
@@ -13713,8 +13929,352 @@ class GameDB:
         commit: bool = True,
         rejection_collector=None,
         _issued_secret_order: bool = False,
+        region_id: str = "",
     ) -> int:
-        """在成案点落一条独立案卷；幂等键只使用真实 (>0) 来源 id。"""
+        """在成案点落一条独立案卷；幂等键只使用真实 (>0) 来源 id。
+
+        #654：int ABI 给非 directive 消费者，直落单行内核；不经 locality oracle /
+        national fan-out。属地浓度与 fan-out 只来自 r5 三路 create_decree_dossiers。
+        """
+        return self._create_decree_dossier_row(
+            state,
+            action_type=action_type,
+            decree_text=decree_text,
+            target_kind=target_kind,
+            target_id=target_id,
+            executor_kind=executor_kind,
+            executor_id=executor_id,
+            source_chat_turn_id=source_chat_turn_id,
+            pending_action_id=pending_action_id,
+            directive_id=directive_id,
+            secret_order_id=secret_order_id,
+            payload=payload,
+            status=status,
+            due_turn=due_turn,
+            extension=extension,
+            participants=participants,
+            commit=commit,
+            rejection_collector=rejection_collector,
+            _issued_secret_order=_issued_secret_order,
+            region_id=str(region_id or ""),
+        )
+
+    def create_decree_dossiers(
+        self,
+        state: GameState,
+        *,
+        action_type: str,
+        decree_text: str,
+        target_kind: str = "",
+        target_id: object = "",
+        executor_kind: str = "",
+        executor_id: object = "",
+        source_chat_turn_id: int = 0,
+        pending_action_id: int = 0,
+        directive_id: int = 0,
+        secret_order_id: Optional[int] = None,
+        payload: Optional[Dict[str, object]] = None,
+        status: str = "proposed",
+        due_turn: int = 0,
+        extension: Optional[Dict[str, object]] = None,
+        participants: Optional[Iterable[object]] = None,
+        commit: bool = True,
+        rejection_collector=None,
+        _issued_secret_order: bool = False,
+    ) -> List[int]:
+        """#654 批量成案 ABI：Plan → Validate-all → Write-once。
+
+        national fan-out → N 行；与 create_decree_dossier 共享单行内核。
+        任一省路由/校验失败 → 整旨零行；复合键按 (source, region_id) 逐项查补。
+        """
+        from ming_sim.execution_pressure import resolve_dossier_region_ids
+        from ming_sim.executor_routing import resolve_lead_executors
+
+        payload_map = dict(payload or {})
+        # target_* 以行级参数为准并入 payload，供 oracle 读取
+        if target_kind and not str(payload_map.get("target_kind") or "").strip():
+            payload_map["target_kind"] = str(target_kind).strip()
+        if target_id not in (None, "") and not str(payload_map.get("target_id") or "").strip():
+            payload_map["target_id"] = str(target_id).strip()
+        if not str(payload_map.get("dossier_action_type") or "").strip():
+            payload_map["dossier_action_type"] = str(action_type or "").strip()
+
+        # 密令不 fan-out；既有行整批返回
+        if secret_order_id is not None:
+            region_ids = [""]
+            existing = self.conn.execute(
+                "SELECT id FROM decree_dossiers WHERE secret_order_id=? "
+                "ORDER BY region_id, id",
+                (int(secret_order_id),),
+            ).fetchall()
+            if existing:
+                return [int(r["id"]) for r in existing]
+        else:
+            regions_content = getattr(self.content, "regions", None) if self.content else None
+            # appointment 等历史行级 target_kind=person：仅 oracle 视作 character，不改 durable 载荷
+            oracle_payload = dict(payload_map)
+            if str(oracle_payload.get("target_kind") or "").strip() == "person":
+                oracle_payload["target_kind"] = "character"
+            region_ids = resolve_dossier_region_ids(
+                self.conn,
+                action_type=str(action_type or "").strip(),
+                payload=oracle_payload,
+                regions_content=regions_content,
+            )
+
+        # 点将名单：与单行内核同序归一 assignee 别名 / 旧式 executor 迁入，再判 named
+        canonical_assignee = str(payload_map.get("assignee_id") or "").strip()
+        if not canonical_assignee:
+            canonical_assignee = str(payload_map.get("assignee") or "").strip()
+        if canonical_assignee:
+            payload_map["assignee_id"] = canonical_assignee
+        payload_map.pop("assignee", None)
+
+        base_roster_source = participants
+        if base_roster_source is None:
+            base_roster_source = (
+                payload_map.get("participant_roster")
+                or payload_map.get("participants")
+            )
+        base_roster = self._normalize_participant_roster(
+            base_roster_source, strict_structured=True,
+        )
+        has_canonical_lead = any(item.get("tier") == "主办" for item in base_roster)
+        action_key = str(action_type or "").strip()
+        if (
+            action_key in {"assignment", "military_order"}
+            and not canonical_assignee
+            and not has_canonical_lead
+            and str(executor_kind or "").strip() in {"", "character"}
+            and str(executor_id or "").strip()
+        ):
+            base_roster.append({
+                "character_id": str(executor_id).strip(), "tier": "主办",
+                "role": "", "delegator_id": None,
+            })
+            base_roster = self._normalize_participant_roster(
+                base_roster, strict_structured=True,
+            )
+        named_leads = [
+            str(item.get("character_id") or "").strip()
+            for item in base_roster
+            if item.get("tier") == "主办"
+            and str(item.get("character_id") or "").strip()
+            and not str(item.get("delegator_id") or "").strip()
+        ]
+        if not named_leads and canonical_assignee:
+            named_leads = [canonical_assignee]
+
+        # ① 完整逐省 plan（零写库）
+        plan: List[Dict[str, object]] = []
+        for rid in region_ids:
+            row_payload = dict(payload_map)
+            row_participants = list(base_roster)
+            row_executor_kind = str(executor_kind or "")
+            row_executor_id = executor_id
+            row_extension = dict(extension or {})
+            if named_leads:
+                existing_names = {
+                    str(i.get("character_id") or "").strip()
+                    for i in row_participants if i.get("tier") == "主办"
+                }
+                for lead in named_leads:
+                    if lead not in existing_names:
+                        row_participants.append({
+                            "character_id": lead, "tier": "主办",
+                            "role": "", "delegator_id": None,
+                        })
+                        existing_names.add(lead)
+                # 与 duty-route 对称：0053 首名主办同步写 executor_*（#654 / ADR 0117）
+                row_executor_kind = "character"
+                row_executor_id = str(named_leads[0])
+                route: Dict[str, object] = {
+                    "coverage": None, "route": "named", "office_type": "",
+                    "leads": list(named_leads), "downgrade_step": "",
+                    "signal": None, "rejection": None,
+                }
+            else:
+                # 逐省真实 0117 路由（region_id 接缝；policy national 升 multi_month）
+                route = resolve_lead_executors(
+                    self.conn,
+                    action_type=action_type,
+                    target_id=str(target_id or row_payload.get("target_id") or ""),
+                    payload=row_payload,
+                    participant_roster=row_participants,
+                    region_id=str(rid or ""),
+                )
+                for lead in route.get("leads") or []:
+                    row_participants.append({
+                        "character_id": str(lead), "tier": "主办",
+                        "role": "", "delegator_id": None,
+                    })
+                if route.get("leads"):
+                    row_executor_kind = "character"
+                    row_executor_id = str(route["leads"][0])
+                signal = route.get("signal")
+                if signal is not None and "execution_signal" not in row_extension:
+                    row_extension["execution_signal"] = signal
+            plan.append({
+                "region_id": str(rid or ""),
+                "route": route,
+                "participants": row_participants,
+                "executor_kind": row_executor_kind,
+                "executor_id": row_executor_id,
+                "payload": row_payload,
+                "extension": row_extension,
+            })
+
+        # ② 全量验证：任一省 rejection → 整旨零行（首个 INSERT 前）
+        rejected_entry = next(
+            (p for p in plan if (p.get("route") or {}).get("rejection") is not None),
+            None,
+        )
+        if rejected_entry is not None:
+            from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
+            route = rejected_entry["route"]  # type: ignore[index]
+            rid = str(rejected_entry.get("region_id") or "")
+            coll = rejection_collector if rejection_collector is not None else RejectionCollector()
+            coll.record(
+                "executor_routing",
+                RejectedItem(
+                    item={
+                        "action_type": str(action_type),
+                        "region_id": rid,
+                        "transaction_category": str(
+                            payload_map.get("transaction_category") or ""
+                        ).strip(),
+                    },
+                    reason="事务类别未命中承办职司映射",
+                    category="duty_route_unmapped",
+                    source=Provenance.player_decree,
+                ),
+                int(state.turn),
+            )
+            if rejection_collector is None and commit:
+                coll.flush_to_db(self)
+                self._commit_dossier_write(True)
+            return []
+
+        # 校验名单引用（写库前）；失败上抛由三路成案点各自终态处理
+        for entry in plan:
+            roster = self._normalize_participant_roster(
+                entry["participants"], strict_structured=True,
+            )
+            self._validate_participant_roster_references(roster)
+            self._validate_dossier_delegations(roster)
+            entry["participants"] = roster
+
+        # ③ 复合键逐 (source, region_id) 查补（删「任一既存即返回」）
+        existing_by_region: Dict[str, int] = {}
+        if secret_order_id is None and int(directive_id or 0) > 0:
+            for row in self.conn.execute(
+                "SELECT id, region_id FROM decree_dossiers WHERE directive_id=? "
+                "ORDER BY region_id, id",
+                (int(directive_id),),
+            ).fetchall():
+                key = str(row["region_id"] or "")
+                if key not in existing_by_region:
+                    existing_by_region[key] = int(row["id"])
+        elif secret_order_id is None and int(pending_action_id or 0) > 0:
+            for row in self.conn.execute(
+                "SELECT id, region_id FROM decree_dossiers WHERE pending_action_id=? "
+                "ORDER BY region_id, id",
+                (int(pending_action_id),),
+            ).fetchall():
+                key = str(row["region_id"] or "")
+                if key not in existing_by_region:
+                    existing_by_region[key] = int(row["id"])
+
+        # ④ 一次写入：仅 missing；commit 一次；返回 existing∪new 确定序
+        new_ids_by_region: Dict[str, int] = {}
+        for entry in plan:
+            rid = str(entry["region_id"] or "")
+            if rid in existing_by_region:
+                continue
+            did = self._create_decree_dossier_row(
+                state,
+                action_type=action_type,
+                decree_text=decree_text,
+                target_kind=target_kind or str(entry["payload"].get("target_kind") or ""),  # type: ignore[union-attr]
+                target_id=(
+                    target_id if target_id not in (None, "")
+                    else entry["payload"].get("target_id") or ""  # type: ignore[union-attr]
+                ),
+                executor_kind=str(entry.get("executor_kind") or ""),
+                executor_id=entry.get("executor_id"),
+                source_chat_turn_id=source_chat_turn_id,
+                pending_action_id=pending_action_id,
+                directive_id=directive_id,
+                secret_order_id=secret_order_id,
+                payload=entry["payload"],  # type: ignore[arg-type]
+                status=status,
+                due_turn=due_turn,
+                extension=entry.get("extension") or None,  # type: ignore[arg-type]
+                participants=entry["participants"],  # type: ignore[arg-type]
+                commit=False,
+                rejection_collector=rejection_collector,
+                _issued_secret_order=_issued_secret_order,
+                region_id=rid,
+                _skip_lead_route=True,
+            )
+            if did == 0:
+                # 内核仍拒绝：整旨不得残留部分行
+                if existing_by_region or new_ids_by_region:
+                    raise ValueError("案卷成案被承办路由拒绝，整旨零行")
+                return []
+            new_ids_by_region[rid] = int(did)
+
+        self._commit_dossier_write(commit)
+
+        merged: Dict[str, int] = dict(existing_by_region)
+        merged.update(new_ids_by_region)
+        # 按 plan 的 region 序，同 region 以 id 稳定
+        ordered: List[int] = []
+        seen_ids: set = set()
+        for entry in plan:
+            rid = str(entry["region_id"] or "")
+            did = merged.get(rid)
+            if did is not None and did not in seen_ids:
+                ordered.append(int(did))
+                seen_ids.add(int(did))
+        # 若有既有多余 region 行（期望集外），按 region_id,id 附于末
+        extras = sorted(
+            (
+                (rid, did) for rid, did in existing_by_region.items()
+                if did not in seen_ids
+            ),
+            key=lambda item: (item[0], item[1]),
+        )
+        for _, did in extras:
+            ordered.append(int(did))
+        return ordered
+
+    def _create_decree_dossier_row(
+        self,
+        state: GameState,
+        *,
+        action_type: str,
+        decree_text: str,
+        target_kind: str = "",
+        target_id: object = "",
+        executor_kind: str = "",
+        executor_id: object = "",
+        source_chat_turn_id: int = 0,
+        pending_action_id: int = 0,
+        directive_id: int = 0,
+        secret_order_id: Optional[int] = None,
+        payload: Optional[Dict[str, object]] = None,
+        status: str = "proposed",
+        due_turn: int = 0,
+        extension: Optional[Dict[str, object]] = None,
+        participants: Optional[Iterable[object]] = None,
+        commit: bool = True,
+        rejection_collector=None,
+        _issued_secret_order: bool = False,
+        region_id: str = "",
+        _skip_lead_route: bool = False,
+    ) -> int:
+        """单行案卷内核（#654 region_id）；create_decree_dossier(s) 共用。"""
         action = str(action_type or "").strip()
         text = str(decree_text or "").strip()
         normalized_payload = dict(payload or {})
@@ -13796,17 +14356,33 @@ class GameDB:
             _issued_secret_order and action == "secret_order" and status == "promulgated"
         ):
             raise ValueError("案卷公共成案点只能从 proposed 起步")
+        # #654 region_id 写侧白名单：'' 或现存 regions.id
+        rid = str(region_id or "").strip()
+        if rid:
+            ok = self.conn.execute(
+                "SELECT 1 FROM regions WHERE id=?", (rid,),
+            ).fetchone()
+            if ok is None:
+                raise ValueError(f"案卷 region_id 非法：{rid!r}")
+        region_id = rid
+
         lookup_sql = ""
-        lookup_value: object = 0
+        lookup_params: tuple = ()
         if secret_order_id is not None:
-            lookup_sql, lookup_value = "secret_order_id = ?", int(secret_order_id)
+            lookup_sql, lookup_params = "secret_order_id = ?", (int(secret_order_id),)
         elif int(directive_id or 0) > 0:
-            lookup_sql, lookup_value = "directive_id = ?", int(directive_id)
+            lookup_sql, lookup_params = (
+                "directive_id = ? AND region_id = ?",
+                (int(directive_id), region_id),
+            )
         elif int(pending_action_id or 0) > 0:
-            lookup_sql, lookup_value = "pending_action_id = ?", int(pending_action_id)
+            lookup_sql, lookup_params = (
+                "pending_action_id = ? AND region_id = ?",
+                (int(pending_action_id), region_id),
+            )
         if lookup_sql:
             existing = self.conn.execute(
-                f"SELECT id FROM decree_dossiers WHERE {lookup_sql}", (lookup_value,)
+                f"SELECT id FROM decree_dossiers WHERE {lookup_sql}", lookup_params,
             ).fetchone()
             if existing is not None:
                 return int(existing["id"])
@@ -13846,11 +14422,20 @@ class GameDB:
 
         # #721：承办路由属于 canonical 成案核，首次 INSERT 前只补内存 roster，
         # 最终仍由同一 INSERT 写一次；不存在成案后 JSON/UPDATE 平行写口。
+        # #654 bulk 层已 Plan/Validate 并逐省 resolve，此处 _skip_lead_route 避免重复；
+        # 单行直落路径仍走 resolver，并传 region_id 接缝。
         from ming_sim.executor_routing import resolve_lead_executors
-        route = resolve_lead_executors(
-            self.conn, action_type=action, target_id=canonical_target_id,
-            payload=canonical_payload, participant_roster=roster,
-        )
+        if _skip_lead_route:
+            route = {
+                "coverage": None, "route": "pre_resolved", "office_type": "",
+                "leads": [], "downgrade_step": "", "signal": None, "rejection": None,
+            }
+        else:
+            route = resolve_lead_executors(
+                self.conn, action_type=action, target_id=canonical_target_id,
+                payload=canonical_payload, participant_roster=roster,
+                region_id=region_id,
+            )
         existing_leads = {
             str(item.get("character_id") or "").strip()
             for item in roster if item.get("tier") == "主办"
@@ -13922,9 +14507,9 @@ class GameDB:
             INSERT INTO decree_dossiers
                 (action_type,target_kind,target_id,executor_kind,executor_id,
                  source_chat_turn_id,pending_action_id,
-                 directive_id,secret_order_id,decree_text,payload_json,status,due_turn,
+                 directive_id,secret_order_id,region_id,decree_text,payload_json,status,due_turn,
                  extension_json,participant_roster,created_turn,created_year,created_period)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 action, canonical_target_kind, canonical_target_id,
@@ -13932,6 +14517,7 @@ class GameDB:
                 source_turn_id, int(pending_action_id or 0),
                 None if int(directive_id or 0) <= 0 else int(directive_id),
                 None if secret_order_id is None else int(secret_order_id),
+                region_id,
                 text, json.dumps(canonical_payload, ensure_ascii=False), status,
                 max(0, int(due_turn or 0)),
                 json.dumps(durable_extension, ensure_ascii=False),
@@ -14153,11 +14739,24 @@ class GameDB:
     def get_dossier_for_directive(
         self, directive_id: int,
     ) -> Optional[Dict[str, object]]:
+        """存在性哨兵：确定序取首行（#654 fan-out 下 N 行时勿当唯一读面）。"""
         row = self.conn.execute(
-            "SELECT * FROM decree_dossiers WHERE directive_id=?",
+            "SELECT * FROM decree_dossiers WHERE directive_id=? "
+            "ORDER BY region_id, id LIMIT 1",
             (int(directive_id),),
         ).fetchone()
         return None if row is None else self._dossier_row(row)
+
+    def list_dossiers_for_directive(
+        self, directive_id: int,
+    ) -> List[Dict[str, object]]:
+        """#654：directive 名下全部子差务，ORDER BY region_id, id。"""
+        rows = self.conn.execute(
+            "SELECT * FROM decree_dossiers WHERE directive_id=? "
+            "ORDER BY region_id, id",
+            (int(directive_id),),
+        ).fetchall()
+        return [self._dossier_row(r) for r in rows]
 
     def get_dossier_for_secret_order(self, secret_order_id: int) -> Optional[Dict[str, object]]:
         row = self.conn.execute(
@@ -17166,9 +17765,18 @@ class GameDB:
                             "UPDATE pending_actions SET status='failed' WHERE id=?",
                             (int(pa["id"]),),
                         )
-                except Exception:
+                except Exception as exc:
+                    # #654 r3-C.2 路1：directive 特路与通用分支同款——回滚后标 failed，不崩结算
                     self.conn.execute(f"ROLLBACK TO {savepoint}")
-                    raise
+                    self.conn.execute(
+                        "UPDATE pending_actions SET status='failed' WHERE id=?",
+                        (int(pa["id"]),),
+                    )
+                    tlog(
+                        f"[pending_actions] 落库失败标 failed id={pa['id']} "
+                        f"{pa['kind']}/{pa['action']}：{exc}"
+                    )
+                    result = None
                 finally:
                     self.conn.execute(f"RELEASE {savepoint}")
                 rejection_collector.flush_to_db(self)
@@ -17445,7 +18053,7 @@ class GameDB:
             if status == "draft":
                 action_type = self._directive_dossier_action_type(payload)
                 executor_kind, executor_id = self._directive_executor(action_type, payload)
-                dossier_id = self.create_decree_dossier(
+                dossier_ids = self.create_decree_dossiers(
                     state,
                     action_type=action_type,
                     decree_text=text,
@@ -17462,7 +18070,7 @@ class GameDB:
                     commit=False,
                     rejection_collector=rejection_collector,
                 )
-                if dossier_id == 0:
+                if not dossier_ids:
                     return False
             return True
         return False
@@ -18081,14 +18689,15 @@ class GameDB:
         self, state: GameState, directive_id: int, text: str,
         payload: Optional[Dict[str, object]] = None, *, commit: bool = True,
         rejection_collector=None,
-    ) -> int:
-        """旧式/新式旨稿共用的幂等成案口；未知语义明确落叙事旨。"""
+    ) -> List[int]:
+        """旧式/新式旨稿共用的幂等成案口；#654 返回 List[int]（fan-out 多行）。"""
         structured = dict(payload or {})
         if not structured:
             structured = {
                 "dossier_action_type": "special_decree",
                 "target_kind": "policy",
                 "target_id": f"legacy-directive:{directive_id}",
+                "locality_scope": "none",
             }
         structured = self._normalize_directive_dossier_payload(
             structured, content=self.content, current_turn=int(state.turn),
@@ -18107,7 +18716,7 @@ class GameDB:
             """,
             (int(directive_id),),
         ).fetchone()
-        return self.create_decree_dossier(
+        return self.create_decree_dossiers(
             state,
             action_type=action_type,
             decree_text=text,
@@ -18178,12 +18787,12 @@ class GameDB:
             if row is None:
                 raise KeyError(f"旨稿不存在：{directive_id}")
             if int(changed.rowcount or 0) > 0:
-                dossier_id = self._ensure_directive_dossier(
+                dossier_ids = self._ensure_directive_dossier(
                     state, int(directive_id), str(row["text"]),
                     self.read_directive_dossier_payload(row), commit=False,
                     rejection_collector=collector,
                 )
-                if dossier_id == 0:
+                if not dossier_ids:
                     self.conn.execute(
                         "UPDATE turn_directives SET status='rejected', "
                         "updated_at=CURRENT_TIMESTAMP WHERE id=?",
@@ -18195,22 +18804,46 @@ class GameDB:
         mirror_rejections_after_commit(self, collector, rejections_jsonl_path)
 
     def ensure_dossiers_for_draft_directives(self, state: GameState) -> None:
-        """结束边界成案：只读最新 draft 正文/载荷，按 directive_id 幂等创建。"""
-        from ming_sim.applier import RejectionCollector
+        """结束边界成案：只读最新 draft 正文/载荷，按 directive_id 幂等创建。
+
+        #654 r3-C.2 路3：每道旨独立 SAVEPOINT；单旨失败记 rejection、保持 draft，不波及他旨。
+        """
+        from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
         collector = RejectionCollector()
         with atomic(self):
             for row in self.list_directives(state, statuses=("draft",)):
-                dossier_id = self._ensure_directive_dossier(
-                    state, int(row["id"]), str(row["text"]),
-                    self.read_directive_dossier_payload(row), commit=False,
-                    rejection_collector=collector,
-                )
-                if dossier_id == 0:
-                    self.conn.execute(
-                        "UPDATE turn_directives SET status='rejected', "
-                        "updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                        (int(row["id"]),),
+                did = int(row["id"])
+                sp = f"ensure_directive_{did}"
+                self.conn.execute(f"SAVEPOINT {sp}")
+                try:
+                    dossier_ids = self._ensure_directive_dossier(
+                        state, did, str(row["text"]),
+                        self.read_directive_dossier_payload(row), commit=False,
+                        rejection_collector=collector,
                     )
+                    if not dossier_ids:
+                        self.conn.execute(
+                            "UPDATE turn_directives SET status='rejected', "
+                            "updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                            (did,),
+                        )
+                except Exception as exc:
+                    self.conn.execute(f"ROLLBACK TO {sp}")
+                    # P6：rejection 只存 directive_id，不裁剪/快照 LLM 旨文
+                    collector.record(
+                        "directive_locality",
+                        RejectedItem(
+                            item={"directive_id": did},
+                            reason=str(exc),
+                            category="locality_fanout_failed",
+                            source=Provenance.player_decree,
+                        ),
+                        int(state.turn),
+                    )
+                    tlog(f"[ensure_dossiers] 旨#{did} 成案失败：{exc}")
+                    # 坏旨保持 draft，次边界重试
+                finally:
+                    self.conn.execute(f"RELEASE {sp}")
             collector.flush_to_db(self)
         from ming_sim.applier import mirror_rejections_after_commit
         from ming_sim.error_pack import rejections_jsonl_path
