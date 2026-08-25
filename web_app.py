@@ -4668,7 +4668,13 @@ async def api_history_turn(turn: int) -> Dict[str, Any]:
     attendant_message = db.get_turn_attendant_message(turn)
     extraction = db.get_turn_extraction(turn)
     directives = db.list_directives_by_turn(turn)
-    if not report and not attendant_message and extraction is None and not directives:
+    # exists：递话纯空白与空串同属缺席（临时 strip）；payload 仍回原文
+    if (
+        not report
+        and not str(attendant_message or "").strip()
+        and extraction is None
+        and not directives
+    ):
         return {"turn": turn, "exists": False}
     decree_text = ""
     if extraction is not None:
