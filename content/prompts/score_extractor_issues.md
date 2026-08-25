@@ -28,30 +28,11 @@
 
 月末奏章若出现皇帝原旨未点名、由现有主办/协办自行拉入办差的新人物，输出 `{"案卷编号":12,"人物":"规范名","档位":"主办|协办|知情","职分":"本案职分","委派人":"拉他入案的大臣规范名"}`。只追加 `extractor_context.decree_dossiers` 中已有案卷的新参与人；不得重写或省略旧名单。知情人也按 `知情` 档记录。
 
-## 差务两轴清单（#654 / ADR 0092）
-
-`extractor_context.execution_two_axis` 是纯机接口层清单（确定性、零 LLM），只在本 issues 档房可见，不进玩家盘面。
-
-- **带宽轴（忙→拖磨）**：按主办看 `owner_open_count`×`owner_ability`=`owner_load`；按省看 `province_open_count`。在办定义＝案卷 `status=executing`。负荷高、省内差务扎堆时，执行更易拖磨、延宕。
-- **阻力轴（顶→变形）**：`gentry_resistance` 与士绅切片（`gentry_slice`）并列；官僚盘＝`officials_slice`＋督抚 `dutang_faction`/`dutang_integrity`（出缺如实）；流寇治安＝`bandit_pressure`＋`bandit_strength`。阻力高时更易变形/顶着干。
-- **灾情占用**：`disaster_rows` 已按严重度置顶（severity DESC, id ASC）。有灾时新差默认让路或强推变形↑——软判，清单只供事实。
-- **距离档 `distance_semantic_band`**：承办人 location×差务 region 的语义量级，按 D1–D6（本省当地／邻近一月／中途二三月／边远三月以上；非属地、无驻地、在途时为「不参与」）。只读距离列，不要用距离兼表在途。
-- **到差态行（`行类=到差态` / `arrival_rows`）**：独立行，读 `在途`／`已到差`／`尚未到差`。在途→软判差未开张（人在路上）；已到差／尚未到差只作到差事实，不改距离列义。
-- **0116 收口**：两轴只是执行格带内加重输入面；只准加重不准减轻；不重算意愿轴底档、不另立终值、不扩枚举。
-- 党派因子沿用既有 0072 输入，清单不重列。
-
 ## 案卷执行
 
-`extractor_context.decree_dossiers` 中 `status:"executing"` 的案卷会跨月持续出现。军队目标的 `army_pay_fact` 是月结真值：只在奏章已经明确判定补饷奉行变形成地方暗渠摊派时，案卷执行写 `transformed`。本档房只拥有执行格；同案钱粮、财政与人口实况由并行内政财政档房从同一奏章抽取，本档房严禁代写，亦不得自行补判或另造 verdict/decision 包装。每案含 `appointment_tenure`（承办任别）与 `held_authorities`/`distortion_weight`（号令力读端）：号令力真除＞兼署＞署理＞加衔，权重越高越易走样。另含 `#625` 监督事实底只读面：`supervision_history`（稽核在场史，含 `consecutive_months` 连号派生、`auditor_integrity_band`、`faction_relation`、`auditor_tenure`）、`loophole_exposures`（空子暴露史，类键=`action_type`+`execution_form`）、`transformation_tendency_facts`（变形倾向观察槽，定性事实、无钝化分数）。
+`extractor_context.decree_dossiers` 中 `status:"executing"` 的案卷会跨月持续出现。军队目标的 `army_pay_fact` 是月结真值：只在奏章已经明确判定补饷奉行变形成地方暗渠摊派时，案卷执行写 `transformed`。本档房只拥有执行格；同案钱粮、财政与人口实况由并行内政财政档房从同一奏章抽取，本档房严禁代写，亦不得自行补判或另造 verdict/decision 包装。每案含 `appointment_tenure`（承办任别）与 `held_authorities`/`distortion_weight`（号令力读端）及 `#625` 监督事实底只读面字段名（`supervision_history`／`loophole_exposures`／`transformation_tendency_facts`）——供校验与映射，**不**据其私有裁量。
 
-**人身条件化判官口径（读事实软判，禁写「钝化/陋规化」等系统词入说明）**：
-- **庸吏久任合流**：稽核 `auditor_integrity_band` 属操守多亏/未稳/平常，且同路连月在场越久（`consecutive_months` 高、同派纠葛深），执行越易走样——满约一年同路挂满时，结局倾 `degraded`/`transformed`（表报仍可粉饰）。
-- **同派稽核首日打折**：`faction_relation=same` 时不必久任，睁眼闭眼，漏检多、奏报宽。
-- **敌派稽核不钝但夹私货**：`faction_relation=enemy` 查得狠、不易放过；月报 origin 可带 `private_goods` 标记（只在 origin 结构化载体，永不入 apply）。
-- **孤直型人不钝化**：`auditor_integrity_band` 属操守清正/清介可称——连月在场亦不得把结局软成陋规合流；反制转打其人（架空/断信息/诬告围攻/明升暗调）由程序硬门另立局势，本档房见已立反制 issue 时只推进、不自造弹劾潮。
-- **空子转移**：读 `loophole_exposures`——被盯紧题材（已暴露类键）收敛，无人盯题材抬头；变形倾向随暴露史差分，不另造数值分。
-
-仅当本月奏章已经给出明确执行结局时，输出 `{"案卷编号":12,"执行结果":"fulfilled|degraded|failed|transformed","执行说明":"本月已发生的具体结局"}`。没有明确结局就不要输出该案卷；不得为 proposed、promulgated 或密令案卷填写执行格。执行说明用崇祯朝口语，**严禁**出现「钝化」「钝化度」「陋规化」及英文字段名。
+仅当本月奏章已经给出明确执行结局时，输出 `{"案卷编号":12,"执行结果":"fulfilled|degraded|failed|transformed","执行说明":"本月已发生的具体结局"}`。没有明确结局就不要输出该案卷；不得为 proposed、promulgated 或密令案卷填写执行格；**不得自行补判**，亦不得据任何私有两轴/事实面改判。执行说明用崇祯朝口语，**严禁**出现「钝化」「钝化度」「陋规化」及英文字段名。
 
 ## 拨帑对账（#567）
 

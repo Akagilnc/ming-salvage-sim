@@ -778,6 +778,22 @@ def build_simulator_payload(
     displaced_pressure = regional_displaced_pressure_brief(db)
     # #652：机面结构化省池清单（0143 世界事实数值放行）；classes_brief 仍定性。
     displaced_pool = _auto_table(displaced_pool_balance_rows(db))
+    # #669/0095：仍在途者的月数语义特征（非裸账）。先成 list，供 two_axis builder 同引用。
+    transit_semantics = project_transit_semantics(
+        db,
+        state,
+        DistanceMatrix.from_file(bundled_path("content", "distance_matrix.json")),
+    )
+    # #652：执行格唯一 LLM 判官面——builder 真源一次 + ADR 0143 定性投影进 simulator。
+    from ming_sim.execution_pressure import (
+        build_execution_two_axis_surface,
+        project_execution_two_axis_for_simulator,
+    )
+    execution_two_axis = project_execution_two_axis_for_simulator(
+        build_execution_two_axis_surface(
+            db, state.turn, transit_semantics=transit_semantics,
+        ),
+    )
     return {
         "year": state.year,
         "period": state.period,
@@ -836,11 +852,9 @@ def build_simulator_payload(
         # pending_resolve_context.simulator_payload.transit_arrivals，由调用方注入。
         "transit_arrivals": list(transit_arrivals or []),
         # #669/0095：仍在途者的月数语义特征（非裸账）。
-        "transit_semantics": project_transit_semantics(
-            db,
-            state,
-            DistanceMatrix.from_file(bundled_path("content", "distance_matrix.json")),
-        ),
+        "transit_semantics": transit_semantics,
+        # #652：执行中属地差务带宽/阻力/灾情占用/到差定性清单（唯一判官软判成色）。
+        "execution_two_axis": execution_two_axis,
         # #670: machine facts for the existing monthly judge.
         # arrivals → 续赴京；waiting_audience → 抵京候见（只读投影，非法固定句）。
         "unsettled_arrived_summons": list_arrived_unsettled_summons(db),
@@ -857,6 +871,8 @@ def build_simulator_payload(
             "已确认抵达的人物（name+location），请据此演出到任，勿改 location/在途账。"
             "transit_semantics 为仍在途人物的在途语义特征（name/目的地/月数语义）；"
             "仅据该字段所给语义演出在途情形。"
+            "execution_two_axis 为执行中属地差务的带宽/阻力/灾情占用/距离到差定性清单，"
+            "供唯一判官软判执行成色；勿念裸属性分。"
             "unsettled_arrived_summons 为原程已抵非京、须续赴京的未结传召机器事实；"
             "waiting_audience 为已抵京候见、尚未宣入消费的未结传召机器事实。"
             "faction_denunciation_facts 为派系恩怨/分叉案卷/处境/个性事实包，供朝堂弹劾叙事取材，不含真伪位。"
@@ -1211,6 +1227,8 @@ def build_extractor_shared_context(
 ) -> Dict[str, object]:
     """供模块 extractor 放入 system 前缀的共同结算补充上下文。
 
+    #652：transit_semantics 形参已退役（two_axis 只进 simulator）；保留签名兼容，忽略之。
+
     盘面（regions/armies/buildings/current_state/active_issues/candidate_events…）
     已由同 system 前缀的 simulator_payload 全量给出，这里剔除重复，只留 extractor 独有的
     校验集（region_ids/army_ids/class_names/power_ids/fiscal_config）+ offstage_ministers
@@ -1350,12 +1368,7 @@ def build_extractor_shared_context(
         # #626：反噬事实包仅 issues 档房（与 #625 监督三键同格门控）；
         # 不在 _extractor_context_payload 无门副本，避免非 issues 模块误读。
         slim["commitment_backlash_facts"] = build_backlash_narrative_features(db)
-        # #654/#673：带宽/阻力两轴清单——纯机 issues extractor 私有面（P4：不进 simulator）。
-        # transit_semantics 必须是 phase1 payload 既成 list 对象引用（is 同一对象）。
-        from ming_sim.execution_pressure import build_execution_two_axis_surface
-        slim["execution_two_axis"] = build_execution_two_axis_surface(
-            db, state.turn, transit_semantics=transit_semantics,
-        )
+        # #652：execution_two_axis 仅进 simulator（唯一判官）；issues 只抄录奏章已写结局。
         # The issues extractor consumes the same canonical candidate_events key
         # as its prompt.  This private module payload remains outside simulator
         # decision binding and HITL.

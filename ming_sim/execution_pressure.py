@@ -232,8 +232,13 @@ def _class_slice(conn, name: str, region_id: str) -> object:
 
 
 def _format_class_slice(value: object) -> str:
-    """TSV 运输：有记录 → pop/sat/lev；哨兵原样。"""
+    """TSV 运输：有记录 → pop/sat/lev（或定性投影三元组）；哨兵原样。"""
     if isinstance(value, Mapping):
+        if "satisfaction_band" in value or "population_label" in value:
+            pop = value.get("population_label") or value.get("population") or ""
+            sat = value.get("satisfaction_band") or ""
+            lev = value.get("power_band") or value.get("leverage_band") or ""
+            return f"{pop}/{sat}/{lev}"
         return (
             f"{int(value.get('population', 0))}/"
             f"{int(value.get('satisfaction', 0))}/"
@@ -626,8 +631,12 @@ def _render_two_axis_tsv(provinces: Sequence[Mapping[str, object]]) -> str:
                     "", "",
                     str(own.get("owner_name") or ""),
                     str(own.get("owner_open_count")),
-                    str(own.get("owner_ability")),
-                    str(own.get("owner_load")),
+                    str(
+                        own.get("ability_band")
+                        if "ability_band" in own
+                        else own.get("owner_ability")
+                    ),
+                    str(own.get("owner_load", "") if "owner_load" in own else ""),
                     str(own.get("distance_semantic_band") or ""),
                     "", "", "", "",
                     "",  # 到差态
@@ -648,3 +657,125 @@ def _render_two_axis_tsv(provinces: Sequence[Mapping[str, object]]) -> str:
                 ])
             )
     return "\n".join(lines)
+
+
+# 士绅阻力 / 流寇压力 / 灾情严重度：与 regions 报告层既有词表同族（db.region_report）。
+_GENTRY_RESISTANCE_BANDS = ("极弱", "偏弱", "中等", "偏强", "强")
+_BANDIT_PRESSURE_BANDS = ("极低", "偏低", "中等", "偏高", "极高")
+_DISASTER_SEVERITY_BANDS = ("轻微", "偏轻", "中等", "偏重", "极重")
+
+
+def _population_approx_label(persons: object) -> str:
+    """玩家可感人口约数（与 simulator #648 「约N万口」同公式）。"""
+    try:
+        n = int(persons or 0)
+    except (TypeError, ValueError):
+        n = 0
+    wan = n // 10000
+    if wan <= 0:
+        return "不足一万口"
+    return f"约{wan}万口"
+
+
+def _project_class_slice_for_simulator(value: object) -> object:
+    if not isinstance(value, Mapping):
+        return value  # 哨兵 NO_RECORD 等原样
+    from ming_sim.qualitative import power_band, satisfaction_band
+
+    return {
+        "population_label": _population_approx_label(value.get("population")),
+        "satisfaction_band": satisfaction_band(value.get("satisfaction")),
+        "power_band": power_band(value.get("leverage")),
+    }
+
+
+def _project_scalar_band(value: object, words: tuple[str, ...]) -> object:
+    """数值 → 定性档；哨兵字符串原样穿过。"""
+    if isinstance(value, str):
+        return value
+    from ming_sim.qualitative import qualitative_band
+
+    return qualitative_band(value, words)
+
+
+def _project_integrity_for_simulator(value: object) -> object:
+    if isinstance(value, str):
+        return value  # 出缺 / 无记录
+    from ming_sim.qualitative import qualitative_character_axis
+
+    return qualitative_character_axis("integrity", value)
+
+
+def project_execution_two_axis_for_simulator(
+    raw: Mapping[str, object],
+) -> Dict[str, object]:
+    """#652 / ADR 0143：执行两轴 builder 产物 → 玩家可感 simulator 定性投影。
+
+    复用 builder 真源一次；禁第二套 band/矩阵/计数；投影后重走既有 TSV 渲染。
+    剥离 owner_ability 裸分与派生 owner_load；能力/操守/阻力/灾情走定性档。
+    """
+    from ming_sim.qualitative import qualitative_character_axis
+
+    provinces_in = raw.get("provinces") or []
+    if not isinstance(provinces_in, Sequence):
+        provinces_in = []
+    projected: List[Dict[str, object]] = []
+    for block in provinces_in:
+        if not isinstance(block, Mapping):
+            continue
+        owners_out: List[Dict[str, object]] = []
+        for own in block.get("owners") or []:
+            if not isinstance(own, Mapping):
+                continue
+            owners_out.append({
+                "owner_name": own.get("owner_name"),
+                "owner_open_count": own.get("owner_open_count"),
+                "ability_band": qualitative_character_axis(
+                    "ability", own.get("owner_ability"),
+                ),
+                "distance_semantic_band": own.get("distance_semantic_band"),
+            })
+        disasters_out: List[Dict[str, object]] = []
+        for dis in block.get("disaster_rows") or []:
+            if not isinstance(dis, Mapping):
+                continue
+            disasters_out.append({
+                "id": dis.get("id"),
+                "title": dis.get("title"),
+                "kind": dis.get("kind"),
+                "severity": _project_scalar_band(
+                    dis.get("severity"), _DISASTER_SEVERITY_BANDS,
+                ),
+            })
+        bandit_strength = block.get("bandit_strength")
+        if not isinstance(bandit_strength, str):
+            from ming_sim.qualitative import power_band
+            bandit_strength = power_band(bandit_strength)
+        projected.append({
+            "region_id": block.get("region_id"),
+            "province_open_count": block.get("province_open_count"),
+            "gentry_resistance": _project_scalar_band(
+                block.get("gentry_resistance"), _GENTRY_RESISTANCE_BANDS,
+            ),
+            "gentry_slice": _project_class_slice_for_simulator(
+                block.get("gentry_slice"),
+            ),
+            "officials_slice": _project_class_slice_for_simulator(
+                block.get("officials_slice"),
+            ),
+            "dutang_faction": block.get("dutang_faction"),
+            "dutang_integrity": _project_integrity_for_simulator(
+                block.get("dutang_integrity"),
+            ),
+            "bandit_pressure": _project_scalar_band(
+                block.get("bandit_pressure"), _BANDIT_PRESSURE_BANDS,
+            ),
+            "bandit_strength": bandit_strength,
+            "disaster_rows": disasters_out,
+            "owners": owners_out,
+            "arrival_rows": list(block.get("arrival_rows") or []),
+        })
+    return {
+        "provinces": projected,
+        "tsv": _render_two_axis_tsv(projected),
+    }
