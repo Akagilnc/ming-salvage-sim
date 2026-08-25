@@ -10817,10 +10817,7 @@ class GameDB:
         ).fetchone()
         if row is None:
             return ""
-        try:
-            return str(row["attendant_message"] or "")
-        except (KeyError, IndexError):
-            return ""
+        return str(row["attendant_message"] or "")
 
     def previous_turn_attendant_message(self, state: GameState) -> str:
         """#671：状态口投影——仅上一已完成月的独立递话。"""
@@ -18429,10 +18426,7 @@ class GameDB:
             # 合法 JSON 非 dict（type-corrupt）同样回 None（重抽）：原样返回会让恢复叉
             # 抛 LLMContractError 绕过逃生口=corruption 软死锁（ship-pre r1）。
             return parsed if isinstance(parsed, dict) else None
-        try:
-            attendant_message = str(row["attendant_message"] or "")
-        except (KeyError, IndexError):
-            attendant_message = ""
+        attendant_message = str(row["attendant_message"] or "")
         return {
             "decree_text": row["decree_text"],
             "narrative": row["narrative"],
