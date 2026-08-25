@@ -396,6 +396,8 @@ def _run_yang_anchor(cfg: LLMConfig, content: GameContent) -> Dict[str, Any]:
         all_judge_written = 0
         settle_traces: List[Dict[str, Any]] = []
 
+        # 三拍内：读面→召对→判官（真实依赖串行）。月末 settle+brew 只跑一次——
+        # 单链仍含酿制腿，避免每拍完整 brew 批把活闸成本扩成三次结算。
         for spec in _YANG_BEAT_UTTERANCES:
             minister = str(spec["minister"])
             face_before = project_relation_ledger(sess.db, viewer=minister)
@@ -409,8 +411,6 @@ def _run_yang_anchor(cfg: LLMConfig, content: GameContent) -> Dict[str, Any]:
             )
             written = list(judge_result.get("written") or [])
             all_judge_written += int(judge_result.get("edges") or len(written) or 0)
-            settle_meta = _settle_with_brew(sess, content, cfg)
-            settle_traces.append(settle_meta)
             origin_prefix = summon_edge_origin(int(chat_meta["chat_turn_id"]))
             events_after = [
                 _edge_pointer(e)
@@ -433,6 +433,9 @@ def _run_yang_anchor(cfg: LLMConfig, content: GameContent) -> Dict[str, Any]:
                             "recent_context": d.get("recent_context") or "",
                         }
                         for d in face_before
+                        if minister in (d["source"], d["target"])
+                        or "倪元璐" in (d["source"], d["target"])
+                        or "黄道周" in (d["source"], d["target"])
                     ],
                 },
                 "chat": {
@@ -457,9 +460,13 @@ def _run_yang_anchor(cfg: LLMConfig, content: GameContent) -> Dict[str, Any]:
                         for w in written
                     ],
                 },
-                "settle": settle_meta,
                 "edges_from_this_turn": events_after,
             })
+
+        settle_meta = _settle_with_brew(sess, content, cfg)
+        settle_traces.append(settle_meta)
+        for beat in beat_traces:
+            beat["settle"] = settle_meta
 
         events = sess.db.get_relation_edge_events()
         # 召对判官 origin 含 chat_turn 段（summon_edge_origin 形）。
@@ -486,7 +493,7 @@ def _run_yang_anchor(cfg: LLMConfig, content: GameContent) -> Dict[str, Any]:
             "judge_wrote_edges": all_judge_written > 0 and len(summon_origin_edges) > 0,
             "edge_kinds_controlled": kind_ok if summon_origin_edges else False,
             "edge_contexts_nonempty": context_ok if summon_origin_edges else False,
-            "settles_completed": len(settle_traces) == 3,
+            "settles_completed": len(settle_traces) == 1,
             "face_dto_ok_each_beat": all(b["face_before"]["dto_keys_ok"] for b in beat_traces),
         }
         # 语义裁判只读真实链指针（chat-turn / edge / summary），不喂直写剧本。
