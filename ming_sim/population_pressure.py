@@ -2,7 +2,27 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Dict, List
+
+
+def displaced_pool_balance_rows(db: Any) -> List[Dict[str, object]]:
+    """#652：机面结构化省级流民池清单（region_id + 余额 + population_unit）。
+
+    复用 classes 主账流民行，不新建表。供 simulator / 投贼吸收软判吃池顶；
+    玩家面 classes_brief 定性投影另走 regional_displaced_pressure_brief。
+    """
+    unit = str(getattr(db, "population_unit", "") or "")
+    return [
+        {
+            "region_id": str(row["region_id"]),
+            "population": int(row["population"]),
+            "population_unit": unit,
+        }
+        for row in db.conn.execute(
+            "SELECT region_id, population FROM classes "
+            "WHERE name='流民' AND region_id <> '' ORDER BY region_id"
+        ).fetchall()
+    ]
 
 
 def regional_displaced_pressure_brief(db: Any, *, recent_turns: int = 3) -> str:

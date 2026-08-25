@@ -60,6 +60,8 @@ TOP_LEVEL_ALIASES = {
     "地区变化": "region_delta",
     "军队变化": "army_delta",
     "势力变化": "power_updates",
+    "流民投贼": "bandit_absorptions",
+    "投贼吸收": "bandit_absorptions",
     "建军": "new_armies",
     "新建军队": "new_armies",
     "外交态度": "world_advance",
@@ -114,6 +116,10 @@ ITEM_FIELD_ALIASES = {
     "source": "source", "源": "source", "源阶级": "source",
     "target": "target", "目标": "target", "目标阶级": "target",
     "amount": "amount", "数额": "amount", "口数": "amount",
+    # #652 投贼吸收 item（region_id 别名见下方 surcharge 段共用）
+    "requested_count": "requested_count", "请求口数": "requested_count",
+    "请求人数": "requested_count", "拟吸口数": "requested_count",
+    "power_id": "power_id", "势力编号": "power_id", "势力id": "power_id",
     # #649 §1.4：class_delta 人口键 canonical 化，使 _apply_class_dict population guard
     # 对中英文拼写统一整项拒收（人口只经 population_transfers 守恒转移变动）。
     "population": "population", "人口": "population",
@@ -763,10 +769,15 @@ def build_simulator_payload(
             raw.pop(field)
         court_rows.append(raw)
     court_roster = _auto_table(court_rows)
-    from ming_sim.population_pressure import regional_displaced_pressure_brief
+    from ming_sim.population_pressure import (
+        displaced_pool_balance_rows,
+        regional_displaced_pressure_brief,
+    )
 
     reign_label = reign_period_label(state.year, state.period)
     displaced_pressure = regional_displaced_pressure_brief(db)
+    # #652：机面结构化省池清单（0143 世界事实数值放行）；classes_brief 仍定性。
+    displaced_pool = _auto_table(displaced_pool_balance_rows(db))
     return {
         "year": state.year,
         "period": state.period,
@@ -797,6 +808,8 @@ def build_simulator_payload(
             db.class_report(audience=True),
             f"省级流民态势：{displaced_pressure}",
         )),
+        # #652 机面：省级流民池结构化余额（投贼吸收吃池顶）；非玩家盘面数表。
+        "displaced_pool_balances": displaced_pool,
         "powers_brief": db.power_report(exclude_self=True),
         "active_issues": issues_payload,
         "candidate_events": candidate_events,
@@ -930,6 +943,7 @@ EMPTY_EXTRACTION: Dict[str, object] = {
     "army_delta": {},
     "new_armies": [],
     "power_updates": {},
+    "bandit_absorptions": [],  # #652/0087：流民投贼吸收请求（吃池顶→实力正增）
     "world_advance": {},
     "issue_advances": [],
     "new_issues": [],
@@ -960,7 +974,9 @@ EMPTY_EXTRACTION: Dict[str, object] = {
 
 MODULE_FIELDS: Dict[str, set[str]] = {
     "internal": {"metric_delta", "economy_moves", "faction_delta", "class_delta", "population_transfers", "surcharge_decrees", "region_delta", "fiscal_changes", "fiscal_creates", "fiscal_removes"},
-    "military_external": {"army_delta", "new_armies", "power_updates", "world_advance"},
+    "military_external": {
+        "army_delta", "new_armies", "power_updates", "bandit_absorptions", "world_advance",
+    },
     "issues": {
         "issue_advances", "new_issues", "事件结局", "cancels", "close_issues",
         "dossier_executions", "dossier_participants", "dossier_reconciliations",
