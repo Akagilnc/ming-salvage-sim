@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AudienceArchiveModal } from "./audienceArchiveModal";
 import { ChatModal } from "./chatModal";
 import { EdictModal } from "./edictModal";
-import { HistoryDetailView, HistoryModal } from "./historyModal";
+import { HistoryModal } from "./historyModal";
 import { FullscreenModal } from "./hud";
 import { ReportModal } from "./reportModal";
 import { parseLeadingStageDirection } from "../format";
@@ -1332,55 +1332,62 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
     expect(host.textContent).not.toContain("不应出现的场卷");
   });
 
-  it("#671 史册月档呈现独立递话原文（HistoryDetail→HistoryDetailView）", () => {
+  it("#671 史册月档经 HistoryModal fetch 呈现独立递话原文", async () => {
     const raw = "\n  **皇爷**，洪承畴本月抵京候旨。  \n";
-    const host = document.createElement("div"); document.body.appendChild(host);
-    const root = createRoot(host); mountedRoots.push({ root, host });
-    act(() => {
-      root.render(
-        <HistoryDetailView
-          loading={false}
-          error=""
-          selectedTurn={7}
-          detail={{
+    const blank = "   \n\t  ";
+    const monthTurn = { kind: "month" as const, turn: 7, year: 1, period: 11, has_report: true, has_directive: false };
+    const fetchMock = vi.fn().mockImplementation((url: string) => Promise.resolve({
+      ok: true,
+      json: async () => url === "/api/history/turns"
+        ? { turns: [monthTurn] }
+        : {
             turn: 7,
             exists: true,
-            year: 1627,
-            period: 10,
+            year: 1,
+            period: 11,
             report: "一、人事除目",
             attendant_message: raw,
             decree_text: "",
             directives: [],
-          }}
-        />,
-      );
+          },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const host = document.createElement("div"); document.body.appendChild(host);
+    const root = createRoot(host); mountedRoots.push({ root, host });
+    await act(async () => {
+      root.render(<HistoryModal onClose={() => {}} />);
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
     });
+    expect(fetchMock).toHaveBeenCalledWith("/api/history/turns");
+    expect(fetchMock).toHaveBeenCalledWith("/api/history/turn/7");
     const section = host.querySelector("[data-testid=history-attendant]");
     expect(section).not.toBeNull();
     // trim 仅判空；DOM 写原文（含空白与 markdown 标记）
     expect(section!.querySelector("pre")?.textContent).toBe(raw);
 
-    // 空/纯空白不渲染
-    act(() => {
-      root.render(
-        <HistoryDetailView
-          loading={false}
-          error=""
-          selectedTurn={7}
-          detail={{
+    // 纯空白递话：经同一 fetch 链不渲染 section
+    fetchMock.mockImplementation((url: string) => Promise.resolve({
+      ok: true,
+      json: async () => url === "/api/history/turns"
+        ? { turns: [monthTurn] }
+        : {
             turn: 7,
             exists: true,
-            year: 1627,
-            period: 10,
+            year: 1,
+            period: 11,
             report: "一、人事除目",
-            attendant_message: "   \n\t  ",
+            attendant_message: blank,
             decree_text: "",
             directives: [],
-          }}
-        />,
-      );
+          },
+    }));
+    const hostBlank = document.createElement("div"); document.body.appendChild(hostBlank);
+    const rootBlank = createRoot(hostBlank); mountedRoots.push({ root: rootBlank, host: hostBlank });
+    await act(async () => {
+      rootBlank.render(<HistoryModal onClose={() => {}} />);
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
     });
-    expect(host.querySelector("[data-testid=history-attendant]")).toBeNull();
+    expect(hostBlank.querySelector("[data-testid=history-attendant]")).toBeNull();
   });
 });
 

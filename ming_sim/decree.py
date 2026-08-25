@@ -754,8 +754,9 @@ def _record_settlement_narrative_sources(
     source_id = f"settlement:narrative:{state.turn}"
     if has_restricted_source:
         return
-    narrative_text = str(narrative or "").strip()
-    if not narrative_text:
+    # #671 / P6 / ADR 0142：simulator 自由文本零删改；strip 只在临时副本上判空
+    narrative_text = str(narrative or "")
+    if not narrative_text.strip():
         return
     db.record_public_knowledge_event(
         state, "本回合邸报", narrative_text, source_id=source_id, commit=commit,

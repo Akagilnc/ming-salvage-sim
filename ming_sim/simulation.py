@@ -913,7 +913,12 @@ def simulate_season_with_payload(
         on_thinking=on_thinking,
         on_text=on_text,
     )
-    return raw.strip(), payload
+    # #671 / P6 / ADR 0142：输出侧零删改；strip 只在临时副本上判空，不回写。
+    text = str(raw or "")
+    if not text.strip():
+        # 流式层已对空文 abort；纯空白仍原样返回，供下游自决
+        return text, payload
+    return text, payload
 
 
 # #633：relations（关系档房）并入同一并发装配——各模块共享同一 ThreadPoolExecutor，
