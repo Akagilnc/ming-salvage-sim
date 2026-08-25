@@ -1,7 +1,7 @@
 {
   "gate": "issue-642-family-tail-relation-acceptance",
   "method": {
-    "design": "Live LLM semantic judge on production read/brew seams; seed/yang/coda anchors independently selectable; no free-text regex; structured pass/fail only.",
+    "design": "Live production-chain tracer: seed semantic on seed ledger; yang = project_relation_ledger → session summon Q&A → prepare/invoke/finalize_summon_relation_judge → settle_with_delta brew leg ×3 beats; coda = typed prior_events mechanical only; independent top-level anchors run via ThreadPoolExecutor; no free-text regex; structured pass/fail only.",
     "samples": 1,
     "anchors": [
       "seed",
@@ -19,7 +19,6 @@
     "samples": 1,
     "checks": {
       "coda.mechanical_ok": true,
-      "coda.semantic_pass": true,
       "seed.mechanical_dto": true,
       "seed.semantic_pass": true,
       "yang.semantic_pass": true,
@@ -31,8 +30,8 @@
   "limitations": [
     "Semantic judge is one configured model; not population calibration.",
     "Anchor ③ structural + restore are CI pytest only (no live LLM required).",
-    "Yang three-beat uses production write/read seams with fixture beats; full multi-month live summon chain is optional extension.",
-    "Coda semantic is optional per r2; mechanical prior_events locked by pytest."
+    "Yang three-beat drives fixture player utterances only; minister reply, relation judge edges, and brew summaries come from the live production chain.",
+    "Coda live semantic sampling omitted per r2 P-5; mechanical prior_events locked here and by pytest history/brew seams."
   ],
   "samples": [
     {
@@ -47,18 +46,19 @@
           },
           "semantic": {
             "pass": true,
-            "reason": "账本提供了多条可读且可交叉追索的网状线索：崔呈秀与魏忠贤双向投附、盟誓并掌握党人状；客氏负责宫中回护；王体乾公开翼护；张瑞图、施凤来、来宗道依附承顺；王绍徽献《东林点将录》供按名排陷；阎鸣泰、李从心、郭允厚、黄立极因结附、故旧或擢用形成恩义与升迁链；田尔耕执行厂卫罗织；杨涟则构成明确结怨与血债线。足以据此追查核心、宫禁奥援、外廷羽翼、荐引升迁、排陷名册和执行爪牙。",
-            "raw_excerpt": "{\"pass\":true,\"reason\":\"账本提供了多条可读且可交叉追索的网状线索：崔呈秀与魏忠贤双向投附、盟誓并掌握党人状；客氏负责宫中回护；王体乾公开翼护；张瑞图、施凤来、来宗道依附承顺；王绍徽献《东林点将录》供按名排陷；阎鸣泰、李从心、郭允厚、黄立极因结附、故旧或擢用形成恩义与升迁链；田尔耕执行厂卫罗织；杨涟则构成明确结怨与血债线。足以据此追查核心、宫禁奥援、外廷羽翼、荐引升迁、排陷名册和执行爪牙。\",\"menu_hints\":[\"从崔呈秀掌握的党人状与双向盟誓切入\",\"追查客氏、王体乾的宫中回护链\",\"按王绍徽所献点将录核对排陷对象与党羽\",\"沿李从心、郭允厚、黄立极的关照擢用线倒查恩义\",\"锁定田尔耕及厂卫罗织执行链\",\"以杨涟案核验结怨、构陷与血债\"]}",
+            "reason": "账本提供了以魏忠贤为中心的多类可读关系边：崔呈秀、张瑞图、施凤来、来宗道、王体乾、王绍徽、阎鸣泰等人的投附、依媚、遮护与献录；客氏的宫中回护；李从心、郭允厚、黄立极所受的荐引擢升；田尔耕充当厂卫爪牙并罗织狱案；以及魏忠贤与杨涟之间的死仇和血债。线索既覆盖内廷与外廷，也包含双向相倚、升迁恩义、党附把柄和结怨，可供按关系网剪除党羽。",
+            "raw_excerpt": "{\"pass\":true,\"reason\":\"账本提供了以魏忠贤为中心的多类可读关系边：崔呈秀、张瑞图、施凤来、来宗道、王体乾、王绍徽、阎鸣泰等人的投附、依媚、遮护与献录；客氏的宫中回护；李从心、郭允厚、黄立极所受的荐引擢升；田尔耕充当厂卫爪牙并罗织狱案；以及魏忠贤与杨涟之间的死仇和血债。线索既覆盖内廷与外廷，也包含双向相倚、升迁恩义、党附把柄和结怨，可供按关系网剪除党羽。\",\"menu_hints\":[\"先剪宫中回护线：客氏\",\"再剪外廷腹心线：崔呈秀\",\"追查厂卫办案线：田尔耕\",\"核对遮护与献录线：王体乾、王绍徽\",\"核对依附入阁线：张瑞图、施凤来、来宗道、黄立极\",\"追查荐引升迁线：李从心、郭允厚、阎鸣泰\",\"以杨涟血债作为结怨与构陷线索\"]}",
             "parsed": {
               "pass": true,
-              "reason": "账本提供了多条可读且可交叉追索的网状线索：崔呈秀与魏忠贤双向投附、盟誓并掌握党人状；客氏负责宫中回护；王体乾公开翼护；张瑞图、施凤来、来宗道依附承顺；王绍徽献《东林点将录》供按名排陷；阎鸣泰、李从心、郭允厚、黄立极因结附、故旧或擢用形成恩义与升迁链；田尔耕执行厂卫罗织；杨涟则构成明确结怨与血债线。足以据此追查核心、宫禁奥援、外廷羽翼、荐引升迁、排陷名册和执行爪牙。",
+              "reason": "账本提供了以魏忠贤为中心的多类可读关系边：崔呈秀、张瑞图、施凤来、来宗道、王体乾、王绍徽、阎鸣泰等人的投附、依媚、遮护与献录；客氏的宫中回护；李从心、郭允厚、黄立极所受的荐引擢升；田尔耕充当厂卫爪牙并罗织狱案；以及魏忠贤与杨涟之间的死仇和血债。线索既覆盖内廷与外廷，也包含双向相倚、升迁恩义、党附把柄和结怨，可供按关系网剪除党羽。",
               "menu_hints": [
-                "从崔呈秀掌握的党人状与双向盟誓切入",
-                "追查客氏、王体乾的宫中回护链",
-                "按王绍徽所献点将录核对排陷对象与党羽",
-                "沿李从心、郭允厚、黄立极的关照擢用线倒查恩义",
-                "锁定田尔耕及厂卫罗织执行链",
-                "以杨涟案核验结怨、构陷与血债"
+                "先剪宫中回护线：客氏",
+                "再剪外廷腹心线：崔呈秀",
+                "追查厂卫办案线：田尔耕",
+                "核对遮护与献录线：王体乾、王绍徽",
+                "核对依附入阁线：张瑞图、施凤来、来宗道、黄立极",
+                "追查荐引升迁线：李从心、郭允厚、阎鸣泰",
+                "以杨涟血债作为结怨与构陷线索"
               ]
             }
           },
@@ -71,21 +71,29 @@
           "anchor": "yang",
           "structural": {
             "beat_count": 3,
-            "has_jun_yang_two_zhiyu": true,
-            "has_yang_ni_tension_and_collab": true,
-            "old_tension_not_deleted": true
+            "chat_turns_completed": true,
+            "judge_wrote_edges": true,
+            "edge_kinds_controlled": true,
+            "edge_contexts_nonempty": true,
+            "settles_completed": true,
+            "face_dto_ok_each_beat": true
           },
           "semantic": {
             "pass": true,
-            "reason": "君→杨嗣昌由首拍越次擢用，到末拍委任加重、圣眷再深，知遇逐拍加深；杨↔倪元璐由路线分歧露出苗头、形成细缝，再以刚柔分工当面调和且明确保留前隙，未发生跳变抹平。",
-            "raw_excerpt": "{\"pass\":true,\"reason\":\"君→杨嗣昌由首拍越次擢用，到末拍委任加重、圣眷再深，知遇逐拍加深；杨↔倪元璐由路线分歧露出苗头、形成细缝，再以刚柔分工当面调和且明确保留前隙，未发生跳变抹平。\",\"jun_yang\":\"deeper\",\"yang_ni\":\"deepen_reconcile\"}",
+            "reason": "君→杨三拍由越次接应钱粮文书、追问如何协调倪黄，到认可接应得力并加重委任隐田、屯田与钱粮调度，呈明确加深。杨↔倪/黄在每拍读面后均有新边回写：首拍站台并建立协作，次拍在刚柔路线张力下形成分任合账、疑案会看，三拍进一步落实各负其责、旧隙不妨公事且不推诿；月末摘要也按十月至十二月逐拍累积，未一次跳变抹平。配合段闭环成立。",
+            "raw_excerpt": "{\"pass\":true,\"reason\":\"君→杨三拍由越次接应钱粮文书、追问如何协调倪黄，到认可接应得力并加重委任隐田、屯田与钱粮调度，呈明确加深。杨↔倪/黄在每拍读面后均有新边回写：首拍站台并建立协作，次拍在刚柔路线张力下形成分任合账、疑案会看，三拍进一步落实各负其责、旧隙不妨公事且不推诿；月末摘要也按十月至十二月逐拍累积，未一次跳变抹平。配合段闭环成立。\",\"jun_yang\":\"deeper\",\"yang_ni\":\"deepen_reconcile\"}",
             "parsed": {
               "pass": true,
-              "reason": "君→杨嗣昌由首拍越次擢用，到末拍委任加重、圣眷再深，知遇逐拍加深；杨↔倪元璐由路线分歧露出苗头、形成细缝，再以刚柔分工当面调和且明确保留前隙，未发生跳变抹平。",
+              "reason": "君→杨三拍由越次接应钱粮文书、追问如何协调倪黄，到认可接应得力并加重委任隐田、屯田与钱粮调度，呈明确加深。杨↔倪/黄在每拍读面后均有新边回写：首拍站台并建立协作，次拍在刚柔路线张力下形成分任合账、疑案会看，三拍进一步落实各负其责、旧隙不妨公事且不推诿；月末摘要也按十月至十二月逐拍累积，未一次跳变抹平。配合段闭环成立。",
               "jun_yang": "deeper",
               "yang_ni": "deepen_reconcile"
             }
           },
+          "chat_turn_ids": [
+            1,
+            2,
+            3
+          ],
           "event_ids": [
             1,
             2,
@@ -112,7 +120,472 @@
             23,
             24,
             25,
-            26
+            26,
+            27,
+            28,
+            29,
+            30,
+            31,
+            32,
+            33,
+            34
+          ],
+          "summon_edge_ids": [
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31,
+            32,
+            33,
+            34
+          ],
+          "summary_pointers": [
+            {
+              "source": "杨嗣昌",
+              "target": "倪元璐",
+              "founding_segment": "",
+              "recent_segment": "天启七年十月，杨嗣昌推许倪元璐能守名节，与之分任试丈，倪持法丈量，杨核账筹饷，初交已有相敬之意。十一月，杨又明言不可移其刚直，愿全其清议体面，并主张分任合账、疑案会看，异议则两说密奏。至十二月，杨更申明虽有旧隙，亦不使异议妨害公事，彼此各负其责，若事有不济，决不以意见不同相推，协力任事之意益坚。",
+              "founding_chars": 0,
+              "recent_chars": 148,
+              "updated_at_period": null
+            }
+          ],
+          "beats": [
+            {
+              "beat": 1,
+              "label": "越次召对",
+              "face_before": {
+                "viewer": "杨嗣昌",
+                "rows": 0,
+                "dto_keys_ok": true,
+                "all_rows": 21,
+                "pairs": []
+              },
+              "chat": {
+                "chat_turn_id": 1,
+                "night_id": 1,
+                "minister": "杨嗣昌",
+                "user_message_id": 1,
+                "answer_chars": 754,
+                "turn": 1,
+                "year": 1627,
+                "period": 10,
+                "minister_name": "杨嗣昌",
+                "user_message": "宣杨嗣昌入对。太仓见底，盐课与清丈当如何动？谁可撑住说情的条子？朕意先令倪元璐、黄道周试点畿辅清丈，卿以户部郎中越次接应钱粮文书——这差事，朕记下了。",
+                "minister_message": "臣领旨。倪元璐、黄道周主清丈试点，臣越次承办户部钱粮文书，逐册核验，不许地方以虚数塞责。\n\n臣请分两路，不可一齐猛进：\n\n盐课先清旧弊，不先加额。核盐引、商欠、运司解数三账，追实欠、裁浮费，使商人尚有盐可运；若骤增课额，只会逼出私盐，账面增而实收减。\n\n清丈只择畿辅二三县试办。先丈官田、勋戚庄田及豪强隐田，不动小民已纳税之熟田；旧亩、新丈、争讼各立一册。第一月只清数，不立即追补多年旧税，免得士绅煽动百姓抗丈。待查明隐田，再按年起科。\n\n至于说情条子，倪、黄能守名节，却未必挡得住勋戚、内臣与部院层层牵扯。臣请召南京户部尚书毕自严入京，以钦差身份总核盐课与清丈。他久任度支，名位足以压住府县，亦能替二臣挡住部议。臣在其下掌文书与收支归口：凡请托者，姓名、所求、转递之人一并封册进呈。只是此举必触勋戚、盐商与地方士绅，须皇上明谕：试点未结，不受私揭；若御前先开一口，下面便无人肯丈。\n\n臣敢请皇上再定一条：所追回银粮，半数解部，半数暂留地方补差役与丈量费用。若一文尽收京师，地方必虚报；若全留地方，又必被侵吞。如此方能使清丈有钱办，也让太仓见到实收。\n\n臣所领之旨，臣复述如下：以畿辅少数州县为限，二臣主丈，臣主账，毕自严总核；盐课清欠不骤增，清丈核隐不扰民；请托一概留名封奏。伏乞圣裁。臣已将差事听明：倪元璐、黄道周主持畿辅试丈，臣越次接应户部钱粮文书；盐课先清欠弊，不骤然加额。臣愿以身任事。\n\n只是说情关节，非臣一郎中名位所能尽挡。臣具名保举南京户部尚书毕自严充钦差总核，节制府县、核验账册，替二臣承受勋戚士绅之压。若其徇情失察，臣甘与之同受追责。伏乞陛下裁定。臣叩谢陛下信任。清丈与盐课之差，臣已领下，必使账册、实收、经手之人逐项相符。毕自严是否奉钦差总核，尚候圣裁；在旨意未下前，臣不敢假其名行事。"
+              },
+              "judge": {
+                "edges": 6,
+                "judged_turn_ids": [
+                  1
+                ],
+                "origins": [
+                  "召对判官|chat_turn:1"
+                ],
+                "degraded": null,
+                "skipped": null,
+                "rejected_count": 0,
+                "written": [
+                  {
+                    "source": "杨嗣昌",
+                    "target": "倪元璐",
+                    "event_kind": "站台",
+                    "origin": "召对判官|chat_turn:1",
+                    "edge_id": 23
+                  },
+                  {
+                    "source": "杨嗣昌",
+                    "target": "黄道周",
+                    "event_kind": "站台",
+                    "origin": "召对判官|chat_turn:1",
+                    "edge_id": 24
+                  },
+                  {
+                    "source": "杨嗣昌",
+                    "target": "倪元璐",
+                    "event_kind": "协作",
+                    "origin": "召对判官|chat_turn:1",
+                    "edge_id": 25
+                  },
+                  {
+                    "source": "杨嗣昌",
+                    "target": "黄道周",
+                    "event_kind": "协作",
+                    "origin": "召对判官|chat_turn:1",
+                    "edge_id": 26
+                  },
+                  {
+                    "source": "杨嗣昌",
+                    "target": "毕自严",
+                    "event_kind": "荐引",
+                    "origin": "召对判官|chat_turn:1",
+                    "edge_id": 27
+                  },
+                  {
+                    "source": "杨嗣昌",
+                    "target": "毕自严",
+                    "event_kind": "连坐",
+                    "origin": "召对判官|chat_turn:1",
+                    "edge_id": 28
+                  }
+                ]
+              },
+              "settle": {
+                "settled_turn": 1,
+                "settled_year": 1627,
+                "settled_period": 10,
+                "after_turn": 2,
+                "report_chars": 11
+              },
+              "edges_from_this_turn": [
+                {
+                  "id": 23,
+                  "source": "杨嗣昌",
+                  "target": "倪元璐",
+                  "event_kind": "站台",
+                  "origin": "召对判官|chat_turn:1|round:1",
+                  "turn": 1,
+                  "year": 1627,
+                  "period": 10,
+                  "context": "杨嗣昌当面称“倪、黄能守名节”，认可二人操守。",
+                  "context_chars": 23
+                },
+                {
+                  "id": 24,
+                  "source": "杨嗣昌",
+                  "target": "黄道周",
+                  "event_kind": "站台",
+                  "origin": "召对判官|chat_turn:1|round:1",
+                  "turn": 1,
+                  "year": 1627,
+                  "period": 10,
+                  "context": "杨嗣昌当面称“倪、黄能守名节”，认可二人操守。",
+                  "context_chars": 23
+                },
+                {
+                  "id": 25,
+                  "source": "杨嗣昌",
+                  "target": "倪元璐",
+                  "event_kind": "协作",
+                  "origin": "召对判官|chat_turn:1|round:1",
+                  "turn": 1,
+                  "year": 1627,
+                  "period": 10,
+                  "context": "杨嗣昌领旨与倪元璐、黄道周分工，二臣主持试丈，自己承办钱粮文书、逐册核验。",
+                  "context_chars": 37
+                },
+                {
+                  "id": 26,
+                  "source": "杨嗣昌",
+                  "target": "黄道周",
+                  "event_kind": "协作",
+                  "origin": "召对判官|chat_turn:1|round:1",
+                  "turn": 1,
+                  "year": 1627,
+                  "period": 10,
+                  "context": "杨嗣昌领旨与倪元璐、黄道周分工，二臣主持试丈，自己承办钱粮文书、逐册核验。",
+                  "context_chars": 37
+                },
+                {
+                  "id": 27,
+                  "source": "杨嗣昌",
+                  "target": "毕自严",
+                  "event_kind": "荐引",
+                  "origin": "召对判官|chat_turn:1|round:1",
+                  "turn": 1,
+                  "year": 1627,
+                  "period": 10,
+                  "context": "杨嗣昌具名保举毕自严入京充钦差总核，节制府县并替倪、黄承压。",
+                  "context_chars": 30
+                },
+                {
+                  "id": 28,
+                  "source": "杨嗣昌",
+                  "target": "毕自严",
+                  "event_kind": "连坐",
+                  "origin": "召对判官|chat_turn:1|round:1",
+                  "turn": 1,
+                  "year": 1627,
+                  "period": 10,
+                  "context": "杨嗣昌当面作保，称若毕自严徇情失察，自己甘与之同受追责。",
+                  "context_chars": 28
+                }
+              ]
+            },
+            {
+              "beat": 2,
+              "label": "一刚一柔·问配合",
+              "face_before": {
+                "viewer": "杨嗣昌",
+                "rows": 3,
+                "dto_keys_ok": true,
+                "all_rows": 24,
+                "pairs": [
+                  {
+                    "source": "杨嗣昌",
+                    "target": "倪元璐",
+                    "summary": "天启七年十月，杨嗣昌当面称倪元璐能守名节，于其操守颇加推许；旋又奉旨与之分任试丈诸务，由倪元璐主持丈量，杨嗣昌承办钱粮文书、逐册核验。二人初次共事，彼此尚无深交，而敬重之意已见，协作亦有条理，后续亲疏仍系此差办理是否公允顺遂。",
+                    "recent_context": "杨嗣昌领旨与倪元璐、黄道周分工，二臣主持试丈，自己承办钱粮文书、逐册核验。（天启七年十月）"
+                  },
+                  {
+                    "source": "杨嗣昌",
+                    "target": "毕自严",
+                    "summary": "天启七年十月，杨嗣昌具名荐引毕自严入京总核，并以身家仕途为其清正任事作保，此知遇担当足以定二人日后进退。\n天启七年十月，杨嗣昌力荐毕自严入京充任钦差总核，欲借其才望节制府县，亦使其代倪、黄承受查核之重。杨嗣昌更当面明言，若毕自严徇情失察，甘与同受追责。此举既是深信相托，亦将二人荣辱骤然相系；毕自严尚未赴任见效，眼下情分以荐引为始，却也从此背负不容轻负的知遇与公议。",
+                    "recent_context": "杨嗣昌当面作保，称若毕自严徇情失察，自己甘与之同受追责。（天启七年十月）"
+                  },
+                  {
+                    "source": "杨嗣昌",
+                    "target": "黄道周",
+                    "summary": "天启七年十月，杨嗣昌当面称黄道周能守名节，颇许其操守；继而奉旨与黄道周等分任其事，由黄道周主持试丈，杨嗣昌承办钱粮文书、逐册核验。二人初次共事，既有相敬之意，亦须在田亩钱粮的实务中互相印证，情分尚浅而协作已有端绪。",
+                    "recent_context": "杨嗣昌领旨与倪元璐、黄道周分工，二臣主持试丈，自己承办钱粮文书、逐册核验。（天启七年十月）"
+                  }
+                ]
+              },
+              "chat": {
+                "chat_turn_id": 2,
+                "night_id": 1,
+                "minister": "杨嗣昌",
+                "user_message_id": 3,
+                "answer_chars": 586,
+                "turn": 2,
+                "year": 1627,
+                "period": 11,
+                "minister_name": "杨嗣昌",
+                "user_message": "畿辅清丈一月：倪黄刚直硬顶，士绅抱团抗丈，细缝已现。卿献分化之策，与二公路线不同。如何与倪元璐、黄道周配合，既让清流攻坚、又不把缝隙撕成决裂，卿可有主意？",
+                "minister_message": "臣以为，不可劝倪、黄二公改其刚直，亦不可任臣私下周旋。前者折其名节，后者反坐实臣与士绅暗通。宜分其任，而合其账。\n\n倪、黄在明处主持丈量，专攻三类：勋戚庄田、豪强隐田、账册显然不合之田。臣在后承办文书，将抗丈者分作三等：\n\n一是契券混乱、疆界确有争议者，暂缓起科，限期补证；  \n二是小民代大户承名、实受逼迫者，先保其耕种，不追旧欠；  \n三是有田有契、串通胥吏蓄意隐瞒者，径交倪、黄追丈，不许说情。\n\n如此，二公所攻皆是硬案，清议不失；臣所缓皆有册据，也不落徇私之名。士绅若愿自行报出隐田，可准其免追往年，来岁照亩起科；若仍聚众抗丈，则将首倡者与胥吏同案参办。先分化肯报者，再治硬抗者，不使一县士绅结成一党。\n\n臣还请定一规矩：凡臣拟缓之案，须送倪、黄会看；凡二公欲立刻追办而地方恐生变者，也须将户数、田数、牵连情形交臣核算。意见不合，不在县衙当众争执，只列两说密奏御前。如此可存二公体面，也堵臣擅权之口。\n\n臣愿亲往与二公共议，只说臣替他们辨出真伪、筹措差费，绝不说是来收其锋芒。倪、黄要的是清丈不被权势压倒；臣要的是田能丈、税能收、地方不乱。所行虽有刚柔，所归实为一处。\n\n但此策有一处须陛下亲自压定：自报者免追旧欠，只免到什么年月；抗丈者一经查实，勋戚、内臣是否一体办理。若御前对此稍有游移，士绅便会拖着等风向，臣与二公纵不决裂，也无人再肯信账。伏乞陛下先定此界。"
+              },
+              "judge": {
+                "edges": 4,
+                "judged_turn_ids": [
+                  2
+                ],
+                "origins": [
+                  "召对判官|chat_turn:2"
+                ],
+                "degraded": null,
+                "skipped": null,
+                "rejected_count": 0,
+                "written": [
+                  {
+                    "source": "杨嗣昌",
+                    "target": "倪元璐",
+                    "event_kind": "站台",
+                    "origin": "召对判官|chat_turn:2",
+                    "edge_id": 29
+                  },
+                  {
+                    "source": "杨嗣昌",
+                    "target": "黄道周",
+                    "event_kind": "站台",
+                    "origin": "召对判官|chat_turn:2",
+                    "edge_id": 30
+                  },
+                  {
+                    "source": "杨嗣昌",
+                    "target": "倪元璐",
+                    "event_kind": "协作",
+                    "origin": "召对判官|chat_turn:2",
+                    "edge_id": 31
+                  },
+                  {
+                    "source": "杨嗣昌",
+                    "target": "黄道周",
+                    "event_kind": "协作",
+                    "origin": "召对判官|chat_turn:2",
+                    "edge_id": 32
+                  }
+                ]
+              },
+              "settle": {
+                "settled_turn": 2,
+                "settled_year": 1627,
+                "settled_period": 11,
+                "after_turn": 3,
+                "report_chars": 11
+              },
+              "edges_from_this_turn": [
+                {
+                  "id": 29,
+                  "source": "杨嗣昌",
+                  "target": "倪元璐",
+                  "event_kind": "站台",
+                  "origin": "召对判官|chat_turn:2|round:2",
+                  "turn": 2,
+                  "year": 1627,
+                  "period": 11,
+                  "context": "杨嗣昌当面主张“不可劝倪、黄二公改其刚直”，明言要保全倪元璐的清议与体面。",
+                  "context_chars": 37
+                },
+                {
+                  "id": 30,
+                  "source": "杨嗣昌",
+                  "target": "黄道周",
+                  "event_kind": "站台",
+                  "origin": "召对判官|chat_turn:2|round:2",
+                  "turn": 2,
+                  "year": 1627,
+                  "period": 11,
+                  "context": "杨嗣昌当面主张“不可劝倪、黄二公改其刚直”，明言要保全黄道周的清议与体面。",
+                  "context_chars": 37
+                },
+                {
+                  "id": 31,
+                  "source": "杨嗣昌",
+                  "target": "倪元璐",
+                  "event_kind": "协作",
+                  "origin": "召对判官|chat_turn:2|round:2",
+                  "turn": 2,
+                  "year": 1627,
+                  "period": 11,
+                  "context": "杨嗣昌提出与倪元璐分任合账、疑案会看，意见不合则列两说密奏，并愿亲往共议。",
+                  "context_chars": 37
+                },
+                {
+                  "id": 32,
+                  "source": "杨嗣昌",
+                  "target": "黄道周",
+                  "event_kind": "协作",
+                  "origin": "召对判官|chat_turn:2|round:2",
+                  "turn": 2,
+                  "year": 1627,
+                  "period": 11,
+                  "context": "杨嗣昌提出与黄道周分任合账、疑案会看，意见不合则列两说密奏，并愿亲往共议。",
+                  "context_chars": 37
+                }
+              ]
+            },
+            {
+              "beat": 3,
+              "label": "委任加重",
+              "face_before": {
+                "viewer": "杨嗣昌",
+                "rows": 3,
+                "dto_keys_ok": true,
+                "all_rows": 24,
+                "pairs": [
+                  {
+                    "source": "杨嗣昌",
+                    "target": "倪元璐",
+                    "summary": "天启七年十月，杨嗣昌推许倪元璐能守名节，继而与之分任试丈，倪主持丈量，杨承钱粮文书及逐册核验，初交已有相敬之意。至十一月，杨又当面明言不可劝其改易刚直，愿保全其清议体面；于公事则主张分任合账、疑案会看，纵有异议亦列两说密奏，不私相掩抑，并愿亲往共议。二人交谊虽尚未深，然杨之敬重与协力之意较前愈明。",
+                    "recent_context": "杨嗣昌提出与倪元璐分任合账、疑案会看，意见不合则列两说密奏，并愿亲往共议。（天启七年十一月）"
+                  },
+                  {
+                    "source": "杨嗣昌",
+                    "target": "毕自严",
+                    "summary": "天启七年十月，杨嗣昌具名荐引毕自严入京总核，并以身家仕途为其清正任事作保，此知遇担当足以定二人日后进退。\n天启七年十月，杨嗣昌力荐毕自严入京充任钦差总核，欲借其才望节制府县，亦使其代倪、黄承受查核之重。杨嗣昌更当面明言，若毕自严徇情失察，甘与同受追责。此举既是深信相托，亦将二人荣辱骤然相系；毕自严尚未赴任见效，眼下情分以荐引为始，却也从此背负不容轻负的知遇与公议。",
+                    "recent_context": "杨嗣昌当面作保，称若毕自严徇情失察，自己甘与之同受追责。（天启七年十月）"
+                  },
+                  {
+                    "source": "杨嗣昌",
+                    "target": "黄道周",
+                    "summary": "天启七年十月至十一月，杨嗣昌先许黄道周能守名节，继又当面力陈不可劝其改却刚直，颇有保全清议与体面之意。及奉旨核办田亩钱粮，二人分任试丈、文书与逐册核验，杨嗣昌更议合账互校、疑案会看，若所见不合则并列两说密奏，且愿亲往共议。其相敬之意较前更笃，协作章法亦渐明，然交契初成，尚待实务磨合以验始终。",
+                    "recent_context": "杨嗣昌提出与黄道周分任合账、疑案会看，意见不合则列两说密奏，并愿亲往共议。（天启七年十一月）"
+                  }
+                ]
+              },
+              "chat": {
+                "chat_turn_id": 3,
+                "night_id": 1,
+                "minister": "杨嗣昌",
+                "user_message_id": 5,
+                "answer_chars": 308,
+                "turn": 3,
+                "year": 1627,
+                "period": 12,
+                "minister_name": "杨嗣昌",
+                "user_message": "一刚一柔之议朕准了。清丈见你接应得力，朕加重委任：隐田归属、屯田接应与钱粮调度仍归卿盯着，与倪黄各对朕负责。旧隙不必抹平，事要办成。",
+                "minister_message": "臣领旨。\n\n隐田归属，臣依契券、实占、纳粮三项逐册勾稽；有争者会同倪、黄审定，所见不合，各具实数密奏，绝不私相迁就。\n\n屯田接应，臣专核田亩、军户、籽种、牛具与应解粮数，不许地方拿荒册冒充熟田，也不许借屯田之名侵夺民业。\n\n钱粮调度，臣先保丈量差费与屯田春种，再据实收解部；每笔银粮俱记来源、经手、去向，按月封奏。勋戚、内臣及豪强所涉隐田，与民田同册核办，不另开私门。\n\n臣与倪、黄各负其责：二公持法攻坚，臣核账筹饷；旧隙可以留在奏牍里，不可坏在公事上。若有人借三臣异议挑拨，臣请陛下只看田是否丈出、粮是否入仓、百姓是否失业，不听空言。\n\n臣受此加重委任，办成则不敢居二公之功，办坏亦不以意见不同推诿。伏惟陛下睿裁。"
+              },
+              "judge": {
+                "edges": 2,
+                "judged_turn_ids": [
+                  3
+                ],
+                "origins": [
+                  "召对判官|chat_turn:3"
+                ],
+                "degraded": null,
+                "skipped": null,
+                "rejected_count": 0,
+                "written": [
+                  {
+                    "source": "杨嗣昌",
+                    "target": "倪元璐",
+                    "event_kind": "协作",
+                    "origin": "召对判官|chat_turn:3",
+                    "edge_id": 33
+                  },
+                  {
+                    "source": "杨嗣昌",
+                    "target": "黄道周",
+                    "event_kind": "协作",
+                    "origin": "召对判官|chat_turn:3",
+                    "edge_id": 34
+                  }
+                ]
+              },
+              "settle": {
+                "settled_turn": 3,
+                "settled_year": 1627,
+                "settled_period": 12,
+                "after_turn": 4,
+                "report_chars": 11
+              },
+              "edges_from_this_turn": [
+                {
+                  "id": 33,
+                  "source": "杨嗣昌",
+                  "target": "倪元璐",
+                  "event_kind": "协作",
+                  "origin": "召对判官|chat_turn:3|round:3",
+                  "turn": 3,
+                  "year": 1627,
+                  "period": 12,
+                  "context": "杨嗣昌当面表明与倪、黄各负其责，二公持法攻坚、自己核账筹饷，虽有旧隙也不让异议坏了公事，并承诺办坏不以意见不同推诿。",
+                  "context_chars": 58
+                },
+                {
+                  "id": 34,
+                  "source": "杨嗣昌",
+                  "target": "黄道周",
+                  "event_kind": "协作",
+                  "origin": "召对判官|chat_turn:3|round:3",
+                  "turn": 3,
+                  "year": 1627,
+                  "period": 12,
+                  "context": "杨嗣昌当面表明与倪、黄各负其责，二公持法攻坚、自己核账筹饷，虽有旧隙也不让异议坏了公事，并承诺办坏不以意见不同推诿。",
+                  "context_chars": 58
+                }
+              ]
+            }
+          ],
+          "settles": [
+            {
+              "settled_turn": 1,
+              "settled_year": 1627,
+              "settled_period": 10,
+              "after_turn": 2,
+              "report_chars": 11
+            },
+            {
+              "settled_turn": 2,
+              "settled_year": 1627,
+              "settled_period": 11,
+              "after_turn": 3,
+              "report_chars": 11
+            },
+            {
+              "settled_turn": 3,
+              "settled_year": 1627,
+              "settled_period": 12,
+              "after_turn": 4,
+              "report_chars": 11
+            }
           ],
           "checks": {
             "structural_ok": true,
@@ -126,18 +599,8 @@
             "prior_byte_equal": true,
             "prior_count": 1
           },
-          "semantic": {
-            "pass": true,
-            "reason": "prior_events 中包含多年前奠基原句“越次一召，擢杨嗣昌于五品郎中。”，并非仅有蒸馏残留。",
-            "raw_excerpt": "{\"pass\":true,\"reason\":\"prior_events 中包含多年前奠基原句“越次一召，擢杨嗣昌于五品郎中。”，并非仅有蒸馏残留。\"}",
-            "parsed": {
-              "pass": true,
-              "reason": "prior_events 中包含多年前奠基原句“越次一召，擢杨嗣昌于五品郎中。”，并非仅有蒸馏残留。"
-            }
-          },
           "checks": {
-            "mechanical_ok": true,
-            "semantic_pass": true
+            "mechanical_ok": true
           }
         }
       },
@@ -146,40 +609,127 @@
         "seed.semantic_pass": true,
         "yang.structural_ok": true,
         "yang.semantic_pass": true,
-        "coda.mechanical_ok": true,
-        "coda.semantic_pass": true
+        "coda.mechanical_ok": true
       }
     }
   ],
-  "git_head_at_run": "e63fee74afaf886016189beeea80ce4fca88a8c0",
+  "git_head_at_run": "e548923f860bfb5ced2bbd98b3887bfefe4a30c7",
   "fresh_trace": {
     "path": "docs/evidence/issue-642-acceptance-trace.jsonl",
-    "records": 3,
+    "records": 26,
     "observed_tags": [
+      "other",
+      "action_intent",
+      "minister",
+      "minister",
+      "minister",
+      "other",
+      "other",
+      "other",
+      "other",
+      "other",
+      "other",
+      "action_intent",
+      "minister",
+      "other",
+      "other",
+      "other",
+      "other",
+      "other",
+      "minister",
+      "action_intent",
+      "other",
+      "other",
+      "other",
       "other",
       "other",
       "other"
     ],
     "observed_seq": [
       1,
+      -1,
       2,
-      3
+      3,
+      4,
+      5,
+      10,
+      8,
+      9,
+      6,
+      7,
+      -1,
+      11,
+      12,
+      14,
+      13,
+      16,
+      15,
+      17,
+      -1,
+      18,
+      20,
+      19,
+      22,
+      21,
+      23
     ],
     "observed_resp_chars": [
-      339,
+      330,
+      711,
+      678,
+      273,
+      70,
+      350,
+      161,
+      147,
+      154,
       153,
-      75
+      224,
+      331,
+      586,
+      364,
+      189,
+      186,
+      173,
+      155,
+      308,
+      1178,
+      129,
+      162,
+      188,
+      173,
+      161,
+      233
     ],
     "errors": [
       null,
       null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
       null
     ],
-    "note": "CLI/agno path did not propagate script tag= issue-642-anchor-* into jsonl; all three records have typed tag=\"other\". Anchor identity is by call order matching samples[0].anchors seed→yang→coda and resp_chars 339/153/75.",
-    "anchor_order_by_seq": [
-      "seed",
-      "yang",
-      "coda"
-    ]
+    "note": "Top-level anchors seed/yang/coda run via ThreadPoolExecutor; yang contains multi-step production-chain calls (minister/judge/brew). CLI/agno may tag script verdicts as tag=other; identity by method.anchors and samples.",
+    "wall_clock_note": "see fixer report for measured duration"
   }
 }
