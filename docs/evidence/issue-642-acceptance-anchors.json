@@ -1,7 +1,7 @@
 {
   "gate": "issue-642-family-tail-relation-acceptance",
   "method": {
-    "design": "Live production-chain tracer: seed semantic on seed ledger; yang = project_relation_ledger → session summon Q&A → prepare/invoke/finalize_summon_relation_judge → settle_with_delta brew leg ×3 beats; coda = typed prior_events mechanical only; independent top-level anchors run via ThreadPoolExecutor; no free-text regex; structured pass/fail only.",
+    "design": "Live production-chain tracer: seed semantic on seed ledger; yang = 3×(project_relation_ledger → session summon Q&A → prepare/invoke/finalize_summon_relation_judge) then one settle_with_delta brew; coda = typed prior_events mechanical only; independent top-level anchors run via ThreadPoolExecutor; no free-text regex; structured pass/fail only.",
     "samples": 1,
     "anchors": [
       "seed",
@@ -534,7 +534,7 @@
       }
     }
   ],
-  "git_head_at_run": "e3693c1d9618209f13f5be717a37e89703a4f346",
+  "git_head_at_run": "b7acc2d47ec70700382bd35cdf1c8bbf9d511bd4",
   "fresh_trace": {
     "path": "docs/evidence/issue-642-acceptance-trace.jsonl",
     "records": 19,

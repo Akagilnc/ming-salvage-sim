@@ -647,7 +647,7 @@ def main() -> int:
                 "Live production-chain tracer: seed semantic on seed ledger; "
                 "yang = project_relation_ledger → session summon Q&A → "
                 "prepare/invoke/finalize_summon_relation_judge → "
-                "settle_with_delta brew leg ×3 beats; "
+                "one settle_with_delta brew after three summon/judge beats; "
                 "coda = typed prior_events mechanical only; "
                 "independent top-level anchors run via ThreadPoolExecutor; "
                 "no free-text regex; structured pass/fail only."
