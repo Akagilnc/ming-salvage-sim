@@ -726,6 +726,33 @@ def test_657_p6_mapper_deliberate_preserve_free_text(game):
     assert str(issue["title"]) == will_title
     assert str(issue["stage_text"]) == will_body
 
+    # stop_condition：经 canonical_choice（validate 入口）保真 dict，mapper 落 payload 结构化相等
+    army0 = db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()
+    stop = {f"army.{army0['id']}.arrears": "<=0"} if army0 else {"metrics.民心": ">=0"}
+    choice = ra.canonical_choice({
+        "decision_key": "rescript_draft:1:0",
+        "action": "midzhi",
+        "action_type": "assignment",
+        "label": "x", "hint": "h",
+        "target_kind": "region", "target_id": "shaanxi",
+        "locality_scope": "single", "region_id": "shaanxi",
+        "transaction_category": "督赈", "assignee_name": mname,
+        "commitment_kind": "until_stop",
+        "stop_condition": stop,
+        "deadline_months": 1,
+    })
+    assert choice["stop_condition"] == stop
+    assert isinstance(choice["stop_condition"], dict)
+    # JSON 串入口同样还原为 dict
+    choice_s = ra.canonical_choice({
+        "decision_key": "rescript_draft:1:0",
+        "action": "midzhi",
+        "stop_condition": json.dumps(stop, ensure_ascii=False),
+    })
+    assert choice_s["stop_condition"] == stop
+    mapped = ra.map_rescript_option_or_choice(choice, mode="midzhi", db=db, content=content, state=state)
+    assert mapped["stop_condition"] == stop
+
 
 def test_657_default_hold_missing_and_empty_action(game):
     """#657 Class2 V1–V5：缺行/keyed 无 action/keyed 空 action → hold；
@@ -1439,12 +1466,6 @@ def test_657_abi_mapper_matrix_a1_a12(game):
             )
         return created
 
-    def _payload(created):
-        raw = created.get("payload_json") or created.get("payload") or {}
-        if isinstance(raw, str):
-            raw = json.loads(raw or "{}")
-        return raw if isinstance(raw, dict) else {}
-
     # A1 assignment：判后 issues initiative + origin_ref + end_turn；roster 有主办
     army0 = db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()
     stop_a1 = {f"army.{army0['id']}.arrears": "<=0"} if army0 else {"metrics.民心": ">=0"}
@@ -1468,13 +1489,22 @@ def test_657_abi_mapper_matrix_a1_a12(game):
     }, title="A1急务")
     origin = f"dossier:{int(created['id'])}"
     init = db.conn.execute(
-        "SELECT kind, origin_ref, end_turn, status FROM issues WHERE origin_ref=?",
+        "SELECT kind, origin_ref, end_turn, status, stop_condition FROM issues WHERE origin_ref=?",
         (origin,),
     ).fetchone()
     assert init is not None, "A1 判后须落 initiative"
     assert str(init["kind"]) == "initiative"
     assert str(init["origin_ref"]) == origin
     assert int(init["end_turn"]) == int(state.turn) + 2
+    # stop_condition 结构化保真（经 option normalize→follow→payload→initiative）
+    sc_issue = init["stop_condition"] if "stop_condition" in init.keys() else None
+    if isinstance(sc_issue, str) and sc_issue.strip().startswith("{"):
+        sc_issue = json.loads(sc_issue)
+    assert sc_issue == stop_a1, f"A1 issue stop_condition 须结构化相等：{sc_issue!r}"
+    pl_a1 = created.get("payload_json") or created.get("payload") or {}
+    if isinstance(pl_a1, str):
+        pl_a1 = json.loads(pl_a1 or "{}")
+    assert pl_a1.get("stop_condition") == stop_a1
     roster = created.get("participant_roster") or []
     assert any(
         isinstance(e, dict) and str(e.get("tier") or "") == "主办"
