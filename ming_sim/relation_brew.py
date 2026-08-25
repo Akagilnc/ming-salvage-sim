@@ -300,7 +300,6 @@ class MonthEndRelationBrewLeg:
                 **item,
                 "item_kind": "关系",
                 "new_events": new_events,
-                "prior_events": prior_events,
                 "input": build_brew_input(
                     source=item["source"], target=item["target"],
                     dimension=item["dimension"], year=self.year, period=self.period,

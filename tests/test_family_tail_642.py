@@ -18,9 +18,8 @@ from ming_sim.db import GameDB
 from ming_sim.issues import apply_score_extraction
 import ming_sim.issues as issues_mod
 from ming_sim.models import LLMConfig
-from ming_sim.relation_brew import run_month_end_relation_brew
 from ming_sim.relation_judge import run_summon_relation_judge, summon_edge_origin
-from ming_sim.relation_read import load_relation_history_before, project_relation_ledger
+from ming_sim.relation_read import project_relation_ledger
 from ming_sim.relations import EMPEROR_NODE, MINISTER_EDGE_KINDS
 from ming_sim.session import GameSession
 from ming_sim.simulation import EMPTY_EXTRACTION, MODULE_FIELDS
@@ -105,19 +104,13 @@ def test_anchor1_seed_net_readable_via_production_import(tmp_path, monkeypatch):
         # 魏忠贤场网：至少能读到阉党骨干相关边（不以人数硬闸）。
         wei = [d for d in face if "魏忠贤" in (d["source"], d["target"])]
         assert wei, "seed 网应含魏忠贤相关有向对"
-        # 初始摘要按 ADR 0086 可选：只校验 seed 实际提供的那几条非空可读。
+        # 初始摘要按 ADR 0086 可选：只校验 seed 实际提供的那几条非空可读
+        # （不断言「凡阉党核心对必有 summary」）。
         for source, target in seed_summary_pairs:
             hit = next(
                 d for d in face if (d["source"], d["target"]) == (source, target)
             )
             assert hit["summary"].strip(), f"seed 摘要应对 {source}→{target} 可读"
-        # 负向结构位：允许核心对无摘要（不强迫凡核心对必有 summary）。
-        _core_without = [
-            d for d in wei
-            if (d["source"], d["target"]) not in seed_summary_pairs
-            and not d["summary"].strip()
-        ]
-        assert isinstance(_core_without, list)
     finally:
         sess.close()
 
@@ -232,52 +225,10 @@ def test_anchor3_xuyang_collaboration_via_summon_judge(game):
     reopened.close()
 
 
-# ── 锚④ 机械装配：多年后 brew 输入含奠基原句 ────────────────────────
-
-
-def test_anchor4_coda_brew_input_carries_founding_context(game):
-    db, state, _ = game
-    source, target = EMPEROR_NODE, "杨嗣昌"
-    founding = "越次一召，擢杨嗣昌于五品郎中。"
-    db.record_relation_edge_event(
-        source=source, target=target, event_kind="知遇",
-        context=founding, origin="seed:founding:yueci",
-        turn=0, year=1628, period=11,
-    )
-    # 推进到多年后 settled 月并写入新事件以入选
-    state.year = 1635
-    state.period = 6
-    state.turn = 80
-    db.record_relation_edge_event(
-        source=source, target=target, event_kind="知遇",
-        context="多年后委以更大任。", origin="audience:later",
-        turn=80, year=1635, period=6,
-    )
-    calls: list = []
-
-    def brew_fn(payload_json: str) -> str:
-        payload = json.loads(payload_json)
-        calls.append(payload)
-        if payload.get("view"):
-            return json.dumps({"stance_segment": "派系态势。"}, ensure_ascii=False)
-        return json.dumps(
-            {"new_foundings": [], "recent_segment": "知遇回声近况。"},
-            ensure_ascii=False,
-        )
-
-    report = run_month_end_relation_brew(db, state, brew_fn)
-    assert report["selected"] >= 1
-    relation_calls = [c for c in calls if "view" not in c]
-    assert relation_calls
-    prior = relation_calls[0]["prior_events"]
-    assert any(e["context"] == founding for e in prior)
-    seam = load_relation_history_before(
-        db, source=source, target=target, before_year=1635, before_period=6,
-    )
-    assert founding in [e["context"] for e in seam]
-
-
 # ── DoD 面4：真实 extractor 产出路径 → 唯一写口 ──────────────────────
+# 锚④ prior_events 主干在 tests/test_relation_brew_636.py
+# （test_build_brew_input_includes_full_prior_history_in_stable_order +
+#  test_prepare_attaches_prior_events_only_via_history_seam），此处不平行重测。
 
 
 def test_dod_face4_real_extractor_section_lands_via_apply_score(game):
@@ -347,23 +298,19 @@ def test_r1_edges_and_summaries_survive_reopen(game):
     reopened.close()
 
 
-# ── 文档契约机械钉（P-4）────────────────────────────────────────────
+# ── 文档契约：只咬稳定符号/受控词表字面（P-4；不锁散文措辞）────────
 
 
-def test_settlement_flow_documents_relation_brew_leg_order():
+def test_settlement_flow_names_canonical_brew_symbols():
     text = (ROOT / "docs" / "SETTLEMENT_FLOW.md").read_text(encoding="utf-8")
     assert "MonthEndRelationBrewLeg" in text
     assert "settle_with_delta" in text
-    assert "认领" in text
-    assert "persist" in text
-    assert "pending" in text
+    assert "build_brew_input" in text
+    assert "load_relation_history_before" in text
 
 
-def test_delta_schema_relation_edge_events_matches_minister_kinds():
+def test_delta_schema_relation_edge_events_lists_minister_kinds():
     text = (ROOT / "docs" / "DELTA_SCHEMA.md").read_text(encoding="utf-8")
     assert "relation_edge_events" in text
     for kind in sorted(MINISTER_EDGE_KINDS):
         assert kind in text
-    brew_docs = (ROOT / "docs" / "SETTLEMENT_FLOW.md").read_text(encoding="utf-8")
-    # 文档必须明文禁止输出字数 clamp（P-0 / P6），不得写成实现要求。
-    assert "禁止" in brew_docs and "字数 clamp" in brew_docs
