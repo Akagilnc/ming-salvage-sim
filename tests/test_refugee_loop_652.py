@@ -237,20 +237,27 @@ def test_resettlement_grant_action_also_produces_回流(game):
     assert reflux[0]["origin_ref"] == f"dossier:{dossier_id}"
 
 
-def test_recovery_idempotent_same_dossier_turn(game):
-    """同 dossier+turn 结算两次不双减池（幂等键）。"""
+def test_recovery_fires_once_across_subsequent_settles(game):
+    """同一 closed recovery 案卷只在 closed_turn 当月出回流；下月 settle 不双扣。"""
     db, state, content = game
     _recovery_grant(db, state, action="赈灾", amount=20, surface="immediate")
-    before_turn = state.turn
     settle_with_delta(
-        state, db, {}, before_turn=before_turn, content=content, narrative="一次",
+        state, db, {}, before_turn=state.turn, content=content, narrative="一次",
     )
     after_first = _pop(db, "流民", "shaanxi")
-    # 人为把 turn 拨回并再跑 recovery 入口（模拟重放同 turn 键）
-    state.turn = before_turn
-    from ming_sim.issues import _apply_recovery_driven_transfers
-    second_applied, _ = _apply_recovery_driven_transfers(db, state, commit=True)
-    assert second_applied == []
+    first_turn = state.turn - 1
+    first_reflux = [
+        t for t in db.get_turn_extraction(first_turn)["extractor_output"]["population_transfers"]
+        if t.get("reason") == "回流"
+    ]
+    assert len(first_reflux) == 1
+
+    settle_with_delta(
+        state, db, {}, before_turn=state.turn, content=content, narrative="下月",
+    )
+    second_turn = state.turn - 1
+    second_transfers = db.get_turn_extraction(second_turn)["extractor_output"]["population_transfers"]
+    assert not any(t.get("reason") == "回流" for t in second_transfers)
     assert _pop(db, "流民", "shaanxi") == after_first
 
 
@@ -313,11 +320,8 @@ def test_non_recovery_grant_no_回流(game):
 
 
 def test_recovery_without_paid_evidence_produces_nothing(game):
-    """无实付证据（零 economy_moves、零对账）→ 即使 closed+fulfilled 也不产回流。"""
-    from ming_sim.issues import _apply_recovery_driven_transfers
-
-    db, state, _content = game
-    # 先走正常 immediate 成案（会扣库），再剥掉 ledger/对账，只留判决面。
+    """无实付证据（零 ledger、零对账）→ settle 后即使 closed+fulfilled 也不产回流。"""
+    db, state, content = game
     dossier_id = _recovery_grant(
         db, state, action="赈灾", amount=30, surface="immediate",
     )
@@ -342,22 +346,24 @@ def test_recovery_without_paid_evidence_produces_nothing(game):
     assert db.list_dossier_reconciliations(dossier_id) == []
     displaced_before = _pop(db, "流民", "shaanxi")
 
-    applied, _ = _apply_recovery_driven_transfers(db, state, commit=True)
-    assert not any(t.get("reason") == "回流" for t in applied)
+    before_turn = state.turn
+    settle_with_delta(
+        state, db, {}, before_turn=before_turn, content=content, narrative="无实付",
+    )
+    transfers = db.get_turn_extraction(before_turn)["extractor_output"]["population_transfers"]
+    assert not any(t.get("reason") == "回流" for t in transfers)
     assert _pop(db, "流民", "shaanxi") == displaced_before
 
 
 # ── 刀③ 灾情判决折减序 ──────────────────────────────────────────────────────
 
 def test_worse_execution_outcome_yields_less_recovery(game):
-    """同成本同池：较差结构化执行判决 → 更少回流。"""
+    """同成本同池：较差结构化执行判决 → settle 后回流更少。"""
     db, state, content = game
     amount_wan = 40
 
     def _run(outcome: str) -> int:
-        # 隔离：每 outcome 独立案卷 + 清空同 turn 旧 recovery 案与 extraction 幂等键。
-        from ming_sim.issues import _apply_recovery_driven_transfers
-
+        # 每 outcome：重置省池 → 新案 → 改写 outcome → settle_with_delta 真入口。
         db.conn.execute(
             "UPDATE classes SET population=? WHERE name='流民' AND region_id='shaanxi'",
             (DISPLACED_SHAANXI,),
@@ -366,17 +372,13 @@ def test_worse_execution_outcome_yields_less_recovery(game):
             "UPDATE classes SET population=? WHERE name='农民' AND region_id='shaanxi'",
             (FARMER_SHAANXI,),
         )
-        db.conn.execute(
-            "DELETE FROM decree_dossiers WHERE action_type='grant_allocation'"
-        )
-        db.conn.execute("DELETE FROM turn_extractions WHERE turn=?", (state.turn,))
         db.conn.commit()
         state.metrics["内库"] = max(int(state.metrics.get("内库") or 0), amount_wan + 50)
 
         dossier_id = db.create_decree_dossier(
             state,
             action_type="grant_allocation",
-            decree_text=f"赈灾-{outcome}",
+            decree_text=f"赈灾-{outcome}-{state.turn}",
             target_kind="region",
             target_id="shaanxi",
             payload={
@@ -388,14 +390,21 @@ def test_worse_execution_outcome_yields_less_recovery(game):
             },
         )
         db.apply_dossier_promulgation(state, dossier_id, "promulgated")
-        # 覆盖执行判决成色（immediate 默认 fulfilled）
         db.conn.execute(
             "UPDATE decree_dossiers SET execution_outcome=?, closed_turn=? WHERE id=?",
             (outcome, state.turn, dossier_id),
         )
         db.conn.commit()
-        applied, _ = _apply_recovery_driven_transfers(db, state, commit=True)
-        reflux = [t for t in applied if t.get("reason") == "回流"]
+        before_turn = state.turn
+        settle_with_delta(
+            state, db, {}, before_turn=before_turn, content=content,
+            narrative=f"判决{outcome}",
+        )
+        transfers = db.get_turn_extraction(before_turn)["extractor_output"]["population_transfers"]
+        reflux = [
+            t for t in transfers
+            if t.get("reason") == "回流" and t.get("origin_ref") == f"dossier:{dossier_id}"
+        ]
         return int(reflux[0]["amount"]) if reflux else 0
 
     full = _run("fulfilled")
@@ -408,7 +417,7 @@ def test_worse_execution_outcome_yields_less_recovery(game):
 
 
 def test_legacy_population_unit_skips_absorption_and_recovery(game):
-    """legacy 万口径不误开 substrate 环。"""
+    """legacy 万口径：吸收拒收；有实付 recovery 案 settle 亦不产回流。"""
     db, state, content = game
     db.conn.execute("DELETE FROM save_meta WHERE key='population_unit'")
     db.conn.commit()
@@ -425,6 +434,14 @@ def test_legacy_population_unit_skips_absorption_and_recovery(game):
     assert applied["bandit_absorptions"] == []
     assert applied["bandit_absorptions_rejections"]
 
-    from ming_sim.issues import _apply_recovery_driven_transfers
-    rec_applied, _ = _apply_recovery_driven_transfers(db, state, commit=True)
-    assert rec_applied == []
+    # recovery 单核同样门控：实付+fulfilled 在 legacy 档仍零回流
+    dossier_id = _recovery_grant(
+        db, state, action="赈灾", amount=10, surface="immediate",
+    )
+    assert db.get_decree_dossier(dossier_id)["execution_outcome"] == "fulfilled"
+    before_turn = state.turn
+    settle_with_delta(
+        state, db, {}, before_turn=before_turn, content=content, narrative="legacy",
+    )
+    transfers = db.get_turn_extraction(before_turn)["extractor_output"]["population_transfers"]
+    assert not any(t.get("reason") == "回流" for t in transfers)
