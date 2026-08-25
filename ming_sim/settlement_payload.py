@@ -44,8 +44,8 @@ DECISION_NARRATIVE_PREFIX = (
 )
 
 # 决策块边界标记。simulator 在邸报末尾按规范输出，本回合解析后从 narrative 剥离。
-# 机标本体 + 两侧至多一行框架换行；剥离时不 .strip() 整篇邸报（P6 / #671）
-_DECISION_RE = re.compile(r"\n?<<DECISION>>\s*(\{.*?\})\s*<<END>>\n?", re.DOTALL)
+# 只匹配显式机标本体；邻接 whitespace 属原文，不得一并消费（P6 / #671 / ADR 0142）
+_DECISION_RE = re.compile(r"<<DECISION>>\s*(\{.*?\})\s*<<END>>", re.DOTALL)
 MAX_DECISIONS_PER_TURN = 5
 
 
