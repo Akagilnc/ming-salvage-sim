@@ -84,8 +84,7 @@ def test_transformed_fact_is_projected_as_namespaced_candidate(game):
     assert item not in payload["candidate_events"]
     assert all(not str(event["id"]).startswith("impeachment_surge:") for event in payload["candidate_events"])
     issues_context = build_extractor_shared_context(
-        db, state, "", "", module="issues",
-        transit_semantics=payload["transit_semantics"],
+        db, state, "", "", module="issues"
     )
     assert item in issues_context["candidate_events"]
     assert "impeachment_surge_candidates" not in issues_context

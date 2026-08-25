@@ -183,8 +183,7 @@ def test_only_private_extractor_context_reads_canonical_history(game):
     )
     assert marker not in str(public)
     assert marker not in str(build_extractor_shared_context(
-        db, state, "", "", module="issues",
-        transit_semantics=public["transit_semantics"],
+        db, state, "", "", module="issues"
     ))
     pushed = next(item for item in private["monthly_dossier_reports"]
                   if item["dossier_id"] == dossier_id)

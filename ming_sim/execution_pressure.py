@@ -659,51 +659,27 @@ def _render_two_axis_tsv(provinces: Sequence[Mapping[str, object]]) -> str:
     return "\n".join(lines)
 
 
-# 士绅阻力 / 流寇压力 / 灾情严重度：与 regions 报告层既有词表同族（db.region_report）。
-_GENTRY_RESISTANCE_BANDS = ("极弱", "偏弱", "中等", "偏强", "强")
-_BANDIT_PRESSURE_BANDS = ("极低", "偏低", "中等", "偏高", "极高")
-_DISASTER_SEVERITY_BANDS = ("轻微", "偏轻", "中等", "偏重", "极重")
-
-
-def _population_approx_label(persons: object) -> str:
-    """玩家可感人口约数（与 simulator #648 「约N万口」同公式）。"""
-    try:
-        n = int(persons or 0)
-    except (TypeError, ValueError):
-        n = 0
-    wan = n // 10000
-    if wan <= 0:
-        return "不足一万口"
-    return f"约{wan}万口"
-
-
 def _project_class_slice_for_simulator(value: object) -> object:
     if not isinstance(value, Mapping):
         return value  # 哨兵 NO_RECORD 等原样
-    from ming_sim.qualitative import power_band, satisfaction_band
+    from ming_sim.qualitative import (
+        population_wan_kou_label,
+        power_band,
+        satisfaction_band,
+    )
 
     return {
-        "population_label": _population_approx_label(value.get("population")),
+        "population_label": population_wan_kou_label(value.get("population")),
         "satisfaction_band": satisfaction_band(value.get("satisfaction")),
         "power_band": power_band(value.get("leverage")),
     }
 
 
-def _project_scalar_band(value: object, words: tuple[str, ...]) -> object:
-    """数值 → 定性档；哨兵字符串原样穿过。"""
+def _pass_or_band(value: object, band_fn) -> object:
+    """哨兵字符串原样穿过；数值走定性档 helper。"""
     if isinstance(value, str):
         return value
-    from ming_sim.qualitative import qualitative_band
-
-    return qualitative_band(value, words)
-
-
-def _project_integrity_for_simulator(value: object) -> object:
-    if isinstance(value, str):
-        return value  # 出缺 / 无记录
-    from ming_sim.qualitative import qualitative_character_axis
-
-    return qualitative_character_axis("integrity", value)
+    return band_fn(value)
 
 
 def project_execution_two_axis_for_simulator(
@@ -712,9 +688,15 @@ def project_execution_two_axis_for_simulator(
     """#652 / ADR 0143：执行两轴 builder 产物 → 玩家可感 simulator 定性投影。
 
     复用 builder 真源一次；禁第二套 band/矩阵/计数；投影后重走既有 TSV 渲染。
-    剥离 owner_ability 裸分与派生 owner_load；能力/操守/阻力/灾情走定性档。
+    剥离 owner_ability 裸分与派生 owner_load；能力/操守/阻力/灾情走 qualitative 单源。
     """
-    from ming_sim.qualitative import qualitative_character_axis
+    from ming_sim.qualitative import (
+        disaster_severity_band,
+        gentry_resistance_band,
+        military_pressure_band,
+        power_band,
+        qualitative_character_axis,
+    )
 
     provinces_in = raw.get("provinces") or []
     if not isinstance(provinces_in, Sequence):
@@ -743,19 +725,15 @@ def project_execution_two_axis_for_simulator(
                 "id": dis.get("id"),
                 "title": dis.get("title"),
                 "kind": dis.get("kind"),
-                "severity": _project_scalar_band(
-                    dis.get("severity"), _DISASTER_SEVERITY_BANDS,
+                "severity": _pass_or_band(
+                    dis.get("severity"), disaster_severity_band,
                 ),
             })
-        bandit_strength = block.get("bandit_strength")
-        if not isinstance(bandit_strength, str):
-            from ming_sim.qualitative import power_band
-            bandit_strength = power_band(bandit_strength)
         projected.append({
             "region_id": block.get("region_id"),
             "province_open_count": block.get("province_open_count"),
-            "gentry_resistance": _project_scalar_band(
-                block.get("gentry_resistance"), _GENTRY_RESISTANCE_BANDS,
+            "gentry_resistance": _pass_or_band(
+                block.get("gentry_resistance"), gentry_resistance_band,
             ),
             "gentry_slice": _project_class_slice_for_simulator(
                 block.get("gentry_slice"),
@@ -764,13 +742,16 @@ def project_execution_two_axis_for_simulator(
                 block.get("officials_slice"),
             ),
             "dutang_faction": block.get("dutang_faction"),
-            "dutang_integrity": _project_integrity_for_simulator(
+            "dutang_integrity": _pass_or_band(
                 block.get("dutang_integrity"),
+                lambda v: qualitative_character_axis("integrity", v),
             ),
-            "bandit_pressure": _project_scalar_band(
-                block.get("bandit_pressure"), _BANDIT_PRESSURE_BANDS,
+            "bandit_pressure": _pass_or_band(
+                block.get("bandit_pressure"), military_pressure_band,
             ),
-            "bandit_strength": bandit_strength,
+            "bandit_strength": _pass_or_band(
+                block.get("bandit_strength"), power_band,
+            ),
             "disaster_rows": disasters_out,
             "owners": owners_out,
             "arrival_rows": list(block.get("arrival_rows") or []),

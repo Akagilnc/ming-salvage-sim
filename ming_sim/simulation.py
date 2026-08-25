@@ -33,6 +33,7 @@ from ming_sim.models import GameState, loads_effect_dict, reign_period_label
 from ming_sim.paths import bundled_path
 from ming_sim.qualitative import (
     imperial_authority_band,
+    population_wan_kou_label,
     power_band,
     progress_band,
     public_support_band,
@@ -413,17 +414,6 @@ def _simulator_factions_brief(db: GameDB) -> str:
     return "；".join(parts)
 
 
-def _population_wan_kou_label(persons: int) -> str:
-    """ADR 0088/#648 玩家面投影：裸人数 → 「约N万口」定性（P4）。
-
-    这是 LLM 输入的特征化投影（同 satisfaction_band 族），非玩家直出文本模板；
-    叙事由 simulator 从此正向长出，严禁事后对 LLM 产文换算/改写（0142 零删改）。"""
-    wan = int(persons) // 10000
-    if wan <= 0:
-        return "不足一万口"
-    return f"约{wan}万口"
-
-
 def _project_simulator_region_row(
     row: Dict[str, object], population_unit: str
 ) -> Dict[str, object]:
@@ -436,7 +426,7 @@ def _project_simulator_region_row(
     if "public_support" in projected:
         projected["public_support"] = public_support_band(projected["public_support"])
     if population_unit == POPULATION_UNIT_PERSONS and "population" in projected:
-        projected["population"] = _population_wan_kou_label(int(projected["population"]))
+        projected["population"] = population_wan_kou_label(projected["population"])
     return projected
 
 
@@ -1223,11 +1213,8 @@ def build_extractor_shared_context(
     secret_orders: Optional[Dict[str, object]] = None,
     module: str = "",
     decree_dossiers: Optional[List[Dict[str, object]]] = None,
-    transit_semantics: Optional[List[Dict[str, object]]] = None,
 ) -> Dict[str, object]:
     """供模块 extractor 放入 system 前缀的共同结算补充上下文。
-
-    #652：transit_semantics 形参已退役（two_axis 只进 simulator）；保留签名兼容，忽略之。
 
     盘面（regions/armies/buildings/current_state/active_issues/candidate_events…）
     已由同 system 前缀的 simulator_payload 全量给出，这里剔除重复，只留 extractor 独有的

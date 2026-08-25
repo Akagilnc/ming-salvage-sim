@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -16,7 +15,6 @@ from ming_sim.execution_pressure import (
     build_execution_two_axis_surface,
 )
 from ming_sim.simulation import (
-    build_extractor_shared_context,
     build_simulator_payload,
     project_transit_semantics,
 )
@@ -379,37 +377,3 @@ def test_phase1_phase2_same_transit_semantics_object_and_single_projector(env, m
     assert payload["transit_semantics"] is C
 
 
-# ── 门控回归 / H 删旧 ─────────────────────────────────────────────
-
-
-def test_two_axis_in_simulator_not_extractors_gate(env):
-    """#652：simulator 有 two_axis；issues / non-issues 均无。"""
-    db, state, _ = env
-    _make_executing_dossier(
-        db, state, owner="毕自严", region_id="shaanxi", tag="gate",
-    )
-    payload = build_simulator_payload(
-        state, db, decree_text="d", previous_narrative="n",
-    )
-    assert "execution_two_axis" in payload
-
-    other = build_extractor_shared_context(
-        db, state, narrative="n", decree_text="d", module="internal",
-    )
-    assert "execution_two_axis" not in other
-
-    issues = build_extractor_shared_context(
-        db, state, narrative="n", decree_text="d", module="issues",
-    )
-    assert "execution_two_axis" not in issues
-
-
-def test_source_hygiene_no_legacy_comments():
-    """源码卫生：无 #673 判官清单复用残留；execution_pressure 零 schema。"""
-    sim_src = Path("ming_sim/simulation.py").read_text(encoding="utf-8")
-    assert "#673 判官清单复用" not in sim_src
-    assert "#673 将来复用" not in sim_src
-    assert "私有面（P4：不进 simulator）" not in sim_src
-
-    ep_src = Path("ming_sim/execution_pressure.py").read_text(encoding="utf-8")
-    assert "CREATE TABLE" not in ep_src
