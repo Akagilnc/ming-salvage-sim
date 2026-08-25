@@ -1,0 +1,165 @@
+{
+  "gate": "issue-642-family-tail-relation-acceptance",
+  "method": {
+    "design": "Live LLM semantic judge on production read/brew seams; seed/yang/coda anchors independently selectable; no free-text regex; structured pass/fail only.",
+    "samples": 1,
+    "anchors": [
+      "seed",
+      "yang",
+      "coda"
+    ],
+    "config": {
+      "channel": "cli",
+      "runner": "codex",
+      "model": "gpt-5.6-sol",
+      "reasoning_strength": "high"
+    }
+  },
+  "summary": {
+    "samples": 1,
+    "checks": {
+      "coda.mechanical_ok": true,
+      "coda.semantic_pass": true,
+      "seed.mechanical_dto": true,
+      "seed.semantic_pass": true,
+      "yang.semantic_pass": true,
+      "yang.structural_ok": true
+    },
+    "failed": [],
+    "passed": true
+  },
+  "limitations": [
+    "Semantic judge is one configured model; not population calibration.",
+    "Anchor ③ structural + restore are CI pytest only (no live LLM required).",
+    "Yang three-beat uses production write/read seams with fixture beats; full multi-month live summon chain is optional extension.",
+    "Coda semantic is optional per r2; mechanical prior_events locked by pytest."
+  ],
+  "samples": [
+    {
+      "sample": 1,
+      "anchors": {
+        "seed": {
+          "anchor": "seed",
+          "mechanical": {
+            "ledger_rows": 21,
+            "wei_related_rows": 14,
+            "dto_keys_ok": true
+          },
+          "semantic": {
+            "pass": true,
+            "reason": "账本提供了多条可读且可交叉追索的网状线索：崔呈秀与魏忠贤双向投附、盟誓并掌握党人状；客氏负责宫中回护；王体乾公开翼护；张瑞图、施凤来、来宗道依附承顺；王绍徽献《东林点将录》供按名排陷；阎鸣泰、李从心、郭允厚、黄立极因结附、故旧或擢用形成恩义与升迁链；田尔耕执行厂卫罗织；杨涟则构成明确结怨与血债线。足以据此追查核心、宫禁奥援、外廷羽翼、荐引升迁、排陷名册和执行爪牙。",
+            "raw_excerpt": "{\"pass\":true,\"reason\":\"账本提供了多条可读且可交叉追索的网状线索：崔呈秀与魏忠贤双向投附、盟誓并掌握党人状；客氏负责宫中回护；王体乾公开翼护；张瑞图、施凤来、来宗道依附承顺；王绍徽献《东林点将录》供按名排陷；阎鸣泰、李从心、郭允厚、黄立极因结附、故旧或擢用形成恩义与升迁链；田尔耕执行厂卫罗织；杨涟则构成明确结怨与血债线。足以据此追查核心、宫禁奥援、外廷羽翼、荐引升迁、排陷名册和执行爪牙。\",\"menu_hints\":[\"从崔呈秀掌握的党人状与双向盟誓切入\",\"追查客氏、王体乾的宫中回护链\",\"按王绍徽所献点将录核对排陷对象与党羽\",\"沿李从心、郭允厚、黄立极的关照擢用线倒查恩义\",\"锁定田尔耕及厂卫罗织执行链\",\"以杨涟案核验结怨、构陷与血债\"]}",
+            "parsed": {
+              "pass": true,
+              "reason": "账本提供了多条可读且可交叉追索的网状线索：崔呈秀与魏忠贤双向投附、盟誓并掌握党人状；客氏负责宫中回护；王体乾公开翼护；张瑞图、施凤来、来宗道依附承顺；王绍徽献《东林点将录》供按名排陷；阎鸣泰、李从心、郭允厚、黄立极因结附、故旧或擢用形成恩义与升迁链；田尔耕执行厂卫罗织；杨涟则构成明确结怨与血债线。足以据此追查核心、宫禁奥援、外廷羽翼、荐引升迁、排陷名册和执行爪牙。",
+              "menu_hints": [
+                "从崔呈秀掌握的党人状与双向盟誓切入",
+                "追查客氏、王体乾的宫中回护链",
+                "按王绍徽所献点将录核对排陷对象与党羽",
+                "沿李从心、郭允厚、黄立极的关照擢用线倒查恩义",
+                "锁定田尔耕及厂卫罗织执行链",
+                "以杨涟案核验结怨、构陷与血债"
+              ]
+            }
+          },
+          "checks": {
+            "mechanical_dto": true,
+            "semantic_pass": true
+          }
+        },
+        "yang": {
+          "anchor": "yang",
+          "structural": {
+            "beat_count": 3,
+            "has_jun_yang_two_zhiyu": true,
+            "has_yang_ni_tension_and_collab": true,
+            "old_tension_not_deleted": true
+          },
+          "semantic": {
+            "pass": true,
+            "reason": "君→杨嗣昌由首拍越次擢用，到末拍委任加重、圣眷再深，知遇逐拍加深；杨↔倪元璐由路线分歧露出苗头、形成细缝，再以刚柔分工当面调和且明确保留前隙，未发生跳变抹平。",
+            "raw_excerpt": "{\"pass\":true,\"reason\":\"君→杨嗣昌由首拍越次擢用，到末拍委任加重、圣眷再深，知遇逐拍加深；杨↔倪元璐由路线分歧露出苗头、形成细缝，再以刚柔分工当面调和且明确保留前隙，未发生跳变抹平。\",\"jun_yang\":\"deeper\",\"yang_ni\":\"deepen_reconcile\"}",
+            "parsed": {
+              "pass": true,
+              "reason": "君→杨嗣昌由首拍越次擢用，到末拍委任加重、圣眷再深，知遇逐拍加深；杨↔倪元璐由路线分歧露出苗头、形成细缝，再以刚柔分工当面调和且明确保留前隙，未发生跳变抹平。",
+              "jun_yang": "deeper",
+              "yang_ni": "deepen_reconcile"
+            }
+          },
+          "event_ids": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26
+          ],
+          "checks": {
+            "structural_ok": true,
+            "semantic_pass": true
+          }
+        },
+        "coda": {
+          "anchor": "coda",
+          "mechanical": {
+            "prior_has_founding": true,
+            "prior_byte_equal": true,
+            "prior_count": 1
+          },
+          "semantic": {
+            "pass": true,
+            "reason": "prior_events 中包含多年前奠基原句“越次一召，擢杨嗣昌于五品郎中。”，并非仅有蒸馏残留。",
+            "raw_excerpt": "{\"pass\":true,\"reason\":\"prior_events 中包含多年前奠基原句“越次一召，擢杨嗣昌于五品郎中。”，并非仅有蒸馏残留。\"}",
+            "parsed": {
+              "pass": true,
+              "reason": "prior_events 中包含多年前奠基原句“越次一召，擢杨嗣昌于五品郎中。”，并非仅有蒸馏残留。"
+            }
+          },
+          "checks": {
+            "mechanical_ok": true,
+            "semantic_pass": true
+          }
+        }
+      },
+      "checks": {
+        "seed.mechanical_dto": true,
+        "seed.semantic_pass": true,
+        "yang.structural_ok": true,
+        "yang.semantic_pass": true,
+        "coda.mechanical_ok": true,
+        "coda.semantic_pass": true
+      }
+    }
+  ],
+  "git_head_at_run": "e63fee74afaf886016189beeea80ce4fca88a8c0",
+  "fresh_trace": {
+    "path": "docs/evidence/issue-642-acceptance-trace.jsonl",
+    "records": 3,
+    "tags": [
+      "issue-642-anchor-seed",
+      "issue-642-anchor-yang",
+      "issue-642-anchor-coda"
+    ],
+    "note": "CLI jsonl moved from MING_SIM_TRACE_PATH=/tmp/issue-642-acceptance-trace.jsonl after green gate"
+  }
+}
