@@ -235,7 +235,11 @@ def test_arrival_dual_voice_parallel_main_path(game, monkeypatch):
 
 
 def test_arrival_dual_voice_hitl_pending_restores_and_completes(game, monkeypatch, tmp_path):
-    """HITL 暂停写入 pending.attendant_message；关库重开后完成月仍呈现。"""
+    """HITL 暂停写入 pending.attendant_message；关库重开后完成月仍呈现。
+
+    #671 P6：decision-bearing 真实链只剥 <<DECISION>>…<<END>> 本体，
+    块外首尾 whitespace 须在 pending.narrative 与完成后 turn_report 逐字保留。
+    """
     import ming_sim.decree as decree_mod
     import ming_sim.memories as memories
 
@@ -243,6 +247,8 @@ def test_arrival_dual_voice_hitl_pending_restores_and_completes(game, monkeypatc
     names = ["洪承畴", "孙传庭"]
     arrivals, _waiting = _seed_waiting_arrivals(game, names)
 
+    # 块外可辨首尾 whitespace（含邻接换行）；不锁散文措辞
+    sim_body = "  《双星抵京》边饷告急。  "
     decision_block = (
         "\n<<DECISION>>\n"
         + json.dumps(
@@ -258,13 +264,15 @@ def test_arrival_dual_voice_hitl_pending_restores_and_completes(game, monkeypatc
         )
         + "\n<<END>>\n"
     )
+    # 仅剥机标本体后，邻接换行仍属原文
+    expected_narrative = sim_body + "\n\n"
 
     def _attendant(*_a, **_k):
         return ATTENDANT_TEXT
 
     def _simulate(*_a, **kwargs):
         payload = kwargs["simulator_payload"]
-        return (SIM_REPORT + decision_block, payload)
+        return (sim_body + decision_block, payload)
 
     monkeypatch.setattr(
         decree_mod, "tick_transit_arrivals",
@@ -281,7 +289,7 @@ def test_arrival_dual_voice_hitl_pending_restores_and_completes(game, monkeypatc
     ctx = db.get_resolve_context(state.turn)
     assert ctx is not None
     assert ctx["attendant_message"] == ATTENDANT_TEXT
-    assert ctx["narrative"]  # 官方声部亦在
+    assert ctx["narrative"] == expected_narrative
 
     # 关库重开：pending 字段仍在
     path = Path(db.path)
@@ -293,6 +301,7 @@ def test_arrival_dual_voice_hitl_pending_restores_and_completes(game, monkeypatc
         restored = reopened.get_resolve_context(turn)
         assert restored is not None
         assert restored["attendant_message"] == ATTENDANT_TEXT
+        assert restored["narrative"] == expected_narrative
 
         # 完成亲裁 → turn_reports 原子转存
         decisions = reopened.list_pending_decisions(turn)
@@ -311,8 +320,8 @@ def test_arrival_dual_voice_hitl_pending_restores_and_completes(game, monkeypatc
             st, reopened, None, None, content=content_ref,
         )
         # 完成月官方奏章原样保留（phase2 报告前缀含诏书，正文须含 phase1 受控奏章）
-        assert SIM_REPORT in report
-        assert reopened.get_turn_report(turn) == SIM_REPORT
+        assert expected_narrative in report
+        assert reopened.get_turn_report(turn) == expected_narrative
         assert reopened.get_turn_attendant_message(turn) == ATTENDANT_TEXT
         assert reopened.get_resolve_context(turn) is None  # 结算后清理
         assert reopened.previous_turn_attendant_message(st) == ATTENDANT_TEXT
