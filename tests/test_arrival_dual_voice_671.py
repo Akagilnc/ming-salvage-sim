@@ -222,12 +222,115 @@ def test_arrival_dual_voice_hitl_pending_restores_and_completes(game, monkeypatc
         report = decree_mod.resolve_decisions_phase2(
             st, reopened, None, None, content=content_ref,
         )
-        assert SIM_REPORT in report or "人事除目" in report or report
+        # 完成月官方奏章原样保留（phase2 报告前缀含诏书，正文须含 phase1 受控奏章）
+        assert SIM_REPORT in report
+        assert reopened.get_turn_report(turn) == SIM_REPORT
         assert reopened.get_turn_attendant_message(turn) == ATTENDANT_TEXT
         assert reopened.get_resolve_context(turn) is None  # 结算后清理
         assert reopened.previous_turn_attendant_message(st) == ATTENDANT_TEXT
     finally:
         reopened.close()
+
+
+def test_arrival_dual_voice_companion_failure_not_swallowed_as_sim_fallback(
+    game, monkeypatch,
+):
+    """companion 异常归属独立：不得进 simulator 宽 except 被误标为 sim fallback。"""
+    import ming_sim.decree as decree_mod
+    import ming_sim.memories as memories
+    from ming_sim.exceptions import LLMContractError
+
+    db, state, content = game
+    names = ["洪承畴", "孙传庭"]
+    arrivals, _waiting = _seed_waiting_arrivals(game, names)
+    sim_ran = {"n": 0}
+
+    def _attendant(*_a, **_k):
+        raise LLMContractError("王承恩抵京报到返回空文")
+
+    def _simulate(*_a, **kwargs):
+        sim_ran["n"] += 1
+        return (SIM_REPORT, kwargs["simulator_payload"])
+
+    monkeypatch.setattr(
+        decree_mod, "tick_transit_arrivals",
+        lambda *_a, **_k: list(arrivals),
+    )
+    _stub_settlement_llms(
+        decree_mod, memories, monkeypatch, simulate=_simulate, attendant=_attendant,
+    )
+
+    with pytest.raises(LLMContractError, match="王承恩抵京报到返回空文"):
+        decree_mod.resolve_directives(
+            state, db, None, None, [], "", content=content,
+        )
+    # simulator 已跑完；失败是 companion 独立抛出，不是 sim fallback 叙事推进
+    assert sim_ran["n"] == 1
+    assert db.get_turn_report(int(state.turn)) == ""
+    assert db.get_turn_attendant_message(int(state.turn)) == ""
+    # 不得留下 sim fallback 简化邸报推进痕迹
+    ctx = db.get_resolve_context(state.turn)
+    if ctx is not None:
+        assert "推演 agent 被服务方拦截" not in str(ctx.get("narrative") or "")
+
+
+def test_arrival_dual_voice_sim_fail_still_surfaces_companion_error(
+    game, monkeypatch,
+):
+    """sim 已失败时 companion 错仍以独立异常出，不被 fallback 吞掉。"""
+    import ming_sim.decree as decree_mod
+    import ming_sim.memories as memories
+    from ming_sim.exceptions import LLMContractError
+
+    db, state, content = game
+    names = ["洪承畴"]
+    arrivals, _waiting = _seed_waiting_arrivals(game, names)
+
+    def _attendant(*_a, **_k):
+        raise LLMContractError("王承恩独立腿失败")
+
+    def _simulate(*_a, **_k):
+        raise RuntimeError("simulator boom")
+
+    monkeypatch.setattr(
+        decree_mod, "tick_transit_arrivals",
+        lambda *_a, **_k: list(arrivals),
+    )
+    _stub_settlement_llms(
+        decree_mod, memories, monkeypatch, simulate=_simulate, attendant=_attendant,
+    )
+
+    with pytest.raises(LLMContractError, match="王承恩独立腿失败"):
+        decree_mod.resolve_directives(
+            state, db, None, None, [], "", content=content,
+        )
+    # 不得以 sim fallback 叙事完成月（companion 错优先于 fallback 推进）
+    assert db.get_turn_attendant_message(int(state.turn)) == ""
+    assert int(state.turn) == 1  # 未推进
+
+
+def test_clear_for_resimulation_preserves_attendant_message(game):
+    """#671：重模拟降级须保留 attendant_message（同 source 保留范式）。"""
+    from ming_sim.error_pack import clear_for_resimulation
+
+    db, state, _content = game
+    turn = state.turn
+    db.save_resolve_context(
+        turn, "d", "n", {"k": "v"},
+        secret_orders=[], relevant_memories=[],
+        extracted={"metric_delta": {"国库": 1}},
+        source="player_decree",
+        attendant_message=ATTENDANT_TEXT,
+    )
+    assert db.get_resolve_context(turn)["attendant_message"] == ATTENDANT_TEXT
+
+    clear_for_resimulation(db, turn)
+
+    ctx = db.get_resolve_context(turn)
+    assert ctx is not None
+    assert ctx["extracted"] is None
+    assert ctx["attendant_message"] == ATTENDANT_TEXT
+    db.clear_resolve_context(turn)
 
 
 def test_arrival_dual_voice_empty_set_zero_calls(game, monkeypatch):
