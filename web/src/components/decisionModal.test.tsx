@@ -637,4 +637,58 @@ describe("DecisionModal #1202 seal-is-confirm first screen + pick affordance", (
     expect(payload[1].decision_key).toBe("decision:1:1");
     cleanup();
   });
+
+  it("#657 midzhi projects non-assignment §C.4 closed-set keys from selected option", () => {
+    const decisions = [
+      {
+        idx: 0,
+        kind: "rescript_draft",
+        decision_key: "rescript_draft:1:0",
+        title: "中旨非 assignment",
+        context: "c",
+        actor_name: "杨嗣昌",
+        options: [
+          {
+            label: "加衔恩赏",
+            hint: "荣誉",
+            draft_capability: "cap-grant",
+            action_type: "grant_allocation",
+            grant_action: "加衔",
+            target_kind: "character",
+            target_id: "杨嗣昌",
+            name: "杨嗣昌",
+            locality_scope: "none",
+            office: "太子太保",
+          },
+          { label: "备", hint: "h", draft_capability: "cap2" },
+        ],
+      },
+    ];
+    const onResolve = vi.fn();
+    const cleanup = render(<DecisionModal decisions={decisions} onResolve={onResolve} />);
+    // 先点选非 assignment option，再点中旨——投影须用选中项闭集键
+    act(() => {
+      const opt = Array.from(document.querySelectorAll(".decision-option")).find(
+        (b) => b.textContent?.includes("加衔恩赏"),
+      ) as HTMLButtonElement | undefined;
+      opt?.click();
+    });
+    act(() => {
+      (document.querySelector('[data-action="midzhi"]') as HTMLButtonElement).click();
+    });
+    act(() => {
+      document.querySelector<HTMLButtonElement>(".decision-confirm")!.click();
+    });
+    expect(onResolve).toHaveBeenCalledTimes(1);
+    const choice = onResolve.mock.calls[0][0][0];
+    expect(choice.action).toBe("midzhi");
+    expect(choice.action_type).toBe("grant_allocation");
+    expect(choice.grant_action).toBe("加衔");
+    expect(choice.target_kind).toBe("character");
+    expect(choice.target_id).toBe("杨嗣昌");
+    expect(choice.name).toBe("杨嗣昌");
+    expect(choice.office).toBe("太子太保");
+    expect(choice.locality_scope).toBe("none");
+    cleanup();
+  });
 });
