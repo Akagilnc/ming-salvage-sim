@@ -76,6 +76,15 @@ describe("#1398 邸报朕知道了视口常显", () => {
   });
 });
 
+describe("#671 长递话不挤 dismiss", () => {
+  it("gazette-attendant 可缩 + 区内滚（三键）", () => {
+    const block = styles.match(/\.gazette-attendant\s*\{[^}]*\}/)?.[0] || "";
+    expect(block).toMatch(/flex:\s*0\s+1\s+auto/);
+    expect(block).toMatch(/min-height:\s*0/);
+    expect(block).toMatch(/overflow-y:\s*auto/);
+  });
+});
+
 describe("#1486 邸报底栏不与卷轴末行混层", () => {
   it("modal-bg-gazette 下 dismiss 有实底，压过 * transparent", () => {
     // 行为面：按钮区自带实底，不与卷轴底缘半裁切行共透底层
