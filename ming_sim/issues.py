@@ -4915,6 +4915,7 @@ def _strategic_result_item_has_material_world_state(item: Dict[str, object]) -> 
         ("old_office_type", "office_type"),
         ("old_loyalty", "new_loyalty"),
         ("old_power", "new_power"),
+        ("old_style", "new_style"),
     ):
         if old_key in item and new_key in item and str(item.get(old_key)) != str(item.get(new_key)):
             return True
@@ -6743,7 +6744,8 @@ def _apply_person_changes(
             if not isinstance(raw_style, str) or not raw_style.strip():
                 applied.append(rejected(item, "性情 style 须为非空字符串", "invalid_enum"))
                 continue
-            new_style = raw_style.strip()
+            # 空白探测仅作拒收；自由文本正文按原串字节透传（P6 / ADR 0142）。
+            new_style = raw_style
             old_style = str(row["style"] or "")
             origin_error = origin_rejected(item)
             if origin_error:

@@ -210,9 +210,12 @@ def minister_dossier(character: Character) -> str:
     脾性位：非空持久化 character.style 优先，否则 dossier.temperament / 通用兜底。
     """
     dossier = _MINISTER_DOSSIERS.get(character.name)
+    raw_style = character.style or ""
+    # 存在性用 strip 探测；选用时传原串（禁把裁剪值当正文，P6 / ADR 0142）。
+    style_present = bool(raw_style.strip())
     if dossier is None:
         identity = (character.summary or "").strip() or "未有专门 dossier，以官职、性情和任事处作通用特征化"
-        temperament = (character.style or "").strip() or "以官职与任事处推知其处世分寸"
+        temperament = raw_style if style_present else "以官职与任事处推知其处世分寸"
         skills = "、".join(character.personal_skills) or "未留专长档案"
         motivation = f"在{character.office or '所任官署'}任事并完成本分"
         burden = "暂无可核的特别包袱"
@@ -224,7 +227,7 @@ def minister_dossier(character: Character) -> str:
             "burden": burden,
             "episode": episode,
         }
-    temperament = (character.style or "").strip() or dossier["temperament"]
+    temperament = raw_style if style_present else dossier["temperament"]
     return (
         f"身份：{dossier['identity']}；脾性：{temperament}；"
         f"动机：{dossier['motivation']}；包袱：{dossier['burden']}；"
@@ -285,11 +288,12 @@ def relation_ledger_context(character: Character, db: GameDB) -> str:
     parts: List[str] = []
     for row in rows:
         bits = [f"{row['source']}→{row['target']}"]
-        summary = str(row.get("summary") or "").strip()
-        if summary:
+        # summary/recent_context 为 LLM/账本自由文本：strip 只判空，append 原串。
+        summary = str(row.get("summary") or "")
+        if summary.strip():
             bits.append(summary)
-        recent = str(row.get("recent_context") or "").strip()
-        if recent:
+        recent = str(row.get("recent_context") or "")
+        if recent.strip():
             bits.append(recent)
         updated = str(row.get("updated_at_period") or "").strip()
         if updated:
