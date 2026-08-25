@@ -42,6 +42,7 @@ from ming_sim.faction_brew import (
     select_faction_brew_targets,
 )
 from ming_sim.models import GameState
+from ming_sim.relation_read import load_relation_history_before
 from ming_sim.relations import EMPEROR_NODE
 from ming_sim.token_stats import tlog
 
@@ -118,8 +119,13 @@ def build_brew_input(
     summary: Optional[Dict[str, Any]],
     new_events: List[Dict[str, Any]],
     has_pending: bool,
+    prior_events: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
-    """单条关系的酿制输入（旧摘要＋新边事件＋当前年月，ADR 0083 口径）。"""
+    """单条关系的酿制输入（旧摘要＋新边事件＋严格更早完整历史＋当前年月）。
+
+    prior_events＝#642 锚④ coda 回流水：仅已选中有向对、由
+    ``load_relation_history_before`` 提供的严格早于 settled 年月的完整事件；
+    零语义筛选/裁剪；无旧事时为空列表。不改五字段玩家读面。"""
     return {
         "source": source,
         "target": target,
@@ -137,6 +143,16 @@ def build_brew_input(
                 "period": int(event["period"]),
             }
             for event in new_events
+        ],
+        "prior_events": [
+            {
+                "event_kind": event["event_kind"],
+                "context": event["context"],
+                "origin": event["origin"],
+                "year": int(event["year"]),
+                "period": int(event["period"]),
+            }
+            for event in (prior_events or [])
         ],
         "has_pending_failure": bool(has_pending),
     }
@@ -272,15 +288,25 @@ class MonthEndRelationBrewLeg:
                 self._db, source=item["source"], target=item["target"],
                 watermark=item["watermark"],
             )
+            # #642 锚④：仅对已选中有向对定点读取严格更早的完整历史（coda 唯一消费者）。
+            prior_events = load_relation_history_before(
+                self._db,
+                source=item["source"],
+                target=item["target"],
+                before_year=self.year,
+                before_period=self.period,
+            )
             jobs.append({
                 **item,
                 "item_kind": "关系",
                 "new_events": new_events,
+                "prior_events": prior_events,
                 "input": build_brew_input(
                     source=item["source"], target=item["target"],
                     dimension=item["dimension"], year=self.year, period=self.period,
                     summary=item["summary"], new_events=new_events,
                     has_pending=item["has_pending"],
+                    prior_events=prior_events,
                 ),
             })
         for item in faction_targets:
