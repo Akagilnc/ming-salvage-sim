@@ -143,6 +143,11 @@
     {"name": "商人",   "region_id": "guizhou",   "population": 20000,    "satisfaction": 42, "leverage": 25, "agenda": "盐茶小商"},
     {"name": "匠户",   "region_id": "guizhou",   "population": 10000,    "satisfaction": 40, "leverage": 22, "agenda": "矿匠少"},
     {"name": "宗藩",   "region_id": "guizhou",   "population": 0,    "satisfaction": 60, "leverage": 18, "agenda": "无宗藩"},
-    {"name": "流民",   "region_id": "guizhou", "population": 0, "satisfaction": 30, "leverage": 5, "agenda": "就食求赈，流徙谋生"}
+    {"name": "流民",   "region_id": "guizhou", "population": 0, "satisfaction": 30, "leverage": 5, "agenda": "就食求赈，流徙谋生"},
+
+    {"name": "军户",   "region_id": "liaodong", "population": 230000, "satisfaction": 20, "leverage": 75, "agenda": "关宁宁锦欠饷高压，军户逃役"},
+    {"name": "流民",   "region_id": "liaodong", "population": 0, "satisfaction": 30, "leverage": 5, "agenda": "就食求赈，流徙谋生"},
+    {"name": "军户",   "region_id": "dongjiang_area", "population": 95000, "satisfaction": 22, "leverage": 68, "agenda": "东江皮岛军户远悬，索饷求归"},
+    {"name": "流民",   "region_id": "dongjiang_area", "population": 0, "satisfaction": 30, "leverage": 5, "agenda": "就食求赈，流徙谋生"}
   ]
 }

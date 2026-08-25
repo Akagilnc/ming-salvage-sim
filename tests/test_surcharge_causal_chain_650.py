@@ -377,7 +377,7 @@ def test_phase2_reopen_consumes_old_levy_once_and_records_it(game, monkeypatch):
 
 
 def test_province_without_population_pool_rejects_surcharge_and_old_ledger_exits(game):
-    """辽东无人口池：新旨不落账，历史毒账也不得让下月 soft-lock。"""
+    """辽东无完整农民/流民加派池（#659 仅军户/流民）：新旨不落账，历史毒账也不得 soft-lock。"""
     db, state, content = game
     applied = apply_score_extraction(db, state, {
         "surcharge_decrees": [_decree(db, state, region_id="liaodong", monthly_amount=10.0)],

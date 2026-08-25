@@ -3,8 +3,8 @@
 canonical＝ADR 0087/0088 + 票面冻结修正案 r1/r2：
 - F1：extractor class 写面只收 satisfaction/leverage，population 更新面删除；
 - F2：机面 TSV 裸人 / 玩家面 LLM 输入投影「约N万口」（正向 prompt，零删改）；
-- F3：流民 16 行冻结 seed 表（陕西15万/河南5万/其余13省0；全国=省级求和派生；
-      satisfaction 基线30 陕西20 河南25 / leverage 5 / agenda 冻结句）；
+- F3：流民冻结 seed 表（陕西15万/河南5万/内地其余省0；#659 辽东/东江边镇切片0；
+      全国=省级求和派生；satisfaction 基线30 陕西20 河南25 / leverage 5 / agenda 冻结句）；
 - F4：旧档双口径——新档 DB 持久标「人」，无标旧档判「万人」，不读 content 元信息；
 - AC4+AC8 合并：五项 mutation 验收矩阵（classes seed / regions seed / events effect /
   new-save prompt / old-save prompt），逐项钉新旧档期望口径，×10⁴ 漏乘或重乘必咬。
@@ -27,6 +27,8 @@ AGENDA_FROZEN = "就食求赈，流徙谋生"
 DISPLACED_PROVINCES = [
     "beizhili", "nanzhili", "shandong", "shanxi", "henan", "shaanxi", "zhejiang",
     "jiangxi", "huguang", "sichuan", "fujian", "guangdong", "guangxi", "yunnan", "guizhou",
+    # #659 边镇军户逃亡闭环：仅军户/流民切片，流民初值 0
+    "liaodong", "dongjiang_area",
 ]
 SHAANXI_POP, SHAANXI_SAT = 150000, 20
 HENAN_POP, HENAN_SAT = 50000, 25
@@ -74,10 +76,10 @@ def legacy_game(content, tmp_path):
 # ── 新档 classes seed（F3/r2 冻结表 + ×10⁴）─────────────────────────────────
 
 def test_new_save_displaced_class_seed_frozen_table(game):
-    """F3/r2：流民第八阶级 15 省＋全国切片，冻结 seed 表逐字段钉死。"""
+    """F3/r2：流民第八阶级省切片＋全国，冻结 seed 表逐字段钉死（含 #659 边镇）。"""
     db, _, _ = game
     rows = _displaced_rows(db)
-    assert len(rows) == 16  # 15 省 + 全国
+    assert len(rows) == len(DISPLACED_PROVINCES) + 1  # 省切片 + 全国
 
     by_region = {r["region_id"]: r for r in rows}
     assert set(by_region) == set(DISPLACED_PROVINCES) | {""}
@@ -88,7 +90,7 @@ def test_new_save_displaced_class_seed_frozen_table(game):
     assert by_region["henan"]["population"] == HENAN_POP
     assert by_region["henan"]["satisfaction"] == HENAN_SAT
 
-    # 其余 13 省 population=0，satisfaction 取统一基线
+    # 其余省（含 #659 辽东/东江）population=0，satisfaction 取统一基线
     for prov in DISPLACED_PROVINCES:
         if prov in ("shaanxi", "henan"):
             continue
