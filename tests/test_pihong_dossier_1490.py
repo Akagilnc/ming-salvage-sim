@@ -1329,14 +1329,15 @@ def test_657_abi_mapper_matrix_a1_a12(game):
         "locality_scope": "none",
     }, title="A4急务")
     assert created["action_type"] == "grant_allocation"
-    # 判后域内真可见：离 proposed；payload amount=1000；赏赉默认 in_transit（不即时扣库）
+    # 判后只咬 dossier payload（禁回退 apply 前 mapper 字典）
     assert str(created.get("status") or "") in {"promulgated", "executing", "closed"}
     raw = created.get("payload_json") or created.get("payload") or {}
     if isinstance(raw, str):
         raw = json.loads(raw or "{}")
-    assert int(raw.get("amount") or 0) == 1000
-    assert str(raw.get("account") or p.get("account") or "") == "国库"
-    assert str(raw.get("execution_surface") or p.get("execution_surface") or "") == "in_transit"
+    assert isinstance(raw, dict) and raw
+    assert int(raw["amount"]) == 1000
+    assert str(raw["account"]) == "国库"
+    assert str(raw["execution_surface"]) == "in_transit"
     with pytest.raises(ValueError):
         ra.map_rescript_option_or_choice({
             "action_type": "grant_allocation", "label": "赏", "hint": "h",
@@ -1589,9 +1590,10 @@ def test_657_abi_mapper_matrix_a1_a12(game):
 
 
 def test_657_s10_http_five_actions_and_1490_no_regress(web_game, monkeypatch):
-    """P3+S10(+S1)：六动作参数表真 HTTP + 外部结构化终局；#1490 不回归。
+    """P3+S10(+S1)：六动作参数表真 HTTP + 真 phase2 外部结构化终局。
 
-    不含 S5/S6（独立符号）。five_actions_domain_writes 保留领域写，不得标 P3。
+    不含 S5/S6（独立符号）。#1490 批红 force/hold 物化由同文件既有 #1490 专测覆盖，
+    不在本符号 stub phase2 冒充。five_actions_domain_writes 保留领域写，不得标 P3。
     """
     from ming_sim.audience_night import TAG_ENTER
     from ming_sim.models import TurnPhase
@@ -1739,30 +1741,6 @@ def test_657_s10_http_five_actions_and_1490_no_regress(web_game, monkeypatch):
             assert int(hit["revision_round"] or 0) == 1
             labels = [str(o.get("label") or "") for o in (hit["options"] or [])]
             assert "新甲" in labels
-
-    # #1490 不回归：与既有 #1490 测同形——HTTP 受理 + 能力对 decided；
-    # phase2 边界 stub（批红 rescript 物化另有 #1490 专测；P3 六动作已真 phase2）
-    state = web_game.session.state
-    db = web_game.db
-
-    def _p2_1490(_state, _db, *_a, **_k):
-        _db.clear_pending_decisions(int(_state.turn))
-        return "邸报：#1490。"
-
-    monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _p2_1490)
-    db.conn.execute("DELETE FROM pending_decisions")
-    db.conn.commit()
-    dossier_id = _plant_dossier_awaiting(db, state)
-    full = {
-        "label": "强颁", "hint": "以中旨强行颁出", "note": "准。",
-        "dossier_id": dossier_id, "dossier_decision": "force_promulgated",
-    }
-    r = asyncio.run(_post_resolve([full]))
-    assert r.status_code == 200 and "event: done" in r.text, r.text
-    row = db.list_pending_decisions(int(state.turn))
-    # stub 已清 decision 行；若仍在则须 decided
-    assert not row or row[0].get("status") == "decided"
-
 
 def test_657_mixed_batch_follow_plus_decision_and_no_context_copy(web_game, monkeypatch):
     """C1.1：急务 follow + decision 打回；真 HTTP；③后 extracted 空杀进程；

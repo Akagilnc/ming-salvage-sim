@@ -1568,15 +1568,13 @@ def _settle_after_narrative(
     # resolve_turn 直落 path 仍生成/覆写本月票拟（preserve=False）。
     if preserve_rescript_drafts:
         draft_cell["drafts"] = _PRESERVE_RESCRIPT_DRAFTS
-        triage_actor = None
         tlog("[rescript] HITL phase2 续跑：保留既有急务票拟行。")
+        triage_actor = None
     else:
         triage_actor = select_triage_actor(db)
-    if preserve_rescript_drafts:
-        pass
-    elif triage_actor is None:
+    if not preserve_rescript_drafts and triage_actor is None:
         tlog("[rescript] 无在任首辅／掌印，本月无头版（全量邸报照旧）。")
-    else:
+    elif triage_actor is not None:
         def _rescript_draft_leg() -> None:
             # agent/payload 构造是纯程序逻辑（ADR 0005 / r2 裁决 B3）：其错误属代码
             # 侧错，不在票拟业务降级面内——在腿内构造，程序错经 side_future.result()
