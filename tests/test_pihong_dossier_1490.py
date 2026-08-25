@@ -1264,19 +1264,12 @@ def test_657_abi_mapper_matrix_a1_a12(game):
         "transaction_category": "督赈", "deadline_months": 2,
     }, title="A1急务")
     assert created["action_type"] == "assignment"
-    # 判后：顺颁后 status 离 proposed；payload 绝对 end_turn=turn+N
+    # 判后可见：离 proposed + payload 绝对 end_turn=turn+N（duty 无 assignee 真形）
     assert str(created.get("status") or "") in {"promulgated", "executing", "closed"}
     raw = created.get("payload_json") or created.get("payload") or {}
     if isinstance(raw, str):
         raw = json.loads(raw or "{}")
     assert int(raw.get("end_turn") or 0) == int(state.turn) + 2
-    # duty 无 assignee 时 initiative 可能因 vacancy 链未建——有则核对绝对 end_turn
-    inits = db.conn.execute(
-        "SELECT end_turn, status FROM issues WHERE kind='initiative' AND status='active' "
-        "ORDER BY id DESC LIMIT 1"
-    ).fetchone()
-    if inits is not None:
-        assert int(inits["end_turn"]) == int(state.turn) + 2
     with pytest.raises(ValueError):
         ra.map_rescript_option_or_choice({
             "action_type": "assignment", "label": "x", "hint": "h",
@@ -1329,7 +1322,6 @@ def test_657_abi_mapper_matrix_a1_a12(game):
         "locality_scope": "none",
     }, db=db, content=content, state=state)
     assert p["account"] == "国库"
-    treasury_before = int(state.metrics.get("国库") or 0)
     created = _apply_mapped_choice({
         "action": "follow_draft", "action_type": "grant_allocation",
         "label": "赏", "hint": "h", "grant_action": "赏赉", "amount": 1000,
@@ -1337,8 +1329,14 @@ def test_657_abi_mapper_matrix_a1_a12(game):
         "locality_scope": "none",
     }, title="A4急务")
     assert created["action_type"] == "grant_allocation"
-    # 判后：扣库/科目（国库默认）
-    assert int(state.metrics.get("国库") or 0) <= treasury_before
+    # 判后域内真可见：离 proposed；payload amount=1000；赏赉默认 in_transit（不即时扣库）
+    assert str(created.get("status") or "") in {"promulgated", "executing", "closed"}
+    raw = created.get("payload_json") or created.get("payload") or {}
+    if isinstance(raw, str):
+        raw = json.loads(raw or "{}")
+    assert int(raw.get("amount") or 0) == 1000
+    assert str(raw.get("account") or p.get("account") or "") == "国库"
+    assert str(raw.get("execution_surface") or p.get("execution_surface") or "") == "in_transit"
     with pytest.raises(ValueError):
         ra.map_rescript_option_or_choice({
             "action_type": "grant_allocation", "label": "赏", "hint": "h",
