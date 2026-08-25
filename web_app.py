@@ -5319,39 +5319,23 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
                     ),
                 )
                 session = game.session
-                # 分流探针：keyed 只扫 body（无 DB）；has_urgent 仅当 game.db 具备
-                # list_rescript_desk 时读 desk。禁 session.db/session.state 作分流前提
-                # （合法 session 替身可能无 db——三回归契约）。
-                keyed = any(
-                    isinstance(c, dict) and str(c.get("decision_key") or "").strip()
-                    for c in (body.choices or [])
-                )
-                has_urgent = False
-                list_desk = getattr(getattr(game, "db", None), "list_rescript_desk", None)
-                if callable(list_desk):
-                    desk = list_desk(int(getattr(game.state, "turn", 0) or 0))
-                    has_urgent = any(
-                        str(r.get("kind")) == "rescript_draft" for r in (desk or [])
+                # #657：HITL 唯一编排在 session.submit_hitl_choices（急务四段 / 纯 decision）。
+                # 分流探针在 session 内；禁在此平行复制 PRE→①→②→③。
+                # 合法 session 替身（三回归）可无 submit_hitl_choices → 回落 submit_decisions。
+                submit_hitl = getattr(session, "submit_hitl_choices", None)
+                if callable(submit_hitl):
+                    report = submit_hitl(
+                        body.choices,
+                        write_gate=_game_write_gate(game),
+                        on_event=on_event,
+                        cheat_directive=body.cheat,
                     )
-                if has_urgent or keyed:
-                    # PREWRITE — gate 外
-                    pre = session.prepare_rescript_prewrite(body.choices)
-                    # ① 短写
-                    with _game_write_gate(game):
-                        p1 = session.commit_rescript_phase1(pre)
-                    # ② 无锁 join
-                    joined = session.join_rescript_summons(p1)
-                    # ③ 短写 + phase2
-                    with _game_write_gate(game):
-                        report = session.finish_rescript_phase2(
-                            p1, joined,
-                            on_event=on_event, cheat_directive=body.cheat,
-                        )
                 else:
-                    # #1490 纯 decision：仍可整段短写（无 prewrite/join LLM）
                     with _game_write_gate(game):
                         report = session.submit_decisions(
-                            body.choices, on_event=on_event, cheat_directive=body.cheat,
+                            body.choices,
+                            on_event=on_event,
+                            cheat_directive=body.cheat,
                         )
                 decree = game.session.last_decree
                 failures = _new_secret_order_failure_payloads_for_turn(

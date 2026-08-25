@@ -331,9 +331,7 @@ def _surface_capture(label: str, text: str) -> dict:
 def _auto_complete_hitl(session: GameSession) -> Optional[str]:
     """真实结算若出 HITL，一次 awaiting 自动选第一项；返回完整 report。
 
-    形状对齐生产 API（terminal._submit_first_cli_decisions / agy_turn_probe）。
-    #657：急务/keyed 走 PRE→①(session._write_gate)→②无锁→③同 gate；不得再
-    submit_decisions 走急务内 join。
+    #657：session.submit_hitl_choices 唯一编排 + 既有 session._write_gate。
     """
     result = session.advance_without_decree()
     if result is None:
@@ -356,22 +354,7 @@ def _auto_complete_hitl(session: GameSession) -> Optional[str]:
                 if pick.get(k) is not None and k not in item:
                     item[k] = pick[k]
         choices.append(item)
-    gate = session._write_gate
-    keyed = any(
-        isinstance(c, dict) and str(c.get("decision_key") or "").strip()
-        for c in choices
-    )
-    desk = session.db.list_rescript_desk(int(session.state.turn))
-    has_urgent = any(str(r.get("kind")) == "rescript_draft" for r in desk)
-    if has_urgent or keyed:
-        pre = session.prepare_rescript_prewrite(choices)
-        with gate:
-            p1 = session.commit_rescript_phase1(pre)
-        joined = session.join_rescript_summons(p1)
-        with gate:
-            return session.finish_rescript_phase2(p1, joined)
-    with gate:
-        return session.submit_decisions(choices)
+    return session.submit_hitl_choices(choices, write_gate=session._write_gate)
 
 
 def _first_month_gazette_via_production_settle(

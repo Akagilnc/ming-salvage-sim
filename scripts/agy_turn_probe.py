@@ -59,7 +59,7 @@ def main() -> int:
     result = session.resolve_turn(decree=ns.decree, on_event=on_event)
 
     # HITL：推演若出决策点，自动选第一项，续跑 phase2（含 4 模块 extractor）。
-    # #657：急务/keyed 走 PRE→①(session._write_gate)→②无锁→③同 gate；禁裸跑①③。
+    # #657：session.submit_hitl_choices 唯一编排 + 既有 session._write_gate。
     rounds = 0
     while getattr(result, "awaiting", False):
         rounds += 1
@@ -83,26 +83,9 @@ def main() -> int:
                     if pick.get(k) is not None and k not in item:
                         item[k] = pick[k]
             choices.append(item)
-        gate = session._write_gate
-        keyed = any(
-            isinstance(c, dict) and str(c.get("decision_key") or "").strip()
-            for c in choices
+        report = session.submit_hitl_choices(
+            choices, write_gate=session._write_gate, on_event=on_event,
         )
-        desk = session.db.list_rescript_desk(int(session.state.turn))
-        has_urgent = any(str(r.get("kind")) == "rescript_draft" for r in desk)
-        if has_urgent or keyed:
-            pre = session.prepare_rescript_prewrite(choices)
-            with gate:
-                p1 = session.commit_rescript_phase1(pre)
-            joined = session.join_rescript_summons(p1)
-            with gate:
-                report = session.finish_rescript_phase2(
-                    p1, joined, on_event=on_event,
-                )
-        else:
-            with gate:
-                report = session.submit_decisions(choices, on_event=on_event)
-        # 返回报告字符串；置 ISSUED。再无 awaiting。
         result = type("R", (), {"awaiting": False, "report": report})()
 
     report_text = result.report if hasattr(result, "report") else str(result)

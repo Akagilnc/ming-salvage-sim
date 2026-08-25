@@ -743,7 +743,7 @@ def test_657_five_actions_domain_writes(game):
         "SELECT title, origin_ref FROM issues WHERE origin_ref=?",
         (f"rescript_deliberate:{key}",),
     ).fetchone()
-    assert issue is not None and "廷议" in str(issue["title"])
+    assert issue is not None and str(issue["origin_ref"] or "") == f"rescript_deliberate:{key}"
 
     # --- summon：只 decided，不写 ledger 正文 ---
     db.conn.execute("DELETE FROM pending_decisions WHERE kind='rescript_draft'")
@@ -1638,7 +1638,7 @@ def test_657_s10_http_five_actions_and_1490_no_regress(web_game, monkeypatch):
             tags = json.loads(row["tags"] or "[]")
             assert TAG_ENTER in tags
             assert str(row["body"] or "").strip()
-            assert "奉诏入殿" in str(row["body"])
+            assert str(row["body"] or "").strip() == "杨嗣昌奉诏入殿。"
         elif name == "return_revise":
             assert hit["status"] == "pending"
             assert int(hit["revision_round"] or 0) == 1

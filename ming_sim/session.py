@@ -3467,21 +3467,13 @@ class GameSession:
                 raise ValueError(
                     "召见尚未消费，不得推进 phase2：" + "; ".join(unconsumed)
                 )
-            # 消费成功：空问话 scaffold 退出 generating，避免后续 auto_close
-            # wait_in_flight 死等。无独立 completed 枚举；failed 仅作非在飞终态
-            # （body 已非空 → 再入走 consumed 短路，不走 ensure CAS）。
+            # 消费成功：空问话 scaffold → status=consumed（非在飞终态唯一写点）
             for item in join_state.get("joined") or []:
                 if item.get("error") or item.get("consumed"):
                     continue
                 ctid = int(item.get("chat_turn_id") or 0)
-                if ctid <= 0:
-                    continue
-                self.db.conn.execute(
-                    "UPDATE chat_turns SET status='failed' "
-                    "WHERE id=? AND status='generating' AND user_message_id IS NULL",
-                    (ctid,),
-                )
-            self.db.conn.commit()
+                if ctid > 0:
+                    self.db.complete_rescript_summon_scaffold_turn(ctid)
 
         if not (self.last_decree or "").strip():
             ctx0 = self.db.get_resolve_context(self.state.turn)
@@ -3504,15 +3496,70 @@ class GameSession:
         self.db.save_state(self.state)
         return report
 
+    def resolve_rescript_decisions(
+        self,
+        choices: List[Dict[str, object]],
+        *,
+        write_gate: Any,
+        on_event=None,
+        cheat_directive: str = "",
+    ) -> str:
+        """#657 急务/keyed 唯一编排出口。
+
+        PRE 锁外 → ① 持 write_gate → ② 无锁 join → ③ 再持同一 write_gate。
+        调用方只注入既有 write_gate / on_event；禁平行复制本配方。
+        """
+        if write_gate is None:
+            raise ValueError("resolve_rescript_decisions 须注入既有 write_gate")
+        pre = self.prepare_rescript_prewrite(choices)
+        with write_gate:
+            p1 = self.commit_rescript_phase1(pre)
+        joined = self.join_rescript_summons(p1)
+        with write_gate:
+            return self.finish_rescript_phase2(
+                p1, joined, on_event=on_event, cheat_directive=cheat_directive,
+            )
+
+    def submit_hitl_choices(
+        self,
+        choices: List[Dict[str, object]],
+        *,
+        write_gate: Any,
+        on_event=None,
+        cheat_directive: str = "",
+    ) -> str:
+        """#657 HITL 公共入口：急务/keyed → resolve_rescript_decisions；纯 decision → gate 内 submit_decisions。"""
+        if write_gate is None:
+            raise ValueError("submit_hitl_choices 须注入既有 write_gate")
+        keyed = any(
+            isinstance(c, dict) and str(c.get("decision_key") or "").strip()
+            for c in (choices or [])
+        )
+        has_urgent = False
+        list_desk = getattr(getattr(self, "db", None), "list_rescript_desk", None)
+        if callable(list_desk):
+            desk = list_desk(int(self.state.turn))
+            has_urgent = any(str(r.get("kind")) == "rescript_draft" for r in (desk or []))
+        if has_urgent or keyed:
+            return self.resolve_rescript_decisions(
+                choices,
+                write_gate=write_gate,
+                on_event=on_event,
+                cheat_directive=cheat_directive,
+            )
+        with write_gate:
+            return self.submit_decisions(
+                choices, on_event=on_event, cheat_directive=cheat_directive,
+            )
+
     def submit_decisions(
         self, choices: List[Dict[str, object]], on_event=None, cheat_directive: str = ""
     ) -> str:
         """皇帝亲裁完决策点，续跑 phase2 结算。
 
         #657：本方法**仅**纯 decision/#1490 路径（不内部 join LLM）。
-        急务/keyed 批必须由调用方走分段 API：
-          prepare_rescript_prewrite（锁外）→ commit_rescript_phase1（持 write_gate）
-          → join_rescript_summons（无锁）→ finish_rescript_phase2（再持同一 write_gate）。
+        急务/keyed 批必须走 resolve_rescript_decisions / submit_hitl_choices
+        （调用方注入既有 write_gate）。
         """
         self._assert_awaiting_decision_submit()
 
