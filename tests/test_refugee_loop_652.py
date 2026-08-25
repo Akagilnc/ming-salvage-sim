@@ -75,8 +75,7 @@ def test_simulator_payload_carries_structured_displaced_pool(game):
     rows = {r[0]: (r[1], r[2]) for r in pool["rows"]}
     assert "shaanxi" in rows
     assert rows["shaanxi"] == (DISPLACED_SHAANXI, POPULATION_UNIT_PERSONS)
-    # 玩家面定性 brief 仍在；机面清单是额外燃料。
-    assert "流民" in payload["classes_brief"] or "流民" in str(payload["classes_brief"])
+    # 契约在结构化清单；classes_brief 定性投影另缝，不在此锁措辞。
 
 
 def test_bandit_absorption_clamps_to_pool_and_raises_strength(game):
@@ -281,44 +280,28 @@ def test_llm_free_回流_rejected_engine_still_lands(game):
 
 
 def test_non_recovery_grant_no_回流(game):
-    """非 recovery 拨帑（赏赉等）不产回流；开仓路径排除的同构。"""
+    """非 RECOVERY_GRANT_ACTIONS 的拨帑（项目经费）即使足额扣库+fulfilled 也不产回流。"""
     db, state, content = game
     state.metrics["内库"] = max(int(state.metrics.get("内库") or 0), 80)
     dossier_id = db.create_decree_dossier(
         state,
         action_type="grant_allocation",
-        decree_text="赏赉银两",
-        target_kind="character",
-        target_id="毕自严",
+        decree_text="项目经费",
+        target_kind="issue",
+        target_id="project_dummy",
         payload={
-            "grant_action": "赏赉",
+            "grant_action": "项目经费",
             "account": "内库",
             "amount": 5,
             "execution_surface": "immediate",
             "cadence": "一次性",
         },
     )
-    # 赏赉 target 可能需合法人物名——若 create 失败则改用 region 无 recovery action
-    try:
-        db.apply_dossier_promulgation(state, dossier_id, "promulgated")
-    except Exception:
-        db.conn.execute("DELETE FROM decree_dossiers WHERE id=?", (dossier_id,))
-        db.conn.commit()
-        dossier_id = db.create_decree_dossier(
-            state,
-            action_type="grant_allocation",
-            decree_text="项目经费",
-            target_kind="issue",
-            target_id="dummy",
-            payload={
-                "grant_action": "项目经费",
-                "account": "内库",
-                "amount": 5,
-                "execution_surface": "immediate",
-                "cadence": "一次性",
-            },
-        )
-        db.apply_dossier_promulgation(state, dossier_id, "promulgated")
+    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
+    row = db.get_decree_dossier(dossier_id)
+    assert row["status"] == "closed"
+    assert row["execution_outcome"] == "fulfilled"
+    assert db.list_economy_moves_for_dossier(dossier_id), "夹具须实付入账"
 
     settle_with_delta(
         state, db, {}, before_turn=state.turn, content=content, narrative="非回流",
@@ -327,6 +310,41 @@ def test_non_recovery_grant_no_回流(game):
     extraction = db.get_turn_extraction(turn)
     transfers = (extraction or {}).get("extractor_output", {}).get("population_transfers") or []
     assert not any(t.get("reason") == "回流" for t in transfers)
+
+
+def test_recovery_without_paid_evidence_produces_nothing(game):
+    """无实付证据（零 economy_moves、零对账）→ 即使 closed+fulfilled 也不产回流。"""
+    from ming_sim.issues import _apply_recovery_driven_transfers
+
+    db, state, _content = game
+    # 先走正常 immediate 成案（会扣库），再剥掉 ledger/对账，只留判决面。
+    dossier_id = _recovery_grant(
+        db, state, action="赈灾", amount=30, surface="immediate",
+    )
+    row = db.get_decree_dossier(dossier_id)
+    assert row["status"] == "closed"
+    assert row["execution_outcome"] == "fulfilled"
+    assert db.list_economy_moves_for_dossier(dossier_id), "成案须先有实付再剥离"
+    db.conn.execute(
+        "DELETE FROM economy_ledger WHERE origin_ref=?",
+        (f"dossier:{dossier_id}",),
+    )
+    db.conn.execute(
+        "DELETE FROM decree_dossier_reconciliations WHERE dossier_id=?",
+        (dossier_id,),
+    )
+    db.conn.execute(
+        "UPDATE decree_dossiers SET closed_turn=? WHERE id=?",
+        (state.turn, dossier_id),
+    )
+    db.conn.commit()
+    assert db.list_economy_moves_for_dossier(dossier_id) == []
+    assert db.list_dossier_reconciliations(dossier_id) == []
+    displaced_before = _pop(db, "流民", "shaanxi")
+
+    applied, _ = _apply_recovery_driven_transfers(db, state, commit=True)
+    assert not any(t.get("reason") == "回流" for t in applied)
+    assert _pop(db, "流民", "shaanxi") == displaced_before
 
 
 # ── 刀③ 灾情判决折减序 ──────────────────────────────────────────────────────

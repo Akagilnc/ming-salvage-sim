@@ -7787,8 +7787,12 @@ def _apply_bandit_absorptions(
     return applied, rejected, power_changes
 
 
-def _recovery_effective_silver_wan(db: GameDB, dossier_id: int, payload: dict, turn: int) -> int:
-    """回流成本面：本回合实抵优先，否则已落 economy_moves，再退回 payload.amount。"""
+def _recovery_effective_silver_wan(db: GameDB, dossier_id: int, turn: int) -> int:
+    """回流成本面唯一读缝：只认实付证据。
+
+    本回合对账实抵优先；否则累加该案已落 economy_moves 负向出账。
+    **不**回退 payload.amount（ordered 非实付，零 ledger 不得假阳性出回流）。
+    """
     history = db.list_dossier_reconciliations(int(dossier_id))
     arrived_this_turn = [
         int(row["arrived_amount"])
@@ -7797,22 +7801,15 @@ def _recovery_effective_silver_wan(db: GameDB, dossier_id: int, payload: dict, t
     ]
     if arrived_this_turn:
         return max(0, sum(arrived_this_turn))
-    moves = db.list_economy_moves_for_dossier(int(dossier_id))
     paid = 0
-    for move in moves:
+    for move in db.list_economy_moves_for_dossier(int(dossier_id)):
         try:
             delta = int(move.get("delta") or 0)
         except (TypeError, ValueError):
             continue
         if delta < 0:
             paid += -delta
-    if paid > 0:
-        return paid
-    try:
-        ordered = int(payload.get("amount") or 0)
-    except (TypeError, ValueError):
-        ordered = 0
-    return max(0, ordered)
+    return max(0, paid)
 
 
 def _apply_recovery_driven_transfers(
@@ -7883,7 +7880,7 @@ def _apply_recovery_driven_transfers(
         if factor <= 0:
             seen_keys.add((dossier_id, turn))
             continue
-        silver = _recovery_effective_silver_wan(db, dossier_id, payload, turn)
+        silver = _recovery_effective_silver_wan(db, dossier_id, turn)
         if silver <= 0:
             continue
         raw_persons = silver * RECOVERY_PERSONS_PER_WAN * factor
