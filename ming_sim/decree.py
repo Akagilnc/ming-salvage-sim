@@ -1271,6 +1271,8 @@ def resolve_directives(
     for row in arrival_waiting:
         row["year"] = int(state.year)
         row["period"] = int(state.period)
+    # #671：引擎已求交的本月新抵京∩候见列表——simulator 只读此键，勿让 LLM 自算交集
+    simulator_payload["arrival_waiting"] = list(arrival_waiting)
 
     simulator = create_season_simulator_agent(
         llm_config, agno_db, state=state, db=db, simulator_payload=simulator_payload

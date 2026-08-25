@@ -131,6 +131,8 @@ def test_arrival_dual_voice_parallel_main_path(game, monkeypatch):
         seen_payload["payload"] = payload
         assert payload["transit_arrivals"] == arrivals
         assert {row["person_name"] for row in payload["waiting_audience"]} == set(waiting_names)
+        # #671：引擎求交后写入 payload 的唯一真源；LLM 不得自算交集
+        assert {row["name"] for row in payload["arrival_waiting"]} == intersection
         return (SIM_REPORT, payload)
 
     monkeypatch.setattr(
@@ -369,6 +371,8 @@ def test_arrival_dual_voice_empty_set_zero_calls(game, monkeypatch):
         return ATTENDANT_TEXT
 
     def _simulate(*_a, **kwargs):
+        # #671：无交集时引擎写入空序列，simulator 不得另算
+        assert kwargs["simulator_payload"].get("arrival_waiting") == []
         return ("本月无新抵京。", kwargs["simulator_payload"])
 
     monkeypatch.setattr(
