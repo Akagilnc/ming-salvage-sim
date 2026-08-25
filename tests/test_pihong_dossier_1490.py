@@ -967,6 +967,10 @@ def test_657_five_actions_domain_writes(game):
     mids = [d for d in db.list_decree_dossiers() if d.get("mode") == "midzhi"]
     assert mids, "midzhi 须落 mode=midzhi 案卷"
     assert mids[-1]["status"] == "proposed"
+    # §C.8：payload 须带既有 decision identity
+    mid_payload = json.loads(str(mids[-1].get("payload_json") or "{}"))
+    assert mid_payload.get("decision_key") == key
+    assert mid_payload.get("mode") == "midzhi"
 
     # --- deliberate ---
     db.conn.execute("DELETE FROM pending_decisions WHERE kind='rescript_draft'")
@@ -2555,3 +2559,188 @@ def test_657_illegal_summon_target_http_zero_writes(web_game, monkeypatch):
         "SELECT COUNT(*) AS c FROM story_ledger_entries"
     ).fetchone()["c"]
     assert ledger_after == ledger_before
+
+
+def test_657_follow_draft_ignores_client_field_overlay(game):
+    """Spec1/A12：同 capability 不得靠客户端字段 overlay 改机械载荷。"""
+    from ming_sim import rescript_actions as ra
+
+    db, state, content = game
+    opt = _layer_a_option(
+        label="权威票拟",
+        target_id="shaanxi",
+        region_id="shaanxi",
+        transaction_category="督赈",
+        title="权威标题",
+    )
+    urgent, _ = _plant_urgent_desk(db, state, options=[opt, _layer_a_option(label="备")])
+    key = urgent["decision_key"]
+    before = len(db.list_decree_dossiers())
+    batch = ra.validate_all([urgent], [{
+        "decision_key": key,
+        "action": "follow_draft",
+        "draft_capability": opt["draft_capability"],
+        "label": opt["label"],
+        # 客户端企图改机械字段
+        "target_id": "henan",
+        "region_id": "henan",
+        "title": "伪造标题",
+        "transaction_category": "练兵",
+        "assignee_name": "不存在的人",
+    }])
+    ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(), content=content)
+    after = db.list_decree_dossiers()
+    assert len(after) == before + 1
+    created = after[-1]
+    payload = json.loads(str(created.get("payload_json") or "{}"))
+    assert str(created.get("target_id") or payload.get("target_id") or "") == "shaanxi"
+    assert "henan" not in {
+        str(created.get("target_id") or ""),
+        str(payload.get("target_id") or ""),
+        str(created.get("region_id") or ""),
+        str(payload.get("region_id") or ""),
+    }
+    assert str(payload.get("title") or "") == "权威标题"
+    assert "伪造标题" not in str(payload.get("title") or "")
+    assert str(payload.get("transaction_category") or "") == "督赈"
+    assert "不存在的人" not in str(payload.get("assignee_name") or "")
+    assert "不存在的人" not in str(created.get("executor_id") or "")
+
+
+def test_657_midzhi_persists_decision_key_and_llm_label(game):
+    """Spec2 + P7：midzhi payload 带 decision_key；decree_text 用 LLM label 非固定钮文。"""
+    from ming_sim import rescript_actions as ra
+
+    db, state, content = game
+    llm_label = "着户部立发秦地赈银"
+    urgent, _ = _plant_urgent_desk(db, state)
+    key = urgent["decision_key"]
+    choice = {
+        "decision_key": key,
+        "action": "midzhi",
+        "label": llm_label,
+        "action_type": "assignment",
+        "target_kind": "region",
+        "target_id": "shaanxi",
+        "locality_scope": "single",
+        "region_id": "shaanxi",
+        "transaction_category": "督赈",
+        "deadline_months": 2,
+    }
+    batch = ra.validate_all([urgent], [choice])
+    ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(), content=content)
+    mids = [d for d in db.list_decree_dossiers() if d.get("mode") == "midzhi"]
+    assert mids
+    hit = mids[-1]
+    payload = json.loads(str(hit.get("payload_json") or "{}"))
+    assert payload.get("decision_key") == key
+    assert str(hit.get("decree_text") or "") == llm_label
+    assert "另旨·中旨" not in str(hit.get("decree_text") or "")
+    # mapper 缺 decision_key 响亮失败
+    with pytest.raises(ValueError, match="decision_key"):
+        ra.map_rescript_option_or_choice(
+            {k: v for k, v in choice.items() if k != "decision_key"},
+            mode="midzhi", db=db, content=content, state=state,
+        )
+
+
+def test_657_midzhi_verdict_no_party_satisfaction(game):
+    """Spec3/§C.8：midzhi 判决不写派系 satisfaction；affected_parties 仅落库。"""
+    from tests.dossier_test_helpers import _sat
+
+    db, state, content = game
+    from ming_sim import rescript_actions as ra
+    urgent, _ = _plant_urgent_desk(db, state)
+    key = urgent["decision_key"]
+    batch = ra.validate_all([urgent], [{
+        "decision_key": key,
+        "action": "midzhi",
+        "label": "中旨赈陕",
+        "action_type": "assignment",
+        "target_kind": "region",
+        "target_id": "shaanxi",
+        "locality_scope": "single",
+        "region_id": "shaanxi",
+        "transaction_category": "督赈",
+        "deadline_months": 1,
+    }])
+    ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(), content=content)
+    mid = next(d for d in db.list_decree_dossiers() if d.get("mode") == "midzhi")
+    before_f = _sat(db, "factions", "东林")
+    before_c = _sat(db, "classes", "士绅")
+    db.apply_dossier_verdicts(state, [{
+        "dossier_id": int(mid["id"]),
+        "decision": "promulgated",
+        "affected_parties": [
+            {"kind": "faction", "key": "东林", "direction": "negative", "intensity": "strong"},
+            {"kind": "class", "key": "士绅", "direction": "negative", "intensity": "strong"},
+        ],
+    }], content=content)
+    assert _sat(db, "factions", "东林") == before_f
+    assert _sat(db, "classes", "士绅") == before_c
+    stored = db.conn.execute(
+        "SELECT affected_parties_json FROM decree_dossier_decisions "
+        "WHERE dossier_id=? ORDER BY id DESC LIMIT 1",
+        (int(mid["id"]),),
+    ).fetchone()
+    parties = json.loads(str(stored["affected_parties_json"] or "[]"))
+    assert any(p.get("key") == "东林" for p in parties)
+
+
+def test_657_summon_consumed_requires_tag_enter(game):
+    """Spec4/§D.0：非空 body  alone ≠ consumed；须 TAG_ENTER；门闩共用谓词。"""
+    from ming_sim.audience_night import (
+        AudienceNightError,
+        TAG_ENTER,
+        prepare_rescript_summon_scaffold,
+        rescript_summon_origin_consumed,
+        rescript_summon_origin_ref,
+    )
+
+    db, state, _content = game
+    minister = "杨嗣昌"
+    origin = rescript_summon_origin_ref(int(state.turn), 3, 0)
+    # 合法垫位
+    sc = prepare_rescript_summon_scaffold(
+        db, state, person_name=minister, origin_ref=origin,
+    )
+    assert sc["consumed"] is False
+    eid = int(sc["entry_id"])
+    # 伪造：非空 body 但去掉 TAG_ENTER
+    db.conn.execute(
+        "UPDATE story_ledger_entries SET body=?, tags=? WHERE id=?",
+        ("伪造成功正文", json.dumps(["叙事"], ensure_ascii=False), eid),
+    )
+    db.conn.commit()
+    entry = {
+        "body": "伪造成功正文",
+        "tags": ["叙事"],
+    }
+    assert rescript_summon_origin_consumed(entry) is False
+    with pytest.raises(AudienceNightError) as ei:
+        prepare_rescript_summon_scaffold(
+            db, state, person_name=minister, origin_ref=origin,
+        )
+    assert ei.value.code == "scaffold_malformed_body"
+    # 补回 TAG_ENTER + 非空 body → consumed
+    db.conn.execute(
+        "UPDATE story_ledger_entries SET tags=? WHERE id=?",
+        (json.dumps([TAG_ENTER, "宣入"], ensure_ascii=False), eid),
+    )
+    db.conn.commit()
+    assert rescript_summon_origin_consumed({
+        "body": "伪造成功正文", "tags": [TAG_ENTER, "宣入"],
+    }) is True
+    sc2 = prepare_rescript_summon_scaffold(
+        db, state, person_name=minister, origin_ref=origin,
+    )
+    assert sc2["consumed"] is True
+    # expected_bodies 不匹配 → 未消费
+    assert rescript_summon_origin_consumed(
+        {"body": "伪造成功正文", "tags": [TAG_ENTER]},
+        expected_bodies=["真正 generator 正文"],
+    ) is False
+    assert rescript_summon_origin_consumed(
+        {"body": "真正 generator 正文", "tags": [TAG_ENTER]},
+        expected_bodies=["真正 generator 正文"],
+    ) is True

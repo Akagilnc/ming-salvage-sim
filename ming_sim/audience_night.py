@@ -2305,6 +2305,47 @@ def rescript_summon_origin_ref(source_turn: int, idx: int, revision_round: int) 
     return f"rescript_draft:{int(source_turn)}:{int(idx)}:summon:r{int(revision_round)}"
 
 
+def rescript_summon_origin_consumed(
+    entry: Optional[Mapping[str, Any]],
+    *,
+    expected_bodies: Optional[Sequence[str]] = None,
+) -> bool:
+    """#657 §D.0 consumed 唯一谓词（prepare / phase2 门闩共用）。
+
+    consumed ≔ origin 行存在
+      ∧ TAG_ENTER∈tags
+      ∧ body.strip() 非空
+      ∧（若给 expected_bodies）body 等于本轮已成功 persist 的 generator 非空返回值之一
+
+    prepare 路径无本轮 generator：只检 TAG_ENTER+非空 body（即既有成功消费账）。
+    空 body ≠ 消费；缺 TAG_ENTER 的非空 body ≠ 消费。
+    """
+    if entry is None:
+        return False
+    tags_raw = entry.get("tags")
+    if isinstance(tags_raw, str):
+        try:
+            tags_list = json.loads(tags_raw or "[]")
+        except Exception:
+            tags_list = []
+    elif isinstance(tags_raw, (list, tuple)):
+        tags_list = list(tags_raw)
+    else:
+        tags_list = []
+    tags = [str(t) for t in tags_list]
+    if TAG_ENTER not in tags:
+        return False
+    body = str(entry.get("body") or "")
+    if not body.strip():
+        return False
+    if expected_bodies is None:
+        return True
+    allowed = [str(b) for b in expected_bodies if str(b).strip()]
+    if not allowed:
+        return False
+    return body in allowed
+
+
 def _ledger_by_origin_ref(db: Any, origin: str) -> Optional[Dict[str, Any]]:
     origin = str(origin or "").strip()
     if not origin:
@@ -2460,13 +2501,19 @@ def prepare_rescript_summon_scaffold(
 
     existing = _ledger_by_origin_ref(db, origin)
     if existing is not None:
-        if str(existing.get("body") or "").strip():
+        if rescript_summon_origin_consumed(existing):
             return {
                 "entry_id": int(existing["id"]),
                 "chat_turn_id": int(existing.get("origin_chat_turn_id") or 0),
                 "night_id": int(existing["night_id"]),
                 "consumed": True,
             }
+        if str(existing.get("body") or "").strip():
+            # 非空 body 但缺 TAG_ENTER 等 → 非合法消费，响亮失败（禁当 consumed 放行）
+            raise AudienceNightError(
+                f"summon origin 行非空但未满足消费谓词：origin={origin}",
+                code="scaffold_malformed_body",
+            )
         # 空垫位复用
         entry_id = int(existing["id"])
         ctid = int(existing.get("origin_chat_turn_id") or 0)
@@ -2554,13 +2601,18 @@ def prepare_rescript_summon_scaffold(
         again = _ledger_by_origin_ref(db, origin)
         if again is None:
             raise
-        if str(again.get("body") or "").strip():
+        if rescript_summon_origin_consumed(again):
             return {
                 "entry_id": int(again["id"]),
                 "chat_turn_id": int(again.get("origin_chat_turn_id") or 0),
                 "night_id": int(again["night_id"]),
                 "consumed": True,
             }
+        if str(again.get("body") or "").strip():
+            raise AudienceNightError(
+                f"summon origin 冲突行非空但未满足消费谓词：origin={origin}",
+                code="scaffold_malformed_body",
+            )
         # 空冲突 → 复用，非成功消费
         entry_id = int(again["id"])
         ctid = int(again.get("origin_chat_turn_id") or 0)
