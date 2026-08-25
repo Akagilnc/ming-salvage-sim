@@ -375,5 +375,3 @@ def test_phase1_phase2_same_transit_semantics_object_and_single_projector(env, m
     assert call_count["n"] == 1
     # settle 后 payload 顶层 transit_semantics 仍是原 list
     assert payload["transit_semantics"] is C
-
-
