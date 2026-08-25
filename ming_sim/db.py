@@ -16741,8 +16741,11 @@ class GameDB:
         # 缺 commitment_kind marker 的毒形不得在此洗掉后当普通 initiative 落地（#520）。
         if commitment_kind:
             ni["commitment_kind"] = commitment_kind
+        # C.6 rescript stop_condition 为 str（payload 层保真）；结构化 commitment
+        # 门仍只认 dict（#136 全局契约不动）。非 dict 不转发进 ni，避免 str 被
+        # 结构化校验误拒；until_stop+end_turn 仍可落 initiative。
         stop_raw = payload.get("stop_condition")
-        if stop_raw not in (None, "", {}):
+        if isinstance(stop_raw, dict) and stop_raw:
             ni["stop_condition"] = stop_raw
         try:
             end_turn = int(payload.get("end_turn") or 0)
@@ -16750,6 +16753,10 @@ class GameDB:
             end_turn = 0
         if end_turn > 0:
             ni["end_turn"] = end_turn
+            # 与 stages 支对称：有绝对期限则须带 commitment marker，否则
+            # end_turn 会被当成「承诺形态无 marker」拒（issues 既有契约）。
+            if not commitment_kind:
+                ni["commitment_kind"] = "until_stop"
         ongoing = payload.get("ongoing_effects")
         if isinstance(ongoing, dict) and ongoing:
             ni["ongoing_effects"] = ongoing
