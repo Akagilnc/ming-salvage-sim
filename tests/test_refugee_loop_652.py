@@ -13,6 +13,7 @@ import pytest
 
 from ming_sim.constants import (
     BANDIT_ABSORPTION_PERSONS_PER_STRENGTH,
+    RECOVERY_OUTCOME_FACTORS,
     RECOVERY_PERSONS_PER_WAN,
 )
 from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS, grant_arrival_bounds
@@ -247,9 +248,6 @@ _NOTE_BY = {
     "failed": "押解尽失，赈务无成",
     "transformed": "银两被挪作他用，名实已乖",
 }
-_OUTCOME_FACTOR = {
-    "fulfilled": 1.0, "degraded": 0.5, "failed": 0.0, "transformed": 0.0,
-}
 
 
 def _in_transit_recovery_grant(db, state, *, amount=40, region_id="shaanxi", tag="赈"):
@@ -345,7 +343,8 @@ def _assert_two_axis_projection(payload):
 def _expected_recovery(amount: int, outcome: str, pool: int) -> int:
     lo, hi = grant_arrival_bounds(amount, escorted=False)
     silver = (lo + hi) // 2
-    return min(int(round(silver * RECOVERY_PERSONS_PER_WAN * _OUTCOME_FACTOR[outcome])), pool)
+    factor = float(RECOVERY_OUTCOME_FACTORS[outcome])
+    return min(int(round(silver * RECOVERY_PERSONS_PER_WAN * factor)), pool)
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
