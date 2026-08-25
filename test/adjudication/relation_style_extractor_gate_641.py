@@ -45,6 +45,7 @@ from ming_sim.context import bind_content
 from ming_sim.db import GameDB
 from ming_sim.issues import apply_score_extraction, bind_content as bind_issue_content
 from ming_sim.models import LLMConfig
+from ming_sim.relations import MINISTER_EDGE_KINDS
 from ming_sim.simulation import (
     EXTRACTION_MODULES,
     build_extractor_shared_context,
@@ -62,9 +63,6 @@ SCENARIO_NARRATIVE = (
     f"{TARGET}因此衔恨，二人在朝会议事时互相掣肘使绊，声气不通。"
     "本月未见任免、处置、评定或丧亲破胆等人事固有层变故。"
 )
-MINISTER_EDGE_KINDS = frozenset({
-    "荐引", "恩义", "结怨", "站台", "使绊", "联名", "连坐", "把柄", "协作",
-})
 
 
 def _args() -> argparse.Namespace:
