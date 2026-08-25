@@ -1552,6 +1552,8 @@ class WebGame:
             ),
             "last_decree": self.last_decree,
             "last_report": self.last_report,
+            # #671：上一已完成月王承恩独立递话（与 last_report 同级 typed 字段）
+            "last_attendant_message": self.db.previous_turn_attendant_message(self.state),
         }
 
     # ── 聊天 ──────────────────────────────────────────────────────────────

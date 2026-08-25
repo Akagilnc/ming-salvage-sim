@@ -2520,6 +2520,13 @@ class GameDB:
         # 来源(player_decree/hitl)的拒收被恢复路记成 system_simulation、静默不提示。老档缺省
         # 'system_simulation'（与原 resolve_settling_recovery 硬编值一致，行为不变）。
         self.ensure_column("pending_resolve_context", "source", "TEXT NOT NULL DEFAULT 'system_simulation'")
+        # #671：抵京月王承恩独立递话（与官方 report 分栏；HITL 暂停→完成月同缝转存）
+        self.ensure_column(
+            "pending_resolve_context", "attendant_message", "TEXT NOT NULL DEFAULT ''",
+        )
+        self.ensure_column(
+            "turn_reports", "attendant_message", "TEXT NOT NULL DEFAULT ''",
+        )
         # 后宫调教记录
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS consort_traits (
@@ -10727,6 +10734,7 @@ class GameDB:
         knowledge_items: Optional[Iterable[Mapping[str, object]]] = None,
         public_body: Optional[str] = None,
         *,
+        attendant_message: str = "",
         commit: bool = True,
     ) -> None:
         """每回合月末奏报单独存档（turn_reports），与 turn_logs 解耦。
@@ -10735,6 +10743,8 @@ class GameDB:
         control.  Producers that mix public and restricted material may pass
         the source-scoped ``knowledge_items`` projection; each item is then
         durable independently for character reads.
+
+        ``attendant_message``（#671）是王承恩独立递话，与官方 report 分栏同原子写。
         """
         self.persist_knowledge_items_for_turn(state, knowledge_items, commit=commit)
         items = [item for item in self.knowledge_items_for_turn(state.turn)
@@ -10766,14 +10776,19 @@ class GameDB:
         # (public LLMs never preload secrets; private briefs are not knowledge_items).
         self.conn.execute(
             """
-            INSERT INTO turn_reports (turn, year, period, report)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO turn_reports (turn, year, period, report, attendant_message)
+            VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(turn) DO UPDATE SET
                 year = excluded.year,
                 period = excluded.period,
-                report = excluded.report
+                report = excluded.report,
+                attendant_message = excluded.attendant_message
             """,
-            (state.turn, state.year, state.period, sanitize_sqlite_text(public_report)),
+            (
+                state.turn, state.year, state.period,
+                sanitize_sqlite_text(public_report),
+                sanitize_sqlite_text(str(attendant_message or "")),
+            ),
         )
         # Aggregate prose cannot authorize an audience read: removing known
         # secret substrings is not safe against a paraphrase.  Persist a
@@ -10793,6 +10808,26 @@ class GameDB:
             (turn,),
         ).fetchone()
         return (row["report"] if row else "") or ""
+
+    def get_turn_attendant_message(self, turn: int) -> str:
+        """#671：指定回合王承恩独立递话（turn_reports 分栏；空＝无递话）。"""
+        row = self.conn.execute(
+            "SELECT attendant_message FROM turn_reports WHERE turn = ?",
+            (int(turn),),
+        ).fetchone()
+        if row is None:
+            return ""
+        try:
+            return str(row["attendant_message"] or "")
+        except (KeyError, IndexError):
+            return ""
+
+    def previous_turn_attendant_message(self, state: GameState) -> str:
+        """#671：状态口投影——仅上一已完成月的独立递话。"""
+        previous_turn = int(state.turn) - 1
+        if previous_turn < 0:
+            return ""
+        return self.get_turn_attendant_message(previous_turn)
 
     def list_turn_reports(self) -> List[Dict[str, object]]:
         """Return the durable gazette archive in chronological order."""
@@ -18319,6 +18354,7 @@ class GameDB:
         relevant_memories: Optional[List[Dict[str, object]]] = None,
         extracted: Optional[Dict[str, object]] = None,
         source: str = "system_simulation",
+        attendant_message: str = "",
     ) -> None:
         """暂存 phase1 推演结果，供 phase2 读回（决策暂停期间不重算 simulator）。
 
@@ -18330,8 +18366,8 @@ class GameDB:
             """INSERT INTO pending_resolve_context
                (turn, decree_text, narrative, simulator_payload_json,
                 secret_orders_json, relevant_memories_json, extracted_delta_json,
-                extracted_ready, resolve_contract_version, source)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                extracted_ready, resolve_contract_version, source, attendant_message)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(turn) DO UPDATE SET
                    decree_text = excluded.decree_text,
                    narrative = excluded.narrative,
@@ -18341,7 +18377,8 @@ class GameDB:
                    extracted_delta_json = excluded.extracted_delta_json,
                    extracted_ready = excluded.extracted_ready,
                    resolve_contract_version = excluded.resolve_contract_version,
-                   source = excluded.source""",
+                   source = excluded.source,
+                   attendant_message = excluded.attendant_message""",
             (
                 int(turn), sanitize_sqlite_text(decree_text), sanitize_sqlite_text(narrative),
                 safe_json_dumps(simulator_payload or {}, ensure_ascii=False),
@@ -18357,6 +18394,7 @@ class GameDB:
                 # Provenance(...) 不匹配 → 静默退回 system_simulation 丢源（Sourcery #175 bug_risk）。
                 # getattr(.,"value",.) 让枚举取 .value、普通字符串原样、None/空回落 system_simulation。
                 str(getattr(source, "value", source) or "system_simulation"),
+                sanitize_sqlite_text(str(attendant_message or "")),
             ),
         )
         self.conn.commit()
@@ -18366,7 +18404,7 @@ class GameDB:
         row = self.conn.execute(
             "SELECT decree_text, narrative, simulator_payload_json, "
             "secret_orders_json, relevant_memories_json, extracted_delta_json, "
-            "extracted_ready, resolve_contract_version, source "
+            "extracted_ready, resolve_contract_version, source, attendant_message "
             "FROM pending_resolve_context WHERE turn = ?",
             (int(turn),),
         ).fetchone()
@@ -18391,6 +18429,10 @@ class GameDB:
             # 合法 JSON 非 dict（type-corrupt）同样回 None（重抽）：原样返回会让恢复叉
             # 抛 LLMContractError 绕过逃生口=corruption 软死锁（ship-pre r1）。
             return parsed if isinstance(parsed, dict) else None
+        try:
+            attendant_message = str(row["attendant_message"] or "")
+        except (KeyError, IndexError):
+            attendant_message = ""
         return {
             "decree_text": row["decree_text"],
             "narrative": row["narrative"],
@@ -18402,6 +18444,7 @@ class GameDB:
             "extracted": _load_extracted(),
             "resolve_contract_version": int(row["resolve_contract_version"] or 0),
             "source": row["source"] or "system_simulation",  # 拒收来源，恢复重放用（#144）
+            "attendant_message": attendant_message,  # #671 王承恩独立递话
         }
 
     def clear_resolve_context(self, turn: int) -> None:

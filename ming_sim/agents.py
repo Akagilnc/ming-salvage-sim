@@ -360,6 +360,24 @@ def create_decree_writer_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agen
     )
 
 
+def create_arrival_attendant_agent(llm_config: LLMConfig) -> Agent:
+    """#671：抵京候见独立报到声部（王承恩 one-shot；勿复用读心 agent/夜卷）。"""
+    return Agent(
+        name="王承恩抵京报到",
+        id="arrival-attendant",
+        model=create_chat_model(llm_config, temperature=0.4),
+        instructions=[
+            "你是王承恩——御前老太监。用户给出本月新抵京、尚在候旨的结构化名单"
+            "（年月、人名、地点、候旨状态）。你只据此向皇爷低声递话，通报何人本月抵京候旨。",
+            "只读结构化事实，自由措辞；不得编造名单外的人，不得把未宣入写成已开殿召对。",
+            "同月多人须逐人点到。只输出递话正文，不输出推理、JSON 或机制说明。",
+            "口吻如：「皇爷，洪承畴本月已抵京，现于宫门候旨，尚未宣入。」",
+        ],
+        add_history_to_context=False,
+        markdown=False,
+    )
+
+
 def create_mindreading_agent(llm_config: LLMConfig) -> Agent:
     """Create an isolated, one-shot near-attendant reading role.
 
