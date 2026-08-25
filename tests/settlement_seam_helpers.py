@@ -6,7 +6,7 @@ Only replaces outer LLM factories/calls; production spine stays real.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, List, Optional
+from typing import Dict, List, Optional
 
 import ming_sim.decree as decree_mod
 import ming_sim.memories as memories
@@ -45,20 +45,14 @@ def canned_full_settlement(
     modules_seen: Optional[list] = None,
     skip_fixed_flows: bool = False,
     skip_relation_brew: bool = False,
-    narrative_fn: Optional[Callable[..., str]] = None,
-    extract_fn: Optional[Callable[..., Dict[str, object]]] = None,
 ) -> list:
     """Replace only external LLM seams; keep production settlement spine.
 
     extract_result: canned merged extractor payload (English keys).
-    narrative_fn(payload, **ctx) → optional dynamic narrative from payload.
-    extract_fn(narrative, payload, **ctx) → optional dynamic extract from the
-    simulator product (preferred over static extract_result when both given).
     """
     simulator_calls = simulator_calls if simulator_calls is not None else []
     decisions = list(decisions or [])
     canned_extract = dict(extract_result or {})
-    last_sim: Dict[str, Any] = {"narrative": narrative, "payload": {}}
 
     monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
 
@@ -68,10 +62,7 @@ def canned_full_settlement(
             "decree_text": a[3] if len(a) > 3 else k.get("decree_text", ""),
             "payload": payload,
         })
-        if narrative_fn is not None:
-            text = narrative_fn(payload, args=a, kwargs=k)
-        else:
-            text = narrative
+        text = narrative
         if decisions:
             blocks = []
             for i, d in enumerate(decisions):
@@ -82,8 +73,6 @@ def canned_full_settlement(
                     f"<<DECISION title=\"{title}\">>\n{opt_lines}\n<</DECISION>>"
                 )
             text = text + "\n" + "\n".join(blocks)
-        last_sim["narrative"] = text
-        last_sim["payload"] = payload
         return text, payload
 
     monkeypatch.setattr(decree_mod, "simulate_season_with_payload", _sim)
@@ -100,11 +89,6 @@ def canned_full_settlement(
     def _extract(*a, **k):
         if extract_calls is not None:
             extract_calls.append(1)
-        if extract_fn is not None:
-            dynamic = extract_fn(
-                last_sim["narrative"], last_sim["payload"], args=a, kwargs=k,
-            ) or {}
-            return (dict(dynamic), "out", "in")
         return (dict(canned_extract), "out", "in")
 
     monkeypatch.setattr(decree_mod, "extract_scores_by_modules_with_agno", _extract)
