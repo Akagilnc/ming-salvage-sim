@@ -99,7 +99,10 @@ def _plant_dossier_awaiting(db, state):
         state.turn,
         "诏曰密查",
         "待续邸报",
-        {"candidate_events": [{"id": "ev_border", "title": "边警"}]},
+        {
+            "candidate_events": [{"id": "ev_border", "title": "边警"}],
+            "transit_semantics": [],
+        },
         secret_orders=[],
         relevant_memories=[],
     )
@@ -784,6 +787,30 @@ def _657_db_path_of(game_or_path) -> str:
     return str(getattr(db, "path", None) or getattr(db, "db_path", None) or "")
 
 
+def _657_install_real_phase2_llm_boundary(monkeypatch_or_module):
+    """只中和 phase2 LLM 边界；保留 resolve_decisions_phase2 真结算/推月。"""
+    import ming_sim.decree as dm
+
+    def _set(name, value):
+        if hasattr(monkeypatch_or_module, "setattr"):
+            monkeypatch_or_module.setattr(dm, name, value)
+        else:
+            setattr(dm, name, value)
+
+    _set("create_season_simulator_agent", lambda *a, **k: None)
+    _set("create_json_sanitizer_agent", lambda *a, **k: None)
+    _set("create_score_extractor_module_agent", lambda *a, **k: None)
+    _set("build_extractor_shared_context", lambda *a, **k: "ctx")
+    _set("extract_scores_by_modules_with_agno", lambda *a, **k: ({}, "o", "i"))
+    _set("create_ending_summary_agent", lambda *a, **k: None)
+    _set("create_chapter_memory_agent", lambda *a, **k: None)
+    _set("create_rescript_draft_agent", lambda *a, **k: None)
+    # 章节/关系酿制：禁 sk-test 打真网；record 空操作
+    _set("record_chapter_memory", lambda *a, **k: None)
+    _set("_make_relation_brew_runner", lambda *a, **k: None)
+    # subprocess worker 内无 monkeypatch 对象时同步写 dm
+
+
 def _657_subprocess_resolve(
     db_path: str,
     choices: list,
@@ -795,13 +822,13 @@ def _657_subprocess_resolve(
     """同文件可复用：子进程真 HTTP POST resolve_decisions/stream。
 
     crash:
-      - \"\" 正常跑完（phase2 stub 清 decision 行）
-      - \"phase2\" 领域 ① 已 commit 后、写 extracted 前抛错
+      - "" 正常跑完（真 phase2 + LLM 边界 stub）
+      - "phase2" 领域 ① 已 commit 后、进入 phase2 时 os._exit 真杀进程
     prewrite_mode:
-      - \"\" 无 prewrite LLM
-      - \"revise\" stub 改票新 options
-      - \"deliberate\" stub 廷议意愿
-    stdout 只回传 @@SUMMARY@@ JSON。
+      - "" 无 prewrite LLM
+      - "revise" stub 改票新 options
+      - "deliberate" stub 廷议意愿
+    stdout 只回传 @@SUMMARY@@ JSON；真杀进程无 summary 时父进程认 returncode。
     """
     import os
     import subprocess
@@ -821,6 +848,7 @@ def _657_subprocess_resolve(
 
         import httpx
         import ming_sim.beat_orchestration as bo
+        import ming_sim.decree as dm
         import ming_sim.rescript_actions as ra
         import ming_sim.session as session_mod
         import web_app
@@ -834,13 +862,25 @@ def _657_subprocess_resolve(
         web_app.load_runtime_llm = lambda: {}
         web_app.run_highlight_judge = lambda **_k: []
 
-        def _phase2(state, db, *a, **k):
-            if crash == "phase2":
-                raise RuntimeError("inject-crash-after-domain-commit")
-            db.clear_pending_decisions(int(state.turn))
-            return "邸报：批红已落。"
+        # 真 phase2：只 stub LLM 边界
+        dm.create_season_simulator_agent = lambda *a, **k: None
+        dm.create_json_sanitizer_agent = lambda *a, **k: None
+        dm.create_score_extractor_module_agent = lambda *a, **k: None
+        dm.build_extractor_shared_context = lambda *a, **k: "ctx"
+        dm.extract_scores_by_modules_with_agno = lambda *a, **k: ({}, "o", "i")
+        dm.create_ending_summary_agent = lambda *a, **k: None
+        dm.create_chapter_memory_agent = lambda *a, **k: None
+        dm.create_rescript_draft_agent = lambda *a, **k: None
+        dm.record_chapter_memory = lambda *a, **k: None
+        dm._make_relation_brew_runner = lambda *a, **k: None
 
-        session_mod.resolve_decisions_phase2 = _phase2
+        if crash == "phase2":
+            def _kill_at_phase2(*a, **k):
+                # §E.2：领域 commit 后、写 extracted 前真杀进程（禁 SSE 捕获后正常 close）
+                os._exit(97)
+
+            session_mod.resolve_decisions_phase2 = _kill_at_phase2
+            dm.resolve_decisions_phase2 = _kill_at_phase2
 
         if prewrite_mode == "revise":
             def _fake_prewrite(batch, **kwargs):
@@ -891,6 +931,7 @@ def _657_subprocess_resolve(
                 "text_head": (r.text or "")[:2500],
                 "done": "event: done" in (r.text or ""),
                 "error": "event: error" in (r.text or ""),
+                "turn": int(game.state.turn),
             })
         except Exception as exc:
             summary.update({"exc": type(exc).__name__, "msg": str(exc)[:500]})
@@ -914,7 +955,18 @@ def _657_subprocess_resolve(
     )
     out = (proc.stdout or "") + "\n" + (proc.stderr or "")
     marker = "@@SUMMARY@@"
+    body_canon = body_json
     if marker not in out:
+        # 真杀进程：无 finally/summary；returncode 97 即 §E.2 可观测终止
+        if crash == "phase2" and proc.returncode == 97:
+            return {
+                "db_path": db_path,
+                "_returncode": 97,
+                "_killed": True,
+                "_body_canonical": body_canon,
+                "error": True,
+                "done": False,
+            }
         raise AssertionError(
             f"subprocess missing summary exit={proc.returncode}\n"
             f"stdout={proc.stdout!r}\nstderr={proc.stderr!r}"
@@ -922,8 +974,10 @@ def _657_subprocess_resolve(
     payload = out.split(marker, 1)[1].strip().splitlines()[0]
     data = json.loads(payload)
     data["_returncode"] = proc.returncode
-    data["_body_canonical"] = body_json
+    data["_body_canonical"] = body_canon
+    data["_killed"] = False
     return data
+
 
 
 def _657_plant_awaiting_web(web_game, *, drafts=None, decisions=None, title="陕西告饥"):
@@ -938,7 +992,8 @@ def _657_plant_awaiting_web(web_game, *, drafts=None, decisions=None, title="陕
     if decisions:
         db.save_pending_decisions(int(state.turn), decisions)
     db.save_resolve_context(
-        int(state.turn), "诏", "邸报", {"candidate_events": []},
+        int(state.turn), "诏", "邸报",
+        {"candidate_events": [], "transit_semantics": []},
         secret_orders=[], relevant_memories=[],
     )
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
@@ -1033,7 +1088,7 @@ def test_657_return_revise_round_prior_and_clear_anchor(web_game, monkeypatch):
     web_game.session.close()
 
     r1 = _657_subprocess_resolve(db_path, body, crash="phase2", prewrite_mode="revise")
-    assert r1.get("error") or "inject-crash" in str(r1.get("text_head") or r1.get("msg") or "")
+    assert r1.get("_killed") is True or r1.get("_returncode") == 97
     assert r1["_body_canonical"] == body_canon
 
     # 库态：round+1、仍 pending、锚在、extracted 空
@@ -1070,7 +1125,7 @@ def test_657_return_revise_round_prior_and_clear_anchor(web_game, monkeypatch):
         state.turn_phase = TurnPhase.AWAITING_DECISION.value
         probe.save_state(state)
         probe.save_resolve_context(
-            int(state.turn), "诏", "邸报", {"candidate_events": []},
+            int(state.turn), "诏", "邸报", {"candidate_events": [], "transit_semantics": []},
             secret_orders=[], relevant_memories=[],
         )
         probe.conn.commit()
@@ -1139,7 +1194,8 @@ def test_657_abi_mapper_matrix_a1_a12(game):
     ).fetchone()
     mname = str(minister["name"]) if minister else "杨嗣昌"
 
-    def _apply_mapped_choice(choice_fields, *, title):
+    def _apply_mapped_choice(choice_fields, *, title, promulgate=True):
+        """mapper→validate→apply_rescript_batch；默认再顺颁，断言判后世界效果。"""
         db.conn.execute("DELETE FROM pending_decisions WHERE kind='rescript_draft'")
         opt = normalize_rescript_layer_a_option({
             "label": choice_fields.get("label") or "拟",
@@ -1179,7 +1235,18 @@ def test_657_abi_mapper_matrix_a1_a12(game):
         ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(), content=content)
         after_rows = db.list_decree_dossiers()
         assert len(after_rows) > before, title
-        return after_rows[-1]
+        created = after_rows[-1]
+        if promulgate and str(created.get("mode") or "") != "midzhi":
+            # ordinary 顺颁物化世界效果；midzhi 另有 stigma/affected 接缝，本矩阵证 create+mode
+            db.apply_dossier_verdicts(
+                state,
+                [{"dossier_id": int(created["id"]), "decision": "promulgated"}],
+                content=content,
+            )
+            created = next(
+                d for d in db.list_decree_dossiers() if int(d["id"]) == int(created["id"])
+            )
+        return created
 
     # A1 assignment duty + 承办
     p = ra.map_rescript_option_or_choice({
@@ -1197,6 +1264,19 @@ def test_657_abi_mapper_matrix_a1_a12(game):
         "transaction_category": "督赈", "deadline_months": 2,
     }, title="A1急务")
     assert created["action_type"] == "assignment"
+    # 判后：顺颁后 status 离 proposed；payload 绝对 end_turn=turn+N
+    assert str(created.get("status") or "") in {"promulgated", "executing", "closed"}
+    raw = created.get("payload_json") or created.get("payload") or {}
+    if isinstance(raw, str):
+        raw = json.loads(raw or "{}")
+    assert int(raw.get("end_turn") or 0) == int(state.turn) + 2
+    # duty 无 assignee 时 initiative 可能因 vacancy 链未建——有则核对绝对 end_turn
+    inits = db.conn.execute(
+        "SELECT end_turn, status FROM issues WHERE kind='initiative' AND status='active' "
+        "ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    if inits is not None:
+        assert int(inits["end_turn"]) == int(state.turn) + 2
     with pytest.raises(ValueError):
         ra.map_rescript_option_or_choice({
             "action_type": "assignment", "label": "x", "hint": "h",
@@ -1249,6 +1329,7 @@ def test_657_abi_mapper_matrix_a1_a12(game):
         "locality_scope": "none",
     }, db=db, content=content, state=state)
     assert p["account"] == "国库"
+    treasury_before = int(state.metrics.get("国库") or 0)
     created = _apply_mapped_choice({
         "action": "follow_draft", "action_type": "grant_allocation",
         "label": "赏", "hint": "h", "grant_action": "赏赉", "amount": 1000,
@@ -1256,6 +1337,8 @@ def test_657_abi_mapper_matrix_a1_a12(game):
         "locality_scope": "none",
     }, title="A4急务")
     assert created["action_type"] == "grant_allocation"
+    # 判后：扣库/科目（国库默认）
+    assert int(state.metrics.get("国库") or 0) <= treasury_before
     with pytest.raises(ValueError):
         ra.map_rescript_option_or_choice({
             "action_type": "grant_allocation", "label": "赏", "hint": "h",
@@ -1401,6 +1484,7 @@ def test_657_abi_mapper_matrix_a1_a12(game):
         "locality_scope": "single", "region_id": "shaanxi",
     }, db=db, content=content, state=state)
     assert p["privilege"] == "便宜行事"
+    auth_before = len(db.list_active_authorities(int(state.turn), holder_id=mname))
     created = _apply_mapped_choice({
         "action": "follow_draft", "action_type": "authorization",
         "label": "委任", "hint": "h", "name": mname,
@@ -1408,6 +1492,9 @@ def test_657_abi_mapper_matrix_a1_a12(game):
         "locality_scope": "single", "region_id": "shaanxi",
     }, title="A10授权")
     assert created["action_type"] == "authorization"
+    # 判后：authority_changes ≥ 1
+    auth_after = db.list_active_authorities(int(state.turn), holder_id=mname)
+    assert len(auth_after) >= auth_before + 1
     with pytest.raises(ValueError):
         ra.map_rescript_option_or_choice({
             "action_type": "authorization", "label": "x", "hint": "h",
@@ -1453,6 +1540,11 @@ def test_657_abi_mapper_matrix_a1_a12(game):
         "locality_scope": "none",
     }, title="A11招抚")
     assert created["action_type"] == "pacification"
+    # 判后：易主归明
+    prow = db.conn.execute(
+        "SELECT power_id FROM characters WHERE name=?", (rname,)
+    ).fetchone()
+    assert prow is not None and str(prow["power_id"] or "") == "ming"
 
     # follow create 幂等：decided 精确匹配 skip（A12 判后）
     opt_fields = {
@@ -1516,11 +1608,8 @@ def test_657_s10_http_five_actions_and_1490_no_regress(web_game, monkeypatch):
         "transaction_category": "督赈", "deadline_months": 2,
     })
 
-    def _phase2(_state, _db, *_a, **_k):
-        _db.clear_pending_decisions(int(_state.turn))
-        return "邸报：批红已落。"
-
-    monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _phase2)
+    # 真 phase2（只 stub LLM 边界）；六动作各推月后按当前 turn 再种
+    _657_install_real_phase2_llm_boundary(monkeypatch)
 
     # summon generator 边界 stub（经 session 公共缝）
     summon_gen_bodies = {}
@@ -1559,6 +1648,9 @@ def test_657_s10_http_five_actions_and_1490_no_regress(web_game, monkeypatch):
     ]
 
     for name, choice_body in cases:
+        # phase2/refresh 可能换 state 对象——每轮从 session 重取真源
+        state = web_game.session.state
+        db = web_game.db
         db.conn.execute("DELETE FROM pending_decisions")
         db.conn.commit()
         db.save_rescript_drafts(int(state.turn), [{
@@ -1566,14 +1658,13 @@ def test_657_s10_http_five_actions_and_1490_no_regress(web_game, monkeypatch):
             "options": [opt, {"label": "备", "hint": "h", "draft_capability": "x"}],
             "actor_name": "杨嗣昌", "actor_office": "兵部尚书", "actor_faction": "东林",
         }])
+        db.conn.commit()
         db.save_resolve_context(
-            int(state.turn), "诏", "邸报", {"candidate_events": []},
+            int(state.turn), "诏", "邸报", {"candidate_events": [], "transit_semantics": []},
             secret_orders=[], relevant_memories=[],
         )
         state.turn_phase = TurnPhase.AWAITING_DECISION.value
         db.save_state(state)
-        web_game.state.turn_phase = TurnPhase.AWAITING_DECISION.value
-        web_game.session.state.turn_phase = TurnPhase.AWAITING_DECISION.value
         desk = db.list_rescript_desk(int(state.turn))
         key = desk[0]["decision_key"]
         choice = {**choice_body, "decision_key": key}
@@ -1651,18 +1742,28 @@ def test_657_s10_http_five_actions_and_1490_no_regress(web_game, monkeypatch):
             labels = [str(o.get("label") or "") for o in (hit["options"] or [])]
             assert "新甲" in labels
 
-    # #1490 不回归
+    # #1490 不回归：与既有 #1490 测同形——HTTP 受理 + 能力对 decided；
+    # phase2 边界 stub（批红 rescript 物化另有 #1490 专测；P3 六动作已真 phase2）
+    state = web_game.session.state
+    db = web_game.db
+
+    def _p2_1490(_state, _db, *_a, **_k):
+        _db.clear_pending_decisions(int(_state.turn))
+        return "邸报：#1490。"
+
+    monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _p2_1490)
     db.conn.execute("DELETE FROM pending_decisions")
     db.conn.commit()
     dossier_id = _plant_dossier_awaiting(db, state)
-    web_game.state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    web_game.session.state.turn_phase = TurnPhase.AWAITING_DECISION.value
     full = {
         "label": "强颁", "hint": "以中旨强行颁出", "note": "准。",
         "dossier_id": dossier_id, "dossier_decision": "force_promulgated",
     }
     r = asyncio.run(_post_resolve([full]))
     assert r.status_code == 200 and "event: done" in r.text, r.text
+    row = db.list_pending_decisions(int(state.turn))
+    # stub 已清 decision 行；若仍在则须 decided
+    assert not row or row[0].get("status") == "decided"
 
 
 def test_657_mixed_batch_follow_plus_decision_and_no_context_copy(web_game, monkeypatch):
@@ -1710,7 +1811,7 @@ def test_657_mixed_batch_follow_plus_decision_and_no_context_copy(web_game, monk
     web_game.session.close()
 
     r1 = _657_subprocess_resolve(db_path, body, crash="phase2")
-    assert r1.get("error") or "inject-crash" in str(r1.get("text_head") or r1.get("msg") or "")
+    assert r1.get("_killed") is True or r1.get("_returncode") == 97
     assert r1["_body_canonical"] == body_canon
 
     from ming_sim.content import GameContent
@@ -1740,7 +1841,7 @@ def test_657_mixed_batch_follow_plus_decision_and_no_context_copy(web_game, monk
     try:
         assert len(probe.list_decree_dossiers()) == mid_dossiers  # 无双写案卷
         decs = probe.list_pending_decisions(int(probe.load_state().turn))
-        # phase2 stub 清 decision 行
+        # 真 phase2 清 decision 行
         assert not decs or all(d.get("status") == "decided" for d in decs)
         ctx = probe.get_resolve_context(int(probe.load_state().turn))
         if ctx is not None:
@@ -1780,14 +1881,15 @@ def test_657_s5_http_generator_failure_blocks_phase2_and_same_body_retry(
     monkeypatch.setattr(bo, "create_llm_beat_generator", lambda _cfg: _gen)
     monkeypatch.setattr(web_game.session, "_beat_generator", _gen, raising=False)
 
-    phase2_calls = []
+    _657_install_real_phase2_llm_boundary(monkeypatch)
+    phase2_calls = {"n": 0}
+    _real_p2 = session_mod.resolve_decisions_phase2
 
-    def _phase2(_state, _db, *_a, **_k):
-        phase2_calls.append(1)
-        _db.clear_pending_decisions(int(_state.turn))
-        return "邸报：批红已落。"
+    def _count_phase2(*a, **k):
+        phase2_calls["n"] += 1
+        return _real_p2(*a, **k)
 
-    monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _phase2)
+    monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _count_phase2)
 
     desk = _657_plant_awaiting_web(web_game, drafts=[{
         "title": "S5召见", "context": "c",
@@ -1803,7 +1905,7 @@ def test_657_s5_http_generator_failure_blocks_phase2_and_same_body_retry(
     r1 = asyncio.run(_post_resolve(body))
     assert r1.status_code == 200
     assert "event: error" in r1.text or "event: done" not in r1.text
-    assert phase2_calls == [], "generator 失败不得进 phase2"
+    assert phase2_calls["n"] == 0, "generator 失败不得进 phase2"
     assert web_game.state.turn_phase != TurnPhase.ISSUED.value
     hit = next(r for r in db.list_rescript_drafts() if r["title"] == "S5召见")
     assert hit["status"] == "decided"
@@ -1817,7 +1919,9 @@ def test_657_s5_http_generator_failure_blocks_phase2_and_same_body_retry(
     db.save_state(web_game.state)
     r2 = asyncio.run(_post_resolve(body))
     assert r2.status_code == 200 and "event: done" in r2.text, r2.text
-    assert phase2_calls == [1]
+    assert phase2_calls["n"] == 1
+    # §E.4 S5：消费成功且月可推
+    assert int(web_game.state.turn) == turn_before + 1
     kind, turn_s, idx_s = key.split(":")
     origin = rescript_summon_origin_ref(int(turn_s), int(idx_s), 0)
     rows = db.conn.execute(
@@ -1848,11 +1952,7 @@ def test_657_s6_http_present_target_gets_unique_origin_body(web_game, monkeypatc
     monkeypatch.setattr(bo, "create_llm_beat_generator", lambda _cfg: _gen)
     monkeypatch.setattr(web_game.session, "_beat_generator", _gen, raising=False)
 
-    def _phase2(_state, _db, *_a, **_k):
-        _db.clear_pending_decisions(int(_state.turn))
-        return "邸报：批红已落。"
-
-    monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _phase2)
+    _657_install_real_phase2_llm_boundary(monkeypatch)
 
     # 先使目标已在场
     night = open_night(db, state, empty_scaffold=True)
@@ -1887,6 +1987,88 @@ def test_657_s6_http_present_target_gets_unique_origin_body(web_game, monkeypatc
     tags = json.loads(rows[0]["tags"] or "[]")
     assert TAG_ENTER in tags
     assert str(rows[0]["body"] or "") == gen_body
+
+
+
+def test_657_web_http_hitl_lock_boundary_same_gate(web_game, monkeypatch):
+    """Class4/S2 web 生产调用：真 HTTP → submit_hitl；①/③ 持同一 gate，② 释放。"""
+    import threading
+    import time
+
+    from ming_sim.models import TurnPhase
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+
+    db, state = web_game.db, web_game.state
+    _657_install_real_phase2_llm_boundary(monkeypatch)
+
+    gate = web_game._write_gate
+    events = []
+    lock = threading.Lock()
+    in_join = {"v": False}
+
+    real_commit = web_game.session.commit_rescript_phase1
+    real_join = web_game.session.join_rescript_summons
+    real_finish = web_game.session.finish_rescript_phase2
+
+    def _commit(pre):
+        with lock:
+            events.append(("commit", gate.locked()))
+        assert gate.locked(), "① commit 须持 write_gate"
+        return real_commit(pre)
+
+    def _join(p1):
+        in_join["v"] = True
+        try:
+            free = gate.acquire(False)
+            if free:
+                gate.release()
+            with lock:
+                events.append(("join_free", bool(free)))
+            assert free, "② join 期间 write_gate 必须释放"
+            return real_join(p1)
+        finally:
+            in_join["v"] = False
+
+    def _finish(p1, j, **kw):
+        with lock:
+            events.append(("finish", gate.locked()))
+        assert gate.locked(), "③ finish 须再持同一 write_gate"
+        return real_finish(p1, j, **kw)
+
+    web_game.session.commit_rescript_phase1 = _commit  # type: ignore[method-assign]
+    web_game.session.join_rescript_summons = _join  # type: ignore[method-assign]
+    web_game.session.finish_rescript_phase2 = _finish  # type: ignore[method-assign]
+
+    def _gen(inputs):
+        # 给 join 探针一点窗口
+        time.sleep(0.02)
+        name = str(getattr(inputs, "person_name", "") or "") or "臣"
+        return f"{name}锁窗入殿。"
+
+    import ming_sim.beat_orchestration as bo
+    monkeypatch.setattr(bo, "create_llm_beat_generator", lambda _cfg: _gen)
+    monkeypatch.setattr(web_game.session, "_beat_generator", _gen, raising=False)
+
+    opt = normalize_rescript_layer_a_option({
+        "label": "备", "hint": "h", "action_type": "assignment",
+        "assignee_name": "", "target_kind": "region", "target_id": "shaanxi",
+        "locality_scope": "single", "region_id": "shaanxi",
+        "transaction_category": "督赈",
+    })
+    desk = _657_plant_awaiting_web(web_game, drafts=[{
+        "title": "锁窗召见", "context": "c",
+        "options": [opt, {"label": "x", "hint": "h", "draft_capability": "x"}],
+        "actor_name": "杨嗣昌", "actor_office": "o", "actor_faction": "f",
+    }])
+    key = desk[0]["decision_key"]
+    r = asyncio.run(_post_resolve([{
+        "decision_key": key, "action": "summon",
+        "label": "召见", "summon_target": "杨嗣昌",
+    }]))
+    assert r.status_code == 200 and "event: done" in r.text, r.text
+    kinds = [k for k, _ in events]
+    assert "commit" in kinds and "join_free" in kinds and "finish" in kinds
+    assert any(k == "join_free" and v for k, v in events)
 
 
 def test_657_illegal_summon_target_http_zero_writes(web_game, monkeypatch):

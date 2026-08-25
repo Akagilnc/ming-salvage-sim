@@ -66,7 +66,11 @@ class _SettlementSession:
             decisions=[{"title": "辽饷", "context": "家赀约十万两，是否发帑"}],
         )
 
-    def submit_decisions(self, *_args, **_kwargs):
+    def submit_hitl_choices(self, *_args, write_gate=None, **_kwargs):
+        # 生产协议：resolve/stream 唯一走 submit_hitl_choices
+        if write_gate is not None:
+            with write_gate:
+                return "邸报：国丈家赀约数十万两，三十万两帑银与五千援军已抵辽东。"
         return "邸报：国丈家赀约数十万两，三十万两帑银与五千援军已抵辽东。"
 
 

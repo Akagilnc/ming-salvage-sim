@@ -3393,16 +3393,8 @@ class GameSession:
             try:
                 generated = self.join_chat_turn_scene(ctid)
             except Exception as exc:
-                # 单 target 失败域：不回滚其它已消费；记入失败供门闩。
-                # generator 失败须把无问话 scaffold 标 failed，否则 generating 空 body
-                # 会卡死后续 auto_close 在飞等待；重入走 ensure CAS failed→generating。
-                if ctid > 0:
-                    self.db.conn.execute(
-                        "UPDATE chat_turns SET status='failed' "
-                        "WHERE id=? AND status='generating' AND user_message_id IS NULL",
-                        (ctid,),
-                    )
-                    self.db.conn.commit()
+                # §D.1 ② 无锁等待：只汇合 Future / 记 error，**零写库**。
+                # failed 持久化挪到 ③ finish（持 write_gate）——禁无锁② UPDATE+commit。
                 joined.append({**sc, "generated": [], "error": str(exc)})
                 continue
             joined.append({**sc, "generated": list(generated)})
@@ -3421,10 +3413,19 @@ class GameSession:
         from ming_sim.applier import atomic
 
         if not phase1_state.get("ready_replay"):
-            # persist generator 原文到原 entry_id
+            # ③ 持 write_gate：generator 失败 scaffold → failed（供 CAS 重入）；成功则 persist。
             with atomic(self.db):
                 for item in join_state.get("joined") or []:
                     if item.get("error"):
+                        ctid_err = int(item.get("chat_turn_id") or 0)
+                        if ctid_err > 0:
+                            # 无问话 generating → failed；重入走 ensure CAS failed→generating。
+                            self.db.conn.execute(
+                                "UPDATE chat_turns SET status='failed' "
+                                "WHERE id=? AND status='generating' "
+                                "AND user_message_id IS NULL",
+                                (ctid_err,),
+                            )
                         continue
                     generated = item.get("generated") or []
                     if generated:
