@@ -2063,10 +2063,12 @@ def test_657_s2_s3_lock_boundary_and_parallel_summons(game, monkeypatch):
 
     # 门闩应因 unconsumed 失败；已 persist body 仍在
     with sess._write_gate:
+        raised = False
         try:
             sess.finish_rescript_phase2(p1, joined)
-        except ValueError as exc:
-            assert "召见尚未消费" in str(exc) or "inject" in str(exc)
+        except ValueError:
+            raised = True
+        assert raised, "单 target 失败门闩须响亮 ValueError"
     if ok_item:
         body0_after = db.conn.execute(
             "SELECT body FROM story_ledger_entries WHERE id=?",

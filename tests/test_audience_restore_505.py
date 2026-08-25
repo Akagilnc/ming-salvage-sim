@@ -687,7 +687,7 @@ def test_657_s11_s15_summon_scaffold_matrix(game, monkeypatch):
         assert row["status"] == "generating" and row["user_message_id"] is None
         ind.close()
 
-    # --- S13：CAS+reconcile 不增行后 persist 非空 body，body==generator ---
+    # --- S13：CAS+reconcile 不增行后经 persist_chat_turn_scene 真写入 ---
     db.reconcile_interrupted_chat_turns()
     ensure_summon_scaffold_reenterable(
         db, origin_ref=origin_s, entry_id=s_entry, chat_turn_id=s_ct,
@@ -697,11 +697,9 @@ def test_657_s11_s15_summon_scaffold_matrix(game, monkeypatch):
         "SELECT COUNT(*) AS c FROM story_ledger_entries WHERE origin_ref=?",
         (origin_s,),
     ).fetchone()["c"] == 1
+    from ming_sim.beat_orchestration import persist_chat_turn_scene
     gen_text = f"{minister}scaffold-persist-body"
-    db.conn.execute(
-        "UPDATE story_ledger_entries SET body=? WHERE id=?",
-        (gen_text, s_entry),
-    )
+    persist_chat_turn_scene(db, [(s_entry, gen_text)])
     db.conn.commit()
     body_row = db.conn.execute(
         "SELECT body FROM story_ledger_entries WHERE id=?", (s_entry,),
@@ -787,7 +785,21 @@ def test_657_s11_s15_summon_scaffold_matrix(game, monkeypatch):
     joined = sess.join_rescript_summons(p1)
     with sess._write_gate:
         report = sess.finish_rescript_phase2(p1, joined)
-    assert "S12" in report or report
+    assert isinstance(report, str) and report.strip()
+    assert state.turn_phase == TurnPhase.ISSUED.value or (
+        sess.state.turn_phase == TurnPhase.ISSUED.value
+    )
+    hit12 = next(r for r in db.list_rescript_drafts() if r["title"] == "S12全链")
+    assert hit12["status"] == "decided"
+    assert (hit12["choice"] or {}).get("action") == "summon"
+    # scaffold chat_turn 消费终态
+    sc12 = (p1.get("summons") or [None])[0]
+    if sc12 and not sc12.get("consumed"):
+        st12 = db.conn.execute(
+            "SELECT status FROM chat_turns WHERE id=?",
+            (int(sc12["chat_turn_id"]),),
+        ).fetchone()["status"]
+        assert st12 == "consumed"
     kind, turn_s, idx_s = key.split(":")
     origin12 = rescript_summon_origin_ref(int(turn_s), int(idx_s), 0)
     row12 = db.conn.execute(

@@ -9047,6 +9047,26 @@ class GameDB:
         )
         return nxt
 
+    def complete_rescript_summon_scaffold_turn(self, chat_turn_id: int) -> None:
+        """#657：空问话召见 scaffold 消费成功 → status=consumed（非在飞终态唯一写点）。
+
+        list_in_flight 不含 consumed；与 failed（真失败）分立。body 已非空时
+        再入走 consumed 短路，不走 ensure CAS。
+        """
+        ctid = int(chat_turn_id or 0)
+        if ctid <= 0:
+            return
+        self.conn.execute(
+            "UPDATE chat_turns SET status='consumed' "
+            "WHERE id=? AND status='generating' AND user_message_id IS NULL",
+            (ctid,),
+        )
+        if (
+            not bool(getattr(self.conn, "_commit_suspended", False))
+            and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0
+        ):
+            self.conn.commit()
+
     def list_in_flight_chat_turns(
         self,
         *,
@@ -9056,6 +9076,7 @@ class GameDB:
     ) -> List[Dict[str, Any]]:
         """未完成回话：generating，或 active 且尚无大臣回话。
 
+        consumed / failed / interrupted / undone 均非在飞。
         WebGame / 收夜守卫走此接口，不直接摸 conn（测试替身可 stub）。
         """
         clauses = [
@@ -9229,7 +9250,7 @@ class GameDB:
         initial_status = status
         if initial_status is None:
             initial_status = "generating" if int(night_id or 0) else "active"
-        if initial_status not in {"active", "generating", "failed", "undone"}:
+        if initial_status not in {"active", "generating", "failed", "undone", "consumed"}:
             raise ValueError(f"unsupported chat_turn status: {initial_status!r}")
         nid = int(night_id or 0)
         seq = int(night_seq) if night_seq is not None else (
