@@ -1703,22 +1703,19 @@ def test_657_abi_mapper_matrix_a1_a12(game):
         "locality_scope": "none",
     }, db=db, content=content, state=state)
     assert p["punish_action"] == "拿问下狱"
-    status_before = db.get_character_status(mname)[0]
-    created = _apply_mapped_choice({
+    assert db.get_character_status(mname)[0] == "active", "A9 下狱前须 active"
+    _apply_mapped_choice({
         "action": "follow_draft", "action_type": "punishment",
         "label": "下狱", "hint": "h", "punish_action": "拿问下狱",
         "target_kind": "character", "target_id": mname, "name": mname,
         "locality_scope": "none", "assignee_name": other,
     }, title="A9下狱")
-    assert db.get_character_status(mname)[0] == "imprisoned" or (
-        status_before == "imprisoned"
-    )
-    # 恢复 active 以便后续 A7/A8
-    if db.get_character_status(mname)[0] == "imprisoned":
-        db.set_character_status(state, mname, "active", "A9 cleanup")
-        if mname in getattr(content, "characters", {}):
-            content.characters[mname].status = "active"
-        db.conn.commit()
+    assert db.get_character_status(mname)[0] == "imprisoned", "A9 判后须 imprisoned"
+    # 恢复 active 以便后续 A7/A8/罚俸
+    db.set_character_status(state, mname, "active", "A9 cleanup")
+    if mname in getattr(content, "characters", {}):
+        content.characters[mname].status = "active"
+    db.conn.commit()
 
     # 罚俸：seed 足额后咬 person_logs 罚俸 + 国库精确减额（禁 status 恒真兜底）
     state.metrics["国库"] = int(state.metrics.get("国库") or 0) + 500
@@ -1763,6 +1760,13 @@ def test_657_abi_mapper_matrix_a1_a12(game):
         "locality_scope": "none",
     }, db=db, content=content, state=state)
     assert p["_office_action"] == "任命" and p["_emitted_action_type"] == "appointment"
+    # seed 可知前态：非目标官职，避免「本已是兵部尚书」零写绿灯
+    office_before_a7 = "光禄寺署丞"
+    db.conn.execute(
+        "UPDATE characters SET office=?, status='active', power_id='ming' WHERE name=?",
+        (office_before_a7, mname),
+    )
+    db.conn.commit()
     created = _apply_mapped_choice({
         "action": "follow_draft", "action_type": "appointment",
         "label": "授官", "hint": "h", "appoint_action": "任命", "office": "兵部尚书",
@@ -1773,10 +1777,12 @@ def test_657_abi_mapper_matrix_a1_a12(game):
         "SELECT COUNT(*) AS c FROM office_change_records WHERE dossier_id=?",
         (int(created["id"]),),
     ).fetchone()
+    assert int(ocr["c"] or 0) >= 1, "A7 须落 office_change_records 绑定本案"
     office_now = db.conn.execute(
         "SELECT office FROM characters WHERE name=?", (mname,),
     ).fetchone()
-    assert int(ocr["c"] or 0) >= 1 or str(office_now["office"] or "") == "兵部尚书"
+    assert str(office_now["office"] or "") == "兵部尚书"
+    assert str(office_now["office"] or "") != office_before_a7
 
     p = ra.map_rescript_option_or_choice({
         "action_type": "appointment", "label": "罢", "hint": "h",
@@ -1785,22 +1791,23 @@ def test_657_abi_mapper_matrix_a1_a12(game):
         "locality_scope": "none",
     }, db=db, content=content, state=state)
     assert p["_emitted_action_type"] == "dismiss_assignment"
-    created = _apply_mapped_choice({
+    office_before_a8 = str(db.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (mname,),
+    ).fetchone()["office"] or "")
+    assert office_before_a8 == "兵部尚书", "A8 前须有 A7 授官"
+    assert db.get_character_status(mname)[0] == "active"
+    _apply_mapped_choice({
         "action": "follow_draft", "action_type": "appointment",
         "label": "罢", "hint": "h", "appoint_action": "罢免", "office": "",
         "target_kind": "character", "target_id": mname, "name": mname,
         "locality_scope": "none",
     }, title="A8罢免")
-    # 罢免后：去职记录或 office 空/非原主职
-    ocr8 = db.conn.execute(
-        "SELECT COUNT(*) AS c FROM office_change_records WHERE dossier_id=?",
-        (int(created["id"]),),
-    ).fetchone()
-    st8 = db.get_character_status(mname)[0]
-    office8 = db.conn.execute(
+    # dismiss_assignment 判后：status=dismissed 且 office 清空（真写核，非 ocr 表）
+    assert db.get_character_status(mname)[0] == "dismissed", "A8 判后须 dismissed"
+    office8 = str(db.conn.execute(
         "SELECT office FROM characters WHERE name=?", (mname,),
-    ).fetchone()
-    assert int(ocr8["c"] or 0) >= 1 or st8 != "active" or not str(office8["office"] or "").strip()
+    ).fetchone()["office"] or "")
+    assert not office8.strip(), f"A8 罢免后 office 须空：{office8!r}"
     with pytest.raises(ValueError):
         ra.map_rescript_option_or_choice({
             "action_type": "appointment", "label": "授", "hint": "h",
