@@ -205,7 +205,10 @@ def _faction_band(field: str, value: object) -> str:
 
 
 def minister_dossier(character: Character) -> str:
-    """返回人物特征档料；没有富化资料时保留 S1 的通用兜底。"""
+    """返回人物特征档料；没有富化资料时保留 S1 的通用兜底。
+
+    脾性位：非空持久化 character.style 优先，否则 dossier.temperament / 通用兜底。
+    """
     dossier = _MINISTER_DOSSIERS.get(character.name)
     if dossier is None:
         identity = (character.summary or "").strip() or "未有专门 dossier，以官职、性情和任事处作通用特征化"
@@ -221,8 +224,9 @@ def minister_dossier(character: Character) -> str:
             "burden": burden,
             "episode": episode,
         }
+    temperament = (character.style or "").strip() or dossier["temperament"]
     return (
-        f"身份：{dossier['identity']}；脾性：{dossier['temperament']}；"
+        f"身份：{dossier['identity']}；脾性：{temperament}；"
         f"动机：{dossier['motivation']}；包袱：{dossier['burden']}；"
         f"事例：{dossier['episode']}"
     )

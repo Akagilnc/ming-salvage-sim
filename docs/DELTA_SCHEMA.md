@@ -388,13 +388,13 @@ personnel_secret 模块产出；settle 内经 `record_monthly_dossier_progress` 
 - 一般由 issue bar=100/0 自动了结；这里用于强行结案。`acknowledged` 只用于已到期 form③ 承诺被皇帝明确裁决/确认处理后的 ACK 收尾。
 
 ### `人物变更` — 人事档案单一入口
-每条必须带 `name`（必须在 `characters` 名册）和 `动作`。`动作` 只收九个值：`任命` / `罢黜` / `调任` / `处置` / `易主` / `册封` / `行止` / `评定` / `性情`。未知动作、查无此人、缺必填字段、非法枚举或非法状态迁移都会逐项拒收留痕。
+每条必须带 `name`（必须在 `characters` 名册）和 `动作`。`动作` 闭集唯一真源为 `ming_sim.person_archive_contract.PERSON_ACTIONS`（transition + 评定/性情）；未知动作、查无此人、缺必填字段、非法枚举或非法状态迁移都会逐项拒收留痕。
 
 共通字段：
 | 字段 | 约束 |
 |---|---|
 | `name` | 必填，精确人物名 |
-| `动作` | 必填，九动作之一 |
+| `动作` | 必填，见 `PERSON_ACTIONS` |
 | `reason` / `status_reason` | 可选，人读叙事说明 |
 | `reason_code` | 可选，机读枚举；未知值归一到 `未识别`，缺省和读不懂不能混成一个语义 |
 
