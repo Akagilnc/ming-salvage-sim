@@ -6729,6 +6729,45 @@ def _apply_person_changes(
             needs_person_change_commit = True
             continue
 
+        if action == "性情":
+            if content is not None and name not in content.characters:
+                applied.append(rejected(item, "非既有人物", "hallucinated_id"))
+                continue
+            row = db.conn.execute(
+                "SELECT name, style FROM characters WHERE name=?", (name,)
+            ).fetchone()
+            if row is None:
+                applied.append(rejected(item, "非既有人物", "hallucinated_id"))
+                continue
+            raw_style = item.get("style")
+            if not isinstance(raw_style, str) or not raw_style.strip():
+                applied.append(rejected(item, "性情 style 须为非空字符串", "invalid_enum"))
+                continue
+            new_style = raw_style.strip()
+            old_style = str(row["style"] or "")
+            origin_error = origin_rejected(item)
+            if origin_error:
+                applied.append(origin_error)
+                continue
+            db.conn.execute(
+                "UPDATE characters SET style=? WHERE name=?",
+                (new_style, name),
+            )
+            if content is not None and name in content.characters:
+                content.characters[name].style = new_style
+            result = {
+                "name": name,
+                "动作": action,
+                "style": new_style,
+                "old_style": old_style,
+                "new_style": new_style,
+                "reason": str(item.get("reason") or ""),
+            }
+            applied.append(result)
+            log_applied(result, item, commit=False)
+            needs_person_change_commit = True
+            continue
+
         if action in {"处置", "罢黜"}:
             status = "dismissed" if action == "罢黜" else str(item.get("status") or "").strip()
             reason_text = str(item.get("reason") or item.get("status_reason") or "")

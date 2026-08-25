@@ -176,7 +176,7 @@ def _person_effect_has_work(raw: object) -> bool:
     if not isinstance(raw, list):
         return False
     action_fields = {
-        "任命", "罢黜", "调任", "处置", "易主", "册封", "行止", "评定",
+        "任命", "罢黜", "调任", "处置", "易主", "册封", "行止", "评定", "性情",
     }
     for item in raw:
         if not isinstance(item, dict):
@@ -192,6 +192,11 @@ def _person_effect_has_work(raw: object) -> bool:
                 and isinstance(loyalty, int)
                 and loyalty != 0
             ):
+                return True
+            continue
+        if action == "性情":
+            style = item.get("style")
+            if isinstance(style, str) and style.strip():
                 return True
             continue
         return True
