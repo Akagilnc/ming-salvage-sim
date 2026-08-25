@@ -302,11 +302,9 @@ def test_r2_commit_join_before_persist_fault_keeps_pending_and_rebrrews_once(
         )
 
     # 重载 state 与打开的 db 对齐（真实恢复路径）。
-    from ming_sim.models import GameState
     row = db.conn.execute(
         "SELECT turn, year, period FROM game_state WHERE id = 1"
     ).fetchone()
-    # settle_with_delta 需要完整 state；沿用 fixture 推进后的内存态并校正年月。
     state.turn = int(row["turn"])
     state.year = int(row["year"])
     state.period = int(row["period"])
@@ -329,59 +327,29 @@ def test_r2_commit_join_before_persist_fault_keeps_pending_and_rebrrews_once(
     assert edge_ids_after == edge_ids_before
 
 
-# ---------------- #642 锚④：build_brew_input 消费完整 prior 流水
+# ---------------- #642 锚④：build_brew_input 只投影 prior 字段（全序/筛选归 read 缝）
 
-def test_build_brew_input_includes_full_prior_history_in_stable_order(game):
-    """r4 三例：多旧事全量有序、含和解、无旧事空列表；仅经 build_brew_input 装配。"""
-    db, state, _ = game
-    source, target = EMPEROR_NODE, "杨嗣昌"
-    db.record_relation_edge_event(
-        source=source, target=target, event_kind="知遇",
-        context="越次一召，擢杨嗣昌于五品郎中。", origin="seed:founding:yueci",
-        turn=0, year=1628, period=11,
-    )
-    db.record_relation_edge_event(
-        source=source, target=target, event_kind="知遇",
-        context="清丈议上，圣眷再深一层。", origin="audience:turn-2",
-        turn=2, year=1628, period=12,
-    )
-    db.record_relation_edge_event(
-        source=source, target=target, event_kind="协作",
-        context="君臣暂释前隙，同谋屯田。", origin="audience:turn-3",
-        turn=3, year=1629, period=1,
-    )
-    # 本月新事件（不进 prior）
-    new_id = db.record_relation_edge_event(
-        source=source, target=target, event_kind="知遇",
-        context="多年后更大委任。", origin="audience:later",
-        turn=10, year=1635, period=6,
-    )
-    new_events = [
-        row for row in db.get_relation_edge_events(source=source, target=target)
-        if int(row["id"]) == int(new_id)
-    ]
-    from ming_sim.relation_read import load_relation_history_before
-    prior = load_relation_history_before(
-        db, source=source, target=target, before_year=1635, before_period=6,
-    )
+def test_build_brew_input_projects_prior_event_fields():
+    """brew 侧只锁 prior_events 字段投影与空列表；全量有序/和解归 read 缝主干。"""
+    prior = [{
+        "id": 9, "event_kind": "知遇", "context": "越次一召原句。",
+        "origin": "seed:founding", "year": 1628, "period": 11,
+    }]
     payload = build_brew_input(
-        source=source, target=target, dimension="君臣",
-        year=1635, period=6, summary=None, new_events=new_events,
+        source=EMPEROR_NODE, target="杨嗣昌", dimension="君臣",
+        year=1635, period=6, summary=None, new_events=[],
         has_pending=False, prior_events=prior,
     )
-    assert [e["context"] for e in payload["prior_events"]] == [
-        "越次一召，擢杨嗣昌于五品郎中。",
-        "清丈议上，圣眷再深一层。",
-        "君臣暂释前隙，同谋屯田。",
-    ]
-    assert all("context" in e and e["context"] for e in payload["prior_events"])
-    # 无旧事 → 空列表（字段仍在，供装配探针机械断言）
-    empty_payload = build_brew_input(
+    assert payload["prior_events"] == [{
+        "event_kind": "知遇", "context": "越次一召原句。",
+        "origin": "seed:founding", "year": 1628, "period": 11,
+    }]
+    assert "id" not in payload["prior_events"][0]
+    assert build_brew_input(
         source="甲", target="乙", dimension="大臣",
         year=1635, period=6, summary=None, new_events=[],
         has_pending=True, prior_events=[],
-    )
-    assert empty_payload["prior_events"] == []
+    )["prior_events"] == []
 
 
 def test_prepare_attaches_prior_events_only_via_history_seam(game, monkeypatch):
