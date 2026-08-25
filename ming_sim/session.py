@@ -3431,35 +3431,35 @@ class GameSession:
                     if generated:
                         self.persist_chat_turn_scene(list(generated))
 
-            # D.8 门闩：未消费 summon → 响亮失败
+            # D.8 门闩：未消费 summon → 响亮失败（§D.0 唯一谓词）
+            from ming_sim.audience_night import rescript_summon_origin_consumed
             unconsumed: List[str] = []
             for item in join_state.get("joined") or []:
-                if item.get("consumed"):
-                    continue
                 origin = str(item.get("origin_ref") or "")
                 row = self.db.conn.execute(
                     "SELECT body, tags FROM story_ledger_entries WHERE origin_ref = ?",
                     (origin,),
                 ).fetchone()
-                body = str(row["body"] if row is not None else "") or ""
-                tags_raw = str(row["tags"] if row is not None else "[]")
-                try:
-                    tags = json.loads(tags_raw)
-                except Exception:
-                    tags = []
-                from ming_sim.audience_night import TAG_ENTER
-                ok = (
-                    row is not None
-                    and TAG_ENTER in (tags or [])
-                    and body.strip()
-                    and not item.get("error")
-                )
-                # body 须等于本轮 generator 非空返回值之一（ENTER 行）
-                generated_bodies = [
-                    str(b) for _eid, b in (item.get("generated") or []) if str(b).strip()
-                ]
-                if ok and generated_bodies:
-                    ok = body in generated_bodies or body == generated_bodies[-1]
+                entry = None
+                if row is not None:
+                    entry = {
+                        "body": str(row["body"] or ""),
+                        "tags": str(row["tags"] or "[]"),
+                    }
+                if item.get("error"):
+                    ok = False
+                elif item.get("consumed"):
+                    # 既有消费：prepare 已判；门闩仍复核 TAG_ENTER+非空 body
+                    ok = rescript_summon_origin_consumed(entry)
+                else:
+                    generated_bodies = [
+                        str(b)
+                        for _eid, b in (item.get("generated") or [])
+                        if str(b).strip()
+                    ]
+                    ok = rescript_summon_origin_consumed(
+                        entry, expected_bodies=generated_bodies,
+                    )
                 if not ok:
                     unconsumed.append(
                         f"{item.get('decision_key')}:{item.get('target') or ''}:{origin}"

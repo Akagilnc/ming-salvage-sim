@@ -120,11 +120,15 @@ export function DecisionModal({
     }
     if (action === "midzhi") {
       // 中旨：与 follow_draft 同形——把所选 option（已选则用选中项，否则首 option）
-      // 上 §C.4 闭集键投影进 choice；空/缺按协议默认，不发明值、不回读旧拟。
+      // 上 §C.4 闭集键投影进 choice。P7：decree_text 回退 label，必须保留
+      // option 的 LLM 文案；「另旨·中旨」只作结构按钮文案（RESCRIPT_ACTIONS）。
       const opt =
         cur.options.find((o) => o.label === pick.label) ||
-        cur.options[0] ||
-        { label: "中旨", hint: "" };
+        cur.options[0];
+      if (!opt) {
+        setPick({ action, label: String(pick.label || ""), hint: String(pick.hint || "") });
+        return;
+      }
       const s = (v: unknown) => (v == null || v === "" ? undefined : String(v));
       const n = (v: unknown) => {
         if (v == null || v === "") return undefined;
@@ -133,8 +137,8 @@ export function DecisionModal({
       };
       setPick({
         action,
-        label: "另旨·中旨",
-        hint: "中旨直发",
+        label: String(opt.label),
+        hint: String(opt.hint || ""),
         action_type: s(opt.action_type) || "assignment",
         assignee_name: s(opt.assignee_name) || "",
         name: s((opt as { name?: unknown }).name) || "",

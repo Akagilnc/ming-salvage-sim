@@ -608,6 +608,15 @@ def map_rescript_option_or_choice(
         "label": label,
         "hint": str(src.get("hint") or ""),
     }
+    # §C.8 可选 provenance：payload 普通字段写 decision_key（非第二幂等真源）。
+    # midzhi 必须带既有 decision identity，供频度按 distinct identity 计数。
+    decision_key = str(src.get("decision_key") or "").strip()
+    if mode == "midzhi":
+        if not decision_key:
+            raise ValueError("midzhi 缺 decision_key（既有 decision identity）")
+        payload["decision_key"] = decision_key
+    elif decision_key:
+        payload["decision_key"] = decision_key
     if assignee_name:
         payload["assignee_id"] = assignee_name
         payload["assignee_name"] = assignee_name
@@ -1044,11 +1053,19 @@ def apply_rescript_batch(
                 continue
 
             if action == "follow_draft":
-                # 按 capability 从行 options 取全字段再 map（choice 仅存请求形）
+                # §C.4/A12/C.7：机械载荷只从 capability 命中的权威 option 映射；
+                # 禁止客户端 choice 字段 overlay（同 cap 两套 payload）。
                 by_cap = _option_by_capability(item.row)
                 cap = str(item.choice.get("draft_capability") or "").strip()
-                opt = by_cap.get(cap) or {}
-                map_src = {**opt, **item.choice, "action": "follow_draft"}
+                opt = by_cap.get(cap)
+                if not opt:
+                    raise ValueError(
+                        f"follow_draft 缺匹配 option：{item.decision_key}"
+                    )
+                map_src = dict(opt)
+                map_src["action"] = "follow_draft"
+                # provenance only；不参与机械字段 overlay
+                map_src["decision_key"] = item.decision_key
                 mapped = map_rescript_option_or_choice(
                     map_src, mode="ordinary", db=db, content=content, state=state,
                 )
@@ -1064,8 +1081,11 @@ def apply_rescript_batch(
                 continue
 
             if action == "midzhi":
+                # choice 显式字段 + 行 decision_key 身份（§C.7/C.8）
+                midzhi_src = dict(item.choice)
+                midzhi_src["decision_key"] = item.decision_key
                 mapped = map_rescript_option_or_choice(
-                    item.choice, mode="midzhi", db=db, content=content, state=state,
+                    midzhi_src, mode="midzhi", db=db, content=content, state=state,
                 )
                 created = _create_from_mapped(
                     db, state, content, mapped, status="proposed", mode="midzhi",

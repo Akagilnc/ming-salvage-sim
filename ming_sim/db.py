@@ -15536,9 +15536,9 @@ class GameDB:
                     """,
                     (int(dossier_id), current_turn),
                 )
-                # Predeclared midzhi already took stigma + party reactions on
-                # rejection; force only adds authority (parties_already_applied).
-                # Ordinary force adds rescript stigma and both cost legs here.
+                # #657 §C.8：中旨当下不向派系扇出、不猜受影响派系（正式离心归 M12）。
+                # 预声明 midzhi 打回只落 stigma；强颁只追加皇威。
+                # Ordinary force 仍走 stigma + authority + typed parties。
                 if not predeclared_midzhi:
                     self._append_midzhi_stigma(
                         dossier_id, decision="force_promulgated", turn=state.turn,
@@ -16975,18 +16975,15 @@ class GameDB:
                      dossier_id),
                 )
                 dossier = self.get_decree_dossier(dossier_id)
-                # ADR 0055/0056: midzhi attempt lands typed party reactions even
-                # on reject; authority only when actually promulgated/forced.
-                # #614: 批红收回/留中不追加强颁账——反应已在打回落、幂等不双记。
-                if dossier and dossier.get("mode") == "midzhi":
+                # #657 §C.8 later-wins：中旨当下不写派系/阶级 satisfaction 扇出
+                # （不猜受影响派系；正式离心归 M12）。affected_parties_json 仍落库
+                # 供后续 M12。顺颁仍可记皇威；打回仅 stigma（见 apply_dossier_promulgation）。
+                if dossier and dossier.get("mode") == "midzhi" and decision == "promulgated":
                     self._apply_override_costs(
                         state, dossier_id,
-                        include_authority=(decision == "promulgated"),
-                        include_parties=True,
-                        stigma_reason=(
-                            "预先中旨直发" if decision == "promulgated"
-                            else "中旨被打回"
-                        ),
+                        include_authority=True,
+                        include_parties=False,
+                        stigma_reason="预先中旨直发",
                         commit=False,
                     )
             # Consumption belongs to the same atomic unit as effect application;

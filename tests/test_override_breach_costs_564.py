@@ -54,9 +54,10 @@ def test_force_land_survey_charges_three_costs_without_eunuch_reaction(game):
 
 
 def test_signed_reactions_use_typed_direction_not_narrative_words(game):
+    """ordinary 强颁仍按 typed direction 落反应（叙事词不参与）。"""
     db, state, _ = game
-    dossier_id = _dossier(db, state, mode="midzhi")
-    verdict = _verdict(dossier_id, decision="promulgated")
+    dossier_id = _dossier(db, state, mode="ordinary")
+    verdict = _verdict(dossier_id, decision="rejected")
     verdict["reason"] = "东林震怒，士绅欣然"
     verdict["affected_parties"] = [
         {"kind": "faction", "key": "东林", "direction": "positive", "intensity": "weak"},
@@ -65,12 +66,13 @@ def test_signed_reactions_use_typed_direction_not_narrative_words(game):
     before_faction = _sat(db, "factions", "东林")
     before_class = _sat(db, "classes", "士绅")
     db.apply_dossier_verdicts(state, [verdict])
+    db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
     assert _sat(db, "factions", "东林") == min(100, before_faction + 4)
     assert _sat(db, "classes", "士绅") == max(0, before_class - 8)
 
 
-def test_midzhi_rejection_charges_only_parties_and_stigma_then_force_only_authority(game):
-    """ADR 0055/0056: 中旨打回落反应无皇威；强颁只追加皇威（反应幂等）。"""
+def test_midzhi_rejection_no_party_fanout_then_force_only_authority(game):
+    """#657 §C.8：中旨打回不撞派；强颁只追加皇威。affected_parties 仅落库。"""
     db, state, _ = game
     dossier_id = _dossier(db, state, mode="midzhi")
     authority = state.metrics["皇威"]
@@ -78,19 +80,23 @@ def test_midzhi_rejection_charges_only_parties_and_stigma_then_force_only_author
     before_class = _sat(db, "classes", "士绅")
     db.apply_dossier_verdicts(state, [_verdict(dossier_id)])
     assert state.metrics["皇威"] == authority
-    assert _sat(db, "factions", "东林") == max(0, before_faction - 4)
-    assert _sat(db, "classes", "士绅") == max(0, before_class - 8)
-    assert {x["cost_kind"] for x in _cost_events(db, dossier_id)} == {"satisfaction"}
-    after_reject_faction = _sat(db, "factions", "东林")
-    after_reject_class = _sat(db, "classes", "士绅")
+    assert _sat(db, "factions", "东林") == before_faction
+    assert _sat(db, "classes", "士绅") == before_class
+    assert [x for x in _cost_events(db, dossier_id) if x["cost_kind"] == "satisfaction"] == []
+    # schema 仍落 affected_parties_json（供 M12），但不写 satisfaction
+    stored = db.conn.execute(
+        "SELECT affected_parties_json FROM decree_dossier_decisions "
+        "WHERE dossier_id=? ORDER BY id DESC LIMIT 1",
+        (dossier_id,),
+    ).fetchone()
+    assert stored is not None
+    assert json.loads(str(stored["affected_parties_json"] or "[]"))
     db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
     assert state.metrics["皇威"] == max(0, authority - 5)
-    assert _sat(db, "factions", "东林") == after_reject_faction
-    assert _sat(db, "classes", "士绅") == after_reject_class
+    assert _sat(db, "factions", "东林") == before_faction
+    assert _sat(db, "classes", "士绅") == before_class
     assert {(x["cost_kind"], x["target_kind"], x["target_id"]) for x in _cost_events(db, dossier_id)} == {
         ("authority", "metric", "皇威"),
-        ("satisfaction", "class", "士绅"),
-        ("satisfaction", "faction", "东林"),
     }
 
 
@@ -108,14 +114,15 @@ def test_ordinary_rejection_has_zero_reaction_and_authority(game):
     assert _cost_events(db, dossier_id) == []
 
 
-def test_midzhi_rejudgment_changed_party_list_has_group_level_idempotency(game):
-    """中旨打回已落反应；留中重判不追加第二笔 override 反应。"""
+def test_midzhi_rejudgment_never_applies_party_satisfaction(game):
+    """#657 §C.8：中旨打回/重判都不写派系 satisfaction；名单变更亦不扇出。"""
     db, state, _ = game
     dossier_id = _dossier(db, state, mode="midzhi")
     first = _verdict(dossier_id)
     db.apply_dossier_verdicts(state, [first])
     before_new_party = _sat(db, "classes", "农民")
-    assert len([row for row in _cost_events(db, dossier_id) if row["cost_kind"] == "satisfaction"]) == 2
+    before_faction = _sat(db, "factions", "东林")
+    assert [row for row in _cost_events(db, dossier_id) if row["cost_kind"] == "satisfaction"] == []
     db.record_dossier_decision(dossier_id, "hold")
     state.turn += 1
     db.conn.execute("UPDATE game_state SET turn=? WHERE id=1", (state.turn,))
@@ -127,25 +134,29 @@ def test_midzhi_rejudgment_changed_party_list_has_group_level_idempotency(game):
     db.apply_dossier_verdicts(state, [changed])
 
     assert _sat(db, "classes", "农民") == before_new_party
-    assert len([row for row in _cost_events(db, dossier_id) if row["cost_kind"] == "satisfaction"]) == 2
+    assert _sat(db, "factions", "东林") == before_faction
+    assert [row for row in _cost_events(db, dossier_id) if row["cost_kind"] == "satisfaction"] == []
 
 
 def test_costs_are_idempotent_and_survive_restore(game):
+    """ordinary 强颁代价落库后 restore 仍在；同案不双记。"""
     db, state, content = game
-    dossier_id = _dossier(db, state, mode="midzhi")
+    dossier_id = _dossier(db, state, mode="ordinary")
     verdict = _verdict(dossier_id)
     db.apply_dossier_verdicts(state, [verdict])
-    db.record_dossier_decision(dossier_id, "hold")
-    state.turn += 1
-    db.conn.execute("UPDATE game_state SET turn=? WHERE id=1", (state.turn,))
-    db.apply_dossier_verdicts(state, [verdict])
-    assert len(_cost_events(db, dossier_id)) == 2
+    db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
+    first_count = len(_cost_events(db, dossier_id))
+    assert first_count >= 2  # authority + satisfaction
+    # 再 force 应被状态闸拒，流水不膨胀
+    with pytest.raises(ValueError):
+        db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
+    assert len(_cost_events(db, dossier_id)) == first_count
     path = db.path
     db.close()
     from ming_sim.db import GameDB
     restored = GameDB(path, content)
     try:
-        assert len(_cost_events(restored, dossier_id)) == 2
+        assert len(_cost_events(restored, dossier_id)) == first_count
     finally:
         restored.close()
 
@@ -509,10 +520,10 @@ def test_breach_charges_authority_ministers_and_related_factions_once(game):
 def test_chosen_rescript_actions_settle_via_promulgation_path(
     game, monkeypatch, decision, expected_status, expect_override_authority,
 ):
-    """三路对照：中旨打回有反应无皇威；收回/留中不追加；强颁只加皇威。
+    """三路对照：#657 §C.8 中旨打回零派系扇出；收回/留中不追加；强颁只加皇威。
 
     Player disposition rows settle through apply_dossier_promulgation only.
-    #614 零代价验的是批红三选不再追加强颁账，不是废掉中旨尝试污名/反应。
+    #614 零代价验的是批红三选不再追加强颁账。
     """
     from ming_sim.decree import _chosen_rescript_actions, settle_with_delta
 
@@ -522,12 +533,10 @@ def test_chosen_rescript_actions_settle_via_promulgation_path(
     before_faction = _sat(db, "factions", "东林")
     before_class = _sat(db, "classes", "士绅")
     db.apply_dossier_verdicts(state, [_verdict(dossier_id)])
-    after_reject_faction = _sat(db, "factions", "东林")
-    after_reject_class = _sat(db, "classes", "士绅")
-    assert after_reject_faction == max(0, before_faction - 4)
-    assert after_reject_class == max(0, before_class - 8)
+    assert _sat(db, "factions", "东林") == before_faction
+    assert _sat(db, "classes", "士绅") == before_class
     assert state.metrics["皇威"] == before_auth
-    assert {x["cost_kind"] for x in _cost_events(db, dossier_id)} == {"satisfaction"}
+    assert [x for x in _cost_events(db, dossier_id) if x["cost_kind"] == "satisfaction"] == []
     settle_turn = state.turn
 
     # 现行 rendered 契约：服务端 options 带 dossier_id/dossier_decision + hint
@@ -566,9 +575,9 @@ def test_chosen_rescript_actions_settle_via_promulgation_path(
 
     row = db.get_decree_dossier(dossier_id)
     assert row["status"] == expected_status
-    # 打回已落反应；批红选择不得再动派系/阶级。
-    assert _sat(db, "factions", "东林") == after_reject_faction
-    assert _sat(db, "classes", "士绅") == after_reject_class
+    # §C.8：中旨全程不写派系/阶级 satisfaction
+    assert _sat(db, "factions", "东林") == before_faction
+    assert _sat(db, "classes", "士绅") == before_class
     authority_events = [
         x for x in _cost_events(db, dossier_id)
         if x["cost_kind"] == "authority"
@@ -577,18 +586,13 @@ def test_chosen_rescript_actions_settle_via_promulgation_path(
         x for x in _cost_events(db, dossier_id)
         if x["cost_kind"] == "satisfaction"
     ]
-    assert {(x["target_kind"], x["target_id"], x["delta"], x["cost_identity"])
-            for x in sat_events} == {
-        ("class", "士绅", -8, "override"),
-        ("faction", "东林", -4, "override"),
-    }
+    assert sat_events == []
     if expect_override_authority:
-        # 强颁只追加 override 皇威；反应已在打回落、流水不双记。
         assert {(x["cost_identity"], x["delta"]) for x in authority_events} == {
             ("override", -5),
         }
     else:
-        # 收回 / 留中：不追加 override 皇威，也不追加第二笔反应
+        # 收回 / 留中：不追加 override 皇威
         assert authority_events == []
     if decision == "hold":
         assert row["rescript_pending"] is False
