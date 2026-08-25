@@ -1193,12 +1193,19 @@ def clear_return_revise_choice_anchors(
         "AND choice_json IS NOT NULL AND TRIM(choice_json) NOT IN ('', '{}')"
     ).fetchall()
     for r in rows:
+        raw = r["choice_json"] or "{}"
         try:
-            choice = json.loads(r["choice_json"] or "{}")
-        except Exception:
-            continue
+            choice = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"return_revise 清锚 choice_json 损坏："
+                f"turn={r['turn']} idx={r['idx']}"
+            ) from exc
         if not isinstance(choice, dict):
-            continue
+            raise ValueError(
+                f"return_revise 清锚 choice 非 object："
+                f"turn={r['turn']} idx={r['idx']} type={type(choice).__name__}"
+            )
         row = {
             "status": r["status"],
             "revision_round": r["revision_round"],
