@@ -3413,19 +3413,10 @@ class GameSession:
         from ming_sim.applier import atomic
 
         if not phase1_state.get("ready_replay"):
-            # ③ 持 write_gate：generator 失败 scaffold → failed（供 CAS 重入）；成功则 persist。
+            # ③ 持 write_gate：成功则 persist；失败状态统一在门闩后唯一写点落 failed。
             with atomic(self.db):
                 for item in join_state.get("joined") or []:
                     if item.get("error"):
-                        ctid_err = int(item.get("chat_turn_id") or 0)
-                        if ctid_err > 0:
-                            # 无问话 generating → failed；重入走 ensure CAS failed→generating。
-                            self.db.conn.execute(
-                                "UPDATE chat_turns SET status='failed' "
-                                "WHERE id=? AND status='generating' "
-                                "AND user_message_id IS NULL",
-                                (ctid_err,),
-                            )
                         continue
                     generated = item.get("generated") or []
                     if generated:
@@ -3465,11 +3456,11 @@ class GameSession:
                         f"{item.get('decision_key')}:{item.get('target') or ''}:{origin}"
                     )
             if unconsumed:
-                # 与 generator 失败同形：门闩未消费时 generating 空问话 → failed，供 CAS 重入。
-                # 否则 HTTP 过月 barrier 会永久等 generating 票（#657 Spec4 重试）。
+                # 唯一失败写点：generator error 与门闩未消费同形
+                # generating 空问话 → failed，供 CAS 重入（#657 Spec4 重试）。
                 with atomic(self.db):
                     for item in join_state.get("joined") or []:
-                        if item.get("error") or item.get("consumed"):
+                        if item.get("consumed"):
                             continue
                         ctid_fail = int(item.get("chat_turn_id") or 0)
                         if ctid_fail > 0:
