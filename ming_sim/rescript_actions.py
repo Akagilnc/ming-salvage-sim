@@ -70,6 +70,42 @@ def _stable_json(obj: object) -> str:
     return json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
+def project_preferred_hitl_choice(decision: Mapping[str, object]) -> Dict[str, object]:
+    """CLI/probe 首选项投影唯一真源。
+
+    - 急务 ``rescript_draft``：首 option → ``follow_draft`` + ``draft_capability``
+    - 普通 decision：首 option 原样（补 decision_key）
+    """
+    options = decision.get("options") or []
+    first = options[0] if options else {}
+    if not isinstance(first, dict):
+        first = {"label": str(first or "")}
+    item = dict(first)
+    dk = str(decision.get("decision_key") or "").strip()
+    if not dk:
+        kind = str(decision.get("kind") or "decision").strip() or "decision"
+        turn = decision.get("source_turn", decision.get("turn"))
+        idx = decision.get("idx")
+        if turn is not None and idx is not None:
+            dk = f"{kind}:{int(turn)}:{int(idx)}"
+    if dk:
+        item.setdefault("decision_key", dk)
+    kind = str(decision.get("kind") or "").strip()
+    if kind == "rescript_draft":
+        item["action"] = "follow_draft"
+        cap = str(item.get("draft_capability") or "").strip()
+        if not cap:
+            try:
+                cap = derive_draft_capability(item)
+            except Exception:
+                cap = ""
+        if cap:
+            item["draft_capability"] = cap
+        if not str(item.get("label") or "").strip():
+            item["label"] = "依拟"
+    return item
+
+
 def canonical_choice(raw: object) -> Dict[str, object]:
     """确定性规范化 choice：键序固定、缺省填协议默认、decision_key/action/capability 必在。"""
     if not isinstance(raw, dict):
@@ -326,12 +362,16 @@ def validate_all(
 
         # 急务缺行 / 有行但 action 缺或空 → 统一机械 hold（服务端单真源）
         if kind == "rescript_draft" and default_hold_missing and (req is None or not action):
-            hold_choice = canonical_choice({
+            hold_raw: Dict[str, object] = {
                 "decision_key": key,
                 "action": "hold",
                 "label": "留中",
                 "hint": "",
-            })
+            }
+            # 默认 hold 仍保留朱笔 note（与显式 hold 钮同形）
+            if isinstance(req, dict) and req.get("note") is not None:
+                hold_raw["note"] = req.get("note")
+            hold_choice = canonical_choice(hold_raw)
             batch.default_hold_keys.append(key)
             batch.items.append(ValidatedItem(
                 decision_key=key,
@@ -751,7 +791,13 @@ def map_rescript_option_or_choice(
         if appoint_action not in {"任命", "罢免"}:
             raise ValueError("appoint_action 须为任命或罢免")
         office = str(src.get("office") or "").strip()
-        name = str(src.get("name") or target_id or "").strip()
+        name = str(src.get("name") or "").strip()
+        # 单一边界：name 与 target_id 皆非空且不一致 → 整批拒（禁静默择一改写）
+        if name and target_id and name != target_id:
+            raise ValueError(
+                f"appointment/dismiss name 与 target_id 冲突：{name!r} vs {target_id!r}"
+            )
+        name = name or target_id
         if not name:
             raise ValueError("appointment 缺 name/target")
         if appoint_action == "任命" and not office:
@@ -1126,17 +1172,43 @@ def apply_rescript_batch(
 
 def clear_return_revise_choice_anchors(
     db: Any,
-    applied_revise_keys: Sequence[str],
+    applied_revise_keys: Optional[Sequence[str]] = None,
 ) -> None:
-    """phase2 全程成功后：对本批已应用 return_revise 行清空 choice_json。
+    """清已应用 return_revise 行 choice 锚（唯一清锚动作；无 consumed_epoch）。
 
-    唯一清锚动作；无 consumed_epoch。五动作 decided 行保留 choice_json。
+    - 传 keys：只清本批键（兼容旧调用）
+    - keys is None：按行事实扫描全部已应用 revise 锚（settle 终态单缝）
+    须在 settle atomic 内、next_period 前调用，与回合推进同生共死。
     """
-    for key in applied_revise_keys:
-        kind, turn, idx = _parse_decision_key(key)
-        db.conn.execute(
-            "UPDATE pending_decisions SET choice_json = '{}' "
-            "WHERE turn = ? AND idx = ? AND kind = ? AND status = 'pending'",
-            (turn, idx, kind),
-        )
-    # 调用方持锁窗内决定是否 commit；此处不强制 commit 以融入 ③ 事务
+    if applied_revise_keys is not None:
+        for key in applied_revise_keys:
+            kind, turn, idx = _parse_decision_key(key)
+            db.conn.execute(
+                "UPDATE pending_decisions SET choice_json = '{}' "
+                "WHERE turn = ? AND idx = ? AND kind = ? AND status = 'pending'",
+                (turn, idx, kind),
+            )
+        return
+    rows = db.conn.execute(
+        "SELECT turn, idx, kind, status, choice_json, revision_round "
+        "FROM pending_decisions "
+        "WHERE status = 'pending' AND kind = 'rescript_draft' "
+        "AND choice_json IS NOT NULL AND TRIM(choice_json) NOT IN ('', '{}')"
+    ).fetchall()
+    for r in rows:
+        try:
+            choice = json.loads(r["choice_json"] or "{}")
+        except Exception:
+            continue
+        if not isinstance(choice, dict):
+            continue
+        row = {
+            "status": r["status"],
+            "revision_round": r["revision_round"],
+        }
+        if _is_applied_revise_anchor(row, choice):
+            db.conn.execute(
+                "UPDATE pending_decisions SET choice_json = '{}' "
+                "WHERE turn = ? AND idx = ? AND kind = ? AND status = 'pending'",
+                (int(r["turn"]), int(r["idx"]), str(r["kind"])),
+            )

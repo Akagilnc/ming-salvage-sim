@@ -16,6 +16,24 @@ const RESCRIPT_ACTIONS: { action: RescriptDeskAction; label: string; hint: strin
   { action: "summon", label: "召见", hint: "当回合入召对" },
 ];
 
+/** 票拟 option → follow_draft choice 字段投影（按钮点选与六动作依拟共用）。 */
+function projectFollowDraftFromOption(option: PendingDecision["options"][number]): DecisionChoice {
+  const s = (v: unknown) => (v == null || v === "" ? undefined : String(v));
+  return {
+    action: "follow_draft",
+    label: String(option.label),
+    hint: String(option.hint || ""),
+    draft_capability: String(option.draft_capability || ""),
+    action_type: s(option.action_type),
+    assignee_name: s(option.assignee_name),
+    target_kind: s(option.target_kind),
+    target_id: s(option.target_id),
+    locality_scope: s(option.locality_scope),
+    region_id: s(option.region_id),
+    transaction_category: s(option.transaction_category),
+  };
+}
+
 function isRescriptDraft(d: PendingDecision | undefined): boolean {
   return String(d?.kind || "") === "rescript_draft";
 }
@@ -89,21 +107,7 @@ export function DecisionModal({
         setPick({ action, label: "依拟" });
         return;
       }
-      setPick({
-        action,
-        label: String(opt.label),
-        hint: String(opt.hint || ""),
-        draft_capability: String(opt.draft_capability || ""),
-        action_type: opt.action_type ? String(opt.action_type) : undefined,
-        assignee_name: opt.assignee_name ? String(opt.assignee_name) : undefined,
-        target_kind: opt.target_kind ? String(opt.target_kind) : undefined,
-        target_id: opt.target_id ? String(opt.target_id) : undefined,
-        locality_scope: opt.locality_scope ? String(opt.locality_scope) : undefined,
-        region_id: opt.region_id ? String(opt.region_id) : undefined,
-        transaction_category: opt.transaction_category
-          ? String(opt.transaction_category)
-          : undefined,
-      });
+      setPick(projectFollowDraftFromOption(opt));
       return;
     }
     if (action === "hold") {
@@ -300,21 +304,7 @@ export function DecisionModal({
                       type="button"
                       className={"decision-option" + (pick.label === option.label && pick.action === "follow_draft" ? " is-picked" : "")}
                       onClick={() => {
-                        setPick({
-                          action: "follow_draft",
-                          label: option.label,
-                          hint: option.hint || "",
-                          draft_capability: String(option.draft_capability || ""),
-                          action_type: option.action_type ? String(option.action_type) : undefined,
-                          assignee_name: option.assignee_name ? String(option.assignee_name) : undefined,
-                          target_kind: option.target_kind ? String(option.target_kind) : undefined,
-                          target_id: option.target_id ? String(option.target_id) : undefined,
-                          locality_scope: option.locality_scope ? String(option.locality_scope) : undefined,
-                          region_id: option.region_id ? String(option.region_id) : undefined,
-                          transaction_category: option.transaction_category
-                            ? String(option.transaction_category)
-                            : undefined,
-                        });
+                        setPick(projectFollowDraftFromOption(option));
                       }}
                     >
                       <span className="decision-option-label">拟批：{option.label}</span>

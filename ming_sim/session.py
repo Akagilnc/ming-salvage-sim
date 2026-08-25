@@ -2973,8 +2973,11 @@ class GameSession:
         if self.state.turn_phase == TurnPhase.AWAITING_DECISION.value:
             # HITL 暂停期重发 issue：幂等返回已存决策点，不二跑 simulator——二跑会覆盖
             # pending_decisions，或第二次输出无决策块时绕过亲裁直接结算（cmr S4 r3 F3）。
+            # #657：返回合并 desk（急务 backlog ∪ 本月 decision），与 pending_decisions 同缝。
             return ResolveResult(
-                awaiting=True, decisions=self.db.list_pending_decisions(self.state.turn))
+                awaiting=True,
+                decisions=self.db.list_rescript_desk(int(self.state.turn)),
+            )
         # ADR 0008 S7（决定 3）：settling 态崩溃恢复分流。settling 只意味着「前半段已完成」，
         # 不意味着后半段就绪——查 resolve_context 判别：
         #   有 ready context（extractor 已产出并 persist）→ 直入 apply，不重跑贵的 simulator/
@@ -3408,8 +3411,10 @@ class GameSession:
         on_event=None,
         cheat_directive: str = "",
     ) -> str:
-        """#657 ③ 短写（调用方已持 write_gate）：persist + 门闩 + phase2 + 清 revise 锚。"""
-        from ming_sim import rescript_actions as ra
+        """#657 ③ 短写（调用方已持 write_gate）：persist + 门闩 + phase2。
+
+        return_revise 清锚在 settle_with_delta 单一终态完成（与 next_period 同 atomic）。
+        """
         from ming_sim.applier import atomic
 
         if not phase1_state.get("ready_replay"):
@@ -3473,9 +3478,10 @@ class GameSession:
                 raise ValueError(
                     "召见尚未消费，不得推进 phase2：" + "; ".join(unconsumed)
                 )
-            # 消费成功：空问话 scaffold → status=consumed（非在飞终态唯一写点）
+            # 消费成功 / 已消费短路：空问话 scaffold → status=consumed
+            # （含 retry 时 origin 已 consumed 但 scaffold 仍 generating 的可恢复终态）
             for item in join_state.get("joined") or []:
-                if item.get("error") or item.get("consumed"):
+                if item.get("error"):
                     continue
                 ctid = int(item.get("chat_turn_id") or 0)
                 if ctid > 0:
@@ -3491,11 +3497,7 @@ class GameSession:
             on_event=on_event, content=self.content, registry=self.registry,
             cheat_directive=cheat_directive,
         )
-        # phase2 成功后清 return_revise choice 锚
-        revise_keys = list(phase1_state.get("revise_keys") or [])
-        if revise_keys:
-            ra.clear_return_revise_choice_anchors(self.db, revise_keys)
-            self.db.conn.commit()
+        # return_revise 清锚已纳入 settle_with_delta 单一终态（与 next_period 同 atomic）
 
         self.last_report = report
         self.state.turn_phase = TurnPhase.ISSUED.value
