@@ -155,11 +155,31 @@
   "fresh_trace": {
     "path": "docs/evidence/issue-642-acceptance-trace.jsonl",
     "records": 3,
-    "tags": [
-      "issue-642-anchor-seed",
-      "issue-642-anchor-yang",
-      "issue-642-anchor-coda"
+    "observed_tags": [
+      "other",
+      "other",
+      "other"
     ],
-    "note": "CLI jsonl moved from MING_SIM_TRACE_PATH=/tmp/issue-642-acceptance-trace.jsonl after green gate"
+    "observed_seq": [
+      1,
+      2,
+      3
+    ],
+    "observed_resp_chars": [
+      339,
+      153,
+      75
+    ],
+    "errors": [
+      null,
+      null,
+      null
+    ],
+    "note": "CLI/agno path did not propagate script tag= issue-642-anchor-* into jsonl; all three records have typed tag=\"other\". Anchor identity is by call order matching samples[0].anchors seed→yang→coda and resp_chars 339/153/75.",
+    "anchor_order_by_seq": [
+      "seed",
+      "yang",
+      "coda"
+    ]
   }
 }
