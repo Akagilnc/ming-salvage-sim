@@ -578,7 +578,6 @@ def test_internal_extractor_context_has_province_population_tsv(game):
     assert rows["population"] == FARMER_SHAANXI
     assert rows["population_unit"] == POPULATION_UNIT_PERSONS
     other = build_extractor_shared_context(
-        db, state, "", "", module="issues",
-        transit_semantics=[],
+        db, state, "", "", module="issues"
     )
     assert "class_population_balances" not in other

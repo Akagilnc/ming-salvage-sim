@@ -277,8 +277,7 @@ def test_issues_context_exposes_recon_for_soft_discount(game):
         {"dossier_id": gid, "arrived_amount": 16},
     ])
     ctx = build_extractor_shared_context(
-        db, state, "", "", module="issues",
-        transit_semantics=[],
+        db, state, "", "", module="issues"
     )
     assert "grant_reconciliations" in ctx
     hit = next(r for r in ctx["grant_reconciliations"] if r["dossier_id"] == gid)

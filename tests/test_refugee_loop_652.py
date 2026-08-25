@@ -18,8 +18,8 @@ from ming_sim.constants import (
 from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS, grant_arrival_bounds
 from ming_sim.decree import settle_with_delta
 from ming_sim.issues import apply_score_extraction
-from ming_sim.session import GameSession
 from ming_sim.simulation import EXTRACTION_MODULES, build_simulator_payload
+from tests.settlement_seam_helpers import canned_full_settlement, make_light_session
 
 FARMER_SHAANXI = 6000000
 DISPLACED_SHAANXI = 150000
@@ -241,28 +241,19 @@ def test_recovery_without_paid_evidence_produces_nothing(game):
 
 # ── 刀③ 唯一判官链 + 成色序（真实月结全链）────────────────────────────────
 
-
-def _session(db, state, content):
-    session = GameSession.__new__(GameSession)
-    session.db = db
-    session.state = state
-    session.content = content
-    session.registry = None
-    session.llm_config = None
-    session.agno_db = None
-    session.deaths_this_turn = []
-    session.debuts_this_turn = []
-    session.last_decree = ""
-    session.last_report = ""
-    session._decree_draft_fingerprint = ()
-    session._scene_registry = None
-    session._beat_generator = None
-    session.auto_save = lambda *a, **k: None
-    return session
+_NOTE_BY = {
+    "fulfilled": "赈银尽数到位，流民就抚",
+    "degraded": "赈银半途折损，仅部分就抚",
+    "failed": "押解尽失，赈务无成",
+    "transformed": "银两被挪作他用，名实已乖",
+}
+_OUTCOME_FACTOR = {
+    "fulfilled": 1.0, "degraded": 0.5, "failed": 0.0, "transformed": 0.0,
+}
 
 
 def _in_transit_recovery_grant(db, state, *, amount=40, region_id="shaanxi", tag="赈"):
-    """真实 recovery producer：in_transit 赈灾 → executing + 实付，不经 immediate 终局。"""
+    """真实 recovery producer：in_transit 赈灾 → executing + 实付。"""
     state.metrics["内库"] = max(int(state.metrics.get("内库") or 0), amount + 50)
     dossier_id = db.create_decree_dossier(
         state,
@@ -306,84 +297,34 @@ def _insert_shaanxi_disaster(db, state):
     )
 
 
-def _canned_judge_month(
-    monkeypatch, *,
-    outcome: str | None,
-    dossier_id: int,
-    sim_calls: list,
-    extract_calls: list,
-    modules_seen: list,
-):
-    """可控 LLM seam：保留真实编排/落库核；只罐装外层 LLM 返回。"""
-    import ming_sim.decree as decree_mod
-    import ming_sim.memories as memories
-
-    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
-
+def _canned_judge(monkeypatch, *, outcome, dossier_id, sim_calls, extract_calls, modules_seen):
+    """共享 canned_full_settlement + 本票 issues 抄录/噪声跳过。"""
     if outcome is None:
         narrative = (
             f"本月陕西饥情仍重，案卷 dossier:{dossier_id} 赈银尚在途中押解，"
             f"地方尚未回报办差结局。"
         )
-        issues_payload: dict = {"dossier_executions": []}
+        extract_result: dict = {"dossier_executions": []}
     else:
-        # 奏章写明结局；issues 抄录同一 outcome（非手改 execution_outcome 列）
-        note_by = {
-            "fulfilled": "赈银尽数到位，流民就抚",
-            "degraded": "赈银半途折损，仅部分就抚",
-            "failed": "押解尽失，赈务无成",
-            "transformed": "银两被挪作他用，名实已乖",
-        }
+        note = _NOTE_BY[outcome]
         narrative = (
-            f"案卷 dossier:{dossier_id} 陕西赈灾执行结果已明："
-            f"{note_by[outcome]}（outcome={outcome}）。"
+            f"案卷 dossier:{dossier_id} 陕西赈灾执行结果已明：{note}。"
             f"灾情挤占下成色如上。"
         )
-        issues_payload = {
+        extract_result = {
             "dossier_executions": [{
-                "dossier_id": dossier_id,
-                "outcome": outcome,
-                "note": note_by[outcome],
+                "dossier_id": dossier_id, "outcome": outcome, "note": note,
             }],
         }
-
-    def _sim(*a, **k):
-        payload = k.get("simulator_payload") or (a[10] if len(a) > 10 else {}) or {}
-        sim_calls.append(payload)
-        return narrative, payload
-
-    monkeypatch.setattr(decree_mod, "simulate_season_with_payload", _sim)
-    monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
-
-    def _module_agent(*a, **k):
-        module = a[2] if len(a) > 2 else k.get("module")
-        modules_seen.append(module)
-        return object()
-
-    monkeypatch.setattr(decree_mod, "create_score_extractor_module_agent", _module_agent)
-
-    def _extract(*a, **k):
-        extract_calls.append(1)
-        # 只填 issues 槽；其余模块空合法结果——不新增模块/调用种类
-        return (dict(issues_payload), "extractor-out", "extractor-in")
-
-    monkeypatch.setattr(decree_mod, "extract_scores_by_modules_with_agno", _extract)
-    monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
-    monkeypatch.setattr(decree_mod, "record_chapter_memory", lambda *a, **k: None)
-    monkeypatch.setattr(decree_mod, "create_ending_summary_agent", lambda *a, **k: None)
-    monkeypatch.setattr(decree_mod, "create_rescript_draft_agent", lambda *a, **k: object())
-    monkeypatch.setattr(memories, "run_agent_text", lambda *a, **k: '{"body":"月记","tags":[]}')
-    # 跳过无关节拍噪声（既有 571 先例）
-    monkeypatch.setattr(decree_mod, "apply_fixed_period_flows", lambda *_a, **_k: None)
-
-    class _SkipBrewLeg:
-        def prepare(self):
-            return False
-
-    monkeypatch.setattr(
-        decree_mod,
-        "_make_relation_brew_runner",
-        lambda *_a, **_k: (lambda *_a2, **_k2: _SkipBrewLeg()),
+    canned_full_settlement(
+        monkeypatch,
+        narrative=narrative,
+        simulator_calls=sim_calls,
+        extract_result=extract_result,
+        extract_calls=extract_calls,
+        modules_seen=modules_seen,
+        skip_fixed_flows=True,
+        skip_relation_brew=True,
     )
 
 
@@ -401,10 +342,19 @@ def _assert_two_axis_projection(payload):
     assert shaanxi.get("disaster_rows"), "有灾 fixture 时须含灾情占用字段"
 
 
+def _expected_recovery(amount: int, outcome: str, pool: int) -> int:
+    lo, hi = grant_arrival_bounds(amount, escorted=False)
+    silver = (lo + hi) // 2
+    return min(int(round(silver * RECOVERY_PERSONS_PER_WAN * _OUTCOME_FACTOR[outcome])), pool)
+
+
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 @pytest.mark.parametrize("outcome", ["fulfilled", "degraded", "failed", "transformed"])
 def test_judge_chain_outcome_recovery(game, monkeypatch, outcome):
-    """真实月结：唯一判官装配 + issues 抄录 + 执行格/recovery 成色（禁 UPDATE 冒充）。"""
+    """真实月结：唯一判官装配 + issues 抄录 + 执行格/recovery 成色（禁 UPDATE 冒充）。
+
+    成色序由四档绝对量直接蕴涵：fulfilled > degraded > 0；failed == transformed == 0。
+    """
     db, state, content = game
     amount = 40
     _reset_shaanxi_pool(db)
@@ -414,95 +364,37 @@ def test_judge_chain_outcome_recovery(game, monkeypatch, outcome):
     sim_calls: list = []
     extract_calls: list = []
     modules_seen: list = []
-    _canned_judge_month(
-        monkeypatch,
-        outcome=outcome,
-        dossier_id=dossier_id,
-        sim_calls=sim_calls,
-        extract_calls=extract_calls,
-        modules_seen=modules_seen,
+    _canned_judge(
+        monkeypatch, outcome=outcome, dossier_id=dossier_id,
+        sim_calls=sim_calls, extract_calls=extract_calls, modules_seen=modules_seen,
     )
 
     displaced_before = _pop(db, "流民", "shaanxi")
     farmer_before = _pop(db, "农民", "shaanxi")
     closed_turn = int(state.turn)
 
-    result = _session(db, state, content).advance_without_decree()
+    result = make_light_session(db, state, content).advance_without_decree()
     assert result is not None and result.awaiting is False
 
-    # 调用次数：simulator 恰 1；extractor 一次扇出；模块集合＝既有五模块
     assert len(sim_calls) == 1
     assert len(extract_calls) == 1
     assert set(modules_seen) == set(EXTRACTION_MODULES)
     assert len(modules_seen) == len(EXTRACTION_MODULES)
 
-    payload = sim_calls[0]
-    _assert_two_axis_projection(payload)
+    _assert_two_axis_projection(sim_calls[0]["payload"])
 
     row = db.get_decree_dossier(dossier_id)
     assert row["status"] == "closed"
     assert row["execution_outcome"] == outcome
     assert int(row["closed_turn"] or 0) == closed_turn
 
-    # 实抵＝无护行机械中位（真实月结对账）；recovery 按实抵×成色
-    lo, hi = grant_arrival_bounds(amount, escorted=False)
-    silver = (lo + hi) // 2
-    factor = {"fulfilled": 1.0, "degraded": 0.5, "failed": 0.0, "transformed": 0.0}[outcome]
-    expected = int(round(silver * RECOVERY_PERSONS_PER_WAN * factor))
-    expected = min(expected, displaced_before)
-
+    expected = _expected_recovery(amount, outcome, displaced_before)
     extraction = db.get_turn_extraction(closed_turn)
     transfers = (extraction or {}).get("extractor_output", {}).get("population_transfers") or []
-    reflux = _reflux(transfers, dossier_id=dossier_id)
-    actual = sum(int(t.get("amount") or 0) for t in reflux)
+    actual = sum(int(t.get("amount") or 0) for t in _reflux(transfers, dossier_id=dossier_id))
     assert actual == expected
     assert _pop(db, "流民", "shaanxi") == displaced_before - expected
     assert _pop(db, "农民", "shaanxi") == farmer_before + expected
-
-
-@pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_judge_chain_recovery_ordering_across_outcomes(game, monkeypatch):
-    """跨 outcome 成色序：fulfilled > degraded > 0；failed == transformed == 0。"""
-    db, state, content = game
-    amount = 40
-    amounts = {}
-    for outcome in ("fulfilled", "degraded", "failed", "transformed"):
-        _reset_shaanxi_pool(db)
-        # 清掉上轮同省灾情 issue 避免堆积（insert 新的）
-        db.conn.execute(
-            "DELETE FROM issues WHERE title=? AND region_hint=?",
-            ("陕西大饥", "shaanxi"),
-        )
-        db.conn.commit()
-        _insert_shaanxi_disaster(db, state)
-        dossier_id = _in_transit_recovery_grant(db, state, amount=amount, tag=f"ord-{outcome}")
-        sim_calls: list = []
-        extract_calls: list = []
-        modules_seen: list = []
-        _canned_judge_month(
-            monkeypatch,
-            outcome=outcome,
-            dossier_id=dossier_id,
-            sim_calls=sim_calls,
-            extract_calls=extract_calls,
-            modules_seen=modules_seen,
-        )
-        closed_turn = int(state.turn)
-        _session(db, state, content).advance_without_decree()
-        extraction = db.get_turn_extraction(closed_turn)
-        transfers = (extraction or {}).get("extractor_output", {}).get("population_transfers") or []
-        amounts[outcome] = sum(
-            int(t.get("amount") or 0)
-            for t in _reflux(transfers, dossier_id=dossier_id)
-        )
-        # 下轮：turn 已 +1；保持池复位即可
-    assert amounts["fulfilled"] > amounts["degraded"] > 0
-    assert amounts["failed"] == 0
-    assert amounts["transformed"] == 0
-    lo, hi = grant_arrival_bounds(amount, escorted=False)
-    silver = (lo + hi) // 2
-    assert amounts["fulfilled"] == int(round(silver * RECOVERY_PERSONS_PER_WAN))
-    assert amounts["degraded"] == int(round(silver * RECOVERY_PERSONS_PER_WAN * 0.5))
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
@@ -518,22 +410,18 @@ def test_no_explicit_outcome_no_judge_fill(game, monkeypatch):
     sim_calls: list = []
     extract_calls: list = []
     modules_seen: list = []
-    _canned_judge_month(
-        monkeypatch,
-        outcome=None,
-        dossier_id=dossier_id,
-        sim_calls=sim_calls,
-        extract_calls=extract_calls,
-        modules_seen=modules_seen,
+    _canned_judge(
+        monkeypatch, outcome=None, dossier_id=dossier_id,
+        sim_calls=sim_calls, extract_calls=extract_calls, modules_seen=modules_seen,
     )
 
     closed_turn = int(state.turn)
-    _session(db, state, content).advance_without_decree()
+    make_light_session(db, state, content).advance_without_decree()
 
     assert len(sim_calls) == 1
     assert len(extract_calls) == 1
     assert set(modules_seen) == set(EXTRACTION_MODULES)
-    _assert_two_axis_projection(sim_calls[0])
+    _assert_two_axis_projection(sim_calls[0]["payload"])
 
     row = db.get_decree_dossier(dossier_id)
     assert row["status"] == "executing"
