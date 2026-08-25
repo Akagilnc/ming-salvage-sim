@@ -29,6 +29,7 @@ from ming_sim.constants import (
     REGION_TEXT_FIELDS,
     SCORE_METRICS,
 )
+from ming_sim.person_archive_contract import PERSON_ACTIONS
 
 
 def loads_effect_dict(raw: object) -> Dict[str, object]:
@@ -175,15 +176,12 @@ def _new_armies_effect_has_work(raw: object) -> bool:
 def _person_effect_has_work(raw: object) -> bool:
     if not isinstance(raw, list):
         return False
-    action_fields = {
-        "任命", "罢黜", "调任", "处置", "易主", "册封", "行止", "评定", "性情",
-    }
     for item in raw:
         if not isinstance(item, dict):
             continue
         name = str(item.get("name") or item.get("人物") or "").strip()
         action = str(item.get("动作") or item.get("action") or "").strip()
-        if not name or action not in action_fields:
+        if not name or action not in PERSON_ACTIONS:
             continue
         if action == "评定":
             loyalty = item.get("loyalty")

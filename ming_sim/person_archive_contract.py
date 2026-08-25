@@ -14,6 +14,12 @@ PERSON_NON_TRANSITION_ACTIONS = ("评定", "性情")
 
 PERSON_ACTIONS = PERSON_TRANSITION_ACTIONS + PERSON_NON_TRANSITION_ACTIONS
 
+
+def format_person_actions() -> str:
+    """Project PERSON_ACTIONS for machine-consumed closed-set surfaces."""
+    return " / ".join(f"`{action}`" for action in PERSON_ACTIONS)
+
+
 PERSON_STATUSES = (
     "active",
     "candidate",

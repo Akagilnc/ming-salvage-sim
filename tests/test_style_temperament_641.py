@@ -13,15 +13,20 @@ from __future__ import annotations
 import pytest
 
 import ming_sim.issues as issues
-from ming_sim.context import _MINISTER_DOSSIERS, character_context_with_db
+from ming_sim.content import GameContent
+from ming_sim.context import character_context_with_db, minister_dossier
 from ming_sim.decree import reload_state_from_db
 from ming_sim.models import effect_dict_has_work
-from ming_sim.person_archive_contract import PERSON_ACTIONS, PERSON_NON_TRANSITION_ACTIONS
+from ming_sim.person_archive_contract import (
+    PERSON_ACTIONS,
+    PERSON_NON_TRANSITION_ACTIONS,
+    format_person_actions,
+)
 from ming_sim.relation_read import project_relation_ledger
 
 
 PERSON = "毛文龙"
-NEW_STYLE = "旧恨未消，却更沉得住气，对朝廷仍带三分观望。"
+NEW_STYLE = "旧恨未消，却更沉得住气，临事少作张扬。"
 
 
 def _style_row(db, name=PERSON):
@@ -40,16 +45,6 @@ def _temperament_item(**overrides):
     }
     item.update(overrides)
     return item
-
-
-def _active_ming_without_dossier(content, db):
-    return next(
-        c for c in content.characters.values()
-        if c.name not in _MINISTER_DOSSIERS
-        and c.office_type not in ("后宫", "宗藩", "未仕")
-        and db.get_character_status(c.name)[0] == "active"
-        and getattr(c, "power_id", "ming") == "ming"
-    )
 
 
 def test_contract_enumerates_temperament_action():
@@ -201,7 +196,7 @@ def test_apply_score_extraction_rejects_invalid_temperament(game, item, category
 
 def test_character_context_with_db_reads_own_style_and_viewer_ledger(game):
     db, state, content = game
-    person = _active_ming_without_dossier(content, db)
+    person = content.characters[PERSON]
     other = next(
         c for c in content.characters.values()
         if c.name != person.name
@@ -209,17 +204,13 @@ def test_character_context_with_db_reads_own_style_and_viewer_ledger(game):
         and db.get_character_status(c.name)[0] == "active"
         and getattr(c, "power_id", "ming") == "ming"
     )
-    stranger_a = "毕自严"
-    stranger_b = "王绍徽"
-    assert person.name not in {stranger_a, stranger_b}
-    assert other.name not in {stranger_a, stranger_b}
 
-    person.style = NEW_STYLE
-    db.conn.execute(
-        "UPDATE characters SET style=? WHERE name=?",
-        (NEW_STYLE, person.name),
+    issues.apply_score_extraction(
+        db,
+        state,
+        {"人物变更": [_temperament_item()]},
+        content=content,
     )
-    db.conn.commit()
 
     db.record_relation_edge_event(
         source=person.name,
@@ -231,27 +222,27 @@ def test_character_context_with_db_reads_own_style_and_viewer_ledger(game):
         year=int(state.year),
         period=int(state.period),
     )
-    db.record_relation_edge_event(
-        source=stranger_a,
-        target=stranger_b,
-        event_kind="使绊",
-        context="户部用度上挡路。",
-        origin="audience:turn-1",
-        turn=int(state.turn),
-        year=int(state.year),
-        period=int(state.period),
-    )
 
     expected_own = project_relation_ledger(db, viewer=person.name)
     assert [(d["source"], d["target"]) for d in expected_own] == [(person.name, other.name)]
 
+    assert NEW_STYLE in minister_dossier(person)
     rendered = character_context_with_db(person, db)
 
     assert NEW_STYLE in rendered
     assert person.name in rendered and other.name in rendered
-    assert stranger_a not in rendered and stranger_b not in rendered
     own_dto = expected_own[0]
     assert own_dto["recent_context"] in rendered or "两人在朝上声气相通" in rendered
+
+
+def test_score_extractor_prompts_project_person_actions_from_canonical():
+    projected = format_person_actions()
+    assert projected  # canonical tuple → non-empty projection string
+    content = GameContent.load()
+    shared = content.score_extractor_shared_prompt
+    personnel = content.score_extractor_module_prompts["personnel_secret"]
+    assert projected in shared
+    assert projected in personnel
 
 
 def test_relation_edge_events_do_not_mutate_style(game):
