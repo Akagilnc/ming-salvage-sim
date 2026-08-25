@@ -725,7 +725,7 @@ def test_657_s11_s15_summon_scaffold_matrix(game, monkeypatch):
     assert int(sc2["entry_id"]) == int(sc_e["entry_id"])
     assert int(sc2["chat_turn_id"]) == int(sc_e["chat_turn_id"])
 
-    # --- S12：ensure CAS 后真实 discover→start→join→persist→phase2 门闩 ---
+    # --- S12：经 resolve_rescript_decisions 唯一编排全链 ---
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)
     opt = normalize_rescript_layer_a_option({
@@ -763,9 +763,10 @@ def test_657_s11_s15_summon_scaffold_matrix(game, monkeypatch):
     sess._write_gate = threading.Lock()
     sess._write_queue = type("Q", (), {"write_gate": sess._write_gate})()
 
+    gen_body = f"{minister}S12入殿。"
+
     def _gen(inputs):
-        name = str(getattr(inputs, "person_name", "") or "") or "臣"
-        return f"{name}S12入殿。"
+        return gen_body
 
     sess._beat_generator = _gen
 
@@ -779,37 +780,29 @@ def test_657_s11_s15_summon_scaffold_matrix(game, monkeypatch):
         "decision_key": key, "action": "summon",
         "label": "召见", "summon_target": minister,
     }]
-    pre = sess.prepare_rescript_prewrite(choices)
-    with sess._write_gate:
-        p1 = sess.commit_rescript_phase1(pre)
-    joined = sess.join_rescript_summons(p1)
-    with sess._write_gate:
-        report = sess.finish_rescript_phase2(p1, joined)
+    report = sess.resolve_rescript_decisions(choices, write_gate=sess._write_gate)
     assert isinstance(report, str) and report.strip()
-    assert state.turn_phase == TurnPhase.ISSUED.value or (
-        sess.state.turn_phase == TurnPhase.ISSUED.value
-    )
+    assert sess.state.turn_phase == TurnPhase.ISSUED.value
     hit12 = next(r for r in db.list_rescript_drafts() if r["title"] == "S12全链")
     assert hit12["status"] == "decided"
     assert (hit12["choice"] or {}).get("action") == "summon"
-    # scaffold chat_turn 消费终态
-    sc12 = (p1.get("summons") or [None])[0]
-    if sc12 and not sc12.get("consumed"):
-        st12 = db.conn.execute(
-            "SELECT status FROM chat_turns WHERE id=?",
-            (int(sc12["chat_turn_id"]),),
-        ).fetchone()["status"]
-        assert st12 == "consumed"
     kind, turn_s, idx_s = key.split(":")
     origin12 = rescript_summon_origin_ref(int(turn_s), int(idx_s), 0)
     row12 = db.conn.execute(
-        "SELECT body, tags FROM story_ledger_entries WHERE origin_ref=?",
+        "SELECT body, tags, origin_chat_turn_id FROM story_ledger_entries WHERE origin_ref=?",
         (origin12,),
     ).fetchone()
     assert row12 is not None
     tags12 = __import__("json").loads(row12["tags"] or "[]")
     assert TAG_ENTER in tags12
-    assert str(row12["body"] or "").strip() == f"{minister}S12入殿。"
+    assert str(row12["body"] or "").strip()  # 非空；不锁 stub 全文
+    assert str(row12["body"] or "").strip() == gen_body  # 与本测 generator 返回值全等（非 LLM 生成物）
+    ctid12 = int(row12["origin_chat_turn_id"] or 0)
+    assert ctid12 > 0
+    st12 = db.conn.execute(
+        "SELECT status FROM chat_turns WHERE id=?", (ctid12,),
+    ).fetchone()["status"]
+    assert st12 == "consumed"
     executor.shutdown(wait=False)
 
 

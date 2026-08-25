@@ -1924,16 +1924,19 @@ def test_cli_scaffold_exit_failure_deletes_exit_ledger(game, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_657_s2_s3_lock_boundary_and_parallel_summons(game, monkeypatch):
-    """S2/S3/S7 + Class4：session 分段 API + 既有 session._write_gate。
 
-    ① 持锁 commit → ② 无锁 join（gate.acquire(False) is True 后立刻 release）
-    → ③ 再持同一 gate persist；单 target 失败不毁另一已 persist。
+
+def test_657_s2_s3_lock_boundary_and_parallel_summons(game, monkeypatch):
+    """S2/S3/S7 + Class4：经 session.resolve_rescript_decisions 唯一编排 + 既有 write_gate。
+
+    ① 持锁 commit → ② 无锁 join（gate.acquire(False)）→ ③ 再持同一 gate；
+    单 target 失败门闩响亮，另一 target 已 persist 正文保留。
     """
     import threading
     import time
     from concurrent.futures import ThreadPoolExecutor
 
+    from ming_sim.audience_night import rescript_summon_origin_ref
     from ming_sim.beat_orchestration import ChatTurnSceneRegistry
     from ming_sim.models import TurnPhase
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
@@ -1956,6 +1959,7 @@ def test_657_s2_s3_lock_boundary_and_parallel_summons(game, monkeypatch):
         if len(ministers) >= 2:
             break
     assert len(ministers) >= 2
+    ok_name, bad_name = ministers[0], ministers[1]
 
     opt = normalize_rescript_layer_a_option({
         "label": "备", "hint": "h", "action_type": "assignment",
@@ -1990,7 +1994,6 @@ def test_657_s2_s3_lock_boundary_and_parallel_summons(game, monkeypatch):
     sess.temporary_characters = {}
     executor = ThreadPoolExecutor(max_workers=4)
     sess._scene_registry = ChatTurnSceneRegistry(executor)
-    # 既有唯一 write_gate（禁第二锁）
     sess._write_gate = threading.Lock()
     sess._write_queue = type("Q", (), {"write_gate": sess._write_gate})()
 
@@ -1998,12 +2001,13 @@ def test_657_s2_s3_lock_boundary_and_parallel_summons(game, monkeypatch):
     lock = threading.Lock()
     join_saw_free = []
     in_join_phase = {"v": False}
+    gen_ok_body = f"{ok_name}入殿请安。"
 
-    def slow_gen(inputs):
-        name = str(getattr(inputs, "person_name", "") or "") or "臣"
+    def mixed_gen(inputs):
+        name = str(getattr(inputs, "person_name", "") or "") or ""
         with lock:
-            started[f"{name}-{id(inputs)}"] = time.time()
-        # 仅在 ② join 期观测：① 持锁 start 时 generator 可能已起跑，不计入
+            if name:
+                started[f"{name}-{id(inputs)}"] = time.time()
         time.sleep(0.05)
         if in_join_phase["v"]:
             free = sess._write_gate.acquire(False)
@@ -2011,71 +2015,57 @@ def test_657_s2_s3_lock_boundary_and_parallel_summons(game, monkeypatch):
                 sess._write_gate.release()
             join_saw_free.append(bool(free))
         time.sleep(0.12)
-        return f"{name}入殿请安。"
+        if name == bad_name:
+            raise RuntimeError("target B boom")
+        if name == ok_name:
+            return gen_ok_body
+        return f"{name or '臣'}入殿请安。"
 
-    sess._beat_generator = slow_gen
+    sess._beat_generator = mixed_gen
+    monkeypatch.setattr(
+        session_mod, "resolve_decisions_phase2",
+        lambda *_a, **_k: "邸报：锁窗测。",
+    )
 
-    def _phase2(_state, _db, *_a, **_k):
-        return "邸报：锁窗测。"
+    real_join = sess.join_rescript_summons
 
-    monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _phase2)
+    def _join_probe(p1):
+        in_join_phase["v"] = True
+        try:
+            return real_join(p1)
+        finally:
+            in_join_phase["v"] = False
 
-    choices = []
-    for key, name in zip(keys, ministers):
-        choices.append({
+    sess.join_rescript_summons = _join_probe  # type: ignore[method-assign]
+
+    choices = [
+        {
             "decision_key": key, "action": "summon",
             "label": "召见", "summon_target": name,
-        })
+        }
+        for key, name in zip(keys, ministers)
+    ]
 
-    # PRE 锁外
-    pre = sess.prepare_rescript_prewrite(choices)
-    # ① 持锁
-    with sess._write_gate:
-        p1 = sess.commit_rescript_phase1(pre)
-    # ② 无锁 join — 期间 gate 可被非阻塞 acquire
-    in_join_phase["v"] = True
-    joined = sess.join_rescript_summons(p1)
-    in_join_phase["v"] = False
-    assert join_saw_free, "generator 应曾在飞"
-    assert all(join_saw_free), f"join 期间 gate 应空闲: {join_saw_free}"
-
-    # S3：Futures 重叠
-    times = list(started.values())
+    raised = False
+    try:
+        sess.resolve_rescript_decisions(choices, write_gate=sess._write_gate)
+    except ValueError:
+        raised = True
+    assert raised, "单 target 失败门闩须响亮 ValueError"
+    assert join_saw_free and all(join_saw_free), f"join 期间 gate 应空闲: {join_saw_free}"
+    times = [t for k, t in started.items() if ok_name in k or bad_name in k]
     if len(times) >= 2:
         assert max(times) - min(times) < 0.12, f"Futures 未重叠: {started}"
 
-    # ③ 再持同一 gate persist + phase2
-    # 注入单 target 失败域：改 join_state 使第二个带 error，第一个已有 generated
-    if len(joined.get("joined") or []) >= 2:
-        joined["joined"][1]["error"] = "inject fail"
-        joined["joined"][1]["generated"] = []
-
-    # 先手动 persist 成功的一个，证明失败域不毁
-    ok_item = (joined.get("joined") or [None])[0]
-    if ok_item and ok_item.get("generated"):
-        sess.persist_chat_turn_scene(list(ok_item["generated"]))
-        db.conn.commit()
-        body0 = db.conn.execute(
-            "SELECT body FROM story_ledger_entries WHERE id=?",
-            (int(ok_item["entry_id"]),),
-        ).fetchone()["body"]
-        assert str(body0).strip()
-
-    # 门闩应因 unconsumed 失败；已 persist body 仍在
-    with sess._write_gate:
-        raised = False
-        try:
-            sess.finish_rescript_phase2(p1, joined)
-        except ValueError:
-            raised = True
-        assert raised, "单 target 失败门闩须响亮 ValueError"
-    if ok_item:
-        body0_after = db.conn.execute(
-            "SELECT body FROM story_ledger_entries WHERE id=?",
-            (int(ok_item["entry_id"]),),
-        ).fetchone()["body"]
-        assert str(body0_after).strip()
-
+    # 成功 target 正文仍在（S7 失败域）
+    k0 = next(k for k, n in zip(keys, ministers) if n == ok_name)
+    _kind, turn_s, idx_s = k0.split(":")
+    origin0 = rescript_summon_origin_ref(int(turn_s), int(idx_s), 0)
+    body0 = db.conn.execute(
+        "SELECT body FROM story_ledger_entries WHERE origin_ref=?",
+        (origin0,),
+    ).fetchone()
+    assert body0 is not None and str(body0["body"] or "").strip() == gen_ok_body
     executor.shutdown(wait=False)
 
 

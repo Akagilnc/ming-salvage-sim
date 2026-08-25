@@ -1293,7 +1293,7 @@ def _strategy_selection_origin_turn_id(
                 WHERE t.night_id = ?
                   AND t.minister_name = ?
                   AND t.undone_at IS NULL
-                  AND t.status NOT IN ('failed', 'undone')
+                  AND t.status NOT IN ('failed', 'undone', 'consumed')
                   AND t.minister_message_id IS NOT NULL
                   AND t.minister_message_id > 0
                   AND t.id <> ?
@@ -1310,7 +1310,7 @@ def _strategy_selection_origin_turn_id(
                 WHERE t.turn = ?
                   AND t.minister_name = ?
                   AND t.undone_at IS NULL
-                  AND t.status NOT IN ('failed', 'undone')
+                  AND t.status NOT IN ('failed', 'undone', 'consumed')
                   AND t.minister_message_id IS NOT NULL
                   AND t.minister_message_id > 0
                   AND t.id <> ?
