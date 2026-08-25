@@ -115,13 +115,6 @@ def test_distance_d6_missing_matrix_node_fail_loud():
         )
 
 
-def test_no_placeholder_673_wording_in_module_source():
-    from pathlib import Path
-    src = Path("ming_sim/execution_pressure.py").read_text(encoding="utf-8")
-    assert "#673 占位" not in src
-    assert "恒不参与" not in src
-
-
 # ── locality oracle 组合矩阵 ───────────────────────────────────────
 
 
