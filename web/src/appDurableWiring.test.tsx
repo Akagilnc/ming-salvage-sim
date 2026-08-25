@@ -654,6 +654,8 @@ const SNAP_CONSORT = "月初妃嫔";
 const SNAP_BUILDING = "月初城防";
 const SNAP_MEMORIAL = "月初奏报正文";
 const SNAP_GAZETTE = "上月邸报月初口径";
+// #671：含 markdown/空白特征的原文常量——证明 App 接线不经 strip
+const SNAP_ATTENDANT = "  奴婢启禀：\n**洪承畴**已抵京候旨。  ";
 const SNAP_CLOSED = "月初已结边饷";
 const MIDCOURSE_ISSUE = "半程军饷议题";
 const MIDCOURSE_ARMY = "半程边军";
@@ -1041,9 +1043,11 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
 
   it("gazette：核账期邸报（上月）可读且正文=状态口 previous_summary（isFaceReachable 真链）", async () => {
     // #1356 F4：App 接缝——previous_* 与 turn.reign_period_label 同给，报头不得混充当前月
+    // #671：last_attendant_message 经 App 接线可达 gazette-attendant（不经 strip；在 document 外）
     stubSettlementFetch(settlementBaseState("player", {
       previous_summary: SNAP_GAZETTE,
       previous_reign_period_label: "天启七年九月",
+      last_attendant_message: SNAP_ATTENDANT,
       turn: {
         year: 1627,
         period: 10,
@@ -1062,6 +1066,11 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     const masthead = host.querySelector(".gazette-masthead")?.textContent || "";
     expect(masthead).toContain("天启七年九月");
     expect(masthead).not.toContain("天启七年十月");
+    // #671 App 接线：递话可见且位于 .gazette-document 之外
+    const attendant = host.querySelector("[data-testid=gazette-attendant]");
+    expect(attendant).not.toBeNull();
+    expect(attendant!.textContent).toContain(SNAP_ATTENDANT);
+    expect(attendant!.closest(".gazette-document")).toBeNull();
     // 半程议题仍不泄漏；上月已结只读面可同屏
     expect(host.textContent).not.toContain(MIDCOURSE_ISSUE);
     expect(host.querySelector(".situation-closed-list")).not.toBeNull();
