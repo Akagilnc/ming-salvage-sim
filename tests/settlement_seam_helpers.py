@@ -6,7 +6,7 @@ Only replaces outer LLM factories/calls; production spine stays real.
 
 from __future__ import annotations
 
-from typing import Callable, Dict, List, Optional
+from typing import Dict, List, Optional
 
 import ming_sim.decree as decree_mod
 import ming_sim.memories as memories
@@ -45,22 +45,14 @@ def canned_full_settlement(
     modules_seen: Optional[list] = None,
     skip_fixed_flows: bool = False,
     skip_relation_brew: bool = False,
-    simulator_fn: Optional[Callable[..., Dict[str, object]]] = None,
 ) -> list:
     """Replace only external LLM seams; keep production settlement spine.
 
-    extract_result: static merged extractor payload (English keys).
-    simulator_fn(payload) -> {"narrative": str, "extract": dict}: sole decision
-    surface for payload-driven tracers. Only _sim may call it / read payload;
-    _extract shallow-copies last_product["extract"] and never re-judges.
-    When simulator_fn is set, static narrative/extract_result are ignored.
+    extract_result: canned merged extractor payload (English keys).
     """
     simulator_calls = simulator_calls if simulator_calls is not None else []
     decisions = list(decisions or [])
-    last_product: Dict[str, object] = {
-        "narrative": narrative,
-        "extract": dict(extract_result or {}),
-    }
+    canned_extract = dict(extract_result or {})
 
     monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
 
@@ -70,13 +62,7 @@ def canned_full_settlement(
             "decree_text": a[3] if len(a) > 3 else k.get("decree_text", ""),
             "payload": payload,
         })
-        if simulator_fn is not None:
-            product = simulator_fn(payload) or {}
-            text = str(product.get("narrative") or "")
-            last_product["narrative"] = text
-            last_product["extract"] = dict(product.get("extract") or {})
-        else:
-            text = narrative
+        text = narrative
         if decisions:
             blocks = []
             for i, d in enumerate(decisions):
@@ -103,8 +89,7 @@ def canned_full_settlement(
     def _extract(*a, **k):
         if extract_calls is not None:
             extract_calls.append(1)
-        # Pure copy of simulator product — no payload re-read, no second judge.
-        return (dict(last_product["extract"]), "out", "in")  # type: ignore[arg-type]
+        return (dict(canned_extract), "out", "in")
 
     monkeypatch.setattr(decree_mod, "extract_scores_by_modules_with_agno", _extract)
     monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)

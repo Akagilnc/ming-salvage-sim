@@ -373,14 +373,6 @@ def _assert_two_axis_projection(payload, *, expect_disaster: bool = False):
         assert shaanxi.get("disaster_rows"), "有灾 fixture 时须含灾情占用字段"
 
 
-def _shaanxi_disaster_rows(payload) -> list:
-    surface = payload.get("execution_two_axis") or {}
-    for prov in surface.get("provinces") or []:
-        if prov.get("region_id") == "shaanxi":
-            return list(prov.get("disaster_rows") or [])
-    return []
-
-
 def _shaanxi_pool_from_payload(payload) -> int:
     table = payload.get("displaced_pool_balances") or {}
     cols = list(table.get("cols") or [])
@@ -409,7 +401,7 @@ def test_judge_chain_outcome_recovery(game, monkeypatch, outcome):
     """无灾成色序：唯一判官装配 + issues 抄录 + recovery（禁 UPDATE 冒充）。
 
     成色序：fulfilled > degraded > 0；failed == transformed == 0。
-    有灾赈灾必折损另见 test_disaster_province_relief_must_degrade。
+    有灾赈灾必折损属 season_simulator 软判契约，本测不冒充。
     """
     db, state, content = game
     amount = 40
@@ -453,202 +445,90 @@ def test_judge_chain_outcome_recovery(game, monkeypatch, outcome):
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
-@pytest.mark.parametrize("with_disaster", [True, False])
-def test_disaster_province_relief_must_degrade(game, monkeypatch, with_disaster):
-    """真实月结：唯一 simulator_fn 读 two_axis 灾行一次判成色；extractor 只抄录。
+def test_month_settle_carries_disaster_rows_to_judge(game, monkeypatch):
+    """月结入口：有灾 + executing 赈灾时 two_axis 灾行进入唯一判官输入。
 
-    有灾 → degraded 且回流 < 无灾 fulfilled 全额；无灾 → fulfilled 全额。
+    有灾必折损是 season_simulator 软判（本测不 canned 冒充成色）。
     """
     db, state, content = game
-    amount = 40
     _reset_shaanxi_pool(db)
-    if with_disaster:
-        _insert_shaanxi_disaster(db, state)
-    dossier_id = _in_transit_recovery_grant(
-        db, state, amount=amount, tag=f"dis-{int(with_disaster)}",
-    )
-    paid_before = [
-        m for m in db.list_economy_moves_for_dossier(dossier_id)
-        if int(m.get("delta") or 0) < 0
-    ]
-    assert paid_before
+    _insert_shaanxi_disaster(db, state)
+    dossier_id = _in_transit_recovery_grant(db, state, amount=40, tag="dis-in")
 
     sim_calls: list = []
     extract_calls: list = []
     modules_seen: list = []
-    box: dict = {}
-
-    def simulator_fn(payload):
-        disasters = _shaanxi_disaster_rows(payload)
-        _assert_two_axis_projection(payload, expect_disaster=with_disaster)
-        assert bool(disasters) is with_disaster
-        if disasters:
-            outcome = "degraded"
-            note = _NOTE_BY["degraded"]
-            narrative = (
-                f"案卷 dossier:{dossier_id} 本省灾情占尽差务，"
-                f"赈务不得全额办成：{note}。"
-            )
-        else:
-            outcome = "fulfilled"
-            note = _NOTE_BY["fulfilled"]
-            narrative = (
-                f"案卷 dossier:{dossier_id} 陕西赈灾无灾挤占，"
-                f"{note}。"
-            )
-        box["outcome"] = outcome
-        return {
-            "narrative": narrative,
-            "extract": {
-                "dossier_executions": [{
-                    "dossier_id": dossier_id,
-                    "outcome": outcome,
-                    "note": note,
-                }],
-            },
-        }
-
-    canned_full_settlement(
-        monkeypatch,
-        simulator_fn=simulator_fn,
-        simulator_calls=sim_calls,
-        extract_calls=extract_calls,
-        modules_seen=modules_seen,
-        skip_fixed_flows=True,
-        skip_relation_brew=True,
+    # 成色任意——只为走完月结；不借此证「必折损」。
+    _canned_judge(
+        monkeypatch, outcome="degraded", dossier_id=dossier_id,
+        sim_calls=sim_calls, extract_calls=extract_calls, modules_seen=modules_seen,
     )
 
-    displaced_before = _pop(db, "流民", "shaanxi")
-    farmer_before = _pop(db, "农民", "shaanxi")
-    closed_turn = int(state.turn)
     result = make_light_session(db, state, content).advance_without_decree()
     assert result is not None and result.awaiting is False
-    assert len(sim_calls) == 1 and len(extract_calls) == 1
-    assert set(modules_seen) == set(EXTRACTION_MODULES)
-
-    row = db.get_decree_dossier(dossier_id)
-    assert row["status"] == "closed"
-    outcome = row["execution_outcome"]
-    assert outcome == box["outcome"]
-
-    extraction = db.get_turn_extraction(closed_turn)
-    transfers = (extraction or {}).get("extractor_output", {}).get("population_transfers") or []
-    actual = sum(int(t.get("amount") or 0) for t in _reflux(transfers, dossier_id=dossier_id))
-    full_baseline = _expected_recovery(amount, "fulfilled", displaced_before)
-    expected = _expected_recovery(amount, outcome, displaced_before)
-    assert actual == expected
-    if with_disaster:
-        assert outcome != "fulfilled"
-        assert actual < full_baseline
-    else:
-        assert outcome == "fulfilled"
-        assert actual == full_baseline
-    assert _pop(db, "流民", "shaanxi") == displaced_before - actual
-    assert _pop(db, "农民", "shaanxi") == farmer_before + actual
-    # 代价照付：实付负向流水不因成色折损而退回
-    paid_after = [
-        m for m in db.list_economy_moves_for_dossier(dossier_id)
-        if int(m.get("delta") or 0) < 0
-    ]
-    assert paid_after
+    assert len(sim_calls) == 1
+    _assert_two_axis_projection(sim_calls[0]["payload"], expect_disaster=True)
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_post_relief_bandit_growth_slows_next_month(game, monkeypatch):
-    """两月真实月结：同一 simulator_fn 月2 读下降后池决定 requested_count。
-
-    extractor 只抄录；请求/落账/实力增均低于未赈基线。
-    """
+def test_post_relief_pool_carries_into_next_month_absorption(game, monkeypatch):
+    """跨月池传导：月1 赈济减池；月2 payload 携下降后池；吸收 applier 吃该池落账。"""
     db, state, content = game
     pid = "bandit_li_zicheng"
     _reset_shaanxi_pool(db)
     pool0 = _pop(db, "流民", "shaanxi")
     strength0 = _strength(db, pid)
-    # 未赈对照：同比例请求在满池上的吸收量（缓存，不另开平行 applier）。
-    baseline_request = pool0 // 2
-    baseline_actual = min(baseline_request, pool0)
-    baseline_delta = baseline_actual // BANDIT_ABSORPTION_PERSONS_PER_STRENGTH
-    assert baseline_actual > 0 and baseline_delta > 0
-
     _recovery_grant(db, state, amount=30)
 
-    sim_calls: list = []
-    extract_calls: list = []
-    modules_seen: list = []
-    month = {"n": 0}
-    m2: dict = {}
+    sess = make_light_session(db, state, content)
 
-    def simulator_fn(payload):
-        month["n"] += 1
-        pool = _shaanxi_pool_from_payload(payload)
-        if month["n"] == 1:
-            return {
-                "narrative": "本月赈银到位，流民渐有归农气象，贼势未及大举。",
-                "extract": {},
-            }
-        # 月2：必须读到下降后的池，一次决定 requested_count（不得写死 pool0）
-        m2["pool"] = pool
-        req = max(int(pool) // 2, 0)
-        m2["request"] = req
-        extract: dict = {}
-        if req > 0:
-            extract = {
-                "bandit_absorptions": [{
-                    "region_id": "shaanxi",
-                    "power_id": pid,
-                    "requested_count": req,
-                    "origin_ref": "盘面自发",
-                }],
-            }
-        return {
-            "narrative": (
-                "陕西赈后流民池已降，饥民投附流寇之势回落，"
-                "贼股难再按旧速吸纳。"
-            ),
-            "extract": extract,
-        }
-
+    # 月1：只走回流，不吸池
+    sim_m1: list = []
     canned_full_settlement(
         monkeypatch,
-        simulator_fn=simulator_fn,
-        simulator_calls=sim_calls,
-        extract_calls=extract_calls,
-        modules_seen=modules_seen,
+        narrative="本月赈银到位，流民渐有归农气象。",
+        extract_result={},
+        simulator_calls=sim_m1,
         skip_fixed_flows=True,
         skip_relation_brew=True,
     )
-
-    sess = make_light_session(db, state, content)
-    turn1 = int(state.turn)
     r1 = sess.advance_without_decree()
     assert r1 is not None and r1.awaiting is False
     pool_after = _pop(db, "流民", "shaanxi")
     assert pool_after < pool0
-    assert _strength(db, pid) == strength0  # 月1 无吸收
+    assert _strength(db, pid) == strength0
 
+    # 月2：payload 须见下降后池；请求按赈前满池，applier 吃现池顶
+    sim_m2: list = []
     turn2 = int(state.turn)
-    assert turn2 == turn1 + 1
+    canned_full_settlement(
+        monkeypatch,
+        narrative="陕西流民池已降，饥民投附仍据现池。",
+        extract_result={
+            "bandit_absorptions": [{
+                "region_id": "shaanxi",
+                "power_id": pid,
+                "requested_count": pool0,
+                "origin_ref": "盘面自发",
+            }],
+        },
+        simulator_calls=sim_m2,
+        skip_fixed_flows=True,
+        skip_relation_brew=True,
+    )
     r2 = sess.advance_without_decree()
     assert r2 is not None and r2.awaiting is False
-    assert len(sim_calls) == 2 and len(extract_calls) == 2
-    assert month["n"] == 2
-    assert set(modules_seen) == set(EXTRACTION_MODULES)
-    assert m2["pool"] == pool_after
-    assert _shaanxi_pool_from_payload(sim_calls[1]["payload"]) == pool_after
-    assert m2["request"] < baseline_request
+    assert len(sim_m2) == 1
+    assert _shaanxi_pool_from_payload(sim_m2[0]["payload"]) == pool_after
 
     extraction = db.get_turn_extraction(turn2)
     absorptions = (extraction or {}).get("extractor_output", {}).get("bandit_absorptions") or []
     assert len(absorptions) == 1
     actual = int(absorptions[0]["actual_count"])
-    requested = int(absorptions[0]["requested_count"])
-    assert requested == m2["request"]
-    assert actual == min(requested, pool_after)
-    assert actual < baseline_actual
-    strength_delta = actual // BANDIT_ABSORPTION_PERSONS_PER_STRENGTH
-    assert strength_delta < baseline_delta
-    assert _pop(db, "流民", "shaanxi") == pool_after - actual
-    assert _strength(db, pid) == strength0 + strength_delta
+    assert actual == pool_after
+    assert actual < pool0
+    assert _pop(db, "流民", "shaanxi") == 0
+    assert _strength(db, pid) == strength0 + actual // BANDIT_ABSORPTION_PERSONS_PER_STRENGTH
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
