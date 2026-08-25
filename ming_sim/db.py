@@ -11379,6 +11379,19 @@ class GameDB:
             "DELETE FROM pending_decisions WHERE turn = ? AND kind = 'rescript_draft'",
             (int(turn),),
         )
+        self._insert_rescript_draft_rows(int(turn), drafts)
+
+    def append_rescript_drafts(self, turn: int, drafts: List[Dict[str, object]]) -> None:
+        """#657：HITL phase2 续跑追加本回合新票拟，不 DELETE 既有急务行。
+
+        保留 return_revise/decided/跨月 backlog；只在 max(idx)+1 后续插。
+        只写 conn 不 commit——与 persist_resolve_context 同事务。
+        """
+        self._insert_rescript_draft_rows(int(turn), drafts)
+
+    def _insert_rescript_draft_rows(
+        self, turn: int, drafts: List[Dict[str, object]],
+    ) -> None:
         row = self.conn.execute(
             "SELECT COALESCE(MAX(idx) + 1, 0) FROM pending_decisions WHERE turn = ?",
             (int(turn),),

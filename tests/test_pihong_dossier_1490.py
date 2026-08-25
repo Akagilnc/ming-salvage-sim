@@ -2785,3 +2785,257 @@ def test_657_summon_missing_tag_enter_blocks_phase2_then_retry(
     tags = json.loads(rows[0]["tags"] or "[]")
     assert TAG_ENTER in tags
     assert str(rows[0]["body"] or "").strip() == gen_body
+
+
+# ---------------------------------------------------------------------------
+# #657 大理寺六类：扩展既有 tracer，不另造夹具族
+# ---------------------------------------------------------------------------
+
+def test_657_backlog_only_enters_awaiting_via_merged_desk(game, monkeypatch):
+    """① resolve_directives：仅急务 backlog → AWAITING；result.decisions=合并 desk。"""
+    import ming_sim.decree as dm
+    from ming_sim.models import TurnPhase
+
+    db, state, content = game
+    # 跨月 backlog：写在 turn-1
+    prev = max(1, int(state.turn) - 1)
+    db.conn.execute(
+        "INSERT INTO pending_decisions "
+        "(turn, idx, event_id, title, context, options_json, choice_json, status, kind, "
+        " actor_name, actor_office, actor_faction) "
+        "VALUES (?, 0, 'urgent:prev:0', '旧急务', 'c', ?, '', 'pending', 'rescript_draft', "
+        " '杨嗣昌', 'o', 'f')",
+        (prev, json.dumps([_layer_a_option()], ensure_ascii=False)),
+    )
+    db.conn.commit()
+    assert db.list_rescript_desk(int(state.turn)), "precondition: backlog desk nonempty"
+
+    monkeypatch.setattr(dm, "create_season_simulator_agent", lambda *a, **k: None)
+    monkeypatch.setattr(
+        dm, "simulate_season_with_payload",
+        lambda *a, **k: ("本月无重大抉择。", k.get("simulator_payload") or {}),
+    )
+    # 禁 settle 直落（若误推进会调此）
+    monkeypatch.setattr(
+        dm, "_settle_after_narrative",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("backlog-only 不得直落 settle")),
+    )
+
+    result = dm.resolve_directives(
+        state, db, None, None, [], "诏书", content=content, registry=None,
+    )
+    assert result.awaiting is True
+    assert any(
+        str(d.get("kind")) == "rescript_draft" and d.get("title") == "旧急务"
+        for d in result.decisions
+    )
+    assert state.turn_phase == TurnPhase.AWAITING_DECISION.value
+    assert db.get_resolve_context(int(state.turn)) is not None
+
+
+def test_657_preferred_hitl_choice_urgent_follow_draft_ordinary_intact():
+    """② 共享首选项投影：急务=follow_draft+capability；普通 decision 不变。"""
+    from ming_sim.rescript_actions import project_preferred_hitl_choice
+
+    opt = _layer_a_option()
+    urgent = {
+        "kind": "rescript_draft",
+        "decision_key": "rescript_draft:1:0",
+        "title": "急",
+        "idx": 0,
+        "options": [opt, {"label": "备", "hint": "h", "draft_capability": "x"}],
+    }
+    pref = project_preferred_hitl_choice(urgent)
+    assert pref["action"] == "follow_draft"
+    assert pref["draft_capability"] == opt["draft_capability"]
+    assert pref["decision_key"] == "rescript_draft:1:0"
+    assert pref["label"] == opt["label"]
+
+    ordinary = {
+        "kind": "decision",
+        "decision_key": "decision:1:0",
+        "idx": 0,
+        "options": [
+            {"label": "甲", "hint": "h1", "dossier_id": 3, "dossier_decision": "hold"},
+            {"label": "乙", "hint": "h2"},
+        ],
+    }
+    pref2 = project_preferred_hitl_choice(ordinary)
+    assert pref2.get("action") in (None, "")
+    assert pref2["label"] == "甲"
+    assert pref2["dossier_id"] == 3
+    assert pref2["dossier_decision"] == "hold"
+    assert "follow_draft" not in str(pref2.get("action") or "")
+
+
+def test_657_phase2_preserve_backlog_and_generate_current_drafts(game, monkeypatch):
+    """③ HITL phase2：保留旧 backlog 同时并行生成本回合 drafts。"""
+    import ming_sim.decree as dm
+    from ming_sim.models import TurnPhase
+
+    db, state, content = game
+    turn = int(state.turn)
+    # 本回合既有 return_revise 行 + append 新票拟：验证 preserve 不 DELETE 既有
+    old_opt = _layer_a_option()
+    db.save_rescript_drafts(turn, [{
+        "title": "旧急务", "context": "c", "options": [old_opt],
+        "actor_name": "杨嗣昌", "actor_office": "o", "actor_faction": "f",
+    }])
+    db.conn.execute(
+        "UPDATE pending_decisions SET revision_round=1, choice_json=? "
+        "WHERE turn=? AND kind='rescript_draft' AND title='旧急务'",
+        (json.dumps({
+            "action": "return_revise", "label": "发回改票",
+            "applied_from_revision_round": 0,
+        }, ensure_ascii=False), turn),
+    )
+    db.conn.commit()
+
+    monkeypatch.setattr(
+        dm, "select_triage_actor",
+        lambda _db: {"name": "杨嗣昌", "office": "首辅", "faction": "东林"},
+    )
+    monkeypatch.setattr(dm, "create_rescript_draft_agent", lambda *a, **k: object())
+    monkeypatch.setattr(
+        dm, "build_rescript_draft_payload", lambda *a, **k: {"ok": True},
+    )
+    new_opt = _layer_a_option(label="新拟本月", hint="新")
+    monkeypatch.setattr(
+        dm, "generate_rescript_draft",
+        lambda *a, **k: [{
+            "title": "本月新急务", "context": "n", "options": [new_opt],
+        }],
+    )
+    monkeypatch.setattr(dm, "create_json_sanitizer_agent", lambda *a, **k: None)
+    monkeypatch.setattr(dm, "create_score_extractor_module_agent", lambda *a, **k: None)
+    monkeypatch.setattr(dm, "build_extractor_shared_context", lambda *a, **k: "ctx")
+
+    def _extract_with_side(*a, **k):
+        side = k.get("side_leg")
+        if callable(side):
+            side()
+        return {}, "o", "i"
+
+    monkeypatch.setattr(dm, "extract_scores_by_modules_with_agno", _extract_with_side)
+    monkeypatch.setattr(dm, "create_chapter_memory_agent", lambda *a, **k: None)
+    monkeypatch.setattr(dm, "record_chapter_memory", lambda *a, **k: None)
+    monkeypatch.setattr(dm, "_make_relation_brew_runner", lambda *a, **k: None)
+    monkeypatch.setattr(dm, "create_ending_summary_agent", lambda *a, **k: None)
+
+    db.save_resolve_context(
+        turn, "诏", "邸报正文", {"candidate_events": [], "transit_semantics": []},
+        secret_orders=[], relevant_memories=[],
+    )
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
+
+    report = dm._settle_after_narrative(
+        state, db, None, None,
+        decree_text="诏", narrative="邸报正文",
+        simulator_payload={"candidate_events": [], "transit_semantics": [], "decree_text": "诏"},
+        relevant_memories=[], secret_orders={},
+        before_turn=turn, _emit=lambda *a, **k: None,
+        content=content, registry=None,
+        preserve_rescript_drafts=True,
+    )
+    assert isinstance(report, str)
+    titles = {d["title"] for d in db.list_rescript_drafts()}
+    assert "旧急务" in titles, titles
+    assert "本月新急务" in titles, titles
+    old = next(d for d in db.list_rescript_drafts() if d["title"] == "旧急务")
+    assert int(old["revision_round"] or 0) == 1
+    # settle 终态清锚：applied revise choice 已空
+    assert not (old.get("choice") or {})
+
+
+def test_657_consumed_scaffold_finalized_on_retry(game):
+    """④ consumed origin 短路时 scaffold 仍须落 consumed 终态（禁 generating 永挂）。"""
+    from ming_sim.audience_night import (
+        TAG_ENTER,
+        prepare_rescript_summon_scaffold,
+        rescript_summon_origin_ref,
+    )
+
+    db, state, _content = game
+    origin = rescript_summon_origin_ref(int(state.turn), 0, 0)
+    first = prepare_rescript_summon_scaffold(
+        db, state, person_name="杨嗣昌", origin_ref=origin,
+    )
+    ctid = int(first["chat_turn_id"])
+    eid = int(first["entry_id"])
+    # 模拟：body 已落 + TAG_ENTER，但 scaffold 仍 generating（崩溃窗口）
+    db.conn.execute(
+        "UPDATE story_ledger_entries SET body=?, tags=? WHERE id=?",
+        ("杨嗣昌入殿。", json.dumps([TAG_ENTER, "宣入"], ensure_ascii=False), eid),
+    )
+    db.conn.execute(
+        "UPDATE chat_turns SET status='generating' WHERE id=?",
+        (ctid,),
+    )
+    db.conn.commit()
+
+    again = prepare_rescript_summon_scaffold(
+        db, state, person_name="杨嗣昌", origin_ref=origin,
+    )
+    assert again.get("consumed") is True
+    st = db.conn.execute(
+        "SELECT status FROM chat_turns WHERE id=?", (ctid,),
+    ).fetchone()
+    assert str(st["status"]) == "consumed"
+
+
+def test_657_default_hold_preserves_red_pen_note(game):
+    """⑤ 默认 hold 保留朱笔 note。"""
+    from ming_sim import rescript_actions as ra
+
+    db, state, _content = game
+    urgent, _ = _plant_urgent_desk(db, state)
+    key = urgent["decision_key"]
+    batch = ra.validate_all(
+        [urgent],
+        [{"decision_key": key, "note": "着再议。"}],
+        default_hold_missing=True,
+    )
+    assert key in batch.default_hold_keys
+    assert batch.items[0].choice.get("action") == "hold"
+    assert batch.items[0].choice.get("note") == "着再议。"
+
+
+def test_657_appointment_name_target_id_conflict_batch_reject(game):
+    """⑥ appointment/dismiss name≠target_id 在 mapper 单一边界整批拒绝。"""
+    from ming_sim import rescript_actions as ra
+
+    db, state, content = game
+    # 找两名 active 明臣
+    rows = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
+        "ORDER BY name LIMIT 2",
+    ).fetchall()
+    assert len(rows) >= 2
+    n1, n2 = str(rows[0]["name"]), str(rows[1]["name"])
+    with pytest.raises(ValueError, match="冲突|name|target_id"):
+        ra.map_rescript_option_or_choice(
+            {
+                "action_type": "appointment",
+                "appoint_action": "任命",
+                "office": "兵部尚书",
+                "name": n1,
+                "target_kind": "character",
+                "target_id": n2,
+                "label": "授官",
+            },
+            db=db, content=content, state=state,
+        )
+    with pytest.raises(ValueError, match="冲突|name|target_id"):
+        ra.map_rescript_option_or_choice(
+            {
+                "action_type": "appointment",
+                "appoint_action": "罢免",
+                "office": "",
+                "name": n1,
+                "target_kind": "character",
+                "target_id": n2,
+                "label": "罢",
+            },
+            db=db, content=content, state=state,
+        )

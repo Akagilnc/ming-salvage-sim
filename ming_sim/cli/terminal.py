@@ -911,19 +911,19 @@ def _submit_first_cli_decisions(session: GameSession, result) -> str:
     """CLI 暂无亲裁 UI：所有结算入口共用同一首选项续跑策略。
 
     #657：经 session.submit_hitl_choices 唯一编排；注入既有 `_cli_write_gate`。
+    首选项投影走 ``project_preferred_hitl_choice`` 唯一真源（急务=follow_draft+capability）。
     """
     if result is None or not result.awaiting:
         return "" if result is None else result.report
+    from ming_sim.rescript_actions import project_preferred_hitl_choice
+
     print("\n【月末重大抉择】（CLI 暂自动取首选项；交互式裁决见网页版）")
+    # result.decisions 已是合并 desk；若空则回读 session.pending_decisions
+    decisions = list(result.decisions or []) or list(session.pending_decisions())
     choices = []
-    for decision in result.decisions:
-        options = decision.get("options") or []
-        first = options[0] if options else {}
-        print(f"  · {decision.get('title')} → {first.get('label', '（无）')}")
-        item = dict(first) if isinstance(first, dict) else {"label": str(first or "")}
-        dk = str(decision.get("decision_key") or "").strip()
-        if dk:
-            item.setdefault("decision_key", dk)
+    for decision in decisions:
+        item = project_preferred_hitl_choice(decision)
+        print(f"  · {decision.get('title')} → {item.get('label', '（无）')}")
         choices.append(item)
     return session.submit_hitl_choices(choices, write_gate=_cli_write_gate(session))
 

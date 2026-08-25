@@ -2502,9 +2502,13 @@ def prepare_rescript_summon_scaffold(
     existing = _ledger_by_origin_ref(db, origin)
     if existing is not None:
         if rescript_summon_origin_consumed(existing):
+            # 已消费：同步 scaffold → consumed 终态（禁 generating 永挂 wait_in_flight）
+            ctid_done = int(existing.get("origin_chat_turn_id") or 0)
+            if ctid_done > 0 and hasattr(db, "complete_rescript_summon_scaffold_turn"):
+                db.complete_rescript_summon_scaffold_turn(ctid_done)
             return {
                 "entry_id": int(existing["id"]),
-                "chat_turn_id": int(existing.get("origin_chat_turn_id") or 0),
+                "chat_turn_id": ctid_done,
                 "night_id": int(existing["night_id"]),
                 "consumed": True,
             }
