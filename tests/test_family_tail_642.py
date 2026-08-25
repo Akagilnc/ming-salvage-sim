@@ -261,15 +261,17 @@ def test_yang_acceptance_tracer_production_chain_not_direct_write(monkeypatch):
         for s in result["settles"]
     ]
     assert settle_cals == [(1627, 10, 1), (1627, 11, 2), (1627, 12, 3)], settle_cals
-    # 时序：第二拍召对调用前 face_before 已含杨↔倪/黄（第一拍张力回写后读面）
+    # 时序：第二拍召对调用前 face_before 已含杨↔倪 与 杨↔黄（第一拍张力回写后读面）
     assert len(result["beats"]) == 3
     beat2_face = result["beats"][1]["face_before"]
-    face_pairs = [
-        p for p in (beat2_face.get("pairs") or [])
-        if "杨嗣昌" in (p.get("source"), p.get("target"))
-        and ({"倪元璐", "黄道周"} & {p.get("source"), p.get("target")})
-    ]
-    assert face_pairs, beat2_face
+    face_pair_set = {
+        frozenset((p.get("source"), p.get("target")))
+        for p in (beat2_face.get("pairs") or [])
+    }
+    assert face_pair_set >= {
+        frozenset(("杨嗣昌", "倪元璐")),
+        frozenset(("杨嗣昌", "黄道周")),
+    }, beat2_face
     # 张力→配合→演进：各拍召对回写类目
     kind_seq = [
         sorted({

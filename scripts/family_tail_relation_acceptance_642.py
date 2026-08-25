@@ -583,14 +583,16 @@ def _run_yang_anchor(cfg: LLMConfig, content: GameContent) -> Dict[str, Any]:
             "month_advanced_each_settle": month_advanced,
             "summary_brew_progressed": _summary_brew_progressed(beat_traces),
             "face_dto_ok_each_beat": all(b["face_before"]["dto_keys_ok"] for b in beat_traces),
-            # 第二拍召对前须已能读到杨↔倪/黄（张力拍回写后的读面），否则时序缺口。
+            # 第二拍召对前须已同时读到杨↔倪 与 杨↔黄（张力拍回写后的读面）。
             "face_has_yang_ni_huang_before_beat2": (
                 len(beat_traces) >= 2
-                and any(
-                    "杨嗣昌" in (p.get("source"), p.get("target"))
-                    and ({"倪元璐", "黄道周"} & {p.get("source"), p.get("target")})
+                and {
+                    frozenset((p.get("source"), p.get("target")))
                     for p in (beat_traces[1].get("face_before") or {}).get("pairs") or []
-                )
+                } >= {
+                    frozenset(("杨嗣昌", "倪元璐")),
+                    frozenset(("杨嗣昌", "黄道周")),
+                }
             ),
         }
         # 语义裁判只读真实链指针（chat-turn / edge / summary），不喂直写剧本。
