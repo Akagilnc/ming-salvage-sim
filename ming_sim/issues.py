@@ -23,6 +23,7 @@ from ming_sim.constants import (
     POWER_SCORE_FIELDS, POWER_TEXT_FIELDS, CHARACTER_TEXT_FIELDS,
     REGION_FIELD_ALIASES, ARMY_FIELD_ALIASES, POWER_FIELD_ALIASES, GATE_TABLES,
     LEVY_DISPLACEMENT_RATE,
+    BANDIT_ABSORPTION_FIELDS,
     BANDIT_ABSORPTION_PERSONS_PER_STRENGTH,
     RECOVERY_PERSONS_PER_WAN,
     RECOVERY_GRANT_ACTIONS,
@@ -7695,6 +7696,15 @@ def _apply_bandit_absorptions(
                 "rejected": True, "category": category,
                 "reason": reason, "item": item,
             })
+
+        extra = sorted(set(item) - BANDIT_ABSORPTION_FIELDS)
+        if extra:
+            _reject(
+                "invalid_enum",
+                f"bandit_absorptions 白名单外字段 {extra}"
+                f"（合法字段：region_id/power_id/requested_count/origin_ref）",
+            )
+            continue
 
         region_id = str(item.get("region_id") or "").strip()
         power_id = str(item.get("power_id") or "").strip()

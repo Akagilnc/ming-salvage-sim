@@ -287,6 +287,10 @@ LEVY_DISPLACEMENT_RATE = 2000.0
 # #652/0087：流民投贼——实吸口数→实力正增量（人/点；δ=actual//本率，再经 0–100 clamp）。
 # 单写关系：仅 bandit_absorptions 原子 applier 可产贼势正增；自由 power_updates 正实力拒。
 BANDIT_ABSORPTION_PERSONS_PER_STRENGTH = 10000
+# canonical item 闭集（DELTA_SCHEMA / ITEM_FIELD_ALIASES 四字段；未知键逐项拒收，ADR 0015）。
+BANDIT_ABSORPTION_FIELDS = frozenset({
+    "region_id", "power_id", "requested_count", "origin_ref",
+})
 
 # #652/0087：赈济/招抚屯田回流——实抵万两→回流口数基线，再经执行判决成色折减。
 RECOVERY_PERSONS_PER_WAN = 2000
