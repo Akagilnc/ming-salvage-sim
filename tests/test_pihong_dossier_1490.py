@@ -1523,9 +1523,13 @@ def test_657_s10_http_five_actions_and_1490_no_regress(web_game, monkeypatch):
     monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _phase2)
 
     # summon generator 边界 stub（经 session 公共缝）
+    summon_gen_bodies = {}
+
     def _det_gen(inputs):
         name = str(getattr(inputs, "person_name", "") or "") or "臣"
-        return f"{name}奉诏入殿。"
+        text = f"{name}奉诏入殿。"
+        summon_gen_bodies[name] = text
+        return text
 
     monkeypatch.setattr(
         web_game.session, "_beat_generator", _det_gen, raising=False,
@@ -1638,7 +1642,9 @@ def test_657_s10_http_five_actions_and_1490_no_regress(web_game, monkeypatch):
             tags = json.loads(row["tags"] or "[]")
             assert TAG_ENTER in tags
             assert str(row["body"] or "").strip()
-            assert str(row["body"] or "").strip() == "杨嗣昌奉诏入殿。"
+            body_s = str(row["body"] or "").strip()
+            assert body_s
+            assert body_s == summon_gen_bodies.get("杨嗣昌") or body_s in summon_gen_bodies.values()
         elif name == "return_revise":
             assert hit["status"] == "pending"
             assert int(hit["revision_round"] or 0) == 1

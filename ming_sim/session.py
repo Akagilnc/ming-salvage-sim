@@ -297,7 +297,7 @@ def _recent_audience_context_for_secret_order(
                 WHERE t.night_id = ?
                   AND t.minister_name = ?
                   AND t.undone_at IS NULL
-                  AND t.status NOT IN ('failed', 'undone')
+                  AND t.status NOT IN ('failed', 'undone', 'consumed')
                 ORDER BY m.id DESC
                 LIMIT ?
                 """,

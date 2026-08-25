@@ -391,9 +391,10 @@ def list_ledger(db: Any, night_id: int) -> List[Dict[str, Any]]:
 
 def list_chat_turns_for_night(db: Any, night_id: int) -> List[Dict[str, Any]]:
     # 撤回的轮（status='undone'）从「按夜取数」隐去——与「该轮未发生」等价（#506）。
-    # failed 半场轮同样不计入夜时间线。
+    # failed 半场轮 / consumed 空问话召见 scaffold 同样不计入夜时间线。
     rows = db.conn.execute(
-        "SELECT * FROM chat_turns WHERE night_id = ? AND status NOT IN ('undone', 'failed') "
+        "SELECT * FROM chat_turns WHERE night_id = ? "
+        "AND status NOT IN ('undone', 'failed', 'consumed') "
         "ORDER BY night_seq ASC, id ASC",
         (int(night_id),),
     ).fetchall()
@@ -622,7 +623,7 @@ def audit_night_direct_writes(db: Any, night_id: int) -> set[str]:
         SELECT DISTINCT i.target_table
         FROM chat_turn_rollback_items i
         JOIN chat_turns t ON t.id = i.chat_turn_id
-        WHERE t.night_id = ? AND t.status NOT IN ('undone', 'failed')
+        WHERE t.night_id = ? AND t.status NOT IN ('undone', 'failed', 'consumed')
         """,
         (int(night_id),),
     ).fetchall()

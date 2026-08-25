@@ -11101,7 +11101,8 @@ class GameDB:
         ).fetchall()
         turn_rows = self.conn.execute(
             f"SELECT night_id,minister_name FROM chat_turns "
-            f"WHERE night_id IN ({placeholders}) AND status NOT IN ('undone', 'failed') "
+            f"WHERE night_id IN ({placeholders}) "
+            f"AND status NOT IN ('undone', 'failed', 'consumed') "
             "ORDER BY night_id,night_seq,id",
             night_ids,
         ).fetchall()

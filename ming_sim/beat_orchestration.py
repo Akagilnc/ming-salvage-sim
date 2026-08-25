@@ -512,10 +512,11 @@ def discover_open_enter_tasks(
     night = get_night(db, night_id) or {}
     entries = list_ledger(db, night_id)
     tasks: List[Tuple[int, BeatInputs]] = []
-    # Failed/undone turns do not consume first-turn opening eligibility (C12/T13).
+    # Failed/undone/consumed turns do not consume first-turn opening eligibility (C12/T13).
     count = db.conn.execute(
         "SELECT COUNT(*) AS c FROM chat_turns "
-        "WHERE night_id = ? AND id <= ? AND status NOT IN ('failed', 'undone')",
+        "WHERE night_id = ? AND id <= ? "
+        "AND status NOT IN ('failed', 'undone', 'consumed')",
         (night_id, int(chat_turn_id)),
     ).fetchone()["c"]
     if int(count) == 1:
