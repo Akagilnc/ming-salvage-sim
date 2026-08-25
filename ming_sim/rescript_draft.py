@@ -68,6 +68,26 @@ _LAYER_A_ALLOWED_KEYS = frozenset(
 )
 
 
+def normalize_stop_condition(raw: object) -> object:
+    """stop_condition 唯一保真缝：dict 原样；JSON 对象串→dict；其它非空串原文；空/None→""。
+
+    供层 A normalize / choice 规范化 / mapper 共用——禁止平行拷贝。
+    """
+    if raw is None:
+        return ""
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str):
+        if not raw.strip():
+            return ""
+        try:
+            parsed = json.loads(raw)
+        except (TypeError, ValueError):
+            return raw
+        return parsed if isinstance(parsed, dict) else raw
+    return raw
+
+
 def normalize_rescript_layer_a_option(raw: object) -> Dict[str, object]:
     """#657 层 A option shape 校验 + 服务端写 draft_capability（生产票拟/改票单真源）。
 
@@ -115,19 +135,8 @@ def normalize_rescript_layer_a_option(raw: object) -> Dict[str, object]:
     ):
         if key in raw and raw[key] is not None:
             out[key] = str(raw[key])
-    # stop_condition：dict 原样（until_stop 真源）；JSON 对象串还原；其它串原文
     if "stop_condition" in raw and raw["stop_condition"] is not None:
-        sc = raw["stop_condition"]
-        if isinstance(sc, dict):
-            out["stop_condition"] = sc
-        elif isinstance(sc, str) and sc.strip():
-            try:
-                parsed = json.loads(sc)
-            except (TypeError, ValueError):
-                parsed = None
-            out["stop_condition"] = parsed if isinstance(parsed, dict) else sc
-        else:
-            out["stop_condition"] = sc
+        out["stop_condition"] = normalize_stop_condition(raw["stop_condition"])
     for key in ("end_turn", "deadline_months", "due_turn", "amount"):
         if key in raw and raw[key] is not None and raw[key] != "":
             try:

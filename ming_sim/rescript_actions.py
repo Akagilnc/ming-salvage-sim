@@ -87,13 +87,14 @@ def canonical_choice(raw: object) -> Dict[str, object]:
     cap = str(raw.get("draft_capability") or "").strip()
     if cap:
         out["draft_capability"] = cap
-    # 通用展示/批红字段
+    # 通用展示/批红字段（标识/自由文本串；stop_condition 走唯一保真缝，禁 str(dict)）
+    from ming_sim.rescript_draft import normalize_stop_condition
     for key in (
         "label", "hint", "note",
         "action_type", "assignee_name", "name",
         "target_kind", "target_id", "transaction_category",
         "locality_scope", "region_id", "title", "commitment_kind",
-        "stop_condition", "station", "office",
+        "station", "office",
         "grant_action", "account", "cadence", "execution_surface",
         "appoint_action", "appointment_tenure", "punish_action",
         "privilege", "summon_target",
@@ -103,6 +104,8 @@ def canonical_choice(raw: object) -> Dict[str, object]:
             out[key] = str(raw[key]) if not isinstance(raw[key], (int, float, bool)) else raw[key]
             if isinstance(out[key], bool):
                 out[key] = str(out[key])
+    if "stop_condition" in raw and raw["stop_condition"] is not None:
+        out["stop_condition"] = normalize_stop_condition(raw["stop_condition"])
     for key in ("end_turn", "deadline_months", "due_turn", "amount",
                 "dossier_id", "applied_from_revision_round", "revision_round"):
         if key in raw and raw[key] is not None and raw[key] != "":
@@ -624,17 +627,8 @@ def map_rescript_option_or_choice(
             payload["title"] = title_raw  # 原文；超长响亮拒绝，不截断
         ck = str(src.get("commitment_kind") or "无").strip() or "无"
         payload["commitment_kind"] = ck
-        # stop_condition 保真：dict 原样；JSON 对象串还原为 dict；其它非空串原文
-        stop_raw = src.get("stop_condition")
-        stop: object = ""
-        if isinstance(stop_raw, dict):
-            stop = stop_raw
-        elif isinstance(stop_raw, str) and stop_raw.strip():
-            try:
-                parsed = json.loads(stop_raw)
-            except (TypeError, ValueError):
-                parsed = None
-            stop = parsed if isinstance(parsed, dict) else stop_raw
+        from ming_sim.rescript_draft import normalize_stop_condition
+        stop = normalize_stop_condition(src.get("stop_condition"))
         if ck == "until_stop" and not stop:
             raise ValueError("until_stop 缺 stop_condition")
         if stop:
