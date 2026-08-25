@@ -7652,11 +7652,13 @@ def _apply_levy_driven_transfers(
         if base <= 0:
             continue
         pool_members = _surcharge_population_pool_members(db, region_id)
-        if not pool_members:
-            # Pre-contract ledgers may exist on fiscal provinces outside the population
-            # substrate.  They have no population effect and must not soft-lock saves.
+        if pool_members == {"农民", "流民"}:
+            pass  # 完整加派人口池
+        elif "农民" not in pool_members:
+            # 无农民源：空池或 #659 边镇仅军户/流民切片——无加派人口效应，不 soft-lock。
             continue
-        if pool_members != {"农民", "流民"}:
+        else:
+            # 有农民无流民＝农业省池残缺，fail-loud（#650 missing_pool）
             raise ValueError(f"{region_id} 有正加派账但仅有部分农民/流民省级人口行")
         support = max(0, min(100, int(row["public_support"] or 0)))
         raw_persons = base * LEVY_DISPLACEMENT_RATE * (100 - support) / 100.0

@@ -42,7 +42,7 @@ FISCAL_SCORE_FIELDS = ("corruption",)
 ARMY_SCORE_FIELDS = ("supply", "morale", "training", "equipment", "arrears", "mobility", "loyalty",
                      "firearm_equipment", "cannon_equipment")
 ARMY_QUANTITY_FIELDS = ("manpower",)  # #173：maintenance_per_turn 列已删（月饷由 army_needed 按兵力派生）
-ARMY_TEXT_FIELDS = ("station", "commander", "controller", "troop_type", "status", "owner_power")
+ARMY_TEXT_FIELDS = ("station", "station_region", "commander", "controller", "troop_type", "status", "owner_power")
 BUILDING_CATEGORIES = ("财政", "军事", "民生", "科技", "交通", "内廷")
 BUILDING_OUTPUT_METRICS = ("国库", "内库", "民心", "皇威", "")
 BUILDING_SCORE_FIELDS = ("condition", "risk")
@@ -139,6 +139,7 @@ REGION_FIELD_LABELS = {
 }
 ARMY_FIELD_LABELS = {
     "station": "驻扎地",
+    "station_region": "实际驻地",
     "commander": "统帅",
     "controller": "主管",
     "troop_type": "兵种",
@@ -199,6 +200,9 @@ ARMY_FIELD_ALIASES = {
     **{field: field for field in ARMY_SCORE_FIELDS + ARMY_QUANTITY_FIELDS + ARMY_TEXT_FIELDS},
     "驻扎地": "station",
     "驻地": "station",
+    "station_region": "station_region",
+    "实际驻地": "station_region",
+    "驻地省": "station_region",
     "统帅": "commander",
     "统将": "commander",
     "主将": "commander",
