@@ -152,6 +152,7 @@ function renderModal(props: {
 
 function renderReportModal(props: {
   report: string;
+  attendantMessage?: string;
   onClose?: () => void;
   periodLabel?: string;
 }) {
@@ -162,6 +163,7 @@ function renderReportModal(props: {
     root.render(
       <ReportModal
         report={props.report}
+        attendantMessage={props.attendantMessage}
         periodLabel={props.periodLabel}
         onClose={props.onClose ?? (() => {})}
       />
@@ -1499,6 +1501,24 @@ describe("ReportModal — narrative settlement bulletin", () => {
     expect(scroll!.contains(dismissWrap)).toBe(false);
     act(() => dismissBtn!.click());
     expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("#671 王承恩递话在邸报纸面外独立区，不经 stripOrganicMarkdown；空则不渲染", () => {
+    const hostEmpty = renderReportModal({ report: "一、边报" });
+    expect(hostEmpty.querySelector("[data-testid=gazette-attendant]")).toBeNull();
+
+    const host = renderReportModal({
+      report: "**辽东军情**",
+      attendantMessage: "**皇爷**，洪承畴本月抵京候旨。",
+    });
+    const aside = host.querySelector("[data-testid=gazette-attendant]");
+    expect(aside).not.toBeNull();
+    // 递话原文保留 markdown 标记；官方邸报仍剥离
+    expect(aside?.textContent).toContain("**皇爷**，洪承畴本月抵京候旨。");
+    expect(host.querySelector(".gazette-document")?.textContent).toContain("辽东军情");
+    expect(host.querySelector(".gazette-document")?.textContent).not.toContain("**");
+    // 递话区在纸面 article 之外
+    expect(host.querySelector(".gazette-document")?.contains(aside)).toBe(false);
   });
 });
 

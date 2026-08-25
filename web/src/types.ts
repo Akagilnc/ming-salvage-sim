@@ -309,6 +309,8 @@ export type GameState = {
   pending_decisions?: PendingDecision[];
   last_decree: string;
   last_report: string;
+  /** #671：上一已完成月王承恩独立递话；空＝无递话区 */
+  last_attendant_message?: string;
 };
 
 export type EndingTimelineItem = {

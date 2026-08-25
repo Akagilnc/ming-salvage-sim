@@ -264,5 +264,7 @@ def clear_for_resimulation(db: Any, turn: int) -> None:
             # 恢复重放仍需原始 provenance 判玩家可见性；不回传会被默认 system_simulation
             # 盖掉原 player_decree/hitl_decision，使降级路径静默吞掉玩家可见提示。
             source=str(ctx.get("source") or "system_simulation"),
+            # #671：王承恩递话随 phase1 字段保留，不得因重模拟降级清空。
+            attendant_message=str(ctx.get("attendant_message") or ""),
             # 不传 extracted → upsert ready=0：LLM 段产出清除，phase1 字段保留。
         )
