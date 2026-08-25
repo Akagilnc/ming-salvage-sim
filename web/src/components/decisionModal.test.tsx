@@ -614,7 +614,7 @@ describe("DecisionModal #1202 seal-is-confirm first screen + pick affordance", (
     expect(actions).toEqual([
       "follow_draft", "return_revise", "midzhi", "deliberate", "hold", "summon",
     ]);
-    // 留中可点并落印推进
+    // 显式留中可点并落印推进
     act(() => {
       (document.querySelector('[data-action="hold"]') as HTMLButtonElement).click();
     });
@@ -636,6 +636,21 @@ describe("DecisionModal #1202 seal-is-confirm first screen + pick affordance", (
     expect(payload[1].label).toBe("准");
     expect(payload[1].decision_key).toBe("decision:1:1");
     cleanup();
+
+    // V7：急务不点六钮 → 确认可点 → onResolve 该行无 action 且有 decision_key
+    const onResolveDefault = vi.fn();
+    const cleanupDefault = render(
+      <DecisionModal decisions={[mixed[0]]} onResolve={onResolveDefault} />,
+    );
+    expect(document.querySelector<HTMLButtonElement>(".decision-confirm")!.disabled).toBe(false);
+    act(() => {
+      document.querySelector<HTMLButtonElement>(".decision-confirm")!.click();
+    });
+    expect(onResolveDefault).toHaveBeenCalledTimes(1);
+    const defPayload = onResolveDefault.mock.calls[0][0][0];
+    expect(defPayload.decision_key).toBe("rescript_draft:1:0");
+    expect(defPayload.action).toBeUndefined();
+    cleanupDefault();
   });
 
   it("#657 midzhi projects non-assignment §C.4 closed-set keys from selected option", () => {

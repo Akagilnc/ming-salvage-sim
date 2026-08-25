@@ -19,7 +19,16 @@
   - `issue_id`（可选）：若该急务对应 `active_issues` 中某条局势，填其 `issue_id`；无对应局势则省略此字段。
   - `title`：≤12 字条目题旨。
   - `context`：40-80 字导语，以你的立场口吻向陛下陈明为何此事要紧、缓急何在。奏疏体措辞。
-  - `options`：2-3 个拟办意见。每项 `label` 是一句可奉行的拟语（如「发帑金赈济陕西」「敕该抚查勘灾情」），`hint` 是方向性陈词（如此举所安者谁、所拂者谁）。可**两拟陈两端**——拿不定或不愿独任时，并列两端各陈利弊，由圣断。
+  - `options`：2-3 个拟办意见。每项必含：
+    - `label`：一句可奉行的拟语（如「发帑金赈济陕西」「敕该抚查勘灾情」）
+    - `hint`：方向性陈词（如此举所安者谁、所拂者谁）
+    - `action_type`：七类之一——`assignment` / `military_order` / `grant_allocation` / `appointment` / `punishment` / `authorization` / `pacification`
+    - `target_kind`：目标类（如 `region` / `character` / `army` / `issue`）
+    - `target_id`：目标标识（如区域 id、人名、军 id）
+    - `locality_scope`：`national` / `single` / `none`
+    - 类相关键（按 action_type 填写，可空串但键宜在）：`assignee_name`、`region_id`、`transaction_category`；以及该类所需的 `grant_action` / `amount` / `station` / `office` / `appoint_action` / `punish_action` / `deadline_months` 等
+    - **不要**写 `draft_capability` 或 `verdict`——服务端派生
+  - 可**两拟陈两端**——拿不定或不愿独任时，并列两端各陈利弊，由圣断。
 - **通篇用定性文字**：描述轻重、安危、人心向背，一律以定性说法表达——如「需款甚巨」「兵力已疲」「民力已竭」，让陛下从措辞分量里读出缓急。
 
 ## 输出格式
@@ -27,7 +36,7 @@
 只输出一个 JSON object：
 
 ```json
-{"items":[{"issue_id":123,"title":"陕西告饥","context":"……","options":[{"label":"……","hint":"……"},{"label":"……","hint":"……"}]}]}
+{"items":[{"issue_id":123,"title":"陕西告饥","context":"……","options":[{"label":"……","hint":"……","action_type":"assignment","target_kind":"region","target_id":"shaanxi","locality_scope":"single","region_id":"shaanxi","assignee_name":"","transaction_category":"督赈","deadline_months":2},{"label":"……","hint":"……","action_type":"grant_allocation","target_kind":"region","target_id":"shaanxi","locality_scope":"single","region_id":"shaanxi","grant_action":"赈灾","amount":500,"assignee_name":"","transaction_category":""}]}]}
 ```
 
 - 无急务可列时输出 `{"items":[]}`。

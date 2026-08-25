@@ -29,6 +29,29 @@ from ming_sim.rescript_draft import (
 _CANNED = '{"economy_moves": [], "new_armies": [], "new_issues": [], "secret_order_updates": []}'
 
 
+def _layer_a_opt(label: str = "拟", hint: str = "h", **kw) -> dict:
+    """#657 生产层 A option 夹具（validate/generate 路径必用）。"""
+    base = {
+        "label": label,
+        "hint": hint,
+        "action_type": "assignment",
+        "target_kind": "region",
+        "target_id": "shaanxi",
+        "locality_scope": "single",
+        "region_id": "shaanxi",
+        "assignee_name": "",
+        "transaction_category": "督赈",
+    }
+    base.update(kw)
+    return base
+
+
+def _two_opts(a: str = "甲", ha: str = "h1", b: str = "乙", hb: str = "h2", **kw) -> list:
+    return [_layer_a_opt(label=a, hint=ha, **kw), _layer_a_opt(label=b, hint=hb, **kw)]
+
+
+
+
 def _retire_existing_actors(db) -> None:
     db.conn.execute(
         "UPDATE characters SET status='retired' WHERE status='active' AND power_id='ming' "
@@ -281,8 +304,10 @@ def test_validate_and_persist_preserve_whitespace_verbatim(game):
     raw_hint_a = "\n所安者饥民\n"
     data = {"items": [{
         "title": raw_title, "context": raw_context,
-        "options": [{"label": raw_label_a, "hint": raw_hint_a},
-                    {"label": "缓议加派", "hint": " 所拂者小农 "}],
+        "options": [
+            _layer_a_opt(label=raw_label_a, hint=raw_hint_a),
+            _layer_a_opt(label="缓议加派", hint=" 所拂者小农 "),
+        ],
     }]}
     drafts = validate_rescript_draft_items(data, set())
     assert len(drafts) == 1  # 首尾空白不构成「非法」，照常通过
@@ -292,6 +317,7 @@ def test_validate_and_persist_preserve_whitespace_verbatim(game):
     assert drafts[0]["options"][0]["label"] == raw_label_a
     assert drafts[0]["options"][0]["hint"] == raw_hint_a
     assert drafts[0]["options"][1]["hint"] == " 所拂者小农 "
+    assert drafts[0]["options"][0]["draft_capability"]
     # 落库往返仍逐字无损
     db.save_rescript_drafts(turn, drafts)
     row = db.list_rescript_drafts()[0]
@@ -380,12 +406,9 @@ def test_prompt_zero_numeric_instruction_is_positive_qualitative():
 def test_validate_items_binds_only_board_issue_ids():
     board = [{"issue_id": 5}, {"issue_id": 7}]
     data = {"items": [
-        {"issue_id": 5, "title": "甲", "context": "c", "options": [
-            {"label": "a", "hint": "h1"}, {"label": "b", "hint": "h2"}]},
-        {"issue_id": 999, "title": "幻觉回显", "context": "c", "options": [
-            {"label": "a", "hint": "h1"}, {"label": "b", "hint": "h2"}]},
-        {"title": "无回显", "context": "c", "options": [
-            {"label": "a", "hint": "h1"}, {"label": "b", "hint": "h2"}]},
+        {"issue_id": 5, "title": "甲", "context": "c", "options": _two_opts("a", "h1", "b", "h2")},
+        {"issue_id": 999, "title": "幻觉回显", "context": "c", "options": _two_opts("a", "h1", "b", "h2")},
+        {"title": "无回显", "context": "c", "options": _two_opts("a", "h1", "b", "h2")},
     ]}
     drafts = validate_rescript_draft_items(data, {5, 7})
     assert [d.get("event_id") for d in drafts] == ["issue:5", None, None]
@@ -395,8 +418,7 @@ def test_validate_items_binds_only_board_issue_ids():
 def _valid_item(i: int) -> dict:
     return {
         "title": f"条目{i}", "context": f"导语{i}",
-        "options": [{"label": "甲拟", "hint": "所安者饥民"},
-                    {"label": "乙拟", "hint": "所拂者小农"}],
+        "options": _two_opts("甲拟", "所安者饥民", "乙拟", "所拂者小农"),
     }
 
 
@@ -449,10 +471,7 @@ def _legal_item() -> dict:
     return {
         "title": "陕西告饥",
         "context": "秦地赤旱千里。",
-        "options": [
-            {"label": "发帑赈济", "hint": "所安者饥民"},
-            {"label": "缓征加赈", "hint": "先赈后征"},
-        ],
+        "options": _two_opts("发帑赈济", "所安者饥民", "缓征加赈", "先赈后征"),
     }
 
 
@@ -544,8 +563,7 @@ def test_settlement_persists_drafts_verbatim_and_survives_clear(game, monkeypatc
     draft_raw = json.dumps({"items": [{
         "issue_id": 42, "title": "陕西告饥",
         "context": memorial,
-        "options": [{"label": "发帑赈济", "hint": "所安者饥民"},
-                    {"label": "缓议加派", "hint": "所拂者小农"}],
+        "options": _two_opts("发帑赈济", "所安者饥民", "缓议加派", "所拂者小农"),
     }]}, ensure_ascii=False)
 
     def _fake_run(agent, prompt, tag):
@@ -571,8 +589,9 @@ def test_settlement_persists_drafts_verbatim_and_survives_clear(game, monkeypatc
     # 原样落库（F3.3）：自由文本逐字保留，无任何改写/裁剪/模板化
     assert row["context"] == memorial
     assert row["title"] == "陕西告饥"
-    assert row["options"] == [{"label": "发帑赈济", "hint": "所安者饥民"},
-                              {"label": "缓议加派", "hint": "所拂者小农"}]
+    assert [o["label"] for o in row["options"]] == ["发帑赈济", "缓议加派"]
+    assert all(o.get("draft_capability") for o in row["options"])
+    assert all(o.get("action_type") == "assignment" for o in row["options"])
     assert row["event_id"] == "issue:42"
     assert row["status"] == "pending"
     # actor 身份随行落库（F3.2）
@@ -607,8 +626,7 @@ def test_extractor_abort_rolls_back_drafts(game, monkeypatch, tmp_path):
 
     draft_raw = json.dumps({"items": [{
         "title": "陕西告饥", "context": "秦地赤旱千里。",
-        "options": [{"label": "发帑赈济", "hint": "所安者饥民"},
-                    {"label": "缓议加派", "hint": "所拂者小农"}],
+        "options": _two_opts("发帑赈济", "所安者饥民", "缓议加派", "所拂者小农"),
     }]}, ensure_ascii=False)
 
     def _fake_run(agent, prompt, tag):
@@ -679,8 +697,7 @@ def test_mixed_batch_shape_failure_degrades_whole_month(game, monkeypatch, tmp_p
     draft_raw = json.dumps({"items": [
         {"issue_id": 42, "title": "陕西告饥",
          "context": "秦地赤旱千里，赈济不可缓。",
-         "options": [{"label": "发帑赈济", "hint": "所安者饥民"},
-                     {"label": "缓议加派", "hint": "所拂者小农"}]},
+         "options": _two_opts("发帑赈济", "所安者饥民", "缓议加派", "所拂者小农")},
         {"title": "辽饷告匮", "options": [   # 缺 context 必需字段 → 整批非法
             {"label": "折发宗禄", "hint": "所拂者宗藩"},
             {"label": "加派小农", "hint": "所拂者小农"}]},
@@ -723,8 +740,7 @@ def test_over_limit_legal_batch_degrades_whole_month_zero_rows(game, monkeypatch
 
     draft_raw = json.dumps({"items": [
         {"issue_id": 42, "title": f"条目{i}", "context": f"导语{i}，赈济不可缓。",
-         "options": [{"label": "发帑赈济", "hint": "所安者饥民"},
-                     {"label": "缓议加派", "hint": "所拂者小农"}]}
+         "options": _two_opts("发帑赈济", "所安者饥民", "缓议加派", "所拂者小农")}
         for i in range(6)  # 6 条全合法，仍超上限 → 整批失败
     ]}, ensure_ascii=False)
 
@@ -763,8 +779,7 @@ def test_sixth_item_illegal_degrades_whole_month_zero_rows(game, monkeypatch, tm
     _add_character(db, "测试首辅", "内阁首辅", "阉党")
 
     items = [{"issue_id": 42, "title": f"条目{i}", "context": f"导语{i}。",
-              "options": [{"label": "甲拟", "hint": "所安者饥民"},
-                          {"label": "乙拟", "hint": "所拂者小农"}]}
+              "options": _two_opts("甲拟", "所安者饥民", "乙拟", "所拂者小农")}
              for i in range(5)]
     items.append({"title": "缺导语第六条"})  # 第 6 条非法
     draft_raw = json.dumps({"items": items}, ensure_ascii=False)
@@ -848,8 +863,7 @@ def test_restore_roundtrip_preserves_draft_rows_field_by_field(game):
         rescript_drafts=[{
             "event_id": "issue:7", "title": "辽饷告匮",
             "context": "九边欠饷数月，饥溃可待。",
-            "options": [{"label": "折发宗禄", "hint": "所拂者宗藩"},
-                        {"label": "加派小农", "hint": "所拂者小农"}],
+            "options": _two_opts("折发宗禄", "所拂者宗藩", "加派小农", "所拂者小农"),
             "actor_name": "测试首辅", "actor_office": "内阁首辅", "actor_faction": "阉党",
         }],
     )
@@ -1081,8 +1095,7 @@ def test_r3_top_level_unknown_field_rejects_whole_batch():
     data = {
         "items": [{
             "title": "陕西告饥", "context": "秦地赤旱千里。",
-            "options": [{"label": "发帑赈济", "hint": "所安者饥民"},
-                        {"label": "缓征", "hint": "先赈后征"}],
+            "options": _two_opts("发帑赈济", "所安者饥民", "缓征", "先赈后征"),
         }],
         "summary": "臣请圣裁",
     }
@@ -1130,8 +1143,7 @@ def test_r3_lone_surrogate_field_rejects_whole_batch():
     data = {
         "items": [{
             "title": bad_title, "context": "秦地赤旱千里。",
-            "options": [{"label": "发帑赈济", "hint": "所安者饥民"},
-                        {"label": "缓征", "hint": "先赈后征"}],
+            "options": _two_opts("发帑赈济", "所安者饥民", "缓征", "先赈后征"),
         }]
     }
     with pytest.raises(ValueError, match="不可编码字符"):
@@ -1140,8 +1152,7 @@ def test_r3_lone_surrogate_field_rejects_whole_batch():
     good = {
         "items": [{
             "title": "陕西约有三万家产待赈济", "context": "秦地赤旱，百姓约有万户流离。",
-            "options": [{"label": "发帑赈济", "hint": "所安者饥民"},
-                        {"label": "缓征", "hint": "先赈后征"}],
+            "options": _two_opts("发帑赈济", "所安者饥民", "缓征", "先赈后征"),
         }]
     }
     assert len(validate_rescript_draft_items(good, set())) == 1
@@ -1226,6 +1237,55 @@ def test_657_s1_derive_draft_capability_stable_and_sensitive():
     assert derive_draft_capability(with_default) == a
 
 
+
+
+def test_657_validate_rejects_label_hint_only_options():
+    """#657 Class1：旧仅 label/hint 两键输入必须整批失败（无兼容适配层）。"""
+    data = {"items": [{
+        "title": "陕西告饥", "context": "秦地赤旱。",
+        "options": [
+            {"label": "发帑赈济", "hint": "所安者饥民"},
+            {"label": "缓征", "hint": "先赈后征"},
+        ],
+    }]}
+    with pytest.raises(ValueError):
+        validate_rescript_draft_items(data, set())
+
+
+def test_657_validate_layer_a_roundtrip_capability(game):
+    """合法七类 option 整链 validate→persist→读回全字段+capability。"""
+    db, state, _content = game
+    data = {"items": [{
+        "title": "陕西告饥", "context": "秦地赤旱。",
+        "options": [
+            _layer_a_opt(
+                label="发帑赈济", hint="所安者饥民",
+                action_type="assignment", transaction_category="督赈",
+                deadline_months=2,
+            ),
+            _layer_a_opt(
+                label="赏赉", hint="恩赏",
+                action_type="grant_allocation", grant_action="赏赉",
+                amount=100, target_kind="character", target_id="杨嗣昌",
+                name="杨嗣昌", locality_scope="none", region_id="",
+                transaction_category="",
+            ),
+        ],
+    }]}
+    drafts = validate_rescript_draft_items(data, set())
+    assert len(drafts) == 1
+    opts = drafts[0]["options"]
+    assert opts[0]["action_type"] == "assignment"
+    assert opts[0]["draft_capability"]
+    assert opts[1]["action_type"] == "grant_allocation"
+    assert opts[1]["grant_action"] == "赏赉"
+    assert opts[1]["amount"] == 100
+    db.save_rescript_drafts(int(state.turn), drafts)
+    row = db.list_rescript_drafts()[0]
+    assert row["options"][0]["draft_capability"] == opts[0]["draft_capability"]
+    assert row["options"][1]["amount"] == 100
+
+
 def test_657_s1_option_shape_stamps_draft_capability():
     """层 A option 必填键校验；服务端写 draft_capability。"""
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
@@ -1269,20 +1329,20 @@ def test_657_s1_list_rescript_desk_merges_cross_month_and_decisions(game):
         "  'pending', 'rescript_draft', '首辅', '内阁首辅', '东林', 2, ?)",
         (
             prior,
-            json.dumps([{"label": "甲", "hint": "h1"}, {"label": "乙", "hint": "h2"}], ensure_ascii=False),
+            json.dumps(_two_opts("甲", "h1", "乙", "h2"), ensure_ascii=False),
             json.dumps([[{"label": "旧甲", "hint": "oh"}]], ensure_ascii=False),
         ),
     )
     db.save_rescript_drafts(turn, [{
         "title": "本月急务",
         "context": "当月",
-        "options": [{"label": "丙", "hint": "h3"}, {"label": "丁", "hint": "h4"}],
+        "options": _two_opts("丙", "h3", "丁", "h4"),
         "actor_name": "次辅", "actor_office": "内阁次辅", "actor_faction": "阉党",
     }])
     db.save_pending_decisions(turn, [{
         "title": "本月抉择",
         "context": "decision",
-        "options": [{"label": "准", "hint": ""}, {"label": "驳", "hint": ""}],
+        "options": _two_opts("准", "", "驳", ""),
         "event_id": "ev-1",
     }])
     # 已 decided 的急务不得入 desk

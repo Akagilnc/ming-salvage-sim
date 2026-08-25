@@ -51,9 +51,15 @@ export function DecisionModal({
   const pick = picks[cursor] || {};
   const rescript = isRescriptDraft(cur);
   const requiresListedChoice = (cur?.event_id || "").startsWith("dossier:");
+  // 急务：已选合法六动作，或未选动作（空 pick 仅 decision_key）→ 可落印；
+  // 未选时服务端 validate_all 统一机械 hold（客户端不得伪造 action:"hold"）。
   const decided = rescript
-    ? !!(pick.action && (pick.action !== "summon" || (pick.summon_target || "").trim())
-      && (pick.action !== "follow_draft" || (pick.draft_capability || pick.label)))
+    ? (!pick.action
+      || (pick.action === "summon"
+        ? !!(pick.summon_target || "").trim()
+        : pick.action === "follow_draft"
+          ? !!(pick.draft_capability || pick.label)
+          : true))
     : requiresListedChoice
       ? !!pick.label
       : !!(pick.label || (pick.note || "").trim());

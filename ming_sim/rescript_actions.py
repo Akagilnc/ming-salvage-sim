@@ -298,45 +298,51 @@ def validate_all(
 
         # pending 行
         kind = str(row.get("kind") or "decision")
-        if req is None:
-            if kind == "rescript_draft" and default_hold_missing:
-                # 新鲜批缺 action → 机械 hold（落印时）
-                hold_choice = canonical_choice({
-                    "decision_key": key,
-                    "action": "hold",
-                    "label": "留中",
-                    "hint": "",
-                })
-                batch.default_hold_keys.append(key)
+
+        # 已应用 return_revise 锚：先于空 action 默认 hold（§B.3 重试批不重新默认）
+        if (
+            req is not None
+            and not _choice_empty(stored_choice)
+            and isinstance(stored_choice, dict)
+            and _is_applied_revise_anchor(row, stored_choice)
+        ):
+            if _choices_equal(stored_choice, req):
                 batch.items.append(ValidatedItem(
                     decision_key=key,
                     kind=kind,
                     source_turn=int(row.get("source_turn") if row.get("source_turn") is not None else row.get("turn") or 0),
                     idx=int(row.get("idx") or 0),
                     row=row,
-                    choice=hold_choice,
+                    choice=req,
+                    already_applied=True,
                 ))
                 continue
-            # decision 行缺请求：非急务，不默认 hold；若 desk 含 decision 则必须提交
+            raise ValueError(f"已应用 revise 锚与请求不一致：{key}")
+
+        action = str((req or {}).get("action") or "").strip() if req is not None else ""
+
+        # 急务缺行 / 有行但 action 缺或空 → 统一机械 hold（服务端单真源）
+        if kind == "rescript_draft" and default_hold_missing and (req is None or not action):
+            hold_choice = canonical_choice({
+                "decision_key": key,
+                "action": "hold",
+                "label": "留中",
+                "hint": "",
+            })
+            batch.default_hold_keys.append(key)
+            batch.items.append(ValidatedItem(
+                decision_key=key,
+                kind=kind,
+                source_turn=int(row.get("source_turn") if row.get("source_turn") is not None else row.get("turn") or 0),
+                idx=int(row.get("idx") or 0),
+                row=row,
+                choice=hold_choice,
+            ))
+            continue
+
+        if req is None:
+            # decision 行缺请求：非急务，不默认 hold
             raise ValueError(f"pending 行缺请求 choice：{key}")
-
-        action = str(req.get("action") or "").strip()
-
-        # 已应用 return_revise 锚（先于 capability∈当前 options）
-        if not _choice_empty(stored_choice) and isinstance(stored_choice, dict):
-            if _is_applied_revise_anchor(row, stored_choice):
-                if _choices_equal(stored_choice, req):
-                    batch.items.append(ValidatedItem(
-                        decision_key=key,
-                        kind=kind,
-                        source_turn=int(row.get("source_turn") if row.get("source_turn") is not None else row.get("turn") or 0),
-                        idx=int(row.get("idx") or 0),
-                        row=row,
-                        choice=req,
-                        already_applied=True,
-                    ))
-                    continue
-                raise ValueError(f"已应用 revise 锚与请求不一致：{key}")
 
         # dossier 批红 decision 行（#1490）
         if kind == "decision" and decision_has_rescript_capability(row):
@@ -580,9 +586,11 @@ def map_rescript_option_or_choice(
     if not target_id:
         raise ValueError("target_id 不可空")
 
-    label = str(src.get("label") or "").strip()
-    note = str(src.get("note") or "").strip()
-    decree_text = note if note else label
+    # P6：自由文本 strip 仅判空；payload/decree_text 落原文
+    label_raw = str(src.get("label") or "")
+    note_raw = str(src.get("note") or "")
+    decree_text = note_raw if note_raw.strip() else label_raw
+    label = label_raw
     assignee_name = str(src.get("assignee_name") or src.get("assignee") or "").strip()
     locality_scope = str(src.get("locality_scope") or "none").strip() or "none"
     region_id = str(src.get("region_id") or "").strip()
@@ -609,12 +617,24 @@ def map_rescript_option_or_choice(
             raise ValueError("assignment 缺 transaction_category 与主办")
         if cat:
             payload["transaction_category"] = cat
-        title = str(src.get("title") or label or "").strip()
-        if title:
-            payload["title"] = title[:80]
+        title_raw = str(src.get("title") or label or "")
+        if title_raw.strip():
+            if len(title_raw) > 80:
+                raise ValueError(f"assignment title 超 80 字：{len(title_raw)}")
+            payload["title"] = title_raw  # 原文；超长响亮拒绝，不截断
         ck = str(src.get("commitment_kind") or "无").strip() or "无"
         payload["commitment_kind"] = ck
-        stop = str(src.get("stop_condition") or "").strip()
+        # stop_condition 保真：dict 原样；JSON 对象串还原为 dict；其它非空串原文
+        stop_raw = src.get("stop_condition")
+        stop: object = ""
+        if isinstance(stop_raw, dict):
+            stop = stop_raw
+        elif isinstance(stop_raw, str) and stop_raw.strip():
+            try:
+                parsed = json.loads(stop_raw)
+            except (TypeError, ValueError):
+                parsed = None
+            stop = parsed if isinstance(parsed, dict) else stop_raw
         if ck == "until_stop" and not stop:
             raise ValueError("until_stop 缺 stop_condition")
         if stop:
@@ -906,9 +926,10 @@ def _apply_deliberate(
     will = prewrite.deliberate_by_key.get(item.decision_key)
     if not isinstance(will, dict):
         raise ValueError(f"deliberate 缺 prewrite 意愿：{item.decision_key}")
-    title = str(will.get("title") or item.row.get("title") or "廷议").strip()
-    body = str(will.get("body") or will.get("stance") or will.get("text") or "").strip()
-    if not body:
+    # P6：strip 仅判空；insert 用原文 title/body
+    title = str(will.get("title") or item.row.get("title") or "廷议")
+    body = str(will.get("body") or will.get("stance") or will.get("text") or "")
+    if not body.strip():
         raise ValueError("deliberate LLM 意愿正文为空")
     origin = f"rescript_deliberate:{item.decision_key}"
     # 既有 origin 去重
@@ -936,16 +957,11 @@ def _apply_return_revise(
     new_options = prewrite.revise_by_key.get(item.decision_key)
     if not isinstance(new_options, list) or not new_options:
         raise ValueError(f"return_revise 缺 prewrite 新 options：{item.decision_key}")
-    # 确保新 options 带 capability
+    # 改票 options 必经层 A 单真源（与 validate_rescript_draft_items 同缝）
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
     stamped: List[Dict[str, object]] = []
     for opt in new_options:
-        if not isinstance(opt, dict):
-            raise ValueError("改票 option 非 object")
-        # 允许仅 label/hint 的改票输出——不强制层 A 全键（改票 LLM 单行模式）
-        if "draft_capability" not in opt:
-            opt = dict(opt)
-            opt["draft_capability"] = derive_draft_capability(opt)
-        stamped.append(opt)
+        stamped.append(normalize_rescript_layer_a_option(opt))
     old_round = int(item.row.get("revision_round") or 0)
     old_options = item.row.get("options") or []
     prior = list(item.row.get("prior_options_json") or [])

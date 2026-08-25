@@ -741,7 +741,8 @@ def test_657_s11_s15_summon_scaffold_matrix(game, monkeypatch):
         "actor_name": minister, "actor_office": "o", "actor_faction": "f",
     }])
     db.save_resolve_context(
-        int(state.turn), "诏", "邸报", {"candidate_events": []},
+        int(state.turn), "诏", "邸报",
+        {"candidate_events": [], "transit_semantics": []},
         secret_orders=[], relevant_memories=[],
     )
     db.conn.commit()
@@ -770,12 +771,11 @@ def test_657_s11_s15_summon_scaffold_matrix(game, monkeypatch):
 
     sess._beat_generator = _gen
 
-    def _phase2(_state, _db, *_a, **_k):
-        _db.clear_pending_decisions(int(_state.turn))
-        return "邸报：S12。"
+    # 真 phase2：只中和 LLM 边界，保留结算/推月（禁 clear-only stub）
+    from tests.test_pihong_dossier_1490 import _657_install_real_phase2_llm_boundary
+    _657_install_real_phase2_llm_boundary(monkeypatch)
 
-    monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _phase2)
-
+    turn_before = int(state.turn)
     choices = [{
         "decision_key": key, "action": "summon",
         "label": "召见", "summon_target": minister,
@@ -783,6 +783,8 @@ def test_657_s11_s15_summon_scaffold_matrix(game, monkeypatch):
     report = sess.resolve_rescript_decisions(choices, write_gate=sess._write_gate)
     assert isinstance(report, str) and report.strip()
     assert sess.state.turn_phase == TurnPhase.ISSUED.value
+    turn_after = int(sess.state.turn)
+    assert turn_after == turn_before + 1
     hit12 = next(r for r in db.list_rescript_drafts() if r["title"] == "S12全链")
     assert hit12["status"] == "decided"
     assert (hit12["choice"] or {}).get("action") == "summon"

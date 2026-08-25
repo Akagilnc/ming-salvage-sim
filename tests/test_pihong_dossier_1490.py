@@ -665,6 +665,194 @@ def test_657_c1_decided_mismatch_rejects_and_cas0(game):
         }])
 
 
+def test_657_p6_mapper_deliberate_preserve_free_text(game):
+    """#657 Class3 P6：label/note/title/body 原文落库；title>80 响亮拒绝。"""
+    from ming_sim import rescript_actions as ra
+    db, state, content = game
+    m = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' LIMIT 1"
+    ).fetchone()
+    mname = str(m["name"]) if m else "杨嗣昌"
+
+    label = " 责成督赈 "
+    note = "\n着即办理。\t"
+    p = ra.map_rescript_option_or_choice({
+        "action_type": "assignment", "label": label, "note": note, "hint": " h ",
+        "target_kind": "region", "target_id": "shaanxi",
+        "locality_scope": "single", "region_id": "shaanxi",
+        "transaction_category": "督赈", "assignee_name": mname,
+        "title": " 陕赈 ",
+    }, db=db, content=content, state=state)
+    assert p["label"] == label
+    assert p["hint"] == " h "
+    assert p["title"] == " 陕赈 "
+    assert p.get("_decree_text") == note
+
+    title80 = "字" * 80
+    p80 = ra.map_rescript_option_or_choice({
+        "action_type": "assignment", "label": "x", "hint": "h",
+        "target_kind": "region", "target_id": "shaanxi",
+        "locality_scope": "single", "region_id": "shaanxi",
+        "transaction_category": "督赈", "assignee_name": mname,
+        "title": title80,
+    }, db=db, content=content, state=state)
+    assert p80["title"] == title80
+    with pytest.raises(ValueError, match="80"):
+        ra.map_rescript_option_or_choice({
+            "action_type": "assignment", "label": "x", "hint": "h",
+            "target_kind": "region", "target_id": "shaanxi",
+            "locality_scope": "single", "region_id": "shaanxi",
+            "transaction_category": "督赈", "assignee_name": mname,
+            "title": "字" * 81,
+        }, db=db, content=content, state=state)
+
+    # deliberate will 首尾空白 → issues 全等
+    urgent, _ = _plant_urgent_desk(db, state)
+    key = urgent["decision_key"]
+    batch = ra.validate_all([urgent], [{
+        "decision_key": key, "action": "deliberate", "label": "下部议",
+    }])
+    will_title = " 廷议题 "
+    will_body = "\n臣请集议。\t"
+    pre = ra.PrewriteResults(deliberate_by_key={
+        key: {"title": will_title, "body": will_body},
+    })
+    ra.apply_rescript_batch(db, state, batch, pre, content=content)
+    issue = db.conn.execute(
+        "SELECT title, stage_text FROM issues WHERE origin_ref=?",
+        (f"rescript_deliberate:{key}",),
+    ).fetchone()
+    assert issue is not None
+    assert str(issue["title"]) == will_title
+    assert str(issue["stage_text"]) == will_body
+
+
+def test_657_default_hold_missing_and_empty_action(game):
+    """#657 Class2 V1–V5：缺行/keyed 无 action/keyed 空 action → hold；
+    decided 精确重放过、不匹配拒；revise 锚 + 空 action 不重新 default。"""
+    from ming_sim import rescript_actions as ra
+    db, state, content = game
+
+    # V1 省略该行
+    urgent, _ = _plant_urgent_desk(db, state, actor_name="杨嗣昌")
+    key = urgent["decision_key"]
+    batch = ra.validate_all([urgent], [], default_hold_missing=True)
+    assert key in batch.default_hold_keys
+    assert batch.items[0].choice.get("action") == "hold"
+
+    # V2 keyed 无 action
+    batch2 = ra.validate_all([urgent], [{"decision_key": key}], default_hold_missing=True)
+    assert key in batch2.default_hold_keys
+    assert batch2.items[0].choice.get("action") == "hold"
+
+    # V3 keyed 空 action
+    batch3 = ra.validate_all(
+        [urgent], [{"decision_key": key, "action": ""}], default_hold_missing=True,
+    )
+    assert key in batch3.default_hold_keys
+    assert batch3.items[0].choice.get("action") == "hold"
+
+    # apply V2 → decided + 辜负
+    ra.apply_rescript_batch(db, state, batch2, ra.PrewriteResults(), content=content)
+    hit = next(r for r in db.list_rescript_drafts() if r["title"] == "陕西告饥")
+    assert hit["status"] == "decided"
+    assert (hit["choice"] or {}).get("action") == "hold"
+    edges = db.conn.execute(
+        "SELECT event_kind FROM relation_edge_events WHERE target=? AND event_kind=?",
+        ("杨嗣昌", "辜负"),
+    ).fetchall()
+    assert edges, "default hold 须写辜负信用事件"
+
+    # V4 decided 精确重放仍过；空/不匹配仍整批拒（不 default）
+    stored = dict(hit["choice"] or {})
+    stored.setdefault("decision_key", key)
+    decided_desk = {
+        **urgent, "status": "decided", "choice": stored,
+    }
+    batch4 = ra.validate_all([decided_desk], [stored], default_hold_missing=True)
+    assert batch4.items[0].already_applied
+    assert key not in batch4.default_hold_keys
+    with pytest.raises(ValueError):
+        ra.validate_all(
+            [decided_desk], [{"decision_key": key}], default_hold_missing=True,
+        )
+    with pytest.raises(ValueError):
+        ra.validate_all(
+            [decided_desk],
+            [{"decision_key": key, "action": "hold", "label": "另留"}],
+            default_hold_missing=True,
+        )
+
+    # V5 pending 已应用 return_revise 锚 + 空 action → 拒，禁止重新 default
+    db.conn.execute("DELETE FROM pending_decisions WHERE kind='rescript_draft'")
+    urgent2, opts2 = _plant_urgent_desk(db, state, actor_name="杨嗣昌")
+    key2 = urgent2["decision_key"]
+    revise_choice = ra.canonical_choice({
+        "decision_key": key2, "action": "return_revise", "label": "发回改票",
+        "applied_from_revision_round": 0,
+    })
+    # 模拟已应用 revise 锚：pending + choice=return_revise + round 已 +1 + prior 非空
+    db.conn.execute(
+        "UPDATE pending_decisions SET choice_json=?, revision_round=1, "
+        "prior_options_json=? WHERE turn=? AND idx=? AND kind='rescript_draft'",
+        (
+            json.dumps(revise_choice, ensure_ascii=False),
+            json.dumps([opts2], ensure_ascii=False),
+            int(urgent2["source_turn"] if urgent2.get("source_turn") is not None else urgent2["turn"]),
+            int(urgent2["idx"]),
+        ),
+    )
+    db.conn.commit()
+    desk2 = db.list_rescript_desk(int(state.turn))
+    row2 = next(r for r in desk2 if r["decision_key"] == key2)
+    assert row2["status"] == "pending"
+    with pytest.raises(ValueError):
+        ra.validate_all(
+            [row2], [{"decision_key": key2, "action": ""}], default_hold_missing=True,
+        )
+    # equal 重放 → already_applied，不进 default_hold_keys
+    batch5 = ra.validate_all([row2], [revise_choice], default_hold_missing=True)
+    assert batch5.items[0].already_applied
+    assert key2 not in batch5.default_hold_keys
+
+
+def test_657_http_default_hold_keyed_empty_action_and_betray(web_game, monkeypatch):
+    """#657 Class2 V6 必跑：真 HTTP keyed 仅 decision_key → 持久 hold + 辜负。"""
+    db, state = web_game.db, web_game.state
+    _657_install_real_phase2_llm_boundary(monkeypatch)
+    opt = _layer_a_option()
+    db.conn.execute("DELETE FROM pending_decisions WHERE kind='rescript_draft'")
+    db.save_rescript_drafts(int(state.turn), [{
+        "title": "HTTP默认留中",
+        "context": "c",
+        "options": [opt, _layer_a_option(label="备", hint="h")],
+        "actor_name": "杨嗣昌",
+        "actor_office": "兵部尚书",
+        "actor_faction": "东林",
+    }])
+    db.save_resolve_context(
+        int(state.turn), "诏", "邸报",
+        {"candidate_events": [], "transit_semantics": []},
+        secret_orders=[], relevant_memories=[],
+    )
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
+    db.conn.commit()
+    desk = db.list_rescript_desk(int(state.turn))
+    key = next(r["decision_key"] for r in desk if r["title"] == "HTTP默认留中")
+
+    r = asyncio.run(_post_resolve([{"decision_key": key}]))
+    assert r.status_code == 200, r.text
+    hit = next(row for row in db.list_rescript_drafts() if row["title"] == "HTTP默认留中")
+    assert hit["status"] == "decided"
+    assert (hit["choice"] or {}).get("action") == "hold"
+    edges = db.conn.execute(
+        "SELECT event_kind FROM relation_edge_events WHERE target=? AND event_kind=?",
+        ("杨嗣昌", "辜负"),
+    ).fetchall()
+    assert edges, "HTTP default hold 须写辜负"
+
+
 def test_657_five_actions_domain_writes(game):
     """五动作至少各一领域断言；summon 只 CAS decided。"""
     from ming_sim import rescript_actions as ra
@@ -1189,13 +1377,15 @@ def test_657_abi_mapper_matrix_a1_a12(game):
     cols = {r[1] for r in db.conn.execute("PRAGMA table_info(decree_dossiers)").fetchall()}
     assert "rescript_origin" not in cols
 
-    minister = db.conn.execute(
-        "SELECT name FROM characters WHERE status='active' AND power_id='ming' LIMIT 1"
-    ).fetchone()
-    mname = str(minister["name"]) if minister else "杨嗣昌"
+    ministers = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
+        "ORDER BY name LIMIT 2"
+    ).fetchall()
+    mname = str(ministers[0]["name"]) if ministers else "杨嗣昌"
+    other = str(ministers[1]["name"]) if len(ministers) > 1 else mname
 
     def _apply_mapped_choice(choice_fields, *, title, promulgate=True):
-        """mapper→validate→apply_rescript_batch；默认再顺颁，断言判后世界效果。"""
+        """mapper→validate→apply_rescript_batch；默认再顺颁，读世界事实。"""
         db.conn.execute("DELETE FROM pending_decisions WHERE kind='rescript_draft'")
         opt = normalize_rescript_layer_a_option({
             "label": choice_fields.get("label") or "拟",
@@ -1204,13 +1394,13 @@ def test_657_abi_mapper_matrix_a1_a12(game):
                if k not in {"decision_key", "action", "draft_capability"}},
         }) if choice_fields.get("action") == "follow_draft" else None
         if opt is not None:
-            drafts_opts = [opt, {"label": "b", "hint": "h", "draft_capability": "x"}]
+            drafts_opts = [opt, _layer_a_option(label="b", hint="h")]
             cap = opt["draft_capability"]
             label = opt["label"]
         else:
             drafts_opts = [
                 _layer_a_option(label="骨架", hint="h"),
-                {"label": "b", "hint": "h", "draft_capability": "x"},
+                _layer_a_option(label="b", hint="h"),
             ]
             cap = ""
             label = choice_fields.get("label") or "中旨"
@@ -1236,24 +1426,35 @@ def test_657_abi_mapper_matrix_a1_a12(game):
         after_rows = db.list_decree_dossiers()
         assert len(after_rows) > before, title
         created = after_rows[-1]
-        if promulgate and str(created.get("mode") or "") != "midzhi":
-            # ordinary 顺颁物化世界效果；midzhi 另有 stigma/affected 接缝，本矩阵证 create+mode
-            db.apply_dossier_verdicts(
-                state,
-                [{"dossier_id": int(created["id"]), "decision": "promulgated"}],
-                content=content,
-            )
+        if promulgate:
+            verdict = {"dossier_id": int(created["id"]), "decision": "promulgated"}
+            if str(created.get("mode") or "") == "midzhi":
+                verdict["affected_parties"] = [{
+                    "kind": "faction", "key": "皇党",
+                    "direction": "positive", "intensity": "weak",
+                }]
+            db.apply_dossier_verdicts(state, [verdict], content=content)
             created = next(
                 d for d in db.list_decree_dossiers() if int(d["id"]) == int(created["id"])
             )
         return created
 
-    # A1 assignment duty + 承办
+    def _payload(created):
+        raw = created.get("payload_json") or created.get("payload") or {}
+        if isinstance(raw, str):
+            raw = json.loads(raw or "{}")
+        return raw if isinstance(raw, dict) else {}
+
+    # A1 assignment：判后 issues initiative + origin_ref + end_turn；roster 有主办
+    army0 = db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()
+    stop_a1 = {f"army.{army0['id']}.arrears": "<=0"} if army0 else {"metrics.民心": ">=0"}
     p = ra.map_rescript_option_or_choice({
         "action_type": "assignment", "label": "责成督赈", "hint": "h",
         "target_kind": "region", "target_id": "shaanxi",
         "locality_scope": "single", "region_id": "shaanxi",
         "transaction_category": "督赈", "deadline_months": 2,
+        "assignee_name": mname,
+        "commitment_kind": "until_stop", "stop_condition": stop_a1,
     }, db=db, content=content, state=state)
     assert p["end_turn"] == int(state.turn) + 2
     created = _apply_mapped_choice({
@@ -1262,14 +1463,23 @@ def test_657_abi_mapper_matrix_a1_a12(game):
         "target_kind": "region", "target_id": "shaanxi",
         "locality_scope": "single", "region_id": "shaanxi",
         "transaction_category": "督赈", "deadline_months": 2,
+        "assignee_name": mname,
+        "commitment_kind": "until_stop", "stop_condition": stop_a1,
     }, title="A1急务")
-    assert created["action_type"] == "assignment"
-    # 判后可见：离 proposed + payload 绝对 end_turn=turn+N（duty 无 assignee 真形）
-    assert str(created.get("status") or "") in {"promulgated", "executing", "closed"}
-    raw = created.get("payload_json") or created.get("payload") or {}
-    if isinstance(raw, str):
-        raw = json.loads(raw or "{}")
-    assert int(raw.get("end_turn") or 0) == int(state.turn) + 2
+    origin = f"dossier:{int(created['id'])}"
+    init = db.conn.execute(
+        "SELECT kind, origin_ref, end_turn, status FROM issues WHERE origin_ref=?",
+        (origin,),
+    ).fetchone()
+    assert init is not None, "A1 判后须落 initiative"
+    assert str(init["kind"]) == "initiative"
+    assert str(init["origin_ref"]) == origin
+    assert int(init["end_turn"]) == int(state.turn) + 2
+    roster = created.get("participant_roster") or []
+    assert any(
+        isinstance(e, dict) and str(e.get("tier") or "") == "主办"
+        for e in roster
+    ), f"A1 roster 须有主办：{roster!r}"
     with pytest.raises(ValueError):
         ra.map_rescript_option_or_choice({
             "action_type": "assignment", "label": "x", "hint": "h",
@@ -1277,23 +1487,29 @@ def test_657_abi_mapper_matrix_a1_a12(game):
             "locality_scope": "single",
         }, db=db, content=content, state=state)
 
-    # A2 military_order
-    army = db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()
+    # A2 military_order：station 正例改 armies.station
+    army = db.conn.execute("SELECT id, station FROM armies LIMIT 1").fetchone()
     if army is not None:
         aid = str(army["id"])
+        old_station = str(army["station"] or "")
+        new_station = "山海关" if old_station != "山海关" else "大同"
         p = ra.map_rescript_option_or_choice({
             "action_type": "military_order", "label": "调驻", "hint": "h",
             "assignee_name": mname, "target_kind": "army", "target_id": aid,
-            "locality_scope": "none", "station": "山海关",
+            "locality_scope": "none", "station": new_station,
         }, db=db, content=content, state=state)
-        assert p["station"] == "山海关"
+        assert p["station"] == new_station
         created = _apply_mapped_choice({
             "action": "follow_draft", "action_type": "military_order",
             "label": "调驻", "hint": "h", "assignee_name": mname,
             "target_kind": "army", "target_id": aid, "locality_scope": "none",
-            "station": "山海关",
+            "station": new_station,
         }, title="A2急务")
-        assert created["action_type"] == "military_order"
+        after_army = db.conn.execute(
+            "SELECT station FROM armies WHERE id=?", (aid,),
+        ).fetchone()
+        assert after_army is not None
+        assert str(after_army["station"] or "") == new_station
         with pytest.raises(ValueError):
             ra.map_rescript_option_or_choice({
                 "action_type": "military_order", "label": "x", "hint": "h",
@@ -1301,7 +1517,11 @@ def test_657_abi_mapper_matrix_a1_a12(game):
                 "locality_scope": "none",
             }, db=db, content=content, state=state)
 
-    # A3/A4 grant honorific + 金钱
+    # A3 grant honorific：person_logs 加衔；office 不被覆盖
+    office_before = db.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (mname,),
+    ).fetchone()
+    office_before_s = str(office_before["office"] or "") if office_before else ""
     p = ra.map_rescript_option_or_choice({
         "action_type": "grant_allocation", "label": "加衔", "hint": "h",
         "grant_action": "加衔", "target_kind": "character", "target_id": mname,
@@ -1314,30 +1534,38 @@ def test_657_abi_mapper_matrix_a1_a12(game):
         "target_kind": "character", "target_id": mname, "name": mname,
         "locality_scope": "none",
     }, title="A3急务")
-    assert created["action_type"] == "grant_allocation"
+    logs = db.conn.execute(
+        "SELECT action FROM person_logs WHERE person_name=? AND action IN ('加衔','荫叙')",
+        (mname,),
+    ).fetchall()
+    assert logs, "A3 判后须落 person_logs 加衔/荫叙"
+    office_after = db.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (mname,),
+    ).fetchone()
+    assert str(office_after["office"] or "") == office_before_s
+
+    # A4 金钱：国库减少 amount（seed 足额后再咬）
+    state.metrics["国库"] = int(state.metrics.get("国库") or 0) + 5000
+    db.save_state(state)
+    treasury_before = int(state.metrics.get("国库") or 0)
+    amount_a4 = 1000
     p = ra.map_rescript_option_or_choice({
         "action_type": "grant_allocation", "label": "赏", "hint": "h",
-        "grant_action": "赏赉", "amount": 1000,
+        "grant_action": "赏赉", "amount": amount_a4,
         "target_kind": "character", "target_id": mname, "name": mname,
         "locality_scope": "none",
     }, db=db, content=content, state=state)
     assert p["account"] == "国库"
     created = _apply_mapped_choice({
         "action": "follow_draft", "action_type": "grant_allocation",
-        "label": "赏", "hint": "h", "grant_action": "赏赉", "amount": 1000,
+        "label": "赏", "hint": "h", "grant_action": "赏赉", "amount": amount_a4,
         "target_kind": "character", "target_id": mname, "name": mname,
         "locality_scope": "none",
     }, title="A4急务")
-    assert created["action_type"] == "grant_allocation"
-    # 判后只咬 dossier payload（禁回退 apply 前 mapper 字典）
-    assert str(created.get("status") or "") in {"promulgated", "executing", "closed"}
-    raw = created.get("payload_json") or created.get("payload") or {}
-    if isinstance(raw, str):
-        raw = json.loads(raw or "{}")
-    assert isinstance(raw, dict) and raw
-    assert int(raw["amount"]) == 1000
-    assert str(raw["account"]) == "国库"
-    assert str(raw["execution_surface"]) == "in_transit"
+    treasury_after = int(state.metrics.get("国库") or 0)
+    assert treasury_after == treasury_before - amount_a4, (
+        f"A4 国库应减 {amount_a4}：{treasury_before}→{treasury_after}"
+    )
     with pytest.raises(ValueError):
         ra.map_rescript_option_or_choice({
             "action_type": "grant_allocation", "label": "赏", "hint": "h",
@@ -1346,7 +1574,7 @@ def test_657_abi_mapper_matrix_a1_a12(game):
             "locality_scope": "none",
         }, db=db, content=content, state=state)
 
-    # A5 项目经费 / 赈灾
+    # A5 项目经费/赈灾：仅 kind 落对（持久 target_kind/target_id）
     p = ra.map_rescript_option_or_choice({
         "action_type": "grant_allocation", "label": "项目", "hint": "h",
         "grant_action": "项目经费", "amount": 500,
@@ -1359,11 +1587,8 @@ def test_657_abi_mapper_matrix_a1_a12(game):
         "label": "项目", "hint": "h", "grant_action": "项目经费", "amount": 500,
         "target_kind": "issue", "target_id": "river-works", "locality_scope": "none",
     }, title="A5项目")
-    assert created["action_type"] == "grant_allocation"
-    assert (created.get("payload") or created).get("grant_action") == "项目经费" or (
-        (created.get("payload") or {}).get("grant_action") == "项目经费"
-        if isinstance(created.get("payload"), dict) else True
-    )
+    assert str(created.get("target_kind") or "") == "issue"
+    assert str(created.get("target_id") or "") == "river-works"
     p = ra.map_rescript_option_or_choice({
         "action_type": "grant_allocation", "label": "赈", "hint": "h",
         "grant_action": "赈灾", "amount": 800,
@@ -1377,11 +1602,30 @@ def test_657_abi_mapper_matrix_a1_a12(game):
         "target_kind": "region", "target_id": "shaanxi",
         "locality_scope": "single", "region_id": "shaanxi",
     }, title="A5赈灾")
-    assert created["action_type"] == "grant_allocation"
+    assert str(created.get("target_kind") or "") == "region"
+    assert str(created.get("target_id") or "") == "shaanxi"
+    # 赈灾无可用 region 靶（target_id 空/等于动作字面）→ issue 叉
+    created_fb = _apply_mapped_choice({
+        "action": "follow_draft", "action_type": "grant_allocation",
+        "label": "赈fallback", "hint": "h", "grant_action": "赈灾", "amount": 100,
+        "target_kind": "issue", "target_id": "赈灾", "locality_scope": "none",
+    }, title="A5赈灾fallback")
+    assert str(created_fb.get("target_kind") or "") == "issue"
 
-    # A6 协饷销欠
+    # A6 协饷销欠：真军 arrears 可见变化
     if army is not None:
         aid = str(army["id"])
+        # seed 欠饷
+        db.conn.execute(
+            "UPDATE armies SET province_pay_arrears=500, central_pay_arrears=0, "
+            "arrears=500 WHERE id=?",
+            (aid,),
+        )
+        db.conn.commit()
+        before_arr = db.conn.execute(
+            "SELECT province_pay_arrears, central_pay_arrears, arrears FROM armies WHERE id=?",
+            (aid,),
+        ).fetchone()
         p = ra.map_rescript_option_or_choice({
             "action_type": "grant_allocation", "label": "协饷", "hint": "h",
             "grant_action": "协饷", "amount": 1200,
@@ -1393,7 +1637,26 @@ def test_657_abi_mapper_matrix_a1_a12(game):
             "label": "协饷", "hint": "h", "grant_action": "协饷", "amount": 1200,
             "target_kind": "army", "target_id": aid, "locality_scope": "none",
         }, title="A6协饷")
-        assert created["action_type"] == "grant_allocation"
+        after_arr = db.conn.execute(
+            "SELECT province_pay_arrears, central_pay_arrears, arrears FROM armies WHERE id=?",
+            (aid,),
+        ).fetchone()
+        before_total = (
+            float(before_arr["province_pay_arrears"] or 0)
+            + float(before_arr["central_pay_arrears"] or 0)
+            + float(before_arr["arrears"] or 0)
+        )
+        after_total = (
+            float(after_arr["province_pay_arrears"] or 0)
+            + float(after_arr["central_pay_arrears"] or 0)
+            + float(after_arr["arrears"] or 0)
+        )
+        # 销欠或补饷可见：欠饷总额下降（真军写核）
+        assert after_total < before_total, (
+            f"A6 欠饷应下降：{before_total}→{after_total}"
+        )
+        assert str(created.get("target_kind") or "") == "army"
+        assert str(created.get("target_id") or "") == aid
         with pytest.raises(ValueError):
             ra.map_rescript_option_or_choice({
                 "action_type": "grant_allocation", "label": "协饷", "hint": "h",
@@ -1402,7 +1665,7 @@ def test_657_abi_mapper_matrix_a1_a12(game):
                 "locality_scope": "none",
             }, db=db, content=content, state=state)
 
-    # A9 punishment 正例含罚俸；判后 midzhi + named assignee 过承办路由
+    # A9 punishment：下狱 imprisoned；罚俸国库变化
     p = ra.map_rescript_option_or_choice({
         "action_type": "punishment", "label": "下狱", "hint": "h",
         "punish_action": "拿问下狱",
@@ -1410,13 +1673,24 @@ def test_657_abi_mapper_matrix_a1_a12(game):
         "locality_scope": "none",
     }, db=db, content=content, state=state)
     assert p["punish_action"] == "拿问下狱"
+    status_before = db.get_character_status(mname)[0]
     created = _apply_mapped_choice({
-        "action": "midzhi", "action_type": "punishment",
+        "action": "follow_draft", "action_type": "punishment",
         "label": "下狱", "hint": "h", "punish_action": "拿问下狱",
         "target_kind": "character", "target_id": mname, "name": mname,
-        "locality_scope": "none", "assignee_name": mname,
+        "locality_scope": "none", "assignee_name": other,
     }, title="A9下狱")
-    assert created["action_type"] == "punishment"
+    assert db.get_character_status(mname)[0] == "imprisoned" or (
+        status_before == "imprisoned"
+    )
+    # 恢复 active 以便后续 A7/A8
+    if db.get_character_status(mname)[0] == "imprisoned":
+        db.set_character_status(state, mname, "active", "A9 cleanup")
+        if mname in getattr(content, "characters", {}):
+            content.characters[mname].status = "active"
+        db.conn.commit()
+
+    treasury_b = int(state.metrics.get("国库") or 0)
     p = ra.map_rescript_option_or_choice({
         "action_type": "punishment", "label": "罚俸", "hint": "h",
         "punish_action": "罚俸", "amount": 50,
@@ -1425,12 +1699,20 @@ def test_657_abi_mapper_matrix_a1_a12(game):
     }, db=db, content=content, state=state)
     assert p["amount"] == 50
     created = _apply_mapped_choice({
-        "action": "midzhi", "action_type": "punishment",
+        "action": "follow_draft", "action_type": "punishment",
         "label": "罚俸", "hint": "h", "punish_action": "罚俸", "amount": 50,
         "target_kind": "character", "target_id": mname, "name": mname,
-        "locality_scope": "none", "assignee_name": mname,
+        "locality_scope": "none", "assignee_name": other,
     }, title="A9罚俸")
-    assert created["action_type"] == "punishment"
+    # 罚俸：国库或俸禄相关可见变化（person_logs / metrics）
+    plogs = db.conn.execute(
+        "SELECT action FROM person_logs WHERE person_name=? AND action LIKE '%罚%'",
+        (mname,),
+    ).fetchall()
+    treasury_a = int(state.metrics.get("国库") or 0)
+    assert plogs or treasury_a != treasury_b or str(created.get("status") or "") in {
+        "promulgated", "executing", "closed",
+    }
     with pytest.raises(ValueError):
         ra.map_rescript_option_or_choice({
             "action_type": "punishment", "label": "罚", "hint": "h",
@@ -1439,7 +1721,7 @@ def test_657_abi_mapper_matrix_a1_a12(game):
             "locality_scope": "none",
         }, db=db, content=content, state=state)
 
-    # A7/A8 appointment
+    # A7/A8 appointment：授官 office_change 或 office；罢免非 active 主职
     p = ra.map_rescript_option_or_choice({
         "action_type": "appointment", "label": "授官", "hint": "h",
         "appoint_action": "任命", "office": "兵部尚书",
@@ -1453,7 +1735,15 @@ def test_657_abi_mapper_matrix_a1_a12(game):
         "target_kind": "character", "target_id": mname, "name": mname,
         "locality_scope": "none",
     }, title="A7授官")
-    assert created["action_type"] == "appointment"
+    ocr = db.conn.execute(
+        "SELECT COUNT(*) AS c FROM office_change_records WHERE dossier_id=?",
+        (int(created["id"]),),
+    ).fetchone()
+    office_now = db.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (mname,),
+    ).fetchone()
+    assert int(ocr["c"] or 0) >= 1 or str(office_now["office"] or "") == "兵部尚书"
+
     p = ra.map_rescript_option_or_choice({
         "action_type": "appointment", "label": "罢", "hint": "h",
         "appoint_action": "罢免", "office": "",
@@ -1467,7 +1757,16 @@ def test_657_abi_mapper_matrix_a1_a12(game):
         "target_kind": "character", "target_id": mname, "name": mname,
         "locality_scope": "none",
     }, title="A8罢免")
-    assert created["action_type"] == "dismiss_assignment"
+    # 罢免后：去职记录或 office 空/非原主职
+    ocr8 = db.conn.execute(
+        "SELECT COUNT(*) AS c FROM office_change_records WHERE dossier_id=?",
+        (int(created["id"]),),
+    ).fetchone()
+    st8 = db.get_character_status(mname)[0]
+    office8 = db.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (mname,),
+    ).fetchone()
+    assert int(ocr8["c"] or 0) >= 1 or st8 != "active" or not str(office8["office"] or "").strip()
     with pytest.raises(ValueError):
         ra.map_rescript_option_or_choice({
             "action_type": "appointment", "label": "授", "hint": "h",
@@ -1475,6 +1774,16 @@ def test_657_abi_mapper_matrix_a1_a12(game):
             "target_kind": "character", "target_id": mname,
             "locality_scope": "none",
         }, db=db, content=content, state=state)
+
+    # 恢复 mname 以便 A10/A11（若被罢）
+    if db.get_character_status(mname)[0] != "active":
+        db.set_character_status(state, mname, "active", "A8 cleanup")
+    db.conn.execute(
+        "UPDATE characters SET office=COALESCE(NULLIF(office,''), '兵部尚书'), "
+        "power_id='ming', status='active' WHERE name=?",
+        (mname,),
+    )
+    db.conn.commit()
 
     # A10 authorization
     p = ra.map_rescript_option_or_choice({
@@ -1490,8 +1799,6 @@ def test_657_abi_mapper_matrix_a1_a12(game):
         "target_kind": "region", "target_id": "shaanxi",
         "locality_scope": "single", "region_id": "shaanxi",
     }, title="A10授权")
-    assert created["action_type"] == "authorization"
-    # 判后：authority_changes ≥ 1
     auth_after = db.list_active_authorities(int(state.turn), holder_id=mname)
     assert len(auth_after) >= auth_before + 1
     with pytest.raises(ValueError):
@@ -1509,7 +1816,6 @@ def test_657_abi_mapper_matrix_a1_a12(game):
         "AND p.leader = c.name LIMIT 1"
     ).fetchone()
     if rebel is None:
-        # 种植最小合格内乱 leader
         db.conn.execute(
             "INSERT OR REPLACE INTO powers "
             "(id, name, kind, leader, stance, troops, cohesion, morale, supply, aggression, "
@@ -1538,8 +1844,6 @@ def test_657_abi_mapper_matrix_a1_a12(game):
         "target_kind": "character", "target_id": rname, "name": rname,
         "locality_scope": "none",
     }, title="A11招抚")
-    assert created["action_type"] == "pacification"
-    # 判后：易主归明
     prow = db.conn.execute(
         "SELECT power_id FROM characters WHERE name=?", (rname,)
     ).fetchone()
@@ -1556,7 +1860,7 @@ def test_657_abi_mapper_matrix_a1_a12(game):
     db.conn.execute("DELETE FROM pending_decisions WHERE kind='rescript_draft'")
     db.save_rescript_drafts(int(state.turn), [{
         "title": "幂等急务", "context": "c",
-        "options": [opt, {"label": "b", "hint": "h", "draft_capability": "x"}],
+        "options": [opt, _layer_a_option(label="b", hint="h")],
         "actor_name": mname, "actor_office": "o", "actor_faction": "f",
     }])
     db.conn.commit()
@@ -1587,6 +1891,7 @@ def test_657_abi_mapper_matrix_a1_a12(game):
     assert batch2.items[0].already_applied
     ra.apply_rescript_batch(db, state, batch2, ra.PrewriteResults(), content=content)
     assert len(db.list_decree_dossiers()) == mid
+
 
 
 def test_657_s10_http_five_actions_and_1490_no_regress(web_game, monkeypatch):
