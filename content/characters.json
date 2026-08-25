@@ -90,7 +90,7 @@
       "personal_skills": [
         "书法名家",
         "票拟附阉",
-        "为魏忠贤题碑"
+        "碑版书丹"
       ],
       "loyalty": 45,
       "ability": 62,
@@ -874,7 +874,7 @@
     },
     {
       "name": "曹化淳",
-      "office": "信邸内官（候补司礼监）",
+      "office": "候补司礼监内官",
       "office_type": "司礼监",
       "faction": "皇党",
       "aliases": [
@@ -937,7 +937,7 @@
     },
     {
       "name": "王承恩",
-      "office": "信邸内官随驾",
+      "office": "内官随驾",
       "office_type": "司礼监",
       "faction": "皇党",
       "aliases": [
@@ -1359,7 +1359,7 @@
       ],
       "personal_skills": [
         "蓟辽防务",
-        "为魏忠贤建生祠",
+        "边镇经营",
         "边镇钱粮"
       ],
       "loyalty": 38,
@@ -3135,7 +3135,7 @@
     },
     {
       "name": "孔有德",
-      "office": "东江毛文龙部将",
+      "office": "东江军将",
       "office_type": "边镇",
       "faction": "军队",
       "aliases": [
@@ -3168,7 +3168,7 @@
     },
     {
       "name": "耿仲明",
-      "office": "东江毛文龙部将",
+      "office": "东江军将",
       "office_type": "边镇",
       "faction": "军队",
       "aliases": [
