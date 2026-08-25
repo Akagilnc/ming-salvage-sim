@@ -218,15 +218,29 @@ def test_yang_acceptance_tracer_production_chain_not_direct_write(monkeypatch):
         for beat in result["beats"]
         for origin in (beat.get("judge") or {}).get("origins") or []
     )
-    # 跨拍摘要水位/年月递进（typed；不锁自由文本）
-    brew_cals = []
+    # 三拍真实年月序列（turn + year/period，非单点自比）
+    settle_cals = [
+        (int(s["settled_year"]), int(s["settled_period"]), int(s["settled_turn"]))
+        for s in result["settles"]
+    ]
+    assert settle_cals == [(1627, 10, 1), (1627, 11, 2), (1627, 12, 3)], settle_cals
+    # 同 pair 三拍摘要快照：last_event_id 与 last_brewed 年月均递进
+    yang_ni: list[dict] = []
     for beat in result["beats"]:
-        for ptr in beat.get("summaries_after_settle") or []:
-            if {ptr.get("source"), ptr.get("target")} == {"杨嗣昌", "倪元璐"}:
-                assert int(ptr.get("last_event_id") or 0) > 0
-                brew_cals.append((
-                    int(ptr.get("last_brewed_year") or 0),
-                    int(ptr.get("last_brewed_period") or 0),
-                ))
-    assert brew_cals and brew_cals[-1][0] > 0
-    assert brew_cals[-1] >= brew_cals[0]
+        hit = next(
+            (
+                p for p in beat.get("summaries_after_settle") or []
+                if (p.get("source"), p.get("target")) == ("杨嗣昌", "倪元璐")
+            ),
+            None,
+        )
+        assert hit is not None, beat.get("summaries_after_settle")
+        yang_ni.append(hit)
+    assert len(yang_ni) == 3
+    event_ids = [int(p["last_event_id"]) for p in yang_ni]
+    brew_cals = [
+        (int(p["last_brewed_year"]), int(p["last_brewed_period"])) for p in yang_ni
+    ]
+    assert event_ids[0] > 0 and event_ids[-1] > event_ids[0]
+    assert event_ids == sorted(event_ids)
+    assert brew_cals == [(1627, 10), (1627, 11), (1627, 12)], brew_cals

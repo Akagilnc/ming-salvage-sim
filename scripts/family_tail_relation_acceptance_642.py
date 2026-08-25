@@ -379,8 +379,15 @@ def _tracked_summary_pointers(db: Any) -> List[Dict[str, Any]]:
     ]
 
 
+def _period_ordinal(year: int, period: int) -> int:
+    return int(year) * 12 + int(period)
+
+
 def _summary_brew_progressed(beat_traces: List[Dict[str, Any]]) -> bool:
-    """跨拍 typed：至少一对摘要 last_event_id/last_brewed 年月递进（不锁自由文本）。"""
+    """跨拍 typed：同一 pair 至少两拍快照，last_event_id 与 last_brewed 年月均递进。
+
+    单点快照不得算通过；任一对水位/年月回退即失败。不锁自由文本。
+    """
     series: Dict[Tuple[str, str], List[Tuple[int, int, int]]] = {}
     for beat in beat_traces:
         for ptr in beat.get("summaries_after_settle") or []:
@@ -390,24 +397,25 @@ def _summary_brew_progressed(beat_traces: List[Dict[str, Any]]) -> bool:
                 int(ptr.get("last_brewed_year") or 0),
                 int(ptr.get("last_brewed_period") or 0),
             ))
-    progressed = False
+    found_progress = False
     for pts in series.values():
-        if not pts:
+        if len(pts) < 2:
             continue
+        if any(event_id <= 0 or year <= 0 or not (1 <= period <= 12)
+               for event_id, year, period in pts):
+            return False
         for i in range(len(pts) - 1):
-            if pts[i][0] > pts[i + 1][0]:
+            e0, y0, p0 = pts[i]
+            e1, y1, p1 = pts[i + 1]
+            if e1 < e0:
                 return False
-            cal_a = (pts[i][1], pts[i][2])
-            cal_b = (pts[i + 1][1], pts[i + 1][2])
-            if cal_a > cal_b and pts[i + 1][1] > 0:
+            if _period_ordinal(y1, p1) < _period_ordinal(y0, p0):
                 return False
-        if pts[-1][0] > 0 and pts[-1][1] > 0:
-            if len(pts) == 1 or pts[0] != pts[-1] or pts[-1][0] > 0:
-                progressed = True
-        if len(pts) >= 2 and pts[0][0] > 0 and pts[-1][0] >= pts[0][0]:
-            if (pts[-1][1], pts[-1][2]) >= (pts[0][1], pts[0][2]) and pts[-1][1] > 0:
-                progressed = True
-    return progressed
+        first_e, first_y, first_p = pts[0]
+        last_e, last_y, last_p = pts[-1]
+        if last_e > first_e and _period_ordinal(last_y, last_p) > _period_ordinal(first_y, first_p):
+            found_progress = True
+    return found_progress
 
 
 def _chat_turn_pointer(db: Any, chat_turn_id: int) -> Dict[str, Any]:
@@ -538,8 +546,16 @@ def _run_yang_anchor(cfg: LLMConfig, content: GameContent) -> Dict[str, Any]:
                 int(s["after_turn"]) == int(s["settled_turn"]) + 1
                 for s in settle_traces
             )
-            and int(settle_traces[-1]["settled_turn"])
-            == int(settle_traces[0]["settled_turn"]) + 2
+            and all(
+                _period_ordinal(
+                    int(settle_traces[i + 1]["settled_year"]),
+                    int(settle_traces[i + 1]["settled_period"]),
+                ) == _period_ordinal(
+                    int(settle_traces[i]["settled_year"]),
+                    int(settle_traces[i]["settled_period"]),
+                ) + 1
+                for i in range(len(settle_traces) - 1)
+            )
         )
         structural = {
             "beat_count": len(beat_traces),
