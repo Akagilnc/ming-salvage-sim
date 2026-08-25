@@ -72,25 +72,25 @@ def test_signed_reactions_use_typed_direction_not_narrative_words(game):
 
 
 def test_midzhi_rejection_no_party_fanout_then_force_only_authority(game):
-    """#657 §C.8：中旨打回不撞派；强颁只追加皇威。affected_parties 仅落库。"""
+    """#657 §C.8：中旨打回不撞派、不落猜派；强颁只追加皇威。"""
     db, state, _ = game
     dossier_id = _dossier(db, state, mode="midzhi")
     authority = state.metrics["皇威"]
     before_faction = _sat(db, "factions", "东林")
     before_class = _sat(db, "classes", "士绅")
+    # 即便上游夹带 affected_parties，midzhi 也不持久化、不扇出
     db.apply_dossier_verdicts(state, [_verdict(dossier_id)])
     assert state.metrics["皇威"] == authority
     assert _sat(db, "factions", "东林") == before_faction
     assert _sat(db, "classes", "士绅") == before_class
     assert [x for x in _cost_events(db, dossier_id) if x["cost_kind"] == "satisfaction"] == []
-    # schema 仍落 affected_parties_json（供 M12），但不写 satisfaction
     stored = db.conn.execute(
         "SELECT affected_parties_json FROM decree_dossier_decisions "
         "WHERE dossier_id=? ORDER BY id DESC LIMIT 1",
         (dossier_id,),
     ).fetchone()
     assert stored is not None
-    assert json.loads(str(stored["affected_parties_json"] or "[]"))
+    assert json.loads(str(stored["affected_parties_json"] or "[]")) == []
     db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
     assert state.metrics["皇威"] == max(0, authority - 5)
     assert _sat(db, "factions", "东林") == before_faction
@@ -261,8 +261,6 @@ def test_cancel_linked_issue_breaches_only_its_origin_dossier_once(game):
     [
         ("ordinary", "rejected", None, "affected_parties"),
         ("ordinary", "rejected", [], "affected_parties"),
-        ("midzhi", "rejected", None, "affected_parties"),
-        ("midzhi", "promulgated", [], "affected_parties"),
         ("ordinary", "promulgated", [
             {"kind": "faction", "key": "东林", "direction": "negative", "intensity": "weak"},
         ], "affected_parties"),
@@ -286,6 +284,33 @@ def test_public_apply_rejects_invalid_mode_decision_reaction_shape_before_writes
 
     assert db.list_decree_dossier_decisions(dossier_id) == []
     assert db.get_decree_dossier(dossier_id)["status"] == "proposed"
+
+
+def test_midzhi_apply_omits_guessed_parties_and_keeps_satisfaction(game):
+    """#657 §C.8：midzhi 顺颁/打回均不要求、不落库 affected_parties。"""
+    db, state, _ = game
+    for decision, build in (
+        ("promulgated", lambda did: {"dossier_id": did, "decision": "promulgated"}),
+        ("rejected", lambda did: {
+            k: v for k, v in _verdict(did).items() if k != "affected_parties"
+        }),
+    ):
+        dossier_id = _dossier(db, state, mode="midzhi")
+        before_f = _sat(db, "factions", "东林")
+        before_c = _sat(db, "classes", "士绅")
+        db.apply_dossier_verdicts(state, [build(dossier_id)])
+        assert _sat(db, "factions", "东林") == before_f
+        assert _sat(db, "classes", "士绅") == before_c
+        stored = db.conn.execute(
+            "SELECT affected_parties_json FROM decree_dossier_decisions "
+            "WHERE dossier_id=? ORDER BY id DESC LIMIT 1",
+            (dossier_id,),
+        ).fetchone()
+        assert json.loads(str(stored["affected_parties_json"] or "[]")) == []
+        assert decision in {
+            str(r.get("decision") or "")
+            for r in db.list_decree_dossier_decisions(dossier_id)
+        }
 
 
 def test_legacy_persisted_reaction_severity_migrates_narrowly_and_idempotently(game, caplog):

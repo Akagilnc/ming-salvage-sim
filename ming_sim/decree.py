@@ -399,9 +399,11 @@ def _validate_promulgation_verdict_item(
             for key in rejection_only_fields:
                 item.pop(key, None)
             item.pop("legal_reason_code", None)
-            # ordinary 顺颁必须省略 affected_parties；中旨顺颁保留（ADR 0055 反应）。
-            if mode != "midzhi":
-                item.pop("affected_parties", None)
+            # ordinary/midzhi 顺颁均省略 affected_parties（#657 §C.8 later-wins：中旨不猜派）。
+            item.pop("affected_parties", None)
+        elif mode == "midzhi" and decision == "rejected":
+            # 中旨打回：剥离猜派字段；正式离心归 M12。
+            item.pop("affected_parties", None)
         marker = item.get("midzhi_unpromulgatable", False)
         if not isinstance(marker, bool):
             raise ValueError("中旨亦不可颁标记必须为 bool")
@@ -416,13 +418,14 @@ def _validate_promulgation_verdict_item(
         # Exact verdict-key enforcement (#561) when mode is known from proposed set.
         if mode is not None:
             allowed_keys = {"dossier_id", "decision"}
-            if decision == "promulgated" and mode == "midzhi":
-                allowed_keys.add("affected_parties")
-            elif decision == "rejected":
+            if decision == "rejected":
                 allowed_keys.update(rejection_only_fields - {"midzhi_unpromulgatable"})
-                allowed_keys.update({"affected_parties", "legal_reason_code"})
+                allowed_keys.update({"legal_reason_code"})
                 if mode == "midzhi":
                     allowed_keys.add("midzhi_unpromulgatable")
+                else:
+                    # ordinary 打回仍承载 typed 反应清单
+                    allowed_keys.add("affected_parties")
             unknown_keys = set(item) - allowed_keys
             if unknown_keys:
                 raise ValueError(f"颁布判决含未知字段：{sorted(unknown_keys)}")

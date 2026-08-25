@@ -1500,12 +1500,8 @@ def test_657_abi_mapper_matrix_a1_a12(game):
         assert len(after_rows) > before, title
         created = after_rows[-1]
         if promulgate:
+            # #657 §C.8：midzhi 顺颁不附猜派 affected_parties
             verdict = {"dossier_id": int(created["id"]), "decision": "promulgated"}
-            if str(created.get("mode") or "") == "midzhi":
-                verdict["affected_parties"] = [{
-                    "kind": "faction", "key": "皇党",
-                    "direction": "positive", "intensity": "weak",
-                }]
             db.apply_dossier_verdicts(state, [verdict], content=content)
             created = next(
                 d for d in db.list_decree_dossiers() if int(d["id"]) == int(created["id"])
@@ -2645,7 +2641,7 @@ def test_657_midzhi_persists_decision_key_and_llm_label(game):
 
 
 def test_657_midzhi_verdict_no_party_satisfaction(game):
-    """Spec3/§C.8：midzhi 判决不写派系 satisfaction；affected_parties 仅落库。"""
+    """Spec3/§C.8：midzhi 判决不写派系 satisfaction，且不落库猜派。"""
     from tests.dossier_test_helpers import _sat
 
     db, state, content = game
@@ -2668,6 +2664,7 @@ def test_657_midzhi_verdict_no_party_satisfaction(game):
     mid = next(d for d in db.list_decree_dossiers() if d.get("mode") == "midzhi")
     before_f = _sat(db, "factions", "东林")
     before_c = _sat(db, "classes", "士绅")
+    # 夹带猜派亦不得落库/扇出
     db.apply_dossier_verdicts(state, [{
         "dossier_id": int(mid["id"]),
         "decision": "promulgated",
@@ -2684,63 +2681,107 @@ def test_657_midzhi_verdict_no_party_satisfaction(game):
         (int(mid["id"]),),
     ).fetchone()
     parties = json.loads(str(stored["affected_parties_json"] or "[]"))
-    assert any(p.get("key") == "东林" for p in parties)
+    assert parties == []
 
 
-def test_657_summon_consumed_requires_tag_enter(game):
-    """Spec4/§D.0：非空 body  alone ≠ consumed；须 TAG_ENTER；门闩共用谓词。"""
-    from ming_sim.audience_night import (
-        AudienceNightError,
-        TAG_ENTER,
-        prepare_rescript_summon_scaffold,
-        rescript_summon_origin_consumed,
-        rescript_summon_origin_ref,
-    )
+def test_657_summon_missing_tag_enter_blocks_phase2_then_retry(
+    web_game, monkeypatch,
+):
+    """Spec4/§D.0：真 HTTP 入口；origin 非空 body 缺 TAG_ENTER → 不进 phase2；
+    修正后同 body 重试成功。复用 S5 夹具，不另造平行机制。"""
+    from ming_sim.audience_night import TAG_ENTER, rescript_summon_origin_ref
+    from ming_sim.models import TurnPhase
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+    import ming_sim.beat_orchestration as bo
 
-    db, state, _content = game
-    minister = "杨嗣昌"
-    origin = rescript_summon_origin_ref(int(state.turn), 3, 0)
-    # 合法垫位
-    sc = prepare_rescript_summon_scaffold(
-        db, state, person_name=minister, origin_ref=origin,
-    )
-    assert sc["consumed"] is False
-    eid = int(sc["entry_id"])
-    # 伪造：非空 body 但去掉 TAG_ENTER
+    db, state = web_game.db, web_game.state
+    opt = normalize_rescript_layer_a_option({
+        "label": "备", "hint": "h", "action_type": "assignment",
+        "assignee_name": "", "target_kind": "region", "target_id": "shaanxi",
+        "locality_scope": "single", "region_id": "shaanxi",
+        "transaction_category": "督赈",
+    })
+    gen_body = "杨嗣昌门闩入殿。"
+
+    def _gen(inputs):
+        name = str(getattr(inputs, "person_name", "") or "") or "臣"
+        return f"{name}门闩入殿。" if name != "臣" else gen_body
+
+    monkeypatch.setattr(bo, "create_llm_beat_generator", lambda _cfg: _gen)
+    monkeypatch.setattr(web_game.session, "_beat_generator", _gen, raising=False)
+
+    _657_install_real_phase2_llm_boundary(monkeypatch)
+    phase2_calls = {"n": 0}
+    _real_p2 = session_mod.resolve_decisions_phase2
+
+    def _count_phase2(*a, **k):
+        phase2_calls["n"] += 1
+        return _real_p2(*a, **k)
+
+    monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _count_phase2)
+
+    # finish 写 body 后剥 TAG_ENTER：非空 body ≠ consumed，门闩挡 phase2
+    corrupt = {"v": True}
+    real_persist = bo.persist_chat_turn_scene
+
+    def _persist_strip_enter(db_arg, generated):
+        real_persist(db_arg, generated)
+        if corrupt["v"]:
+            for eid, _body in generated:
+                db_arg.conn.execute(
+                    "UPDATE story_ledger_entries SET tags=? WHERE id=?",
+                    (json.dumps(["叙事"], ensure_ascii=False), int(eid)),
+                )
+
+    monkeypatch.setattr(bo, "persist_chat_turn_scene", _persist_strip_enter)
+
+    desk = _657_plant_awaiting_web(web_game, drafts=[{
+        "title": "门闩召见", "context": "c",
+        "options": [opt, {"label": "x", "hint": "h", "draft_capability": "x"}],
+        "actor_name": "杨嗣昌", "actor_office": "o", "actor_faction": "f",
+    }])
+    key = desk[0]["decision_key"]
+    body = [{
+        "decision_key": key, "action": "summon",
+        "label": "召见", "summon_target": "杨嗣昌",
+    }]
+    turn_before = int(state.turn)
+    r1 = asyncio.run(_post_resolve(body))
+    assert r1.status_code == 200
+    assert "event: error" in r1.text or "event: done" not in r1.text
+    assert phase2_calls["n"] == 0, "缺 TAG_ENTER 不得进 phase2"
+    assert web_game.state.turn_phase != TurnPhase.ISSUED.value
+    hit = next(r for r in db.list_rescript_drafts() if r["title"] == "门闩召见")
+    assert hit["status"] == "decided"
+    assert (hit["choice"] or {}).get("action") == "summon"
+    assert int(web_game.state.turn) == turn_before
+    # 门闩失败须把空问话 scaffold 落 failed（与 generator 失败同形），否则 barrier 永等
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS c FROM chat_turns WHERE status='generating' "
+        "AND user_message_id IS NULL",
+    ).fetchone()["c"] == 0
+
+    # 修正：恢复 TAG_ENTER（合法消费账）后同 body 重试
+    corrupt["v"] = False
+    kind, turn_s, idx_s = key.split(":")
+    origin = rescript_summon_origin_ref(int(turn_s), int(idx_s), 0)
     db.conn.execute(
-        "UPDATE story_ledger_entries SET body=?, tags=? WHERE id=?",
-        ("伪造成功正文", json.dumps(["叙事"], ensure_ascii=False), eid),
+        "UPDATE story_ledger_entries SET tags=? WHERE origin_ref=?",
+        (json.dumps([TAG_ENTER, "宣入"], ensure_ascii=False), origin),
     )
     db.conn.commit()
-    entry = {
-        "body": "伪造成功正文",
-        "tags": ["叙事"],
-    }
-    assert rescript_summon_origin_consumed(entry) is False
-    with pytest.raises(AudienceNightError) as ei:
-        prepare_rescript_summon_scaffold(
-            db, state, person_name=minister, origin_ref=origin,
-        )
-    assert ei.value.code == "scaffold_malformed_body"
-    # 补回 TAG_ENTER + 非空 body → consumed
-    db.conn.execute(
-        "UPDATE story_ledger_entries SET tags=? WHERE id=?",
-        (json.dumps([TAG_ENTER, "宣入"], ensure_ascii=False), eid),
-    )
-    db.conn.commit()
-    assert rescript_summon_origin_consumed({
-        "body": "伪造成功正文", "tags": [TAG_ENTER, "宣入"],
-    }) is True
-    sc2 = prepare_rescript_summon_scaffold(
-        db, state, person_name=minister, origin_ref=origin,
-    )
-    assert sc2["consumed"] is True
-    # expected_bodies 不匹配 → 未消费
-    assert rescript_summon_origin_consumed(
-        {"body": "伪造成功正文", "tags": [TAG_ENTER]},
-        expected_bodies=["真正 generator 正文"],
-    ) is False
-    assert rescript_summon_origin_consumed(
-        {"body": "真正 generator 正文", "tags": [TAG_ENTER]},
-        expected_bodies=["真正 generator 正文"],
-    ) is True
+    web_game.state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    web_game.session.state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(web_game.state)
+    r2 = asyncio.run(_post_resolve(body))
+    assert r2.status_code == 200 and "event: done" in r2.text, r2.text
+    assert phase2_calls["n"] == 1
+    assert int(web_game.state.turn) == turn_before + 1
+    rows = db.conn.execute(
+        "SELECT body, tags FROM story_ledger_entries WHERE origin_ref=?",
+        (origin,),
+    ).fetchall()
+    assert len(rows) == 1
+    tags = json.loads(rows[0]["tags"] or "[]")
+    assert TAG_ENTER in tags
+    assert str(rows[0]["body"] or "").strip() == gen_body

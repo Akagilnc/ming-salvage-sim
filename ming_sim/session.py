@@ -3465,6 +3465,20 @@ class GameSession:
                         f"{item.get('decision_key')}:{item.get('target') or ''}:{origin}"
                     )
             if unconsumed:
+                # 与 generator 失败同形：门闩未消费时 generating 空问话 → failed，供 CAS 重入。
+                # 否则 HTTP 过月 barrier 会永久等 generating 票（#657 Spec4 重试）。
+                with atomic(self.db):
+                    for item in join_state.get("joined") or []:
+                        if item.get("error") or item.get("consumed"):
+                            continue
+                        ctid_fail = int(item.get("chat_turn_id") or 0)
+                        if ctid_fail > 0:
+                            self.db.conn.execute(
+                                "UPDATE chat_turns SET status='failed' "
+                                "WHERE id=? AND status='generating' "
+                                "AND user_message_id IS NULL",
+                                (ctid_fail,),
+                            )
                 raise ValueError(
                     "召见尚未消费，不得推进 phase2：" + "; ".join(unconsumed)
                 )

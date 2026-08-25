@@ -15516,8 +15516,9 @@ class GameDB:
                         raise ValueError("留中案卷须先完成下月重判方可强颁")
                     raise ValueError("强颁只可承接首次打回或下月重判")
                 # Evidence is a Judge verdict, never the player disposition row.
-                # Validate it before status, stigma, authority, or reaction writes.
-                self._current_judge_affected_parties(dossier_id, current_turn)
+                # Ordinary force 须先校验 typed parties；midzhi 不猜派，跳过该证据链。
+                if not predeclared_midzhi:
+                    self._current_judge_affected_parties(dossier_id, current_turn)
                 self.conn.execute(
                     """
                     UPDATE decree_dossiers
@@ -16966,18 +16967,24 @@ class GameDB:
                     content=content, registry=registry,
                 )
                 dossier_id = strict_int(verdict.get("dossier_id"))
+                dossier = self.get_decree_dossier(dossier_id)
+                # #657 §C.8 later-wins：midzhi 不持久化猜派 affected_parties（正式离心归 M12）；
+                # ordinary 仍落库 typed 反应。顺颁中旨可记皇威；打回仅 stigma。
+                parties_json = (
+                    "[]"
+                    if dossier and dossier.get("mode") == "midzhi"
+                    else safe_json_dumps(
+                        verdict.get("affected_parties") or [], ensure_ascii=False,
+                    )
+                )
                 self.conn.execute(
                     """UPDATE decree_dossier_decisions
                        SET affected_parties_json=?, midzhi_unpromulgatable=?
                        WHERE id=(SELECT MAX(id) FROM decree_dossier_decisions WHERE dossier_id=?)""",
-                    (safe_json_dumps(verdict.get("affected_parties") or [], ensure_ascii=False),
+                    (parties_json,
                      1 if verdict.get("midzhi_unpromulgatable") is True else 0,
                      dossier_id),
                 )
-                dossier = self.get_decree_dossier(dossier_id)
-                # #657 §C.8 later-wins：中旨当下不写派系/阶级 satisfaction 扇出
-                # （不猜受影响派系；正式离心归 M12）。affected_parties_json 仍落库
-                # 供后续 M12。顺颁仍可记皇威；打回仅 stigma（见 apply_dossier_promulgation）。
                 if dossier and dossier.get("mode") == "midzhi" and decision == "promulgated":
                     self._apply_override_costs(
                         state, dossier_id,
