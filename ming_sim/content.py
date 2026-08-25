@@ -453,6 +453,7 @@ def load_army_content() -> Dict[str, Army]:
             id=army_id,
             name=str_field(item, "name", f"armies.json.armies[{idx}]"),
             station=str_field(item, "station", f"armies.json.armies[{idx}]"),
+            station_region=str(item.get("station_region") or "").strip(),
             theater=str_field(item, "theater", f"armies.json.armies[{idx}]"),
             commander=str_field(item, "commander", f"armies.json.armies[{idx}]"),
             controller=str_field(item, "controller", f"armies.json.armies[{idx}]"),
