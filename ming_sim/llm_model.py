@@ -248,21 +248,26 @@ def _run_output_status_is_error(run_output: object) -> bool:
 
 
 def extract_agent_text(run_output: object) -> str:
+    """从 agent.run 产出取最终正文。
+
+    #671：真实提取不得 strip；判空/provider_message 只用临时副本。
+    玩家可见原文（含首尾空白）须原样返回。
+    """
     missing = object()
     content = getattr(run_output, "content", missing)
     if content is missing:
-        text = str(run_output).strip()
+        text = str(run_output)
     elif content is None:
         text = ""
     else:
-        text = str(content).strip()
+        text = str(content)
     # #1299/#1310：治本在缝——ERROR status 翻 typed，错误串永不得进 content 当叙事。
     # fail_if_llm_error 标记集只覆盖 API 认证错，不再是唯一护栏。
     if _run_output_status_is_error(run_output):
         raise LLMUnavailable(
             CLI_RUNNER_PLAYER_MESSAGE,
             code="llm_run_error",
-            provider_message=text or "run status=ERROR",
+            provider_message=text.strip() or "run status=ERROR",
         )
     fail_if_llm_error(text, "LLM 调用")
     return text

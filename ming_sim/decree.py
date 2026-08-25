@@ -166,13 +166,14 @@ def collect_new_arrival_waiting_audience(
         waiting = waiting_by_name[name]
         wait_loc = str(waiting.get("location") or "").strip()
         effective_loc = location or wait_loc
-        if effective_loc and not is_capital_location(effective_loc):
+        # #671：双来源均空或非京 → 拒收；不得默认 beizhili。只认 is_capital_location。
+        if not is_capital_location(effective_loc):
             continue
         seen.add(name)
         result.append({
             "name": name,
             "person_name": name,
-            "location": effective_loc or "beizhili",
+            "location": effective_loc,
             "status": "候旨",
             "origin_id": waiting.get("origin_id"),
             "source_entry_id": waiting.get("source_entry_id"),
@@ -1323,10 +1324,19 @@ def resolve_directives(
         simulator = create_season_simulator_agent(
             llm_config, agno_db, state=state, db=db, simulator_payload=simulator_payload
         )
+        # #671：clear_for_resimulation 后 marker 已剥但 attendant 可能已持久——
+        # 复用已有递话，不重叫 companion、不以空覆盖；sim 仍按 ADR 0008 重跑。
+        archived_attendant = (
+            str(prior_resolve_ctx.get("attendant_message") or "")
+            if isinstance(prior_resolve_ctx, dict)
+            else ""
+        )
+        if archived_attendant:
+            attendant_message = archived_attendant
         # companion future.result() 禁止落入 simulator 宽 except（否则误标 sim 失败并吞递话）
         pool = (
             ThreadPoolExecutor(max_workers=1, thread_name_prefix="arrival-attendant")
-            if arrival_waiting else None
+            if arrival_waiting and not archived_attendant else None
         )
         try:
             attendant_future = None
@@ -1359,6 +1369,7 @@ def resolve_directives(
                 )
             # sim 真成功且 companion 在飞：join 前落 durable 完成态（ready=0 + 标记）。
             # 不给 sim 宽 except fallback 叙事打标记（fallback 便宜；标记会永久跳过真 sim）。
+            # companion 未在飞时不写空 attendant（避免覆盖 clear_for_resimulation 已保留原文）。
             if not sim_failed and attendant_future is not None:
                 ckpt_payload = (
                     dict(simulator_payload)
@@ -2085,10 +2096,19 @@ def prepare_resolve_front_half(
             )
             # #668：transit_arrivals 与 ready=0 占位同外层 atomic 写入。
             placeholder_payload = {"transit_arrivals": list(transit_arrivals_box)}
+            # #671：占位 upsert 不得以默认空串覆盖已持久 attendant_message
+            #（clear_for_resimulation 后 phase 非 FRONT_HALF_DONE 重入时尤甚）。
+            prior_placeholder = db.get_resolve_context(int(state.turn))
+            preserved_attendant = (
+                str(prior_placeholder.get("attendant_message") or "")
+                if isinstance(prior_placeholder, dict)
+                else ""
+            )
             db.save_resolve_context(
                 state.turn, decree_text, "", placeholder_payload,
                 secret_orders={}, relevant_memories=[],  # #48：占位用分组承载的空 dict（旋即被真存覆盖）
                 source=Provenance(source).value,  # #146 A：归一 enum/合法值串
+                attendant_message=preserved_attendant,
             )
     except BaseException as exc:
         raise_fixed_period_flow_abort_if_needed(db, state, exc)

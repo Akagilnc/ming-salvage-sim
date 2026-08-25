@@ -207,13 +207,14 @@ def run_agent_stream_text(
         merged = "".join(chunk_buf).replace("\n", " ⏎ ")
         tlog(f"[{tag}] …{merged[-160:]}")
 
-    streamed = "".join(pieces).strip()
-    if streamed:
+    # #671：流式拼合原文不 strip；仅用临时副本判空。
+    streamed = "".join(pieces)
+    if streamed.strip():
         text = streamed
         fail_if_llm_error(text, "LLM 调用")
     elif final_output is not None:
         text = extract_agent_text(final_output)
-        if not text:
+        if not text.strip():
             abort_llm_contract(tag, "流式终结事件没有正文 content", "")
     else:
         abort_llm_contract(tag, "流式无内容且无终结事件", "")

@@ -1,5 +1,5 @@
 import React, { act } from "react";
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./main";
@@ -62,7 +62,26 @@ const click = (el: Element | null | undefined) => act(() => { el?.dispatchEvent(
 const findButton = (host: HTMLElement, text: string) =>
   Array.from(host.querySelectorAll("button")).find((b) => (b.textContent || "").includes(text));
 
-afterEach(() => { vi.unstubAllGlobals(); document.body.innerHTML = ""; });
+// #671：根因——createRoot 后只清 innerHTML 不 unmount，孤儿树 effect/定时器串测致全套件时序 flake。
+const mountedRoots: Array<{ root: Root; host: HTMLElement }> = [];
+const trackRoot = (host: HTMLElement): Root => {
+  const root = createRoot(host);
+  mountedRoots.push({ root, host });
+  return root;
+};
+const unmountTrackedRoots = () => {
+  for (const { root, host } of mountedRoots.splice(0)) {
+    act(() => { root.unmount(); });
+    host.remove();
+  }
+};
+
+afterEach(() => {
+  unmountTrackedRoots();
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+  document.body.innerHTML = "";
+});
 
 describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer）", () => {
   it("#1276 邸报木牌重开 gazette；史册头起居注另入口解析近臣像", async () => {
@@ -86,7 +105,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       return jsonResp({});
     }));
     const host = document.createElement("div"); document.body.appendChild(host);
-    await act(async () => { createRoot(host).render(<App />); });
+    await act(async () => { trackRoot(host).render(<App />); });
     // 自动邸报弹出后关掉，再经木牌重开
     await act(async () => {
       await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="邸报"]')).not.toBeNull());
@@ -145,7 +164,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       return jsonResp({});
     }));
     const host = document.createElement("div"); document.body.appendChild(host);
-    await act(async () => { createRoot(host).render(<App />); });
+    await act(async () => { trackRoot(host).render(<App />); });
     await tick();
     await click(host.querySelector('[title="朝堂·召见大臣"]'));
     await tick();
@@ -202,7 +221,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       return jsonResp({});
     }));
     const host = document.createElement("div"); document.body.appendChild(host);
-    await act(async () => { createRoot(host).render(<App />); });
+    await act(async () => { trackRoot(host).render(<App />); });
     await tick();
     await click(host.querySelector('[title="朝堂·召见大臣"]'));
     await tick();
@@ -238,7 +257,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       return jsonResp({});
     }));
     const host = document.createElement("div"); document.body.appendChild(host);
-    await act(async () => { createRoot(host).render(<App />); });
+    await act(async () => { trackRoot(host).render(<App />); });
     await tick();
     await click(host.querySelector('[title="朝堂·召见大臣"]'));
     await tick();
@@ -294,7 +313,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     }));
 
     const host = document.createElement("div"); document.body.appendChild(host);
-    await act(async () => { createRoot(host).render(<App />); });
+    await act(async () => { trackRoot(host).render(<App />); });
     await tick();
     await click(host.querySelector('[aria-label="朝堂·召见大臣"]'));
     await tick();
@@ -338,7 +357,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     }));
 
     const host = document.createElement("div"); document.body.appendChild(host);
-    await act(async () => { createRoot(host).render(<App />); });
+    await act(async () => { trackRoot(host).render(<App />); });
     await tick();
     await click(host.querySelector('[aria-label="朝堂·召见大臣"]'));
     await tick();
@@ -379,7 +398,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       return jsonResp({});
     }));
     const host = document.createElement("div"); document.body.appendChild(host);
-    await act(async () => { createRoot(host).render(<App />); });
+    await act(async () => { trackRoot(host).render(<App />); });
     await tick();
     await click(host.querySelector('[aria-label="朝堂·召见大臣"]'));
     await tick();
@@ -398,7 +417,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     });
 
     const secondHost = document.createElement("div"); document.body.appendChild(secondHost);
-    await act(async () => { createRoot(secondHost).render(<App />); });
+    await act(async () => { trackRoot(secondHost).render(<App />); });
     await tick();
     await click(secondHost.querySelector('[aria-label="朝堂·召见大臣"]'));
     await tick();
@@ -443,7 +462,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     }));
 
     const host = document.createElement("div"); document.body.appendChild(host);
-    await act(async () => { createRoot(host).render(<App />); });
+    await act(async () => { trackRoot(host).render(<App />); });
     await act(async () => { await vi.waitFor(() => expect(findButton(host, "杨嗣昌")).toBeTruthy()); });
     await click(host.querySelector('[aria-label="朝堂·召见大臣"]'));
     await click(findButton(host, "杨嗣昌"));
@@ -488,7 +507,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
 
     const host = document.createElement("div");
     document.body.appendChild(host);
-    await act(async () => { createRoot(host).render(<App />); });
+    await act(async () => { trackRoot(host).render(<App />); });
     await tick();
     expect(host.querySelector(".hud2-stage")).not.toBeNull();  // 进入游戏视图（旧草案在飞刷新已发出、挂起）
 
@@ -522,7 +541,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       }));
       const host = document.createElement("div");
       document.body.appendChild(host);
-      await act(async () => { createRoot(host).render(<App />); });
+      await act(async () => { trackRoot(host).render(<App />); });
       await act(async () => { await vi.advanceTimersByTimeAsync(0); });   // 冲刷挂载 fetch，换回合 effect 起 autoOpen 定时器
       expect(secretDialog(host)).toBeNull();                             // 未到点：真实对话框未开
       await act(async () => { await vi.advanceTimersByTimeAsync(400); }); // 400ms 到点、仍最新代次 → open()
@@ -544,7 +563,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       }));
       const host = document.createElement("div");
       document.body.appendChild(host);
-      await act(async () => { createRoot(host).render(<App />); });
+      await act(async () => { trackRoot(host).render(<App />); });
       await act(async () => { await vi.advanceTimersByTimeAsync(0); });   // 冲刷挂载：autoOpen 400ms 定时器已排程（尚未到点）
       expect(secretDialog(host)).toBeNull();
 
@@ -571,7 +590,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     }));
     const host = document.createElement("div");
     document.body.appendChild(host);
-    await act(async () => { createRoot(host).render(<App />); });
+    await act(async () => { trackRoot(host).render(<App />); });
     await tick();
     expect(host.querySelector(".hud2-stage")).not.toBeNull();
 
@@ -612,7 +631,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       }));
       const host = document.createElement("div");
       document.body.appendChild(host);
-      await act(async () => { createRoot(host).render(<App />); });
+      await act(async () => { trackRoot(host).render(<App />); });
       await tick();
       expect(host.querySelector(".hud2-stage")).not.toBeNull();
 
@@ -762,7 +781,7 @@ const stubSettlementFetch = (state: unknown) => {
 const mountApp = async () => {
   const host = document.createElement("div");
   document.body.appendChild(host);
-  await act(async () => { createRoot(host).render(<App />); });
+  await act(async () => { trackRoot(host).render(<App />); });
   await act(async () => {
     await vi.waitFor(() => expect(host.querySelector(".hud2-stage")).not.toBeNull());
   });
@@ -784,7 +803,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     expect(host.querySelector("[data-testid=wang-settlement-slip]")).not.toBeNull();
 
     // 刷新口径：busy 空 + phase 仍 settling → 重挂仍可达
-    document.body.innerHTML = "";
+    unmountTrackedRoots();
     const host2 = await mountApp();
     const resume2 = host2.querySelector('[data-testid="settle-resume"] button') as HTMLButtonElement | null;
     expect(resume2).not.toBeNull();
@@ -807,7 +826,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     expect(action).toBeTruthy();
     expect(action!.disabled).toBe(false);
 
-    document.body.innerHTML = "";
+    unmountTrackedRoots();
     const host2 = await mountApp();
     await act(async () => {
       await vi.waitFor(() => expect(host2.querySelector('[data-testid="decision-modal"]')).not.toBeNull());
@@ -830,7 +849,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     expect(retry!.disabled).toBe(false);
     expect(retry!.textContent).toContain("重新拉取");
 
-    document.body.innerHTML = "";
+    unmountTrackedRoots();
     const host2 = await mountApp();
     await act(async () => {
       await vi.waitFor(() => expect(host2.querySelector('[data-testid="decision-recovery"]')).not.toBeNull());
@@ -855,7 +874,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     expect(resume.textContent).toContain("续跑结算");
 
     // 刷新重挂仍在
-    document.body.innerHTML = "";
+    unmountTrackedRoots();
     const host2 = await mountApp();
     await act(async () => {
       await vi.waitFor(() => expect(host2.querySelector('[data-testid="settle-resume"]')).not.toBeNull());

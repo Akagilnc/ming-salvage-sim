@@ -96,6 +96,29 @@ def test_run_arrival_attendant_message_preserves_raw_text(monkeypatch):
         )
 
 
+def test_run_arrival_attendant_message_real_extract_preserves_whitespace(monkeypatch):
+    """#671①：真实入口 agent.run → extract_agent_text → run_agent_text 不得 strip。"""
+    import ming_sim.agents as agents_mod
+    import ming_sim.decree as decree_mod
+    from types import SimpleNamespace
+
+    raw = "\n  奴婢禀报：孙传庭本月抵京候旨。  \n"
+    arrivals = [{"name": "孙传庭", "location": "beizhili"}]
+
+    class _Agent:
+        def run(self, _prompt):
+            return SimpleNamespace(content=raw, status="COMPLETED")
+
+    # 不 stub run_agent_text / extract_agent_text——咬住真实提取缝
+    monkeypatch.setattr(decree_mod, "create_arrival_attendant_agent", lambda *_a, **_k: _Agent())
+    # decree 经 agents.run_agent_text；确保 dump 旁路安静
+    monkeypatch.setattr(agents_mod, "_dump_llm_messages", lambda *_a, **_k: None)
+    got = decree_mod.run_arrival_attendant_message(
+        object(), year=1627, period=10, arrivals=arrivals,
+    )
+    assert got == raw
+
+
 @pytest.mark.parametrize(
     "error_factory",
     [
@@ -456,29 +479,41 @@ def test_arrival_companion_checkpoint_retry_skips_sim(game, monkeypatch):
 
 
 def test_arrival_clear_without_marker_still_reruns_sim(game, monkeypatch):
-    """无标记的 ready=0 + 非空 narrative/attendant 不得跳过 simulator（ADR 0008）。"""
+    """无标记的 ready=0 + 非空 narrative/attendant：sim 必重跑（ADR 0008）；
+    #671②：已持久 attendant 复用，不重叫 companion、不以空覆盖。"""
     import ming_sim.decree as decree_mod
     import ming_sim.memories as memories
+    from ming_sim.models import TurnPhase
 
     db, state, content = game
     names = ["洪承畴"]
     arrivals, _waiting = _seed_waiting_arrivals(game, names)
     sim_ran = {"n": 0}
+    attendant_ran = {"n": 0}
 
     def _attendant(*_a, **_k):
-        return ATTENDANT_TEXT
+        attendant_ran["n"] += 1
+        return "不应重叫的递话"
 
     def _simulate(*_a, **kwargs):
         sim_ran["n"] += 1
+        # 重跑过程中 context 上的 attendant 不得被空串覆盖
+        ctx = db.get_resolve_context(state.turn)
+        if ctx is not None:
+            assert ctx.get("attendant_message") == ATTENDANT_TEXT
         return (SIM_REPORT, kwargs["simulator_payload"])
 
-    # 模拟 clear_for_resimulation 后态：narrative/attendant 在、标记已剥、ready=0
+    # 模拟 clear_for_resimulation 后生产态：SETTLING + narrative/attendant 在、标记已剥、ready=0
+    # transit_arrivals 已进 durable（前半段不重跑 tick），arrival_waiting 将由引擎重算。
     db.save_resolve_context(
-        state.turn, "d", "旧邸报仍在", {"k": "v", "arrival_waiting": []},
+        state.turn, "d", "旧邸报仍在",
+        {"k": "v", "transit_arrivals": list(arrivals)},
         secret_orders=[], relevant_memories=[],
         source="player_decree",
         attendant_message=ATTENDANT_TEXT,
     )
+    state.turn_phase = TurnPhase.SETTLING.value
+    db.save_state(state)
     assert db.get_resolve_context(state.turn)["extracted"] is None
     assert ARRIVAL_COMPANION_SIM_DONE_KEY not in (
         db.get_resolve_context(state.turn)["simulator_payload"] or {}
@@ -486,7 +521,7 @@ def test_arrival_clear_without_marker_still_reruns_sim(game, monkeypatch):
 
     monkeypatch.setattr(
         decree_mod, "tick_transit_arrivals",
-        lambda *_a, **_k: list(arrivals),
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("settling 不得重跑 tick")),
     )
     _stub_settlement_llms(
         decree_mod, memories, monkeypatch, simulate=_simulate, attendant=_attendant,
@@ -497,8 +532,10 @@ def test_arrival_clear_without_marker_still_reruns_sim(game, monkeypatch):
     )
     assert result.awaiting is False
     assert sim_ran["n"] == 1
+    assert attendant_ran["n"] == 0  # 不重叫 companion
     completed = int(state.turn) - 1
     assert db.get_turn_report(completed) == SIM_REPORT
+    assert db.get_turn_attendant_message(completed) == ATTENDANT_TEXT
 
 
 def test_arrival_dual_voice_empty_set_zero_calls(game, monkeypatch):
@@ -543,3 +580,51 @@ def test_arrival_dual_voice_empty_set_zero_calls(game, monkeypatch):
     completed = int(state.turn) - 1
     assert db.get_turn_attendant_message(completed) == ""
     assert db.previous_turn_attendant_message(state) == ""
+
+
+def test_collect_arrival_waiting_rejects_empty_locations():
+    """#671④：双来源地点均空不得默认 beizhili；只认 is_capital_location。"""
+    import ming_sim.decree as decree_mod
+
+    rows = decree_mod.collect_new_arrival_waiting_audience(
+        transit_arrivals=[{"name": "洪承畴", "location": ""}],
+        waiting_audience=[{"person_name": "洪承畴", "location": ""}],
+    )
+    assert rows == []
+
+    rows_unknown = decree_mod.collect_new_arrival_waiting_audience(
+        transit_arrivals=[{"name": "洪承畴", "location": "shaanxi"}],
+        waiting_audience=[{"person_name": "洪承畴", "location": ""}],
+    )
+    assert rows_unknown == []
+
+    rows_ok = decree_mod.collect_new_arrival_waiting_audience(
+        transit_arrivals=[{"name": "洪承畴", "location": "beizhili"}],
+        waiting_audience=[{"person_name": "洪承畴", "location": ""}],
+    )
+    assert len(rows_ok) == 1
+    assert rows_ok[0]["location"] == "beizhili"
+    assert "beizhili" not in json.dumps(
+        decree_mod.collect_new_arrival_waiting_audience(
+            transit_arrivals=[{"name": "孙传庭", "location": None}],
+            waiting_audience=[{"person_name": "孙传庭", "location": None}],
+        ),
+        ensure_ascii=False,
+    )
+
+
+def test_history_turn_api_returns_attendant_message_raw(game, monkeypatch):
+    """#671③：/api/history/turn/{turn} 交付独立递话原文（真实 API 入口）。"""
+    import asyncio
+    import web_app
+
+    db, state, _content = game
+    turn = int(state.turn)
+    db.save_turn_report(state, SIM_REPORT, attendant_message=ATTENDANT_TEXT)
+    assert db.get_turn_attendant_message(turn) == ATTENDANT_TEXT
+
+    monkeypatch.setattr(web_app, "get_game", lambda: type("G", (), {"db": db})())
+    payload = asyncio.run(web_app.api_history_turn(turn))
+    assert payload["exists"] is True
+    assert payload["report"] == SIM_REPORT
+    assert payload["attendant_message"] == ATTENDANT_TEXT
