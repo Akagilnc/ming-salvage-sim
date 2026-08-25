@@ -12,7 +12,8 @@ from ming_sim import audience_night as an
 from ming_sim.db import GameDB
 
 
-ATTENDANT_TEXT = "奴婢禀报：洪承畴、孙传庭本月抵京候旨，尚未宣入。"
+# 含首尾空白：生成→DB→状态投影须逐字保留（P6 零删改）
+ATTENDANT_TEXT = "\n  奴婢禀报：洪承畴、孙传庭本月抵京候旨，尚未宣入。  \n"
 SIM_REPORT = "《双星抵京》\n天启七年十月 月末奏章\n\n一、人事除目\n洪承畴、孙传庭抵京候旨。\n\n十、诏书核销\n本月无新旨 → 已办成。"
 
 
@@ -84,6 +85,33 @@ def test_collect_new_arrival_waiting_audience_intersection_and_empty():
 
     assert collect_new_arrival_waiting_audience([], waiting) == []
     assert collect_new_arrival_waiting_audience(arrivals, []) == []
+
+
+def test_run_arrival_attendant_message_preserves_raw_text(monkeypatch):
+    """成功返回未 strip 原文；纯空白仍抛 LLMContractError。"""
+    import ming_sim.decree as decree_mod
+    from ming_sim.exceptions import LLMContractError
+
+    raw = "\n  皇爷，洪承畴本月抵京候旨。  \n"
+    arrivals = [{"name": "洪承畴", "location": "beizhili"}]
+
+    monkeypatch.setattr(decree_mod, "run_agent_text", lambda *_a, **_k: raw)
+    got = decree_mod.run_arrival_attendant_message(
+        object(), year=1627, period=10, arrivals=arrivals, agent=object(),
+    )
+    assert got == raw
+
+    monkeypatch.setattr(decree_mod, "run_agent_text", lambda *_a, **_k: "   \n\t  ")
+    with pytest.raises(LLMContractError, match="王承恩抵京报到返回空文"):
+        decree_mod.run_arrival_attendant_message(
+            object(), year=1627, period=10, arrivals=arrivals, agent=object(),
+        )
+
+    monkeypatch.setattr(decree_mod, "run_agent_text", lambda *_a, **_k: None)
+    with pytest.raises(LLMContractError, match="王承恩抵京报到返回空文"):
+        decree_mod.run_arrival_attendant_message(
+            object(), year=1627, period=10, arrivals=arrivals, agent=object(),
+        )
 
 
 def test_arrival_dual_voice_parallel_main_path(game, monkeypatch):

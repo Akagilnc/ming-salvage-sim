@@ -213,10 +213,10 @@ def run_arrival_attendant_message(
         json.dumps(facts, ensure_ascii=False),
         tag="arrival-attendant",
     )
-    cleaned = str(text or "").strip()
-    if not cleaned:
+    text = str(text or "")
+    if not text.strip():
         raise LLMContractError("王承恩抵京报到返回空文")
-    return cleaned
+    return text  # 原文，含首尾空白（P6：零删改）
 
 
 class PromulgationVerdictProvider(Protocol):
