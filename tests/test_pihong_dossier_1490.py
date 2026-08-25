@@ -2869,13 +2869,16 @@ def test_657_preferred_hitl_choice_urgent_follow_draft_ordinary_intact():
 
 
 def test_657_phase2_preserve_backlog_and_generate_current_drafts(game, monkeypatch):
-    """③ HITL phase2：保留旧 backlog 同时并行生成本回合 drafts。"""
+    """③ 真入口 resolve_decisions_phase2：保留既有急务并追加本回合新票拟；清锚同终态。
+
+    不 stub extract 编排：真实 extract fan-out 调 side_leg；只替 LLM 文本与票拟生成结果。
+    """
     import ming_sim.decree as dm
+    import ming_sim.simulation as simulation
     from ming_sim.models import TurnPhase
 
     db, state, content = game
     turn = int(state.turn)
-    # 本回合既有 return_revise 行 + append 新票拟：验证 preserve 不 DELETE 既有
     old_opt = _layer_a_option()
     db.save_rescript_drafts(turn, [{
         "title": "旧急务", "context": "c", "options": [old_opt],
@@ -2889,15 +2892,31 @@ def test_657_phase2_preserve_backlog_and_generate_current_drafts(game, monkeypat
             "applied_from_revision_round": 0,
         }, ensure_ascii=False), turn),
     )
-    db.conn.commit()
+    db.save_resolve_context(
+        turn, "诏", "邸报正文",
+        {"candidate_events": [], "transit_semantics": [], "decree_text": "诏"},
+        secret_orders=[], relevant_memories=[],
+    )
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
 
+    canned = (
+        '{"economy_moves": [], "new_armies": [], "new_issues": [], '
+        '"secret_order_updates": []}'
+    )
+    monkeypatch.setattr(simulation, "run_agent_text", lambda *a, **k: canned)
+    monkeypatch.setattr(dm, "create_json_sanitizer_agent", lambda *a, **k: None)
+    monkeypatch.setattr(dm, "create_score_extractor_module_agent", lambda *a, **k: object())
+    monkeypatch.setattr(dm, "build_extractor_shared_context", lambda *a, **k: "ctx")
+    monkeypatch.setattr(dm, "create_chapter_memory_agent", lambda *a, **k: None)
+    monkeypatch.setattr(dm, "record_chapter_memory", lambda *a, **k: None)
+    monkeypatch.setattr(dm, "_make_relation_brew_runner", lambda *a, **k: None)
+    monkeypatch.setattr(dm, "create_ending_summary_agent", lambda *a, **k: None)
+    monkeypatch.setattr(dm, "create_rescript_draft_agent", lambda *a, **k: object())
+    monkeypatch.setattr(dm, "build_rescript_draft_payload", lambda *a, **k: {"ok": True})
     monkeypatch.setattr(
         dm, "select_triage_actor",
         lambda _db: {"name": "杨嗣昌", "office": "首辅", "faction": "东林"},
-    )
-    monkeypatch.setattr(dm, "create_rescript_draft_agent", lambda *a, **k: object())
-    monkeypatch.setattr(
-        dm, "build_rescript_draft_payload", lambda *a, **k: {"ok": True},
     )
     new_opt = _layer_a_option(label="新拟本月", hint="新")
     monkeypatch.setattr(
@@ -2906,45 +2925,18 @@ def test_657_phase2_preserve_backlog_and_generate_current_drafts(game, monkeypat
             "title": "本月新急务", "context": "n", "options": [new_opt],
         }],
     )
-    monkeypatch.setattr(dm, "create_json_sanitizer_agent", lambda *a, **k: None)
-    monkeypatch.setattr(dm, "create_score_extractor_module_agent", lambda *a, **k: None)
-    monkeypatch.setattr(dm, "build_extractor_shared_context", lambda *a, **k: "ctx")
 
-    def _extract_with_side(*a, **k):
-        side = k.get("side_leg")
-        if callable(side):
-            side()
-        return {}, "o", "i"
-
-    monkeypatch.setattr(dm, "extract_scores_by_modules_with_agno", _extract_with_side)
-    monkeypatch.setattr(dm, "create_chapter_memory_agent", lambda *a, **k: None)
-    monkeypatch.setattr(dm, "record_chapter_memory", lambda *a, **k: None)
-    monkeypatch.setattr(dm, "_make_relation_brew_runner", lambda *a, **k: None)
-    monkeypatch.setattr(dm, "create_ending_summary_agent", lambda *a, **k: None)
-
-    db.save_resolve_context(
-        turn, "诏", "邸报正文", {"candidate_events": [], "transit_semantics": []},
-        secret_orders=[], relevant_memories=[],
-    )
-    state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.save_state(state)
-
-    report = dm._settle_after_narrative(
-        state, db, None, None,
-        decree_text="诏", narrative="邸报正文",
-        simulator_payload={"candidate_events": [], "transit_semantics": [], "decree_text": "诏"},
-        relevant_memories=[], secret_orders={},
-        before_turn=turn, _emit=lambda *a, **k: None,
-        content=content, registry=None,
-        preserve_rescript_drafts=True,
+    turn_before = int(state.turn)
+    report = dm.resolve_decisions_phase2(
+        state, db, None, None, content=content, registry=None,
     )
     assert isinstance(report, str)
+    assert int(state.turn) == turn_before + 1
     titles = {d["title"] for d in db.list_rescript_drafts()}
     assert "旧急务" in titles, titles
     assert "本月新急务" in titles, titles
     old = next(d for d in db.list_rescript_drafts() if d["title"] == "旧急务")
     assert int(old["revision_round"] or 0) == 1
-    # settle 终态清锚：applied revise choice 已空
     assert not (old.get("choice") or {})
 
 

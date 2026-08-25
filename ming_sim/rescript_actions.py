@@ -95,12 +95,9 @@ def project_preferred_hitl_choice(decision: Mapping[str, object]) -> Dict[str, o
         item["action"] = "follow_draft"
         cap = str(item.get("draft_capability") or "").strip()
         if not cap:
-            try:
-                cap = derive_draft_capability(item)
-            except Exception:
-                cap = ""
-        if cap:
-            item["draft_capability"] = cap
+            # derive_draft_capability 为纯函数，缺字段回填默认后哈希，不上抛业务异常
+            cap = derive_draft_capability(item)
+        item["draft_capability"] = cap
         if not str(item.get("label") or "").strip():
             item["label"] = "依拟"
     return item
