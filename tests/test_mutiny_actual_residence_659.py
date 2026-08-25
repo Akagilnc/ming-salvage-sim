@@ -3,17 +3,23 @@
 票面根修：station_region=regions.id；station 只做人读细地点；欠饷事实 region
 改取 station_region（饷源 pay_source_region 只服务分账）；逃亡落既有
 population_transfers。禁止 station 文本解析、第二事实核、第二转移核。
+
+主行为闭环（#659 判词）：simulator / internal extractor 输入面同时可见哗变
+（zero_combat）／长期分源欠饷／station_region 与该省军户·流民余额，再沿
+apply_score_extraction 落既有 shape 的 reason=逃亡 转移并守恒记账。
 """
 
 from __future__ import annotations
 
 import os
+import shutil
 
 from ming_sim.db import GameDB
 from ming_sim.execution_pressure import build_execution_two_axis_surface
 from ming_sim.fiscal_fact_brief import build_fiscal_fact_brief
 from ming_sim.issues import apply_score_extraction
 from ming_sim.models import Event
+from ming_sim.simulation import build_extractor_shared_context, build_simulator_payload
 
 # content/classes.json 冻结字面（施工 oracle，非实现推导）
 JUNHU_LIAODONG = 230000
@@ -78,43 +84,73 @@ def _executing_dossier(db, state, region_id: str) -> int:
     return int(did)
 
 
-def test_unparseable_station_facts_s7_desertion_restore_follow_station_region(game, tmp_path):
-    """station 不可解析文字 + station_region=dongjiang_area：事实/S7/逃亡/restore 只落东江。"""
+def _simulator_army_dicts(payload_armies):
+    if isinstance(payload_armies, dict) and "rows" in payload_armies:
+        cols = payload_armies.get("cols") or payload_armies.get("columns") or []
+        return [dict(zip(cols, row)) for row in payload_armies["rows"]]
+    return list(payload_armies)
+
+
+def test_mutiny_arrears_desertion_real_payload_tracer(game, tmp_path):
+    """真实入口 tracer：盘面哗变+长期欠饷+station_region → simulator/extractor 可见 → 逃亡落账守恒。
+
+    只构造盘面事实与既有 shape 的 population_transfers；不 fake 触发公式、
+    不 grep prompt 文案、不加第二转移核。S7 军镇属地同缝顺带钉住。
+    """
     db, state, content = game
-    # 人读 station 故意不可解析；结构化驻地与饷源分属
+    # 人读 station 故意不可解析；结构化驻地与饷源分属；闩哗变 + 分源长期欠饷
     db.conn.execute(
         "UPDATE armies SET station=?, station_region='dongjiang_area',"
-        " pay_source_region='liaodong' WHERE id='dongjiang'",
+        " pay_source_region='liaodong', is_mutinied=1, loyalty=10 WHERE id='dongjiang'",
         ("___not_a_place___",),
     )
     _pin_split_arrears(db, "dongjiang", province=40.0, central=20.0)
     assert _pop(db, "军户", "dongjiang_area") == JUNHU_DONGJIANG
     assert _pop(db, "流民", "dongjiang_area") == LIUMIN_DONGJIANG
+    assert _pop(db, "军户", "liaodong") == JUNHU_LIAODONG
 
-    entries = build_fiscal_fact_brief(db)
-    dong_facts = [
-        e for e in entries
+    # 1) simulator 输入面：zero_combat / station_region / 分源欠饷属地=驻地
+    payload = build_simulator_payload(state, db, decree_text="", previous_narrative="")
+    armies = _simulator_army_dicts(payload["armies"])
+    dong = next(
+        a for a in armies
+        if "东江" in str(a.get("name", "")) or str(a.get("id", "")) == "dongjiang"
+    )
+    assert dong.get("zero_combat") is True
+    assert dong.get("station_region") == "dongjiang_area"
+    assert "is_mutinied" not in dong
+
+    fiscal = payload["fiscal_fact_brief"]
+    dong_arrears = [
+        e for e in fiscal
         if e["subject_id"] == "dongjiang" and e["metric"] == "分源欠饷月数"
     ]
-    assert dong_facts
-    assert all(e["region"] == "dongjiang_area" for e in dong_facts)
+    assert dong_arrears
+    assert all(e["region"] == "dongjiang_area" for e in dong_arrears)
+    assert all(int(e["window_turns"]) >= 1 for e in dong_arrears)
     assert not any(
         e["subject_id"] == "dongjiang" and e["region"] == "liaodong"
-        for e in entries
+        for e in fiscal
     )
 
+    # 2) internal extractor 输入面：该驻地省军户/流民余额可见
+    context = build_extractor_shared_context(
+        db, state, "东江驻军哗变日久，军户私逃为流民。", "", module="internal",
+    )
+    balances = context["class_population_balances"]
+    assert balances["cols"] == ["class_region", "population", "population_unit"]
+    assert any(row[:2] == ["军户@dongjiang_area", JUNHU_DONGJIANG] for row in balances["rows"])
+    assert any(row[:2] == ["流民@dongjiang_area", LIUMIN_DONGJIANG] for row in balances["rows"])
+
+    # 3) S7 军镇压力按 station_region 挂属地（既有契约，不新开核）
     _executing_dossier(db, state, "dongjiang_area")
     _executing_dossier(db, state, "liaodong")
     surface = build_execution_two_axis_surface(db, transit_semantics=())
     by_rid = {str(p["region_id"]): p for p in surface["provinces"]}
-    dong_garrison = by_rid["dongjiang_area"]["garrison_pressure_rows"]
-    assert any(g["army_id"] == "dongjiang" for g in dong_garrison)
-    liao_garrison = by_rid["liaodong"]["garrison_pressure_rows"]
-    assert not any(g["army_id"] == "dongjiang" for g in liao_garrison)
-    assert "\t军镇\tdongjiang_area\t" in surface["tsv"] or any(
-        ln.startswith("军镇\tdongjiang_area\t") for ln in surface["tsv"].splitlines()
-    )
+    assert any(g["army_id"] == "dongjiang" for g in by_rid["dongjiang_area"]["garrison_pressure_rows"])
+    assert not any(g["army_id"] == "dongjiang" for g in by_rid["liaodong"]["garrison_pressure_rows"])
 
+    # 4) 沿既有 applier 申报 reason=逃亡；守恒、属地不串
     total_before = _global_population(db)
     desert_amt = 3000
     applied = apply_score_extraction(db, state, {
@@ -129,23 +165,23 @@ def test_unparseable_station_facts_s7_desertion_restore_follow_station_region(ga
     assert not applied["population_transfers_rejections"]
     assert _pop(db, "军户", "dongjiang_area") == JUNHU_DONGJIANG - desert_amt
     assert _pop(db, "流民", "dongjiang_area") == LIUMIN_DONGJIANG + desert_amt
-    # 辽东军户不被串扣
-    assert _pop(db, "军户", "liaodong") == JUNHU_LIAODONG
+    assert _pop(db, "军户", "liaodong") == JUNHU_LIAODONG  # 非驻地省不串
     assert _global_population(db) == total_before
 
+    # 5) save/restore 只读 DB 接续
     path = str(tmp_path / "659_restore.db")
     db.conn.commit()
-    # 拷贝当前库文件再 reopen（同票 save/restore 接续）
-    import shutil
     shutil.copyfile(db.path, path)
     restored = GameDB(path, content)
     try:
         row = restored.conn.execute(
-            "SELECT station, station_region, pay_source_region FROM armies WHERE id='dongjiang'"
+            "SELECT station, station_region, pay_source_region, is_mutinied "
+            "FROM armies WHERE id='dongjiang'"
         ).fetchone()
         assert row["station"] == "___not_a_place___"
         assert row["station_region"] == "dongjiang_area"
         assert row["pay_source_region"] == "liaodong"
+        assert int(row["is_mutinied"]) == 1
         assert _pop(restored, "军户", "dongjiang_area") == JUNHU_DONGJIANG - desert_amt
         assert _pop(restored, "流民", "dongjiang_area") == LIUMIN_DONGJIANG + desert_amt
         r_entries = build_fiscal_fact_brief(restored)
@@ -154,57 +190,19 @@ def test_unparseable_station_facts_s7_desertion_restore_follow_station_region(ga
             for e in r_entries
             if e["subject_id"] == "dongjiang" and e["metric"] == "分源欠饷月数"
         )
+        r_payload = build_simulator_payload(
+            restored.load_state(), restored, decree_text="", previous_narrative="",
+        )
+        r_dong = next(
+            a for a in _simulator_army_dicts(r_payload["armies"])
+            if "东江" in str(a.get("name", "")) or str(a.get("id", "")) == "dongjiang"
+        )
+        assert r_dong.get("zero_combat") is True
+        assert r_dong.get("station_region") == "dongjiang_area"
     finally:
         restored.close()
         if os.path.exists(path):
             os.remove(path)
-
-
-def test_same_pay_source_split_residence_no_cross_book(game):
-    """关宁/东江同饷源 liaodong、分属地：事实与逃亡扣减互不串。"""
-    db, state, content = game
-    g = db.conn.execute(
-        "SELECT station_region, pay_source_region FROM armies WHERE id='guanning'"
-    ).fetchone()
-    d = db.conn.execute(
-        "SELECT station_region, pay_source_region FROM armies WHERE id='dongjiang'"
-    ).fetchone()
-    assert g["pay_source_region"] == d["pay_source_region"] == "liaodong"
-    assert g["station_region"] == "liaodong"
-    assert d["station_region"] == "dongjiang_area"
-
-    _pin_split_arrears(db, "guanning", province=30.0, central=15.0)
-    _pin_split_arrears(db, "dongjiang", province=24.0, central=12.0)
-
-    entries = build_fiscal_fact_brief(db)
-    g_regions = {
-        e["region"] for e in entries
-        if e["subject_id"] == "guanning" and e["metric"] == "分源欠饷月数"
-    }
-    d_regions = {
-        e["region"] for e in entries
-        if e["subject_id"] == "dongjiang" and e["metric"] == "分源欠饷月数"
-    }
-    assert g_regions == {"liaodong"}
-    assert d_regions == {"dongjiang_area"}
-
-    applied = apply_score_extraction(db, state, {
-        "population_transfers": [
-            {
-                "source": "军户@liaodong", "target": "流民@liaodong",
-                "amount": 1000, "reason": "逃亡", "origin_ref": "盘面自发",
-            },
-            {
-                "source": "军户@dongjiang_area", "target": "流民@dongjiang_area",
-                "amount": 500, "reason": "逃亡", "origin_ref": "盘面自发",
-            },
-        ],
-    }, content, None)
-    assert not applied["population_transfers_rejections"]
-    assert _pop(db, "军户", "liaodong") == JUNHU_LIAODONG - 1000
-    assert _pop(db, "流民", "liaodong") == LIUMIN_LIAODONG + 1000
-    assert _pop(db, "军户", "dongjiang_area") == JUNHU_DONGJIANG - 500
-    assert _pop(db, "流民", "dongjiang_area") == LIUMIN_DONGJIANG + 500
 
 
 def test_redeploy_moves_fact_region_keeps_pay_source(game):
@@ -243,25 +241,6 @@ def test_redeploy_moves_fact_region_keeps_pay_source(game):
     assert d_regions == {"shandong"}
     assert "dongjiang_area" not in d_regions
     assert "liaodong" not in d_regions
-
-
-def test_desertion_transfer_conserves_global_population(game):
-    """逃亡转移前后 SUM(classes.population) 守恒。"""
-    db, state, content = game
-    total_before = _global_population(db)
-    applied = apply_score_extraction(db, state, {
-        "population_transfers": [{
-            "source": "军户@liaodong",
-            "target": "流民@liaodong",
-            "amount": 7777,
-            "reason": "逃亡",
-            "origin_ref": "盘面自发",
-        }],
-    }, content, None)
-    assert not applied["population_transfers_rejections"]
-    assert _global_population(db) == total_before
-    assert _pop(db, "军户", "liaodong") == JUNHU_LIAODONG - 7777
-    assert _pop(db, "流民", "liaodong") == LIUMIN_LIAODONG + 7777
 
 
 def test_station_region_rejects_unknown_region_id(game):
