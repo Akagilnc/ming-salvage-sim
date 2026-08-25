@@ -908,7 +908,11 @@ def review_directives(session: GameSession) -> str:
 
 
 def _submit_first_cli_decisions(session: GameSession, result) -> str:
-    """CLI 暂无亲裁 UI：所有结算入口共用同一首选项续跑策略。"""
+    """CLI 暂无亲裁 UI：所有结算入口共用同一首选项续跑策略。
+
+    #657：急务/keyed → PRE 锁外 → ① 持 `_cli_write_gate` → ② 无锁 join → ③ 再持同一 gate。
+    纯 decision 仍 `with gate: submit_decisions`。
+    """
     if result is None or not result.awaiting:
         return "" if result is None else result.report
     print("\n【月末重大抉择】（CLI 暂自动取首选项；交互式裁决见网页版）")
@@ -917,8 +921,31 @@ def _submit_first_cli_decisions(session: GameSession, result) -> str:
         options = decision.get("options") or []
         first = options[0] if options else {}
         print(f"  · {decision.get('title')} → {first.get('label', '（无）')}")
-        choices.append(dict(first))
-    return session.submit_decisions(choices)
+        item = dict(first) if isinstance(first, dict) else {"label": str(first or "")}
+        # desk 行若带 decision_key，写入 choice 供分段分流
+        dk = str(decision.get("decision_key") or "").strip()
+        if dk:
+            item.setdefault("decision_key", dk)
+        choices.append(item)
+    gate = _cli_write_gate(session)
+    keyed = any(
+        isinstance(c, dict) and str(c.get("decision_key") or "").strip()
+        for c in choices
+    )
+    has_urgent = False
+    list_desk = getattr(getattr(session, "db", None), "list_rescript_desk", None)
+    if callable(list_desk):
+        desk = list_desk(int(session.state.turn))
+        has_urgent = any(str(r.get("kind")) == "rescript_draft" for r in (desk or []))
+    if has_urgent or keyed:
+        pre = session.prepare_rescript_prewrite(choices)
+        with gate:
+            p1 = session.commit_rescript_phase1(pre)
+        joined = session.join_rescript_summons(p1)
+        with gate:
+            return session.finish_rescript_phase2(p1, joined)
+    with gate:
+        return session.submit_decisions(choices)
 
 
 def play_turn(session: GameSession) -> None:

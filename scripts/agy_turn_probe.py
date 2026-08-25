@@ -59,6 +59,7 @@ def main() -> int:
     result = session.resolve_turn(decree=ns.decree, on_event=on_event)
 
     # HITL：推演若出决策点，自动选第一项，续跑 phase2（含 4 模块 extractor）。
+    # #657：急务/keyed 走 PRE→①(session._write_gate)→②无锁→③同 gate；禁裸跑①③。
     rounds = 0
     while getattr(result, "awaiting", False):
         rounds += 1
@@ -70,9 +71,38 @@ def main() -> int:
             pick = opts[0] if opts else {}
             label = pick.get("label", "") if isinstance(pick, dict) else str(pick)
             print(f"   - #{d['idx']} {str(d.get('title'))[:40]} → 选「{label[:40]}」")
-            choices.append({"label": label, "hint": pick.get("hint", "") if isinstance(pick, dict) else ""})
-        report = session.submit_decisions(choices, on_event=on_event)
-        # submit_decisions 返回报告字符串；置 ISSUED。再无 awaiting。
+            item = {
+                "label": label,
+                "hint": pick.get("hint", "") if isinstance(pick, dict) else "",
+            }
+            dk = str(d.get("decision_key") or "").strip()
+            if dk:
+                item["decision_key"] = dk
+            if isinstance(pick, dict):
+                for k in ("action", "draft_capability", "dossier_id", "dossier_decision"):
+                    if pick.get(k) is not None and k not in item:
+                        item[k] = pick[k]
+            choices.append(item)
+        gate = session._write_gate
+        keyed = any(
+            isinstance(c, dict) and str(c.get("decision_key") or "").strip()
+            for c in choices
+        )
+        desk = session.db.list_rescript_desk(int(session.state.turn))
+        has_urgent = any(str(r.get("kind")) == "rescript_draft" for r in desk)
+        if has_urgent or keyed:
+            pre = session.prepare_rescript_prewrite(choices)
+            with gate:
+                p1 = session.commit_rescript_phase1(pre)
+            joined = session.join_rescript_summons(p1)
+            with gate:
+                report = session.finish_rescript_phase2(
+                    p1, joined, on_event=on_event,
+                )
+        else:
+            with gate:
+                report = session.submit_decisions(choices, on_event=on_event)
+        # 返回报告字符串；置 ISSUED。再无 awaiting。
         result = type("R", (), {"awaiting": False, "report": report})()
 
     report_text = result.report if hasattr(result, "report") else str(result)

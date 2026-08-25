@@ -2332,11 +2332,13 @@ def ensure_summon_scaffold_reenterable(
     origin_ref: str,
     entry_id: int,
     chat_turn_id: int,
+    expected_night_id: int,
 ) -> None:
     """#657 D.6：空垫位复用 CAS（failed→generating）。
 
-    单短 atomic 内全谓词复核；generating no-op；failed→generating CAS 且
-    rowcount!=1 raise；interrupted/其它 raise。不调 reopen_interrupted；不改 reconcile。
+    单短 atomic 内 §D.6.2 全谓词复核（含 TAG_ENTER、空 body、night 三方一致、
+    minister_message 空）；generating no-op 与 failed→CAS 共用同一套谓词；
+    interrupted/其它 raise。不调 reopen_interrupted；不改 reconcile。
     """
     from ming_sim.applier import atomic
 
@@ -2345,7 +2347,9 @@ def ensure_summon_scaffold_reenterable(
         raise AudienceNightError("ensure_summon_scaffold 缺 origin_ref", code="bad_origin")
     eid = int(entry_id)
     ctid = int(chat_turn_id)
+    expect_night = int(expected_night_id)
     with atomic(db):
+        # 事务内重新 SELECT，禁止信任事务前快照
         entry = db.conn.execute(
             "SELECT id, body, origin_ref, origin_chat_turn_id, night_id, tags "
             "FROM story_ledger_entries WHERE id = ?",
@@ -2354,14 +2358,6 @@ def ensure_summon_scaffold_reenterable(
         if entry is None:
             raise AudienceNightError(
                 f"summon 垫位不存在：entry={eid}", code="scaffold_missing",
-            )
-        if str(entry["origin_ref"] or "") != origin:
-            raise AudienceNightError(
-                f"summon 垫位 origin 漂移：entry={eid}", code="scaffold_origin_mismatch",
-            )
-        if int(entry["origin_chat_turn_id"] or 0) != ctid:
-            raise AudienceNightError(
-                f"summon 垫位 chat_turn 绑定漂移：entry={eid}", code="scaffold_ct_mismatch",
             )
         ct = db.conn.execute(
             "SELECT id, status, user_message_id, minister_message_id, night_id "
@@ -2372,21 +2368,50 @@ def ensure_summon_scaffold_reenterable(
             raise AudienceNightError(
                 f"summon scaffold chat_turn 不存在：{ctid}", code="scaffold_ct_missing",
             )
-        night = get_night(db, int(entry["night_id"]))
+        if str(entry["origin_ref"] or "") != origin:
+            raise AudienceNightError(
+                f"summon 垫位 origin 漂移：entry={eid}", code="scaffold_origin_mismatch",
+            )
+        tags = [str(t) for t in _json_list(entry["tags"] if "tags" in entry.keys() else None)]
+        if TAG_ENTER not in tags:
+            raise AudienceNightError(
+                f"summon 垫位缺 TAG_ENTER：entry={eid}", code="scaffold_no_enter_tag",
+            )
+        if str(entry["body"] or "").strip():
+            raise AudienceNightError(
+                f"summon 垫位已消费（body 非空）：entry={eid}", code="scaffold_consumed",
+            )
+        if int(entry["origin_chat_turn_id"] or 0) != ctid:
+            raise AudienceNightError(
+                f"summon 垫位 chat_turn 绑定漂移：entry={eid}", code="scaffold_ct_mismatch",
+            )
+        le_night = int(entry["night_id"] or 0)
+        ct_night = int(ct["night_id"] or 0)
+        if not (ct_night == le_night == expect_night):
+            raise AudienceNightError(
+                f"summon 垫位 night 不一致：ct={ct_night} le={le_night} expect={expect_night}",
+                code="scaffold_night_mismatch",
+            )
+        night = get_night(db, le_night)
         if night is None or str(night.get("status") or "") not in {
             NIGHT_STATUS_OPEN, NIGHT_STATUS_CLOSING,
         }:
             raise AudienceNightError(
-                f"summon 垫位夜不可用：night={entry['night_id']}", code="scaffold_night",
+                f"summon 垫位夜不可用：night={le_night}", code="scaffold_night",
             )
-        # 无问话 scaffold 谓词
         if ct["user_message_id"] is not None:
             raise AudienceNightError(
                 f"summon scaffold 已有问话，不得 CAS：{ctid}", code="scaffold_has_user",
             )
+        minister_mid = ct["minister_message_id"]
+        if minister_mid is not None and int(minister_mid or 0) != 0:
+            raise AudienceNightError(
+                f"summon scaffold 已有大臣回复，不得 CAS：{ctid}",
+                code="scaffold_has_minister",
+            )
         status = str(ct["status"] or "")
         if status == "generating":
-            return  # no-op；谓词已复核
+            return  # no-op；§D.6.2 谓词已在事务内复核
         if status == "failed":
             cur = db.conn.execute(
                 "UPDATE chat_turns SET status = 'generating' "
@@ -2448,13 +2473,43 @@ def prepare_rescript_summon_scaffold(
             raise AudienceNightError(
                 f"空垫位缺 chat_turn 绑定：origin={origin}", code="scaffold_unbound",
             )
+        night_id = int(existing["night_id"])
+        night = get_night(db, night_id)
+        night_ok = (
+            night is not None
+            and str(night.get("status") or "") in {NIGHT_STATUS_OPEN, NIGHT_STATUS_CLOSING}
+        )
+        if not night_ok:
+            # generator 失败后次轮 auto_close 可能已收夜——开新夜并回绑空垫位，
+            # 保持同 origin/entry/chat_turn，供 ensure CAS 重入（S5）。
+            with atomic(db):
+                new_night = get_open_night(db)
+                if new_night is None or str(new_night.get("status") or "") != NIGHT_STATUS_OPEN:
+                    new_night = open_night(
+                        db, state,
+                        time_of_day=time_of_day, location=location,
+                        empty_scaffold=True,
+                    )
+                night_id = int(new_night["id"])
+                db.conn.execute(
+                    "UPDATE story_ledger_entries SET night_id = ? WHERE id = ?",
+                    (night_id, entry_id),
+                )
+                db.conn.execute(
+                    "UPDATE chat_turns SET night_id = ? WHERE id = ?",
+                    (night_id, ctid),
+                )
         ensure_summon_scaffold_reenterable(
-            db, origin_ref=origin, entry_id=entry_id, chat_turn_id=ctid,
+            db,
+            origin_ref=origin,
+            entry_id=entry_id,
+            chat_turn_id=ctid,
+            expected_night_id=night_id,
         )
         return {
             "entry_id": entry_id,
             "chat_turn_id": ctid,
-            "night_id": int(existing["night_id"]),
+            "night_id": night_id,
             "consumed": False,
         }
 
@@ -2508,14 +2563,19 @@ def prepare_rescript_summon_scaffold(
         # 空冲突 → 复用，非成功消费
         entry_id = int(again["id"])
         ctid = int(again.get("origin_chat_turn_id") or 0)
+        night_id = int(again["night_id"])
         if ctid > 0:
             ensure_summon_scaffold_reenterable(
-                db, origin_ref=origin, entry_id=entry_id, chat_turn_id=ctid,
+                db,
+                origin_ref=origin,
+                entry_id=entry_id,
+                chat_turn_id=ctid,
+                expected_night_id=night_id,
             )
         return {
             "entry_id": entry_id,
             "chat_turn_id": ctid,
-            "night_id": int(again["night_id"]),
+            "night_id": night_id,
             "consumed": False,
         }
 

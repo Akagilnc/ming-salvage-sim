@@ -331,8 +331,9 @@ def _surface_capture(label: str, text: str) -> dict:
 def _auto_complete_hitl(session: GameSession) -> Optional[str]:
     """真实结算若出 HITL，一次 awaiting 自动选第一项；返回完整 report。
 
-    形状对齐生产 API（terminal._submit_first_cli_decisions / agy_turn_probe）：
-    submit_decisions 返回报告字符串，再无 awaiting——不造 while/round_cap/伪结果。
+    形状对齐生产 API（terminal._submit_first_cli_decisions / agy_turn_probe）。
+    #657：急务/keyed 走 PRE→①(session._write_gate)→②无锁→③同 gate；不得再
+    submit_decisions 走急务内 join。
     """
     result = session.advance_without_decree()
     if result is None:
@@ -346,8 +347,31 @@ def _auto_complete_hitl(session: GameSession) -> Optional[str]:
         pick = opts[0] if opts else {}
         label = pick.get("label", "") if isinstance(pick, dict) else str(pick)
         hint = pick.get("hint", "") if isinstance(pick, dict) else ""
-        choices.append({"label": label, "hint": hint})
-    return session.submit_decisions(choices)
+        item = {"label": label, "hint": hint}
+        dk = str(d.get("decision_key") or "").strip()
+        if dk:
+            item["decision_key"] = dk
+        if isinstance(pick, dict):
+            for k in ("action", "draft_capability", "dossier_id", "dossier_decision"):
+                if pick.get(k) is not None and k not in item:
+                    item[k] = pick[k]
+        choices.append(item)
+    gate = session._write_gate
+    keyed = any(
+        isinstance(c, dict) and str(c.get("decision_key") or "").strip()
+        for c in choices
+    )
+    desk = session.db.list_rescript_desk(int(session.state.turn))
+    has_urgent = any(str(r.get("kind")) == "rescript_draft" for r in desk)
+    if has_urgent or keyed:
+        pre = session.prepare_rescript_prewrite(choices)
+        with gate:
+            p1 = session.commit_rescript_phase1(pre)
+        joined = session.join_rescript_summons(p1)
+        with gate:
+            return session.finish_rescript_phase2(p1, joined)
+    with gate:
+        return session.submit_decisions(choices)
 
 
 def _first_month_gazette_via_production_settle(
