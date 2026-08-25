@@ -1532,6 +1532,7 @@ def stage_military_order_candidate(
     target_id: str,
     assignee: str = "",
     station: object = "",
+    station_region: object = "",
     deadline_months: object = 0,
     due_turn: object = 0,
     office: object = "",
@@ -1543,7 +1544,7 @@ def stage_military_order_candidate(
 ) -> int:
     """Shared military_order candidate write (#521 / #502).
 
-    收夜只成案卷；station/office 按 ADR 0055 判后物化。既有军调驻不写 new_armies。
+    收夜只成案卷；station/station_region/office 按 ADR 0055 判后物化。既有军调驻不写 new_armies。
     期限只落 due_turn；admission 仅对限期出战（无 station）强制未来 due。
     同军多道独立军令各自成候选；仅 structured target_candidate id 才改草点名更新。
     """
@@ -1604,6 +1605,9 @@ def stage_military_order_candidate(
     dest = str(station or "").strip()
     if dest:
         staged["station"] = dest
+    dest_region = str(station_region or "").strip()
+    if dest_region:
+        staged["station_region"] = dest_region
     # 相对月数 / 绝对 due_turn → 未来 due（与 admission 同形）
     try:
         absolute_due = int(due_turn or 0)
@@ -1654,6 +1658,11 @@ def _materialize_military_order(ctx: MaterializeCtx) -> None:
         target_id=target_id,
         assignee=assignee,
         station=intent.get("station"),
+        station_region=(
+            intent.get("station_region")
+            or intent.get("实际驻地")
+            or intent.get("驻地省")
+        ),
         deadline_months=intent.get("deadline_months"),
         due_turn=intent.get("due_turn"),
         office=intent.get("office"),
@@ -3019,6 +3028,8 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 # 承办人 / 责任军将（admission 映 assignee_id）
                 FieldSpec("name", "姓名", None, "", max_len=20),
                 FieldSpec("station", "驻地", None, "", max_len=80),
+                # #659：结构化实际驻地=regions.id；与 station 双写，不改饷源
+                FieldSpec("station_region", "驻地省", None, "", max_len=40),
                 # 与 secret 共享期限月数；限期出战 stage/admission 换算绝对 due_turn
                 FieldSpec(
                     "deadline_months", "期限月数", None, 0, as_int=True, int_hi=36,
