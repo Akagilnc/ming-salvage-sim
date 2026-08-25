@@ -3,7 +3,7 @@
 | 面 | 含义 | 证据指针 | 本片义务 |
 |---|---|---|---|
 | **1 写入** | 写端三口 + seed 写 | S1 store_632；S2 capture_633；S3 judge_634；S7/S8 seed_638；本片锚③ `tests/test_family_tail_642.py::test_anchor3_xuyang_collaboration_via_summon_judge` | 锚③ 召对写口 |
-| **2 读取** | canonical 读面 + 判官机面 | S9 read_640；锚① seed_638；锚② 闸级 `--anchor yang`（生产单链：读面→召对→判官→settle brew，禁 direct-write）；锚④ read_640 history 缝 + brew_636 `test_build_brew_input_projects_prior_event_fields` / `test_prepare_attaches_prior_events_only_via_history_seam`（闸级 coda 仅 mechanical） | ②不入 CI 重言 |
+| **2 读取** | canonical 读面 + 判官机面 | S9 read_640；锚① seed_638；锚② 闸级 `--anchor yang`（生产单链：读面→召对→close_night 判官 Future→按月 settle/brew，禁 direct-write）；锚④ read_640 history 缝 + brew_636 `test_build_brew_input_projects_prior_event_fields` / `test_prepare_attaches_prior_events_only_via_history_seam`（闸级 coda 仅 mechanical） | ②不入 CI 重言 |
 | **3 恢复** | TD-5 全链 | `docs/evidence/issue-642-restore-matrix.md` | P-2 |
 | **4 真实 extractor 输出** | 结算口真出口 | capture_633 `test_settlement_interaction_lands_directed_edge_with_origin_round` + `test_relation_edge_events_slot_owned_by_relations_module` | 点检引用 |
 | **5 UI/呈现** | P4 | read_640 TD-7；presentation_p4_family_629；style_temperament_641 | 点检引用 |

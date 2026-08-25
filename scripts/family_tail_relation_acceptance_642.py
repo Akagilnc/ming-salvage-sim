@@ -47,18 +47,13 @@ from ming_sim.cli_backend import (
 )
 from ming_sim.content import GameContent
 from ming_sim.context import bind_content
+from ming_sim.audience_night import close_night, get_open_night
 from ming_sim.decree import _make_relation_brew_runner, settle_with_delta
 import ming_sim.issues as issues_mod
 from ming_sim.llm_model import create_chat_model
 from ming_sim.models import LLMConfig
 from ming_sim.relation_brew import build_brew_input
-from ming_sim.relation_judge import (
-    PreparedRelationJudge,
-    finalize_summon_relation_judge,
-    invoke_summon_relation_judge_provider,
-    prepare_summon_relation_judge,
-    summon_edge_origin,
-)
+from ming_sim.relation_judge import summon_edge_origin
 from ming_sim.relation_read import load_relation_history_before, project_relation_ledger
 from ming_sim.relations import EDGE_KINDS, EMPEROR_NODE
 from ming_sim.session import GameSession
@@ -262,41 +257,52 @@ def _production_summon_turn(
     }
 
 
-def _court_roster_names(sess: GameSession) -> set[str]:
-    """与收夜 production 传入 prepare 的 source_night_roster 同形：当前朝堂名册。"""
-    names: set[str] = set()
-    for row in sess.db.current_court_roster_rows(sess.state):
-        name = str(row["name"] if "name" in row.keys() else "")
-        if name:
-            names.add(name)
-    return names
+def _mark_story_extract_done(db: Any, chat_turn_id: int) -> None:
+    """闸级卫生：本锚验的是收夜判官 Future，不另付费跑 story 抽取 drain。"""
+    db.conn.execute(
+        "UPDATE chat_turns SET extract_status='done' WHERE id=?",
+        (int(chat_turn_id),),
+    )
+    db.conn.commit()
 
 
-def _run_summon_relation_judge_phases(
+def _relation_judge_status(db: Any, chat_turn_id: int) -> str:
+    row = db.conn.execute(
+        "SELECT relation_judge_status FROM chat_turns WHERE id=?",
+        (int(chat_turn_id),),
+    ).fetchone()
+    return str(row["relation_judge_status"] or "") if row is not None else ""
+
+
+def _close_night_production_judge(
     sess: GameSession,
     cfg: LLMConfig,
     *,
-    write_gate: threading.Lock,
+    content: GameContent,
+    write_gate: Any,
 ) -> Dict[str, Any]:
-    """既有 prepare → invoke → finalize 单链（不另造平行 judge）。
-
-    allowed_endpoint_names 对齐 audience_night 收夜扫尾：传入朝堂名册，避免 night 批
-    仅 persons_entered_tonight 时把未入殿但对话点名的朝臣端点全部拒写。
-    """
-    prepared = prepare_summon_relation_judge(
+    """生产收夜：判官经 scene_registry.start_relation_judge_provider Future。"""
+    open_n = get_open_night(sess.db)
+    if open_n is None:
+        return {"closed": False, "reason": "no_open_night"}
+    night_id = int(open_n["id"])
+    result = close_night(
         sess.db,
         sess.state,
+        night_id=night_id,
+        body="退朝。",
+        content=content,
+        registry=sess.registry,
+        llm_config=cfg,
         write_gate=write_gate,
-        allowed_endpoint_names=_court_roster_names(sess),
+        scene_registry=getattr(sess, "_scene_registry", None),
+        wait_timeout_s=0.0,
     )
-    if not isinstance(prepared, PreparedRelationJudge):
-        return dict(prepared) if isinstance(prepared, dict) else {"skipped": "not_prepared"}
-    provider_result = invoke_summon_relation_judge_provider(
-        prepared, llm_config=cfg,
-    )
-    return finalize_summon_relation_judge(
-        prepared, provider_result, write_gate=write_gate,
-    )
+    return {
+        "closed": bool(result.get("closed")),
+        "night_id": night_id,
+        "already": bool(result.get("already")),
+    }
 
 
 def _settle_with_brew(sess: GameSession, content: GameContent, cfg: LLMConfig) -> Dict[str, Any]:
@@ -353,7 +359,55 @@ def _summary_pointer(db: Any, source: str, target: str) -> Optional[Dict[str, An
         "founding_chars": len(founding),
         "recent_chars": len(recent),
         "updated_at_period": row.get("updated_at_period"),
+        "last_event_id": int(row.get("last_event_id") or 0),
+        "last_brewed_turn": int(row.get("last_brewed_turn") or 0),
+        "last_brewed_year": int(row.get("last_brewed_year") or 0),
+        "last_brewed_period": int(row.get("last_brewed_period") or 0),
     }
+
+
+def _tracked_summary_pointers(db: Any) -> List[Dict[str, Any]]:
+    return [
+        p for p in (
+            _summary_pointer(db, EMPEROR_NODE, "杨嗣昌"),
+            _summary_pointer(db, "杨嗣昌", "倪元璐"),
+            _summary_pointer(db, "倪元璐", "杨嗣昌"),
+            _summary_pointer(db, "杨嗣昌", "黄道周"),
+            _summary_pointer(db, "黄道周", "杨嗣昌"),
+        )
+        if p is not None
+    ]
+
+
+def _summary_brew_progressed(beat_traces: List[Dict[str, Any]]) -> bool:
+    """跨拍 typed：至少一对摘要 last_event_id/last_brewed 年月递进（不锁自由文本）。"""
+    series: Dict[Tuple[str, str], List[Tuple[int, int, int]]] = {}
+    for beat in beat_traces:
+        for ptr in beat.get("summaries_after_settle") or []:
+            key = (str(ptr.get("source") or ""), str(ptr.get("target") or ""))
+            series.setdefault(key, []).append((
+                int(ptr.get("last_event_id") or 0),
+                int(ptr.get("last_brewed_year") or 0),
+                int(ptr.get("last_brewed_period") or 0),
+            ))
+    progressed = False
+    for pts in series.values():
+        if not pts:
+            continue
+        for i in range(len(pts) - 1):
+            if pts[i][0] > pts[i + 1][0]:
+                return False
+            cal_a = (pts[i][1], pts[i][2])
+            cal_b = (pts[i + 1][1], pts[i + 1][2])
+            if cal_a > cal_b and pts[i + 1][1] > 0:
+                return False
+        if pts[-1][0] > 0 and pts[-1][1] > 0:
+            if len(pts) == 1 or pts[0] != pts[-1] or pts[-1][0] > 0:
+                progressed = True
+        if len(pts) >= 2 and pts[0][0] > 0 and pts[-1][0] >= pts[0][0]:
+            if (pts[-1][1], pts[-1][2]) >= (pts[0][1], pts[0][2]) and pts[-1][1] > 0:
+                progressed = True
+    return progressed
 
 
 def _chat_turn_pointer(db: Any, chat_turn_id: int) -> Dict[str, Any]:
@@ -386,18 +440,16 @@ def _chat_turn_pointer(db: Any, chat_turn_id: int) -> Dict[str, Any]:
 
 
 def _run_yang_anchor(cfg: LLMConfig, content: GameContent) -> Dict[str, Any]:
-    """锚②最短生产单链 tracer：读面→真实召对→判官 prepare/invoke/finalize→settle brew。"""
+    """锚②最短生产单链：读面→召对→close_night 判官 Future→按月 settle/brew。"""
     sess = _fresh_session(content, cfg)
-    write_gate = threading.Lock()
+    write_gate = getattr(sess, "_write_gate", None) or threading.Lock()
     try:
         sess.begin_turn()
         beat_traces: List[Dict[str, Any]] = []
         all_chat_turn_ids: List[int] = []
-        all_judge_written = 0
         settle_traces: List[Dict[str, Any]] = []
 
-        # 三拍内：读面→召对→判官（真实依赖串行）。月末 settle+brew 只跑一次——
-        # 单链仍含酿制腿，避免每拍完整 brew 批把活闸成本扩成三次结算。
+        # 三拍按素材月份真实推进：每拍召对→收夜判官 Future→月末 settle/brew。
         for spec in _YANG_BEAT_UTTERANCES:
             minister = str(spec["minister"])
             face_before = project_relation_ledger(sess.db, viewer=minister)
@@ -405,18 +457,22 @@ def _run_yang_anchor(cfg: LLMConfig, content: GameContent) -> Dict[str, Any]:
             chat_meta = _production_summon_turn(
                 sess, minister=minister, utterance=str(spec["utterance"]),
             )
-            all_chat_turn_ids.append(int(chat_meta["chat_turn_id"]))
-            judge_result = _run_summon_relation_judge_phases(
-                sess, cfg, write_gate=write_gate,
+            ctid = int(chat_meta["chat_turn_id"])
+            all_chat_turn_ids.append(ctid)
+            _mark_story_extract_done(sess.db, ctid)
+            close_meta = _close_night_production_judge(
+                sess, cfg, content=content, write_gate=write_gate,
             )
-            written = list(judge_result.get("written") or [])
-            all_judge_written += int(judge_result.get("edges") or len(written) or 0)
-            origin_prefix = summon_edge_origin(int(chat_meta["chat_turn_id"]))
+            origin_prefix = summon_edge_origin(ctid)
             events_after = [
                 _edge_pointer(e)
                 for e in sess.db.get_relation_edge_events()
                 if str(e.get("origin") or "").startswith(origin_prefix)
             ]
+            judge_status = _relation_judge_status(sess.db, ctid)
+            settle_meta = _settle_with_brew(sess, content, cfg)
+            settle_traces.append(settle_meta)
+            summaries_after = _tracked_summary_pointers(sess.db)
             beat_traces.append({
                 "beat": int(spec["beat"]),
                 "label": spec["label"],
@@ -440,33 +496,31 @@ def _run_yang_anchor(cfg: LLMConfig, content: GameContent) -> Dict[str, Any]:
                 },
                 "chat": {
                     **chat_meta,
-                    **_chat_turn_pointer(sess.db, int(chat_meta["chat_turn_id"])),
+                    **_chat_turn_pointer(sess.db, ctid),
                 },
+                "close": close_meta,
                 "judge": {
-                    "edges": judge_result.get("edges"),
-                    "judged_turn_ids": judge_result.get("judged_turn_ids"),
-                    "origins": judge_result.get("origins"),
-                    "degraded": judge_result.get("degraded"),
-                    "skipped": judge_result.get("skipped"),
-                    "rejected_count": len(judge_result.get("rejected") or []),
+                    "relation_judge_status": judge_status,
+                    "edges": len(events_after),
+                    "edge_ids": [int(e["id"]) for e in events_after],
+                    "origins": sorted({
+                        str(e.get("origin") or "") for e in events_after if e.get("origin")
+                    }),
                     "written": [
                         {
-                            "source": w.get("source"),
-                            "target": w.get("target"),
-                            "event_kind": w.get("event_kind"),
-                            "origin": w.get("origin"),
-                            "edge_id": w.get("edge_id"),
+                            "source": e.get("source"),
+                            "target": e.get("target"),
+                            "event_kind": e.get("event_kind"),
+                            "origin": e.get("origin"),
+                            "edge_id": e.get("id"),
                         }
-                        for w in written
+                        for e in events_after
                     ],
                 },
+                "settle": settle_meta,
                 "edges_from_this_turn": events_after,
+                "summaries_after_settle": summaries_after,
             })
-
-        settle_meta = _settle_with_brew(sess, content, cfg)
-        settle_traces.append(settle_meta)
-        for beat in beat_traces:
-            beat["settle"] = settle_meta
 
         events = sess.db.get_relation_edge_events()
         # 召对判官 origin 含 chat_turn 段（summon_edge_origin 形）。
@@ -477,23 +531,39 @@ def _run_yang_anchor(cfg: LLMConfig, content: GameContent) -> Dict[str, Any]:
             str(e.get("event_kind") or "") in EDGE_KINDS for e in summon_origin_edges
         )
         context_ok = all(str(e.get("context") or "").strip() for e in summon_origin_edges)
-        summary_ptrs = [
-            p for p in (
-                _summary_pointer(sess.db, EMPEROR_NODE, "杨嗣昌"),
-                _summary_pointer(sess.db, "杨嗣昌", "倪元璐"),
-                _summary_pointer(sess.db, "倪元璐", "杨嗣昌"),
+        summary_ptrs = _tracked_summary_pointers(sess.db)
+        month_advanced = (
+            len(settle_traces) == 3
+            and all(
+                int(s["after_turn"]) == int(s["settled_turn"]) + 1
+                for s in settle_traces
             )
-            if p is not None
-        ]
+            and int(settle_traces[-1]["settled_turn"])
+            == int(settle_traces[0]["settled_turn"]) + 2
+        )
         structural = {
             "beat_count": len(beat_traces),
             "chat_turns_completed": len(all_chat_turn_ids) == 3 and all(
                 int(b["chat"]["answer_chars"]) > 0 for b in beat_traces
             ),
-            "judge_wrote_edges": all_judge_written > 0 and len(summon_origin_edges) > 0,
+            "nights_closed": all(bool(b.get("close", {}).get("closed")) for b in beat_traces),
+            "judge_watermark_done": all(
+                str((b.get("judge") or {}).get("relation_judge_status") or "") == "done"
+                for b in beat_traces
+            ),
+            "judge_wrote_edges": len(summon_origin_edges) > 0,
+            "edge_ids_present": all(
+                int(e.get("id") or 0) > 0 for e in summon_origin_edges
+            ) if summon_origin_edges else False,
+            "origins_bind_chat_turn": all(
+                "|chat_turn:" in str(e.get("origin") or "")
+                for e in summon_origin_edges
+            ) if summon_origin_edges else False,
             "edge_kinds_controlled": kind_ok if summon_origin_edges else False,
             "edge_contexts_nonempty": context_ok if summon_origin_edges else False,
-            "settles_completed": len(settle_traces) == 1,
+            "settles_completed": len(settle_traces) == 3,
+            "month_advanced_each_settle": month_advanced,
+            "summary_brew_progressed": _summary_brew_progressed(beat_traces),
             "face_dto_ok_each_beat": all(b["face_before"]["dto_keys_ok"] for b in beat_traces),
         }
         # 语义裁判只读真实链指针（chat-turn / edge / summary），不喂直写剧本。
@@ -645,9 +715,11 @@ def main() -> int:
         "method": {
             "design": (
                 "Live production-chain tracer: seed semantic on seed ledger; "
-                "yang = project_relation_ledger → session summon Q&A → "
-                "prepare/invoke/finalize_summon_relation_judge → "
-                "one settle_with_delta brew after three summon/judge beats; "
+                "yang = 3×(project_relation_ledger → session summon Q&A → "
+                "audience_night.close_night via scene_registry."
+                "start_relation_judge_provider Future → settle_with_delta brew); "
+                "typed asserts on judge watermark/origin/edge id/summary "
+                "last_event_id + last_brewed year-period progression; "
                 "coda = typed prior_events mechanical only; "
                 "independent top-level anchors run via ThreadPoolExecutor; "
                 "no free-text regex; structured pass/fail only."

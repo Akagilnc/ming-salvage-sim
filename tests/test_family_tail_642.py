@@ -3,7 +3,7 @@
 既有指针（不平行重测）：
 - 锚① seed 网：`tests/test_relation_seed_638.py`
 - 锚② 活模型语义：闸级 `scripts/family_tail_relation_acceptance_642.py --anchor yang`
-  （CI 只证生产缝主干，不直写三拍边、不盯并行 helper）
+  （CI 只证 close_night 判官 Future + 按月 settle 主干，不直写三拍边）
 - 锚④ prior 机械：`tests/test_relation_read_640.py` + `tests/test_relation_brew_636.py`
   + 本文件 coda mechanical-only
 - R1 双表面：`tests/test_relation_store_632.py::test_relation_edges_survive_restore`
@@ -122,11 +122,12 @@ def test_coda_acceptance_mechanical_only_skips_live_llm(monkeypatch):
 
 
 def test_yang_acceptance_tracer_production_chain_not_direct_write(monkeypatch):
-    """锚②最短生产缝：召对→判官三阶段→单次 settle brew；禁 gate642 direct-write 自证。
+    """锚②最短生产缝：召对→close_night 判官 Future→按月 settle/brew；禁 gate642 自证写边。
 
-    canned 只替 LLM 体；attach/persist/prepare/finalize/settle 走真实入口。
-    不在 CI 重言三拍预定边语义（活闸仍持 semantic）。
+    canned 只替 LLM 体；attach/persist/close_night/settle 走真实入口。
+    typed 断言水位/origin/edge/摘要年月递进；不锁自由文本、不另造 executor。
     """
+    import ming_sim.agents as agents_mod
     import scripts.family_tail_relation_acceptance_642 as gate
 
     content = _bind_content()
@@ -155,18 +156,20 @@ def test_yang_acceptance_tracer_production_chain_not_direct_write(monkeypatch):
 
     monkeypatch.setattr(GameSession, "chat", _fake_chat)
 
-    def _fake_invoke(prepared, *, llm_config=None, agent=None):
-        judge_calls["n"] += 1
-        ctid = int(prepared.window[0]["id"])
-        return [{
-            "源轮": ctid,
+    class _BeatJudge(_CannedJudge):
+        def run(self, prompt):
+            judge_calls["n"] += 1
+            return super().run(prompt)
+
+    def _fake_agent(_cfg):
+        return _BeatJudge({"events": [{
             "施动者": "杨嗣昌",
             "受动者": "倪元璐",
             "类目": "协作",
-            "语境": f"杨嗣昌与倪元璐当面分工协作（ctid={ctid}）。",
-        }]
+            "语境": "杨嗣昌与倪元璐当面分工协作。",
+        }]})
 
-    monkeypatch.setattr(gate, "invoke_summon_relation_judge_provider", _fake_invoke)
+    monkeypatch.setattr(agents_mod, "create_relation_judge_agent", _fake_agent)
 
     def _fake_runner(_cfg, _agno):
         def _create(state, db, *, settled_turn, settled_year, settled_period):
@@ -193,15 +196,37 @@ def test_yang_acceptance_tracer_production_chain_not_direct_write(monkeypatch):
     )
 
     result = gate._run_yang_anchor(cfg, content)
-    assert result["checks"]["structural_ok"] is True
+    structural = result["structural"]
+    assert result["checks"]["structural_ok"] is True, structural
     assert result["checks"]["semantic_pass"] is True
     assert judge_calls["n"] == 3
-    assert len(result["settles"]) == 1
+    assert len(result["settles"]) == 3
     assert brew_calls["n"] >= 1
     assert result["summon_edge_ids"], result
     assert not direct_write_origins, direct_write_origins
+    assert structural["judge_watermark_done"] is True
+    assert structural["origins_bind_chat_turn"] is True
+    assert structural["edge_ids_present"] is True
+    assert structural["month_advanced_each_settle"] is True
+    assert structural["summary_brew_progressed"] is True
+    assert all(
+        str((beat.get("judge") or {}).get("relation_judge_status") or "") == "done"
+        for beat in result["beats"]
+    )
     assert all(
         "|chat_turn:" in str(origin)
         for beat in result["beats"]
         for origin in (beat.get("judge") or {}).get("origins") or []
     )
+    # 跨拍摘要水位/年月递进（typed；不锁自由文本）
+    brew_cals = []
+    for beat in result["beats"]:
+        for ptr in beat.get("summaries_after_settle") or []:
+            if {ptr.get("source"), ptr.get("target")} == {"杨嗣昌", "倪元璐"}:
+                assert int(ptr.get("last_event_id") or 0) > 0
+                brew_cals.append((
+                    int(ptr.get("last_brewed_year") or 0),
+                    int(ptr.get("last_brewed_period") or 0),
+                ))
+    assert brew_cals and brew_cals[-1][0] > 0
+    assert brew_cals[-1] >= brew_cals[0]
