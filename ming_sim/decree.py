@@ -1539,8 +1539,6 @@ def _settle_after_narrative(
                 if isinstance(simulator_payload.get("decree_dossiers"), list)
                 else []
             ),
-            # #673 r3：phase1 既成 transit_semantics list 对象原样下传（is 同一引用）。
-            transit_semantics=simulator_payload["transit_semantics"],
         )
         for module in EXTRACTION_MODULES
     }
