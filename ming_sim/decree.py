@@ -1415,6 +1415,11 @@ def _replay_settle(
     return report
 
 
+# #657：HITL phase2 续跑时 persist 不得触碰急务票拟行（return_revise 等跨 phase2 存活）。
+# 与 None/[]（#656 空票拟 → DELETE 本回合 draft）三态分立。
+_PRESERVE_RESCRIPT_DRAFTS = object()
+
+
 def persist_resolve_context(
     db: GameDB,
     turn: int,
@@ -1468,7 +1473,10 @@ def persist_resolve_context(
         # #656 / F2.5：急务票拟行与重跑真源同一事务——ready context 存在 ⟺ 票拟已落
         # （生成成功时）。崩溃恢复从持久层读回，不重跑已完成的票拟步（F1.3）；
         # extractor 中止则整个事务回滚，票拟一并回滚不落、重试重生成。
-        if isinstance(rescript_drafts, list) and rescript_drafts:
+        # #657：_PRESERVE_RESCRIPT_DRAFTS → 零触碰（HITL phase2 续跑 / return_revise 存活）。
+        if rescript_drafts is _PRESERVE_RESCRIPT_DRAFTS:
+            pass
+        elif isinstance(rescript_drafts, list) and rescript_drafts:
             db.save_rescript_drafts(turn, rescript_drafts)
         elif rescript_drafts is None or (isinstance(rescript_drafts, list) and len(rescript_drafts) == 0):
             # r4 p3：空/None 时同一事务内 DELETE 本回合 kind='rescript_draft' 行，
@@ -1500,6 +1508,7 @@ def _settle_after_narrative(
     source: Provenance = Provenance.system_simulation,
     dossier_verdicts: Optional[List[Dict[str, object]]] = None,
     dossier_rescript_actions: Optional[List[Dict[str, object]]] = None,
+    preserve_rescript_drafts: bool = False,
 ) -> str:
     """phase2：邸报已定（已剥离决策块），跑 extractor→落库→章节记忆→结局→推进。
     cheat_directive / decision_directive 各自拼到 effective_narrative 最前喂 extractor。
@@ -1555,8 +1564,17 @@ def _settle_after_narrative(
     # 单腿接缝：腿结果由闭包持有（draft_cell），无外部可变结果容器、无串行备选形态。
     draft_cell: Dict[str, object] = {}
     side_leg: Optional[Callable[[], object]] = None
-    triage_actor = select_triage_actor(db)
-    if triage_actor is None:
+    # #657：resolve_decisions_phase2 续跑须保留既有急务票拟（return_revise/decided）。
+    # resolve_turn 直落 path 仍生成/覆写本月票拟（preserve=False）。
+    if preserve_rescript_drafts:
+        draft_cell["drafts"] = _PRESERVE_RESCRIPT_DRAFTS
+        triage_actor = None
+        tlog("[rescript] HITL phase2 续跑：保留既有急务票拟行。")
+    else:
+        triage_actor = select_triage_actor(db)
+    if preserve_rescript_drafts:
+        pass
+    elif triage_actor is None:
         tlog("[rescript] 无在任首辅／掌印，本月无头版（全量邸报照旧）。")
     else:
         def _rescript_draft_leg() -> None:
@@ -2701,6 +2719,7 @@ def resolve_decisions_phase2(
             if isinstance(sim_payload.get("dossier_verdicts"), list) else None
         ),
         dossier_rescript_actions=rescript_actions,
+        preserve_rescript_drafts=True,  # #657：禁擦 return_revise/decided 急务行
     )
     # 结算完清掉暂存决策点（next_period 已在 _settle 内执行，故按 before_turn 清理本回合残留）。
     # resolve_context 的清理已移入 settle_with_delta 的写序列内（ADR 0008 S3），不在此 post-settle 处清。

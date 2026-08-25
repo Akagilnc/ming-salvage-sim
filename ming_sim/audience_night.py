@@ -2481,25 +2481,25 @@ def prepare_rescript_summon_scaffold(
             and str(night.get("status") or "") in {NIGHT_STATUS_OPEN, NIGHT_STATUS_CLOSING}
         )
         if not night_ok:
-            # generator 失败后次轮 auto_close 可能已收夜——开新夜并回绑空垫位，
-            # 保持同 origin/entry/chat_turn，供 ensure CAS 重入（S5）。
+            # §D.5/D.6：复用须同 origin/entry/chat_turn/**原夜**一致。
+            # 禁跨夜改写 ledger/chat_turn.night_id。原夜已闭则重开同一夜（S5 重入）。
             with atomic(db):
-                new_night = get_open_night(db)
-                if new_night is None or str(new_night.get("status") or "") != NIGHT_STATUS_OPEN:
-                    new_night = open_night(
-                        db, state,
-                        time_of_day=time_of_day, location=location,
-                        empty_scaffold=True,
+                other = get_open_night(db)
+                if other is not None and int(other["id"]) != night_id:
+                    raise AudienceNightError(
+                        f"summon 垫位原夜已闭且另有开夜：origin={origin}",
+                        code="scaffold_night_conflict",
                     )
-                night_id = int(new_night["id"])
-                db.conn.execute(
-                    "UPDATE story_ledger_entries SET night_id = ? WHERE id = ?",
-                    (night_id, entry_id),
+                cur = db.conn.execute(
+                    "UPDATE audience_nights SET status = ?, closed_at = NULL "
+                    "WHERE id = ? AND status = ?",
+                    (NIGHT_STATUS_OPEN, night_id, NIGHT_STATUS_CLOSED),
                 )
-                db.conn.execute(
-                    "UPDATE chat_turns SET night_id = ? WHERE id = ?",
-                    (night_id, ctid),
-                )
+                if cur.rowcount != 1:
+                    raise AudienceNightError(
+                        f"summon 垫位原夜不可重开：night={night_id}",
+                        code="scaffold_night",
+                    )
         ensure_summon_scaffold_reenterable(
             db,
             origin_ref=origin,
