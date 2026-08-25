@@ -5319,12 +5319,20 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
                     ),
                 )
                 session = game.session
-                desk = session.db.list_rescript_desk(int(session.state.turn))
-                has_urgent = any(str(r.get("kind")) == "rescript_draft" for r in desk)
+                # 分流探针：keyed 只扫 body（无 DB）；has_urgent 仅当 game.db 具备
+                # list_rescript_desk 时读 desk。禁 session.db/session.state 作分流前提
+                # （合法 session 替身可能无 db——三回归契约）。
                 keyed = any(
                     isinstance(c, dict) and str(c.get("decision_key") or "").strip()
                     for c in (body.choices or [])
                 )
+                has_urgent = False
+                list_desk = getattr(getattr(game, "db", None), "list_rescript_desk", None)
+                if callable(list_desk):
+                    desk = list_desk(int(getattr(game.state, "turn", 0) or 0))
+                    has_urgent = any(
+                        str(r.get("kind")) == "rescript_draft" for r in (desk or [])
+                    )
                 if has_urgent or keyed:
                     # PREWRITE — gate 外
                     pre = session.prepare_rescript_prewrite(body.choices)

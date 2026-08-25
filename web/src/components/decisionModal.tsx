@@ -113,21 +113,48 @@ export function DecisionModal({
       return;
     }
     if (action === "midzhi") {
-      // 中旨：字段从 choice 显式；默认沿用首 option 骨架便于落印
-      const opt = cur.options[0] || { label: "中旨", hint: "" };
+      // 中旨：与 follow_draft 同形——把所选 option（已选则用选中项，否则首 option）
+      // 上 §C.4 闭集键投影进 choice；空/缺按协议默认，不发明值、不回读旧拟。
+      const opt =
+        cur.options.find((o) => o.label === pick.label) ||
+        cur.options[0] ||
+        { label: "中旨", hint: "" };
+      const s = (v: unknown) => (v == null || v === "" ? undefined : String(v));
+      const n = (v: unknown) => {
+        if (v == null || v === "") return undefined;
+        const num = Number(v);
+        return Number.isFinite(num) ? num : undefined;
+      };
       setPick({
         action,
         label: "另旨·中旨",
         hint: "中旨直发",
-        action_type: opt.action_type ? String(opt.action_type) : "assignment",
-        target_kind: opt.target_kind ? String(opt.target_kind) : "region",
-        target_id: opt.target_id ? String(opt.target_id) : "",
-        locality_scope: opt.locality_scope ? String(opt.locality_scope) : "none",
-        region_id: opt.region_id ? String(opt.region_id) : "",
-        transaction_category: opt.transaction_category
-          ? String(opt.transaction_category)
-          : "督赈",
-        assignee_name: opt.assignee_name ? String(opt.assignee_name) : "",
+        action_type: s(opt.action_type) || "assignment",
+        assignee_name: s(opt.assignee_name) || "",
+        name: s((opt as { name?: unknown }).name) || "",
+        target_kind: s(opt.target_kind) || "region",
+        target_id: s(opt.target_id) || "",
+        transaction_category: s(opt.transaction_category) || "",
+        locality_scope: s(opt.locality_scope) || "none",
+        region_id: s(opt.region_id) || "",
+        title: s((opt as { title?: unknown }).title) || "",
+        commitment_kind: s((opt as { commitment_kind?: unknown }).commitment_kind) || "",
+        stop_condition: s((opt as { stop_condition?: unknown }).stop_condition) || "",
+        end_turn: n((opt as { end_turn?: unknown }).end_turn),
+        deadline_months: n((opt as { deadline_months?: unknown }).deadline_months),
+        station: s((opt as { station?: unknown }).station) || "",
+        due_turn: n((opt as { due_turn?: unknown }).due_turn),
+        office: s((opt as { office?: unknown }).office) || "",
+        grant_action: s((opt as { grant_action?: unknown }).grant_action) || "",
+        account: s((opt as { account?: unknown }).account) || "",
+        amount: n((opt as { amount?: unknown }).amount),
+        cadence: s((opt as { cadence?: unknown }).cadence) || "",
+        execution_surface: s((opt as { execution_surface?: unknown }).execution_surface) || "",
+        appoint_action: s((opt as { appoint_action?: unknown }).appoint_action) || "",
+        appointment_tenure: s((opt as { appointment_tenure?: unknown }).appointment_tenure) || "",
+        punish_action: s((opt as { punish_action?: unknown }).punish_action) || "",
+        privilege: s((opt as { privilege?: unknown }).privilege) || "",
+        summon_target: s((opt as { summon_target?: unknown }).summon_target) || "",
       });
       return;
     }

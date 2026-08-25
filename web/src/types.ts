@@ -260,6 +260,7 @@ export type DecisionChoice = {
   /** #657 急务动作 */
   action?: RescriptDeskAction | string;
   draft_capability?: string;
+  /** §C.4 capability 派生闭集（仅补缺口，不新并行类型） */
   summon_target?: string;
   action_type?: string;
   target_kind?: string;
@@ -268,12 +269,22 @@ export type DecisionChoice = {
   region_id?: string;
   transaction_category?: string;
   assignee_name?: string;
+  name?: string;
+  title?: string;
+  commitment_kind?: string;
+  stop_condition?: string;
+  end_turn?: number;
+  deadline_months?: number;
+  station?: string;
+  due_turn?: number;
+  office?: string;
   grant_action?: string;
   amount?: number;
   account?: string;
+  cadence?: string;
+  execution_surface?: string;
   appoint_action?: string;
-  office?: string;
-  name?: string;
+  appointment_tenure?: string;
   punish_action?: string;
   privilege?: string;
 };
@@ -283,15 +294,34 @@ export type DecisionOption = {
   hint: string;
   dossier_id?: number;
   dossier_decision?: DossierDecision;
-  /** #657 层 A 票拟字段 */
+  /** #657 层 A 票拟字段 · §C.4 闭集 */
   draft_capability?: string;
   action_type?: string;
   assignee_name?: string;
+  name?: string;
   target_kind?: string;
   target_id?: string;
   locality_scope?: string;
   region_id?: string;
   transaction_category?: string;
+  title?: string;
+  commitment_kind?: string;
+  stop_condition?: string;
+  end_turn?: number;
+  deadline_months?: number;
+  station?: string;
+  due_turn?: number;
+  office?: string;
+  grant_action?: string;
+  account?: string;
+  amount?: number;
+  cadence?: string;
+  execution_surface?: string;
+  appoint_action?: string;
+  appointment_tenure?: string;
+  punish_action?: string;
+  privilege?: string;
+  summon_target?: string;
   [key: string]: unknown;
 };
 

@@ -11457,49 +11457,87 @@ class GameDB:
             """,
             (turn,),
         ).fetchall()
+        return [self._project_rescript_desk_row(r) for r in rows]
+
+    def _project_rescript_desk_row(self, r: Any) -> Dict[str, object]:
+        """pending_decisions 行 → desk 投影（pending/decided 共用）。"""
+        kind = str(r["kind"] or "decision")
+        source_turn = int(r["turn"])
+        idx = int(r["idx"])
+        try:
+            options = json.loads(r["options_json"] or "[]")
+        except Exception as exc:
+            tlog(f"[db] options_json 损坏，回空：{exc}")  # #14 surface
+            options = []
+        if not isinstance(options, list):
+            options = []
+        choice_raw = (r["choice_json"] or "").strip()
+        try:
+            choice = json.loads(choice_raw) if choice_raw else None
+        except Exception as exc:
+            tlog(f"[db] choice_json 损坏，回 None（desk {kind}:{source_turn}:{idx}）：{exc}")
+            choice = None
+        try:
+            prior = json.loads(r["prior_options_json"] or "[]")
+        except Exception as exc:
+            tlog(f"[db] prior_options_json 损坏，回空：{exc}")  # #14 surface
+            prior = []
+        return {
+            "decision_key": f"{kind}:{source_turn}:{idx}",
+            "kind": kind,
+            "source_turn": source_turn,
+            "turn": source_turn,
+            "idx": idx,
+            "event_id": r["event_id"],
+            "title": r["title"],
+            "context": r["context"],
+            "rejection_reason": r["rejection_reason"] if "rejection_reason" in r.keys() else "",
+            "opposition": r["opposition"] if "opposition" in r.keys() else "",
+            "options": options,
+            "choice": choice,
+            "status": r["status"],
+            "actor_name": r["actor_name"],
+            "actor_office": r["actor_office"],
+            "actor_faction": r["actor_faction"],
+            "revision_round": int(r["revision_round"] or 0),
+            "prior_options_json": prior if isinstance(prior, list) else [],
+        }
+
+    def get_rescript_desk_rows_by_keys(
+        self, keys: Sequence[str],
+    ) -> List[Dict[str, object]]:
+        """按 decision_key 取 desk 行（含 decided）——C1.1 崩溃重入 already_applied 用。"""
         out: List[Dict[str, object]] = []
-        for r in rows:
-            kind = str(r["kind"] or "decision")
-            source_turn = int(r["turn"])
-            idx = int(r["idx"])
+        seen: set[str] = set()
+        for raw in keys:
+            key = str(raw or "").strip()
+            if not key or key in seen:
+                continue
+            parts = key.split(":")
+            if len(parts) != 3:
+                continue
+            kind, turn_s, idx_s = parts
             try:
-                options = json.loads(r["options_json"] or "[]")
-            except Exception as exc:
-                tlog(f"[db] options_json 损坏，回空：{exc}")  # #14 surface
-                options = []
-            if not isinstance(options, list):
-                options = []
-            choice_raw = (r["choice_json"] or "").strip()
-            try:
-                choice = json.loads(choice_raw) if choice_raw else None
-            except Exception as exc:
-                tlog(f"[db] choice_json 损坏，回 None（desk {kind}:{source_turn}:{idx}）：{exc}")
-                choice = None
-            try:
-                prior = json.loads(r["prior_options_json"] or "[]")
-            except Exception as exc:
-                tlog(f"[db] prior_options_json 损坏，回空：{exc}")  # #14 surface
-                prior = []
-            out.append({
-                "decision_key": f"{kind}:{source_turn}:{idx}",
-                "kind": kind,
-                "source_turn": source_turn,
-                "turn": source_turn,
-                "idx": idx,
-                "event_id": r["event_id"],
-                "title": r["title"],
-                "context": r["context"],
-                "rejection_reason": r["rejection_reason"] if "rejection_reason" in r.keys() else "",
-                "opposition": r["opposition"] if "opposition" in r.keys() else "",
-                "options": options,
-                "choice": choice,
-                "status": r["status"],
-                "actor_name": r["actor_name"],
-                "actor_office": r["actor_office"],
-                "actor_faction": r["actor_faction"],
-                "revision_round": int(r["revision_round"] or 0),
-                "prior_options_json": prior if isinstance(prior, list) else [],
-            })
+                turn_i, idx_i = int(turn_s), int(idx_s)
+            except (TypeError, ValueError):
+                continue
+            if kind not in {"rescript_draft", "decision"}:
+                continue
+            r = self.conn.execute(
+                """
+                SELECT turn, idx, event_id, title, context, rejection_reason, opposition,
+                       options_json, choice_json, status, kind,
+                       actor_name, actor_office, actor_faction,
+                       revision_round, prior_options_json
+                FROM pending_decisions
+                WHERE turn = ? AND idx = ? AND kind = ?
+                """,
+                (turn_i, idx_i, kind),
+            ).fetchone()
+            if r is None:
+                continue
+            seen.add(key)
+            out.append(self._project_rescript_desk_row(r))
         return out
 
     # ── 动作闸门：结构化聊天写动作暂存(ADR 0006) ──────────────────────────

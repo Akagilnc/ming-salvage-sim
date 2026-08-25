@@ -3195,10 +3195,21 @@ class GameSession:
         from ming_sim.rescript_draft import validate_rescript_draft_items
 
         self._assert_awaiting_decision_submit()
-        desk = self.db.list_rescript_desk(int(self.state.turn))
-        # 也纳入已 decided 的本批重放行（list_rescript_desk 只 pending）——
-        # 恢复路径由 ready_replay 短路；此处 desk 以 pending 为主。
+        desk = list(self.db.list_rescript_desk(int(self.state.turn)))
         req = self._normalize_rescript_request_choices(choices, desk)
+        # C1.1：① 已落 decided、③ phase2 未写 extracted 的崩溃重入——
+        # list_rescript_desk 只 pending，须把请求键对应 decided 行并入 desk
+        # 供 validate already_applied；ready_replay（extracted 非空）仍短路。
+        desk_keys = {str(r.get("decision_key") or "") for r in desk}
+        missing_keys = [
+            str(c.get("decision_key") or "").strip()
+            for c in req
+            if isinstance(c, dict)
+            and str(c.get("decision_key") or "").strip()
+            and str(c.get("decision_key") or "").strip() not in desk_keys
+        ]
+        if missing_keys:
+            desk.extend(self.db.get_rescript_desk_rows_by_keys(missing_keys))
         ctx = self.db.get_resolve_context(self.state.turn)
         ready_replay = ctx is not None and ctx.get("extracted") is not None
         if ready_replay:
@@ -3210,7 +3221,34 @@ class GameSession:
                 "choices": req,
             }
 
-        batch = ra.validate_all(desk, req, default_hold_missing=True)
+        def _rescript_can_summon(name: str):
+            """validate_all 唯一资格出口：str→Character→can_summon；成功回 canonical。"""
+            raw = str(name or "").strip()
+            if not raw:
+                return False, "summon_target 为空"
+            canon = _find_existing_minister(self.content, raw, self.db)
+            character = None
+            if canon and canon in self.content.characters:
+                character = self.content.characters[canon]
+            elif raw in self.content.characters:
+                character = self.content.characters[raw]
+                canon = raw
+            else:
+                for key, ch in self.content.characters.items():
+                    if raw in (getattr(ch, "aliases", None) or []):
+                        character = ch
+                        canon = key
+                        break
+            if character is None:
+                return False, f"人物未建档，无法召见：{raw}"
+            ok, reason = self.can_summon(character)
+            if not ok:
+                return False, reason or f"不可召见：{raw}"
+            return True, str(canon or character.name)
+
+        batch = ra.validate_all(
+            desk, req, default_hold_missing=True, can_summon=_rescript_can_summon,
+        )
 
         def _revise_runner(item: ra.ValidatedItem) -> List[Dict[str, object]]:
             # 单行改票：复用 create_rescript_draft_agent + validate_rescript_draft_items
@@ -3355,7 +3393,16 @@ class GameSession:
             try:
                 generated = self.join_chat_turn_scene(ctid)
             except Exception as exc:
-                # 单 target 失败域：不回滚其它已消费；记入失败供门闩
+                # 单 target 失败域：不回滚其它已消费；记入失败供门闩。
+                # generator 失败须把无问话 scaffold 标 failed，否则 generating 空 body
+                # 会卡死后续 auto_close 在飞等待；重入走 ensure CAS failed→generating。
+                if ctid > 0:
+                    self.db.conn.execute(
+                        "UPDATE chat_turns SET status='failed' "
+                        "WHERE id=? AND status='generating' AND user_message_id IS NULL",
+                        (ctid,),
+                    )
+                    self.db.conn.commit()
                 joined.append({**sc, "generated": [], "error": str(exc)})
                 continue
             joined.append({**sc, "generated": list(generated)})
@@ -3420,6 +3467,21 @@ class GameSession:
                 raise ValueError(
                     "召见尚未消费，不得推进 phase2：" + "; ".join(unconsumed)
                 )
+            # 消费成功：空问话 scaffold 退出 generating，避免后续 auto_close
+            # wait_in_flight 死等。无独立 completed 枚举；failed 仅作非在飞终态
+            # （body 已非空 → 再入走 consumed 短路，不走 ensure CAS）。
+            for item in join_state.get("joined") or []:
+                if item.get("error") or item.get("consumed"):
+                    continue
+                ctid = int(item.get("chat_turn_id") or 0)
+                if ctid <= 0:
+                    continue
+                self.db.conn.execute(
+                    "UPDATE chat_turns SET status='failed' "
+                    "WHERE id=? AND status='generating' AND user_message_id IS NULL",
+                    (ctid,),
+                )
+            self.db.conn.commit()
 
         if not (self.last_decree or "").strip():
             ctx0 = self.db.get_resolve_context(self.state.turn)
@@ -3447,26 +3509,14 @@ class GameSession:
     ) -> str:
         """皇帝亲裁完决策点，续跑 phase2 结算。
 
-        #657：若案头含急务或 choice 带 decision_key，走 PRE→①→②→③ 分段编排
-        （本方法**不**持 write_gate；web 须按分段在 ①/③ 持锁、② 放锁）。
-        纯 decision/#1490 旧路径保留 idx 序回写。
+        #657：本方法**仅**纯 decision/#1490 路径（不内部 join LLM）。
+        急务/keyed 批必须由调用方走分段 API：
+          prepare_rescript_prewrite（锁外）→ commit_rescript_phase1（持 write_gate）
+          → join_rescript_summons（无锁）→ finish_rescript_phase2（再持同一 write_gate）。
         """
         self._assert_awaiting_decision_submit()
-        desk = self.db.list_rescript_desk(int(self.state.turn))
-        has_urgent = any(str(r.get("kind")) == "rescript_draft" for r in desk)
-        keyed = any(
-            isinstance(c, dict) and str(c.get("decision_key") or "").strip()
-            for c in (choices or [])
-        )
-        if has_urgent or keyed:
-            pre = self.prepare_rescript_prewrite(choices)
-            p1 = self.commit_rescript_phase1(pre)
-            joined = self.join_rescript_summons(p1)
-            return self.finish_rescript_phase2(
-                p1, joined, on_event=on_event, cheat_directive=cheat_directive,
-            )
 
-        # ── #1490 / 纯 decision 旧路径 ──────────────────────────────────
+        # ── #1490 / 纯 decision 路径 ──────────────────────────────────
         stored = self.db.list_pending_decisions(self.state.turn)
         ctx_for_event_binding = self.db.get_resolve_context(self.state.turn)
         ready_replay = (

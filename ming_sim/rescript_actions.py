@@ -228,6 +228,7 @@ def validate_all(
     request_choices: object,
     *,
     default_hold_missing: bool = True,
+    can_summon: Optional[Callable[[str], Tuple[bool, str]]] = None,
 ) -> ValidatedBatch:
     """① Validate-all（内存，零写库）。
 
@@ -236,6 +237,8 @@ def validate_all(
     - decided 精确匹配→已应用；decided 不匹配/空→整批拒
     - desk 外/非法→整批拒
     - 新鲜批 P 内急务缺 action → 仅落印时机械 hold（记入 default_hold_keys）
+    - summon：非空 target；若提供 can_summon 则必须过资格（失败整批拒）。
+      成功时第二返回值若非空则视为 canonical name 写回 choice（仍零 DB 写）。
     """
     desk_by_key: Dict[str, Dict[str, object]] = {}
     for row in desk_rows:
@@ -404,12 +407,21 @@ def validate_all(
             if not cap or cap not in by_cap:
                 raise ValueError(f"stale 或缺失 draft_capability：{key}")
             opt = by_cap[cap]
-            merged = canonical_choice({**opt, **req, "decision_key": key, "action": "follow_draft"})
+            # choice 存请求形（C1.1 同 body 重放 already_applied）；option 字段在 apply 再合并
+            stored_raw = {
+                **req,
+                "decision_key": key,
+                "action": "follow_draft",
+                "draft_capability": cap,
+            }
+            if not str(stored_raw.get("label") or "").strip():
+                stored_raw["label"] = str(opt.get("label") or "")
+            stored = canonical_choice(stored_raw)
             batch.items.append(ValidatedItem(
                 decision_key=key, kind=kind,
                 source_turn=int(row.get("source_turn") if row.get("source_turn") is not None else row.get("turn") or 0),
                 idx=int(row.get("idx") or 0),
-                row=row, choice=merged,
+                row=row, choice=stored,
             ))
             continue
 
@@ -467,6 +479,14 @@ def validate_all(
             target = str(req.get("summon_target") or "").strip()
             if not target:
                 raise ValueError(f"summon 缺 summon_target：{key}")
+            if can_summon is not None:
+                ok, detail = can_summon(target)
+                if not ok:
+                    raise ValueError(detail or f"不可召见：{target}")
+                # 成功且 detail 非空 → canonical name 写回（session 薄包装约定）
+                if str(detail or "").strip():
+                    req = dict(req)
+                    req["summon_target"] = str(detail).strip()
             batch.items.append(ValidatedItem(
                 decision_key=key, kind=kind,
                 source_turn=int(row.get("source_turn") if row.get("source_turn") is not None else row.get("turn") or 0),
@@ -996,16 +1016,13 @@ def apply_rescript_batch(
 
             if kind == "decision":
                 # decision 行：写 choice + decided（#1490 / 普通 HITL）
+                # 事件账失败必须穿透 atomic → 整批回滚（§B.1）；禁 swallow。
                 _cas_decided(db, item)
                 event_id = str(item.row.get("event_id") or "").strip()
                 if event_id and not event_id.startswith("dossier:"):
-                    try:
-                        db.record_event_decision_choice(
-                            state, event_id, item.choice, commit=False,
-                        )
-                    except Exception:
-                        # 事件账可选；不阻断批红主路径
-                        pass
+                    db.record_event_decision_choice(
+                        state, event_id, item.choice, commit=False,
+                    )
                 result.applied_keys.append(item.decision_key)
                 continue
 
@@ -1017,12 +1034,21 @@ def apply_rescript_batch(
                 continue
 
             if action == "follow_draft":
+                # 按 capability 从行 options 取全字段再 map（choice 仅存请求形）
+                by_cap = _option_by_capability(item.row)
+                cap = str(item.choice.get("draft_capability") or "").strip()
+                opt = by_cap.get(cap) or {}
+                map_src = {**opt, **item.choice, "action": "follow_draft"}
                 mapped = map_rescript_option_or_choice(
-                    item.choice, mode="ordinary", db=db, content=content, state=state,
+                    map_src, mode="ordinary", db=db, content=content, state=state,
                 )
-                _create_from_mapped(
+                created = _create_from_mapped(
                     db, state, content, mapped, status="proposed", mode="ordinary",
                 )
+                if not created:
+                    raise ValueError(
+                        f"follow_draft 成案零行：{item.decision_key}"
+                    )
                 _cas_decided(db, item)
                 result.applied_keys.append(item.decision_key)
                 continue
@@ -1031,9 +1057,13 @@ def apply_rescript_batch(
                 mapped = map_rescript_option_or_choice(
                     item.choice, mode="midzhi", db=db, content=content, state=state,
                 )
-                _create_from_mapped(
+                created = _create_from_mapped(
                     db, state, content, mapped, status="proposed", mode="midzhi",
                 )
+                if not created:
+                    raise ValueError(
+                        f"midzhi 成案零行：{item.decision_key}"
+                    )
                 _cas_decided(db, item)
                 result.applied_keys.append(item.decision_key)
                 continue
@@ -1051,19 +1081,10 @@ def apply_rescript_batch(
                 continue
 
             if action == "summon":
-                # 本片只 CAS→decided+choice；领域消费片3
+                # 资格已在 validate_all（含 can_summon）完成；此处只 CAS。
                 target = str(item.choice.get("summon_target") or "").strip()
                 if not target:
                     raise ValueError("summon_target 为空")
-                # 预校验 can_summon：人物存在即可（深度校验片3）
-                if content is not None:
-                    from ming_sim.session import _find_existing_minister
-                    canon = _find_existing_minister(content, target, db)
-                    if not canon:
-                        # 允许非大臣名（边将等）——至少非空
-                        pass
-                    else:
-                        item.choice["summon_target"] = canon
                 _cas_decided(db, item)
                 result.applied_keys.append(item.decision_key)
                 result.summon_keys.append(item.decision_key)
