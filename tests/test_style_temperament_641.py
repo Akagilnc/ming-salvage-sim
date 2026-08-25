@@ -16,12 +16,8 @@ import ming_sim.issues as issues
 from ming_sim.content import GameContent
 from ming_sim.context import character_context_with_db, minister_dossier
 from ming_sim.decree import reload_state_from_db
-from ming_sim.models import effect_dict_has_work
-from ming_sim.person_archive_contract import (
-    PERSON_ACTIONS,
-    PERSON_NON_TRANSITION_ACTIONS,
-    format_person_actions,
-)
+from ming_sim.issues import apply_issue_inertia_and_ongoing
+from ming_sim.person_archive_contract import format_person_actions
 from ming_sim.relation_read import project_relation_ledger
 
 
@@ -47,16 +43,42 @@ def _temperament_item(**overrides):
     return item
 
 
-def test_contract_enumerates_temperament_action():
-    assert "性情" in PERSON_NON_TRANSITION_ACTIONS
-    assert "性情" in PERSON_ACTIONS
-    assert effect_dict_has_work({"人物变更": [_temperament_item()]}) is True
-    assert effect_dict_has_work({
-        "人物变更": [{"name": PERSON, "动作": "性情", "style": ""}],
-    }) is False
-    assert effect_dict_has_work({
-        "人物变更": [{"name": PERSON, "动作": "性情", "style": 12}],
-    }) is False
+def test_inertia_natural_resolve_applies_temperament_style(game):
+    """生产入口：issue 自然结案 effect_on_resolve 性情 → DB/runtime/person_logs 一致。"""
+    db, state, content = game
+    before_db = _style_row(db)
+    before_rt = content.characters[PERSON].style
+    before_logs = db.conn.execute(
+        "SELECT COUNT(*) AS c FROM person_logs WHERE person_name=? AND action=?",
+        (PERSON, "性情"),
+    ).fetchone()["c"]
+
+    db.insert_issue(
+        state,
+        kind="situation",
+        title="自然结案性情测试",
+        bar_value=99,
+        inertia=1,
+        effect_on_resolve={"人物变更": [_temperament_item()]},
+    )
+    apply_issue_inertia_and_ongoing(db, state)
+
+    assert before_db == before_rt
+    assert _style_row(db) == NEW_STYLE
+    assert content.characters[PERSON].style == NEW_STYLE
+    assert NEW_STYLE != before_db
+    after_logs = db.conn.execute(
+        "SELECT COUNT(*) AS c FROM person_logs WHERE person_name=? AND action=?",
+        (PERSON, "性情"),
+    ).fetchone()["c"]
+    assert after_logs == before_logs + 1
+    log = db.conn.execute(
+        "SELECT action, payload_summary FROM person_logs "
+        "WHERE person_name=? AND action=? ORDER BY id DESC LIMIT 1",
+        (PERSON, "性情"),
+    ).fetchone()
+    assert log["action"] == "性情"
+    assert log["payload_summary"] == "经事锤炼，固有层改写"
 
 
 def test_apply_score_extraction_writes_temperament_style_and_log(game):
