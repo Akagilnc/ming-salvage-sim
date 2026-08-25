@@ -39,6 +39,7 @@ from ming_sim.constants import TURN_UNIT
 from ming_sim.context import ENDING_LABELS, ENDING_ONGOING, ENDING_TIMEOUT, victory_status
 from ming_sim.db import GameDB
 from ming_sim.error_pack import (
+    ARRIVAL_COMPANION_SIM_DONE_KEY,
     _next_attempt,
     clear_for_resimulation,
     complete_error_packs_for_ready,
@@ -208,11 +209,16 @@ def run_arrival_attendant_message(
     if not facts["arrivals"]:
         return ""
     runner = agent if agent is not None else create_arrival_attendant_agent(llm_config)
-    text = run_agent_text(
-        runner,
-        json.dumps(facts, ensure_ascii=False),
-        tag="arrival-attendant",
-    )
+    try:
+        text = run_agent_text(
+            runner,
+            json.dumps(facts, ensure_ascii=False),
+            tag="arrival-attendant",
+        )
+    except (APITimeoutError, APIConnectionError, APIStatusError) as error:
+        # 生产 provider 调用适配缝：只捕已知超时/连接/HTTP 异常，译 LLMUnavailable
+        #（保留 cause）。LLMContractError（空文）与程序错不捕，照旧响亮上抛。
+        raise llm_unavailable_from_error(error, "王承恩抵京报到") from error
     text = str(text or "")
     if not text.strip():
         raise LLMContractError("王承恩抵京报到返回空文")
@@ -1274,51 +1280,108 @@ def resolve_directives(
     # #671：引擎已求交的本月新抵京∩候见列表——simulator 只读此键，勿让 LLM 自算交集
     simulator_payload["arrival_waiting"] = list(arrival_waiting)
 
-    simulator = create_season_simulator_agent(
-        llm_config, agno_db, state=state, db=db, simulator_payload=simulator_payload
+    # #671 companion checkpoint：仅 payload 独有 bool 命中才跳过 sim、只重试 companion。
+    # 禁止用 narrative 非空 / ready=0 作判别（撞 clear_for_resimulation / ADR 0008）。
+    prior_resolve_ctx = db.get_resolve_context(state.turn)
+    prior_sim_payload = (
+        prior_resolve_ctx.get("simulator_payload")
+        if isinstance(prior_resolve_ctx, dict)
+        else None
     )
+    companion_sim_done = (
+        isinstance(prior_sim_payload, dict)
+        and prior_sim_payload.get(ARRIVAL_COMPANION_SIM_DONE_KEY) is True
+    )
+
     attendant_message = ""
     sim_failed = False
-    # companion future.result() 禁止落入 simulator 宽 except（否则误标 sim 失败并吞递话）
-    pool = (
-        ThreadPoolExecutor(max_workers=1, thread_name_prefix="arrival-attendant")
-        if arrival_waiting else None
-    )
-    try:
-        attendant_future = None
-        if pool is not None:
-            attendant_future = pool.submit(
-                run_arrival_attendant_message,
-                llm_config,
-                year=int(state.year),
-                period=int(state.period),
-                arrivals=arrival_waiting,
+    narrative = ""
+
+    if companion_sim_done:
+        # 复用存档叙事与世界结果；勿被本轮 build_simulator_payload 盖掉。
+        narrative = str(prior_resolve_ctx.get("narrative") or "")
+        simulator_payload = dict(prior_sim_payload)
+        archived_waiting = simulator_payload.get("arrival_waiting")
+        if isinstance(archived_waiting, list):
+            arrival_waiting = [row for row in archived_waiting if isinstance(row, dict)]
+        archived_attendant = str(prior_resolve_ctx.get("attendant_message") or "")
+        if archived_attendant:
+            attendant_message = archived_attendant
+        elif arrival_waiting:
+            # companion 仍失败则原样上抛；完成态行（标记）保持，再重试仍不重跑 sim
+            attendant_message = str(
+                run_arrival_attendant_message(
+                    llm_config,
+                    year=int(state.year),
+                    period=int(state.period),
+                    arrivals=arrival_waiting,
+                ) or ""
             )
+        # companion 成功路径：清标记，再进 HITL/extractor
+        simulator_payload.pop(ARRIVAL_COMPANION_SIM_DONE_KEY, None)
+    else:
+        simulator = create_season_simulator_agent(
+            llm_config, agno_db, state=state, db=db, simulator_payload=simulator_payload
+        )
+        # companion future.result() 禁止落入 simulator 宽 except（否则误标 sim 失败并吞递话）
+        pool = (
+            ThreadPoolExecutor(max_workers=1, thread_name_prefix="arrival-attendant")
+            if arrival_waiting else None
+        )
         try:
-            narrative, simulator_payload = simulate_season_with_payload(
-                simulator, state, db, executable_decree_text, previous_narrative,
-                deaths_this_turn=deaths_this_turn,
-                debuts_this_turn=debuts_this_turn,
-                relevant_memories=relevant_memories,
-                secret_orders=secret_orders_for_sim,
-                simulator_payload=simulator_payload,
-                on_thinking=lambda c: _emit("thinking", c),
-                on_text=lambda c: _emit("text", c),
-            )
-        except Exception as exc:
-            sim_failed = True
-            print(f"[WARN] 推演 agent 失败：{exc}；本{TURN_UNIT}用简化邸报兜底，继续正常抽取结算。")
-            narrative = (
-                f"奉天承运皇帝诏曰：本{TURN_UNIT}推演 agent 被服务方拦截，无完整邸报。"
-                f"已颁诏书：\n{executable_decree_text}\n"
-                f"固定收支已落账，事项 inertia 自然漂移；本{TURN_UNIT}无新立 issue。"
-            )
-        # 同作用域 join：companion 异常归属独立，不被 simulator fallback 吞掉
-        if attendant_future is not None:
-            attendant_message = str(attendant_future.result() or "")
-    finally:
-        if pool is not None:
-            pool.shutdown(wait=True)
+            attendant_future = None
+            if pool is not None:
+                attendant_future = pool.submit(
+                    run_arrival_attendant_message,
+                    llm_config,
+                    year=int(state.year),
+                    period=int(state.period),
+                    arrivals=arrival_waiting,
+                )
+            try:
+                narrative, simulator_payload = simulate_season_with_payload(
+                    simulator, state, db, executable_decree_text, previous_narrative,
+                    deaths_this_turn=deaths_this_turn,
+                    debuts_this_turn=debuts_this_turn,
+                    relevant_memories=relevant_memories,
+                    secret_orders=secret_orders_for_sim,
+                    simulator_payload=simulator_payload,
+                    on_thinking=lambda c: _emit("thinking", c),
+                    on_text=lambda c: _emit("text", c),
+                )
+            except Exception as exc:
+                sim_failed = True
+                print(f"[WARN] 推演 agent 失败：{exc}；本{TURN_UNIT}用简化邸报兜底，继续正常抽取结算。")
+                narrative = (
+                    f"奉天承运皇帝诏曰：本{TURN_UNIT}推演 agent 被服务方拦截，无完整邸报。"
+                    f"已颁诏书：\n{executable_decree_text}\n"
+                    f"固定收支已落账，事项 inertia 自然漂移；本{TURN_UNIT}无新立 issue。"
+                )
+            # sim 真成功且 companion 在飞：join 前落 durable 完成态（ready=0 + 标记）。
+            # 不给 sim 宽 except fallback 叙事打标记（fallback 便宜；标记会永久跳过真 sim）。
+            if not sim_failed and attendant_future is not None:
+                ckpt_payload = (
+                    dict(simulator_payload)
+                    if isinstance(simulator_payload, dict)
+                    else {}
+                )
+                ckpt_payload[ARRIVAL_COMPANION_SIM_DONE_KEY] = True
+                db.save_resolve_context(
+                    state.turn, decree_text, narrative, ckpt_payload,
+                    secret_orders=secret_orders_for_sim,
+                    relevant_memories=relevant_memories,
+                    source=Provenance(source).value,
+                    attendant_message="",
+                )
+            # 同作用域 join：companion 异常归属独立，不被 simulator fallback 吞掉
+            if attendant_future is not None:
+                attendant_message = str(attendant_future.result() or "")
+        finally:
+            if pool is not None:
+                pool.shutdown(wait=True)
+        # companion 成功后清内存标记，随后 HITL/settle 整行 upsert 不得再带标记
+        if isinstance(simulator_payload, dict):
+            simulator_payload.pop(ARRIVAL_COMPANION_SIM_DONE_KEY, None)
 
     if sim_failed:
         rescript_decisions = _rescript_decisions(verdict_rows, proposed_dossiers)

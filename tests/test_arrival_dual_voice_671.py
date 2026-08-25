@@ -6,10 +6,13 @@ import json
 import threading
 from pathlib import Path
 
+import httpx
 import pytest
+from openai import APIConnectionError, APIStatusError, APITimeoutError
 
 from ming_sim import audience_night as an
 from ming_sim.db import GameDB
+from ming_sim.error_pack import ARRIVAL_COMPANION_SIM_DONE_KEY
 
 
 # 含首尾空白：生成→DB→状态投影须逐字保留（P6 零删改）
@@ -91,6 +94,39 @@ def test_run_arrival_attendant_message_preserves_raw_text(monkeypatch):
         decree_mod.run_arrival_attendant_message(
             object(), year=1627, period=10, arrivals=arrivals, agent=object(),
         )
+
+
+@pytest.mark.parametrize(
+    "error_factory",
+    [
+        lambda: APITimeoutError(request=httpx.Request("POST", "https://llm.invalid/v1")),
+        lambda: APIConnectionError(request=httpx.Request("POST", "https://llm.invalid/v1")),
+        lambda: APIStatusError(
+            "boom",
+            response=httpx.Response(503, request=httpx.Request("POST", "https://llm.invalid/v1")),
+            body=None,
+        ),
+    ],
+    ids=["timeout", "connection", "status"],
+)
+def test_run_arrival_attendant_message_translates_provider_errors(monkeypatch, error_factory):
+    """三类 provider 错窄译 LLMUnavailable，保留 __cause__；不锁自由文案。"""
+    import ming_sim.decree as decree_mod
+    from ming_sim.exceptions import LLMUnavailable
+
+    arrivals = [{"name": "洪承畴", "location": "beizhili"}]
+    provider_error = error_factory()
+
+    def _boom(*_a, **_k):
+        raise provider_error
+
+    monkeypatch.setattr(decree_mod, "run_agent_text", _boom)
+    with pytest.raises(LLMUnavailable) as ei:
+        decree_mod.run_arrival_attendant_message(
+            object(), year=1627, period=10, arrivals=arrivals, agent=object(),
+        )
+    assert isinstance(ei.value.__cause__, type(provider_error))
+    assert ei.value.__cause__ is provider_error
 
 
 def test_arrival_dual_voice_parallel_main_path(game, monkeypatch):
@@ -284,10 +320,15 @@ def test_arrival_dual_voice_companion_failure_not_swallowed_as_sim_fallback(
     assert sim_ran["n"] == 1
     assert db.get_turn_report(int(state.turn)) == ""
     assert db.get_turn_attendant_message(int(state.turn)) == ""
-    # 不得留下 sim fallback 简化邸报推进痕迹
+    # durable 完成态：sim 真成功后、join 前 checkpoint（标记 + 真叙事 + ready=0）
     ctx = db.get_resolve_context(state.turn)
-    if ctx is not None:
-        assert "推演 agent 被服务方拦截" not in str(ctx.get("narrative") or "")
+    assert ctx is not None
+    assert ctx["narrative"] == SIM_REPORT
+    assert ctx["extracted"] is None
+    payload = ctx["simulator_payload"]
+    assert isinstance(payload, dict)
+    assert payload.get(ARRIVAL_COMPANION_SIM_DONE_KEY) is True
+    assert "推演 agent 被服务方拦截" not in str(ctx.get("narrative") or "")
 
 
 def test_arrival_dual_voice_sim_fail_still_surfaces_companion_error(
@@ -326,13 +367,14 @@ def test_arrival_dual_voice_sim_fail_still_surfaces_companion_error(
 
 
 def test_clear_for_resimulation_preserves_attendant_message(game):
-    """#671：重模拟降级须保留 attendant_message（同 source 保留范式）。"""
+    """#671：重模拟降级须保留 attendant_message（同 source 保留范式）；必剥 companion 标记。"""
     from ming_sim.error_pack import clear_for_resimulation
 
     db, state, _content = game
     turn = state.turn
     db.save_resolve_context(
-        turn, "d", "n", {"k": "v"},
+        turn, "d", "n",
+        {"k": "v", ARRIVAL_COMPANION_SIM_DONE_KEY: True},
         secret_orders=[], relevant_memories=[],
         extracted={"metric_delta": {"国库": 1}},
         source="player_decree",
@@ -346,7 +388,117 @@ def test_clear_for_resimulation_preserves_attendant_message(game):
     assert ctx is not None
     assert ctx["extracted"] is None
     assert ctx["attendant_message"] == ATTENDANT_TEXT
+    assert ctx["narrative"] == "n"
+    payload = ctx["simulator_payload"]
+    assert isinstance(payload, dict)
+    assert ARRIVAL_COMPANION_SIM_DONE_KEY not in payload
+    assert payload.get("k") == "v"
     db.clear_resolve_context(turn)
+
+
+def test_arrival_companion_checkpoint_retry_skips_sim(game, monkeypatch):
+    """companion 首次失败落标记；重试只跑 companion，sim 全程只一次；成功后标记清除。"""
+    import ming_sim.decree as decree_mod
+    import ming_sim.memories as memories
+    from ming_sim.exceptions import LLMContractError
+
+    db, state, content = game
+    names = ["洪承畴", "孙传庭"]
+    arrivals, _waiting = _seed_waiting_arrivals(game, names)
+    sim_ran = {"n": 0}
+    attendant_ran = {"n": 0}
+
+    def _attendant(*_a, **_k):
+        attendant_ran["n"] += 1
+        if attendant_ran["n"] == 1:
+            raise LLMContractError("王承恩抵京报到返回空文")
+        return ATTENDANT_TEXT
+
+    def _simulate(*_a, **kwargs):
+        sim_ran["n"] += 1
+        return (SIM_REPORT, kwargs["simulator_payload"])
+
+    monkeypatch.setattr(
+        decree_mod, "tick_transit_arrivals",
+        lambda *_a, **_k: list(arrivals),
+    )
+    _stub_settlement_llms(
+        decree_mod, memories, monkeypatch, simulate=_simulate, attendant=_attendant,
+    )
+
+    with pytest.raises(LLMContractError, match="王承恩抵京报到返回空文"):
+        decree_mod.resolve_directives(
+            state, db, None, None, [], "", content=content,
+        )
+    assert sim_ran["n"] == 1
+    assert attendant_ran["n"] == 1
+    failed_ctx = db.get_resolve_context(state.turn)
+    assert failed_ctx is not None
+    assert failed_ctx["simulator_payload"].get(ARRIVAL_COMPANION_SIM_DONE_KEY) is True
+
+    result = decree_mod.resolve_directives(
+        state, db, None, None, [], "", content=content,
+    )
+    assert result.awaiting is False
+    assert sim_ran["n"] == 1  # 重试未再跑 sim
+    assert attendant_ran["n"] == 2
+    completed = int(state.turn) - 1
+    assert db.get_turn_report(completed) == SIM_REPORT
+    assert db.get_turn_attendant_message(completed) == ATTENDANT_TEXT
+    # settle 后 context 清空；若仍在，标记必须已剥
+    settled_ctx = db.get_resolve_context(completed)
+    if settled_ctx is not None:
+        payload = settled_ctx.get("simulator_payload") or {}
+        assert not (
+            isinstance(payload, dict)
+            and payload.get(ARRIVAL_COMPANION_SIM_DONE_KEY) is True
+        )
+
+
+def test_arrival_clear_without_marker_still_reruns_sim(game, monkeypatch):
+    """无标记的 ready=0 + 非空 narrative/attendant 不得跳过 simulator（ADR 0008）。"""
+    import ming_sim.decree as decree_mod
+    import ming_sim.memories as memories
+
+    db, state, content = game
+    names = ["洪承畴"]
+    arrivals, _waiting = _seed_waiting_arrivals(game, names)
+    sim_ran = {"n": 0}
+
+    def _attendant(*_a, **_k):
+        return ATTENDANT_TEXT
+
+    def _simulate(*_a, **kwargs):
+        sim_ran["n"] += 1
+        return (SIM_REPORT, kwargs["simulator_payload"])
+
+    # 模拟 clear_for_resimulation 后态：narrative/attendant 在、标记已剥、ready=0
+    db.save_resolve_context(
+        state.turn, "d", "旧邸报仍在", {"k": "v", "arrival_waiting": []},
+        secret_orders=[], relevant_memories=[],
+        source="player_decree",
+        attendant_message=ATTENDANT_TEXT,
+    )
+    assert db.get_resolve_context(state.turn)["extracted"] is None
+    assert ARRIVAL_COMPANION_SIM_DONE_KEY not in (
+        db.get_resolve_context(state.turn)["simulator_payload"] or {}
+    )
+
+    monkeypatch.setattr(
+        decree_mod, "tick_transit_arrivals",
+        lambda *_a, **_k: list(arrivals),
+    )
+    _stub_settlement_llms(
+        decree_mod, memories, monkeypatch, simulate=_simulate, attendant=_attendant,
+    )
+
+    result = decree_mod.resolve_directives(
+        state, db, None, None, [], "", content=content,
+    )
+    assert result.awaiting is False
+    assert sim_ran["n"] == 1
+    completed = int(state.turn) - 1
+    assert db.get_turn_report(completed) == SIM_REPORT
 
 
 def test_arrival_dual_voice_empty_set_zero_calls(game, monkeypatch):

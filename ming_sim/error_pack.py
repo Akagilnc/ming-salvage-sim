@@ -197,6 +197,11 @@ def write_error_pack(
     return str(pack_dir)
 
 
+# #671：sim 真成功后、companion join 前的 durable 完成态标记（∈ simulator_payload）。
+# 唯一命中条件：payload.get(KEY) is True。clear_for_resimulation 必剥，避免撞 ADR 0008 重推演。
+ARRIVAL_COMPANION_SIM_DONE_KEY = "arrival_companion_sim_done"
+
+
 def clear_for_resimulation(db: Any, turn: int) -> None:
     """「重新推演」逃生口（ADR 0008 决定 6）：把 resolve_context 降级为非 ready，
     让重试重跑 simulator/extractor。
@@ -252,11 +257,19 @@ def clear_for_resimulation(db: Any, turn: int) -> None:
         )
         if ctx is None:
             return
+        # #671：剥 companion 完成态标记——降级后 ready=0 且 narrative/attendant 可非空，
+        # 但不得命中标记，SETTLING fallthrough 仍按 ADR 0008 重跑 simulator。
+        payload = (
+            dict(ctx["simulator_payload"])
+            if isinstance(ctx.get("simulator_payload"), dict)
+            else {}
+        )
+        payload.pop(ARRIVAL_COMPANION_SIM_DONE_KEY, None)
         db.save_resolve_context(
             int(turn),
             str(ctx.get("decree_text") or ""),
             str(ctx.get("narrative") or ""),
-            ctx.get("simulator_payload") if isinstance(ctx.get("simulator_payload"), dict) else {},
+            payload,
             # 分组承载是 dict（#48）；兼容在途旧 list 形状的 ctx，二者都透传。
             secret_orders=ctx.get("secret_orders") if isinstance(ctx.get("secret_orders"), (list, dict)) else {},
             relevant_memories=ctx.get("relevant_memories") if isinstance(ctx.get("relevant_memories"), list) else [],
