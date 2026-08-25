@@ -122,6 +122,63 @@ def test_anchor1_seed_net_readable_via_production_import(tmp_path, monkeypatch):
         sess.close()
 
 
+# ── 锚② 结构步：三拍边/读面闭环（加深语义仅闸级 LLM）────────────────
+
+
+def test_anchor2_yang_three_beat_structural_read_write_loop(game):
+    """锚② 结构面：读面→张力边→配合协作回写→知遇再深；旧张力不删。
+
+    语义「逐拍加深/不跳变」归闸级 scripts/family_tail_relation_acceptance_642.py。
+    """
+    db, state, _content = game
+    # 拍1：君→杨 知遇（经 canonical 写口）
+    db.record_relation_edge_event(
+        source=EMPEROR_NODE, target="杨嗣昌", event_kind="知遇",
+        context="越次一召，擢杨嗣昌于五品郎中。",
+        origin="anchor2:beat1", turn=int(state.turn),
+        year=int(state.year), period=int(state.period),
+    )
+    # 拍2：杨→倪 细缝；角色读面须可见自身参与边
+    db.record_relation_edge_event(
+        source="杨嗣昌", target="倪元璐", event_kind="使绊",
+        context="清丈议上路线分歧，细缝初现。",
+        origin="anchor2:beat2", turn=int(state.turn),
+        year=int(state.year), period=int(state.period),
+    )
+    yang_face = project_relation_ledger(db, viewer="杨嗣昌")
+    yang_pairs = {(d["source"], d["target"]) for d in yang_face}
+    assert (EMPEROR_NODE, "杨嗣昌") in yang_pairs
+    assert ("杨嗣昌", "倪元璐") in yang_pairs
+    tension = next(
+        d for d in yang_face if (d["source"], d["target"]) == ("杨嗣昌", "倪元璐")
+    )
+    assert "细缝初现" in tension["recent_context"]
+    # 拍3：配合段回写协作（调和）+ 君→杨 知遇再记一条；旧使绊仍在流水
+    db.record_relation_edge_event(
+        source="杨嗣昌", target="倪元璐", event_kind="协作",
+        context="一刚一柔分工，当面调和而不抹去前隙。",
+        origin="anchor2:beat3-collab", turn=int(state.turn),
+        year=int(state.year), period=int(state.period),
+    )
+    db.record_relation_edge_event(
+        source=EMPEROR_NODE, target="杨嗣昌", event_kind="知遇",
+        context="清丈委任加重，圣眷再深。",
+        origin="anchor2:beat3-zhiyu", turn=int(state.turn),
+        year=int(state.year), period=int(state.period),
+    )
+    jun_yang = db.get_relation_edge_events(source=EMPEROR_NODE, target="杨嗣昌")
+    assert sum(1 for e in jun_yang if e["event_kind"] == "知遇") >= 2
+    yang_ni = db.get_relation_edge_events(source="杨嗣昌", target="倪元璐")
+    kinds = {e["event_kind"] for e in yang_ni}
+    assert "使绊" in kinds and "协作" in kinds
+    # 旧张力事件字节仍在（和解不删旧事）
+    assert any(e["context"] == "清丈议上路线分歧，细缝初现。" for e in yang_ni)
+    for e in jun_yang + yang_ni:
+        assert e["event_kind"]
+        assert e["context"].strip()
+        assert e["origin"]
+
+
 # ── 锚③：召对判官落边生产缝生成徐杨协作 ─────────────────────────────
 
 
