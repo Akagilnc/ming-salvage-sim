@@ -91,22 +91,31 @@ def test_transfer_two_legs_same_transaction_conservation(game):
 
 
 def test_all_six_reasons_positive_cases_land(game):
-    """六种 reason 各 ≥1 正例落账（方向矩阵全覆盖，含兵灾双腿与回流出池）。"""
+    """六种 reason 各 ≥1 正例落账（方向矩阵全覆盖，含兵灾双腿与回流出池）。
+
+    #652：extractor 路径不再受理 `回流`（recovery 单核唯一写入）；入池五因仍走
+    apply_score_extraction，回流经守恒原语直接落（与 recovery 单核同缝）。
+    """
+    from ming_sim.flows import _apply_population_transfers
+
     db, state, content = game
-    cases = [
-        (_transfer(source="农民@shaanxi", target="流民@shaanxi", amount=100, reason="加派"), ("农民", "流民")),
-        (_transfer(source="农民@henan", target="流民@henan", amount=100, reason="摊派"), ("农民", "流民")),
-        (_transfer(source="农民@shanxi", target="流民@shanxi", amount=100, reason="灾害"), ("农民", "流民")),
-        (_transfer(source="军户@shandong", target="流民@shandong", amount=100, reason="兵灾"), ("军户", "流民")),
-        (_transfer(source="军户@beizhili", target="流民@beizhili", amount=100, reason="逃亡"), ("军户", "流民")),
-        (_transfer(source="流民@henan", target="农民@henan", amount=200, reason="回流"), ("流民", "农民")),
+    inflow = [
+        _transfer(source="农民@shaanxi", target="流民@shaanxi", amount=100, reason="加派"),
+        _transfer(source="农民@henan", target="流民@henan", amount=100, reason="摊派"),
+        _transfer(source="农民@shanxi", target="流民@shanxi", amount=100, reason="灾害"),
+        _transfer(source="军户@shandong", target="流民@shandong", amount=100, reason="兵灾"),
+        _transfer(source="军户@beizhili", target="流民@beizhili", amount=100, reason="逃亡"),
     ]
-    items = [c[0] for c in cases]
+    reflux = _transfer(source="流民@henan", target="农民@henan", amount=200, reason="回流")
+    items = [*inflow, reflux]
     keys = {tuple(item[key].split("@")) for item in items for key in ("source", "target")}
     before = {(n, r): _pop(db, n, r) for n, r in keys}
-    applied = apply_score_extraction(db, state, {"population_transfers": items}, content, None)
+    applied = apply_score_extraction(db, state, {"population_transfers": inflow}, content, None)
     assert not applied["population_transfers_rejections"]
-    assert len(applied["population_transfers"]) == len(items)
+    assert len(applied["population_transfers"]) == len(inflow)
+    reflux_applied, reflux_rej = _apply_population_transfers(db, [reflux], commit=True)
+    assert not reflux_rej
+    assert len(reflux_applied) == 1
     # 净账期望：每条记录源腿 -amt、目标腿 +amt（同一行被多条记录触碰时叠加）。
     expected = dict(before)
     for item in items:
