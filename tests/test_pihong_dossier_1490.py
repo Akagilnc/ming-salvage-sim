@@ -1720,29 +1720,33 @@ def test_657_abi_mapper_matrix_a1_a12(game):
             content.characters[mname].status = "active"
         db.conn.commit()
 
+    # 罚俸：seed 足额后咬 person_logs 罚俸 + 国库精确减额（禁 status 恒真兜底）
+    state.metrics["国库"] = int(state.metrics.get("国库") or 0) + 500
+    db.save_state(state)
     treasury_b = int(state.metrics.get("国库") or 0)
+    fine_amt = 50
     p = ra.map_rescript_option_or_choice({
         "action_type": "punishment", "label": "罚俸", "hint": "h",
-        "punish_action": "罚俸", "amount": 50,
+        "punish_action": "罚俸", "amount": fine_amt,
         "target_kind": "character", "target_id": mname, "name": mname,
         "locality_scope": "none",
     }, db=db, content=content, state=state)
-    assert p["amount"] == 50
-    created = _apply_mapped_choice({
+    assert p["amount"] == fine_amt
+    _apply_mapped_choice({
         "action": "follow_draft", "action_type": "punishment",
-        "label": "罚俸", "hint": "h", "punish_action": "罚俸", "amount": 50,
+        "label": "罚俸", "hint": "h", "punish_action": "罚俸", "amount": fine_amt,
         "target_kind": "character", "target_id": mname, "name": mname,
         "locality_scope": "none", "assignee_name": other,
     }, title="A9罚俸")
-    # 罚俸：国库或俸禄相关可见变化（person_logs / metrics）
     plogs = db.conn.execute(
-        "SELECT action FROM person_logs WHERE person_name=? AND action LIKE '%罚%'",
-        (mname,),
+        "SELECT action FROM person_logs WHERE person_name=? AND action=?",
+        (mname, "罚俸"),
     ).fetchall()
+    assert plogs, "A9 罚俸须落 person_logs action=罚俸"
     treasury_a = int(state.metrics.get("国库") or 0)
-    assert plogs or treasury_a != treasury_b or str(created.get("status") or "") in {
-        "promulgated", "executing", "closed",
-    }
+    assert treasury_a == treasury_b - fine_amt, (
+        f"A9 罚俸国库应减 {fine_amt}：{treasury_b}→{treasury_a}"
+    )
     with pytest.raises(ValueError):
         ra.map_rescript_option_or_choice({
             "action_type": "punishment", "label": "罚", "hint": "h",
