@@ -271,6 +271,29 @@ def held_authority_context(
     return f"【在持授权】{'、'.join(labels)}。"
 
 
+def relation_ledger_context(character: Character, db: GameDB) -> str:
+    """角色视角关系账：唯一经 project_relation_ledger(viewer=name) 投影。"""
+    from ming_sim.relation_read import project_relation_ledger
+
+    rows = project_relation_ledger(db, viewer=character.name)
+    if not rows:
+        return ""
+    parts: List[str] = []
+    for row in rows:
+        bits = [f"{row['source']}→{row['target']}"]
+        summary = str(row.get("summary") or "").strip()
+        if summary:
+            bits.append(summary)
+        recent = str(row.get("recent_context") or "").strip()
+        if recent:
+            bits.append(recent)
+        updated = str(row.get("updated_at_period") or "").strip()
+        if updated:
+            bits.append(updated)
+        parts.append("；".join(bits))
+    return f"【人物关系】{' | '.join(parts)}。"
+
+
 def character_context_with_db(
     character: Character, db: GameDB, *, turn: Optional[int] = None,
 ) -> str:
@@ -279,6 +302,7 @@ def character_context_with_db(
         + "【通用特征】人物档料不足处，以其现职、经历与当下处境推知。"
         + faction_context_with_db(character, db)
         + held_authority_context(character, db, turn=turn)
+        + relation_ledger_context(character, db)
         + f"当前可用技能：{available_skill_names(character, db)}"
     )
 
