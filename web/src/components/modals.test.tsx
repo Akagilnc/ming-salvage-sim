@@ -1507,14 +1507,25 @@ describe("ReportModal — narrative settlement bulletin", () => {
     const hostEmpty = renderReportModal({ report: "一、边报" });
     expect(hostEmpty.querySelector("[data-testid=gazette-attendant]")).toBeNull();
 
+    // 纯空白 / 空串：trim 判空后不渲染
+    expect(
+      renderReportModal({ report: "一、边报", attendantMessage: "   \n\t  " })
+        .querySelector("[data-testid=gazette-attendant]"),
+    ).toBeNull();
+    expect(
+      renderReportModal({ report: "一、边报", attendantMessage: "" })
+        .querySelector("[data-testid=gazette-attendant]"),
+    ).toBeNull();
+
+    const rawWithWs = "\n  **皇爷**，洪承畴本月抵京候旨。  \n";
     const host = renderReportModal({
       report: "**辽东军情**",
-      attendantMessage: "**皇爷**，洪承畴本月抵京候旨。",
+      attendantMessage: rawWithWs,
     });
     const aside = host.querySelector("[data-testid=gazette-attendant]");
     expect(aside).not.toBeNull();
-    // 递话原文保留 markdown 标记；官方邸报仍剥离
-    expect(aside?.textContent).toContain("**皇爷**，洪承畴本月抵京候旨。");
+    // 递话原文含首尾空白与 markdown 标记；官方邸报仍剥离
+    expect(aside?.textContent).toBe(rawWithWs);
     expect(host.querySelector(".gazette-document")?.textContent).toContain("辽东军情");
     expect(host.querySelector(".gazette-document")?.textContent).not.toContain("**");
     // 递话区在纸面 article 之外

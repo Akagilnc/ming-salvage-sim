@@ -371,7 +371,6 @@ def create_arrival_attendant_agent(llm_config: LLMConfig) -> Agent:
             "（年月、人名、地点、候旨状态）。你只据此向皇爷低声递话，通报何人本月抵京候旨。",
             "只读结构化事实，自由措辞；不得编造名单外的人，不得把未宣入写成已开殿召对。",
             "同月多人须逐人点到。只输出递话正文，不输出推理、JSON 或机制说明。",
-            "口吻如：「皇爷，洪承畴本月已抵京，现于宫门候旨，尚未宣入。」",
         ],
         add_history_to_context=False,
         markdown=False,

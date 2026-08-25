@@ -722,7 +722,7 @@ export function App() {
       {gazetteOpen ? (
         <ReportModal
           report={(gazetteReport || state.previous_summary || report || "").trim()}
-          attendantMessage={(state.last_attendant_message || "").trim() || undefined}
+          attendantMessage={state.last_attendant_message || undefined}
           periodLabel={state.previous_reign_period_label || undefined}
           onClose={() => setActiveModal("none")}
         />

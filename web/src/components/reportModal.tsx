@@ -15,7 +15,8 @@ export function ReportModal({
   periodLabel?: string;
 }) {
   const activeText = stripOrganicMarkdown(report || "");
-  const attendantText = String(attendantMessage || "").trim();
+  // trim 仅判空；DOM 写原始 attendantMessage（P6：零删改）
+  const rawAttendant = String(attendantMessage || "");
   const masthead = periodLabel || "邸报";
   return (
     <FullscreenModal title="邸报" subtitle={masthead} bgClass="modal-bg-gazette" onClose={onClose} hideTitle>
@@ -30,9 +31,9 @@ export function ReportModal({
           <pre className="memorial-text">{activeText}</pre>
         </article>
         {/* #671：邸报纸面之外独立递话区；原文不经 stripOrganicMarkdown */}
-        {attendantText ? (
+        {rawAttendant.trim() ? (
           <aside className="gazette-attendant" data-testid="gazette-attendant">
-            <pre className="gazette-attendant-text">{attendantText}</pre>
+            <pre className="gazette-attendant-text">{rawAttendant}</pre>
           </aside>
         ) : null}
         {/* #1387：主关闭钮（系统 chrome，ADR 0046）；正文仍只滚 LLM/引擎叙事，不代笔。 */}
