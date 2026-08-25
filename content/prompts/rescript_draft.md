@@ -26,7 +26,7 @@
     - `target_kind`：目标类（如 `region` / `character` / `army` / `issue`）
     - `target_id`：目标标识（如区域 id、人名、军 id）
     - `locality_scope`：`national` / `single` / `none`
-    - 类相关键（按 action_type 填写，可空串但键宜在）：`assignee_name`、`region_id`、`transaction_category`；以及该类所需的 `grant_action` / `amount` / `station` / `office` / `appoint_action` / `punish_action` / `deadline_months` 等
+    - 类相关键（按 action_type 填写；`assignee_name`/`region_id`/`transaction_category` **必须输出**，值可空串）：以及该类所需的 `grant_action` / `amount` / `station` / `office` / `appoint_action` / `punish_action` / `deadline_months` 等
     - **不要**写 `draft_capability` 或 `verdict`——服务端派生
   - 可**两拟陈两端**——拿不定或不愿独任时，并列两端各陈利弊，由圣断。
 - **通篇用定性文字**：描述轻重、安危、人心向背，一律以定性说法表达——如「需款甚巨」「兵力已疲」「民力已竭」，让陛下从措辞分量里读出缓急。

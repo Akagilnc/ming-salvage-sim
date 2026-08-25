@@ -68,24 +68,21 @@ _LAYER_A_ALLOWED_KEYS = frozenset(
 )
 
 
-def normalize_stop_condition(raw: object) -> object:
-    """stop_condition 唯一保真缝：dict 原样；JSON 对象串→dict；其它非空串原文；空/None→""。
+def normalize_stop_condition(raw: object) -> str:
+    """stop_condition 唯一保真缝（C.6）：仅 str 原文；None/空白→""；dict/list/其它→ValueError。
 
     供层 A normalize / choice 规范化 / mapper 共用——禁止平行拷贝。
+    非空不 strip 落库（strip 只可在 until_stop 判空临时用）。
     """
     if raw is None:
         return ""
-    if isinstance(raw, dict):
-        return raw
     if isinstance(raw, str):
         if not raw.strip():
             return ""
-        try:
-            parsed = json.loads(raw)
-        except (TypeError, ValueError):
-            return raw
-        return parsed if isinstance(parsed, dict) else raw
-    return raw
+        return raw
+    raise ValueError(
+        f"stop_condition 须为 str（C.6），拒 {type(raw).__name__}"
+    )
 
 
 def normalize_rescript_layer_a_option(raw: object) -> Dict[str, object]:
@@ -120,10 +117,16 @@ def normalize_rescript_layer_a_option(raw: object) -> Dict[str, object]:
     if scope not in _LOCALITY_SCOPES:
         raise ValueError(f"票拟 option.locality_scope 非法：{scope_raw!r}")
     out["locality_scope"] = scope
-    # 键必须在（可空串）
+    # C.3：三键必须在且为 str（可 ""）；禁缺键补全 / None→"" / str(value) 洗值
     for key in _LAYER_A_PRESENT_KEYS:
-        value = raw.get(key, "")
-        out[key] = "" if value is None else str(value)
+        if key not in raw:
+            raise ValueError(f"票拟 option 缺层 A 须在键：{key}")
+        value = raw[key]
+        if not isinstance(value, str):
+            raise ValueError(
+                f"票拟 option.{key} 须为 str（可空串），拒 {type(value).__name__}"
+            )
+        out[key] = value
     # 其余 capability 闭集字段透传（有则规范化，无则由 derive 填默认）
     for key, _default in (
         ("name", ""), ("title", ""), ("commitment_kind", ""),
