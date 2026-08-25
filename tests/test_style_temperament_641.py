@@ -46,6 +46,7 @@ def _temperament_item(**overrides):
 def test_inertia_natural_resolve_applies_temperament_style(game):
     """生产入口：issue 自然结案 effect_on_resolve 性情 → DB/runtime/person_logs 一致。"""
     db, state, content = game
+    issues.bind_content(content)  # 防他测漂移 _content；inertia 路 content=None→_ctx()
     before_db = _style_row(db)
     before_rt = content.characters[PERSON].style
     before_logs = db.conn.execute(
