@@ -20,7 +20,7 @@
 
 1. **依拟**（差务落账、绑票拟所荐承办人）
 2. **发回改票**（退回重拟一轮）
-3. **另旨·中旨**（中旨频度机械累计当回合落库——0011 离心账的先行计数，M12 硬化时并账，0057 interim 成例）
+3. **另旨·中旨**（当回合 midzhi 案卷落库；频度／身份／离心见 **§C.8**）
 4. **下部议·廷议**（议程 issue）
 5. **留中**（惯性结算＋上疏者寒心）
 6. **召见（入召对流程）**——完整技术义务见 §D；其中 scaffold CAS 见 §D.6，属召见子接缝
@@ -374,7 +374,7 @@ payload["holder_id"] = payload["assignee_id"] = payload["name"] = canonical
 | `payload.mode` | ordinary | midzhi |
 | `status` | ordinary 默认 | **proposed** |
 
-### C.8 dossier 幂等（废止 rescript_origin 列）
+### C.8 dossier 幂等（废止 rescript_origin 列）＋中旨 D+（本文件唯一完整定义）
 
 | 项 | 口径 |
 |---|---|
@@ -383,6 +383,25 @@ payload["holder_id"] = payload["assignee_id"] = payload["name"] = canonical
 | **fan-out** | create Plan→Validate-all→Write-once；既有 `(source,region_id)` 查补 |
 | **验收** | ③ 后 crash / 同 body 重交 → **不增** dossier；每 region 恰一行 |
 | **可选 provenance** | payload 普通字段可写 decision_key；**不得**第二幂等真源/加列索引 |
+
+#### 中旨 D+（本契约唯一完整位；ADR／GH 只 later-wins 指针，不复述整套）
+
+**Owner 直支**（真源 GH #657 owner 评论 2026-08-25T00:47:48Z）：
+
+1. 每次中旨仅在现有案卷以 `mode=midzhi` + **既有 decision identity** 持久化
+2. 频度从案卷直接派生
+3. **三不**：不建全局计数器、不向全部派系扇出、不猜受影响派系
+4. 正式派系离心归 **M12** 按上下文落账
+
+中旨**当下**可写：`mode=midzhi` 案卷行、decision identity、不依赖猜派的 STIGMA／污名标记、provisional 等既有非猜派机制。  
+中旨**当下不可写**（施工义）：该派血债、相关价值派血债、中旨侧 `edict_overdraw`、频度进血债账、向派系扇出累加。  
+正式逐派离心／频度反噬落派：**仅 M12**（指针；本契约不实现 M12）。旧 0011 系「中旨当回合立即撞派写 blood_debt／edict_overdraw／频度计数器」施工义 **later-wins 废止**，以本条为准。
+
+**施工结论**（**非** owner 原话；保留行为、改归因——由 owner「既有 decision identity」+ 本契约 C1／本条 fan-out 结构推出，防重复计频；锚 §A 行身份基线 `decision_key = "{kind}:{source_turn}:{idx}"` 与上表 **主幂等**／**fan-out** 行）：
+
+- fan-out **共用同一** decision identity
+- 频度按案卷 **distinct identity** 计数
+- 不得另建第二幂等真源／全局计数器／加列索引
 
 ### C.9 ABI 契约矩阵（A 组 · 规范说明 · 勾选正文见 §E.3）
 
