@@ -613,7 +613,7 @@
       }
     }
   ],
-  "git_head_at_run": "e548923f860bfb5ced2bbd98b3887bfefe4a30c7",
+  "git_head_at_run": "9840261f709c88a50bb594b11208d12d0dc09a44",
   "fresh_trace": {
     "path": "docs/evidence/issue-642-acceptance-trace.jsonl",
     "records": 26,
