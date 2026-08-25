@@ -44,7 +44,8 @@ DECISION_NARRATIVE_PREFIX = (
 )
 
 # 决策块边界标记。simulator 在邸报末尾按规范输出，本回合解析后从 narrative 剥离。
-_DECISION_RE = re.compile(r"<<DECISION>>\s*(\{.*?\})\s*<<END>>", re.DOTALL)
+# 机标本体 + 两侧至多一行框架换行；剥离时不 .strip() 整篇邸报（P6 / #671）
+_DECISION_RE = re.compile(r"\n?<<DECISION>>\s*(\{.*?\})\s*<<END>>\n?", re.DOTALL)
 MAX_DECISIONS_PER_TURN = 5
 
 
@@ -88,7 +89,8 @@ def parse_decision_blocks(narrative: str) -> tuple[str, List[Dict[str, object]]]
         if event_id:
             decision["event_id"] = event_id
         decisions.append(decision)
-    clean = _DECISION_RE.sub("", narrative or "").strip()
+    # #671 / P6 / ADR 0142：剥离 DECISION 机标后不得 strip 邸报原文（零删改）
+    clean = _DECISION_RE.sub("", narrative or "")
     return clean, decisions
 
 

@@ -153,7 +153,11 @@ def test_run_arrival_attendant_message_translates_provider_errors(monkeypatch, e
 
 
 def test_arrival_dual_voice_parallel_main_path(game, monkeypatch):
-    """真实 resolve_directives 入口：混合集合只对交集递话 + 并行双腿落 typed 字段。"""
+    """真实 resolve_directives 入口：混合集合只对交集递话 + 并行双腿落 typed 字段。
+
+    #671④ 并入：waiting 地点空时以 arrival 京地点入交集（不默认写死 beizhili 字面以外的来源）。
+    """
+    import ming_sim.audience_night as audience_night
     import ming_sim.decree as decree_mod
     import ming_sim.memories as memories
 
@@ -168,6 +172,14 @@ def test_arrival_dual_voice_parallel_main_path(game, monkeypatch):
         {"name": "袁崇焕", "location": "beizhili"},  # 仅抵达未候见
     ]
     intersection = {"洪承畴", "孙传庭"}
+    # waiting 地点置空：有效 location 须来自 arrival，不得因空值丢弃或另默认
+    monkeypatch.setattr(
+        audience_night, "list_waiting_audience_summons",
+        lambda _db: [
+            {"person_name": n, "location": "", "origin_id": f"test:main:{n}", "source_entry_id": i}
+            for i, n in enumerate(waiting_names, start=1)
+        ],
+    )
 
     attendant_entered = threading.Event()
     sim_entered = threading.Event()
@@ -192,6 +204,7 @@ def test_arrival_dual_voice_parallel_main_path(game, monkeypatch):
         assert {row["person_name"] for row in payload["waiting_audience"]} == set(waiting_names)
         # #671：引擎求交后写入 payload 的唯一真源；LLM 不得自算交集
         assert {row["name"] for row in payload["arrival_waiting"]} == intersection
+        assert {row["location"] for row in payload["arrival_waiting"]} == {"beizhili"}
         return (SIM_REPORT, payload)
 
     monkeypatch.setattr(
@@ -538,35 +551,70 @@ def test_arrival_clear_without_marker_still_reruns_sim(game, monkeypatch):
     assert db.get_turn_attendant_message(completed) == ATTENDANT_TEXT
 
 
-def test_arrival_dual_voice_empty_set_zero_calls(game, monkeypatch):
-    """arrivals 非空但与 waiting 无交集 → 零 companion 调用、字段空。"""
+@pytest.mark.parametrize(
+    "arrivals,waiting_stub",
+    [
+        (
+            [{"name": "孙传庭", "location": "beizhili"}],
+            None,  # 真实 waiting=洪承畴（beizhili）
+        ),
+        (
+            [{"name": "洪承畴", "location": ""}],
+            [{"person_name": "洪承畴", "location": "", "origin_id": "t:empty", "source_entry_id": 1}],
+        ),
+        (
+            [{"name": "洪承畴", "location": "shaanxi"}],
+            [{"person_name": "洪承畴", "location": "", "origin_id": "t:shaanxi", "source_entry_id": 1}],
+        ),
+        (
+            [{"name": "孙传庭", "location": None}],
+            [{"person_name": "孙传庭", "location": None, "origin_id": "t:none", "source_entry_id": 1}],
+        ),
+    ],
+    ids=["name_disjoint", "both_empty", "non_capital", "both_none"],
+)
+def test_arrival_dual_voice_empty_set_zero_calls(game, monkeypatch, arrivals, waiting_stub):
+    """resolve_directives 真实入口：无有效 arrival_waiting → 零 companion。
+
+    覆盖名不相交、双来源地点空/None、arrival 非京；不得默认 beizhili。
+    """
+    import ming_sim.audience_night as audience_night
     import ming_sim.decree as decree_mod
     import ming_sim.memories as memories
 
     db, state, content = game
-    # waiting=洪承畴；arrivals=孙传庭（非空不相交）
     _set_place(game, "洪承畴", location="beizhili")
     night = an.get_open_night(db) or an.open_night(db, state)
     an.record_summon_in_transit(
         db, int(night["id"]), "洪承畴", origin_id="test:old-waiting",
     )
     assert an.list_waiting_audience_summons(db)
-    non_intersecting_arrivals = [{"name": "孙传庭", "location": "beizhili"}]
+
+    if waiting_stub is not None:
+        monkeypatch.setattr(
+            audience_night, "list_waiting_audience_summons",
+            lambda _db: list(waiting_stub),
+        )
 
     attendant_calls: list = []
+    seen_waiting: list = []
 
     def _attendant(*_a, **_k):
         attendant_calls.append(1)
         return ATTENDANT_TEXT
 
     def _simulate(*_a, **kwargs):
-        # #671：无交集时引擎写入空序列，simulator 不得另算
-        assert kwargs["simulator_payload"].get("arrival_waiting") == []
-        return ("本月无新抵京。", kwargs["simulator_payload"])
+        payload = kwargs["simulator_payload"]
+        aw = payload.get("arrival_waiting")
+        seen_waiting.append(list(aw) if isinstance(aw, list) else aw)
+        # #671：无有效交集时引擎写入空序列，simulator 不得另算；不得默认 beizhili
+        assert aw == []
+        assert "beizhili" not in json.dumps(aw, ensure_ascii=False)
+        return ("本月无新抵京。", payload)
 
     monkeypatch.setattr(
         decree_mod, "tick_transit_arrivals",
-        lambda *_a, **_k: list(non_intersecting_arrivals),
+        lambda *_a, **_k: list(arrivals),
     )
     _stub_settlement_llms(
         decree_mod, memories, monkeypatch, simulate=_simulate, attendant=_attendant,
@@ -577,40 +625,60 @@ def test_arrival_dual_voice_empty_set_zero_calls(game, monkeypatch):
     )
     assert result.awaiting is False
     assert attendant_calls == []
+    assert seen_waiting == [[]]
     completed = int(state.turn) - 1
     assert db.get_turn_attendant_message(completed) == ""
     assert db.previous_turn_attendant_message(state) == ""
 
 
-def test_collect_arrival_waiting_rejects_empty_locations():
-    """#671④：双来源地点均空不得默认 beizhili；只认 is_capital_location。"""
+def test_simulator_resolve_turn_report_preserves_raw_whitespace(game, monkeypatch):
+    """#671 P6：真实 simulator→resolve→turn_reports 链保留 raw whitespace，不锁散文。"""
+    import ming_sim.agents as agents_mod
     import ming_sim.decree as decree_mod
+    import ming_sim.memories as memories
+    from types import SimpleNamespace
 
-    rows = decree_mod.collect_new_arrival_waiting_audience(
-        transit_arrivals=[{"name": "洪承畴", "location": ""}],
-        waiting_audience=[{"person_name": "洪承畴", "location": ""}],
-    )
-    assert rows == []
+    db, state, content = game
+    # 含首尾空白的固定探针串——只断言持久化逐字相等，不锁奏章措辞契约
+    raw_report = "\n  《探针月报》边事稍宁。  \n"
 
-    rows_unknown = decree_mod.collect_new_arrival_waiting_audience(
-        transit_arrivals=[{"name": "洪承畴", "location": "shaanxi"}],
-        waiting_audience=[{"person_name": "洪承畴", "location": ""}],
-    )
-    assert rows_unknown == []
+    class _SimAgent:
+        def run(self, _prompt):
+            # 拒 stream kwargs → run_agent_stream_text 走普通 run 兼容支路
+            return SimpleNamespace(content=raw_report, status="COMPLETED")
 
-    rows_ok = decree_mod.collect_new_arrival_waiting_audience(
-        transit_arrivals=[{"name": "洪承畴", "location": "beizhili"}],
-        waiting_audience=[{"person_name": "洪承畴", "location": ""}],
+    monkeypatch.setattr(
+        decree_mod, "create_season_simulator_agent", lambda *a, **k: _SimAgent(),
     )
-    assert len(rows_ok) == 1
-    assert rows_ok[0]["location"] == "beizhili"
-    assert "beizhili" not in json.dumps(
-        decree_mod.collect_new_arrival_waiting_audience(
-            transit_arrivals=[{"name": "孙传庭", "location": None}],
-            waiting_audience=[{"person_name": "孙传庭", "location": None}],
-        ),
-        ensure_ascii=False,
+    # 不 stub simulate_season_with_payload——咬住 simulation 真缝
+    monkeypatch.setattr(decree_mod, "run_arrival_attendant_message", lambda *a, **k: "")
+    monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
+    monkeypatch.setattr(
+        decree_mod, "create_score_extractor_module_agent", lambda *a, **k: object(),
     )
+    monkeypatch.setattr(
+        decree_mod, "extract_scores_by_modules_with_agno",
+        lambda *a, **k: ({}, "out", "in"),
+    )
+    monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
+    monkeypatch.setattr(memories, "run_agent_text", lambda *a, **k: '{"body":"月记","tags":[]}')
+    monkeypatch.setattr(decree_mod, "llm_promulgation_verdicts", lambda *a, **k: [])
+    monkeypatch.setattr(agents_mod, "_dump_llm_messages", lambda *a, **k: None)
+    monkeypatch.setattr(
+        decree_mod, "tick_transit_arrivals", lambda *_a, **_k: [],
+    )
+
+    result = decree_mod.resolve_directives(
+        state, db, None, None, [], "", content=content,
+    )
+    assert result.awaiting is False
+    completed = int(state.turn) - 1
+    persisted = db.get_turn_report(completed)
+    # 外部持久化字段保留原 whitespace（P6 零删改）；不断言散文措辞结构
+    assert persisted == raw_report
+    assert persisted.startswith("\n")
+    assert persisted.endswith("\n")
+    assert persisted != persisted.strip()
 
 
 def test_history_turn_api_returns_attendant_message_raw(game, monkeypatch):
