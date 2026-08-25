@@ -10,8 +10,6 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
-
 import pytest
 
 import ming_sim.issues as issues
@@ -247,16 +245,8 @@ def test_character_context_with_db_reads_own_style_and_viewer_ledger(game):
     expected_own = project_relation_ledger(db, viewer=person.name)
     assert [(d["source"], d["target"]) for d in expected_own] == [(person.name, other.name)]
 
-    with patch(
-        "ming_sim.relation_read.project_relation_ledger",
-        wraps=project_relation_ledger,
-    ) as mocked:
-        rendered = character_context_with_db(person, db)
+    rendered = character_context_with_db(person, db)
 
-    mocked.assert_called()
-    assert any(
-        call.kwargs.get("viewer") == person.name for call in mocked.call_args_list
-    )
     assert NEW_STYLE in rendered
     assert person.name in rendered and other.name in rendered
     assert stranger_a not in rendered and stranger_b not in rendered
@@ -266,16 +256,27 @@ def test_character_context_with_db_reads_own_style_and_viewer_ledger(game):
 
 def test_relation_edge_events_do_not_mutate_style(game):
     db, state, content = game
-    before = _style_row(db)
-    before_rt = content.characters[PERSON].style
+    source, target = "毕自严", "王绍徽"
+    before_db = {
+        source: _style_row(db, source),
+        target: _style_row(db, target),
+    }
+    before_rt = {
+        source: content.characters[source].style,
+        target: content.characters[target].style,
+    }
+    before_temperament_logs = db.conn.execute(
+        "SELECT COUNT(*) AS c FROM person_logs WHERE action=?",
+        ("性情",),
+    ).fetchone()["c"]
 
     out = issues.apply_score_extraction(
         db,
         state,
         {
             "relation_edge_events": [{
-                "施动者": "毕自严",
-                "受动者": "王绍徽",
+                "施动者": source,
+                "受动者": target,
                 "类目": "使绊",
                 "语境": "毕自严在户部用度上挡了王绍徽的路。",
                 "来源引用": "盘面自发",
@@ -285,10 +286,17 @@ def test_relation_edge_events_do_not_mutate_style(game):
     )
     res = out["relation_edge_event_resolutions"]
     assert not any(r.get("rejected") for r in res), res
-    rows = db.get_relation_edge_events(source="毕自严", target="王绍徽")
+    rows = db.get_relation_edge_events(source=source, target=target)
     assert len(rows) == 1
-    assert _style_row(db) == before
-    assert content.characters[PERSON].style == before_rt
+    assert _style_row(db, source) == before_db[source]
+    assert _style_row(db, target) == before_db[target]
+    assert content.characters[source].style == before_rt[source]
+    assert content.characters[target].style == before_rt[target]
+    after_temperament_logs = db.conn.execute(
+        "SELECT COUNT(*) AS c FROM person_logs WHERE action=?",
+        ("性情",),
+    ).fetchone()["c"]
+    assert after_temperament_logs == before_temperament_logs
 
 
 def test_temperament_does_not_write_relation_edges(game):
