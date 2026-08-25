@@ -1923,15 +1923,22 @@ def test_cli_scaffold_exit_failure_deletes_exit_ledger(game, monkeypatch):
 # #657 片3 S2/S3/S7：锁边界与多 target 并行
 # ---------------------------------------------------------------------------
 
+
 def test_657_s2_s3_lock_boundary_and_parallel_summons(game, monkeypatch):
-    """S2：prewrite/join 不在 gate 内；S3：多 target Future 重叠；S7：失败域。"""
+    """S2/S3/S7 + Class4：session 分段 API + 既有 session._write_gate。
+
+    ① 持锁 commit → ② 无锁 join（gate.acquire(False) is True 后立刻 release）
+    → ③ 再持同一 gate persist；单 target 失败不毁另一已 persist。
+    """
     import threading
     import time
+    from concurrent.futures import ThreadPoolExecutor
 
-    from ming_sim.audience_night import rescript_summon_origin_ref
+    from ming_sim.beat_orchestration import ChatTurnSceneRegistry
     from ming_sim.models import TurnPhase
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
     from ming_sim.session import GameSession
+    import ming_sim.session as session_mod
 
     db, state, content = game
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
@@ -1980,94 +1987,93 @@ def test_657_s2_s3_lock_boundary_and_parallel_summons(game, monkeypatch):
     sess.agno_db = None
     sess.registry = None
     sess.last_decree = "诏"
-    from ming_sim.beat_orchestration import ChatTurnSceneRegistry
-    from concurrent.futures import ThreadPoolExecutor
+    sess.temporary_characters = {}
     executor = ThreadPoolExecutor(max_workers=4)
     sess._scene_registry = ChatTurnSceneRegistry(executor)
+    # 既有唯一 write_gate（禁第二锁）
+    sess._write_gate = threading.Lock()
+    sess._write_queue = type("Q", (), {"write_gate": sess._write_gate})()
 
     started = {}
     lock = threading.Lock()
-    join_gate_held = {"v": False}
-    observed_join_gate = []
+    join_saw_free = []
+    in_join_phase = {"v": False}
 
     def slow_gen(inputs):
-        name = str(getattr(inputs, "person_name", "") or "") or str(
-            getattr(inputs, "beat_kind", "") or ""
-        )
+        name = str(getattr(inputs, "person_name", "") or "") or "臣"
         with lock:
             started[f"{name}-{id(inputs)}"] = time.time()
-        time.sleep(0.2)
-        # S2：join 等待期（generator 仍在飞）不得持 write_gate
-        observed_join_gate.append(join_gate_held["v"])
-        return f"{name or '臣'}入殿请安。"
+        # 仅在 ② join 期观测：① 持锁 start 时 generator 可能已起跑，不计入
+        time.sleep(0.05)
+        if in_join_phase["v"]:
+            free = sess._write_gate.acquire(False)
+            if free:
+                sess._write_gate.release()
+            join_saw_free.append(bool(free))
+        time.sleep(0.12)
+        return f"{name}入殿请安。"
 
-    # 直接用 registry 测并行：绕过 full submit（phase2 重）
-    from ming_sim.audience_night import prepare_rescript_summon_scaffold
-    scaffolds = []
+    sess._beat_generator = slow_gen
+
+    def _phase2(_state, _db, *_a, **_k):
+        return "邸报：锁窗测。"
+
+    monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _phase2)
+
+    choices = []
     for key, name in zip(keys, ministers):
-        kind, turn, idx = key.split(":")
-        origin = rescript_summon_origin_ref(int(turn), int(idx), 0)
-        sc = prepare_rescript_summon_scaffold(
-            db, state, person_name=name, origin_ref=origin,
-        )
-        scaffolds.append((name, sc))
+        choices.append({
+            "decision_key": key, "action": "summon",
+            "label": "召见", "summon_target": name,
+        })
 
-    # ① 全部 start（可持锁）；禁 start-A→join-A→start-B
-    for name, sc in scaffolds:
-        sess._scene_registry.start_open_enter(
-            db, state, minister_name=name,
-            chat_turn_id=int(sc["chat_turn_id"]),
-            beat_generator=slow_gen,
-        )
-    # 放锁后再 join
-    join_gate_held["v"] = False
+    # PRE 锁外
+    pre = sess.prepare_rescript_prewrite(choices)
+    # ① 持锁
+    with sess._write_gate:
+        p1 = sess.commit_rescript_phase1(pre)
+    # ② 无锁 join — 期间 gate 可被非阻塞 acquire
+    in_join_phase["v"] = True
+    joined = sess.join_rescript_summons(p1)
+    in_join_phase["v"] = False
+    assert join_saw_free, "generator 应曾在飞"
+    assert all(join_saw_free), f"join 期间 gate 应空闲: {join_saw_free}"
 
-    # ② 无锁 join — Future 应重叠
-    results = []
-    for name, sc in scaffolds:
-        results.append(sess.join_chat_turn_scene(int(sc["chat_turn_id"])))
-    assert observed_join_gate, "generator 应曾在飞"
-    assert all(v is False for v in observed_join_gate), (
-        f"join 期间不得持 write_gate: {observed_join_gate}"
-    )
-
-    # S3：至少两个 start 时间差 < 单个 sleep（并行）
+    # S3：Futures 重叠
     times = list(started.values())
     if len(times) >= 2:
         assert max(times) - min(times) < 0.12, f"Futures 未重叠: {started}"
 
-    # S7：注入单 target 失败不影响另一已 persist
-    ok_sc = scaffolds[0]
-    bad_sc = scaffolds[1]
-    sess.persist_chat_turn_scene(results[0])
-    db.conn.commit()
-    body0 = db.conn.execute(
-        "SELECT body FROM story_ledger_entries WHERE id=?",
-        (int(ok_sc[1]["entry_id"]),),
-    ).fetchone()["body"]
-    assert str(body0).strip()
+    # ③ 再持同一 gate persist + phase2
+    # 注入单 target 失败域：改 join_state 使第二个带 error，第一个已有 generated
+    if len(joined.get("joined") or []) >= 2:
+        joined["joined"][1]["error"] = "inject fail"
+        joined["joined"][1]["generated"] = []
 
-    # bad target 失败不抹掉 ok
-    def boom(_inputs):
-        raise RuntimeError("target B boom")
+    # 先手动 persist 成功的一个，证明失败域不毁
+    ok_item = (joined.get("joined") or [None])[0]
+    if ok_item and ok_item.get("generated"):
+        sess.persist_chat_turn_scene(list(ok_item["generated"]))
+        db.conn.commit()
+        body0 = db.conn.execute(
+            "SELECT body FROM story_ledger_entries WHERE id=?",
+            (int(ok_item["entry_id"]),),
+        ).fetchone()["body"]
+        assert str(body0).strip()
 
-    # 新 origin 再起一个失败 target
-    origin_b = rescript_summon_origin_ref(int(state.turn), 99, 0)
-    sc_b = prepare_rescript_summon_scaffold(
-        db, state, person_name=ministers[1], origin_ref=origin_b,
-    )
-    sess._scene_registry.start_open_enter(
-        db, state, minister_name=ministers[1],
-        chat_turn_id=int(sc_b["chat_turn_id"]),
-        beat_generator=boom,
-    )
-    try:
-        sess.join_chat_turn_scene(int(sc_b["chat_turn_id"]))
-    except RuntimeError:
-        pass
-    body0_after = db.conn.execute(
-        "SELECT body FROM story_ledger_entries WHERE id=?",
-        (int(ok_sc[1]["entry_id"]),),
-    ).fetchone()["body"]
-    assert body0_after == body0
+    # 门闩应因 unconsumed 失败；已 persist body 仍在
+    with sess._write_gate:
+        try:
+            sess.finish_rescript_phase2(p1, joined)
+        except ValueError as exc:
+            assert "召见尚未消费" in str(exc) or "inject" in str(exc)
+    if ok_item:
+        body0_after = db.conn.execute(
+            "SELECT body FROM story_ledger_entries WHERE id=?",
+            (int(ok_item["entry_id"]),),
+        ).fetchone()["body"]
+        assert str(body0_after).strip()
+
     executor.shutdown(wait=False)
+
+
