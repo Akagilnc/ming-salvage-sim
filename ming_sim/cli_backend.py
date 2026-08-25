@@ -2833,7 +2833,7 @@ def enrich_initiative_effects(title: str, stage: str = "", llm_config: Any = Non
         '  "effect_on_resolve": {\n'
         '    "metrics": {"民心": int, "皇威": int, "国库": int},   // 抽象国势回报，按需，可省\n'
         '    "buildings": [{"action":"create","region_id":"省拼音码","name":"","category":"财政/军事/民生/科技/交通/内廷","output_metric":"国库/内库/民心/皇威/","output_amount":int}],\n'
-        '    "new_armies": [{"id":"英文小写id","name":"军名","owner_power":"ming","manpower":兵额(整数,如18000),"pay_source_region":"饷源省region_id如shaanxi","province_pay_share":省份额0到1,"central_pay_share":中央份额0到1,"commander":"主将姓名或空","station":"驻地","troop_type":"步/骑/水/车营","火器":0到100整数(火器局/神机营/火器新军给高),"随军大炮":0到12整数门数(炮营/红夷炮新军给几门)}],   // 明军必须给饷源省+省/中央份额(和=1)，月饷总额由引擎按 manpower 派生，勿列饷额\n'
+        '    "new_armies": [{"id":"英文小写id","name":"军名","owner_power":"ming","manpower":兵额(整数,如18000),"pay_source_region":"饷源省region_id如shaanxi","province_pay_share":省份额0到1,"central_pay_share":中央份额0到1,"commander":"主将姓名或空","station":"驻地中文","station_region":"实际驻地region_id如shaanxi","troop_type":"步/骑/水/车营","火器":0到100整数(火器局/神机营/火器新军给高),"随军大炮":0到12整数门数(炮营/红夷炮新军给几门)}],   // 明军必须给饷源省+省/中央份额(和=1)；station_region=实际驻地id（≠饷源）；月饷总额由引擎按 manpower 派生，勿列饷额\n'
         '    "army_delta": {"既有军id":{"manpower":增兵整数,"火器":增量,"随军大炮":门数增量,"reason":""}},\n'
         '    "人物变更": [{"name":"必须是确切人名","动作":"处置","status":"dead/exiled/imprisoned/dismissed/retired","reason":""}]\n'
         "  },\n"
@@ -2842,7 +2842,7 @@ def enrich_initiative_effects(title: str, stage: str = "", llm_config: Any = Non
         "}\n"
         "【按国策性质选类型，不要全用 metrics 凑数】：\n"
         "- 营建/办厂/设局/筑堡/设仓/建坞/立学 → buildings.create（科技/军事厂局让推演认军备能力，别只给民心）\n"
-        "- 练兵/募营/建新军 → new_armies（给合理兵额/主将/驻地；owner_power=\"ming\" 的普通明军必须给 pay_source_region + province_pay_share + central_pay_share，份额和=1；月饷总额由引擎按 manpower 派生）\n"
+        "- 练兵/募营/建新军 → new_armies（给合理兵额/主将/驻地 station + station_region；owner_power=\"ming\" 的普通明军必须给 pay_source_region + province_pay_share + central_pay_share，份额和=1；月饷总额由引擎按 manpower 派生）\n"
         "- 给既有军扩编/补员 → army_delta\n"
         "- 暗杀/处决/罢黜/流放/下狱某个**确切人物**(含敌酋如皇太极) → 人物变更(name 必须确切、动作=处置、status 取白名单)\n"
         "- 整顿提威/安民/财政新政 → metrics / economy\n"
