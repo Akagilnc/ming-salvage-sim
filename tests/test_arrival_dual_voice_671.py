@@ -66,27 +66,6 @@ def _stub_settlement_llms(decree_mod, memories, monkeypatch, *, simulate, attend
     )
 
 
-def test_collect_new_arrival_waiting_audience_intersection_and_empty():
-    from ming_sim.decree import collect_new_arrival_waiting_audience
-
-    arrivals = [
-        {"name": "洪承畴", "location": "beizhili"},
-        {"name": "孙传庭", "location": "beizhili"},
-        {"name": "袁崇焕", "location": "liaodong"},  # 非京，不得入相交
-    ]
-    waiting = [
-        {"person_name": "洪承畴", "location": "beizhili", "origin_id": "a"},
-        {"person_name": "毕自严", "location": "beizhili", "origin_id": "b"},  # 无本月抵达
-        {"person_name": "孙传庭", "location": "beizhili", "origin_id": "c"},
-    ]
-    got = collect_new_arrival_waiting_audience(arrivals, waiting)
-    assert [row["name"] for row in got] == ["洪承畴", "孙传庭"]
-    assert all(row["status"] == "候旨" for row in got)
-
-    assert collect_new_arrival_waiting_audience([], waiting) == []
-    assert collect_new_arrival_waiting_audience(arrivals, []) == []
-
-
 def test_run_arrival_attendant_message_preserves_raw_text(monkeypatch):
     """成功返回未 strip 原文；纯空白仍抛 LLMContractError。"""
     import ming_sim.decree as decree_mod
@@ -115,13 +94,21 @@ def test_run_arrival_attendant_message_preserves_raw_text(monkeypatch):
 
 
 def test_arrival_dual_voice_parallel_main_path(game, monkeypatch):
-    """真实 resolve_directives 入口：并行双腿 + 完整受控产物落 typed 字段。"""
+    """真实 resolve_directives 入口：混合集合只对交集递话 + 并行双腿落 typed 字段。"""
     import ming_sim.decree as decree_mod
     import ming_sim.memories as memories
 
     db, state, content = game
-    names = ["洪承畴", "孙传庭"]
-    arrivals, waiting = _seed_waiting_arrivals(game, names)
+    # 混合集合：交集（洪/孙）+ 仅候见（毕）+ 仅抵达（袁）
+    waiting_names = ["洪承畴", "孙传庭", "毕自严"]
+    _seed_waiting_arrivals(game, waiting_names)
+    _set_place(game, "袁崇焕", location="beizhili")
+    arrivals = [
+        {"name": "洪承畴", "location": "beizhili"},
+        {"name": "孙传庭", "location": "beizhili"},
+        {"name": "袁崇焕", "location": "beizhili"},  # 仅抵达未候见
+    ]
+    intersection = {"洪承畴", "孙传庭"}
 
     attendant_entered = threading.Event()
     sim_entered = threading.Event()
@@ -143,7 +130,7 @@ def test_arrival_dual_voice_parallel_main_path(game, monkeypatch):
         payload = kwargs["simulator_payload"]
         seen_payload["payload"] = payload
         assert payload["transit_arrivals"] == arrivals
-        assert {row["person_name"] for row in payload["waiting_audience"]} == set(names)
+        assert {row["person_name"] for row in payload["waiting_audience"]} == set(waiting_names)
         return (SIM_REPORT, payload)
 
     monkeypatch.setattr(
@@ -160,8 +147,7 @@ def test_arrival_dual_voice_parallel_main_path(game, monkeypatch):
 
     assert result.awaiting is False
     assert len(attendant_calls) == 1
-    assert attendant_calls[0]["arrivals"]
-    assert {row["name"] for row in attendant_calls[0]["arrivals"]} == set(names)
+    assert {row["name"] for row in attendant_calls[0]["arrivals"]} == intersection
 
     # 官方 report 原样含 simulator 奏章；独立字段原样＝王承恩产物
     assert SIM_REPORT in result.report
@@ -362,18 +348,19 @@ def test_clear_for_resimulation_preserves_attendant_message(game):
 
 
 def test_arrival_dual_voice_empty_set_zero_calls(game, monkeypatch):
-    """无 arrivals（或不交 waiting）→ 零调用、字段空。"""
+    """arrivals 非空但与 waiting 无交集 → 零 companion 调用、字段空。"""
     import ming_sim.decree as decree_mod
     import ming_sim.memories as memories
 
     db, state, content = game
-    # 仅 waiting、无本月抵达
+    # waiting=洪承畴；arrivals=孙传庭（非空不相交）
     _set_place(game, "洪承畴", location="beizhili")
     night = an.get_open_night(db) or an.open_night(db, state)
     an.record_summon_in_transit(
         db, int(night["id"]), "洪承畴", origin_id="test:old-waiting",
     )
     assert an.list_waiting_audience_summons(db)
+    non_intersecting_arrivals = [{"name": "孙传庭", "location": "beizhili"}]
 
     attendant_calls: list = []
 
@@ -386,7 +373,7 @@ def test_arrival_dual_voice_empty_set_zero_calls(game, monkeypatch):
 
     monkeypatch.setattr(
         decree_mod, "tick_transit_arrivals",
-        lambda *_a, **_k: [],
+        lambda *_a, **_k: list(non_intersecting_arrivals),
     )
     _stub_settlement_llms(
         decree_mod, memories, monkeypatch, simulate=_simulate, attendant=_attendant,
