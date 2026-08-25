@@ -1331,6 +1331,57 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
     expect(host.textContent).toContain("奏报与诏书");
     expect(host.textContent).not.toContain("不应出现的场卷");
   });
+
+  it("#671 史册月档呈现独立递话原文（HistoryDetail→HistoryDetailView）", () => {
+    const raw = "\n  **皇爷**，洪承畴本月抵京候旨。  \n";
+    const host = document.createElement("div"); document.body.appendChild(host);
+    const root = createRoot(host); mountedRoots.push({ root, host });
+    act(() => {
+      root.render(
+        <HistoryDetailView
+          loading={false}
+          error=""
+          selectedTurn={7}
+          detail={{
+            turn: 7,
+            exists: true,
+            year: 1627,
+            period: 10,
+            report: "一、人事除目",
+            attendant_message: raw,
+            decree_text: "",
+            directives: [],
+          }}
+        />,
+      );
+    });
+    const section = host.querySelector("[data-testid=history-attendant]");
+    expect(section).not.toBeNull();
+    // trim 仅判空；DOM 写原文（含空白与 markdown 标记）
+    expect(section!.querySelector("pre")?.textContent).toBe(raw);
+
+    // 空/纯空白不渲染
+    act(() => {
+      root.render(
+        <HistoryDetailView
+          loading={false}
+          error=""
+          selectedTurn={7}
+          detail={{
+            turn: 7,
+            exists: true,
+            year: 1627,
+            period: 10,
+            report: "一、人事除目",
+            attendant_message: "   \n\t  ",
+            decree_text: "",
+            directives: [],
+          }}
+        />,
+      );
+    });
+    expect(host.querySelector("[data-testid=history-attendant]")).toBeNull();
+  });
 });
 
 describe("ChatModal — thinking/loading text switches on character type (gemini cmr r1)", () => {

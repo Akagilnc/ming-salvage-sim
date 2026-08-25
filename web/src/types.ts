@@ -629,6 +629,8 @@ export type HistoryDetail = {
   year: number;
   period: number;
   report: string;
+  /** #671：王承恩独立递话原文；与 report 分栏；空则史册不呈现 */
+  attendant_message?: string;
   decree_text: string;
   directives: HistoryDirective[];
 };

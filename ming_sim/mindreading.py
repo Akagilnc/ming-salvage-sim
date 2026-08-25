@@ -197,7 +197,8 @@ def generate_mindreading_payload(
             raise LLMUnavailable("当前会话没有可用的模型配置")
         agent = create_mindreading_agent(llm_config)
     subtext = extract_agent_text(agent.run(json.dumps(model_materials, ensure_ascii=False)))
-    if not subtext:
+    # #671：extract 不 strip；判空用临时副本（纯空白 = 合法缺席）
+    if not str(subtext or "").strip():
         # 宁缺毋滥：空返回 = 本轮不递话（合法缺席）
         return None
 

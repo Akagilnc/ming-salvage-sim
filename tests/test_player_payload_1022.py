@@ -18,6 +18,9 @@ class _HistoryDB:
     def get_turn_report(self, turn: int) -> str:
         return "邸报：国丈家赀约数十万两。"
 
+    def get_turn_attendant_message(self, turn: int) -> str:
+        return ""
+
     def get_turn_extraction(self, turn: int):
         return {
             "turn": turn,
@@ -45,6 +48,7 @@ def test_history_payload_preserves_narrative_without_machine_ledger(monkeypatch)
         "year": 2,
         "period": 3,
         "report": "邸报：国丈家赀约数十万两。",
+        "attendant_message": "",
         "decree_text": "诏曰：赈济辽东。",
         "directives": [{"id": 7, "text": "命户部发帑", "notes": "家赀约十万两"}],
     }

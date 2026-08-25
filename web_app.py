@@ -4661,12 +4661,14 @@ def api_history_turns() -> Dict[str, Any]:
 
 @app.get("/api/history/turn/{turn}")
 async def api_history_turn(turn: int) -> Dict[str, Any]:
-    """某回合玩家历史：只交付邸报、诏书与已颁草案。"""
+    """某回合玩家历史：只交付邸报、诏书、已颁草案与独立递话原文。"""
     db = get_game().db
     report = db.get_turn_report(turn)
+    # #671：与 report 分栏同表；史册月档须可独立回读（trim 仅判空，原文零删改）
+    attendant_message = db.get_turn_attendant_message(turn)
     extraction = db.get_turn_extraction(turn)
     directives = db.list_directives_by_turn(turn)
-    if not report and extraction is None and not directives:
+    if not report and not attendant_message and extraction is None and not directives:
         return {"turn": turn, "exists": False}
     decree_text = ""
     if extraction is not None:
@@ -4677,6 +4679,7 @@ async def api_history_turn(turn: int) -> Dict[str, Any]:
         "year": extraction["year"] if extraction else (directives[0]["year"] if directives else 0),
         "period": extraction["period"] if extraction else (directives[0]["period"] if directives else 0),
         "report": report,
+        "attendant_message": attendant_message,
         "decree_text": decree_text,
         "directives": directives,
     }
