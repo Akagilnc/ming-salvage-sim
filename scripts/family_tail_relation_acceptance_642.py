@@ -72,6 +72,8 @@ _YANG_BEAT_UTTERANCES: Tuple[Dict[str, Any], ...] = (
             "宣杨嗣昌入对。太仓见底，盐课与清丈当如何动？"
             "谁可撑住说情的条子？朕意先令倪元璐、黄道周试点畿辅清丈，"
             "卿以户部郎中越次接应钱粮文书——这差事，朕记下了。"
+            "倪黄刚直硬顶，卿主钱粮权宜，路线本就不同；"
+            "当面把掣肘与细缝说清，勿以虚文和稀泥。"
         ),
     },
     {
@@ -581,6 +583,15 @@ def _run_yang_anchor(cfg: LLMConfig, content: GameContent) -> Dict[str, Any]:
             "month_advanced_each_settle": month_advanced,
             "summary_brew_progressed": _summary_brew_progressed(beat_traces),
             "face_dto_ok_each_beat": all(b["face_before"]["dto_keys_ok"] for b in beat_traces),
+            # 第二拍召对前须已能读到杨↔倪/黄（张力拍回写后的读面），否则时序缺口。
+            "face_has_yang_ni_huang_before_beat2": (
+                len(beat_traces) >= 2
+                and any(
+                    "杨嗣昌" in (p.get("source"), p.get("target"))
+                    and ({"倪元璐", "黄道周"} & {p.get("source"), p.get("target")})
+                    for p in (beat_traces[1].get("face_before") or {}).get("pairs") or []
+                )
+            ),
         }
         # 语义裁判只读真实链指针（chat-turn / edge / summary），不喂直写剧本。
         # 召对关系判官只产大臣↔大臣类目；君→杨的知遇/委任加深看三拍问答应酬与
@@ -591,9 +602,9 @@ def _run_yang_anchor(cfg: LLMConfig, content: GameContent) -> Dict[str, Any]:
             "判定标准：\n"
             "1) 君→杨：三拍皇帝问话与杨答是否呈越次接应→问配合→委任加重的定性加深"
             "（不必要求 DB 已有「知遇」类目边；君臣类目不由召对判官写）。\n"
-            "2) 杨↔倪/黄：边事件+摘要是否呈配合/协作关系在读面后回写、逐拍演进，"
-            "而非一次跳变抹平或完全无回写；若对话/边语境出现路线张力再配合，更佳，"
-            "但不以必须先有「使绊」边为硬条件。\n"
+            "2) 杨↔倪/黄：须先有路线张力（使绊/结怨等）进入读面，再在后续拍"
+            "出现配合/协作回写并逐拍演进，而非一次跳变抹平或完全无回写；"
+            "第二拍召对前 face_before 已含杨嗣昌↔倪元璐/黄道周关系读面。\n"
             "3) 配合段闭环：至少一拍在读面后出现召对判官回写的新边。\n"
             "证据不足则 pass=false。\n"
             "只输出 JSON：{\"pass\": true|false, \"reason\": \"...\", "

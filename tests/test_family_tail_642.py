@@ -133,6 +133,7 @@ def test_yang_acceptance_tracer_production_chain_not_direct_write(monkeypatch):
     content = _bind_content()
     cfg = _gate_cfg()
     judge_calls = {"n": 0}
+    chat_calls = {"n": 0}
     brew_calls = {"n": 0}
     direct_write_origins: list[str] = []
 
@@ -147,27 +148,63 @@ def test_yang_acceptance_tracer_production_chain_not_direct_write(monkeypatch):
     monkeypatch.setattr(GameDB, "record_relation_edge_event", _spy_record)
 
     def _fake_chat(self, minister_name, message, *, chat_turn_id=0):
-        return ChatTurnResult(
-            answer=(
+        # 三拍答问只驱动真实召对入口；边事件由 canned 判官按拍递进，不锁答词。
+        chat_calls["n"] += 1
+        n = chat_calls["n"]
+        if n <= 1:
+            answer = (
+                f"臣{minister_name}领旨。臣与倪元璐、黄道周清丈路线相左，"
+                f"钱粮权宜与刚直硬顶当面掣肘，细缝已现。"
+            )
+        elif n == 2:
+            answer = (
                 f"臣{minister_name}领旨。与倪元璐、黄道周一刚一柔分工协作，"
                 f"细缝在而事可办；户部接应钱粮，臣任之。"
-            ),
-        )
+            )
+        else:
+            answer = (
+                f"臣{minister_name}领旨。与倪黄互看册证、分歧并呈，"
+                f"旧隙不必抹平，事要办成。"
+            )
+        return ChatTurnResult(answer=answer)
 
     monkeypatch.setattr(GameSession, "chat", _fake_chat)
 
-    class _BeatJudge(_CannedJudge):
+    # 张力→配合→演进：三拍 canned 判官经 close_night Future 真实写边，不直写。
+    _BEAT_EVENTS = (
+        {"events": [
+            {"施动者": "杨嗣昌", "受动者": "倪元璐", "类目": "使绊",
+             "语境": "杨嗣昌与倪元璐清丈路线相左当面掣肘。"},
+            {"施动者": "杨嗣昌", "受动者": "黄道周", "类目": "使绊",
+             "语境": "杨嗣昌与黄道周清丈路线相左当面掣肘。"},
+        ]},
+        {"events": [
+            {"施动者": "杨嗣昌", "受动者": "倪元璐", "类目": "协作",
+             "语境": "杨嗣昌与倪元璐当面一刚一柔分工协作。"},
+            {"施动者": "杨嗣昌", "受动者": "黄道周", "类目": "协作",
+             "语境": "杨嗣昌与黄道周当面一刚一柔分工协作。"},
+        ]},
+        {"events": [
+            {"施动者": "杨嗣昌", "受动者": "倪元璐", "类目": "协作",
+             "语境": "杨嗣昌与倪元璐推进互看册证、分歧并呈御前。"},
+            {"施动者": "杨嗣昌", "受动者": "黄道周", "类目": "协作",
+             "语境": "杨嗣昌与黄道周推进互看册证、分歧并呈御前。"},
+        ]},
+    )
+
+    class _BeatJudge:
         def run(self, prompt):
+            del prompt
+            idx = judge_calls["n"]
             judge_calls["n"] += 1
-            return super().run(prompt)
+            payload = _BEAT_EVENTS[min(idx, len(_BEAT_EVENTS) - 1)]
+            from types import SimpleNamespace
+            return SimpleNamespace(
+                content=json.dumps(payload, ensure_ascii=False),
+            )
 
     def _fake_agent(_cfg):
-        return _BeatJudge({"events": [{
-            "施动者": "杨嗣昌",
-            "受动者": "倪元璐",
-            "类目": "协作",
-            "语境": "杨嗣昌与倪元璐当面分工协作。",
-        }]})
+        return _BeatJudge()
 
     monkeypatch.setattr(agents_mod, "create_relation_judge_agent", _fake_agent)
 
@@ -224,6 +261,26 @@ def test_yang_acceptance_tracer_production_chain_not_direct_write(monkeypatch):
         for s in result["settles"]
     ]
     assert settle_cals == [(1627, 10, 1), (1627, 11, 2), (1627, 12, 3)], settle_cals
+    # 时序：第二拍召对调用前 face_before 已含杨↔倪/黄（第一拍张力回写后读面）
+    assert len(result["beats"]) == 3
+    beat2_face = result["beats"][1]["face_before"]
+    face_pairs = [
+        p for p in (beat2_face.get("pairs") or [])
+        if "杨嗣昌" in (p.get("source"), p.get("target"))
+        and ({"倪元璐", "黄道周"} & {p.get("source"), p.get("target")})
+    ]
+    assert face_pairs, beat2_face
+    # 张力→配合→演进：各拍召对回写类目
+    kind_seq = [
+        sorted({
+            str(e.get("event_kind") or "")
+            for e in (beat.get("edges_from_this_turn") or [])
+        })
+        for beat in result["beats"]
+    ]
+    assert kind_seq[0] == ["使绊"], kind_seq
+    assert kind_seq[1] == ["协作"], kind_seq
+    assert kind_seq[2] == ["协作"], kind_seq
     # 同 pair 三拍摘要快照：last_event_id 与 last_brewed 年月均递进
     yang_ni: list[dict] = []
     for beat in result["beats"]:
