@@ -30,7 +30,7 @@ import ming_sim.mindreading as mindreading_mod
 import ming_sim.session as session_mod
 import web_app
 from ming_sim import audience_night as an
-from ming_sim.session_write_queue import get_session_write_queue
+from tests.test_session_write_queue_1353 import wait_pending_writes as _wait_pending_writes
 
 # ── 矩阵常量（票面原轨）────────────────────────────────────────────────
 
@@ -333,39 +333,6 @@ def matrix_env(tmp_path, monkeypatch, _offline_scene_beat_generator):
 
 
 # ── helpers ────────────────────────────────────────────────────────────
-
-
-def _wait_pending_writes(game, *, timeout_s: float = 3.0) -> None:
-    """真源＝SessionWriteQueue.wait_idle（Condition）；禁 sleep busy-poll 加墙钟洗绿。"""
-    q = get_session_write_queue(game)
-    ok = q.wait_idle(timeout_s=float(timeout_s))
-    assert ok, (
-        f"pending writes did not drain in {timeout_s}s; "
-        f"count={q.inflight_count()}"
-    )
-
-
-def test_wait_pending_writes_fail_loud_on_false_and_exception(monkeypatch):
-    """负向：wait_idle=False 与队列异常均须报红，不得被 teardown/调用方洗白。"""
-    from ming_sim.session_write_queue import SessionWriteQueue
-
-    stuck = SessionWriteQueue()
-    ticket = stuck.claim(key=("teardown-stuck", 1))
-    assert ticket is not None
-    try:
-        with pytest.raises(AssertionError, match="did not drain"):
-            _wait_pending_writes(SimpleNamespace(_write_queue=stuck), timeout_s=0.05)
-    finally:
-        stuck.complete(ticket)
-
-    boom = SessionWriteQueue()
-
-    def _raise(*, timeout_s=None):
-        raise RuntimeError("queue boom")
-
-    monkeypatch.setattr(boom, "wait_idle", _raise)
-    with pytest.raises(RuntimeError, match="queue boom"):
-        _wait_pending_writes(SimpleNamespace(_write_queue=boom), timeout_s=0.05)
 
 
 def _parse_sse(text: str) -> list[dict]:

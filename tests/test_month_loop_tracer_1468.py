@@ -37,6 +37,7 @@ import ming_sim.session as session_mod
 import web_app
 from ming_sim import audience_night as an
 from ming_sim.session_write_queue import _is_barrier_ticket, get_session_write_queue
+from tests.test_session_write_queue_1353 import wait_pending_writes as _wait_pending_writes
 
 
 # ── outermost LLM seams only ─────────────────────────────────────────────
@@ -207,43 +208,6 @@ def _pick_active_minister(state: dict) -> str:
 
 def _install_canned_minister(game) -> None:
     game.session.registry.get = lambda _ch: _CannedMinisterAgent()
-
-
-def _wait_pending_writes(game, *, timeout_s: float = 2.0) -> None:
-    """等召对尾随（读心/抽取/关系判官）放闸——拟旨/颁诏抢 write_gate 前必须空。
-
-    真源＝SessionWriteQueue.wait_idle（Condition 通知），禁 sleep busy-poll 墙钟竞猜。
-    timeout 仅作挂死探测上限，不靠加长墙钟洗绿。
-    """
-    q = get_session_write_queue(game)
-    ok = q.wait_idle(timeout_s=float(timeout_s))
-    assert ok, (
-        f"pending writes did not drain in {timeout_s}s; "
-        f"count={q.inflight_count()}"
-    )
-
-
-def test_wait_pending_writes_fail_loud_on_false_and_exception(monkeypatch):
-    """负向：wait_idle=False 与队列异常均须报红，不得被 teardown/调用方洗白。"""
-    from ming_sim.session_write_queue import SessionWriteQueue
-
-    stuck = SessionWriteQueue()
-    ticket = stuck.claim(key=("teardown-stuck", 1))
-    assert ticket is not None
-    try:
-        with pytest.raises(AssertionError, match="did not drain"):
-            _wait_pending_writes(SimpleNamespace(_write_queue=stuck), timeout_s=0.05)
-    finally:
-        stuck.complete(ticket)
-
-    boom = SessionWriteQueue()
-
-    def _raise(*, timeout_s=None):
-        raise RuntimeError("queue boom")
-
-    monkeypatch.setattr(boom, "wait_idle", _raise)
-    with pytest.raises(RuntimeError, match="queue boom"):
-        _wait_pending_writes(SimpleNamespace(_write_queue=boom), timeout_s=0.05)
 
 
 def _install_trail_hold(game, release: threading.Event):
