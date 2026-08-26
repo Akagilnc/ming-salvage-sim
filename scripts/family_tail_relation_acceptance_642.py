@@ -26,6 +26,8 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
+import subprocess
 import sys
 import tempfile
 import threading
@@ -60,6 +62,13 @@ from ming_sim.session import GameSession
 
 _LOG = logging.getLogger("issue-642-acceptance")
 _ANCHORS = ("seed", "yang", "coda")
+# 锚② typed 递进：第一拍张力 → 第二/三拍配合（白名单子集；不锁自由文本）。
+_TENSION_EDGE_KINDS = frozenset({"使绊", "结怨"})
+_COOP_EDGE_KINDS = frozenset({"协作", "站台", "联名"})
+_YANG_TRACKED_PAIRS = (
+    frozenset(("杨嗣昌", "倪元璐")),
+    frozenset(("杨嗣昌", "黄道周")),
+)
 
 # 三拍玩家话语（fixture only）——素材取自 AUDIENCE_NORTH_STAR 连读三档；
 # 不短路写边/摘要，只驱动真实召对入口。
@@ -69,11 +78,12 @@ _YANG_BEAT_UTTERANCES: Tuple[Dict[str, Any], ...] = (
         "label": "越次召对",
         "minister": "杨嗣昌",
         "utterance": (
-            "宣杨嗣昌入对。太仓见底，盐课与清丈当如何动？"
-            "谁可撑住说情的条子？朕意先令倪元璐、黄道周试点畿辅清丈，"
-            "卿以户部郎中越次接应钱粮文书——这差事，朕记下了。"
-            "倪黄刚直硬顶，卿主钱粮权宜，路线本就不同；"
-            "当面把掣肘与细缝说清，勿以虚文和稀泥。"
+            "宣杨嗣昌入对。太仓见底，朕意令倪元璐、黄道周试点畿辅清丈，"
+            "卿以户部郎中越次接应钱粮——这差事朕记下了。"
+            "只是倪黄已在朝中对卿冷语相轧：斥卿钱粮权宜为护豪右，"
+            "卿亦恼他们刚愎掣肘、以清名误事。细缝已成结怨之势。"
+            "今日只准说清这使绊与顶牛：二人何处卡卿、卿何处恼二人。"
+            "不许谈配合、不许划分工、不许和稀泥。"
         ),
     },
     {
@@ -347,6 +357,129 @@ def _edge_pointer(row: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _pair_key(source: Any, target: Any) -> frozenset:
+    return frozenset((str(source or ""), str(target or "")))
+
+
+def _tracked_pair_event_pointers(db: Any) -> List[Dict[str, Any]]:
+    """闸级 typed 指针：追踪对在读面前的最新边（不扩五字段 DTO）。"""
+    out: List[Dict[str, Any]] = []
+    seen: set[frozenset] = set()
+    for pair in _YANG_TRACKED_PAIRS:
+        a, b = tuple(pair)
+        events = list(db.get_relation_edge_events(source=a, target=b))
+        events.extend(db.get_relation_edge_events(source=b, target=a))
+        if not events:
+            continue
+        latest = max(events, key=lambda e: int(e["id"]))
+        key = _pair_key(latest.get("source"), latest.get("target"))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({
+            "source": latest.get("source"),
+            "target": latest.get("target"),
+            "latest_event_id": int(latest["id"]),
+            "latest_event_kind": str(latest.get("event_kind") or ""),
+            "origin": latest.get("origin"),
+        })
+    return out
+
+
+def _beat_tracked_edges(edges: List[Dict[str, Any]]) -> Dict[frozenset, List[Dict[str, Any]]]:
+    by_pair: Dict[frozenset, List[Dict[str, Any]]] = {p: [] for p in _YANG_TRACKED_PAIRS}
+    for edge in edges:
+        key = _pair_key(edge.get("source"), edge.get("target"))
+        if key in by_pair:
+            by_pair[key].append(edge)
+    return by_pair
+
+
+def _yang_tension_coop_structural(beat_traces: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """张力→配合 typed 闸：第一拍张力边 + 指针进入第二拍前读面 + 后两拍配合递进。"""
+    if len(beat_traces) < 3:
+        return {
+            "beat1_yang_ni_huang_tension": False,
+            "beat2_face_carries_beat1_tension_events": False,
+            "beat2_yang_ni_huang_coop": False,
+            "beat3_yang_ni_huang_coop": False,
+            "tension_event_pointers": [],
+        }
+
+    beat1_by_pair = _beat_tracked_edges(list(beat_traces[0].get("edges_from_this_turn") or []))
+    tension_ptrs: List[Dict[str, Any]] = []
+    beat1_tension_ok = True
+    beat1_tension_ids: Dict[frozenset, set[int]] = {p: set() for p in _YANG_TRACKED_PAIRS}
+    for pair in _YANG_TRACKED_PAIRS:
+        edges = beat1_by_pair.get(pair) or []
+        kinds = {str(e.get("event_kind") or "") for e in edges}
+        if not edges or not kinds or not kinds <= _TENSION_EDGE_KINDS:
+            beat1_tension_ok = False
+            continue
+        for e in edges:
+            eid = int(e.get("id") or 0)
+            if eid > 0:
+                beat1_tension_ids[pair].add(eid)
+                tension_ptrs.append({
+                    "pair": sorted(pair),
+                    "edge_id": eid,
+                    "event_kind": e.get("event_kind"),
+                    "origin": e.get("origin"),
+                    "source": e.get("source"),
+                    "target": e.get("target"),
+                })
+        if not beat1_tension_ids[pair]:
+            beat1_tension_ok = False
+
+    face2_ptrs = list(
+        ((beat_traces[1].get("face_before") or {}).get("pair_event_pointers")) or []
+    )
+    face2_by_pair: Dict[frozenset, List[Dict[str, Any]]] = {p: [] for p in _YANG_TRACKED_PAIRS}
+    for ptr in face2_ptrs:
+        key = _pair_key(ptr.get("source"), ptr.get("target"))
+        if key in face2_by_pair:
+            face2_by_pair[key].append(ptr)
+
+    face_carries = True
+    for pair in _YANG_TRACKED_PAIRS:
+        wanted = beat1_tension_ids.get(pair) or set()
+        if not wanted:
+            face_carries = False
+            break
+        got_ids = {
+            int(p.get("latest_event_id") or 0)
+            for p in face2_by_pair.get(pair) or []
+        }
+        # 第二拍前读面最新边 id 必须落在第一拍张力边集合（typed 指针，不比散文）。
+        if not (got_ids & wanted):
+            face_carries = False
+            break
+        kinds = {
+            str(p.get("latest_event_kind") or "")
+            for p in face2_by_pair.get(pair) or []
+        }
+        if not kinds or not kinds <= _TENSION_EDGE_KINDS:
+            face_carries = False
+            break
+
+    def _coop_ok(beat: Dict[str, Any]) -> bool:
+        by_pair = _beat_tracked_edges(list(beat.get("edges_from_this_turn") or []))
+        for pair in _YANG_TRACKED_PAIRS:
+            edges = by_pair.get(pair) or []
+            kinds = {str(e.get("event_kind") or "") for e in edges}
+            if not edges or not kinds or not kinds <= _COOP_EDGE_KINDS:
+                return False
+        return True
+
+    return {
+        "beat1_yang_ni_huang_tension": beat1_tension_ok,
+        "beat2_face_carries_beat1_tension_events": face_carries,
+        "beat2_yang_ni_huang_coop": _coop_ok(beat_traces[1]),
+        "beat3_yang_ni_huang_coop": _coop_ok(beat_traces[2]),
+        "tension_event_pointers": tension_ptrs,
+    }
+
+
 def _summary_pointer(db: Any, source: str, target: str) -> Optional[Dict[str, Any]]:
     row = db.get_relation_summary(source, target)
     if not row:
@@ -464,6 +597,8 @@ def _run_yang_anchor(cfg: LLMConfig, content: GameContent) -> Dict[str, Any]:
             minister = str(spec["minister"])
             face_before = project_relation_ledger(sess.db, viewer=minister)
             face_all = project_relation_ledger(sess.db, viewer=None)
+            # 与 face_before 同时刻采集：证明上一拍张力边已进入本拍召对前读面。
+            pair_event_ptrs_before = _tracked_pair_event_pointers(sess.db)
             chat_meta = _production_summon_turn(
                 sess, minister=minister, utterance=str(spec["utterance"]),
             )
@@ -503,6 +638,8 @@ def _run_yang_anchor(cfg: LLMConfig, content: GameContent) -> Dict[str, Any]:
                         or "倪元璐" in (d["source"], d["target"])
                         or "黄道周" in (d["source"], d["target"])
                     ],
+                    # 闸级 typed 边指针（不进生产五字段 DTO）。
+                    "pair_event_pointers": pair_event_ptrs_before,
                 },
                 "chat": {
                     **chat_meta,
@@ -559,6 +696,7 @@ def _run_yang_anchor(cfg: LLMConfig, content: GameContent) -> Dict[str, Any]:
                 for i in range(len(settle_traces) - 1)
             )
         )
+        progression = _yang_tension_coop_structural(beat_traces)
         structural = {
             "beat_count": len(beat_traces),
             "chat_turns_completed": len(all_chat_turn_ids) == 3 and all(
@@ -594,6 +732,13 @@ def _run_yang_anchor(cfg: LLMConfig, content: GameContent) -> Dict[str, Any]:
                     frozenset(("杨嗣昌", "黄道周")),
                 }
             ),
+            # 张力→配合 typed：第一拍类目 + 事件指针进入第二拍前读面 + 后两拍配合。
+            "beat1_yang_ni_huang_tension": bool(progression["beat1_yang_ni_huang_tension"]),
+            "beat2_face_carries_beat1_tension_events": bool(
+                progression["beat2_face_carries_beat1_tension_events"]
+            ),
+            "beat2_yang_ni_huang_coop": bool(progression["beat2_yang_ni_huang_coop"]),
+            "beat3_yang_ni_huang_coop": bool(progression["beat3_yang_ni_huang_coop"]),
         }
         # 语义裁判只读真实链指针（chat-turn / edge / summary），不喂直写剧本。
         # 召对关系判官只产大臣↔大臣类目；君→杨的知遇/委任加深看三拍问答应酬与
@@ -618,10 +763,14 @@ def _run_yang_anchor(cfg: LLMConfig, content: GameContent) -> Dict[str, Any]:
             f"all_event_ids={[int(e['id']) for e in events]}\n"
         )
         verdict = _llm_json_verdict(cfg, prompt, tag="issue-642-anchor-yang")
+        structural_ok = all(bool(v) for v in structural.values())
+        semantic_pass = bool(verdict.get("pass"))
+        # 语义判官不得洗白 typed 序列失败：二者冲突时 aggregate 必失败。
         return {
             "anchor": "yang",
             "structural": structural,
             "semantic": verdict,
+            "tension_event_pointers": progression.get("tension_event_pointers") or [],
             "chat_turn_ids": all_chat_turn_ids,
             "event_ids": [int(e["id"]) for e in events],
             "summon_edge_ids": [int(e["id"]) for e in summon_origin_edges],
@@ -629,8 +778,9 @@ def _run_yang_anchor(cfg: LLMConfig, content: GameContent) -> Dict[str, Any]:
             "beats": beat_traces,
             "settles": settle_traces,
             "checks": {
-                "structural_ok": all(structural.values()),
-                "semantic_pass": bool(verdict.get("pass")),
+                "structural_ok": structural_ok,
+                "semantic_pass": semantic_pass,
+                "typed_semantic_consistent": structural_ok and semantic_pass,
             },
         }
     finally:
@@ -715,11 +865,20 @@ def _run_selected_anchors(
     return {name: by_name[name] for name in names}
 
 
+def _git_head() -> str:
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=str(ROOT), text=True,
+        ).strip()
+    except Exception:
+        return ""
+
+
 def main() -> int:
     logging.basicConfig(level=logging.INFO)
     args = _args()
     cfg = _config(args)
-    require_fresh_cli_trace(cfg)
+    trace_path = require_fresh_cli_trace(cfg)
     content = GameContent.load()
     bind_content(content)
     issues_mod.bind_content(content)
@@ -739,8 +898,14 @@ def main() -> int:
         for name in check_names
     }
     failed = [name for name, ok in aggregate.items() if not ok]
+    raw_trace = (
+        str(trace_path) if trace_path is not None
+        else (os.environ.get("MING_SIM_TRACE_PATH") or "").strip() or None
+    )
     artifact = {
         "gate": "issue-642-family-tail-relation-acceptance",
+        "git_head": _git_head(),
+        "raw_cli_trace": raw_trace,
         "method": {
             "design": (
                 "Live production-chain tracer: seed semantic on seed ledger; "
@@ -748,7 +913,9 @@ def main() -> int:
                 "audience_night.close_night via scene_registry."
                 "start_relation_judge_provider Future → settle_with_delta brew); "
                 "typed asserts on judge watermark/origin/edge id/summary "
-                "last_event_id + last_brewed year-period progression; "
+                "last_event_id + last_brewed year-period progression + "
+                "beat1 tension kinds → face_before event pointers → beat2/3 coop; "
+                "semantic cannot wash typed failure; "
                 "coda = typed prior_events mechanical only; "
                 "independent top-level anchors run via ThreadPoolExecutor; "
                 "no free-text regex; structured pass/fail only."

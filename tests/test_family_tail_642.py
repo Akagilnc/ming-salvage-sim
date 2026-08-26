@@ -121,6 +121,73 @@ def test_coda_acceptance_mechanical_only_skips_live_llm(monkeypatch):
     assert "semantic" not in result
 
 
+def test_yang_typed_failure_blocks_semantic_wash(monkeypatch):
+    """语义判官 pass 不得洗白 typed 张力序列失败（aggregate 必红）。"""
+    import ming_sim.agents as agents_mod
+    import scripts.family_tail_relation_acceptance_642 as gate
+
+    content = _bind_content()
+    cfg = _gate_cfg()
+    judge_calls = {"n": 0}
+    chat_calls = {"n": 0}
+
+    def _fake_chat(self, minister_name, message, *, chat_turn_id=0):
+        del message, chat_turn_id
+        chat_calls["n"] += 1
+        return ChatTurnResult(answer=f"臣{minister_name}领旨。")
+
+    monkeypatch.setattr(GameSession, "chat", _fake_chat)
+
+    # 三拍全写协作——缺第一拍张力，typed 必败。
+    _COOP_ONLY = {"events": [
+        {"施动者": "杨嗣昌", "受动者": "倪元璐", "类目": "协作",
+         "语境": "杨嗣昌与倪元璐协作。"},
+        {"施动者": "杨嗣昌", "受动者": "黄道周", "类目": "协作",
+         "语境": "杨嗣昌与黄道周协作。"},
+    ]}
+
+    class _CoopJudge:
+        def run(self, prompt):
+            del prompt
+            judge_calls["n"] += 1
+            from types import SimpleNamespace
+            return SimpleNamespace(content=json.dumps(_COOP_ONLY, ensure_ascii=False))
+
+    monkeypatch.setattr(agents_mod, "create_relation_judge_agent", lambda _cfg: _CoopJudge())
+
+    def _fake_runner(_cfg, _agno):
+        def _create(state, db, *, settled_turn, settled_year, settled_period):
+            def _brew_fn(payload_json: str) -> str:
+                del payload_json
+                return json.dumps(
+                    {FOUNDINGS_KEY: [], RECENT_KEY: "近况重酿（coda）。"},
+                    ensure_ascii=False,
+                )
+
+            return MonthEndRelationBrewLeg(
+                db, state, _brew_fn,
+                settled_turn=settled_turn,
+                settled_year=settled_year,
+                settled_period=settled_period,
+            )
+
+        return _create
+
+    monkeypatch.setattr(gate, "_make_relation_brew_runner", _fake_runner)
+    monkeypatch.setattr(
+        gate, "_llm_json_verdict",
+        lambda *_a, **_k: {"pass": True, "reason": "semantic wash attempt"},
+    )
+
+    result = gate._run_yang_anchor(cfg, content)
+    assert result["checks"]["semantic_pass"] is True
+    assert result["checks"]["structural_ok"] is False, result["structural"]
+    assert result["checks"]["typed_semantic_consistent"] is False
+    assert result["structural"]["beat1_yang_ni_huang_tension"] is False
+    assert judge_calls["n"] == 3
+    assert chat_calls["n"] == 3
+
+
 def test_yang_acceptance_tracer_production_chain_not_direct_write(monkeypatch):
     """锚②最短生产缝：召对→close_night 判官 Future→按月 settle/brew；禁 gate642 自证写边。
 
@@ -236,6 +303,7 @@ def test_yang_acceptance_tracer_production_chain_not_direct_write(monkeypatch):
     structural = result["structural"]
     assert result["checks"]["structural_ok"] is True, structural
     assert result["checks"]["semantic_pass"] is True
+    assert result["checks"]["typed_semantic_consistent"] is True
     assert judge_calls["n"] == 3
     assert len(result["settles"]) == 3
     assert brew_calls["n"] >= 1
@@ -246,6 +314,21 @@ def test_yang_acceptance_tracer_production_chain_not_direct_write(monkeypatch):
     assert structural["edge_ids_present"] is True
     assert structural["month_advanced_each_settle"] is True
     assert structural["summary_brew_progressed"] is True
+    assert structural["beat1_yang_ni_huang_tension"] is True
+    assert structural["beat2_face_carries_beat1_tension_events"] is True
+    assert structural["beat2_yang_ni_huang_coop"] is True
+    assert structural["beat3_yang_ni_huang_coop"] is True
+    assert structural["face_has_yang_ni_huang_before_beat2"] is True
+    # typed 指针：第一拍张力 edge_id 进入第二拍前 pair_event_pointers
+    tension_ptrs = result.get("tension_event_pointers") or []
+    assert tension_ptrs, tension_ptrs
+    beat2_face_ptrs = {
+        int(p.get("latest_event_id") or 0)
+        for p in (result["beats"][1].get("face_before") or {}).get("pair_event_pointers") or []
+    }
+    assert {
+        int(p["edge_id"]) for p in tension_ptrs if int(p.get("edge_id") or 0) > 0
+    } & beat2_face_ptrs
     assert all(
         str((beat.get("judge") or {}).get("relation_judge_status") or "") == "done"
         for beat in result["beats"]
