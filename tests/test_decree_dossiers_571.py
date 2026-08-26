@@ -2092,8 +2092,7 @@ def test_extractor_context_origin_ref_round_trips_to_commitment(game):
     )
     db.record_dossier_decision(dossier_id, "promulgated")
     extractor_context = build_extractor_shared_context(
-        db, state, "河工已经开办", "今后每月修河", module="issues",
-        transit_semantics=[],
+        db, state, "河工已经开办", "今后每月修河", module="issues"
     )
     origin_ref = next(
         row["origin_ref"] for row in extractor_context["decree_dossiers"]

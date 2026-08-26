@@ -31,6 +31,7 @@
   "army_delta":       {},  // dict[army_id -> {字段:数值}]
   "new_armies":       [],  // 建军
   "power_updates":    {},  // dict[power_id -> {字段}]
+  "bandit_absorptions": [], // #652 流民投贼吸收请求（吃池顶）
   "world_advance":    {},  // dict[势力名 -> "stance/态度文 ≤40字"]
 
   // ── issues 模块 ──
@@ -105,12 +106,27 @@ canonical 段形＝list，每条记录**同时表达两条腿**：applier 读一
 | `source` | `<class_name>@<region_id>` 省级行（如 `农民@shaanxi`）；全国行（region_id 空）不合法 |
 | `target` | 同上；须与 source **同 region_id**（跨省在途归 #475 预留，本契约不做） |
 | `amount` | 正整数（严格 int，拒数字串/float/bool）；单位随存档 `population_unit`（新档「人」、legacy「万」），全线禁混刻度 |
-| `reason` | 枚举×方向矩阵：`加派`/`摊派`/`灾害`＝农民→流民；`兵灾`＝农民→流民、军户→流民；`逃亡`＝军户→流民；`回流`＝流民→农民。方向出阵即拒 |
+| `reason` | 枚举×方向矩阵：`加派`/`摊派`/`灾害`＝农民→流民；`兵灾`＝农民→流民、军户→流民；`逃亡`＝军户→流民；`回流`＝流民→农民（**仅引擎 recovery 单核可写**，extractor 申报整项拒收，#652）。方向出阵即拒 |
 | `origin_ref` | **必填** `dossier:<id>`（须存在且已颁）或精确哨兵 `盘面自发`——来源追溯契约与 `reason` 机制枚举两槽并存、职责互斥 |
 
 - 逐项拒收面（坏项留痕、同批合法项照落，ADR 0015/0008）：方向出阵、reason 枚举外、amount 非严格 int/≤0/超实时源余额、region 未知或两侧不同省、source/target 触全国行、origin_ref 缺失/伪前缀/未颁案卷、白名单外字段（任何形式的绝对值覆写均不合法——人口只经本原语守恒变动，禁凭空造人/单侧写）。
 - 灾害／兵灾入口（#662/S14）：发生与否及具体量级由 internal extractor 依据既有盘面（region `natural_disaster`/`human_disaster` 字段、military_pressure 定性档、活跃局势 issue）、`class_population_balances` 与 `population_unit` 软判；无事实支撑不得申报该 reason（无灾不入）。代码仅校验上述物理不变量并守恒记账，不建引擎侧自动触发（与 extractor 无双驱动并存）。origin 标即 `reason` 枚举本身，无第二 origin 字段；与加派/摊派入口合流同一 classes 行池账，下游只认账不认来源。
-- item 字段中英别名：`源`/`源阶级`→source、`目标`/`目标阶级`→target、`数额`/`口数`→amount、`原因`→reason（prompt 中文 shape 教 `原因`，与 `ITEM_FIELD_ALIASES` 单一真源；勿另教别名表外标签如「缘由」）。接口层：internal extractor 专属输入面带按 class@region_id 键合的省级人口余额＋本档 population_unit 的 `class_population_balances` TSV（不进玩家可感 simulator 数表）。
+- item 字段中英别名：`源`/`源阶级`→source、`目标`/`目标阶级`→target、`数额`/`口数`→amount、`原因`→reason（prompt 中文 shape 教 `原因`，与 `ITEM_FIELD_ALIASES` 单一真源；勿另教别名表外标签如「缘由」）。接口层：internal extractor 专属输入面带按 class@region_id 键合的省级人口余额＋本档 population_unit 的 `class_population_balances` TSV（不进玩家可感 simulator 数表）。simulator 另有机面 `displaced_pool_balances`（省级流民池 `region_id`+余额+单位，#652 投贼吃池顶；classes_brief 仍定性）。
+
+### `bandit_absorptions` — 流民投贼吸收（#652/ADR 0087）
+
+canonical 段形＝list；中英别名：`流民投贼` / `投贼吸收`。LLM 软判产 typed 请求，单一原子 applier：`actual=min(requested, 该省流民余额)` → 扣池（单侧出池，无农民对端）→ 仅 `actual>0` 允许该股 `military_strength` 正增（δ=`actual//BANDIT_ABSORPTION_PERSONS_PER_STRENGTH`，再 0–100 clamp）。
+
+| 字段 | 约束 |
+|---|---|
+| `region_id` | 须有 `流民@region_id` 省级行 |
+| `power_id` | 流寇股：`bandits` 或 `bandit_*`，须已入库 |
+| `requested_count` | 正整数（严格 int）；单位随存档 `population_unit` |
+| `origin_ref` | 必填 `dossier:<id>` 或 `盘面自发` |
+
+- 流寇 `power_updates.military_strength` **正增量**整项拒收（必须走本段）；负增量（剿股）仍走 `power_updates`。
+- 仅 `population_unit='人'` 新档可写；legacy 拒收。
+- item 字段中英别名：`地区编号`→region_id、`势力编号`→power_id、`请求口数`/`请求人数`/`拟吸口数`→requested_count。
 
 ### `surcharge_decrees` — 下旨加派（#650/ADR 0089 明渠）
 
@@ -190,6 +206,7 @@ canonical 段形＝list，每项落一道加派旨：逐省累积账当回合落
 - value 字段只允许三项整数增量：`威望` / `leverage`、`实力` / `military_strength`、`经济` / `supply`；其余字段一律逐项拒收留痕。
 - #190 流寇分股：李自成股 / 张献忠股等必须写各自 power_id（如 `bandit_li_zicheng`、`bandit_zhang_xianzhong`），不是全局 `bandits`。
 - 剿股 / 被剿 / 孤儿股平定：写目标股 `power_updates.<power_id>.military_strength` 下降，这是独立 power 级军事镇压。
+- 流寇实力**正增**禁止走本段——须 `bandit_absorptions` 吃池顶（#652）；自由正实力整项拒收。
 - 招安 / 就抚某流寇头目归明：削股不写顶层 `power_updates`，而写在同一条 `人物变更.易主.反噬` 里；同一股同一信封两边都写会拒收顶层 `power_updates` 防双减。
 - 若作为战略/外敌战事同信封主账战果，`reason` / `原因` 必须带事件名或战役名；缺锚点不能单独触发战略事件。
 
@@ -443,7 +460,7 @@ personnel_secret 模块产出；settle 内经 `record_monthly_dossier_progress` 
 | 模块 | 顶层字段 |
 |---|---|
 | `internal` | `metric_delta` `economy_moves` `faction_delta` `class_delta` `population_transfers` `surcharge_decrees` `region_delta` `fiscal_changes` `fiscal_creates` `fiscal_removes` |
-| `military_external` | `army_delta` `new_armies` `power_updates` `world_advance` |
+| `military_external` | `army_delta` `new_armies` `power_updates` `bandit_absorptions` `world_advance` |
 | `issues` | `issue_advances` `new_issues` `事件结局` `cancels` `close_issues` `dossier_executions` `dossier_participants` `authority_changes` `dossier_reconciliations` `faction_denunciations` |
 | `personnel_secret` | `人物变更` `secret_order_updates` `covert_exec_selections` `dossier_progress_reports` `secret_dossier_participants` `emperor_fate` |
 | `relations` | `relation_edge_events` |

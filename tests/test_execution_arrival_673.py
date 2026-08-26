@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -16,7 +15,6 @@ from ming_sim.execution_pressure import (
     build_execution_two_axis_surface,
 )
 from ming_sim.simulation import (
-    build_extractor_shared_context,
     build_simulator_payload,
     project_transit_semantics,
 )
@@ -294,7 +292,7 @@ def test_tsv_header_exactly_20_cols_and_arrival_rows(env):
 
 
 def test_phase1_phase2_same_transit_semantics_object_and_single_projector(env, monkeypatch):
-    """真 payload → 真实 settle → 真 context：is 同一对象；projector 恰一次；在途可关联。"""
+    """#652：payload 装配钉 transit_semantics 同引用 + projector 恰一次；到差从 two_axis 读。"""
     import ming_sim.decree as decree_mod
 
     db, state, content = env
@@ -338,8 +336,8 @@ def test_phase1_phase2_same_transit_semantics_object_and_single_projector(env, m
     def _wrap_ctx(*args, **kwargs):
         ctx = real_build_ctx(*args, **kwargs)
         if kwargs.get("module") == "issues":
-            captured["transit_semantics"] = kwargs.get("transit_semantics")
             captured["ctx"] = ctx
+            captured["has_two_axis"] = "execution_two_axis" in ctx
         return ctx
 
     monkeypatch.setattr(decree_mod, "build_extractor_shared_context", _wrap_ctx)
@@ -354,6 +352,13 @@ def test_phase1_phase2_same_transit_semantics_object_and_single_projector(env, m
         C = payload["transit_semantics"]
         assert isinstance(C, list)
         assert any(r.get("name") == owner for r in C)
+        # builder 入参与 payload 顶层同一 list（#652 装配）
+        assert "execution_two_axis" in payload
+        surface = payload["execution_two_axis"]
+        block = _block(surface, "shaanxi")
+        arr = _arrival_by_owner(block)[owner]
+        assert arr["duty_arrival_status"] == "在途"
+        assert any(r.get("name") == arr["owner_name"] for r in C)
 
         # 真实 phase2 装配缝（非孤立直调 context）
         decree_mod._settle_after_narrative(
@@ -365,59 +370,8 @@ def test_phase1_phase2_same_transit_semantics_object_and_single_projector(env, m
         )
 
     assert "ctx" in captured, "issues 模块未调用真实 build_extractor_shared_context"
-    # 装配缝收到同一 list 对象
-    assert captured["transit_semantics"] is payload["transit_semantics"]
-    assert captured["transit_semantics"] is C
-    # projector 全链仍恰一次（context / settle 不得再投影）
+    # issues 不得见 two_axis；projector 全链恰一次
+    assert captured["has_two_axis"] is False
     assert call_count["n"] == 1
-
-    surface = captured["ctx"]["execution_two_axis"]
-    block = _block(surface, "shaanxi")
-    arr = _arrival_by_owner(block)[owner]
-    assert arr["duty_arrival_status"] == "在途"
-    # 到差「在途」行的 owner_name 可在同一 collection 按 name 关联
-    assert any(r.get("name") == arr["owner_name"] for r in C)
-
-
-# ── 门控回归 / H 删旧 ─────────────────────────────────────────────
-
-
-def test_non_issues_and_simulator_still_no_two_axis(env):
-    db, state, _ = env
-    _make_executing_dossier(
-        db, state, owner="毕自严", region_id="shaanxi", tag="gate",
-    )
-    payload = build_simulator_payload(
-        state, db, decree_text="d", previous_narrative="n",
-    )
-    assert "execution_two_axis" not in payload
-
-    other = build_extractor_shared_context(
-        db, state, narrative="n", decree_text="d", module="internal",
-        transit_semantics=payload["transit_semantics"],
-    )
-    assert "execution_two_axis" not in other
-
-    issues = build_extractor_shared_context(
-        db, state, narrative="n", decree_text="d", module="issues",
-        transit_semantics=payload["transit_semantics"],
-    )
-    assert "execution_two_axis" in issues
-
-
-def test_prompt_and_source_hygiene_h():
-    prompt = Path("content/prompts/score_extractor_issues.md").read_text(
-        encoding="utf-8",
-    )
-    assert "到差态" in prompt
-    assert "已到差" in prompt or "尚未到差" in prompt
-    # 不得再用「不参与」兼表在途
-    assert "值为「不参与」时（非属地、承办人无驻地、在途）" not in prompt
-
-    sim_src = Path("ming_sim/simulation.py").read_text(encoding="utf-8")
-    assert "#673 判官清单复用" not in sim_src
-    assert "#673 将来复用" not in sim_src
-
-    # 零 schema：region_id 列仍在，无新增到差表
-    ep_src = Path("ming_sim/execution_pressure.py").read_text(encoding="utf-8")
-    assert "CREATE TABLE" not in ep_src
+    # settle 后 payload 顶层 transit_semantics 仍是原 list
+    assert payload["transit_semantics"] is C

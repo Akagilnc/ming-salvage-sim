@@ -23,6 +23,11 @@ from ming_sim.constants import (
     POWER_SCORE_FIELDS, POWER_TEXT_FIELDS, CHARACTER_TEXT_FIELDS,
     REGION_FIELD_ALIASES, ARMY_FIELD_ALIASES, POWER_FIELD_ALIASES, GATE_TABLES,
     LEVY_DISPLACEMENT_RATE,
+    BANDIT_ABSORPTION_FIELDS,
+    BANDIT_ABSORPTION_PERSONS_PER_STRENGTH,
+    RECOVERY_PERSONS_PER_WAN,
+    RECOVERY_GRANT_ACTIONS,
+    RECOVERY_OUTCOME_FACTORS,
 )
 from ming_sim.content import GameContent
 from ming_sim.context import victory_status
@@ -7497,6 +7502,7 @@ def _apply_surcharge_decrees(
     origin_ref 缺失/伪前缀/未颁案卷（复用 effect_origin_rejection 单一真源）；
     白名单外字段。坏项留痕、好项照落；数据拒收不中止事务。
     """
+    should_commit = bool(commit) and db.owns_transaction()
     applied: List[Dict[str, object]] = []
     rejected: List[Dict[str, object]] = []
     if not db.is_substrate_hub_fiscal_engine_enabled():
@@ -7602,7 +7608,7 @@ def _apply_surcharge_decrees(
             "origin_ref": origin_ref,
             "加派基线": new,
         })
-    if commit and not db.conn.in_transaction:
+    if should_commit:
         db.conn.commit()
     return applied, rejected
 
@@ -7681,6 +7687,307 @@ def _apply_levy_driven_transfers(
             # 月度后果来自累积账，不伪归因给最后一道改变账额的旨。
             "origin_ref": "盘面自发",
         })
+    if not records:
+        return [], []
+    return _apply_population_transfers(db, records, commit=commit)
+
+
+def _is_bandit_power_id(power_id: str) -> bool:
+    """流寇总股与分股（bandits / bandit_*）；投贼吸收与正实力门控共用。"""
+    pid = str(power_id or "").strip()
+    return pid == "bandits" or pid.startswith("bandit_")
+
+
+def _apply_bandit_absorptions(
+    db: GameDB,
+    state: GameState,
+    absorptions: object,
+    *,
+    commit: bool = True,
+) -> Tuple[List[Dict[str, object]], List[Dict[str, object]], List[Dict[str, object]]]:
+    """#652/0087：流民投贼吸收原子 applier。
+
+    LLM 只产 typed 请求；本核：actual=min(requested, 省池)→扣流民池（无农民对端，
+    0087 兵源出口单侧出池）→仅 actual>0 允许实力正增（δ=actual//换算率，0–100 clamp
+    走 apply_power_deltas）。超池/非法 id/零池正请求 → 逐项拒收留痕。
+    返回 (applied_absorptions, rejections, power_changes)。
+    """
+    should_commit = bool(commit) and db.owns_transaction()
+    applied: List[Dict[str, object]] = []
+    rejected: List[Dict[str, object]] = []
+    power_changes: List[Dict[str, object]] = []
+    items = absorptions if isinstance(absorptions, list) else []
+    # 仅 substrate 人口径新档开环；legacy 不误开（对齐 #649/#650）。
+    if db.population_unit != POPULATION_UNIT_PERSONS:
+        for item in items:
+            rejected.append({
+                "rejected": True, "category": "invalid_enum",
+                "reason": "bandit_absorptions 仅适用于 population_unit='人' 的人口池档",
+                "item": item if isinstance(item, dict) else {"raw_value": item},
+            })
+        return applied, rejected, power_changes
+
+    for item in items:
+        if not isinstance(item, dict):
+            rejected.append({
+                "rejected": True, "category": "invalid_shape",
+                "reason": "bandit_absorptions 项必须是 object(dict)",
+                "item": {"raw_value": item},
+            })
+            continue
+
+        def _reject(category: str, reason: str) -> None:
+            rejected.append({
+                "rejected": True, "category": category,
+                "reason": reason, "item": item,
+            })
+
+        extra = sorted(set(item) - BANDIT_ABSORPTION_FIELDS)
+        if extra:
+            _reject(
+                "invalid_enum",
+                f"bandit_absorptions 白名单外字段 {extra}"
+                f"（合法字段：region_id/power_id/requested_count/origin_ref）",
+            )
+            continue
+
+        region_id = str(item.get("region_id") or "").strip()
+        power_id = str(item.get("power_id") or "").strip()
+        origin_ref = str(item.get("origin_ref") or "").strip()
+        if not region_id:
+            _reject("missing_ref", "bandit_absorptions 缺 region_id")
+            continue
+        region_row = db.conn.execute(
+            "SELECT controlled_by FROM regions WHERE id=?", (region_id,)
+        ).fetchone()
+        if region_row is None:
+            _reject("missing_ref", f"bandit_absorptions 未知 region_id：{region_id!r}")
+            continue
+        if str(region_row["controlled_by"] or "") != "ming":
+            _reject("missing_ref", f"bandit_absorptions 非明省不可吸收：{region_id!r}")
+            continue
+        if not power_id or not _is_bandit_power_id(power_id):
+            _reject(
+                "invalid_enum",
+                f"bandit_absorptions power_id 须为流寇股（bandits/bandit_*）：{power_id!r}",
+            )
+            continue
+        power_row = db.conn.execute(
+            "SELECT id FROM powers WHERE id=?", (power_id,)
+        ).fetchone()
+        if power_row is None:
+            _reject("hallucinated_id", f"bandit_absorptions 引用未入库势力 '{power_id}'")
+            continue
+        raw_req = item.get("requested_count")
+        try:
+            requested = _strict_int(raw_req, accept_numeric_strings=False)
+        except (TypeError, ValueError):
+            _reject("invalid_enum", f"bandit_absorptions requested_count 非整数：{raw_req!r}")
+            continue
+        if requested <= 0:
+            _reject("invalid_enum", f"bandit_absorptions requested_count 须为正整数：{requested!r}")
+            continue
+        origin_error = db.effect_origin_rejection(origin_ref)
+        if origin_error:
+            rejected.append({
+                "rejected": True,
+                "category": origin_error["category"],
+                "reason": f"bandit_absorptions {origin_error['reason']}",
+                "item": item,
+            })
+            continue
+        pool_row = db.conn.execute(
+            "SELECT population FROM classes WHERE name='流民' AND region_id=?",
+            (region_id,),
+        ).fetchone()
+        if pool_row is None:
+            _reject(
+                "missing_ref",
+                f"bandit_absorptions 查无流民省级行「流民@{region_id}」",
+            )
+            continue
+        pool = int(pool_row["population"])
+        actual = min(int(requested), pool)
+        if actual <= 0:
+            _reject(
+                "invalid_enum",
+                f"bandit_absorptions 省池为空，禁止正增贼势：流民@{region_id}=0",
+            )
+            continue
+        # 单侧出池（0087 兵源出口无农民对端）+ 实力正增同事务。
+        db.conn.execute(
+            "UPDATE classes SET population = population - ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE name='流民' AND region_id=?",
+            (actual, region_id),
+        )
+        strength_delta = actual // int(BANDIT_ABSORPTION_PERSONS_PER_STRENGTH)
+        applied_item: Dict[str, object] = {
+            "region_id": region_id,
+            "power_id": power_id,
+            "requested_count": requested,
+            "actual_count": actual,
+            "strength_delta": strength_delta,
+            "origin_ref": origin_ref,
+            "population_unit": db.population_unit,
+        }
+        if strength_delta > 0:
+            power_changes.extend(db.apply_power_deltas(
+                state,
+                {power_id: {
+                    "military_strength": strength_delta,
+                    "reason": "流民投贼",
+                    "origin_ref": origin_ref,
+                }},
+                commit=False,
+                origin_ref=origin_ref,
+                require_origin=True,
+            ))
+        applied.append(applied_item)
+    if should_commit:
+        db.conn.commit()
+    return applied, rejected, power_changes
+
+
+def _recovery_effective_silver_wan(db: GameDB, dossier_id: int, turn: int) -> int:
+    """回流成本面唯一读缝：只认实付证据。
+
+    本回合对账实抵优先；否则累加该案已落 economy_moves 负向出账。
+    **不**回退 payload.amount（ordered 非实付，零 ledger 不得假阳性出回流）。
+    """
+    history = db.list_dossier_reconciliations(int(dossier_id))
+    arrived_this_turn = [
+        int(row["arrived_amount"])
+        for row in history
+        if int(row.get("turn") or 0) == int(turn)
+    ]
+    if arrived_this_turn:
+        return max(0, sum(arrived_this_turn))
+    paid = 0
+    for move in db.list_economy_moves_for_dossier(int(dossier_id)):
+        try:
+            delta = int(move.get("delta") or 0)
+        except (TypeError, ValueError):
+            continue
+        if delta < 0:
+            paid += -delta
+    return max(0, paid)
+
+
+def _apply_recovery_driven_transfers(
+    db: GameDB,
+    state: GameState,
+    *,
+    commit: bool = True,
+) -> Tuple[List[Dict[str, object]], List[Dict[str, object]]]:
+    """#652/0087：赈济/招抚屯田回流单核（确定性；LLM 零产回流）。
+
+    触发：带 recovery 身份的 grant_allocation（赈灾/招抚屯田）+ 属地 region +
+    本回合已付代价 + 已落结构化执行判决。基线=实抵万两×RECOVERY_PERSONS_PER_WAN，
+    再经执行 outcome 成色折减；经 _apply_population_transfers reason=回流 唯一落库。
+    幂等键 (dossier_id, turn)：同键不双扣池。立即开仓/#522 pacification 不在此列。
+    """
+    if db.population_unit != POPULATION_UNIT_PERSONS:
+        return [], []
+    turn = int(state.turn)
+    # 本回合已落回流 provenance（含本 settle 前半段 / 重放）。
+    seen_keys: set[tuple[int, int]] = set()
+    prior = db.get_turn_extraction(turn) or {}
+    prior_out = prior.get("extractor_output") if isinstance(prior, dict) else None
+    if isinstance(prior_out, dict):
+        for item in prior_out.get("population_transfers") or []:
+            if not isinstance(item, dict) or item.get("reason") != "回流":
+                continue
+            ref = str(item.get("origin_ref") or "")
+            if ref.startswith("dossier:") and ref[8:].isdigit():
+                seen_keys.add((int(ref[8:]), turn))
+
+    records: List[Dict[str, object]] = []
+    remaining_by_region: Dict[str, int] = {}
+    rows = db.conn.execute(
+        """
+        SELECT id, status, target_kind, target_id, payload_json,
+               execution_outcome, closed_turn
+        FROM decree_dossiers
+        WHERE action_type='grant_allocation'
+        ORDER BY id
+        """
+    ).fetchall()
+    for row in rows:
+        dossier_id = int(row["id"])
+        if (dossier_id, turn) in seen_keys:
+            continue
+        try:
+            payload = json.loads(str(row["payload_json"] or "{}"))
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        grant_action = str(payload.get("grant_action") or "").strip()
+        if grant_action not in RECOVERY_GRANT_ACTIONS:
+            continue
+        target_kind = str(row["target_kind"] or payload.get("target_kind") or "").strip()
+        region_id = str(row["target_id"] or payload.get("target_id") or "").strip()
+        if target_kind != "region" or not region_id:
+            continue
+        if db.conn.execute("SELECT 1 FROM regions WHERE id=?", (region_id,)).fetchone() is None:
+            continue
+        outcome = str(row["execution_outcome"] or "").strip()
+        if outcome not in RECOVERY_OUTCOME_FACTORS:
+            continue
+        cadence = str(payload.get("cadence") or "").strip()
+        closed_turn = int(row["closed_turn"] or 0)
+        if cadence != "每月" and closed_turn != turn:
+            continue
+        factor = float(RECOVERY_OUTCOME_FACTORS[outcome])
+        if factor <= 0:
+            seen_keys.add((dossier_id, turn))
+            continue
+        if cadence == "每月":
+            reconciled = [
+                int(item["arrived_amount"])
+                for item in db.list_dossier_reconciliations(dossier_id)
+                if int(item.get("turn") or 0) == turn
+            ]
+            if reconciled:
+                silver = max(0, sum(reconciled))
+            else:
+                paid_row = db.conn.execute(
+                    "SELECT COALESCE(SUM(-delta), 0) FROM economy_ledger "
+                    "WHERE origin_ref=? AND turn=? AND delta<0",
+                    (f"dossier:{dossier_id}", turn),
+                ).fetchone()
+                silver = max(0, int(paid_row[0] or 0))
+        else:
+            silver = _recovery_effective_silver_wan(db, dossier_id, turn)
+        if silver <= 0:
+            continue
+        raw_persons = silver * RECOVERY_PERSONS_PER_WAN * factor
+        amount = int(round(raw_persons))
+        if amount <= 0:
+            continue
+        pool_row = db.conn.execute(
+            "SELECT population FROM classes WHERE name='流民' AND region_id=?",
+            (region_id,),
+        ).fetchone()
+        farmer_row = db.conn.execute(
+            "SELECT 1 FROM classes WHERE name='农民' AND region_id=?",
+            (region_id,),
+        ).fetchone()
+        if pool_row is None or farmer_row is None:
+            continue
+        remaining = remaining_by_region.setdefault(region_id, int(pool_row["population"]))
+        amount = min(amount, remaining)
+        if amount <= 0:
+            continue
+        records.append({
+            "source": f"流民@{region_id}",
+            "target": f"农民@{region_id}",
+            "amount": amount,
+            "reason": "回流",
+            "origin_ref": f"dossier:{dossier_id}",
+        })
+        remaining_by_region[region_id] = remaining - amount
+        seen_keys.add((dossier_id, turn))
     if not records:
         return [], []
     return _apply_population_transfers(db, records, commit=commit)
@@ -8188,7 +8495,14 @@ def apply_score_extraction(
         source = str(item.get("source") or "") if isinstance(item, dict) else ""
         region_id = source.rpartition("@")[2]
         claim = (str(item.get("origin_ref") or ""), region_id) if isinstance(item, dict) else ("", "")
-        if isinstance(item, dict) and item.get("reason") == "加派" and claim in surcharge_claims:
+        if isinstance(item, dict) and str(item.get("reason") or "").strip() == "回流":
+            # #652：回流唯一由 recovery 单核写入；LLM 自由抽取拒收，防同源双写。
+            transfer_rejections.append({
+                "rejected": True, "category": "invalid_enum",
+                "reason": "回流仅由赈济/招抚屯田 recovery 单核写入，extractor 不得自由申报",
+                "item": item,
+            })
+        elif isinstance(item, dict) and item.get("reason") == "加派" and claim in surcharge_claims:
             transfer_rejections.append({
                 "rejected": True, "category": "invalid_enum",
                 "reason": "同一道加派旨的人口后果已由加派账唯一拥有",
@@ -8269,11 +8583,24 @@ def apply_score_extraction(
     # 注：建筑的新建/变更/废止不走顶层字段，全由 issue 的 effect_on_resolve /
     #     effect_on_fail 里的 `buildings` 段在局势结案时落地（见 _apply_issue_buildings）。
 
+    # 4.5) #652 已付赈济/招抚先回流，再允许投贼吃同省余池。
+    recovery_applied, recovery_rejections = _apply_recovery_driven_transfers(
+        db, state, commit=commit_now,
+    )
+    applied_transfers.extend(recovery_applied)
+    transfer_rejections.extend(recovery_rejections)
+    applied_absorptions, absorption_rejections, absorption_power_changes = (
+        _apply_bandit_absorptions(
+            db, state, extracted.get("bandit_absorptions") or [], commit=commit_now,
+        )
+    )
+
     # 5) power_updates：非明势力三项简表（威望/实力/经济）落库
     # ADR 0008 决定 1:不再整段吞——LLM 脏数据(未知 power id/字段非法)在
     # apply_power_deltas 内逐项拒收留痕(返回列表含 {"rejected": True, ...});
     # 代码异常(KeyError/AttributeError 等)上抛到 settle 层回滚整批,绝不吞。
-    power_changes: List[Dict[str, object]] = []
+    # #652：流寇实力正增只走 bandit_absorptions；自由 power_updates 正实力拒。
+    power_changes: List[Dict[str, object]] = list(absorption_power_changes)
     if ordinary_power_updates_raw:
         power_updates_to_apply = dict(ordinary_power_updates_raw)
         for power_id in sorted(set(power_updates_to_apply) & amnesty_conflict_power_ids):
@@ -8285,6 +8612,47 @@ def apply_score_extraction(
                 "reason": "同一股同一时段已有招安易主，拒绝顶层 power_updates 剿股；削股须随易主反噬一处落账",
                 "item": {"power_id": power_id, "changes": raw_changes},
             })
+        for power_id, raw_changes in list(power_updates_to_apply.items()):
+            if not isinstance(raw_changes, dict):
+                continue
+            if not _is_bandit_power_id(str(power_id)):
+                continue
+            # 只剥正实力；威望/经济等同包其它字段仍可落。
+            stripped: Dict[str, object] = {}
+            positive_ms_rejected = False
+            ms_item: Dict[str, object] | None = None
+            for k, v in raw_changes.items():
+                mapped = POWER_FIELD_ALIASES.get(str(k).strip(), str(k).strip())
+                if mapped != "military_strength":
+                    stripped[k] = v
+                    continue
+                try:
+                    if isinstance(v, bool) or isinstance(v, float):
+                        raise ValueError("非整数")
+                    ms_delta = int(v)
+                except (TypeError, ValueError):
+                    stripped[k] = v  # 交 apply_power_deltas 原样拒非整数
+                    continue
+                if ms_delta > 0:
+                    positive_ms_rejected = True
+                    ms_item = {"power_id": power_id, "field": str(k), "value": v}
+                else:
+                    stripped[k] = v
+            if positive_ms_rejected:
+                power_changes.append({
+                    "power_id": power_id,
+                    "rejected": True,
+                    "category": "invalid_enum",
+                    "reason": (
+                        "流寇实力正增须走 bandit_absorptions 吃池顶，"
+                        "禁止自由 power_updates 正实力"
+                    ),
+                    "item": ms_item or {"power_id": power_id, "changes": raw_changes},
+                })
+            if stripped:
+                power_updates_to_apply[power_id] = stripped
+            else:
+                power_updates_to_apply.pop(power_id, None)
         for power_id, raw_changes in power_updates_to_apply.items():
             origin_ref = str(raw_changes.get("origin_ref") or "").strip()
             payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
@@ -9104,6 +9472,8 @@ def apply_score_extraction(
         "faction_delta": applied_factions,
         "class_delta": applied_classes,
         "population_transfers": applied_transfers,
+        "bandit_absorptions": applied_absorptions,
+        "bandit_absorptions_rejections": absorption_rejections,
         "surcharge_decrees": applied_surcharges,
         "surcharge_decrees_rejections": surcharge_rejections,
         # 拒收项独立段（list）：供 _collect_inline_rejections 扫记 rejection_reports；
