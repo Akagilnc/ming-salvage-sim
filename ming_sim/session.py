@@ -3442,10 +3442,17 @@ class GameSession:
                         self.persist_chat_turn_scene(list(generated))
 
             # D.8 门闩：未消费 summon → 响亮失败（§D.0 唯一谓词）
-            from ming_sim.audience_night import rescript_summon_origin_consumed
+            # 权威=行事实：先扫本次 join，再扫 durable decided summon（跨月 backlog 不收窄）。
+            from ming_sim.audience_night import (
+                rescript_summon_origin_consumed,
+                rescript_summon_origin_ref,
+            )
             unconsumed: List[str] = []
+            seen_origins: set[str] = set()
             for item in join_state.get("joined") or []:
                 origin = str(item.get("origin_ref") or "")
+                if origin:
+                    seen_origins.add(origin)
                 row = self.db.conn.execute(
                     "SELECT body, tags FROM story_ledger_entries WHERE origin_ref = ?",
                     (origin,),
@@ -3474,6 +3481,38 @@ class GameSession:
                     unconsumed.append(
                         f"{item.get('decision_key')}:{item.get('target') or ''}:{origin}"
                     )
+            # join_state 空/残缺时仍以 durable 行事实挡 phase2（S5/D.8）
+            for draft in self.db.list_rescript_drafts() or []:
+                if str(draft.get("status") or "") != "decided":
+                    continue
+                choice = draft.get("choice")
+                if not isinstance(choice, dict):
+                    continue
+                if str(choice.get("action") or "") != "summon":
+                    continue
+                source_turn = int(draft.get("turn") or 0)
+                idx = int(draft.get("idx") or 0)
+                rev = int(draft.get("revision_round") or 0)
+                origin = rescript_summon_origin_ref(source_turn, idx, rev)
+                if origin in seen_origins:
+                    continue
+                row = self.db.conn.execute(
+                    "SELECT body, tags FROM story_ledger_entries WHERE origin_ref = ?",
+                    (origin,),
+                ).fetchone()
+                entry = None
+                if row is not None:
+                    entry = {
+                        "body": str(row["body"] or ""),
+                        "tags": str(row["tags"] or "[]"),
+                    }
+                if rescript_summon_origin_consumed(entry):
+                    continue
+                dk = str(choice.get("decision_key") or "").strip() or (
+                    f"rescript_draft:{source_turn}:{idx}"
+                )
+                target = str(choice.get("summon_target") or "").strip()
+                unconsumed.append(f"{dk}:{target}:{origin}")
             if unconsumed:
                 # 唯一失败写点：generator error 与门闩未消费同形
                 # generating 空问话 → failed，供 CAS 重入（#657 Spec4 重试）。
@@ -3549,6 +3588,52 @@ class GameSession:
                 p1, joined, on_event=on_event, cheat_directive=cheat_directive,
             )
 
+    def _unconsumed_decided_summon_choices(self) -> List[Dict[str, object]]:
+        """#657 D.8：只读 durable decided summon 行，派生未消费恢复批（不新建表/API）。
+
+        跨月 backlog 不按 state.turn 收窄；choice/decision_key 取行事实与 C1 公式。
+        """
+        from ming_sim.audience_night import (
+            rescript_summon_origin_consumed,
+            rescript_summon_origin_ref,
+        )
+
+        list_drafts = getattr(getattr(self, "db", None), "list_rescript_drafts", None)
+        if not callable(list_drafts):
+            return []
+        out: List[Dict[str, object]] = []
+        for draft in list_drafts() or []:
+            if str(draft.get("status") or "") != "decided":
+                continue
+            choice = draft.get("choice")
+            if not isinstance(choice, dict):
+                continue
+            if str(choice.get("action") or "") != "summon":
+                continue
+            source_turn = int(draft.get("turn") or 0)
+            idx = int(draft.get("idx") or 0)
+            rev = int(draft.get("revision_round") or 0)
+            origin = rescript_summon_origin_ref(source_turn, idx, rev)
+            row = self.db.conn.execute(
+                "SELECT body, tags FROM story_ledger_entries WHERE origin_ref = ?",
+                (origin,),
+            ).fetchone()
+            entry = None
+            if row is not None:
+                entry = {
+                    "body": str(row["body"] or ""),
+                    "tags": str(row["tags"] or "[]"),
+                }
+            if rescript_summon_origin_consumed(entry):
+                continue
+            recovered = dict(choice)
+            dk = str(recovered.get("decision_key") or "").strip()
+            if not dk:
+                dk = f"rescript_draft:{source_turn}:{idx}"
+            recovered["decision_key"] = dk
+            out.append(recovered)
+        return out
+
     def submit_hitl_choices(
         self,
         choices: List[Dict[str, object]],
@@ -3557,7 +3642,12 @@ class GameSession:
         on_event=None,
         cheat_directive: str = "",
     ) -> str:
-        """#657 HITL 公共入口：急务/keyed → resolve_rescript_decisions；纯 decision → gate 内 submit_decisions。"""
+        """#657 HITL 公共入口：急务/keyed → resolve_rescript_decisions；纯 decision → gate 内 submit_decisions。
+
+        空 choices 且 desk 无 pending 急务时：若仍有未消费 durable decided summon，
+        交回同一 resolve_rescript_decisions（C1 already_applied → scaffold/registry），
+        不得直 submit_decisions 越过召见。
+        """
         if write_gate is None:
             raise ValueError("submit_hitl_choices 须注入既有 write_gate")
         keyed = any(
@@ -3576,6 +3666,16 @@ class GameSession:
                 on_event=on_event,
                 cheat_directive=cheat_directive,
             )
+        # 无 key / 无 pending 急务：未消费 durable summon 仍走同一 resolver
+        if not keyed:
+            recovery = self._unconsumed_decided_summon_choices()
+            if recovery:
+                return self.resolve_rescript_decisions(
+                    recovery,
+                    write_gate=write_gate,
+                    on_event=on_event,
+                    cheat_directive=cheat_directive,
+                )
         with write_gate:
             return self.submit_decisions(
                 choices, on_event=on_event, cheat_directive=cheat_directive,
