@@ -37,6 +37,7 @@ import ming_sim.session as session_mod
 import web_app
 from ming_sim import audience_night as an
 from ming_sim.session_write_queue import _is_barrier_ticket, get_session_write_queue
+from tests.test_session_write_queue_1353 import wait_pending_writes as _wait_pending_writes
 
 
 # ── outermost LLM seams only ─────────────────────────────────────────────
@@ -69,6 +70,13 @@ class _CannedMinisterAgent:
         return SimpleNamespace(content="臣已知悉，边饷当速清。", tools=[])
 
 
+class _CannedRelationJudge:
+    """召对/收夜关系判官外层——零事件 canned，禁真网。"""
+
+    def run(self, _prompt):
+        return SimpleNamespace(content='{"events":[]}')
+
+
 def _stub_outer_llm_seams(monkeypatch) -> None:
     """只换最外层 LLM 工厂/调用；结算核、收夜、HTTP 路由全真跑。"""
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
@@ -83,6 +91,12 @@ def _stub_outer_llm_seams(monkeypatch) -> None:
     monkeypatch.setattr(
         mindreading_mod, "create_mindreading_agent",
         lambda *a, **k: _CannedMindreadingAgent(),
+    )
+    # #642：召对/收夜关系判官同属外层 LLM 缝——漏 stub 会在有 window 时真网挂起，
+    # 票据不归还 → xdist 下 _wait_pending_writes 墙钟假红。
+    monkeypatch.setattr(
+        agents_mod, "create_relation_judge_agent",
+        lambda *a, **k: _CannedRelationJudge(),
     )
     # 高亮判官默认 8s 超时——必须零延迟 stub，否则两月链必破速度红线。
     monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
@@ -149,18 +163,12 @@ def tracer_client(tmp_path, monkeypatch, _offline_scene_beat_generator):
 
     game = web_app.web_game
     if game is not None:
-        # 等召对尾随（读心/抽取）落完再关库，避免 teardown 与后台写竞态。
-        deadline = time.perf_counter() + 2.0
-        while time.perf_counter() < deadline:
-            pending = int(getattr(game, "_pending_writes_count", 0) or 0)
-            if pending <= 0:
-                break
-            time.sleep(0.01)
+        # 等召对尾随落完再关库；fail-loud——wait_idle=False/异常不得吞掉后继续关库。
         try:
+            _wait_pending_writes(game)
             game.session.close()
-        except Exception:
-            pass
-        web_app.web_game = None
+        finally:
+            web_app.web_game = None
 
 
 def _assert_not_bare_500(resp, *, step: str) -> None:
@@ -200,29 +208,6 @@ def _pick_active_minister(state: dict) -> str:
 
 def _install_canned_minister(game) -> None:
     game.session.registry.get = lambda _ch: _CannedMinisterAgent()
-
-
-def _wait_pending_writes(game, *, timeout_s: float = 2.0) -> None:
-    """等召对尾随（读心/抽取）放闸——拟旨/颁诏抢 write_gate 前必须空。
-
-    轮询间隔 0.01s 级，禁等真实 LLM/超时窗。
-    """
-    deadline = time.perf_counter() + float(timeout_s)
-    while time.perf_counter() < deadline:
-        pending = int(getattr(game, "_pending_writes_count", 0) or 0)
-        if pending <= 0:
-            # 再确认 gate 可非阻塞获取（无结算/尾随持锁）
-            gate = getattr(game, "_write_gate", None)
-            if gate is None:
-                return
-            if gate.acquire(blocking=False):
-                gate.release()
-                return
-        time.sleep(0.01)
-    raise AssertionError(
-        f"pending writes did not drain in {timeout_s}s; "
-        f"count={getattr(game, '_pending_writes_count', None)}"
-    )
 
 
 def _install_trail_hold(game, release: threading.Event):

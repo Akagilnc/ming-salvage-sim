@@ -460,7 +460,6 @@ _ARMY_QUALITATIVE_WORDS: Dict[str, Tuple[str, str, str, str, str]] = {
     "training": ("散漫", "生疏", "粗疏", "尚可", "精熟"),
     "equipment": ("残破", "简陋", "短缺", "尚可", "精良"),
     "mobility": ("迟滞", "缓慢", "受限", "尚可", "灵便"),
-    "loyalty": ("危殆", "浮动", "不稳", "尚稳", "稳固"),
 }
 
 
@@ -485,6 +484,35 @@ def _qualitative_army_stat(field: str, value: object) -> str:
 
 def _army_arrears_report_text(row: sqlite3.Row, monthly_pay: object) -> str:
     return _approx_wanliang(row["arrears"]) + _approx_pay_months(row["arrears"], monthly_pay)
+
+
+def _player_army_situation(row, monthly_pay: object) -> Dict[str, str]:
+    """#321 玩家军心/士气/欠饷唯一投影：复用 derive + qualitative/arrears helper。
+
+    mutiny_tier 六档：哗变/鼓噪/不满/一般/优秀/死忠。
+    derive 非「正常」时直接复用其档名；仅「正常」再按 L 切一般/优秀/死忠。
+    """
+    from ming_sim.flows import derive_army_mutiny_state
+
+    derived = derive_army_mutiny_state(row)
+    if derived == "正常":
+        try:
+            loyalty = int(row["loyalty"] or 0)
+        except (TypeError, ValueError):
+            loyalty = 0
+        if loyalty >= 80:
+            mutiny_tier = "死忠"
+        elif loyalty >= 70:
+            mutiny_tier = "优秀"
+        else:
+            mutiny_tier = "一般"
+    else:
+        mutiny_tier = derived
+    return {
+        "mutiny_tier": mutiny_tier,
+        "morale_text": _qualitative_army_stat("morale", row["morale"]),
+        "arrears_text": _army_arrears_report_text(row, monthly_pay),
+    }
 
 
 def _is_commitment_stop_condition(resolve_condition: object) -> bool:
@@ -1068,6 +1096,7 @@ class GameDB:
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL UNIQUE,
                 station TEXT NOT NULL,
+                station_region TEXT NOT NULL DEFAULT '',
                 theater TEXT NOT NULL,
                 commander TEXT NOT NULL,
                 controller TEXT NOT NULL,
@@ -2123,11 +2152,54 @@ class GameDB:
                 last_brewed_period INTEGER NOT NULL DEFAULT 0,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
+
+            -- #690 / ADR 0011-2：血债棘轮 substrate（log 真源 + sparse 缓存）
+            CREATE TABLE IF NOT EXISTS faction_axis_debt (
+                faction TEXT NOT NULL REFERENCES factions(name),
+                axis TEXT NOT NULL CHECK (axis IN (
+                    '礼法名节','既得利益','实务事功','皇权依附','华夷战和','民本恤民'
+                )),
+                blood_debt INTEGER NOT NULL DEFAULT 0 CHECK (blood_debt >= 0),
+                wariness INTEGER NOT NULL DEFAULT 0 CHECK (wariness >= 0),
+                PRIMARY KEY (faction, axis)
+            );
+
+            CREATE TABLE IF NOT EXISTS centrifuge_log (
+                id INTEGER PRIMARY KEY,
+                turn INTEGER NOT NULL,
+                faction TEXT NOT NULL REFERENCES factions(name),
+                axis TEXT CHECK (
+                    axis IS NULL OR axis IN (
+                        '礼法名节','既得利益','实务事功','皇权依附','华夷战和','民本恤民'
+                    )
+                ),
+                kind TEXT NOT NULL CHECK (kind IN ('direct','kinship','overdraw')),
+                base INTEGER,
+                legitimacy_pct INTEGER,
+                amount INTEGER NOT NULL CHECK (amount > 0),
+                source_name TEXT,
+                reason_code TEXT,
+                source TEXT,
+                idem_key TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                CHECK (
+                    (kind = 'overdraw' AND axis IS NULL AND base IS NULL
+                     AND legitimacy_pct IS NULL)
+                    OR (kind IN ('direct','kinship') AND axis IS NOT NULL
+                        AND base IS NOT NULL AND legitimacy_pct IS NOT NULL)
+                )
+            );
             """.replace("__AUTHORITY_PRIVILEGES__", AUTHORITY_PRIVILEGE_SQL_IN)
         )
         # #637 S6：老档迁移——relation_brew_pending 泛化身份列（新档建表已含，此处幂等）。
         self.ensure_column(
             "relation_brew_pending", "item_kind", "TEXT NOT NULL DEFAULT '关系'"
+        )
+        # #690 / ADR 0011-2：逐派皇权透支账（廷杖侧第一刀；老档 ensure_column 迁移）
+        self.ensure_column(
+            "factions",
+            "edict_overdraw",
+            "INTEGER NOT NULL DEFAULT 0 CHECK (edict_overdraw >= 0)",
         )
         self._migrate_building_logs_to_durable_audit()
         self._ensure_office_type_parents()
@@ -2142,6 +2214,7 @@ class GameDB:
         }.items():
             self.ensure_column("powers", column, definition)
         self.ensure_column("armies", "owner_power", "TEXT NOT NULL DEFAULT 'ming'")
+        self.ensure_column("armies", "station_region", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("armies", "province_pay_arrears", "REAL NOT NULL DEFAULT 0")
         self.ensure_column("armies", "central_pay_arrears", "REAL NOT NULL DEFAULT 0")
         self.ensure_column("armies", "consecutive_pay_shortfall_months", "INTEGER NOT NULL DEFAULT 0")
@@ -3695,17 +3768,18 @@ class GameDB:
                 self.conn.execute(
                     """
                     INSERT INTO armies
-                    (id, name, station, theater, commander, controller, troop_type, manpower,
+                    (id, name, station, station_region, theater, commander, controller, troop_type, manpower,
                      supply, morale, training, equipment, arrears,
                      province_pay_arrears, central_pay_arrears, pay_source_region,
                      province_pay_share, central_pay_share, is_tusi, self_funded_pay,
                      mobility, loyalty, firearm_equipment, cannon_equipment, salary_rate, status, owner_power)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         army.id,
                         army.name,
                         army.station,
+                        army.station_region,
                         army.theater,
                         army.commander,
                         army.controller,
@@ -7428,6 +7502,8 @@ class GameDB:
     def army_payload(self, limit: int | None = None, danger_order: bool = False) -> List[Dict[str, object]]:
         payload: List[Dict[str, object]] = []
         for row in self.army_rows(limit=limit, danger_order=danger_order):
+            pay = self._army_pay(row)
+            sit = _player_army_situation(row, pay)
             payload.append(
                 {
                     "id": row["id"],
@@ -7439,18 +7515,18 @@ class GameDB:
                     "troop_type": row["troop_type"],
                     "manpower": int(row["manpower"]),
                     # #173：引擎实扣月应发（呈现层「月饷」唯一真源）。维护费列已删。
-                    "army_needed": self._army_pay(row),
+                    "army_needed": pay,
                     "supply": int(row["supply"]),
-                    "morale": int(row["morale"]),
+                    # #321：军心/士气/欠饷走玩家投影字符串；禁 raw morale/loyalty/arrears。
+                    "morale_text": sit["morale_text"],
                     "training": int(row["training"]),
                     "equipment": int(row["equipment"]),
-                    # #1363：只读投影收整到一位小数，杜绝 IEEE 残渣进 API
-                    "arrears": round(float(row["arrears"] or 0), 1),
+                    "arrears_text": sit["arrears_text"],
                     "mobility": int(row["mobility"]),
-                    "loyalty": int(row["loyalty"]),
+                    "mutiny_tier": sit["mutiny_tier"],
                     "firearm_equipment": int(row["firearm_equipment"]),
                     "cannon_equipment": int(row["cannon_equipment"]),
-                    # #1501：军牌专属投影停携静态 status 句（欠饷栏真数是唯一欠饷呈现源）；
+                    # #1501：军牌专属投影停携静态 status 句；
                     # DB armies.status 与共享读者 army_report 仍保留原句，不在此投影。
                     "owner_power": row["owner_power"],
                 }
@@ -7467,14 +7543,14 @@ class GameDB:
         parts = []
         for row in rows:
             pay = self._army_pay(row)
-            arr_text = _army_arrears_report_text(row, pay)
+            sit = _player_army_situation(row, pay)
             parts.append(
                 f"{row['name']}：驻{row['station']}，兵{row['manpower']}，"
                 f"饷{format_money(monthly_amount(pay))} /{TURN_UNIT}，"
                 f"{_qualitative_army_stat('supply', row['supply'])}，"
-                f"{_qualitative_army_stat('morale', row['morale'])}，"
+                f"{sit['morale_text']}，军心：{sit['mutiny_tier']}，"
                 f"火器：{_qualitative_army_stat('equipment', row['firearm_equipment']).removeprefix('装备：')}，"
-                f"炮{row['cannon_equipment']}门，{arr_text}，{row['status']}"
+                f"炮{row['cannon_equipment']}门，{sit['arrears_text']}，{row['status']}"
             )
         return (
             f"军队警讯：{'；'.join(parts)}。"
@@ -7496,25 +7572,24 @@ class GameDB:
         if row is None:
             raise ValueError(f"未找到军队：{raw_name}")
         pay = self._army_pay(row)  # #173：月饷取引擎实扣应发
-        arr_text = _army_arrears_report_text(row, pay)
+        sit = _player_army_situation(row, pay)
         return (
             f"{row['name']}：驻扎地{row['station']}，统帅{row['commander']}，"
             f"兵种{row['troop_type']}，人数{row['manpower']}人，"
             f"月应发军饷{format_money(monthly_amount(pay))} /{TURN_UNIT}，"
             f"{_qualitative_army_stat('supply', row['supply'])}，"
-            f"{_qualitative_army_stat('morale', row['morale'])}，"
+            f"{sit['morale_text']}，"
             f"{_qualitative_army_stat('training', row['training'])}，"
             f"{_qualitative_army_stat('equipment', row['equipment'])}，"
             f"火器{row['firearm_equipment']}，随军大炮{row['cannon_equipment']}门，"
-            f"{arr_text}，{_qualitative_army_stat('mobility', row['mobility'])}，"
-            f"{_qualitative_army_stat('loyalty', row['loyalty'])}。"
+            f"{sit['arrears_text']}，{_qualitative_army_stat('mobility', row['mobility'])}，"
+            f"军心：{sit['mutiny_tier']}。"
             f"状态：{row['status']}"
         )
 
     def army_roster(
         self,
         filter_names: Optional[List[str]] = None,
-        index_only: bool = False,
         qualitative_equipment: bool = False,
     ) -> str:
         """全军名册；大臣上下文可将火器装备以定性词呈现。"""
@@ -7523,16 +7598,6 @@ class GameDB:
         ).fetchall()
         if filter_names:
             rows = [r for r in rows if r["name"] in filter_names or r["id"] in filter_names]
-        if index_only:
-            # 军队超 30 时用索引：仅显示军名+欠饷+状态，完整信息由 query_army_roster tool 提供
-            lines = []
-            for row in rows:
-                if str(row["owner_power"]) == "ming":
-                    lines.append(f"{row['name']}：{_approx_wanliang(row['arrears'])}，{row['status']}")
-            return (
-                "【全军名册索引（涉及军队欠饷/补给/士气时先调 query_army_roster 查完整信息）】\n"
-                + "\n".join(lines)
-            ) if lines else ""
         if not rows:
             return ""
         own: List[str] = []
@@ -7540,20 +7605,20 @@ class GameDB:
         for row in rows:
             # #173：月饷取引擎实扣应发 army_needed（替退役 maintenance_per_turn）。全按月度，不除 3。
             monthly_pay = self._army_pay(row)
-            arrears_text = _army_arrears_report_text(row, monthly_pay)
+            sit = _player_army_situation(row, monthly_pay)
             if str(row["owner_power"]) == "ming":
-                # 列序见表头。兵力/月饷/欠饷为真钱；补给…忠诚以奏报定性呈现。
+                # 列序见表头。兵力/月饷为真钱；士气/军心/欠饷走 #321 玩家投影。
                 own.append(
                     "|".join(str(x) for x in (
                         row["name"], row["station"], row["commander"], row["troop_type"],
                         row["manpower"], monthly_pay,
                         _qualitative_army_stat("supply", row["supply"]),
-                        _qualitative_army_stat("morale", row["morale"]),
+                        sit["morale_text"],
                         _qualitative_army_stat("training", row["training"]),
                         _qualitative_army_stat("equipment", row["equipment"]),
                         _qualitative_army_stat("mobility", row["mobility"]),
-                        _qualitative_army_stat("loyalty", row["loyalty"]),
-                        arrears_text, row["status"],
+                        sit["mutiny_tier"],
+                        sit["arrears_text"], row["status"],
                         f"火器：{_qualitative_army_stat('equipment', row['firearm_equipment']).removeprefix('装备：')}"
                         if qualitative_equipment else row["firearm_equipment"],
                         row["cannon_equipment"],
@@ -7569,9 +7634,9 @@ class GameDB:
         out = [
             "【全军名册（现状以此为准，谈某军欠饷/补给/士气直接据此；欠饷为奏报近似总额，不拆省/中央分账）】",
             (
-                "大明各军（| 分隔，列序＝军名|驻地|统帅|兵种|兵力|月饷万两|补给|士气|训练|装备|机动|忠诚|欠饷奏报|状态|火器|随军大炮；补给…忠诚为定性奏报，火器为定性装备，随军大炮为门数0-12）："
+                "大明各军（| 分隔，列序＝军名|驻地|统帅|兵种|兵力|月饷万两|补给|士气|训练|装备|机动|军心|欠饷奏报|状态|火器|随军大炮；补给…军心为定性奏报，火器为定性装备，随军大炮为门数0-12）："
                 if qualitative_equipment else
-                "大明各军（| 分隔，列序＝军名|驻地|统帅|兵种|兵力|月饷万两|补给|士气|训练|装备|机动|忠诚|欠饷奏报|状态|火器|随军大炮；补给…忠诚为定性奏报，火器为0-100，随军大炮为门数0-12）："
+                "大明各军（| 分隔，列序＝军名|驻地|统帅|兵种|兵力|月饷万两|补给|士气|训练|装备|机动|军心|欠饷奏报|状态|火器|随军大炮；补给…军心为定性奏报，火器为0-100，随军大炮为门数0-12）："
             ),
             *own,
         ]
@@ -7978,6 +8043,23 @@ class GameDB:
                     text_value = str(value).strip()[:160]
                     if not text_value or text_value == str(old_value):
                         continue
+                    # #659：station_region 非空须为已入库 regions.id；禁止从 station 文本反推。
+                    if field == "station_region":
+                        exists = self.conn.execute(
+                            "SELECT 1 FROM regions WHERE id = ?", (text_value,),
+                        ).fetchone()
+                        if exists is None:
+                            changes.append({
+                                "army": row["name"], "field": field,
+                                "rejected": True, "category": "invalid_enum",
+                                "reason": (
+                                    f"army_delta.station_region 未入库 region_id：{text_value}"
+                                ),
+                                "item": {
+                                    "army_id": army_id, "field": field, "value": value,
+                                },
+                            })
+                            continue
                     stored_new = text_value
                     log_delta = None
                 else:
@@ -8198,6 +8280,22 @@ class GameDB:
                     "item": raw,
                 })
                 continue
+            # #659：结构化实际驻地可选；非空须为已入库 region_id，缺省 "" 不 fail-loud。
+            station_region = str(item.get("station_region") or "").strip()
+            if station_region:
+                exists = self.conn.execute(
+                    "SELECT 1 FROM regions WHERE id = ?", (station_region,),
+                ).fetchone()
+                if exists is None:
+                    created.append({
+                        "id": aid, "rejected": True, "category": "invalid_enum",
+                        "reason": (
+                            f"new_armies '{aid}' station_region 未入库 region_id："
+                            f"{station_region}"
+                        ),
+                        "item": raw,
+                    })
+                    continue
             pay_source_region = ""
             province_pay_share = central_pay_share = 0.0
             province_pay_arrears = central_pay_arrears = 0.0
@@ -8239,6 +8337,7 @@ class GameDB:
                 aid,
                 name,
                 str(item.get("station") or ""),
+                station_region,
                 str(item.get("theater") or ""),
                 commander,
                 str(item.get("controller") or commander),
@@ -8270,12 +8369,12 @@ class GameDB:
                 self.conn.execute(
                     """
                     INSERT INTO armies
-                    (id, name, station, theater, commander, controller, troop_type, manpower,
+                    (id, name, station, station_region, theater, commander, controller, troop_type, manpower,
                      supply, morale, training, equipment, arrears,
                      province_pay_arrears, central_pay_arrears, pay_source_region,
                      province_pay_share, central_pay_share, is_tusi, self_funded_pay,
                      mobility, loyalty, firearm_equipment, cannon_equipment, salary_rate, status, owner_power)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     row,
                 )
@@ -16303,10 +16402,16 @@ class GameDB:
 
     def _apply_military_order_station_effect(
         self, state, *, army_id: str, station: str, actor: str, reason: str,
-        origin_ref: str,
+        origin_ref: str, station_region: str = "",
     ) -> None:
-        """军令调驻面：既有军 station → army 写核；不得 new_armies。"""
-        if not station:
+        """军令调驻面：既有军 station(+可选 station_region) → army 写核；不得 new_armies。
+
+        #659：只改人读驻地/结构化驻地；不触 pay_source_region。仅 station 无 region
+        时只改人读字段，region 保持原值（禁止从 station 文本反推）。
+        """
+        dest = str(station or "").strip()
+        dest_region = str(station_region or "").strip()
+        if not dest and not dest_region:
             return
         if not army_id:
             raise ValueError("军令调驻缺少军队 target")
@@ -16322,9 +16427,14 @@ class GameDB:
             id="military_order", title="军令调遣", kind="圣旨", summary="",
             urgency=0, severity=0, credibility=100, interests=[], audiences=[],
         )
+        delta: Dict[str, object] = {"reason": reason[:80]}
+        if dest:
+            delta["station"] = dest
+        if dest_region:
+            delta["station_region"] = dest_region
         changes = self.apply_army_deltas(
             state, pseudo, None, actor or "军令",
-            {army_id: {"station": station, "reason": reason[:80]}},
+            {army_id: delta},
             commit=False,
             origin_ref=origin_ref,
             require_origin=True,
@@ -16594,6 +16704,12 @@ class GameDB:
             payload.get("target_id") or row.get("target_id") or ""
         ).strip()
         station = str(payload.get("station") or "").strip()
+        station_region = str(
+            payload.get("station_region")
+            or payload.get("实际驻地")
+            or payload.get("驻地省")
+            or ""
+        ).strip()
         reason = str(
             payload.get("text") or row.get("decree_text") or "军令调遣"
         )
@@ -16604,6 +16720,7 @@ class GameDB:
             state,
             army_id=army_id,
             station=station,
+            station_region=station_region,
             actor=actor,
             reason=reason,
             origin_ref=origin_ref,

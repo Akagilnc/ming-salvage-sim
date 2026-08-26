@@ -205,6 +205,30 @@ session.advance_without_decree / POST /api/decree/advance_without_edict:
 #1467：无 hitl_min_decisions 配额；无旨月 simulator 仍可产局势决策 → 批红；真零决策则既有空批/all-decided 链路走通。
 批量跳 N 月 = 另票 #1425，本片不做。
 
+## 关系酿制腿（#636/#637/#642；月末增量重酿）
+
+**真相源**：`decree.settle_with_delta` 单点拥有 start/join/drain 生命周期；腿本体＝`relation_brew.MonthEndRelationBrewLeg`（`prepare` → `brew` → `persist`）。派系态势摘要（#637）与关系摘要同批同命，不另开第二编排腿。
+
+### 生产序（与无依赖后处理重叠）
+
+1. **本月边事件集定型**：`_settle_after_extract_body` 内 apply/extractor 落库完成后，在 chapter/ending 等后处理之前触发 `start_relation_brew`。
+2. **durable claim（认领先行）**：`MonthEndRelationBrewLeg.prepare` 在结算事务内按 `select_brew_targets`（该 settled 年月新增边事件 id>水位 ∨ durable pending）选中有向对；入选即 `claim_relation_brew_targets` 把 pending 落盘——与本月边事件同生共死。pending **不靠**失败后 catch 补记。
+3. **备料**：对每个已选中有向对收集水位上 `new_events`；经 `relation_read.load_relation_history_before` 读取严格早于 settled 年月的**完整**历史事件（#642 锚④ coda 回流水，零语义筛选/裁剪），由 `build_brew_input` 装配为确定性 JSON（旧摘要段 + new_events + prior_events + 年月）。
+4. **brew Future**：`brew()`（零 DB 的 LLM 相）提交到 `settle_with_delta` 唯一受管 Future，与无依赖的 chapter/ending 重叠等待。
+5. **settle atomic commit**：整个后半段写序列（含 claim 与本月边事件）随 `atomic_and_reload` 提交；`next_period` 推进后 state 已指下一月，酿制落款仍用 settled 年月快照。
+6. **join → persist**：提交成功后 join Future；`persist()` 将摘要写入与 pending 清除放在同一 DB 事务原子落定。单条 LLM 调用/输出契约失败→降级留痕（保旧摘要 + 事件已在流水 + pending 在册），不阻塞结算。
+
+### 失败 / pending 恢复
+
+| 窗口 | 后果 |
+|---|---|
+| 结算 atomic 回滚（commit 前） | 本月边事件与 claim 同消；酿制 Future 排空丢弃，产物一律作废 |
+| 单条 LLM/契约失败 | 保旧摘要；事件仍在流水；pending 在册；下月补酿 |
+| **commit 后 → join 后 → persist 前**中断（#642 R2） | 边事件仍在；旧摘要字节不变（无半新摘要）；durable pending 在册；再次结算补酿恰一次、pending 清除、摘要落定；边 id 不双增、水位不回拨 |
+| persist 内 apply/mark DB 错 | 响亮上抛（ADR 0005/0008），不伪装成 LLM 单条失败 |
+
+**禁止**：把召对口/seed 口写成「结算 extractor 一步」；禁止文档或实现对酿制输出做字数 clamp（CLAUDE.md P6 / ADR 0142）。普通读面仍是「摘要＋最近事件」五字段 DTO（`project_relation_ledger`）；完整历史只进 coda 酿制输入。
+
 ## 崩溃 / 中止恢复（ADR 0008 PR1，v0.8.0.0）
 
 重开档（或同进程重试）按相位分流（`session.py` 恢复入口）：
@@ -243,7 +267,9 @@ session.advance_without_decree / POST /api/decree/advance_without_edict:
 
 | 文件 | 看什么 |
 |---|---|
-| `ming_sim/decree.py` | `resolve_directives` + `_settle_after_narrative` 编排；可复用核 `pre_settle` / `settle_with_delta`；二者均转发调用方 `scene_registry`（#542）；`resolve_settling_recovery` / `persist_resolve_context` 恢复机械 |
+| `ming_sim/decree.py` | `resolve_directives` + `_settle_after_narrative` 编排；可复用核 `pre_settle` / `settle_with_delta`；二者均转发调用方 `scene_registry`（#542）；`resolve_settling_recovery` / `persist_resolve_context` 恢复机械；月末关系酿制 Future 的 start/join/drain |
+| `ming_sim/relation_brew.py` | `MonthEndRelationBrewLeg` prepare/brew/persist；`select_brew_targets` / `build_brew_input`（含 #642 prior_events） |
+| `ming_sim/relation_read.py` | `project_relation_ledger` 五字段读面；`load_relation_history_before` coda 历史读缝 |
 | `ming_sim/session_write_queue.py` | per-session 单写者有序票据队列（#1353 / ADR 0149）：尾随领票、写经 `TicketedWriteGate`/`run`、过月=`barrier`、失败空放行、撤回 `cancel_key`；屏障只等工人终态（K10a 无 elapsed 熔断） |
 | `ming_sim/audience_night.py` | `auto_close_open_night` / `close_night`：颁诏 / 退朝遇开夜时顺势自动收夜（#498）；在飞只依工人终态续跑（K10a）；欠账并入过月 drain；`scene_registry` 调用方所有，start→并行→终局前 join，失败 OPEN fail-closed |
 | `ming_sim/audience_extraction.py` | 收夜 endorsement 批：一夜一批 single-flight 去重；真失败 fail-closed 保持 OPEN，禁第二次 LLM；写序归队列票据 |

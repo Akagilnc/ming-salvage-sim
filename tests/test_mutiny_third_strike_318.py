@@ -18,6 +18,22 @@ PATHS = ("legacy", "substrate_hub")
 BANDIT_POWERS = frozenset({"bandits", "bandit_li_zicheng"})
 
 
+def _simulator_army_dicts(payload_armies):
+    """Normalize simulator armies payload (dict-rows or col/row matrix) to dict list."""
+    if isinstance(payload_armies, dict) and "rows" in payload_armies:
+        cols = payload_armies.get("cols") or payload_armies.get("columns") or []
+        return [dict(zip(cols, row)) for row in payload_armies["rows"]]
+    return list(payload_armies)
+
+
+def _find_simulator_army(rows, army_id: str = ARMY):
+    return next(
+        r
+        for r in rows
+        if "关宁" in str(r.get("name", "")) or str(r.get("id", "")) == army_id
+    )
+
+
 def _configure(db, fiscal_path: str) -> None:
     value = 0 if fiscal_path == "legacy" else 1
     for key in ("__army_pay_source_cutover", "__fiscal_engine"):
@@ -407,21 +423,8 @@ def test_simulator_payload_derives_zero_combat_from_mutiny_latch(game):
     _configure(db, "legacy")
     _set(db, "legacy", loyalty=10, arrears=5, latched=1, mutiny_count=1)
 
-    def _army_dicts(payload_armies):
-        if isinstance(payload_armies, dict) and "rows" in payload_armies:
-            cols = payload_armies.get("cols") or payload_armies.get("columns") or []
-            return [dict(zip(cols, row)) for row in payload_armies["rows"]]
-        return list(payload_armies)
-
-    def _find_guanning(rows):
-        return next(
-            r
-            for r in rows
-            if "关宁" in str(r.get("name", "")) or str(r.get("id", "")) == ARMY
-        )
-
     payload = build_simulator_payload(state, db, decree_text="", previous_narrative="")
-    by_name = _find_guanning(_army_dicts(payload["armies"]))
+    by_name = _find_simulator_army(_simulator_army_dicts(payload["armies"]))
     assert by_name.get("zero_combat") is True
     assert "is_mutinied" not in by_name  # 机读派生 flag，不抛裸 latch 列
     # 非闩军
@@ -430,8 +433,36 @@ def test_simulator_payload_derives_zero_combat_from_mutiny_latch(game):
     )
     db.conn.commit()
     payload2 = build_simulator_payload(state, db, decree_text="", previous_narrative="")
-    by_name2 = _find_guanning(_army_dicts(payload2["armies"]))
+    by_name2 = _find_simulator_army(_simulator_army_dicts(payload2["armies"]))
     assert by_name2.get("zero_combat") is False
+
+
+@pytest.mark.parametrize(
+    "morale,loyalty,latched,expect_zero",
+    (
+        (90, 15, 1, True),   # 高 morale / 低 loyalty + latch → zero_combat
+        (10, 85, 0, False),  # 低 morale / 高 loyalty 未闩 → 可战
+    ),
+    ids=("high_morale_low_loyalty_latched", "low_morale_high_loyalty_clear"),
+)
+def test_simulator_zero_combat_cross_morale_loyalty_axes(
+    game, morale, loyalty, latched, expect_zero
+):
+    """#321：机器面仍 raw morale/loyalty + zero_combat；双轴交叉不翻 ABI。"""
+    db, state, _ = game
+    _configure(db, "legacy")
+    _set(db, "legacy", loyalty=loyalty, arrears=5 if latched else 0, latched=latched)
+    db.conn.execute("UPDATE armies SET morale=? WHERE id=?", (morale, ARMY))
+    db.conn.commit()
+
+    payload = build_simulator_payload(state, db, decree_text="", previous_narrative="")
+    army = _find_simulator_army(_simulator_army_dicts(payload["armies"]))
+    assert int(army["morale"]) == morale
+    assert int(army["loyalty"]) == loyalty
+    assert army.get("zero_combat") is expect_zero
+    assert "is_mutinied" not in army
+    assert "mutiny_tier" not in army
+    assert "morale_text" not in army
 
 
 def test_season_simulator_prompt_defines_zero_combat_noncombat():
