@@ -3442,11 +3442,8 @@ class GameSession:
                         self.persist_chat_turn_scene(list(generated))
 
             # D.8 门闩：未消费 summon → 响亮失败（§D.0 唯一谓词）
-            # 权威=行事实：先扫本次 join，再扫 durable decided summon（跨月 backlog 不收窄）。
-            from ming_sim.audience_night import (
-                rescript_summon_origin_consumed,
-                rescript_summon_origin_ref,
-            )
+            # 权威=行事实：先扫本次 join，再扫 durable decided summon（共享迭代器）。
+            from ming_sim.audience_night import rescript_summon_origin_consumed
             unconsumed: List[str] = []
             seen_origins: set[str] = set()
             for item in join_state.get("joined") or []:
@@ -3482,37 +3479,13 @@ class GameSession:
                         f"{item.get('decision_key')}:{item.get('target') or ''}:{origin}"
                     )
             # join_state 空/残缺时仍以 durable 行事实挡 phase2（S5/D.8）
-            for draft in self.db.list_rescript_drafts() or []:
-                if str(draft.get("status") or "") != "decided":
-                    continue
-                choice = draft.get("choice")
-                if not isinstance(choice, dict):
-                    continue
-                if str(choice.get("action") or "") != "summon":
-                    continue
-                source_turn = int(draft.get("turn") or 0)
-                idx = int(draft.get("idx") or 0)
-                rev = int(draft.get("revision_round") or 0)
-                origin = rescript_summon_origin_ref(source_turn, idx, rev)
+            for fact in self._iter_unconsumed_decided_summons():
+                origin = str(fact.get("origin_ref") or "")
                 if origin in seen_origins:
                     continue
-                row = self.db.conn.execute(
-                    "SELECT body, tags FROM story_ledger_entries WHERE origin_ref = ?",
-                    (origin,),
-                ).fetchone()
-                entry = None
-                if row is not None:
-                    entry = {
-                        "body": str(row["body"] or ""),
-                        "tags": str(row["tags"] or "[]"),
-                    }
-                if rescript_summon_origin_consumed(entry):
-                    continue
-                dk = str(choice.get("decision_key") or "").strip() or (
-                    f"rescript_draft:{source_turn}:{idx}"
+                unconsumed.append(
+                    f"{fact.get('decision_key')}:{fact.get('target') or ''}:{origin}"
                 )
-                target = str(choice.get("summon_target") or "").strip()
-                unconsumed.append(f"{dk}:{target}:{origin}")
             if unconsumed:
                 # 唯一失败写点：generator error 与门闩未消费同形
                 # generating 空问话 → failed，供 CAS 重入（#657 Spec4 重试）。
@@ -3588,10 +3561,11 @@ class GameSession:
                 p1, joined, on_event=on_event, cheat_directive=cheat_directive,
             )
 
-    def _unconsumed_decided_summon_choices(self) -> List[Dict[str, object]]:
-        """#657 D.8：只读 durable decided summon 行，派生未消费恢复批（不新建表/API）。
+    def _iter_unconsumed_decided_summons(self) -> List[Dict[str, object]]:
+        """#657 D.8 未消费 durable decided summon 行事实唯一权威（跨月不收窄）。
 
-        跨月 backlog 不按 state.turn 收窄；choice/decision_key 取行事实与 C1 公式。
+        每项：decision_key / origin_ref / target / choice（行上既有 choice + C1 key）。
+        恢复批与 finish 门闩共用；不新建表/API。
         """
         from ming_sim.audience_night import (
             rescript_summon_origin_consumed,
@@ -3631,8 +3605,17 @@ class GameSession:
             if not dk:
                 dk = f"rescript_draft:{source_turn}:{idx}"
             recovered["decision_key"] = dk
-            out.append(recovered)
+            out.append({
+                "decision_key": dk,
+                "origin_ref": origin,
+                "target": str(recovered.get("summon_target") or "").strip(),
+                "choice": recovered,
+            })
         return out
+
+    def _unconsumed_decided_summon_choices(self) -> List[Dict[str, object]]:
+        """恢复批投影：权威 `_iter_unconsumed_decided_summons` → request choices。"""
+        return [dict(fact["choice"]) for fact in self._iter_unconsumed_decided_summons()]
 
     def submit_hitl_choices(
         self,
