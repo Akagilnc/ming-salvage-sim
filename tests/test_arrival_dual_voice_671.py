@@ -500,6 +500,77 @@ def test_arrival_companion_checkpoint_retry_skips_sim(game, monkeypatch):
         )
 
 
+def test_arrival_companion_success_extractor_fail_retry_skips_both(
+    game, monkeypatch, tmp_path,
+):
+    """companion 首次成功、下游 extractor 失败；重试 sim/companion 各只 1 次，原文落库。
+
+    咬住既有双声 checkpoint 接缝：成功后 durable 原样 attendant + 标记，
+    不得扩 schema / 另造 checkpoint。
+    """
+    import ming_sim.decree as decree_mod
+    import ming_sim.memories as memories
+    from ming_sim.exceptions import SettlementAbort
+
+    db, state, content = game
+    names = ["洪承畴", "孙传庭"]
+    arrivals, _waiting = _seed_waiting_arrivals(game, names)
+    sim_ran = {"n": 0}
+    attendant_ran = {"n": 0}
+    extract_ran = {"n": 0}
+
+    def _attendant(*_a, **_k):
+        attendant_ran["n"] += 1
+        return ATTENDANT_TEXT
+
+    def _simulate(*_a, **kwargs):
+        sim_ran["n"] += 1
+        return (SIM_REPORT, kwargs["simulator_payload"])
+
+    def _extract(*_a, **_k):
+        extract_ran["n"] += 1
+        if extract_ran["n"] == 1:
+            raise RuntimeError("extractor boom after companion success")
+        return ({}, "out", "in")
+
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        decree_mod, "tick_transit_arrivals",
+        lambda *_a, **_k: list(arrivals),
+    )
+    _stub_settlement_llms(
+        decree_mod, memories, monkeypatch, simulate=_simulate, attendant=_attendant,
+    )
+    monkeypatch.setattr(
+        decree_mod, "extract_scores_by_modules_with_agno", _extract,
+    )
+
+    with pytest.raises(SettlementAbort):
+        decree_mod.resolve_directives(
+            state, db, None, None, [], "", content=content,
+        )
+    assert sim_ran["n"] == 1
+    assert attendant_ran["n"] == 1
+    assert extract_ran["n"] == 1
+    failed_ctx = db.get_resolve_context(state.turn)
+    assert failed_ctx is not None
+    assert failed_ctx["narrative"] == SIM_REPORT
+    assert failed_ctx["attendant_message"] == ATTENDANT_TEXT
+    assert failed_ctx["extracted"] is None
+    assert failed_ctx["simulator_payload"].get(ARRIVAL_COMPANION_SIM_DONE_KEY) is True
+
+    result = decree_mod.resolve_directives(
+        state, db, None, None, [], "", content=content,
+    )
+    assert result.awaiting is False
+    assert sim_ran["n"] == 1
+    assert attendant_ran["n"] == 1
+    assert extract_ran["n"] == 2
+    completed = int(state.turn) - 1
+    assert db.get_turn_report(completed) == SIM_REPORT
+    assert db.get_turn_attendant_message(completed) == ATTENDANT_TEXT
+
+
 def test_arrival_clear_without_marker_still_reruns_sim(game, monkeypatch):
     """无标记的 ready=0 + 非空 narrative/attendant：sim 必重跑（ADR 0008）；
     #671②：已持久 attendant 复用，不重叫 companion、不以空覆盖。"""
