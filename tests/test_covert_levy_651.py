@@ -111,8 +111,7 @@ def test_pay_fact_reaches_both_production_judge_inputs(game):
     sim_row = next(row for row in simulator if row["id"] == did)
     assert sim_row["army_pay_fact"]["consecutive_pay_shortfall_months"] == 3
     issues = build_extractor_shared_context(
-        db, state, "", "", module="issues", decree_dossiers=simulator,
-        transit_semantics=[],
+        db, state, "", "", module="issues", decree_dossiers=simulator
     )
     issue_row = next(row for row in issues["decree_dossiers"] if row["id"] == did)
     assert issue_row["army_pay_fact"] == sim_row["army_pay_fact"]

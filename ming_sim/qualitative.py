@@ -153,6 +153,10 @@ POWER_BANDS = ("极弱", "偏弱", "中等", "偏强", "强盛")  # also 皇威
 SATISFACTION_BANDS = ("怨愤", "不满", "平常", "顺应", "拥戴")
 # Issue/dossier bar progress — single vocabulary (was tools._progress_band).
 PROGRESS_BANDS = ("未见起色", "略有起色", "进展过半", "进展顺利", "近于收束")
+# Region resistance / military pressure — single vocabulary (db.region_report + #652 two_axis).
+GENTRY_RESISTANCE_BANDS = ("极弱", "偏弱", "中等", "偏强", "强")
+MILITARY_PRESSURE_BANDS = ("极低", "偏低", "中等", "偏高", "极高")
+DISASTER_SEVERITY_BANDS = ("轻微", "偏轻", "中等", "偏重", "极重")
 
 
 def public_support_band(value: object) -> str:
@@ -178,3 +182,30 @@ def satisfaction_band(value: object) -> str:
 def progress_band(value: object) -> str:
     """Present issue bar_value / 局势进度 without exposing the score."""
     return qualitative_band(value, PROGRESS_BANDS)
+
+
+def gentry_resistance_band(value: object) -> str:
+    """Present region gentry_resistance without exposing the score."""
+    return qualitative_band(value, GENTRY_RESISTANCE_BANDS)
+
+
+def military_pressure_band(value: object) -> str:
+    """Present region military_pressure / 流寇压力 without exposing the score."""
+    return qualitative_band(value, MILITARY_PRESSURE_BANDS)
+
+
+def disaster_severity_band(value: object) -> str:
+    """Present issue/disaster severity without exposing the score."""
+    return qualitative_band(value, DISASTER_SEVERITY_BANDS)
+
+
+def population_wan_kou_label(persons: object) -> str:
+    """ADR 0088/#648：裸人数 → 「约N万口」定性（P4 玩家可感 LLM 输入）。"""
+    try:
+        n = int(0 if persons is None else persons)
+    except (TypeError, ValueError):
+        n = 0
+    wan = n // 10000
+    if wan <= 0:
+        return "不足一万口"
+    return f"约{wan}万口"

@@ -288,6 +288,24 @@ POPULATION_TRANSFER_FIELDS = frozenset({"source", "target", "amount", "reason", 
 # 钳到农民余额（代码只 clamp 不判胜负，P6/0087 applier 机械转移）。
 LEVY_DISPLACEMENT_RATE = 2000.0
 
+# #652/0087：流民投贼——实吸口数→实力正增量（人/点；δ=actual//本率，再经 0–100 clamp）。
+# 单写关系：仅 bandit_absorptions 原子 applier 可产贼势正增；自由 power_updates 正实力拒。
+BANDIT_ABSORPTION_PERSONS_PER_STRENGTH = 10000
+# canonical item 闭集（DELTA_SCHEMA / ITEM_FIELD_ALIASES 四字段；未知键逐项拒收，ADR 0015）。
+BANDIT_ABSORPTION_FIELDS = frozenset({
+    "region_id", "power_id", "requested_count", "origin_ref",
+})
+
+# #652/0087：赈济/招抚屯田回流——实抵万两→回流口数基线，再经执行判决成色折减。
+RECOVERY_PERSONS_PER_WAN = 2000
+RECOVERY_GRANT_ACTIONS = frozenset({"赈灾", "招抚屯田"})
+RECOVERY_OUTCOME_FACTORS = {
+    "fulfilled": 1.0,
+    "degraded": 0.5,
+    "failed": 0.0,
+    "transformed": 0.0,
+}
+
 # trigger_gate key 语法（content.py load 校验 + issues._eval_gate_key 求值共用，DRY，#12 Q3 fail-loud）：
 # bare key（无 "."）须是已知 metric；点分 key 首段须是合法表名、末段可为聚合函数。
 GATE_METRIC_KEYS = ("国库", "内库", "民心", "皇威")
