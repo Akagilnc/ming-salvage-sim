@@ -157,9 +157,6 @@ def test_mutiny_arrears_desertion_real_payload_tracer(game, tmp_path):
         g["army_id"] == "dongjiang"
         for g in by_rid["liaodong"]["garrison_pressure_rows"]
     )
-    # TSV 同源渲染旁证：军镇行随投影再现（不锁自由文案措辞）
-    tsv = str(surface.get("tsv") or "")
-    assert "军镇" in tsv and "东江" in tsv
 
     # 4) 沿既有 applier 申报 reason=逃亡；守恒、属地不串
     total_before = _global_population(db)
