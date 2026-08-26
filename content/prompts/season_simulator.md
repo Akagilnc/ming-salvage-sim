@@ -30,6 +30,7 @@ input 含本{{TURN_UNIT}}全量盘面，不另查。**盘面表（buildings/cour
 - `commitment_backlash_facts`（#626）：承诺所系反噬结构化事实包——`commitment_title`（源前诺）、`source_kind`（`breach_verdict` 事废半途撤手 / `failed_terminal` 烂尾终值 / `deformation_exposure` 名实已乖变形暴露）、`trigger_ref`/`origin_ref`（溯源）、`metrics_delta`（已落国势账）。硬门只记账；**玩家可见阶段/叙述须你从本事实包长出**（与局势推进同格，不抄系统字段名；标题已由硬门链接源前诺；进度条两端文案不在本步填写）。**呈现约束**读 `presentation_constraints`：禁用「反噬平息」「反噬坐大」（与 #625 反制用语区分）；严禁 `commitment_backlash`/`foundation_tier`/`breach_verdict` 等系统词入正文。有条目时在事件章或在办局势中写清前诺牵连的余波，口吻各依朝局，不成句模板。
 - `historical_anchor` / `victory_status` / `deaths_this_turn` / `debuts_this_turn`：历史锚点、终局状态、讣闻、史实登场。
 - `transit_arrivals`：本{{TURN_UNIT}}引擎确认抵达的人物（`name`+`location`）。背景说明用，不作抵京候见求交依据。
+- `transit_semantics`：仍在途人物的语义事实。每一行是一名人物的一段完整在途行程；正文逐行写清该行 `name` 所指人物、`transit_to` 所指目的地，以及 `semantic` 所表达的已行路程与全程时序。
 - `waiting_audience`：已抵京候见、尚未宣入消费的未结传召（`person_name`+`location`）。背景说明用，不作抵京候见求交依据。
 - `arrival_waiting`：引擎已求交的本{{TURN_UNIT}}新抵京∩候见列表（`name`+`location`+年月）。抵京候见报到的唯一权威真源。
 
