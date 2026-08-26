@@ -569,6 +569,8 @@ def test_657_s11_rollback_enter_before_chat_turn(game):
 
 def test_657_s11_rollback_chat_turn_before_rebind(game):
     """S11：真实 prepare 内 create_chat_turn 后 / 回绑前崩溃 → 零孤儿。"""
+    import sqlite3
+
     from ming_sim.audience_night import prepare_rescript_summon_scaffold, rescript_summon_origin_ref
 
     db, state, content = game
@@ -582,7 +584,7 @@ def test_657_s11_rollback_chat_turn_before_rebind(game):
         "BEGIN SELECT RAISE(ABORT, 'inject after chat_turn before rebind'); END"
     )
     try:
-        with pytest.raises(Exception):
+        with pytest.raises(sqlite3.IntegrityError, match="inject after chat_turn before rebind"):
             prepare_rescript_summon_scaffold(
                 db, state, person_name=minister, origin_ref=origin,
             )
