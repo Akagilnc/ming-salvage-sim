@@ -20,16 +20,10 @@ class _RO {
 Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, get: () => 1600 });
 Object.defineProperty(HTMLElement.prototype, "clientHeight", { configurable: true, get: () => 900 });
 
-// 开启密令换回合自动弹窗（生产 gate 默认关；测试打开以验协调器所属的延迟呈现定时器 wiring）。
-// #1236：其余 face-gate 助手走真实实现，避免 wiring 测试与门控分叉。
-vi.mock("./settlementPresentation", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./settlementPresentation")>();
-  return {
-    ...actual,
-    shouldAutoOpenSecretOrdersAfterSettlement: () => true,
-    shouldAutoOpenClosedIssuesAfterSettlement: () => false,
-  };
-});
+// #1236：face-gate / 密令自动弹窗谓词一律走真实实现。
+// 禁止把 shouldAutoOpenSecretOrdersAfterSettlement 全局 mock 成恒 true——
+// 否则挂载后 400ms 协调器定时器会在任意长测中途抢 activeModal（串写失败的假阴性根因）。
+// 延迟呈现用例以真实谓词所需的 dossier_progress 行触发 autoOpen。
 
 // GrandMap 依赖 SVG getBBox；本文件只验 face 门控/持久投影，不测地图几何。
 vi.mock("./components/map", () => ({
@@ -531,10 +525,16 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
   it("延迟呈现正路（协调器所属定时器）：最新代次时 fake time 到点弹密令进度对话框", async () => {
     vi.useFakeTimers();
     try {
+      // makeState(1) → currentTurn=1；真实谓词认 turn-1 的 dossier_progress。
+      const autoOpenOrder = {
+        id: 1, title: "密", content: "", status: "active", minister_name: "",
+        year_issued: 1627, period_issued: 10,
+        dossier_progress: [{ turn: 0 }],
+      };
       vi.stubGlobal("fetch", vi.fn(async (url: string) => {
         const u = new URL(String(url), "http://t.local");
         if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
-        if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [{ id: 1, title: "密", content: "", status: "active", minister_name: "", year_issued: 1627, period_issued: 10 }] });
+        if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [autoOpenOrder] });
         if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
         if (u.pathname.endsWith("/api/game/state")) return jsonResp(makeState(1));
         return jsonResp({});
@@ -552,11 +552,16 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
   it("延迟呈现负路：定时器计时中经真实变更(删草案)推进代次→陈旧定时器 no-op，密令进度不弹", async () => {
     vi.useFakeTimers();
     try {
+      const autoOpenOrder = {
+        id: 1, title: "密", content: "", status: "active", minister_name: "",
+        year_issued: 1627, period_issued: 10,
+        dossier_progress: [{ turn: 0 }],
+      };
       vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
         const u = new URL(String(url), "http://t.local");
         if (u.pathname.endsWith("/api/directives/1") && init?.method === "DELETE") return jsonResp({ directives: [] });
         if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
-        if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [{ id: 1, title: "密", content: "", status: "active", minister_name: "", year_issued: 1627, period_issued: 10 }] });
+        if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [autoOpenOrder] });
         if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
         if (u.pathname.endsWith("/api/game/state")) return jsonResp(makeState(1, [directive()]));
         return jsonResp({});
