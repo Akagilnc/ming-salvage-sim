@@ -7502,6 +7502,7 @@ def _apply_surcharge_decrees(
     origin_ref 缺失/伪前缀/未颁案卷（复用 effect_origin_rejection 单一真源）；
     白名单外字段。坏项留痕、好项照落；数据拒收不中止事务。
     """
+    should_commit = bool(commit) and db.owns_transaction()
     applied: List[Dict[str, object]] = []
     rejected: List[Dict[str, object]] = []
     if not db.is_substrate_hub_fiscal_engine_enabled():
@@ -7607,7 +7608,7 @@ def _apply_surcharge_decrees(
             "origin_ref": origin_ref,
             "加派基线": new,
         })
-    if commit and not db.conn.in_transaction:
+    if should_commit:
         db.conn.commit()
     return applied, rejected
 
@@ -7711,6 +7712,7 @@ def _apply_bandit_absorptions(
     走 apply_power_deltas）。超池/非法 id/零池正请求 → 逐项拒收留痕。
     返回 (applied_absorptions, rejections, power_changes)。
     """
+    should_commit = bool(commit) and db.owns_transaction()
     applied: List[Dict[str, object]] = []
     rejected: List[Dict[str, object]] = []
     power_changes: List[Dict[str, object]] = []
@@ -7841,7 +7843,7 @@ def _apply_bandit_absorptions(
                 require_origin=True,
             ))
         applied.append(applied_item)
-    if commit and not db.conn.in_transaction:
+    if should_commit:
         db.conn.commit()
     return applied, rejected, power_changes
 
