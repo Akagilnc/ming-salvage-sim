@@ -7902,6 +7902,7 @@ def _apply_recovery_driven_transfers(
                 seen_keys.add((int(ref[8:]), turn))
 
     records: List[Dict[str, object]] = []
+    remaining_by_region: Dict[str, int] = {}
     rows = db.conn.execute(
         """
         SELECT id, status, target_kind, target_id, payload_json,
@@ -7958,7 +7959,8 @@ def _apply_recovery_driven_transfers(
         ).fetchone()
         if pool_row is None or farmer_row is None:
             continue
-        amount = min(amount, int(pool_row["population"]))
+        remaining = remaining_by_region.setdefault(region_id, int(pool_row["population"]))
+        amount = min(amount, remaining)
         if amount <= 0:
             continue
         records.append({
@@ -7968,6 +7970,7 @@ def _apply_recovery_driven_transfers(
             "reason": "回流",
             "origin_ref": f"dossier:{dossier_id}",
         })
+        remaining_by_region[region_id] = remaining - amount
         seen_keys.add((dossier_id, turn))
     if not records:
         return [], []
