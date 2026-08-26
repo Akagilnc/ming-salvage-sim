@@ -8,9 +8,11 @@ owner A：开仓非回流 producer；只覆盖赈济与招抚屯田；#522 不�
 from __future__ import annotations
 
 import json
+import sqlite3
 
 import pytest
 
+from ming_sim.applier import atomic
 from ming_sim.constants import (
     BANDIT_ABSORPTION_PERSONS_PER_STRENGTH,
     RECOVERY_OUTCOME_FACTORS,
@@ -88,6 +90,77 @@ def test_simulator_payload_carries_structured_displaced_pool(game):
     assert pool["cols"] == ["region_id", "population", "population_unit"]
     rows = {r[0]: (r[1], r[2]) for r in pool["rows"]}
     assert rows["shaanxi"] == (DISPLACED_SHAANXI, POPULATION_UNIT_PERSONS)
+
+
+def _database_path(db: GameDB) -> str:
+    return str(db.conn.execute("PRAGMA database_list").fetchone()[2])
+
+
+def test_standalone_absorption_is_durable_to_second_connection(game):
+    db, state, content = game
+    before = _pop(db, "流民", "shaanxi")
+    applied = apply_score_extraction(db, state, {
+        "bandit_absorptions": [{
+            "region_id": "shaanxi", "power_id": "bandit_li_zicheng",
+            "requested_count": 10_000, "origin_ref": "盘面自发",
+        }],
+    }, content, None)
+    assert applied["bandit_absorptions"][0]["actual_count"] == 10_000
+    with sqlite3.connect(_database_path(db)) as reopened:
+        assert reopened.execute(
+            "SELECT population FROM classes WHERE name='流民' AND region_id='shaanxi'"
+        ).fetchone()[0] == before - 10_000
+
+
+def test_standalone_surcharge_is_durable_to_second_connection(game):
+    db, state, content = game
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="陕西加派",
+        target_kind="region", target_id="shaanxi",
+    )
+    db.record_dossier_decision(dossier_id, "promulgated")
+    applied = apply_score_extraction(db, state, {
+        "surcharge_decrees": [{
+            "region_id": "shaanxi", "monthly_amount": 10.0,
+            "origin_ref": f"dossier:{dossier_id}",
+        }],
+    }, content, None)
+    expected = applied["surcharge_decrees"][0]["加派基线"]
+    with sqlite3.connect(_database_path(db)) as reopened:
+        fiscal = json.loads(reopened.execute(
+            "SELECT fiscal FROM regions WHERE id='shaanxi'"
+        ).fetchone()[0])
+    assert fiscal["settle"]["_meta"]["加派基线"] == expected
+
+
+def test_outer_atomic_rolls_back_surcharge_and_absorption(game):
+    db, state, content = game
+    before_pool = _pop(db, "流民", "shaanxi")
+    before_fiscal = db.conn.execute(
+        "SELECT fiscal FROM regions WHERE id='shaanxi'"
+    ).fetchone()[0]
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="陕西加派",
+        target_kind="region", target_id="shaanxi",
+    )
+    db.record_dossier_decision(dossier_id, "promulgated")
+    with pytest.raises(RuntimeError):
+        with atomic(db):
+            apply_score_extraction(db, state, {
+                "surcharge_decrees": [{
+                    "region_id": "shaanxi", "monthly_amount": 10.0,
+                    "origin_ref": f"dossier:{dossier_id}",
+                }],
+                "bandit_absorptions": [{
+                    "region_id": "shaanxi", "power_id": "bandit_li_zicheng",
+                    "requested_count": 10_000, "origin_ref": "盘面自发",
+                }],
+            }, content, None)
+            raise RuntimeError("rollback")
+    assert _pop(db, "流民", "shaanxi") == before_pool
+    assert db.conn.execute(
+        "SELECT fiscal FROM regions WHERE id='shaanxi'"
+    ).fetchone()[0] == before_fiscal
 
 
 def test_occupied_region_is_hidden_and_rejected_for_absorption(game):
