@@ -33,4 +33,3 @@ JSON：关系双方、维度（君臣／大臣）、当前年月、既有奠基�
 
 - 输出只能是上述 JSON，不要多余文字。
 - new_foundings 是字符串列表（可为空）；recent_segment 是一段散文文本。
-- new_foundings 只能由 new_events 产生，不得把 prior_events 里的旧事写成新奠基。
