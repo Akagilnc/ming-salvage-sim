@@ -15638,8 +15638,9 @@ class GameDB:
         gatekeeper_id: Optional[str] = None,
         criteria_snapshot: Optional[Dict[str, object]] = None,
         content=None, registry=None,
-    ) -> None:
+    ) -> set[str]:
         """判决注入 seam：结构化载荷只在顺颁后从同一案卷物化。"""
+        affected_people: set[str] = set()
         with atomic(self):
             row = self.get_decree_dossier(dossier_id)
             if row is None:
@@ -15657,7 +15658,7 @@ class GameDB:
                     self._append_midzhi_stigma(
                         dossier_id, decision="rejected", turn=state.turn, commit=False,
                     )
-                return
+                return affected_people
             if decision == "force_promulgated":
                 turn_row = self.conn.execute(
                     "SELECT turn FROM game_state WHERE id=1"
@@ -15804,10 +15805,26 @@ class GameDB:
                 )
                 self.conn._materializing_dossier_id = int(dossier_id)
                 try:
-                    if not self._commit_office_action(
-                        state, pa, payload, content, registry,
-                    ):
+                    affected_people = self._commit_office_action(
+                        state, pa, payload, content, None, return_affected=True,
+                    )
+                    if not affected_people:
                         raise ValueError("任免案卷载荷物化失败")
+                    if (
+                        pa["action"] == "任命"
+                        and str(payload.get("summon_after") or "否") == "是"
+                    ):
+                        from ming_sim.audience_night import (
+                            activate_office_summon,
+                            commit_fresh_summons_for_night,
+                        )
+                        entry = activate_office_summon(self, int(pa["id"]))
+                        if entry is None:
+                            raise ValueError("任命后传召缺原始故事账")
+                        commit_fresh_summons_for_night(
+                            self, state, int(entry["night_id"]),
+                            content=content, registry=None,
+                        )
                 finally:
                     self.conn._materializing_dossier_id = previous_materializing
             elif row["action_type"] == "grant_allocation":
@@ -16001,6 +16018,7 @@ class GameDB:
                 self.transition_decree_dossier(
                     dossier_id, "executing", commit=False,
                 )
+        return affected_people
 
     _OVERRIDE_AUTHORITY_COST = -5
     _REACTION_INTENSITY = {"weak": 4, "strong": 8}
@@ -17098,7 +17116,7 @@ class GameDB:
     def apply_dossier_verdicts(
         self, state: GameState, verdicts: Iterable[Dict[str, object]], *,
         content=None, registry=None,
-    ) -> None:
+    ) -> set[str]:
         """结算判决注入入口：批量、同事务消费每案结构化 verdict。"""
         # Validate the complete batch before the first write at this public seam.
         rows = list(verdicts)
@@ -17128,12 +17146,13 @@ class GameDB:
         # both SQLite and the caller's in-memory GameState.
         from ming_sim.decree import atomic_and_reload
 
+        affected_people: set[str] = set()
         with atomic_and_reload(self, state, content=content, registry=registry):
             for verdict in rows:
                 decision = str(verdict.get("decision") or "")
                 opponents = verdict.get("primary_opponents")
                 snapshot = verdict.get("criteria_snapshot")
-                self.apply_dossier_promulgation(
+                affected_people.update(self.apply_dossier_promulgation(
                     state, strict_int(verdict.get("dossier_id")), decision,
                     blocked_layer=str(verdict.get("blocked_layer") or ""),
                     reason=str(verdict.get("reason") or ""),
@@ -17142,8 +17161,8 @@ class GameDB:
                     gatekeeper_id=(str(verdict["gatekeeper_id"]).strip()
                                    if verdict.get("gatekeeper_id") is not None else None),
                     criteria_snapshot=snapshot if isinstance(snapshot, dict) else None,
-                    content=content, registry=registry,
-                )
+                    content=content, registry=None,
+                ) or set())
                 dossier_id = strict_int(verdict.get("dossier_id"))
                 dossier = self.get_decree_dossier(dossier_id)
                 # #657 §C.8 later-wins：midzhi 不持久化猜派 affected_parties（正式离心归 M12）；
@@ -17176,6 +17195,7 @@ class GameDB:
             self.conn.execute(
                 "DELETE FROM pending_promulgation_verdicts WHERE turn=?", (int(state.turn),)
             )
+        return affected_people
 
     def interrupt_dossiers_for_character(
         self, state: GameState, character_name: str, reason: str, *,
@@ -18406,9 +18426,9 @@ class GameDB:
 
     def _commit_office_action(
         self, state: GameState, pa: Dict[str, object], payload: Dict[str, object],
-        content, registry,
-    ) -> bool:
-        """任免(office)落库,按被任者是否在册分流(CMR R1 补全):
+        content, registry, *, return_affected: bool = False,
+    ) -> object:
+        """任免(office)落库并返回 canonical applied 中受影响的正式人物。
         - 任命既有官 → 升迁/调任:set_character_office(改官、仍 active),不当新人(apply_appointment
           对在册者命中即拒、会标 failed);
         - 任命朝臣(新任/升迁/调任)→ apply_office_appointment(与 extractor office_changes 共用的【唯一落地核】,
@@ -18416,12 +18436,15 @@ class GameDB:
         - 任命纳妃(office 推断为后宫)→ 语义不同,走 apply_appointment 的 consort 路;
         - 罢免:_find_existing_minister 解 alias + ming-guard(外藩/后宫/不在册不接),dismissed+同步清内存 office。
         缺 content(无法查重/注册)→ False 标 failed,不静默。跨模块函数运行期 lazy import 避免 db↔session/issues 循环。"""
+        def _result(names: set[str]) -> object:
+            return names if return_affected else bool(names)
+
         if content is None:
-            return False
+            return _result(set())
         from ming_sim.session import _find_existing_minister
         name = str(payload.get("name") or "").strip()
         if not name:
-            return False
+            return _result(set())
         office = str(payload.get("office") or "")
         if pa["action"] == "任命":
             # 纳妃(后宫)语义不同,不走朝臣落地核:推断为后宫则走 apply_appointment 的 consort 路。
@@ -18430,16 +18453,15 @@ class GameDB:
                 data = {"name": name, "office": office, "office_type": "后宫", "approved": True}
                 appointed, _displaced = apply_appointment(
                     self, state, content, registry, data, llm_config=self.llm_config)
-                return bool(appointed)
+                return _result({name} if appointed else set())
             # 朝臣任命/升迁/调任 → 唯一落地核(在册激活授官 / 不在册建档 / dead 拒 / 空 office 拒)。
-            from ming_sim.issues import apply_office_appointment
             faction = str(payload.get("faction") or "中立").strip() or "中立"
             reason = str(payload.get("reason") or "奉旨任免").strip() or "奉旨任免"
             office_type = str(payload.get("office_type") or "").strip()
             try:
                 appointment_tenure = appointment_tenure_from(payload)
             except ValueError:
-                return False
+                return _result(set())
             recommendation = payload.get("recommendation")
             staged_candidate = recommendation.get("candidate") if isinstance(recommendation, dict) else None
             recommender = str(recommendation.get("recommender") or pa["minister_name"]) if isinstance(recommendation, dict) else ""
@@ -18447,69 +18469,67 @@ class GameDB:
                 not isinstance(staged_candidate, dict)
                 or not recommender
             ):
-                return False
+                return _result(set())
             if isinstance(staged_candidate, dict):
                 from ming_sim.recommendations import validate_recommendation_snapshot
                 if staged_candidate.get("name") != name or not validate_recommendation_snapshot(
                     self, state, recommender, staged_candidate
                 ):
-                    return False
+                    return _result(set())
             # A recommendation event is provenance for this exact staged
             # candidate.  Keep the appointment and event in one transaction so
             # a failure while recording cannot leave the appointment adopted
             # without its auditable recommendation.
+            recommendation_reason = ""
             if isinstance(recommendation, dict):
-                # #635 荐人口（庭裁 r3）：荐词（payload.reason 原句）是双边的一句
-                # 语境，非空必填；缺失即在调用方事务内 fail-loud，任命与双边一并
-                # 回滚（ADR 0079/0082 零模板、P1 失败诚实）。原句逐字透传，
-                # 只以 strip 判空、不裁剪持久化文本。
                 recommendation_reason = str(payload.get("reason") or "")
                 if not recommendation_reason.strip():
                     raise ValueError("荐人双边缺非空荐词语境：payload.reason 必填")
+                reason = recommendation_reason
+            from ming_sim.issues import apply_score_extraction
+            applied = apply_score_extraction(
+                self, state,
+                {"人物变更": [{
+                    "name": name, "动作": "任命", "office": office,
+                    "office_type": office_type, "任别": appointment_tenure,
+                    "reason": reason, "origin_ref": "盘面自发",
+                }]},
+                content=content, registry=None, llm_config=self.llm_config,
+            )
+            affected = {
+                str(item.get("name") or item.get("人物") or "").strip()
+                for item in applied.get("applied_person_changes", [])
+                if isinstance(item, dict) and not item.get("rejected")
+            }
+            affected.discard("")
+            if recommendation_reason and name in affected:
                 from ming_sim.recommendations import record_recommendation_edges
-                with atomic(self):
-                    res = apply_office_appointment(
-                        self, state, content, registry, name, office,
-                        reason=recommendation_reason, new_office_type=office_type,
-                        faction=faction, appointment_tenure=appointment_tenure,
-                        llm_config=self.llm_config, commit=False)
-                    accepted = not res.get("rejected")
-                    if accepted:
-                        event_id = self.record_recommendation(
-                            state, recommender, staged_candidate, office,
-                            recommendation_reason,
-                        )
-                        record_recommendation_edges(
-                            self, state, recommender,
-                            str(staged_candidate.get("name") or ""),
-                            event_id, recommendation_reason,
-                        )
-                    return accepted
-            res = apply_office_appointment(
-                self, state, content, registry, name, office,
-                reason=reason, new_office_type=office_type, faction=faction,
-                appointment_tenure=appointment_tenure, llm_config=self.llm_config)
-            return not res.get("rejected")
+                event_id = self.record_recommendation(
+                    state, recommender, staged_candidate, office,
+                    recommendation_reason,
+                )
+                record_recommendation_edges(
+                    self, state, recommender, name, event_id, recommendation_reason,
+                )
+            return _result(affected)
         if pa["action"] == "罢免":
             # 仅大明【在职】大臣可罢:_find_existing_minister 已 ming-guard + 解 alias;
             # 外藩(power_id≠ming)/后宫/不在册不接(无字面 fallback,免误黜皇太极,CMR R2);
             # 再校 active,免把已故/已黜/致仕者的终态改写成 dismissed(CMR R3 codex R2)。
             key = _find_existing_minister(content, name, self)
             if key is None or self.get_character_status(key)[0] != "active":
-                return False
+                return _result(set())
             # 宗藩（就藩宗室）非朝堂命官，不可作朝臣罢免——_find_existing_minister 仍会解析到宗藩名
             # （任命核需解到名才能显式拒），故罢免侧单独守（cmr R6 cross-section）。
             _ch_key = content.characters.get(key)  # key 来自 _find_existing_minister 必在册，.get 防御一致（R2 gemini）
             if _ch_key is not None and is_vassal_prince(_ch_key):
-                return False
+                return _result(set())
             self.set_character_status(
                 state, key, "dismissed", reason="奉旨罢黜", content=content,
             )
             # 对话确认回合中落库,刷 Agent 让被罢者本回合后续不再以旧活跃态被召对(线上 gemini)。
-            if registry is not None:
-                registry.refresh(key)
-            return True
-        return False
+            return _result({key})
+        return _result(set())
 
     def withdraw_pending_action(self, action_id: int, turn: int) -> bool:
         """皇帝复核:撤回本回合一条尚未落库的暂存动作(删 pending 行)。返回是否删了。

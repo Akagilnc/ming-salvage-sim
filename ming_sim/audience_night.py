@@ -1931,6 +1931,38 @@ def record_summon_fresh(
     )
 
 
+def ensure_inactive_office_summon(
+    db: Any, pending_id: int, person_name: str, *, night_id: int,
+) -> int:
+    """Ensure the pre-close, inactive half of an appointment-plus-summon intent."""
+    origin = f"office:{int(pending_id)}"
+    existing = _ledger_by_origin_ref(db, origin)
+    if existing is not None:
+        return int(existing["id"])
+    if int(night_id) <= 0:
+        raise AudienceNightError("任命后传召须在召对夜内落账", code="night_not_found")
+    return append_ledger_entry(
+        db, int(night_id), person_names=[str(person_name).strip()],
+        tags=[METHOD_CHUANZHAO, _summon_origin_tag(origin)], origin_ref=origin,
+    )
+
+
+def activate_office_summon(db: Any, pending_id: int) -> Optional[Dict[str, Any]]:
+    """Activate the original inactive row; never append to a closed night."""
+    origin = f"office:{int(pending_id)}"
+    entry = _ledger_by_origin_ref(db, origin)
+    if entry is None:
+        return None
+    tags = list(entry["tags"])
+    if TAG_SUMMON_UNSETTLED not in tags:
+        tags.append(TAG_SUMMON_UNSETTLED)
+        db.conn.execute(
+            "UPDATE story_ledger_entries SET tags=? WHERE id=?",
+            (json.dumps(tags, ensure_ascii=False), int(entry["id"])),
+        )
+    return {**entry, "tags": tags}
+
+
 def commit_fresh_summons_for_night(
     db: Any,
     state: GameState,
