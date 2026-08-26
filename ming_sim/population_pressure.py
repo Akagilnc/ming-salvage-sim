@@ -6,6 +6,7 @@ import json
 from typing import Any, Dict, Iterator, List, Tuple
 
 from ming_sim.constants import RECOVERY_GRANT_ACTIONS
+from ming_sim.db import POPULATION_UNIT_PERSONS
 
 
 def displaced_pool_balance_rows(db: Any) -> List[Dict[str, object]]:
@@ -15,6 +16,8 @@ def displaced_pool_balance_rows(db: Any) -> List[Dict[str, object]]:
     玩家面 classes_brief 定性投影另走 regional_displaced_pressure_brief。
     """
     unit = str(getattr(db, "population_unit", "") or "")
+    if unit != POPULATION_UNIT_PERSONS:
+        return []
     return [
         {
             "region_id": str(row["region_id"]),
