@@ -2790,7 +2790,7 @@ class GameDB:
         不在本列表里）。dynamic 项（田赋/辽饷/盐税/商税/皇庄）走省级公式，这里不返回。
         """
         rows = self.conn.execute(
-            "SELECT key, account, direction, display, note, sort_order FROM fiscal_config "
+            "SELECT key, account, direction, display, note, sort_order, origin_ref FROM fiscal_config "
             "WHERE budget_role = 'fixed' AND kind = 'base' AND key LIKE '%\\_base' ESCAPE '\\' "
             "ORDER BY sort_order, key"
         ).fetchall()
@@ -2801,6 +2801,7 @@ class GameDB:
                 "direction": str(r["direction"]),
                 "display": str(r["display"]),
                 "note": str(r["note"] or ""),
+                "origin_ref": str(r["origin_ref"] or ""),
             }
             for r in rows
         ]

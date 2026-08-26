@@ -7934,15 +7934,31 @@ def _apply_recovery_driven_transfers(
         outcome = str(row["execution_outcome"] or "").strip()
         if outcome not in RECOVERY_OUTCOME_FACTORS:
             continue
-        # 仅在本回合落执行判决的案卷触发（closed_turn 对齐）；月拨另轮再判再回流。
+        cadence = str(payload.get("cadence") or "").strip()
         closed_turn = int(row["closed_turn"] or 0)
-        if closed_turn != turn:
+        if cadence != "每月" and closed_turn != turn:
             continue
         factor = float(RECOVERY_OUTCOME_FACTORS[outcome])
         if factor <= 0:
             seen_keys.add((dossier_id, turn))
             continue
-        silver = _recovery_effective_silver_wan(db, dossier_id, turn)
+        if cadence == "每月":
+            reconciled = [
+                int(item["arrived_amount"])
+                for item in db.list_dossier_reconciliations(dossier_id)
+                if int(item.get("turn") or 0) == turn
+            ]
+            if reconciled:
+                silver = max(0, sum(reconciled))
+            else:
+                paid_row = db.conn.execute(
+                    "SELECT COALESCE(SUM(-delta), 0) FROM economy_ledger "
+                    "WHERE origin_ref=? AND turn=? AND delta<0",
+                    (f"dossier:{dossier_id}", turn),
+                ).fetchone()
+                silver = max(0, int(paid_row[0] or 0))
+        else:
+            silver = _recovery_effective_silver_wan(db, dossier_id, turn)
         if silver <= 0:
             continue
         raw_persons = silver * RECOVERY_PERSONS_PER_WAN * factor
