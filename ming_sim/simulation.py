@@ -761,6 +761,7 @@ def build_simulator_payload(
     court_roster = _auto_table(court_rows)
     from ming_sim.population_pressure import (
         displaced_pool_balance_rows,
+        recent_reflux_cause_rows,
         regional_displaced_pressure_brief,
     )
 
@@ -768,6 +769,8 @@ def build_simulator_payload(
     displaced_pressure = regional_displaced_pressure_brief(db)
     # #652：机面结构化省池清单（0143 世界事实数值放行）；classes_brief 仍定性。
     displaced_pool = _auto_table(displaced_pool_balance_rows(db))
+    # #652：近窗回流原因（赈灾/招抚屯田）——与 displaced_pool 同形机面表，供投贼软判归因。
+    recent_reflux_causes = _auto_table(recent_reflux_cause_rows(db))
     # #669/0095：仍在途者的月数语义特征（非裸账）。先成 list，供 two_axis builder 同引用。
     transit_semantics = project_transit_semantics(
         db,
@@ -816,6 +819,8 @@ def build_simulator_payload(
         )),
         # #652 机面：省级流民池结构化余额（投贼吸收吃池顶）；非玩家盘面数表。
         "displaced_pool_balances": displaced_pool,
+        # #652 机面：近窗回流原因（region_id/grant_action/origin_ref）；不报口数。
+        "recent_reflux_causes": recent_reflux_causes,
         "powers_brief": db.power_report(exclude_self=True),
         "active_issues": issues_payload,
         "candidate_events": candidate_events,

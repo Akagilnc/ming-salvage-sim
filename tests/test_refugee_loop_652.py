@@ -388,6 +388,21 @@ def _shaanxi_pool_from_payload(payload) -> int:
     return 0
 
 
+def _shaanxi_reflux_causes_from_payload(payload) -> list[dict]:
+    """Typed recent_reflux_causes rows for shaanxi only (no text locks)."""
+    table = payload.get("recent_reflux_causes") or {}
+    cols = list(table.get("cols") or [])
+    rows = list(table.get("rows") or [])
+    if not cols or not rows:
+        return []
+    out = []
+    for row in rows:
+        item = {cols[i]: row[i] for i in range(min(len(cols), len(row)))}
+        if str(item.get("region_id") or "") == "shaanxi":
+            out.append(item)
+    return out
+
+
 def _expected_recovery(amount: int, outcome: str, pool: int) -> int:
     lo, hi = grant_arrival_bounds(amount, escorted=False)
     silver = (lo + hi) // 2
@@ -478,11 +493,11 @@ def test_post_relief_pool_carries_into_next_month_absorption(game, monkeypatch):
     _reset_shaanxi_pool(db)
     pool0 = _pop(db, "流民", "shaanxi")
     strength0 = _strength(db, pid)
-    _recovery_grant(db, state, amount=30)
+    dossier_id = _recovery_grant(db, state, amount=30)
 
     sess = make_light_session(db, state, content)
 
-    # 月1：只走回流，不吸池
+    # 月1：只走回流，不吸池；回流尚未入近窗前账 → 无陕西赈灾原因行
     sim_m1: list = []
     canned_full_settlement(
         monkeypatch,
@@ -494,11 +509,17 @@ def test_post_relief_pool_carries_into_next_month_absorption(game, monkeypatch):
     )
     r1 = sess.advance_without_decree()
     assert r1 is not None and r1.awaiting is False
+    assert len(sim_m1) == 1
+    m1_causes = _shaanxi_reflux_causes_from_payload(sim_m1[0]["payload"])
+    assert not any(
+        c.get("grant_action") == "赈灾" and c.get("origin_ref") == f"dossier:{dossier_id}"
+        for c in m1_causes
+    )
     pool_after = _pop(db, "流民", "shaanxi")
     assert pool_after < pool0
     assert _strength(db, pid) == strength0
 
-    # 月2：payload 须见下降后池；请求按赈前满池，applier 吃现池顶
+    # 月2：payload 须见下降后池 + 月1 真实回流原因行；请求按赈前满池，applier 吃现池顶
     sim_m2: list = []
     turn2 = int(state.turn)
     canned_full_settlement(
@@ -520,6 +541,11 @@ def test_post_relief_pool_carries_into_next_month_absorption(game, monkeypatch):
     assert r2 is not None and r2.awaiting is False
     assert len(sim_m2) == 1
     assert _shaanxi_pool_from_payload(sim_m2[0]["payload"]) == pool_after
+    m2_causes = _shaanxi_reflux_causes_from_payload(sim_m2[0]["payload"])
+    assert any(
+        c.get("grant_action") == "赈灾" and c.get("origin_ref") == f"dossier:{dossier_id}"
+        for c in m2_causes
+    )
 
     extraction = db.get_turn_extraction(turn2)
     absorptions = (extraction or {}).get("extractor_output", {}).get("bandit_absorptions") or []
