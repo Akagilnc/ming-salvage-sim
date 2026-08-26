@@ -12,6 +12,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import sqlite3
 import time
 from datetime import datetime, timezone
 from collections.abc import Mapping
@@ -2597,10 +2598,15 @@ def prepare_rescript_summon_scaffold(
             "night_id": night_id,
             "consumed": False,
         }
-    except Exception as exc:
-        # UNIQUE 冲突：再 SELECT
-        msg = str(exc).lower()
-        if "unique" not in msg and "constraint" not in msg:
+    except sqlite3.IntegrityError as exc:
+        # origin_ref UNIQUE only：typed errorcode，禁 str(exc) taxonomy
+        unique_codes = {
+            getattr(sqlite3, "SQLITE_CONSTRAINT_UNIQUE", None),
+            getattr(sqlite3, "SQLITE_CONSTRAINT", None),
+        }
+        unique_codes.discard(None)
+        err_code = getattr(exc, "sqlite_errorcode", None)
+        if unique_codes and err_code not in unique_codes:
             raise
         again = _ledger_by_origin_ref(db, origin)
         if again is None:

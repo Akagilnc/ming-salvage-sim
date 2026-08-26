@@ -1518,6 +1518,14 @@ class GameSession:
         """委托编排层等待本轮 scene；调用方在短事务内 persist。"""
         return self._scene_registry.join(int(chat_turn_id or 0))
 
+    def join_rescript_summon_scene(self, chat_turn_id: int) -> list[tuple[int, str]]:
+        """#657 summon 等待：retain claim 直至 finish durable 终态后 release。"""
+        return self._scene_registry.join_retained(int(chat_turn_id or 0))
+
+    def release_rescript_summon_scene(self, chat_turn_id: int) -> None:
+        """#657 summon 终态释放 registry claim（consumed/failed 写后）。"""
+        self._scene_registry.release(int(chat_turn_id or 0))
+
     def persist_chat_turn_scene(self, generated: list[tuple[int, str]]) -> None:
         """委托编排层短写已 join 的 scene 正文。"""
         from ming_sim.beat_orchestration import persist_chat_turn_scene as _persist
@@ -3194,8 +3202,14 @@ class GameSession:
     ) -> Dict[str, object]:
         """#657 PREWRITE（gate 外）：validate_all + run_prewrite_llms；失败零写。"""
         from ming_sim import rescript_actions as ra
-        from ming_sim.agents import create_rescript_draft_agent
-        from ming_sim.rescript_draft import validate_rescript_draft_items
+        from ming_sim.agents import (
+            create_rescript_deliberate_agent,
+            create_rescript_revise_agent,
+        )
+        from ming_sim.rescript_draft import (
+            _parse_rescript_json_strict,
+            normalize_rescript_layer_a_option,
+        )
 
         self._assert_awaiting_decision_submit()
         desk = list(self.db.list_rescript_desk(int(self.state.turn)))
@@ -3254,8 +3268,8 @@ class GameSession:
         )
 
         def _revise_runner(item: ra.ValidatedItem) -> List[Dict[str, object]]:
-            # 单行改票：复用 create_rescript_draft_agent + validate_rescript_draft_items
-            agent = create_rescript_draft_agent(self.llm_config, self.agno_db)
+            # 单行改票：专用 agent + 唯一 {"options":[...]} shape；禁 monthly items[] / drafts[0]
+            agent = create_rescript_revise_agent(self.llm_config, self.agno_db)
             payload = {
                 "mode": "single_row_revise",
                 "title": item.row.get("title"),
@@ -3264,20 +3278,21 @@ class GameSession:
                 "note": item.choice.get("note") or "",
             }
             from ming_sim.agents import run_agent_text
-            from ming_sim.rescript_draft import _parse_rescript_json_strict
             raw = run_agent_text(
                 agent, json.dumps(payload, ensure_ascii=False), tag="rescript-revise",
             )
             data = _parse_rescript_json_strict(raw)
-            drafts = validate_rescript_draft_items(data, set())
-            if not drafts:
-                raise ValueError("改票 LLM 未产出 options")
-            return list(drafts[0].get("options") or [])
+            if not isinstance(data, dict) or "items" in data:
+                raise ValueError("改票 LLM 须输出 {\"options\":[...]}，禁 monthly items[]")
+            options_raw = data.get("options")
+            if not isinstance(options_raw, list) or not options_raw:
+                raise ValueError("改票 LLM 未产出非空 options")
+            return [normalize_rescript_layer_a_option(opt) for opt in options_raw]
 
         def _deliberate_runner(item: ra.ValidatedItem) -> Dict[str, object]:
-            # 站台意愿必须由 LLM 输出；代码只校验 shape
+            # 站台意愿：专用 agent + 整串严格 JSON {title,body,stance}；禁 regex 抽对象
             from ming_sim.agents import run_agent_text
-            agent = create_rescript_draft_agent(self.llm_config, self.agno_db)
+            agent = create_rescript_deliberate_agent(self.llm_config, self.agno_db)
             prompt = (
                 "请为以下急务拟定下部议/廷议的站台意愿（JSON："
                 "{\"title\":\"...\",\"body\":\"...\",\"stance\":\"...\"}）。\n"
@@ -3285,17 +3300,15 @@ class GameSession:
                 f"批语：{item.choice.get('note') or ''}"
             )
             raw = run_agent_text(agent, prompt, tag="rescript-deliberate")
-            text = str(raw or "").strip()
-            try:
-                # 容忍围栏
-                import re as _re
-                m = _re.search(r"\{.*\}", text, _re.S)
-                obj = json.loads(m.group(0) if m else text)
-            except Exception as exc:
-                raise ValueError(f"deliberate LLM 输出非 JSON：{exc}") from exc
-            if not isinstance(obj, dict) or not str(obj.get("body") or obj.get("stance") or "").strip():
-                raise ValueError("deliberate LLM 意愿 shape 非法")
-            return obj
+            obj = _parse_rescript_json_strict(str(raw or ""))
+            if not isinstance(obj, dict):
+                raise ValueError("deliberate LLM 意愿须为 object")
+            title = str(obj.get("title") or "").strip()
+            body = str(obj.get("body") or "").strip()
+            stance = str(obj.get("stance") or "").strip()
+            if not (title and body and stance):
+                raise ValueError("deliberate LLM 意愿缺 title/body/stance")
+            return {"title": title, "body": body, "stance": stance}
 
         prewrite = ra.run_prewrite_llms(
             batch,
@@ -3394,7 +3407,8 @@ class GameSession:
                 continue
             ctid = int(sc.get("chat_turn_id") or 0)
             try:
-                generated = self.join_chat_turn_scene(ctid)
+                # retain claim across wait so concurrent same-body retry coalesces
+                generated = self.join_rescript_summon_scene(ctid)
             except Exception as exc:
                 # §D.1 ② 无锁等待：只汇合 Future / 记 error，**零写库**。
                 # failed 持久化挪到 ③ finish（持 write_gate）——禁无锁② UPDATE+commit。
@@ -3475,6 +3489,11 @@ class GameSession:
                                 "AND user_message_id IS NULL",
                                 (ctid_fail,),
                             )
+                # durable failed 已写 → 唯一 release，允许合法重入
+                for item in join_state.get("joined") or []:
+                    ctid_rel = int(item.get("chat_turn_id") or 0)
+                    if ctid_rel > 0:
+                        self.release_rescript_summon_scene(ctid_rel)
                 raise ValueError(
                     "召见尚未消费，不得推进 phase2：" + "; ".join(unconsumed)
                 )
@@ -3486,6 +3505,8 @@ class GameSession:
                 ctid = int(item.get("chat_turn_id") or 0)
                 if ctid > 0:
                     self.db.complete_rescript_summon_scaffold_turn(ctid)
+                    # durable consumed 已写 → 唯一 release
+                    self.release_rescript_summon_scene(ctid)
 
         if not (self.last_decree or "").strip():
             ctx0 = self.db.get_resolve_context(self.state.turn)

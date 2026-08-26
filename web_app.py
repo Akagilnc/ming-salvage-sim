@@ -1550,9 +1550,22 @@ class WebGame:
                 self.session.pending_decisions()
                 if self.state.turn_phase == TurnPhase.AWAITING_DECISION.value else []
             ),
+            # #657：phase1 已落 decided、desk 只查 pending 为空时，投影 typed 续跑信号。
+            # 不把 decided 塞回 pending 列表；前端空 POST 既有 resolve_decisions/stream。
+            "resume_phase2": self._resume_phase2_signal(),
             "last_decree": self.last_decree,
             "last_report": self.last_report,
         }
+
+    def _resume_phase2_signal(self) -> bool:
+        """durable：awaiting_decision + resolve_context 在 + 合并 desk 无 pending。"""
+        if self.state.turn_phase != TurnPhase.AWAITING_DECISION.value:
+            return False
+        ctx = self.db.get_resolve_context(self.state.turn)
+        if ctx is None:
+            return False
+        desk = self.session.pending_decisions()
+        return len(desk) == 0
 
     # ── 聊天 ──────────────────────────────────────────────────────────────
     def _persistent_chat_minister(self, minister_name: str) -> bool:
