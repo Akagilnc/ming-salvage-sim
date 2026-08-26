@@ -54,7 +54,6 @@ from ming_sim.issues import (
     apply_issue_inertia_and_ongoing,
     apply_score_extraction,
     _apply_levy_driven_transfers,
-    _apply_recovery_driven_transfers,
     auto_trigger_seed_issues,
     clear_gated_legacies,
     gather_impeachment_surge_candidates,
@@ -2408,11 +2407,6 @@ def _settle_after_extract_body(
         applied = delta_applier(db, state, extracted, content, registry)
     else:
         applied = apply_score_extraction(db, state, extracted, content=content, registry=registry)
-    # #652：回流单核在 dossier_executions 落库之后消费执行判决 + 实抵；
-    # 与 levy 同属本 phase2 atomic，LLM 零产回流。
-    recovery_applied, recovery_rejected = _apply_recovery_driven_transfers(
-        db, state, commit=False,
-    )
     # #670：判官所产续程只有在 canonical applier 已成功后才按故事账 origin 结清；
     # 本函数外层 atomic 使行止与结清同成同败；另退役非 active 未结传召。
     from ming_sim.audience_night import (
@@ -2423,8 +2417,6 @@ def _settle_after_extract_body(
     applied["retired_summon_origins"] = retire_unsettled_summons_for_inactive(db)
     applied.setdefault("population_transfers", []).extend(levy_applied)
     applied.setdefault("population_transfers_rejections", []).extend(levy_rejected)
-    applied.setdefault("population_transfers", []).extend(recovery_applied)
-    applied.setdefault("population_transfers_rejections", []).extend(recovery_rejected)
     # #1504：当月 covert 实况进度与 apply 同一 atomic（0073 实况轨；不读奏报）。
     from ming_sim.covert_progress import (
         apply_monthly_covert_actual_progress,

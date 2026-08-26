@@ -307,6 +307,35 @@ def test_recovery_grant_produces_回流_on_settle(game, action):
     assert _pop(db, "农民", "shaanxi") == farmer_before + expected
 
 
+def test_paid_recovery_preempts_same_turn_absorption(game):
+    db, state, content = game
+    db.conn.execute(
+        "UPDATE classes SET population=100000 WHERE name='流民' AND region_id='shaanxi'"
+    )
+    db.conn.commit()
+    pid = "bandit_li_zicheng"
+    dossier_id = _recovery_grant(db, state, amount=30)
+    strength_before = _strength(db, pid)
+    before_turn = int(state.turn)
+    settle_with_delta(
+        state, db, {
+            "bandit_absorptions": [{
+                "region_id": "shaanxi", "power_id": pid,
+                "requested_count": 100_000, "origin_ref": "盘面自发",
+            }],
+        }, before_turn=before_turn, content=content, narrative="回流先于投贼",
+    )
+    output = db.get_turn_extraction(before_turn)["extractor_output"]
+    reflux = _reflux(output["population_transfers"], dossier_id=dossier_id)
+    absorption = output["bandit_absorptions"]
+    assert [item["amount"] for item in reflux] == [60_000]
+    assert [item["actual_count"] for item in absorption] == [40_000]
+    assert _pop(db, "流民", "shaanxi") == 0
+    assert _strength(db, pid) == (
+        strength_before + 40_000 // BANDIT_ABSORPTION_PERSONS_PER_STRENGTH
+    )
+
+
 def test_two_recovery_dossiers_share_remaining_pool(game):
     db, state, content = game
     db.conn.execute(
