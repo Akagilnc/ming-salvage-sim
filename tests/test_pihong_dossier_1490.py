@@ -1424,6 +1424,12 @@ def test_657_prewrite_failure_zero_db_writes(game):
     assert hit["status"] == "pending"
     assert hit["choice"] is None or hit["choice"] == {} or not hit["choice"]
 
+    def interrupted(_it):
+        raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        ra.run_prewrite_llms(batch, deliberate_runner=interrupted)
+
 
 def test_657_abi_mapper_matrix_a1_a12(game):
     """A1–A12：map 正/负 + 判后 follow/midzhi→apply 链（补 A5/A6/A11）。"""

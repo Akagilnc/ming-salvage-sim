@@ -3634,11 +3634,8 @@ class GameSession:
             isinstance(c, dict) and str(c.get("decision_key") or "").strip()
             for c in (choices or [])
         )
-        has_urgent = False
-        list_desk = getattr(getattr(self, "db", None), "list_rescript_desk", None)
-        if callable(list_desk):
-            desk = list_desk(int(self.state.turn))
-            has_urgent = any(str(r.get("kind")) == "rescript_draft" for r in (desk or []))
+        desk = self.db.list_rescript_desk(int(self.state.turn))
+        has_urgent = any(str(r.get("kind")) == "rescript_draft" for r in (desk or []))
         if has_urgent or keyed:
             return self.resolve_rescript_decisions(
                 choices,

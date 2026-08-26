@@ -564,7 +564,7 @@ def run_prewrite_llms(
     if not revise_items and not deliberate_items:
         return results
 
-    errors: List[BaseException] = []
+    errors: List[Exception] = []
 
     def _run_revise(it: ValidatedItem) -> Tuple[str, List[Dict[str, object]]]:
         if revise_runner is None:
@@ -589,7 +589,7 @@ def run_prewrite_llms(
         for kind, fut in futs:
             try:
                 key, payload = fut.result()
-            except BaseException as exc:  # noqa: BLE001 — 任一腿失败整批中止
+            except Exception as exc:  # noqa: BLE001 — 任一普通腿失败整批中止
                 errors.append(exc)
                 continue
             if kind == "revise":

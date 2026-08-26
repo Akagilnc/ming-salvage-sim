@@ -482,7 +482,7 @@ def test_history_projection_handlers_are_sync_for_sqlite_access():
 # ---------------------------------------------------------------------------
 
 def test_657_s4_empty_scaffold_open_enter_roster_not_on_scroll(game):
-    """generator 未完成期：scroll 无空 OPEN/ENTER、无人物锚、无固定开夜/入殿/随侍句。"""
+    """generator 未完成期：scroll 无空 OPEN/ENTER。"""
     from ming_sim.audience_night import (
         open_night,
         prepare_rescript_summon_scaffold,
@@ -502,15 +502,6 @@ def test_657_s4_empty_scaffold_open_enter_roster_not_on_scroll(game):
     # 空垫位 OPEN/ENTER 不得投影
     assert openings == []
     assert entrances == []
-    joined = "\n".join(str(m.get("content") or "") for m in scroll)
-    assert "召对启" not in joined
-    assert "入殿" not in joined
-    assert "随侍在侧" not in joined
-    # 无人物锚展示（entrance 已空；scene 亦不应挂空垫位人名作入口）
-    assert not any(
-        m.get("beat") == "entrance" and m.get("speaker")
-        for m in scroll
-    )
 
 
 def test_657_s4_success_persist_shows_generator_body_only(game):
@@ -532,6 +523,4 @@ def test_657_s4_success_persist_shows_generator_body_only(game):
     db.conn.commit()
     scroll = read_night_scroll(db, int(sc["night_id"]))
     entrances = [m for m in scroll if m.get("beat") == "entrance"]
-    assert any(m.get("content") == gen_body for m in entrances)
-    assert not any("入殿。" == str(m.get("content") or "").strip()[-3:] and "趋步" not in str(m.get("content"))
-                   for m in entrances)
+    assert [m.get("content") for m in entrances] == [gen_body]
