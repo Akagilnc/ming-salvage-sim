@@ -162,17 +162,12 @@ def tracer_client(tmp_path, monkeypatch, _offline_scene_beat_generator):
 
     game = web_app.web_game
     if game is not None:
-        # 等召对尾随（读心/抽取/关系判官）落完再关库；Condition 等票，不 busy-poll。
+        # 等召对尾随落完再关库；fail-loud——wait_idle=False/异常不得吞掉后继续关库。
         try:
-            q = get_session_write_queue(game)
-            q.wait_idle(timeout_s=2.0)
-        except Exception:
-            pass
-        try:
+            _wait_pending_writes(game)
             game.session.close()
-        except Exception:
-            pass
-        web_app.web_game = None
+        finally:
+            web_app.web_game = None
 
 
 def _assert_not_bare_500(resp, *, step: str) -> None:
@@ -226,6 +221,29 @@ def _wait_pending_writes(game, *, timeout_s: float = 2.0) -> None:
         f"pending writes did not drain in {timeout_s}s; "
         f"count={q.inflight_count()}"
     )
+
+
+def test_wait_pending_writes_fail_loud_on_false_and_exception(monkeypatch):
+    """负向：wait_idle=False 与队列异常均须报红，不得被 teardown/调用方洗白。"""
+    from ming_sim.session_write_queue import SessionWriteQueue
+
+    stuck = SessionWriteQueue()
+    ticket = stuck.claim(key=("teardown-stuck", 1))
+    assert ticket is not None
+    try:
+        with pytest.raises(AssertionError, match="did not drain"):
+            _wait_pending_writes(SimpleNamespace(_write_queue=stuck), timeout_s=0.05)
+    finally:
+        stuck.complete(ticket)
+
+    boom = SessionWriteQueue()
+
+    def _raise(*, timeout_s=None):
+        raise RuntimeError("queue boom")
+
+    monkeypatch.setattr(boom, "wait_idle", _raise)
+    with pytest.raises(RuntimeError, match="queue boom"):
+        _wait_pending_writes(SimpleNamespace(_write_queue=boom), timeout_s=0.05)
 
 
 def _install_trail_hold(game, release: threading.Event):
