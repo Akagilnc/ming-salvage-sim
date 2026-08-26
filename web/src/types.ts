@@ -593,6 +593,8 @@ export type HistoryTurnItem = {
   year: number;
   period: number;
   has_report: boolean;
+  /** #671：本月有非空王承恩递话（trim 存在位，不解析正文） */
+  has_attendant: boolean;
   has_directive: boolean;
   /** Persisted closed audience night for a scene archive. */
   night_id?: number;

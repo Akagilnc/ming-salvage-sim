@@ -4663,9 +4663,10 @@ def api_history_turns() -> Dict[str, Any]:
 async def api_history_turn(turn: int) -> Dict[str, Any]:
     """某回合玩家历史：只交付邸报、诏书、已颁草案与独立递话原文。"""
     db = get_game().db
-    report = db.get_turn_report(turn)
-    # #671：与 report 分栏同表；史册月档须可独立回读（trim 仅判空，原文零删改）
-    attendant_message = db.get_turn_attendant_message(turn)
+    # #671：一次读 turn_reports；year/period 在 extraction/directives 皆无时回落存档行
+    archive = db.get_turn_report_archive(turn)
+    report = str((archive or {}).get("report") or "")
+    attendant_message = str((archive or {}).get("attendant_message") or "")
     extraction = db.get_turn_extraction(turn)
     directives = db.list_directives_by_turn(turn)
     # exists：递话纯空白与空串同属缺席（临时 strip）；payload 仍回原文
@@ -4679,11 +4680,23 @@ async def api_history_turn(turn: int) -> Dict[str, Any]:
     decree_text = ""
     if extraction is not None:
         decree_text = str(extraction.get("decree_text") or "")
+    if extraction is not None:
+        year = extraction["year"]
+        period = extraction["period"]
+    elif directives:
+        year = directives[0]["year"]
+        period = directives[0]["period"]
+    elif archive is not None:
+        year = archive["year"]
+        period = archive["period"]
+    else:
+        year = 0
+        period = 0
     return {
         "turn": turn,
         "exists": True,
-        "year": extraction["year"] if extraction else (directives[0]["year"] if directives else 0),
-        "period": extraction["period"] if extraction else (directives[0]["period"] if directives else 0),
+        "year": year,
+        "period": period,
         "report": report,
         "attendant_message": attendant_message,
         "decree_text": decree_text,

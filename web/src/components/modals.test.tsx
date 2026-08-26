@@ -1290,7 +1290,7 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
   it("selects closed scenes through the shared scroll endpoint without a composer", async () => {
     const fetchMock = vi.fn().mockImplementation((url: string) => {
       if (url === "/api/history/turns") return Promise.resolve({ ok: true, json: async () => ({ turns: [
-        { kind: "month", turn: 7, year: 1, period: 11, has_report: true, has_directive: false },
+        { kind: "month", turn: 7, year: 1, period: 11, has_report: true, has_attendant: false, has_directive: false },
         { kind: "night", turn: 7, year: 1, period: 11, night_id: 31, title: "1年11月 · 戌时乾清宫 · 越次召对 · 第1场", involved_people: ["杨嗣昌"] },
         { kind: "night", turn: 7, year: 1, period: 11, night_id: 32, title: "1年11月 · 戌时乾清宫 · 召对 · 第2场", involved_people: ["洪承畴"] },
       ] }) });
@@ -1321,21 +1321,21 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
   it("史册 filters out scene rows and keeps the public-document boundary", async () => {
     vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string) => Promise.resolve({ ok: true, json: async () =>
       url === "/api/history/turns" ? { turns: [
-        { kind: "month", turn: 7, year: 1, period: 11, has_report: true, has_directive: false },
+        { kind: "month", turn: 7, year: 1, period: 11, has_report: true, has_attendant: false, has_directive: false },
         { kind: "night", turn: 7, year: 1, period: 11, night_id: 31, title: "不应出现的场卷" },
       ] } : { turn: 7, exists: true, report: "月档奏报", directives: [] }
     })));
     const host = document.createElement("div"); document.body.appendChild(host);
     const root = createRoot(host); mountedRoots.push({ root, host });
     await act(async () => { root.render(<HistoryModal onClose={() => {}} />); await Promise.resolve(); await Promise.resolve(); });
-    expect(host.textContent).toContain("奏报与诏书");
+    expect(host.textContent).toMatch(/奏报.*诏书.*递话|奏报、诏书与递话/);
     expect(host.textContent).not.toContain("不应出现的场卷");
   });
 
   it("#671 史册月档经 HistoryModal fetch 呈现独立递话原文", async () => {
     const raw = "\n  **皇爷**，洪承畴本月抵京候旨。  \n";
     const blank = "   \n\t  ";
-    const monthTurn = { kind: "month" as const, turn: 7, year: 1, period: 11, has_report: true, has_directive: false };
+    const monthTurn = { kind: "month" as const, turn: 7, year: 1, period: 11, has_report: true, has_attendant: true, has_directive: false };
     const fetchMock = vi.fn().mockImplementation((url: string) => Promise.resolve({
       ok: true,
       json: async () => url === "/api/history/turns"
@@ -1388,6 +1388,51 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
       await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
     });
     expect(hostBlank.querySelector("[data-testid=history-attendant]")).toBeNull();
+  });
+
+  it("#671 attendant-only 月档列表标签为递话、不冒充奏报", async () => {
+    const monthTurn = {
+      kind: "month" as const,
+      turn: 7,
+      year: 1627,
+      period: 10,
+      has_report: false,
+      has_attendant: true,
+      has_directive: false,
+    };
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string) => Promise.resolve({
+      ok: true,
+      json: async () => url === "/api/history/turns"
+        ? { turns: [monthTurn] }
+        : {
+            turn: 7,
+            exists: true,
+            year: 1627,
+            period: 10,
+            report: "",
+            attendant_message: "递话正文",
+            decree_text: "",
+            directives: [],
+          },
+    })));
+    const host = document.createElement("div"); document.body.appendChild(host);
+    const root = createRoot(host); mountedRoots.push({ root, host });
+    await act(async () => {
+      root.render(<HistoryModal onClose={() => {}} />);
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    });
+
+    const item = host.querySelector(".history-turn-item");
+    expect(item).not.toBeNull();
+    const label = item!.textContent || "";
+    expect(label).toContain("递话");
+    expect(label).not.toContain("奏报");
+
+    // 标题/摘要承认第三种内容（契约：含「递话」；不锁死全句）
+    const dialog = host.querySelector('[role="dialog"]');
+    expect(dialog?.getAttribute("aria-label") || "").toContain("递话");
+    expect(host.textContent).toContain("递话");
+    expect(host.textContent).not.toMatch(/仅收奏报与诏书/);
   });
 });
 
