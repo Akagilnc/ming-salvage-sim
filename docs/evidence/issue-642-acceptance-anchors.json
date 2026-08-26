@@ -1,7 +1,7 @@
 {
   "gate": "issue-642-family-tail-relation-acceptance",
-  "git_head": "7d96fe17b4c59b33d86b01a3ab742a20e97be307",
-  "raw_cli_trace": "/private/tmp/ming-w5-642/docs/evidence/issue-642-acceptance-trace.jsonl",
+  "git_head": "b931de529b83fad1010b8e8154ed5b20c8a8e005",
+  "raw_cli_trace": "docs/evidence/issue-642-acceptance-trace.jsonl",
   "method": {
     "design": "Live production-chain tracer: seed semantic on seed ledger; yang = 3×(project_relation_ledger → session summon Q&A → audience_night.close_night via scene_registry.start_relation_judge_provider Future → settle_with_delta brew); typed asserts on judge watermark/origin/edge id/summary last_event_id + last_brewed year-period progression + beat1 tension kinds → face_before event pointers → beat2/3 coop; semantic cannot wash typed failure; coda = typed prior_events mechanical only; independent top-level anchors run via ThreadPoolExecutor; no free-text regex; structured pass/fail only.",
     "samples": 1,
