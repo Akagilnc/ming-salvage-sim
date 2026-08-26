@@ -1298,6 +1298,9 @@ def resolve_directives(
     attendant_message = ""
     sim_failed = False
     narrative = ""
+    # companion 腿刚成功（含 checkpoint 重试叫通）时须在下游前 durable；
+    # 仅复用已持久 attendant / 无 companion 在飞 不置位——避免给 clear_for_resimulation 重推演误打标记。
+    companion_just_succeeded = False
 
     if companion_sim_done:
         # 复用存档叙事与世界结果；勿被本轮 build_simulator_payload 盖掉。
@@ -1319,8 +1322,7 @@ def resolve_directives(
                     arrivals=arrival_waiting,
                 ) or ""
             )
-        # companion 成功路径：清标记，再进 HITL/extractor
-        simulator_payload.pop(ARRIVAL_COMPANION_SIM_DONE_KEY, None)
+            companion_just_succeeded = True
     else:
         simulator = create_season_simulator_agent(
             llm_config, agno_db, state=state, db=db, simulator_payload=simulator_payload
@@ -1388,12 +1390,29 @@ def resolve_directives(
             # 同作用域 join：companion 异常归属独立，不被 simulator fallback 吞掉
             if attendant_future is not None:
                 attendant_message = str(attendant_future.result() or "")
+                companion_just_succeeded = True
         finally:
             if pool is not None:
                 pool.shutdown(wait=True)
-        # companion 成功后清内存标记，随后 HITL/settle 整行 upsert 不得再带标记
-        if isinstance(simulator_payload, dict):
-            simulator_payload.pop(ARRIVAL_COMPANION_SIM_DONE_KEY, None)
+
+    # #671：companion 成功后、进 parse_decision_blocks / extractor / 票拟前，
+    # 同一 simulator 叙事/payload 与原样 attendant 一并 durable；checkpoint 仍带
+    # ARRIVAL_COMPANION_SIM_DONE_KEY，下游失败重试既不重跑 sim 也不重叫 companion。
+    # 随后 HITL/settle 整行 upsert 用已 pop 的内存 payload 清标转存。
+    if not sim_failed and companion_just_succeeded and attendant_message:
+        ckpt_payload = (
+            dict(simulator_payload) if isinstance(simulator_payload, dict) else {}
+        )
+        ckpt_payload[ARRIVAL_COMPANION_SIM_DONE_KEY] = True
+        db.save_resolve_context(
+            state.turn, decree_text, narrative, ckpt_payload,
+            secret_orders=secret_orders_for_sim,
+            relevant_memories=relevant_memories,
+            source=Provenance(source).value,
+            attendant_message=attendant_message,
+        )
+    if isinstance(simulator_payload, dict):
+        simulator_payload.pop(ARRIVAL_COMPANION_SIM_DONE_KEY, None)
 
     if sim_failed:
         rescript_decisions = _rescript_decisions(verdict_rows, proposed_dossiers)
