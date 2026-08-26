@@ -1,0 +1,271 @@
+{
+  "gate": "issue-641-relation-only-extractor-bare-seam (test/adjudication/relation_style_extractor_gate_641.py)",
+  "claim_scope": "single_observed_pass",
+  "git_head": "f41b72046aee80f2b3b553911f5349e955641afc",
+  "config": {
+    "channel": "cli",
+    "runner": "codex",
+    "model": "gpt-5.6-sol",
+    "reasoning_strength": "high"
+  },
+  "scenario": {
+    "narrative": "本月邸报：户部尚书毕自严核销用度时屡次驳回吏部尚书王绍徽所请拨付，王绍徽因此衔恨，二人在朝会议事时互相掣肘使绊，声气不通。本月未见任免、处置、评定或丧亲破胆等人事固有层变故。",
+    "principals": [
+      "毕自严",
+      "王绍徽"
+    ],
+    "styles_before": {
+      "毕自严": "务实算账",
+      "王绍徽": "党锢酷烈"
+    }
+  },
+  "edge_baseline": {
+    "target_pair": {
+      "source": "毕自严",
+      "target": "王绍徽"
+    },
+    "pair_note": "ordered pair names the scenario principals; accepted direction follows merged",
+    "ids_before": [],
+    "count_before": 0
+  },
+  "module_raw_capture": {
+    "extractor/relations": {
+      "full_response": "{\"大臣互动\":[{\"施动者\":\"毕自严\",\"受动者\":\"王绍徽\",\"类目\":\"使绊\",\"语境\":\"毕自严核销用度时屡次驳回王绍徽所请拨付，二人在朝会议事时互相掣肘。\",\"来源引用\":\"盘面自发\"}]}",
+      "prompt_chars": 199,
+      "resp_chars": 101,
+      "seq_or_ordinal": 1,
+      "wall_ts": "2026-08-25 14:38:26"
+    },
+    "extractor/internal": {
+      "full_response": "{\"国势变化\":{},\"钱粮收支\":[],\"财政制度变化\":[],\"新立月度收支\":[],\"裁撤月度收支\":[],\"派系变化\":{},\"阶级变化\":{},\"人口转移\":[],\"加派\":[],\"地区变化\":{}}",
+      "prompt_chars": 354,
+      "resp_chars": 105,
+      "seq_or_ordinal": 2,
+      "wall_ts": "2026-08-25 14:38:26"
+    },
+    "extractor/military_external": {
+      "full_response": "{\"军队变化\":{},\"新建军队\":[],\"势力变化\":{},\"四方动向\":{}}",
+      "prompt_chars": 245,
+      "resp_chars": 41,
+      "seq_or_ordinal": 3,
+      "wall_ts": "2026-08-25 14:38:26"
+    },
+    "extractor/personnel_secret": {
+      "full_response": "{\"人物变更\":[],\"new_issues\":[],\"密令副作用\":[],\"密令执行态\":[],\"dossier_progress_reports\":[],\"secret_dossier_participants\":[],\"崇祯结局\":null}",
+      "prompt_chars": 329,
+      "resp_chars": 124,
+      "seq_or_ordinal": 4,
+      "wall_ts": "2026-08-25 14:38:26"
+    },
+    "extractor/issues": {
+      "full_response": "{\"局势推进\":[],\"新立局势\":[],\"事件结局\":{},\"撤销局势\":[],\"结案局势\":[],\"案卷执行\":[],\"案卷参与人\":[],\"拨帑对账\":[],\"政敌检举\":[]}",
+      "prompt_chars": 426,
+      "resp_chars": 92,
+      "seq_or_ordinal": 5,
+      "wall_ts": "2026-08-25 14:38:26"
+    }
+  },
+  "fresh_trace": {
+    "path": "/private/tmp/issue-641-trace-85673.jsonl",
+    "records": [
+      {
+        "seq": 2,
+        "ts": "2026-08-25 14:38:37",
+        "backend": "codex",
+        "model_id": "gpt-5.6-sol",
+        "prompt_chars": 35436,
+        "resp_chars": 101,
+        "error": null,
+        "response": "{\"大臣互动\":[{\"施动者\":\"毕自严\",\"受动者\":\"王绍徽\",\"类目\":\"使绊\",\"语境\":\"毕自严核销用度时屡次驳回王绍徽所请拨付，二人在朝会议事时互相掣肘。\",\"来源引用\":\"盘面自发\"}]}",
+        "tag": "extractor"
+      },
+      {
+        "seq": 4,
+        "ts": "2026-08-25 14:38:38",
+        "backend": "codex",
+        "model_id": "gpt-5.6-sol",
+        "prompt_chars": 47191,
+        "resp_chars": 105,
+        "error": null,
+        "response": "{\"国势变化\":{},\"钱粮收支\":[],\"财政制度变化\":[],\"新立月度收支\":[],\"裁撤月度收支\":[],\"派系变化\":{},\"阶级变化\":{},\"人口转移\":[],\"加派\":[],\"地区变化\":{}}",
+        "tag": "extractor"
+      },
+      {
+        "seq": 1,
+        "ts": "2026-08-25 14:38:41",
+        "backend": "codex",
+        "model_id": "gpt-5.6-sol",
+        "prompt_chars": 39358,
+        "resp_chars": 41,
+        "error": null,
+        "response": "{\"军队变化\":{},\"新建军队\":[],\"势力变化\":{},\"四方动向\":{}}",
+        "tag": "extractor"
+      },
+      {
+        "seq": 3,
+        "ts": "2026-08-25 14:38:41",
+        "backend": "codex",
+        "model_id": "gpt-5.6-sol",
+        "prompt_chars": 43406,
+        "resp_chars": 124,
+        "error": null,
+        "response": "{\"人物变更\":[],\"new_issues\":[],\"密令副作用\":[],\"密令执行态\":[],\"dossier_progress_reports\":[],\"secret_dossier_participants\":[],\"崇祯结局\":null}",
+        "tag": "extractor"
+      },
+      {
+        "seq": 5,
+        "ts": "2026-08-25 14:38:45",
+        "backend": "codex",
+        "model_id": "gpt-5.6-sol",
+        "prompt_chars": 55365,
+        "resp_chars": 92,
+        "error": null,
+        "response": "{\"局势推进\":[],\"新立局势\":[],\"事件结局\":{},\"撤销局势\":[],\"结案局势\":[],\"案卷执行\":[],\"案卷参与人\":[],\"拨帑对账\":[],\"政敌检举\":[]}",
+        "tag": "extractor"
+      }
+    ],
+    "linkage": [
+      {
+        "caller_tag": "extractor/internal",
+        "linked": true,
+        "trace_seq": 4,
+        "match": "exact_response",
+        "trace_truncated": false
+      },
+      {
+        "caller_tag": "extractor/military_external",
+        "linked": true,
+        "trace_seq": 1,
+        "match": "exact_response",
+        "trace_truncated": false
+      },
+      {
+        "caller_tag": "extractor/issues",
+        "linked": true,
+        "trace_seq": 5,
+        "match": "exact_response",
+        "trace_truncated": false
+      },
+      {
+        "caller_tag": "extractor/personnel_secret",
+        "linked": true,
+        "trace_seq": 3,
+        "match": "exact_response",
+        "trace_truncated": false
+      },
+      {
+        "caller_tag": "extractor/relations",
+        "linked": true,
+        "trace_seq": 2,
+        "match": "exact_response",
+        "trace_truncated": false
+      }
+    ]
+  },
+  "extractor_output": {
+    "merged": {
+      "metric_delta": {},
+      "economy_moves": [],
+      "faction_delta": {},
+      "class_delta": {},
+      "population_transfers": [],
+      "surcharge_decrees": [],
+      "region_delta": {},
+      "army_delta": {},
+      "new_armies": [],
+      "power_updates": {},
+      "world_advance": {},
+      "issue_advances": [],
+      "new_issues": [],
+      "事件结局": {},
+      "cancels": [],
+      "close_issues": [],
+      "fiscal_changes": [],
+      "fiscal_creates": [],
+      "fiscal_removes": [],
+      "office_changes": [],
+      "appointments": [],
+      "character_status_changes": [],
+      "character_power_changes": [],
+      "人物变更": [],
+      "secret_order_updates": [],
+      "secret_order_closes": [],
+      "covert_exec_selections": [],
+      "dossier_executions": [],
+      "dossier_participants": [],
+      "secret_dossier_participants": [],
+      "dossier_reconciliations": [],
+      "faction_denunciations": [],
+      "authority_changes": [],
+      "dossier_progress_reports": [],
+      "emperor_fate": null,
+      "relation_edge_events": [
+        {
+          "施动者": "毕自严",
+          "受动者": "王绍徽",
+          "类目": "使绊",
+          "语境": "毕自严核销用度时屡次驳回王绍徽所请拨付，二人在朝会议事时互相掣肘。",
+          "origin_ref": "盘面自发"
+        }
+      ]
+    }
+  },
+  "apply": {
+    "relation_edge_event_resolutions": [
+      {
+        "source": "毕自严",
+        "target": "王绍徽",
+        "event_kind": "使绊",
+        "origin": "盘面自发:relation:使绊",
+        "edge_id": 1
+      }
+    ],
+    "accepted_pair_resolutions": [
+      {
+        "source": "毕自严",
+        "target": "王绍徽",
+        "event_kind": "使绊",
+        "origin": "盘面自发:relation:使绊",
+        "edge_id": 1
+      }
+    ],
+    "new_edge_ids": [
+      1
+    ],
+    "new_edge_rows": [
+      {
+        "id": 1,
+        "source": "毕自严",
+        "target": "王绍徽",
+        "event_kind": "使绊",
+        "context": "毕自严核销用度时屡次驳回王绍徽所请拨付，二人在朝会议事时互相掣肘。"
+      }
+    ],
+    "styles_before": {
+      "毕自严": "务实算账",
+      "王绍徽": "党锢酷烈"
+    },
+    "styles_after": {
+      "毕自严": "务实算账",
+      "王绍徽": "党锢酷烈"
+    },
+    "temperament_log_count_before": 0,
+    "temperament_log_count_after": 0,
+    "person_change_actions_in_merged": [],
+    "count_after": 1
+  },
+  "checks": {
+    "no_temperament_in_merged_person_changes": true,
+    "styles_unchanged": true,
+    "no_new_temperament_person_logs": true,
+    "merged_has_pair_relation_edge_events": true,
+    "accepted_pair_resolution": true,
+    "edge_id_delta_nonempty": true,
+    "edge_count_matches_new_ids": true,
+    "new_ids_correspond_to_accepted": true,
+    "all_modules_raw_captured": true,
+    "critical_raw_trace_linkage": true,
+    "edge_write_proven": true,
+    "passed": true
+  }
+}

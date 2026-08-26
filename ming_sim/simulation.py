@@ -210,6 +210,7 @@ ITEM_FIELD_ALIASES = {
     # character_power_changes 子字段（人物易主）
     "new_power": "new_power", "新势力": "new_power",
     "station": "station", "驻扎地": "station", "驻地": "station",
+    "station_region": "station_region", "实际驻地": "station_region", "驻地省": "station_region",
     "theater": "theater", "战区": "theater",
     "commander": "commander", "统帅": "commander", "统将": "commander", "主将": "commander",
     "controller": "controller", "主管": "controller",
@@ -722,7 +723,7 @@ def build_simulator_payload(
 
     army_rows = _army_rows_with_needed(
         db,
-        "SELECT name,station,theater,commander,controller,troop_type,manpower,"
+        "SELECT name,station,station_region,theater,commander,controller,troop_type,manpower,"
         "supply,morale,training,equipment,arrears,mobility,"
         "loyalty,firearm_equipment,cannon_equipment,status,owner_power,salary_rate,"
         "is_mutinied,mutiny_probation "
@@ -1087,7 +1088,7 @@ def _extractor_context_payload(
     ]
     army_rows = _army_rows_with_needed(
         db,
-        "SELECT id,name,station,theater,commander,controller,troop_type,manpower,"
+        "SELECT id,name,station,station_region,theater,commander,controller,troop_type,manpower,"
         "supply,morale,training,equipment,arrears,mobility,"
         "loyalty,status,owner_power,salary_rate FROM armies ORDER BY id",
         drop=("salary_rate", "owner_power"),  # extractor 盘面原无 owner_power，只新增 army_needed 列

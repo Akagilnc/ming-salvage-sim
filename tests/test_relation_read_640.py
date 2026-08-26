@@ -227,3 +227,71 @@ def test_missing_viewer_rejected(ledger):
     db, _ = ledger
     with pytest.raises(TypeError):
         project_relation_ledger(db)
+
+
+# ---------------------------------------------------------------- #642 锚④：coda 历史读缝
+
+
+def test_load_relation_history_before_returns_full_stable_prior_stream(game):
+    """r4：已选中有向对的严格早于 settled 年月的完整历史——多旧事全量、含和解、无裁剪。"""
+    from ming_sim.relation_read import load_relation_history_before
+
+    db, state, _ = game
+    source, target = "杨嗣昌", "倪元璐"
+    # 旧事 1（奠基）
+    db.record_relation_edge_event(
+        source=source, target=target, event_kind="结怨",
+        context="杨嗣昌与倪元璐初有细缝。", origin="seed:founding:yang-ni",
+        turn=0, year=1627, period=10,
+    )
+    # 旧事 2（后续加深）
+    db.record_relation_edge_event(
+        source=source, target=target, event_kind="使绊",
+        context="清丈议上，杨嗣昌挡了倪元璐的硬路。", origin="audience:turn-2",
+        turn=2, year=1628, period=11,
+    )
+    # 旧事 3（和解——同流后续，不删旧怨）
+    db.record_relation_edge_event(
+        source=source, target=target, event_kind="协作",
+        context="二人当面言和，暂释前隙。", origin="audience:turn-3",
+        turn=3, year=1629, period=3,
+    )
+    # 本 settled 月新事——不得进入 prior
+    db.record_relation_edge_event(
+        source=source, target=target, event_kind="站台",
+        context="本月新站台，不应进历史包。", origin="audience:turn-4",
+        turn=4, year=1630, period=5,
+    )
+
+    prior = load_relation_history_before(
+        db, source=source, target=target, before_year=1630, before_period=5,
+    )
+    assert [row["context"] for row in prior] == [
+        "杨嗣昌与倪元璐初有细缝。",
+        "清丈议上，杨嗣昌挡了倪元璐的硬路。",
+        "二人当面言和，暂释前隙。",
+    ]
+    # 稳定序＝纪年 (year, period) ＋事件 id；语境字节不改。
+    assert [(int(r["year"]), int(r["period"])) for r in prior] == [
+        (1627, 10), (1628, 11), (1629, 3),
+    ]
+    ids = [int(r["id"]) for r in prior]
+    assert ids == sorted(ids)
+    assert prior[2]["context"] == "二人当面言和，暂释前隙。"
+
+
+def test_load_relation_history_before_empty_when_no_older_events(game):
+    """r4 验收第三例：无严格更早流水 → 空列表。"""
+    from ming_sim.relation_read import load_relation_history_before
+
+    db, state, _ = game
+    db.record_relation_edge_event(
+        source="徐光启", target="杨嗣昌", event_kind="协作",
+        context="本月当场协作。", origin="audience:now",
+        turn=int(state.turn), year=int(state.year), period=int(state.period),
+    )
+    prior = load_relation_history_before(
+        db, source="徐光启", target="杨嗣昌",
+        before_year=int(state.year), before_period=int(state.period),
+    )
+    assert prior == []
