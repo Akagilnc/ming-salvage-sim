@@ -76,7 +76,7 @@ legitimacy_pct= clamp(10 + 90 × mismatch / severity, 10, 100)
 |---|---|---|---|---|
 | 走程序坐实真重罪（崔呈秀；∈依律集） | 70 | ✅塌 | 10% | **+7**（罪罚相称） |
 | 走程序坐实真轻罪、重罚（福王；∈依律集，cw 低） | 10 | ✅塌 | 87% | **+61**（轻罪重罚） |
-| 中旨罗织（STIGMA；不∈依律集） | 1 | ❌不塌 | 99% | **+69** + 透支账 |
+| 中旨罗织（STIGMA；不∈依律集） | 1 | ❌不塌 | 99% | **+69**（血债公式数值例；**正式撞派落账属 M12**，#657 D+／contract §C.8——不得读成「#657 中旨动作当回合写 `edict_overdraw`／该派血债」） |
 
 —— 崔呈秀 / 福王 **同走程序坐实（同 ∈依律集 → ceiling 同塌）**，但 crime_weight（真罪 gravity）70 vs 10 → 血债 +7 vs +61。这就是「福王 ceiling 能塌、血债却高 = 能颁但代价高」的数值来源（0011-4 D4-4 福王对比）。
 
@@ -157,7 +157,7 @@ net_centrifuge       = Σ( Δsatisfaction项 + Δleverage项 )    ← 签名物�
 -- 6 轴枚举（dig-5；下文 CHECK 复用）：礼法名节 / 既得利益 / 实务事功 / 皇权依附 / 华夷战和 / 民本恤民
 
 -- 逐派 scalar（皇权透支账，非逐轴）
-ALTER TABLE factions ADD COLUMN edict_overdraw INTEGER DEFAULT 0;   -- 频度累加器：廷杖侧(第一刀)+中旨侧(第二刀随中旨闸)，单调（H1/H4）
+ALTER TABLE factions ADD COLUMN edict_overdraw INTEGER DEFAULT 0;   -- 频度累加器：廷杖侧（及既有非中旨用法），单调（H1/H4）。旧「中旨侧第二刀随中旨闸累加」施工义已废——中旨频度／逐派离心 later-wins → #657 contract §C.8 → M12；不删本列、不改 schema 本体
 
 -- 42 格缓存（逐派 × 轴；O(1) 读，由 centrifuge_log SUM 重建）
 CREATE TABLE faction_axis_debt (
@@ -230,7 +230,7 @@ k_id = clamp(identity / 100.0, 0, 1)        ← 浮点除（写 `100.0` 显式�
 
 ### H1/H2/H5/H6 闭合
 
-- **H1（中旨频度反噬无载体）**：`edict_overdraw` 落 factions 列（不落 metrics，规避双杀），applier 撞派 `+=1` 单调。**刀分配**：列 + **廷杖侧累加 = 第一刀**（粗粒度按 target faction）；**中旨侧累加 + 暴露螺旋后果 = 第二刀**（随中旨闸，0011-5 D5-6）。残留：归派精度依赖轴矩阵（defer）。
+- **H1（中旨频度反噬无载体）**：`edict_overdraw` 落 factions 列（不落 metrics，规避双杀），**廷杖侧累加 = 第一刀**（粗粒度按 target faction；及既有非中旨用法）单调。旧「中旨侧累加 + 暴露螺旋 = 第二刀」施工义 later-wins 废止——中旨频度／逐派反噬 → #657 contract **§C.8** + **M12**（0011-5 D5-6 同步）。残留：归派精度依赖轴矩阵（defer）。
 - **H2（离心可被好回合洗白）**：不变式1 + 2（唯一写只 `+=`、读侧不 SELECT satisfaction）。攻击判「真正的棘轮牙、攻不破」。
 - **H5（软判可被话术诱导降敏感度）**：受害派 faction（`SQL 查 characters.faction`）+ crime_weight（`reason_code` 枚举）+ severity（**解析失败 fail-closed：落最高档或 SettlementAbort，绝不降罚**——CMR r1 codex：落最低档会让模糊措辞把重罚记成轻罚＝压低血债代价的 H5 漏洞；crime_weight 反向默认低档＝失称度偏高＝多记血债，方向本就保守、保留）**三入参全结构化**。**⚠️ 残留比原想的大（内部红队攻破，本轮必修）**：`source_name`→faction 解析不仅过 extractor，且本仓库 name→row 是**模糊子串/别名匹配、非 PK 精确**（`session.py:_find_candidate_by_name` 做 `key in name or name in key`），而 seed 存**跨派同名别名**——实证 `袁巡抚` 同时是袁可立（东林）与袁崇焕（军队）的别名。攻击路径：皇帝以官衔「袁巡抚」重办袁崇焕（军队），extractor 产 `source_name="袁巡抚"`，上游别名解析撞两派、无 tie-break、worst-case 静默选错 → 高 severity 血债落到东林而非军队；因不变式1（单调）+ 不变式3（不可跨派冲抵）**永久不可撤**，静默腐蚀悲剧引擎。**解析契约钉死**：① `source_name` 只接名册原始全名（extractor 朝臣 name 补「须用原始全名」纪律，对齐妃嫔已有约束），禁 alias/官衔进 source_name；② accrue 前 name→faction **PK 精确查**，命中 0 或 >1（歧义）一律 SettlementAbort + 报错包、绝不静默任选首行；③ 治本（**须按序**，CMR r1 gemini）：**先**洗 `content/characters.json` 跨派别名去歧义（`袁巡抚` 这类纯官衔别名加人名前缀或剔除），**再**开 startup 断言「无任何 alias/name 跨 faction 多映射」当不变式守门——**断言先于清洗会开局即崩**（gemini 实证 `袁巡抚` 现存跨派）；④ 诚实标：H5「收窄非归零」对存在跨派同名官衔的人物当前**实为可诱导跨派**，须上述精确化后才成立。彻底归零（任意自由文本→实体）仍留**母 ADR 决定5**。
 - **H6（中旨当回合落库 + 封驳异步套利）**：第一刀不做、随中旨闸 defer 第二刀（D2-8）。提前做必撞软死锁 / 套利。

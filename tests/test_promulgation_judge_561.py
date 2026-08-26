@@ -270,8 +270,8 @@ def test_promulgated_verdict_strips_rejection_only_noise(game):
     assert set(noisy) == original_keys
 
 
-def test_promulgated_midzhi_keeps_affected_parties_while_stripping_rejection_noise(game):
-    """中旨顺颁：剥离打回噪声，保留 ADR 0055 要求的 affected_parties。"""
+def test_promulgated_midzhi_strips_affected_parties_with_rejection_noise(game):
+    """#657 §C.8：中旨顺颁剥离打回噪声与猜派 affected_parties。"""
     db, state, _content = game
     dossier_id = _dossier(db, state, mode="midzhi")
     dossiers = db.list_decree_dossiers(status="proposed")
@@ -302,8 +302,8 @@ def test_promulgated_midzhi_keeps_affected_parties_while_stripping_rejection_noi
     assert cleaned == [{
         "dossier_id": dossier_id,
         "decision": "promulgated",
-        "affected_parties": parties,
     }]
+    assert "affected_parties" not in cleaned[0]
 
 
 def test_promulgated_true_path_clean_verdict_passes(game):
@@ -811,18 +811,22 @@ def test_promulgation_verdict_accepts_exact_keys_for_each_mode(game, mode, decis
     context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
     if decision == "promulgated":
         verdict = {"dossier_id": dossier_id, "decision": decision}
-        if mode == "midzhi":
-            verdict["affected_parties"] = [
-                {"kind": "faction", "key": "东林", "direction": "negative", "intensity": "weak"},
-            ]
+        expected = [verdict]
     else:
         verdict = _rejected_verdict(
             dossier_id, context["imperial_authority_band"], midzhi=mode == "midzhi",
         )
+        if mode == "midzhi":
+            # #657 §C.8：中旨打回剥离猜派字段
+            expected = [{
+                k: v for k, v in verdict.items() if k != "affected_parties"
+            }]
+        else:
+            expected = [verdict]
 
     assert decree_mod.validate_promulgation_verdicts(
         [verdict], dossiers, db, prepared_context=context,
-    ) == [verdict]
+    ) == expected
 
 
 def test_rejected_exact_keys_accept_only_empty_legal_reason_slot(game):
@@ -1206,6 +1210,7 @@ def test_judge_gate_examples_and_simulator_rejection_narrative_boundary(game, mo
         return json.dumps({"verdicts": [
             _rejected_verdict(hostile_land, band),
             {"dossier_id": ordinary_pay, "decision": "promulgated"},
+            # 夹带猜派：闸门须剥离，不得进入 pending
             {"dossier_id": midzhi_pay, "decision": "promulgated", "affected_parties": [
                 {"kind": "faction", "key": "东林", "direction": "negative", "intensity": "weak"},
             ]},

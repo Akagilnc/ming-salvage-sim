@@ -143,9 +143,9 @@ class _PhaseSession:
     def current_phase(self):
         return TurnPhase(self.state.turn_phase)
 
-    def submit_decisions(self, *_a, **_k):
+    def submit_hitl_choices(self, *_a, write_gate=None, **_k):
         self._submit_called = True
-        raise AssertionError("wrong-phase must not reach submit_decisions")
+        raise AssertionError("wrong-phase must not reach submit_hitl_choices")
 
 
 class _ResolveGame:
@@ -216,19 +216,20 @@ def test_resolve_decisions_stream_phase_precheck_before_lock(monkeypatch):
 
 
 def test_resolve_decisions_stream_awaiting_still_submits_under_lock(monkeypatch):
-    """#1322：awaiting 相位仍进锁内 submit（权威复查保留，锁语义不动）。"""
+    """#1322：awaiting 相位仍经 submit_hitl 在 write_gate 内提交（权威复查保留）。"""
     gate = threading.Lock()
     game = _ResolveGame(TurnPhase.AWAITING_DECISION.value, gate)
     submitted = {"ok": False}
 
-    def _submit(choices, on_event=None, cheat_directive=""):
-        assert gate.locked(), "submit must run while write gate held"
-        submitted["ok"] = True
-        if on_event:
-            on_event("stage", "数值推演结算")
-        return "邸报：已裁。"
+    def _submit_hitl(choices, *, write_gate, on_event=None, cheat_directive=""):
+        with write_gate:
+            assert gate.locked(), "submit must run while write gate held"
+            submitted["ok"] = True
+            if on_event:
+                on_event("stage", "数值推演结算")
+            return "邸报：已裁。"
 
-    game.session.submit_decisions = _submit  # type: ignore[method-assign]
+    game.session.submit_hitl_choices = _submit_hitl  # type: ignore[method-assign]
     game.session.last_decree = "诏曰：发帑。"
     monkeypatch.setattr(web_app, "get_game", lambda: game)
     monkeypatch.setattr(web_app, "_failed_secret_order_ids_for_turn", lambda *_a, **_k: set())

@@ -31,12 +31,123 @@ from ming_sim.agents import run_agent_text
 from ming_sim.assets import strip_json_fence
 from ming_sim.llm_model import llm_unavailable_from_error
 from ming_sim.db import GameDB
+from ming_sim.decree_vocabulary import (
+    RESCRIPT_ROUTABLE_ACTION_TYPES,
+    TARGET_KINDS,
+    _DRAFT_CAPABILITY_KEYS,
+    derive_draft_capability,
+)
 from ming_sim.error_pack import error_packs_root
 from ming_sim.exceptions import LLMContractError, LLMUnavailable
 from ming_sim.models import GameState, reign_period_label
 from ming_sim.token_stats import tlog
 
 MAX_RESCRIPT_DRAFTS = 5
+
+# #657 C.3 层 A option 必填键（缺一 shape 失败）；draft_capability 由服务端派生写入。
+_LAYER_A_REQUIRED_KEYS = (
+    "label", "hint", "action_type", "target_kind", "target_id", "locality_scope",
+)
+_LAYER_A_PRESENT_KEYS = (
+    "assignee_name", "region_id", "transaction_category",
+)
+_LOCALITY_SCOPES = frozenset({"national", "single", "none"})
+_LOCALITY_ALIASES = {
+    "全国": "national", "全域": "national",
+    "单地": "single", "一地": "single",
+    "无": "none", "无属地": "none",
+}
+
+
+# 层 A 允许键 = C.3 必填/须在 + C.4 闭集 + draft_capability（服务端覆盖，LLM 自带不准）
+_LAYER_A_ALLOWED_KEYS = frozenset(
+    list(_LAYER_A_REQUIRED_KEYS)
+    + list(_LAYER_A_PRESENT_KEYS)
+    + [key for key, _default in _DRAFT_CAPABILITY_KEYS]
+    + ["draft_capability"]
+)
+
+
+def normalize_stop_condition(raw: object) -> str:
+    """stop_condition 唯一保真缝（C.6）：仅 str 原文；None/空白→""；dict/list/其它→ValueError。
+
+    供层 A normalize / choice 规范化 / mapper 共用——禁止平行拷贝。
+    非空不 strip 落库（strip 只可在 until_stop 判空临时用）。
+    """
+    if raw is None:
+        return ""
+    if isinstance(raw, str):
+        if not raw.strip():
+            return ""
+        return raw
+    raise ValueError(
+        f"stop_condition 须为 str（C.6），拒 {type(raw).__name__}"
+    )
+
+
+def normalize_rescript_layer_a_option(raw: object) -> Dict[str, object]:
+    """#657 层 A option shape 校验 + 服务端写 draft_capability（生产票拟/改票单真源）。
+
+    自由文本（label/hint 等）strip 只作判空临时值，落库原文；
+    draft_capability 一律服务端重算覆盖，禁止 LLM 自带为准。
+    """
+    if not isinstance(raw, dict):
+        raise ValueError("票拟 option 非 object（层 A shape）")
+    unknown = set(raw) - _LAYER_A_ALLOWED_KEYS
+    if unknown:
+        raise ValueError(
+            f"票拟 option 含未知字段（整批 shape 错，F2.5/F3.3）：{sorted(unknown)}"
+        )
+    out: Dict[str, object] = {}
+    for key in _LAYER_A_REQUIRED_KEYS:
+        value = raw.get(key)
+        if not isinstance(value, str) or not str(value).strip():
+            raise ValueError(f"票拟 option 缺层 A 必填键或为空白：{key}")
+        out[key] = str(value)  # 原文；strip 仅判空
+    action_type = str(out["action_type"]).strip()
+    if action_type not in RESCRIPT_ROUTABLE_ACTION_TYPES:
+        raise ValueError(f"票拟 option.action_type 非七类 routable：{action_type!r}")
+    out["action_type"] = action_type
+    target_kind = str(out["target_kind"]).strip()
+    if target_kind not in TARGET_KINDS:
+        raise ValueError(f"票拟 option.target_kind 非法：{target_kind!r}")
+    out["target_kind"] = target_kind
+    scope_raw = str(out["locality_scope"]).strip()
+    scope = _LOCALITY_ALIASES.get(scope_raw, scope_raw)
+    if scope not in _LOCALITY_SCOPES:
+        raise ValueError(f"票拟 option.locality_scope 非法：{scope_raw!r}")
+    out["locality_scope"] = scope
+    # C.3：三键必须在且为 str（可 ""）；禁缺键补全 / None→"" / str(value) 洗值
+    for key in _LAYER_A_PRESENT_KEYS:
+        if key not in raw:
+            raise ValueError(f"票拟 option 缺层 A 须在键：{key}")
+        value = raw[key]
+        if not isinstance(value, str):
+            raise ValueError(
+                f"票拟 option.{key} 须为 str（可空串），拒 {type(value).__name__}"
+            )
+        out[key] = value
+    # 其余 capability 闭集字段透传（有则规范化，无则由 derive 填默认）
+    for key, _default in (
+        ("name", ""), ("title", ""), ("commitment_kind", ""),
+        ("station", ""), ("office", ""),
+        ("grant_action", ""), ("account", ""), ("cadence", ""),
+        ("execution_surface", ""), ("appoint_action", ""),
+        ("appointment_tenure", ""), ("punish_action", ""),
+        ("privilege", ""), ("summon_target", ""),
+    ):
+        if key in raw and raw[key] is not None:
+            out[key] = str(raw[key])
+    if "stop_condition" in raw and raw["stop_condition"] is not None:
+        out["stop_condition"] = normalize_stop_condition(raw["stop_condition"])
+    for key in ("end_turn", "deadline_months", "due_turn", "amount"):
+        if key in raw and raw[key] is not None and raw[key] != "":
+            try:
+                out[key] = int(raw[key])  # type: ignore[arg-type]
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"票拟 option.{key} 非法：{raw[key]!r}") from exc
+    out["draft_capability"] = derive_draft_capability(out)
+    return out
 
 
 def select_triage_actor(db: GameDB) -> Optional[Dict[str, str]]:
@@ -63,7 +174,6 @@ def select_triage_actor(db: GameDB) -> Optional[Dict[str, str]]:
 
 _TOP_ALLOWED_KEYS = frozenset({"items"})
 _ITEM_ALLOWED_KEYS = frozenset({"title", "context", "options", "issue_id"})
-_OPTION_ALLOWED_KEYS = frozenset({"label", "hint"})
 
 
 def _assert_utf8(s: str, field: str) -> None:
@@ -169,15 +279,16 @@ def validate_rescript_draft_items(
 
     - 顶层非法（非 dict / 无 items list）→ raise ValueError（整批降级，本月无头版）；
     - 任一条目必需字段缺失或非法（title/context 非空字符串 / options 非 2-3 项 /
-      option.label/hint 非空字符串）→ raise ValueError 整批失败（冻结票面 F2.2/F2.5：
+      option 须过层 A 单真源 normalize）→ raise ValueError 整批失败（F2.2/F2.5：
       不得保留合法项形成部分头版，不得把缺失洗成空串）；合法 `items=[]` 仍是
       「本月无急务」；
     - 自由文本零删改（CLAUDE.md P6 / F3.3）：strip 只作判空的临时值，落库一律原文；
+    - option 经 normalize_rescript_layer_a_option：C.3 必填 + C.4 闭集；
+      draft_capability 服务端重算；未知键响亮失败（不再接受仅 label/hint 两键）；
     - 处理条目前先校验 items 总数：超过 MAX_RESCRIPT_DRAFTS 即 raise ValueError
       整批响亮降级（#656 A1：不截断、不静默丢弃后项、不保留前五条，F2.5）；
-    - item/option 层白名单外未知字段 → raise ValueError 整批失败（r2 B2：接受后
-      静默省略＝删 LLM 产文，违反 F3.3 零删改——未知键属 shape 错，走整月降级；
-      issue_id 是唯一豁免的可选绑定键）；
+    - item 层白名单外未知字段 → raise ValueError 整批失败（r2 B2）；
+      issue_id 是唯一豁免的可选绑定键；
     - event_id 只采信出现在权威盘面里的 issue_id 回指（bind 同款纪律）；其余留给
       落库层合成 `urgent:{turn}:{idx}`。
     """
@@ -215,20 +326,21 @@ def validate_rescript_draft_items(
         raw_opts = raw.get("options")
         if not isinstance(raw_opts, list) or not (2 <= len(raw_opts) <= 3):
             raise ValueError(f"票拟条目 options 非 2-3 项（整批失败，F2.2）：{title!r}")
-        options: List[Dict[str, str]] = []
+        options: List[Dict[str, object]] = []
         for opt in raw_opts:
             if not isinstance(opt, dict):
                 raise ValueError(f"票拟 option 非 object（整批失败，F2.2）：{title!r}")
-            unknown_opt = set(opt) - _OPTION_ALLOWED_KEYS
-            if unknown_opt:
+            # 层 A 单真源：完整 option + 服务端 draft_capability
+            try:
+                normalized_opt = normalize_rescript_layer_a_option(opt)
+            except ValueError as exc:
                 raise ValueError(
-                    f"票拟 option 含未知字段（整批 shape 错，F2.5/F3.3 零删改不静默省略）："
-                    f"{title!r} {sorted(unknown_opt)}"
-                )
-            options.append({
-                "label": _required_text(opt, "label"),
-                "hint": _required_text(opt, "hint"),
-            })
+                    f"票拟 option 层 A shape 失败（整批失败，F2.2/F2.5）：{title!r} {exc}"
+                ) from exc
+            # 自由文本 UTF-8 可编码性（label/hint 原文）
+            _assert_utf8(str(normalized_opt.get("label") or ""), "label")
+            _assert_utf8(str(normalized_opt.get("hint") or ""), "hint")
+            options.append(normalized_opt)
         # options_json 序列化前再校验 ensure_ascii=False 场景的可编码性
         try:
             json.dumps(options, ensure_ascii=False).encode("utf-8")

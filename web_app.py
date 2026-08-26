@@ -1550,11 +1550,24 @@ class WebGame:
                 self.session.pending_decisions()
                 if self.state.turn_phase == TurnPhase.AWAITING_DECISION.value else []
             ),
+            # #657：phase1 已落 decided、desk 只查 pending 为空时，投影 typed 续跑信号。
+            # 不把 decided 塞回 pending 列表；前端空 POST 既有 resolve_decisions/stream。
+            "resume_phase2": self._resume_phase2_signal(),
             "last_decree": self.last_decree,
             "last_report": self.last_report,
             # #671：上一已完成月王承恩独立递话（与 last_report 同级 typed 字段）
             "last_attendant_message": self.db.previous_turn_attendant_message(self.state),
         }
+
+    def _resume_phase2_signal(self) -> bool:
+        """durable：awaiting_decision + resolve_context 在 + 合并 desk 无 pending。"""
+        if self.state.turn_phase != TurnPhase.AWAITING_DECISION.value:
+            return False
+        ctx = self.db.get_resolve_context(self.state.turn)
+        if ctx is None:
+            return False
+        desk = self.session.pending_decisions()
+        return len(desk) == 0
 
     # ── 聊天 ──────────────────────────────────────────────────────────────
     def _persistent_chat_minister(self, minister_name: str) -> bool:
@@ -3745,13 +3758,22 @@ def _serialized_web_write(game):
 
 
 @contextlib.contextmanager
-def _settlement_period_entry(game, *, write_cm: Callable[[Any], Any]):
+def _settlement_period_entry(
+    game,
+    *,
+    write_cm: Callable[[Any], Any],
+    hold_write_for_body: bool = True,
+):
     """#1241 S1：颁布/退朝/stream 三入口受理样板（begin→accept→await→close→gate）。
 
     行为零变化硬约束：write_cm **必须**参数化锁获取语义分叉——
       · advance → `_serialized_web_write`（非阻塞抢锁，撞锁/相位拒 409）
       · issue / stream → `_game_write_gate`（阻塞 acquire）
     统一获取语义即破 T2 行为零变化（r2-r7 不变式）。
+
+    #657 resolve/stream：hold_write_for_body=False——展示态仍走本样板，但 body 内
+    submit_hitl_choices 自管 ①/③ 短持同一 write_cm（② 无锁 join）；禁整段 gate 盖 join。
+    hold_write_for_body=True（默认）= issue/advance 旧形：body 全程持 write_cm。
 
     #1353 fold-in r5：收夜欠账补跑内部静默；过月 SSE 只由 resolve 本体推正常进度。
 
@@ -3784,20 +3806,27 @@ def _settlement_period_entry(game, *, write_cm: Callable[[Any], Any]):
                 game, inflight_wait_s=0.0, write_gate=close_gate,
             ),
         )
-        with write_cm(game):
-            yield
+
+        def _clear_orphan_success() -> None:
             # #1343/#1378/#1379/#1388：成功回常态后兜底清残留快照。
-            # 持 write_cm 同门（与失败支 _game_write_gate 同形）——禁无门直写共享连接，
-            # 使并发 B 进 atomic 时 DELETE 不得落进 B 事务。
-            # clear_orphan 同谓词：settling/awaiting 保留；summoning 残留不得挡拟诏。
-            # settled_ok 须在 clear 完成后才置真——clear 抛错走失败 exit，
-            # 禁「成功态 + 死遮罩」留 settlement_display=true 于常态相位。
+            # 持 write_cm 同门（与失败支 _game_write_gate 同形）——禁无门直写共享连接。
             db = getattr(game, "db", None)
             state = getattr(game, "state", None)
             if db is not None and state is not None and hasattr(db, "clear_month_open_snapshot"):
                 from ming_sim.month_open_snapshot import clear_orphan_month_open_snapshot
                 clear_orphan_month_open_snapshot(db, state)
-            # with 体无异常结束且 clear 已完成（或无需 clear）→ 成功。
+
+        if hold_write_for_body:
+            with write_cm(game):
+                yield
+                _clear_orphan_success()
+                # with 体无异常结束且 clear 已完成（或无需 clear）→ 成功。
+                settled_ok = True
+        else:
+            # #657：body 自管 write_cm 分段；成功后短持 clear。
+            yield
+            with write_cm(game):
+                _clear_orphan_success()
             settled_ok = True
     finally:
         # 嵌套 try/finally：exit/clear 抛错仍须销账 inflight（验收：clear 抛 → inflight 归零）。
@@ -5325,22 +5354,31 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
             # 锁内 submit_decisions 仍做权威复查——与既有 TOCTOU 双查同款。
             if game.session.current_phase() != TurnPhase.AWAITING_DECISION:
                 raise ValueError("当前不在待裁决策阶段，无法提交亲裁。")
-            # #1374：与 issue/stream 同款受理样板——phase2 窗有核账展示态；
-            # decided 先写后跑的崩溃安全时序仍在 session.submit_decisions 内，不动。
-            # 锁语义 = 阻塞 _game_write_gate（与 issue/stream 同，禁改非阻塞）。
+            # #657 / ADR 0149：展示态走 _settlement_period_entry；hold_write_for_body=False
+            # 使 PREWRITE/② join 在 write_gate 外，①/③ 由 submit_hitl_choices 短持同一 gate。
             # 终态 __done__ 须在 entry（含 clear）成功后才入队——与 settled_ok 同核。
+            # 唯一 HITL 编排：session.submit_hitl_choices；禁 submit_decisions 生产旁路。
             terminal: Optional[tuple[str, Any]] = None
-            with _settlement_period_entry(game, write_cm=_game_write_gate):
-                report = game.session.submit_decisions(
-                    body.choices, on_event=on_event, cheat_directive=body.cheat
+            with _settlement_period_entry(
+                game, write_cm=_game_write_gate, hold_write_for_body=False,
+            ):
+                report = game.session.submit_hitl_choices(
+                    body.choices,
+                    write_gate=_game_write_gate(game),
+                    on_event=on_event,
+                    cheat_directive=body.cheat,
                 )
                 decree = game.session.last_decree
-                failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
+                failures = _new_secret_order_failure_payloads_for_turn(
+                    game, turn_before, failed_before,
+                )
                 game.refresh_turn()
                 events = [
                     steam_events.add_stat(steam_events.STAT_DECREES_ISSUED),
                     steam_events.add_stat(steam_events.STAT_TURNS_PLAYED),
-                    steam_events.set_stat(steam_events.STAT_MAX_TURN_REACHED, int(game.state.turn)),
+                    steam_events.set_stat(
+                        steam_events.STAT_MAX_TURN_REACHED, int(game.state.turn),
+                    ),
                 ]
                 if not was_ended and game.state.ended:
                     events.append(steam_events.add_stat(steam_events.STAT_ENDINGS_REACHED))
