@@ -492,9 +492,11 @@ def _validate_promulgation_verdict_item(
             for key in rejection_only_fields:
                 item.pop(key, None)
             item.pop("legal_reason_code", None)
-            # ordinary 顺颁必须省略 affected_parties；中旨顺颁保留（ADR 0055 反应）。
-            if mode != "midzhi":
-                item.pop("affected_parties", None)
+            # ordinary/midzhi 顺颁均省略 affected_parties（#657 §C.8 later-wins：中旨不猜派）。
+            item.pop("affected_parties", None)
+        elif mode == "midzhi" and decision == "rejected":
+            # 中旨打回：剥离猜派字段；正式离心归 M12。
+            item.pop("affected_parties", None)
         marker = item.get("midzhi_unpromulgatable", False)
         if not isinstance(marker, bool):
             raise ValueError("中旨亦不可颁标记必须为 bool")
@@ -509,13 +511,14 @@ def _validate_promulgation_verdict_item(
         # Exact verdict-key enforcement (#561) when mode is known from proposed set.
         if mode is not None:
             allowed_keys = {"dossier_id", "decision"}
-            if decision == "promulgated" and mode == "midzhi":
-                allowed_keys.add("affected_parties")
-            elif decision == "rejected":
+            if decision == "rejected":
                 allowed_keys.update(rejection_only_fields - {"midzhi_unpromulgatable"})
-                allowed_keys.update({"affected_parties", "legal_reason_code"})
+                allowed_keys.update({"legal_reason_code"})
                 if mode == "midzhi":
                     allowed_keys.add("midzhi_unpromulgatable")
+                else:
+                    # ordinary 打回仍承载 typed 反应清单
+                    allowed_keys.add("affected_parties")
             unknown_keys = set(item) - allowed_keys
             if unknown_keys:
                 raise ValueError(f"颁布判决含未知字段：{sorted(unknown_keys)}")
@@ -650,6 +653,60 @@ def _rescript_decisions(
             ],
         })
     return decisions
+
+
+def _maybe_pause_for_rescript_desk(
+    state: GameState,
+    db: GameDB,
+    decree_text: str,
+    narrative: str,
+    simulator_payload: Dict[str, object],
+    *,
+    secret_orders,
+    relevant_memories,
+    source: Provenance,
+    content=None,
+    registry=None,
+    new_decisions: Optional[List[Dict[str, object]]] = None,
+    attendant_message: str = "",
+) -> Optional[ResolveResult]:
+    """#657：desk=backlog 急务 ∪ 本月 decision 非空 → AWAITING；返回合并 desk。
+
+    仅急务 backlog（无新 decision）也入相，禁直落 settle 推进。
+    """
+    decisions = list(new_decisions or [])
+    # 先落本月 decision（若有），再读合并 desk（含跨月 pending 急务）
+    if decisions:
+        tlog(
+            f"[HITL] 检测到 {len(decisions)} 个决策点，暂停等皇帝亲裁："
+            f"{[d.get('title') for d in decisions]}"
+        )
+    # 预读 backlog：无新 decision 时若 desk 已有急务也须入相
+    if not decisions:
+        desk_preview = db.list_rescript_desk(int(state.turn))
+        if not desk_preview:
+            return None
+        tlog(
+            f"[HITL] 急务 backlog {len(desk_preview)} 条，暂停等批红："
+            f"{[d.get('title') for d in desk_preview]}"
+        )
+    # 暂停态三件（上下文+决策点+AWAITING 相位）同事务落库（cmr S4 r2）
+    with atomic_and_reload(db, state, content=content, registry=registry):
+        db.save_resolve_context(
+            state.turn, decree_text, narrative, simulator_payload,
+            secret_orders=secret_orders,
+            relevant_memories=relevant_memories,
+            source=Provenance(source).value,
+            attendant_message=attendant_message,
+        )
+        if decisions:
+            db.save_pending_decisions(state.turn, decisions)
+        state.turn_phase = TurnPhase.AWAITING_DECISION.value
+        db.save_state(state)
+    return ResolveResult(
+        awaiting=True,
+        decisions=db.list_rescript_desk(int(state.turn)),
+    )
 
 
 def _chosen_rescript_actions(
@@ -1422,22 +1479,18 @@ def resolve_directives(
 
     if sim_failed:
         rescript_decisions = _rescript_decisions(verdict_rows, proposed_dossiers)
-        if rescript_decisions:
-            with atomic_and_reload(db, state, content=content, registry=registry):
-                db.save_resolve_context(
-                    state.turn, decree_text, narrative, simulator_payload,
-                    secret_orders=secret_orders_for_sim,
-                    relevant_memories=relevant_memories,
-                    source=Provenance(source).value,
-                    attendant_message=attendant_message,
-                )
-                db.save_pending_decisions(state.turn, rescript_decisions)
-                state.turn_phase = TurnPhase.AWAITING_DECISION.value
-                db.save_state(state)
-            return ResolveResult(
-                awaiting=True,
-                decisions=db.list_pending_decisions(state.turn),
-            )
+        paused = _maybe_pause_for_rescript_desk(
+            state, db, decree_text, narrative, simulator_payload,
+            secret_orders=secret_orders_for_sim,
+            relevant_memories=relevant_memories,
+            source=source,
+            content=content,
+            registry=registry,
+            new_decisions=rescript_decisions,
+            attendant_message=attendant_message,
+        )
+        if paused is not None:
+            return paused
         # Fallback only replaces the unavailable narrative.  Extraction,
         # private-context merge, durable resolve context, and atomic settlement
         # remain on the normal single rail; a missing required report therefore
@@ -1459,32 +1512,27 @@ def resolve_directives(
 
     # 2.4) HITL 决策点：从邸报抽 <<DECISION>> 块。有 → 存上下文+决策点，暂停等皇帝亲裁。
     #      剥离后的干净邸报落库/展示；决策点选完由 resolve_decisions_phase2 续跑结算。
+    # #657：desk = backlog 急务 ∪ 本月 decision；非空 → AWAITING（含仅急务 backlog）。
     narrative, decisions = parse_decision_blocks(narrative)
     decisions = _rescript_decisions(verdict_rows, proposed_dossiers) + (
         bind_decisions_to_candidate_events(decisions, simulator_payload)
     )
-    if decisions:
-        tlog(f"[HITL] 检测到 {len(decisions)} 个决策点，暂停等皇帝亲裁：{[d['title'] for d in decisions]}")
-        # 暂停态三件（上下文+决策点+AWAITING 相位）同事务落库（cmr S4 r2）：相位若靠
-        # session 事后另笔写，崩在窗口里 DB 停在 settling 而决策已存——web submit_decisions
-        # 只认 AWAITING 相位，恢复死路。session 事后那笔写变为幂等。
-        # 五个事务块同款（ADR 决定 3）：回滚后内存与 DB 同源——不 reload 的话内存留
-        # awaiting/DB 回滚回 settling，进程内重试走 awaiting 幂等叉读空决策=死胡同
-        # （ship-pre r2）。嵌套时跳过，最外层拥有者处理。见 atomic_and_reload。
-        with atomic_and_reload(db, state, content=content, registry=registry):
-            db.save_resolve_context(
-                state.turn, decree_text, narrative, simulator_payload,
-                secret_orders=secret_orders_for_sim, relevant_memories=relevant_memories,
-                source=Provenance(source).value,  # #146 A：HITL 暂停存触发源（默认 player），phase2 续跑/崩溃恢复继承。Provenance(source).value 归一(兼容 enum/合法值串)、与 persist_resolve_context 一致(gemini R5)
-                attendant_message=attendant_message,
-            )
-            db.save_pending_decisions(state.turn, decisions)
-            state.turn_phase = TurnPhase.AWAITING_DECISION.value
-            db.save_state(state)
-        return ResolveResult(awaiting=True, decisions=db.list_pending_decisions(state.turn))
+    paused = _maybe_pause_for_rescript_desk(
+        state, db, decree_text, narrative, simulator_payload,
+        secret_orders=secret_orders_for_sim,
+        relevant_memories=relevant_memories,
+        source=source,
+        content=content,
+        registry=registry,
+        new_decisions=decisions,
+        attendant_message=attendant_message,
+    )
+    if paused is not None:
+        return paused
 
-    # 无决策点：透明续跑结算（cheat 仍可叠加）。来源贯穿 source 参数（默认 player_decree：皇帝下旨
-    # 拒收提示皇帝；恢复 fallthrough 穿透 ctx 真源，system 重跑仍记 system 静默——#146 cmr r2）。
+    # 双空（无 decision 且无 backlog 急务）：透明续跑结算（cheat 仍可叠加）。
+    # 来源贯穿 source 参数（默认 player_decree：皇帝下旨拒收提示皇帝；恢复 fallthrough
+    # 穿透 ctx 真源，system 重跑仍记 system 静默——#146 cmr r2）。
     report = _settle_after_narrative(
         state, db, agno_db, llm_config, decree_text, narrative,
         simulator_payload=simulator_payload,
@@ -1647,6 +1695,20 @@ def _replay_settle(
     return report
 
 
+# #657：HITL phase2 续跑时 persist 不得触碰急务票拟行（return_revise 等跨 phase2 存活）。
+# 与 None/[]（#656 空票拟 → DELETE 本回合 draft）三态分立。
+_PRESERVE_RESCRIPT_DRAFTS = object()
+
+
+class _AppendRescriptDrafts:
+    """#657 HITL phase2：追加本回合新票拟，不 DELETE 既有急务行。"""
+
+    __slots__ = ("items",)
+
+    def __init__(self, items: List[Dict[str, object]]) -> None:
+        self.items = list(items)
+
+
 def persist_resolve_context(
     db: GameDB,
     turn: int,
@@ -1702,7 +1764,13 @@ def persist_resolve_context(
         # #656 / F2.5：急务票拟行与重跑真源同一事务——ready context 存在 ⟺ 票拟已落
         # （生成成功时）。崩溃恢复从持久层读回，不重跑已完成的票拟步（F1.3）；
         # extractor 中止则整个事务回滚，票拟一并回滚不落、重试重生成。
-        if isinstance(rescript_drafts, list) and rescript_drafts:
+        # #657：_PRESERVE_RESCRIPT_DRAFTS → 零触碰；_AppendRescriptDrafts → 追加不删既有。
+        if rescript_drafts is _PRESERVE_RESCRIPT_DRAFTS:
+            pass
+        elif isinstance(rescript_drafts, _AppendRescriptDrafts):
+            if rescript_drafts.items:
+                db.append_rescript_drafts(turn, rescript_drafts.items)
+        elif isinstance(rescript_drafts, list) and rescript_drafts:
             db.save_rescript_drafts(turn, rescript_drafts)
         elif rescript_drafts is None or (isinstance(rescript_drafts, list) and len(rescript_drafts) == 0):
             # r4 p3：空/None 时同一事务内 DELETE 本回合 kind='rescript_draft' 行，
@@ -1734,6 +1802,7 @@ def _settle_after_narrative(
     source: Provenance = Provenance.system_simulation,
     dossier_verdicts: Optional[List[Dict[str, object]]] = None,
     dossier_rescript_actions: Optional[List[Dict[str, object]]] = None,
+    preserve_rescript_drafts: bool = False,
     attendant_message: str = "",
 ) -> str:
     """phase2：邸报已定（已剥离决策块），跑 extractor→落库→章节记忆→结局→推进。
@@ -1790,6 +1859,13 @@ def _settle_after_narrative(
     # 单腿接缝：腿结果由闭包持有（draft_cell），无外部可变结果容器、无串行备选形态。
     draft_cell: Dict[str, object] = {}
     side_leg: Optional[Callable[[], object]] = None
+    # #657：HITL phase2 续跑须保留既有急务（return_revise/decided/跨月 backlog），
+    # 同时仍并行生成本回合 drafts。
+    # 默认 PRESERVE：side_leg 未跑/生成空时不得 DELETE 本回合急务行；
+    # 仅当生成出非空 list 时 save_rescript_drafts 覆写 before_turn（不碰他回合）。
+    if preserve_rescript_drafts:
+        draft_cell["drafts"] = _PRESERVE_RESCRIPT_DRAFTS
+        tlog("[rescript] HITL phase2 续跑：默认保留既有急务票拟行。")
     triage_actor = select_triage_actor(db)
     if triage_actor is None:
         tlog("[rescript] 无在任首辅／掌印，本月无头版（全量邸报照旧）。")
@@ -1812,7 +1888,14 @@ def _settle_after_narrative(
                     d["actor_name"] = triage_actor["name"]
                     d["actor_office"] = triage_actor["office"]
                     d["actor_faction"] = triage_actor["faction"]
-            draft_cell["drafts"] = drafts
+                if preserve_rescript_drafts:
+                    # 追加本回合新票拟，不 DELETE return_revise/decided/跨月 backlog
+                    draft_cell["drafts"] = _AppendRescriptDrafts(drafts)
+                    tlog("[rescript] HITL phase2 续跑：保留既有急务并追加本回合票拟。")
+                else:
+                    draft_cell["drafts"] = drafts
+            elif not preserve_rescript_drafts:
+                draft_cell["drafts"] = drafts
         side_leg = _rescript_draft_leg
     try:
         tlog("结算 3/4 抽取（模块 module）")
@@ -2854,6 +2937,10 @@ def _settle_after_extract_body(
             state.ending_status = str(outcome.get("status") or "")
 
     db.mark_directives_issued(state)
+    # #657：return_revise 清锚纳入 settle 单一终态（与 next_period 同 atomic），
+    # 禁 phase2 成功后再另笔 commit（崩溃窗口会卡住已应用 revise 锚）。
+    from ming_sim.rescript_actions import clear_return_revise_choice_anchors
+    clear_return_revise_choice_anchors(db, None)
     state.next_period()
     # 不变式先验后再写：assert 排在 clear 之后的话，失败时重试真源已被删（cmr r4 codex）。
     assert state.turn == before_turn + 1
@@ -2951,6 +3038,7 @@ def resolve_decisions_phase2(
             if isinstance(sim_payload.get("dossier_verdicts"), list) else None
         ),
         dossier_rescript_actions=rescript_actions,
+        preserve_rescript_drafts=True,  # #657：禁擦 return_revise/decided 急务行
         attendant_message=str(ctx.get("attendant_message") or ""),
     )
     # 结算完清掉暂存决策点（next_period 已在 _settle 内执行，故按 before_turn 清理本回合残留）。

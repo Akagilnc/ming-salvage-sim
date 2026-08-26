@@ -81,17 +81,17 @@ describe("decision routing — issueDecree entry (routeIssueDecisions)", () => {
     expect(route.error).toBe(PAUSED_DECISION_MSG);
   });
 
-  it("rejects the batch when idx values are swapped — [idx:1, idx:0] must not pass (idx invariant guard)", () => {
+  it("#657 乱序 idx [1,0] 仍按结构校验受理（禁 idx===position 整表拒收）", () => {
     const swapped: PendingDecision[] = [
       { idx: 1, title: "河工修治", context: "河决在即。", options: [{ label: "拨银", hint: "保百姓。" }] },
       { idx: 0, title: "关宁军饷", context: "辽东急报。", options: [{ label: "拨帑", hint: "解燃眉。" }] },
     ];
     const route = routeIssueDecisions(swapped);
-    expect(route.pendingDecisions).toEqual([]);
-    expect(route.error).toBe(PAUSED_DECISION_MSG);
+    expect(route.pendingDecisions).toEqual(swapped);
+    expect(route.error).toBe("");
   });
 
-  it("accepts the entire batch when all decisions are valid and idx matches enumerated position", () => {
+  it("accepts the entire batch when all decisions are structurally valid", () => {
     const route = routeIssueDecisions([validDecision, validDecision2]);
     expect(route.pendingDecisions).toEqual([validDecision, validDecision2]);
     expect(route.error).toBe("");
@@ -123,14 +123,21 @@ describe("decision routing — refresh entry (routeRefreshDecisions)", () => {
     expect(route.error).toBeNull();
   });
 
-  it("rejects swapped idx [idx:1, idx:0] on refresh entry too (idx invariant guard)", () => {
+  it("#657 跨源/乱序 idx 仍按结构校验受理（禁 idx===position 整表拒收）", () => {
     const swapped: PendingDecision[] = [
       { idx: 1, title: "河工修治", context: "河决在即。", options: [{ label: "拨银", hint: "保百姓。" }] },
       { idx: 0, title: "关宁军饷", context: "辽东急报。", options: [{ label: "拨帑", hint: "解燃眉。" }] },
     ];
     const route = routeRefreshDecisions("awaiting_decision", swapped);
-    expect(route.pendingDecisions).toEqual([]);
-    expect(route.error).toBe(PAUSED_DECISION_MSG);
+    expect(route.pendingDecisions).toEqual(swapped);
+    expect(route.error).toBe("");
+  });
+
+  it("#657 typed resume_phase2 空 pending → 续跑，不报 PAUSED", () => {
+    const route = routeRefreshDecisions("awaiting_decision", [], true);
+    expect(route.pendingDecisions).toBeNull();
+    expect(route.error).toBeNull();
+    expect(route.resumePhase2).toBe(true);
   });
 
   it("accepts a valid batch on refresh", () => {
@@ -220,5 +227,11 @@ describe("#1418 r2 needsPhase2Resume（all-decided 续跑谓词）", () => {
 
   it("负向：畸形 {status:decided} 不得当 all-decided", () => {
     expect(needsPhase2Resume("awaiting_decision", [{ status: "decided" }], true)).toBe(false);
+  });
+
+  it("#657 服务端 typed resume_phase2 空 pending 仍触发续跑", () => {
+    expect(needsPhase2Resume("awaiting_decision", [], false, true)).toBe(true);
+    expect(needsPhase2Resume("awaiting_decision", [], undefined, true)).toBe(true);
+    expect(needsPhase2Resume("settling", [], true, true)).toBe(false);
   });
 });
