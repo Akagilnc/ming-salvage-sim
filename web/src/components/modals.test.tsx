@@ -1518,16 +1518,13 @@ describe("ChatModal — elapsed timer during thinking (issue #353)", () => {
 });
 
 describe("ReportModal — narrative settlement bulletin", () => {
-  it("renders narrative without an account page or literal organic markdown", () => {
+  it("renders narrative without an account page", () => {
     renderReportModal({
       report: "**辽东军情**\n- 军前缺饷",
     });
 
     expect(document.body.textContent).toContain("辽东军情");
     expect(document.body.textContent).toContain("军前缺饷");
-    expect(document.body.textContent).not.toContain("**");
-    expect(document.body.textContent).not.toContain("- 军前缺饷");
-
     expect(document.body.textContent).not.toContain("实账");
     expect(document.body.textContent).not.toContain("账目明细");
   });
@@ -1627,10 +1624,8 @@ describe("ReportModal — narrative settlement bulletin", () => {
     });
     const aside = host.querySelector("[data-testid=gazette-attendant]");
     expect(aside).not.toBeNull();
-    // 递话原文含首尾空白与 markdown 标记；官方邸报仍剥离
+    // 递话原文含首尾空白与 markdown 标记；官方邸报逐字契约只在 App→DOM tracer
     expect(aside?.textContent).toBe(rawWithWs);
-    expect(host.querySelector(".gazette-document")?.textContent).toContain("辽东军情");
-    expect(host.querySelector(".gazette-document")?.textContent).not.toContain("**");
     // 递话区在纸面 article 之外
     expect(host.querySelector(".gazette-document")?.contains(aside)).toBe(false);
   });

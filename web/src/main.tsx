@@ -331,15 +331,15 @@ export function App() {
     if (state.ending && !endingDismissed) return;
     const currentTurn = state.turn.turn;
     // #1356：t0 previous_summary 为空串——自动弹仅在有真报时；空壳仍可由木牌打开。
-    const summary = (state.previous_summary || "").trim();
-    if (!summary) return;
+    // trim 只做空壳门；写入 state 的是未 trim 原文（P6 / #671）
+    if (!(state.previous_summary || "").trim()) return;
     if (currentTurn === gazetteShown) return;
     if (!isFaceReachable("gazette", isSettlementDisplay(state.turn))) return;
     if (suppressNextReportRef.current) {
       suppressNextReportRef.current = false;
       return;
     }
-    setGazetteReport(summary);
+    setGazetteReport(state.previous_summary || "");
     setActiveModal("report");
     setGazetteShown(currentTurn);
   }, [state, gazetteShown, endingDismissed, activeModal]);
@@ -721,7 +721,7 @@ export function App() {
       {/* #1356：空 previous_summary 亦可开卷轴壳（木牌）；无固定空注 */}
       {gazetteOpen ? (
         <ReportModal
-          report={(gazetteReport || state.previous_summary || report || "").trim()}
+          report={gazetteReport || state.previous_summary || report || ""}
           attendantMessage={state.last_attendant_message || undefined}
           periodLabel={state.previous_reign_period_label || undefined}
           onClose={() => setActiveModal("none")}

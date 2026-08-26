@@ -1,5 +1,4 @@
 import { FullscreenModal } from "./hud";
-import { stripOrganicMarkdown } from "../format";
 
 export function ReportModal({
   report,
@@ -8,14 +7,13 @@ export function ReportModal({
   periodLabel,
 }: {
   report: string;
-  /** #671：王承恩独立递话；不经 stripOrganicMarkdown；空则整区不渲染 */
+  /** #671：王承恩独立递话；空则整区不渲染 */
   attendantMessage?: string;
   onClose: () => void;
   /** #1356：后端 previous_reign_period_label（报文自身月）投影；禁前端第二份年号表 */
   periodLabel?: string;
 }) {
-  const activeText = stripOrganicMarkdown(report || "");
-  // trim 仅判空；DOM 写原始 attendantMessage（P6：零删改）
+  // P6 / ADR 0142：官方邸报原文直写 DOM，trim 仅用于递话判空
   const rawAttendant = String(attendantMessage || "");
   const masthead = periodLabel || "邸报";
   return (
@@ -28,9 +26,9 @@ export function ReportModal({
             <span>{masthead} · 通政使司发抄</span>
           </div>
           {/* #1356：空卷轴复用原 pre，不另写固定空态文案（P7） */}
-          <pre className="memorial-text">{activeText}</pre>
+          <pre className="memorial-text">{report || ""}</pre>
         </article>
-        {/* #671：邸报纸面之外独立递话区；原文不经 stripOrganicMarkdown */}
+        {/* #671：邸报纸面之外独立递话区；原文直写 */}
         {rawAttendant.trim() ? (
           <aside className="gazette-attendant" data-testid="gazette-attendant">
             <pre className="gazette-attendant-text">{rawAttendant}</pre>

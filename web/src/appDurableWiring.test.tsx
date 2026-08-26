@@ -672,7 +672,8 @@ const SNAP_MINISTER = "月初辅臣";
 const SNAP_CONSORT = "月初妃嫔";
 const SNAP_BUILDING = "月初城防";
 const SNAP_MEMORIAL = "月初奏报正文";
-const SNAP_GAZETTE = "上月邸报月初口径";
+// #671：含首尾空白与 markdown 标记——唯一 App→DOM 官方邸报逐字契约
+const SNAP_GAZETTE = "\n  **上月邸报**\n- 军前缺饷\n  ";
 // #671：含 markdown/空白特征的原文常量——证明 App 接线不经 strip
 const SNAP_ATTENDANT = "  奴婢启禀：\n**洪承畴**已抵京候旨。  ";
 const SNAP_CLOSED = "月初已结边饷";
@@ -1062,6 +1063,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
 
   it("gazette：核账期邸报（上月）可读且正文=状态口 previous_summary（isFaceReachable 真链）", async () => {
     // #1356 F4：App 接缝——previous_* 与 turn.reign_period_label 同给，报头不得混充当前月
+    // #671：唯一官方邸报 App→DOM 逐字契约（咬 state trim / prop trim / strip 三处）
     // #671：last_attendant_message 经 App 接线可达 gazette-attendant（不经 strip；在 document 外）
     stubSettlementFetch(settlementBaseState("player", {
       previous_summary: SNAP_GAZETTE,
@@ -1081,7 +1083,8 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     await act(async () => {
       await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="邸报"]')).not.toBeNull());
     });
-    expect(host.querySelector('[role="dialog"][aria-label="邸报"]')!.textContent).toContain(SNAP_GAZETTE);
+    // 官方邸报 pre 正文与状态口 previous_summary 逐字相等（含空白与 markdown）
+    expect(host.querySelector("pre.memorial-text")!.textContent).toBe(SNAP_GAZETTE);
     const masthead = host.querySelector(".gazette-masthead")?.textContent || "";
     expect(masthead).toContain("天启七年九月");
     expect(masthead).not.toContain("天启七年十月");
