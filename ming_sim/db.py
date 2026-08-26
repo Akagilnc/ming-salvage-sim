@@ -50,6 +50,9 @@ from ming_sim.qualitative import (
     building_output_effect,
     building_qualitative_fields,
     city_defense_description,
+    gentry_resistance_band,
+    military_pressure_band,
+    population_wan_kou_label,
     power_band,
     public_support_band,
     qualitative_band,
@@ -2806,7 +2809,7 @@ class GameDB:
         不在本列表里）。dynamic 项（田赋/辽饷/盐税/商税/皇庄）走省级公式，这里不返回。
         """
         rows = self.conn.execute(
-            "SELECT key, account, direction, display, note, sort_order FROM fiscal_config "
+            "SELECT key, account, direction, display, note, sort_order, origin_ref FROM fiscal_config "
             "WHERE budget_role = 'fixed' AND kind = 'base' AND key LIKE '%\\_base' ESCAPE '\\' "
             "ORDER BY sort_order, key"
         ).fetchall()
@@ -2817,6 +2820,7 @@ class GameDB:
                 "direction": str(r["direction"]),
                 "display": str(r["display"]),
                 "note": str(r["note"] or ""),
+                "origin_ref": str(r["origin_ref"] or ""),
             }
             for r in rows
         ]
@@ -7033,17 +7037,12 @@ class GameDB:
         held = ""
         if str(row["controlled_by"]) != "ming":
             held = f"，控制权：已为{self.power_display_name(row['controlled_by'])}所据（非大明辖治）"
-        # ADR 0088/#648：人口展示按档口径——新档（人）玩家面投影「约N万口」（P4），
-        # 不足一万口不定性为 0（与 simulation._population_wan_kou_label 同口径）；
+        # ADR 0088/#648：人口展示按档口径——新档（人）玩家面投影「约N万口」（P4）；
         # 机面裸人数；无标旧档沿万人 legacy 原样，不加换算层。
         persons_unit = self.population_unit == POPULATION_UNIT_PERSONS
 
-        def _wan_kou_label(persons: int) -> str:
-            wan = int(persons) // 10000
-            return "不足一万口" if wan <= 0 else f"约{wan}万口"
-
         pop_qual = (
-            f"人口{_wan_kou_label(int(row['population']))}" if persons_unit
+            f"人口{population_wan_kou_label(row['population'])}" if persons_unit
             else f"人口{row['population']}万人"
         )
         pop_raw = f"人口{row['population']}人" if persons_unit else f"人口{row['population']}万人"
@@ -7054,8 +7053,8 @@ class GameDB:
                 f"{_unrest_description(row['unrest'])}，粮食{row['grain_security']}万石，"
                 f"田亩{row['registered_land']}万亩，隐田{row['hidden_land']}万亩，"
                 f"账面税收{format_money(monthly_amount(int(row['tax_per_turn'])))}/{TURN_UNIT}，"
-                f"士绅阻力{qualitative_band(row['gentry_resistance'], ('极弱', '偏弱', '中等', '偏强', '强'))}，"
-                f"军事压力{qualitative_band(row['military_pressure'], ('极低', '偏低', '中等', '偏高', '极高'))}，"
+                f"士绅阻力{gentry_resistance_band(row['gentry_resistance'])}，"
+                f"军事压力{military_pressure_band(row['military_pressure'])}，"
                 f"城防{city_defense_description(row['city_level'])}，"
                 f"城防大炮{int(row['cannon'])}门。天灾：{row['natural_disaster']}；"
                 f"人祸：{row['human_disaster']}；状态：{row['status']}"

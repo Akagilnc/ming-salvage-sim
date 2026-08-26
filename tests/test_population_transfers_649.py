@@ -2,7 +2,7 @@
 
 canonical＝ADR 0087/0088 + #649 冻结票面（含庭裁修正案 r1-r5）：
 - 原子单记录双写：一条转移记录同事务「源阶级减 N、目标阶级增 N」，LLM 不提交双腿；
-- reason×方向矩阵（加派/摊派/灾害/兵灾/逃亡/回流），出阵组合逐项拒收；
+- reason×方向矩阵（加派/摊派/灾害/兵灾/逃亡；回流出池见 #652 settle 真缝），出阵组合逐项拒收；
 - class_delta 写 population 由静默忽略升格逐项拒收；两轴分立（数据拒收不中止事务）；
 - 单位随存档 population_unit（新档人/sub-万精确，legacy 万口径、sub-万不可表达）；
 - restore 后流民池从 classes 只读 DB 无损接续；effect_brief 机器面事实摘要。
@@ -90,24 +90,25 @@ def test_transfer_two_legs_same_transaction_conservation(game):
     assert _global_population(db) == total_before  # 全局守恒
 
 
-def test_all_six_reasons_positive_cases_land(game):
-    """六种 reason 各 ≥1 正例落账（方向矩阵全覆盖，含兵灾双腿与回流出池）。"""
+def test_all_inflow_reasons_positive_cases_land(game):
+    """入池五因（加派/摊派/灾害/兵灾/逃亡）各 ≥1 正例经 apply_score_extraction 落账。
+
+    #652：`回流` 不再由 extractor 受理，出池落账由 test_refugee_loop_652 经
+    settle_with_delta 真缝证明，本测不平行私核直落。
+    """
     db, state, content = game
-    cases = [
-        (_transfer(source="农民@shaanxi", target="流民@shaanxi", amount=100, reason="加派"), ("农民", "流民")),
-        (_transfer(source="农民@henan", target="流民@henan", amount=100, reason="摊派"), ("农民", "流民")),
-        (_transfer(source="农民@shanxi", target="流民@shanxi", amount=100, reason="灾害"), ("农民", "流民")),
-        (_transfer(source="军户@shandong", target="流民@shandong", amount=100, reason="兵灾"), ("军户", "流民")),
-        (_transfer(source="军户@beizhili", target="流民@beizhili", amount=100, reason="逃亡"), ("军户", "流民")),
-        (_transfer(source="流民@henan", target="农民@henan", amount=200, reason="回流"), ("流民", "农民")),
+    items = [
+        _transfer(source="农民@shaanxi", target="流民@shaanxi", amount=100, reason="加派"),
+        _transfer(source="农民@henan", target="流民@henan", amount=100, reason="摊派"),
+        _transfer(source="农民@shanxi", target="流民@shanxi", amount=100, reason="灾害"),
+        _transfer(source="军户@shandong", target="流民@shandong", amount=100, reason="兵灾"),
+        _transfer(source="军户@beizhili", target="流民@beizhili", amount=100, reason="逃亡"),
     ]
-    items = [c[0] for c in cases]
     keys = {tuple(item[key].split("@")) for item in items for key in ("source", "target")}
     before = {(n, r): _pop(db, n, r) for n, r in keys}
     applied = apply_score_extraction(db, state, {"population_transfers": items}, content, None)
     assert not applied["population_transfers_rejections"]
     assert len(applied["population_transfers"]) == len(items)
-    # 净账期望：每条记录源腿 -amt、目标腿 +amt（同一行被多条记录触碰时叠加）。
     expected = dict(before)
     for item in items:
         src = tuple(item["source"].split("@"))
@@ -577,7 +578,6 @@ def test_internal_extractor_context_has_province_population_tsv(game):
     assert rows["population"] == FARMER_SHAANXI
     assert rows["population_unit"] == POPULATION_UNIT_PERSONS
     other = build_extractor_shared_context(
-        db, state, "", "", module="issues",
-        transit_semantics=[],
+        db, state, "", "", module="issues"
     )
     assert "class_population_balances" not in other
