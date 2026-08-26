@@ -54,6 +54,8 @@ def _runtime(db, state):
     runtime.character_power_id = lambda c: "ming"
     runtime.refresh_turn = lambda: None
     runtime._write_gate = threading.Lock()
+    runtime._settlement_entry_lock = threading.Lock()
+    runtime._settlement_entry_inflight = 0
     return runtime
 
 
@@ -87,30 +89,35 @@ def test_resolve_stream_uses_settlement_period_entry(game, monkeypatch):
     real_entry = web_app._settlement_period_entry
 
     @contextmanager
-    def _spy_entry(g, *, write_cm):
+    def _spy_entry(g, *, write_cm, hold_write_for_body=True):
         entered["n"] += 1
         # 锁语义与 issue/stream 同：阻塞 _game_write_gate（禁 advance 的非阻塞 409 形）
         assert write_cm is web_app._game_write_gate
-        with real_entry(g, write_cm=write_cm):
+        # #657 resolve：hold_write_for_body=False（①/③ 分段）；展示态仍入样板
+        with real_entry(
+            g, write_cm=write_cm, hold_write_for_body=hold_write_for_body,
+        ):
             yield
 
     phase2_started = threading.Event()
     release_phase2 = threading.Event()
 
-    def _submit(choices, on_event=None, cheat_directive=""):
-        # 模拟 decided 先写（崩溃安全时序）——本刀不改 session 真写序，仅证展示态窗口。
-        db.conn.execute(
-            "UPDATE pending_decisions SET status='decided' WHERE turn=?",
-            (int(state.turn),),
-        )
-        db.conn.commit()
-        phase2_started.set()
-        assert release_phase2.wait(5.0)
-        if on_event:
-            on_event("stage", "数值推演结算")
-        return "邸报：测。"
+    def _submit_hitl(choices, *, write_gate, on_event=None, cheat_directive=""):
+        # 生产协议：submit_hitl_choices；纯 decision 路径持 write_gate。
+        with write_gate:
+            # 模拟 decided 先写（崩溃安全时序）——本刀不改 session 真写序，仅证展示态窗口。
+            db.conn.execute(
+                "UPDATE pending_decisions SET status='decided' WHERE turn=?",
+                (int(state.turn),),
+            )
+            db.conn.commit()
+            phase2_started.set()
+            assert release_phase2.wait(5.0)
+            if on_event:
+                on_event("stage", "数值推演结算")
+            return "邸报：测。"
 
-    runtime.session.submit_decisions = _submit
+    runtime.session.submit_hitl_choices = _submit_hitl
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
     monkeypatch.setattr(web_app, "_settlement_period_entry", _spy_entry)
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
@@ -151,7 +158,7 @@ def test_resolve_stream_entry_failure_exits_display_when_not_front_half(game, mo
     def _boom(*_a, **_k):
         raise ValueError("当前不在待裁决策阶段，无法提交亲裁。")
 
-    runtime.session.submit_decisions = _boom
+    runtime.session.submit_hitl_choices = _boom
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
     monkeypatch.setattr(web_app, "_failed_secret_order_ids_for_turn", lambda *_a, **_k: set())
@@ -177,15 +184,16 @@ def test_resolve_stream_clear_throw_emits_error_not_done(game, monkeypatch):
         "options": [{"label": "发", "hint": "发内帑"}],
     }])
 
-    def _submit(choices, on_event=None, cheat_directive=""):
-        if on_event:
-            on_event("stage", "数值推演结算")
-        # 回 summoning 常态，使成功支 clear_orphan 真触发
-        state.turn_phase = TurnPhase.SUMMONING.value
-        db.save_state(state)
-        return "邸报：测。"
+    def _submit_hitl(choices, *, write_gate, on_event=None, cheat_directive=""):
+        with write_gate:
+            if on_event:
+                on_event("stage", "数值推演结算")
+            # 回 summoning 常态，使成功支 clear_orphan 真触发
+            state.turn_phase = TurnPhase.SUMMONING.value
+            db.save_state(state)
+            return "邸报：测。"
 
-    runtime.session.submit_decisions = _submit
+    runtime.session.submit_hitl_choices = _submit_hitl
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
     monkeypatch.setattr(web_app, "_failed_secret_order_ids_for_turn", lambda *_a, **_k: set())

@@ -41,9 +41,14 @@ export function useSettlementFlow({
   const [pausedDecisionError, setPausedDecisionError] = React.useState("");
 
   // 刷新恢复：若回合停在 awaiting_decision 且有未裁决策点，自动重弹决策弹窗。
+  // #657：typed resume_phase2 时空 pending 不报 PAUSED，接到 phase2 空 POST 续跑。
   React.useEffect(() => {
     if (!state) return;
-    const route = routeRefreshDecisions(state.turn.phase, state.pending_decisions || []);
+    const route = routeRefreshDecisions(
+      state.turn.phase,
+      state.pending_decisions || [],
+      state.resume_phase2,
+    );
     if (route.pendingDecisions !== null) {
       const next = route.pendingDecisions;
       setPendingDecisions((prev) => replacePendingDecisionsOnRefresh(prev, next) || []);
@@ -184,12 +189,19 @@ export function useSettlementFlow({
       const freshState = await loadState();
       if (!freshState) return;  // 陈旧代次被协调器拒收（返 null）→ 拒收陈旧 cargo，不据此路由决策
       const events = freshState.pending_decisions || [];
-      const route = routeRetryDecisions(freshState.turn.phase, events);
-      // #1418 r2：all-decided 不得当成功空批清横幅——接到 phase2 续跑 affordance。
+      const route = routeRetryDecisions(
+        freshState.turn.phase, events, freshState.resume_phase2,
+      );
+      // #1418 r2 / #657：all-decided 或 typed resume 不得当成功空批清横幅——接到 phase2 续跑。
       // 移交 resumePhase2 前先放行本函数 busy，避免 finally 清掉续跑中的「月末结算」。
       if (
         route.resumePhase2
-        || needsPhase2Resume(freshState.turn.phase, events, freshState.turn.settlement_display)
+        || needsPhase2Resume(
+          freshState.turn.phase,
+          events,
+          freshState.turn.settlement_display,
+          freshState.resume_phase2,
+        )
       ) {
         setBusy("");
         await resumePhase2();

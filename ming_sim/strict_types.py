@@ -49,14 +49,26 @@ def validate_affected_parties(
 def validate_verdict_affected_parties(
     verdict: object, mode: str, *, faction_names: object, class_names: object,
 ) -> None:
-    """Enforce the mode/decision reaction shape at every public verdict seam."""
+    """Enforce the mode/decision reaction shape at every public verdict seam.
+
+    #657 §C.8 later-wins：mode=midzhi 不猜/不强制 affected_parties（顺颁与打回皆然）；
+    ordinary 打回仍须非空 typed 清单；ordinary 顺颁必须省略。
+    """
     if not isinstance(verdict, dict):
         raise ValueError("案卷 verdict 须为对象")
     decision = verdict.get("decision")
-    required = decision == "rejected" or mode == "midzhi"
     present = "affected_parties" in verdict
+    if mode == "midzhi":
+        # 中旨接缝不消费该字段；若 LLM 夹带则仅校验形状（下游剥离/不落库）。
+        if present and verdict.get("affected_parties") not in (None, []):
+            validate_affected_parties(
+                verdict.get("affected_parties"),
+                faction_names=faction_names, class_names=class_names,
+            )
+        return
+    required = decision == "rejected"
     if required and (not present or not verdict.get("affected_parties")):
-        raise ValueError("打回或中旨判决的 affected_parties 必须为非空 typed 清单")
+        raise ValueError("打回判决的 affected_parties 必须为非空 typed 清单")
     if not required and present:
         raise ValueError("普通顺颁判决必须省略 affected_parties")
     validate_affected_parties(
@@ -96,7 +108,11 @@ def validate_rejection_verdict(
     )
     endorsement_ids = snapshot.get("endorsement_entry_ids") if isinstance(snapshot, dict) else None
     dossier_id = verdict.get("dossier_id")
-    affected = verdict.get("affected_parties")
+    # 缺省/空清单在此过形状；ordinary 非空要求由 validate_verdict_affected_parties 承担。
+    # midzhi 打回可无 affected_parties（#657 §C.8 不猜派）。
+    affected = verdict.get("affected_parties", [])
+    if affected is None:
+        affected = []
     try:
         validate_affected_parties(
             affected, faction_names=faction_names, class_names=class_names,
