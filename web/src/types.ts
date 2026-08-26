@@ -309,6 +309,8 @@ export type GameState = {
   pending_decisions?: PendingDecision[];
   last_decree: string;
   last_report: string;
+  /** #671：上一已完成月王承恩独立递话；空＝无递话区 */
+  last_attendant_message?: string;
 };
 
 export type EndingTimelineItem = {
@@ -591,6 +593,8 @@ export type HistoryTurnItem = {
   year: number;
   period: number;
   has_report: boolean;
+  /** #671：本月有非空王承恩递话（trim 存在位，不解析正文） */
+  has_attendant: boolean;
   has_directive: boolean;
   /** Persisted closed audience night for a scene archive. */
   night_id?: number;
@@ -627,6 +631,8 @@ export type HistoryDetail = {
   year: number;
   period: number;
   report: string;
+  /** #671：王承恩独立递话原文；与 report 分栏；空则史册不呈现 */
+  attendant_message?: string;
   decree_text: string;
   directives: HistoryDirective[];
 };

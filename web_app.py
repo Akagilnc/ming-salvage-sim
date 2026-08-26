@@ -1552,6 +1552,8 @@ class WebGame:
             ),
             "last_decree": self.last_decree,
             "last_report": self.last_report,
+            # #671：上一已完成月王承恩独立递话（与 last_report 同级 typed 字段）
+            "last_attendant_message": self.db.previous_turn_attendant_message(self.state),
         }
 
     # ── 聊天 ──────────────────────────────────────────────────────────────
@@ -4659,22 +4661,44 @@ def api_history_turns() -> Dict[str, Any]:
 
 @app.get("/api/history/turn/{turn}")
 async def api_history_turn(turn: int) -> Dict[str, Any]:
-    """某回合玩家历史：只交付邸报、诏书与已颁草案。"""
+    """某回合玩家历史：只交付邸报、诏书、已颁草案与独立递话原文。"""
     db = get_game().db
-    report = db.get_turn_report(turn)
+    # #671：一次读 turn_reports；year/period 在 extraction/directives 皆无时回落存档行
+    archive = db.get_turn_report_archive(turn)
+    report = str((archive or {}).get("report") or "")
+    attendant_message = str((archive or {}).get("attendant_message") or "")
     extraction = db.get_turn_extraction(turn)
     directives = db.list_directives_by_turn(turn)
-    if not report and extraction is None and not directives:
+    # exists：report/递话纯空白与空串同属缺席（临时 strip）；payload 仍回原文
+    if (
+        not str(report or "").strip()
+        and not str(attendant_message or "").strip()
+        and extraction is None
+        and not directives
+    ):
         return {"turn": turn, "exists": False}
     decree_text = ""
     if extraction is not None:
         decree_text = str(extraction.get("decree_text") or "")
+    if extraction is not None:
+        year = extraction["year"]
+        period = extraction["period"]
+    elif directives:
+        year = directives[0]["year"]
+        period = directives[0]["period"]
+    elif archive is not None:
+        year = archive["year"]
+        period = archive["period"]
+    else:
+        year = 0
+        period = 0
     return {
         "turn": turn,
         "exists": True,
-        "year": extraction["year"] if extraction else (directives[0]["year"] if directives else 0),
-        "period": extraction["period"] if extraction else (directives[0]["period"] if directives else 0),
+        "year": year,
+        "period": period,
         "report": report,
+        "attendant_message": attendant_message,
         "decree_text": decree_text,
         "directives": directives,
     }
