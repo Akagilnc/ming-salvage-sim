@@ -600,6 +600,7 @@ def test_legacy_population_unit_skips_absorption_and_recovery(game):
     db.conn.execute("DELETE FROM save_meta WHERE key='population_unit'")
     db.conn.commit()
     assert db.population_unit != POPULATION_UNIT_PERSONS
+    assert build_simulator_payload(state, db, "", "")["displaced_pool_balances"]["rows"] == []
 
     applied = apply_score_extraction(db, state, {
         "bandit_absorptions": [{
