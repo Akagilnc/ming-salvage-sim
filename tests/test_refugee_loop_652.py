@@ -307,6 +307,25 @@ def test_recovery_grant_produces_回流_on_settle(game, action):
     assert _pop(db, "农民", "shaanxi") == farmer_before + expected
 
 
+def test_two_recovery_dossiers_share_remaining_pool(game):
+    db, state, content = game
+    db.conn.execute(
+        "UPDATE classes SET population=100000 WHERE name='流民' AND region_id='shaanxi'"
+    )
+    db.conn.commit()
+    first = _recovery_grant(db, state, amount=30)
+    second = _recovery_grant(db, state, amount=30)
+    farmer_before = _pop(db, "农民", "shaanxi")
+
+    reflux = _reflux(_settle_transfers(state, db, content, "双案同省"))
+    assert [(r["origin_ref"], r["amount"]) for r in reflux] == [
+        (f"dossier:{first}", 60_000),
+        (f"dossier:{second}", 40_000),
+    ]
+    assert _pop(db, "流民", "shaanxi") == 0
+    assert _pop(db, "农民", "shaanxi") == farmer_before + 100_000
+
+
 def test_recovery_fires_once_across_subsequent_settles(game):
     db, state, content = game
     _recovery_grant(db, state, amount=20)
