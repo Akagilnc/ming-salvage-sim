@@ -161,10 +161,11 @@ export function HistoryDetailView({
         </section>
       ) : null}
 
-      {detail?.report ? (
+      {/* trim 仅判空，DOM 写原文（P6 零删改；与递话对称） */}
+      {String(detail?.report || "").trim() ? (
         <section className="document-section">
           <h3 className="extraction-section-title">月末邸报奏报</h3>
-          <pre className="memorial-text">{detail.report}</pre>
+          <pre className="memorial-text">{detail!.report}</pre>
         </section>
       ) : null}
 

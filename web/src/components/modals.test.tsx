@@ -1400,6 +1400,49 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
       });
     });
     expect(hostBlank.querySelector("[data-testid=history-attendant]")).toBeNull();
+
+    // 第三场景：纯空白 report + 非空递话 → 递话原文呈现，不画空奏报 section
+    const attendantOnlyTurn = {
+      kind: "month" as const,
+      turn: 7,
+      year: 1,
+      period: 11,
+      has_report: false,
+      has_attendant: true,
+      has_directive: false,
+    };
+    fetchMock.mockImplementation((url: string) => Promise.resolve({
+      ok: true,
+      json: async () => url === "/api/history/turns"
+        ? { turns: [attendantOnlyTurn] }
+        : {
+            turn: 7,
+            exists: true,
+            year: 1,
+            period: 11,
+            report: blank,
+            attendant_message: raw,
+            decree_text: "",
+            directives: [],
+          },
+    }));
+    const hostBlankReport = document.createElement("div"); document.body.appendChild(hostBlankReport);
+    const rootBlankReport = createRoot(hostBlankReport); mountedRoots.push({ root: rootBlankReport, host: hostBlankReport });
+    await act(async () => {
+      rootBlankReport.render(<HistoryModal onClose={() => {}} />);
+    });
+    await act(async () => {
+      await vi.waitFor(async () => {
+        await Promise.resolve();
+        expect(hostBlankReport.querySelector("[data-testid=history-attendant]")).not.toBeNull();
+      });
+    });
+    const attendantSection = hostBlankReport.querySelector("[data-testid=history-attendant]");
+    expect(attendantSection!.querySelector("pre")?.textContent).toBe(raw);
+    expect(hostBlankReport.textContent).not.toContain("月末邸报奏报");
+    const memorialPres = Array.from(hostBlankReport.querySelectorAll("pre.memorial-text"));
+    expect(memorialPres).toHaveLength(1);
+    expect(memorialPres[0].textContent).toBe(raw);
   });
 
   it("#671 attendant-only 月档列表标签为递话、不冒充奏报", async () => {
