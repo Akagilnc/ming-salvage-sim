@@ -800,3 +800,59 @@ def test_history_turn_api_blank_attendant_alone_is_absent(game, monkeypatch):
     assert present["exists"] is True
     assert present["report"] == SIM_REPORT
     assert present["attendant_message"] == blank
+
+
+def test_history_turn_api_attendant_only_returns_archived_year_period(game, monkeypatch):
+    """#671：attendant-only 月档详情 year/period 回落 turn_reports 存档行（非 0）。"""
+    import asyncio
+    import web_app
+
+    db, state, _content = game
+    turn = int(state.turn)
+    expected_year = int(state.year)
+    expected_period = int(state.period)
+    assert expected_year != 0 and expected_period != 0
+
+    db.save_turn_report(state, "", attendant_message=ATTENDANT_TEXT)
+    monkeypatch.setattr(web_app, "get_game", lambda: type("G", (), {"db": db})())
+
+    payload = asyncio.run(web_app.api_history_turn(turn))
+    assert payload["exists"] is True
+    assert payload["year"] == expected_year
+    assert payload["period"] == expected_period
+    assert payload["report"] == ""
+    assert payload["attendant_message"] == ATTENDANT_TEXT
+    assert payload["directives"] == []
+
+
+def test_history_archive_list_marks_attendant_presence(game, monkeypatch):
+    """#671：月档列表 has_report/has_attendant 按正文空白存在位；不冒充奏报。"""
+    import web_app
+
+    db, state, _content = game
+    turn = int(state.turn)
+    expected_year = int(state.year)
+    expected_period = int(state.period)
+
+    # attendant-only：有递话无奏报
+    db.save_turn_report(state, "", attendant_message=ATTENDANT_TEXT)
+    month = next(row for row in db.list_monthly_archives() if int(row["turn"]) == turn)
+    assert month["has_report"] is False
+    assert month["has_attendant"] is True
+    assert month["has_directive"] is False
+    assert int(month["year"]) == expected_year
+    assert int(month["period"]) == expected_period
+
+    monkeypatch.setattr(web_app, "get_game", lambda: type("G", (), {"db": db})())
+    listed = web_app.api_history_turns()
+    api_month = next(item for item in listed["turns"] if item.get("kind") == "month" and int(item["turn"]) == turn)
+    assert api_month["has_report"] is False
+    assert api_month["has_attendant"] is True
+    assert int(api_month["year"]) == expected_year
+    assert int(api_month["period"]) == expected_period
+
+    # 对照：非空 report → has_report
+    db.save_turn_report(state, SIM_REPORT, attendant_message=ATTENDANT_TEXT)
+    both = next(row for row in db.list_monthly_archives() if int(row["turn"]) == turn)
+    assert both["has_report"] is True
+    assert both["has_attendant"] is True

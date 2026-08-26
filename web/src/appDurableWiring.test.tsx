@@ -95,7 +95,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
         previous_summary: "天启七年九月邸报·试重开",
       });
       if (u.pathname.endsWith("/api/history/turns")) return jsonResp({ turns: [
-        { kind: "month", turn: 0, year: 1627, period: 9, has_report: true, has_directive: false },
+        { kind: "month", turn: 0, year: 1627, period: 9, has_report: true, has_attendant: false, has_directive: false },
         { kind: "night", turn: 1, year: 1627, period: 10, night_id: 31, title: "乾清宫召对", involved_people: ["王承恩"] },
       ] });
       if (u.pathname.endsWith("/api/history/turn/0")) return jsonResp({ turn: 0, exists: true, report: "月档", directives: [] });
@@ -768,7 +768,7 @@ const stubSettlementFetch = (state: unknown) => {
     if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
     if (u.pathname.endsWith("/api/game/state")) return jsonResp(state);
     if (u.pathname.endsWith("/api/history/turns")) return jsonResp({
-      turns: [{ kind: "month", turn: 4, year: 1627, period: 9, has_report: true, has_directive: true }],
+      turns: [{ kind: "month", turn: 4, year: 1627, period: 9, has_report: true, has_attendant: false, has_directive: true }],
     });
     if (u.pathname.includes("/api/history/turn/")) return jsonResp({
       turn: 4, year: 1627, period: 9, report: SNAP_GAZETTE, decree: "",
@@ -1027,9 +1027,9 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     await click(cmdByCaption(host, "史册"));
     await tick();
     await act(async () => {
-      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="史册：历代奏报与诏书"]')).not.toBeNull());
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="史册：历代奏报、诏书与递话"]')).not.toBeNull());
     });
-    expect(host.querySelector('[role="dialog"][aria-label="史册：历代奏报与诏书"]')!.textContent).toMatch(/1627\s*年\s*9\s*月/);
+    expect(host.querySelector('[role="dialog"][aria-label="史册：历代奏报、诏书与递话"]')!.textContent).toMatch(/1627\s*年\s*9\s*月/);
     await closeOpenOverlay(host);
 
     // audience_archive：史册头起居注另入口可开

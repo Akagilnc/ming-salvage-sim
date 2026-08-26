@@ -10839,19 +10839,28 @@ class GameDB:
         if commit:
             self.conn.commit()
 
-    def get_turn_report(self, turn: int) -> str:
+    def get_turn_report_archive(self, turn: int) -> Optional[Dict[str, object]]:
+        """#671：一次读 turn_reports 行（year/period/report/attendant）；无行→None。"""
         row = self.conn.execute(
-            "SELECT report FROM turn_reports WHERE turn = ?",
-            (turn,),
+            "SELECT year, period, report, attendant_message FROM turn_reports WHERE turn = ?",
+            (int(turn),),
         ).fetchone()
-        return (row["report"] if row else "") or ""
+        if row is None:
+            return None
+        return {
+            "year": int(row["year"] or 0),
+            "period": int(row["period"] or 0),
+            "report": str(row["report"] or ""),
+            "attendant_message": str(row["attendant_message"] or ""),
+        }
+
+    def get_turn_report(self, turn: int) -> str:
+        row = self.get_turn_report_archive(turn)
+        return str(row["report"] if row else "") or ""
 
     def get_turn_attendant_message(self, turn: int) -> str:
         """#671：指定回合王承恩独立递话（turn_reports 分栏；空＝无递话）。"""
-        row = self.conn.execute(
-            "SELECT attendant_message FROM turn_reports WHERE turn = ?",
-            (int(turn),),
-        ).fetchone()
+        row = self.get_turn_report_archive(turn)
         if row is None:
             return ""
         return str(row["attendant_message"] or "")
@@ -11152,14 +11161,19 @@ class GameDB:
             """
             SELECT turn, MAX(year) AS year, MAX(period) AS period,
                    MAX(has_report) AS has_report,
+                   MAX(has_attendant) AS has_attendant,
                    MAX(has_extraction) AS has_extraction,
                    MAX(has_directive) AS has_directive
             FROM (
-                SELECT turn, year, period, 1 AS has_report, 0 AS has_extraction, 0 AS has_directive FROM turn_reports
+                SELECT turn, year, period,
+                       CASE WHEN length(trim(COALESCE(report, ''))) > 0 THEN 1 ELSE 0 END AS has_report,
+                       CASE WHEN length(trim(COALESCE(attendant_message, ''))) > 0 THEN 1 ELSE 0 END AS has_attendant,
+                       0 AS has_extraction, 0 AS has_directive
+                FROM turn_reports
                 UNION ALL
-                SELECT turn, year, period, 0, 1, 0 FROM turn_extractions
+                SELECT turn, year, period, 0, 0, 1, 0 FROM turn_extractions
                 UNION ALL
-                SELECT turn, year, period, 0, 0, 1 FROM turn_directives WHERE status = 'issued'
+                SELECT turn, year, period, 0, 0, 0, 1 FROM turn_directives WHERE status = 'issued'
             )
             GROUP BY turn ORDER BY turn
             """
@@ -11167,6 +11181,7 @@ class GameDB:
         return [{
             "kind": "month", "turn": int(r["turn"]), "year": int(r["year"]),
             "period": int(r["period"]), "has_report": bool(r["has_report"]),
+            "has_attendant": bool(r["has_attendant"]),
             "has_extraction": bool(r["has_extraction"]), "has_directive": bool(r["has_directive"]),
         } for r in rows]
 
@@ -11249,6 +11264,7 @@ class GameDB:
             combined.append({
                 **night,
                 "has_report": bool(material.get("has_report", False)),
+                "has_attendant": bool(material.get("has_attendant", False)),
                 "has_extraction": bool(material.get("has_extraction", False)),
                 "has_directive": bool(material.get("has_directive", False)),
             })
