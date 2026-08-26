@@ -25,8 +25,10 @@ def displaced_pool_balance_rows(db: Any) -> List[Dict[str, object]]:
             "population_unit": unit,
         }
         for row in db.conn.execute(
-            "SELECT region_id, population FROM classes "
-            "WHERE name='流民' AND region_id <> '' ORDER BY region_id"
+            "SELECT c.region_id, c.population FROM classes c "
+            "JOIN regions r ON r.id=c.region_id "
+            "WHERE c.name='流民' AND c.region_id <> '' AND r.controlled_by='ming' "
+            "ORDER BY c.region_id"
         ).fetchall()
     ]
 

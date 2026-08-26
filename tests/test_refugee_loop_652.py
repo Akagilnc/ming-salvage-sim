@@ -90,6 +90,28 @@ def test_simulator_payload_carries_structured_displaced_pool(game):
     assert rows["shaanxi"] == (DISPLACED_SHAANXI, POPULATION_UNIT_PERSONS)
 
 
+def test_occupied_region_is_hidden_and_rejected_for_absorption(game):
+    db, state, content = game
+    pid = "bandit_li_zicheng"
+    before_pool = _pop(db, "流民", "shaanxi")
+    before_strength = _strength(db, pid)
+    db.conn.execute("UPDATE regions SET controlled_by='bandits' WHERE id='shaanxi'")
+    db.conn.commit()
+
+    rows = build_simulator_payload(state, db, "", "")["displaced_pool_balances"]["rows"]
+    assert all(row[0] != "shaanxi" for row in rows)
+    applied = apply_score_extraction(db, state, {
+        "bandit_absorptions": [{
+            "region_id": "shaanxi", "power_id": pid,
+            "requested_count": 10_000, "origin_ref": "盘面自发",
+        }],
+    }, content, None)
+    assert applied["bandit_absorptions"] == []
+    assert applied["bandit_absorptions_rejections"][0]["category"] == "missing_ref"
+    assert _pop(db, "流民", "shaanxi") == before_pool
+    assert _strength(db, pid) == before_strength
+
+
 def test_bandit_absorption_clamps_pool_strength_and_ceiling(game):
     """超池 clamp；实力按 actual；触 100 上界；空池拒收无正增。"""
     db, state, content = game

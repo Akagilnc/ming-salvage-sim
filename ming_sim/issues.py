@@ -7755,8 +7755,14 @@ def _apply_bandit_absorptions(
         if not region_id:
             _reject("missing_ref", "bandit_absorptions 缺 region_id")
             continue
-        if db.conn.execute("SELECT 1 FROM regions WHERE id=?", (region_id,)).fetchone() is None:
+        region_row = db.conn.execute(
+            "SELECT controlled_by FROM regions WHERE id=?", (region_id,)
+        ).fetchone()
+        if region_row is None:
             _reject("missing_ref", f"bandit_absorptions 未知 region_id：{region_id!r}")
+            continue
+        if str(region_row["controlled_by"] or "") != "ming":
+            _reject("missing_ref", f"bandit_absorptions 非明省不可吸收：{region_id!r}")
             continue
         if not power_id or not _is_bandit_power_id(power_id):
             _reject(
