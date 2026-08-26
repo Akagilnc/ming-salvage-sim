@@ -645,6 +645,12 @@ def _stage_office_pending_core(
                 resolved = int(existing_hits[0]["id"])
             if write_primary_pending_id:
                 ctx.out["pending_action_id"] = resolved
+            if str(appt.get("summon_after") or "否").strip() == "是":
+                from ming_sim.audience_night import ensure_inactive_office_summon
+                ensure_inactive_office_summon(
+                    session.db, resolved, appt_name,
+                    night_id=int(session.db._current_open_night_id()),
+                )
             return resolved
 
     if action == "任命":
@@ -672,6 +678,7 @@ def _stage_office_pending_core(
         "office": appt_office,
         "appointer": minister_name,
         "mode": resolve_directive_mode(ctx.player_message, appt.get("mode")),
+        "summon_after": str(appt.get("summon_after") or "否").strip(),
     }
     # 署理等任别随新建候选写入；特旨仅 mode（上已 resolve）
     if tenure_mark == "署理":
@@ -692,6 +699,12 @@ def _stage_office_pending_core(
     resolved = int(pending_id)
     if write_primary_pending_id:
         ctx.out["pending_action_id"] = resolved
+    if payload["summon_after"] == "是":
+        from ming_sim.audience_night import ensure_inactive_office_summon
+        ensure_inactive_office_summon(
+            session.db, resolved, appt_name,
+            night_id=int(session.db._current_open_night_id()),
+        )
     return resolved
 
 
@@ -3112,6 +3125,10 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 ),
                 FieldSpec("name", "姓名", None, "", max_len=20),
                 FieldSpec("office", "官职", None, "", max_len=40),
+                FieldSpec(
+                    "summon_after", "任命后传召",
+                    frozenset({"是", "否"}), "否",
+                ),
                 FieldSpec(
                     "mode", "颁布方式",
                     frozenset({"ordinary", "midzhi"}), "",

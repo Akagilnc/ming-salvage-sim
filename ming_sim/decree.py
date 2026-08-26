@@ -2496,6 +2496,7 @@ def settle_with_delta(
     _brew_pool = None
     _brew_future = None
     _brew_leg = None
+    affected_people: set[str] = set()
 
     def _start_relation_brew() -> None:
         nonlocal _brew_pool, _brew_future, _brew_leg
@@ -2520,26 +2521,26 @@ def settle_with_delta(
             # 事务外 commit 的话重放炸时结算回滚而动作及其真表副作用留存=跨事务半写
             # （cmr S7 r4，claude+codex 两面同根）。
             db.commit_pending_actions(
-                state, content=content, registry=registry,
+                state, content=content, registry=None,
                 rejection_collector=collector,
             )
             if dossier_verdicts:
-                db.apply_dossier_verdicts(
-                    state, dossier_verdicts, content=content, registry=registry,
-                )
+                affected_people.update(db.apply_dossier_verdicts(
+                    state, dossier_verdicts, content=content, registry=None,
+                ))
             # Player disposition rows are not Judge verdicts: no affected_parties,
             # no midzhi validator, no apply_dossier_verdicts. Route each chosen
             # rescript action through the existing promulgation seam under this
             # outer atomic batch (ADR 0056 force reads current-turn Judge evidence).
             if dossier_rescript_actions:
                 for action in dossier_rescript_actions:
-                    db.apply_dossier_promulgation(
+                    affected_people.update(db.apply_dossier_promulgation(
                         state,
                         int(action["dossier_id"]),
                         str(action["decision"]),
                         content=content,
-                        registry=registry,
-                    )
+                        registry=None,
+                    ) or set())
             full_report = _settle_after_extract_body(
                 state, db, extracted,
                 before_turn=before_turn, content=content, registry=registry,
@@ -2587,6 +2588,9 @@ def settle_with_delta(
             settlement_abort_message(pack_path),
             turn=before_turn, stage="settle", error_pack_path=pack_path,
         ) from exc
+    if registry is not None:
+        for person_name in sorted(affected_people):
+            registry.refresh(person_name)
     # JSONL follows the real outer transaction outcome; DB remains truth.
     mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
     # #636 S5 月末酿制腿收尾（判词类②）：结算事务已提交，摘要持久化前 join。
