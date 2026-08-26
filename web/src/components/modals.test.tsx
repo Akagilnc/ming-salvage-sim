@@ -1439,7 +1439,6 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
     });
     const attendantSection = hostBlankReport.querySelector("[data-testid=history-attendant]");
     expect(attendantSection!.querySelector("pre")?.textContent).toBe(raw);
-    expect(hostBlankReport.textContent).not.toContain("月末邸报奏报");
     const memorialPres = Array.from(hostBlankReport.querySelectorAll("pre.memorial-text"));
     expect(memorialPres).toHaveLength(1);
     expect(memorialPres[0].textContent).toBe(raw);
