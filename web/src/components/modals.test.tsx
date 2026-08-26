@@ -1356,16 +1356,21 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
     const root = createRoot(host); mountedRoots.push({ root, host });
     await act(async () => {
       root.render(<HistoryModal onClose={() => {}} />);
-      await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    });
+    // 等详情链落地后再断言递话原文（完成信号，非固定微任务次数）
+    await act(async () => {
+      await vi.waitFor(async () => {
+        await Promise.resolve();
+        expect(host.querySelector("[data-testid=history-attendant]")).not.toBeNull();
+      });
     });
     expect(fetchMock).toHaveBeenCalledWith("/api/history/turns");
     expect(fetchMock).toHaveBeenCalledWith("/api/history/turn/7");
     const section = host.querySelector("[data-testid=history-attendant]");
-    expect(section).not.toBeNull();
     // trim 仅判空；DOM 写原文（含空白与 markdown 标记）
     expect(section!.querySelector("pre")?.textContent).toBe(raw);
 
-    // 纯空白递话：经同一 fetch 链不渲染 section
+    // 纯空白递话：先等详情 report 正文落地，再断言 section 缺席
     fetchMock.mockImplementation((url: string) => Promise.resolve({
       ok: true,
       json: async () => url === "/api/history/turns"
@@ -1385,7 +1390,14 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
     const rootBlank = createRoot(hostBlank); mountedRoots.push({ root: rootBlank, host: hostBlank });
     await act(async () => {
       rootBlank.render(<HistoryModal onClose={() => {}} />);
-      await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    });
+    await act(async () => {
+      await vi.waitFor(async () => {
+        await Promise.resolve();
+        const reportPre = Array.from(hostBlank.querySelectorAll("pre.memorial-text"))
+          .find((el) => el.textContent === "一、人事除目");
+        expect(reportPre).toBeTruthy();
+      });
     });
     expect(hostBlank.querySelector("[data-testid=history-attendant]")).toBeNull();
   });
