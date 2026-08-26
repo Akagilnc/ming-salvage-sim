@@ -326,6 +326,50 @@ def test_two_recovery_dossiers_share_remaining_pool(game):
     assert _pop(db, "农民", "shaanxi") == farmer_before + 100_000
 
 
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
+def test_monthly_recovery_uses_each_turn_fixed_payment(game, monkeypatch):
+    db, state, content = game
+    state.metrics["内库"] = 10_000
+    dossier_id = db.create_decree_dossier(
+        state, action_type="grant_allocation", decree_text="陕西每月赈济",
+        target_kind="region", target_id="shaanxi",
+        payload={
+            "grant_action": "赈灾", "account": "内库", "amount": 10,
+            "execution_surface": "immediate", "cadence": "每月",
+        },
+    )
+    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
+    assert db.get_decree_dossier(dossier_id)["execution_outcome"] == "fulfilled"
+    pool_before = _pop(db, "流民", "shaanxi")
+    canned_full_settlement(
+        monkeypatch, extract_result={}, skip_relation_brew=True,
+    )
+    session = make_light_session(db, state, content)
+
+    turn_one = int(state.turn)
+    session.advance_without_decree()
+    first = _reflux(
+        db.get_turn_extraction(turn_one)["extractor_output"]["population_transfers"],
+        dossier_id=dossier_id,
+    )
+    turn_two = int(state.turn)
+    session.advance_without_decree()
+    second = _reflux(
+        db.get_turn_extraction(turn_two)["extractor_output"]["population_transfers"],
+        dossier_id=dossier_id,
+    )
+
+    assert [item["amount"] for item in first] == [20_000]
+    assert [item["amount"] for item in second] == [20_000]
+    assert _pop(db, "流民", "shaanxi") == pool_before - 40_000
+    paid_turns = {
+        int(move["turn"])
+        for move in db.list_economy_moves_for_dossier(dossier_id)
+        if int(move.get("delta") or 0) < 0
+    }
+    assert {turn_one, turn_two}.issubset(paid_turns)
+
+
 def test_recovery_fires_once_across_subsequent_settles(game):
     db, state, content = game
     _recovery_grant(db, state, amount=20)

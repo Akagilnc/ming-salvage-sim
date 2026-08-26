@@ -488,7 +488,11 @@ def compute_budget_lines(
         rate_key = base_key[:-5] + "_rate"  # 去 _base 换 _rate
         amount = round(int(cfg.get(base_key, 0)) * cfg.get(rate_key, 100) / 100)
         budget[str(item["account"])][str(item["direction"])].append(
-            {"name": str(item["display"]), "amount": int(amount), "note": str(item.get("note") or "")}
+            {
+                "name": str(item["display"]), "amount": int(amount),
+                "note": str(item.get("note") or ""),
+                "origin_ref": str(item.get("origin_ref") or ""),
+            }
         )
 
     # 建筑：按当前 condition 折算月产出/维护。内廷类维护扣内库，余扣国库；产出按 output_metric。
@@ -1372,10 +1376,14 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
         flows.append({"dir": "income", "account": account, "amount": actual,
                       "category": category, "reason": reason})
 
-    def _expense(account: str, amount: int, category: str, reason: str) -> None:
+    def _expense(
+        account: str, amount: int, category: str, reason: str, *, origin_ref: str = "",
+    ) -> None:
         if amount <= 0:
             return
-        actual = db.record_issue_economy_move(state, account, -amount, category, reason)
+        actual = db.record_issue_economy_move(
+            state, account, -amount, category, reason, origin_ref=origin_ref,
+        )
         flows.append({"dir": "expense", "account": account, "amount": abs(actual),
                       "category": category, "reason": reason})
 
@@ -1580,7 +1588,10 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                     skip_substrate_hub_lines and it.get("internal") == "substrate_hub"
                 ):
                     continue
-                _expense(account, int(it["amount"]), it["name"], f"{it['name']}{TURN_UNIT}支")
+                _expense(
+                    account, int(it["amount"]), it["name"], f"{it['name']}{TURN_UNIT}支",
+                    origin_ref=str(it.get("origin_ref") or ""),
+                )
 
     _apply_budget_lines(skip_substrate_hub_lines=db.is_substrate_hub_fiscal_engine_enabled())
 
