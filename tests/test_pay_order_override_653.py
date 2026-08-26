@@ -689,7 +689,7 @@ def test_fiscal_fact_brief_pure_projection_deterministic_tsv(read_game):
         }
         assert e["metric"] in FACT_METRICS
         assert str(e["origin_ref"]).strip()  # origin_ref 恒不空（judge class③）
-        # 属地归因不变量：region 级=subject_id；army 级=pay_source_region 或空
+        # 属地归因不变量：region 级=subject_id；army 级=station_region 或空（#659）
         if e["subject_kind"] == "region":
             assert e["region"] == e["subject_id"]
     tsv = format_fiscal_fact_brief_tsv(e1)
@@ -1435,7 +1435,7 @@ def test_oracle_independent_of_debt_mapping(monkeypatch):
 
 def test_fact_brief_per_source_windows_and_region_attribution(game):
     """分源欠饷月数＝ceil(分源现欠/月需)，province/central 各自独立成窗；
-    army 级事实带属地 region（=pay_source_region）；零分母短路不计。"""
+    army 级事实带属地 region（=station_region，#659）；零分母短路不计。"""
     from ming_sim.flows import army_needed
 
     db, _state, _content = game
@@ -1461,7 +1461,7 @@ def test_fact_brief_per_source_windows_and_region_attribution(game):
     assert xuan["province"]["value"] == pytest.approx(25.0)
     assert xuan["central"]["value"] == pytest.approx(12.0)
     for e in xuan.values():
-        assert e["region"] == "shanxi"             # 属地随 pay_source_region 归因
+        assert e["region"] == "shanxi"             # 属地随 station_region 归因（#659；宣大 seed 同省）
         assert e["affected_class"] == "军户"
     # 零分母军不出窗
     assert not any(
@@ -1476,7 +1476,7 @@ def test_fact_brief_per_source_windows_and_region_attribution(game):
 def test_fact_brief_zero_need_army_region_attribution_not_gated(game):
     """零需残军（manpower=0 携历史欠，0023 D6/D11）属地归因不被 need 门误删：
     月需=0 只短路欠饷月数计算（不做除法），army 仍入 region_of_army 册——
-    其省源偿欠受益事实照常带 pay_source_region 归因，不落成无属地。"""
+    其省源偿欠受益事实照常带 station_region 归因（#659），不落成无属地。"""
     from ming_sim.flows import army_needed
 
     db, state, _content = game
@@ -1502,7 +1502,7 @@ def test_fact_brief_zero_need_army_region_attribution_not_gated(game):
         e["subject_id"] == "shaanxi_army" and e["metric"] == "分源欠饷月数"
         for e in entries
     )
-    # 但属地归因在案：偿欠受益事实带 pay_source_region，非空串
+    # 但属地归因在案：偿欠受益事实带 station_region，非空串
     repaid = [
         e for e in entries
         if e["subject_id"] == "shaanxi_army" and e["detail"] == "省源偿欠"

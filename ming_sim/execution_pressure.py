@@ -434,14 +434,77 @@ def _project_owner_arrival_for_region(
     return owner_rows, arrival_rows
 
 
+def _garrison_pressure_by_region(db) -> Dict[str, List[Dict[str, object]]]:
+    """#659：按 station_region 投影军镇压力（复用 fiscal_fact_brief + mutiny latch）。
+
+    无 station_region 的军不进属地块（不回落饷源）。禁止复制欠饷算法。
+    """
+    from ming_sim.fiscal_fact_brief import build_fiscal_fact_brief
+    from ming_sim.flows import derive_army_mutiny_state
+
+    arrears_by_army: Dict[str, Dict[str, object]] = {}
+    for entry in build_fiscal_fact_brief(db):
+        if entry.get("metric") != "分源欠饷月数":
+            continue
+        if entry.get("subject_kind") != "army":
+            continue
+        army_id = str(entry.get("subject_id") or "").strip()
+        if not army_id:
+            continue
+        bucket = arrears_by_army.setdefault(
+            army_id,
+            {"province_months": 0, "central_months": 0, "province_value": 0.0, "central_value": 0.0},
+        )
+        detail = str(entry.get("detail") or "")
+        months = int(entry.get("window_turns") or 0)
+        value = float(entry.get("value") or 0.0)
+        if detail == "province":
+            bucket["province_months"] = months
+            bucket["province_value"] = value
+        elif detail == "central":
+            bucket["central_months"] = months
+            bucket["central_value"] = value
+
+    grouped: Dict[str, List[Dict[str, object]]] = {}
+    rows = db.conn.execute(
+        "SELECT id, name, station_region, owner_power, is_mutinied, mutiny_status, "
+        "mutiny_probation, mutiny_count, loyalty "
+        "FROM armies ORDER BY id"
+    ).fetchall()
+    for row in rows:
+        rid = str(row["station_region"] or "").strip()
+        if not rid:
+            continue
+        army_id = str(row["id"])
+        arrears = arrears_by_army.get(army_id, {})
+        mutiny_state = derive_army_mutiny_state(row)
+        latched = bool(row["is_mutinied"]) or mutiny_state == "哗变"
+        # 无欠饷窗且未 latch 的军不制造噪音行
+        if not latched and not arrears:
+            continue
+        grouped.setdefault(rid, []).append({
+            "army_id": army_id,
+            "army_name": str(row["name"] or ""),
+            "mutiny_latched": latched,
+            "mutiny_status": str(row["mutiny_status"] or "") or mutiny_state,
+            "province_arrears_months": int(arrears.get("province_months") or 0),
+            "central_arrears_months": int(arrears.get("central_months") or 0),
+            "province_arrears_value": float(arrears.get("province_value") or 0.0),
+            "central_arrears_value": float(arrears.get("central_value") or 0.0),
+        })
+    return grouped
+
+
 def _assemble_province_block(
     conn,
     rid: str,
     owner_rows: Sequence[Mapping[str, object]],
     arrival_rows: Sequence[Mapping[str, object]],
     province_counts: Mapping[str, int],
+    garrison_rows: Sequence[Mapping[str, object]] | None = None,
 ) -> Dict[str, object]:
-    """单省 block 装配（哨兵块 vs 读 regions / 切片 / 督抚 / 贼 / 灾）。"""
+    """单省 block 装配（哨兵块 vs 读 regions / 切片 / 督抚 / 贼 / 灾 / 军镇）。"""
+    garrison = list(garrison_rows or [])
     if rid == "":
         return {
             "region_id": "",
@@ -454,6 +517,7 @@ def _assemble_province_block(
             "bandit_pressure": ABSENT,
             "bandit_strength": ABSENT,
             "disaster_rows": [],
+            "garrison_pressure_rows": garrison,
             "owners": list(owner_rows),
             "arrival_rows": list(arrival_rows),
         }
@@ -476,6 +540,7 @@ def _assemble_province_block(
         "bandit_pressure": bandit_pressure,
         "bandit_strength": _bandit_strength(conn, rid),
         "disaster_rows": _disaster_rows(conn, rid),
+        "garrison_pressure_rows": garrison,
         "owners": list(owner_rows),
         "arrival_rows": list(arrival_rows),
     }
@@ -531,6 +596,9 @@ def build_execution_two_axis_surface(
         ).fetchall()
     ]
 
+    # #659：军镇压力按 station_region 挂入既有属地块（无 station_region 不回落饷源）
+    garrison_by_region = _garrison_pressure_by_region(db)
+
     provinces: List[Dict[str, object]] = []
     for rid in region_ids:
         owner_rows, arrival_rows = _project_owner_arrival_for_region(
@@ -544,6 +612,7 @@ def build_execution_two_axis_surface(
         provinces.append(
             _assemble_province_block(
                 conn, rid, owner_rows, arrival_rows, province_counts,
+                garrison_rows=garrison_by_region.get(rid, []),
             ),
         )
 
@@ -571,7 +640,11 @@ def _tsv_data_row(cells: Sequence[object]) -> str:
 
 
 def _render_two_axis_tsv(provinces: Sequence[Mapping[str, object]]) -> str:
-    """一省一块投影：灾情行 → 省盘 → 主办行 → 到差态行；无全局重排。20 列 ABI。"""
+    """一省一块投影：灾情行 → 省盘 → 军镇行 → 主办行 → 到差态行；无全局重排。20 列 ABI。
+
+    #659 军镇行复用既有列（不扩 ABI）：主办=军名、在办数=省源欠月、能力=中央欠月、
+    负荷=哗变闩(0/1)、灾情id=army_id、灾种=mutiny_status。
+    """
     header = (
         "行类\t省\t省在办数\t士绅阻力\t流寇压力\t贼强度\t督抚派系\t督抚操守"
         "\t士绅盘\t官僚盘\t主办\t在办数\t能力\t负荷\t距离档"
@@ -619,6 +692,27 @@ def _render_two_axis_tsv(provinces: Sequence[Mapping[str, object]]) -> str:
                 "",  # 到差态
             ])
         )
+        # ②b 军镇压力行（#659；结构化真源=garrison_pressure_rows）
+        for gar in block.get("garrison_pressure_rows") or []:
+            if not isinstance(gar, Mapping):
+                continue
+            lines.append(
+                _tsv_data_row([
+                    "军镇",
+                    rid,
+                    "", "", "", "", "", "",
+                    "", "",
+                    str(gar.get("army_name") or ""),
+                    str(gar.get("province_arrears_months") or 0),
+                    str(gar.get("central_arrears_months") or 0),
+                    "1" if gar.get("mutiny_latched") else "0",
+                    "",
+                    str(gar.get("army_id") or ""),
+                    str(gar.get("mutiny_status") or ""),
+                    "", "",
+                    "",  # 到差态
+                ])
+            )
         # ③ 主办行
         for own in block.get("owners") or []:
             if not isinstance(own, Mapping):

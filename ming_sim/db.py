@@ -1099,6 +1099,7 @@ class GameDB:
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL UNIQUE,
                 station TEXT NOT NULL,
+                station_region TEXT NOT NULL DEFAULT '',
                 theater TEXT NOT NULL,
                 commander TEXT NOT NULL,
                 controller TEXT NOT NULL,
@@ -2216,6 +2217,7 @@ class GameDB:
         }.items():
             self.ensure_column("powers", column, definition)
         self.ensure_column("armies", "owner_power", "TEXT NOT NULL DEFAULT 'ming'")
+        self.ensure_column("armies", "station_region", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("armies", "province_pay_arrears", "REAL NOT NULL DEFAULT 0")
         self.ensure_column("armies", "central_pay_arrears", "REAL NOT NULL DEFAULT 0")
         self.ensure_column("armies", "consecutive_pay_shortfall_months", "INTEGER NOT NULL DEFAULT 0")
@@ -3757,17 +3759,18 @@ class GameDB:
                 self.conn.execute(
                     """
                     INSERT INTO armies
-                    (id, name, station, theater, commander, controller, troop_type, manpower,
+                    (id, name, station, station_region, theater, commander, controller, troop_type, manpower,
                      supply, morale, training, equipment, arrears,
                      province_pay_arrears, central_pay_arrears, pay_source_region,
                      province_pay_share, central_pay_share, is_tusi, self_funded_pay,
                      mobility, loyalty, firearm_equipment, cannon_equipment, salary_rate, status, owner_power)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         army.id,
                         army.name,
                         army.station,
+                        army.station_region,
                         army.theater,
                         army.commander,
                         army.controller,
@@ -8026,6 +8029,23 @@ class GameDB:
                     text_value = str(value).strip()[:160]
                     if not text_value or text_value == str(old_value):
                         continue
+                    # #659：station_region 非空须为已入库 regions.id；禁止从 station 文本反推。
+                    if field == "station_region":
+                        exists = self.conn.execute(
+                            "SELECT 1 FROM regions WHERE id = ?", (text_value,),
+                        ).fetchone()
+                        if exists is None:
+                            changes.append({
+                                "army": row["name"], "field": field,
+                                "rejected": True, "category": "invalid_enum",
+                                "reason": (
+                                    f"army_delta.station_region 未入库 region_id：{text_value}"
+                                ),
+                                "item": {
+                                    "army_id": army_id, "field": field, "value": value,
+                                },
+                            })
+                            continue
                     stored_new = text_value
                     log_delta = None
                 else:
@@ -8246,6 +8266,22 @@ class GameDB:
                     "item": raw,
                 })
                 continue
+            # #659：结构化实际驻地可选；非空须为已入库 region_id，缺省 "" 不 fail-loud。
+            station_region = str(item.get("station_region") or "").strip()
+            if station_region:
+                exists = self.conn.execute(
+                    "SELECT 1 FROM regions WHERE id = ?", (station_region,),
+                ).fetchone()
+                if exists is None:
+                    created.append({
+                        "id": aid, "rejected": True, "category": "invalid_enum",
+                        "reason": (
+                            f"new_armies '{aid}' station_region 未入库 region_id："
+                            f"{station_region}"
+                        ),
+                        "item": raw,
+                    })
+                    continue
             pay_source_region = ""
             province_pay_share = central_pay_share = 0.0
             province_pay_arrears = central_pay_arrears = 0.0
@@ -8287,6 +8323,7 @@ class GameDB:
                 aid,
                 name,
                 str(item.get("station") or ""),
+                station_region,
                 str(item.get("theater") or ""),
                 commander,
                 str(item.get("controller") or commander),
@@ -8318,12 +8355,12 @@ class GameDB:
                 self.conn.execute(
                     """
                     INSERT INTO armies
-                    (id, name, station, theater, commander, controller, troop_type, manpower,
+                    (id, name, station, station_region, theater, commander, controller, troop_type, manpower,
                      supply, morale, training, equipment, arrears,
                      province_pay_arrears, central_pay_arrears, pay_source_region,
                      province_pay_share, central_pay_share, is_tusi, self_funded_pay,
                      mobility, loyalty, firearm_equipment, cannon_equipment, salary_rate, status, owner_power)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     row,
                 )
@@ -16179,10 +16216,16 @@ class GameDB:
 
     def _apply_military_order_station_effect(
         self, state, *, army_id: str, station: str, actor: str, reason: str,
-        origin_ref: str,
+        origin_ref: str, station_region: str = "",
     ) -> None:
-        """军令调驻面：既有军 station → army 写核；不得 new_armies。"""
-        if not station:
+        """军令调驻面：既有军 station(+可选 station_region) → army 写核；不得 new_armies。
+
+        #659：只改人读驻地/结构化驻地；不触 pay_source_region。仅 station 无 region
+        时只改人读字段，region 保持原值（禁止从 station 文本反推）。
+        """
+        dest = str(station or "").strip()
+        dest_region = str(station_region or "").strip()
+        if not dest and not dest_region:
             return
         if not army_id:
             raise ValueError("军令调驻缺少军队 target")
@@ -16198,9 +16241,14 @@ class GameDB:
             id="military_order", title="军令调遣", kind="圣旨", summary="",
             urgency=0, severity=0, credibility=100, interests=[], audiences=[],
         )
+        delta: Dict[str, object] = {"reason": reason[:80]}
+        if dest:
+            delta["station"] = dest
+        if dest_region:
+            delta["station_region"] = dest_region
         changes = self.apply_army_deltas(
             state, pseudo, None, actor or "军令",
-            {army_id: {"station": station, "reason": reason[:80]}},
+            {army_id: delta},
             commit=False,
             origin_ref=origin_ref,
             require_origin=True,
@@ -16470,6 +16518,12 @@ class GameDB:
             payload.get("target_id") or row.get("target_id") or ""
         ).strip()
         station = str(payload.get("station") or "").strip()
+        station_region = str(
+            payload.get("station_region")
+            or payload.get("实际驻地")
+            or payload.get("驻地省")
+            or ""
+        ).strip()
         reason = str(
             payload.get("text") or row.get("decree_text") or "军令调遣"
         )
@@ -16480,6 +16534,7 @@ class GameDB:
             state,
             army_id=army_id,
             station=station,
+            station_region=station_region,
             actor=actor,
             reason=reason,
             origin_ref=origin_ref,

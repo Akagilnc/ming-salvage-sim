@@ -29,6 +29,7 @@ from ming_sim.constants import (
     REGION_TEXT_FIELDS,
     SCORE_METRICS,
 )
+from ming_sim.person_archive_contract import PERSON_ACTIONS
 
 
 def loads_effect_dict(raw: object) -> Dict[str, object]:
@@ -175,15 +176,12 @@ def _new_armies_effect_has_work(raw: object) -> bool:
 def _person_effect_has_work(raw: object) -> bool:
     if not isinstance(raw, list):
         return False
-    action_fields = {
-        "任命", "罢黜", "调任", "处置", "易主", "册封", "行止", "评定",
-    }
     for item in raw:
         if not isinstance(item, dict):
             continue
         name = str(item.get("name") or item.get("人物") or "").strip()
         action = str(item.get("动作") or item.get("action") or "").strip()
-        if not name or action not in action_fields:
+        if not name or action not in PERSON_ACTIONS:
             continue
         if action == "评定":
             loyalty = item.get("loyalty")
@@ -192,6 +190,11 @@ def _person_effect_has_work(raw: object) -> bool:
                 and isinstance(loyalty, int)
                 and loyalty != 0
             ):
+                return True
+            continue
+        if action == "性情":
+            style = item.get("style")
+            if isinstance(style, str) and style.strip():
                 return True
             continue
         return True
@@ -571,6 +574,7 @@ class Army:
     firearm_equipment: int = 0  # 火器装备 0-100：鸟铳/三眼铳，野战+守城
     cannon_equipment: int = 0   # 随军大炮门数(clamp 0-12)：红夷炮，守城/攻城，不利野战；城防炮另挂 region.cannon
     salary_rate: float = 0.0    # #44 名义月饷率(两/兵·月)：应发=ceil(manpower×rate/10000)，仅 ming；新军默认见 db 建军
+    station_region: str = ""  # #659 结构化实际驻地=regions.id；station 仅人读细地点
     pay_source_region: str = ""
     province_pay_share: float = 0.0
     central_pay_share: float = 0.0

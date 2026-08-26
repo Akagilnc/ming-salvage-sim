@@ -61,7 +61,8 @@
 - `id`：全新英文蛇形 id，**不得**与 input `army_ids` 重复。叛军建议加前缀如 `bandit_wangjiayin`、`bandit_li_zicheng`；明朝募兵如 `xinjun_denglai`、`qin_army`。
 - `name`：中文军号，如“秦军新营”“闯王部”“登莱新军”。
 - `owner_power`：必须来自 input `power_ids`。
-- `station`：驻地（中文），跨区调度直接改驻地，如“北直隶 / 遵化”“建州 / 赫图阿拉”。
+- `station`：驻地细地点（中文），跨区调度直接改驻地，如“北直隶 / 遵化”“建州 / 赫图阿拉”。
+- `station_region` / `实际驻地` / `驻地省`：结构化实际驻地，必须是 input `region_ids` 内的英文 id（如 `liaodong`、`dongjiang_area`、`beizhili`）。调防时与 `station` 同改；**不得**用它改饷源三字段（`pay_source_region`/`province_pay_share`/`central_pay_share` 不随调防改）。缺省可空（未知属地），代码不从 `station` 文字反推。
 - `commander`：统帅姓名（如孙传庭、王嘉胤）。只写这一个指挥字段。
 - `troop_type`：兵种（如募兵/饥民裹挟/降军/骑兵）。
 - `manpower`：人数（整数，整数人，不是"万人"）。明军月饷总额由引擎按此人数自动核算，不写饷额；但普通明军必须写下列饷源拆分字段。
@@ -115,7 +116,7 @@
   "军队变化": {"guanning": {"士气": -3, "忠诚": -2, "来源引用": "盘面自发"}, "shaanxi_army": {"人数": 1500, "状态":"补兵", "来源引用": "dossier:17"}},
   "新建军队": [
     {"id": "qin_army", "name": "秦军新营", "owner_power": "ming",
-     "station": "陕西/西安", "commander": "孙传庭",
+     "station": "陕西/西安", "station_region": "shaanxi", "commander": "孙传庭",
      "troop_type": "募兵步骑",
      "manpower": 8000,
      "pay_source_region": "shaanxi",
