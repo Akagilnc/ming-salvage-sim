@@ -18504,14 +18504,8 @@ class GameDB:
                 person = str(item.get("name") or item.get("人物") or "").strip()
                 if person:
                     affected.add(person)
-                displaced = item.get("displaced")
-                if isinstance(displaced, str):
-                    displaced_parts = [displaced] if displaced.strip() else []
-                elif isinstance(displaced, (list, tuple)):
-                    displaced_parts = displaced
-                else:
-                    displaced_parts = []
-                for part in displaced_parts:
+                # Canonical producer (apply_score_extraction) writes List[str] only.
+                for part in item.get("displaced") or []:
                     displaced_name = str(part).split(":", 1)[0].strip()
                     if displaced_name:
                         affected.add(displaced_name)
