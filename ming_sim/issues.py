@@ -8583,7 +8583,12 @@ def apply_score_extraction(
     # 注：建筑的新建/变更/废止不走顶层字段，全由 issue 的 effect_on_resolve /
     #     effect_on_fail 里的 `buildings` 段在局势结案时落地（见 _apply_issue_buildings）。
 
-    # 4.5) bandit_absorptions：#652 流民投贼原子吸收（先于自由 power_updates）。
+    # 4.5) #652 已付赈济/招抚先回流，再允许投贼吃同省余池。
+    recovery_applied, recovery_rejections = _apply_recovery_driven_transfers(
+        db, state, commit=commit_now,
+    )
+    applied_transfers.extend(recovery_applied)
+    transfer_rejections.extend(recovery_rejections)
     applied_absorptions, absorption_rejections, absorption_power_changes = (
         _apply_bandit_absorptions(
             db, state, extracted.get("bandit_absorptions") or [], commit=commit_now,
