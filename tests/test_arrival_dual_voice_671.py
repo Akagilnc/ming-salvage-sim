@@ -851,7 +851,16 @@ def test_history_archive_list_marks_attendant_presence(game, monkeypatch):
     assert int(api_month["year"]) == expected_year
     assert int(api_month["period"]) == expected_period
 
-    # 对照：非空 report → has_report
+    # 空白语义：空串/空格/换行制表均不算 present；存档原文不改写
+    for blank in ("", "   ", "\n\t  "):
+        db.save_turn_report(state, blank, attendant_message=blank)
+        blank_month = next(row for row in db.list_monthly_archives() if int(row["turn"]) == turn)
+        assert blank_month["has_report"] is False
+        assert blank_month["has_attendant"] is False
+        assert db.get_turn_report(turn) == blank
+        assert db.get_turn_attendant_message(turn) == blank
+
+    # 对照：非空 report → has_report；attendant-only 非空 → has_attendant
     db.save_turn_report(state, SIM_REPORT, attendant_message=ATTENDANT_TEXT)
     both = next(row for row in db.list_monthly_archives() if int(row["turn"]) == turn)
     assert both["has_report"] is True

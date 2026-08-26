@@ -15,11 +15,13 @@ from ming_sim.cli import terminal
 
 
 class _HistoryDB:
-    def get_turn_report(self, turn: int) -> str:
-        return "邸报：国丈家赀约数十万两。"
-
-    def get_turn_attendant_message(self, turn: int) -> str:
-        return ""
+    def get_turn_report_archive(self, turn: int):
+        return {
+            "year": 0,
+            "period": 0,
+            "report": "邸报：国丈家赀约数十万两。",
+            "attendant_message": "",
+        }
 
     def get_turn_extraction(self, turn: int):
         return {
