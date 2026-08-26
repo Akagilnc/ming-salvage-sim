@@ -123,9 +123,11 @@ def build_brew_input(
 ) -> Dict[str, Any]:
     """单条关系的酿制输入（旧摘要＋新边事件＋严格更早完整历史＋当前年月）。
 
-    prior_events＝#642 锚④ coda 回流水：仅已选中有向对、由
-    ``load_relation_history_before`` 提供的严格早于 settled 年月的完整事件；
-    零语义筛选/裁剪；无旧事时为空列表。不改五字段玩家读面。"""
+    prior_events＝#642 锚④ coda 回流水：已消化历史参考；new_events＝本批未消化
+    事实（id > watermark，含失败月 backlog）。两桶互斥：同一事件不得双送——
+    由调用方 ``MonthEndRelationBrewLeg.prepare`` 在装配时保证（new 优先，
+    prior 去掉 new id 集）。并集仍覆盖该有向关系应提供的完整流水；无旧事时
+    prior 为空列表。不改五字段玩家读面。"""
     return {
         "source": source,
         "target": target,
@@ -289,6 +291,8 @@ class MonthEndRelationBrewLeg:
                 watermark=item["watermark"],
             )
             # #642 锚④：仅对已选中有向对定点读取严格更早的完整历史（coda 唯一消费者）。
+            # 互斥：未消化事实只进 new_events；prior 去掉与 new 重叠的 id，避免
+            # 失败月重试／水位未推进时同一事件双送。
             prior_events = load_relation_history_before(
                 self._db,
                 source=item["source"],
@@ -296,6 +300,8 @@ class MonthEndRelationBrewLeg:
                 before_year=self.year,
                 before_period=self.period,
             )
+            new_ids = {int(e["id"]) for e in new_events}
+            prior_events = [e for e in prior_events if int(e["id"]) not in new_ids]
             jobs.append({
                 **item,
                 "item_kind": "关系",
