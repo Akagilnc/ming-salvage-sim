@@ -3572,11 +3572,8 @@ class GameSession:
             rescript_summon_origin_ref,
         )
 
-        list_drafts = getattr(getattr(self, "db", None), "list_rescript_drafts", None)
-        if not callable(list_drafts):
-            return []
         out: List[Dict[str, object]] = []
-        for draft in list_drafts() or []:
+        for draft in self.db.list_rescript_drafts():
             if str(draft.get("status") or "") != "decided":
                 continue
             choice = draft.get("choice")
