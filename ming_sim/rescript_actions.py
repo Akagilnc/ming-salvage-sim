@@ -824,7 +824,13 @@ def map_rescript_option_or_choice(
         pa = str(src.get("punish_action") or "").strip()
         if pa not in punish_actions_effective():
             raise ValueError(f"非法 punish_action：{pa!r}")
-        name = str(src.get("name") or target_id or "").strip()
+        name = str(src.get("name") or "").strip()
+        # 与 appointment 同形：双非空且不一致 → 整批拒（禁静默 name or target_id 改写）
+        if name and target_id and name != target_id:
+            raise ValueError(
+                f"punishment name 与 target_id 冲突：{name!r} vs {target_id!r}"
+            )
+        name = name or target_id
         if not name:
             raise ValueError("punishment 缺 name/target")
         payload["punish_action"] = pa
@@ -877,7 +883,13 @@ def map_rescript_option_or_choice(
     elif action_type == "pacification":
         if target_kind != "character":
             raise ValueError("pacification.target_kind 必须 character")
-        name = str(src.get("name") or target_id or "").strip()
+        name = str(src.get("name") or "").strip()
+        # 与 appointment/punishment 同形：双非空且不一致 → 整批拒
+        if name and target_id and name != target_id:
+            raise ValueError(
+                f"pacification name 与 target_id 冲突：{name!r} vs {target_id!r}"
+            )
+        name = name or target_id
         if not name:
             raise ValueError("pacification 缺 target")
         if db is not None:

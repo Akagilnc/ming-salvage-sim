@@ -674,6 +674,67 @@ def create_rescript_draft_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Age
     )
 
 
+def create_rescript_revise_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
+    """#657 单行改票：输出唯一 shape {"options":[...]}；禁 monthly items[] 契约。"""
+    del agno_db
+    ctx = _ctx()
+    cfg = _llm_for_role(llm_config, "extractor")
+    instructions = [
+        ctx.game_world_prompt,
+        (
+            "你是批红改票官。根据给定急务行与批语，输出改票 options。\n"
+            "只输出一个 JSON 对象，shape 必须是 "
+            '{"options":[{...},...]}' "——禁止 items 数组、禁止草稿列表外壳。\n"
+            "每个 option 须含 label/hint/action_type/target_kind/target_id/"
+            "locality_scope/assignee_name/region_id/army_id 等层 A 键。"
+        ),
+    ]
+    return Agent(
+        name="批红改票官",
+        id="rescript-reviser",
+        model=create_chat_model(
+            cfg,
+            temperature=0.3,
+            top_p=0.9,
+            enable_thinking=False,
+            force_json_output=True,
+        ),
+        instructions=instructions,
+        add_history_to_context=False,
+        markdown=False,
+    )
+
+
+def create_rescript_deliberate_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
+    """#657 廷议站台：输出唯一 shape {title, body, stance} 整串严格 JSON。"""
+    del agno_db
+    ctx = _ctx()
+    cfg = _llm_for_role(llm_config, "extractor")
+    instructions = [
+        ctx.game_world_prompt,
+        (
+            "你是廷议站台官。根据急务与批语输出站台意愿。\n"
+            "只输出一个 JSON 对象，shape 必须是 "
+            '{"title":"...","body":"...","stance":"..."}' "。\n"
+            "title/body/stance 均须非空字符串；禁止数组外壳、禁止围栏外 prose。"
+        ),
+    ]
+    return Agent(
+        name="廷议站台官",
+        id="rescript-deliberator",
+        model=create_chat_model(
+            cfg,
+            temperature=0.4,
+            top_p=0.9,
+            enable_thinking=False,
+            force_json_output=True,
+        ),
+        instructions=instructions,
+        add_history_to_context=False,
+        markdown=False,
+    )
+
+
 def create_chapter_memory_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
     """章节记忆：把本回合诏书+邸报+落库效果浓缩成 {body, tags} JSON（body 叙事，tags 召回标签）。
     一次性，不持久化。"""

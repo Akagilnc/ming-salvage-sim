@@ -386,6 +386,8 @@ export type GameState = {
   pending_non_directive_action_count?: number;  // 可见的非拟旨 pending_actions（不含隐藏新密令候选）
   failed_secret_order_count?: number;
   pending_decisions?: PendingDecision[];
+  /** #657：awaiting + resolve_context + 空 pending desk → 续跑 phase2（空 POST 既有 stream） */
+  resume_phase2?: boolean;
   last_decree: string;
   last_report: string;
 };
