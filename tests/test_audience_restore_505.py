@@ -542,55 +542,53 @@ def _657_active_minister(db, content) -> str:
 
 
 def test_657_s11_rollback_enter_before_chat_turn(game):
-    """S11：atomic 内 enter 后 / create_chat_turn 前崩溃 → 零孤儿。"""
-    from ming_sim.applier import atomic
-    from ming_sim.audience_night import open_night, rescript_summon_origin_ref, summon_enter
+    """S11：真实 prepare 内 create_chat_turn 前崩溃 → 零孤儿。"""
+    from ming_sim.audience_night import prepare_rescript_summon_scaffold, rescript_summon_origin_ref
 
     db, state, content = game
     minister = _657_active_minister(db, content)
     origin = rescript_summon_origin_ref(int(state.turn), 50, 0)
-    night = open_night(db, state, empty_scaffold=True)
-    night_id = int(night["id"])
-    try:
-        with atomic(db):
-            eid = summon_enter(
-                db, night_id, minister,
-                empty_scaffold=True, origin_ref=origin, commit=False,
-            )
-            assert eid > 0
-            raise RuntimeError("inject after enter before chat_turn")
-    except RuntimeError:
-        pass
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("inject after enter before chat_turn")
+
+    db.create_chat_turn = _boom  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError, match="inject after enter before chat_turn"):
+        prepare_rescript_summon_scaffold(
+            db, state, person_name=minister, origin_ref=origin,
+        )
     assert db.conn.execute(
         "SELECT COUNT(*) AS c FROM story_ledger_entries WHERE origin_ref=?",
         (origin,),
     ).fetchone()["c"] == 0
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS c FROM chat_turns WHERE agno_session_id=?",
+        (f"rescript-summon:{origin}",),
+    ).fetchone()["c"] == 0
 
 
 def test_657_s11_rollback_chat_turn_before_rebind(game):
-    """S11：atomic 内 create_chat_turn 后 / 回绑前崩溃 → 零孤儿。"""
-    from ming_sim.applier import atomic
-    from ming_sim.audience_night import open_night, rescript_summon_origin_ref, summon_enter
+    """S11：真实 prepare 内 create_chat_turn 后 / 回绑前崩溃 → 零孤儿。"""
+    from ming_sim.audience_night import prepare_rescript_summon_scaffold, rescript_summon_origin_ref
 
     db, state, content = game
     minister = _657_active_minister(db, content)
     origin = rescript_summon_origin_ref(int(state.turn), 1, 0)
-    night = open_night(db, state, empty_scaffold=True)
-    night_id = int(night["id"])
+
+    # 临时 trigger：回绑 origin_chat_turn_id 时失败，测后拆除
+    db.conn.execute(
+        "CREATE TEMP TRIGGER _657_s11_rebind_fail "
+        "BEFORE UPDATE OF origin_chat_turn_id ON story_ledger_entries "
+        "BEGIN SELECT RAISE(ABORT, 'inject after chat_turn before rebind'); END"
+    )
     try:
-        with atomic(db):
-            eid = summon_enter(
-                db, night_id, minister,
-                empty_scaffold=True, origin_ref=origin, commit=False,
+        with pytest.raises(Exception):
+            prepare_rescript_summon_scaffold(
+                db, state, person_name=minister, origin_ref=origin,
             )
-            ctid_tmp = db.create_chat_turn(
-                state, minister, f"rescript-summon:{origin}", 0,
-                night_id=night_id, status="generating",
-            )
-            assert eid > 0 and ctid_tmp > 0
-            raise RuntimeError("inject after chat_turn before rebind")
-    except RuntimeError:
-        pass
+    finally:
+        db.conn.execute("DROP TRIGGER IF EXISTS _657_s11_rebind_fail")
+        db.conn.commit()
     assert db.conn.execute(
         "SELECT COUNT(*) AS c FROM story_ledger_entries WHERE origin_ref=?",
         (origin,),
@@ -632,7 +630,8 @@ def test_657_s11_committed_scaffold_reuses_ids(game):
 
 
 def test_657_s12_reconciles_s_u_q_and_finishes_summon(game, monkeypatch):
-    """S12 medium：同库 S/U/Q 全链 reconcile→CAS→reopen→真编排 summon 可续。"""
+    """S12 medium：durable decided summon 同 origin → reconcile/CAS → 空 choices 真恢复。"""
+    import json
     import threading
     from concurrent.futures import ThreadPoolExecutor
 
@@ -650,50 +649,8 @@ def test_657_s12_reconciles_s_u_q_and_finishes_summon(game, monkeypatch):
 
     db, state, content = game
     minister = _657_active_minister(db, content)
-    origin_s = rescript_summon_origin_ref(int(state.turn), 50, 0)
-    night = open_night(db, state, empty_scaffold=True)
-    night_id = int(night["id"])
 
-    sc = prepare_rescript_summon_scaffold(
-        db, state, person_name=minister, origin_ref=origin_s,
-    )
-    s_entry = int(sc["entry_id"])
-    s_ct = int(sc["chat_turn_id"])
-    s_night = int(sc["night_id"])
-
-    u_ct = db.create_chat_turn(
-        state, minister, "orphan-u", 0, night_id=night_id, status="generating",
-    )
-    q_ct = db.create_chat_turn(
-        state, minister, "q-turn", 0, night_id=night_id, status="generating",
-    )
-    mid = db.append_chat_message(minister, int(state.turn), "user", "卿意如何？")
-    db.conn.execute(
-        "UPDATE chat_turns SET user_message_id=? WHERE id=?", (int(mid), int(q_ct)),
-    )
-    db.conn.commit()
-
-    db.reconcile_interrupted_chat_turns()
-    assert db.conn.execute("SELECT status FROM chat_turns WHERE id=?", (s_ct,)).fetchone()["status"] == "failed"
-    assert db.conn.execute("SELECT status FROM chat_turns WHERE id=?", (u_ct,)).fetchone()["status"] == "failed"
-    assert db.conn.execute("SELECT status FROM chat_turns WHERE id=?", (q_ct,)).fetchone()["status"] == "interrupted"
-
-    ensure_summon_scaffold_reenterable(
-        db, origin_ref=origin_s, entry_id=s_entry, chat_turn_id=s_ct,
-        expected_night_id=s_night,
-    )
-    assert db.conn.execute("SELECT status FROM chat_turns WHERE id=?", (s_ct,)).fetchone()["status"] == "generating"
-    assert db.conn.execute("SELECT status FROM chat_turns WHERE id=?", (u_ct,)).fetchone()["status"] == "failed"
-    assert db.conn.execute("SELECT status FROM chat_turns WHERE id=?", (q_ct,)).fetchone()["status"] == "interrupted"
-    assert db.conn.execute(
-        "SELECT COUNT(*) AS c FROM story_ledger_entries WHERE origin_ref=?",
-        (origin_s,),
-    ).fetchone()["c"] == 1
-
-    assert db.reopen_interrupted_chat_turn_for_retry(int(q_ct)) is True
-    assert db.conn.execute("SELECT status FROM chat_turns WHERE id=?", (q_ct,)).fetchone()["status"] == "generating"
-    assert db.conn.execute("SELECT status FROM chat_turns WHERE id=?", (u_ct,)).fetchone()["status"] == "failed"
-
+    # 1) 先落 durable decided summon（C1 行事实）；origin 即后续空 scaffold
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)
     opt = normalize_rescript_layer_a_option({
@@ -713,10 +670,68 @@ def test_657_s12_reconciles_s_u_q_and_finishes_summon(game, monkeypatch):
         {"candidate_events": [], "transit_semantics": []},
         secret_orders=[], relevant_memories=[],
     )
-    db.conn.commit()
     desk = db.list_rescript_desk(int(state.turn))
     key = next(r["decision_key"] for r in desk if r["title"] == "S12全链")
+    kind, turn_s, idx_s = key.split(":")
+    choice = {
+        "decision_key": key, "action": "summon",
+        "label": "召见", "summon_target": minister,
+    }
+    db.conn.execute(
+        "UPDATE pending_decisions SET status='decided', choice_json=? "
+        "WHERE kind=? AND turn=? AND idx=?",
+        (json.dumps(choice, ensure_ascii=False), kind, int(turn_s), int(idx_s)),
+    )
+    db.conn.commit()
+    origin_s = rescript_summon_origin_ref(int(turn_s), int(idx_s), 0)
 
+    night = open_night(db, state, empty_scaffold=True)
+    night_id = int(night["id"])
+    sc = prepare_rescript_summon_scaffold(
+        db, state, person_name=minister, origin_ref=origin_s,
+    )
+    s_entry = int(sc["entry_id"])
+    s_ct = int(sc["chat_turn_id"])
+    s_night = int(sc["night_id"])
+
+    u_ct = db.create_chat_turn(
+        state, minister, "orphan-u", 0, night_id=night_id, status="generating",
+    )
+    q_ct = db.create_chat_turn(
+        state, minister, "q-turn", 0, night_id=night_id, status="generating",
+    )
+    mid = db.append_chat_message(minister, int(state.turn), "user", "卿意如何？")
+    db.conn.execute(
+        "UPDATE chat_turns SET user_message_id=? WHERE id=?", (int(mid), int(q_ct)),
+    )
+    db.conn.commit()
+
+    # 2) reconcile 一次 → S/U failed、Q interrupted；ledger 行数/id 不变
+    db.reconcile_interrupted_chat_turns()
+    assert db.conn.execute("SELECT status FROM chat_turns WHERE id=?", (s_ct,)).fetchone()["status"] == "failed"
+    assert db.conn.execute("SELECT status FROM chat_turns WHERE id=?", (u_ct,)).fetchone()["status"] == "failed"
+    assert db.conn.execute("SELECT status FROM chat_turns WHERE id=?", (q_ct,)).fetchone()["status"] == "interrupted"
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS c FROM story_ledger_entries WHERE origin_ref=?",
+        (origin_s,),
+    ).fetchone()["c"] == 1
+
+    # 3) 仅 S CAS → generating；U 仍 failed；Q 仍 interrupted
+    ensure_summon_scaffold_reenterable(
+        db, origin_ref=origin_s, entry_id=s_entry, chat_turn_id=s_ct,
+        expected_night_id=s_night,
+    )
+    assert db.conn.execute("SELECT status FROM chat_turns WHERE id=?", (s_ct,)).fetchone()["status"] == "generating"
+    assert db.conn.execute("SELECT status FROM chat_turns WHERE id=?", (u_ct,)).fetchone()["status"] == "failed"
+    assert db.conn.execute("SELECT status FROM chat_turns WHERE id=?", (q_ct,)).fetchone()["status"] == "interrupted"
+
+    # 4) Q reopen；U 仍 failed
+    assert db.reopen_interrupted_chat_turn_for_retry(int(q_ct)) is True
+    assert db.conn.execute("SELECT status FROM chat_turns WHERE id=?", (q_ct,)).fetchone()["status"] == "generating"
+    assert db.conn.execute("SELECT status FROM chat_turns WHERE id=?", (u_ct,)).fetchone()["status"] == "failed"
+
+    # 5–7) 空 choices 走真实 submit_hitl_choices；session 既有单一 registry
+    assert db.list_rescript_desk(int(state.turn)) == []
     sess = GameSession.__new__(GameSession)
     sess.db = db
     sess.state = state
@@ -730,6 +745,14 @@ def test_657_s12_reconciles_s_u_q_and_finishes_summon(game, monkeypatch):
     sess._scene_registry = ChatTurnSceneRegistry(executor)
     sess._write_gate = threading.Lock()
     sess._write_queue = type("Q", (), {"write_gate": sess._write_gate})()
+    started: list[int] = []
+    real_start = sess._scene_registry.start_open_enter
+
+    def _track_start(db_arg, state_arg, *a, chat_turn_id=0, **k):
+        started.append(int(chat_turn_id or 0))
+        return real_start(db_arg, state_arg, *a, chat_turn_id=chat_turn_id, **k)
+
+    sess._scene_registry.start_open_enter = _track_start  # type: ignore[method-assign]
     gen_body = f"{minister}S12入殿。"
     sess._beat_generator = lambda inputs: gen_body
 
@@ -737,34 +760,30 @@ def test_657_s12_reconciles_s_u_q_and_finishes_summon(game, monkeypatch):
     _657_install_real_phase2_llm_boundary(monkeypatch)
 
     turn_before = int(state.turn)
-    report = sess.resolve_rescript_decisions(
-        [{
-            "decision_key": key, "action": "summon",
-            "label": "召见", "summon_target": minister,
-        }],
-        write_gate=sess._write_gate,
-    )
+    report = sess.submit_hitl_choices([], write_gate=sess._write_gate)
     assert isinstance(report, str) and report.strip()
     assert sess.state.turn_phase == TurnPhase.ISSUED.value
     assert int(sess.state.turn) == turn_before + 1
+    # 仅 S 被启动；U 仍 failed
+    assert started == [s_ct]
+    assert db.conn.execute("SELECT status FROM chat_turns WHERE id=?", (u_ct,)).fetchone()["status"] == "failed"
+
     hit12 = next(r for r in db.list_rescript_drafts() if r["title"] == "S12全链")
     assert hit12["status"] == "decided"
     assert (hit12["choice"] or {}).get("action") == "summon"
-    kind, turn_s, idx_s = key.split(":")
-    origin12 = rescript_summon_origin_ref(int(turn_s), int(idx_s), 0)
     row12 = db.conn.execute(
-        "SELECT body, tags, origin_chat_turn_id FROM story_ledger_entries WHERE origin_ref=?",
-        (origin12,),
+        "SELECT id, body, tags, origin_chat_turn_id FROM story_ledger_entries WHERE origin_ref=?",
+        (origin_s,),
     ).fetchone()
     assert row12 is not None
-    tags12 = __import__("json").loads(row12["tags"] or "[]")
+    assert int(row12["id"]) == s_entry
+    tags12 = json.loads(row12["tags"] or "[]")
     assert TAG_ENTER in tags12
-    # S12 契约：消费正文非空；不锁 generator 字面句
+    # 同一 S：非空 TAG_ENTER 消费；不锁 generator 字面
     assert str(row12["body"] or "").strip()
-    ctid12 = int(row12["origin_chat_turn_id"] or 0)
-    assert ctid12 > 0
+    assert int(row12["origin_chat_turn_id"] or 0) == s_ct
     assert db.conn.execute(
-        "SELECT status FROM chat_turns WHERE id=?", (ctid12,),
+        "SELECT status FROM chat_turns WHERE id=?", (s_ct,),
     ).fetchone()["status"] == "consumed"
     executor.shutdown(wait=False)
 
