@@ -28,7 +28,8 @@ def print_header(state: GameState, db: Optional[GameDB] = None) -> None:
     if db is not None:
         print()
         print(wrap(db.region_report(limit=3)))
-        print(wrap(db.army_report(limit=3)))
+        # #321 P7：不在 CLI header 直显 army_report（含 mutiny_tier/morale_text/arrears_text）；
+        # 军情只经既有 LLM 装配面（army_report/detail/roster → knowledge/tools/intelligence）。
     print()
 
 

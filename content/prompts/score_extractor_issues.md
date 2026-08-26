@@ -34,6 +34,7 @@
 
 - **带宽轴（忙→拖磨）**：按主办看 `owner_open_count`×`owner_ability`=`owner_load`；按省看 `province_open_count`。在办定义＝案卷 `status=executing`。负荷高、省内差务扎堆时，执行更易拖磨、延宕。
 - **阻力轴（顶→变形）**：`gentry_resistance` 与士绅切片（`gentry_slice`）并列；官僚盘＝`officials_slice`＋督抚 `dutang_faction`/`dutang_integrity`（出缺如实）；流寇治安＝`bandit_pressure`＋`bandit_strength`。阻力高时更易变形/顶着干。
+- **军镇压力行（`行类=军镇` / `garrison_pressure_rows`）**：按军队结构化实际驻地挂入属地块，读分源欠饷月数与哗变闩；军镇高压时属地差务更易忙→拖磨、顶→变形（只读结构化字段，不另算欠饷）。
 - **灾情占用**：`disaster_rows` 已按严重度置顶（severity DESC, id ASC）。有灾时新差默认让路或强推变形↑——软判，清单只供事实。
 - **距离档 `distance_semantic_band`**：承办人 location×差务 region 的语义量级，按 D1–D6（本省当地／邻近一月／中途二三月／边远三月以上；非属地、无驻地、在途时为「不参与」）。只读距离列，不要用距离兼表在途。
 - **到差态行（`行类=到差态` / `arrival_rows`）**：独立行，读 `在途`／`已到差`／`尚未到差`。在途→软判差未开张（人在路上）；已到差／尚未到差只作到差事实，不改距离列义。

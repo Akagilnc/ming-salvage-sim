@@ -4915,6 +4915,7 @@ def _strategic_result_item_has_material_world_state(item: Dict[str, object]) -> 
         ("old_office_type", "office_type"),
         ("old_loyalty", "new_loyalty"),
         ("old_power", "new_power"),
+        ("old_style", "new_style"),
     ):
         if old_key in item and new_key in item and str(item.get(old_key)) != str(item.get(new_key)):
             return True
@@ -6729,6 +6730,46 @@ def _apply_person_changes(
             needs_person_change_commit = True
             continue
 
+        if action == "性情":
+            if content is not None and name not in content.characters:
+                applied.append(rejected(item, "非既有人物", "hallucinated_id"))
+                continue
+            row = db.conn.execute(
+                "SELECT name, style FROM characters WHERE name=?", (name,)
+            ).fetchone()
+            if row is None:
+                applied.append(rejected(item, "非既有人物", "hallucinated_id"))
+                continue
+            raw_style = item.get("style")
+            if not isinstance(raw_style, str) or not raw_style.strip():
+                applied.append(rejected(item, "性情 style 须为非空字符串", "invalid_enum"))
+                continue
+            # 空白探测仅作拒收；自由文本正文按原串字节透传（P6 / ADR 0142）。
+            new_style = raw_style
+            old_style = str(row["style"] or "")
+            origin_error = origin_rejected(item)
+            if origin_error:
+                applied.append(origin_error)
+                continue
+            db.conn.execute(
+                "UPDATE characters SET style=? WHERE name=?",
+                (new_style, name),
+            )
+            if content is not None and name in content.characters:
+                content.characters[name].style = new_style
+            result = {
+                "name": name,
+                "动作": action,
+                "style": new_style,
+                "old_style": old_style,
+                "new_style": new_style,
+                "reason": str(item.get("reason") or ""),
+            }
+            applied.append(result)
+            log_applied(result, item, commit=False)
+            needs_person_change_commit = True
+            continue
+
         if action in {"处置", "罢黜"}:
             status = "dismissed" if action == "罢黜" else str(item.get("status") or "").strip()
             reason_text = str(item.get("reason") or item.get("status_reason") or "")
@@ -7613,11 +7654,13 @@ def _apply_levy_driven_transfers(
         if base <= 0:
             continue
         pool_members = _surcharge_population_pool_members(db, region_id)
-        if not pool_members:
-            # Pre-contract ledgers may exist on fiscal provinces outside the population
-            # substrate.  They have no population effect and must not soft-lock saves.
+        if pool_members == {"农民", "流民"}:
+            pass  # 完整加派人口池
+        elif "农民" not in pool_members:
+            # 无农民源：空池或 #659 边镇仅军户/流民切片——无加派人口效应，不 soft-lock。
             continue
-        if pool_members != {"农民", "流民"}:
+        else:
+            # 有农民无流民＝农业省池残缺，fail-loud（#650 missing_pool）
             raise ValueError(f"{region_id} 有正加派账但仅有部分农民/流民省级人口行")
         support = max(0, min(100, int(row["public_support"] or 0)))
         raw_persons = base * LEVY_DISPLACEMENT_RATE * (100 - support) / 100.0

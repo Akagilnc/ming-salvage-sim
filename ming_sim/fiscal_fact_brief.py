@@ -18,8 +18,9 @@ F2.1 既有真源的**本回合分量**（禁把长期存量误作本回合事�
   ③ economy_ledger：purpose='补饷' 的当月入账行 → 被补发方受益事实（value<0=资源流入，
     受益符号域）。origin_ref 取行上 dossier:<id> provenance，缺则 economy_ledger:<id>。
   ④ 中央折发＝flows._central_dues_with_haircut 唯一读端直接复用（每军 floor，余数=
-    免除不入欠）——禁先聚省再舍入的伪重建；免除额按 army pay_source_region 地域精确
-    聚合（@region#central > @region > #central > 裸 全序由该读端消费），只读不改账。
+    免除不入欠）——禁先聚省再舍入的伪重建；免除额按 army 实际驻地 station_region
+    地域精确聚合（@region#central > @region > #central > 裸 全序由该读端消费），只读不改账。
+    饷源分账仍 pay_source_region（Due/容器/偿欠金额路径不变）。
   ⑤ fiscal_config provenance：折发事实 origin_ref 优先取 fiscal_config_changes 该键
     最新一行 provenance（dossier:<id>），否则落胜出 config 键名；origin_ref 恒不空。
 
@@ -27,9 +28,9 @@ F2.1 既有真源的**本回合分量**（禁把长期存量误作本回合事�
 origin_ref, affected_class, detail}；metric ∈ {分源欠饷月数, 加派量, 欠禄额} 三枚举
 不动——被折发/被补发资源事实按最近口径族归入既有 metric、以 detail 区分：折发免除额
 （应得被折减=受损）归欠禄额族、detail=折发_<科目>；补发入账（受益）归欠禄额族的负值
-方向。region=事实属地（region 级=subject_id；army 级=pay_source_region；无属地=''），
-供 F3.2 @region 精确归因。value 符号约定：>0=受损分量、<0=受益分量（F3.2 符号域的
-归因输入）。
+方向。region=事实属地（region 级=subject_id；army 级事实属地=station_region；
+无属地=''；饷源分账仍 pay_source_region），供 F3.2 @region 精确归因。value 符号约定：
+>0=受损分量、<0=受益分量（F3.2 符号域的归因输入）。
 
 确定性排序：regions 按 id、armies 按 rowid、饷源 province→central、补发行按 ledger id。
 
@@ -417,8 +418,10 @@ def build_fiscal_fact_brief(db: Any) -> List[Dict[str, Any]]:
 
     # ② 分源欠饷月数（army 级，带属地 region）：ceil(分源现欠/月需)——0023 per-source
     #    双累加器本身就是分源持久投影面（F2.2 备选口径），零分母短路（0023 D6/D11）。
+    #    #659：army 级事实属地=station_region（实际驻地）；pay_source_region 只服务饷源分账。
     army_rows = db.conn.execute(
         "SELECT id, name, owner_power, manpower, salary_rate, pay_source_region, "
+        "station_region, "
         "central_pay_share, province_pay_share, province_pay_arrears, central_pay_arrears "
         "FROM armies ORDER BY rowid"
     ).fetchall()
@@ -427,11 +430,11 @@ def build_fiscal_fact_brief(db: Any) -> List[Dict[str, Any]]:
         if str(row["owner_power"]) != "ming":
             continue
         army_id = str(row["id"])
-        army_region = str(row["pay_source_region"] or "").strip()
+        army_fact_region = str(row["station_region"] or "").strip()
         # 属地归因先于 need 门：月需=0（土司自养/零需残军，0023 D6/D11）只短路
         # 欠饷月数计算，不把该军逐出 region_of_army 册——否则其后 ③省源偿欠/
         # ④补发/⑤中央折发的属地归因全部落空。
-        region_of_army[army_id] = army_region
+        region_of_army[army_id] = army_fact_region
         need = army_needed(row)
         if need <= 0:
             continue  # 零分母：该军该月不计欠饷月数（不做除法）
@@ -442,7 +445,7 @@ def build_fiscal_fact_brief(db: Any) -> List[Dict[str, Any]]:
             entries.append({
                 "subject_kind": "army",
                 "subject_id": army_id,
-                "region": army_region,
+                "region": army_fact_region,
                 "metric": "分源欠饷月数",
                 "window_turns": int(math.ceil(arrears / need)),
                 "value": arrears,
@@ -480,7 +483,7 @@ def build_fiscal_fact_brief(db: Any) -> List[Dict[str, Any]]:
         })
 
     # ④ 补发受益事实：economy_ledger purpose='补饷' 当月行（value<0=资源流入=受益符号域）；
-    #    属地随目标军 pay_source_region 归因（同省 scoped 军户键受约束）。
+    #    属地随目标军 station_region 归因（#659；同省 scoped 军户键受约束）。
     relief_rows = db.conn.execute(
         "SELECT id, delta, category, target_kind, target_id, origin_ref FROM economy_ledger "
         "WHERE turn = ? AND purpose = '补饷' AND delta < 0 ORDER BY id",
@@ -503,8 +506,8 @@ def build_fiscal_fact_brief(db: Any) -> List[Dict[str, Any]]:
         })
 
     # ⑤ 中央侧折发事实：复用 flows._central_dues_with_haircut 唯一读端——每军各自
-    #    floor（与真账同舍入），禁先聚省再舍入的伪重建；免除额按 pay_source_region
-    #    地域精确聚合，只读不改账。
+    #    floor（与真账同舍入），禁先聚省再舍入的伪重建；免除额按 station_region
+    #    地域精确聚合（#659），只读不改账。
     central_fed = [
         row for row in army_rows
         if str(row["owner_power"]) == "ming"

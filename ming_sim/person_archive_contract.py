@@ -10,9 +10,15 @@ from __future__ import annotations
 
 PERSON_TRANSITION_ACTIONS = ("任命", "罢黜", "调任", "处置", "易主", "册封", "行止")
 
-PERSON_NON_TRANSITION_ACTIONS = ("评定",)
+PERSON_NON_TRANSITION_ACTIONS = ("评定", "性情")
 
 PERSON_ACTIONS = PERSON_TRANSITION_ACTIONS + PERSON_NON_TRANSITION_ACTIONS
+
+
+def format_person_actions() -> str:
+    """Project PERSON_ACTIONS for machine-consumed closed-set surfaces."""
+    return " / ".join(f"`{action}`" for action in PERSON_ACTIONS)
+
 
 PERSON_STATUSES = (
     "active",
@@ -36,6 +42,10 @@ PERSON_REASON_CODES = (
     "落选",
     "历史卒",
     "登场",
+    # #690 / ADR 0011-2 D2-5：依律集扩 0009（走程序坐实 flag；与 cw 高低正交）
+    "依律",
+    "谋逆坐实",
+    "贪墨坐实",
     "未识别",
 )
 

@@ -45,7 +45,7 @@ force_json 模式下你**只能输出最终 JSON**，不得吐出思考文本。
 | `加派` | array，每项 `{"地区编号":"shaanxi","月增额":数值,"原因":"…(≤120字,可选)","来源引用":"dossier:<正整数>"}`；来源案卷须具有效果资格，明省且有财政基座；不得使用 `盘面自发` | 下旨加派（#650/0089 明渠）：逐省累积账当回合落库，正数累加、负数停征/蠲免冲减；钱面真征收、流民后果由账本按月机械结算，勿另报 `人口转移`（#650） |
 | `地区变化` | object，key 为 region_id，value 为含 `来源引用` 的字段增量/文字新值 object | 数值字段填增量，文字字段填新值 |
 | `军队变化` | object，key 为 army_id，value 为含 `来源引用` 的字段增量/文字新值 object | 数值字段填增量，文字字段填新值 |
-| `新建军队` | array，每项含 `id`/`name`/`owner_power`/`manpower`/`来源引用` 等完整军队字段；`owner_power="ming"` 的普通明军还必须含 `pay_source_region`/`饷源省`、`province_pay_share`/`省份额`、`central_pay_share`/`中央份额` | 新募成建制官军、叛军或外族新军；已有军扩编走 `军队变化.人数`；明军月饷由 `manpower` 派生后按饷源比例拆分省存留/中央京运 |
+| `新建军队` | array，每项含 `id`/`name`/`owner_power`/`manpower`/`来源引用` 等完整军队字段；另写 `station`（中文细地点）与可选 `station_region`/`实际驻地`（input `region_ids` 内英文 id）；`owner_power="ming"` 的普通明军还必须含 `pay_source_region`/`饷源省`、`province_pay_share`/`省份额`、`central_pay_share`/`中央份额`（饷源三字段≠驻地，调防不改饷源） | 新募成建制官军、叛军或外族新军；已有军扩编走 `军队变化.人数`；明军月饷由 `manpower` 派生后按饷源比例拆分省存留/中央京运 |
 | `势力变化` | object，key 为非大明 power_id，value 为含 `来源引用` 的 `{"威望":整数,"实力":整数,"经济":整数}` 子集 | 只记录别的势力三项简单属性增量 |
 | `四方动向` | object，key 为势力名或 power_id，value 为外交态度字符串 | 外交态度 KV；只记录态度，不写行动/影响/意图小作文 |
 | `局势推进` | array，每项 `{"局势编号":整数,"进度增量":整数,"阶段":"...","叙述":"..."}`，可选 `惯性增量`:整数 | 既有局势推进 |
@@ -53,7 +53,7 @@ force_json 模式下你**只能输出最终 JSON**，不得吐出思考文本。
 | `事件结局` | object，key 为战略事件编号，value 为闭合结局标签 | 仅用于已声明闭合标签集的战略/外敌战事；当前己巳之变只能填 `挡于边墙`/`入塞被遏`/`长驱直入`，不要给未声明标签集的事件自造标签 |
 | `撤销局势` | array，每项 `{"局势编号":整数,"已付代价":object,"叙述":"..."}` | 皇帝撤销的局势 |
 | `结案局势` | array，每项 `{"局势编号":整数,"原因":"resolved\|failed\|acknowledged","叙述":"..."}` | 本{{TURN_UNIT}}结案/失败；`acknowledged` 仅用于到期待裁承诺已被皇帝裁决确认 |
-| `人物变更` | array，每项必须含 `{"name":"...","动作":"任命\|罢黜\|调任\|处置\|易主\|册封\|行止\|评定","来源引用":"..."}`；按动作补 `office`/`office_type`/`status`/`new_power`/`transit_to`/`loyalty`/`reason` | ADR0009 人事档案单一入口；`行止` 只填来自 `region_ids` 的非空 `transit_to`，不得填 `location`；`评定.loyalty` 是忠诚增量 |
+| `人物变更` | array，每项必须含 name、动作、来源引用；`动作` 只能是：{{PERSON_ACTIONS}}；按动作补 `office`/`office_type`/`status`/`new_power`/`transit_to`/`loyalty`/`style`/`reason` | ADR0009 人事档案单一入口；`行止` 只填来自 `region_ids` 的非空 `transit_to`，不得填 `location`；`评定.loyalty` 是忠诚增量；`性情.style` 是人物固有层完整替换 |
 | `密令副作用` | array，每项 `{"密令编号":整数,"推演备注":"...","泄漏结论":boolean}`（泄漏结论可省略） | `在办` 组密令副作用；情节已实际公开（disclosed）才为 true |
 | `密令执行态` | array，每项 `{"密令编号":整数,"执行态":"忠实\|打折\|阳奉阴违\|反噬","备注":"..."}` | 在办密令带内选态（≥`covert_exec_floors` 底档，只准加重）；结案不由本字段 |
 
@@ -70,3 +70,4 @@ force_json 模式下你**只能输出最终 JSON**，不得吐出思考文本。
 - 流寇分股：李自成股、张献忠股等各用自己的 `power_id`。招安/就抚归明的削股写在 `人物变更.易主.反噬`，同一股不要再写 `势力变化`；剿股/孤儿股平定才写 `势力变化`。
 - 军队**月饷总额**由引擎按 `人数` 自动核算（明军=按兵力派生、扩兵即增饷），不是 extractor 可写字段；调月饷只需调 `人数`。
 - `新建军队` 里 `owner_power="ming"` 且不是土司/自养军时，必须写饷源三字段：`pay_source_region`/`饷源省` 用明控 region_id；`province_pay_share`/`省份额` 与 `central_pay_share`/`中央份额` 用 0-1 小数且两者和为 1（纯省源军写 1.0/0.0，混合军如 0.65/0.35）。土司/自养明军才写 `is_tusi`/`土司` 或 `self_funded_pay`/`自养军饷`，且饷源比例为 0/0。
+- `station`＝中文细地点；`station_region`/`实际驻地`/`驻地省`＝input `region_ids` 内英文 id。调防时两字段同改；**饷源三字段不随调防改**。代码不从 `station` 文字反推 region。
