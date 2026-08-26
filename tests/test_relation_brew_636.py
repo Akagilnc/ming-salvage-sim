@@ -179,8 +179,11 @@ def test_flip_brew_input_must_contain_new_edge_events(game):
 
 def test_failed_month_degrades_to_pending_and_rebrews_next_month(game):
     db, state, _ = game
-    _add_edge(db, state, source="温体仁", target="周延儒", kind="结怨",
-              context="温体仁当殿讦周延儒。", origin="audience:turn-1")
+    failed_context = "温体仁当殿讦周延儒。"
+    failed_id = _add_edge(
+        db, state, source="温体仁", target="周延儒", kind="结怨",
+        context=failed_context, origin="audience:turn-1",
+    )
 
     # 真 LLM 单条失败（声明类型 LLMUnavailable）→ 降级留痕；程序错类不走此路。
     def failing_brew(payload_json: str) -> str:
@@ -197,6 +200,7 @@ def test_failed_month_degrades_to_pending_and_rebrews_next_month(game):
     assert [(row["source"], row["target"]) for row in pending] == [("温体仁", "周延儒")]
 
     # 次月无新事件，仍因 pending 被选中；成功后 pending 清除、摘要落定。
+    # #642：失败月事件在次月 payload 双桶并集中恰一次，且落 new 不落 prior。
     state.turn += 1
     state.period += 1
     calls: list = []
@@ -207,10 +211,16 @@ def test_failed_month_degrades_to_pending_and_rebrews_next_month(game):
     assert report["selected"] == 2 and len(report["brewed"]) == 2
     relation_calls = [c for c in calls if "view" not in c]
     assert relation_calls and relation_calls[0]["has_pending_failure"] is True
+    payload = relation_calls[0]
+    new_hits = [e for e in payload["new_events"] if e["context"] == failed_context]
+    prior_hits = [e for e in payload["prior_events"] if e["context"] == failed_context]
+    assert len(new_hits) + len(prior_hits) == 1
+    assert len(new_hits) == 1 and prior_hits == []
     assert db.get_relation_brew_pending() == []
     summary = db.get_relation_summary("温体仁", "周延儒")
     assert summary["recent_segment"] == "温周结怨，朝堂侧目。"
     assert summary["dimension"] == "大臣"
+    assert int(summary["last_event_id"]) >= int(failed_id)
 
 
 # ---------------- #642 r3 R2：commit→join→persist 前窗口（非 SIGKILL 可控接缝）
@@ -353,17 +363,32 @@ def test_build_brew_input_projects_prior_event_fields():
 
 
 def test_prepare_attaches_prior_events_only_via_history_seam(game, monkeypatch):
-    """生产装配：prepare→build_brew_input 经历史读缝取 prior；不经 SQL 直扫冒充。"""
+    """生产装配：prepare→build_brew_input 经历史读缝取 prior；与 new 互斥。
+
+    先成功酿出水位，再加次月新事件——已消化旧事只在 prior，本批新事只在 new。
+    """
     db, state, _ = game
     source, target = EMPEROR_NODE, "杨嗣昌"
-    # 严格早于开局年月（1627/10）的奠基原句，才能进 prior_events。
+    prior_context = "越次一召原句。"
+    # 严格早于开局年月（1627/10）的奠基原句，水位推进后才能进 prior_events。
     db.record_relation_edge_event(
         source=source, target=target, event_kind="知遇",
-        context="越次一召原句。", origin="seed:founding:yueci",
+        context=prior_context, origin="seed:founding:yueci",
         turn=0, year=1626, period=6,
     )
     _add_edge(db, state, source=source, target=target, kind="知遇",
-              context="本月新知遇。", origin="audience:now")
+              context="首月知遇。", origin="audience:month-1")
+    brew_fn = _brew_fn_factory([])
+    brew_fn.outputs = [_script(recent="首月近况。")]
+    run_month_end_relation_brew(db, state, brew_fn)
+    assert db.get_relation_summary(source, target) is not None
+
+    # 次月新事件：prior 经历史读缝、与 new 互斥、已消化旧事只在 prior。
+    state.turn += 1
+    state.period += 1
+    new_context = "次月新知遇。"
+    _add_edge(db, state, source=source, target=target, kind="知遇",
+              context=new_context, origin="audience:month-2")
 
     import ming_sim.relation_brew as brew_mod
     import ming_sim.relation_read as read_mod
@@ -378,15 +403,20 @@ def test_prepare_attaches_prior_events_only_via_history_seam(game, monkeypatch):
         )
 
     monkeypatch.setattr(brew_mod, "load_relation_history_before", spy)
-    # relation_brew 从 relation_read 导入的符号也要补丁到 brew 模块命名空间。
     calls: list = []
     brew_fn = _brew_fn_factory(calls)
-    brew_fn.outputs = [_script(recent="知遇近况。")]
+    brew_fn.outputs = [_script(recent="次月近况。")]
     run_month_end_relation_brew(db, state, brew_fn)
     relation_calls = [c for c in calls if "view" not in c]
     assert relation_calls
-    assert relation_calls[0]["prior_events"]
-    assert relation_calls[0]["prior_events"][0]["context"] == "越次一召原句。"
+    payload = relation_calls[0]
+    new_contexts = [e["context"] for e in payload["new_events"]]
+    prior_contexts = [e["context"] for e in payload["prior_events"]]
+    assert new_context in new_contexts
+    assert prior_context not in new_contexts
+    assert prior_context in prior_contexts
+    assert new_context not in prior_contexts
+    assert set(new_contexts).isdisjoint(prior_contexts)
     assert (source, target, int(state.year), int(state.period)) in seen
 
 
