@@ -4669,9 +4669,9 @@ async def api_history_turn(turn: int) -> Dict[str, Any]:
     attendant_message = str((archive or {}).get("attendant_message") or "")
     extraction = db.get_turn_extraction(turn)
     directives = db.list_directives_by_turn(turn)
-    # exists：递话纯空白与空串同属缺席（临时 strip）；payload 仍回原文
+    # exists：report/递话纯空白与空串同属缺席（临时 strip）；payload 仍回原文
     if (
-        not report
+        not str(report or "").strip()
         and not str(attendant_message or "").strip()
         and extraction is None
         and not directives

@@ -1099,6 +1099,31 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     expect(host.textContent).toContain(SNAP_CLOSED);
   });
 
+  it("gazette：仅有 last_attendant_message 时核账期仍自动弹邸报", async () => {
+    // #671：attendant-only 月完——自动门槛认递话存在，dialog 含原文
+    stubSettlementFetch(settlementBaseState("player", {
+      previous_summary: "",
+      previous_reign_period_label: "天启七年九月",
+      last_attendant_message: SNAP_ATTENDANT,
+      turn: {
+        year: 1627,
+        period: 10,
+        turn: 5,
+        phase: "player",
+        settlement_display: true,
+        reign_period_label: "天启七年十月",
+      },
+      pending_decisions: [],
+    }));
+    const host = await mountApp();
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="邸报"]')).not.toBeNull());
+    });
+    const attendant = host.querySelector("[data-testid=gazette-attendant]");
+    expect(attendant).not.toBeNull();
+    expect(attendant!.textContent).toContain(SNAP_ATTENDANT);
+  });
+
   it("月完后 settlement_display=false：关闭组入口恢复；递话条收；局势半程面重现", async () => {
     stubSettlementFetch({
       ...settlementBaseState("player"),

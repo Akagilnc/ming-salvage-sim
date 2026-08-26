@@ -857,7 +857,7 @@ def test_history_turn_api_returns_attendant_message_raw(game, monkeypatch):
 
 
 def test_history_turn_api_blank_attendant_alone_is_absent(game, monkeypatch):
-    """#671③：仅纯空白递话 → exists=false；有正文时空白递话仍原样回传。"""
+    """#671③：纯空白 report/递话 → exists=false；有正文侧时空白原文仍回传。"""
     import asyncio
     import web_app
 
@@ -872,7 +872,19 @@ def test_history_turn_api_blank_attendant_alone_is_absent(game, monkeypatch):
     absent = asyncio.run(web_app.api_history_turn(turn))
     assert absent == {"turn": turn, "exists": False}
 
-    # 有 report 时 exists=true，空白递话原文仍回（UI trim 判空不渲染）
+    # 双空白 report+递话 → 缺席（与 list_monthly_archives trim 口径对称）
+    db.save_turn_report(state, blank, attendant_message=blank)
+    both_blank = asyncio.run(web_app.api_history_turn(turn))
+    assert both_blank == {"turn": turn, "exists": False}
+
+    # 空白 report + 非空递话 → exists=true，两侧原文仍回
+    db.save_turn_report(state, blank, attendant_message=ATTENDANT_TEXT)
+    blank_report = asyncio.run(web_app.api_history_turn(turn))
+    assert blank_report["exists"] is True
+    assert blank_report["report"] == blank
+    assert blank_report["attendant_message"] == ATTENDANT_TEXT
+
+    # 有正文 report 时 exists=true，空白递话原文仍回（UI trim 判空不渲染）
     db.save_turn_report(state, SIM_REPORT, attendant_message=blank)
     present = asyncio.run(web_app.api_history_turn(turn))
     assert present["exists"] is True
