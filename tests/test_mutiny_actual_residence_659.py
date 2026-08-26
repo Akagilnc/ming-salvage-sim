@@ -15,7 +15,6 @@ import os
 import shutil
 
 from ming_sim.db import GameDB
-from ming_sim.execution_pressure import build_execution_two_axis_surface
 from ming_sim.fiscal_fact_brief import build_fiscal_fact_brief
 from ming_sim.issues import apply_score_extraction
 from ming_sim.models import Event
@@ -142,13 +141,25 @@ def test_mutiny_arrears_desertion_real_payload_tracer(game, tmp_path):
     assert any(row[:2] == ["军户@dongjiang_area", JUNHU_DONGJIANG] for row in balances["rows"])
     assert any(row[:2] == ["流民@dongjiang_area", LIUMIN_DONGJIANG] for row in balances["rows"])
 
-    # 3) S7 军镇压力按 station_region 挂属地（既有契约，不新开核）
+    # 3) S7 军镇压力经 build_simulator_payload 投影面按 station_region 挂属地
+    # （契约主钉落 payload 投影，盖住 project 漏键；不新开核、不钉 raw-only）
     _executing_dossier(db, state, "dongjiang_area")
     _executing_dossier(db, state, "liaodong")
-    surface = build_execution_two_axis_surface(db, transit_semantics=())
+    surface = build_simulator_payload(
+        state, db, decree_text="", previous_narrative="",
+    )["execution_two_axis"]
     by_rid = {str(p["region_id"]): p for p in surface["provinces"]}
-    assert any(g["army_id"] == "dongjiang" for g in by_rid["dongjiang_area"]["garrison_pressure_rows"])
-    assert not any(g["army_id"] == "dongjiang" for g in by_rid["liaodong"]["garrison_pressure_rows"])
+    assert any(
+        g["army_id"] == "dongjiang"
+        for g in by_rid["dongjiang_area"]["garrison_pressure_rows"]
+    )
+    assert not any(
+        g["army_id"] == "dongjiang"
+        for g in by_rid["liaodong"]["garrison_pressure_rows"]
+    )
+    # TSV 同源渲染旁证：军镇行随投影再现（不锁自由文案措辞）
+    tsv = str(surface.get("tsv") or "")
+    assert "军镇" in tsv and "东江" in tsv
 
     # 4) 沿既有 applier 申报 reason=逃亡；守恒、属地不串
     total_before = _global_population(db)

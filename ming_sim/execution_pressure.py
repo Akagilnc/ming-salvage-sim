@@ -849,6 +849,7 @@ def project_execution_two_axis_for_simulator(
             "disaster_rows": disasters_out,
             "owners": owners_out,
             "arrival_rows": list(block.get("arrival_rows") or []),
+            "garrison_pressure_rows": list(block.get("garrison_pressure_rows") or []),
         })
     return {
         "provinces": projected,
