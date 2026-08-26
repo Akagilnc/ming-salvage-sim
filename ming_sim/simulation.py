@@ -937,7 +937,9 @@ def simulate_season_with_payload(
         on_thinking=on_thinking,
         on_text=on_text,
     )
-    return raw.strip(), payload
+    # #671 / P6 / ADR 0142：输出侧零删改。空文契约由 run_agent_stream_text 临时副本判空/abort；
+    # 此处不得再 strip 回写。
+    return raw, payload
 
 
 # #633：relations（关系档房）并入同一并发装配——各模块共享同一 ThreadPoolExecutor，

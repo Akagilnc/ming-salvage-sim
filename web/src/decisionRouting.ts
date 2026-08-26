@@ -19,16 +19,20 @@ export function isAllDecisionsDecided(events: unknown[]): boolean {
 }
 
 /**
- * #1418 r2：all-decided 且核账展示态仍真 → 需接到既有 settle-resume 续跑面
+ * #1418 r2 / #657：需接到既有 settle-resume 续跑面
  * （重发 resolve_decisions/stream 续 phase2）。
- * 负向：快照已清（正常完成月 / 真失败退出）不触发。
+ * - 非空 all-decided + settlement_display（同会话先写态）
+ * - 或服务端 typed resume_phase2（desk 只 pending→空 + resolve_context 在）
+ * 负向：快照已清（正常完成月 / 真失败退出）且无服务端信号 → 不触发。
  */
 export function needsPhase2Resume(
   phase: string | undefined,
   events: unknown[],
   settlementDisplay?: boolean,
+  resumePhase2Signal?: boolean,
 ): boolean {
   if (phase !== "awaiting_decision") return false;
+  if (resumePhase2Signal) return true;
   if (!settlementDisplay) return false;
   return isAllDecisionsDecided(events);
 }
@@ -38,8 +42,8 @@ export function pendingDecisionsFrom(events: unknown[]): PendingDecision[] {
   const validated: PendingDecision[] = [];
   for (let i = 0; i < events.length; i++) {
     const event = events[i];
+    // 只做结构校验；身份靠 decision_key 提交。禁 idx===array-position 整表拒收。
     if (!isPendingDecision(event)) return [];
-    if (event.idx !== i) return [];
     validated.push(event);
   }
   return validated;
@@ -85,6 +89,7 @@ export function routeIssueDecisions(events: unknown[]): DecisionRouteOutcome {
 export function routeRefreshDecisions(
   phase: string | undefined,
   events: unknown[],
+  resumePhase2Signal?: boolean,
 ): DecisionRouteOutcome {
   // #1307：settling 中间态 pending=[] 正常——轮询/等待呈现，不报错不喊重拉。
   if (phase === "settling") {
@@ -93,9 +98,8 @@ export function routeRefreshDecisions(
   if (phase !== "awaiting_decision") {
     return { pendingDecisions: null, error: null };
   }
-  // #1374/#1418 r2：全员 decided = phase2 在办（崩溃安全先写）——
-  // 不重开批红弹窗；接到 settle-resume 续跑面（由 UI 读 resumePhase2 / needsPhase2Resume）。
-  if (isAllDecisionsDecided(events)) {
+  // #1374/#1418 r2 / #657：phase2 在办——不重开批红；接到 settle-resume。
+  if (resumePhase2Signal || isAllDecisionsDecided(events)) {
     return { pendingDecisions: null, error: null, resumePhase2: true };
   }
   const decisions = pendingDecisionsFrom(events);
@@ -108,6 +112,7 @@ export function routeRefreshDecisions(
 export function routeRetryDecisions(
   phase: string | undefined,
   events: unknown[],
+  resumePhase2Signal?: boolean,
 ): DecisionRouteOutcome {
   // #1307：settling 重拉也不报错；空批红只在 awaiting_decision 才响亮。
   if (phase === "settling") {
@@ -116,8 +121,8 @@ export function routeRetryDecisions(
   if (phase !== "awaiting_decision") {
     return { pendingDecisions: [], error: "" };
   }
-  // #1418 r2：all-decided 不得 error:"" 当成功清横幅——改路由到 phase2 续跑 affordance。
-  if (isAllDecisionsDecided(events)) {
+  // #1418 r2 / #657：all-decided 或 typed resume 信号 → phase2 续跑 affordance。
+  if (resumePhase2Signal || isAllDecisionsDecided(events)) {
     return { pendingDecisions: null, error: null, resumePhase2: true };
   }
   const decisions = pendingDecisionsFrom(events);

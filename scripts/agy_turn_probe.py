@@ -59,20 +59,24 @@ def main() -> int:
     result = session.resolve_turn(decree=ns.decree, on_event=on_event)
 
     # HITL：推演若出决策点，自动选第一项，续跑 phase2（含 4 模块 extractor）。
+    # #657：session.submit_hitl_choices 唯一编排 + 既有 session._write_gate。
+    # 首选项投影走 project_preferred_hitl_choice 唯一真源。
+    from ming_sim.rescript_actions import project_preferred_hitl_choice
+
     rounds = 0
     while getattr(result, "awaiting", False):
         rounds += 1
         decisions = session.pending_decisions()
         print(f"[hitl] 第{rounds}轮决策点 {len(decisions)} 个，自动选第一项：")
         choices = []
-        for d in sorted(decisions, key=lambda x: int(x["idx"])):
-            opts = d.get("options") or []
-            pick = opts[0] if opts else {}
-            label = pick.get("label", "") if isinstance(pick, dict) else str(pick)
-            print(f"   - #{d['idx']} {str(d.get('title'))[:40]} → 选「{label[:40]}」")
-            choices.append({"label": label, "hint": pick.get("hint", "") if isinstance(pick, dict) else ""})
-        report = session.submit_decisions(choices, on_event=on_event)
-        # submit_decisions 返回报告字符串；置 ISSUED。再无 awaiting。
+        for d in sorted(decisions, key=lambda x: int(x.get("idx") or 0)):
+            item = project_preferred_hitl_choice(d)
+            label = str(item.get("label") or "")
+            print(f"   - #{d.get('idx')} {str(d.get('title'))[:40]} → 选「{label[:40]}」")
+            choices.append(item)
+        report = session.submit_hitl_choices(
+            choices, write_gate=session._write_gate, on_event=on_event,
+        )
         result = type("R", (), {"awaiting": False, "report": report})()
 
     report_text = result.report if hasattr(result, "report") else str(result)
