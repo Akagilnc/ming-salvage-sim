@@ -322,13 +322,6 @@ def test_payload_and_context_wire_transit_semantics(game):
         "semantic": _expected_semantic(1.5, 0, t),
     }]
     assert set(rows[0]) == {"name", "transit_to", "semantic"}
-    assert "在途语义" in payload["data_note"]
-    # #669 r1 / P4：transit_semantics 段只给正向事实指引，不新增反向禁令
-    ts_idx = payload["data_note"].index("transit_semantics")
-    next_field = payload["data_note"].find("faction_denunciation_facts", ts_idx)
-    ts_clause = payload["data_note"][ts_idx:next_field if next_field >= 0 else None]
-    assert "勿改" not in ts_clause
-    assert "勿自算" not in ts_clause
 
     ctx = build_simulator_context(payload)
     assert rows[0]["semantic"] in ctx

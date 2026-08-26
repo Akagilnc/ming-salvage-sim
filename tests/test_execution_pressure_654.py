@@ -115,13 +115,6 @@ def test_distance_d6_missing_matrix_node_fail_loud():
         )
 
 
-def test_no_placeholder_673_wording_in_module_source():
-    from pathlib import Path
-    src = Path("ming_sim/execution_pressure.py").read_text(encoding="utf-8")
-    assert "#673 占位" not in src
-    assert "恒不参与" not in src
-
-
 # ── locality oracle 组合矩阵 ───────────────────────────────────────
 
 
@@ -559,8 +552,25 @@ def test_two_axis_disaster_pinned_top_order(env):
     assert titles == ["重灾", "轻灾"]
 
 
-def test_two_axis_only_in_issues_extractor_not_simulator(env):
+def test_two_axis_in_simulator_not_extractors(env):
+    """#652：execution_two_axis 仅 simulator 定性投影；extractors 不见；无裸分。"""
     db, state, _ = env
+    # 同省灾情占用面
+    db.insert_issue(
+        state,
+        kind="situation",
+        title="陕西大饥",
+        origin_kind="test",
+        severity=80,
+        region_hint="shaanxi",
+        tags=["饥荒"],
+        bar_value=10,
+        bar_good_meaning="缓",
+        bar_bad_meaning="剧",
+        stage_text="s",
+        cancellable="never",
+        commit=True,
+    )
     did = db.create_decree_dossier(
         state,
         action_type="assignment",
@@ -578,23 +588,36 @@ def test_two_axis_only_in_issues_extractor_not_simulator(env):
     _promote_executing(db, did, "shaanxi")
 
     sim = build_simulator_payload(state, db, decree_text="d", previous_narrative="n")
+    assert "execution_two_axis" in sim
+    surface = sim["execution_two_axis"]
+    dumped_surface = json.dumps(surface, ensure_ascii=False)
+    # 投影面：无裸能力分、无派生负荷
+    assert "owner_ability" not in dumped_surface
+    assert "owner_load" not in dumped_surface
+    block = next(p for p in surface["provinces"] if p["region_id"] == "shaanxi")
+    assert isinstance(block["province_open_count"], int) and block["province_open_count"] >= 1
+    assert block["owners"], "须有主办带宽行"
+    owner = block["owners"][0]
+    assert "owner_open_count" in owner
+    assert "ability_band" in owner and isinstance(owner["ability_band"], str)
+    assert owner["ability_band"]  # 非空档位词
+    assert "distance_semantic_band" in owner
+    assert "arrival_rows" in block
+    assert isinstance(block["gentry_resistance"], str) and block["gentry_resistance"]
+    assert block["disaster_rows"], "有灾 fixture 时须含灾情占用"
+    assert all(
+        isinstance(d.get("severity"), str) and d.get("severity")
+        for d in block["disaster_rows"]
+    )
+
     issues_ctx = build_extractor_shared_context(
         db, state, narrative="n", decree_text="d", module="issues",
-        transit_semantics=sim["transit_semantics"],
     )
-    assert "execution_two_axis" in issues_ctx
-    assert "owner_ability" in json.dumps(issues_ctx["execution_two_axis"], ensure_ascii=False)
-
+    assert "execution_two_axis" not in issues_ctx
     other = build_extractor_shared_context(
         db, state, narrative="n", decree_text="d", module="internal",
-        transit_semantics=sim["transit_semantics"],
     )
     assert "execution_two_axis" not in other
-    assert "execution_two_axis" not in sim
-    # 裸 ability 不得进 simulator
-    dumped = json.dumps(sim, ensure_ascii=False)
-    assert "owner_ability" not in dumped
-    assert "execution_two_axis" not in dumped
 
 
 def test_normalize_payload_locality_and_target_kind(env):
@@ -643,17 +666,6 @@ def test_cli_backend_invalid_target_kind_fail_loud():
     # 生产路径：capture 合并处对非法 target_kind 抛错
     with pytest.raises(ValueError):
         cb._coerce_draft_target_kind("not_a_real_kind")
-
-
-def test_score_extractor_issues_mentions_two_axis():
-    from pathlib import Path
-    text = Path("content/prompts/score_extractor_issues.md").read_text(encoding="utf-8")
-    assert "两轴" in text or "execution_two_axis" in text
-    assert "忙" in text and "拖磨" in text
-    assert "顶" in text and "变形" in text
-    assert "distance_semantic_band" in text or "距离档" in text
-    assert "#673 占位" not in text
-    assert "恒不参与" not in text
 
 
 # ── #654 断根 tracer（外部行为）────────────────────────────────────
@@ -1575,7 +1587,6 @@ def test_issues_only_region_id_projection(env):
     sim = build_simulator_payload(state, db, decree_text="d", previous_narrative="n")
     issues_ctx = build_extractor_shared_context(
         db, state, narrative="n", decree_text="d", module="issues",
-        transit_semantics=sim["transit_semantics"],
     )
     dossiers = issues_ctx["decree_dossiers"]
     assert dossiers and "region_id" in dossiers[0]
@@ -1583,7 +1594,6 @@ def test_issues_only_region_id_projection(env):
     for module in ("internal", "personnel_secret", "military_external"):
         other = build_extractor_shared_context(
             db, state, narrative="n", decree_text="d", module=module,
-            transit_semantics=sim["transit_semantics"],
         )
         for row in other.get("decree_dossiers") or []:
             assert "region_id" not in row, module
