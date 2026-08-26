@@ -11166,8 +11166,8 @@ class GameDB:
                    MAX(has_directive) AS has_directive
             FROM (
                 SELECT turn, year, period,
-                       CASE WHEN length(trim(COALESCE(report, ''))) > 0 THEN 1 ELSE 0 END AS has_report,
-                       CASE WHEN length(trim(COALESCE(attendant_message, ''))) > 0 THEN 1 ELSE 0 END AS has_attendant,
+                       CASE WHEN length(trim(COALESCE(report, ''), char(9)||char(10)||char(13)||' ')) > 0 THEN 1 ELSE 0 END AS has_report,
+                       CASE WHEN length(trim(COALESCE(attendant_message, ''), char(9)||char(10)||char(13)||' ')) > 0 THEN 1 ELSE 0 END AS has_attendant,
                        0 AS has_extraction, 0 AS has_directive
                 FROM turn_reports
                 UNION ALL
