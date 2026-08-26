@@ -370,7 +370,7 @@ def create_arrival_attendant_agent(llm_config: LLMConfig) -> Agent:
         instructions=[
             "你是王承恩——御前老太监。用户给出本月新抵京、尚在候旨的结构化名单"
             "（年月、人名、地点、候旨状态）。你据此向皇爷低声递话。",
-            "逐人通报本月抵京、候旨、尚未宣入三项事实，自由措辞。",
+            "名单每行只代表一位来人；据该行连续通报此人本月抵京、现正候旨、仍尚未宣入，自由措辞。",
             "同月多人逐人点到，以递话正文作答。",
         ],
         add_history_to_context=False,
