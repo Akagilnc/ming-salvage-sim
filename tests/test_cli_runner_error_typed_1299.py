@@ -115,6 +115,16 @@ def test_extract_agent_text_normal_reply_passes():
     assert extract_agent_text(run_output) == "臣请据实回奏边饷事。"
 
 
+def test_extract_agent_text_preserves_leading_trailing_whitespace():
+    """#671：真实 agent.run 提取不得 strip；空白只在判空临时副本用。"""
+    raw = "\n  奴婢禀报：洪承畴抵京候旨。  \n"
+    run_output = SimpleNamespace(content=raw, status="COMPLETED")
+    assert extract_agent_text(run_output) == raw
+    # 纯空白仍原样返回（空判定由调用方临时 strip）
+    blank = "   \n\t  "
+    assert extract_agent_text(SimpleNamespace(content=blank, status="COMPLETED")) == blank
+
+
 def test_extract_agent_text_plain_string_still_works():
     """无 status 的纯文本/旧路径仍可提取。"""
     assert extract_agent_text("臣领旨。") == "臣领旨。"

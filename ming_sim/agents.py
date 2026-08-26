@@ -207,13 +207,14 @@ def run_agent_stream_text(
         merged = "".join(chunk_buf).replace("\n", " ⏎ ")
         tlog(f"[{tag}] …{merged[-160:]}")
 
-    streamed = "".join(pieces).strip()
-    if streamed:
+    # #671：流式拼合原文不 strip；仅用临时副本判空。
+    streamed = "".join(pieces)
+    if streamed.strip():
         text = streamed
         fail_if_llm_error(text, "LLM 调用")
     elif final_output is not None:
         text = extract_agent_text(final_output)
-        if not text:
+        if not text.strip():
             abort_llm_contract(tag, "流式终结事件没有正文 content", "")
     else:
         abort_llm_contract(tag, "流式无内容且无终结事件", "")
@@ -355,6 +356,23 @@ def create_decree_writer_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agen
         id="decree-writer",
         model=create_chat_model(llm_config, temperature=0.3, top_p=0.9),
         instructions=[_ctx().game_world_prompt, _ctx().decree_writer_prompt],
+        add_history_to_context=False,
+        markdown=False,
+    )
+
+
+def create_arrival_attendant_agent(llm_config: LLMConfig) -> Agent:
+    """#671：抵京候见独立报到声部（王承恩 one-shot；勿复用读心 agent/夜卷）。"""
+    return Agent(
+        name="王承恩抵京报到",
+        id="arrival-attendant",
+        model=create_chat_model(llm_config, temperature=0.4),
+        instructions=[
+            "你是王承恩——御前老太监。用户给出本月新抵京、尚在候旨的结构化名单"
+            "（年月、人名、地点、候旨状态）。你只据此向皇爷低声递话，通报何人本月抵京候旨。",
+            "只读结构化事实，自由措辞；不得编造名单外的人，不得把未宣入写成已开殿召对。",
+            "同月多人须逐人点到。只输出递话正文，不输出推理、JSON 或机制说明。",
+        ],
         add_history_to_context=False,
         markdown=False,
     )

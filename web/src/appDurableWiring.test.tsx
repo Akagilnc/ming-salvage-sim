@@ -1,5 +1,5 @@
 import React, { act } from "react";
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./main";
@@ -56,7 +56,26 @@ const click = (el: Element | null | undefined) => act(() => { el?.dispatchEvent(
 const findButton = (host: HTMLElement, text: string) =>
   Array.from(host.querySelectorAll("button")).find((b) => (b.textContent || "").includes(text));
 
-afterEach(() => { vi.unstubAllGlobals(); document.body.innerHTML = ""; });
+// #671：根因——createRoot 后只清 innerHTML 不 unmount，孤儿树 effect/定时器串测致全套件时序 flake。
+const mountedRoots: Array<{ root: Root; host: HTMLElement }> = [];
+const trackRoot = (host: HTMLElement): Root => {
+  const root = createRoot(host);
+  mountedRoots.push({ root, host });
+  return root;
+};
+const unmountTrackedRoots = () => {
+  for (const { root, host } of mountedRoots.splice(0)) {
+    act(() => { root.unmount(); });
+    host.remove();
+  }
+};
+
+afterEach(() => {
+  unmountTrackedRoots();
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+  document.body.innerHTML = "";
+});
 
 describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer）", () => {
   it("#1276 邸报木牌重开 gazette；史册头起居注另入口解析近臣像", async () => {
@@ -70,7 +89,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
         previous_summary: "天启七年九月邸报·试重开",
       });
       if (u.pathname.endsWith("/api/history/turns")) return jsonResp({ turns: [
-        { kind: "month", turn: 0, year: 1627, period: 9, has_report: true, has_directive: false },
+        { kind: "month", turn: 0, year: 1627, period: 9, has_report: true, has_attendant: false, has_directive: false },
         { kind: "night", turn: 1, year: 1627, period: 10, night_id: 31, title: "乾清宫召对", involved_people: ["王承恩"] },
       ] });
       if (u.pathname.endsWith("/api/history/turn/0")) return jsonResp({ turn: 0, exists: true, report: "月档", directives: [] });
@@ -80,7 +99,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       return jsonResp({});
     }));
     const host = document.createElement("div"); document.body.appendChild(host);
-    await act(async () => { createRoot(host).render(<App />); });
+    await act(async () => { trackRoot(host).render(<App />); });
     // 自动邸报弹出后关掉，再经木牌重开
     await act(async () => {
       await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="邸报"]')).not.toBeNull());
@@ -139,7 +158,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       return jsonResp({});
     }));
     const host = document.createElement("div"); document.body.appendChild(host);
-    await act(async () => { createRoot(host).render(<App />); });
+    await act(async () => { trackRoot(host).render(<App />); });
     await tick();
     await click(host.querySelector('[title="朝堂·召见大臣"]'));
     await tick();
@@ -196,7 +215,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       return jsonResp({});
     }));
     const host = document.createElement("div"); document.body.appendChild(host);
-    await act(async () => { createRoot(host).render(<App />); });
+    await act(async () => { trackRoot(host).render(<App />); });
     await tick();
     await click(host.querySelector('[title="朝堂·召见大臣"]'));
     await tick();
@@ -232,7 +251,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       return jsonResp({});
     }));
     const host = document.createElement("div"); document.body.appendChild(host);
-    await act(async () => { createRoot(host).render(<App />); });
+    await act(async () => { trackRoot(host).render(<App />); });
     await tick();
     await click(host.querySelector('[title="朝堂·召见大臣"]'));
     await tick();
@@ -288,7 +307,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     }));
 
     const host = document.createElement("div"); document.body.appendChild(host);
-    await act(async () => { createRoot(host).render(<App />); });
+    await act(async () => { trackRoot(host).render(<App />); });
     await tick();
     await click(host.querySelector('[aria-label="朝堂·召见大臣"]'));
     await tick();
@@ -332,7 +351,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     }));
 
     const host = document.createElement("div"); document.body.appendChild(host);
-    await act(async () => { createRoot(host).render(<App />); });
+    await act(async () => { trackRoot(host).render(<App />); });
     await tick();
     await click(host.querySelector('[aria-label="朝堂·召见大臣"]'));
     await tick();
@@ -373,7 +392,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       return jsonResp({});
     }));
     const host = document.createElement("div"); document.body.appendChild(host);
-    await act(async () => { createRoot(host).render(<App />); });
+    await act(async () => { trackRoot(host).render(<App />); });
     await tick();
     await click(host.querySelector('[aria-label="朝堂·召见大臣"]'));
     await tick();
@@ -392,7 +411,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     });
 
     const secondHost = document.createElement("div"); document.body.appendChild(secondHost);
-    await act(async () => { createRoot(secondHost).render(<App />); });
+    await act(async () => { trackRoot(secondHost).render(<App />); });
     await tick();
     await click(secondHost.querySelector('[aria-label="朝堂·召见大臣"]'));
     await tick();
@@ -437,7 +456,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     }));
 
     const host = document.createElement("div"); document.body.appendChild(host);
-    await act(async () => { createRoot(host).render(<App />); });
+    await act(async () => { trackRoot(host).render(<App />); });
     await act(async () => { await vi.waitFor(() => expect(findButton(host, "杨嗣昌")).toBeTruthy()); });
     await click(host.querySelector('[aria-label="朝堂·召见大臣"]'));
     await click(findButton(host, "杨嗣昌"));
@@ -482,7 +501,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
 
     const host = document.createElement("div");
     document.body.appendChild(host);
-    await act(async () => { createRoot(host).render(<App />); });
+    await act(async () => { trackRoot(host).render(<App />); });
     await tick();
     expect(host.querySelector(".hud2-stage")).not.toBeNull();  // 进入游戏视图（旧草案在飞刷新已发出、挂起）
 
@@ -522,7 +541,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       }));
       const host = document.createElement("div");
       document.body.appendChild(host);
-      await act(async () => { createRoot(host).render(<App />); });
+      await act(async () => { trackRoot(host).render(<App />); });
       await act(async () => { await vi.advanceTimersByTimeAsync(0); });   // 冲刷挂载 fetch，换回合 effect 起 autoOpen 定时器
       expect(secretDialog(host)).toBeNull();                             // 未到点：真实对话框未开
       await act(async () => { await vi.advanceTimersByTimeAsync(400); }); // 400ms 到点、仍最新代次 → open()
@@ -549,7 +568,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       }));
       const host = document.createElement("div");
       document.body.appendChild(host);
-      await act(async () => { createRoot(host).render(<App />); });
+      await act(async () => { trackRoot(host).render(<App />); });
       await act(async () => { await vi.advanceTimersByTimeAsync(0); });   // 冲刷挂载：autoOpen 400ms 定时器已排程（尚未到点）
       expect(secretDialog(host)).toBeNull();
 
@@ -576,7 +595,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     }));
     const host = document.createElement("div");
     document.body.appendChild(host);
-    await act(async () => { createRoot(host).render(<App />); });
+    await act(async () => { trackRoot(host).render(<App />); });
     await tick();
     expect(host.querySelector(".hud2-stage")).not.toBeNull();
 
@@ -617,7 +636,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       }));
       const host = document.createElement("div");
       document.body.appendChild(host);
-      await act(async () => { createRoot(host).render(<App />); });
+      await act(async () => { trackRoot(host).render(<App />); });
       await tick();
       expect(host.querySelector(".hud2-stage")).not.toBeNull();
 
@@ -658,7 +677,10 @@ const SNAP_MINISTER = "月初辅臣";
 const SNAP_CONSORT = "月初妃嫔";
 const SNAP_BUILDING = "月初城防";
 const SNAP_MEMORIAL = "月初奏报正文";
-const SNAP_GAZETTE = "上月邸报月初口径";
+// #671：含首尾空白与 markdown 标记——唯一 App→DOM 官方邸报逐字契约
+const SNAP_GAZETTE = "\n  **上月邸报**\n- 军前缺饷\n  ";
+// #671：含 markdown/空白特征的原文常量——证明 App 接线不经 strip
+const SNAP_ATTENDANT = "  奴婢启禀：\n**洪承畴**已抵京候旨。  ";
 const SNAP_CLOSED = "月初已结边饷";
 const MIDCOURSE_ISSUE = "半程军饷议题";
 const MIDCOURSE_ARMY = "半程边军";
@@ -752,7 +774,7 @@ const stubSettlementFetch = (state: unknown) => {
     if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
     if (u.pathname.endsWith("/api/game/state")) return jsonResp(state);
     if (u.pathname.endsWith("/api/history/turns")) return jsonResp({
-      turns: [{ kind: "month", turn: 4, year: 1627, period: 9, has_report: true, has_directive: true }],
+      turns: [{ kind: "month", turn: 4, year: 1627, period: 9, has_report: true, has_attendant: false, has_directive: true }],
     });
     if (u.pathname.includes("/api/history/turn/")) return jsonResp({
       turn: 4, year: 1627, period: 9, report: SNAP_GAZETTE, decree: "",
@@ -765,7 +787,7 @@ const stubSettlementFetch = (state: unknown) => {
 const mountApp = async () => {
   const host = document.createElement("div");
   document.body.appendChild(host);
-  await act(async () => { createRoot(host).render(<App />); });
+  await act(async () => { trackRoot(host).render(<App />); });
   await act(async () => {
     await vi.waitFor(() => expect(host.querySelector(".hud2-stage")).not.toBeNull());
   });
@@ -787,7 +809,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     expect(host.querySelector("[data-testid=wang-settlement-slip]")).not.toBeNull();
 
     // 刷新口径：busy 空 + phase 仍 settling → 重挂仍可达
-    document.body.innerHTML = "";
+    unmountTrackedRoots();
     const host2 = await mountApp();
     const resume2 = host2.querySelector('[data-testid="settle-resume"] button') as HTMLButtonElement | null;
     expect(resume2).not.toBeNull();
@@ -810,7 +832,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     expect(action).toBeTruthy();
     expect(action!.disabled).toBe(false);
 
-    document.body.innerHTML = "";
+    unmountTrackedRoots();
     const host2 = await mountApp();
     await act(async () => {
       await vi.waitFor(() => expect(host2.querySelector('[data-testid="decision-modal"]')).not.toBeNull());
@@ -833,7 +855,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     expect(retry!.disabled).toBe(false);
     expect(retry!.textContent).toContain("重新拉取");
 
-    document.body.innerHTML = "";
+    unmountTrackedRoots();
     const host2 = await mountApp();
     await act(async () => {
       await vi.waitFor(() => expect(host2.querySelector('[data-testid="decision-recovery"]')).not.toBeNull());
@@ -858,7 +880,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     expect(resume.textContent).toContain("续跑结算");
 
     // 刷新重挂仍在
-    document.body.innerHTML = "";
+    unmountTrackedRoots();
     const host2 = await mountApp();
     await act(async () => {
       await vi.waitFor(() => expect(host2.querySelector('[data-testid="settle-resume"]')).not.toBeNull());
@@ -1011,9 +1033,9 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     await click(cmdByCaption(host, "史册"));
     await tick();
     await act(async () => {
-      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="史册：历代奏报与诏书"]')).not.toBeNull());
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="史册：历代奏报、诏书与递话"]')).not.toBeNull());
     });
-    expect(host.querySelector('[role="dialog"][aria-label="史册：历代奏报与诏书"]')!.textContent).toMatch(/1627\s*年\s*9\s*月/);
+    expect(host.querySelector('[role="dialog"][aria-label="史册：历代奏报、诏书与递话"]')!.textContent).toMatch(/1627\s*年\s*9\s*月/);
     await closeOpenOverlay(host);
 
     // audience_archive：史册头起居注另入口可开
@@ -1046,9 +1068,12 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
 
   it("gazette：核账期邸报（上月）可读且正文=状态口 previous_summary（isFaceReachable 真链）", async () => {
     // #1356 F4：App 接缝——previous_* 与 turn.reign_period_label 同给，报头不得混充当前月
+    // #671：唯一官方邸报 App→DOM 逐字契约（咬 state trim / prop trim / strip 三处）
+    // #671：last_attendant_message 经 App 接线可达 gazette-attendant（不经 strip；在 document 外）
     stubSettlementFetch(settlementBaseState("player", {
       previous_summary: SNAP_GAZETTE,
       previous_reign_period_label: "天启七年九月",
+      last_attendant_message: SNAP_ATTENDANT,
       turn: {
         year: 1627,
         period: 10,
@@ -1063,14 +1088,45 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     await act(async () => {
       await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="邸报"]')).not.toBeNull());
     });
-    expect(host.querySelector('[role="dialog"][aria-label="邸报"]')!.textContent).toContain(SNAP_GAZETTE);
+    // 官方邸报 pre 正文与状态口 previous_summary 逐字相等（含空白与 markdown）
+    expect(host.querySelector("pre.memorial-text")!.textContent).toBe(SNAP_GAZETTE);
     const masthead = host.querySelector(".gazette-masthead")?.textContent || "";
     expect(masthead).toContain("天启七年九月");
     expect(masthead).not.toContain("天启七年十月");
+    // #671 App 接线：递话可见且位于 .gazette-document 之外
+    const attendant = host.querySelector("[data-testid=gazette-attendant]");
+    expect(attendant).not.toBeNull();
+    expect(attendant!.textContent).toContain(SNAP_ATTENDANT);
+    expect(attendant!.closest(".gazette-document")).toBeNull();
     // 半程议题仍不泄漏；上月已结只读面可同屏
     expect(host.textContent).not.toContain(MIDCOURSE_ISSUE);
     expect(host.querySelector(".situation-closed-list")).not.toBeNull();
     expect(host.textContent).toContain(SNAP_CLOSED);
+  });
+
+  it("gazette：仅有 last_attendant_message 时核账期仍自动弹邸报", async () => {
+    // #671：attendant-only 月完——自动门槛认递话存在，dialog 含原文
+    stubSettlementFetch(settlementBaseState("player", {
+      previous_summary: "",
+      previous_reign_period_label: "天启七年九月",
+      last_attendant_message: SNAP_ATTENDANT,
+      turn: {
+        year: 1627,
+        period: 10,
+        turn: 5,
+        phase: "player",
+        settlement_display: true,
+        reign_period_label: "天启七年十月",
+      },
+      pending_decisions: [],
+    }));
+    const host = await mountApp();
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="邸报"]')).not.toBeNull());
+    });
+    const attendant = host.querySelector("[data-testid=gazette-attendant]");
+    expect(attendant).not.toBeNull();
+    expect(attendant!.textContent).toContain(SNAP_ATTENDANT);
   });
 
   it("月完后 settlement_display=false：关闭组入口恢复；递话条收；局势半程面重现", async () => {
