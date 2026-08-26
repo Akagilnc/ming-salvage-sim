@@ -18492,12 +18492,29 @@ class GameDB:
                 }]},
                 content=content, registry=None, llm_config=self.llm_config,
             )
-            affected = {
-                str(item.get("name") or item.get("人物") or "").strip()
-                for item in applied.get("applied_person_changes", [])
-                if isinstance(item, dict) and not item.get("rejected")
-            }
-            affected.discard("")
+            # Canonical applied rows name the appointee; partial concurrent-office
+            # displacements only appear on the row's displaced list (full
+            # 听用候铨 displacements are also synthesized as cascade rows).
+            # Outer settle refresh must cover both so partially-displaced holders
+            # are not left on a stale Agent identity after commit.
+            affected: set[str] = set()
+            for item in applied.get("applied_person_changes", []):
+                if not isinstance(item, dict) or item.get("rejected"):
+                    continue
+                person = str(item.get("name") or item.get("人物") or "").strip()
+                if person:
+                    affected.add(person)
+                displaced = item.get("displaced")
+                if isinstance(displaced, str):
+                    displaced_parts = [displaced] if displaced.strip() else []
+                elif isinstance(displaced, (list, tuple)):
+                    displaced_parts = displaced
+                else:
+                    displaced_parts = []
+                for part in displaced_parts:
+                    displaced_name = str(part).split(":", 1)[0].strip()
+                    if displaced_name:
+                        affected.add(displaced_name)
             if recommendation_reason and name in affected:
                 from ming_sim.recommendations import record_recommendation_edges
                 event_id = self.record_recommendation(
