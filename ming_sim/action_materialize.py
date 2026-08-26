@@ -969,7 +969,7 @@ def _materialize_pacification(ctx: MaterializeCtx) -> None:
 
 
 GRANT_ACTIONS = frozenset({
-    "无", "赏赉", "发内帑", "加衔", "荫叙", "赈灾", "项目经费", "协饷",
+    "无", "赏赉", "发内帑", "加衔", "荫叙", "赈灾", "招抚屯田", "项目经费", "协饷",
 })
 GRANT_HONORIFICS = frozenset({"加衔", "荫叙"})
 GRANT_MONEY_ACTIONS = GRANT_ACTIONS - {"无"} - GRANT_HONORIFICS
@@ -1007,7 +1007,8 @@ def _grant_target(intent: Dict[str, Any]) -> Tuple[str, str]:
     if action == "协饷":
         # 仅抛原始 target 文本；army id 解析在 stage 前完成，禁止把 region 标签硬改 army。
         return "army", target_id or name
-    if action == "赈灾":
+    if action in {"赈灾", "招抚屯田"}:
+        # #652：执行型赈济／招抚屯田均锚定属地省；recovery 单核读 region target。
         kind = "region" if target_id and target_id != action else "issue"
         return kind, target_id or name or action
     return "issue", target_id or name or action

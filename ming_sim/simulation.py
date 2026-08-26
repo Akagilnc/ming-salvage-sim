@@ -33,6 +33,7 @@ from ming_sim.models import GameState, loads_effect_dict, reign_period_label
 from ming_sim.paths import bundled_path
 from ming_sim.qualitative import (
     imperial_authority_band,
+    population_wan_kou_label,
     power_band,
     progress_band,
     public_support_band,
@@ -60,6 +61,8 @@ TOP_LEVEL_ALIASES = {
     "地区变化": "region_delta",
     "军队变化": "army_delta",
     "势力变化": "power_updates",
+    "流民投贼": "bandit_absorptions",
+    "投贼吸收": "bandit_absorptions",
     "建军": "new_armies",
     "新建军队": "new_armies",
     "外交态度": "world_advance",
@@ -114,6 +117,10 @@ ITEM_FIELD_ALIASES = {
     "source": "source", "源": "source", "源阶级": "source",
     "target": "target", "目标": "target", "目标阶级": "target",
     "amount": "amount", "数额": "amount", "口数": "amount",
+    # #652 投贼吸收 item（region_id 别名见下方 surcharge 段共用）
+    "requested_count": "requested_count", "请求口数": "requested_count",
+    "请求人数": "requested_count", "拟吸口数": "requested_count",
+    "power_id": "power_id", "势力编号": "power_id", "势力id": "power_id",
     # #649 §1.4：class_delta 人口键 canonical 化，使 _apply_class_dict population guard
     # 对中英文拼写统一整项拒收（人口只经 population_transfers 守恒转移变动）。
     "population": "population", "人口": "population",
@@ -408,17 +415,6 @@ def _simulator_factions_brief(db: GameDB) -> str:
     return "；".join(parts)
 
 
-def _population_wan_kou_label(persons: int) -> str:
-    """ADR 0088/#648 玩家面投影：裸人数 → 「约N万口」定性（P4）。
-
-    这是 LLM 输入的特征化投影（同 satisfaction_band 族），非玩家直出文本模板；
-    叙事由 simulator 从此正向长出，严禁事后对 LLM 产文换算/改写（0142 零删改）。"""
-    wan = int(persons) // 10000
-    if wan <= 0:
-        return "不足一万口"
-    return f"约{wan}万口"
-
-
 def _project_simulator_region_row(
     row: Dict[str, object], population_unit: str
 ) -> Dict[str, object]:
@@ -431,7 +427,7 @@ def _project_simulator_region_row(
     if "public_support" in projected:
         projected["public_support"] = public_support_band(projected["public_support"])
     if population_unit == POPULATION_UNIT_PERSONS and "population" in projected:
-        projected["population"] = _population_wan_kou_label(int(projected["population"]))
+        projected["population"] = population_wan_kou_label(projected["population"])
     return projected
 
 
@@ -764,10 +760,34 @@ def build_simulator_payload(
             raw.pop(field)
         court_rows.append(raw)
     court_roster = _auto_table(court_rows)
-    from ming_sim.population_pressure import regional_displaced_pressure_brief
+    from ming_sim.population_pressure import (
+        displaced_pool_balance_rows,
+        recent_reflux_cause_rows,
+        regional_displaced_pressure_brief,
+    )
 
     reign_label = reign_period_label(state.year, state.period)
     displaced_pressure = regional_displaced_pressure_brief(db)
+    # #652：机面结构化省池清单（0143 世界事实数值放行）；classes_brief 仍定性。
+    displaced_pool = _auto_table(displaced_pool_balance_rows(db))
+    # #652：近窗回流原因（赈灾/招抚屯田）——与 displaced_pool 同形机面表，供投贼软判归因。
+    recent_reflux_causes = _auto_table(recent_reflux_cause_rows(db))
+    # #669/0095：仍在途者的月数语义特征（非裸账）。先成 list，供 two_axis builder 同引用。
+    transit_semantics = project_transit_semantics(
+        db,
+        state,
+        DistanceMatrix.from_file(bundled_path("content", "distance_matrix.json")),
+    )
+    # #652：执行格唯一 LLM 判官面——builder 真源一次 + ADR 0143 定性投影进 simulator。
+    from ming_sim.execution_pressure import (
+        build_execution_two_axis_surface,
+        project_execution_two_axis_for_simulator,
+    )
+    execution_two_axis = project_execution_two_axis_for_simulator(
+        build_execution_two_axis_surface(
+            db, state.turn, transit_semantics=transit_semantics,
+        ),
+    )
     return {
         "year": state.year,
         "period": state.period,
@@ -798,6 +818,10 @@ def build_simulator_payload(
             db.class_report(audience=True),
             f"省级流民态势：{displaced_pressure}",
         )),
+        # #652 机面：省级流民池结构化余额（投贼吸收吃池顶）；非玩家盘面数表。
+        "displaced_pool_balances": displaced_pool,
+        # #652 机面：近窗回流原因（region_id/grant_action/origin_ref）；不报口数。
+        "recent_reflux_causes": recent_reflux_causes,
         "powers_brief": db.power_report(exclude_self=True),
         "active_issues": issues_payload,
         "candidate_events": candidate_events,
@@ -824,11 +848,9 @@ def build_simulator_payload(
         # pending_resolve_context.simulator_payload.transit_arrivals，由调用方注入。
         "transit_arrivals": list(transit_arrivals or []),
         # #669/0095：仍在途者的月数语义特征（非裸账）。
-        "transit_semantics": project_transit_semantics(
-            db,
-            state,
-            DistanceMatrix.from_file(bundled_path("content", "distance_matrix.json")),
-        ),
+        "transit_semantics": transit_semantics,
+        # #652：执行中属地差务带宽/阻力/灾情占用/到差定性清单（唯一判官软判成色）。
+        "execution_two_axis": execution_two_axis,
         # #670: machine facts for the existing monthly judge.
         # arrivals → 续赴京；waiting_audience → 抵京候见（只读投影，非法固定句）。
         "unsettled_arrived_summons": list_arrived_unsettled_summons(db),
@@ -845,6 +867,8 @@ def build_simulator_payload(
             "已确认抵达的人物（name+location），供演出到任事实。"
             "transit_semantics 为仍在途人物的在途语义特征（name/目的地/月数语义），"
             "供逐行演出在途情形。"
+            "execution_two_axis 为执行中属地差务的带宽/阻力/灾情占用/距离到差定性清单，"
+            "供唯一判官软判执行成色；勿念裸属性分。"
             "unsettled_arrived_summons 为原程已抵非京、须续赴京的未结传召机器事实；"
             "waiting_audience 为已抵京候见、尚未宣入消费的未结传召机器事实。"
             "faction_denunciation_facts 为派系恩怨/分叉案卷/处境/个性事实包，供朝堂弹劾叙事取材，不含真伪位。"
@@ -933,6 +957,7 @@ EMPTY_EXTRACTION: Dict[str, object] = {
     "army_delta": {},
     "new_armies": [],
     "power_updates": {},
+    "bandit_absorptions": [],  # #652/0087：流民投贼吸收请求（吃池顶→实力正增）
     "world_advance": {},
     "issue_advances": [],
     "new_issues": [],
@@ -963,7 +988,9 @@ EMPTY_EXTRACTION: Dict[str, object] = {
 
 MODULE_FIELDS: Dict[str, set[str]] = {
     "internal": {"metric_delta", "economy_moves", "faction_delta", "class_delta", "population_transfers", "surcharge_decrees", "region_delta", "fiscal_changes", "fiscal_creates", "fiscal_removes"},
-    "military_external": {"army_delta", "new_armies", "power_updates", "world_advance"},
+    "military_external": {
+        "army_delta", "new_armies", "power_updates", "bandit_absorptions", "world_advance",
+    },
     "issues": {
         "issue_advances", "new_issues", "事件结局", "cancels", "close_issues",
         "dossier_executions", "dossier_participants", "dossier_reconciliations",
@@ -1194,7 +1221,6 @@ def build_extractor_shared_context(
     secret_orders: Optional[Dict[str, object]] = None,
     module: str = "",
     decree_dossiers: Optional[List[Dict[str, object]]] = None,
-    transit_semantics: Optional[List[Dict[str, object]]] = None,
 ) -> Dict[str, object]:
     """供模块 extractor 放入 system 前缀的共同结算补充上下文。
 
@@ -1337,12 +1363,7 @@ def build_extractor_shared_context(
         # #626：反噬事实包仅 issues 档房（与 #625 监督三键同格门控）；
         # 不在 _extractor_context_payload 无门副本，避免非 issues 模块误读。
         slim["commitment_backlash_facts"] = build_backlash_narrative_features(db)
-        # #654/#673：带宽/阻力两轴清单——纯机 issues extractor 私有面（P4：不进 simulator）。
-        # transit_semantics 必须是 phase1 payload 既成 list 对象引用（is 同一对象）。
-        from ming_sim.execution_pressure import build_execution_two_axis_surface
-        slim["execution_two_axis"] = build_execution_two_axis_surface(
-            db, state.turn, transit_semantics=transit_semantics,
-        )
+        # #652：execution_two_axis 仅进 simulator（唯一判官）；issues 只抄录奏章已写结局。
         # The issues extractor consumes the same canonical candidate_events key
         # as its prompt.  This private module payload remains outside simulator
         # decision binding and HITL.

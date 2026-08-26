@@ -73,8 +73,7 @@ def test_issues_extractor_context_keeps_threshold_numerics(game):
     _plant(db, state)
 
     ctx = build_extractor_shared_context(
-        db, state, "邸报正文", "测试诏", module="issues", decree_dossiers=[],
-        transit_semantics=[],
+        db, state, "邸报正文", "测试诏", module="issues", decree_dossiers=[]
     )
 
     # current_state：民心/皇威必须是精确整数，供「民心>60」类对照
@@ -107,8 +106,7 @@ def test_threshold_numerics_only_for_issues_module(game):
     _plant(db, state)
 
     issues_ctx = build_extractor_shared_context(
-        db, state, "邸报正文", "测试诏", module="issues", decree_dossiers=[],
-        transit_semantics=[],
+        db, state, "邸报正文", "测试诏", module="issues", decree_dossiers=[]
     )
     for key in _THRESHOLD_FIELDS:
         assert key in issues_ctx, f"issues 必须有 {key}"
