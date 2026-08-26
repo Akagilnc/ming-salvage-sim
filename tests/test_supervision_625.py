@@ -662,8 +662,7 @@ def test_injection_simulator_and_extractor_surfaces(game):
     payload = build_simulator_payload(state, db, "着清丈", "")
     # payload 经 project 装配时由调用方传入；此处直接验 project 结果已含槽
     ctx = build_extractor_shared_context(
-        db, state, "邸报", "", module="issues",
-        transit_semantics=payload["transit_semantics"],
+        db, state, "邸报", "", module="issues"
     )
     dhit = next(r for r in ctx["decree_dossiers"] if int(r["id"]) == subject_id)
     assert dhit.get("supervision_history") is not None
@@ -681,8 +680,7 @@ def test_extractor_supervision_keys_gated_to_issues_module(game):
     db.record_monthly_supervision_presence(state.turn, commit=True)
 
     issues_ctx = build_extractor_shared_context(
-        db, state, "邸报", "", module="issues",
-        transit_semantics=[],
+        db, state, "邸报", "", module="issues"
     )
     issues_hit = next(
         r for r in issues_ctx["decree_dossiers"] if int(r["id"]) == subject_id
