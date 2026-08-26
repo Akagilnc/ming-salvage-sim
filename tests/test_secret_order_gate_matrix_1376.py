@@ -30,6 +30,7 @@ import ming_sim.mindreading as mindreading_mod
 import ming_sim.session as session_mod
 import web_app
 from ming_sim import audience_night as an
+from tests.test_session_write_queue_1353 import wait_pending_writes as _wait_pending_writes
 
 # ── 矩阵常量（票面原轨）────────────────────────────────────────────────
 
@@ -85,6 +86,13 @@ class _CannedMindreading:
         return SimpleNamespace(content="近臣低声：边饷事重。")
 
 
+class _CannedRelationJudge:
+    """召对/收夜关系判官外层——零事件 canned，禁真网。"""
+
+    def run(self, _prompt):
+        return SimpleNamespace(content='{"events":[]}')
+
+
 def _install_settlement_llm_stubs(monkeypatch) -> None:
     """过月 SSE 外层 LLM 边界 canned（与 #1468 tracer 同形，结算核真跑）。"""
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
@@ -99,6 +107,12 @@ def _install_settlement_llm_stubs(monkeypatch) -> None:
     monkeypatch.setattr(
         mindreading_mod, "create_mindreading_agent",
         lambda *a, **k: _CannedMindreading(),
+    )
+    # #642：关系判官同属外层 LLM 缝——漏 stub → 有 window 时真网挂起占票，
+    # xdist 下 pending drain 墙钟假红。
+    monkeypatch.setattr(
+        agents_mod, "create_relation_judge_agent",
+        lambda *a, **k: _CannedRelationJudge(),
     )
     monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
     monkeypatch.setattr(
@@ -308,41 +322,17 @@ def matrix_env(tmp_path, monkeypatch, _offline_scene_beat_generator):
         "ud": ud,
     }
 
-    # teardown
+    # teardown：Condition 等票排空；fail-loud——wait_idle=False/异常不得吞掉后继续关库。
     g = web_app.web_game
     if g is not None:
-        deadline = time.perf_counter() + 2.0
-        while time.perf_counter() < deadline:
-            pending = int(getattr(g, "_pending_writes_count", 0) or 0)
-            if pending <= 0:
-                break
-            time.sleep(0.01)
         try:
+            _wait_pending_writes(g)
             g.session.close()
-        except Exception:
-            pass
-        web_app.web_game = None
+        finally:
+            web_app.web_game = None
 
 
 # ── helpers ────────────────────────────────────────────────────────────
-
-
-def _wait_pending_writes(game, *, timeout_s: float = 3.0) -> None:
-    deadline = time.perf_counter() + float(timeout_s)
-    while time.perf_counter() < deadline:
-        pending = int(getattr(game, "_pending_writes_count", 0) or 0)
-        if pending <= 0:
-            gate = getattr(game, "_write_gate", None)
-            if gate is None:
-                return
-            if gate.acquire(blocking=False):
-                gate.release()
-                return
-        time.sleep(0.01)
-    raise AssertionError(
-        f"pending writes did not drain in {timeout_s}s; "
-        f"count={getattr(game, '_pending_writes_count', None)}"
-    )
 
 
 def _parse_sse(text: str) -> list[dict]:

@@ -132,6 +132,7 @@ def test_credit_contract_fixture_reads_as_semantic_directed_edges():
 
 
 def test_relation_edges_survive_restore(game, tmp_path):
+    """R1：边事件 + 关系摘要双表面经关闭重开逐字段一致（#642 扩摘要面）。"""
     db, state, content = game
     db.record_relation_edge_event(
         source="杨嗣昌",
@@ -141,6 +142,15 @@ def test_relation_edges_survive_restore(game, tmp_path):
         origin="audience:turn-1:round-7",
         turn=state.turn,
     )
+    edge = db.get_relation_edge_events(source="杨嗣昌", target="徐光启")[0]
+    db.apply_relation_brew_result(
+        source="杨嗣昌", target="徐光启", dimension="大臣",
+        founding_segment="徐杨相发明奠基。",
+        recent_segment="协作在案。",
+        last_event_id=int(edge["id"]),
+        turn=int(state.turn), year=int(state.year), period=int(state.period),
+    )
+    summary = db.get_relation_summary("杨嗣昌", "徐光启")
     path = db.path
     db.close()
 
@@ -150,6 +160,17 @@ def test_relation_edges_survive_restore(game, tmp_path):
         assert len(rows) == 1
         assert rows[0]["context"] == "二人当面相发明。"
         assert rows[0]["origin_round"] == 7
+        for key in (
+            "source", "target", "event_kind", "context", "origin",
+            "year", "period", "turn",
+        ):
+            assert rows[0][key] == edge[key]
+        summary2 = restored.get_relation_summary("杨嗣昌", "徐光启")
+        for key in (
+            "founding_segment", "recent_segment", "last_event_id",
+            "last_brewed_year", "last_brewed_period", "dimension",
+        ):
+            assert summary2[key] == summary[key]
     finally:
         restored.close()
 

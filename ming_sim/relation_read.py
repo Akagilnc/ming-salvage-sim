@@ -27,6 +27,33 @@ from typing import Any, Dict, List
 from ming_sim.models import reign_period_label
 
 
+def load_relation_history_before(
+    db: Any,
+    *,
+    source: str,
+    target: str,
+    before_year: int,
+    before_period: int,
+) -> List[Dict[str, Any]]:
+    """有向对在严格早于目标年月的完整边事件历史（#642 锚④ coda 酿制读缝）。
+
+    只读 append-only 流水；零语义筛选、零数量裁剪、零关键词判断。排序键＝
+    (year, period, id) 稳定全序。语境等字段字节不改。唯一生产调用方＝
+    ``relation_brew.build_brew_input``（经 ``MonthEndRelationBrewLeg.prepare``
+    装配）；不扩五字段玩家 DTO，不改摘要。"""
+    by = int(before_year)
+    bp = int(before_period)
+    if not (1 <= bp <= 12):
+        raise ValueError(f"before_period must be 1..12, got {bp}")
+    prior = [
+        dict(event)
+        for event in db.get_relation_edge_events(source=str(source), target=str(target))
+        if (int(event["year"]), int(event["period"])) < (by, bp)
+    ]
+    prior.sort(key=lambda event: (int(event["year"]), int(event["period"]), int(event["id"])))
+    return prior
+
+
 def project_relation_ledger(db: Any, *, viewer: str | None) -> List[Dict[str, str]]:
     """按授权参数投影关系账读面（#640 单一读取接缝，庭裁 r1 F2）。
 
