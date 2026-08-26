@@ -1218,9 +1218,7 @@ def test_non_streaming_appointment_tool_stages_pending_action(game):
     ]
     assert len(appointment_dossiers) == 1
     assert appointment_dossiers[0]["mode"] == "midzhi"
-    promulgate_proposed_appointments(
-        db, state, content, registry=sess.registry,
-    )
+    promulgate_proposed_appointments(db, state, content)
 
     assert content.characters[appointee].faction == "阉党"
 

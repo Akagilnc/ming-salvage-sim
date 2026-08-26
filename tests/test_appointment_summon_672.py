@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 
@@ -10,11 +11,16 @@ from ming_sim.audience_night import (
     list_unsettled_summons,
     open_night,
 )
+from ming_sim.distance import DistanceMatrix
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.session import GameSession
 from ming_sim.decree import prepare_resolve_front_half, settle_with_delta
 from tests.dossier_test_helpers import rejected_verdict
 from tests.test_qa_c_p0_1380_1355 import _fake_session, _minister_wang_shaohui
+
+_MATRIX = DistanceMatrix.from_file(
+    Path(__file__).resolve().parents[1] / "content/distance_matrix.json"
+)
 
 
 class _FakeRegistry:
@@ -112,7 +118,9 @@ def test_appointment_summon_activates_only_after_promulgation(game, monkeypatch)
     # 启程落在 settle 事务内、当月 tick 已过；outer 提交后 turn 已 +1，但尚未跑下月
     # front-half tick → 距离仍为矩阵全值（启程当月不扣）。
     assert departed_start == int(state.turn) - 1
-    assert departed_remaining > 0
+    assert departed_remaining == pytest.approx(
+        _MATRIX.travel_time("guangdong", "beizhili")
+    )
 
     # 下一月 canonical tick 首次递减。
     prepare_resolve_front_half(state, db, content=content)
@@ -235,6 +243,45 @@ def test_appointment_summon_rejected_leaves_no_travel(game, monkeypatch):
     assert (after["status"], after["office"], after["transit_to"] or "") == (
         before["status"], before["office"], before["transit_to"] or "",
     )
+    tags = json.loads(db.conn.execute(
+        "SELECT tags FROM story_ledger_entries WHERE origin_ref=?", (origin,),
+    ).fetchone()["tags"])
+    assert "传召未结" not in tags
+
+
+def test_appointment_summon_office_commit_failure_rolls_back(game, monkeypatch):
+    """canonical 授官返回空 affected：经真实 settle_with_delta 整批回滚。
+
+    案卷仍 proposed、inactive office origin 唯一且未激活、人物官职/行止不变、
+    registry 零调用。
+    """
+    db, state, content = game
+    pending, origin = _stage_yuan_appointment_summon(game, monkeypatch)
+    dossier_id = _close_office_to_dossier(db, state, content, pending["id"])
+    before = dict(_yuan_row(db))
+    reg = _FakeRegistry()
+
+    monkeypatch.setattr(db, "_commit_office_action", lambda *a, **k: set())
+
+    with pytest.raises(SettlementAbort):
+        settle_with_delta(
+            state, db, {}, before_turn=int(state.turn), content=content,
+            registry=reg,
+            dossier_verdicts=[{"dossier_id": dossier_id, "decision": "promulgated"}],
+        )
+
+    assert reg.refreshed == []
+    assert list_unsettled_summons(db) == []
+    assert db.get_decree_dossier(dossier_id)["status"] == "proposed"
+    rolled = dict(_yuan_row(db))
+    assert rolled == before
+    ch = content.characters["袁崇焕"]
+    assert (ch.status, ch.office or "", getattr(ch, "transit_to", "") or "") == (
+        rolled["status"], rolled["office"] or "", rolled["transit_to"] or "",
+    )
+    assert db.conn.execute(
+        "SELECT count(*) FROM story_ledger_entries WHERE origin_ref=?", (origin,),
+    ).fetchone()[0] == 1
     tags = json.loads(db.conn.execute(
         "SELECT tags FROM story_ledger_entries WHERE origin_ref=?", (origin,),
     ).fetchone()["tags"])
