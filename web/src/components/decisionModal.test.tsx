@@ -653,6 +653,42 @@ describe("DecisionModal #1202 seal-is-confirm first screen + pick affordance", (
     cleanupDefault();
   });
 
+  it("#657 跨月 draft idx=2 首行可点，submit 携带 decision_key（禁 idx===position 拒收）", () => {
+    const crossMonth: PendingDecision[] = [
+      {
+        idx: 2,
+        kind: "rescript_draft",
+        source_turn: 3,
+        decision_key: "rescript_draft:3:2",
+        title: "跨月急务",
+        context: "上月遗留",
+        options: [
+          {
+            label: "发帑", hint: "h",
+            draft_capability: "cap-x", action_type: "assignment",
+            target_kind: "region", target_id: "shaanxi",
+            locality_scope: "single", region_id: "shaanxi",
+            transaction_category: "督赈",
+          },
+          { label: "缓", hint: "h", draft_capability: "cap-y" },
+        ],
+      },
+    ];
+    expect(pendingDecisionsFrom(crossMonth)).toEqual(crossMonth);
+    const onResolve = vi.fn();
+    const cleanup = render(<DecisionModal decisions={crossMonth} onResolve={onResolve} />);
+    act(() => {
+      (document.querySelector('[data-action="hold"]') as HTMLButtonElement).click();
+    });
+    act(() => {
+      document.querySelector<HTMLButtonElement>(".decision-confirm")!.click();
+    });
+    expect(onResolve).toHaveBeenCalledTimes(1);
+    expect(onResolve.mock.calls[0][0][0].decision_key).toBe("rescript_draft:3:2");
+    expect(onResolve.mock.calls[0][0][0].action).toBe("hold");
+    cleanup();
+  });
+
   it("#657 midzhi projects non-assignment §C.4 closed-set keys from selected option", () => {
     const decisions = [
       {

@@ -3056,3 +3056,320 @@ def test_657_appointment_name_target_id_conflict_batch_reject(game):
             },
             db=db, content=content, state=state,
         )
+
+
+def test_657_punishment_name_target_id_conflict_zero_writes(web_game, monkeypatch):
+    """punishment name≠target_id → 整批拒；真 HTTP 零 dossier/character 写。"""
+    from ming_sim import rescript_actions as ra
+    from ming_sim.models import TurnPhase
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+
+    db, state = web_game.db, web_game.state
+    rows = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
+        "ORDER BY name LIMIT 2",
+    ).fetchall()
+    assert len(rows) >= 2
+    n1, n2 = str(rows[0]["name"]), str(rows[1]["name"])
+
+    with pytest.raises(ValueError, match="冲突|name|target_id"):
+        ra.map_rescript_option_or_choice(
+            {
+                "action_type": "punishment",
+                "punish_action": "廷杖",
+                "name": n1,
+                "target_kind": "character",
+                "target_id": n2,
+                "label": "责",
+                "locality_scope": "none",
+            },
+            db=db, content=web_game.content, state=state,
+        )
+    ok = ra.map_rescript_option_or_choice(
+        {
+            "action_type": "punishment",
+            "punish_action": "廷杖",
+            "name": n1,
+            "target_kind": "character",
+            "target_id": n1,
+            "label": "责",
+            "locality_scope": "none",
+        },
+        db=db, content=web_game.content, state=state,
+    )
+    assert ok["name"] == n1 and ok["target_id"] == n1
+    ok_one = ra.map_rescript_option_or_choice(
+        {
+            "action_type": "punishment",
+            "punish_action": "廷杖",
+            "target_kind": "character",
+            "target_id": n1,
+            "label": "责",
+            "locality_scope": "none",
+        },
+        db=db, content=web_game.content, state=state,
+    )
+    assert ok_one["name"] == n1 and ok_one["target_id"] == n1
+
+    opt_base = normalize_rescript_layer_a_option({
+        "label": "责", "hint": "h", "action_type": "punishment",
+        "assignee_name": "", "target_kind": "character", "target_id": n1,
+        "name": n1, "punish_action": "廷杖",
+        "locality_scope": "none", "region_id": "", "transaction_category": "",
+    })
+    _657_plant_awaiting_web(web_game, drafts=[{
+        "title": "惩处冲突", "context": "c",
+        "options": [opt_base, {"label": "x", "hint": "h", "draft_capability": "z"}],
+        "actor_name": n1, "actor_office": "o", "actor_faction": "f",
+    }])
+    desk = db.list_rescript_desk(int(state.turn))
+    key = desk[0]["decision_key"]
+    before_status = db.get_character_status(n1)[0]
+    before_dossiers = db.conn.execute(
+        "SELECT COUNT(*) AS c FROM decree_dossiers",
+    ).fetchone()["c"]
+
+    body = [{
+        "decision_key": key,
+        "action": "midzhi",
+        "label": "责",
+        "action_type": "punishment",
+        "punish_action": "廷杖",
+        "name": n1,
+        "target_kind": "character",
+        "target_id": n2,
+        "locality_scope": "none",
+    }]
+    r = asyncio.run(_post_resolve(body))
+    assert r.status_code == 200
+    assert "event: error" in r.text
+    assert "event: done" not in r.text
+    assert db.get_character_status(n1)[0] == before_status
+    after_dossiers = db.conn.execute(
+        "SELECT COUNT(*) AS c FROM decree_dossiers",
+    ).fetchone()["c"]
+    assert after_dossiers == before_dossiers
+    assert web_game.state.turn_phase != TurnPhase.ISSUED.value
+    hit = next(r for r in db.list_rescript_drafts() if r["title"] == "惩处冲突")
+    assert hit["status"] == "pending"
+
+
+def test_657_revise_deliberate_strict_contracts_zero_write_on_bad_shape(game, monkeypatch):
+    """revise 拒 monthly items[]；deliberate 拒缺 stance；合法 options 进入 prewrite。"""
+    from ming_sim.rescript_actions import PrewriteResults
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+    from ming_sim.session import GameSession
+    from ming_sim.models import TurnPhase
+    import ming_sim.agents as agents_mod
+
+    db, state, content = game
+    opt = normalize_rescript_layer_a_option({
+        "label": "备", "hint": "h", "action_type": "assignment",
+        "assignee_name": "", "target_kind": "region", "target_id": "shaanxi",
+        "locality_scope": "single", "region_id": "shaanxi",
+        "transaction_category": "督赈",
+    })
+    db.conn.execute("DELETE FROM pending_decisions WHERE kind='rescript_draft'")
+    db.save_rescript_drafts(int(state.turn), [{
+        "title": "改票契约", "context": "c",
+        "options": [opt, {"label": "x", "hint": "h", "draft_capability": "z"}],
+        "actor_name": "杨嗣昌", "actor_office": "o", "actor_faction": "f",
+    }])
+    db.save_resolve_context(
+        int(state.turn), "诏", "邸报",
+        {"candidate_events": [], "transit_semantics": []},
+        secret_orders=[], relevant_memories=[],
+    )
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
+    desk = db.list_rescript_desk(int(state.turn))
+    key = desk[0]["decision_key"]
+
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.llm_config = object()
+    sess.agno_db = None
+    sess.registry = None
+    sess.last_decree = "诏"
+    sess.temporary_characters = {}
+
+    def _bad_revise_text(*_a, **_k):
+        return json.dumps({
+            "items": [{"title": "t", "context": "c", "options": [opt]}],
+        }, ensure_ascii=False)
+
+    monkeypatch.setattr(agents_mod, "create_rescript_revise_agent", lambda *_a, **_k: object())
+    monkeypatch.setattr(agents_mod, "run_agent_text", _bad_revise_text)
+    with pytest.raises((ValueError, RuntimeError), match="options|items|prewrite LLM"):
+        sess.prepare_rescript_prewrite([{
+            "decision_key": key, "action": "return_revise", "note": "再拟",
+        }])
+    hit = next(r for r in db.list_rescript_drafts() if r["title"] == "改票契约")
+    assert hit["status"] == "pending"
+
+    legal_opt = normalize_rescript_layer_a_option({
+        "label": "新案", "hint": "h2", "action_type": "assignment",
+        "assignee_name": "", "target_kind": "region", "target_id": "shaanxi",
+        "locality_scope": "single", "region_id": "shaanxi",
+        "transaction_category": "督赈",
+    })
+
+    def _ok_revise_text(*_a, **_k):
+        return json.dumps({"options": [legal_opt]}, ensure_ascii=False)
+
+    monkeypatch.setattr(agents_mod, "run_agent_text", _ok_revise_text)
+    pre = sess.prepare_rescript_prewrite([{
+        "decision_key": key, "action": "return_revise", "note": "再拟",
+    }])
+    assert isinstance(pre.get("prewrite"), PrewriteResults)
+    ro = pre["prewrite"].revise_by_key
+    assert key in ro
+    assert any(str(o.get("label") or "") == "新案" for o in ro[key])
+
+    def _bad_delib(*_a, **_k):
+        return json.dumps({"title": "t", "body": "b"}, ensure_ascii=False)
+
+    monkeypatch.setattr(agents_mod, "create_rescript_deliberate_agent", lambda *_a, **_k: object())
+    monkeypatch.setattr(agents_mod, "run_agent_text", _bad_delib)
+    with pytest.raises((ValueError, RuntimeError), match="stance|title|body|意愿|prewrite LLM"):
+        sess.prepare_rescript_prewrite([{
+            "decision_key": key, "action": "deliberate", "label": "下部议",
+        }])
+    hit2 = next(r for r in db.list_rescript_drafts() if r["title"] == "改票契约")
+    assert hit2["status"] == "pending"
+
+
+def test_657_summon_single_flight_concurrent_http(web_game, monkeypatch):
+    """summon 同 body 并发：单 chat_turn / 单 ledger body / 单月推进；失败后可重入。"""
+    import threading
+    import time
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    from ming_sim.audience_night import TAG_ENTER, rescript_summon_origin_ref
+    from ming_sim.models import TurnPhase
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+
+    db, state = web_game.db, web_game.state
+    opt = normalize_rescript_layer_a_option({
+        "label": "备", "hint": "h", "action_type": "assignment",
+        "assignee_name": "", "target_kind": "region", "target_id": "shaanxi",
+        "locality_scope": "single", "region_id": "shaanxi",
+        "transaction_category": "督赈",
+    })
+    started = threading.Event()
+    release = threading.Event()
+    gen_calls = {"n": 0}
+
+    def _gen(inputs):
+        gen_calls["n"] += 1
+        started.set()
+        assert release.wait(5), "generator not released"
+        name = str(getattr(inputs, "person_name", "") or "") or "臣"
+        return f"{name}single-flight。"
+
+    import ming_sim.beat_orchestration as bo
+    monkeypatch.setattr(bo, "create_llm_beat_generator", lambda _cfg: _gen)
+    monkeypatch.setattr(web_game.session, "_beat_generator", _gen, raising=False)
+    _657_install_real_phase2_llm_boundary(monkeypatch)
+
+    desk = _657_plant_awaiting_web(web_game, drafts=[{
+        "title": "单飞召见", "context": "c",
+        "options": [opt, {"label": "x", "hint": "h", "draft_capability": "x"}],
+        "actor_name": "杨嗣昌", "actor_office": "o", "actor_faction": "f",
+    }])
+    key = desk[0]["decision_key"]
+    body = [{
+        "decision_key": key, "action": "summon",
+        "label": "召见", "summon_target": "杨嗣昌",
+    }]
+    turn_before = int(state.turn)
+
+    def _post():
+        return asyncio.run(_post_resolve(body))
+
+    # 并发两路同 body：一路慢 generator 窗口内第二路须 coalesce
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        f1 = pool.submit(_post)
+        assert started.wait(3), "first generator never started"
+        f2 = pool.submit(_post)
+        time.sleep(0.15)  # 第二路进入 wait/coalesce 窗口
+        release.set()
+        results = [f.result(timeout=60) for f in (f1, f2)]
+
+    assert any(r.status_code == 200 and "event: done" in r.text for r in results), results
+    kind, turn_s, idx_s = key.split(":")
+    origin = rescript_summon_origin_ref(int(turn_s), int(idx_s), 0)
+    rows = db.conn.execute(
+        "SELECT body, tags, origin_chat_turn_id FROM story_ledger_entries WHERE origin_ref=?",
+        (origin,),
+    ).fetchall()
+    assert len(rows) == 1
+    tags = json.loads(rows[0]["tags"] or "[]")
+    assert TAG_ENTER in tags
+    assert str(rows[0]["body"] or "").strip() == "杨嗣昌single-flight。"
+    ctid = int(rows[0]["origin_chat_turn_id"] or 0)
+    assert ctid > 0
+    # 外部契约：单 origin 账 + 单 chat_turn；open/enter 可各调 generator 一次
+    # （禁 dual-start 双倍）。不锁 registry 内部。
+    assert gen_calls["n"] <= 4, gen_calls
+    ct_rows = db.conn.execute(
+        "SELECT COUNT(*) AS c FROM chat_turns WHERE id=?", (ctid,),
+    ).fetchone()["c"]
+    assert ct_rows == 1
+    # 月推进恰一次（至少一路 done）
+    assert any("event: done" in r.text for r in results)
+    assert int(web_game.state.turn) == turn_before + 1
+    st = db.conn.execute(
+        "SELECT status FROM chat_turns WHERE id=?", (ctid,),
+    ).fetchone()["status"]
+    assert st == "consumed"
+
+
+def test_657_resume_phase2_signal_empty_desk_http(web_game, monkeypatch):
+    """crash 后 desk 空 pending：state_payload.resume_phase2；空 POST stream 完成 phase2。"""
+    from ming_sim.models import TurnPhase
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+
+    db, state = web_game.db, web_game.state
+    opt = normalize_rescript_layer_a_option({
+        "label": "备", "hint": "h", "action_type": "assignment",
+        "assignee_name": "", "target_kind": "region", "target_id": "shaanxi",
+        "locality_scope": "single", "region_id": "shaanxi",
+        "transaction_category": "督赈",
+    })
+    desk = _657_plant_awaiting_web(web_game, drafts=[{
+        "title": "续跑信号", "context": "c",
+        "options": [opt, {"label": "x", "hint": "h", "draft_capability": "z"}],
+        "actor_name": "杨嗣昌", "actor_office": "o", "actor_faction": "f",
+    }])
+    key = desk[0]["decision_key"]
+
+    # 模拟 phase1 已落 decided 后 crash：choice 已写、status=decided、仍 awaiting
+    choice = {
+        "decision_key": key, "action": "follow_draft", "label": "备",
+    }
+    kind, turn_s, idx_s = key.split(":")
+    db.conn.execute(
+        "UPDATE pending_decisions SET status='decided', choice_json=? "
+        "WHERE kind=? AND turn=? AND idx=?",
+        (json.dumps(choice, ensure_ascii=False), kind, int(turn_s), int(idx_s)),
+    )
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
+    web_game.state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    web_game.session.state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    # 确保 settlement_display 可真：开 snapshot 若需要
+    db.conn.commit()
+
+    payload = web_game.state_payload()
+    assert payload.get("resume_phase2") is True
+    assert payload.get("pending_decisions") == []
+
+    _657_install_real_phase2_llm_boundary(monkeypatch)
+    turn_before = int(state.turn)
+    r = asyncio.run(_post_resolve([]))  # 空 POST 既有 stream
+    assert r.status_code == 200 and "event: done" in r.text, r.text
+    assert int(web_game.state.turn) == turn_before + 1
+    assert web_game.state.turn_phase == TurnPhase.ISSUED.value or int(web_game.state.turn) > turn_before
