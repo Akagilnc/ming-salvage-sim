@@ -1,68 +1,138 @@
 import json
 
+import pytest
+
 import ming_sim.cli_backend as cb
 import ming_sim.audience_night as audience_night
-from ming_sim.audience_night import list_unsettled_summons, open_night
+from ming_sim.audience_night import (
+    CLOSE_STEP_COMMIT_OFFICE,
+    AudienceNightError,
+    list_unsettled_summons,
+    open_night,
+)
+from ming_sim.exceptions import SettlementAbort
 from ming_sim.session import GameSession
 from ming_sim.decree import prepare_resolve_front_half, settle_with_delta
+from tests.dossier_test_helpers import rejected_verdict
 from tests.test_qa_c_p0_1380_1355 import _fake_session, _minister_wang_shaohui
 
 
-def test_appointment_summon_activates_only_after_promulgation(game, monkeypatch):
+class _FakeRegistry:
+    def __init__(self):
+        self.refreshed = []
+
+    def refresh(self, name):
+        self.refreshed.append(name)
+
+
+def _stage_yuan_appointment_summon(game, monkeypatch, *, summon_after="是"):
     db, state, content = game
     minister = _minister_wang_shaohui(db, content)
     open_night(db, state, empty_scaffold=True)
     monkeypatch.setattr(cb, "_run_backend_for_config", lambda *a, **k: ("{}", 1))
-
     GameSession.apply_cli_conversation_actions(
         _fake_session(db, state, content), minister,
         player_message="起复袁崇焕为辽东巡抚，传召入京。", answer="遵旨。",
         has_directive=False, secret_order_id=None,
         preclassified_intent=[{
             "kind": "appointment", "appoint_action": "任命",
-            "name": "袁崇焕", "office": "辽东巡抚", "summon_after": "是",
+            "name": "袁崇焕", "office": "辽东巡抚", "summon_after": summon_after,
         }],
     )
     pending = next(row for row in db.list_pending_actions(state.turn) if row["kind"] == "office")
-    origin = f"office:{pending['id']}"
-    ledger = db.conn.execute(
-        "SELECT tags FROM story_ledger_entries WHERE origin_ref=?", (origin,),
-    ).fetchone()
-    assert ledger is not None and "传召未结" not in json.loads(ledger["tags"])
-    assert list_unsettled_summons(db) == []
+    return pending, f"office:{pending['id']}"
 
+
+def _close_office_to_dossier(db, state, content, pending_id):
     db.mark_pending_night_approved(
-        [pending["id"]], night_id=int(audience_night.get_open_night(db)["id"]),
+        [pending_id], night_id=int(audience_night.get_open_night(db)["id"]),
     )
     audience_night.close_night(
         db, state, night_id=int(audience_night.get_open_night(db)["id"]),
         content=content,
     )
-    dossier_id = next(
+    return next(
         row["id"] for row in db.list_decree_dossiers(status="proposed")
         if row["action_type"] == "appointment"
-    )
-    settle_with_delta(
-        state, db, {}, before_turn=int(state.turn), content=content,
-        dossier_verdicts=[{"dossier_id": dossier_id, "decision": "promulgated"}],
+        and int(row.get("pending_action_id") or 0) == int(pending_id)
     )
 
+
+def _yuan_row(db):
+    return db.conn.execute(
+        "SELECT status, office, location, transit_to, transit_distance_remaining, "
+        "transit_speed_factor, transit_start_turn FROM characters WHERE name='袁崇焕'"
+    ).fetchone()
+
+
+def test_appointment_summon_activates_only_after_promulgation(game, monkeypatch):
+    """主 tracer：stage→close→settle 顺颁→启程当月不扣距→次月首减→waiting；
+    registry 仅 outer commit 后刷新。"""
+    db, state, content = game
+    pending, origin = _stage_yuan_appointment_summon(game, monkeypatch)
+    ledger = db.conn.execute(
+        "SELECT tags FROM story_ledger_entries WHERE origin_ref=?", (origin,),
+    ).fetchone()
+    assert ledger is not None and "传召未结" not in json.loads(ledger["tags"])
+    assert list_unsettled_summons(db) == []
+    before = _yuan_row(db)
+    assert before["location"] == "guangdong"
+
+    dossier_id = _close_office_to_dossier(db, state, content, pending["id"])
+    mid = _yuan_row(db)
+    assert (mid["status"], mid["office"], mid["transit_to"]) == (
+        before["status"], before["office"], before["transit_to"] or "",
+    )
+    assert list_unsettled_summons(db) == []
+
+    reg = _FakeRegistry()
+
+    def mid_txn_applier(_db, _state, _extracted, _content, _registry):
+        assert reg.refreshed == [], "事务内不得 refresh registry"
+        return {}
+
+    settle_with_delta(
+        state, db, {}, before_turn=int(state.turn), content=content,
+        registry=reg,
+        dossier_verdicts=[{"dossier_id": dossier_id, "decision": "promulgated"}],
+        delta_applier=mid_txn_applier,
+    )
+
+    assert "袁崇焕" in reg.refreshed
     assert [(x["person_name"], x["origin_id"], x["kind"]) for x in list_unsettled_summons(db)] == [
         ("袁崇焕", origin, "in_transit")
     ]
-    row = db.conn.execute(
-        "SELECT status,transit_to FROM characters WHERE name='袁崇焕'"
-    ).fetchone()
-    assert (row["status"], row["transit_to"]) == ("active", "beizhili")
+    after = _yuan_row(db)
+    assert (after["status"], after["office"], after["location"], after["transit_to"]) == (
+        "active", "辽东巡抚", "guangdong", "beizhili",
+    )
+    assert after["transit_distance_remaining"] is not None
+    departed_remaining = float(after["transit_distance_remaining"])
+    departed_start = int(after["transit_start_turn"] or 0)
+    # 启程落在 settle 事务内、当月 tick 已过；outer 提交后 turn 已 +1，但尚未跑下月
+    # front-half tick → 距离仍为矩阵全值（启程当月不扣）。
+    assert departed_start == int(state.turn) - 1
+    assert departed_remaining > 0
+
+    # 下一月 canonical tick 首次递减。
+    prepare_resolve_front_half(state, db, content=content)
+    next_month = _yuan_row(db)
+    if next_month["transit_to"]:
+        assert float(next_month["transit_distance_remaining"]) < departed_remaining
+    else:
+        assert next_month["location"] == "beizhili"
 
     for _ in range(60):
-        if list_unsettled_summons(db)[0]["kind"] == "waiting":
+        if list_unsettled_summons(db) and list_unsettled_summons(db)[0]["kind"] == "waiting":
             break
-        prepare_resolve_front_half(state, db, content=content)
+        if not list_unsettled_summons(db):
+            break
         settle_with_delta(
             state, db, {}, before_turn=int(state.turn), content=content,
         )
+        prepare_resolve_front_half(state, db, content=content)
     assert list_unsettled_summons(db)[0]["kind"] == "waiting"
+    assert _yuan_row(db)["location"] == "beizhili"
 
 
 def test_appointment_summon_staging_rolls_back_both_rows(game, monkeypatch):
@@ -89,6 +159,9 @@ def test_appointment_summon_staging_rolls_back_both_rows(game, monkeypatch):
     else:
         raise AssertionError("ledger failure must propagate")
     assert [r for r in db.list_pending_actions(state.turn) if r["kind"] == "office"] == []
+    assert db.conn.execute(
+        "SELECT count(*) FROM story_ledger_entries WHERE origin_ref LIKE 'office:%'"
+    ).fetchone()[0] == 0
 
 
 def test_dedup_promotes_existing_appointment_summon(game, monkeypatch):
@@ -115,3 +188,153 @@ def test_dedup_promotes_existing_appointment_summon(game, monkeypatch):
         "SELECT count(*) FROM story_ledger_entries WHERE origin_ref=?",
         (f"office:{rows[0]['id']}",),
     ).fetchone()[0] == 1
+
+
+def test_appointment_summon_close_crash_restore_keeps_inactive_origin(game, monkeypatch):
+    """收夜 COMMIT_OFFICE 后 crash→续跑：唯一 inactive origin 仍在，顺颁前不启程。"""
+    db, state, content = game
+    pending, origin = _stage_yuan_appointment_summon(game, monkeypatch)
+    night_id = int(audience_night.get_open_night(db)["id"])
+    db.mark_pending_night_approved([pending["id"]], night_id=night_id)
+
+    with pytest.raises(AudienceNightError) as ei:
+        audience_night.close_night(
+            db, state, night_id=night_id, content=content,
+            crash_after_step=CLOSE_STEP_COMMIT_OFFICE,
+        )
+    assert ei.value.code == "close_crash"
+    assert db.conn.execute(
+        "SELECT count(*) FROM story_ledger_entries WHERE origin_ref=?", (origin,),
+    ).fetchone()[0] == 1
+    assert list_unsettled_summons(db) == []
+    assert (_yuan_row(db)["transit_to"] or "") == ""
+
+    result = audience_night.close_night(db, state, night_id=night_id, content=content)
+    assert result["closed"] is True
+    assert db.conn.execute(
+        "SELECT count(*) FROM story_ledger_entries WHERE origin_ref=?", (origin,),
+    ).fetchone()[0] == 1
+    assert list_unsettled_summons(db) == []
+    assert (_yuan_row(db)["transit_to"] or "") == ""
+
+
+def test_appointment_summon_rejected_leaves_no_travel(game, monkeypatch):
+    """打回：未结传召与行止均为零。"""
+    db, state, content = game
+    pending, origin = _stage_yuan_appointment_summon(game, monkeypatch)
+    dossier_id = _close_office_to_dossier(db, state, content, pending["id"])
+    before = _yuan_row(db)
+
+    settle_with_delta(
+        state, db, {}, before_turn=int(state.turn), content=content,
+        dossier_verdicts=[rejected_verdict(dossier_id)],
+    )
+
+    assert list_unsettled_summons(db) == []
+    after = _yuan_row(db)
+    assert (after["status"], after["office"], after["transit_to"] or "") == (
+        before["status"], before["office"], before["transit_to"] or "",
+    )
+    tags = json.loads(db.conn.execute(
+        "SELECT tags FROM story_ledger_entries WHERE origin_ref=?", (origin,),
+    ).fetchone()["tags"])
+    assert "传召未结" not in tags
+
+
+def test_appointment_summon_outer_fault_rolls_back_and_retries_once(game, monkeypatch):
+    """verdict 已物化后 outer 接缝故障：DB/content 回滚、registry 零调用；重试唯一 origin。"""
+    db, state, content = game
+    pending, origin = _stage_yuan_appointment_summon(game, monkeypatch)
+    dossier_id = _close_office_to_dossier(db, state, content, pending["id"])
+    before = dict(_yuan_row(db))
+    reg = _FakeRegistry()
+
+    def boom_applier(*_a, **_k):
+        raise RuntimeError("outer fault after verdict")
+
+    with pytest.raises(SettlementAbort):
+        settle_with_delta(
+            state, db, {}, before_turn=int(state.turn), content=content,
+            registry=reg,
+            dossier_verdicts=[{"dossier_id": dossier_id, "decision": "promulgated"}],
+            delta_applier=boom_applier,
+        )
+
+    assert reg.refreshed == []
+    assert list_unsettled_summons(db) == []
+    rolled = dict(_yuan_row(db))
+    assert rolled == before
+    ch = content.characters["袁崇焕"]
+    assert (ch.status, ch.office or "", getattr(ch, "transit_to", "") or "") == (
+        rolled["status"], rolled["office"] or "", rolled["transit_to"] or "",
+    )
+    assert db.conn.execute(
+        "SELECT count(*) FROM story_ledger_entries WHERE origin_ref=?", (origin,),
+    ).fetchone()[0] == 1
+    assert db.get_decree_dossier(dossier_id)["status"] == "proposed"
+
+    settle_with_delta(
+        state, db, {}, before_turn=int(state.turn), content=content,
+        registry=reg,
+        dossier_verdicts=[{"dossier_id": dossier_id, "decision": "promulgated"}],
+    )
+    assert "袁崇焕" in reg.refreshed
+    unsettled = list_unsettled_summons(db)
+    assert [(x["person_name"], x["origin_id"], x["kind"]) for x in unsettled] == [
+        ("袁崇焕", origin, "in_transit")
+    ]
+    assert db.conn.execute(
+        "SELECT count(*) FROM story_ledger_entries WHERE origin_ref=?", (origin,),
+    ).fetchone()[0] == 1
+
+
+@pytest.mark.parametrize(
+    ("starting_status", "reason_code", "status_reason", "expected_derive"),
+    [
+        ("retired", "致仕", "致仕归里", "起复"),
+        ("offstage", "", "罢居", "起复"),
+        ("dismissed", "获罪削籍", "忤逆案削籍", "昭雪"),
+        ("offstage", "丁忧", "丁忧离朝", "夺情"),
+    ],
+)
+def test_appointment_summon_consumes_0009_four_states(
+    game, monkeypatch, starting_status, reason_code, status_reason, expected_derive,
+):
+    """retired/offstage/dismissed·获罪/丁忧 只消费 0009 既有状态机（含 derive 审计）。"""
+    db, state, content = game
+    yuan = content.characters["袁崇焕"]
+    db.conn.execute(
+        "UPDATE characters SET status=?, status_reason=?, reason_code=?, office='', "
+        "transit_to='', transit_distance_remaining=NULL, transit_speed_factor=NULL, "
+        "transit_start_turn=0 WHERE name='袁崇焕'",
+        (starting_status, status_reason, reason_code),
+    )
+    db.conn.commit()
+    yuan.status = starting_status
+    yuan.status_reason = status_reason
+    yuan.reason_code = reason_code
+    yuan.office = ""
+    yuan.transit_to = ""
+
+    pending, origin = _stage_yuan_appointment_summon(game, monkeypatch)
+    dossier_id = _close_office_to_dossier(db, state, content, pending["id"])
+    before_logs = db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0]
+
+    settle_with_delta(
+        state, db, {}, before_turn=int(state.turn), content=content,
+        dossier_verdicts=[{"dossier_id": dossier_id, "decision": "promulgated"}],
+    )
+
+    row = _yuan_row(db)
+    assert (row["status"], row["office"], row["location"], row["transit_to"]) == (
+        "active", "辽东巡抚", "guangdong", "beizhili",
+    )
+    assert [(x["origin_id"], x["kind"]) for x in list_unsettled_summons(db)] == [
+        (origin, "in_transit")
+    ]
+    marks = db.conn.execute(
+        "SELECT derived_from FROM person_logs WHERE id > ? AND person_name='袁崇焕' "
+        "AND derived_from=?",
+        (before_logs, expected_derive),
+    ).fetchall()
+    assert marks, f"期望 0009 derive={expected_derive!r} 审计落 person_logs"

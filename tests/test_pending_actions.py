@@ -30,7 +30,7 @@ import web_app
 import ming_sim.cli_backend as cb
 import ming_sim.issues as issues
 from ming_sim.db import GameDB
-from ming_sim.decree import pre_settle, reload_state_from_db
+from ming_sim.decree import pre_settle, reload_state_from_db, settle_with_delta
 from ming_sim.session import GameSession, TurnPhase, _pending_action_failure_payload
 from tests.dossier_test_helpers import promulgate_proposed_appointments
 
@@ -2387,8 +2387,8 @@ def test_commit_appointment_existing_minister_by_alias(game, monkeypatch):
 
 
 def test_commit_reappoint_reactivates_dismissed_minister(game, monkeypatch):
-    """重新任命【已罢黜】大臣 → commit 改回 active 并授官(走唯一落地核)。
-    (CMR codex R2 / gemini F2:旧 fix 只 set_character_office、不改 status,人留 dismissed。)"""
+    """重新任命【已罢黜】大臣 → 外层 settle 顺颁后改回 active 并授官。
+    #672：registry 只在 settle_with_delta outer commit 后 refresh；事务内零刷新。"""
     db, state, content = game
     a, b = _two_active_ming(db, content)
     objb = content.characters[b.name]
@@ -2404,18 +2404,29 @@ def test_commit_reappoint_reactivates_dismissed_minister(game, monkeypatch):
         GameSession.apply_cli_conversation_actions(
             _fake_session(db, state), a, player_message=f"起复{b.name},授{new_office}",
             answer="臣领旨。", has_directive=False, secret_order_id=None)
-        reg = _FakeRegistry()
-        applied = db.commit_pending_actions(state, content=content, registry=reg)
+        applied = db.commit_pending_actions(state, content=content, registry=None)
         assert any(x["kind"] == "office" for x in applied)
-        promulgate_proposed_appointments(
-            db, state, content, registry=reg,
+        verdicts = [
+            {"dossier_id": row["id"], "decision": "promulgated"}
+            for row in db.list_decree_dossiers(status="proposed")
+            if row["action_type"] == "appointment"
+        ]
+        reg = _FakeRegistry()
+
+        def mid_txn_applier(_db, _state, _extracted, _content, _registry):
+            assert reg.refreshed == [], "事务内不得 refresh registry"
+            return {}
+
+        settle_with_delta(
+            state, db, {}, before_turn=int(state.turn), content=content,
+            registry=reg, dossier_verdicts=verdicts, delta_applier=mid_txn_applier,
         )
         row = db.conn.execute(
             "SELECT status, office FROM characters WHERE name=?", (b.name,)).fetchone()
         assert row["status"] == "active"        # 起复:改回 active
         assert row["office"]                    # 已授新官
         assert content.characters[b.name].status == "active"   # 内存同步
-        assert b.name in reg.refreshed          # content/registry 真透传到落地核(CMR R3 codex-docs R1)
+        assert b.name in reg.refreshed          # outer commit 后才 refresh
     finally:
         objb.office, objb.status, objb.office_type = saved
 
@@ -2545,27 +2556,33 @@ def test_displace_duplicate_offices_recomputes_office_type(game):
 
 
 def test_commit_dismiss_refreshes_registry(game, monkeypatch):
-    """罢免 commit 后刷新被罢者 Agent(对话回合中落库,本回合后续不再以旧活跃态被召对)。(线上 gemini)"""
+    """罢免经 settle_with_delta 顺颁后刷新被罢者 Agent；事务内零刷新。(#672)"""
     db, state, content = game
     a, b = _two_active_ming(db, content)
-    reg = _FakeRegistry()
     sess = types.SimpleNamespace(
         db=db, state=state, llm_config=types.SimpleNamespace(channel="cli"),
-        registry=reg, content=content)
+        registry=None, content=content)
     monkeypatch.setattr(cb, "_run_backend_for_config",
                         lambda p, llm_config=None, tag="": (json.dumps(
                             {"任免动作": "罢免", "姓名": b.name, "官职": ""}, ensure_ascii=False), 1))
     GameSession.apply_cli_conversation_actions(
         sess, a, player_message=f"革{b.name}职", answer="臣遵旨。",
         has_directive=False, secret_order_id=None)
-    db.commit_pending_actions(state, content=content, registry=reg)
-    db.apply_dossier_verdicts(
-        state,
-        [{"dossier_id": d["id"], "decision": "promulgated"}
-         for d in db.list_decree_dossiers(status="proposed")
-         if d["action_type"] == "dismiss_assignment"],
-        content=content,
-        registry=reg,
+    db.commit_pending_actions(state, content=content, registry=None)
+    verdicts = [
+        {"dossier_id": d["id"], "decision": "promulgated"}
+        for d in db.list_decree_dossiers(status="proposed")
+        if d["action_type"] == "dismiss_assignment"
+    ]
+    reg = _FakeRegistry()
+
+    def mid_txn_applier(_db, _state, _extracted, _content, _registry):
+        assert reg.refreshed == [], "事务内不得 refresh registry"
+        return {}
+
+    settle_with_delta(
+        state, db, {}, before_turn=int(state.turn), content=content,
+        registry=reg, dossier_verdicts=verdicts, delta_applier=mid_txn_applier,
     )
     assert b.name in reg.refreshed
     assert db.conn.execute(
