@@ -596,6 +596,7 @@ def _stage_office_pending_core(
     require_office_for_appoint：parallel 任命必须带职名。
     write_primary_pending_id：主路径写 out['pending_action_id']；parallel 不覆盖 directive id。
     """
+    from ming_sim.applier import atomic
     from ming_sim.cli_backend import resolve_directive_mode
     from ming_sim.session import (
         _appointment_intent_is_current_office_noop,
@@ -605,6 +606,32 @@ def _stage_office_pending_core(
 
     session = ctx.session
     minister_name = ctx.character.name
+
+    def persist_appointment_summon(
+        pending_id: int, person_name: str, *, promote_payload: bool,
+    ) -> None:
+        """Persist the dossier flag and its inactive origin as one staging unit."""
+        from ming_sim.audience_night import ensure_inactive_office_summon
+
+        with atomic(session.db):
+            if promote_payload:
+                row = session.db.conn.execute(
+                    "SELECT payload_json FROM pending_actions WHERE id=?",
+                    (int(pending_id),),
+                ).fetchone()
+                if row is None:
+                    raise ValueError("任命后传召所关联的暂存任命不存在")
+                stored = json.loads(row["payload_json"] or "{}")
+                stored["summon_after"] = "是"
+                session.db.conn.execute(
+                    "UPDATE pending_actions SET payload_json=? WHERE id=?",
+                    (json.dumps(stored, ensure_ascii=False), int(pending_id)),
+                )
+            ensure_inactive_office_summon(
+                session.db, pending_id, person_name,
+                night_id=int(session.db._current_open_night_id()),
+            )
+
     content_ref = getattr(session, "content", None)
     action = str(appt.get("appoint_action") or "").strip()
     appt_name = str(appt.get("name") or "").strip()
@@ -646,10 +673,8 @@ def _stage_office_pending_core(
             if write_primary_pending_id:
                 ctx.out["pending_action_id"] = resolved
             if str(appt.get("summon_after") or "否").strip() == "是":
-                from ming_sim.audience_night import ensure_inactive_office_summon
-                ensure_inactive_office_summon(
-                    session.db, resolved, appt_name,
-                    night_id=int(session.db._current_open_night_id()),
+                persist_appointment_summon(
+                    resolved, appt_name, promote_payload=True,
                 )
             return resolved
 
@@ -689,22 +714,21 @@ def _stage_office_pending_core(
         ).strip()
         if tenure in {"真除", "署理", "兼署", "加衔"}:
             payload["任别"] = tenure
-    pending_id = session.db.stage_pending_action(
-        session.state.turn, kind="office", action=action,
-        minister_name=minister_name, target_id=None,
-        payload=payload,
-    )
-    if not pending_id:
-        return None
-    resolved = int(pending_id)
+    with atomic(session.db):
+        pending_id = session.db.stage_pending_action(
+            session.state.turn, kind="office", action=action,
+            minister_name=minister_name, target_id=None,
+            payload=payload,
+        )
+        if not pending_id:
+            return None
+        resolved = int(pending_id)
+        if payload["summon_after"] == "是":
+            persist_appointment_summon(
+                resolved, appt_name, promote_payload=False,
+            )
     if write_primary_pending_id:
         ctx.out["pending_action_id"] = resolved
-    if payload["summon_after"] == "是":
-        from ming_sim.audience_night import ensure_inactive_office_summon
-        ensure_inactive_office_summon(
-            session.db, resolved, appt_name,
-            night_id=int(session.db._current_open_night_id()),
-        )
     return resolved
 
 
