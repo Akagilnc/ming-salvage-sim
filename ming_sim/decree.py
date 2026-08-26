@@ -1396,14 +1396,20 @@ def resolve_directives(
                 pool.shutdown(wait=True)
 
     # #671：companion 成功后、进 parse_decision_blocks / extractor / 票拟前，
-    # 同一 simulator 叙事/payload 与原样 attendant 一并 durable；checkpoint 仍带
-    # ARRIVAL_COMPANION_SIM_DONE_KEY，下游失败重试既不重跑 sim 也不重叫 companion。
+    # 同一 simulator 叙事/payload 与原样 attendant 一并 durable。
+    # 真 sim 成功：checkpoint 带 ARRIVAL_COMPANION_SIM_DONE_KEY，下游失败重试
+    # 既不重跑 sim 也不重叫 companion。
+    # fallback（sim_failed）：显式剥 marker，attendant 仍 durable；重试重跑真 sim，
+    # 经 prior_resolve_ctx.attendant_message 复用递话、不重叫 companion。
     # 随后 HITL/settle 整行 upsert 用已 pop 的内存 payload 清标转存。
-    if not sim_failed and companion_just_succeeded and attendant_message:
+    if companion_just_succeeded and attendant_message:
         ckpt_payload = (
             dict(simulator_payload) if isinstance(simulator_payload, dict) else {}
         )
-        ckpt_payload[ARRIVAL_COMPANION_SIM_DONE_KEY] = True
+        if sim_failed:
+            ckpt_payload.pop(ARRIVAL_COMPANION_SIM_DONE_KEY, None)
+        else:
+            ckpt_payload[ARRIVAL_COMPANION_SIM_DONE_KEY] = True
         db.save_resolve_context(
             state.turn, decree_text, narrative, ckpt_payload,
             secret_orders=secret_orders_for_sim,
