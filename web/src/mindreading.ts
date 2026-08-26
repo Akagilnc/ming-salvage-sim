@@ -46,9 +46,10 @@ export const insertMindreadingByTurn = (
 ): ChatMessage[] => {
   let next = chat;
   for (const record of records) {
-    const content = String(record?.narration || "").trim();
+    // trim 只做空壳门；content 写 narration 原文（P6 / #671）
+    const raw = String(record?.narration || "");
     const recordId = Number(record?.id || 0);
-    if (!content || recordId <= 0) continue;  // 无正文或无持久身份的记录不投递
+    if (!raw.trim() || recordId <= 0) continue;  // 无正文或无持久身份的记录不投递
     const already = next.some(
       (m) => m.role === "attendant" && m.chatTurnId === chatTurnId && m.recordId === recordId,
     );
@@ -59,7 +60,7 @@ export const insertMindreadingByTurn = (
       if (next[i].chatTurnId === chatTurnId) insertAfter = i;
     }
     if (insertAfter < 0) continue;  // 归属轮不在视图 → 不追加串尾（拆除 tail-append）
-    const message: ChatMessage = { role: "attendant", content, chatTurnId, recordId };
+    const message: ChatMessage = { role: "attendant", content: raw, chatTurnId, recordId };
     next = [...next.slice(0, insertAfter + 1), message, ...next.slice(insertAfter + 1)];
   }
   return next;

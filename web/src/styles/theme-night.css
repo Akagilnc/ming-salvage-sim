@@ -116,6 +116,27 @@
   text-shadow: 0 1px 6px rgba(0, 0, 0, 0.95), 0 0 24px rgba(0, 0, 0, 0.8);
 }
 
+/* #671：邸报纸面外王承恩独立递话区（不经 markdown 剥离）
+   长文须可在壳内收缩并区内滚动，不得挤掉 .gazette-dismiss（flex-shrink + min-height:0）。 */
+.gazette-attendant {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  margin: 8px 0 0;
+  padding: 14px clamp(20px, 5vw, 90px);
+  border-top: 1px solid rgba(216, 185, 106, 0.28);
+  box-sizing: border-box;
+}
+.gazette-attendant-text {
+  margin: 0;
+  white-space: pre-wrap;
+  color: rgba(232, 213, 168, 0.88);
+  font-size: 1.0rem;
+  line-height: 1.85;
+  font-family: inherit;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.85);
+}
+
 
 /* ===== 主界面：地图暖黄昏调 + 暗角（盖在交互地图上的纯装饰层，夜·烛基调） ===== */
 .hud2-map-grade-frame {

@@ -88,17 +88,17 @@ per_layer_resistance = max( min(cap, α×血债)[真源 0011-2 D2-7] , 命门合
 
 **弃案**：破局 = 绕过 ceiling 的特例 / 后门（gamey）；数值堆够就过（抹平「攒合法性」教学）；用无重罪的目标（福王）演 +7 聪明解（产不出，P1-8）。
 
-### D5-6 中旨（绕内阁、六科照封、代价落库；edict_overdraw 中旨螺旋 / provisional defer 第二刀）
+### D5-6 中旨（绕内阁、六科照封、代价落库；provisional defer；正式离心 → M12）
 
-**决定**（母 ADR 决定5 / ✅ 用户拍③）：
+**决定**（母 ADR 决定5 / ✅ 用户拍③；中旨频度／逐派离心 later-wins → #657 contract **§C.8**）：
 
 - **绕内阁**（L1 置 0）= 中旨唯一买到的；**六科照样封驳且陡升**（`MIDZHI_PENALTY`）→ 行政旨几乎无伤、**命门题照样打回**（白绕、还多担「非正途」污名）。代价曲线 = 命门陡 / 行政平。
 - **⚠️ MIDZHI_PENALTY = 这道旨的全局污名项、不依赖短路跑到 L3（P1-6）**：挂在 ResolveResult 的中旨 flag 上、**当回合无条件落库**（即便 L2 批红先超阈也照落），不靠循环评估到六科才 fire。
-- **⚠️ 第一刀中旨打回仍落代价（P1-7，消除 D5-6/D5-8 矛盾）**：第一刀中旨打回时**仍落 `STIGMA` 污名（独立常量表、非 0009 reason_code，D5-10）+ 该派血债陡**（走 0011-2 D2-4：STIGMA cw=1 → legitimacy≈99% → 血债≈severity 满档）；**只 defer `edict_overdraw` 的中旨侧累加 + 暴露螺旋后果 + provisional 至第二刀**（`edict_overdraw` 计数列 + 廷杖侧累加第一刀已建，0011-2 H1）。如此命门题下「顺颁打回（血债低）vs 中旨打回（血债陡）」在下一回合大臣态度 / 邸报**可观察可复现**——埋伏笔成立（不是纯装饰选项）。一句锚：**第一刀中旨 = 落 STIGMA + 血债（P1）；defer edict_overdraw 中旨螺旋 / provisional 第二刀（计数列 + 廷杖累加第一刀已建）**。
+- **⚠️ 第一刀中旨打回仍落可观察代价（P1-7，消除 D5-6/D5-8 矛盾）**：第一刀中旨打回时**仍落不依赖选派的 `STIGMA` 污名**（独立常量表、非 0009 reason_code，D5-10）与 `mode=midzhi` 案卷事实；**不**在当回合写「该派血债」或中旨侧 `edict_overdraw`／向派系扇出累加（旧义 later-wins 废止）。**正式逐派血债／离心／频度反噬落派 → M12**（#657 D+／contract §C.8；0011-2 D2-4 罗织失称度数值例仍作血债**公式**说明，正式撞派落账属 M12）。provisional 生命周期仍 defer（H6；0011-2 D2-8）。`edict_overdraw` **廷杖侧**累加第一刀已建（0011-2 H1），与中旨当下施工脱钩。命门题下中旨可观察代价＝STIGMA（+案卷 midzhi 事实），不是纯装饰。一句锚：**第一刀中旨 = 落 STIGMA + 案卷 midzhi 事实（P1）；正式血债／离心 → M12；provisional defer**。
 - **⚠️ 行政旨端代价曲线（P2）**：第一刀「中旨 = 必碰壁打回」**限定命门题**；低敏感行政旨中旨**照过 + 落非正途污名**（与「行政平」曲线一致），不是一律打回（否则行政旨用中旨反比顺颁差、与曲线矛盾）。
 - **provisional / 未生效标记 = defer 第二刀**（H6；最低契约已由 0011-2 D2-8 钉死：钱拨了被封驳 = 没了、status 类压窗 W=1 当回合作废、转 final 放 settle 后半段 atomic 对 before_turn 幂等、绝不放 pre_settle 早退守门避软死锁）。本 ADR **不重复 0011-2 D2-8**，只声明四层侧消费点。`MIDZHI_PENALTY` 的真闸（陡升量级）= 第二刀调参（D5-8 调参节，**不与第一刀公式阈值并列**）。
 
-**弃案**：第一刀就做真中旨闸（必撞软死锁 / 套利，0011-2 D2-8 实测）；中旨能稳过命门题；第一刀中旨连血债都不落（则确为纯装饰）。
+**弃案**：第一刀就做真中旨闸（必撞软死锁 / 套利，0011-2 D2-8 实测）；中旨能稳过命门题；第一刀中旨连 STIGMA／案卷事实都不落（则确为纯装饰）；当回合猜派写 blood_debt／中旨侧 `edict_overdraw`（违 #657 D+）。
 
 ### D5-7 执行层（阶段二：忠实 / 打折 / 阳奉阴违 / 反噬）
 
@@ -112,9 +112,9 @@ per_layer_resistance = max( min(cap, α×血债)[真源 0011-2 D2-7] , 命门合
 
 **决定**（✅ 用户拍②）：
 
-- **第一刀 = `resolve_core` 确定性骨架，只做阶段一颁布「顺颁 / 打回」两档**，替换 `estimate_resistance`；召对 dry-run 只读；邸报复盘；**打回 → 触发二次决策点**（载体 = HITL `<<DECISION>>` 块，接线见 D5-11）。第一刀中旨：命门题映射「必碰壁打回」+ 落 STIGMA + 血债（D5-6），行政旨照过 + 污名。
+- **第一刀 = `resolve_core` 确定性骨架，只做阶段一颁布「顺颁 / 打回」两档**，替换 `estimate_resistance`；召对 dry-run 只读；邸报复盘；**打回 → 触发二次决策点**（载体 = HITL `<<DECISION>>` 块，接线见 D5-11）。第一刀中旨：命门题映射「必碰壁打回」+ 落 STIGMA／案卷 midzhi 事实（D5-6；**正式血债／离心 → M12**），行政旨照过 + 污名。
 - **⚠️ estimate_resistance 替换面（P2，含 skills.json）**：`estimate_resistance` 是面向大臣的注册工具，`content/skills.json` 三处（`common_skills:8` / `skill_catalog:38` / 描述 `:174`）须同步——召对侦察口径（dry_run resolve）接到玩家暴露的技能名上，或保留技能名内部改派；避免 dangling 注册。列入第一刀写入端 DoD。
-- **defer 第二刀**：中旨闸整套（provisional / edict_overdraw 螺旋 / MIDZHI 真闸量级）；执行层四态细分 + 密令结构化裁判；provisional 生命周期；召对 location 闸（FF-4，决定8）。〔**取代注（2026-07-08 M12 闸回标）**：本行系写作时快照——其中「召对 location 闸（FF-4）」一项已由 **ADR 0096** 兑现、不再是第二刀待办；其余 defer 项不受影响。defer 清单取代注同源。〕
+- **defer 第二刀**：中旨闸整套（provisional / MIDZHI 真闸量级；旧「edict_overdraw 中旨螺旋」施工义 later-wins → #657 contract §C.8 → M12）；执行层四态细分 + 密令结构化裁判；provisional 生命周期；召对 location 闸（FF-4，决定8）。〔**取代注（2026-07-08 M12 闸回标）**：本行系写作时快照——其中「召对 location 闸（FF-4）」一项已由 **ADR 0096** 兑现、不再是第二刀待办；其余 defer 项不受影响。defer 清单取代注同源。〕
 
 **弃案**：第一刀就铺四层全套 + 中旨闸 + 执行层（过度工程、违硬序）。
 
@@ -149,8 +149,8 @@ per_layer_resistance = max( min(cap, α×血债)[真源 0011-2 D2-7] , 命门合
 1. **轻交互真没堆成 CK3**：一次 resolve、blocked_layer 只进邸报复盘，零新面板。
 2. **读 substrate 对**：逐条核 0011-2/3/4 值与字段；**阻力只读 血债 floor / leverage / ceiling / 外压**，**不读 satisfaction**（失望层、走召对 + 净负）、**不读 identity**（只缩 kinship）——0011-2 D2-6 不变式2 / H2 堵好回合洗白。执行层 `exec_fidelity`（非阻力）才读 satisfaction / kinship。
 3. **破局非灭亡**：ceiling 硬墙但走程序压成顺颁（D5-5）、dig-2 红线守死不内嵌判负。
-4. **中旨第一刀自洽 + 非装饰**：命门题打回仍落 STIGMA + 血债（可观察，D5-6）；真中旨闸 defer。
-5. **gaming 扫洞**：① 中旨绕四层 → 六科照封 + MIDZHI 全局污名 + 透支账（第二刀）；② 话术诱导降敏感度 → 结构化查表（0011-4 D4-5）；③ 召对侦察套利 → dry_run 物理只读护栏（D5-3）；④ LLM 把打回写成办成 → D5-11 硬约束。
+4. **中旨第一刀自洽 + 非装饰**：命门题打回仍落 STIGMA + 案卷 midzhi 事实（可观察，D5-6）；正式血债／离心 → M12；真中旨闸 defer。
+5. **gaming 扫洞**：① 中旨绕四层 → 六科照封 + MIDZHI 全局污名；正式逐派离心／频度反噬 → M12（#657 §C.8）；② 话术诱导降敏感度 → 结构化查表（0011-4 D4-5）；③ 召对侦察套利 → dry_run 物理只读护栏（D5-3）；④ LLM 把打回写成办成 → D5-11 硬约束。
 6. **build-upon 0004/0008/0009 + 码集二分单源**（D5-10）。
 7. **召对 dry_run 单一真源 + 等价性强制点 + mode-aware**（D5-3）。
 8. **blocked_layer 全算取真墙（非短路误报）+ 命门必由六科挡不变式**（D5-4）。
@@ -168,7 +168,7 @@ per_layer_resistance = max( min(cap, α×血债)[真源 0011-2 D2-7] , 命门合
 
 ## defer 清单（明确不在第一刀 / 不在本 ADR）
 
-- **中旨闸整套**（provisional 生命周期 / edict_overdraw 螺旋 / MIDZHI 真闸量级）= 第二刀（最低契约在 0011-2 D2-8）。
+- **中旨闸整套**（provisional 生命周期 / MIDZHI 真闸量级）= 第二刀（最低契约在 0011-2 D2-8）。旧「edict_overdraw 中旨螺旋」当回合／第二刀施工义 later-wins → #657 contract **§C.8** → **M12**。
 - **执行层四态细分 + 密令结构化裁判**（与现存密令核议合一）= 第二刀。
 - **召对 location 闸**（FF-4，决定8）= 单独切片（依赖 0009 location）。〔**取代注（2026-07-08 M12 闸回标）**：本行系写作时快照——FF-4 已由 **ADR 0096**（召对 travel-gating＋候见制）兑现，不再单独立片；母 ADR line125/133 取代注同源。〕
 - **actor 取证引擎 + 认同度叛变（破局回路后半截）= #89 / 单独切片**（D5-5 诚实标）。
@@ -183,7 +183,7 @@ per_layer_resistance = max( min(cap, α×血债)[真源 0011-2 D2-7] , 命门合
 
 ### 落地顺序（硬序铁律）
 
-substrate（0011-2/3/4）**全先落** → `resolve_core` 确定性骨架（第一刀，只颁布关 顺颁 / 打回 + 命门题中旨落 STIGMA+血债）→ 替换 `estimate_resistance`（含 skills.json 三处）→ 召对 dry-run 物理只读 → season_simulator 加吃判决 + HITL 接线 + P4 禁令（D5-11）→ 邸报复盘。第二刀（中旨闸 / 执行层四态 / location 闸 / 密令结构化）后接。〔**取代注（2026-07-08 M12 闸回标）**：第二刀括注系写作时快照——其中「location 闸」已由 **ADR 0096** 兑现、不再后接；其余项仍属第二刀。defer 清单取代注同源。〕
+substrate（0011-2/3/4）**全先落** → `resolve_core` 确定性骨架（第一刀，只颁布关 顺颁 / 打回 + 命门题中旨落 STIGMA／案卷 midzhi 事实；正式血债／离心 → M12）→ 替换 `estimate_resistance`（含 skills.json 三处）→ 召对 dry-run 物理只读 → season_simulator 加吃判决 + HITL 接线 + P4 禁令（D5-11）→ 邸报复盘。第二刀（中旨闸／执行层四态／location 闸／密令结构化）后接。〔**取代注（2026-07-08 M12 闸回标）**：第二刀括注系写作时快照——其中「location 闸」已由 **ADR 0096** 兑现、不再后接；其余项仍属第二刀。defer 清单取代注同源。〕
 
 ### 调参 / playtest
 

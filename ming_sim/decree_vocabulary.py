@@ -1,5 +1,11 @@
 """#471 皇帝动作在案卷层的 canonical 受控词表。"""
 
+from __future__ import annotations
+
+import hashlib
+import json
+from typing import Any, Mapping
+
 DOSSIER_ACTION_TYPES = frozenset({
     "policy", "appointment", "acting_appointment",
     "assignment", "military_order",
@@ -19,6 +25,74 @@ DOSSIER_ACTION_TYPES = frozenset({
 })
 
 DIRECTIVE_ACTION_TYPES = DOSSIER_ACTION_TYPES - {"appointment", "secret_order"}
+
+# #657 / ADR 0093 后半：批红急务可路由七类（choice/option.action_type）与落库 emitted 闭集。
+# 罢免在 choice 上仍用 appointment + appoint_action=罢免；emitted 为 dismiss_assignment。
+# 禁止把 DOSSIER_ACTION_TYPES 收成七值。
+RESCRIPT_ROUTABLE_ACTION_TYPES = frozenset({
+    "assignment", "military_order", "grant_allocation",
+    "appointment", "punishment", "authorization", "pacification",
+})
+RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES = frozenset({
+    "assignment", "military_order", "grant_allocation", "appointment",
+    "dismiss_assignment",  # 罢免支
+    "punishment", "authorization", "pacification",
+})
+assert RESCRIPT_ROUTABLE_ACTION_TYPES <= DOSSIER_ACTION_TYPES
+assert RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES <= DOSSIER_ACTION_TYPES
+
+# C.4 capability 派生闭集（全键 · 仅此表）。缺键按协议默认（""/0）参与派生。
+_DRAFT_CAPABILITY_KEYS: tuple[tuple[str, Any], ...] = (
+    ("action_type", ""),
+    ("label", ""),
+    ("hint", ""),
+    ("assignee_name", ""),
+    ("name", ""),
+    ("target_kind", ""),
+    ("target_id", ""),
+    ("transaction_category", ""),
+    ("locality_scope", ""),
+    ("region_id", ""),
+    ("title", ""),
+    ("commitment_kind", ""),
+    ("stop_condition", ""),
+    ("end_turn", 0),
+    ("deadline_months", 0),
+    ("station", ""),
+    ("due_turn", 0),
+    ("office", ""),
+    ("grant_action", ""),
+    ("account", ""),
+    ("amount", 0),
+    ("cadence", ""),
+    ("execution_surface", ""),
+    ("appoint_action", ""),
+    ("appointment_tenure", ""),
+    ("punish_action", ""),
+    ("privilege", ""),
+    ("summon_target", ""),
+)
+
+
+def derive_draft_capability(fields: Mapping[str, Any] | None) -> str:
+    """#657 C.4：闭集键 canonical JSON + sha256 截断。同字段⇒同键；任一有效差变键。"""
+    src = fields or {}
+    canonical: dict[str, Any] = {}
+    for key, default in _DRAFT_CAPABILITY_KEYS:
+        raw = src.get(key, default)
+        if isinstance(default, int):
+            if isinstance(raw, bool) or raw is None or raw == "":
+                canonical[key] = 0
+            else:
+                try:
+                    canonical[key] = int(raw)
+                except (TypeError, ValueError):
+                    canonical[key] = 0
+        else:
+            canonical[key] = "" if raw is None else str(raw)
+    blob = json.dumps(canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:32]
+
 
 # Ming #654 / owner A：旨意 target_kind 唯一八值真源（含结构目标 dossier）。
 # durable normalization / producer / locality oracle 共引；禁第二份枚举。

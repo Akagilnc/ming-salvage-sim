@@ -29,13 +29,17 @@ describe("#1474 mindreading empty absence presentation", () => {
   });
 
   it("non-empty narration still inserts attendant bubble", () => {
+    // #671：首尾空白只作判空，content 逐字保留原文
+    const raw = "  皇爷，他这句另有盘算。  \n";
     const next = insertMindreadingByTurn(base, 10, [
-      { id: 4, narration: "皇爷，他这句另有盘算。" },
+      { id: 4, narration: raw },
     ]);
+    expect(next).toHaveLength(3);
+    expect(next[2]).toMatchObject({ role: "attendant", content: raw, chatTurnId: 10, recordId: 4 });
     expect(next.map((m) => `${m.role}:${m.content}`)).toEqual([
       "user:问",
       "minister:答",
-      "attendant:皇爷，他这句另有盘算。",
+      `attendant:${raw}`,
     ]);
   });
 });
