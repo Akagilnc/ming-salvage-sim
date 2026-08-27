@@ -625,6 +625,39 @@ def test_dismiss_with_summon_after_does_not_stage_origin(game, monkeypatch):
         "SELECT count(*) FROM story_ledger_entries WHERE origin_ref LIKE 'office:%'"
     ).fetchone()[0] == 0
 
+    # 同类旁路：罢免来意带路径标记命中既有任命时，也不得把 summon 升到旧 row。
+    GameSession.apply_cli_conversation_actions(
+        _fake_session(db, state, content), minister,
+        player_message="起复袁崇焕为辽东巡抚。", answer="遵旨。",
+        has_directive=False, secret_order_id=None,
+        preclassified_intent=[{
+            "kind": "appointment", "appoint_action": "任命",
+            "name": "袁崇焕", "office": "辽东巡抚", "summon_after": "否",
+        }],
+    )
+    appointment = next(
+        r for r in db.list_pending_actions(state.turn)
+        if r["kind"] == "office" and r["action"] == "任命"
+    )
+    appointment_id = int(appointment["id"])
+    before = _office_payload_snapshot(db, appointment_id)
+
+    GameSession.apply_cli_conversation_actions(
+        _fake_session(db, state, content), minister,
+        player_message="特旨罢免袁崇焕，并传召入京。", answer="遵旨。",
+        has_directive=False, secret_order_id=None,
+        preclassified_intent=[{
+            "kind": "appointment", "appoint_action": "罢免",
+            "name": "袁崇焕", "office": "辽东巡抚",
+            "mode": "midzhi", "summon_after": "是",
+        }],
+    )
+
+    after = _office_payload_snapshot(db, appointment_id)
+    assert before.get("summon_after") in (None, "否", "")
+    assert after.get("summon_after") in (None, "否", "")
+    assert _office_origin_count(db, appointment_id) == 0
+
 
 def test_path_only_omitted_name_still_promotes_summon_on_single_pending(
     game, monkeypatch,

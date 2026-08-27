@@ -2925,6 +2925,7 @@ def _materialize_appointment(ctx: MaterializeCtx) -> None:
                     str(appt.get("summon_after") or "否").strip() == "是"
                     and bool(person_for_summon)
                     and row_is_appoint
+                    and str(appt.get("appoint_action") or "").strip() != "罢免"
                 ),
                 origin_chat_turn_id=int(ctx.chat_turn_id or 0),
                 annotate=True,
