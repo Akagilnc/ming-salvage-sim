@@ -16522,6 +16522,28 @@ class GameDB:
             fail_reason = str(rejected[0].get("reason") or "")
             raise ValueError(fail_reason or "军令调驻物化失败")
 
+    @staticmethod
+    def _affected_people_from_applied_rows(rows) -> set[str]:
+        """Canonical applied rows → formal person names (appointee + displaced).
+
+        Partial concurrent-office displacements live only on the row's displaced
+        list (full 听用候铨 displacements are also synthesized as cascade rows).
+        Outer settle refresh must cover both so partially-displaced holders are
+        not left on a stale Agent identity after commit.
+        """
+        names: set[str] = set()
+        for item in rows or ():
+            if not isinstance(item, dict) or item.get("rejected"):
+                continue
+            person = str(item.get("name") or item.get("人物") or "").strip()
+            if person:
+                names.add(person)
+            for part in item.get("displaced") or []:
+                displaced_name = str(part).split(":", 1)[0].strip()
+                if displaced_name:
+                    names.add(displaced_name)
+        return names
+
     def _apply_military_order_office_effect(
         self, state, payload, *, actor: str, reason: str, origin_ref: str,
         content=None, registry=None,
@@ -16580,16 +16602,7 @@ class GameDB:
             if results and isinstance(results[0], dict):
                 fail_reason = str(results[0].get("reason") or "")
             raise ValueError(fail_reason or "军令职守变更物化失败")
-        names: set[str] = set()
-        for item in accepted_p:
-            person = str(item.get("name") or item.get("人物") or "").strip()
-            if person:
-                names.add(person)
-            for part in item.get("displaced") or []:
-                displaced_name = str(part).split(":", 1)[0].strip()
-                if displaced_name:
-                    names.add(displaced_name)
-        return names
+        return self._affected_people_from_applied_rows(accepted_p)
 
     def _apply_authorization_verdict_effect(
         self, state, row, payload, dossier_id,
@@ -18536,23 +18549,9 @@ class GameDB:
                 }],
                 content=content, registry=None, llm_config=self.llm_config,
             )
-            # Canonical applied rows name the appointee; partial concurrent-office
-            # displacements only appear on the row's displaced list (full
-            # 听用候铨 displacements are also synthesized as cascade rows).
-            # Outer settle refresh must cover both so partially-displaced holders
-            # are not left on a stale Agent identity after commit.
-            affected: set[str] = set()
-            for item in applied.get("applied_person_changes", []):
-                if not isinstance(item, dict) or item.get("rejected"):
-                    continue
-                person = str(item.get("name") or item.get("人物") or "").strip()
-                if person:
-                    affected.add(person)
-                # Canonical producer writes List[str] only.
-                for part in item.get("displaced") or []:
-                    displaced_name = str(part).split(":", 1)[0].strip()
-                    if displaced_name:
-                        affected.add(displaced_name)
+            affected = self._affected_people_from_applied_rows(
+                applied.get("applied_person_changes", []),
+            )
             if recommendation_reason and name in affected:
                 from ming_sim.recommendations import record_recommendation_edges
                 event_id = self.record_recommendation(
