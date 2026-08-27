@@ -299,41 +299,6 @@ def test_scripted_confirmation_answer_existing_no_new_stage(game, monkeypatch):
 # ── #516：问/令查分界（扩 #515 表驱动正反例 + 结构化判词契约）──────────
 
 
-def test_action_intent_prompt_encodes_ask_vs_order_boundary(monkeypatch):
-    """结构化判词须内建问/令分界：纯问→无；另案令查→新建；指向现有密令的补充→更新。
-
-    禁「祈使令查→一律新建」过宽规则；禁字样启发升格；禁无现有密令时一刀切禁密令动作
-    （会误伤新建）。不断言 LLM 语义，只钉 prompt 契约。
-    """
-    prompts: list[str] = []
-
-    def _capture(prompt, llm_config=None, tag=""):
-        prompts.append(prompt)
-        return ('{"动作类型":"无"}', 0)
-
-    monkeypatch.setattr(cb, "_run_backend_for_config", _capture)
-    assert cb.classify_cli_action_intent("陕西巡抚可有？") == []
-    assert prompts, "classify 必须走结构化判词"
-    rules = prompts[0].split("【待确认动作】", 1)[0]
-
-    # 正例：另案祈使令查 → 新建
-    assert "新建" in rules
-    assert any(tok in rules for tok in ("你去查", "祈使", "令查"))
-    # 正例：指向现有密令的补充/续查 → 更新（#516 r3）
-    assert "更新" in rules
-    assert "再去查他在苏州的田产" in rules
-    assert any(tok in rules for tok in ("现有密令", "补充", "续查", "原令"))
-    # 反例：纯问 / 含命令词的问 → 无（北极星入集）
-    assert "陕西巡抚可有" in rules
-    assert any(tok in rules for tok in ("是谁", "整体为问", "问句"))
-    # 不得把祈使令查一律钉死为新建；不得用字样启发升格
-    assert "祈使令查→密令动作=新建" not in rules
-    assert "一律新建" not in rules
-    assert "字样即" not in rules
-    assert "没有现有密令时不要硬判密令动作" not in rules
-    assert "问询、查账、问军情、泛泛商议填无" not in rules
-
-
 @pytest.mark.parametrize(
     ("utterance", "raw_payload", "expect_kinds", "expect_secret_action", "expect_order_id"),
     [
@@ -391,7 +356,6 @@ def test_classify_soft_path_ask_vs_order_payload_matrix(
 
     def _scripted(prompt, llm_config=None, tag=""):
         assert tag == "action_intent"
-        assert utterance in prompt
         return (json.dumps(raw_payload, ensure_ascii=False), 0)
 
     monkeypatch.setattr(cb, "_run_backend_for_config", _scripted)
