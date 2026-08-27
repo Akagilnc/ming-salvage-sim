@@ -1954,7 +1954,17 @@ def ensure_inactive_office_summon(
 
 
 def discard_inactive_office_summon(db: Any, pending_id: int) -> bool:
-    """Delete still-inactive office:<pending_id> origin; refuse activated history."""
+    """Delete still-inactive office:<pending_id> origin; refuse activated history.
+
+    Matches withdraw/drop owns_transaction: do not commit over a caller-owned
+    BEGIN/atomic, so outer rollback can restore pending + origin together.
+    """
+    conn = db.conn
+    owns_transaction = not (
+        bool(getattr(conn, "_commit_suspended", False))
+        or int(getattr(conn, "_atomic_depth", 0) or 0) > 0
+        or conn.in_transaction
+    )
     origin = f"office:{int(pending_id)}"
     entry = _ledger_by_origin_ref(db, origin)
     if entry is None:
@@ -1963,12 +1973,12 @@ def discard_inactive_office_summon(db: Any, pending_id: int) -> bool:
     # Activated / in-transit / settled rows are post-promulgation history — keep.
     if TAG_SUMMON_UNSETTLED in tags or TAG_IN_TRANSIT in tags or TAG_SUMMON_SETTLED in tags:
         return False
-    db.conn.execute(
+    conn.execute(
         "DELETE FROM story_ledger_entries WHERE id=?",
         (int(entry["id"]),),
     )
-    if _should_commit(db):
-        db.conn.commit()
+    if owns_transaction:
+        conn.commit()
     return True
 
 

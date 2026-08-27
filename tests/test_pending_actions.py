@@ -616,37 +616,48 @@ def test_advance_without_edict_commits_staged(game, monkeypatch):
 
 
 def test_withdraw_pending_action_removes_before_decree(game):
-    """皇帝复核可撤回暂存动作:withdraw 删 pending 行,颁诏不再落库;二次/不存在撤回返 False。"""
+    """#672：withdraw office pending 同步清仍 inactive 的 office:<id> origin；二次撤回返 False。"""
+    import ming_sim.audience_night as an
+
     db, state, content = game
     name = _active_minister_name(db, content)
-    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=0)
-    pid = db.stage_pending_action(state.turn, kind="secret_order", action="更新",
-                                  minister_name=name, target_id=oid,
-                                  payload={"new_title": "改", "new_content": "改", "deadline_months": 0})
+    night = an.open_night(db, state, empty_scaffold=True)
+    pid = db.stage_pending_action(
+        state.turn, kind="office", action="任命", minister_name=name, target_id=None,
+        payload={"name": "袁崇焕", "office": "辽东巡抚", "summon_after": "是"},
+    )
+    an.ensure_inactive_office_summon(
+        db, int(pid), "袁崇焕", night_id=int(night["id"]),
+    )
+    origin = f"office:{int(pid)}"
+    assert db.conn.execute(
+        "SELECT count(*) FROM story_ledger_entries WHERE origin_ref=?", (origin,),
+    ).fetchone()[0] == 1
 
     assert db.withdraw_pending_action(pid, state.turn) is True
     assert db.list_pending_actions(state.turn) == []
-
-    db.commit_pending_actions(state)   # 撤回后颁诏:真实表不变
-    assert db.conn.execute("SELECT title FROM secret_orders WHERE id=?", (oid,)).fetchone()["title"] == "原标题"
+    assert db.conn.execute(
+        "SELECT count(*) FROM story_ledger_entries WHERE origin_ref=?", (origin,),
+    ).fetchone()[0] == 0
 
     assert db.withdraw_pending_action(pid, state.turn) is False   # 二次撤回无此 pending
 
 
 def test_withdraw_pending_action_does_not_commit_outer_transaction(game):
-    """普通外层事务中 withdraw pending 不得自行 commit，否则调用方回滚失效。"""
+    """#672：外层事务中 withdraw office pending 不得自行 commit；回滚同时恢复 pending 与 inactive origin。"""
+    import ming_sim.audience_night as an
+
     db, state, content = game
     name = _active_minister_name(db, content)
+    night = an.open_night(db, state, empty_scaffold=True)
     pending_id = db.stage_pending_action(
-        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
-        payload={
-            "title": "暗查辽饷",
-            "content": "密查辽饷侵冒。",
-            "assignee": name,
-            "tags": [],
-            "deadline_months": 0,
-        },
+        state.turn, kind="office", action="任命", minister_name=name, target_id=None,
+        payload={"name": "袁崇焕", "office": "辽东巡抚", "summon_after": "是"},
     )
+    an.ensure_inactive_office_summon(
+        db, int(pending_id), "袁崇焕", night_id=int(night["id"]),
+    )
+    origin = f"office:{int(pending_id)}"
 
     db.conn.execute("BEGIN")
     assert db.withdraw_pending_action(pending_id, state.turn) is True
@@ -656,6 +667,9 @@ def test_withdraw_pending_action_does_not_commit_outer_transaction(game):
         "SELECT status FROM pending_actions WHERE id=?", (pending_id,)
     ).fetchone()
     assert row is not None and row["status"] == "pending"
+    assert db.conn.execute(
+        "SELECT count(*) FROM story_ledger_entries WHERE origin_ref=?", (origin,),
+    ).fetchone()[0] == 1
 
 
 def test_pending_actions_endpoints(game, monkeypatch):
