@@ -170,7 +170,7 @@ def test_status_exit_clears_complete_transit_ledger(game, exit_path):
     else:
         assert db._commit_office_action(
             state, {"action": "罢免"}, {"name": name}, content, None,
-        ) is True
+        ) == {name}
 
     row = db.conn.execute(
         "SELECT status, transit_to, transit_distance_remaining, transit_speed_factor, transit_start_turn "

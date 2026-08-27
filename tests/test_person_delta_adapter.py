@@ -2463,7 +2463,7 @@ def test_pending_dismiss_rejects_vassal_prince(read_game):
     db, state, content = read_game
     name = _materialize_active_prince(db, state, content)
     ok = db._commit_office_action(state, {"action": "罢免"}, {"name": name}, content, None)
-    assert ok is False
+    assert ok == set()
     assert db.get_character_status(name)[0] == "active"  # 未被罢、状态不变
 
 

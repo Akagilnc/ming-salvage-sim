@@ -799,3 +799,51 @@ def test_legacy_population_unit_skips_absorption_and_recovery(game):
 
     assert db.get_decree_dossier(_recovery_grant(db, state, amount=10))["execution_outcome"] == "fulfilled"
     assert not _reflux(_settle_transfers(state, db, content, "legacy"))
+
+
+def test_appointment_summon_settlement_runs_recovery_once(game, monkeypatch):
+    """#672：真实任命+传召 settle 入口下，同月 recovery 人口只结一次。
+
+    person-only 授官/启程不得借 full settlement 再跑 #652 recovery；
+    本月 settle 仍应恰好回流一次期望口数。
+    """
+    from ming_sim.constants import RECOVERY_OUTCOME_FACTORS, RECOVERY_PERSONS_PER_WAN
+    from tests.test_appointment_summon_672 import (
+        _close_office_to_dossier,
+        _stage_yuan_appointment_summon,
+        _yuan_row,
+    )
+
+    db, state, content = game
+    amount = 30
+    _reset_shaanxi_pool(db)
+    recovery_dossier = _recovery_grant(db, state, amount=amount)
+    displaced_before = _pop(db, "流民", "shaanxi")
+    expected_once = int(round(
+        amount * RECOVERY_PERSONS_PER_WAN * float(RECOVERY_OUTCOME_FACTORS["fulfilled"])
+    ))
+
+    pending, _origin = _stage_yuan_appointment_summon(game, monkeypatch)
+    appointment_dossier = _close_office_to_dossier(db, state, content, pending["id"])
+
+    settle_with_delta(
+        state, db, {}, before_turn=int(state.turn), content=content,
+        dossier_verdicts=[{
+            "dossier_id": appointment_dossier, "decision": "promulgated",
+        }],
+    )
+
+    displaced_after = _pop(db, "流民", "shaanxi")
+    assert displaced_before - displaced_after == expected_once
+    closed_turn = int(state.turn) - 1  # settle advances turn after apply
+    transfers = (db.get_turn_extraction(closed_turn) or {}).get(
+        "extractor_output", {},
+    ).get("population_transfers") or []
+    reflux = _reflux(transfers, dossier_id=recovery_dossier)
+    assert len(reflux) == 1
+    assert int(reflux[0].get("amount") or 0) == expected_once
+
+    after = _yuan_row(db)
+    assert (after["status"], after["office"], after["transit_to"]) == (
+        "active", "辽东巡抚", "beizhili",
+    )

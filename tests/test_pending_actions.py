@@ -30,7 +30,8 @@ import web_app
 import ming_sim.cli_backend as cb
 import ming_sim.issues as issues
 from ming_sim.db import GameDB
-from ming_sim.decree import pre_settle, reload_state_from_db
+from ming_sim.decree import pre_settle, reload_state_from_db, settle_with_delta
+from ming_sim.registry import MinisterRegistry
 from ming_sim.session import GameSession, TurnPhase, _pending_action_failure_payload
 from tests.dossier_test_helpers import promulgate_proposed_appointments
 
@@ -616,37 +617,48 @@ def test_advance_without_edict_commits_staged(game, monkeypatch):
 
 
 def test_withdraw_pending_action_removes_before_decree(game):
-    """皇帝复核可撤回暂存动作:withdraw 删 pending 行,颁诏不再落库;二次/不存在撤回返 False。"""
+    """#672：withdraw office pending 同步清仍 inactive 的 office:<id> origin；二次撤回返 False。"""
+    import ming_sim.audience_night as an
+
     db, state, content = game
     name = _active_minister_name(db, content)
-    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=0)
-    pid = db.stage_pending_action(state.turn, kind="secret_order", action="更新",
-                                  minister_name=name, target_id=oid,
-                                  payload={"new_title": "改", "new_content": "改", "deadline_months": 0})
+    night = an.open_night(db, state, empty_scaffold=True)
+    pid = db.stage_pending_action(
+        state.turn, kind="office", action="任命", minister_name=name, target_id=None,
+        payload={"name": "袁崇焕", "office": "辽东巡抚", "summon_after": "是"},
+    )
+    an.ensure_inactive_office_summon(
+        db, int(pid), "袁崇焕", night_id=int(night["id"]),
+    )
+    origin = f"office:{int(pid)}"
+    assert db.conn.execute(
+        "SELECT count(*) FROM story_ledger_entries WHERE origin_ref=?", (origin,),
+    ).fetchone()[0] == 1
 
     assert db.withdraw_pending_action(pid, state.turn) is True
     assert db.list_pending_actions(state.turn) == []
-
-    db.commit_pending_actions(state)   # 撤回后颁诏:真实表不变
-    assert db.conn.execute("SELECT title FROM secret_orders WHERE id=?", (oid,)).fetchone()["title"] == "原标题"
+    assert db.conn.execute(
+        "SELECT count(*) FROM story_ledger_entries WHERE origin_ref=?", (origin,),
+    ).fetchone()[0] == 0
 
     assert db.withdraw_pending_action(pid, state.turn) is False   # 二次撤回无此 pending
 
 
 def test_withdraw_pending_action_does_not_commit_outer_transaction(game):
-    """普通外层事务中 withdraw pending 不得自行 commit，否则调用方回滚失效。"""
+    """#672：外层事务中 withdraw office pending 不得自行 commit；回滚同时恢复 pending 与 inactive origin。"""
+    import ming_sim.audience_night as an
+
     db, state, content = game
     name = _active_minister_name(db, content)
+    night = an.open_night(db, state, empty_scaffold=True)
     pending_id = db.stage_pending_action(
-        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
-        payload={
-            "title": "暗查辽饷",
-            "content": "密查辽饷侵冒。",
-            "assignee": name,
-            "tags": [],
-            "deadline_months": 0,
-        },
+        state.turn, kind="office", action="任命", minister_name=name, target_id=None,
+        payload={"name": "袁崇焕", "office": "辽东巡抚", "summon_after": "是"},
     )
+    an.ensure_inactive_office_summon(
+        db, int(pending_id), "袁崇焕", night_id=int(night["id"]),
+    )
+    origin = f"office:{int(pending_id)}"
 
     db.conn.execute("BEGIN")
     assert db.withdraw_pending_action(pending_id, state.turn) is True
@@ -656,6 +668,9 @@ def test_withdraw_pending_action_does_not_commit_outer_transaction(game):
         "SELECT status FROM pending_actions WHERE id=?", (pending_id,)
     ).fetchone()
     assert row is not None and row["status"] == "pending"
+    assert db.conn.execute(
+        "SELECT count(*) FROM story_ledger_entries WHERE origin_ref=?", (origin,),
+    ).fetchone()[0] == 1
 
 
 def test_pending_actions_endpoints(game, monkeypatch):
@@ -2387,8 +2402,8 @@ def test_commit_appointment_existing_minister_by_alias(game, monkeypatch):
 
 
 def test_commit_reappoint_reactivates_dismissed_minister(game, monkeypatch):
-    """重新任命【已罢黜】大臣 → commit 改回 active 并授官(走唯一落地核)。
-    (CMR codex R2 / gemini F2:旧 fix 只 set_character_office、不改 status,人留 dismissed。)"""
+    """重新任命【已罢黜】大臣 → 外层 settle 顺颁后改回 active 并授官。
+    #672：registry 只在 settle_with_delta outer commit 后 refresh；事务内零刷新。"""
     db, state, content = game
     a, b = _two_active_ming(db, content)
     objb = content.characters[b.name]
@@ -2404,18 +2419,29 @@ def test_commit_reappoint_reactivates_dismissed_minister(game, monkeypatch):
         GameSession.apply_cli_conversation_actions(
             _fake_session(db, state), a, player_message=f"起复{b.name},授{new_office}",
             answer="臣领旨。", has_directive=False, secret_order_id=None)
-        reg = _FakeRegistry()
-        applied = db.commit_pending_actions(state, content=content, registry=reg)
+        applied = db.commit_pending_actions(state, content=content, registry=None)
         assert any(x["kind"] == "office" for x in applied)
-        promulgate_proposed_appointments(
-            db, state, content, registry=reg,
+        verdicts = [
+            {"dossier_id": row["id"], "decision": "promulgated"}
+            for row in db.list_decree_dossiers(status="proposed")
+            if row["action_type"] == "appointment"
+        ]
+        reg = _FakeRegistry()
+
+        def mid_txn_applier(_db, _state, _extracted, _content, _registry):
+            assert reg.refreshed == [], "事务内不得 refresh registry"
+            return {}
+
+        settle_with_delta(
+            state, db, {}, before_turn=int(state.turn), content=content,
+            registry=reg, dossier_verdicts=verdicts, delta_applier=mid_txn_applier,
         )
         row = db.conn.execute(
             "SELECT status, office FROM characters WHERE name=?", (b.name,)).fetchone()
         assert row["status"] == "active"        # 起复:改回 active
         assert row["office"]                    # 已授新官
         assert content.characters[b.name].status == "active"   # 内存同步
-        assert b.name in reg.refreshed          # content/registry 真透传到落地核(CMR R3 codex-docs R1)
+        assert b.name in reg.refreshed          # outer commit 后才 refresh
     finally:
         objb.office, objb.status, objb.office_type = saved
 
@@ -2545,27 +2571,33 @@ def test_displace_duplicate_offices_recomputes_office_type(game):
 
 
 def test_commit_dismiss_refreshes_registry(game, monkeypatch):
-    """罢免 commit 后刷新被罢者 Agent(对话回合中落库,本回合后续不再以旧活跃态被召对)。(线上 gemini)"""
+    """罢免经 settle_with_delta 顺颁后刷新被罢者 Agent；事务内零刷新。(#672)"""
     db, state, content = game
     a, b = _two_active_ming(db, content)
-    reg = _FakeRegistry()
     sess = types.SimpleNamespace(
         db=db, state=state, llm_config=types.SimpleNamespace(channel="cli"),
-        registry=reg, content=content)
+        registry=None, content=content)
     monkeypatch.setattr(cb, "_run_backend_for_config",
                         lambda p, llm_config=None, tag="": (json.dumps(
                             {"任免动作": "罢免", "姓名": b.name, "官职": ""}, ensure_ascii=False), 1))
     GameSession.apply_cli_conversation_actions(
         sess, a, player_message=f"革{b.name}职", answer="臣遵旨。",
         has_directive=False, secret_order_id=None)
-    db.commit_pending_actions(state, content=content, registry=reg)
-    db.apply_dossier_verdicts(
-        state,
-        [{"dossier_id": d["id"], "decision": "promulgated"}
-         for d in db.list_decree_dossiers(status="proposed")
-         if d["action_type"] == "dismiss_assignment"],
-        content=content,
-        registry=reg,
+    db.commit_pending_actions(state, content=content, registry=None)
+    verdicts = [
+        {"dossier_id": d["id"], "decision": "promulgated"}
+        for d in db.list_decree_dossiers(status="proposed")
+        if d["action_type"] == "dismiss_assignment"
+    ]
+    reg = _FakeRegistry()
+
+    def mid_txn_applier(_db, _state, _extracted, _content, _registry):
+        assert reg.refreshed == [], "事务内不得 refresh registry"
+        return {}
+
+    settle_with_delta(
+        state, db, {}, before_turn=int(state.turn), content=content,
+        registry=reg, dossier_verdicts=verdicts, delta_applier=mid_txn_applier,
     )
     assert b.name in reg.refreshed
     assert db.conn.execute(
@@ -2573,21 +2605,58 @@ def test_commit_dismiss_refreshes_registry(game, monkeypatch):
 
 
 def test_office_appointment_refreshes_displaced_holder(game):
-    """调任占已占独占实职 → 新任者【与被顶替者】都刷新 Agent(被顶替者 office_type 也变)。(线上 gemini)"""
-    from ming_sim.issues import apply_office_appointment
+    """兼衔部分顶替经真实 settle_with_delta：事务内零 refresh；
+    outer commit 后新任者与部分被顶替者（仍留其余官职）均 refresh。(#672)"""
     db, state, content = game
-    a, x = _two_active_ming(db, content)
-    db.conn.execute("UPDATE characters SET office=?, office_type=? WHERE name=?",
-                    ("兵部尚书,左都御史", "兵部", x.name))
+    new_holder, partial = _two_active_ming(db, content)
+    # 旧任兼两职；新任只占其一 → 部分顶替，不落到听用候铨。
+    db.conn.execute(
+        "UPDATE characters SET office=?, office_type=? WHERE name=?",
+        ("兵部尚书,左都御史", "兵部", partial.name),
+    )
     db.conn.commit()
-    content.characters[x.name].office = "兵部尚书,左都御史"
-    content.characters[x.name].office_type = "兵部"
+    content.characters[partial.name].office = "兵部尚书,左都御史"
+    content.characters[partial.name].office_type = "兵部"
+
+    pending_id = db.stage_pending_action(
+        state.turn, kind="office", action="任命",
+        minister_name=new_holder.name, target_id=None,
+        payload={"name": new_holder.name, "office": "兵部尚书"},
+    )
+    applied = db.commit_pending_actions(state, content=content, registry=None)
+    assert any(row["kind"] == "office" for row in applied)
+    verdicts = [
+        {"dossier_id": row["id"], "decision": "promulgated"}
+        for row in db.list_decree_dossiers(status="proposed")
+        if row["action_type"] == "appointment"
+        and int(row.get("pending_action_id") or 0) == int(pending_id)
+    ]
+    assert verdicts, "任命 pending 须落 proposed 案卷"
     reg = _FakeRegistry()
-    res = apply_office_appointment(db, state, content, reg, a.name, "兵部尚书",
-                                   reason="测试调任", llm_config=None)
-    assert not res.get("rejected")
-    assert a.name in reg.refreshed   # 调任者刷新
-    assert x.name in reg.refreshed   # 被顶替者也刷新(线上 gemini #5)
+
+    def mid_txn_applier(_db, _state, _extracted, _content, _registry):
+        assert reg.refreshed == [], "事务内不得 refresh registry"
+        return {}
+
+    settle_with_delta(
+        state, db, {}, before_turn=int(state.turn), content=content,
+        registry=reg, dossier_verdicts=verdicts, delta_applier=mid_txn_applier,
+    )
+
+    row_partial = db.conn.execute(
+        "SELECT office, office_type FROM characters WHERE name=?",
+        (partial.name,),
+    ).fetchone()
+    assert row_partial["office"] == "左都御史"
+    assert row_partial["office_type"] == "都察院"
+    assert content.characters[partial.name].office == "左都御史"
+    row_new = db.conn.execute(
+        "SELECT office FROM characters WHERE name=?",
+        (new_holder.name,),
+    ).fetchone()
+    assert "兵部尚书" in str(row_new["office"] or "")
+    assert new_holder.name in reg.refreshed
+    assert partial.name in reg.refreshed
 
 
 def test_dialogue_reject_filters_by_summoned_minister(game, monkeypatch):
@@ -2709,3 +2778,108 @@ def test_front_half_done_directive_confirmation_commits_without_second_review(ga
     ).fetchone()
     assert row["status"] == "draft"
     assert row["text"] == "着户部清核辽饷。"
+
+
+def test_settle_pending_cultivate_refreshes_after_outer_commit(game, monkeypatch):
+    """#672：phase-2/recovery commit_pending(registry=None) 后宫调教须 outer-commit refresh。"""
+    consort = next((c for c in content_consort_candidates(game)), None)
+    if consort is None:
+        pytest.skip("基底无 active 后宫角色")
+    db, state, content = game
+    db.stage_pending_action(
+        state.turn, kind="consort", action="调教",
+        minister_name=consort.name, target_id=None,
+        payload={"name": consort.name, "skill": "理财", "trait": ""},
+    )
+
+    class _Reg:
+        def __init__(self):
+            self.refreshed: list[str] = []
+
+        def refresh(self, name):
+            self.refreshed.append(name)
+
+    reg = _Reg()
+
+    def mid_txn_applier(_db, _state, _extracted, _content, _registry):
+        assert reg.refreshed == [], "事务内不得 refresh registry"
+        return {}
+
+    settle_with_delta(
+        state, db, {}, before_turn=int(state.turn), content=content,
+        registry=reg, delta_applier=mid_txn_applier,
+    )
+    assert consort.name in reg.refreshed
+    traits = db.get_consort_traits(consort.name)
+    assert "理财" in (traits.get("extra_skills") or [])
+
+
+def test_new_consort_registers_after_outer_commit(game, monkeypatch):
+    """#672：册外后宫晋封新建正式人物 → outer commit 走 register，结算成功无 KeyError。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    new_consort = "测试新妃丁"
+    content.characters.pop(new_consort, None)
+    try:
+        monkeypatch.setattr(
+            cb, "_run_backend_for_config",
+            lambda prompt, llm_config=None, tag="": (json.dumps({
+                "任免动作": "任命", "姓名": new_consort, "官职": "贵妃",
+            }, ensure_ascii=False), 1),
+        )
+        GameSession.apply_cli_conversation_actions(
+            _fake_session(db, state), ch,
+            player_message=f"册{new_consort}为贵妃", answer="臣为陛下贺。",
+            has_directive=False, secret_order_id=None,
+        )
+        applied = db.commit_pending_actions(state, content=content, registry=None)
+        assert any(x["kind"] == "office" for x in applied)
+        verdicts = [
+            {"dossier_id": row["id"], "decision": "promulgated"}
+            for row in db.list_decree_dossiers(status="proposed")
+            if row["action_type"] == "appointment"
+            and str(row.get("target_id") or "") == new_consort
+        ]
+        assert verdicts, "新妃任命须落 proposed 案卷"
+
+        # Tracer leaves only: real MinisterRegistry.project_outcome decides
+        # register vs refresh. session_ids empty = pre-materialization roster.
+        class _Reg:
+            def __init__(self):
+                self.registered: list[str] = []
+                self.refreshed: list[str] = []
+                self.session_ids: dict = {}
+                self.content = content
+
+            def register(self, character):
+                self.registered.append(character.name)
+                self.session_ids[character.name] = f"minister-{character.name}"
+
+            def refresh(self, person_name):
+                self.refreshed.append(person_name)
+
+            project_outcome = MinisterRegistry.project_outcome
+
+        reg = _Reg()
+
+        def mid_txn_applier(_db, _state, _extracted, _content, _registry):
+            assert reg.registered == [] and reg.refreshed == []
+            return {}
+
+        settle_with_delta(
+            state, db, {}, before_turn=int(state.turn), content=content,
+            registry=reg, dossier_verdicts=verdicts, delta_applier=mid_txn_applier,
+        )
+        assert new_consort in reg.registered
+        assert new_consort not in reg.refreshed
+        row = db.conn.execute(
+            "SELECT office_type, faction, status FROM characters WHERE name=?",
+            (new_consort,),
+        ).fetchone()
+        assert row is not None
+        assert row["office_type"] == "后宫"
+        assert row["faction"] == "后宫"
+        assert row["status"] == "active"
+    finally:
+        content.characters.pop(new_consort, None)

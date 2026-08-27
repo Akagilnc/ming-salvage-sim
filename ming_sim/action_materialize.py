@@ -579,6 +579,93 @@ def _structured_appointment_from_ctx(ctx: MaterializeCtx) -> Optional[Dict[str, 
     return None
 
 
+def _persist_appointment_summon(
+    session: Any,
+    pending_id: int,
+    person_name: str,
+    *,
+    promote_payload: bool,
+    origin_chat_turn_id: int = 0,
+) -> None:
+    """Persist the dossier flag and its inactive origin as one staging unit.
+
+    Shared success tail for new stage, same-person dedupe, and mode/tenure merge.
+    Ledger person_names use the same roster/alias canonical key as 0009 applier.
+    """
+    from ming_sim.applier import atomic
+    from ming_sim.audience_night import ensure_inactive_office_summon
+    from ming_sim.session import _canonical_minister_key
+
+    # Exact-name summon projections (commit/启程/origin) require the roster key;
+    # raw extractor aliases must not land in inactive office:<pending_id> ledger.
+    person_name = _canonical_minister_key(
+        getattr(session, "content", None), str(person_name or "").strip(), session.db,
+    )
+    with atomic(session.db):
+        if promote_payload:
+            row = session.db.conn.execute(
+                "SELECT payload_json FROM pending_actions WHERE id=?",
+                (int(pending_id),),
+            ).fetchone()
+            if row is None:
+                raise ValueError("任命后传召所关联的暂存任命不存在")
+            stored = json.loads(row["payload_json"] or "{}")
+            stored["summon_after"] = "是"
+            session.db.conn.execute(
+                "UPDATE pending_actions SET payload_json=? WHERE id=?",
+                (json.dumps(stored, ensure_ascii=False), int(pending_id)),
+            )
+        ensure_inactive_office_summon(
+            session.db, pending_id, person_name,
+            night_id=int(session.db._current_open_night_id()),
+            origin_chat_turn_id=int(origin_chat_turn_id or 0),
+        )
+
+
+def _apply_existing_appointment_hit(
+    session: Any,
+    row: Dict[str, Any],
+    *,
+    mode_mark: Optional[str] = None,
+    tenure_mark: Optional[str] = None,
+    minister_name: str = "",
+    turn: int = 0,
+    person_name: str = "",
+    summon_after: bool = False,
+    origin_chat_turn_id: int = 0,
+    annotate: bool = False,
+) -> int:
+    """Existing-hit merge: path marks + optional summon under one atomic.
+
+    mode/任别、路径故事账、summon_after 升格与 inactive origin 同成同败——
+    不得先 annotate 真提交再进 summon 自己的 atomic。
+    """
+    from ming_sim.applier import atomic
+
+    with atomic(session.db):
+        resolved = int(row["id"])
+        if annotate:
+            pending_id = _annotate_office_pending_path(
+                session.db,
+                row,
+                mode_mark=mode_mark,
+                tenure_mark=tenure_mark,
+                minister_name=minister_name,
+                turn=turn,
+            )
+            if pending_id:
+                resolved = int(pending_id)
+        if summon_after and person_name:
+            _persist_appointment_summon(
+                session,
+                resolved,
+                person_name,
+                promote_payload=True,
+                origin_chat_turn_id=int(origin_chat_turn_id or 0),
+            )
+        return resolved
+
+
 def _stage_office_pending_core(
     ctx: MaterializeCtx,
     appt: Dict[str, Any],
@@ -596,19 +683,36 @@ def _stage_office_pending_core(
     require_office_for_appoint：parallel 任命必须带职名。
     write_primary_pending_id：主路径写 out['pending_action_id']；parallel 不覆盖 directive id。
     """
+    from ming_sim.applier import atomic
     from ming_sim.cli_backend import resolve_directive_mode
     from ming_sim.session import (
         _appointment_intent_is_current_office_noop,
         _cancel_staged_opposing_office,
+        _canonical_minister_key,
         _target_active_officeholder,
     )
 
     session = ctx.session
     minister_name = ctx.character.name
+
+    def persist_appointment_summon(
+        pending_id: int, person_name: str, *, promote_payload: bool,
+    ) -> None:
+        _persist_appointment_summon(
+            session, pending_id, person_name,
+            promote_payload=promote_payload,
+            origin_chat_turn_id=int(ctx.chat_turn_id or 0),
+        )
+
     content_ref = getattr(session, "content", None)
     action = str(appt.get("appoint_action") or "").strip()
     appt_name = str(appt.get("name") or "").strip()
     appt_office = str(appt.get("office") or "").strip()
+    # FieldSpec 「任命后传召」：仅任命可承载；罢免组合收敛为无传召。
+    want_summon = (
+        action == "任命"
+        and str(appt.get("summon_after") or "否").strip() == "是"
+    )
 
     if action not in {"任命", "罢免"} or not appt_name:
         return None
@@ -631,18 +735,18 @@ def _stage_office_pending_core(
             if str(r.get("action") or "") == "任命"
         ]
         if len(existing_hits) == 1:
-            if annotate_existing:
-                pending_id = _annotate_office_pending_path(
-                    session.db,
-                    existing_hits[0],
-                    mode_mark=mode_mark,
-                    tenure_mark=tenure_mark,
-                    minister_name=minister_name,
-                    turn=int(session.state.turn),
-                )
-                resolved = int(pending_id or existing_hits[0]["id"])
-            else:
-                resolved = int(existing_hits[0]["id"])
+            resolved = _apply_existing_appointment_hit(
+                session,
+                existing_hits[0],
+                mode_mark=mode_mark,
+                tenure_mark=tenure_mark,
+                minister_name=minister_name,
+                turn=int(session.state.turn),
+                person_name=appt_name,
+                summon_after=want_summon,
+                origin_chat_turn_id=int(ctx.chat_turn_id or 0),
+                annotate=annotate_existing,
+            )
             if write_primary_pending_id:
                 ctx.out["pending_action_id"] = resolved
             return resolved
@@ -652,11 +756,21 @@ def _stage_office_pending_core(
             session.db, "罢免", appt_name, int(session.state.turn),
             content=content_ref,
         )
-        if hedged or _appointment_intent_is_current_office_noop(
+        if hedged:
+            return None
+        # 现职 no-op 只豁免重复官职写；同句 summon_after 仍须落单一 pending/origin。
+        current_office_noop = _appointment_intent_is_current_office_noop(
             session.db, appt_name, appt_office or appt.get("office", ""),
             content=content_ref,
-        ):
+        )
+        if current_office_noop and not want_summon:
             return None
+        if current_office_noop:
+            canonical_name = _canonical_minister_key(content_ref, appt_name, session.db)
+            current_row = session.db.conn.execute(
+                "SELECT office FROM characters WHERE name=?", (canonical_name,),
+            ).fetchone()
+            appt_office = str(current_row["office"] or "").strip()
     elif action == "罢免":
         cancelled = _cancel_staged_opposing_office(
             session.db, "任命", appt_name, int(session.state.turn),
@@ -672,6 +786,7 @@ def _stage_office_pending_core(
         "office": appt_office,
         "appointer": minister_name,
         "mode": resolve_directive_mode(ctx.player_message, appt.get("mode")),
+        "summon_after": "是" if want_summon else "否",
     }
     # 署理等任别随新建候选写入；特旨仅 mode（上已 resolve）
     if tenure_mark == "署理":
@@ -682,14 +797,19 @@ def _stage_office_pending_core(
         ).strip()
         if tenure in {"真除", "署理", "兼署", "加衔"}:
             payload["任别"] = tenure
-    pending_id = session.db.stage_pending_action(
-        session.state.turn, kind="office", action=action,
-        minister_name=minister_name, target_id=None,
-        payload=payload,
-    )
-    if not pending_id:
-        return None
-    resolved = int(pending_id)
+    with atomic(session.db):
+        pending_id = session.db.stage_pending_action(
+            session.state.turn, kind="office", action=action,
+            minister_name=minister_name, target_id=None,
+            payload=payload,
+        )
+        if not pending_id:
+            return None
+        resolved = int(pending_id)
+        if want_summon:
+            persist_appointment_summon(
+                resolved, appt_name, promote_payload=False,
+            )
     if write_primary_pending_id:
         ctx.out["pending_action_id"] = resolved
     return resolved
@@ -2561,11 +2681,24 @@ def _select_pending_office_for_path(
 
     if not rows:
         return None, "miss"
-    if len(rows) == 1:
-        return rows[0], "hit"
 
     want_name = str(name or "").strip()
     want_office = str(office or "").strip()
+
+    if len(rows) == 1:
+        # #529：完全省略 name+office 的路径应答 → 唯一候选直取。
+        # #672：任一身份字段在场则必须完整人+职联合命中，缺一/错配零改该 row。
+        if not want_name and not want_office:
+            return rows[0], "hit"
+        if not want_name or not want_office:
+            return None, "miss"
+        hits = _match_office_row_by_name_office(
+            rows, name=want_name, office=want_office, content=content, db=db,
+        )
+        if len(hits) == 1:
+            return hits[0], "hit"
+        return None, "miss"
+
     # 多条必须人+职同时在场；缺一（含仅数字 id / 姓名-only）→ 歧义，戏内确认
     if not want_name or not want_office:
         return None, "ambiguous"
@@ -2780,18 +2913,37 @@ def _materialize_appointment(ctx: MaterializeCtx) -> None:
                 pend_for_minister=ctx.pend_for_minister,
             )
             return
-        if status == "hit" and row is not None:
-            # 同人同职再发任命+路径：no-op 去重，中旨/任别并入既有条
-            pending_id = _annotate_office_pending_path(
-                session.db,
+        incoming_action = str(appt.get("appoint_action") or "").strip()
+        row_action = str(row.get("action") or "").strip() if row is not None else ""
+        if (
+            status == "hit" and row is not None
+            and (incoming_action == "无" or incoming_action == row_action)
+        ):
+            # 路径只并入同向 action；反向任免继续走下方既有 staging/对冲管线。
+            # 同人同职再发任命+路径：no-op 去重，中旨/任别/summon 并入既有条。
+            # path-only 省略 name 时从命中 row payload 取 canonical 人名，走共享 summon tail。
+            person_for_summon = appt_name or str(
+                _office_payload(row).get("name") or ""
+            ).strip()
+            row_is_appoint = str(row.get("action") or "") == "任命"
+            resolved = _apply_existing_appointment_hit(
+                session,
                 row,
                 mode_mark=mode_mark,
                 tenure_mark=tenure_mark,
                 minister_name=minister_name,
                 turn=int(session.state.turn),
+                person_name=person_for_summon,
+                summon_after=(
+                    str(appt.get("summon_after") or "否").strip() == "是"
+                    and bool(person_for_summon)
+                    and row_is_appoint
+                    and str(appt.get("appoint_action") or "").strip() != "罢免"
+                ),
+                origin_chat_turn_id=int(ctx.chat_turn_id or 0),
+                annotate=True,
             )
-            if pending_id:
-                ctx.out["pending_action_id"] = pending_id
+            ctx.out["pending_action_id"] = resolved
             # 路径命中后：若本轮仍是完整任命语义且已并入，不再新建第二候选
             if appt.get("appoint_action") in ("任命", "罢免") and appt_name:
                 same = _match_office_row_by_name_office(
@@ -3113,6 +3265,10 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 ),
                 FieldSpec("name", "姓名", None, "", max_len=20),
                 FieldSpec("office", "官职", None, "", max_len=40),
+                FieldSpec(
+                    "summon_after", "任命后传召",
+                    frozenset({"是", "否"}), "否",
+                ),
                 FieldSpec(
                     "mode", "颁布方式",
                     frozenset({"ordinary", "midzhi"}), "",

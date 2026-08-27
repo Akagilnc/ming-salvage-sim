@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
 import pytest
@@ -585,3 +586,63 @@ def test_undo_survives_db_created_before_undone_at_column(game):
         assert row["undone_at"]
     finally:
         db2.close()
+
+
+def test_undo_erases_inactive_office_summon_origin_bound_to_chat_turn(game):
+    """#672：ensure inactive office origin 绑 chat-turn；undo 按 typed source 清。"""
+    db, state, content = game
+    m = _active_minister(db, content)
+    night = an.open_night(db, state, empty_scaffold=True)
+    night_id = int(night["id"])
+
+    def _writes(_nid: int, chat_id: int) -> None:
+        pending_id = db.stage_pending_action(
+            int(state.turn), "office", "任命", m,
+            {"name": "袁崇焕", "office": "辽东巡抚", "summon_after": "是"},
+        )
+        an.ensure_inactive_office_summon(
+            db, int(pending_id), "袁崇焕",
+            night_id=night_id, origin_chat_turn_id=int(chat_id),
+        )
+
+    _nid, chat_id = _run_round(db, state, m, writes=_writes)
+    origin_rows = db.conn.execute(
+        "SELECT id, origin_ref, origin_chat_turn_id, tags FROM story_ledger_entries "
+        "WHERE origin_ref LIKE 'office:%'",
+    ).fetchall()
+    assert len(origin_rows) == 1
+    assert int(origin_rows[0]["origin_chat_turn_id"]) == int(chat_id)
+    assert "传召未结" not in json.loads(origin_rows[0]["tags"] or "[]")
+    entry_id = int(origin_rows[0]["id"])
+
+    db.undo_chat_turn(int(chat_id))
+    assert db.conn.execute(
+        "SELECT count(*) FROM story_ledger_entries WHERE id=?", (entry_id,),
+    ).fetchone()[0] == 0
+
+
+def test_reject_pending_discards_inactive_office_summon_origin(game):
+    """#672：确认拒绝只清仍 inactive 的 office:<pending_id> origin。"""
+    db, state, content = game
+    m = _active_minister(db, content)
+    night = an.open_night(db, state, empty_scaffold=True)
+    pending_id = db.stage_pending_action(
+        int(state.turn), "office", "任命", m,
+        {"name": "袁崇焕", "office": "辽东巡抚", "summon_after": "是"},
+    )
+    an.ensure_inactive_office_summon(
+        db, int(pending_id), "袁崇焕",
+        night_id=int(night["id"]), origin_chat_turn_id=0,
+    )
+    origin = f"office:{int(pending_id)}"
+    assert db.conn.execute(
+        "SELECT count(*) FROM story_ledger_entries WHERE origin_ref=?", (origin,),
+    ).fetchone()[0] == 1
+
+    dropped = db.drop_pending_actions_for_minister(
+        int(state.turn), m, action_ids=[int(pending_id)],
+    )
+    assert dropped == 1
+    assert db.conn.execute(
+        "SELECT count(*) FROM story_ledger_entries WHERE origin_ref=?", (origin,),
+    ).fetchone()[0] == 0
