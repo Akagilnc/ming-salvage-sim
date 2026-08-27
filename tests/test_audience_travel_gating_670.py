@@ -2075,6 +2075,8 @@ def test_fresh_summon_same_beizhili_journey_attaches_origin_without_reapply(game
 def test_fresh_summon_omitted_content_syncs_db_and_rolls_back_together(game):
     """#672：省略 content 时 runtime_content 同步 DB/content；批内失败两侧同撤。"""
     db, state, content = game
+    from ming_sim import issues
+    issues.bind_content(content)  # 防他测漂移 _content；省略 content 路 →_ctx()
 
     # 成功路径：content 默认 None → runtime_content=_ctx() 与绑定 content 同步。
     solo = _set_place(game, "洪承畴", location="shaanxi")
