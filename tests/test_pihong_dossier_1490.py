@@ -3764,60 +3764,37 @@ def test_658_imperial_push_reuses_stalled_and_backing_credit(game):
     assert _edge_count() == edges_r
 
     # 非惩罚动作（放归/昭雪）带合法 backing → 顺颁成功零信用
-    db.set_character_status(state, minister, "imprisoned", "658-pre-release")
-    tool_args.update({
-        "decree_text": f"着放归{minister}。",
-        "punish_action": "放归",
-        "target_id": minister,
-        "amount": 0,
-        "backing_dossier_id": bid,
-    })
-    release_result = GameSession.chat(sess, actor, f"拟旨放归{minister}。")
-    assert release_result.pending_action_id
-    db.commit_pending_actions(
-        state, content=content,
-        action_ids=[int(release_result.pending_action_id)],
-    )
-    release_d = next(
-        d for d in db.list_decree_dossiers()
-        if d["pending_action_id"] == int(release_result.pending_action_id)
-    )
-    assert int(_dossier_payload(release_d).get("backing_dossier_id") or 0) == bid
-    edges_release = _edge_count()
-    db.apply_dossier_verdicts(
-        state,
-        [{"dossier_id": int(release_d["id"]), "decision": "promulgated"}],
-        content=content,
-    )
-    assert db.get_character_status(minister)[0] == "active"
-    assert _edge_count() == edges_release
-
-    db.set_character_status(state, minister, "dismissed", "658-pre-exonerate")
-    tool_args.update({
-        "decree_text": f"着昭雪{minister}。",
-        "punish_action": "昭雪",
-        "target_id": minister,
-        "amount": 0,
-        "backing_dossier_id": bid,
-    })
-    exonerate_result = GameSession.chat(sess, actor, f"拟旨昭雪{minister}。")
-    assert exonerate_result.pending_action_id
-    db.commit_pending_actions(
-        state, content=content,
-        action_ids=[int(exonerate_result.pending_action_id)],
-    )
-    exonerate_d = next(
-        d for d in db.list_decree_dossiers()
-        if d["pending_action_id"] == int(exonerate_result.pending_action_id)
-    )
-    edges_exonerate = _edge_count()
-    db.apply_dossier_verdicts(
-        state,
-        [{"dossier_id": int(exonerate_d["id"]), "decision": "promulgated"}],
-        content=content,
-    )
-    assert db.get_character_status(minister)[0] == "active"
-    assert _edge_count() == edges_exonerate
+    for status, reason, action in (
+        ("imprisoned", "658-pre-release", "放归"),
+        ("dismissed", "658-pre-exonerate", "昭雪"),
+    ):
+        db.set_character_status(state, minister, status, reason)
+        tool_args.update({
+            "decree_text": f"着{action}{minister}。",
+            "punish_action": action,
+            "target_id": minister,
+            "amount": 0,
+            "backing_dossier_id": bid,
+        })
+        nonpunish_result = GameSession.chat(sess, actor, f"拟旨{action}{minister}。")
+        assert nonpunish_result.pending_action_id
+        db.commit_pending_actions(
+            state, content=content,
+            action_ids=[int(nonpunish_result.pending_action_id)],
+        )
+        nonpunish_d = next(
+            d for d in db.list_decree_dossiers()
+            if d["pending_action_id"] == int(nonpunish_result.pending_action_id)
+        )
+        assert int(_dossier_payload(nonpunish_d).get("backing_dossier_id") or 0) == bid
+        edges_np = _edge_count()
+        db.apply_dossier_verdicts(
+            state,
+            [{"dossier_id": int(nonpunish_d["id"]), "decision": "promulgated"}],
+            content=content,
+        )
+        assert db.get_character_status(minister)[0] == "active"
+        assert _edge_count() == edges_np
 
 
 def test_658_endorsement_provenance_xor(game):
