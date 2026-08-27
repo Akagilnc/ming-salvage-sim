@@ -23,7 +23,7 @@ Status: accepted（实现分波次,见末节;#73 产出问题 1/4 的答案;r1 �
 
 7. **不建自动回收 telemetry**(探针期过早工程化)。试玩形态=**试玩者本地跑**(不考虑作者托管 web),回收唯一路径=手动发错误目录——中止提示必须自带指引(写明完整路径+「请把它发给作者」),拒收 jsonl 与错误包集中同一目录,一次打包全带走。
 
-8. **契约住 `ming_sim/applier.py`**(契约类型 + 拒收收集器 + 事务包裹);各 section **原地**迁入契约,不大搬家(免与财政线 #66/#78 撞文件)。
+8. **契约住 `ming_sim/applier.py`**(契约类型 + 拒收收集器 + 事务包裹);各 section **原地**迁入契约,不大搬家(免与财政线 #66/#78 撞文件)。〔2026-08-27 后出为准:**本决定被 ADR 0150 supersede**——段物理迁入实体适配器目录 `ming_sim/entities/<entity>/`、契约承重化(SectionResult/RejectedItem canonical)、`apply_score_extraction` 退役为 `settle_delta`;当年「免撞财政线」的理由已随财政线落地过期。0008 其余决定(事务边界/重跑契约/错误包/拒收报告)全部继续有效。〕
 
 ## Considered Options
 
