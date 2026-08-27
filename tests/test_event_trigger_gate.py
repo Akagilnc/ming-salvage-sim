@@ -3041,6 +3041,116 @@ def test_strategic_foreign_event_lands_soft_result_person_delta(game):
     assert db.get_character_status("卢象升")[0] == "dead"
 
 
+def test_strategic_event_style_only_temperament_is_material_world_state(game):
+    """#641：style-only 合法性情战果承认 materiality，可触发事件且各投影一致。"""
+    import json
+
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1638
+    state.period = 9
+    person = "卢象升"
+    new_style = "  经戊寅边事锤炼，临机更沉得住气。\n少作张扬。  "
+    before_style = db.conn.execute(
+        "SELECT style FROM characters WHERE name=?", (person,)
+    ).fetchone()["style"]
+    assert new_style != before_style
+    assert any(ev.id == "wuyin_lubian" for ev in issues.gather_candidate_events(state, db))
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{"origin_kind": "event_pool", "id": "wuyin_lubian"}],
+            "人物变更": [{
+                "origin_ref": "盘面自发",
+                "name": person,
+                "动作": "性情",
+                "style": new_style,
+                "reason": "戊寅虏变后主帅性情软进化",
+            }],
+        },
+        content=content,
+    )
+
+    issue = out["issue_summary"]["new_issues"][0]
+    assert issue.get("rejected") is not True
+    assert issue.get("category") != "missing_world_state_delta"
+    assert db.has_event_triggered("wuyin_lubian")
+    assert db.conn.execute(
+        "SELECT style FROM characters WHERE name=?", (person,)
+    ).fetchone()["style"] == new_style
+    assert content.characters[person].style == new_style
+    change = next(
+        item for item in out["applied_person_changes"]
+        if item.get("name") == person and item.get("动作") == "性情"
+    )
+    assert change.get("rejected") is not True
+    assert change["old_style"] == before_style
+    assert change["new_style"] == new_style
+    assert change["style"] == new_style
+    log = db.conn.execute(
+        "SELECT action, normalized FROM person_logs "
+        "WHERE person_name=? AND action=? ORDER BY id DESC LIMIT 1",
+        (person, "性情"),
+    ).fetchone()
+    assert log is not None
+    normalized = json.loads(log["normalized"])
+    assert normalized["old_style"] == before_style
+    assert normalized["new_style"] == new_style
+
+
+def test_strategic_event_same_style_temperament_is_not_material(game):
+    """#641：同值 style 重写不构成 material world-state delta。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1638
+    state.period = 9
+    person = "卢象升"
+    current = db.conn.execute(
+        "SELECT style FROM characters WHERE name=?", (person,)
+    ).fetchone()["style"] or "沉毅果决，临阵不苟。"
+    # 确保当前 style 非空可重写；若库内为空则先落一笔再测同值。
+    if not str(current).strip():
+        current = "沉毅果决，临阵不苟。"
+        issues.apply_score_extraction(
+            db,
+            state,
+            {"人物变更": [{
+                "origin_ref": "盘面自发",
+                "name": person,
+                "动作": "性情",
+                "style": current,
+                "reason": "前置写入",
+            }]},
+            content=content,
+        )
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{"origin_kind": "event_pool", "id": "wuyin_lubian"}],
+            "人物变更": [{
+                "origin_ref": "盘面自发",
+                "name": person,
+                "动作": "性情",
+                "style": current,
+                "reason": "戊寅虏变后同值重写",
+            }],
+        },
+        content=content,
+    )
+
+    issue = out["issue_summary"]["new_issues"][0]
+    assert issue.get("rejected") is True
+    assert issue.get("category") == "missing_world_state_delta"
+    assert not db.has_event_triggered("wuyin_lubian")
+    assert db.conn.execute(
+        "SELECT style FROM characters WHERE name=?", (person,)
+    ).fetchone()["style"] == current
+
+
 def test_wuyin_lubian_content_treats_lu_death_as_soft_battle_outcome():
     """#189：戊寅虏变不能把卢象升写成人物核心；卢死/生是战事软判结果。"""
     events_path = Path(__file__).resolve().parents[1] / "content" / "events.json"

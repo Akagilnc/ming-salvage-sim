@@ -15,11 +15,7 @@ from __future__ import annotations
 import hashlib
 import httpx
 import json
-import os
-import signal
 import sqlite3
-import subprocess
-import sys
 import threading
 
 import pytest
@@ -34,6 +30,7 @@ from ming_sim.relation_brew import (
     FOUNDINGS_KEY,
     RECENT_KEY,
     MonthEndRelationBrewLeg,
+    build_brew_input,
     merge_founding_segment,
     relation_dimension,
     run_month_end_relation_brew,
@@ -182,8 +179,11 @@ def test_flip_brew_input_must_contain_new_edge_events(game):
 
 def test_failed_month_degrades_to_pending_and_rebrews_next_month(game):
     db, state, _ = game
-    _add_edge(db, state, source="温体仁", target="周延儒", kind="结怨",
-              context="温体仁当殿讦周延儒。", origin="audience:turn-1")
+    failed_context = "温体仁当殿讦周延儒。"
+    failed_id = _add_edge(
+        db, state, source="温体仁", target="周延儒", kind="结怨",
+        context=failed_context, origin="audience:turn-1",
+    )
 
     # 真 LLM 单条失败（声明类型 LLMUnavailable）→ 降级留痕；程序错类不走此路。
     def failing_brew(payload_json: str) -> str:
@@ -200,6 +200,7 @@ def test_failed_month_degrades_to_pending_and_rebrews_next_month(game):
     assert [(row["source"], row["target"]) for row in pending] == [("温体仁", "周延儒")]
 
     # 次月无新事件，仍因 pending 被选中；成功后 pending 清除、摘要落定。
+    # #642：失败月事件在次月 payload 双桶并集中恰一次，且落 new 不落 prior。
     state.turn += 1
     state.period += 1
     calls: list = []
@@ -210,190 +211,213 @@ def test_failed_month_degrades_to_pending_and_rebrews_next_month(game):
     assert report["selected"] == 2 and len(report["brewed"]) == 2
     relation_calls = [c for c in calls if "view" not in c]
     assert relation_calls and relation_calls[0]["has_pending_failure"] is True
+    payload = relation_calls[0]
+    new_hits = [e for e in payload["new_events"] if e["context"] == failed_context]
+    prior_hits = [e for e in payload["prior_events"] if e["context"] == failed_context]
+    assert len(new_hits) + len(prior_hits) == 1
+    assert len(new_hits) == 1 and prior_hits == []
     assert db.get_relation_brew_pending() == []
     summary = db.get_relation_summary("温体仁", "周延儒")
     assert summary["recent_segment"] == "温周结怨，朝堂侧目。"
     assert summary["dimension"] == "大臣"
+    assert int(summary["last_event_id"]) >= int(failed_id)
 
 
-# ---------------- 庭裁 r3 F1①② 故障注入 A/B：进程边界硬杀证明（真崩溃，非可捕获异常）
+# ---------------- #642 r3 R2：commit→join→persist 前窗口（非 SIGKILL 可控接缝）
 
-# 崩溃子进程：在注入点对自身 os.kill(SIGKILL)——进程级猝死，宽 catch 路径、
-# finally、atexit 一概无从执行，未提交事务由 SQLite 热日志在下次开库时回滚。
-# 只操作测试自建的临时库文件；被硬杀的仅是测试子进程自身，不触碰任何在役进程。
-# 生产代码零改动、零 crash hook——注入全部在子进程内对测试自己的连接打补丁。
-_CRASH_CHILD_SCRIPT = r'''
-import json
-import os
-import signal
-import sys
+def test_r2_commit_join_before_persist_fault_keeps_pending_and_rebrrews_once(
+    game, monkeypatch,
+):
+    """#642 R2：settle atomic 已提交、brew join 已完成、真实 persist 尚未写入时可控中止。
 
-from ming_sim.db import GameDB
-from ming_sim.relation_brew import (
-    FOUNDINGS_KEY,
-    RECENT_KEY,
-    run_month_end_relation_brew,
-)
-from ming_sim.relations import EMPEROR_NODE
-
-db_path, mode = sys.argv[1], sys.argv[2]
-db = GameDB(db_path)
-
-row = db.conn.execute(
-    "SELECT turn, year, period FROM game_state WHERE id = 1"
-).fetchone()
-
-
-class _State:
-    turn = int(row["turn"])
-    year = int(row["year"])
-    period = int(row["period"])
-
-
-state = _State()
-
-
-def _recent_brew(recent):
-    return lambda payload: json.dumps(
-        {FOUNDINGS_KEY: [], RECENT_KEY: recent}, ensure_ascii=False
-    )
-
-
-if mode == "A":
-    # 故障 A「摘要已写、事务未提交即崩」：次月新边事件先落库（正常提交），随后
-    # 第 1、2 次 commit＝关系/派系两笔认领（须先持久，#637 同批），第 3 次
-    # commit＝apply 落定提交——不提交、直接 SIGKILL。崩溃点之后任何写（含宽
-    # catch 补记）都不可能发生。
-    state.turn += 1
-    state.period += 1
-    db.record_relation_edge_event(
-        source="洪承畴", target=EMPEROR_NODE, event_kind="辜负",
-        context="洪承畴所请饷银被驳。", origin="audience:turn-2",
-        turn=state.turn, year=state.year, period=state.period,
-    )
-    original_commit = db.conn.commit
-    commits = {"n": 0}
-
-    def crashing_commit():
-        commits["n"] += 1
-        if commits["n"] >= 3:
-            os.kill(os.getpid(), signal.SIGKILL)
-        original_commit()
-
-    db.conn.commit = crashing_commit
-    run_month_end_relation_brew(
-        db, state, _recent_brew("洪承畴请饷被驳，心怨。"),
-        settled_turn=state.turn, settled_year=state.year, settled_period=state.period,
-    )
-    os._exit(3)  # 不可达：第 2 次 commit 处已硬杀；到达即注入失败。
-elif mode == "B":
-    # 故障 B「新边事件已落、pending 标记尚未持久即崩」（fresh claim→durable
-    # pending 缝）：边事件已在父进程持久，第 1 次 commit＝认领——不提交、直接
-    # SIGKILL，pending 从未落盘。
-    def crashing_commit():
-        os.kill(os.getpid(), signal.SIGKILL)
-
-    db.conn.commit = crashing_commit
-    run_month_end_relation_brew(
-        db, state, _recent_brew("孙传庭困守乏饷，怨望渐深。"),
-        settled_turn=state.turn, settled_year=state.year, settled_period=state.period,
-    )
-    os._exit(3)  # 不可达：认领 commit 处已硬杀。
-else:
-    os._exit(2)
-'''
-
-
-def _run_crash_child(db_path: str, mode: str) -> int:
-    """拉起最小崩溃子进程，返回其退出码（SIGKILL 死亡＝-signal.SIGKILL）。"""
-    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    env = dict(os.environ)
-    env["PYTHONPATH"] = repo_root + os.pathsep + env.get("PYTHONPATH", "")
-    proc = subprocess.run(
-        [sys.executable, "-c", _CRASH_CHILD_SCRIPT, str(db_path), mode],
-        env=env, capture_output=True, text=True, timeout=120,
-    )
-    return proc.returncode, proc.stderr
-
-
-def _assert_sigkilled(returncode: int, stderr: str, *, mode: str) -> None:
-    assert returncode == -signal.SIGKILL, (
-        f"故障{mode}子进程未在注入点被硬杀：rc={returncode}\n{stderr}"
-    )
-
-
-def test_fault_a_uncommitted_summary_crash_keeps_pending_and_old_summary(game):
-    db, state, _ = game
-    _add_edge(db, state, source="洪承畴", target=EMPEROR_NODE, kind="兑现所托",
+    注入＝既有生产接缝 MonthEndRelationBrewLeg.persist 入口抛错（非 SIGKILL、
+    无 test-only 生产钩子）。重开后续跑恰一次补酿、旧摘要字节不变、边 id 不双增。
+    """
+    db, state, content = game
+    source, target = "洪承畴", EMPEROR_NODE
+    _add_edge(db, state, source=source, target=target, kind="兑现所托",
               context="洪承畴剿抚办结。", origin="audience:turn-1")
     calls: list = []
     brew_fn = _brew_fn_factory(calls)
     brew_fn.outputs = [_script(recent="洪承畴初结天恩。")]
     run_month_end_relation_brew(db, state, brew_fn)
-    old_summary = db.get_relation_summary("洪承畴", EMPEROR_NODE)
+    old_recent = db.get_relation_summary(source, target)["recent_segment"]
+    assert old_recent == "洪承畴初结天恩。"
 
-    # 次月新边事件＋「摘要已写、事务未提交即崩」注入全部发生在子进程：子进程在
-    # apply 落定提交处被 SIGKILL 真硬杀——生产宽 catch 路径随进程一起死亡，
-    # 重启后 pending 在册只能是崩前已持久的 durable claim，绝非 catch 补记。
-    path = db.path
-    db.close()
-    _assert_sigkilled(*_run_crash_child(path, "A"), mode="A")
-
-    # 父进程重开 DB 文件（真实崩溃恢复：热日志回滚未提交事务）：
-    # pending 在册、事件不丢、摘要读回＝崩前旧值（不得已见新摘要、无半写）。
-    db = GameDB(path)
-    assert [(row["source"], row["target"]) for row in db.get_relation_brew_pending()] == [
-        ("洪承畴", EMPEROR_NODE)
-    ]
-    assert db.get_relation_edge_events(source="洪承畴", target=EMPEROR_NODE)
-    assert db.get_relation_summary("洪承畴", EMPEROR_NODE)["recent_segment"] == (
-        old_summary["recent_segment"]
-    )
-
-    # 补酿恰一次：再跑结算，成功落定、pending 清除。
+    # 次月新边事件：进入 settle 生产序后被选中并 durable claim。
     state.turn += 1
     state.period += 1
-    calls.clear()
-    brew_fn.outputs = [_script(recent="洪承畴请饷被驳，心怨。")]
-    report = run_month_end_relation_brew(db, state, brew_fn)
-    # 同批新事实：洪承畴党籍投影中立（factions 表现存）→ 关系对＋中立，补酿恰一次。
-    assert len(report["brewed"]) == 2
-    assert len(calls) == 2
-    assert db.get_relation_brew_pending() == []
-    assert db.get_relation_summary("洪承畴", EMPEROR_NODE)["recent_segment"] == "洪承畴请饷被驳，心怨。"
+    _add_edge(db, state, source=source, target=target, kind="辜负",
+              context="洪承畴所请饷银被驳。", origin="audience:turn-2")
+    edge_ids_before = {
+        int(row["id"])
+        for row in db.get_relation_edge_events(source=source, target=target)
+    }
 
+    persist_hits = {"n": 0}
+    real_persist = MonthEndRelationBrewLeg.persist
 
-# ------------------------------------ 庭裁 r3 F1② 故障注入 B：pending 未持久即崩
+    def boom_then_real(self):
+        persist_hits["n"] += 1
+        if persist_hits["n"] == 1:
+            # join 之后、真实写入之前：直接中止，不调用真实 persist。
+            raise RuntimeError("persist 前可控中止（#642 R2）")
+        return real_persist(self)
 
-def test_fault_b_pending_mark_lost_still_selected_and_brewed_once(game):
-    db, state, _ = game
-    _add_edge(db, state, source="孙传庭", target=EMPEROR_NODE, kind="辜负",
-              context="孙传庭困守乏饷。", origin="audience:turn-1")
+    monkeypatch.setattr(MonthEndRelationBrewLeg, "persist", boom_then_real)
 
-    # fresh claim→durable pending 缝在子进程内注入：边事件已持久（父进程已提交），
-    # 子进程在第 1 次 commit（认领）处被 SIGKILL 真硬杀——pending 确实未曾持久。
+    def runner(settle_state, settle_db, *, settled_turn, settled_year, settled_period):
+        brew = _brew_fn_factory(calls)
+        brew.outputs = [_script(recent="洪承畴请饷被驳，心怨。")]
+        return MonthEndRelationBrewLeg(
+            settle_db, settle_state, brew,
+            settled_turn=settled_turn,
+            settled_year=settled_year,
+            settled_period=settled_period,
+        )
+
+    before_turn = state.turn
+    with pytest.raises(RuntimeError, match="persist 前可控中止"):
+        settle_with_delta(
+            state, db, {}, before_turn=before_turn, content=content,
+            relation_brew_runner=runner,
+        )
+
+    # settle atomic 已提交（turn 推进）；摘要未半写；认领先行 pending 在册。
+    assert state.turn == before_turn + 1
+    assert persist_hits["n"] == 1
     path = db.path
     db.close()
-    _assert_sigkilled(*_run_crash_child(path, "B"), mode="B")
-
-    # 重启（父进程重开 DB 文件）：pending 未持久、边事件已在册。
     db = GameDB(path)
-    assert db.get_relation_brew_pending() == []
-    assert db.get_relation_edge_events(source="孙传庭", target=EMPEROR_NODE)
+    pending_pairs = [(row["source"], row["target"]) for row in db.get_relation_brew_pending()]
+    assert (source, target) in pending_pairs
+    assert db.get_relation_summary(source, target)["recent_segment"] == old_recent
+    edge_ids_mid = {
+        int(row["id"])
+        for row in db.get_relation_edge_events(source=source, target=target)
+    }
+    assert edge_ids_mid == edge_ids_before
 
-    # 该月仍被选中（本月新事件判据）、酿制恰一次：认领→成功→pending 同事务清除。
+    # 再次结算：补酿恰一次、pending 清除、摘要落定；边 id 不双增。
+    calls.clear()
+
+    def runner2(settle_state, settle_db, *, settled_turn, settled_year, settled_period):
+        brew = _brew_fn_factory(calls)
+        brew.outputs = [_script(recent="洪承畴请饷被驳，心怨。")]
+        return MonthEndRelationBrewLeg(
+            settle_db, settle_state, brew,
+            settled_turn=settled_turn,
+            settled_year=settled_year,
+            settled_period=settled_period,
+        )
+
+    # 重载 state 与打开的 db 对齐（真实恢复路径）。
+    row = db.conn.execute(
+        "SELECT turn, year, period FROM game_state WHERE id = 1"
+    ).fetchone()
+    state.turn = int(row["turn"])
+    state.year = int(row["year"])
+    state.period = int(row["period"])
+    settle_with_delta(
+        state, db, {}, before_turn=state.turn, content=content,
+        relation_brew_runner=runner2,
+    )
+    relation_calls = [c for c in calls if "view" not in c]
+    assert len(relation_calls) == 1
+    assert (source, target) not in [
+        (row["source"], row["target"]) for row in db.get_relation_brew_pending()
+    ]
+    assert db.get_relation_summary(source, target)["recent_segment"] == (
+        "洪承畴请饷被驳，心怨。"
+    )
+    edge_ids_after = {
+        int(row["id"])
+        for row in db.get_relation_edge_events(source=source, target=target)
+    }
+    assert edge_ids_after == edge_ids_before
+
+
+# ---------------- #642 锚④：build_brew_input 只投影 prior 字段（全序/筛选归 read 缝）
+
+def test_build_brew_input_projects_prior_event_fields():
+    """brew 侧只锁 prior_events 字段投影与空列表；全量有序/和解归 read 缝主干。"""
+    prior = [{
+        "id": 9, "event_kind": "知遇", "context": "越次一召原句。",
+        "origin": "seed:founding", "year": 1628, "period": 11,
+    }]
+    payload = build_brew_input(
+        source=EMPEROR_NODE, target="杨嗣昌", dimension="君臣",
+        year=1635, period=6, summary=None, new_events=[],
+        has_pending=False, prior_events=prior,
+    )
+    assert payload["prior_events"] == [{
+        "event_kind": "知遇", "context": "越次一召原句。",
+        "origin": "seed:founding", "year": 1628, "period": 11,
+    }]
+    assert "id" not in payload["prior_events"][0]
+    assert build_brew_input(
+        source="甲", target="乙", dimension="大臣",
+        year=1635, period=6, summary=None, new_events=[],
+        has_pending=True, prior_events=[],
+    )["prior_events"] == []
+
+
+def test_prepare_attaches_prior_events_only_via_history_seam(game, monkeypatch):
+    """生产装配：prepare→build_brew_input 经历史读缝取 prior；与 new 互斥。
+
+    先成功酿出水位，再加次月新事件——已消化旧事只在 prior，本批新事只在 new。
+    """
+    db, state, _ = game
+    source, target = EMPEROR_NODE, "杨嗣昌"
+    prior_context = "越次一召原句。"
+    # 严格早于开局年月（1627/10）的奠基原句，水位推进后才能进 prior_events。
+    db.record_relation_edge_event(
+        source=source, target=target, event_kind="知遇",
+        context=prior_context, origin="seed:founding:yueci",
+        turn=0, year=1626, period=6,
+    )
+    _add_edge(db, state, source=source, target=target, kind="知遇",
+              context="首月知遇。", origin="audience:month-1")
+    brew_fn = _brew_fn_factory([])
+    brew_fn.outputs = [_script(recent="首月近况。")]
+    run_month_end_relation_brew(db, state, brew_fn)
+    assert db.get_relation_summary(source, target) is not None
+
+    # 次月新事件：prior 经历史读缝、与 new 互斥、已消化旧事只在 prior。
+    state.turn += 1
+    state.period += 1
+    new_context = "次月新知遇。"
+    _add_edge(db, state, source=source, target=target, kind="知遇",
+              context=new_context, origin="audience:month-2")
+
+    import ming_sim.relation_brew as brew_mod
+    import ming_sim.relation_read as read_mod
+    seen = []
+    real = read_mod.load_relation_history_before
+
+    def spy(db_, *, source, target, before_year, before_period):
+        seen.append((source, target, before_year, before_period))
+        return real(
+            db_, source=source, target=target,
+            before_year=before_year, before_period=before_period,
+        )
+
+    monkeypatch.setattr(brew_mod, "load_relation_history_before", spy)
     calls: list = []
     brew_fn = _brew_fn_factory(calls)
-    brew_fn.outputs = [_script(recent="孙传庭困守乏饷，怨望渐深。")]
-    report = run_month_end_relation_brew(db, state, brew_fn)
-
-    assert report["selected"] == 2
-    assert len(calls) == 2
-    assert len(report["brewed"]) == 2
-    assert db.get_relation_summary("孙传庭", EMPEROR_NODE)["recent_segment"] == (
-        "孙传庭困守乏饷，怨望渐深。"
-    )
-    assert db.get_relation_brew_pending() == []
+    brew_fn.outputs = [_script(recent="次月近况。")]
+    run_month_end_relation_brew(db, state, brew_fn)
+    relation_calls = [c for c in calls if "view" not in c]
+    assert relation_calls
+    payload = relation_calls[0]
+    new_contexts = [e["context"] for e in payload["new_events"]]
+    prior_contexts = [e["context"] for e in payload["prior_events"]]
+    assert new_context in new_contexts
+    assert prior_context not in new_contexts
+    assert prior_context in prior_contexts
+    assert new_context not in prior_contexts
+    assert set(new_contexts).isdisjoint(prior_contexts)
+    assert (source, target, int(state.year), int(state.period)) in seen
 
 
 # --------------------------- 庭裁 r3/r4 F2 超长 fixture：32,700 字节零删改

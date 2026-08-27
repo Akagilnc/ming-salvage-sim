@@ -331,23 +331,22 @@ def _surface_capture(label: str, text: str) -> dict:
 def _auto_complete_hitl(session: GameSession) -> Optional[str]:
     """真实结算若出 HITL，一次 awaiting 自动选第一项；返回完整 report。
 
-    形状对齐生产 API（terminal._submit_first_cli_decisions / agy_turn_probe）：
-    submit_decisions 返回报告字符串，再无 awaiting——不造 while/round_cap/伪结果。
+    #657：session.submit_hitl_choices 唯一编排 + 既有 session._write_gate。
+    首选项投影走 project_preferred_hitl_choice 唯一真源。
     """
+    from ming_sim.rescript_actions import project_preferred_hitl_choice
+
     result = session.advance_without_decree()
     if result is None:
         return None
     if not result.awaiting:
         return result.report
     decisions = list(result.decisions) or session.pending_decisions()
-    choices = []
-    for d in sorted(decisions, key=lambda x: int(x["idx"])):
-        opts = d.get("options") or []
-        pick = opts[0] if opts else {}
-        label = pick.get("label", "") if isinstance(pick, dict) else str(pick)
-        hint = pick.get("hint", "") if isinstance(pick, dict) else ""
-        choices.append({"label": label, "hint": hint})
-    return session.submit_decisions(choices)
+    choices = [
+        project_preferred_hitl_choice(d)
+        for d in sorted(decisions, key=lambda x: int(x.get("idx") or 0))
+    ]
+    return session.submit_hitl_choices(choices, write_gate=session._write_gate)
 
 
 def _first_month_gazette_via_production_settle(

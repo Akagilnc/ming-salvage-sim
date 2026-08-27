@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AudienceArchiveModal } from "./audienceArchiveModal";
 import { ChatModal } from "./chatModal";
 import { EdictModal } from "./edictModal";
-import { HistoryDetailView, HistoryModal } from "./historyModal";
+import { HistoryModal } from "./historyModal";
 import { FullscreenModal } from "./hud";
 import { ReportModal } from "./reportModal";
 import { parseLeadingStageDirection } from "../format";
@@ -152,6 +152,7 @@ function renderModal(props: {
 
 function renderReportModal(props: {
   report: string;
+  attendantMessage?: string;
   onClose?: () => void;
   periodLabel?: string;
 }) {
@@ -162,6 +163,7 @@ function renderReportModal(props: {
     root.render(
       <ReportModal
         report={props.report}
+        attendantMessage={props.attendantMessage}
         periodLabel={props.periodLabel}
         onClose={props.onClose ?? (() => {})}
       />
@@ -1288,7 +1290,7 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
   it("selects closed scenes through the shared scroll endpoint without a composer", async () => {
     const fetchMock = vi.fn().mockImplementation((url: string) => {
       if (url === "/api/history/turns") return Promise.resolve({ ok: true, json: async () => ({ turns: [
-        { kind: "month", turn: 7, year: 1, period: 11, has_report: true, has_directive: false },
+        { kind: "month", turn: 7, year: 1, period: 11, has_report: true, has_attendant: false, has_directive: false },
         { kind: "night", turn: 7, year: 1, period: 11, night_id: 31, title: "1年11月 · 戌时乾清宫 · 越次召对 · 第1场", involved_people: ["杨嗣昌"] },
         { kind: "night", turn: 7, year: 1, period: 11, night_id: 32, title: "1年11月 · 戌时乾清宫 · 召对 · 第2场", involved_people: ["洪承畴"] },
       ] }) });
@@ -1319,15 +1321,172 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
   it("史册 filters out scene rows and keeps the public-document boundary", async () => {
     vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string) => Promise.resolve({ ok: true, json: async () =>
       url === "/api/history/turns" ? { turns: [
-        { kind: "month", turn: 7, year: 1, period: 11, has_report: true, has_directive: false },
+        { kind: "month", turn: 7, year: 1, period: 11, has_report: true, has_attendant: false, has_directive: false },
         { kind: "night", turn: 7, year: 1, period: 11, night_id: 31, title: "不应出现的场卷" },
       ] } : { turn: 7, exists: true, report: "月档奏报", directives: [] }
     })));
     const host = document.createElement("div"); document.body.appendChild(host);
     const root = createRoot(host); mountedRoots.push({ root, host });
     await act(async () => { root.render(<HistoryModal onClose={() => {}} />); await Promise.resolve(); await Promise.resolve(); });
-    expect(host.textContent).toContain("奏报与诏书");
+    expect(host.textContent).toMatch(/奏报.*诏书.*递话|奏报、诏书与递话/);
     expect(host.textContent).not.toContain("不应出现的场卷");
+  });
+
+  it("#671 史册月档经 HistoryModal fetch 呈现独立递话原文", async () => {
+    const raw = "\n  **皇爷**，洪承畴本月抵京候旨。  \n";
+    const blank = "   \n\t  ";
+    const monthTurn = { kind: "month" as const, turn: 7, year: 1, period: 11, has_report: true, has_attendant: true, has_directive: false };
+    const fetchMock = vi.fn().mockImplementation((url: string) => Promise.resolve({
+      ok: true,
+      json: async () => url === "/api/history/turns"
+        ? { turns: [monthTurn] }
+        : {
+            turn: 7,
+            exists: true,
+            year: 1,
+            period: 11,
+            report: "一、人事除目",
+            attendant_message: raw,
+            decree_text: "",
+            directives: [],
+          },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const host = document.createElement("div"); document.body.appendChild(host);
+    const root = createRoot(host); mountedRoots.push({ root, host });
+    await act(async () => {
+      root.render(<HistoryModal onClose={() => {}} />);
+    });
+    // 等详情链落地后再断言递话原文（完成信号，非固定微任务次数）
+    await act(async () => {
+      await vi.waitFor(async () => {
+        await Promise.resolve();
+        expect(host.querySelector("[data-testid=history-attendant]")).not.toBeNull();
+      });
+    });
+    expect(fetchMock).toHaveBeenCalledWith("/api/history/turns");
+    expect(fetchMock).toHaveBeenCalledWith("/api/history/turn/7");
+    const section = host.querySelector("[data-testid=history-attendant]");
+    // trim 仅判空；DOM 写原文（含空白与 markdown 标记）
+    expect(section!.querySelector("pre")?.textContent).toBe(raw);
+
+    // 纯空白递话：先等详情 report 正文落地，再断言 section 缺席
+    fetchMock.mockImplementation((url: string) => Promise.resolve({
+      ok: true,
+      json: async () => url === "/api/history/turns"
+        ? { turns: [monthTurn] }
+        : {
+            turn: 7,
+            exists: true,
+            year: 1,
+            period: 11,
+            report: "一、人事除目",
+            attendant_message: blank,
+            decree_text: "",
+            directives: [],
+          },
+    }));
+    const hostBlank = document.createElement("div"); document.body.appendChild(hostBlank);
+    const rootBlank = createRoot(hostBlank); mountedRoots.push({ root: rootBlank, host: hostBlank });
+    await act(async () => {
+      rootBlank.render(<HistoryModal onClose={() => {}} />);
+    });
+    await act(async () => {
+      await vi.waitFor(async () => {
+        await Promise.resolve();
+        const reportPre = Array.from(hostBlank.querySelectorAll("pre.memorial-text"))
+          .find((el) => el.textContent === "一、人事除目");
+        expect(reportPre).toBeTruthy();
+      });
+    });
+    expect(hostBlank.querySelector("[data-testid=history-attendant]")).toBeNull();
+
+    // 第三场景：纯空白 report + 非空递话 → 递话原文呈现，不画空奏报 section
+    const attendantOnlyTurn = {
+      kind: "month" as const,
+      turn: 7,
+      year: 1,
+      period: 11,
+      has_report: false,
+      has_attendant: true,
+      has_directive: false,
+    };
+    fetchMock.mockImplementation((url: string) => Promise.resolve({
+      ok: true,
+      json: async () => url === "/api/history/turns"
+        ? { turns: [attendantOnlyTurn] }
+        : {
+            turn: 7,
+            exists: true,
+            year: 1,
+            period: 11,
+            report: blank,
+            attendant_message: raw,
+            decree_text: "",
+            directives: [],
+          },
+    }));
+    const hostBlankReport = document.createElement("div"); document.body.appendChild(hostBlankReport);
+    const rootBlankReport = createRoot(hostBlankReport); mountedRoots.push({ root: rootBlankReport, host: hostBlankReport });
+    await act(async () => {
+      rootBlankReport.render(<HistoryModal onClose={() => {}} />);
+    });
+    await act(async () => {
+      await vi.waitFor(async () => {
+        await Promise.resolve();
+        expect(hostBlankReport.querySelector("[data-testid=history-attendant]")).not.toBeNull();
+      });
+    });
+    const attendantSection = hostBlankReport.querySelector("[data-testid=history-attendant]");
+    expect(attendantSection!.querySelector("pre")?.textContent).toBe(raw);
+    const memorialPres = Array.from(hostBlankReport.querySelectorAll("pre.memorial-text"));
+    expect(memorialPres).toHaveLength(1);
+    expect(memorialPres[0].textContent).toBe(raw);
+  });
+
+  it("#671 attendant-only 月档列表标签为递话、不冒充奏报", async () => {
+    const monthTurn = {
+      kind: "month" as const,
+      turn: 7,
+      year: 1627,
+      period: 10,
+      has_report: false,
+      has_attendant: true,
+      has_directive: false,
+    };
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string) => Promise.resolve({
+      ok: true,
+      json: async () => url === "/api/history/turns"
+        ? { turns: [monthTurn] }
+        : {
+            turn: 7,
+            exists: true,
+            year: 1627,
+            period: 10,
+            report: "",
+            attendant_message: "递话正文",
+            decree_text: "",
+            directives: [],
+          },
+    })));
+    const host = document.createElement("div"); document.body.appendChild(host);
+    const root = createRoot(host); mountedRoots.push({ root, host });
+    await act(async () => {
+      root.render(<HistoryModal onClose={() => {}} />);
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    });
+
+    const item = host.querySelector(".history-turn-item");
+    expect(item).not.toBeNull();
+    const label = item!.textContent || "";
+    expect(label).toContain("递话");
+    expect(label).not.toContain("奏报");
+
+    // 标题/摘要承认第三种内容（契约：含「递话」；不锁死全句）
+    const dialog = host.querySelector('[role="dialog"]');
+    expect(dialog?.getAttribute("aria-label") || "").toContain("递话");
+    expect(host.textContent).toContain("递话");
+    expect(host.textContent).not.toMatch(/仅收奏报与诏书/);
   });
 });
 
@@ -1413,16 +1572,13 @@ describe("ChatModal — elapsed timer during thinking (issue #353)", () => {
 });
 
 describe("ReportModal — narrative settlement bulletin", () => {
-  it("renders narrative without an account page or literal organic markdown", () => {
+  it("renders narrative without an account page", () => {
     renderReportModal({
       report: "**辽东军情**\n- 军前缺饷",
     });
 
     expect(document.body.textContent).toContain("辽东军情");
     expect(document.body.textContent).toContain("军前缺饷");
-    expect(document.body.textContent).not.toContain("**");
-    expect(document.body.textContent).not.toContain("- 军前缺饷");
-
     expect(document.body.textContent).not.toContain("实账");
     expect(document.body.textContent).not.toContain("账目明细");
   });
@@ -1499,6 +1655,33 @@ describe("ReportModal — narrative settlement bulletin", () => {
     expect(scroll!.contains(dismissWrap)).toBe(false);
     act(() => dismissBtn!.click());
     expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("#671 王承恩递话在邸报纸面外独立区，不经 stripOrganicMarkdown；空则不渲染", () => {
+    const hostEmpty = renderReportModal({ report: "一、边报" });
+    expect(hostEmpty.querySelector("[data-testid=gazette-attendant]")).toBeNull();
+
+    // 纯空白 / 空串：trim 判空后不渲染
+    expect(
+      renderReportModal({ report: "一、边报", attendantMessage: "   \n\t  " })
+        .querySelector("[data-testid=gazette-attendant]"),
+    ).toBeNull();
+    expect(
+      renderReportModal({ report: "一、边报", attendantMessage: "" })
+        .querySelector("[data-testid=gazette-attendant]"),
+    ).toBeNull();
+
+    const rawWithWs = "\n  **皇爷**，洪承畴本月抵京候旨。  \n";
+    const host = renderReportModal({
+      report: "**辽东军情**",
+      attendantMessage: rawWithWs,
+    });
+    const aside = host.querySelector("[data-testid=gazette-attendant]");
+    expect(aside).not.toBeNull();
+    // 递话原文含首尾空白与 markdown 标记；官方邸报逐字契约只在 App→DOM tracer
+    expect(aside?.textContent).toBe(rawWithWs);
+    // 递话区在纸面 article 之外
+    expect(host.querySelector(".gazette-document")?.contains(aside)).toBe(false);
   });
 });
 

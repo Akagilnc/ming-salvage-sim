@@ -17,6 +17,7 @@ from openai import APIConnectionError, APIStatusError, APITimeoutError
 
 from ming_sim.agents import (
     _dump_llm_messages,
+    create_arrival_attendant_agent,
     create_chapter_memory_agent,
     create_decree_writer_agent,
     create_promulgation_judge_agent,
@@ -38,6 +39,7 @@ from ming_sim.constants import TURN_UNIT
 from ming_sim.context import ENDING_LABELS, ENDING_ONGOING, ENDING_TIMEOUT, victory_status
 from ming_sim.db import GameDB
 from ming_sim.error_pack import (
+    ARRIVAL_COMPANION_SIM_DONE_KEY,
     _next_attempt,
     clear_for_resimulation,
     complete_error_packs_for_ready,
@@ -131,6 +133,97 @@ class ResolveResult:
     awaiting: bool
     report: str = ""
     decisions: List[Dict[str, object]] = field(default_factory=list)
+
+
+def collect_new_arrival_waiting_audience(
+    transit_arrivals: Sequence[Mapping[str, object]] | None,
+    waiting_audience: Sequence[Mapping[str, object]] | None,
+) -> List[Dict[str, object]]:
+    """#671：frozen transit_arrivals ∩ waiting_audience（typed 键，不解析自由文）。
+
+    映射：``transit_arrivals[].name`` ↔ ``waiting_audience[].person_name``，
+    并核抵京 location（``is_capital_location``）。集合空 → 调用方零调用。
+    """
+    from ming_sim.matching import is_capital_location
+
+    waiting_by_name: Dict[str, Mapping[str, object]] = {}
+    for item in waiting_audience or ():
+        if not isinstance(item, Mapping):
+            continue
+        person_name = str(item.get("person_name") or "").strip()
+        if person_name and person_name not in waiting_by_name:
+            waiting_by_name[person_name] = item
+
+    result: List[Dict[str, object]] = []
+    seen: set[str] = set()
+    for arrival in transit_arrivals or ():
+        if not isinstance(arrival, Mapping):
+            continue
+        name = str(arrival.get("name") or "").strip()
+        if not name or name in seen or name not in waiting_by_name:
+            continue
+        location = str(arrival.get("location") or "").strip()
+        waiting = waiting_by_name[name]
+        wait_loc = str(waiting.get("location") or "").strip()
+        effective_loc = location or wait_loc
+        # #671：双来源均空或非京 → 拒收；不得默认 beizhili。只认 is_capital_location。
+        if not is_capital_location(effective_loc):
+            continue
+        seen.add(name)
+        result.append({
+            "name": name,
+            "person_name": name,
+            "location": effective_loc,
+            "status": "候旨",
+            "origin_id": waiting.get("origin_id"),
+            "source_entry_id": waiting.get("source_entry_id"),
+            "year": arrival.get("year"),
+            "period": arrival.get("period"),
+        })
+    return result
+
+
+def run_arrival_attendant_message(
+    llm_config: LLMConfig,
+    *,
+    year: int,
+    period: int,
+    arrivals: Sequence[Mapping[str, object]],
+    agent=None,
+) -> str:
+    """#671：王承恩抵京报到 one-shot。集合非空而空文 → LLMContractError。"""
+    if not arrivals:
+        return ""
+    facts = {
+        "year": int(year),
+        "period": int(period),
+        "arrivals": [
+            {
+                "name": str(row.get("name") or row.get("person_name") or "").strip(),
+                "location": str(row.get("location") or "").strip(),
+                "status": str(row.get("status") or "候旨"),
+            }
+            for row in arrivals
+            if str(row.get("name") or row.get("person_name") or "").strip()
+        ],
+    }
+    if not facts["arrivals"]:
+        return ""
+    runner = agent if agent is not None else create_arrival_attendant_agent(llm_config)
+    try:
+        text = run_agent_text(
+            runner,
+            json.dumps(facts, ensure_ascii=False),
+            tag="arrival-attendant",
+        )
+    except (APITimeoutError, APIConnectionError, APIStatusError) as error:
+        # 生产 provider 调用适配缝：只捕已知超时/连接/HTTP 异常，译 LLMUnavailable
+        #（保留 cause）。LLMContractError（空文）与程序错不捕，照旧响亮上抛。
+        raise llm_unavailable_from_error(error, "王承恩抵京报到") from error
+    text = str(text or "")
+    if not text.strip():
+        raise LLMContractError("王承恩抵京报到返回空文")
+    return text  # 原文，含首尾空白（P6：零删改）
 
 
 class PromulgationVerdictProvider(Protocol):
@@ -399,9 +492,11 @@ def _validate_promulgation_verdict_item(
             for key in rejection_only_fields:
                 item.pop(key, None)
             item.pop("legal_reason_code", None)
-            # ordinary 顺颁必须省略 affected_parties；中旨顺颁保留（ADR 0055 反应）。
-            if mode != "midzhi":
-                item.pop("affected_parties", None)
+            # ordinary/midzhi 顺颁均省略 affected_parties（#657 §C.8 later-wins：中旨不猜派）。
+            item.pop("affected_parties", None)
+        elif mode == "midzhi" and decision == "rejected":
+            # 中旨打回：剥离猜派字段；正式离心归 M12。
+            item.pop("affected_parties", None)
         marker = item.get("midzhi_unpromulgatable", False)
         if not isinstance(marker, bool):
             raise ValueError("中旨亦不可颁标记必须为 bool")
@@ -416,13 +511,14 @@ def _validate_promulgation_verdict_item(
         # Exact verdict-key enforcement (#561) when mode is known from proposed set.
         if mode is not None:
             allowed_keys = {"dossier_id", "decision"}
-            if decision == "promulgated" and mode == "midzhi":
-                allowed_keys.add("affected_parties")
-            elif decision == "rejected":
+            if decision == "rejected":
                 allowed_keys.update(rejection_only_fields - {"midzhi_unpromulgatable"})
-                allowed_keys.update({"affected_parties", "legal_reason_code"})
+                allowed_keys.update({"legal_reason_code"})
                 if mode == "midzhi":
                     allowed_keys.add("midzhi_unpromulgatable")
+                else:
+                    # ordinary 打回仍承载 typed 反应清单
+                    allowed_keys.add("affected_parties")
             unknown_keys = set(item) - allowed_keys
             if unknown_keys:
                 raise ValueError(f"颁布判决含未知字段：{sorted(unknown_keys)}")
@@ -559,6 +655,60 @@ def _rescript_decisions(
     return decisions
 
 
+def _maybe_pause_for_rescript_desk(
+    state: GameState,
+    db: GameDB,
+    decree_text: str,
+    narrative: str,
+    simulator_payload: Dict[str, object],
+    *,
+    secret_orders,
+    relevant_memories,
+    source: Provenance,
+    content=None,
+    registry=None,
+    new_decisions: Optional[List[Dict[str, object]]] = None,
+    attendant_message: str = "",
+) -> Optional[ResolveResult]:
+    """#657：desk=backlog 急务 ∪ 本月 decision 非空 → AWAITING；返回合并 desk。
+
+    仅急务 backlog（无新 decision）也入相，禁直落 settle 推进。
+    """
+    decisions = list(new_decisions or [])
+    # 先落本月 decision（若有），再读合并 desk（含跨月 pending 急务）
+    if decisions:
+        tlog(
+            f"[HITL] 检测到 {len(decisions)} 个决策点，暂停等皇帝亲裁："
+            f"{[d.get('title') for d in decisions]}"
+        )
+    # 预读 backlog：无新 decision 时若 desk 已有急务也须入相
+    if not decisions:
+        desk_preview = db.list_rescript_desk(int(state.turn))
+        if not desk_preview:
+            return None
+        tlog(
+            f"[HITL] 急务 backlog {len(desk_preview)} 条，暂停等批红："
+            f"{[d.get('title') for d in desk_preview]}"
+        )
+    # 暂停态三件（上下文+决策点+AWAITING 相位）同事务落库（cmr S4 r2）
+    with atomic_and_reload(db, state, content=content, registry=registry):
+        db.save_resolve_context(
+            state.turn, decree_text, narrative, simulator_payload,
+            secret_orders=secret_orders,
+            relevant_memories=relevant_memories,
+            source=Provenance(source).value,
+            attendant_message=attendant_message,
+        )
+        if decisions:
+            db.save_pending_decisions(state.turn, decisions)
+        state.turn_phase = TurnPhase.AWAITING_DECISION.value
+        db.save_state(state)
+    return ResolveResult(
+        awaiting=True,
+        decisions=db.list_rescript_desk(int(state.turn)),
+    )
+
+
 def _chosen_rescript_actions(
     decisions: List[Dict[str, object]],
 ) -> List[Dict[str, object]]:
@@ -661,8 +811,9 @@ def _record_settlement_narrative_sources(
     source_id = f"settlement:narrative:{state.turn}"
     if has_restricted_source:
         return
-    narrative_text = str(narrative or "").strip()
-    if not narrative_text:
+    # #671 / P6 / ADR 0142：simulator 自由文本零删改；strip 只在临时副本上判空
+    narrative_text = str(narrative or "")
+    if not narrative_text.strip():
         return
     db.record_public_knowledge_event(
         state, "本回合邸报", narrative_text, source_id=source_id, commit=commit,
@@ -1176,47 +1327,175 @@ def resolve_directives(
         "勿单靠 stigma 是否含强颁。顺颁与上述入列表者均可进入本月办理。"
         "decree_text 仅为兼容摘要，不得覆盖案卷列表与判决。"
     )
-    simulator = create_season_simulator_agent(
-        llm_config, agno_db, state=state, db=db, simulator_payload=simulator_payload
+    # #671：本月新抵京∩候见 → 王承恩独立声部（与 simulator 真并行；输入不读 sim 输出）
+    arrival_waiting = collect_new_arrival_waiting_audience(
+        durable_arrivals,
+        simulator_payload.get("waiting_audience")
+        if isinstance(simulator_payload.get("waiting_audience"), list) else [],
     )
-    try:
-        narrative, simulator_payload = simulate_season_with_payload(
-            simulator, state, db, executable_decree_text, previous_narrative,
-            deaths_this_turn=deaths_this_turn,
-            debuts_this_turn=debuts_this_turn,
-            relevant_memories=relevant_memories,
-            secret_orders=secret_orders_for_sim,
-            simulator_payload=simulator_payload,
-            on_thinking=lambda c: _emit("thinking", c),
-            on_text=lambda c: _emit("text", c),
+    for row in arrival_waiting:
+        row["year"] = int(state.year)
+        row["period"] = int(state.period)
+    # #671：引擎已求交的本月新抵京∩候见列表——simulator 只读此键，勿让 LLM 自算交集
+    simulator_payload["arrival_waiting"] = list(arrival_waiting)
+
+    # #671 companion checkpoint：仅 payload 独有 bool 命中才跳过 sim、只重试 companion。
+    # 禁止用 narrative 非空 / ready=0 作判别（撞 clear_for_resimulation / ADR 0008）。
+    prior_resolve_ctx = db.get_resolve_context(state.turn)
+    prior_sim_payload = (
+        prior_resolve_ctx.get("simulator_payload")
+        if isinstance(prior_resolve_ctx, dict)
+        else None
+    )
+    companion_sim_done = (
+        isinstance(prior_sim_payload, dict)
+        and prior_sim_payload.get(ARRIVAL_COMPANION_SIM_DONE_KEY) is True
+    )
+
+    attendant_message = ""
+    sim_failed = False
+    narrative = ""
+    # companion 腿刚成功（含 checkpoint 重试叫通）时须在下游前 durable；
+    # 仅复用已持久 attendant / 无 companion 在飞 不置位——避免给 clear_for_resimulation 重推演误打标记。
+    companion_just_succeeded = False
+
+    if companion_sim_done:
+        # 复用存档叙事与世界结果；勿被本轮 build_simulator_payload 盖掉。
+        narrative = str(prior_resolve_ctx.get("narrative") or "")
+        simulator_payload = dict(prior_sim_payload)
+        archived_waiting = simulator_payload.get("arrival_waiting")
+        if isinstance(archived_waiting, list):
+            arrival_waiting = [row for row in archived_waiting if isinstance(row, dict)]
+        archived_attendant = str(prior_resolve_ctx.get("attendant_message") or "")
+        if archived_attendant:
+            attendant_message = archived_attendant
+        elif arrival_waiting:
+            # companion 仍失败则原样上抛；完成态行（标记）保持，再重试仍不重跑 sim
+            attendant_message = str(
+                run_arrival_attendant_message(
+                    llm_config,
+                    year=int(state.year),
+                    period=int(state.period),
+                    arrivals=arrival_waiting,
+                ) or ""
+            )
+            companion_just_succeeded = True
+    else:
+        simulator = create_season_simulator_agent(
+            llm_config, agno_db, state=state, db=db, simulator_payload=simulator_payload
         )
-    except Exception as exc:
-        print(f"[WARN] 推演 agent 失败：{exc}；本{TURN_UNIT}用简化邸报兜底，继续正常抽取结算。")
-        narrative = (
-            f"奉天承运皇帝诏曰：本{TURN_UNIT}推演 agent 被服务方拦截，无完整邸报。"
-            f"已颁诏书：\n{executable_decree_text}\n"
-            f"固定收支已落账，事项 inertia 自然漂移；本{TURN_UNIT}无新立 issue。"
+        # #671：clear_for_resimulation 后 marker 已剥但 attendant 可能已持久——
+        # 复用已有递话，不重叫 companion、不以空覆盖；sim 仍按 ADR 0008 重跑。
+        archived_attendant = (
+            str(prior_resolve_ctx.get("attendant_message") or "")
+            if isinstance(prior_resolve_ctx, dict)
+            else ""
         )
-        rescript_decisions = _rescript_decisions(verdict_rows, proposed_dossiers)
-        if rescript_decisions:
-            with atomic_and_reload(db, state, content=content, registry=registry):
+        if archived_attendant:
+            attendant_message = archived_attendant
+        # companion future.result() 禁止落入 simulator 宽 except（否则误标 sim 失败并吞递话）
+        pool = (
+            ThreadPoolExecutor(max_workers=1, thread_name_prefix="arrival-attendant")
+            if arrival_waiting and not archived_attendant else None
+        )
+        try:
+            attendant_future = None
+            if pool is not None:
+                attendant_future = pool.submit(
+                    run_arrival_attendant_message,
+                    llm_config,
+                    year=int(state.year),
+                    period=int(state.period),
+                    arrivals=arrival_waiting,
+                )
+            try:
+                narrative, simulator_payload = simulate_season_with_payload(
+                    simulator, state, db, executable_decree_text, previous_narrative,
+                    deaths_this_turn=deaths_this_turn,
+                    debuts_this_turn=debuts_this_turn,
+                    relevant_memories=relevant_memories,
+                    secret_orders=secret_orders_for_sim,
+                    simulator_payload=simulator_payload,
+                    on_thinking=lambda c: _emit("thinking", c),
+                    on_text=lambda c: _emit("text", c),
+                )
+            except Exception as exc:
+                sim_failed = True
+                print(f"[WARN] 推演 agent 失败：{exc}；本{TURN_UNIT}用简化邸报兜底，继续正常抽取结算。")
+                narrative = (
+                    f"奉天承运皇帝诏曰：本{TURN_UNIT}推演 agent 被服务方拦截，无完整邸报。"
+                    f"已颁诏书：\n{executable_decree_text}\n"
+                    f"固定收支已落账，事项 inertia 自然漂移；本{TURN_UNIT}无新立 issue。"
+                )
+            # sim 真成功且 companion 在飞：join 前落 durable 完成态（ready=0 + 标记）。
+            # 不给 sim 宽 except fallback 叙事打标记（fallback 便宜；标记会永久跳过真 sim）。
+            # companion 未在飞时不写空 attendant（避免覆盖 clear_for_resimulation 已保留原文）。
+            if not sim_failed and attendant_future is not None:
+                ckpt_payload = (
+                    dict(simulator_payload)
+                    if isinstance(simulator_payload, dict)
+                    else {}
+                )
+                ckpt_payload[ARRIVAL_COMPANION_SIM_DONE_KEY] = True
                 db.save_resolve_context(
-                    state.turn, decree_text, narrative, simulator_payload,
+                    state.turn, decree_text, narrative, ckpt_payload,
                     secret_orders=secret_orders_for_sim,
                     relevant_memories=relevant_memories,
                     source=Provenance(source).value,
+                    attendant_message="",
                 )
-                db.save_pending_decisions(state.turn, rescript_decisions)
-                state.turn_phase = TurnPhase.AWAITING_DECISION.value
-                db.save_state(state)
-            return ResolveResult(
-                awaiting=True,
-                decisions=db.list_pending_decisions(state.turn),
-            )
+            # 同作用域 join：companion 异常归属独立，不被 simulator fallback 吞掉
+            if attendant_future is not None:
+                attendant_message = str(attendant_future.result() or "")
+                companion_just_succeeded = True
+        finally:
+            if pool is not None:
+                pool.shutdown(wait=True)
+
+    # #671：companion 成功后、进 parse_decision_blocks / extractor / 票拟前，
+    # 同一 simulator 叙事/payload 与原样 attendant 一并 durable。
+    # 真 sim 成功：checkpoint 带 ARRIVAL_COMPANION_SIM_DONE_KEY，下游失败重试
+    # 既不重跑 sim 也不重叫 companion。
+    # fallback（sim_failed）：显式剥 marker，attendant 仍 durable；重试重跑真 sim，
+    # 经 prior_resolve_ctx.attendant_message 复用递话、不重叫 companion。
+    # 随后 HITL/settle 整行 upsert 用已 pop 的内存 payload 清标转存。
+    if companion_just_succeeded and attendant_message:
+        ckpt_payload = (
+            dict(simulator_payload) if isinstance(simulator_payload, dict) else {}
+        )
+        if sim_failed:
+            ckpt_payload.pop(ARRIVAL_COMPANION_SIM_DONE_KEY, None)
+        else:
+            ckpt_payload[ARRIVAL_COMPANION_SIM_DONE_KEY] = True
+        db.save_resolve_context(
+            state.turn, decree_text, narrative, ckpt_payload,
+            secret_orders=secret_orders_for_sim,
+            relevant_memories=relevant_memories,
+            source=Provenance(source).value,
+            attendant_message=attendant_message,
+        )
+    if isinstance(simulator_payload, dict):
+        simulator_payload.pop(ARRIVAL_COMPANION_SIM_DONE_KEY, None)
+
+    if sim_failed:
+        rescript_decisions = _rescript_decisions(verdict_rows, proposed_dossiers)
+        paused = _maybe_pause_for_rescript_desk(
+            state, db, decree_text, narrative, simulator_payload,
+            secret_orders=secret_orders_for_sim,
+            relevant_memories=relevant_memories,
+            source=source,
+            content=content,
+            registry=registry,
+            new_decisions=rescript_decisions,
+            attendant_message=attendant_message,
+        )
+        if paused is not None:
+            return paused
         # Fallback only replaces the unavailable narrative.  Extraction,
         # private-context merge, durable resolve context, and atomic settlement
         # remain on the normal single rail; a missing required report therefore
         # raises SettlementAbort and leaves the turn unadvanced.
+        # companion 已成功则 attendant_message 仍进 durable。
         report = _settle_after_narrative(
             state, db, agno_db, llm_config, decree_text, narrative,
             simulator_payload=simulator_payload,
@@ -1227,36 +1506,33 @@ def resolve_directives(
             cheat_directive=cheat_directive,
             source=source,
             dossier_verdicts=verdict_rows,
+            attendant_message=attendant_message,
         )
         return ResolveResult(awaiting=False, report=report)
 
     # 2.4) HITL 决策点：从邸报抽 <<DECISION>> 块。有 → 存上下文+决策点，暂停等皇帝亲裁。
     #      剥离后的干净邸报落库/展示；决策点选完由 resolve_decisions_phase2 续跑结算。
+    # #657：desk = backlog 急务 ∪ 本月 decision；非空 → AWAITING（含仅急务 backlog）。
     narrative, decisions = parse_decision_blocks(narrative)
     decisions = _rescript_decisions(verdict_rows, proposed_dossiers) + (
         bind_decisions_to_candidate_events(decisions, simulator_payload)
     )
-    if decisions:
-        tlog(f"[HITL] 检测到 {len(decisions)} 个决策点，暂停等皇帝亲裁：{[d['title'] for d in decisions]}")
-        # 暂停态三件（上下文+决策点+AWAITING 相位）同事务落库（cmr S4 r2）：相位若靠
-        # session 事后另笔写，崩在窗口里 DB 停在 settling 而决策已存——web submit_decisions
-        # 只认 AWAITING 相位，恢复死路。session 事后那笔写变为幂等。
-        # 五个事务块同款（ADR 决定 3）：回滚后内存与 DB 同源——不 reload 的话内存留
-        # awaiting/DB 回滚回 settling，进程内重试走 awaiting 幂等叉读空决策=死胡同
-        # （ship-pre r2）。嵌套时跳过，最外层拥有者处理。见 atomic_and_reload。
-        with atomic_and_reload(db, state, content=content, registry=registry):
-            db.save_resolve_context(
-                state.turn, decree_text, narrative, simulator_payload,
-                secret_orders=secret_orders_for_sim, relevant_memories=relevant_memories,
-                source=Provenance(source).value,  # #146 A：HITL 暂停存触发源（默认 player），phase2 续跑/崩溃恢复继承。Provenance(source).value 归一(兼容 enum/合法值串)、与 persist_resolve_context 一致(gemini R5)
-            )
-            db.save_pending_decisions(state.turn, decisions)
-            state.turn_phase = TurnPhase.AWAITING_DECISION.value
-            db.save_state(state)
-        return ResolveResult(awaiting=True, decisions=db.list_pending_decisions(state.turn))
+    paused = _maybe_pause_for_rescript_desk(
+        state, db, decree_text, narrative, simulator_payload,
+        secret_orders=secret_orders_for_sim,
+        relevant_memories=relevant_memories,
+        source=source,
+        content=content,
+        registry=registry,
+        new_decisions=decisions,
+        attendant_message=attendant_message,
+    )
+    if paused is not None:
+        return paused
 
-    # 无决策点：透明续跑结算（cheat 仍可叠加）。来源贯穿 source 参数（默认 player_decree：皇帝下旨
-    # 拒收提示皇帝；恢复 fallthrough 穿透 ctx 真源，system 重跑仍记 system 静默——#146 cmr r2）。
+    # 双空（无 decision 且无 backlog 急务）：透明续跑结算（cheat 仍可叠加）。
+    # 来源贯穿 source 参数（默认 player_decree：皇帝下旨拒收提示皇帝；恢复 fallthrough
+    # 穿透 ctx 真源，system 重跑仍记 system 静默——#146 cmr r2）。
     report = _settle_after_narrative(
         state, db, agno_db, llm_config, decree_text, narrative,
         simulator_payload=simulator_payload,
@@ -1270,6 +1546,7 @@ def resolve_directives(
             simulator_payload.get("dossier_verdicts")
             if isinstance(simulator_payload, dict) else None
         ),
+        attendant_message=attendant_message,
     )
     return ResolveResult(awaiting=False, report=report)
 
@@ -1346,6 +1623,7 @@ def resolve_settling_recovery(
                 db.list_pending_decisions(state.turn)
             ),
             content=content, registry=registry, _emit=_emit, source=source,
+            attendant_message=str(ctx.get("attendant_message") or ""),
         )
     except SettlementAbort as abort_exc:
         # First failure keeps the ready context for an ordinary atomic retry.
@@ -1379,6 +1657,7 @@ def _replay_settle(
     registry=None,
     _emit: Callable[[str, str], None],
     source: Provenance = Provenance.system_simulation,
+    attendant_message: str = "",
 ) -> str:
     report = settle_with_delta(
         state,
@@ -1411,8 +1690,23 @@ def _replay_settle(
             if isinstance(simulator_payload, dict) else None
         ),
         dossier_rescript_actions=dossier_rescript_actions,
+        attendant_message=attendant_message,
     )
     return report
+
+
+# #657：HITL phase2 续跑时 persist 不得触碰急务票拟行（return_revise 等跨 phase2 存活）。
+# 与 None/[]（#656 空票拟 → DELETE 本回合 draft）三态分立。
+_PRESERVE_RESCRIPT_DRAFTS = object()
+
+
+class _AppendRescriptDrafts:
+    """#657 HITL phase2：追加本回合新票拟，不 DELETE 既有急务行。"""
+
+    __slots__ = ("items",)
+
+    def __init__(self, items: List[Dict[str, object]]) -> None:
+        self.items = list(items)
 
 
 def persist_resolve_context(
@@ -1427,6 +1721,7 @@ def persist_resolve_context(
     relevant_memories: List[Dict],
     source: Provenance = Provenance.system_simulation,
     rescript_drafts: Optional[List[Dict[str, object]]] = None,
+    attendant_message: str = "",
 ) -> Dict[str, object]:
     """ADR 0008 S2：每回合进入结算后半段前无条件持久化 resolve_context（extractor delta + 叙事）。
 
@@ -1464,11 +1759,18 @@ def persist_resolve_context(
             turn, decree_text, narrative, simulator_payload,
             secret_orders=secret_orders, relevant_memories=relevant_memories,
             extracted=cleaned, source=Provenance(source).value,
+            attendant_message=attendant_message,
         )
         # #656 / F2.5：急务票拟行与重跑真源同一事务——ready context 存在 ⟺ 票拟已落
         # （生成成功时）。崩溃恢复从持久层读回，不重跑已完成的票拟步（F1.3）；
         # extractor 中止则整个事务回滚，票拟一并回滚不落、重试重生成。
-        if isinstance(rescript_drafts, list) and rescript_drafts:
+        # #657：_PRESERVE_RESCRIPT_DRAFTS → 零触碰；_AppendRescriptDrafts → 追加不删既有。
+        if rescript_drafts is _PRESERVE_RESCRIPT_DRAFTS:
+            pass
+        elif isinstance(rescript_drafts, _AppendRescriptDrafts):
+            if rescript_drafts.items:
+                db.append_rescript_drafts(turn, rescript_drafts.items)
+        elif isinstance(rescript_drafts, list) and rescript_drafts:
             db.save_rescript_drafts(turn, rescript_drafts)
         elif rescript_drafts is None or (isinstance(rescript_drafts, list) and len(rescript_drafts) == 0):
             # r4 p3：空/None 时同一事务内 DELETE 本回合 kind='rescript_draft' 行，
@@ -1500,6 +1802,8 @@ def _settle_after_narrative(
     source: Provenance = Provenance.system_simulation,
     dossier_verdicts: Optional[List[Dict[str, object]]] = None,
     dossier_rescript_actions: Optional[List[Dict[str, object]]] = None,
+    preserve_rescript_drafts: bool = False,
+    attendant_message: str = "",
 ) -> str:
     """phase2：邸报已定（已剥离决策块），跑 extractor→落库→章节记忆→结局→推进。
     cheat_directive / decision_directive 各自拼到 effective_narrative 最前喂 extractor。
@@ -1538,8 +1842,6 @@ def _settle_after_narrative(
                 if isinstance(simulator_payload.get("decree_dossiers"), list)
                 else []
             ),
-            # #673 r3：phase1 既成 transit_semantics list 对象原样下传（is 同一引用）。
-            transit_semantics=simulator_payload["transit_semantics"],
         )
         for module in EXTRACTION_MODULES
     }
@@ -1555,6 +1857,13 @@ def _settle_after_narrative(
     # 单腿接缝：腿结果由闭包持有（draft_cell），无外部可变结果容器、无串行备选形态。
     draft_cell: Dict[str, object] = {}
     side_leg: Optional[Callable[[], object]] = None
+    # #657：HITL phase2 续跑须保留既有急务（return_revise/decided/跨月 backlog），
+    # 同时仍并行生成本回合 drafts。
+    # 默认 PRESERVE：side_leg 未跑/生成空时不得 DELETE 本回合急务行；
+    # 仅当生成出非空 list 时 save_rescript_drafts 覆写 before_turn（不碰他回合）。
+    if preserve_rescript_drafts:
+        draft_cell["drafts"] = _PRESERVE_RESCRIPT_DRAFTS
+        tlog("[rescript] HITL phase2 续跑：默认保留既有急务票拟行。")
     triage_actor = select_triage_actor(db)
     if triage_actor is None:
         tlog("[rescript] 无在任首辅／掌印，本月无头版（全量邸报照旧）。")
@@ -1577,7 +1886,14 @@ def _settle_after_narrative(
                     d["actor_name"] = triage_actor["name"]
                     d["actor_office"] = triage_actor["office"]
                     d["actor_faction"] = triage_actor["faction"]
-            draft_cell["drafts"] = drafts
+                if preserve_rescript_drafts:
+                    # 追加本回合新票拟，不 DELETE return_revise/decided/跨月 backlog
+                    draft_cell["drafts"] = _AppendRescriptDrafts(drafts)
+                    tlog("[rescript] HITL phase2 续跑：保留既有急务并追加本回合票拟。")
+                else:
+                    draft_cell["drafts"] = drafts
+            elif not preserve_rescript_drafts:
+                draft_cell["drafts"] = drafts
         side_leg = _rescript_draft_leg
     try:
         tlog("结算 3/4 抽取（模块 module）")
@@ -1640,6 +1956,7 @@ def _settle_after_narrative(
         relevant_memories=relevant_memories,
         source=source,  # #146 A：来源贯穿进 ctx，崩溃恢复重抽从 ctx['source'] 继承、不丢
         rescript_drafts=draft_cell.get("drafts"),  # #656：与重跑真源同事务（F2.5，闭包持有）
+        attendant_message=attendant_message,
     )
 
     # 后括号确定性结算核：与探针 driver 共用同一段（ADR 0004）。章节记忆 / 结局总评
@@ -1678,6 +1995,7 @@ def _settle_after_narrative(
         source=source,
         dossier_verdicts=dossier_verdicts,
         dossier_rescript_actions=dossier_rescript_actions,
+        attendant_message=attendant_message,
     )
 
 
@@ -1885,10 +2203,19 @@ def prepare_resolve_front_half(
             )
             # #668：transit_arrivals 与 ready=0 占位同外层 atomic 写入。
             placeholder_payload = {"transit_arrivals": list(transit_arrivals_box)}
+            # #671：占位 upsert 不得以默认空串覆盖已持久 attendant_message
+            #（clear_for_resimulation 后 phase 非 FRONT_HALF_DONE 重入时尤甚）。
+            prior_placeholder = db.get_resolve_context(int(state.turn))
+            preserved_attendant = (
+                str(prior_placeholder.get("attendant_message") or "")
+                if isinstance(prior_placeholder, dict)
+                else ""
+            )
             db.save_resolve_context(
                 state.turn, decree_text, "", placeholder_payload,
                 secret_orders={}, relevant_memories=[],  # #48：占位用分组承载的空 dict（旋即被真存覆盖）
                 source=Provenance(source).value,  # #146 A：归一 enum/合法值串
+                attendant_message=preserved_attendant,
             )
     except BaseException as exc:
         raise_fixed_period_flow_abort_if_needed(db, state, exc)
@@ -2099,6 +2426,7 @@ def settle_with_delta(
     source: Provenance = Provenance.unknown,
     dossier_verdicts: Optional[List[Dict[str, object]]] = None,
     dossier_rescript_actions: Optional[List[Dict[str, object]]] = None,
+    attendant_message: str = "",
 ) -> str:
     """确定性结算「后括号」：apply→turn_logs→inertia→留痕→章节记忆→clear→结局判定→next_period。
 
@@ -2222,6 +2550,7 @@ def settle_with_delta(
                 start_relation_brew=(
                     _start_relation_brew if relation_brew_runner is not None else None
                 ),
+                attendant_message=attendant_message,
             )
     except BaseException as exc:
         # 酿制腿异常路排空（判词：异常时也排空）：等 brew() 收尾并丢弃结果——结算
@@ -2373,6 +2702,7 @@ def _settle_after_extract_body(
     collector: Optional[RejectionCollector] = None,
     source: Provenance = Provenance.unknown,
     start_relation_brew: Optional[Callable[[], None]] = None,
+    attendant_message: str = "",
 ) -> str:
     """settle_with_delta 的后半段写序列正文（被其 atomic 包裹调用）。
 
@@ -2529,7 +2859,8 @@ def _settle_after_extract_body(
     # authorization boundary when they mix public and restricted matters.
     db.persist_knowledge_items_for_turn(state, commit=False)
     db.save_turn_report(
-        state, narrative, knowledge_items=[], commit=False
+        state, narrative, knowledge_items=[],
+        attendant_message=attendant_message, commit=False,
     )
 
     # 推演链留痕：extractor_input 保留输入；extractor_output 存最终 applied 结果,
@@ -2604,6 +2935,10 @@ def _settle_after_extract_body(
             state.ending_status = str(outcome.get("status") or "")
 
     db.mark_directives_issued(state)
+    # #657：return_revise 清锚纳入 settle 单一终态（与 next_period 同 atomic），
+    # 禁 phase2 成功后再另笔 commit（崩溃窗口会卡住已应用 revise 锚）。
+    from ming_sim.rescript_actions import clear_return_revise_choice_anchors
+    clear_return_revise_choice_anchors(db, None)
     state.next_period()
     # 不变式先验后再写：assert 排在 clear 之后的话，失败时重试真源已被删（cmr r4 codex）。
     assert state.turn == before_turn + 1
@@ -2701,6 +3036,8 @@ def resolve_decisions_phase2(
             if isinstance(sim_payload.get("dossier_verdicts"), list) else None
         ),
         dossier_rescript_actions=rescript_actions,
+        preserve_rescript_drafts=True,  # #657：禁擦 return_revise/decided 急务行
+        attendant_message=str(ctx.get("attendant_message") or ""),
     )
     # 结算完清掉暂存决策点（next_period 已在 _settle 内执行，故按 before_turn 清理本回合残留）。
     # resolve_context 的清理已移入 settle_with_delta 的写序列内（ADR 0008 S3），不在此 post-settle 处清。

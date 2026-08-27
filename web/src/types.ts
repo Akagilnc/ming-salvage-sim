@@ -241,12 +241,53 @@ export type DossierDecision =
   | "withdrawn"
   | "hold";
 
+/** #657 急务六动作 */
+export type RescriptDeskAction =
+  | "follow_draft"
+  | "return_revise"
+  | "midzhi"
+  | "deliberate"
+  | "hold"
+  | "summon";
+
 export type DecisionChoice = {
   label?: string;
   hint?: string;
   note?: string;
   dossier_id?: number | null;
   dossier_decision?: DossierDecision;
+  /** #657 案头行键 */
+  decision_key?: string;
+  /** #657 急务动作 */
+  action?: RescriptDeskAction | string;
+  draft_capability?: string;
+  /** §C.4 capability 派生闭集（仅补缺口，不新并行类型） */
+  summon_target?: string;
+  action_type?: string;
+  target_kind?: string;
+  target_id?: string;
+  locality_scope?: string;
+  region_id?: string;
+  transaction_category?: string;
+  assignee_name?: string;
+  name?: string;
+  title?: string;
+  commitment_kind?: string;
+  stop_condition?: string;
+  end_turn?: number;
+  deadline_months?: number;
+  station?: string;
+  due_turn?: number;
+  office?: string;
+  grant_action?: string;
+  amount?: number;
+  account?: string;
+  cadence?: string;
+  execution_surface?: string;
+  appoint_action?: string;
+  appointment_tenure?: string;
+  punish_action?: string;
+  privilege?: string;
 };
 
 export type DecisionOption = {
@@ -254,6 +295,35 @@ export type DecisionOption = {
   hint: string;
   dossier_id?: number;
   dossier_decision?: DossierDecision;
+  /** #657 层 A 票拟字段 · §C.4 闭集 */
+  draft_capability?: string;
+  action_type?: string;
+  assignee_name?: string;
+  name?: string;
+  target_kind?: string;
+  target_id?: string;
+  locality_scope?: string;
+  region_id?: string;
+  transaction_category?: string;
+  title?: string;
+  commitment_kind?: string;
+  stop_condition?: string;
+  end_turn?: number;
+  deadline_months?: number;
+  station?: string;
+  due_turn?: number;
+  office?: string;
+  grant_action?: string;
+  account?: string;
+  amount?: number;
+  cadence?: string;
+  execution_surface?: string;
+  appoint_action?: string;
+  appointment_tenure?: string;
+  punish_action?: string;
+  privilege?: string;
+  summon_target?: string;
+  [key: string]: unknown;
 };
 
 export type PendingDecision = {
@@ -266,6 +336,15 @@ export type PendingDecision = {
   options: DecisionOption[];
   choice?: DecisionChoice | null;
   status?: string;
+  /** #657 案头 */
+  kind?: "decision" | "rescript_draft" | string;
+  decision_key?: string;
+  source_turn?: number;
+  turn?: number;
+  revision_round?: number;
+  actor_name?: string;
+  actor_office?: string;
+  actor_faction?: string;
 };
 
 export type GameState = {
@@ -307,8 +386,12 @@ export type GameState = {
   pending_non_directive_action_count?: number;  // 可见的非拟旨 pending_actions（不含隐藏新密令候选）
   failed_secret_order_count?: number;
   pending_decisions?: PendingDecision[];
+  /** #657：awaiting + resolve_context + 空 pending desk → 续跑 phase2（空 POST 既有 stream） */
+  resume_phase2?: boolean;
   last_decree: string;
   last_report: string;
+  /** #671：上一已完成月王承恩独立递话；空＝无递话区 */
+  last_attendant_message?: string;
 };
 
 export type EndingTimelineItem = {
@@ -591,6 +674,8 @@ export type HistoryTurnItem = {
   year: number;
   period: number;
   has_report: boolean;
+  /** #671：本月有非空王承恩递话（trim 存在位，不解析正文） */
+  has_attendant: boolean;
   has_directive: boolean;
   /** Persisted closed audience night for a scene archive. */
   night_id?: number;
@@ -627,6 +712,8 @@ export type HistoryDetail = {
   year: number;
   period: number;
   report: string;
+  /** #671：王承恩独立递话原文；与 report 分栏；空则史册不呈现 */
+  attendant_message?: string;
   decree_text: string;
   directives: HistoryDirective[];
 };

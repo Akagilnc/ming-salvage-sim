@@ -232,8 +232,13 @@ def _class_slice(conn, name: str, region_id: str) -> object:
 
 
 def _format_class_slice(value: object) -> str:
-    """TSV 运输：有记录 → pop/sat/lev；哨兵原样。"""
+    """TSV 运输：有记录 → pop/sat/lev（或定性投影三元组）；哨兵原样。"""
     if isinstance(value, Mapping):
+        if "satisfaction_band" in value or "population_label" in value:
+            pop = value.get("population_label") or value.get("population") or ""
+            sat = value.get("satisfaction_band") or ""
+            lev = value.get("power_band") or value.get("leverage_band") or ""
+            return f"{pop}/{sat}/{lev}"
         return (
             f"{int(value.get('population', 0))}/"
             f"{int(value.get('satisfaction', 0))}/"
@@ -720,8 +725,12 @@ def _render_two_axis_tsv(provinces: Sequence[Mapping[str, object]]) -> str:
                     "", "",
                     str(own.get("owner_name") or ""),
                     str(own.get("owner_open_count")),
-                    str(own.get("owner_ability")),
-                    str(own.get("owner_load")),
+                    str(
+                        own.get("ability_band")
+                        if "ability_band" in own
+                        else own.get("owner_ability")
+                    ),
+                    str(own.get("owner_load", "") if "owner_load" in own else ""),
                     str(own.get("distance_semantic_band") or ""),
                     "", "", "", "",
                     "",  # 到差态
@@ -742,3 +751,107 @@ def _render_two_axis_tsv(provinces: Sequence[Mapping[str, object]]) -> str:
                 ])
             )
     return "\n".join(lines)
+
+
+def _project_class_slice_for_simulator(value: object) -> object:
+    if not isinstance(value, Mapping):
+        return value  # 哨兵 NO_RECORD 等原样
+    from ming_sim.qualitative import (
+        population_wan_kou_label,
+        power_band,
+        satisfaction_band,
+    )
+
+    return {
+        "population_label": population_wan_kou_label(value.get("population")),
+        "satisfaction_band": satisfaction_band(value.get("satisfaction")),
+        "power_band": power_band(value.get("leverage")),
+    }
+
+
+def _pass_or_band(value: object, band_fn) -> object:
+    """哨兵字符串原样穿过；数值走定性档 helper。"""
+    if isinstance(value, str):
+        return value
+    return band_fn(value)
+
+
+def project_execution_two_axis_for_simulator(
+    raw: Mapping[str, object],
+) -> Dict[str, object]:
+    """#652 / ADR 0143：执行两轴 builder 产物 → 玩家可感 simulator 定性投影。
+
+    复用 builder 真源一次；禁第二套 band/矩阵/计数；投影后重走既有 TSV 渲染。
+    剥离 owner_ability 裸分与派生 owner_load；能力/操守/阻力/灾情走 qualitative 单源。
+    """
+    from ming_sim.qualitative import (
+        disaster_severity_band,
+        gentry_resistance_band,
+        military_pressure_band,
+        power_band,
+        qualitative_character_axis,
+    )
+
+    provinces_in = raw.get("provinces") or []
+    if not isinstance(provinces_in, Sequence):
+        provinces_in = []
+    projected: List[Dict[str, object]] = []
+    for block in provinces_in:
+        if not isinstance(block, Mapping):
+            continue
+        owners_out: List[Dict[str, object]] = []
+        for own in block.get("owners") or []:
+            if not isinstance(own, Mapping):
+                continue
+            owners_out.append({
+                "owner_name": own.get("owner_name"),
+                "owner_open_count": own.get("owner_open_count"),
+                "ability_band": qualitative_character_axis(
+                    "ability", own.get("owner_ability"),
+                ),
+                "distance_semantic_band": own.get("distance_semantic_band"),
+            })
+        disasters_out: List[Dict[str, object]] = []
+        for dis in block.get("disaster_rows") or []:
+            if not isinstance(dis, Mapping):
+                continue
+            disasters_out.append({
+                "id": dis.get("id"),
+                "title": dis.get("title"),
+                "kind": dis.get("kind"),
+                "severity": _pass_or_band(
+                    dis.get("severity"), disaster_severity_band,
+                ),
+            })
+        projected.append({
+            "region_id": block.get("region_id"),
+            "province_open_count": block.get("province_open_count"),
+            "gentry_resistance": _pass_or_band(
+                block.get("gentry_resistance"), gentry_resistance_band,
+            ),
+            "gentry_slice": _project_class_slice_for_simulator(
+                block.get("gentry_slice"),
+            ),
+            "officials_slice": _project_class_slice_for_simulator(
+                block.get("officials_slice"),
+            ),
+            "dutang_faction": block.get("dutang_faction"),
+            "dutang_integrity": _pass_or_band(
+                block.get("dutang_integrity"),
+                lambda v: qualitative_character_axis("integrity", v),
+            ),
+            "bandit_pressure": _pass_or_band(
+                block.get("bandit_pressure"), military_pressure_band,
+            ),
+            "bandit_strength": _pass_or_band(
+                block.get("bandit_strength"), power_band,
+            ),
+            "disaster_rows": disasters_out,
+            "owners": owners_out,
+            "arrival_rows": list(block.get("arrival_rows") or []),
+            "garrison_pressure_rows": list(block.get("garrison_pressure_rows") or []),
+        })
+    return {
+        "provinces": projected,
+        "tsv": _render_two_axis_tsv(projected),
+    }

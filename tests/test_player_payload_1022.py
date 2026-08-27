@@ -15,8 +15,13 @@ from ming_sim.cli import terminal
 
 
 class _HistoryDB:
-    def get_turn_report(self, turn: int) -> str:
-        return "邸报：国丈家赀约数十万两。"
+    def get_turn_report_archive(self, turn: int):
+        return {
+            "year": 0,
+            "period": 0,
+            "report": "邸报：国丈家赀约数十万两。",
+            "attendant_message": "",
+        }
 
     def get_turn_extraction(self, turn: int):
         return {
@@ -45,6 +50,7 @@ def test_history_payload_preserves_narrative_without_machine_ledger(monkeypatch)
         "year": 2,
         "period": 3,
         "report": "邸报：国丈家赀约数十万两。",
+        "attendant_message": "",
         "decree_text": "诏曰：赈济辽东。",
         "directives": [{"id": 7, "text": "命户部发帑", "notes": "家赀约十万两"}],
     }
@@ -66,7 +72,11 @@ class _SettlementSession:
             decisions=[{"title": "辽饷", "context": "家赀约十万两，是否发帑"}],
         )
 
-    def submit_decisions(self, *_args, **_kwargs):
+    def submit_hitl_choices(self, *_args, write_gate=None, **_kwargs):
+        # 生产协议：resolve/stream 唯一走 submit_hitl_choices
+        if write_gate is not None:
+            with write_gate:
+                return "邸报：国丈家赀约数十万两，三十万两帑银与五千援军已抵辽东。"
         return "邸报：国丈家赀约数十万两，三十万两帑银与五千援军已抵辽东。"
 
 

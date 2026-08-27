@@ -330,16 +330,18 @@ export function App() {
     // 结局页未关掉时让位给它；玩家关掉后（endingDismissed）邸报照常。
     if (state.ending && !endingDismissed) return;
     const currentTurn = state.turn.turn;
-    // #1356：t0 previous_summary 为空串——自动弹仅在有真报时；空壳仍可由木牌打开。
-    const summary = (state.previous_summary || "").trim();
-    if (!summary) return;
+    // #1356/#671：t0 双空不自动弹；有邸报或独立递话任一即弹。空壳仍可由木牌打开。
+    // trim 只做空壳门；写入 state 的是未 trim 原文（P6）
+    const hasReport = Boolean((state.previous_summary || "").trim());
+    const hasAttendant = Boolean((state.last_attendant_message || "").trim());
+    if (!hasReport && !hasAttendant) return;
     if (currentTurn === gazetteShown) return;
     if (!isFaceReachable("gazette", isSettlementDisplay(state.turn))) return;
     if (suppressNextReportRef.current) {
       suppressNextReportRef.current = false;
       return;
     }
-    setGazetteReport(summary);
+    setGazetteReport(state.previous_summary || "");
     setActiveModal("report");
     setGazetteShown(currentTurn);
   }, [state, gazetteShown, endingDismissed, activeModal]);
@@ -721,7 +723,8 @@ export function App() {
       {/* #1356：空 previous_summary 亦可开卷轴壳（木牌）；无固定空注 */}
       {gazetteOpen ? (
         <ReportModal
-          report={(gazetteReport || state.previous_summary || report || "").trim()}
+          report={gazetteReport || state.previous_summary || report || ""}
+          attendantMessage={state.last_attendant_message || undefined}
           periodLabel={state.previous_reign_period_label || undefined}
           onClose={() => setActiveModal("none")}
         />
@@ -789,16 +792,26 @@ export function App() {
 
       {/* 必达：续跑入口仍挂既有 phase===settling（及 issueDecree 恢复分流）；展示态门控不误关。
           ship-pre r4：崩溃/中止后重载时相位停在 settling——last_decree 已被 begin_turn 清空。
-          #1418 r2：all-decided + settlement_display 仍真 → 同条续跑面，改发 resolve_decisions/stream。 */}
+          #1418 r2 / #657：all-decided 或 typed resume_phase2 → 同条续跑面，空 POST resolve_decisions/stream。 */}
       {state.turn.phase === "settling"
-        || needsPhase2Resume(state.turn.phase, state.pending_decisions || [], state.turn.settlement_display)
+        || needsPhase2Resume(
+          state.turn.phase,
+          state.pending_decisions || [],
+          state.turn.settlement_display,
+          state.resume_phase2,
+        )
         ? (
         <div className="recovery-banner" data-testid="settle-resume">
           <span>上月结算未完成（进度已保存）。</span>
           <button
             className="seal-btn-issue"
             onClick={
-              needsPhase2Resume(state.turn.phase, state.pending_decisions || [], state.turn.settlement_display)
+              needsPhase2Resume(
+                state.turn.phase,
+                state.pending_decisions || [],
+                state.turn.settlement_display,
+                state.resume_phase2,
+              )
                 ? resumePhase2
                 : issueDecree
             }

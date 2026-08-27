@@ -17,77 +17,13 @@ import inspect
 
 import pytest
 
-import ming_sim.decree as decree_mod
-import ming_sim.memories as memories
 from ming_sim.applier import Provenance
 from ming_sim.decree import resolve_directives
-from ming_sim.session import GameSession
+from tests.settlement_seam_helpers import canned_full_settlement, make_light_session
 
-
-def _canned_full_settlement(monkeypatch, *, narrative="本月边情邸报：辽饷催征，流寇未息。",
-                            decisions=None, simulator_calls=None, source_spy=None):
-    """Replace only external LLM seams; keep production settlement spine."""
-    simulator_calls = simulator_calls if simulator_calls is not None else []
-    decisions = list(decisions or [])
-
-    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
-
-    def _sim(*a, **k):
-        simulator_calls.append({
-            "decree_text": a[3] if len(a) > 3 else k.get("decree_text", ""),
-            "payload": k.get("simulator_payload") or (a[10] if len(a) > 10 else None),
-        })
-        text = narrative
-        if decisions:
-            # parse_decision_blocks 认 <<DECISION>> 块
-            blocks = []
-            for i, d in enumerate(decisions):
-                title = d.get("title") or f"决策{i}"
-                opts = d.get("options") or ["准", "不准"]
-                opt_lines = "\n".join(f"- {o}" for o in opts)
-                blocks.append(f"<<DECISION title=\"{title}\">>\n{opt_lines}\n<</DECISION>>")
-            text = narrative + "\n" + "\n".join(blocks)
-        return text, k.get("simulator_payload") or {}
-
-    monkeypatch.setattr(decree_mod, "simulate_season_with_payload", _sim)
-    monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
-    monkeypatch.setattr(decree_mod, "create_score_extractor_module_agent", lambda *a, **k: object())
-    monkeypatch.setattr(
-        decree_mod, "extract_scores_by_modules_with_agno",
-        lambda *a, **k: ({}, "out", "in"),
-    )
-    monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
-    monkeypatch.setattr(memories, "run_agent_text", lambda *a, **k: '{"body":"月记","tags":[]}')
-
-    if source_spy is not None:
-        real_settle = decree_mod.settle_with_delta
-
-        def _spy_settle(*a, **k):
-            source_spy.append(k.get("source"))
-            return real_settle(*a, **k)
-
-        monkeypatch.setattr(decree_mod, "settle_with_delta", _spy_settle)
-
-    return simulator_calls
-
-
-def _session(db, state, content):
-    session = GameSession.__new__(GameSession)
-    session.db = db
-    session.state = state
-    session.content = content
-    session.registry = None
-    session.llm_config = None
-    session.agno_db = None
-    session.deaths_this_turn = []
-    session.debuts_this_turn = []
-    session.last_decree = ""
-    session.last_report = ""
-    session._decree_draft_fingerprint = ()
-    session._scene_registry = None
-    session._beat_generator = None
-    session.auto_save = lambda *a, **k: None
-    return session
+# Back-compat aliases for this file's call sites.
+_canned_full_settlement = canned_full_settlement
+_session = make_light_session
 
 
 def _issue_bars(db):

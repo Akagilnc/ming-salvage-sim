@@ -1917,3 +1917,155 @@ def test_cli_scaffold_exit_failure_deletes_exit_ledger(game, monkeypatch):
     assert exit_rows == [], exit_rows
     # Minister remains present because scaffold exit rolled back.
     assert minister in an.present_names_at(db, night_id)
+
+
+# ---------------------------------------------------------------------------
+# #657 片3 S2/S3/S7：锁边界与多 target 并行
+# ---------------------------------------------------------------------------
+
+
+
+
+def test_657_s2_s3_lock_boundary_and_parallel_summons(game, monkeypatch):
+    """S2/S3/S7 + Class4：经 session.resolve_rescript_decisions 唯一编排 + 既有 write_gate。
+
+    ① 持锁 commit → ② 无锁 join（gate.acquire(False)）→ ③ 再持同一 gate；
+    单 target 失败门闩响亮，另一 target 已 persist 正文保留。
+    """
+    import threading
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+
+    from ming_sim.audience_night import rescript_summon_origin_ref
+    from ming_sim.beat_orchestration import ChatTurnSceneRegistry
+    from ming_sim.models import TurnPhase
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+    from ming_sim.session import GameSession
+    import ming_sim.session as session_mod
+
+    db, state, content = game
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
+
+    ministers = []
+    for ch in content.characters.values():
+        if db.get_character_status(ch.name)[0] != "active":
+            continue
+        if db.resolve_power_id(ch) != "ming":
+            continue
+        if getattr(ch, "office_type", "") in ("后宫", "宗藩"):
+            continue
+        ministers.append(ch.name)
+        if len(ministers) >= 2:
+            break
+    assert len(ministers) >= 2
+    ok_name, bad_name = ministers[0], ministers[1]
+
+    opt = normalize_rescript_layer_a_option({
+        "label": "备", "hint": "h", "action_type": "assignment",
+        "assignee_name": "", "target_kind": "region", "target_id": "shaanxi",
+        "locality_scope": "single", "region_id": "shaanxi",
+        "transaction_category": "督赈",
+    })
+    drafts = []
+    for i, name in enumerate(ministers):
+        drafts.append({
+            "title": f"召见{name}", "context": "c",
+            "options": [opt, {"label": "x", "hint": "h", "draft_capability": f"cap{i}"}],
+            "actor_name": name, "actor_office": "o", "actor_faction": "f",
+        })
+    db.save_rescript_drafts(int(state.turn), drafts)
+    db.save_resolve_context(
+        int(state.turn), "诏", "邸报", {"candidate_events": []},
+        secret_orders=[], relevant_memories=[],
+    )
+    db.conn.commit()
+    desk = db.list_rescript_desk(int(state.turn))
+    keys = [r["decision_key"] for r in desk if r["kind"] == "rescript_draft"]
+
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.llm_config = None
+    sess.agno_db = None
+    sess.registry = None
+    sess.last_decree = "诏"
+    sess.temporary_characters = {}
+    executor = ThreadPoolExecutor(max_workers=4)
+    sess._scene_registry = ChatTurnSceneRegistry(executor)
+    sess._write_gate = threading.Lock()
+    sess._write_queue = type("Q", (), {"write_gate": sess._write_gate})()
+
+    started = {}
+    lock = threading.Lock()
+    join_saw_free = []
+    in_join_phase = {"v": False}
+    gen_ok_body = f"{ok_name}入殿请安。"
+
+    def mixed_gen(inputs):
+        name = str(getattr(inputs, "person_name", "") or "") or ""
+        with lock:
+            if name:
+                started[f"{name}-{id(inputs)}"] = time.time()
+        time.sleep(0.05)
+        if in_join_phase["v"]:
+            free = sess._write_gate.acquire(False)
+            if free:
+                sess._write_gate.release()
+            join_saw_free.append(bool(free))
+        time.sleep(0.12)
+        if name == bad_name:
+            raise RuntimeError("target B boom")
+        if name == ok_name:
+            return gen_ok_body
+        return f"{name or '臣'}入殿请安。"
+
+    sess._beat_generator = mixed_gen
+    monkeypatch.setattr(
+        session_mod, "resolve_decisions_phase2",
+        lambda *_a, **_k: "邸报：锁窗测。",
+    )
+
+    real_join = sess.join_rescript_summons
+
+    def _join_probe(p1):
+        in_join_phase["v"] = True
+        try:
+            return real_join(p1)
+        finally:
+            in_join_phase["v"] = False
+
+    sess.join_rescript_summons = _join_probe  # type: ignore[method-assign]
+
+    choices = [
+        {
+            "decision_key": key, "action": "summon",
+            "label": "召见", "summon_target": name,
+        }
+        for key, name in zip(keys, ministers)
+    ]
+
+    raised = False
+    try:
+        sess.resolve_rescript_decisions(choices, write_gate=sess._write_gate)
+    except ValueError:
+        raised = True
+    assert raised, "单 target 失败门闩须响亮 ValueError"
+    assert join_saw_free and all(join_saw_free), f"join 期间 gate 应空闲: {join_saw_free}"
+    times = [t for k, t in started.items() if ok_name in k or bad_name in k]
+    if len(times) >= 2:
+        assert max(times) - min(times) < 0.12, f"Futures 未重叠: {started}"
+
+    # 成功 target 正文仍在（S7 失败域）
+    k0 = next(k for k, n in zip(keys, ministers) if n == ok_name)
+    _kind, turn_s, idx_s = k0.split(":")
+    origin0 = rescript_summon_origin_ref(int(turn_s), int(idx_s), 0)
+    body0 = db.conn.execute(
+        "SELECT body FROM story_ledger_entries WHERE origin_ref=?",
+        (origin0,),
+    ).fetchone()
+    assert body0 is not None and str(body0["body"] or "").strip() == gen_ok_body
+    executor.shutdown(wait=False)
+
+
