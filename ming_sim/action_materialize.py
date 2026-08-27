@@ -2906,7 +2906,13 @@ def _materialize_appointment(ctx: MaterializeCtx) -> None:
                 pend_for_minister=ctx.pend_for_minister,
             )
             return
-        if status == "hit" and row is not None:
+        incoming_action = str(appt.get("appoint_action") or "").strip()
+        row_action = str(row.get("action") or "").strip() if row is not None else ""
+        if (
+            status == "hit" and row is not None
+            and (incoming_action == "无" or incoming_action == row_action)
+        ):
+            # 路径只并入同向 action；反向任免继续走下方既有 staging/对冲管线。
             # 同人同职再发任命+路径：no-op 去重，中旨/任别/summon 并入既有条。
             # path-only 省略 name 时从命中 row payload 取 canonical 人名，走共享 summon tail。
             person_for_summon = appt_name or str(

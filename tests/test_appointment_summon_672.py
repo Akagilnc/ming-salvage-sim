@@ -641,6 +641,13 @@ def test_dismiss_with_summon_after_does_not_stage_origin(game, monkeypatch):
     )
     appointment_id = int(appointment["id"])
     before = _office_payload_snapshot(db, appointment_id)
+    # 对冲会删除旧任命；在真实 DB 删除边界留 OLD payload，证明反向来意未先污染它。
+    db.conn.execute("CREATE TEMP TABLE deleted_office_payload (id INTEGER, payload_json TEXT)")
+    db.conn.execute(
+        "CREATE TEMP TRIGGER audit_deleted_office BEFORE DELETE ON pending_actions "
+        "WHEN OLD.id = %d BEGIN INSERT INTO deleted_office_payload VALUES "
+        "(OLD.id, OLD.payload_json); END" % appointment_id
+    )
 
     GameSession.apply_cli_conversation_actions(
         _fake_session(db, state, content), minister,
@@ -653,9 +660,19 @@ def test_dismiss_with_summon_after_does_not_stage_origin(game, monkeypatch):
         }],
     )
 
-    after = _office_payload_snapshot(db, appointment_id)
-    assert before.get("summon_after") in (None, "否", "")
-    assert after.get("summon_after") in (None, "否", "")
+    deleted = db.conn.execute(
+        "SELECT payload_json FROM deleted_office_payload WHERE id=?", (appointment_id,),
+    ).fetchone()
+    assert deleted is not None
+    assert json.loads(deleted["payload_json"] or "{}") == before
+    assert db.conn.execute(
+        "SELECT 1 FROM pending_actions WHERE id=?", (appointment_id,),
+    ).fetchone() is None
+    yuan_rows = [
+        r for r in db.list_pending_actions(state.turn)
+        if json.loads(r["payload_json"] or "{}").get("name") == "袁崇焕"
+    ]
+    assert yuan_rows == []  # 非现职：既有任命与反向罢免按普通管线对冲。
     assert _office_origin_count(db, appointment_id) == 0
 
 
