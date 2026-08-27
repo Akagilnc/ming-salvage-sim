@@ -1931,6 +1931,73 @@ def record_summon_fresh(
     )
 
 
+def ensure_inactive_office_summon(
+    db: Any, pending_id: int, person_name: str, *, night_id: int,
+    origin_chat_turn_id: int = 0,
+) -> int:
+    """Ensure the pre-close, inactive half of an appointment-plus-summon intent.
+
+    Binds origin_chat_turn_id so #506 undo of the staging turn erases this row;
+    still-inactive origins are also discarded on pending reject/withdraw.
+    """
+    origin = f"office:{int(pending_id)}"
+    existing = _ledger_by_origin_ref(db, origin)
+    if existing is not None:
+        return int(existing["id"])
+    if int(night_id) <= 0:
+        raise AudienceNightError("任命后传召须在召对夜内落账", code="night_not_found")
+    return append_ledger_entry(
+        db, int(night_id), person_names=[str(person_name).strip()],
+        tags=[METHOD_CHUANZHAO, _summon_origin_tag(origin)], origin_ref=origin,
+        origin_chat_turn_id=int(origin_chat_turn_id or 0),
+    )
+
+
+def discard_inactive_office_summon(db: Any, pending_id: int) -> bool:
+    """Delete still-inactive office:<pending_id> origin; refuse activated history.
+
+    Matches withdraw/drop owns_transaction: do not commit over a caller-owned
+    BEGIN/atomic, so outer rollback can restore pending + origin together.
+    """
+    conn = db.conn
+    owns_transaction = not (
+        bool(getattr(conn, "_commit_suspended", False))
+        or int(getattr(conn, "_atomic_depth", 0) or 0) > 0
+        or conn.in_transaction
+    )
+    origin = f"office:{int(pending_id)}"
+    entry = _ledger_by_origin_ref(db, origin)
+    if entry is None:
+        return False
+    tags = list(entry.get("tags") or [])
+    # Activated / in-transit / settled rows are post-promulgation history — keep.
+    if TAG_SUMMON_UNSETTLED in tags or TAG_IN_TRANSIT in tags or TAG_SUMMON_SETTLED in tags:
+        return False
+    conn.execute(
+        "DELETE FROM story_ledger_entries WHERE id=?",
+        (int(entry["id"]),),
+    )
+    if owns_transaction:
+        conn.commit()
+    return True
+
+
+def activate_office_summon(db: Any, pending_id: int) -> Optional[Dict[str, Any]]:
+    """Activate the original inactive row; never append to a closed night."""
+    origin = f"office:{int(pending_id)}"
+    entry = _ledger_by_origin_ref(db, origin)
+    if entry is None:
+        return None
+    tags = list(entry["tags"])
+    if TAG_SUMMON_UNSETTLED not in tags:
+        tags.append(TAG_SUMMON_UNSETTLED)
+        db.conn.execute(
+            "UPDATE story_ledger_entries SET tags=? WHERE id=?",
+            (json.dumps(tags, ensure_ascii=False), int(entry["id"])),
+        )
+    return {**entry, "tags": tags}
+
+
 def commit_fresh_summons_for_night(
     db: Any,
     state: GameState,
@@ -1939,7 +2006,10 @@ def commit_fresh_summons_for_night(
     content: Any = None,
     registry: Any = None,
 ) -> List[str]:
-    """收夜按人一次 canonical 启程；成功后标在途，origin 保持未结候见关联。"""
+    """收夜按人一次 canonical 启程；成功后标在途，origin 保持未结候见关联。
+
+    已在同一 beizhili 旅程只附加 origin 并标在途；异目的地仍拒。
+    """
     pending = [
         item for item in list_unsettled_summons(db)
         if item["kind"] == "fresh" and int(item["night_id"]) == int(night_id)
@@ -1947,29 +2017,59 @@ def commit_fresh_summons_for_night(
     if not pending:
         return []
     from ming_sim.decree import atomic_and_reload
-    from ming_sim.issues import apply_score_extraction
+    from ming_sim.issues import apply_person_changes_only
 
     # 历史多 origin 未结账：按人分组，apply 一次后全部标在途（兼容重试）。
     by_person: Dict[str, List[Dict[str, Any]]] = {}
     for item in pending:
         by_person.setdefault(str(item["person_name"]), []).append(item)
 
+    from ming_sim.matching import is_capital_location
+
     origins: List[str] = []
     with atomic_and_reload(db, state, content=content, registry=registry):
         for person_name, items in by_person.items():
-            applied = apply_score_extraction(
+            row = db.conn.execute(
+                "SELECT location, transit_to, status FROM characters WHERE name=?",
+                (person_name,),
+            ).fetchone()
+            current_transit = str(row["transit_to"] or "").strip() if row is not None else ""
+            location = str(row["location"] or "").strip() if row is not None else ""
+            if current_transit:
+                if current_transit != "beizhili":
+                    raise AudienceNightError(
+                        f"传召启程未落定：{person_name} 已在途赴 {current_transit}",
+                        code="summon_departure_rejected",
+                        detail={
+                            "origin_id": str(items[0]["origin_id"]),
+                            "transit_to": current_transit,
+                        },
+                    )
+                # Same beizhili journey: attach origins only, no second departure write.
+                _mark_summon_entries_in_transit(db, items)
+                for item in items:
+                    origins.append(str(item["origin_id"]))
+                continue
+            # 已在京且无在途：复用 capital matcher + 在途 tag → waiting 投影，
+            # 不调同地行止 applier（#672 / #671 候见不变式）。
+            if is_capital_location(location):
+                _mark_summon_entries_in_transit(db, items)
+                for item in items:
+                    origins.append(str(item["origin_id"]))
+                continue
+            applied = apply_person_changes_only(
                 db,
                 state,
-                {"人物变更": [{
+                [{
                     "name": person_name,
                     "动作": "行止",
                     "transit_to": "beizhili",
                     # Canonical applier only admits its established provenance vocabulary;
                     # the summon origin remains machine-linked in the story ledger.
                     "origin_ref": "盘面自发",
-                }]},
+                }],
                 content=content,
-                registry=registry,
+                registry=None,
             )
             results = list(applied.get("applied_person_changes") or [])
             if not results or any(result.get("rejected") for result in results):

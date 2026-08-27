@@ -26,7 +26,7 @@
 
 > **「共置」是本 ADR 要新引入的实体适配器目录/索引,不是复用现成基建**：① 不是 `registry.py` 的 `MinisterRegistry`（那是 agent 刷新用的运行时登记，别撞术语）；② 0008 的写侧也**没有**「registry」——`applier.py` 是 0008 的契约类型 / `RejectionCollector` / `atomic` helper，而各 section 的落库逻辑仍住在 `apply_score_extraction`（`issues.py`）/ `GameDB` / issue 路径里、由 `decree.py` 桥接（section 原地迁入、未集中）。本 ADR 需明说这些**现有写主**如何登记/包进新目录。共置只是一条**约定**：实体 X 的读+写适配器一处可寻。
 
-不合并成单一「实体适配器」的理由：写（delta items → DB）与读（model/DB → LLM 文本）**数据流相反、输入不同、代码位置不同**，是两个 seam；one adapter ≠ 把反向数据流塞进同一接口（deletion test：硬并是捆两件不相干的事，不concentrate 复杂度）。共置约定保证「实体 X 的写适配器 + 读适配器」一处可寻，locality 不丢。
+不合并成单一「实体适配器」的理由：写（delta items → DB）与读（model/DB → LLM 文本）**数据流相反、输入不同、代码位置不同**，是两个 seam；one adapter ≠ 把反向数据流塞进同一接口（deletion test：硬并是捆两件不相干的事，不concentrate 复杂度）。共置约定保证「实体 X 的写适配器 + 读适配器」一处可寻，locality 不丢。〔2026-08-27 后出为准：**实体适配器目录由 ADR 0150 交付**（`ming_sim/entities/<entity>/`，写侧段适配器先入住）；本 ADR 的读侧呈现适配器将来住进同一目录，共置约定就此实体化。〕
 
 ## 决定 2：呈现两形状 —— 名册行 + 全档，字段集进契约
 

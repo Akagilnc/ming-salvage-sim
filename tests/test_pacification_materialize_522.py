@@ -979,3 +979,36 @@ def test_pacification_successful_promulgation_closes_dossier(game):
     assert db.conn.execute(
         "SELECT power_id FROM characters WHERE name='张献忠'"
     ).fetchone()["power_id"] == "ming"
+
+
+def test_pacification_promulgation_refreshes_target_after_outer_commit(game):
+    """#672：招抚易主成功后经 outer-commit callback 刷新 registry。"""
+    from ming_sim.decree import settle_with_delta
+
+    db, state, content = game
+    _activate_canonical_bandit(db, content)
+    target_name = "张献忠"
+    ctx = _stage_pacification(db, state.turn, target_name)
+    db.commit_pending_actions(state, content=content)
+    dossier = next(
+        d for d in db.list_decree_dossiers(status="proposed")
+        if d["action_type"] == "pacification"
+    )
+
+    class _Reg:
+        def __init__(self):
+            self.refreshed = []
+
+        def refresh(self, name):
+            self.refreshed.append(name)
+
+    reg = _Reg()
+    settle_with_delta(
+        state, db, {}, before_turn=int(state.turn), content=content, registry=reg,
+        dossier_verdicts=[{"dossier_id": dossier["id"], "decision": "promulgated"}],
+        delta_applier=lambda *a, **k: {},
+    )
+    assert target_name in reg.refreshed
+    assert db.conn.execute(
+        "SELECT power_id FROM characters WHERE name=?", (target_name,),
+    ).fetchone()["power_id"] == "ming"

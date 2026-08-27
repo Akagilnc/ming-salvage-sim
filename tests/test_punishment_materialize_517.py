@@ -895,3 +895,30 @@ def test_web_stream_transports_punishment_category_to_real_stage(game):
     assert invalid.get("pending_action_failures")
     assert db.conn.execute("SELECT COUNT(*) FROM pending_actions").fetchone()[0] == pending_before
     assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0] == dossiers_before
+
+
+def test_punishment_promulgation_refreshes_target_after_outer_commit(game):
+    """#672：惩处人物处置经 outer-commit callback 刷新 registry。"""
+    from ming_sim.decree import settle_with_delta
+
+    db, state, content = game
+    target = _active_ming(db, content)
+    ctx = _stage_punishment(db, state.turn, target.name, action="拿问下狱")
+    pending_id = ctx.out["pending_action_id"]
+    dossier = _close_night_dossier(db, state, content, pending_id)
+
+    class _Reg:
+        def __init__(self):
+            self.refreshed = []
+
+        def refresh(self, name):
+            self.refreshed.append(name)
+
+    reg = _Reg()
+    settle_with_delta(
+        state, db, {}, before_turn=int(state.turn), content=content, registry=reg,
+        dossier_verdicts=[{"dossier_id": dossier["id"], "decision": "promulgated"}],
+        delta_applier=lambda *a, **k: {},
+    )
+    assert target.name in reg.refreshed
+    assert db.get_character_status(target.name)[0] == "imprisoned"
