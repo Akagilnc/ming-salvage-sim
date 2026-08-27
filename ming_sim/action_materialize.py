@@ -495,6 +495,8 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
             "locality_scope",
             # #653：pay_order_override 结构化载荷随拟旨草案整道入 staging payload。
             "entries",
+            # #658：御笔强推 target 须随对话拟旨 staging 完整保留，禁第二案卷。
+            "target_dossier_id",
         )
         for field_name in mechanical_fields:
             if draft_res.get(field_name) not in (None, ""):
@@ -508,7 +510,11 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
             semantic_payload["source_chat_turn_id"] = origin_pin
         if isinstance(draft_res.get("participant_roster"), list):
             semantic_payload["participant_roster"] = draft_res["participant_roster"]
-        if not is_existing_update:
+        # #658：纯强推不得 setdefault 普通 triad，否则混载触发互斥拒收 / 造第二案卷
+        from ming_sim.db import classify_directive_structured_kind
+        if not is_existing_update and classify_directive_structured_kind(
+            semantic_payload,
+        ) != "push":
             semantic_payload.setdefault("dossier_action_type", "special_decree")
             semantic_payload.setdefault("target_kind", "policy")
             semantic_payload.setdefault("target_id", ctx.player_message.strip())

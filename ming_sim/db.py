@@ -593,12 +593,27 @@ def directive_payload_has_ordinary_triad(payload: Mapping[str, object]) -> bool:
     )
 
 
+def classify_directive_structured_kind(payload: Mapping[str, object]) -> str:
+    """#658 旨意结构化互斥权威：'push' | 'ordinary' | 'empty'；并存响亮拒绝。
+
+    extract / capture / staging / merge / ensure 共吃——禁第二份 triad↔target 判定。
+    """
+    has_push = imperial_push_target_dossier_id(payload) is not None
+    has_triad = directive_payload_has_ordinary_triad(payload)
+    if has_push and has_triad:
+        raise ValueError(
+            "旨意不得同时带普通结构化 triad 与御笔强推 target_dossier_id"
+        )
+    if has_push:
+        return "push"
+    if has_triad:
+        return "ordinary"
+    return "empty"
+
+
 def directive_payload_admits_structured_write(payload: Mapping[str, object]) -> bool:
-    """旨意可落库：普通 triad，或 #658 御笔强推 typed target。"""
-    return (
-        directive_payload_has_ordinary_triad(payload)
-        or imperial_push_target_dossier_id(payload) is not None
-    )
+    """旨意可落库：普通 triad，或 #658 御笔强推 typed target（互斥）。"""
+    return classify_directive_structured_kind(payload) != "empty"
 
 
 def _coerce_deadline_months(raw: object, *, default: int = 0) -> int:
@@ -15535,7 +15550,11 @@ class GameDB:
         return out
 
     def list_decree_dossiers_for_simulation(self, turn: int) -> List[Dict[str, object]]:
-        """本月新生/重判案卷及所有未结案执行中案卷。"""
+        """本月新生/重判案卷及所有未结案执行中案卷。
+
+        #658：旧案本回合刚获 pending 颁布 verdict（如 stalled→backed 后顺颁）
+        亦入同一清单，不另建第二可见集。
+        """
         rows = self.conn.execute(
             """
             SELECT d.*,
@@ -15556,6 +15575,13 @@ class GameDB:
                        AND d.held_turn > 0
                        AND ? > d.held_turn
                     )
+                    OR (
+                           d.promulgation_decision=''
+                       AND EXISTS (
+                               SELECT 1 FROM pending_promulgation_verdicts pv
+                               WHERE pv.turn=? AND pv.dossier_id=d.id
+                           )
+                    )
                 )
             ) OR (
                     d.status='executing'
@@ -15575,7 +15601,8 @@ class GameDB:
             """,
             (
                 int(turn), int(turn), int(turn),
-                int(turn), int(turn), int(turn), int(turn), int(turn),
+                int(turn), int(turn), int(turn),
+                int(turn), int(turn), int(turn),
             ),
         ).fetchall()
         visible = []
@@ -17735,7 +17762,11 @@ class GameDB:
     def _merge_directive_payload(
         self, existing_json: object, new_payload: Dict[str, object],
     ) -> Dict[str, object]:
-        """改草保留未修改的机械字段；显式新值覆盖后统一校验。"""
+        """改草保留未修改的机械字段；显式新值覆盖后统一校验。
+
+        #658：普通 triad 与御笔 target 互斥生命周期——
+        普通改草不得继承旧 target；纯强推改草不得继承旧 triad。
+        """
         old = self._decode_directive_dossier_payload(existing_json)
         incoming = dict(new_payload or {})
         old_roster = self._normalize_participant_roster(old.get("participant_roster") or [])
@@ -17746,8 +17777,34 @@ class GameDB:
             incoming["participant_roster"] = old_roster + [
                 item for item in new_roster if item not in old_roster
             ]
+        # 先对 incoming 互斥分类（并存即拒），再决定从 old 继承哪些字段
+        incoming_kind = (
+            classify_directive_structured_kind(incoming)
+            if incoming else "empty"
+        )
         merged = {**old, **incoming}
+        if incoming_kind == "ordinary":
+            merged.pop("target_dossier_id", None)
+            merged.pop("目标案卷ID", None)
+        elif incoming_kind == "push":
+            # 纯强推载荷只保留 target + mode（及 incoming 显式键）
+            keep = {"target_dossier_id", "目标案卷ID", "mode"}
+            keep.update(incoming.keys())
+            merged = {k: v for k, v in merged.items() if k in keep}
+            # 确保 target 权威键存在
+            push_id = imperial_push_target_dossier_id(incoming)
+            if push_id is not None:
+                merged["target_dossier_id"] = push_id
+                merged.pop("目标案卷ID", None)
+        # 合并结果再过互斥权威（old 残留 + incoming 部分字段仍可能冲突）
+        classify_directive_structured_kind(merged)
         requested = str(merged.get("dossier_action_type") or "")
+        if incoming_kind == "push":
+            # 强推不经普通 normalize triad 要求
+            mode = self._normalize_dossier_mode(
+                merged["mode"] if "mode" in merged else "ordinary"
+            )
+            return {"target_dossier_id": int(merged["target_dossier_id"]), "mode": mode}
         normalized = self._normalize_directive_dossier_payload(
             merged, content=self.content,
             current_turn=int(self.conn.execute(
@@ -19274,8 +19331,12 @@ class GameDB:
                 "target_id": f"legacy-directive:{directive_id}",
                 "locality_scope": "none",
             }
-        # 御笔强推：在 normalize 前识别 typed target，避免误建平行案卷
-        target_did = imperial_push_target_dossier_id(structured)
+        # #658：互斥权威——push 与 ordinary 并存响亮拒绝；push 在 normalize 前短路
+        kind = classify_directive_structured_kind(structured)
+        target_did = (
+            imperial_push_target_dossier_id(structured)
+            if kind == "push" else None
+        )
         if target_did is not None:
             # 同 directive↔目标 dossier 已绑定：幂等返回，不重跑 stalled 校验副作用
             bound = self.conn.execute(
