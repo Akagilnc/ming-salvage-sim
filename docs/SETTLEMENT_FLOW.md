@@ -142,7 +142,13 @@
        未 prepare 的 settle 响亮失败且零写；settling+ready=1 崩溃重入只读 context，不二次 tick
 
   ── 后半段 settle_with_delta：整段单一 atomic 事务，9–16 全有或全无 ──
-  9. applied = apply_score_extraction(db, state, delta, content=content, registry=None)
+  9. db.commit_pending_actions(..., registry=None)  # 正常路通常为 no-op；覆盖恢复/重抽路的新暂存动作
+     affected_people += db.apply_dossier_verdicts(..., registry=None)
+     affected_people += db.apply_dossier_promulgation(..., registry=None)
+     applied = apply_score_extraction(db, state, delta, content=content, registry=None)
+     ↳ #672 任命并传召：pending/案卷先保存未激活的同源传召；任命真正落成后才在
+       同一 outer atomic 内激活该传召并按在册出发地启程。任命失败则整笔回滚，不留在途半写。
+     ↳ verdict/批红返回的受影响人物只在 9–16 全部提交成功后刷新 registry；事务内不碰缓存。
      ↳ 内部 _sanitize → _merge → 分发到 region/army/building/economy/issue/character 各 apply_*
      ↳ 未知顶层字段响亮中止；9 个结算 section 的脏项（坏值/缺 id/非法 enum）逐项拒收
        落 `rejection_reports`（坏一项不带走整批，不再印 [WARN]），commit 成功后镜像到
@@ -238,7 +244,7 @@ session.advance_without_decree / POST /api/decree/advance_without_edict:
 - `settling` + 无 ready context（崩在推演期）→ 落回正常流程重跑推演；`pre_settle` 被 settling 守门跳过=财政不二落。
 - settling 恢复窗口内**冻结改盘操作**：
   - 下旨草案/撤回/跳过等 7 个入口（`session._refuse_if_settling`；web 对应端点 409，CLI 打印恢复指引并留在本回合交互循环不重印回合头）。
-  - 全部即时写聊天路径一并冻（`_proposal_blocked` 总闸）：任免落地（`_apply_appointment`）、编外人物登记、密令房 tool 四个 action（issue/progress/submit/rush，`tools.py` dispatcher 一处冻）、CLI 前缀密令 upsert——这些直写在 settle 重试事务边界外，重放中止回滚不会回滚它们。
+  - 全部聊天侧新写入一并冻（`_proposal_blocked` 总闸）：任免候选暂存（`_stage_appointment_candidate`）、编外人物登记、密令房 tool 四个 action（issue/progress/submit/rush，`tools.py` dispatcher 一处冻）、CLI 前缀密令 upsert——这些写入在 settle 重试事务边界外，重放中止回滚不会回滚它们。
   - 自然语言抽取的**新暂存动作**短路不入档（抽取器 LLM 调用一并跳过）——窗内新 stage 会被重试 settle 的 commit_pending_actions 落进「保存的 delta 推演时并不知道」的旧回合。
   - 窗**前**已暂存的 pending 不受影响：对话确认（应允延迟提交/拒绝丢弃）保持可用，仍随 settle 事务统一提交。
 - ready 但值级坏掉的 payload 反复重放失败 → 「重新推演」逃生口 `error_pack.clear_for_resimulation`：把 context **降级为非 ready**（保留邸报字段），不删行，崩溃循环切断。

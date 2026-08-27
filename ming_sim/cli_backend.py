@@ -2560,22 +2560,40 @@ def extract_appointment_action(
     llm_config: Any = None,
 ) -> Dict[str, Any]:
     """LLM 判皇帝本轮口头是否在任免某人（任命/罢免），返回结构化动作。失败/无 → 「无」。
-    只判自然语言；显式「拟旨如下：」里的任免走 extractor 的 office_changes，不在此。"""
+    只判自然语言；显式「拟旨如下：」里的任免走 extractor 的 office_changes，不在此。
+
+    字段/枚举唯一真源 = appointment catalog FieldSpec（含 summon_after）；
+    串行 fallback 与分类器同形，禁止手写第二份字段定义。
+    """
+    from ming_sim.action_clusters import cluster_by_kind, normalize_one_candidate
+
+    cluster = cluster_by_kind("appointment")
+    if cluster is None:
+        raise RuntimeError("appointment cluster missing from action catalog")
+    # Prompt 字段行直接从 catalog FieldSpec 生成，不复制枚举。
+    field_lines: List[str] = []
+    for spec in cluster.fields:
+        if spec.allowed is not None:
+            vals = sorted(spec.allowed, key=lambda x: (x != "无", x))
+            field_lines.append(f'  "{spec.zh}": "{"|".join(vals)}",')
+        elif spec.as_int:
+            field_lines.append(f'  "{spec.zh}": 0,')
+        else:
+            field_lines.append(f'  "{spec.zh}": "",')
+    if field_lines:
+        field_lines[-1] = field_lines[-1].rstrip(",")
+    schema = "{\n" + "\n".join(field_lines) + "\n}"
     prompt = (
         "你是信息抽取器，不扮演、不写圣旨。读皇帝这句话 + 被召对者回话，判断皇帝**本轮**"
         "是否在口头任免某人（授官/升迁/调任=任命；革职/罢黜=罢免）。"
         "拿问、下狱、赐死、廷杖、罚俸、削籍、放归、昭雪属惩处，不是任免，任免动作填「无」。"
         "只输出一个 JSON 对象（无代码围栏、无多余字）：\n"
-        "{\n"
-        '  "任免动作": "无|任命|罢免",  // 皇帝命某人任/升/调某官=任命；命革/罢/黜某人=罢免；都不是=无\n'
-        '  "姓名": "",                 // 被任/被免者确切姓名\n'
-        '  "官职": "",                 // 任命时所授官职；罢免可空\n'
-        '  "颁布方式": "普通|中旨直发", // 皇帝明确预声明中旨/特旨钦命时选后者\n'
-        '  "任别": ""                  // 署理/兼署/加衔/真除；路径应答「署理」填署理；非任别留空\n'
-        "}\n"
+        + schema + "\n"
         "判定要点：皇帝口语如「着X任/授X为/升X/调X去/革X职/罢X」即任免；"
         "对已拟任免的路径应答「特旨钦命」→任免动作可无、颁布方式=中旨直发；"
-        "「署理」→任免动作可无、任别=署理。闲谈、议事、下密令、拟旨、惩处都不算。"
+        "「署理」→任免动作可无、任别=署理。"
+        "任命并令其入京/来见/赴阙 → 任命后传召=是；未要求传召则否。"
+        "闲谈、议事、下密令、拟旨、惩处都不算。"
         "语义判断，别拘字面。无任免且无路径应答 → 任免动作填「无」、其余留空。\n\n"
         "【皇帝】" + (player_message or "（无）") + "\n"
         "【回话】" + (minister_reply or "（无）") + "\n"
@@ -2586,21 +2604,26 @@ def extract_appointment_action(
     except Exception as exc:  # 抽取失败不阻断对话
         _log(f"任免动作抽取失败：{exc}")
     obj = _loads_lenient(raw) or {}
-    # 动作归一到固定枚举：枚举外的串 → 「无」，防按未知动作误操作（同密令抽取 CMR F10）。
-    # 不收「顶替」字段：顶替/去职由落地核 _displace_duplicate_offices 按 office 文字自动去重处理，
-    # 与 extractor 的 office_changes 同一机制（CMR R3：收而不用=capture-but-ignore 不一致）。
-    _raw_action = str(obj.get("任免动作") or "无").strip()
-    _action = _raw_action if _raw_action in {"无", "任命", "罢免"} else "无"
+    if not isinstance(obj, dict):
+        obj = {}
+    # 颁布方式：先把中文/前缀声明归一到 catalog 枚举 ordinary|midzhi，再 soft normalize。
+    mapped_mode = _directive_mode(obj.get("颁布方式") if "颁布方式" in obj else obj.get("mode"))
+    if mapped_mode is not None:
+        obj = {**obj, "mode": mapped_mode}
+    # 不收「顶替」字段：顶替/去职由落地核按 office 自动去重（与 extractor office_changes 同机制）。
+    # soft normalize 经 catalog：枚举外 → default；summon_after 等字段与分类器同形。
+    normalized = normalize_one_candidate({**obj, "kind": "appointment"}, soft=True)
     result = {
-        "appoint_action": _action,
-        "name": str(obj.get("姓名") or "").strip()[:20],
-        "office": str(obj.get("官职") or "").strip()[:40],
+        "appoint_action": str(normalized.get("appoint_action") or "无"),
+        "name": str(normalized.get("name") or "").strip()[:20],
+        "office": str(normalized.get("office") or "").strip()[:40],
+        "summon_after": str(normalized.get("summon_after") or "否"),
     }
-    mode = _directive_mode(obj.get("颁布方式"))
-    if mode is not None:
+    mode = str(normalized.get("mode") or "").strip()
+    if mode:
         result["mode"] = mode
-    tenure = str(obj.get("任别") or "").strip()
-    if tenure in {"真除", "署理", "兼署", "加衔"}:
+    tenure = str(normalized.get("appointment_tenure") or "").strip()
+    if tenure:
         result["appointment_tenure"] = tenure
     return result
 

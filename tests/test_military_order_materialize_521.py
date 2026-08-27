@@ -861,3 +861,42 @@ def test_apply_military_order_verdict_effect_within_line_limit():
                 assert n <= 100, f"_apply_military_order_verdict_effect 仍超上限：{n} 行"
                 return
     raise AssertionError("未找到 _apply_military_order_verdict_effect")
+
+
+def test_military_order_office_promulgation_refreshes_after_outer_commit(game):
+    """#672：军令职守面成功后经 outer-commit callback 刷新 registry。"""
+    from ming_sim.decree import settle_with_delta
+
+    db, state, content = game
+    army_id = "xuan_da"
+    actor = _active_ming(db, content)
+    old_office = str(getattr(actor, "office", "") or "")
+    new_office = "大同总兵" if old_office != "大同总兵" else "宣府总兵"
+    ctx = _stage_military_order(
+        db, state.turn,
+        target_id=army_id,
+        assignee=actor.name,
+        station="山西 / 大同",
+        office=new_office,
+        deadline_months=3,
+        message=f"着{actor.name}移镇大同，改任{new_office}。",
+    )
+    dossier = _close_night_dossier(db, state, content, ctx.out["pending_action_id"])
+
+    class _Reg:
+        def __init__(self):
+            self.refreshed = []
+
+        def refresh(self, name):
+            self.refreshed.append(name)
+
+    reg = _Reg()
+    settle_with_delta(
+        state, db, {}, before_turn=int(state.turn), content=content, registry=reg,
+        dossier_verdicts=[{"dossier_id": dossier["id"], "decision": "promulgated"}],
+        delta_applier=lambda *a, **k: {},
+    )
+    assert actor.name in reg.refreshed
+    assert db.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (actor.name,),
+    ).fetchone()["office"] == new_office
