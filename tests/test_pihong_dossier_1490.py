@@ -3416,423 +3416,6 @@ def _summonable_name(db, content):
     return ids[0]
 
 
-def test_658_deliberate_backed_and_stalled_dossier_first(game):
-    """#658：有站台 → backed+当面站台背书；无人 → stalled+dossier: issue；非法身份零写。"""
-    from ming_sim import rescript_actions as ra
-    from ming_sim.db import GameDB
-
-    db, state, content = game
-    minister = _summonable_name(db, content)
-
-    # --- backed ---
-    urgent, _ = _plant_urgent_desk(db, state)
-    key = urgent["decision_key"]
-    before_dossiers = len(db.list_decree_dossiers())
-    before_issues = db.conn.execute("SELECT COUNT(*) AS c FROM issues").fetchone()["c"]
-    batch = ra.validate_all([urgent], [{
-        "decision_key": key, "action": "deliberate", "label": "下部议",
-    }])
-    pre = ra.PrewriteResults(deliberate_by_key={
-        key: {
-            "title": "南迁之议", "body": "臣请集议南迁。", "stance": "可议",
-            "supporter_ids": [minister],
-        },
-    })
-    ra.apply_rescript_batch(db, state, batch, pre, content=content)
-    assert len(db.list_decree_dossiers()) == before_dossiers + 1
-    drow = db.find_deliberation_dossier_by_decision_key(key)
-    assert drow is not None and drow["status"] == "proposed"
-    payload = _dossier_payload(drow)
-    assert payload.get("deliberation_state") == "backed"
-    assert payload.get("decision_key") == key
-    # 站台名单只在背书表
-    assert "supporter_ids" not in payload
-    ends = db.list_dossier_endorsements(int(drow["id"]))
-    assert len(ends) == 1
-    assert ends[0]["form"] == "当面站台"
-    assert ends[0]["endorser_id"] == minister
-    assert ends[0]["decision_key"] == key
-    assert int(ends[0]["source_chat_turn_id"] or 0) == 0
-    # backed 不产惯性 issue
-    assert db.conn.execute(
-        "SELECT COUNT(*) AS c FROM issues WHERE origin_ref=?",
-        (f"dossier:{int(drow['id'])}",),
-    ).fetchone()["c"] == 0
-    assert db.conn.execute("SELECT COUNT(*) AS c FROM issues").fetchone()["c"] == before_issues
-
-    # restore
-    reopened = GameDB(db.path, content=content)
-    try:
-        restored = reopened.find_deliberation_dossier_by_decision_key(key)
-        assert restored is not None
-        assert _dossier_payload(restored).get("deliberation_state") == "backed"
-        r_ends = reopened.list_dossier_endorsements(int(restored["id"]))
-        assert r_ends[0]["decision_key"] == key
-        assert r_ends[0]["source_chat_turn_id"] == 0
-    finally:
-        reopened.close()
-
-    # --- stalled（换 turn 避免 decision_key 与上案碰撞）---
-    state.turn = int(state.turn) + 1
-    db.save_state(state)
-    db.conn.execute("DELETE FROM pending_decisions WHERE kind='rescript_draft'")
-    urgent2, _ = _plant_urgent_desk(db, state)
-    key2 = urgent2["decision_key"]
-    assert key2 != key
-    batch2 = ra.validate_all([urgent2], [{
-        "decision_key": key2, "action": "deliberate", "label": "下部议",
-    }])
-    pre2 = ra.PrewriteResults(deliberate_by_key={
-        key2: {
-            "title": "议而不决", "body": "无人肯担。", "stance": "冷场",
-            "supporter_ids": [],
-        },
-    })
-    ra.apply_rescript_batch(db, state, batch2, pre2, content=content)
-    stalled = db.find_deliberation_dossier_by_decision_key(key2)
-    assert stalled is not None
-    assert _dossier_payload(stalled).get("deliberation_state") == "stalled"
-    assert db.list_dossier_endorsements(int(stalled["id"])) == []
-    issue = db.conn.execute(
-        "SELECT status, origin_ref FROM issues WHERE origin_ref=?",
-        (f"dossier:{int(stalled['id'])}",),
-    ).fetchone()
-    assert issue is not None and str(issue["status"]) == "active"
-
-    # --- illegal supporter zero write ---
-    state.turn = int(state.turn) + 1
-    db.save_state(state)
-    db.conn.execute("DELETE FROM pending_decisions WHERE kind='rescript_draft'")
-    urgent3, _ = _plant_urgent_desk(db, state)
-    key3 = urgent3["decision_key"]
-    dossiers_before = len(db.list_decree_dossiers())
-    batch3 = ra.validate_all([urgent3], [{
-        "decision_key": key3, "action": "deliberate", "label": "下部议",
-    }])
-    pre3 = ra.PrewriteResults(deliberate_by_key={
-        key3: {
-            "title": "t", "body": "b", "stance": "s",
-            "supporter_ids": ["不存在的大臣XYZ"],
-        },
-    })
-    with pytest.raises(ValueError, match="非法站台身份"):
-        ra.apply_rescript_batch(db, state, batch3, pre3, content=content)
-    assert len(db.list_decree_dossiers()) == dossiers_before
-    assert db.find_deliberation_dossier_by_decision_key(key3) is None
-    hit = next(r for r in db.list_rescript_drafts() if r["title"] == "陕西告饥")
-    assert hit["status"] == "pending"
-
-
-def test_658_imperial_push_reuses_stalled_and_backing_credit(game):
-    """#658：御笔强推复用 stalled；处置命中站台者写辜负；非惩罚/幻影/被拒零写。"""
-    from ming_sim import rescript_actions as ra
-    from ming_sim.credit_events import KIND_BETRAY
-
-    db, state, content = game
-    minister = _summonable_name(db, content)
-
-    # plant stalled deliberation via deliberate
-    urgent, _ = _plant_urgent_desk(db, state)
-    key = urgent["decision_key"]
-    batch = ra.validate_all([urgent], [{
-        "decision_key": key, "action": "deliberate", "label": "下部议",
-    }])
-    pre = ra.PrewriteResults(deliberate_by_key={
-        key: {
-            "title": "南迁", "body": "无人站台。", "stance": "冷",
-            "supporter_ids": [],
-        },
-    })
-    ra.apply_rescript_batch(db, state, batch, pre, content=content)
-    stalled = db.find_deliberation_dossier_by_decision_key(key)
-    did = int(stalled["id"])
-    before = len(db.list_decree_dossiers())
-
-    # imperial push via ensure_directive_dossier seam
-    dir_id = db.conn.execute(
-        "INSERT INTO turn_directives(turn, year, period, actor, text, source, status, dossier_payload_json) "
-        "VALUES (?,?,?,?,?,?,?,?)",
-        (
-            int(state.turn), int(state.year), int(state.period), minister,
-            "着即强推南迁", "test-658", "draft",
-            json.dumps({"target_dossier_id": did}, ensure_ascii=False),
-        ),
-    ).lastrowid
-    db.conn.commit()
-    ids = db._ensure_directive_dossier(
-        state, int(dir_id), "着即强推南迁",
-        payload={"target_dossier_id": did},
-        commit=True,
-    )
-    assert ids == [did]
-    assert len(db.list_decree_dossiers()) == before  # 不新建第二案卷
-    pushed = db.get_decree_dossier(did)
-    assert _dossier_payload(pushed).get("deliberation_state") == "backed"
-    ends = db.list_dossier_endorsements(did)
-    assert any(
-        e["form"] == "御笔手敕" and e["imperial"] is True
-        and e["decision_key"] == f"directive:{int(dir_id)}"
-        and int(e["source_chat_turn_id"] or 0) == 0
-        for e in ends
-    )
-
-    # illegal target (not stalled) → fail
-    with pytest.raises(ValueError, match="stalled|proposed"):
-        ra.apply_imperial_deliberation_push(
-            db, state, target_dossier_id=did,
-            directive_identity="directive:999",
-        )
-
-    # plant backed with minister stand, then punish via propose_directive 真生产链
-    state.turn = int(state.turn) + 1
-    db.save_state(state)
-    db.conn.execute("DELETE FROM pending_decisions WHERE kind='rescript_draft'")
-    urgent2, _ = _plant_urgent_desk(db, state)
-    key2 = urgent2["decision_key"]
-    assert key2 != key
-    batch2 = ra.validate_all([urgent2], [{
-        "decision_key": key2, "action": "deliberate", "label": "下部议",
-    }])
-    ra.apply_rescript_batch(
-        db, state, batch2,
-        ra.PrewriteResults(deliberate_by_key={
-            key2: {
-                "title": "清丈", "body": "臣请清丈。", "stance": "主清",
-                "supporter_ids": [minister],
-            },
-        }),
-        content=content,
-    )
-    backed = db.find_deliberation_dossier_by_decision_key(key2)
-    bid = int(backed["id"])
-
-    # 生产 tracer：GameSession.chat→propose_directive → commit → verdict → 信用
-    from types import SimpleNamespace
-    from ming_sim.session import GameSession
-
-    actor = next(
-        n for n in ra.list_deliberation_candidate_ids(db, content) if n != minister
-    )
-    other = next(
-        n for n in ra.list_deliberation_candidate_ids(db, content)
-        if n not in {minister, actor}
-    )
-    tool_args: dict = {
-        "decree_text": f"背信弃义，着罚{minister}俸示惩。",
-        "punish_action": "罚俸",
-        "target_id": minister,
-        "amount": 100,
-        "backing_dossier_id": bid,
-    }
-
-    class _Agent:
-        def run(self, _message):
-            return SimpleNamespace(
-                content="臣已拟旨。",
-                tools=[
-                    SimpleNamespace(
-                        tool_name="propose_directive",
-                        result="",
-                        arguments=dict(tool_args),
-                    )
-                ],
-            )
-
-    class _Registry:
-        def get(self, _character):
-            return _Agent()
-
-        def build_draft_line(self):
-            return "无"
-
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-    sess.content = content
-    sess.registry = _Registry()
-    sess.llm_config = SimpleNamespace(channel="api")
-    sess.temporary_characters = set()
-    sess._audience_prompt_for_message = lambda message: message
-    sess._start_cli_action_intent = lambda *_a, **_k: None
-    sess._finish_cli_action_intent = lambda *_a, **_k: None
-
-    def _edge_count() -> int:
-        return int(db.conn.execute(
-            "SELECT COUNT(*) AS c FROM relation_edge_events WHERE event_kind=?",
-            (KIND_BETRAY,),
-        ).fetchone()["c"])
-
-    def _pending_count() -> int:
-        return int(db.conn.execute(
-            "SELECT COUNT(*) AS c FROM pending_actions WHERE status='pending'"
-        ).fetchone()["c"])
-
-    result = GameSession.chat(sess, actor, f"拟旨罚{minister}俸。")
-    assert result.pending_action_id
-    staged = json.loads(db.conn.execute(
-        "SELECT payload_json FROM pending_actions WHERE id=?",
-        (int(result.pending_action_id),),
-    ).fetchone()["payload_json"])
-    assert int(staged.get("backing_dossier_id") or 0) == bid
-
-    db.commit_pending_actions(
-        state, content=content, action_ids=[int(result.pending_action_id)],
-    )
-    punish = next(
-        d for d in db.list_decree_dossiers()
-        if d["pending_action_id"] == int(result.pending_action_id)
-    )
-    assert int(_dossier_payload(punish).get("backing_dossier_id") or 0) == bid
-
-    edges_before = _edge_count()
-    db.apply_dossier_verdicts(
-        state,
-        [{"dossier_id": int(punish["id"]), "decision": "promulgated"}],
-        content=content,
-    )
-    edges_after = db.conn.execute(
-        "SELECT origin, context, target FROM relation_edge_events "
-        "WHERE event_kind=? ORDER BY id DESC LIMIT 1",
-        (KIND_BETRAY,),
-    ).fetchone()
-    assert _edge_count() == edges_before + 1
-    assert str(edges_after["origin"] or "").startswith(f"dossier:{bid}")
-    assert str(edges_after["target"]) == minister
-
-    # 幻影 / 坏 shape / 显式 0 → 真入口响亮拒绝，零 pending / 零信用
-    pending_mid = _pending_count()
-    edges_mid = _edge_count()
-    for bad in (999999, True, 1.9, "1", 0, -3):
-        tool_args.update({
-            "decree_text": f"着罚{minister}俸。",
-            "target_id": minister,
-            "amount": 50,
-            "backing_dossier_id": bad,
-        })
-        with pytest.raises(ValueError):
-            GameSession.chat(sess, actor, f"拟旨罚{minister}。")
-    assert _pending_count() == pending_mid
-    assert _edge_count() == edges_mid
-
-    # 非站台者 → chat 真入口顺颁零信用
-    tool_args.update({
-        "decree_text": f"着罚{other}俸。",
-        "target_id": other,
-        "amount": 10,
-        "backing_dossier_id": bid,
-    })
-    other_result = GameSession.chat(sess, actor, f"拟旨罚{other}。")
-    assert other_result.pending_action_id
-    db.commit_pending_actions(
-        state, content=content, action_ids=[int(other_result.pending_action_id)],
-    )
-    other_d = next(
-        d for d in db.list_decree_dossiers()
-        if d["pending_action_id"] == int(other_result.pending_action_id)
-    )
-    edges_b = _edge_count()
-    db.apply_dossier_verdicts(
-        state,
-        [{"dossier_id": int(other_d["id"]), "decision": "promulgated"}],
-        content=content,
-    )
-    assert _edge_count() == edges_b
-
-    # 处置案卷被 rejected → 零信用（同 chat→commit→verdict 最短 tracer）
-    tool_args.update({
-        "decree_text": f"再罚{minister}俸。",
-        "target_id": minister,
-        "amount": 20,
-        "backing_dossier_id": bid,
-    })
-    rejected_result = GameSession.chat(sess, actor, f"拟旨再罚{minister}。")
-    assert rejected_result.pending_action_id
-    db.commit_pending_actions(
-        state, content=content,
-        action_ids=[int(rejected_result.pending_action_id)],
-    )
-    rejected_d = next(
-        d for d in db.list_decree_dossiers()
-        if d["pending_action_id"] == int(rejected_result.pending_action_id)
-    )
-    edges_r = _edge_count()
-    db.apply_dossier_verdicts(
-        state,
-        [rejected_verdict(int(rejected_d["id"]))],
-        content=content,
-    )
-    assert _edge_count() == edges_r
-
-    # 非惩罚动作（放归/昭雪）带合法 backing → 顺颁成功零信用
-    for status, reason, action in (
-        ("imprisoned", "658-pre-release", "放归"),
-        ("dismissed", "658-pre-exonerate", "昭雪"),
-    ):
-        db.set_character_status(state, minister, status, reason)
-        tool_args.update({
-            "decree_text": f"着{action}{minister}。",
-            "punish_action": action,
-            "target_id": minister,
-            "amount": 0,
-            "backing_dossier_id": bid,
-        })
-        nonpunish_result = GameSession.chat(sess, actor, f"拟旨{action}{minister}。")
-        assert nonpunish_result.pending_action_id
-        db.commit_pending_actions(
-            state, content=content,
-            action_ids=[int(nonpunish_result.pending_action_id)],
-        )
-        nonpunish_d = next(
-            d for d in db.list_decree_dossiers()
-            if d["pending_action_id"] == int(nonpunish_result.pending_action_id)
-        )
-        assert int(_dossier_payload(nonpunish_d).get("backing_dossier_id") or 0) == bid
-        edges_np = _edge_count()
-        db.apply_dossier_verdicts(
-            state,
-            [{"dossier_id": int(nonpunish_d["id"]), "decision": "promulgated"}],
-            content=content,
-        )
-        assert db.get_character_status(minister)[0] == "active"
-        assert _edge_count() == edges_np
-
-
-def test_658_endorsement_provenance_xor(game):
-    """#658：背书 provenance 恰为 chat_turn 或 decision_key 之一。"""
-    db, state, content = game
-    minister = _summonable_name(db, content)
-    did = db.create_decree_dossier(
-        state, action_type="policy", decree_text="试",
-        target_kind="policy", target_id="t",
-    )
-    chat = db.create_chat_turn(state, minister, "658-xor", 0)
-    # chat path
-    eid = db.add_dossier_endorsement(
-        did, form="会签", endorser_id=minister, source_chat_turn_id=chat,
-    )
-    row = db.list_dossier_endorsements(did)[0]
-    assert row["source_chat_turn_id"] == chat and row["decision_key"] == ""
-    # decision_key path
-    eid2 = db.add_dossier_endorsement(
-        did, form="当面站台", endorser_id=minister,
-        decision_key="rescript_draft:1:0",
-    )
-    rows = {e["id"]: e for e in db.list_dossier_endorsements(did)}
-    assert rows[eid2]["decision_key"] == "rescript_draft:1:0"
-    assert rows[eid2]["source_chat_turn_id"] == 0
-    # both → reject
-    with pytest.raises(ValueError, match="provenance"):
-        db.add_dossier_endorsement(
-            did, form="会签", endorser_id=minister,
-            source_chat_turn_id=chat, decision_key="x",
-        )
-    # neither → reject
-    with pytest.raises(ValueError, match="provenance"):
-        db.add_dossier_endorsement(
-            did, form="会签", endorser_id=minister,
-        )
-
-
 def _658_plant_stalled_deliberation(db, state, content, *, title="议而不决"):
     """最短：经 deliberate 真写核种一条 stalled 案卷 + active issue。"""
     from ming_sim import rescript_actions as ra
@@ -3857,8 +3440,368 @@ def _658_plant_stalled_deliberation(db, state, content, *, title="议而不决")
     return stalled, key
 
 
+def _658_session(db, state, content, *, agent=None):
+    """最小真 GameSession 壳：只填 chat/add_directive 所需属性。"""
+    from types import SimpleNamespace
+    from ming_sim.session import GameSession
+
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.llm_config = SimpleNamespace(channel="api")
+    sess.temporary_characters = set()
+    sess._refuse_if_settling = lambda: None  # type: ignore[attr-defined]
+    sess._audience_prompt_for_message = lambda message: message
+    sess._start_cli_action_intent = lambda *_a, **_k: None
+    sess._finish_cli_action_intent = lambda *_a, **_k: None
+    if agent is not None:
+        class _Registry:
+            def get(self, _character):
+                return agent
+
+            def build_draft_line(self):
+                return "无"
+
+        sess.registry = _Registry()
+    return sess
+
+
+def test_658_deliberate_backed_and_stalled_dossier_first(game):
+    """#658：有站台 → backed+当面站台背书；无人 → stalled+dossier: issue；非法身份零写。"""
+    from ming_sim import rescript_actions as ra
+    from ming_sim.db import GameDB
+
+    db, state, content = game
+    minister = _summonable_name(db, content)
+
+    urgent, _ = _plant_urgent_desk(db, state)
+    key = urgent["decision_key"]
+    before_issues = db.conn.execute("SELECT COUNT(*) AS c FROM issues").fetchone()["c"]
+    batch = ra.validate_all([urgent], [{
+        "decision_key": key, "action": "deliberate", "label": "下部议",
+    }])
+    ra.apply_rescript_batch(
+        db, state, batch,
+        ra.PrewriteResults(deliberate_by_key={
+            key: {
+                "title": "南迁之议", "body": "臣请集议南迁。", "stance": "可议",
+                "supporter_ids": [minister],
+            },
+        }),
+        content=content,
+    )
+    drow = db.find_deliberation_dossier_by_decision_key(key)
+    assert drow is not None and drow["status"] == "proposed"
+    assert _dossier_payload(drow).get("deliberation_state") == "backed"
+    ends = db.list_dossier_endorsements(int(drow["id"]))
+    assert len(ends) == 1
+    assert ends[0]["form"] == "当面站台"
+    assert ends[0]["endorser_id"] == minister
+    assert ends[0]["decision_key"] == key
+    assert int(ends[0]["source_chat_turn_id"] or 0) == 0
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS c FROM issues WHERE origin_ref=?",
+        (f"dossier:{int(drow['id'])}",),
+    ).fetchone()["c"] == 0
+    assert db.conn.execute("SELECT COUNT(*) AS c FROM issues").fetchone()["c"] == before_issues
+
+    reopened = GameDB(db.path, content=content)
+    try:
+        restored = reopened.find_deliberation_dossier_by_decision_key(key)
+        assert restored is not None
+        assert _dossier_payload(restored).get("deliberation_state") == "backed"
+        assert reopened.list_dossier_endorsements(int(restored["id"]))[0]["decision_key"] == key
+    finally:
+        reopened.close()
+
+    state.turn = int(state.turn) + 1
+    db.save_state(state)
+    db.conn.execute("DELETE FROM pending_decisions WHERE kind='rescript_draft'")
+    stalled, key2 = _658_plant_stalled_deliberation(db, state, content, title="议而不决")
+    assert key2 != key
+    assert _dossier_payload(stalled).get("deliberation_state") == "stalled"
+    assert db.list_dossier_endorsements(int(stalled["id"])) == []
+    issue = db.conn.execute(
+        "SELECT status FROM issues WHERE origin_ref=?",
+        (f"dossier:{int(stalled['id'])}",),
+    ).fetchone()
+    assert issue is not None and str(issue["status"]) == "active"
+
+    state.turn = int(state.turn) + 1
+    db.save_state(state)
+    db.conn.execute("DELETE FROM pending_decisions WHERE kind='rescript_draft'")
+    urgent3, _ = _plant_urgent_desk(db, state)
+    key3 = urgent3["decision_key"]
+    dossiers_before = len(db.list_decree_dossiers())
+    batch3 = ra.validate_all([urgent3], [{
+        "decision_key": key3, "action": "deliberate", "label": "下部议",
+    }])
+    with pytest.raises(ValueError, match="非法站台身份"):
+        ra.apply_rescript_batch(
+            db, state, batch3,
+            ra.PrewriteResults(deliberate_by_key={
+                key3: {
+                    "title": "t", "body": "b", "stance": "s",
+                    "supporter_ids": ["不存在的大臣XYZ"],
+                },
+            }),
+            content=content,
+        )
+    assert len(db.list_decree_dossiers()) == dossiers_before
+    assert db.find_deliberation_dossier_by_decision_key(key3) is None
+
+
+def test_658_imperial_push_reuses_stalled_closes_issue_and_simulates(game):
+    """#658：ensure 真入口强推复用 stalled；同事务终结 issue；本回合 verdict 入仿真清单。"""
+    from ming_sim import rescript_actions as ra
+
+    db, state, content = game
+    stalled, _ = _658_plant_stalled_deliberation(db, state, content, title="南迁")
+    did = int(stalled["id"])
+    origin = f"dossier:{did}"
+    issue_before = db.conn.execute(
+        "SELECT id, status FROM issues WHERE origin_ref=? AND status='active'",
+        (origin,),
+    ).fetchone()
+    assert issue_before is not None
+    before = len(db.list_decree_dossiers())
+
+    dir_id = int(db.add_directive(
+        state, None, "着即强推南迁", "test-658-push",
+        dossier_payload={"target_dossier_id": did},
+    ))
+    db.ensure_dossiers_for_draft_directives(state)
+    assert len(db.list_decree_dossiers()) == before
+    pushed = db.get_decree_dossier(did)
+    assert _dossier_payload(pushed).get("deliberation_state") == "backed"
+    ends = db.list_dossier_endorsements(did)
+    assert any(
+        e["form"] == "御笔手敕" and e["imperial"] is True
+        and e["decision_key"] == f"directive:{int(dir_id)}"
+        and int(e["source_chat_turn_id"] or 0) == 0
+        for e in ends
+    )
+    issue_after = db.conn.execute(
+        "SELECT status FROM issues WHERE id=?", (int(issue_before["id"]),),
+    ).fetchone()
+    assert str(issue_after["status"]) == "resolved"
+
+    # 同 directive 幂等
+    db.ensure_dossiers_for_draft_directives(state)
+    assert len([
+        e for e in db.list_dossier_endorsements(did) if e["form"] == "御笔手敕"
+    ]) == 1
+
+    # 已 backed 再强推 → 拒
+    with pytest.raises(ValueError, match="stalled|proposed"):
+        ra.apply_imperial_deliberation_push(
+            db, state, target_dossier_id=did,
+            directive_identity="directive:999",
+        )
+
+    # 旧案本回合 pending verdict → 入现有仿真清单
+    db.save_pending_promulgation_verdicts(
+        state.turn, [{"dossier_id": did, "decision": "promulgated"}],
+    )
+    sim_ids = {int(r["id"]) for r in db.list_decree_dossiers_for_simulation(state.turn)}
+    assert did in sim_ids
+
+
+def test_658_backing_credit_on_punish_promulgation(game):
+    """#658：处置命中站台者经 chat→commit→verdict 写辜负；非站台/驳回/非惩罚零写。"""
+    from types import SimpleNamespace
+    from ming_sim import rescript_actions as ra
+    from ming_sim.credit_events import KIND_BETRAY
+    from ming_sim.session import GameSession
+
+    db, state, content = game
+    minister = _summonable_name(db, content)
+    candidates = [
+        n for n in ra.list_deliberation_candidate_ids(db, content) if n != minister
+    ]
+    actor, other = candidates[0], candidates[1]
+
+    urgent, _ = _plant_urgent_desk(db, state)
+    key = urgent["decision_key"]
+    batch = ra.validate_all([urgent], [{
+        "decision_key": key, "action": "deliberate", "label": "下部议",
+    }])
+    ra.apply_rescript_batch(
+        db, state, batch,
+        ra.PrewriteResults(deliberate_by_key={
+            key: {
+                "title": "清丈", "body": "臣请清丈。", "stance": "主清",
+                "supporter_ids": [minister],
+            },
+        }),
+        content=content,
+    )
+    bid = int(db.find_deliberation_dossier_by_decision_key(key)["id"])
+
+    tool_args: dict = {
+        "decree_text": f"背信弃义，着罚{minister}俸示惩。",
+        "punish_action": "罚俸",
+        "target_id": minister,
+        "amount": 100,
+        "backing_dossier_id": bid,
+    }
+
+    class _Agent:
+        def run(self, _message):
+            return SimpleNamespace(
+                content="臣已拟旨。",
+                tools=[
+                    SimpleNamespace(
+                        tool_name="propose_directive",
+                        result="",
+                        arguments=dict(tool_args),
+                    )
+                ],
+            )
+
+    sess = _658_session(db, state, content, agent=_Agent())
+
+    def _edge_count() -> int:
+        return int(db.conn.execute(
+            "SELECT COUNT(*) AS c FROM relation_edge_events WHERE event_kind=?",
+            (KIND_BETRAY,),
+        ).fetchone()["c"])
+
+    result = GameSession.chat(sess, actor, f"拟旨罚{minister}俸。")
+    assert result.pending_action_id
+    db.commit_pending_actions(
+        state, content=content, action_ids=[int(result.pending_action_id)],
+    )
+    punish = next(
+        d for d in db.list_decree_dossiers()
+        if d["pending_action_id"] == int(result.pending_action_id)
+    )
+    assert int(_dossier_payload(punish).get("backing_dossier_id") or 0) == bid
+    edges_before = _edge_count()
+    db.apply_dossier_verdicts(
+        state,
+        [{"dossier_id": int(punish["id"]), "decision": "promulgated"}],
+        content=content,
+    )
+    assert _edge_count() == edges_before + 1
+    edge = db.conn.execute(
+        "SELECT origin, target FROM relation_edge_events "
+        "WHERE event_kind=? ORDER BY id DESC LIMIT 1",
+        (KIND_BETRAY,),
+    ).fetchone()
+    assert str(edge["origin"] or "").startswith(f"dossier:{bid}")
+    assert str(edge["target"]) == minister
+
+    # 非站台者零信用
+    tool_args.update({
+        "decree_text": f"着罚{other}俸。",
+        "target_id": other,
+        "amount": 10,
+        "backing_dossier_id": bid,
+    })
+    other_result = GameSession.chat(sess, actor, f"拟旨罚{other}。")
+    db.commit_pending_actions(
+        state, content=content, action_ids=[int(other_result.pending_action_id)],
+    )
+    other_d = next(
+        d for d in db.list_decree_dossiers()
+        if d["pending_action_id"] == int(other_result.pending_action_id)
+    )
+    edges_b = _edge_count()
+    db.apply_dossier_verdicts(
+        state,
+        [{"dossier_id": int(other_d["id"]), "decision": "promulgated"}],
+        content=content,
+    )
+    assert _edge_count() == edges_b
+
+    # rejected 零信用
+    tool_args.update({
+        "decree_text": f"再罚{minister}俸。",
+        "target_id": minister,
+        "amount": 20,
+        "backing_dossier_id": bid,
+    })
+    rejected_result = GameSession.chat(sess, actor, f"拟旨再罚{minister}。")
+    db.commit_pending_actions(
+        state, content=content,
+        action_ids=[int(rejected_result.pending_action_id)],
+    )
+    rejected_d = next(
+        d for d in db.list_decree_dossiers()
+        if d["pending_action_id"] == int(rejected_result.pending_action_id)
+    )
+    edges_r = _edge_count()
+    db.apply_dossier_verdicts(
+        state,
+        [rejected_verdict(int(rejected_d["id"]))],
+        content=content,
+    )
+    assert _edge_count() == edges_r
+
+    # 非惩罚（放归/昭雪）零信用
+    for status, action in (("imprisoned", "放归"), ("dismissed", "昭雪")):
+        db.set_character_status(state, minister, status, f"658-pre-{action}")
+        tool_args.update({
+            "decree_text": f"着{action}{minister}。",
+            "punish_action": action,
+            "target_id": minister,
+            "amount": 0,
+            "backing_dossier_id": bid,
+        })
+        np_result = GameSession.chat(sess, actor, f"拟旨{action}{minister}。")
+        db.commit_pending_actions(
+            state, content=content, action_ids=[int(np_result.pending_action_id)],
+        )
+        np_d = next(
+            d for d in db.list_decree_dossiers()
+            if d["pending_action_id"] == int(np_result.pending_action_id)
+        )
+        edges_np = _edge_count()
+        db.apply_dossier_verdicts(
+            state,
+            [{"dossier_id": int(np_d["id"]), "decision": "promulgated"}],
+            content=content,
+        )
+        assert db.get_character_status(minister)[0] == "active"
+        assert _edge_count() == edges_np
+
+
+def test_658_endorsement_provenance_xor(game):
+    """#658：背书 provenance 恰为 chat_turn 或 decision_key 之一。"""
+    db, state, content = game
+    minister = _summonable_name(db, content)
+    did = db.create_decree_dossier(
+        state, action_type="policy", decree_text="试",
+        target_kind="policy", target_id="t",
+    )
+    chat = db.create_chat_turn(state, minister, "658-xor", 0)
+    eid = db.add_dossier_endorsement(
+        did, form="会签", endorser_id=minister, source_chat_turn_id=chat,
+    )
+    row = db.list_dossier_endorsements(did)[0]
+    assert row["source_chat_turn_id"] == chat and row["decision_key"] == ""
+    eid2 = db.add_dossier_endorsement(
+        did, form="当面站台", endorser_id=minister,
+        decision_key="rescript_draft:1:0",
+    )
+    rows = {e["id"]: e for e in db.list_dossier_endorsements(did)}
+    assert rows[eid2]["decision_key"] == "rescript_draft:1:0"
+    assert rows[eid2]["source_chat_turn_id"] == 0
+    with pytest.raises(ValueError, match="provenance"):
+        db.add_dossier_endorsement(
+            did, form="会签", endorser_id=minister,
+            source_chat_turn_id=chat, decision_key="x",
+        )
+    with pytest.raises(ValueError, match="provenance"):
+        db.add_dossier_endorsement(
+            did, form="会签", endorser_id=minister,
+        )
+
+
 def test_658_candidates_require_active_status(game):
-    """#658 F1：罢黜等非 active 不得入廷议站台候选。"""
+    """#658：罢黜等非 active 不得入廷议站台候选。"""
     from ming_sim import rescript_actions as ra
 
     db, state, content = game
@@ -3866,7 +3809,6 @@ def test_658_candidates_require_active_status(game):
     assert name in ra.list_deliberation_candidate_ids(db, content)
     db.set_character_status(state, name, "dismissed", "658-candidate")
     assert name not in ra.list_deliberation_candidate_ids(db, content)
-    # 非法身份整批零写（dismissed 不再属候选）
     urgent, _ = _plant_urgent_desk(db, state)
     key = urgent["decision_key"]
     before = len(db.list_decree_dossiers())
@@ -3887,33 +3829,8 @@ def test_658_candidates_require_active_status(game):
     assert len(db.list_decree_dossiers()) == before
 
 
-def test_658_imperial_push_same_directive_idempotent(game):
-    """#658 F2：同 directive 重试 ensure 幂等返回，不因已 backed 假拒。"""
-    db, state, content = game
-    stalled, _ = _658_plant_stalled_deliberation(db, state, content, title="南迁")
-    did = int(stalled["id"])
-    dir_id = int(db.add_directive(
-        state, None, "着即强推", "test-658-idem",
-        dossier_payload={"target_dossier_id": did},
-    ))
-    payload = {"target_dossier_id": did}
-    assert db._ensure_directive_dossier(
-        state, int(dir_id), "着即强推", payload=payload, commit=True,
-    ) == [did]
-    # 重试：已 stalled→backed 仍按同一 directive 绑定幂等返回
-    assert db._ensure_directive_dossier(
-        state, int(dir_id), "着即强推", payload=payload, commit=True,
-    ) == [did]
-    ends = [
-        e for e in db.list_dossier_endorsements(did)
-        if e["form"] == "御笔手敕"
-    ]
-    assert len(ends) == 1
-    assert ends[0]["decision_key"] == f"directive:{int(dir_id)}"
-
-
 def test_658_stalled_excluded_from_promulgation_validation(game, monkeypatch):
-    """#658 F3：判官/校验只覆盖可颁布集合；stalled 同在 proposed 不触发全覆盖炸。"""
+    """#658：判官/校验只覆盖可颁布集合；stalled 同在 proposed 不触发全覆盖炸。"""
     import ming_sim.decree as decree_mod
 
     db, state, content = game
@@ -3943,7 +3860,6 @@ def test_658_stalled_excluded_from_promulgation_validation(game, monkeypatch):
     assert seen == [[normal_id]]
     stored = db.get_pending_promulgation_verdicts(state.turn)
     assert {int(v["dossier_id"]) for v in stored} == {normal_id}
-    # stalled 仍 proposed，未入 durable 判决
     assert db.get_decree_dossier(stalled_id)["status"] == "proposed"
     assert _dossier_payload(db.get_decree_dossier(stalled_id)).get(
         "deliberation_state",
@@ -3951,9 +3867,8 @@ def test_658_stalled_excluded_from_promulgation_validation(game, monkeypatch):
 
 
 def test_658_free_decree_capture_target_dossier_real_entry(game, monkeypatch):
-    """#658 F4：自由下旨 capture 声明/投影 target_dossier_id，经 session.add 真入口强推。"""
+    """#658：自由下旨 capture→add_directive→ensure 真入口强推，复用同案卷。"""
     import ming_sim.cli_backend as cli_backend
-    from ming_sim.session import GameSession
 
     db, state, content = game
     stalled, _ = _658_plant_stalled_deliberation(db, state, content, title="南迁之议")
@@ -3969,27 +3884,21 @@ def test_658_free_decree_capture_target_dossier_real_entry(game, monkeypatch):
         }, ensure_ascii=False), 1)
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
+    text = f"着即强推南迁之议（案卷{did}）"
     payload = cli_backend.capture_manual_directive_payload(
-        f"着即强推南迁之议（案卷{did}）", None, db=db, content=content,
+        text, None, db=db, content=content,
     )
-    # 契约只锁 structured 字段；不锁 prompt 措辞/排版
     assert payload.get("target_dossier_id") == did
     assert prompts, "须真实走过抽取 backend"
+    # 候选完整上下文（题/正文），不截断
+    joined = "\n".join(prompts)
+    assert f"案卷ID={did}" in joined
+    assert "南迁之议" in joined
+    assert "南迁之议正文" in joined
 
-    session = GameSession.__new__(GameSession)
-    session.db = db
-    session.state = state
-    session.llm_config = None
-    session.content = content
-    session._refuse_if_settling = lambda: None  # type: ignore[attr-defined]
-    dv = session.add_directive(
-        f"着即强推南迁之议（案卷{did}）", dossier_payload=payload,
-    )
-    ids = db._ensure_directive_dossier(
-        state, int(dv.id), f"着即强推南迁之议（案卷{did}）",
-        payload=payload, commit=True,
-    )
-    assert ids == [did]
+    session = _658_session(db, state, content)
+    dv = session.add_directive(text, dossier_payload=payload)
+    db.ensure_dossiers_for_draft_directives(state)
     assert len(db.list_decree_dossiers()) == before
     pushed = db.get_decree_dossier(did)
     assert _dossier_payload(pushed).get("deliberation_state") == "backed"
@@ -3997,12 +3906,15 @@ def test_658_free_decree_capture_target_dossier_real_entry(game, monkeypatch):
         e["form"] == "御笔手敕" and e["decision_key"] == f"directive:{int(dv.id)}"
         for e in db.list_dossier_endorsements(did)
     )
+    issue = db.conn.execute(
+        "SELECT status FROM issues WHERE origin_ref=?", (f"dossier:{did}",),
+    ).fetchone()
+    assert issue is not None and str(issue["status"]) == "resolved"
 
 
-def test_658_typed_target_rejects_bool_float_string(game, monkeypatch):
-    """#658 F4：typed target 只接真正正整数；坏 shape 响亮失败且自由下旨零写。"""
-    from ming_sim.db import imperial_push_target_dossier_id
-    from ming_sim.session import GameSession
+def test_658_typed_target_and_backing_reject_bad_shapes(game, monkeypatch):
+    """#658：typed target/backing 最低层表驱动负例；自由下旨坏 shape 零写。"""
+    from ming_sim.db import imperial_push_target_dossier_id, parse_backing_dossier_id
     import ming_sim.cli_backend as cli_backend
 
     db, state, content = game
@@ -4010,11 +3922,10 @@ def test_658_typed_target_rejects_bool_float_string(game, monkeypatch):
     did = int(stalled["id"])
     before_dossiers = len(db.list_decree_dossiers())
     before_ends = len(db.list_dossier_endorsements(did))
-    before_dirs = db.conn.execute("SELECT COUNT(*) AS c FROM turn_directives").fetchone()["c"]
+    before_dirs = db.conn.execute(
+        "SELECT COUNT(*) AS c FROM turn_directives"
+    ).fetchone()["c"]
 
-    from ming_sim.db import parse_backing_dossier_id
-
-    # 最低层结构化负例：target/backing 共吃正整数契约；显式 0/负亦拒
     for bad in (True, False, 1.9, 1.0, "1", "12", 0, -1):
         with pytest.raises(ValueError):
             imperial_push_target_dossier_id(bad)
@@ -4032,18 +3943,11 @@ def test_658_typed_target_rejects_bool_float_string(game, monkeypatch):
     assert parse_backing_dossier_id("") is None
     assert parse_backing_dossier_id(did) == did
 
-    session = GameSession.__new__(GameSession)
-    session.db = db
-    session.state = state
-    session.llm_config = None
-    session.content = content
-    session._refuse_if_settling = lambda: None  # type: ignore[attr-defined]
-
-    # 自由下旨真入口：坏 shape 不得落 directive / 御笔
+    session = _658_session(db, state, content)
     for bad in (True, 1.9, "1"):
         with pytest.raises(ValueError):
             session.add_directive(
-                f"着即强推（坏shape）",
+                "着即强推（坏shape）",
                 dossier_payload={"target_dossier_id": bad},
             )
 
@@ -4067,3 +3971,191 @@ def test_658_typed_target_rejects_bool_float_string(game, monkeypatch):
     assert _dossier_payload(db.get_decree_dossier(did)).get(
         "deliberation_state",
     ) == "stalled"
+
+
+def test_658_ordinary_edit_does_not_inherit_push_target(game):
+    """#658：普通 triad 改草不得继承旧强推 target。"""
+    db, state, content = game
+    stalled, _ = _658_plant_stalled_deliberation(db, state, content, title="旧强推")
+    did = int(stalled["id"])
+    dir_id = int(db.add_directive(
+        state, None, "着即强推", "test-658-edit",
+        dossier_payload={"target_dossier_id": did},
+    ))
+    db.update_directive_text(
+        dir_id, "着清核河工",
+        dossier_payload={
+            "dossier_action_type": "policy",
+            "target_kind": "issue",
+            "target_id": "river-works",
+            "mode": "ordinary",
+        },
+    )
+    row = db.conn.execute(
+        "SELECT dossier_payload_json FROM turn_directives WHERE id=?", (dir_id,),
+    ).fetchone()
+    payload = json.loads(str(row["dossier_payload_json"] or "{}"))
+    assert "target_dossier_id" not in payload
+    assert payload.get("dossier_action_type") == "policy"
+    assert payload.get("target_id") == "river-works"
+
+
+def test_658_mixed_ordinary_triad_and_target_rejected(game, monkeypatch):
+    """#658：普通 triad + target 矛盾载荷响亮拒绝，禁静默吞旨。"""
+    from ming_sim.db import classify_directive_structured_kind
+    import ming_sim.cli_backend as cli_backend
+
+    db, state, content = game
+    stalled, _ = _658_plant_stalled_deliberation(db, state, content, title="混载")
+    did = int(stalled["id"])
+    mixed = {
+        "dossier_action_type": "policy",
+        "target_kind": "issue",
+        "target_id": "river",
+        "target_dossier_id": did,
+    }
+    with pytest.raises(ValueError, match="不得同时"):
+        classify_directive_structured_kind(mixed)
+    with pytest.raises(ValueError, match="不得同时"):
+        session = _658_session(db, state, content)
+        session.add_directive("混载旨", dossier_payload=mixed)
+
+    def backend_mixed(prompt, *_a, **_k):
+        return (json.dumps({
+            "拟旨意图": "拟旨",
+            "动作类型": "policy",
+            "目标类型": "issue",
+            "目标ID": "river",
+            "目标案卷ID": did,
+        }, ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend_mixed)
+    with pytest.raises(ValueError, match="不得同时"):
+        cli_backend.capture_manual_directive_payload(
+            "混载旨文", None, db=db, content=content,
+        )
+
+
+def test_658_chat_staging_preserves_push_target(game, monkeypatch):
+    """#658：对话拟旨经 apply_cli_conversation_actions 真入口 staging 保留 target。"""
+    from types import SimpleNamespace
+    import ming_sim.cli_backend as cli_backend
+
+    db, state, content = game
+    stalled, _ = _658_plant_stalled_deliberation(db, state, content, title="对话强推")
+    did = int(stalled["id"])
+    minister = _summonable_name(db, content)
+    character = content.characters[minister]
+
+    def backend(prompt, *_a, **_k):
+        return (json.dumps({
+            "拟旨意图": "拟旨",
+            "目标案卷ID": did,
+        }, ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
+    # channel=cli 走 conversation materialize（非 api passthrough）
+    sess = _658_session(db, state, content)
+    sess.llm_config = SimpleNamespace(channel="cli")
+    out = sess.apply_cli_conversation_actions(
+        character,
+        f"着即强推案卷{did}",
+        "臣遵旨拟强推此议。",
+        has_directive=False,
+        secret_order_id=None,
+        preclassified_intent=[{"kind": "draft"}],
+    )
+    pid = int(out.get("pending_action_id") or 0)
+    assert pid > 0
+    staged = json.loads(db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?", (pid,),
+    ).fetchone()["payload_json"])
+    assert int(staged.get("target_dossier_id") or 0) == did
+
+
+def test_658_endorsement_old_schema_migration_preserves_rows(tmp_path, content):
+    """#658：旧背书表（chat FK、无 decision_key）升级保行数/id/provenance，新 XOR 可写。"""
+    import sqlite3
+    from ming_sim.db import GameDB
+
+    path = str(tmp_path / "old_endorsement.db")
+    # 先以现行 schema 建库，再回退 endorsements 为旧表形
+    db = GameDB(path, content)
+    db.seed_static_data()
+    state = db.load_state()
+    minister = str(db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
+    ).fetchone()["name"])
+    did = int(db.create_decree_dossier(
+        state, action_type="policy", decree_text="旧表迁移试",
+        target_kind="policy", target_id="mig-658",
+    ))
+    chat = int(db.create_chat_turn(state, minister, "658-mig", 0))
+    old_id = int(db.add_dossier_endorsement(
+        did, form="会签", endorser_id=minister, source_chat_turn_id=chat,
+    ))
+    db.conn.commit()
+    db.close()
+
+    # 手工回退为旧 schema：有 chat_turns FK、无 decision_key
+    raw = sqlite3.connect(path)
+    raw.execute("PRAGMA foreign_keys=OFF")
+    raw.executescript(
+        """
+        CREATE TABLE decree_dossier_endorsements_old (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            dossier_id INTEGER NOT NULL,
+            form TEXT NOT NULL CHECK(form IN ('会签','当面站台','御笔手敕')),
+            endorser_id TEXT NOT NULL DEFAULT '',
+            imperial INTEGER NOT NULL DEFAULT 0 CHECK(imperial IN (0,1)),
+            source_chat_turn_id INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(dossier_id, form, endorser_id, imperial, source_chat_turn_id),
+            FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE,
+            FOREIGN KEY(source_chat_turn_id) REFERENCES chat_turns(id) ON DELETE CASCADE
+        );
+        INSERT INTO decree_dossier_endorsements_old
+            (id, dossier_id, form, endorser_id, imperial, source_chat_turn_id, created_at)
+        SELECT id, dossier_id, form, endorser_id, imperial, source_chat_turn_id, created_at
+        FROM decree_dossier_endorsements;
+        DROP TABLE decree_dossier_endorsements;
+        ALTER TABLE decree_dossier_endorsements_old
+            RENAME TO decree_dossier_endorsements;
+        """
+    )
+    raw.commit()
+    raw.close()
+
+    # 重开触发迁移
+    reopened = GameDB(path, content)
+    try:
+        cols = {
+            str(r["name"])
+            for r in reopened.conn.execute(
+                "PRAGMA table_info(decree_dossier_endorsements)"
+            ).fetchall()
+        }
+        assert "decision_key" in cols
+        fks = [
+            str(r["table"])
+            for r in reopened.conn.execute(
+                "PRAGMA foreign_key_list(decree_dossier_endorsements)"
+            ).fetchall()
+        ]
+        assert "chat_turns" not in fks
+        rows = reopened.list_dossier_endorsements(did)
+        assert len(rows) == 1
+        assert int(rows[0]["id"]) == old_id
+        assert int(rows[0]["source_chat_turn_id"]) == chat
+        assert rows[0]["decision_key"] == ""
+        # 新 decision_key provenance 可写
+        new_id = reopened.add_dossier_endorsement(
+            did, form="当面站台", endorser_id=minister,
+            decision_key="rescript_draft:mig:0",
+        )
+        after = {e["id"]: e for e in reopened.list_dossier_endorsements(did)}
+        assert after[new_id]["decision_key"] == "rescript_draft:mig:0"
+        assert int(after[new_id]["source_chat_turn_id"] or 0) == 0
+        assert int(after[old_id]["source_chat_turn_id"]) == chat
+    finally:
+        reopened.close()
