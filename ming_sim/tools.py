@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from ming_sim.constants import DOSSIER_LINK_TYPES, TURN_UNIT
 from ming_sim.context import _ctx as _content_ctx, state_context
@@ -460,7 +460,7 @@ def build_minister_tools(character: Character, context: CourtContext,
         name: str = "",
         amount: int = 0,
         transaction_category: str = "",
-        backing_dossier_id: int = 0,
+        backing_dossier_id: Optional[int] = None,
     ) -> str:
         """把已定处置方案拟成一道圣旨草稿呈给皇帝审阅。
 

@@ -15286,6 +15286,32 @@ class GameDB:
         ).fetchone()
         return None if row is None else self._dossier_row(row)
 
+    def list_endorsed_dossier_candidates(
+        self, current_turn: int,
+    ) -> List[Dict[str, object]]:
+        """Typed backing choices projected from durable named endorsements."""
+        rows = self.conn.execute(
+            """SELECT d.id AS dossier_id, e.endorser_id, d.decree_text AS subject
+               FROM decree_dossier_endorsements e
+               JOIN decree_dossiers d ON d.id=e.dossier_id
+               WHERE e.endorser_id<>'' AND d.created_turn<=?
+               ORDER BY d.id DESC, e.id DESC""",
+            (int(current_turn),),
+        ).fetchall()
+        seen: set[int] = set()
+        result: List[Dict[str, object]] = []
+        for row in rows:
+            dossier_id = int(row["dossier_id"])
+            if dossier_id in seen:
+                continue
+            seen.add(dossier_id)
+            result.append({
+                "dossier_id": dossier_id,
+                "endorser_id": str(row["endorser_id"]),
+                "subject": str(row["subject"] or ""),
+            })
+        return result
+
     def list_referenceable_dossiers(
         self, character_name: str, current_turn: int,
     ) -> List[Dict[str, object]]:
@@ -19485,7 +19511,7 @@ class GameDB:
     def ensure_dossiers_for_draft_directives(self, state: GameState) -> None:
         """结束边界成案：只读最新 draft 正文/载荷，按 directive_id 幂等创建。
 
-        #654 r3-C.2 路3：每道旨独立 SAVEPOINT；单旨失败记 rejection、保持 draft，不波及他旨。
+        #654 r3-C.2 路3：每道旨独立 SAVEPOINT；单旨失败记 rejection 并拒绝，不波及他旨。
         """
         from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
         collector = RejectionCollector()
@@ -19520,7 +19546,12 @@ class GameDB:
                         int(state.turn),
                     )
                     tlog(f"[ensure_dossiers] 旨#{did} 成案失败：{exc}")
-                    # 坏旨保持 draft，次边界重试
+                    # 失败旨不得进入本轮结算，更不得在结算末端被盖成 issued。
+                    self.conn.execute(
+                        "UPDATE turn_directives SET status='rejected', "
+                        "updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                        (did,),
+                    )
                 finally:
                     self.conn.execute(f"RELEASE {sp}")
             collector.flush_to_db(self)

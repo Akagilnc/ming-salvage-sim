@@ -1217,6 +1217,9 @@ class GameSession:
         recent_context = _recent_audience_context_for_secret_order(
             self.db, minister_name, int(self.state.turn), text,
         )
+        backing_candidates = self.db.list_endorsed_dossier_candidates(
+            int(self.state.turn),
+        )
         return _CLI_ACTION_INTENT_EXECUTOR.submit(
             classify_cli_action_intent,
             text,
@@ -1227,6 +1230,7 @@ class GameSession:
             getattr(self, "llm_config", None),
             recent_context,
             int(self.state.turn),
+            backing_candidates,
         )
 
     def _finish_cli_action_intent(self, future: Optional[Future]) -> Optional[List[Dict[str, Any]]]:

@@ -1180,6 +1180,7 @@ def classify_cli_action_intent(
     llm_config: Any = None,
     recent_context: str = "",
     current_turn: int = 0,
+    backing_dossier_candidates: Optional[List[Dict[str, Any]]] = None,
 ) -> List[Dict[str, Any]]:
     """召对动作 typed 判断：读皇帝本条消息 + ADR 0028 最近相关召对上下文，不读本轮大臣回话。
 
@@ -1201,6 +1202,9 @@ def classify_cli_action_intent(
     ) or "（无）"
     pending_brief = "；".join(pending_summaries or []) or "（无）"
     context_block = (recent_context or "").strip() or "（无）"
+    backing_facts = json.dumps(
+        backing_dossier_candidates or [], ensure_ascii=False, separators=(",", ":"),
+    )
     # 字段/枚举唯一真源 = 登记表 FieldSpec（#515：禁手写字段副本）
     schema_obj = classifier_json_fields_prompt()
     turn_n = int(current_turn or 0)
@@ -1235,6 +1239,8 @@ def classify_cli_action_intent(
         'value 含比较算符，如 {"army.guanning.arrears":"<=0"}；'
         "自然语言军令状须落成该 shape，不得只写散文。\n\n"
         f"【最近相关召对】\n{context_block}\n"
+        f"【此臣已站台案卷候选】{backing_facts}\n"
+        "惩处此臣且语义指向其既有站台事项时，从候选 dossier_id 填站台案卷；否则留 null。\n"
         f"【待确认动作】{pending_brief}\n"
         f"【现有密令】{orders_brief}\n"
         f"【此人是否妃嫔】{'是' if is_consort else '否'}\n"
@@ -2198,6 +2204,7 @@ def extract_draft_intent(
     correction_block = str(correction_feedback or "").strip()
     if correction_block and not correction_block.endswith("\n"):
         correction_block += "\n"
+    stalled_push_facts = _stalled_deliberation_push_facts(db)
     if draft_count > 1:
         prompt = (
             "你是信息抽取器，不扮演。皇帝同一句要求拟多道彼此独立的圣旨，大臣已在一段回话中"
@@ -2205,7 +2212,7 @@ def extract_draft_intent(
             "只输出一个 JSON 对象（无代码围栏、无多余字）：\n"
             '{"成品旨稿": ['
             '{"正文":"第一道完整旨稿","动作类型":"policy",'
-            f'"目标类型":"{_draft_target_kind_guidance()}","目标ID":"...",'
+            f'"目标类型":"{_draft_target_kind_guidance()}","目标ID":"...","目标案卷ID":null,'
             '"颁布方式":"普通|中旨直发","施行范围":"无|全国|单省"},'
             f'{{"正文":"……共 {draft_count} 道","动作类型":"military_order","目标类型":"army",'
             '"目标ID":"...","金额":null,"账户":"","执行面":"immediate|in_transit",'
@@ -2218,6 +2225,8 @@ def extract_draft_intent(
             + correction_block
             + roster_facts
             + pay_order_facts
+            + stalled_push_facts
+            + "御笔强推逐道只填目标案卷ID，普通旨逐道只填动作类型/目标类型/目标ID；两种形状不得并存。\n"
             + "【皇帝】" + (player_message or "（无）") + "\n"
             + "【大臣完整回话】" + (minister_reply or "（无）") + "\n"
         )
@@ -2243,10 +2252,35 @@ def extract_draft_intent(
             mode = _directive_mode(value.get("颁布方式"))
             target_kind = str(value.get("目标类型") or "").strip()
             target_id = str(value.get("目标ID") or "").strip()
-            if not text or not action or not target_kind or not target_id or mode is None or text in seen_texts:
+            probe: Dict[str, Any] = {}
+            if value.get("目标案卷ID") is not None:
+                probe["target_dossier_id"] = value.get("目标案卷ID")
+            if action:
+                probe["dossier_action_type"] = action
+            if target_kind:
+                probe["target_kind"] = target_kind
+            if target_id:
+                probe["target_id"] = target_id
+            from ming_sim.db import (
+                classify_directive_structured_kind,
+                imperial_push_target_dossier_id,
+            )
+            try:
+                structured_kind = classify_directive_structured_kind(probe)
+            except ValueError:
+                invalid_batch = True
+                break
+            if not text or mode is None or text in seen_texts or structured_kind == "empty":
                 invalid_batch = True
                 break
             seen_texts.add(text)
+            if structured_kind == "push":
+                drafts.append({
+                    "draft_action": "拟旨", "draft_text": text,
+                    "target_candidate": "", "mode": mode,
+                    "target_dossier_id": imperial_push_target_dossier_id(probe),
+                })
+                continue
             if action == "acting_appointment":
                 # #529 署理走既有 pending 人事候选路径应答（0064 任别），不经草案 acting_appointment。
                 # 保留原批次位置，避免后续按候选序号消费时错配 sibling。
@@ -2354,7 +2388,6 @@ def extract_draft_intent(
         ) + "\n"
         if _candidates else ""
     )
-    stalled_push_facts = _stalled_deliberation_push_facts(db)
     prompt = (
         "你是信息抽取器，不扮演、不写圣旨。读皇帝这句话 + 大臣回话，判断皇帝**本轮**"
         "是否在口头请大臣拟旨（如「拟旨吧」「你拟一道旨」「帮我起草」「草拟圣旨」等）。"
