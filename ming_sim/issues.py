@@ -8101,6 +8101,45 @@ def neutralize_covert_fiscal_effects(
     return written
 
 
+def apply_person_changes_only(
+    db: GameDB,
+    state: GameState,
+    person_changes: List[Dict[str, object]],
+    *,
+    content=None,
+    registry=None,
+    llm_config: Any = None,
+    origin_ref: str = "盘面自发",
+    require_origin: bool = False,
+) -> Dict[str, object]:
+    """Person-only canonical adapter：只走人物变更核，不经 full settlement recovery。
+
+    任命授官、传召启程等单人物动作共用此口；禁止借 apply_score_extraction 附带
+    #652 recovery / bandit 等结算核。返回形状与 full applier 的 applied_person_changes 对齐。
+    """
+    runtime_content = content if content is not None else _ctx()
+    caller_transaction = db.conn.in_transaction
+    if caller_transaction:
+        _register_runtime_rollback_snapshot(db, state, runtime_content, registry)
+    changes = _canonicalize_person_change_names(
+        normalize_person_changes({"人物变更": list(person_changes or [])}),
+        runtime_content,
+        db,
+    )
+    results = _apply_person_changes(
+        db,
+        state,
+        changes,
+        content=runtime_content,
+        registry=registry,
+        llm_config=llm_config,
+        external_transaction=caller_transaction,
+        origin_ref=origin_ref,
+        require_origin=require_origin,
+    )
+    return {"applied_person_changes": results}
+
+
 def apply_score_extraction(
     db: GameDB,
     state: GameState,

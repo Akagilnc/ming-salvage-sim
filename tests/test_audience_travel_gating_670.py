@@ -430,7 +430,7 @@ def test_fresh_summon_applier_failure_rolls_back_and_close_retry_is_safe(game, m
     an.record_summon_fresh(db, night_id, person.name, origin_id="command:retry-1")
 
     from ming_sim import issues
-    real_apply = issues.apply_score_extraction
+    real_apply = issues.apply_person_changes_only
     attempts = 0
 
     def fail_once(*args, **kwargs):
@@ -440,7 +440,7 @@ def test_fresh_summon_applier_failure_rolls_back_and_close_retry_is_safe(game, m
             raise RuntimeError("injected canonical applier failure")
         return real_apply(*args, **kwargs)
 
-    monkeypatch.setattr(issues, "apply_score_extraction", fail_once)
+    monkeypatch.setattr(issues, "apply_person_changes_only", fail_once)
 
     try:
         an.close_night(db, state, night_id=night_id, content=content)
@@ -649,7 +649,7 @@ def test_multi_origin_fresh_closes_once_per_person_and_retries(game, monkeypatch
     assert {row["entry_id"] for row in unsettled_before} == {first, second}
 
     from ming_sim import issues
-    real_apply = issues.apply_score_extraction
+    real_apply = issues.apply_person_changes_only
     attempts = 0
 
     def fail_once(*args, **kwargs):
@@ -659,7 +659,7 @@ def test_multi_origin_fresh_closes_once_per_person_and_retries(game, monkeypatch
             raise RuntimeError("injected multi-origin applier failure")
         return real_apply(*args, **kwargs)
 
-    monkeypatch.setattr(issues, "apply_score_extraction", fail_once)
+    monkeypatch.setattr(issues, "apply_person_changes_only", fail_once)
     with pytest.raises(RuntimeError, match="injected multi-origin applier failure"):
         an.close_night(db, state, night_id=night_id, content=content)
 
@@ -730,7 +730,7 @@ def test_multi_origin_fresh_independent_retract_and_single_departure(game, monke
     )
     assert entry_a2 != entry_b2
     from ming_sim import issues
-    real_apply = issues.apply_score_extraction
+    real_apply = issues.apply_person_changes_only
     apply_calls = 0
 
     def count_apply(*args, **kwargs):
@@ -738,7 +738,7 @@ def test_multi_origin_fresh_independent_retract_and_single_departure(game, monke
         apply_calls += 1
         return real_apply(*args, **kwargs)
 
-    monkeypatch.setattr(issues, "apply_score_extraction", count_apply)
+    monkeypatch.setattr(issues, "apply_person_changes_only", count_apply)
     result = an.close_night(db, state, night_id=night_id, content=content)
     assert result["closed"] is True
     assert apply_calls == 1
@@ -2000,3 +2000,155 @@ def test_tool_summon_binds_origin_chat_turn_id_and_undo_deletes(game, monkeypatc
         (int(cli_rows[0]["entry_id"]),),
     ).fetchone()
     assert int(cli_entry["origin_chat_turn_id"] or 0) == 0
+
+
+def test_fresh_summon_same_beizhili_journey_attaches_origin_without_reapply(game):
+    """#672/#670：真实 apply_dossier_verdicts 同人双 office origin 批内一次消费。
+
+    两宗任命+传召经同一 verdicts 批激活后：durable 行止 person_log 恰一次，
+    人物只赴 beizhili 一程，两个 origin 均投影为 in_transit。
+    """
+    db, state, content = game
+    person = _set_place(game, "洪承畴", location="shaanxi")
+    person.location = "shaanxi"
+    person.transit_to = ""
+    minister = next(
+        ch.name for ch in content.characters.values()
+        if db.resolve_power_id(ch) == "ming"
+        and db.get_character_status(ch.name)[0] == "active"
+        and str(getattr(ch, "office", "") or "").strip()
+        and ch.name != person.name
+    )
+    night_id = int(an.open_night(db, state, empty_scaffold=True)["id"])
+    pids: list[int] = []
+    for office in ("三边总督", "蓟辽总督"):
+        pid = int(db.stage_pending_action(
+            int(state.turn), "office", "任命", minister,
+            {"name": person.name, "office": office, "summon_after": "是"},
+        ))
+        an.ensure_inactive_office_summon(
+            db, pid, person.name, night_id=night_id,
+        )
+        pids.append(pid)
+    origins = {f"office:{pid}" for pid in pids}
+    db.mark_pending_night_approved(pids, night_id=night_id)
+    an.close_night(db, state, night_id=night_id, content=content)
+    dossiers = [
+        row for row in db.list_decree_dossiers(status="proposed")
+        if row["action_type"] == "appointment"
+        and int(row.get("pending_action_id") or 0) in set(pids)
+    ]
+    assert len(dossiers) == 2
+
+    before_logs = int(db.conn.execute(
+        "SELECT COUNT(*) AS n FROM person_logs "
+        "WHERE person_name=? AND action=?",
+        (person.name, "行止"),
+    ).fetchone()["n"])
+
+    db.apply_dossier_verdicts(
+        state,
+        [{"dossier_id": row["id"], "decision": "promulgated"} for row in dossiers],
+        content=content,
+    )
+
+    after_logs = int(db.conn.execute(
+        "SELECT COUNT(*) AS n FROM person_logs "
+        "WHERE person_name=? AND action=?",
+        (person.name, "行止"),
+    ).fetchone()["n"])
+    assert after_logs == before_logs + 1
+    after = db.conn.execute(
+        "SELECT location, transit_to FROM characters WHERE name=?", (person.name,),
+    ).fetchone()
+    assert (after["location"], after["transit_to"]) == ("shaanxi", "beizhili")
+    mirror = content.characters[person.name]
+    assert (getattr(mirror, "location", ""), getattr(mirror, "transit_to", "") or "") == (
+        "shaanxi", "beizhili",
+    )
+    unsettled = an.list_unsettled_summons(db)
+    assert len(unsettled) == 2
+    assert {row["kind"] for row in unsettled} == {"in_transit"}
+    assert {row["origin_id"] for row in unsettled} == origins
+
+
+def test_fresh_summon_omitted_content_syncs_db_and_rolls_back_together(game):
+    """#672：省略 content 时 runtime_content 同步 DB/content；批内失败两侧同撤。"""
+    db, state, content = game
+    from ming_sim import issues
+    issues.bind_content(content)  # 防他测漂移 _content；省略 content 路 →_ctx()
+
+    # 成功路径：content 默认 None → runtime_content=_ctx() 与绑定 content 同步。
+    solo = _set_place(game, "洪承畴", location="shaanxi")
+    solo.location = "shaanxi"
+    solo.transit_to = ""
+    solo_night = int(an.open_night(db, state)["id"])
+    an.record_summon_fresh(db, solo_night, solo.name, origin_id="command:omit-ok")
+    origins = an.commit_fresh_summons_for_night(db, state, solo_night)
+    assert origins == ["command:omit-ok"]
+    after = db.conn.execute(
+        "SELECT location, transit_to FROM characters WHERE name=?", (solo.name,),
+    ).fetchone()
+    assert (after["location"], after["transit_to"]) == ("shaanxi", "beizhili")
+    assert (getattr(solo, "location", ""), getattr(solo, "transit_to", "") or "") == (
+        "shaanxi", "beizhili",
+    )
+    an.close_night(db, state, night_id=solo_night, content=content)
+
+    # 回滚路径：先写行止者成功、后写者异目的地在途拒 → 整批 DB/content 同撤。
+    first = _set_place(game, "卢象升", location="shaanxi")
+    first.location = "shaanxi"
+    first.transit_to = ""
+    second = _set_place(game, "孙传庭", location="henan", transit_to="shandong")
+    second.location = "henan"
+    second.transit_to = "shandong"
+
+    night_id = int(an.open_night(db, state)["id"])
+    an.record_summon_fresh(db, night_id, first.name, origin_id="command:omit-a")
+    an.record_summon_fresh(db, night_id, second.name, origin_id="command:omit-b")
+
+    before_first = _travel_row(db, first.name)
+    before_second = _travel_row(db, second.name)
+    before_logs = int(db.conn.execute(
+        "SELECT COUNT(*) AS n FROM person_logs WHERE person_name=? AND action=?",
+        (first.name, "行止"),
+    ).fetchone()["n"])
+
+    with pytest.raises(an.AudienceNightError, match="已在途赴 shandong") as ei:
+        an.commit_fresh_summons_for_night(db, state, night_id)
+    assert ei.value.code == "summon_departure_rejected"
+
+    assert _travel_row(db, first.name) == before_first
+    assert _travel_row(db, second.name) == before_second
+    assert (getattr(first, "location", ""), getattr(first, "transit_to", "") or "") == (
+        "shaanxi", "",
+    )
+    assert (getattr(second, "location", ""), getattr(second, "transit_to", "") or "") == (
+        "henan", "shandong",
+    )
+    assert int(db.conn.execute(
+        "SELECT COUNT(*) AS n FROM person_logs WHERE person_name=? AND action=?",
+        (first.name, "行止"),
+    ).fetchone()["n"]) == before_logs
+    assert {
+        (row["origin_id"], row["kind"]) for row in an.list_unsettled_summons(db)
+        if row["origin_id"] in {"command:omit-a", "command:omit-b"}
+    } == {("command:omit-a", "fresh"), ("command:omit-b", "fresh")}
+
+
+def test_fresh_summon_rejects_different_destination_in_transit(game):
+    """#672/#670：已在异目的地在途，fresh 启程仍拒。"""
+    db, state, content = game
+    person = _set_place(game, "洪承畴", location="shaanxi", transit_to="henan")
+    night_id = int(an.open_night(db, state)["id"])
+    an.record_summon_fresh(db, night_id, person.name, origin_id="office:diff-dest")
+    with pytest.raises(an.AudienceNightError, match="已在途赴 henan") as ei:
+        an.commit_fresh_summons_for_night(
+            db, state, night_id, content=content, registry=None,
+        )
+    assert ei.value.code == "summon_departure_rejected"
+    after = db.conn.execute(
+        "SELECT location, transit_to FROM characters WHERE name=?", (person.name,),
+    ).fetchone()
+    assert (after["location"], after["transit_to"]) == ("shaanxi", "henan")
+    assert [row["kind"] for row in an.list_unsettled_summons(db)] == ["fresh"]
