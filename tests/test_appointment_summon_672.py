@@ -130,16 +130,20 @@ def test_appointment_summon_activates_only_after_promulgation(game, monkeypatch)
     else:
         assert next_month["location"] == "beizhili"
 
+    unsettled = []
     for _ in range(60):
-        if list_unsettled_summons(db) and list_unsettled_summons(db)[0]["kind"] == "waiting":
+        unsettled = list_unsettled_summons(db)
+        if unsettled and unsettled[0]["kind"] == "waiting":
             break
-        if not list_unsettled_summons(db):
+        if not unsettled:
             break
         settle_with_delta(
             state, db, {}, before_turn=int(state.turn), content=content,
         )
         prepare_resolve_front_half(state, db, content=content)
-    assert list_unsettled_summons(db)[0]["kind"] == "waiting"
+        unsettled = list_unsettled_summons(db)
+    assert unsettled, "抵京后应仍有未结传召投影"
+    assert unsettled[0]["kind"] == "waiting"
     assert _yuan_row(db)["location"] == "beizhili"
 
 

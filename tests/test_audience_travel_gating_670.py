@@ -430,7 +430,7 @@ def test_fresh_summon_applier_failure_rolls_back_and_close_retry_is_safe(game, m
     an.record_summon_fresh(db, night_id, person.name, origin_id="command:retry-1")
 
     from ming_sim import issues
-    real_apply = issues.apply_score_extraction
+    real_apply = issues.apply_person_changes_only
     attempts = 0
 
     def fail_once(*args, **kwargs):
@@ -440,7 +440,7 @@ def test_fresh_summon_applier_failure_rolls_back_and_close_retry_is_safe(game, m
             raise RuntimeError("injected canonical applier failure")
         return real_apply(*args, **kwargs)
 
-    monkeypatch.setattr(issues, "apply_score_extraction", fail_once)
+    monkeypatch.setattr(issues, "apply_person_changes_only", fail_once)
 
     try:
         an.close_night(db, state, night_id=night_id, content=content)
@@ -649,7 +649,7 @@ def test_multi_origin_fresh_closes_once_per_person_and_retries(game, monkeypatch
     assert {row["entry_id"] for row in unsettled_before} == {first, second}
 
     from ming_sim import issues
-    real_apply = issues.apply_score_extraction
+    real_apply = issues.apply_person_changes_only
     attempts = 0
 
     def fail_once(*args, **kwargs):
@@ -659,7 +659,7 @@ def test_multi_origin_fresh_closes_once_per_person_and_retries(game, monkeypatch
             raise RuntimeError("injected multi-origin applier failure")
         return real_apply(*args, **kwargs)
 
-    monkeypatch.setattr(issues, "apply_score_extraction", fail_once)
+    monkeypatch.setattr(issues, "apply_person_changes_only", fail_once)
     with pytest.raises(RuntimeError, match="injected multi-origin applier failure"):
         an.close_night(db, state, night_id=night_id, content=content)
 
@@ -730,7 +730,7 @@ def test_multi_origin_fresh_independent_retract_and_single_departure(game, monke
     )
     assert entry_a2 != entry_b2
     from ming_sim import issues
-    real_apply = issues.apply_score_extraction
+    real_apply = issues.apply_person_changes_only
     apply_calls = 0
 
     def count_apply(*args, **kwargs):
@@ -738,7 +738,7 @@ def test_multi_origin_fresh_independent_retract_and_single_departure(game, monke
         apply_calls += 1
         return real_apply(*args, **kwargs)
 
-    monkeypatch.setattr(issues, "apply_score_extraction", count_apply)
+    monkeypatch.setattr(issues, "apply_person_changes_only", count_apply)
     result = an.close_night(db, state, night_id=night_id, content=content)
     assert result["closed"] is True
     assert apply_calls == 1
@@ -2000,3 +2000,57 @@ def test_tool_summon_binds_origin_chat_turn_id_and_undo_deletes(game, monkeypatc
         (int(cli_rows[0]["entry_id"]),),
     ).fetchone()
     assert int(cli_entry["origin_chat_turn_id"] or 0) == 0
+
+
+def test_fresh_summon_same_beizhili_journey_attaches_origin_without_reapply(game, monkeypatch):
+    """#672/#670：已在同一 beizhili 旅程只附加 origin 标 in_transit，不二次行止。"""
+    from ming_sim import issues
+
+    db, state, content = game
+    person = _set_place(game, "洪承畴", location="shaanxi", transit_to="beizhili")
+    night_id = int(an.open_night(db, state)["id"])
+    origin_a = "office:1001"
+    origin_b = "office:1002"
+    an.record_summon_fresh(db, night_id, person.name, origin_id=origin_a)
+    an.record_summon_fresh(db, night_id, person.name, origin_id=origin_b)
+
+    apply_calls = 0
+    real_apply = issues.apply_person_changes_only
+
+    def count_apply(*args, **kwargs):
+        nonlocal apply_calls
+        apply_calls += 1
+        return real_apply(*args, **kwargs)
+
+    monkeypatch.setattr(issues, "apply_person_changes_only", count_apply)
+    origins = an.commit_fresh_summons_for_night(
+        db, state, night_id, content=content, registry=None,
+    )
+    assert set(origins) == {origin_a, origin_b}
+    assert apply_calls == 0  # already on beizhili journey — attach only
+    after = db.conn.execute(
+        "SELECT location, transit_to FROM characters WHERE name=?", (person.name,),
+    ).fetchone()
+    assert (after["location"], after["transit_to"]) == ("shaanxi", "beizhili")
+    unsettled = an.list_unsettled_summons(db)
+    assert len(unsettled) == 2
+    assert {row["kind"] for row in unsettled} == {"in_transit"}
+    assert {row["origin_id"] for row in unsettled} == {origin_a, origin_b}
+
+
+def test_fresh_summon_rejects_different_destination_in_transit(game):
+    """#672/#670：已在异目的地在途，fresh 启程仍拒。"""
+    db, state, content = game
+    person = _set_place(game, "洪承畴", location="shaanxi", transit_to="henan")
+    night_id = int(an.open_night(db, state)["id"])
+    an.record_summon_fresh(db, night_id, person.name, origin_id="office:diff-dest")
+    with pytest.raises(an.AudienceNightError, match="已在途赴 henan") as ei:
+        an.commit_fresh_summons_for_night(
+            db, state, night_id, content=content, registry=None,
+        )
+    assert ei.value.code == "summon_departure_rejected"
+    after = db.conn.execute(
+        "SELECT location, transit_to FROM characters WHERE name=?", (person.name,),
+    ).fetchone()
+    assert (after["location"], after["transit_to"]) == ("shaanxi", "henan")
+    assert [row["kind"] for row in an.list_unsettled_summons(db)] == ["fresh"]

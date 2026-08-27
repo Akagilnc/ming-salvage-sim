@@ -690,3 +690,57 @@ def test_special_decree_path_does_not_stage_authorization(game):
         and "authorization" in str(p.get("payload_json") or "")
         for p in db.list_pending_actions(state.turn)
     )
+
+
+def test_mode_tenure_merge_promotes_summon_after_on_existing_pending(game):
+    """#672：路径 merge 早退后仍须 promote summon_after + inactive origin。"""
+    db, state, content = game
+    actor = _minister(db)
+    target = "袁崇焕"
+    an.open_night(db, state, location="乾清宫", time_of_day="夜")
+    first = _stage_appt(
+        db, state.turn,
+        {
+            "kind": "appointment",
+            "appoint_action": "任命",
+            "name": target,
+            "office": "辽东巡抚",
+            "summon_after": "否",
+        },
+        actor=actor,
+        message="着起复袁崇焕为辽东巡抚。",
+    )
+    pending_id = int(first.out["pending_action_id"])
+    assert _payload(db, pending_id).get("summon_after") in (None, "否", "")
+    assert db.conn.execute(
+        "SELECT count(*) FROM story_ledger_entries WHERE origin_ref=?",
+        (f"office:{pending_id}",),
+    ).fetchone()[0] == 0
+
+    # Mode/tenure path hit merges into the same pending and must run the
+    # shared summon success tail (not early-return away from it).
+    _stage_appt(
+        db, state.turn,
+        {
+            "kind": "appointment",
+            "appoint_action": "任命",
+            "name": target,
+            "office": "辽东巡抚",
+            "mode": "midzhi",
+            "appointment_tenure": "署理",
+            "summon_after": "是",
+        },
+        actor=actor,
+        message="特旨署理，并传召入京。",
+        pend=_office_pendings(db, state.turn),
+    )
+    rows = _office_pendings(db, state.turn)
+    assert len(rows) == 1
+    assert int(rows[0]["id"]) == pending_id
+    payload = _payload(db, pending_id)
+    assert payload.get("summon_after") == "是"
+    assert payload.get("mode") == "midzhi"
+    assert db.conn.execute(
+        "SELECT count(*) FROM story_ledger_entries WHERE origin_ref=?",
+        (f"office:{pending_id}",),
+    ).fetchone()[0] == 1

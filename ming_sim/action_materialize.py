@@ -579,6 +579,42 @@ def _structured_appointment_from_ctx(ctx: MaterializeCtx) -> Optional[Dict[str, 
     return None
 
 
+def _persist_appointment_summon(
+    session: Any,
+    pending_id: int,
+    person_name: str,
+    *,
+    promote_payload: bool,
+    origin_chat_turn_id: int = 0,
+) -> None:
+    """Persist the dossier flag and its inactive origin as one staging unit.
+
+    Shared success tail for new stage, same-person dedupe, and mode/tenure merge.
+    """
+    from ming_sim.applier import atomic
+    from ming_sim.audience_night import ensure_inactive_office_summon
+
+    with atomic(session.db):
+        if promote_payload:
+            row = session.db.conn.execute(
+                "SELECT payload_json FROM pending_actions WHERE id=?",
+                (int(pending_id),),
+            ).fetchone()
+            if row is None:
+                raise ValueError("任命后传召所关联的暂存任命不存在")
+            stored = json.loads(row["payload_json"] or "{}")
+            stored["summon_after"] = "是"
+            session.db.conn.execute(
+                "UPDATE pending_actions SET payload_json=? WHERE id=?",
+                (json.dumps(stored, ensure_ascii=False), int(pending_id)),
+            )
+        ensure_inactive_office_summon(
+            session.db, pending_id, person_name,
+            night_id=int(session.db._current_open_night_id()),
+            origin_chat_turn_id=int(origin_chat_turn_id or 0),
+        )
+
+
 def _stage_office_pending_core(
     ctx: MaterializeCtx,
     appt: Dict[str, Any],
@@ -610,27 +646,11 @@ def _stage_office_pending_core(
     def persist_appointment_summon(
         pending_id: int, person_name: str, *, promote_payload: bool,
     ) -> None:
-        """Persist the dossier flag and its inactive origin as one staging unit."""
-        from ming_sim.audience_night import ensure_inactive_office_summon
-
-        with atomic(session.db):
-            if promote_payload:
-                row = session.db.conn.execute(
-                    "SELECT payload_json FROM pending_actions WHERE id=?",
-                    (int(pending_id),),
-                ).fetchone()
-                if row is None:
-                    raise ValueError("任命后传召所关联的暂存任命不存在")
-                stored = json.loads(row["payload_json"] or "{}")
-                stored["summon_after"] = "是"
-                session.db.conn.execute(
-                    "UPDATE pending_actions SET payload_json=? WHERE id=?",
-                    (json.dumps(stored, ensure_ascii=False), int(pending_id)),
-                )
-            ensure_inactive_office_summon(
-                session.db, pending_id, person_name,
-                night_id=int(session.db._current_open_night_id()),
-            )
+        _persist_appointment_summon(
+            session, pending_id, person_name,
+            promote_payload=promote_payload,
+            origin_chat_turn_id=int(ctx.chat_turn_id or 0),
+        )
 
     content_ref = getattr(session, "content", None)
     action = str(appt.get("appoint_action") or "").strip()
@@ -2827,8 +2847,20 @@ def _materialize_appointment(ctx: MaterializeCtx) -> None:
                 minister_name=minister_name,
                 turn=int(session.state.turn),
             )
+            resolved = int(pending_id or row["id"])
             if pending_id:
                 ctx.out["pending_action_id"] = pending_id
+            # Shared success tail with _stage_office_pending_core: payload
+            # promotion + inactive origin ensure must not early-return away.
+            if (
+                str(appt.get("summon_after") or "否").strip() == "是"
+                and appt_name
+            ):
+                _persist_appointment_summon(
+                    session, resolved, appt_name,
+                    promote_payload=True,
+                    origin_chat_turn_id=int(ctx.chat_turn_id or 0),
+                )
             # 路径命中后：若本轮仍是完整任命语义且已并入，不再新建第二候选
             if appt.get("appoint_action") in ("任命", "罢免") and appt_name:
                 same = _match_office_row_by_name_office(
