@@ -1239,8 +1239,9 @@ def classify_cli_action_intent(
         'value 含比较算符，如 {"army.guanning.arrears":"<=0"}；'
         "自然语言军令状须落成该 shape，不得只写散文。\n\n"
         f"【最近相关召对】\n{context_block}\n"
-        f"【此臣已站台案卷候选】{backing_facts}\n"
-        "惩处此臣且语义指向其既有站台事项时，从候选 dossier_id 填站台案卷；否则留 null。\n"
+        f"【站台案卷候选（逐背书）】{backing_facts}\n"
+        "每项 endorser_id 是该案站台者；惩处目标与 endorser_id 相同且语义指向其站台事项时，"
+        "从该人物候选 dossier_id 填站台案卷，否则留 null。\n"
         f"【待确认动作】{pending_brief}\n"
         f"【现有密令】{orders_brief}\n"
         f"【此人是否妃嫔】{'是' if is_consort else '否'}\n"

@@ -1598,8 +1598,8 @@ class GameSession:
         from ming_sim.action_clusters import is_confirmation_decision, resolve_primary_intent
         explicit_draft_prefix = message_text.startswith(_DRAFT_PREFIXES)
         explicit_secret_prefix = message_text.startswith(_SECRET_PREFIXES)
-        confirmation_turn = is_confirmation_decision(
-            resolve_primary_intent(preclassified_intent))
+        primary_intent = resolve_primary_intent(preclassified_intent)
+        confirmation_turn = is_confirmation_decision(primary_intent)
         for tool_exec in getattr(run_output, "tools", None) or []:
             tool_name = getattr(tool_exec, "tool_name", "")
             tool_result = str(getattr(tool_exec, "result", "") or "")
@@ -1643,7 +1643,15 @@ class GameSession:
                     draft_text = ""  # 恢复窗婉拒：不入档（见 _proposal_blocked）
                 if draft_text:
                     # #502 L2 / #522 / #517：tool 拟旨与 CLI 共用候选 seam；
-                    # 惩处结构化字段只从 tool arguments 交付，不扫散文。
+                    # 站台案卷由并行分类候选按惩处目标关联，不从 tool 参数伪造。
+                    tool_target = str(args.get("target_id") or args.get("name") or "")
+                    classified_backing = next((
+                        candidate.get("backing_dossier_id")
+                        for candidate in (preclassified_intent or [])
+                        if candidate.get("kind") == "punishment"
+                        and str(candidate.get("target_id") or candidate.get("name") or "") == tool_target
+                        and candidate.get("backing_dossier_id") is not None
+                    ), None)
                     stage_failures: List[Dict[str, Any]] = []
                     result.pending_action_id = coalesce_pending_action_id(
                         result.pending_action_id,
@@ -1655,7 +1663,11 @@ class GameSession:
                             name=args.get("name"),
                             amount=args.get("amount"),
                             transaction_category=args.get("transaction_category"),
-                            backing_dossier_id=args.get("backing_dossier_id"),
+                            backing_dossier_id=(
+                                args.get("backing_dossier_id")
+                                if args.get("backing_dossier_id") is not None
+                                else classified_backing
+                            ),
                         ),
                     )
                     if stage_failures:
@@ -3085,7 +3097,7 @@ class GameSession:
         # #658：Web/CLI free-form draft 在真实颁诏链进入唯一成案接缝（confirm/commit
         # 已各自 ensure；本口覆盖 add_directive 直落 draft 的路径，幂等）。
         self.db.ensure_dossiers_for_draft_directives(self.state)
-        directives = list(self.db.list_directives(self.state, statuses=("draft",)))
+        directives = list(self.db.list_dossiered_draft_directives(self.state))
         # DB owner supplies the canonical read-only default-approval projection.
         # Negative preview ids participate in stale-decree fingerprinting without
         # colliding with durable turn_directives ids.
