@@ -8120,7 +8120,7 @@ def apply_person_changes_only(
     runtime_content = content if content is not None else _ctx()
     caller_transaction = db.conn.in_transaction
     if caller_transaction:
-        _register_runtime_rollback_snapshot(db, state, content, registry)
+        _register_runtime_rollback_snapshot(db, state, runtime_content, registry)
     changes = _canonicalize_person_change_names(
         normalize_person_changes({"人物变更": list(person_changes or [])}),
         runtime_content,
@@ -8130,7 +8130,7 @@ def apply_person_changes_only(
         db,
         state,
         changes,
-        content=content,
+        content=runtime_content,
         registry=registry,
         llm_config=llm_config,
         external_transaction=caller_transaction,
