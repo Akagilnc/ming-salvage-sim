@@ -85,8 +85,7 @@ def test_s1_private_rail_exposes_secret_dossier_id_and_roster(game):
     )
     for module in ("issues", "internal", "military_external"):
         ctx = build_extractor_shared_context(
-            db, state, "", "", module=module, secret_orders=grouped,
-            transit_semantics=public["transit_semantics"],
+            db, state, "", "", module=module, secret_orders=grouped
         )
         assert "secret_dossier_rosters" not in ctx
         assert all(

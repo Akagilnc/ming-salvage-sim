@@ -207,13 +207,14 @@ def run_agent_stream_text(
         merged = "".join(chunk_buf).replace("\n", " ⏎ ")
         tlog(f"[{tag}] …{merged[-160:]}")
 
-    streamed = "".join(pieces).strip()
-    if streamed:
+    # #671：流式拼合原文不 strip；仅用临时副本判空。
+    streamed = "".join(pieces)
+    if streamed.strip():
         text = streamed
         fail_if_llm_error(text, "LLM 调用")
     elif final_output is not None:
         text = extract_agent_text(final_output)
-        if not text:
+        if not text.strip():
             abort_llm_contract(tag, "流式终结事件没有正文 content", "")
     else:
         abort_llm_contract(tag, "流式无内容且无终结事件", "")
@@ -326,19 +327,19 @@ def create_promulgation_judge_agent(llm_config: LLMConfig, agno_db: SqliteDb) ->
             "一次返回一个 JSON object：{\"verdicts\":[...]}，逐案恰好一项。"
             "每项含 dossier_id、decision(promulgated|rejected)。打回还须含 "
             "blocked_layer(cabinet_drafting|palace_rescript|six_offices)、reason、"
-            "primary_opponents、gatekeeper_id、criteria_snapshot、affected_parties。"
+            "primary_opponents、gatekeeper_id、criteria_snapshot。"
             "primary_opponents 必须是非空 typed 派系数组，每项须且仅为 "
             "{kind:faction,key:<输入 factions 中的在册派系名>}；不得输出字符串清单。"
             "criteria_snapshot 必须逐字取该案 criteria_snapshot_source 的四键："
             "imperial_authority_band、appointment_tenure、authorization_ids、"
-            "endorsement_entry_ids，不得缺键。affected_parties 必须是非空数组，每项须为 "
-            "{kind:faction|class,key,direction:positive|negative,intensity:weak|strong}。mode=midzhi 无论顺颁打回"
-            "均须给非空 affected_parties；命门类可打回并置 midzhi_unpromulgatable=true，"
-            "普通中旨无前科时从严但不得机械地一概打回；有 promulgation_history 批红强颁前科时"
-            "与无前科差分，优先打回。",
-            "逐一独立判断各 faction/class 对这道判决的真实反应，不得把受害方机械当作"
-            "默认反应方。direction 是有符号方向（可正可负），intensity 是强弱；反应为零"
-            "就省略该方，不得填默认值。不要调用第二个模型，也不要用公式补算反应。",
+            "endorsement_entry_ids，不得缺键。ordinary 打回还须含非空 affected_parties，每项须为 "
+            "{kind:faction|class,key,direction:positive|negative,intensity:weak|strong}；"
+            "逐一独立判断各 faction/class 对这道 ordinary 打回判决的真实反应，不得把受害方"
+            "机械当作默认反应方。direction 是有符号方向（可正可负），intensity 是强弱；"
+            "反应为零就省略该方，不得填默认值。不要调用第二个模型，也不要用公式补算反应。"
+            "mode=midzhi 无论顺颁打回均不得猜测或输出 affected_parties（正式逐派离心归 M12）；"
+            "命门类可打回并置 midzhi_unpromulgatable=true，普通中旨无前科时从严但不得机械地"
+            "一概打回；有 promulgation_history 批红强颁前科时与无前科差分，优先打回。",
             "顺颁不得虚构卡点。只输出 JSON，不写解释。",
         ],
         add_history_to_context=False,
@@ -355,6 +356,23 @@ def create_decree_writer_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agen
         id="decree-writer",
         model=create_chat_model(llm_config, temperature=0.3, top_p=0.9),
         instructions=[_ctx().game_world_prompt, _ctx().decree_writer_prompt],
+        add_history_to_context=False,
+        markdown=False,
+    )
+
+
+def create_arrival_attendant_agent(llm_config: LLMConfig) -> Agent:
+    """#671：抵京候见独立报到声部（王承恩 one-shot；勿复用读心 agent/夜卷）。"""
+    return Agent(
+        name="王承恩抵京报到",
+        id="arrival-attendant",
+        model=create_chat_model(llm_config, temperature=0.4),
+        instructions=[
+            "你是王承恩——御前老太监。用户给出本月新抵京、尚在候旨的结构化名单"
+            "（年月、人名、地点、候旨状态）。你据此向皇爷低声递话。",
+            "名单每行只代表一位来人；据该行连续通报此人本月抵京、现正候旨、仍尚未宣入，自由措辞。",
+            "同月多人逐人点到，以递话正文作答。",
+        ],
         add_history_to_context=False,
         markdown=False,
     )
@@ -669,6 +687,67 @@ def create_rescript_draft_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Age
             force_json_output=True,
         ),
         instructions=[ctx.game_world_prompt, ctx.rescript_draft_prompt],
+        add_history_to_context=False,
+        markdown=False,
+    )
+
+
+def create_rescript_revise_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
+    """#657 单行改票：输出唯一 shape {"options":[...]}；禁 monthly items[] 契约。"""
+    del agno_db
+    ctx = _ctx()
+    cfg = _llm_for_role(llm_config, "extractor")
+    instructions = [
+        ctx.game_world_prompt,
+        (
+            "你是批红改票官。根据给定急务行与批语，输出改票 options。\n"
+            "只输出一个 JSON 对象，shape 必须是 "
+            '{"options":[{...},...]}' "——禁止 items 数组、禁止草稿列表外壳。\n"
+            "每个 option 须含 label/hint/action_type/target_kind/target_id/"
+            "locality_scope/assignee_name/region_id/army_id 等层 A 键。"
+        ),
+    ]
+    return Agent(
+        name="批红改票官",
+        id="rescript-reviser",
+        model=create_chat_model(
+            cfg,
+            temperature=0.3,
+            top_p=0.9,
+            enable_thinking=False,
+            force_json_output=True,
+        ),
+        instructions=instructions,
+        add_history_to_context=False,
+        markdown=False,
+    )
+
+
+def create_rescript_deliberate_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
+    """#657 廷议站台：输出唯一 shape {title, body, stance} 整串严格 JSON。"""
+    del agno_db
+    ctx = _ctx()
+    cfg = _llm_for_role(llm_config, "extractor")
+    instructions = [
+        ctx.game_world_prompt,
+        (
+            "你是廷议站台官。根据急务与批语输出站台意愿。\n"
+            "只输出一个 JSON 对象，shape 必须是 "
+            '{"title":"...","body":"...","stance":"..."}' "。\n"
+            "title/body/stance 均须非空字符串；禁止数组外壳、禁止围栏外 prose。"
+        ),
+    ]
+    return Agent(
+        name="廷议站台官",
+        id="rescript-deliberator",
+        model=create_chat_model(
+            cfg,
+            temperature=0.4,
+            top_p=0.9,
+            enable_thinking=False,
+            force_json_output=True,
+        ),
+        instructions=instructions,
         add_history_to_context=False,
         markdown=False,
     )

@@ -512,10 +512,11 @@ def discover_open_enter_tasks(
     night = get_night(db, night_id) or {}
     entries = list_ledger(db, night_id)
     tasks: List[Tuple[int, BeatInputs]] = []
-    # Failed/undone turns do not consume first-turn opening eligibility (C12/T13).
+    # Failed/undone/consumed turns do not consume first-turn opening eligibility (C12/T13).
     count = db.conn.execute(
         "SELECT COUNT(*) AS c FROM chat_turns "
-        "WHERE night_id = ? AND id <= ? AND status NOT IN ('failed', 'undone')",
+        "WHERE night_id = ? AND id <= ? "
+        "AND status NOT IN ('failed', 'undone', 'consumed')",
         (night_id, int(chat_turn_id)),
     ).fetchone()["c"]
     if int(count) == 1:
@@ -731,12 +732,39 @@ class ChatTurnSceneRegistry:
         return results
 
     def join(self, chat_turn_id: int) -> List[Tuple[int, str]]:
-        """等待本轮全部 scene Future；不持 DB/写锁。"""
+        """等待本轮全部 scene Future；不持 DB/写锁。
+
+        默认 pop+drain：ordinary web chat / close scene 共用。summon 长等
+        窗口须走 join_retained + release，避免 drain 前 pop 打开 dual-start 窗。
+        """
         with self._lock:
             futures = self._futures.pop(int(chat_turn_id), None)
         if not futures:
             return []
         return self._drain(futures, keep_results=True)
+
+    def join_retained(self, chat_turn_id: int) -> List[Tuple[int, str]]:
+        """#657 summon 专用：drain 结果但保留 claim，使同 body 重试 coalesce。
+
+        不 pop。终态（consumed/failed 已落 durable）后须 release。
+        """
+        key = int(chat_turn_id)
+        with self._lock:
+            futures = list(self._futures.get(key) or ())
+        if not futures:
+            return []
+        return self._drain(futures, keep_results=True)
+
+    def release(self, chat_turn_id: int) -> None:
+        """#657 summon 终态释放：pop residual claim + abandon-drain 残余 Future。
+
+        仅 finish_rescript_phase2 在 durable consumed/failed 写后调用。
+        """
+        with self._lock:
+            futures = self._futures.pop(int(chat_turn_id), None)
+        if not futures:
+            return
+        self._drain(futures, keep_results=False)
 
     def abandon(self, chat_turn_id: int) -> None:
         """排空本轮 scene：能 cancel 则 cancel，已在跑则 join 丢结果。"""
