@@ -1651,6 +1651,7 @@ class GameSession:
                             name=args.get("name"),
                             amount=args.get("amount"),
                             transaction_category=args.get("transaction_category"),
+                            backing_dossier_id=args.get("backing_dossier_id"),
                         ),
                     )
                     if stage_failures:
@@ -2492,14 +2493,15 @@ class GameSession:
         name: object = None,
         amount: object = None,
         transaction_category: object = None,
+        backing_dossier_id: object = None,
     ) -> int:
         """API/stream/CLI tool propose_directive → structured candidate seam (#522/#517).
 
         Pacification cue/target still reads the tool draft. Punishment facts
-        (punish_action / single target / positive fine amount) come only from
-        explicit tool/action-candidate fields — never prose keyword or number
-        guessing. Incomplete structured punishment fails loud and never degrades
-        to special_decree; ordinary prose discussion keeps the special_decree path.
+        (punish_action / single target / positive fine amount / backing_dossier_id)
+        come only from explicit tool/action-candidate fields — never prose keyword
+        or number guessing. Incomplete structured punishment fails loud and never
+        degrades to special_decree; ordinary prose discussion keeps the special_decree path.
         """
         text = str(draft_text or "").strip()
         if not text:
@@ -2582,6 +2584,7 @@ class GameSession:
                 emperor_text=message_text,
                 amount=n if action == "罚俸" else 0,
                 transaction_category=transaction_category,
+                backing_dossier_id=backing_dossier_id,
             )
             if not pending_id:
                 failure = {
@@ -3301,7 +3304,10 @@ class GameSession:
                 if str(row.get("source") or "") in cand_set
                 or str(row.get("target") or "") in cand_set
             ]
-            faction_rows = self.db.get_faction_stance_summaries()
+            # #658：派系态势只保留候选人物 canonical faction 相关行，不灌全表
+            faction_rows = ra.candidate_faction_stance_rows(
+                self.db, self.content, candidates,
+            )
             agent = create_rescript_deliberate_agent(self.llm_config, self.agno_db)
             prompt = (
                 "请为以下急务拟定下部议/廷议站台（JSON："

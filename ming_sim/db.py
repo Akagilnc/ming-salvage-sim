@@ -536,24 +536,56 @@ def _has_stop_condition(stop_condition: object) -> bool:
 
 
 def imperial_push_target_dossier_id(payload: object) -> Optional[int]:
-    """#658：解析合法御笔强推 target_dossier_id；非法/缺省 → None。
+    """#658：解析合法御笔强推 target_dossier_id；缺省 → None；坏 shape 响亮失败。
 
     capture / session.add / db.update / extract 共吃本函数——禁第二份 int>0 分支。
     Mapping 同时认 target_dossier_id 与抽取原键 目标案卷ID。
+    字段一旦出现只接真正的正整数（拒 bool/float/字符串）。
     """
     if isinstance(payload, Mapping):
-        raw = payload.get("target_dossier_id")
-        if raw is None:
+        if "target_dossier_id" in payload:
+            raw = payload.get("target_dossier_id")
+        elif "目标案卷ID" in payload:
             raw = payload.get("目标案卷ID")
+        else:
+            return None
     else:
         raw = payload
-    if raw in (None, "", 0, "0"):
+    if raw in (None, ""):
         return None
-    try:
-        value = int(raw)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
+    value = strict_int(raw, accept_numeric_strings=False)
+    if value == 0:
         return None
-    return value if value > 0 else None
+    if value < 0:
+        raise ValueError(f"target_dossier_id 非法 shape：{raw!r}")
+    return value
+
+
+def parse_backing_dossier_id(raw: object) -> Optional[int]:
+    """#658：处置 backing_dossier_id 单权威解析；缺省→None；坏 shape 响亮失败。
+
+    首写 stage 与 durable apply 共吃；禁 generic as_int clamp 成「未提供」。
+    字段一旦出现只接真正的正整数（拒 bool/float/字符串）。
+    """
+    if raw in (None, ""):
+        return None
+    value = strict_int(raw, accept_numeric_strings=False)
+    if value == 0:
+        return None
+    if value < 0:
+        raise ValueError(f"backing_dossier_id 非法：{raw!r}")
+    return value
+
+
+def require_backing_dossier_id(db: object, raw: object) -> Optional[int]:
+    """解析 + 存在性：有值则案卷必须在册；供 stage 首写与 apply 复用。"""
+    backing = parse_backing_dossier_id(raw)
+    if backing is None:
+        return None
+    getter = getattr(db, "get_decree_dossier", None)
+    if getter is None or getter(backing) is None:
+        raise ValueError(f"backing_dossier_id 所指案卷不存在：{backing}")
+    return backing
 
 
 def directive_payload_has_ordinary_triad(payload: Mapping[str, object]) -> bool:
@@ -17145,18 +17177,8 @@ class GameDB:
         reason = str(
             payload.get("text") or row.get("decree_text") or punish_action
         )
-        # #658：typed backing_dossier_id 非法（幻影案卷）在处置效果首写前响亮拒绝
-        raw_backing = payload.get("backing_dossier_id")
-        backing_id = 0
-        if raw_backing not in (None, "", 0, "0"):
-            try:
-                backing_id = int(raw_backing)
-            except (TypeError, ValueError) as exc:
-                raise ValueError(f"backing_dossier_id 非法：{raw_backing!r}") from exc
-            if backing_id <= 0:
-                raise ValueError(f"backing_dossier_id 非法：{raw_backing!r}")
-            if self.get_decree_dossier(backing_id) is None:
-                raise ValueError(f"backing_dossier_id 所指案卷不存在：{backing_id}")
+        # #658：typed backing 单权威（与 stage 首写共吃）
+        backing_id = int(require_backing_dossier_id(self, payload.get("backing_dossier_id")) or 0)
         status_by_action = {
             "拿问下狱": "imprisoned",
             "拿问去职": "imprisoned",

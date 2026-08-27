@@ -2451,6 +2451,7 @@ class WebGame:
                                 name=args.get("name"),
                                 amount=args.get("amount"),
                                 transaction_category=args.get("transaction_category"),
+                                backing_dossier_id=args.get("backing_dossier_id"),
                             ),
                         )
                         if stage_failures:
