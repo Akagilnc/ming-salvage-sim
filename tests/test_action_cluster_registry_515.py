@@ -62,11 +62,18 @@ def test_registry_row_carries_handler_and_fields_prompt_from_specs():
     for c in materialize_clusters_ordered():
         assert c.effect == EFFECT_MATERIALIZE
         assert c.materialize_fn is not None
-    # prompt 字段来自 FieldSpec，非手写副本
+    # prompt 字段来自 FieldSpec，非手写副本；对象本体须为合法 JSON
     schema = classifier_json_fields_prompt()
     assert "动作类型" in schema
     assert "确认" in schema and "任免动作" in schema
     assert "密令动作" in schema
+    start, end = schema.find("{"), schema.rfind("}")
+    assert 0 <= start < end
+    body = json.loads(schema[start : end + 1])
+    for c in ACTION_CLUSTERS:
+        for f in c.fields:
+            if f.as_int and f.default is None:
+                assert body.get(f.zh) is None
 
 
 def test_registry_rows_generate_shape_contract_matrix():
