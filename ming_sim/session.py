@@ -3078,6 +3078,9 @@ class GameSession:
         # pre_settle owning transaction 与财政等副作用一起物化。
         for pending in self.db.list_directives(self.state, statuses=("pending",)):
             self.db.confirm_directive(int(pending["id"]), self.state)
+        # #658：Web/CLI free-form draft 在真实颁诏链进入唯一成案接缝（confirm/commit
+        # 已各自 ensure；本口覆盖 add_directive 直落 draft 的路径，幂等）。
+        self.db.ensure_dossiers_for_draft_directives(self.state)
         directives = list(self.db.list_directives(self.state, statuses=("draft",)))
         # DB owner supplies the canonical read-only default-approval projection.
         # Negative preview ids participate in stale-decree fingerprinting without

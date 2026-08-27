@@ -891,10 +891,10 @@ def stage_punishment_candidate(
         "mode": mode,
     }
     # #658：与 durable apply 共吃 require_backing_dossier_id，禁第二份 int/存在性分支
+    # 省略时显式写 None，改草 merge 不得继承旧 backing 关联
     from ming_sim.db import require_backing_dossier_id
     backing = require_backing_dossier_id(db, backing_dossier_id)
-    if backing is not None:
-        staged["backing_dossier_id"] = int(backing)
+    staged["backing_dossier_id"] = int(backing) if backing is not None else None
     category = str(transaction_category or "").strip()
     if category:
         valid, _ = validate_action_candidate_shape(

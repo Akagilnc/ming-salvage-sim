@@ -1121,11 +1121,13 @@ def apply_imperial_deliberation_push(
     target_dossier_id: int,
     directive_identity: str,
     decree_text: str = "",
+    mode: str | None = None,
     commit: bool = False,
 ) -> int:
     """自由下旨御笔强推 stalled 廷议：复用案卷 + 御笔手敕 + stalled→backed。
 
     directive_identity＝本次自由下旨 durable identity（decision_key provenance）。
+    mode 为 push 载荷已归一的 mode 真源；写入原案卷 payload.mode，禁第二存储。
     """
     did = int(target_dossier_id)
     dkey = str(directive_identity or "").strip()
@@ -1152,6 +1154,9 @@ def apply_imperial_deliberation_push(
         raise ValueError(f"御笔强推要求 active issue origin_ref={origin}")
     new_payload = dict(payload)
     new_payload["deliberation_state"] = "backed"
+    if mode is not None:
+        # 贯穿既有 mode 真源（payload.mode）；普通缺省 ordinary 亦显式落库
+        new_payload["mode"] = db._normalize_dossier_mode(mode)
     if decree_text and not str(new_payload.get("imperial_push_note") or ""):
         new_payload["imperial_push_note"] = str(decree_text)
     db.update_decree_dossier_payload(did, new_payload, commit=False)
