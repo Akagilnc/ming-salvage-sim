@@ -12428,7 +12428,14 @@ class GameDB:
             # 枚举唯一真源 = ACTION_CLUSTERS punishment FieldSpec（经 punish_actions_effective）。
             from ming_sim.action_materialize import punish_actions_effective
             punish_action = str(normalized.get("punish_action") or "").strip()
-            if not punish_action or punish_action not in punish_actions_effective():
+            issue_disposition = str(normalized.get("issue_disposition") or "").strip()
+            if (
+                not punish_action
+                or (
+                    punish_action not in punish_actions_effective()
+                    and issue_disposition != "压下"
+                )
+            ):
                 raise ValueError(
                     f"惩处旨意 punish_action 非法或缺失：{punish_action or '(空)'}"
                 )
@@ -17321,6 +17328,35 @@ class GameDB:
         if not target:
             raise ValueError("惩处案卷缺少 canonical target")
         punish_action = str(payload.get("punish_action") or "").strip()
+        issue_disposition = str(payload.get("issue_disposition") or "").strip()
+        issue_id = int(payload.get("issue_id") or 0)
+        if issue_id and issue_disposition == "压下":
+            issue = self.conn.execute(
+                "SELECT status,origin_kind,faction_hint FROM issues WHERE id=?",
+                (issue_id,),
+            ).fetchone()
+            if issue is None or issue["origin_kind"] != "impeachment_surge":
+                raise ValueError("压下所指弹劾潮不存在")
+            if issue["status"] != "active":
+                return set()
+            faction = str(issue["faction_hint"] or "").strip()
+            if self._record_decree_cost(
+                dossier_id, state.turn, "authority", "metric", "皇威", -1,
+                "压下弹劾", cost_identity="impeachment_suppression",
+            ):
+                state.metrics["皇威"] = max(0, int(state.metrics.get("皇威", 0)) - 1)
+                self.conn.execute(
+                    "INSERT INTO metrics(key,value) VALUES('皇威',?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    (state.metrics["皇威"],),
+                )
+            if faction and self._record_decree_cost(
+                dossier_id, state.turn, "satisfaction", "faction", faction, -1,
+                "压下弹劾", cost_identity="impeachment_suppression",
+            ):
+                self.adjust_factions({faction: {"satisfaction": -1}}, commit=False)
+            self.close_issue(state, issue_id, reason="resolved", commit=False)
+            return set()
         origin_ref = f"dossier:{int(dossier_id)}"
         reason = str(
             payload.get("text") or row.get("decree_text") or punish_action
@@ -17368,6 +17404,20 @@ class GameDB:
             self._maybe_write_backing_betray_credit(
                 state, target=target, backing_id=backing_id, reason=reason,
             )
+            if issue_id and issue_disposition == "办人":
+                issue = self.conn.execute(
+                    "SELECT status,origin_kind,target_roster FROM issues WHERE id=?",
+                    (issue_id,),
+                ).fetchone()
+                if issue is None or issue["origin_kind"] != "impeachment_surge":
+                    raise ValueError("办人所指弹劾潮不存在")
+                try:
+                    roster = json.loads(str(issue["target_roster"] or "[]"))
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("弹劾潮 target_roster 非法") from exc
+                if target not in roster:
+                    raise ValueError("办人目标不在弹劾潮 target_roster")
+                self.close_issue(state, issue_id, reason="resolved", commit=False)
             return {target}
         if punish_action in {"放归", "昭雪"}:
             # #517：宥赦只回迁在世处置态；dead 等终态响亮拒绝，不得复活。

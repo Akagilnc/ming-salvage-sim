@@ -117,6 +117,53 @@ def test_naowen_stages_then_dossier_then_imprisoned_only_after_verdict(game):
     assert content.characters[target.name].status == "imprisoned"
 
 
+@pytest.mark.parametrize("disposition", ["办人", "压下"])
+def test_active_impeachment_disposition_closes_once_through_punishment_dossier(game, disposition):
+    """#660：typed 办人/压下复用惩处案卷，并与弹劾潮结案原子落地。"""
+    db, state, content = game
+    actor = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
+    ).fetchone()["name"]
+    target = _active_ming(db, content, exclude=actor)
+    faction = db.conn.execute("SELECT name FROM factions ORDER BY name LIMIT 1").fetchone()["name"]
+    issue_id = db.insert_issue(
+        state, kind="situation", title="御史发难", origin_kind="impeachment_surge",
+        origin_ref="commitment:660:deformation_exposure", faction_hint=faction,
+        target_roster=[target.name],
+    )
+    pending_id = am.stage_punishment_candidate(
+        db, state.turn, actor, text=f"对此弹劾潮{disposition}",
+        target_id="不得采用的调用方目标", punish_action="拿问下狱" if disposition == "办人" else "无",
+        issue_id=issue_id, issue_disposition=disposition,
+    )
+    dossier = _close_night_dossier(db, state, content, pending_id)
+    before_authority = state.metrics["皇威"]
+    before_sat = db.faction_satisfaction(faction)
+
+    db.apply_dossier_verdicts(
+        state, [{"dossier_id": dossier["id"], "decision": "promulgated"}], content=content,
+    )
+    row = db.conn.execute("SELECT status FROM issues WHERE id=?", (issue_id,)).fetchone()
+    assert row["status"] == "resolved"
+    if disposition == "办人":
+        assert db.get_character_status(target.name)[0] == "imprisoned"
+        assert state.metrics["皇威"] == before_authority
+        assert db.faction_satisfaction(faction) == before_sat
+    else:
+        assert db.get_character_status(target.name)[0] == "active"
+        assert state.metrics["皇威"] == before_authority - 1
+        assert db.faction_satisfaction(faction) == before_sat - 1
+
+    # 同一已结事项再次识别不得双办、双扣或重复结案。
+    assert am.stage_punishment_candidate(
+        db, state.turn, actor, text=f"再次{disposition}", target_id="另一调用方目标",
+        punish_action="拿问下狱" if disposition == "办人" else "无",
+        issue_id=issue_id, issue_disposition=disposition,
+    ) == 0
+    assert state.metrics["皇威"] == before_authority - (disposition == "压下")
+    assert db.faction_satisfaction(faction) == before_sat - (disposition == "压下")
+
+
 def test_naowen_rejected_verdict_leaves_status_untouched(game):
     """AC1 打回拍：案卷在、imprisoned 零落。"""
     db, state, content = game

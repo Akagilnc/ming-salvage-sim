@@ -961,6 +961,8 @@ def stage_punishment_candidate(
     amount: object = 0,
     transaction_category: object = "",
     backing_dossier_id: object = None,
+    issue_id: object = None,
+    issue_disposition: object = None,
     pend_for_minister: Optional[List[Dict[str, Any]]] = None,
 ) -> int:
     """Shared punishment candidate write: mode + same-target update."""
@@ -968,9 +970,37 @@ def stage_punishment_candidate(
 
     target = str(target_id or "").strip()
     action = str(punish_action or "").strip()
-    if not target or action not in punish_actions_effective():
+    disposition = str(issue_disposition or "").strip()
+    linked_issue_id = 0
+    if issue_id is not None:
+        try:
+            linked_issue_id = int(issue_id)
+        except (TypeError, ValueError):
+            return 0
+        issue = db.conn.execute(
+            "SELECT origin_kind,status,target_roster FROM issues WHERE id=?",
+            (linked_issue_id,),
+        ).fetchone()
+        if issue is None or issue["status"] != "active" or issue["origin_kind"] != "impeachment_surge":
+            return 0
+        if disposition not in {"办人", "压下"}:
+            return 0
+        try:
+            roster = json.loads(str(issue["target_roster"] or "[]"))
+        except (TypeError, ValueError):
+            return 0
+        if not isinstance(roster, list) or not roster:
+            return 0
+        target = str(roster[0] or "").strip()
+        if disposition == "办人":
+            action = "拿问下狱"
+        else:
+            action = "无"
+    if not target or (action not in punish_actions_effective() and disposition != "压下"):
         return 0
     body = str(text or "").strip()
+    if linked_issue_id and disposition == "办人" and target not in body:
+        body = f"{body}：{target}拿问下狱"
     if not body:
         return 0
 
@@ -1010,12 +1040,17 @@ def stage_punishment_candidate(
         "punish_action": action,
         "mode": mode,
     }
+    if linked_issue_id:
+        staged["issue_id"] = linked_issue_id
+        staged["issue_disposition"] = disposition
     # #658：与 durable apply 共吃 require_backing_dossier_id，禁第二份 int/存在性分支
     # 省略时显式写 None，改草 merge 不得继承旧 backing 关联
     from ming_sim.db import require_backing_dossier_id
     backing = require_backing_dossier_id(db, backing_dossier_id)
     staged["backing_dossier_id"] = int(backing) if backing is not None else None
     category = str(transaction_category or "").strip()
+    if linked_issue_id and disposition == "办人" and not category:
+        category = "缉拿"
     if category:
         valid, _ = validate_action_candidate_shape(
             {"kind": "punishment", "transaction_category": category}
