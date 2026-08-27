@@ -17802,12 +17802,12 @@ class GameDB:
             merged.pop("target_dossier_id", None)
             merged.pop("目标案卷ID", None)
         elif incoming_kind == "push":
-            # 纯强推载荷只保留 target + mode（及 incoming 显式键）
-            keep = {"target_dossier_id", "目标案卷ID", "mode"}
-            keep.update(incoming.keys())
-            merged = {k: v for k, v in merged.items() if k in keep}
-            # 确保 target 权威键存在
+            # 只清互斥 ordinary triad，保留 text/actor 等非互斥字段
+            for key in ("dossier_action_type", "target_kind", "target_id"):
+                merged.pop(key, None)
             push_id = imperial_push_target_dossier_id(incoming)
+            if push_id is None:
+                push_id = imperial_push_target_dossier_id(merged)
             if push_id is not None:
                 merged["target_dossier_id"] = push_id
                 merged.pop("目标案卷ID", None)
@@ -17815,11 +17815,13 @@ class GameDB:
         classify_directive_structured_kind(merged)
         requested = str(merged.get("dossier_action_type") or "")
         if incoming_kind == "push":
-            # 强推不经普通 normalize triad 要求
-            mode = self._normalize_dossier_mode(
-                merged["mode"] if "mode" in merged else "ordinary"
+            # 复用既有 push 归一化（保留 text/actor/mode）
+            return self._normalize_directive_dossier_payload(
+                merged, content=self.content,
+                current_turn=int(self.conn.execute(
+                    "SELECT turn FROM game_state WHERE id=1"
+                ).fetchone()["turn"]),
             )
-            return {"target_dossier_id": int(merged["target_dossier_id"]), "mode": mode}
         normalized = self._normalize_directive_dossier_payload(
             merged, content=self.content,
             current_turn=int(self.conn.execute(
@@ -19355,11 +19357,15 @@ class GameDB:
             if bound is not None:
                 return [int(target_did)]
             from ming_sim.rescript_actions import apply_imperial_deliberation_push
+            push_mode = self._normalize_dossier_mode(
+                structured["mode"] if "mode" in structured else "ordinary"
+            )
             pushed = apply_imperial_deliberation_push(
                 self, state,
                 target_dossier_id=int(target_did),
                 directive_identity=f"directive:{int(directive_id)}",
                 decree_text=str(text or ""),
+                mode=push_mode,
                 commit=False,
             )
             # 绑 directive_id 到既有案卷，供 restore/幂等

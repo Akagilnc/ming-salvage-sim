@@ -104,6 +104,9 @@ def classifier_json_fields_prompt() -> str:
                 lines.append(f'  "{f.zh}": "{"|".join(vals)}",')
             elif f.as_int:
                 lines.append(f'  "{f.zh}": 0,')
+            elif f.default is None:
+                # 可选 typed id（backing_dossier_id）：整数或 null，禁字符串占位
+                lines.append(f'  "{f.zh}": null,')
             else:
                 lines.append(f'  "{f.zh}": "",')
     # trailing comma cleanup on last line
