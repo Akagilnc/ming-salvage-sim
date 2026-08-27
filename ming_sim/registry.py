@@ -647,6 +647,22 @@ class MinisterRegistry:
             return
         self.agents[character.name] = self._create(character)
 
+    def project_outcome(self, character_name: str) -> None:
+        """Outer-commit projection for formal people after durable settlement.
+
+        Brand-new formal people (no session_ids entry yet) must register;
+        already-known roster members refresh. Temporary runtime registration
+        is untouched (those names already have session_ids). Fail-loud: no
+        swallow of register/refresh errors (ADR 0005).
+        """
+        character = self.content.characters.get(character_name)
+        if character is None:
+            return
+        if character.name not in self.session_ids:
+            self.register(character)
+        else:
+            self.refresh(character.name)
+
     def register(self, character: Character) -> None:
         """运行时新建人物（吏部铨选任命）后注册其 Agent，使本回合即可召见。"""
         self.session_ids[character.name] = (

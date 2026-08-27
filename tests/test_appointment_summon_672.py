@@ -417,3 +417,48 @@ def test_appointment_summon_consumes_0009_four_states(
         (before_logs, expected_derive),
     ).fetchall()
     assert marks, f"期望 0009 derive={expected_derive!r} 审计落 person_logs"
+
+
+def test_serial_appointment_fallback_preserves_summon_after(game, monkeypatch):
+    """#672：分类器未跑时串行 extract_appointment_action 须保留 catalog summon_after。
+
+    真实 fallback 入口（preclassified_intent=None）同句任命并传召 → 同一 office pending
+    + inactive office:<id> origin；字段经 appointment catalog 归一，无第二 schema。
+    """
+    db, state, content = game
+    minister = _minister_wang_shaohui(db, content)
+    open_night(db, state, empty_scaffold=True)
+
+    def _fake_run(prompt, llm_config=None, tag=""):
+        if tag == "appointment":
+            return (json.dumps({
+                "任免动作": "任命",
+                "姓名": "袁崇焕",
+                "官职": "辽东巡抚",
+                "任命后传召": "是",
+            }, ensure_ascii=False), 1)
+        return ("{}", 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _fake_run)
+    # intent=None + candidates=None → 分类器未跑 → serial extract_appointment_action
+    GameSession.apply_cli_conversation_actions(
+        _fake_session(db, state, content), minister,
+        player_message="起复袁崇焕为辽东巡抚，传召入京。", answer="遵旨。",
+        has_directive=False, secret_order_id=None,
+        preclassified_intent=None,
+    )
+
+    rows = [r for r in db.list_pending_actions(state.turn) if r["kind"] == "office"]
+    assert len(rows) == 1
+    payload = json.loads(rows[0]["payload_json"] or "{}")
+    assert payload.get("summon_after") == "是"
+    assert payload.get("name") == "袁崇焕"
+    assert payload.get("office") == "辽东巡抚"
+    origin = f"office:{rows[0]['id']}"
+    ledger = db.conn.execute(
+        "SELECT person_names, tags FROM story_ledger_entries WHERE origin_ref=?",
+        (origin,),
+    ).fetchone()
+    assert ledger is not None
+    assert json.loads(ledger["person_names"]) == ["袁崇焕"]
+    assert "传召未结" not in json.loads(ledger["tags"])

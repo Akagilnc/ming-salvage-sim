@@ -2777,3 +2777,113 @@ def test_front_half_done_directive_confirmation_commits_without_second_review(ga
     ).fetchone()
     assert row["status"] == "draft"
     assert row["text"] == "着户部清核辽饷。"
+
+
+def test_settle_pending_cultivate_refreshes_after_outer_commit(game, monkeypatch):
+    """#672：phase-2/recovery commit_pending(registry=None) 后宫调教须 outer-commit refresh。"""
+    consort = next((c for c in content_consort_candidates(game)), None)
+    if consort is None:
+        pytest.skip("基底无 active 后宫角色")
+    db, state, content = game
+    db.stage_pending_action(
+        state.turn, kind="consort", action="调教",
+        minister_name=consort.name, target_id=None,
+        payload={"name": consort.name, "skill": "理财", "trait": ""},
+    )
+
+    class _Reg:
+        def __init__(self):
+            self.refreshed: list[str] = []
+
+        def refresh(self, name):
+            self.refreshed.append(name)
+
+    reg = _Reg()
+
+    def mid_txn_applier(_db, _state, _extracted, _content, _registry):
+        assert reg.refreshed == [], "事务内不得 refresh registry"
+        return {}
+
+    settle_with_delta(
+        state, db, {}, before_turn=int(state.turn), content=content,
+        registry=reg, delta_applier=mid_txn_applier,
+    )
+    assert consort.name in reg.refreshed
+    traits = db.get_consort_traits(consort.name)
+    assert "理财" in (traits.get("extra_skills") or [])
+
+
+def test_new_consort_registers_after_outer_commit(game, monkeypatch):
+    """#672：册外后宫晋封新建正式人物 → outer commit 走 register，结算成功无 KeyError。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    new_consort = "测试新妃丁"
+    content.characters.pop(new_consort, None)
+    try:
+        monkeypatch.setattr(
+            cb, "_run_backend_for_config",
+            lambda prompt, llm_config=None, tag="": (json.dumps({
+                "任免动作": "任命", "姓名": new_consort, "官职": "贵妃",
+            }, ensure_ascii=False), 1),
+        )
+        GameSession.apply_cli_conversation_actions(
+            _fake_session(db, state), ch,
+            player_message=f"册{new_consort}为贵妃", answer="臣为陛下贺。",
+            has_directive=False, secret_order_id=None,
+        )
+        applied = db.commit_pending_actions(state, content=content, registry=None)
+        assert any(x["kind"] == "office" for x in applied)
+        verdicts = [
+            {"dossier_id": row["id"], "decision": "promulgated"}
+            for row in db.list_decree_dossiers(status="proposed")
+            if row["action_type"] == "appointment"
+            and str(row.get("target_id") or "") == new_consort
+        ]
+        assert verdicts, "新妃任命须落 proposed 案卷"
+
+        class _Reg:
+            def __init__(self):
+                self.registered: list[str] = []
+                self.refreshed: list[str] = []
+                self.session_ids: dict = {}
+                self.content = content
+
+            def register(self, character):
+                self.registered.append(character.name)
+                self.session_ids[character.name] = f"minister-{character.name}"
+
+            def refresh(self, person_name):
+                self.refreshed.append(person_name)
+
+            def project_outcome(self, person_name):
+                character = self.content.characters.get(person_name)
+                if character is None:
+                    return
+                if character.name not in self.session_ids:
+                    self.register(character)
+                else:
+                    self.refresh(character.name)
+
+        reg = _Reg()
+
+        def mid_txn_applier(_db, _state, _extracted, _content, _registry):
+            assert reg.registered == [] and reg.refreshed == []
+            return {}
+
+        settle_with_delta(
+            state, db, {}, before_turn=int(state.turn), content=content,
+            registry=reg, dossier_verdicts=verdicts, delta_applier=mid_txn_applier,
+        )
+        assert new_consort in reg.registered
+        assert new_consort not in reg.refreshed
+        row = db.conn.execute(
+            "SELECT office_type, faction, status FROM characters WHERE name=?",
+            (new_consort,),
+        ).fetchone()
+        assert row is not None
+        assert row["office_type"] == "后宫"
+        assert row["faction"] == "后宫"
+        assert row["status"] == "active"
+    finally:
+        content.characters.pop(new_consort, None)
