@@ -598,44 +598,6 @@ def test_current_office_noop_still_stages_summon_after(game, monkeypatch):
     assert content.characters[target.name].office == full_office
 
 
-def test_unlisted_appointment_summon_rejects_before_staging(game, monkeypatch):
-    """#672：册外任命可成案，但无 canonical 行止起点时不得进入传召 batch。"""
-    db, state, content = game
-    minister = _minister_wang_shaohui(db, content)
-    open_night(db, state, empty_scaffold=True)
-    monkeypatch.setattr(cb, "_run_backend_for_config", lambda *a, **k: ("{}", 1))
-    session = _fake_session(db, state, content)
-
-    GameSession.apply_cli_conversation_actions(
-        session, minister,
-        player_message="任命册外测试臣为待选。", answer="遵旨。",
-        has_directive=False, secret_order_id=None,
-        preclassified_intent=[{
-            "kind": "appointment", "appoint_action": "任命",
-            "name": "册外测试臣", "office": "待选", "summon_after": "否",
-        }],
-    )
-    row = next(r for r in db.list_pending_actions(state.turn) if r["kind"] == "office")
-    before_payload = _office_payload_snapshot(db, row["id"])
-
-    with pytest.raises(ValueError):
-        GameSession.apply_cli_conversation_actions(
-            session, minister,
-            player_message="改由中旨传召入京。", answer="遵旨。",
-            has_directive=False, secret_order_id=None,
-            preclassified_intent=[{
-                "kind": "appointment", "appoint_action": "无",
-                "name": "", "office": "", "mode": "midzhi", "summon_after": "是",
-            }],
-        )
-
-    assert _office_payload_snapshot(db, row["id"]) == before_payload
-    assert _office_origin_count(db, row["id"]) == 0
-    assert db.conn.execute(
-        "SELECT 1 FROM characters WHERE name='册外测试臣'",
-    ).fetchone() is None
-
-
 def test_dismiss_with_summon_after_does_not_stage_origin(game, monkeypatch):
     """#672：罢免+summon_after 在物化边界收敛为无传召，不留永久 inactive origin。"""
     db, state, content = game

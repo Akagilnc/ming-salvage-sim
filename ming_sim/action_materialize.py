@@ -601,14 +601,6 @@ def _persist_appointment_summon(
     person_name = _canonical_minister_key(
         getattr(session, "content", None), str(person_name or "").strip(), session.db,
     )
-    travel_row = session.db.conn.execute(
-        "SELECT location FROM characters WHERE name=?", (person_name,),
-    ).fetchone()
-    if travel_row is None or not str(travel_row["location"] or "").strip():
-        raise ValueError(
-            "任命后传召缺少在册行止起点，未能入档；请补全人物行止后重试。"
-        )
-
     with atomic(session.db):
         if promote_payload:
             row = session.db.conn.execute(
