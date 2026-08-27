@@ -692,8 +692,12 @@ def test_special_decree_path_does_not_stage_authorization(game):
     )
 
 
-def test_mode_tenure_merge_promotes_summon_after_on_existing_pending(game):
-    """#672：路径 merge 早退后仍须 promote summon_after + inactive origin。"""
+def test_mode_tenure_merge_promotes_summon_after_on_existing_pending(game, monkeypatch):
+    """#672：路径 merge 早退后仍须 promote summon_after + inactive origin。
+
+    后半：ensure_inactive_office_summon 失败时，mode/任别、路径账与 summon
+    origin 须整笔回到调用前——existing-hit 不得半提交。
+    """
     db, state, content = game
     actor = _minister(db)
     target = "袁崇焕"
@@ -740,7 +744,69 @@ def test_mode_tenure_merge_promotes_summon_after_on_existing_pending(game):
     payload = _payload(db, pending_id)
     assert payload.get("summon_after") == "是"
     assert payload.get("mode") == "midzhi"
+    assert payload.get("任别") == "署理"
     assert db.conn.execute(
         "SELECT count(*) FROM story_ledger_entries WHERE origin_ref=?",
         (f"office:{pending_id}",),
     ).fetchone()[0] == 1
+
+    # 后半：另起既有 pending，merge 中途 origin 失败 → 整笔回滚。
+    target2 = "孙传庭"
+    first2 = _stage_appt(
+        db, state.turn,
+        {
+            "kind": "appointment",
+            "appoint_action": "任命",
+            "name": target2,
+            "office": "陕西三边总督",
+            "summon_after": "否",
+        },
+        actor=actor,
+        message="着起复孙传庭为陕西三边总督。",
+    )
+    pending_id2 = int(first2.out["pending_action_id"])
+    payload_before = dict(_payload(db, pending_id2))
+    path_before = db.conn.execute(
+        "SELECT count(*) FROM story_ledger_entries WHERE tags LIKE ?",
+        (f"%pending:{pending_id2}%",),
+    ).fetchone()[0]
+    origin_before = db.conn.execute(
+        "SELECT count(*) FROM story_ledger_entries WHERE origin_ref=?",
+        (f"office:{pending_id2}",),
+    ).fetchone()[0]
+    assert origin_before == 0
+
+    monkeypatch.setattr(
+        an, "ensure_inactive_office_summon",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("ledger failed")),
+    )
+    try:
+        _stage_appt(
+            db, state.turn,
+            {
+                "kind": "appointment",
+                "appoint_action": "任命",
+                "name": target2,
+                "office": "陕西三边总督",
+                "mode": "midzhi",
+                "appointment_tenure": "署理",
+                "summon_after": "是",
+            },
+            actor=actor,
+            message="特旨署理，并传召入京。",
+            pend=_office_pendings(db, state.turn),
+        )
+    except RuntimeError as exc:
+        assert str(exc) == "ledger failed"
+    else:
+        raise AssertionError("existing-hit summon origin failure must propagate")
+
+    assert _payload(db, pending_id2) == payload_before
+    assert db.conn.execute(
+        "SELECT count(*) FROM story_ledger_entries WHERE tags LIKE ?",
+        (f"%pending:{pending_id2}%",),
+    ).fetchone()[0] == path_before
+    assert db.conn.execute(
+        "SELECT count(*) FROM story_ledger_entries WHERE origin_ref=?",
+        (f"office:{pending_id2}",),
+    ).fetchone()[0] == origin_before

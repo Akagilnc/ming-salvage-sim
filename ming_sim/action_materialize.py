@@ -623,6 +623,50 @@ def _persist_appointment_summon(
         )
 
 
+def _apply_existing_appointment_hit(
+    session: Any,
+    row: Dict[str, Any],
+    *,
+    mode_mark: Optional[str] = None,
+    tenure_mark: Optional[str] = None,
+    minister_name: str = "",
+    turn: int = 0,
+    person_name: str = "",
+    summon_after: bool = False,
+    origin_chat_turn_id: int = 0,
+    annotate: bool = False,
+) -> int:
+    """Existing-hit merge: path marks + optional summon under one atomic.
+
+    mode/任别、路径故事账、summon_after 升格与 inactive origin 同成同败——
+    不得先 annotate 真提交再进 summon 自己的 atomic。
+    """
+    from ming_sim.applier import atomic
+
+    with atomic(session.db):
+        resolved = int(row["id"])
+        if annotate:
+            pending_id = _annotate_office_pending_path(
+                session.db,
+                row,
+                mode_mark=mode_mark,
+                tenure_mark=tenure_mark,
+                minister_name=minister_name,
+                turn=turn,
+            )
+            if pending_id:
+                resolved = int(pending_id)
+        if summon_after and person_name:
+            _persist_appointment_summon(
+                session,
+                resolved,
+                person_name,
+                promote_payload=True,
+                origin_chat_turn_id=int(origin_chat_turn_id or 0),
+            )
+        return resolved
+
+
 def _stage_office_pending_core(
     ctx: MaterializeCtx,
     appt: Dict[str, Any],
@@ -686,24 +730,20 @@ def _stage_office_pending_core(
             if str(r.get("action") or "") == "任命"
         ]
         if len(existing_hits) == 1:
-            if annotate_existing:
-                pending_id = _annotate_office_pending_path(
-                    session.db,
-                    existing_hits[0],
-                    mode_mark=mode_mark,
-                    tenure_mark=tenure_mark,
-                    minister_name=minister_name,
-                    turn=int(session.state.turn),
-                )
-                resolved = int(pending_id or existing_hits[0]["id"])
-            else:
-                resolved = int(existing_hits[0]["id"])
+            resolved = _apply_existing_appointment_hit(
+                session,
+                existing_hits[0],
+                mode_mark=mode_mark,
+                tenure_mark=tenure_mark,
+                minister_name=minister_name,
+                turn=int(session.state.turn),
+                person_name=appt_name,
+                summon_after=str(appt.get("summon_after") or "否").strip() == "是",
+                origin_chat_turn_id=int(ctx.chat_turn_id or 0),
+                annotate=annotate_existing,
+            )
             if write_primary_pending_id:
                 ctx.out["pending_action_id"] = resolved
-            if str(appt.get("summon_after") or "否").strip() == "是":
-                persist_appointment_summon(
-                    resolved, appt_name, promote_payload=True,
-                )
             return resolved
 
     if action == "任命":
@@ -2846,29 +2886,23 @@ def _materialize_appointment(ctx: MaterializeCtx) -> None:
             )
             return
         if status == "hit" and row is not None:
-            # 同人同职再发任命+路径：no-op 去重，中旨/任别并入既有条
-            pending_id = _annotate_office_pending_path(
-                session.db,
+            # 同人同职再发任命+路径：no-op 去重，中旨/任别/summon 并入既有条
+            resolved = _apply_existing_appointment_hit(
+                session,
                 row,
                 mode_mark=mode_mark,
                 tenure_mark=tenure_mark,
                 minister_name=minister_name,
                 turn=int(session.state.turn),
+                person_name=appt_name,
+                summon_after=(
+                    str(appt.get("summon_after") or "否").strip() == "是"
+                    and bool(appt_name)
+                ),
+                origin_chat_turn_id=int(ctx.chat_turn_id or 0),
+                annotate=True,
             )
-            resolved = int(pending_id or row["id"])
-            if pending_id:
-                ctx.out["pending_action_id"] = pending_id
-            # Shared success tail with _stage_office_pending_core: payload
-            # promotion + inactive origin ensure must not early-return away.
-            if (
-                str(appt.get("summon_after") or "否").strip() == "是"
-                and appt_name
-            ):
-                _persist_appointment_summon(
-                    session, resolved, appt_name,
-                    promote_payload=True,
-                    origin_chat_turn_id=int(ctx.chat_turn_id or 0),
-                )
+            ctx.out["pending_action_id"] = resolved
             # 路径命中后：若本轮仍是完整任命语义且已并入，不再新建第二候选
             if appt.get("appoint_action") in ("任命", "罢免") and appt_name:
                 same = _match_office_row_by_name_office(
