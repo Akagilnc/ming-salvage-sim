@@ -3118,6 +3118,17 @@ def _load_pending_gate_valid_regions(db: GameDB) -> set[str]:
     }
 
 
+TRAVEL_SPEED_BY_TONE = {"常行": 1.0, "加急": 1.5, "星夜兼程": 2.0}
+
+
+def normalize_travel_tone(value: object) -> str:
+    """Validate the canonical typed travel tone; never infer or downgrade it."""
+    tone = str(value or "常行").strip()
+    if tone not in TRAVEL_SPEED_BY_TONE:
+        raise ValueError("行程语气不在闭合枚举")
+    return tone
+
+
 def _admit_transit_departure(
     item: Dict[str, object],
     row: Dict[str, object],
@@ -3133,9 +3144,9 @@ def _admit_transit_departure(
         return None, ("行止 仅适用于 active 人物", "invalid_transition")
     if transit_to not in valid_regions:
         return None, ("transit_to 地区不存在", "missing_ref")
-    tone = str(item.get("行程语气") or "常行").strip()
-    speed_by_tone = {"常行": 1.0, "加急": 1.5, "星夜兼程": 2.0}
-    if tone not in speed_by_tone:
+    try:
+        tone = normalize_travel_tone(item.get("行程语气"))
+    except ValueError:
         return None, ("行程语气不在闭合枚举", "invalid_enum")
     previous_destination = str(row.get("transit_to") or "")
     if previous_destination and previous_destination != transit_to:
@@ -3154,7 +3165,7 @@ def _admit_transit_departure(
         "transit_to": terminal_transit_to,
         "distance": distance,
         "tone": tone,
-        "speed": None if distance == 0 else speed_by_tone[tone],
+        "speed": None if distance == 0 else TRAVEL_SPEED_BY_TONE[tone],
         "material": (
             terminal_location != location
             or terminal_transit_to != previous_destination

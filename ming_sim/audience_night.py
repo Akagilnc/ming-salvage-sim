@@ -97,24 +97,20 @@ TAG_IN_TRANSIT = "传召在途"  # 账在人不在场：传召已发、人在途
 TAG_SUMMON_UNSETTLED = "传召未结"
 TAG_SUMMON_SETTLED = "传召结清"
 _SUMMON_TRAVEL_TONE_PREFIX = "行程语气:"
-_TRAVEL_TONES = ("常行", "加急", "星夜兼程")
-
-
-def _normalize_travel_tone(value: object) -> str:
-    tone = str(value or "常行").strip()
-    return tone if tone in _TRAVEL_TONES else "常行"
 
 
 def _travel_tone_tag(value: object) -> str:
-    return f"{_SUMMON_TRAVEL_TONE_PREFIX}{_normalize_travel_tone(value)}"
+    from ming_sim.issues import normalize_travel_tone
+    return f"{_SUMMON_TRAVEL_TONE_PREFIX}{normalize_travel_tone(value)}"
 
 
 def _travel_tone_from_tags(tags: Sequence[Any]) -> str:
+    from ming_sim.issues import TRAVEL_SPEED_BY_TONE, normalize_travel_tone
     tones = [
-        _normalize_travel_tone(str(tag)[len(_SUMMON_TRAVEL_TONE_PREFIX):])
+        normalize_travel_tone(str(tag)[len(_SUMMON_TRAVEL_TONE_PREFIX):])
         for tag in tags if str(tag).startswith(_SUMMON_TRAVEL_TONE_PREFIX)
     ]
-    return max(tones or ["常行"], key=_TRAVEL_TONES.index)
+    return max(tones or ["常行"], key=TRAVEL_SPEED_BY_TONE.__getitem__)
 _SUMMON_ORIGIN_PREFIX = "传召源#"
 # #526 / #471 S10：留侍叙事账标签——非进/出，不驱动在场（口径回灌 #500）
 TAG_STAY_ATTEND = "留侍"
@@ -2080,9 +2076,10 @@ def commit_fresh_summons_for_night(
                 for item in items:
                     origins.append(str(item["origin_id"]))
                 continue
+            from ming_sim.issues import TRAVEL_SPEED_BY_TONE, normalize_travel_tone
             travel_tone = max(
-                (_normalize_travel_tone(item.get("travel_tone")) for item in items),
-                key=_TRAVEL_TONES.index,
+                (normalize_travel_tone(item.get("travel_tone")) for item in items),
+                key=TRAVEL_SPEED_BY_TONE.__getitem__,
             )
             applied = apply_person_changes_only(
                 db,

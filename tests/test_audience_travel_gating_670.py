@@ -633,10 +633,10 @@ def test_multi_origin_fresh_closes_once_per_person_and_retries(game, monkeypatch
     origin_cli = "cli:initial:1:洪承畴"
 
     first = an.record_summon_fresh(
-        db, night_id, person.name, origin_id=origin_web,
+        db, night_id, person.name, origin_id=origin_web, travel_tone="加急",
     )
     second = an.record_summon_fresh(
-        db, night_id, person.name, origin_id=origin_cli,
+        db, night_id, person.name, origin_id=origin_cli, travel_tone="星夜兼程",
     )
     # 不同 origin 各一行；同 origin 再消费才幂等复用。
     assert second != first
@@ -672,10 +672,13 @@ def test_multi_origin_fresh_closes_once_per_person_and_retries(game, monkeypatch
 
     result = an.close_night(db, state, night_id=night_id, content=content)
     after = db.conn.execute(
-        "SELECT location, transit_to FROM characters WHERE name=?", (person.name,)
+        "SELECT location, transit_to, transit_speed_factor, transit_distance_remaining "
+        "FROM characters WHERE name=?", (person.name,)
     ).fetchone()
     assert result["closed"] is True
     assert (after["location"], after["transit_to"]) == ("shaanxi", "beizhili")
+    assert after["transit_speed_factor"] == 2.0
+    assert after["transit_distance_remaining"] > 0
     unsettled = an.list_unsettled_summons(db)
     assert len(unsettled) == 2
     assert {row["kind"] for row in unsettled} == {"in_transit"}
