@@ -4118,6 +4118,51 @@ def test_658_typed_target_and_backing_reject_bad_shapes(game, monkeypatch):
     assert parse_backing_dossier_id("") is None
     assert parse_backing_dossier_id(did) == did
 
+    # 同一 typed 背书真源保留被拒/留中站台案，不受公开 referenceable 投影限制。
+    endorser = _summonable_name(db, content)
+    db.add_dossier_endorsement(
+        did, form="会签", endorser_id=endorser, decision_key="test:658:typed",
+    )
+    assert any(
+        c["dossier_id"] == did and c["endorser_id"] == endorser
+        for c in db.list_endorsed_dossier_candidates(state.turn)
+    )
+
+    # 多旨真实抽取接缝逐项接受 push / ordinary 互斥形状。
+    def backend_multi(prompt, *_a, **_k):
+        return (json.dumps({"成品旨稿": [
+            {"正文": "御笔强推", "目标案卷ID": did, "颁布方式": "中旨直发"},
+            {"正文": "清核河工", "动作类型": "policy", "目标类型": "issue",
+             "目标ID": "river-works", "颁布方式": "普通", "施行范围": "无"},
+        ]}, ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend_multi)
+    multi = cli_backend.extract_draft_intent(
+        "分拟两旨", "臣已拟成", draft_count=2, db=db,
+    )
+    assert multi["drafts"][0]["target_dossier_id"] == did
+    assert multi["drafts"][1]["target_id"] == "river-works"
+
+    # 成案失败在既有结束边界转 rejected，不再进入 draft 结算或被盖 issued。
+    bad_directive = int(db.add_directive(
+        state, None, "处分不存在之人", "test-658-ensure",
+        dossier_payload={
+            "dossier_action_type": "punishment",
+            "target_kind": "character",
+            "target_id": "不存在的大臣XYZ",
+            "mode": "ordinary",
+        },
+    ))
+    db.ensure_dossiers_for_draft_directives(state)
+    status = db.conn.execute(
+        "SELECT status FROM turn_directives WHERE id=?", (bad_directive,),
+    ).fetchone()["status"]
+    assert status == "rejected"
+    assert all(
+        int(row["id"]) != bad_directive
+        for row in db.list_directives(state, statuses=("draft",))
+    )
+
     # 一条外部入口零写（capture 真 seam），不再 session 全排列
     def backend_bad(prompt, *_a, **_k):
         return (json.dumps({
@@ -4132,10 +4177,10 @@ def test_658_typed_target_and_backing_reject_bad_shapes(game, monkeypatch):
         )
 
     assert len(db.list_decree_dossiers()) == before_dossiers
-    assert len(db.list_dossier_endorsements(did)) == before_ends
+    assert len(db.list_dossier_endorsements(did)) == before_ends + 1
     assert db.conn.execute(
         "SELECT COUNT(*) AS c FROM turn_directives"
-    ).fetchone()["c"] == before_dirs
+    ).fetchone()["c"] == before_dirs + 1
     assert _dossier_payload(db.get_decree_dossier(did)).get(
         "deliberation_state",
     ) == "stalled"
