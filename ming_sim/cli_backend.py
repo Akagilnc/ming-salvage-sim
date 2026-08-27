@@ -2149,8 +2149,10 @@ def _stalled_deliberation_push_facts(db: Any) -> str:
             title = str(
                 payload.get("title") or row.get("decree_text") or issue["title"] or ""
             ).strip()
+            body = str(payload.get("body") or row.get("decree_text") or "").strip()
+            # #658：完整 title/body 供唯一辨认；禁 40 字截断导致同前缀误绑定
             lines.append(
-                f"  案卷ID={did} issue#{int(issue['id'])} {title[:40]}"
+                f"  案卷ID={did} issue#{int(issue['id'])} 题={title} 正文={body}"
             )
         except (TypeError, ValueError, KeyError, json.JSONDecodeError):
             continue
@@ -2389,10 +2391,31 @@ def extract_draft_intent(
     # #654 H：无意图立即短路，不跑 acting/动作类型/target_kind 校验。
     if _action == "无":
         return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
-    # #658：御笔强推只需 typed 目标案卷，不经普通动作/目标 triad
-    from ming_sim.db import imperial_push_target_dossier_id
-    push_dossier_id = imperial_push_target_dossier_id(obj)
-    if push_dossier_id is not None:
+    # #658：御笔强推与普通 triad 互斥；并存响亮拒绝，禁止静默吞旨
+    from ming_sim.db import (
+        classify_directive_structured_kind,
+        imperial_push_target_dossier_id,
+    )
+    # 先把抽取原键投影到权威键，再走单一互斥分类
+    _probe: Dict[str, Any] = {}
+    _raw_target = obj.get("目标案卷ID")
+    if _raw_target is None:
+        _raw_target = obj.get("target_dossier_id")
+    if _raw_target is not None:
+        _probe["target_dossier_id"] = _raw_target
+    _act = str(obj.get("动作类型") or "").strip()
+    _tk = str(obj.get("目标类型") or "").strip()
+    _tid = str(obj.get("目标ID") or "").strip()
+    if _act:
+        _probe["dossier_action_type"] = _act
+    if _tk:
+        _probe["target_kind"] = _tk
+    if _tid:
+        _probe["target_id"] = _tid
+    kind = classify_directive_structured_kind(_probe) if _probe else "empty"
+    if kind == "push":
+        push_dossier_id = imperial_push_target_dossier_id(_probe)
+        assert push_dossier_id is not None
         push_out: Dict[str, Any] = {
             "draft_action": "拟旨",
             "draft_text": (minister_reply or player_message or "").strip(),
@@ -2420,8 +2443,6 @@ def extract_draft_intent(
         "locality_scope": _coerce_draft_locality_scope(obj.get("施行范围")),
         # #653：pay_order_override 结构化载荷随 capture 整道转交（禁旁路）。
         "entries": obj.get("entries"),
-        # #658：御笔强推目标廷议案卷
-        "target_dossier_id": obj.get("目标案卷ID") if obj.get("目标案卷ID") is not None else obj.get("target_dossier_id"),
     }
     mode = _directive_mode(obj.get("颁布方式"))
     if mode is not None:
@@ -2611,17 +2632,20 @@ def capture_manual_directive_payload(
         # the same structured materialization fields at this capture seam.
         payload["name"] = str(payload.get("target_id") or "").strip()
         payload["_office_action"] = "罢免"
-    # #658：御笔强推只需 typed target_dossier_id，不得因无关 triad 缺省而降级
-    from ming_sim.db import imperial_push_target_dossier_id
-    push_id = imperial_push_target_dossier_id(payload)
-    if push_id is not None:
+    # #658：互斥权威——纯强推 / 普通 triad；并存响亮拒绝，禁静默吞旨
+    from ming_sim.db import (
+        classify_directive_structured_kind,
+        imperial_push_target_dossier_id,
+    )
+    kind = classify_directive_structured_kind(payload)
+    if kind == "push":
+        push_id = imperial_push_target_dossier_id(payload)
+        assert push_id is not None
         return {
             "target_dossier_id": push_id,
             "mode": declared_mode,
         }
-    if not all(str(payload.get(key) or "").strip() for key in (
-        "dossier_action_type", "target_kind", "target_id",
-    )):
+    if kind == "empty":
         return _manual_special_decree_payload(declared_mode)
     return payload
 

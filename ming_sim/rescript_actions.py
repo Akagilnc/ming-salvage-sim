@@ -1164,6 +1164,14 @@ def apply_imperial_deliberation_push(
         source_chat_turn_id=0,
         commit=False,
     )
+    # #658：stalled→backed 同事务终结 origin_ref 投影 issue，禁 durable ledger 自相矛盾
+    db.close_issue(
+        state,
+        int(issue["id"]),
+        reason="resolved",
+        narrative=str(decree_text or new_payload.get("title") or "御笔强推"),
+        commit=False,
+    )
     if commit:
         db.conn.commit()
     return did
