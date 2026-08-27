@@ -2024,6 +2024,8 @@ def commit_fresh_summons_for_night(
     for item in pending:
         by_person.setdefault(str(item["person_name"]), []).append(item)
 
+    from ming_sim.matching import is_capital_location
+
     origins: List[str] = []
     with atomic_and_reload(db, state, content=content, registry=registry):
         for person_name, items in by_person.items():
@@ -2032,6 +2034,7 @@ def commit_fresh_summons_for_night(
                 (person_name,),
             ).fetchone()
             current_transit = str(row["transit_to"] or "").strip() if row is not None else ""
+            location = str(row["location"] or "").strip() if row is not None else ""
             if current_transit:
                 if current_transit != "beizhili":
                     raise AudienceNightError(
@@ -2043,6 +2046,13 @@ def commit_fresh_summons_for_night(
                         },
                     )
                 # Same beizhili journey: attach origins only, no second departure write.
+                _mark_summon_entries_in_transit(db, items)
+                for item in items:
+                    origins.append(str(item["origin_id"]))
+                continue
+            # 已在京且无在途：复用 capital matcher + 在途 tag → waiting 投影，
+            # 不调同地行止 applier（#672 / #671 候见不变式）。
+            if is_capital_location(location):
                 _mark_summon_entries_in_transit(db, items)
                 for item in items:
                     origins.append(str(item["origin_id"]))

@@ -462,3 +462,244 @@ def test_serial_appointment_fallback_preserves_summon_after(game, monkeypatch):
     assert ledger is not None
     assert json.loads(ledger["person_names"]) == ["袁崇焕"]
     assert "传召未结" not in json.loads(ledger["tags"])
+
+
+def _office_payload_snapshot(db, pending_id):
+    row = db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?", (int(pending_id),),
+    ).fetchone()
+    return json.loads(row["payload_json"] or "{}")
+
+
+def _office_origin_count(db, pending_id):
+    return int(db.conn.execute(
+        "SELECT count(*) FROM story_ledger_entries WHERE origin_ref=?",
+        (f"office:{int(pending_id)}",),
+    ).fetchone()[0])
+
+
+@pytest.mark.parametrize(
+    "path_intent",
+    [
+        # 完整人职错配 + 路径/传召：不得改旧 pending；新任命只落自己的 pending/origin
+        {
+            "kind": "appointment", "appoint_action": "任命",
+            "name": "孙传庭", "office": "陕西三边总督",
+            "mode": "midzhi", "appointment_tenure": "署理", "summon_after": "是",
+        },
+        # name-only / office 缺失 + summon：身份字段在场但联合键不全 → 旧 row 零改
+        {
+            "kind": "appointment", "appoint_action": "无",
+            "name": "孙传庭", "office": "",
+            "mode": "midzhi", "summon_after": "是",
+        },
+    ],
+    ids=["complete_mismatch", "name_only_partial"],
+)
+def test_single_pending_identity_mismatch_does_not_corrupt_or_bind_summon(
+    game, monkeypatch, path_intent,
+):
+    """#672：单 pending 身份绕过——错配/缺联合键不得改旧 row，也不得绑旧 origin。"""
+    db, state, content = game
+    minister = _minister_wang_shaohui(db, content)
+    open_night(db, state, empty_scaffold=True)
+    monkeypatch.setattr(cb, "_run_backend_for_config", lambda *a, **k: ("{}", 1))
+    session = _fake_session(db, state, content)
+
+    GameSession.apply_cli_conversation_actions(
+        session, minister,
+        player_message="起复袁崇焕为辽东巡抚。", answer="遵旨。",
+        has_directive=False, secret_order_id=None,
+        preclassified_intent=[{
+            "kind": "appointment", "appoint_action": "任命",
+            "name": "袁崇焕", "office": "辽东巡抚", "summon_after": "否",
+        }],
+    )
+    old = next(r for r in db.list_pending_actions(state.turn) if r["kind"] == "office")
+    old_id = int(old["id"])
+    before_payload = _office_payload_snapshot(db, old_id)
+    assert before_payload.get("summon_after") in (None, "否", "")
+    assert _office_origin_count(db, old_id) == 0
+
+    GameSession.apply_cli_conversation_actions(
+        session, minister,
+        player_message="特旨署理，并传召入京。", answer="遵旨。",
+        has_directive=False, secret_order_id=None,
+        preclassified_intent=[path_intent],
+    )
+
+    assert _office_payload_snapshot(db, old_id) == before_payload
+    assert _office_origin_count(db, old_id) == 0
+
+    if path_intent.get("appoint_action") == "任命":
+        rows = [r for r in db.list_pending_actions(state.turn) if r["kind"] == "office"]
+        assert len(rows) == 2
+        new = next(r for r in rows if int(r["id"]) != old_id)
+        new_payload = json.loads(new["payload_json"] or "{}")
+        assert new_payload.get("name") == "孙传庭"
+        assert new_payload.get("office") == "陕西三边总督"
+        assert new_payload.get("summon_after") == "是"
+        assert _office_origin_count(db, int(new["id"])) == 1
+    else:
+        rows = [r for r in db.list_pending_actions(state.turn) if r["kind"] == "office"]
+        assert len(rows) == 1
+        assert int(rows[0]["id"]) == old_id
+
+
+def test_current_office_noop_still_stages_summon_after(game, monkeypatch):
+    """#672：现职 no-op 只豁免重复官职写，同句 summon_after 仍落单一 pending/origin。"""
+    db, state, content = game
+    minister = _minister_wang_shaohui(db, content)
+    open_night(db, state, empty_scaffold=True)
+    monkeypatch.setattr(cb, "_run_backend_for_config", lambda *a, **k: ("{}", 1))
+
+    target = next(
+        ch for ch in content.characters.values()
+        if getattr(ch, "power_id", "ming") == "ming"
+        and str(getattr(ch, "office", "") or "").strip()
+        and getattr(ch, "office_type", "") not in {"后宫", "宗藩"}
+        and db.get_character_status(ch.name)[0] == "active"
+        and ch.name != minister.name
+    )
+    office = str(target.office).split(",")[0].strip()
+
+    GameSession.apply_cli_conversation_actions(
+        _fake_session(db, state, content), minister,
+        player_message=f"{target.name}仍任{office}，传召入京。", answer="遵旨。",
+        has_directive=False, secret_order_id=None,
+        preclassified_intent=[{
+            "kind": "appointment", "appoint_action": "任命",
+            "name": target.name, "office": office, "summon_after": "是",
+        }],
+    )
+
+    rows = [r for r in db.list_pending_actions(state.turn) if r["kind"] == "office"]
+    assert len(rows) == 1
+    payload = json.loads(rows[0]["payload_json"] or "{}")
+    assert payload.get("name") == target.name
+    assert payload.get("office") == office
+    assert payload.get("summon_after") == "是"
+    origin = f"office:{rows[0]['id']}"
+    ledger = db.conn.execute(
+        "SELECT person_names, tags FROM story_ledger_entries WHERE origin_ref=?",
+        (origin,),
+    ).fetchone()
+    assert ledger is not None
+    assert target.name in json.loads(ledger["person_names"])
+    assert "传召未结" not in json.loads(ledger["tags"])
+
+
+def test_dismiss_with_summon_after_does_not_stage_origin(game, monkeypatch):
+    """#672：罢免+summon_after 在物化边界收敛为无传召，不留永久 inactive origin。"""
+    db, state, content = game
+    minister = _minister_wang_shaohui(db, content)
+    open_night(db, state, empty_scaffold=True)
+    monkeypatch.setattr(cb, "_run_backend_for_config", lambda *a, **k: ("{}", 1))
+
+    target = next(
+        ch for ch in content.characters.values()
+        if getattr(ch, "power_id", "ming") == "ming"
+        and str(getattr(ch, "office", "") or "").strip()
+        and getattr(ch, "office_type", "") not in {"后宫", "宗藩"}
+        and db.get_character_status(ch.name)[0] == "active"
+        and ch.name != minister.name
+    )
+
+    GameSession.apply_cli_conversation_actions(
+        _fake_session(db, state, content), minister,
+        player_message=f"罢免{target.name}，传召入京。", answer="遵旨。",
+        has_directive=False, secret_order_id=None,
+        preclassified_intent=[{
+            "kind": "appointment", "appoint_action": "罢免",
+            "name": target.name, "office": "", "summon_after": "是",
+        }],
+    )
+
+    rows = [r for r in db.list_pending_actions(state.turn) if r["kind"] == "office"]
+    assert len(rows) == 1
+    assert rows[0]["action"] == "罢免"
+    payload = json.loads(rows[0]["payload_json"] or "{}")
+    assert payload.get("summon_after") == "否"
+    assert _office_origin_count(db, int(rows[0]["id"])) == 0
+    assert db.conn.execute(
+        "SELECT count(*) FROM story_ledger_entries WHERE origin_ref LIKE 'office:%'"
+    ).fetchone()[0] == 0
+
+
+def test_path_only_omitted_name_still_promotes_summon_on_single_pending(
+    game, monkeypatch,
+):
+    """#672：单 pending path-only 省略 name 时从 row payload 取人名，summon 随同一 pending。"""
+    db, state, content = game
+    minister = _minister_wang_shaohui(db, content)
+    open_night(db, state, empty_scaffold=True)
+    monkeypatch.setattr(cb, "_run_backend_for_config", lambda *a, **k: ("{}", 1))
+    session = _fake_session(db, state, content)
+
+    GameSession.apply_cli_conversation_actions(
+        session, minister,
+        player_message="起复袁崇焕为辽东巡抚。", answer="遵旨。",
+        has_directive=False, secret_order_id=None,
+        preclassified_intent=[{
+            "kind": "appointment", "appoint_action": "任命",
+            "name": "袁崇焕", "office": "辽东巡抚", "summon_after": "否",
+        }],
+    )
+    pending = next(r for r in db.list_pending_actions(state.turn) if r["kind"] == "office")
+    pending_id = int(pending["id"])
+
+    GameSession.apply_cli_conversation_actions(
+        session, minister,
+        player_message="特旨署理，并传召入京。", answer="遵旨。",
+        has_directive=False, secret_order_id=None,
+        preclassified_intent=[{
+            "kind": "appointment", "appoint_action": "无",
+            "name": "", "office": "",
+            "mode": "midzhi", "appointment_tenure": "署理", "summon_after": "是",
+        }],
+    )
+
+    rows = [r for r in db.list_pending_actions(state.turn) if r["kind"] == "office"]
+    assert len(rows) == 1
+    assert int(rows[0]["id"]) == pending_id
+    payload = json.loads(rows[0]["payload_json"] or "{}")
+    assert payload.get("mode") == "midzhi"
+    assert payload.get("任别") == "署理"
+    assert payload.get("summon_after") == "是"
+    assert _office_origin_count(db, pending_id) == 1
+    ledger = db.conn.execute(
+        "SELECT person_names FROM story_ledger_entries WHERE origin_ref=?",
+        (f"office:{pending_id}",),
+    ).fetchone()
+    assert json.loads(ledger["person_names"]) == ["袁崇焕"]
+
+
+def test_appointment_summon_already_in_capital_projects_waiting(game, monkeypatch):
+    """#672：已在京无在途 → 顺颁后直接 waiting，不调同地行止、不回滚结算。"""
+    db, state, content = game
+    # 袁崇焕默认广东；先置于京，再走任命+传召全链。
+    db.conn.execute(
+        "UPDATE characters SET location='beizhili', transit_to='', "
+        "transit_distance_remaining=NULL, transit_speed_factor=NULL, "
+        "transit_start_turn=0 WHERE name='袁崇焕'"
+    )
+    db.conn.commit()
+    yuan = content.characters["袁崇焕"]
+    yuan.location = "beizhili"
+    yuan.transit_to = ""
+
+    pending, origin = _stage_yuan_appointment_summon(game, monkeypatch)
+    dossier_id = _close_office_to_dossier(db, state, content, pending["id"])
+
+    settle_with_delta(
+        state, db, {}, before_turn=int(state.turn), content=content,
+        dossier_verdicts=[{"dossier_id": dossier_id, "decision": "promulgated"}],
+    )
+
+    unsettled = list_unsettled_summons(db)
+    assert [(x["person_name"], x["origin_id"], x["kind"]) for x in unsettled] == [
+        ("袁崇焕", origin, "waiting")
+    ]
+    after = _yuan_row(db)
+    assert (after["location"], after["transit_to"] or "") == ("beizhili", "")
+    assert after["office"] == "辽东巡抚"

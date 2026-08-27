@@ -708,6 +708,11 @@ def _stage_office_pending_core(
     action = str(appt.get("appoint_action") or "").strip()
     appt_name = str(appt.get("name") or "").strip()
     appt_office = str(appt.get("office") or "").strip()
+    # FieldSpec 「任命后传召」：仅任命可承载；罢免组合收敛为无传召。
+    want_summon = (
+        action == "任命"
+        and str(appt.get("summon_after") or "否").strip() == "是"
+    )
 
     if action not in {"任命", "罢免"} or not appt_name:
         return None
@@ -738,7 +743,7 @@ def _stage_office_pending_core(
                 minister_name=minister_name,
                 turn=int(session.state.turn),
                 person_name=appt_name,
-                summon_after=str(appt.get("summon_after") or "否").strip() == "是",
+                summon_after=want_summon,
                 origin_chat_turn_id=int(ctx.chat_turn_id or 0),
                 annotate=annotate_existing,
             )
@@ -751,10 +756,13 @@ def _stage_office_pending_core(
             session.db, "罢免", appt_name, int(session.state.turn),
             content=content_ref,
         )
-        if hedged or _appointment_intent_is_current_office_noop(
+        if hedged:
+            return None
+        # 现职 no-op 只豁免重复官职写；同句 summon_after 仍须落单一 pending/origin。
+        if _appointment_intent_is_current_office_noop(
             session.db, appt_name, appt_office or appt.get("office", ""),
             content=content_ref,
-        ):
+        ) and not want_summon:
             return None
     elif action == "罢免":
         cancelled = _cancel_staged_opposing_office(
@@ -771,7 +779,7 @@ def _stage_office_pending_core(
         "office": appt_office,
         "appointer": minister_name,
         "mode": resolve_directive_mode(ctx.player_message, appt.get("mode")),
-        "summon_after": str(appt.get("summon_after") or "否").strip(),
+        "summon_after": "是" if want_summon else "否",
     }
     # 署理等任别随新建候选写入；特旨仅 mode（上已 resolve）
     if tenure_mark == "署理":
@@ -791,7 +799,7 @@ def _stage_office_pending_core(
         if not pending_id:
             return None
         resolved = int(pending_id)
-        if payload["summon_after"] == "是":
+        if want_summon:
             persist_appointment_summon(
                 resolved, appt_name, promote_payload=False,
             )
@@ -2666,11 +2674,24 @@ def _select_pending_office_for_path(
 
     if not rows:
         return None, "miss"
-    if len(rows) == 1:
-        return rows[0], "hit"
 
     want_name = str(name or "").strip()
     want_office = str(office or "").strip()
+
+    if len(rows) == 1:
+        # #529：完全省略 name+office 的路径应答 → 唯一候选直取。
+        # #672：任一身份字段在场则必须完整人+职联合命中，缺一/错配零改该 row。
+        if not want_name and not want_office:
+            return rows[0], "hit"
+        if not want_name or not want_office:
+            return None, "miss"
+        hits = _match_office_row_by_name_office(
+            rows, name=want_name, office=want_office, content=content, db=db,
+        )
+        if len(hits) == 1:
+            return hits[0], "hit"
+        return None, "miss"
+
     # 多条必须人+职同时在场；缺一（含仅数字 id / 姓名-only）→ 歧义，戏内确认
     if not want_name or not want_office:
         return None, "ambiguous"
@@ -2886,7 +2907,12 @@ def _materialize_appointment(ctx: MaterializeCtx) -> None:
             )
             return
         if status == "hit" and row is not None:
-            # 同人同职再发任命+路径：no-op 去重，中旨/任别/summon 并入既有条
+            # 同人同职再发任命+路径：no-op 去重，中旨/任别/summon 并入既有条。
+            # path-only 省略 name 时从命中 row payload 取 canonical 人名，走共享 summon tail。
+            person_for_summon = appt_name or str(
+                _office_payload(row).get("name") or ""
+            ).strip()
+            row_is_appoint = str(row.get("action") or "") == "任命"
             resolved = _apply_existing_appointment_hit(
                 session,
                 row,
@@ -2894,10 +2920,11 @@ def _materialize_appointment(ctx: MaterializeCtx) -> None:
                 tenure_mark=tenure_mark,
                 minister_name=minister_name,
                 turn=int(session.state.turn),
-                person_name=appt_name,
+                person_name=person_for_summon,
                 summon_after=(
                     str(appt.get("summon_after") or "否").strip() == "是"
-                    and bool(appt_name)
+                    and bool(person_for_summon)
+                    and row_is_appoint
                 ),
                 origin_chat_turn_id=int(ctx.chat_turn_id or 0),
                 annotate=True,
