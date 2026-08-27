@@ -276,6 +276,7 @@ def test_fresh_summon_origin_is_idempotent_and_projects_kind(game):
         "person_name": "洪承畴",
         "origin_id": "command:43",
         "kind": "fresh",
+        "travel_tone": "常行",
     }]
 
 
@@ -632,10 +633,10 @@ def test_multi_origin_fresh_closes_once_per_person_and_retries(game, monkeypatch
     origin_cli = "cli:initial:1:洪承畴"
 
     first = an.record_summon_fresh(
-        db, night_id, person.name, origin_id=origin_web,
+        db, night_id, person.name, origin_id=origin_web, travel_tone="加急",
     )
     second = an.record_summon_fresh(
-        db, night_id, person.name, origin_id=origin_cli,
+        db, night_id, person.name, origin_id=origin_cli, travel_tone="星夜兼程",
     )
     # 不同 origin 各一行；同 origin 再消费才幂等复用。
     assert second != first
@@ -671,10 +672,13 @@ def test_multi_origin_fresh_closes_once_per_person_and_retries(game, monkeypatch
 
     result = an.close_night(db, state, night_id=night_id, content=content)
     after = db.conn.execute(
-        "SELECT location, transit_to FROM characters WHERE name=?", (person.name,)
+        "SELECT location, transit_to, transit_speed_factor, transit_distance_remaining "
+        "FROM characters WHERE name=?", (person.name,)
     ).fetchone()
     assert result["closed"] is True
     assert (after["location"], after["transit_to"]) == ("shaanxi", "beizhili")
+    assert after["transit_speed_factor"] == 2.0
+    assert after["transit_distance_remaining"] > 0
     unsettled = an.list_unsettled_summons(db)
     assert len(unsettled) == 2
     assert {row["kind"] for row in unsettled} == {"in_transit"}
@@ -826,7 +830,7 @@ def test_tool_summon_does_not_splice_gate_reason_into_llm_answer(game, monkeypat
                 tools=[SimpleNamespace(
                     tool_name="summon_minister",
                     result=f"__summon__{remote.name}",
-                    arguments={"name": remote.name},
+                    arguments={"name": remote.name, "行程语气": "加急"},
                 )],
             )
 
@@ -863,16 +867,16 @@ def test_tool_summon_does_not_splice_gate_reason_into_llm_answer(game, monkeypat
     assert not result.court_action and not result.next_minister
     assert any(
         row["person_name"] == remote.name and row["kind"] == "fresh"
+        and row["travel_tone"] == "加急"
         for row in an.list_unsettled_summons(db)
     )
 
     # web stream tool 路：复用既有 _chat_stream_payload 真入口夹具。
     for row in list(an.list_unsettled_summons(db)):
         an.settle_summon_origin(db, row["origin_id"])
-    agent = _FakeAgent(
-        tools=[ToolExec("summon_minister", f"__summon__{remote.name}")],
-        chunks=[model_answer],
-    )
+    tool_exec = ToolExec("summon_minister", f"__summon__{remote.name}")
+    tool_exec.arguments = {"name": remote.name, "行程语气": "星夜兼程"}
+    agent = _FakeAgent(tools=[tool_exec], chunks=[model_answer])
     web_game = _web_game(db, state, content, agent)
     web_game.session.summon_character = (
         lambda name, current, allow_temporary=True: GameSession.summon_character(
@@ -886,11 +890,12 @@ def test_tool_summon_does_not_splice_gate_reason_into_llm_answer(game, monkeypat
         lambda character: GameSession.can_summon(web_game.session, character)
     )
     web_game.session.consume_audience_admission = (
-        lambda character, *, origin_id, state=None, origin_chat_turn_id=0: (
+        lambda character, *, origin_id, state=None, origin_chat_turn_id=0, travel_tone="常行": (
             GameSession.consume_audience_admission(
                 web_game.session, character, origin_id=origin_id,
                 state=state or web_game.session.state,
                 origin_chat_turn_id=origin_chat_turn_id,
+                travel_tone=travel_tone,
             )
         )
     )
@@ -907,6 +912,7 @@ def test_tool_summon_does_not_splice_gate_reason_into_llm_answer(game, monkeypat
     assert not payload.get("court_action") and not payload.get("next_minister")
     assert any(
         row["person_name"] == remote.name and row["kind"] == "fresh"
+        and row["travel_tone"] == "星夜兼程"
         for row in an.list_unsettled_summons(db)
     )
 

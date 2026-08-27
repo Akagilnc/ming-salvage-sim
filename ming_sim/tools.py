@@ -9,6 +9,7 @@ from typing import Dict, List, Optional
 from ming_sim.constants import DOSSIER_LINK_TYPES, TURN_UNIT
 from ming_sim.context import _ctx as _content_ctx, state_context
 from ming_sim.models import FRONT_HALF_DONE_PHASES, Character, CourtContext
+from ming_sim.issues import TravelTone, normalize_travel_tone
 from ming_sim.person_archive_contract import PERSON_ACTIONS
 from ming_sim.qualitative import progress_band, qualitative_band
 from ming_sim.strict_types import strict_int
@@ -778,8 +779,9 @@ def build_minister_tools(character: Character, context: CourtContext,
         """结束本次召见，退朝。"""
         return "__dismiss__"
 
-    def summon_minister(name: str) -> str:
-        """传召另一位大臣入殿。name 填大臣姓名。"""
+    def summon_minister(name: str, 行程语气: TravelTone = "常行") -> str:
+        """传召另一位大臣入殿。行程语气取常行、加急或星夜兼程。"""
+        normalize_travel_tone(行程语气)
         return f"__summon__{name}"
 
     # #635 荐人准入唯一所有者（庭裁 Y1/Y3）：reason 为工具契约必填参数，
