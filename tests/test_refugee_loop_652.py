@@ -799,3 +799,37 @@ def test_legacy_population_unit_skips_absorption_and_recovery(game):
 
     assert db.get_decree_dossier(_recovery_grant(db, state, amount=10))["execution_outcome"] == "fulfilled"
     assert not _reflux(_settle_transfers(state, db, content, "legacy"))
+
+
+def test_person_only_adapter_skips_recovery_kernel(game):
+    """#672：任命/传召 person-only adapter 不得顺带跑 #652 recovery。"""
+    from ming_sim.issues import apply_person_changes_only, apply_score_extraction
+
+    db, state, content = game
+    _reset_shaanxi_pool(db)
+    dossier_id = _recovery_grant(db, state, amount=30)
+    displaced_before = _pop(db, "流民", "shaanxi")
+
+    # Person-only path (same shape office/summon uses) must leave recovery untouched.
+    apply_person_changes_only(
+        db, state,
+        [{
+            "name": "袁崇焕", "动作": "行止", "transit_to": "beizhili",
+            "origin_ref": "盘面自发",
+        }],
+        content=content, registry=None,
+    )
+    assert _pop(db, "流民", "shaanxi") == displaced_before
+
+    # Contrast: full settle applier still runs recovery on the same paid grant.
+    applied = apply_score_extraction(db, state, {}, content=content)
+    reflux = _reflux(applied.get("population_transfers") or [], dossier_id=dossier_id)
+    if not reflux:
+        # Recovery may land under applied_transfers depending on report shape.
+        reflux = [
+            t for t in (applied.get("applied_transfers") or [])
+            if isinstance(t, dict) and t.get("reason") == "回流"
+            and t.get("origin_ref") == f"dossier:{dossier_id}"
+        ]
+    assert reflux, "full apply_score_extraction must still run recovery"
+    assert _pop(db, "流民", "shaanxi") < displaced_before

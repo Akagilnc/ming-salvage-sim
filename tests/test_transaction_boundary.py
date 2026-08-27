@@ -579,3 +579,42 @@ def test_begin_failure_at_entry_restores_flags(game, monkeypatch):
     assert db.kv_get("s1r3_after_begin_fail") == "ok"
     db.conn.execute("DELETE FROM kv_store WHERE key='s1r3_after_begin_fail'")
     db.conn.commit()
+
+
+def test_outer_atomic_rollback_discards_registry_refresh_callback(game):
+    """#672：affected registry refresh 挂 outer-commit callback；外包 rollback 丢弃。"""
+    from ming_sim.applier import atomic, register_runtime_outcome_callbacks
+
+    db, _state, _content = game
+    refreshed: list[str] = []
+
+    class _Reg:
+        def refresh(self, name):
+            refreshed.append(name)
+
+    reg = _Reg()
+    names = ["袁崇焕"]
+
+    def _refresh_reg() -> None:
+        for name in names:
+            reg.refresh(name)
+
+    with pytest.raises(RuntimeError, match="outer boom"):
+        with atomic(db):
+            register_runtime_outcome_callbacks(db, on_commit=_refresh_reg)
+            db.conn.execute(
+                "INSERT INTO kv_store(key,value) VALUES('outer_reg_probe','1')"
+            )
+            raise RuntimeError("outer boom")
+
+    assert refreshed == []
+    assert db.kv_get("outer_reg_probe") is None
+
+    # Commit path fires the callback once at the real outermost boundary.
+    with atomic(db):
+        register_runtime_outcome_callbacks(db, on_commit=_refresh_reg)
+        db.conn.execute(
+            "INSERT INTO kv_store(key,value) VALUES('outer_reg_probe','1')"
+        )
+    assert refreshed == ["袁崇焕"]
+    assert db.kv_get("outer_reg_probe") == "1"

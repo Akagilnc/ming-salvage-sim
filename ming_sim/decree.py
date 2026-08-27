@@ -2586,9 +2586,16 @@ def settle_with_delta(
             settlement_abort_message(pack_path),
             turn=before_turn, stage="settle", error_pack_path=pack_path,
         ) from exc
-    if registry is not None:
-        for person_name in sorted(affected_people):
-            registry.refresh(person_name)
+    # Registry refresh only after the real outermost commit; outer rollback discards.
+    if registry is not None and affected_people:
+        from ming_sim.applier import register_runtime_outcome_callbacks
+        names = sorted(affected_people)
+
+        def _refresh_affected() -> None:
+            for person_name in names:
+                registry.refresh(person_name)
+
+        register_runtime_outcome_callbacks(db, on_commit=_refresh_affected)
     # JSONL follows the real outer transaction outcome; DB remains truth.
     mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
     # #636 S5 月末酿制腿收尾（判词类②）：结算事务已提交，摘要持久化前 join。
