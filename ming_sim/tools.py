@@ -277,10 +277,12 @@ def build_minister_tools(character: Character, context: CourtContext,
             kind_tag = "系统" if row["kind"] == "situation" else "皇帝推动"
             commitment_fields = _commitment_tool_fields(context.db, context.state, row)
             commitment_suffix = f"，{commitment_fields}" if commitment_fields else ""
+            targets = "、".join(row.get("target_roster") or [])
+            target_suffix = f"；标靶：{targets}" if targets else ""
             lines.append(
                 f"{idx}. #{row['id']}[{kind_tag}]{row['title']}"
                 f"（进展{_progress_band(row['bar_value'])}；向好端：{row['bar_good_meaning']}；"
-                f"{row['stage_text']}{commitment_suffix}）"
+                f"{row['stage_text']}{commitment_suffix}{target_suffix}）"
             )
         return "\n".join(lines)
 
@@ -296,13 +298,15 @@ def build_minister_tools(character: Character, context: CourtContext,
         row = rows[n - 1]
         commitment_fields = _commitment_tool_fields(context.db, context.state, row)
         commitment_text = f"承诺字段：{commitment_fields}。" if commitment_fields else ""
+        targets = "、".join(row.get("target_roster") or [])
+        target_text = f"标靶：{targets}。" if targets else ""
         return (
             f"#{row['id']} {row['title']}（进展{_progress_band(row['bar_value'])}，"
             f"{row['bar_bad_meaning']}↔{row['bar_good_meaning']}）。"
             f"阶段：{row['stage_text']}。牵涉：{row['faction_hint'] or '—'}。"
             f"结案条件：{_qualitative_condition(row['resolve_condition'])}。"
             f"失败条件：{_qualitative_condition(row['fail_condition'])}。"
-            f"{commitment_text}"
+            f"{target_text}{commitment_text}"
         )
 
     def list_regions() -> str:

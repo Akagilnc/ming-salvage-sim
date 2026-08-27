@@ -136,6 +136,20 @@ def test_active_impeachment_disposition_flows_from_player_tool_to_dossier(game, 
         origin_ref="commitment:660:deformation_exposure", faction_hint=faction,
         target_roster=[first.name, selected.name],
     )
+    from ming_sim.knowledge import build_character_knowledge
+
+    knowledge = build_character_knowledge(db, state, actor.name)
+    issue_slot, projected = next(
+        (slot, row) for slot, row in enumerate(knowledge["issues"], 1) if row["id"] == issue_id
+    )
+    assert projected["target_roster"] == [first.name, selected.name]
+    tools = {
+        tool.__name__: tool
+        for tool in build_minister_tools(actor, CourtContext(state=state, db=db, previous_summary=""))
+    }
+    assert first.name in tools["list_memorials"]()
+    assert selected.name in tools["inspect_memorial"](issue_slot)
+
     reply = "臣据实拟就，不替圣意增删一字。"
 
     class Agent:
@@ -177,6 +191,21 @@ def test_active_impeachment_disposition_flows_from_player_tool_to_dossier(game, 
     assert db.get_character_status(first.name)[0] == "active"
     assert state.metrics["皇威"] == before_authority - (disposition == "压下")
     assert db.faction_satisfaction(faction) == before_sat - (disposition == "压下")
+
+
+def test_impeachment_disposition_without_positive_issue_id_stages_nothing(game):
+    db, state, content = game
+    actor = _active_ming(db, content)
+    target = _active_ming(db, content, exclude=actor.name)
+    before = db.conn.execute("SELECT COUNT(*) FROM pending_actions").fetchone()[0]
+
+    for issue_id in (None, 0, -1):
+        assert am.stage_punishment_candidate(
+            db, state.turn, actor.name, text="照此处置。", target_id=target.name,
+            punish_action="拿问下狱", issue_id=issue_id, issue_disposition="办人",
+        ) == 0
+
+    assert db.conn.execute("SELECT COUNT(*) FROM pending_actions").fetchone()[0] == before
 
 
 def test_prestaged_impeachment_punishments_skip_person_writes_after_first_closes_issue(game):
