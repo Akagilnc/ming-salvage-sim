@@ -590,9 +590,17 @@ def _persist_appointment_summon(
     """Persist the dossier flag and its inactive origin as one staging unit.
 
     Shared success tail for new stage, same-person dedupe, and mode/tenure merge.
+    Ledger person_names use the same roster/alias canonical key as 0009 applier.
     """
     from ming_sim.applier import atomic
     from ming_sim.audience_night import ensure_inactive_office_summon
+    from ming_sim.session import _canonical_minister_key
+
+    # Exact-name summon projections (commit/启程/origin) require the roster key;
+    # raw extractor aliases must not land in inactive office:<pending_id> ledger.
+    person_name = _canonical_minister_key(
+        getattr(session, "content", None), str(person_name or "").strip(), session.db,
+    )
 
     with atomic(session.db):
         if promote_payload:

@@ -31,18 +31,20 @@ class _FakeRegistry:
         self.refreshed.append(name)
 
 
-def _stage_yuan_appointment_summon(game, monkeypatch, *, summon_after="是"):
+def _stage_yuan_appointment_summon(
+    game, monkeypatch, *, summon_after="是", appt_name="袁崇焕",
+):
     db, state, content = game
     minister = _minister_wang_shaohui(db, content)
     open_night(db, state, empty_scaffold=True)
     monkeypatch.setattr(cb, "_run_backend_for_config", lambda *a, **k: ("{}", 1))
     GameSession.apply_cli_conversation_actions(
         _fake_session(db, state, content), minister,
-        player_message="起复袁崇焕为辽东巡抚，传召入京。", answer="遵旨。",
+        player_message=f"起复{appt_name}为辽东巡抚，传召入京。", answer="遵旨。",
         has_directive=False, secret_order_id=None,
         preclassified_intent=[{
             "kind": "appointment", "appoint_action": "任命",
-            "name": "袁崇焕", "office": "辽东巡抚", "summon_after": summon_after,
+            "name": appt_name, "office": "辽东巡抚", "summon_after": summon_after,
         }],
     )
     pending = next(row for row in db.list_pending_actions(state.turn) if row["kind"] == "office")
@@ -71,15 +73,23 @@ def _yuan_row(db):
     ).fetchone()
 
 
-def test_appointment_summon_activates_only_after_promulgation(game, monkeypatch):
+@pytest.mark.parametrize("appt_name", ["袁崇焕", "前辽东"])
+def test_appointment_summon_activates_only_after_promulgation(
+    game, monkeypatch, appt_name,
+):
     """主 tracer：stage→close→settle 顺颁→启程当月不扣距→次月首减→waiting；
-    registry 仅 outer commit 后刷新。"""
+    registry 仅 outer commit 后刷新。alias 名（前辽东）须落 canonical ledger。"""
     db, state, content = game
-    pending, origin = _stage_yuan_appointment_summon(game, monkeypatch)
+    pending, origin = _stage_yuan_appointment_summon(
+        game, monkeypatch, appt_name=appt_name,
+    )
     ledger = db.conn.execute(
-        "SELECT tags FROM story_ledger_entries WHERE origin_ref=?", (origin,),
+        "SELECT tags, person_names FROM story_ledger_entries WHERE origin_ref=?",
+        (origin,),
     ).fetchone()
     assert ledger is not None and "传召未结" not in json.loads(ledger["tags"])
+    # stage 即写 roster canonical key；alias 不得进入 inactive office origin。
+    assert json.loads(ledger["person_names"]) == ["袁崇焕"]
     assert list_unsettled_summons(db) == []
     before = _yuan_row(db)
     assert before["location"] == "guangdong"
@@ -144,6 +154,8 @@ def test_appointment_summon_activates_only_after_promulgation(game, monkeypatch)
         unsettled = list_unsettled_summons(db)
     assert unsettled, "抵京后应仍有未结传召投影"
     assert unsettled[0]["kind"] == "waiting"
+    assert unsettled[0]["person_name"] == "袁崇焕"
+    assert unsettled[0]["origin_id"] == origin
     assert _yuan_row(db)["location"] == "beizhili"
 
 
@@ -182,24 +194,30 @@ def test_dedup_promotes_existing_appointment_summon(game, monkeypatch):
     open_night(db, state, empty_scaffold=True)
     monkeypatch.setattr(cb, "_run_backend_for_config", lambda *a, **k: ("{}", 1))
     session = _fake_session(db, state, content)
-    base = {
-        "kind": "appointment", "appoint_action": "任命",
-        "name": "袁崇焕", "office": "辽东巡抚",
-    }
-    for summon_after in ("否", "是"):
+    # First stage by canonical, promote summon_after via roster alias — one origin.
+    intents = [
+        {"kind": "appointment", "appoint_action": "任命",
+         "name": "袁崇焕", "office": "辽东巡抚", "summon_after": "否"},
+        {"kind": "appointment", "appoint_action": "任命",
+         "name": "前辽东", "office": "辽东巡抚", "summon_after": "是"},
+    ]
+    for intent in intents:
         GameSession.apply_cli_conversation_actions(
             session, minister, player_message="任命并传召", answer="遵旨。",
             has_directive=False, secret_order_id=None,
-            preclassified_intent=[dict(base, summon_after=summon_after)],
+            preclassified_intent=[intent],
         )
 
     rows = [r for r in db.list_pending_actions(state.turn) if r["kind"] == "office"]
     assert len(rows) == 1
     assert json.loads(rows[0]["payload_json"])["summon_after"] == "是"
-    assert db.conn.execute(
-        "SELECT count(*) FROM story_ledger_entries WHERE origin_ref=?",
-        (f"office:{rows[0]['id']}",),
-    ).fetchone()[0] == 1
+    origin = f"office:{rows[0]['id']}"
+    ledger = db.conn.execute(
+        "SELECT person_names FROM story_ledger_entries WHERE origin_ref=?",
+        (origin,),
+    ).fetchone()
+    assert ledger is not None
+    assert json.loads(ledger["person_names"]) == ["袁崇焕"]
 
 
 def test_appointment_summon_close_crash_restore_keeps_inactive_origin(game, monkeypatch):
