@@ -27,6 +27,7 @@ class FieldSpec:
     default: Any = ""
     max_len: Optional[int] = None
     as_int: bool = False
+    int_lo: int = 0  # symmetric lower bound; >0 marks positive integer
     int_hi: int = 10**9
     # Optional per-enum execution metadata lives on the canonical field row.
     execution_coverage: Optional[Mapping[str, Optional[str]]] = None
@@ -103,11 +104,17 @@ def classifier_json_fields_prompt() -> str:
                 vals = sorted(f.allowed, key=lambda x: (x != "无", x))
                 lines.append(f'  "{f.zh}": "{"|".join(vals)}",')
             elif f.as_int:
-                if f.default is None:
-                    # 可选正整数 id：缺省 JSON null；命中时由模型填正整数（禁字符串）
-                    lines.append(f'  "{f.zh}": null,')
+                # 合法 JSON 缺省示例：optional→null，否则 0；人可读约束由 int_lo 派生
+                example = "null" if f.default is None else "0"
+                if f.int_lo > 0:
+                    constraint = (
+                        f"可null；命中 JSON integer>={f.int_lo}；禁数字字符串"
+                        if f.default is None
+                        else f"JSON integer>={f.int_lo}"
+                    )
+                    lines.append(f'  "{f.zh}": {example},  // {constraint}')
                 else:
-                    lines.append(f'  "{f.zh}": 0,')
+                    lines.append(f'  "{f.zh}": {example},')
             else:
                 lines.append(f'  "{f.zh}": "",')
     # trailing comma cleanup on last line
@@ -248,7 +255,7 @@ def normalize_one_candidate(obj: Mapping[str, Any], *, soft: bool) -> Dict[str, 
             out[name] = _field_raw(obj, spec)
             continue
         if spec.as_int:
-            out[name] = _as_int(raw, hi=int(spec.int_hi))
+            out[name] = _as_int(raw, lo=int(spec.int_lo), hi=int(spec.int_hi))
         elif spec.allowed is not None:
             out[name] = _enum(raw, spec.allowed, str(spec.default))
         else:

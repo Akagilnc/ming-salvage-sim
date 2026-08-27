@@ -3027,8 +3027,10 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                     "mode", "颁布方式",
                     frozenset({"ordinary", "midzhi"}), "",
                 ),
-                # #658：处置指向哪次站台；可选正整数 id（as_int+default None），禁 generic clamp
-                FieldSpec("backing_dossier_id", "站台案卷", None, None, as_int=True),
+                # #658：处置指向哪次站台；optional positive int（as_int+default None+int_lo=1），禁 generic clamp
+                FieldSpec(
+                    "backing_dossier_id", "站台案卷", None, None, as_int=True, int_lo=1,
+                ),
             ),
             materialize_fn=_materialize_punishment,
         ),
