@@ -2003,31 +2003,71 @@ def test_tool_summon_binds_origin_chat_turn_id_and_undo_deletes(game, monkeypatc
 
 
 def test_fresh_summon_same_beizhili_journey_attaches_origin_without_reapply(game, monkeypatch):
-    """#672/#670：已在同一 beizhili 旅程只附加 origin 标 in_transit，不二次行止。"""
+    """#672/#670：真实 apply_dossier_verdicts 同人双 office origin 批内一次消费。
+
+    两宗任命+传召经同一 verdicts 批激活后，只调用一次 commit_fresh，只写一次行止。
+    """
     from ming_sim import issues
 
     db, state, content = game
-    person = _set_place(game, "洪承畴", location="shaanxi", transit_to="beizhili")
-    night_id = int(an.open_night(db, state)["id"])
-    origin_a = "office:1001"
-    origin_b = "office:1002"
-    an.record_summon_fresh(db, night_id, person.name, origin_id=origin_a)
-    an.record_summon_fresh(db, night_id, person.name, origin_id=origin_b)
+    person = _set_place(game, "洪承畴", location="shaanxi")
+    minister = next(
+        ch.name for ch in content.characters.values()
+        if db.resolve_power_id(ch) == "ming"
+        and db.get_character_status(ch.name)[0] == "active"
+        and str(getattr(ch, "office", "") or "").strip()
+        and ch.name != person.name
+    )
+    night_id = int(an.open_night(db, state, empty_scaffold=True)["id"])
+    pids: list[int] = []
+    for office in ("三边总督", "蓟辽总督"):
+        pid = int(db.stage_pending_action(
+            int(state.turn), "office", "任命", minister,
+            {"name": person.name, "office": office, "summon_after": "是"},
+        ))
+        an.ensure_inactive_office_summon(
+            db, pid, person.name, night_id=night_id,
+        )
+        pids.append(pid)
+    origins = {f"office:{pid}" for pid in pids}
+    db.mark_pending_night_approved(pids, night_id=night_id)
+    an.close_night(db, state, night_id=night_id, content=content)
+    dossiers = [
+        row for row in db.list_decree_dossiers(status="proposed")
+        if row["action_type"] == "appointment"
+        and int(row.get("pending_action_id") or 0) in set(pids)
+    ]
+    assert len(dossiers) == 2
 
-    apply_calls = 0
+    fresh_calls = 0
+    real_fresh = an.commit_fresh_summons_for_night
+
+    def count_fresh(*args, **kwargs):
+        nonlocal fresh_calls
+        fresh_calls += 1
+        return real_fresh(*args, **kwargs)
+
+    monkeypatch.setattr(an, "commit_fresh_summons_for_night", count_fresh)
+
+    travel_applies = 0
     real_apply = issues.apply_person_changes_only
 
-    def count_apply(*args, **kwargs):
-        nonlocal apply_calls
-        apply_calls += 1
-        return real_apply(*args, **kwargs)
+    def count_apply(db_, state_, changes, **kwargs):
+        nonlocal travel_applies
+        for change in changes or []:
+            if str(change.get("动作") or "") == "行止":
+                travel_applies += 1
+        return real_apply(db_, state_, changes, **kwargs)
 
     monkeypatch.setattr(issues, "apply_person_changes_only", count_apply)
-    origins = an.commit_fresh_summons_for_night(
-        db, state, night_id, content=content, registry=None,
+
+    db.apply_dossier_verdicts(
+        state,
+        [{"dossier_id": row["id"], "decision": "promulgated"} for row in dossiers],
+        content=content,
     )
-    assert set(origins) == {origin_a, origin_b}
-    assert apply_calls == 0  # already on beizhili journey — attach only
+    assert fresh_calls == 1
+    assert travel_applies == 1
     after = db.conn.execute(
         "SELECT location, transit_to FROM characters WHERE name=?", (person.name,),
     ).fetchone()
@@ -2035,7 +2075,7 @@ def test_fresh_summon_same_beizhili_journey_attaches_origin_without_reapply(game
     unsettled = an.list_unsettled_summons(db)
     assert len(unsettled) == 2
     assert {row["kind"] for row in unsettled} == {"in_transit"}
-    assert {row["origin_id"] for row in unsettled} == {origin_a, origin_b}
+    assert {row["origin_id"] for row in unsettled} == origins
 
 
 def test_fresh_summon_rejects_different_destination_in_transit(game):
