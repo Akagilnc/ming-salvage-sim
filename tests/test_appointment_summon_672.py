@@ -547,21 +547,20 @@ def test_single_pending_identity_mismatch_does_not_corrupt_or_bind_summon(
 
 
 def test_current_office_noop_still_stages_summon_after(game, monkeypatch):
-    """#672：现职 no-op 只豁免重复官职写，同句 summon_after 仍落单一 pending/origin。"""
+    """#672：summon-only 复用 appointment pending，顺颁不得截掉目标的兼职。"""
     db, state, content = game
     minister = _minister_wang_shaohui(db, content)
     open_night(db, state, empty_scaffold=True)
     monkeypatch.setattr(cb, "_run_backend_for_config", lambda *a, **k: ("{}", 1))
 
-    target = next(
-        ch for ch in content.characters.values()
-        if getattr(ch, "power_id", "ming") == "ming"
-        and str(getattr(ch, "office", "") or "").strip()
-        and getattr(ch, "office_type", "") not in {"后宫", "宗藩"}
-        and db.get_character_status(ch.name)[0] == "active"
-        and ch.name != minister.name
+    target = content.characters["韩爌"]
+    full_office = "兵部尚书,左都御史"
+    office = "兵部尚书"
+    db.conn.execute(
+        "UPDATE characters SET status='active', office=?, location='beizhili' WHERE name=?",
+        (full_office, target.name),
     )
-    office = str(target.office).split(",")[0].strip()
+    db.conn.commit()
 
     GameSession.apply_cli_conversation_actions(
         _fake_session(db, state, content), minister,
@@ -577,7 +576,7 @@ def test_current_office_noop_still_stages_summon_after(game, monkeypatch):
     assert len(rows) == 1
     payload = json.loads(rows[0]["payload_json"] or "{}")
     assert payload.get("name") == target.name
-    assert payload.get("office") == office
+    assert payload.get("office") == full_office
     assert payload.get("summon_after") == "是"
     origin = f"office:{rows[0]['id']}"
     ledger = db.conn.execute(
@@ -587,6 +586,42 @@ def test_current_office_noop_still_stages_summon_after(game, monkeypatch):
     assert ledger is not None
     assert target.name in json.loads(ledger["person_names"])
     assert "传召未结" not in json.loads(ledger["tags"])
+
+    dossier_id = _close_office_to_dossier(db, state, content, rows[0]["id"])
+    settle_with_delta(
+        state, db, {}, before_turn=int(state.turn), content=content,
+        dossier_verdicts=[{"dossier_id": dossier_id, "decision": "promulgated"}],
+    )
+    assert db.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (target.name,),
+    ).fetchone()["office"] == full_office
+
+
+def test_unlisted_appointment_summon_rejects_before_staging(game, monkeypatch):
+    """#672：册外任命可成案，但无 canonical 行止起点时不得进入传召 batch。"""
+    db, state, content = game
+    minister = _minister_wang_shaohui(db, content)
+    open_night(db, state, empty_scaffold=True)
+    monkeypatch.setattr(cb, "_run_backend_for_config", lambda *a, **k: ("{}", 1))
+
+    with pytest.raises(ValueError, match="缺少在册行止起点"):
+        GameSession.apply_cli_conversation_actions(
+            _fake_session(db, state, content), minister,
+            player_message="任命册外测试臣为待选，并传召入京。", answer="遵旨。",
+            has_directive=False, secret_order_id=None,
+            preclassified_intent=[{
+                "kind": "appointment", "appoint_action": "任命",
+                "name": "册外测试臣", "office": "待选", "summon_after": "是",
+            }],
+        )
+
+    assert [r for r in db.list_pending_actions(state.turn) if r["kind"] == "office"] == []
+    assert db.conn.execute(
+        "SELECT 1 FROM characters WHERE name='册外测试臣'",
+    ).fetchone() is None
+    assert db.conn.execute(
+        "SELECT 1 FROM story_ledger_entries WHERE origin_ref LIKE 'office:%'",
+    ).fetchone() is None
 
 
 def test_dismiss_with_summon_after_does_not_stage_origin(game, monkeypatch):

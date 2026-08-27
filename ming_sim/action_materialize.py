@@ -689,6 +689,7 @@ def _stage_office_pending_core(
     from ming_sim.session import (
         _appointment_intent_is_current_office_noop,
         _cancel_staged_opposing_office,
+        _canonical_minister_key,
         _target_active_officeholder,
     )
 
@@ -718,6 +719,16 @@ def _stage_office_pending_core(
         return None
     if action == "任命" and require_office_for_appoint and not appt_office:
         return None
+
+    if action == "任命" and want_summon:
+        canonical_name = _canonical_minister_key(content_ref, appt_name, session.db)
+        travel_row = session.db.conn.execute(
+            "SELECT location FROM characters WHERE name=?", (canonical_name,),
+        ).fetchone()
+        if travel_row is None or not str(travel_row["location"] or "").strip():
+            raise ValueError(
+                "任命后传召缺少在册行止起点，未能入档；请补全人物行止后重试。"
+            )
 
     # #519 同人同职 no-op 去重：仅对同向「任命」pending 并入，不双落。
     if action == "任命" and appt_name:
@@ -759,11 +770,18 @@ def _stage_office_pending_core(
         if hedged:
             return None
         # 现职 no-op 只豁免重复官职写；同句 summon_after 仍须落单一 pending/origin。
-        if _appointment_intent_is_current_office_noop(
+        current_office_noop = _appointment_intent_is_current_office_noop(
             session.db, appt_name, appt_office or appt.get("office", ""),
             content=content_ref,
-        ) and not want_summon:
+        )
+        if current_office_noop and not want_summon:
             return None
+        if current_office_noop:
+            canonical_name = _canonical_minister_key(content_ref, appt_name, session.db)
+            current_row = session.db.conn.execute(
+                "SELECT office FROM characters WHERE name=?", (canonical_name,),
+            ).fetchone()
+            appt_office = str(current_row["office"] or "").strip()
     elif action == "罢免":
         cancelled = _cancel_staged_opposing_office(
             session.db, "任命", appt_name, int(session.state.turn),
