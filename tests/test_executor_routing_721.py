@@ -394,9 +394,19 @@ def test_draft_batch_isolates_routing_rejection(env, monkeypatch, tmp_path):
     statuses = dict(db.conn.execute(
         "SELECT id,status FROM turn_directives WHERE id IN (?,?)", (bad, good),
     ).fetchall())
-    assert statuses == {bad: "rejected", good: "draft"}
+    assert statuses == {bad: "draft", good: "draft"}
     assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers WHERE directive_id=?", (bad,)).fetchone()[0] == 0
     assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers WHERE directive_id=?", (good,)).fetchone()[0] == 1
+    assert [
+        int(row["id"]) for row in db.list_dossiered_draft_directives(state)
+        if int(row["id"]) in (bad, good)
+    ] == [good]
+
+    db.mark_directives_issued(state)
+    statuses = dict(db.conn.execute(
+        "SELECT id,status FROM turn_directives WHERE id IN (?,?)", (bad, good),
+    ).fetchall())
+    assert statuses == {bad: "draft", good: "issued"}
     assert db.conn.execute("SELECT COUNT(*) FROM rejection_reports").fetchone()[0] == 1
     assert mirror.exists()
 

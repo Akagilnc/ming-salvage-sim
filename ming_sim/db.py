@@ -19517,17 +19517,11 @@ class GameDB:
                 sp = f"ensure_directive_{did}"
                 self.conn.execute(f"SAVEPOINT {sp}")
                 try:
-                    dossier_ids = self._ensure_directive_dossier(
+                    self._ensure_directive_dossier(
                         state, did, str(row["text"]),
                         self.read_directive_dossier_payload(row), commit=False,
                         rejection_collector=collector,
                     )
-                    if not dossier_ids:
-                        self.conn.execute(
-                            "UPDATE turn_directives SET status='rejected', "
-                            "updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                            (did,),
-                        )
                 except Exception as exc:
                     self.conn.execute(f"ROLLBACK TO {sp}")
                     # P6：rejection 只存 directive_id，不裁剪/快照 LLM 旨文
