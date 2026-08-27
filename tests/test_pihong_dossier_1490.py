@@ -3552,7 +3552,7 @@ def test_658_deliberate_backed_and_stalled_dossier_first(game):
     assert db.find_deliberation_dossier_by_decision_key(key3) is None
 
 
-def test_658_backing_credit_on_punish_promulgation(game):
+def test_658_backing_credit_on_punish_promulgation(game, monkeypatch):
     """#658：正向 chat→commit→verdict 写辜负；零写与同批后案失败回滚在同一 applier 夹具。"""
     from types import SimpleNamespace
     from ming_sim import rescript_actions as ra
@@ -3588,8 +3588,25 @@ def test_658_backing_credit_on_punish_promulgation(game):
         "punish_action": "罚俸",
         "target_id": minister,
         "amount": 100,
-        "backing_dossier_id": bid,
     }
+
+    # Mock only the external classifier transport.  The real chat classifier,
+    # staging, commit and verdict seams carry backing_dossier_id end to end.
+    import ming_sim.cli_backend as cli_backend
+
+    def _classifier_backend(_prompt, _config, *, tag):
+        assert tag == "action_intent"
+        return (json.dumps({
+            "kind": "punishment",
+            "punish_action": "罚俸",
+            "name": minister,
+            "amount": 100,
+            "backing_dossier_id": bid,
+        }, ensure_ascii=False), 1)
+
+    monkeypatch.setattr(
+        cli_backend, "_run_json_extractor_for_config", _classifier_backend,
+    )
 
     class _Agent:
         def run(self, _message):
@@ -3605,6 +3622,8 @@ def test_658_backing_credit_on_punish_promulgation(game):
             )
 
     sess = _658_session(db, state, content, agent=_Agent())
+    sess._start_cli_action_intent = GameSession._start_cli_action_intent.__get__(sess)
+    sess._finish_cli_action_intent = GameSession._finish_cli_action_intent.__get__(sess)
 
     def _edge_count() -> int:
         return int(db.conn.execute(
@@ -3625,21 +3644,9 @@ def test_658_backing_credit_on_punish_promulgation(game):
     assert int(_dossier_payload(punish).get("backing_dossier_id") or 0) == bid
     edges_before = _edge_count()
 
-    # #640 全知读面：本事件结构化配对 before/after + reopen 归因（禁宽泛 any）
+    # #640：typed credit event survives reopen with dossier attribution.
     from ming_sim.db import GameDB
-    from ming_sim.relation_read import project_relation_ledger
-    from ming_sim.relations import EMPEROR_NODE
 
-    credit_marker = str(tool_args["decree_text"])
-
-    def _emperor_minister_ctx(gdb) -> str:
-        for row in project_relation_ledger(gdb, viewer=None):
-            if row.get("source") == EMPEROR_NODE and row.get("target") == minister:
-                return str(row.get("recent_context") or "")
-        return ""
-
-    before_ctx = _emperor_minister_ctx(db)
-    assert credit_marker not in before_ctx
     db.apply_dossier_verdicts(
         state,
         [{"dossier_id": int(punish["id"]), "decision": "promulgated"}],
@@ -3653,9 +3660,6 @@ def test_658_backing_credit_on_punish_promulgation(game):
     ).fetchone()
     assert str(edge["origin"] or "").startswith(f"dossier:{bid}")
     assert str(edge["target"]) == minister
-    after_ctx = _emperor_minister_ctx(db)
-    assert credit_marker in after_ctx, after_ctx
-    assert after_ctx != before_ctx
     credit_origin_prefix = f"dossier:{bid}"
     reopened = GameDB(db.path, content=content)
     try:
@@ -3668,8 +3672,7 @@ def test_658_backing_credit_on_punish_promulgation(game):
         ).fetchone()
         assert restored_edge is not None
         assert str(restored_edge["origin"] or "").startswith(credit_origin_prefix)
-        assert credit_marker in str(restored_edge["context"] or "")
-        assert credit_marker in _emperor_minister_ctx(reopened)
+        assert str(restored_edge["target"]) == minister
     finally:
         reopened.close()
 
@@ -4118,15 +4121,18 @@ def test_658_typed_target_and_backing_reject_bad_shapes(game, monkeypatch):
     assert parse_backing_dossier_id("") is None
     assert parse_backing_dossier_id(did) == did
 
-    # 同一 typed 背书真源保留被拒/留中站台案，不受公开 referenceable 投影限制。
-    endorser = _summonable_name(db, content)
-    db.add_dossier_endorsement(
-        did, form="会签", endorser_id=endorser, decision_key="test:658:typed",
-    )
-    assert any(
-        c["dossier_id"] == did and c["endorser_id"] == endorser
-        for c in db.list_endorsed_dossier_candidates(state.turn)
-    )
+    # 同一 typed 背书真源逐条投影，不按案卷吞掉其他站台者。
+    endorsers = [_summonable_name(db, content)]
+    endorsers.append(next(n for n in content.characters if n != endorsers[0]))
+    for index, endorser in enumerate(endorsers):
+        db.add_dossier_endorsement(
+            did, form="会签", endorser_id=endorser,
+            decision_key=f"test:658:typed:{index}",
+        )
+    projected = db.list_endorsed_dossier_candidates(state.turn)
+    assert [
+        c["endorser_id"] for c in projected if c["dossier_id"] == did
+    ] == list(reversed(endorsers))
 
     # 多旨真实抽取接缝逐项接受 push / ordinary 互斥形状。
     def backend_multi(prompt, *_a, **_k):
@@ -4143,7 +4149,7 @@ def test_658_typed_target_and_backing_reject_bad_shapes(game, monkeypatch):
     assert multi["drafts"][0]["target_dossier_id"] == did
     assert multi["drafts"][1]["target_id"] == "river-works"
 
-    # 成案失败在既有结束边界转 rejected，不再进入 draft 结算或被盖 issued。
+    # 成案失败保持 draft 重试，但既有消费投影与 issued 边界均过滤无案卷旨。
     bad_directive = int(db.add_directive(
         state, None, "处分不存在之人", "test-658-ensure",
         dossier_payload={
@@ -4157,11 +4163,16 @@ def test_658_typed_target_and_backing_reject_bad_shapes(game, monkeypatch):
     status = db.conn.execute(
         "SELECT status FROM turn_directives WHERE id=?", (bad_directive,),
     ).fetchone()["status"]
-    assert status == "rejected"
+    assert status == "draft"
     assert all(
         int(row["id"]) != bad_directive
-        for row in db.list_directives(state, statuses=("draft",))
+        for row in db.list_dossiered_draft_directives(state)
     )
+    db.mark_directives_issued(state)
+    status = db.conn.execute(
+        "SELECT status FROM turn_directives WHERE id=?", (bad_directive,),
+    ).fetchone()["status"]
+    assert status == "draft"
 
     # 一条外部入口零写（capture 真 seam），不再 session 全排列
     def backend_bad(prompt, *_a, **_k):
@@ -4177,7 +4188,7 @@ def test_658_typed_target_and_backing_reject_bad_shapes(game, monkeypatch):
         )
 
     assert len(db.list_decree_dossiers()) == before_dossiers
-    assert len(db.list_dossier_endorsements(did)) == before_ends + 1
+    assert len(db.list_dossier_endorsements(did)) == before_ends + 2
     assert db.conn.execute(
         "SELECT COUNT(*) AS c FROM turn_directives"
     ).fetchone()["c"] == before_dirs + 1

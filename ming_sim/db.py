@@ -15298,13 +15298,9 @@ class GameDB:
                ORDER BY d.id DESC, e.id DESC""",
             (int(current_turn),),
         ).fetchall()
-        seen: set[int] = set()
         result: List[Dict[str, object]] = []
         for row in rows:
             dossier_id = int(row["dossier_id"])
-            if dossier_id in seen:
-                continue
-            seen.add(dossier_id)
             result.append({
                 "dossier_id": dossier_id,
                 "endorser_id": str(row["endorser_id"]),
@@ -19511,7 +19507,7 @@ class GameDB:
     def ensure_dossiers_for_draft_directives(self, state: GameState) -> None:
         """结束边界成案：只读最新 draft 正文/载荷，按 directive_id 幂等创建。
 
-        #654 r3-C.2 路3：每道旨独立 SAVEPOINT；单旨失败记 rejection 并拒绝，不波及他旨。
+        #654 r3-C.2 路3：每道旨独立 SAVEPOINT；单旨失败记 rejection、保持 draft，不波及他旨。
         """
         from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
         collector = RejectionCollector()
@@ -19546,12 +19542,7 @@ class GameDB:
                         int(state.turn),
                     )
                     tlog(f"[ensure_dossiers] 旨#{did} 成案失败：{exc}")
-                    # 失败旨不得进入本轮结算，更不得在结算末端被盖成 issued。
-                    self.conn.execute(
-                        "UPDATE turn_directives SET status='rejected', "
-                        "updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                        (did,),
-                    )
+                    # 坏旨保持 draft，次边界重试；消费边界只读取已有案卷的 draft。
                 finally:
                     self.conn.execute(f"RELEASE {sp}")
             collector.flush_to_db(self)
@@ -19642,12 +19633,27 @@ class GameDB:
         )
         self.conn.commit()
 
+    def list_dossiered_draft_directives(self, state: GameState) -> List[Dict[str, object]]:
+        """Settlement projection: drafts whose dossier creation succeeded."""
+        rows = self.conn.execute(
+            """SELECT td.* FROM turn_directives td
+               WHERE td.turn=? AND td.status='draft'
+                 AND EXISTS (SELECT 1 FROM decree_dossiers d WHERE d.directive_id=td.id)
+               ORDER BY td.id""",
+            (state.turn,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
     def mark_directives_issued(self, state: GameState) -> None:
         self.conn.execute(
             """
             UPDATE turn_directives
             SET status = 'issued', updated_at = CURRENT_TIMESTAMP
             WHERE turn = ? AND status = 'draft'
+              AND EXISTS (
+                  SELECT 1 FROM decree_dossiers d
+                  WHERE d.directive_id=turn_directives.id
+              )
             """,
             (state.turn,),
         )
