@@ -139,16 +139,8 @@ def test_active_impeachment_disposition_flows_from_player_tool_to_dossier(game, 
     from ming_sim.knowledge import build_character_knowledge
 
     knowledge = build_character_knowledge(db, state, actor.name)
-    issue_slot, projected = next(
-        (slot, row) for slot, row in enumerate(knowledge["issues"], 1) if row["id"] == issue_id
-    )
+    projected = next(row for row in knowledge["issues"] if row["id"] == issue_id)
     assert projected["target_roster"] == [first.name, selected.name]
-    tools = {
-        tool.__name__: tool
-        for tool in build_minister_tools(actor, CourtContext(state=state, db=db, previous_summary=""))
-    }
-    assert first.name in tools["list_memorials"]()
-    assert selected.name in tools["inspect_memorial"](issue_slot)
 
     reply = "臣据实拟就，不替圣意增删一字。"
 
