@@ -142,7 +142,13 @@
        未 prepare 的 settle 响亮失败且零写；settling+ready=1 崩溃重入只读 context，不二次 tick
 
   ── 后半段 settle_with_delta：整段单一 atomic 事务，9–16 全有或全无 ──
-  9. applied = apply_score_extraction(db, state, delta, content=content, registry=None)
+  9. db.commit_pending_actions(..., registry=None)  # 正常路通常为 no-op；覆盖恢复/重抽路的新暂存动作
+     affected_people += db.apply_dossier_verdicts(..., registry=None)
+     affected_people += db.apply_dossier_promulgation(..., registry=None)
+     applied = apply_score_extraction(db, state, delta, content=content, registry=None)
+     ↳ #672 任命并传召：pending/案卷先保存未激活的同源传召；任命真正落成后才在
+       同一 outer atomic 内激活该传召并按在册出发地启程。任命失败则整笔回滚，不留在途半写。
+     ↳ verdict/批红返回的受影响人物只在 9–16 全部提交成功后刷新 registry；事务内不碰缓存。
      ↳ 内部 _sanitize → _merge → 分发到 region/army/building/economy/issue/character 各 apply_*
      ↳ 未知顶层字段响亮中止；9 个结算 section 的脏项（坏值/缺 id/非法 enum）逐项拒收
        落 `rejection_reports`（坏一项不带走整批，不再印 [WARN]），commit 成功后镜像到
