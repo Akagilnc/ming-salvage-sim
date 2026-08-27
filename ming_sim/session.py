@@ -30,6 +30,7 @@ from ming_sim.context import (
 )
 from ming_sim.db import (
     GameDB,
+    directive_payload_admits_structured_write,
     infer_office_type_from_office,
     normalize_office,
     resolve_office_type_preserving_title,
@@ -1216,6 +1217,9 @@ class GameSession:
         recent_context = _recent_audience_context_for_secret_order(
             self.db, minister_name, int(self.state.turn), text,
         )
+        backing_candidates = self.db.list_endorsed_dossier_candidates(
+            int(self.state.turn),
+        )
         return _CLI_ACTION_INTENT_EXECUTOR.submit(
             classify_cli_action_intent,
             text,
@@ -1226,6 +1230,7 @@ class GameSession:
             getattr(self, "llm_config", None),
             recent_context,
             int(self.state.turn),
+            backing_candidates,
         )
 
     def _finish_cli_action_intent(self, future: Optional[Future]) -> Optional[List[Dict[str, Any]]]:
@@ -1593,8 +1598,8 @@ class GameSession:
         from ming_sim.action_clusters import is_confirmation_decision, resolve_primary_intent
         explicit_draft_prefix = message_text.startswith(_DRAFT_PREFIXES)
         explicit_secret_prefix = message_text.startswith(_SECRET_PREFIXES)
-        confirmation_turn = is_confirmation_decision(
-            resolve_primary_intent(preclassified_intent))
+        primary_intent = resolve_primary_intent(preclassified_intent)
+        confirmation_turn = is_confirmation_decision(primary_intent)
         for tool_exec in getattr(run_output, "tools", None) or []:
             tool_name = getattr(tool_exec, "tool_name", "")
             tool_result = str(getattr(tool_exec, "result", "") or "")
@@ -1638,7 +1643,15 @@ class GameSession:
                     draft_text = ""  # 恢复窗婉拒：不入档（见 _proposal_blocked）
                 if draft_text:
                     # #502 L2 / #522 / #517：tool 拟旨与 CLI 共用候选 seam；
-                    # 惩处结构化字段只从 tool arguments 交付，不扫散文。
+                    # 站台案卷由并行分类候选按惩处目标关联，不从 tool 参数伪造。
+                    tool_target = str(args.get("target_id") or args.get("name") or "")
+                    classified_backing = next((
+                        candidate.get("backing_dossier_id")
+                        for candidate in (preclassified_intent or [])
+                        if candidate.get("kind") == "punishment"
+                        and str(candidate.get("target_id") or candidate.get("name") or "") == tool_target
+                        and candidate.get("backing_dossier_id") is not None
+                    ), None)
                     stage_failures: List[Dict[str, Any]] = []
                     result.pending_action_id = coalesce_pending_action_id(
                         result.pending_action_id,
@@ -1650,6 +1663,11 @@ class GameSession:
                             name=args.get("name"),
                             amount=args.get("amount"),
                             transaction_category=args.get("transaction_category"),
+                            backing_dossier_id=(
+                                args.get("backing_dossier_id")
+                                if args.get("backing_dossier_id") is not None
+                                else classified_backing
+                            ),
                         ),
                     )
                     if stage_failures:
@@ -2491,14 +2509,15 @@ class GameSession:
         name: object = None,
         amount: object = None,
         transaction_category: object = None,
+        backing_dossier_id: object = None,
     ) -> int:
         """API/stream/CLI tool propose_directive → structured candidate seam (#522/#517).
 
         Pacification cue/target still reads the tool draft. Punishment facts
-        (punish_action / single target / positive fine amount) come only from
-        explicit tool/action-candidate fields — never prose keyword or number
-        guessing. Incomplete structured punishment fails loud and never degrades
-        to special_decree; ordinary prose discussion keeps the special_decree path.
+        (punish_action / single target / positive fine amount / backing_dossier_id)
+        come only from explicit tool/action-candidate fields — never prose keyword
+        or number guessing. Incomplete structured punishment fails loud and never
+        degrades to special_decree; ordinary prose discussion keeps the special_decree path.
         """
         text = str(draft_text or "").strip()
         if not text:
@@ -2581,6 +2600,7 @@ class GameSession:
                 emperor_text=message_text,
                 amount=n if action == "罚俸" else 0,
                 transaction_category=transaction_category,
+                backing_dossier_id=backing_dossier_id,
             )
             if not pending_id:
                 failure = {
@@ -2875,9 +2895,7 @@ class GameSession:
     ) -> DirectiveView:
         self._refuse_if_settling()
         payload = dict(dossier_payload or {})
-        if not all(str(payload.get(key) or "").strip() for key in (
-            "dossier_action_type", "target_kind", "target_id",
-        )):
+        if not directive_payload_admits_structured_write(payload):
             raise ValueError("新增旨意须由上游提供完整结构化动作与目标")
         directive_id = self.db.add_directive(
             self.state, None, text, "手动新增", notes=notes,
@@ -3076,7 +3094,10 @@ class GameSession:
         # pre_settle owning transaction 与财政等副作用一起物化。
         for pending in self.db.list_directives(self.state, statuses=("pending",)):
             self.db.confirm_directive(int(pending["id"]), self.state)
-        directives = list(self.db.list_directives(self.state, statuses=("draft",)))
+        # #658：Web/CLI free-form draft 在真实颁诏链进入唯一成案接缝（confirm/commit
+        # 已各自 ensure；本口覆盖 add_directive 直落 draft 的路径，幂等）。
+        self.db.ensure_dossiers_for_draft_directives(self.state)
+        directives = list(self.db.list_dossiered_draft_directives(self.state))
         # DB owner supplies the canonical read-only default-approval projection.
         # Negative preview ids participate in stale-decree fingerprinting without
         # colliding with durable turn_directives ids.
@@ -3290,14 +3311,39 @@ class GameSession:
             return [normalize_rescript_layer_a_option(opt) for opt in options_raw]
 
         def _deliberate_runner(item: ra.ValidatedItem) -> Dict[str, object]:
-            # 站台意愿：专用 agent + 整串严格 JSON {title,body,stance}；禁 regex 抽对象
+            # #658：站台意愿 + typed supporter_ids；读关系账/派系态势切片，禁第二 roster
             from ming_sim.agents import run_agent_text
+            from ming_sim.relation_read import project_relation_ledger
+            candidates = ra.list_deliberation_candidate_ids(self.db, self.content)
+            relation_slice = project_relation_ledger(self.db, viewer=None)
+            # 仅保留候选相关边，避免整账灌入
+            cand_set = set(candidates)
+            relation_slice = [
+                row for row in relation_slice
+                if str(row.get("source") or "") in cand_set
+                or str(row.get("target") or "") in cand_set
+            ]
+            # #658：派系态势只保留候选人物 canonical faction 相关行，不灌全表
+            characters = getattr(self.content, "characters", {}) or {}
+            cand_factions = {
+                str(getattr(characters.get(name), "faction", "") or "").strip()
+                for name in candidates
+            }
+            cand_factions.discard("")
+            faction_rows = [
+                row for row in self.db.get_faction_stance_summaries()
+                if str(row.get("faction") or "") in cand_factions
+            ]
             agent = create_rescript_deliberate_agent(self.llm_config, self.agno_db)
             prompt = (
-                "请为以下急务拟定下部议/廷议的站台意愿（JSON："
-                "{\"title\":\"...\",\"body\":\"...\",\"stance\":\"...\"}）。\n"
+                "请为以下急务拟定下部议/廷议站台（JSON："
+                "{\"title\":\"...\",\"body\":\"...\",\"stance\":\"...\","
+                "\"supporter_ids\":[\"...\"]}）。\n"
                 f"标题：{item.row.get('title')}\n语境：{item.row.get('context')}\n"
-                f"批语：{item.choice.get('note') or ''}"
+                f"批语：{item.choice.get('note') or ''}\n"
+                f"候选大臣（只可从中选 supporter_ids，可空）：{json.dumps(candidates, ensure_ascii=False)}\n"
+                f"关系账切片：{json.dumps(relation_slice, ensure_ascii=False)}\n"
+                f"派系态势：{json.dumps(faction_rows, ensure_ascii=False)}"
             )
             raw = run_agent_text(agent, prompt, tag="rescript-deliberate")
             obj = _parse_rescript_json_strict(str(raw or ""))
@@ -3308,7 +3354,16 @@ class GameSession:
             stance = str(obj.get("stance") or "").strip()
             if not (title and body and stance):
                 raise ValueError("deliberate LLM 意愿缺 title/body/stance")
-            return {"title": title, "body": body, "stance": stance}
+            # shape 初检；身份合法性在 apply 事务内再核（整批零写）
+            supporters = obj.get("supporter_ids", [])
+            if supporters is None:
+                supporters = []
+            if not isinstance(supporters, list):
+                raise ValueError("deliberate supporter_ids 须为数组")
+            return {
+                "title": title, "body": body, "stance": stance,
+                "supporter_ids": supporters,
+            }
 
         prewrite = ra.run_prewrite_llms(
             batch,

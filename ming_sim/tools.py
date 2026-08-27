@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from ming_sim.constants import DOSSIER_LINK_TYPES, TURN_UNIT
 from ming_sim.context import _ctx as _content_ctx, state_context
@@ -460,18 +460,20 @@ def build_minister_tools(character: Character, context: CourtContext,
         name: str = "",
         amount: int = 0,
         transaction_category: str = "",
+        backing_dossier_id: Optional[int] = None,
     ) -> str:
         """把已定处置方案拟成一道圣旨草稿呈给皇帝审阅。
 
         decree_text 为完整圣旨正文。若本件为惩处，须同时填 ACTION_CLUSTERS 同名
         结构化字段：punish_action、单一目标（target_id 或 name）、罚俸时正数 amount，
-        以及来自 ACTION_CLUSTERS 的 transaction_category。
+        以及来自 ACTION_CLUSTERS 的 transaction_category；若处置站台者，填
+        backing_dossier_id 指向原廷议案卷。
         仅在正文讨论廷杖/流放/昭雪等制度、未填结构化字段时，不得当作已决惩处。
         """
         text = (decree_text or "").strip()
         if not text:
             return "拟旨失败：圣旨正文为空。"
-        # punish_action/target_id|name/amount：tool schema 显式字段（#517 r3），
+        # punish_action/target_id|name/amount/backing_dossier_id：tool schema 显式字段，
         # 真源在 tool arguments，由 session/web 组装进候选 seam；标记串只带正文。
         # 返回草稿标记，由 minister_chat / GameSession.chat 截获展示给皇帝确认，不在此入库。
         return f"__pending_directive__{text}"

@@ -495,6 +495,8 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
             "locality_scope",
             # #653：pay_order_override 结构化载荷随拟旨草案整道入 staging payload。
             "entries",
+            # #658：御笔强推 target 须随对话拟旨 staging 完整保留，禁第二案卷。
+            "target_dossier_id",
         )
         for field_name in mechanical_fields:
             if draft_res.get(field_name) not in (None, ""):
@@ -508,7 +510,11 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
             semantic_payload["source_chat_turn_id"] = origin_pin
         if isinstance(draft_res.get("participant_roster"), list):
             semantic_payload["participant_roster"] = draft_res["participant_roster"]
-        if not is_existing_update:
+        # #658：纯强推不得 setdefault 普通 triad，否则混载触发互斥拒收 / 造第二案卷
+        from ming_sim.db import classify_directive_structured_kind
+        if not is_existing_update and classify_directive_structured_kind(
+            semantic_payload,
+        ) != "push":
             semantic_payload.setdefault("dossier_action_type", "special_decree")
             semantic_payload.setdefault("target_kind", "policy")
             semantic_payload.setdefault("target_id", ctx.player_message.strip())
@@ -954,6 +960,7 @@ def stage_punishment_candidate(
     extracted_mode: object = None,
     amount: object = 0,
     transaction_category: object = "",
+    backing_dossier_id: object = None,
     pend_for_minister: Optional[List[Dict[str, Any]]] = None,
 ) -> int:
     """Shared punishment candidate write: mode + same-target update."""
@@ -1003,6 +1010,11 @@ def stage_punishment_candidate(
         "punish_action": action,
         "mode": mode,
     }
+    # #658：与 durable apply 共吃 require_backing_dossier_id，禁第二份 int/存在性分支
+    # 省略时显式写 None，改草 merge 不得继承旧 backing 关联
+    from ming_sim.db import require_backing_dossier_id
+    backing = require_backing_dossier_id(db, backing_dossier_id)
+    staged["backing_dossier_id"] = int(backing) if backing is not None else None
     category = str(transaction_category or "").strip()
     if category:
         valid, _ = validate_action_candidate_shape(
@@ -1053,6 +1065,7 @@ def _materialize_punishment(ctx: MaterializeCtx) -> None:
         extracted_mode=intent.get("mode"),
         amount=intent.get("amount"),
         transaction_category=intent.get("transaction_category"),
+        backing_dossier_id=intent.get("backing_dossier_id"),
         pend_for_minister=ctx.pend_for_minister,
     )
     if pending_id:
@@ -3165,6 +3178,10 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 FieldSpec(
                     "mode", "颁布方式",
                     frozenset({"ordinary", "midzhi"}), "",
+                ),
+                # #658：处置指向哪次站台；optional positive int（as_int+default None+int_lo=1），禁 generic clamp
+                FieldSpec(
+                    "backing_dossier_id", "站台案卷", None, None, as_int=True, int_lo=1,
                 ),
             ),
             materialize_fn=_materialize_punishment,

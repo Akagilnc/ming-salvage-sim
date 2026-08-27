@@ -335,11 +335,17 @@ def test_failed_mindreading_marks_terminal_and_stops_pending(game, monkeypatch):
 def test_real_chat_persistence_atomically_accepts_mindreading_task(game, monkeypatch):
     """真实 chat 持久化 counterexample：回话链接与任务接受**原子**提交——完成的回话必是
     'running'（已接受），重开经 API 可恢复（pending）。若把接受从回话提交拆出（旧非原子实现），
-    完成的回话会留空状态 → 本断言（status=='running' / pending）失败。"""
+    完成的回话会留空状态 → 本断言（status=='running' / pending）失败。
+
+    读心阻塞用显式 release（无共享截止线竞态）；highlight 属无关尾腿，本契约隔离之；
+    finally 放行 + join + queue-drain，生产降级日志不删不吞。
+    """
     import threading as _t
 
     import web_app as web_app_mod
-    from tests.test_audience_background import _FakeAgent, _web_game, _wait_for
+    from tests.test_audience_background import (
+        _FakeAgent, _web_game, _wait_for, _wait_for_pending_writes_to_drain,
+    )
 
     db, state, content = game
     minister = "温体仁"
@@ -348,12 +354,19 @@ def test_real_chat_persistence_atomically_accepts_mindreading_task(game, monkeyp
     release = _t.Event()
 
     def blocked(**_kwargs):
-        release.wait(timeout=2.0)  # 读心阻塞：回话已完成、任务在办、未落库
+        # 显式 release 控制：测试断言完成前不返回；禁与 _wait_for 共用 timeout 竞态
+        release.wait()
         return None
 
     monkeypatch.setattr(web_app_mod, "run_mindreading_for_turn", blocked)
-    _t.Thread(target=lambda: list(web_game.chat_stream(minister, "问？")), daemon=True).start()
+    # 本契约不覆盖 highlight：隔离尾腿，避免假 session 无 base_url 的既有降级日志干扰
+    monkeypatch.setattr(web_app_mod, "run_highlight_judge", lambda **_k: [])
 
+    stream_thread = _t.Thread(
+        target=lambda: list(web_game.chat_stream(minister, "问？")),
+        daemon=True,
+    )
+    stream_thread.start()
     holder: dict = {}
 
     def _reply_linked_and_accepted():
@@ -364,11 +377,17 @@ def test_real_chat_persistence_atomically_accepts_mindreading_task(game, monkeyp
             return db.get_mindreading_status(int(row["id"])) == "running"
         return False
 
-    assert _wait_for(_reply_linked_and_accepted, timeout=2.0)
+    try:
+        assert _wait_for(_reply_linked_and_accepted, timeout=2.0)
+        cid = holder["cid"]
+        # 公共恢复结果：重开 API 见任务 pending（accepted 已持久，恢复会轮询/投递）
+        assert web_game.mindreading_for_minister(minister, cid)["mindreading_pending"] is True
+    finally:
+        release.set()
+        stream_thread.join(timeout=5.0)
+        _wait_for_pending_writes_to_drain(web_game)
+
     cid = holder["cid"]
-    # 公共恢复结果：重开 API 见任务 pending（accepted 已持久，恢复会轮询/投递）
-    assert web_game.mindreading_for_minister(minister, cid)["mindreading_pending"] is True
-    release.set()
     assert _wait_for(lambda: db.get_mindreading_status(cid) in {"skip", "failed"})
 
 

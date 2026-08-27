@@ -975,36 +975,211 @@ def _apply_hold(db: Any, state: Any, item: ValidatedItem) -> None:
     )
 
 
+def list_deliberation_candidate_ids(db: Any, content: Any) -> List[str]:
+    """廷议站台候选 = 在朝可召大臣，按 canonical 人物 id 稳定排序（#658）。
+
+    空集合合法（等同无人站台）。不另加品级/派系/关系/人数过滤。
+    """
+    from ming_sim.session import _is_summonable_court_minister
+
+    if content is None:
+        raise ValueError("deliberate 需要 content 以解析可召候选")
+    resolve = getattr(db, "resolve_power_id", None)
+    names: List[str] = []
+    characters = getattr(content, "characters", {}) or {}
+    for name, ch in characters.items():
+        if not _is_summonable_court_minister(ch, resolve_power_id=resolve):
+            continue
+        # 与 can_summon 同口径：DB 权威 status 须 active（罢/狱/流/致仕/故/未登场均排除）
+        status, _ = db.get_character_status(str(name))
+        if status != "active":
+            continue
+        names.append(str(name))
+    return sorted(names)
+
+
+def _normalize_deliberate_will(
+    will: Mapping[str, object],
+    *,
+    item: ValidatedItem,
+    candidate_ids: Sequence[str],
+) -> Dict[str, object]:
+    """校验 deliberate prewrite shape；非法 supporter 整批响亮失败。"""
+    if not isinstance(will, Mapping):
+        raise ValueError(f"deliberate 缺 prewrite 意愿：{item.decision_key}")
+    title = str(will.get("title") or item.row.get("title") or "廷议")
+    body = str(will.get("body") or will.get("stance") or will.get("text") or "")
+    if not body.strip():
+        raise ValueError("deliberate LLM 意愿正文为空")
+    raw_supporters = will.get("supporter_ids", [])
+    if raw_supporters is None:
+        raw_supporters = []
+    if not isinstance(raw_supporters, list):
+        raise ValueError("deliberate supporter_ids 须为数组")
+    candidate_set = {str(x) for x in candidate_ids}
+    supporters: List[str] = []
+    seen: set[str] = set()
+    for raw in raw_supporters:
+        if not isinstance(raw, str):
+            raise ValueError(f"非法站台身份（非字符串）：{raw!r}")
+        name = raw.strip()
+        if not name:
+            raise ValueError("非法站台身份：空串")
+        if name not in candidate_set:
+            raise ValueError(f"非法站台身份：{name}")
+        if name in seen:
+            continue
+        seen.add(name)
+        supporters.append(name)
+    return {
+        "title": title,
+        "body": body,
+        "stance": str(will.get("stance") or ""),
+        "supporter_ids": supporters,
+    }
+
+
 def _apply_deliberate(
     db: Any,
     state: Any,
     item: ValidatedItem,
     prewrite: PrewriteResults,
+    *,
+    content: Any = None,
 ) -> None:
-    will = prewrite.deliberate_by_key.get(item.decision_key)
-    if not isinstance(will, dict):
-        raise ValueError(f"deliberate 缺 prewrite 意愿：{item.decision_key}")
-    # P6：strip 仅判空；insert 用原文 title/body
-    title = str(will.get("title") or item.row.get("title") or "廷议")
-    body = str(will.get("body") or will.get("stance") or will.get("text") or "")
-    if not body.strip():
-        raise ValueError("deliberate LLM 意愿正文为空")
-    origin = f"rescript_deliberate:{item.decision_key}"
-    # 既有 origin 去重
-    existing = db.conn.execute(
-        "SELECT id FROM issues WHERE origin_ref=? LIMIT 1", (origin,),
-    ).fetchone()
+    """#658 廷议 dossier-first：唯一 durable 主体＝proposed 案卷。
+
+    - 有站台 → deliberation_state=backed + 当面站台背书（decision_key provenance）
+    - 无人 → stalled + 一条 origin_ref=dossier:<id> 惯性 issue
+    - 删除 rescript_deliberate:<key> 平行真源
+    """
+    existing = db.find_deliberation_dossier_by_decision_key(item.decision_key)
     if existing is not None:
         return
-    db.insert_issue(
+    candidates = list_deliberation_candidate_ids(db, content)
+    will = _normalize_deliberate_will(
+        prewrite.deliberate_by_key.get(item.decision_key),  # type: ignore[arg-type]
+        item=item,
+        candidate_ids=candidates,
+    )
+    supporters = list(will["supporter_ids"])
+    deliberation_state = "backed" if supporters else "stalled"
+    title = str(will["title"])
+    body = str(will["body"])
+    payload = {
+        "dossier_action_type": "policy",
+        "mode": "ordinary",
+        "decision_key": item.decision_key,
+        "deliberation_state": deliberation_state,
+        "title": title,
+        "body": body,  # P6 原文；decree_text 经成案内核 strip
+        "target_kind": "policy",
+        "target_id": f"deliberation:{item.decision_key}",
+        "locality_scope": "none",
+    }
+    dossier_id = int(db.create_decree_dossier(
         state,
-        kind="situation",
-        title=title,
-        origin_kind="rescript_deliberate",
-        origin_ref=origin,
-        stage_text=body,
+        action_type="policy",
+        decree_text=body if body.strip() else title,
+        target_kind="policy",
+        target_id=f"deliberation:{item.decision_key}",
+        payload=payload,
+        status="proposed",
+        commit=False,
+    ))
+    for name in supporters:
+        db.add_dossier_endorsement(
+            dossier_id,
+            form="当面站台",
+            endorser_id=name,
+            imperial=False,
+            decision_key=item.decision_key,
+            source_chat_turn_id=0,
+            commit=False,
+        )
+    if deliberation_state == "stalled":
+        origin = f"dossier:{dossier_id}"
+        already = db.conn.execute(
+            "SELECT id FROM issues WHERE origin_ref=? LIMIT 1", (origin,),
+        ).fetchone()
+        if already is None:
+            db.insert_issue(
+                state,
+                kind="situation",
+                title=title,
+                origin_kind="deliberation",
+                origin_ref=origin,
+                stage_text=body,
+                commit=False,
+            )
+
+
+def apply_imperial_deliberation_push(
+    db: Any,
+    state: Any,
+    *,
+    target_dossier_id: int,
+    directive_identity: str,
+    decree_text: str = "",
+    mode: str | None = None,
+    commit: bool = False,
+) -> int:
+    """自由下旨御笔强推 stalled 廷议：复用案卷 + 御笔手敕 + stalled→backed。
+
+    directive_identity＝本次自由下旨 durable identity（decision_key provenance）。
+    mode 为 push 载荷已归一的 mode 真源；写入原案卷 payload.mode，禁第二存储。
+    """
+    did = int(target_dossier_id)
+    dkey = str(directive_identity or "").strip()
+    if not dkey:
+        raise ValueError("御笔强推缺 directive identity")
+    row = db.get_decree_dossier(did)
+    if row is None:
+        raise ValueError(f"御笔强推目标案卷不存在：{did}")
+    if str(row.get("status") or "") != "proposed":
+        raise ValueError(f"御笔强推只接 proposed 案卷：{did}")
+    payload = row.get("payload")
+    if not isinstance(payload, dict):
+        payload = json.loads(str(row.get("payload_json") or "{}"))
+    if not isinstance(payload, dict):
+        raise ValueError("廷议案卷 payload 非对象")
+    if str(payload.get("deliberation_state") or "") != "stalled":
+        raise ValueError(f"御笔强推只接 stalled 廷议：{did}")
+    origin = f"dossier:{did}"
+    issue = db.conn.execute(
+        "SELECT id, status FROM issues WHERE origin_ref=? AND status='active' LIMIT 1",
+        (origin,),
+    ).fetchone()
+    if issue is None:
+        raise ValueError(f"御笔强推要求 active issue origin_ref={origin}")
+    new_payload = dict(payload)
+    new_payload["deliberation_state"] = "backed"
+    if mode is not None:
+        # 贯穿既有 mode 真源（payload.mode）；普通缺省 ordinary 亦显式落库
+        new_payload["mode"] = db._normalize_dossier_mode(mode)
+    if decree_text and not str(new_payload.get("imperial_push_note") or ""):
+        new_payload["imperial_push_note"] = str(decree_text)
+    db.update_decree_dossier_payload(did, new_payload, commit=False)
+    db.add_dossier_endorsement(
+        did,
+        form="御笔手敕",
+        endorser_id="",
+        imperial=True,
+        decision_key=dkey,
+        source_chat_turn_id=0,
         commit=False,
     )
+    # #658：stalled→backed 同事务终结 origin_ref 投影 issue，禁 durable ledger 自相矛盾
+    db.close_issue(
+        state,
+        int(issue["id"]),
+        reason="resolved",
+        narrative=str(decree_text or new_payload.get("title") or "御笔强推"),
+        commit=False,
+    )
+    if commit:
+        db.conn.commit()
+    return did
 
 
 def _apply_return_revise(
@@ -1154,7 +1329,7 @@ def apply_rescript_batch(
                 continue
 
             if action == "deliberate":
-                _apply_deliberate(db, state, item, prewrite)
+                _apply_deliberate(db, state, item, prewrite, content=content)
                 _cas_decided(db, item)
                 result.applied_keys.append(item.decision_key)
                 continue

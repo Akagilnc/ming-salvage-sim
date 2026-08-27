@@ -56,6 +56,15 @@ def canned_full_settlement(
 
     monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
 
+    # #658：真实 ensure 成案后颁布判官亦为外部 LLM 缝——canned 默认全顺颁
+    def _promulgate(dossiers, *_a, **_k):
+        return [
+            {"dossier_id": int(row["id"]), "decision": "promulgated"}
+            for row in dossiers
+        ]
+
+    monkeypatch.setattr(decree_mod, "llm_promulgation_verdicts", _promulgate)
+
     def _sim(*a, **k):
         payload = k.get("simulator_payload") or (a[10] if len(a) > 10 else None) or {}
         simulator_calls.append({
