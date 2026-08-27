@@ -16544,6 +16544,37 @@ class GameDB:
                     names.add(displaced_name)
         return names
 
+    def _affected_people_from_pending_action(
+        self, pa: Dict[str, object], payload: Dict[str, object],
+    ) -> set[str]:
+        """Formal people mutated directly by a committed pending action.
+
+        Office rows only stage dossiers here—person impact arrives via
+        promulgation affected sets. Consort cultivation and secret-order
+        writes change agent context immediately and must join outer-commit
+        registry projection when settle passes registry=None.
+        """
+        kind = str(pa.get("kind") or "")
+        action = str(pa.get("action") or "")
+        if kind == "consort" and action == "调教":
+            name = str(payload.get("name") or pa.get("minister_name") or "").strip()
+            return {name} if name else set()
+        if kind != "secret_order":
+            return set()
+        if action == "新建":
+            name = str(
+                payload.get("assignee") or pa.get("minister_name") or ""
+            ).strip()
+            return {name} if name else set()
+        oid = pa.get("target_id")
+        if oid is None:
+            return set()
+        order = self.get_secret_order(int(oid))
+        if order is None:
+            return set()
+        name = str(order.get("minister_name") or "").strip()
+        return {name} if name else set()
+
     def _apply_military_order_office_effect(
         self, state, payload, *, actor: str, reason: str, origin_ref: str,
         content=None, registry=None,
@@ -18042,6 +18073,11 @@ class GameDB:
                     ).fetchone()
                     if row is not None and row["secret_order_id"] is not None:
                         item["secret_order_id"] = int(row["secret_order_id"])
+                # Direct person mutations (调教/密令…) surface names for outer-commit
+                # registry projection when settle passes registry=None.
+                affected = self._affected_people_from_pending_action(pa, payload)
+                if affected:
+                    item["affected_people"] = sorted(affected)
                 applied.append(item)
         if owns_transaction and owns_rejection_collector:
             from ming_sim.applier import mirror_rejections_after_commit
@@ -18505,9 +18541,11 @@ class GameDB:
             if infer_office_type_from_office(office, "", self.llm_config) == "后宫":
                 from ming_sim.session import apply_appointment
                 data = {"name": name, "office": office, "office_type": "后宫", "approved": True}
+                # registry 仍为 None（事务内零变更）；返回 canonical appointed
+                # 供 outer-commit project_outcome：新人 register、在册 refresh。
                 appointed, _displaced = apply_appointment(
                     self, state, content, registry, data, llm_config=self.llm_config)
-                return {name} if appointed else set()
+                return {appointed} if appointed else set()
             # 朝臣任命/升迁/调任 → person-only adapter（不经 full settlement recovery）。
             reason = str(payload.get("reason") or "奉旨任免").strip() or "奉旨任免"
             office_type = str(payload.get("office_type") or "").strip()
