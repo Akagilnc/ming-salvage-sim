@@ -17232,9 +17232,7 @@ class GameDB:
                 state, target, "处置", payload_summary=punish_action,
                 source="punishment", origin_ref=origin_ref, commit=False,
             )
-            self._maybe_write_backing_betray_credit(
-                state, target=target, backing_id=backing_id, reason=reason,
-            )
+            # #658：放归/昭雪为非惩罚动作，成功亦不写 backing 辜负。
             return
         if punish_action == "罚俸":
             amount = int(payload.get("amount") or 0)
