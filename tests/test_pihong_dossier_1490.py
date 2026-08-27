@@ -3740,6 +3740,118 @@ def test_658_backing_credit_on_punish_promulgation(game):
             assert db.get_character_status(minister)[0] == expect_status
 
 
+def test_658_stage_rejects_bad_backing_zero_write(game):
+    """#658：stage 首写接缝拒坏 shape / 不存在 id；pending/案卷/信用零写。"""
+    from ming_sim.action_materialize import stage_punishment_candidate
+    from ming_sim.credit_events import KIND_BETRAY
+
+    db, state, content = game
+    from ming_sim import rescript_actions as ra
+
+    names = ra.list_deliberation_candidate_ids(db, content)
+    actor, target = names[0], names[1]
+
+    def snapshot() -> tuple[int, int, int]:
+        pending = int(db.conn.execute(
+            "SELECT COUNT(*) AS c FROM pending_actions WHERE status='pending'"
+        ).fetchone()["c"])
+        dossiers = len(db.list_decree_dossiers())
+        edges = int(db.conn.execute(
+            "SELECT COUNT(*) AS c FROM relation_edge_events WHERE event_kind=?",
+            (KIND_BETRAY,),
+        ).fetchone()["c"])
+        return pending, dossiers, edges
+
+    before = snapshot()
+    # 代表坏 shape + 不存在 id；不恢复 chat 全排列
+    for bad in (True, 999999):
+        with pytest.raises(ValueError):
+            stage_punishment_candidate(
+                db, state.turn, actor,
+                text=f"着罚{target}俸。",
+                target_id=target,
+                punish_action="罚俸",
+                amount=10,
+                backing_dossier_id=bad,
+            )
+    assert snapshot() == before
+
+
+def test_658_backing_credit_batch_rolls_back_on_later_failure(game):
+    """#658：同批前案可写信用、后案效果失败 → 信用/效果/案卷状态整批回滚。"""
+    from ming_sim import rescript_actions as ra
+    from ming_sim.credit_events import KIND_BETRAY
+
+    db, state, content = game
+    minister = _summonable_name(db, content)
+    other = next(
+        n for n in ra.list_deliberation_candidate_ids(db, content) if n != minister
+    )
+
+    urgent, _ = _plant_urgent_desk(db, state)
+    key = urgent["decision_key"]
+    batch = ra.validate_all([urgent], [{
+        "decision_key": key, "action": "deliberate", "label": "下部议",
+    }])
+    ra.apply_rescript_batch(
+        db, state, batch,
+        ra.PrewriteResults(deliberate_by_key={
+            key: {
+                "title": "清丈", "body": "臣请清丈。", "stance": "主清",
+                "supporter_ids": [minister],
+            },
+        }),
+        content=content,
+    )
+    bid = int(db.find_deliberation_dossier_by_decision_key(key)["id"])
+
+    def _plant(*, target: str, punish_action: str, amount: int = 0) -> int:
+        payload = {
+            "punish_action": punish_action,
+            "target_id": target,
+            "backing_dossier_id": bid,
+            "text": f"着{punish_action}{target}",
+        }
+        if amount:
+            payload["amount"] = amount
+        return int(db.create_decree_dossier(
+            state, action_type="punishment",
+            decree_text=str(payload["text"]),
+            target_kind="character", target_id=target,
+            payload=payload,
+        ))
+
+    first_id = _plant(target=minister, punish_action="罚俸", amount=10)
+    # 后案：放归 active 人物 → 效果响亮失败（前案本可写信用与经济）
+    second_id = _plant(target=other, punish_action="放归")
+
+    edges_before = int(db.conn.execute(
+        "SELECT COUNT(*) AS c FROM relation_edge_events WHERE event_kind=?",
+        (KIND_BETRAY,),
+    ).fetchone()["c"])
+    treasury_before = int(state.metrics.get("国库") or 0)
+    status_other_before = db.get_character_status(other)[0]
+
+    with pytest.raises(ValueError):
+        db.apply_dossier_verdicts(
+            state,
+            [
+                {"dossier_id": first_id, "decision": "promulgated"},
+                {"dossier_id": second_id, "decision": "promulgated"},
+            ],
+            content=content,
+        )
+
+    assert int(db.conn.execute(
+        "SELECT COUNT(*) AS c FROM relation_edge_events WHERE event_kind=?",
+        (KIND_BETRAY,),
+    ).fetchone()["c"]) == edges_before
+    assert int(state.metrics.get("国库") or 0) == treasury_before
+    assert db.get_character_status(other)[0] == status_other_before
+    assert db.get_decree_dossier(first_id)["status"] == "proposed"
+    assert db.get_decree_dossier(second_id)["status"] == "proposed"
+
+
 def test_658_endorsement_provenance_xor(game):
     """#658：背书 provenance 恰为 chat_turn 或 decision_key 之一。"""
     db, state, content = game
