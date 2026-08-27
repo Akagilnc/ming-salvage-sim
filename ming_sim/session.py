@@ -1672,6 +1672,8 @@ class GameSession:
                                 if args.get("backing_dossier_id") is not None
                                 else classified_backing
                             ),
+                            issue_id=args.get("issue_id"),
+                            issue_disposition=args.get("issue_disposition"),
                         ),
                     )
                     if stage_failures:
@@ -2514,6 +2516,8 @@ class GameSession:
         amount: object = None,
         transaction_category: object = None,
         backing_dossier_id: object = None,
+        issue_id: object = None,
+        issue_disposition: object = None,
     ) -> int:
         """API/stream/CLI tool propose_directive → structured candidate seam (#522/#517).
 
@@ -2557,11 +2561,13 @@ class GameSession:
 
         # #517 r3：惩处只认 ACTION_CLUSTERS 同名显式字段，不扫散文关键词/数字。
         from ming_sim.action_materialize import (
+            issue_dispositions_allowed,
             punish_actions_effective,
             stage_punishment_candidate,
         )
         action = str(punish_action or "").strip()
-        if action in punish_actions_effective():
+        disposition = str(issue_disposition or "").strip()
+        if action in punish_actions_effective() or disposition in issue_dispositions_allowed():
             raw_target = str(target_id or name or "").strip()
             target = (
                 _find_existing_minister(self.content, raw_target, self.db)
@@ -2572,8 +2578,8 @@ class GameSession:
                 n = int(amount) if amount is not None and amount != "" else 0
             except (TypeError, ValueError):
                 n = 0
-            if not target or (action == "罚俸" and n <= 0):
-                if not target:
+            if (not target and disposition != "压下") or (action == "罚俸" and n <= 0):
+                if not target and disposition != "压下":
                     message = (
                         "惩处目标未知或歧义，未能拟旨入档；"
                         "请指明单一在册对象后再拟。"
@@ -2605,6 +2611,8 @@ class GameSession:
                 amount=n if action == "罚俸" else 0,
                 transaction_category=transaction_category,
                 backing_dossier_id=backing_dossier_id,
+                issue_id=issue_id,
+                issue_disposition=disposition,
             )
             if not pending_id:
                 failure = {
