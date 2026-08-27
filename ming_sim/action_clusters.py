@@ -103,10 +103,11 @@ def classifier_json_fields_prompt() -> str:
                 vals = sorted(f.allowed, key=lambda x: (x != "无", x))
                 lines.append(f'  "{f.zh}": "{"|".join(vals)}",')
             elif f.as_int:
-                lines.append(f'  "{f.zh}": 0,')
-            elif f.default is None:
-                # 可选 typed id（backing_dossier_id）：整数或 null，禁字符串占位
-                lines.append(f'  "{f.zh}": null,')
+                if f.default is None:
+                    # 可选正整数 id：JSON null 缺省 | 命中时正整数（禁字符串占位）
+                    lines.append(f'  "{f.zh}": null|1,')
+                else:
+                    lines.append(f'  "{f.zh}": 0,')
             else:
                 lines.append(f'  "{f.zh}": "",')
     # trailing comma cleanup on last line
@@ -242,8 +243,8 @@ def normalize_one_candidate(obj: Mapping[str, Any], *, soft: bool) -> Dict[str, 
         raw = _field_raw(obj, spec)
         if raw is None:
             raw = spec.default
-        # #658：backing_dossier_id 禁 generic as_int/str clamp；缺省保持 None，交给 stage 权威
-        if name == "backing_dossier_id":
+        # #658：可选正整数 id（as_int + default None）禁 generic clamp；raw 直达严格写边界
+        if spec.as_int and spec.default is None:
             out[name] = _field_raw(obj, spec)
             continue
         if spec.as_int:
