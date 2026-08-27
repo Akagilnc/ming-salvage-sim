@@ -724,17 +724,19 @@ def create_rescript_revise_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Ag
 
 
 def create_rescript_deliberate_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
-    """#657 廷议站台：输出唯一 shape {title, body, stance} 整串严格 JSON。"""
+    """#658 廷议站台：{title, body, stance, supporter_ids} 整串严格 JSON。"""
     del agno_db
     ctx = _ctx()
     cfg = _llm_for_role(llm_config, "extractor")
     instructions = [
         ctx.game_world_prompt,
         (
-            "你是廷议站台官。根据急务与批语输出站台意愿。\n"
+            "你是廷议站台官。根据急务、批语、关系账与派系态势，判定谁肯当面站台。\n"
             "只输出一个 JSON 对象，shape 必须是 "
-            '{"title":"...","body":"...","stance":"..."}' "。\n"
-            "title/body/stance 均须非空字符串；禁止数组外壳、禁止围栏外 prose。"
+            '{"title":"...","body":"...","stance":"...","supporter_ids":["..."]}' "。\n"
+            "title/body/stance 均须非空字符串；supporter_ids 为候选名单中的人物 id 数组，"
+            "可空（无人站台＝议而不决）；禁止从散文抠人名以外的第二名单；"
+            "禁止数组外壳、禁止围栏外 prose。"
         ),
     ]
     return Agent(

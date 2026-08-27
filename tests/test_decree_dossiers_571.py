@@ -3105,6 +3105,7 @@ def test_web_inner_treasury_allocation_closes_next_month_without_replay(
         db.apply_dossier_promulgation(
             state, dossier["id"], "promulgated", content=content,
         )
+    db.mark_directives_issued(state)
     assert state.metrics["内库"] == 25
     assert [
         [row["delta"] for row in db.list_economy_moves_for_dossier(dossier["id"])]
@@ -3194,6 +3195,7 @@ def test_cli_protection_execution_closes_from_next_month_extractor(game, monkeyp
     db.ensure_dossiers_for_draft_directives(state)
     dossier = db.get_dossier_for_directive(directive_id)
     db.apply_dossier_promulgation(state, dossier["id"], "promulgated", content=content)
+    db.mark_directives_issued(state)
     assert db.get_decree_dossier(dossier["id"])["status"] == "executing"
 
     state.turn += 1

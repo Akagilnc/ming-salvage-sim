@@ -535,6 +535,87 @@ def _has_stop_condition(stop_condition: object) -> bool:
     return isinstance(parsed, (dict, list)) and bool(parsed)
 
 
+def _optional_positive_dossier_id(raw: object, *, field: str) -> Optional[int]:
+    """#658：typed dossier id 单权威——真正缺省→None；一旦出现只接正整数。
+
+    拒 0/负/bool/float/数字字符串。target 与 backing 共吃，禁第二份 optional-positive。
+    """
+    if raw in (None, ""):
+        return None
+    value = strict_int(raw, accept_numeric_strings=False)
+    if value <= 0:
+        raise ValueError(f"{field} 非法 shape：{raw!r}")
+    return value
+
+
+def imperial_push_target_dossier_id(payload: object) -> Optional[int]:
+    """#658：解析合法御笔强推 target_dossier_id；缺省 → None；坏 shape 响亮失败。
+
+    capture / session.add / db.update / extract 共吃本函数——禁第二份 int>0 分支。
+    Mapping 同时认 target_dossier_id 与抽取原键 目标案卷ID。
+    """
+    if isinstance(payload, Mapping):
+        if "target_dossier_id" in payload:
+            raw = payload.get("target_dossier_id")
+        elif "目标案卷ID" in payload:
+            raw = payload.get("目标案卷ID")
+        else:
+            return None
+    else:
+        raw = payload
+    return _optional_positive_dossier_id(raw, field="target_dossier_id")
+
+
+def parse_backing_dossier_id(raw: object) -> Optional[int]:
+    """#658：处置 backing_dossier_id 单权威解析；缺省→None；坏 shape 响亮失败。
+
+    首写 stage 与 durable apply 共吃；禁 generic as_int clamp 成「未提供」。
+    """
+    return _optional_positive_dossier_id(raw, field="backing_dossier_id")
+
+
+def require_backing_dossier_id(db: object, raw: object) -> Optional[int]:
+    """解析 + 存在性：有值则案卷必须在册；供 stage 首写与 apply 复用。"""
+    backing = parse_backing_dossier_id(raw)
+    if backing is None:
+        return None
+    getter = getattr(db, "get_decree_dossier", None)
+    if getter is None or getter(backing) is None:
+        raise ValueError(f"backing_dossier_id 所指案卷不存在：{backing}")
+    return backing
+
+
+def directive_payload_has_ordinary_triad(payload: Mapping[str, object]) -> bool:
+    """普通旨意结构化 triad：动作类型 + 目标类型 + 目标ID。"""
+    return all(
+        str(payload.get(key) or "").strip()
+        for key in ("dossier_action_type", "target_kind", "target_id")
+    )
+
+
+def classify_directive_structured_kind(payload: Mapping[str, object]) -> str:
+    """#658 旨意结构化互斥权威：'push' | 'ordinary' | 'empty'；并存响亮拒绝。
+
+    extract / capture / staging / merge / ensure 共吃——禁第二份 triad↔target 判定。
+    """
+    has_push = imperial_push_target_dossier_id(payload) is not None
+    has_triad = directive_payload_has_ordinary_triad(payload)
+    if has_push and has_triad:
+        raise ValueError(
+            "旨意不得同时带普通结构化 triad 与御笔强推 target_dossier_id"
+        )
+    if has_push:
+        return "push"
+    if has_triad:
+        return "ordinary"
+    return "empty"
+
+
+def directive_payload_admits_structured_write(payload: Mapping[str, object]) -> bool:
+    """旨意可落库：普通 triad，或 #658 御笔强推 typed target（互斥）。"""
+    return classify_directive_structured_kind(payload) != "empty"
+
+
 def _coerce_deadline_months(raw: object, *, default: int = 0) -> int:
     """解析密令期限；显式 0 是合法值，不能被缺省兜底吞掉。"""
     if raw is None:
@@ -1568,17 +1649,23 @@ class GameDB:
             CREATE INDEX IF NOT EXISTS idx_dossier_reconciliations_dossier
                 ON decree_dossier_reconciliations(dossier_id, turn, id);
             -- ADR 0070：担名与办事名单分立；条目只能指向落条目前已存在的案卷。
+            -- #658 later-wins：provenance 恰为 source_chat_turn_id>0 或 decision_key 非空之一。
+            -- chat_turn 删除走显式清理（见 rollback 路径），不靠 FK CASCADE 绑死批红路径。
             CREATE TABLE IF NOT EXISTS decree_dossier_endorsements (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 dossier_id INTEGER NOT NULL,
                 form TEXT NOT NULL CHECK(form IN ('会签','当面站台','御笔手敕')),
                 endorser_id TEXT NOT NULL DEFAULT '',
                 imperial INTEGER NOT NULL DEFAULT 0 CHECK(imperial IN (0,1)),
-                source_chat_turn_id INTEGER NOT NULL,
+                source_chat_turn_id INTEGER NOT NULL DEFAULT 0,
+                decision_key TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(dossier_id, form, endorser_id, imperial, source_chat_turn_id),
-                FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE,
-                FOREIGN KEY(source_chat_turn_id) REFERENCES chat_turns(id) ON DELETE CASCADE
+                UNIQUE(dossier_id, form, endorser_id, imperial, source_chat_turn_id, decision_key),
+                CHECK (
+                    (source_chat_turn_id > 0 AND decision_key = '')
+                    OR (source_chat_turn_id = 0 AND decision_key != '')
+                ),
+                FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
             );
             CREATE INDEX IF NOT EXISTS idx_dossier_endorsements_dossier
                 ON decree_dossier_endorsements(dossier_id, id);
@@ -2205,6 +2292,7 @@ class GameDB:
             "INTEGER NOT NULL DEFAULT 0 CHECK (edict_overdraw >= 0)",
         )
         self._migrate_building_logs_to_durable_audit()
+        self._migrate_endorsement_decision_provenance()
         self._ensure_office_type_parents()
         self._ensure_event_parents()
         for column, definition in {
@@ -3443,6 +3531,67 @@ class GameDB:
                 if str(office_type).strip()
             }
         ) - set(PERSON_TITLE_KINDS)
+
+    def _migrate_endorsement_decision_provenance(self) -> None:
+        """#658 ADR 0070 later-wins：背书 provenance = chat_turn XOR decision_key。
+
+        旧表带 chat_turns FK 且无 decision_key；重建以允许批红路径不伪造 chat turn。
+        既有行一律 source_chat_turn_id>0 + decision_key=''，满足新 CHECK。
+        """
+        cols = {
+            str(row["name"])
+            for row in self.conn.execute(
+                "PRAGMA table_info(decree_dossier_endorsements)"
+            ).fetchall()
+        }
+        if not cols:
+            return
+        has_decision_key = "decision_key" in cols
+        has_chat_fk = any(
+            str(row["table"]) == "chat_turns"
+            for row in self.conn.execute(
+                "PRAGMA foreign_key_list(decree_dossier_endorsements)"
+            ).fetchall()
+        )
+        if has_decision_key and not has_chat_fk:
+            return
+        # 旧表可能尚无 decision_key 列；SELECT 用条件表达式兜底。
+        select_key = (
+            "decision_key" if has_decision_key else "'' AS decision_key"
+        )
+        self.conn.executescript(
+            f"""
+            CREATE TABLE decree_dossier_endorsements_658 (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                dossier_id INTEGER NOT NULL,
+                form TEXT NOT NULL CHECK(form IN ('会签','当面站台','御笔手敕')),
+                endorser_id TEXT NOT NULL DEFAULT '',
+                imperial INTEGER NOT NULL DEFAULT 0 CHECK(imperial IN (0,1)),
+                source_chat_turn_id INTEGER NOT NULL DEFAULT 0,
+                decision_key TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(dossier_id, form, endorser_id, imperial, source_chat_turn_id, decision_key),
+                CHECK (
+                    (source_chat_turn_id > 0 AND decision_key = '')
+                    OR (source_chat_turn_id = 0 AND decision_key != '')
+                ),
+                FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
+            );
+            INSERT INTO decree_dossier_endorsements_658
+                (id, dossier_id, form, endorser_id, imperial,
+                 source_chat_turn_id, decision_key, created_at)
+            SELECT id, dossier_id, form, endorser_id, imperial,
+                   source_chat_turn_id,
+                   {select_key},
+                   created_at
+            FROM decree_dossier_endorsements;
+            DROP TABLE decree_dossier_endorsements;
+            ALTER TABLE decree_dossier_endorsements_658
+                RENAME TO decree_dossier_endorsements;
+            CREATE INDEX IF NOT EXISTS idx_dossier_endorsements_dossier
+                ON decree_dossier_endorsements(dossier_id, id);
+            """
+        )
 
     def _migrate_building_logs_to_durable_audit(self) -> None:
         """Keep building history after its live building has been removed."""
@@ -12083,6 +12232,21 @@ class GameDB:
         self, payload: Dict[str, object], *, content=None, current_turn: int = 0,
     ) -> Dict[str, object]:
         """机械旨意的唯一结构边界；不完整载荷响亮拒绝。"""
+        # #658：纯御笔强推不经 ordinary triad 归一（prepare/commit/ensure 共吃）。
+        # text/actor 等会话字段须保留——pending payload 以它们为成案正文真源。
+        if classify_directive_structured_kind(payload) == "push":
+            push_id = imperial_push_target_dossier_id(payload)
+            assert push_id is not None
+            mode = self._normalize_dossier_mode(
+                payload["mode"] if "mode" in payload else "ordinary"
+            )
+            out: Dict[str, object] = {
+                "target_dossier_id": int(push_id), "mode": mode,
+            }
+            for key in ("text", "actor", "source_chat_turn_id"):
+                if payload.get(key) not in (None, ""):
+                    out[key] = payload[key]
+            return out
         normalized = dict(payload)
         normalized["mode"] = self._normalize_dossier_mode(
             normalized["mode"] if "mode" in normalized else "ordinary"
@@ -14878,24 +15042,35 @@ class GameDB:
                 raise ValueError("委派人须为同案主办/协办且不得自委派")
 
     def _validate_dossier_endorsement(
-        self, dossier_id: object, *, form: object, source_chat_turn_id: object,
+        self, dossier_id: object, *, form: object,
+        source_chat_turn_id: object = 0, decision_key: object = "",
         endorser_id: object = "", imperial: object = False,
-    ) -> tuple[int, int, str, str, bool]:
+    ) -> tuple[int, int, str, str, str, bool]:
+        """#658：provenance 恰取 source_chat_turn_id>0 或 decision_key 非空之一。"""
         if isinstance(dossier_id, bool) or not isinstance(dossier_id, int):
             raise ValueError("背书案卷 id 须为整数")
         if isinstance(source_chat_turn_id, bool) or not isinstance(source_chat_turn_id, int):
             raise ValueError("背书来源对话轮 id 须为整数")
+        if not isinstance(decision_key, str):
+            raise ValueError("背书 decision_key 须为字符串")
         if not isinstance(form, str) or not isinstance(endorser_id, str):
             raise ValueError("背书形式与人物须为字符串")
-        did, cid = dossier_id, source_chat_turn_id
+        did, cid = dossier_id, int(source_chat_turn_id)
+        dkey = decision_key.strip()
         kind, person = form.strip(), endorser_id.strip()
         if not isinstance(imperial, bool):
             raise ValueError("御笔标记须为布尔")
         is_imperial = imperial
+        # 恰一种 provenance：召对 chat_turn XOR 批红/下旨 decision_key。
+        has_turn = cid > 0
+        has_key = bool(dkey)
+        if has_turn == has_key:
+            raise ValueError("背书 provenance 须恰为 source_chat_turn_id 或 decision_key 之一")
         if self.conn.execute("SELECT 1 FROM decree_dossiers WHERE id=?", (did,)).fetchone() is None:
             raise ValueError("背书所指案卷不存在")
-        if self.conn.execute("SELECT 1 FROM chat_turns WHERE id=?", (cid,)).fetchone() is None:
-            raise ValueError("背书来源对话轮不存在")
+        if has_turn:
+            if self.conn.execute("SELECT 1 FROM chat_turns WHERE id=?", (cid,)).fetchone() is None:
+                raise ValueError("背书来源对话轮不存在")
         if kind not in {"会签", "当面站台", "御笔手敕"}:
             raise ValueError("背书形式非法")
         if kind == "御笔手敕":
@@ -14906,26 +15081,28 @@ class GameDB:
                 raise ValueError("会签/当面站台必须具名背书人")
             if self.conn.execute("SELECT 1 FROM characters WHERE name=?", (person,)).fetchone() is None:
                 raise ValueError("背书人物不存在")
-        return did, cid, kind, person, is_imperial
+        return did, cid, dkey, kind, person, is_imperial
 
     def add_dossier_endorsement(
-        self, dossier_id: int, *, form: str, source_chat_turn_id: int,
+        self, dossier_id: int, *, form: str,
+        source_chat_turn_id: int = 0, decision_key: str = "",
         endorser_id: str = "", imperial: bool = False, commit: bool = True,
     ) -> int:
         """Persist one already-spoken ADR 0070 endorsement; never re-judge willingness."""
-        did, cid, kind, person, is_imperial = self._validate_dossier_endorsement(
+        did, cid, dkey, kind, person, is_imperial = self._validate_dossier_endorsement(
             dossier_id, form=form, source_chat_turn_id=source_chat_turn_id,
-            endorser_id=endorser_id, imperial=imperial,
+            decision_key=decision_key, endorser_id=endorser_id, imperial=imperial,
         )
         self.conn.execute(
             "INSERT OR IGNORE INTO decree_dossier_endorsements "
-            "(dossier_id,form,endorser_id,imperial,source_chat_turn_id) VALUES (?,?,?,?,?)",
-            (did, kind, person, int(is_imperial), cid),
+            "(dossier_id,form,endorser_id,imperial,source_chat_turn_id,decision_key) "
+            "VALUES (?,?,?,?,?,?)",
+            (did, kind, person, int(is_imperial), cid, dkey),
         )
         row = self.conn.execute(
             "SELECT id FROM decree_dossier_endorsements WHERE dossier_id=? AND form=? "
-            "AND endorser_id=? AND imperial=? AND source_chat_turn_id=?",
-            (did, kind, person, int(is_imperial), cid),
+            "AND endorser_id=? AND imperial=? AND source_chat_turn_id=? AND decision_key=?",
+            (did, kind, person, int(is_imperial), cid, dkey),
         ).fetchone()
         if commit:
             self._commit_dossier_write(True)
@@ -14933,7 +15110,7 @@ class GameDB:
 
     def list_dossier_endorsements(self, dossier_id: int) -> List[Dict[str, object]]:
         rows = self.conn.execute(
-            "SELECT id,dossier_id,form,endorser_id,imperial,source_chat_turn_id "
+            "SELECT id,dossier_id,form,endorser_id,imperial,source_chat_turn_id,decision_key "
             "FROM decree_dossier_endorsements WHERE dossier_id=? ORDER BY id",
             (int(dossier_id),),
         ).fetchall()
@@ -14941,8 +15118,53 @@ class GameDB:
             "id": int(row["id"]), "dossier_id": int(row["dossier_id"]),
             "form": str(row["form"]), "endorser_id": str(row["endorser_id"]),
             "imperial": bool(row["imperial"]),
-            "source_chat_turn_id": int(row["source_chat_turn_id"]),
+            "source_chat_turn_id": int(row["source_chat_turn_id"] or 0),
+            "decision_key": str(row["decision_key"] or ""),
         } for row in rows]
+
+    def update_decree_dossier_payload(
+        self, dossier_id: int, payload: Mapping[str, object], *, commit: bool = True,
+    ) -> None:
+        """Replace payload_json for an existing dossier (deliberation_state 等 typed 字段)."""
+        did = int(dossier_id)
+        if self.conn.execute("SELECT 1 FROM decree_dossiers WHERE id=?", (did,)).fetchone() is None:
+            raise KeyError(f"案卷不存在：{did}")
+        if not isinstance(payload, Mapping):
+            raise ValueError("案卷 payload 须为对象")
+        self.conn.execute(
+            "UPDATE decree_dossiers SET payload_json=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            (json.dumps(dict(payload), ensure_ascii=False), did),
+        )
+        if commit:
+            self._commit_dossier_write(True)
+
+    def find_deliberation_dossier_by_decision_key(
+        self, decision_key: str,
+    ) -> Optional[Dict[str, object]]:
+        """按批红 decision_key 取廷议案卷（payload.decision_key + deliberation_state）。"""
+        key = str(decision_key or "").strip()
+        if not key:
+            return None
+        row = self.conn.execute(
+            """
+            SELECT * FROM decree_dossiers
+            WHERE json_extract(payload_json, '$.decision_key') = ?
+              AND json_extract(payload_json, '$.deliberation_state') IS NOT NULL
+            ORDER BY id LIMIT 1
+            """,
+            (key,),
+        ).fetchone()
+        if row is None:
+            return None
+        out = self._dossier_row(row)
+        # 读缝附 payload 对象，避免调用方只认 payload 键时踩空
+        try:
+            out["payload"] = json.loads(str(out.get("payload_json") or "{}"))
+        except (TypeError, ValueError):
+            out["payload"] = {}
+        if not isinstance(out["payload"], dict):
+            out["payload"] = {}
+        return out
 
     def append_decree_dossier_participants(
         self, dossier_id: int, participants: Iterable[object], *,
@@ -15063,6 +15285,28 @@ class GameDB:
             (int(secret_order_id),),
         ).fetchone()
         return None if row is None else self._dossier_row(row)
+
+    def list_endorsed_dossier_candidates(
+        self, current_turn: int,
+    ) -> List[Dict[str, object]]:
+        """Typed backing choices projected from durable named endorsements."""
+        rows = self.conn.execute(
+            """SELECT d.id AS dossier_id, e.endorser_id, d.decree_text AS subject
+               FROM decree_dossier_endorsements e
+               JOIN decree_dossiers d ON d.id=e.dossier_id
+               WHERE e.endorser_id<>'' AND d.created_turn<=?
+               ORDER BY d.id DESC, e.id DESC""",
+            (int(current_turn),),
+        ).fetchall()
+        result: List[Dict[str, object]] = []
+        for row in rows:
+            dossier_id = int(row["dossier_id"])
+            result.append({
+                "dossier_id": dossier_id,
+                "endorser_id": str(row["endorser_id"]),
+                "subject": str(row["subject"] or ""),
+            })
+        return result
 
     def list_referenceable_dossiers(
         self, character_name: str, current_turn: int,
@@ -15343,7 +15587,11 @@ class GameDB:
         return out
 
     def list_decree_dossiers_for_simulation(self, turn: int) -> List[Dict[str, object]]:
-        """本月新生/重判案卷及所有未结案执行中案卷。"""
+        """本月新生/重判案卷及所有未结案执行中案卷。
+
+        #658：旧案本回合刚获 pending 颁布 verdict（如 stalled→backed 后顺颁）
+        亦入同一清单，不另建第二可见集。
+        """
         rows = self.conn.execute(
             """
             SELECT d.*,
@@ -15364,6 +15612,13 @@ class GameDB:
                        AND d.held_turn > 0
                        AND ? > d.held_turn
                     )
+                    OR (
+                           d.promulgation_decision=''
+                       AND EXISTS (
+                               SELECT 1 FROM pending_promulgation_verdicts pv
+                               WHERE pv.turn=? AND pv.dossier_id=d.id
+                           )
+                    )
                 )
             ) OR (
                     d.status='executing'
@@ -15383,7 +15638,8 @@ class GameDB:
             """,
             (
                 int(turn), int(turn), int(turn),
-                int(turn), int(turn), int(turn), int(turn), int(turn),
+                int(turn), int(turn), int(turn),
+                int(turn), int(turn), int(turn),
             ),
         ).fetchall()
         visible = []
@@ -17069,6 +17325,8 @@ class GameDB:
         reason = str(
             payload.get("text") or row.get("decree_text") or punish_action
         )
+        # #658：typed backing 单权威（与 stage 首写共吃）
+        backing_id = int(require_backing_dossier_id(self, payload.get("backing_dossier_id")) or 0)
         status_by_action = {
             "拿问下狱": "imprisoned",
             "拿问去职": "imprisoned",
@@ -17107,6 +17365,9 @@ class GameDB:
                 if results and isinstance(results[0], dict):
                     fail_reason = str(results[0].get("reason") or "")
                 raise ValueError(fail_reason or "惩处案卷人物效果物化失败")
+            self._maybe_write_backing_betray_credit(
+                state, target=target, backing_id=backing_id, reason=reason,
+            )
             return {target}
         if punish_action in {"放归", "昭雪"}:
             # #517：宥赦只回迁在世处置态；dead 等终态响亮拒绝，不得复活。
@@ -17122,6 +17383,7 @@ class GameDB:
                 state, target, "处置", payload_summary=punish_action,
                 source="punishment", origin_ref=origin_ref, commit=False,
             )
+            # #658：放归/昭雪为非惩罚动作，成功亦不写 backing 辜负。
             return {target}
         if punish_action == "罚俸":
             amount = int(payload.get("amount") or 0)
@@ -17149,6 +17411,9 @@ class GameDB:
                 state, target, "罚俸", payload_summary="罚俸示惩",
                 source="punishment", origin_ref=origin_ref, commit=False,
             )
+            self._maybe_write_backing_betray_credit(
+                state, target=target, backing_id=backing_id, reason=reason,
+            )
             # 钱粮示惩不改人物身份态，不入 registry refresh set。
             return set()
         if punish_action == "廷杖":
@@ -17156,8 +17421,45 @@ class GameDB:
                 state, target, "廷杖", payload_summary="廷杖示惩",
                 source="punishment", origin_ref=origin_ref, commit=False,
             )
+            self._maybe_write_backing_betray_credit(
+                state, target=target, backing_id=backing_id, reason=reason,
+            )
             return set()
         raise ValueError(f"惩处案卷动作无法物化：{punish_action}")
+
+    def _maybe_write_backing_betray_credit(
+        self, state, *, target: str, backing_id: int, reason: str,
+    ) -> None:
+        """#658：处置成功且目标确为原案非御笔背书人时，经 ADR 0079 写辜负。
+
+        origin 回指原 dossier。无 backing / 非站台者 / 御笔背书 → 零信用事件。
+        """
+        if int(backing_id or 0) <= 0:
+            return
+        person = str(target or "").strip()
+        if not person:
+            return
+        endorsements = self.list_dossier_endorsements(int(backing_id))
+        hit = False
+        for item in endorsements:
+            if bool(item.get("imperial")):
+                continue
+            if str(item.get("form") or "") != "当面站台":
+                continue
+            if str(item.get("endorser_id") or "").strip() == person:
+                hit = True
+                break
+        if not hit:
+            return
+        context = str(reason or "").strip() or "处置站台者"
+        from ming_sim.credit_events import KIND_BETRAY, write_credit_event
+        write_credit_event(
+            self, state,
+            person=person,
+            event_kind=KIND_BETRAY,
+            context=context,
+            origin=f"dossier:{int(backing_id)}",
+        )
 
     def _apply_pay_order_override_effect(
         self, state: GameState, row, payload: Dict[str, object], dossier_id: int,
@@ -17606,7 +17908,11 @@ class GameDB:
     def _merge_directive_payload(
         self, existing_json: object, new_payload: Dict[str, object],
     ) -> Dict[str, object]:
-        """改草保留未修改的机械字段；显式新值覆盖后统一校验。"""
+        """改草保留未修改的机械字段；显式新值覆盖后统一校验。
+
+        #658：普通 triad 与御笔 target 互斥生命周期——
+        普通改草不得继承旧 target；纯强推改草不得继承旧 triad。
+        """
         old = self._decode_directive_dossier_payload(existing_json)
         incoming = dict(new_payload or {})
         old_roster = self._normalize_participant_roster(old.get("participant_roster") or [])
@@ -17617,8 +17923,36 @@ class GameDB:
             incoming["participant_roster"] = old_roster + [
                 item for item in new_roster if item not in old_roster
             ]
+        # 先对 incoming 互斥分类（并存即拒），再决定从 old 继承哪些字段
+        incoming_kind = (
+            classify_directive_structured_kind(incoming)
+            if incoming else "empty"
+        )
         merged = {**old, **incoming}
+        if incoming_kind == "ordinary":
+            merged.pop("target_dossier_id", None)
+            merged.pop("目标案卷ID", None)
+        elif incoming_kind == "push":
+            # 只清互斥 ordinary triad，保留 text/actor 等非互斥字段
+            for key in ("dossier_action_type", "target_kind", "target_id"):
+                merged.pop(key, None)
+            push_id = imperial_push_target_dossier_id(incoming)
+            if push_id is None:
+                push_id = imperial_push_target_dossier_id(merged)
+            if push_id is not None:
+                merged["target_dossier_id"] = push_id
+                merged.pop("目标案卷ID", None)
+        # 合并结果再过互斥权威（old 残留 + incoming 部分字段仍可能冲突）
+        classify_directive_structured_kind(merged)
         requested = str(merged.get("dossier_action_type") or "")
+        if incoming_kind == "push":
+            # 复用既有 push 归一化（保留 text/actor/mode）
+            return self._normalize_directive_dossier_payload(
+                merged, content=self.content,
+                current_turn=int(self.conn.execute(
+                    "SELECT turn FROM game_state WHERE id=1"
+                ).fetchone()["turn"]),
+            )
         normalized = self._normalize_directive_dossier_payload(
             merged, content=self.content,
             current_turn=int(self.conn.execute(
@@ -18492,28 +18826,22 @@ class GameDB:
             )
             # pending 只是皇帝核定前的候选，不是 ADR 0051 的成案点；默认同意进入
             # draft 时则已越过最终提交边界，应当立即取得案卷身份。
+            # #658：与 free-form / confirm 共吃 _ensure_directive_dossier（含御笔强推）。
             if status == "draft":
-                action_type = self._directive_dossier_action_type(payload)
-                executor_kind, executor_id = self._directive_executor(action_type, payload)
-                dossier_ids = self.create_decree_dossiers(
-                    state,
-                    action_type=action_type,
-                    decree_text=text,
-                    target_kind=str(payload.get("target_kind") or ""),
-                    target_id=payload.get("target_id") or "",
-                    executor_kind=executor_kind,
-                    executor_id=executor_id,
-                    source_chat_turn_id=int(payload.get("source_chat_turn_id") or 0),
-                    pending_action_id=int(pa["id"]),
-                    directive_id=did,
-                    payload=payload,
-                    status="proposed",
-                    due_turn=int(payload.get("due_turn") or 0),
-                    commit=False,
+                dossier_ids = self._ensure_directive_dossier(
+                    state, did, text, payload, commit=False,
                     rejection_collector=rejection_collector,
                 )
                 if not dossier_ids:
                     return False
+                # conversational commit 的 pending_action_id 绑回案卷（push 复用路径
+                # 只写 directive_id，普通 create 路径本就带 pending_action_id）
+                self.conn.execute(
+                    "UPDATE decree_dossiers SET pending_action_id=? "
+                    "WHERE directive_id=? AND (pending_action_id IS NULL "
+                    "OR pending_action_id=0 OR pending_action_id=?)",
+                    (int(pa["id"]), int(did), int(pa["id"])),
+                )
             return True
         return False
 
@@ -19150,7 +19478,11 @@ class GameDB:
         payload: Optional[Dict[str, object]] = None, *, commit: bool = True,
         rejection_collector=None,
     ) -> List[int]:
-        """旧式/新式旨稿共用的幂等成案口；#654 返回 List[int]（fan-out 多行）。"""
+        """旧式/新式旨稿共用的幂等成案口；#654 返回 List[int]（fan-out 多行）。
+
+        #658：payload.target_dossier_id 指向 stalled 廷议时，复用该案卷并落御笔手敕，
+        不新建第二案卷。directive identity = directive:<id>。
+        """
         structured = dict(payload or {})
         if not structured:
             structured = {
@@ -19159,6 +19491,41 @@ class GameDB:
                 "target_id": f"legacy-directive:{directive_id}",
                 "locality_scope": "none",
             }
+        # #658：互斥权威——push 与 ordinary 并存响亮拒绝；push 在 normalize 前短路
+        kind = classify_directive_structured_kind(structured)
+        target_did = (
+            imperial_push_target_dossier_id(structured)
+            if kind == "push" else None
+        )
+        if target_did is not None:
+            # 同 directive↔目标 dossier 已绑定：幂等返回，不重跑 stalled 校验副作用
+            bound = self.conn.execute(
+                "SELECT id FROM decree_dossiers WHERE id=? AND directive_id=?",
+                (int(target_did), int(directive_id)),
+            ).fetchone()
+            if bound is not None:
+                return [int(target_did)]
+            from ming_sim.rescript_actions import apply_imperial_deliberation_push
+            push_mode = self._normalize_dossier_mode(
+                structured["mode"] if "mode" in structured else "ordinary"
+            )
+            pushed = apply_imperial_deliberation_push(
+                self, state,
+                target_dossier_id=int(target_did),
+                directive_identity=f"directive:{int(directive_id)}",
+                decree_text=str(text or ""),
+                mode=push_mode,
+                commit=False,
+            )
+            # 绑 directive_id 到既有案卷，供 restore/幂等
+            self.conn.execute(
+                "UPDATE decree_dossiers SET directive_id=?, updated_at=CURRENT_TIMESTAMP "
+                "WHERE id=? AND (directive_id IS NULL OR directive_id=0 OR directive_id=?)",
+                (int(directive_id), int(pushed), int(directive_id)),
+            )
+            if commit:
+                self._commit_dossier_write(True)
+            return [int(pushed)]
         structured = self._normalize_directive_dossier_payload(
             structured, content=self.content, current_turn=int(state.turn),
         )
@@ -19184,6 +19551,7 @@ class GameDB:
             target_id=target_id,
             executor_kind=executor_kind,
             executor_id=executor_id,
+            source_chat_turn_id=int(structured.get("source_chat_turn_id") or 0),
             pending_action_id=0 if pending is None else int(pending["id"]),
             directive_id=int(directive_id),
             payload=structured,
@@ -19202,10 +19570,11 @@ class GameDB:
             SELECT d.*, e.title AS event_title
             FROM turn_directives d
             LEFT JOIN events e ON e.id = d.event_id
-            WHERE d.turn = ? AND d.status IN ({placeholders})
+            WHERE (d.turn = ? OR (d.turn < ? AND d.status = 'draft'))
+              AND d.status IN ({placeholders})
             ORDER BY d.id
             """,
-            (state.turn, *statuses),
+            (state.turn, state.turn, *statuses),
         ).fetchall()
 
     @staticmethod
@@ -19276,17 +19645,11 @@ class GameDB:
                 sp = f"ensure_directive_{did}"
                 self.conn.execute(f"SAVEPOINT {sp}")
                 try:
-                    dossier_ids = self._ensure_directive_dossier(
+                    self._ensure_directive_dossier(
                         state, did, str(row["text"]),
                         self.read_directive_dossier_payload(row), commit=False,
                         rejection_collector=collector,
                     )
-                    if not dossier_ids:
-                        self.conn.execute(
-                            "UPDATE turn_directives SET status='rejected', "
-                            "updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                            (did,),
-                        )
                 except Exception as exc:
                     self.conn.execute(f"ROLLBACK TO {sp}")
                     # P6：rejection 只存 directive_id，不裁剪/快照 LLM 旨文
@@ -19301,7 +19664,7 @@ class GameDB:
                         int(state.turn),
                     )
                     tlog(f"[ensure_dossiers] 旨#{did} 成案失败：{exc}")
-                    # 坏旨保持 draft，次边界重试
+                    # 坏旨保持 draft，次边界重试；消费边界只读取已有案卷的 draft。
                 finally:
                     self.conn.execute(f"RELEASE {sp}")
             collector.flush_to_db(self)
@@ -19343,9 +19706,7 @@ class GameDB:
         payload = self._merge_directive_payload(
             row["dossier_payload_json"], dict(dossier_payload or {})
         )
-        if not all(str(payload.get(key) or "").strip() for key in (
-            "dossier_action_type", "target_kind", "target_id",
-        )):
+        if not directive_payload_admits_structured_write(payload):
             raise ValueError("旨意编辑须提供完整结构化动作与目标")
         with atomic(self):
             self.conn.execute(
@@ -19394,12 +19755,27 @@ class GameDB:
         )
         self.conn.commit()
 
+    def list_dossiered_draft_directives(self, state: GameState) -> List[Dict[str, object]]:
+        """Settlement projection: drafts whose dossier creation succeeded."""
+        rows = self.conn.execute(
+            """SELECT td.* FROM turn_directives td
+               WHERE td.turn<=? AND td.status='draft'
+                 AND EXISTS (SELECT 1 FROM decree_dossiers d WHERE d.directive_id=td.id)
+               ORDER BY td.id""",
+            (state.turn,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
     def mark_directives_issued(self, state: GameState) -> None:
         self.conn.execute(
             """
             UPDATE turn_directives
             SET status = 'issued', updated_at = CURRENT_TIMESTAMP
-            WHERE turn = ? AND status = 'draft'
+            WHERE turn <= ? AND status = 'draft'
+              AND EXISTS (
+                  SELECT 1 FROM decree_dossiers d
+                  WHERE d.directive_id=turn_directives.id
+              )
             """,
             (state.turn,),
         )
