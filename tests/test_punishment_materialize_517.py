@@ -190,6 +190,13 @@ def test_impeachment_disposition_without_positive_issue_id_stages_nothing(game):
     actor = _active_ming(db, content)
     target = _active_ming(db, content, exclude=actor.name)
     before = db.conn.execute("SELECT COUNT(*) FROM pending_actions").fetchone()[0]
+    for malformed_id in (0, -1):
+        db.conn.execute(
+            "INSERT INTO issues(id,kind,title,origin_kind,origin_turn,target_roster) "
+            "VALUES(?,?,?,?,?,?)",
+            (malformed_id, "situation", "异常弹劾", "impeachment_surge", state.turn,
+             json.dumps([target.name], ensure_ascii=False)),
+        )
 
     for issue_id in (None, 0, -1):
         assert am.stage_punishment_candidate(
@@ -198,6 +205,25 @@ def test_impeachment_disposition_without_positive_issue_id_stages_nothing(game):
         ) == 0
 
     assert db.conn.execute("SELECT COUNT(*) FROM pending_actions").fetchone()[0] == before
+
+
+def test_impeachment_admission_rejects_noncanonical_person_action(game):
+    db, state, content = game
+    actor = _active_ming(db, content)
+    target = _active_ming(db, content, exclude=actor.name)
+
+    pending_id = db.stage_directive_candidate(state.turn, actor.name, payload={
+        "text": "照此处置。", "actor": actor.name,
+        "dossier_action_type": "punishment", "target_id": target.name,
+        "punish_action": "廷杖", "issue_id": 1, "issue_disposition": "办人",
+    })
+    db.commit_pending_actions(state, content=content, action_ids=[pending_id])
+    assert db.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (pending_id,),
+    ).fetchone()["status"] == "failed"
+    assert not any(
+        row["pending_action_id"] == pending_id for row in db.list_decree_dossiers()
+    )
 
 
 def test_prestaged_impeachment_punishments_skip_person_writes_after_first_closes_issue(game):
@@ -977,10 +1003,11 @@ def test_web_stream_transports_punishment_category_to_real_stage(game):
     web_game.directive_payload = lambda row: row
     web_game.can_undo_last_chat = lambda _name: False
     web_game._record_chat_rollback_items = lambda *_a, **_k: None
-    def interpret(category_marker):
+    def interpret(category_marker, **typed_fields):
         arguments = {
             "decree_text": f"着将{target.name}拿问下狱。",
             "punish_action": "拿问下狱", "target_id": target.name,
+            **typed_fields,
         }
         if category_marker is not None:
             arguments["transaction_category"] = category_marker
@@ -1002,6 +1029,26 @@ def test_web_stream_transports_punishment_category_to_real_stage(game):
     payload = dict(_pending_directive_payloads(db, state.turn, minister))[pending_id]
     assert payload["transaction_category"] == "缉拿"
     assert not valid.get("pending_action_failures")
+
+    issue_id = db.insert_issue(
+        state, kind="situation", title="御史发难", origin_kind="impeachment_surge",
+        origin_ref="commitment:660:web-stream", target_roster=[target.name],
+    )
+    linked = interpret("缉拿", issue_id=issue_id, issue_disposition="办人")
+    linked_id = int(linked["pending_action_id"])
+    assert linked_id != pending_id
+    linked_payload = dict(_pending_directive_payloads(db, state.turn, minister))[linked_id]
+    assert linked_payload["issue_id"] == issue_id
+    assert linked_payload["issue_disposition"] == "办人"
+
+    second_issue_id = db.insert_issue(
+        state, kind="situation", title="御史再劾", origin_kind="impeachment_surge",
+        origin_ref="commitment:660:web-stream-2", target_roster=[target.name],
+    )
+    second_linked = interpret(
+        "缉拿", issue_id=second_issue_id, issue_disposition="办人",
+    )
+    assert int(second_linked["pending_action_id"]) not in {pending_id, linked_id}
 
     pending_before = db.conn.execute("SELECT COUNT(*) FROM pending_actions").fetchone()[0]
     dossiers_before = db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0]
