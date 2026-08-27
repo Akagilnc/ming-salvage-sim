@@ -2390,26 +2390,19 @@ def extract_draft_intent(
     if _action == "无":
         return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
     # #658：御笔强推只需 typed 目标案卷，不经普通动作/目标 triad
-    raw_push_id = (
-        obj.get("目标案卷ID") if obj.get("目标案卷ID") is not None
-        else obj.get("target_dossier_id")
-    )
-    if raw_push_id not in (None, ""):
-        try:
-            push_dossier_id = int(raw_push_id)
-        except (TypeError, ValueError):
-            push_dossier_id = 0
-        if push_dossier_id > 0:
-            push_out: Dict[str, Any] = {
-                "draft_action": "拟旨",
-                "draft_text": (minister_reply or player_message or "").strip(),
-                "target_candidate": "",
-                "target_dossier_id": push_dossier_id,
-            }
-            push_mode = _directive_mode(obj.get("颁布方式"))
-            if push_mode is not None:
-                push_out["mode"] = push_mode
-            return push_out
+    from ming_sim.db import imperial_push_target_dossier_id
+    push_dossier_id = imperial_push_target_dossier_id(obj)
+    if push_dossier_id is not None:
+        push_out: Dict[str, Any] = {
+            "draft_action": "拟旨",
+            "draft_text": (minister_reply or player_message or "").strip(),
+            "target_candidate": "",
+            "target_dossier_id": push_dossier_id,
+        }
+        push_mode = _directive_mode(obj.get("颁布方式"))
+        if push_mode is not None:
+            push_out["mode"] = push_mode
+        return push_out
     dossier_action = str(obj.get("动作类型") or "special_decree").strip()
     if dossier_action == "acting_appointment":
         # #529 与多旨同：署理交回既有人事候选链，不经草案 acting_appointment。
@@ -2619,17 +2612,13 @@ def capture_manual_directive_payload(
         payload["name"] = str(payload.get("target_id") or "").strip()
         payload["_office_action"] = "罢免"
     # #658：御笔强推只需 typed target_dossier_id，不得因无关 triad 缺省而降级
-    raw_push = payload.get("target_dossier_id")
-    if raw_push not in (None, "", 0, "0"):
-        try:
-            push_id = int(raw_push)
-        except (TypeError, ValueError):
-            push_id = 0
-        if push_id > 0:
-            return {
-                "target_dossier_id": push_id,
-                "mode": declared_mode,
-            }
+    from ming_sim.db import imperial_push_target_dossier_id
+    push_id = imperial_push_target_dossier_id(payload)
+    if push_id is not None:
+        return {
+            "target_dossier_id": push_id,
+            "mode": declared_mode,
+        }
     if not all(str(payload.get(key) or "").strip() for key in (
         "dossier_action_type", "target_kind", "target_id",
     )):

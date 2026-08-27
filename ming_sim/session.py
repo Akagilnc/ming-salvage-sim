@@ -30,6 +30,7 @@ from ming_sim.context import (
 )
 from ming_sim.db import (
     GameDB,
+    directive_payload_admits_structured_write,
     infer_office_type_from_office,
     normalize_office,
     resolve_office_type_preserving_title,
@@ -2875,18 +2876,7 @@ class GameSession:
     ) -> DirectiveView:
         self._refuse_if_settling()
         payload = dict(dossier_payload or {})
-        # 普通旨意须 triad；#658 御笔强推仅需 typed target_dossier_id
-        has_triad = all(str(payload.get(key) or "").strip() for key in (
-            "dossier_action_type", "target_kind", "target_id",
-        ))
-        raw_push = payload.get("target_dossier_id")
-        has_push = False
-        if raw_push not in (None, "", 0, "0"):
-            try:
-                has_push = int(raw_push) > 0
-            except (TypeError, ValueError):
-                has_push = False
-        if not has_triad and not has_push:
+        if not directive_payload_admits_structured_write(payload):
             raise ValueError("新增旨意须由上游提供完整结构化动作与目标")
         directive_id = self.db.add_directive(
             self.state, None, text, "手动新增", notes=notes,

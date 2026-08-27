@@ -535,6 +535,43 @@ def _has_stop_condition(stop_condition: object) -> bool:
     return isinstance(parsed, (dict, list)) and bool(parsed)
 
 
+def imperial_push_target_dossier_id(payload: object) -> Optional[int]:
+    """#658：解析合法御笔强推 target_dossier_id；非法/缺省 → None。
+
+    capture / session.add / db.update / extract 共吃本函数——禁第二份 int>0 分支。
+    Mapping 同时认 target_dossier_id 与抽取原键 目标案卷ID。
+    """
+    if isinstance(payload, Mapping):
+        raw = payload.get("target_dossier_id")
+        if raw is None:
+            raw = payload.get("目标案卷ID")
+    else:
+        raw = payload
+    if raw in (None, "", 0, "0"):
+        return None
+    try:
+        value = int(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+def directive_payload_has_ordinary_triad(payload: Mapping[str, object]) -> bool:
+    """普通旨意结构化 triad：动作类型 + 目标类型 + 目标ID。"""
+    return all(
+        str(payload.get(key) or "").strip()
+        for key in ("dossier_action_type", "target_kind", "target_id")
+    )
+
+
+def directive_payload_admits_structured_write(payload: Mapping[str, object]) -> bool:
+    """旨意可落库：普通 triad，或 #658 御笔强推 typed target。"""
+    return (
+        directive_payload_has_ordinary_triad(payload)
+        or imperial_push_target_dossier_id(payload) is not None
+    )
+
+
 def _coerce_deadline_months(raw: object, *, default: int = 0) -> int:
     """解析密令期限；显式 0 是合法值，不能被缺省兜底吞掉。"""
     if raw is None:
@@ -19221,14 +19258,8 @@ class GameDB:
                 "locality_scope": "none",
             }
         # 御笔强推：在 normalize 前识别 typed target，避免误建平行案卷
-        raw_target = structured.get("target_dossier_id")
-        if raw_target not in (None, "", 0, "0"):
-            try:
-                target_did = int(raw_target)
-            except (TypeError, ValueError) as exc:
-                raise ValueError(f"target_dossier_id 非法：{raw_target!r}") from exc
-            if target_did <= 0:
-                raise ValueError(f"target_dossier_id 非法：{raw_target!r}")
+        target_did = imperial_push_target_dossier_id(structured)
+        if target_did is not None:
             # 同 directive↔目标 dossier 已绑定：幂等返回，不重跑 stalled 校验副作用
             bound = self.conn.execute(
                 "SELECT id FROM decree_dossiers WHERE id=? AND directive_id=?",
@@ -19239,7 +19270,7 @@ class GameDB:
             from ming_sim.rescript_actions import apply_imperial_deliberation_push
             pushed = apply_imperial_deliberation_push(
                 self, state,
-                target_dossier_id=target_did,
+                target_dossier_id=int(target_did),
                 directive_identity=f"directive:{int(directive_id)}",
                 decree_text=str(text or ""),
                 commit=False,
@@ -19437,17 +19468,7 @@ class GameDB:
         payload = self._merge_directive_payload(
             row["dossier_payload_json"], dict(dossier_payload or {})
         )
-        has_triad = all(str(payload.get(key) or "").strip() for key in (
-            "dossier_action_type", "target_kind", "target_id",
-        ))
-        raw_push = payload.get("target_dossier_id")
-        has_push = False
-        if raw_push not in (None, "", 0, "0"):
-            try:
-                has_push = int(raw_push) > 0
-            except (TypeError, ValueError):
-                has_push = False
-        if not has_triad and not has_push:
+        if not directive_payload_admits_structured_write(payload):
             raise ValueError("旨意编辑须提供完整结构化动作与目标")
         with atomic(self):
             self.conn.execute(
