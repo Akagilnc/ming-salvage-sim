@@ -3609,7 +3609,7 @@ def test_658_imperial_push_reuses_stalled_closes_issue_and_simulates(game):
 
 
 def test_658_backing_credit_on_punish_promulgation(game):
-    """#658：正向 chat→commit→verdict 写辜负；非站台/驳回/非惩罚在 applier 层表驱动零写。"""
+    """#658：正向 chat→commit→verdict 写辜负；零写与同批后案失败回滚在同一 applier 夹具。"""
     from types import SimpleNamespace
     from ming_sim import rescript_actions as ra
     from ming_sim.credit_events import KIND_BETRAY
@@ -3739,6 +3739,27 @@ def test_658_backing_credit_on_punish_promulgation(game):
         if expect_status is not None:
             assert db.get_character_status(minister)[0] == expect_status
 
+    # 同批回滚：前案可写信用、后案放归 active 失败 → 信用/国库/人物/两案卷全回滚
+    first_id = _plant_punish(target=minister, punish_action="罚俸", amount=10)
+    second_id = _plant_punish(target=other, punish_action="放归")
+    edges_rb = _edge_count()
+    treasury_before = int(state.metrics.get("国库") or 0)
+    status_other_before = db.get_character_status(other)[0]
+    with pytest.raises(ValueError):
+        db.apply_dossier_verdicts(
+            state,
+            [
+                {"dossier_id": first_id, "decision": "promulgated"},
+                {"dossier_id": second_id, "decision": "promulgated"},
+            ],
+            content=content,
+        )
+    assert _edge_count() == edges_rb
+    assert int(state.metrics.get("国库") or 0) == treasury_before
+    assert db.get_character_status(other)[0] == status_other_before
+    assert db.get_decree_dossier(first_id)["status"] == "proposed"
+    assert db.get_decree_dossier(second_id)["status"] == "proposed"
+
 
 def test_658_stage_rejects_bad_backing_zero_write(game):
     """#658：stage 首写接缝拒坏 shape / 不存在 id；pending/案卷/信用零写。"""
@@ -3775,81 +3796,6 @@ def test_658_stage_rejects_bad_backing_zero_write(game):
                 backing_dossier_id=bad,
             )
     assert snapshot() == before
-
-
-def test_658_backing_credit_batch_rolls_back_on_later_failure(game):
-    """#658：同批前案可写信用、后案效果失败 → 信用/效果/案卷状态整批回滚。"""
-    from ming_sim import rescript_actions as ra
-    from ming_sim.credit_events import KIND_BETRAY
-
-    db, state, content = game
-    minister = _summonable_name(db, content)
-    other = next(
-        n for n in ra.list_deliberation_candidate_ids(db, content) if n != minister
-    )
-
-    urgent, _ = _plant_urgent_desk(db, state)
-    key = urgent["decision_key"]
-    batch = ra.validate_all([urgent], [{
-        "decision_key": key, "action": "deliberate", "label": "下部议",
-    }])
-    ra.apply_rescript_batch(
-        db, state, batch,
-        ra.PrewriteResults(deliberate_by_key={
-            key: {
-                "title": "清丈", "body": "臣请清丈。", "stance": "主清",
-                "supporter_ids": [minister],
-            },
-        }),
-        content=content,
-    )
-    bid = int(db.find_deliberation_dossier_by_decision_key(key)["id"])
-
-    def _plant(*, target: str, punish_action: str, amount: int = 0) -> int:
-        payload = {
-            "punish_action": punish_action,
-            "target_id": target,
-            "backing_dossier_id": bid,
-            "text": f"着{punish_action}{target}",
-        }
-        if amount:
-            payload["amount"] = amount
-        return int(db.create_decree_dossier(
-            state, action_type="punishment",
-            decree_text=str(payload["text"]),
-            target_kind="character", target_id=target,
-            payload=payload,
-        ))
-
-    first_id = _plant(target=minister, punish_action="罚俸", amount=10)
-    # 后案：放归 active 人物 → 效果响亮失败（前案本可写信用与经济）
-    second_id = _plant(target=other, punish_action="放归")
-
-    edges_before = int(db.conn.execute(
-        "SELECT COUNT(*) AS c FROM relation_edge_events WHERE event_kind=?",
-        (KIND_BETRAY,),
-    ).fetchone()["c"])
-    treasury_before = int(state.metrics.get("国库") or 0)
-    status_other_before = db.get_character_status(other)[0]
-
-    with pytest.raises(ValueError):
-        db.apply_dossier_verdicts(
-            state,
-            [
-                {"dossier_id": first_id, "decision": "promulgated"},
-                {"dossier_id": second_id, "decision": "promulgated"},
-            ],
-            content=content,
-        )
-
-    assert int(db.conn.execute(
-        "SELECT COUNT(*) AS c FROM relation_edge_events WHERE event_kind=?",
-        (KIND_BETRAY,),
-    ).fetchone()["c"]) == edges_before
-    assert int(state.metrics.get("国库") or 0) == treasury_before
-    assert db.get_character_status(other)[0] == status_other_before
-    assert db.get_decree_dossier(first_id)["status"] == "proposed"
-    assert db.get_decree_dossier(second_id)["status"] == "proposed"
 
 
 def test_658_endorsement_provenance_xor(game):
