@@ -1,172 +1,116 @@
 # 大臣职位变动技术文档
 
-> 追踪切入点：`ming_sim/issues.py:apply_score_extraction`（主入口）、`ming_sim/session.py:apply_appointment`（建档落地）、`ming_sim/db.py:set_character_office`（调任写库）
+> 人物写契约：[`ADR 0009`](adr/0009-person-archive-applier-contract.md)；任免生效时点：[`ADR 0055`](adr/0055-promulgation-gate-at-settlement-effects-follow-verdict.md)；结算事务：[`SETTLEMENT_FLOW`](SETTLEMENT_FLOW.md)。本文只说明任免接线，不重复三份契约。
 
----
+## 一、两条入口
 
-## 一、触发路径总览
+```text
+召对任免
+  propose_appointment / 口头任免分类
+    → pending_actions(kind=office)
+    → 玩家确认或结束回合默认同意
+    → commit_pending_actions：只成任免案卷，不授官
+    → 颁布判决
+       ├─ 打回 / 收回 / 留中：人物效果不落
+       └─ 顺颁 / 强颁：apply_dossier_promulgation
+            → _commit_office_action
+            → apply_person_changes_only
+            → 同一 outer atomic 内完成授官及可选传召启程
+            → outer commit 后 registry.project_outcome
 
-```
-玩家回合
-  ├─ 召见吏部尚书 → propose_appointment tool
-  │     └─ 返回 __pending_appointment__<json>
-  │           └─ session.chat 截获 → _apply_appointment → apply_appointment()
-  │
-  └─ 月末结算（decree.resolve_directives）
-        ├─ simulator 生成邸报
-        ├─ extractor 抽 JSON → 含 appointments / office_changes / character_status_changes
-        └─ apply_score_extraction()
-              ├─ [8] appointments       → 仅后宫纳妃
-              ├─ [9] character_status_changes → 罢/狱/流/致仕/死
-              └─ [10] office_changes    → 朝臣新任 + 调任（统一入口）
-```
-
----
-
-## 二、三条落地路径
-
-### 路径 A：吏部铨选（实时，本回合即生效）
-
-**触发**：吏部尚书（`office_type == "吏部"`）调用 `propose_appointment` tool。
-
-**流程**：
-1. `tools.propose_appointment()` → 返回 `__pending_appointment__<json>`
-2. `session.chat()` 截获哨兵串 → 调 `_apply_appointment(payload, character)`
-3. `_apply_appointment` → 调 `apply_appointment(db, state, content, registry, data)`
-4. `apply_appointment()` 建档入库 + 注册 Agent，**本回合即可召见** 〔此时点已被 ADR 0055 修订：任免属经外廷受判类、效果改为结算内判决后落，见 ADR 0055〕
-
-**payload 字段**：
-```json
-{"name": "孙传庭", "office": "陕西总督", "faction": "东林", "reason": "...", "replaces": "原任者名"}
+月末人物变化
+  extractor 的「人物变更」
+    → apply_score_extraction
+    → ADR 0009 人物 applier
 ```
 
-- `replaces` 非空且对应 active → 原任者改 `dismissed`、office 清空（腾缺）
-- 新建 `Character`，`office_type` 默认 `"待铨"`（LLM 不传则用此默认）
-- 姓名查重：精确名 + aliases 命中即拒（`_find_existing_minister`）
+旧 `appointments` / `office_changes` / `character_status_changes` / `character_power_changes` 只为历史 delta 重放保留，由 sanitize 层翻译；新内容只写 `人物变更`，字段与动作见 ADR 0009 和 `docs/DELTA_SCHEMA.md`。
 
----
+## 二、召对任免
 
-### 路径 B：extractor office_changes（月末，结算生效）
+`propose_appointment` 返回任免候选；`GameSession._stage_appointment_candidate` 将其写入 `pending_actions`，与口头任免共用确认闸。候选在这里尚未授官，也不能因该候选获得新职或传召资格。
 
-**触发**：月末 extractor JSON 含 `office_changes` 数组。
+候选载荷的核心字段：
 
-**extractor 字段**：
 ```json
 {
-  "office_changes": [
-    {"name": "孙传庭", "new_office": "陕西总督", "new_office_type": "督抚", "court_role": "", "reason": "..."}
-  ]
+  "name": "孙传庭",
+  "office": "陕西总督",
+  "office_type": "督抚",
+  "faction": "中立",
+  "reason": "奉旨起复",
+  "replaces": "原任者名",
+  "summon_after": "是"
 }
 ```
 
-**代码位置**：`issues.py:867–942`
+- `name`、`office` 为任命必需；罢免不需 `office`。
+- `summon_after` 由任命/传召分类与合并接线保留；不另造第二份任免 schema。
+- 撤回、拒绝或 undo 会同时清除尚未激活的 `office:<pending_id>` 传召 origin。
+- 朝臣名册外目标在成案时只登记身份为 `offstage/待选`，不提前授官；月末自由文本凭空产生的陌生人物仍按 ADR 0009 `hallucinated_id` 拒收。
 
-**分支逻辑**（按 name 在不在册）：
+## 三、颁布与物化
 
-| name 状态 | 路径 |
-|-----------|------|
-| 在册 `active` | `db.set_character_office()` 改 office（调任） |
-| 不在册 / 非 active | 构造 appt payload → `apply_appointment()` 建新档（新任） |
+`commit_pending_actions` 对 `kind=office` 的动作只创建 `decree_dossiers` 任免案卷。任免属于经外廷受判类，机械效果必须等颁布结果：
 
-**`new_office_type` 处理**：
-- 在册调任：`set_character_office(name, new_office, new_office_type, source=reason)`
-- `new_office_type` 为空 → `set_character_office` 不改 `office_type`
+| 判决 | 人物结果 |
+|---|---|
+| 顺颁 / 强颁 | 通过 `apply_person_changes_only` 落任命、调任、罢免及其派生变化 |
+| 打回 / 收回 | 零人物效果 |
+| 留中 | 同一案卷留待后续判决，零人物效果 |
 
-**`court_role` 处理**（首辅/次辅/六部尚书槽）：
-1. 先清空已有同 `court_role` 的其他人：`UPDATE characters SET court_role='' WHERE court_role=? AND name!=?`
-2. 再写入本人：`UPDATE characters SET court_role=? WHERE name=?`
+任命物化只走人物 adapter，不调用完整 `apply_score_extraction`，因此不会顺带重跑赈灾回流、议题或其他月末结算核。
 
-**spillover**：extractor 把朝臣误塞进 `appointments` 数组时，代码自动转至 `office_changes` 处理（`spillover_office_changes` list，`issues.py:784–800`）。
+### 任命并传召
 
----
+`summon_after=是` 时，传召先以未激活故事账与任命同源暂存。只有任命成功后，`apply_dossier_promulgation` 才激活该 origin，并在同一 outer atomic 内沿既有传召状态机从人物当前所在地启程。
 
-### 路径 C：character_status_changes（月末，去职/死亡）
+- 任命失败：任命、传召、在途状态全部回滚。
+- 同人同夜多来源：既有 #670 单次消费规则保证只启程一次。
+- 同地传召：仍记同一 origin，但不制造虚假路程。
+- 结算提交成功后，受影响人物才由 `registry.project_outcome` 注册或刷新；事务内不碰运行时缓存。
 
-**触发**：extractor JSON 含 `character_status_changes`。
-
-**字段**：
-```json
-{"name": "袁崇焕", "status": "imprisoned", "reason": "擅杀毛文龙"}
-```
-
-**合法 status 值**：`dismissed` / `imprisoned` / `exiled` / `retired` / `dead` / `offstage`
-
-**落地**：`db.set_character_status()` → `issues.py:850`
-
-**副作用**：
-- 去职类（`dismissed` / `imprisoned` / `exiled` / `retired` / `dead`）：DB `office` 字段清空（`characters.office = ''`）
-- 原职保留在 `character_offices` 表备档（可追溯历史任职）
-- 内存 `content.characters[name].office = ""` 同步
-- `offstage` / `active`（复职）：不动 office
-
----
-
-## 三、后宫纳妃路径（特殊）
-
-**触发**：`appointments` 数组中 `office_type == "后宫"` 的项。
-
-**`apply_appointment()` 内后宫分支**（`session.py:154–189`）：
-- 若 name 匹配 `candidate` 池 → `UPDATE`（保留原 style/skills/portrait_id）
-- 否则新建 `Character`，`office_type = "后宫"`，`faction = "后宫"`
-- Agent 用 `consort_agent_prompt` 注册
-
----
-
-## 四、DB 表结构
+## 四、人物与任职存储
 
 ```sql
--- 主表（当前状态）
 characters (
   name TEXT PRIMARY KEY,
-  office TEXT,           -- 当前官职；去职时清空
-  office_type TEXT,      -- 内阁/吏部/督抚/边镇/…/后宫
-  court_role TEXT,       -- 首辅/次辅/吏部尚书/… （空=无固定槽）
-  status TEXT,           -- active/offstage/dismissed/imprisoned/exiled/retired/dead
+  office TEXT,
+  office_type TEXT,
+  court_role TEXT,
+  status TEXT,
   status_reason TEXT,
   status_changed_turn INTEGER
 )
 
--- 备档（可追溯历任）
 character_offices (
-  character_name TEXT PRIMARY KEY,  -- 每人仅存最新一条
+  character_name TEXT PRIMARY KEY,
   office_title TEXT,
   office_type TEXT,
-  source TEXT,           -- 初始设定/吏部铨选任命/诏书调任/…
+  source TEXT,
   updated_at TIMESTAMP
 )
 ```
 
-`character_offices` 设计为"最新任职备档"而非完整履历，每次调任 UPSERT 覆盖。**解禁只写契约（ADR 0055 / 0057）**：唯一写入方＝结算内任免物化路径（经外廷受判类效果判决后落）；0057 起复品级检测与破格查表只读本表，不得平行回写、不得夜内直写。罢黜、致仕、下狱、流放、赋闲及被顶替后听用候铨者，均读取此处最近任职，不得回落到「待铨」最低带。
+`characters` 保存当前名分和状态；`character_offices` 保存最近任职备档，不是完整履历。后者唯一写入方是颁布后的人物物化路径；起复、品级与破格判断只读，不得平行回写。
 
----
+过程史与来源分别在 `person_logs`、案卷及同源 origin 中；不要从旁白反解析人物结构。
 
-## 五、关键约束
+## 五、不变式
 
-| 约束 | 位置 |
-|------|------|
-| 吏部专属 `propose_appointment` tool | `tools.py:526` |
-| LLM 已判史实合理性，代码只查重 | `session.py:130` |
-| 新建大臣默认 `office_type="待铨"` | `session.py:218` |
-| 调任不改 status，仍 active | `db.py:1075` |
-| 任命案卷成案时按当前职或 `character_offices` 最近任职写入确定性 `break_rank` 标 | `db.py:create_decree_dossier` / `office_rank.py` |
-| 罢居开局清洗后 `character_offices.office_title` 存最近实职（去「前/罢居」污染），供起复品级带读取 | `db.py:_migrate_legacy_office_pollution` / `office_rank.canonical_office_title` |
-| faction leverage 品级 multiplier 与破格查表共用 `content/offices.json` `rank_rules`，无第二套 rank parser | `office_rank.office_leverage_multiplier` ← `db._office_rank_multiplier` |
-| 去职必清 office | `db.py:1047–1051` |
-| court_role 全局唯一（新写入前清旧） | `issues.py:903–911` |
+- 任免候选成案不等于生效；颁布结果才决定人物效果。
+- 人物效果只走 ADR 0009 唯一 applier；任免局部写不得借完整月末 applier 搭便车。
+- 任命、可选传召、案卷状态与结算写处于同一 outer atomic；失败不留半写。
+- registry 只在 outer commit 成功后投影；回滚不得留下脏 Agent。
+- `character_offices` 只存最近任职；完整过程看 `person_logs`。
+- LLM 负责判断任免内容；代码只校验结构、状态转换并记账。
 
----
+## 六、排查
 
-## 六、常见排查点
-
-**问题：extractor 新任大臣 `office_type` 没更新**
-→ extractor 没输出 `new_office_type`；在册者走 `set_character_office`，空 `office_type` 不改原值。
-→ 修法：extractor prompt 明确要求填 `new_office_type`，或者调任后再补一次 `set_character_office`。
-
-**问题：court_role 没写入**
-→ 只有 `in_roster and cur_status == "active"` 的调任分支才处理 `court_role`（`issues.py:903`）。新建档走 `apply_appointment`，不处理 `court_role`，需下一回合才能通过 `office_changes` 再调。
-
-**问题：吏部铨选本回合没效果**
-→ 检查 `_apply_appointment` 是否被 `session.chat` 正确截获；`propose_appointment` 返回的哨兵串是否含正确 JSON。
-
-**问题：被替换官员未去职**
-→ `replaces` 字段为空，或对应 name 不在 `content.characters`，或该人 status 已非 active（代码只改 active 者）。
+| 现象 | 先查 |
+|---|---|
+| 玩家确认后尚未授官 | 正常；查任免案卷是否已进入颁布判决 |
+| 结算后仍未授官 | 查案卷判决、`rejection_reports` 与人物 applier 回执 |
+| 任命成功但未启程 | 查载荷 `summon_after`、未激活 origin 是否被正确提升，以及 #670 单次消费结果 |
+| 失败后残留在途或脏 Agent | 属事务/outer-commit 投影缺陷；任命、传召、缓存必须一起核 |
+| 月末陌生人物被拒 | 正常；先走史实人物补档或用户确认登记，再任命 |

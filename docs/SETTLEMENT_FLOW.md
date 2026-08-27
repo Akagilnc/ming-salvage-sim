@@ -244,7 +244,7 @@ session.advance_without_decree / POST /api/decree/advance_without_edict:
 - `settling` + 无 ready context（崩在推演期）→ 落回正常流程重跑推演；`pre_settle` 被 settling 守门跳过=财政不二落。
 - settling 恢复窗口内**冻结改盘操作**：
   - 下旨草案/撤回/跳过等 7 个入口（`session._refuse_if_settling`；web 对应端点 409，CLI 打印恢复指引并留在本回合交互循环不重印回合头）。
-  - 全部即时写聊天路径一并冻（`_proposal_blocked` 总闸）：任免落地（`_apply_appointment`）、编外人物登记、密令房 tool 四个 action（issue/progress/submit/rush，`tools.py` dispatcher 一处冻）、CLI 前缀密令 upsert——这些直写在 settle 重试事务边界外，重放中止回滚不会回滚它们。
+  - 全部聊天侧新写入一并冻（`_proposal_blocked` 总闸）：任免候选暂存（`_stage_appointment_candidate`）、编外人物登记、密令房 tool 四个 action（issue/progress/submit/rush，`tools.py` dispatcher 一处冻）、CLI 前缀密令 upsert——这些写入在 settle 重试事务边界外，重放中止回滚不会回滚它们。
   - 自然语言抽取的**新暂存动作**短路不入档（抽取器 LLM 调用一并跳过）——窗内新 stage 会被重试 settle 的 commit_pending_actions 落进「保存的 delta 推演时并不知道」的旧回合。
   - 窗**前**已暂存的 pending 不受影响：对话确认（应允延迟提交/拒绝丢弃）保持可用，仍随 settle 事务统一提交。
 - ready 但值级坏掉的 payload 反复重放失败 → 「重新推演」逃生口 `error_pack.clear_for_resimulation`：把 context **降级为非 ready**（保留邸报字段），不删行，崩溃循环切断。
