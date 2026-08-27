@@ -884,17 +884,11 @@ def stage_punishment_candidate(
         "punish_action": action,
         "mode": mode,
     }
-    try:
-        backing = int(backing_dossier_id) if backing_dossier_id not in (None, "") else 0
-    except (TypeError, ValueError):
-        raise ValueError(f"backing_dossier_id 非法：{backing_dossier_id!r}")
-    if backing < 0:
-        raise ValueError(f"backing_dossier_id 非法：{backing_dossier_id!r}")
-    if backing > 0:
-        # 非法 typed 关联在首写前响亮拒绝
-        if db.get_decree_dossier(backing) is None:
-            raise ValueError(f"backing_dossier_id 所指案卷不存在：{backing}")
-        staged["backing_dossier_id"] = backing
+    # #658：与 durable apply 共吃 require_backing_dossier_id，禁第二份 int/存在性分支
+    from ming_sim.db import require_backing_dossier_id
+    backing = require_backing_dossier_id(db, backing_dossier_id)
+    if backing is not None:
+        staged["backing_dossier_id"] = int(backing)
     category = str(transaction_category or "").strip()
     if category:
         valid, _ = validate_action_candidate_shape(
@@ -3027,8 +3021,8 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                     "mode", "颁布方式",
                     frozenset({"ordinary", "midzhi"}), "",
                 ),
-                # #658：处置指向哪次站台（不替代本案 provenance）
-                FieldSpec("backing_dossier_id", "站台案卷", None, 0, as_int=True),
+                # #658：处置指向哪次站台；禁 generic as_int clamp，原样交 stage 权威
+                FieldSpec("backing_dossier_id", "站台案卷", None, 0),
             ),
             materialize_fn=_materialize_punishment,
         ),

@@ -239,6 +239,11 @@ def normalize_one_candidate(obj: Mapping[str, Any], *, soft: bool) -> Dict[str, 
         raw = _field_raw(obj, spec)
         if raw is None:
             raw = spec.default
+        # #658：backing_dossier_id 禁 generic as_int/str clamp，原样交给 stage 权威解析
+        if name == "backing_dossier_id":
+            present = _field_raw(obj, spec)
+            out[name] = 0 if present is None else present
+            continue
         if spec.as_int:
             out[name] = _as_int(raw, hi=int(spec.int_hi))
         elif spec.allowed is not None:
