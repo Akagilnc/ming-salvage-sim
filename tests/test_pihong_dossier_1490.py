@@ -4197,6 +4197,105 @@ def test_658_typed_target_and_backing_reject_bad_shapes(game, monkeypatch):
     ) == "stalled"
 
 
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
+def test_658_routing_rejected_draft_retries_across_real_turn_boundaries(
+    game, monkeypatch, tmp_path,
+):
+    from tests.settlement_seam_helpers import canned_full_settlement, make_light_session
+
+    db, state, content = game
+    mirror = tmp_path / "routing-rejections.jsonl"
+    monkeypatch.setattr(
+        "ming_sim.error_pack.rejections_jsonl_path", lambda: str(mirror),
+    )
+    canned_full_settlement(monkeypatch)
+    monkeypatch.setattr(
+        session_mod, "write_decree_with_agno",
+        lambda *_a, **_k: "诏曰清丈。",
+    )
+    session = make_light_session(db, state, content)
+    original_turn = int(state.turn)
+    original_year = int(state.year)
+    original_period = int(state.period)
+    bad = int(db.add_directive(
+        state, None, "修仙", "player-decree-test",
+        dossier_payload={
+            "dossier_action_type": "assignment",
+            "target_kind": "issue",
+            "target_id": "route-修仙",
+            "transaction_category": "修仙",
+        },
+    ))
+    good = int(db.add_directive(
+        state, None, "清丈", "player-decree-test",
+        dossier_payload={
+            "dossier_action_type": "assignment",
+            "target_kind": "issue",
+            "target_id": "route-清丈",
+            "transaction_category": "清丈",
+        },
+    ))
+
+    first = session.resolve_turn()
+    assert first.awaiting is False
+    assert int(state.turn) == original_turn + 1
+    statuses = dict(db.conn.execute(
+        "SELECT id,status FROM turn_directives WHERE id IN (?,?)", (bad, good),
+    ).fetchall())
+    assert statuses == {bad: "draft", good: "issued"}
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM decree_dossiers WHERE directive_id=?", (good,),
+    ).fetchone()[0] == 1
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM decree_dossiers WHERE directive_id=?", (bad,),
+    ).fetchone()[0] == 0
+
+    reports = db.conn.execute(
+        "SELECT section,item_json,category,source FROM rejection_reports"
+    ).fetchall()
+    assert len(reports) == 1
+    assert reports[0]["section"] == "executor_routing"
+    assert reports[0]["category"] == "duty_route_unmapped"
+    assert reports[0]["source"] == "player_decree"
+    assert json.loads(reports[0]["item_json"])["transaction_category"] == "修仙"
+    assert mirror.exists()
+    mirror_lines = mirror.read_text(encoding="utf-8").splitlines()
+    assert len(mirror_lines) == 1
+    mirror_row = json.loads(mirror_lines[0])
+    assert mirror_row["section"] == "executor_routing"
+    assert mirror_row["category"] == "duty_route_unmapped"
+    assert mirror_row["source"] == "player_decree"
+    assert json.loads(mirror_row["item_json"])["transaction_category"] == "修仙"
+
+    assert [d.id for d in session.list_directives()] == [bad]
+    session.update_directive(bad, "清丈重拟", dossier_payload={
+        "dossier_action_type": "assignment",
+        "target_kind": "issue",
+        "target_id": "route-清丈-retry",
+        "transaction_category": "清丈",
+    })
+    second = session.resolve_turn()
+    assert second.awaiting is False
+    assert int(state.turn) == original_turn + 2
+    statuses = dict(db.conn.execute(
+        "SELECT id,status FROM turn_directives WHERE id IN (?,?)", (bad, good),
+    ).fetchall())
+    assert statuses == {bad: "issued", good: "issued"}
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM decree_dossiers WHERE directive_id=?", (bad,),
+    ).fetchone()[0] == 1
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM decree_dossiers WHERE directive_id=?", (good,),
+    ).fetchone()[0] == 1
+    provenance = db.conn.execute(
+        "SELECT turn,year,period,source FROM turn_directives WHERE id=?", (bad,),
+    ).fetchone()
+    assert (provenance["turn"], provenance["year"], provenance["period"]) == (
+        original_turn, original_year, original_period,
+    )
+    assert provenance["source"] == "player-decree-test"
+
+
 def test_658_ordinary_edit_does_not_inherit_push_target(game):
     """#658：普通 triad 改草不得继承旧强推 target。"""
     db, state, content = game

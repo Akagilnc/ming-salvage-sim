@@ -19443,10 +19443,11 @@ class GameDB:
             SELECT d.*, e.title AS event_title
             FROM turn_directives d
             LEFT JOIN events e ON e.id = d.event_id
-            WHERE d.turn = ? AND d.status IN ({placeholders})
+            WHERE (d.turn = ? OR (d.turn < ? AND d.status = 'draft'))
+              AND d.status IN ({placeholders})
             ORDER BY d.id
             """,
-            (state.turn, *statuses),
+            (state.turn, state.turn, *statuses),
         ).fetchall()
 
     @staticmethod
@@ -19631,7 +19632,7 @@ class GameDB:
         """Settlement projection: drafts whose dossier creation succeeded."""
         rows = self.conn.execute(
             """SELECT td.* FROM turn_directives td
-               WHERE td.turn=? AND td.status='draft'
+               WHERE td.turn<=? AND td.status='draft'
                  AND EXISTS (SELECT 1 FROM decree_dossiers d WHERE d.directive_id=td.id)
                ORDER BY td.id""",
             (state.turn,),
@@ -19643,7 +19644,7 @@ class GameDB:
             """
             UPDATE turn_directives
             SET status = 'issued', updated_at = CURRENT_TIMESTAMP
-            WHERE turn = ? AND status = 'draft'
+            WHERE turn <= ? AND status = 'draft'
               AND EXISTS (
                   SELECT 1 FROM decree_dossiers d
                   WHERE d.directive_id=turn_directives.id
