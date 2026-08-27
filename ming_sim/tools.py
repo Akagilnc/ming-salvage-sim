@@ -778,8 +778,8 @@ def build_minister_tools(character: Character, context: CourtContext,
         """结束本次召见，退朝。"""
         return "__dismiss__"
 
-    def summon_minister(name: str) -> str:
-        """传召另一位大臣入殿。name 填大臣姓名。"""
+    def summon_minister(name: str, 行程语气: str = "常行") -> str:
+        """传召另一位大臣入殿。行程语气取常行、加急或星夜兼程。"""
         return f"__summon__{name}"
 
     # #635 荐人准入唯一所有者（庭裁 Y1/Y3）：reason 为工具契约必填参数，
