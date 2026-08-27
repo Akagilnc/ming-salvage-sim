@@ -222,7 +222,8 @@ def test_office_appointment_keeps_status_reason_mirrored(
     )
 
 
-def test_invalid_tone_is_rejected_before_same_destination_idempotence(game):
+@pytest.mark.parametrize("invalid_tone", ["", 0, False, "飞驰"])
+def test_invalid_tone_is_rejected_before_same_destination_idempotence(game, invalid_tone):
     db, state, content = game
     name = _active(db)
     db.conn.execute("UPDATE characters SET location='beizhili', transit_to='liaodong' WHERE name=?", (name,))
@@ -231,7 +232,7 @@ def test_invalid_tone_is_rejected_before_same_destination_idempotence(game):
 
     result = issues.apply_score_extraction(db, state, {"人物变更": [{
         "name": name, "origin_ref": "盘面自发", "动作": "行止",
-        "transit_to": "liaodong", "行程语气": "飞驰",
+        "transit_to": "liaodong", "行程语气": invalid_tone,
     }]}, content=content)
 
     assert result["applied_person_changes"][0]["category"] == "invalid_enum"

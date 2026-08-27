@@ -11,7 +11,7 @@ import math
 import re
 import sqlite3
 from contextlib import contextmanager
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from ming_sim.applier import atomic
 from ming_sim.appointment_tenure import appointment_tenure_from
@@ -3119,11 +3119,12 @@ def _load_pending_gate_valid_regions(db: GameDB) -> set[str]:
 
 
 TRAVEL_SPEED_BY_TONE = {"常行": 1.0, "加急": 1.5, "星夜兼程": 2.0}
+TravelTone = Literal[*TRAVEL_SPEED_BY_TONE]
 
 
 def normalize_travel_tone(value: object) -> str:
     """Validate the canonical typed travel tone; never infer or downgrade it."""
-    tone = str(value or "常行").strip()
+    tone = "常行" if value is None else str(value).strip()
     if tone not in TRAVEL_SPEED_BY_TONE:
         raise ValueError("行程语气不在闭合枚举")
     return tone
