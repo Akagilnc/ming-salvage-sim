@@ -104,8 +104,8 @@ def classifier_json_fields_prompt() -> str:
                 lines.append(f'  "{f.zh}": "{"|".join(vals)}",')
             elif f.as_int:
                 if f.default is None:
-                    # 可选正整数 id：JSON null 缺省 | 命中时正整数（禁字符串占位）
-                    lines.append(f'  "{f.zh}": null|1,')
+                    # 可选正整数 id：缺省 JSON null；命中时由模型填正整数（禁字符串）
+                    lines.append(f'  "{f.zh}": null,')
                 else:
                     lines.append(f'  "{f.zh}": 0,')
             else:

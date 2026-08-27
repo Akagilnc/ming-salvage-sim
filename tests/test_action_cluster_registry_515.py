@@ -134,6 +134,22 @@ def test_registry_rows_generate_shape_contract_matrix():
         )
         assert over[spec.name] == int(spec.int_hi)
 
+    # 可选正整数：as_int + default None 为结构化契约；raw 直达，不经 generic clamp
+    opt_pos = [s for s in specs_by_name.values() if s.as_int and s.default is None]
+    assert opt_pos, "catalog must expose optional positive-int FieldSpec"
+    for spec in opt_pos:
+        host = next(
+            c.kind for c in ACTION_CLUSTERS
+            if any(f.name == spec.name for f in c.fields)
+        )
+        absent = normalize_one_candidate({"kind": host}, soft=True)
+        assert absent[spec.name] is None
+        kept = normalize_one_candidate({"kind": host, spec.name: 7}, soft=True)
+        assert kept[spec.name] == 7
+        # numeric string 原样过缝；拒绝权在既有严格 parser/stage 边界
+        raw_str = normalize_one_candidate({"kind": host, spec.name: "12"}, soft=True)
+        assert raw_str[spec.name] == "12"
+
 
 def test_strict_shape_rejects_unknown_kind_and_out_of_enum_subfield():
     ok, reason = validate_action_candidate_shape({"kind": "treasury"})
