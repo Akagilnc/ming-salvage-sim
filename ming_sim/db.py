@@ -19229,6 +19229,13 @@ class GameDB:
                 raise ValueError(f"target_dossier_id 非法：{raw_target!r}") from exc
             if target_did <= 0:
                 raise ValueError(f"target_dossier_id 非法：{raw_target!r}")
+            # 同 directive↔目标 dossier 已绑定：幂等返回，不重跑 stalled 校验副作用
+            bound = self.conn.execute(
+                "SELECT id FROM decree_dossiers WHERE id=? AND directive_id=?",
+                (int(target_did), int(directive_id)),
+            ).fetchone()
+            if bound is not None:
+                return [int(target_did)]
             from ming_sim.rescript_actions import apply_imperial_deliberation_push
             pushed = apply_imperial_deliberation_push(
                 self, state,
@@ -19430,9 +19437,17 @@ class GameDB:
         payload = self._merge_directive_payload(
             row["dossier_payload_json"], dict(dossier_payload or {})
         )
-        if not all(str(payload.get(key) or "").strip() for key in (
+        has_triad = all(str(payload.get(key) or "").strip() for key in (
             "dossier_action_type", "target_kind", "target_id",
-        )):
+        ))
+        raw_push = payload.get("target_dossier_id")
+        has_push = False
+        if raw_push not in (None, "", 0, "0"):
+            try:
+                has_push = int(raw_push) > 0
+            except (TypeError, ValueError):
+                has_push = False
+        if not has_triad and not has_push:
             raise ValueError("旨意编辑须提供完整结构化动作与目标")
         with atomic(self):
             self.conn.execute(
