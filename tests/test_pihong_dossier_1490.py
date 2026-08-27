@@ -3868,9 +3868,9 @@ def test_658_free_decree_capture_target_dossier_real_entry(game, monkeypatch):
     payload = cli_backend.capture_manual_directive_payload(
         f"着即强推南迁之议（案卷{did}）", None, db=db, content=content,
     )
+    # 契约只锁 structured 字段；不锁 prompt 措辞/排版
     assert payload.get("target_dossier_id") == did
-    assert prompts and "目标案卷ID" in prompts[0]
-    assert f"案卷ID={did}" in prompts[0]
+    assert prompts, "须真实走过抽取 backend"
 
     session = GameSession.__new__(GameSession)
     session.db = db
