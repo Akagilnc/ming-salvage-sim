@@ -15,6 +15,7 @@ from ming_sim.distance import DistanceMatrix
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.session import GameSession
 from ming_sim.decree import prepare_resolve_front_half, settle_with_delta
+from ming_sim.simulation import build_simulator_payload
 from tests.dossier_test_helpers import rejected_verdict
 from tests.test_qa_c_p0_1380_1355 import _fake_session, _minister_wang_shaohui
 
@@ -157,6 +158,59 @@ def test_appointment_summon_activates_only_after_promulgation(
     assert unsettled[0]["person_name"] == "袁崇焕"
     assert unsettled[0]["origin_id"] == origin
     assert _yuan_row(db)["location"] == "beizhili"
+
+
+def test_three_anchor_summons_arrive_in_successive_months(game, monkeypatch):
+    """#675 family tracer: two fresh summons plus promulgated reinstatement."""
+    db, state, content = game
+    session = GameSession.__new__(GameSession)
+    session.db, session.state, session.content = db, state, content
+    session.temporary_characters = {}
+    for name, location in (
+        ("孙传庭", "henan"),
+        ("徐光启", "nanzhili"),
+        ("袁崇焕", "guangdong"),
+    ):
+        db.conn.execute(
+            "UPDATE characters SET location=?, transit_to='' WHERE name=?",
+            (location, name),
+        )
+    db.conn.commit()
+    db.set_character_status(state, "徐光启", "active", reason="奉旨起用")
+
+    pending, _origin = _stage_yuan_appointment_summon(game, monkeypatch)
+    for name, travel_tone in (("孙传庭", "常行"), ("徐光启", "加急")):
+        target, _temporary = session.summon_character(
+            name, content.characters["王绍徽"], allow_temporary=False,
+        )
+        session.consume_audience_admission(
+            target, origin_id=f"test:#675:{name}", state=state,
+            travel_tone=travel_tone,
+        )
+
+    dossier_id = _close_office_to_dossier(db, state, content, pending["id"])
+    settle_with_delta(
+        state, db, {}, before_turn=int(state.turn), content=content,
+        dossier_verdicts=[{"dossier_id": dossier_id, "decision": "promulgated"}],
+    )
+
+    expected_arrival = {1: "孙传庭", 2: "徐光启", 3: "袁崇焕"}
+    seen: set[str] = set()
+    for month in range(1, 4):
+        prepare_resolve_front_half(state, db, content=content)
+        payload = build_simulator_payload(state, db, "", "")
+        waiting = {row["person_name"] for row in payload["waiting_audience"]}
+        assert expected_arrival[month] in waiting
+        assert expected_arrival[month] not in seen
+        seen.update(waiting)
+        if month < 3:
+            settle_with_delta(
+                state, db, {}, before_turn=int(state.turn), content=content,
+            )
+
+    assert seen == {"孙传庭", "徐光启", "袁崇焕"}
+    transit = {row["name"] for row in payload["transit_semantics"]}
+    assert seen.isdisjoint(transit)
 
 
 def test_appointment_summon_staging_rolls_back_both_rows(game, monkeypatch):

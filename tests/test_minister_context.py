@@ -12,6 +12,7 @@ from itertools import combinations
 from unittest.mock import MagicMock, patch
 
 import pytest
+from agno.tools.function import Function
 
 from ming_sim.models import Character, CourtContext, LLMConfig
 from ming_sim.knowledge import knowledge_row_visible_to
@@ -147,6 +148,18 @@ def test_building_brief_joins_chinese_region_and_qualitative_fields(game):
 # ---------------------------------------------------------------------------
 # memorial / resistance tools
 # ---------------------------------------------------------------------------
+
+def test_summon_tool_exposes_and_enforces_canonical_travel_tones(game):
+    db, _state, content = game
+    minister = _active_ministers(content, db, n=1)[0]
+    summon = {f.__name__: f for f in build_minister_tools(minister, _ctx(game))}["summon_minister"]
+
+    schema = Function.from_callable(summon).to_dict()
+    assert schema["parameters"]["properties"]["行程语气"]["enum"] == ["常行", "加急", "星夜兼程"]
+    assert summon(minister.name, 行程语气="加急") == f"__summon__{minister.name}"
+    with pytest.raises(ValueError, match="行程语气"):
+        summon(minister.name, 行程语气="飞驰")
+
 
 def test_minister_memorial_tools_emit_commitment_protocol_fields(game):
     """list/inspect_memorial 吐 commitment_kind/end_turn/progress 协议键；停止条件定性。"""
