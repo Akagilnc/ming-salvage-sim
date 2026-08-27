@@ -1628,7 +1628,7 @@ class GameSession:
                             target,
                             origin_id=f"session:tool:{int(chat_turn_id or 0)}:{target.name}",
                             origin_chat_turn_id=int(chat_turn_id or 0),
-                            travel_tone=str(args.get("行程语气") or "常行"),
+                            travel_tone=args.get("行程语气"),
                         )
                         if decision.allowed:
                             result.court_action = "summon"
