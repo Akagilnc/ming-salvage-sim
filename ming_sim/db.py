@@ -15734,7 +15734,7 @@ class GameDB:
                 self.transition_decree_dossier(
                     dossier_id, "executing", commit=False,
                 )
-                return
+                return affected_people
             # Narrative-owned effects are deliberately left to the
             # simulator/extractor; immediate-owned effects were staged before
             # this gate.  Only payload-owned actions enter this dispatcher.
@@ -15790,7 +15790,7 @@ class GameDB:
                         dossier_id, "fulfilled", "成案时即生效",
                         state.turn, close=True, commit=False,
                     )
-                return
+                return affected_people
             if row["action_type"] in {"appointment", "dismiss_assignment"}:
                 pa = {
                     "id": int(row["pending_action_id"]),
@@ -15881,7 +15881,7 @@ class GameDB:
                                     f"拨饷不足额：应拨{amount}两，实拨{spent}两",
                                     state.turn, close=True, commit=False,
                                 )
-                                return
+                                return affected_people
                     else:
                         actual = self.record_issue_economy_move(
                             state,
@@ -15907,7 +15907,7 @@ class GameDB:
                                 f"拨帑不足额：应拨{amount}两，实拨{abs(actual)}两",
                                 state.turn, close=True, commit=False,
                             )
-                            return
+                            return affected_people
             elif row["action_type"] == "pay_order_override":
                 # #653 / ADR 0055/0090：偿还序 override＋折发旨判后物化——顺颁/强颁
                 # 走 materialize_pay_order_decree 唯一入口（真实案卷资格＋颁布门校验、
@@ -16003,13 +16003,13 @@ class GameDB:
                 if not self._apply_assignment_verdict_effect(
                     state, row, payload, dossier_id,
                 ):
-                    return
+                    return affected_people
             elif row["action_type"] == "referral":
                 # #524 / ADR 0055：下议机械效果=initiative（机关 participants + end_turn）。
                 if not self._apply_referral_verdict_effect(
                     state, row, payload, dossier_id,
                 ):
-                    return
+                    return affected_people
             elif row["action_type"] == "military_order":
                 # #521 / ADR 0055：军令 station/office 自案卷物化；due_turn 已在案卷。
                 affected_people.update(self._apply_military_order_verdict_effect(

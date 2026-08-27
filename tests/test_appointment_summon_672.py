@@ -254,18 +254,28 @@ def test_appointment_summon_rejected_leaves_no_travel(game, monkeypatch):
 
 
 def test_appointment_summon_office_commit_failure_rolls_back(game, monkeypatch):
-    """canonical 授官返回空 affected：经真实 settle_with_delta 整批回滚。
+    """真实授官核拒收（已故）→ 空 affected：经 settle_with_delta 整批回滚。
 
-    案卷仍 proposed、inactive office origin 唯一且未激活、人物官职/行止不变、
-    registry 零调用。
+    不 mock _commit_office_action；案卷仍 proposed、inactive office origin 唯一且未激活、
+    人物官职/行止不变、registry 零调用。
     """
     db, state, content = game
     pending, origin = _stage_yuan_appointment_summon(game, monkeypatch)
     dossier_id = _close_office_to_dossier(db, state, content, pending["id"])
+
+    # 合法入口可产生的真实失败：在册已故 → apply_office_appointment 拒收 → 空 affected。
+    db.conn.execute(
+        "UPDATE characters SET status='dead', status_reason='测试已故', reason_code='' "
+        "WHERE name='袁崇焕'",
+    )
+    db.conn.commit()
+    yuan = content.characters["袁崇焕"]
+    yuan.status = "dead"
+    yuan.status_reason = "测试已故"
+    yuan.reason_code = ""
+
     before = dict(_yuan_row(db))
     reg = _FakeRegistry()
-
-    monkeypatch.setattr(db, "_commit_office_action", lambda *a, **k: set())
 
     with pytest.raises(SettlementAbort):
         settle_with_delta(
