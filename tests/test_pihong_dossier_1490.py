@@ -3624,6 +3624,22 @@ def test_658_backing_credit_on_punish_promulgation(game):
     )
     assert int(_dossier_payload(punish).get("backing_dossier_id") or 0) == bid
     edges_before = _edge_count()
+
+    # #640 全知读面：本事件结构化配对 before/after + reopen 归因（禁宽泛 any）
+    from ming_sim.db import GameDB
+    from ming_sim.relation_read import project_relation_ledger
+    from ming_sim.relations import EMPEROR_NODE
+
+    credit_marker = str(tool_args["decree_text"])
+
+    def _emperor_minister_ctx(gdb) -> str:
+        for row in project_relation_ledger(gdb, viewer=None):
+            if row.get("source") == EMPEROR_NODE and row.get("target") == minister:
+                return str(row.get("recent_context") or "")
+        return ""
+
+    before_ctx = _emperor_minister_ctx(db)
+    assert credit_marker not in before_ctx
     db.apply_dossier_verdicts(
         state,
         [{"dossier_id": int(punish["id"]), "decision": "promulgated"}],
@@ -3637,31 +3653,23 @@ def test_658_backing_credit_on_punish_promulgation(game):
     ).fetchone()
     assert str(edge["origin"] or "").startswith(f"dossier:{bid}")
     assert str(edge["target"]) == minister
-
-    # #640 全知读面可见变化；重开后 credit origin 仍回指原 dossier
-    from ming_sim.relation_read import project_relation_ledger
-    from ming_sim.db import GameDB
-    ledger = project_relation_ledger(db, viewer=None)
-    assert any(
-        minister in (row.get("source"), row.get("target"))
-        and str(row.get("recent_context") or "").strip()
-        for row in ledger
-    )
+    after_ctx = _emperor_minister_ctx(db)
+    assert credit_marker in after_ctx, after_ctx
+    assert after_ctx != before_ctx
+    credit_origin_prefix = f"dossier:{bid}"
     reopened = GameDB(db.path, content=content)
     try:
         restored_edge = reopened.conn.execute(
-            "SELECT origin, target FROM relation_edge_events "
-            "WHERE event_kind=? ORDER BY id DESC LIMIT 1",
-            (KIND_BETRAY,),
+            "SELECT origin, target, context FROM relation_edge_events "
+            "WHERE event_kind=? AND target=? "
+            "AND origin LIKE ? ESCAPE '\\' "
+            "ORDER BY id DESC LIMIT 1",
+            (KIND_BETRAY, minister, credit_origin_prefix + "%"),
         ).fetchone()
-        assert str(restored_edge["origin"] or "").startswith(f"dossier:{bid}")
-        assert str(restored_edge["target"]) == minister
-        restored_ledger = project_relation_ledger(reopened, viewer=None)
-        assert any(
-            minister in (row.get("source"), row.get("target"))
-            and str(row.get("recent_context") or "").strip()
-            for row in restored_ledger
-        )
+        assert restored_edge is not None
+        assert str(restored_edge["origin"] or "").startswith(credit_origin_prefix)
+        assert credit_marker in str(restored_edge["context"] or "")
+        assert credit_marker in _emperor_minister_ctx(reopened)
     finally:
         reopened.close()
 
@@ -3913,15 +3921,14 @@ def test_658_stalled_excluded_from_promulgation_validation(game, monkeypatch):
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_658_free_decree_capture_target_dossier_real_entry(game, monkeypatch):
-    """#658：Web 真入口 → Session.resolve_turn 成案；同案卷/issue/幂等/仿真/封驳三选/restore。"""
+    """#658：Web 真入口 → 真实 resolve_directives 成案/颁布/仿真/封驳三选/restore。"""
     import types
     import ming_sim.cli_backend as cli_backend
     import ming_sim.session as session_mod
     from ming_sim import rescript_actions as ra
     from ming_sim.db import GameDB
-    from ming_sim.decree import _rescript_decisions
     from ming_sim.models import TurnPhase
-    from ming_sim.session import GameSession, ResolveResult
+    from tests.settlement_seam_helpers import canned_full_settlement, make_light_session
 
     db, state, content = game
     stalled, _ = _658_plant_stalled_deliberation(db, state, content, title="南迁之议")
@@ -3944,17 +3951,7 @@ def test_658_free_decree_capture_target_dossier_real_entry(game, monkeypatch):
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
     text_in = f"着即中旨直发强推南迁之议（案卷{did}）"
 
-    session = GameSession.__new__(GameSession)
-    session.db = db
-    session.state = state
-    session.content = content
-    session.llm_config = None
-    session.agno_db = None
-    session.registry = None
-    session.last_decree = ""
-    session.last_report = ""
-    session.deaths_this_turn = []
-    session.debuts_this_turn = []
+    session = make_light_session(db, state, content)
     web_game = types.SimpleNamespace(
         db=db, state=state, content=content, session=session,
         directive_rows=lambda: db.list_directives(
@@ -3974,19 +3971,38 @@ def test_658_free_decree_capture_target_dossier_real_entry(game, monkeypatch):
     assert int(payload.get("target_dossier_id") or 0) == did
     assert payload.get("mode") == "midzhi"
 
-    # 真实结算入口：resolve_turn → ensure_dossiers（禁测试手调 ensure）
+    # 真实结算：只替换外部 LLM seam；resolve_turn → ensure → 真 resolve_directives
     state.turn_phase = TurnPhase.SUMMONING.value
     db.save_state(state)
+    canned_full_settlement(monkeypatch, narrative=f"邸报：强推案卷{did}。")
 
-    def fake_resolve(st, gdb, agno, llm, directives, decree_text, **kw):
-        return ResolveResult(awaiting=False, report="ok")
+    def _reject_reviewed(dossiers, state_arg, **kw):
+        # 只替外部判官；criteria_snapshot 必须回放 prepared 原值
+        prepared = kw.get("prepared_context") or decree_mod.build_promulgation_judge_context(
+            db, state_arg, dossiers,
+        )
+        band = str(prepared.get("imperial_authority_band") or "偏弱")
+        by_id = {
+            int(item["id"]): item
+            for item in prepared.get("dossiers", [])
+            if isinstance(item, dict) and isinstance(item.get("id"), int)
+        }
+        out = []
+        for row in dossiers:
+            rid = int(row["id"])
+            verdict = rejected_verdict(rid, band, reason="658-reject")
+            src = (by_id.get(rid) or {}).get("criteria_snapshot_source")
+            if isinstance(src, dict):
+                verdict["criteria_snapshot"] = dict(src)
+            out.append(verdict)
+        return out
 
-    monkeypatch.setattr(session_mod, "resolve_directives", fake_resolve)
+    monkeypatch.setattr(decree_mod, "llm_promulgation_verdicts", _reject_reviewed)
     monkeypatch.setattr(
         session_mod, "write_decree_with_agno",
         lambda *a, **k: f"诏曰强推案卷{did}",
     )
-    session.resolve_turn()
+    resolve_result = session.resolve_turn()
 
     assert len(db.list_decree_dossiers()) == before
     pushed = db.get_decree_dossier(did)
@@ -4018,28 +4034,28 @@ def test_658_free_decree_capture_target_dossier_real_entry(game, monkeypatch):
             directive_identity="directive:999",
         )
 
-    # 旧案本回合 pending verdict → 入现有仿真清单
-    db.save_pending_promulgation_verdicts(
-        state.turn, [{"dossier_id": did, "decision": "promulgated"}],
-    )
+    # 真链已落 pending verdict → 入现有仿真清单（禁手工 save_pending）
+    stored_verdicts = db.get_pending_promulgation_verdicts(state.turn)
+    assert any(int(v["dossier_id"]) == did for v in stored_verdicts)
     sim_ids = {int(r["id"]) for r in db.list_decree_dossiers_for_simulation(state.turn)}
     assert did in sim_ids
 
-    # 封驳后进入既有强颁/收回/留中轨（_rescript_decisions 单一接缝）
-    desk = _rescript_decisions(
-        [{"dossier_id": did, "decision": "rejected", "reason": "658-reject"}],
-        [db.get_decree_dossier(did)],
-    )
-    assert len(desk) == 1
-    labels = {str(o.get("label") or "") for o in desk[0]["options"]}
+    # 封驳三选来自真实 resolve 决策轨（禁直调 _rescript_decisions）
+    assert resolve_result.awaiting is True
+    dossier_rows = [
+        d for d in (resolve_result.decisions or [])
+        if str(d.get("event_id") or "") == f"dossier:{did}"
+    ]
+    assert len(dossier_rows) == 1, resolve_result.decisions
+    labels = {str(o.get("label") or "") for o in dossier_rows[0]["options"]}
     assert {"强颁", "收回", "留中"} <= labels
-    by_label = {str(o["label"]): o for o in desk[0]["options"]}
+    by_label = {str(o["label"]): o for o in dossier_rows[0]["options"]}
     assert by_label["强颁"]["dossier_decision"] == "force_promulgated"
     assert by_label["收回"]["dossier_decision"] == "withdrawn"
     assert by_label["留中"]["dossier_decision"] == "hold"
-    assert all(int(o["dossier_id"]) == did for o in desk[0]["options"])
+    assert all(int(o["dossier_id"]) == did for o in dossier_rows[0]["options"])
 
-    # 重开 DB 仅读库接续：backed / midzhi / 御笔 / issue resolved
+    # 重开 DB 仅读库接续：backed / midzhi / 御笔 / issue resolved / desk 三选
     reopened = GameDB(db.path, content=content)
     try:
         restored = reopened.get_decree_dossier(did)
@@ -4054,6 +4070,14 @@ def test_658_free_decree_capture_target_dossier_real_entry(game, monkeypatch):
             "SELECT status FROM issues WHERE id=?", (int(issue_before["id"]),),
         ).fetchone()
         assert str(issue_r["status"]) == "resolved"
+        desk = reopened.list_rescript_desk(int(state.turn))
+        desk_hit = [
+            d for d in desk if str(d.get("event_id") or "") == f"dossier:{did}"
+        ]
+        assert desk_hit
+        assert {"强颁", "收回", "留中"} <= {
+            str(o.get("label") or "") for o in desk_hit[0]["options"]
+        }
     finally:
         reopened.close()
 
