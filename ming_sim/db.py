@@ -12232,6 +12232,21 @@ class GameDB:
         self, payload: Dict[str, object], *, content=None, current_turn: int = 0,
     ) -> Dict[str, object]:
         """机械旨意的唯一结构边界；不完整载荷响亮拒绝。"""
+        # #658：纯御笔强推不经 ordinary triad 归一（prepare/commit/ensure 共吃）。
+        # text/actor 等会话字段须保留——pending payload 以它们为成案正文真源。
+        if classify_directive_structured_kind(payload) == "push":
+            push_id = imperial_push_target_dossier_id(payload)
+            assert push_id is not None
+            mode = self._normalize_dossier_mode(
+                payload["mode"] if "mode" in payload else "ordinary"
+            )
+            out: Dict[str, object] = {
+                "target_dossier_id": int(push_id), "mode": mode,
+            }
+            for key in ("text", "actor", "source_chat_turn_id"):
+                if payload.get(key) not in (None, ""):
+                    out[key] = payload[key]
+            return out
         normalized = dict(payload)
         normalized["mode"] = self._normalize_dossier_mode(
             normalized["mode"] if "mode" in normalized else "ordinary"
@@ -18673,28 +18688,22 @@ class GameDB:
             )
             # pending 只是皇帝核定前的候选，不是 ADR 0051 的成案点；默认同意进入
             # draft 时则已越过最终提交边界，应当立即取得案卷身份。
+            # #658：与 free-form / confirm 共吃 _ensure_directive_dossier（含御笔强推）。
             if status == "draft":
-                action_type = self._directive_dossier_action_type(payload)
-                executor_kind, executor_id = self._directive_executor(action_type, payload)
-                dossier_ids = self.create_decree_dossiers(
-                    state,
-                    action_type=action_type,
-                    decree_text=text,
-                    target_kind=str(payload.get("target_kind") or ""),
-                    target_id=payload.get("target_id") or "",
-                    executor_kind=executor_kind,
-                    executor_id=executor_id,
-                    source_chat_turn_id=int(payload.get("source_chat_turn_id") or 0),
-                    pending_action_id=int(pa["id"]),
-                    directive_id=did,
-                    payload=payload,
-                    status="proposed",
-                    due_turn=int(payload.get("due_turn") or 0),
-                    commit=False,
+                dossier_ids = self._ensure_directive_dossier(
+                    state, did, text, payload, commit=False,
                     rejection_collector=rejection_collector,
                 )
                 if not dossier_ids:
                     return False
+                # conversational commit 的 pending_action_id 绑回案卷（push 复用路径
+                # 只写 directive_id，普通 create 路径本就带 pending_action_id）
+                self.conn.execute(
+                    "UPDATE decree_dossiers SET pending_action_id=? "
+                    "WHERE directive_id=? AND (pending_action_id IS NULL "
+                    "OR pending_action_id=0 OR pending_action_id=?)",
+                    (int(pa["id"]), int(did), int(pa["id"])),
+                )
             return True
         return False
 
@@ -19387,6 +19396,7 @@ class GameDB:
             target_id=target_id,
             executor_kind=executor_kind,
             executor_id=executor_id,
+            source_chat_turn_id=int(structured.get("source_chat_turn_id") or 0),
             pending_action_id=0 if pending is None else int(pending["id"]),
             directive_id=int(directive_id),
             payload=structured,
