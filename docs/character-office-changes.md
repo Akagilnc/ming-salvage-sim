@@ -14,8 +14,7 @@
        ├─ 打回 / 收回 / 留中：人物效果不落
        └─ 顺颁 / 强颁：apply_dossier_promulgation
             → _commit_office_action
-            → 普通朝臣任免：apply_person_changes_only
-              既有后宫册封：apply_appointment
+            → 人物效果按「三、颁布与物化」权威分流落地
             → 同一 outer atomic 内完成授官及可选传召启程
             → outer commit 后 registry.project_outcome
 
@@ -52,15 +51,23 @@
 
 ## 三、颁布与物化
 
-`commit_pending_actions` 对 `kind=office` 的动作只创建 `decree_dossiers` 任免案卷。任免属于经外廷受判类，机械效果必须等颁布结果：
+`commit_pending_actions` 对 `kind=office` 的动作只创建 `decree_dossiers` 任免案卷。任免属于经外廷受判类，机械效果必须等颁布结果。
+
+**人物效果权威分流**（本文唯一真源；流程图、判决表、不变式只引用此处，不另定义）：
+
+| 类别 | 落地路径 |
+|---|---|
+| 普通朝臣任命 / 升迁 / 调任 | `apply_person_changes_only` |
+| 罢免 | `_commit_office_action` 内独立分支，经 canonical status primitive（`set_character_status`） |
+| 既有后宫册封 | `apply_appointment` |
 
 | 判决 | 人物结果 |
 |---|---|
-| 顺颁 / 强颁 | 普通朝臣任免走 `apply_person_changes_only`；既有后宫册封仍走 `apply_appointment`；落任命、调任、罢免及其派生变化 |
+| 顺颁 / 强颁 | 按上表权威分流落地任命、调任、罢免及其派生变化 |
 | 打回 / 收回 | 零人物效果 |
 | 留中 | 同一案卷留待后续判决，零人物效果 |
 
-普通朝臣任命物化走 `apply_person_changes_only`；既有后宫册封仍走 `apply_appointment`。两者都不调用完整 `apply_score_extraction`，因此不会顺带重跑赈灾回流、议题或其他月末结算核。
+朝臣任命路径与后宫册封路径都不调用完整 `apply_score_extraction`，因此不会顺带重跑赈灾回流、议题或其他月末结算核。
 
 ### 任命并传召
 
@@ -100,7 +107,7 @@ character_offices (
 ## 五、不变式
 
 - 任免候选成案不等于生效；颁布结果才决定人物效果。
-- 人物效果只走 ADR 0009 唯一 applier；任免局部写不得借完整月末 applier 搭便车。
+- 人物效果按「三、颁布与物化」权威分流落地；任免局部写不得借完整月末 applier 搭便车。
 - 任命、可选传召、案卷状态与结算写处于同一 outer atomic；失败不留半写。
 - registry 只在 outer commit 成功后投影；回滚不得留下脏 Agent。
 - `character_offices` 只存最近任职；完整过程看 `person_logs`。
