@@ -207,7 +207,13 @@ def test_impeachment_disposition_without_positive_issue_id_stages_nothing(game):
     assert db.conn.execute("SELECT COUNT(*) FROM pending_actions").fetchone()[0] == before
 
 
-def test_impeachment_admission_rejects_noncanonical_person_action(game):
+@pytest.mark.parametrize(("disposition", "punish_action"), [
+    ("办人", "廷杖"),
+    ("压下", "拿问下狱"),
+])
+def test_impeachment_admission_rejects_noncanonical_action(
+    game, disposition, punish_action,
+):
     db, state, content = game
     actor = _active_ming(db, content)
     target = _active_ming(db, content, exclude=actor.name)
@@ -215,7 +221,8 @@ def test_impeachment_admission_rejects_noncanonical_person_action(game):
     pending_id = db.stage_directive_candidate(state.turn, actor.name, payload={
         "text": "照此处置。", "actor": actor.name,
         "dossier_action_type": "punishment", "target_id": target.name,
-        "punish_action": "廷杖", "issue_id": 1, "issue_disposition": "办人",
+        "punish_action": punish_action, "issue_id": 1,
+        "issue_disposition": disposition,
     })
     db.commit_pending_actions(state, content=content, action_ids=[pending_id])
     assert db.conn.execute(
