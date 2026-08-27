@@ -256,6 +256,18 @@ def _dossier_payload_dict(row: Mapping[str, object] | Dict[str, object]) -> Dict
     return parsed if isinstance(parsed, dict) else {}
 
 
+def _is_stalled_deliberation(dossier: Mapping[str, object] | Dict[str, object]) -> bool:
+    """#658：stalled 廷议不进颁布集合（判官/stub/校验/消费共用）。"""
+    return str(_dossier_payload_dict(dossier).get("deliberation_state") or "") == "stalled"
+
+
+def _promulgable_proposed_dossiers(
+    proposed_dossiers: Sequence[Dict[str, object]],
+) -> List[Dict[str, object]]:
+    """本轮可颁布 proposed = 非 stalled 廷议的 proposed 案卷。"""
+    return [row for row in proposed_dossiers if not _is_stalled_deliberation(row)]
+
+
 def resolve_executor_appointment_tenure(
     db: GameDB, dossier: Mapping[str, object] | Dict[str, object],
 ) -> str:
@@ -1122,21 +1134,18 @@ def resolve_directives(
     )
 
     proposed_dossiers = db.list_decree_dossiers(status="proposed")
+    # #658：判官/stub/stored 校验/后续消费共用「可颁布」集合；stalled 保持 proposed 走惯性
+    promulgable_dossiers = _promulgable_proposed_dossiers(proposed_dossiers)
     verdict_rows: List[Dict[str, object]] = []
     rejected_verdict_batch: object = None
     reviewed_dossier_ids: Optional[set[int]] = None
     prepared_context: Optional[Dict[str, object]] = None
     proposed_modes: Dict[int, str] = {}
     try:
-        if proposed_dossiers:
+        if promulgable_dossiers:
             reviewed, exempt = [], []
-            for dossier in proposed_dossiers:
-                payload = dossier.get("payload")
-                if not isinstance(payload, dict):
-                    payload = json.loads(str(dossier.get("payload_json") or "{}"))
-                # #658：stalled 廷议不得进颁布判官；backed 与无 deliberation_state 照旧
-                if str(payload.get("deliberation_state") or "") == "stalled":
-                    continue
+            for dossier in promulgable_dossiers:
+                payload = _dossier_payload_dict(dossier)
                 proposed_modes[int(dossier["id"])] = str(payload.get("mode") or "ordinary")
                 (reviewed if dossier_action_policy(
                     dossier.get("action_type"), payload,
@@ -1152,7 +1161,7 @@ def resolve_directives(
             if stored:
                 rejected_verdict_batch = stored
                 verdict_rows = validate_promulgation_verdicts(
-                    stored, proposed_dossiers, db, prepared_context=prepared_context,
+                    stored, promulgable_dossiers, db, prepared_context=prepared_context,
                 )
             else:
                 provider = promulgation_verdict_provider
@@ -1168,7 +1177,7 @@ def resolve_directives(
                     stub_promulgation_verdicts(exempt, state) if exempt else []
                 )
                 verdict_rows = validate_promulgation_verdicts(
-                    generated, proposed_dossiers, db,
+                    generated, promulgable_dossiers, db,
                     prepared_context=prepared_context,
                 )
                 db.save_pending_promulgation_verdicts(state.turn, verdict_rows)

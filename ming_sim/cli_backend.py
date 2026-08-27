@@ -2041,6 +2041,7 @@ def extract_draft_intent_with_roster_heal(
             content=content,
             pay_order_facts=_pay_order_grounding_facts(content, db),
             correction_feedback=correction,
+            db=db,
             **extract_kwargs,
         )
         if db is not None:
@@ -2119,6 +2120,49 @@ def extract_draft_intent_with_roster_heal(
         return validated
 
 
+def _stalled_deliberation_push_facts(db: Any) -> str:
+    """#658：自由下旨可强推的 stalled 廷议＋active issue 投影（候选相关切片）。"""
+    if db is None:
+        return ""
+    try:
+        rows = db.list_decree_dossiers(status="proposed")
+    except Exception:
+        return ""
+    lines: List[str] = []
+    for row in rows or []:
+        try:
+            payload = row.get("payload") if isinstance(row.get("payload"), dict) else None
+            if payload is None:
+                payload = json.loads(str(row.get("payload_json") or "{}"))
+            if not isinstance(payload, dict):
+                continue
+            if str(payload.get("deliberation_state") or "") != "stalled":
+                continue
+            did = int(row["id"])
+            issue = db.conn.execute(
+                "SELECT id, title FROM issues WHERE origin_ref=? AND status='active' "
+                "LIMIT 1",
+                (f"dossier:{did}",),
+            ).fetchone()
+            if issue is None:
+                continue
+            title = str(
+                payload.get("title") or row.get("decree_text") or issue["title"] or ""
+            ).strip()
+            lines.append(
+                f"  案卷ID={did} issue#{int(issue['id'])} {title[:40]}"
+            )
+        except (TypeError, ValueError, KeyError, json.JSONDecodeError):
+            continue
+    if not lines:
+        return ""
+    return (
+        "【可御笔强推的议而不决案卷】仅当皇帝明确强推下列事项时填目标案卷ID；"
+        "否则目标案卷ID留 null。\n"
+        + "\n".join(lines) + "\n"
+    )
+
+
 def extract_draft_intent(
     player_message: Optional[str],
     minister_reply: str,
@@ -2130,6 +2174,7 @@ def extract_draft_intent(
     content: Any = None,
     correction_feedback: str = "",
     pay_order_facts: str = "",
+    db: Any = None,
 ) -> Dict[str, Any]:
     """LLM 判皇帝本轮是否在口头请大臣拟旨（非显式前缀），返回拟旨意图 + 草案文本 + 目标候选。
     失败/无 → {"draft_action": "无", "draft_text": "", "target_candidate": ""}。
@@ -2279,9 +2324,10 @@ def extract_draft_intent(
         '  "承办人": "",\n'
         '  "参与人": [{"character_id":"规范名","tier":"主办|协办|知情","role":"本案职分","delegator_id":null}],\n'
         '  "施行范围": "无|全国|单省", // 全国性政令填全国；明指某省填单省；京内/任免等无属地语义留无\n'
-        '  "期限月数": null' + (
+        '  "期限月数": null,           // 军令必填正整数；非军令留 null\n'
+        '  "目标案卷ID": null' + (
             "," if (_candidates or _supplement_mode) else ""
-        ) + '           // 军令必填正整数；非军令留 null\n'
+        ) + '        // 御笔强推议而不决廷议时填该案卷整数 ID；非此意图留 null\n'
     )
     # 多道模式：加「目标草案」判新拟 vs 补某道 + 现有候选清单（供 LLM 指认）。
     target_schema_line = (
@@ -2306,6 +2352,7 @@ def extract_draft_intent(
         ) + "\n"
         if _candidates else ""
     )
+    stalled_push_facts = _stalled_deliberation_push_facts(db)
     prompt = (
         "你是信息抽取器，不扮演、不写圣旨。读皇帝这句话 + 大臣回话，判断皇帝**本轮**"
         "是否在口头请大臣拟旨（如「拟旨吧」「你拟一道旨」「帮我起草」「草拟圣旨」等）。"
@@ -2316,10 +2363,12 @@ def extract_draft_intent(
         + target_schema_line
         + merge_schema_line
         + "}\n"
-        "判定要点：皇帝明确让大臣拟旨/起草圣旨→拟旨；仅商议/问询/催办/评论不算。语义判断，别拘字面。\n\n"
+        "判定要点：皇帝明确让大臣拟旨/起草圣旨→拟旨；仅商议/问询/催办/评论不算。语义判断，别拘字面。\n"
+        "御笔强推议而不决事项亦归拟旨，并填目标案卷ID。\n\n"
         + correction_block
         + roster_facts
         + pay_order_facts
+        + stalled_push_facts
         + draft_context
         + candidates_context
         + "【皇帝】" + (player_message or "（无）") + "\n"
@@ -2340,6 +2389,27 @@ def extract_draft_intent(
     # #654 H：无意图立即短路，不跑 acting/动作类型/target_kind 校验。
     if _action == "无":
         return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
+    # #658：御笔强推只需 typed 目标案卷，不经普通动作/目标 triad
+    raw_push_id = (
+        obj.get("目标案卷ID") if obj.get("目标案卷ID") is not None
+        else obj.get("target_dossier_id")
+    )
+    if raw_push_id not in (None, ""):
+        try:
+            push_dossier_id = int(raw_push_id)
+        except (TypeError, ValueError):
+            push_dossier_id = 0
+        if push_dossier_id > 0:
+            push_out: Dict[str, Any] = {
+                "draft_action": "拟旨",
+                "draft_text": (minister_reply or player_message or "").strip(),
+                "target_candidate": "",
+                "target_dossier_id": push_dossier_id,
+            }
+            push_mode = _directive_mode(obj.get("颁布方式"))
+            if push_mode is not None:
+                push_out["mode"] = push_mode
+            return push_out
     dossier_action = str(obj.get("动作类型") or "special_decree").strip()
     if dossier_action == "acting_appointment":
         # #529 与多旨同：署理交回既有人事候选链，不经草案 acting_appointment。
@@ -2548,6 +2618,18 @@ def capture_manual_directive_payload(
         # the same structured materialization fields at this capture seam.
         payload["name"] = str(payload.get("target_id") or "").strip()
         payload["_office_action"] = "罢免"
+    # #658：御笔强推只需 typed target_dossier_id，不得因无关 triad 缺省而降级
+    raw_push = payload.get("target_dossier_id")
+    if raw_push not in (None, "", 0, "0"):
+        try:
+            push_id = int(raw_push)
+        except (TypeError, ValueError):
+            push_id = 0
+        if push_id > 0:
+            return {
+                "target_dossier_id": push_id,
+                "mode": declared_mode,
+            }
     if not all(str(payload.get(key) or "").strip() for key in (
         "dossier_action_type", "target_kind", "target_id",
     )):
