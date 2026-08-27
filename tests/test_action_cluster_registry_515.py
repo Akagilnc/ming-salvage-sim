@@ -134,10 +134,17 @@ def test_registry_rows_generate_shape_contract_matrix():
         )
         assert over[spec.name] == int(spec.int_hi)
 
-    # 可选正整数：as_int + default None 为结构化契约；raw 直达，不经 generic clamp
-    opt_pos = [s for s in specs_by_name.values() if s.as_int and s.default is None]
+    # 可选正整数：as_int + default None + int_lo>=1 为结构化契约；raw 直达，不经 generic clamp
+    opt_pos = [
+        s for s in specs_by_name.values()
+        if s.as_int and s.default is None and int(s.int_lo) >= 1
+    ]
     assert opt_pos, "catalog must expose optional positive-int FieldSpec"
     for spec in opt_pos:
+        # 同一 catalog 真源：nullable / JSON integer / positive lower bound
+        assert spec.default is None
+        assert spec.as_int is True
+        assert int(spec.int_lo) >= 1
         host = next(
             c.kind for c in ACTION_CLUSTERS
             if any(f.name == spec.name for f in c.fields)
