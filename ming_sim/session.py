@@ -3305,9 +3305,16 @@ class GameSession:
                 or str(row.get("target") or "") in cand_set
             ]
             # #658：派系态势只保留候选人物 canonical faction 相关行，不灌全表
-            faction_rows = ra.candidate_faction_stance_rows(
-                self.db, self.content, candidates,
-            )
+            characters = getattr(self.content, "characters", {}) or {}
+            cand_factions = {
+                str(getattr(characters.get(name), "faction", "") or "").strip()
+                for name in candidates
+            }
+            cand_factions.discard("")
+            faction_rows = [
+                row for row in self.db.get_faction_stance_summaries()
+                if str(row.get("faction") or "") in cand_factions
+            ]
             agent = create_rescript_deliberate_agent(self.llm_config, self.agno_db)
             prompt = (
                 "请为以下急务拟定下部议/廷议站台（JSON："

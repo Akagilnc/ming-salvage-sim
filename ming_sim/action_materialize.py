@@ -834,7 +834,7 @@ def stage_punishment_candidate(
     extracted_mode: object = None,
     amount: object = 0,
     transaction_category: object = "",
-    backing_dossier_id: object = 0,
+    backing_dossier_id: object = None,
     pend_for_minister: Optional[List[Dict[str, Any]]] = None,
 ) -> int:
     """Shared punishment candidate write: mode + same-target update."""
@@ -3021,8 +3021,8 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                     "mode", "颁布方式",
                     frozenset({"ordinary", "midzhi"}), "",
                 ),
-                # #658：处置指向哪次站台；禁 generic as_int clamp，原样交 stage 权威
-                FieldSpec("backing_dossier_id", "站台案卷", None, 0),
+                # #658：处置指向哪次站台；缺省 None，禁 generic as_int clamp
+                FieldSpec("backing_dossier_id", "站台案卷", None, None),
             ),
             materialize_fn=_materialize_punishment,
         ),

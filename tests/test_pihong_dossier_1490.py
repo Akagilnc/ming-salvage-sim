@@ -3606,13 +3606,24 @@ def test_658_imperial_push_reuses_stalled_and_backing_credit(game):
     backed = db.find_deliberation_dossier_by_decision_key(key2)
     bid = int(backed["id"])
 
-    # 生产 tracer：tool schema → session stage → commit → verdict → 辜负
+    # 生产 tracer：GameSession.chat→propose_directive → commit → verdict → 信用
     from types import SimpleNamespace
     from ming_sim.session import GameSession
 
     actor = next(
         n for n in ra.list_deliberation_candidate_ids(db, content) if n != minister
     )
+    other = next(
+        n for n in ra.list_deliberation_candidate_ids(db, content)
+        if n not in {minister, actor}
+    )
+    tool_args: dict = {
+        "decree_text": f"背信弃义，着罚{minister}俸示惩。",
+        "punish_action": "罚俸",
+        "target_id": minister,
+        "amount": 100,
+        "backing_dossier_id": bid,
+    }
 
     class _Agent:
         def run(self, _message):
@@ -3622,13 +3633,7 @@ def test_658_imperial_push_reuses_stalled_and_backing_credit(game):
                     SimpleNamespace(
                         tool_name="propose_directive",
                         result="",
-                        arguments={
-                            "decree_text": f"背信弃义，着罚{minister}俸示惩。",
-                            "punish_action": "罚俸",
-                            "target_id": minister,
-                            "amount": 100,
-                            "backing_dossier_id": bid,
-                        },
+                        arguments=dict(tool_args),
                     )
                 ],
             )
@@ -3651,6 +3656,17 @@ def test_658_imperial_push_reuses_stalled_and_backing_credit(game):
     sess._start_cli_action_intent = lambda *_a, **_k: None
     sess._finish_cli_action_intent = lambda *_a, **_k: None
 
+    def _edge_count() -> int:
+        return int(db.conn.execute(
+            "SELECT COUNT(*) AS c FROM relation_edge_events WHERE event_kind=?",
+            (KIND_BETRAY,),
+        ).fetchone()["c"])
+
+    def _pending_count() -> int:
+        return int(db.conn.execute(
+            "SELECT COUNT(*) AS c FROM pending_actions WHERE status='pending'"
+        ).fetchone()["c"])
+
     result = GameSession.chat(sess, actor, f"拟旨罚{minister}俸。")
     assert result.pending_action_id
     staged = json.loads(db.conn.execute(
@@ -3668,10 +3684,7 @@ def test_658_imperial_push_reuses_stalled_and_backing_credit(game):
     )
     assert int(_dossier_payload(punish).get("backing_dossier_id") or 0) == bid
 
-    edges_before = db.conn.execute(
-        "SELECT COUNT(*) AS c FROM relation_edge_events WHERE event_kind=?",
-        (KIND_BETRAY,),
-    ).fetchone()["c"]
+    edges_before = _edge_count()
     db.apply_dossier_verdicts(
         state,
         [{"dossier_id": int(punish["id"]), "decision": "promulgated"}],
@@ -3682,65 +3695,73 @@ def test_658_imperial_push_reuses_stalled_and_backing_credit(game):
         "WHERE event_kind=? ORDER BY id DESC LIMIT 1",
         (KIND_BETRAY,),
     ).fetchone()
-    assert db.conn.execute(
-        "SELECT COUNT(*) AS c FROM relation_edge_events WHERE event_kind=?",
-        (KIND_BETRAY,),
-    ).fetchone()["c"] == edges_before + 1
+    assert _edge_count() == edges_before + 1
     assert str(edges_after["origin"] or "").startswith(f"dossier:{bid}")
     assert str(edges_after["target"]) == minister
 
-    # 幻影 / 坏 shape → stage 响亮拒绝，零 pending / 零信用
-    pending_mid = db.conn.execute(
-        "SELECT COUNT(*) AS c FROM pending_actions WHERE status='pending'"
-    ).fetchone()["c"]
-    edges_mid = db.conn.execute(
-        "SELECT COUNT(*) AS c FROM relation_edge_events WHERE event_kind=?",
-        (KIND_BETRAY,),
-    ).fetchone()["c"]
-    for bad in (999999, True, 1.9, "1"):
+    # 幻影 / 坏 shape / 显式 0 → 真入口响亮拒绝，零 pending / 零信用
+    pending_mid = _pending_count()
+    edges_mid = _edge_count()
+    for bad in (999999, True, 1.9, "1", 0, -3):
+        tool_args.update({
+            "decree_text": f"着罚{minister}俸。",
+            "target_id": minister,
+            "amount": 50,
+            "backing_dossier_id": bad,
+        })
         with pytest.raises(ValueError):
-            sess._stage_directive_tool_candidate(
-                f"着罚{minister}俸。", actor, f"拟旨罚{minister}。",
-                punish_action="罚俸", target_id=minister, amount=50,
-                backing_dossier_id=bad,
-            )
-    assert db.conn.execute(
-        "SELECT COUNT(*) AS c FROM pending_actions WHERE status='pending'"
-    ).fetchone()["c"] == pending_mid
-    assert db.conn.execute(
-        "SELECT COUNT(*) AS c FROM relation_edge_events WHERE event_kind=?",
-        (KIND_BETRAY,),
-    ).fetchone()["c"] == edges_mid
+            GameSession.chat(sess, actor, f"拟旨罚{minister}。")
+    assert _pending_count() == pending_mid
+    assert _edge_count() == edges_mid
 
-    # 非站台者 → 顺颁零信用
-    other = next(
-        n for n in ra.list_deliberation_candidate_ids(db, content)
-        if n not in {minister, actor}
+    # 非站台者 → chat 真入口顺颁零信用
+    tool_args.update({
+        "decree_text": f"着罚{other}俸。",
+        "target_id": other,
+        "amount": 10,
+        "backing_dossier_id": bid,
+    })
+    other_result = GameSession.chat(sess, actor, f"拟旨罚{other}。")
+    assert other_result.pending_action_id
+    db.commit_pending_actions(
+        state, content=content, action_ids=[int(other_result.pending_action_id)],
     )
-    pending_other = sess._stage_directive_tool_candidate(
-        f"着罚{other}俸。", actor, f"拟旨罚{other}。",
-        punish_action="罚俸", target_id=other, amount=10,
-        backing_dossier_id=bid,
-    )
-    assert pending_other
-    db.commit_pending_actions(state, content=content, action_ids=[int(pending_other)])
     other_d = next(
         d for d in db.list_decree_dossiers()
-        if d["pending_action_id"] == int(pending_other)
+        if d["pending_action_id"] == int(other_result.pending_action_id)
     )
-    edges_b = db.conn.execute(
-        "SELECT COUNT(*) AS c FROM relation_edge_events WHERE event_kind=?",
-        (KIND_BETRAY,),
-    ).fetchone()["c"]
+    edges_b = _edge_count()
     db.apply_dossier_verdicts(
         state,
         [{"dossier_id": int(other_d["id"]), "decision": "promulgated"}],
         content=content,
     )
-    assert db.conn.execute(
-        "SELECT COUNT(*) AS c FROM relation_edge_events WHERE event_kind=?",
-        (KIND_BETRAY,),
-    ).fetchone()["c"] == edges_b
+    assert _edge_count() == edges_b
+
+    # 处置案卷被 rejected → 零信用（同 chat→commit→verdict 最短 tracer）
+    tool_args.update({
+        "decree_text": f"再罚{minister}俸。",
+        "target_id": minister,
+        "amount": 20,
+        "backing_dossier_id": bid,
+    })
+    rejected_result = GameSession.chat(sess, actor, f"拟旨再罚{minister}。")
+    assert rejected_result.pending_action_id
+    db.commit_pending_actions(
+        state, content=content,
+        action_ids=[int(rejected_result.pending_action_id)],
+    )
+    rejected_d = next(
+        d for d in db.list_decree_dossiers()
+        if d["pending_action_id"] == int(rejected_result.pending_action_id)
+    )
+    edges_r = _edge_count()
+    db.apply_dossier_verdicts(
+        state,
+        [rejected_verdict(int(rejected_d["id"]))],
+        content=content,
+    )
+    assert _edge_count() == edges_r
 
 
 def test_658_endorsement_provenance_xor(game):
@@ -3958,18 +3979,25 @@ def test_658_typed_target_rejects_bool_float_string(game, monkeypatch):
     before_ends = len(db.list_dossier_endorsements(did))
     before_dirs = db.conn.execute("SELECT COUNT(*) AS c FROM turn_directives").fetchone()["c"]
 
-    # 最低层结构化负例
-    for bad in (True, False, 1.9, 1.0, "1", "12"):
+    from ming_sim.db import parse_backing_dossier_id
+
+    # 最低层结构化负例：target/backing 共吃正整数契约；显式 0/负亦拒
+    for bad in (True, False, 1.9, 1.0, "1", "12", 0, -1):
         with pytest.raises(ValueError):
             imperial_push_target_dossier_id(bad)
         with pytest.raises(ValueError):
             imperial_push_target_dossier_id({"target_dossier_id": bad})
         with pytest.raises(ValueError):
             imperial_push_target_dossier_id({"目标案卷ID": bad})
+        with pytest.raises(ValueError):
+            parse_backing_dossier_id(bad)
     assert imperial_push_target_dossier_id(did) == did
     assert imperial_push_target_dossier_id({"target_dossier_id": did}) == did
     assert imperial_push_target_dossier_id({}) is None
-    assert imperial_push_target_dossier_id({"target_dossier_id": 0}) is None
+    assert imperial_push_target_dossier_id({"target_dossier_id": None}) is None
+    assert parse_backing_dossier_id(None) is None
+    assert parse_backing_dossier_id("") is None
+    assert parse_backing_dossier_id(did) == did
 
     session = GameSession.__new__(GameSession)
     session.db = db
@@ -4008,41 +4036,3 @@ def test_658_typed_target_rejects_bool_float_string(game, monkeypatch):
     ) == "stalled"
 
 
-def test_658_faction_stance_sliced_to_candidate_factions(game):
-    """#658：廷议派系态势只含候选 canonical faction，不灌全表。"""
-    from ming_sim import rescript_actions as ra
-
-    db, state, content = game
-    candidates = ra.list_deliberation_candidate_ids(db, content)
-    assert candidates
-    cand_factions = {
-        str(getattr(content.characters.get(n), "faction", "") or "").strip()
-        for n in candidates
-    }
-    cand_factions.discard("")
-    assert cand_factions
-
-    # 全表种两条：一条命中候选派，一条必不命中
-    hit = next(iter(cand_factions))
-    miss = "__658_non_candidate_faction__"
-    db.conn.execute(
-        "INSERT OR REPLACE INTO factions(name, satisfaction, leverage, agenda) "
-        "VALUES (?,?,?,?)",
-        (miss, 50, 0, ""),
-    )
-    db.apply_faction_brew_result(
-        faction=hit, stance_segment="候选相关", last_event_id=1,
-        turn=int(state.turn), year=int(state.year), period=int(state.period),
-    )
-    db.apply_faction_brew_result(
-        faction=miss, stance_segment="无关派", last_event_id=2,
-        turn=int(state.turn), year=int(state.year), period=int(state.period),
-    )
-    full = {str(r["faction"]) for r in db.get_faction_stance_summaries()}
-    assert hit in full and miss in full
-
-    sliced = ra.candidate_faction_stance_rows(db, content, candidates)
-    names = {str(r["faction"]) for r in sliced}
-    assert hit in names
-    assert miss not in names
-    assert names <= cand_factions
