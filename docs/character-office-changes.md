@@ -14,7 +14,8 @@
        ├─ 打回 / 收回 / 留中：人物效果不落
        └─ 顺颁 / 强颁：apply_dossier_promulgation
             → _commit_office_action
-            → apply_person_changes_only
+            → 普通朝臣任免：apply_person_changes_only
+              既有后宫册封：apply_appointment
             → 同一 outer atomic 内完成授官及可选传召启程
             → outer commit 后 registry.project_outcome
 
@@ -55,11 +56,11 @@
 
 | 判决 | 人物结果 |
 |---|---|
-| 顺颁 / 强颁 | 通过 `apply_person_changes_only` 落任命、调任、罢免及其派生变化 |
+| 顺颁 / 强颁 | 普通朝臣任免走 `apply_person_changes_only`；既有后宫册封仍走 `apply_appointment`；落任命、调任、罢免及其派生变化 |
 | 打回 / 收回 | 零人物效果 |
 | 留中 | 同一案卷留待后续判决，零人物效果 |
 
-任命物化只走人物 adapter，不调用完整 `apply_score_extraction`，因此不会顺带重跑赈灾回流、议题或其他月末结算核。
+普通朝臣任命物化走 `apply_person_changes_only`；既有后宫册封仍走 `apply_appointment`。两者都不调用完整 `apply_score_extraction`，因此不会顺带重跑赈灾回流、议题或其他月末结算核。
 
 ### 任命并传召
 
@@ -92,7 +93,7 @@ character_offices (
 )
 ```
 
-`characters` 保存当前名分和状态；`character_offices` 保存最近任职备档，不是完整履历。后者唯一写入方是颁布后的人物物化路径；起复、品级与破格判断只读，不得平行回写。
+`characters` 保存当前名分和状态；`character_offices` 保存最近任职备档，不是完整履历。`character_offices` 的低层唯一共享 writer 是 `GameDB._record_character_office`：运行期由 canonical 人物核调用；seed/迁移按 ADR 0009 豁免。起复、品级与破格判断只读，不得平行回写。
 
 过程史与来源分别在 `person_logs`、案卷及同源 origin 中；不要从旁白反解析人物结构。
 
