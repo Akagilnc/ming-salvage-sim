@@ -96,6 +96,25 @@ TAG_EXIT = "告退"          # 出：离场；确定性「令 X 退下」口令�
 TAG_IN_TRANSIT = "传召在途"  # 账在人不在场：传召已发、人在途（不落在场效果）
 TAG_SUMMON_UNSETTLED = "传召未结"
 TAG_SUMMON_SETTLED = "传召结清"
+_SUMMON_TRAVEL_TONE_PREFIX = "行程语气:"
+_TRAVEL_TONES = ("常行", "加急", "星夜兼程")
+
+
+def _normalize_travel_tone(value: object) -> str:
+    tone = str(value or "常行").strip()
+    return tone if tone in _TRAVEL_TONES else "常行"
+
+
+def _travel_tone_tag(value: object) -> str:
+    return f"{_SUMMON_TRAVEL_TONE_PREFIX}{_normalize_travel_tone(value)}"
+
+
+def _travel_tone_from_tags(tags: Sequence[Any]) -> str:
+    tones = [
+        _normalize_travel_tone(str(tag)[len(_SUMMON_TRAVEL_TONE_PREFIX):])
+        for tag in tags if str(tag).startswith(_SUMMON_TRAVEL_TONE_PREFIX)
+    ]
+    return max(tones or ["常行"], key=_TRAVEL_TONES.index)
 _SUMMON_ORIGIN_PREFIX = "传召源#"
 # #526 / #471 S10：留侍叙事账标签——非进/出，不驱动在场（口径回灌 #500）
 TAG_STAY_ATTEND = "留侍"
@@ -1687,6 +1706,9 @@ def list_unsettled_summons(db: Any) -> List[Dict[str, Any]]:
             "entry_id": int(row["id"]), "night_id": int(row["night_id"]),
             "person_name": person_name, "origin_id": origin,
             "kind": _project_unsettled_summon_kind(db, tags, person_name),
+            **({"travel_tone": _travel_tone_from_tags(tags)}
+               if any(str(tag).startswith(_SUMMON_TRAVEL_TONE_PREFIX) for tag in tags)
+               else {}),
         })
     return projected
 
@@ -1901,6 +1923,7 @@ def record_summon_fresh(
     body: str = "",
     origin_id: object = "",
     origin_chat_turn_id: int = 0,
+    travel_tone: str = "常行",
 ) -> int:
     """落 fresh 场外传召账；带 origin 时，同一人物同一未结 origin 幂等。
 
@@ -1918,7 +1941,7 @@ def record_summon_fresh(
         for item in list_unsettled_summons(db):
             if item["person_name"] == name and item["origin_id"] == str(origin_id).strip():
                 return int(item["entry_id"])
-    tags = [method]
+    tags = [method, _travel_tone_tag(travel_tone)]
     if origin_tag:
         tags.extend([TAG_SUMMON_UNSETTLED, origin_tag])
     return append_ledger_entry(
@@ -2057,6 +2080,10 @@ def commit_fresh_summons_for_night(
                 for item in items:
                     origins.append(str(item["origin_id"]))
                 continue
+            travel_tone = max(
+                (_normalize_travel_tone(item.get("travel_tone")) for item in items),
+                key=_TRAVEL_TONES.index,
+            )
             applied = apply_person_changes_only(
                 db,
                 state,
@@ -2064,6 +2091,7 @@ def commit_fresh_summons_for_night(
                     "name": person_name,
                     "动作": "行止",
                     "transit_to": "beizhili",
+                    "行程语气": travel_tone,
                     # Canonical applier only admits its established provenance vocabulary;
                     # the summon origin remains machine-linked in the story ledger.
                     "origin_ref": "盘面自发",

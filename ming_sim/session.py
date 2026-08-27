@@ -1141,6 +1141,7 @@ class GameSession:
         origin_id: str,
         state: Optional[GameState] = None,
         origin_chat_turn_id: int = 0,
+        travel_tone: str = "常行",
     ) -> AudienceAdmissionDecision:
         """Consume the shared audience gate before any turn/entrance/reply is created.
 
@@ -1180,6 +1181,7 @@ class GameSession:
                 self.db, int(night["id"]), character.name,
                 origin_id=str(origin_id).strip(),
                 origin_chat_turn_id=int(origin_chat_turn_id or 0),
+                **({"travel_tone": travel_tone} if recorder is record_summon_fresh else {}),
             )
         return decision
 
@@ -1621,10 +1623,12 @@ class GameSession:
                     except ValueError:
                         target = None
                     if target is not None:
+                        args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
                         decision = self.consume_audience_admission(
                             target,
                             origin_id=f"session:tool:{int(chat_turn_id or 0)}:{target.name}",
                             origin_chat_turn_id=int(chat_turn_id or 0),
+                            travel_tone=str(args.get("行程语气") or "常行"),
                         )
                         if decision.allowed:
                             result.court_action = "summon"
