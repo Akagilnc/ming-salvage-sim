@@ -90,9 +90,14 @@ def classifier_action_types_prompt() -> str:
 
 
 def classifier_json_fields_prompt() -> str:
-    """从登记 FieldSpec 生成 JSON 字段行（无手写字段副本）。"""
+    """从登记 FieldSpec 生成 JSON 字段行（无手写字段副本）。
+
+    对象本体保持合法 JSON；FieldSpec 派生的人可读约束（nullable /
+    positive integer / 禁数字字符串）附在对象外，不进对象行内。
+    """
     _ensure_catalog()
     lines = [f'  "动作类型": "{classifier_action_types_prompt()}",']
+    notes: list[str] = []
     seen_zh: set = set()
     for c in ACTION_CLUSTERS:
         for f in c.fields:
@@ -104,23 +109,25 @@ def classifier_json_fields_prompt() -> str:
                 vals = sorted(f.allowed, key=lambda x: (x != "无", x))
                 lines.append(f'  "{f.zh}": "{"|".join(vals)}",')
             elif f.as_int:
-                # 合法 JSON 缺省示例：optional→null，否则 0；人可读约束由 int_lo 派生
+                # 合法 JSON 缺省示例：optional→null，否则 0；约束说明派生到对象外
                 example = "null" if f.default is None else "0"
+                lines.append(f'  "{f.zh}": {example},')
                 if f.int_lo > 0:
                     constraint = (
                         f"可null；命中 JSON integer>={f.int_lo}；禁数字字符串"
                         if f.default is None
                         else f"JSON integer>={f.int_lo}"
                     )
-                    lines.append(f'  "{f.zh}": {example},  // {constraint}')
-                else:
-                    lines.append(f'  "{f.zh}": {example},')
+                    notes.append(f"{f.zh}：{constraint}")
             else:
                 lines.append(f'  "{f.zh}": "",')
     # trailing comma cleanup on last line
     if lines:
         lines[-1] = lines[-1].rstrip(",")
-    return "{\n" + "\n".join(lines) + "\n}"
+    body = "{\n" + "\n".join(lines) + "\n}"
+    if notes:
+        return body + "\n" + "；".join(notes)
+    return body
 
 
 def cluster_by_kind(kind: str) -> Optional[ActionCluster]:
