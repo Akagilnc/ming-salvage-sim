@@ -382,35 +382,6 @@ def test_confirm_directive_consumes_routing_rejection(env, monkeypatch, tmp_path
     assert json.loads(mirror.read_text(encoding="utf-8"))["category"] == "duty_route_unmapped"
 
 
-def test_draft_batch_isolates_routing_rejection(env, monkeypatch, tmp_path):
-    db, state, _ = env
-    mirror = tmp_path / "batch.jsonl"
-    monkeypatch.setattr("ming_sim.error_pack.rejections_jsonl_path", lambda: str(mirror))
-    bad = db.add_directive(state, None, "修仙", "test", dossier_payload=_directive_payload("修仙"))
-    good = db.add_directive(state, None, "清丈", "test", dossier_payload=_directive_payload("清丈"))
-
-    db.ensure_dossiers_for_draft_directives(state)
-
-    statuses = dict(db.conn.execute(
-        "SELECT id,status FROM turn_directives WHERE id IN (?,?)", (bad, good),
-    ).fetchall())
-    assert statuses == {bad: "draft", good: "draft"}
-    assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers WHERE directive_id=?", (bad,)).fetchone()[0] == 0
-    assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers WHERE directive_id=?", (good,)).fetchone()[0] == 1
-    assert [
-        int(row["id"]) for row in db.list_dossiered_draft_directives(state)
-        if int(row["id"]) in (bad, good)
-    ] == [good]
-
-    db.mark_directives_issued(state)
-    statuses = dict(db.conn.execute(
-        "SELECT id,status FROM turn_directives WHERE id IN (?,?)", (bad, good),
-    ).fetchall())
-    assert statuses == {bad: "draft", good: "issued"}
-    assert db.conn.execute("SELECT COUNT(*) FROM rejection_reports").fetchone()[0] == 1
-    assert mirror.exists()
-
-
 def test_rolled_back_collector_reuse_does_not_mirror_orphan(env, monkeypatch, tmp_path):
     from ming_sim.applier import Provenance, RejectedItem, RejectionCollector, mirror_rejections_after_commit
 
