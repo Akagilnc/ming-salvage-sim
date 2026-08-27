@@ -535,12 +535,24 @@ def _has_stop_condition(stop_condition: object) -> bool:
     return isinstance(parsed, (dict, list)) and bool(parsed)
 
 
+def _optional_positive_dossier_id(raw: object, *, field: str) -> Optional[int]:
+    """#658：typed dossier id 单权威——真正缺省→None；一旦出现只接正整数。
+
+    拒 0/负/bool/float/数字字符串。target 与 backing 共吃，禁第二份 optional-positive。
+    """
+    if raw in (None, ""):
+        return None
+    value = strict_int(raw, accept_numeric_strings=False)
+    if value <= 0:
+        raise ValueError(f"{field} 非法 shape：{raw!r}")
+    return value
+
+
 def imperial_push_target_dossier_id(payload: object) -> Optional[int]:
     """#658：解析合法御笔强推 target_dossier_id；缺省 → None；坏 shape 响亮失败。
 
     capture / session.add / db.update / extract 共吃本函数——禁第二份 int>0 分支。
     Mapping 同时认 target_dossier_id 与抽取原键 目标案卷ID。
-    字段一旦出现只接真正的正整数（拒 bool/float/字符串）。
     """
     if isinstance(payload, Mapping):
         if "target_dossier_id" in payload:
@@ -551,30 +563,15 @@ def imperial_push_target_dossier_id(payload: object) -> Optional[int]:
             return None
     else:
         raw = payload
-    if raw in (None, ""):
-        return None
-    value = strict_int(raw, accept_numeric_strings=False)
-    if value == 0:
-        return None
-    if value < 0:
-        raise ValueError(f"target_dossier_id 非法 shape：{raw!r}")
-    return value
+    return _optional_positive_dossier_id(raw, field="target_dossier_id")
 
 
 def parse_backing_dossier_id(raw: object) -> Optional[int]:
     """#658：处置 backing_dossier_id 单权威解析；缺省→None；坏 shape 响亮失败。
 
     首写 stage 与 durable apply 共吃；禁 generic as_int clamp 成「未提供」。
-    字段一旦出现只接真正的正整数（拒 bool/float/字符串）。
     """
-    if raw in (None, ""):
-        return None
-    value = strict_int(raw, accept_numeric_strings=False)
-    if value == 0:
-        return None
-    if value < 0:
-        raise ValueError(f"backing_dossier_id 非法：{raw!r}")
-    return value
+    return _optional_positive_dossier_id(raw, field="backing_dossier_id")
 
 
 def require_backing_dossier_id(db: object, raw: object) -> Optional[int]:

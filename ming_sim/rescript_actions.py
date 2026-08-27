@@ -998,22 +998,6 @@ def list_deliberation_candidate_ids(db: Any, content: Any) -> List[str]:
     return sorted(names)
 
 
-def candidate_faction_stance_rows(
-    db: Any, content: Any, candidate_ids: Sequence[str],
-) -> List[Dict[str, Any]]:
-    """#658：按候选 canonical faction 过滤既有 get_faction_stance_summaries()，不另建真源。"""
-    characters = getattr(content, "characters", {}) or {}
-    factions = {
-        str(getattr(characters.get(name), "faction", "") or "").strip()
-        for name in candidate_ids
-    }
-    factions.discard("")
-    return [
-        row for row in db.get_faction_stance_summaries()
-        if str(row.get("faction") or "") in factions
-    ]
-
-
 def _normalize_deliberate_will(
     will: Mapping[str, object],
     *,
