@@ -985,6 +985,8 @@ def stage_punishment_candidate(
     action = str(punish_action or "").strip()
     disposition = str(issue_disposition or "").strip()
     linked_issue_id = 0
+    if disposition in issue_dispositions_allowed() and issue_id is None:
+        return 0
     if issue_id is not None:
         try:
             linked_issue_id = int(issue_id)

@@ -697,6 +697,13 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
             character_name,
         ):
             continue
+        try:
+            target_roster = json.loads(str(issue["target_roster"] or "[]"))
+        except (KeyError, TypeError, ValueError):
+            target_roster = []
+        if issue["origin_kind"] != "impeachment_surge" or not isinstance(target_roster, list):
+            target_roster = []
+        target_roster = [str(target).strip() for target in target_roster if str(target).strip()]
         visible_issues.append({
             "id": int(issue["id"]), "kind": issue["kind"],
             "title": issue["title"], "bar_value": issue["bar_value"],
@@ -710,6 +717,7 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
             "origin_turn": issue["origin_turn"],
             "end_turn": issue["end_turn"],
             "commitment_kind": issue["commitment_kind"],
+            "target_roster": target_roster,
         })
     return {
         "character_name": character_name,
