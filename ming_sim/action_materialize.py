@@ -948,6 +948,19 @@ def punish_actions_effective() -> frozenset:
     return punish_actions_allowed() - {"无"}
 
 
+def issue_dispositions_allowed() -> frozenset:
+    """弹劾潮处置枚举唯一真源 = ACTION_CLUSTERS punishment 行。"""
+    cluster = cluster_by_kind("punishment")
+    if cluster is None:
+        raise RuntimeError("punishment cluster not installed")
+    for field in cluster.fields:
+        if field.name == "issue_disposition":
+            if field.allowed is None:
+                raise RuntimeError("issue_disposition FieldSpec.allowed missing")
+            return field.allowed - {"无"}
+    raise RuntimeError("issue_disposition FieldSpec missing")
+
+
 def stage_punishment_candidate(
     db: Any,
     turn: int,
@@ -983,7 +996,7 @@ def stage_punishment_candidate(
         ).fetchone()
         if issue is None or issue["status"] != "active" or issue["origin_kind"] != "impeachment_surge":
             return 0
-        if disposition not in {"办人", "压下"}:
+        if disposition not in issue_dispositions_allowed():
             return 0
         try:
             roster = json.loads(str(issue["target_roster"] or "[]"))
@@ -991,16 +1004,18 @@ def stage_punishment_candidate(
             return 0
         if not isinstance(roster, list) or not roster:
             return 0
-        target = str(roster[0] or "").strip()
         if disposition == "办人":
+            if target not in roster:
+                return 0
             action = "拿问下狱"
         else:
+            target = str(linked_issue_id)
             action = "无"
-    if not target or (action not in punish_actions_effective() and disposition != "压下"):
+    if (not target and disposition != "压下") or (
+        action not in punish_actions_effective() and disposition != "压下"
+    ):
         return 0
     body = str(text or "").strip()
-    if linked_issue_id and disposition == "办人" and target not in body:
-        body = f"{body}：{target}拿问下狱"
     if not body:
         return 0
 
@@ -1035,7 +1050,7 @@ def stage_punishment_candidate(
         "text": body,
         "actor": minister_name,
         "dossier_action_type": "punishment",
-        "target_kind": "character",
+        "target_kind": "issue" if disposition == "压下" else "character",
         "target_id": target,
         "punish_action": action,
         "mode": mode,
@@ -1087,7 +1102,10 @@ def _materialize_punishment(ctx: MaterializeCtx) -> None:
     intent = ctx.intent or {}
     target_id = str(intent.get("name") or intent.get("target_id") or "").strip()
     punish_action = str(intent.get("punish_action") or "").strip()
-    if not target_id or punish_action not in punish_actions_effective():
+    disposition = str(intent.get("issue_disposition") or "").strip()
+    if disposition not in issue_dispositions_allowed() and (
+        not target_id or punish_action not in punish_actions_effective()
+    ):
         return
     pending_id = stage_punishment_candidate(
         ctx.session.db,
@@ -1101,6 +1119,8 @@ def _materialize_punishment(ctx: MaterializeCtx) -> None:
         amount=intent.get("amount"),
         transaction_category=intent.get("transaction_category"),
         backing_dossier_id=intent.get("backing_dossier_id"),
+        issue_id=intent.get("issue_id"),
+        issue_disposition=intent.get("issue_disposition"),
         pend_for_minister=ctx.pend_for_minister,
     )
     if pending_id:
@@ -3217,6 +3237,11 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 # #658：处置指向哪次站台；optional positive int（as_int+default None+int_lo=1），禁 generic clamp
                 FieldSpec(
                     "backing_dossier_id", "站台案卷", None, None, as_int=True, int_lo=1,
+                ),
+                FieldSpec("issue_id", "事项标识", None, None, as_int=True, int_lo=1),
+                FieldSpec(
+                    "issue_disposition", "事项处置",
+                    frozenset({"无", "办人", "压下"}), "无",
                 ),
             ),
             materialize_fn=_materialize_punishment,

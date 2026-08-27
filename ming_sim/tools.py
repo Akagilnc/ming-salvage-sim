@@ -461,13 +461,16 @@ def build_minister_tools(character: Character, context: CourtContext,
         amount: int = 0,
         transaction_category: str = "",
         backing_dossier_id: Optional[int] = None,
+        issue_id: Optional[int] = None,
+        issue_disposition: str = "",
     ) -> str:
         """把已定处置方案拟成一道圣旨草稿呈给皇帝审阅。
 
         decree_text 为完整圣旨正文。若本件为惩处，须同时填 ACTION_CLUSTERS 同名
         结构化字段：punish_action、单一目标（target_id 或 name）、罚俸时正数 amount，
         以及来自 ACTION_CLUSTERS 的 transaction_category；若处置站台者，填
-        backing_dossier_id 指向原廷议案卷。
+        backing_dossier_id 指向原廷议案卷；若处置弹劾潮，填 issue_id 与
+        issue_disposition，并在办人时从该事项标靶中明确选择单一 target_id。
         仅在正文讨论廷杖/流放/昭雪等制度、未填结构化字段时，不得当作已决惩处。
         """
         text = (decree_text or "").strip()
