@@ -12442,6 +12442,10 @@ class GameDB:
                 raise ValueError(
                     f"惩处旨意 punish_action 非法或缺失：{punish_action or '(空)'}"
                 )
+            if issue_disposition == "办人" and punish_action != "拿问下狱":
+                raise ValueError("弹劾潮办人须使用 canonical 拿问下狱动作")
+            if issue_disposition == "压下" and punish_action != "无":
+                raise ValueError("弹劾潮压下须使用 canonical 无动作")
             normalized["punish_action"] = punish_action
             # #517 r2：罚俸须正数 amount，成案前响亮拒绝（不得归零暂存后判后才炸）。
             if punish_action == "罚俸":

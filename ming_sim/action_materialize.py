@@ -953,11 +953,11 @@ def issue_dispositions_allowed() -> frozenset:
     cluster = cluster_by_kind("punishment")
     if cluster is None:
         raise RuntimeError("punishment cluster not installed")
-    for field in cluster.fields:
-        if field.name == "issue_disposition":
-            if field.allowed is None:
+    for field_spec in cluster.fields:
+        if field_spec.name == "issue_disposition":
+            if field_spec.allowed is None:
                 raise RuntimeError("issue_disposition FieldSpec.allowed missing")
-            return field.allowed - {"无"}
+            return field_spec.allowed - {"无"}
     raise RuntimeError("issue_disposition FieldSpec missing")
 
 
@@ -991,6 +991,8 @@ def stage_punishment_candidate(
         try:
             linked_issue_id = int(issue_id)
         except (TypeError, ValueError):
+            return 0
+        if linked_issue_id <= 0:
             return 0
         issue = db.conn.execute(
             "SELECT origin_kind,status,target_roster FROM issues WHERE id=?",
@@ -1042,6 +1044,12 @@ def stage_punishment_candidate(
         if str(payload.get("dossier_action_type") or "").strip() != "punishment":
             continue
         if str(payload.get("target_id") or "").strip() != target:
+            continue
+        try:
+            stored_issue_id = int(payload.get("issue_id") or 0)
+        except (TypeError, ValueError):
+            stored_issue_id = 0
+        if stored_issue_id != linked_issue_id:
             continue
         existing_id = int(row["id"])
         existing_mode = payload.get("mode")
