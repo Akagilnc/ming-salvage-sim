@@ -3290,14 +3290,29 @@ class GameSession:
             return [normalize_rescript_layer_a_option(opt) for opt in options_raw]
 
         def _deliberate_runner(item: ra.ValidatedItem) -> Dict[str, object]:
-            # 站台意愿：专用 agent + 整串严格 JSON {title,body,stance}；禁 regex 抽对象
+            # #658：站台意愿 + typed supporter_ids；读关系账/派系态势切片，禁第二 roster
             from ming_sim.agents import run_agent_text
+            from ming_sim.relation_read import project_relation_ledger
+            candidates = ra.list_deliberation_candidate_ids(self.db, self.content)
+            relation_slice = project_relation_ledger(self.db, viewer=None)
+            # 仅保留候选相关边，避免整账灌入
+            cand_set = set(candidates)
+            relation_slice = [
+                row for row in relation_slice
+                if str(row.get("source") or "") in cand_set
+                or str(row.get("target") or "") in cand_set
+            ]
+            faction_rows = self.db.get_faction_stance_summaries()
             agent = create_rescript_deliberate_agent(self.llm_config, self.agno_db)
             prompt = (
-                "请为以下急务拟定下部议/廷议的站台意愿（JSON："
-                "{\"title\":\"...\",\"body\":\"...\",\"stance\":\"...\"}）。\n"
+                "请为以下急务拟定下部议/廷议站台（JSON："
+                "{\"title\":\"...\",\"body\":\"...\",\"stance\":\"...\","
+                "\"supporter_ids\":[\"...\"]}）。\n"
                 f"标题：{item.row.get('title')}\n语境：{item.row.get('context')}\n"
-                f"批语：{item.choice.get('note') or ''}"
+                f"批语：{item.choice.get('note') or ''}\n"
+                f"候选大臣（只可从中选 supporter_ids，可空）：{json.dumps(candidates, ensure_ascii=False)}\n"
+                f"关系账切片：{json.dumps(relation_slice, ensure_ascii=False)}\n"
+                f"派系态势：{json.dumps(faction_rows, ensure_ascii=False)}"
             )
             raw = run_agent_text(agent, prompt, tag="rescript-deliberate")
             obj = _parse_rescript_json_strict(str(raw or ""))
@@ -3308,7 +3323,16 @@ class GameSession:
             stance = str(obj.get("stance") or "").strip()
             if not (title and body and stance):
                 raise ValueError("deliberate LLM 意愿缺 title/body/stance")
-            return {"title": title, "body": body, "stance": stance}
+            # shape 初检；身份合法性在 apply 事务内再核（整批零写）
+            supporters = obj.get("supporter_ids", [])
+            if supporters is None:
+                supporters = []
+            if not isinstance(supporters, list):
+                raise ValueError("deliberate supporter_ids 须为数组")
+            return {
+                "title": title, "body": body, "stance": stance,
+                "supporter_ids": supporters,
+            }
 
         prewrite = ra.run_prewrite_llms(
             batch,

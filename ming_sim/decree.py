@@ -1134,6 +1134,9 @@ def resolve_directives(
                 payload = dossier.get("payload")
                 if not isinstance(payload, dict):
                     payload = json.loads(str(dossier.get("payload_json") or "{}"))
+                # #658：stalled 廷议不得进颁布判官；backed 与无 deliberation_state 照旧
+                if str(payload.get("deliberation_state") or "") == "stalled":
+                    continue
                 proposed_modes[int(dossier["id"])] = str(payload.get("mode") or "ordinary")
                 (reviewed if dossier_action_policy(
                     dossier.get("action_type"), payload,
