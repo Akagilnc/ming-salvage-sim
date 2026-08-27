@@ -1568,17 +1568,23 @@ class GameDB:
             CREATE INDEX IF NOT EXISTS idx_dossier_reconciliations_dossier
                 ON decree_dossier_reconciliations(dossier_id, turn, id);
             -- ADR 0070：担名与办事名单分立；条目只能指向落条目前已存在的案卷。
+            -- #658 later-wins：provenance 恰为 source_chat_turn_id>0 或 decision_key 非空之一。
+            -- chat_turn 删除走显式清理（见 rollback 路径），不靠 FK CASCADE 绑死批红路径。
             CREATE TABLE IF NOT EXISTS decree_dossier_endorsements (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 dossier_id INTEGER NOT NULL,
                 form TEXT NOT NULL CHECK(form IN ('会签','当面站台','御笔手敕')),
                 endorser_id TEXT NOT NULL DEFAULT '',
                 imperial INTEGER NOT NULL DEFAULT 0 CHECK(imperial IN (0,1)),
-                source_chat_turn_id INTEGER NOT NULL,
+                source_chat_turn_id INTEGER NOT NULL DEFAULT 0,
+                decision_key TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(dossier_id, form, endorser_id, imperial, source_chat_turn_id),
-                FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE,
-                FOREIGN KEY(source_chat_turn_id) REFERENCES chat_turns(id) ON DELETE CASCADE
+                UNIQUE(dossier_id, form, endorser_id, imperial, source_chat_turn_id, decision_key),
+                CHECK (
+                    (source_chat_turn_id > 0 AND decision_key = '')
+                    OR (source_chat_turn_id = 0 AND decision_key != '')
+                ),
+                FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
             );
             CREATE INDEX IF NOT EXISTS idx_dossier_endorsements_dossier
                 ON decree_dossier_endorsements(dossier_id, id);
@@ -2205,6 +2211,7 @@ class GameDB:
             "INTEGER NOT NULL DEFAULT 0 CHECK (edict_overdraw >= 0)",
         )
         self._migrate_building_logs_to_durable_audit()
+        self._migrate_endorsement_decision_provenance()
         self._ensure_office_type_parents()
         self._ensure_event_parents()
         for column, definition in {
@@ -3443,6 +3450,67 @@ class GameDB:
                 if str(office_type).strip()
             }
         ) - set(PERSON_TITLE_KINDS)
+
+    def _migrate_endorsement_decision_provenance(self) -> None:
+        """#658 ADR 0070 later-wins：背书 provenance = chat_turn XOR decision_key。
+
+        旧表带 chat_turns FK 且无 decision_key；重建以允许批红路径不伪造 chat turn。
+        既有行一律 source_chat_turn_id>0 + decision_key=''，满足新 CHECK。
+        """
+        cols = {
+            str(row["name"])
+            for row in self.conn.execute(
+                "PRAGMA table_info(decree_dossier_endorsements)"
+            ).fetchall()
+        }
+        if not cols:
+            return
+        has_decision_key = "decision_key" in cols
+        has_chat_fk = any(
+            str(row["table"]) == "chat_turns"
+            for row in self.conn.execute(
+                "PRAGMA foreign_key_list(decree_dossier_endorsements)"
+            ).fetchall()
+        )
+        if has_decision_key and not has_chat_fk:
+            return
+        # 旧表可能尚无 decision_key 列；SELECT 用条件表达式兜底。
+        select_key = (
+            "decision_key" if has_decision_key else "'' AS decision_key"
+        )
+        self.conn.executescript(
+            f"""
+            CREATE TABLE decree_dossier_endorsements_658 (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                dossier_id INTEGER NOT NULL,
+                form TEXT NOT NULL CHECK(form IN ('会签','当面站台','御笔手敕')),
+                endorser_id TEXT NOT NULL DEFAULT '',
+                imperial INTEGER NOT NULL DEFAULT 0 CHECK(imperial IN (0,1)),
+                source_chat_turn_id INTEGER NOT NULL DEFAULT 0,
+                decision_key TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(dossier_id, form, endorser_id, imperial, source_chat_turn_id, decision_key),
+                CHECK (
+                    (source_chat_turn_id > 0 AND decision_key = '')
+                    OR (source_chat_turn_id = 0 AND decision_key != '')
+                ),
+                FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
+            );
+            INSERT INTO decree_dossier_endorsements_658
+                (id, dossier_id, form, endorser_id, imperial,
+                 source_chat_turn_id, decision_key, created_at)
+            SELECT id, dossier_id, form, endorser_id, imperial,
+                   source_chat_turn_id,
+                   {select_key},
+                   created_at
+            FROM decree_dossier_endorsements;
+            DROP TABLE decree_dossier_endorsements;
+            ALTER TABLE decree_dossier_endorsements_658
+                RENAME TO decree_dossier_endorsements;
+            CREATE INDEX IF NOT EXISTS idx_dossier_endorsements_dossier
+                ON decree_dossier_endorsements(dossier_id, id);
+            """
+        )
 
     def _migrate_building_logs_to_durable_audit(self) -> None:
         """Keep building history after its live building has been removed."""
@@ -14878,24 +14946,35 @@ class GameDB:
                 raise ValueError("委派人须为同案主办/协办且不得自委派")
 
     def _validate_dossier_endorsement(
-        self, dossier_id: object, *, form: object, source_chat_turn_id: object,
+        self, dossier_id: object, *, form: object,
+        source_chat_turn_id: object = 0, decision_key: object = "",
         endorser_id: object = "", imperial: object = False,
-    ) -> tuple[int, int, str, str, bool]:
+    ) -> tuple[int, int, str, str, str, bool]:
+        """#658：provenance 恰取 source_chat_turn_id>0 或 decision_key 非空之一。"""
         if isinstance(dossier_id, bool) or not isinstance(dossier_id, int):
             raise ValueError("背书案卷 id 须为整数")
         if isinstance(source_chat_turn_id, bool) or not isinstance(source_chat_turn_id, int):
             raise ValueError("背书来源对话轮 id 须为整数")
+        if not isinstance(decision_key, str):
+            raise ValueError("背书 decision_key 须为字符串")
         if not isinstance(form, str) or not isinstance(endorser_id, str):
             raise ValueError("背书形式与人物须为字符串")
-        did, cid = dossier_id, source_chat_turn_id
+        did, cid = dossier_id, int(source_chat_turn_id)
+        dkey = decision_key.strip()
         kind, person = form.strip(), endorser_id.strip()
         if not isinstance(imperial, bool):
             raise ValueError("御笔标记须为布尔")
         is_imperial = imperial
+        # 恰一种 provenance：召对 chat_turn XOR 批红/下旨 decision_key。
+        has_turn = cid > 0
+        has_key = bool(dkey)
+        if has_turn == has_key:
+            raise ValueError("背书 provenance 须恰为 source_chat_turn_id 或 decision_key 之一")
         if self.conn.execute("SELECT 1 FROM decree_dossiers WHERE id=?", (did,)).fetchone() is None:
             raise ValueError("背书所指案卷不存在")
-        if self.conn.execute("SELECT 1 FROM chat_turns WHERE id=?", (cid,)).fetchone() is None:
-            raise ValueError("背书来源对话轮不存在")
+        if has_turn:
+            if self.conn.execute("SELECT 1 FROM chat_turns WHERE id=?", (cid,)).fetchone() is None:
+                raise ValueError("背书来源对话轮不存在")
         if kind not in {"会签", "当面站台", "御笔手敕"}:
             raise ValueError("背书形式非法")
         if kind == "御笔手敕":
@@ -14906,26 +14985,28 @@ class GameDB:
                 raise ValueError("会签/当面站台必须具名背书人")
             if self.conn.execute("SELECT 1 FROM characters WHERE name=?", (person,)).fetchone() is None:
                 raise ValueError("背书人物不存在")
-        return did, cid, kind, person, is_imperial
+        return did, cid, dkey, kind, person, is_imperial
 
     def add_dossier_endorsement(
-        self, dossier_id: int, *, form: str, source_chat_turn_id: int,
+        self, dossier_id: int, *, form: str,
+        source_chat_turn_id: int = 0, decision_key: str = "",
         endorser_id: str = "", imperial: bool = False, commit: bool = True,
     ) -> int:
         """Persist one already-spoken ADR 0070 endorsement; never re-judge willingness."""
-        did, cid, kind, person, is_imperial = self._validate_dossier_endorsement(
+        did, cid, dkey, kind, person, is_imperial = self._validate_dossier_endorsement(
             dossier_id, form=form, source_chat_turn_id=source_chat_turn_id,
-            endorser_id=endorser_id, imperial=imperial,
+            decision_key=decision_key, endorser_id=endorser_id, imperial=imperial,
         )
         self.conn.execute(
             "INSERT OR IGNORE INTO decree_dossier_endorsements "
-            "(dossier_id,form,endorser_id,imperial,source_chat_turn_id) VALUES (?,?,?,?,?)",
-            (did, kind, person, int(is_imperial), cid),
+            "(dossier_id,form,endorser_id,imperial,source_chat_turn_id,decision_key) "
+            "VALUES (?,?,?,?,?,?)",
+            (did, kind, person, int(is_imperial), cid, dkey),
         )
         row = self.conn.execute(
             "SELECT id FROM decree_dossier_endorsements WHERE dossier_id=? AND form=? "
-            "AND endorser_id=? AND imperial=? AND source_chat_turn_id=?",
-            (did, kind, person, int(is_imperial), cid),
+            "AND endorser_id=? AND imperial=? AND source_chat_turn_id=? AND decision_key=?",
+            (did, kind, person, int(is_imperial), cid, dkey),
         ).fetchone()
         if commit:
             self._commit_dossier_write(True)
@@ -14933,7 +15014,7 @@ class GameDB:
 
     def list_dossier_endorsements(self, dossier_id: int) -> List[Dict[str, object]]:
         rows = self.conn.execute(
-            "SELECT id,dossier_id,form,endorser_id,imperial,source_chat_turn_id "
+            "SELECT id,dossier_id,form,endorser_id,imperial,source_chat_turn_id,decision_key "
             "FROM decree_dossier_endorsements WHERE dossier_id=? ORDER BY id",
             (int(dossier_id),),
         ).fetchall()
@@ -14941,8 +15022,53 @@ class GameDB:
             "id": int(row["id"]), "dossier_id": int(row["dossier_id"]),
             "form": str(row["form"]), "endorser_id": str(row["endorser_id"]),
             "imperial": bool(row["imperial"]),
-            "source_chat_turn_id": int(row["source_chat_turn_id"]),
+            "source_chat_turn_id": int(row["source_chat_turn_id"] or 0),
+            "decision_key": str(row["decision_key"] or ""),
         } for row in rows]
+
+    def update_decree_dossier_payload(
+        self, dossier_id: int, payload: Mapping[str, object], *, commit: bool = True,
+    ) -> None:
+        """Replace payload_json for an existing dossier (deliberation_state 等 typed 字段)."""
+        did = int(dossier_id)
+        if self.conn.execute("SELECT 1 FROM decree_dossiers WHERE id=?", (did,)).fetchone() is None:
+            raise KeyError(f"案卷不存在：{did}")
+        if not isinstance(payload, Mapping):
+            raise ValueError("案卷 payload 须为对象")
+        self.conn.execute(
+            "UPDATE decree_dossiers SET payload_json=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            (json.dumps(dict(payload), ensure_ascii=False), did),
+        )
+        if commit:
+            self._commit_dossier_write(True)
+
+    def find_deliberation_dossier_by_decision_key(
+        self, decision_key: str,
+    ) -> Optional[Dict[str, object]]:
+        """按批红 decision_key 取廷议案卷（payload.decision_key + deliberation_state）。"""
+        key = str(decision_key or "").strip()
+        if not key:
+            return None
+        row = self.conn.execute(
+            """
+            SELECT * FROM decree_dossiers
+            WHERE json_extract(payload_json, '$.decision_key') = ?
+              AND json_extract(payload_json, '$.deliberation_state') IS NOT NULL
+            ORDER BY id LIMIT 1
+            """,
+            (key,),
+        ).fetchone()
+        if row is None:
+            return None
+        out = self._dossier_row(row)
+        # 读缝附 payload 对象，避免调用方只认 payload 键时踩空
+        try:
+            out["payload"] = json.loads(str(out.get("payload_json") or "{}"))
+        except (TypeError, ValueError):
+            out["payload"] = {}
+        if not isinstance(out["payload"], dict):
+            out["payload"] = {}
+        return out
 
     def append_decree_dossier_participants(
         self, dossier_id: int, participants: Iterable[object], *,
@@ -16982,6 +17108,18 @@ class GameDB:
         reason = str(
             payload.get("text") or row.get("decree_text") or punish_action
         )
+        # #658：typed backing_dossier_id 非法（幻影案卷）在处置效果首写前响亮拒绝
+        raw_backing = payload.get("backing_dossier_id")
+        backing_id = 0
+        if raw_backing not in (None, "", 0, "0"):
+            try:
+                backing_id = int(raw_backing)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"backing_dossier_id 非法：{raw_backing!r}") from exc
+            if backing_id <= 0:
+                raise ValueError(f"backing_dossier_id 非法：{raw_backing!r}")
+            if self.get_decree_dossier(backing_id) is None:
+                raise ValueError(f"backing_dossier_id 所指案卷不存在：{backing_id}")
         status_by_action = {
             "拿问下狱": "imprisoned",
             "拿问去职": "imprisoned",
@@ -17020,6 +17158,9 @@ class GameDB:
                 if results and isinstance(results[0], dict):
                     fail_reason = str(results[0].get("reason") or "")
                 raise ValueError(fail_reason or "惩处案卷人物效果物化失败")
+            self._maybe_write_backing_betray_credit(
+                state, target=target, backing_id=backing_id, reason=reason,
+            )
             return
         if punish_action in {"放归", "昭雪"}:
             # #517：宥赦只回迁在世处置态；dead 等终态响亮拒绝，不得复活。
@@ -17034,6 +17175,9 @@ class GameDB:
             self.record_person_log(
                 state, target, "处置", payload_summary=punish_action,
                 source="punishment", origin_ref=origin_ref, commit=False,
+            )
+            self._maybe_write_backing_betray_credit(
+                state, target=target, backing_id=backing_id, reason=reason,
             )
             return
         if punish_action == "罚俸":
@@ -17062,14 +17206,54 @@ class GameDB:
                 state, target, "罚俸", payload_summary="罚俸示惩",
                 source="punishment", origin_ref=origin_ref, commit=False,
             )
+            self._maybe_write_backing_betray_credit(
+                state, target=target, backing_id=backing_id, reason=reason,
+            )
             return
         if punish_action == "廷杖":
             self.record_person_log(
                 state, target, "廷杖", payload_summary="廷杖示惩",
                 source="punishment", origin_ref=origin_ref, commit=False,
             )
+            self._maybe_write_backing_betray_credit(
+                state, target=target, backing_id=backing_id, reason=reason,
+            )
             return
         raise ValueError(f"惩处案卷动作无法物化：{punish_action}")
+
+    def _maybe_write_backing_betray_credit(
+        self, state, *, target: str, backing_id: int, reason: str,
+    ) -> None:
+        """#658：处置成功且目标确为原案非御笔背书人时，经 ADR 0079 写辜负。
+
+        origin 回指原 dossier。无 backing / 非站台者 / 御笔背书 → 零信用事件。
+        """
+        if int(backing_id or 0) <= 0:
+            return
+        person = str(target or "").strip()
+        if not person:
+            return
+        endorsements = self.list_dossier_endorsements(int(backing_id))
+        hit = False
+        for item in endorsements:
+            if bool(item.get("imperial")):
+                continue
+            if str(item.get("form") or "") != "当面站台":
+                continue
+            if str(item.get("endorser_id") or "").strip() == person:
+                hit = True
+                break
+        if not hit:
+            return
+        context = str(reason or "").strip() or "处置站台者"
+        from ming_sim.credit_events import KIND_BETRAY, write_credit_event
+        write_credit_event(
+            self, state,
+            person=person,
+            event_kind=KIND_BETRAY,
+            context=context,
+            origin=f"dossier:{int(backing_id)}",
+        )
 
     def _apply_pay_order_override_effect(
         self, state: GameState, row, payload: Dict[str, object], dossier_id: int,
@@ -19023,7 +19207,11 @@ class GameDB:
         payload: Optional[Dict[str, object]] = None, *, commit: bool = True,
         rejection_collector=None,
     ) -> List[int]:
-        """旧式/新式旨稿共用的幂等成案口；#654 返回 List[int]（fan-out 多行）。"""
+        """旧式/新式旨稿共用的幂等成案口；#654 返回 List[int]（fan-out 多行）。
+
+        #658：payload.target_dossier_id 指向 stalled 廷议时，复用该案卷并落御笔手敕，
+        不新建第二案卷。directive identity = directive:<id>。
+        """
         structured = dict(payload or {})
         if not structured:
             structured = {
@@ -19032,6 +19220,32 @@ class GameDB:
                 "target_id": f"legacy-directive:{directive_id}",
                 "locality_scope": "none",
             }
+        # 御笔强推：在 normalize 前识别 typed target，避免误建平行案卷
+        raw_target = structured.get("target_dossier_id")
+        if raw_target not in (None, "", 0, "0"):
+            try:
+                target_did = int(raw_target)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"target_dossier_id 非法：{raw_target!r}") from exc
+            if target_did <= 0:
+                raise ValueError(f"target_dossier_id 非法：{raw_target!r}")
+            from ming_sim.rescript_actions import apply_imperial_deliberation_push
+            pushed = apply_imperial_deliberation_push(
+                self, state,
+                target_dossier_id=target_did,
+                directive_identity=f"directive:{int(directive_id)}",
+                decree_text=str(text or ""),
+                commit=False,
+            )
+            # 绑 directive_id 到既有案卷，供 restore/幂等
+            self.conn.execute(
+                "UPDATE decree_dossiers SET directive_id=?, updated_at=CURRENT_TIMESTAMP "
+                "WHERE id=? AND (directive_id IS NULL OR directive_id=0 OR directive_id=?)",
+                (int(directive_id), int(pushed), int(directive_id)),
+            )
+            if commit:
+                self._commit_dossier_write(True)
+            return [int(pushed)]
         structured = self._normalize_directive_dossier_payload(
             structured, content=self.content, current_turn=int(state.turn),
         )

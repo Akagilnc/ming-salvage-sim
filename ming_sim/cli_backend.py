@@ -2357,6 +2357,8 @@ def extract_draft_intent(
         "locality_scope": _coerce_draft_locality_scope(obj.get("施行范围")),
         # #653：pay_order_override 结构化载荷随 capture 整道转交（禁旁路）。
         "entries": obj.get("entries"),
+        # #658：御笔强推目标廷议案卷
+        "target_dossier_id": obj.get("目标案卷ID") if obj.get("目标案卷ID") is not None else obj.get("target_dossier_id"),
     }
     mode = _directive_mode(obj.get("颁布方式"))
     if mode is not None:
@@ -2535,6 +2537,8 @@ def capture_manual_directive_payload(
     for field in (
         "amount", "account", "execution_surface", "assignee",
         "deadline_months", "participant_roster", "locality_scope", "entries",
+        # #658：自由下旨御笔强推 stalled 廷议
+        "target_dossier_id",
     ):
         if captured.get(field) not in (None, ""):
             payload[field] = captured[field]
