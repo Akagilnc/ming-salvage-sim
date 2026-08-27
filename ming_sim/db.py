@@ -12426,14 +12426,17 @@ class GameDB:
         if action == "punishment":
             # #517：与 grant_allocation / military_order 一致——合法非空动作在 admission 强制。
             # 枚举唯一真源 = ACTION_CLUSTERS punishment FieldSpec（经 punish_actions_effective）。
-            from ming_sim.action_materialize import punish_actions_effective
+            from ming_sim.action_materialize import (
+                issue_dispositions_allowed,
+                punish_actions_effective,
+            )
             punish_action = str(normalized.get("punish_action") or "").strip()
             issue_disposition = str(normalized.get("issue_disposition") or "").strip()
             if (
                 not punish_action
                 or (
                     punish_action not in punish_actions_effective()
-                    and issue_disposition != "压下"
+                    and issue_disposition not in issue_dispositions_allowed()
                 )
             ):
                 raise ValueError(
@@ -17325,20 +17328,27 @@ class GameDB:
         target = str(
             payload.get("target_id") or row.get("target_id") or ""
         ).strip()
-        if not target:
-            raise ValueError("惩处案卷缺少 canonical target")
         punish_action = str(payload.get("punish_action") or "").strip()
         issue_disposition = str(payload.get("issue_disposition") or "").strip()
         issue_id = int(payload.get("issue_id") or 0)
-        if issue_id and issue_disposition == "压下":
+        issue = None
+        if issue_id:
             issue = self.conn.execute(
-                "SELECT status,origin_kind,faction_hint FROM issues WHERE id=?",
+                "SELECT status,origin_kind,faction_hint,target_roster FROM issues WHERE id=?",
                 (issue_id,),
             ).fetchone()
             if issue is None or issue["origin_kind"] != "impeachment_surge":
-                raise ValueError("压下所指弹劾潮不存在")
+                raise ValueError("处置所指弹劾潮不存在")
             if issue["status"] != "active":
                 return set()
+            if issue_disposition == "办人":
+                try:
+                    roster = json.loads(str(issue["target_roster"] or "[]"))
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("弹劾潮 target_roster 非法") from exc
+                if target not in roster:
+                    raise ValueError("办人目标不在弹劾潮 target_roster")
+        if issue_disposition == "压下" and issue is not None:
             faction = str(issue["faction_hint"] or "").strip()
             if self._record_decree_cost(
                 dossier_id, state.turn, "authority", "metric", "皇威", -1,
@@ -17357,6 +17367,8 @@ class GameDB:
                 self.adjust_factions({faction: {"satisfaction": -1}}, commit=False)
             self.close_issue(state, issue_id, reason="resolved", commit=False)
             return set()
+        if not target:
+            raise ValueError("惩处案卷缺少 canonical target")
         origin_ref = f"dossier:{int(dossier_id)}"
         reason = str(
             payload.get("text") or row.get("decree_text") or punish_action
@@ -17405,18 +17417,6 @@ class GameDB:
                 state, target=target, backing_id=backing_id, reason=reason,
             )
             if issue_id and issue_disposition == "办人":
-                issue = self.conn.execute(
-                    "SELECT status,origin_kind,target_roster FROM issues WHERE id=?",
-                    (issue_id,),
-                ).fetchone()
-                if issue is None or issue["origin_kind"] != "impeachment_surge":
-                    raise ValueError("办人所指弹劾潮不存在")
-                try:
-                    roster = json.loads(str(issue["target_roster"] or "[]"))
-                except (TypeError, ValueError) as exc:
-                    raise ValueError("弹劾潮 target_roster 非法") from exc
-                if target not in roster:
-                    raise ValueError("办人目标不在弹劾潮 target_roster")
                 self.close_issue(state, issue_id, reason="resolved", commit=False)
             return {target}
         if punish_action in {"放归", "昭雪"}:
