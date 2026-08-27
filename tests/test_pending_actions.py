@@ -31,6 +31,7 @@ import ming_sim.cli_backend as cb
 import ming_sim.issues as issues
 from ming_sim.db import GameDB
 from ming_sim.decree import pre_settle, reload_state_from_db, settle_with_delta
+from ming_sim.registry import MinisterRegistry
 from ming_sim.session import GameSession, TurnPhase, _pending_action_failure_payload
 from tests.dossier_test_helpers import promulgate_proposed_appointments
 
@@ -2842,6 +2843,8 @@ def test_new_consort_registers_after_outer_commit(game, monkeypatch):
         ]
         assert verdicts, "新妃任命须落 proposed 案卷"
 
+        # Tracer leaves only: real MinisterRegistry.project_outcome decides
+        # register vs refresh. session_ids empty = pre-materialization roster.
         class _Reg:
             def __init__(self):
                 self.registered: list[str] = []
@@ -2856,14 +2859,7 @@ def test_new_consort_registers_after_outer_commit(game, monkeypatch):
             def refresh(self, person_name):
                 self.refreshed.append(person_name)
 
-            def project_outcome(self, person_name):
-                character = self.content.characters.get(person_name)
-                if character is None:
-                    return
-                if character.name not in self.session_ids:
-                    self.register(character)
-                else:
-                    self.refresh(character.name)
+            project_outcome = MinisterRegistry.project_outcome
 
         reg = _Reg()
 
