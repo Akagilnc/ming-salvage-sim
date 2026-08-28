@@ -1288,7 +1288,7 @@ def resolve_directives(
     # 密令期限到期送核议已挪进 pre_settle 事务（ADR 0008 S4）——此处不再单独调用，
     # 否则二次写在 pre_settle 提交后散落事务外。下面只读注入推演（active 密令）。
 
-    # 密令注入推演：仅 active（legacy pending_review 开库一次迁）；结案改 settle 对账（#1504）
+    # 密令注入推演：仅 active；结案改 settle 对账（#1504）
     try:
         active_orders = _select_secret_orders_for_sim(db)  # 仅 active；due_commitment 另由 augment 进待核议
         # 分组承载、剥英文 status：simulator/extractor 收到的密令零英文 enum（#48）。

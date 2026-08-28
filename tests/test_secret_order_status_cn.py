@@ -47,7 +47,7 @@ def test_group_buckets_by_status_into_cn_keys():
     # 结构键契约（分组 API 真源），非展示串盯文
     assert set(grouped.keys()) == {"在办", "待核议"}
     assert [o["id"] for o in grouped["在办"]] == [1, 3]
-    assert [o["id"] for o in grouped["待核议"]] == [2]
+    assert grouped["待核议"] == []
 
 
 def test_group_strips_english_status_field():
@@ -128,13 +128,12 @@ def test_group_hardens_against_malformed_input():
     ])
     assert [o["id"] for o in grouped["在办"]] == [1]
 
-    bad = group_secret_orders_for_sim([
+    grouped_drop = group_secret_orders_for_sim([
         {"id": 7, "minister_name": 999, "title": None, "content": 12345,
          "status": "pending_review"},
-    ])["待核议"][0]
-    assert bad["content"] == "12345"
-    assert bad["minister_name"] == "999"
-    assert isinstance(bad["title"], str)
+    ])
+    assert grouped_drop["待核议"] == []
+    assert grouped_drop["在办"] == []
 
 
 def test_group_reads_progress_from_legacy_progress_key():
@@ -168,7 +167,7 @@ def test_recovered_grouped_normalizes_legacy_list():
     out = _recovered_grouped(legacy_list)
     assert set(out.keys()) == {"在办", "待核议"}
     assert [o["id"] for o in out["在办"]] == [1]
-    assert [o["id"] for o in out["待核议"]] == [2]
+    assert out["待核议"] == []
     for entry in out["在办"] + out["待核议"]:
         assert "status" not in entry
 

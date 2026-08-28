@@ -218,18 +218,18 @@ def group_secret_orders_for_sim(
     """把密令 DB 行按状态分进中文键两组，作喂 extractor 独立 rail 的承载形状（#48 / #883）。
 
     输入 = db.list_secret_orders 返回的行（含英文 status）；输出 =
-    `{"在办": [...], "待核议": [...]}`。英文 status（active/pending_review）只用来分组，
+    `{"在办": [...], "待核议": [...]}`。英文 status 只用来分组，
     **不当字段进 LLM 输入**（#48：status 不进 LLM——否则下游叙事/UI 会冒出
     「孙承宗密旨（active）」）。条目保留
     id/minister_name/title/content[:120]/turn_issued/due_turn/progress/sim_note，不含 status。
-    #1504：待核议组主要承载 due_commitment 与 legacy pending；密令结案不再由 LLM 产出。
-    done/failed/cancelled 是裁决输出、无注入需求，落到此函数时忽略不进任何组。
+    #1504：待核议组只承载 due_commitment ACK；密令结案不再由 LLM 产出。
+    pending_review/done/failed/cancelled 落到此函数时忽略不进任何组。
 
     #883：本分组只喂 personnel_secret extractor 独立 rail；simulator 公共轨不收密令正文，
     只见 `build_simulator_payload` 派生的扁平 `due_commitments`。恢复存档复用同一承载形状。
     """
     groups: Dict[str, List[Dict[str, object]]] = {"在办": [], "待核议": []}
-    bucket = {"active": "在办", "pending_review": "待核议"}
+    bucket = {"active": "在办"}
     # 恢复路也用本函数重分组旧存档 list（见 _recovered_grouped）；损坏/历史遗留数据可能非 list
     # 或含非 dict 元素，照 simulation._clean_* 的守门惯例跳过，不让 TypeError 崩在恢复链上。
     if not isinstance(rows, list):
@@ -272,7 +272,7 @@ def _recovered_grouped(value: object) -> Dict[str, object]:
 
 
 def _select_secret_orders_for_sim(db: GameDB, cap: int = 20) -> List[Dict[str, object]]:
-    """选注入月末推演的密令：仅 active（#1504：pending_review 已一次迁 active+到期标记）。
+    """选注入月末推演的密令：仅 active。
 
     到期结案改 settle 尾部机械对账；「待核议」分组现只承载 due_commitment ACK（见 augment）。
     """
