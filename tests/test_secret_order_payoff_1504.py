@@ -12,9 +12,11 @@ Seams:
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
+from ming_sim.action_materialize import MaterializeCtx, run_materialize_pipeline
 from ming_sim.covert_progress import (
     FIDELITY_STATES,
     build_covert_task_contract,
@@ -917,22 +919,17 @@ def test_extract_secret_order_schema_and_confirm_typed_contract(game, monkeypatc
         return canned, 1
 
     monkeypatch.setattr(cb, "_run_json_extractor_for_config", fake_json)
-    extracted = cb._extract_secret_order("按数补发五千两", "臣领密旨", name)
-    assert extracted["covert_task"]["kind"] == "补发饷银"
-    assert extracted["covert_task"]["delivery"]["unit"] == "两"
-    assert extracted["covert_task"]["delivery"]["target_units"] == 5000.0
-    pid = db.stage_pending_action(
-        state.turn, kind="secret_order", action="新建",
-        minister_name=name, target_id=None,
-        payload={
-            "title": extracted["title"],
-            "content": extracted["content"],
-            "assignee": extracted["assignee"],
-            "tags": extracted["tags"],
-            "deadline_months": extracted["deadline_months"],
-            "covert_task": extracted["covert_task"],
-        },
+    ctx = MaterializeCtx(
+        session=SimpleNamespace(db=db, state=state),
+        character=SimpleNamespace(name=name, office_type="文官"),
+        player_message="按数补发五千两", reply="臣领密旨",
+        message_text="按数补发五千两", explicit_prefixed=False,
+        has_directive=False, pend_for_minister=[], out={},
+        intent={"secret_action": "新建"}, intent_kind="secret",
+        llm_config=None, intent_candidates=[],
     )
+    run_materialize_pipeline(ctx)
+    pid = int(ctx.out["pending_action_id"])
     db.commit_pending_actions(state, content=content, action_ids=[pid])
     oid = int(db.list_secret_orders(status="active")[0]["id"])
     contract = read_covert_task_contract(db.get_dossier_for_secret_order(oid))
