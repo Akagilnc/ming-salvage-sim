@@ -324,12 +324,7 @@ def _record_audience_exit(session: GameSession, name: str) -> None:
         # Scaffold turn has no minister reply — retire so in-flight guards stay clear.
         # Exit ledger keeps origin binding; success path does not record rollback diffs.
         if scaffold_owned:
-            session.db.conn.execute(
-                "UPDATE chat_turns SET status = 'failed' "
-                "WHERE id = ? AND status = 'generating' AND minister_message_id IS NULL",
-                (int(chat_turn_id),),
-            )
-            session.db.conn.commit()
+            session.db.mark_chat_turn_failed(int(chat_turn_id))
     except BaseException as exc:
         # 与 minister_chat 失败清理同族：abandon + rollback/fail；cleanup 失败链到原异常。
         try:

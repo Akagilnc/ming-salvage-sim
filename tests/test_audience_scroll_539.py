@@ -152,7 +152,7 @@ def test_presence_commands_project_to_diegetic_scene_beats(game):
         if message["beat"] in {"entrance", "exit"}
     ])
     an.summon_enter(db, night_id, "杨嗣昌")
-    an.dismiss_from_audience(db, "杨嗣昌", night_id=night_id)
+    an.dismiss_from_audience(db, "杨嗣昌", night_id=night_id, body="杨嗣昌退下。")
 
     scroll = an.read_night_scroll(db, night_id)
     presence = [
@@ -177,6 +177,8 @@ def test_scroll_derives_soft_boundary_and_omits_dialogue_carried_action(game):
     scroll = an.read_night_scroll(db, night_id)
 
     assert [m["content"] for m in scroll].count("臣告退。") == 1
+    segment = [m["beat"] for m in scroll if m["beat"] in {"exit", "divider", "entrance"}]
+    assert segment[-3:] == ["exit", "divider", "entrance"]
     divider = next(m for m in scroll if m["beat"] == "divider")
     assert divider["soft_boundary"] is True
     assert divider["speaker"] == "洪承畴"
@@ -271,7 +273,7 @@ def test_extraction_derived_facts_stay_off_live_scroll_but_remain_in_ledger(game
         ],
         10,
     )
-    an.dismiss_from_audience(db, "杨嗣昌", night_id=night_id)
+    an.dismiss_from_audience(db, "杨嗣昌", night_id=night_id, body="杨嗣昌退下。")
 
     scroll = an.read_night_scroll(db, night_id)
     contents = [m["content"] for m in scroll]
@@ -481,9 +483,10 @@ def test_history_projection_handlers_are_sync_for_sqlite_access():
 # #657 片3 S4：P7 三写口空垫位不可见
 # ---------------------------------------------------------------------------
 
-def test_657_s4_empty_scaffold_open_enter_roster_not_on_scroll(game):
-    """generator 未完成期：scroll 无空 OPEN/ENTER。"""
+def test_657_s4_empty_scaffold_open_enter_and_scene_not_on_scroll(game):
+    """generator 未完成期：scroll 无空 OPEN/ENTER/普通 scene。"""
     from ming_sim.audience_night import (
+        append_ledger_entry,
         open_night,
         prepare_rescript_summon_scaffold,
         read_night_scroll,
@@ -496,12 +499,15 @@ def test_657_s4_empty_scaffold_open_enter_roster_not_on_scroll(game):
     prepare_rescript_summon_scaffold(
         db, state, person_name="杨嗣昌", origin_ref=origin,
     )
+    append_ledger_entry(db, int(night["id"]), body="", tags=["军务"])
     scroll = read_night_scroll(db, int(night["id"]))
     openings = [m for m in scroll if m.get("beat") == "opening"]
     entrances = [m for m in scroll if m.get("beat") == "entrance"]
-    # 空垫位 OPEN/ENTER 不得投影
+    scenes = [m for m in scroll if m.get("beat") == "scene"]
+    # 空垫位 OPEN/ENTER 与普通公共 scene 均不得投影
     assert openings == []
     assert entrances == []
+    assert scenes == []
 
 
 def test_657_s4_success_persist_shows_generator_body_only(game):

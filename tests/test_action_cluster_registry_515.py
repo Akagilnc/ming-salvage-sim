@@ -337,6 +337,19 @@ def test_scripted_confirmation_answer_existing_no_new_stage(game, monkeypatch):
             "更新",
             6,
         ),
+        # #1509：确认=修改携带 typed 新内容与目标编号，须原样过缝（并入真实分类入口）
+        (
+            "朕要修改密令正文为只查饷银去向，不查动向",
+            {
+                "动作类型": "确认",
+                "确认": "修改",
+                "新内容": "只查饷银去向，不查动向",
+                "目标编号": [6],
+            },
+            ["confirmation"],
+            None,
+            0,
+        ),
     ],
     ids=[
         "north_star_pure_ask",
@@ -346,6 +359,7 @@ def test_scripted_confirmation_answer_existing_no_new_stage(game, monkeypatch):
         "imperative_go_check_new",
         "imperative_micha_new",
         "supplement_existing_update",
+        "confirmation_modify_carries_new_content_and_target_ids",
     ],
 )
 def test_classify_soft_path_ask_vs_order_payload_matrix(
@@ -367,6 +381,10 @@ def test_classify_soft_path_ask_vs_order_payload_matrix(
     if expect_secret_action is not None:
         assert got[0]["secret_action"] == expect_secret_action
         assert int(got[0].get("order_id") or 0) == int(expect_order_id)
+    if raw_payload.get("确认") == "修改":
+        assert got[0]["confirmation"] == "修改"
+        assert got[0]["new_content"] == raw_payload["新内容"]
+        assert got[0]["target_ids"] == raw_payload["目标编号"]
 
 
 @pytest.mark.parametrize(

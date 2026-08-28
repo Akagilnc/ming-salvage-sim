@@ -26,6 +26,7 @@
 from __future__ import annotations
 
 from concurrent.futures import Executor, Future
+from contextlib import nullcontext
 from dataclasses import dataclass, fields as _dc_fields
 from typing import Any, Callable, Dict, List, Optional, Tuple
 import json
@@ -36,7 +37,11 @@ from ming_sim.audience_night import (
     METHOD_XUANRU,
     SUMMON_METHODS,
     TAG_ENTER,
+    TAG_EXIT,
+    TAG_HANDOFF,
     TAG_OPEN_NIGHT,
+    dismiss_from_audience,
+    find_prior_speaker_still_present,
     get_night,
     list_chat_turns_for_night,
     list_ledger,
@@ -47,6 +52,10 @@ BEAT_OPEN = "open"
 BEAT_ENTER = "enter"
 BEAT_EXIT = "exit"
 BEAT_CLOSE = "close"
+BEAT_HANDOFF = "handoff"
+# #1566：场外传召 scene beat ——人在途未入殿，场景围绕「传召已发、人在途」承接，
+# 而非「入殿」。ADR 0096：本回合开不成召对、抵京候旨召见。
+BEAT_SUMMON = "summon"
 
 # 见闻供给接口：character_name -> 角色见闻投影（get_character_knowledge 契约的 dict）。
 # 空名返回 {}。默认实现包 get_character_knowledge（#489 底座）；可注入 fake 做切片验收。
@@ -196,7 +205,7 @@ def assemble_beat_inputs(
     """
     provider = knowledge_provider or _default_knowledge_provider(db, state)
 
-    if beat_kind in (BEAT_ENTER, BEAT_EXIT):
+    if beat_kind in (BEAT_ENTER, BEAT_EXIT, BEAT_HANDOFF, BEAT_SUMMON):
         subject = str(person_name or "").strip()
     else:
         # 夜级框架 beat（开夜/收夜）：视角取常在员额首席（王承恩），无则空。
@@ -215,7 +224,7 @@ def assemble_beat_inputs(
     characterization = ""
     prior_appearances: Tuple[str, ...] = ()
     prior_bound = int(before_entry_id or 0)
-    if beat_kind in (BEAT_ENTER, BEAT_EXIT):
+    if beat_kind in (BEAT_ENTER, BEAT_EXIT, BEAT_HANDOFF, BEAT_SUMMON):
         characterization = _characterization(db, person_name)
         prior_appearances = _person_prior_appearances(
             db, night_id, person_name, before_entry_id=prior_bound,
@@ -223,7 +232,7 @@ def assemble_beat_inputs(
 
     # #1294：open/enter 当期年号事实；复用 models.reign_period_label，不另写投影。
     era_label = ""
-    if beat_kind in (BEAT_OPEN, BEAT_ENTER):
+    if beat_kind in (BEAT_OPEN, BEAT_ENTER, BEAT_SUMMON):
         year = getattr(state, "year", None)
         period = getattr(state, "period", None)
         if year is not None and period is not None:
@@ -238,14 +247,29 @@ def assemble_beat_inputs(
         audience_scenes = (() if current is None else (
             json.dumps(current, ensure_ascii=False, sort_keys=True),
         ))
+    elif beat_kind == BEAT_SUMMON:
+        # ADR 0096 / #1566：场外传召的正向结构化事实（旨意已发、驰递未达、尚未入殿）。
+        # 走既有 audience_scenes 槽进 LLM 材料，不另开字段、不写玩家可见模板。
+        audience_scenes = (
+            json.dumps(
+                {
+                    "decree_issued": True,
+                    "courier_traveling": True,
+                    "courier_arrived": False,
+                    "person_entered_court": False,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+        )
 
     return BeatInputs(
         beat_kind=beat_kind,
         time_of_day=str(time_of_day or ""),
         location=str(location or ""),
-        person_name=str(person_name or "") if beat_kind in (BEAT_ENTER, BEAT_EXIT) else "",
+        person_name=str(person_name or "") if beat_kind in (BEAT_ENTER, BEAT_EXIT, BEAT_HANDOFF, BEAT_SUMMON) else "",
         characterization=characterization,
-        summon_method=str(summon_method or "") if beat_kind == BEAT_ENTER else "",
+        summon_method=str(summon_method or "") if beat_kind in (BEAT_ENTER, BEAT_SUMMON) else "",
         perspectival_world=perspectival_world,
         court_tension=court_tension,
         prior_appearances=prior_appearances,
@@ -272,17 +296,6 @@ def run_beat_generator(beat_generator: Optional[BeatGenerator], inputs: BeatInpu
     return body
 
 
-def _identity_snippet(characterization: str) -> str:
-    """从 ADR 0033 特征化串取身份短句（生产日记用；不锁文案质量）。"""
-    raw = str(characterization or "").strip()
-    if not raw:
-        return ""
-    # minister_dossier 形如「身份：…；脾性：…」——只取身份段作入殿气象种子。
-    if raw.startswith("身份："):
-        raw = raw[3:]
-    return raw.split("；", 1)[0].strip()
-
-
 def create_llm_beat_generator(llm_config: Any) -> BeatGenerator:
     """创建真实 scene LLM adapter。
 
@@ -296,9 +309,9 @@ def create_llm_beat_generator(llm_config: Any) -> BeatGenerator:
 
     instructions = [
         "你是御前召对的叙事声音。依据人物自身可知的朝局与殿上前情，让场景从具体人物、时地和局势中自然长出。",
-        # #1295/#1314(2)：开场/入殿只立局势与悬念——与 production_beat_generator 同口径，
-        # 不写皇帝答复、不预演奏对（entrance 在玩家首句落库前生成，LLM 无从知问话）。
+        # #1295/#1314(2)：开场/入殿只立局势与悬念——不写皇帝答复、不预演奏对
         "开场与入殿只立局势与悬念，不预告后来结果；入殿写人物入殿气象，不写皇帝答复、不预演奏对；"
+        "交接写当前人物让出当前奏对位、退侍殿侧，其人仍留殿中；"
         "收束忠于已经发生的史实。玩家可见文案不要把召对硬称为夜。",
     ]
 
@@ -323,71 +336,17 @@ def create_llm_beat_generator(llm_config: Any) -> BeatGenerator:
         # #1294/#1313 r4b：仅 open/enter 且 label 非空时发射「当期年月」；
         # exit/close（及空 label）不加入该键，避免越界空键。
         label = str(inputs.reign_period_label or "").strip()
-        if inputs.beat_kind in (BEAT_OPEN, BEAT_ENTER) and label:
+        if inputs.beat_kind in (BEAT_OPEN, BEAT_ENTER, BEAT_SUMMON) and label:
             materials["当期年月"] = label
-        # Structured living facts belong only to the open-beat LLM materials.
-        # The deterministic fallback remains fixed prose and must not expand.
+        # Structured living facts: open-beat 场面；summon 场外传召（#1566）。
+        # Without a generator, opening remains an empty typed placeholder.
         if inputs.beat_kind == BEAT_OPEN and inputs.audience_scenes:
             materials["待呈御前的结构化场面事实"] = inputs.audience_scenes
+        if inputs.beat_kind == BEAT_SUMMON and inputs.audience_scenes:
+            materials["场外传召结构化事实"] = inputs.audience_scenes
         return extract_agent_text(agent.run(json.dumps(materials, ensure_ascii=False)))
 
     return generate
-
-
-def production_beat_generator(inputs: BeatInputs) -> str:
-    """#503 生产默认生成器：把编排层路由后的 BeatInputs 落成日记式账正文。
-
-    内容质量/声音形态仍归 #472/#478（#542 真实 LLM 走 create_llm_beat_generator 同一 seam）；
-    本生成器保证 Web/CLI/收夜生产路径**接通**编排缝，使入殿账随身份/召法/时地输入不同而不同
-    （AC1，不做文案质量断言），不再永久塌成 #498 一行兜底。
-
-    只读 BeatInputs（零形式约束、无裸数值），失败/空输入返回 ""；run_beat_generator 对空白 fail-loud。
-    """
-    tod = str(inputs.time_of_day or "").strip()
-    loc = str(inputs.location or "").strip()
-    place_time = "·".join(p for p in (loc, tod) if p)
-    tension = str(inputs.court_tension or "").strip()
-
-    if inputs.beat_kind == BEAT_OPEN:
-        head = f"{place_time}，召对启。" if place_time else "召对启。"
-        if tension:
-            return f"{head}{tension}"
-        return head
-
-    if inputs.beat_kind == BEAT_ENTER:
-        method = str(inputs.summon_method or METHOD_XUANRU).strip() or METHOD_XUANRU
-        name = str(inputs.person_name or "").strip()
-        if not name:
-            return ""
-        identity = _identity_snippet(inputs.characterization)
-        # 二次入殿与首次不同（US5 输入面已含 prior；生产正文用「再入/初入」区分）。
-        visit = "再入" if inputs.prior_appearances else "初入"
-        head = f"{place_time}，" if place_time else ""
-        who = f"{method}{name}"
-        if identity:
-            who = f"{who}（{identity}）"
-        body = f"{head}{who}{visit}殿。"
-        if tension:
-            body = f"{body}{tension}"
-        return body
-
-    if inputs.beat_kind == BEAT_EXIT:
-        name = str(inputs.person_name or "").strip()
-        if not name:
-            return ""
-        head = f"{place_time}，" if place_time else ""
-        body = f"{head}帝令{name}退下，{name}告退。"
-        if tension:
-            body = f"{body}{tension}"
-        return body
-
-    if inputs.beat_kind == BEAT_CLOSE:
-        head = f"{place_time}，退朝，召对到此。" if place_time else "退朝，召对到此。"
-        if tension:
-            return f"{head}{tension}"
-        return head
-
-    return ""
 
 
 def generate_open_beat_body(
@@ -399,7 +358,7 @@ def generate_open_beat_body(
     beat_generator: Optional[BeatGenerator] = None,
     knowledge_provider: Optional[KnowledgeProvider] = None,
 ) -> str:
-    """开夜账正文（夜级框架气氛）。无生成器返空（调用方沿用确定性兜底）。"""
+    """开夜账正文（夜级框架气氛）；无生成器时保留空垫位。"""
     if beat_generator is None:
         return ""
     inputs = assemble_beat_inputs(
@@ -547,6 +506,23 @@ def discover_open_enter_tasks(
             person_name=minister_name, summon_method=summon_method,
             before_entry_id=enter_id,
         )))
+        # #1585：发现同轮交接任务（A 在场时 B 宣入），与 enter 同桶并行生成。
+        handoff_entry = next(
+            (e for e in entries
+             if int(e.get("origin_chat_turn_id") or 0) == int(chat_turn_id)
+             and TAG_HANDOFF in (e.get("tags") or [])),
+            None,
+        )
+        if handoff_entry is not None:
+            handoff_id = int(handoff_entry["id"])
+            handoff_person = (handoff_entry.get("person_names") or [minister_name])[0]
+            tasks.append((handoff_id, assemble_beat_inputs(
+                db, state, beat_kind=BEAT_HANDOFF,
+                time_of_day=str(night.get("time_of_day") or ""),
+                location=str(night.get("location") or ""), night_id=night_id,
+                person_name=handoff_person, summon_method=summon_method,
+                before_entry_id=handoff_id,
+            )))
     return tasks
 
 
@@ -559,11 +535,80 @@ def persist_chat_turn_scene(db: Any, generated: List[Tuple[int, str]]) -> None:
         )
 
 
+def _offsite_summon_entry_id(db: Any, *, origin_id: str, person_name: str) -> int:
+    """场外传召 entry_id 唯一 lookup（key 派生与 discover 幂等重读共用同一权威）。"""
+    from ming_sim.audience_night import list_unsettled_summons
+
+    origin = str(origin_id or "").strip()
+    name = str(person_name or "").strip()
+    if not origin or not name:
+        raise ValueError(
+            f"assemble_offsite_summon_inputs 须有 origin_id 与 person_name，"
+            f"got origin_id={origin_id!r} person_name={person_name!r}"
+        )
+    item = next(
+        (row for row in list_unsettled_summons(db)
+         if row["origin_id"] == origin and row["person_name"] == name),
+        None,
+    )
+    if item is None:
+        raise RuntimeError(
+            f"场外传召账未落库，无法物化 scene：origin_id={origin!r} person={name!r}"
+        )
+    return int(item["entry_id"])
+
+
+def assemble_offsite_summon_inputs(
+    db: Any,
+    state: Any,
+    *,
+    origin_id: str,
+    person_name: str,
+) -> Optional[Tuple[int, BeatInputs]]:
+    """#1566：场外传召账 → (entry_id, BeatInputs)。调用方须在 ticketed gate 内调用。
+
+    BEAT_SUMMON（非 BEAT_ENTER）：人在途未入殿，ADR 0096。
+    body 已物化时返回 None（幂等）。生成器在 gate 外跑。
+    """
+    from ming_sim.audience_night import SUMMON_METHODS, get_night
+    import json as _json
+
+    name = str(person_name or "").strip()
+    entry_id = _offsite_summon_entry_id(db, origin_id=origin_id, person_name=person_name)
+    row = db.conn.execute(
+        "SELECT body, tags, night_id FROM story_ledger_entries WHERE id=?",
+        (entry_id,),
+    ).fetchone()
+    if row is None:
+        raise RuntimeError(f"传召 ledger 行消失：entry_id={entry_id}")
+    if str(row["body"] or "").strip():
+        return None
+    tags = _json.loads(row["tags"] or "[]")
+    method = next((m for m in SUMMON_METHODS if m in tags), None)
+    if method is None:
+        raise RuntimeError(
+            f"传召账缺召法 tag：entry_id={entry_id} tags={tags!r}"
+        )
+    night_id = int(row["night_id"])
+    night = get_night(db, night_id) or {}
+    inputs = assemble_beat_inputs(
+        db, state, beat_kind=BEAT_SUMMON,
+        time_of_day=str(night.get("time_of_day") or ""),
+        location=str(night.get("location") or ""),
+        night_id=night_id,
+        person_name=name,
+        summon_method=method,
+        before_entry_id=entry_id,
+    )
+    return (entry_id, inputs)
+
+
 class ChatTurnSceneRegistry:
     """本轮 scene 工作的唯一 registry（open/enter/exit 同桶，禁止平行第二表）。
 
     无依赖 beat 各提交独立 Future 真并发。join/abandon 排空整桶。
     Future.cancel 挡不住已在跑的 LLM——abandon 必须 join drain。
+    只拥有 chat-turn scene（int key）。
     """
 
     def __init__(self, executor: Executor) -> None:
@@ -774,6 +819,14 @@ class ChatTurnSceneRegistry:
             return
         self._drain(futures, keep_results=False)
 
+    def abandon_all(self) -> None:
+        """teardown：排空全部 chat-turn scene bucket 后再关库。"""
+        with self._lock:
+            pending = list(self._futures.items())
+            self._futures.clear()
+        for _key, futures in pending:
+            self._drain(futures, keep_results=False)
+
 
 def start_close_scene_on_registry(
     db: Any,
@@ -803,6 +856,62 @@ def start_close_scene_on_registry(
         scaffold_owned = True
 
     try:
+        # #1585：末位仍在场则先落 TAG_EXIT 垫位，再与 closing 同桶并行生成。
+        # exclude 收夜 scaffold，避免把框架轮当成末位被召者。
+        last_present = find_prior_speaker_still_present(
+            db, int(night_id), exclude_name="收夜",
+        )
+        exit_id = 0
+        exit_person = ""
+        if last_present:
+            new_exit_id = dismiss_from_audience(
+                db, last_present,
+                night_id=int(night_id),
+                body="",
+                origin_chat_turn_id=int(ctid),
+                state=state,
+                allow_closing=True,
+            )
+            if new_exit_id:
+                exit_id, exit_person = int(new_exit_id), last_present
+        else:
+            # #1585 进程级 CLOSING 重开（ADR 0036：reconcile 永不删账）：只复用
+            # origin_chat_turn_id 回指本夜 minister_name='收夜'、agno_session_id=
+            # 'close-scene' 的空 TAG_EXIT；较早普通空令退不得冒充 final-exit。
+            close_owned: List[Any] = []
+            for entry in list_ledger(db, int(night_id)):
+                if TAG_EXIT not in (entry.get("tags") or []):
+                    continue
+                if str(entry.get("body") or "").strip():
+                    continue
+                origin = int(entry.get("origin_chat_turn_id") or 0)
+                if origin <= 0:
+                    continue
+                row = db.conn.execute(
+                    "SELECT minister_name, agno_session_id FROM chat_turns WHERE id = ?",
+                    (origin,),
+                ).fetchone()
+                if row is None:
+                    continue
+                if (
+                    str(row["minister_name"]) == "收夜"
+                    and str(row["agno_session_id"] or "") == "close-scene"
+                ):
+                    close_owned.append(entry)
+            if close_owned:
+                chosen = close_owned[-1]
+                exit_id = int(chosen["id"])
+                exit_person = str((chosen.get("person_names") or [""])[0])
+        if exit_id:
+            scene_registry.start_exit(
+                db, state,
+                person_name=exit_person,
+                chat_turn_id=int(ctid),
+                entry_id=int(exit_id),
+                night_id=int(night_id),
+                beat_generator=beat_generator,
+                knowledge_provider=knowledge_provider,
+            )
         scene_registry.start_close(
             db, state,
             chat_turn_id=ctid,
@@ -826,19 +935,30 @@ def join_close_scene_on_registry(
     *,
     scene_registry: ChatTurnSceneRegistry,
     chat_turn_id: int,
-    scaffold_owned: bool = False,
+    write_gate: Any = None,
 ) -> str:
-    """收夜 scene 汇合：join 既有 registry 桶，返回正文。
+    """收夜 scene 汇合：join 既有 registry 桶（LLM 等待，闸外），返回正文。
 
-    成功后退役 scaffold；失败 abandon + fail_chat_turn 后原样抛出——
-    不重开夜、不自建 Thread/executor。
+    成功只持久化 scene 正文，不退役 scaffold——整体 close 成功后再退役，
+    以便 sibling 失败时既有 fail_chat_turn 仍能回滚 origin-bound exit。
+    失败 abandon + fail_chat_turn 后原样抛出——不重开夜、不自建 Thread/executor。
+
+    `write_gate`（#1585）：session_write_queue 是唯一 exclusive write lock——join
+    本身（等 LLM）留在闸外，但 join 后的账本回填 / 失败清理短持同一把既有闸，
+    不与调用方其它共享 conn 写交叠（不新增第二把锁）。
     """
     ctid = int(chat_turn_id or 0)
     if not ctid or not hasattr(scene_registry, "join"):
         return ""
 
+    gate = write_gate if write_gate is not None else nullcontext()
     try:
         generated = scene_registry.join(ctid)
+        with gate:
+            persist_chat_turn_scene(
+                db,
+                [(int(entry_id), str(text)) for entry_id, text in generated if int(entry_id) > 0],
+            )
         body = ""
         for entry_id, text in generated:
             # The close bucket also carries provider-only siblings (relation judge
@@ -847,21 +967,14 @@ def join_close_scene_on_registry(
             if int(entry_id) == 0 and text:
                 body = str(text)
                 break
-        if scaffold_owned and hasattr(db, "conn") and getattr(db, "conn", None) is not None:
-            # 成功后退役 scaffold，避免 wait_in_flight 把 generating 空轮当在飞。
-            db.conn.execute(
-                "UPDATE chat_turns SET status = 'failed' "
-                "WHERE id = ? AND status = 'generating' AND minister_message_id IS NULL",
-                (int(ctid),),
-            )
-            db.conn.commit()
         return body
     except BaseException as scene_exc:
         try:
             if hasattr(scene_registry, "abandon"):
                 scene_registry.abandon(ctid)
             if ctid and hasattr(db, "fail_chat_turn"):
-                db.fail_chat_turn(int(ctid))
+                with gate:
+                    db.fail_chat_turn(int(ctid))
         except BaseException as cleanup_exc:
             raise scene_exc from cleanup_exc
         raise

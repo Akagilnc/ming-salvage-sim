@@ -11,10 +11,7 @@ import types
 from types import SimpleNamespace
 
 import ming_sim.cli_backend as cb
-from ming_sim.session import (
-    GameSession,
-    _strip_secret_amendment_prefix,
-)
+from ming_sim.session import GameSession
 
 
 def _active_minister_name(db, content) -> str:
@@ -34,19 +31,6 @@ def _sess(db, state):
         llm_config=types.SimpleNamespace(channel="cli"),
         registry=None, content=None,
     )
-
-
-def test_strip_amendment_prefix():
-    assert (
-        _strip_secret_amendment_prefix("修改：只查饷银去向，不查动向")
-        == "只查饷银去向，不查动向"
-    )
-    assert _strip_secret_amendment_prefix("改：收窄范围") == "收窄范围"
-    assert (
-        _strip_secret_amendment_prefix("修改第二道：只查饷银去向，不查动向")
-        == "只查饷银去向，不查动向"
-    )
-    assert _strip_secret_amendment_prefix("只查饷银") == "只查饷银"
 
 
 def test_modify_target_from_stub_id_not_message_literal(game, monkeypatch):
@@ -83,7 +67,7 @@ def test_modify_target_from_stub_id_not_message_literal(game, monkeypatch):
         # 故意与消息字面「第二道」「暗结蒙古」相反：点名第一道
         return (
             json.dumps(
-                {"确认": "修改", "目标编号": [id1]},
+                {"确认": "修改", "目标编号": [id1], "新内容": "暗结蒙古那道改成只查饷银去向"},
                 ensure_ascii=False,
             ),
             1,
@@ -166,7 +150,9 @@ def test_modify_does_not_claim_success_when_row_left_pending(game, monkeypatch):
     monkeypatch.setattr(db.conn, "execute", _race_then_update)
     monkeypatch.setattr(
         cb, "_run_backend_for_config",
-        lambda *a, **k: (json.dumps({"确认": "修改"}, ensure_ascii=False), 1),
+        lambda *a, **k: (
+            json.dumps({"确认": "修改", "新内容": "只查饷银去向"}, ensure_ascii=False), 1,
+        ),
     )
     monkeypatch.setattr(
         cb, "_extract_secret_order",
@@ -327,7 +313,10 @@ def test_modify_preserves_fields_targets_one_no_second_extract(game, monkeypatch
         cb, "_run_backend_for_config",
         # 目标编号显式点名 id2（不靠消息「第二道」）
         lambda *a, **k: (
-            json.dumps({"确认": "修改", "目标编号": [id2]}, ensure_ascii=False),
+            json.dumps(
+                {"确认": "修改", "目标编号": [id2], "新内容": "只查饷银去向，不查动向"},
+                ensure_ascii=False,
+            ),
             1,
         ),
     )
@@ -362,6 +351,35 @@ def test_modify_preserves_fields_targets_one_no_second_extract(game, monkeypatch
     assert p2["tags"] == ["蒙古"]
     assert p2["deadline_months"] == 2
     assert p2["title"] == "暗结蒙古"
+
+
+def test_modify_empty_typed_body_keeps_candidate_and_reports_no_success(game, monkeypatch):
+    """空正文 fail-closed：候选原样保留，且不回填 pending_action_id。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    pending_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name,
+        target_id=None,
+        payload={"title": "密察关宁", "content": "原正文", "assignee": name},
+    )
+    monkeypatch.setattr(
+        cb, "_run_backend_for_config",
+        lambda *a, **k: (
+            json.dumps({"确认": "修改", "目标编号": [pending_id], "新内容": "   "}), 1,
+        ),
+    )
+
+    out = GameSession.apply_cli_conversation_actions(
+        _sess(db, state), ch, player_message="修改", answer="臣候旨。",
+        has_directive=False, secret_order_id=None,
+    )
+    payload = json.loads(db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
+    ).fetchone()[0])
+    assert payload["content"] == "原正文"
+    assert "pending_action_id" not in out
+    assert out["directive_confirmation_ambiguous"]["candidates"][0]["id"] == pending_id
 
 
 def test_non_secret_modify_does_not_swallow_directive(game, monkeypatch):
@@ -488,7 +506,7 @@ def test_chat_path_modify_uses_stub_id_not_message_literal(game, monkeypatch):
         # 故意与消息字面「第二道」相反：点名第一道
         return (
             json.dumps(
-                {"确认": "修改", "目标编号": [id1]},
+                {"确认": "修改", "目标编号": [id1], "新内容": "暗结蒙古那道改成只查饷银去向"},
                 ensure_ascii=False,
             ),
             1,

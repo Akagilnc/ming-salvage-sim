@@ -1,6 +1,6 @@
 import React from "react";
 import { Crown, Landmark, MapPinned, ScrollText, Star, Swords, X } from "lucide-react";
-import { MinisterPortrait, PortraitUploadButton, RightDrawer, cacheBust, courtSlots, loadCourtPos, saveCourtPos, snapToSlot } from "./hud";
+import { ArmyPaySection, MinisterPortrait, PortraitUploadButton, RightDrawer, cacheBust, courtSlots, loadCourtPos, saveCourtPos, snapToSlot } from "./hud";
 import { formatMoney, formatSignedMoney, qualitativeArmyStat } from "../format";
 import { settlementClosedReason } from "../settlementPresentation";
 import type { Army, Building, GameState, MapNode, Minister, Region } from "../types";
@@ -559,6 +559,12 @@ export function EconomyDrawer({
             <b className="expense">-{formatMoney(item.amount)}</b>
           </div>
         ))}
+        {tab === "国库" && (
+          <ArmyPaySection
+            armyPayDueTotal={state.budget.army_pay_due_total}
+            settledArmyPay={state.budget.settled_army_pay}
+          />
+        )}
         {budget.movements.filter((m) => matchItem(m.category || m.reason)).length > 0 && (
           <>
             <div className="right-drawer-section-title">本月一次性入账</div>

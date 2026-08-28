@@ -66,7 +66,7 @@ def webgame_shell_for_secret_order(db, state, content, *, session_chat):
     runtime._reject_if_settlement_phase = web_app.WebGame._reject_if_settlement_phase.__get__(runtime)
     runtime._persistent_chat_minister = web_app.WebGame._persistent_chat_minister.__get__(runtime)
     runtime._audience_turn_in_flight = lambda _name: False
-    runtime._start_chat_turn = lambda _name: (0, {})
+    runtime._start_chat_turn = lambda _name, **_k: (0, {})
     runtime._record_chat_rollback_items = lambda *_a, **_k: None
     runtime._chat_payload = web_app.WebGame._chat_payload.__get__(runtime)
     runtime.chat_projection = lambda _name: list(runtime.chat_history.get(_name, []))

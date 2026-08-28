@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 
 import pytest
 
@@ -601,8 +602,8 @@ def test_poison_replay_clears_context_for_resimulation(game, monkeypatch, tmp_pa
 def test_hitl_retry_replays_ready_context_without_reextract(saved_game, monkeypatch):
     """HITL 重试消费 ready context，不重跑 extractor（cmr S7 r2 codex）。
 
-    phase2 已 persist ready delta 后 settle 曾 abort：重试 submit_decisions
-    不得重跑贵调用并覆盖 ready context。
+    phase2 已 persist ready delta 后 settle 曾 abort：重试 submit_hitl_choices
+    （keyed，#1589 唯一 HITL 编排入口）不得重跑贵调用并覆盖 ready context。
     用 saved_game：断言依赖玩过存档的结算链路状态，fresh seed 不复现（#5）。
     """
     from ming_sim.session import TurnPhase
@@ -631,7 +632,10 @@ def test_hitl_retry_replays_ready_context_without_reextract(saved_game, monkeypa
 
     support_before = db.load_state().metrics["民心"]
     sess = _recovery_session(db, state, content, monkeypatch)
-    report = sess.submit_decisions([{"label": "战"}])
+    d_key = db.list_rescript_desk(turn)[0]["decision_key"]
+    report = sess.submit_hitl_choices(
+        [{"decision_key": d_key, "label": "战"}], write_gate=threading.Lock(),
+    )
 
     assert state.turn == turn + 1
     assert db.load_state().metrics["民心"] == support_before - 3  # ready delta 真重放
@@ -674,7 +678,11 @@ def test_submit_event_decision_persists_choice_after_pending_cleanup(game, monke
     sess.content = content
     sess.registry = None
 
-    sess.submit_decisions([{"label": "留", "hint": "暂稳东江", "note": "姑留观后效"}])
+    d_key = db.list_rescript_desk(turn)[0]["decision_key"]
+    sess.submit_hitl_choices(
+        [{"decision_key": d_key, "label": "留", "hint": "暂稳东江", "note": "姑留观后效"}],
+        write_gate=threading.Lock(),
+    )
 
     assert db.list_pending_decisions(turn) == []
     row = db.conn.execute(
@@ -685,13 +693,15 @@ def test_submit_event_decision_persists_choice_after_pending_cleanup(game, monke
     assert row["terminal_state"] == ""
     assert row["source"] == "hitl_decision"
     assert json.loads(row["choice_json"]) == {
+        "decision_key": d_key,
+        "action": "decision",
         "label": "留",
         "hint": "暂稳东江",
         "note": "姑留观后效",
     }
     assert not db.has_event_triggered(event_id)
     assert event_id not in I._event_trigger_refs(db), (
-        "submit_decisions 只能暂存亲裁 choice，不能在 phase2 前抢先把候选事件记成终态"
+        "submit_hitl_choices 只能暂存亲裁 choice，不能在 phase2 前抢先把候选事件记成终态"
     )
 
 
@@ -737,7 +747,13 @@ def test_submit_event_decision_binds_from_candidate_snapshot_without_event_id(ga
     sess.content = content
     sess.registry = None
 
-    sess.submit_decisions([{"label": "留", "hint": "暂稳东江", "note": "姑留观后效"}])
+    # #1589：绑定发生在 desk 读出口（prepare_rescript_prewrite），键仍取绑定前
+    # 的 decision:{turn}:0 投影——event_id 是否已绑定不改变 decision_key 形状。
+    d_key = db.list_rescript_desk(turn)[0]["decision_key"]
+    sess.submit_hitl_choices(
+        [{"decision_key": d_key, "label": "留", "hint": "暂稳东江", "note": "姑留观后效"}],
+        write_gate=threading.Lock(),
+    )
 
     assert db.list_pending_decisions(turn) == []
     row = db.conn.execute(
@@ -748,6 +764,8 @@ def test_submit_event_decision_binds_from_candidate_snapshot_without_event_id(ga
     assert row["terminal_state"] == ""
     assert row["source"] == "hitl_decision"
     assert json.loads(row["choice_json"]) == {
+        "decision_key": d_key,
+        "action": "decision",
         "label": "留",
         "hint": "暂稳东江",
         "note": "姑留观后效",
@@ -755,10 +773,11 @@ def test_submit_event_decision_binds_from_candidate_snapshot_without_event_id(ga
 
 
 def test_hitl_ready_replay_retry_keeps_original_event_choice(game, monkeypatch):
-    """cmr Gate2 r4 Finding2：ready-context 重试时 phase2 走「恢复重放」、**忽略**重交的亲裁
-    选择（重放崩溃前真源的旧选择 delta）。submit_decisions 此刻绝不能用新选择覆写
-    event_triggers.choice_json——否则事件账记新选择 B、而重放的世界状态来自旧选择 A，durable
-    账实不符。断言：重试改投不同选择后，事件账仍是原选择。"""
+    """cmr Gate2 r4 Finding2 / #1589 最短 ready-replay tracer：ready-context 重试时
+    phase2 走「恢复重放」、**忽略**重交的亲裁选择（重放崩溃前真源的旧选择 delta）。
+    submit_hitl_choices（keyed）此刻绝不能用新选择覆写 event_triggers.choice_json——
+    否则事件账记新选择 B、而重放的世界状态来自旧选择 A，durable 账实不符。
+    断言：重试改投不同选择（仍显式携原 decision_key）后，事件账仍是原选择。"""
     import json
     import ming_sim.decree as dm
     import ming_sim.session as session_mod
@@ -798,8 +817,12 @@ def test_hitl_ready_replay_retry_keeps_original_event_choice(game, monkeypatch):
     sess.content = content
     sess.registry = None
 
-    # 重试改投「留」（B，与原 A 不同）——ready-replay 应跳过覆写
-    sess.submit_decisions([{"label": "留", "note": "改裁"}])
+    # 重试改投「留」（B，与原 A 不同，显式携 key）——ready-replay 应跳过覆写
+    d_key = db.list_rescript_desk(turn)[0]["decision_key"]
+    sess.submit_hitl_choices(
+        [{"decision_key": d_key, "label": "留", "note": "改裁"}],
+        write_gate=threading.Lock(),
+    )
 
     row = db.conn.execute(
         "SELECT choice_json FROM event_triggers WHERE event_id=?", (event_id,)).fetchone()
@@ -808,10 +831,13 @@ def test_hitl_ready_replay_retry_keeps_original_event_choice(game, monkeypatch):
 
 
 def test_submit_decisions_does_not_overwrite_already_decided_rows(game, monkeypatch):
-    """#1418 r2：phase2 失败后续跑——已 decided 行不得被空/异载荷覆写。
+    """#1418 r2 / #1589：phase2 失败后续跑——已 decided 行不得被空/异载荷覆写。
 
     崩溃安全先写后跑：choice 已落 status=decided，但 extracted 未就绪（非 ready_replay）。
-    重发 resolve（空 choices 或改裁）须保留账上原 choice，再进 phase2。
+    desk 此刻无 pending 行（已 decided，不在 list_rescript_desk 投影内）：
+    ① 真正空 choices 续跑合法，保留账上原 choice 再进 phase2；
+    ② #1589 起，非空无键载荷不再被静默吞掉/忽略——空 desk 无例外，整批拒、零写，
+    account 上原 choice 因整批拒直接原样未动（比忽略更强的不变式）。
     """
     import json
     import ming_sim.session as session_mod
@@ -863,17 +889,20 @@ def test_submit_decisions_does_not_overwrite_already_decided_rows(game, monkeypa
     sess.registry = None
 
     # ① 空载荷续跑不得清空
-    assert sess.submit_decisions([]) == "ok"
+    assert sess.submit_hitl_choices([], write_gate=threading.Lock()) == "ok"
     assert db.list_pending_decisions(turn)[0]["choice"] == original
 
     # 复位 awaiting 再试异载荷（模拟 phase2 再次失败后的续跑）
     state.turn_phase = "awaiting_decision"
     db.save_state(state)
-    # ② 异载荷改裁不得覆写
-    assert sess.submit_decisions([{"label": "留", "note": "改裁"}]) == "ok"
+    # ② #1589：空 desk + 非空无键异载荷整批拒，不静默吞掉——phase2 不重入
+    with pytest.raises(ValueError, match="decision_key"):
+        sess.submit_hitl_choices(
+            [{"label": "留", "note": "改裁"}], write_gate=threading.Lock(),
+        )
     assert db.list_pending_decisions(turn)[0]["choice"] == original, \
         "已 decided 行不得被异载荷覆写"
-    assert seen == [original, original]
+    assert seen == [original]
 
 
 def test_submit_dossier_rescript_does_not_create_event_trigger(game, monkeypatch):
@@ -911,7 +940,10 @@ def test_submit_dossier_rescript_does_not_create_event_trigger(game, monkeypatch
     sess.content = content
     sess.registry = None
 
-    assert sess.submit_decisions([option]) == "ok"
+    d_key = db.list_rescript_desk(state.turn)[0]["decision_key"]
+    assert sess.submit_hitl_choices(
+        [{**option, "decision_key": d_key}], write_gate=threading.Lock(),
+    ) == "ok"
     assert db.conn.execute(
         "SELECT 1 FROM event_triggers WHERE event_id=?",
         (f"dossier:{dossier_id}",),
@@ -919,6 +951,8 @@ def test_submit_dossier_rescript_does_not_create_event_trigger(game, monkeypatch
     stored = db.list_pending_decisions(state.turn)[0]
     assert stored["status"] == "decided"
     assert stored["choice"] == {
+        "decision_key": d_key,
+        "action": "withdrawn",
         "label": "收回",
         "hint": "收回此道准旨",
         "dossier_id": dossier_id,
@@ -1071,12 +1105,17 @@ def test_hitl_poison_replay_downgrades_context_then_reextracts(game, monkeypatch
         raise RuntimeError("value-level poison")
     monkeypatch.setattr(dm, "apply_score_extraction", _poison)
 
+    d_key = db.list_rescript_desk(turn)[0]["decision_key"]
     sess = _recovery_session(db, state, content, monkeypatch)
     with pytest.raises(SettlementAbort):
-        sess.submit_decisions([{"label": "战"}])
+        sess.submit_hitl_choices(
+            [{"decision_key": d_key, "label": "战"}], write_gate=threading.Lock(),
+        )
     assert db.get_resolve_context(turn)["extracted"] is not None  # 首败仍可原子重放
     with pytest.raises(SettlementAbort):
-        sess.submit_decisions([{"label": "战"}])
+        sess.submit_hitl_choices(
+            [{"decision_key": d_key, "label": "战"}], write_gate=threading.Lock(),
+        )
 
     ctx = db.get_resolve_context(turn)
     assert ctx is not None  # 行没被删（phase1 字段是重抽的数据依赖）
@@ -1094,7 +1133,9 @@ def test_hitl_poison_replay_downgrades_context_then_reextracts(game, monkeypatch
                         lambda *a, **k: ({"metric_delta": {"民心": -3}}, "o", "i"))
     state.turn_phase = "awaiting_decision"  # 回滚已还原；拼装 session 重建
     sess2 = _recovery_session(db, state, content, monkeypatch)
-    report = sess2.submit_decisions([{"label": "战"}])
+    report = sess2.submit_hitl_choices(
+        [{"decision_key": d_key, "label": "战"}], write_gate=threading.Lock(),
+    )
 
     assert state.turn == turn + 1  # 不再 LLMContractError，正常重抽结算
 
@@ -1178,7 +1219,10 @@ def test_hitl_reextract_branch_commits_pending(game, monkeypatch, tmp_path):
     )
 
     sess = _recovery_session(db, state, content, monkeypatch)
-    sess.submit_decisions([{"label": "战"}])
+    d_key = db.list_rescript_desk(turn)[0]["decision_key"]
+    sess.submit_hitl_choices(
+        [{"decision_key": d_key, "label": "战"}], write_gate=threading.Lock(),
+    )
 
     assert state.turn == turn + 1
     row = db.conn.execute(
