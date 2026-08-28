@@ -47,7 +47,7 @@ E3_MESSAGE = "你替朕悄悄查一查关宁欠饷实数"
 # 抽取 stub 默认 typed 载荷（用例可覆盖）；S2 修改 material=测试自送正文
 RESTATED_CONTENT = "密察关宁欠饷，据实密奏，不得声张。"
 # 玩家修改输入是确定性材料（非 LLM 生成物）；S2 新正文唯取 typed new_content
-S2_MODIFY_BODY = "  " + ("只查饷银去向" * 60) + "  "
+S2_MODIFY_BODY = "  " + ("只查饷银去向" * 90) + "  "
 # 自然语言修改表达（不含结构化「修改：」前缀），保证旧 prefix parser 无法直接产出
 # S2_MODIFY_BODY——proof-of-red：生产须从 typed new_content 消费而非裁剪散文。
 S2_MODIFY_MESSAGE = "朕要修改密令正文为只查饷银去向，不查动向"
