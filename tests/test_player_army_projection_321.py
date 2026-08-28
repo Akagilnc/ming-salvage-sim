@@ -203,14 +203,6 @@ def _web_runtime(db, state, content):
     runtime._display_metrics = lambda: dict(state.metrics)
     # 真实 map_nodes（army_payload 片段挂到节点）
     runtime.map_nodes = lambda: web_app.WebGame.map_nodes(runtime)
-    runtime._army_belongs_to_theater = (
-        lambda army, tid: web_app.WebGame._army_belongs_to_theater(runtime, army, tid)
-    )
-    runtime._army_belongs_to_region = (
-        lambda army, region: web_app.WebGame._army_belongs_to_region(
-            runtime, army, region
-        )
-    )
     runtime._theater_label = lambda tid: web_app.WebGame._theater_label(runtime, tid)
     return runtime
 

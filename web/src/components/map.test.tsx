@@ -98,20 +98,6 @@ describe("NodeIntel #1401 theater naming", () => {
     expect(host.textContent).toContain("辽东省名-优先");
     expect(host.textContent).not.toContain("theater-label-不应先显");
   });
-
-  it("falls back to label when theater has no region", () => {
-    const node: MapNode = {
-      id: "shanhaiguan",
-      kind: "theater",
-      x: 55.52,
-      y: 42.84,
-      label: "山海关",
-      risk: 120,
-      armies: [],
-    };
-    const host = renderNodeIntel(node);
-    expect(host.textContent).toContain("山海关");
-  });
 });
 
 describe("NodeIntel #1352 garrison layout / army-list口径", () => {

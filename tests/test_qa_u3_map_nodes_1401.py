@@ -1,10 +1,11 @@
-"""#1274 QA 包⑦ / #1401：地图 theater 无名 + 军队双挂 + theater 针塌缩。
+"""#1505 QA 包：地图 typed station_region 单归属 + liaodong 同 id 合 theater+region。
 
 钉测：
 1. 一军一挂——同一 army.id 不得出现在两个 map_nodes 的 armies 里
 2. 无名节点——每个节点须有可见名（region.name 或 theater label）
-3. theater 针 emit（dongjiang/xuan_da/shanhaiguan/liaodong）+ 东江军可达 + guanning 在 liaodong
+3. typed station_region 单归属：东江→dongjiang_area、宣大→shanxi、山海关→beizhili、关宁→liaodong
 4. 外线军不误吞 liaodong：manchu→jianzhou、han_liaoren→shenyang_liaoyang
+5. 空 station_region（如 southwest_tusi）不挂在任何地图节点
 """
 
 from __future__ import annotations
@@ -20,48 +21,8 @@ def _map_nodes(db):
     return web_app.WebGame.map_nodes(rt)
 
 
-def test_map_nodes_dynamic_liaodong_outer_station_not_on_liaodong(game):
-    """#1448/#1497：动态军 station=辽东外线 穿 map_nodes 真路径不得进 liaodong。
-
-    theater 白名单 alone 不够——region 回退用地区名分段「辽东」仍会把
-    辽东侧翼/门户/外线 误挂；须与 theater 共用同一 station 真源。
-    """
-    db, _state, _content = game
-    # 正例对照：关宁形 station 仍归 liaodong（theater 白名单路径）
-    db.conn.execute(
-        "INSERT INTO armies (id, name, station, theater, commander, controller, troop_type, "
-        "manpower, supply, morale, training, equipment, arrears, mobility, "
-        "loyalty, salary_rate, status, owner_power) "
-        "VALUES ('dyn_liaodong_core', '试关宁形', '辽东 / 宁远锦州', '', 'x', 'ming', '边', "
-        "1000, 50, 50, 50, 50, 0, 50, 50, 1.0, '试', 'ming')"
-    )
-    # 反例：三前缀落入 station（seed 里在 theater 字段；动态/调防可进 station）
-    for i, bad in enumerate(("辽东侧翼", "辽东门户", "辽东外线")):
-        db.conn.execute(
-            "INSERT INTO armies (id, name, station, theater, commander, controller, troop_type, "
-            "manpower, supply, morale, training, equipment, arrears, mobility, "
-            "loyalty, salary_rate, status, owner_power) "
-            "VALUES (?, ?, ?, '', 'x', 'houjin', '骑', "
-            "1000, 50, 50, 50, 50, 0, 50, 50, 1.0, '试', 'houjin')",
-            (f"dyn_liaodong_bad_{i}", f"试{bad}", bad),
-        )
-    db.conn.commit()
-
-    nodes = _map_nodes(db)
-    by_id = {str(n["id"]): n for n in nodes}
-    liaodong_ids = {str(a["id"]) for a in (by_id["liaodong"].get("armies") or [])}
-    assert "dyn_liaodong_core" in liaodong_ids, (
-        f"关宁形 station 应进 liaodong；armies={sorted(liaodong_ids)}"
-    )
-    for i, bad in enumerate(("辽东侧翼", "辽东门户", "辽东外线")):
-        aid = f"dyn_liaodong_bad_{i}"
-        assert aid not in liaodong_ids, (
-            f"station={bad!r} 不得经 map_nodes 进 liaodong；armies={sorted(liaodong_ids)}"
-        )
-
-
 def test_map_nodes_no_double_army_hang(game):
-    """#1401：theater 优先挂；未命中再 region——一军不得双挂。"""
+    """#1505：typed station_region 单归属——同一 army.id 不得出现在两个 map_nodes 的 armies 里。"""
     db, _state, _content = game
     nodes = _map_nodes(db)
     seen: dict[str, str] = {}
@@ -78,30 +39,53 @@ def test_map_nodes_no_double_army_hang(game):
     assert seen["guanning"] == "liaodong"
 
 
-def test_map_nodes_theater_pins_emit_and_dongjiang_reachable(game):
-    """#1401 r1：theater 关键词优先——东江/宣大/山海关针 emit；东江军在可选 theater 针。"""
+def test_map_nodes_province_garrison_co_node(game):
+    """#1505：typed station_region 单归属——province nodes carry tax + garrison。
+
+    纯 theater 针（dongjiang/xuan_da/shanhaiguan）不再 emit；军挂在其
+    station_region 对应的 province 节点上，节点同时携带 region tax payload。
+    """
     db, _state, _content = game
     nodes = _map_nodes(db)
     by_id = {str(n["id"]): n for n in nodes}
-    for tid in ("dongjiang", "xuan_da", "shanhaiguan", "liaodong"):
-        assert tid in by_id, f"missing theater pin {tid}"
-        assert by_id[tid].get("kind") == "theater", (
-            f"{tid} kind={by_id[tid].get('kind')!r}, want theater"
-        )
-        assert str(by_id[tid].get("label") or "").strip(), f"{tid} missing label"
 
-    # 东江军须挂在地图可选节点（theater pin，非无 path 的 dongjiang_area  alone）
-    dongjiang_armies = [str(a["id"]) for a in (by_id["dongjiang"].get("armies") or [])]
+    # dongjiang army → dongjiang_area province node (NOT dongjiang theater pin)
+    assert "dongjiang_area" in by_id, "dongjiang_area province node missing"
+    dongjiang_armies = [str(a["id"]) for a in (by_id["dongjiang_area"].get("armies") or [])]
     assert "dongjiang" in dongjiang_armies, (
-        f"dongjiang army not on selectable theater pin; armies={dongjiang_armies}"
+        f"dongjiang army not on dongjiang_area node; armies={dongjiang_armies}"
     )
-    # 宣大 / 山海关本军各归其针
-    assert any(str(a["id"]) == "xuan_da" for a in (by_id["xuan_da"].get("armies") or []))
-    assert any(str(a["id"]) == "shanhaiguan" for a in (by_id["shanhaiguan"].get("armies") or []))
-    # liaodong 合并节点仍收关宁
-    assert any(str(a["id"]) == "guanning" for a in (by_id["liaodong"].get("armies") or []))
+    # 节点同时携带 region tax payload
+    assert isinstance(by_id["dongjiang_area"].get("region"), dict) and by_id["dongjiang_area"]["region"].get("name"), (
+        "dongjiang_area node must carry region tax payload"
+    )
 
-    # 外线军不得被宽「辽东」关键词吞进 liaodong；各归 region
+    # xuan_da army → shanxi province node
+    assert "shanxi" in by_id, "shanxi province node missing"
+    xuan_da_armies = [str(a["id"]) for a in (by_id["shanxi"].get("armies") or [])]
+    assert "xuan_da" in xuan_da_armies, (
+        f"xuan_da army not on shanxi node; armies={xuan_da_armies}"
+    )
+    assert isinstance(by_id["shanxi"].get("region"), dict) and by_id["shanxi"]["region"].get("name"), (
+        "shanxi node must carry region tax payload"
+    )
+
+    # shanhaiguan army → beizhili province node
+    assert "beizhili" in by_id, "beizhili province node missing"
+    shanhaiguan_armies = [str(a["id"]) for a in (by_id["beizhili"].get("armies") or [])]
+    assert "shanhaiguan" in shanhaiguan_armies, (
+        f"shanhaiguan army not on beizhili node; armies={shanhaiguan_armies}"
+    )
+    assert isinstance(by_id["beizhili"].get("region"), dict) and by_id["beizhili"]["region"].get("name"), (
+        "beizhili node must carry region tax payload"
+    )
+
+    # liaodong 合并 theater+region 节点仍收关宁
+    assert any(str(a["id"]) == "guanning" for a in (by_id["liaodong"].get("armies") or [])), (
+        "guanning not on liaodong merged node"
+    )
+
+    # 外线军不得被吞进 liaodong；各归其 province region
     liaodong_army_ids = {str(a["id"]) for a in (by_id["liaodong"].get("armies") or [])}
     assert "manchu_banners_main" not in liaodong_army_ids
     assert "han_liaoren_corps" not in liaodong_army_ids
@@ -116,18 +100,15 @@ def test_map_nodes_theater_pins_emit_and_dongjiang_reachable(game):
         f"han_liaoren_corps not on shenyang_liaoyang; armies={sorted(shenyang_army_ids)}"
     )
 
-    # 仍无双挂（与 no_double 同口径，钉在本场景）
-    seen: dict[str, str] = {}
-    for node in nodes:
-        nid = str(node["id"])
-        for army in node.get("armies") or []:
-            aid = str(army["id"])
-            assert aid not in seen, f"army {aid} double-hung on {seen[aid]} and {nid}"
-            seen[aid] = nid
+    # 空 station_region 的军（southwest_tusi）不挂在任何地图节点
+    assert not any(
+        str(a["id"]) == "southwest_tusi"
+        for n in nodes for a in (n.get("armies") or [])
+    ), "southwest_tusi (station_region='') must not be hung on any map node"
 
 
 def test_map_nodes_no_nameless_nodes(game):
-    """#1401：theater/region/external 节点皆须有可见名，禁无名点；id 不得双份。"""
+    """#1505：theater/region/external 节点皆须有可见名，禁无名点；id 不得双份。"""
     db, _state, _content = game
     nodes = _map_nodes(db)
     assert nodes, "map_nodes 空投影"
@@ -155,5 +136,3 @@ def test_map_nodes_no_nameless_nodes(game):
                 assert isinstance(node.get("region"), dict) and node["region"].get("name"), (
                     "liaodong theater must carry region.name (no nameless pin)"
                 )
-
-
