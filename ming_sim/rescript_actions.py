@@ -128,7 +128,7 @@ def canonical_choice(raw: object) -> Dict[str, object]:
         "target_kind", "target_id", "transaction_category",
         "locality_scope", "region_id", "title", "commitment_kind",
         "station", "office",
-        "grant_action", "account", "cadence", "execution_surface",
+        "grant_action", "account", "cadence", "execution_surface", "purpose",
         "appoint_action", "appointment_tenure", "punish_action",
         "privilege", "summon_target",
         "holder_id", "assignee_id", "assignee",
@@ -733,6 +733,8 @@ def map_rescript_option_or_choice(
         raw_account = str(src.get("account") or "").strip()
         if ga == "发内帑":
             account = "内库"
+        elif ga == "协饷":
+            account = raw_account
         elif ga in GRANT_MONEY_ACTIONS:
             if raw_account and raw_account not in {"国库", "内库"}:
                 raise ValueError(f"grant 非法 account：{raw_account!r}")
@@ -744,16 +746,28 @@ def map_rescript_option_or_choice(
             "grant_action": ga,
             "name": str(src.get("name") or assignee_name or ""),
             "target_id": target_id,
+            "target_kind": str(src.get("target_kind") or target_kind or ""),
         })
-        # 协饷必须真 army
+        # 协饷必须真 army；五字段走单一权威接缝，禁止默认国库/army/purpose。
         if ga == "协饷":
-            army_id = g_tid
+            from ming_sim.action_materialize import require_explicit_xiexang_fields
+            explicit = require_explicit_xiexang_fields(
+                amount=src.get("amount"),
+                account=account,
+                purpose=str(src.get("purpose") or ""),
+                target_kind=g_kind,
+                target_id=g_tid,
+            )
+            army_id = explicit["target_id"]
             if db is not None:
-                army_id = _resolve_xiexang_army_id(db, g_tid) or ""
+                army_id = _resolve_xiexang_army_id(db, army_id) or ""
             if not army_id:
                 raise ValueError("协饷 target 须为真实 army id")
             payload["target_kind"] = "army"
             payload["target_id"] = army_id
+            payload["purpose"] = explicit["purpose"]
+            payload["amount"] = explicit["amount"]
+            payload["account"] = explicit["account"]
             target_kind, target_id = "army", army_id
         else:
             payload["target_kind"] = g_kind or target_kind

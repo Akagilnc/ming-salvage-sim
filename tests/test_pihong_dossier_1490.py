@@ -1787,13 +1787,15 @@ def test_657_abi_mapper_matrix_a1_a12(game):
         ).fetchone()
         p = ra.map_rescript_option_or_choice({
             "action_type": "grant_allocation", "label": "协饷", "hint": "h",
-            "grant_action": "协饷", "amount": 1200,
+            "grant_action": "协饷", "amount": 1200, "account": "国库",
+            "purpose": "补饷",
             "target_kind": "army", "target_id": aid, "locality_scope": "none",
         }, db=db, content=content, state=state)
         assert p.get("grant_action") == "协饷"
         created = _apply_mapped_choice({
             "action": "follow_draft", "action_type": "grant_allocation",
             "label": "协饷", "hint": "h", "grant_action": "协饷", "amount": 1200,
+            "account": "国库", "purpose": "补饷",
             "target_kind": "army", "target_id": aid, "locality_scope": "none",
         }, title="A6协饷")
         after_arr = db.conn.execute(
@@ -1816,7 +1818,8 @@ def test_657_abi_mapper_matrix_a1_a12(game):
         with pytest.raises(ValueError):
             ra.map_rescript_option_or_choice({
                 "action_type": "grant_allocation", "label": "协饷", "hint": "h",
-                "grant_action": "协饷", "amount": 100,
+                "grant_action": "协饷", "amount": 100, "account": "国库",
+                "purpose": "补饷",
                 "target_kind": "army", "target_id": "no-such-army-657",
                 "locality_scope": "none",
             }, db=db, content=content, state=state)

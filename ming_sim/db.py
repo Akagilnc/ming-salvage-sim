@@ -14247,43 +14247,24 @@ class GameDB:
     def _normalize_army_pay_grant_payload(
         self, payload: Dict[str, object],
     ) -> Dict[str, object]:
-        """#1503：拨饷类成案载荷 — amount/account/purpose=补饷/army target；缺则响亮。"""
+        """#1503：拨饷类成案载荷 — 五字段显式；缺则一次收集响亮；不补值。"""
         if not self._is_army_pay_grant_payload(payload):
             return payload
         if self._grant_allocation_is_honorific(payload):
             return payload
+        from ming_sim.action_materialize import require_explicit_xiexang_fields
+
         normalized = dict(payload)
-        # 月度协饷建科目，不走一次性补饷销欠缝。
+        explicit = require_explicit_xiexang_fields(
+            amount=normalized.get("amount"),
+            account=str(normalized.get("account") or ""),
+            purpose=str(normalized.get("purpose") or ""),
+            target_kind=str(normalized.get("target_kind") or ""),
+            target_id=str(normalized.get("target_id") or ""),
+        )
+        normalized.update(explicit)
         if self._grant_allocation_is_monthly(normalized):
             return normalized
-        try:
-            amount = strict_int(normalized.get("amount"), accept_numeric_strings=False)
-        except ValueError:
-            amount = 0
-        account = str(normalized.get("account") or "").strip()
-        target_kind = str(normalized.get("target_kind") or "").strip()
-        target_id = str(normalized.get("target_id") or "").strip()
-        missing = []
-        if amount <= 0:
-            missing.append("amount")
-        if account not in {"国库", "内库"}:
-            missing.append("account")
-        if target_kind != "army":
-            missing.append("target_kind=army")
-        if not target_id:
-            missing.append("target_id")
-        if missing:
-            raise ValueError(
-                "拨饷旨意缺少结构化字段：" + "/".join(missing)
-                + "（不猜散文）"
-            )
-        normalized["amount"] = amount
-        normalized["account"] = account
-        normalized["purpose"] = "补饷"
-        normalized["target_kind"] = "army"
-        normalized["target_id"] = target_id
-        if not str(normalized.get("grant_action") or "").strip():
-            normalized["grant_action"] = "协饷"
         # #1503：非月度拨饷强制 immediate。覆盖 normalize 前置插入的 in_transit 默认，
         # 以及旧 pending/恢复载荷残留的在途面——在途只留叙事，不进机械对账轨。
         normalized["execution_surface"] = "immediate"
