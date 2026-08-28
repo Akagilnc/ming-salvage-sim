@@ -60,27 +60,43 @@ def _army_pay_budget_lines(budget):
     ]
 
 
-def test_substrate_budget_splits_proposals_without_projecting_settlement(read_game, monkeypatch):
-    """#1366：预算从真实入口分列两项拟拨，不调用未来损耗分配。"""
-    import ming_sim.flows as flows_mod
-
-    db, state, _ = read_game
-    monkeypatch.setattr(
-        flows_mod,
-        "_compute_substrate_hub_outbound",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("future settlement")),
+def test_substrate_budget_splits_proposals_without_treasury_cap(game):
+    """#1366：真实预算入口分别读取中央份额与京运补应拟支，不受国库余额截断。"""
+    db, state, _ = game
+    db.conn.execute(
+        """
+        UPDATE armies SET self_funded_pay=1, is_tusi=1, province_pay_share=0,
+          central_pay_share=0, pay_source_region='', province_pay_arrears=0,
+          central_pay_arrears=0, arrears=0
+        """
     )
+    db.conn.execute(
+        """
+        UPDATE armies SET self_funded_pay=0, is_tusi=0, owner_power='ming',
+          pay_source_region='shaanxi', province_pay_share=0, central_pay_share=1,
+          manpower=10000, salary_rate=10
+        WHERE id='guanning'
+        """
+    )
+    db.conn.execute(
+        "UPDATE regions SET fiscal=json_set(fiscal, '$.settle.p.拨付gross', 0)"
+    )
+    db.conn.execute(
+        "UPDATE regions SET fiscal=json_set(fiscal, '$.settle.p.拨付gross', 7) "
+        "WHERE id='shaanxi'"
+    )
+    db.conn.commit()
 
-    first = compute_budget_lines(db, state)
-    first_lines = _army_pay_budget_lines(first)
-    assert len(first_lines) == 2
-    first_amounts = [line["amount"] for line in first_lines]
+    def proposed_parts():
+        return {
+            line["budget_part"]: line["amount"]
+            for line in _army_pay_budget_lines(compute_budget_lines(db, state))
+        }
 
     state.metrics["国库"] = 0
-    second_amounts = [
-        line["amount"] for line in _army_pay_budget_lines(compute_budget_lines(db, state))
-    ]
-    assert second_amounts == first_amounts
+    assert proposed_parts() == {"central": 10, "jingyun": 7}
+    state.metrics["国库"] = 100
+    assert proposed_parts() == {"central": 10, "jingyun": 7}
 
 
 
