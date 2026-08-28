@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from ming_sim.constants import DOSSIER_LINK_TYPES, TURN_UNIT
 from ming_sim.context import _ctx as _content_ctx, state_context
 from ming_sim.models import FRONT_HALF_DONE_PHASES, Character, CourtContext
+from ming_sim.issues import TravelTone, normalize_travel_tone
 from ming_sim.person_archive_contract import PERSON_ACTIONS
 from ming_sim.qualitative import progress_band, qualitative_band
 from ming_sim.strict_types import strict_int
@@ -277,10 +278,12 @@ def build_minister_tools(character: Character, context: CourtContext,
             kind_tag = "系统" if row["kind"] == "situation" else "皇帝推动"
             commitment_fields = _commitment_tool_fields(context.db, context.state, row)
             commitment_suffix = f"，{commitment_fields}" if commitment_fields else ""
+            targets = "、".join(row.get("target_roster") or [])
+            target_suffix = f"；标靶：{targets}" if targets else ""
             lines.append(
                 f"{idx}. #{row['id']}[{kind_tag}]{row['title']}"
                 f"（进展{_progress_band(row['bar_value'])}；向好端：{row['bar_good_meaning']}；"
-                f"{row['stage_text']}{commitment_suffix}）"
+                f"{row['stage_text']}{commitment_suffix}{target_suffix}）"
             )
         return "\n".join(lines)
 
@@ -296,13 +299,15 @@ def build_minister_tools(character: Character, context: CourtContext,
         row = rows[n - 1]
         commitment_fields = _commitment_tool_fields(context.db, context.state, row)
         commitment_text = f"承诺字段：{commitment_fields}。" if commitment_fields else ""
+        targets = "、".join(row.get("target_roster") or [])
+        target_text = f"标靶：{targets}。" if targets else ""
         return (
             f"#{row['id']} {row['title']}（进展{_progress_band(row['bar_value'])}，"
             f"{row['bar_bad_meaning']}↔{row['bar_good_meaning']}）。"
             f"阶段：{row['stage_text']}。牵涉：{row['faction_hint'] or '—'}。"
             f"结案条件：{_qualitative_condition(row['resolve_condition'])}。"
             f"失败条件：{_qualitative_condition(row['fail_condition'])}。"
-            f"{commitment_text}"
+            f"{target_text}{commitment_text}"
         )
 
     def list_regions() -> str:
@@ -460,18 +465,23 @@ def build_minister_tools(character: Character, context: CourtContext,
         name: str = "",
         amount: int = 0,
         transaction_category: str = "",
+        backing_dossier_id: Optional[int] = None,
+        issue_id: Optional[int] = None,
+        issue_disposition: str = "",
     ) -> str:
         """把已定处置方案拟成一道圣旨草稿呈给皇帝审阅。
 
         decree_text 为完整圣旨正文。若本件为惩处，须同时填 ACTION_CLUSTERS 同名
         结构化字段：punish_action、单一目标（target_id 或 name）、罚俸时正数 amount，
-        以及来自 ACTION_CLUSTERS 的 transaction_category。
+        以及来自 ACTION_CLUSTERS 的 transaction_category；若处置站台者，填
+        backing_dossier_id 指向原廷议案卷；若处置弹劾潮，填 issue_id 与
+        issue_disposition，并在办人时从该事项标靶中明确选择单一 target_id。
         仅在正文讨论廷杖/流放/昭雪等制度、未填结构化字段时，不得当作已决惩处。
         """
         text = (decree_text or "").strip()
         if not text:
             return "拟旨失败：圣旨正文为空。"
-        # punish_action/target_id|name/amount：tool schema 显式字段（#517 r3），
+        # punish_action/target_id|name/amount/backing_dossier_id：tool schema 显式字段，
         # 真源在 tool arguments，由 session/web 组装进候选 seam；标记串只带正文。
         # 返回草稿标记，由 minister_chat / GameSession.chat 截获展示给皇帝确认，不在此入库。
         return f"__pending_directive__{text}"
@@ -776,8 +786,9 @@ def build_minister_tools(character: Character, context: CourtContext,
         """结束本次召见，退朝。"""
         return "__dismiss__"
 
-    def summon_minister(name: str) -> str:
-        """传召另一位大臣入殿。name 填大臣姓名。"""
+    def summon_minister(name: str, 行程语气: TravelTone = "常行") -> str:
+        """传召另一位大臣入殿。行程语气取常行、加急或星夜兼程。"""
+        normalize_travel_tone(行程语气)
         return f"__summon__{name}"
 
     # #635 荐人准入唯一所有者（庭裁 Y1/Y3）：reason 为工具契约必填参数，

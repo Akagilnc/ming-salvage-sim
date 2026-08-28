@@ -579,3 +579,68 @@ def test_begin_failure_at_entry_restores_flags(game, monkeypatch):
     assert db.kv_get("s1r3_after_begin_fail") == "ok"
     db.conn.execute("DELETE FROM kv_store WHERE key='s1r3_after_begin_fail'")
     db.conn.commit()
+
+
+def test_outer_atomic_rollback_discards_registry_refresh_callback(game):
+    """#672：真实 settle_with_delta 的 affected refresh 挂最外层 commit；outer rollback 丢弃。
+
+    nested settle 返回后 registry 仍未刷新；外层故障回滚后人物 DB/content 与 registry
+    均回前态；另一次真实 outer commit 只刷新一次。
+    """
+    from ming_sim.decree import atomic_and_reload, settle_with_delta
+    from tests.test_punishment_materialize_517 import (
+        _close_night_dossier,
+        _stage_punishment,
+    )
+
+    db, state, content = game
+    target = next(
+        ch for ch in content.characters.values()
+        if getattr(ch, "office_type", "") not in ("后宫", "宗藩")
+        and db.resolve_power_id(ch) == "ming"
+        and db.get_character_status(ch.name)[0] == "active"
+        and str(getattr(ch, "office", "") or "").strip()
+    )
+    ctx = _stage_punishment(db, state.turn, target.name, action="拿问下狱")
+    dossier = _close_night_dossier(db, state, content, ctx.out["pending_action_id"])
+    before_status = db.get_character_status(target.name)[0]
+    before_content_status = content.characters[target.name].status
+    before_turn = int(state.turn)
+
+    class _Reg:
+        def __init__(self):
+            self.refreshed: list[str] = []
+
+        def refresh(self, name):
+            self.refreshed.append(name)
+
+    reg = _Reg()
+
+    with pytest.raises(RuntimeError, match="outer boom"):
+        with atomic_and_reload(db, state, content=content, registry=reg):
+            settle_with_delta(
+                state, db, {}, before_turn=before_turn, content=content, registry=reg,
+                dossier_verdicts=[{"dossier_id": dossier["id"], "decision": "promulgated"}],
+                delta_applier=lambda *a, **k: {},
+            )
+            # nested settle 已返回：人物已物化但 registry 仍挂 outer-commit。
+            assert reg.refreshed == []
+            assert db.get_character_status(target.name)[0] == "imprisoned"
+            raise RuntimeError("outer boom")
+
+    assert reg.refreshed == []
+    assert db.get_character_status(target.name)[0] == before_status
+    assert content.characters[target.name].status == before_content_status
+    assert int(state.turn) == before_turn
+    assert db.get_decree_dossier(dossier["id"])["status"] == "proposed"
+
+    # 真实 outer commit：settle 返回后仍未刷新，最外层退出只刷新一次。
+    with atomic_and_reload(db, state, content=content, registry=reg):
+        settle_with_delta(
+            state, db, {}, before_turn=int(state.turn), content=content, registry=reg,
+            dossier_verdicts=[{"dossier_id": dossier["id"], "decision": "promulgated"}],
+            delta_applier=lambda *a, **k: {},
+        )
+        assert reg.refreshed == []
+    assert reg.refreshed == [target.name]
+    assert db.get_character_status(target.name)[0] == "imprisoned"

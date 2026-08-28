@@ -117,6 +117,154 @@ def test_naowen_stages_then_dossier_then_imprisoned_only_after_verdict(game):
     assert content.characters[target.name].status == "imprisoned"
 
 
+@pytest.mark.parametrize("disposition", ["办人", "压下"])
+def test_active_impeachment_disposition_flows_from_player_tool_to_dossier(game, disposition):
+    """#660：玩家动作的 typed 处置直达案卷；办人目标由动作选择而非 roster 顺序决定。"""
+    db, state, content = game
+    actor = _active_ming(db, content)
+    first = _active_ming(db, content, exclude=actor.name)
+    selected = next(
+        ch for ch in content.characters.values()
+        if ch.name not in {actor.name, first.name}
+        and db.resolve_power_id(ch) == "ming"
+        and db.get_character_status(ch.name)[0] == "active"
+        and str(getattr(ch, "office", "") or "").strip()
+    )
+    faction = db.conn.execute("SELECT name FROM factions ORDER BY name LIMIT 1").fetchone()["name"]
+    issue_id = db.insert_issue(
+        state, kind="situation", title="御史发难", origin_kind="impeachment_surge",
+        origin_ref="commitment:660:deformation_exposure", faction_hint=faction,
+        target_roster=[first.name, selected.name],
+    )
+    from ming_sim.knowledge import build_character_knowledge
+
+    knowledge = build_character_knowledge(db, state, actor.name)
+    projected = next(row for row in knowledge["issues"] if row["id"] == issue_id)
+    assert projected["target_roster"] == [first.name, selected.name]
+
+    reply = "臣据实拟就，不替圣意增删一字。"
+
+    class Agent:
+        def run(self, _message):
+            return SimpleNamespace(content=reply, tools=[SimpleNamespace(
+                tool_name="propose_directive", result="", arguments={
+                    "decree_text": "照此处置。",
+                    "punish_action": "拿问下狱" if disposition == "办人" else "无",
+                    "target_id": selected.name if disposition == "办人" else "",
+                    "issue_id": issue_id,
+                    "issue_disposition": disposition,
+                },
+            )])
+
+    sess = _directive_session(db, state, content)
+    sess.registry = SimpleNamespace(get=lambda _character: Agent(), build_draft_line=lambda: "无")
+    sess.llm_config = SimpleNamespace(channel="api")
+    sess.temporary_characters = set()
+    sess._audience_prompt_for_message = lambda message: message
+    sess._start_cli_action_intent = lambda *_args, **_kwargs: None
+    sess._finish_cli_action_intent = lambda *_args, **_kwargs: None
+    result = GameSession.chat(sess, actor.name, f"对此弹劾潮{disposition}。")
+    pending = json.loads(db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?", (result.pending_action_id,),
+    ).fetchone()["payload_json"])
+    assert pending["text"] == "照此处置。"
+    assert pending["issue_id"] == issue_id
+    assert pending["issue_disposition"] == disposition
+    assert pending["target_id"] == (selected.name if disposition == "办人" else str(issue_id))
+
+    dossier = _close_night_dossier(db, state, content, result.pending_action_id)
+    before_authority = state.metrics["皇威"]
+    before_sat = db.faction_satisfaction(faction)
+    db.apply_dossier_verdicts(
+        state, [{"dossier_id": dossier["id"], "decision": "promulgated"}], content=content,
+    )
+    assert db.conn.execute("SELECT status FROM issues WHERE id=?", (issue_id,)).fetchone()["status"] == "resolved"
+    assert db.get_character_status(selected.name)[0] == ("imprisoned" if disposition == "办人" else "active")
+    assert db.get_character_status(first.name)[0] == "active"
+    assert state.metrics["皇威"] == before_authority - (disposition == "压下")
+    assert db.faction_satisfaction(faction) == before_sat - (disposition == "压下")
+
+
+def test_impeachment_disposition_without_positive_issue_id_stages_nothing(game):
+    db, state, content = game
+    actor = _active_ming(db, content)
+    target = _active_ming(db, content, exclude=actor.name)
+    before = db.conn.execute("SELECT COUNT(*) FROM pending_actions").fetchone()[0]
+    for malformed_id in (0, -1):
+        db.conn.execute(
+            "INSERT INTO issues(id,kind,title,origin_kind,origin_turn,target_roster) "
+            "VALUES(?,?,?,?,?,?)",
+            (malformed_id, "situation", "异常弹劾", "impeachment_surge", state.turn,
+             json.dumps([target.name], ensure_ascii=False)),
+        )
+
+    for issue_id in (None, 0, -1):
+        assert am.stage_punishment_candidate(
+            db, state.turn, actor.name, text="照此处置。", target_id=target.name,
+            punish_action="拿问下狱", issue_id=issue_id, issue_disposition="办人",
+        ) == 0
+
+    assert db.conn.execute("SELECT COUNT(*) FROM pending_actions").fetchone()[0] == before
+
+
+@pytest.mark.parametrize(("disposition", "punish_action"), [
+    ("办人", "廷杖"),
+    ("压下", "拿问下狱"),
+])
+def test_impeachment_admission_rejects_noncanonical_action(
+    game, disposition, punish_action,
+):
+    db, state, content = game
+    actor = _active_ming(db, content)
+    target = _active_ming(db, content, exclude=actor.name)
+
+    pending_id = db.stage_directive_candidate(state.turn, actor.name, payload={
+        "text": "照此处置。", "actor": actor.name,
+        "dossier_action_type": "punishment", "target_id": target.name,
+        "punish_action": punish_action, "issue_id": 1,
+        "issue_disposition": disposition,
+    })
+    db.commit_pending_actions(state, content=content, action_ids=[pending_id])
+    assert db.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (pending_id,),
+    ).fetchone()["status"] == "failed"
+    assert not any(
+        row["pending_action_id"] == pending_id for row in db.list_decree_dossiers()
+    )
+
+
+def test_prestaged_impeachment_punishments_skip_person_writes_after_first_closes_issue(game):
+    """#660：同 issue 预暂存两案；首案结案后第二案在人物写前幂等返回。"""
+    db, state, content = game
+    actor = _active_ming(db, content)
+    targets = [
+        ch for ch in content.characters.values()
+        if ch.name != actor.name and db.resolve_power_id(ch) == "ming"
+        and db.get_character_status(ch.name)[0] == "active"
+        and str(getattr(ch, "office", "") or "").strip()
+    ][:2]
+    issue_id = db.insert_issue(
+        state, kind="situation", title="御史发难", origin_kind="impeachment_surge",
+        origin_ref="commitment:660:prestage", target_roster=[ch.name for ch in targets],
+    )
+    dossiers = []
+    for target in targets:
+        pending_id = am.stage_punishment_candidate(
+            db, state.turn, actor.name, text="照此处置。", target_id=target.name,
+            punish_action="拿问下狱", issue_id=issue_id, issue_disposition="办人",
+        )
+        dossiers.append(_close_night_dossier(db, state, content, pending_id))
+    db.apply_dossier_verdicts(state, [
+        {"dossier_id": dossier["id"], "decision": "promulgated"} for dossier in dossiers
+    ], content=content)
+    assert db.get_character_status(targets[0].name)[0] == "imprisoned"
+    assert db.get_character_status(targets[1].name)[0] == "active"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM person_logs WHERE person_name=?",
+        (targets[1].name,)
+    ).fetchone()[0] == 0
+
+
 def test_naowen_rejected_verdict_leaves_status_untouched(game):
     """AC1 打回拍：案卷在、imprisoned 零落。"""
     db, state, content = game
@@ -862,10 +1010,11 @@ def test_web_stream_transports_punishment_category_to_real_stage(game):
     web_game.directive_payload = lambda row: row
     web_game.can_undo_last_chat = lambda _name: False
     web_game._record_chat_rollback_items = lambda *_a, **_k: None
-    def interpret(category_marker):
+    def interpret(category_marker, **typed_fields):
         arguments = {
             "decree_text": f"着将{target.name}拿问下狱。",
             "punish_action": "拿问下狱", "target_id": target.name,
+            **typed_fields,
         }
         if category_marker is not None:
             arguments["transaction_category"] = category_marker
@@ -888,6 +1037,26 @@ def test_web_stream_transports_punishment_category_to_real_stage(game):
     assert payload["transaction_category"] == "缉拿"
     assert not valid.get("pending_action_failures")
 
+    issue_id = db.insert_issue(
+        state, kind="situation", title="御史发难", origin_kind="impeachment_surge",
+        origin_ref="commitment:660:web-stream", target_roster=[target.name],
+    )
+    linked = interpret("缉拿", issue_id=issue_id, issue_disposition="办人")
+    linked_id = int(linked["pending_action_id"])
+    assert linked_id != pending_id
+    linked_payload = dict(_pending_directive_payloads(db, state.turn, minister))[linked_id]
+    assert linked_payload["issue_id"] == issue_id
+    assert linked_payload["issue_disposition"] == "办人"
+
+    second_issue_id = db.insert_issue(
+        state, kind="situation", title="御史再劾", origin_kind="impeachment_surge",
+        origin_ref="commitment:660:web-stream-2", target_roster=[target.name],
+    )
+    second_linked = interpret(
+        "缉拿", issue_id=second_issue_id, issue_disposition="办人",
+    )
+    assert int(second_linked["pending_action_id"]) not in {pending_id, linked_id}
+
     pending_before = db.conn.execute("SELECT COUNT(*) FROM pending_actions").fetchone()[0]
     dossiers_before = db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0]
     invalid = interpret("修仙")
@@ -895,3 +1064,30 @@ def test_web_stream_transports_punishment_category_to_real_stage(game):
     assert invalid.get("pending_action_failures")
     assert db.conn.execute("SELECT COUNT(*) FROM pending_actions").fetchone()[0] == pending_before
     assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0] == dossiers_before
+
+
+def test_punishment_promulgation_refreshes_target_after_outer_commit(game):
+    """#672：惩处人物处置经 outer-commit callback 刷新 registry。"""
+    from ming_sim.decree import settle_with_delta
+
+    db, state, content = game
+    target = _active_ming(db, content)
+    ctx = _stage_punishment(db, state.turn, target.name, action="拿问下狱")
+    pending_id = ctx.out["pending_action_id"]
+    dossier = _close_night_dossier(db, state, content, pending_id)
+
+    class _Reg:
+        def __init__(self):
+            self.refreshed = []
+
+        def refresh(self, name):
+            self.refreshed.append(name)
+
+    reg = _Reg()
+    settle_with_delta(
+        state, db, {}, before_turn=int(state.turn), content=content, registry=reg,
+        dossier_verdicts=[{"dossier_id": dossier["id"], "decision": "promulgated"}],
+        delta_applier=lambda *a, **k: {},
+    )
+    assert target.name in reg.refreshed
+    assert db.get_character_status(target.name)[0] == "imprisoned"

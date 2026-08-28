@@ -106,6 +106,7 @@ def test_endorsement_forms_persist_restore_and_judge_without_roster_join(game):
         "id": 1, "dossier_id": cosign_id, "form": "会签",
         "endorser_id": minister, "imperial": False,
         "source_chat_turn_id": chat_turn_id,
+        "decision_key": "",
     }]
     backing = db.list_dossier_endorsements(backing_id)
     assert backing[0]["form"] == "当面站台"
@@ -243,6 +244,7 @@ def test_ordinary_extraction_and_parse_boundaries(game):
                 "dossier_ref": {"dossier_id": 3}, "form": "会签",
                 "endorser_id": "毕自严", "imperial": False,
                 "source_chat_turn_id": 9,
+                "decision_key": "",
             },
             {"body": "故事字段不得入背书", "dossier_id": 3, "form": "会签",
              "endorser_id": "毕自严", "imperial": False, "source_chat_turn_id": 9},
@@ -365,6 +367,7 @@ def test_close_night_endorsement_batch_once_gate_free_and_parallel_independent_w
                     "dossier_id": did, "form": "御笔手敕",
                     "endorser_id": "", "imperial": True,
                     "source_chat_turn_id": chat_turn_id,
+                    "decision_key": "",
                 },
                 # 单项畸形：故事字段 → rejection，不拖垮合法 sibling。
                 {
@@ -376,6 +379,7 @@ def test_close_night_endorsement_batch_once_gate_free_and_parallel_independent_w
                 {
                     "dossier_id": foreign_id, "form": "会签", "endorser_id": minister,
                     "imperial": False, "source_chat_turn_id": chat_turn_id,
+                    "decision_key": "",
                 },
             ]}, ensure_ascii=False)
 
@@ -467,6 +471,7 @@ def test_close_night_beat_and_endorsement_exceptions_terminate_before_reopen(gam
                 "dossier_id": did, "form": "御笔手敕",
                 "endorser_id": "", "imperial": True,
                 "source_chat_turn_id": chat_turn_id,
+                "decision_key": "",
             }]}, ensure_ascii=False)
 
     def _boom_beat(_inputs):
@@ -674,6 +679,7 @@ def test_endorsement_failure_keeps_open_drafts_and_retries_idempotently(game):
                 "dossier_id": target["ref"]["dossier_id"], "form": "御笔手敕",
                 "endorser_id": "", "imperial": True,
                 "source_chat_turn_id": chat_turn_id,
+                "decision_key": "",
             }]}, ensure_ascii=False)
 
     with pytest.raises(an.AudienceNightError) as ei:
@@ -780,6 +786,7 @@ def test_office_phase1_draft_only_materializes_once_after_endorsement(game):
                 "dossier_id": target_row["ref"]["dossier_id"], "form": "御笔手敕",
                 "endorser_id": "", "imperial": True,
                 "source_chat_turn_id": chat_turn_id,
+                "decision_key": "",
             }]}, ensure_ascii=False)
 
     with pytest.raises(an.AudienceNightError) as ei:
@@ -874,6 +881,7 @@ def test_mingfa_publication_ignores_extractor_source_and_malformed_suffix_on_ret
                 "dossier_id": target["ref"]["dossier_id"], "form": "御笔手敕",
                 "endorser_id": "", "imperial": True,
                 "source_chat_turn_id": chat_turn_id,
+                "decision_key": "",
             }]}, ensure_ascii=False)
 
     with pytest.raises(an.AudienceNightError) as ei:
@@ -966,6 +974,7 @@ def test_no_edict_chain_binds_endorsement_after_draft(game, monkeypatch):
                 "dossier_ref": candidates[0]["ref"], "form": "御笔手敕",
                 "endorser_id": "", "imperial": True,
                 "source_chat_turn_id": chat_turn_id,
+                "decision_key": "",
             }]}, ensure_ascii=False)
 
     monkeypatch.setattr(agents_mod, "create_endorsement_extractor_agent", lambda cfg: _Endorse())
