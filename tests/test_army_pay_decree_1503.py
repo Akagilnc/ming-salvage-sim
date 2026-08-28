@@ -809,3 +809,322 @@ def test_extractor_echo_with_dossier_origin_still_single_writer_after_close(game
     assert int(state.metrics["国库"]) == treasury_before - 10
     assert len(db.list_economy_moves_for_dossier(did)) == 1
     assert _army_row(db)["arrears"] == pytest.approx(arrears_mid)
+
+
+# ── ⑦ #1503 上游 carrier：显式拟旨前缀 → typed grant 单轨 ─────────────
+
+def _scripted_xiexang_candidates(*, amount=15, account="国库", target_id="guanning"):
+    return candidates_from_classifier_payload(
+        {
+            "kind": "grant_allocation",
+            "grant_action": "协饷",
+            "amount": amount,
+            "account": account,
+            "target_id": target_id,
+        },
+        soft=False,
+    )
+
+
+def test_explicit_draft_prefix_with_typed_grant_stages_pay_payload(game, monkeypatch):
+    """成案边界：显式「拟旨如下」+ typed grant 候选 → 既有 grant 单轨，非 generic special_decree。"""
+    import types
+
+    import ming_sim.cli_backend as cb
+    from ming_sim.session import GameSession
+
+    db, state, content = game
+    actor = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
+    ).fetchone()["name"]
+    character = content.characters[actor]
+    scripted = _scripted_xiexang_candidates(amount=15, target_id="guanning")
+
+    # 后置串行 extractor 仍须零调用（#344 前缀后置禁令保留）
+    def _forbidden(*_a, **_k):
+        raise AssertionError("explicit draft prefix must not call post-prefix serial extractors")
+
+    monkeypatch.setattr(cb, "extract_minister_actions", _forbidden)
+    monkeypatch.setattr(cb, "extract_draft_intent", _forbidden)
+    monkeypatch.setattr(cb, "extract_appointment_action", _forbidden)
+    monkeypatch.setattr(cb, "extract_confirmation_intent", _forbidden)
+
+    sess = types.SimpleNamespace(
+        db=db,
+        state=state,
+        content=content,
+        llm_config=types.SimpleNamespace(channel="cli", cli_runner="codex"),
+        registry=None,
+    )
+    sess.apply_cli_conversation_actions = types.MethodType(
+        GameSession.apply_cli_conversation_actions, sess,
+    )
+
+    out = sess.apply_cli_conversation_actions(
+        character,
+        "拟旨如下：准拨关宁军饷十五万两。",
+        "臣遵旨。敕户部发太仓银十五万两协济关宁军前，即行起解。钦此。",
+        has_directive=False,
+        secret_order_id=None,
+        preclassified_intent=scripted,
+    )
+    pending_id = out.get("pending_action_id")
+    assert pending_id
+    pending = json.loads(db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
+    ).fetchone()["payload_json"])
+    assert pending["dossier_action_type"] == "grant_allocation"
+    assert pending["grant_action"] == "协饷"
+    assert int(pending["amount"]) == 15
+    assert pending["account"] == "国库"
+    assert pending["purpose"] == "补饷"
+    assert pending["target_kind"] == "army"
+    assert pending["target_id"] == "guanning"
+    assert pending.get("dossier_action_type") != "special_decree"
+
+
+def test_explicit_draft_prefix_without_grant_candidate_stays_generic(game, monkeypatch):
+    """非载荷拟旨：classifier 无 grant 候选时仍走 generic special_decree（#344 残余）。"""
+    import types
+
+    import ming_sim.cli_backend as cb
+    from ming_sim.session import GameSession
+
+    db, state, content = game
+    actor = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
+    ).fetchone()["name"]
+    character = content.characters[actor]
+    seed = "臣遵旨，着户部清核辽饷。钦此。"
+
+    monkeypatch.setattr(cb, "extract_minister_actions", lambda *a, **k: {
+        "secret_action": "无", "order_id": 0, "new_title": "", "new_content": "",
+        "deadline_months": 0, "cultivate_skill": "", "cultivate_trait": "",
+    })
+    monkeypatch.setattr(cb, "extract_confirmation_intent", lambda *a, **k: "无")
+
+    sess = types.SimpleNamespace(
+        db=db,
+        state=state,
+        content=content,
+        llm_config=types.SimpleNamespace(channel="cli"),
+        registry=None,
+    )
+    sess.apply_cli_conversation_actions = types.MethodType(
+        GameSession.apply_cli_conversation_actions, sess,
+    )
+    out = sess.apply_cli_conversation_actions(
+        character,
+        "拟旨如下：着户部清核辽饷。",
+        seed,
+        has_directive=False,
+        secret_order_id=None,
+        preclassified_intent=[],  # classifier 已跑、无动作
+    )
+    pending_id = out.get("pending_action_id")
+    assert pending_id
+    pending = json.loads(db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
+    ).fetchone()["payload_json"])
+    assert pending.get("dossier_action_type") == "special_decree"
+    assert pending.get("text") == seed
+    assert pending.get("purpose") != "补饷"
+
+
+def test_real_chat_explicit_prefix_pay_decree_promulgates_once(game, monkeypatch):
+    """真实 session.chat 入口：拟旨如下 + classifier grant → 收夜成案 → 顺颁扣库销欠恰一次。"""
+    import types
+
+    import ming_sim.cli_backend as cb
+    import ming_sim.session as session_mod
+    from ming_sim.session import GameSession
+
+    db, state, content = game
+    _set_guanning_arrears(db, 60, central=60, province=0)
+    state.metrics["国库"] = max(int(state.metrics["国库"]), 100)
+    treasury_before = int(state.metrics["国库"])
+    arrears_before = _army_row(db)["arrears"]
+
+    actor_row = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
+    ).fetchone()
+    actor = actor_row["name"]
+    scripted = _scripted_xiexang_candidates(amount=15, target_id="guanning")
+    classify_calls: list = []
+
+    def fake_classify(*_a, **_k):
+        classify_calls.append("classify")
+        return list(scripted)
+
+    class FakeAgent:
+        def run(self, _msg):
+            return SimpleNamespace(
+                content="臣遵旨。敕户部发太仓银十五万两协济关宁军前。钦此。",
+                tools=[],
+            )
+
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.registry = SimpleNamespace(
+        get=lambda _character: FakeAgent(),
+        build_draft_line=lambda: "无",
+    )
+    sess.llm_config = SimpleNamespace(channel="cli", cli_runner="codex")
+    sess.temporary_characters = {}
+    sess._retrieve_memories_for_message = lambda message: message
+    monkeypatch.setattr(session_mod, "_dump_llm_messages", lambda *a, **k: None)
+    monkeypatch.setattr(cb, "classify_cli_action_intent", fake_classify)
+    # 后置串行抽取器不得因前缀复活
+    for name in (
+        "extract_minister_actions",
+        "extract_draft_intent",
+        "extract_appointment_action",
+        "extract_confirmation_intent",
+    ):
+        monkeypatch.setattr(
+            cb, name,
+            lambda *a, **k: (_ for _ in ()).throw(
+                AssertionError(f"must not call {name} on explicit draft prefix")
+            ),
+        )
+
+    result = sess.chat(actor, "拟旨如下：准拨关宁军饷十五万两。")
+    assert classify_calls == ["classify"], "显式拟旨须跑一次 typed classifier"
+    pending_id = int(getattr(result, "pending_action_id", 0) or 0)
+    assert pending_id > 0
+    pending = json.loads(db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
+    ).fetchone()["payload_json"])
+    assert pending["dossier_action_type"] == "grant_allocation"
+    assert pending["purpose"] == "补饷"
+    assert int(pending["amount"]) == 15
+    assert pending["target_id"] == "guanning"
+    # 成案前零落账
+    assert int(state.metrics["国库"]) == treasury_before
+    assert _army_row(db)["arrears"] == pytest.approx(arrears_before)
+
+    dossier = _close_night_dossier(db, state, content, pending_id)
+    assert dossier["action_type"] == "grant_allocation"
+    _promulgate(db, state, content, dossier["id"])
+
+    assert int(state.metrics["国库"]) == treasury_before - 15
+    assert _army_row(db)["arrears"] == pytest.approx(arrears_before - 15)
+    moves = db.list_economy_moves_for_dossier(dossier["id"])
+    assert len(moves) == 1
+    assert int(moves[0]["delta"]) == -15
+    assert moves[0]["purpose"] == "补饷"
+
+
+def test_http_explicit_prefix_pay_decree_carrier_and_promulgate(
+    tmp_path, monkeypatch, _offline_scene_beat_generator,
+):
+    """真 HTTP：POST /api/ministers/{}/chat 显式拟旨 → typed 拨饷 payload → 顺颁扣 15。
+
+    stub 仅 LLM 边界（agent.run + classify）；session.chat / materialize / 颁布缝走生产。
+    """
+    from fastapi.testclient import TestClient
+
+    import ming_sim.agents as agents_mod
+    import ming_sim.cli_backend as cb
+    import ming_sim.mindreading as mindreading_mod
+    import web_app
+
+    class _CannedRun:
+        content = "臣遵旨。敕户部发太仓银十五万两协济关宁军前。钦此。"
+        tools: list = []
+
+    class _CannedAgent:
+        def run(self, *_a, **_k):
+            return _CannedRun()
+
+        def get_last_run_output(self):
+            return None
+
+    class _CannedExtractor:
+        def run(self, _material):
+            return SimpleNamespace(content='{"facts":[]}')
+
+    class _CannedMindreading:
+        def run(self, _material):
+            return SimpleNamespace(content="近臣低声：此旨关军食。")
+
+    scripted = _scripted_xiexang_candidates(amount=15, target_id="guanning")
+    classify_calls: list = []
+
+    def fake_classify(*_a, **_k):
+        classify_calls.append(1)
+        return list(scripted)
+
+    monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
+    monkeypatch.setattr(
+        agents_mod, "create_audience_extractor_agent", lambda *a, **k: _CannedExtractor())
+    monkeypatch.setattr(
+        agents_mod, "create_endorsement_extractor_agent",
+        lambda *a, **k: _CannedExtractor(),
+    )
+    monkeypatch.setattr(
+        mindreading_mod, "create_mindreading_agent",
+        lambda *a, **k: _CannedMindreading(),
+    )
+    monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
+    monkeypatch.setattr(cb, "classify_cli_action_intent", fake_classify)
+
+    game = web_app.WebGame(fresh=False)
+    monkeypatch.setattr(web_app, "web_game", game)
+    try:
+        # 任取一 active 文官；classifier 已 scripted，不依赖真实户部身份
+        name = next(
+            getattr(ch, "name", key)
+            for key, ch in game.content.characters.items()
+            if getattr(ch, "power_id", "ming") == "ming"
+            and getattr(ch, "office_type", "") not in ("后宫", "宗藩")
+            and game.db.get_character_status(getattr(ch, "name", key))[0] == "active"
+        )
+        game.session.registry.get = lambda _ch: _CannedAgent()
+        # 确保 channel 允许 classifier（api/cli）
+        if getattr(game.session, "llm_config", None) is not None:
+            try:
+                game.session.llm_config.channel = "cli"
+            except Exception:
+                pass
+
+        _set_guanning_arrears(game.db, 60, central=60, province=0)
+        game.state.metrics["国库"] = max(int(game.state.metrics["国库"]), 100)
+        treasury_before = int(game.state.metrics["国库"])
+        arrears_before = _army_row(game.db)["arrears"]
+
+        client = TestClient(web_app.app)
+        chat_resp = client.post(
+            f"/api/ministers/{name}/chat",
+            json={"message": "拟旨如下：准拨关宁军饷十五万两。"},
+        )
+        assert chat_resp.status_code == 200, chat_resp.text
+        body = chat_resp.json()
+        pending_id = int(body.get("pending_action_id") or 0)
+        assert pending_id > 0, body
+        assert classify_calls == [1], "HTTP 显式拟旨须一次 typed classifier"
+
+        pending = json.loads(game.db.conn.execute(
+            "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
+        ).fetchone()["payload_json"])
+        assert pending["dossier_action_type"] == "grant_allocation"
+        assert pending["purpose"] == "补饷"
+        assert int(pending["amount"]) == 15
+        assert pending["target_id"] == "guanning"
+        assert int(game.state.metrics["国库"]) == treasury_before
+
+        dossier = _close_night_dossier(game.db, game.state, game.content, pending_id)
+        _promulgate(game.db, game.state, game.content, dossier["id"])
+        assert int(game.state.metrics["国库"]) == treasury_before - 15
+        assert _army_row(game.db)["arrears"] == pytest.approx(arrears_before - 15)
+        assert len(game.db.list_economy_moves_for_dossier(dossier["id"])) == 1
+    finally:
+        try:
+            game.session.close()
+        except Exception:
+            pass

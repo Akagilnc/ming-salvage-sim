@@ -579,6 +579,30 @@ def apply_appointment(
     return (name, displaced)
 
 
+def _typed_grant_candidate_present(
+    intent: Optional[Dict[str, Any]],
+    intent_candidates: Optional[List[Dict[str, Any]]],
+) -> bool:
+    """#1503：classifier 是否已给出可物化的 grant_allocation 候选。
+
+    真则显式拟旨前缀不得先落 generic special_decree，改由既有 grant 单轨成案。
+    """
+    import ming_sim.action_materialize as am  # catalog side-effect ok
+
+    valid = am.GRANT_ACTIONS - {"无"}
+
+    def _ok(candidate: Any) -> bool:
+        if not isinstance(candidate, dict):
+            return False
+        if str(candidate.get("kind") or "").strip() != "grant_allocation":
+            return False
+        return str(candidate.get("grant_action") or "").strip() in valid
+
+    if _ok(intent or {}):
+        return True
+    return any(_ok(c) for c in (intent_candidates or []))
+
+
 def coalesce_pending_action_id(prior: int, staged: int) -> int:
     """Same-turn tool aggregation: non-zero staged wins; zero must not erase prior success."""
     staged_id = int(staged or 0)
@@ -1188,11 +1212,12 @@ class GameSession:
     def _start_cli_action_intent(self, character: Character, message: str) -> Optional[Future]:
         """召对动作判断只读皇帝消息，可与大臣回话并发。
 
-        #1502：API 与 CLI 非前缀自然语言均并行提交既有 classifier；
-        显式前缀仍跳过（#344）。无可用通道时不启动。
+        #1502：API 与 CLI 自然语言并行提交既有 classifier。
+        #1503 / ADR 0028：显式拟旨前缀亦提交一次 typed classifier（载荷式成案）；
+        密令前缀仍跳过（权威路由，不跑其它分类器）。无可用通道时不启动。
         """
         from ming_sim.cli_backend import (
-            _DRAFT_PREFIXES, _SECRET_PREFIXES, classify_cli_action_intent,
+            _SECRET_PREFIXES, classify_cli_action_intent,
             cli_backend_from_env,
         )
         channel = (getattr(getattr(self, "llm_config", None), "channel", "") or "").strip().lower()
@@ -1201,7 +1226,8 @@ class GameSession:
             return None
         # CLI 动作分类器与大臣回话一律并发；不按 runner 退串行。
         text = (message or "").strip()
-        if text.startswith(_DRAFT_PREFIXES) or text.startswith(_SECRET_PREFIXES):
+        # 密令前缀 = 权威类别声明，不跑动作分类器；拟旨前缀见 #1503。
+        if text.startswith(_SECRET_PREFIXES):
             return None
         minister_name = character.name
         pend_for_minister = self.db.list_pending_actions(self.state.turn, minister_name=minister_name)
@@ -1936,11 +1962,12 @@ class GameSession:
         minister_name = character.name
         reply = (answer or "").strip()
         llm_config = getattr(self, "llm_config", None)
-        # 显式前缀(拟旨如下:/密令如下:)= 皇帝已明示动作，由 resolve_minister_actions 零 LLM 落地。
-        # 单一真源在此前置判定，统一把门【所有】后置 LLM 抽取器（确认/密令/调教/拟旨/任免），
-        # 杜绝前缀路多跑任何 LLM extractor（#344 US3「按钮前缀路零 LLM」）。确认闸门尤其要跳过：
-        # 否则前缀消息在有 pending 待确认动作时既多跑 extract_confirmation_intent(LLM)，还可能被
-        # 误判「应允/拒绝」提前 return、把这道前缀拟旨/密令整个吞掉（确认句本无前缀，跳过无损）。
+        # 显式前缀(拟旨如下:/密令如下:)= 皇帝已明示动作类别。
+        # 后置 LLM 抽取器（确认/密令/调教/拟旨/任免）仍由本闸统一跳过（#344 US3）。
+        # #1503：拟旨前缀可携带**并发** typed classifier 候选；载荷式（grant_allocation）
+        # 走既有 stage_grant_allocation_candidate，不再先落 generic special_decree。
+        # 确认闸门仍跳过：否则前缀消息在有 pending 时既多跑 extract_confirmation_intent，
+        # 还可能被误判「应允/拒绝」提前 return、吞掉这道前缀拟旨/密令（确认句本无前缀）。
         message_text = (player_message or "").strip()
         explicit_prefixed = message_text.startswith(_DRAFT_PREFIXES) or message_text.startswith(_SECRET_PREFIXES)
         channel = (getattr(getattr(self, "llm_config", None), "channel", "") or "").strip().lower()
@@ -2207,7 +2234,14 @@ class GameSession:
             # 拒绝丢弃）针对的是窗前已暂存的 pending，保持可用（ship-pre r2 设计）。
             # 抽取器（LLM 调用）一并跳过。
             return out
-        needs_draft_fallback = not has_directive and message_text.startswith(_DRAFT_PREFIXES)
+        # #1503：显式拟旨若已有 typed grant_allocation 候选，禁 generic special_decree
+        # 抢先占 pending——交给既有 grant materialize 单轨成案。
+        typed_grant_ready = _typed_grant_candidate_present(intent, intent_candidates)
+        needs_draft_fallback = (
+            not has_directive
+            and message_text.startswith(_DRAFT_PREFIXES)
+            and not typed_grant_ready
+        )
         needs_secret_fallback = (
             not has_directive
             and not out["secret_order_id"]
