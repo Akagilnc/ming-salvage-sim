@@ -2660,6 +2660,7 @@ class WebGame:
                                     "excluded_names": payload.get("excluded_names") if isinstance(payload.get("excluded_names"), list) else [],
                                     "excluded_offices": payload.get("excluded_offices") if isinstance(payload.get("excluded_offices"), list) else [],
                                     "dossier_links": dossier_links,
+                                    "covert_task": payload.get("covert_task") if isinstance(payload.get("covert_task"), dict) else None,
                                 },
                             )
                             pending_action_id = coalesce_pending_action_id(

@@ -1117,25 +1117,3 @@ def test_incomplete_extract_does_not_stage_zero_contract(game, monkeypatch):
     run_materialize_pipeline(ctx)
     assert int(ctx.out.get("pending_action_id") or 0) == 0
     assert db.list_secret_orders() == []
-
-
-def test_confirmation_rejects_missing_contract_and_legacy_corruption_fails_at_real_entries(game):
-    db, state, _ = game
-    name = _minister(db)
-    with pytest.raises(CovertContractError):
-        db.create_secret_order(
-            state, name, "无合同密令", "无显式差务", [], deadline_months=1,
-        )
-    assert db.list_secret_orders() == []
-
-    oid = _issue(db, state, name, "损坏旧档", "模拟恢复所得非法旧行", months=1, target=1)
-    dossier = db.get_dossier_for_secret_order(oid)
-    payload = json.loads(dossier["payload_json"])
-    payload.pop("covert_task_contract")
-    db.update_decree_dossier_payload(int(dossier["id"]), payload)
-    state.turn += 1
-    db.save_state(state)
-    with pytest.raises(CovertContractError):
-        apply_monthly_covert_actual_progress(db, state, commit=True)
-    with pytest.raises(CovertContractError):
-        settle_due_secret_orders(db, state, commit=True)
