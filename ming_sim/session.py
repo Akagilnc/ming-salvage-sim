@@ -1813,7 +1813,7 @@ class GameSession:
                                         payload.get("dossier_links"),
                                         llm_config=self.llm_config,
                                     ),
-                                    "covert_task": payload.get("covert_task") if isinstance(payload.get("covert_task"), dict) else {},
+                                    "covert_task": payload.get("covert_task") if isinstance(payload.get("covert_task"), dict) else None,
                                 },
                             ),
                         )
@@ -2232,6 +2232,9 @@ class GameSession:
                 self.state.turn, minister_name, acts["decree_text"], mode=message_text)
         def _stage_secret_order_candidate(so: Dict[str, Any]) -> int:
             assignee = so.get("assignee") or minister_name
+            frozen = so.get("covert_task") if isinstance(so.get("covert_task"), dict) else None
+            if frozen is None:
+                return 0
             return self.db.stage_pending_action(
                 self.state.turn, kind="secret_order", action="新建",
                 minister_name=minister_name, target_id=None,
@@ -2246,7 +2249,7 @@ class GameSession:
                     # The extractor emits only links explicitly narrowed in the
                     # minister's confirmation; carry that immutable set to commit.
                     "dossier_links": so.get("dossier_links") or [],
-                    "covert_task": so.get("covert_task") if isinstance(so.get("covert_task"), dict) else {},
+                    "covert_task": frozen,
                 },
             )
         if not out["secret_order_id"] and acts["secret_order"]:

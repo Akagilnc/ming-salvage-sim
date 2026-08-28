@@ -15,6 +15,12 @@ def _order(db, state, title="护行辽饷", tags=None, deadline=4):
     order_id = db.create_secret_order(
         state, _actor(db), title, "逐月办理", tags or ["护行"],
         deadline_months=deadline,
+        covert_task={
+            "kind": "护行差务",
+            "axes": ["实务事功"],
+            "direction": 1,
+            "delivery": {"unit": "万两", "target_units": float(deadline or 1)},
+        },
     )
     return order_id, int(db.get_dossier_for_secret_order(order_id)["id"])
 
@@ -399,6 +405,12 @@ def _stage_routed_secret_order(db, state, action, deadline):
             "title": "护行辽饷", "content": "逐月稽核", "tags": ["护行"],
             "new_title": "护行辽饷", "new_content": "继续逐月稽核",
             "deadline_months": deadline,
+            "covert_task": {
+                "kind": "护行差务",
+                "axes": ["实务事功"],
+                "direction": 1,
+                "delivery": {"unit": "万两", "target_units": float(max(deadline, 1))},
+            },
         }, target_id=target_id,
     )
     return pending_id, target_id

@@ -187,6 +187,12 @@ def _secret_payload_from_command(
         "excluded_names": [],
         "excluded_offices": [],
         "dossier_links": [],
+        "covert_task": {
+            "kind": "查核关宁欠饷",
+            "axes": ["实务事功"],
+            "direction": 1,
+            "delivery": {"unit": "万两", "target_units": 1},
+        },
     }
 
 

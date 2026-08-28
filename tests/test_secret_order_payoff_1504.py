@@ -6,7 +6,7 @@ Seams:
 - apply_monthly_covert_actual_progress + settle_due_secret_orders（settle 同 atomic）
 - 正反例：已交付→done、缺口→failed；表报背离不翻实账
 - secret_order_closes 不再落库结案
-- auto_submit 不再翻 pending_review
+- auto_submit 不再翻 pending_review；到期不写玩家模板
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ import pytest
 from ming_sim.action_materialize import MaterializeCtx, run_materialize_pipeline
 from ming_sim.covert_progress import (
     FIDELITY_STATES,
+    CovertContractError,
     build_covert_task_contract,
     build_minister_snapshot,
     clamp_fidelity_to_floor,
@@ -27,6 +28,7 @@ from ming_sim.covert_progress import (
     monthly_actual_units,
     progress_units_for_state,
     read_covert_task_contract,
+    require_covert_task_contract,
     seed_guilt_counts_as_debt,
     target_progress_units,
     apply_monthly_covert_actual_progress,
@@ -52,7 +54,7 @@ def _task(*, kind, axes, unit, target, direction=1):
 
 
 def _issue(db, state, name, title, content, *, months, target, kind="查案",
-           axes=None, unit="两", tags=None):
+           axes=None, unit="万两", tags=None):
     return db.create_secret_order(
         state, name, title, content, tags if tags is not None else [],
         deadline_months=months,
@@ -271,17 +273,14 @@ def test_task_specific_contract_from_explicit_fields_not_tags():
         delivery_unit="人犯", delivery_target_units=3,
     )
     assert audit["kind"] == "补发饷银" and audit["axes"] == ["既得利益"]
-    assert audit["delivery"]["unit"] == "两"
-    assert audit["delivery"]["target_units"] == 3000.0
+    assert audit["delivery"]["unit"] == "万两"
+    assert audit["delivery"]["target_units"] == 1.0
     assert catch["kind"] == "缉获人犯" and catch["delivery"]["unit"] == "人犯"
     assert catch["delivery"]["target_units"] == 3.0
-    # 检索关键词 tags 不得猜 kind / 不得统一 progress_unit×期限
-    tagged = build_covert_task_contract(
-        deadline_span=3, due_turn=10, tags=["辽饷", "兵部", "密查", "稽核"],
-    )
-    assert tagged["kind"] != "稽核"
-    assert tagged["delivery"]["unit"] != "progress_unit" or tagged["delivery"]["target_units"] != 3.0
-    assert tagged["delivery"]["target_units"] == 0.0
+    with pytest.raises(CovertContractError):
+        build_covert_task_contract(
+            deadline_span=3, due_turn=10, tags=["辽饷", "兵部", "密查", "稽核"],
+        )
 
 
 def test_actual_units_share_originated_quantity():
@@ -298,15 +297,15 @@ def test_confirm_persists_task_specific_contract_absent_before(game):
     assert before == 0
     oid = _issue(
         db, state, name, "密查辽饷", "不得声张",
-        months=3, target=3000, kind="补发饷银", axes=["既得利益"], unit="两",
+        months=3, target=3, kind="补发饷银", axes=["既得利益"], unit="万两",
         tags=["辽饷", "兵部", "密查"],
     )
     contract = read_covert_task_contract(db.get_dossier_for_secret_order(oid))
     assert contract is not None
     assert contract["kind"] == "补发饷银"
     assert contract["axes"] == ["既得利益"]
-    assert contract["delivery"]["unit"] == "两"
-    assert contract["delivery"]["target_units"] == 3000.0
+    assert contract["delivery"]["unit"] == "万两"
+    assert contract["delivery"]["target_units"] == 3.0
     catch_id = _issue(
         db, state, name, "缉获私贩", "拿人犯",
         months=2, target=2, kind="缉获人犯", unit="人犯",
@@ -624,11 +623,15 @@ def test_auto_submit_due_no_longer_flips_pending_review(game):
     db.save_state(state)
 
     submitted = db.auto_submit_due_secret_orders(state)
-    # 可记录到期戳，但不得再 pending_review
     order = db.get_secret_order(oid)
     assert order["status"] == "active", order
+    assert "[期限届满]" not in str(order.get("result") or "")
     assert all(item.get("id") != oid or item.get("status") != "pending_review"
                for item in (submitted or [{"id": oid, "status": order["status"]}]))
+    dossier = db.get_dossier_for_secret_order(oid)
+    payload = json.loads(str(dossier["payload_json"]))
+    assert payload["due_machine"]["order_id"] == oid
+    assert payload["due_machine"]["due_turn"] == int(state.turn)
 
 
 def test_judge_selection_cannot_lighten_floor(game):
@@ -786,16 +789,16 @@ def test_zero_target_is_not_delivered():
     assert not verdict["delivered"]
 
 
-def test_submit_unlimited_zero_actual_cannot_done(game):
+def test_submit_unlimited_keeps_frozen_target(game):
     db, state, _ = game
     name = _minister(db)
     oid = _issue(
         db, state, name, "无期密查辽饷", "密查侵冒",
-        months=0, target=0, kind="补发饷银", axes=["既得利益"], unit="两",
+        months=0, target=3, kind="补发饷银", axes=["既得利益"], unit="万两",
         tags=["辽饷", "兵部", "密查"],
     )
     contract0 = read_covert_task_contract(db.get_dossier_for_secret_order(oid))
-    assert contract0["delivery"]["target_units"] == 0.0
+    assert contract0["delivery"]["target_units"] == 3.0
     assert int(db.get_secret_order(oid)["due_turn"] or 0) == 0
 
     ok = db.submit_secret_order_for_review(oid, "臣已办结", state.year, state.period)
@@ -803,9 +806,9 @@ def test_submit_unlimited_zero_actual_cannot_done(game):
     live = db.get_secret_order(oid)
     assert int(live["due_turn"]) == int(state.turn)
     contract = read_covert_task_contract(db.get_dossier_for_secret_order(oid))
-    assert float(contract["delivery"]["target_units"]) > 0.0
+    assert contract["delivery"]["target_units"] == 3.0
     assert contract["kind"] == "补发饷银"
-    assert contract["delivery"]["unit"] == "两"
+    assert contract["delivery"]["unit"] == "万两"
 
     out = settle_due_secret_orders(db, state, commit=True)
     row = next(r for r in out if r["order_id"] == oid)
@@ -815,18 +818,18 @@ def test_submit_unlimited_zero_actual_cannot_done(game):
     assert db.get_secret_order(oid)["status"] == "failed"
 
 
-def test_rush_refreshes_contract_on_same_seam(game):
+def test_rush_preserves_frozen_contract(game):
     db, state, _ = game
     name = _minister(db)
     oid = _issue(
         db, state, name, "无期缉获", "拿人",
-        months=0, target=0, kind="缉获人犯", unit="人犯",
+        months=0, target=3, kind="缉获人犯", unit="人犯",
     )
     db.rush_secret_order(oid, state, deadline_months=0, reason="即核")
     live = db.get_secret_order(oid)
     assert int(live["due_turn"]) == int(state.turn)
     contract = read_covert_task_contract(db.get_dossier_for_secret_order(oid))
-    assert float(contract["delivery"]["target_units"]) > 0.0
+    assert contract["delivery"]["target_units"] == 3.0
     assert contract["kind"] == "缉获人犯"
     assert contract["delivery"]["unit"] == "人犯"
 
@@ -854,8 +857,8 @@ def test_1376_candidate_confirm_freezes_explicit_typed_contract(game):
     contract = read_covert_task_contract(db.get_dossier_for_secret_order(oid))
     assert contract["kind"] == "补发饷银"
     assert contract["axes"] == ["既得利益"]
-    assert contract["delivery"]["unit"] == "两"
-    assert contract["delivery"]["target_units"] == 5000.0
+    assert contract["delivery"]["unit"] == "万两"
+    assert contract["delivery"]["target_units"] == 1.0
     assert contract["kind"] != "稽核"
 
 
@@ -866,7 +869,7 @@ def test_internal_extractor_receives_origin_linked_typed_briefs_without_secret_p
     secret_prose = "乙巳密查辽饷侵冒正文不得进公共档房"
     fiscal_id = _issue(
         db, state, name, "补发边饷", secret_prose,
-        months=1, target=5000, kind="补发饷银", axes=["既得利益"], unit="两",
+        months=1, target=5, kind="补发饷银", axes=["既得利益"], unit="万两",
         tags=["辽饷"],
     )
     catch_id = _issue(
@@ -882,7 +885,8 @@ def test_internal_extractor_receives_origin_linked_typed_briefs_without_secret_p
         for brief in internal_ctx["secret_covert_effect_briefs"]
     }
     assert briefs[fiscal_id]["origin_ref"].startswith("dossier:")
-    assert briefs[fiscal_id]["delivery"] == {"unit": "两", "target_units": 5000.0}
+    assert briefs[fiscal_id]["delivery"]["unit"] == "万两"
+    assert briefs[fiscal_id]["delivery"]["target_units"] == 5.0
     assert briefs[fiscal_id]["canonical_fields"] == ["economy_moves"]
     assert catch_id not in briefs
     personnel_ctx = build_extractor_shared_context(db, state, "", "", module="personnel_secret")
@@ -893,7 +897,8 @@ def test_internal_extractor_receives_origin_linked_typed_briefs_without_secret_p
     }
     assert fiscal_id not in pbriefs
     assert pbriefs[catch_id]["canonical_fields"] == ["人物变更"]
-    assert pbriefs[catch_id]["delivery"] == {"unit": "人犯", "target_units": 3.0}
+    assert pbriefs[catch_id]["delivery"]["unit"] == "人犯"
+    assert pbriefs[catch_id]["delivery"]["target_units"] == 3.0
 
 
 def test_extract_secret_order_schema_and_confirm_typed_contract(game, monkeypatch):
@@ -911,8 +916,8 @@ def test_extract_secret_order_schema_and_confirm_typed_contract(game, monkeypatc
         "差务": "补发饷银",
         "价值轴": ["既得利益"],
         "方向": 1,
-        "交付单位": "两",
-        "交付目标": 5000,
+        "交付单位": "万两",
+        "交付目标": 5,
     }, ensure_ascii=False)
 
     def fake_json(_prompt, llm_config=None, tag=""):
@@ -934,7 +939,8 @@ def test_extract_secret_order_schema_and_confirm_typed_contract(game, monkeypatc
     oid = int(db.list_secret_orders(status="active")[0]["id"])
     contract = read_covert_task_contract(db.get_dossier_for_secret_order(oid))
     assert contract["kind"] == "补发饷银"
-    assert contract["delivery"]["target_units"] == 5000.0
+    assert contract["delivery"]["unit"] == "万两"
+    assert contract["delivery"]["target_units"] == 5.0
 
 
 def test_fiscal_quantity_tracer_same_unit_done_and_gap(game):
@@ -943,12 +949,25 @@ def test_fiscal_quantity_tracer_same_unit_done_and_gap(game):
     _set_axes(db, name, loyalty=90, identity=30)
     oid = _issue(
         db, state, name, "补发五千", "补发饷银",
-        months=1, target=20, kind="补发饷银", axes=["既得利益"], unit="两",
+        months=1, target=20, kind="补发饷银", axes=["既得利益"], unit="万两",
     )
     did = int(db.get_dossier_for_secret_order(oid)["id"])
     settle_with_delta(
         state, db, {"dossier_progress_reports": [_report(did, "发令")]},
         before_turn=state.turn, content=content,
+    )
+    apply_score_extraction(
+        db, state,
+        {
+            "economy_moves": [{
+                "account": "内库",
+                "delta": 9,
+                "category": "抄没",
+                "reason": "无关同案收入不得充交付",
+                "origin_ref": f"dossier:{did}",
+            }],
+        },
+        content=content,
     )
     settle_with_delta(
         state, db,
@@ -960,7 +979,7 @@ def test_fiscal_quantity_tracer_same_unit_done_and_gap(game):
 
     oid2 = _issue(
         db, state, name, "补发缺口", "补发饷银",
-        months=1, target=20, kind="补发饷银", axes=["既得利益"], unit="两",
+        months=1, target=20, kind="补发饷银", axes=["既得利益"], unit="万两",
     )
     did2 = int(db.get_dossier_for_secret_order(oid2)["id"])
     settle_with_delta(
@@ -1001,3 +1020,55 @@ def test_catch_quantity_tracer_same_unit_done_and_mismatch_ignored(game):
     assert row["status"] == "done"
     assert row["actual_units"] == 3.0
     assert row["target_units"] == 3.0
+
+
+def test_incomplete_extract_does_not_stage_zero_contract(game, monkeypatch):
+    from ming_sim import cli_backend as cb
+
+    db, state, _ = game
+    name = _minister(db)
+    canned = json.dumps({
+        "标题": "查核辽饷侵冒",
+        "内容": "查核辽饷侵冒",
+        "承办人": name,
+        "期限月数": 3,
+        "标签": ["辽饷"],
+        "差务": "",
+        "价值轴": [],
+        "方向": 1,
+        "交付单位": "",
+        "交付目标": 0,
+    }, ensure_ascii=False)
+
+    def fake_json(_prompt, llm_config=None, tag=""):
+        return canned, 1
+
+    monkeypatch.setattr(cb, "_run_json_extractor_for_config", fake_json)
+    ctx = MaterializeCtx(
+        session=SimpleNamespace(db=db, state=state),
+        character=SimpleNamespace(name=name, office_type="文官"),
+        player_message="查核辽饷侵冒", reply="臣领密旨",
+        message_text="查核辽饷侵冒", explicit_prefixed=False,
+        has_directive=False, pend_for_minister=[], out={},
+        intent={"secret_action": "新建"}, intent_kind="secret",
+        llm_config=None, intent_candidates=[],
+    )
+    run_materialize_pipeline(ctx)
+    assert int(ctx.out.get("pending_action_id") or 0) == 0
+    assert db.list_secret_orders() == []
+
+
+def test_monthly_and_due_fail_loud_without_contract(game):
+    db, state, _ = game
+    name = _minister(db)
+    oid = db.create_secret_order(state, name, "无合同密令", "无显式差务", [], deadline_months=1)
+    dossier = db.get_dossier_for_secret_order(oid)
+    with pytest.raises(CovertContractError):
+        require_covert_task_contract(dossier)
+    state.turn += 1
+    db.save_state(state)
+    with pytest.raises(CovertContractError):
+        apply_monthly_covert_actual_progress(db, state, commit=True)
+    with pytest.raises(CovertContractError):
+        settle_due_secret_orders(db, state, commit=True)
+

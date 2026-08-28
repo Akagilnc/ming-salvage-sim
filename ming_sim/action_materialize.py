@@ -163,6 +163,10 @@ def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
                 minister_name, session.state.turn),
         )
         ctx.conversation_intent_handled = True
+        frozen = secret.get("covert_task") if isinstance(secret.get("covert_task"), dict) else None
+        if frozen is None:
+            ctx.out["pending_action_id"] = 0
+            return
         ctx.out["pending_action_id"] = session.db.stage_pending_action(
             session.state.turn,
             kind="secret_order",
@@ -178,7 +182,7 @@ def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
                 "excluded_names": secret.get("excluded_names") or [],
                 "excluded_offices": secret.get("excluded_offices") or [],
                 "dossier_links": secret.get("dossier_links") or [],
-                "covert_task": secret.get("covert_task") if isinstance(secret.get("covert_task"), dict) else {},
+                "covert_task": frozen,
             },
         )
         return

@@ -15172,46 +15172,9 @@ class GameDB:
         deadline_span: int,
         due_turn: int,
     ) -> None:
-        """期限变更时更新 payload.covert_task_contract.delivery（保轴/方向/单位/kind）。"""
-        from ming_sim.covert_progress import (
-            CONTRACT_KEY,
-            build_covert_task_contract,
-            coerce_covert_task_contract,
-            refresh_contract_target_units,
-        )
-
-        dossier = self.get_dossier_for_secret_order(int(secret_order_id))
-        if dossier is None:
-            return
-        try:
-            payload = json.loads(str(dossier.get("payload_json") or "{}"))
-        except (TypeError, ValueError):
-            payload = {}
-        if not isinstance(payload, dict):
-            payload = {}
-        prior = coerce_covert_task_contract(payload.get(CONTRACT_KEY))
-        target = refresh_contract_target_units(
-            prior, deadline_span=int(deadline_span), due_turn=int(due_turn),
-        )
-        if prior is not None:
-            delivery = prior.get("delivery") if isinstance(prior.get("delivery"), Mapping) else {}
-            contract = build_covert_task_contract(
-                deadline_span=int(deadline_span),
-                due_turn=int(due_turn),
-                kind=prior.get("kind"),
-                axes=prior.get("axes"),
-                direction=prior.get("direction"),
-                delivery_unit=delivery.get("unit") if isinstance(delivery, dict) else None,
-                delivery_target_units=target,
-            )
-        else:
-            contract = build_covert_task_contract(
-                deadline_span=int(deadline_span),
-                due_turn=int(due_turn),
-                delivery_target_units=target,
-            )
-        payload[CONTRACT_KEY] = contract
-        self.update_decree_dossier_payload(int(dossier["id"]), payload, commit=False)
+        """期限变更不得另造/补默认合同；已冻结交付身份保持原样。"""
+        del secret_order_id, deadline_span, due_turn
+        return
 
     def list_endorsed_dossier_candidates(
         self, current_turn: int,
@@ -18642,14 +18605,18 @@ class GameDB:
                 # decree; may differ from final assignee (跨人承办).
                 # Stage-time pin: do not re-guess max(held) after confirm utterance.
                 origin_mid = self._parse_origin_chat_message_id(payload)
-                from ming_sim.covert_progress import covert_task_from_payload
+                from ming_sim.covert_progress import build_covert_task_contract, covert_task_from_payload
+                raw_task = covert_task_from_payload(payload) or payload.get("covert_task")
+                frozen_task = None
+                if raw_task:
+                    frozen_task = build_covert_task_contract(covert_task=raw_task)
                 order_id = self.create_secret_order(
                     state, assignee, title, content_text, tags, deadline_months=deadline,
                     excluded_names=excluded, excluded_offices=excluded_offices,
                     origin_minister_name=str(pa.get("minister_name") or "") or None,
                     origin_chat_message_id=origin_mid,
                     pending_action_id=int(pa["id"]),
-                    covert_task=covert_task_from_payload(payload) or payload.get("covert_task"),
+                    covert_task=frozen_task,
                 )
                 if order_id is not None and payload.get("dossier_links") is not None:
                     links = payload.get("dossier_links")
@@ -21800,15 +21767,22 @@ class GameDB:
             )
             # #1504 Owner A：确认闸一次冻结 typed covert-task contract（动作轴/可数交付）。
             # 不解析 title/content/tags；轴与交付单位来自 #1376 候选显式字段。
-            from ming_sim.covert_progress import (
-                CONTRACT_KEY,
-                build_covert_task_contract,
-            )
-            covert_contract = build_covert_task_contract(
-                deadline_span=int(deadline),
-                due_turn=int(due_turn),
-                covert_task=covert_task,
-            )
+            from ming_sim.covert_progress import CONTRACT_KEY, CovertContractError, build_covert_task_contract
+            covert_contract = None
+            if covert_task is not None:
+                covert_contract = build_covert_task_contract(covert_task=covert_task)
+            payload = {
+                "title": title,
+                "content": content,
+                "tags": list(tags),
+                "importance": int(importance),
+                "excluded_names": list(raw_excluded_names),
+                "excluded_offices": list(excluded_offices),
+            }
+            if covert_contract is not None:
+                payload[CONTRACT_KEY] = covert_contract
+            elif covert_task is not None:
+                raise CovertContractError("密令确认缺少完整 typed covert-task contract")
             dossier_id = self.create_decree_dossier(
                 state,
                 action_type="secret_order",
@@ -21820,15 +21794,7 @@ class GameDB:
                 source_chat_turn_id=source_chat_turn_id,
                 pending_action_id=int(pending_action_id or 0),
                 secret_order_id=order_id,
-                payload={
-                    "title": title,
-                    "content": content,
-                    "tags": list(tags),
-                    "importance": int(importance),
-                    "excluded_names": list(raw_excluded_names),
-                    "excluded_offices": list(excluded_offices),
-                    CONTRACT_KEY: covert_contract,
-                },
+                payload=payload,
                 status="promulgated",
                 due_turn=due_turn,
                 commit=False,
@@ -22365,10 +22331,9 @@ class GameDB:
         }
 
     def auto_submit_due_secret_orders(self, state: GameState) -> List[Dict[str, object]]:
-        """#1504：到期只打「期限届满」陈词戳，保持 active；结案改 settle 尾部机械对账。
+        """#1504：到期只记 typed 机器事实，保持 active；玩家文字走 0058 密奏。"""
+        from ming_sim.covert_progress import CONTRACT_KEY, read_covert_task_contract
 
-        不改变密令状态（LLM secret_order_closes 消费链已退役）。
-        """
         rows = self.conn.execute(
             """
             SELECT id, title, result FROM secret_orders
@@ -22380,29 +22345,31 @@ class GameDB:
         submitted: List[Dict[str, object]] = []
         with atomic(self):
             for row in rows:
-                stamp = f"〔{period_label(state.year, state.period)}〕[期限届满] "
-                note = "御限已至，本月结算按实进度对账定成败（不入核议链）。"
-                prev = row["result"] or ""
-                lines = [ln for ln in prev.split("\n") if ln.strip()]
-                if not any("[期限届满]" in ln for ln in lines):
-                    lines.append(f"{stamp}{note}")
-                    self.conn.execute(
-                        """
-                        UPDATE secret_orders
-                        SET result = ?, updated_at = CURRENT_TIMESTAMP
-                        WHERE id = ? AND status = 'active'
-                        """,
-                        ("\n".join(lines), int(row["id"])),
-                    )
-                self.mark_secret_order_in_progress(int(row["id"]), commit=False)
+                oid = int(row["id"])
+                self.mark_secret_order_in_progress(oid, commit=False)
+                dossier = self.get_dossier_for_secret_order(oid)
+                if dossier is not None:
+                    try:
+                        payload = json.loads(str(dossier.get("payload_json") or "{}"))
+                    except (TypeError, ValueError):
+                        payload = {}
+                    if not isinstance(payload, dict):
+                        payload = {}
+                    payload["due_machine"] = {
+                        "order_id": oid,
+                        "due_turn": int(state.turn),
+                    }
+                    if read_covert_task_contract(dossier) is None and CONTRACT_KEY not in payload:
+                        pass
+                    self.update_decree_dossier_payload(int(dossier["id"]), payload, commit=False)
                 submitted.append({
-                    "id": int(row["id"]),
+                    "id": oid,
                     "title": row["title"],
                     "status": "active",
                 })
         if rows:
             tlog(
-                f"[secret_order] due_stamp count={len(submitted)} "
+                f"[secret_order] due_typed count={len(submitted)} "
                 f"ids={[x['id'] for x in submitted]} (status unchanged)"
             )
         return submitted

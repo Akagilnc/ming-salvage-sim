@@ -3416,12 +3416,13 @@ def _extract_secret_order(
         "  \"排除对象\": {\"人物\": [\"明确说要瞒住的人名\"], \"机构\": [\"不走的衙门\"]},\n"
         "  \"案卷关联\": [{\"目标案卷ID\": 123, \"类型\": \"护卫/稽核/接应\", "
         "\"说明\": \"一句说明\"}],\n"
-        "  \"差务\": \"差务类型名，如 补发饷银、缉获人犯、清丈；只填皇帝/大臣已点明的任务，不得用标题或标签猜测\",\n"
-        "  \"价值轴\": [\"闭集轴名，如 实务事功、既得利益；未点明则空数组\"],\n"
+        "  \"差务\": \"差务类型名，如 补发饷银、缉获人犯、清丈；必须点明，不得用标题或标签猜测\",\n"
+        "  \"价值轴\": [\"闭集轴名，如 实务事功、既得利益\"],\n"
         "  \"方向\": 1,\n"
-        "  \"交付单位\": \"可数实物单位，如 两、人犯、亩；未点明则空字符串\",\n"
-        "  \"交付目标\": 到期须交付的可数目标数字，未点明则 0\n"
+        "  \"交付单位\": \"可数实物单位，必须是 万两、人犯 或 亩（银钱与落库 economy_moves.delta 同量纲：整数万两）\",\n"
+        "  \"交付目标\": 到期须交付的正数目标（万两用整数万两，人犯用人数，亩用亩数）\n"
         "}\n"
+        "差务、价值轴、交付单位、交付目标缺一项则抽取失败；不得填空字符串或 0 凑数。\n"
         "案卷关联只能填写大臣回话中已明确复述确认、且在下列候选中的具体旧案卷 ID；模糊指代、未确认或没有 ID 时填空列表。\n"
         "【可引用旧案卷】\n" + "\n".join(
             f"- #{int(row['id'])} {row.get('secret_title') or row.get('decree_text') or row.get('action_type') or ''}"
@@ -3529,26 +3530,29 @@ def _extract_secret_order(
     axes = [str(a).strip() for a in axes if str(a).strip()] if isinstance(axes, list) else []
     unit = str(obj.get("交付单位") or "").strip()
     try:
-        target_units = float(obj.get("交付目标") or 0)
-    except (TypeError, ValueError):
-        target_units = 0.0
-    try:
         direction = int(obj.get("方向") or 1)
     except (TypeError, ValueError):
         direction = 1
     if direction not in (1, -1):
         direction = 1
-    covert_task = {
-        "kind": kind,
-        "axes": axes,
-        "direction": direction,
-        "delivery": {"unit": unit, "target_units": target_units},
-    }
-    return {"title": title, "content": content, "assignee": assignee,
+    from ming_sim.covert_progress import CovertContractError, build_covert_task_contract
+    try:
+        covert_task = build_covert_task_contract(
+            kind=kind,
+            axes=axes,
+            direction=direction,
+            delivery_unit=unit,
+            delivery_target_units=obj.get("交付目标"),
+        )
+    except CovertContractError:
+        covert_task = None
+    result = {"title": title, "content": content, "assignee": assignee,
             "deadline_months": deadline, "tags": tags, "excluded_names": excluded_names,
             "excluded_offices": excluded_offices, "dossier_links": dossier_links,
-            "excluded_targets": {"people": excluded_names, "offices": excluded_offices},
-            "covert_task": covert_task}
+            "excluded_targets": {"people": excluded_names, "offices": excluded_offices}}
+    if covert_task is not None:
+        result["covert_task"] = covert_task
+    return result
 
 def resolve_minister_actions(
     minister_reply: str, player_message: str = "", default_assignee: str = "", llm_config: Any = None,

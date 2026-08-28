@@ -540,7 +540,7 @@ export function App() {
         onSelectMapNode={selectMapNode}
         activeDrawerKey={activeDrawerKey}
         navHandlers={navHandlers}
-        secretOrderActiveCount={secretOrders.filter((o) => o.status === "active" || o.status === "pending_review").length}
+        secretOrderActiveCount={secretOrders.filter((o) => o.status === "active").length}
         onOpenModal={openModal}
         onClosedFaceAttempt={(reason) => setError(reason)}
         edictOpen={edictOpen}
@@ -655,7 +655,7 @@ export function App() {
             input={input}
             busy={busy}
             error={error}
-            secretOrders={secretOrders.filter((o) => o.status === "active" || o.status === "pending_review")}
+            secretOrders={secretOrders.filter((o) => o.status === "active")}
             replyRetry={replyRetry}
             onInput={setInput}
             onSend={sendChat}
