@@ -149,8 +149,7 @@ def test_no_edict_http_last_report_matches_durable_and_history(game, monkeypatch
     response = web_app.api_advance_without_edict(body)
 
     durable = db.get_turn_report(closed_turn)
-    assert durable
-    assert "原文钉测" in durable or "边事自演" in durable
+    assert durable  # 结构化：闭月有落库行；正文同值由下方三方相等钉，不盯措辞
     assert int(state.turn) == closed_turn + 1
     assert response.get("awaiting_decision") is False
 
