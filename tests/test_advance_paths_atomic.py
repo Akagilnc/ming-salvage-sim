@@ -26,6 +26,7 @@ import ming_sim.issues as I
 from ming_sim.decree import persist_resolve_context, settle_with_delta
 from tests.conftest import covering_monthly_extract, with_monthly_reports
 from tests.dossier_test_helpers import TYPED_COVERT_TASK
+from tests.dossier_test_helpers import create_test_secret_order
 
 
 def _ledger_count(db, turn: int) -> int:
@@ -514,7 +515,7 @@ def test_recovery_path_commits_pending_actions(game, monkeypatch):
     )
     # 崩溃重载后玩家继续召对，stage 一条动作
     name = _active_minister_name(db, content)
-    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=0)
+    oid = create_test_secret_order(db, state, name, "原标题", "原内容", [], deadline_months=0)
     db.stage_pending_action(
         state.turn, kind="secret_order", action="更新", minister_name=name, target_id=oid,
         payload={"new_title": "恢复期标题", "new_content": "x", "deadline_months": 0})
@@ -1159,7 +1160,7 @@ def test_pending_commit_rolls_back_with_failed_replay(game, monkeypatch, tmp_pat
         simulator_payload={}, secret_orders=[], relevant_memories=[],
     )
     name = _active_minister_name(db, content)
-    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=0)
+    oid = create_test_secret_order(db, state, name, "原标题", "原内容", [], deadline_months=0)
     db.stage_pending_action(
         turn, kind="secret_order", action="更新", minister_name=name, target_id=oid,
         payload={"new_title": "重放期标题", "new_content": "x", "deadline_months": 0})
@@ -1202,7 +1203,7 @@ def test_hitl_reextract_branch_commits_pending(game, monkeypatch, tmp_path):
     db.save_state(state)
 
     name = _active_minister_name(db, content)
-    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=0)
+    oid = create_test_secret_order(db, state, name, "原标题", "原内容", [], deadline_months=0)
     db.stage_pending_action(
         turn, kind="secret_order", action="更新", minister_name=name, target_id=oid,
         payload={"new_title": "重抽期标题", "new_content": "x", "deadline_months": 0})
@@ -1282,7 +1283,7 @@ def test_resim_path_does_not_preconsume_pending(game, monkeypatch, tmp_path):
     turn = state.turn
     dm.pre_settle(state, db, content=content)  # 落 settling
     name = _active_minister_name(db, content)
-    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=0)
+    oid = create_test_secret_order(db, state, name, "原标题", "原内容", [], deadline_months=0)
     db.stage_pending_action(
         turn, kind="secret_order", action="更新", minister_name=name, target_id=oid,
         payload={"new_title": "重推演期标题", "new_content": "x", "deadline_months": 0})
@@ -1328,7 +1329,7 @@ def test_fallback_path_commits_pending(game, monkeypatch):
     turn = state.turn
     dm.pre_settle(state, db, content=content)  # settling：守门早退不再消费
     name = _active_minister_name(db, content)
-    oid = db.create_secret_order(
+    oid = create_test_secret_order(db, 
         state, name, "原标题", "原内容", [], deadline_months=0,
         covert_task=TYPED_COVERT_TASK,
     )

@@ -1790,6 +1790,13 @@ def test_api_channel_mixed_confirmation_keeps_supplement_when_extract_fails(game
     assert "督办陕西赈灾" in payload["content"]
     assert "三月内回奏" in payload["content"]
     assert "covert_task" not in payload
+    db.commit_pending_actions(state)
+    assert db.list_secret_orders() == []
+    pending = db.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?",
+        (res["pending_action_id"],),
+    ).fetchone()
+    assert pending["status"] == "failed"
 
 
 def test_secret_context_path_preserves_multiple_related_emperor_task_lines(game, monkeypatch):

@@ -9,6 +9,7 @@ import pytest
 
 from tests.conftest import with_monthly_reports
 from tests.dossier_test_helpers import TYPED_COVERT_TASK
+from tests.dossier_test_helpers import create_test_secret_order
 
 
 def _actor(db):
@@ -28,7 +29,7 @@ def _people(db, count):
 
 def _secret(db, state, *, title="密查漕弊", body="暗访仓胥", tags=None):
     lead = _actor(db)
-    order_id = db.create_secret_order(
+    order_id = create_test_secret_order(db, 
         state, lead, title, body, tags or ["稽核"], deadline_months=3,
         covert_task=TYPED_COVERT_TASK,
     )
@@ -123,7 +124,7 @@ def test_s2_secret_field_appends_via_real_settle_and_recovery_replays(game, monk
     db, state, content = game
     lead, worker = _people(db, 2)
     # Non 护行/稽核 tags + short deadline: avoid #566 monthly-progress fail-loud.
-    order_id = db.create_secret_order(
+    order_id = create_test_secret_order(db, 
         state, lead, "密查仓胥", "暗访通州仓", ["密访"], deadline_months=1,
         covert_task=TYPED_COVERT_TASK,
     )
@@ -198,7 +199,7 @@ def test_s2_tracer_613_565_readers_see_appended_roster(game):
 
     db, state, content = game
     lead, worker = _people(db, 2)
-    order_id = db.create_secret_order(
+    order_id = create_test_secret_order(db, 
         state, lead, "密查仓胥", "暗访通州仓", ["稽核"], deadline_months=3,
     )
     dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
@@ -246,7 +247,7 @@ def test_s2_public_dossier_participants_still_rejects_secret_id(game):
 
     db, state, _content = game
     lead, worker = _people(db, 2)
-    order_id = db.create_secret_order(
+    order_id = create_test_secret_order(db, 
         state, lead, "密查仓胥", "暗访通州仓", ["稽核"], deadline_months=3,
     )
     secret_id = int(db.get_dossier_for_secret_order(order_id)["id"])
@@ -338,7 +339,7 @@ def test_s2_driver_persists_secret_orders_and_freezes_secret_authority(game, mon
 
     db, state, content = game
     lead, worker = _people(db, 2)
-    order_id = db.create_secret_order(
+    order_id = create_test_secret_order(db, 
         state, lead, "密查仓胥", "暗访通州仓", ["稽核"], deadline_months=3,
     )
     dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])

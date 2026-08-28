@@ -18,6 +18,7 @@ from ming_sim.memories import effect_brief
 from ming_sim.models import Event
 from ming_sim import issues
 from tests.conftest import active_ming_character, covering_monthly_extract, with_monthly_reports
+from tests.dossier_test_helpers import create_test_secret_order
 
 
 def test_settle_with_delta_applies_region_and_advances_turn(game):
@@ -113,7 +114,7 @@ def test_settle_persists_public_and_restricted_sources_before_archive_projection
         and db.get_character_status(character.name)[0] == "active"
     ]
     knower, excluded = ministers[:2]
-    order = db.create_secret_order(
+    order = create_test_secret_order(db, 
         state,
         knower.name,
         "生产链密查",
@@ -211,7 +212,7 @@ def test_settlement_pure_public_narrative_excludes_secret_brief_from_public_view
     ]
     knower, excluded = ministers[:2]
     secret_marker = "混合结算密令标记"
-    order = db.create_secret_order(
+    order = create_test_secret_order(db, 
         state, knower.name, "混合密查", secret_marker, [],
         excluded_names=[excluded.name],
     )
@@ -253,7 +254,7 @@ def test_settlement_pure_public_narrative_lands_while_secret_brief_active(game):
     ]
     knower, excluded = ministers[:2]
     secret_body = "核验边镇欠饷密令"
-    order = db.create_secret_order(
+    order = create_test_secret_order(db, 
         state, knower.name, "改写密查", secret_body, [],
         excluded_names=[excluded.name],
     )

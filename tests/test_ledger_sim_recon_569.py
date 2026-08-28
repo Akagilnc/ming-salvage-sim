@@ -17,6 +17,7 @@ from ming_sim.decree_vocabulary import (
 )
 from ming_sim.simulation import build_extractor_shared_context, build_simulator_payload
 from tests.dossier_test_helpers import TYPED_COVERT_TASK, rejected_verdict as _rejected_verdict
+from tests.dossier_test_helpers import create_test_secret_order
 
 
 _REPO = Path(__file__).resolve().parents[1]
@@ -35,7 +36,7 @@ def _active_minister(db) -> str:
 
 def _long_secret(db, state, *, title="护行辽饷密件", memorial="密奏：已验关防，不得外泄"):
     actor = _active_minister(db)
-    order_id = db.create_secret_order(
+    order_id = create_test_secret_order(db, 
         state, actor, title, "逐月办理不得外泄", ["护行"], deadline_months=4,
         covert_task=TYPED_COVERT_TASK,
     )

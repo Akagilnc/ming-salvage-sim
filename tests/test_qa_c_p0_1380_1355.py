@@ -18,6 +18,7 @@ import ming_sim.cli_backend as cb
 from ming_sim.session import GameSession
 from tests.conftest import covering_monthly_extract
 from tests.dossier_test_helpers import TYPED_COVERT_TASK, promulgate_proposed_appointments
+from tests.dossier_test_helpers import create_test_secret_order
 
 
 def _canned_no_edict_settlement(monkeypatch):
@@ -775,7 +776,7 @@ def test_secret_order_survives_no_edict_full_chain_settle(game, monkeypatch):
     actor = str(db.conn.execute(
         "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
     ).fetchone()["name"])
-    oid = db.create_secret_order(
+    oid = create_test_secret_order(db, 
         state, actor, "密查关宁欠饷", "密查关宁军饷侵冒与欠发。",
         ["关宁", "欠饷"], deadline_months=2,
         covert_task=TYPED_COVERT_TASK,

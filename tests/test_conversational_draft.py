@@ -21,6 +21,7 @@ import pytest
 import ming_sim.cli_backend as cb
 from ming_sim.models import TurnPhase
 from ming_sim.session import GameSession
+from tests.dossier_test_helpers import TYPED_COVERT_TASK, create_test_secret_order
 
 _POLICY_FIELDS = {
     "dossier_action_type": "policy",
@@ -549,7 +550,7 @@ def test_secret_order_status_query_does_not_stage_new_hidden_order(game, monkeyp
     db, state, content = game
     name = _active_minister_name(db, content)
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
-    db.create_secret_order(state, name, "暗查辽饷", "密查辽饷侵冒。", [], deadline_months=0)
+    create_test_secret_order(db, state, name, "暗查辽饷", "密查辽饷侵冒。", [], deadline_months=0)
     calls = []
 
     def _extractors(prompt, llm_config=None, tag=""):
@@ -648,7 +649,7 @@ def test_new_secret_order_with_existing_order_stages_only_new_candidate(game, mo
     db, state, content = game
     name = _active_minister_name(db, content)
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
-    oid = db.create_secret_order(state, name, "旧令", "旧令内容。", [], deadline_months=0)
+    oid = create_test_secret_order(db, state, name, "旧令", "旧令内容。", [], deadline_months=0)
 
     def _extractors(prompt, llm_config=None, tag=""):
         if tag == "secret_extract":
@@ -740,6 +741,7 @@ def test_dialogue_affirm_commits_pending_new_secret_order(game, monkeypatch):
             "assignee": name,
             "tags": ["关宁"],
             "deadline_months": 2,
+            "covert_task": TYPED_COVERT_TASK,
         },
     )
 

@@ -18592,15 +18592,15 @@ class GameDB:
                 # decree; may differ from final assignee (跨人承办).
                 # Stage-time pin: do not re-guess max(held) after confirm utterance.
                 origin_mid = self._parse_origin_chat_message_id(payload)
-                from ming_sim.covert_progress import build_covert_task_contract, covert_task_from_payload
-                raw_task = covert_task_from_payload(payload) or payload.get("covert_task")
-                # Real producers reject incomplete extraction before staging. Keep
-                # pre-contract pending rows usable for non-delivery lifecycle paths;
-                # when typed fields are present, freeze and validate them here.
-                frozen_task = (
-                    build_covert_task_contract(covert_task=raw_task)
-                    if raw_task else None
+                from ming_sim.covert_progress import (
+                    CovertContractError,
+                    build_covert_task_contract,
+                    covert_task_from_payload,
                 )
+                raw_task = covert_task_from_payload(payload) or payload.get("covert_task")
+                if not raw_task:
+                    raise CovertContractError("密令确认缺少差务类型")
+                frozen_task = build_covert_task_contract(covert_task=raw_task)
                 order_id = self.create_secret_order(
                     state, assignee, title, content_text, tags, deadline_months=deadline,
                     excluded_names=excluded, excluded_offices=excluded_offices,
@@ -21708,10 +21708,7 @@ class GameDB:
             merge_investigation_confirmation,
             _investigation_target_of,
         )
-        covert_contract = (
-            build_covert_task_contract(covert_task=covert_task)
-            if covert_task is not None else None
-        )
+        covert_contract = build_covert_task_contract(covert_task=covert_task)
         inv_target = _investigation_target_of(covert_contract or {})
         if inv_target:
             existing_oid = find_active_investigation_order_id(self, inv_target)
@@ -21792,8 +21789,7 @@ class GameDB:
                 "excluded_names": list(raw_excluded_names),
                 "excluded_offices": list(excluded_offices),
             }
-            if covert_contract is not None:
-                payload[CONTRACT_KEY] = covert_contract
+            payload[CONTRACT_KEY] = covert_contract
             from ming_sim.covert_progress import (
                 live_investigation_fact_keys,
                 FACT_LANES_KEY,
