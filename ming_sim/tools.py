@@ -620,6 +620,7 @@ def build_minister_tools(character: Character, context: CourtContext,
         kind: str = "", axes_json: str = "[]", direction: int = 1, delivery_unit: str = "", delivery_target_units: float = 0,
         purpose: str = "", category: str = "", account: str = "",
         person_action: str = "", region: str = "", field: str = "", region_target: str = "",
+        investigation_target: str = "",
     ) -> str:
         """皇帝下达密令，返回待确认密令 payload，由召对确认闸门决定是否正式落库。
 
@@ -631,8 +632,9 @@ def build_minister_tools(character: Character, context: CourtContext,
         kind：差务类型名（补发饷银/缉获人犯/清丈等），不得用 tags 猜测。
         axes_json：价值轴闭集 JSON 数组，如 '["既得利益"]'。
         direction：1 顺轴，-1 逆轴。
-        delivery_unit：可数交付单位（万两/人犯/亩）；银钱与 economy_moves.delta 同为整数万两。
-        delivery_target_units：到期须交付的正数目标。
+        delivery_unit：可数交付单位（万两/人犯/亩）；调查差务留空。
+        delivery_target_units：到期须交付的正数目标；调查为须坐实的事实条数。
+        investigation_target：查核目标人名；非调查留空。
         purpose/category/account：delivery_unit=万两 时必填，对应 economy_moves 的用途/类别/账户。
         person_action：delivery_unit=人犯 时必填，对应 person_logs 的落库动作名。
         region/field/region_target：delivery_unit=亩 时必填，对应 region_logs 的地区 id/落库字段/目标值。
@@ -732,6 +734,7 @@ def build_minister_tools(character: Character, context: CourtContext,
                 region=region,
                 field=field,
                 region_target=region_target,
+                investigation_target=investigation_target,
             )
         except CovertContractError as exc:
             return f"密令下达失败：{exc}"

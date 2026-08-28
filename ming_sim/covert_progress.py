@@ -37,18 +37,17 @@ PROGRESS_UNITS: Dict[str, float] = {
 CONTRACT_KEY = "covert_task_contract"
 CONTRACT_VERSION = 1
 _STANCE_SCORE_SCALE = 18.0
-CANONICAL_UNITS = ("万两", "人犯", "亩", "案")
+CANONICAL_UNITS = ("万两", "人犯", "亩")
+FACT_LANE_USED_KEY = "fact_lane_used"
 _FIELD_FOR_UNIT = {
     "万两": ["economy_moves"],
     "人犯": ["人物变更"],
     "亩": ["region_delta"],
-    "案": ["new_issues"],
 }
 _IDENTITY_FOR_UNIT = {
     "万两": ("purpose", "category", "account"),
     "人犯": ("person_action",),
     "亩": ("region", "field", "target"),
-    "案": (),
 }
 
 
@@ -220,7 +219,15 @@ def covert_task_from_payload(payload: object) -> Optional[Dict[str, object]]:
     if region_target is None:
         region_target = source.get("target")
     person_action = delivery.get("person_action")
-    if not kind and not unit and target is None and not normalize_axes(axes):
+    if person_action is None:
+        person_action = source.get("person_action")
+    investigation_target = str(
+        delivery.get("investigation_target")
+        or source.get("investigation_target")
+        or payload.get("investigation_target")
+        or ""
+    ).strip()
+    if not kind and not unit and target is None and not normalize_axes(axes) and not investigation_target:
         return None
     out: Dict[str, object] = {}
     if kind:
@@ -249,6 +256,8 @@ def covert_task_from_payload(payload: object) -> Optional[Dict[str, object]]:
         out["target"] = region_target
     if person_action is not None:
         out["person_action"] = person_action
+    if investigation_target:
+        out["investigation_target"] = investigation_target
     return out or None
 
 
@@ -261,7 +270,7 @@ def canonicalize_delivery_unit(unit: object, target: object) -> tuple[str, float
     if qty <= 0.0:
         raise CovertContractError("密令确认交付目标必须为正数")
     if raw not in CANONICAL_UNITS:
-        raise CovertContractError("密令确认交付单位须为万两/人犯/亩/案")
+        raise CovertContractError("密令确认交付单位须为万两/人犯/亩")
     return raw, float(qty)
 
 
@@ -298,6 +307,7 @@ def build_covert_task_contract(
     field: object = None,
     region_target: object = None,
     person_action: object = None,
+    investigation_target: object = None,
 ) -> Dict[str, object]:
     """确认闸一次生成可被 canonical applier 接受的 typed contract。缺字段响亮失败。"""
     del tags, deadline_span, due_turn
@@ -330,6 +340,8 @@ def build_covert_task_contract(
             region_target = extracted.get("target")
         if person_action is None:
             person_action = extracted.get("person_action")
+        if investigation_target is None:
+            investigation_target = extracted.get("investigation_target")
     resolved_kind = str(kind or "").strip()
     if not resolved_kind:
         raise CovertContractError("密令确认缺少差务类型")
@@ -337,6 +349,29 @@ def build_covert_task_contract(
     if not axis_list:
         raise CovertContractError("密令确认缺少价值轴")
     direction_i = normalize_direction(direction, default=1)
+    inv_target = str(investigation_target or "").strip()
+    if inv_target:
+        try:
+            qty = float(delivery_target_units)
+        except (TypeError, ValueError):
+            raise CovertContractError("密令确认缺少可数交付目标") from None
+        if qty <= 0.0:
+            raise CovertContractError("密令确认交付目标必须为正数")
+        delivery = {
+            "target_units": float(qty),
+            "effect_sign": 1,
+            "canonical_fields": [],
+            "investigation_target": inv_target,
+        }
+        return {
+            "version": CONTRACT_VERSION,
+            "action_type": str(action_type or "secret_order"),
+            "kind": resolved_kind,
+            "axes": axis_list,
+            "direction": direction_i,
+            "investigation_target": inv_target,
+            "delivery": delivery,
+        }
     unit, target = canonicalize_delivery_unit(delivery_unit, delivery_target_units)
     sign = _effect_sign_for_unit(unit, effect_sign)
     delivery: Dict[str, object] = {
@@ -392,6 +427,23 @@ def coerce_covert_task_contract(raw: object) -> Optional[Dict[str, object]]:
         return None
     if raw.get("direction") not in (-1, 1):
         return None
+    inv_target = str(
+        raw.get("investigation_target") or delivery.get("investigation_target") or ""
+    ).strip()
+    if inv_target:
+        try:
+            qty = float(delivery.get("target_units"))
+        except (TypeError, ValueError):
+            return None
+        if qty <= 0.0:
+            return None
+        if delivery.get("effect_sign") not in (-1, 1):
+            return None
+        if list(delivery.get("canonical_fields") or []):
+            return None
+        if str(delivery.get("investigation_target") or "").strip() != inv_target:
+            return None
+        return copy.deepcopy(dict(raw))
     try:
         unit, target = canonicalize_delivery_unit(
             delivery.get("unit"), delivery.get("target_units"),
@@ -650,6 +702,62 @@ def _delivery_matches_region(row: Mapping[str, object], delivery: Mapping[str, o
     )
 
 
+def _dossier_payload_map(db: Any, dossier_id: int) -> Dict[str, object]:
+    row = db.conn.execute(
+        "SELECT payload_json FROM decree_dossiers WHERE id=?",
+        (int(dossier_id),),
+    ).fetchone()
+    if row is None:
+        return {}
+    try:
+        payload = json.loads(str(row["payload_json"] or "{}"))
+    except (TypeError, ValueError):
+        return {}
+    return dict(payload) if isinstance(payload, Mapping) else {}
+
+
+def live_investigation_fact_keys(db: Any, target: str) -> List[str]:
+    name = str(target or "").strip()
+    if not name:
+        return []
+    keys: List[str] = []
+    row = db.conn.execute(
+        "SELECT seed_guilt FROM characters WHERE name=?",
+        (name,),
+    ).fetchone()
+    if row is not None and seed_guilt_counts_as_debt(row["seed_guilt"]):
+        keys.append(name)
+    for edge in db.get_relation_edge_events(person=name, evidence=True):
+        keys.append(str(int(edge["id"])))
+    return keys
+
+
+def unused_investigation_fact_keys(db: Any, dossier_id: int, target: str) -> List[str]:
+    used_raw = _dossier_payload_map(db, dossier_id).get(FACT_LANE_USED_KEY) or []
+    used = {str(item) for item in used_raw} if isinstance(used_raw, list) else set()
+    return [key for key in live_investigation_fact_keys(db, target) if key not in used]
+
+
+def mark_investigation_fact_used(
+    db: Any, dossier_id: int, fact_key: str, *, commit: bool = False,
+) -> None:
+    payload = _dossier_payload_map(db, dossier_id)
+    used_raw = payload.get(FACT_LANE_USED_KEY) or []
+    used = [str(item) for item in used_raw] if isinstance(used_raw, list) else []
+    key = str(fact_key)
+    if key not in used:
+        used.append(key)
+    payload[FACT_LANE_USED_KEY] = used
+    db.update_decree_dossier_payload(int(dossier_id), payload, commit=commit)
+
+
+def _investigation_target_of(contract: Mapping[str, object]) -> str:
+    delivery = contract.get("delivery") if isinstance(contract.get("delivery"), Mapping) else {}
+    return str(
+        contract.get("investigation_target") or delivery.get("investigation_target") or ""
+    ).strip()
+
+
 def originated_quantity_this_turn(
     db: Any,
     dossier_id: int,
@@ -661,6 +769,9 @@ def originated_quantity_this_turn(
     current = int(turn)
     origin = f"dossier:{did}"
     delivery = contract.get("delivery") if isinstance(contract.get("delivery"), Mapping) else {}
+    inv_target = _investigation_target_of(contract)
+    if inv_target:
+        return 1.0 if unused_investigation_fact_keys(db, did, inv_target) else 0.0
     unit = str(delivery.get("unit") or "")
     fields = canonical_fields_for_delivery(unit=unit)
     qty = 0.0
@@ -679,12 +790,6 @@ def originated_quantity_this_turn(
         rows = db.conn.execute(
             "SELECT id FROM person_logs WHERE origin_ref=? AND turn=? AND action=?",
             (origin, current, action),
-        ).fetchall()
-        qty += float(len(rows))
-    if "new_issues" in fields:
-        rows = db.conn.execute(
-            "SELECT id FROM issues WHERE origin_ref=? AND origin_turn=? AND kind=?",
-            (origin, current, str(contract.get("kind") or "")),
         ).fetchall()
         qty += float(len(rows))
     if "region_delta" in fields:
@@ -806,6 +911,13 @@ def apply_monthly_covert_actual_progress(
         units = monthly_actual_units(
             fidelity=fidelity, originated_quantity=originated,
         )
+        inv_target = _investigation_target_of(contract)
+        bound_key = ""
+        if inv_target and units > 0.0:
+            unused = unused_investigation_fact_keys(db, did, inv_target)
+            if unused:
+                bound_key = unused[0]
+                mark_investigation_fact_used(db, did, bound_key, commit=False)
         note = str(sel.get("note") or sel.get("备注") or "").strip()
         if not note:
             note = (
@@ -833,6 +945,7 @@ def apply_monthly_covert_actual_progress(
             "target_units": contract_target_units(contract),
             "contract_kind": contract.get("kind"),
             "contract_axes": list(contract.get("axes") or []),
+            "fact_key": bound_key,
         })
     if commit and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0:
         db.conn.commit()
