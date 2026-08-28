@@ -568,7 +568,9 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
             beat = "aside" if entry["audibility"] == AUDIBILITY_PRIVATE else "scene"
         # #657 S4/P7：OPEN/ENTER 口令账仅 body.strip() 非空才投影；
         # 空垫位不进 scroll（无空条、无人物锚、无固定句冒充）。
-        if beat in {"opening", "entrance"} and not str(entry.get("body") or "").strip():
+        # #1561：普通公共 scene 同属玩家可见 scene，空正文亦不投影；
+        # aside/exit/closing 等其它 beat 不在本票扩域。
+        if beat in {"opening", "entrance", "scene"} and not str(entry.get("body") or "").strip():
             continue
         events.append((
             _entry_order_key(entry), 10,
@@ -849,16 +851,21 @@ def open_night(
         # #657 P7/W1：垫位路径只许空 body；不叠复命场面、不用固定开夜句。
         open_body = ""
     else:
-        open_body = body or f"{location}·{time_of_day}，召对启。"
+        # N1（#1561）：删除固定 opening fallback。空 body 时留空垫位；
+        # opening 成色只走既有 LLM 输入/materials seam（attach_chat_turn_to_night
+        # → generate_open_beat_body），不再写「{location}·{time_of_day}，召对启。」。
+        open_body = body or ""
         # #621：次回合召对顶出复命场面（pending todo 投影；P4 定性、不停轮）。
         # body 是开夜气氛层（含 LLM open-beat）；复命是召对顶出层——二者叠加，
         # 不得因调用方已供 body 而跳过（生产 ensure_open_night_for_audience 常带 body）。
+        # #1561 N1：仅 opening 已有显式非空 body 时叠加；无 generator 的空垫位
+        # 不得被 pending due/urge scene_text 填成确定性正文（整段迁移属 #1571）。
         from ming_sim.due_review import list_due_review_scenes
         from ming_sim.urge_lever import list_urge_audience_scenes
         scenes = list_due_review_scenes(db, state)
         # #624 / ADR 0078：谏/宽限同款次回合召对顶出（不进 due-review 白名单、不占接管窗）
         scenes = list(scenes) + list(list_urge_audience_scenes(db, state))
-        if scenes:
+        if scenes and str(open_body).strip():
             scene_lines = [str(s.get("scene_text") or "").strip() for s in scenes]
             scene_lines = [line for line in scene_lines if line]
             if scene_lines:
@@ -898,7 +905,9 @@ def open_night(
         for name in roster:
             # #657 P7/W3：registry 开夜垫位路径员额 ENTER 先落 body=""；
             # 禁止 generator 完成前落「随侍在侧」固定句。
-            roster_body = "" if empty_scaffold else f"{name}随侍在侧。"
+            # P29（#1561）：删除固定「随侍在侧。」fallback，body 始终置空；
+            # standing-roster 无生成路由，仅保留 typed tags/person_names。
+            roster_body = ""
             append_ledger_entry(
                 db, night_id,
                 person_names=[name],
@@ -2784,7 +2793,8 @@ def attach_chat_turn_to_night(
     """开夜（若需）+ 首次对话落宣入账 + 建 generating 对话轮挂 night_id/night_seq。
 
     beat_generator 注入时（#503 编排）：开夜/入殿账正文经编排层路由输入后由内容生成填充，
-    落为对应账正文；不注入则沿用 #498 确定性兜底正文。见 beat_orchestration。
+    落为对应账正文。不注入时 opening 按 #1561 留空；仅既有 entrance 路径仍可能使用
+    #498 确定性兜底正文。见 beat_orchestration。
     """
     from ming_sim import beat_orchestration as beats
 
