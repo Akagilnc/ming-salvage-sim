@@ -5,6 +5,12 @@ TYPED_COVERT_TASK = {
     "direction": 1,
     "delivery": {"unit": "亩", "target_units": 1.0},
 }
+def create_test_secret_order(db, state, minister, title, content, tags, **kwargs):
+    """Canonical neutral contract for tests whose behavior is unrelated to delivery semantics."""
+    kwargs.setdefault("covert_task", TYPED_COVERT_TASK)
+    return db.create_secret_order(state, minister, title, content, tags, **kwargs)
+
+
 TYPED_COVERT_EXTRACT = {
     "差务": "清丈",
     "价值轴": ["实务事功"],

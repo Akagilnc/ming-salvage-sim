@@ -28,19 +28,7 @@ import ming_sim.audience_night as audience_night
 import ming_sim.cli_backend as cb
 import ming_sim.session as session_mod
 from ming_sim.session import GameSession
-from tests.dossier_test_helpers import TYPED_COVERT_EXTRACT, TYPED_COVERT_TASK, promulgate_proposed_appointments
-
-
-def _create_secret_order(db, state, minister, title, content, tags, **kwargs):
-    """Session fixtures issue a task-specific current contract at the real DB seam."""
-    return db.create_secret_order(
-        state, minister, title, content, tags,
-        covert_task={
-            "kind": str(title), "axes": ["实务事功"], "direction": 1,
-            "delivery": {"unit": "案", "target_units": 1.0},
-        },
-        **kwargs,
-    )
+from tests.dossier_test_helpers import TYPED_COVERT_EXTRACT, TYPED_COVERT_TASK, create_test_secret_order as _create_secret_order, promulgate_proposed_appointments
 
 
 def _result():
