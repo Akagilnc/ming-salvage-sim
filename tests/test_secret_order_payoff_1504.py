@@ -612,6 +612,25 @@ def test_secret_order_closes_no_longer_applies(game):
     assert db.get_secret_order(oid)["status"] == "active"
 
 
+def test_auto_submit_due_no_longer_flips_pending_review(game):
+    db, state, _ = game
+    name = _minister(db)
+    oid = _issue(db, state, name, "到期仍在办", "到期对账前保持 active", months=1, target=1)
+    due = db.conn.execute(
+        "SELECT due_turn FROM secret_orders WHERE id=?", (oid,)
+    ).fetchone()["due_turn"]
+    state.turn = int(due)
+    db.save_state(state)
+
+    submitted = db.auto_submit_due_secret_orders(state)
+    order = db.get_secret_order(oid)
+    assert order["status"] == "active", order
+    assert all(item.get("id") != oid or item.get("status") != "pending_review"
+               for item in (submitted or [{"id": oid, "status": order["status"]}]))
+    dossier = db.get_dossier_for_secret_order(oid)
+    payload = json.loads(str(dossier["payload_json"]))
+    assert payload["due_machine"]["order_id"] == oid
+    assert payload["due_machine"]["due_turn"] == int(state.turn)
 
 
 def test_judge_selection_cannot_lighten_floor(game):
