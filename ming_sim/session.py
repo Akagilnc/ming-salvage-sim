@@ -2233,25 +2233,25 @@ class GameSession:
                 self.state.turn, minister_name, acts["decree_text"], mode=message_text)
         def _stage_secret_order_candidate(so: Dict[str, Any]) -> int:
             assignee = so.get("assignee") or minister_name
+            payload = {
+                "title": so["title"],
+                "content": so["content"],
+                "assignee": assignee,
+                "tags": so.get("tags") or [],
+                "deadline_months": so.get("deadline_months", 0),
+                "excluded_names": so.get("excluded_names") or [],
+                "excluded_offices": so.get("excluded_offices") or [],
+                # The extractor emits only links explicitly narrowed in the
+                # minister's confirmation; carry that immutable set to commit.
+                "dossier_links": so.get("dossier_links") or [],
+            }
             frozen = so.get("covert_task") if isinstance(so.get("covert_task"), dict) else None
-            if frozen is None:
-                return 0
+            if frozen is not None:
+                payload["covert_task"] = frozen
             return self.db.stage_pending_action(
                 self.state.turn, kind="secret_order", action="新建",
                 minister_name=minister_name, target_id=None,
-                payload={
-                    "title": so["title"],
-                    "content": so["content"],
-                    "assignee": assignee,
-                    "tags": so.get("tags") or [],
-                    "deadline_months": so.get("deadline_months", 0),
-                    "excluded_names": so.get("excluded_names") or [],
-                    "excluded_offices": so.get("excluded_offices") or [],
-                    # The extractor emits only links explicitly narrowed in the
-                    # minister's confirmation; carry that immutable set to commit.
-                    "dossier_links": so.get("dossier_links") or [],
-                    "covert_task": frozen,
-                },
+                payload=payload,
             )
         if not out["secret_order_id"] and acts["secret_order"]:
             out["pending_action_id"] = _stage_secret_order_candidate(acts["secret_order"])
