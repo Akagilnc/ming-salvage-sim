@@ -3420,7 +3420,10 @@ def _extract_secret_order(
         "  \"价值轴\": [\"闭集轴名，如 实务事功、既得利益\"],\n"
         "  \"方向\": 1,\n"
         "  \"交付单位\": \"canonical applier 单位：万两、人犯、亩或案；调查/查核以新立案情为交付时填案\",\n"
-        "  \"交付目标\": 到期须交付的正数目标（调查/查核未明示数量时填1案）\n"
+        "  \"交付目标\": 到期须交付的正数目标（调查/查核未明示数量时填1案）,\n"
+        "  \"钱粮用途\": \"钱粮收支 purpose，非钱粮留空\", \"钱粮类别\": \"category\", \"钱粮账户\": \"account\",\n"
+        "  \"人物动作\": \"人物变更动作，非人物留空\",\n"
+        "  \"地区\": \"region_delta 地区 id\", \"地区字段\": \"落库字段\", \"地区目标值\": \"落库后的目标值\"\n"
         "}\n"
         "差务、价值轴、交付单位、交付目标缺一项则抽取失败；不得填空字符串或 0 凑数。\n"
         "案卷关联只能填写大臣回话中已明确复述确认、且在下列候选中的具体旧案卷 ID；模糊指代、未确认或没有 ID 时填空列表。\n"
@@ -3543,6 +3546,13 @@ def _extract_secret_order(
             direction=direction,
             delivery_unit=unit,
             delivery_target_units=obj.get("交付目标"),
+            purpose=obj.get("钱粮用途"),
+            category=obj.get("钱粮类别"),
+            account=obj.get("钱粮账户"),
+            person_action=obj.get("人物动作"),
+            region=obj.get("地区"),
+            field=obj.get("地区字段"),
+            region_target=obj.get("地区目标值"),
         )
     except CovertContractError:
         covert_task = None

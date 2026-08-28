@@ -45,11 +45,17 @@ from ming_sim.simulation import (
 
 
 def _task(*, kind, axes, unit, target, direction=1):
+    identity = {
+        "万两": {"purpose": "其它", "category": "密令差务", "account": "内库"},
+        "人犯": {"person_action": "处置"},
+        "亩": {"region": "henan", "field": "registered_land", "target": "421"},
+        "案": {},
+    }[unit]
     return {
         "kind": kind,
         "axes": list(axes),
         "direction": int(direction),
-        "delivery": {"unit": unit, "target_units": float(target)},
+        "delivery": {"unit": unit, "target_units": float(target), **identity},
     }
 
 
@@ -884,7 +890,11 @@ def test_internal_extractor_receives_origin_linked_typed_briefs_without_secret_p
     }
     assert briefs[fiscal_id]["origin_ref"].startswith("dossier:")
     assert briefs[fiscal_id]["delivery"]["unit"] == "万两"
-    assert briefs[fiscal_id]["delivery"]["target_units"] == 5.0
+    assert briefs[fiscal_id]["delivery"] == {
+        "unit": "万两", "target_units": 5.0, "effect_sign": -1,
+        "canonical_fields": ["economy_moves"],
+        "purpose": "其它", "category": "密令差务", "account": "内库",
+    }
     assert briefs[fiscal_id]["canonical_fields"] == ["economy_moves"]
     assert catch_id not in briefs
     personnel_ctx = build_extractor_shared_context(db, state, "", "", module="personnel_secret")
@@ -896,6 +906,7 @@ def test_internal_extractor_receives_origin_linked_typed_briefs_without_secret_p
     assert fiscal_id not in pbriefs
     assert pbriefs[catch_id]["canonical_fields"] == ["人物变更"]
     assert pbriefs[catch_id]["delivery"]["unit"] == "人犯"
+    assert pbriefs[catch_id]["delivery"]["person_action"] == "处置"
     assert pbriefs[catch_id]["delivery"]["target_units"] == 3.0
 
 
@@ -993,6 +1004,33 @@ def test_fiscal_quantity_tracer_same_unit_done_and_gap(game):
     assert db.get_secret_order(oid2)["status"] == "failed"
 
 
+def test_region_quantity_ignores_same_origin_turn_with_mismatched_identity(game):
+    db, state, _ = game
+    name = _minister(db)
+    _set_axes(db, name, loyalty=90, identity=30)
+    oid = _issue(db, state, name, "清丈河南", "清丈", months=1, target=1, unit="亩")
+    did = int(db.get_dossier_for_secret_order(oid)["id"])
+    state.turn += 1
+    db.save_state(state)
+    origin = f"dossier:{did}"
+    rows = [
+        ("henan", "registered_land", "420", "421", 1),
+        ("shandong", "registered_land", "520", "521", 1),
+        ("henan", "hidden_land", "420", "421", 1),
+        ("henan", "registered_land", "421", "422", 1),
+    ]
+    db.conn.executemany(
+        "INSERT INTO region_logs "
+        "(turn, year, period, region_id, field, old_value, new_value, delta, reason, origin_ref) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'test', ?)",
+        [(state.turn, state.year, state.period, *row, origin) for row in rows],
+    )
+    apply_monthly_covert_actual_progress(
+        db, state, selections=[{"order_id": oid, "fidelity": "忠实"}], commit=True,
+    )
+    assert db.sum_dossier_actual_progress_units(did) == 1.0
+
+
 def test_catch_quantity_tracer_same_unit_done_and_mismatch_ignored(game):
     db, state, content = game
     name = _minister(db)
@@ -1008,6 +1046,11 @@ def test_catch_quantity_tracer_same_unit_done_and_mismatch_ignored(game):
         before_turn=state.turn, content=content,
     )
     _originate_work(db, state, content, did, delta=-9)
+    db.conn.execute(
+        "INSERT INTO person_logs "
+        "(turn, year, period, person_name, action, origin_ref) VALUES (?, ?, ?, ?, ?, ?)",
+        (state.turn, state.year, state.period, name, "任命", f"dossier:{did}"),
+    )
     _originate_catches(db, state, content, did, targets)
     apply_monthly_covert_actual_progress(
         db, state, selections=[{"order_id": oid, "fidelity": "忠实"}], commit=True,
