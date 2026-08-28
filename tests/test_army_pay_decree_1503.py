@@ -892,6 +892,7 @@ def test_manual_directive_admission_real_http_tracer_1591(
             json={"text": "准从太仓见银拨关宁军饷十五万两即发。", "notes": ""},
         )
         assert directive.status_code == 200, directive.text
+        directive_id = int(directive.json()["directive"]["id"])
         wait_pending_writes(game)
 
         game.db.stage_pending_action(
@@ -904,8 +905,19 @@ def test_manual_directive_admission_real_http_tracer_1591(
         assert issue.status_code == 400, issue.text
         detail = issue.json().get("detail")
         message = detail.get("message") if isinstance(detail, dict) else detail
-        assert "国库或内库" in str(message), message
-        assert "至少一条草案" not in str(message), message
+        # 同次 admission 拒因真源：ledger 按 turn+section+directive_id 定位唯一记录，
+        # HTTP message 与 ledger.reason 只做不透明值相等，不锁具体措辞（#13）。
+        rejection_rows = game.db.conn.execute(
+            "SELECT reason, category, source FROM rejection_reports "
+            "WHERE turn = ? AND section = 'directive_locality' "
+            "AND json_extract(item_json, '$.directive_id') = ?",
+            (turn2, directive_id),
+        ).fetchall()
+        assert len(rejection_rows) == 1, [dict(row) for row in rejection_rows]
+        rejection_row = rejection_rows[0]
+        assert rejection_row["category"] == "locality_fanout_failed", dict(rejection_row)
+        assert rejection_row["source"] == "player_decree", dict(rejection_row)
+        assert str(message) == rejection_row["reason"], (message, rejection_row["reason"])
         assert int(game.state.turn) == turn2, "拒案不得推进回合"
     finally:
         try:
