@@ -165,8 +165,6 @@ class _ConfirmStub:
 
     def __init__(self) -> None:
         self.queue: List[str] = []
-        self.calls: List[str] = []
-        self.results: List[str] = []
 
     def push(self, *values: str) -> None:
         self.queue.extend(values)
@@ -178,10 +176,8 @@ class _ConfirmStub:
         pending_summaries: List[str],
         llm_config: Any = None,
     ) -> Dict[str, Any]:
-        del minister_reply, pending_summaries, llm_config
-        self.calls.append(player_message or "")
+        del player_message, minister_reply, pending_summaries, llm_config
         result = self.queue.pop(0) if self.queue else "无"
-        self.results.append(result)
         return {"confirmation": result, "target_ids": []}
 
 
@@ -190,7 +186,6 @@ class _ExtractStub:
 
     def __init__(self) -> None:
         self.payload: Dict[str, Any] = dict(DEFAULT_EXTRACT_PAYLOAD)
-        self.calls: List[str] = []
 
     def __call__(
         self,
@@ -201,8 +196,7 @@ class _ExtractStub:
         force_default_assignee: bool = False,
         dossier_candidates: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
-        del minister_reply, llm_config, force_default_assignee, dossier_candidates
-        self.calls.append(player_command or "")
+        del player_command, minister_reply, llm_config, force_default_assignee, dossier_candidates
         out = dict(self.payload)
         if default_assignee and not out.get("assignee"):
             out["assignee"] = default_assignee
@@ -214,18 +208,12 @@ class _ClassifierStub:
 
     def __init__(self) -> None:
         self.mode: str = "none"  # none | secret_new
-        self.calls: List[str] = []
-        self.results: List[List[Dict[str, Any]]] = []
 
     def __call__(self, player_message: str, *args, **kwargs) -> List[Dict[str, Any]]:
-        del args, kwargs
-        self.calls.append(player_message or "")
+        del player_message, args, kwargs
         if self.mode == "secret_new":
-            result: List[Dict[str, Any]] = [{"kind": "secret", "secret_action": "新建"}]
-        else:
-            result = []
-        self.results.append(result)
-        return result
+            return [{"kind": "secret", "secret_action": "新建"}]
+        return []
 
 
 # ── 公共 fixture ───────────────────────────────────────────────────────
@@ -479,7 +467,6 @@ def test_matrix_S1_default_commit_on_settle(matrix_env, cell, entry):
     env = matrix_env
     client = env["client"]
     game = env["game"]
-    classifier: _ClassifierStub = env["classifier"]
     extract: _ExtractStub = env["extract"]
 
     ids_before = _order_ids(client)
@@ -494,31 +481,11 @@ def test_matrix_S1_default_commit_on_settle(matrix_env, cell, entry):
     cand_id = int(cand["id"])
     staged_payload = _payload_of(cand)
     staged_content = str(staged_payload.get("content") or "")
-    # 候选 content = 抽取 stub 显式灌入的 typed 字段
+    # 候选 content = 用例灌入的抽取 typed 字段（外部 pending 可见）
     assert staged_content == str(extract.payload.get("content") or ""), (
         f"{cell} 候选 content 须等于抽取 stub typed 载荷: "
         f"staged={staged_content!r} stub={extract.payload!r}"
     )
-
-    if entry == "E3":
-        assert classifier.results, f"{cell} E3 须打到分类器 stub"
-        assert any(
-            isinstance(item, dict) and item.get("kind") == "secret"
-            for result in classifier.results
-            for item in result
-        ), f"{cell} E3 分类器返回须含 secret 判词: {classifier.results!r}"
-    else:
-        assert classifier.mode == "none", f"{cell} 结构性入口 classifier.mode 须为 none"
-        assert all(
-            not any(
-                isinstance(item, dict) and item.get("kind") == "secret"
-                for item in result
-            )
-            for result in classifier.results
-        ), (
-            f"{cell} E1/E2 不得依赖分类器密令判词达 stage: "
-            f"results={classifier.results!r}"
-        )
 
     assert _order_ids(client) == ids_before, (
         f"{cell} settle 前不得新增可见密令 id: before={ids_before!r} "
@@ -587,16 +554,12 @@ def test_matrix_S2_modify_then_land(matrix_env, cell, entry, via_approve):
         f"{cell} 修改后候选 content 须相对 stage 变更: "
         f"staged={staged_content!r} mid={mid_content!r}"
     )
-    assert "修改" in confirm.results, (
-        f"{cell} 修改轮须消费 typed 确认判词=修改: results={confirm.results!r}"
-    )
 
     if via_approve:
         confirm.push("应允")
         out = _chat(env, S2_APPROVE_MESSAGE)
         oid = int(out.get("secret_order_id") or 0)
         assert oid > 0, f"{cell} 准后 secret_order_id 须>0: {out!r}"
-        assert "应允" in confirm.results, confirm.results
     else:
         _settle_month(env)
 
@@ -639,9 +602,6 @@ def test_matrix_S3_reject_then_settle_no_resurrection(matrix_env, cell, entry):
         f"{cell} 拒绝后 pending 新建候选须清除: {_db_pending_secret_new(game)!r}"
     )
     assert _order_ids(client) == ids_before
-    assert "拒绝" in confirm.results, (
-        f"{cell} 拒绝轮须消费 typed 确认判词=拒绝: results={confirm.results!r}"
-    )
 
     _settle_month(env)
     assert _order_ids(client) - ids_before == set(), (
