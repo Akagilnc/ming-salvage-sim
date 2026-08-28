@@ -2830,13 +2830,16 @@ def find_prior_speaker_still_present(db: Any, night_id: int, exclude_name: str =
     Returns None when there is no prior speaker or A has already left.
     """
     turns = list_chat_turns_for_night(db, int(night_id))
+    prior = ""
     for turn in reversed(turns):
-        prior = str(turn.get("minister_name") or "").strip()
-        if not prior or prior == exclude_name:
+        name = str(turn.get("minister_name") or "").strip()
+        if not name or name == exclude_name:
             continue
-        if prior in present_names_at(db, int(night_id)):
-            return prior
-    return None
+        prior = name
+        break
+    if not prior or prior not in present_names_at(db, int(night_id)):
+        return None
+    return prior
 
 
 def attach_chat_turn_to_night(
