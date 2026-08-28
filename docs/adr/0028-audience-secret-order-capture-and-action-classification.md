@@ -40,12 +40,4 @@ Status: Accepted（2026-07-02：随 #470 设计闸一并评审——本地 cmr �
 
 ## 修订（2026-08-28，owner A 裁决——#1503 显式拟旨载荷式 typed 成案）
 
-**问题**：显式「拟旨如下」此前只成 generic `special_decree`；拨饷/协饷类旨意无结构化 amount/account/purpose/target，颁布缝无法按旨扣库销欠（QA 国库连走 −12、关宁欠饷不销）。
-
-**裁决（选 A）**：
-
-1. **仅对显式、载荷式的拟旨**，在成案/确认边界调用**一次**既有动作意图 classifier，产出 typed payload（`grant_allocation` 等）。
-2. **同步修订**本 ADR 决定 1/2 与 #344「拟旨前缀零分类调用」口径：拟旨前缀允许这一次 typed 分类；**密令前缀零其它分类器**口径不动；后置串行 extractor（确认/拟旨/任免/密令会话）在前缀路上仍禁跑。
-3. **落账复用既有拨款分配路径**（`stage_grant_allocation_candidate` → 案卷 payload → 颁布缝一次消费）；**不**新增文本 parser、第二写者或在途状态机。
-4. 非载荷拟旨（classifier 未给出 typed grant 候选）仍走 `stage_explicit_directive` generic 路径，回话原文为草案正文。
-5. 字段缺失 fail-loud，不猜散文；拒颁/留中零落账；ready 重放不二扣——均沿 #1503 既有颁布单写者契约。
+显式拟旨此前无 typed payload，拨饷不落账。owner A 允许成案边界并发一次既有 typed classifier、复用既有 grant/dossier 单写者，非载荷仍 generic；该修订 supersede #344 的拟旨零分类口径，密令前缀与后置 extractor 不变。详设与验收只引用 #1503。
