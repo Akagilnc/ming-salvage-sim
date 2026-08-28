@@ -130,8 +130,12 @@ def test_missing_dossier_fields_stay_pending_then_full_retry_decides(
 
     monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _phase2)
 
-    # ① 缺字段（与 QA m02-first-issue-pihong-choices 同形）
-    incomplete = {"label": "强颁", "hint": "", "note": "准。先济关宁边饷。"}
+    # ① 缺字段（与 QA m02-first-issue-pihong-choices 同形；#1589 起须显式携 key）
+    d_key = db.list_rescript_desk(int(state.turn))[0]["decision_key"]
+    incomplete = {
+        "decision_key": d_key,
+        "label": "强颁", "hint": "", "note": "准。先济关宁边饷。",
+    }
     r1 = asyncio.run(_post_resolve([incomplete]))
     assert r1.status_code == 200, r1.text
     assert "event: error" in r1.text, r1.text
@@ -152,6 +156,7 @@ def test_missing_dossier_fields_stay_pending_then_full_retry_decides(
 
     # ② 带齐字段重交 → 成功
     full = {
+        "decision_key": d_key,
         "label": "强颁",
         "hint": "以中旨强行颁出",
         "note": "准。先济关宁边饷。",
@@ -312,7 +317,10 @@ def test_due_commitment_shaped_submit_does_not_poison_or_deadlock(
 
     monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _phase2)
 
-    choice = {"label": "准其销号", "hint": "事已办结", "note": "准销。"}
+    choice = {
+        "decision_key": db.list_rescript_desk(int(state.turn))[0]["decision_key"],
+        "label": "准其销号", "hint": "事已办结", "note": "准销。",
+    }
     r = asyncio.run(_post_resolve([choice]))
     assert r.status_code == 200, r.text
     assert "event: error" not in r.text, r.text
@@ -343,6 +351,7 @@ def test_lying_label_rebuilt_from_server_option(web_game, monkeypatch):
     monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _phase2)
 
     lying = {
+        "decision_key": db.list_rescript_desk(int(state.turn))[0]["decision_key"],
         "label": "收回",  # 撒谎：能力对是强颁
         "hint": "收回此道准旨",
         "note": "准。先济关宁边饷。",
@@ -460,6 +469,7 @@ def test_mixed_legal_illegal_options_illegal_choice_stays_pending(
 
     # ① 选非法残对（负 id）→ error + pending
     illegal = {
+        "decision_key": db.list_rescript_desk(int(state.turn))[0]["decision_key"],
         "label": "伪收回",
         "hint": "残对负 id",
         "dossier_id": -9,
@@ -479,6 +489,7 @@ def test_mixed_legal_illegal_options_illegal_choice_stays_pending(
 
     # ② 选未知动作枚举 → 同样 fail-closed
     unknown = {
+        "decision_key": db.list_rescript_desk(int(state.turn))[0]["decision_key"],
         "label": "伪留中",
         "hint": "未知动作",
         "dossier_id": dossier_id,
@@ -495,6 +506,7 @@ def test_mixed_legal_illegal_options_illegal_choice_stays_pending(
 
     # ③ 同批合法 option 仍可过
     legal = {
+        "decision_key": db.list_rescript_desk(int(state.turn))[0]["decision_key"],
         "label": "强颁",
         "hint": "以中旨强行颁出",
         "note": "准。",
@@ -558,8 +570,11 @@ def test_ordinary_event_with_hallucinated_capability_submits(
 
     monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _phase2)
 
-    # 客户端按普通决策提交（无能力字段）——不得 SSE error / 批红卡死
-    choice = {"label": "准其销号", "hint": "事已办结", "note": "准销。"}
+    # 客户端按普通决策提交（无能力字段；#1589 起显式携 key）——不得 SSE error / 批红卡死
+    choice = {
+        "decision_key": db.list_rescript_desk(int(state.turn))[0]["decision_key"],
+        "label": "准其销号", "hint": "事已办结", "note": "准销。",
+    }
     r = asyncio.run(_post_resolve([choice]))
     assert r.status_code == 200, r.text
     assert "event: error" not in r.text, r.text
@@ -2362,6 +2377,217 @@ def test_657_mixed_batch_follow_plus_decision_and_no_context_copy(web_game, monk
         _ = choice_fp
     finally:
         probe.close()
+
+
+def test_1589_mixed_desk_keyless_choice_rejected_batch_zero_writes(web_game):
+    """#1589：mixed desk 单条无键 choice 修前被 _normalize 按 decision idx 位置猜绑
+    误受理；修后整批拒——所有行仍 pending、choice 未写、案卷零写、相位/turn 不动。"""
+    from ming_sim.content import GameContent
+    from ming_sim.db import GameDB
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+
+    db_path = _657_db_path_of(web_game)
+    opt = normalize_rescript_layer_a_option({
+        "label": "发帑赈济", "hint": "所安者饥民",
+        "action_type": "assignment", "assignee_name": "",
+        "target_kind": "region", "target_id": "shaanxi",
+        "locality_scope": "single", "region_id": "shaanxi",
+        "transaction_category": "督赈", "deadline_months": 2,
+    })
+    _657_plant_awaiting_web(
+        web_game,
+        drafts=[{
+            "title": "混批急务", "context": "c",
+            "options": [opt, {"label": "备", "hint": "h", "draft_capability": "x"}],
+            "actor_name": "杨嗣昌", "actor_office": "兵部尚书", "actor_faction": "东林",
+        }],
+        decisions=[{
+            "title": "打回件", "context": "科臣封驳",
+            "options": [{"label": "打回", "hint": "驳"}, {"label": "准", "hint": ""}],
+            "event_id": "",
+        }],
+    )
+    turn_before = int(web_game.state.turn)
+    dossiers_before = len(web_game.db.list_decree_dossiers())
+    web_game.session.close()
+
+    # 无键单条：label 恰是 decision 行合法选项——修前 idx=0 猜绑到 decision:{turn}:0 误受理
+    body = [{"label": "打回", "hint": "驳"}]
+    r = _657_subprocess_resolve(db_path, body)
+    assert r.get("error") is True, r
+    assert r.get("done") is not True, r
+
+    probe = GameDB(db_path, GameContent.load())
+    try:
+        state = probe.load_state()
+        assert int(state.turn) == turn_before
+        assert str(state.turn_phase) == TurnPhase.AWAITING_DECISION.value
+        rows = probe.list_rescript_desk(turn_before)
+        assert len(rows) == 2, rows
+        assert all(str(row.get("status")) == "pending" for row in rows), rows
+        assert all(not row.get("choice") for row in rows), rows
+        assert len(probe.list_decree_dossiers()) == dossiers_before
+        ctx = probe.get_resolve_context(turn_before)
+        assert ctx is None or ctx.get("extracted") is None
+    finally:
+        probe.close()
+
+
+def test_1589_pure_decision_keyless_rejected_then_keyed_same_choice_passes(web_game):
+    """#1589：纯 decision 无急务时，无键合法 choice 修前经 submit_decisions 位置匹配受理；
+    修后整批拒——decision 仍 pending、choice 未写、事件/案卷零写；显式 key 的同一选择正常通过。"""
+    from ming_sim.content import GameContent
+    from ming_sim.db import GameDB
+
+    db_path = _657_db_path_of(web_game)
+    _657_plant_awaiting_web(
+        web_game,
+        decisions=[{
+            "title": "科参驳还", "context": "科臣封驳",
+            "options": [{"label": "打回", "hint": "驳"}, {"label": "准", "hint": ""}],
+            "event_id": "",
+        }],
+    )
+    desk = web_game.db.list_rescript_desk(int(web_game.state.turn))
+    d_key = str(desk[0]["decision_key"])
+    turn_before = int(web_game.state.turn)
+    dossiers_before = len(web_game.db.list_decree_dossiers())
+    web_game.session.close()
+    # 子进程首次 WebGame(fresh=False) 初始化会触发 legacy_event_pool 迁移
+    # （INSERT OR IGNORE 写非 hitl 行，与本批亲裁无关）；在 baseline 前于同一 DB
+    # 先走一遍等价初始化并关闭，把该噪声吸收进 baseline，而非靠 source 子集
+    # 过滤规避——随后全表 COUNT(*) 前后必须真正相等。
+    baseline_game = web_app.WebGame(fresh=False)
+    events_before = baseline_game.db.conn.execute(
+        "SELECT COUNT(*) AS c FROM event_triggers"
+    ).fetchone()["c"]
+    baseline_game.session.close()
+    # 1) 同一选择缺 decision_key → 整批拒、零写（单条也无例外）
+    keyless = [{"label": "打回", "hint": "驳"}]
+    r1 = _657_subprocess_resolve(db_path, keyless)
+    assert r1.get("error") is True, r1
+    assert r1.get("done") is not True, r1
+    probe = GameDB(db_path, GameContent.load())
+    try:
+        assert int(probe.load_state().turn) == turn_before
+        decs = probe.list_pending_decisions(turn_before)
+        assert decs and all(str(d.get("status")) == "pending" for d in decs), decs
+        assert all(not d.get("choice") for d in decs), decs
+        assert len(probe.list_decree_dossiers()) == dossiers_before
+        # 本批零事件写：整批拒后 event_triggers 全表行数相对 events_before 零增量
+        events_after = probe.conn.execute(
+            "SELECT COUNT(*) AS c FROM event_triggers"
+        ).fetchone()["c"]
+        assert events_after == events_before, (events_before, events_after)
+    finally:
+        probe.close()
+
+    # 2) 显式 key 的同一选择 → 正常通过
+    keyed = [{"decision_key": d_key, "label": "打回", "hint": "驳", "action": "decision"}]
+    r2 = _657_subprocess_resolve(db_path, keyed)
+    assert r2.get("done") is True, r2
+    probe = GameDB(db_path, GameContent.load())
+    try:
+        decs = probe.list_pending_decisions(turn_before)
+        assert not decs or all(d.get("status") == "decided" for d in decs), decs
+    finally:
+        probe.close()
+
+
+def test_1589_ready_replay_rejects_bad_keys(web_game, monkeypatch):
+    """#1589 fix5：ready-replay 短路前仍过 validate_all 同一权威请求索引校验——
+    缺键/重复键/desk 外未知键整批拒，冻结 extracted/pending_decisions 领域状态不变；
+    只校 envelope/key membership，不比较/采纳重交 choice 内容（§B.3 语义不变）。"""
+    db, state = web_game.db, web_game.state
+    _657_plant_awaiting_web(web_game, decisions=[{
+        "title": "辽东战和", "context": "c",
+        "options": [{"label": "战", "hint": ""}, {"label": "和", "hint": ""}],
+        "event_id": "",
+    }])
+    turn = int(state.turn)
+    d_key = str(db.list_rescript_desk(turn)[0]["decision_key"])
+    # 手工把 context 升级为 ready（extracted 非空）：模拟「phase2 已抽取、settle 曾 abort」。
+    db.save_resolve_context(
+        turn, "诏", "邸报", {"candidate_events": []},
+        secret_orders=[], relevant_memories=[],
+        extracted={"metric_delta": {}},
+    )
+    ctx = db.get_resolve_context(turn)
+    assert ctx is not None and ctx.get("extracted") is not None
+
+    phase2_calls: list[int] = []
+
+    def _phase2(_state, _db, *_a, **_k):
+        phase2_calls.append(1)
+        return "不应到此"
+
+    monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _phase2)
+
+    bad_batches = (
+        [{"label": "战"}],  # 缺键
+        [
+            {"decision_key": d_key, "label": "战"},
+            {"decision_key": d_key, "label": "和"},
+        ],  # 重复键
+        [{"decision_key": "decision:9999:0", "label": "战"}],  # desk 外未知键
+    )
+    for bad in bad_batches:
+        state.turn_phase = TurnPhase.AWAITING_DECISION.value
+        db.save_state(state)
+        r = asyncio.run(_post_resolve(bad))
+        assert r.status_code == 200, r.text
+        assert "event: error" in r.text, r.text
+        assert "event: done" not in r.text, r.text
+
+    assert phase2_calls == [], "缺键/重复键/未知键均须整批拒，phase2 不得被调用"
+    ctx_after = db.get_resolve_context(turn)
+    assert ctx_after is not None and ctx_after.get("extracted") is not None, (
+        "整批拒不得清空/覆盖冻结的 ready extracted"
+    )
+    row = db.list_pending_decisions(turn)[0]
+    assert row["status"] == "pending"
+    assert row["choice"] is None
+
+    # 有效 key + 无关畸形字段不得挡 extracted_ready 的 phase2 重放
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
+    r_ok = asyncio.run(_post_resolve([
+        {"decision_key": d_key, "label": "战", "dossier_id": "stale"},
+    ]))
+    assert r_ok.status_code == 200, r_ok.text
+    assert "event: error" not in r_ok.text, r_ok.text
+    assert "event: done" in r_ok.text, r_ok.text
+    assert phase2_calls == [1], "有效 key 携无关字段须进入冻结 extracted 的 phase2 重放"
+
+
+def test_1589_empty_desk_rejects_nonempty_keyless_choices(web_game, monkeypatch):
+    """#1589 fix5：desk 空（无 pending 急务/decision）时非空无键载荷同样整批拒——
+    唯一合法续跑是真正空 choices（#1322）；不保留空 desk 例外。"""
+    db, state = web_game.db, web_game.state
+    _657_plant_awaiting_web(web_game)
+    turn = int(state.turn)
+    assert db.list_rescript_desk(turn) == []
+
+    phase2_calls: list[int] = []
+
+    def _phase2(_state, _db, *_a, **_k):
+        phase2_calls.append(1)
+        return "邸报"
+
+    monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _phase2)
+
+    r1 = asyncio.run(_post_resolve([{"label": "留", "note": "无键"}]))
+    assert r1.status_code == 200, r1.text
+    assert "event: error" in r1.text, r1.text
+    assert "event: done" not in r1.text, r1.text
+    assert phase2_calls == [], "空 desk + 非空无键载荷须整批拒，不得进 phase2"
+
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
+    r2 = asyncio.run(_post_resolve([]))
+    assert r2.status_code == 200, r2.text
+    assert "event: done" in r2.text, r2.text
+    assert phase2_calls == [1], "真正空 choices 续跑仍合法，走 submit_decisions"
 
 
 def test_657_s5_http_generator_failure_blocks_phase2_and_same_body_retry(

@@ -55,11 +55,6 @@ from ming_sim.llm_model import create_agno_db, extract_agent_text
 from ming_sim.models import Character, CourtContext, GameState, LLMConfig, is_vassal_prince, is_weishi
 from ming_sim.paths import user_data_path
 from ming_sim.registry import MinisterRegistry, bind_content as _bind_registry
-from ming_sim.settlement_payload import (
-    bind_decisions_to_candidate_events,
-    decision_has_rescript_capability,
-    parse_rescript_capability_pair,
-)
 from ming_sim.skills import bind_content as _bind_skills
 
 
@@ -3253,32 +3248,6 @@ class GameSession:
         ):
             raise ValueError("月末亲裁期新增拟旨须先核定，不能并入已冻结的结算")
 
-    def _normalize_rescript_request_choices(
-        self,
-        choices: List[Dict[str, object]],
-        desk: List[Dict[str, object]],
-    ) -> List[Dict[str, object]]:
-        """把 idx 序旧载荷或 decision_key 新载荷统一成带 decision_key 的 choice 列表。"""
-        if not choices:
-            return []
-        if any(isinstance(c, dict) and c.get("decision_key") for c in choices):
-            return [dict(c) for c in choices if isinstance(c, dict)]
-        # 旧形：按 desk 中 decision 行 idx 对齐；急务缺省 hold
-        by_idx = {
-            int(r["idx"]): r for r in desk if str(r.get("kind")) == "decision"
-        }
-        out: List[Dict[str, object]] = []
-        for idx, choice in enumerate(choices):
-            if not isinstance(choice, dict):
-                continue
-            row = by_idx.get(idx)
-            if row is None:
-                continue
-            item = dict(choice)
-            item["decision_key"] = row["decision_key"]
-            out.append(item)
-        return out
-
     def prepare_rescript_prewrite(
         self, choices: List[Dict[str, object]],
     ) -> Dict[str, object]:
@@ -3295,7 +3264,22 @@ class GameSession:
 
         self._assert_awaiting_decision_submit()
         desk = list(self.db.list_rescript_desk(int(self.state.turn)))
-        req = self._normalize_rescript_request_choices(choices, desk)
+        ctx = self.db.get_resolve_context(self.state.turn)
+        # #389：event_id 缺失/回显越权（越出本回合候选快照）时以候选快照重绑——
+        # 迁自旧 submit_decisions 的绑定步（与 choices[idx] 位置写协议无关，非
+        # 猜绑，唯一权威仍是 bind_decisions_to_candidate_events）；scope 与旧
+        # list_pending_decisions 同款只收 kind='decision'，rescript_draft 行不动。
+        if ctx is not None:
+            from ming_sim.settlement_payload import bind_decisions_to_candidate_events
+            decision_rows = [r for r in desk if str(r.get("kind") or "") == "decision"]
+            other_rows = [r for r in desk if str(r.get("kind") or "") != "decision"]
+            desk = other_rows + bind_decisions_to_candidate_events(
+                decision_rows, ctx.get("simulator_payload"),
+            )
+        # #1589：位置补键/猜绑协议已删——choice 须显式携带 decision_key；
+        # 缺键/重复键/desk 外键/非 object 项由 validate_request_keys（内存）
+        # 在领域写前整批拒，此处不再静默丢非 object 项。
+        req = list(choices)
         # C1.1：① 已落 decided、③ phase2 未写 extracted 的崩溃重入——
         # list_rescript_desk 只 pending，须把请求键对应 decided 行并入 desk
         # 供 validate already_applied；ready_replay（extracted 非空）仍短路。
@@ -3309,9 +3293,12 @@ class GameSession:
         ]
         if missing_keys:
             desk.extend(self.db.get_rescript_desk_rows_by_keys(missing_keys))
-        ctx = self.db.get_resolve_context(self.state.turn)
         ready_replay = ctx is not None and ctx.get("extracted") is not None
         if ready_replay:
+            # #1589 Spec-1：ready-replay 短路前仍须过 validate_all 同一权威请求索引
+            # 校验（缺键/重复键/desk 外键整批拒）；只校 envelope/key membership，
+            # 不比较/采纳重交 choice 内容——冻结 extracted 语义不变（§B.3）。
+            ra.validate_request_keys(desk, req)
             return {
                 "ready_replay": True,
                 "batch": None,
@@ -3737,37 +3724,37 @@ class GameSession:
         on_event=None,
         cheat_directive: str = "",
     ) -> str:
-        """#657 HITL 公共入口：急务/keyed → resolve_rescript_decisions；纯 decision → gate 内 submit_decisions。
+        """#657 HITL 公共入口：desk 非空或 choices 非空 → resolve_rescript_decisions；
+        desk 与 choices 均空 → gate 内 submit_decisions。
 
-        空 choices 且 desk 无 pending 急务时：若仍有未消费 durable decided summon，
-        交回同一 resolve_rescript_decisions（C1 already_applied → scaffold/registry），
-        不得直 submit_decisions 越过召见。
+        #1589：choice 缺 decision_key / 非 object 的位置序载荷不再被受理——
+        desk 非空或原始 choices 非空一律经 resolve_rescript_decisions →
+        validate_request_keys（内存，唯一 envelope/key membership 权威）在
+        领域写前整批拒；不在此处平行探测 keyed 或另拒空-desk 非空批。
+        仅 desk 空且原始 choices 真空时（含 #1322 空 choices 续跑）仍走
+        submit_decisions；desk 无 pending 急务但仍有未消费 durable decided
+        summon 时，交回同一 resolve_rescript_decisions（C1 already_applied →
+        scaffold/registry），不得直 submit_decisions 越过召见。
         """
         if write_gate is None:
             raise ValueError("submit_hitl_choices 须注入既有 write_gate")
-        keyed = any(
-            isinstance(c, dict) and str(c.get("decision_key") or "").strip()
-            for c in (choices or [])
-        )
         desk = self.db.list_rescript_desk(int(self.state.turn))
-        has_urgent = any(str(r.get("kind")) == "rescript_draft" for r in (desk or []))
-        if has_urgent or keyed:
+        if desk or choices:
             return self.resolve_rescript_decisions(
                 choices,
                 write_gate=write_gate,
                 on_event=on_event,
                 cheat_directive=cheat_directive,
             )
-        # 无 key / 无 pending 急务：未消费 durable summon 仍走同一 resolver
-        if not keyed:
-            recovery = self._unconsumed_decided_summon_choices()
-            if recovery:
-                return self.resolve_rescript_decisions(
-                    recovery,
-                    write_gate=write_gate,
-                    on_event=on_event,
-                    cheat_directive=cheat_directive,
-                )
+        # 空 desk 且无 key：未消费 durable summon 仍走同一 resolver
+        recovery = self._unconsumed_decided_summon_choices()
+        if recovery:
+            return self.resolve_rescript_decisions(
+                recovery,
+                write_gate=write_gate,
+                on_event=on_event,
+                cheat_directive=cheat_directive,
+            )
         with write_gate:
             return self.submit_decisions(
                 choices, on_event=on_event, cheat_directive=cheat_directive,
@@ -3776,82 +3763,18 @@ class GameSession:
     def submit_decisions(
         self, choices: List[Dict[str, object]], on_event=None, cheat_directive: str = ""
     ) -> str:
-        """皇帝亲裁完决策点，续跑 phase2 结算。
+        """空 desk 续跑：复算既有 decided 行 / 重放 ready-replay，零新增领域写。
 
-        #657：本方法**仅**纯 decision/#1490 路径（不内部 join LLM）。
-        急务/keyed 批必须走 resolve_rescript_decisions / submit_hitl_choices
-        （调用方注入既有 write_gate）。
+        #657/#1589：本方法仅接受空 choices——旧 choices[idx] 位置补键/猜绑写协议
+        已删；已裁批（含纯 decision/#1490）一律须经 resolve_rescript_decisions /
+        submit_hitl_choices（keyed，调用方注入既有 write_gate），desk 空亦无例外。
         """
         self._assert_awaiting_decision_submit()
-
-        # ── #1490 / 纯 decision 路径 ──────────────────────────────────
-        stored = self.db.list_pending_decisions(self.state.turn)
-        ctx_for_event_binding = self.db.get_resolve_context(self.state.turn)
-        ready_replay = (
-            ctx_for_event_binding is not None
-            and ctx_for_event_binding.get("extracted") is not None
-        )
-        if ctx_for_event_binding is not None:
-            stored = bind_decisions_to_candidate_events(
-                stored, ctx_for_event_binding.get("simulator_payload")
+        if choices:
+            raise ValueError(
+                "submit_decisions 仅续跑空 choices；已裁批须经 submit_hitl_choices/"
+                "resolve_rescript_decisions 显式携 decision_key"
             )
-        if not ready_replay:
-            import json as _json
-            rebuilt_by_idx: Dict[int, Dict[str, object]] = {}
-            for d in stored:
-                if str(d.get("status") or "") == "decided":
-                    continue
-                if not str(d.get("event_id") or "").startswith("dossier:"):
-                    continue
-                if not decision_has_rescript_capability(d):
-                    continue
-                options = [
-                    option for option in (d.get("options") or [])
-                    if isinstance(option, dict)
-                ]
-                idx = int(d["idx"])
-                choice = choices[idx] if idx < len(choices) else None
-                option_by_pair: Dict[tuple, Dict[str, object]] = {}
-                for option in options:
-                    pair = parse_rescript_capability_pair(option)
-                    if pair is not None:
-                        option_by_pair[pair] = option
-                allowed = set(option_by_pair)
-                selected = (
-                    parse_rescript_capability_pair(choice)
-                    if isinstance(choice, dict) else None
-                )
-                if selected is None or selected not in allowed:
-                    raise ValueError("批红选择必须是本案提供的强颁、收回或留中选项")
-                matched = option_by_pair[selected]
-                rebuilt: Dict[str, object] = {
-                    "label": matched.get("label"),
-                    "hint": matched.get("hint") or "",
-                    "dossier_id": selected[0],
-                    "dossier_decision": selected[1],
-                }
-                if isinstance(choice, dict) and choice.get("note") is not None:
-                    rebuilt["note"] = choice.get("note")
-                rebuilt_by_idx[idx] = rebuilt
-            for d in stored:
-                if str(d.get("status") or "") == "decided":
-                    continue
-                idx = int(d["idx"])
-                if idx in rebuilt_by_idx:
-                    choice = rebuilt_by_idx[idx]
-                else:
-                    choice = choices[idx] if idx < len(choices) else None
-                    if not isinstance(choice, dict):
-                        choice = {}
-                self.db.conn.execute(
-                    "UPDATE pending_decisions SET choice_json=?, status='decided' WHERE turn=? AND idx=?",
-                    (_json.dumps(choice, ensure_ascii=False), self.state.turn, idx),
-                )
-                event_id = str(d.get("event_id") or "").strip()
-                if event_id and not event_id.startswith("dossier:"):
-                    self.db.record_event_decision_choice(
-                        self.state, event_id, choice, commit=False)
-            self.db.conn.commit()
         if not (self.last_decree or "").strip():
             ctx0 = self.db.get_resolve_context(self.state.turn)
             if ctx0 is not None:
