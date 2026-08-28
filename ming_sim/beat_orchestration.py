@@ -259,36 +259,6 @@ def assemble_beat_inputs(
     )
 
 
-def assemble_handoff_beat_inputs(
-    db: Any,
-    state: Any,
-    *,
-    night: Dict[str, Any],
-    prior_speaker: str,
-    new_speaker: str,
-    night_id: int,
-    summon_method: str = "",
-    knowledge_provider: Optional[KnowledgeProvider] = None,
-    before_entry_id: int = 0,
-) -> BeatInputs:
-    """组装交接（handoff）beat 的 in-world 输入。
-
-    当已开夜中前一位奏对者 A 仍在场时，新召入 B 须补一笔「让出当前奏对位」的
-    持久可撤回叙事旁白（TAG_STAY_ATTEND，不写 TAG_EXIT、不改 presence）。
-    handoff body 由 A 视角生成（A 交出殿上讲述权），person_name=A。
-    """
-    return assemble_beat_inputs(
-        db, state, beat_kind=BEAT_HANDOFF,
-        time_of_day=str(night.get("time_of_day") or ""),
-        location=str(night.get("location") or ""),
-        night_id=int(night.get("id") or 0) or night_id,
-        person_name=prior_speaker,
-        summon_method=str(summon_method or ""),
-        knowledge_provider=knowledge_provider,
-        before_entry_id=before_entry_id,
-    )
-
-
 def run_beat_generator(beat_generator: Optional[BeatGenerator], inputs: BeatInputs) -> str:
     """调内容生成器——只递 BeatInputs 一件，绝不附加长度/结构等形式约束参数。
 
@@ -468,39 +438,6 @@ def generate_enter_beat_body(
         summon_method=summon_method,
         knowledge_provider=knowledge_provider,
         extra_public_layer=extra_public_layer,
-    )
-    return run_beat_generator(beat_generator, inputs)
-
-
-def generate_handoff_beat_body(
-    db: Any,
-    state: Any,
-    *,
-    night: Dict[str, Any],
-    prior_speaker: str,
-    new_speaker: str,
-    night_id: int,
-    summon_method: str = "",
-    beat_generator: Optional[BeatGenerator] = None,
-    knowledge_provider: Optional[KnowledgeProvider] = None,
-    before_entry_id: int = 0,
-) -> str:
-    """交接（handoff）beat 正文：A 在场时 B 宣入，A 让出奏对位。
-
-    不写 TAG_EXIT、不改 presence——A 仍在殿。body 由 A 视角生成。
-    无生成器返空（调用方沿用确定性兜底或留空）。
-    """
-    if beat_generator is None:
-        return ""
-    inputs = assemble_beat_inputs(
-        db, state, beat_kind=BEAT_HANDOFF,
-        time_of_day=str(night.get("time_of_day") or ""),
-        location=str(night.get("location") or ""),
-        night_id=int(night.get("id") or 0) or night_id,
-        person_name=prior_speaker,
-        summon_method=str(summon_method or ""),
-        knowledge_provider=knowledge_provider,
-        before_entry_id=before_entry_id,
     )
     return run_beat_generator(beat_generator, inputs)
 
