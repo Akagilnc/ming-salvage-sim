@@ -23,7 +23,7 @@ import pytest
 import ming_sim.decree as decree_mod
 import ming_sim.issues as I
 from ming_sim.decree import persist_resolve_context, settle_with_delta
-from tests.conftest import covering_monthly_extract
+from tests.conftest import covering_monthly_extract, with_monthly_reports
 
 
 def _ledger_count(db, turn: int) -> int:
@@ -126,7 +126,11 @@ def _drive_fallback(db, state, content, monkeypatch):
     monkeypatch.setattr(decree_mod, "create_score_extractor_module_agent", lambda *a, **k: None)
     monkeypatch.setattr(
         decree_mod, "extract_scores_by_modules_with_agno",
-        lambda *a, **k: ({}, "fallback-extractor-output", "fallback-extractor-input"),
+        lambda *a, **k: (
+            with_monthly_reports(db, {}),
+            "fallback-extractor-output",
+            "fallback-extractor-input",
+        ),
     )
     monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
     monkeypatch.setattr(decree_mod, "record_chapter_memory", lambda *a, **k: None)
@@ -512,6 +516,11 @@ def test_recovery_path_commits_pending_actions(game, monkeypatch):
     db.stage_pending_action(
         state.turn, kind="secret_order", action="更新", minister_name=name, target_id=oid,
         payload={"new_title": "恢复期标题", "new_content": "x", "deadline_months": 0})
+    dm.persist_resolve_context(
+        db, turn, with_monthly_reports(db, {"metric_delta": {"国库": 5}}),
+        decree_text="d", narrative="n",
+        simulator_payload={}, secret_orders=[], relevant_memories=[],
+    )
 
     sess = _recovery_session(db, state, content, monkeypatch)
     result = sess.resolve_turn()
@@ -1160,8 +1169,12 @@ def test_hitl_reextract_branch_commits_pending(game, monkeypatch, tmp_path):
     monkeypatch.setattr(dm, "create_json_sanitizer_agent", lambda *a, **k: None)
     monkeypatch.setattr(dm, "create_score_extractor_module_agent", lambda *a, **k: None)
     monkeypatch.setattr(dm, "build_extractor_shared_context", lambda *a, **k: "ctx")
-    monkeypatch.setattr(dm, "extract_scores_by_modules_with_agno",
-                        lambda *a, **k: ({"metric_delta": {"民心": -1}}, "o", "i"))
+    monkeypatch.setattr(
+        dm, "extract_scores_by_modules_with_agno",
+        lambda *a, **k: (
+            with_monthly_reports(db, {"metric_delta": {"民心": -1}}), "o", "i",
+        ),
+    )
 
     sess = _recovery_session(db, state, content, monkeypatch)
     sess.submit_decisions([{"label": "战"}])

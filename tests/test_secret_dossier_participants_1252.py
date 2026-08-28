@@ -7,6 +7,8 @@ import types
 
 import pytest
 
+from tests.conftest import with_monthly_reports
+
 
 def _actor(db):
     return str(db.conn.execute(
@@ -137,7 +139,7 @@ def test_s2_secret_field_appends_via_real_settle_and_recovery_replays(game, monk
         }],
     }
     driver.run_prepare(db, state, content)
-    driver.run_settle(db, state, content, delta)
+    driver.run_settle(db, state, content, with_monthly_reports(db, delta))
 
     roster = db.get_decree_dossier(dossier_id)["participant_roster"]
     assert any(
@@ -168,7 +170,7 @@ def test_s2_secret_field_appends_via_real_settle_and_recovery_replays(game, monk
         state.turn, "", "",
         {"decree_dossiers": []},
         secret_orders=grouped,
-        extracted=delta,
+        extracted=with_monthly_reports(db, delta),
     )
     ctx = db.get_resolve_context(state.turn)
     monkeypatch.setattr(decree, "create_chapter_memory_agent", lambda *a, **k: None)

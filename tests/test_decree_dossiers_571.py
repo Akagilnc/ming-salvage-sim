@@ -380,7 +380,10 @@ def test_driver_settle_freezes_dossier_roster_authority_at_input(game, monkeypat
         {"dossier_id": dossier_id, "character_id": worker, "tier": "协办", "delegator_id": lead}
         for dossier_id in (visible_id, closed_id, secret_id)
     ]
-    driver.run_settle(db, state, content, {"dossier_participants": additions})
+    driver.run_settle(
+        db, state, content,
+        covering_monthly_extract(None, db, state)[0] | {"dossier_participants": additions},
+    )
 
     assert len(db.get_decree_dossier(visible_id)["participant_roster"]) == 2
     assert len(db.get_decree_dossier(closed_id)["participant_roster"]) == 1
