@@ -42,6 +42,7 @@ _EXPECTED_MIGRATED_KINDS = frozenset({
 })
 from ming_sim.session import GameSession
 from web_app import WebGame
+from tests.dossier_test_helpers import create_test_secret_order
 
 
 # ── 单一挂点 ──────────────────────────────────────────────────────────
@@ -456,7 +457,7 @@ def test_scripted_ask_vs_order_staging_matrix(
     )
     oid = 0
     if seed_existing:
-        oid = db.create_secret_order(
+        oid = create_test_secret_order(db, 
             state, minister.name, "查其家产", "密查家产", [],
         )
         for cand in scripted:

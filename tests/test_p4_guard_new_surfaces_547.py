@@ -21,6 +21,7 @@ from ming_sim.beat_orchestration import (
 )
 from ming_sim.decree import _rescript_decisions
 from ming_sim.models import TurnPhase
+from tests.dossier_test_helpers import create_test_secret_order
 from tests.conftest import (
     CHARACTER_AXIS_SENTINEL,
     active_ming_character,
@@ -408,7 +409,7 @@ def test_family_dossier_brief_and_progress_keep_system_words_out(game):
     db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
 
     # monthly_progress 真源＝长差密令（护行/稽核 + deadline≥2），与 #566/#569 同缝。
-    order_id = db.create_secret_order(
+    order_id = create_test_secret_order(db, 
         state, minister, f"护行{facts['army_name']}饷",
         f"逐月核兵{facts['manpower']}不得外泄", ["护行"], deadline_months=4,
     )

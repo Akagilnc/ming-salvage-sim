@@ -3,6 +3,7 @@
 import json
 
 import pytest
+from tests.dossier_test_helpers import create_test_secret_order
 
 
 def _actor(db):
@@ -12,7 +13,7 @@ def _actor(db):
 
 
 def _order(db, state, title="护行辽饷", tags=None, deadline=4):
-    order_id = db.create_secret_order(
+    order_id = create_test_secret_order(db, 
         state, _actor(db), title, "逐月办理", tags or ["护行"],
         deadline_months=deadline,
         covert_task={

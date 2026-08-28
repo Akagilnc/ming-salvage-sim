@@ -33,7 +33,7 @@ from ming_sim.db import GameDB
 from ming_sim.decree import pre_settle, reload_state_from_db, settle_with_delta
 from ming_sim.registry import MinisterRegistry
 from ming_sim.session import GameSession, TurnPhase, _pending_action_failure_payload
-from tests.dossier_test_helpers import LIAO_PAY_COVERT_TASK, promulgate_proposed_appointments
+from tests.dossier_test_helpers import LIAO_PAY_COVERT_TASK, create_test_secret_order, promulgate_proposed_appointments
 from tests.conftest import covering_monthly_extract
 
 
@@ -116,7 +116,7 @@ def _drive_intent(db, state, content, monkeypatch, *, canned: dict, player_messa
     ch = content.characters[name] if name in content.characters else None
     if ch is None or getattr(ch, "name", None) != name:
         ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
-    oid = db.create_secret_order(state, name, "原标题", "原内容", ["甲"], deadline_months=0)
+    oid = create_test_secret_order(db, state, name, "原标题", "原内容", ["甲"], deadline_months=0)
     monkeypatch.setattr(cb, "_run_backend_for_config",
                         lambda prompt, llm_config=None, tag="": (json.dumps(canned, ensure_ascii=False), 1))
     sess = _fake_session(db, state)
@@ -159,7 +159,7 @@ def test_secret_order_rush_intent_stages_and_commits(game, monkeypatch):
     db, state, content = game
     name = _active_minister_name(db, content)
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
-    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=6)
+    oid = create_test_secret_order(db, state, name, "原标题", "原内容", [], deadline_months=6)
     due_before = db.conn.execute("SELECT due_turn FROM secret_orders WHERE id=?", (oid,)).fetchone()["due_turn"]
 
     monkeypatch.setattr(cb, "_run_backend_for_config",
@@ -190,7 +190,7 @@ def test_secret_order_rush_intent_preserves_zero_deadline(game, monkeypatch):
     db, state, content = game
     name = _active_minister_name(db, content)
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
-    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=6)
+    oid = create_test_secret_order(db, state, name, "原标题", "原内容", [], deadline_months=6)
 
     monkeypatch.setattr(cb, "_run_backend_for_config",
                         lambda prompt, llm_config=None, tag="": (json.dumps(
@@ -218,7 +218,7 @@ def test_secret_order_rush_deadline_zero_commits_immediate_review(game):
     """暂存催办 deadline_months=0 表示本月到期对账，commit 时不能被缺省值改成 1。"""
     db, state, content = game
     name = _active_minister_name(db, content)
-    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=6)
+    oid = create_test_secret_order(db, state, name, "原标题", "原内容", [], deadline_months=6)
     db.stage_pending_action(
         state.turn, kind="secret_order", action="催办", minister_name=name, target_id=oid,
         payload={"deadline_months": 0, "reason": "即刻核议"},
@@ -238,7 +238,7 @@ def test_secret_order_submit_intent_stages_and_commits(game, monkeypatch):
     db, state, content = game
     name = _active_minister_name(db, content)
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
-    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=6)
+    oid = create_test_secret_order(db, state, name, "原标题", "原内容", [], deadline_months=6)
 
     monkeypatch.setattr(cb, "_run_backend_for_config",
                         lambda prompt, llm_config=None, tag="": (json.dumps(
@@ -265,7 +265,7 @@ def test_secret_order_progress_intent_stages_and_commits(game, monkeypatch):
     db, state, content = game
     name = _active_minister_name(db, content)
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
-    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=0)
+    oid = create_test_secret_order(db, state, name, "原标题", "原内容", [], deadline_months=0)
     # 记进展 guard 要求非本回合所立 → 把 turn_issued 改早
     db.conn.execute("UPDATE secret_orders SET turn_issued=? WHERE id=?", (int(state.turn) - 2, oid))
     db.conn.commit()
@@ -289,7 +289,7 @@ def test_pre_settle_commits_pending_at_decree_front(game):
     """接线:颁诏最前 pre_settle 调 commit_pending_actions——暂存动作在结算管线前落库。"""
     db, state, content = game
     name = _active_minister_name(db, content)
-    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=0)
+    oid = create_test_secret_order(db, state, name, "原标题", "原内容", [], deadline_months=0)
     db.stage_pending_action(
         state.turn, kind="secret_order", action="更新", minister_name=name, target_id=oid,
         payload={"new_title": "颁诏标题", "new_content": "颁诏内容", "deadline_months": 0})
@@ -482,7 +482,7 @@ def test_commit_marks_unapplicable_failed_not_orphan(game, monkeypatch):
     可落的照落;再 commit 不重跑(幂等,failed/committed 都不在 pending)。"""
     db, state, content = game
     name = _active_minister_name(db, content)
-    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=0)
+    oid = create_test_secret_order(db, state, name, "原标题", "原内容", [], deadline_months=0)
     db.stage_pending_action(state.turn, kind="secret_order", action="更新",
                             minister_name=name, target_id=None, payload={"new_title": "x"})   # 无 target
     db.stage_pending_action(state.turn, kind="secret_order", action="自爆",
@@ -557,7 +557,7 @@ def test_commit_rolls_back_secret_order_when_status_mark_fails(game, monkeypatch
     )
 
     def _create_then_crash(state_arg, pa, payload, *, content=None, registry=None):
-        db.create_secret_order(
+        create_test_secret_order(db, 
             state_arg,
             str(payload["assignee"]),
             str(payload["title"]),
@@ -582,7 +582,7 @@ def test_undo_chat_turn_removes_staged_pending_action(game):
     靠把 pending_actions 纳入 rollback 快照表(_ROLLBACK_TABLE_PK)。"""
     db, state, content = game
     name = _active_minister_name(db, content)
-    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=0)
+    oid = create_test_secret_order(db, state, name, "原标题", "原内容", [], deadline_months=0)
 
     ctid = db.create_chat_turn(state, name, "sess-undo", 0)
     before = db.capture_chat_rollback_snapshot()
@@ -604,7 +604,7 @@ def test_advance_without_edict_commits_staged(game, monkeypatch):
     否则暂存动作成孤儿、随回合推进永久丢失。"""
     db, state, content = game
     name = _active_minister_name(db, content)
-    oid = db.create_secret_order(
+    oid = create_test_secret_order(db, 
         state, name, "原标题", "原内容", [], deadline_months=0,
         covert_task=LIAO_PAY_COVERT_TASK,
     )
@@ -687,7 +687,7 @@ def test_pending_actions_endpoints(game, monkeypatch):
     import web_app
     db, state, content = game
     name = _active_minister_name(db, content)
-    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=0)
+    oid = create_test_secret_order(db, state, name, "原标题", "原内容", [], deadline_months=0)
     pid = db.stage_pending_action(state.turn, kind="secret_order", action="更新",
                                   minister_name=name, target_id=oid, payload={"new_title": "x"})
     monkeypatch.setattr(web_app, "get_game", lambda: types.SimpleNamespace(db=db, state=state))
@@ -720,7 +720,7 @@ def test_pending_actions_endpoint_hides_new_secret_order_candidates(game, monkey
 
     db, state, content = game
     name = _active_minister_name(db, content)
-    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=0)
+    oid = create_test_secret_order(db, state, name, "原标题", "原内容", [], deadline_months=0)
     visible_pid = db.stage_pending_action(
         state.turn, kind="secret_order", action="更新", minister_name=name,
         target_id=oid, payload={"new_title": "改"})
@@ -1174,8 +1174,8 @@ def test_commit_does_not_crash_when_action_raises(game):
     """
     db, state, content = game
     name = _active_minister_name(db, content)
-    oid_done = db.create_secret_order(state, name, "已结标题", "已结内容", [], deadline_months=6)
-    oid_live = db.create_secret_order(state, name, "在办标题", "在办内容", [], deadline_months=6)
+    oid_done = create_test_secret_order(db, state, name, "已结标题", "已结内容", [], deadline_months=6)
+    oid_live = create_test_secret_order(db, state, name, "在办标题", "在办内容", [], deadline_months=6)
     db.conn.execute(
         "UPDATE secret_orders SET status='done', turn_closed=? WHERE id=?",
         (state.turn, oid_done),
@@ -1213,7 +1213,7 @@ def test_no_stage_for_non_active_target(game, monkeypatch):
     db, state, content = game
     name = _active_minister_name(db, content)
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
-    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=0)
+    oid = create_test_secret_order(db, state, name, "原标题", "原内容", [], deadline_months=0)
     db.conn.execute(
         "UPDATE secret_orders SET status='done', turn_closed=? WHERE id=?",
         (state.turn, oid),
@@ -1363,7 +1363,7 @@ def test_dialogue_affirm_commits_staged_now(game, monkeypatch):
     db, state, content = game
     name = _active_minister_name(db, content)
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
-    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=0)
+    oid = create_test_secret_order(db, state, name, "原标题", "原内容", [], deadline_months=0)
 
     _stage_secret_update(db, state, ch, monkeypatch, oid)
     assert db.conn.execute(
@@ -1389,7 +1389,7 @@ def test_dialogue_affirm_does_not_restage_restated_action(game, monkeypatch):
     db, state, content = game
     name = _active_minister_name(db, content)
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
-    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=0)
+    oid = create_test_secret_order(db, state, name, "原标题", "原内容", [], deadline_months=0)
     _stage_secret_update(db, state, ch, monkeypatch, oid)
     assert len(db.list_pending_actions(state.turn)) == 1
 
@@ -1413,7 +1413,7 @@ def test_dialogue_reject_drops_staged(game, monkeypatch):
     db, state, content = game
     name = _active_minister_name(db, content)
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
-    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=0)
+    oid = create_test_secret_order(db, state, name, "原标题", "原内容", [], deadline_months=0)
 
     _stage_secret_update(db, state, ch, monkeypatch, oid)
     assert any(pa["kind"] == "secret_order" for pa in db.list_pending_actions(state.turn))
@@ -1558,7 +1558,7 @@ def test_retry_failed_secret_order_apply_exception_rolls_back_side_effects(game,
     db.conn.commit()
 
     def partial_apply(_state, _pa, _payload, **_kwargs):
-        db.create_secret_order(state, name, "半写密令", "不应留下。", [], deadline_months=0)
+        create_test_secret_order(db, state, name, "半写密令", "不应留下。", [], deadline_months=0)
         raise RuntimeError("apply failed after durable write")
 
     monkeypatch.setattr(db, "_apply_pending_action", partial_apply)
@@ -1590,7 +1590,7 @@ def test_commit_pending_action_false_rolls_back_side_effects(game, monkeypatch):
     )
 
     def partial_apply(_state, _pa, _payload, **_kwargs):
-        db.create_secret_order(state, name, "半写密令", "不应留下。", [], deadline_months=0)
+        create_test_secret_order(db, state, name, "半写密令", "不应留下。", [], deadline_months=0)
         return False
 
     monkeypatch.setattr(db, "_apply_pending_action", partial_apply)
@@ -1624,7 +1624,7 @@ def test_retry_failed_secret_order_false_rolls_back_side_effects(game, monkeypat
     db.conn.commit()
 
     def partial_apply(_state, _pa, _payload, **_kwargs):
-        db.create_secret_order(state, name, "半写密令", "不应留下。", [], deadline_months=0)
+        create_test_secret_order(db, state, name, "半写密令", "不应留下。", [], deadline_months=0)
         return False
 
     monkeypatch.setattr(db, "_apply_pending_action", partial_apply)
@@ -2271,8 +2271,8 @@ def test_dialogue_affirm_filters_by_summoned_minister(game, monkeypatch):
                and getattr(c, "office_type", "") != "后宫"
                and db.get_character_status(c.name)[0] == "active"]
     a, b = actives[0], actives[1]
-    oid_a = db.create_secret_order(state, a.name, "甲原", "甲原内容", [], deadline_months=0)
-    oid_b = db.create_secret_order(state, b.name, "乙原", "乙原内容", [], deadline_months=0)
+    oid_a = create_test_secret_order(db, state, a.name, "甲原", "甲原内容", [], deadline_months=0)
+    oid_b = create_test_secret_order(db, state, b.name, "乙原", "乙原内容", [], deadline_months=0)
 
     monkeypatch.setattr(cb, "_run_backend_for_config",
                         lambda p, llm_config=None, tag="": (json.dumps(
@@ -2311,7 +2311,7 @@ def test_dialogue_no_response_keeps_staged(game, monkeypatch):
     db, state, content = game
     name = _active_minister_name(db, content)
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
-    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=0)
+    oid = create_test_secret_order(db, state, name, "原标题", "原内容", [], deadline_months=0)
 
     _stage_secret_update(db, state, ch, monkeypatch, oid)
     assert any(pa["kind"] == "secret_order" for pa in db.list_pending_actions(state.turn))
@@ -2675,8 +2675,8 @@ def test_dialogue_reject_filters_by_summoned_minister(game, monkeypatch):
     """拒绝只丢【当前召对】大臣的暂存,另一个大臣的暂存留着。(CMR codex R3:拒绝路没测过滤。)"""
     db, state, content = game
     a, b = _two_active_ming(db, content)
-    oid_a = db.create_secret_order(state, a.name, "甲原", "甲原内容", [], deadline_months=0)
-    oid_b = db.create_secret_order(state, b.name, "乙原", "乙原内容", [], deadline_months=0)
+    oid_a = create_test_secret_order(db, state, a.name, "甲原", "甲原内容", [], deadline_months=0)
+    oid_b = create_test_secret_order(db, state, b.name, "乙原", "乙原内容", [], deadline_months=0)
     monkeypatch.setattr(cb, "_run_backend_for_config",
                         lambda p, llm_config=None, tag="": (json.dumps(
                             {"密令动作": "更新", "目标密令编号": oid_a,
@@ -2735,7 +2735,7 @@ def test_chat_confirm_defers_commit_at_front_half_done(game, monkeypatch):
     db, state, content = game
     name = _active_minister_name(db, content)
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
-    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=0)
+    oid = create_test_secret_order(db, state, name, "原标题", "原内容", [], deadline_months=0)
     db.stage_pending_action(
         state.turn, kind="secret_order", action="更新", minister_name=name, target_id=oid,
         payload={"new_title": "恢复窗确认标题", "new_content": "x", "deadline_months": 0})

@@ -1286,3 +1286,13 @@ def test_incomplete_extract_does_not_stage_zero_contract(game, monkeypatch):
     run_materialize_pipeline(ctx)
     assert int(ctx.out.get("pending_action_id") or 0) == 0
     assert db.list_secret_orders() == []
+
+
+def test_create_secret_order_rejects_missing_contract(game):
+    db, state, _ = game
+    name = _minister(db)
+    with pytest.raises(CovertContractError):
+        db.create_secret_order(
+            state, name, "无合同密令", "无显式差务", [], deadline_months=1,
+        )
+    assert db.list_secret_orders() == []

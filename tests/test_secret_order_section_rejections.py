@@ -13,6 +13,7 @@ from functools import partial
 from tests.section_rejection_helpers import prepare_then_settle as run_settle
 from ming_sim import issues
 from tests.section_rejection_helpers import game, rejection_rows
+from tests.dossier_test_helpers import create_test_secret_order
 
 
 _rejection_rows = partial(rejection_rows, columns="section, reason, category")
@@ -56,7 +57,7 @@ def test_update_valid_active_order_applies_no_reject(game):
     sim_note 真写入、零拒收行。"""
     db, state, content = game
     turn = state.turn
-    oid = db.create_secret_order(
+    oid = create_test_secret_order(db, 
         state,
         "测试密令官",
         "合法更新正向守门",
@@ -76,7 +77,7 @@ def test_update_valid_active_order_applies_no_reject(game):
 def test_apply_score_extraction_secret_order_update_respects_outer_transaction_rollback(game):
     """post-merge CMR R8：secret_order_updates 不得绕过外层事务硬提交。"""
     db, state, content = game
-    oid = db.create_secret_order(state, "测试密令官R8", "测试密令", "测试内容", [], deadline_months=1)
+    oid = create_test_secret_order(db, state, "测试密令官R8", "测试密令", "测试内容", [], deadline_months=1)
     db.conn.commit()
 
     db.conn.execute("BEGIN")

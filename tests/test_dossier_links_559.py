@@ -7,9 +7,10 @@ import pytest
 from ming_sim import cli_backend
 from ming_sim.session import GameSession
 from ming_sim.skills import bind_content as bind_skills_content
-from tests.dossier_test_helpers import TYPED_COVERT_EXTRACT, rejected_verdict as _rejected_verdict
+from tests.dossier_test_helpers import TYPED_COVERT_EXTRACT, TYPED_COVERT_TASK, rejected_verdict as _rejected_verdict
 from tests.web_audience_test_doubles import HallAdmissionSessionMixin
 from web_app import WebGame
+from tests.dossier_test_helpers import create_test_secret_order
 
 
 def _make_dossier(db, state, text):
@@ -172,7 +173,7 @@ def test_reference_candidates_hide_other_ministers_secret_dossiers(game):
     draft_id = _make_dossier(db, state, "尚未明发饷案")
     public_id = _make_dossier(db, state, "公开饷案")
     db.record_dossier_decision(public_id, "promulgated")
-    other_order = db.create_secret_order(state, "卢象升", "密查", "不可外泄", [])
+    other_order = create_test_secret_order(db, state, "卢象升", "密查", "不可外泄", [])
     other_secret = db.get_dossier_for_secret_order(other_order)
 
     visible = db.list_referenceable_dossiers("孙承宗", state.turn)
@@ -190,7 +191,7 @@ def test_reference_candidates_obey_canonical_disclosure_blacklist(game):
     from ming_sim.knowledge import knowledge_row_visible_to
 
     db, state, _ = game
-    order_id = db.create_secret_order(state, "卢象升", "密查辽饷", "不可外泄", [])
+    order_id = create_test_secret_order(db, state, "卢象升", "密查辽饷", "不可外泄", [])
     dossier = db.get_dossier_for_secret_order(order_id)
     source_id = f"secret_order_disclosure:{order_id}:test"
     db.record_public_knowledge_event(
@@ -217,6 +218,7 @@ def test_real_api_session_tool_path_commits_only_semantically_confirmed_link(
     minister = "毕自严"
     payload = json.dumps({
         "title": "护行辽饷", "content": "护送辽饷", "assignee": minister,
+        "covert_task": TYPED_COVERT_TASK,
         "dossier_links": [{"target_dossier_id": target, "relation_type": "护卫", "note": "护送"}],
     }, ensure_ascii=False)
     verdict_ids = [target] if confirmed_ids == "target" else confirmed_ids
@@ -309,6 +311,7 @@ def test_real_web_stream_pending_commit_traces_only_confirmed_visible_links(
     minister = "毕自严"
     payload = json.dumps({
         "title": "护行辽饷", "content": "护送辽饷", "assignee": minister,
+        "covert_task": TYPED_COVERT_TASK,
         "dossier_links": [proposal(target)],
     }, ensure_ascii=False)
 
@@ -411,6 +414,7 @@ def test_confirmed_secret_order_materializes_links_through_pending_commit(game):
     action_id = db.stage_pending_action(
         state.turn, "secret_order", "新建", "孙承宗",
         {"title": "护行三路饷银", "content": "密护三路饷银", "assignee": "孙承宗",
+         "covert_task": TYPED_COVERT_TASK,
          "dossier_links": [
              {"target_dossier_id": target, "relation_type": "护卫", "note": "护送该路饷银"}
              for target in targets
@@ -431,6 +435,7 @@ def test_unknown_target_in_pending_commit_is_rolled_back_and_durably_audited(gam
     action_id = db.stage_pending_action(
         state.turn, "secret_order", "新建", "孙承宗",
         {"title": "护行密令", "content": "护送旧案", "assignee": "孙承宗",
+         "covert_task": TYPED_COVERT_TASK,
          "dossier_links": [
              {"target_dossier_id": 999999, "relation_type": "护卫", "note": "护送"}
          ]},
@@ -506,7 +511,8 @@ def test_pending_rejection_does_not_follow_reused_rolled_back_source_id(game):
     db, state, _ = game
     action_id = db.stage_pending_action(
         state.turn, "secret_order", "新建", "孙承宗",
-        {"title": "坏引用", "content": "坏引用", "assignee": "孙承宗", "dossier_links": [
+        {"title": "坏引用", "content": "坏引用", "assignee": "孙承宗",
+         "covert_task": TYPED_COVERT_TASK, "dossier_links": [
             {"target_dossier_id": 999999, "relation_type": "护卫", "note": "护送"}]},
     )
     assert db.commit_pending_actions(state, action_ids=[action_id]) == []

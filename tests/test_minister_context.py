@@ -45,6 +45,7 @@ from ming_sim.qualitative import (
     satisfaction_band,
 )
 from ming_sim.db import _qualitative_army_stat
+from tests.dossier_test_helpers import create_test_secret_order
 
 
 def _ctx(game):
@@ -575,7 +576,7 @@ def test_minister_context_secret_order_chain_filters_final_tools_and_instruction
     """密令真实建档后，排除名单同时约束 instructions 与记忆工具。"""
     db, state, content = game
     first, second = _active_ministers(content, db, n=2)
-    order = db.create_secret_order(
+    order = create_test_secret_order(db, 
         state, first.name, "暗查军饷", "查验边镇欠饷", [],
         excluded_names=[second.name],
     )
@@ -596,11 +597,11 @@ def test_minister_context_secret_order_chain_filters_final_tools_and_instruction
 def test_secret_order_blacklist_overrides_assignee_brief_and_reference_candidate(game):
     db, state, _content = game
     excluded = "毕自严"
-    hidden_order = db.create_secret_order(
+    hidden_order = create_test_secret_order(db, 
         state, excluded, "黑名单密查军饷", "不可向承办人披露", [],
         excluded_names=[excluded],
     )
-    visible_order = db.create_secret_order(
+    visible_order = create_test_secret_order(db, 
         state, excluded, "承办人可知军械", "正常承办密令", [],
     )
     hidden_dossier = db.get_dossier_for_secret_order(hidden_order)
@@ -625,7 +626,7 @@ def test_secret_source_boundary_does_not_hide_unrelated_chapter_material(game):
     """真实密令只约束自身来源，不能把同回合章节整份变成密件。"""
     db, state, content = game
     knower, excluded = _active_ministers(content, db, n=2)
-    order = db.create_secret_order(
+    order = create_test_secret_order(db, 
         state, knower.name, "密查军饷", "核验欠饷", [],
         excluded_names=[excluded.name],
     )

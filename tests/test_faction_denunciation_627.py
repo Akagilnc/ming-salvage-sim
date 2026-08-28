@@ -38,6 +38,7 @@ from ming_sim.supervision import (
     origin_has_mark,
 )
 from tests.test_dossier_reported_progress_619 import _world_fingerprint
+from tests.dossier_test_helpers import create_test_secret_order
 
 
 _REPO = Path(__file__).resolve().parents[1]
@@ -594,7 +595,7 @@ def test_ac5_zero_template_banned_tokens_exposure_and_622(game):
 
     # #622 读端改调 public fork 单源
     actor = subject_name
-    audit_order = db.create_secret_order(
+    audit_order = create_test_secret_order(db, 
         state, actor, "密查清丈", "逐月密奏", ["稽核"], deadline_months=4,
     )
     audit_dossier = int(db.get_dossier_for_secret_order(audit_order)["id"])
