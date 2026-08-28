@@ -564,8 +564,9 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
         elif TAG_CLOSE_NIGHT in tags:
             beat = "closing"
         elif TAG_HANDOFF in tags:
-            # #1585：交接旁白——软段切换事实（A 在场时 B 宣入），不写 TAG_EXIT、不改 presence。
-            beat = "handoff"
+            # #1585：公开投影为「exit」（退侍殿侧），内部 TAG_HANDOFF/TAG_STAY_ATTEND
+            # 事实不变——不写 TAG_EXIT、机器 presence 不退出（ADR 0035：殿侧侍立非硬状态）。
+            beat = "exit"
         elif TAG_ENTER in tags:
             beat = "entrance"
         elif TAG_EXIT in tags:
@@ -575,8 +576,10 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
         # #657 S4/P7：OPEN/ENTER 口令账仅 body.strip() 非空才投影；
         # 空垫位不进 scroll（无空条、无人物锚、无固定句冒充）。
         # #1561：普通公共 scene 同属玩家可见 scene，空正文亦不投影；
-        # aside/exit/closing 等其它 beat 不在本票扩域。
-        if beat in {"opening", "entrance", "handoff", "scene"} and not str(entry.get("body") or "").strip():
+        # aside/closing 等其它 beat 不在本票扩域。
+        # #1585：交接投影为 exit 时和真实告退共用此标签，但交接 scaffold 生成前
+        # body 确定为空（真实告退落账即带默认文案，从不落空）——同一空检门槛安全覆盖两源。
+        if beat in {"opening", "entrance", "exit", "scene"} and not str(entry.get("body") or "").strip():
             continue
         events.append((
             _entry_order_key(entry), 10,
@@ -604,7 +607,9 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
                                    and TAG_HANDOFF in following_tags
                                    and TAG_STAY_ATTEND in following_tags)
 
-        if is_handoff and identity_key not in divided_identities:
+        # #1585：交接正文生成前 body 为空——divider 须等交接实体旁白落定才派生，
+        # 否则先出现孤立分幕、后补 exit/entrance，分幕顺序失真（#1585 空 scaffold coverage）。
+        if is_handoff and str(entry.get("body") or "").strip() and identity_key not in divided_identities:
             divided_identities.add(identity_key)
             next_name = person
             for later in facts[index + 1:]:

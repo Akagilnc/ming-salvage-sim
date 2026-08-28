@@ -260,7 +260,11 @@ def test_discover_open_enter_tasks_restores_yueci_summon_method(game):
 
 
 def test_open_enter_registry_persists_handoff_and_soft_segment(game):
-    """#1585: 真实 attach→registry→persist→scroll 链保留 A 并切到 B。"""
+    """#1585: 真实 attach→registry→persist→scroll 链证真并发+空 scaffold+A/B presence。
+
+    公开卷轴序列须为 exit(A 退侍殿侧)→divider(B)→entrance(B)，内部
+    TAG_HANDOFF/TAG_STAY_ATTEND 事实与机器 presence 不变（A 仍在场）。
+    """
     db, state, content = game
     first_minister = _active_minister(db, content)
     # A (first_minister) 先入殿并奏对。
@@ -273,22 +277,35 @@ def test_open_enter_registry_persists_handoff_and_soft_segment(game):
         db, state, second_minister, agno_session_id="b-turn", agno_runs_before=0,
     )
 
-    # 回显生成器：输出 beat_kind + person_name。
-    def echo(inputs: BeatInputs) -> str:
+    # 真并发：BEAT_HANDOFF 与 BEAT_ENTER 须同桶重叠执行，串行提交会在此死锁超时。
+    both = threading.Barrier(2, timeout=2.0)
+    seen: list[str] = []
+
+    def overlapping(inputs: BeatInputs) -> str:
+        seen.append(inputs.beat_kind)
+        if inputs.beat_kind in {BEAT_HANDOFF, BEAT_ENTER}:
+            both.wait()
         return f"kind={inputs.beat_kind}|person={inputs.person_name}"
 
     registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=2))
     registry.start_open_enter(
         db, state, minister_name=second_minister, chat_turn_id=ctid,
-        beat_generator=echo,
+        beat_generator=overlapping,
     )
+    # 交接正文尚未 join/落回——scaffold body 确定为空，公开卷轴此刻不得先出现
+    # 孤立的 exit/divider（#1585 空 scaffold coverage）。
+    pre_scroll = an.read_night_scroll(db, night_id)
+    assert not any(item["beat"] in {"exit", "divider"} for item in pre_scroll)
+
     generated = registry.join(ctid)
     bo.persist_chat_turn_scene(db, generated)
     db.conn.commit()
 
+    assert {BEAT_HANDOFF, BEAT_ENTER} <= set(seen)
+
     scroll = an.read_night_scroll(db, night_id)
-    segment = [item["beat"] for item in scroll if item["beat"] in {"handoff", "divider", "entrance"}]
-    assert segment[-3:] == ["handoff", "divider", "entrance"]
+    segment = [item["beat"] for item in scroll if item["beat"] in {"exit", "divider", "entrance"}]
+    assert segment[-3:] == ["exit", "divider", "entrance"]
     dividers = [item for item in scroll if item["beat"] == "divider"]
     assert [item["speaker"] for item in dividers].count(second_minister) == 1
     assert dividers[-1]["speaker"] == second_minister
@@ -2029,28 +2046,30 @@ def test_close_scene_early_phase1_failure_drains_and_reopens(game, monkeypatch):
     assert all(str(r["status"]) == "failed" for r in rows)
 
 
-def test_close_endorsement_failure_rolls_back_final_exit(game, monkeypatch):
-    """#1585：endorsement 失败、exit/closing 成功时须 OPEN、无本轮 TAG_EXIT、末位仍在场。"""
+def test_close_final_exit_generator_failure_rolls_back_final_exit(game):
+    """#1585：BEAT_EXIT/close generator 失败时须 OPEN、无本轮 TAG_EXIT、末位仍在场。
+
+    失败源改走真实 generator Future/join 异常接缝（而非旁路 endorsement monkeypatch），
+    以证 origin-bound TAG_EXIT scaffold 随 generator 失败正确回滚。
+    """
     db, state, content = game
     minister = _active_minister(db, content)
     night_id, ctid = an.attach_chat_turn_to_night(
-        db, state, minister, agno_session_id="endorsement-fail-exit", agno_runs_before=0,
+        db, state, minister, agno_session_id="exit-generator-fail", agno_runs_before=0,
     )
     _land_reply(db, state, minister, ctid, night_id)
     assert minister in an.present_names_at(db, int(night_id))
 
-    def boom_endorsement(*_a, **_k):
-        raise RuntimeError("endorsement sibling boom")
+    def boom_exit(inputs: BeatInputs) -> str:
+        if inputs.beat_kind == BEAT_EXIT:
+            raise RuntimeError("final exit generator boom")
+        return f"kind={inputs.beat_kind}|person={inputs.person_name}"
 
-    monkeypatch.setattr(
-        "ming_sim.audience_extraction.run_endorsement_batch_for_night",
-        boom_endorsement,
-    )
     registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=2))
-    with pytest.raises(RuntimeError, match="endorsement sibling boom"):
+    with pytest.raises(RuntimeError, match="final exit generator boom"):
         an.close_night(
             db, state, night_id=int(night_id), content=content,
-            beat_generator=_echo_generator, scene_registry=registry,
+            beat_generator=boom_exit, scene_registry=registry,
             wait_timeout_s=0.0,
         )
     failed = an.get_night(db, int(night_id))
