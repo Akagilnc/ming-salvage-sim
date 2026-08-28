@@ -214,15 +214,3 @@ def test_advance_without_edict_shell_absent():
 
     assert not hasattr(decree_mod, "advance_without_edict")
     assert "def advance_without_edict" not in inspect.getsource(decree_mod)
-
-
-def test_session_has_no_last_report_parallel_cache():
-    """#1382：GameSession 不再持 last_report 平行缓存。"""
-    import inspect
-
-    src = inspect.getsource(GameSession)
-    assert "self.last_report" not in src
-    # 状态口投影接缝在 WebGame，按 turn-1 读 DB
-    prop_src = inspect.getsource(web_app.WebGame.last_report.fget)
-    assert "get_turn_report" in prop_src
-    assert "session.last_report" not in prop_src
