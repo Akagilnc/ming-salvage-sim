@@ -81,6 +81,10 @@ system             -- 规则层直接写入
 | `turn_closed` | 结案回合 |
 | 上限 | 同时active ≤ 20条，超限报错 |
 
+密令的结构化差务合同不另开表，冻结在对应案卷的 `payload_json.covert_task_contract`；
+每月实况进度继续写既有 `dossier_actual_progress`，承办人密奏则留在
+`dossier_progress_json`。两轨职责分离：前者决定真实交付，后者只供玩家阅读。
+
 ---
 
 ## 二、提取链（每月末执行）
@@ -197,28 +201,35 @@ db.prune_event_memories_for_turn(state.turn, per_subject=3)
 
 ### 下达密令
 
-大臣工具 `issue_secret_order(title, content, tags_json, assignee)` →
+大臣工具或旧按钮先转成同一条召对消息；工具返回带 `covert_task` 的
+`__secret_order__` 载荷，由 `session.py` 暂存为 `pending_actions`：
 
 ```
-db.create_secret_order(state, assignee, title, content, tags)
-  → INSERT secret_orders status='active'
-  → 返回 __secret_order_registered__{id}__ 哨兵
-      或降级 → __secret_order__<json> 哨兵（直接落库失败时）
-
-session.py._apply_secret_order 截获哨兵 → 落库
+召对提出密令
+  → stage_pending_action(kind="secret_order", action="新建")
+  → 皇帝应允，或结束回合默认同意
+  → commit_pending_actions()
+  → create_secret_order(..., covert_task=...)
+  → 同一事务写 active 密令 + 已颁密令案卷 + covert_task_contract
 ```
 
-上限：active ≤ 20条，超限直接报错给大臣。
+确认写口不从标题、正文或标签反解析合同。缺少结构化差务类型时响亮失败，
+不落空壳密令；active 上限仍为 20 条。
 
 ### 汇报结果
 
-大臣工具 `report_secret_order_result(order_id, status, result)` →
+承办人逐月密奏只追加奏报轨，不再直接写 `done/failed`。月末先从真实效果、
+案卷 `origin_ref` 与执行判决累计实况轨；到期后由确定性对账结案：
 
 ```
-返回 __close_secret_order__<json> 哨兵
-session.py._apply_close_secret_order 截获 → db.close_secret_order(order_id, status, result, turn)
-  → UPDATE status=done/failed, turn_closed=当前回合
+dossier_progress_json                         # 奏报轨，只供玩家阅读
+dossier_actual_progress                       # 实况轨，只认真实交付
+  → settle_due_secret_orders()
+  → Σ actual_units 对比 covert_task_contract.target_units
+  → db.close_secret_order(done/failed, player_facing_result, turn)
 ```
+
+奏报内容不能改变世界状态，也不能决定结案；恢复存档后两轨都从 DB 原边界继续。
 
 ### 密令注入推演（#883 隔离）
 
