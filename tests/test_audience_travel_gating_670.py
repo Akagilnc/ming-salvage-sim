@@ -71,6 +71,7 @@ def _chat_turn_count(db):
 
 def _web_hall_runtime(db, state, content, *, session_chat):
     """#670：常规 Web.chat（gate_already_held=False）殿上入口壳；挂真 admission。"""
+    from ming_sim.beat_orchestration import production_beat_generator
     from tests.test_qa_c3_secret_order_path_1357_1376 import (
         webgame_shell_for_secret_order,
     )
@@ -84,6 +85,25 @@ def _web_hall_runtime(db, state, content, *, session_chat):
     runtime.session.consume_audience_admission = MethodType(
         GameSession.consume_audience_admission, runtime.session,
     )
+    # #1566：场外记召 scene 物化缝（生产 beat 生成器，禁 LLM）。
+    runtime.session._beat_generator = production_beat_generator
+    runtime.session.materialize_offsite_summon_scene = MethodType(
+        GameSession.materialize_offsite_summon_scene, runtime.session,
+    )
+    # stream 密令绕闸后进入 payload 缝；无 CLI 通道时 action-intent 为空 Future。
+    runtime.session._start_cli_action_intent = lambda *_a, **_k: None
+    runtime.session._finish_cli_action_intent = lambda *_a, **_k: None
+    runtime.session._dispatch_relation_judge = lambda *_a, **_k: None
+    runtime._finish_offsite_summon_scene = (
+        __import__("web_app").WebGame._finish_offsite_summon_scene.__get__(runtime)
+    )
+    runtime._message_is_formal_secret_order = (
+        __import__("web_app").WebGame._message_is_formal_secret_order
+    )
+    runtime._summon_admission_success_payload = (
+        __import__("web_app").WebGame._summon_admission_success_payload.__get__(runtime)
+    )
+    runtime._dispatch_relation_judge = lambda *_a, **_k: None
     return runtime
 
 
@@ -1156,6 +1176,7 @@ def test_web_chat_hall_admission_allows_capital_and_blocks_offsite(game):
     allowed_msgs = _chat_message_count(db)
     allowed_turns = _chat_turn_count(db)
     # 成功记召：200 静默载荷，不 409、不调回话、不建轮/消息；枚举仅机面字段。
+    # #1566：同一 ledger 行须有自由 scene body；canonical scroll 可见，仍无 chat turn。
     remote_payload = runtime.chat(remote.name, "传洪承畴来。")
     assert remote_payload["admission"] == AudienceAdmission.SUMMON_FRESH.value
     assert remote_payload["answer"] == ""
@@ -1177,12 +1198,35 @@ def test_web_chat_hall_admission_allows_capital_and_blocks_offsite(game):
     assert _travel_row(db, moving.name) == moving_before
 
     by_origin = {row["origin_id"]: row for row in an.list_unsettled_summons(db)}
-    assert by_origin[f"web:chat:{state.turn}:{remote.name}"]["kind"] == "fresh"
-    assert by_origin[f"web:chat:{state.turn}:{moving.name}"]["kind"] == "in_transit"
+    remote_origin = f"web:chat:{state.turn}:{remote.name}"
+    moving_origin = f"web:chat:{state.turn}:{moving.name}"
+    assert by_origin[remote_origin]["kind"] == "fresh"
+    assert by_origin[moving_origin]["kind"] == "in_transit"
+    remote_entry = db.conn.execute(
+        "SELECT body, tags FROM story_ledger_entries WHERE id=?",
+        (by_origin[remote_origin]["entry_id"],),
+    ).fetchone()
+    moving_entry = db.conn.execute(
+        "SELECT body, tags FROM story_ledger_entries WHERE id=?",
+        (by_origin[moving_origin]["entry_id"],),
+    ).fetchone()
+    assert str(remote_entry["body"] or "").strip()
+    assert str(moving_entry["body"] or "").strip()
+    night_id = int(by_origin[remote_origin]["night_id"])
+    scroll = an.read_night_scroll(db, night_id)
+    summon_scenes = [
+        m for m in scroll
+        if m.get("beat") == "entrance" and m.get("speaker") in {remote.name, moving.name}
+        and str(m.get("content") or "").strip()
+    ]
+    assert {m["speaker"] for m in summon_scenes} >= {remote.name, moving.name}
 
 
 def test_web_chat_stream_summon_success_exits_error_channel(game):
-    """#670：chat_stream 成功记召 yield done+end，无 error，不调回话。"""
+    """#670：chat_stream 成功记召 yield done+end，无 error，不调回话。
+
+    #1566：同一 ledger 行持久化自由 scene；仍无 chat turn / 回话。
+    """
     db, state, content = game
     remote = _set_place(game, "洪承畴", location="shaanxi")
     moving = _set_place(
@@ -1221,8 +1265,72 @@ def test_web_chat_stream_summon_success_exits_error_channel(game):
     assert _chat_message_count(db) == before_msgs
     assert _chat_turn_count(db) == before_turns
     by_origin = {row["origin_id"]: row for row in an.list_unsettled_summons(db)}
-    assert by_origin[f"web:stream:{state.turn}:{remote.name}"]["kind"] == "fresh"
-    assert by_origin[f"web:stream:{state.turn}:{moving.name}"]["kind"] == "in_transit"
+    remote_origin = f"web:stream:{state.turn}:{remote.name}"
+    moving_origin = f"web:stream:{state.turn}:{moving.name}"
+    assert by_origin[remote_origin]["kind"] == "fresh"
+    assert by_origin[moving_origin]["kind"] == "in_transit"
+    for origin_key in (remote_origin, moving_origin):
+        body = db.conn.execute(
+            "SELECT body FROM story_ledger_entries WHERE id=?",
+            (by_origin[origin_key]["entry_id"],),
+        ).fetchone()["body"]
+        assert str(body or "").strip()
+
+
+def test_web_chat_stream_formal_secret_order_bypasses_audience_admission(game):
+    """#1566：公开 chat/stream 正式密令前缀绕过殿上 location admission，汇入密令管线。"""
+    db, state, content = game
+    remote = _set_place(game, "洪承畴", location="shaanxi")
+    before_summons = an.list_unsettled_summons(db)
+    chat_calls: list[tuple[str, str]] = []
+    stream_payload_calls: list[tuple[str, str]] = []
+
+    def _session_chat(minister_name, message, *, chat_turn_id=0):
+        chat_calls.append((minister_name, message))
+        return ChatTurnResult(
+            answer="臣领密旨。", pending_action_id=0, secret_order_id=0,
+        )
+
+    runtime = _web_hall_runtime(db, state, content, session_chat=_session_chat)
+    secret_text = "密令如下：陕北赈抚探报\n速报陕西军情。"
+
+    # 非流式：正式前缀不得 SUMMON_FRESH 空 done，须进 session.chat。
+    payload = runtime.chat(remote.name, secret_text)
+    assert not payload.get("admission")
+    assert payload["answer"] == "臣领密旨。"
+    assert chat_calls == [(remote.name, secret_text)]
+    assert an.list_unsettled_summons(db) == before_summons
+
+    # 流式：同口径绕过 admission；stream 走 _chat_stream_payload 而非 session.chat。
+    def _stream_payload(minister_name, text, *args, **kwargs):
+        stream_payload_calls.append((minister_name, text))
+        return {
+            "minister": minister_name,
+            "answer": "臣领密旨。",
+            "admission": "",
+            "chat_turn_id": 0,
+            "secret_order_id": 0,
+            "history": [],
+            "directives": [],
+            "pending_count": 0,
+            "suggestions": [],
+            "can_undo_last_chat": False,
+            "pending_action_failures": [],
+        }
+
+    runtime._chat_stream_payload = _stream_payload
+    events = list(runtime.chat_stream(remote.name, secret_text))
+    types = [ev.get("type") for ev in events]
+    assert "error" not in types
+    done_events = [ev for ev in events if ev.get("type") == "done"]
+    assert done_events, f"expected done event, got {types!r}"
+    done_payload = done_events[0].get("payload") or {}
+    assert done_payload.get("admission") in (None, "")
+    assert done_payload.get("answer") == "臣领密旨。"
+    assert stream_payload_calls == [(remote.name, secret_text)], (
+        f"密令须绕过 admission 进入 stream payload，实得 {stream_payload_calls!r} types={types!r}"
+    )
+    assert an.list_unsettled_summons(db) == before_summons
 
 
 def test_web_chat_ledger_append_failure_has_no_side_effects(game, monkeypatch):

@@ -1185,6 +1185,83 @@ class GameSession:
             )
         return decision
 
+    def materialize_offsite_summon_scene(
+        self,
+        *,
+        origin_id: str,
+        person_name: str,
+    ) -> list[tuple[int, str]]:
+        """#1566：为已落库的场外传召账生成并持久化自由 scene。
+
+        复用 beat_orchestration 既有 assemble/run/persist 缝；不建 chat turn、
+        不调大臣回话。body 已有则幂等 no-op。调用方须在 write_gate 外等待 LLM。
+        """
+        from ming_sim.applier import atomic
+        from ming_sim.audience_night import (
+            METHOD_CHUANZHAO,
+            SUMMON_METHODS,
+            get_night,
+            list_ledger,
+            list_unsettled_summons,
+        )
+        from ming_sim.beat_orchestration import (
+            BEAT_ENTER,
+            assemble_beat_inputs,
+            persist_chat_turn_scene,
+            production_beat_generator,
+            run_beat_generator,
+        )
+
+        origin = str(origin_id or "").strip()
+        name = str(person_name or "").strip()
+        if not origin or not name:
+            return []
+        item = next(
+            (
+                row for row in list_unsettled_summons(self.db)
+                if row["origin_id"] == origin and row["person_name"] == name
+            ),
+            None,
+        )
+        if item is None:
+            return []
+        entry_id = int(item["entry_id"])
+        night_id = int(item["night_id"])
+        entry = next(
+            (e for e in list_ledger(self.db, night_id) if int(e["id"]) == entry_id),
+            None,
+        )
+        if entry is None:
+            return []
+        if str(entry.get("body") or "").strip():
+            return []
+        tags = list(entry.get("tags") or [])
+        method = next(
+            (m for m in SUMMON_METHODS if m in tags),
+            METHOD_CHUANZHAO,
+        )
+        night = get_night(self.db, night_id) or {}
+        state = getattr(self, "state", None)
+        if state is None:
+            return []
+        generator = getattr(self, "_beat_generator", None) or production_beat_generator
+        inputs = assemble_beat_inputs(
+            self.db,
+            state,
+            beat_kind=BEAT_ENTER,
+            time_of_day=str(night.get("time_of_day") or ""),
+            location=str(night.get("location") or ""),
+            night_id=night_id,
+            person_name=name,
+            summon_method=method,
+            before_entry_id=entry_id,
+        )
+        body = run_beat_generator(generator, inputs)
+        generated = [(entry_id, body)]
+        with atomic(self.db):
+            persist_chat_turn_scene(self.db, generated)
+        return generated
+
     def _start_cli_action_intent(self, character: Character, message: str) -> Optional[Future]:
         """召对动作判断只读皇帝消息，可与大臣回话并发。
 
