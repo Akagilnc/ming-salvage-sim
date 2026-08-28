@@ -289,8 +289,13 @@ def test_promulgated_army_pay_debits_and_clears_arrears_once(game):
     assert logs and "补饷" in str(logs[0]["reason"])
 
 
-def test_promulgation_settle_applies_once_ready_replay_no_double_debit(game):
-    """颁布缝落账恰一次；同批 extractor 误产 + ready 重放均不二扣。"""
+def test_promulgation_settle_applies_once_ready_replay_no_double_debit(game, monkeypatch):
+    """颁布缝落账恰一次；ready=1 恢复重放不二扣。"""
+    import ming_sim.decree as dm
+    from ming_sim.decree import persist_resolve_context, pre_settle
+    from ming_sim.session import TurnPhase
+    from tests.test_advance_paths_atomic import _recovery_session
+
     db, state, content = game
     _set_guanning_arrears(db, 60, central=60, province=0)
     state.metrics["国库"] = max(int(state.metrics["国库"]), 100)
@@ -300,36 +305,17 @@ def test_promulgation_settle_applies_once_ready_replay_no_double_debit(game):
     dossier = _close_night_dossier(db, state, content, ctx.out["pending_action_id"])
     did = int(dossier["id"])
 
-    # 颁布缝一次消费
     _promulgate(db, state, content, did)
     assert int(state.metrics["国库"]) == treasury_before - 15
     assert len(db.list_economy_moves_for_dossier(did)) == 1
-    arrears_after_first = _army_row(db)["arrears"]
 
-    # 同批 extractor 误产（模拟 settle 内 apply_score_extraction）
-    apply_score_extraction(
-        db, state,
-        {
-            "economy_moves": [{
-                "account": "国库",
-                "delta": -15,
-                "category": "补饷",
-                "reason": "extractor 误产补饷（应被单写者滤掉）",
-                "purpose": "补饷",
-                "target_kind": "army",
-                "target_id": "guanning",
-                "origin_ref": f"dossier:{did}",
-            }],
-        },
-        content=content,
-    )
-    assert int(state.metrics["国库"]) == treasury_before - 15
-    assert len(db.list_economy_moves_for_dossier(did)) == 1
+    turn = state.turn
+    pre_settle(state, db, content=content)
+    assert state.turn_phase == TurnPhase.SETTLING.value
+    arrears_after_pre = _army_row(db)["arrears"]
 
-    # ready=1 重放：extractor 再吐同一笔；不得二扣。
-    # 颁布缝幂等：若再次进入 apply（不应发生，status 已非 proposed），既有流水护栏。
-    apply_score_extraction(
-        db, state,
+    persist_resolve_context(
+        db, turn,
         {
             "economy_moves": [{
                 "account": "国库",
@@ -342,19 +328,40 @@ def test_promulgation_settle_applies_once_ready_replay_no_double_debit(game):
                 "origin_ref": f"dossier:{did}",
             }],
         },
-        content=content,
+        decree_text="拨饷诏",
+        narrative="已存邸报……",
+        simulator_payload={},
+        secret_orders=[],
+        relevant_memories=[],
     )
-    assert int(state.metrics["国库"]) == treasury_before - 15
-    assert len(db.list_economy_moves_for_dossier(did)) == 1
-    assert _army_row(db)["arrears"] == pytest.approx(arrears_after_first)
+    ready = db.get_resolve_context(turn)
+    assert ready is not None and ready.get("extracted") is not None
 
-    # 直接再调拨饷消费缝：已有流水则零增量
-    spent_again = db._apply_army_pay_grant_effect(
-        state, dossier, json.loads(dossier["payload_json"]), did,
-    )
-    assert spent_again == 15
-    assert int(state.metrics["国库"]) == treasury_before - 15
-    assert len(db.list_economy_moves_for_dossier(did)) == 1
+    def _must_not_run(*a, **k):
+        raise AssertionError("恢复直入 apply 不应重跑 simulator/extractor")
+    monkeypatch.setattr(dm, "simulate_season_with_payload", _must_not_run)
+    monkeypatch.setattr(dm, "extract_scores_by_modules_with_agno", _must_not_run)
+
+    result = _recovery_session(db, state, content, monkeypatch).resolve_turn()
+
+    assert result.awaiting is False
+    assert state.turn == turn + 1
+    assert db.get_resolve_context(turn) is None
+    moves = db.list_economy_moves_for_dossier(did)
+    assert len(moves) == 1
+    assert int(moves[0]["delta"]) == -15
+    pay_ledger = [
+        dict(r) for r in db.conn.execute(
+            """
+            SELECT delta, origin_ref FROM economy_ledger
+            WHERE purpose='补饷' AND origin_ref=?
+            """,
+            (f"dossier:{did}",),
+        ).fetchall()
+    ]
+    assert len(pay_ledger) == 1
+    assert int(pay_ledger[0]["delta"]) == -15
+    assert _army_row(db)["arrears"] == pytest.approx(arrears_after_pre)
 
 
 def test_rejected_and_hold_leave_zero_ledger(game):
@@ -827,7 +834,7 @@ def _scripted_xiexang_candidates(*, amount=15, account="国库", target_id="guan
 
 
 def test_explicit_draft_prefix_without_grant_candidate_stays_generic(game, monkeypatch):
-    """非载荷拟旨：classifier 无 grant 候选时仍走 generic special_decree（#344 残余）。"""
+    """非载荷拟旨：classifier 无 grant 候选时仍走 generic special_decree；颁布不误落补饷。"""
     import types
 
     import ming_sim.cli_backend as cb
@@ -872,6 +879,25 @@ def test_explicit_draft_prefix_without_grant_candidate_stays_generic(game, monke
     assert pending.get("dossier_action_type") == "special_decree"
     assert pending.get("text") == seed
     assert pending.get("purpose") != "补饷"
+
+    _set_guanning_arrears(db, 60, central=60, province=0)
+    before = _army_row(db)
+    state.metrics["国库"] = max(int(state.metrics["国库"]), 100)
+    dossier = _close_night_dossier(db, state, content, pending_id)
+    _promulgate(db, state, content, dossier["id"])
+    moves = db.list_economy_moves_for_dossier(dossier["id"])
+    assert all(m.get("purpose") != "补饷" for m in moves)
+    pay_ledger = [
+        dict(r) for r in db.conn.execute(
+            """
+            SELECT purpose, origin_ref FROM economy_ledger
+            WHERE purpose='补饷' AND origin_ref=?
+            """,
+            (f"dossier:{dossier['id']}",),
+        ).fetchall()
+    ]
+    assert pay_ledger == []
+    assert _army_row(db)["arrears"] == pytest.approx(before["arrears"])
 
 
 def test_explicit_prefix_grant_missing_target_fail_loud_no_pending(game, monkeypatch):
