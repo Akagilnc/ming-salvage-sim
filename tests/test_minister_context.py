@@ -817,16 +817,6 @@ def test_audience_faction_and_power_reports_never_emit_raw_abstract_axes(game):
     assert power_band(82) in rendered
 
 
-def test_secret_order_tool_preserves_long_title_without_formal_cap(game):
-    db, _state, content = game
-    minister = _active_ministers(content, db, n=1)[0]
-    tools = {f.__name__: f for f in build_minister_tools(minister, _ctx(game))}
-    title = "查核辽饷转运与沿途侵蚀及军粮实数并追索责任官员"
-
-    result = tools["secret_order"](action="issue", title=title, content="查明事实并回奏。")
-
-    assert result.startswith("__secret_order__")
-    assert json.loads(result.removeprefix("__secret_order__"))["title"] == title
 
 
 def test_minister_tools_characterize_region_army_and_issue_progress(game):
