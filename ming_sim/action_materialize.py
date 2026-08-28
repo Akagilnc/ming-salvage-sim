@@ -1360,10 +1360,13 @@ def stage_grant_allocation_candidate(
 
 
 def _materialize_grant_allocation(ctx: MaterializeCtx) -> None:
-    """暂存恩赏·拨帑案卷；钱粮按 ADR 0055 分流落地。"""
+    """暂存恩赏·拨帑案卷；钱粮按 ADR 0055 分流落地。
+
+    #1503：显式拟旨前缀若带 typed grant 候选，仍走本单轨（不再因 explicit_prefixed 早退）。
+    draft_staged / 已有 pending 仍互斥，避免与 generic special_decree 双写。
+    """
     if (
         ctx.intent_kind != "grant_allocation"
-        or ctx.explicit_prefixed
         or ctx.draft_staged
         or ctx.out.get("pending_action_id")
         or ctx.conversation_intent_handled
