@@ -2549,29 +2549,14 @@ def settle_with_delta(
             # rescript action through the existing promulgation seam under this
             # outer atomic batch (ADR 0056 force reads current-turn Judge evidence).
             if dossier_rescript_actions:
-                # #1583：批红序同样是有序物化批——批前统一荐人快照校验，
-                # 批内前序任免不得污染后序二次校验。
-                rescript_rows = []
                 for action in dossier_rescript_actions:
-                    row = db.get_decree_dossier(int(action["dossier_id"]))
-                    if row is not None:
-                        rescript_rows.append(row)
-                db._prevalidate_office_recommendation_snapshots(state, rescript_rows)
-                previous_reco = bool(
-                    getattr(db.conn, "_recommendation_snapshots_prevalidated", False)
-                )
-                db.conn._recommendation_snapshots_prevalidated = True
-                try:
-                    for action in dossier_rescript_actions:
-                        affected_people.update(db.apply_dossier_promulgation(
-                            state,
-                            int(action["dossier_id"]),
-                            str(action["decision"]),
-                            content=content,
-                            registry=None,
-                        ) or set())
-                finally:
-                    db.conn._recommendation_snapshots_prevalidated = previous_reco
+                    affected_people.update(db.apply_dossier_promulgation(
+                        state,
+                        int(action["dossier_id"]),
+                        str(action["decision"]),
+                        content=content,
+                        registry=None,
+                    ) or set())
             full_report = _settle_after_extract_body(
                 state, db, extracted,
                 before_turn=before_turn, content=content, registry=registry,
