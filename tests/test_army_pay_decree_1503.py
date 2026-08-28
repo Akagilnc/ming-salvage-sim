@@ -846,6 +846,9 @@ def test_non_xiexang_payload_cannot_smuggle_army_pay_purpose(game):
     actor = db.conn.execute(
         "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
     ).fetchone()["name"]
+    ledger_before = db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger"
+    ).fetchone()[0]
     pending_id = db.stage_directive_candidate(state.turn, actor, payload={
         "text": "拨关宁军械项目经费十万两。",
         "actor": actor,
@@ -864,7 +867,9 @@ def test_non_xiexang_payload_cannot_smuggle_army_pay_purpose(game):
     assert not any(
         row["pending_action_id"] == pending_id for row in db.list_decree_dossiers()
     )
-    assert db.list_economy_moves_for_dossier(pending_id) == []
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger"
+    ).fetchone()[0] == ledger_before
     assert _army_row(db) == before
 
 
