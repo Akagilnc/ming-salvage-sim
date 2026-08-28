@@ -515,11 +515,17 @@ def test_api_start_cli_action_intent_runs_for_natural_language(game, monkeypatch
     assert "draft" in kinds
     assert captured.get("message", "").startswith("着起复袁崇焕")
 
-    # 显式前缀仍跳过（#344）
+    # #1503 Owner A：显式拟旨前缀在成案边界提交 typed classifier（不再 #344 跳过）
     fut_prefix = GameSession._start_cli_action_intent(
         sess, ch, "拟旨如下：着起复袁崇焕为辽东巡抚",
     )
-    assert fut_prefix is None
+    assert fut_prefix is not None
+    prefix_finished = GameSession._finish_cli_action_intent(sess, fut_prefix)
+    assert prefix_finished is not None
+    assert {str(c.get("kind") or "") for c in prefix_finished} == {
+        "appointment", "draft",
+    }
+    assert captured.get("message", "").startswith("拟旨如下：")
 
 
 def test_classify_prompt_allows_draft_and_appointment_coexistence(monkeypatch):

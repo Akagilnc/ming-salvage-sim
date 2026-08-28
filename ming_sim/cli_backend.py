@@ -2641,6 +2641,7 @@ def capture_manual_directive_payload(
         "deadline_months", "participant_roster", "locality_scope", "entries",
         # #658：自由下旨御笔强推 stalled 廷议
         "target_dossier_id",
+        "grant_action", "purpose", "cadence",
     ):
         if captured.get(field) not in (None, ""):
             payload[field] = captured[field]
