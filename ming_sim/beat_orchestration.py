@@ -27,13 +27,12 @@ from __future__ import annotations
 
 from concurrent.futures import Executor, Future
 from dataclasses import dataclass, fields as _dc_fields
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, Hashable, List, Optional, Tuple
 import json
 import threading
 
 from ming_sim.audience_night import (
     AUDIBILITY_PUBLIC,
-    METHOD_CHUANZHAO,
     METHOD_XUANRU,
     SUMMON_METHODS,
     TAG_ENTER,
@@ -512,26 +511,9 @@ def persist_chat_turn_scene(db: Any, generated: List[Tuple[int, str]]) -> None:
         )
 
 
-def discover_offsite_summon_task(
-    db: Any,
-    state: Any,
-    *,
-    origin_id: str,
-    person_name: str,
-    beat_generator: Optional[BeatGenerator] = None,
-) -> Optional[Tuple[int, str]]:
-    """#1566：发现场外传召账，经 LLM beat seam 组装并生成正文。
-
-    复用既有 assemble/run 单轨，不另建 registry/generator/lifecycle。
-    BEAT_SUMMON（非 BEAT_ENTER）：人在途未入殿，ADR 0096。
-    返回 (entry_id, body)，或 body 已物化时返回 None。
-    """
-    from ming_sim.audience_night import (
-        SUMMON_METHODS,
-        get_night,
-        list_unsettled_summons,
-    )
-    import json as _json
+def _offsite_summon_entry_id(db: Any, *, origin_id: str, person_name: str) -> int:
+    """场外传召 entry_id 唯一 lookup（key 派生与 discover 幂等重读共用同一权威）。"""
+    from ming_sim.audience_night import list_unsettled_summons
 
     origin = str(origin_id or "").strip()
     name = str(person_name or "").strip()
@@ -549,10 +531,30 @@ def discover_offsite_summon_task(
         raise RuntimeError(
             f"场外传召账未落库，无法物化 scene：origin_id={origin!r} person={name!r}"
         )
-    entry_id = int(item["entry_id"])
-    night_id = int(item["night_id"])
+    return int(item["entry_id"])
+
+
+def discover_offsite_summon_task(
+    db: Any,
+    state: Any,
+    *,
+    origin_id: str,
+    person_name: str,
+    beat_generator: Optional[BeatGenerator] = None,
+) -> Optional[Tuple[int, str]]:
+    """#1566：发现场外传召账，经 LLM beat seam 组装并生成正文。
+
+    复用既有 assemble/run 单轨，不另建 registry/generator/lifecycle。
+    BEAT_SUMMON（非 BEAT_ENTER）：人在途未入殿，ADR 0096。
+    返回 (entry_id, body)，或 body 已物化时返回 None。
+    """
+    from ming_sim.audience_night import SUMMON_METHODS, get_night
+    import json as _json
+
+    name = str(person_name or "").strip()
+    entry_id = _offsite_summon_entry_id(db, origin_id=origin_id, person_name=person_name)
     row = db.conn.execute(
-        "SELECT body, tags FROM story_ledger_entries WHERE id=?",
+        "SELECT body, tags, night_id FROM story_ledger_entries WHERE id=?",
         (entry_id,),
     ).fetchone()
     if row is None:
@@ -566,6 +568,7 @@ def discover_offsite_summon_task(
         raise RuntimeError(
             f"传召账缺召法 tag：entry_id={entry_id} tags={tags!r}"
         )
+    night_id = int(row["night_id"])
     night = get_night(db, night_id) or {}
     inputs = assemble_beat_inputs(
         db, state, beat_kind=BEAT_SUMMON,
@@ -586,29 +589,31 @@ def materialize_offsite_summon_scene(
     *,
     origin_id: str,
     person_name: str,
+    scene_registry: "ChatTurnSceneRegistry",
+    write_back: Callable[[List[Tuple[int, str]]], None],
     beat_generator: Optional[BeatGenerator] = None,
 ) -> List[Tuple[int, str]]:
     """#1566：为已落库的场外传召账生成并持久化自由 scene。
 
-    复用 beat_orchestration 既有 assemble/run/persist 缝；不建 chat turn、
-    不调大臣回话。唯一合法 no-op：该 ledger 行 body 已非空（幂等重入）。
+    经唯一 `ChatTurnSceneRegistry._futures`（key=`('offsite_summon', entry_id)`）
+    复用与 chat-turn scene 相同的 `_lock`/executor：同一 entry 上并发 caller
+    coalesce 同一 Future，只有首个 submit 的任务实际生成并经调用方 `write_back`
+    写回一次；调用方在 write_gate 外阻塞等待 Future，不自行二次持久化。
     传召账缺失、召法 tag 缺失、生成器失败一律上抛，禁止洗成空白成功载荷。
-    调用方须在 write_gate 外等待 LLM。
 
     BEAT_SUMMON（非 BEAT_ENTER）：人在途未入殿，ADR 0096。
     """
-    task = discover_offsite_summon_task(
-        db, state, origin_id=origin_id, person_name=person_name,
-        beat_generator=beat_generator,
-    )
-    if task is None:
-        return []
-    entry_id, body = task
-    generated: List[Tuple[int, str]] = [(entry_id, body)]
-    from ming_sim.applier import atomic
-    with atomic(db):
-        persist_chat_turn_scene(db, generated)
-    return generated
+    entry_id = _offsite_summon_entry_id(db, origin_id=origin_id, person_name=person_name)
+    key = ("offsite_summon", entry_id)
+
+    def _generate() -> Optional[Tuple[int, str]]:
+        return discover_offsite_summon_task(
+            db, state, origin_id=origin_id, person_name=person_name,
+            beat_generator=beat_generator,
+        )
+
+    future = scene_registry.start_offsite_summon(key, _generate, write_back)
+    return future.result()
 
 
 class ChatTurnSceneRegistry:
@@ -616,20 +621,25 @@ class ChatTurnSceneRegistry:
 
     无依赖 beat 各提交独立 Future 真并发。join/abandon 排空整桶。
     Future.cancel 挡不住已在跑的 LLM——abandon 必须 join drain。
+
+    #1566：同一 `_futures` 泛化为 `Dict[Hashable, List[Future]]`——chat-turn
+    仍用 int key 走既有 start/join/abandon；场外传召复用同 `_lock`/executor，
+    key=`('offsite_summon', entry_id)`，不建第二 map。
     """
 
     def __init__(self, executor: Executor) -> None:
         self._executor = executor
         self._lock = threading.Lock()
-        self._futures: Dict[int, List[Future]] = {}
+        self._futures: Dict[Hashable, List[Future]] = {}
 
     def has(self, chat_turn_id: int) -> bool:
         with self._lock:
             return int(chat_turn_id) in self._futures
 
     def active_turn_ids(self) -> List[int]:
+        """只投影 int chat-turn key；offsite tuple key 不经此口暴露给旧消费者。"""
         with self._lock:
-            return list(self._futures.keys())
+            return [key for key in self._futures.keys() if isinstance(key, int)]
 
     def _submit(
         self,
@@ -825,6 +835,55 @@ class ChatTurnSceneRegistry:
         if not futures:
             return
         self._drain(futures, keep_results=False)
+
+    def start_offsite_summon(
+        self,
+        key: Hashable,
+        generate: Callable[[], Optional[Tuple[int, str]]],
+        write_back: Callable[[List[Tuple[int, str]]], None],
+    ) -> Future:
+        """#1566：场外传召专用 coalescing submit——同 key 并发 caller 共享同一 Future。
+
+        同一 `_lock` 下已有 bucket则直接返回其 Future（不重复 submit，不重复生成）；
+        无 bucket才向同一 executor 提交任务。任务内重读 body（`generate` 内经
+        `discover_offsite_summon_task` 幂等重读）→ 必要时生成 → 仅在生成非空时经
+        `write_back` 写回一次（其余 coalesce 的 caller 只等待同一 Future，不二次写）。
+        终态（成功/异常/cancel）后仅当 map 仍指向本 Future 时才清 key，避免误清
+        后来者重新提交的新 Future。
+        """
+        def _run() -> List[Tuple[int, str]]:
+            item = generate()
+            generated: List[Tuple[int, str]] = [item] if item is not None else []
+            if generated:
+                write_back(generated)
+            return generated
+
+        with self._lock:
+            bucket = self._futures.get(key)
+            if bucket:
+                return bucket[0]
+            future = self._executor.submit(_run)
+            self._futures[key] = [future]
+
+        def _clear_if_current(fut: Future) -> None:
+            with self._lock:
+                if self._futures.get(key) == [fut]:
+                    self._futures.pop(key, None)
+
+        future.add_done_callback(_clear_if_current)
+        return future
+
+    def abandon_all(self) -> None:
+        """统一 teardown：一次 pop 唯一 map 全部既有 bucket（chat-turn + offsite），
+
+        逐桶复用既有 `_drain(..., keep_results=False)`；`GameSession.close()`
+        经此单一入口排空后再关库，不逐 key 分别调用。
+        """
+        with self._lock:
+            pending = list(self._futures.items())
+            self._futures.clear()
+        for _key, futures in pending:
+            self._drain(futures, keep_results=False)
 
 
 def start_close_scene_on_registry(
