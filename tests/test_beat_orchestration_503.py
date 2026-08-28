@@ -660,45 +660,6 @@ def web_game(tmp_path, monkeypatch):
         pass
 
 
-def test_game_session_close_drains_active_offsite_future_before_closing_db(web_game):
-    """#1566：统一 registry teardown 排空 tuple-key offsite Future 后才关库。"""
-    started = threading.Event()
-    release = threading.Event()
-    closed = threading.Event()
-    errors: list[BaseException] = []
-    registry = web_game.session._scene_registry
-
-    def _generate():
-        started.set()
-        assert release.wait(2.0), "offsite Future was not released"
-        return None
-
-    registry.start_offsite_summon(
-        ("offsite_summon", 1566), _generate, lambda _generated: None,
-    )
-    assert started.wait(2.0), "offsite Future did not start"
-
-    def _close():
-        try:
-            web_game.session.close()
-        except BaseException as exc:  # noqa: BLE001
-            errors.append(exc)
-        finally:
-            closed.set()
-
-    worker = threading.Thread(target=_close, daemon=True)
-    worker.start()
-    assert not closed.wait(0.1), "GameSession.close did not drain the active Future"
-    release.set()
-    assert closed.wait(2.0), "GameSession.close did not finish after Future release"
-    worker.join(2.0)
-
-    assert not errors, errors
-    assert registry.active_turn_ids() == []
-    with pytest.raises(sqlite3.ProgrammingError):
-        web_game.db.conn.execute("SELECT 1")
-
-
 def test_exit_beat_routes_characterization_and_perspectival_inputs(game):
     """exit 特征化/见闻走 assemble+generator seam；dismiss 只落垫位，不跑同步 LLM。"""
     db, state, _content = game
@@ -1528,7 +1489,7 @@ def test_stream_join_and_abandon_do_not_hold_write_gate(monkeypatch):
     rt._runtime_write_queue = lambda: q
     rt._persistent_chat_minister = lambda _n: True
     rt._audience_turn_in_flight = lambda _n: False
-    rt._start_chat_turn = lambda _n: (11, {})
+    rt._start_chat_turn = lambda _n, **_k: (11, {})
     rt._record_chat_rollback_items = lambda *_a, **_k: None
     rt._chat_payload = lambda *a, **k: {"answer": "臣遵旨。"}
     rt._spawn_extraction_trail = lambda *_a, **_k: None

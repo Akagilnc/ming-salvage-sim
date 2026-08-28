@@ -103,7 +103,7 @@ def _base_runtime(db):
     runtime.chat_history = {character.name: []}
     runtime._persistent_chat_minister = lambda name: True
     runtime._audience_turn_in_flight = lambda name: False
-    runtime._start_chat_turn = lambda name: (7, {})
+    runtime._start_chat_turn = lambda name, **_k: (7, {})
     return runtime, character.name
 
 
@@ -492,7 +492,7 @@ def _runtime_for_nonstream_chat(*, start_scene=None, append_error=None, abandon_
     runtime.chat_history = {character.name: []}
     runtime._persistent_chat_minister = lambda name: True
     runtime._audience_turn_in_flight = lambda name: False
-    runtime._start_chat_turn = lambda name: (7, {})
+    runtime._start_chat_turn = lambda name, **_k: (7, {})
     runtime._record_chat_rollback_items = lambda *a, **k: None
     return runtime, character.name, abandoned, failed, restored
 
