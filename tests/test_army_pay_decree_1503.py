@@ -1070,123 +1070,10 @@ def test_real_chat_explicit_prefix_pay_decree_promulgates_once(game, monkeypatch
     assert moves[0]["purpose"] == "补饷"
 
 
-def test_http_explicit_prefix_pay_decree_carrier_and_promulgate(
-    tmp_path, monkeypatch, _offline_scene_beat_generator,
-):
-    """真 HTTP：POST /api/ministers/{}/chat 显式拟旨 → typed 拨饷 payload → 顺颁扣 15。
-
-    stub 仅 LLM 边界（agent.run + classify）；session.chat / materialize / 颁布缝走生产。
-    """
-    from fastapi.testclient import TestClient
-
-    import ming_sim.agents as agents_mod
-    import ming_sim.cli_backend as cb
-    import ming_sim.mindreading as mindreading_mod
-    import web_app
-
-    class _CannedRun:
-        content = "臣遵旨。敕户部发太仓银十五万两协济关宁军前。钦此。"
-        tools: list = []
-
-    class _CannedAgent:
-        def run(self, *_a, **_k):
-            return _CannedRun()
-
-        def get_last_run_output(self):
-            return None
-
-    class _CannedExtractor:
-        def run(self, _material):
-            return SimpleNamespace(content='{"facts":[]}')
-
-    class _CannedMindreading:
-        def run(self, _material):
-            return SimpleNamespace(content="近臣低声：此旨关军食。")
-
-    scripted = _scripted_xiexang_candidates(amount=15, target_id="guanning")
-    classify_calls: list = []
-
-    def fake_classify(*_a, **_k):
-        classify_calls.append(1)
-        return list(scripted)
-
-    monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
-    monkeypatch.setattr(
-        agents_mod, "create_audience_extractor_agent", lambda *a, **k: _CannedExtractor())
-    monkeypatch.setattr(
-        agents_mod, "create_endorsement_extractor_agent",
-        lambda *a, **k: _CannedExtractor(),
-    )
-    monkeypatch.setattr(
-        mindreading_mod, "create_mindreading_agent",
-        lambda *a, **k: _CannedMindreading(),
-    )
-    monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
-    monkeypatch.setattr(cb, "classify_cli_action_intent", fake_classify)
-
-    game = web_app.WebGame(fresh=False)
-    monkeypatch.setattr(web_app, "web_game", game)
-    try:
-        # 任取一 active 文官；classifier 已 scripted，不依赖真实户部身份
-        name = next(
-            getattr(ch, "name", key)
-            for key, ch in game.content.characters.items()
-            if getattr(ch, "power_id", "ming") == "ming"
-            and getattr(ch, "office_type", "") not in ("后宫", "宗藩")
-            and game.db.get_character_status(getattr(ch, "name", key))[0] == "active"
-        )
-        game.session.registry.get = lambda _ch: _CannedAgent()
-        # 确保 channel 允许 classifier（api/cli）
-        if getattr(game.session, "llm_config", None) is not None:
-            try:
-                game.session.llm_config.channel = "cli"
-            except Exception:
-                pass
-
-        _set_guanning_arrears(game.db, 60, central=60, province=0)
-        game.state.metrics["国库"] = max(int(game.state.metrics["国库"]), 100)
-        treasury_before = int(game.state.metrics["国库"])
-        arrears_before = _army_row(game.db)["arrears"]
-
-        client = TestClient(web_app.app)
-        chat_resp = client.post(
-            f"/api/ministers/{name}/chat",
-            json={"message": "拟旨如下：准拨关宁军饷十五万两。"},
-        )
-        assert chat_resp.status_code == 200, chat_resp.text
-        body = chat_resp.json()
-        pending_id = int(body.get("pending_action_id") or 0)
-        assert pending_id > 0, body
-        assert classify_calls == [1], "HTTP 显式拟旨须一次 typed classifier"
-
-        pending = json.loads(game.db.conn.execute(
-            "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
-        ).fetchone()["payload_json"])
-        assert pending["dossier_action_type"] == "grant_allocation"
-        assert pending["purpose"] == "补饷"
-        assert int(pending["amount"]) == 15
-        assert pending["target_id"] == "guanning"
-        assert int(game.state.metrics["国库"]) == treasury_before
-
-        dossier = _close_night_dossier(game.db, game.state, game.content, pending_id)
-        _promulgate(game.db, game.state, game.content, dossier["id"])
-        assert int(game.state.metrics["国库"]) == treasury_before - 15
-        assert _army_row(game.db)["arrears"] == pytest.approx(arrears_before - 15)
-        assert len(game.db.list_economy_moves_for_dossier(dossier["id"])) == 1
-    finally:
-        try:
-            game.session.close()
-        except Exception:
-            pass
-
-
 def test_http_chat_issue_stream_pay_decree_advances_month(
     tmp_path, monkeypatch, _offline_scene_beat_generator,
 ):
-    """原轨真 HTTP：召对准拨 → POST /api/decree/issue/stream（必要时 resolve）过月。
+    """原轨真 HTTP：召对户部「拨关宁军饷十五万两」→「准」→ issue/stream（必要时 resolve）过月。
 
     stub 仅 LLM 边界；不得用 store helper 代替收夜/颁布/结算 HTTP 链。
     """
@@ -1207,13 +1094,17 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
     )
     from tests.test_session_write_queue_1353 import wait_pending_writes
 
-    class _CannedRun:
-        content = "臣遵旨。敕户部发太仓银十五万两协济关宁军前。钦此。"
-        tools: list = []
-
     class _CannedAgent:
+        def __init__(self):
+            self._calls = 0
+
         def run(self, *_a, **_k):
-            return _CannedRun()
+            self._calls += 1
+            if self._calls == 1:
+                content = "臣请户部发帑十五万两协济关宁军前，请陛下定夺准驳。"
+            else:
+                content = "臣遵旨。敕户部发太仓银十五万两协济关宁军前。钦此。"
+            return SimpleNamespace(content=content, tools=[])
 
         def get_last_run_output(self):
             return None
@@ -1221,6 +1112,10 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
     class _CannedExtractor:
         def run(self, _material):
             return SimpleNamespace(content='{"facts":[]}')
+
+    class _CannedEndorsementExtractor:
+        def run(self, _material):
+            return SimpleNamespace(content='{"endorsements":[]}')
 
     class _CannedMindreading:
         def run(self, _material):
@@ -1232,8 +1127,15 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
 
     scripted = _scripted_xiexang_candidates(amount=15, target_id="guanning")
 
-    def fake_classify(*_a, **_k):
+    def fake_classify(text, *_a, **_k):
+        if str(text or "").strip() == "准":
+            return []
         return list(scripted)
+
+    def fake_confirm(player_message, *_a, **_k):
+        if str(player_message or "").strip() == "准":
+            return "应允"
+        return "无"
 
     monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
@@ -1243,7 +1145,7 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
         agents_mod, "create_audience_extractor_agent", lambda *a, **k: _CannedExtractor())
     monkeypatch.setattr(
         agents_mod, "create_endorsement_extractor_agent",
-        lambda *a, **k: _CannedExtractor(),
+        lambda *a, **k: _CannedEndorsementExtractor(),
     )
     monkeypatch.setattr(
         agents_mod, "create_relation_judge_agent",
@@ -1255,6 +1157,7 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
     )
     monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
     monkeypatch.setattr(cb, "classify_cli_action_intent", fake_classify)
+    monkeypatch.setattr(cb, "extract_confirmation_intent", fake_confirm)
     monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
     monkeypatch.setattr(
         decree_mod,
@@ -1296,11 +1199,12 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
         name = next(
             getattr(ch, "name", key)
             for key, ch in game.content.characters.items()
-            if getattr(ch, "power_id", "ming") == "ming"
-            and getattr(ch, "office_type", "") not in ("后宫", "宗藩")
+            if getattr(ch, "office_type", "") == "户部"
+            and getattr(ch, "power_id", "ming") == "ming"
             and game.db.get_character_status(getattr(ch, "name", key))[0] == "active"
         )
-        game.session.registry.get = lambda _ch: _CannedAgent()
+        canned = _CannedAgent()
+        game.session.registry.get = lambda _ch: canned
         if getattr(game.session, "llm_config", None) is not None:
             try:
                 game.session.llm_config.channel = "cli"
@@ -1315,13 +1219,22 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
         turn_before = int(game.state.turn)
 
         client = TestClient(web_app.app)
-        chat_resp = client.post(
+        petition = client.post(
             f"/api/ministers/{name}/chat",
-            json={"message": "拟旨如下：准拨关宁军饷十五万两。"},
+            json={"message": "拨关宁军饷十五万两。"},
         )
-        assert chat_resp.status_code == 200, chat_resp.text
-        pending_id = int(chat_resp.json().get("pending_action_id") or 0)
-        assert pending_id > 0, chat_resp.json()
+        assert petition.status_code == 200, petition.text
+        pending_id = int(petition.json().get("pending_action_id") or 0)
+        assert pending_id > 0, petition.json()
+        wait_pending_writes(game)
+        assert int(game.state.metrics["国库"]) == treasury_before
+        assert _army_row(game.db)["arrears"] == pytest.approx(arrears_before["arrears"])
+
+        confirm = client.post(
+            f"/api/ministers/{name}/chat",
+            json={"message": "准"},
+        )
+        assert confirm.status_code == 200, confirm.text
         wait_pending_writes(game)
         assert int(game.state.metrics["国库"]) == treasury_before
         assert _army_row(game.db)["arrears"] == pytest.approx(arrears_before["arrears"])
@@ -1377,6 +1290,23 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
         assert len(logs) == 1
         assert float(logs[0]["delta"]) == pytest.approx(-15)
         after_army = _army_row(game.db)
+        tick_delta = sum(
+            float(row["delta"] or 0)
+            for row in game.db.conn.execute(
+                """
+                SELECT delta FROM army_logs
+                WHERE army_id='guanning' AND field='arrears'
+                  AND turn=? AND (origin_ref IS NULL OR origin_ref='')
+                """,
+                (turn_before,),
+            ).fetchall()
+        )
+        assert after_army["arrears"] == pytest.approx(
+            float(arrears_before["arrears"]) - 15 + tick_delta
+        )
+        assert after_army["central_pay_arrears"] == pytest.approx(
+            float(arrears_before["central_pay_arrears"]) - 15 + tick_delta
+        )
         assert after_army["arrears"] == pytest.approx(float(logs[0]["new_value"]))
         assert after_army["central_pay_arrears"] == pytest.approx(
             float(logs[0]["new_value"])
