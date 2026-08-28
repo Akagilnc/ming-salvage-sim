@@ -138,7 +138,12 @@ export function GameHud({
         </span>
       </button>
       <div className="hud2-slot" style={HUD_SLOTS.顶栏.国库}>
-        <BudgetHover accountName="国库" budget={state.budget["国库"]} />
+        <BudgetHover
+          accountName="国库"
+          budget={state.budget["国库"]}
+          armyPayDueTotal={state.budget.army_pay_due_total}
+          settledArmyPay={state.budget.settled_army_pay}
+        />
       </div>
       <div className="hud2-slot" style={HUD_SLOTS.顶栏.内库}>
         <BudgetHover accountName="内库" budget={state.budget["内库"]} />

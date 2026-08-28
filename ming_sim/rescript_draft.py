@@ -131,7 +131,7 @@ def normalize_rescript_layer_a_option(raw: object) -> Dict[str, object]:
     for key, _default in (
         ("name", ""), ("title", ""), ("commitment_kind", ""),
         ("station", ""), ("office", ""),
-        ("grant_action", ""), ("account", ""), ("cadence", ""),
+        ("grant_action", ""), ("account", ""), ("purpose", ""), ("cadence", ""),
         ("execution_surface", ""), ("appoint_action", ""),
         ("appointment_tenure", ""), ("punish_action", ""),
         ("privilege", ""), ("summon_target", ""),
@@ -236,6 +236,34 @@ def _project_issue_qualitatively(issue: object) -> Optional[Dict[str, object]]:
     return row or None
 
 
+def _project_region_targets(table: object) -> List[Dict[str, str]]:
+    """Project the simulator's canonical typed region table into the target catalog."""
+    if table is None:
+        return []
+    try:
+        cols = table["cols"]  # type: ignore[index]
+        rows = table["rows"]  # type: ignore[index]
+        indexes = {field: cols.index(field) for field in ("id", "name", "kind")}
+        targets = []
+        for row in rows:
+            if not isinstance(row, list):
+                raise ValueError(f"canonical region target row 非 list：{row!r}")
+            target = {}
+            for field, index in indexes.items():
+                value = row[index]
+                if value is not None and not isinstance(value, str):
+                    raise ValueError(
+                        f"canonical region target {field} 非字符串：{value!r}"
+                    )
+                target[field] = (value or "").strip()
+            targets.append(target)
+        if any(not value for target in targets for value in target.values()):
+            raise ValueError("canonical region target 含空 id/name/kind")
+        return targets
+    except (KeyError, IndexError, TypeError, ValueError) as exc:
+        raise ValueError("canonical region target table 畸形") from exc
+
+
 def build_rescript_draft_payload(
     state: GameState,
     narrative: str,
@@ -267,6 +295,7 @@ def build_rescript_draft_payload(
         "gazette": narrative,
         "triage_actor": dict(triage_actor),
         "active_issues": active_issues,
+        "region_targets": _project_region_targets(simulator_payload.get("regions")),
         "target": {"min_items": 3, "max_items": MAX_RESCRIPT_DRAFTS},
     }
 
@@ -365,6 +394,18 @@ def validate_rescript_draft_items(
     return drafts
 
 
+def _assert_region_targets_grounded(
+    drafts: List[Dict[str, object]], region_target_ids: set[str]
+) -> None:
+    for draft in drafts:
+        for option in draft["options"]:  # type: ignore[union-attr]
+            if option["target_kind"] == "region" \
+                    and option["target_id"] not in region_target_ids:
+                raise ValueError(
+                    f"票拟 option.target_id 不在同批 region_targets：{option['target_id']!r}"
+                )
+
+
 def _board_issue_ids(active_issues: object) -> set[int]:
     ids: set[int] = set()
     if isinstance(active_issues, list):
@@ -423,9 +464,15 @@ def generate_rescript_draft(
         return None
     try:
         data = _parse_rescript_json_strict(raw)
+        region_targets = payload.get("region_targets")
+        region_target_ids = {
+            str(row["id"]) for row in region_targets
+            if isinstance(row, dict) and isinstance(row.get("id"), str)
+        } if isinstance(region_targets, list) else set()
         drafts = validate_rescript_draft_items(
             data, _board_issue_ids(payload.get("active_issues"))
         )
+        _assert_region_targets_grounded(drafts, region_target_ids)
     except (LLMContractError, ValueError) as exc:  # 解析/shape 缝：只收契约违约
         _degrade(exc)
         return None

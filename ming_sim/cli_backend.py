@@ -1067,32 +1067,6 @@ def _messages_to_prompt(
     return prompt
 
 
-# agy 自治 agent 偶发把英文行动计划吐进开头，cwd 隔离是治本，这里再剥一层兜底。
-_NARRATION_HEAD = re.compile(
-    r"^\s*(I will\b|I'll\b|Let me\b|First,|First I|I need to\b|I'm going to\b|I am going to\b|"
-    r"Looking at\b|Let's\b|I should\b|To answer\b|Based on the (workspace|directory|files)\b).*$",
-    re.IGNORECASE,
-)
-
-
-def _strip_agent_narration(text: str) -> str:
-    """剥掉开头若干行英文行动计划 narration，保留真正的角色回答（中文）。"""
-    lines = text.split("\n")
-    i = 0
-    while i < len(lines):
-        ln = lines[i].strip()
-        if not ln:
-            i += 1
-            continue
-        # 命中英文行动计划行就跳过；遇到第一行非 narration（通常是中文正文）即停。
-        if _NARRATION_HEAD.match(ln):
-            i += 1
-            continue
-        break
-    cleaned = "\n".join(lines[i:]).strip()
-    return cleaned or text.strip()  # 全被剥光则退回原文，宁可脏不要空
-
-
 # ── 拟旨 / 下密令入档（CLI 后端）────────────────────────────────────────
 # 原版（api key）靠 agno 工具 propose_directive/secret_order，模型 function-call 触发。
 # agy/codex/claude 不做 function-calling，唯一缺口在此。玩家用「拟旨/下密令」按钮 =
@@ -1164,7 +1138,7 @@ def extract_minister_actions(
         "order_id": _int(obj.get("目标密令编号")),
         # Title has no formal length cap (family removed silent 20-char hard trunc).
         "new_title": str(obj.get("新标题") or "").strip(),
-        "new_content": str(obj.get("新内容") or "").strip(),
+        "new_content": str(obj.get("新内容") or ""),
         "deadline_months": _int(obj.get("期限月数"), 36),
         "cultivate_skill": str(obj.get("调教技能") or "").strip()[:20],
         "cultivate_trait": str(obj.get("调教性格") or "").strip()[:20],
@@ -1216,7 +1190,9 @@ def classify_cli_action_intent(
         "单动作输出一个 JSON 对象，多动作输出 JSON 对象数组（无代码围栏、无多余字）：\n"
         + schema_obj + "\n"
         "规则：确认优先于新动作；同一话语可同时含拟旨与任免时须同时输出"
-        "拟旨与任免候选（draft+appointment 并存），多候选不得因拟旨省略任免。\n"
+        "拟旨与任免候选（draft+appointment 并存），多候选不得因拟旨省略任免。"
+        "修改待确认动作时，确认=修改、新内容=完整非空修改正文；有多个待确认候选时，"
+        "目标编号必须且只能填一个所指候选 id。\n"
         "跨轮指代（如「这三件事你都办」「三事全允」）须结合最近相关召对上下文与"
         "待确认动作列表解析所指事项，逐事各产一条候选；更新既有候选时填目标候选=该道 id。\n"
         "拿问、下狱、赐死、廷杖、罚俸、削籍、放归、昭雪属惩处，不得判任免罢免。\n"
@@ -2667,6 +2643,7 @@ def capture_manual_directive_payload(
         "deadline_months", "participant_roster", "locality_scope", "entries",
         # #658：自由下旨御笔强推 stalled 廷议
         "target_dossier_id",
+        "grant_action", "purpose", "cadence",
     ):
         if captured.get(field) not in (None, ""):
             payload[field] = captured[field]
@@ -2784,7 +2761,8 @@ def extract_confirmation_intent(
     确认判读只许结构化 LLM JSON 枚举（ADR 0028 2026-07-23 / ADR 0142）；
     禁自由散文 regex/词表快路（准/不准/作罢/算了…）。结构性前缀/端点路由在调用方。
 
-    返回 {"confirmation": 应允|拒绝|留中|修改|无, "target_ids": [合法候选 id...]}。
+    返回 {"confirmation": 应允|拒绝|留中|修改|无, "target_ids": [合法候选 id...],
+    "new_content": "修改正文（仅修改时填充）"}。
     #1509：同一次 confirmation JSON 可选「目标编号」——修改多候选时由调用方按编号过滤；
     编号只接受摘要里方括号列出的合法 id，非法/空由调用方作含糊，不在此机械读玩家散文。
     """
@@ -2810,9 +2788,11 @@ def extract_confirmation_intent(
         "  修改=要求改/更正/收窄/扩充该暂存内容（未应允也未拒绝，继续改同一候选）；\n"
         "  无=没提这些、继续说别的、含糊未表态。\n"
         "只输出一个 JSON（无代码围栏、无多余字）：\n"
-        '{"确认":"应允|拒绝|留中|修改|无","目标编号":[方括号里的候选编号...]}。\n'
+        '{"确认":"应允|拒绝|留中|修改|无","目标编号":[方括号里的候选编号...],"新内容":""}。\n'
         "指向具体某道（含修改第几道/某道）就填其编号；单道可留空目标编号；"
-        "多道修改未指明哪道=确认仍为修改、目标编号留空。语义判断，别拘字面。\n\n"
+        "多道修改未指明哪道=确认仍为修改、目标编号留空。语义判断，别拘字面。\n"
+        "修改时「新内容」=玩家所下修改正文（去结构化「修改：」前缀后的御旨材料），"
+        "应允/拒绝/留中/无时「新内容」留空。\n\n"
         "【待皇帝定夺的暂存动作】\n" + listing + "\n"
         "【皇帝】" + (player_message or "（无）") + "\n"
         "【大臣回话】" + (minister_reply or "（无）") + "\n"
@@ -2835,7 +2815,12 @@ def extract_confirmation_intent(
             digits = "".join(ch for ch in str(t) if ch.isdigit())
             if digits and int(digits) in by_id and int(digits) not in target_ids:
                 target_ids.append(int(digits))
-    return {"confirmation": v, "target_ids": target_ids}
+    # #1376：修改判词携带 typed 新内容——唯一权威正文。ADR 0142 禁从自由散文机械提取，
+    # 此字段仅从结构化 LLM JSON 吸收；未填/非修改时留空。
+    new_content = str(obj.get("新内容") or "")
+    if v != "修改":
+        new_content = ""
+    return {"confirmation": v, "target_ids": target_ids, "new_content": new_content}
 
 
 def extract_directive_confirmation(
@@ -3756,7 +3741,6 @@ class CliChat(OpenAIChat):
             _log(f"#{seq} {tag} {dt}s attempts={attempts} resp={len(text)}c"
                  + (f" ERROR={error}" if error else ""))
 
-        text = _strip_agent_narration(text)
         text, tool_calls = _cli_recommendation_call(text, tools)
         provider_response = (
             _fake_completion(text, self.id, tool_calls)
