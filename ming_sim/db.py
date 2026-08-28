@@ -6641,12 +6641,13 @@ class GameDB:
         """已执行边饷 hub 三项结果；只读 ledger/container，不重算结算。"""
         if not self.is_substrate_hub_fiscal_engine_enabled():
             return None
-        # pre_settle 已在当月 state.turn 写 ledger/覆盖容器，settling 相位下 next_period
-        # 尚未推进——此刻 state.turn 本身就是刚结算完的 turn。换月后（summoning 等其它
-        # 相位）next_period 已推进，刚结算的 turn 退一位。settling 窗口内若仍按 turn-1
-        # 取 ledger，会把上一次结算的旧 turn 流水与本次刚覆盖的新 turn 容器拼在一起。
-        settling = str(getattr(state, "turn_phase", "") or "") == TurnPhase.SETTLING.value
-        settled_turn = max(0, int(state.turn) - (0 if settling else 1))
+        # pre_settle 已在当月 state.turn 写 ledger/覆盖容器，settling/awaiting_decision
+        # 相位下 next_period 尚未推进——此刻 state.turn 本身就是刚结算完的 turn（两者语义
+        # 相同，见 FRONT_HALF_DONE_PHASES 单一真源）。换月后（summoning 等其它相位）
+        # next_period 已推进，刚结算的 turn 退一位。前半段窗口内若仍按 turn-1 取 ledger，
+        # 会把上一次结算的旧 turn 流水与本次刚覆盖的新 turn 容器拼在一起。
+        front_half_done = str(getattr(state, "turn_phase", "") or "") in FRONT_HALF_DONE_PHASES
+        settled_turn = max(0, int(state.turn) - (0 if front_half_done else 1))
         hub_debit = self.conn.execute(
             """
             SELECT COALESCE(SUM(-delta), 0) AS amount
