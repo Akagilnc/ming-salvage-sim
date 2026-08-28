@@ -16,7 +16,7 @@ from ming_sim import audience_night as an
 from ming_sim.beat_orchestration import (
     BEAT_ENTER,
     assemble_beat_inputs,
-    run_beat_generator,
+    create_llm_beat_generator,
 )
 from ming_sim.decree import _rescript_decisions
 from ming_sim.models import TurnPhase
@@ -185,14 +185,27 @@ def test_scroll_and_highlight_list_keep_sentinels_out_and_world_facts_in(game, m
         time_of_day="戌时", location="乾清宫",
         person_name=minister, summon_method=an.METHOD_XUANRU,
     )
-    routed_inputs = []
-    enter_body = run_beat_generator(
-        lambda inp: routed_inputs.append(inp) or "entry", enter_inputs,
+    llm_calls = []
+
+    class _FakeAgent:
+        def __init__(self, **_kwargs):
+            pass
+
+        def run(self, prompt):
+            llm_calls.append(prompt)
+            return SimpleNamespace(content="entry")
+
+    monkeypatch.setattr("agno.agent.Agent", _FakeAgent)
+    monkeypatch.setattr("ming_sim.llm_model.create_chat_model", lambda *_a, **_k: object())
+    monkeypatch.setattr(
+        "ming_sim.llm_model.extract_agent_text",
+        lambda result: str(result.content),
     )
-    assert routed_inputs == [enter_inputs]
-    assert routed_inputs[0].beat_kind == BEAT_ENTER
-    assert routed_inputs[0].person_name == minister
-    assert routed_inputs[0].summon_method == an.METHOD_XUANRU
+    enter_body = create_llm_beat_generator(object())(enter_inputs)
+    assert enter_inputs.beat_kind == BEAT_ENTER
+    assert enter_inputs.person_name == minister
+    assert enter_inputs.summon_method == an.METHOD_XUANRU
+    assert len(llm_calls) == 1
     an.append_ledger_entry(
         db, night_id, body=enter_body, tags=[an.TAG_ENTER],
         person_names=[minister],
