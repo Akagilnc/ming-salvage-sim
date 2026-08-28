@@ -376,6 +376,24 @@ def test_payload_projection_excludes_machine_condition_fields():
     assert payload["turn"]["year"] == 1630 and payload["turn"]["reign_period_label"]
 
 
+def test_payload_projects_consumable_region_targets_from_real_monthly_board(game):
+    """系统票拟看到同批盘面的合法 region id，而非从地名臆造目标。"""
+    from ming_sim.simulation import build_simulator_payload
+
+    db, state, _content = game
+    simulator_payload = build_simulator_payload(state, db, "", "")
+    payload = build_rescript_draft_payload(
+        state, "邸报", simulator_payload,
+        {"name": "首辅", "office": "内阁首辅", "faction": "阉党"},
+    )
+
+    targets = {row["id"]: row for row in payload["region_targets"]}
+    assert targets["liaodong"] == {
+        "id": "liaodong", "name": "辽东 / 宁锦", "kind": "边镇",
+    }
+    assert "ningyuan" not in targets
+
+
 def test_payload_projection_without_active_issues_degrades_to_empty():
     from ming_sim.models import GameState
 
