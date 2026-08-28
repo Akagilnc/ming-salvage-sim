@@ -7,6 +7,12 @@
 ### Added
 - **#662 灾害/兵灾驱动入池**：流民池补齐 0087 四入口中天灾与兵祸两入口——发生与具体量级由 internal extractor 依据既有盘面（region 天灾/人祸字段、military_pressure 定性档、活跃局势 issue）、`class_population_balances` 与 `population_unit` 软判；代码仅校验正整数、实时源余额、合法方向与来源并做守恒记账。无事实不申报（无灾不入），不建引擎侧自动触发（与 extractor 无双驱动）。邸报/召对因果回响走既有 effect_brief／classes_brief 定性特征面（P4 零数值）；restore 只读 DB 接续，与加派/摊派入口合流同一本账。
 
+## [0.48.8.0] - 2026-08-28
+
+### Fixed
+- **#1563 CLI 回话保持模型原文**：移除会按英文句式剥除大模型自由文本的输出侧清洗；CLI runner 的回话现在原样进入既有推荐动作解析与 typed completion，输入侧工作区隔离和角色约束继续负责防止元游戏泄漏。
+- 同步公开入口回归测试、基准脚本与历史 TODO 说明，明确输出侧正则清洗不再是合法兜底。
+
 ## [0.48.4.0] - 2026-08-28
 
 ### Fixed
