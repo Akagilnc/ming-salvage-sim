@@ -185,9 +185,14 @@ def test_scroll_and_highlight_list_keep_sentinels_out_and_world_facts_in(game, m
         time_of_day="戌时", location="乾清宫",
         person_name=minister, summon_method=an.METHOD_XUANRU,
     )
+    routed_inputs = []
     enter_body = run_beat_generator(
-        lambda inp: inp.location or inp.time_of_day or "entry", enter_inputs,
+        lambda inp: routed_inputs.append(inp) or "entry", enter_inputs,
     )
+    assert routed_inputs == [enter_inputs]
+    assert routed_inputs[0].beat_kind == BEAT_ENTER
+    assert routed_inputs[0].person_name == minister
+    assert routed_inputs[0].summon_method == an.METHOD_XUANRU
     an.append_ledger_entry(
         db, night_id, body=enter_body, tags=[an.TAG_ENTER],
         person_names=[minister],
@@ -211,7 +216,6 @@ def test_scroll_and_highlight_list_keep_sentinels_out_and_world_facts_in(game, m
     _assert_no_character_sentinel_leak(scroll, where="read_night_scroll")
     _assert_no_character_sentinel_leak(projection, where="build_chat_projection")
     _assert_no_character_sentinel_leak(enter_inputs, where="assemble_beat_inputs")
-    _assert_no_character_sentinel_leak(enter_body, where="run_beat_generator")
 
     blob = _scan_blob({"api": payload, "scroll": scroll, "projection": projection})
     assert str(facts["year"]) in blob
