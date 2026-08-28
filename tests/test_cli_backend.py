@@ -793,17 +793,12 @@ def test_run_claude_stdout_only(monkeypatch):
     assert captured["kw"].get("env") is None
 
 
-def test_run_codex_uses_typed_final_agent_message(monkeypatch):
+def test_run_codex_flags_and_stdout(monkeypatch):
     body = '{"k": []}'
-    events = "\n".join([
-        json.dumps({"type": "item.completed", "item": {"type": "reasoning", "text": "WRAPPER"}}),
-        json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": body}}),
-    ])
     monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
-    captured = _capture_run(monkeypatch, _P(stdout=events, stderr="OpenAI Codex v0\nlogs"))
+    captured = _capture_run(monkeypatch, _P(stdout=body, stderr="OpenAI Codex v0\nlogs"))
     out, n = cb._run_codex("p")
     assert out == body and n == 1
-    assert "--json" in captured["cmd"]
     assert "--skip-git-repo-check" in captured["cmd"]
     assert "--ephemeral" in captured["cmd"]
     assert "-c" not in captured["cmd"]
@@ -982,14 +977,14 @@ def test_codex_stream_watchdog_kills_hung_process(monkeypatch):
     assert killed.is_set()
 
 
-def test_codex_final_text_accepts_only_completed_agent_message():
+def test_codex_final_text_handles_item_completed_shape():
     assert cb._codex_final_text(
         {"type": "item.completed", "item": {"type": "agent_message", "text": "BODY"}}
     ) == "BODY"
     assert cb._codex_final_text(
         {"type": "item.completed", "item": {"type": "reasoning", "text": "DRAFT"}}
     ) == ""
-    assert cb._codex_final_text({"type": "agent_message", "message": "WRAPPER"}) == ""
+    assert cb._codex_final_text({"type": "agent_message", "message": "TOP"}) == "TOP"
 
 
 @pytest.mark.parametrize(
@@ -1001,12 +996,7 @@ def test_codex_final_text_accepts_only_completed_agent_message():
 )
 def test_run_runner_accepts_config_model_and_timeout(monkeypatch, runner, kwargs, model_flag, timeout):
     monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
-    stdout = "STDOUT_BODY"
-    if runner == "_run_codex":
-        stdout = json.dumps(
-            {"type": "item.completed", "item": {"type": "agent_message", "text": stdout}}
-        )
-    captured = _capture_run(monkeypatch, _P(stdout=stdout))
+    captured = _capture_run(monkeypatch, _P(stdout="STDOUT_BODY"))
     out, n = getattr(cb, runner)("p", **kwargs)
     assert out == "STDOUT_BODY" and n == 1
     assert captured["cmd"][captured["cmd"].index("--model") + 1] == model_flag
@@ -1015,9 +1005,7 @@ def test_run_runner_accepts_config_model_and_timeout(monkeypatch, runner, kwargs
 
 def test_run_codex_reasoning_env_optional(monkeypatch):
     monkeypatch.setenv("MING_SIM_CODEX_REASONING", "medium")
-    captured = _capture_run(monkeypatch, _P(stdout=json.dumps(
-        {"type": "item.completed", "item": {"type": "agent_message", "text": "BODY"}}
-    )))
+    captured = _capture_run(monkeypatch)
     cb._run_codex("p")
     joined = " ".join(captured["cmd"])
     assert "-c" in captured["cmd"]
@@ -1026,23 +1014,21 @@ def test_run_codex_reasoning_env_optional(monkeypatch):
 
 def test_run_codex_maps_reasoning_strength_to_native_effort(monkeypatch):
     monkeypatch.setenv("MING_SIM_CODEX_REASONING", "medium")
-    captured = _capture_run(monkeypatch, _P(stdout=json.dumps(
-        {"type": "item.completed", "item": {"type": "agent_message", "text": "BODY"}}
-    )))
+    captured = _capture_run(monkeypatch)
     cb._run_codex("p", reasoning_strength="high")
     joined = " ".join(captured["cmd"])
     assert 'model_reasoning_effort="xhigh"' in joined
     assert 'model_reasoning_effort="medium"' not in joined
 
 
-def test_run_codex_rejects_output_without_typed_final_message(monkeypatch):
+def test_run_codex_stdout_empty_fallback(monkeypatch):
     monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
     monkeypatch.setattr(
         cb.subprocess, "run",
-        lambda cmd, **kw: _P(stdout="PLAIN_WRAPPER", stderr="OpenAI Codex v0.125.0\nlogs"),
+        lambda cmd, **kw: _P(stdout="", stderr="STDOUT_BODY\nOpenAI Codex v0.125.0\nlogs"),
     )
-    with pytest.raises(RuntimeError, match="codex 调用失败"):
-        cb._run_codex("p")
+    out, n = cb._run_codex("p")
+    assert out == "STDOUT_BODY"
 
 
 def test_run_claude_maps_reasoning_strength_to_thinking_tokens(monkeypatch):
@@ -1210,12 +1196,7 @@ def test_run_runner_execs_resolved_abspath(monkeypatch, runner, resolved):
         if cmd and cmd[0] == "security":
             return _P()
         seen["cmd"] = cmd
-        stdout = "STDOUT_BODY"
-        if runner == "_run_codex":
-            stdout = json.dumps(
-                {"type": "item.completed", "item": {"type": "agent_message", "text": stdout}}
-            )
-        return _P(stdout=stdout)
+        return _P(stdout="STDOUT_BODY")
 
     monkeypatch.setattr(cb.subprocess, "run", fake_run)
     getattr(cb, runner)("p")
