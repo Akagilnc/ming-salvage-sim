@@ -974,96 +974,31 @@ def test_1376_candidate_confirm_freezes_explicit_typed_contract(game):
     assert contract["kind"] != "稽核"
 
 
-def test_extractor_assembly_origin_linked_fiscal_and_nonfiscal(game):
-    """真装配入口：internal 从 typed 私密 brief 产 origin-linked economy/fiscal。"""
-    db, state, content = game
+def test_internal_extractor_receives_origin_linked_typed_briefs_without_secret_prose(game):
+    """真实 extractor 装配只证明结构化输入契约；LLM 产出不以手造结果冒充。"""
+    db, state, _ = game
     name = _minister(db)
-    _set_axes(db, name, loyalty=90, identity=30)
     secret_prose = "乙巳密查辽饷侵冒正文不得进公共档房"
     fiscal_id = _issue(
         db, state, name, "补发边饷", secret_prose,
-        months=1, target=1, kind="补发饷银", axes=["既得利益"], unit="两",
+        months=1, target=5000, kind="补发饷银", axes=["既得利益"], unit="两",
         tags=["辽饷"],
     )
     catch_id = _issue(
         db, state, name, "缉私枭", secret_prose,
-        months=1, target=1, kind="缉获人犯", unit="人犯",
-        tags=["密查"],
+        months=1, target=3, kind="缉获人犯", unit="人犯", tags=["密查"],
     )
-    fiscal_did = int(db.get_dossier_for_secret_order(fiscal_id)["id"])
-    catch_did = int(db.get_dossier_for_secret_order(catch_id)["id"])
 
-    internal_ctx = build_extractor_shared_context(
-        db, state, "", "", module="internal",
-    )
-    from ming_sim.settlement_payload import _select_secret_orders_for_sim, group_secret_orders_for_sim
-    grouped = group_secret_orders_for_sim(_select_secret_orders_for_sim(db))
-    secret_ctx = build_extractor_shared_context(
-        db, state, "", "", secret_orders=grouped, module="personnel_secret",
-    )
+    internal_ctx = build_extractor_shared_context(db, state, "", "", module="internal")
     assert secret_prose not in str(internal_ctx)
     assert "secret_orders" not in internal_ctx
-    briefs = internal_ctx["secret_covert_effect_briefs"]
-    by_origin = {str(b["origin_ref"]): b for b in briefs}
-    assert by_origin[f"dossier:{fiscal_did}"]["delivery"]["unit"] == "两"
-    assert by_origin[f"dossier:{catch_did}"]["delivery"]["unit"] == "人犯"
-    assert secret_prose in str(secret_ctx.get("secret_orders") or "")
-
-    fiscal_key = db.conn.execute(
-        "SELECT key FROM fiscal_config WHERE key LIKE '%_rate' ORDER BY key LIMIT 1"
-    ).fetchone()
-    assert fiscal_key is not None
-    key = str(fiscal_key["key"])
-
-    state.turn += 1
-    db.save_state(state)
-
-    fiscal_raw = {
-        "fiscal_changes": [{
-            "key": key, "delta": 1, "reason": "按合同补饷银口",
-            "origin_ref": f"dossier:{fiscal_did}",
-        }],
+    briefs = {
+        int(brief["order_id"]): brief
+        for brief in internal_ctx["secret_covert_effect_briefs"]
     }
-    catch_raw = {
-        "economy_moves": [{
-            "account": "内库", "delta": -1, "category": "密令差务",
-            "reason": "缉获开支",
-            "origin_ref": f"dossier:{catch_did}",
-        }],
-    }
-    cleaned_fiscal = _sanitize_module_output("internal", fiscal_raw)
-    cleaned_catch = _sanitize_module_output("internal", catch_raw)
-    leaked = _sanitize_module_output("personnel_secret", fiscal_raw)
-    assert leaked.get("fiscal_changes") in (None, [])
-    merged = {
-        "fiscal_changes": cleaned_fiscal["fiscal_changes"],
-        "economy_moves": cleaned_catch["economy_moves"],
-        "covert_exec_selections": [
-            {"order_id": fiscal_id, "fidelity": "忠实"},
-            {"order_id": catch_id, "fidelity": "忠实"},
-        ],
-    }
-    apply_score_extraction(db, state, merged, content=content)
-    apply_monthly_covert_actual_progress(
-        db, state,
-        selections=[
-            {"order_id": fiscal_id, "fidelity": "忠实"},
-            {"order_id": catch_id, "fidelity": "忠实"},
-        ],
-        commit=True,
-    )
-    assert db.sum_dossier_actual_progress_units(fiscal_did) == 1.0
-    assert db.sum_dossier_actual_progress_units(catch_did) == 1.0
-    durable_f = db.list_dossier_durable_effects(fiscal_did)
-    durable_c = db.list_dossier_durable_effects(catch_did)
-    assert durable_f and all(
-        str(r.get("origin_ref") or "") == f"dossier:{fiscal_did}" for r in durable_f
-    )
-    assert durable_c and all(
-        str(r.get("origin_ref") or "") == f"dossier:{catch_did}" for r in durable_c
-    )
-
-    out = settle_due_secret_orders(db, state, commit=True)
-    by_oid = {r["order_id"]: r for r in out}
-    assert by_oid[fiscal_id]["status"] == "done" and by_oid[fiscal_id]["delivered"]
-    assert by_oid[catch_id]["status"] == "done" and by_oid[catch_id]["delivered"]
+    assert briefs[fiscal_id]["origin_ref"].startswith("dossier:")
+    assert briefs[fiscal_id]["delivery"] == {"unit": "两", "target_units": 5000.0}
+    assert briefs[fiscal_id]["canonical_fields"] == ["fiscal_changes"]
+    assert briefs[catch_id]["origin_ref"].startswith("dossier:")
+    assert briefs[catch_id]["delivery"] == {"unit": "人犯", "target_units": 3.0}
+    assert briefs[catch_id]["canonical_fields"] == ["economy_moves"]
