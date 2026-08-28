@@ -1274,6 +1274,31 @@ def test_resim_path_does_not_preconsume_pending(game, monkeypatch, tmp_path):
     assert title == "原标题"  # 真表无半写
 
 
+def test_fallback_path_commits_pending(game, monkeypatch):
+    """fallback 终端路（推进回合）在自己的 atomic 内 commit 暂存动作（cmr S7 r5）。"""
+    import ming_sim.decree as dm
+    from tests.test_pending_actions import _active_minister_name
+
+    db, state, content = game
+    turn = state.turn
+    dm.pre_settle(state, db, content=content)  # settling：守门早退不再消费
+    name = _active_minister_name(db, content)
+    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=0)
+    db.stage_pending_action(
+        turn, kind="secret_order", action="更新", minister_name=name, target_id=oid,
+        payload={"new_title": "fallback标题", "new_content": "x", "deadline_months": 0})
+
+    res = _drive_fallback(db, state, content, monkeypatch)
+
+    assert res.awaiting is False
+    assert state.turn == turn + 1
+    row = db.conn.execute(
+        "SELECT status FROM pending_actions WHERE turn=? AND target_id=?",
+        (turn, oid)).fetchone()
+    assert row is not None and row["status"] == "committed"  # 真 committed 非 failed（ship-pre r1）
+    title = db.conn.execute(
+        "SELECT title FROM secret_orders WHERE id=?", (oid,)).fetchone()["title"]
+    assert title == "fallback标题"
 
 
 def test_fallback_persists_sources_created_by_inertia_before_archive(game, monkeypatch):

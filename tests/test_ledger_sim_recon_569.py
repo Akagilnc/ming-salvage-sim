@@ -69,6 +69,34 @@ def test_a_monthly_progress_public_safe_projection(game):
     assert "memorial_text" not in hit
 
 
+def test_a_personnel_secret_rail_and_secret_order_exclusion_unchanged(game):
+    db, state, _content = game
+    _order_id, dossier_id, secret_title, memorial = _long_secret(db, state)
+
+    private = build_extractor_shared_context(
+        db, state, "邸报", "", module="personnel_secret",
+    )
+    assert any(
+        int(item["dossier_id"]) == dossier_id
+        for item in private["monthly_dossier_reports"]
+    )
+    private_dump = json.dumps(private, ensure_ascii=False)
+    assert memorial in private_dump or any(
+        any(
+            str(p.get("memorial_text") or "") == memorial
+            for p in (item.get("progress") or [])
+        )
+        for item in private["monthly_dossier_reports"]
+    )
+
+    public_ids = {
+        int(row["id"]) for row in db.list_decree_dossiers_for_simulation(state.turn)
+    }
+    assert dossier_id not in public_ids
+    assert all(
+        row.get("action_type") != "secret_order"
+        for row in db.list_decree_dossiers_for_simulation(state.turn)
+    )
 
 
 # ── B. 结构化案卷投影契约 ───────────────────────────────────────────

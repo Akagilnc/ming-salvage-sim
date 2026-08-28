@@ -165,3 +165,33 @@ def test_plain_dismissal_without_opposing_pending_still_stages(game):
 
 
 # ── AC1：密令按钮轮按按钮路由，不跑任免/确认等其它 LLM 分类器（调用审计）────────
+def test_secret_prefix_turn_runs_no_appointment_classifier(game, monkeypatch):
+    db, state, content = game
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    minister = _active_ming_minister(db, content)
+
+    def _forbidden(*a, **k):
+        raise AssertionError("密令按钮轮不应触发任免/确认/会话密令/拟旨等其它 LLM 分类器")
+
+    monkeypatch.setattr(cb, "extract_appointment_action", _forbidden)
+    monkeypatch.setattr(cb, "extract_confirmation_intent", _forbidden)
+    monkeypatch.setattr(cb, "extract_minister_actions", _forbidden)
+    monkeypatch.setattr(cb, "extract_draft_intent", _forbidden)
+
+    # 密令轮的轻 LLM 字段提取（decision 2 允许）走 _run_backend_for_config，喂固定 JSON。
+    monkeypatch.setattr(cb, "_run_backend_for_config",
+                        lambda prompt, llm_config=None, tag="": (json.dumps({
+                            "标题": "密查关宁军饷", "内容": "着人密查关宁军饷截留。",
+                            "承办人": minister.name, "期限月数": 0, "标签": ["关宁"],
+                        }, ensure_ascii=False), 1))
+
+    sess = _session(db, state, content)
+    res = sess.apply_cli_conversation_actions(
+        SimpleNamespace(name=minister.name, office_type=minister.office_type),
+        "密令如下：着人密查关宁军饷截留，不得声张。", "臣领密旨。",
+        has_directive=False, secret_order_id=None)
+
+    # 走密令路：落一条 secret_order 暂存（未打任免/确认分类器即已由 _forbidden 保证）。
+    pend = db.list_pending_actions(state.turn)
+    assert res.get("pending_action_id")
+    assert [p["kind"] for p in pend] == ["secret_order"]
