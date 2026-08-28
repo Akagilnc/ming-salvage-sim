@@ -223,14 +223,14 @@ def group_secret_orders_for_sim(
     「孙承宗密旨（active）」）。条目保留
     id/minister_name/title/content[:120]/turn_issued/due_turn/progress/sim_note，不含 status。
     #1504：待核议组只承载 due_commitment ACK；密令结案不再由 LLM 产出。
-    pending_review/done/failed/cancelled 落到此函数时忽略不进任何组。
+    非 active 密令落到此函数时忽略不进任何组。
 
     #883：本分组只喂 personnel_secret extractor 独立 rail；simulator 公共轨不收密令正文，
-    只见 `build_simulator_payload` 派生的扁平 `due_commitments`。恢复存档复用同一承载形状。
+    只见 `build_simulator_payload` 派生的扁平 `due_commitments`。
     """
     groups: Dict[str, List[Dict[str, object]]] = {"在办": [], "待核议": []}
     bucket = {"active": "在办"}
-    # 恢复路也用本函数重分组旧存档 list（见 _recovered_grouped）；损坏/历史遗留数据可能非 list
+    # 调用方输入可能不是 list；此处保持边界容错。
     # 或含非 dict 元素，照 simulation._clean_* 的守门惯例跳过，不让 TypeError 崩在恢复链上。
     if not isinstance(rows, list):
         return groups

@@ -18321,7 +18321,7 @@ class GameDB:
                     payload = {}
             except (ValueError, TypeError):
                 payload = {}
-            # apply 抛错(如 催办 对已转 pending_review 的密令)= 当 False:下面标 failed、
+            # apply 抛错(如 催办 对已非 active 的密令)= 当 False:下面标 failed、
             # 不中断本轮其余动作、更不能崩整个结算(CMR P0)。
             cm = atomic(self) if owns_transaction else contextlib.nullcontext()
             with cm:
@@ -18355,7 +18355,7 @@ class GameDB:
                     else:
                         self.conn.execute(f"ROLLBACK TO {savepoint}")
                         restore_office_memory()
-                        # 落不了的(目标已转 pending_review、未知动作、坏 payload)标 failed,不留 pending——
+                        # 落不了的(目标已非 active、未知动作、坏 payload)标 failed,不留 pending——
                         # 否则回合推进后成旧回合不可见死行,永不再处理(ship-pre CMR codex)。
                         self.conn.execute(
                             "UPDATE pending_actions SET status='failed' WHERE id=?", (int(pa["id"]),))
@@ -22120,7 +22120,7 @@ class GameDB:
         tlog(f"[secret_order] close id={order_id} status={status}")
 
     def submit_secret_order_for_review(self, order_id: int, claim: str, year: int, period: int) -> bool:
-        """#1504：大臣自认办结 → 缩 due_turn 至当月，月末机械对账；不再进 pending_review 核议链。
+        """#1504：大臣自认办结 → 缩 due_turn 至当月，月末机械对账。
 
         claim 按月戳追加进 result（奏报/陈词轨），不入实况对账真源。仅 active 可提交。
         """
@@ -22284,7 +22284,7 @@ class GameDB:
         deadline_months: int = 1,
         reason: str = "",
     ) -> Dict[str, object]:
-        """缩短 active 密令期限。deadline_months<=0 表示本月到期对账（#1504 不再 pending_review）。"""
+        """缩短 active 密令期限。deadline_months<=0 表示本月到期对账。"""
         row = self.conn.execute(
             "SELECT id, title, status, result, due_turn FROM secret_orders WHERE id = ?",
             (int(order_id),),
@@ -22367,7 +22367,7 @@ class GameDB:
     def auto_submit_due_secret_orders(self, state: GameState) -> List[Dict[str, object]]:
         """#1504：到期只打「期限届满」陈词戳，保持 active；结案改 settle 尾部机械对账。
 
-        不再翻 pending_review（拆 LLM secret_order_closes 核议消费链）。
+        不改变密令状态（LLM secret_order_closes 消费链已退役）。
         """
         rows = self.conn.execute(
             """
@@ -22403,7 +22403,7 @@ class GameDB:
         if rows:
             tlog(
                 f"[secret_order] due_stamp count={len(submitted)} "
-                f"ids={[x['id'] for x in submitted]} (no pending_review)"
+                f"ids={[x['id'] for x in submitted]} (status unchanged)"
             )
         return submitted
 
