@@ -366,7 +366,7 @@ def test_family_dossier_brief_and_progress_keep_system_words_out(game):
         build_simulator_payload,
         project_monthly_progress_for_simulator,
     )
-    from tests.dossier_test_helpers import rejected_verdict
+    from tests.dossier_test_helpers import investigation_covert_task, rejected_verdict
 
     db, state, content = game
     minister = active_ming_character(db, content)
@@ -388,10 +388,7 @@ def test_family_dossier_brief_and_progress_keep_system_words_out(game):
     db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
 
     # monthly_progress 真源＝长差密令（护行/稽核 + deadline≥2），与 #566/#569 同缝。
-    order_id = db.create_secret_order(
-        state, minister, f"护行{facts['army_name']}饷",
-        f"逐月核兵{facts['manpower']}不得外泄", ["护行"], deadline_months=4,
-    )
+    order_id = db.create_secret_order(state, minister, f"护行{facts['army_name']}饷", f"逐月核兵{facts['manpower']}不得外泄", ["护行"], deadline_months=4, covert_task=investigation_covert_task(f"护行{facts['army_name']}饷"))
     errand_id = int(db.get_dossier_for_secret_order(order_id)["id"])
     db.record_dossier_progress(
         errand_id, state.turn, "在途",

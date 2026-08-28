@@ -182,7 +182,7 @@ def test_secret_prefix_turn_runs_no_appointment_classifier(game, monkeypatch):
     monkeypatch.setattr(cb, "_run_backend_for_config",
                         lambda prompt, llm_config=None, tag="": (json.dumps({
                             "标题": "密查关宁军饷", "内容": "着人密查关宁军饷截留。",
-                            "承办人": minister.name, "期限月数": 0, "差务": "清丈", "价值轴": ["实务事功"], "方向": 1, "交付单位": "亩", "交付目标": 1, "标签": ["关宁"],
+                            "承办人": minister.name, "期限月数": 0, "差务": "查核关宁军饷", "价值轴": ["实务事功"], "方向": 1, "交付单位": "案", "交付目标": 1, "标签": ["关宁"],
                         }, ensure_ascii=False), 1))
 
     sess = _session(db, state, content)

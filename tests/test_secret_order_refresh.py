@@ -15,6 +15,7 @@ from ming_sim.registry import MinisterRegistry, bind_content as _bind_registry
 from ming_sim.skills import bind_content as _bind_skills
 from ming_sim.llm_model import create_agno_db
 from tests.conftest import active_ming_character
+from tests.dossier_test_helpers import investigation_covert_task
 
 
 def _registry(game, monkeypatch):
@@ -37,7 +38,7 @@ def test_refresh_rebuilds_agent_with_new_secret_order(game, monkeypatch):
     reg, apath = _registry(game, monkeypatch)
     try:
         a1 = reg.get(char)                      # 密令未建时建好、缓存
-        db.create_secret_order(state, name, "辰字密令更新测试", "限期半年补饷", [], deadline_months=6)
+        db.create_secret_order(state, name, "辰字密令更新测试", "限期半年补饷", [], deadline_months=6, covert_task=investigation_covert_task("辰字密令更新测试"))
         assert reg.get(char) is a1              # 创建不触发刷新 → 仍是陈旧缓存
         reg.refresh(name)
         a2 = reg.get(char)

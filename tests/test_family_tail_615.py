@@ -8,7 +8,7 @@ import ming_sim.decree as decree_mod
 from ming_sim import issues as issue_engine
 from ming_sim.db import GameDB
 from ming_sim.models import Character
-from tests.dossier_test_helpers import _cost_events, _sat
+from tests.dossier_test_helpers import _cost_events, _sat, investigation_covert_task
 
 
 BLOCKED_LAYERS = {"cabinet_drafting", "palace_rescript", "six_offices"}
@@ -281,10 +281,7 @@ def test_secret_order_0055_exempt_not_in_rescript_with_break_rank(game, monkeypa
 
     secret_pending = db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=minister,
-        target_id=None, payload={
-            "title": "密查仓场", "content": "密查仓场侵冒，不得外泄。",
-            "assignee": minister, "tags": [], "deadline_months": 0,
-        },
+        target_id=None, payload={"title": "密查仓场", "content": "密查仓场侵冒，不得外泄。", "assignee": minister, "tags": [], "deadline_months": 0, "covert_task": investigation_covert_task("密查仓场")},
     )
     office_pending = db.stage_pending_action(
         state.turn, kind="office", action="任命",

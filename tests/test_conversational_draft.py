@@ -21,6 +21,7 @@ import pytest
 import ming_sim.cli_backend as cb
 from ming_sim.models import TurnPhase
 from ming_sim.session import GameSession
+from tests.dossier_test_helpers import investigation_covert_task
 
 _POLICY_FIELDS = {
     "dossier_action_type": "policy",
@@ -456,10 +457,10 @@ def test_explicit_secret_order_prefix_stages_pending_candidate(game, monkeypatch
             "内容": "查辽东军饷有无侵冒，并封存兵部辽饷册。",
             "承办人": name,
             "期限月数": 3,
-            "差务": "清丈",
+            "差务": "查核辽饷",
             "价值轴": ["实务事功"],
             "方向": 1,
-            "交付单位": "亩",
+            "交付单位": "案",
             "交付目标": 1,
             "标签": ["辽东", "军饷"],
         }, ensure_ascii=False), 1)
@@ -496,10 +497,10 @@ def test_natural_language_secret_order_stages_pending_candidate(game, monkeypatc
                 "内容": "暗查关宁诸将虚冒兵额，并密访粮道账册。",
                 "承办人": name,
                 "期限月数": 2,
-                "差务": "清丈",
+                "差务": "查核关宁兵额",
                 "价值轴": ["实务事功"],
                 "方向": 1,
-                "交付单位": "亩",
+                "交付单位": "案",
                 "交付目标": 1,
                 "标签": ["关宁", "兵额"],
             }, ensure_ascii=False), 1)
@@ -546,7 +547,7 @@ def test_secret_order_status_query_does_not_stage_new_hidden_order(game, monkeyp
     db, state, content = game
     name = _active_minister_name(db, content)
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
-    db.create_secret_order(state, name, "暗查辽饷", "密查辽饷侵冒。", [], deadline_months=0)
+    db.create_secret_order(state, name, "暗查辽饷", "密查辽饷侵冒。", [], deadline_months=0, covert_task=investigation_covert_task("暗查辽饷"))
     calls = []
 
     def _extractors(prompt, llm_config=None, tag=""):
@@ -645,7 +646,7 @@ def test_new_secret_order_with_existing_order_stages_only_new_candidate(game, mo
     db, state, content = game
     name = _active_minister_name(db, content)
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
-    oid = db.create_secret_order(state, name, "旧令", "旧令内容。", [], deadline_months=0)
+    oid = db.create_secret_order(state, name, "旧令", "旧令内容。", [], deadline_months=0, covert_task=investigation_covert_task("旧令"))
 
     def _extractors(prompt, llm_config=None, tag=""):
         if tag == "secret_extract":
@@ -654,10 +655,10 @@ def test_new_secret_order_with_existing_order_stages_only_new_candidate(game, mo
                 "内容": "另下一道密令暗查粮道。",
                 "承办人": name,
                 "期限月数": 2,
-                "差务": "清丈",
+                "差务": "查核粮道",
                 "价值轴": ["实务事功"],
                 "方向": 1,
-                "交付单位": "亩",
+                "交付单位": "案",
                 "交付目标": 1,
                 "标签": [],
             }, ensure_ascii=False), 1)
@@ -697,13 +698,7 @@ def test_dialogue_reject_drops_pending_new_secret_order(game, monkeypatch):
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
     db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
-        payload={
-            "title": "暗查关宁",
-            "content": "暗查关宁诸将虚冒兵额。",
-            "assignee": name,
-            "tags": ["关宁"],
-            "deadline_months": 2,
-        },
+        payload={"title": "暗查关宁", "content": "暗查关宁诸将虚冒兵额。", "assignee": name, "tags": ["关宁"], "deadline_months": 2, "covert_task": investigation_covert_task("暗查关宁")},
     )
 
     monkeypatch.setattr(cb, "_run_backend_for_config",
@@ -728,13 +723,7 @@ def test_dialogue_affirm_commits_pending_new_secret_order(game, monkeypatch):
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
     db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
-        payload={
-            "title": "暗查关宁",
-            "content": "暗查关宁诸将虚冒兵额。",
-            "assignee": name,
-            "tags": ["关宁"],
-            "deadline_months": 2,
-        },
+        payload={"title": "暗查关宁", "content": "暗查关宁诸将虚冒兵额。", "assignee": name, "tags": ["关宁"], "deadline_months": 2, "covert_task": investigation_covert_task("暗查关宁")},
     )
 
     monkeypatch.setattr(cb, "_run_backend_for_config",
@@ -1697,7 +1686,7 @@ def test_targeted_directive_rejection_does_not_drop_secret_order(game, monkeypat
         state.turn, name, payload={**_POLICY_FIELDS, "text": "草案：清查三边粮饷。", "actor": name})
     secret_id = db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
-        payload={"title": "暗查辽饷", "content": "密查辽饷侵冒。", "assignee": name})
+        payload={"title": "暗查辽饷", "content": "密查辽饷侵冒。", "assignee": name, "covert_task": investigation_covert_task("暗查辽饷")})
 
     # 确认判读只许结构化 LLM 枚举（ADR 0028）；stub 拒绝，禁词表快路。
     monkeypatch.setattr(

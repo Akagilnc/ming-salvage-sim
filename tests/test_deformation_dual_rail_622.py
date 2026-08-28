@@ -27,6 +27,7 @@ from ming_sim.issues import apply_issue_inertia_and_ongoing, apply_score_extract
 from ming_sim.simulation import _sanitize_module_output
 from ming_sim.staged_commitment import write_due_staged_commitment_todos
 from tests.test_dossier_reported_progress_619 import _world_fingerprint
+from tests.dossier_test_helpers import investigation_covert_task
 
 
 # ── shared helpers ────────────────────────────────────────────────────
@@ -277,9 +278,7 @@ def test_ac5_audit_fork_signal_present_only_with_audit_link(game):
     )
 
     # 正：长差稽核密令 + 稽核链指向目标
-    audit_order = db.create_secret_order(
-        state, actor, "密查清丈浮收", "逐月密奏", ["稽核"], deadline_months=4,
-    )
+    audit_order = db.create_secret_order(state, actor, "密查清丈浮收", "逐月密奏", ["稽核"], deadline_months=4, covert_task=investigation_covert_task("密查清丈浮收"))
     audit_dossier = int(db.get_dossier_for_secret_order(audit_order)["id"])
     db.add_dossier_links(
         audit_dossier,
@@ -298,9 +297,7 @@ def test_ac5_audit_fork_signal_present_only_with_audit_link(game):
     assert "已竣" in hit["reported_bands"]
 
     # 负：护行长差无稽核链 → 不出现 audit_fork_signals 键
-    escort_order = db.create_secret_order(
-        state, actor, "护行辽饷", "逐月办理", ["护行"], deadline_months=4,
-    )
+    escort_order = db.create_secret_order(state, actor, "护行辽饷", "逐月办理", ["护行"], deadline_months=4, covert_task=investigation_covert_task("护行辽饷"))
     escort_dossier = int(db.get_dossier_for_secret_order(escort_order)["id"])
     nudges2 = db.list_monthly_dossier_progress_nudges()
     escort_nudge = next(n for n in nudges2 if int(n["dossier_id"]) == escort_dossier)
