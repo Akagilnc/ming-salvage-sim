@@ -2089,6 +2089,171 @@ def test_close_final_exit_generator_failure_rolls_back_final_exit(game):
     assert all(str(r["status"]) == "failed" for r in rows)
 
 
+def test_close_scene_join_free_but_persist_and_cleanup_hold_write_gate(monkeypatch, game):
+    """#1585 fixer: join() (the LLM wait) must stay gate-free (P5: no LLM under the
+    runtime write gate), but the post-join ledger backfill (persist_chat_turn_scene)
+    must briefly hold the sole write_gate — session_write_queue.py's single-writer
+    contract forbids any exclusive write outside it.
+    """
+    db, state, content = game
+    minister = _active_minister(db, content)
+    night_id, ctid = an.attach_chat_turn_to_night(
+        db, state, minister, agno_session_id="gate-check", agno_runs_before=0,
+    )
+    _land_reply(db, state, minister, ctid, night_id)
+
+    gate = threading.Lock()
+    held_during_persist: list[bool] = []
+    held_during_join: list[bool] = []
+    real_persist = bo.persist_chat_turn_scene
+
+    def tracking_persist(db_, generated):
+        held_during_persist.append(gate.locked())
+        return real_persist(db_, generated)
+
+    monkeypatch.setattr(bo, "persist_chat_turn_scene", tracking_persist)
+
+    registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=2))
+    real_join = registry.join
+
+    def tracking_join(chat_turn_id):
+        held_during_join.append(gate.locked())
+        return real_join(chat_turn_id)
+
+    monkeypatch.setattr(registry, "join", tracking_join)
+
+    an.close_night(
+        db, state, night_id=int(night_id), content=content,
+        beat_generator=_echo_generator, scene_registry=registry,
+        wait_timeout_s=0.0, write_gate=gate,
+    )
+    assert held_during_join == [False], held_during_join
+    assert held_during_persist == [True], held_during_persist
+
+
+def test_final_exit_scaffold_lands_truly_empty_not_fixed_template(game):
+    """#1585 fixer: final-exit scaffold must ledger truly empty pre-generation — P7
+    forbids a hardcoded 告退 fallback string leaking to the player before the real
+    beat generates; read_night_scroll's existing empty-body gate is the only thing
+    keeping a half-built scaffold off the scroll, so the ledgered body itself must
+    actually be empty, not a fixed template that happens to be non-empty.
+    """
+    db, state, content = game
+    minister = _active_minister(db, content)
+    night_id, ctid = an.attach_chat_turn_to_night(
+        db, state, minister, agno_session_id="scaffold-empty", agno_runs_before=0,
+    )
+    _land_reply(db, state, minister, ctid, night_id)
+    registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=2))
+    close_ctid, _owned = bo.start_close_scene_on_registry(
+        db, state, night_id=int(night_id), scene_registry=registry,
+        beat_generator=_echo_generator,
+    )
+    exit_entry = next(
+        e for e in an.list_ledger(db, int(night_id))
+        if an.TAG_EXIT in (e.get("tags") or [])
+    )
+    assert exit_entry["body"] == "", exit_entry["body"]
+    bo.persist_chat_turn_scene(db, registry.join(close_ctid))
+    filled = next(
+        e for e in an.list_ledger(db, int(night_id)) if e["id"] == exit_entry["id"]
+    )
+    assert minister in filled["body"]
+
+
+def test_close_night_missing_start_exit_capability_fails_loud_and_rolls_back(game):
+    """#1585 fixer: last-present minister at close time but a scene_registry lacking
+    start_exit must fail loudly — never silently skip the final-exit beat — and then
+    roll back exactly like any other final-exit failure (OPEN, no TAG_EXIT residue,
+    minister still present).
+    """
+    db, state, content = game
+    minister = _active_minister(db, content)
+    night_id, ctid = an.attach_chat_turn_to_night(
+        db, state, minister, agno_session_id="no-start-exit", agno_runs_before=0,
+    )
+    _land_reply(db, state, minister, ctid, night_id)
+
+    class _NoExitRegistry:
+        def start_close(self, *_a, **_k):
+            return None
+
+        def abandon(self, _chat_turn_id):
+            return None
+
+    with pytest.raises(an.AudienceNightError, match="start_exit"):
+        an.close_night(
+            db, state, night_id=int(night_id), content=content,
+            beat_generator=_echo_generator, scene_registry=_NoExitRegistry(),
+            wait_timeout_s=0.0,
+        )
+    failed = an.get_night(db, int(night_id))
+    assert failed["status"] == an.NIGHT_STATUS_OPEN
+    exits = [
+        e for e in an.list_ledger(db, int(night_id))
+        if an.TAG_EXIT in (e.get("tags") or [])
+    ]
+    assert exits == []
+    assert minister in an.present_names_at(db, int(night_id))
+
+
+def test_closing_crash_resume_reuses_ledgered_empty_final_exit_scaffold(game):
+    """#1585 fixer: a process crash after the mechanical dismissal (P1) lands but
+    before the final-exit beat generates must resume by filling the SAME already
+    -ledgered empty TAG_EXIT scaffold (ADR 0036: reconcile never deletes ledger
+    rows) — not silently leave the beat bodiless forever, and not duplicate the
+    exit entry on the new process's close attempt.
+    """
+    from ming_sim.db import GameDB
+
+    db, state, content = game
+    minister = _active_minister(db, content)
+    night_id, ctid = an.attach_chat_turn_to_night(
+        db, state, minister, agno_session_id="crash-resume", agno_runs_before=0,
+    )
+    _land_reply(db, state, minister, ctid, night_id)
+
+    # Simulate the pre-crash CLOSING state: the mechanical dismissal (P1) already
+    # landed via a close-owned scaffold chat turn whose generation never finished
+    # before the process died.
+    dead_ctid = db.create_chat_turn(state, "收夜", "close-scene", 0, night_id=int(night_id))
+    exit_id = an.dismiss_from_audience(
+        db, minister, night_id=int(night_id), body="",
+        origin_chat_turn_id=int(dead_ctid), state=state,
+        allow_closing=True, body_pending_generation=True,
+    )
+    assert exit_id
+    an._set_night_fields(db, int(night_id), status=an.NIGHT_STATUS_CLOSING)
+    db.conn.commit()
+    path = db.path
+    db.close()
+
+    # Simulate process restart: fresh GameDB handle + startup reconcile (ADR 0036).
+    db2 = GameDB(path, content)
+    try:
+        state2 = db2.load_state()
+        db2.reconcile_interrupted_chat_turns()
+        assert minister not in an.present_names_at(db2, int(night_id))
+
+        registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=2))
+        an.close_night(
+            db2, state2, night_id=int(night_id), content=content,
+            beat_generator=_echo_generator, scene_registry=registry,
+            wait_timeout_s=0.0,
+        )
+        exits = [
+            e for e in an.list_ledger(db2, int(night_id))
+            if an.TAG_EXIT in (e.get("tags") or [])
+        ]
+        assert len(exits) == 1, exits
+        assert exits[0]["id"] == int(exit_id)
+        assert minister in exits[0]["body"]
+        scroll = an.read_night_scroll(db2, int(night_id))
+        assert _named_scene_beats(scroll)[-3:] == ["exit", "divider", "closing"]
+    finally:
+        db2.close()
+
+
 def test_cli_scaffold_exit_failure_deletes_exit_ledger(game, monkeypatch):
     """C11/T12: scaffold-owned CLI exit failure deletes exit placeholder then fails turn."""
     import ming_sim.cli.terminal as term

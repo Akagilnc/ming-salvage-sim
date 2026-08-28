@@ -577,8 +577,9 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
         # 空垫位不进 scroll（无空条、无人物锚、无固定句冒充）。
         # #1561：普通公共 scene 同属玩家可见 scene，空正文亦不投影；
         # aside/closing 等其它 beat 不在本票扩域。
-        # #1585：交接投影为 exit 时和真实告退共用此标签，但交接 scaffold 生成前
-        # body 确定为空（真实告退落账即带默认文案，从不落空）——同一空检门槛安全覆盖两源。
+        # #1585：交接投影为 exit 时和真实告退共用此标签；两源生成前都可能落真正空
+        # scaffold（final-exit 经 body_pending_generation=True 落空账，交接同理）——
+        # 同一空检门槛安全覆盖两源，生成落地后 persist_chat_turn_scene 原地补写。
         if beat in {"opening", "entrance", "exit", "scene"} and not str(entry.get("body") or "").strip():
             continue
         events.append((
@@ -1289,7 +1290,8 @@ def close_night(
                 if hasattr(reg, "abandon"):
                     reg.abandon(int(close_ctid))
                 if close_scaffold_owned and hasattr(db, "fail_chat_turn"):
-                    db.fail_chat_turn(int(close_ctid))
+                    with gate:
+                        db.fail_chat_turn(int(close_ctid))
             except BaseException as exc:
                 cleanup_exc = exc
         with gate:
@@ -1428,7 +1430,8 @@ def close_night(
                 if hasattr(reg, "abandon"):
                     reg.abandon(int(close_ctid))
                 if close_scaffold_owned and hasattr(db, "fail_chat_turn"):
-                    db.fail_chat_turn(int(close_ctid))
+                    with gate:
+                        db.fail_chat_turn(int(close_ctid))
             except BaseException as exc:
                 cleanup_exc = exc
         with gate:
@@ -1493,6 +1496,7 @@ def close_night(
                 db,
                 scene_registry=reg,
                 chat_turn_id=int(close_ctid),
+                write_gate=gate,
             )
             if joined_body and not close_body:
                 close_body = str(joined_body)
@@ -1514,9 +1518,9 @@ def close_night(
             )
 
     if primary_exc is not None or join_exc is not None:
-        if close_scaffold_owned and close_ctid and hasattr(db, "fail_chat_turn"):
-            db.fail_chat_turn(int(close_ctid))
         with gate:
+            if close_scaffold_owned and close_ctid and hasattr(db, "fail_chat_turn"):
+                db.fail_chat_turn(int(close_ctid))
             _set_night_fields(
                 db, night_id, status=NIGHT_STATUS_OPEN, closed_at=None,
                 close_commit_cursor=0,
@@ -2199,6 +2203,7 @@ def dismiss_from_audience(
     beat_generator: Any = None,
     knowledge_provider: Any = None,
     allow_closing: bool = False,
+    body_pending_generation: bool = False,
 ) -> Optional[int]:
     """「令 X 退下」口令：确定性落告退账，即时反映于名单查询。
 
@@ -2210,6 +2215,11 @@ def dismiss_from_audience(
     `origin_chat_turn_id`（#506 L1）：tool 触发的令退发生在某一对话轮内时绑该轮 chat_turn_id，
     使撤回本轮据 origin 删掉告退账、令退者在场复原（否则告退账残留 → 按夜取数 ≠ 未发生，
     且被令退者永久差出）。0=不属某轮的独立令退（无撤回目标）。
+
+    `body_pending_generation`（#1585 final-exit scaffold）：调用方随即经既有
+    ChatTurnSceneRegistry.start_exit 补生成正文时置 True——落真正空账，不填固定告退
+    模板（P7：任何文字模板=违宪）。read_night_scroll 既有空检门槛据此在生成完成前
+    不投影半成品；生成落地后 persist_chat_turn_scene 原地补写同一条账，不另落一条。
     """
     name = str(person_name or "").strip()
     if not name:
@@ -2224,11 +2234,12 @@ def dismiss_from_audience(
         return None
     # state/beat_generator/knowledge_provider: compatibility only — no sync LLM here.
     _ = (state, beat_generator, knowledge_provider)
+    final_body = body if body_pending_generation else (body or f"帝令{name}退下，{name}告退。")
     return append_ledger_entry(
         db, int(nid),
         person_names=[name],
         audibility=AUDIBILITY_PUBLIC,
-        body=body or f"帝令{name}退下，{name}告退。",
+        body=final_body,
         tags=[TAG_EXIT],
         check_dead=False,
         origin_chat_turn_id=origin_chat_turn_id,

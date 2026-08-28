@@ -26,6 +26,7 @@
 from __future__ import annotations
 
 from concurrent.futures import Executor, Future
+from contextlib import nullcontext
 from dataclasses import dataclass, fields as _dc_fields
 from typing import Any, Callable, Dict, List, Optional, Tuple
 import json
@@ -36,8 +37,10 @@ from ming_sim.audience_night import (
     METHOD_XUANRU,
     SUMMON_METHODS,
     TAG_ENTER,
+    TAG_EXIT,
     TAG_HANDOFF,
     TAG_OPEN_NIGHT,
+    AudienceNightError,
     dismiss_from_audience,
     find_prior_speaker_still_present,
     get_night,
@@ -744,6 +747,10 @@ def start_close_scene_on_registry(
     无 chat_turn_id 时 scaffold 一轮（与 CLI exit 同族）。返回 (ctid, scaffold_owned)。
     调用方与 endorsement 等无依赖任务并行后，再 join_close_scene_on_registry。
     无 generator 或无 start_close 能力时返回 (ctid, False) 且不提交 Future。
+
+    末位告退（新落账或崩溃重开复用的既有空 scaffold）存在却无 start_exit 能力时
+    响亮失败（AudienceNightError code=missing_exit_capability）——不得静默漏生成，
+    留一条永久空账悄悄从长卷里消失。
     """
     ctid = int(chat_turn_id or 0)
     if beat_generator is None or not hasattr(scene_registry, "start_close"):
@@ -762,25 +769,47 @@ def start_close_scene_on_registry(
         last_present = find_prior_speaker_still_present(
             db, int(night_id), exclude_name="收夜",
         )
+        exit_id = 0
+        exit_person = ""
         if last_present:
-            exit_id = dismiss_from_audience(
+            new_exit_id = dismiss_from_audience(
                 db, last_present,
                 night_id=int(night_id),
                 body="",
                 origin_chat_turn_id=int(ctid),
                 state=state,
                 allow_closing=True,
+                body_pending_generation=True,
             )
-            if exit_id and hasattr(scene_registry, "start_exit"):
-                scene_registry.start_exit(
-                    db, state,
-                    person_name=last_present,
-                    chat_turn_id=int(ctid),
-                    entry_id=int(exit_id),
-                    night_id=int(night_id),
-                    beat_generator=beat_generator,
-                    knowledge_provider=knowledge_provider,
+            if new_exit_id:
+                exit_id, exit_person = int(new_exit_id), last_present
+        else:
+            # #1585 进程级 CLOSING 重开（ADR 0036：reconcile 永不删账）：presence 已因
+            # 早前崩溃前的 dismiss 落定（末位已不在场），但生成随旧 chat_turn 一起死于
+            # 进程崩溃——复用同一条已落账的空 final-exit scaffold 补生成，不再造新
+            # TAG_EXIT、不留一条永久空账悄悄从长卷里消失。
+            for entry in list_ledger(db, int(night_id)):
+                if TAG_EXIT in (entry.get("tags") or []) and not str(entry.get("body") or "").strip():
+                    exit_id = int(entry["id"])
+                    exit_person = str((entry.get("person_names") or [""])[0])
+                    break
+        if exit_id:
+            if not hasattr(scene_registry, "start_exit"):
+                raise AudienceNightError(
+                    f"末位告退（{exit_person}）已落账但 scene_registry 无 start_exit "
+                    "能力，无法生成告退正文",
+                    code="missing_exit_capability",
+                    detail={"night_id": int(night_id), "person_name": exit_person},
                 )
+            scene_registry.start_exit(
+                db, state,
+                person_name=exit_person,
+                chat_turn_id=int(ctid),
+                entry_id=int(exit_id),
+                night_id=int(night_id),
+                beat_generator=beat_generator,
+                knowledge_provider=knowledge_provider,
+            )
         scene_registry.start_close(
             db, state,
             chat_turn_id=ctid,
@@ -804,23 +833,30 @@ def join_close_scene_on_registry(
     *,
     scene_registry: ChatTurnSceneRegistry,
     chat_turn_id: int,
+    write_gate: Any = None,
 ) -> str:
-    """收夜 scene 汇合：join 既有 registry 桶，返回正文。
+    """收夜 scene 汇合：join 既有 registry 桶（LLM 等待，闸外），返回正文。
 
     成功只持久化 scene 正文，不退役 scaffold——整体 close 成功后再退役，
     以便 sibling 失败时既有 fail_chat_turn 仍能回滚 origin-bound exit。
     失败 abandon + fail_chat_turn 后原样抛出——不重开夜、不自建 Thread/executor。
+
+    `write_gate`（#1585）：session_write_queue 是唯一 exclusive write lock——join
+    本身（等 LLM）留在闸外，但 join 后的账本回填 / 失败清理短持同一把既有闸，
+    不与调用方其它共享 conn 写交叠（不新增第二把锁）。
     """
     ctid = int(chat_turn_id or 0)
     if not ctid or not hasattr(scene_registry, "join"):
         return ""
 
+    gate = write_gate if write_gate is not None else nullcontext()
     try:
         generated = scene_registry.join(ctid)
-        persist_chat_turn_scene(
-            db,
-            [(int(entry_id), str(text)) for entry_id, text in generated if int(entry_id) > 0],
-        )
+        with gate:
+            persist_chat_turn_scene(
+                db,
+                [(int(entry_id), str(text)) for entry_id, text in generated if int(entry_id) > 0],
+            )
         body = ""
         for entry_id, text in generated:
             # The close bucket also carries provider-only siblings (relation judge
@@ -835,7 +871,8 @@ def join_close_scene_on_registry(
             if hasattr(scene_registry, "abandon"):
                 scene_registry.abandon(ctid)
             if ctid and hasattr(db, "fail_chat_turn"):
-                db.fail_chat_turn(int(ctid))
+                with gate:
+                    db.fail_chat_turn(int(ctid))
         except BaseException as cleanup_exc:
             raise scene_exc from cleanup_exc
         raise
