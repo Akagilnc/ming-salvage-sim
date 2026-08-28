@@ -236,6 +236,28 @@ def _project_issue_qualitatively(issue: object) -> Optional[Dict[str, object]]:
     return row or None
 
 
+def _project_region_targets(table: object) -> List[Dict[str, str]]:
+    """Project the simulator's typed region table into the option target catalog."""
+    if not isinstance(table, dict):
+        return []
+    cols = table.get("cols")
+    rows = table.get("rows")
+    if not isinstance(cols, list) or not isinstance(rows, list):
+        return []
+    required = ("id", "name", "kind")
+    if any(field not in cols for field in required):
+        return []
+    indexes = {field: cols.index(field) for field in required}
+    targets: List[Dict[str, str]] = []
+    for row in rows:
+        if not isinstance(row, list) or any(indexes[field] >= len(row) for field in required):
+            continue
+        target = {field: str(row[indexes[field]] or "").strip() for field in required}
+        if all(target.values()):
+            targets.append(target)
+    return targets
+
+
 def build_rescript_draft_payload(
     state: GameState,
     narrative: str,
@@ -267,6 +289,7 @@ def build_rescript_draft_payload(
         "gazette": narrative,
         "triage_actor": dict(triage_actor),
         "active_issues": active_issues,
+        "region_targets": _project_region_targets(simulator_payload.get("regions")),
         "target": {"min_items": 3, "max_items": MAX_RESCRIPT_DRAFTS},
     }
 
