@@ -3173,6 +3173,10 @@ class GameSession:
         # Pending non-directive actions (secret orders etc.) enter resolve_directives
         # so pre_settle owns materialization with the rest of the settlement spine.
         pending_action_due = bool(self.db.list_pending_actions(self.state.turn))
+        if not directives and dossier_rejections:
+            # #1591：草案的真实成案拒因优先于无关 pending 动作或既有结算工作。
+            # recovery/allow-empty 只豁免真正的无旨月，不得洗掉已存在的坏草案。
+            raise ValueError(dossier_rejections[-1])
         if not directives and not settlement_due and not pending_action_due:
             # 恢复态且有存诏：免草案要求（零草案 settling=driver 档/逃生口降级后是真实态，
             # 而 add 已冻结——硬要草案=循环死路，ship-pre r5）。directives 仅作非空哨兵。
@@ -3182,8 +3186,6 @@ class GameSession:
             elif allow_empty_decree or recovered_source is not None:
                 # #1274：无旨月 / 结算中恢复 — decrees=[] 走完整链，不拒。
                 pass
-            elif dossier_rejections:
-                raise ValueError(dossier_rejections[-1])
             else:
                 raise ValueError("网页/CLI 端不允许跳过回合：至少一条草案才能颁诏。")
         # P1-1（不变式：不许颁发早于尚未纳入草案的生成稿）：玩家拟诏后又回对话新建草案时，

@@ -310,9 +310,9 @@ else:
 | 赏赉 | 正 int | ∈{国库,内库} 缺→国库 | 缺→一次性 | 默认 in_transit |
 | 发内帑 | 正 int | **内库** | 缺→一次性 | 同上 |
 | 赈灾、项目经费 | 正 int | 缺→国库 | 缺→一次性 | 同上 |
-| 协饷 | 正 int | **显式**∈{国库,内库} | `purpose=补饷`、`target_kind=army`、真实 `target_id` 均须显式；一次性→强制 immediate；每月→建科目 | 见左 |
+| 协饷 | 正 int | **显式输入**∈{国库,太仓,内库}；太仓→canonical 国库 | `purpose=补饷`、`target_kind=army`、真实 `target_id` 均须显式；一次性→强制 immediate；每月→建科目 | 见左 |
 
-- **正例**须覆盖：普通金钱 grant 缺 account→国库；发内帑→内库；缺 cadence→一次性；honorific；协饷五字段显式且真 army；项目经费→issue；赈灾 region/issue 分叉
+- **正例**须覆盖：普通金钱 grant 缺 account→国库；发内帑→内库；缺 cadence→一次性；honorific；协饷五字段显式且真 army（输入太仓 canonicalize 为国库）；项目经费→issue；赈灾 region/issue 分叉
 - **负例**：缺 amount；赏赉显式非法 account；协饷缺 account/purpose/target_kind/target_id 或非 army；honorific 缺 name/target
 - **判后**：honorific / 金钱扣库或月度科目 / 协饷补饷销欠 各≥1
 
