@@ -7,6 +7,12 @@
 ### Added
 - **#662 灾害/兵灾驱动入池**：流民池补齐 0087 四入口中天灾与兵祸两入口——发生与具体量级由 internal extractor 依据既有盘面（region 天灾/人祸字段、military_pressure 定性档、活跃局势 issue）、`class_population_balances` 与 `population_unit` 软判；代码仅校验正整数、实时源余额、合法方向与来源并做守恒记账。无事实不申报（无灾不入），不建引擎侧自动触发（与 extractor 无双驱动）。邸报/召对因果回响走既有 effect_brief／classes_brief 定性特征面（P4 零数值）；restore 只读 DB 接续，与加派/摊派入口合流同一本账。
 
+## [0.48.16.0] - 2026-08-29
+
+### Fixed
+- **#1566 远人传召不再瞬时空结束**：向尚在外地的大臣发起普通召对时，传召会由 LLM 生成“旨意已发、人在途中”的场景并写入同源卷轴。同步与流式入口同走 `_finish_offsite_summon_scene`：闸内组装 BeatInputs、闸外 `run_beat_generator`、闸内短写同一 ledger 行；不把未入殿写成 entrance；生成期间 load/reset 对 open ticket 返回 409。无跨请求共用生成任务 / Future coalesce。
+- **#1566 场外密令回归真实密令管线**：带正式密令前缀的消息不再被所在地传召闸提前截走，能够正常生成回话并持久化密令。
+
 ## [0.48.15.0] - 2026-08-29
 
 ### Fixed

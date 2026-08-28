@@ -436,7 +436,7 @@ export type AudienceScrollMessage = {
   time: string | null;
   content: string;
   soft_boundary: boolean;
-  beat: "opening" | "entrance" | "dialogue" | "aside" | "scene" | "exit" | "divider" | "closing" | "coda";
+  beat: "opening" | "entrance" | "dialogue" | "aside" | "scene" | "exit" | "divider" | "closing" | "coda" | "summon";
   highlights: string[];
   container: { time_of_day: string; location: string; audience_type: string };
   /** Internal durable identity used only to merge a refreshing live projection. */
