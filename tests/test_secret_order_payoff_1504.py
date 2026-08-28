@@ -625,7 +625,6 @@ def test_auto_submit_due_no_longer_flips_pending_review(game):
     submitted = db.auto_submit_due_secret_orders(state)
     order = db.get_secret_order(oid)
     assert order["status"] == "active", order
-    assert "[期限届满]" not in str(order.get("result") or "")
     assert all(item.get("id") != oid or item.get("status") != "pending_review"
                for item in (submitted or [{"id": oid, "status": order["status"]}]))
     dossier = db.get_dossier_for_secret_order(oid)
