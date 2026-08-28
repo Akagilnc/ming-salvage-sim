@@ -1517,7 +1517,12 @@ def test_hot_replace_409_while_offsite_scene_ticket_open(game, monkeypatch, op):
     assert not q.is_sealed()
     ticket = q.claim("post-hot-replace")
     assert ticket is not None
-    db.conn.execute("SELECT 1").fetchone()
+
+    def _min_write():
+        db.conn.execute("PRAGMA user_version = 1566")
+        return db.conn.execute("PRAGMA user_version").fetchone()[0]
+
+    assert q.run(ticket, _min_write) == 1566
     q.complete(ticket)
 
 
