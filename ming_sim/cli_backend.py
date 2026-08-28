@@ -1067,32 +1067,6 @@ def _messages_to_prompt(
     return prompt
 
 
-# agy 自治 agent 偶发把英文行动计划吐进开头，cwd 隔离是治本，这里再剥一层兜底。
-_NARRATION_HEAD = re.compile(
-    r"^\s*(I will\b|I'll\b|Let me\b|First,|First I|I need to\b|I'm going to\b|I am going to\b|"
-    r"Looking at\b|Let's\b|I should\b|To answer\b|Based on the (workspace|directory|files)\b).*$",
-    re.IGNORECASE,
-)
-
-
-def _strip_agent_narration(text: str) -> str:
-    """剥掉开头若干行英文行动计划 narration，保留真正的角色回答（中文）。"""
-    lines = text.split("\n")
-    i = 0
-    while i < len(lines):
-        ln = lines[i].strip()
-        if not ln:
-            i += 1
-            continue
-        # 命中英文行动计划行就跳过；遇到第一行非 narration（通常是中文正文）即停。
-        if _NARRATION_HEAD.match(ln):
-            i += 1
-            continue
-        break
-    cleaned = "\n".join(lines[i:]).strip()
-    return cleaned or text.strip()  # 全被剥光则退回原文，宁可脏不要空
-
-
 # ── 拟旨 / 下密令入档（CLI 后端）────────────────────────────────────────
 # 原版（api key）靠 agno 工具 propose_directive/secret_order，模型 function-call 触发。
 # agy/codex/claude 不做 function-calling，唯一缺口在此。玩家用「拟旨/下密令」按钮 =
@@ -3766,7 +3740,6 @@ class CliChat(OpenAIChat):
             _log(f"#{seq} {tag} {dt}s attempts={attempts} resp={len(text)}c"
                  + (f" ERROR={error}" if error else ""))
 
-        text = _strip_agent_narration(text)
         text, tool_calls = _cli_recommendation_call(text, tools)
         provider_response = (
             _fake_completion(text, self.id, tool_calls)
