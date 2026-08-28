@@ -73,6 +73,7 @@ from ming_sim.session import (
     AudienceAdmission,
     _is_summonable_court_minister,
     _pending_action_failure_payload,
+    _typed_grant_candidate_present,
     coalesce_pending_action_id,
 )
 from ming_sim.audience_pipeline import run_mindreading_for_turn
@@ -1373,6 +1374,17 @@ class WebGame:
             ]
             account["movements"] = movements
             account["movements_total"] = sum(m["delta"] for m in movements)
+        # #1366：结算前只呈现事实——全军名义应发合计，与 army_report 警讯文本共用同一计算，
+        # 不与国库拟拨/结算结果混叫一个数字。
+        budget["army_pay_due_total"] = self.db.army_pay_theoretical_total()
+        # #1366：结算后的 typed 玩家结果；treasury_report 与 Web 共用同一 DB 投影。
+        # 核账期（月初快照在场，settling/awaiting_decision）不下发——半程中间态不对皇帝
+        # 可见（CONTEXT.md 核账期定义）；待 next_period 完成、快照过期后才见同 turn 结果，
+        # 复用与顶栏/余额同一条 _month_open_snapshot 展示边界，不另造第二判定。
+        budget["settled_army_pay"] = (
+            None if self._month_open_snapshot() is not None
+            else self.db.treasury_hub_result(self.state)
+        )
         return budget
 
     def ending_payload(self) -> Optional[Dict[str, Any]]:
@@ -2338,7 +2350,11 @@ class WebGame:
                 res = str(getattr(tool_exec, "result", "") or "")
                 tool_name = getattr(tool_exec, "tool_name", "")
                 if tool_name == "propose_directive" or res.startswith("__pending_directive__"):
-                    if confirmation_turn or explicit_secret_prefix:
+                    if (
+                        confirmation_turn
+                        or explicit_secret_prefix
+                        or _typed_grant_candidate_present(None, preclassified_intent)
+                    ):
                         continue
                     args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
                     if not isinstance(args, dict):
@@ -5239,8 +5255,9 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
 
 
 class ResolveDecisionsRequest(BaseModel):
-    # 皇帝亲裁结果：按决策点 idx 顺序，每项 {label, hint?, note?}；
-    # dossier 批红另须带 dossier_id/dossier_decision（#1490，非法不落 decided）。
+    # #1589：皇帝亲裁结果，每项须显式携带 decision_key（{decision_key, label, hint?, note?}）；
+    # 缺键/重复键/desk 外键整批拒绝，不落任何领域写。dossier 批红另须带
+    # dossier_id/dossier_decision（#1490，非法不落 decided）。
     choices: List[Dict[str, Any]] = []
     cheat: str = ""
 
@@ -5248,7 +5265,8 @@ class ResolveDecisionsRequest(BaseModel):
 @app.post("/api/decree/resolve_decisions/stream")
 async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> StreamingResponse:
     """皇帝亲裁完决策点，流式跑 phase2 结算（extractor→落库→结局）。
-    与 issue/stream 同结构：worker 跑 submit_decisions，SSE 推 stage/text + done。"""
+    与 issue/stream 同结构：worker 跑 session.submit_hitl_choices（唯一 HITL 编排入口，
+    keyed 权威由 validate_all 整批拒），SSE 推 stage/text + done。"""
     ev_queue: "queue.Queue[tuple[str, Any]]" = queue.Queue()
 
     def on_event(kind: str, data: str) -> None:
