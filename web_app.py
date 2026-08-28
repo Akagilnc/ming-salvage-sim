@@ -1007,7 +1007,11 @@ class WebGame:
 
     @property
     def last_report(self) -> str:
-        return self.session.last_report
+        """#1382：上一已完成月 turn_reports 原文；禁 session 瞬态缓存。"""
+        previous_turn = int(self.state.turn) - 1
+        if previous_turn < 0:
+            return ""
+        return self.db.get_turn_report(previous_turn)
 
     def _runtime_write_queue(self) -> SessionWriteQueue:
         return get_session_write_queue(self)
