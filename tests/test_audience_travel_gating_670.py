@@ -1458,6 +1458,21 @@ def test_web_chat_offsite_summon_generation_coalesces_dual_concurrent_same_origi
 
     runtime = _web_hall_runtime(db, state, content, session_chat=_session_chat)
 
+    admission_count = 0
+    admission_lock = threading.Lock()
+    both_admitted = threading.Event()
+    consume_admission = runtime.session.consume_audience_admission
+
+    def _observe_admission(*args, **kwargs):
+        nonlocal admission_count
+        result = consume_admission(*args, **kwargs)
+        with admission_lock:
+            admission_count += 1
+            if admission_count == 2:
+                both_admitted.set()
+        return result
+
+    runtime.session.consume_audience_admission = _observe_admission
     call_count = 0
     call_lock = threading.Lock()
     started = threading.Event()
@@ -1493,11 +1508,10 @@ def test_web_chat_offsite_summon_generation_coalesces_dual_concurrent_same_origi
 
     second = threading.Thread(target=_invoke, args=(1,), daemon=True)
     second.start()
-    # 第二请求须能在首请求仍卡在 generator 时完成自己的 prologue 并挂到同一
-    # coalescing Future——不得因首请求卡住而超时/报错，也不得重复调用 provider。
-    assert not finished[1].wait(0.2), (
-        "second request finished before release (coalescing not engaged)"
-    )
+    # 两请求均须在首个 generator 释放前走完真实 admission；随后第二请求仍未完成，
+    # 证明它已越过 prologue 并等待首请求创建的同一生成任务，而非堵在请求级互斥外。
+    assert both_admitted.wait(2.0), "second request did not pass admission before release"
+    assert not finished[1].is_set(), "second request did not wait for the shared generation"
 
     release.set()
     assert finished[0].wait(2.0), "first request did not finish after release"

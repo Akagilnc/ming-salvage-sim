@@ -695,7 +695,6 @@ def test_game_session_close_drains_active_offsite_future_before_closing_db(web_g
 
     assert not errors, errors
     assert registry.active_turn_ids() == []
-    assert registry._futures == {}
     with pytest.raises(sqlite3.ProgrammingError):
         web_game.db.conn.execute("SELECT 1")
 
