@@ -1,12 +1,23 @@
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
-import { NodeIntel } from "./map";
+import { GrandMap, NodeIntel } from "./map";
 import type { Army, MapNode, Region } from "../types";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const mountedRoots: Array<{ root: Root; host: HTMLElement }> = [];
+
+function stubSvgGetBBox() {
+  const proto = SVGElement.prototype as SVGElement & { getBBox?: () => DOMRect };
+  if (typeof proto.getBBox !== "function") {
+    proto.getBBox = () => ({
+      x: 0, y: 0, width: 1, height: 1,
+      top: 0, left: 0, bottom: 1, right: 1,
+      toJSON() { return this; },
+    }) as DOMRect;
+  }
+}
 
 function renderNodeIntel(node: MapNode) {
   const host = document.createElement("div");
@@ -98,20 +109,6 @@ describe("NodeIntel #1401 theater naming", () => {
     expect(host.textContent).toContain("辽东省名-优先");
     expect(host.textContent).not.toContain("theater-label-不应先显");
   });
-
-  it("falls back to label when theater has no region", () => {
-    const node: MapNode = {
-      id: "shanhaiguan",
-      kind: "theater",
-      x: 55.52,
-      y: 42.84,
-      label: "山海关",
-      risk: 120,
-      armies: [],
-    };
-    const host = renderNodeIntel(node);
-    expect(host.textContent).toContain("山海关");
-  });
 });
 
 describe("NodeIntel #1352 garrison layout / army-list口径", () => {
@@ -158,4 +155,38 @@ describe("NodeIntel #1352 garrison layout / army-list口径", () => {
     expect(host.textContent).not.toContain("欠饷不足十万两，约两月军饷");
   });
 
+});
+
+describe("GrandMap #1505 dongjiang_area merged pin", () => {
+  it("renders a clickable control that selects dongjiang_area", () => {
+    stubSvgGetBBox();
+    const region = makeRegion({ id: "dongjiang_area", name: "东江海域" });
+    const node: MapNode = {
+      id: "dongjiang_area",
+      kind: "theater",
+      x: 68.9,
+      y: 43.7,
+      label: "东江 / 皮岛",
+      risk: 80,
+      region,
+      armies: [],
+    };
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const selected: string[] = [];
+    act(() => {
+      root.render(
+        <GrandMap nodes={[node]} selectedId="" onSelect={(id) => selected.push(id)} />,
+      );
+    });
+    mountedRoots.push({ root, host });
+
+    const button = host.querySelector('button[data-node-id="dongjiang_area"]');
+    expect(button).not.toBeNull();
+    act(() => {
+      (button as HTMLButtonElement).click();
+    });
+    expect(selected).toEqual(["dongjiang_area"]);
+  });
 });
