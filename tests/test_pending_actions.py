@@ -33,7 +33,7 @@ from ming_sim.db import GameDB
 from ming_sim.decree import pre_settle, reload_state_from_db, settle_with_delta
 from ming_sim.registry import MinisterRegistry
 from ming_sim.session import GameSession, TurnPhase, _pending_action_failure_payload
-from tests.dossier_test_helpers import promulgate_proposed_appointments
+from tests.dossier_test_helpers import TYPED_COVERT_TASK, promulgate_proposed_appointments
 from tests.conftest import covering_monthly_extract
 
 
@@ -602,7 +602,10 @@ def test_advance_without_edict_commits_staged(game, monkeypatch):
     否则暂存动作成孤儿、随回合推进永久丢失。"""
     db, state, content = game
     name = _active_minister_name(db, content)
-    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=0)
+    oid = db.create_secret_order(
+        state, name, "原标题", "原内容", [], deadline_months=0,
+        covert_task=TYPED_COVERT_TASK,
+    )
     db.stage_pending_action(state.turn, kind="secret_order", action="更新",
                             minister_name=name, target_id=oid,
                             payload={"new_title": "退朝前改", "new_content": "退朝前内容", "deadline_months": 0})
@@ -748,6 +751,7 @@ def test_web_advance_without_edict_lands_hidden_pending_secret_order(game, monke
             "assignee": name,
             "tags": ["辽饷"],
             "deadline_months": 3,
+            "covert_task": TYPED_COVERT_TASK,
         },
     )
     _canned_no_edict_settlement(monkeypatch)

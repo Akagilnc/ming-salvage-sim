@@ -7,7 +7,7 @@ import pytest
 from ming_sim import cli_backend
 from ming_sim.session import GameSession
 from ming_sim.skills import bind_content as bind_skills_content
-from tests.dossier_test_helpers import rejected_verdict as _rejected_verdict
+from tests.dossier_test_helpers import TYPED_COVERT_EXTRACT, rejected_verdict as _rejected_verdict
 from tests.web_audience_test_doubles import HallAdmissionSessionMixin
 from web_app import WebGame
 
@@ -260,6 +260,7 @@ def test_real_cli_materialize_path_commits_only_semantically_confirmed_link(
     db.record_dossier_decision(target, "promulgated")
     extracted = {
         "标题": "护行辽饷", "内容": "护送辽饷", "承办人": "毕自严",
+        **TYPED_COVERT_EXTRACT,
         "案卷关联": [{"目标案卷ID": target, "类型": "护卫", "说明": "护送"}],
     }
     def runner(*args, **kwargs):
@@ -547,6 +548,7 @@ def test_parallel_cli_bad_link_does_not_roll_back_valid_secret_order(game, monke
     db.record_dossier_decision(target, "promulgated")
     extracted = {
         "标题": "护行辽饷", "内容": "护送辽饷", "承办人": "毕自严",
+        **TYPED_COVERT_EXTRACT,
         "案卷关联": [{"目标案卷ID": target, "类型": "护卫", "说明": "   "}],
     }
 

@@ -8,6 +8,7 @@ import types
 import pytest
 
 from tests.conftest import with_monthly_reports
+from tests.dossier_test_helpers import TYPED_COVERT_TASK
 
 
 def _actor(db):
@@ -29,6 +30,7 @@ def _secret(db, state, *, title="密查漕弊", body="暗访仓胥", tags=None):
     lead = _actor(db)
     order_id = db.create_secret_order(
         state, lead, title, body, tags or ["稽核"], deadline_months=3,
+        covert_task=TYPED_COVERT_TASK,
     )
     dossier = db.get_dossier_for_secret_order(order_id)
     assert dossier is not None
@@ -123,6 +125,7 @@ def test_s2_secret_field_appends_via_real_settle_and_recovery_replays(game, monk
     # Non 护行/稽核 tags + short deadline: avoid #566 monthly-progress fail-loud.
     order_id = db.create_secret_order(
         state, lead, "密查仓胥", "暗访通州仓", ["密访"], deadline_months=1,
+        covert_task=TYPED_COVERT_TASK,
     )
     dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
     db.append_decree_dossier_participants(dossier_id, [{

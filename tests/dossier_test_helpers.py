@@ -1,3 +1,19 @@
+# #1504 typed covert-task contract fixtures (applier-native 亩 / 实务事功).
+TYPED_COVERT_TASK = {
+    "kind": "清丈",
+    "axes": ["实务事功"],
+    "direction": 1,
+    "delivery": {"unit": "亩", "target_units": 1.0},
+}
+TYPED_COVERT_EXTRACT = {
+    "差务": "清丈",
+    "价值轴": ["实务事功"],
+    "方向": 1,
+    "交付单位": "亩",
+    "交付目标": 1,
+}
+
+
 def _cost_events(db, dossier_id):
     return [dict(row) for row in db.conn.execute(
         "SELECT * FROM decree_cost_events WHERE dossier_id=? ORDER BY id",
