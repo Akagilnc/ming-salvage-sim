@@ -314,7 +314,7 @@ def create_llm_beat_generator(llm_config: Any) -> BeatGenerator:
         if inputs.beat_kind in (BEAT_OPEN, BEAT_ENTER) and label:
             materials["当期年月"] = label
         # Structured living facts belong only to the open-beat LLM materials.
-        # The deterministic fallback remains fixed prose and must not expand.
+        # Without a generator, opening remains an empty typed placeholder.
         if inputs.beat_kind == BEAT_OPEN and inputs.audience_scenes:
             materials["待呈御前的结构化场面事实"] = inputs.audience_scenes
         return extract_agent_text(agent.run(json.dumps(materials, ensure_ascii=False)))
@@ -331,7 +331,7 @@ def generate_open_beat_body(
     beat_generator: Optional[BeatGenerator] = None,
     knowledge_provider: Optional[KnowledgeProvider] = None,
 ) -> str:
-    """开夜账正文（夜级框架气氛）。无生成器返空（调用方沿用确定性兜底）。"""
+    """开夜账正文（夜级框架气氛）；无生成器时保留空垫位。"""
     if beat_generator is None:
         return ""
     inputs = assemble_beat_inputs(

@@ -578,10 +578,8 @@ def test_open_and_close_beat_bodies_land(game):
     assert close_body and close_body.startswith(f"kind={BEAT_CLOSE}")
 
 
-def test_no_generator_keeps_deterministic_fallback(game):
-    """无生成器/registry 缺失 = 确定性 open/close 兜底；文案从时地长出，不硬称夜。
-    #1561 N1 裁定：删除固定 opening fallback，空 body 时留空垫位。
-    """
+def test_no_generator_leaves_opening_empty_and_keeps_close_fallback(game):
+    """无生成器/registry 时 opening 留空；既有 close-only fallback 不硬称夜。"""
     db, state, content = game
     minister = _active_minister(db, content)
     night_id, _cid = an.attach_chat_turn_to_night(
