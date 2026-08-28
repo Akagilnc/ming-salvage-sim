@@ -17567,6 +17567,18 @@ class GameDB:
                     character_ids=character_ids,
                 )
 
+        # #1583：荐人快照以批前盘面统一校验——同批前序任免造成的中间态不得
+        # 令后序案卷二次校验失败。validate_recommendation_snapshot 仍是唯一真源。
+        prevalidate_rows: List[Dict[str, object]] = []
+        for verdict in rows:
+            decision = str(verdict.get("decision") or "")
+            if decision not in {"promulgated", "force_promulgated"}:
+                continue
+            dossier = self.get_decree_dossier(strict_int(verdict.get("dossier_id")))
+            if dossier is not None:
+                prevalidate_rows.append(dossier)
+        self._prevalidate_office_recommendation_snapshots(state, prevalidate_rows)
+
         # Reuse the settlement rollback primitive so failed later effects restore
         # both SQLite and the caller's in-memory GameState.
         from ming_sim.decree import atomic_and_reload
@@ -17575,7 +17587,11 @@ class GameDB:
         # Defer #670 fresh-summon consumption until every office origin in this
         # batch has been activated — one departure write per person/night.
         previous_summon_nights = getattr(self.conn, "_deferred_office_summon_nights", None)
+        previous_reco_prevalidated = getattr(
+            self.conn, "_recommendation_snapshots_prevalidated", False,
+        )
         self.conn._deferred_office_summon_nights = set()
+        self.conn._recommendation_snapshots_prevalidated = True
         try:
             with atomic_and_reload(self, state, content=content, registry=registry):
                 for verdict in rows:
@@ -17634,6 +17650,7 @@ class GameDB:
                     "DELETE FROM pending_promulgation_verdicts WHERE turn=?", (int(state.turn),)
                 )
         finally:
+            self.conn._recommendation_snapshots_prevalidated = previous_reco_prevalidated
             if previous_summon_nights is None:
                 if hasattr(self.conn, "_deferred_office_summon_nights"):
                     delattr(self.conn, "_deferred_office_summon_nights")
@@ -18899,6 +18916,59 @@ class GameDB:
             return True
         return False
 
+    def _recommendation_snapshot_ready(
+        self, state: GameState, payload: Dict[str, object], *, minister_name: str = "",
+    ) -> bool:
+        """载荷无荐人，或 staged 快照仍与当前盘面一致时为 True。
+
+        #1583：唯一校验真源仍是 validate_recommendation_snapshot；本 helper 只
+        组装 payload 形状，不复制第二套判断。
+        """
+        recommendation = payload.get("recommendation")
+        if recommendation is None:
+            return True
+        if not isinstance(recommendation, dict):
+            return False
+        staged_candidate = recommendation.get("candidate")
+        recommender = str(
+            recommendation.get("recommender") or minister_name or ""
+        ).strip()
+        if not isinstance(staged_candidate, dict) or not recommender:
+            return False
+        name = str(payload.get("name") or "").strip()
+        from ming_sim.recommendations import validate_recommendation_snapshot
+        return (
+            staged_candidate.get("name") == name
+            and validate_recommendation_snapshot(
+                self, state, recommender, staged_candidate,
+            )
+        )
+
+    def _prevalidate_office_recommendation_snapshots(
+        self, state: GameState, dossiers: Iterable[Dict[str, object]],
+    ) -> None:
+        """批前统一校验即将物化的任命荐人快照（#1583）。
+
+        以本批结算开始时盘面为准；任一失效即在首条物化前 fail-loud，
+        错误文案与物化缝保持一致。
+        """
+        for row in dossiers:
+            if str(row.get("action_type") or "") != "appointment":
+                continue
+            try:
+                payload = json.loads(str(row.get("payload_json") or "{}"))
+            except (TypeError, ValueError):
+                payload = {}
+            if not isinstance(payload, dict):
+                payload = {}
+            if payload.get("recommendation") is None:
+                continue
+            minister = str(payload.get("_minister_name") or "")
+            if not self._recommendation_snapshot_ready(
+                state, payload, minister_name=minister,
+            ):
+                raise ValueError("任免案卷载荷物化失败")
+
     def _commit_office_action(
         self, state: GameState, pa: Dict[str, object], payload: Dict[str, object],
         content, registry,
@@ -18938,17 +19008,26 @@ class GameDB:
             recommendation = payload.get("recommendation")
             staged_candidate = recommendation.get("candidate") if isinstance(recommendation, dict) else None
             recommender = str(recommendation.get("recommender") or pa["minister_name"]) if isinstance(recommendation, dict) else ""
-            if recommendation is not None and (
-                not isinstance(staged_candidate, dict)
-                or not recommender
-            ):
-                return set()
-            if isinstance(staged_candidate, dict):
-                from ming_sim.recommendations import validate_recommendation_snapshot
-                if staged_candidate.get("name") != name or not validate_recommendation_snapshot(
-                    self, state, recommender, staged_candidate
+            # #1583：批内已在 apply_dossier_verdicts / 批红序前统一校验过荐人快照时，
+            # 跳过二次校验，避免前序任免改盘面把后序同快照误判过期。
+            if not getattr(self.conn, "_recommendation_snapshots_prevalidated", False):
+                if recommendation is not None and (
+                    not isinstance(staged_candidate, dict)
+                    or not recommender
                 ):
                     return set()
+                if isinstance(staged_candidate, dict):
+                    from ming_sim.recommendations import validate_recommendation_snapshot
+                    if staged_candidate.get("name") != name or not validate_recommendation_snapshot(
+                        self, state, recommender, staged_candidate
+                    ):
+                        return set()
+            elif recommendation is not None and (
+                not isinstance(staged_candidate, dict)
+                or not recommender
+                or staged_candidate.get("name") != name
+            ):
+                return set()
             # A recommendation event is provenance for this exact staged
             # candidate.  Keep the appointment and event in one transaction so
             # a failure while recording cannot leave the appointment adopted
