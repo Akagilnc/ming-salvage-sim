@@ -74,6 +74,7 @@ DEFAULT_EXTRACT_PAYLOAD: Dict[str, Any] = {
         "delivery": {
             "unit": "万两",
             "target_units": 1,
+            "effect_sign": -1,
             "purpose": "关宁欠饷",
             "category": "军饷",
             "account": "国库",
