@@ -787,8 +787,12 @@ def test_cli_dismiss_routes_exit_through_scene_registry(game, monkeypatch):
     assert minister not in an.present_names_at(db, night["id"])
 
 
+def _named_scene_beats(scroll):
+    return [m["beat"] for m in scroll if m["beat"] not in {"coda", ""}]
+
+
 def test_four_beat_scroll_e2e_via_real_player_entries(web_game):
-    """#542 票面 e2e：真实玩家入口→假 generator→卷轴四类 role=scene（零真 LLM）。"""
+    """#1585/#542：单场真实入口 open→entrance/dialogue→close_night，closed 末段 exit→divider→closing。"""
     game = web_game
     minister = _active_minister(game.db, game.content)
     fake_bodies = {
@@ -796,6 +800,7 @@ def test_four_beat_scroll_e2e_via_real_player_entries(web_game):
         BEAT_ENTER: f"【入殿旁白·特征化】{minister}趋入。",
         BEAT_EXIT: f"【退下旁白·特征化】{minister}告退。",
         BEAT_CLOSE: "【收夜旁白·特征化】烛影摇红。",
+        BEAT_HANDOFF: f"【交接旁白·特征化】{minister}退侍殿侧。",
     }
     fake_gen = lambda inputs: fake_bodies[inputs.beat_kind]
     game.session._beat_generator = fake_gen
@@ -805,13 +810,6 @@ def test_four_beat_scroll_e2e_via_real_player_entries(web_game):
     ).fetchone()["night_id"])
     uid = game.db.append_chat_message(minister, game.state.turn, "user", "边饷如何？")
     game.db.update_chat_turn_messages(ctid, user_message_id=int(uid))
-    entry_id = an.dismiss_from_audience(
-        game.db, minister, night_id=night_id, origin_chat_turn_id=int(ctid),
-        state=game.state,
-    )
-    game.session.start_chat_turn_exit_scene(
-        minister, int(ctid), int(entry_id), night_id=night_id,
-    )
     game.session.persist_chat_turn_scene(game.session.join_chat_turn_scene(int(ctid)))
     game.db.persist_minister_reply(minister, game.state.turn, "臣请据实核账。", int(ctid))
     game.db.settle_story_extraction(int(ctid), night_id, [], 0)
@@ -821,8 +819,14 @@ def test_four_beat_scroll_e2e_via_real_player_entries(web_game):
         game.db, game.state, night_id=night_id, content=game.content,
         beat_generator=fake_gen, scene_registry=registry, wait_timeout_s=0.0,
     )
+    scroll = an.read_night_scroll(game.db, night_id)
+    beats = _named_scene_beats(scroll)
+    assert beats[-3:] == ["exit", "divider", "closing"]
+    divider = next(m for m in reversed(scroll) if m["beat"] == "divider")
+    assert divider["soft_boundary"] is True
+    assert divider["speaker"] == ""
     by_beat = {
-        m["beat"]: m for m in an.read_night_scroll(game.db, night_id)
+        m["beat"]: m for m in scroll
         if m["role"] == "scene" and m["beat"] in {"opening", "entrance", "exit", "closing"}
     }
     assert set(by_beat) == {"opening", "entrance", "exit", "closing"}
@@ -831,6 +835,79 @@ def test_four_beat_scroll_e2e_via_real_player_entries(web_game):
         (BEAT_EXIT, "exit"), (BEAT_CLOSE, "closing"),
     ):
         assert by_beat[key]["content"] == fake_bodies[kind]
+
+
+def test_multi_scene_final_close_keeps_last_exit_divider_closing(game):
+    """#1585：连场末位收夜仍为末位 exit→未具名 divider→closing，不把交接误当收夜退场。"""
+    db, state, content = game
+    first = _active_minister(db, content)
+    second = _active_minister(db, content, exclude={first})
+
+    def echo(inputs: BeatInputs) -> str:
+        return f"kind={inputs.beat_kind}|person={inputs.person_name}"
+
+    night_id, ctid_a = an.attach_chat_turn_to_night(
+        db, state, first, agno_session_id="a-turn", agno_runs_before=0,
+    )
+    _land_reply(db, state, first, ctid_a, night_id)
+    night_id, ctid_b = an.attach_chat_turn_to_night(
+        db, state, second, agno_session_id="b-turn", agno_runs_before=0,
+    )
+    registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=2))
+    registry.start_open_enter(
+        db, state, minister_name=second, chat_turn_id=ctid_b, beat_generator=echo,
+    )
+    bo.persist_chat_turn_scene(db, registry.join(ctid_b))
+    _land_reply(db, state, second, ctid_b, night_id)
+    db.conn.commit()
+    close_registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=2))
+    an.close_night(
+        db, state, night_id=night_id, content=content,
+        beat_generator=echo, scene_registry=close_registry, wait_timeout_s=0.0,
+    )
+    scroll = an.read_night_scroll(db, night_id)
+    beats = _named_scene_beats(scroll)
+    assert beats[-3:] == ["exit", "divider", "closing"]
+    exit_beat = next(m for m in reversed(scroll) if m["beat"] == "exit")
+    assert second in (exit_beat["content"] or "") or exit_beat.get("speaker") == second
+    last_exit = next(
+        entry for entry in reversed(an.list_ledger(db, night_id))
+        if an.TAG_EXIT in (entry.get("tags") or [])
+    )
+    assert last_exit["person_names"] == [second]
+    divider = next(m for m in reversed(scroll) if m["beat"] == "divider")
+    assert divider["speaker"] == ""
+    assert an.TAG_HANDOFF in {
+        tag for entry in an.list_ledger(db, night_id) for tag in (entry.get("tags") or [])
+    }
+
+
+def test_close_night_runs_final_exit_and_closing_in_parallel(game):
+    """#1585 P5：无依赖的末位 exit 与 closing 须同桶并行，不能串完再开下一个。"""
+    db, state, content = game
+    minister = _active_minister(db, content)
+    night_id, ctid = an.attach_chat_turn_to_night(
+        db, state, minister, agno_session_id="solo", agno_runs_before=0,
+    )
+    _land_reply(db, state, minister, ctid, night_id)
+    both = threading.Barrier(2, timeout=2.0)
+    seen: list[str] = []
+
+    def overlapping(inputs: BeatInputs) -> str:
+        seen.append(inputs.beat_kind)
+        if inputs.beat_kind in {BEAT_EXIT, BEAT_CLOSE}:
+            both.wait()
+        return f"kind={inputs.beat_kind}|person={inputs.person_name}"
+
+    registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=2))
+    an.close_night(
+        db, state, night_id=int(night_id), content=content,
+        beat_generator=overlapping, scene_registry=registry, wait_timeout_s=0.0,
+    )
+    assert {BEAT_EXIT, BEAT_CLOSE} <= set(seen)
+    assert _named_scene_beats(an.read_night_scroll(db, int(night_id)))[-3:] == [
+        "exit", "divider", "closing",
+    ]
 
 
 def test_web_start_chat_turn_wires_session_beat_generator(web_game):
