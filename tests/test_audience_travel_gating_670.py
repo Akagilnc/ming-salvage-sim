@@ -1259,6 +1259,51 @@ def test_web_chat_stream_summon_success_exits_error_channel(game):
     assert moving.name in entrance_speakers
 
 
+def test_web_chat_offsite_summon_scene_generator_failure_is_loud(game):
+    """#1566：场外记召 scene 生成失败须响亮上抛，不得空白成功载荷。
+
+    真实入口 WebGame.chat；admission 已落传召账；generator 抛错后：
+    - 请求以异常失败（非 200 空 answer/SUMMON_* done）
+    - ledger 仍在且 body 仍空（未伪装已生成）
+    - 零 chat turn
+    """
+    db, state, content = game
+    remote = _set_place(game, "洪承畴", location="shaanxi")
+    before_turns = _chat_turn_count(db)
+
+    def _session_chat(minister_name, message, *, chat_turn_id=0):
+        raise AssertionError("scene 失败路径不得调回话")
+
+    runtime = _web_hall_runtime(db, state, content, session_chat=_session_chat)
+
+    def _boom(_inputs):
+        raise RuntimeError("injected offsite summon scene failure")
+
+    runtime.session._beat_generator = _boom
+
+    with pytest.raises(RuntimeError, match="injected offsite summon scene failure"):
+        runtime.chat(remote.name, "传洪承畴来。")
+
+    unsettled = an.list_unsettled_summons(db)
+    assert len(unsettled) == 1
+    assert unsettled[0]["origin_id"] == f"web:chat:{state.turn}:{remote.name}"
+    assert unsettled[0]["kind"] == "fresh"
+    body = db.conn.execute(
+        "SELECT body FROM story_ledger_entries WHERE id=?",
+        (unsettled[0]["entry_id"],),
+    ).fetchone()["body"]
+    assert not str(body or "").strip(), "生成失败不得写入/伪装 scene body"
+    assert _chat_turn_count(db) == before_turns
+    # 空 body 的场外传召不进 scroll entrance 投影
+    night_id = int(unsettled[0]["night_id"])
+    entrance_speakers = {
+        m.get("speaker")
+        for m in an.read_night_scroll(db, night_id)
+        if m.get("beat") == "entrance" and m.get("speaker")
+    }
+    assert remote.name not in entrance_speakers
+
+
 def _install_secret_order_agent(runtime, *, stream: bool = False) -> None:
     """#1566：在既有 hall 壳上只换 LLM 边界 agent + 密令落地真方法。
 
