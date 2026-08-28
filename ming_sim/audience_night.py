@@ -1479,7 +1479,6 @@ def close_night(
                 db,
                 scene_registry=reg,
                 chat_turn_id=int(close_ctid),
-                scaffold_owned=bool(close_scaffold_owned),
             )
             if joined_body and not close_body:
                 close_body = str(joined_body)
@@ -1602,8 +1601,7 @@ def close_night(
                 close_commit_cursor=CLOSE_STEP_FINALIZE,
             )
         if close_scaffold_owned and close_ctid:
-            from ming_sim import beat_orchestration as beats
-            beats.retire_owned_close_scaffold(db, int(close_ctid))
+            db.mark_chat_turn_failed(int(close_ctid))
         final = get_night(db, night_id)
 
     return {
