@@ -451,13 +451,9 @@ def _run_codex(
             event = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if event.get("type") != "item.completed":
-            continue
-        item = event.get("item")
-        if isinstance(item, dict) and item.get("type") == "agent_message":
-            text = item.get("text")
-            if isinstance(text, str):
-                final_text = text
+        text = _codex_final_text(event)
+        if text:
+            final_text = text
     # 非零退出 / 缺 typed 最终消息 → 抛错，不把 stdout 包装当角色回复落库。
     if proc.returncode != 0 or not final_text.strip():
         raise RuntimeError(f"codex 调用失败（退出码 {proc.returncode}）：{(proc.stderr or '')[:200]}")
@@ -497,31 +493,14 @@ def _codex_event_text(obj: object) -> str:
 
 
 def _codex_final_text(obj: object) -> str:
-    if not isinstance(obj, dict):
+    """Return only Codex's typed completed agent message, never event wrappers."""
+    if not isinstance(obj, dict) or obj.get("type") != "item.completed":
         return ""
-    typ = str(obj.get("type") or obj.get("event") or "")
-    if "delta" in typ:
-        return ""
-    # 防御性兼容 codex `--json` 的 item.* 形态（如 {"type":"item.completed",
-    # "item":{"type":"agent_message","text":"…"}}）：最终 agent message 可能嵌在 item.text
-    # 里。只取 agent_message 类 item，忽略 reasoning/tool/plan item，避免把真实邸报当成空
-    # 输出误判失败（codex correctness）。与下面的顶层 message/text 形态并存，互不影响。
     item = obj.get("item")
-    if isinstance(item, dict):
-        item_type = str(item.get("type") or "")
-        if item_type in ("", "agent_message") or "message" in item_type:
-            value = item.get("text") or item.get("content") or item.get("message")
-            if isinstance(value, str) and value:
-                return value
-    for key in ("message", "content", "text", "final", "last_message"):
-        value = obj.get(key)
-        if isinstance(value, str) and value:
-            return value
-        if isinstance(value, dict):
-            nested = value.get("content") or value.get("text") or value.get("message")
-            if isinstance(nested, str) and nested:
-                return nested
-    return ""
+    if not isinstance(item, dict) or item.get("type") != "agent_message":
+        return ""
+    value = item.get("text")
+    return value if isinstance(value, str) else ""
 
 
 def _iter_codex_stream_chunks(
