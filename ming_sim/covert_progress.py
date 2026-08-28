@@ -511,40 +511,101 @@ def build_secret_covert_effect_briefs(db: Any, orders: Sequence[Mapping[str, obj
             due_turn=int(order.get("due_turn") or 0),
         )
         delivery = contract.get("delivery") if isinstance(contract.get("delivery"), Mapping) else {}
-        unit = str(delivery.get("unit") or DEFAULT_UNIT)
-        fiscal = unit in {"两", "银两", "饷银"}
+        unit = str(delivery.get("unit") or "")
+        fields = canonical_fields_for_delivery(
+            unit=unit, kind=str(contract.get("kind") or ""),
+        )
+        owner = "internal"
+        if fields == ["人物变更"]:
+            owner = "personnel_secret"
         out.append({
             "origin_ref": f"dossier:{int(dossier['id'])}",
             "order_id": oid,
-            "kind": str(contract.get("kind") or DEFAULT_KIND),
-            "axes": list(contract.get("axes") or DEFAULT_AXES),
+            "kind": str(contract.get("kind") or ""),
+            "axes": list(contract.get("axes") or []),
             "direction": int(contract.get("direction") or 1),
             "delivery": {
                 "unit": unit,
                 "target_units": float(delivery.get("target_units") or 0),
             },
-            "effect_owner": "internal",
-            "canonical_fields": ["fiscal_changes"] if fiscal else ["economy_moves"],
+            "effect_owner": owner,
+            "canonical_fields": fields,
         })
     return out
 
 
-def count_turn_originated_effects(db: Any, dossier_id: int, turn: int) -> int:
-    """本回合带 dossier origin 的真实效果条数（0054 实况，不含奏报）。"""
+def canonical_fields_for_delivery(*, unit: object = None, kind: object = None) -> List[str]:
+    """差务可数单位 → 既有 extractor 字段/applier，不发明第三轨。"""
+    del kind
+    u = str(unit or "").strip()
+    if u in {"两", "银两", "饷银"}:
+        return ["economy_moves"]
+    if u == "人犯":
+        return ["人物变更"]
+    if u == "亩":
+        return ["region_delta"]
+    return []
+
+
+def originated_quantity_this_turn(
+    db: Any,
+    dossier_id: int,
+    turn: int,
+    contract: Mapping[str, object] | None,
+) -> float:
+    """当月 origin-linked canonical 效果的可数实物量（与合同 unit 同量纲）。"""
     did = int(dossier_id)
     current = int(turn)
-    n = 0
-    for item in db.list_dossier_durable_effects(did):
-        if int(item.get("turn") or 0) == current:
-            n += 1
-    return n
+    origin = f"dossier:{did}"
+    delivery = contract.get("delivery") if isinstance(contract, Mapping) else None
+    unit = ""
+    if isinstance(delivery, Mapping):
+        unit = str(delivery.get("unit") or "")
+    kind = str((contract or {}).get("kind") or "") if isinstance(contract, Mapping) else ""
+    fields = canonical_fields_for_delivery(unit=unit, kind=kind)
+    qty = 0.0
+    if "economy_moves" in fields:
+        for item in db.list_economy_moves_for_dossier(did):
+            if int(item.get("turn") or 0) == current:
+                try:
+                    qty += abs(float(item.get("delta") or 0))
+                except (TypeError, ValueError):
+                    continue
+    if "fiscal_changes" in fields:
+        for item in db.list_fiscal_effects_for_dossier(did):
+            if int(item.get("turn") or 0) == current:
+                try:
+                    qty += abs(float(item.get("delta") or 0))
+                except (TypeError, ValueError):
+                    continue
+    if "人物变更" in fields:
+        rows = db.conn.execute(
+            "SELECT id FROM person_logs WHERE origin_ref=? AND turn=?",
+            (origin, current),
+        ).fetchall()
+        qty += float(len(rows))
+    if "region_delta" in fields:
+        rows = db.conn.execute(
+            "SELECT delta FROM region_logs WHERE origin_ref=? AND turn=?",
+            (origin, current),
+        ).fetchall()
+        for row in rows:
+            try:
+                qty += abs(float(row["delta"] or 0))
+            except (TypeError, ValueError, KeyError):
+                continue
+    return qty
 
 
-def monthly_actual_units(*, fidelity: object, originated_effect_count: int) -> float:
-    """实进度 = 执行格判决 × 当月真实效果是否在场。无 origin 效果则空转 0。"""
-    if int(originated_effect_count or 0) <= 0:
+def monthly_actual_units(*, fidelity: object, originated_quantity: float) -> float:
+    """实进度 = 执行格份额 × 当月 canonical 可数量。无 origin 实物则空转 0。"""
+    try:
+        quantity = float(originated_quantity or 0)
+    except (TypeError, ValueError):
+        quantity = 0.0
+    if quantity <= 0.0:
         return 0.0
-    return progress_units_for_state(fidelity)
+    return progress_units_for_state(fidelity) * quantity
 
 
 def build_covert_floor_payload(db: Any, orders: Sequence[Mapping[str, object]]) -> List[Dict[str, object]]:
@@ -646,9 +707,9 @@ def apply_monthly_covert_actual_progress(
         sel = by_sel.get(oid) or {}
         selected = sel.get("fidelity", sel.get("执行态", sel.get("state")))
         fidelity = clamp_fidelity_to_floor(floor, selected)
-        originated = count_turn_originated_effects(db, did, turn)
+        originated = originated_quantity_this_turn(db, did, turn, contract)
         units = monthly_actual_units(
-            fidelity=fidelity, originated_effect_count=originated,
+            fidelity=fidelity, originated_quantity=originated,
         )
         note = str(sel.get("note") or sel.get("备注") or "").strip()
         if not note:
@@ -673,7 +734,7 @@ def apply_monthly_covert_actual_progress(
             "fidelity": fidelity,
             "floor": floor,
             "row_id": row.get("id"),
-            "originated_effect_count": originated,
+            "originated_quantity": originated,
             "target_units": contract_target_units(
                 contract,
                 deadline_span=int(order.get("deadline_span") or 0),
