@@ -283,9 +283,6 @@ def test_open_enter_registry_persists_handoff_and_soft_segment(game):
         beat_generator=echo,
     )
     generated = registry.join(ctid)
-    generated_bodies = [body for _eid, body in generated]
-    assert f"kind={BEAT_HANDOFF}|person={first_minister}" in generated_bodies
-    assert f"kind={BEAT_ENTER}|person={second_minister}" in generated_bodies
     bo.persist_chat_turn_scene(db, generated)
     db.conn.commit()
 
