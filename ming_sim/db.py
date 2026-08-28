@@ -6637,6 +6637,35 @@ class GameDB:
             f"净{format_money_delta(nk_in - nk_out)}。"
         )
 
+    def treasury_hub_result(self, state: GameState) -> Optional[Dict[str, int]]:
+        """已执行边饷 hub 三项结果；只读 ledger/container，不重算结算。"""
+        if not self.is_substrate_hub_fiscal_engine_enabled():
+            return None
+        hub_debit = self.conn.execute(
+            """
+            SELECT COALESCE(SUM(-delta), 0) AS amount
+            FROM economy_ledger
+            WHERE turn = ? AND account = '国库' AND category = '边饷hub'
+            """,
+            (state.turn,),
+        ).fetchone()
+        containers = self.conn.execute(
+            """
+            SELECT key, value FROM fiscal_containers
+            WHERE key IN ('hub_京运实拨', 'hub_中央军饷实拨', 'hub_京运损耗')
+            """
+        ).fetchall()
+        values = {str(row["key"]): float(row["value"] or 0) for row in containers}
+        if not int(hub_debit["amount"] or 0) and len(values) != 3:
+            return None
+        return {
+            "treasury_disbursed": int(hub_debit["amount"] or 0),
+            "actual_arrived": int(
+                values.get("hub_京运实拨", 0) + values.get("hub_中央军饷实拨", 0)
+            ),
+            "transit_loss": int(values.get("hub_京运损耗", 0)),
+        }
+
     def treasury_report(self, state: GameState, limit: int = 6) -> str:
         account_rows = self.conn.execute(
             "SELECT account, balance FROM economy_accounts ORDER BY account DESC"
@@ -6683,29 +6712,13 @@ class GameDB:
             )
         recent_text = "；".join(recent) if recent else "未见流水"
         hub_result_text = ""
-        if self.is_substrate_hub_fiscal_engine_enabled():
-            hub_debit = self.conn.execute(
-                """
-                SELECT COALESCE(SUM(-delta), 0) AS amount
-                FROM economy_ledger
-                WHERE turn = ? AND account = '国库' AND category = '边饷hub'
-                """,
-                (state.turn,),
-            ).fetchone()
-            containers = self.conn.execute(
-                """
-                SELECT key, value FROM fiscal_containers
-                WHERE key IN ('hub_京运实拨', 'hub_中央军饷实拨', 'hub_京运损耗')
-                """
-            ).fetchall()
-            values = {str(row["key"]): float(row["value"] or 0) for row in containers}
-            if int(hub_debit["amount"] or 0) or len(values) == 3:
-                arrived = values.get("hub_京运实拨", 0) + values.get("hub_中央军饷实拨", 0)
-                hub_result_text = (
-                    f"边饷结算：国库实拨{format_money(int(hub_debit['amount'] or 0))}，"
-                    f"实际到达{format_money(int(arrived))}，"
-                    f"途中损耗{format_money(int(values.get('hub_京运损耗', 0)))}。"
-                )
+        hub_result = self.treasury_hub_result(state)
+        if hub_result is not None:
+            hub_result_text = (
+                f"边饷结算：国库实拨{format_money(hub_result['treasury_disbursed'])}，"
+                f"实际到达{format_money(hub_result['actual_arrived'])}，"
+                f"途中损耗{format_money(hub_result['transit_loss'])}。"
+            )
         budget = self.treasury_budget_summary(state)
         return (
             f"{budget}账面：{account_text}。本{TURN_UNIT}收支：{period_text}。"

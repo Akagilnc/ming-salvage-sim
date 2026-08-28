@@ -1230,6 +1230,15 @@ def test_fixed_flows_substrate_hub_central_pay_carries_transport_loss_without_ji
     assert army["central_pay_arrears"] == pytest.approx(3)
     assert army["arrears"] == pytest.approx(3)
 
+    # #1366：从玩家可达 treasury_report 真入口接线；机器断言落结构化结果，
+    # 不锁生成文本措辞。
+    assert db.treasury_report(state)
+    assert db.treasury_hub_result(state) == {
+        "treasury_disbursed": 10,
+        "actual_arrived": 7,
+        "transit_loss": 3,
+    }
+
     ledger_snapshot = _hub_ledger_snapshot(db, turn=state.turn)
     container_snapshot = _hub_container_snapshot(db)
     outbound = {
