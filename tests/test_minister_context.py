@@ -826,7 +826,8 @@ def test_secret_order_tool_preserves_long_title_without_formal_cap(game):
     result = tools["secret_order"](
         action="issue", title=title, content="查明事实并回奏。",
         kind="清丈", axes_json='["实务事功"]', delivery_unit="亩",
-        delivery_target_units=1,
+        delivery_target_units=1, region="henan", field="registered_land",
+        region_target="421",
     )
 
     assert result.startswith("__secret_order__")

@@ -412,7 +412,10 @@ def _stage_routed_secret_order(db, state, action, deadline):
                 "kind": "护行差务",
                 "axes": ["实务事功"],
                 "direction": 1,
-                "delivery": {"unit": "万两", "target_units": float(max(deadline, 1))},
+                "delivery": {
+                    "unit": "万两", "target_units": float(max(deadline, 1)),
+                    "purpose": "辽饷", "category": "军饷", "account": "国库",
+                },
             },
         }, target_id=target_id,
     )
