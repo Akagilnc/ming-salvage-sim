@@ -1164,7 +1164,7 @@ def extract_minister_actions(
         "order_id": _int(obj.get("目标密令编号")),
         # Title has no formal length cap (family removed silent 20-char hard trunc).
         "new_title": str(obj.get("新标题") or "").strip(),
-        "new_content": str(obj.get("新内容") or "").strip(),
+        "new_content": str(obj.get("新内容") or ""),
         "deadline_months": _int(obj.get("期限月数"), 36),
         "cultivate_skill": str(obj.get("调教技能") or "").strip()[:20],
         "cultivate_trait": str(obj.get("调教性格") or "").strip()[:20],
@@ -1216,7 +1216,9 @@ def classify_cli_action_intent(
         "单动作输出一个 JSON 对象，多动作输出 JSON 对象数组（无代码围栏、无多余字）：\n"
         + schema_obj + "\n"
         "规则：确认优先于新动作；同一话语可同时含拟旨与任免时须同时输出"
-        "拟旨与任免候选（draft+appointment 并存），多候选不得因拟旨省略任免。\n"
+        "拟旨与任免候选（draft+appointment 并存），多候选不得因拟旨省略任免。"
+        "修改待确认动作时，确认=修改、新内容=完整非空修改正文；有多个待确认候选时，"
+        "目标编号必须且只能填一个所指候选 id。\n"
         "跨轮指代（如「这三件事你都办」「三事全允」）须结合最近相关召对上下文与"
         "待确认动作列表解析所指事项，逐事各产一条候选；更新既有候选时填目标候选=该道 id。\n"
         "拿问、下狱、赐死、廷杖、罚俸、削籍、放归、昭雪属惩处，不得判任免罢免。\n"
@@ -2830,7 +2832,7 @@ def extract_confirmation_intent(
                 target_ids.append(int(digits))
     # #1376：修改判词携带 typed 新内容——唯一权威正文。ADR 0142 禁从自由散文机械提取，
     # 此字段仅从结构化 LLM JSON 吸收；未填/非修改时留空。
-    new_content = str(obj.get("新内容") or "").strip()
+    new_content = str(obj.get("新内容") or "")
     if v != "修改":
         new_content = ""
     return {"confirmation": v, "target_ids": target_ids, "new_content": new_content}

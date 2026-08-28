@@ -683,7 +683,7 @@ def _coerce_confirmation_result(raw: Any) -> Tuple[str, List[int], str]:
                 if i > 0 and i not in tids:
                     tids.append(i)
             break
-        new_content = str(raw.get("new_content") or raw.get("新内容") or "").strip()
+        new_content = str(raw.get("new_content") or raw.get("新内容") or "")
         return v, tids, new_content
     return "无", [], ""
 
@@ -2139,6 +2139,19 @@ class GameSession:
                         resolved = [
                             p for p in secret_new if int(p["id"]) in named_set
                         ]
+                    # A modification without a complete typed body did not succeed.
+                    # Keep every candidate unchanged and do not advertise a pending id.
+                    if not confirm_new_content:
+                        out["directive_confirmation_ambiguous"] = {
+                            "candidates": [
+                                {
+                                    "id": int(p["id"]),
+                                    "summary": _pending_action_brief(p),
+                                }
+                                for p in resolved
+                            ],
+                        }
+                        return out
                     for pending in resolved:
                         try:
                             payload = json.loads(pending.get("payload_json") or "{}")
@@ -2146,9 +2159,8 @@ class GameSession:
                             payload = {}
                         if not isinstance(payload, dict):
                             payload = {}
-                        # #1376：正文唯取 typed new_content，空则不覆写。
-                        if confirm_new_content:
-                            payload["content"] = confirm_new_content
+                        # #1376：正文唯取完整、非空 typed new_content。
+                        payload["content"] = confirm_new_content
                         encoded = json.dumps(payload, ensure_ascii=False)
                         cur = self.db.conn.execute(
                             "UPDATE pending_actions SET payload_json=? "
