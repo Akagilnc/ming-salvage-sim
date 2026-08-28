@@ -21738,11 +21738,29 @@ class GameDB:
             ).fetchone()
             if source_row is not None:
                 source_chat_turn_id = int(source_row["id"])
-        from ming_sim.covert_progress import CONTRACT_KEY, build_covert_task_contract
+        from ming_sim.covert_progress import (
+            CONTRACT_KEY,
+            build_covert_task_contract,
+            find_active_investigation_order_id,
+            merge_investigation_confirmation,
+            _investigation_target_of,
+        )
         covert_contract = (
             build_covert_task_contract(covert_task=covert_task)
             if covert_task is not None else None
         )
+        inv_target = _investigation_target_of(covert_contract or {})
+        if inv_target:
+            existing_oid = find_active_investigation_order_id(self, inv_target)
+            if existing_oid:
+                return merge_investigation_confirmation(
+                    self,
+                    state,
+                    existing_oid,
+                    pending_action_id=int(pending_action_id or 0),
+                    origin_chat_message_ids=provenance_message_ids,
+                    commit=True,
+                )
         with atomic(self):
             cur = self.conn.execute(
                 """
@@ -21776,11 +21794,9 @@ class GameDB:
             if covert_contract is not None:
                 payload[CONTRACT_KEY] = covert_contract
             from ming_sim.covert_progress import (
-                _investigation_target_of,
                 live_investigation_fact_keys,
                 FACT_LANES_KEY,
             )
-            inv_target = _investigation_target_of(covert_contract or {})
             if inv_target:
                 payload[FACT_LANES_KEY] = [
                     {"fact_key": key, "progress": 0.0, "used": False}
