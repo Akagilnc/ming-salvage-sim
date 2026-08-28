@@ -123,8 +123,8 @@
 - **修法(1)**：
   - 主治：`_run_agy`/`_run_codex` 传 `cwd=<空临时目录>`(如 `/tmp/ming_agy_sandbox`，启动时建)，agy 进空 workspace 无可探。
   - 加固 prompt：`_messages_to_prompt` 明示"你没有任何文件/工具/命令可用，不要描述你要做什么，直接以角色身份用中文作答，禁用英文"。
-  - 兜底：输出后剥掉开头的英文行动计划行(`^(I will|Let me|I'll|First|I need to|Looking at|I'm going to)` 等)。
-  - cwd 是治本，后两者兜底。
+  - ~~输出侧清洗（**已废止，历史弯路**）~~：曾作为兜底的输出后剥掉开头英文行动计划行(`^(I will|Let me|I'll|First|I need to|Looking at|I'm going to)` 等），依**P6 / ADR 0142 / 0143**废止，当前 `ming_sim/cli_backend.py` 不复存在该 helper，**不再作为兜底**。
+  - cwd 沙箱 + prompt 硬约束为唯一现行措施：前者治本，后者为输入侧约束；不得新增输出侧 regex 清洗。
 
 ### B3. 大臣"自己动手"的动作工具在 CLI 后端不触发(拟旨/下密令不入档) ✅ 已修（2026-06-07）
 > **原版**靠 agno 工具 `propose_directive`/`secret_order`，api 模型 function-call 可靠触发。agy 不做 function-calling = 唯一缺口。
