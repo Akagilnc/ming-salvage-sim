@@ -46,10 +46,8 @@
 ### ~~B14. 召对取消的内存历史按文本剪枝，并发同文本会误删（P3·自愈，family/362-base CMR defer）~~ ✅ 已解决（被 id-based `db.fail_chat_turn(chat_turn_id)` 取代）
 - 原文批评的 `WebGame._fail_incomplete_chat_turn`（按文本签名倒序剪 `chat_history`）与其锁定测试 `tests/test_chat_stream_cancel.py` 均已不存在；取消/失败路径现走 `db.fail_chat_turn(chat_turn_id)`（[db.py](ming_sim/db.py)），按精确 id 操作，原文提出的文本歧义前提不再成立。#505/#506（撤回/续夜）在此 id-based 底座上继续重写 chat-turn 回滚子系统。
 
-### B12. 密令状态在游戏画面露英文 enum（active/pending_review/done/failed） → [issue #48](https://github.com/Akagilnc/ming-salvage-sim/issues/48)
-- **现象**：「密旨动向」等展示里密令 status 直接渲染数据库英文 enum「（active）」，明末中文游戏里露英文，出戏。
-- **修法**：在展示层把 status enum 映射成中文（active→在办、pending_review→待核议、done→已结、failed→未成 之类），找密令 status 渲染处（web 前端密令面板 / 邸报或 notes 生成器）统一过一层 label 映射。
-- **注**：与 LLM 通道 PR 无关，是既有展示/i18n bug；非本次 channel 改动引入。
+### ~~B12. 密令状态在游戏画面露英文 enum~~ ✅ 已解决（#48，2026-06-14）
+- 密令注入按「在办／待核议」中文组承载并剥离 `status`，前端亦统一使用中文标签；#1504 后密令状态只剩 `active/done/failed`，不再保留 `pending_review` 中间态。
 
 ### B11. 全系统静默吞异常/吞畸形数据（不抛错不告警），该落没落无人知 → [issue #14](https://github.com/Akagilnc/ming-salvage-sim/issues/14)
 - 系统级模式（从 B10 抽象）：delta 畸形项 `continue` 丢弃 / apply 拒收只记 `rejected` 不报 / db.py broad `except` 返默认 / gate 解析失败返 None。后果=静默数据丢失 + DB↔叙事漂移 + 调试盲区，侵蚀 P1 落库铁律。修法待定（结算级 reject 收集器 / except 收窄记日志 / gate 失败区分）。与 #3、#13 同根。
@@ -172,7 +170,7 @@
 - **已补**：崇祯二年八月立天雄军军籍(兵 18000)+ 调卢象升「荡寇将军」督天雄军镇蓟镇东协·喜峰口、受孙承宗节制。
 
 ### T5. 密令应支持「撤销/提前结束」（玩家面，留待深挖密令机制时做）
-- **缺口**：当前密令(secret_orders)只有建/列两个端点，status 仅 active/pending_review/done/failed，**无玩家面的「撤回/作废/提前结束」**。能撤的只有「撤回召对」（回合级 undo，仅最后一轮、颁诏前）或结算时 close 为 failed。
+- **缺口**：当前密令(secret_orders)的 status 仅 active/done/failed，**无玩家面的「撤回/作废/提前结束」**。能撤的只有「撤回召对」（回合级 undo，仅最后一轮、颁诏前）或结算时 close 为 failed。
 - **范式**：照局势(issue)的 `cancellable=decree`（可撤旨）+ `cancel_cost`（撤销代价）那套——已颁诏的密令可由「圣旨撤回 + 代价」收回（人已派/钱已花的沉没成本）。见 `db.cancel_issue`(db.py:5060) + `_normalize_cancellable`(issues.py:555)。
 - **时机**：属「颁诏后玩法」，**不在 pending_actions(slice 4+5)范围**；留到后续深挖密令机制专项时做。
 
