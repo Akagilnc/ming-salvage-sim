@@ -244,31 +244,47 @@ class _ClassifierStub:
 # ── 公共 fixture ───────────────────────────────────────────────────────
 
 
-def _writable_root_sig(path: Path) -> Tuple[str, int, int]:
-    """轻量 scoped 前后态：存在性 + mtime_ns + size；不递归扫描。"""
+def _item_sig(path: Path) -> Tuple[str, int, int]:
+    """单路径轻量态：存在性 + mtime_ns + size；不读内容、不递归。"""
     if not path.exists():
         return ("missing", 0, 0)
     st = path.stat()
-    return ("present", int(st.st_mtime_ns), int(st.st_size))
+    kind = "file" if path.is_file() else "dir"
+    return (kind, int(st.st_mtime_ns), int(st.st_size))
 
 
-def _affected_external_write_paths(real_home: Path) -> list[Path]:
-    """矩阵真实入口可达的仓外/真实 user-data 具体路径（无 override 时）。"""
+def _snapshot_write_surface(real_home: Path) -> dict:
+    """真实入口可达的直写文件/文件族与必要子根的轻量前后态。
+
+    覆盖 data/active_db.txt、data/ming_sim_*.db（仅 data 根 glob）、
+    runtime_llm.json，以及 saves/error_packs/~/.ming_sim 的直接子项。
+    不递归 hash。
+    """
     repo = Path(__file__).resolve().parent.parent
-    return [
-        repo / "data" / "runtime_llm.json",
-        repo / "data" / "saves",
-        repo / "data" / "error_packs",
-        real_home / ".ming_sim",
-    ]
+    data = repo / "data"
+    snap: dict = {}
+    for p in (data / "active_db.txt", data / "runtime_llm.json"):
+        snap[str(p)] = _item_sig(p)
+    family: dict = {}
+    if data.is_dir():
+        for p in sorted(data.glob("ming_sim_*.db")):
+            if p.is_file():
+                family[p.name] = _item_sig(p)
+    snap["data:ming_sim_*.db"] = family
+    for root in (data / "saves", data / "error_packs", real_home / ".ming_sim"):
+        kids: dict = {}
+        if root.is_dir():
+            for child in sorted(root.iterdir(), key=lambda x: x.name):
+                kids[child.name] = _item_sig(child)
+        snap[str(root)] = kids
+    return snap
 
 
 @pytest.fixture
 def matrix_env(tmp_path, monkeypatch, _offline_scene_beat_generator):
     """临时 HOME + user_data/DB；CLI 通道；LLM 全 stub。"""
     real_home = Path(os.environ.get("HOME") or Path.home())
-    watched = _affected_external_write_paths(real_home)
-    before = {str(p): _writable_root_sig(p) for p in watched}
+    before = _snapshot_write_surface(real_home)
     home = tmp_path / "home"
     home.mkdir()
     ud = tmp_path / "user_data"
@@ -341,7 +357,7 @@ def matrix_env(tmp_path, monkeypatch, _offline_scene_beat_generator):
         finally:
             web_app.web_game = None
 
-    after = {str(p): _writable_root_sig(p) for p in watched}
+    after = _snapshot_write_surface(real_home)
     assert after == before, f"仓外/真实 user-data 零写失败: {before=} {after=}"
 
 
