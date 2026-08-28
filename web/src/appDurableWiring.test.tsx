@@ -682,6 +682,12 @@ const SNAP_GAZETTE = "\n  **上月邸报**\n- 军前缺饷\n  ";
 // #671：含 markdown/空白特征的原文常量——证明 App 接线不经 strip
 const SNAP_ATTENDANT = "  奴婢启禀：\n**洪承畴**已抵京候旨。  ";
 const SNAP_CLOSED = "月初已结边饷";
+// #1366：全军理论应发（结算前事实）+ 已结算边饷 hub 三项（结算后结果），同一 settled_turn。
+const SNAP_ARMY_PAY_DUE = 72;
+const SNAP_ARMY_PAY_DISBURSED = 60;
+const SNAP_ARMY_PAY_ARRIVED = 50;
+const SNAP_ARMY_PAY_LOSS = 10;
+const SNAP_ARMY_PAY_SETTLED_TURN = 4;
 const MIDCOURSE_ISSUE = "半程军饷议题";
 const MIDCOURSE_ARMY = "半程边军";
 const MIDCOURSE_REGION = "半程辽东";
@@ -718,7 +724,16 @@ const settlementBaseState = (phase: string, extra: Record<string, unknown> = {})
     bar_value: 0, bar_good_meaning: "妥", bar_bad_meaning: "",
     closed_turn: 4, stage_text: "", effect: {},
   }],
-  budget: { 国库: snapBudget(SNAP_TREASURY), 内库: snapBudget(SNAP_INNER) },
+  budget: {
+    国库: snapBudget(SNAP_TREASURY), 内库: snapBudget(SNAP_INNER),
+    army_pay_due_total: SNAP_ARMY_PAY_DUE,
+    settled_army_pay: {
+      settled_turn: SNAP_ARMY_PAY_SETTLED_TURN,
+      treasury_disbursed: SNAP_ARMY_PAY_DISBURSED,
+      actual_arrived: SNAP_ARMY_PAY_ARRIVED,
+      transit_loss: SNAP_ARMY_PAY_LOSS,
+    },
+  },
   region_warning: "", army_warning: "", power_warning: "", powers: [],
   victory_status: { status: "", summary: "" }, ending: null,
   events: [{ id: 1, title: "月初题本" }],
@@ -969,6 +984,13 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     const economyOpen = host.querySelector(".right-drawer-economy.open");
     expect(economyOpen).not.toBeNull();
     expect(economyOpen!.textContent).toContain(`${SNAP_TREASURY}万两`);
+    // #1366：结算前事实（全军名义应发）与结算后结果（国库实拨/实际到达/途中损耗）
+    // 同版接入玩家可见户部面，三值绑定同一 settled_turn，不互相拼接。
+    expect(economyOpen!.textContent).toContain(`${SNAP_ARMY_PAY_DUE}万两`);
+    expect(economyOpen!.textContent).toContain(`${SNAP_ARMY_PAY_DISBURSED}万两`);
+    expect(economyOpen!.textContent).toContain(`${SNAP_ARMY_PAY_ARRIVED}万两`);
+    expect(economyOpen!.textContent).toContain(`${SNAP_ARMY_PAY_LOSS}万两`);
+    expect(economyOpen!.textContent).toContain(`第 ${SNAP_ARMY_PAY_SETTLED_TURN} 月`);
     await closeOpenOverlay(host);
     expect(host.querySelector(".right-drawer-economy.open")).toBeNull();
 

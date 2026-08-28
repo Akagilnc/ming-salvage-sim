@@ -1373,6 +1373,9 @@ class WebGame:
             ]
             account["movements"] = movements
             account["movements_total"] = sum(m["delta"] for m in movements)
+        # #1366：结算前只呈现事实——全军名义应发合计，与 army_report 警讯文本共用同一计算，
+        # 不与国库拟拨/结算结果混叫一个数字。
+        budget["army_pay_due_total"] = self.db.army_pay_theoretical_total()
         # #1366：结算后的 typed 玩家结果；treasury_report 与 Web 共用同一 DB 投影。
         budget["settled_army_pay"] = self.db.treasury_hub_result(self.state)
         return budget

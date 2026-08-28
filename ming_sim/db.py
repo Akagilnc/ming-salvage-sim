@@ -37,7 +37,7 @@ from ming_sim.matching import match_army_id_from_text, match_region_id_from_text
 from ming_sim.exceptions import LLMContractError
 from ming_sim.intelligence import OFFICE_SLOTS
 from ming_sim.models import (
-    FRONT_HALF_DONE_PHASES, Character, Event, GameState, is_vassal_prince,
+    FRONT_HALF_DONE_PHASES, Character, Event, GameState, TurnPhase, is_vassal_prince,
     loads_effect_dict, monthly_amount, period_label, reign_period_label,
 )
 from ming_sim.relations import SUMMON_EDGE_ORIGIN_PREFIX
@@ -6641,9 +6641,12 @@ class GameDB:
         """已执行边饷 hub 三项结果；只读 ledger/container，不重算结算。"""
         if not self.is_substrate_hub_fiscal_engine_enabled():
             return None
-        # 玩家财政面在换月后读取刚结束的 turn；容器也是该次 fixed-flow 的覆盖值。
-        # 精确绑定 turn，零拨款月即使没有 ledger 行也不得回退拼接旧月扣款。
-        settled_turn = max(0, int(state.turn) - 1)
+        # pre_settle 已在当月 state.turn 写 ledger/覆盖容器，settling 相位下 next_period
+        # 尚未推进——此刻 state.turn 本身就是刚结算完的 turn。换月后（summoning 等其它
+        # 相位）next_period 已推进，刚结算的 turn 退一位。settling 窗口内若仍按 turn-1
+        # 取 ledger，会把上一次结算的旧 turn 流水与本次刚覆盖的新 turn 容器拼在一起。
+        settling = str(getattr(state, "turn_phase", "") or "") == TurnPhase.SETTLING.value
+        settled_turn = max(0, int(state.turn) - (0 if settling else 1))
         hub_debit = self.conn.execute(
             """
             SELECT COALESCE(SUM(-delta), 0) AS amount
@@ -7742,13 +7745,20 @@ class GameDB:
             )
         return payload
 
+    def army_pay_theoretical_total(self) -> int:
+        """全军（明军）月度名义应发军饷合计；army_report 文本与玩家户部结算前投影共用同一计算
+        （#1366：户部「各军军饷」与警讯月应发口径不一致的根因即两处各自求和，改共用此源）。"""
+        return monthly_amount(
+            sum(self._army_pay(r) for r in self.conn.execute("SELECT * FROM armies").fetchall())
+        )
+
     def army_report(self, limit: int = 5) -> str:
         rows = self.army_rows(limit=limit, danger_order=True)
         if not rows:
             return "军队尚未建档。"
         total_manpower = self.conn.execute("SELECT SUM(manpower) AS total FROM armies").fetchone()
         # #173：月饷总额按引擎实扣应发 army_needed 之和（替退役 maintenance_per_turn 之和）。
-        total_pay = sum(self._army_pay(r) for r in self.conn.execute("SELECT * FROM armies").fetchall())
+        total_pay = self.army_pay_theoretical_total()
         parts = []
         for row in rows:
             pay = self._army_pay(row)
