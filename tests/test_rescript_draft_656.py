@@ -399,6 +399,7 @@ def test_payload_projects_consumable_region_targets_from_real_monthly_board(game
         {"cols": ["id", "name", "kind"], "rows": [["", "辽东", "边镇"]]},
         {"cols": ["id", "name", "kind"], "rows": [[123, "辽东", "边镇"]]},
         {"cols": ["id", "name", "kind"], "rows": [["liaodong", ["辽东"], "边镇"]]},
+        {"cols": ["id", "name", "kind"], "rows": ["abc"]},
     ):
         bad["regions"] = table
         with pytest.raises(ValueError):

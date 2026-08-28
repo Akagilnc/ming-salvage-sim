@@ -246,6 +246,8 @@ def _project_region_targets(table: object) -> List[Dict[str, str]]:
         indexes = {field: cols.index(field) for field in ("id", "name", "kind")}
         targets = []
         for row in rows:
+            if not isinstance(row, list):
+                raise ValueError(f"canonical region target row 非 list：{row!r}")
             target = {}
             for field, index in indexes.items():
                 value = row[index]
