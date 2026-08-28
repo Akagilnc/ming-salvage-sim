@@ -251,10 +251,6 @@ def _snapshot_secret_order_people(
     return list(dict.fromkeys(names))
 
 
-_SECRET_EXCLUSION_CLAUSE_RE = re.compile(
-    r"(?:不走|不经|勿走|勿经|瞒住|瞒着|瞒过|不可令|勿令|不得让|不得告知|勿使|莫让|别让|不要让|不许|严禁)\s*"
-    r"([^，。；;\s]{2,40}?)(?=(?:知晓|知道|得知|知情|过问|插手|，|。|；|\s|$))"
-)
 _SECRET_OFFICE_TYPES = (
     "吏部", "户部", "礼部", "兵部", "刑部", "工部", "都察院", "大理寺", "通政司",
     "司礼监", "内阁", "东厂", "锦衣卫", "翰林院", "詹事府",
@@ -283,75 +279,24 @@ def _canonical_secret_exclusion_target(
     return "", target
 
 
-def _recover_secret_order_exclusions(
-    content: Any, text: object,
-) -> tuple[List[str], List[str]]:
-    """Recover explicit secrecy targets at the sole durable-order boundary.
-
-    Structured callers may omit an exclusion field, but an explicit ``瞒住``
-    clause in the order itself must survive every staging path.  Resolve names,
-    aliases, office types, and current office titles against the same content
-    registry that is used to snapshot the durable blacklist.
-    """
-    people: List[str] = []
-    offices: List[str] = []
-    characters = list(getattr(content, "characters", {}).values())
-    by_name = {
-        token: character.name
-        for character in characters
-        for token in [character.name, *(character.aliases or [])]
-        if token
-    }
-    office_types = {str(character.office_type).strip() for character in characters if character.office_type}
-    office_titles = {str(character.office).strip() for character in characters if character.office}
-    clauses = _SECRET_EXCLUSION_CLAUSE_RE.findall(str(text or ""))
-    clauses += re.findall(
-        r"(?:对|向)\s*([^，。；;\s]{2,40}?)\s*(?:保密|秘而不宣|不得透露)",
-        str(text or ""),
-    )
-    for clause in clauses:
-        for target in re.split(r"[、，,和与及]", clause):
-            target = target.strip("，。；、 ")
-            if not target or target in {"他们", "他", "她", "此人", "诸人"}:
-                continue
-            canonical_name = by_name.get(target)
-            if canonical_name:
-                people.append(canonical_name)
-            else:
-                kind, canonical_target = _canonical_secret_exclusion_target(
-                    target, office_types, office_titles,
-                )
-                if kind == "office":
-                    offices.append(canonical_target)
-                else:
-                    # The CLI adapter has no content registry, but must use
-                    # this same parser.  Preserve an unresolved explicit name
-                    # for issuance-time canonicalisation instead of dropping
-                    # it or maintaining a second CLI classifier.
-                    people.append(target)
-    return list(dict.fromkeys(people)), list(dict.fromkeys(offices))
-
-
 def canonical_secret_order_exclusions(
     content: Any, explicit_people: Iterable[str], explicit_offices: Iterable[str], text: object,
 ) -> tuple[List[str], List[str]]:
-    """Canonicalize every secret-order exclusion before it enters staging or DB.
+    """Canonicalize structured extractor targets before staging or DB.
 
-    Explicit structured fields and natural-language clauses describe one
-    authorization invariant: excluded people and offices never receive a later
-    projection.  Resolve aliases and registry-backed office targets together so
-    function calls, CLI recovery, and durable issuance cannot drift apart.
+    Player prose is not a machine contract.  Only typed people/offices reach
+    this boundary; roster aliases and office titles are canonicalized here.
+    ``text`` remains accepted for callers that also pass the order body, but is
+    deliberately not consumed.
     """
-    recovered_people, recovered_offices = _recover_secret_order_exclusions(content, text)
-    people = _snapshot_secret_order_people(
-        content, [*explicit_people, *recovered_people], [],
-    )
+    del text
+    people = _snapshot_secret_order_people(content, explicit_people, [])
     office_types = {str(character.office_type).strip() for character in getattr(content, "characters", {}).values()
                     if character.office_type}
     office_titles = {str(character.office).strip() for character in getattr(content, "characters", {}).values()
                      if character.office}
     offices = []
-    for value in [*explicit_offices, *recovered_offices]:
+    for value in explicit_offices:
         kind, target = _canonical_secret_exclusion_target(str(value), office_types, office_titles)
         if kind == "office":
             offices.append(target)
@@ -931,12 +876,18 @@ class GameDB:
         # 步骤7 起由 GameSession 统一传入同一份 GameContent。
         self.content = content if content is not None else GameContent.load()
         self.llm_config = llm_config
-        # check_same_thread=False：流式颁诏在 worker 线程跑 resolve_turn，
-        # 复用同一 GameDB 连接。游戏单写者、无并发写，跨线程安全。
+        # check_same_thread=False：流式颁诏/召对 worker 与轮询读共用同一连接。
+        # cached_statements=0：关掉 CPython sqlite3 statement cache，避免 3.12/3.13
+        # 共享连接并发 fetch 的 InterfaceError（CPython #118172）。
         # factory=_SuspendableConnection：使 atomic() 能暂停全库 commit（ADR 0008 决定 2/8）。
         # 暂停标志默认 off，下面 init_schema 建表照常提交。
         from ming_sim.applier import _SuspendableConnection
-        self.conn = sqlite3.connect(path, check_same_thread=False, factory=_SuspendableConnection)
+        self.conn = sqlite3.connect(
+            path,
+            check_same_thread=False,
+            cached_statements=0,
+            factory=_SuspendableConnection,
+        )
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
         if int(self.conn.execute("PRAGMA foreign_keys").fetchone()[0]) != 1:
@@ -6586,39 +6537,49 @@ class GameDB:
         def _amt(acc: str, direction: str, name: str) -> int:
             return sum(int(it["amount"]) for it in budget[acc][direction] if it["name"] == name)
 
+        def _amt_key(acc: str, direction: str, budget_key: str) -> int:
+            return sum(
+                int(it["amount"])
+                for it in budget[acc][direction]
+                if it.get("budget_key") == budget_key
+            )
+
+        def _names_key(acc: str, direction: str, budget_key: str) -> str:
+            return "+".join(
+                str(it["name"])
+                for it in budget[acc][direction]
+                if it.get("budget_key") == budget_key and int(it["amount"])
+            )
+
         def _parts(acc: str, direction: str, names: tuple[str, ...]) -> str:
             present = [name for name in names if _amt(acc, direction, name)]
             return "+".join(present) if present else "无"
 
         gk_in, gk_out = _sum("国库", "income"), _sum("国库", "expense")
         nk_in, nk_out = _sum("内库", "income"), _sum("内库", "expense")
+        army_pay_amt = _amt_key("国库", "expense", "army_pay")
+        army_pay_label = _names_key("国库", "expense", "army_pay")
         gk_income_names = _parts(
             "国库", "income",
             ("起运", "田赋辽饷盐商", "盐税", "商税"),
         )
-        if self.is_substrate_hub_fiscal_engine_enabled():
-            expense_present = [
-                "边饷hub" if _amt("国库", "expense", "各军军饷") else "",
-                *(
-                    name for name in (
-                        "中央军饷", "太仓亏空", "宗室禄米", "百官俸禄", "工部",
-                        "赈灾备用", "建筑维护",
-                    )
-                    if _amt("国库", "expense", name)
-                ),
-            ]
-            gk_expense_names = "+".join(name for name in expense_present if name) or "无"
-        else:
-            gk_expense_names = _parts(
-                "国库", "expense",
-                ("各军军饷", "宗室禄米", "百官俸禄", "工部", "赈灾备用", "建筑维护"),
-            )
+        # 军饷科目取数认 budget_key；呈现名跟预算行 name（玩家/摘要同源）。
+        other_expense = (
+            ("中央军饷", "太仓亏空", "宗室禄米", "百官俸禄", "工部", "赈灾备用", "建筑维护")
+            if self.is_substrate_hub_fiscal_engine_enabled()
+            else ("宗室禄米", "百官俸禄", "工部", "赈灾备用", "建筑维护")
+        )
+        expense_present = [
+            army_pay_label if army_pay_amt else "",
+            *(name for name in other_expense if _amt("国库", "expense", name)),
+        ]
+        gk_expense_names = "+".join(name for name in expense_present if name) or "无"
         return (
             f"{TURN_UNIT}度预算基准：国库入{format_money(gk_in)}"
             f"（{gk_income_names}；建筑产出{format_money(_amt('国库', 'income', '建筑产出'))}）"
             f"出{format_money(gk_out)}"
             f"（{gk_expense_names}；军饷"
-            f"{format_money(_amt('国库', 'expense', '各军军饷') + _amt('国库', 'expense', '边饷hub'))}+"
+            f"{format_money(army_pay_amt)}+"
             f"建筑维护{format_money(_amt('国库', 'expense', '建筑维护'))}）"
             f"净{format_money_delta(gk_in - gk_out)}；"
             f"内库入{format_money(nk_in)}"
@@ -6626,6 +6587,43 @@ class GameDB:
             f"（内廷维护{format_money(_amt('内库', 'expense', '建筑维护'))}）"
             f"净{format_money_delta(nk_in - nk_out)}。"
         )
+
+    def treasury_hub_result(self, state: GameState) -> Optional[Dict[str, int]]:
+        """已执行边饷 hub 三项结果；只读 ledger/container，不重算结算。"""
+        if not self.is_substrate_hub_fiscal_engine_enabled():
+            return None
+        # pre_settle 已在当月 state.turn 写 ledger/覆盖容器，settling/awaiting_decision
+        # 相位下 next_period 尚未推进——此刻 state.turn 本身就是刚结算完的 turn（两者语义
+        # 相同，见 FRONT_HALF_DONE_PHASES 单一真源）。换月后（summoning 等其它相位）
+        # next_period 已推进，刚结算的 turn 退一位。前半段窗口内若仍按 turn-1 取 ledger，
+        # 会把上一次结算的旧 turn 流水与本次刚覆盖的新 turn 容器拼在一起。
+        front_half_done = str(getattr(state, "turn_phase", "") or "") in FRONT_HALF_DONE_PHASES
+        settled_turn = max(0, int(state.turn) - (0 if front_half_done else 1))
+        hub_debit = self.conn.execute(
+            """
+            SELECT COALESCE(SUM(-delta), 0) AS amount
+            FROM economy_ledger
+            WHERE turn = ? AND account = '国库' AND category = '边饷hub'
+            """,
+            (settled_turn,),
+        ).fetchone()
+        containers = self.conn.execute(
+            """
+            SELECT key, value FROM fiscal_containers
+            WHERE key IN ('hub_京运实拨', 'hub_中央军饷实拨', 'hub_京运损耗')
+            """
+        ).fetchall()
+        values = {str(row["key"]): float(row["value"] or 0) for row in containers}
+        if len(values) != 3:
+            return None
+        return {
+            "settled_turn": settled_turn,
+            "treasury_disbursed": int(hub_debit["amount"] or 0),
+            "actual_arrived": int(
+                values.get("hub_京运实拨", 0) + values.get("hub_中央军饷实拨", 0)
+            ),
+            "transit_loss": int(values.get("hub_京运损耗", 0)),
+        }
 
     def treasury_report(self, state: GameState, limit: int = 6) -> str:
         account_rows = self.conn.execute(
@@ -6672,8 +6670,19 @@ class GameDB:
                 f"{period_label(int(row['year']), int(row['period']))} {row['account']}{sign}{format_money(delta)} {row['category']}：{row['reason']}"
             )
         recent_text = "；".join(recent) if recent else "未见流水"
+        hub_result_text = ""
+        hub_result = self.treasury_hub_result(state)
+        if hub_result is not None:
+            hub_result_text = (
+                f"边饷结算：国库实拨{format_money(hub_result['treasury_disbursed'])}，"
+                f"实际到达{format_money(hub_result['actual_arrived'])}，"
+                f"途中损耗{format_money(hub_result['transit_loss'])}。"
+            )
         budget = self.treasury_budget_summary(state)
-        return f"{budget}账面：{account_text}。本{TURN_UNIT}收支：{period_text}。近账：{recent_text}。"
+        return (
+            f"{budget}账面：{account_text}。本{TURN_UNIT}收支：{period_text}。"
+            f"{hub_result_text}近账：{recent_text}。"
+        )
 
     def faction_satisfaction(self, faction: str) -> int:
         row = self.conn.execute("SELECT satisfaction FROM factions WHERE name = ?", (faction,)).fetchone()
@@ -7688,13 +7697,20 @@ class GameDB:
             )
         return payload
 
+    def army_pay_theoretical_total(self) -> int:
+        """全军（明军）月度名义应发军饷合计；army_report 文本与玩家户部结算前投影共用同一计算
+        （#1366：户部「各军军饷」与警讯月应发口径不一致的根因即两处各自求和，改共用此源）。"""
+        return monthly_amount(
+            sum(self._army_pay(r) for r in self.conn.execute("SELECT * FROM armies").fetchall())
+        )
+
     def army_report(self, limit: int = 5) -> str:
         rows = self.army_rows(limit=limit, danger_order=True)
         if not rows:
             return "军队尚未建档。"
         total_manpower = self.conn.execute("SELECT SUM(manpower) AS total FROM armies").fetchone()
         # #173：月饷总额按引擎实扣应发 army_needed 之和（替退役 maintenance_per_turn 之和）。
-        total_pay = sum(self._army_pay(r) for r in self.conn.execute("SELECT * FROM armies").fetchall())
+        total_pay = self.army_pay_theoretical_total()
         parts = []
         for row in rows:
             pay = self._army_pay(row)
@@ -12256,7 +12272,12 @@ class GameDB:
             grant_action = str(normalized.get("grant_action") or "").strip()
             if grant_action in {"加衔", "荫叙"}:
                 normalized.pop("delta", None)
+            elif self._is_army_pay_grant_payload(normalized):
+                # #1503：协饷先且只经 require_explicit_xiexang_fields，不经 amount/account 首错。
+                normalized = self._normalize_army_pay_grant_payload(normalized)
             else:
+                if str(normalized.get("purpose") or "").strip() == "补饷":
+                    raise ValueError("非协饷拨帑不得夹带 purpose=补饷")
                 try:
                     amount = strict_int(
                         normalized.get("amount"), accept_numeric_strings=False
@@ -12279,8 +12300,6 @@ class GameDB:
                     else:
                         normalized["execution_surface"] = surface
                     normalized.pop("delta", None)
-                # #1503：拨饷/协饷类 — 成案即结构化补饷载荷；缺字段 fail-loud，不猜散文。
-                normalized = self._normalize_army_pay_grant_payload(normalized)
         elif action == "pay_order_override":
             # #653：结构化载荷 presence 在指令归一边界先验（键形/值域/幻影 region
             # 仍由成案点与物化点共 prepare_pay_order_entries 同一验形，不在此重复）。
@@ -14238,52 +14257,31 @@ class GameDB:
 
     @staticmethod
     def _is_army_pay_grant_payload(payload: Optional[Dict[str, object]]) -> bool:
-        """#1503：拨饷/协饷类 = 显式 grant_action=协饷 或 purpose=补饷（禁 army 通用升格）。"""
-        p = payload or {}
-        grant_action = str(p.get("grant_action") or "").strip()
-        purpose = str(p.get("purpose") or "").strip()
-        return grant_action == "协饷" or purpose == "补饷"
+        """#1503：补饷身份只由显式 grant_action=协饷 决定。"""
+        return str((payload or {}).get("grant_action") or "").strip() == "协饷"
 
     def _normalize_army_pay_grant_payload(
         self, payload: Dict[str, object],
     ) -> Dict[str, object]:
-        """#1503：拨饷类成案载荷 — amount/account/purpose=补饷/army target；缺则响亮。"""
+        """#1503：拨饷类成案载荷 — 五字段显式；缺则一次收集响亮；不补值。"""
         if not self._is_army_pay_grant_payload(payload):
             return payload
         if self._grant_allocation_is_honorific(payload):
             return payload
+        from ming_sim.action_materialize import require_explicit_xiexang_fields
+
         normalized = dict(payload)
-        # 月度协饷建科目，不走一次性补饷销欠缝。
+        explicit = require_explicit_xiexang_fields(
+            amount=normalized.get("amount"),
+            account=str(normalized.get("account") or ""),
+            purpose=str(normalized.get("purpose") or ""),
+            target_kind=str(normalized.get("target_kind") or ""),
+            target_id=str(normalized.get("target_id") or ""),
+            cadence=str(normalized.get("cadence") or ""),
+        )
+        normalized.update(explicit)
         if self._grant_allocation_is_monthly(normalized):
             return normalized
-        try:
-            amount = strict_int(normalized.get("amount"), accept_numeric_strings=False)
-        except ValueError:
-            amount = 0
-        account = str(normalized.get("account") or "").strip()
-        target_kind = str(normalized.get("target_kind") or "").strip()
-        target_id = str(normalized.get("target_id") or "").strip()
-        missing = []
-        if amount <= 0:
-            missing.append("amount")
-        if account not in {"国库", "内库"}:
-            missing.append("account")
-        if target_kind != "army":
-            missing.append("target_kind=army")
-        if not target_id:
-            missing.append("target_id")
-        if missing:
-            raise ValueError(
-                "拨饷旨意缺少结构化字段：" + "/".join(missing)
-                + "（不猜散文）"
-            )
-        normalized["amount"] = amount
-        normalized["account"] = account
-        normalized["purpose"] = "补饷"
-        normalized["target_kind"] = "army"
-        normalized["target_id"] = target_id
-        if not str(normalized.get("grant_action") or "").strip():
-            normalized["grant_action"] = "协饷"
         # #1503：非月度拨饷强制 immediate。覆盖 normalize 前置插入的 in_transit 默认，
         # 以及旧 pending/恢复载荷残留的在途面——在途只留叙事，不进机械对账轨。
         normalized["execution_surface"] = "immediate"
@@ -18714,9 +18712,9 @@ class GameDB:
             oid = pa["target_id"]
             if pa["action"] == "新建":
                 title = str(payload.get("title") or "").strip()
-                content_text = str(payload.get("content") or "").strip()
+                content_text = str(payload.get("content") or "")
                 assignee = str(payload.get("assignee") or pa["minister_name"] or "").strip()
-                if not title or not content_text or not assignee:
+                if not title or not content_text.strip() or not assignee:
                     return False
                 tags_raw = payload.get("tags") or []
                 tags = [str(t).strip() for t in tags_raw if str(t).strip()] if isinstance(tags_raw, list) else []
@@ -19765,13 +19763,14 @@ class GameDB:
         from ming_sim.error_pack import rejections_jsonl_path
         mirror_rejections_after_commit(self, collector, rejections_jsonl_path)
 
-    def ensure_dossiers_for_draft_directives(self, state: GameState) -> None:
+    def ensure_dossiers_for_draft_directives(self, state: GameState) -> List[str]:
         """结束边界成案：只读最新 draft 正文/载荷，按 directive_id 幂等创建。
 
         #654 r3-C.2 路3：每道旨独立 SAVEPOINT；单旨失败记 rejection、保持 draft，不波及他旨。
         """
         from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
         collector = RejectionCollector()
+        rejection_reasons: List[str] = []
         with atomic(self):
             for row in self.list_directives(state, statuses=("draft",)):
                 did = int(row["id"])
@@ -19785,6 +19784,7 @@ class GameDB:
                     )
                 except Exception as exc:
                     self.conn.execute(f"ROLLBACK TO {sp}")
+                    rejection_reasons.append(str(exc))
                     # P6：rejection 只存 directive_id，不裁剪/快照 LLM 旨文
                     collector.record(
                         "directive_locality",
@@ -19804,6 +19804,7 @@ class GameDB:
         from ming_sim.applier import mirror_rejections_after_commit
         from ming_sim.error_pack import rejections_jsonl_path
         mirror_rejections_after_commit(self, collector, rejections_jsonl_path)
+        return rejection_reasons
 
     def reject_directive(self, directive_id: int) -> None:
         """皇帝驳回大臣拟旨：pending → rejected。"""

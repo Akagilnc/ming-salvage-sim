@@ -232,7 +232,20 @@ export type BudgetAccount = {
   movements_total: number;
 };
 
-export type Budget = Record<"国库" | "内库", BudgetAccount>;
+/** #1366：换月后的一次已结算边饷 hub 结果（国库实拨/实际到达/途中损耗），三值同一 settled_turn；
+ * 未启用 substrate_hub 财政引擎时为 null。 */
+export type SettledArmyPay = {
+  settled_turn: number;
+  treasury_disbursed: number;
+  actual_arrived: number;
+  transit_loss: number;
+};
+
+export type Budget = Record<"国库" | "内库", BudgetAccount> & {
+  /** 全军（明军）月度名义应发军饷合计；结算前事实，与 army_warning 文本共用同一口径。 */
+  army_pay_due_total: number;
+  settled_army_pay: SettledArmyPay | null;
+};
 
 export type DossierDecision =
   | "promulgated"
@@ -423,7 +436,7 @@ export type AudienceScrollMessage = {
   time: string | null;
   content: string;
   soft_boundary: boolean;
-  beat: "opening" | "entrance" | "dialogue" | "aside" | "scene" | "exit" | "divider" | "closing" | "coda";
+  beat: "opening" | "entrance" | "dialogue" | "aside" | "scene" | "exit" | "divider" | "closing" | "coda" | "summon";
   highlights: string[];
   container: { time_of_day: string; location: string; audience_type: string };
   /** Internal durable identity used only to merge a refreshing live projection. */

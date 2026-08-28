@@ -192,7 +192,7 @@ function baseGameState(overrides: Partial<GameState> = {}): GameState {
     issues: [],
     legacies: [],
     closed_this_turn: [],
-    budget: { 国库: EMPTY_BUDGET_ACCOUNT, 内库: EMPTY_BUDGET_ACCOUNT },
+    budget: { 国库: EMPTY_BUDGET_ACCOUNT, 内库: EMPTY_BUDGET_ACCOUNT, army_pay_due_total: 0, settled_army_pay: null },
     region_warning: "",
     army_warning: "",
     power_warning: "",

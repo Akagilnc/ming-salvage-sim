@@ -13,6 +13,7 @@ from __future__ import annotations
 import contextlib
 from concurrent.futures import Future, ThreadPoolExecutor
 from types import SimpleNamespace
+import sqlite3
 import threading
 import time
 
@@ -1644,7 +1645,7 @@ def test_stream_join_and_abandon_do_not_hold_write_gate(monkeypatch):
     rt._runtime_write_queue = lambda: q
     rt._persistent_chat_minister = lambda _n: True
     rt._audience_turn_in_flight = lambda _n: False
-    rt._start_chat_turn = lambda _n: (11, {})
+    rt._start_chat_turn = lambda _n, **_k: (11, {})
     rt._record_chat_rollback_items = lambda *_a, **_k: None
     rt._chat_payload = lambda *a, **k: {"answer": "臣遵旨。"}
     rt._spawn_extraction_trail = lambda *_a, **_k: None

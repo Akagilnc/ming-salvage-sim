@@ -53,6 +53,9 @@ BEAT_ENTER = "enter"
 BEAT_EXIT = "exit"
 BEAT_CLOSE = "close"
 BEAT_HANDOFF = "handoff"
+# #1566：场外传召 scene beat ——人在途未入殿，场景围绕「传召已发、人在途」承接，
+# 而非「入殿」。ADR 0096：本回合开不成召对、抵京候旨召见。
+BEAT_SUMMON = "summon"
 
 # 见闻供给接口：character_name -> 角色见闻投影（get_character_knowledge 契约的 dict）。
 # 空名返回 {}。默认实现包 get_character_knowledge（#489 底座）；可注入 fake 做切片验收。
@@ -202,7 +205,7 @@ def assemble_beat_inputs(
     """
     provider = knowledge_provider or _default_knowledge_provider(db, state)
 
-    if beat_kind in (BEAT_ENTER, BEAT_EXIT, BEAT_HANDOFF):
+    if beat_kind in (BEAT_ENTER, BEAT_EXIT, BEAT_HANDOFF, BEAT_SUMMON):
         subject = str(person_name or "").strip()
     else:
         # 夜级框架 beat（开夜/收夜）：视角取常在员额首席（王承恩），无则空。
@@ -221,7 +224,7 @@ def assemble_beat_inputs(
     characterization = ""
     prior_appearances: Tuple[str, ...] = ()
     prior_bound = int(before_entry_id or 0)
-    if beat_kind in (BEAT_ENTER, BEAT_EXIT, BEAT_HANDOFF):
+    if beat_kind in (BEAT_ENTER, BEAT_EXIT, BEAT_HANDOFF, BEAT_SUMMON):
         characterization = _characterization(db, person_name)
         prior_appearances = _person_prior_appearances(
             db, night_id, person_name, before_entry_id=prior_bound,
@@ -229,7 +232,7 @@ def assemble_beat_inputs(
 
     # #1294：open/enter 当期年号事实；复用 models.reign_period_label，不另写投影。
     era_label = ""
-    if beat_kind in (BEAT_OPEN, BEAT_ENTER):
+    if beat_kind in (BEAT_OPEN, BEAT_ENTER, BEAT_SUMMON):
         year = getattr(state, "year", None)
         period = getattr(state, "period", None)
         if year is not None and period is not None:
@@ -244,14 +247,29 @@ def assemble_beat_inputs(
         audience_scenes = (() if current is None else (
             json.dumps(current, ensure_ascii=False, sort_keys=True),
         ))
+    elif beat_kind == BEAT_SUMMON:
+        # ADR 0096 / #1566：场外传召的正向结构化事实（旨意已发、驰递未达、尚未入殿）。
+        # 走既有 audience_scenes 槽进 LLM 材料，不另开字段、不写玩家可见模板。
+        audience_scenes = (
+            json.dumps(
+                {
+                    "decree_issued": True,
+                    "courier_traveling": True,
+                    "courier_arrived": False,
+                    "person_entered_court": False,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+        )
 
     return BeatInputs(
         beat_kind=beat_kind,
         time_of_day=str(time_of_day or ""),
         location=str(location or ""),
-        person_name=str(person_name or "") if beat_kind in (BEAT_ENTER, BEAT_EXIT, BEAT_HANDOFF) else "",
+        person_name=str(person_name or "") if beat_kind in (BEAT_ENTER, BEAT_EXIT, BEAT_HANDOFF, BEAT_SUMMON) else "",
         characterization=characterization,
-        summon_method=str(summon_method or "") if beat_kind == BEAT_ENTER else "",
+        summon_method=str(summon_method or "") if beat_kind in (BEAT_ENTER, BEAT_SUMMON) else "",
         perspectival_world=perspectival_world,
         court_tension=court_tension,
         prior_appearances=prior_appearances,
@@ -318,12 +336,14 @@ def create_llm_beat_generator(llm_config: Any) -> BeatGenerator:
         # #1294/#1313 r4b：仅 open/enter 且 label 非空时发射「当期年月」；
         # exit/close（及空 label）不加入该键，避免越界空键。
         label = str(inputs.reign_period_label or "").strip()
-        if inputs.beat_kind in (BEAT_OPEN, BEAT_ENTER) and label:
+        if inputs.beat_kind in (BEAT_OPEN, BEAT_ENTER, BEAT_SUMMON) and label:
             materials["当期年月"] = label
-        # Structured living facts belong only to the open-beat LLM materials.
+        # Structured living facts: open-beat 场面；summon 场外传召（#1566）。
         # Without a generator, opening remains an empty typed placeholder.
         if inputs.beat_kind == BEAT_OPEN and inputs.audience_scenes:
             materials["待呈御前的结构化场面事实"] = inputs.audience_scenes
+        if inputs.beat_kind == BEAT_SUMMON and inputs.audience_scenes:
+            materials["场外传召结构化事实"] = inputs.audience_scenes
         return extract_agent_text(agent.run(json.dumps(materials, ensure_ascii=False)))
 
     return generate
@@ -515,11 +535,80 @@ def persist_chat_turn_scene(db: Any, generated: List[Tuple[int, str]]) -> None:
         )
 
 
+def _offsite_summon_entry_id(db: Any, *, origin_id: str, person_name: str) -> int:
+    """场外传召 entry_id 唯一 lookup（key 派生与 discover 幂等重读共用同一权威）。"""
+    from ming_sim.audience_night import list_unsettled_summons
+
+    origin = str(origin_id or "").strip()
+    name = str(person_name or "").strip()
+    if not origin or not name:
+        raise ValueError(
+            f"assemble_offsite_summon_inputs 须有 origin_id 与 person_name，"
+            f"got origin_id={origin_id!r} person_name={person_name!r}"
+        )
+    item = next(
+        (row for row in list_unsettled_summons(db)
+         if row["origin_id"] == origin and row["person_name"] == name),
+        None,
+    )
+    if item is None:
+        raise RuntimeError(
+            f"场外传召账未落库，无法物化 scene：origin_id={origin!r} person={name!r}"
+        )
+    return int(item["entry_id"])
+
+
+def assemble_offsite_summon_inputs(
+    db: Any,
+    state: Any,
+    *,
+    origin_id: str,
+    person_name: str,
+) -> Optional[Tuple[int, BeatInputs]]:
+    """#1566：场外传召账 → (entry_id, BeatInputs)。调用方须在 ticketed gate 内调用。
+
+    BEAT_SUMMON（非 BEAT_ENTER）：人在途未入殿，ADR 0096。
+    body 已物化时返回 None（幂等）。生成器在 gate 外跑。
+    """
+    from ming_sim.audience_night import SUMMON_METHODS, get_night
+    import json as _json
+
+    name = str(person_name or "").strip()
+    entry_id = _offsite_summon_entry_id(db, origin_id=origin_id, person_name=person_name)
+    row = db.conn.execute(
+        "SELECT body, tags, night_id FROM story_ledger_entries WHERE id=?",
+        (entry_id,),
+    ).fetchone()
+    if row is None:
+        raise RuntimeError(f"传召 ledger 行消失：entry_id={entry_id}")
+    if str(row["body"] or "").strip():
+        return None
+    tags = _json.loads(row["tags"] or "[]")
+    method = next((m for m in SUMMON_METHODS if m in tags), None)
+    if method is None:
+        raise RuntimeError(
+            f"传召账缺召法 tag：entry_id={entry_id} tags={tags!r}"
+        )
+    night_id = int(row["night_id"])
+    night = get_night(db, night_id) or {}
+    inputs = assemble_beat_inputs(
+        db, state, beat_kind=BEAT_SUMMON,
+        time_of_day=str(night.get("time_of_day") or ""),
+        location=str(night.get("location") or ""),
+        night_id=night_id,
+        person_name=name,
+        summon_method=method,
+        before_entry_id=entry_id,
+    )
+    return (entry_id, inputs)
+
+
 class ChatTurnSceneRegistry:
     """本轮 scene 工作的唯一 registry（open/enter/exit 同桶，禁止平行第二表）。
 
     无依赖 beat 各提交独立 Future 真并发。join/abandon 排空整桶。
     Future.cancel 挡不住已在跑的 LLM——abandon 必须 join drain。
+    只拥有 chat-turn scene（int key）。
     """
 
     def __init__(self, executor: Executor) -> None:
@@ -729,6 +818,14 @@ class ChatTurnSceneRegistry:
         if not futures:
             return
         self._drain(futures, keep_results=False)
+
+    def abandon_all(self) -> None:
+        """teardown：排空全部 chat-turn scene bucket 后再关库。"""
+        with self._lock:
+            pending = list(self._futures.items())
+            self._futures.clear()
+        for _key, futures in pending:
+            self._drain(futures, keep_results=False)
 
 
 def start_close_scene_on_registry(
