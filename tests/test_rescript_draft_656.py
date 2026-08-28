@@ -394,12 +394,16 @@ def test_payload_projects_consumable_region_targets_from_real_monthly_board(game
     assert "ningyuan" not in targets
 
     bad = dict(simulator_payload)
-    bad["regions"] = {"cols": ["id", "name", "kind"], "rows": [["liaodong"]]}
-    with pytest.raises(IndexError):
-        build_rescript_draft_payload(
-            state, "邸报", bad,
-            {"name": "首辅", "office": "内阁首辅", "faction": "阉党"},
-        )
+    for table, error in (
+        ({"cols": ["id", "name", "kind"], "rows": [["liaodong"]]}, IndexError),
+        ({"cols": ["id", "name", "kind"], "rows": [["", "辽东", "边镇"]]}, ValueError),
+    ):
+        bad["regions"] = table
+        with pytest.raises(error):
+            build_rescript_draft_payload(
+                state, "邸报", bad,
+                {"name": "首辅", "office": "内阁首辅", "faction": "阉党"},
+            )
 
 
 def test_generate_rejects_region_id_outside_same_batch_catalog(monkeypatch):
