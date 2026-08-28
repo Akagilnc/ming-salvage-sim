@@ -21775,6 +21775,17 @@ class GameDB:
             }
             if covert_contract is not None:
                 payload[CONTRACT_KEY] = covert_contract
+            from ming_sim.covert_progress import (
+                _investigation_target_of,
+                live_investigation_fact_keys,
+                FACT_LANES_KEY,
+            )
+            inv_target = _investigation_target_of(covert_contract or {})
+            if inv_target:
+                payload[FACT_LANES_KEY] = [
+                    {"fact_key": key, "progress": 0.0, "used": False}
+                    for key in live_investigation_fact_keys(self, inv_target)
+                ]
             dossier_id = self.create_decree_dossier(
                 state,
                 action_type="secret_order",
