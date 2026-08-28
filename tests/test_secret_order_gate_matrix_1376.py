@@ -16,6 +16,8 @@ V3 回归只在 tests/test_qa_c3_secret_order_path_1357_1376.py，本文件不�
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Set
 
@@ -27,6 +29,7 @@ import ming_sim.cli_backend as cli_backend
 import ming_sim.decree as decree_mod
 import ming_sim.memories as memories_mod
 import ming_sim.mindreading as mindreading_mod
+import ming_sim.llm_config as llm_config_mod
 import ming_sim.session as session_mod
 import web_app
 from ming_sim import audience_night as an
@@ -44,7 +47,7 @@ E3_MESSAGE = "你替朕悄悄查一查关宁欠饷实数"
 # 抽取 stub 默认 typed 载荷（用例可覆盖）；S2 修改 material=测试自送正文
 RESTATED_CONTENT = "密察关宁欠饷，据实密奏，不得声张。"
 # 玩家修改输入是确定性材料（非 LLM 生成物）；S2 新正文唯取 typed new_content
-S2_MODIFY_BODY = "只查饷银去向，不查动向"
+S2_MODIFY_BODY = "  " + ("只查饷银去向" * 60) + "  "
 # 自然语言修改表达（不含结构化「修改：」前缀），保证旧 prefix parser 无法直接产出
 # S2_MODIFY_BODY——proof-of-red：生产须从 typed new_content 消费而非裁剪散文。
 S2_MODIFY_MESSAGE = "朕要修改密令正文为只查饷银去向，不查动向"
@@ -272,6 +275,18 @@ def matrix_env(tmp_path, monkeypatch, _offline_scene_beat_generator):
     assert new.status_code == 200, new.text
     game = web_app.web_game
     assert game is not None
+
+    # Scoped zero-write proof: enumerate this matrix's effective writable roots.
+    # Do not inspect or hash the real HOME/data tree.
+    roots = {
+        Path(os.environ["HOME"]),
+        Path(os.environ["MING_SIM_USER_DATA_DIR"]),
+        Path(web_app.UPLOAD_PORTRAIT_DIR),
+        Path(llm_config_mod.RUNTIME_LLM_PATH),
+        Path(game.db.path),
+    }
+    assert all(root.resolve().is_relative_to(tmp_path.resolve()) for root in roots), roots
+
     game.session.registry.get = lambda _ch: _CannedAgent()
     cfg = game.session.llm_config
     if getattr(cfg, "channel", None) != "cli":

@@ -150,7 +150,9 @@ def test_modify_does_not_claim_success_when_row_left_pending(game, monkeypatch):
     monkeypatch.setattr(db.conn, "execute", _race_then_update)
     monkeypatch.setattr(
         cb, "_run_backend_for_config",
-        lambda *a, **k: (json.dumps({"确认": "修改"}, ensure_ascii=False), 1),
+        lambda *a, **k: (
+            json.dumps({"确认": "修改", "新内容": "只查饷银去向"}, ensure_ascii=False), 1,
+        ),
     )
     monkeypatch.setattr(
         cb, "_extract_secret_order",
@@ -351,6 +353,35 @@ def test_modify_preserves_fields_targets_one_no_second_extract(game, monkeypatch
     assert p2["title"] == "暗结蒙古"
 
 
+def test_modify_empty_typed_body_keeps_candidate_and_reports_no_success(game, monkeypatch):
+    """空正文 fail-closed：候选原样保留，且不回填 pending_action_id。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    pending_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name,
+        target_id=None,
+        payload={"title": "密察关宁", "content": "原正文", "assignee": name},
+    )
+    monkeypatch.setattr(
+        cb, "_run_backend_for_config",
+        lambda *a, **k: (
+            json.dumps({"确认": "修改", "目标编号": [pending_id], "新内容": ""}), 1,
+        ),
+    )
+
+    out = GameSession.apply_cli_conversation_actions(
+        _sess(db, state), ch, player_message="修改", answer="臣候旨。",
+        has_directive=False, secret_order_id=None,
+    )
+    payload = json.loads(db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
+    ).fetchone()[0])
+    assert payload["content"] == "原正文"
+    assert "pending_action_id" not in out
+    assert out["directive_confirmation_ambiguous"]["candidates"][0]["id"] == pending_id
+
+
 def test_non_secret_modify_does_not_swallow_directive(game, monkeypatch):
     """F4：仅有 directive 时「修改」不得提前吞掉；候选仍在。"""
     db, state, content = game
@@ -379,6 +410,16 @@ def test_non_secret_modify_does_not_swallow_directive(game, monkeypatch):
     pend = [p for p in db.list_pending_actions(state.turn) if p["kind"] == "directive"]
     assert len(pend) == 1
     assert int(pend[0]["id"]) == did
+
+
+def test_action_classifier_schema_carries_modify_contract():
+    """并行 preclassifier 的登记 schema 包含修改枚举、正文与 typed 唯一目标。"""
+    from ming_sim.action_clusters import classifier_json_fields_prompt
+
+    schema, _ = json.JSONDecoder().raw_decode(classifier_json_fields_prompt())
+    assert "修改" in schema["确认"]
+    assert "新内容" in schema
+    assert "目标编号" in schema
 
 
 def test_extract_confirmation_intent_returns_target_ids(monkeypatch):
