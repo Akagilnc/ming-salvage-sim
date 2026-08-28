@@ -276,7 +276,7 @@ def _snapshot_write_surface(real_home: Path) -> dict:
         if root.is_dir():
             for child in sorted(root.iterdir(), key=lambda x: x.name):
                 kids[child.name] = _item_sig(child)
-        snap[str(root)] = kids
+        snap[str(root)] = {"root": _item_sig(root), "children": kids}
     return snap
 
 
