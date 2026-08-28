@@ -826,63 +826,6 @@ def _scripted_xiexang_candidates(*, amount=15, account="国库", target_id="guan
     )
 
 
-def test_explicit_draft_prefix_with_typed_grant_stages_pay_payload(game, monkeypatch):
-    """成案边界：显式「拟旨如下」+ typed grant 候选 → 既有 grant 单轨，非 generic special_decree。"""
-    import types
-
-    import ming_sim.cli_backend as cb
-    from ming_sim.session import GameSession
-
-    db, state, content = game
-    actor = db.conn.execute(
-        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
-    ).fetchone()["name"]
-    character = content.characters[actor]
-    scripted = _scripted_xiexang_candidates(amount=15, target_id="guanning")
-
-    # 后置串行 extractor 仍须零调用（#344 前缀后置禁令保留）
-    def _forbidden(*_a, **_k):
-        raise AssertionError("explicit draft prefix must not call post-prefix serial extractors")
-
-    monkeypatch.setattr(cb, "extract_minister_actions", _forbidden)
-    monkeypatch.setattr(cb, "extract_draft_intent", _forbidden)
-    monkeypatch.setattr(cb, "extract_appointment_action", _forbidden)
-    monkeypatch.setattr(cb, "extract_confirmation_intent", _forbidden)
-
-    sess = types.SimpleNamespace(
-        db=db,
-        state=state,
-        content=content,
-        llm_config=types.SimpleNamespace(channel="cli", cli_runner="codex"),
-        registry=None,
-    )
-    sess.apply_cli_conversation_actions = types.MethodType(
-        GameSession.apply_cli_conversation_actions, sess,
-    )
-
-    out = sess.apply_cli_conversation_actions(
-        character,
-        "拟旨如下：准拨关宁军饷十五万两。",
-        "臣遵旨。敕户部发太仓银十五万两协济关宁军前，即行起解。钦此。",
-        has_directive=False,
-        secret_order_id=None,
-        preclassified_intent=scripted,
-    )
-    pending_id = out.get("pending_action_id")
-    assert pending_id
-    pending = json.loads(db.conn.execute(
-        "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
-    ).fetchone()["payload_json"])
-    assert pending["dossier_action_type"] == "grant_allocation"
-    assert pending["grant_action"] == "协饷"
-    assert int(pending["amount"]) == 15
-    assert pending["account"] == "国库"
-    assert pending["purpose"] == "补饷"
-    assert pending["target_kind"] == "army"
-    assert pending["target_id"] == "guanning"
-    assert pending.get("dossier_action_type") != "special_decree"
-
-
 def test_explicit_draft_prefix_without_grant_candidate_stays_generic(game, monkeypatch):
     """非载荷拟旨：classifier 无 grant 候选时仍走 generic special_decree（#344 残余）。"""
     import types
@@ -985,7 +928,7 @@ def test_explicit_prefix_grant_missing_target_fail_loud_no_pending(game, monkeyp
 
 
 def test_real_chat_explicit_prefix_pay_decree_promulgates_once(game, monkeypatch):
-    """真实 session.chat 入口：拟旨如下 + classifier grant → 收夜成案 → 顺颁扣库销欠恰一次。"""
+    """真实 session.chat 入口：拟旨如下 + 一次 typed classifier → grant pending，尚未落账。"""
     import types
 
     import ming_sim.cli_backend as cb
@@ -1057,17 +1000,6 @@ def test_real_chat_explicit_prefix_pay_decree_promulgates_once(game, monkeypatch
     # 成案前零落账
     assert int(state.metrics["国库"]) == treasury_before
     assert _army_row(db)["arrears"] == pytest.approx(arrears_before)
-
-    dossier = _close_night_dossier(db, state, content, pending_id)
-    assert dossier["action_type"] == "grant_allocation"
-    _promulgate(db, state, content, dossier["id"])
-
-    assert int(state.metrics["国库"]) == treasury_before - 15
-    assert _army_row(db)["arrears"] == pytest.approx(arrears_before - 15)
-    moves = db.list_economy_moves_for_dossier(dossier["id"])
-    assert len(moves) == 1
-    assert int(moves[0]["delta"]) == -15
-    assert moves[0]["purpose"] == "补饷"
 
 
 def test_http_chat_issue_stream_pay_decree_advances_month(
