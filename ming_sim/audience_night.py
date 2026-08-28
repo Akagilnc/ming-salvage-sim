@@ -559,6 +559,16 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
         # source>0 留痕如路径应答）一律不上 live/档案同源卷轴；禁盯 body。
         if not _is_command_entry(entry):
             continue
+        # #1566：场外传召账（未入殿）有自由 body 时按 entrance 投影并锚定 speaker，
+        # 供 minister scroll lens 可见承接；空 body 仍不进卷轴。
+        is_offsite_summon = (
+            TAG_ENTER not in tags
+            and (
+                TAG_SUMMON_UNSETTLED in tags
+                or TAG_IN_TRANSIT in tags
+            )
+            and any(method in tags for method in SUMMON_METHODS)
+        )
         if TAG_OPEN_NIGHT in tags:
             beat = "opening"
         elif TAG_CLOSE_NIGHT in tags:
@@ -569,22 +579,35 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
             beat = "exit"
         elif TAG_ENTER in tags:
             beat = "entrance"
+        elif is_offsite_summon:
+            # #1566：场外传召（未入殿）投影为结构化非 entrance scene。
+            # ADR 0096：本回合开不成召对、抵京候旨召见——scene 围绕
+            # 「传召已发、人在途」承接，而非入殿。
+            beat = "summon"
         elif TAG_EXIT in tags:
             beat = "exit"
         else:
             beat = "aside" if entry["audibility"] == AUDIBILITY_PRIVATE else "scene"
-        # #657 S4/P7：OPEN/ENTER 口令账仅 body.strip() 非空才投影；
+        # #657 S4/P7：OPEN/ENTER/summon 口令账仅 body.strip() 非空才投影；
         # 空垫位不进 scroll（无空条、无人物锚、无固定句冒充）。
         # #1561：普通公共 scene 同属玩家可见 scene，空正文亦不投影；
         # aside/closing 等其它 beat 不在本票扩域。
         # #1585：交接投影为 exit 时和真实告退共用此标签；无显式 body 的 TAG_EXIT
         # 一律空 scaffold，生成落地前不投影，persist_chat_turn_scene 原地补写。
-        if beat in {"opening", "entrance", "exit", "scene"} and not str(entry.get("body") or "").strip():
+        # #1566：空 summon 垫位同不投影。
+        if beat in {"opening", "entrance", "exit", "summon", "scene"} and not str(entry.get("body") or "").strip():
             continue
+        person = (entry.get("person_names") or [""])[0] if entry.get("person_names") else ""
+        if beat == "aside" and person:
+            speaker = person
+        elif is_offsite_summon and person:
+            speaker = person
+        else:
+            speaker = ""
         events.append((
             _entry_order_key(entry), 10,
             message(role="attendant" if beat == "aside" else "scene",
-                    speaker=(entry["person_names"][0] if beat == "aside" and entry["person_names"] else ""),
+                    speaker=speaker,
                     audibility=entry["audibility"], time=entry["created_at"],
                     content=entry["body"], beat=beat),
         ))

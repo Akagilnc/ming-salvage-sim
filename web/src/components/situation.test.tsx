@@ -185,6 +185,8 @@ describe("#1432 StateModal 奏疏卷心列表可见", () => {
       budget: {
         国库: { balance: 0, income: [], expense: [], income_total: 0, expense_total: 0, net: 0, movements: [], movements_total: 0 },
         内库: { balance: 0, income: [], expense: [], income_total: 0, expense_total: 0, net: 0, movements: [], movements_total: 0 },
+        army_pay_due_total: 0,
+        settled_army_pay: null,
       },
       region_warning: "",
       army_warning: "",

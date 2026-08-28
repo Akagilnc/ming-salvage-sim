@@ -63,6 +63,7 @@ _DRAFT_CAPABILITY_KEYS: tuple[tuple[str, Any], ...] = (
     ("office", ""),
     ("grant_action", ""),
     ("account", ""),
+    ("purpose", ""),
     ("amount", 0),
     ("cadence", ""),
     ("execution_surface", ""),

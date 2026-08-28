@@ -208,4 +208,20 @@ describe("filterScrollForSelectedMinister (#1511 lens)", () => {
       filterScrollForSelectedMinister(scroll, "许誉卿", { claimedTurnId: 11 }).map((m) => m.content),
     ).toEqual([]);
   });
+
+  it("具名 summon 接在前臣段后：目标臣收 summon，前臣不继承", () => {
+    const scroll: AudienceScrollMessage[] = [
+      msg({ role: "scene", speaker: "洪承畴", content: "洪承畴趋入殿中。", beat: "entrance" }),
+      msg({ role: "minister", speaker: "洪承畴", content: "臣自三边来。", beat: "dialogue", chat_turn_id: 1 }),
+      msg({ role: "scene", speaker: "许誉卿", content: "驿路传召许誉卿。", beat: "summon" }),
+    ];
+    const xu = filterScrollForSelectedMinister(scroll, "许誉卿");
+    expect(xu.map((m) => ({ beat: m.beat, speaker: m.speaker }))).toEqual([
+      { beat: "summon", speaker: "许誉卿" },
+    ]);
+    const hong = filterScrollForSelectedMinister(scroll, "洪承畴");
+    expect(hong.some((m) => m.beat === "summon")).toBe(false);
+    expect(hong.some((m) => m.speaker === "许誉卿")).toBe(false);
+    expect(hong.some((m) => m.beat === "entrance" && m.speaker === "洪承畴")).toBe(true);
+  });
 });

@@ -2,7 +2,7 @@ import React from "react";
 import { createPortal } from "react-dom";
 import { Upload, X } from "lucide-react";
 import { formatLegacyEffect, formatMoney, formatSignedMoney } from "../format";
-import type { BudgetAccount, BudgetItem, BudgetMovement, Legacy } from "../types";
+import type { BudgetAccount, BudgetItem, BudgetMovement, Legacy, SettledArmyPay } from "../types";
 
 export function MinisterPortrait({ primary, fallback, name, className = "minister-card-portrait" }: { primary: string; fallback?: string; name: string; className?: string }) {
   // 两级 fallback：primary（专属）→ fallback（pool 预设）→ 占位符
@@ -266,7 +266,50 @@ export function LegacyBar({ legacies }: { legacies: Legacy[] }) {
   );
 }
 
-export function BudgetHover({ accountName, budget }: { accountName: "国库" | "内库"; budget: BudgetAccount }) {
+/** #1366：军饷玩家可见时间线——结算前只呈现全军名义应发合计（事实，不预演分配/损耗）；
+ * 结算后呈现已执行的国库实拨/实际到达/途中损耗（同一 settled_turn，只读既有 ledger/容器投影）。 */
+export function ArmyPaySection({
+  armyPayDueTotal, settledArmyPay,
+}: {
+  armyPayDueTotal?: number;
+  settledArmyPay?: SettledArmyPay | null;
+}) {
+  if (armyPayDueTotal === undefined && !settledArmyPay) return null;
+  return (
+    <span className="budget-list budget-army-pay">
+      <span className="budget-list-title">军饷</span>
+      {armyPayDueTotal !== undefined && (
+        <span className="budget-row">
+          <span><b>全军名义应发</b><small>结算前事实，不含转运损耗</small></span>
+          <strong className="expense">{formatMoney(armyPayDueTotal)}</strong>
+        </span>
+      )}
+      {settledArmyPay && (
+        <>
+          <span className="budget-row">
+            <span><b>国库实拨</b><small>第 {settledArmyPay.settled_turn} 月边饷 hub 结算</small></span>
+            <strong className="expense">{formatMoney(settledArmyPay.treasury_disbursed)}</strong>
+          </span>
+          <span className="budget-row">
+            <span><b>实际到达</b></span>
+            <strong className="income">{formatMoney(settledArmyPay.actual_arrived)}</strong>
+          </span>
+          <span className="budget-row">
+            <span><b>途中损耗</b></span>
+            <strong className="expense">{formatMoney(settledArmyPay.transit_loss)}</strong>
+          </span>
+        </>
+      )}
+    </span>
+  );
+}
+
+export function BudgetHover({ accountName, budget, armyPayDueTotal, settledArmyPay }: {
+  accountName: "国库" | "内库";
+  budget: BudgetAccount;
+  armyPayDueTotal?: number;
+  settledArmyPay?: SettledArmyPay | null;
+}) {
   const [open, setOpen] = React.useState(false);
   const triggerRef = React.useRef<HTMLButtonElement>(null);
   const hideTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -320,6 +363,9 @@ export function BudgetHover({ accountName, budget }: { accountName: "国库" | "
           </span>
           <BudgetList title="固定收入" items={budget.income} />
           <BudgetList title="固定支出" items={budget.expense} expense />
+          {accountName === "国库" && (
+            <ArmyPaySection armyPayDueTotal={armyPayDueTotal} settledArmyPay={settledArmyPay} />
+          )}
           <BudgetMovementsList movements={budget.movements} total={budget.movements_total} />
         </span>,
         document.body

@@ -1,10 +1,10 @@
-"""包戊 数值呈现钉测（#1334/#1350/#1363/#1383 浮点族 + #1366 预算/警讯口径）。
+"""包戊 数值呈现钉测（#1334/#1350/#1363/#1383 浮点族 + #1366 预算口径）。
 
 真缝：
 - army_logs.reason → turn_army_summary / previous_summary 路径上的欠发文案
 - 省源分账 reason / turn_army_summary delta（#1383 残余）
 - API armies.arrears_text approximate 投影；raw arrears 键缺席（#1363 同源呈现面）
-- budget「各军军饷」vs army_report「应发」呈现口径标注
+- budget_key=army_pay 结构化身份、金额口径与改名不双扣（#1366；不锁显示措辞）
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from types import SimpleNamespace
 
 import web_app
 from ming_sim.assets import format_wanliang_amount
-from ming_sim.flows import apply_fixed_period_flows, army_needed, compute_budget_lines
+from ming_sim.flows import apply_fixed_period_flows, compute_budget_lines
 
 
 # 多于一位小数的 IEEE 残渣（如 1.2000000000000002 / 0.09999999999999964）
@@ -54,33 +54,84 @@ def test_army_pay_shortfall_reason_has_no_float_garbage(game):
     assert not _FLOAT_GARBAGE.search(summary), f"turn_army_summary 含浮点垃圾：{summary}"
 
 
-def test_budget_army_pay_and_warning_due_calibers_are_labeled(read_game):
-    """#1366：预算各军军饷(hub 实拨)与警讯月应发本不同口径——数不变，呈现标明。"""
-    db, state, _ = read_game
+def _army_pay_budget_lines(budget):
+    return [
+        row for row in budget["国库"]["expense"] if row.get("budget_key") == "army_pay"
+    ]
+
+
+def test_substrate_budget_splits_proposals_without_treasury_cap(game):
+    """#1366：真实预算入口分别读取中央份额与京运补应拟支，不受国库余额截断。"""
+    db, state, _ = game
+    db.conn.execute(
+        """
+        UPDATE armies SET self_funded_pay=1, is_tusi=1, province_pay_share=0,
+          central_pay_share=0, pay_source_region='', province_pay_arrears=0,
+          central_pay_arrears=0, arrears=0
+        """
+    )
+    db.conn.execute(
+        """
+        UPDATE armies SET self_funded_pay=0, is_tusi=0, owner_power='ming',
+          pay_source_region='shaanxi', province_pay_share=0, central_pay_share=1,
+          manpower=10000, salary_rate=10
+        WHERE id='guanning'
+        """
+    )
+    db.conn.execute(
+        "UPDATE regions SET fiscal=json_set(fiscal, '$.settle.p.拨付gross', 0)"
+    )
+    db.conn.execute(
+        "UPDATE regions SET fiscal=json_set(fiscal, '$.settle.p.拨付gross', 7) "
+        "WHERE id='shaanxi'"
+    )
+    db.conn.commit()
+
+    def proposed_parts():
+        return {
+            line["budget_part"]: line["amount"]
+            for line in _army_pay_budget_lines(compute_budget_lines(db, state))
+        }
+
+    state.metrics["国库"] = 0
+    assert proposed_parts() == {"central": 10, "jingyun": 7}
+    state.metrics["国库"] = 100
+    assert proposed_parts() == {"central": 10, "jingyun": 7}
+
+
+
+def test_renaming_army_pay_budget_line_does_not_double_debit(game, monkeypatch):
+    """#1366：改 army_pay 显示名不得让定额路径再扣一笔。"""
+    import ming_sim.flows as flows_mod
+
+    db, state, _ = game
     assert db.fiscal_engine() == "substrate_hub"
 
-    budget = compute_budget_lines(db, state)
-    army_line = next(
-        row for row in budget["国库"]["expense"] if row["name"] == "各军军饷"
-    )
-    nominal_due = sum(
-        army_needed(row)
-        for row in db.conn.execute(
-            "SELECT * FROM armies WHERE owner_power = 'ming'"
-        ).fetchall()
-    )
-    report = db.army_report(limit=5)
+    real = flows_mod.compute_budget_lines
 
-    # 开局两套数本就不同（hub 实拨含中央份额/京运损耗 ≠ 全军名义应发）
-    assert army_line["amount"] == 87
-    assert nominal_due == 72
-    assert f"{nominal_due}" in report or "72万两" in report.replace(" ", "")
+    def _renamed(db_, state_, **kwargs):
+        budget = real(db_, state_, **kwargs)
+        for row in budget["国库"]["expense"]:
+            if row.get("budget_key") == "army_pay":
+                row["name"] = "完全不同的军饷科目名"
+        return budget
 
-    note = str(army_line.get("note") or "")
-    assert any(token in note for token in ("实拨", "hub", "中央", "损耗")), (
-        f"预算各军军饷 note 须标明 hub/实拨口径，得 {note!r}"
+    monkeypatch.setattr(flows_mod, "compute_budget_lines", _renamed)
+    flow_rows = apply_fixed_period_flows(db, state)
+
+    renamed = "完全不同的军饷科目名"
+    assert not any(
+        row.get("account") == "国库" and row.get("category") == renamed
+        for row in flow_rows
     )
-    assert "应发" in report, "army_warning 须标明应发口径"
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM economy_ledger "
+        "WHERE account = '国库' AND category = ?",
+        (renamed,),
+    ).fetchone()["n"] == 0
+    hub_rows = [row for row in flow_rows if row.get("category") == "边饷hub"]
+    assert len(hub_rows) == 1
+    assert int(hub_rows[0]["paid"]) > 0
 
 
 def test_player_budget_payload_strips_engineering_notes(read_game):
@@ -114,6 +165,7 @@ def test_player_budget_payload_strips_engineering_notes(read_game):
                 )
                 assert "note" not in item
                 assert "internal" not in item
+                assert "budget_key" not in item
                 player_texts.append(str(item.get("name") or ""))
                 player_texts.append(str(item.get("amount") or ""))
 
