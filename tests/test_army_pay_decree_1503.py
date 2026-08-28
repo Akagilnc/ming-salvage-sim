@@ -1122,19 +1122,39 @@ def test_real_chat_explicit_prefix_pay_decree_stages_grant_pending(game, monkeyp
     assert _army_row(db)["arrears"] == pytest.approx(arrears_before)
 
 
-def test_web_stream_propose_directive_skips_when_typed_grant_present(game, monkeypatch):
-    """#1503：stream 截获 propose_directive 时 typed grant 已在则不 stage generic。"""
+def test_web_stream_propose_directive_skips_when_typed_grant_present(
+    tmp_path, monkeypatch, _offline_scene_beat_generator,
+):
+    """真 HTTP /chat/stream：propose_directive + typed grant 只落一条拨款 pending。"""
+    from fastapi.testclient import TestClient
+
     import ming_sim.cli_backend as cb
     import web_app
-    from ming_sim.session import GameSession
+    from tests.test_month_loop_tracer_1468 import _stub_outer_llm_seams
+    from tests.test_session_write_queue_1353 import wait_pending_writes
 
-    db, state, content = game
-    _set_guanning_arrears(db, 60, central=60, province=0)
-    state.metrics["国库"] = max(int(state.metrics["国库"]), 100)
-    actor_row = db.conn.execute(
-        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
-    ).fetchone()
-    actor = actor_row["name"]
+    class RunOutput:
+        def __init__(self, tools):
+            self.event = "RunCompleted"
+            self.content = ""
+            self.tools = tools
+
+    class _StreamHubuAgent:
+        def run(self, *_a, **_k):
+            tools = [SimpleNamespace(
+                tool_name="propose_directive",
+                result="__pending_directive__敕户部发太仓银十五万两协济关宁军前。",
+                arguments={"decree_text": "敕户部发太仓银十五万两协济关宁军前。"},
+            )]
+            yield SimpleNamespace(
+                event="RunContent",
+                content="臣遵旨。敕户部发太仓银十五万两协济关宁军前。钦此。",
+            )
+            yield RunOutput(tools)
+
+        def get_last_run_output(self):
+            return None
+
     scripted = _scripted_xiexang_candidates(
         amount=15, account="太仓", target_id="guanning",
     )
@@ -1142,56 +1162,50 @@ def test_web_stream_propose_directive_skips_when_typed_grant_present(game, monke
     def fake_classify(*_a, **_k):
         return list(scripted)
 
-    class FakeAgent:
-        def run(self, _msg):
-            return SimpleNamespace(
-                content="臣遵旨。敕户部发太仓银十五万两协济关宁军前。钦此。",
-                tools=[SimpleNamespace(
-                    tool_name="propose_directive",
-                    result="__pending_directive__敕户部发太仓银十五万两协济关宁军前。",
-                    arguments={"decree_text": "敕户部发太仓银十五万两协济关宁军前。"},
-                )],
-            )
-
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-    sess.content = content
-    sess.registry = SimpleNamespace(
-        get=lambda _character: FakeAgent(),
-        build_draft_line=lambda: "无",
-    )
-    sess.llm_config = SimpleNamespace(channel="cli", cli_runner="codex")
-    sess.temporary_characters = {}
-    sess._retrieve_memories_for_message = lambda message: message
-    sess._start_cli_action_intent = lambda *_a, **_k: scripted
-    sess._finish_cli_action_intent = lambda *_a, **_k: scripted
+    monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    _stub_outer_llm_seams(monkeypatch)
     monkeypatch.setattr(cb, "classify_cli_action_intent", fake_classify)
 
-    web_game = web_app.WebGame.__new__(web_app.WebGame)
-    web_game.session = sess
-    web_game._record_chat_rollback_items = lambda *_a, **_k: None
-    character = content.characters[actor]
-    run_output = FakeAgent().run("")
-    payload = web_app.WebGame._chat_stream_interpret_tools(
-        web_game,
-        actor,
-        "拟旨如下：准拨关宁军饷十五万两。",
-        character,
-        "臣遵旨。敕户部发太仓银十五万两协济关宁军前。钦此。",
-        run_output,
-        scripted,
-        0,
-    )
-    rows = list(db.conn.execute(
-        "SELECT payload_json FROM pending_actions WHERE turn=? AND kind='directive'",
-        (state.turn,),
-    ).fetchall())
-    payloads = [json.loads(row["payload_json"]) for row in rows]
-    assert len(payloads) == 1
-    assert payloads[0].get("dossier_action_type") == "grant_allocation"
-    pending_id = int(payload.get("pending_action_id") or 0)
-    assert pending_id > 0
+    game = web_app.WebGame(fresh=False)
+    monkeypatch.setattr(web_app, "web_game", game)
+    try:
+        name = next(
+            getattr(ch, "name", key)
+            for key, ch in game.content.characters.items()
+            if getattr(ch, "office_type", "") == "户部"
+            and getattr(ch, "power_id", "ming") == "ming"
+            and game.db.get_character_status(getattr(ch, "name", key))[0] == "active"
+        )
+        game.session.registry.get = lambda _ch: _StreamHubuAgent()
+        if getattr(game.session, "llm_config", None) is not None:
+            try:
+                game.session.llm_config.channel = "cli"
+            except Exception:
+                pass
+        _set_guanning_arrears(game.db, 60, central=60, province=0)
+        game.state.metrics["国库"] = max(int(game.state.metrics["国库"]), 100)
+        game.db.save_state(game.state)
+        client = TestClient(web_app.app)
+        resp = client.post(
+            f"/api/ministers/{name}/chat/stream",
+            json={"message": "拟旨如下：准拨关宁军饷十五万两。"},
+        )
+        assert resp.status_code == 200, resp.text
+        wait_pending_writes(game)
+        rows = list(game.db.conn.execute(
+            "SELECT payload_json FROM pending_actions WHERE turn=? AND kind='directive'",
+            (game.state.turn,),
+        ).fetchall())
+        payloads = [json.loads(row["payload_json"]) for row in rows]
+        assert len(payloads) == 1
+        assert payloads[0].get("dossier_action_type") == "grant_allocation"
+    finally:
+        try:
+            game.session.close()
+        except Exception:
+            pass
 
 
 def test_http_chat_issue_stream_pay_decree_advances_month(
