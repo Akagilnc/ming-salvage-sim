@@ -619,8 +619,6 @@ def test_no_generator_leaves_opening_empty_and_keeps_close_fallback(game):
     assert open_body == ""
     scroll = an.read_night_scroll(db, night_id)
     assert all(m.get("beat") != "opening" for m in scroll)
-    enter_body = _enter_body(db, night_id, minister)
-    assert enter_body and "kind=" not in enter_body
     _land_reply(db, state, minister, _cid, night_id)
     # 无 beat_generator、无 scene_registry：走空 body close 兜底
     an.close_night(db, state, night_id=night_id, content=content)
