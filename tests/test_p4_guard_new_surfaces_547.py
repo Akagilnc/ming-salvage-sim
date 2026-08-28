@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from types import SimpleNamespace
 
@@ -202,10 +203,11 @@ def test_scroll_and_highlight_list_keep_sentinels_out_and_world_facts_in(game, m
         lambda result: str(result.content),
     )
     enter_body = create_llm_beat_generator(object())(enter_inputs)
-    assert enter_inputs.beat_kind == BEAT_ENTER
-    assert enter_inputs.person_name == minister
-    assert enter_inputs.summon_method == an.METHOD_XUANRU
     assert len(llm_calls) == 1
+    routed_materials = json.loads(llm_calls[0])
+    assert routed_materials["场景节点"] == BEAT_ENTER
+    assert routed_materials["人物"] == minister
+    assert routed_materials["召法"] == an.METHOD_XUANRU
     an.append_ledger_entry(
         db, night_id, body=enter_body, tags=[an.TAG_ENTER],
         person_names=[minister],
