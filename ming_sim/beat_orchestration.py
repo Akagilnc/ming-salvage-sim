@@ -779,28 +779,38 @@ def start_close_scene_on_registry(
                 origin_chat_turn_id=int(ctid),
                 state=state,
                 allow_closing=True,
-                body_pending_generation=True,
             )
             if new_exit_id:
                 exit_id, exit_person = int(new_exit_id), last_present
         else:
-            # #1585 进程级 CLOSING 重开（ADR 0036：reconcile 永不删账）：presence 已因
-            # 早前崩溃前的 dismiss 落定（末位已不在场），但生成随旧 chat_turn 一起死于
-            # 进程崩溃——复用同一条已落账的空 final-exit scaffold 补生成，不再造新
-            # TAG_EXIT、不留一条永久空账悄悄从长卷里消失。
+            # #1585 进程级 CLOSING 重开（ADR 0036：reconcile 永不删账）：只复用
+            # origin_chat_turn_id 回指本夜 minister_name='收夜'、agno_session_id=
+            # 'close-scene' 的空 TAG_EXIT；较早普通空令退不得冒充 final-exit。
+            close_owned: List[Any] = []
             for entry in list_ledger(db, int(night_id)):
-                if TAG_EXIT in (entry.get("tags") or []) and not str(entry.get("body") or "").strip():
-                    exit_id = int(entry["id"])
-                    exit_person = str((entry.get("person_names") or [""])[0])
-                    break
+                if TAG_EXIT not in (entry.get("tags") or []):
+                    continue
+                if str(entry.get("body") or "").strip():
+                    continue
+                origin = int(entry.get("origin_chat_turn_id") or 0)
+                if origin <= 0:
+                    continue
+                row = db.conn.execute(
+                    "SELECT minister_name, agno_session_id FROM chat_turns WHERE id = ?",
+                    (origin,),
+                ).fetchone()
+                if row is None:
+                    continue
+                if (
+                    str(row["minister_name"]) == "收夜"
+                    and str(row["agno_session_id"] or "") == "close-scene"
+                ):
+                    close_owned.append(entry)
+            if close_owned:
+                chosen = close_owned[-1]
+                exit_id = int(chosen["id"])
+                exit_person = str((chosen.get("person_names") or [""])[0])
         if exit_id:
-            if not hasattr(scene_registry, "start_exit"):
-                raise AudienceNightError(
-                    f"末位告退（{exit_person}）已落账但 scene_registry 无 start_exit "
-                    "能力，无法生成告退正文",
-                    code="missing_exit_capability",
-                    detail={"night_id": int(night_id), "person_name": exit_person},
-                )
             scene_registry.start_exit(
                 db, state,
                 person_name=exit_person,
