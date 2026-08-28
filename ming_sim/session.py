@@ -1183,31 +1183,6 @@ class GameSession:
             )
         return decision
 
-    def materialize_offsite_summon_scene(
-        self,
-        *,
-        origin_id: str,
-        person_name: str,
-        write_back: Callable[[list[tuple[int, str]]], None],
-    ) -> list[tuple[int, str]]:
-        """#1566：为已落库的场外传召账生成并持久化自由 scene。
-
-        委托 beat_orchestration.materialize_offsite_summon_scene（单一编排入口），
-        使用 BEAT_SUMMON（非 BEAT_ENTER）——人在途未入殿，ADR 0096。经唯一
-        `_scene_registry` coalescing；调用方须传入 `write_back`——最终短写只在
-        调用方持有的 `_ticketed_write_gate` 内执行一次（web_app 组装该 callback）。
-        不建 chat turn、不调大臣回话。唯一合法 no-op：body 已非空（幂等）。
-        传召账缺失、召法 tag 缺失、生成器失败一律上抛。
-        """
-        from ming_sim.beat_orchestration import materialize_offsite_summon_scene
-        return materialize_offsite_summon_scene(
-            self.db, self.state,
-            origin_id=origin_id, person_name=person_name,
-            scene_registry=self._scene_registry,
-            beat_generator=getattr(self, "_beat_generator", None),
-            write_back=write_back,
-        )
-
     def _start_cli_action_intent(self, character: Character, message: str) -> Optional[Future]:
         """召对动作判断只读皇帝消息，可与大臣回话并发。
 

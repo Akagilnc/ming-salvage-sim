@@ -5,13 +5,11 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
-from concurrent.futures import ThreadPoolExecutor
 from types import MethodType, SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
 
-from ming_sim import beat_orchestration as bo
 from ming_sim.db import GameDB
 from ming_sim.session import AudienceAdmission, ChatTurnResult, GameSession
 from ming_sim import audience_night as an
@@ -99,13 +97,6 @@ def _web_hall_runtime(db, state, content, *, session_chat):
     s.admit_audience = MethodType(GameSession.admit_audience, s)
     s.consume_audience_admission = MethodType(GameSession.consume_audience_admission, s)
     s._beat_generator = lambda _inputs: "generated offsite summon scene"
-    # #1566：materialize_offsite_summon_scene 经唯一 _scene_registry coalescing；
-    # 壳 session 是 SimpleNamespace，须补真 registry 供 start_offsite_summon 使用。
-    s._scene_registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=4))
-    s.materialize_offsite_summon_scene = MethodType(
-        GameSession.materialize_offsite_summon_scene, s,
-    )
-    s.persist_chat_turn_scene = MethodType(GameSession.persist_chat_turn_scene, s)
     return runtime
 
 
@@ -1438,105 +1429,129 @@ def test_web_chat_offsite_scene_failure_releases_close_barrier(game, stream):
     assert close_entered.is_set(), "close barrier did not drain after scene failure"
 
 
-@pytest.mark.parametrize("stream", [False, True], ids=["sync", "stream"])
-def test_web_chat_offsite_summon_generation_coalesces_dual_concurrent_same_origin(
-    game, stream,
-):
-    """#1566：同 endpoint 同 turn/person 双并发只生成一次，且同一 ledger 只物化一次。
+@pytest.mark.parametrize("op", ["load", "reset"], ids=["load", "reset"])
+def test_hot_replace_409_while_offsite_scene_ticket_open(game, monkeypatch, op):
+    """#1566：load/reset 在 open ticket 时立即 409，不等 LLM、不关旧库。"""
+    import web_app
 
-    真实入口 WebGame.chat / WebGame.chat_stream；两个并发请求命中同一 origin_id
-    （同 turn+minister），consume_audience_admission 幂等复用同一 entry_id；第二
-    请求须在第一请求仍卡在 generator 时完成自己的 prologue 并挂到同一
-    ChatTurnSceneRegistry coalescing Future——provider 只调一次，两请求均收口
-    成功，ledger body 只写一次（无重复行/无覆盖竞争/无 last-write-wins 漂移）。
-    """
     db, state, content = game
     remote = _set_place(game, "洪承畴", location="shaanxi")
-
-    def _session_chat(minister_name, message, *, chat_turn_id=0):
-        raise AssertionError("场外记召不得调回话")
-
-    runtime = _web_hall_runtime(db, state, content, session_chat=_session_chat)
-
-    admission_count = 0
-    admission_lock = threading.Lock()
-    both_admitted = threading.Event()
-    consume_admission = runtime.session.consume_audience_admission
-
-    def _observe_admission(*args, **kwargs):
-        nonlocal admission_count
-        result = consume_admission(*args, **kwargs)
-        with admission_lock:
-            admission_count += 1
-            if admission_count == 2:
-                both_admitted.set()
-        return result
-
-    runtime.session.consume_audience_admission = _observe_admission
-    call_count = 0
-    call_lock = threading.Lock()
+    runtime = _web_hall_runtime(
+        db, state, content,
+        session_chat=lambda *_a, **_k: (_ for _ in ()).throw(
+            AssertionError("场外记召不得调回话"),
+        ),
+    )
     started = threading.Event()
     release = threading.Event()
 
     def _slow(_inputs):
-        nonlocal call_count
-        with call_lock:
-            call_count += 1
         started.set()
         assert release.wait(2.0), "scene generator was not released"
         return "generated offsite summon scene"
 
     runtime.session._beat_generator = _slow
+    runtime.load_save = lambda _name: replacements.append("load")
+    runtime.reset_game = lambda: replacements.append("reset")
+    runtime.state_payload = lambda: {"ok": True}
+    replacements: list[str] = []
+    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
 
-    results: list = []
-    errors: list[BaseException] = []
-    finished = [threading.Event(), threading.Event()]
+    chat_error: list[BaseException] = []
 
-    def _invoke(slot):
+    def _run():
         try:
-            results.append(
-                _run_offsite_chat(runtime, remote.name, "传洪承畴来。", stream=stream)
-            )
+            runtime.chat(remote.name, "传洪承畴来。")
         except BaseException as exc:  # noqa: BLE001
-            errors.append(exc)
-        finally:
-            finished[slot].set()
+            chat_error.append(exc)
 
-    first = threading.Thread(target=_invoke, args=(0,), daemon=True)
-    first.start()
-    assert started.wait(2.0), "first request did not reach scene generator"
+    worker = threading.Thread(target=_run, daemon=True)
+    worker.start()
+    assert started.wait(2.0), "offsite scene generator did not start"
+    db.conn.execute("SELECT 1").fetchone()
 
-    second = threading.Thread(target=_invoke, args=(1,), daemon=True)
-    second.start()
-    # 两请求均须在首个 generator 释放前走完真实 admission；随后第二请求仍未完成，
-    # 证明它已越过 prologue 并等待首请求创建的同一生成任务，而非堵在请求级互斥外。
-    assert both_admitted.wait(2.0), "second request did not pass admission before release"
-    assert not finished[1].is_set(), "second request did not wait for the shared generation"
+    with pytest.raises(HTTPException) as ei:
+        if op == "load":
+            asyncio.run(web_app.api_load_save("存档"))
+        else:
+            asyncio.run(web_app.api_reset_game())
+    assert ei.value.status_code == 409
+    assert replacements == []
+    db.conn.execute("SELECT 1").fetchone()
 
     release.set()
-    assert finished[0].wait(2.0), "first request did not finish after release"
-    assert finished[1].wait(2.0), "second request did not finish after release"
+    worker.join(2.0)
+    assert not chat_error, chat_error
 
-    assert not errors, errors
-    assert call_count == 1
-    assert len(results) == 2
-    for payload in results:
-        assert payload["admission"] == AudienceAdmission.SUMMON_FRESH.value
-        assert payload["answer"] == ""
-        assert payload["chat_turn_id"] == 0
+    if op == "load":
+        asyncio.run(web_app.api_load_save("存档"))
+    else:
+        asyncio.run(web_app.api_reset_game())
+    assert replacements == [op]
 
-    prefix = "stream" if stream else "chat"
-    origin_id = f"web:{prefix}:{state.turn}:{remote.name}"
+
+def test_offsite_scene_assembles_under_gate_generates_without_gate(game):
+    """#1566：组装持 gate、生成不持 gate、ticket 在 provider 终态前仍 open。"""
+    from ming_sim import beat_orchestration as bo
+
+    db, state, content = game
+    remote = _set_place(game, "洪承畴", location="shaanxi")
+    runtime = _web_hall_runtime(
+        db, state, content,
+        session_chat=lambda *_a, **_k: (_ for _ in ()).throw(
+            AssertionError("场外记召不得调回话"),
+        ),
+    )
+    assemble_held: list[bool] = []
+    generate_held: list[bool] = []
+    generate_inflight: list[int] = []
+    orig_assemble = bo.assemble_beat_inputs
+
+    def _assemble(*args, **kwargs):
+        assemble_held.append(runtime._runtime_write_gate().locked())
+        return orig_assemble(*args, **kwargs)
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def _boom(_inputs):
+        generate_held.append(runtime._runtime_write_gate().locked())
+        generate_inflight.append(runtime._pending_writes_count)
+        started.set()
+        assert release.wait(2.0), "scene generator was not released"
+        raise RuntimeError("injected offsite summon scene failure")
+
+    runtime.session._beat_generator = _boom
+    bo.assemble_beat_inputs = _assemble
+    chat_error: list[BaseException] = []
+
+    def _run():
+        try:
+            runtime.chat(remote.name, "传洪承畴来。")
+        except BaseException as exc:  # noqa: BLE001
+            chat_error.append(exc)
+
+    try:
+        worker = threading.Thread(target=_run, daemon=True)
+        worker.start()
+        assert started.wait(2.0), "offsite scene generator did not start"
+        release.set()
+        worker.join(2.0)
+    finally:
+        bo.assemble_beat_inputs = orig_assemble
+
+    assert assemble_held == [True]
+    assert generate_held == [False]
+    assert generate_inflight and generate_inflight[0] > 0
+    assert len(chat_error) == 1
+    assert str(chat_error[0]) == "injected offsite summon scene failure"
     unsettled = an.list_unsettled_summons(db)
     assert len(unsettled) == 1
-    assert unsettled[0]["origin_id"] == origin_id
-    night_id = int(unsettled[0]["night_id"])
-    summon_rows = [
-        m
-        for m in an.read_night_scroll(db, night_id)
-        if m.get("beat") == "summon" and m.get("speaker") == remote.name
-    ]
-    assert len(summon_rows) == 1
+    entry = db.conn.execute(
+        "SELECT body FROM story_ledger_entries WHERE id=?",
+        (int(unsettled[0]["entry_id"]),),
+    ).fetchone()
+    assert entry["body"] == ""
 
 
 def _install_secret_order_agent(runtime, *, stream: bool = False) -> None:
@@ -1597,20 +1612,33 @@ def _assert_secret_order_pending(db, state, *, minister_name: str, pid: int) -> 
 
 def _secret_order_runtime(db, state, content, *, stream: bool):
     """hall 壳 + 密令 agent 一次装配（chat/stream 共用）。"""
+    import web_app
     runtime = _web_hall_runtime(
         db, state, content,
         session_chat=lambda *_a, **_k: ChatTurnResult(answer="不应到达。"),
     )
     _install_secret_order_agent(runtime, stream=stream)
+    runtime._start_chat_turn = web_app.WebGame._start_chat_turn.__get__(runtime)
+    runtime._minister_agno_session_id = (
+        web_app.WebGame._minister_agno_session_id.__get__(runtime)
+    )
     return runtime
 
 
-def test_web_chat_formal_secret_order_bypasses_audience_admission(game):
-    """#1566：公开 chat 正式密令前缀绕过殿上 location admission，汇入密令管线。
+def _formal_secret_order_payload(runtime, minister_name, message, *, stream):
+    if stream:
+        events = list(runtime.chat_stream(minister_name, message))
+        types = [ev.get("type") for ev in events]
+        assert "error" not in types, f"stream secret order errored: {events!r}"
+        done_events = [ev for ev in events if ev.get("type") == "done"]
+        assert done_events, f"expected done, got types={types!r}"
+        return done_events[0].get("payload") or {}
+    return runtime.chat(minister_name, message)
 
-    真实入口 WebGame.chat → 真实 GameSession.chat → pending secret_order 落库；
-    外部可见：pending_action_id>0 且 kind=secret_order；零传召账；无 admission 空 done。
-    """
+
+@pytest.mark.parametrize("stream", [False, True], ids=["sync", "stream"])
+def test_web_chat_formal_secret_order_hangs_night_without_enter(game, stream):
+    """#1566：场外正式密令挂当前夜轮，不 consume 传召、不入殿。"""
     db, state, content = game
     remote = _set_place(game, "洪承畴", location="shaanxi")
     before_summons = list(an.list_unsettled_summons(db))
@@ -1618,54 +1646,37 @@ def test_web_chat_formal_secret_order_bypasses_audience_admission(game):
         1 for p in db.list_pending_actions(state.turn) if p.get("kind") == "secret_order"
     )
 
-    runtime = _secret_order_runtime(db, state, content, stream=False)
-    payload = runtime.chat(remote.name, "密令如下：陕北赈抚探报\n速报陕西军情。")
+    runtime = _secret_order_runtime(db, state, content, stream=stream)
+    payload = _formal_secret_order_payload(
+        runtime, remote.name, "密令如下：陕北赈抚探报\n速报陕西军情。",
+        stream=stream,
+    )
     assert not payload.get("admission"), (
         f"正式密令不得被 SUMMON_* admission 截获，got admission={payload.get('admission')!r}"
     )
-    _assert_secret_order_pending(
-        db, state, minister_name=remote.name,
-        pid=int(payload.get("pending_action_id") or 0),
-    )
+    pid = int(payload.get("pending_action_id") or 0)
+    _assert_secret_order_pending(db, state, minister_name=remote.name, pid=pid)
     assert an.list_unsettled_summons(db) == before_summons
     assert sum(
         1 for p in db.list_pending_actions(state.turn) if p.get("kind") == "secret_order"
     ) == before_n + 1
-
-
-def test_web_chat_stream_formal_secret_order_bypasses_audience_admission(game):
-    """#1566：公开 chat_stream 正式密令前缀绕过 location admission，汇入密令管线。
-
-    真实入口 chat_stream → 真实 _chat_stream_payload（类方法，不 mock）→ pending；
-    不得 SUMMON_* 空 done；零传召账。
-    """
-    db, state, content = game
-    remote = _set_place(game, "洪承畴", location="shaanxi")
-    before_summons = list(an.list_unsettled_summons(db))
-    before_n = sum(
-        1 for p in db.list_pending_actions(state.turn) if p.get("kind") == "secret_order"
+    chat_turn_id = int(payload.get("chat_turn_id") or 0)
+    assert chat_turn_id > 0
+    turn = db.conn.execute(
+        "SELECT night_id, status FROM chat_turns WHERE id=?",
+        (chat_turn_id,),
+    ).fetchone()
+    assert turn is not None
+    assert int(turn["night_id"] or 0) > 0
+    scroll = an.read_night_scroll(db, int(turn["night_id"]))
+    assert not any(
+        m.get("beat") == "entrance" and m.get("speaker") == remote.name
+        for m in scroll
     )
-
-    runtime = _secret_order_runtime(db, state, content, stream=True)
-    events = list(runtime.chat_stream(
-        remote.name, "密令如下：陕北赈抚探报\n速报陕西军情。",
-    ))
-    types = [ev.get("type") for ev in events]
-    assert "error" not in types, f"stream secret order errored: {events!r}"
-    done_events = [ev for ev in events if ev.get("type") == "done"]
-    assert done_events, f"expected done, got types={types!r}"
-    done_payload = done_events[0].get("payload") or {}
-    assert not done_payload.get("admission"), (
-        f"stream 正式密令不得 SUMMON_* admission，got {done_payload.get('admission')!r}"
-    )
-    _assert_secret_order_pending(
-        db, state, minister_name=remote.name,
-        pid=int(done_payload.get("pending_action_id") or 0),
-    )
-    assert an.list_unsettled_summons(db) == before_summons
-    assert sum(
-        1 for p in db.list_pending_actions(state.turn) if p.get("kind") == "secret_order"
-    ) == before_n + 1
+    owned = [m for m in scroll if int(m.get("chat_turn_id") or 0) == chat_turn_id]
+    roles = {m.get("role") for m in owned}
+    assert "user" in roles
+    assert "minister" in roles
 
 
 def test_web_chat_ledger_append_failure_has_no_side_effects(game, monkeypatch):
