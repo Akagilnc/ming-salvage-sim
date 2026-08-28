@@ -927,7 +927,7 @@ def test_explicit_prefix_grant_missing_target_fail_loud_no_pending(game, monkeyp
     assert len(after) == len(before)
 
 
-def test_real_chat_explicit_prefix_pay_decree_promulgates_once(game, monkeypatch):
+def test_real_chat_explicit_prefix_pay_decree_stages_grant_pending(game, monkeypatch):
     """真实 session.chat 入口：拟旨如下 + 一次 typed classifier → grant pending，尚未落账。"""
     import types
 
