@@ -190,6 +190,30 @@ def test_army_pay_missing_fields_fail_loud_at_admission(game, monkeypatch):
     assert ledger_after == ledger_before
 
 
+def test_create_decree_dossier_xiexang_missing_five_fields_zero_writes(game):
+    """直接 admission：create_decree_dossier 同时缺五项一次 typed 聚合，零案卷/账本/国库写。"""
+    db, state, content = game
+    treasury_before = int(state.metrics["国库"])
+    ledger_before = db.conn.execute("SELECT COUNT(*) AS n FROM economy_ledger").fetchone()["n"]
+    before_ids = {int(d["id"]) for d in db.list_decree_dossiers()}
+    from ming_sim.action_materialize import IncompleteXiexangPayloadError
+
+    with pytest.raises(IncompleteXiexangPayloadError) as caught:
+        db.create_decree_dossier(
+            state,
+            action_type="grant_allocation",
+            decree_text="拟旨如下：准拨军饷。",
+            payload={"kind": "grant_allocation", "grant_action": "协饷"},
+        )
+    assert caught.value.missing_fields == (
+        "amount", "account", "purpose", "target_kind", "target_id",
+    )
+    assert {int(d["id"]) for d in db.list_decree_dossiers()} == before_ids
+    assert int(state.metrics["国库"]) == treasury_before
+    ledger_after = db.conn.execute("SELECT COUNT(*) AS n FROM economy_ledger").fetchone()["n"]
+    assert ledger_after == ledger_before
+
+
 def test_xiexang_unresolvable_target_rejected_before_pending(game):
     """五项齐全但 target 无法解析为军队：fail-loud、零写入。"""
     db, state, content = game
