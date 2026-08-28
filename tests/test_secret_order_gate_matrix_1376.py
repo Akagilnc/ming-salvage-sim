@@ -499,10 +499,11 @@ def _settle_month(env: dict) -> dict:
             opts = dec.get("options") or []
             assert opts, dec
             opt0 = opts[0]
-            if isinstance(opt0, dict):
-                choices.append({"label": str(opt0.get("label") or "准")})
-            else:
-                choices.append({"label": str(opt0)})
+            # #1589：公共 resolve 缝不再接受无键位置载荷，须显式携带 decision_key
+            key = str(dec.get("decision_key") or "")
+            assert key, f"decision 行缺 decision_key：{dec}"
+            label = str(opt0.get("label") or "准") if isinstance(opt0, dict) else str(opt0)
+            choices.append({"decision_key": key, "label": label})
         resolve = client.post(
             "/api/decree/resolve_decisions/stream",
             json={"choices": choices},

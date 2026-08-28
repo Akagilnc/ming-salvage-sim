@@ -12327,7 +12327,12 @@ class GameDB:
             grant_action = str(normalized.get("grant_action") or "").strip()
             if grant_action in {"加衔", "荫叙"}:
                 normalized.pop("delta", None)
+            elif self._is_army_pay_grant_payload(normalized):
+                # #1503：协饷先且只经 require_explicit_xiexang_fields，不经 amount/account 首错。
+                normalized = self._normalize_army_pay_grant_payload(normalized)
             else:
+                if str(normalized.get("purpose") or "").strip() == "补饷":
+                    raise ValueError("非协饷拨帑不得夹带 purpose=补饷")
                 try:
                     amount = strict_int(
                         normalized.get("amount"), accept_numeric_strings=False
@@ -12350,8 +12355,6 @@ class GameDB:
                     else:
                         normalized["execution_surface"] = surface
                     normalized.pop("delta", None)
-                # #1503：拨饷/协饷类 — 成案即结构化补饷载荷；缺字段 fail-loud，不猜散文。
-                normalized = self._normalize_army_pay_grant_payload(normalized)
         elif action == "pay_order_override":
             # #653：结构化载荷 presence 在指令归一边界先验（键形/值域/幻影 region
             # 仍由成案点与物化点共 prepare_pay_order_entries 同一验形，不在此重复）。
@@ -14309,52 +14312,31 @@ class GameDB:
 
     @staticmethod
     def _is_army_pay_grant_payload(payload: Optional[Dict[str, object]]) -> bool:
-        """#1503：拨饷/协饷类 = 显式 grant_action=协饷 或 purpose=补饷（禁 army 通用升格）。"""
-        p = payload or {}
-        grant_action = str(p.get("grant_action") or "").strip()
-        purpose = str(p.get("purpose") or "").strip()
-        return grant_action == "协饷" or purpose == "补饷"
+        """#1503：补饷身份只由显式 grant_action=协饷 决定。"""
+        return str((payload or {}).get("grant_action") or "").strip() == "协饷"
 
     def _normalize_army_pay_grant_payload(
         self, payload: Dict[str, object],
     ) -> Dict[str, object]:
-        """#1503：拨饷类成案载荷 — amount/account/purpose=补饷/army target；缺则响亮。"""
+        """#1503：拨饷类成案载荷 — 五字段显式；缺则一次收集响亮；不补值。"""
         if not self._is_army_pay_grant_payload(payload):
             return payload
         if self._grant_allocation_is_honorific(payload):
             return payload
+        from ming_sim.action_materialize import require_explicit_xiexang_fields
+
         normalized = dict(payload)
-        # 月度协饷建科目，不走一次性补饷销欠缝。
+        explicit = require_explicit_xiexang_fields(
+            amount=normalized.get("amount"),
+            account=str(normalized.get("account") or ""),
+            purpose=str(normalized.get("purpose") or ""),
+            target_kind=str(normalized.get("target_kind") or ""),
+            target_id=str(normalized.get("target_id") or ""),
+            cadence=str(normalized.get("cadence") or ""),
+        )
+        normalized.update(explicit)
         if self._grant_allocation_is_monthly(normalized):
             return normalized
-        try:
-            amount = strict_int(normalized.get("amount"), accept_numeric_strings=False)
-        except ValueError:
-            amount = 0
-        account = str(normalized.get("account") or "").strip()
-        target_kind = str(normalized.get("target_kind") or "").strip()
-        target_id = str(normalized.get("target_id") or "").strip()
-        missing = []
-        if amount <= 0:
-            missing.append("amount")
-        if account not in {"国库", "内库"}:
-            missing.append("account")
-        if target_kind != "army":
-            missing.append("target_kind=army")
-        if not target_id:
-            missing.append("target_id")
-        if missing:
-            raise ValueError(
-                "拨饷旨意缺少结构化字段：" + "/".join(missing)
-                + "（不猜散文）"
-            )
-        normalized["amount"] = amount
-        normalized["account"] = account
-        normalized["purpose"] = "补饷"
-        normalized["target_kind"] = "army"
-        normalized["target_id"] = target_id
-        if not str(normalized.get("grant_action") or "").strip():
-            normalized["grant_action"] = "协饷"
         # #1503：非月度拨饷强制 immediate。覆盖 normalize 前置插入的 in_transit 默认，
         # 以及旧 pending/恢复载荷残留的在途面——在途只留叙事，不进机械对账轨。
         normalized["execution_surface"] = "immediate"
@@ -19836,13 +19818,14 @@ class GameDB:
         from ming_sim.error_pack import rejections_jsonl_path
         mirror_rejections_after_commit(self, collector, rejections_jsonl_path)
 
-    def ensure_dossiers_for_draft_directives(self, state: GameState) -> None:
+    def ensure_dossiers_for_draft_directives(self, state: GameState) -> List[str]:
         """结束边界成案：只读最新 draft 正文/载荷，按 directive_id 幂等创建。
 
         #654 r3-C.2 路3：每道旨独立 SAVEPOINT；单旨失败记 rejection、保持 draft，不波及他旨。
         """
         from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
         collector = RejectionCollector()
+        rejection_reasons: List[str] = []
         with atomic(self):
             for row in self.list_directives(state, statuses=("draft",)):
                 did = int(row["id"])
@@ -19856,6 +19839,7 @@ class GameDB:
                     )
                 except Exception as exc:
                     self.conn.execute(f"ROLLBACK TO {sp}")
+                    rejection_reasons.append(str(exc))
                     # P6：rejection 只存 directive_id，不裁剪/快照 LLM 旨文
                     collector.record(
                         "directive_locality",
@@ -19875,6 +19859,7 @@ class GameDB:
         from ming_sim.applier import mirror_rejections_after_commit
         from ming_sim.error_pack import rejections_jsonl_path
         mirror_rejections_after_commit(self, collector, rejections_jsonl_path)
+        return rejection_reasons
 
     def reject_directive(self, directive_id: int) -> None:
         """皇帝驳回大臣拟旨：pending → rejected。"""

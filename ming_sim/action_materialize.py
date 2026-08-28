@@ -14,6 +14,8 @@ import re
 from dataclasses import dataclass, field, replace
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+from ming_sim.decree_vocabulary import TARGET_KINDS
+
 from ming_sim.action_clusters import (
     ActionCluster,
     FieldSpec,
@@ -84,13 +86,22 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
         # 裁决并提前返回。每项复用登记行自带的同一 handler，不复制 kind 分支。
         baseline_out = dict(ctx.out)
         multi_batch = len(ctx.intent_candidates) > 1
+        candidates = list(ctx.intent_candidates)
+        if ctx.explicit_prefixed:
+            candidates.sort(
+                key=lambda candidate: str(candidate.get("kind") or "")
+                != "grant_allocation"
+            )
         kind_counts: Dict[str, int] = {}
-        for candidate in ctx.intent_candidates:
+        for candidate in candidates:
             kind = str(candidate.get("kind") or "")
             kind_counts[kind] = kind_counts.get(kind, 0) + 1
         kind_indexes: Dict[str, int] = {}
-        for candidate in ctx.intent_candidates:
+        grant_staged = False
+        for candidate in candidates:
             kind = str(candidate.get("kind") or "")
+            if grant_staged and kind == "draft" and ctx.explicit_prefixed:
+                continue
             cluster = cluster_by_kind(kind)
             if cluster is None or cluster.effect != EFFECT_MATERIALIZE:
                 continue
@@ -106,6 +117,7 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
                 intent=candidate,
                 intent_kind=cluster.kind,
                 intent_candidates=None,
+                explicit_prefixed=ctx.explicit_prefixed and not grant_staged,
                 candidate_kind_index=kind_index,
                 candidate_kind_count=kind_counts[kind],
                 multi_intent_batch=multi_batch,
@@ -113,6 +125,10 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
                 draft_staged=False,
             )
             fn(candidate_ctx)
+            if kind == "grant_allocation" and int(
+                candidate_out.get("pending_action_id") or 0
+            ) > int(baseline_out.get("pending_action_id") or 0):
+                grant_staged = True
             ctx.out.update(candidate_out)
             if candidate_ctx.draft_staged:
                 ctx.draft_staged = True
@@ -1180,6 +1196,8 @@ def _grant_account(intent: Dict[str, Any]) -> str:
         return "内库"
     if account in {"国库", "内库"}:
         return account
+    if action == "协饷":
+        return account
     if action in GRANT_MONEY_ACTIONS:
         return "国库"
     return ""
@@ -1204,7 +1222,9 @@ def _grant_target(intent: Dict[str, Any]) -> Tuple[str, str]:
         return "issue", target_id or name or action
     if action == "协饷":
         # 仅抛原始 target 文本；army id 解析在 stage 前完成，禁止把 region 标签硬改 army。
-        return "army", target_id or name
+        # #1503：target_kind/target_id 须显式透传；缺失不得默认 army，不得用 name 代填。
+        kind = str(intent.get("target_kind") or "").strip()
+        return kind, target_id
     if action in {"赈灾", "招抚屯田"}:
         # #652：执行型赈济／招抚屯田均锚定属地省；recovery 单核读 region target。
         kind = "region" if target_id and target_id != action else "issue"
@@ -1234,6 +1254,57 @@ def _resolve_xiexang_army_id(db: Any, raw_target: str) -> str:
     return ""
 
 
+class IncompleteXiexangPayloadError(ValueError):
+    def __init__(self, missing_fields: list) -> None:
+        self.missing_fields = tuple(missing_fields)
+        super().__init__(
+            "拨饷旨意缺少结构化字段：" + "/".join(missing_fields) + "（不猜散文）"
+        )
+
+
+def require_explicit_xiexang_fields(
+    *,
+    amount: object = 0,
+    account: str = "",
+    purpose: str = "",
+    target_kind: str = "",
+    target_id: str = "",
+    cadence: str = "",
+) -> Dict[str, Any]:
+    """#1503 单一权威接缝：严格验形并归一 typed 字段。"""
+    from ming_sim.strict_types import strict_int
+
+    missing: list = []
+    try:
+        n = strict_int(amount, accept_numeric_strings=False)
+    except ValueError:
+        n = 0
+    if n <= 0:
+        missing.append("amount")
+    raw_account = str(account or "").strip()
+    canonical_account = "国库" if raw_account == "太仓" else raw_account
+    if canonical_account not in {"国库", "内库"}:
+        missing.append("account")
+    if str(purpose or "").strip() != "补饷":
+        missing.append("purpose")
+    if str(target_kind or "").strip() != "army":
+        missing.append("target_kind")
+    if not str(target_id or "").strip():
+        missing.append("target_id")
+    cadence_value = str(cadence or "").strip()
+    if cadence_value and cadence_value not in {"一次性", "每月"}:
+        missing.append("cadence")
+    if missing:
+        raise IncompleteXiexangPayloadError(missing)
+    return {
+        "amount": n,
+        "account": canonical_account,
+        "purpose": "补饷",
+        "target_kind": "army",
+        "target_id": str(target_id).strip(),
+    }
+
+
 def stage_grant_allocation_candidate(
     db: Any,
     turn: int,
@@ -1247,6 +1318,7 @@ def stage_grant_allocation_candidate(
     extracted_mode: object = None,
     amount: object = 0,
     account: str = "",
+    purpose: str = "",
     cadence: str = "",
     target_candidate: object = None,
     pend_for_minister: Optional[List[Dict[str, Any]]] = None,
@@ -1262,11 +1334,40 @@ def stage_grant_allocation_candidate(
     action = str(grant_action or "").strip()
     target = str(target_id or "").strip()
     kind = str(target_kind or "").strip()
-    if not target or not kind or action not in (GRANT_ACTIONS - {"无"}):
-        return 0
     body = str(text or "").strip()
-    if not body:
+    if action not in (GRANT_ACTIONS - {"无"}):
         return 0
+    # #1503：协饷五字段由 require_explicit_xiexang_fields 一次收集；此处不补值。
+    if action == "协饷":
+        explicit = require_explicit_xiexang_fields(
+            amount=amount,
+            account=account,
+            purpose=purpose,
+            target_kind=kind,
+            target_id=target,
+            cadence=cadence,
+        )
+        n = int(explicit["amount"])
+        account = str(explicit["account"])
+        purpose = str(explicit["purpose"])
+        kind = str(explicit["target_kind"])
+        target = str(explicit["target_id"])
+        if not body:
+            raise ValueError("协饷旨意缺少正文（不猜散文）")
+        army_id = _resolve_xiexang_army_id(db, target)
+        if not army_id:
+            raise ValueError(
+                f"协饷旨意 target 无法解析为军队：{target!r}（不猜散文）"
+            )
+    else:
+        if not target or not kind:
+            return 0
+        if not body:
+            return 0
+        try:
+            n = int(amount or 0)
+        except (TypeError, ValueError):
+            n = 0
 
     pending_rows = list(pend_for_minister or [])
     if not pending_rows:
@@ -1314,37 +1415,18 @@ def stage_grant_allocation_candidate(
         staged["account"] = account
     if cadence in {"一次性", "每月"}:
         staged["cadence"] = cadence
-    try:
-        n = int(amount or 0)
-    except (TypeError, ValueError):
-        n = 0
     if n > 0:
         staged["amount"] = n
-    # #1503：仅显式协饷成案带 purpose=补饷；army 对象的军械/筑城/项目经费不得升格销欠。
+    # #1503：仅显式协饷成案透传 purpose；army 对象的军械/筑城/项目经费不得升格销欠。
     if action == "协饷":
-        # 入 pending 前 fail-loud：缺字段/非军目标不得静默写残载荷。
-        if n <= 0:
-            raise ValueError("协饷旨意缺少正数 amount（不猜散文）")
-        if account not in {"国库", "内库"}:
-            raise ValueError("协饷旨意缺少合法 account（不猜散文）")
-        if kind and kind != "army":
-            raise ValueError(
-                f"协饷旨意 target_kind 须为 army，不得为 {kind!r}（不猜散文）"
-            )
-        army_id = _resolve_xiexang_army_id(db, target)
-        if not army_id:
-            raise ValueError(
-                f"协饷旨意 target 无法解析为军队：{target!r}（不猜散文）"
-            )
-        if cadence and cadence not in {"一次性", "每月"}:
-            raise ValueError("协饷旨意 cadence 非法（不猜散文）")
+        # fail-loud 已在上方完成；army_id 已解析通过，此处只归一化载荷、不补五字段。
         if not cadence:
             staged["cadence"] = "一次性"
             cadence = "一次性"
         staged["amount"] = n
         staged["account"] = account
-        staged["purpose"] = "补饷"
-        staged["target_kind"] = "army"
+        staged["purpose"] = purpose
+        staged["target_kind"] = kind
         staged["target_id"] = army_id
         if cadence != "每月":
             # 颁布即扣库+销欠；在途只留叙事，不进机械对账轨。
@@ -1360,10 +1442,13 @@ def stage_grant_allocation_candidate(
 
 
 def _materialize_grant_allocation(ctx: MaterializeCtx) -> None:
-    """暂存恩赏·拨帑案卷；钱粮按 ADR 0055 分流落地。"""
+    """暂存恩赏·拨帑案卷；钱粮按 ADR 0055 分流落地。
+
+    #1503：显式拟旨前缀若带 typed grant 候选，仍走本单轨（不再因 explicit_prefixed 早退）。
+    draft_staged / 已有 pending 仍互斥，避免与 generic special_decree 双写。
+    """
     if (
         ctx.intent_kind != "grant_allocation"
-        or ctx.explicit_prefixed
         or ctx.draft_staged
         or ctx.out.get("pending_action_id")
         or ctx.conversation_intent_handled
@@ -1374,7 +1459,8 @@ def _materialize_grant_allocation(ctx: MaterializeCtx) -> None:
     if grant_action not in (GRANT_ACTIONS - {"无"}):
         return
     target_kind, target_id = _grant_target(intent)
-    if not target_id:
+    # 协饷缺 target 仍交 stage fail-loud；其它 grant 无目标则无物化。
+    if not target_id and grant_action != "协饷":
         return
     pending_id = stage_grant_allocation_candidate(
         ctx.session.db,
@@ -1388,6 +1474,7 @@ def _materialize_grant_allocation(ctx: MaterializeCtx) -> None:
         extracted_mode=intent.get("mode"),
         amount=intent.get("amount"),
         account=_grant_account(intent),
+        purpose=str(intent.get("purpose") or "").strip(),
         cadence=_grant_cadence(intent),
         target_candidate=intent.get("target_candidate"),
         pend_for_minister=ctx.pend_for_minister,
@@ -3180,10 +3267,15 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 FieldSpec("name", "姓名", None, "", max_len=20),
                 # 政务拨款对象：赈灾地区 / 项目 / 协饷军队 / 恩赏人物
                 FieldSpec("target_id", "目标", None, "", max_len=80),
-                FieldSpec("amount", "金额", None, 0, as_int=True),
+                FieldSpec("target_kind", "目标类型", TARGET_KINDS, ""),
+                FieldSpec("amount", "金额", None, None, as_int=True, int_lo=1),
                 FieldSpec(
                     "account", "账户",
-                    frozenset({"国库", "内库"}), "",
+                    frozenset({"国库", "内库", "太仓"}), "",
+                ),
+                FieldSpec(
+                    "purpose", "用途",
+                    frozenset({"补饷"}), "",
                 ),
                 FieldSpec(
                     "cadence", "拨付节奏",
