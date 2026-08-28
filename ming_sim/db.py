@@ -931,8 +931,8 @@ class GameDB:
         # 步骤7 起由 GameSession 统一传入同一份 GameContent。
         self.content = content if content is not None else GameContent.load()
         self.llm_config = llm_config
-        # check_same_thread=False：流式颁诏在 worker 线程跑 resolve_turn，
-        # 复用同一 GameDB 连接。游戏单写者、无并发写，跨线程安全。
+        # check_same_thread=False：流式颁诏/召对 worker 与轮询读共用同一连接。
+        # SQLite C API 串行化由 _SuspendableConnection 持锁完成。
         # factory=_SuspendableConnection：使 atomic() 能暂停全库 commit（ADR 0008 决定 2/8）。
         # 暂停标志默认 off，下面 init_schema 建表照常提交。
         from ming_sim.applier import _SuspendableConnection
