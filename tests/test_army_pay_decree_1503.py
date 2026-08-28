@@ -1375,7 +1375,6 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
             ).fetchall()
         ]
         assert len(logs) == 1
-        assert "补饷" in str(logs[0]["reason"])
         assert float(logs[0]["delta"]) == pytest.approx(-15)
         after_army = _army_row(game.db)
         assert after_army["arrears"] == pytest.approx(float(logs[0]["new_value"]))

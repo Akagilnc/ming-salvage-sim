@@ -520,6 +520,12 @@ def test_api_start_cli_action_intent_runs_for_natural_language(game, monkeypatch
         sess, ch, "拟旨如下：着起复袁崇焕为辽东巡抚",
     )
     assert fut_prefix is not None
+    prefix_finished = GameSession._finish_cli_action_intent(sess, fut_prefix)
+    assert prefix_finished is not None
+    assert {str(c.get("kind") or "") for c in prefix_finished} == {
+        "appointment", "draft",
+    }
+    assert captured.get("message", "").startswith("拟旨如下：")
 
 
 def test_classify_prompt_allows_draft_and_appointment_coexistence(monkeypatch):
