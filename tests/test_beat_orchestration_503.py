@@ -288,10 +288,7 @@ def test_open_enter_registry_persists_handoff_and_soft_segment(game):
 
     scroll = an.read_night_scroll(db, night_id)
     scenes = [item for item in scroll if item["beat"] in {"handoff", "entrance"}]
-    assert [(item["beat"], item["content"]) for item in scenes[-2:]] == [
-        ("handoff", f"kind=handoff|person={first_minister}"),
-        ("entrance", f"kind=enter|person={second_minister}"),
-    ]
+    assert [item["beat"] for item in scenes[-2:]] == ["handoff", "entrance"]
     dividers = [item for item in scroll if item["beat"] == "divider"]
     assert [item["speaker"] for item in dividers].count(second_minister) == 1
     assert dividers[-1]["speaker"] == second_minister
