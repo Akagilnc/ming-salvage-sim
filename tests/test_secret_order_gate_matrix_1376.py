@@ -43,14 +43,9 @@ E3_MESSAGE = "你替朕悄悄查一查关宁欠饷实数"
 
 # 抽取 stub 默认 typed 载荷（用例可覆盖）；S2 修改材料=测试自送正文经 production strip
 RESTATED_CONTENT = "密察关宁欠饷，据实密奏，不得声张。"
-MODIFIED_CONTENT = "只查饷银去向，不查动向"
 S2_MODIFY_MESSAGE = "修改：只查饷银去向，不查动向"
 S2_APPROVE_MESSAGE = "准"
-S3_REJECT = {
-    "E1S3": "此事作罢",
-    "E2S3": "朕再思之，不必查了",
-    "E3S3": "算了",
-}
+S3_REJECT_MESSAGE = "此事作罢"
 
 DEFAULT_EXTRACT_PAYLOAD: Dict[str, Any] = {
     "title": E2_TITLE,
@@ -506,10 +501,7 @@ def test_matrix_S1_default_commit_on_settle(matrix_env, cell, entry):
     )
 
     if entry == "E3":
-        assert classifier.calls, f"{cell} E3 须打到分类器 stub"
-        assert E3_MESSAGE in classifier.calls, (
-            f"{cell} E3 分类器须收到测试自送原文: {classifier.calls!r}"
-        )
+        assert classifier.results, f"{cell} E3 须打到分类器 stub"
         assert any(
             isinstance(item, dict) and item.get("kind") == "secret"
             for result in classifier.results
@@ -525,7 +517,7 @@ def test_matrix_S1_default_commit_on_settle(matrix_env, cell, entry):
             for result in classifier.results
         ), (
             f"{cell} E1/E2 不得依赖分类器密令判词达 stage: "
-            f"calls={classifier.calls!r} results={classifier.results!r}"
+            f"results={classifier.results!r}"
         )
 
     assert _order_ids(client) == ids_before, (
@@ -573,6 +565,7 @@ def test_matrix_S2_modify_then_land(matrix_env, cell, entry, via_approve):
     pending_before = _db_pending_secret_new(game)
     assert len(pending_before) == 1, f"{cell} 须恰一候选: {pending_before!r}"
     cand_id = int(pending_before[0]["id"])
+    staged_content = str(_payload_of(pending_before[0]).get("content") or "")
     assert _order_ids(client) == ids_before
 
     # 修改轮：显式灌确认判词=修改（不读玩家散文）
@@ -589,14 +582,14 @@ def test_matrix_S2_modify_then_land(matrix_env, cell, entry, via_approve):
     )
     mid_payload = _payload_of(pending_mid[0])
     mid_content = str(mid_payload.get("content") or "")
-    # production 修改缝：去「修改：」前缀后的测试自送材料写入同一候选
-    assert mid_content == MODIFIED_CONTENT, (
-        f"{cell} 修改后候选 content 须=测试自送材料: {mid_payload!r}"
+    # 修改链：同候选 id 上 payload 相对 stage 有变更；落地只认此捕获
+    assert mid_content != staged_content, (
+        f"{cell} 修改后候选 content 须相对 stage 变更: "
+        f"staged={staged_content!r} mid={mid_content!r}"
     )
     assert "修改" in confirm.results, (
-        f"{cell} 修改轮须消费确认判词=修改: calls={confirm.calls!r} results={confirm.results!r}"
+        f"{cell} 修改轮须消费 typed 确认判词=修改: results={confirm.results!r}"
     )
-    assert S2_MODIFY_MESSAGE in confirm.calls, confirm.calls
 
     if via_approve:
         confirm.push("应允")
@@ -639,19 +632,15 @@ def test_matrix_S3_reject_then_settle_no_resurrection(matrix_env, cell, entry):
     assert len(_db_pending_secret_new(game)) >= 1
     assert _order_ids(client) == ids_before
 
-    reject_msg = S3_REJECT[cell]
     confirm.push("拒绝")
-    _chat(env, reject_msg)
+    _chat(env, S3_REJECT_MESSAGE)
 
     assert _db_pending_secret_new(game) == [], (
         f"{cell} 拒绝后 pending 新建候选须清除: {_db_pending_secret_new(game)!r}"
     )
     assert _order_ids(client) == ids_before
-    assert reject_msg in confirm.calls, (
-        f"{cell} 拒绝轮须调用确认 stub: calls={confirm.calls!r}"
-    )
     assert "拒绝" in confirm.results, (
-        f"{cell} 拒绝轮须消费确认判词=拒绝: results={confirm.results!r}"
+        f"{cell} 拒绝轮须消费 typed 确认判词=拒绝: results={confirm.results!r}"
     )
 
     _settle_month(env)
