@@ -2179,6 +2179,7 @@ def dismiss_from_audience(
     state: Any = None,
     beat_generator: Any = None,
     knowledge_provider: Any = None,
+    allow_closing: bool = False,
 ) -> Optional[int]:
     """「令 X 退下」口令：确定性落告退账，即时反映于名单查询。
 
@@ -2212,6 +2213,7 @@ def dismiss_from_audience(
         tags=[TAG_EXIT],
         check_dead=False,
         origin_chat_turn_id=origin_chat_turn_id,
+        allow_closing=allow_closing,
     )
 
 

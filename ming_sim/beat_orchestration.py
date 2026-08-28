@@ -38,6 +38,8 @@ from ming_sim.audience_night import (
     TAG_ENTER,
     TAG_HANDOFF,
     TAG_OPEN_NIGHT,
+    dismiss_from_audience,
+    find_prior_speaker_still_present,
     get_night,
     list_chat_turns_for_night,
     list_ledger,
@@ -823,6 +825,30 @@ def start_close_scene_on_registry(
         scaffold_owned = True
 
     try:
+        # #1585：末位仍在场则先落 TAG_EXIT 垫位，再与 closing 同桶并行生成。
+        # exclude 收夜 scaffold，避免把框架轮当成末位被召者。
+        last_present = find_prior_speaker_still_present(
+            db, int(night_id), exclude_name="收夜",
+        )
+        if last_present:
+            exit_id = dismiss_from_audience(
+                db, last_present,
+                night_id=int(night_id),
+                body="",
+                origin_chat_turn_id=int(ctid),
+                state=state,
+                allow_closing=True,
+            )
+            if exit_id and hasattr(scene_registry, "start_exit"):
+                scene_registry.start_exit(
+                    db, state,
+                    person_name=last_present,
+                    chat_turn_id=int(ctid),
+                    entry_id=int(exit_id),
+                    night_id=int(night_id),
+                    beat_generator=beat_generator,
+                    knowledge_provider=knowledge_provider,
+                )
         scene_registry.start_close(
             db, state,
             chat_turn_id=ctid,
@@ -859,6 +885,10 @@ def join_close_scene_on_registry(
 
     try:
         generated = scene_registry.join(ctid)
+        persist_chat_turn_scene(
+            db,
+            [(int(entry_id), str(text)) for entry_id, text in generated if int(entry_id) > 0],
+        )
         body = ""
         for entry_id, text in generated:
             # The close bucket also carries provider-only siblings (relation judge
