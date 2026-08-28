@@ -596,9 +596,6 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
             for p in (e.get("person_names") or []):
                 if p:
                     present_so_far.add(p)
-    # Track whether the immediately preceding fact emitted a divider, for dedup.
-    prev_was_exit: bool = False
-    prev_was_handoff: bool = False
     for index, entry in enumerate(facts):
         tags = set(entry.get("tags") or [])
         is_exit = (_is_command_entry(entry) and TAG_EXIT in tags) or entry.get("presence_effect") == PRESENCE_EXIT
@@ -617,40 +614,40 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
         person = (entry.get("person_names") or [""])[0]
         identity_key = (person, fact_order)
 
+        previous_tags = set(facts[index - 1].get("tags") or []) if index else set()
+        follows_handoff = bool(index and _is_command_entry(facts[index - 1])
+                               and TAG_HANDOFF in previous_tags
+                               and TAG_STAY_ATTEND in previous_tags)
+        following = facts[index + 1] if index + 1 < len(facts) else None
+        following_tags = set(following.get("tags") or []) if following else set()
+        followed_by_soft_segment = bool(following and (
+            (_is_command_entry(following) and (
+                TAG_ENTER in following_tags or (
+                    TAG_HANDOFF in following_tags and TAG_STAY_ATTEND in following_tags
+                )
+            )) or following.get("presence_effect") == PRESENCE_ENTER
+        ))
+
         if is_handoff and identity_key not in divided_identities:
             divided_identities.add(identity_key)
-            if not prev_was_exit:
-                next_name = person
-                for following in facts[index + 1:]:
-                    following_tags = set(following.get("tags") or [])
-                    if ((_is_command_entry(following) and TAG_ENTER in following_tags)
-                            or following.get("presence_effect") == PRESENCE_ENTER):
-                        next_name = (following.get("person_names") or [""])[0] or person
-                        break
-                events.append((fact_order, 90,
-                    message(role="scene", speaker=next_name, audibility=AUDIBILITY_PUBLIC,
-                            time=entry["created_at"], content="", beat="divider", soft_boundary=True),
-                ))
-                prev_was_exit = False
-                prev_was_handoff = True
-            else:
-                prev_was_handoff = True
-                prev_was_exit = False
-        elif new_entrance and identity_key not in divided_identities:
+            next_name = person
+            for following in facts[index + 1:]:
+                following_tags = set(following.get("tags") or [])
+                if ((_is_command_entry(following) and TAG_ENTER in following_tags)
+                        or following.get("presence_effect") == PRESENCE_ENTER):
+                    next_name = (following.get("person_names") or [""])[0] or person
+                    break
+            events.append((fact_order, 90,
+                message(role="scene", speaker=next_name, audibility=AUDIBILITY_PUBLIC,
+                        time=entry["created_at"], content="", beat="divider", soft_boundary=True),
+            ))
+        elif new_entrance and not follows_handoff and identity_key not in divided_identities:
             divided_identities.add(identity_key)
-            emit = True
-            if prev_was_handoff:
-                emit = False
-            if emit:
-                events.append((fact_order, 90,
-                    message(role="scene", speaker=person, audibility=AUDIBILITY_PUBLIC,
-                            time=entry["created_at"], content="", beat="divider", soft_boundary=True),
-                ))
-                prev_was_exit = False
-                prev_was_handoff = False
-            else:
-                prev_was_handoff = False
-        elif is_exit and identity_key not in divided_identities:
+            events.append((fact_order, 90,
+                message(role="scene", speaker=person, audibility=AUDIBILITY_PUBLIC,
+                        time=entry["created_at"], content="", beat="divider", soft_boundary=True),
+            ))
+        elif is_exit and not followed_by_soft_segment and identity_key not in divided_identities:
             divided_identities.add(identity_key)
             next_name = ""
             for following in facts[index + 1:]:
@@ -659,23 +656,10 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
                         or following.get("presence_effect") == PRESENCE_ENTER):
                     next_name = (following.get("person_names") or [""])[0]
                     break
-            next_is_soft = False
-            if index + 1 < len(facts):
-                nxt = facts[index + 1]
-                nxt_tags = set(nxt.get("tags") or [])
-                nxt_handoff = _is_command_entry(nxt) and TAG_HANDOFF in nxt_tags and TAG_STAY_ATTEND in nxt_tags
-                nxt_enter = (_is_command_entry(nxt) and TAG_ENTER in nxt_tags) or nxt.get("presence_effect") == PRESENCE_ENTER
-                next_is_soft = nxt_handoff or nxt_enter
-            if not next_is_soft:
-                events.append((fact_order, 90,
-                    message(role="scene", speaker=next_name, audibility=AUDIBILITY_PUBLIC,
-                            time=entry["created_at"], content="", beat="divider", soft_boundary=True),
-                ))
-            prev_was_exit = is_exit and not next_is_soft
-            prev_was_handoff = False
-        else:
-            prev_was_exit = False
-            prev_was_handoff = False
+            events.append((fact_order, 90,
+                message(role="scene", speaker=next_name, audibility=AUDIBILITY_PUBLIC,
+                        time=entry["created_at"], content="", beat="divider", soft_boundary=True),
+            ))
         # Update presence tracking for new-entrance detection.
         _apply_presence(present_so_far, entry)
 
