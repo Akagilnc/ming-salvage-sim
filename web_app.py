@@ -1374,6 +1374,17 @@ class WebGame:
             ]
             account["movements"] = movements
             account["movements_total"] = sum(m["delta"] for m in movements)
+        # #1366：结算前只呈现事实——全军名义应发合计，与 army_report 警讯文本共用同一计算，
+        # 不与国库拟拨/结算结果混叫一个数字。
+        budget["army_pay_due_total"] = self.db.army_pay_theoretical_total()
+        # #1366：结算后的 typed 玩家结果；treasury_report 与 Web 共用同一 DB 投影。
+        # 核账期（月初快照在场，settling/awaiting_decision）不下发——半程中间态不对皇帝
+        # 可见（CONTEXT.md 核账期定义）；待 next_period 完成、快照过期后才见同 turn 结果，
+        # 复用与顶栏/余额同一条 _month_open_snapshot 展示边界，不另造第二判定。
+        budget["settled_army_pay"] = (
+            None if self._month_open_snapshot() is not None
+            else self.db.treasury_hub_result(self.state)
+        )
         return budget
 
     def ending_payload(self) -> Optional[Dict[str, Any]]:
