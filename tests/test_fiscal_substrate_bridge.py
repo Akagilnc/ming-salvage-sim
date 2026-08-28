@@ -1230,16 +1230,23 @@ def test_fixed_flows_substrate_hub_central_pay_carries_transport_loss_without_ji
     assert army["central_pay_arrears"] == pytest.approx(3)
     assert army["arrears"] == pytest.approx(3)
 
-    # #1366：从玩家可达 treasury_report 真入口接线；机器断言落结构化结果，
+    # #1366：真实换月后从 Web 玩家入口读取 typed 三项；国库报告复用同一投影，
     # 不锁生成文本措辞。
-    assert db.treasury_report(state)
-    assert db.treasury_hub_result(state) == {
+    import web_app
+
+    settled_turn = state.turn
+    state.next_period()
+    runtime = object.__new__(web_app.WebGame)
+    runtime.session = SimpleNamespace(db=db, state=state)
+    assert runtime.budget_payload()["settled_army_pay"] == {
+        "settled_turn": settled_turn,
         "treasury_disbursed": 10,
         "actual_arrived": 7,
         "transit_loss": 3,
     }
+    assert db.treasury_report(state)
 
-    ledger_snapshot = _hub_ledger_snapshot(db, turn=state.turn)
+    ledger_snapshot = _hub_ledger_snapshot(db, turn=settled_turn)
     container_snapshot = _hub_container_snapshot(db)
     outbound = {
         "jingyun_paid": expense_row["jingyun_paid"],
