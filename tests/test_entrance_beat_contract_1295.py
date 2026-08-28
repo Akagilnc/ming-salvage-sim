@@ -86,7 +86,7 @@ def test_llm_beat_instructions_forbid_entrance_preenactment(monkeypatch):
     instructions = capture["agents"][0].get("instructions") or []
     joined = "\n".join(str(x) for x in instructions)
 
-    # 正向契约钉：局势/悬念 + 禁预演奏对/皇帝答复（与 production_beat_generator 口径同向）
+    # 正向契约钉：局势/悬念 + 禁预演奏对/皇帝答复（与 LLM instructions 同口径）
     assert "只立局势与悬念" in joined
     assert "不写皇帝答复" in joined
     assert "不预演奏对" in joined

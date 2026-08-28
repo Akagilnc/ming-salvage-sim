@@ -579,7 +579,9 @@ def test_open_and_close_beat_bodies_land(game):
 
 
 def test_no_generator_keeps_deterministic_fallback(game):
-    """无生成器/registry 缺失 = 确定性 open/close 兜底；文案从时地长出，不硬称夜。"""
+    """无生成器/registry 缺失 = 确定性 open/close 兜底；文案从时地长出，不硬称夜。
+    #1561 N1 裁定：删除固定 opening fallback，空 body 时留空垫位。
+    """
     db, state, content = game
     minister = _active_minister(db, content)
     night_id, _cid = an.attach_chat_turn_to_night(
@@ -587,8 +589,8 @@ def test_no_generator_keeps_deterministic_fallback(game):
         time_of_day="戌时", location="乾清宫",
     )
     open_body = _ledger_body(db, night_id, an.TAG_OPEN_NIGHT)
-    assert open_body == "乾清宫·戌时，召对启。"
-    assert "夜" not in open_body
+    # N1：无 beat_generator + 无 body 时 opening body 为空（不写固定 fallback）
+    assert open_body == ""
     enter_body = _enter_body(db, night_id, minister)
     assert enter_body and "kind=" not in enter_body
     _land_reply(db, state, minister, _cid, night_id)
@@ -597,27 +599,6 @@ def test_no_generator_keeps_deterministic_fallback(game):
     close_body = _ledger_body(db, night_id, an.TAG_CLOSE_NIGHT)
     assert close_body == "退朝，召对到此。"
     assert "夜" not in close_body
-
-
-def test_production_beat_generator_open_close_fallback_no_night_hardcode():
-    """#542 r3：production open/close 确定性正文从时地长出，不硬称夜。"""
-    open_with = bo.production_beat_generator(
-        BeatInputs(beat_kind=BEAT_OPEN, time_of_day="戌时", location="乾清宫"),
-    )
-    assert open_with == "乾清宫·戌时，召对启。"
-    assert "夜" not in open_with
-    open_bare = bo.production_beat_generator(BeatInputs(beat_kind=BEAT_OPEN))
-    assert open_bare == "召对启。"
-    assert "夜" not in open_bare
-
-    close_with = bo.production_beat_generator(
-        BeatInputs(beat_kind=BEAT_CLOSE, time_of_day="戌时", location="乾清宫"),
-    )
-    assert close_with == "乾清宫·戌时，退朝，召对到此。"
-    assert "夜" not in close_with
-    close_bare = bo.production_beat_generator(BeatInputs(beat_kind=BEAT_CLOSE))
-    assert close_bare == "退朝，召对到此。"
-    assert "夜" not in close_bare
 
 
 def test_auto_close_fallback_body_no_night_hardcode(game):
@@ -778,7 +759,7 @@ def test_web_start_chat_turn_wires_session_beat_generator(web_game):
 
 
 def test_web_auto_close_uses_session_beat_generator(web_game, monkeypatch):
-    """#542: Web 自动收夜走 session._beat_generator，不旁路 production_beat_generator。"""
+    """#542: Web 自动收夜走 session._beat_generator，不旁路生产生成器。"""
     game = web_game
     for ctid in list(game.session._scene_registry.active_turn_ids()):
         game.session.abandon_chat_turn_scene(ctid)
@@ -786,10 +767,6 @@ def test_web_auto_close_uses_session_beat_generator(web_game, monkeypatch):
     seen: list[str] = []
     game.session._beat_generator = (
         lambda inputs: seen.append(inputs.beat_kind) or f"session-owned-{inputs.beat_kind}"
-    )
-    monkeypatch.setattr(
-        bo, "production_beat_generator",
-        lambda _i: (_ for _ in ()).throw(AssertionError("production bypass")),
     )
     web_app._auto_close_open_night_gate_free(game, inflight_wait_s=0.0)
     assert BEAT_CLOSE in seen and an.get_open_night(game.db) is None
