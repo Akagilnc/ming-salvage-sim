@@ -20,6 +20,9 @@ TYPED_COVERT_EXTRACT = {
     "方向": 1,
     "交付单位": "亩",
     "交付目标": 1,
+    "地区": "henan",
+    "地区字段": "registered_land",
+    "地区目标值": "421",
 }
 
 
