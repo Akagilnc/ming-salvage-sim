@@ -466,6 +466,50 @@ def test_scripted_ask_vs_order_staging_matrix(
         assert not any(r["action"] == "新建" for r in secret_rows)
 
 
+# ── #1565：交办·责成 vs 当场问对 边界 prompt-contract（不经预造 payload）───
+
+
+def test_classify_prompt_carries_1565_ask_vs_assignment_boundary(monkeypatch):
+    """#1565 判词契约：classify_cli_action_intent 入口的 prompt 里，宫内当场
+    问对（据实/分策/开列回奏）须被界定为无，交办·责成 界定为需在召对后继续执行的
+    工作。仅 mock LLM backend，禁预造 payload。"""
+    captured = {}
+
+    def _scripted(prompt, llm_config=None, tag=""):
+        captured["prompt"] = prompt
+        assert tag == "action_intent"
+        return (json.dumps({"动作类型": "无"}, ensure_ascii=False), 0)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _scripted)
+    cb.classify_cli_action_intent(
+        "杨卿，太仓实存与关宁、陕西边饷核到哪一步？分策回奏",
+        recent_context="",
+    )
+    prompt = captured["prompt"]
+
+    # 边界声明块存在：交办·责成 vs 当场问对
+    assert "交办·责成 vs 当场问对" in prompt
+    assert "#1565" in prompt
+    assert "ADR 0042" in prompt
+
+    # 交办·责成 被定义为召对后仍需继续执行的政务工作（ongoing 工作）
+    assert "交办·责成 = 需在本次召对之后仍要继续执行的政务工作" in prompt
+    assert "ongoing 工作" in prompt
+
+    # 当场问对 被定义为普通对话 → kind none，零 staging
+    assert "当场问对 = 大臣当场被点名解释/比较/列数" in prompt
+    assert "动作类型=无（kind none）" in prompt
+    assert "不是交办，零 staging" in prompt
+
+    # #1565 三个真实语料的判定片段存在（用独特片段判定，防同文噪声）
+    assert "太仓实存与关宁" in prompt and "分策回奏" in prompt
+    assert "改元之后钱粮如何撑过春月" in prompt and "开列回奏" in prompt
+    assert "入春边事与朝局何者最急" in prompt and "据实回奏" in prompt
+
+    # 这些问对提问必不得上升为交办
+    assert "统一判为无，坚决不得上升为交办" in prompt
+
+
 # ── P5：双向 barrier，串行实现必须红 ──────────────────────────────────
 
 # #516 问/令查样本：并入 P5 真实 session.chat barrier/poison 矩阵（不经 preclassified_intent）
