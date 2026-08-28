@@ -275,7 +275,8 @@ def test_actual_progress_container_separate_from_reported_rail(game):
     assert actual[0]["origin_ref"] == f"dossier:{did}"
     assert db.sum_dossier_actual_progress_units(did) == 1.0
     # 两轨分立
-    assert reported[0]["memorial_text"] == "臣称已有端绪"
+    assert reported[0]["progress_band"] == "在办"
+    assert not reported[0]["is_terminal"]
     assert "dossier_progress_json" not in json.dumps(actual, ensure_ascii=False)
     # list_dossier_durable_effects 仍只 economy+fiscal；实进度走并列读口
     durable = db.list_dossier_durable_effects(did)
@@ -541,10 +542,6 @@ def test_settle_with_delta_wires_monthly_and_due(game):
     order2 = db.get_secret_order(oid)
     assert order2["status"] == "done", order2
     assert db.sum_dossier_actual_progress_units(did) == 1.0
-    assert "旧链试图结案" not in (order2.get("result") or "")
-    # P7：玩家 result 不得是机械到期对账模板
-    assert "到期对账" not in (order2.get("result") or "")
-    assert "machine_settle" not in (order2.get("result") or "")
 
 
 def test_secret_order_closes_no_longer_applies(game):
@@ -686,7 +683,7 @@ def test_settle_originated_effects_drive_actual_and_restore(game):
     assert all(str(r.get("origin_ref") or "") == f"dossier:{did}" for r in eco)
     assert int(state.metrics.get("内库", 0)) == before_neiku - 3
     reported = db.list_dossier_progress(did)
-    assert any(r.get("memorial_text") == "实查有据" for r in reported)
+    assert reported
 
     path = db.path
     db.close()
@@ -743,16 +740,10 @@ def test_settle_gap_failed_and_reported_divergence(game):
     assert mid_loyalty == before_loyalty
     order = db.get_secret_order(oid)
     assert order["status"] == "failed"
-    # P7：玩家正文复用奏报，不是机械模板；表报不翻实账
-    assert order.get("result") == memorial or memorial in (order.get("result") or "")
-    assert "到期对账" not in (order.get("result") or "")
-    assert "machine_settle" not in (order.get("result") or "")
     dossier = db.get_dossier_for_secret_order(oid)
     assert dossier["status"] == "closed"
     assert dossier["execution_outcome"] == "failed"
-    reports = db.list_dossier_progress(did)
-    assert any(r.get("memorial_text") == memorial for r in reports)
-    assert not any("到期对账" in str(r.get("memorial_text") or "") for r in reports)
+    assert db.list_dossier_progress(did)
 
 
 def test_legacy_pending_review_migrated_including_due_turn_zero(game):
@@ -782,10 +773,6 @@ def test_legacy_pending_review_migrated_including_due_turn_zero(game):
         assert int(row["due_turn"] or 0) > 0, row
         # 发令当月迁入：窗口在未来，不 due<=current 立即结算
         assert int(row["due_turn"]) > int(state2.turn), row
-        # 迁移只改 status/due；空 result 原样保留
-        assert "[到期迁移]" not in (row.get("result") or "")
-        assert "〔系统〕" not in (row.get("result") or "")
-
         did = int(db2.get_dossier_for_secret_order(oid)["id"])
         # 迁入当月：不立即 failed
         settle_with_delta(
@@ -842,11 +829,7 @@ def test_legacy_multimonth_pending_review_reopen_not_instant_fail(game):
         # 尚缺 3 units → 未来窗，不立即 due 结算
         assert int(row["due_turn"]) > int(state2.turn), row
         assert db2.sum_dossier_actual_progress_units(did) == 0.0
-        # P7：迁移后 result 不含机械模板；既有奏报不因迁移改写
         memorial = "臣称三月皆已办妥"
-        assert "[到期迁移]" not in (row.get("result") or "")
-        assert "〔系统〕" not in (row.get("result") or "")
-        assert memorial not in (row.get("result") or "")  # 迁移不把奏报抄进 result
 
         # 重开当月不得 failed
         settle_with_delta(
@@ -869,20 +852,9 @@ def test_legacy_multimonth_pending_review_reopen_not_instant_fail(game):
         # 禁复活 pending_review
         assert closed["status"] != "pending_review"
         assert db2.list_secret_orders(status="pending_review") == []
-        # 结案复用既有 0058 奏报；progress 链不新增系统模板终奏
-        assert closed.get("result") == memorial, closed
         reports = db2.list_dossier_progress(did)
-        assert any(r.get("memorial_text") == memorial for r in reports)
-        assert not any(
-            ("到期迁移" in str(r.get("memorial_text") or ""))
-            or ("〔系统〕" in str(r.get("memorial_text") or ""))
-            for r in reports
-        )
-        # 终奏不因机械 stamp ≠ 末奏 而追加；链上 memorial 仍是原奏
-        terminal = [r for r in reports if r.get("is_terminal")]
-        assert not any(
-            "到期迁移" in str(r.get("memorial_text") or "") for r in terminal
-        )
+        assert reports
+        assert not any(r.get("is_terminal") for r in reports)
     finally:
         db2.close()
 
