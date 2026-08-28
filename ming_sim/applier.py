@@ -9,6 +9,7 @@ from __future__ import annotations
 import enum
 import json
 import sqlite3
+import threading
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterator, List
@@ -44,6 +45,54 @@ def safe_json_dumps(value: Any, **kwargs: Any) -> str:
 # 决定 2/8：事务边界 —— commit 暂停连接 + atomic 包裹
 # ---------------------------------------------------------------------------
 
+class _SerializedCursor:
+    """Hold the connection lock across execute + fetch (SQLite C API is not reentrant)."""
+
+    __slots__ = ("_cur", "_lock")
+
+    def __init__(self, cur: sqlite3.Cursor, lock: threading.RLock) -> None:
+        self._cur = cur
+        self._lock = lock
+
+    def execute(self, *args, **kwargs):
+        with self._lock:
+            self._cur.execute(*args, **kwargs)
+        return self
+
+    def executemany(self, *args, **kwargs):
+        with self._lock:
+            self._cur.executemany(*args, **kwargs)
+        return self
+
+    def fetchone(self):
+        with self._lock:
+            return self._cur.fetchone()
+
+    def fetchall(self):
+        with self._lock:
+            return self._cur.fetchall()
+
+    def fetchmany(self, *args, **kwargs):
+        with self._lock:
+            return self._cur.fetchmany(*args, **kwargs)
+
+    def close(self):
+        with self._lock:
+            return self._cur.close()
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        row = self.fetchone()
+        if row is None:
+            raise StopIteration
+        return row
+
+    def __getattr__(self, name: str):
+        return getattr(self._cur, name)
+
+
 class _SuspendableConnection(sqlite3.Connection):
     """sqlite3.Connection 子类，可暂停 commit。
 
@@ -59,12 +108,38 @@ class _SuspendableConnection(sqlite3.Connection):
     `with conn:` 块的提交被暂停、由最外层统一落定，atomic 外保持原生语义。
     executescript 在 legacy 模式 C 层先隐式 commit、同样绕过暂停（cmr S1 F4），
     暂停期直接拒绝。
+
+    check_same_thread=False 允许召对流与轮询读共用一连；SQLite C API 仍须串行，
+    否则并发 execute 会 sqlite3.InterfaceError: bad parameter or other API misuse。
     """
 
     # 类属性兜底：sqlite3 可能在 __init__ 前调用 commit（理论上不会，但稳妥）。
     _commit_suspended = False
 
+    def _serialize(self) -> threading.RLock:
+        lock = getattr(self, "_api_lock", None)
+        if lock is None:
+            lock = threading.RLock()
+            self._api_lock = lock
+        return lock
+
+    def execute(self, *args, **kwargs):
+        with self._serialize():
+            return _SerializedCursor(super().execute(*args, **kwargs), self._serialize())
+
+    def executemany(self, *args, **kwargs):
+        with self._serialize():
+            return _SerializedCursor(super().executemany(*args, **kwargs), self._serialize())
+
+    def cursor(self, *args, **kwargs):
+        with self._serialize():
+            return _SerializedCursor(super().cursor(*args, **kwargs), self._serialize())
+
     def commit(self) -> None:
+        with self._serialize():
+            self._commit_unlocked()
+
+    def _commit_unlocked(self) -> None:
         if self._commit_suspended:
             return
         callbacks = list(getattr(self, "_runtime_commit_callbacks", []))
@@ -83,6 +158,10 @@ class _SuspendableConnection(sqlite3.Connection):
             ) from callback_errors[0]
 
     def rollback(self) -> None:
+        with self._serialize():
+            self._rollback_unlocked()
+
+    def _rollback_unlocked(self) -> None:
         super().rollback()
         callbacks = list(getattr(self, "_runtime_rollback_callbacks", []))
         self._runtime_rollback_callbacks = []
@@ -125,12 +204,13 @@ class _SuspendableConnection(sqlite3.Connection):
         return False
 
     def executescript(self, sql_script):
-        if self._commit_suspended:
-            raise RuntimeError(
-                "executescript 在 atomic 事务内禁止：C 层隐式 commit 会绕过暂停、"
-                "提前提交半成品。请改用逐条 execute，或移到 atomic 外。"
-            )
-        return super().executescript(sql_script)
+        with self._serialize():
+            if self._commit_suspended:
+                raise RuntimeError(
+                    "executescript 在 atomic 事务内禁止：C 层隐式 commit 会绕过暂停、"
+                    "提前提交半成品。请改用逐条 execute，或移到 atomic 外。"
+                )
+            return super().executescript(sql_script)
 
 
 @contextmanager
