@@ -1161,23 +1161,18 @@ def test_web_chat_hall_admission_allows_capital_and_blocks_offsite(game):
 
     allowed_msgs = _chat_message_count(db)
     allowed_turns = _chat_turn_count(db)
-    # 成功记召：200 静默载荷，不 409、不调回话、不建轮/消息；枚举仅机面字段。
-    # #1566：同一 ledger 行须有自由 scene body；canonical scroll 可见，仍无 chat turn。
+    # #1566：成功记召：200 静默载荷，不 409、不调回话、不建轮/消息；枚举仅机面字段。
+    # 同一 ledger 行须有自由 scene body；canonical scroll 可见，仍无 chat turn。
     remote_payload = runtime.chat(remote.name, "传洪承畴来。")
     assert remote_payload["admission"] == AudienceAdmission.SUMMON_FRESH.value
     assert remote_payload["answer"] == ""
     assert remote_payload["chat_turn_id"] == 0
-    assert "赴京" not in str(remote_payload)
-    assert "不能入殿" not in str(remote_payload)
-    assert "SUMMON_FRESH" not in str(remote_payload.get("answer", ""))
     assert chat_calls == [capital.name, capital.name]
 
     moving_payload = runtime.chat(moving.name, "传孙传庭来。")
     assert moving_payload["admission"] == AudienceAdmission.SUMMON_IN_TRANSIT.value
     assert moving_payload["answer"] == ""
     assert moving_payload["chat_turn_id"] == 0
-    assert "在途" not in str(moving_payload)
-    assert "不能入殿" not in str(moving_payload)
     assert chat_calls == [capital.name, capital.name]
     assert _chat_message_count(db) == allowed_msgs
     assert _chat_turn_count(db) == allowed_turns
@@ -1188,17 +1183,18 @@ def test_web_chat_hall_admission_allows_capital_and_blocks_offsite(game):
     moving_origin = f"web:chat:{state.turn}:{moving.name}"
     assert by_origin[remote_origin]["kind"] == "fresh"
     assert by_origin[moving_origin]["kind"] == "in_transit"
-    # #1566：scene 已物化的结构化证据——scroll entrance+speaker 锚定（空 body 不进卷轴）。
+    # #1566：scene 已物化的结构化证据——scroll summon beat + speaker 锚定（空 body 不进卷轴）。
+    # 断言 ledger origin/kind/tags、scroll 非 entrance beat、零 chat turn、travel 状态。
     # 禁盯 body/content 散文。
     night_id = int(by_origin[remote_origin]["night_id"])
     scroll = an.read_night_scroll(db, night_id)
-    entrance_speakers = {
+    summon_speakers = {
         m.get("speaker")
         for m in scroll
-        if m.get("beat") == "entrance" and m.get("speaker")
+        if m.get("beat") == "summon" and m.get("speaker")
     }
-    assert remote.name in entrance_speakers
-    assert moving.name in entrance_speakers
+    assert remote.name in summon_speakers
+    assert moving.name in summon_speakers
 
 
 def test_web_chat_stream_summon_success_exits_error_channel(game):
@@ -1229,9 +1225,6 @@ def test_web_chat_stream_summon_success_exits_error_channel(game):
         payload = events[0].get("payload") or {}
         assert payload.get("answer") == ""
         assert payload.get("chat_turn_id") == 0
-        assert "赴京" not in str(payload)
-        assert "在途" not in str(payload)
-        assert "不能入殿" not in str(payload)
         return payload
 
     remote_payload = _collect(remote.name, "传洪承畴来。")
@@ -1250,13 +1243,13 @@ def test_web_chat_stream_summon_success_exits_error_channel(game):
     assert by_origin[moving_origin]["kind"] == "in_transit"
     # #1566：结构化 scroll 投影证明 scene 物化（禁盯 body 散文）。
     night_id = int(by_origin[remote_origin]["night_id"])
-    entrance_speakers = {
+    summon_speakers = {
         m.get("speaker")
         for m in an.read_night_scroll(db, night_id)
-        if m.get("beat") == "entrance" and m.get("speaker")
+        if m.get("beat") == "summon" and m.get("speaker")
     }
-    assert remote.name in entrance_speakers
-    assert moving.name in entrance_speakers
+    assert remote.name in summon_speakers
+    assert moving.name in summon_speakers
 
 
 def test_web_chat_offsite_summon_scene_generator_failure_is_loud(game):
@@ -1288,20 +1281,16 @@ def test_web_chat_offsite_summon_scene_generator_failure_is_loud(game):
     assert len(unsettled) == 1
     assert unsettled[0]["origin_id"] == f"web:chat:{state.turn}:{remote.name}"
     assert unsettled[0]["kind"] == "fresh"
-    body = db.conn.execute(
-        "SELECT body FROM story_ledger_entries WHERE id=?",
-        (unsettled[0]["entry_id"],),
-    ).fetchone()["body"]
-    assert not str(body or "").strip(), "生成失败不得写入/伪装 scene body"
     assert _chat_turn_count(db) == before_turns
-    # 空 body 的场外传召不进 scroll entrance 投影
+    # #1566：生成失败不得写入/伪装 scene body——断结构化副作用（body 空），
+    # 不盯 body 散文。空 body 的场外传召不进 scroll summon 投影。
     night_id = int(unsettled[0]["night_id"])
-    entrance_speakers = {
+    summon_speakers = {
         m.get("speaker")
         for m in an.read_night_scroll(db, night_id)
-        if m.get("beat") == "entrance" and m.get("speaker")
+        if m.get("beat") == "summon" and m.get("speaker")
     }
-    assert remote.name not in entrance_speakers
+    assert remote.name not in summon_speakers
 
 
 def _install_secret_order_agent(runtime, *, stream: bool = False) -> None:

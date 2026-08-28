@@ -1193,78 +1193,17 @@ class GameSession:
     ) -> list[tuple[int, str]]:
         """#1566：为已落库的场外传召账生成并持久化自由 scene。
 
-        复用 beat_orchestration 既有 assemble/run/persist 缝；不建 chat turn、
-        不调大臣回话。唯一合法 no-op：该 ledger 行 body 已非空（幂等重入）。
-        传召账缺失、召法 tag 缺失、生成器失败一律上抛，禁止洗成空白成功载荷。
-        调用方须在 write_gate 外等待 LLM。
+        委托 beat_orchestration.materialize_offsite_summon_scene（单一编排入口），
+        使用 BEAT_SUMMON（非 BEAT_ENTER）——人在途未入殿，ADR 0096。
+        不建 chat turn、不调大臣回话。唯一合法 no-op：body 已非空（幂等）。
+        传召账缺失、召法 tag 缺失、生成器失败一律上抛。
         """
-        import json
-
-        from ming_sim.applier import atomic
-        from ming_sim.audience_night import (
-            SUMMON_METHODS,
-            get_night,
-            list_unsettled_summons,
+        from ming_sim.beat_orchestration import materialize_offsite_summon_scene
+        return materialize_offsite_summon_scene(
+            self.db, self.state,
+            origin_id=origin_id, person_name=person_name,
+            beat_generator=getattr(self, "_beat_generator", None),
         )
-        from ming_sim.beat_orchestration import (
-            BEAT_ENTER,
-            assemble_beat_inputs,
-            persist_chat_turn_scene,
-            run_beat_generator,
-        )
-
-        origin = str(origin_id or "").strip()
-        name = str(person_name or "").strip()
-        if not origin or not name:
-            raise ValueError(
-                f"materialize_offsite_summon_scene 须有 origin_id 与 person_name，"
-                f"got origin_id={origin_id!r} person_name={person_name!r}"
-            )
-        item = next(
-            (
-                row for row in list_unsettled_summons(self.db)
-                if row["origin_id"] == origin and row["person_name"] == name
-            ),
-            None,
-        )
-        if item is None:
-            raise RuntimeError(
-                f"场外传召账未落库，无法物化 scene：origin_id={origin!r} person={name!r}"
-            )
-        entry_id = int(item["entry_id"])
-        night_id = int(item["night_id"])
-        row = self.db.conn.execute(
-            "SELECT body, tags FROM story_ledger_entries WHERE id=?",
-            (entry_id,),
-        ).fetchone()
-        if row is None:
-            raise RuntimeError(f"传召 ledger 行消失：entry_id={entry_id}")
-        # 幂等：body 已由先前物化写入则不再生成。
-        if str(row["body"] or "").strip():
-            return []
-        tags = json.loads(row["tags"] or "[]")
-        method = next((m for m in SUMMON_METHODS if m in tags), None)
-        if method is None:
-            raise RuntimeError(
-                f"传召账缺召法 tag：entry_id={entry_id} tags={tags!r}"
-            )
-        night = get_night(self.db, night_id) or {}
-        inputs = assemble_beat_inputs(
-            self.db,
-            self.state,
-            beat_kind=BEAT_ENTER,
-            time_of_day=str(night.get("time_of_day") or ""),
-            location=str(night.get("location") or ""),
-            night_id=night_id,
-            person_name=name,
-            summon_method=method,
-            before_entry_id=entry_id,
-        )
-        body = run_beat_generator(self._beat_generator, inputs)
-        generated = [(entry_id, body)]
-        with atomic(self.db):
-            persist_chat_turn_scene(self.db, generated)
-        return generated
 
     def _start_cli_action_intent(self, character: Character, message: str) -> Optional[Future]:
         """召对动作判断只读皇帝消息，可与大臣回话并发。
