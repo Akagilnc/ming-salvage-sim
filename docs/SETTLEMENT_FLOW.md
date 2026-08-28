@@ -148,6 +148,8 @@
      applied = apply_score_extraction(db, state, delta, content=content, registry=None)
      ↳ #672 任命并传召：pending/案卷先保存未激活的同源传召；任命真正落成后才在
        同一 outer atomic 内激活该传召并按在册出发地启程。任命失败则整笔回滚，不留在途半写。
+     ↳ #1583 任命案卷物化前，先以本批结算开始时的盘面统一校验所有荐人快照；
+       通过后按稳定案卷序依次物化，不再被同批前序任免造成的中间态误拒。批外真陈旧快照仍拒。
      ↳ verdict/批红返回的受影响人物只在 9–16 全部提交成功后刷新 registry；事务内不碰缓存。
      ↳ 内部 _sanitize → _merge → 分发到 region/army/building/economy/issue/character 各 apply_*
      ↳ 未知顶层字段响亮中止；9 个结算 section 的脏项（坏值/缺 id/非法 enum）逐项拒收
