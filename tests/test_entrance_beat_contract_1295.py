@@ -1,11 +1,11 @@
-"""#1295/#1314(2) entrance beat 预演契约——生成 instructions + 输入边界。
+"""#1295/#1314(2)/#1561 entrance beat 契约——JSON materials、beat_kind、年月键与输入边界。
 
 seam：
-- create_llm_beat_generator 的 Agent instructions（正向契约：只立局势与悬念，
-  不写皇帝答复、不预演奏对）；
-- 入殿材料面（assemble_beat_inputs + generator 投喂 JSON）：不含玩家问话。
+- 入殿材料面（assemble_beat_inputs + generator 投喂 JSON）：不含玩家问话；
+- open-beat JSON materials 的 typed 场面事实；
+- open/enter 与 exit/close 的年月键发射闸。
 
-不锁文案质量；不动编排缝 / registry 生命周期。
+不比较生成正文或 prompt 措辞；不动编排缝 / registry 生命周期。
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ def _load_fresh_beat_module(monkeypatch, *, capture: dict):
 
     class _FakeAgent:
         def __init__(self, **kwargs):
-            capture.setdefault("agents", []).append(kwargs)
+            pass
 
         def run(self, prompt):
             capture.setdefault("prompts", []).append(prompt)
@@ -74,23 +74,6 @@ def _active_minister(db, content, *, exclude=None):
         if db.get_character_status(name)[0] == "active":
             return name
     raise AssertionError("no active ming minister")
-
-
-def test_llm_beat_instructions_forbid_entrance_preenactment(monkeypatch):
-    """#1295：entrance 生成契约正向钉——只立局势与悬念，不写皇帝答复、不预演奏对。"""
-    capture: dict = {}
-    probe = _load_fresh_beat_module(monkeypatch, capture=capture)
-    gen = probe.create_llm_beat_generator(object())
-    gen(BeatInputs(beat_kind=BEAT_ENTER, person_name="杨嗣昌", time_of_day="戌时"))
-
-    assert capture.get("agents"), "Agent was never constructed"
-    instructions = capture["agents"][0].get("instructions") or []
-    joined = "\n".join(str(x) for x in instructions)
-
-    # 正向契约钉：局势/悬念 + 禁预演奏对/皇帝答复（与 production_beat_generator 口径同向）
-    assert "只立局势与悬念" in joined
-    assert "不写皇帝答复" in joined
-    assert "不预演奏对" in joined
 
 
 def test_entrance_materials_exclude_player_utterance(game, monkeypatch):
@@ -146,23 +129,17 @@ def test_entrance_materials_exclude_player_utterance(game, monkeypatch):
     assert "玩家专属问话标记1295" not in blob
 
 
-def test_open_beat_llm_receives_structured_scene_and_generated_body_is_ledgered(game, monkeypatch):
-    db, state, _ = game
+def test_open_beat_llm_receives_structured_scene_materials(monkeypatch):
+    """#1561：open-beat 验收只断 JSON materials 中 typed 场面事实。"""
     capture: dict = {}
     probe = _load_fresh_beat_module(monkeypatch, capture=capture)
     facts = ('{"dossier_id": 651, "channels": ["稽核"], "scene_text": ""}',)
-    body = probe.create_llm_beat_generator(object())(
+    probe.create_llm_beat_generator(object())(
         BeatInputs(beat_kind=BEAT_OPEN, time_of_day="戌时", location="乾清宫",
                    audience_scenes=facts)
     )
     payload = json.loads(capture["prompts"][0])
     assert payload["待呈御前的结构化场面事实"] == list(facts)
-    night = an.open_night(db, state, time_of_day="戌时", location="乾清宫", body=body)
-    opening = next(row for row in an.list_ledger(db, night["id"])
-                   if an.TAG_OPEN_NIGHT in row["tags"])
-    assert opening["body"] == "【入殿气象】帘外风动。"
-
-
 def test_summon_beat_llm_receives_structured_offsite_facts(monkeypatch):
     """#1566 r4：真实 LLM beat 材料须正向含场外传召事实。"""
     capture: dict = {}
@@ -195,18 +172,6 @@ def test_summon_beat_llm_receives_structured_offsite_facts(monkeypatch):
     assert nested["courier_traveling"] is True
     assert nested["courier_arrived"] is False
     assert nested["person_entered_court"] is False
-
-
-def test_open_beat_instructions_share_no_preenact_contract(monkeypatch):
-    """开场与入殿共用同一 instructions 契约（不按 kind 分叉模板文案）。"""
-    capture: dict = {}
-    probe = _load_fresh_beat_module(monkeypatch, capture=capture)
-    gen = probe.create_llm_beat_generator(object())
-    gen(BeatInputs(beat_kind=BEAT_OPEN, time_of_day="戌时", location="乾清宫"))
-    instructions = capture["agents"][0].get("instructions") or []
-    joined = "\n".join(str(x) for x in instructions)
-    assert "不预演奏对" in joined
-    assert "不写皇帝答复" in joined
 
 
 @pytest.mark.parametrize("beat_kind", [BEAT_OPEN, BEAT_ENTER])
