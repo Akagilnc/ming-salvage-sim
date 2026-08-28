@@ -6593,11 +6593,12 @@ class GameDB:
                 if it.get("budget_key") == budget_key
             )
 
-        def _name_key(acc: str, direction: str, budget_key: str) -> str:
-            for it in budget[acc][direction]:
-                if it.get("budget_key") == budget_key:
-                    return str(it["name"])
-            return ""
+        def _names_key(acc: str, direction: str, budget_key: str) -> str:
+            return "+".join(
+                str(it["name"])
+                for it in budget[acc][direction]
+                if it.get("budget_key") == budget_key and int(it["amount"])
+            )
 
         def _parts(acc: str, direction: str, names: tuple[str, ...]) -> str:
             present = [name for name in names if _amt(acc, direction, name)]
@@ -6606,7 +6607,7 @@ class GameDB:
         gk_in, gk_out = _sum("国库", "income"), _sum("国库", "expense")
         nk_in, nk_out = _sum("内库", "income"), _sum("内库", "expense")
         army_pay_amt = _amt_key("国库", "expense", "army_pay")
-        army_pay_label = _name_key("国库", "expense", "army_pay")
+        army_pay_label = _names_key("国库", "expense", "army_pay")
         gk_income_names = _parts(
             "国库", "income",
             ("起运", "田赋辽饷盐商", "盐税", "商税"),
@@ -6681,8 +6682,35 @@ class GameDB:
                 f"{period_label(int(row['year']), int(row['period']))} {row['account']}{sign}{format_money(delta)} {row['category']}：{row['reason']}"
             )
         recent_text = "；".join(recent) if recent else "未见流水"
+        hub_result_text = ""
+        if self.is_substrate_hub_fiscal_engine_enabled():
+            hub_debit = self.conn.execute(
+                """
+                SELECT COALESCE(SUM(-delta), 0) AS amount
+                FROM economy_ledger
+                WHERE turn = ? AND account = '国库' AND category = '边饷hub'
+                """,
+                (state.turn,),
+            ).fetchone()
+            containers = self.conn.execute(
+                """
+                SELECT key, value FROM fiscal_containers
+                WHERE key IN ('hub_京运实拨', 'hub_中央军饷实拨', 'hub_京运损耗')
+                """
+            ).fetchall()
+            values = {str(row["key"]): float(row["value"] or 0) for row in containers}
+            if int(hub_debit["amount"] or 0) or len(values) == 3:
+                arrived = values.get("hub_京运实拨", 0) + values.get("hub_中央军饷实拨", 0)
+                hub_result_text = (
+                    f"边饷结算：国库实拨{format_money(int(hub_debit['amount'] or 0))}，"
+                    f"实际到达{format_money(int(arrived))}，"
+                    f"途中损耗{format_money(int(values.get('hub_京运损耗', 0)))}。"
+                )
         budget = self.treasury_budget_summary(state)
-        return f"{budget}账面：{account_text}。本{TURN_UNIT}收支：{period_text}。近账：{recent_text}。"
+        return (
+            f"{budget}账面：{account_text}。本{TURN_UNIT}收支：{period_text}。"
+            f"{hub_result_text}近账：{recent_text}。"
+        )
 
     def faction_satisfaction(self, faction: str) -> int:
         row = self.conn.execute("SELECT satisfaction FROM factions WHERE name = ?", (faction,)).fetchone()
