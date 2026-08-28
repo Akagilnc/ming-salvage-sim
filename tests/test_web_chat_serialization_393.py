@@ -546,7 +546,7 @@ def test_streamed_secret_order_update_pins_held_oral_and_keeps_it_private(game):
     db, state, content = game
     active = [c for c in content.characters.values() if c.status == "active"]
     assignee, other = active[:2]
-    order_id = create_test_secret_order(db, 
+    order_id = create_test_secret_order(db,
         state, assignee.name, "密查国丈", "初旨：暗访田宅。", [],
     )
     oral = "续密：扩查国丈典当与内库往来，不得走漏。"
@@ -596,7 +596,7 @@ def test_streamed_secret_order_progress_does_not_pin_public_held_message(game):
     """Web streamed 催办/记进展 must not invent secret bloodline."""
     db, state, content = game
     assignee = next(c for c in content.characters.values() if c.status == "active")
-    order_id = create_test_secret_order(db, 
+    order_id = create_test_secret_order(db,
         state, assignee.name, "密查国丈", "初旨：暗访田宅。", [],
     )
 

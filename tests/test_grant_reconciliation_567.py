@@ -52,7 +52,7 @@ def _in_transit_grant(db, state, *, amount=ORDERED, text="拨银押解", target_
 
 def _escort_order(db, state, grant_ids, *, tags=None):
     """密令案卷（新）→ 护卫/稽核 指向既有拨饷案卷（旧）。"""
-    order_id = create_test_secret_order(db, 
+    order_id = create_test_secret_order(db,
         state, _actor(db), "护行饷银", "沿途按月稽核",
         tags or ["护行"], deadline_months=4,
     )

@@ -9,7 +9,7 @@ from ming_sim.exceptions import LLMContractError, SettlementAbort
 from ming_sim.models import LLMConfig
 from ming_sim.qualitative import power_band, qualitative_character_axis
 from ming_sim.strict_types import IMPERIAL_AUTHORITY_BANDS
-from tests.dossier_test_helpers import rejected_verdict
+from tests.dossier_test_helpers import TYPED_COVERT_TASK, rejected_verdict
 
 
 def _dossier(db, state, text="清丈天下田亩", **payload):
@@ -1010,6 +1010,7 @@ def test_reviewed_and_palace_exempt_dossiers_close_in_one_default_batch(game, mo
         target_id=None, payload={
             "title": "密令暗查", "content": "密查辽饷侵冒。", "assignee": minister,
             "tags": [], "deadline_months": 0,
+            "covert_task": TYPED_COVERT_TASK,
         },
     )
     db.commit_pending_actions(state, action_ids=[secret_pending])

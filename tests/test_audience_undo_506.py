@@ -194,7 +194,7 @@ def test_audit_passes_whitelisted_and_catches_unwhitelisted_night_write(game):
 
     # 合法夜：仅「密令落地」直写真实盘面 → 审计通过，报出观测到的白名单操作
     def _land_secret(night_id: int, chat_id: int) -> None:
-        create_test_secret_order(db, 
+        create_test_secret_order(db,
             state, m, "密查盐引", "密查两淮盐引亏空", ["盐政"], importance=4,
         )
     legal_night, _ = _run_round(
@@ -420,7 +420,7 @@ def test_undo_landed_secret_decree_removes_all_structured_records(game):
     m = _active_minister(db, content)
 
     def _land(night_id: int, chat_id: int) -> None:
-        create_test_secret_order(db, 
+        create_test_secret_order(db,
             state, m, "密核盐课", "密核长芦盐课隐没", ["盐政", "稽核"],
             importance=5, deadline_months=6,
             excluded_names=[_active_minister(db, content, exclude={m})],

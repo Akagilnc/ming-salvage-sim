@@ -595,7 +595,7 @@ def test_ac5_zero_template_banned_tokens_exposure_and_622(game):
 
     # #622 读端改调 public fork 单源
     actor = subject_name
-    audit_order = create_test_secret_order(db, 
+    audit_order = create_test_secret_order(db,
         state, actor, "密查清丈", "逐月密奏", ["稽核"], deadline_months=4,
     )
     audit_dossier = int(db.get_dossier_for_secret_order(audit_order)["id"])

@@ -36,7 +36,7 @@ def _active_minister(db) -> str:
 
 def _long_secret(db, state, *, title="护行辽饷密件", memorial="密奏：已验关防，不得外泄"):
     actor = _active_minister(db)
-    order_id = create_test_secret_order(db, 
+    order_id = create_test_secret_order(db,
         state, actor, title, "逐月办理不得外泄", ["护行"], deadline_months=4,
         covert_task=TYPED_COVERT_TASK,
     )

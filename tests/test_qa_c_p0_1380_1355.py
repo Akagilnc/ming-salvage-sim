@@ -776,7 +776,7 @@ def test_secret_order_survives_no_edict_full_chain_settle(game, monkeypatch):
     actor = str(db.conn.execute(
         "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
     ).fetchone()["name"])
-    oid = create_test_secret_order(db, 
+    oid = create_test_secret_order(db,
         state, actor, "密查关宁欠饷", "密查关宁军饷侵冒与欠发。",
         ["关宁", "欠饷"], deadline_months=2,
         covert_task=TYPED_COVERT_TASK,
