@@ -858,12 +858,14 @@ def open_night(
         # #621：次回合召对顶出复命场面（pending todo 投影；P4 定性、不停轮）。
         # body 是开夜气氛层（含 LLM open-beat）；复命是召对顶出层——二者叠加，
         # 不得因调用方已供 body 而跳过（生产 ensure_open_night_for_audience 常带 body）。
+        # #1561 N1：仅 opening 已有显式非空 body 时叠加；无 generator 的空垫位
+        # 不得被 pending due/urge scene_text 填成确定性正文（整段迁移属 #1571）。
         from ming_sim.due_review import list_due_review_scenes
         from ming_sim.urge_lever import list_urge_audience_scenes
         scenes = list_due_review_scenes(db, state)
         # #624 / ADR 0078：谏/宽限同款次回合召对顶出（不进 due-review 白名单、不占接管窗）
         scenes = list(scenes) + list(list_urge_audience_scenes(db, state))
-        if scenes:
+        if scenes and str(open_body).strip():
             scene_lines = [str(s.get("scene_text") or "").strip() for s in scenes]
             scene_lines = [line for line in scene_lines if line]
             if scene_lines:

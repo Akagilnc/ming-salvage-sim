@@ -580,15 +580,45 @@ def test_open_and_close_beat_bodies_land(game):
 
 def test_no_generator_leaves_opening_empty_and_keeps_close_fallback(game):
     """无生成器/registry 时 opening 留空；既有 close-only fallback 不硬称夜。"""
+    from ming_sim.due_review import list_due_review_scenes
+    from ming_sim.staged_commitment import ENTRY_KIND_RUSH_REMONSTRANCE, ENTRY_KIND_STAGED
+    from ming_sim.urge_lever import list_urge_audience_scenes
+
     db, state, content = game
     minister = _active_minister(db, content)
+    issue_id = int(db.conn.execute("SELECT id FROM issues ORDER BY id LIMIT 1").fetchone()["id"])
+    db.insert_next_audience_todo(
+        commitment_ref=issue_id,
+        stage_idx=0,
+        due_turn=int(state.turn),
+        criterion_text="火器见眉目",
+        origin_context="三年火器见眉目",
+        entry_kind=ENTRY_KIND_STAGED,
+        created_turn=int(state.turn),
+    )
+    db.insert_next_audience_todo(
+        commitment_ref=issue_id,
+        stage_idx=0,
+        due_turn=int(state.turn),
+        criterion_text="期限过急",
+        origin_context="催办之诺",
+        entry_kind=ENTRY_KIND_RUSH_REMONSTRANCE,
+        created_turn=int(state.turn),
+    )
+    due_scenes = list_due_review_scenes(db, state)
+    urge_scenes = list_urge_audience_scenes(db, state)
+    assert due_scenes and "scene_text" in due_scenes[0]
+    assert urge_scenes and "scene_text" in urge_scenes[0]
     night_id, _cid = an.attach_chat_turn_to_night(
         db, state, minister, agno_session_id="s", agno_runs_before=0,
         time_of_day="戌时", location="乾清宫",
     )
     open_body = _ledger_body(db, night_id, an.TAG_OPEN_NIGHT)
-    # N1：无 beat_generator + 无 body 时 opening body 为空（不写固定 fallback）
+    # N1：无 beat_generator + 无 body 时 opening body 为空（不写固定 fallback）；
+    # pending due/urge 不得把空垫位填成确定性正文。
     assert open_body == ""
+    scroll = an.read_night_scroll(db, night_id)
+    assert all(m.get("beat") != "opening" for m in scroll)
     enter_body = _enter_body(db, night_id, minister)
     assert enter_body and "kind=" not in enter_body
     _land_reply(db, state, minister, _cid, night_id)
