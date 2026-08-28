@@ -376,6 +376,36 @@ class RejectionCollector:
         return any(row["source"] in _visible for row in (*self._buffer, *self._flushed))
 
 
+def register_runtime_outcome_callbacks(
+    db: Any,
+    *,
+    on_commit: Callable[[], None] | None = None,
+    on_rollback: Callable[[], None] | None = None,
+) -> None:
+    """Run callbacks at the real outermost commit/rollback boundary.
+
+    Nested owners register on the shared connection so side effects (JSONL mirror,
+    registry refresh) only fire after the outermost commit, and are discarded on
+    rollback. Depth 0 runs on_commit immediately.
+    """
+    if getattr(db.conn, "_atomic_depth", 0) == 0:
+        if on_commit is not None:
+            on_commit()
+        return
+    if on_commit is not None:
+        commit_callbacks = getattr(db.conn, "_runtime_commit_callbacks", None)
+        if commit_callbacks is None:
+            commit_callbacks = []
+            db.conn._runtime_commit_callbacks = commit_callbacks
+        commit_callbacks.append(on_commit)
+    if on_rollback is not None:
+        rollback_callbacks = getattr(db.conn, "_runtime_rollback_callbacks", None)
+        if rollback_callbacks is None:
+            rollback_callbacks = []
+            db.conn._runtime_rollback_callbacks = rollback_callbacks
+        rollback_callbacks.append(on_rollback)
+
+
 def mirror_rejections_after_commit(
     db: Any,
     collector: RejectionCollector,
@@ -394,16 +424,6 @@ def mirror_rejections_after_commit(
             from ming_sim.token_stats import tlog
             tlog(f"[rejection] jsonl 镜像失败（DB 行已落，仅副本丢失）：{mirror_exc}")
 
-    if getattr(db.conn, "_atomic_depth", 0) == 0:
-        _mirror()
-        return
-    commit_callbacks = getattr(db.conn, "_runtime_commit_callbacks", None)
-    if commit_callbacks is None:
-        commit_callbacks = []
-        db.conn._runtime_commit_callbacks = commit_callbacks
-    rollback_callbacks = getattr(db.conn, "_runtime_rollback_callbacks", None)
-    if rollback_callbacks is None:
-        rollback_callbacks = []
-        db.conn._runtime_rollback_callbacks = rollback_callbacks
-    commit_callbacks.append(_mirror)
-    rollback_callbacks.append(collector.reset)
+    register_runtime_outcome_callbacks(
+        db, on_commit=_mirror, on_rollback=collector.reset,
+    )

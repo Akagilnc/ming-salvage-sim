@@ -52,14 +52,16 @@ def rejected_verdict(
     return verdict
 
 
-def promulgate_proposed_appointments(db, state, content, registry=None):
-    """测试经公共判决入口顺颁当前全部 proposed 任命案卷。"""
+def promulgate_proposed_appointments(db, state, content):
+    """测试经公共判决入口顺颁当前全部 proposed 任命案卷。
+
+    物化只走 DB/content（registry=None）；需要 commit 后 agent refresh 的
+    证明改经真实 settle_with_delta 外层入口，不保留平行旧路径。
+    """
     # #657 §C.8：midzhi 亦不附 affected_parties（不猜派）。
     verdicts = [
         {"dossier_id": row["id"], "decision": "promulgated"}
         for row in db.list_decree_dossiers(status="proposed")
         if row["action_type"] == "appointment"
     ]
-    db.apply_dossier_verdicts(
-        state, verdicts, content=content, registry=registry,
-    )
+    db.apply_dossier_verdicts(state, verdicts, content=content)

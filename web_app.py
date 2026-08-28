@@ -2451,6 +2451,9 @@ class WebGame:
                                 name=args.get("name"),
                                 amount=args.get("amount"),
                                 transaction_category=args.get("transaction_category"),
+                                backing_dossier_id=args.get("backing_dossier_id"),
+                                issue_id=args.get("issue_id"),
+                                issue_disposition=args.get("issue_disposition"),
                             ),
                         )
                         if stage_failures:
@@ -2496,10 +2499,8 @@ class WebGame:
                                 court_action = "summon"
                                 next_minister = target.name
                 elif tool_name == "summon_minister" or res.startswith("__summon__"):
-                    target_name = res.removeprefix("__summon__").strip()
-                    if not target_name:
-                        args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
-                        target_name = args.get("name", "")
+                    args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
+                    target_name = res.removeprefix("__summon__").strip() or args.get("name", "")
                     if target_name:
                         try:
                             target, _is_temporary = self.session.summon_character(
@@ -2512,6 +2513,7 @@ class WebGame:
                                 target,
                                 origin_id=f"web:tool:{int(chat_turn_id or 0)}:{target.name}",
                                 origin_chat_turn_id=int(chat_turn_id or 0),
+                                travel_tone=args.get("行程语气"),
                             )
                             if decision.allowed:
                                 court_action = "summon"

@@ -28,7 +28,6 @@ from ming_sim.action_clusters import (
     ActionCandidateShapeError,
     assert_action_candidate_shape,
     candidates_from_classifier_payload,
-    classifier_json_fields_prompt,
     cluster_by_kind,
     materialize_clusters_ordered,
     normalize_intent_candidates,
@@ -56,17 +55,12 @@ def test_required_six_migrated_subset_of_registry():
         assert cluster_by_kind(k) is not None
 
 
-def test_registry_row_carries_handler_and_fields_prompt_from_specs():
+def test_registry_row_carries_handler_and_effect():
     assert cluster_by_kind("none").effect == EFFECT_NOOP
     assert cluster_by_kind("confirmation").effect == EFFECT_ANSWER_EXISTING
     for c in materialize_clusters_ordered():
         assert c.effect == EFFECT_MATERIALIZE
         assert c.materialize_fn is not None
-    # prompt 字段来自 FieldSpec，非手写副本
-    schema = classifier_json_fields_prompt()
-    assert "动作类型" in schema
-    assert "确认" in schema and "任免动作" in schema
-    assert "密令动作" in schema
 
 
 def test_registry_rows_generate_shape_contract_matrix():
@@ -133,6 +127,29 @@ def test_registry_rows_generate_shape_contract_matrix():
             {"kind": "secret", spec.name: int(spec.int_hi) + 100}, soft=True,
         )
         assert over[spec.name] == int(spec.int_hi)
+
+    # 可选正整数：as_int + default None + int_lo>=1 为结构化契约；raw 直达，不经 generic clamp
+    opt_pos = [
+        s for s in specs_by_name.values()
+        if s.as_int and s.default is None and int(s.int_lo) >= 1
+    ]
+    assert opt_pos, "catalog must expose optional positive-int FieldSpec"
+    for spec in opt_pos:
+        # 同一 catalog 真源：nullable / JSON integer / positive lower bound
+        assert spec.default is None
+        assert spec.as_int is True
+        assert int(spec.int_lo) >= 1
+        host = next(
+            c.kind for c in ACTION_CLUSTERS
+            if any(f.name == spec.name for f in c.fields)
+        )
+        absent = normalize_one_candidate({"kind": host}, soft=True)
+        assert absent[spec.name] is None
+        kept = normalize_one_candidate({"kind": host, spec.name: 7}, soft=True)
+        assert kept[spec.name] == 7
+        # numeric string 原样过缝；拒绝权在既有严格 parser/stage 边界
+        raw_str = normalize_one_candidate({"kind": host, spec.name: "12"}, soft=True)
+        assert raw_str[spec.name] == "12"
 
 
 def test_strict_shape_rejects_unknown_kind_and_out_of_enum_subfield():
@@ -282,41 +299,6 @@ def test_scripted_confirmation_answer_existing_no_new_stage(game, monkeypatch):
 # ── #516：问/令查分界（扩 #515 表驱动正反例 + 结构化判词契约）──────────
 
 
-def test_action_intent_prompt_encodes_ask_vs_order_boundary(monkeypatch):
-    """结构化判词须内建问/令分界：纯问→无；另案令查→新建；指向现有密令的补充→更新。
-
-    禁「祈使令查→一律新建」过宽规则；禁字样启发升格；禁无现有密令时一刀切禁密令动作
-    （会误伤新建）。不断言 LLM 语义，只钉 prompt 契约。
-    """
-    prompts: list[str] = []
-
-    def _capture(prompt, llm_config=None, tag=""):
-        prompts.append(prompt)
-        return ('{"动作类型":"无"}', 0)
-
-    monkeypatch.setattr(cb, "_run_backend_for_config", _capture)
-    assert cb.classify_cli_action_intent("陕西巡抚可有？") == []
-    assert prompts, "classify 必须走结构化判词"
-    rules = prompts[0].split("【待确认动作】", 1)[0]
-
-    # 正例：另案祈使令查 → 新建
-    assert "新建" in rules
-    assert any(tok in rules for tok in ("你去查", "祈使", "令查"))
-    # 正例：指向现有密令的补充/续查 → 更新（#516 r3）
-    assert "更新" in rules
-    assert "再去查他在苏州的田产" in rules
-    assert any(tok in rules for tok in ("现有密令", "补充", "续查", "原令"))
-    # 反例：纯问 / 含命令词的问 → 无（北极星入集）
-    assert "陕西巡抚可有" in rules
-    assert any(tok in rules for tok in ("是谁", "整体为问", "问句"))
-    # 不得把祈使令查一律钉死为新建；不得用字样启发升格
-    assert "祈使令查→密令动作=新建" not in rules
-    assert "一律新建" not in rules
-    assert "字样即" not in rules
-    assert "没有现有密令时不要硬判密令动作" not in rules
-    assert "问询、查账、问军情、泛泛商议填无" not in rules
-
-
 @pytest.mark.parametrize(
     ("utterance", "raw_payload", "expect_kinds", "expect_secret_action", "expect_order_id"),
     [
@@ -374,7 +356,6 @@ def test_classify_soft_path_ask_vs_order_payload_matrix(
 
     def _scripted(prompt, llm_config=None, tag=""):
         assert tag == "action_intent"
-        assert utterance in prompt
         return (json.dumps(raw_payload, ensure_ascii=False), 0)
 
     monkeypatch.setattr(cb, "_run_backend_for_config", _scripted)

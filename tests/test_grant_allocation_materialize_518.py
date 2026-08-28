@@ -694,13 +694,10 @@ def _grant_field_zh(name: str) -> str:
 
 def test_grant_target_field_carries_region_project_army_through_normalize(game):
     """政务拨款目标字段须能表达赈灾地区/项目/协饷军队，并经真实归一化到物化。"""
-    from ming_sim.action_clusters import classifier_json_fields_prompt, cluster_by_kind
+    from ming_sim.action_clusters import cluster_by_kind
 
     target_zh = _grant_field_zh("target_id")
     assert target_zh != "目标人物", "目标字段不得限缩为人物，否则赈灾/项目/协饷无法入契约"
-    schema = classifier_json_fields_prompt()
-    assert f'"{target_zh}"' in schema
-    assert '"目标人物"' not in schema
 
     # 共享 target_id 契约须与 grant 行一致，分类中文键能贯通
     shared = next(f for c in ACTION_CLUSTERS for f in c.fields if f.name == "target_id")

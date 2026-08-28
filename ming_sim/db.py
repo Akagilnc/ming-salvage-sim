@@ -535,6 +535,87 @@ def _has_stop_condition(stop_condition: object) -> bool:
     return isinstance(parsed, (dict, list)) and bool(parsed)
 
 
+def _optional_positive_dossier_id(raw: object, *, field: str) -> Optional[int]:
+    """#658：typed dossier id 单权威——真正缺省→None；一旦出现只接正整数。
+
+    拒 0/负/bool/float/数字字符串。target 与 backing 共吃，禁第二份 optional-positive。
+    """
+    if raw in (None, ""):
+        return None
+    value = strict_int(raw, accept_numeric_strings=False)
+    if value <= 0:
+        raise ValueError(f"{field} 非法 shape：{raw!r}")
+    return value
+
+
+def imperial_push_target_dossier_id(payload: object) -> Optional[int]:
+    """#658：解析合法御笔强推 target_dossier_id；缺省 → None；坏 shape 响亮失败。
+
+    capture / session.add / db.update / extract 共吃本函数——禁第二份 int>0 分支。
+    Mapping 同时认 target_dossier_id 与抽取原键 目标案卷ID。
+    """
+    if isinstance(payload, Mapping):
+        if "target_dossier_id" in payload:
+            raw = payload.get("target_dossier_id")
+        elif "目标案卷ID" in payload:
+            raw = payload.get("目标案卷ID")
+        else:
+            return None
+    else:
+        raw = payload
+    return _optional_positive_dossier_id(raw, field="target_dossier_id")
+
+
+def parse_backing_dossier_id(raw: object) -> Optional[int]:
+    """#658：处置 backing_dossier_id 单权威解析；缺省→None；坏 shape 响亮失败。
+
+    首写 stage 与 durable apply 共吃；禁 generic as_int clamp 成「未提供」。
+    """
+    return _optional_positive_dossier_id(raw, field="backing_dossier_id")
+
+
+def require_backing_dossier_id(db: object, raw: object) -> Optional[int]:
+    """解析 + 存在性：有值则案卷必须在册；供 stage 首写与 apply 复用。"""
+    backing = parse_backing_dossier_id(raw)
+    if backing is None:
+        return None
+    getter = getattr(db, "get_decree_dossier", None)
+    if getter is None or getter(backing) is None:
+        raise ValueError(f"backing_dossier_id 所指案卷不存在：{backing}")
+    return backing
+
+
+def directive_payload_has_ordinary_triad(payload: Mapping[str, object]) -> bool:
+    """普通旨意结构化 triad：动作类型 + 目标类型 + 目标ID。"""
+    return all(
+        str(payload.get(key) or "").strip()
+        for key in ("dossier_action_type", "target_kind", "target_id")
+    )
+
+
+def classify_directive_structured_kind(payload: Mapping[str, object]) -> str:
+    """#658 旨意结构化互斥权威：'push' | 'ordinary' | 'empty'；并存响亮拒绝。
+
+    extract / capture / staging / merge / ensure 共吃——禁第二份 triad↔target 判定。
+    """
+    has_push = imperial_push_target_dossier_id(payload) is not None
+    has_triad = directive_payload_has_ordinary_triad(payload)
+    if has_push and has_triad:
+        raise ValueError(
+            "旨意不得同时带普通结构化 triad 与御笔强推 target_dossier_id"
+        )
+    if has_push:
+        return "push"
+    if has_triad:
+        return "ordinary"
+    return "empty"
+
+
+def directive_payload_admits_structured_write(payload: Mapping[str, object]) -> bool:
+    """旨意可落库：普通 triad，或 #658 御笔强推 typed target（互斥）。"""
+    return classify_directive_structured_kind(payload) != "empty"
+
+
 def _coerce_deadline_months(raw: object, *, default: int = 0) -> int:
     """解析密令期限；显式 0 是合法值，不能被缺省兜底吞掉。"""
     if raw is None:
@@ -1568,17 +1649,23 @@ class GameDB:
             CREATE INDEX IF NOT EXISTS idx_dossier_reconciliations_dossier
                 ON decree_dossier_reconciliations(dossier_id, turn, id);
             -- ADR 0070：担名与办事名单分立；条目只能指向落条目前已存在的案卷。
+            -- #658 later-wins：provenance 恰为 source_chat_turn_id>0 或 decision_key 非空之一。
+            -- chat_turn 删除走显式清理（见 rollback 路径），不靠 FK CASCADE 绑死批红路径。
             CREATE TABLE IF NOT EXISTS decree_dossier_endorsements (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 dossier_id INTEGER NOT NULL,
                 form TEXT NOT NULL CHECK(form IN ('会签','当面站台','御笔手敕')),
                 endorser_id TEXT NOT NULL DEFAULT '',
                 imperial INTEGER NOT NULL DEFAULT 0 CHECK(imperial IN (0,1)),
-                source_chat_turn_id INTEGER NOT NULL,
+                source_chat_turn_id INTEGER NOT NULL DEFAULT 0,
+                decision_key TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(dossier_id, form, endorser_id, imperial, source_chat_turn_id),
-                FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE,
-                FOREIGN KEY(source_chat_turn_id) REFERENCES chat_turns(id) ON DELETE CASCADE
+                UNIQUE(dossier_id, form, endorser_id, imperial, source_chat_turn_id, decision_key),
+                CHECK (
+                    (source_chat_turn_id > 0 AND decision_key = '')
+                    OR (source_chat_turn_id = 0 AND decision_key != '')
+                ),
+                FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
             );
             CREATE INDEX IF NOT EXISTS idx_dossier_endorsements_dossier
                 ON decree_dossier_endorsements(dossier_id, id);
@@ -2205,6 +2292,7 @@ class GameDB:
             "INTEGER NOT NULL DEFAULT 0 CHECK (edict_overdraw >= 0)",
         )
         self._migrate_building_logs_to_durable_audit()
+        self._migrate_endorsement_decision_provenance()
         self._ensure_office_type_parents()
         self._ensure_event_parents()
         for column, definition in {
@@ -3443,6 +3531,67 @@ class GameDB:
                 if str(office_type).strip()
             }
         ) - set(PERSON_TITLE_KINDS)
+
+    def _migrate_endorsement_decision_provenance(self) -> None:
+        """#658 ADR 0070 later-wins：背书 provenance = chat_turn XOR decision_key。
+
+        旧表带 chat_turns FK 且无 decision_key；重建以允许批红路径不伪造 chat turn。
+        既有行一律 source_chat_turn_id>0 + decision_key=''，满足新 CHECK。
+        """
+        cols = {
+            str(row["name"])
+            for row in self.conn.execute(
+                "PRAGMA table_info(decree_dossier_endorsements)"
+            ).fetchall()
+        }
+        if not cols:
+            return
+        has_decision_key = "decision_key" in cols
+        has_chat_fk = any(
+            str(row["table"]) == "chat_turns"
+            for row in self.conn.execute(
+                "PRAGMA foreign_key_list(decree_dossier_endorsements)"
+            ).fetchall()
+        )
+        if has_decision_key and not has_chat_fk:
+            return
+        # 旧表可能尚无 decision_key 列；SELECT 用条件表达式兜底。
+        select_key = (
+            "decision_key" if has_decision_key else "'' AS decision_key"
+        )
+        self.conn.executescript(
+            f"""
+            CREATE TABLE decree_dossier_endorsements_658 (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                dossier_id INTEGER NOT NULL,
+                form TEXT NOT NULL CHECK(form IN ('会签','当面站台','御笔手敕')),
+                endorser_id TEXT NOT NULL DEFAULT '',
+                imperial INTEGER NOT NULL DEFAULT 0 CHECK(imperial IN (0,1)),
+                source_chat_turn_id INTEGER NOT NULL DEFAULT 0,
+                decision_key TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(dossier_id, form, endorser_id, imperial, source_chat_turn_id, decision_key),
+                CHECK (
+                    (source_chat_turn_id > 0 AND decision_key = '')
+                    OR (source_chat_turn_id = 0 AND decision_key != '')
+                ),
+                FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
+            );
+            INSERT INTO decree_dossier_endorsements_658
+                (id, dossier_id, form, endorser_id, imperial,
+                 source_chat_turn_id, decision_key, created_at)
+            SELECT id, dossier_id, form, endorser_id, imperial,
+                   source_chat_turn_id,
+                   {select_key},
+                   created_at
+            FROM decree_dossier_endorsements;
+            DROP TABLE decree_dossier_endorsements;
+            ALTER TABLE decree_dossier_endorsements_658
+                RENAME TO decree_dossier_endorsements;
+            CREATE INDEX IF NOT EXISTS idx_dossier_endorsements_dossier
+                ON decree_dossier_endorsements(dossier_id, id);
+            """
+        )
 
     def _migrate_building_logs_to_durable_audit(self) -> None:
         """Keep building history after its live building has been removed."""
@@ -12083,6 +12232,21 @@ class GameDB:
         self, payload: Dict[str, object], *, content=None, current_turn: int = 0,
     ) -> Dict[str, object]:
         """机械旨意的唯一结构边界；不完整载荷响亮拒绝。"""
+        # #658：纯御笔强推不经 ordinary triad 归一（prepare/commit/ensure 共吃）。
+        # text/actor 等会话字段须保留——pending payload 以它们为成案正文真源。
+        if classify_directive_structured_kind(payload) == "push":
+            push_id = imperial_push_target_dossier_id(payload)
+            assert push_id is not None
+            mode = self._normalize_dossier_mode(
+                payload["mode"] if "mode" in payload else "ordinary"
+            )
+            out: Dict[str, object] = {
+                "target_dossier_id": int(push_id), "mode": mode,
+            }
+            for key in ("text", "actor", "source_chat_turn_id"):
+                if payload.get(key) not in (None, ""):
+                    out[key] = payload[key]
+            return out
         normalized = dict(payload)
         normalized["mode"] = self._normalize_dossier_mode(
             normalized["mode"] if "mode" in normalized else "ordinary"
@@ -12262,12 +12426,26 @@ class GameDB:
         if action == "punishment":
             # #517：与 grant_allocation / military_order 一致——合法非空动作在 admission 强制。
             # 枚举唯一真源 = ACTION_CLUSTERS punishment FieldSpec（经 punish_actions_effective）。
-            from ming_sim.action_materialize import punish_actions_effective
+            from ming_sim.action_materialize import (
+                issue_dispositions_allowed,
+                punish_actions_effective,
+            )
             punish_action = str(normalized.get("punish_action") or "").strip()
-            if not punish_action or punish_action not in punish_actions_effective():
+            issue_disposition = str(normalized.get("issue_disposition") or "").strip()
+            if (
+                not punish_action
+                or (
+                    punish_action not in punish_actions_effective()
+                    and issue_disposition not in issue_dispositions_allowed()
+                )
+            ):
                 raise ValueError(
                     f"惩处旨意 punish_action 非法或缺失：{punish_action or '(空)'}"
                 )
+            if issue_disposition == "办人" and punish_action != "拿问下狱":
+                raise ValueError("弹劾潮办人须使用 canonical 拿问下狱动作")
+            if issue_disposition == "压下" and punish_action != "无":
+                raise ValueError("弹劾潮压下须使用 canonical 无动作")
             normalized["punish_action"] = punish_action
             # #517 r2：罚俸须正数 amount，成案前响亮拒绝（不得归零暂存后判后才炸）。
             if punish_action == "罚俸":
@@ -14878,24 +15056,35 @@ class GameDB:
                 raise ValueError("委派人须为同案主办/协办且不得自委派")
 
     def _validate_dossier_endorsement(
-        self, dossier_id: object, *, form: object, source_chat_turn_id: object,
+        self, dossier_id: object, *, form: object,
+        source_chat_turn_id: object = 0, decision_key: object = "",
         endorser_id: object = "", imperial: object = False,
-    ) -> tuple[int, int, str, str, bool]:
+    ) -> tuple[int, int, str, str, str, bool]:
+        """#658：provenance 恰取 source_chat_turn_id>0 或 decision_key 非空之一。"""
         if isinstance(dossier_id, bool) or not isinstance(dossier_id, int):
             raise ValueError("背书案卷 id 须为整数")
         if isinstance(source_chat_turn_id, bool) or not isinstance(source_chat_turn_id, int):
             raise ValueError("背书来源对话轮 id 须为整数")
+        if not isinstance(decision_key, str):
+            raise ValueError("背书 decision_key 须为字符串")
         if not isinstance(form, str) or not isinstance(endorser_id, str):
             raise ValueError("背书形式与人物须为字符串")
-        did, cid = dossier_id, source_chat_turn_id
+        did, cid = dossier_id, int(source_chat_turn_id)
+        dkey = decision_key.strip()
         kind, person = form.strip(), endorser_id.strip()
         if not isinstance(imperial, bool):
             raise ValueError("御笔标记须为布尔")
         is_imperial = imperial
+        # 恰一种 provenance：召对 chat_turn XOR 批红/下旨 decision_key。
+        has_turn = cid > 0
+        has_key = bool(dkey)
+        if has_turn == has_key:
+            raise ValueError("背书 provenance 须恰为 source_chat_turn_id 或 decision_key 之一")
         if self.conn.execute("SELECT 1 FROM decree_dossiers WHERE id=?", (did,)).fetchone() is None:
             raise ValueError("背书所指案卷不存在")
-        if self.conn.execute("SELECT 1 FROM chat_turns WHERE id=?", (cid,)).fetchone() is None:
-            raise ValueError("背书来源对话轮不存在")
+        if has_turn:
+            if self.conn.execute("SELECT 1 FROM chat_turns WHERE id=?", (cid,)).fetchone() is None:
+                raise ValueError("背书来源对话轮不存在")
         if kind not in {"会签", "当面站台", "御笔手敕"}:
             raise ValueError("背书形式非法")
         if kind == "御笔手敕":
@@ -14906,26 +15095,28 @@ class GameDB:
                 raise ValueError("会签/当面站台必须具名背书人")
             if self.conn.execute("SELECT 1 FROM characters WHERE name=?", (person,)).fetchone() is None:
                 raise ValueError("背书人物不存在")
-        return did, cid, kind, person, is_imperial
+        return did, cid, dkey, kind, person, is_imperial
 
     def add_dossier_endorsement(
-        self, dossier_id: int, *, form: str, source_chat_turn_id: int,
+        self, dossier_id: int, *, form: str,
+        source_chat_turn_id: int = 0, decision_key: str = "",
         endorser_id: str = "", imperial: bool = False, commit: bool = True,
     ) -> int:
         """Persist one already-spoken ADR 0070 endorsement; never re-judge willingness."""
-        did, cid, kind, person, is_imperial = self._validate_dossier_endorsement(
+        did, cid, dkey, kind, person, is_imperial = self._validate_dossier_endorsement(
             dossier_id, form=form, source_chat_turn_id=source_chat_turn_id,
-            endorser_id=endorser_id, imperial=imperial,
+            decision_key=decision_key, endorser_id=endorser_id, imperial=imperial,
         )
         self.conn.execute(
             "INSERT OR IGNORE INTO decree_dossier_endorsements "
-            "(dossier_id,form,endorser_id,imperial,source_chat_turn_id) VALUES (?,?,?,?,?)",
-            (did, kind, person, int(is_imperial), cid),
+            "(dossier_id,form,endorser_id,imperial,source_chat_turn_id,decision_key) "
+            "VALUES (?,?,?,?,?,?)",
+            (did, kind, person, int(is_imperial), cid, dkey),
         )
         row = self.conn.execute(
             "SELECT id FROM decree_dossier_endorsements WHERE dossier_id=? AND form=? "
-            "AND endorser_id=? AND imperial=? AND source_chat_turn_id=?",
-            (did, kind, person, int(is_imperial), cid),
+            "AND endorser_id=? AND imperial=? AND source_chat_turn_id=? AND decision_key=?",
+            (did, kind, person, int(is_imperial), cid, dkey),
         ).fetchone()
         if commit:
             self._commit_dossier_write(True)
@@ -14933,7 +15124,7 @@ class GameDB:
 
     def list_dossier_endorsements(self, dossier_id: int) -> List[Dict[str, object]]:
         rows = self.conn.execute(
-            "SELECT id,dossier_id,form,endorser_id,imperial,source_chat_turn_id "
+            "SELECT id,dossier_id,form,endorser_id,imperial,source_chat_turn_id,decision_key "
             "FROM decree_dossier_endorsements WHERE dossier_id=? ORDER BY id",
             (int(dossier_id),),
         ).fetchall()
@@ -14941,8 +15132,53 @@ class GameDB:
             "id": int(row["id"]), "dossier_id": int(row["dossier_id"]),
             "form": str(row["form"]), "endorser_id": str(row["endorser_id"]),
             "imperial": bool(row["imperial"]),
-            "source_chat_turn_id": int(row["source_chat_turn_id"]),
+            "source_chat_turn_id": int(row["source_chat_turn_id"] or 0),
+            "decision_key": str(row["decision_key"] or ""),
         } for row in rows]
+
+    def update_decree_dossier_payload(
+        self, dossier_id: int, payload: Mapping[str, object], *, commit: bool = True,
+    ) -> None:
+        """Replace payload_json for an existing dossier (deliberation_state 等 typed 字段)."""
+        did = int(dossier_id)
+        if self.conn.execute("SELECT 1 FROM decree_dossiers WHERE id=?", (did,)).fetchone() is None:
+            raise KeyError(f"案卷不存在：{did}")
+        if not isinstance(payload, Mapping):
+            raise ValueError("案卷 payload 须为对象")
+        self.conn.execute(
+            "UPDATE decree_dossiers SET payload_json=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            (json.dumps(dict(payload), ensure_ascii=False), did),
+        )
+        if commit:
+            self._commit_dossier_write(True)
+
+    def find_deliberation_dossier_by_decision_key(
+        self, decision_key: str,
+    ) -> Optional[Dict[str, object]]:
+        """按批红 decision_key 取廷议案卷（payload.decision_key + deliberation_state）。"""
+        key = str(decision_key or "").strip()
+        if not key:
+            return None
+        row = self.conn.execute(
+            """
+            SELECT * FROM decree_dossiers
+            WHERE json_extract(payload_json, '$.decision_key') = ?
+              AND json_extract(payload_json, '$.deliberation_state') IS NOT NULL
+            ORDER BY id LIMIT 1
+            """,
+            (key,),
+        ).fetchone()
+        if row is None:
+            return None
+        out = self._dossier_row(row)
+        # 读缝附 payload 对象，避免调用方只认 payload 键时踩空
+        try:
+            out["payload"] = json.loads(str(out.get("payload_json") or "{}"))
+        except (TypeError, ValueError):
+            out["payload"] = {}
+        if not isinstance(out["payload"], dict):
+            out["payload"] = {}
+        return out
 
     def append_decree_dossier_participants(
         self, dossier_id: int, participants: Iterable[object], *,
@@ -15063,6 +15299,28 @@ class GameDB:
             (int(secret_order_id),),
         ).fetchone()
         return None if row is None else self._dossier_row(row)
+
+    def list_endorsed_dossier_candidates(
+        self, current_turn: int,
+    ) -> List[Dict[str, object]]:
+        """Typed backing choices projected from durable named endorsements."""
+        rows = self.conn.execute(
+            """SELECT d.id AS dossier_id, e.endorser_id, d.decree_text AS subject
+               FROM decree_dossier_endorsements e
+               JOIN decree_dossiers d ON d.id=e.dossier_id
+               WHERE e.endorser_id<>'' AND d.created_turn<=?
+               ORDER BY d.id DESC, e.id DESC""",
+            (int(current_turn),),
+        ).fetchall()
+        result: List[Dict[str, object]] = []
+        for row in rows:
+            dossier_id = int(row["dossier_id"])
+            result.append({
+                "dossier_id": dossier_id,
+                "endorser_id": str(row["endorser_id"]),
+                "subject": str(row["subject"] or ""),
+            })
+        return result
 
     def list_referenceable_dossiers(
         self, character_name: str, current_turn: int,
@@ -15343,7 +15601,11 @@ class GameDB:
         return out
 
     def list_decree_dossiers_for_simulation(self, turn: int) -> List[Dict[str, object]]:
-        """本月新生/重判案卷及所有未结案执行中案卷。"""
+        """本月新生/重判案卷及所有未结案执行中案卷。
+
+        #658：旧案本回合刚获 pending 颁布 verdict（如 stalled→backed 后顺颁）
+        亦入同一清单，不另建第二可见集。
+        """
         rows = self.conn.execute(
             """
             SELECT d.*,
@@ -15364,6 +15626,13 @@ class GameDB:
                        AND d.held_turn > 0
                        AND ? > d.held_turn
                     )
+                    OR (
+                           d.promulgation_decision=''
+                       AND EXISTS (
+                               SELECT 1 FROM pending_promulgation_verdicts pv
+                               WHERE pv.turn=? AND pv.dossier_id=d.id
+                           )
+                    )
                 )
             ) OR (
                     d.status='executing'
@@ -15383,7 +15652,8 @@ class GameDB:
             """,
             (
                 int(turn), int(turn), int(turn),
-                int(turn), int(turn), int(turn), int(turn), int(turn),
+                int(turn), int(turn), int(turn),
+                int(turn), int(turn), int(turn),
             ),
         ).fetchall()
         visible = []
@@ -15637,8 +15907,9 @@ class GameDB:
         gatekeeper_id: Optional[str] = None,
         criteria_snapshot: Optional[Dict[str, object]] = None,
         content=None, registry=None,
-    ) -> None:
+    ) -> set[str]:
         """判决注入 seam：结构化载荷只在顺颁后从同一案卷物化。"""
+        affected_people: set[str] = set()
         with atomic(self):
             row = self.get_decree_dossier(dossier_id)
             if row is None:
@@ -15656,7 +15927,7 @@ class GameDB:
                     self._append_midzhi_stigma(
                         dossier_id, decision="rejected", turn=state.turn, commit=False,
                     )
-                return
+                return affected_people
             if decision == "force_promulgated":
                 turn_row = self.conn.execute(
                     "SELECT turn FROM game_state WHERE id=1"
@@ -15733,7 +16004,7 @@ class GameDB:
                 self.transition_decree_dossier(
                     dossier_id, "executing", commit=False,
                 )
-                return
+                return affected_people
             # Narrative-owned effects are deliberately left to the
             # simulator/extractor; immediate-owned effects were staged before
             # this gate.  Only payload-owned actions enter this dispatcher.
@@ -15789,7 +16060,7 @@ class GameDB:
                         dossier_id, "fulfilled", "成案时即生效",
                         state.turn, close=True, commit=False,
                     )
-                return
+                return affected_people
             if row["action_type"] in {"appointment", "dismiss_assignment"}:
                 pa = {
                     "id": int(row["pending_action_id"]),
@@ -15803,10 +16074,33 @@ class GameDB:
                 )
                 self.conn._materializing_dossier_id = int(dossier_id)
                 try:
-                    if not self._commit_office_action(
-                        state, pa, payload, content, registry,
-                    ):
+                    affected_people = self._commit_office_action(
+                        state, pa, payload, content, None,
+                    )
+                    if not affected_people:
                         raise ValueError("任免案卷载荷物化失败")
+                    if (
+                        pa["action"] == "任命"
+                        and str(payload.get("summon_after") or "否") == "是"
+                    ):
+                        from ming_sim.audience_night import activate_office_summon
+                        entry = activate_office_summon(self, int(pa["id"]))
+                        if entry is None:
+                            raise ValueError("任命后传召缺原始故事账")
+                        # Activate only here; #670 consumes once per night/person
+                        # after the batch (apply_dossier_verdicts) or at the end of
+                        # this single promulgation when not deferred.
+                        nights = getattr(self.conn, "_deferred_office_summon_nights", None)
+                        if nights is not None:
+                            nights.add(int(entry["night_id"]))
+                        else:
+                            from ming_sim.audience_night import (
+                                commit_fresh_summons_for_night,
+                            )
+                            commit_fresh_summons_for_night(
+                                self, state, int(entry["night_id"]),
+                                content=content, registry=None,
+                            )
                 finally:
                     self.conn._materializing_dossier_id = previous_materializing
             elif row["action_type"] == "grant_allocation":
@@ -15857,7 +16151,7 @@ class GameDB:
                                     f"拨饷不足额：应拨{amount}两，实拨{spent}两",
                                     state.turn, close=True, commit=False,
                                 )
-                                return
+                                return affected_people
                     else:
                         actual = self.record_issue_economy_move(
                             state,
@@ -15883,7 +16177,7 @@ class GameDB:
                                 f"拨帑不足额：应拨{amount}两，实拨{abs(actual)}两",
                                 state.turn, close=True, commit=False,
                             )
-                            return
+                            return affected_people
             elif row["action_type"] == "pay_order_override":
                 # #653 / ADR 0055/0090：偿还序 override＋折发旨判后物化——顺颁/强颁
                 # 走 materialize_pay_order_decree 唯一入口（真实案卷资格＋颁布门校验、
@@ -15894,9 +16188,9 @@ class GameDB:
                 self._apply_pay_order_override_effect(state, row, payload, dossier_id)
             elif row["action_type"] == "punishment":
                 # #517 / ADR 0055：结构化惩处效果自案卷物化，判决后才落人物/钱粮。
-                self._apply_punishment_verdict_effect(
-                    state, row, payload, dossier_id, content=content, registry=registry,
-                )
+                affected_people.update(self._apply_punishment_verdict_effect(
+                    state, row, payload, dossier_id, content=content, registry=None,
+                ) or set())
             elif row["action_type"] == "pacification":
                 # #522 / ADR 0055：结构化招抚效果自案卷物化，交既有 #190 易主。
                 # 反噬绑定目标当前原势力真实失方削弱（ADR 0009 决定 3）；禁止空对象。
@@ -15939,7 +16233,7 @@ class GameDB:
                     state,
                     [item],
                     content=content,
-                    registry=registry,
+                    registry=None,
                     origin_ref=origin_ref,
                     require_origin=True,
                     external_transaction=True,
@@ -15953,6 +16247,7 @@ class GameDB:
                     if results and isinstance(results[0], dict):
                         reason = str(results[0].get("reason") or "")
                     raise ValueError(reason or "招抚案卷易主物化失败")
+                affected_people.add(target)
             elif row["action_type"] == "authorization":
                 # #528 / #611：公开委任只接 authority_changes 授予槽；判后物化。
                 # Skill grants are a distinct character-skill mechanic, not an authority map.
@@ -15978,19 +16273,19 @@ class GameDB:
                 if not self._apply_assignment_verdict_effect(
                     state, row, payload, dossier_id,
                 ):
-                    return
+                    return affected_people
             elif row["action_type"] == "referral":
                 # #524 / ADR 0055：下议机械效果=initiative（机关 participants + end_turn）。
                 if not self._apply_referral_verdict_effect(
                     state, row, payload, dossier_id,
                 ):
-                    return
+                    return affected_people
             elif row["action_type"] == "military_order":
                 # #521 / ADR 0055：军令 station/office 自案卷物化；due_turn 已在案卷。
-                self._apply_military_order_verdict_effect(
+                affected_people.update(self._apply_military_order_verdict_effect(
                     state, row, payload, dossier_id,
-                    content=content, registry=registry,
-                )
+                    content=content, registry=None,
+                ) or set())
             if policy["execution_surface"] in {"terminal", "immediate"}:
                 self.record_dossier_execution(
                     dossier_id, "fulfilled", "颁布即终局", state.turn,
@@ -16000,6 +16295,7 @@ class GameDB:
                 self.transition_decree_dossier(
                     dossier_id, "executing", commit=False,
                 )
+        return affected_people
 
     _OVERRIDE_AUTHORITY_COST = -5
     _REACTION_INTENSITY = {"weak": 4, "strong": 8}
@@ -16496,11 +16792,67 @@ class GameDB:
             fail_reason = str(rejected[0].get("reason") or "")
             raise ValueError(fail_reason or "军令调驻物化失败")
 
+    @staticmethod
+    def _affected_people_from_applied_rows(rows) -> set[str]:
+        """Canonical applied rows → formal person names (appointee + displaced).
+
+        Partial concurrent-office displacements live only on the row's displaced
+        list (full 听用候铨 displacements are also synthesized as cascade rows).
+        Outer settle refresh must cover both so partially-displaced holders are
+        not left on a stale Agent identity after commit.
+        """
+        names: set[str] = set()
+        for item in rows or ():
+            if not isinstance(item, dict) or item.get("rejected"):
+                continue
+            person = str(item.get("name") or item.get("人物") or "").strip()
+            if person:
+                names.add(person)
+            for part in item.get("displaced") or []:
+                displaced_name = str(part).split(":", 1)[0].strip()
+                if displaced_name:
+                    names.add(displaced_name)
+        return names
+
+    def _affected_people_from_pending_action(
+        self, pa: Dict[str, object], payload: Dict[str, object],
+    ) -> set[str]:
+        """Formal people mutated directly by a committed pending action.
+
+        Office rows only stage dossiers here—person impact arrives via
+        promulgation affected sets. Consort cultivation and secret-order
+        writes change agent context immediately and must join outer-commit
+        registry projection when settle passes registry=None.
+        """
+        kind = str(pa.get("kind") or "")
+        action = str(pa.get("action") or "")
+        if kind == "consort" and action == "调教":
+            name = str(payload.get("name") or pa.get("minister_name") or "").strip()
+            return {name} if name else set()
+        if kind != "secret_order":
+            return set()
+        if action == "新建":
+            name = str(
+                payload.get("assignee") or pa.get("minister_name") or ""
+            ).strip()
+            return {name} if name else set()
+        oid = pa.get("target_id")
+        if oid is None:
+            return set()
+        order = self.get_secret_order(int(oid))
+        if order is None:
+            return set()
+        name = str(order.get("minister_name") or "").strip()
+        return {name} if name else set()
+
     def _apply_military_order_office_effect(
         self, state, payload, *, actor: str, reason: str, origin_ref: str,
         content=None, registry=None,
-    ) -> None:
-        """军令职守面：payload.office / office_changes → 人物变更唯一核。"""
+    ) -> set[str]:
+        """军令职守面：payload.office / office_changes → 人物变更唯一核。
+
+        返回实际成功改变的正式人物名（含 displaced），供 outer-commit refresh。
+        """
         office_items: List[Dict[str, object]] = []
         raw_changes = payload.get("office_changes")
         if isinstance(raw_changes, list):
@@ -16522,7 +16874,7 @@ class GameDB:
                     "reason": reason,
                 })
         if not office_items:
-            return
+            return set()
         from ming_sim.issues import _apply_person_changes
         prepared: List[Dict[str, object]] = []
         for item in office_items:
@@ -16537,7 +16889,7 @@ class GameDB:
             state,
             prepared,
             content=content,
-            registry=registry,
+            registry=None,
             origin_ref=origin_ref,
             require_origin=True,
             external_transaction=True,
@@ -16551,6 +16903,7 @@ class GameDB:
             if results and isinstance(results[0], dict):
                 fail_reason = str(results[0].get("reason") or "")
             raise ValueError(fail_reason or "军令职守变更物化失败")
+        return self._affected_people_from_applied_rows(accepted_p)
 
     def _apply_authorization_verdict_effect(
         self, state, row, payload, dossier_id,
@@ -16739,12 +17092,13 @@ class GameDB:
 
     def _apply_military_order_verdict_effect(
         self, state, row, payload, dossier_id, *, content=None, registry=None,
-    ) -> None:
+    ) -> set[str]:
         """#521：军令案卷顺颁后的结构化效果（受判类，打回不进此函数）。
 
         - 既有军 station → army 写核（apply_army_deltas）；不得 new_armies
         - 真实职守变化 → 人物变更/任免唯一核（ADR 0009）
         - 期限只落案卷 due_turn（限期出战 admission 写入）；无胜负引擎
+        返回职守面实际改变的正式人物名。
         """
         origin_ref = f"dossier:{int(dossier_id)}"
         army_id = str(
@@ -16772,16 +17126,16 @@ class GameDB:
             reason=reason,
             origin_ref=origin_ref,
         )
-        self._apply_military_order_office_effect(
+        # due_turn：admission/create_decree_dossier 已落案卷列；限期出战无另表。
+        return self._apply_military_order_office_effect(
             state,
             payload,
             actor=actor,
             reason=reason,
             origin_ref=origin_ref,
             content=content,
-            registry=registry,
+            registry=None,
         )
-        # due_turn：admission/create_decree_dossier 已落案卷列；限期出战无另表。
 
     def _apply_referral_verdict_effect(
         self, state, row, payload, dossier_id,
@@ -16970,18 +17324,61 @@ class GameDB:
 
     def _apply_punishment_verdict_effect(
         self, state, row, payload, dossier_id, *, content=None, registry=None,
-    ) -> None:
-        """#517：惩处案卷顺颁后的结构化效果（受判类，打回不进此函数）。"""
+    ) -> set[str]:
+        """#517：惩处案卷顺颁后的结构化效果（受判类，打回不进此函数）。
+
+        返回实际成功改变的正式人物名，供 outer-commit registry refresh。
+        """
         target = str(
             payload.get("target_id") or row.get("target_id") or ""
         ).strip()
+        punish_action = str(payload.get("punish_action") or "").strip()
+        issue_disposition = str(payload.get("issue_disposition") or "").strip()
+        issue_id = int(payload.get("issue_id") or 0)
+        issue = None
+        if issue_id:
+            issue = self.conn.execute(
+                "SELECT status,origin_kind,faction_hint,target_roster FROM issues WHERE id=?",
+                (issue_id,),
+            ).fetchone()
+            if issue is None or issue["origin_kind"] != "impeachment_surge":
+                raise ValueError("处置所指弹劾潮不存在")
+            if issue["status"] != "active":
+                return set()
+            if issue_disposition == "办人":
+                try:
+                    roster = json.loads(str(issue["target_roster"] or "[]"))
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("弹劾潮 target_roster 非法") from exc
+                if target not in roster:
+                    raise ValueError("办人目标不在弹劾潮 target_roster")
+        if issue_disposition == "压下" and issue is not None:
+            faction = str(issue["faction_hint"] or "").strip()
+            if self._record_decree_cost(
+                dossier_id, state.turn, "authority", "metric", "皇威", -1,
+                "压下弹劾", cost_identity="impeachment_suppression",
+            ):
+                state.metrics["皇威"] = max(0, int(state.metrics.get("皇威", 0)) - 1)
+                self.conn.execute(
+                    "INSERT INTO metrics(key,value) VALUES('皇威',?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    (state.metrics["皇威"],),
+                )
+            if faction and self._record_decree_cost(
+                dossier_id, state.turn, "satisfaction", "faction", faction, -1,
+                "压下弹劾", cost_identity="impeachment_suppression",
+            ):
+                self.adjust_factions({faction: {"satisfaction": -1}}, commit=False)
+            self.close_issue(state, issue_id, reason="resolved", commit=False)
+            return set()
         if not target:
             raise ValueError("惩处案卷缺少 canonical target")
-        punish_action = str(payload.get("punish_action") or "").strip()
         origin_ref = f"dossier:{int(dossier_id)}"
         reason = str(
             payload.get("text") or row.get("decree_text") or punish_action
         )
+        # #658：typed backing 单权威（与 stage 首写共吃）
+        backing_id = int(require_backing_dossier_id(self, payload.get("backing_dossier_id")) or 0)
         status_by_action = {
             "拿问下狱": "imprisoned",
             "拿问去职": "imprisoned",
@@ -17006,7 +17403,7 @@ class GameDB:
                 state,
                 [item],
                 content=content,
-                registry=registry,
+                registry=None,
                 origin_ref=origin_ref,
                 require_origin=True,
                 external_transaction=True,
@@ -17020,7 +17417,12 @@ class GameDB:
                 if results and isinstance(results[0], dict):
                     fail_reason = str(results[0].get("reason") or "")
                 raise ValueError(fail_reason or "惩处案卷人物效果物化失败")
-            return
+            self._maybe_write_backing_betray_credit(
+                state, target=target, backing_id=backing_id, reason=reason,
+            )
+            if issue_id and issue_disposition == "办人":
+                self.close_issue(state, issue_id, reason="resolved", commit=False)
+            return {target}
         if punish_action in {"放归", "昭雪"}:
             # #517：宥赦只回迁在世处置态；dead 等终态响亮拒绝，不得复活。
             current_status, _ = self.get_character_status(target)
@@ -17035,7 +17437,8 @@ class GameDB:
                 state, target, "处置", payload_summary=punish_action,
                 source="punishment", origin_ref=origin_ref, commit=False,
             )
-            return
+            # #658：放归/昭雪为非惩罚动作，成功亦不写 backing 辜负。
+            return {target}
         if punish_action == "罚俸":
             amount = int(payload.get("amount") or 0)
             if amount <= 0:
@@ -17062,14 +17465,55 @@ class GameDB:
                 state, target, "罚俸", payload_summary="罚俸示惩",
                 source="punishment", origin_ref=origin_ref, commit=False,
             )
-            return
+            self._maybe_write_backing_betray_credit(
+                state, target=target, backing_id=backing_id, reason=reason,
+            )
+            # 钱粮示惩不改人物身份态，不入 registry refresh set。
+            return set()
         if punish_action == "廷杖":
             self.record_person_log(
                 state, target, "廷杖", payload_summary="廷杖示惩",
                 source="punishment", origin_ref=origin_ref, commit=False,
             )
-            return
+            self._maybe_write_backing_betray_credit(
+                state, target=target, backing_id=backing_id, reason=reason,
+            )
+            return set()
         raise ValueError(f"惩处案卷动作无法物化：{punish_action}")
+
+    def _maybe_write_backing_betray_credit(
+        self, state, *, target: str, backing_id: int, reason: str,
+    ) -> None:
+        """#658：处置成功且目标确为原案非御笔背书人时，经 ADR 0079 写辜负。
+
+        origin 回指原 dossier。无 backing / 非站台者 / 御笔背书 → 零信用事件。
+        """
+        if int(backing_id or 0) <= 0:
+            return
+        person = str(target or "").strip()
+        if not person:
+            return
+        endorsements = self.list_dossier_endorsements(int(backing_id))
+        hit = False
+        for item in endorsements:
+            if bool(item.get("imperial")):
+                continue
+            if str(item.get("form") or "") != "当面站台":
+                continue
+            if str(item.get("endorser_id") or "").strip() == person:
+                hit = True
+                break
+        if not hit:
+            return
+        context = str(reason or "").strip() or "处置站台者"
+        from ming_sim.credit_events import KIND_BETRAY, write_credit_event
+        write_credit_event(
+            self, state,
+            person=person,
+            event_kind=KIND_BETRAY,
+            context=context,
+            origin=f"dossier:{int(backing_id)}",
+        )
 
     def _apply_pay_order_override_effect(
         self, state: GameState, row, payload: Dict[str, object], dossier_id: int,
@@ -17097,7 +17541,7 @@ class GameDB:
     def apply_dossier_verdicts(
         self, state: GameState, verdicts: Iterable[Dict[str, object]], *,
         content=None, registry=None,
-    ) -> None:
+    ) -> set[str]:
         """结算判决注入入口：批量、同事务消费每案结构化 verdict。"""
         # Validate the complete batch before the first write at this public seam.
         rows = list(verdicts)
@@ -17127,54 +17571,75 @@ class GameDB:
         # both SQLite and the caller's in-memory GameState.
         from ming_sim.decree import atomic_and_reload
 
-        with atomic_and_reload(self, state, content=content, registry=registry):
-            for verdict in rows:
-                decision = str(verdict.get("decision") or "")
-                opponents = verdict.get("primary_opponents")
-                snapshot = verdict.get("criteria_snapshot")
-                self.apply_dossier_promulgation(
-                    state, strict_int(verdict.get("dossier_id")), decision,
-                    blocked_layer=str(verdict.get("blocked_layer") or ""),
-                    reason=str(verdict.get("reason") or ""),
-                    legal_reason_code=str(verdict.get("legal_reason_code") or ""),
-                    primary_opponents=opponents if isinstance(opponents, list) else None,
-                    gatekeeper_id=(str(verdict["gatekeeper_id"]).strip()
-                                   if verdict.get("gatekeeper_id") is not None else None),
-                    criteria_snapshot=snapshot if isinstance(snapshot, dict) else None,
-                    content=content, registry=registry,
-                )
-                dossier_id = strict_int(verdict.get("dossier_id"))
-                dossier = self.get_decree_dossier(dossier_id)
-                # #657 §C.8 later-wins：midzhi 不持久化猜派 affected_parties（正式离心归 M12）；
-                # ordinary 仍落库 typed 反应。顺颁中旨可记皇威；打回仅 stigma。
-                parties_json = (
-                    "[]"
-                    if dossier and dossier.get("mode") == "midzhi"
-                    else safe_json_dumps(
-                        verdict.get("affected_parties") or [], ensure_ascii=False,
+        affected_people: set[str] = set()
+        # Defer #670 fresh-summon consumption until every office origin in this
+        # batch has been activated — one departure write per person/night.
+        previous_summon_nights = getattr(self.conn, "_deferred_office_summon_nights", None)
+        self.conn._deferred_office_summon_nights = set()
+        try:
+            with atomic_and_reload(self, state, content=content, registry=registry):
+                for verdict in rows:
+                    decision = str(verdict.get("decision") or "")
+                    opponents = verdict.get("primary_opponents")
+                    snapshot = verdict.get("criteria_snapshot")
+                    affected_people.update(self.apply_dossier_promulgation(
+                        state, strict_int(verdict.get("dossier_id")), decision,
+                        blocked_layer=str(verdict.get("blocked_layer") or ""),
+                        reason=str(verdict.get("reason") or ""),
+                        legal_reason_code=str(verdict.get("legal_reason_code") or ""),
+                        primary_opponents=opponents if isinstance(opponents, list) else None,
+                        gatekeeper_id=(str(verdict["gatekeeper_id"]).strip()
+                                       if verdict.get("gatekeeper_id") is not None else None),
+                        criteria_snapshot=snapshot if isinstance(snapshot, dict) else None,
+                        content=content, registry=None,
+                    ) or set())
+                    dossier_id = strict_int(verdict.get("dossier_id"))
+                    dossier = self.get_decree_dossier(dossier_id)
+                    # #657 §C.8 later-wins：midzhi 不持久化猜派 affected_parties（正式离心归 M12）；
+                    # ordinary 仍落库 typed 反应。顺颁中旨可记皇威；打回仅 stigma。
+                    parties_json = (
+                        "[]"
+                        if dossier and dossier.get("mode") == "midzhi"
+                        else safe_json_dumps(
+                            verdict.get("affected_parties") or [], ensure_ascii=False,
+                        )
                     )
-                )
+                    self.conn.execute(
+                        """UPDATE decree_dossier_decisions
+                           SET affected_parties_json=?, midzhi_unpromulgatable=?
+                           WHERE id=(SELECT MAX(id) FROM decree_dossier_decisions WHERE dossier_id=?)""",
+                        (parties_json,
+                         1 if verdict.get("midzhi_unpromulgatable") is True else 0,
+                         dossier_id),
+                    )
+                    if dossier and dossier.get("mode") == "midzhi" and decision == "promulgated":
+                        self._apply_override_costs(
+                            state, dossier_id,
+                            include_authority=True,
+                            include_parties=False,
+                            stigma_reason="预先中旨直发",
+                            commit=False,
+                        )
+                summon_nights = set(getattr(self.conn, "_deferred_office_summon_nights", set()) or set())
+                if summon_nights:
+                    from ming_sim.audience_night import commit_fresh_summons_for_night
+                    for night_id in sorted(summon_nights):
+                        commit_fresh_summons_for_night(
+                            self, state, int(night_id),
+                            content=content, registry=None,
+                        )
+                # Consumption belongs to the same atomic unit as effect application;
+                # an outer settlement rollback restores both effects and this batch.
                 self.conn.execute(
-                    """UPDATE decree_dossier_decisions
-                       SET affected_parties_json=?, midzhi_unpromulgatable=?
-                       WHERE id=(SELECT MAX(id) FROM decree_dossier_decisions WHERE dossier_id=?)""",
-                    (parties_json,
-                     1 if verdict.get("midzhi_unpromulgatable") is True else 0,
-                     dossier_id),
+                    "DELETE FROM pending_promulgation_verdicts WHERE turn=?", (int(state.turn),)
                 )
-                if dossier and dossier.get("mode") == "midzhi" and decision == "promulgated":
-                    self._apply_override_costs(
-                        state, dossier_id,
-                        include_authority=True,
-                        include_parties=False,
-                        stigma_reason="预先中旨直发",
-                        commit=False,
-                    )
-            # Consumption belongs to the same atomic unit as effect application;
-            # an outer settlement rollback restores both effects and this batch.
-            self.conn.execute(
-                "DELETE FROM pending_promulgation_verdicts WHERE turn=?", (int(state.turn),)
-            )
+        finally:
+            if previous_summon_nights is None:
+                if hasattr(self.conn, "_deferred_office_summon_nights"):
+                    delattr(self.conn, "_deferred_office_summon_nights")
+            else:
+                self.conn._deferred_office_summon_nights = previous_summon_nights
+        return affected_people
 
     def interrupt_dossiers_for_character(
         self, state: GameState, character_name: str, reason: str, *,
@@ -17497,7 +17962,11 @@ class GameDB:
     def _merge_directive_payload(
         self, existing_json: object, new_payload: Dict[str, object],
     ) -> Dict[str, object]:
-        """改草保留未修改的机械字段；显式新值覆盖后统一校验。"""
+        """改草保留未修改的机械字段；显式新值覆盖后统一校验。
+
+        #658：普通 triad 与御笔 target 互斥生命周期——
+        普通改草不得继承旧 target；纯强推改草不得继承旧 triad。
+        """
         old = self._decode_directive_dossier_payload(existing_json)
         incoming = dict(new_payload or {})
         old_roster = self._normalize_participant_roster(old.get("participant_roster") or [])
@@ -17508,8 +17977,36 @@ class GameDB:
             incoming["participant_roster"] = old_roster + [
                 item for item in new_roster if item not in old_roster
             ]
+        # 先对 incoming 互斥分类（并存即拒），再决定从 old 继承哪些字段
+        incoming_kind = (
+            classify_directive_structured_kind(incoming)
+            if incoming else "empty"
+        )
         merged = {**old, **incoming}
+        if incoming_kind == "ordinary":
+            merged.pop("target_dossier_id", None)
+            merged.pop("目标案卷ID", None)
+        elif incoming_kind == "push":
+            # 只清互斥 ordinary triad，保留 text/actor 等非互斥字段
+            for key in ("dossier_action_type", "target_kind", "target_id"):
+                merged.pop(key, None)
+            push_id = imperial_push_target_dossier_id(incoming)
+            if push_id is None:
+                push_id = imperial_push_target_dossier_id(merged)
+            if push_id is not None:
+                merged["target_dossier_id"] = push_id
+                merged.pop("目标案卷ID", None)
+        # 合并结果再过互斥权威（old 残留 + incoming 部分字段仍可能冲突）
+        classify_directive_structured_kind(merged)
         requested = str(merged.get("dossier_action_type") or "")
+        if incoming_kind == "push":
+            # 复用既有 push 归一化（保留 text/actor/mode）
+            return self._normalize_directive_dossier_payload(
+                merged, content=self.content,
+                current_turn=int(self.conn.execute(
+                    "SELECT turn FROM game_state WHERE id=1"
+                ).fetchone()["turn"]),
+            )
         normalized = self._normalize_directive_dossier_payload(
             merged, content=self.content,
             current_turn=int(self.conn.execute(
@@ -17964,6 +18461,11 @@ class GameDB:
                     ).fetchone()
                     if row is not None and row["secret_order_id"] is not None:
                         item["secret_order_id"] = int(row["secret_order_id"])
+                # Direct person mutations (调教/密令…) surface names for outer-commit
+                # registry projection when settle passes registry=None.
+                affected = self._affected_people_from_pending_action(pa, payload)
+                if affected:
+                    item["affected_people"] = sorted(affected)
                 applied.append(item)
         if owns_transaction and owns_rejection_collector:
             from ming_sim.applier import mirror_rejections_after_commit
@@ -18378,67 +18880,61 @@ class GameDB:
             )
             # pending 只是皇帝核定前的候选，不是 ADR 0051 的成案点；默认同意进入
             # draft 时则已越过最终提交边界，应当立即取得案卷身份。
+            # #658：与 free-form / confirm 共吃 _ensure_directive_dossier（含御笔强推）。
             if status == "draft":
-                action_type = self._directive_dossier_action_type(payload)
-                executor_kind, executor_id = self._directive_executor(action_type, payload)
-                dossier_ids = self.create_decree_dossiers(
-                    state,
-                    action_type=action_type,
-                    decree_text=text,
-                    target_kind=str(payload.get("target_kind") or ""),
-                    target_id=payload.get("target_id") or "",
-                    executor_kind=executor_kind,
-                    executor_id=executor_id,
-                    source_chat_turn_id=int(payload.get("source_chat_turn_id") or 0),
-                    pending_action_id=int(pa["id"]),
-                    directive_id=did,
-                    payload=payload,
-                    status="proposed",
-                    due_turn=int(payload.get("due_turn") or 0),
-                    commit=False,
+                dossier_ids = self._ensure_directive_dossier(
+                    state, did, text, payload, commit=False,
                     rejection_collector=rejection_collector,
                 )
                 if not dossier_ids:
                     return False
+                # conversational commit 的 pending_action_id 绑回案卷（push 复用路径
+                # 只写 directive_id，普通 create 路径本就带 pending_action_id）
+                self.conn.execute(
+                    "UPDATE decree_dossiers SET pending_action_id=? "
+                    "WHERE directive_id=? AND (pending_action_id IS NULL "
+                    "OR pending_action_id=0 OR pending_action_id=?)",
+                    (int(pa["id"]), int(did), int(pa["id"])),
+                )
             return True
         return False
 
     def _commit_office_action(
         self, state: GameState, pa: Dict[str, object], payload: Dict[str, object],
         content, registry,
-    ) -> bool:
-        """任免(office)落库,按被任者是否在册分流(CMR R1 补全):
+    ) -> set[str]:
+        """任免(office)落库并返回 canonical applied 中受影响的正式人物。
         - 任命既有官 → 升迁/调任:set_character_office(改官、仍 active),不当新人(apply_appointment
           对在册者命中即拒、会标 failed);
-        - 任命朝臣(新任/升迁/调任)→ apply_office_appointment(与 extractor office_changes 共用的【唯一落地核】,
-          自带 dead-reject / 非active→激活 / 顶替去重 / 内存+registry 同步,CMR R2 归一);
+        - 任命朝臣(新任/升迁/调任)→ person-only canonical adapter → apply_office_appointment
+          唯一落地核(dead-reject / 非active→激活 / 顶替去重); registry 仅 outer commit 后刷新;
         - 任命纳妃(office 推断为后宫)→ 语义不同,走 apply_appointment 的 consort 路;
         - 罢免:_find_existing_minister 解 alias + ming-guard(外藩/后宫/不在册不接),dismissed+同步清内存 office。
-        缺 content(无法查重/注册)→ False 标 failed,不静默。跨模块函数运行期 lazy import 避免 db↔session/issues 循环。"""
+        缺 content(无法查重/注册)→ 空集合标 failed,不静默。跨模块函数运行期 lazy import 避免 db↔session/issues 循环。"""
         if content is None:
-            return False
+            return set()
         from ming_sim.session import _find_existing_minister
         name = str(payload.get("name") or "").strip()
         if not name:
-            return False
+            return set()
         office = str(payload.get("office") or "")
         if pa["action"] == "任命":
             # 纳妃(后宫)语义不同,不走朝臣落地核:推断为后宫则走 apply_appointment 的 consort 路。
             if infer_office_type_from_office(office, "", self.llm_config) == "后宫":
                 from ming_sim.session import apply_appointment
                 data = {"name": name, "office": office, "office_type": "后宫", "approved": True}
+                # registry 仍为 None（事务内零变更）；返回 canonical appointed
+                # 供 outer-commit project_outcome：新人 register、在册 refresh。
                 appointed, _displaced = apply_appointment(
                     self, state, content, registry, data, llm_config=self.llm_config)
-                return bool(appointed)
-            # 朝臣任命/升迁/调任 → 唯一落地核(在册激活授官 / 不在册建档 / dead 拒 / 空 office 拒)。
-            from ming_sim.issues import apply_office_appointment
-            faction = str(payload.get("faction") or "中立").strip() or "中立"
+                return {appointed} if appointed else set()
+            # 朝臣任命/升迁/调任 → person-only adapter（不经 full settlement recovery）。
             reason = str(payload.get("reason") or "奉旨任免").strip() or "奉旨任免"
             office_type = str(payload.get("office_type") or "").strip()
             try:
                 appointment_tenure = appointment_tenure_from(payload)
             except ValueError:
-                return False
+                return set()
             recommendation = payload.get("recommendation")
             staged_candidate = recommendation.get("candidate") if isinstance(recommendation, dict) else None
             recommender = str(recommendation.get("recommender") or pa["minister_name"]) if isinstance(recommendation, dict) else ""
@@ -18446,82 +18942,88 @@ class GameDB:
                 not isinstance(staged_candidate, dict)
                 or not recommender
             ):
-                return False
+                return set()
             if isinstance(staged_candidate, dict):
                 from ming_sim.recommendations import validate_recommendation_snapshot
                 if staged_candidate.get("name") != name or not validate_recommendation_snapshot(
                     self, state, recommender, staged_candidate
                 ):
-                    return False
+                    return set()
             # A recommendation event is provenance for this exact staged
             # candidate.  Keep the appointment and event in one transaction so
             # a failure while recording cannot leave the appointment adopted
             # without its auditable recommendation.
+            recommendation_reason = ""
             if isinstance(recommendation, dict):
-                # #635 荐人口（庭裁 r3）：荐词（payload.reason 原句）是双边的一句
-                # 语境，非空必填；缺失即在调用方事务内 fail-loud，任命与双边一并
-                # 回滚（ADR 0079/0082 零模板、P1 失败诚实）。原句逐字透传，
-                # 只以 strip 判空、不裁剪持久化文本。
                 recommendation_reason = str(payload.get("reason") or "")
                 if not recommendation_reason.strip():
                     raise ValueError("荐人双边缺非空荐词语境：payload.reason 必填")
+                reason = recommendation_reason
+            from ming_sim.issues import apply_person_changes_only
+            applied = apply_person_changes_only(
+                self, state,
+                [{
+                    "name": name, "动作": "任命", "office": office,
+                    "office_type": office_type, "任别": appointment_tenure,
+                    "reason": reason, "origin_ref": "盘面自发",
+                }],
+                content=content, registry=None, llm_config=self.llm_config,
+            )
+            affected = self._affected_people_from_applied_rows(
+                applied.get("applied_person_changes", []),
+            )
+            if recommendation_reason and name in affected:
                 from ming_sim.recommendations import record_recommendation_edges
-                with atomic(self):
-                    res = apply_office_appointment(
-                        self, state, content, registry, name, office,
-                        reason=recommendation_reason, new_office_type=office_type,
-                        faction=faction, appointment_tenure=appointment_tenure,
-                        llm_config=self.llm_config, commit=False)
-                    accepted = not res.get("rejected")
-                    if accepted:
-                        event_id = self.record_recommendation(
-                            state, recommender, staged_candidate, office,
-                            recommendation_reason,
-                        )
-                        record_recommendation_edges(
-                            self, state, recommender,
-                            str(staged_candidate.get("name") or ""),
-                            event_id, recommendation_reason,
-                        )
-                    return accepted
-            res = apply_office_appointment(
-                self, state, content, registry, name, office,
-                reason=reason, new_office_type=office_type, faction=faction,
-                appointment_tenure=appointment_tenure, llm_config=self.llm_config)
-            return not res.get("rejected")
+                event_id = self.record_recommendation(
+                    state, recommender, staged_candidate, office,
+                    recommendation_reason,
+                )
+                record_recommendation_edges(
+                    self, state, recommender, name, event_id, recommendation_reason,
+                )
+            return affected
         if pa["action"] == "罢免":
             # 仅大明【在职】大臣可罢:_find_existing_minister 已 ming-guard + 解 alias;
             # 外藩(power_id≠ming)/后宫/不在册不接(无字面 fallback,免误黜皇太极,CMR R2);
             # 再校 active,免把已故/已黜/致仕者的终态改写成 dismissed(CMR R3 codex R2)。
             key = _find_existing_minister(content, name, self)
             if key is None or self.get_character_status(key)[0] != "active":
-                return False
+                return set()
             # 宗藩（就藩宗室）非朝堂命官，不可作朝臣罢免——_find_existing_minister 仍会解析到宗藩名
             # （任命核需解到名才能显式拒），故罢免侧单独守（cmr R6 cross-section）。
             _ch_key = content.characters.get(key)  # key 来自 _find_existing_minister 必在册，.get 防御一致（R2 gemini）
             if _ch_key is not None and is_vassal_prince(_ch_key):
-                return False
+                return set()
             self.set_character_status(
                 state, key, "dismissed", reason="奉旨罢黜", content=content,
             )
             # 对话确认回合中落库,刷 Agent 让被罢者本回合后续不再以旧活跃态被召对(线上 gemini)。
-            if registry is not None:
-                registry.refresh(key)
-            return True
-        return False
+            return {key}
+        return set()
 
     def withdraw_pending_action(self, action_id: int, turn: int) -> bool:
         """皇帝复核:撤回本回合一条尚未落库的暂存动作(删 pending 行)。返回是否删了。
-        已 committed / 非本回合 / 不存在 → False。"""
+        已 committed / 非本回合 / 不存在 → False。
+        仍 inactive 的 office:<id> 传召 origin 同步清掉（#672 颁前反悔）。"""
         owns_transaction = not (
             bool(getattr(self.conn, "_commit_suspended", False))
             or int(getattr(self.conn, "_atomic_depth", 0) or 0) > 0
             or self.conn.in_transaction
         )
+        row = self.conn.execute(
+            "SELECT id, kind FROM pending_actions "
+            "WHERE id=? AND turn=? AND status='pending'",
+            (int(action_id), int(turn)),
+        ).fetchone()
+        if row is None:
+            return False
         cur = self.conn.execute(
             "DELETE FROM pending_actions WHERE id=? AND turn=? AND status='pending'",
             (int(action_id), int(turn)),
         )
+        if cur.rowcount > 0 and str(row["kind"] or "") == "office":
+            from ming_sim.audience_night import discard_inactive_office_summon
+            discard_inactive_office_summon(self, int(action_id))
         if owns_transaction:
             self.conn.commit()
         return cur.rowcount > 0
@@ -18564,7 +19066,8 @@ class GameDB:
         返回删除条数。只动该大臣、只动 pending(已 committed 不动)。
         action_ids 非空=进一步只删指定 pending_actions.id（召对确认只可作用于本轮开始前可见项）。
         kind_filter_exclude 非空=不删该 kind(召对确认拒绝须放过 directive,BUG 1:拟旨搁置
-        是颁诏期语义,不能被召对期拒绝静默删掉玩家草案)。"""
+        是颁诏期语义,不能被召对期拒绝静默删掉玩家草案)。
+        仍 inactive 的 office:<id> 传召 origin 随 pending 同步清（#672 颁前拒绝）。"""
         owns_transaction = not (
             bool(getattr(self.conn, "_commit_suspended", False))
             or int(getattr(self.conn, "_atomic_depth", 0) or 0) > 0
@@ -18582,15 +19085,21 @@ class GameDB:
         if kind_filter_exclude is not None:
             where += " AND kind<>?"
             params.append(str(kind_filter_exclude))
-            cur = self.conn.execute(
-                f"DELETE FROM pending_actions WHERE {where}",
+        office_ids = [
+            int(row["id"])
+            for row in self.conn.execute(
+                f"SELECT id FROM pending_actions WHERE {where} AND kind='office'",
                 tuple(params),
-            )
-        else:
-            cur = self.conn.execute(
-                f"DELETE FROM pending_actions WHERE {where}",
-                tuple(params),
-            )
+            ).fetchall()
+        ]
+        cur = self.conn.execute(
+            f"DELETE FROM pending_actions WHERE {where}",
+            tuple(params),
+        )
+        if office_ids:
+            from ming_sim.audience_night import discard_inactive_office_summon
+            for pending_id in office_ids:
+                discard_inactive_office_summon(self, pending_id)
         if owns_transaction:
             self.conn.commit()
         return cur.rowcount
@@ -19023,7 +19532,11 @@ class GameDB:
         payload: Optional[Dict[str, object]] = None, *, commit: bool = True,
         rejection_collector=None,
     ) -> List[int]:
-        """旧式/新式旨稿共用的幂等成案口；#654 返回 List[int]（fan-out 多行）。"""
+        """旧式/新式旨稿共用的幂等成案口；#654 返回 List[int]（fan-out 多行）。
+
+        #658：payload.target_dossier_id 指向 stalled 廷议时，复用该案卷并落御笔手敕，
+        不新建第二案卷。directive identity = directive:<id>。
+        """
         structured = dict(payload or {})
         if not structured:
             structured = {
@@ -19032,6 +19545,41 @@ class GameDB:
                 "target_id": f"legacy-directive:{directive_id}",
                 "locality_scope": "none",
             }
+        # #658：互斥权威——push 与 ordinary 并存响亮拒绝；push 在 normalize 前短路
+        kind = classify_directive_structured_kind(structured)
+        target_did = (
+            imperial_push_target_dossier_id(structured)
+            if kind == "push" else None
+        )
+        if target_did is not None:
+            # 同 directive↔目标 dossier 已绑定：幂等返回，不重跑 stalled 校验副作用
+            bound = self.conn.execute(
+                "SELECT id FROM decree_dossiers WHERE id=? AND directive_id=?",
+                (int(target_did), int(directive_id)),
+            ).fetchone()
+            if bound is not None:
+                return [int(target_did)]
+            from ming_sim.rescript_actions import apply_imperial_deliberation_push
+            push_mode = self._normalize_dossier_mode(
+                structured["mode"] if "mode" in structured else "ordinary"
+            )
+            pushed = apply_imperial_deliberation_push(
+                self, state,
+                target_dossier_id=int(target_did),
+                directive_identity=f"directive:{int(directive_id)}",
+                decree_text=str(text or ""),
+                mode=push_mode,
+                commit=False,
+            )
+            # 绑 directive_id 到既有案卷，供 restore/幂等
+            self.conn.execute(
+                "UPDATE decree_dossiers SET directive_id=?, updated_at=CURRENT_TIMESTAMP "
+                "WHERE id=? AND (directive_id IS NULL OR directive_id=0 OR directive_id=?)",
+                (int(directive_id), int(pushed), int(directive_id)),
+            )
+            if commit:
+                self._commit_dossier_write(True)
+            return [int(pushed)]
         structured = self._normalize_directive_dossier_payload(
             structured, content=self.content, current_turn=int(state.turn),
         )
@@ -19057,6 +19605,7 @@ class GameDB:
             target_id=target_id,
             executor_kind=executor_kind,
             executor_id=executor_id,
+            source_chat_turn_id=int(structured.get("source_chat_turn_id") or 0),
             pending_action_id=0 if pending is None else int(pending["id"]),
             directive_id=int(directive_id),
             payload=structured,
@@ -19075,10 +19624,11 @@ class GameDB:
             SELECT d.*, e.title AS event_title
             FROM turn_directives d
             LEFT JOIN events e ON e.id = d.event_id
-            WHERE d.turn = ? AND d.status IN ({placeholders})
+            WHERE (d.turn = ? OR (d.turn < ? AND d.status = 'draft'))
+              AND d.status IN ({placeholders})
             ORDER BY d.id
             """,
-            (state.turn, *statuses),
+            (state.turn, state.turn, *statuses),
         ).fetchall()
 
     @staticmethod
@@ -19149,17 +19699,11 @@ class GameDB:
                 sp = f"ensure_directive_{did}"
                 self.conn.execute(f"SAVEPOINT {sp}")
                 try:
-                    dossier_ids = self._ensure_directive_dossier(
+                    self._ensure_directive_dossier(
                         state, did, str(row["text"]),
                         self.read_directive_dossier_payload(row), commit=False,
                         rejection_collector=collector,
                     )
-                    if not dossier_ids:
-                        self.conn.execute(
-                            "UPDATE turn_directives SET status='rejected', "
-                            "updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                            (did,),
-                        )
                 except Exception as exc:
                     self.conn.execute(f"ROLLBACK TO {sp}")
                     # P6：rejection 只存 directive_id，不裁剪/快照 LLM 旨文
@@ -19174,7 +19718,7 @@ class GameDB:
                         int(state.turn),
                     )
                     tlog(f"[ensure_dossiers] 旨#{did} 成案失败：{exc}")
-                    # 坏旨保持 draft，次边界重试
+                    # 坏旨保持 draft，次边界重试；消费边界只读取已有案卷的 draft。
                 finally:
                     self.conn.execute(f"RELEASE {sp}")
             collector.flush_to_db(self)
@@ -19216,9 +19760,7 @@ class GameDB:
         payload = self._merge_directive_payload(
             row["dossier_payload_json"], dict(dossier_payload or {})
         )
-        if not all(str(payload.get(key) or "").strip() for key in (
-            "dossier_action_type", "target_kind", "target_id",
-        )):
+        if not directive_payload_admits_structured_write(payload):
             raise ValueError("旨意编辑须提供完整结构化动作与目标")
         with atomic(self):
             self.conn.execute(
@@ -19267,12 +19809,27 @@ class GameDB:
         )
         self.conn.commit()
 
+    def list_dossiered_draft_directives(self, state: GameState) -> List[Dict[str, object]]:
+        """Settlement projection: drafts whose dossier creation succeeded."""
+        rows = self.conn.execute(
+            """SELECT td.* FROM turn_directives td
+               WHERE td.turn<=? AND td.status='draft'
+                 AND EXISTS (SELECT 1 FROM decree_dossiers d WHERE d.directive_id=td.id)
+               ORDER BY td.id""",
+            (state.turn,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
     def mark_directives_issued(self, state: GameState) -> None:
         self.conn.execute(
             """
             UPDATE turn_directives
             SET status = 'issued', updated_at = CURRENT_TIMESTAMP
-            WHERE turn = ? AND status = 'draft'
+            WHERE turn <= ? AND status = 'draft'
+              AND EXISTS (
+                  SELECT 1 FROM decree_dossiers d
+                  WHERE d.directive_id=turn_directives.id
+              )
             """,
             (state.turn,),
         )
