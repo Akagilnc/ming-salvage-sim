@@ -46,8 +46,29 @@ def test_map_nodes_province_garrison_co_node(game):
     station_region 对应的 province 节点上，节点同时携带 region tax payload。
     """
     db, _state, _content = game
+
+    # station 文本似省但 typed 驻地为空时，不得猜挂。
+    db.conn.execute(
+        "INSERT INTO armies ("
+        " id, name, station, station_region, theater, commander, controller,"
+        " troop_type, manpower, supply, morale, training, equipment, arrears,"
+        " mobility, loyalty, status, owner_power"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "temp_boundary_army", "临时驻防探针", "山西 / 临时驻防", "",
+            "西南", "驻军", "兵部", "边军、步卒", 4000, 50, 50, 50, 50, 0,
+            40, 50, "边界探针：typed station_region 为空不挂点", "ming",
+        ),
+    )
+    db.conn.commit()
+
     nodes = _map_nodes(db)
     by_id = {str(n["id"]): n for n in nodes}
+
+    assert not any(
+        str(a["id"]) == "temp_boundary_army"
+        for n in nodes for a in (n.get("armies") or [])
+    ), "station_region='' 的探针军（station 含省名）不应挂在任何地图节点"
 
     # dongjiang army → dongjiang_area province node (NOT dongjiang theater pin)
     assert "dongjiang_area" in by_id, "dongjiang_area province node missing"
@@ -99,12 +120,6 @@ def test_map_nodes_province_garrison_co_node(game):
     assert "han_liaoren_corps" in shenyang_army_ids, (
         f"han_liaoren_corps not on shenyang_liaoyang; armies={sorted(shenyang_army_ids)}"
     )
-
-    # 空 station_region 的军（southwest_tusi）不挂在任何地图节点
-    assert not any(
-        str(a["id"]) == "southwest_tusi"
-        for n in nodes for a in (n.get("armies") or [])
-    ), "southwest_tusi (station_region='') must not be hung on any map node"
 
 
 def test_map_nodes_no_nameless_nodes(game):
