@@ -38,8 +38,10 @@ CONTRACT_KEY = "covert_task_contract"
 CONTRACT_VERSION = 1
 _STANCE_SCORE_SCALE = 18.0
 CANONICAL_UNITS = ("万两", "人犯", "亩")
-FACT_LANE_USED_KEY = "fact_lane_used"
 FACT_LANES_KEY = "fact_lanes"
+INVESTIGATION_PROVENANCE_KEY = "investigation_provenance"
+LEGAL_SUBSTANTIATION_CODES = frozenset({"依律", "谋逆坐实", "贪墨坐实"})
+DEFAULT_SUBSTANTIATION_REASON = "依律"
 _FIELD_FOR_UNIT = {
     "万两": ["economy_moves"],
     "人犯": ["人物变更"],
@@ -749,19 +751,13 @@ def _lanes_from_payload(payload: Mapping[str, object]) -> List[Dict[str, object]
                 progress = float(item.get("progress") or 0.0)
             except (TypeError, ValueError):
                 progress = 0.0
+            reason = str(item.get("reason_code") or "").strip()
             lanes.append({
                 "fact_key": key,
                 "progress": max(0.0, progress),
                 "used": bool(item.get("used")),
+                "reason_code": reason,
             })
-    used_raw = payload.get(FACT_LANE_USED_KEY) or []
-    if isinstance(used_raw, list):
-        for item in used_raw:
-            key = str(item or "").strip()
-            if not key or key in seen:
-                continue
-            seen.add(key)
-            lanes.append({"fact_key": key, "progress": 1.0, "used": True})
     return lanes
 
 
@@ -786,17 +782,6 @@ def globally_used_fact_keys(db: Any, *, except_dossier_id: int = 0) -> set[str]:
     return used
 
 
-def unused_investigation_fact_keys(db: Any, dossier_id: int, target: str) -> List[str]:
-    blocked = globally_used_fact_keys(db, except_dossier_id=int(dossier_id))
-    local = {
-        str(lane["fact_key"])
-        for lane in _lanes_from_payload(_dossier_payload_map(db, dossier_id))
-        if lane.get("used")
-    }
-    blocked |= local
-    return [key for key in live_investigation_fact_keys(db, target) if key not in blocked]
-
-
 def _write_fact_lanes(
     db: Any, dossier_id: int, lanes: Sequence[Mapping[str, object]], *, commit: bool = False,
 ) -> None:
@@ -806,10 +791,10 @@ def _write_fact_lanes(
             "fact_key": str(lane["fact_key"]),
             "progress": float(lane.get("progress") or 0.0),
             "used": bool(lane.get("used")),
+            "reason_code": str(lane.get("reason_code") or ""),
         }
         for lane in lanes
     ]
-    payload.pop(FACT_LANE_USED_KEY, None)
     db.update_decree_dossier_payload(int(dossier_id), payload, commit=commit)
 
 
@@ -836,13 +821,19 @@ def mark_investigation_fact_used(
     found = False
     for lane in lanes:
         if str(lane["fact_key"]) == key:
-            lane["used"] = True
             if float(lane.get("progress") or 0.0) < 1.0:
                 lane["progress"] = 1.0
+            lane["reason_code"] = DEFAULT_SUBSTANTIATION_REASON
+            lane["used"] = True
             found = True
             break
     if not found:
-        lanes.append({"fact_key": key, "progress": 1.0, "used": True})
+        lanes.append({
+            "fact_key": key,
+            "progress": 1.0,
+            "used": True,
+            "reason_code": DEFAULT_SUBSTANTIATION_REASON,
+        })
     _write_fact_lanes(db, dossier_id, lanes, commit=commit)
 
 
@@ -876,6 +867,7 @@ def advance_investigation_lanes(
         progress = float(lane.get("progress") or 0.0) + increment
         if progress >= 1.0:
             lane["progress"] = 1.0
+            lane["reason_code"] = DEFAULT_SUBSTANTIATION_REASON
             lane["used"] = True
         else:
             lane["progress"] = progress
@@ -893,6 +885,48 @@ def _investigation_target_of(contract: Mapping[str, object]) -> str:
     ).strip()
 
 
+def find_active_investigation_order_id(db: Any, target: str) -> int:
+    name = str(target or "").strip()
+    if not name:
+        return 0
+    for order in db.list_secret_orders(status="active"):
+        dossier = db.get_dossier_for_secret_order(int(order["id"]))
+        if dossier is None:
+            continue
+        contract = read_covert_task_contract(dossier)
+        if not contract:
+            continue
+        if _investigation_target_of(contract) == name:
+            return int(order["id"])
+    return 0
+
+
+def merge_investigation_confirmation(
+    db: Any,
+    state: Any,
+    order_id: int,
+    *,
+    pending_action_id: int = 0,
+    origin_chat_message_ids: Sequence[int] = (),
+    commit: bool = False,
+) -> int:
+    dossier = db.get_dossier_for_secret_order(int(order_id))
+    if dossier is None:
+        raise CovertContractError("查案合流缺少案卷")
+    payload = _dossier_payload_map(db, int(dossier["id"]))
+    sources = payload.get(INVESTIGATION_PROVENANCE_KEY)
+    if not isinstance(sources, list):
+        sources = []
+    sources.append({
+        "pending_action_id": int(pending_action_id or 0),
+        "origin_chat_message_ids": [int(x) for x in origin_chat_message_ids],
+        "turn": int(getattr(state, "turn", 0) or 0),
+    })
+    payload[INVESTIGATION_PROVENANCE_KEY] = sources
+    db.update_decree_dossier_payload(int(dossier["id"]), payload, commit=commit)
+    return int(order_id)
+
+
 def originated_quantity_this_turn(
     db: Any,
     dossier_id: int,
@@ -904,10 +938,6 @@ def originated_quantity_this_turn(
     current = int(turn)
     origin = f"dossier:{did}"
     delivery = contract.get("delivery") if isinstance(contract.get("delivery"), Mapping) else {}
-    inv_target = _investigation_target_of(contract)
-    if inv_target:
-        seed_investigation_fact_lanes(db, did, inv_target, commit=False)
-        return 1.0 if unused_investigation_fact_keys(db, did, inv_target) else 0.0
     unit = str(delivery.get("unit") or "")
     fields = canonical_fields_for_delivery(unit=unit)
     qty = 0.0
