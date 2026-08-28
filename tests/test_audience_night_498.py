@@ -227,13 +227,25 @@ def test_standing_roster_skips_dead(game):
     roster_before = an.resolve_standing_roster(db)
     assert roster_before
     victim = roster_before[0]
+    if len(roster_before) < 2:
+        extra = _active_minister(db, content, exclude={victim})
+        db.conn.execute(
+            "UPDATE characters SET office = ? WHERE name = ?",
+            ("御前近臣", extra),
+        )
+        db.conn.commit()
     db.set_character_status(state, victim, "dead", reason="测试")
     night = an.open_night(db, state, location="乾清宫")
-    names = {
-        p
-        for e in _find_entries(an.list_ledger(db, night["id"]), TAG_ENTER, TAG_STANDING_ROSTER)
-        for p in e["person_names"]
-    }
+    roster_rows = _find_entries(
+        an.list_ledger(db, night["id"]), TAG_ENTER, TAG_STANDING_ROSTER
+    )
+    assert roster_rows
+    for entry in roster_rows:
+        tags = set(entry["tags"])
+        assert TAG_ENTER in tags and TAG_STANDING_ROSTER in tags
+        assert len(entry["person_names"]) == 1
+        assert entry["body"] == ""
+    names = {p for e in roster_rows for p in e["person_names"]}
     assert victim not in names
 
 
