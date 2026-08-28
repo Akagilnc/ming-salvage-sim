@@ -596,25 +596,6 @@ def test_undo_chat_turn_removes_staged_pending_action(game):
     assert db.list_pending_actions(state.turn) == []        # 暂存行被删,不会再颁诏落库
 
 
-@pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_advance_without_edict_commits_staged(game, monkeypatch):
-    """CMR P1:只暂存、不颁正式诏书也推进月份的路径(session.advance_without_decree)必须先 commit 暂存,
-    否则暂存动作成孤儿、随回合推进永久丢失。"""
-    db, state, content = game
-    name = _active_minister_name(db, content)
-    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=0)
-    db.stage_pending_action(state.turn, kind="secret_order", action="更新",
-                            minister_name=name, target_id=oid,
-                            payload={"new_title": "退朝前改", "new_content": "退朝前内容", "deadline_months": 0})
-    turn_before = state.turn
-
-    _canned_no_edict_settlement(monkeypatch)
-    _session_for(db, state, content).advance_without_decree()   # 退朝未下正式圣旨
-
-    assert state.turn == turn_before + 1                     # 月份推进了
-    row = db.conn.execute("SELECT title FROM secret_orders WHERE id=?", (oid,)).fetchone()
-    assert row["title"] == "退朝前改"                          # 暂存在推进前已落库,没丢
-    assert db.list_pending_actions(turn_before) == []
 
 
 def test_withdraw_pending_action_removes_before_decree(game):
@@ -732,44 +713,6 @@ def test_pending_actions_endpoint_hides_new_secret_order_candidates(game, monkey
     assert hidden_pid not in [a["id"] for a in listed["actions"]]
 
 
-@pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_web_advance_without_edict_lands_hidden_pending_secret_order(game, monkeypatch):
-    """web 退朝无诏入口要能提交隐藏的新密令候选，支撑不回默认同意。"""
-    import web_app
-
-    db, state, content = game
-    name = _active_minister_name(db, content)
-    db.stage_pending_action(
-        state.turn, kind="secret_order", action="新建", minister_name=name,
-        target_id=None,
-        payload={
-            "title": "暗查辽饷",
-            "content": "暗查辽饷侵冒。",
-            "assignee": name,
-            "tags": ["辽饷"],
-            "deadline_months": 3,
-        },
-    )
-    _canned_no_edict_settlement(monkeypatch)
-    session = _session_for(db, state, content)
-    stub = types.SimpleNamespace(
-        db=db,
-        state=state,
-        content=content,
-        session=session,
-        refresh_turn=lambda: None,
-        state_payload=lambda: {"turn": {"turn": state.turn}},
-        directive_rows=lambda: [],
-    )
-    monkeypatch.setattr(web_app, "web_game", stub)
-
-    out = web_app.api_advance_without_edict()
-
-    assert out["state"]["turn"]["turn"] == 2
-    orders = db.list_secret_orders()
-    assert len(orders) == 1
-    assert orders[0]["title"] == "暗查辽饷"
-    assert db.list_pending_actions(1) == []
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")

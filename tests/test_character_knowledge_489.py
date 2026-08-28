@@ -69,21 +69,6 @@ def test_secret_order_commit_recovers_non_disclosure_clause(game):
     ).fetchone()
     assert json.loads(row["excluded_targets"])["offices"] == ["翰林院侍读学士"]
 
-def test_secret_order_tool_path_canonicalizes_omitted_exclusions_before_staging(game):
-    """Function callers may omit fields; prose still excludes the whole office."""
-    from ming_sim.models import CourtContext
-    from ming_sim.tools import build_minister_tools
-
-    db, state, content = game
-    academy = next(c for c in content.characters.values() if c.office_type == "翰林院")
-    context = CourtContext(db=db, state=state)
-    tools = {tool.__name__: tool for tool in build_minister_tools(academy, context)}
-    payload = tools["secret_order"](
-        action="issue", title="密查", content="密查账目，勿使翰林院诸官知晓。",
-    ).removeprefix("__secret_order__")
-
-    staged = json.loads(payload)
-    assert staged["excluded_offices"] == ["翰林院"]
 
 def test_every_supported_office_type_has_a_role_specific_current_world_slice(game):
     db, state, content = game

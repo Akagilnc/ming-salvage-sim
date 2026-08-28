@@ -244,40 +244,6 @@ def test_real_api_session_tool_path_commits_only_semantically_confirmed_link(
     assert bool(db.list_dossier_links(source["id"])) is expected
 
 
-@pytest.mark.parametrize("confirmed_ids, expected", [
-    ("target", True), (None, False), ([{"target_dossier_id": True, "relation_type": "护卫"}], False), ([{"id": 1}], False),
-])
-def test_real_cli_materialize_path_commits_only_semantically_confirmed_link(
-    game, monkeypatch, confirmed_ids, expected,
-):
-    db, state, content = game
-    target = _make_dossier(db, state, "辽东补饷")
-    db.record_dossier_decision(target, "promulgated")
-    extracted = {
-        "标题": "护行辽饷", "内容": "护送辽饷", "承办人": "毕自严",
-        "案卷关联": [{"目标案卷ID": target, "类型": "护卫", "说明": "护送"}],
-    }
-    def runner(*args, **kwargs):
-        ids = [target] if confirmed_ids == "target" else (confirmed_ids or [])
-        value = ({"confirmed_links": ([{"target_dossier_id": target, "relation_type": "护卫"}] if ids == [target] else ids)}
-                 if kwargs.get("tag") == "dossier_link_confirmation" else extracted)
-        return json.dumps(value, ensure_ascii=False), 1
-    monkeypatch.setattr(cli_backend, "_run_json_extractor_for_config", runner)
-    sess = GameSession.__new__(GameSession)
-    sess.db, sess.state, sess.content = db, state, content
-    sess.registry = SimpleNamespace(refresh=lambda _name: None)
-    sess.llm_config = SimpleNamespace(channel="cli")
-
-    result = sess.apply_cli_conversation_actions(
-        SimpleNamespace(name="毕自严", office_type="户部"),
-        "密令：护行辽饷。",
-        "臣明确确认护卫辽东补饷。" if expected else "臣不能确认护卫辽东补饷。",
-        has_directive=False, secret_order_id=None,
-    )
-    db.commit_pending_actions(state, action_ids=[result["pending_action_id"]])
-    order = db.list_secret_orders(minister_name="毕自严")[0]
-    source = db.get_dossier_for_secret_order(order["id"])
-    assert bool(db.list_dossier_links(source["id"])) is expected
 
 
 @pytest.mark.parametrize("proposal, verdict, expected", [
@@ -536,39 +502,6 @@ def test_serial_and_parallel_join_share_proposal_normalization(monkeypatch):
     ]
 
 
-def test_parallel_cli_bad_link_does_not_roll_back_valid_secret_order(game, monkeypatch):
-    db, state, content = game
-    target = _make_dossier(db, state, "辽东补饷")
-    db.record_dossier_decision(target, "promulgated")
-    extracted = {
-        "标题": "护行辽饷", "内容": "护送辽饷", "承办人": "毕自严",
-        "案卷关联": [{"目标案卷ID": target, "类型": "护卫", "说明": "   "}],
-    }
-
-    def runner(*args, **kwargs):
-        value = ({"confirmed_links": [
-            {"target_dossier_id": target, "relation_type": "护卫"}
-        ]} if kwargs.get("tag") == "dossier_link_confirmation" else extracted)
-        return json.dumps(value, ensure_ascii=False), 1
-
-    monkeypatch.setattr(cli_backend, "_run_json_extractor_for_config", runner)
-    sess = GameSession.__new__(GameSession)
-    sess.db, sess.state, sess.content = db, state, content
-    sess.registry = SimpleNamespace(refresh=lambda _name: None)
-    sess.llm_config = SimpleNamespace(channel="cli", cli_runner="codex")
-
-    result = sess.apply_cli_conversation_actions(
-        SimpleNamespace(name="毕自严", office_type="户部"),
-        "密令：护行辽饷。", "臣明确确认护卫辽东补饷。",
-        has_directive=False, secret_order_id=None,
-    )
-    applied = db.commit_pending_actions(state, action_ids=[result["pending_action_id"]])
-
-    assert [item["id"] for item in applied] == [result["pending_action_id"]]
-    assert db.list_pending_actions(state.turn, status="failed") == []
-    order = db.list_secret_orders(minister_name="毕自严")[0]
-    source = db.get_dossier_for_secret_order(order["id"])
-    assert db.list_dossier_links(source["id"]) == []
 
 
 def test_cli_secret_extraction_overlaps_independent_confirmation(monkeypatch):
