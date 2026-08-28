@@ -1451,10 +1451,10 @@ def test_hot_replace_409_while_offsite_scene_ticket_open(game, monkeypatch, op):
         return "generated offsite summon scene"
 
     runtime.session._beat_generator = _slow
+    replacements: list[str] = []
     runtime.load_save = lambda _name: replacements.append("load")
     runtime.reset_game = lambda: replacements.append("reset")
     runtime.state_payload = lambda: {"ok": True}
-    replacements: list[str] = []
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
 
     chat_error: list[BaseException] = []
@@ -1483,11 +1483,42 @@ def test_hot_replace_409_while_offsite_scene_ticket_open(game, monkeypatch, op):
     worker.join(2.0)
     assert not chat_error, chat_error
 
+    class _RebuiltSession:
+        def __init__(self, db_path, llm_config):
+            self.llm_config = llm_config
+            self.db = db
+            self.content = content
+            self.state = state
+            self.temporary_characters = {}
+
+        def begin_turn(self):
+            return None
+
+    runtime.db_path = db.path
+    runtime.session.llm_config = object()
+    runtime._spawn_startup_extraction_catch_up = lambda: None
+    runtime._rebuild_session = web_app.WebGame._rebuild_session.__get__(runtime)
+    monkeypatch.setattr(web_app, "GameSession", _RebuiltSession)
+
+    def _hot_replace_via_rebuild(*_a, **_k):
+        replacements.append(op)
+        runtime._rebuild_session(runtime.session.llm_config)
+
+    runtime.load_save = _hot_replace_via_rebuild
+    runtime.reset_game = _hot_replace_via_rebuild
+
     if op == "load":
         asyncio.run(web_app.api_load_save("存档"))
     else:
         asyncio.run(web_app.api_reset_game())
     assert replacements == [op]
+    q = runtime._write_queue
+    assert q is runtime.session._write_queue
+    assert not q.is_sealed()
+    ticket = q.claim("post-hot-replace")
+    assert ticket is not None
+    db.conn.execute("SELECT 1").fetchone()
+    q.complete(ticket)
 
 
 def test_offsite_scene_assembles_under_gate_generates_without_gate(game):
