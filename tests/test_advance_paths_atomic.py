@@ -24,6 +24,7 @@ import ming_sim.decree as decree_mod
 import ming_sim.issues as I
 from ming_sim.decree import persist_resolve_context, settle_with_delta
 from tests.conftest import covering_monthly_extract, with_monthly_reports
+from tests.dossier_test_helpers import TYPED_COVERT_TASK
 
 
 def _ledger_count(db, turn: int) -> int:
@@ -1283,7 +1284,10 @@ def test_fallback_path_commits_pending(game, monkeypatch):
     turn = state.turn
     dm.pre_settle(state, db, content=content)  # settling：守门早退不再消费
     name = _active_minister_name(db, content)
-    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=0)
+    oid = db.create_secret_order(
+        state, name, "原标题", "原内容", [], deadline_months=0,
+        covert_task=TYPED_COVERT_TASK,
+    )
     db.stage_pending_action(
         turn, kind="secret_order", action="更新", minister_name=name, target_id=oid,
         payload={"new_title": "fallback标题", "new_content": "x", "deadline_months": 0})

@@ -17,7 +17,7 @@ import pytest
 import ming_sim.cli_backend as cb
 from ming_sim.session import GameSession
 from tests.conftest import covering_monthly_extract
-from tests.dossier_test_helpers import promulgate_proposed_appointments
+from tests.dossier_test_helpers import TYPED_COVERT_TASK, promulgate_proposed_appointments
 
 
 def _canned_no_edict_settlement(monkeypatch):
@@ -772,6 +772,7 @@ def test_secret_order_survives_no_edict_full_chain_settle(game, monkeypatch):
     oid = db.create_secret_order(
         state, actor, "密查关宁欠饷", "密查关宁军饷侵冒与欠发。",
         ["关宁", "欠饷"], deadline_months=2,
+        covert_task=TYPED_COVERT_TASK,
     )
     assert oid is not None
     before = next(o for o in db.list_secret_orders() if int(o["id"]) == int(oid))

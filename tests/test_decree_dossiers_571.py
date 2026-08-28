@@ -7,7 +7,7 @@ import ming_sim.cli_backend as cli_backend
 import ming_sim.issues as issue_engine
 from ming_sim.session import GameSession
 from tests.conftest import covering_monthly_extract
-from tests.dossier_test_helpers import rejected_verdict as _rejected_verdict
+from tests.dossier_test_helpers import TYPED_COVERT_TASK, rejected_verdict as _rejected_verdict
 
 
 def _active_people(db, count):
@@ -920,6 +920,7 @@ def test_real_resolve_entry_applies_promulgation_verdict_and_payload_effect(
     db.record_dossier_decision(published_id, "promulgated")
     secret_order_id = db.create_secret_order(
         state, actor, "密查军饷", "暗中核清关宁军饷", [],
+        covert_task=TYPED_COVERT_TASK,
     )
     secret_dossier_id = db.get_dossier_for_secret_order(secret_order_id)["id"]
     db.stage_pending_action(

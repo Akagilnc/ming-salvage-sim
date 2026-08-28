@@ -823,7 +823,11 @@ def test_secret_order_tool_preserves_long_title_without_formal_cap(game):
     tools = {f.__name__: f for f in build_minister_tools(minister, _ctx(game))}
     title = "查核辽饷转运与沿途侵蚀及军粮实数并追索责任官员"
 
-    result = tools["secret_order"](action="issue", title=title, content="查明事实并回奏。")
+    result = tools["secret_order"](
+        action="issue", title=title, content="查明事实并回奏。",
+        kind="清丈", axes_json='["实务事功"]', delivery_unit="亩",
+        delivery_target_units=1,
+    )
 
     assert result.startswith("__secret_order__")
     assert json.loads(result.removeprefix("__secret_order__"))["title"] == title

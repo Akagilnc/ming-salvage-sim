@@ -28,7 +28,7 @@ import ming_sim.audience_night as audience_night
 import ming_sim.cli_backend as cb
 import ming_sim.session as session_mod
 from ming_sim.session import GameSession
-from tests.dossier_test_helpers import promulgate_proposed_appointments
+from tests.dossier_test_helpers import TYPED_COVERT_EXTRACT, promulgate_proposed_appointments
 
 
 def _result():
@@ -1295,20 +1295,22 @@ def test_secret_prefix_ignores_mismatched_directive_tool_output(game, monkeypatc
     """显式密令前缀是权威 intent；错家族 propose_directive tool 不得压掉密令 fallback。"""
     db, state, content = game
     minister = "毕自严"
-    monkeypatch.setattr(cb, "_run_backend_for_config", lambda *a, **k: (json.dumps({
-        "密令": {
-            "标题": "暗查辽饷",
-            "内容": "暗查辽饷侵冒。",
-            "承办人": minister,
-            "差务": "清丈",
-            "价值轴": ["实务事功"],
-            "方向": 1,
-            "交付单位": "亩",
-            "交付目标": 1,
-            "标签": ["辽饷"],
-            "期限月数": 0,
-        },
-    }, ensure_ascii=False), 1))
+    extracted = {
+        "标题": "暗查辽饷",
+        "内容": "暗查辽饷侵冒。",
+        "承办人": minister,
+        "标签": ["辽饷"],
+        "期限月数": 0,
+        **TYPED_COVERT_EXTRACT,
+    }
+    monkeypatch.setattr(
+        cb, "_run_json_extractor_for_config",
+        lambda *a, **k: (json.dumps(extracted, ensure_ascii=False), 1),
+    )
+    monkeypatch.setattr(
+        cb, "_run_backend_for_config",
+        lambda *a, **k: (json.dumps({"密令": extracted}, ensure_ascii=False), 1),
+    )
 
     class Agent:
         def run(self, _message):
@@ -1851,9 +1853,11 @@ def test_api_channel_mixed_confirmation_keeps_supplement_when_extract_fails(game
     db.append_chat_message(minister, state.turn, "minister", "臣领密旨，当令东厂暗中护送赈银。")
 
     def fail_extract(*_args, **_kwargs):
-        raise RuntimeError("backend unavailable")
+        # Body extract omitted (backend unavailable); typed contract still required to stage.
+        return (json.dumps(TYPED_COVERT_EXTRACT, ensure_ascii=False), 1)
 
     monkeypatch.setattr(cb, "_run_api_for_config", fail_extract)
+    monkeypatch.setattr(cb, "_run_json_extractor_for_config", fail_extract)
     res = _session(db, state, llm_config=SimpleNamespace(channel="api")).apply_cli_conversation_actions(
         SimpleNamespace(name=minister, office_type="司礼监"),
         "密令如下：可，照办，三月内回奏",
