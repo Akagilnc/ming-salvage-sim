@@ -26,6 +26,7 @@ from ming_sim.beat_orchestration import (
     BEAT_CLOSE,
     BEAT_ENTER,
     BEAT_EXIT,
+    BEAT_HANDOFF,
     BEAT_OPEN,
     BeatInputs,
     assemble_beat_inputs,
@@ -256,6 +257,50 @@ def test_discover_open_enter_tasks_restores_yueci_summon_method(game):
     bodies = [body for _eid, body in registry.join(ctid)]
     assert any(f"method={an.METHOD_YUECI}" in b for b in bodies), bodies
     assert not any(f"method={an.METHOD_XUANRU}" in b and "enter" in b for b in bodies), bodies
+
+
+def test_discover_open_enter_tasks_discovers_handoff_when_prior_speaker_present(game):
+    """#1585: 当 A 在场且 B 宣入时，discover_open_enter_tasks 同桶发现交接+入殿任务。
+
+    二者同 ChatTurnSceneRegistry bucket 并行生成，join 回填。
+    """
+    db, state, content = game
+    first_minister = _active_minister(db, content)
+    # A (first_minister) 先入殿并奏对。
+    an.attach_chat_turn_to_night(
+        db, state, first_minister, agno_session_id="a-turn", agno_runs_before=0,
+    )
+    # 找出第二个活跃 minister 作为 B。
+    second_minister = _active_minister(db, content, exclude={first_minister})
+    night_id, ctid = an.attach_chat_turn_to_night(
+        db, state, second_minister, agno_session_id="b-turn", agno_runs_before=0,
+    )
+
+    # 发现任务：应同时找到 enter + handoff。
+    tasks = bo.discover_open_enter_tasks(
+        db, state, minister_name=second_minister, chat_turn_id=ctid,
+    )
+    beat_kinds = [inp.beat_kind for _eid, inp in tasks]
+    assert bo.BEAT_ENTER in beat_kinds, beat_kinds
+    assert bo.BEAT_HANDOFF in beat_kinds, beat_kinds
+
+    # 回显生成器：输出 beat_kind + person_name。
+    def echo(inputs: BeatInputs) -> str:
+        return f"kind={inputs.beat_kind}|person={inputs.person_name}"
+
+    registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=2))
+    registry.start_open_enter(
+        db, state, minister_name=second_minister, chat_turn_id=ctid,
+        beat_generator=echo,
+    )
+    bodies = [body for _eid, body in registry.join(ctid)]
+    # 交接 body 由 A 视角生成（person_name=A = first_minister）。
+    handoff_bodies = [b for b in bodies if "kind=handoff" in b]
+    enter_bodies = [b for b in bodies if "kind=enter" in b]
+    assert len(handoff_bodies) == 1, bodies
+    assert len(enter_bodies) == 1, bodies
+    assert f"person={first_minister}" in handoff_bodies[0], handoff_bodies
+    assert f"person={second_minister}" in enter_bodies[0], enter_bodies
 
 
 def test_start_open_enter_claims_atomically_under_concurrent_calls(game, monkeypatch):

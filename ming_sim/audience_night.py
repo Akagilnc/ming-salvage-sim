@@ -114,6 +114,8 @@ def _travel_tone_from_tags(tags: Sequence[Any]) -> str:
 _SUMMON_ORIGIN_PREFIX = "传召源#"
 # #526 / #471 S10：留侍叙事账标签——非进/出，不驱动在场（口径回灌 #500）
 TAG_STAY_ATTEND = "留侍"
+# #1585：交接旁白标签——软段切换事实（A 在场时 B 宣入），驱动 divider 投影但不驱动在场
+TAG_HANDOFF = "交接"
 
 # #526 结构化口令判词（引擎只认判词，不重解析散文；非 ACTION_CLUSTERS）
 CMD_CLOSE_NIGHT = "close_night"
@@ -560,6 +562,9 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
             beat = "opening"
         elif TAG_CLOSE_NIGHT in tags:
             beat = "closing"
+        elif TAG_HANDOFF in tags:
+            # #1585：交接旁白——软段切换事实（A 在场时 B 宣入），不写 TAG_EXIT、不改 presence。
+            beat = "handoff"
         elif TAG_ENTER in tags:
             beat = "entrance"
         elif TAG_EXIT in tags:
@@ -568,7 +573,7 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
             beat = "aside" if entry["audibility"] == AUDIBILITY_PRIVATE else "scene"
         # #657 S4/P7：OPEN/ENTER 口令账仅 body.strip() 非空才投影；
         # 空垫位不进 scroll（无空条、无人物锚、无固定句冒充）。
-        if beat in {"opening", "entrance"} and not str(entry.get("body") or "").strip():
+        if beat in {"opening", "entrance", "handoff"} and not str(entry.get("body") or "").strip():
             continue
         events.append((
             _entry_order_key(entry), 10,
@@ -578,35 +583,101 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
                     content=entry["body"], beat=beat),
         ))
 
-    # A divider belongs after each exit.  Its optional name is sourced only from
-    # the next entry fact; an unmatched final exit deliberately remains unnamed.
+    # #1585：divider 真源改为软段切换事实（交接 entry 或新入殿），不再要求物理 EXIT。
+    # 显式令退/叙事真实离殿仍独占既有 TAG_EXIT/presence_effect 路径。
+    # 紧随其后的交接/新入殿与物理 EXIT 去重为一个 divider。
     facts = sorted(ledgers, key=lambda e: (_entry_order_key(e), int(e["id"])))
-    divided_exits: set[tuple[str, float]] = set()
+    divided_identities: set[tuple[str, float]] = set()
+    # Initialize presence with standing roster (常在员额) — they enter at opening, not mid-night.
+    present_so_far: set[str] = set()
+    for e in facts:
+        et = set(e.get("tags") or [])
+        if _is_command_entry(e) and TAG_ENTER in et and TAG_STANDING_ROSTER in et:
+            for p in (e.get("person_names") or []):
+                if p:
+                    present_so_far.add(p)
+    # Track whether the immediately preceding fact emitted a divider, for dedup.
+    prev_was_exit: bool = False
+    prev_was_handoff: bool = False
     for index, entry in enumerate(facts):
         tags = set(entry.get("tags") or [])
         is_exit = (_is_command_entry(entry) and TAG_EXIT in tags) or entry.get("presence_effect") == PRESENCE_EXIT
-        if not is_exit:
-            continue
+        is_enter = (_is_command_entry(entry) and TAG_ENTER in tags) or entry.get("presence_effect") == PRESENCE_ENTER
+        is_handoff = _is_command_entry(entry) and TAG_HANDOFF in tags and TAG_STAY_ATTEND in tags
+        # Standing roster entries are opening-frame presence, not mid-night dividers.
+        is_roster = _is_command_entry(entry) and TAG_STANDING_ROSTER in tags
+        new_entrance = False
+        if is_enter and not is_roster:
+            persons = entry.get("person_names") or []
+            for p in persons:
+                if p and p not in present_so_far:
+                    new_entrance = True
+                    break
+        fact_order = _entry_order_key(entry)
         person = (entry.get("person_names") or [""])[0]
-        # Command and extractor facts can describe the same actual departure.
-        # Their shared night order is the durable source-turn identity; a later
-        # departure has a different order and must retain its own divider.
-        exit_identity = (person, _entry_order_key(entry))
-        if exit_identity in divided_exits:
-            continue
-        divided_exits.add(exit_identity)
-        next_name = ""
-        for following in facts[index + 1:]:
-            following_tags = set(following.get("tags") or [])
-            if ((_is_command_entry(following) and TAG_ENTER in following_tags)
-                    or following.get("presence_effect") == PRESENCE_ENTER):
-                next_name = (following.get("person_names") or [""])[0]
-                break
-        events.append((
-            _entry_order_key(entry), 90,
-            message(role="scene", speaker=next_name, audibility=AUDIBILITY_PUBLIC,
-                    time=entry["created_at"], content="", beat="divider", soft_boundary=True),
-        ))
+        identity_key = (person, fact_order)
+
+        if is_handoff and identity_key not in divided_identities:
+            divided_identities.add(identity_key)
+            if not prev_was_exit:
+                next_name = person
+                for following in facts[index + 1:]:
+                    following_tags = set(following.get("tags") or [])
+                    if ((_is_command_entry(following) and TAG_ENTER in following_tags)
+                            or following.get("presence_effect") == PRESENCE_ENTER):
+                        next_name = (following.get("person_names") or [""])[0] or person
+                        break
+                events.append((fact_order, 90,
+                    message(role="scene", speaker=next_name, audibility=AUDIBILITY_PUBLIC,
+                            time=entry["created_at"], content="", beat="divider", soft_boundary=True),
+                ))
+                prev_was_exit = False
+                prev_was_handoff = True
+            else:
+                prev_was_handoff = True
+                prev_was_exit = False
+        elif new_entrance and identity_key not in divided_identities:
+            divided_identities.add(identity_key)
+            emit = True
+            if prev_was_handoff:
+                emit = False
+            if emit:
+                events.append((fact_order, 90,
+                    message(role="scene", speaker=person, audibility=AUDIBILITY_PUBLIC,
+                            time=entry["created_at"], content="", beat="divider", soft_boundary=True),
+                ))
+                prev_was_exit = False
+                prev_was_handoff = False
+            else:
+                prev_was_handoff = False
+        elif is_exit and identity_key not in divided_identities:
+            divided_identities.add(identity_key)
+            next_name = ""
+            for following in facts[index + 1:]:
+                following_tags = set(following.get("tags") or [])
+                if ((_is_command_entry(following) and TAG_ENTER in following_tags)
+                        or following.get("presence_effect") == PRESENCE_ENTER):
+                    next_name = (following.get("person_names") or [""])[0]
+                    break
+            next_is_soft = False
+            if index + 1 < len(facts):
+                nxt = facts[index + 1]
+                nxt_tags = set(nxt.get("tags") or [])
+                nxt_handoff = _is_command_entry(nxt) and TAG_HANDOFF in nxt_tags and TAG_STAY_ATTEND in nxt_tags
+                nxt_enter = (_is_command_entry(nxt) and TAG_ENTER in nxt_tags) or nxt.get("presence_effect") == PRESENCE_ENTER
+                next_is_soft = nxt_handoff or nxt_enter
+            if not next_is_soft:
+                events.append((fact_order, 90,
+                    message(role="scene", speaker=next_name, audibility=AUDIBILITY_PUBLIC,
+                            time=entry["created_at"], content="", beat="divider", soft_boundary=True),
+                ))
+            prev_was_exit = is_exit and not next_is_soft
+            prev_was_handoff = False
+        else:
+            prev_was_exit = False
+            prev_was_handoff = False
+        # Update presence tracking for new-entrance detection.
+        _apply_presence(present_so_far, entry)
 
     events.sort(key=lambda item: (item[0], item[1]))
     scroll = [item[2] for item in events]
@@ -2768,6 +2839,22 @@ def prepare_rescript_summon_scaffold(
         }
 
 
+def find_prior_speaker_still_present(db: Any, night_id: int, exclude_name: str = "") -> Optional[str]:
+    """Find the previous chat turn's minister who is still present (A in the handoff).
+
+    Returns A's name when A is present and A != exclude_name (the new entrant B).
+    Returns None when there is no prior speaker or A has already left.
+    """
+    turns = list_chat_turns_for_night(db, int(night_id))
+    for turn in reversed(turns):
+        prior = str(turn.get("minister_name") or "").strip()
+        if not prior or prior == exclude_name:
+            continue
+        if prior in present_names_at(db, int(night_id)):
+            return prior
+    return None
+
+
 def attach_chat_turn_to_night(
     db: Any,
     state: GameState,
@@ -2837,6 +2924,24 @@ def attach_chat_turn_to_night(
     # 后，各自单调分配）；atomic 暂停内层 commit、末尾一次落定或整体回滚。
     from ming_sim.applier import atomic
     with atomic(db):
+        # #1585：当夜已开且前一位奏对者 A 仍在场时，B 宣入前须落一笔
+        # TAG_STAY_ATTEND + TAG_HANDOFF 的交接垫位（不写 TAG_EXIT、不改 presence）。
+        # 交接正文与入殿正文同轮 ChatTurnSceneRegistry 并行生成，同轮 join 回填。
+        # handoff 先于 enter 落 seq（进殿在先、奏对在后），discover_open_enter_tasks
+        # 通过 origin_chat_turn_id 同时发现二者。
+        handoff_entry_id = None
+        if existing is not None and existing["status"] == NIGHT_STATUS_OPEN and minister_name not in persons_entered_tonight(db, night_id):
+            prior_speaker = find_prior_speaker_still_present(db, night_id, exclude_name=minister_name)
+            if prior_speaker:
+                handoff_entry_id = append_ledger_entry(
+                    db, night_id,
+                    person_names=[prior_speaker],
+                    audibility=AUDIBILITY_PUBLIC,
+                    body="",
+                    tags=[TAG_STAY_ATTEND, TAG_HANDOFF],
+                    check_dead=False,
+                    commit=False,
+                )
         enter_entry_id = ensure_summon_enter(
             db, night_id, minister_name, method=summon_method, body=enter_body,
         )
@@ -2847,6 +2952,11 @@ def attach_chat_turn_to_night(
             agno_runs_before,
             night_id=night_id,
         )
+        if handoff_entry_id:
+            db.conn.execute(
+                "UPDATE story_ledger_entries SET origin_chat_turn_id = ? WHERE id = ?",
+                (int(chat_turn_id), int(handoff_entry_id)),
+            )
         if enter_entry_id:
             db.conn.execute(
                 "UPDATE story_ledger_entries SET origin_chat_turn_id = ? WHERE id = ?",
