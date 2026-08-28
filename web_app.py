@@ -1736,14 +1736,24 @@ class WebGame:
         from ming_sim.cli_backend import _SECRET_PREFIXES
         return (message or "").strip().startswith(_SECRET_PREFIXES)
 
-    def _finish_offsite_summon_scene(self, *, origin_id: str, minister_name: str) -> None:
+    def _finish_offsite_summon_scene(
+        self, *, origin_id: str, minister_name: str, gate_cm: Any,
+    ) -> None:
         """#1566：admission 已落传召账后，在 write_gate 外为同一 ledger 行生成自由 scene。
 
+        LLM 生成在 gate 外（registry coalescing 单一生成）；最终短写只在传入的
+        `gate_cm`（本请求的 `_ticketed_write_gate(pending_ticket)`）内执行一次——
+        session/beat 编排不持有、不新建裸 `atomic` 写。
         session 必须实现 materialize_offsite_summon_scene；缺能力即 AttributeError 响亮失败，
         禁止 getattr 软退把呈现断口洗成空白成功载荷。
         """
+        def _write_back(generated: list[tuple[int, str]]) -> None:
+            with gate_cm:
+                with atomic(self.db):
+                    self.session.persist_chat_turn_scene(generated)
+
         self.session.materialize_offsite_summon_scene(
-            origin_id=origin_id, person_name=minister_name,
+            origin_id=origin_id, person_name=minister_name, write_back=_write_back,
         )
 
     def _summon_admission_success_payload(
@@ -1915,6 +1925,7 @@ class WebGame:
                     summon_name, summon_result, summon_origin = offsite_summon
                     self._finish_offsite_summon_scene(
                         origin_id=summon_origin, minister_name=summon_name,
+                        gate_cm=gate_cm,
                     )
                     return self._summon_admission_success_payload(
                         summon_name, summon_result,
@@ -3206,6 +3217,7 @@ class WebGame:
                 summon_name, summon_result, summon_origin = offsite_summon
                 self._finish_offsite_summon_scene(
                     origin_id=summon_origin, minister_name=summon_name,
+                    gate_cm=write_gate,
                 )
                 payload = self._summon_admission_success_payload(
                     summon_name, summon_result,

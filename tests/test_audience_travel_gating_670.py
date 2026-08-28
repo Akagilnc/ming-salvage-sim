@@ -5,11 +5,13 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from types import MethodType, SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
 
+from ming_sim import beat_orchestration as bo
 from ming_sim.db import GameDB
 from ming_sim.session import AudienceAdmission, ChatTurnResult, GameSession
 from ming_sim import audience_night as an
@@ -71,6 +73,15 @@ def _chat_turn_count(db):
     return int(db.conn.execute("SELECT COUNT(*) AS n FROM chat_turns").fetchone()["n"])
 
 
+def _run_offsite_chat(runtime, minister_name, message, *, stream):
+    """#1566：非流式/流式共用同一断口——统一读出机面 payload，供 sync/stream 参数化塌缩复用。"""
+    if stream:
+        events = list(runtime.chat_stream(minister_name, message))
+        assert [ev.get("type") for ev in events] == ["done", "end"]
+        return events[0].get("payload") or {}
+    return runtime.chat(minister_name, message)
+
+
 def _web_hall_runtime(db, state, content, *, session_chat):
     """#670：常规 Web.chat（gate_already_held=False）殿上入口壳；挂真 admission。
 
@@ -88,9 +99,13 @@ def _web_hall_runtime(db, state, content, *, session_chat):
     s.admit_audience = MethodType(GameSession.admit_audience, s)
     s.consume_audience_admission = MethodType(GameSession.consume_audience_admission, s)
     s._beat_generator = lambda _inputs: "generated offsite summon scene"
+    # #1566：materialize_offsite_summon_scene 经唯一 _scene_registry coalescing；
+    # 壳 session 是 SimpleNamespace，须补真 registry 供 start_offsite_summon 使用。
+    s._scene_registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=4))
     s.materialize_offsite_summon_scene = MethodType(
         GameSession.materialize_offsite_summon_scene, s,
     )
+    s.persist_chat_turn_scene = MethodType(GameSession.persist_chat_turn_scene, s)
     return runtime
 
 
@@ -1329,8 +1344,9 @@ def test_web_chat_offsite_summon_generator_receives_structured_travel_facts(game
     assert facts["person_entered_court"] is False
 
 
-def test_web_chat_stream_offsite_scene_keeps_pending_until_settled(game):
-    """#1566 r4：场外 scene 生成期间既有 pending ticket 不得提前消失。"""
+@pytest.mark.parametrize("stream", [False, True], ids=["sync", "stream"])
+def test_web_chat_offsite_scene_keeps_pending_until_settled(game, stream):
+    """#1566 r4：场外 scene 生成期间既有 pending ticket 不得提前消失（sync/stream 参数化同缝）。"""
     db, state, content = game
     remote = _set_place(game, "洪承畴", location="shaanxi")
 
@@ -1348,12 +1364,14 @@ def test_web_chat_stream_offsite_scene_keeps_pending_until_settled(game):
         return "generated offsite summon scene"
 
     runtime.session._beat_generator = _slow
-    events: list = []
+    results: list = []
     error: list = []
 
     def _run():
         try:
-            events.extend(list(runtime.chat_stream(remote.name, "传洪承畴来。")))
+            results.append(
+                _run_offsite_chat(runtime, remote.name, "传洪承畴来。", stream=stream)
+            )
         except BaseException as exc:  # noqa: BLE001
             error.append(exc)
 
@@ -1370,12 +1388,13 @@ def test_web_chat_stream_offsite_scene_keeps_pending_until_settled(game):
     worker.join(2.0)
     close_worker.join(2.0)
     assert not error, error
-    assert [ev.get("type") for ev in events] == ["done", "end"]
+    assert results and results[0]["admission"] == AudienceAdmission.SUMMON_FRESH.value
     assert close_entered.is_set(), "close barrier did not drain after scene completion"
 
 
-def test_web_chat_stream_offsite_scene_failure_releases_close_barrier(game):
-    """#1566 r4：场外 scene 失败后既有关闭屏障须可继续。"""
+@pytest.mark.parametrize("stream", [False, True], ids=["sync", "stream"])
+def test_web_chat_offsite_scene_failure_releases_close_barrier(game, stream):
+    """#1566 r4：场外 scene 失败后既有关闭屏障须可继续（sync/stream 参数化同缝）。"""
     db, state, content = game
     remote = _set_place(game, "洪承畴", location="shaanxi")
 
@@ -1386,7 +1405,7 @@ def test_web_chat_stream_offsite_scene_failure_releases_close_barrier(game):
     started = threading.Event()
     release = threading.Event()
     close_entered = threading.Event()
-    stream_error: list[BaseException] = []
+    chat_error: list[BaseException] = []
 
     def _boom(_inputs):
         started.set()
@@ -1397,9 +1416,9 @@ def test_web_chat_stream_offsite_scene_failure_releases_close_barrier(game):
 
     def _run():
         try:
-            list(runtime.chat_stream(remote.name, "传洪承畴来。"))
+            _run_offsite_chat(runtime, remote.name, "传洪承畴来。", stream=stream)
         except BaseException as exc:  # noqa: BLE001
-            stream_error.append(exc)
+            chat_error.append(exc)
 
     worker = threading.Thread(target=_run, daemon=True)
     worker.start()
@@ -1413,10 +1432,97 @@ def test_web_chat_stream_offsite_scene_failure_releases_close_barrier(game):
     release.set()
     worker.join(2.0)
     close_worker.join(2.0)
-    assert len(stream_error) == 1
-    assert isinstance(stream_error[0], RuntimeError)
-    assert str(stream_error[0]) == "injected offsite summon scene failure"
+    assert len(chat_error) == 1
+    assert isinstance(chat_error[0], RuntimeError)
+    assert str(chat_error[0]) == "injected offsite summon scene failure"
     assert close_entered.is_set(), "close barrier did not drain after scene failure"
+
+
+@pytest.mark.parametrize("stream", [False, True], ids=["sync", "stream"])
+def test_web_chat_offsite_summon_generation_coalesces_dual_concurrent_same_origin(
+    game, stream,
+):
+    """#1566：同 endpoint 同 turn/person 双并发只生成一次，且同一 ledger 只物化一次。
+
+    真实入口 WebGame.chat / WebGame.chat_stream；两个并发请求命中同一 origin_id
+    （同 turn+minister），consume_audience_admission 幂等复用同一 entry_id；第二
+    请求须在第一请求仍卡在 generator 时完成自己的 prologue 并挂到同一
+    ChatTurnSceneRegistry coalescing Future——provider 只调一次，两请求均收口
+    成功，ledger body 只写一次（无重复行/无覆盖竞争/无 last-write-wins 漂移）。
+    """
+    db, state, content = game
+    remote = _set_place(game, "洪承畴", location="shaanxi")
+
+    def _session_chat(minister_name, message, *, chat_turn_id=0):
+        raise AssertionError("场外记召不得调回话")
+
+    runtime = _web_hall_runtime(db, state, content, session_chat=_session_chat)
+
+    call_count = 0
+    call_lock = threading.Lock()
+    started = threading.Event()
+    release = threading.Event()
+
+    def _slow(_inputs):
+        nonlocal call_count
+        with call_lock:
+            call_count += 1
+        started.set()
+        assert release.wait(2.0), "scene generator was not released"
+        return "generated offsite summon scene"
+
+    runtime.session._beat_generator = _slow
+
+    results: list = []
+    errors: list[BaseException] = []
+    finished = [threading.Event(), threading.Event()]
+
+    def _invoke(slot):
+        try:
+            results.append(
+                _run_offsite_chat(runtime, remote.name, "传洪承畴来。", stream=stream)
+            )
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+        finally:
+            finished[slot].set()
+
+    first = threading.Thread(target=_invoke, args=(0,), daemon=True)
+    first.start()
+    assert started.wait(2.0), "first request did not reach scene generator"
+
+    second = threading.Thread(target=_invoke, args=(1,), daemon=True)
+    second.start()
+    # 第二请求须能在首请求仍卡在 generator 时完成自己的 prologue 并挂到同一
+    # coalescing Future——不得因首请求卡住而超时/报错，也不得重复调用 provider。
+    assert not finished[1].wait(0.2), (
+        "second request finished before release (coalescing not engaged)"
+    )
+
+    release.set()
+    assert finished[0].wait(2.0), "first request did not finish after release"
+    assert finished[1].wait(2.0), "second request did not finish after release"
+
+    assert not errors, errors
+    assert call_count == 1
+    assert len(results) == 2
+    for payload in results:
+        assert payload["admission"] == AudienceAdmission.SUMMON_FRESH.value
+        assert payload["answer"] == ""
+        assert payload["chat_turn_id"] == 0
+
+    prefix = "stream" if stream else "chat"
+    origin_id = f"web:{prefix}:{state.turn}:{remote.name}"
+    unsettled = an.list_unsettled_summons(db)
+    assert len(unsettled) == 1
+    assert unsettled[0]["origin_id"] == origin_id
+    night_id = int(unsettled[0]["night_id"])
+    summon_rows = [
+        m
+        for m in an.read_night_scroll(db, night_id)
+        if m.get("beat") == "summon" and m.get("speaker") == remote.name
+    ]
+    assert len(summon_rows) == 1
 
 
 def _install_secret_order_agent(runtime, *, stream: bool = False) -> None:

@@ -13,6 +13,7 @@ from __future__ import annotations
 import contextlib
 from concurrent.futures import Future, ThreadPoolExecutor
 from types import SimpleNamespace
+import sqlite3
 import threading
 import time
 
@@ -657,6 +658,46 @@ def web_game(tmp_path, monkeypatch):
         game.session.close()
     except Exception:
         pass
+
+
+def test_game_session_close_drains_active_offsite_future_before_closing_db(web_game):
+    """#1566：统一 registry teardown 排空 tuple-key offsite Future 后才关库。"""
+    started = threading.Event()
+    release = threading.Event()
+    closed = threading.Event()
+    errors: list[BaseException] = []
+    registry = web_game.session._scene_registry
+
+    def _generate():
+        started.set()
+        assert release.wait(2.0), "offsite Future was not released"
+        return None
+
+    registry.start_offsite_summon(
+        ("offsite_summon", 1566), _generate, lambda _generated: None,
+    )
+    assert started.wait(2.0), "offsite Future did not start"
+
+    def _close():
+        try:
+            web_game.session.close()
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+        finally:
+            closed.set()
+
+    worker = threading.Thread(target=_close, daemon=True)
+    worker.start()
+    assert not closed.wait(0.1), "GameSession.close did not drain the active Future"
+    release.set()
+    assert closed.wait(2.0), "GameSession.close did not finish after Future release"
+    worker.join(2.0)
+
+    assert not errors, errors
+    assert registry.active_turn_ids() == []
+    assert registry._futures == {}
+    with pytest.raises(sqlite3.ProgrammingError):
+        web_game.db.conn.execute("SELECT 1")
 
 
 def test_exit_beat_routes_characterization_and_perspectival_inputs(game):
