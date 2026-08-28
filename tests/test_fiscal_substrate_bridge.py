@@ -1260,6 +1260,21 @@ def test_fixed_flows_substrate_hub_central_pay_carries_transport_loss_without_ji
         expected_jingyun_losses=(2, 1),
     )
 
+    # 次月国库为零：容器覆盖为本月零值且 ledger 无 hub 行；玩家结果仍须绑定
+    # 本次 settled turn，不能把上月实拨 10 与本月零容器拼接。
+    state.metrics["国库"] = 0
+    db.save_state(state)
+    second_turn = state.turn
+    second_flows = flows_mod.apply_fixed_period_flows(db, state)
+    assert not any(row.get("category") == "边饷hub" for row in second_flows)
+    state.next_period()
+    assert runtime.budget_payload()["settled_army_pay"] == {
+        "settled_turn": second_turn,
+        "treasury_disbursed": 0,
+        "actual_arrived": 0,
+        "transit_loss": 0,
+    }
+
 
 def test_fixed_flows_substrate_hub_books_split_treasury_income_and_central_losses(fresh_game):
     import ming_sim.flows as flows_mod

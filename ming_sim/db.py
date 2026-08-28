@@ -6641,17 +6641,16 @@ class GameDB:
         """已执行边饷 hub 三项结果；只读 ledger/container，不重算结算。"""
         if not self.is_substrate_hub_fiscal_engine_enabled():
             return None
+        # 玩家财政面在换月后读取刚结束的 turn；容器也是该次 fixed-flow 的覆盖值。
+        # 精确绑定 turn，零拨款月即使没有 ledger 行也不得回退拼接旧月扣款。
+        settled_turn = max(0, int(state.turn) - 1)
         hub_debit = self.conn.execute(
             """
-            SELECT turn, COALESCE(SUM(-delta), 0) AS amount
+            SELECT COALESCE(SUM(-delta), 0) AS amount
             FROM economy_ledger
-            WHERE account = '国库' AND category = '边饷hub'
-              AND turn = (
-                SELECT MAX(turn) FROM economy_ledger
-                WHERE account = '国库' AND category = '边饷hub'
-              )
-            GROUP BY turn
-            """
+            WHERE turn = ? AND account = '国库' AND category = '边饷hub'
+            """,
+            (settled_turn,),
         ).fetchone()
         containers = self.conn.execute(
             """
@@ -6660,10 +6659,10 @@ class GameDB:
             """
         ).fetchall()
         values = {str(row["key"]): float(row["value"] or 0) for row in containers}
-        if hub_debit is None or len(values) != 3:
+        if len(values) != 3:
             return None
         return {
-            "settled_turn": int(hub_debit["turn"]),
+            "settled_turn": settled_turn,
             "treasury_disbursed": int(hub_debit["amount"] or 0),
             "actual_arrived": int(
                 values.get("hub_京运实拨", 0) + values.get("hub_中央军饷实拨", 0)
