@@ -18,6 +18,7 @@ import copy
 import json
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
+from ming_sim.person_archive_contract import PERSON_LEGAL_REASON_CODES
 from ming_sim.value_matrix import (
     mean_aligned_stance,
     normalize_axes,
@@ -751,11 +752,12 @@ def _lanes_from_payload(payload: Mapping[str, object]) -> List[Dict[str, object]
             except (TypeError, ValueError):
                 progress = 0.0
             reason = str(item.get("reason_code") or "").strip()
+            legal = reason in PERSON_LEGAL_REASON_CODES
             lanes.append({
                 "fact_key": key,
                 "progress": max(0.0, progress),
-                "used": bool(item.get("used")),
-                "reason_code": reason,
+                "used": bool(item.get("used")) and legal,
+                "reason_code": reason if legal else "",
             })
     return lanes
 
@@ -812,6 +814,41 @@ def seed_investigation_fact_lanes(
     return lanes
 
 
+def _substantiate_lane(lane: Dict[str, object]) -> None:
+    code = DEFAULT_SUBSTANTIATION_REASON if DEFAULT_SUBSTANTIATION_REASON in PERSON_LEGAL_REASON_CODES else ""
+    lane["progress"] = 1.0
+    lane["reason_code"] = code
+    lane["used"] = bool(code)
+
+
+def read_substantiated_legal_reason_code(
+    db: Any, target: str, fact_key: str,
+) -> str:
+    """D4-4 consumption: legal-set reason_code for a substantiated fact lane."""
+    name = str(target or "").strip()
+    key = str(fact_key or "").strip()
+    if not name or not key:
+        return ""
+    rows = db.conn.execute("SELECT id, payload_json FROM decree_dossiers").fetchall()
+    for row in rows:
+        try:
+            payload = json.loads(str(row["payload_json"] or "{}"))
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(payload, Mapping):
+            continue
+        contract = payload.get(CONTRACT_KEY) if isinstance(payload.get(CONTRACT_KEY), Mapping) else {}
+        if _investigation_target_of(contract) != name:
+            continue
+        for lane in _lanes_from_payload(payload):
+            if str(lane["fact_key"]) != key:
+                continue
+            code = str(lane.get("reason_code") or "").strip()
+            if float(lane.get("progress") or 0.0) >= 1.0 and code in PERSON_LEGAL_REASON_CODES:
+                return code
+    return ""
+
+
 def mark_investigation_fact_used(
     db: Any, dossier_id: int, fact_key: str, *, commit: bool = False,
 ) -> None:
@@ -820,19 +857,13 @@ def mark_investigation_fact_used(
     found = False
     for lane in lanes:
         if str(lane["fact_key"]) == key:
-            if float(lane.get("progress") or 0.0) < 1.0:
-                lane["progress"] = 1.0
-            lane["reason_code"] = DEFAULT_SUBSTANTIATION_REASON
-            lane["used"] = True
+            _substantiate_lane(lane)
             found = True
             break
     if not found:
-        lanes.append({
-            "fact_key": key,
-            "progress": 1.0,
-            "used": True,
-            "reason_code": DEFAULT_SUBSTANTIATION_REASON,
-        })
+        lane = {"fact_key": key}
+        _substantiate_lane(lane)
+        lanes.append(lane)
     _write_fact_lanes(db, dossier_id, lanes, commit=commit)
 
 
@@ -865,9 +896,7 @@ def advance_investigation_lanes(
             continue
         progress = float(lane.get("progress") or 0.0) + increment
         if progress >= 1.0:
-            lane["progress"] = 1.0
-            lane["reason_code"] = DEFAULT_SUBSTANTIATION_REASON
-            lane["used"] = True
+            _substantiate_lane(lane)
         else:
             lane["progress"] = progress
         bound = key
