@@ -2111,6 +2111,28 @@ def test_657_s10_http_five_actions_and_1490_no_regress(web_game, monkeypatch):
         "locality_scope": "single", "region_id": "shaanxi",
         "transaction_category": "督赈", "deadline_months": 2,
     })
+    # #1590：同一真实入口 tracer 的 follow_draft 使用生成边界产出的 catalog 合法目标。
+    import ming_sim.rescript_draft as draft_mod
+    from ming_sim.rescript_draft import build_rescript_draft_payload, generate_rescript_draft
+    from ming_sim.simulation import build_simulator_payload
+
+    liaodong_raw = {**opt, "label": "经略辽东", "target_id": "liaodong", "region_id": "liaodong"}
+    liaodong_raw.pop("draft_capability", None)
+    generated_json = json.dumps({"items": [{
+        "title": "辽东急务", "context": "辽东待议。",
+        "options": [liaodong_raw, {**liaodong_raw, "label": "备拟"}],
+    }]}, ensure_ascii=False)
+    monkeypatch.setattr(draft_mod, "run_agent_text", lambda *a, **k: generated_json)
+    generated = generate_rescript_draft(
+        object(),
+        build_rescript_draft_payload(
+            state, "邸报", build_simulator_payload(state, db, "", ""),
+            {"name": "杨嗣昌", "office": "兵部尚书", "faction": "东林"},
+        ),
+        int(state.turn),
+    )
+    assert generated is not None
+    liaodong_opt = generated[0]["options"][0]
 
     # 真 phase2（只 stub LLM 边界）；六动作各推月后按当前 turn 再种
     _657_install_real_phase2_llm_boundary(monkeypatch)
@@ -2133,8 +2155,8 @@ def test_657_s10_http_five_actions_and_1490_no_regress(web_game, monkeypatch):
     cases = [
         ("hold", {"action": "hold", "label": "留中"}),
         ("follow_draft", {
-            "action": "follow_draft", "label": opt["label"],
-            "draft_capability": opt["draft_capability"],
+            "action": "follow_draft", "label": liaodong_opt["label"],
+            "draft_capability": liaodong_opt["draft_capability"],
         }),
         ("midzhi", {
             "action": "midzhi", "label": "中旨",
@@ -2157,9 +2179,10 @@ def test_657_s10_http_five_actions_and_1490_no_regress(web_game, monkeypatch):
         db = web_game.db
         db.conn.execute("DELETE FROM pending_decisions")
         db.conn.commit()
+        case_opt = liaodong_opt if name == "follow_draft" else opt
         db.save_rescript_drafts(int(state.turn), [{
             "title": f"急务-{name}", "context": "c",
-            "options": [opt, {"label": "备", "hint": "h", "draft_capability": "x"}],
+            "options": [case_opt, {"label": "备", "hint": "h", "draft_capability": "x"}],
             "actor_name": "杨嗣昌", "actor_office": "兵部尚书", "actor_faction": "东林",
         }])
         db.conn.commit()
@@ -2215,7 +2238,8 @@ def test_657_s10_http_five_actions_and_1490_no_regress(web_game, monkeypatch):
             assert edges, "hold 须写辜负信用边"
         elif name == "follow_draft":
             assert hit["status"] == "decided"
-            assert len(db.list_decree_dossiers()) >= 1
+            dossiers = db.list_decree_dossiers()
+            assert dossiers and dossiers[-1]["target_id"] == "liaodong"
         elif name == "midzhi":
             mids = [d for d in db.list_decree_dossiers() if d.get("mode") == "midzhi"]
             assert mids and mids[-1]["status"] == "proposed"
