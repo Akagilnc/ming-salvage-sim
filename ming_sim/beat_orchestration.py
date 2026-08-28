@@ -876,9 +876,11 @@ def join_close_scene_on_registry(
 ) -> str:
     """收夜 scene 汇合：join 既有 registry 桶，返回正文。
 
-    成功后退役 scaffold；失败 abandon + fail_chat_turn 后原样抛出——
-    不重开夜、不自建 Thread/executor。
+    成功只持久化 scene 正文，不退役 scaffold——整体 close 成功后再退役，
+    以便 sibling 失败时既有 fail_chat_turn 仍能回滚 origin-bound exit。
+    失败 abandon + fail_chat_turn 后原样抛出——不重开夜、不自建 Thread/executor。
     """
+    _ = scaffold_owned
     ctid = int(chat_turn_id or 0)
     if not ctid or not hasattr(scene_registry, "join"):
         return ""
@@ -897,14 +899,6 @@ def join_close_scene_on_registry(
             if int(entry_id) == 0 and text:
                 body = str(text)
                 break
-        if scaffold_owned and hasattr(db, "conn") and getattr(db, "conn", None) is not None:
-            # 成功后退役 scaffold，避免 wait_in_flight 把 generating 空轮当在飞。
-            db.conn.execute(
-                "UPDATE chat_turns SET status = 'failed' "
-                "WHERE id = ? AND status = 'generating' AND minister_message_id IS NULL",
-                (int(ctid),),
-            )
-            db.conn.commit()
         return body
     except BaseException as scene_exc:
         try:
@@ -915,3 +909,16 @@ def join_close_scene_on_registry(
         except BaseException as cleanup_exc:
             raise scene_exc from cleanup_exc
         raise
+
+
+def retire_owned_close_scaffold(db: Any, chat_turn_id: int) -> None:
+    """整体 close 成功后退役收夜 scaffold，避免 wait_in_flight 把空轮当在飞。"""
+    ctid = int(chat_turn_id or 0)
+    if not ctid or not hasattr(db, "conn") or getattr(db, "conn", None) is None:
+        return
+    db.conn.execute(
+        "UPDATE chat_turns SET status = 'failed' "
+        "WHERE id = ? AND status = 'generating' AND minister_message_id IS NULL",
+        (int(ctid),),
+    )
+    db.conn.commit()
