@@ -14239,11 +14239,8 @@ class GameDB:
 
     @staticmethod
     def _is_army_pay_grant_payload(payload: Optional[Dict[str, object]]) -> bool:
-        """#1503：拨饷/协饷类 = 显式 grant_action=协饷 或 purpose=补饷（禁 army 通用升格）。"""
-        p = payload or {}
-        grant_action = str(p.get("grant_action") or "").strip()
-        purpose = str(p.get("purpose") or "").strip()
-        return grant_action == "协饷" or purpose == "补饷"
+        """#1503：补饷身份只由显式 grant_action=协饷 决定。"""
+        return str((payload or {}).get("grant_action") or "").strip() == "协饷"
 
     def _normalize_army_pay_grant_payload(
         self, payload: Dict[str, object],
@@ -14262,6 +14259,7 @@ class GameDB:
             purpose=str(normalized.get("purpose") or ""),
             target_kind=str(normalized.get("target_kind") or ""),
             target_id=str(normalized.get("target_id") or ""),
+            cadence=str(normalized.get("cadence") or ""),
         )
         normalized.update(explicit)
         if self._grant_allocation_is_monthly(normalized):
@@ -19747,13 +19745,14 @@ class GameDB:
         from ming_sim.error_pack import rejections_jsonl_path
         mirror_rejections_after_commit(self, collector, rejections_jsonl_path)
 
-    def ensure_dossiers_for_draft_directives(self, state: GameState) -> None:
+    def ensure_dossiers_for_draft_directives(self, state: GameState) -> List[str]:
         """结束边界成案：只读最新 draft 正文/载荷，按 directive_id 幂等创建。
 
         #654 r3-C.2 路3：每道旨独立 SAVEPOINT；单旨失败记 rejection、保持 draft，不波及他旨。
         """
         from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
         collector = RejectionCollector()
+        rejection_reasons: List[str] = []
         with atomic(self):
             for row in self.list_directives(state, statuses=("draft",)):
                 did = int(row["id"])
@@ -19767,6 +19766,7 @@ class GameDB:
                     )
                 except Exception as exc:
                     self.conn.execute(f"ROLLBACK TO {sp}")
+                    rejection_reasons.append(str(exc))
                     # P6：rejection 只存 directive_id，不裁剪/快照 LLM 旨文
                     collector.record(
                         "directive_locality",
@@ -19786,6 +19786,7 @@ class GameDB:
         from ming_sim.applier import mirror_rejections_after_commit
         from ming_sim.error_pack import rejections_jsonl_path
         mirror_rejections_after_commit(self, collector, rejections_jsonl_path)
+        return rejection_reasons
 
     def reject_directive(self, directive_id: int) -> None:
         """皇帝驳回大臣拟旨：pending → rejected。"""

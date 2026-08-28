@@ -14,6 +14,8 @@ import re
 from dataclasses import dataclass, field, replace
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+from ming_sim.decree_vocabulary import TARGET_KINDS
+
 from ming_sim.action_clusters import (
     ActionCluster,
     FieldSpec,
@@ -84,12 +86,19 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
         # 裁决并提前返回。每项复用登记行自带的同一 handler，不复制 kind 分支。
         baseline_out = dict(ctx.out)
         multi_batch = len(ctx.intent_candidates) > 1
+        candidates = list(ctx.intent_candidates)
+        if ctx.explicit_prefixed:
+            candidates.sort(
+                key=lambda candidate: str(candidate.get("kind") or "")
+                != "grant_allocation"
+            )
         kind_counts: Dict[str, int] = {}
-        for candidate in ctx.intent_candidates:
+        for candidate in candidates:
             kind = str(candidate.get("kind") or "")
             kind_counts[kind] = kind_counts.get(kind, 0) + 1
         kind_indexes: Dict[str, int] = {}
-        for candidate in ctx.intent_candidates:
+        grant_staged = False
+        for candidate in candidates:
             kind = str(candidate.get("kind") or "")
             cluster = cluster_by_kind(kind)
             if cluster is None or cluster.effect != EFFECT_MATERIALIZE:
@@ -106,6 +115,7 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
                 intent=candidate,
                 intent_kind=cluster.kind,
                 intent_candidates=None,
+                explicit_prefixed=ctx.explicit_prefixed and not grant_staged,
                 candidate_kind_index=kind_index,
                 candidate_kind_count=kind_counts[kind],
                 multi_intent_batch=multi_batch,
@@ -113,6 +123,10 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
                 draft_staged=False,
             )
             fn(candidate_ctx)
+            if kind == "grant_allocation" and int(
+                candidate_out.get("pending_action_id") or 0
+            ) > int(baseline_out.get("pending_action_id") or 0):
+                grant_staged = True
             ctx.out.update(candidate_out)
             if candidate_ctx.draft_staged:
                 ctx.draft_staged = True
@@ -1253,16 +1267,21 @@ def require_explicit_xiexang_fields(
     purpose: str = "",
     target_kind: str = "",
     target_id: str = "",
+    cadence: str = "",
 ) -> Dict[str, Any]:
-    """#1503 单一权威接缝：一次收集缺项且不补值。"""
+    """#1503 单一权威接缝：严格验形并归一 typed 字段。"""
+    from ming_sim.strict_types import strict_int
+
     missing: list = []
     try:
-        n = int(amount or 0)
-    except (TypeError, ValueError):
+        n = strict_int(amount, accept_numeric_strings=False)
+    except ValueError:
         n = 0
     if n <= 0:
         missing.append("amount")
-    if str(account or "").strip() not in {"国库", "内库"}:
+    raw_account = str(account or "").strip()
+    canonical_account = "国库" if raw_account == "太仓" else raw_account
+    if canonical_account not in {"国库", "内库"}:
         missing.append("account")
     if str(purpose or "").strip() != "补饷":
         missing.append("purpose")
@@ -1270,11 +1289,14 @@ def require_explicit_xiexang_fields(
         missing.append("target_kind")
     if not str(target_id or "").strip():
         missing.append("target_id")
+    cadence_value = str(cadence or "").strip()
+    if cadence_value and cadence_value not in {"一次性", "每月"}:
+        missing.append("cadence")
     if missing:
         raise IncompleteXiexangPayloadError(missing)
     return {
-        "amount": int(amount),
-        "account": str(account).strip(),
+        "amount": n,
+        "account": canonical_account,
         "purpose": "补饷",
         "target_kind": "army",
         "target_id": str(target_id).strip(),
@@ -1321,6 +1343,7 @@ def stage_grant_allocation_candidate(
             purpose=purpose,
             target_kind=kind,
             target_id=target,
+            cadence=cadence,
         )
         n = int(explicit["amount"])
         account = str(explicit["account"])
@@ -1334,8 +1357,6 @@ def stage_grant_allocation_candidate(
             raise ValueError(
                 f"协饷旨意 target 无法解析为军队：{target!r}（不猜散文）"
             )
-        if cadence and cadence not in {"一次性", "每月"}:
-            raise ValueError("协饷旨意 cadence 非法（不猜散文）")
     else:
         if not target or not kind:
             return 0
@@ -3244,11 +3265,11 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 FieldSpec("name", "姓名", None, "", max_len=20),
                 # 政务拨款对象：赈灾地区 / 项目 / 协饷军队 / 恩赏人物
                 FieldSpec("target_id", "目标", None, "", max_len=80),
-                FieldSpec("target_kind", "目标类型", None, "", max_len=40),
-                FieldSpec("amount", "金额", None, 0, as_int=True),
+                FieldSpec("target_kind", "目标类型", TARGET_KINDS, ""),
+                FieldSpec("amount", "金额", None, None, as_int=True, int_lo=1),
                 FieldSpec(
                     "account", "账户",
-                    frozenset({"国库", "内库"}), "",
+                    frozenset({"国库", "内库", "太仓"}), "",
                 ),
                 FieldSpec(
                     "purpose", "用途",

@@ -731,6 +731,8 @@ def map_rescript_option_or_choice(
         payload["grant_action"] = ga
         # account 处理序（mapper 内，normalize 前）
         raw_account = str(src.get("account") or "").strip()
+        if raw_account == "太仓":
+            raw_account = "国库"
         if ga == "发内帑":
             account = "内库"
         elif ga == "协饷":
@@ -757,6 +759,7 @@ def map_rescript_option_or_choice(
                 purpose=str(src.get("purpose") or ""),
                 target_kind=g_kind,
                 target_id=g_tid,
+                cadence=str(src.get("cadence") or ""),
             )
             army_id = explicit["target_id"]
             if db is not None:

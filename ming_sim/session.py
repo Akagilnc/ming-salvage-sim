@@ -1659,7 +1659,11 @@ class GameSession:
                             result.next_minister = target.name
                         # #670 P6'/P7：拒入殿只不设 court_action/next_minister；闸文不进 LLM answer。
             elif tool_name == "propose_directive" or tool_result.startswith("__pending_directive__"):
-                if confirmation_turn or explicit_secret_prefix:
+                if (
+                    confirmation_turn
+                    or explicit_secret_prefix
+                    or _typed_grant_candidate_present(None, preclassified_intent)
+                ):
                     continue
                 args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
                 if not isinstance(args, dict):
@@ -2232,14 +2236,8 @@ class GameSession:
             # 拒绝丢弃）针对的是窗前已暂存的 pending，保持可用（ship-pre r2 设计）。
             # 抽取器（LLM 调用）一并跳过。
             return out
-        # #1503：显式拟旨若已有 typed grant_allocation 候选，禁 generic special_decree
-        # 抢先占 pending——交给既有 grant materialize 单轨成案。
-        typed_grant_ready = _typed_grant_candidate_present(intent, intent_candidates)
-        needs_draft_fallback = (
-            not has_directive
-            and message_text.startswith(_DRAFT_PREFIXES)
-            and not typed_grant_ready
-        )
+        # generic 拟旨 fallback 必须等 typed materialize 的真实结果；候选形状不代表成案。
+        needs_draft_fallback = False
         needs_secret_fallback = (
             not has_directive
             and not out["secret_order_id"]
@@ -2313,6 +2311,23 @@ class GameSession:
             chat_turn_id=active_chat_turn_id,
         )
         run_materialize_pipeline(mat_ctx)
+        if (
+            not has_directive
+            and not out.get("pending_action_id")
+            and message_text.startswith(_DRAFT_PREFIXES)
+        ):
+            fallback = resolve_minister_actions(
+                reply, player_message, default_assignee=minister_name,
+                llm_config=llm_config,
+                dossier_candidates=self.db.list_referenceable_dossiers(
+                    minister_name, self.state.turn,
+                ),
+            )
+            if fallback["decree_text"]:
+                out["pending_action_id"] = self.db.stage_explicit_directive(
+                    self.state.turn, minister_name, fallback["decree_text"],
+                    mode=message_text,
+                )
         return out
 
     @staticmethod
@@ -3139,7 +3154,7 @@ class GameSession:
             self.db.confirm_directive(int(pending["id"]), self.state)
         # #658：Web/CLI free-form draft 在真实颁诏链进入唯一成案接缝（confirm/commit
         # 已各自 ensure；本口覆盖 add_directive 直落 draft 的路径，幂等）。
-        self.db.ensure_dossiers_for_draft_directives(self.state)
+        dossier_rejections = self.db.ensure_dossiers_for_draft_directives(self.state)
         directives = list(self.db.list_dossiered_draft_directives(self.state))
         # DB owner supplies the canonical read-only default-approval projection.
         # Negative preview ids participate in stale-decree fingerprinting without
@@ -3167,6 +3182,8 @@ class GameSession:
             elif allow_empty_decree or recovered_source is not None:
                 # #1274：无旨月 / 结算中恢复 — decrees=[] 走完整链，不拒。
                 pass
+            elif dossier_rejections:
+                raise ValueError(dossier_rejections[-1])
             else:
                 raise ValueError("网页/CLI 端不允许跳过回合：至少一条草案才能颁诏。")
         # P1-1（不变式：不许颁发早于尚未纳入草案的生成稿）：玩家拟诏后又回对话新建草案时，

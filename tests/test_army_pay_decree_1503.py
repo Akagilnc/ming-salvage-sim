@@ -811,6 +811,41 @@ def _scripted_xiexang_candidates(*, amount=15, account="国库", target_id="guan
     )
 
 
+@pytest.mark.parametrize("amount", [True, 15.9, "15"])
+def test_xiexang_amount_rejects_non_json_integer(amount):
+    from ming_sim.action_materialize import IncompleteXiexangPayloadError, require_explicit_xiexang_fields
+
+    with pytest.raises(IncompleteXiexangPayloadError) as exc:
+        require_explicit_xiexang_fields(
+            amount=amount, account="国库", purpose="补饷",
+            target_kind="army", target_id="guanning",
+        )
+    assert "amount" in exc.value.missing_fields
+
+
+def test_xiexang_taicang_alias_and_cadence_share_admission_seam():
+    from ming_sim.action_materialize import IncompleteXiexangPayloadError, require_explicit_xiexang_fields
+
+    payload = require_explicit_xiexang_fields(
+        amount=15, account="太仓", purpose="补饷",
+        target_kind="army", target_id="guanning", cadence="每月",
+    )
+    assert payload["account"] == "国库"
+    with pytest.raises(IncompleteXiexangPayloadError) as exc:
+        require_explicit_xiexang_fields(
+            amount=15, account="国库", purpose="补饷",
+            target_kind="army", target_id="guanning", cadence="每季",
+        )
+    assert "cadence" in exc.value.missing_fields
+
+
+def test_non_xiexang_purpose_does_not_claim_army_pay_identity(game):
+    db, _state, _content = game
+    assert not db._is_army_pay_grant_payload({
+        "grant_action": "项目经费", "purpose": "补饷",
+    })
+
+
 def test_explicit_draft_prefix_without_grant_candidate_stays_generic(game, monkeypatch):
     """非载荷拟旨：classifier 无 grant 候选时仍走 generic special_decree；颁布不误落补饷。"""
     import types
@@ -896,7 +931,12 @@ def test_real_chat_explicit_prefix_pay_decree_stages_grant_pending(game, monkeyp
         "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
     ).fetchone()
     actor = actor_row["name"]
-    scripted = _scripted_xiexang_candidates(amount=15, target_id="guanning")
+    scripted = _scripted_xiexang_candidates(
+        amount=15, account="太仓", target_id="guanning",
+    ) + candidates_from_classifier_payload({
+        "kind": "appointment", "appoint_action": "任命",
+        "name": actor, "office": "经略关宁",
+    }, soft=False)
     classify_calls: list = []
 
     def fake_classify(*_a, **_k):
@@ -907,7 +947,11 @@ def test_real_chat_explicit_prefix_pay_decree_stages_grant_pending(game, monkeyp
         def run(self, _msg):
             return SimpleNamespace(
                 content="臣遵旨。敕户部发太仓银十五万两协济关宁军前。钦此。",
-                tools=[],
+                tools=[SimpleNamespace(
+                    tool_name="propose_directive",
+                    result="__pending_directive__敕户部发太仓银十五万两协济关宁军前。",
+                    arguments={"decree_text": "敕户部发太仓银十五万两协济关宁军前。"},
+                )],
             )
 
     sess = GameSession.__new__(GameSession)
@@ -941,13 +985,30 @@ def test_real_chat_explicit_prefix_pay_decree_stages_grant_pending(game, monkeyp
     assert classify_calls == ["classify"], "显式拟旨须跑一次 typed classifier"
     pending_id = int(getattr(result, "pending_action_id", 0) or 0)
     assert pending_id > 0
-    pending = json.loads(db.conn.execute(
-        "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
-    ).fetchone()["payload_json"])
+    payloads = [
+        json.loads(row["payload_json"])
+        for row in db.conn.execute(
+            "SELECT payload_json FROM pending_actions WHERE turn=? AND kind='directive'",
+            (state.turn,),
+        ).fetchall()
+    ]
+    pending = next(
+        payload for payload in payloads
+        if payload.get("dossier_action_type") == "grant_allocation"
+    )
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM pending_actions WHERE turn=? AND kind='office'",
+        (state.turn,),
+    ).fetchone()[0] == 1
     assert pending["dossier_action_type"] == "grant_allocation"
     assert pending["purpose"] == "补饷"
+    assert pending["account"] == "国库"
     assert int(pending["amount"]) == 15
     assert pending["target_id"] == "guanning"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM pending_actions WHERE turn=? AND kind='directive'",
+        (state.turn,),
+    ).fetchone()[0] == 1
     # 成案前零落账
     assert int(state.metrics["国库"]) == treasury_before
     assert _army_row(db)["arrears"] == pytest.approx(arrears_before)
