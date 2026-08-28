@@ -131,7 +131,7 @@ def normalize_rescript_layer_a_option(raw: object) -> Dict[str, object]:
     for key, _default in (
         ("name", ""), ("title", ""), ("commitment_kind", ""),
         ("station", ""), ("office", ""),
-        ("grant_action", ""), ("account", ""), ("cadence", ""),
+        ("grant_action", ""), ("account", ""), ("purpose", ""), ("cadence", ""),
         ("execution_surface", ""), ("appoint_action", ""),
         ("appointment_tenure", ""), ("punish_action", ""),
         ("privilege", ""), ("summon_target", ""),
