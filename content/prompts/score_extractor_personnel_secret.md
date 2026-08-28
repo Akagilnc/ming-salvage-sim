@@ -107,9 +107,9 @@
   带 `entry_kind:"due_commitment"` 的到期待裁承诺不是密令，忽略本字段。
 - `密令编号` 必须取 input `secret_orders` 两组（`在办`/`待核议`）真实密令条目的 `id`，不要按标题自编。
 
-### 长差逐月密奏
+### 密令逐月密奏（0058 通用奏报轨）
 
-`monthly_dossier_reports` 是本档房独享的合资格长差案卷（仅精确 tag `护行`/`稽核` 且当前期限至少两月）及 canonical `progress` 历史。每个仍在办案卷每月必须恰好输出一项 `dossier_progress_reports`：`dossier_id` 必须照录输入 id，`progress_band` 与 `memorial_text` 必须依据密令案卷、当月推演事实及既往历史写本月密奏。不得从标题猜测、不得输出未知案卷、不得漏项或重复、不得用“仍在承办”等通用占位文冒充事实；无法形成事实密奏即让本次抽取失败，不得伪造空月成功。此内容未披露，不得写入其他字段。
+`monthly_dossier_reports` 是本档房独享的合资格在办密令案卷及 canonical `progress` 历史（#1504 / ADR 0073：凡带执行判定面的密令案卷均可挂，不限 tag、不限期限月数）。每个仍在办候选案卷每月必须恰好输出一项 `dossier_progress_reports`：`dossier_id` 必须照录输入 id，`progress_band` 与 `memorial_text` 必须依据密令案卷、当月推演事实及既往历史写本月密奏。不得从标题猜测、不得输出未知案卷、不得漏项或重复、不得用“仍在承办”等通用占位文冒充事实；无法形成事实密奏即让本次抽取失败，不得伪造空月成功。此内容未披露，不得写入其他字段。奏报永不入 apply、不充当实进度或结案真源。
 
 ### 密令案卷参与人追加
 

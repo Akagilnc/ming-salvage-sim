@@ -18,7 +18,8 @@ def prepare_then_settle(db, state, content, raw_delta, **kwargs):
     if "source" in kwargs:
         prep_kw["source"] = kwargs["source"]
     run_prepare(db, state, content, **prep_kw)
-    return run_settle(db, state, content, raw_delta, **kwargs)
+    from tests.conftest import with_monthly_reports
+    return run_settle(db, state, content, with_monthly_reports(db, raw_delta), **kwargs)
 
 
 def rejection_rows(db, turn, section=None, *, columns="section, reason, category, source"):
