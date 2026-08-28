@@ -645,7 +645,7 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
                 message(role="scene", speaker=next_name, audibility=AUDIBILITY_PUBLIC,
                         time=entry["created_at"], content="", beat="divider", soft_boundary=True),
             ))
-        elif is_exit and not followed_by_handoff and identity_key not in divided_identities:
+        elif is_exit and str(entry.get("body") or "").strip() and not followed_by_handoff and identity_key not in divided_identities:
             divided_identities.add(identity_key)
             next_name = ""
             for later in facts[index + 1:]:

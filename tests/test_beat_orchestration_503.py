@@ -2152,7 +2152,9 @@ def test_close_scene_join_free_but_persist_and_cleanup_hold_write_gate(game):
     worker.join(0.2)
     assert worker.is_alive()
     blocked_scroll = an.read_night_scroll(db, int(night_id))
-    assert "exit" not in _named_scene_beats(blocked_scroll)
+    blocked_beats = _named_scene_beats(blocked_scroll)
+    assert "exit" not in blocked_beats
+    assert "divider" not in blocked_beats
     gate.release()
     worker.join(2)
     assert not worker.is_alive()
@@ -2186,14 +2188,18 @@ def test_final_exit_scaffold_lands_truly_empty_not_fixed_template(game):
         if an.TAG_EXIT in (e.get("tags") or [])
     )
     assert exit_entry["body"] == "", exit_entry["body"]
-    assert "exit" not in _named_scene_beats(an.read_night_scroll(db, int(night_id)))
+    pre_persist_beats = _named_scene_beats(an.read_night_scroll(db, int(night_id)))
+    assert "exit" not in pre_persist_beats
+    assert "divider" not in pre_persist_beats
     bo.persist_chat_turn_scene(db, registry.join(close_ctid))
     filled = next(
         e for e in an.list_ledger(db, int(night_id)) if e["id"] == exit_entry["id"]
     )
     assert filled["id"] == exit_entry["id"]
     scroll = an.read_night_scroll(db, int(night_id))
-    assert "exit" in _named_scene_beats(scroll)
+    named = _named_scene_beats(scroll)
+    assert "exit" in named
+    assert "divider" in named
 
 
 def test_closing_crash_resume_reuses_ledgered_empty_final_exit_scaffold(game):
