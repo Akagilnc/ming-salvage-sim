@@ -73,6 +73,7 @@ from ming_sim.session import (
     AudienceAdmission,
     _is_summonable_court_minister,
     _pending_action_failure_payload,
+    _typed_grant_candidate_present,
     coalesce_pending_action_id,
 )
 from ming_sim.audience_pipeline import run_mindreading_for_turn
@@ -2338,7 +2339,11 @@ class WebGame:
                 res = str(getattr(tool_exec, "result", "") or "")
                 tool_name = getattr(tool_exec, "tool_name", "")
                 if tool_name == "propose_directive" or res.startswith("__pending_directive__"):
-                    if confirmation_turn or explicit_secret_prefix:
+                    if (
+                        confirmation_turn
+                        or explicit_secret_prefix
+                        or _typed_grant_candidate_present(None, preclassified_intent)
+                    ):
                         continue
                     args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
                     if not isinstance(args, dict):
