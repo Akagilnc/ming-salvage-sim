@@ -303,6 +303,32 @@ def test_open_enter_registry_persists_handoff_and_soft_segment(game):
     assert int(handoff["origin_chat_turn_id"]) == int(ctid)
 
 
+def test_attach_skips_handoff_when_nearest_prior_speaker_already_left(game):
+    """#1585: C 留殿、最近奏对者 A 离殿后再宣 B，不得把 C 写成交接。"""
+    db, state, content = game
+    older = _active_minister(db, content)
+    an.attach_chat_turn_to_night(
+        db, state, older, agno_session_id="c-stay", agno_runs_before=0,
+    )
+    prior = _active_minister(db, content, exclude={older})
+    night_id, prior_ctid = an.attach_chat_turn_to_night(
+        db, state, prior, agno_session_id="a-leave", agno_runs_before=0,
+    )
+    an.dismiss_from_audience(db, prior, night_id=night_id, origin_chat_turn_id=prior_ctid)
+    incoming = _active_minister(db, content, exclude={older, prior})
+    _nid, incoming_ctid = an.attach_chat_turn_to_night(
+        db, state, incoming, agno_session_id="b-enter", agno_runs_before=0,
+    )
+    handoffs = [
+        entry for entry in an.list_ledger(db, night_id)
+        if an.TAG_HANDOFF in (entry.get("tags") or [])
+        and int(entry.get("origin_chat_turn_id") or 0) == int(incoming_ctid)
+    ]
+    assert handoffs == []
+    assert older in an.present_names_at(db, night_id)
+    assert prior not in an.present_names_at(db, night_id)
+
+
 def test_start_open_enter_claims_atomically_under_concurrent_calls(game, monkeypatch):
     """#542: 同 chat_turn_id 并发 start_open_enter 至多一轮 discover/submit。"""
     db, state, content = game
