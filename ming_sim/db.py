@@ -15165,17 +15165,6 @@ class GameDB:
         ).fetchone()
         return None if row is None else self._dossier_row(row)
 
-    def _refresh_secret_order_covert_contract(
-        self,
-        secret_order_id: int,
-        *,
-        deadline_span: int,
-        due_turn: int,
-    ) -> None:
-        """期限变更不得另造/补默认合同；已冻结交付身份保持原样。"""
-        del secret_order_id, deadline_span, due_turn
-        return
-
     def list_endorsed_dossier_candidates(
         self, current_turn: int,
     ) -> List[Dict[str, object]]:
@@ -21929,12 +21918,6 @@ class GameDB:
                 origin_chat_message_ids=classify_ids,
                 commit=False,
             )
-            live = self.conn.execute(
-                "SELECT deadline_span, due_turn FROM secret_orders WHERE id=?",
-                (int(order_id),),
-            ).fetchone()
-            span = int(live["deadline_span"] or 0) if live is not None else 0
-            due = int(live["due_turn"] or 0) if live is not None else 0
             dossier = self.get_dossier_for_secret_order(int(order_id))
             if dossier is not None:
                 try:
@@ -21947,11 +21930,6 @@ class GameDB:
                 payload["content"] = content
                 payload["tags"] = json.loads(tags_json)
                 self.update_decree_dossier_payload(int(dossier["id"]), payload, commit=False)
-            self._refresh_secret_order_covert_contract(
-                int(order_id),
-                deadline_span=span,
-                due_turn=due,
-            )
         tlog(f"[secret_order] update id={order_id} title={title[:20]}")
         self.update_secret_order_progress(int(order_id), f"奉旨更新密令要旨：{content}", state.year, state.period)
         if registry is not None:
@@ -22114,15 +22092,6 @@ class GameDB:
                 (current_turn, "\n".join(lines), int(order_id)),
             )
             self.mark_secret_order_in_progress(int(order_id), commit=False)
-            live = self.conn.execute(
-                "SELECT deadline_span, due_turn FROM secret_orders WHERE id=?",
-                (int(order_id),),
-            ).fetchone()
-            self._refresh_secret_order_covert_contract(
-                int(order_id),
-                deadline_span=int(live["deadline_span"] or 0) if live is not None else 0,
-                due_turn=int(live["due_turn"] or 0) if live is not None else current_turn,
-            )
         tlog(f"[secret_order] submit_for_review id={order_id} due_now claim={note[:60]!r}")
         return True
 
@@ -22301,15 +22270,6 @@ class GameDB:
                 )
                 status = "active"
             self.mark_secret_order_in_progress(int(order_id), commit=False)
-            live = self.conn.execute(
-                "SELECT deadline_span, due_turn FROM secret_orders WHERE id=?",
-                (int(order_id),),
-            ).fetchone()
-            self._refresh_secret_order_covert_contract(
-                int(order_id),
-                deadline_span=int(live["deadline_span"] or 0) if live is not None else 0,
-                due_turn=int(live["due_turn"] or due_turn) if live is not None else int(due_turn),
-            )
         tlog(f"[secret_order] rush id={order_id} old_due={old_due} due={due_turn} status={status}")
         return {"id": int(order_id), "title": row["title"], "status": status, "due_turn": due_turn}
 
