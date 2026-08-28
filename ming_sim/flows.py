@@ -468,14 +468,22 @@ def compute_budget_lines(
         "内库": {"income": [], "expense": []},
     }
     budget["国库"]["income"].extend(hub_income_lines)
-    # #1366：substrate_hub 下此行=边饷hub 国库实拨（中央份额+京运损耗），
-    # 异于 army_report「全军名义应发」合计；legacy 下才是应发总和。呈现须标明口径。
+    # #1366：两引擎金额口径不同，但共用稳定机器身份 budget_key=army_pay；
+    # name 只供玩家/摘要呈现。legacy=全军名义应发；substrate=国库 outbound
+    # （京运补+中央份额+转运损耗），不得与应发混名，不得称实拨/实收。
     if db.fiscal_engine() == "legacy":
+        army_pay_name = "各军军饷"
         army_pay_note = "各军月度名义应发军饷合计"
     else:
-        army_pay_note = "边饷hub国库实拨（中央份额与京运损耗；非全军名义应发合计）"
+        army_pay_name = "京运补及中央军饷国库支出"
+        army_pay_note = "京运补及中央军饷国库支出（含转运损耗；非全军名义应发合计）"
     budget["国库"]["expense"].append(
-        {"name": "各军军饷", "amount": int(army_total), "note": army_pay_note}
+        {
+            "budget_key": "army_pay",
+            "name": army_pay_name,
+            "amount": int(army_total),
+            "note": army_pay_note,
+        }
     )
     budget["国库"]["expense"].extend(hub_expense_lines)
     # 皇庄＝fiscal_config 基准（开局校准月额）＋ calc_province_fiscal 的没收藩田增量（开局 0）。
@@ -1575,18 +1583,23 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
         budget = compute_budget_lines(
             db, state, project_substrate_hub=not skip_substrate_hub_lines
         )
-        skip = {"各军军饷", "建筑产出", "建筑维护"}
+        # 军饷跳过认 budget_key，不咬显示名——改 name 不得导致定额路径双扣。
+        skip_names = {"建筑产出", "建筑维护"}
+
+        def _skip_budget_item(it: dict) -> bool:
+            return (
+                it.get("budget_key") == "army_pay"
+                or it["name"] in skip_names
+                or (skip_substrate_hub_lines and it.get("internal") == "substrate_hub")
+            )
+
         for account in ("国库", "内库"):
             for it in budget[account]["income"]:
-                if it["name"] in skip or (
-                    skip_substrate_hub_lines and it.get("internal") == "substrate_hub"
-                ):
+                if _skip_budget_item(it):
                     continue
                 _income(account, int(it["amount"]), it["name"], f"{it['name']}{TURN_UNIT}入")
             for it in budget[account]["expense"]:
-                if it["name"] in skip or (
-                    skip_substrate_hub_lines and it.get("internal") == "substrate_hub"
-                ):
+                if _skip_budget_item(it):
                     continue
                 _expense(
                     account, int(it["amount"]), it["name"], f"{it['name']}{TURN_UNIT}支",

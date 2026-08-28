@@ -1,7 +1,19 @@
 from types import SimpleNamespace
 
 import web_app
+from ming_sim.flows import compute_budget_lines
 from tests.fiscal_test_utils import zero_non_meta_fiscal_config
+
+
+def _player_army_pay_amount(payload, db, state):
+    """玩家投影无 budget_key：先从源侧取 army_pay 行 name，再对齐 amount。"""
+    src = next(
+        row for row in compute_budget_lines(db, state)["国库"]["expense"]
+        if row.get("budget_key") == "army_pay"
+    )
+    return next(
+        row["amount"] for row in payload["国库"]["expense"] if row["name"] == src["name"]
+    )
 
 
 def test_budget_payload_filters_central_army_pay_fixed_flow(game):
@@ -63,10 +75,7 @@ def test_budget_payload_filters_real_substrate_hub_fixed_flow(game):
     db.conn.commit()
 
     pre_payload = runtime.budget_payload()
-    army_pay = next(
-        row["amount"] for row in pre_payload["国库"]["expense"]
-        if row["name"] == "各军军饷"
-    )
+    army_pay = _player_army_pay_amount(pre_payload, db, state)
     assert army_pay == 5
 
     apply_fixed_period_flows(db, state)
@@ -92,8 +101,5 @@ def test_budget_payload_filters_real_substrate_hub_fixed_flow(game):
     db.conn.commit()
 
     updated_payload = runtime.budget_payload()
-    updated_army_pay = next(
-        row["amount"] for row in updated_payload["国库"]["expense"]
-        if row["name"] == "各军军饷"
-    )
+    updated_army_pay = _player_army_pay_amount(updated_payload, db, state)
     assert updated_army_pay == 20

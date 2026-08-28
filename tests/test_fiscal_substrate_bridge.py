@@ -1558,6 +1558,8 @@ def test_substrate_hub_skip_uses_internal_marker_not_user_fixed_display(fresh_ga
 
 
 def test_treasury_budget_summary_names_substrate_hub_surfaces(fresh_game):
+    import ming_sim.flows as flows_mod
+
     db, state = fresh_game
     db._mark_substrate_hub_fiscal_engine_enabled()
     db.conn.executemany(
@@ -1578,9 +1580,13 @@ def test_treasury_budget_summary_names_substrate_hub_surfaces(fresh_game):
     db.conn.commit()
 
     summary = db.treasury_budget_summary(state)
+    army_pay = next(
+        row for row in flows_mod.compute_budget_lines(db, state)["国库"]["expense"]
+        if row.get("budget_key") == "army_pay"
+    )
 
     assert "起运" in summary
-    assert "边饷hub" in summary
+    assert army_pay["name"] in summary
     assert "太仓亏空" in summary
     assert "百官俸禄" in summary
     assert "田赋+辽饷" not in summary
@@ -2125,7 +2131,7 @@ def test_budget_lines_read_fiscal_engine_gate_for_army_pay(fresh_game):
     substrate_budget = flows_mod.compute_budget_lines(db, state)
     substrate_pay = next(
         row["amount"] for row in substrate_budget["国库"]["expense"]
-        if row["name"] == "各军军饷"
+        if row.get("budget_key") == "army_pay"
     )
     assert substrate_pay == 5
 
@@ -2136,7 +2142,7 @@ def test_budget_lines_read_fiscal_engine_gate_for_army_pay(fresh_game):
     settled_budget = flows_mod.compute_budget_lines(db, state)
     settled_pay = next(
         row["amount"] for row in settled_budget["国库"]["expense"]
-        if row["name"] == "各军军饷"
+        if row.get("budget_key") == "army_pay"
     )
     assert settled_pay == 10
 
@@ -2145,7 +2151,7 @@ def test_budget_lines_read_fiscal_engine_gate_for_army_pay(fresh_game):
     legacy_budget = flows_mod.compute_budget_lines(db, state)
     legacy_pay = next(
         row["amount"] for row in legacy_budget["国库"]["expense"]
-        if row["name"] == "各军军饷"
+        if row.get("budget_key") == "army_pay"
     )
     legacy_expected = sum(
         army_needed(row) for row in db.conn.execute(
@@ -2156,7 +2162,7 @@ def test_budget_lines_read_fiscal_engine_gate_for_army_pay(fresh_game):
 
 
 def test_substrate_hub_budget_army_pay_uses_central_haircut_due(fresh_game):
-    """预算「各军军饷」须复用 _central_dues_with_haircut 折后 Due，与真实 hub 结算对齐。"""
+    """预算 army_pay 须复用 _central_dues_with_haircut 折后 Due，与真实 hub 结算对齐。"""
     import ming_sim.flows as flows_mod
     from ming_sim.flows import (
         ARMY_SALARY_PRIORITY,
@@ -2217,7 +2223,8 @@ def test_substrate_hub_budget_army_pay_uses_central_haircut_due(fresh_game):
 
     budget = flows_mod.compute_budget_lines(db, state)
     budget_pay = next(
-        row["amount"] for row in budget["国库"]["expense"] if row["name"] == "各军军饷"
+        row["amount"] for row in budget["国库"]["expense"]
+        if row.get("budget_key") == "army_pay"
     )
     assert budget_pay == expected
     assert budget_pay < int(nominal_due)
@@ -2257,7 +2264,7 @@ def test_pre_s6_cutover_save_without_fiscal_engine_migrates_to_substrate_hub(fre
         budget = flows_mod.compute_budget_lines(reopened, state)
         army_pay = next(
             row["amount"] for row in budget["国库"]["expense"]
-            if row["name"] == "各军军饷"
+            if row.get("budget_key") == "army_pay"
         )
         assert army_pay > 0
 
