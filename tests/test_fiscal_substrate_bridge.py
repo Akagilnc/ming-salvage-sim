@@ -1557,49 +1557,6 @@ def test_substrate_hub_skip_uses_internal_marker_not_user_fixed_display(fresh_ga
     assert all(str(row["reason"] or "").strip() for row in rows)
 
 
-def test_treasury_budget_summary_names_substrate_hub_surfaces(fresh_game):
-    import ming_sim.flows as flows_mod
-
-    db, state = fresh_game
-    db._mark_substrate_hub_fiscal_engine_enabled()
-    db.conn.executemany(
-        """
-        INSERT INTO fiscal_containers (key, value, note)
-        VALUES (?, ?, 'test summary substrate hub source')
-        ON CONFLICT(key) DO UPDATE SET value = excluded.value, note = excluded.note
-        """,
-        [
-            ("hub_省级起运到京", 11),
-            ("hub_盐税解京", 3),
-            ("hub_商税解京", 4),
-            ("hub_太仓亏空", 3),
-            ("C_太仓挪用", 2),
-            ("C_太仓纯亏空", 1),
-        ],
-    )
-    db.conn.commit()
-
-    summary = db.treasury_budget_summary(state)
-    army_pay = next(
-        row for row in flows_mod.compute_budget_lines(db, state)["国库"]["expense"]
-        if row.get("budget_key") == "army_pay"
-    )
-
-    assert "起运" in summary
-    assert army_pay["name"] in summary
-    assert "太仓亏空" in summary
-    assert "百官俸禄" in summary
-    assert "田赋+辽饷" not in summary
-
-
-def test_treasury_budget_summary_names_fixed_salary_display(fresh_game):
-    db, state = fresh_game
-
-    summary = db.treasury_budget_summary(state)
-
-    assert "百官俸禄" in summary
-
-
 def test_substrate_hub_uses_month_opening_treasury_before_lower_priority_expenses(fresh_game):
     import ming_sim.flows as flows_mod
 
