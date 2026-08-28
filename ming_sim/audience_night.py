@@ -114,6 +114,8 @@ def _travel_tone_from_tags(tags: Sequence[Any]) -> str:
 _SUMMON_ORIGIN_PREFIX = "传召源#"
 # #526 / #471 S10：留侍叙事账标签——非进/出，不驱动在场（口径回灌 #500）
 TAG_STAY_ATTEND = "留侍"
+# #1585：交接旁白标签——软段切换事实（A 在场时 B 宣入），驱动 divider 投影但不驱动在场
+TAG_HANDOFF = "交接"
 
 # #526 结构化口令判词（引擎只认判词，不重解析散文；非 ACTION_CLUSTERS）
 CMD_CLOSE_NIGHT = "close_night"
@@ -474,9 +476,10 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
     The two durable stores remain untouched.  This projection merges them, omits
     extraction-derived ledger cards by structural provenance
     (`source_chat_turn_id>0`, same shape as cascade_echo production marks — no
-    text-stare paraphrase detection), derives scene dividers from exit/next-entry
-    facts, and leaves the coda generation slot empty. Memory consumers still read
-    `list_ledger` directly and see every story fact.
+    text-stare paraphrase detection), derives scene dividers from handoff or
+    exit facts (named for the next entrance), and leaves the coda generation
+    slot empty. Memory consumers still read `list_ledger` directly and see every
+    story fact.
     """
     night = get_night(db, night_id)
     if night is None:
@@ -556,57 +559,105 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
         # source>0 留痕如路径应答）一律不上 live/档案同源卷轴；禁盯 body。
         if not _is_command_entry(entry):
             continue
+        # #1566：场外传召账（未入殿）有自由 body 时按 entrance 投影并锚定 speaker，
+        # 供 minister scroll lens 可见承接；空 body 仍不进卷轴。
+        is_offsite_summon = (
+            TAG_ENTER not in tags
+            and (
+                TAG_SUMMON_UNSETTLED in tags
+                or TAG_IN_TRANSIT in tags
+            )
+            and any(method in tags for method in SUMMON_METHODS)
+        )
         if TAG_OPEN_NIGHT in tags:
             beat = "opening"
         elif TAG_CLOSE_NIGHT in tags:
             beat = "closing"
+        elif TAG_HANDOFF in tags:
+            # #1585：公开投影为「exit」（退侍殿侧），内部 TAG_HANDOFF/TAG_STAY_ATTEND
+            # 事实不变——不写 TAG_EXIT、机器 presence 不退出（ADR 0035：殿侧侍立非硬状态）。
+            beat = "exit"
         elif TAG_ENTER in tags:
             beat = "entrance"
+        elif is_offsite_summon:
+            # #1566：场外传召（未入殿）投影为结构化非 entrance scene。
+            # ADR 0096：本回合开不成召对、抵京候旨召见——scene 围绕
+            # 「传召已发、人在途」承接，而非入殿。
+            beat = "summon"
         elif TAG_EXIT in tags:
             beat = "exit"
         else:
             beat = "aside" if entry["audibility"] == AUDIBILITY_PRIVATE else "scene"
-        # #657 S4/P7：OPEN/ENTER 口令账仅 body.strip() 非空才投影；
+        # #657 S4/P7：OPEN/ENTER/summon 口令账仅 body.strip() 非空才投影；
         # 空垫位不进 scroll（无空条、无人物锚、无固定句冒充）。
-        if beat in {"opening", "entrance"} and not str(entry.get("body") or "").strip():
+        # #1561：普通公共 scene 同属玩家可见 scene，空正文亦不投影；
+        # aside/closing 等其它 beat 不在本票扩域。
+        # #1585：交接投影为 exit 时和真实告退共用此标签；无显式 body 的 TAG_EXIT
+        # 一律空 scaffold，生成落地前不投影，persist_chat_turn_scene 原地补写。
+        # #1566：空 summon 垫位同不投影。
+        if beat in {"opening", "entrance", "exit", "summon", "scene"} and not str(entry.get("body") or "").strip():
             continue
+        person = (entry.get("person_names") or [""])[0] if entry.get("person_names") else ""
+        if beat == "aside" and person:
+            speaker = person
+        elif is_offsite_summon and person:
+            speaker = person
+        else:
+            speaker = ""
         events.append((
             _entry_order_key(entry), 10,
             message(role="attendant" if beat == "aside" else "scene",
-                    speaker=(entry["person_names"][0] if beat == "aside" and entry["person_names"] else ""),
+                    speaker=speaker,
                     audibility=entry["audibility"], time=entry["created_at"],
                     content=entry["body"], beat=beat),
         ))
 
-    # A divider belongs after each exit.  Its optional name is sourced only from
-    # the next entry fact; an unmatched final exit deliberately remains unnamed.
+    # #1585：divider 由交接事实或既有 EXIT 承载；handoff→divider(B)→entrance(B)，
+    # 显式退场为 exit→divider(B)→entrance(B)。不在每个新入殿后再造平行 divider。
     facts = sorted(ledgers, key=lambda e: (_entry_order_key(e), int(e["id"])))
-    divided_exits: set[tuple[str, float]] = set()
+    divided_identities: set[tuple[str, float]] = set()
     for index, entry in enumerate(facts):
         tags = set(entry.get("tags") or [])
         is_exit = (_is_command_entry(entry) and TAG_EXIT in tags) or entry.get("presence_effect") == PRESENCE_EXIT
-        if not is_exit:
-            continue
+        is_handoff = _is_command_entry(entry) and TAG_HANDOFF in tags and TAG_STAY_ATTEND in tags
+        fact_order = _entry_order_key(entry)
         person = (entry.get("person_names") or [""])[0]
-        # Command and extractor facts can describe the same actual departure.
-        # Their shared night order is the durable source-turn identity; a later
-        # departure has a different order and must retain its own divider.
-        exit_identity = (person, _entry_order_key(entry))
-        if exit_identity in divided_exits:
-            continue
-        divided_exits.add(exit_identity)
-        next_name = ""
-        for following in facts[index + 1:]:
-            following_tags = set(following.get("tags") or [])
-            if ((_is_command_entry(following) and TAG_ENTER in following_tags)
-                    or following.get("presence_effect") == PRESENCE_ENTER):
-                next_name = (following.get("person_names") or [""])[0]
-                break
-        events.append((
-            _entry_order_key(entry), 90,
-            message(role="scene", speaker=next_name, audibility=AUDIBILITY_PUBLIC,
-                    time=entry["created_at"], content="", beat="divider", soft_boundary=True),
-        ))
+        identity_key = (person, fact_order)
+
+        following = facts[index + 1] if index + 1 < len(facts) else None
+        following_tags = set(following.get("tags") or []) if following else set()
+        followed_by_handoff = bool(following and _is_command_entry(following)
+                                   and TAG_HANDOFF in following_tags
+                                   and TAG_STAY_ATTEND in following_tags)
+
+        # #1585：交接正文生成前 body 为空——divider 须等交接实体旁白落定才派生，
+        # 否则先出现孤立分幕、后补 exit/entrance，分幕顺序失真（#1585 空 scaffold coverage）。
+        if is_handoff and str(entry.get("body") or "").strip() and identity_key not in divided_identities:
+            divided_identities.add(identity_key)
+            next_name = person
+            for later in facts[index + 1:]:
+                later_tags = set(later.get("tags") or [])
+                if ((_is_command_entry(later) and TAG_ENTER in later_tags)
+                        or later.get("presence_effect") == PRESENCE_ENTER):
+                    next_name = (later.get("person_names") or [""])[0] or person
+                    break
+            events.append((fact_order, 90,
+                message(role="scene", speaker=next_name, audibility=AUDIBILITY_PUBLIC,
+                        time=entry["created_at"], content="", beat="divider", soft_boundary=True),
+            ))
+        elif is_exit and str(entry.get("body") or "").strip() and not followed_by_handoff and identity_key not in divided_identities:
+            divided_identities.add(identity_key)
+            next_name = ""
+            for later in facts[index + 1:]:
+                later_tags = set(later.get("tags") or [])
+                if ((_is_command_entry(later) and TAG_ENTER in later_tags)
+                        or later.get("presence_effect") == PRESENCE_ENTER):
+                    next_name = (later.get("person_names") or [""])[0]
+                    break
+            events.append((fact_order, 90,
+                message(role="scene", speaker=next_name, audibility=AUDIBILITY_PUBLIC,
+                        time=entry["created_at"], content="", beat="divider", soft_boundary=True),
+            ))
 
     events.sort(key=lambda item: (item[0], item[1]))
     scroll = [item[2] for item in events]
@@ -849,16 +900,21 @@ def open_night(
         # #657 P7/W1：垫位路径只许空 body；不叠复命场面、不用固定开夜句。
         open_body = ""
     else:
-        open_body = body or f"{location}·{time_of_day}，召对启。"
+        # N1（#1561）：删除固定 opening fallback。空 body 时留空垫位；
+        # opening 成色只走既有 LLM 输入/materials seam（attach_chat_turn_to_night
+        # → generate_open_beat_body），不再写「{location}·{time_of_day}，召对启。」。
+        open_body = body or ""
         # #621：次回合召对顶出复命场面（pending todo 投影；P4 定性、不停轮）。
         # body 是开夜气氛层（含 LLM open-beat）；复命是召对顶出层——二者叠加，
         # 不得因调用方已供 body 而跳过（生产 ensure_open_night_for_audience 常带 body）。
+        # #1561 N1：仅 opening 已有显式非空 body 时叠加；无 generator 的空垫位
+        # 不得被 pending due/urge scene_text 填成确定性正文（整段迁移属 #1571）。
         from ming_sim.due_review import list_due_review_scenes
         from ming_sim.urge_lever import list_urge_audience_scenes
         scenes = list_due_review_scenes(db, state)
         # #624 / ADR 0078：谏/宽限同款次回合召对顶出（不进 due-review 白名单、不占接管窗）
         scenes = list(scenes) + list(list_urge_audience_scenes(db, state))
-        if scenes:
+        if scenes and str(open_body).strip():
             scene_lines = [str(s.get("scene_text") or "").strip() for s in scenes]
             scene_lines = [line for line in scene_lines if line]
             if scene_lines:
@@ -898,7 +954,9 @@ def open_night(
         for name in roster:
             # #657 P7/W3：registry 开夜垫位路径员额 ENTER 先落 body=""；
             # 禁止 generator 完成前落「随侍在侧」固定句。
-            roster_body = "" if empty_scaffold else f"{name}随侍在侧。"
+            # P29（#1561）：删除固定「随侍在侧。」fallback，body 始终置空；
+            # standing-roster 无生成路由，仅保留 typed tags/person_names。
+            roster_body = ""
             append_ledger_entry(
                 db, night_id,
                 person_names=[name],
@@ -1254,7 +1312,8 @@ def close_night(
                 if hasattr(reg, "abandon"):
                     reg.abandon(int(close_ctid))
                 if close_scaffold_owned and hasattr(db, "fail_chat_turn"):
-                    db.fail_chat_turn(int(close_ctid))
+                    with gate:
+                        db.fail_chat_turn(int(close_ctid))
             except BaseException as exc:
                 cleanup_exc = exc
         with gate:
@@ -1393,7 +1452,8 @@ def close_night(
                 if hasattr(reg, "abandon"):
                     reg.abandon(int(close_ctid))
                 if close_scaffold_owned and hasattr(db, "fail_chat_turn"):
-                    db.fail_chat_turn(int(close_ctid))
+                    with gate:
+                        db.fail_chat_turn(int(close_ctid))
             except BaseException as exc:
                 cleanup_exc = exc
         with gate:
@@ -1458,7 +1518,7 @@ def close_night(
                 db,
                 scene_registry=reg,
                 chat_turn_id=int(close_ctid),
-                scaffold_owned=bool(close_scaffold_owned),
+                write_gate=gate,
             )
             if joined_body and not close_body:
                 close_body = str(joined_body)
@@ -1481,6 +1541,8 @@ def close_night(
 
     if primary_exc is not None or join_exc is not None:
         with gate:
+            if close_scaffold_owned and close_ctid and hasattr(db, "fail_chat_turn"):
+                db.fail_chat_turn(int(close_ctid))
             _set_night_fields(
                 db, night_id, status=NIGHT_STATUS_OPEN, closed_at=None,
                 close_commit_cursor=0,
@@ -1502,6 +1564,8 @@ def close_night(
             # settle path should have advanced this; missing watermark is a hard fault.
             # Restore OPEN so the player can retry (ADR 0036); keep code + diagnostics.
             fault_cursor = int(cursor)
+            if close_scaffold_owned and close_ctid and hasattr(db, "fail_chat_turn"):
+                db.fail_chat_turn(int(close_ctid))
             _set_night_fields(
                 db, night_id, status=NIGHT_STATUS_OPEN, closed_at=None,
                 close_commit_cursor=0,
@@ -1576,6 +1640,8 @@ def close_night(
                 closed_at=_now_iso(),
                 close_commit_cursor=CLOSE_STEP_FINALIZE,
             )
+        if close_scaffold_owned and close_ctid:
+            db.mark_chat_turn_failed(int(close_ctid))
         final = get_night(db, night_id)
 
     return {
@@ -2158,6 +2224,7 @@ def dismiss_from_audience(
     state: Any = None,
     beat_generator: Any = None,
     knowledge_provider: Any = None,
+    allow_closing: bool = False,
 ) -> Optional[int]:
     """「令 X 退下」口令：确定性落告退账，即时反映于名单查询。
 
@@ -2169,6 +2236,10 @@ def dismiss_from_audience(
     `origin_chat_turn_id`（#506 L1）：tool 触发的令退发生在某一对话轮内时绑该轮 chat_turn_id，
     使撤回本轮据 origin 删掉告退账、令退者在场复原（否则告退账残留 → 按夜取数 ≠ 未发生，
     且被令退者永久差出）。0=不属某轮的独立令退（无撤回目标）。
+
+    无显式 body 时落真正空 TAG_EXIT scaffold（P7：禁固定告退模板）。玩家可见正文
+    只由调用方既有 ChatTurnSceneRegistry.start_exit 回填；read_night_scroll 空检
+    在生成完成前不投影半成品。
     """
     name = str(person_name or "").strip()
     if not name:
@@ -2187,10 +2258,11 @@ def dismiss_from_audience(
         db, int(nid),
         person_names=[name],
         audibility=AUDIBILITY_PUBLIC,
-        body=body or f"帝令{name}退下，{name}告退。",
+        body=body,
         tags=[TAG_EXIT],
         check_dead=False,
         origin_chat_turn_id=origin_chat_turn_id,
+        allow_closing=allow_closing,
     )
 
 
@@ -2768,6 +2840,25 @@ def prepare_rescript_summon_scaffold(
         }
 
 
+def find_prior_speaker_still_present(db: Any, night_id: int, exclude_name: str = "") -> Optional[str]:
+    """Find the previous chat turn's minister who is still present (A in the handoff).
+
+    Returns A's name when A is present and A != exclude_name (the new entrant B).
+    Returns None when there is no prior speaker or A has already left.
+    """
+    turns = list_chat_turns_for_night(db, int(night_id))
+    prior = ""
+    for turn in reversed(turns):
+        name = str(turn.get("minister_name") or "").strip()
+        if not name or name == exclude_name:
+            continue
+        prior = name
+        break
+    if not prior or prior not in present_names_at(db, int(night_id)):
+        return None
+    return prior
+
+
 def attach_chat_turn_to_night(
     db: Any,
     state: GameState,
@@ -2784,7 +2875,8 @@ def attach_chat_turn_to_night(
     """开夜（若需）+ 首次对话落宣入账 + 建 generating 对话轮挂 night_id/night_seq。
 
     beat_generator 注入时（#503 编排）：开夜/入殿账正文经编排层路由输入后由内容生成填充，
-    落为对应账正文；不注入则沿用 #498 确定性兜底正文。见 beat_orchestration。
+    落为对应账正文。不注入时 opening 按 #1561 留空；仅既有 entrance 路径仍可能使用
+    #498 确定性兜底正文。见 beat_orchestration。
     """
     from ming_sim import beat_orchestration as beats
 
@@ -2837,6 +2929,24 @@ def attach_chat_turn_to_night(
     # 后，各自单调分配）；atomic 暂停内层 commit、末尾一次落定或整体回滚。
     from ming_sim.applier import atomic
     with atomic(db):
+        # #1585：当夜已开且前一位奏对者 A 仍在场时，B 宣入前须落一笔
+        # TAG_STAY_ATTEND + TAG_HANDOFF 的交接垫位（不写 TAG_EXIT、不改 presence）。
+        # 交接正文与入殿正文同轮 ChatTurnSceneRegistry 并行生成，同轮 join 回填。
+        # handoff 先于 enter 落 seq（进殿在先、奏对在后），discover_open_enter_tasks
+        # 通过 origin_chat_turn_id 同时发现二者。
+        handoff_entry_id = None
+        if existing is not None and existing["status"] == NIGHT_STATUS_OPEN and minister_name not in persons_entered_tonight(db, night_id):
+            prior_speaker = find_prior_speaker_still_present(db, night_id, exclude_name=minister_name)
+            if prior_speaker:
+                handoff_entry_id = append_ledger_entry(
+                    db, night_id,
+                    person_names=[prior_speaker],
+                    audibility=AUDIBILITY_PUBLIC,
+                    body="",
+                    tags=[TAG_STAY_ATTEND, TAG_HANDOFF],
+                    check_dead=False,
+                    commit=False,
+                )
         enter_entry_id = ensure_summon_enter(
             db, night_id, minister_name, method=summon_method, body=enter_body,
         )
@@ -2847,6 +2957,11 @@ def attach_chat_turn_to_night(
             agno_runs_before,
             night_id=night_id,
         )
+        if handoff_entry_id:
+            db.conn.execute(
+                "UPDATE story_ledger_entries SET origin_chat_turn_id = ? WHERE id = ?",
+                (int(chat_turn_id), int(handoff_entry_id)),
+            )
         if enter_entry_id:
             db.conn.execute(
                 "UPDATE story_ledger_entries SET origin_chat_turn_id = ? WHERE id = ?",

@@ -52,9 +52,9 @@ export function filterScrollForSelectedMinister(
   };
 
   for (const message of messages) {
-    // Named entrance/divider starts a new soft segment. Empty-speaker anchors stay put
+    // Named entrance/divider/summon starts a new soft segment. Empty-speaker anchors stay put
     // (backend entrance speaker is often ""; final divider speaker is often "").
-    const startsSegment = (message.beat === "entrance" || message.beat === "divider") && !!message.speaker;
+    const startsSegment = isNamedSoftSegmentAnchor(message);
     if (startsSegment && current.messages.length > 0) {
       flush();
     }
@@ -88,13 +88,20 @@ export function filterScrollForSelectedMinister(
   return out;
 }
 
+function isNamedSoftSegmentAnchor(message: AudienceScrollMessage): boolean {
+  return (
+    (message.beat === "entrance" || message.beat === "divider" || message.beat === "summon")
+    && !!message.speaker
+  );
+}
+
 function resolveSegmentOwner(
   segment: { ownerHint: string | null; messages: AudienceScrollMessage[] },
   turnOwner: Map<number, string>,
 ): string | null {
   if (segment.ownerHint) return segment.ownerHint;
   for (const message of segment.messages) {
-    if ((message.beat === "entrance" || message.beat === "divider") && message.speaker) {
+    if (isNamedSoftSegmentAnchor(message)) {
       return message.speaker;
     }
   }

@@ -6,36 +6,6 @@
 
 from __future__ import annotations
 
-import pytest
-
-
-@pytest.mark.parametrize(
-    ("clause", "expected_kind", "expected_target"),
-    [
-        ("对魏忠贤保密", "people", "魏忠贤"),
-        ("别让户部知道", "offices", "户部"),
-        ("莫让魏忠贤知晓", "people", "魏忠贤"),
-    ],
-)
-def test_secret_order_update_persists_new_explicit_secrecy_wording(
-    game, clause, expected_kind, expected_target,
-):
-    db, state, _content = game
-    minister = db.conn.execute(
-        "SELECT name FROM characters WHERE office_type NOT IN ('后宫','宗藩','未仕') LIMIT 1"
-    ).fetchone()["name"]
-
-    order_id = db.create_secret_order(
-        state, minister, "密查账目", "核清旧账。", [],
-    )
-    assert db.update_secret_order_by_id(
-        state, order_id, "密查账目", f"核清旧账，{clause}。", [],
-    )
-
-    order = next(item for item in db.list_secret_orders() if item["id"] == order_id)
-    assert expected_target in order["excluded_targets"][expected_kind]
-
-
 def test_upsert_creates_then_updates(game):
     db, state, _ = game
     n = "测试承办官X"
@@ -86,23 +56,20 @@ def test_update_by_id_preserves_tags_when_none(game):
     assert _j.loads(row["tags"]) == ["辽东", "军饷"]   # 原标签保留
 
 
-def test_update_recanonicalizes_new_secrecy_clause_and_preserves_long_text(game):
+def test_update_preserves_long_text(game):
     db, state, content = game
     assignee = next(iter(content.characters))
-    excluded = next(c for c in content.characters.values() if c.name != assignee)
     oid = db.create_secret_order(state, assignee, "原令", "原内容", [])
     title = "密令修订" * 20
-    body = f"查明此事，对{excluded.name}保密。" + "细节" * 200
+    body = "查明此事。" + "细节" * 200
 
     assert db.update_secret_order_by_id(state, oid, title, body)
 
-    import json
     row = db.conn.execute(
-        "SELECT title, content, excluded_names FROM secret_orders WHERE id=?", (oid,)
+        "SELECT title, content FROM secret_orders WHERE id=?", (oid,)
     ).fetchone()
     assert row["title"] == title
     assert row["content"] == body
-    assert excluded.name in json.loads(row["excluded_names"])
 
 
 def test_update_by_id_refreshes_assignee_only_brief_after_restore(game):

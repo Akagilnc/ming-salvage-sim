@@ -712,7 +712,7 @@ def build_simulator_payload(
         # #648：按档口径传单位——新档玩家面投影「约N万口」，旧档万人原样。
         _project_simulator_region_row(dict(r), db.population_unit)
         for r in db.conn.execute(
-            "SELECT name,kind,population,public_support,unrest,natural_disaster,"
+            "SELECT id,name,kind,population,public_support,unrest,natural_disaster,"
             "human_disaster,registered_land,hidden_land,tax_per_turn,grain_security,"
             "gentry_resistance,military_pressure,status,controlled_by,city_level,cannon,"
             "json_extract(fiscal,'$.corruption') as corruption FROM regions ORDER BY id"

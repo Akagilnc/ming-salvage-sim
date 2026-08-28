@@ -133,49 +133,20 @@ def test_extract_secret_order_preserves_long_title_without_formal_cap(monkeypatc
     assert len(result["title"]) == len(long_title)
 
 
-def test_secret_exclusion_recovery_splits_each_explicit_person(monkeypatch):
-    monkeypatch.setattr(cb, "_run_backend", lambda _prompt: ("{}", 1))
-    result = cb._extract_secret_order(
-        "密查此案，瞒住魏忠贤、王体乾和曹化淳，勿使他们知晓。", "臣领旨", "毕自严"
-    )
-    assert result["excluded_names"] == ["魏忠贤", "王体乾", "曹化淳"]
-
-
-@pytest.mark.parametrize("wording", ["对魏忠贤保密", "莫让魏忠贤知晓"])
-def test_secret_exclusion_recovery_covers_target_first_and_imperative(wording, monkeypatch):
-    monkeypatch.setattr(cb, "_run_backend", lambda _prompt: ("{}", 1))
-    result = cb._extract_secret_order(f"密查此案，{wording}。", "臣领旨", "毕自严")
-    assert result["excluded_names"] == ["魏忠贤"]
-
-
-def test_secret_exclusion_recovery_covers_common_clause_and_shipped_office(monkeypatch):
-    monkeypatch.setattr(cb, "_run_backend", lambda _prompt: ("{}", 1))
-    result = cb._extract_secret_order(
-        "密查此案，不得告知翰林院编修，亦不许户部尚书过问。", "臣领旨", "毕自严"
-    )
-    assert "翰林院编修" in result["excluded_offices"]
-    assert "户部尚书" in result["excluded_offices"]
-
-
-def test_secret_exclusion_recovery_covers_non_disclosure_clause(monkeypatch):
-    monkeypatch.setattr(cb, "_run_backend", lambda _prompt: ("{}", 1))
-    result = cb._extract_secret_order(
-        "密查此案，不可令翰林院侍读学士知情。", "臣领旨", "毕自严"
-    )
-    assert result["excluded_names"] == []
-    assert result["excluded_offices"] == ["翰林院侍读学士"]
-
-
-def test_cli_and_durable_secret_exclusion_share_the_same_parser(game, monkeypatch):
+def test_typed_secret_exclusions_canonicalize_roster_alias_and_office(game):
     from ming_sim.db import canonical_secret_order_exclusions
 
-    monkeypatch.setattr(cb, "_run_backend", lambda _prompt: ("{}", 1))
-    cli = cb._extract_secret_order("密查账目，不走户部。", "臣领旨", "毕自严")
-    people, offices = canonical_secret_order_exclusions(
-        game[2], [], [], "密查账目，不走户部。"
+    content = game[2]
+    character = next(
+        ch for ch in content.characters.values() if getattr(ch, "aliases", None)
     )
-    assert cli["excluded_names"] == people == []
-    assert cli["excluded_offices"] == offices == ["户部"]
+    alias = character.aliases[0]
+    office = character.office_type
+    people, offices = canonical_secret_order_exclusions(
+        content, [alias], [office], "勿使玩家散文成为第二输入源",
+    )
+    assert people == [character.name]
+    assert offices == [office]
 
 
 def test_secret_prefix_deadline_only_confirmation_uses_recent_context(monkeypatch):
@@ -705,60 +676,6 @@ def test_secret_extract_backend_error_falls_back(monkeypatch):
     assert reply not in so["content"]
     assert so["assignee"] == "王在晋"
     assert so["deadline_months"] == 0
-
-
-def test_secret_extract_recovers_explicit_exclusion_when_backend_omits_it(monkeypatch):
-    monkeypatch.setattr(cb, "_run_backend", lambda _p: ('{"标题":"密查","内容":"查账"}', 1))
-    result = cb._extract_secret_order("密查账目，瞒住魏忠贤。", "臣领旨", "毕自严")
-    assert result["excluded_names"] == ["魏忠贤"]
-
-
-def test_secret_extract_recovers_office_exclusion_when_backend_fails(monkeypatch):
-    monkeypatch.setattr(cb, "_run_backend", lambda _p: ("{}", 1))
-    result = cb._extract_secret_order("密查账目，不走户部。", "臣领旨", "毕自严")
-    assert result["excluded_offices"] == ["户部"]
-
-
-def test_secret_extract_merges_office_exclusion_when_backend_omits_it(monkeypatch):
-    monkeypatch.setattr(cb, "_run_backend", lambda _p: ('{"标题":"密查","内容":"查账"}', 1))
-    result = cb._extract_secret_order("密查账目，勿经户部。", "臣领旨", "毕自严")
-    assert result["excluded_offices"] == ["户部"]
-
-
-def test_secret_extract_classifies_institutional_knowledge_ban_as_office(monkeypatch):
-    monkeypatch.setattr(cb, "_run_backend", lambda _p: ("{}", 1))
-    result = cb._extract_secret_order("密查账目，勿使户部知晓。", "臣领旨", "毕自严")
-    assert result["excluded_names"] == []
-    assert result["excluded_offices"] == ["户部"]
-
-
-def test_secret_extract_classifies_institutional_title_knowledge_ban_as_office(monkeypatch):
-    monkeypatch.setattr(cb, "_run_backend", lambda _p: ("{}", 1))
-    result = cb._extract_secret_order("密查账目，勿使户部诸官知晓。", "臣领旨", "毕自严")
-    assert result["excluded_names"] == []
-    assert result["excluded_offices"] == ["户部"]
-
-
-def test_secret_extract_classifies_office_title_knowledge_ban_as_office(monkeypatch):
-    monkeypatch.setattr(cb, "_run_backend", lambda _p: ("{}", 1))
-    result = cb._extract_secret_order("密查账目，勿使户部尚书知晓。", "臣领旨", "毕自严")
-    assert result["excluded_names"] == []
-    assert result["excluded_offices"] == ["户部尚书"]
-
-
-def test_secret_extract_classifies_grand_secretariat_title_knowledge_ban_as_office(monkeypatch):
-    monkeypatch.setattr(cb, "_run_backend", lambda _p: ("{}", 1))
-    result = cb._extract_secret_order("密查账目，勿使内阁首辅知晓。", "臣领旨", "毕自严")
-    assert result["excluded_names"] == []
-    assert result["excluded_offices"] == ["内阁首辅"]
-
-
-@pytest.mark.parametrize("target", ["翰林院", "翰林院编修"])
-def test_secret_extract_classifies_shipped_hanlin_targets_as_offices(monkeypatch, target):
-    monkeypatch.setattr(cb, "_run_backend", lambda _p: ("{}", 1))
-    result = cb._extract_secret_order(f"密查账目，勿使{target}知晓。", "臣领旨", "毕自严")
-    assert result["excluded_names"] == []
-    assert result["excluded_offices"] == [target]
 
 
 # ── runner argv / error contracts (subprocess mocked) ──
@@ -1340,26 +1257,23 @@ def test_extract_preserves_array_trailing_comma_via_loads_path(monkeypatch):
     assert act["order_id"] == 6
 
 
-# ── CliChat public: prompt shape + narration strip + dispatch ──
+# ── CliChat public: prompt shape + typed completion structure ──
 
-def test_clichat_invoke_builds_prompt_and_strips_narration(monkeypatch):
+def test_clichat_invoke_builds_prompt_and_completion_structure(monkeypatch):
+    """#1563：公开 invoke 只证 prompt 角色标签顺序与 typed completion 结构；不锁生成正文。"""
     cc = cb.CliChat(id="cli-test", backend="agy")
     seen = {}
 
+    # Deterministic fixture the old _strip_agent_narration would have rewritten
+    # (drop leading "I will …" line). Public content must equal the stub verbatim.
+    runner_text = "I will check the files.\nBODY_ZH_REPLY"
+
     def fake_cli(prompt):
         seen["prompt"] = prompt
-        return ("I will check the files.\nBODY_ZH_REPLY", 1)
+        return (runner_text, 1)
 
     monkeypatch.setattr(cc, "_call_cli", fake_cli)
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
-    captured = {}
-    real_fake = cb._fake_completion
-
-    def spy(text, model_id, *a, **k):
-        captured["text"] = text
-        return real_fake(text, model_id, *a, **k)
-
-    monkeypatch.setattr(cb, "_fake_completion", spy)
     msgs = [
         SimpleNamespace(role="system", content="SYS_ROLE"),
         SimpleNamespace(role="user", content="USER_MSG"),
@@ -1369,9 +1283,9 @@ def test_clichat_invoke_builds_prompt_and_strips_narration(monkeypatch):
         SimpleNamespace(role="tool", content="TOOL_OUT"),
         SimpleNamespace(role="developer", content=12345),
     ]
-    cc.invoke(msgs, Message(role="assistant"))
+    out = cc.invoke(msgs, Message(role="assistant"))
     p = seen["prompt"]
-    # role tags + order (structural markers, not free prose pins beyond tag keys)
+    # role tags + order (structural markers from deterministic inputs)
     for tag in ("【系统设定】", "【皇帝/输入】", "【你此前的回答】", "【工具结果】", "【developer】"):
         assert tag in p
     assert p.index("【系统设定】") < p.index("【皇帝/输入】")
@@ -1379,29 +1293,11 @@ def test_clichat_invoke_builds_prompt_and_strips_narration(monkeypatch):
     assert "【你此前的回答】" in p and "PRIOR_ASST" in p
     assert "12345" in p
     assert "【执行约束·必读】" in p
-    assert captured["text"] == "BODY_ZH_REPLY"
-
-
-def test_clichat_invoke_all_narration_falls_back_to_original(monkeypatch):
-    """全英文 narration 无中文正文 → strip 退回原文，非空 completion 抵达 _fake_completion。"""
-    cc = cb.CliChat(id="cli-test", backend="agy")
-    raw = "I will do this.\nLet me start."
-    monkeypatch.setattr(cc, "_call_cli", lambda p: (raw, 1))
-    monkeypatch.setattr(cb, "_trace", lambda rec: None)
-    captured = {}
-    real_fake = cb._fake_completion
-
-    def spy(text, model_id, *a, **k):
-        captured["text"] = text
-        return real_fake(text, model_id, *a, **k)
-
-    monkeypatch.setattr(cb, "_fake_completion", spy)
-    cc.invoke(
-        [SimpleNamespace(role="user", content="USER_MSG")],
-        Message(role="assistant"),
-    )
-    assert captured["text"] == raw.strip()
-    assert captured["text"]  # nonempty fail-safe, not emptied by strip
+    # typed completion + passthrough on structured content (fixture, not LLM prose)
+    assert out.role == "assistant"
+    assert out.event == "AssistantResponse"
+    assert out.tool_calls == []
+    assert out.content == runner_text
 
 
 def test_clichat_invoke_json_constraint_and_no_constraint(monkeypatch):

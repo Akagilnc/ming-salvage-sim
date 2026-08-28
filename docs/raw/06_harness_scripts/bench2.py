@@ -88,7 +88,7 @@ with ThreadPoolExecutor(max_workers=5) as ex:
     done=0
     for fut in as_completed(futs):
         role,cat,b,r=futs[fut]; dur,raw,err=fut.result(); done+=1
-        clean = codex_final(raw) if (b in CODEX and not err) else (cb._strip_agent_narration(raw) if not err else "")
+        clean = codex_final(raw) if (b in CODEX and not err) else (raw if not err else "")
         rec={"role":role,"cat":cat,"backend":b,"run":r,"dur":dur,"err":err,"chars":len(clean)}
         if cat=="struct" and not err:
             pk,ne=judge_struct(clean); rec["parse"]=pk; rec["nonempty"]=ne
