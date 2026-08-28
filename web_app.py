@@ -5239,8 +5239,9 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
 
 
 class ResolveDecisionsRequest(BaseModel):
-    # 皇帝亲裁结果：按决策点 idx 顺序，每项 {label, hint?, note?}；
-    # dossier 批红另须带 dossier_id/dossier_decision（#1490，非法不落 decided）。
+    # #1589：皇帝亲裁结果，每项须显式携带 decision_key（{decision_key, label, hint?, note?}）；
+    # 缺键/重复键/desk 外键整批拒绝，不落任何领域写。dossier 批红另须带
+    # dossier_id/dossier_decision（#1490，非法不落 decided）。
     choices: List[Dict[str, Any]] = []
     cheat: str = ""
 
@@ -5248,7 +5249,8 @@ class ResolveDecisionsRequest(BaseModel):
 @app.post("/api/decree/resolve_decisions/stream")
 async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> StreamingResponse:
     """皇帝亲裁完决策点，流式跑 phase2 结算（extractor→落库→结局）。
-    与 issue/stream 同结构：worker 跑 submit_decisions，SSE 推 stage/text + done。"""
+    与 issue/stream 同结构：worker 跑 session.submit_hitl_choices（唯一 HITL 编排入口，
+    keyed 权威由 validate_all 整批拒），SSE 推 stage/text + done。"""
     ev_queue: "queue.Queue[tuple[str, Any]]" = queue.Queue()
 
     def on_event(kind: str, data: str) -> None:

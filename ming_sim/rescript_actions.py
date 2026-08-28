@@ -1,7 +1,7 @@
 """#657 批红案头 C1 ＋ 六动作领域写（唯一新模块）。
 
 公开 API（不得再拆第二模块）：
-  canonical_choice / validate_all / run_prewrite_llms /
+  canonical_choice / validate_request_keys / validate_all / run_prewrite_llms /
   apply_rescript_batch / clear_return_revise_choice_anchors
 
 边界：
@@ -259,22 +259,15 @@ class ApplyResult:
     revise_keys: List[str] = field(default_factory=list)
 
 
-def validate_all(
+def validate_request_keys(
     desk_rows: Sequence[Mapping[str, object]],
     request_choices: object,
-    *,
-    default_hold_missing: bool = True,
-    can_summon: Optional[Callable[[str], Tuple[bool, str]]] = None,
-) -> ValidatedBatch:
-    """① Validate-all（内存，零写库）。
+) -> Tuple[Dict[str, Dict[str, object]], Dict[str, Dict[str, object]]]:
+    """①-a 请求索引校验（内存，零写库；validate_all 与 ready-replay 短路唯一共用权威）。
 
-    - 键∈desk；无重复
-    - applied-revise 锚先于 capability∈当前 options
-    - decided 精确匹配→已应用；decided 不匹配/空→整批拒
-    - desk 外/非法→整批拒
-    - 新鲜批 P 内急务缺 action → 仅落印时机械 hold（记入 default_hold_keys）
-    - summon：非空 target；若提供 can_summon 则必须过资格（失败整批拒）。
-      成功时第二返回值若非空则视为 canonical name 写回 choice（仍零 DB 写）。
+    - 键∈desk；无重复；choice 缺 decision_key 或引用 desk 外键→整批拒
+    - 仅校验 envelope/key membership，不比较/采纳 choice 内容
+    - 返回 (desk_by_key, choice_map) 供 validate_all 续接完整校验
     """
     desk_by_key: Dict[str, Dict[str, object]] = {}
     for row in desk_rows:
@@ -307,7 +300,30 @@ def validate_all(
             raise ValueError(f"重复 decision_key：{key}")
         if key not in desk_by_key:
             raise ValueError(f"decision_key 不在当前 desk：{key}")
-        choice_map[key] = canonical_choice(dict(raw))
+        choice_map[key] = dict(raw)
+
+    return desk_by_key, choice_map
+
+
+def validate_all(
+    desk_rows: Sequence[Mapping[str, object]],
+    request_choices: object,
+    *,
+    default_hold_missing: bool = True,
+    can_summon: Optional[Callable[[str], Tuple[bool, str]]] = None,
+) -> ValidatedBatch:
+    """① Validate-all（内存，零写库）。
+
+    - 键∈desk；无重复
+    - applied-revise 锚先于 capability∈当前 options
+    - decided 精确匹配→已应用；decided 不匹配/空→整批拒
+    - desk 外/非法→整批拒
+    - 新鲜批 P 内急务缺 action → 仅落印时机械 hold（记入 default_hold_keys）
+    - summon：非空 target；若提供 can_summon 则必须过资格（失败整批拒）。
+      成功时第二返回值若非空则视为 canonical name 写回 choice（仍零 DB 写）。
+    """
+    desk_by_key, choice_map = validate_request_keys(desk_rows, request_choices)
+    choice_map = {key: canonical_choice(raw) for key, raw in choice_map.items()}
 
     batch = ValidatedBatch()
     for key, row in desk_by_key.items():
@@ -384,8 +400,13 @@ def validate_all(
             # decision 行缺请求：非急务，不默认 hold
             raise ValueError(f"pending 行缺请求 choice：{key}")
 
-        # dossier 批红 decision 行（#1490）
-        if kind == "decision" and decision_has_rescript_capability(row):
+        # dossier 批红 decision 行（#1490）：dossier: 前缀 AND 能力对合取（#1494-F）——
+        # 普通 event_id + 幻觉能力对不得入批红轨，与 bind/phase2/submit_decisions 同判。
+        if (
+            kind == "decision"
+            and str(row.get("event_id") or "").startswith("dossier:")
+            and decision_has_rescript_capability(row)
+        ):
             options = [o for o in (row.get("options") or []) if isinstance(o, dict)]
             option_by_pair = {}
             for option in options:
