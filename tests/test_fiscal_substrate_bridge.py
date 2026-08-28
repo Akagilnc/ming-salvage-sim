@@ -29,6 +29,7 @@ from ming_sim.exceptions import SettlementAbort
 from ming_sim.fiscal_tick import settle_tick
 from ming_sim.flows import army_needed
 from ming_sim.issues import sync_opening_legacies
+from ming_sim.models import TurnPhase
 from tests.fiscal_test_utils import zero_non_meta_fiscal_config
 
 
@@ -1230,12 +1231,26 @@ def test_fixed_flows_substrate_hub_central_pay_carries_transport_loss_without_ji
     assert army["central_pay_arrears"] == pytest.approx(3)
     assert army["arrears"] == pytest.approx(3)
 
+    # #1366 真实 settling 相位（回归 pre_settle 后半段：apply_fixed_period_flows 已在当月
+    # state.turn 写 ledger/覆盖容器，state.next_period 尚未推进，恰是真实结算窗口的持久态）。
+    # 换 turn-1 前若仍按「换月后」口径找 turn-1 的 ledger，会把本次刚写的容器与上一次
+    # （不存在/不同）turn 的国库实拨拼在一起。
+    state.turn_phase = TurnPhase.SETTLING.value
+    db.save_state(state)
+    assert db.treasury_hub_result(state) == {
+        "settled_turn": state.turn,
+        "treasury_disbursed": 10,
+        "actual_arrived": 7,
+        "transit_loss": 3,
+    }
+
     # #1366：真实换月后从 Web 玩家入口读取 typed 三项；国库报告复用同一投影，
     # 不锁生成文本措辞。
     import web_app
 
     settled_turn = state.turn
     state.next_period()
+    state.turn_phase = TurnPhase.SUMMONING.value
     runtime = object.__new__(web_app.WebGame)
     runtime.session = SimpleNamespace(db=db, state=state)
     assert runtime.budget_payload()["settled_army_pay"] == {
