@@ -152,7 +152,7 @@ def test_presence_commands_project_to_diegetic_scene_beats(game):
         if message["beat"] in {"entrance", "exit"}
     ])
     an.summon_enter(db, night_id, "杨嗣昌")
-    an.dismiss_from_audience(db, "杨嗣昌", night_id=night_id)
+    an.dismiss_from_audience(db, "杨嗣昌", night_id=night_id, body="杨嗣昌退下。")
 
     scroll = an.read_night_scroll(db, night_id)
     presence = [
@@ -273,7 +273,7 @@ def test_extraction_derived_facts_stay_off_live_scroll_but_remain_in_ledger(game
         ],
         10,
     )
-    an.dismiss_from_audience(db, "杨嗣昌", night_id=night_id)
+    an.dismiss_from_audience(db, "杨嗣昌", night_id=night_id, body="杨嗣昌退下。")
 
     scroll = an.read_night_scroll(db, night_id)
     contents = [m["content"] for m in scroll]
