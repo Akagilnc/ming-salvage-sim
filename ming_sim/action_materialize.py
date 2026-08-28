@@ -1238,6 +1238,14 @@ def _resolve_xiexang_army_id(db: Any, raw_target: str) -> str:
     return ""
 
 
+class IncompleteXiexangPayloadError(ValueError):
+    def __init__(self, missing_fields: list) -> None:
+        self.missing_fields = tuple(missing_fields)
+        super().__init__(
+            "拨饷旨意缺少结构化字段：" + "/".join(missing_fields) + "（不猜散文）"
+        )
+
+
 def require_explicit_xiexang_fields(
     *,
     amount: object = 0,
@@ -1263,9 +1271,7 @@ def require_explicit_xiexang_fields(
     if not str(target_id or "").strip():
         missing.append("target_id")
     if missing:
-        raise ValueError(
-            "拨饷旨意缺少结构化字段：" + "/".join(missing) + "（不猜散文）"
-        )
+        raise IncompleteXiexangPayloadError(missing)
     return {
         "amount": int(amount),
         "account": str(account).strip(),
