@@ -7,7 +7,7 @@ import ming_sim.cli_backend as cli_backend
 import ming_sim.issues as issue_engine
 from ming_sim.session import GameSession
 from tests.conftest import covering_monthly_extract
-from tests.dossier_test_helpers import TYPED_COVERT_TASK, rejected_verdict as _rejected_verdict
+from tests.dossier_test_helpers import TYPED_COVERT_TASK, create_test_secret_order as _create_secret_order, rejected_verdict as _rejected_verdict
 
 
 def _active_people(db, count):
@@ -19,15 +19,6 @@ def _active_people(db, count):
     ]
     assert len(people) == count
     return people
-
-
-def _create_secret_order(db, state, minister, title, content, tags, **kwargs):
-    """Issue through the current typed confirmation contract."""
-    kwargs.setdefault("covert_task", {
-        "kind": str(title), "axes": ["实务事功"], "direction": 1,
-        "delivery": {"unit": "案", "target_units": 1.0},
-    })
-    return db.create_secret_order(state, minister, title, content, tags, **kwargs)
 
 
 def _active_minister(db):

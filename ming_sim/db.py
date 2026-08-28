@@ -21735,10 +21735,7 @@ class GameDB:
             if source_row is not None:
                 source_chat_turn_id = int(source_row["id"])
         from ming_sim.covert_progress import CONTRACT_KEY, build_covert_task_contract
-        covert_contract = (
-            build_covert_task_contract(covert_task=covert_task)
-            if covert_task is not None else None
-        )
+        covert_contract = build_covert_task_contract(covert_task=covert_task)
         with atomic(self):
             cur = self.conn.execute(
                 """
@@ -21769,8 +21766,7 @@ class GameDB:
                 "excluded_names": list(raw_excluded_names),
                 "excluded_offices": list(excluded_offices),
             }
-            if covert_contract is not None:
-                payload[CONTRACT_KEY] = covert_contract
+            payload[CONTRACT_KEY] = covert_contract
             dossier_id = self.create_decree_dossier(
                 state,
                 action_type="secret_order",
