@@ -1340,11 +1340,10 @@ def test_web_chat_stream_offsite_scene_keeps_pending_until_settled(game):
     runtime = _web_hall_runtime(db, state, content, session_chat=_session_chat)
     started = threading.Event()
     release = threading.Event()
-    pending_while_blocked: list[int] = []
+    close_entered = threading.Event()
 
     def _slow(_inputs):
         started.set()
-        pending_while_blocked.append(int(runtime._pending_writes_count))
         assert release.wait(2.0), "scene generator was not released"
         return "generated offsite summon scene"
 
@@ -1361,17 +1360,22 @@ def test_web_chat_stream_offsite_scene_keeps_pending_until_settled(game):
     worker = threading.Thread(target=_run, daemon=True)
     worker.start()
     assert started.wait(2.0), "offsite scene generator did not start"
-    assert runtime._pending_writes_count >= 1
-    assert pending_while_blocked and pending_while_blocked[0] >= 1
+    close_worker = threading.Thread(
+        target=lambda: runtime._runtime_write_queue().barrier(close_entered.set),
+        daemon=True,
+    )
+    close_worker.start()
+    assert not close_entered.wait(0.1), "close barrier crossed an unfinished scene"
     release.set()
     worker.join(2.0)
+    close_worker.join(2.0)
     assert not error, error
     assert [ev.get("type") for ev in events] == ["done", "end"]
-    assert runtime._pending_writes_count == 0
+    assert close_entered.is_set(), "close barrier did not drain after scene completion"
 
 
-def test_web_chat_stream_offsite_scene_failure_settles_pending_once(game):
-    """#1566 r4：场外 scene 失败亦经既有 pending 生命周期恰好结清一次。"""
+def test_web_chat_stream_offsite_scene_failure_releases_close_barrier(game):
+    """#1566 r4：场外 scene 失败后既有关闭屏障须可继续。"""
     db, state, content = game
     remote = _set_place(game, "洪承畴", location="shaanxi")
 
@@ -1380,19 +1384,39 @@ def test_web_chat_stream_offsite_scene_failure_settles_pending_once(game):
 
     runtime = _web_hall_runtime(db, state, content, session_chat=_session_chat)
     started = threading.Event()
-    pending_while_blocked: list[int] = []
+    release = threading.Event()
+    close_entered = threading.Event()
+    stream_error: list[BaseException] = []
 
     def _boom(_inputs):
         started.set()
-        pending_while_blocked.append(int(runtime._pending_writes_count))
+        assert release.wait(2.0), "scene generator was not released"
         raise RuntimeError("injected offsite summon scene failure")
 
     runtime.session._beat_generator = _boom
-    with pytest.raises(RuntimeError, match="injected offsite summon scene failure"):
-        list(runtime.chat_stream(remote.name, "传洪承畴来。"))
-    assert started.is_set()
-    assert pending_while_blocked and pending_while_blocked[0] >= 1
-    assert runtime._pending_writes_count == 0
+
+    def _run():
+        try:
+            list(runtime.chat_stream(remote.name, "传洪承畴来。"))
+        except BaseException as exc:  # noqa: BLE001
+            stream_error.append(exc)
+
+    worker = threading.Thread(target=_run, daemon=True)
+    worker.start()
+    assert started.wait(2.0), "offsite scene generator did not start"
+    close_worker = threading.Thread(
+        target=lambda: runtime._runtime_write_queue().barrier(close_entered.set),
+        daemon=True,
+    )
+    close_worker.start()
+    assert not close_entered.wait(0.1), "close barrier crossed an unfinished scene"
+    release.set()
+    worker.join(2.0)
+    close_worker.join(2.0)
+    assert len(stream_error) == 1
+    assert isinstance(stream_error[0], RuntimeError)
+    assert str(stream_error[0]) == "injected offsite summon scene failure"
+    assert close_entered.is_set(), "close barrier did not drain after scene failure"
 
 
 def _install_secret_order_agent(runtime, *, stream: bool = False) -> None:
