@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import threading
 from types import MethodType, SimpleNamespace
 
 import pytest
@@ -1296,6 +1298,101 @@ def test_web_chat_offsite_summon_scene_generator_failure_is_loud(game):
         if m.get("beat") == "summon" and m.get("speaker")
     }
     assert remote.name not in summon_speakers
+
+
+def test_web_chat_offsite_summon_generator_receives_structured_travel_facts(game):
+    """#1566 r4：真实 generator 须收到正向场外事实，而非仅场景节点=summon。"""
+    db, state, content = game
+    remote = _set_place(game, "洪承畴", location="shaanxi")
+    captured: list = []
+
+    def _session_chat(minister_name, message, *, chat_turn_id=0):
+        raise AssertionError("场外记召不得调回话")
+
+    runtime = _web_hall_runtime(db, state, content, session_chat=_session_chat)
+
+    def _capture(inputs):
+        captured.append(inputs)
+        return "generated offsite summon scene"
+
+    runtime.session._beat_generator = _capture
+    payload = runtime.chat(remote.name, "传洪承畴来。")
+    assert payload["admission"] == AudienceAdmission.SUMMON_FRESH.value
+    assert len(captured) == 1
+    inputs = captured[0]
+    assert inputs.beat_kind == "summon"
+    assert inputs.audience_scenes
+    facts = json.loads(inputs.audience_scenes[0])
+    assert facts["decree_issued"] is True
+    assert facts["courier_traveling"] is True
+    assert facts["courier_arrived"] is False
+    assert facts["person_entered_court"] is False
+
+
+def test_web_chat_stream_offsite_scene_keeps_pending_until_settled(game):
+    """#1566 r4：场外 scene 生成期间既有 pending ticket 不得提前消失。"""
+    db, state, content = game
+    remote = _set_place(game, "洪承畴", location="shaanxi")
+
+    def _session_chat(minister_name, message, *, chat_turn_id=0):
+        raise AssertionError("场外记召不得调回话")
+
+    runtime = _web_hall_runtime(db, state, content, session_chat=_session_chat)
+    started = threading.Event()
+    release = threading.Event()
+    pending_while_blocked: list[int] = []
+
+    def _slow(_inputs):
+        started.set()
+        pending_while_blocked.append(int(runtime._pending_writes_count))
+        assert release.wait(2.0), "scene generator was not released"
+        return "generated offsite summon scene"
+
+    runtime.session._beat_generator = _slow
+    events: list = []
+    error: list = []
+
+    def _run():
+        try:
+            events.extend(list(runtime.chat_stream(remote.name, "传洪承畴来。")))
+        except BaseException as exc:  # noqa: BLE001
+            error.append(exc)
+
+    worker = threading.Thread(target=_run, daemon=True)
+    worker.start()
+    assert started.wait(2.0), "offsite scene generator did not start"
+    assert runtime._pending_writes_count >= 1
+    assert pending_while_blocked and pending_while_blocked[0] >= 1
+    release.set()
+    worker.join(2.0)
+    assert not error, error
+    assert [ev.get("type") for ev in events] == ["done", "end"]
+    assert runtime._pending_writes_count == 0
+
+
+def test_web_chat_stream_offsite_scene_failure_settles_pending_once(game):
+    """#1566 r4：场外 scene 失败亦经既有 pending 生命周期恰好结清一次。"""
+    db, state, content = game
+    remote = _set_place(game, "洪承畴", location="shaanxi")
+
+    def _session_chat(minister_name, message, *, chat_turn_id=0):
+        raise AssertionError("场外记召不得调回话")
+
+    runtime = _web_hall_runtime(db, state, content, session_chat=_session_chat)
+    started = threading.Event()
+    pending_while_blocked: list[int] = []
+
+    def _boom(_inputs):
+        started.set()
+        pending_while_blocked.append(int(runtime._pending_writes_count))
+        raise RuntimeError("injected offsite summon scene failure")
+
+    runtime.session._beat_generator = _boom
+    with pytest.raises(RuntimeError, match="injected offsite summon scene failure"):
+        list(runtime.chat_stream(remote.name, "传洪承畴来。"))
+    assert started.is_set()
+    assert pending_while_blocked and pending_while_blocked[0] >= 1
+    assert runtime._pending_writes_count == 0
 
 
 def _install_secret_order_agent(runtime, *, stream: bool = False) -> None:
