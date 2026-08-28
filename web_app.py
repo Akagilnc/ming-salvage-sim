@@ -1816,12 +1816,29 @@ class WebGame:
         if getattr(self.state, "turn_phase", None) in FRONT_HALF_DONE_PHASES:
             raise HTTPException(status_code=409, detail="月末结算/亲裁进行中，暂不能召对。")
 
+    @staticmethod
+    def _message_is_formal_secret_order(message: str) -> bool:
+        """#1566：正式密令前缀入口（复用既有 _SECRET_PREFIXES，不另造分类器）。
+
+        ADR 0096：密疏不受 location 分流；公开 chat/stream 须在 admission 前识别。
+        """
+        from ming_sim.cli_backend import _SECRET_PREFIXES
+        return (message or "").strip().startswith(_SECRET_PREFIXES)
+
+    def _finish_offsite_summon_scene(self, *, origin_id: str, minister_name: str) -> None:
+        """#1566：admission 已落传召账后，在 write_gate 外为同一 ledger 行生成自由 scene。"""
+        materialize = getattr(self.session, "materialize_offsite_summon_scene", None)
+        if materialize is None:
+            return
+        materialize(origin_id=origin_id, person_name=minister_name)
+
     def _summon_admission_success_payload(
         self, minister_name: str, admission_result: str,
     ) -> Dict[str, Any]:
         """#670：成功记召静默载荷——不建轮、不落消息、不调回话/LLM。
 
         admission 为机面控制码，客户端不得写入玩家错误区。
+        #1566：canonical scroll 承接可见 scene；本载荷仍空 answer。
         """
         character = self.session._character(minister_name)
         open_night = None
@@ -1919,6 +1936,8 @@ class WebGame:
         chat_turn_id = 0
         before_snapshot: Dict[str, Any] = {}
         accepted_turn = 0
+        # #1566：场外记召成功后在 gate 外物化 scene；（minister, admission_result, origin_id）
+        offsite_summon: Optional[tuple[str, str, str]] = None
         # #542 r6e：prologue（_start_chat_turn / append）纳入既有 try/except；
         # 与流式 L2414-2428 同缝——drain 在 write_gate 外，再 abandon + fail。
         try:
@@ -1934,10 +1953,16 @@ class WebGame:
                     accepted_turn = int(self.state.turn)
                     # #670：殿上 chat 自持闸时消费 admission；密疏兼容路（gate_already_held）不消费。
                     # 闸只管殿上召对——书信/密疏只受基础资格（_require_active_minister/can_summon）。
-                    if not gate_already_held:
+                    # #1566：正式密令前缀须先入密令管线，不得被 location admission 抢先截获。
+                    secret_order_bypass = (
+                        gate_already_held
+                        or self._message_is_formal_secret_order(text)
+                    )
+                    if not secret_order_bypass:
+                        origin_id = f"web:chat:{accepted_turn}:{minister_name}"
                         admission = self.session.consume_audience_admission(
                             self.session._character(minister_name),
-                            origin_id=f"web:chat:{accepted_turn}:{minister_name}",
+                            origin_id=origin_id,
                         )
                         if not admission.allowed:
                             # 资格失败：非空 reason → 409 错误通道。
@@ -1950,23 +1975,36 @@ class WebGame:
                                 AudienceAdmission.SUMMON_FRESH,
                                 AudienceAdmission.SUMMON_IN_TRANSIT,
                             ):
-                                return self._summon_admission_success_payload(
-                                    minister_name, admission.result.value,
+                                # 记召已落账；scene 在 gate 外生成（见 with 后）。
+                                offsite_summon = (
+                                    minister_name,
+                                    admission.result.value,
+                                    origin_id,
                                 )
-                            raise HTTPException(
-                                status_code=409,
-                                detail=(
-                                    admission.result.value
-                                    if admission.result is not None else ""
-                                ),
-                            )
-                    if self._persistent_chat_minister(minister_name):
-                        chat_turn_id, before_snapshot = self._start_chat_turn(minister_name)
-                    self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})
-                    if minister_name not in self.session.temporary_characters:
-                        message_id = self.db.append_chat_message(minister_name, accepted_turn, "user", text)
-                        if chat_turn_id:
-                            self.db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
+                            else:
+                                raise HTTPException(
+                                    status_code=409,
+                                    detail=(
+                                        admission.result.value
+                                        if admission.result is not None else ""
+                                    ),
+                                )
+                    if offsite_summon is None:
+                        if self._persistent_chat_minister(minister_name):
+                            chat_turn_id, before_snapshot = self._start_chat_turn(minister_name)
+                        self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})
+                        if minister_name not in self.session.temporary_characters:
+                            message_id = self.db.append_chat_message(minister_name, accepted_turn, "user", text)
+                            if chat_turn_id:
+                                self.db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
+                if offsite_summon is not None:
+                    summon_name, summon_result, summon_origin = offsite_summon
+                    self._finish_offsite_summon_scene(
+                        origin_id=summon_origin, minister_name=summon_name,
+                    )
+                    return self._summon_admission_success_payload(
+                        summon_name, summon_result,
+                    )
                 chat_signature = inspect.signature(self.session.chat)
                 # #634 P5：判官拍与回话并行发出（先于回话生成，TD-9 零额外等待）。
                 self._dispatch_relation_judge(chat_turn_id)
@@ -3137,6 +3175,8 @@ class WebGame:
         # 颁诏入口可并发观测 generating 并有界超时 fail-closed，不被挂起回话永久挡死。
         # #542 r6g：Lock.locked() 不记 owner——本路径自记是否仍持 gate，只放自己的锁。
         gate_held = True
+        # #1566：场外记召成功后在 gate 外物化 scene；（minister, admission_result, origin_id）
+        offsite_summon: Optional[tuple[str, str, str]] = None
         try:
             write_gate.acquire()
         except TicketCancelled:
@@ -3172,43 +3212,47 @@ class WebGame:
                 yield {"type": "error", "message": f"{minister_name}上一轮回奏仍在进行，请稍候再问。"}
                 return
             accepted_turn = int(self.state.turn)
-            admission = self.session.consume_audience_admission(
-                self.session._character(minister_name),
-                origin_id=f"web:stream:{accepted_turn}:{minister_name}",
-            )
-            if not admission.allowed:
-                self._complete_pending_write(pending_ticket)
-                pending_ticket = None
-                # 资格失败：非空 reason → SSE error。
-                # 成功记召：done+end 静默载荷，禁止 error 事件进玩家错误通道。
-                if admission.reason:
-                    yield {"type": "error", "message": admission.reason}
-                    return
-                if admission.result in (
-                    AudienceAdmission.SUMMON_FRESH,
-                    AudienceAdmission.SUMMON_IN_TRANSIT,
-                ):
-                    payload = self._summon_admission_success_payload(
-                        minister_name, admission.result.value,
-                    )
-                    yield {"type": "done", "payload": payload}
-                    yield {"type": "end"}
-                    return
-                yield {
-                    "type": "error",
-                    "message": (
-                        admission.result.value
-                        if admission.result is not None else ""
-                    ),
-                }
-                return
-            if self._persistent_chat_minister(minister_name):
-                chat_turn_id, before_snapshot = self._start_chat_turn(minister_name)
-            self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})
-            if minister_name not in self.session.temporary_characters:
-                message_id = self.db.append_chat_message(minister_name, accepted_turn, "user", text)
-                if chat_turn_id:
-                    self.db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
+            # #1566：正式密令前缀先入密令管线；场外记召成功后在 gate 外物化 scene。
+            if not self._message_is_formal_secret_order(text):
+                stream_origin = f"web:stream:{accepted_turn}:{minister_name}"
+                admission = self.session.consume_audience_admission(
+                    self.session._character(minister_name),
+                    origin_id=stream_origin,
+                )
+                if not admission.allowed:
+                    self._complete_pending_write(pending_ticket)
+                    pending_ticket = None
+                    # 资格失败：非空 reason → SSE error。
+                    # 成功记召：done+end 静默载荷，禁止 error 事件进玩家错误通道。
+                    if admission.reason:
+                        yield {"type": "error", "message": admission.reason}
+                        return
+                    if admission.result in (
+                        AudienceAdmission.SUMMON_FRESH,
+                        AudienceAdmission.SUMMON_IN_TRANSIT,
+                    ):
+                        offsite_summon = (
+                            minister_name,
+                            admission.result.value,
+                            stream_origin,
+                        )
+                    else:
+                        yield {
+                            "type": "error",
+                            "message": (
+                                admission.result.value
+                                if admission.result is not None else ""
+                            ),
+                        }
+                        return
+            if offsite_summon is None:
+                if self._persistent_chat_minister(minister_name):
+                    chat_turn_id, before_snapshot = self._start_chat_turn(minister_name)
+                self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})
+                if minister_name not in self.session.temporary_characters:
+                    message_id = self.db.append_chat_message(minister_name, accepted_turn, "user", text)
+                    if chat_turn_id:
+                        self.db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
         except Exception:
             # Release gate before scene drain — prologue may have already started futures.
             if gate_held:
@@ -3240,6 +3284,18 @@ class WebGame:
         finally:
             if gate_held:
                 write_gate.release()
+
+        if offsite_summon is not None:
+            summon_name, summon_result, summon_origin = offsite_summon
+            self._finish_offsite_summon_scene(
+                origin_id=summon_origin, minister_name=summon_name,
+            )
+            payload = self._summon_admission_success_payload(
+                summon_name, summon_result,
+            )
+            yield {"type": "done", "payload": payload}
+            yield {"type": "end"}
+            return
 
         ev_queue: "queue.Queue[Dict[str, Any]]" = queue.Queue()
         identity = {
