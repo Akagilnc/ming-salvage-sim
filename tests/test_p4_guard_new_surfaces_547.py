@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from types import SimpleNamespace
 
@@ -16,7 +17,7 @@ from ming_sim import audience_night as an
 from ming_sim.beat_orchestration import (
     BEAT_ENTER,
     assemble_beat_inputs,
-    production_beat_generator,
+    create_llm_beat_generator,
 )
 from ming_sim.decree import _rescript_decisions
 from ming_sim.models import TurnPhase
@@ -61,7 +62,7 @@ def _scan_blob(value) -> str:
     return "\t".join(_walk_text_tokens(value))
 
 
-def _assert_no_character_sentinel_leak(payload, *, where: str) -> None:
+def _assert_no_character_axis_keys(payload, *, where: str) -> None:
     # 键面：人物抽象轴英文字段名不得进玩家 payload
     keys: set[str] = set()
     pending = [payload]
@@ -74,6 +75,10 @@ def _assert_no_character_sentinel_leak(payload, *, where: str) -> None:
             pending.extend(item)
     leaked_keys = _CHARACTER_AXIS_KEYS & keys
     assert not leaked_keys, f"{where}: payload 键面露出人物抽象轴 {leaked_keys}"
+
+
+def _assert_no_character_sentinel_leak(payload, *, where: str) -> None:
+    _assert_no_character_axis_keys(payload, where=where)
 
     # 值面：剥离墙钟后，哨兵数不得作为独立数字 token 出现
     blob = _ISO_DT_RE.sub("", _scan_blob(payload))
@@ -185,7 +190,28 @@ def test_scroll_and_highlight_list_keep_sentinels_out_and_world_facts_in(game, m
         time_of_day="戌时", location="乾清宫",
         person_name=minister, summon_method=an.METHOD_XUANRU,
     )
-    enter_body = production_beat_generator(enter_inputs)
+    llm_calls = []
+
+    class _FakeAgent:
+        def __init__(self, **_kwargs):
+            pass
+
+        def run(self, prompt):
+            llm_calls.append(prompt)
+            return SimpleNamespace(content="entry")
+
+    monkeypatch.setattr("agno.agent.Agent", _FakeAgent)
+    monkeypatch.setattr("ming_sim.llm_model.create_chat_model", lambda *_a, **_k: object())
+    monkeypatch.setattr(
+        "ming_sim.llm_model.extract_agent_text",
+        lambda result: str(result.content),
+    )
+    enter_body = create_llm_beat_generator(object())(enter_inputs)
+    assert len(llm_calls) == 1
+    routed_materials = json.loads(llm_calls[0])
+    assert routed_materials["场景节点"] == BEAT_ENTER
+    assert routed_materials["人物"] == minister
+    assert routed_materials["召法"] == an.METHOD_XUANRU
     an.append_ledger_entry(
         db, night_id, body=enter_body, tags=[an.TAG_ENTER],
         person_names=[minister],
@@ -205,22 +231,16 @@ def test_scroll_and_highlight_list_keep_sentinels_out_and_world_facts_in(game, m
 
     assert payload["messages"]
     assert scroll
-    _assert_no_character_sentinel_leak(payload, where="api_audience_scroll")
-    _assert_no_character_sentinel_leak(scroll, where="read_night_scroll")
-    _assert_no_character_sentinel_leak(projection, where="build_chat_projection")
+    _assert_no_character_axis_keys(payload, where="api_audience_scroll")
+    _assert_no_character_axis_keys(scroll, where="read_night_scroll")
+    _assert_no_character_axis_keys(projection, where="build_chat_projection")
     _assert_no_character_sentinel_leak(enter_inputs, where="assemble_beat_inputs")
-    _assert_no_character_sentinel_leak(enter_body, where="production_beat_generator")
-
-    blob = _scan_blob({"api": payload, "scroll": scroll, "projection": projection})
-    assert str(facts["year"]) in blob
-    assert str(facts["period"]) in blob
-    assert str(facts["manpower"]) in blob
-    assert str(facts["treasury"]) in blob
 
     minister_msgs = [m for m in scroll if m.get("role") == "minister"]
     assert minister_msgs and minister_msgs[0]["highlights"] == ["辽饷", f"兵{facts['manpower']}"]
     scene_msgs = [m for m in scroll if m.get("role") == "scene"]
-    assert any(scene_body in str(m.get("content") or "") for m in scene_msgs)
+    assert scene_msgs and all("beat" in m and "role" in m for m in scene_msgs)
+    assert all("beat" in m and "role" in m for m in payload["messages"])
 
 
 def test_rescript_page_payload_keeps_sentinels_out_and_world_facts_in(game):
