@@ -821,10 +821,10 @@ def test_secret_order_tool_preserves_long_title_without_formal_cap(game):
     db, _state, content = game
     minister = _active_ministers(content, db, n=1)[0]
     tools = {f.__name__: f for f in build_minister_tools(minister, _ctx(game))}
-    title = "查核辽饷转运与沿途侵蚀及军粮实数并追索责任官员"
+    title = "核发辽饷转运与沿途侵蚀及军粮实数并追索责任官员"
 
     result = tools["secret_order"](
-        action="issue", title=title, content="查明事实并回奏。",
+        action="issue", title=title, content="核发军饷并回奏。",
         kind="核发辽饷", axes_json='["实务事功"]', delivery_unit="万两",
         delivery_target_units=1, purpose="辽饷", category="军饷", account="国库",
     )

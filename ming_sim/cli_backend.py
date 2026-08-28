@@ -3419,8 +3419,9 @@ def _extract_secret_order(
         "  \"差务\": \"差务类型名，如 补发饷银、缉获人犯、清丈；必须点明，不得用标题或标签猜测\",\n"
         "  \"价值轴\": [\"闭集轴名，如 实务事功、既得利益\"],\n"
         "  \"方向\": 1,\n"
-        "  \"交付单位\": \"canonical applier 单位：万两、人犯、亩或案；调查/查核以新立案情为交付时填案\",\n"
-        "  \"交付目标\": 到期须交付的正数目标（调查/查核未明示数量时填1案）,\n"
+        "  \"交付单位\": \"canonical applier 单位：万两、人犯或亩；调查差务留空\",\n"
+        "  \"交付目标\": 到期须交付的正数目标（调查为须坐实的事实条数）,\n"
+        "  \"调查对象\": \"查核目标人名，非调查留空\",\n"
         "  \"钱粮用途\": \"钱粮收支 purpose，非钱粮留空\", \"钱粮类别\": \"category\", \"钱粮账户\": \"account\",\n"
         "  \"人物动作\": \"人物变更动作，非人物留空\",\n"
         "  \"地区\": \"region_delta 地区 id\", \"地区字段\": \"落库字段\", \"地区目标值\": \"落库后的目标值\"\n"
@@ -3553,6 +3554,7 @@ def _extract_secret_order(
             region=obj.get("地区"),
             field=obj.get("地区字段"),
             region_target=obj.get("地区目标值"),
+            investigation_target=obj.get("调查对象"),
         )
     except CovertContractError:
         covert_task = None

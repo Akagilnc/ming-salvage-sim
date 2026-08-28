@@ -44,12 +44,22 @@ from ming_sim.simulation import (
 )
 
 
-def _task(*, kind, axes, unit, target, direction=1):
+def _task(*, kind, axes, unit, target, direction=1, investigation_target=""):
+    if investigation_target:
+        return {
+            "kind": kind,
+            "axes": list(axes),
+            "direction": int(direction),
+            "investigation_target": investigation_target,
+            "delivery": {
+                "target_units": float(target),
+                "investigation_target": investigation_target,
+            },
+        }
     identity = {
         "万两": {"purpose": "其它", "category": "密令差务", "account": "内库"},
         "人犯": {"person_action": "处置"},
         "亩": {"region": "henan", "field": "registered_land", "target": "421"},
-        "案": {},
     }[unit]
     return {
         "kind": kind,
@@ -60,12 +70,13 @@ def _task(*, kind, axes, unit, target, direction=1):
 
 
 def _issue(db, state, name, title, content, *, months, target, kind="查案",
-           axes=None, unit="万两", tags=None):
+           axes=None, unit="万两", tags=None, investigation_target=""):
     return db.create_secret_order(
         state, name, title, content, tags if tags is not None else [],
         deadline_months=months,
         covert_task=_task(
             kind=kind, axes=axes or ["实务事功"], unit=unit, target=target,
+            investigation_target=investigation_target,
         ),
     )
 
@@ -818,7 +829,7 @@ def test_submit_unlimited_keeps_frozen_target(game):
     db, state, _ = game
     name = _minister(db)
     oid = _issue(
-        db, state, name, "无期密查辽饷", "密查侵冒",
+        db, state, name, "无期补发饷银", "补发饷银",
         months=0, target=3, kind="补发饷银", axes=["既得利益"], unit="万两",
         tags=["辽饷", "兵部", "密查"],
     )
@@ -931,23 +942,30 @@ def test_internal_extractor_receives_origin_linked_typed_briefs_without_secret_p
     assert pbriefs[catch_id]["delivery"]["target_units"] == 3.0
 
 
-def test_extract_secret_order_schema_and_confirm_typed_contract(game, monkeypatch):
-    import json
+def test_investigation_truth_floor_confirm_actual_due(game, monkeypatch):
     from ming_sim import cli_backend as cb
+    from ming_sim.covert_progress import FACT_LANE_USED_KEY
 
     db, state, content = game
     name = _minister(db)
+    target = db.conn.execute(
+        "SELECT name FROM characters WHERE name<>? AND status='active' LIMIT 1",
+        (name,),
+    ).fetchone()["name"]
+    _set_axes(db, name, loyalty=90, identity=30)
+    db.conn.execute("UPDATE characters SET seed_guilt='' WHERE name=?", (target,))
+    db.conn.commit()
     canned = json.dumps({
-        "标题": "核辽饷侵冒",
-        "内容": "查核辽饷侵冒并形成案情",
+        "标题": "查核辽饷侵冒",
+        "内容": "查核辽饷侵冒",
         "承办人": name,
-        "期限月数": 1,
+        "期限月数": 6,
         "标签": ["辽饷"],
         "差务": "查核辽饷侵冒",
         "价值轴": ["既得利益"],
         "方向": 1,
-        "交付单位": "案",
-        "交付目标": 1,
+        "交付目标": 2,
+        "调查对象": target,
     }, ensure_ascii=False)
 
     def fake_json(_prompt, llm_config=None, tag=""):
@@ -967,10 +985,59 @@ def test_extract_secret_order_schema_and_confirm_typed_contract(game, monkeypatc
     pid = int(ctx.out["pending_action_id"])
     db.commit_pending_actions(state, content=content, action_ids=[pid])
     oid = int(db.list_secret_orders(status="active")[0]["id"])
-    contract = read_covert_task_contract(db.get_dossier_for_secret_order(oid))
+    dossier = db.get_dossier_for_secret_order(oid)
+    did = int(dossier["id"])
+    contract = read_covert_task_contract(dossier)
     assert contract["kind"] == "查核辽饷侵冒"
-    assert contract["delivery"]["unit"] == "案"
-    assert contract["delivery"]["target_units"] == 1.0
+    assert contract["investigation_target"] == target
+    assert "unit" not in contract["delivery"]
+    assert contract["delivery"]["target_units"] == 2.0
+
+    state.turn += 1
+    db.save_state(state)
+    apply_monthly_covert_actual_progress(
+        db, state, selections=[{"order_id": oid, "fidelity": "忠实"}], commit=True,
+    )
+    assert db.sum_dossier_actual_progress_units(did) == 0.0
+
+    state.turn += 1
+    db.save_state(state)
+    db.conn.execute("UPDATE characters SET seed_guilt=? WHERE name=?", ("侵冒", target))
+    db.conn.commit()
+    applied = apply_monthly_covert_actual_progress(
+        db, state, selections=[{"order_id": oid, "fidelity": "忠实"}], commit=True,
+    )
+    assert applied and float(applied[0].get("units") or 0) == 1.0
+    assert db.sum_dossier_actual_progress_units(did) == 1.0
+    payload = json.loads(db.get_dossier_for_secret_order(oid)["payload_json"])
+    assert payload[FACT_LANE_USED_KEY] == [target]
+
+    state.turn += 1
+    db.save_state(state)
+    apply_monthly_covert_actual_progress(
+        db, state, selections=[{"order_id": oid, "fidelity": "忠实"}], commit=True,
+    )
+    assert db.sum_dossier_actual_progress_units(did) == 1.0
+
+    edge_id = db.record_relation_edge_event(
+        source=name, target=target, event_kind="把柄",
+        context="侵冒把柄", origin=f"test:{did}", evidence=True,
+    )
+    state.turn += 1
+    db.save_state(state)
+    apply_monthly_covert_actual_progress(
+        db, state, selections=[{"order_id": oid, "fidelity": "忠实"}], commit=True,
+    )
+    assert db.sum_dossier_actual_progress_units(did) == 2.0
+    payload = json.loads(db.get_dossier_for_secret_order(oid)["payload_json"])
+    assert payload[FACT_LANE_USED_KEY] == [target, str(edge_id)]
+
+    db.conn.execute("UPDATE secret_orders SET due_turn=? WHERE id=?", (state.turn, oid))
+    db.conn.commit()
+    out = settle_due_secret_orders(db, state, commit=True)
+    row = next(r for r in out if r["order_id"] == oid)
+    assert row["status"] == "done"
+    assert row["actual_units"] == 2.0
 
 
 def test_fiscal_quantity_tracer_same_unit_done_and_gap(game):

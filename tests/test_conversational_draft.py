@@ -456,12 +456,11 @@ def test_explicit_secret_order_prefix_stages_pending_candidate(game, monkeypatch
             "内容": "查辽东军饷有无侵冒，并封存兵部辽饷册。",
             "承办人": name,
             "期限月数": 3,
-            "差务": "核发辽饷",
+            "差务": "查核辽饷侵冒",
             "价值轴": ["实务事功"],
             "方向": 1,
-            "交付单位": "万两",
             "交付目标": 1,
-            "钱粮用途": "辽饷", "钱粮类别": "军饷", "钱粮账户": "国库",
+            "调查对象": name,
             "标签": ["辽东", "军饷"],
         }, ensure_ascii=False), 1)
 
@@ -497,12 +496,11 @@ def test_natural_language_secret_order_stages_pending_candidate(game, monkeypatc
                 "内容": "暗查关宁诸将虚冒兵额，并密访粮道账册。",
                 "承办人": name,
                 "期限月数": 2,
-                "差务": "核发辽饷",
+                "差务": "查虚冒兵额",
                 "价值轴": ["实务事功"],
                 "方向": 1,
-                "交付单位": "万两",
                 "交付目标": 1,
-                "钱粮用途": "辽饷", "钱粮类别": "军饷", "钱粮账户": "国库",
+                "调查对象": name,
                 "标签": ["关宁", "兵额"],
             }, ensure_ascii=False), 1)
         return (json.dumps({"任免动作": "无", "拟旨意图": "无"}, ensure_ascii=False), 1)
@@ -656,12 +654,11 @@ def test_new_secret_order_with_existing_order_stages_only_new_candidate(game, mo
                 "内容": "另下一道密令暗查粮道。",
                 "承办人": name,
                 "期限月数": 2,
-                "差务": "核发辽饷",
+                "差务": "查核粮道",
                 "价值轴": ["实务事功"],
                 "方向": 1,
-                "交付单位": "万两",
                 "交付目标": 1,
-                "钱粮用途": "辽饷", "钱粮类别": "军饷", "钱粮账户": "国库",
+                "调查对象": name,
                 "标签": [],
             }, ensure_ascii=False), 1)
         return (json.dumps({
