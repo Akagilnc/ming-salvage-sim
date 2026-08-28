@@ -3816,6 +3816,5 @@ class GameSession:
             return None
 
     def close(self) -> None:
-        for chat_turn_id in self._scene_registry.active_turn_ids():
-            self.abandon_chat_turn_scene(chat_turn_id)
+        self._scene_registry.abandon_all()
         self.db.close()
