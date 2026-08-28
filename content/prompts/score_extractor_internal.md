@@ -24,6 +24,7 @@
 
 ## 核心纪律
 
+- input 的 `secret_covert_effect_briefs` 是密令差务的私密 typed contract 投影，不含密令正文。逐项只按其 `canonical_fields` 在本档房既有所有权内产出本回合真实效果，且每项效果的 `来源引用` 必须逐字使用该 brief 的 `origin_ref`（`dossier:<id>`）；不得把 brief、kind 或 origin 写入叙事/其它档房字段。`fiscal_changes` 仍须选择 input `fiscal_config` 已有 key；无法形成合法 owned effect 时不臆造。
 - 军队案卷的 `army_pay_fact` 与奏章明确写出的暗渠结论来自唯一 season simulator。若奏章明确判为地方暗渠摊派，本档房只在自己所有权内抽取同一 `dossier:<id>` 的钱粮/财政旨外实况（`beyond_intent`）和同省 `人口转移(reason="摊派")`；没有明确结论不得自行补判。与局势档房并行，不读取或代写其 `案卷执行`。
 - `国势变化` 只写 `民心` / `皇威` 增量，不能写国库/内库。
 
