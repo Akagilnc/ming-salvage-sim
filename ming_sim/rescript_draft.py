@@ -243,10 +243,13 @@ def _project_region_targets(table: object) -> List[Dict[str, str]]:
     cols = table["cols"]  # type: ignore[index]
     rows = table["rows"]  # type: ignore[index]
     indexes = {field: cols.index(field) for field in ("id", "name", "kind")}
-    return [
-        {field: str(row[index]).strip() for field, index in indexes.items()}
+    targets = [
+        {field: str(row[index] or "").strip() for field, index in indexes.items()}
         for row in rows
     ]
+    if any(not value for target in targets for value in target.values()):
+        raise ValueError("canonical region target 含空 id/name/kind")
+    return targets
 
 
 def build_rescript_draft_payload(
