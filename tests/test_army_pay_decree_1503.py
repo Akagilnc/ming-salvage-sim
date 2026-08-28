@@ -43,6 +43,7 @@ def _stage_xiexang(db, turn, *, amount, account="国库", target_id="guanning",
         "grant_action": "协饷",
         "amount": amount,
         "account": account,
+        "target_kind": "army",
         "target_id": target_id,
         **extra,
     }
@@ -163,13 +164,15 @@ def test_army_pay_missing_fields_fail_loud_at_admission(game):
 
 
 def test_xiexang_incomplete_payload_rejected_before_pending(game):
-    """入 pending 前拒不完整协饷载荷（缺 amount/非法 target）。"""
+    """入 pending 前拒不完整协饷载荷（缺 amount/account/target_kind/非法 target）。"""
     db, state, content = game
     from ming_sim.action_materialize import stage_grant_allocation_candidate
 
     actor = db.conn.execute(
         "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
     ).fetchone()["name"]
+    treasury_before = int(state.metrics["国库"])
+    before_ids = {int(d["id"]) for d in db.list_decree_dossiers()}
     before_pending = db.list_pending_actions(state.turn, minister_name=actor)
 
     with pytest.raises(ValueError, match=r"协饷旨意缺少正数 amount"):
@@ -180,6 +183,26 @@ def test_xiexang_incomplete_payload_rejected_before_pending(game):
             target_kind="army",
             target_id="guanning",
             amount=0,
+            account="国库",
+        )
+    with pytest.raises(ValueError, match=r"协饷旨意缺少合法 account"):
+        stage_grant_allocation_candidate(
+            db, state.turn, actor,
+            text="臣请协饷。",
+            grant_action="协饷",
+            target_kind="army",
+            target_id="guanning",
+            amount=15,
+            account="",
+        )
+    with pytest.raises(ValueError, match=r"协饷旨意缺少 target_kind"):
+        stage_grant_allocation_candidate(
+            db, state.turn, actor,
+            text="臣请协饷。",
+            grant_action="协饷",
+            target_kind="",
+            target_id="guanning",
+            amount=15,
             account="国库",
         )
     with pytest.raises(ValueError, match=r"协饷旨意 target 无法解析为军队"):
@@ -204,6 +227,9 @@ def test_xiexang_incomplete_payload_rejected_before_pending(game):
         )
     after_pending = db.list_pending_actions(state.turn, minister_name=actor)
     assert len(after_pending) == len(before_pending)
+    assert int(state.metrics["国库"]) == treasury_before
+    after_ids = {int(d["id"]) for d in db.list_decree_dossiers()}
+    assert after_ids == before_ids
 
 
 def test_revise_away_from_xiexang_clears_pay_only_fields(game):
@@ -816,6 +842,7 @@ def _scripted_xiexang_candidates(*, amount=15, account="国库", target_id="guan
             "grant_action": "协饷",
             "amount": amount,
             "account": account,
+            "target_kind": "army",
             "target_id": target_id,
         },
         soft=False,
@@ -890,7 +917,7 @@ def test_explicit_draft_prefix_without_grant_candidate_stays_generic(game, monke
 
 
 def test_explicit_prefix_grant_missing_target_fail_loud_no_pending(game, monkeypatch):
-    """载荷式拟旨缺 target：fail-loud，不成案、不落 generic、不静默丢旨。"""
+    """载荷式拟旨缺 target/account/target_kind：fail-loud，不成案、不落 generic、不静默丢旨。"""
     import types
 
     import ming_sim.cli_backend as cb
@@ -901,45 +928,73 @@ def test_explicit_prefix_grant_missing_target_fail_loud_no_pending(game, monkeyp
         "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
     ).fetchone()["name"]
     character = content.characters[actor]
-    # kind/grant_action 合法但缺 target_id —— 旧洞：跳过 generic 后 materialize 静默 return
-    scripted = candidates_from_classifier_payload(
-        {
-            "kind": "grant_allocation",
-            "grant_action": "协饷",
-            "amount": 15,
-            "account": "国库",
-            # 无 target_id / name
-        },
-        soft=False,
-    )
     monkeypatch.setattr(cb, "extract_minister_actions", lambda *a, **k: {
         "secret_action": "无", "order_id": 0, "new_title": "", "new_content": "",
         "deadline_months": 0, "cultivate_skill": "", "cultivate_trait": "",
     })
     monkeypatch.setattr(cb, "extract_confirmation_intent", lambda *a, **k: "无")
 
-    sess = types.SimpleNamespace(
-        db=db,
-        state=state,
-        content=content,
-        llm_config=types.SimpleNamespace(channel="cli"),
-        registry=None,
+    cases = (
+        (
+            r"协饷旨意缺少 target",
+            {
+                "kind": "grant_allocation",
+                "grant_action": "协饷",
+                "amount": 15,
+                "account": "国库",
+                "target_kind": "army",
+                # 无 target_id / name
+            },
+        ),
+        (
+            r"协饷旨意缺少合法 account",
+            {
+                "kind": "grant_allocation",
+                "grant_action": "协饷",
+                "amount": 15,
+                "target_kind": "army",
+                "target_id": "guanning",
+            },
+        ),
+        (
+            r"协饷旨意缺少 target_kind",
+            {
+                "kind": "grant_allocation",
+                "grant_action": "协饷",
+                "amount": 15,
+                "account": "国库",
+                "target_id": "guanning",
+            },
+        ),
     )
-    sess.apply_cli_conversation_actions = types.MethodType(
-        GameSession.apply_cli_conversation_actions, sess,
-    )
-    before = db.list_pending_actions(state.turn, minister_name=actor)
-    with pytest.raises(ValueError, match=r"协饷旨意缺少 target"):
-        sess.apply_cli_conversation_actions(
-            character,
-            "拟旨如下：准拨军饷十五万两。",
-            "臣遵旨。请拨军饷十五万两。钦此。",
-            has_directive=False,
-            secret_order_id=None,
-            preclassified_intent=scripted,
+    treasury_before = int(state.metrics["国库"])
+    before_ids = {int(d["id"]) for d in db.list_decree_dossiers()}
+    for match, payload in cases:
+        scripted = candidates_from_classifier_payload(payload, soft=False)
+        sess = types.SimpleNamespace(
+            db=db,
+            state=state,
+            content=content,
+            llm_config=types.SimpleNamespace(channel="cli"),
+            registry=None,
         )
-    after = db.list_pending_actions(state.turn, minister_name=actor)
-    assert len(after) == len(before)
+        sess.apply_cli_conversation_actions = types.MethodType(
+            GameSession.apply_cli_conversation_actions, sess,
+        )
+        before = db.list_pending_actions(state.turn, minister_name=actor)
+        with pytest.raises(ValueError, match=match):
+            sess.apply_cli_conversation_actions(
+                character,
+                "拟旨如下：准拨军饷十五万两。",
+                "臣遵旨。请拨军饷十五万两。钦此。",
+                has_directive=False,
+                secret_order_id=None,
+                preclassified_intent=scripted,
+            )
+        after = db.list_pending_actions(state.turn, minister_name=actor)
+        assert len(after) == len(before)
+    assert int(state.metrics["国库"]) == treasury_before
+    assert {int(d["id"]) for d in db.list_decree_dossiers()} == before_ids
 
 
 def test_real_chat_explicit_prefix_pay_decree_stages_grant_pending(game, monkeypatch):

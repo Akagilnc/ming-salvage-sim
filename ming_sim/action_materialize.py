@@ -1180,6 +1180,8 @@ def _grant_account(intent: Dict[str, Any]) -> str:
         return "内库"
     if account in {"国库", "内库"}:
         return account
+    if action == "协饷":
+        return account
     if action in GRANT_MONEY_ACTIONS:
         return "国库"
     return ""
@@ -1204,7 +1206,9 @@ def _grant_target(intent: Dict[str, Any]) -> Tuple[str, str]:
         return "issue", target_id or name or action
     if action == "协饷":
         # 仅抛原始 target 文本；army id 解析在 stage 前完成，禁止把 region 标签硬改 army。
-        return "army", target_id or name
+        # #1503：target_kind 须显式透传；缺失不得默认 army。
+        kind = str(intent.get("target_kind") or "").strip()
+        return kind, target_id or name
     if action in {"赈灾", "招抚屯田"}:
         # #652：执行型赈济／招抚屯田均锚定属地省；recovery 单核读 region target。
         kind = "region" if target_id and target_id != action else "issue"
@@ -1277,7 +1281,7 @@ def stage_grant_allocation_candidate(
         if account not in {"国库", "内库"}:
             raise ValueError("协饷旨意缺少合法 account（不猜散文）")
         if not kind:
-            kind = "army"
+            raise ValueError("协饷旨意缺少 target_kind（不猜散文）")
         if kind != "army":
             raise ValueError(
                 f"协饷旨意 target_kind 须为 army，不得为 {kind!r}（不猜散文）"
@@ -3200,6 +3204,7 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 FieldSpec("name", "姓名", None, "", max_len=20),
                 # 政务拨款对象：赈灾地区 / 项目 / 协饷军队 / 恩赏人物
                 FieldSpec("target_id", "目标", None, "", max_len=80),
+                FieldSpec("target_kind", "目标类型", None, "", max_len=40),
                 FieldSpec("amount", "金额", None, 0, as_int=True),
                 FieldSpec(
                     "account", "账户",
