@@ -168,10 +168,9 @@ def test_army_pay_missing_fields_fail_loud_at_admission(game, monkeypatch):
     sess.apply_cli_conversation_actions = types.MethodType(
         GameSession.apply_cli_conversation_actions, sess,
     )
-    with pytest.raises(
-        ValueError,
-        match=r"^拨饷旨意缺少结构化字段：amount/account/purpose/target_kind/target_id（不猜散文）$",
-    ):
+    from ming_sim.action_materialize import IncompleteXiexangPayloadError
+
+    with pytest.raises(IncompleteXiexangPayloadError) as caught:
         sess.apply_cli_conversation_actions(
             character,
             "拟旨如下：准拨军饷。",
@@ -180,6 +179,9 @@ def test_army_pay_missing_fields_fail_loud_at_admission(game, monkeypatch):
             secret_order_id=None,
             preclassified_intent=scripted,
         )
+    assert caught.value.missing_fields == (
+        "amount", "account", "purpose", "target_kind", "target_id",
+    )
     after_pending = db.list_pending_actions(state.turn, minister_name=actor)
     assert len(after_pending) == len(before_pending)
     assert {int(d["id"]) for d in db.list_decree_dossiers()} == before_ids
