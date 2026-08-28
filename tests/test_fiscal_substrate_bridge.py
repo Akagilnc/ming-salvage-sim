@@ -1244,15 +1244,37 @@ def test_fixed_flows_substrate_hub_central_pay_carries_transport_loss_without_ji
         "transit_loss": 3,
     }
 
+    # #1366：AWAITING_DECISION 与 settling 语义相同（FRONT_HALF_DONE_PHASES 单一真源，
+    # 真实 HITL 暂停也落在此相位），内部投影不得漏判退回 turn-1 拼接。
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
+    assert db.treasury_hub_result(state) == {
+        "settled_turn": state.turn,
+        "treasury_disbursed": 10,
+        "actual_arrived": 7,
+        "transit_loss": 3,
+    }
+
     # #1366：真实换月后从 Web 玩家入口读取 typed 三项；国库报告复用同一投影，
-    # 不锁生成文本措辞。
+    # 不锁生成文本措辞。核账期（月初快照在场，settling/awaiting_decision）不得下发半程
+    # 结果——CONTEXT.md 核账期定义：半程中间态不对皇帝可见；待 next_period 完成、快照
+    # 过期后才可见同一 settled turn 的三项结果。
     import web_app
 
     settled_turn = state.turn
-    state.next_period()
-    state.turn_phase = TurnPhase.SUMMONING.value
     runtime = object.__new__(web_app.WebGame)
     runtime.session = SimpleNamespace(db=db, state=state)
+    db.capture_month_open_snapshot(state)
+    assert runtime.budget_payload()["settled_army_pay"] is None
+
+    state.turn_phase = TurnPhase.SETTLING.value
+    db.save_state(state)
+    assert runtime.budget_payload()["settled_army_pay"] is None
+
+    state.next_period()
+    state.turn_phase = TurnPhase.SUMMONING.value
+    db.save_state(state)
+    db.clear_month_open_snapshot(settled_turn)
     assert runtime.budget_payload()["settled_army_pay"] == {
         "settled_turn": settled_turn,
         "treasury_disbursed": 10,

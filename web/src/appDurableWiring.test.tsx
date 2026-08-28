@@ -936,7 +936,12 @@ const cmdByCaption = (host: HTMLElement, caption: string) =>
 describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
   it("只读组逐面可达且吃月初叠影；关闭组不可达且半程面不泄漏", async () => {
     // phase=settling：续跑小条不挡 HUD；settlement_display 叠影照常
-    stubSettlementFetch(settlementBaseState("settling"));
+    // #1366：核账期（settling/awaiting_decision）不得下发半程已结算三项——只给结算前
+    // 事实（全军名义应发），settled_army_pay 由后端置 null，与顶栏月初快照同一展示边界。
+    stubSettlementFetch({
+      ...settlementBaseState("settling"),
+      budget: { ...settlementBaseState("settling").budget, settled_army_pay: null },
+    });
     const host = await mountApp();
 
     // 顶栏快照四键 + 核账标（legacies / economy 同源叠影）
@@ -984,13 +989,13 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     const economyOpen = host.querySelector(".right-drawer-economy.open");
     expect(economyOpen).not.toBeNull();
     expect(economyOpen!.textContent).toContain(`${SNAP_TREASURY}万两`);
-    // #1366：结算前事实（全军名义应发）与结算后结果（国库实拨/实际到达/途中损耗）
-    // 同版接入玩家可见户部面，三值绑定同一 settled_turn，不互相拼接。
+    // #1366：结算前只见事实（全军名义应发）；核账期半程结果（国库实拨/实际到达/途中损耗）
+    // 不下发不渲染——待整月推进完成才见同一 settled_turn 的三项结果（见下方独立用例）。
     expect(economyOpen!.textContent).toContain(`${SNAP_ARMY_PAY_DUE}万两`);
-    expect(economyOpen!.textContent).toContain(`${SNAP_ARMY_PAY_DISBURSED}万两`);
-    expect(economyOpen!.textContent).toContain(`${SNAP_ARMY_PAY_ARRIVED}万两`);
-    expect(economyOpen!.textContent).toContain(`${SNAP_ARMY_PAY_LOSS}万两`);
-    expect(economyOpen!.textContent).toContain(`第 ${SNAP_ARMY_PAY_SETTLED_TURN} 月`);
+    expect(economyOpen!.textContent).not.toContain(`${SNAP_ARMY_PAY_DISBURSED}万两`);
+    expect(economyOpen!.textContent).not.toContain(`${SNAP_ARMY_PAY_ARRIVED}万两`);
+    expect(economyOpen!.textContent).not.toContain(`${SNAP_ARMY_PAY_LOSS}万两`);
+    expect(economyOpen!.textContent).not.toContain(`第 ${SNAP_ARMY_PAY_SETTLED_TURN} 月`);
     await closeOpenOverlay(host);
     expect(host.querySelector(".right-drawer-economy.open")).toBeNull();
 
@@ -1088,6 +1093,31 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     expect(host.querySelector('[role="dialog"][aria-label="局势了结"]')).toBeNull();
   });
 
+  it("phase=awaiting_decision：核账门控唯一谓词=settlement_display，同样隐藏半程结算三项", async () => {
+    // #1366：AWAITING_DECISION 与 settling 语义相同（FRONT_HALF_DONE_PHASES），真实 HITL
+    // 暂停落在此相位；核账门控只认 settlement_display（main.tsx#460），readonly 面同可达。
+    const decided = { ...validDecision, status: "decided", choice: { label: "固守" } };
+    stubSettlementFetch({
+      ...settlementBaseState("awaiting_decision", { pending_decisions: [decided] }),
+      budget: {
+        ...settlementBaseState("awaiting_decision").budget,
+        settled_army_pay: null,
+      },
+    });
+    const host = await mountApp();
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[data-testid="settle-resume"]')).not.toBeNull());
+    });
+    await click(byAria(host, "经济面板"));
+    await tick();
+    const economyOpen = host.querySelector(".right-drawer-economy.open");
+    expect(economyOpen).not.toBeNull();
+    expect(economyOpen!.textContent).toContain(`${SNAP_ARMY_PAY_DUE}万两`);
+    expect(economyOpen!.textContent).not.toContain(`${SNAP_ARMY_PAY_DISBURSED}万两`);
+    expect(economyOpen!.textContent).not.toContain(`${SNAP_ARMY_PAY_ARRIVED}万两`);
+    expect(economyOpen!.textContent).not.toContain(`${SNAP_ARMY_PAY_LOSS}万两`);
+  });
+
   it("gazette：核账期邸报（上月）可读且正文=状态口 previous_summary（isFaceReachable 真链）", async () => {
     // #1356 F4：App 接缝——previous_* 与 turn.reign_period_label 同给，报头不得混充当前月
     // #671：唯一官方邸报 App→DOM 逐字契约（咬 state trim / prop trim / strip 三处）
@@ -1168,6 +1198,18 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     expect(host.textContent).toContain(MIDCOURSE_ISSUE);
     expect(host.querySelector(".situation-closed-list")).not.toBeNull();
     expect(host.textContent).toContain(SNAP_CLOSED);
+    // #1366：next_period 完成、月初快照过期后，同一 settled turn 的三项结果才可见
+    // （settlementBaseState 默认 budget.settled_army_pay 非 null）。
+    await click(byAria(host, "经济面板"));
+    await tick();
+    const economyOpen = host.querySelector(".right-drawer-economy.open");
+    expect(economyOpen).not.toBeNull();
+    expect(economyOpen!.textContent).toContain(`${SNAP_ARMY_PAY_DUE}万两`);
+    expect(economyOpen!.textContent).toContain(`${SNAP_ARMY_PAY_DISBURSED}万两`);
+    expect(economyOpen!.textContent).toContain(`${SNAP_ARMY_PAY_ARRIVED}万两`);
+    expect(economyOpen!.textContent).toContain(`${SNAP_ARMY_PAY_LOSS}万两`);
+    expect(economyOpen!.textContent).toContain(`第 ${SNAP_ARMY_PAY_SETTLED_TURN} 月`);
+    await closeOpenOverlay(host);
     // 关闭组命令可再开
     await click(cmdByCaption(host, "密令"));
     await tick();
