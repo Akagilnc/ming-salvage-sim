@@ -2425,8 +2425,11 @@ def test_1589_pure_decision_keyless_rejected_then_keyed_same_choice_passes(web_g
     d_key = str(desk[0]["decision_key"])
     turn_before = int(web_game.state.turn)
     dossiers_before = len(web_game.db.list_decree_dossiers())
+    # source='hitl_decision' 隔离子进程 WebGame(fresh=False) 首次加载触发的
+    # legacy_event_pool 迁移噪声（与本批亲裁无关，INSERT OR IGNORE 写非 hitl 行）；
+    # 相对零增量断言仍是相对的，不是 judge 驳回的绝对 ==0 硬编码。
     events_before = web_game.db.conn.execute(
-        "SELECT COUNT(*) AS c FROM event_triggers"
+        "SELECT COUNT(*) AS c FROM event_triggers WHERE source='hitl_decision'"
     ).fetchone()["c"]
     web_game.session.close()
     # 1) 同一选择缺 decision_key → 整批拒、零写（单条也无例外）
@@ -2441,10 +2444,11 @@ def test_1589_pure_decision_keyless_rejected_then_keyed_same_choice_passes(web_g
         assert decs and all(str(d.get("status")) == "pending" for d in decs), decs
         assert all(not d.get("choice") for d in decs), decs
         assert len(probe.list_decree_dossiers()) == dossiers_before
-        # 本批零事件写：事件账不得新增 HITL 来源行（构造期 legacy_event_pool 迁移不算）
-        assert probe.conn.execute(
+        # 本批零事件写：整批拒后 hitl_decision 来源行数相对 events_before 零增量
+        events_after = probe.conn.execute(
             "SELECT COUNT(*) AS c FROM event_triggers WHERE source='hitl_decision'"
-        ).fetchone()["c"] == 0
+        ).fetchone()["c"]
+        assert events_after == events_before, (events_before, events_after)
     finally:
         probe.close()
 
@@ -2458,6 +2462,91 @@ def test_1589_pure_decision_keyless_rejected_then_keyed_same_choice_passes(web_g
         assert not decs or all(d.get("status") == "decided" for d in decs), decs
     finally:
         probe.close()
+
+
+def test_1589_ready_replay_rejects_bad_keys(web_game, monkeypatch):
+    """#1589 fix5：ready-replay 短路前仍过 validate_all 同一权威请求索引校验——
+    缺键/重复键/desk 外未知键整批拒，冻结 extracted/pending_decisions 领域状态不变；
+    只校 envelope/key membership，不比较/采纳重交 choice 内容（§B.3 语义不变）。"""
+    db, state = web_game.db, web_game.state
+    _657_plant_awaiting_web(web_game, decisions=[{
+        "title": "辽东战和", "context": "c",
+        "options": [{"label": "战", "hint": ""}, {"label": "和", "hint": ""}],
+        "event_id": "",
+    }])
+    turn = int(state.turn)
+    d_key = str(db.list_rescript_desk(turn)[0]["decision_key"])
+    # 手工把 context 升级为 ready（extracted 非空）：模拟「phase2 已抽取、settle 曾 abort」。
+    db.save_resolve_context(
+        turn, "诏", "邸报", {"candidate_events": []},
+        secret_orders=[], relevant_memories=[],
+        extracted={"metric_delta": {}},
+    )
+    ctx = db.get_resolve_context(turn)
+    assert ctx is not None and ctx.get("extracted") is not None
+
+    phase2_calls: list[int] = []
+
+    def _phase2(_state, _db, *_a, **_k):
+        phase2_calls.append(1)
+        return "不应到此"
+
+    monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _phase2)
+
+    bad_batches = (
+        [{"label": "战"}],  # 缺键
+        [
+            {"decision_key": d_key, "label": "战"},
+            {"decision_key": d_key, "label": "和"},
+        ],  # 重复键
+        [{"decision_key": "decision:9999:0", "label": "战"}],  # desk 外未知键
+    )
+    for bad in bad_batches:
+        state.turn_phase = TurnPhase.AWAITING_DECISION.value
+        db.save_state(state)
+        r = asyncio.run(_post_resolve(bad))
+        assert r.status_code == 200, r.text
+        assert "event: error" in r.text, r.text
+        assert "event: done" not in r.text, r.text
+
+    assert phase2_calls == [], "缺键/重复键/未知键均须整批拒，phase2 不得被调用"
+    ctx_after = db.get_resolve_context(turn)
+    assert ctx_after is not None and ctx_after.get("extracted") is not None, (
+        "整批拒不得清空/覆盖冻结的 ready extracted"
+    )
+    row = db.list_pending_decisions(turn)[0]
+    assert row["status"] == "pending"
+    assert row["choice"] is None
+
+
+def test_1589_empty_desk_rejects_nonempty_keyless_choices(web_game, monkeypatch):
+    """#1589 fix5：desk 空（无 pending 急务/decision）时非空无键载荷同样整批拒——
+    唯一合法续跑是真正空 choices（#1322）；不保留空 desk 例外。"""
+    db, state = web_game.db, web_game.state
+    _657_plant_awaiting_web(web_game)
+    turn = int(state.turn)
+    assert db.list_rescript_desk(turn) == []
+
+    phase2_calls: list[int] = []
+
+    def _phase2(_state, _db, *_a, **_k):
+        phase2_calls.append(1)
+        return "邸报"
+
+    monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _phase2)
+
+    r1 = asyncio.run(_post_resolve([{"label": "留", "note": "无键"}]))
+    assert r1.status_code == 200, r1.text
+    assert "event: error" in r1.text, r1.text
+    assert "event: done" not in r1.text, r1.text
+    assert phase2_calls == [], "空 desk + 非空无键载荷须整批拒，不得进 phase2"
+
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
+    r2 = asyncio.run(_post_resolve([]))
+    assert r2.status_code == 200, r2.text
+    assert "event: done" in r2.text, r2.text
+    assert phase2_calls == [1], "真正空 choices 续跑仍合法，走 submit_decisions"
 
 
 def test_657_s5_http_generator_failure_blocks_phase2_and_same_body_retry(
