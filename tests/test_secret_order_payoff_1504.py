@@ -609,9 +609,6 @@ def test_settle_with_delta_wires_monthly_and_due(game):
     did = int(db.get_dossier_for_secret_order(oid)["id"])
     before = state.turn
     first = _delta_work(oid, did, memorial="查有实据")
-    first["secret_order_closes"] = [
-        {"order_id": oid, "status": "failed", "result": "旧链试图结案"},
-    ]
     settle_with_delta(state, db, first, before_turn=before, content=content)
     # 发令月 settle：未到期、无实进度（发令月排除）
     order = db.get_secret_order(oid)
@@ -631,7 +628,7 @@ def test_settle_with_delta_wires_monthly_and_due(game):
     assert db.sum_dossier_actual_progress_units(did) == 1.0
 
 
-def test_secret_order_closes_no_longer_applies(game):
+def test_secret_order_closes_field_is_ignored(game):
     db, state, content = game
     name = _minister(db)
     oid = _issue(db, state, name, "旧链密令", "不应被 closes 结", months=3, target=3)
@@ -644,9 +641,7 @@ def test_secret_order_closes_no_longer_applies(game):
         },
         content=content,
     )
-    closes = out.get("secret_order_closes") or []
-    # 退役：不落成功结案
-    assert all(item.get("rejected") or item.get("retired") for item in closes) or closes == []
+    assert "secret_order_closes" not in out
     assert db.get_secret_order(oid)["status"] == "active"
 
 
@@ -944,7 +939,7 @@ def test_internal_extractor_receives_origin_linked_typed_briefs_without_secret_p
 
 def test_investigation_truth_floor_confirm_actual_due(game, monkeypatch):
     from ming_sim import cli_backend as cb
-    from ming_sim.covert_progress import FACT_LANE_USED_KEY
+    from ming_sim.covert_progress import FACT_LANES_KEY, investigation_lane_actual_units
 
     db, state, content = game
     name = _minister(db)
@@ -1008,9 +1003,11 @@ def test_investigation_truth_floor_confirm_actual_due(game, monkeypatch):
         db, state, selections=[{"order_id": oid, "fidelity": "忠实"}], commit=True,
     )
     assert applied and float(applied[0].get("units") or 0) == 1.0
-    assert db.sum_dossier_actual_progress_units(did) == 1.0
+    assert investigation_lane_actual_units(db, did) == 1.0
     payload = json.loads(db.get_dossier_for_secret_order(oid)["payload_json"])
-    assert payload[FACT_LANE_USED_KEY] == [target]
+    lanes = {row["fact_key"]: row for row in payload[FACT_LANES_KEY]}
+    assert lanes[target]["used"] is True
+    assert lanes[target]["progress"] == 1.0
 
     state.turn += 1
     db.save_state(state)
@@ -1028,16 +1025,65 @@ def test_investigation_truth_floor_confirm_actual_due(game, monkeypatch):
     apply_monthly_covert_actual_progress(
         db, state, selections=[{"order_id": oid, "fidelity": "忠实"}], commit=True,
     )
-    assert db.sum_dossier_actual_progress_units(did) == 2.0
+    assert investigation_lane_actual_units(db, did) == 2.0
     payload = json.loads(db.get_dossier_for_secret_order(oid)["payload_json"])
-    assert payload[FACT_LANE_USED_KEY] == [target, str(edge_id)]
+    lanes = {row["fact_key"]: row for row in payload[FACT_LANES_KEY]}
+    assert lanes[target]["used"] is True
+    assert lanes[str(edge_id)]["used"] is True
 
-    db.conn.execute("UPDATE secret_orders SET due_turn=? WHERE id=?", (state.turn, oid))
+    # 半进度不得把 lane 标 used，也不能把两条半进度加成 due done。
+    oid_half = _issue(
+        db, state, name, "半进度查核", "半进度查核",
+        months=6, target=1, kind="查核辽饷侵冒", axes=["既得利益"],
+        investigation_target=target,
+    )
+    other = db.conn.execute(
+        "SELECT name FROM characters WHERE name NOT IN (?,?) AND status='active' LIMIT 1",
+        (name, target),
+    ).fetchone()["name"]
+    db.conn.execute("UPDATE characters SET seed_guilt='' WHERE name=?", (other,))
+    db.conn.commit()
+    oid_other = _issue(
+        db, state, name, "另一对象", "另一对象",
+        months=6, target=1, kind="查核辽饷侵冒", axes=["既得利益"],
+        investigation_target=other,
+    )
+    did_half = int(db.get_dossier_for_secret_order(oid_half)["id"])
+    did_other = int(db.get_dossier_for_secret_order(oid_other)["id"])
+    db.conn.execute("UPDATE characters SET seed_guilt=? WHERE name=?", ("侵冒", other))
+    db.conn.commit()
+    state.turn += 1
+    db.save_state(state)
+    apply_monthly_covert_actual_progress(
+        db, state,
+        selections=[
+            {"order_id": oid_half, "fidelity": "打折"},
+            {"order_id": oid_other, "fidelity": "打折"},
+        ],
+        commit=True,
+    )
+    half_payload = json.loads(db.get_dossier_for_secret_order(oid_half)["payload_json"])
+    half_lanes = {row["fact_key"]: row for row in half_payload[FACT_LANES_KEY]}
+    # 同 fact 已被原案坐实，跨案不得再消费。
+    assert target not in half_lanes or half_lanes[target].get("used") is not True
+    other_payload = json.loads(db.get_dossier_for_secret_order(oid_other)["payload_json"])
+    other_lanes = {row["fact_key"]: row for row in other_payload[FACT_LANES_KEY]}
+    assert other_lanes[other]["used"] is False
+    assert other_lanes[other]["progress"] == 0.5
+    assert investigation_lane_actual_units(db, did_other) == 0.0
+
+    db.conn.execute(
+        "UPDATE secret_orders SET due_turn=? WHERE id IN (?,?,?)",
+        (state.turn, oid, oid_half, oid_other),
+    )
     db.conn.commit()
     out = settle_due_secret_orders(db, state, commit=True)
-    row = next(r for r in out if r["order_id"] == oid)
-    assert row["status"] == "done"
-    assert row["actual_units"] == 2.0
+    by_id = {r["order_id"]: r for r in out}
+    assert by_id[oid]["status"] == "done"
+    assert by_id[oid]["actual_units"] == 2.0
+    assert by_id[oid_other]["status"] == "failed"
+    assert by_id[oid_other]["actual_units"] == 0.0
+    assert by_id[oid_half]["status"] == "failed"
 
 
 def test_fiscal_quantity_tracer_same_unit_done_and_gap(game):

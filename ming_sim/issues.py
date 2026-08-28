@@ -9352,7 +9352,6 @@ def apply_score_extraction(
             continue
         # 未知/非 active 密令的副作用写不进（_append_secret_order_line 静默返 False）→ 须显式拒收，
         # 否则未知 id 被无脑 append 成功 = 静默报「已应用」（cmr secret-order r1 codex，#14）。
-        # 与 secret_order_closes 同结构对齐。
         order = db.get_secret_order(real_id)
         if order is None:
             applied_secret_orders.append({"order_id": real_id, "rejected": True,
@@ -9411,19 +9410,6 @@ def apply_score_extraction(
             })
         except Exception as exc:
             applied_secret_orders.append({"order_id": real_id, "rejected": True, "reason": str(exc)})
-
-    # 12) secret_order_closes：#1504 退役。结案真源改 settle 尾部机械对账；此处一律拒收。
-    applied_secret_closes: List[Dict[str, object]] = []
-    for item in extracted.get("secret_order_closes") or []:
-        if not isinstance(item, dict):
-            continue
-        applied_secret_closes.append({
-            "order_id": item.get("order_id"),
-            "rejected": True,
-            "retired": True,
-            "category": "retired_source",
-            "reason": "secret_order_closes 真源已退役；到期由实进度对账结案",
-        })
 
     validate_rejection_items = [
         {
@@ -9555,7 +9541,6 @@ def apply_score_extraction(
         "character_power_changes": applied_power_changes,
         "office_changes": applied_office_changes,
         "secret_order_updates": applied_secret_orders,
-        "secret_order_closes": applied_secret_closes,
         "pairing_warnings": (issue_summary or {}).get("pairing_warnings") or [],
         "victory_status": _resolve_victory(db, state, extracted),
     }

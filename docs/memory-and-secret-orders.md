@@ -144,7 +144,7 @@ build_memory_brief(character, context)
 
 ```
 1. 近几回合章节记忆 → relevant_memories（公共轨：simulator + 各 extractor 可见）
-2. 独立拉 active + pending_review 密令 → group_secret_orders_for_sim 分「在办/待核议」两组、剥英文 status（#48）
+2. 独立拉 active 密令 → group_secret_orders_for_sim 分「在办」组、剥英文 status（#48）；到期待裁承诺另并入公开 due_commitments
 3. augment_secret_orders_with_due_commitments 把到期待裁承诺并入「待核议」分组
 4. 注入分流（#883）：
    - simulator payload：只派生扁平 due_commitments（entry_kind=due_commitment 的公开承诺），永不预读密令正文
@@ -225,14 +225,13 @@ session.py._apply_close_secret_order 截获 → db.close_secret_order(order_id, 
 月末 `resolve_directives` step 1.8：
 
 ```python
-active_orders = (db.list_secret_orders(status="active")
-                 + db.list_secret_orders(status="pending_review"))[:20]
-# group_secret_orders_for_sim 按状态分进中文键两组、剥英文 status
-# （#48：status=active/pending_review 只用来分组，绝不当字段进 LLM 输入——
+active_orders = db.list_secret_orders(status="active")[:20]
+# group_secret_orders_for_sim 按状态分进中文键、剥英文 status
+# （#48：status=active 只用来分组，绝不当字段进 LLM 输入——
 #   若把英文 enum 当字段注入，下游叙事/UI 会冒出「孙承宗密旨（active）」）
 secret_orders_for_sim = {
     "在办":   [...],   # active：承办中
-    "待核议": [...],   # pending_review：本回合待裁决（可含 entry_kind=due_commitment 的公开承诺）
+    "待核议": [...],   # 公开 due_commitment ACK，不是密令 pending_review 真源
 }
 # 每条密令 {id, minister_name, title, content[:120], turn_issued, due_turn, progress, sim_note}（无 status）
 

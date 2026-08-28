@@ -20,8 +20,7 @@ TYPED_COVERT_TASK = {
     },
 }
 def create_test_secret_order(db, state, minister, title, content, tags, **kwargs):
-    """Canonical neutral contract for tests whose behavior is unrelated to delivery semantics."""
-    kwargs.setdefault("covert_task", TYPED_COVERT_TASK)
+    """Pass-through secret-order factory; callers that need delivery must pass covert_task."""
     return db.create_secret_order(state, minister, title, content, tags, **kwargs)
 
 

@@ -39,6 +39,7 @@ CONTRACT_VERSION = 1
 _STANCE_SCORE_SCALE = 18.0
 CANONICAL_UNITS = ("万两", "人犯", "亩")
 FACT_LANE_USED_KEY = "fact_lane_used"
+FACT_LANES_KEY = "fact_lanes"
 _FIELD_FOR_UNIT = {
     "万两": ["economy_moves"],
     "人犯": ["人物变更"],
@@ -732,23 +733,157 @@ def live_investigation_fact_keys(db: Any, target: str) -> List[str]:
     return keys
 
 
+def _lanes_from_payload(payload: Mapping[str, object]) -> List[Dict[str, object]]:
+    raw = payload.get(FACT_LANES_KEY)
+    lanes: List[Dict[str, object]] = []
+    seen: set[str] = set()
+    if isinstance(raw, list):
+        for item in raw:
+            if not isinstance(item, Mapping):
+                continue
+            key = str(item.get("fact_key") or "").strip()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            try:
+                progress = float(item.get("progress") or 0.0)
+            except (TypeError, ValueError):
+                progress = 0.0
+            lanes.append({
+                "fact_key": key,
+                "progress": max(0.0, progress),
+                "used": bool(item.get("used")),
+            })
+    used_raw = payload.get(FACT_LANE_USED_KEY) or []
+    if isinstance(used_raw, list):
+        for item in used_raw:
+            key = str(item or "").strip()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            lanes.append({"fact_key": key, "progress": 1.0, "used": True})
+    return lanes
+
+
+def globally_used_fact_keys(db: Any, *, except_dossier_id: int = 0) -> set[str]:
+    used: set[str] = set()
+    rows = db.conn.execute(
+        "SELECT id, payload_json FROM decree_dossiers",
+    ).fetchall()
+    skip = int(except_dossier_id or 0)
+    for row in rows:
+        if skip and int(row["id"] or 0) == skip:
+            continue
+        try:
+            payload = json.loads(str(row["payload_json"] or "{}"))
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(payload, Mapping):
+            continue
+        for lane in _lanes_from_payload(payload):
+            if lane.get("used"):
+                used.add(str(lane["fact_key"]))
+    return used
+
+
 def unused_investigation_fact_keys(db: Any, dossier_id: int, target: str) -> List[str]:
-    used_raw = _dossier_payload_map(db, dossier_id).get(FACT_LANE_USED_KEY) or []
-    used = {str(item) for item in used_raw} if isinstance(used_raw, list) else set()
-    return [key for key in live_investigation_fact_keys(db, target) if key not in used]
+    blocked = globally_used_fact_keys(db, except_dossier_id=int(dossier_id))
+    local = {
+        str(lane["fact_key"])
+        for lane in _lanes_from_payload(_dossier_payload_map(db, dossier_id))
+        if lane.get("used")
+    }
+    blocked |= local
+    return [key for key in live_investigation_fact_keys(db, target) if key not in blocked]
+
+
+def _write_fact_lanes(
+    db: Any, dossier_id: int, lanes: Sequence[Mapping[str, object]], *, commit: bool = False,
+) -> None:
+    payload = _dossier_payload_map(db, dossier_id)
+    payload[FACT_LANES_KEY] = [
+        {
+            "fact_key": str(lane["fact_key"]),
+            "progress": float(lane.get("progress") or 0.0),
+            "used": bool(lane.get("used")),
+        }
+        for lane in lanes
+    ]
+    payload.pop(FACT_LANE_USED_KEY, None)
+    db.update_decree_dossier_payload(int(dossier_id), payload, commit=commit)
+
+
+def seed_investigation_fact_lanes(
+    db: Any, dossier_id: int, target: str, *, commit: bool = False,
+) -> List[Dict[str, object]]:
+    payload = _dossier_payload_map(db, dossier_id)
+    lanes = _lanes_from_payload(payload)
+    seen = {str(lane["fact_key"]) for lane in lanes}
+    for key in live_investigation_fact_keys(db, target):
+        if key in seen:
+            continue
+        lanes.append({"fact_key": key, "progress": 0.0, "used": False})
+        seen.add(key)
+    _write_fact_lanes(db, dossier_id, lanes, commit=commit)
+    return lanes
 
 
 def mark_investigation_fact_used(
     db: Any, dossier_id: int, fact_key: str, *, commit: bool = False,
 ) -> None:
-    payload = _dossier_payload_map(db, dossier_id)
-    used_raw = payload.get(FACT_LANE_USED_KEY) or []
-    used = [str(item) for item in used_raw] if isinstance(used_raw, list) else []
     key = str(fact_key)
-    if key not in used:
-        used.append(key)
-    payload[FACT_LANE_USED_KEY] = used
-    db.update_decree_dossier_payload(int(dossier_id), payload, commit=commit)
+    lanes = _lanes_from_payload(_dossier_payload_map(db, dossier_id))
+    found = False
+    for lane in lanes:
+        if str(lane["fact_key"]) == key:
+            lane["used"] = True
+            if float(lane.get("progress") or 0.0) < 1.0:
+                lane["progress"] = 1.0
+            found = True
+            break
+    if not found:
+        lanes.append({"fact_key": key, "progress": 1.0, "used": True})
+    _write_fact_lanes(db, dossier_id, lanes, commit=commit)
+
+
+def investigation_lane_actual_units(db: Any, dossier_id: int) -> float:
+    return float(
+        sum(1 for lane in _lanes_from_payload(_dossier_payload_map(db, dossier_id)) if lane.get("used"))
+    )
+
+
+def advance_investigation_lanes(
+    db: Any,
+    dossier_id: int,
+    target: str,
+    fidelity: object,
+    *,
+    commit: bool = False,
+) -> tuple[float, str]:
+    increment = progress_units_for_state(fidelity)
+    lanes = seed_investigation_fact_lanes(db, dossier_id, target, commit=False)
+    if increment <= 0.0:
+        return 0.0, ""
+    blocked = globally_used_fact_keys(db, except_dossier_id=int(dossier_id))
+    bound = ""
+    units = 0.0
+    for lane in lanes:
+        key = str(lane["fact_key"])
+        if lane.get("used") or key in blocked:
+            continue
+        if key not in live_investigation_fact_keys(db, target):
+            continue
+        progress = float(lane.get("progress") or 0.0) + increment
+        if progress >= 1.0:
+            lane["progress"] = 1.0
+            lane["used"] = True
+        else:
+            lane["progress"] = progress
+        bound = key
+        units = increment
+        break
+    _write_fact_lanes(db, dossier_id, lanes, commit=commit)
+    return units, bound
 
 
 def _investigation_target_of(contract: Mapping[str, object]) -> str:
@@ -771,6 +906,7 @@ def originated_quantity_this_turn(
     delivery = contract.get("delivery") if isinstance(contract.get("delivery"), Mapping) else {}
     inv_target = _investigation_target_of(contract)
     if inv_target:
+        seed_investigation_fact_lanes(db, did, inv_target, commit=False)
         return 1.0 if unused_investigation_fact_keys(db, did, inv_target) else 0.0
     unit = str(delivery.get("unit") or "")
     fields = canonical_fields_for_delivery(unit=unit)
@@ -907,17 +1043,19 @@ def apply_monthly_covert_actual_progress(
         sel = by_sel.get(oid) or {}
         selected = sel.get("fidelity", sel.get("执行态", sel.get("state")))
         fidelity = clamp_fidelity_to_floor(floor, selected)
-        originated = originated_quantity_this_turn(db, did, turn, contract)
-        units = monthly_actual_units(
-            fidelity=fidelity, originated_quantity=originated,
-        )
         inv_target = _investigation_target_of(contract)
         bound_key = ""
-        if inv_target and units > 0.0:
-            unused = unused_investigation_fact_keys(db, did, inv_target)
-            if unused:
-                bound_key = unused[0]
-                mark_investigation_fact_used(db, did, bound_key, commit=False)
+        if inv_target:
+            seed_investigation_fact_lanes(db, did, inv_target, commit=False)
+            units, bound_key = advance_investigation_lanes(
+                db, did, inv_target, fidelity, commit=False,
+            )
+            originated = 1.0 if units > 0.0 else 0.0
+        else:
+            originated = originated_quantity_this_turn(db, did, turn, contract)
+            units = monthly_actual_units(
+                fidelity=fidelity, originated_quantity=originated,
+            )
         note = str(sel.get("note") or sel.get("备注") or "").strip()
         if not note:
             note = (
@@ -981,8 +1119,11 @@ def settle_due_secret_orders(
         if str(order.get("status") or "") in {"done", "failed"}:
             continue
         did = int(dossier["id"])
-        actual = float(db.sum_dossier_actual_progress_units(did))
         contract = require_covert_task_contract(dossier)
+        if _investigation_target_of(contract):
+            actual = investigation_lane_actual_units(db, did)
+        else:
+            actual = float(db.sum_dossier_actual_progress_units(did))
         target = contract_target_units(contract)
         reports = list(db.list_dossier_progress(did))
         verdict = decide_secret_order_settlement({
