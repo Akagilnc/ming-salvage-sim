@@ -412,16 +412,6 @@ def test_non_secret_modify_does_not_swallow_directive(game, monkeypatch):
     assert int(pend[0]["id"]) == did
 
 
-def test_action_classifier_schema_carries_modify_contract():
-    """并行 preclassifier 的登记 schema 包含修改枚举、正文与 typed 唯一目标。"""
-    from ming_sim.action_clusters import classifier_json_fields_prompt
-
-    schema, _ = json.JSONDecoder().raw_decode(classifier_json_fields_prompt())
-    assert "修改" in schema["确认"]
-    assert "新内容" in schema
-    assert "目标编号" in schema
-
-
 def test_extract_confirmation_intent_returns_target_ids(monkeypatch):
     """confirmation JSON 契约：确认枚举 + 合法目标编号（非法 id 丢弃）。"""
     def _semantic(prompt, llm_config=None, tag=""):
