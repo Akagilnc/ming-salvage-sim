@@ -15,10 +15,8 @@
 from __future__ import annotations
 
 import json
-from functools import lru_cache
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
-from ming_sim.assets import load_json_asset, require_dict
 from ming_sim.value_matrix import (
     mean_aligned_stance,
     normalize_axes,
@@ -37,7 +35,9 @@ PROGRESS_UNITS: Dict[str, float] = {
 
 CONTRACT_KEY = "covert_task_contract"
 CONTRACT_VERSION = 1
-_KINDS_ASSET = "covert_task_kinds.json"
+DEFAULT_KIND = "密令差务"
+DEFAULT_AXES = ("实务事功",)
+DEFAULT_UNIT = "countable_unit"
 _STANCE_SCORE_SCALE = 18.0
 
 _FIDELITY_ALIASES = {
@@ -51,90 +51,6 @@ _FIDELITY_ALIASES = {
     "transformed": "反噬",
     "failed": "反噬",
 }
-
-
-@lru_cache(maxsize=1)
-def _kinds_config() -> dict[str, object]:
-    raw = require_dict(load_json_asset(_KINDS_ASSET), _KINDS_ASSET)
-    kinds = require_dict(raw.get("kinds"), f"{_KINDS_ASSET}.kinds")
-    unspecified = str(raw.get("unspecified_kind") or "_unspecified").strip()
-    if unspecified not in kinds:
-        raise SystemExit(f"content/{_KINDS_ASSET}: unspecified_kind 必须存在于 kinds")
-    return {"kinds": kinds, "unspecified_kind": unspecified}
-
-
-def resolve_covert_kind(tags: object) -> str:
-    """结构化 tags → content 差务 kind；不解析 title/content。"""
-    cfg = _kinds_config()
-    kinds = cfg["kinds"]
-    unspecified = str(cfg["unspecified_kind"])
-    if isinstance(tags, str):
-        items = [tags]
-    elif isinstance(tags, (list, tuple)):
-        items = list(tags)
-    else:
-        items = []
-    matched: list[str] = []
-    seen: set[str] = set()
-    for item in items:
-        key = str(item or "").strip()
-        if not key or key not in kinds or key in seen:
-            continue
-        seen.add(key)
-        matched.append(key)
-    if not matched:
-        return unspecified
-    if len(matched) == 1:
-        return matched[0]
-    return "+".join(matched)
-
-
-def _kind_spec(kind: str) -> Mapping[str, object]:
-    cfg = _kinds_config()
-    kinds = cfg["kinds"]
-    if kind in kinds:
-        spec = kinds[kind]
-        if isinstance(spec, Mapping):
-            return spec
-    parts = [p for p in str(kind).split("+") if p]
-    axes: list[str] = []
-    direction = 1
-    per_month = 0.0
-    unit = "progress_unit"
-    for part in parts:
-        spec = kinds.get(part)
-        if not isinstance(spec, Mapping):
-            continue
-        axes.extend(normalize_axes(spec.get("axes")))
-        direction = normalize_direction(spec.get("direction"), default=direction)
-        delivery = spec.get("delivery")
-        if isinstance(delivery, Mapping):
-            unit = str(delivery.get("unit") or unit)
-            try:
-                per_month += float(delivery.get("target_per_month") or 0)
-            except (TypeError, ValueError):
-                pass
-    unspecified = str(cfg["unspecified_kind"])
-    fallback = kinds[unspecified]
-    if not isinstance(fallback, Mapping):
-        raise SystemExit(f"content/{_KINDS_ASSET}: {unspecified} 非法")
-    if not axes:
-        axes = normalize_axes(fallback.get("axes"))
-        direction = normalize_direction(fallback.get("direction"), default=1)
-        delivery = fallback.get("delivery") if isinstance(fallback.get("delivery"), Mapping) else {}
-        unit = str(delivery.get("unit") or "progress_unit")
-        try:
-            per_month = float(delivery.get("target_per_month") or 1)
-        except (TypeError, ValueError):
-            per_month = 1.0
-    # 多 kind 叠加：轴并集；target_per_month 取均值避免双计期限
-    if parts and per_month > 0:
-        per_month = per_month / float(len(parts))
-    return {
-        "axes": axes,
-        "direction": direction,
-        "delivery": {"unit": unit, "target_per_month": per_month or 1.0},
-    }
 
 
 def normalize_fidelity_state(raw: object) -> Optional[str]:
@@ -195,8 +111,7 @@ def compute_willingness_floor(
     sat = max(0, min(100, int(satisfaction)))
     axis_list = normalize_axes(axes)
     if not axis_list:
-        unspecified = str(_kinds_config()["unspecified_kind"])
-        axis_list = normalize_axes(_kind_spec(unspecified).get("axes"))
+        axis_list = list(DEFAULT_AXES)
     direction_i = normalize_direction(direction, default=1)
 
     score = 0.55 * loy + 0.35 * sat
@@ -239,6 +154,74 @@ def target_progress_units(*, deadline_span: int, due_turn: int, per_month: float
     return months * rate
 
 
+def covert_task_from_payload(payload: object) -> Optional[Dict[str, object]]:
+    """#1376 候选 payload → typed contract 字段；不读 tags / title / content。"""
+    if not isinstance(payload, Mapping):
+        return None
+    nested = payload.get("covert_task")
+    source: Mapping[str, object]
+    if isinstance(nested, Mapping):
+        source = nested
+    else:
+        source = payload
+    kind = str(source.get("kind") or payload.get("kind") or "").strip()
+    axes = source.get("axes")
+    if axes is None:
+        axes = payload.get("axes")
+    delivery = source.get("delivery") if isinstance(source.get("delivery"), Mapping) else source
+    unit = str(
+        delivery.get("unit")
+        or source.get("delivery_unit")
+        or payload.get("delivery_unit")
+        or ""
+    ).strip()
+    target = delivery.get("target_units")
+    if target is None:
+        target = source.get("delivery_target_units")
+    if target is None:
+        target = payload.get("delivery_target_units")
+    direction = source.get("direction")
+    if direction is None:
+        direction = payload.get("direction")
+    if not kind and not unit and target is None and not normalize_axes(axes):
+        return None
+    out: Dict[str, object] = {}
+    if kind:
+        out["kind"] = kind
+    if axes is not None:
+        out["axes"] = axes
+    if direction is not None:
+        out["direction"] = direction
+    if unit:
+        out["delivery_unit"] = unit
+    if target is not None:
+        out["delivery_target_units"] = target
+    return out or None
+
+
+def refresh_contract_target_units(
+    prior: Mapping[str, object] | None,
+    *,
+    deadline_span: int,
+    due_turn: int,
+) -> float:
+    """期限接缝：保已冻结可数目标；无期限保持 0；新到期且无目标则至少 1。"""
+    frozen = 0.0
+    if isinstance(prior, Mapping):
+        delivery = prior.get("delivery")
+        if isinstance(delivery, Mapping):
+            try:
+                frozen = float(delivery.get("target_units") or 0)
+            except (TypeError, ValueError):
+                frozen = 0.0
+    due = int(due_turn or 0)
+    if due <= 0:
+        return frozen if frozen > 0.0 else 0.0
+    if frozen > 0.0:
+        return frozen
+    return float(max(int(deadline_span or 0), 1))
+
+
 def build_covert_task_contract(
     *,
     deadline_span: int,
@@ -247,43 +230,45 @@ def build_covert_task_contract(
     axes: object = None,
     direction: object = None,
     delivery_target_units: object = None,
+    delivery_unit: object = None,
     action_type: str = "secret_order",
     kind: object = None,
+    covert_task: object = None,
 ) -> Dict[str, object]:
     """确认闸一次生成的 typed covert-task contract（Owner A）。
 
-    轴/方向/kind 只从结构化 tags 或已冻结字段取，不解析 title/content。
+    轴/方向/kind/可数交付只从候选显式字段或已冻结合同取，不解析 tags/title/content。
     """
-    resolved_kind = str(kind or "").strip() or resolve_covert_kind(tags)
-    spec = _kind_spec(resolved_kind)
-    axis_list = normalize_axes(axes) if axes is not None else normalize_axes(spec.get("axes"))
+    del tags  # 检索关键词，不是 kind 真源
+    extracted = covert_task_from_payload({"covert_task": covert_task} if covert_task is not None else {})
+    if extracted:
+        kind = kind or extracted.get("kind")
+        if axes is None:
+            axes = extracted.get("axes")
+        if direction is None:
+            direction = extracted.get("direction")
+        if delivery_unit is None:
+            delivery_unit = extracted.get("delivery_unit")
+        if delivery_target_units is None:
+            delivery_target_units = extracted.get("delivery_target_units")
+    resolved_kind = str(kind or "").strip() or DEFAULT_KIND
+    axis_list = normalize_axes(axes)
     if not axis_list:
-        axis_list = normalize_axes(spec.get("axes"))
-    direction_i = normalize_direction(
-        direction if direction is not None else spec.get("direction"),
-        default=1,
-    )
-    delivery = spec.get("delivery") if isinstance(spec.get("delivery"), Mapping) else {}
-    per_month = delivery.get("target_per_month") if isinstance(delivery, Mapping) else 1
+        axis_list = list(DEFAULT_AXES)
+    direction_i = normalize_direction(direction, default=1)
+    unit = str(delivery_unit or "").strip() or DEFAULT_UNIT
     due = int(due_turn or 0)
-    span = int(deadline_span or 0)
     if delivery_target_units is None:
-        target = target_progress_units(
-            deadline_span=span, due_turn=due, per_month=float(per_month or 1),
-        )
+        target = 0.0
     else:
         try:
             target = float(delivery_target_units)
         except (TypeError, ValueError):
-            target = target_progress_units(
-                deadline_span=span, due_turn=due, per_month=float(per_month or 1),
-            )
-        if due <= 0:
             target = 0.0
-        elif target <= 0.0:
-            target = target_progress_units(
-                deadline_span=span, due_turn=due, per_month=float(per_month or 1),
-            )
+        if target < 0.0:
+            target = 0.0
+    if due <= 0 and delivery_target_units is None:
+        target = 0.0
     return {
         "version": CONTRACT_VERSION,
         "action_type": str(action_type or "secret_order"),
@@ -291,9 +276,9 @@ def build_covert_task_contract(
         "axes": axis_list,
         "direction": direction_i,
         "delivery": {
-            "unit": str(delivery.get("unit") or "progress_unit"),
+            "unit": unit,
             "target_units": float(target),
-            "target_per_month": float(per_month or 1),
+            "target_per_month": 0.0,
         },
     }
 
@@ -319,9 +304,9 @@ def coerce_covert_task_contract(raw: object) -> Optional[Dict[str, object]]:
     if not kind:
         return None
     try:
-        per_month = float(delivery.get("target_per_month") or 1)
+        per_month = float(delivery.get("target_per_month") or 0)
     except (TypeError, ValueError):
-        per_month = 1.0
+        per_month = 0.0
     return {
         "version": int(raw.get("version") or CONTRACT_VERSION),
         "action_type": str(raw.get("action_type") or "secret_order"),
@@ -378,9 +363,7 @@ def contract_axes_direction(
         axes = normalize_axes(contract.get("axes"))
         if axes:
             return axes, normalize_direction(contract.get("direction"), default=1)
-    unspecified = str(_kinds_config()["unspecified_kind"])
-    spec = _kind_spec(unspecified)
-    return normalize_axes(spec.get("axes")), normalize_direction(spec.get("direction"), default=1)
+    return list(DEFAULT_AXES), 1
 
 
 def decide_secret_order_settlement(review_input: Mapping[str, object]) -> Dict[str, object]:
@@ -389,7 +372,7 @@ def decide_secret_order_settlement(review_input: Mapping[str, object]) -> Dict[s
     has_reports = bool(review_input.get("has_reports"))
     origin = str(review_input.get("origin_context") or "").strip()
 
-    delivered = target <= 0.0 or actual + 1e-9 >= target
+    delivered = target > 0.0 and actual + 1e-9 >= target
     if delivered:
         status = "done"
         outcome = "fulfilled"
@@ -494,16 +477,6 @@ def compute_floor_for_minister(
     )
 
 
-def _order_tags(order: Mapping[str, object]) -> object:
-    tags = order.get("tags")
-    if isinstance(tags, str):
-        try:
-            return json.loads(tags)
-        except (TypeError, ValueError):
-            return []
-    return tags
-
-
 def _order_contract(db: Any, order: Mapping[str, object]) -> Optional[Dict[str, object]]:
     oid = int(order.get("id") or 0)
     dossier = db.get_dossier_for_secret_order(oid) if oid > 0 else None
@@ -513,8 +486,50 @@ def _order_contract(db: Any, order: Mapping[str, object]) -> Optional[Dict[str, 
     return build_covert_task_contract(
         deadline_span=int(order.get("deadline_span") or 0),
         due_turn=int(order.get("due_turn") or 0),
-        tags=_order_tags(order),
     )
+
+
+def build_secret_covert_effect_briefs(db: Any, orders: Sequence[Mapping[str, object]] | None = None) -> List[Dict[str, object]]:
+    """internal 档房私密输入：typed 合同 + origin，不含密令正文（#883）。"""
+    rows = list(orders or [])
+    if not rows:
+        try:
+            rows = list(db.list_secret_orders(status="active"))
+        except Exception:
+            rows = []
+    out: List[Dict[str, object]] = []
+    for order in rows:
+        if not isinstance(order, Mapping):
+            continue
+        if str(order.get("status") or "active") != "active":
+            continue
+        oid = int(order.get("id") or 0)
+        if oid <= 0:
+            continue
+        dossier = db.get_dossier_for_secret_order(oid)
+        if dossier is None:
+            continue
+        contract = read_covert_task_contract(dossier) or build_covert_task_contract(
+            deadline_span=int(order.get("deadline_span") or 0),
+            due_turn=int(order.get("due_turn") or 0),
+        )
+        delivery = contract.get("delivery") if isinstance(contract.get("delivery"), Mapping) else {}
+        unit = str(delivery.get("unit") or DEFAULT_UNIT)
+        fiscal = unit in {"两", "银两", "饷银"}
+        out.append({
+            "origin_ref": f"dossier:{int(dossier['id'])}",
+            "order_id": oid,
+            "kind": str(contract.get("kind") or DEFAULT_KIND),
+            "axes": list(contract.get("axes") or DEFAULT_AXES),
+            "direction": int(contract.get("direction") or 1),
+            "delivery": {
+                "unit": unit,
+                "target_units": float(delivery.get("target_units") or 0),
+            },
+            "effect_owner": "internal",
+            "canonical_fields": ["fiscal_changes"] if fiscal else ["economy_moves"],
+        })
+    return out
 
 
 def count_turn_originated_effects(db: Any, dossier_id: int, turn: int) -> int:
@@ -629,7 +644,6 @@ def apply_monthly_covert_actual_progress(
         contract = read_covert_task_contract(dossier) or build_covert_task_contract(
             deadline_span=int(order.get("deadline_span") or 0),
             due_turn=int(order.get("due_turn") or 0),
-            tags=_order_tags(order),
         )
         floor = compute_floor_for_minister(db, minister, contract=contract)
         sel = by_sel.get(oid) or {}
@@ -717,7 +731,6 @@ def settle_due_secret_orders(
         contract = read_covert_task_contract(dossier) or build_covert_task_contract(
             deadline_span=span,
             due_turn=int(order.get("due_turn") or 0),
-            tags=_order_tags(order),
         )
         target = contract_target_units(
             contract,

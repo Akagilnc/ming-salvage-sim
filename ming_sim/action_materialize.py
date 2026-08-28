@@ -178,6 +178,7 @@ def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
                 "excluded_names": secret.get("excluded_names") or [],
                 "excluded_offices": secret.get("excluded_offices") or [],
                 "dossier_links": secret.get("dossier_links") or [],
+                "covert_task": secret.get("covert_task") if isinstance(secret.get("covert_task"), dict) else {},
             },
         )
         return
