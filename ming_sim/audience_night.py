@@ -904,7 +904,7 @@ def open_night(
             # #657 P7/W3：registry 开夜垫位路径员额 ENTER 先落 body=""；
             # 禁止 generator 完成前落「随侍在侧」固定句。
             # P29（#1561）：删除固定「随侍在侧。」fallback，body 始终置空；
-            # standing-roster 的 typed tags/person_names 保留，body 交由 seam 生成。
+            # standing-roster 无生成路由，仅保留 typed tags/person_names。
             roster_body = ""
             append_ledger_entry(
                 db, night_id,

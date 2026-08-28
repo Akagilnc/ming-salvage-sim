@@ -758,18 +758,18 @@ def test_web_start_chat_turn_wires_session_beat_generator(web_game):
     assert "kind=open" in (_ledger_body(game.db, night_id, an.TAG_OPEN_NIGHT) or "")
 
 
-def test_web_auto_close_uses_session_beat_generator(web_game, monkeypatch):
-    """#542: Web 自动收夜走 session._beat_generator，不旁路生产生成器。"""
+def test_web_auto_close_uses_session_beat_generator(web_game):
+    """#542: Web 自动收夜走 session._beat_generator。"""
     game = web_game
     for ctid in list(game.session._scene_registry.active_turn_ids()):
         game.session.abandon_chat_turn_scene(ctid)
     an.open_night(game.db, game.state, time_of_day="戌时", location="乾清宫")
-    seen: list[str] = []
-    game.session._beat_generator = (
-        lambda inputs: seen.append(inputs.beat_kind) or f"session-owned-{inputs.beat_kind}"
-    )
+    seen: list[BeatInputs] = []
+    game.session._beat_generator = lambda inputs: seen.append(inputs) or "closed"
     web_app._auto_close_open_night_gate_free(game, inflight_wait_s=0.0)
-    assert BEAT_CLOSE in seen and an.get_open_night(game.db) is None
+    assert any(inputs.beat_kind == BEAT_CLOSE for inputs in seen)
+    assert all(inputs.location == "乾清宫" for inputs in seen)
+    assert an.get_open_night(game.db) is None
 
 
 def test_close_night_routes_scene_through_chat_turn_registry(game, monkeypatch):
