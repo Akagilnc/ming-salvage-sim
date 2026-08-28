@@ -3223,11 +3223,11 @@ class WebGame:
                     origin_id=stream_origin,
                 )
                 if not admission.allowed:
-                    self._complete_pending_write(pending_ticket)
-                    pending_ticket = None
-                    # 资格失败：非空 reason → SSE error。
-                    # 成功记召：done+end 静默载荷，禁止 error 事件进玩家错误通道。
+                    # 资格失败：非空 reason → SSE error，当场结清 ticket。
+                    # 成功记召：ticket 须覆盖后续 scene LLM/持久化，禁止提前 complete。
                     if admission.reason:
+                        self._complete_pending_write(pending_ticket)
+                        pending_ticket = None
                         yield {"type": "error", "message": admission.reason}
                         return
                     if admission.result in (
@@ -3240,6 +3240,8 @@ class WebGame:
                             stream_origin,
                         )
                     else:
+                        self._complete_pending_write(pending_ticket)
+                        pending_ticket = None
                         yield {
                             "type": "error",
                             "message": (
@@ -3289,15 +3291,18 @@ class WebGame:
                 write_gate.release()
 
         if offsite_summon is not None:
-            summon_name, summon_result, summon_origin = offsite_summon
-            self._finish_offsite_summon_scene(
-                origin_id=summon_origin, minister_name=summon_name,
-            )
-            payload = self._summon_admission_success_payload(
-                summon_name, summon_result,
-            )
-            yield {"type": "done", "payload": payload}
-            yield {"type": "end"}
+            try:
+                summon_name, summon_result, summon_origin = offsite_summon
+                self._finish_offsite_summon_scene(
+                    origin_id=summon_origin, minister_name=summon_name,
+                )
+                payload = self._summon_admission_success_payload(
+                    summon_name, summon_result,
+                )
+                yield {"type": "done", "payload": payload}
+                yield {"type": "end"}
+            finally:
+                self._complete_pending_write(pending_ticket)
             return
 
         ev_queue: "queue.Queue[Dict[str, Any]]" = queue.Queue()

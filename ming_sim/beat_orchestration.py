@@ -242,6 +242,21 @@ def assemble_beat_inputs(
         audience_scenes = (() if current is None else (
             json.dumps(current, ensure_ascii=False, sort_keys=True),
         ))
+    elif beat_kind == BEAT_SUMMON:
+        # ADR 0096 / #1566：场外传召的正向结构化事实（旨意已发、驰递未达、尚未入殿）。
+        # 走既有 audience_scenes 槽进 LLM 材料，不另开字段、不写玩家可见模板。
+        audience_scenes = (
+            json.dumps(
+                {
+                    "decree_issued": True,
+                    "courier_traveling": True,
+                    "courier_arrived": False,
+                    "person_entered_court": False,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+        )
 
     return BeatInputs(
         beat_kind=beat_kind,
@@ -329,10 +344,12 @@ def create_llm_beat_generator(llm_config: Any) -> BeatGenerator:
         label = str(inputs.reign_period_label or "").strip()
         if inputs.beat_kind in (BEAT_OPEN, BEAT_ENTER, BEAT_SUMMON) and label:
             materials["当期年月"] = label
-        # Structured living facts belong only to the open-beat LLM materials.
+        # Structured living facts: open-beat 场面；summon 场外传召（#1566）。
         # The deterministic fallback remains fixed prose and must not expand.
         if inputs.beat_kind == BEAT_OPEN and inputs.audience_scenes:
             materials["待呈御前的结构化场面事实"] = inputs.audience_scenes
+        if inputs.beat_kind == BEAT_SUMMON and inputs.audience_scenes:
+            materials["场外传召结构化事实"] = inputs.audience_scenes
         return extract_agent_text(agent.run(json.dumps(materials, ensure_ascii=False)))
 
     return generate

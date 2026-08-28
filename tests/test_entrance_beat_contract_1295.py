@@ -25,6 +25,7 @@ from ming_sim.beat_orchestration import (
     BEAT_ENTER,
     BEAT_EXIT,
     BEAT_OPEN,
+    BEAT_SUMMON,
     BeatInputs,
     assemble_beat_inputs,
 )
@@ -160,6 +161,40 @@ def test_open_beat_llm_receives_structured_scene_and_generated_body_is_ledgered(
     opening = next(row for row in an.list_ledger(db, night["id"])
                    if an.TAG_OPEN_NIGHT in row["tags"])
     assert opening["body"] == "【入殿气象】帘外风动。"
+
+
+def test_summon_beat_llm_receives_structured_offsite_facts(monkeypatch):
+    """#1566 r4：真实 LLM beat 材料须正向含场外传召事实。"""
+    capture: dict = {}
+    probe = _load_fresh_beat_module(monkeypatch, capture=capture)
+    facts = (
+        json.dumps(
+            {
+                "courier_arrived": False,
+                "courier_traveling": True,
+                "decree_issued": True,
+                "person_entered_court": False,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        ),
+    )
+    probe.create_llm_beat_generator(object())(
+        BeatInputs(
+            beat_kind=BEAT_SUMMON,
+            person_name="洪承畴",
+            summon_method=an.METHOD_CHUANZHAO,
+            audience_scenes=facts,
+        )
+    )
+    payload = json.loads(capture["prompts"][0])
+    assert payload["场景节点"] == BEAT_SUMMON
+    assert payload["场外传召结构化事实"] == list(facts)
+    nested = json.loads(payload["场外传召结构化事实"][0])
+    assert nested["decree_issued"] is True
+    assert nested["courier_traveling"] is True
+    assert nested["courier_arrived"] is False
+    assert nested["person_entered_court"] is False
 
 
 def test_open_beat_instructions_share_no_preenact_contract(monkeypatch):
