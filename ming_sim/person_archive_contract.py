@@ -49,6 +49,9 @@ PERSON_REASON_CODES = (
     "未识别",
 )
 
+# ADR 0011-2 D2-5 named subset of PERSON_REASON_CODES; not a parallel enum.
+PERSON_LEGAL_REASON_CODES = ("依律", "谋逆坐实", "贪墨坐实")
+
 PERSON_TITLE_KINDS = ("职名分", "身名分", "无名分")
 
 PERSON_IDENTITY_TITLES = ("听用候铨", "降臣", "归附", "待选", "诸生")

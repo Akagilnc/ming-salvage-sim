@@ -35,8 +35,10 @@ from ming_sim.covert_progress import (
     target_progress_units,
     apply_monthly_covert_actual_progress,
     investigation_lane_actual_units,
+    read_substantiated_legal_reason_code,
     settle_due_secret_orders,
 )
+from ming_sim.person_archive_contract import PERSON_LEGAL_REASON_CODES
 from ming_sim.decree import settle_with_delta
 from ming_sim.db import GameDB
 from ming_sim.issues import apply_score_extraction
@@ -1035,7 +1037,9 @@ def test_investigation_lane_progress_emits_reason_before_used(game):
     payload = json.loads(db.get_dossier_for_secret_order(oid)["payload_json"])
     lanes = {row["fact_key"]: row for row in payload[FACT_LANES_KEY]}
     assert lanes[target]["used"] is False
+    assert not lanes[target].get("reason_code")
     assert lanes[target]["progress"] == 0.5
+    assert read_substantiated_legal_reason_code(db, target, target) == ""
     assert investigation_lane_actual_units(db, did) == 0.0
 
     state.turn += 1
@@ -1045,7 +1049,9 @@ def test_investigation_lane_progress_emits_reason_before_used(game):
     )
     payload = json.loads(db.get_dossier_for_secret_order(oid)["payload_json"])
     lanes = {row["fact_key"]: row for row in payload[FACT_LANES_KEY]}
-    assert lanes[target]["reason_code"] == "依律"
+    code = read_substantiated_legal_reason_code(db, target, target)
+    assert code in PERSON_LEGAL_REASON_CODES
+    assert lanes[target]["reason_code"] == code
     assert lanes[target]["used"] is True
     assert investigation_lane_actual_units(db, did) == 1.0
 
@@ -1060,8 +1066,10 @@ def test_investigation_lane_progress_emits_reason_before_used(game):
     )
     payload = json.loads(db.get_dossier_for_secret_order(oid)["payload_json"])
     lanes = {row["fact_key"]: row for row in payload[FACT_LANES_KEY]}
+    runtime_code = read_substantiated_legal_reason_code(db, target, str(edge_id))
+    assert runtime_code in PERSON_LEGAL_REASON_CODES
+    assert lanes[str(edge_id)]["reason_code"] == runtime_code
     assert lanes[str(edge_id)]["used"] is True
-    assert lanes[str(edge_id)]["reason_code"] == "依律"
 
 
 def test_closed_case_blocks_same_fact_on_later_case_and_due(game):
