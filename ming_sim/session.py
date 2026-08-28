@@ -885,7 +885,6 @@ class GameSession:
         self.registry: Optional[MinisterRegistry] = None
         self.temporary_characters: Dict[str, Character] = {}
         self.last_decree = ""
-        self.last_report = ""
         # P1-1：last_decree 所覆盖的 draft 指纹（write_decree 时记，颁诏时校验是否已陈旧）。
         self._decree_draft_fingerprint: Tuple[Tuple[int, str], ...] = ()
         self._begun = False
@@ -914,7 +913,6 @@ class GameSession:
         self.registry = MinisterRegistry(self.llm_config, self.agno_db, context)
         tlog(f"[接档] begin_turn 大臣 registry 重建 {time.monotonic() - _t:.1f}s")
         self.last_decree = ""
-        self.last_report = ""
         self._decree_draft_fingerprint = ()
         # awaiting_decision 必须保活：刷新页时仍要弹决策点续跑结算，不可重置成 summoning。
         # settling 同样保活（ADR 0008 S4）：pre_settle 前半段已提交，重载若被重置回 summoning，
@@ -3051,7 +3049,6 @@ class GameSession:
                     self.state, self.db, self.agno_db, self.llm_config, ctx,
                     on_event=on_event, content=self.content, registry=self.registry,
                 )
-                self.last_report = result.report
                 self.state.turn_phase = TurnPhase.ISSUED.value
                 self.db.save_state(self.state)
                 return result
@@ -3181,7 +3178,6 @@ class GameSession:
             self.state.turn_phase = TurnPhase.AWAITING_DECISION.value
             self.db.save_state(self.state)
             return result
-        self.last_report = result.report
         # resolve_directives 已 next_period + save_state；阶段标 issued
         self.state.turn_phase = TurnPhase.ISSUED.value
         self.db.save_state(self.state)
@@ -3601,7 +3597,6 @@ class GameSession:
         )
         # return_revise 清锚已纳入 settle_with_delta 单一终态（与 next_period 同 atomic）
 
-        self.last_report = report
         self.state.turn_phase = TurnPhase.ISSUED.value
         self.db.save_state(self.state)
         return report
@@ -3815,7 +3810,6 @@ class GameSession:
             on_event=on_event, content=self.content, registry=self.registry,
             cheat_directive=cheat_directive,
         )
-        self.last_report = report
         self.state.turn_phase = TurnPhase.ISSUED.value
         self.db.save_state(self.state)
         return report

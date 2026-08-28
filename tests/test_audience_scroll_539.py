@@ -483,9 +483,10 @@ def test_history_projection_handlers_are_sync_for_sqlite_access():
 # #657 片3 S4：P7 三写口空垫位不可见
 # ---------------------------------------------------------------------------
 
-def test_657_s4_empty_scaffold_open_enter_roster_not_on_scroll(game):
-    """generator 未完成期：scroll 无空 OPEN/ENTER。"""
+def test_657_s4_empty_scaffold_open_enter_and_scene_not_on_scroll(game):
+    """generator 未完成期：scroll 无空 OPEN/ENTER/普通 scene。"""
     from ming_sim.audience_night import (
+        append_ledger_entry,
         open_night,
         prepare_rescript_summon_scaffold,
         read_night_scroll,
@@ -498,12 +499,15 @@ def test_657_s4_empty_scaffold_open_enter_roster_not_on_scroll(game):
     prepare_rescript_summon_scaffold(
         db, state, person_name="杨嗣昌", origin_ref=origin,
     )
+    append_ledger_entry(db, int(night["id"]), body="", tags=["军务"])
     scroll = read_night_scroll(db, int(night["id"]))
     openings = [m for m in scroll if m.get("beat") == "opening"]
     entrances = [m for m in scroll if m.get("beat") == "entrance"]
-    # 空垫位 OPEN/ENTER 不得投影
+    scenes = [m for m in scroll if m.get("beat") == "scene"]
+    # 空垫位 OPEN/ENTER 与普通公共 scene 均不得投影
     assert openings == []
     assert entrances == []
+    assert scenes == []
 
 
 def test_657_s4_success_persist_shows_generator_body_only(game):
