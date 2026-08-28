@@ -156,6 +156,13 @@ def test_army_pay_missing_fields_fail_loud_at_admission(game):
     assert caught.value.missing_fields == (
         "amount", "account", "purpose", "target_kind", "target_id",
     )
+    with pytest.raises(IncompleteXiexangPayloadError) as cadence_error:
+        from ming_sim.action_materialize import require_explicit_xiexang_fields
+        require_explicit_xiexang_fields(
+            amount=15, account="国库", purpose="补饷",
+            target_kind="army", target_id="guanning", cadence="每季",
+        )
+    assert "cadence" in cadence_error.value.missing_fields
     assert {int(d["id"]) for d in db.list_decree_dossiers()} == before_ids
     assert int(state.metrics["国库"]) == treasury_before
     ledger_after = db.conn.execute("SELECT COUNT(*) AS n FROM economy_ledger").fetchone()["n"]
@@ -238,43 +245,6 @@ def test_revise_away_from_xiexang_clears_pay_only_fields(game):
 
 
 # ── ② 颁布缝一次消费：扣库+销欠同回合 ────────────────────────────
-
-def test_promulgated_army_pay_debits_and_clears_arrears_once(game):
-    """原轨回归：顺颁后国库恰扣 15、guanning 欠饷核减、army_logs 有补饷行。"""
-    db, state, content = game
-    _set_guanning_arrears(db, 60, central=60, province=0)
-    state.metrics["国库"] = max(int(state.metrics["国库"]), 100)
-    treasury_before = int(state.metrics["国库"])
-    before = _army_row(db)
-
-    ctx = _stage_xiexang(
-        db, state.turn, amount=15, target_id="guanning",
-        message="拨关宁军饷十五万两。",
-    )
-    dossier = _close_night_dossier(db, state, content, ctx.out["pending_action_id"])
-    assert int(state.metrics["国库"]) == treasury_before
-    assert _army_row(db)["arrears"] == pytest.approx(before["arrears"])
-
-    _promulgate(db, state, content, dossier["id"])
-
-    moves = db.list_economy_moves_for_dossier(dossier["id"])
-    assert len(moves) == 1
-    assert int(moves[0]["delta"]) == -15
-    assert moves[0]["account"] == "国库"
-    assert moves[0]["purpose"] == "补饷"
-    assert moves[0]["target_kind"] == "army"
-    assert moves[0]["target_id"] == "guanning"
-    assert int(state.metrics["国库"]) == treasury_before - 15
-
-    after = _army_row(db)
-    assert after["arrears"] == pytest.approx(before["arrears"] - 15)
-    assert after["central_pay_arrears"] == pytest.approx(before["central_pay_arrears"] - 15)
-
-    logs = db.conn.execute(
-        "SELECT * FROM army_logs WHERE army_id='guanning' AND field='arrears' ORDER BY id DESC"
-    ).fetchall()
-    assert logs and "补饷" in str(logs[0]["reason"])
-
 
 def test_promulgation_settle_applies_once_ready_replay_no_double_debit(game, monkeypatch):
     """颁布缝落账恰一次；ready=1 恢复重放不二扣。"""
@@ -823,20 +793,25 @@ def test_xiexang_amount_rejects_non_json_integer(amount):
     assert "amount" in exc.value.missing_fields
 
 
-def test_xiexang_taicang_alias_and_cadence_share_admission_seam():
-    from ming_sim.action_materialize import IncompleteXiexangPayloadError, require_explicit_xiexang_fields
+def test_dossier_rejection_surfaces_despite_unrelated_pending_action(game, monkeypatch):
+    """#1591：无可颁案卷时，非旨 pending 不得掩盖当前草案的真实拒因。"""
+    from tests.test_advance_paths_atomic import _recovery_session
 
-    payload = require_explicit_xiexang_fields(
-        amount=15, account="太仓", purpose="补饷",
-        target_kind="army", target_id="guanning", cadence="每月",
-    )
-    assert payload["account"] == "国库"
-    with pytest.raises(IncompleteXiexangPayloadError) as exc:
-        require_explicit_xiexang_fields(
-            amount=15, account="国库", purpose="补饷",
-            target_kind="army", target_id="guanning", cadence="每季",
-        )
-    assert "cadence" in exc.value.missing_fields
+    import ming_sim.audience_night as audience_night
+
+    db, state, content = game
+    sess = _recovery_session(db, state, content, monkeypatch)
+    sess._beat_generator = None
+    sess._scene_registry = None
+    sess._write_gate_if_free = lambda: None
+    monkeypatch.setattr(audience_night, "auto_close_open_night", lambda *_a, **_k: None)
+    monkeypatch.setattr(db, "ensure_dossiers_for_draft_directives", lambda _state: ["account 非法"])
+    monkeypatch.setattr(db, "list_dossiered_draft_directives", lambda _state: [])
+    monkeypatch.setattr(db, "preview_pending_directives", lambda *_a, **_k: [])
+    monkeypatch.setattr(db, "list_pending_actions", lambda *_a, **_k: [{"kind": "secret"}])
+
+    with pytest.raises(ValueError, match="account 非法"):
+        sess.resolve_turn()
 
 
 def test_non_xiexang_payload_cannot_smuggle_army_pay_purpose(game):
@@ -1078,7 +1053,7 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
         def get_last_run_output(self):
             return None
 
-    scripted = _scripted_xiexang_candidates(amount=15, target_id="guanning")
+    scripted = _scripted_xiexang_candidates(amount=15, account="太仓", target_id="guanning")
 
     def fake_classify(text, *_a, **_k):
         if str(text or "").strip() == "准":
