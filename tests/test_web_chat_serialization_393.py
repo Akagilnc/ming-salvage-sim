@@ -10,7 +10,6 @@ from types import SimpleNamespace
 
 import web_app
 from tests.web_audience_test_doubles import HallAdmissionSessionMixin
-from tests.dossier_test_helpers import investigation_covert_task
 
 
 class _RunContent:
@@ -488,11 +487,9 @@ def test_streamed_secret_order_preserves_blacklist_through_commit_restore_transf
     assignee = next(c for c in content.characters.values() if c.office_type == "兵部")
     excluded = next(c for c in content.characters.values() if c.office_type == "户部")
     agent = _SecretOrderAgent(
-        "__secret_order__" + json.dumps({
-            "title": "密查亏空", "content": "查户部旧账", "assignee": assignee.name,
-            "excluded_names": [excluded.name], "excluded_offices": ["户部"],
-            "covert_task": investigation_covert_task("密查亏空"),
-        }, ensure_ascii=False)
+        '__secret_order__{"title":"密查亏空","content":"查户部旧账","assignee":"%s",'
+        '"excluded_names":["%s"],"excluded_offices":["户部"]}'
+        % (assignee.name, excluded.name)
     )
     runtime = object.__new__(web_app.WebGame)
     runtime.session = _FakeSession(assignee, agent, state, db)
@@ -546,7 +543,9 @@ def test_streamed_secret_order_update_pins_held_oral_and_keeps_it_private(game):
     db, state, content = game
     active = [c for c in content.characters.values() if c.status == "active"]
     assignee, other = active[:2]
-    order_id = db.create_secret_order(state, assignee.name, "密查国丈", "初旨：暗访田宅。", [], covert_task=investigation_covert_task("密查国丈"))
+    order_id = db.create_secret_order(
+        state, assignee.name, "密查国丈", "初旨：暗访田宅。", [],
+    )
     oral = "续密：扩查国丈典当与内库往来，不得走漏。"
     message_id = db.append_chat_message(assignee.name, state.turn, "user", oral)
     agent = _SecretOrderAgent(
@@ -594,7 +593,9 @@ def test_streamed_secret_order_progress_does_not_pin_public_held_message(game):
     """Web streamed 催办/记进展 must not invent secret bloodline."""
     db, state, content = game
     assignee = next(c for c in content.characters.values() if c.status == "active")
-    order_id = db.create_secret_order(state, assignee.name, "密查国丈", "初旨：暗访田宅。", [], covert_task=investigation_covert_task("密查国丈"))
+    order_id = db.create_secret_order(
+        state, assignee.name, "密查国丈", "初旨：暗访田宅。", [],
+    )
 
     for action in ("催办", "记进展"):
         public_text = f"京营操练如何？顺便{action}前令。"

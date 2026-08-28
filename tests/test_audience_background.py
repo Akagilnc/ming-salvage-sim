@@ -12,7 +12,6 @@ import ming_sim.cli_backend as cb
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.session import GameSession
 from ming_sim.skills import bind_content as bind_skills_content
-from tests.dossier_test_helpers import investigation_covert_task
 from tests.web_audience_test_doubles import HallAdmissionSessionMixin
 from web_app import WebGame
 
@@ -223,7 +222,7 @@ def test_chat_reload_exposes_retryable_failed_secret_order(game):
     web_game = _web_game(db, state, content, _FakeAgent())
     secret_id = db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=minister_name, target_id=None,
-        payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": minister_name, "covert_task": investigation_covert_task("暗查辽饷")},
+        payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": minister_name},
     )
     db.stage_pending_action(
         state.turn, kind="office", action="任命", minister_name=minister_name, target_id=None,
@@ -246,7 +245,7 @@ def test_undo_chat_response_preserves_retryable_failed_secret_order(game):
     web_game = _web_game(db, state, content, _FakeAgent())
     failed_id = db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=minister_name, target_id=None,
-        payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": minister_name, "covert_task": investigation_covert_task("暗查辽饷")},
+        payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": minister_name},
     )
     db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (failed_id,))
     db.conn.commit()
@@ -354,7 +353,13 @@ def test_stream_confirmation_ignores_same_turn_secret_order_tool_output(game, mo
     minister_name = "毕自严"
     db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=minister_name, target_id=None,
-        payload={"title": "旧候选", "content": "旧候选内容", "assignee": minister_name, "tags": [], "deadline_months": 0, "covert_task": investigation_covert_task("旧候选")},
+        payload={
+            "title": "旧候选",
+            "content": "旧候选内容",
+            "assignee": minister_name,
+            "tags": [],
+            "deadline_months": 0,
+        },
     )
     tool_payload = json.dumps({
         "title": "同句新令",

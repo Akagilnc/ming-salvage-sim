@@ -21816,7 +21816,6 @@ class GameDB:
         tags: List[str],
         importance: int = 4,
         deadline_months: int = 0,
-        covert_task: Optional[Mapping[str, object]] = None,
     ) -> Tuple[int, bool]:
         """同一承办大臣已有 active 密令 → 更新其要旨(title/content/tags/限期)并记一条
         「奉旨更新」进展；否则新建。返回 (order_id, was_update)。
@@ -21828,8 +21827,7 @@ class GameDB:
         ).fetchone()
         if existing is None:
             oid = self.create_secret_order(
-                state, minister_name, title, content, tags, importance, deadline_months,
-                covert_task=covert_task,
+                state, minister_name, title, content, tags, importance, deadline_months
             )
             return oid, False
         oid = int(existing["id"])

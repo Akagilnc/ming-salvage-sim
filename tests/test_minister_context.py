@@ -45,7 +45,6 @@ from ming_sim.qualitative import (
     satisfaction_band,
 )
 from ming_sim.db import _qualitative_army_stat
-from tests.dossier_test_helpers import investigation_covert_task
 
 
 def _ctx(game):
@@ -576,7 +575,10 @@ def test_minister_context_secret_order_chain_filters_final_tools_and_instruction
     """密令真实建档后，排除名单同时约束 instructions 与记忆工具。"""
     db, state, content = game
     first, second = _active_ministers(content, db, n=2)
-    order = db.create_secret_order(state, first.name, "暗查军饷", "查验边镇欠饷", [], excluded_names=[second.name], covert_task=investigation_covert_task("暗查军饷"))
+    order = db.create_secret_order(
+        state, first.name, "暗查军饷", "查验边镇欠饷", [],
+        excluded_names=[second.name],
+    )
     marker = "SENTINEL_SECRET_TO_PUBLIC"
     db.record_public_knowledge_event(
         state, marker, "密查军饷已获确认", source_id=f"secret_order:{order}",
@@ -594,8 +596,13 @@ def test_minister_context_secret_order_chain_filters_final_tools_and_instruction
 def test_secret_order_blacklist_overrides_assignee_brief_and_reference_candidate(game):
     db, state, _content = game
     excluded = "毕自严"
-    hidden_order = db.create_secret_order(state, excluded, "黑名单密查军饷", "不可向承办人披露", [], excluded_names=[excluded], covert_task=investigation_covert_task("黑名单密查军饷"))
-    visible_order = db.create_secret_order(state, excluded, "承办人可知军械", "正常承办密令", [], covert_task=investigation_covert_task("承办人可知军械"))
+    hidden_order = db.create_secret_order(
+        state, excluded, "黑名单密查军饷", "不可向承办人披露", [],
+        excluded_names=[excluded],
+    )
+    visible_order = db.create_secret_order(
+        state, excluded, "承办人可知军械", "正常承办密令", [],
+    )
     hidden_dossier = db.get_dossier_for_secret_order(hidden_order)
     visible_dossier = db.get_dossier_for_secret_order(visible_order)
 
@@ -618,7 +625,10 @@ def test_secret_source_boundary_does_not_hide_unrelated_chapter_material(game):
     """真实密令只约束自身来源，不能把同回合章节整份变成密件。"""
     db, state, content = game
     knower, excluded = _active_ministers(content, db, n=2)
-    order = db.create_secret_order(state, knower.name, "密查军饷", "核验欠饷", [], excluded_names=[excluded.name], covert_task=investigation_covert_task("密查军饷"))
+    order = db.create_secret_order(
+        state, knower.name, "密查军饷", "核验欠饷", [],
+        excluded_names=[excluded.name],
+    )
     secret_mark = "SENTINEL_SECRET_SOURCE"
     chapter_mark = "SENTINEL_PUBLIC_CHAPTER"
     db.record_public_knowledge_event(
@@ -815,7 +825,7 @@ def test_secret_order_tool_preserves_long_title_without_formal_cap(game):
 
     result = tools["secret_order"](
         action="issue", title=title, content="查明事实并回奏。",
-        kind="查核辽饷", axes_json='["实务事功"]', delivery_unit="案",
+        kind="清丈", axes_json='["实务事功"]', delivery_unit="亩",
         delivery_target_units=1,
     )
 

@@ -8,7 +8,7 @@ import types
 import pytest
 
 from tests.conftest import with_monthly_reports
-from tests.dossier_test_helpers import TYPED_COVERT_TASK, investigation_covert_task
+from tests.dossier_test_helpers import TYPED_COVERT_TASK
 
 
 def _actor(db):
@@ -198,7 +198,9 @@ def test_s2_tracer_613_565_readers_see_appended_roster(game):
 
     db, state, content = game
     lead, worker = _people(db, 2)
-    order_id = db.create_secret_order(state, lead, "密查仓胥", "暗访通州仓", ["稽核"], deadline_months=3, covert_task=investigation_covert_task("密查仓胥"))
+    order_id = db.create_secret_order(
+        state, lead, "密查仓胥", "暗访通州仓", ["稽核"], deadline_months=3,
+    )
     dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
     db.append_decree_dossier_participants(dossier_id, [{
         "character_id": lead, "tier": "主办", "role": "密访",
@@ -244,7 +246,9 @@ def test_s2_public_dossier_participants_still_rejects_secret_id(game):
 
     db, state, _content = game
     lead, worker = _people(db, 2)
-    order_id = db.create_secret_order(state, lead, "密查仓胥", "暗访通州仓", ["稽核"], deadline_months=3, covert_task=investigation_covert_task("密查仓胥"))
+    order_id = db.create_secret_order(
+        state, lead, "密查仓胥", "暗访通州仓", ["稽核"], deadline_months=3,
+    )
     secret_id = int(db.get_dossier_for_secret_order(order_id)["id"])
     public_id = db.create_decree_dossier(
         state, action_type="assignment", decree_text="命修历。",
@@ -334,7 +338,9 @@ def test_s2_driver_persists_secret_orders_and_freezes_secret_authority(game, mon
 
     db, state, content = game
     lead, worker = _people(db, 2)
-    order_id = db.create_secret_order(state, lead, "密查仓胥", "暗访通州仓", ["稽核"], deadline_months=3, covert_task=investigation_covert_task("密查仓胥"))
+    order_id = db.create_secret_order(
+        state, lead, "密查仓胥", "暗访通州仓", ["稽核"], deadline_months=3,
+    )
     dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
     db.append_decree_dossier_participants(dossier_id, [{
         "character_id": lead, "tier": "主办", "role": "密访",

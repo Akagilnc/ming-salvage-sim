@@ -568,13 +568,6 @@ def build_minister_tools(character: Character, context: CourtContext,
         direction: int = 1,
         delivery_unit: str = "",
         delivery_target_units: float = 0,
-        purpose: str = "",
-        category: str = "",
-        account: str = "",
-        person_action: str = "",
-        region: str = "",
-        field: str = "",
-        region_target: str = "",
     ) -> str:
         """密令统一入口。action 取值：
         - "issue"：下达新密令。需填 title、content；assignee 留空默认当前大臣；deadline_months=0 无硬限。
@@ -587,12 +580,7 @@ def build_minister_tools(character: Character, context: CourtContext,
         （大臣已复述确认的说明）。示例：[{"target_dossier_id":12,"relation_type":"护卫",
         "note":"护送辽饷"}]。未明确确认则传 []。
         issue 的 typed 合同：kind（差务名，如补发饷银/缉获人犯）、axes_json（价值轴闭集）、
-        direction（1 或 -1）、delivery_unit（万两/人犯/亩/案）、delivery_target_units（到期交付目标，与 applier 同量纲）。
-        delivery_unit 决定还须填哪组 identity（缺则确认时响亮拒绝）：
-        万两 → purpose（用途）、category（类别）、account（账户）；
-        人犯 → person_action（人物变更动作）；
-        亩 → region（地区 id）、field（落库字段）、region_target（落库后的目标值）；
-        案（调查/查核类差务）不需 identity。
+        direction（1 或 -1）、delivery_unit（万两/人犯/亩）、delivery_target_units（到期交付目标，与 applier 同量纲）。
         tags_json 只作检索关键词，不用于猜 kind。
         """
         # 恢复窗总闸（PR #90 R2 codex P2）：FRONT_HALF_DONE 时四个 action 都是
@@ -605,7 +593,6 @@ def build_minister_tools(character: Character, context: CourtContext,
                 title, content, tags_json, assignee, deadline_months,
                 excluded_names_json, excluded_offices_json, dossier_links_json,
                 kind, axes_json, direction, delivery_unit, delivery_target_units,
-                purpose, category, account, person_action, region, field, region_target,
             )
         if act == "progress":
             return _secret_order_progress(order_id, progress)
@@ -615,13 +602,7 @@ def build_minister_tools(character: Character, context: CourtContext,
             return _secret_order_rush(order_id, deadline_months, reason)
         return f"未知 action={action!r}，可选：issue / progress / submit / rush。"
 
-    def _secret_order_issue(
-        title: str, content: str, tags_json: str = "[]", assignee: str = "", deadline_months: int = 0,
-        excluded_names_json: str = "[]", excluded_offices_json: str = "[]", dossier_links_json: str = "[]",
-        kind: str = "", axes_json: str = "[]", direction: int = 1, delivery_unit: str = "", delivery_target_units: float = 0,
-        purpose: str = "", category: str = "", account: str = "",
-        person_action: str = "", region: str = "", field: str = "", region_target: str = "",
-    ) -> str:
+    def _secret_order_issue(title: str, content: str, tags_json: str = "[]", assignee: str = "", deadline_months: int = 0, excluded_names_json: str = "[]", excluded_offices_json: str = "[]", dossier_links_json: str = "[]", kind: str = "", axes_json: str = "[]", direction: int = 1, delivery_unit: str = "", delivery_target_units: float = 0) -> str:
         """皇帝下达密令，返回待确认密令 payload，由召对确认闸门决定是否正式落库。
 
         title：密令标题。
@@ -632,12 +613,8 @@ def build_minister_tools(character: Character, context: CourtContext,
         kind：差务类型名（补发饷银/缉获人犯/清丈等），不得用 tags 猜测。
         axes_json：价值轴闭集 JSON 数组，如 '["既得利益"]'。
         direction：1 顺轴，-1 逆轴。
-        delivery_unit：可数交付单位（万两/人犯/亩/案）；银钱与 economy_moves.delta 同为整数万两。
+        delivery_unit：可数交付单位（万两/人犯/亩）；银钱与 economy_moves.delta 同为整数万两。
         delivery_target_units：到期须交付的正数目标。
-        purpose/category/account：delivery_unit=万两 时必填，对应 economy_moves 的用途/类别/账户。
-        person_action：delivery_unit=人犯 时必填，对应 person_logs 的落库动作名。
-        region/field/region_target：delivery_unit=亩 时必填，对应 region_logs 的地区 id/落库字段/目标值。
-        delivery_unit=案（调查/查核类差务）不需以上 identity。
         dossier_links_json：只填当前提示所列旧案卷，格式为 [{"target_dossier_id": 12,
         "relation_type": "护卫/稽核/接应", "note": "已复述确认的说明"}]。
         """
@@ -727,13 +704,6 @@ def build_minister_tools(character: Character, context: CourtContext,
                 direction=dir_i,
                 delivery_unit=delivery_unit,
                 delivery_target_units=delivery_target_units,
-                purpose=purpose,
-                category=category,
-                account=account,
-                person_action=person_action,
-                region=region,
-                field=field,
-                region_target=region_target,
             )
         except CovertContractError as exc:
             return f"密令下达失败：{exc}"

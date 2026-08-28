@@ -16,7 +16,6 @@ from ming_sim import issues
 from ming_sim.decree import settle_with_delta
 from tests.conftest import with_monthly_reports
 from ming_sim.simulation import build_extractor_shared_context, build_simulator_payload
-from tests.dossier_test_helpers import investigation_covert_task
 
 
 def _active_ministers(db, content):
@@ -52,7 +51,7 @@ def test_883_two_turn_probe_secret_never_enters_shared_archives(game):
     assignee, other = _active_ministers(db, content)[:2]
     marker = "乙巳密查内廷账目883探针"
 
-    oid = db.create_secret_order(state, assignee.name, "乙巳密查", marker, [], covert_task=investigation_covert_task("乙巳密查"))
+    oid = db.create_secret_order(state, assignee.name, "乙巳密查", marker, [])
     assert oid > 0
 
     # T1 → T2：纯公开结算叙事（模拟公共 LLM 无密令预读）。
@@ -139,7 +138,7 @@ def test_883_audience_chat_path_does_not_leave_secret_in_shared_sources(game):
         (f"chat_message:{mid}",),
     ).fetchone()[0] == 0
 
-    oid = db.create_secret_order(state, assignee.name, "乙巳密查旁路", marker, [], covert_task=investigation_covert_task("乙巳密查旁路"))
+    oid = db.create_secret_order(state, assignee.name, "乙巳密查旁路", marker, [])
     assert oid > 0
 
     status = db.conn.execute(
@@ -193,7 +192,9 @@ def test_883_audience_chat_paraphrase_does_not_leave_origin_in_shared_sources(ga
     other_public = "臣报：山东漕粮本月起运如常，无阻。"
     db.append_chat_message(other.name, state.turn, "user", other_public)
 
-    oid = db.create_secret_order(state, assignee.name, extracted_title, extracted_body, [], covert_task=investigation_covert_task(extracted_title))
+    oid = db.create_secret_order(
+        state, assignee.name, extracted_title, extracted_body, [],
+    )
     assert oid > 0
 
     brief = db.conn.execute(
@@ -240,7 +241,7 @@ def test_883_shared_write_seam_keeps_public_assignee_audience(game):
     assignee = _active_ministers(db, content)[0]
     marker = "已存简报原话不得再入共享883"
 
-    oid = db.create_secret_order(state, assignee.name, "密查简报", marker, [], covert_task=investigation_covert_task("密查简报"))
+    oid = db.create_secret_order(state, assignee.name, "密查简报", marker, [])
     assert oid > 0
 
     db.register_character_knowledge_source(
@@ -283,7 +284,7 @@ def test_883_public_audience_same_turn_survives_secret_classification(game):
         (f"chat_message:{mid_public}",),
     ).fetchone()[0] == 0
 
-    oid = db.create_secret_order(state, assignee.name, "密查国丈", extracted, [], covert_task=investigation_covert_task("密查国丈"))
+    oid = db.create_secret_order(state, assignee.name, "密查国丈", extracted, [])
     assert oid > 0
 
     shared_bodies = _shared_bodies(db)
@@ -322,7 +323,7 @@ def test_883_post_brief_public_audience_enters_shared_sources(game):
     db, state, content = game
     assignee, other = _active_ministers(db, content)[:2]
     marker_body = "密查阉党余孽在京城私结会所并藏匿禁书"
-    oid = db.create_secret_order(state, assignee.name, "密查阉党", marker_body, [], covert_task=investigation_covert_task("密查阉党"))
+    oid = db.create_secret_order(state, assignee.name, "密查阉党", marker_body, [])
     assert oid > 0
 
     paraphrase = "臣已暗中查访阉党旧部在京活动，尚未惊动外廷。"
@@ -353,7 +354,7 @@ def test_883_pure_public_archive_lands_while_secret_brief_active(game):
     assignee = _active_ministers(db, content)[0]
     public = "本月山东漕粮起运如常，无阻无欠。"
     secret_marker = "不得入档的密令正文883"
-    db.create_secret_order(state, assignee.name, "密查某事", secret_marker, [], covert_task=investigation_covert_task("密查某事"))
+    db.create_secret_order(state, assignee.name, "密查某事", secret_marker, [])
 
     db.save_turn_report(state, public)
     db.save_chapter_memory(state, "朝局公开", public)
@@ -394,7 +395,7 @@ def test_883_cross_turn_chat_origin_withheld_on_late_secret_create(game):
     ).fetchone()["knowledge_status"] == "held"
     state.turn = int(state.turn) + 1
     db.save_state(state)
-    oid = db.create_secret_order(state, assignee.name, "密查国丈", extracted, [], covert_task=investigation_covert_task("密查国丈"))
+    oid = db.create_secret_order(state, assignee.name, "密查国丈", extracted, [])
     assert oid > 0
     assert db.conn.execute(
         "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid,)
@@ -427,7 +428,9 @@ def test_883_zero_overlap_semantic_rewrite_withholds_prior_audience_origin(game)
     db.append_chat_message(assignee.name, state.turn, "user", chat_origin)
     state.turn = int(state.turn) + 1
     db.save_state(state)
-    oid = db.create_secret_order(state, assignee.name, extracted_title, extracted_body, [], covert_task=investigation_covert_task(extracted_title))
+    oid = db.create_secret_order(
+        state, assignee.name, extracted_title, extracted_body, [],
+    )
     assert oid > 0
 
     other_view = db.get_character_knowledge(state, other.name)
@@ -469,7 +472,7 @@ def test_883_thematic_public_audience_survives_secret_create(game):
         (f"chat_message:{mid}",),
     ).fetchone()[0] == 0
 
-    oid = db.create_secret_order(state, assignee.name, sec_title, sec_body, [], covert_task=investigation_covert_task(sec_title))
+    oid = db.create_secret_order(state, assignee.name, sec_title, sec_body, [])
     assert oid > 0
 
     status = db.conn.execute(
@@ -556,7 +559,7 @@ def test_976_secret_chat_turn_withholds_both_sides_but_public_turn_survives(game
     db.update_chat_turn_messages(
         secret_turn, user_message_id=mid_origin,
     )
-    oid = db.create_secret_order(state, assignee.name, "密查国丈", extracted, [], covert_task=investigation_covert_task("密查国丈"))
+    oid = db.create_secret_order(state, assignee.name, "密查国丈", extracted, [])
     assert oid > 0
     mid_ack = db.append_chat_message(assignee.name, state.turn, "minister", ack)
     db.update_chat_turn_messages(secret_turn, minister_message_id=mid_ack)
@@ -630,7 +633,9 @@ def test_976_withhold_does_not_yank_old_released_public_user(game):
     state.turn = int(state.turn) + 5
     db.save_state(state)
     mid_secret = db.append_chat_message(assignee.name, state.turn, "user", secret_origin)
-    oid = db.create_secret_order(state, assignee.name, "密查国丈", "暗访国丈家产", [], covert_task=investigation_covert_task("密查国丈"))
+    oid = db.create_secret_order(
+        state, assignee.name, "密查国丈", "暗访国丈家产", [],
+    )
     assert oid > 0
 
     assert db.conn.execute(
@@ -688,7 +693,7 @@ def test_883_shared_archive_bypass_positive_and_negative(game):
     public_marker = "旁路公开正负883"
 
     # 负向结构：密令只在 brief；纯公开入档；brief 正文不自动流入共享档。
-    db.create_secret_order(state, assignee.name, "旁路密查", secret_marker, [], covert_task=investigation_covert_task("旁路密查"))
+    db.create_secret_order(state, assignee.name, "旁路密查", secret_marker, [])
     db.save_turn_report(state, "公开句；本月漕运如常。")
     db.save_chapter_memory(state, "朝局", "公开句；本月漕运如常。")
     report_blob = " ".join(item["report"] for item in db.list_turn_reports())
@@ -742,7 +747,7 @@ def test_883_only_explicit_leak_conclusion_promotes_secret_order_to_public(game)
     """泄漏接线：无泄漏结论不公开；显式泄漏结论 → 披露事件 → 进入公共面。"""
     db, state, content = game
     assignee = _active_ministers(db, content)[0]
-    oid = db.create_secret_order(state, assignee.name, "密查盐案", "甲子密查盐案883", [], covert_task=investigation_covert_task("密查盐案"))
+    oid = db.create_secret_order(state, assignee.name, "密查盐案", "甲子密查盐案883", [])
 
     hidden = issues.apply_score_extraction(
         db, state,
@@ -775,7 +780,7 @@ def test_883_cross_turn_repeat_disclosed_does_not_mint_duplicate_public_event(ga
     """跨回合幂等：同一密令多次 disclosed=true 只留一条 secret_order_disclosure 事件。"""
     db, state, content = game
     assignee = _active_ministers(db, content)[0]
-    oid = db.create_secret_order(state, assignee.name, "密查仓案", "丙寅密查仓案883", [], covert_task=investigation_covert_task("密查仓案"))
+    oid = db.create_secret_order(state, assignee.name, "密查仓案", "丙寅密查仓案883", [])
 
     first = issues.apply_score_extraction(
         db, state,
@@ -858,7 +863,10 @@ def test_976_cross_person_speaker_user_origin_withheld_not_shared(game):
     extracted = "暗访国丈家产虚实"
 
     mid = db.append_chat_message(speaker.name, state.turn, "user", secret_text)
-    oid = db.create_secret_order(state, assignee.name, "密查国丈", extracted, [], origin_minister_name=speaker.name, covert_task=investigation_covert_task("密查国丈"))
+    oid = db.create_secret_order(
+        state, assignee.name, "密查国丈", extracted, [],
+        origin_minister_name=speaker.name,
+    )
     assert oid > 0
 
     status = db.conn.execute(
@@ -904,7 +912,7 @@ def test_976_same_window_pure_public_user_survives_secret_classification(game):
     mid_pub = db.append_chat_message(assignee.name, state.turn, "user", public_q)
     mid_ans = db.append_chat_message(assignee.name, state.turn, "minister", public_a)
     mid_sec = db.append_chat_message(assignee.name, state.turn, "user", secret_q)
-    oid = db.create_secret_order(state, assignee.name, "密查国丈", extracted, [], covert_task=investigation_covert_task("密查国丈"))
+    oid = db.create_secret_order(state, assignee.name, "密查国丈", extracted, [])
     assert oid > 0
 
     pub_status = db.conn.execute(
@@ -964,7 +972,15 @@ def test_976_stage_confirm_pin_provenance_not_max_held_user(game):
     pid = db.stage_pending_action(
         state.turn, kind="secret_order", action="新建",
         minister_name=speaker.name, target_id=None,
-        payload={"title": "密查国丈", "content": extracted, "assignee": assignee.name, "tags": [], "deadline_months": 0, "excluded_names": [], "excluded_offices": [], "covert_task": investigation_covert_task("密查国丈")},
+        payload={
+            "title": "密查国丈",
+            "content": extracted,
+            "assignee": assignee.name,
+            "tags": [],
+            "deadline_months": 0,
+            "excluded_names": [],
+            "excluded_offices": [],
+        },
     )
     import json as _json
     staged = db.conn.execute(
@@ -1049,7 +1065,9 @@ def test_976_non_create_stage_commit_update_withholds_oral_pin(game):
     db, state, content = game
     speaker, assignee = _active_ministers(db, content)[:2]
     assert speaker.name != assignee.name
-    oid = db.create_secret_order(state, assignee.name, "密查国丈", "初旨：暗访田宅。", [], covert_task=investigation_covert_task("密查国丈"))
+    oid = db.create_secret_order(
+        state, assignee.name, "密查国丈", "初旨：暗访田宅。", [],
+    )
     assert oid > 0
 
     secret_q = (
@@ -1105,7 +1123,9 @@ def test_976_non_create_stage_commit_rush_withholds_oral_pin(game):
 
     db, state, content = game
     speaker, assignee = _active_ministers(db, content)[:2]
-    oid = db.create_secret_order(state, assignee.name, "密查国丈", "暗访田宅。", [], deadline_months=6, covert_task=investigation_covert_task("密查国丈"))
+    oid = db.create_secret_order(
+        state, assignee.name, "密查国丈", "暗访田宅。", [], deadline_months=6,
+    )
     assert oid > 0
 
     secret_q = (
@@ -1158,12 +1178,16 @@ def test_976_non_create_stage_commit_progress_and_review_withhold_oral_pin(game)
         (
             "记进展",
             {"note": "已密访东城典当三处。"},
-            lambda: db.create_secret_order(state, assignee.name, "密查甲", "暗访田宅甲。", [], covert_task=investigation_covert_task("密查甲")),
+            lambda: db.create_secret_order(
+                state, assignee.name, "密查甲", "暗访田宅甲。", [],
+            ),
         ),
         (
             "提交核议",
             {"claim": "国丈田宅已暗记在册，请核。"},
-            lambda: db.create_secret_order(state, assignee.name, "密查乙", "暗访田宅乙。", [], covert_task=investigation_covert_task("密查乙")),
+            lambda: db.create_secret_order(
+                state, assignee.name, "密查乙", "暗访田宅乙。", [],
+            ),
         ),
     ):
         oid = setup()
@@ -1221,7 +1245,10 @@ def test_976_non_create_pure_public_not_auto_pinned_as_secret_origin(game):
         ),
     ):
         minister = assignee.name if same_person else speaker.name
-        oid = db.create_secret_order(state, assignee.name, f"密查-{action}", f"暗访-{action}。", [], deadline_months=6, covert_task=investigation_covert_task(f"密查-{action}"))
+        oid = db.create_secret_order(
+            state, assignee.name, f"密查-{action}", f"暗访-{action}。", [],
+            deadline_months=6,
+        )
         assert oid > 0
         mid_pub = db.append_chat_message(minister, state.turn, "user", public_q)
         pid = db.stage_pending_action(
@@ -1282,7 +1309,10 @@ def test_976_production_tools_non_create_no_pure_public_auto_pin(game):
         ("submit", {"claim": "国丈田宅已暗记在册，请核。"}, "提交核议"),
     )
     for tool_action, kwargs, expected_sa in cases:
-        oid = db.create_secret_order(state, assignee.name, f"密查-{tool_action}", f"暗访-{tool_action}。", [], deadline_months=6, covert_task=investigation_covert_task(f"密查-{tool_action}"))
+        oid = db.create_secret_order(
+            state, assignee.name, f"密查-{tool_action}", f"暗访-{tool_action}。", [],
+            deadline_months=6,
+        )
         if int(db.get_secret_order(oid)["turn_issued"] or 0) == int(state.turn):
             db.conn.execute(
                 "UPDATE secret_orders SET turn_issued=? WHERE id=?",
@@ -1334,7 +1364,9 @@ def test_976_production_session_tool_path_progress_not_shared(game):
     db, state, content = game
     assignee = _active_ministers(db, content)[0]
     other = next(m for m in _active_ministers(db, content) if m.name != assignee.name)
-    oid = db.create_secret_order(state, assignee.name, "密查国丈", "初旨：暗访田宅。", [], covert_task=investigation_covert_task("密查国丈"))
+    oid = db.create_secret_order(
+        state, assignee.name, "密查国丈", "初旨：暗访田宅。", [],
+    )
     db.conn.execute(
         "UPDATE secret_orders SET turn_issued=? WHERE id=?",
         (state.turn - 1, oid),
@@ -1435,7 +1467,9 @@ def test_976_production_session_extract_update_withholds_oral(game, monkeypatch)
     db, state, content = game
     # extract 路径只对召对对象名下 active 密令 stage；承办人=召对对象。
     assignee = _active_ministers(db, content)[0]
-    oid = db.create_secret_order(state, assignee.name, "密查国丈", "初旨：暗访田宅。", [], covert_task=investigation_covert_task("密查国丈"))
+    oid = db.create_secret_order(
+        state, assignee.name, "密查国丈", "初旨：暗访田宅。", [],
+    )
     secret_q = (
         "前令范围太窄，着尔扩至国丈典当与内库往来账目，皆须暗中簿记，"
         "不得走漏半句，亦不可经司礼监转呈。"
@@ -1515,7 +1549,10 @@ def test_976_production_extract_rush_progress_no_pure_public_pin(game, monkeypat
         ("催办", {"deadline_months": 1}),
         ("记进展", {}),
     ):
-        oid = db.create_secret_order(state, assignee.name, f"密查-{secret_action}", f"暗访-{secret_action}。", [], deadline_months=6, covert_task=investigation_covert_task(f"密查-{secret_action}"))
+        oid = db.create_secret_order(
+            state, assignee.name, f"密查-{secret_action}", f"暗访-{secret_action}。", [],
+            deadline_months=6,
+        )
         if int(db.get_secret_order(oid)["turn_issued"] or 0) == int(state.turn):
             db.conn.execute(
                 "UPDATE secret_orders SET turn_issued=? WHERE id=?",
@@ -1605,7 +1642,11 @@ def _stage_new_secret(db, state, minister_name: str, marker: str) -> tuple[int, 
     pid = db.stage_pending_action(
         state.turn, kind="secret_order", action="新建",
         minister_name=minister_name, target_id=None,
-        payload={"title": marker[:20], "content": marker, "assignee": minister_name, "tags": [], "deadline_months": 0, "excluded_names": [], "excluded_offices": [], "covert_task": investigation_covert_task(marker[:20])},
+        payload={
+            "title": marker[:20], "content": marker, "assignee": minister_name,
+            "tags": [], "deadline_months": 0,
+            "excluded_names": [], "excluded_offices": [],
+        },
     )
     return mid, pid
 
@@ -1709,7 +1750,7 @@ def test_976_rt01_two_secret_orders_different_assignees_no_cross_track(game):
     for mid in (mid_a_user, mid_a_min, mid_b_user, mid_b_min):
         assert _ks(db, mid) == "held"
 
-    oid_a = db.create_secret_order(state, a.name, "甲密查国丈", marker_a, [], covert_task=investigation_covert_task("甲密查国丈"))
+    oid_a = db.create_secret_order(state, a.name, "甲密查国丈", marker_a, [])
     assert oid_a > 0
 
     # create(A) 后 B 仍 held（不得 prematurely release 进共享）
@@ -1731,7 +1772,7 @@ def test_976_rt01_two_secret_orders_different_assignees_no_cross_track(game):
     pins_a = _json.loads(brief_a["origin_chat_message_ids"] or "[]")
     assert mid_a_user in pins_a
 
-    oid_b = db.create_secret_order(state, b.name, "乙密查阉党", marker_b, [], covert_task=investigation_covert_task("乙密查阉党"))
+    oid_b = db.create_secret_order(state, b.name, "乙密查阉党", marker_b, [])
     assert oid_b > 0
 
     assert _ks(db, mid_b_user) == "withheld"
@@ -1771,7 +1812,7 @@ def test_976_rt02_misassigned_provenance_follows_origin_message(game):
     mid_b_min = db.append_chat_message(b.name, state.turn, "minister", public_on_b)
 
     # 错位：无 origin_minister_name / pin — 仅 assignee=B
-    oid = db.create_secret_order(state, b.name, "密查内库", extracted_for_b, [], covert_task=investigation_covert_task("密查内库"))
+    oid = db.create_secret_order(state, b.name, "密查内库", extracted_for_b, [])
     assert oid > 0
 
     # A 口谕不得 released 进共享（scoped：create(B) 不投 A 的 held）
@@ -1785,7 +1826,11 @@ def test_976_rt02_misassigned_provenance_follows_origin_message(game):
         a.name, state.turn, "user",
         "续密：再查内库出纳簿-显式pin976",
     )
-    oid2 = db.create_secret_order(state, b.name, "续密内库", "续查内库出纳簿", [], origin_minister_name=a.name, origin_chat_message_id=mid_a2, covert_task=investigation_covert_task("续密内库"))
+    oid2 = db.create_secret_order(
+        state, b.name, "续密内库", "续查内库出纳簿", [],
+        origin_minister_name=a.name,
+        origin_chat_message_id=mid_a2,
+    )
     assert oid2 > 0
     assert _ks(db, mid_a2) == "withheld"
     assert _shared_source_count(db, mid_a2) == 0
@@ -1812,7 +1857,7 @@ def test_976_rt03_late_chat_after_create_same_turn(game):
     db, state, content = game
     a, b = _active_ministers(db, content)[:2]
     secret = "密令正文：暗访边饷虚报-晚到976"
-    oid = db.create_secret_order(state, a.name, "密查边饷", secret, [], covert_task=investigation_covert_task("密查边饷"))
+    oid = db.create_secret_order(state, a.name, "密查边饷", secret, [])
     assert oid > 0
 
     late_user = "再密嘱：勿使总督知会-晚到user"
@@ -1862,7 +1907,9 @@ def test_976_rt04_undo_chat_turn_secret_order_brief_consistent(game):
     db.record_chat_turn_rollback_diffs(
         ctid_early, snap0, db.capture_chat_rollback_snapshot(),
     )
-    unrelated_oid = db.create_secret_order(state, b.name, "巡查漕运", "未撤销密令正文-KEEP1026", [], covert_task=investigation_covert_task("巡查漕运"))
+    unrelated_oid = db.create_secret_order(
+        state, b.name, "巡查漕运", "未撤销密令正文-KEEP1026", [],
+    )
 
     ctid = db.create_chat_turn(state, a.name, "sess-secret-undo-976", 0)
     before = db.capture_chat_rollback_snapshot()
@@ -1871,7 +1918,7 @@ def test_976_rt04_undo_chat_turn_secret_order_brief_consistent(game):
         a.name, state.turn, "minister", "臣领密旨，即查火器局。",
     )
     db.update_chat_turn_messages(ctid, user_message_id=mid_u, minister_message_id=mid_m)
-    oid = db.create_secret_order(state, a.name, "密查火器局", marker, [], covert_task=investigation_covert_task("密查火器局"))
+    oid = db.create_secret_order(state, a.name, "密查火器局", marker, [])
     after = db.capture_chat_rollback_snapshot()
     db.record_chat_turn_rollback_diffs(ctid, before, after)
 
@@ -1923,7 +1970,10 @@ def test_1026_secret_order_update_rollback_restores_existing_brief(game, rollbac
     old_message_id = db.append_chat_message(
         minister.name, state.turn, "user", "旧令：密查旧案",
     )
-    order_id = db.create_secret_order(state, minister.name, "旧密令", "旧密文", [], origin_chat_message_ids=[old_message_id], covert_task=investigation_covert_task("旧密令"))
+    order_id = db.create_secret_order(
+        state, minister.name, "旧密令", "旧密文", [],
+        origin_chat_message_ids=[old_message_id],
+    )
     old_brief = dict(db.conn.execute(
         "SELECT title, body, origin_chat_message_ids FROM secret_order_briefs WHERE order_id=?",
         (order_id,),
@@ -1979,7 +2029,7 @@ def test_976_rt05_save_restore_between_hold_and_release(game):
     )
     mid_pub = db.append_chat_message(b.name, state.turn, "minister", pending_public)
 
-    oid = db.create_secret_order(state, a.name, "密查驿递", marker, [], covert_task=investigation_covert_task("密查驿递"))
+    oid = db.create_secret_order(state, a.name, "密查驿递", marker, [])
     st_pre = {
         "u": _ks(db, mid_u),
         "ack": _ks(db, mid_ack),
@@ -2049,7 +2099,10 @@ def test_976_message_level_origin_persisted_on_brief(game):
     assignee = _active_ministers(db, content)[0]
     secret_q = "着尔密访国丈家产虚实，勿使外廷知-provenance976"
     mid = db.append_chat_message(assignee.name, state.turn, "user", secret_q)
-    oid = db.create_secret_order(state, assignee.name, "密查国丈", "暗访国丈家产", [], origin_chat_message_id=mid, covert_task=investigation_covert_task("密查国丈"))
+    oid = db.create_secret_order(
+        state, assignee.name, "密查国丈", "暗访国丈家产", [],
+        origin_chat_message_id=mid,
+    )
     brief = db.conn.execute(
         "SELECT origin_chat_message_ids FROM secret_order_briefs WHERE order_id=?",
         (oid,),

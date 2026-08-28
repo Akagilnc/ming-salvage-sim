@@ -16,7 +16,6 @@ from types import SimpleNamespace
 import ming_sim.session as session_mod
 from ming_sim.models import CourtContext
 from ming_sim.session import GameSession, TurnPhase
-from tests.dossier_test_helpers import investigation_covert_task
 
 
 def _settling_session(db, state, content):
@@ -89,7 +88,7 @@ def test_secret_order_tool_progress_allows_same_month_correction(game):
     db, state, content = game
     character = next(c for c in content.characters.values()
                      if getattr(c, "office_type", "") not in ("后宫",))
-    oid = db.create_secret_order(state, character.name, "查辽饷", "查辽饷侵冒。", [], deadline_months=0, covert_task=investigation_covert_task("查辽饷"))
+    oid = db.create_secret_order(state, character.name, "查辽饷", "查辽饷侵冒。", [], deadline_months=0)
     db.conn.execute("UPDATE secret_orders SET turn_issued=? WHERE id=?", (state.turn - 1, oid))
     db.update_secret_order_progress(oid, "旧进展。", state.year, state.period)
     before_result = db.conn.execute(
