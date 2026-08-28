@@ -40,7 +40,6 @@ _STANCE_SCORE_SCALE = 18.0
 CANONICAL_UNITS = ("万两", "人犯", "亩")
 FACT_LANES_KEY = "fact_lanes"
 INVESTIGATION_PROVENANCE_KEY = "investigation_provenance"
-LEGAL_SUBSTANTIATION_CODES = frozenset({"依律", "谋逆坐实", "贪墨坐实"})
 DEFAULT_SUBSTANTIATION_REASON = "依律"
 _FIELD_FOR_UNIT = {
     "万两": ["economy_moves"],
