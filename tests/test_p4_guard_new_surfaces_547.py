@@ -409,7 +409,7 @@ def test_family_dossier_brief_and_progress_keep_system_words_out(game):
     db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
 
     # monthly_progress 真源＝长差密令（护行/稽核 + deadline≥2），与 #566/#569 同缝。
-    order_id = create_test_secret_order(db, 
+    order_id = create_test_secret_order(db,
         state, minister, f"护行{facts['army_name']}饷",
         f"逐月核兵{facts['manpower']}不得外泄", ["护行"], deadline_months=4,
     )

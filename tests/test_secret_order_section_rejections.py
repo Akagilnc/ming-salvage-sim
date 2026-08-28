@@ -57,7 +57,7 @@ def test_update_valid_active_order_applies_no_reject(game):
     sim_note 真写入、零拒收行。"""
     db, state, content = game
     turn = state.turn
-    oid = create_test_secret_order(db, 
+    oid = create_test_secret_order(db,
         state,
         "测试密令官",
         "合法更新正向守门",

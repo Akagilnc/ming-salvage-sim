@@ -557,7 +557,7 @@ def test_commit_rolls_back_secret_order_when_status_mark_fails(game, monkeypatch
     )
 
     def _create_then_crash(state_arg, pa, payload, *, content=None, registry=None):
-        create_test_secret_order(db, 
+        create_test_secret_order(db,
             state_arg,
             str(payload["assignee"]),
             str(payload["title"]),
@@ -604,7 +604,7 @@ def test_advance_without_edict_commits_staged(game, monkeypatch):
     否则暂存动作成孤儿、随回合推进永久丢失。"""
     db, state, content = game
     name = _active_minister_name(db, content)
-    oid = create_test_secret_order(db, 
+    oid = create_test_secret_order(db,
         state, name, "原标题", "原内容", [], deadline_months=0,
         covert_task=LIAO_PAY_COVERT_TASK,
     )

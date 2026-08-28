@@ -1329,7 +1329,7 @@ def test_fallback_path_commits_pending(game, monkeypatch):
     turn = state.turn
     dm.pre_settle(state, db, content=content)  # settling：守门早退不再消费
     name = _active_minister_name(db, content)
-    oid = create_test_secret_order(db, 
+    oid = create_test_secret_order(db,
         state, name, "原标题", "原内容", [], deadline_months=0,
         covert_task=TYPED_COVERT_TASK,
     )
