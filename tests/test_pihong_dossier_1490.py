@@ -2425,13 +2425,16 @@ def test_1589_pure_decision_keyless_rejected_then_keyed_same_choice_passes(web_g
     d_key = str(desk[0]["decision_key"])
     turn_before = int(web_game.state.turn)
     dossiers_before = len(web_game.db.list_decree_dossiers())
-    # source='hitl_decision' 隔离子进程 WebGame(fresh=False) 首次加载触发的
-    # legacy_event_pool 迁移噪声（与本批亲裁无关，INSERT OR IGNORE 写非 hitl 行）；
-    # 相对零增量断言仍是相对的，不是 judge 驳回的绝对 ==0 硬编码。
-    events_before = web_game.db.conn.execute(
-        "SELECT COUNT(*) AS c FROM event_triggers WHERE source='hitl_decision'"
-    ).fetchone()["c"]
     web_game.session.close()
+    # 子进程首次 WebGame(fresh=False) 初始化会触发 legacy_event_pool 迁移
+    # （INSERT OR IGNORE 写非 hitl 行，与本批亲裁无关）；在 baseline 前于同一 DB
+    # 先走一遍等价初始化并关闭，把该噪声吸收进 baseline，而非靠 source 子集
+    # 过滤规避——随后全表 COUNT(*) 前后必须真正相等。
+    baseline_game = web_app.WebGame(fresh=False)
+    events_before = baseline_game.db.conn.execute(
+        "SELECT COUNT(*) AS c FROM event_triggers"
+    ).fetchone()["c"]
+    baseline_game.session.close()
     # 1) 同一选择缺 decision_key → 整批拒、零写（单条也无例外）
     keyless = [{"label": "打回", "hint": "驳"}]
     r1 = _657_subprocess_resolve(db_path, keyless)
@@ -2444,9 +2447,9 @@ def test_1589_pure_decision_keyless_rejected_then_keyed_same_choice_passes(web_g
         assert decs and all(str(d.get("status")) == "pending" for d in decs), decs
         assert all(not d.get("choice") for d in decs), decs
         assert len(probe.list_decree_dossiers()) == dossiers_before
-        # 本批零事件写：整批拒后 hitl_decision 来源行数相对 events_before 零增量
+        # 本批零事件写：整批拒后 event_triggers 全表行数相对 events_before 零增量
         events_after = probe.conn.execute(
-            "SELECT COUNT(*) AS c FROM event_triggers WHERE source='hitl_decision'"
+            "SELECT COUNT(*) AS c FROM event_triggers"
         ).fetchone()["c"]
         assert events_after == events_before, (events_before, events_after)
     finally:
