@@ -1844,8 +1844,8 @@ def test_api_channel_secret_prefix_extracts_deadline_without_cli_helper(game, mo
     assert row["due_turn"] == state.turn + 3
 
 
-def test_api_channel_mixed_confirmation_keeps_supplement_when_extract_fails(game, monkeypatch):
-    """#354 correctness r3: API/提取失败兜底时，混合确认句里的期限/约束不能随确认噪声整行丢掉。"""
+def test_api_channel_extract_failure_does_not_stage_incomplete_contract(game, monkeypatch):
+    """#1504: API extraction failure must fail loud instead of staging an untyped fallback."""
     db, state, _ = game
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
     minister = "魏忠贤"
@@ -1853,11 +1853,9 @@ def test_api_channel_mixed_confirmation_keeps_supplement_when_extract_fails(game
     db.append_chat_message(minister, state.turn, "minister", "臣领密旨，当令东厂暗中护送赈银。")
 
     def fail_extract(*_args, **_kwargs):
-        # Body extract omitted (backend unavailable); typed contract still required to stage.
-        return (json.dumps(TYPED_COVERT_EXTRACT, ensure_ascii=False), 1)
+        raise RuntimeError("backend unavailable")
 
     monkeypatch.setattr(cb, "_run_api_for_config", fail_extract)
-    monkeypatch.setattr(cb, "_run_json_extractor_for_config", fail_extract)
     res = _session(db, state, llm_config=SimpleNamespace(channel="api")).apply_cli_conversation_actions(
         SimpleNamespace(name=minister, office_type="司礼监"),
         "密令如下：可，照办，三月内回奏",
@@ -1866,9 +1864,8 @@ def test_api_channel_mixed_confirmation_keeps_supplement_when_extract_fails(game
         secret_order_id=None,
     )
 
-    row = _commit_staged_secret_order(db, state, res)
-    assert "督办陕西赈灾" in row["content"]
-    assert "三月内回奏" in row["content"]
+    assert res["pending_action_id"] == 0
+    assert res["secret_order_id"] is None
 
 
 def test_secret_context_path_preserves_multiple_related_emperor_task_lines(game, monkeypatch):
