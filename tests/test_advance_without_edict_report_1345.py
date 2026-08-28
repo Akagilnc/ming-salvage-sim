@@ -1,20 +1,27 @@
-"""#1345/#1382 A2 → #1274 QA J-1 改写。
+"""#1345/#1382 A2 → #1274 QA J-1 改写 → #1382 last_report 耐久投影。
 
 原钉：快路 advance_without_edict 落正式月档（save_turn_report）。
 #1274 owner B-2：快路已废；无旨月走完整结算链，月档由 settle_with_delta 正常链落
-（DRY，禁两条结算路）。本文件改钉正常链月档 + 令牌防双发。
+（DRY，禁两条结算路）。
+
+#1382 大理寺：`last_report` 不得靠 session 瞬态；状态口按 state.turn-1 读
+turn_reports 原文。本文件从真实无旨 HTTP 入口证明：结算响应、随后 state
+重载、history/turn/{closed_turn} 三者同份已落库原文。
 """
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
+import threading
 from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 
 import ming_sim.decree as decree_mod
 import ming_sim.memories as memories
-from ming_sim.constants import TURN_UNIT
+import web_app
 from ming_sim.session import GameSession
 
 
@@ -39,12 +46,49 @@ def _session(db, state, content):
     session.db, session.state, session.content = db, state, content
     session.registry = session.llm_config = session.agno_db = None
     session.deaths_this_turn, session.debuts_this_turn = [], []
-    session.last_decree = session.last_report = ""
+    session.last_decree = ""
     session._decree_draft_fingerprint = ()
     session._scene_registry = None
     session._beat_generator = None
     session.auto_save = lambda *a, **k: None
+    session.pending_count = lambda: 0
+    session.pending_decisions = lambda: []
+    session.victory = lambda: {"status": "ongoing", "summary": ""}
+    session.previous_summary = ""
     return session
+
+
+def _web_runtime(db, state, content, *, monkeypatch, session=None):
+    """轻壳 WebGame：真实 state_payload / last_report 投影；refresh 对齐生产 begin_turn 清空瞬态。"""
+    session = session or _session(db, state, content)
+    runtime = object.__new__(web_app.WebGame)
+    runtime.session = session
+    runtime.directive_rows = lambda: []
+    runtime.issue_payloads = lambda: []
+    runtime.legacies_payload = lambda: []
+    runtime.closed_this_turn_payloads = lambda: []
+    runtime.map_nodes = lambda: []
+    runtime.ending_payload = lambda: None
+    runtime.public_character = lambda c: {"name": getattr(c, "name", "")}
+    runtime.character_power_id = lambda c: "ming"
+    runtime._write_gate = threading.Lock()
+
+    def _refresh_turn():
+        # 生产 refresh_turn → begin_turn：清空 last_decree 等瞬态。
+        # 轻壳不跑完整 begin_turn（registry/LLM）；只复现会吃掉旧 last_report 的清空面。
+        session.last_decree = ""
+        session.previous_summary = db.previous_turn_summary(session.state) or ""
+
+    runtime.refresh_turn = _refresh_turn
+
+    @contextlib.contextmanager
+    def unlocked(_game):
+        yield
+
+    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
+    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
+    monkeypatch.setattr(web_app, "_serialized_web_write", unlocked)
+    return runtime
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
@@ -93,11 +137,41 @@ def test_no_edict_previous_turn_summary_hits_narrative(game, monkeypatch):
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
+def test_no_edict_http_last_report_matches_durable_and_history(game, monkeypatch):
+    """#1382：无旨 HTTP 结算响应 / state 重载 / history 三者同 turn_reports 原文。"""
+    db, state, content = game
+    closed_turn = int(state.turn)
+    narrative = "无旨月邸报原文钉测·边事自演。"
+    _canned(monkeypatch, narrative)
+    runtime = _web_runtime(db, state, content, monkeypatch=monkeypatch)
+
+    body = web_app.AdvanceWithoutEdictRequest(expected_turn=closed_turn)
+    response = web_app.api_advance_without_edict(body)
+
+    durable = db.get_turn_report(closed_turn)
+    assert durable
+    assert "原文钉测" in durable or "边事自演" in durable
+    assert int(state.turn) == closed_turn + 1
+    assert response.get("awaiting_decision") is False
+
+    # 1) 结算响应内嵌 state.last_report ≡ 落库原文
+    assert response["state"]["last_report"] == durable
+
+    # 2) 随后 state 刷新/重载仍投影同一原文（refresh_turn 已跑过）
+    reloaded = web_app.WebGame.state_payload(runtime)
+    assert reloaded["last_report"] == durable
+    # api_state 同缝
+    assert asyncio.run(web_app.api_state())["last_report"] == durable
+
+    # 3) history/turn/{closed_turn} 同份原文
+    history = asyncio.run(web_app.api_history_turn(closed_turn))
+    assert history["exists"] is True
+    assert history["report"] == durable
+
+
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_no_edict_history_turn_api_exists_true(game, monkeypatch):
     """Web 史册单月读口：exists:true 且 report 为正式档。"""
-    import asyncio
-    import web_app
-
     db, state, content = game
     closed_turn = int(state.turn)
     narrative = "史册无旨月邸报。"
@@ -116,23 +190,11 @@ def test_no_edict_history_turn_api_exists_true(game, monkeypatch):
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_double_token_only_one_month_archive(game, monkeypatch):
     """A1×A2 联验：同令牌连发两次 → 第二次 409，史册只多一档月报。"""
-    import web_app
-    from fastapi import HTTPException
-
     db, state, content = game
     start = int(state.turn)
     before_archives = len(db.list_monthly_archives())
     _canned(monkeypatch, "令牌联验无旨月邸报。")
-
-    session = _session(db, state, content)
-    runtime = SimpleNamespace(
-        db=db, state=state, content=content, session=session,
-        directive_rows=lambda: [], refresh_turn=lambda: None,
-        state_payload=lambda: {"turn": {"turn": int(state.turn)}},
-        _write_gate=__import__("threading").Lock(),
-    )
-    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
-    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
+    _web_runtime(db, state, content, monkeypatch=monkeypatch)
 
     body = web_app.AdvanceWithoutEdictRequest(expected_turn=start)
     web_app.api_advance_without_edict(body)
@@ -152,3 +214,15 @@ def test_advance_without_edict_shell_absent():
 
     assert not hasattr(decree_mod, "advance_without_edict")
     assert "def advance_without_edict" not in inspect.getsource(decree_mod)
+
+
+def test_session_has_no_last_report_parallel_cache():
+    """#1382：GameSession 不再持 last_report 平行缓存。"""
+    import inspect
+
+    src = inspect.getsource(GameSession)
+    assert "self.last_report" not in src
+    # 状态口投影接缝在 WebGame，按 turn-1 读 DB
+    prop_src = inspect.getsource(web_app.WebGame.last_report.fget)
+    assert "get_turn_report" in prop_src
+    assert "session.last_report" not in prop_src
