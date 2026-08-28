@@ -985,15 +985,26 @@ def test_same_target_confirmations_merge_into_one_open_case(game, monkeypatch):
     first_pid = _confirm_investigation(
         db, state, content, monkeypatch, minister=name, target=target,
     )
+    while len(db.list_secret_orders(status="active")) < 20:
+        n = len(db.list_secret_orders(status="active"))
+        _issue(
+            db, state, name, f"垫条{n}", f"垫条{n}",
+            months=1, target=1, kind="补发饷银", axes=["既得利益"], unit="万两",
+        )
+    assert len(db.list_secret_orders(status="active")) == 20
     second_pid = _confirm_investigation(
         db, state, content, monkeypatch, minister=name, target=target,
     )
     active = db.list_secret_orders(status="active")
-    assert len(active) == 1
-    oid = int(active[0]["id"])
-    dossier = db.get_dossier_for_secret_order(oid)
-    contract = read_covert_task_contract(dossier)
-    assert contract["investigation_target"] == target
+    assert len(active) == 20
+    matched = []
+    for order in active:
+        dossier = db.get_dossier_for_secret_order(int(order["id"]))
+        contract = read_covert_task_contract(dossier) or {}
+        if contract.get("investigation_target") == target:
+            matched.append((int(order["id"]), dossier, contract))
+    assert len(matched) == 1
+    oid, dossier, contract = matched[0]
     payload = json.loads(dossier["payload_json"])
     sources = payload.get(INVESTIGATION_PROVENANCE_KEY) or []
     assert any(int(row.get("pending_action_id") or 0) == second_pid for row in sources)

@@ -21696,6 +21696,33 @@ class GameDB:
                 raise ValueError(f"{_ch.name}为就藩宗室，非朝廷命官，不可受密令。")
             if _ch is not None and self.resolve_power_id(_ch) != "ming":
                 raise ValueError(f"{_ch.name}不属大明朝廷，不可受密令。")
+        provenance_message_ids = self._coerce_positive_message_ids([
+            *([] if origin_chat_message_id is None else [origin_chat_message_id]),
+            *(origin_chat_message_ids or []),
+        ])
+        from ming_sim.covert_progress import (
+            CONTRACT_KEY,
+            build_covert_task_contract,
+            find_active_investigation_order_id,
+            merge_investigation_confirmation,
+            _investigation_target_of,
+        )
+        covert_contract = (
+            build_covert_task_contract(covert_task=covert_task)
+            if covert_task is not None else None
+        )
+        inv_target = _investigation_target_of(covert_contract or {})
+        if inv_target:
+            existing_oid = find_active_investigation_order_id(self, inv_target)
+            if existing_oid:
+                return merge_investigation_confirmation(
+                    self,
+                    state,
+                    existing_oid,
+                    pending_action_id=int(pending_action_id or 0),
+                    origin_chat_message_ids=provenance_message_ids,
+                    commit=True,
+                )
         active_count = self.conn.execute(
             "SELECT COUNT(*) FROM secret_orders WHERE status='active'"
         ).fetchone()[0]
@@ -21720,10 +21747,6 @@ class GameDB:
         tags_json = json.dumps(tags, ensure_ascii=False)
         deadline = max(0, min(int(deadline_months or 0), 36))
         due_turn = int(state.turn) + deadline if deadline else 0
-        provenance_message_ids = self._coerce_positive_message_ids([
-            *([] if origin_chat_message_id is None else [origin_chat_message_id]),
-            *(origin_chat_message_ids or []),
-        ])
         source_chat_turn_id = 0
         if provenance_message_ids:
             placeholders = ",".join("?" for _ in provenance_message_ids)
@@ -21738,29 +21761,6 @@ class GameDB:
             ).fetchone()
             if source_row is not None:
                 source_chat_turn_id = int(source_row["id"])
-        from ming_sim.covert_progress import (
-            CONTRACT_KEY,
-            build_covert_task_contract,
-            find_active_investigation_order_id,
-            merge_investigation_confirmation,
-            _investigation_target_of,
-        )
-        covert_contract = (
-            build_covert_task_contract(covert_task=covert_task)
-            if covert_task is not None else None
-        )
-        inv_target = _investigation_target_of(covert_contract or {})
-        if inv_target:
-            existing_oid = find_active_investigation_order_id(self, inv_target)
-            if existing_oid:
-                return merge_investigation_confirmation(
-                    self,
-                    state,
-                    existing_oid,
-                    pending_action_id=int(pending_action_id or 0),
-                    origin_chat_message_ids=provenance_message_ids,
-                    commit=True,
-                )
         with atomic(self):
             cur = self.conn.execute(
                 """
