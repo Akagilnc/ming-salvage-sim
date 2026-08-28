@@ -40,7 +40,6 @@ from ming_sim.audience_night import (
     TAG_EXIT,
     TAG_HANDOFF,
     TAG_OPEN_NIGHT,
-    AudienceNightError,
     dismiss_from_audience,
     find_prior_speaker_still_present,
     get_night,
@@ -747,10 +746,6 @@ def start_close_scene_on_registry(
     无 chat_turn_id 时 scaffold 一轮（与 CLI exit 同族）。返回 (ctid, scaffold_owned)。
     调用方与 endorsement 等无依赖任务并行后，再 join_close_scene_on_registry。
     无 generator 或无 start_close 能力时返回 (ctid, False) 且不提交 Future。
-
-    末位告退（新落账或崩溃重开复用的既有空 scaffold）存在却无 start_exit 能力时
-    响亮失败（AudienceNightError code=missing_exit_capability）——不得静默漏生成，
-    留一条永久空账悄悄从长卷里消失。
     """
     ctid = int(chat_turn_id or 0)
     if beat_generator is None or not hasattr(scene_registry, "start_close"):
