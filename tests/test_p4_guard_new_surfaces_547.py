@@ -16,7 +16,7 @@ from ming_sim import audience_night as an
 from ming_sim.beat_orchestration import (
     BEAT_ENTER,
     assemble_beat_inputs,
-    production_beat_generator,
+    run_beat_generator,
 )
 from ming_sim.decree import _rescript_decisions
 from ming_sim.models import TurnPhase
@@ -185,7 +185,9 @@ def test_scroll_and_highlight_list_keep_sentinels_out_and_world_facts_in(game, m
         time_of_day="戌时", location="乾清宫",
         person_name=minister, summon_method=an.METHOD_XUANRU,
     )
-    enter_body = production_beat_generator(enter_inputs)
+    enter_body = run_beat_generator(
+        lambda inp: inp.location or inp.time_of_day or "entry", enter_inputs,
+    )
     an.append_ledger_entry(
         db, night_id, body=enter_body, tags=[an.TAG_ENTER],
         person_names=[minister],
@@ -209,7 +211,7 @@ def test_scroll_and_highlight_list_keep_sentinels_out_and_world_facts_in(game, m
     _assert_no_character_sentinel_leak(scroll, where="read_night_scroll")
     _assert_no_character_sentinel_leak(projection, where="build_chat_projection")
     _assert_no_character_sentinel_leak(enter_inputs, where="assemble_beat_inputs")
-    _assert_no_character_sentinel_leak(enter_body, where="production_beat_generator")
+    _assert_no_character_sentinel_leak(enter_body, where="run_beat_generator")
 
     blob = _scan_blob({"api": payload, "scroll": scroll, "projection": projection})
     assert str(facts["year"]) in blob

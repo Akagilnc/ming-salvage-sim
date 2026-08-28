@@ -145,7 +145,7 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
     - _fake_settlement_llm：decree 判官/推演/抽取/拟诏 + memories.run_agent_text
     - load_runtime_llm 配置中和
     - registry.get → 大臣回话流（_FakeAgent，按测例挂起）
-    不 patch production_beat_generator / auto-close / 结算核。
+    不 patch auto-close / 结算核。
     """
     monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")

@@ -567,8 +567,10 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
         else:
             beat = "aside" if entry["audibility"] == AUDIBILITY_PRIVATE else "scene"
         # #657 S4/P7：OPEN/ENTER 口令账仅 body.strip() 非空才投影；
-        # 空垫位不进 scroll（无空条、无人物锚、无固定句冒充）。
-        if beat in {"opening", "entrance"} and not str(entry.get("body") or "").strip():
+        # 空垫位不进 scroll（无空条、无人物锩、无固定句冒充）。
+        # #1561：延至普通空 scene 亦过滤——空 scene 不进入 scroll，避免
+        # 固定/空正文冒充特征化 scene。
+        if not str(entry.get("body") or "").strip():
             continue
         events.append((
             _entry_order_key(entry), 10,
@@ -849,7 +851,10 @@ def open_night(
         # #657 P7/W1：垫位路径只许空 body；不叠复命场面、不用固定开夜句。
         open_body = ""
     else:
-        open_body = body or f"{location}·{time_of_day}，召对启。"
+        # N1（#1561）：删除固定 opening fallback。空 body 时留空垫位；
+        # opening 成色只走既有 LLM 输入/materials seam（attach_chat_turn_to_night
+        # → generate_open_beat_body），不再写「{location}·{time_of_day}，召对启。」。
+        open_body = body or ""
         # #621：次回合召对顶出复命场面（pending todo 投影；P4 定性、不停轮）。
         # body 是开夜气氛层（含 LLM open-beat）；复命是召对顶出层——二者叠加，
         # 不得因调用方已供 body 而跳过（生产 ensure_open_night_for_audience 常带 body）。
@@ -898,7 +903,9 @@ def open_night(
         for name in roster:
             # #657 P7/W3：registry 开夜垫位路径员额 ENTER 先落 body=""；
             # 禁止 generator 完成前落「随侍在侧」固定句。
-            roster_body = "" if empty_scaffold else f"{name}随侍在侧。"
+            # P29（#1561）：删除固定「随侍在侧。」fallback，body 始终置空；
+            # standing-roster 的 typed tags/person_names 保留，body 交由 seam 生成。
+            roster_body = ""
             append_ledger_entry(
                 db, night_id,
                 person_names=[name],
