@@ -138,6 +138,40 @@ def test_renaming_army_pay_budget_line_does_not_double_debit(game, monkeypatch):
     assert int(hub_rows[0]["paid"]) > 0
 
 
+def test_treasury_summary_tracks_keyed_army_pay_share_at_constant_total(
+    game, monkeypatch,
+):
+    """#1366：总支出不变时，摘要的军饷分项仍必须认 budget_key。"""
+    import ming_sim.flows as flows_mod
+
+    db, state, _ = game
+    keyed_amount = {"value": 17}
+
+    def _budget(*_args, **_kwargs):
+        army_pay = keyed_amount["value"]
+        return {
+            "国库": {
+                "income": [],
+                "expense": [
+                    {
+                        "budget_key": "army_pay",
+                        "name": "军饷预算展示项",
+                        "amount": army_pay,
+                    },
+                    {"name": "其他支出", "amount": 100 - army_pay},
+                ],
+            },
+            "内库": {"income": [], "expense": []},
+        }
+
+    monkeypatch.setattr(flows_mod, "compute_budget_lines", _budget)
+    first = db.treasury_budget_summary(state)
+    keyed_amount["value"] = 19
+    second = db.treasury_budget_summary(state)
+
+    assert first != second
+
+
 def test_player_budget_payload_strips_engineering_notes(read_game):
     """#1471：API 玩家定额行键集恰为 {name, amount}；工程 note/internal 不得下发。"""
     db, state, _ = read_game
