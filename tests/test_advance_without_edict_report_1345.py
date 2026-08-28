@@ -19,6 +19,7 @@ from fastapi import HTTPException
 
 import ming_sim.decree as decree_mod
 import ming_sim.memories as memories
+from ming_sim.db import GameDB
 import web_app
 from ming_sim.session import GameSession
 
@@ -138,6 +139,7 @@ def test_no_edict_http_last_report_matches_durable_and_history(game, monkeypatch
     narrative = "无旨月邸报原文钉测·边事自演。"
     _canned(monkeypatch, narrative)
     runtime = _web_runtime(db, state, content, monkeypatch=monkeypatch)
+    assert runtime.state_payload()["last_report"] == ""
 
     body = web_app.AdvanceWithoutEdictRequest(expected_turn=closed_turn)
     response = web_app.api_advance_without_edict(body)
@@ -150,15 +152,19 @@ def test_no_edict_http_last_report_matches_durable_and_history(game, monkeypatch
     # 1) 结算响应内嵌 state.last_report ≡ 落库原文
     assert response["state"]["last_report"] == durable
 
-    # 2) 跨实例恢复：新 runtime 读 db.load_state 恢复，last_report 投影同一原文
-    restored_state = db.load_state()
-    _web_runtime(db, restored_state, content, monkeypatch=monkeypatch)
-    assert asyncio.run(web_app.api_state())["last_report"] == durable
+    # 2) 跨连接恢复：新 GameDB + runtime 只读已提交的 turn_reports 原文
+    reopened = GameDB(db.path, content=content)
+    try:
+        restored_state = reopened.load_state()
+        _web_runtime(reopened, restored_state, content, monkeypatch=monkeypatch)
+        assert asyncio.run(web_app.api_state())["last_report"] == durable
 
-    # 3) history/turn/{closed_turn} 同份原文
-    history = asyncio.run(web_app.api_history_turn(closed_turn))
-    assert history["exists"] is True
-    assert history["report"] == durable
+        # 3) history/turn/{closed_turn} 同份原文
+        history = asyncio.run(web_app.api_history_turn(closed_turn))
+        assert history["exists"] is True
+        assert history["report"] == durable
+    finally:
+        reopened.close()
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
