@@ -43,7 +43,9 @@ E3_MESSAGE = "你替朕悄悄查一查关宁欠饷实数"
 
 # 抽取 stub 默认 typed 载荷（用例可覆盖）；S2 修改材料=测试自送正文经 production strip
 RESTATED_CONTENT = "密察关宁欠饷，据实密奏，不得声张。"
-S2_MODIFY_MESSAGE = "修改：只查饷银去向，不查动向"
+# 玩家修改输入是确定性材料（非 LLM 生成物）；规范化正文=去结构性「修改：」前缀
+S2_MODIFY_BODY = "只查饷银去向，不查动向"
+S2_MODIFY_MESSAGE = f"修改：{S2_MODIFY_BODY}"
 S2_APPROVE_MESSAGE = "准"
 S3_REJECT_MESSAGE = "此事作罢"
 
@@ -549,10 +551,10 @@ def test_matrix_S2_modify_then_land(matrix_env, cell, entry, via_approve):
     )
     mid_payload = _payload_of(pending_mid[0])
     mid_content = str(mid_payload.get("content") or "")
-    # 修改链：同候选 id 上 payload 相对 stage 有变更；落地只认此捕获
-    assert mid_content != staged_content, (
-        f"{cell} 修改后候选 content 须相对 stage 变更: "
-        f"staged={staged_content!r} mid={mid_content!r}"
+    # 外部可见：候选 content = 用户所下修改正文（确定性输入的规范化结果）
+    assert mid_content == S2_MODIFY_BODY, (
+        f"{cell} 修改后候选 content 须=用户修改正文: "
+        f"got={mid_content!r} want={S2_MODIFY_BODY!r} staged={staged_content!r}"
     )
 
     if via_approve:
@@ -566,9 +568,9 @@ def test_matrix_S2_modify_then_land(matrix_env, cell, entry, via_approve):
     new_ids = _order_ids(client) - ids_before
     assert len(new_ids) == 1, f"{cell} 落地后须唯一新 id: {new_ids!r}"
     landed = str(_orders_by_ids(client, new_ids)[0].get("content") or "")
-    assert landed == mid_content, (
-        f"{cell} 真表 content 须=修改后候选 payload 动态传递: "
-        f"landed={landed!r} mid={mid_content!r}"
+    assert landed == S2_MODIFY_BODY, (
+        f"{cell} 真表 content 须=用户修改正文: "
+        f"landed={landed!r} want={S2_MODIFY_BODY!r}"
     )
 
 
