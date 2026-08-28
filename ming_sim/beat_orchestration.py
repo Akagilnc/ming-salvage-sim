@@ -26,6 +26,7 @@
 from __future__ import annotations
 
 from concurrent.futures import Executor, Future
+from contextlib import nullcontext
 from dataclasses import dataclass, fields as _dc_fields
 from typing import Any, Callable, Dict, List, Optional, Tuple
 import json
@@ -36,7 +37,11 @@ from ming_sim.audience_night import (
     METHOD_XUANRU,
     SUMMON_METHODS,
     TAG_ENTER,
+    TAG_EXIT,
+    TAG_HANDOFF,
     TAG_OPEN_NIGHT,
+    dismiss_from_audience,
+    find_prior_speaker_still_present,
     get_night,
     list_chat_turns_for_night,
     list_ledger,
@@ -47,6 +52,7 @@ BEAT_OPEN = "open"
 BEAT_ENTER = "enter"
 BEAT_EXIT = "exit"
 BEAT_CLOSE = "close"
+BEAT_HANDOFF = "handoff"
 # #1566：场外传召 scene beat ——人在途未入殿，场景围绕「传召已发、人在途」承接，
 # 而非「入殿」。ADR 0096：本回合开不成召对、抵京候旨召见。
 BEAT_SUMMON = "summon"
@@ -199,7 +205,7 @@ def assemble_beat_inputs(
     """
     provider = knowledge_provider or _default_knowledge_provider(db, state)
 
-    if beat_kind in (BEAT_ENTER, BEAT_EXIT, BEAT_SUMMON):
+    if beat_kind in (BEAT_ENTER, BEAT_EXIT, BEAT_HANDOFF, BEAT_SUMMON):
         subject = str(person_name or "").strip()
     else:
         # 夜级框架 beat（开夜/收夜）：视角取常在员额首席（王承恩），无则空。
@@ -218,7 +224,7 @@ def assemble_beat_inputs(
     characterization = ""
     prior_appearances: Tuple[str, ...] = ()
     prior_bound = int(before_entry_id or 0)
-    if beat_kind in (BEAT_ENTER, BEAT_EXIT, BEAT_SUMMON):
+    if beat_kind in (BEAT_ENTER, BEAT_EXIT, BEAT_HANDOFF, BEAT_SUMMON):
         characterization = _characterization(db, person_name)
         prior_appearances = _person_prior_appearances(
             db, night_id, person_name, before_entry_id=prior_bound,
@@ -261,7 +267,7 @@ def assemble_beat_inputs(
         beat_kind=beat_kind,
         time_of_day=str(time_of_day or ""),
         location=str(location or ""),
-        person_name=str(person_name or "") if beat_kind in (BEAT_ENTER, BEAT_EXIT, BEAT_SUMMON) else "",
+        person_name=str(person_name or "") if beat_kind in (BEAT_ENTER, BEAT_EXIT, BEAT_HANDOFF, BEAT_SUMMON) else "",
         characterization=characterization,
         summon_method=str(summon_method or "") if beat_kind in (BEAT_ENTER, BEAT_SUMMON) else "",
         perspectival_world=perspectival_world,
@@ -305,6 +311,7 @@ def create_llm_beat_generator(llm_config: Any) -> BeatGenerator:
         "你是御前召对的叙事声音。依据人物自身可知的朝局与殿上前情，让场景从具体人物、时地和局势中自然长出。",
         # #1295/#1314(2)：开场/入殿只立局势与悬念——不写皇帝答复、不预演奏对
         "开场与入殿只立局势与悬念，不预告后来结果；入殿写人物入殿气象，不写皇帝答复、不预演奏对；"
+        "交接写当前人物让出当前奏对位、退侍殿侧，其人仍留殿中；"
         "收束忠于已经发生的史实。玩家可见文案不要把召对硬称为夜。",
     ]
 
@@ -499,6 +506,23 @@ def discover_open_enter_tasks(
             person_name=minister_name, summon_method=summon_method,
             before_entry_id=enter_id,
         )))
+        # #1585：发现同轮交接任务（A 在场时 B 宣入），与 enter 同桶并行生成。
+        handoff_entry = next(
+            (e for e in entries
+             if int(e.get("origin_chat_turn_id") or 0) == int(chat_turn_id)
+             and TAG_HANDOFF in (e.get("tags") or [])),
+            None,
+        )
+        if handoff_entry is not None:
+            handoff_id = int(handoff_entry["id"])
+            handoff_person = (handoff_entry.get("person_names") or [minister_name])[0]
+            tasks.append((handoff_id, assemble_beat_inputs(
+                db, state, beat_kind=BEAT_HANDOFF,
+                time_of_day=str(night.get("time_of_day") or ""),
+                location=str(night.get("location") or ""), night_id=night_id,
+                person_name=handoff_person, summon_method=summon_method,
+                before_entry_id=handoff_id,
+            )))
     return tasks
 
 
@@ -832,6 +856,62 @@ def start_close_scene_on_registry(
         scaffold_owned = True
 
     try:
+        # #1585：末位仍在场则先落 TAG_EXIT 垫位，再与 closing 同桶并行生成。
+        # exclude 收夜 scaffold，避免把框架轮当成末位被召者。
+        last_present = find_prior_speaker_still_present(
+            db, int(night_id), exclude_name="收夜",
+        )
+        exit_id = 0
+        exit_person = ""
+        if last_present:
+            new_exit_id = dismiss_from_audience(
+                db, last_present,
+                night_id=int(night_id),
+                body="",
+                origin_chat_turn_id=int(ctid),
+                state=state,
+                allow_closing=True,
+            )
+            if new_exit_id:
+                exit_id, exit_person = int(new_exit_id), last_present
+        else:
+            # #1585 进程级 CLOSING 重开（ADR 0036：reconcile 永不删账）：只复用
+            # origin_chat_turn_id 回指本夜 minister_name='收夜'、agno_session_id=
+            # 'close-scene' 的空 TAG_EXIT；较早普通空令退不得冒充 final-exit。
+            close_owned: List[Any] = []
+            for entry in list_ledger(db, int(night_id)):
+                if TAG_EXIT not in (entry.get("tags") or []):
+                    continue
+                if str(entry.get("body") or "").strip():
+                    continue
+                origin = int(entry.get("origin_chat_turn_id") or 0)
+                if origin <= 0:
+                    continue
+                row = db.conn.execute(
+                    "SELECT minister_name, agno_session_id FROM chat_turns WHERE id = ?",
+                    (origin,),
+                ).fetchone()
+                if row is None:
+                    continue
+                if (
+                    str(row["minister_name"]) == "收夜"
+                    and str(row["agno_session_id"] or "") == "close-scene"
+                ):
+                    close_owned.append(entry)
+            if close_owned:
+                chosen = close_owned[-1]
+                exit_id = int(chosen["id"])
+                exit_person = str((chosen.get("person_names") or [""])[0])
+        if exit_id:
+            scene_registry.start_exit(
+                db, state,
+                person_name=exit_person,
+                chat_turn_id=int(ctid),
+                entry_id=int(exit_id),
+                night_id=int(night_id),
+                beat_generator=beat_generator,
+                knowledge_provider=knowledge_provider,
+            )
         scene_registry.start_close(
             db, state,
             chat_turn_id=ctid,
@@ -855,19 +935,30 @@ def join_close_scene_on_registry(
     *,
     scene_registry: ChatTurnSceneRegistry,
     chat_turn_id: int,
-    scaffold_owned: bool = False,
+    write_gate: Any = None,
 ) -> str:
-    """收夜 scene 汇合：join 既有 registry 桶，返回正文。
+    """收夜 scene 汇合：join 既有 registry 桶（LLM 等待，闸外），返回正文。
 
-    成功后退役 scaffold；失败 abandon + fail_chat_turn 后原样抛出——
-    不重开夜、不自建 Thread/executor。
+    成功只持久化 scene 正文，不退役 scaffold——整体 close 成功后再退役，
+    以便 sibling 失败时既有 fail_chat_turn 仍能回滚 origin-bound exit。
+    失败 abandon + fail_chat_turn 后原样抛出——不重开夜、不自建 Thread/executor。
+
+    `write_gate`（#1585）：session_write_queue 是唯一 exclusive write lock——join
+    本身（等 LLM）留在闸外，但 join 后的账本回填 / 失败清理短持同一把既有闸，
+    不与调用方其它共享 conn 写交叠（不新增第二把锁）。
     """
     ctid = int(chat_turn_id or 0)
     if not ctid or not hasattr(scene_registry, "join"):
         return ""
 
+    gate = write_gate if write_gate is not None else nullcontext()
     try:
         generated = scene_registry.join(ctid)
+        with gate:
+            persist_chat_turn_scene(
+                db,
+                [(int(entry_id), str(text)) for entry_id, text in generated if int(entry_id) > 0],
+            )
         body = ""
         for entry_id, text in generated:
             # The close bucket also carries provider-only siblings (relation judge
@@ -876,21 +967,14 @@ def join_close_scene_on_registry(
             if int(entry_id) == 0 and text:
                 body = str(text)
                 break
-        if scaffold_owned and hasattr(db, "conn") and getattr(db, "conn", None) is not None:
-            # 成功后退役 scaffold，避免 wait_in_flight 把 generating 空轮当在飞。
-            db.conn.execute(
-                "UPDATE chat_turns SET status = 'failed' "
-                "WHERE id = ? AND status = 'generating' AND minister_message_id IS NULL",
-                (int(ctid),),
-            )
-            db.conn.commit()
         return body
     except BaseException as scene_exc:
         try:
             if hasattr(scene_registry, "abandon"):
                 scene_registry.abandon(ctid)
             if ctid and hasattr(db, "fail_chat_turn"):
-                db.fail_chat_turn(int(ctid))
+                with gate:
+                    db.fail_chat_turn(int(ctid))
         except BaseException as cleanup_exc:
             raise scene_exc from cleanup_exc
         raise

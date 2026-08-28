@@ -152,7 +152,7 @@ def test_presence_commands_project_to_diegetic_scene_beats(game):
         if message["beat"] in {"entrance", "exit"}
     ])
     an.summon_enter(db, night_id, "杨嗣昌")
-    an.dismiss_from_audience(db, "杨嗣昌", night_id=night_id)
+    an.dismiss_from_audience(db, "杨嗣昌", night_id=night_id, body="杨嗣昌退下。")
 
     scroll = an.read_night_scroll(db, night_id)
     presence = [
@@ -177,6 +177,8 @@ def test_scroll_derives_soft_boundary_and_omits_dialogue_carried_action(game):
     scroll = an.read_night_scroll(db, night_id)
 
     assert [m["content"] for m in scroll].count("臣告退。") == 1
+    segment = [m["beat"] for m in scroll if m["beat"] in {"exit", "divider", "entrance"}]
+    assert segment[-3:] == ["exit", "divider", "entrance"]
     divider = next(m for m in scroll if m["beat"] == "divider")
     assert divider["soft_boundary"] is True
     assert divider["speaker"] == "洪承畴"
@@ -271,7 +273,7 @@ def test_extraction_derived_facts_stay_off_live_scroll_but_remain_in_ledger(game
         ],
         10,
     )
-    an.dismiss_from_audience(db, "杨嗣昌", night_id=night_id)
+    an.dismiss_from_audience(db, "杨嗣昌", night_id=night_id, body="杨嗣昌退下。")
 
     scroll = an.read_night_scroll(db, night_id)
     contents = [m["content"] for m in scroll]
