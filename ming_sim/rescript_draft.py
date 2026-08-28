@@ -244,10 +244,17 @@ def _project_region_targets(table: object) -> List[Dict[str, str]]:
         cols = table["cols"]  # type: ignore[index]
         rows = table["rows"]  # type: ignore[index]
         indexes = {field: cols.index(field) for field in ("id", "name", "kind")}
-        targets = [
-            {field: str(row[index] or "").strip() for field, index in indexes.items()}
-            for row in rows
-        ]
+        targets = []
+        for row in rows:
+            target = {}
+            for field, index in indexes.items():
+                value = row[index]
+                if value is not None and not isinstance(value, str):
+                    raise ValueError(
+                        f"canonical region target {field} 非字符串：{value!r}"
+                    )
+                target[field] = (value or "").strip()
+            targets.append(target)
         if any(not value for target in targets for value in target.values()):
             raise ValueError("canonical region target 含空 id/name/kind")
         return targets
