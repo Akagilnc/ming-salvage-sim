@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from concurrent.futures import Executor, Future
 from dataclasses import dataclass, fields as _dc_fields
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple
 import json
 import threading
 
@@ -375,23 +375,6 @@ def production_beat_generator(inputs: BeatInputs) -> str:
             body = f"{body}{tension}"
         return body
 
-    if inputs.beat_kind == BEAT_SUMMON:
-        # #1566：场外传召 scene——人在途未入殿（ADR 0096）。
-        # 围绕「传召已发、人在途」承接，不写入殿气象。
-        method = str(inputs.summon_method or METHOD_CHUANZHAO).strip() or METHOD_CHUANZHAO
-        name = str(inputs.person_name or "").strip()
-        if not name:
-            return ""
-        identity = _identity_snippet(inputs.characterization)
-        head = f"{place_time}，" if place_time else ""
-        who = f"{method}{name}"
-        if identity:
-            who = f"{who}（{identity}）"
-        body = f"{head}{who}发，人在途。"
-        if tension:
-            body = f"{body}{tension}"
-        return body
-
     if inputs.beat_kind == BEAT_EXIT:
         name = str(inputs.person_name or "").strip()
         if not name:
@@ -457,38 +440,6 @@ def generate_enter_beat_body(
         summon_method=summon_method,
         knowledge_provider=knowledge_provider,
         extra_public_layer=extra_public_layer,
-    )
-    return run_beat_generator(beat_generator, inputs)
-
-
-def generate_summon_beat_body(
-    db: Any,
-    state: Any,
-    *,
-    night: Dict[str, Any],
-    person_name: str,
-    summon_method: str = METHOD_CHUANZHAO,
-    beat_generator: Optional[BeatGenerator] = None,
-    knowledge_provider: Optional[KnowledgeProvider] = None,
-    before_entry_id: int = 0,
-) -> str:
-    """#1566：场外传召 scene 正文 ——人在途未入殿（ADR 0096）。
-
-    时辰/地点取自夜容器持久属性（cmr R7）。场外传召不建 chat turn、
-    不调大臣回话。beat_kind=BEAT_SUMMON 而非 BEAT_ENTER，生成器
-    围绕「传召已发、人在途」承接。
-    """
-    if beat_generator is None:
-        return ""
-    inputs = assemble_beat_inputs(
-        db, state, beat_kind=BEAT_SUMMON,
-        time_of_day=str(night.get("time_of_day") or ""),
-        location=str(night.get("location") or ""),
-        night_id=int(night.get("id") or 0),
-        person_name=person_name,
-        summon_method=summon_method,
-        knowledge_provider=knowledge_provider,
-        before_entry_id=before_entry_id,
     )
     return run_beat_generator(beat_generator, inputs)
 
@@ -619,12 +570,12 @@ def discover_offsite_summon_task(
     origin_id: str,
     person_name: str,
     beat_generator: Optional[BeatGenerator] = None,
-) -> Union[Tuple[int, BeatInputs], Tuple[int, str], None]:
-    """#1566：为场外传召账发现/组装 BEAT_SUMMON BeatInputs。
+) -> Optional[Tuple[int, str]]:
+    """#1566：发现场外传召账，经 LLM beat seam 组装并生成正文。
 
-    复用既有 assemble_beat_inputs（单一编排入口），不另建 registry/generator/lifecycle。
+    复用既有 assemble/run 单轨，不另建 registry/generator/lifecycle。
     BEAT_SUMMON（非 BEAT_ENTER）：人在途未入殿，ADR 0096。
-    返回 (entry_id, BeatInputs)、(entry_id, body) 或 None（body 已物化幂等 no-op）。
+    返回 (entry_id, body)，或 body 已物化时返回 None。
     """
     from ming_sim.audience_night import (
         SUMMON_METHODS,
@@ -676,10 +627,8 @@ def discover_offsite_summon_task(
         summon_method=method,
         before_entry_id=entry_id,
     )
-    if beat_generator is not None:
-        body = run_beat_generator(beat_generator, inputs)
-        return (entry_id, body)
-    return (entry_id, inputs)
+    body = run_beat_generator(beat_generator, inputs)
+    return (entry_id, body)
 
 
 def materialize_offsite_summon_scene(
@@ -706,10 +655,6 @@ def materialize_offsite_summon_scene(
     if task is None:
         return []
     entry_id, body = task
-    assert isinstance(body, str), (
-        f"discover_offsite_summon_task returned BeatInputs without beat_generator: "
-        f"entry_id={entry_id}"
-    )
     generated: List[Tuple[int, str]] = [(entry_id, body)]
     from ming_sim.applier import atomic
     with atomic(db):

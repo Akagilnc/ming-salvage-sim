@@ -72,10 +72,9 @@ def _chat_turn_count(db):
 def _web_hall_runtime(db, state, content, *, session_chat):
     """#670：常规 Web.chat（gate_already_held=False）殿上入口壳；挂真 admission。
 
-    #1566：同壳挂场外 scene 物化（production beat，禁 LLM）。WebGame 类方法经
-    __new__ 实例可直接解析，不再手绑 _finish/_summon_payload 等类方法。
+    #1566：同壳挂场外 scene 物化，经 beat generator seam 注入测试替身。
+    WebGame 类方法经 __new__ 实例可直接解析，不再手绑类方法。
     """
-    from ming_sim.beat_orchestration import production_beat_generator
     from tests.test_qa_c3_secret_order_path_1357_1376 import (
         webgame_shell_for_secret_order,
     )
@@ -86,7 +85,7 @@ def _web_hall_runtime(db, state, content, *, session_chat):
     s = runtime.session
     s.admit_audience = MethodType(GameSession.admit_audience, s)
     s.consume_audience_admission = MethodType(GameSession.consume_audience_admission, s)
-    s._beat_generator = production_beat_generator
+    s._beat_generator = lambda _inputs: "generated offsite summon scene"
     s.materialize_offsite_summon_scene = MethodType(
         GameSession.materialize_offsite_summon_scene, s,
     )
@@ -1282,8 +1281,14 @@ def test_web_chat_offsite_summon_scene_generator_failure_is_loud(game):
     assert unsettled[0]["origin_id"] == f"web:chat:{state.turn}:{remote.name}"
     assert unsettled[0]["kind"] == "fresh"
     assert _chat_turn_count(db) == before_turns
-    # #1566：生成失败不得写入/伪装 scene body——断结构化副作用（body 空），
-    # 不盯 body 散文。空 body 的场外传召不进 scroll summon 投影。
+    # #1566：生成失败不得写入/伪装 scene body；这是持久化原子性，
+    # 不约束任何成功生成正文。
+    entry = db.conn.execute(
+        "SELECT body FROM story_ledger_entries WHERE id=?",
+        (int(unsettled[0]["entry_id"]),),
+    ).fetchone()
+    assert entry is not None
+    assert entry["body"] == ""
     night_id = int(unsettled[0]["night_id"])
     summon_speakers = {
         m.get("speaker")
