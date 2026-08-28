@@ -650,23 +650,7 @@ def _confirmation_targets_for_message(pending_actions: List[Dict[str, Any]], mes
     return non_directive or directive
 
 
-_AMEND_PREFIXES = ("修改：", "修改:", "改：", "改:")
-_AMEND_ORDINAL_PREFIX_RE = re.compile(
-    r"^(?:修改|改)\s*第[一二三四五六七八九十百零0-9]+(?:道|条|件|个)?\s*[：:]\s*"
-)
 _CONFIRM_ENUM = frozenset({"应允", "拒绝", "留中", "修改", "无"})
-
-
-def _strip_secret_amendment_prefix(message: str) -> str:
-    """Strip 修改：/改：/修改第N道： so amendment text does not re-enter content."""
-    text = (message or "").strip()
-    for prefix in _AMEND_PREFIXES:
-        if text.startswith(prefix):
-            return text[len(prefix):].strip()
-    m = _AMEND_ORDINAL_PREFIX_RE.match(text)
-    if m:
-        return text[m.end():].strip()
-    return text
 
 
 def _coerce_confirmation_result(raw: Any) -> Tuple[str, List[int], str]:
