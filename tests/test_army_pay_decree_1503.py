@@ -793,25 +793,125 @@ def test_xiexang_amount_rejects_non_json_integer(amount):
     assert "amount" in exc.value.missing_fields
 
 
-def test_dossier_rejection_surfaces_despite_unrelated_pending_action(game, monkeypatch):
-    """#1591：无可颁案卷时，非旨 pending 不得掩盖当前草案的真实拒因。"""
-    from tests.test_advance_paths_atomic import _recovery_session
+def test_manual_directive_admission_real_http_tracer_1591(
+    tmp_path, monkeypatch, _offline_scene_beat_generator,
+):
+    """#1591 真实入口 tracer：同一 WebGame/TestClient 内证两支外部行为。
 
-    import ming_sim.audience_night as audience_night
+    ① 召对协饷候选 account=太仓 经 #1503 typed grant 单轨成案后 canonical 为国库。
+    ② `POST /api/directives` 手工拟旨 account 非法，且有无关非旨 pending action 并存时，
+    `POST /api/decree/issue` 外部响应须是真实 admission 拒因，不得被掩盖为「至少一条草案」。
 
-    db, state, content = game
-    sess = _recovery_session(db, state, content, monkeypatch)
-    sess._beat_generator = None
-    sess._scene_registry = None
-    sess._write_gate_if_free = lambda: None
-    monkeypatch.setattr(audience_night, "auto_close_open_night", lambda *_a, **_k: None)
-    monkeypatch.setattr(db, "ensure_dossiers_for_draft_directives", lambda _state: ["account 非法"])
-    monkeypatch.setattr(db, "list_dossiered_draft_directives", lambda _state: [])
-    monkeypatch.setattr(db, "preview_pending_directives", lambda *_a, **_k: [])
-    monkeypatch.setattr(db, "list_pending_actions", lambda *_a, **_k: [{"kind": "secret"}])
+    stub 仅 LLM payload 产出边界（分类器/拟旨抽取/结算外层）；不 mock
+    ensure_dossiers_for_draft_directives / list_dossiered_draft_directives /
+    preview_pending_directives / list_pending_actions / resolve_turn。
+    """
+    from fastapi.testclient import TestClient
 
-    with pytest.raises(ValueError, match="account 非法"):
-        sess.resolve_turn()
+    import ming_sim.cli_backend as cb
+    import web_app
+    from tests.test_month_loop_tracer_1468 import (
+        _get_state, _post_issue_stream, _stub_outer_llm_seams, _turn_of,
+    )
+    from tests.test_session_write_queue_1353 import wait_pending_writes
+
+    class _CannedHubuAgent:
+        def run(self, *_a, **_k):
+            return SimpleNamespace(
+                content="臣请户部发帑十五万两协济关宁军前，请陛下定夺准驳。", tools=[],
+            )
+
+        def get_last_run_output(self):
+            return None
+
+    scripted = _scripted_xiexang_candidates(amount=15, account="太仓", target_id="guanning")
+
+    def fake_classify(text, *_a, **_k):
+        if str(text or "").strip() == "准":
+            return []
+        return list(scripted)
+
+    def fake_confirm(player_message, *_a, **_k):
+        return "应允" if str(player_message or "").strip() == "准" else "无"
+
+    monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    _stub_outer_llm_seams(monkeypatch)
+    monkeypatch.setattr(cb, "classify_cli_action_intent", fake_classify)
+    monkeypatch.setattr(cb, "extract_confirmation_intent", fake_confirm)
+
+    game = web_app.WebGame(fresh=False)
+    monkeypatch.setattr(web_app, "web_game", game)
+    try:
+        name = next(
+            getattr(ch, "name", key)
+            for key, ch in game.content.characters.items()
+            if getattr(ch, "office_type", "") == "户部"
+            and getattr(ch, "power_id", "ming") == "ming"
+            and game.db.get_character_status(getattr(ch, "name", key))[0] == "active"
+        )
+        game.session.registry.get = lambda _ch: _CannedHubuAgent()
+        if getattr(game.session, "llm_config", None) is not None:
+            try:
+                game.session.llm_config.channel = "cli"
+            except Exception:
+                pass
+
+        client = TestClient(web_app.app)
+
+        # ── ① 太仓→国库 canonical：真实召对候选走 #1503 typed grant 单轨成案 ──
+        turn1 = int(game.state.turn)
+        petition = client.post(
+            f"/api/ministers/{name}/chat", json={"message": "拨关宁军饷十五万两。"},
+        )
+        assert petition.status_code == 200, petition.text
+        wait_pending_writes(game)
+        confirm = client.post(f"/api/ministers/{name}/chat", json={"message": "准"})
+        assert confirm.status_code == 200, confirm.text
+        wait_pending_writes(game)
+        _post_issue_stream(client, expected_turn=turn1, step="1591①太仓 issue/stream")
+        after = _get_state(client)
+        assert _turn_of(after) == turn1 + 1, after.get("turn")
+        dossier = next(
+            d for d in game.db.list_decree_dossiers()
+            if d["action_type"] == "grant_allocation"
+        )
+        payload = json.loads(dossier["payload_json"])
+        assert payload.get("account") == "国库", payload
+
+        # ── ② 手工拟旨 account 非法 + 无关非旨 pending 并存：issue 须回真实拒因 ──
+        turn2 = int(game.state.turn)
+        monkeypatch.setattr(cb, "capture_manual_directive_payload", lambda *_a, **_k: {
+            "dossier_action_type": "grant_allocation",
+            "target_kind": "army", "target_id": "guanning",
+            "mode": "ordinary", "amount": 15, "account": "太仓",
+        })
+        directive = client.post(
+            "/api/directives",
+            json={"text": "准从太仓见银拨关宁军饷十五万两即发。", "notes": ""},
+        )
+        assert directive.status_code == 200, directive.text
+        wait_pending_writes(game)
+
+        game.db.stage_pending_action(
+            turn2, kind="office", action="任命", minister_name=name,
+            payload={"name": name, "office": "经略关宁", "_office_action": "任命"},
+        )
+        assert game.db.list_pending_actions(turn2), "无关非旨 pending action 应在场"
+
+        issue = client.post("/api/decree/issue", json={"expected_turn": turn2})
+        assert issue.status_code == 400, issue.text
+        detail = issue.json().get("detail")
+        message = detail.get("message") if isinstance(detail, dict) else detail
+        assert "国库或内库" in str(message), message
+        assert "至少一条草案" not in str(message), message
+        assert int(game.state.turn) == turn2, "拒案不得推进回合"
+    finally:
+        try:
+            game.session.close()
+        except Exception:
+            pass
 
 
 def test_non_xiexang_payload_cannot_smuggle_army_pay_purpose(game):
