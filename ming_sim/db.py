@@ -12116,6 +12116,15 @@ class GameDB:
                 self.mark_secret_order_in_progress(oid, commit=False)
             except Exception:
                 pass
+            live = self.conn.execute(
+                "SELECT deadline_span, due_turn FROM secret_orders WHERE id=?",
+                (oid,),
+            ).fetchone()
+            self._refresh_secret_order_covert_contract(
+                oid,
+                deadline_span=int(live["deadline_span"] or 0) if live is not None else span,
+                due_turn=int(live["due_turn"] or new_due) if live is not None else int(new_due),
+            )
 
     def _migrate_legacy_secret_order_dossiers(self) -> None:
         """旧密令单向补建案卷；唯一索引使重复开库幂等。"""
@@ -12149,6 +12158,7 @@ class GameDB:
             from ming_sim.covert_progress import (
                 CONTRACT_KEY,
                 build_covert_task_contract,
+                covert_task_from_payload,
             )
             try:
                 tags = json.loads(row["tags"] or "[]")
@@ -12157,10 +12167,11 @@ class GameDB:
             payload = {
                 "title": str(row["title"] or ""),
                 "content": str(row["content"] or ""),
+                "tags": tags,
                 CONTRACT_KEY: build_covert_task_contract(
                     deadline_span=int(row["deadline_span"] or 0),
                     due_turn=int(row["due_turn"] or 0),
-                    tags=tags,
+                    covert_task=covert_task_from_payload({"tags": tags}),
                 ),
             }
             cur = self.conn.execute(
@@ -15328,11 +15339,12 @@ class GameDB:
         deadline_span: int,
         due_turn: int,
     ) -> None:
-        """期限变更时更新 payload.covert_task_contract.delivery（保轴/方向）。"""
+        """期限变更时更新 payload.covert_task_contract.delivery（保轴/方向/单位/kind）。"""
         from ming_sim.covert_progress import (
             CONTRACT_KEY,
             build_covert_task_contract,
             coerce_covert_task_contract,
+            refresh_contract_target_units,
         )
 
         dossier = self.get_dossier_for_secret_order(int(secret_order_id))
@@ -15344,26 +15356,26 @@ class GameDB:
             payload = {}
         if not isinstance(payload, dict):
             payload = {}
-        payload_tags = payload.get("tags") if isinstance(payload.get("tags"), list) else []
         prior = coerce_covert_task_contract(payload.get(CONTRACT_KEY))
-        if payload_tags:
-            contract = build_covert_task_contract(
-                deadline_span=int(deadline_span),
-                due_turn=int(due_turn),
-                tags=payload_tags,
-            )
-        elif prior is not None:
+        target = refresh_contract_target_units(
+            prior, deadline_span=int(deadline_span), due_turn=int(due_turn),
+        )
+        if prior is not None:
+            delivery = prior.get("delivery") if isinstance(prior.get("delivery"), Mapping) else {}
             contract = build_covert_task_contract(
                 deadline_span=int(deadline_span),
                 due_turn=int(due_turn),
                 kind=prior.get("kind"),
                 axes=prior.get("axes"),
                 direction=prior.get("direction"),
+                delivery_unit=delivery.get("unit") if isinstance(delivery, dict) else None,
+                delivery_target_units=target,
             )
         else:
             contract = build_covert_task_contract(
                 deadline_span=int(deadline_span),
                 due_turn=int(due_turn),
+                delivery_target_units=target,
             )
         payload[CONTRACT_KEY] = contract
         self.update_decree_dossier_payload(int(dossier["id"]), payload, commit=False)
@@ -18797,12 +18809,14 @@ class GameDB:
                 # decree; may differ from final assignee (跨人承办).
                 # Stage-time pin: do not re-guess max(held) after confirm utterance.
                 origin_mid = self._parse_origin_chat_message_id(payload)
+                from ming_sim.covert_progress import covert_task_from_payload
                 order_id = self.create_secret_order(
                     state, assignee, title, content_text, tags, deadline_months=deadline,
                     excluded_names=excluded, excluded_offices=excluded_offices,
                     origin_minister_name=str(pa.get("minister_name") or "") or None,
                     origin_chat_message_id=origin_mid,
                     pending_action_id=int(pa["id"]),
+                    covert_task=covert_task_from_payload(payload) or payload.get("covert_task"),
                 )
                 if order_id is not None and payload.get("dossier_links") is not None:
                     links = payload.get("dossier_links")
@@ -21865,6 +21879,7 @@ class GameDB:
         origin_chat_message_id: Optional[int] = None,
         origin_chat_message_ids: Optional[Iterable[int]] = None,
         pending_action_id: int = 0,
+        covert_task: Optional[Mapping[str, object]] = None,
     ) -> int:
         # 宗藩/外藩 非朝堂命官，不可受密令——密令创建的唯一 DB 写口，集中守此一处即覆盖
         # API / 大臣工具 / CLI 自然语言 / upsert 回落 create 全路（cmr R6 cross-section）。
@@ -21950,8 +21965,8 @@ class GameDB:
                 origin_chat_message_ids=origin_chat_message_ids,
                 commit=False,
             )
-            # #1504 Owner A：确认闸一次冻结 typed covert-task contract（动作轴/交付判据）。
-            # 不解析 title/content；轴/方向仅收闭集，缺省用 covert 结构化默认。
+            # #1504 Owner A：确认闸一次冻结 typed covert-task contract（动作轴/可数交付）。
+            # 不解析 title/content/tags；轴与交付单位来自 #1376 候选显式字段。
             from ming_sim.covert_progress import (
                 CONTRACT_KEY,
                 build_covert_task_contract,
@@ -21959,7 +21974,7 @@ class GameDB:
             covert_contract = build_covert_task_contract(
                 deadline_span=int(deadline),
                 due_turn=int(due_turn),
-                tags=list(tags),
+                covert_task=covert_task,
             )
             dossier_id = self.create_decree_dossier(
                 state,
@@ -22302,6 +22317,15 @@ class GameDB:
                 (current_turn, "\n".join(lines), int(order_id)),
             )
             self.mark_secret_order_in_progress(int(order_id), commit=False)
+            live = self.conn.execute(
+                "SELECT deadline_span, due_turn FROM secret_orders WHERE id=?",
+                (int(order_id),),
+            ).fetchone()
+            self._refresh_secret_order_covert_contract(
+                int(order_id),
+                deadline_span=int(live["deadline_span"] or 0) if live is not None else 0,
+                due_turn=int(live["due_turn"] or 0) if live is not None else current_turn,
+            )
         tlog(f"[secret_order] submit_for_review id={order_id} due_now claim={note[:60]!r}")
         return True
 
@@ -22480,6 +22504,15 @@ class GameDB:
                 )
                 status = "active"
             self.mark_secret_order_in_progress(int(order_id), commit=False)
+            live = self.conn.execute(
+                "SELECT deadline_span, due_turn FROM secret_orders WHERE id=?",
+                (int(order_id),),
+            ).fetchone()
+            self._refresh_secret_order_covert_contract(
+                int(order_id),
+                deadline_span=int(live["deadline_span"] or 0) if live is not None else 0,
+                due_turn=int(live["due_turn"] or due_turn) if live is not None else int(due_turn),
+            )
         tlog(f"[secret_order] rush id={order_id} old_due={old_due} due={due_turn} status={status}")
         return {"id": int(order_id), "title": row["title"], "status": status, "due_turn": due_turn}
 

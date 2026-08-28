@@ -563,6 +563,11 @@ def build_minister_tools(character: Character, context: CourtContext,
         excluded_names_json: str = "[]",
         excluded_offices_json: str = "[]",
         dossier_links_json: str = "[]",
+        kind: str = "",
+        axes_json: str = "[]",
+        direction: int = 1,
+        delivery_unit: str = "",
+        delivery_target_units: float = 0,
     ) -> str:
         """密令统一入口。action 取值：
         - "issue"：下达新密令。需填 title、content；assignee 留空默认当前大臣；deadline_months=0 无硬限。
@@ -574,6 +579,9 @@ def build_minister_tools(character: Character, context: CourtContext,
         target_dossier_id（旧案卷整数 ID）、relation_type（护卫/稽核/接应之一）和 note
         （大臣已复述确认的说明）。示例：[{"target_dossier_id":12,"relation_type":"护卫",
         "note":"护送辽饷"}]。未明确确认则传 []。
+        issue 的 typed 合同：kind（差务名，如补发饷银/缉获人犯）、axes_json（价值轴闭集）、
+        direction（1 或 -1）、delivery_unit（两/人犯/亩等可数单位）、delivery_target_units（到期交付目标）。
+        tags_json 只作检索关键词，不用于猜 kind。
         """
         # 恢复窗总闸（PR #90 R2 codex P2）：FRONT_HALF_DONE 时四个 action 都是
         # settle 重试事务边界外的直写，重放中止回滚不回滚它们——dispatcher 一处冻全部。
@@ -581,7 +589,11 @@ def build_minister_tools(character: Character, context: CourtContext,
             return "本月结算未完（恢复中），密令房暂不办事；请先续跑结算，再行降旨。"
         act = (action or "").strip().lower()
         if act == "issue":
-            return _secret_order_issue(title, content, tags_json, assignee, deadline_months, excluded_names_json, excluded_offices_json, dossier_links_json)
+            return _secret_order_issue(
+                title, content, tags_json, assignee, deadline_months,
+                excluded_names_json, excluded_offices_json, dossier_links_json,
+                kind, axes_json, direction, delivery_unit, delivery_target_units,
+            )
         if act == "progress":
             return _secret_order_progress(order_id, progress)
         if act == "submit":
@@ -590,7 +602,7 @@ def build_minister_tools(character: Character, context: CourtContext,
             return _secret_order_rush(order_id, deadline_months, reason)
         return f"未知 action={action!r}，可选：issue / progress / submit / rush。"
 
-    def _secret_order_issue(title: str, content: str, tags_json: str = "[]", assignee: str = "", deadline_months: int = 0, excluded_names_json: str = "[]", excluded_offices_json: str = "[]", dossier_links_json: str = "[]") -> str:
+    def _secret_order_issue(title: str, content: str, tags_json: str = "[]", assignee: str = "", deadline_months: int = 0, excluded_names_json: str = "[]", excluded_offices_json: str = "[]", dossier_links_json: str = "[]", kind: str = "", axes_json: str = "[]", direction: int = 1, delivery_unit: str = "", delivery_target_units: float = 0) -> str:
         """皇帝下达密令，返回待确认密令 payload，由召对确认闸门决定是否正式落库。
 
         title：密令标题。
@@ -598,6 +610,11 @@ def build_minister_tools(character: Character, context: CourtContext,
         tags_json：JSON 数组，填相关人名/地区/事项关键词，用于日后检索，如 '["辽饷","兵部","密查"]'。
         assignee：实际承办人姓名。留空则默认为当前召见的大臣；若皇帝指名他人承办（如"命毕自严去查"），填该人全名。
         deadline_months：硬期限月数；0 表示无硬期限。若皇帝说"下月务必结案"填 1，说"三个月内结案"填 3。
+        kind：差务类型名（补发饷银/缉获人犯/清丈等），不得用 tags 猜测。
+        axes_json：价值轴闭集 JSON 数组，如 '["既得利益"]'。
+        direction：1 顺轴，-1 逆轴。
+        delivery_unit：可数交付单位（两/人犯/亩）。
+        delivery_target_units：到期须交付的可数目标。
         dossier_links_json：只填当前提示所列旧案卷，格式为 [{"target_dossier_id": 12,
         "relation_type": "护卫/稽核/接应", "note": "已复述确认的说明"}]。
         """
@@ -612,6 +629,25 @@ def build_minister_tools(character: Character, context: CourtContext,
         except (ValueError, TypeError):
             tags = []
         tags_clean = [str(k).strip() for k in tags if str(k).strip()]
+        try:
+            raw_axes = json.loads(axes_json or "[]")
+            if not isinstance(raw_axes, list):
+                raw_axes = []
+        except (ValueError, TypeError):
+            raw_axes = []
+        axes_clean = [str(k).strip() for k in raw_axes if str(k).strip()]
+        try:
+            dir_i = int(direction)
+        except (TypeError, ValueError):
+            dir_i = 1
+        if dir_i not in (1, -1):
+            dir_i = 1
+        try:
+            target_units = float(delivery_target_units or 0)
+        except (TypeError, ValueError):
+            target_units = 0.0
+        if target_units < 0:
+            target_units = 0.0
         try:
             excluded = json.loads(excluded_names_json or "[]")
             excluded = [str(k).strip() for k in excluded if str(k).strip()] if isinstance(excluded, list) else []
@@ -660,7 +696,7 @@ def build_minister_tools(character: Character, context: CourtContext,
             deadline = max(0, min(int(deadline_months or 0), 36))
         except (TypeError, ValueError):
             deadline = 0
-        return f"__secret_order__{json.dumps({'title': t, 'content': c, 'tags': tags_clean, 'assignee': real_assignee, 'deadline_months': deadline, 'excluded_names': excluded, 'excluded_offices': excluded_offices, 'dossier_links': dossier_links}, ensure_ascii=False)}"
+        return f"__secret_order__{json.dumps({'title': t, 'content': c, 'tags': tags_clean, 'assignee': real_assignee, 'deadline_months': deadline, 'excluded_names': excluded, 'excluded_offices': excluded_offices, 'dossier_links': dossier_links, 'covert_task': {'kind': str(kind or '').strip(), 'axes': axes_clean, 'direction': dir_i, 'delivery': {'unit': str(delivery_unit or '').strip(), 'target_units': target_units}}}, ensure_ascii=False)}"
 
     def _pending_secret_action(action_name: str, order_id: int, payload: Dict[str, object]) -> str:
         # Non-create tools (记进展/催办/提交核议) do **not** pin latest held.

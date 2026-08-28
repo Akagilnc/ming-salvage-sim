@@ -1813,6 +1813,7 @@ class GameSession:
                                         payload.get("dossier_links"),
                                         llm_config=self.llm_config,
                                     ),
+                                    "covert_task": payload.get("covert_task") if isinstance(payload.get("covert_task"), dict) else {},
                                 },
                             ),
                         )
@@ -2245,6 +2246,7 @@ class GameSession:
                     # The extractor emits only links explicitly narrowed in the
                     # minister's confirmation; carry that immutable set to commit.
                     "dossier_links": so.get("dossier_links") or [],
+                    "covert_task": so.get("covert_task") if isinstance(so.get("covert_task"), dict) else {},
                 },
             )
         if not out["secret_order_id"] and acts["secret_order"]:

@@ -3519,10 +3519,31 @@ def _extract_secret_order(
     else:
         dossier_links = confirm_dossier_links(
             minister_reply, dossier_candidates, dossier_links, llm_config=llm_config)
+    kind = str(obj.get("差务") or obj.get("kind") or "").strip()
+    axes = obj.get("价值轴")
+    axes = [str(a).strip() for a in axes if str(a).strip()] if isinstance(axes, list) else []
+    unit = str(obj.get("交付单位") or "").strip()
+    try:
+        target_units = float(obj.get("交付目标") or 0)
+    except (TypeError, ValueError):
+        target_units = 0.0
+    try:
+        direction = int(obj.get("方向") or 1)
+    except (TypeError, ValueError):
+        direction = 1
+    if direction not in (1, -1):
+        direction = 1
+    covert_task = {
+        "kind": kind,
+        "axes": axes,
+        "direction": direction,
+        "delivery": {"unit": unit, "target_units": target_units},
+    }
     return {"title": title, "content": content, "assignee": assignee,
             "deadline_months": deadline, "tags": tags, "excluded_names": excluded_names,
             "excluded_offices": excluded_offices, "dossier_links": dossier_links,
-            "excluded_targets": {"people": excluded_names, "offices": excluded_offices}}
+            "excluded_targets": {"people": excluded_names, "offices": excluded_offices},
+            "covert_task": covert_task}
 
 def resolve_minister_actions(
     minister_reply: str, player_message: str = "", default_assignee: str = "", llm_config: Any = None,
