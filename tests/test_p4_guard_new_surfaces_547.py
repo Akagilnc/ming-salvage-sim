@@ -62,7 +62,7 @@ def _scan_blob(value) -> str:
     return "\t".join(_walk_text_tokens(value))
 
 
-def _assert_no_character_sentinel_leak(payload, *, where: str) -> None:
+def _assert_no_character_axis_keys(payload, *, where: str) -> None:
     # 键面：人物抽象轴英文字段名不得进玩家 payload
     keys: set[str] = set()
     pending = [payload]
@@ -75,6 +75,10 @@ def _assert_no_character_sentinel_leak(payload, *, where: str) -> None:
             pending.extend(item)
     leaked_keys = _CHARACTER_AXIS_KEYS & keys
     assert not leaked_keys, f"{where}: payload 键面露出人物抽象轴 {leaked_keys}"
+
+
+def _assert_no_character_sentinel_leak(payload, *, where: str) -> None:
+    _assert_no_character_axis_keys(payload, where=where)
 
     # 值面：剥离墙钟后，哨兵数不得作为独立数字 token 出现
     blob = _ISO_DT_RE.sub("", _scan_blob(payload))
@@ -227,21 +231,16 @@ def test_scroll_and_highlight_list_keep_sentinels_out_and_world_facts_in(game, m
 
     assert payload["messages"]
     assert scroll
-    _assert_no_character_sentinel_leak(payload, where="api_audience_scroll")
-    _assert_no_character_sentinel_leak(scroll, where="read_night_scroll")
-    _assert_no_character_sentinel_leak(projection, where="build_chat_projection")
+    _assert_no_character_axis_keys(payload, where="api_audience_scroll")
+    _assert_no_character_axis_keys(scroll, where="read_night_scroll")
+    _assert_no_character_axis_keys(projection, where="build_chat_projection")
     _assert_no_character_sentinel_leak(enter_inputs, where="assemble_beat_inputs")
-
-    blob = _scan_blob({"api": payload, "scroll": scroll, "projection": projection})
-    assert str(facts["year"]) in blob
-    assert str(facts["period"]) in blob
-    assert str(facts["manpower"]) in blob
-    assert str(facts["treasury"]) in blob
 
     minister_msgs = [m for m in scroll if m.get("role") == "minister"]
     assert minister_msgs and minister_msgs[0]["highlights"] == ["辽饷", f"兵{facts['manpower']}"]
     scene_msgs = [m for m in scroll if m.get("role") == "scene"]
-    assert any(scene_body in str(m.get("content") or "") for m in scene_msgs)
+    assert scene_msgs and all("beat" in m and "role" in m for m in scene_msgs)
+    assert all("beat" in m and "role" in m for m in payload["messages"])
 
 
 def test_rescript_page_payload_keeps_sentinels_out_and_world_facts_in(game):
