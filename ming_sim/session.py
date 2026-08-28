@@ -1195,15 +1195,15 @@ class GameSession:
 
         复用 beat_orchestration 既有 assemble/run/persist 缝；不建 chat turn、
         不调大臣回话。唯一合法 no-op：该 ledger 行 body 已非空（幂等重入）。
-        其余不变式破坏（缺 origin/账行/state/生成器）一律响亮失败，禁止洗成空载荷。
+        传召账缺失、召法 tag 缺失、生成器失败一律上抛，禁止洗成空白成功载荷。
         调用方须在 write_gate 外等待 LLM。
         """
+        import json
+
         from ming_sim.applier import atomic
         from ming_sim.audience_night import (
-            METHOD_CHUANZHAO,
             SUMMON_METHODS,
             get_night,
-            list_ledger,
             list_unsettled_summons,
         )
         from ming_sim.beat_orchestration import (
@@ -1233,30 +1233,25 @@ class GameSession:
             )
         entry_id = int(item["entry_id"])
         night_id = int(item["night_id"])
-        entry = next(
-            (e for e in list_ledger(self.db, night_id) if int(e["id"]) == entry_id),
-            None,
-        )
-        if entry is None:
-            raise RuntimeError(
-                f"传召 ledger 行消失：entry_id={entry_id} night_id={night_id}"
-            )
+        row = self.db.conn.execute(
+            "SELECT body, tags FROM story_ledger_entries WHERE id=?",
+            (entry_id,),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError(f"传召 ledger 行消失：entry_id={entry_id}")
         # 幂等：body 已由先前物化写入则不再生成。
-        if str(entry.get("body") or "").strip():
+        if str(row["body"] or "").strip():
             return []
-        tags = list(entry.get("tags") or [])
-        method = next(
-            (m for m in SUMMON_METHODS if m in tags),
-            METHOD_CHUANZHAO,
-        )
-        night = get_night(self.db, night_id)
-        if night is None:
-            raise RuntimeError(f"传召夜不存在：night_id={night_id}")
-        state = self.state
-        generator = self._beat_generator
+        tags = json.loads(row["tags"] or "[]")
+        method = next((m for m in SUMMON_METHODS if m in tags), None)
+        if method is None:
+            raise RuntimeError(
+                f"传召账缺召法 tag：entry_id={entry_id} tags={tags!r}"
+            )
+        night = get_night(self.db, night_id) or {}
         inputs = assemble_beat_inputs(
             self.db,
-            state,
+            self.state,
             beat_kind=BEAT_ENTER,
             time_of_day=str(night.get("time_of_day") or ""),
             location=str(night.get("location") or ""),
@@ -1265,7 +1260,7 @@ class GameSession:
             summon_method=method,
             before_entry_id=entry_id,
         )
-        body = run_beat_generator(generator, inputs)
+        body = run_beat_generator(self._beat_generator, inputs)
         generated = [(entry_id, body)]
         with atomic(self.db):
             persist_chat_turn_scene(self.db, generated)
