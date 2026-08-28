@@ -6,6 +6,7 @@ import pytest
 import ming_sim.cli_backend as cli_backend
 import ming_sim.issues as issue_engine
 from ming_sim.session import GameSession
+from tests.conftest import covering_monthly_extract
 from tests.dossier_test_helpers import rejected_verdict as _rejected_verdict
 
 
@@ -969,7 +970,7 @@ def test_real_resolve_entry_applies_promulgation_verdict_and_payload_effect(
     )
     monkeypatch.setattr(
         decree_mod, "extract_scores_by_modules_with_agno",
-        lambda *a, **k: ({}, "", ""),
+        covering_monthly_extract,
     )
     monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
     monkeypatch.setattr(decree_mod, "record_chapter_memory", lambda *a, **k: None)
@@ -1064,7 +1065,7 @@ def test_real_resolve_entry_without_pending_dossiers_skips_promulgation_llm(
     )
     monkeypatch.setattr(
         decree_mod, "extract_scores_by_modules_with_agno",
-        lambda *a, **k: ({}, "out", "in"),
+        covering_monthly_extract,
     )
     monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
     monkeypatch.setattr(memories, "run_agent_text", lambda *a, **k: '{"body":"月记","tags":[]}')
@@ -1126,7 +1127,7 @@ def test_rejected_dossier_uses_player_rescript_choice_and_resume(
     )
     monkeypatch.setattr(
         decree_mod, "extract_scores_by_modules_with_agno",
-        lambda *a, **k: ({}, "", ""),
+        covering_monthly_extract,
     )
     monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
     monkeypatch.setattr(decree_mod, "record_chapter_memory", lambda *a, **k: None)
@@ -1238,7 +1239,7 @@ def test_rejected_dossier_survives_simulator_failure_on_rescript_rail(
     )
     monkeypatch.setattr(
         decree_mod, "extract_scores_by_modules_with_agno",
-        lambda *a, **k: ({}, "", ""),
+        covering_monthly_extract,
     )
     monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
     monkeypatch.setattr(decree_mod, "record_chapter_memory", lambda *a, **k: None)

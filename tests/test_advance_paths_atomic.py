@@ -23,6 +23,7 @@ import pytest
 import ming_sim.decree as decree_mod
 import ming_sim.issues as I
 from ming_sim.decree import persist_resolve_context, settle_with_delta
+from tests.conftest import covering_monthly_extract
 
 
 def _ledger_count(db, turn: int) -> int:
@@ -65,7 +66,7 @@ def test_advance_without_edict_atomic(game, monkeypatch):
     monkeypatch.setattr(decree_mod, "create_score_extractor_module_agent", lambda *a, **k: object())
     monkeypatch.setattr(
         decree_mod, "extract_scores_by_modules_with_agno",
-        lambda *a, **k: ({}, "out", "in"),
+        covering_monthly_extract,
     )
     monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
     monkeypatch.setattr(memories, "run_agent_text", lambda *a, **k: '{"body":"月记","tags":[]}')

@@ -160,12 +160,15 @@ def test_short_and_one_shot_dossiers_have_no_empty_monthly_shell(game):
     short_dossier = int(db.get_dossier_for_secret_order(short_id)["id"])
     one_shot = _executing_assignment(db, state, text="一次性清查", target="one-shot-619")
 
-    assert db.list_monthly_dossier_progress_nudges() == []
+    # 一月期密令仍入 0058；非密令一次性案卷不入密令月报候选
+    assert [item["dossier_id"] for item in db.list_monthly_dossier_progress_nudges()] == [short_dossier]
     assert db.list_dossier_progress(short_dossier) == []
     assert db.list_dossier_progress(one_shot) == []
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM dossier_reported_progress"
     ).fetchone()["n"] == 0
+    with pytest.raises(ValueError, match="缺少本月密奏"):
+        db.record_monthly_dossier_progress(state.turn, [])
 
 
 def test_origin_namespace_minimum_closed_set_and_open_append(game):

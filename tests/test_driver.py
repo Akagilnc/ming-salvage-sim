@@ -145,7 +145,7 @@ def test_run_settle_records_non_dict_module_value(game):
 def test_open_game_loads_board(tmp_path):
     """open_game 按路径打开存档，返回 (db, state, content)，盘面已加载（turn>0）。"""
     src = os.path.join(os.path.dirname(__file__), "..", "data", "probe.db")
-    if not os.path.exists(src):
+    if not os.path.exists(src) or os.path.getsize(src) == 0:
         pytest.skip("缺基底存档 data/probe.db")
     dst = tmp_path / "probe.db"
     shutil.copy(src, dst)

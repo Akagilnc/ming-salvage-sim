@@ -1,24 +1,33 @@
 """#1504 B 包：密令 covert 差务机械实进度 + 到期交付缺口对账。
 
 真源：
-- ADR 0116 意愿轴机械底档 + 0092 带内选态只准加重
+- ADR 0116 意愿轴机械底档（loyalty + identity×0011-3 立场 + satisfaction/血债）
+- ADR 0092 带内选态只准加重
 - ADR 0073 实况轨（非 0058 奏报）
-- ADR 0120 done/failed 退役为到期对账派生
-- SURVEY.md §4/§5 挂接点
+- ADR 0118 可数交付缺口；ADR 0120 done/failed 退役为到期对账派生
+- Owner A：确认闸 typed covert-task contract → dossier payload；
+  monthly typed actuals → dossier_actual_progress；无新表/第三轨/自由文本反解析
 
 边界墙（本模块不做）：暴露累积器/逐档跳/成色轴 0108/透支账/谎报反噬纹理。
+当月真实效果只经既有 extractor→applier＋origin 落库；本模块不发明固定后果套餐。
 """
 
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
+from functools import lru_cache
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
-# 四态：索引越大越重（只准加重 = 索引只增不减）
+from ming_sim.assets import load_json_asset, require_dict
+from ming_sim.value_matrix import (
+    mean_aligned_stance,
+    normalize_axes,
+    normalize_direction,
+)
+
 FIDELITY_STATES: tuple[str, ...] = ("忠实", "打折", "阳奉阴违", "反噬")
 _FIDELITY_INDEX = {name: idx for idx, name in enumerate(FIDELITY_STATES)}
 
-# 月度实进度单位（首版随 playtest；成色轴 0108 不读）
 PROGRESS_UNITS: Dict[str, float] = {
     "忠实": 1.0,
     "打折": 0.5,
@@ -26,17 +35,11 @@ PROGRESS_UNITS: Dict[str, float] = {
     "反噬": 0.0,
 }
 
-# 四态 → 本月人物/钱粮/地区后果系数（首版随 playtest；成色轴 0108 不读）
-# 仅走已有 canonical origin 写口：loyalty→人物评定；economy→内库；region_unrest→地区动乱。
-# 不派生 皇威 metric / faction satisfaction——二者 applier 无 origin 落点（ADR 0054/0073）。
-_WORLD_EFFECT_BY_FIDELITY: Dict[str, Dict[str, int]] = {
-    "忠实": {"loyalty": 1, "economy": -3, "region_unrest": 0},
-    "打折": {"loyalty": 0, "economy": -1, "region_unrest": 0},
-    "阳奉阴违": {"loyalty": -1, "economy": 0, "region_unrest": 1},
-    "反噬": {"loyalty": -2, "economy": 0, "region_unrest": 2},
-}
+CONTRACT_KEY = "covert_task_contract"
+CONTRACT_VERSION = 1
+_KINDS_ASSET = "covert_task_kinds.json"
+_STANCE_SCORE_SCALE = 18.0
 
-# 兼容 LLM 英文/旧词
 _FIDELITY_ALIASES = {
     "faithful": "忠实",
     "fulfilled": "忠实",
@@ -48,6 +51,90 @@ _FIDELITY_ALIASES = {
     "transformed": "反噬",
     "failed": "反噬",
 }
+
+
+@lru_cache(maxsize=1)
+def _kinds_config() -> dict[str, object]:
+    raw = require_dict(load_json_asset(_KINDS_ASSET), _KINDS_ASSET)
+    kinds = require_dict(raw.get("kinds"), f"{_KINDS_ASSET}.kinds")
+    unspecified = str(raw.get("unspecified_kind") or "_unspecified").strip()
+    if unspecified not in kinds:
+        raise SystemExit(f"content/{_KINDS_ASSET}: unspecified_kind 必须存在于 kinds")
+    return {"kinds": kinds, "unspecified_kind": unspecified}
+
+
+def resolve_covert_kind(tags: object) -> str:
+    """结构化 tags → content 差务 kind；不解析 title/content。"""
+    cfg = _kinds_config()
+    kinds = cfg["kinds"]
+    unspecified = str(cfg["unspecified_kind"])
+    if isinstance(tags, str):
+        items = [tags]
+    elif isinstance(tags, (list, tuple)):
+        items = list(tags)
+    else:
+        items = []
+    matched: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        key = str(item or "").strip()
+        if not key or key not in kinds or key in seen:
+            continue
+        seen.add(key)
+        matched.append(key)
+    if not matched:
+        return unspecified
+    if len(matched) == 1:
+        return matched[0]
+    return "+".join(matched)
+
+
+def _kind_spec(kind: str) -> Mapping[str, object]:
+    cfg = _kinds_config()
+    kinds = cfg["kinds"]
+    if kind in kinds:
+        spec = kinds[kind]
+        if isinstance(spec, Mapping):
+            return spec
+    parts = [p for p in str(kind).split("+") if p]
+    axes: list[str] = []
+    direction = 1
+    per_month = 0.0
+    unit = "progress_unit"
+    for part in parts:
+        spec = kinds.get(part)
+        if not isinstance(spec, Mapping):
+            continue
+        axes.extend(normalize_axes(spec.get("axes")))
+        direction = normalize_direction(spec.get("direction"), default=direction)
+        delivery = spec.get("delivery")
+        if isinstance(delivery, Mapping):
+            unit = str(delivery.get("unit") or unit)
+            try:
+                per_month += float(delivery.get("target_per_month") or 0)
+            except (TypeError, ValueError):
+                pass
+    unspecified = str(cfg["unspecified_kind"])
+    fallback = kinds[unspecified]
+    if not isinstance(fallback, Mapping):
+        raise SystemExit(f"content/{_KINDS_ASSET}: {unspecified} 非法")
+    if not axes:
+        axes = normalize_axes(fallback.get("axes"))
+        direction = normalize_direction(fallback.get("direction"), default=1)
+        delivery = fallback.get("delivery") if isinstance(fallback.get("delivery"), Mapping) else {}
+        unit = str(delivery.get("unit") or "progress_unit")
+        try:
+            per_month = float(delivery.get("target_per_month") or 1)
+        except (TypeError, ValueError):
+            per_month = 1.0
+    # 多 kind 叠加：轴并集；target_per_month 取均值避免双计期限
+    if parts and per_month > 0:
+        per_month = per_month / float(len(parts))
+    return {
+        "axes": axes,
+        "direction": direction,
+        "delivery": {"unit": unit, "target_per_month": per_month or 1.0},
+    }
 
 
 def normalize_fidelity_state(raw: object) -> Optional[str]:
@@ -67,13 +154,6 @@ def progress_units_for_state(state: object) -> float:
 
 
 def seed_guilt_counts_as_debt(seed_guilt: object) -> bool:
-    """结构化 guilt 口径（与 mindreading._seed_guilt_text 同形）：
-
-    - {"crime":"无","severity":"无"} / {"crime":"无"} → 清白
-    - 空/NULL → 清白
-    - 非空非 JSON 旧串 → 仍计血债（测试/legacy）
-    - 其余有 crime 坐实 → 血债
-    """
     if seed_guilt is None:
         return False
     if isinstance(seed_guilt, Mapping):
@@ -95,7 +175,6 @@ def seed_guilt_counts_as_debt(seed_guilt: object) -> bool:
 
 
 def _int_axis(value: object, default: int = 50) -> int:
-    """轴值：仅 NULL/缺省才回落；0 是合法值（禁 `x or default`）。"""
     if value is None:
         return int(default)
     return int(value)
@@ -107,17 +186,22 @@ def compute_willingness_floor(
     identity: int,
     satisfaction: int,
     seed_guilt: object = "",
+    faction: object = "",
+    axes: object = None,
+    direction: object = 1,
 ) -> str:
-    """0116 意愿轴机械底档（纯函数，可 golden）。
-
-    输入闭集：loyalty / identity / 派系 satisfaction / seed_guilt（血债代理）。
-    不读 0058 奏报、不读 sim_note、不算成色 ability/阴谋。
-    """
     loy = max(0, min(100, int(loyalty)))
     ident = max(0, min(100, int(identity)))
     sat = max(0, min(100, int(satisfaction)))
-    # 忠诚与满意度为主臂；深度党附且不忠则下拉（能吏×不肯办的粗糙代理，非 0108）。
-    score = 0.55 * loy + 0.35 * sat + 0.10 * (100 - ident)
+    axis_list = normalize_axes(axes)
+    if not axis_list:
+        unspecified = str(_kinds_config()["unspecified_kind"])
+        axis_list = normalize_axes(_kind_spec(unspecified).get("axes"))
+    direction_i = normalize_direction(direction, default=1)
+
+    score = 0.55 * loy + 0.35 * sat
+    aligned = mean_aligned_stance(faction, axis_list, direction=direction_i)
+    score += (ident / 100.0) * aligned * _STANCE_SCORE_SCALE
     if ident >= 70 and loy < 55:
         score -= 18.0
     if seed_guilt_counts_as_debt(seed_guilt):
@@ -132,7 +216,6 @@ def compute_willingness_floor(
 
 
 def clamp_fidelity_to_floor(floor: object, selected: object) -> str:
-    """0092：带内选态只准加重不准减轻。缺选/非法选 → 落在底档。"""
     floor_name = normalize_fidelity_state(floor) or "反噬"
     selected_name = normalize_fidelity_state(selected)
     if selected_name is None:
@@ -142,22 +225,165 @@ def clamp_fidelity_to_floor(floor: object, selected: object) -> str:
     return selected_name
 
 
-def target_progress_units(*, deadline_span: int, due_turn: int) -> float:
-    """差务目标 Σ：有期限按月数（至少 1）；无 due 不进入到期对账。"""
+def target_progress_units(*, deadline_span: int, due_turn: int, per_month: float = 1.0) -> float:
     if int(due_turn or 0) <= 0:
         return 0.0
     span = int(deadline_span or 0)
-    return float(max(span, 1))
+    months = float(max(span, 1))
+    try:
+        rate = float(per_month)
+    except (TypeError, ValueError):
+        rate = 1.0
+    if rate <= 0.0:
+        rate = 1.0
+    return months * rate
+
+
+def build_covert_task_contract(
+    *,
+    deadline_span: int,
+    due_turn: int,
+    tags: object = None,
+    axes: object = None,
+    direction: object = None,
+    delivery_target_units: object = None,
+    action_type: str = "secret_order",
+    kind: object = None,
+) -> Dict[str, object]:
+    """确认闸一次生成的 typed covert-task contract（Owner A）。
+
+    轴/方向/kind 只从结构化 tags 或已冻结字段取，不解析 title/content。
+    """
+    resolved_kind = str(kind or "").strip() or resolve_covert_kind(tags)
+    spec = _kind_spec(resolved_kind)
+    axis_list = normalize_axes(axes) if axes is not None else normalize_axes(spec.get("axes"))
+    if not axis_list:
+        axis_list = normalize_axes(spec.get("axes"))
+    direction_i = normalize_direction(
+        direction if direction is not None else spec.get("direction"),
+        default=1,
+    )
+    delivery = spec.get("delivery") if isinstance(spec.get("delivery"), Mapping) else {}
+    per_month = delivery.get("target_per_month") if isinstance(delivery, Mapping) else 1
+    due = int(due_turn or 0)
+    span = int(deadline_span or 0)
+    if delivery_target_units is None:
+        target = target_progress_units(
+            deadline_span=span, due_turn=due, per_month=float(per_month or 1),
+        )
+    else:
+        try:
+            target = float(delivery_target_units)
+        except (TypeError, ValueError):
+            target = target_progress_units(
+                deadline_span=span, due_turn=due, per_month=float(per_month or 1),
+            )
+        if due <= 0:
+            target = 0.0
+        elif target <= 0.0:
+            target = target_progress_units(
+                deadline_span=span, due_turn=due, per_month=float(per_month or 1),
+            )
+    return {
+        "version": CONTRACT_VERSION,
+        "action_type": str(action_type or "secret_order"),
+        "kind": resolved_kind,
+        "axes": axis_list,
+        "direction": direction_i,
+        "delivery": {
+            "unit": str(delivery.get("unit") or "progress_unit"),
+            "target_units": float(target),
+            "target_per_month": float(per_month or 1),
+        },
+    }
+
+
+def coerce_covert_task_contract(raw: object) -> Optional[Dict[str, object]]:
+    if not isinstance(raw, Mapping):
+        return None
+    axes = normalize_axes(raw.get("axes"))
+    if not axes:
+        return None
+    delivery = raw.get("delivery")
+    if not isinstance(delivery, Mapping):
+        return None
+    try:
+        target = float(delivery.get("target_units"))
+    except (TypeError, ValueError):
+        return None
+    if target < 0.0:
+        return None
+    direction_i = normalize_direction(raw.get("direction"), default=1)
+    unit = str(delivery.get("unit") or "progress_unit").strip() or "progress_unit"
+    kind = str(raw.get("kind") or "").strip()
+    if not kind:
+        return None
+    try:
+        per_month = float(delivery.get("target_per_month") or 1)
+    except (TypeError, ValueError):
+        per_month = 1.0
+    return {
+        "version": int(raw.get("version") or CONTRACT_VERSION),
+        "action_type": str(raw.get("action_type") or "secret_order"),
+        "kind": kind,
+        "axes": axes,
+        "direction": direction_i,
+        "delivery": {
+            "unit": unit,
+            "target_units": float(target),
+            "target_per_month": per_month,
+        },
+    }
+
+
+def read_covert_task_contract(dossier: Mapping[str, object] | None) -> Optional[Dict[str, object]]:
+    if not isinstance(dossier, Mapping):
+        return None
+    payload = dossier.get("payload")
+    if not isinstance(payload, Mapping):
+        raw_json = dossier.get("payload_json")
+        if isinstance(raw_json, str) and raw_json.strip():
+            try:
+                loaded = json.loads(raw_json)
+            except (TypeError, ValueError):
+                loaded = None
+            payload = loaded if isinstance(loaded, Mapping) else None
+        else:
+            payload = None
+    if not isinstance(payload, Mapping):
+        return None
+    return coerce_covert_task_contract(payload.get(CONTRACT_KEY))
+
+
+def contract_target_units(
+    contract: Mapping[str, object] | None,
+    *,
+    deadline_span: int = 0,
+    due_turn: int = 0,
+) -> float:
+    if isinstance(contract, Mapping):
+        delivery = contract.get("delivery")
+        if isinstance(delivery, Mapping):
+            try:
+                return float(delivery.get("target_units"))
+            except (TypeError, ValueError):
+                pass
+    return target_progress_units(deadline_span=deadline_span, due_turn=due_turn)
+
+
+def contract_axes_direction(
+    contract: Mapping[str, object] | None,
+) -> tuple[list[str], int]:
+    if isinstance(contract, Mapping):
+        axes = normalize_axes(contract.get("axes"))
+        if axes:
+            return axes, normalize_direction(contract.get("direction"), default=1)
+    unspecified = str(_kinds_config()["unspecified_kind"])
+    spec = _kind_spec(unspecified)
+    return normalize_axes(spec.get("axes")), normalize_direction(spec.get("direction"), default=1)
 
 
 def decide_secret_order_settlement(review_input: Mapping[str, object]) -> Dict[str, object]:
-    """到期交付缺口对账——与 due_review.decide_due_review_verdict 同形精神：
-
-    - 只读实况轨 Σ（actual_units），不读 progress_json / sim_note 作真源
-    - status/outcome/Σ 结构化存储；note 仅机面审计，不得作玩家正文（P7）
-    - 表报仅可入机面 note，不得翻实账归因
-    - 交付缺口 → failed；已交付 → done
-    """
     actual = float(review_input.get("actual_units") or 0.0)
     target = float(review_input.get("target_units") or 0.0)
     has_reports = bool(review_input.get("has_reports"))
@@ -192,7 +418,6 @@ def player_facing_secret_order_close_text(
     order: Mapping[str, object],
     reports: Sequence[Mapping[str, object]],
 ) -> str:
-    """玩家可见结案正文：复用既有 result 时间线或 0058/personnel_secret 奏报，不造模板。"""
     existing = str(order.get("result") or "").strip()
     if existing:
         return existing
@@ -206,7 +431,6 @@ def player_facing_secret_order_close_text(
 
 
 def build_minister_snapshot(db: Any, minister_name: str) -> Dict[str, object]:
-    """读 DB 快照装配意愿轴输入（extractor 前可 golden）。"""
     name = str(minister_name or "").strip()
     row = db.conn.execute(
         "SELECT loyalty, identity, faction, seed_guilt, status FROM characters WHERE name=?",
@@ -247,23 +471,71 @@ def build_minister_snapshot(db: Any, minister_name: str) -> Dict[str, object]:
 
 
 def minister_eligible_for_monthly_covert(db: Any, minister_name: str) -> bool:
-    """承办资格：人物行存在且 characters.status==active（复用既有状态，不新建表）。"""
     snap = build_minister_snapshot(db, minister_name)
     return bool(snap.get("present")) and str(snap.get("status") or "") == "active"
 
 
-def compute_floor_for_minister(db: Any, minister_name: str) -> str:
+def compute_floor_for_minister(
+    db: Any,
+    minister_name: str,
+    *,
+    contract: Mapping[str, object] | None = None,
+) -> str:
     snap = build_minister_snapshot(db, minister_name)
+    axes, direction = contract_axes_direction(contract)
     return compute_willingness_floor(
         loyalty=int(snap["loyalty"]),
         identity=int(snap["identity"]),
         satisfaction=int(snap["satisfaction"]),
-        seed_guilt=str(snap.get("seed_guilt") or ""),
+        seed_guilt=snap.get("seed_guilt") or "",
+        faction=str(snap.get("faction") or ""),
+        axes=axes,
+        direction=direction,
     )
 
 
+def _order_tags(order: Mapping[str, object]) -> object:
+    tags = order.get("tags")
+    if isinstance(tags, str):
+        try:
+            return json.loads(tags)
+        except (TypeError, ValueError):
+            return []
+    return tags
+
+
+def _order_contract(db: Any, order: Mapping[str, object]) -> Optional[Dict[str, object]]:
+    oid = int(order.get("id") or 0)
+    dossier = db.get_dossier_for_secret_order(oid) if oid > 0 else None
+    contract = read_covert_task_contract(dossier)
+    if contract is not None:
+        return contract
+    return build_covert_task_contract(
+        deadline_span=int(order.get("deadline_span") or 0),
+        due_turn=int(order.get("due_turn") or 0),
+        tags=_order_tags(order),
+    )
+
+
+def count_turn_originated_effects(db: Any, dossier_id: int, turn: int) -> int:
+    """本回合带 dossier origin 的真实效果条数（0054 实况，不含奏报）。"""
+    did = int(dossier_id)
+    current = int(turn)
+    n = 0
+    for item in db.list_dossier_durable_effects(did):
+        if int(item.get("turn") or 0) == current:
+            n += 1
+    return n
+
+
+def monthly_actual_units(*, fidelity: object, originated_effect_count: int) -> float:
+    """实进度 = 执行格判决 × 当月真实效果是否在场。无 origin 效果则空转 0。"""
+    if int(originated_effect_count or 0) <= 0:
+        return 0.0
+    return progress_units_for_state(fidelity)
+
+
 def build_covert_floor_payload(db: Any, orders: Sequence[Mapping[str, object]]) -> List[Dict[str, object]]:
-    """注入 personnel_secret 的机械底档带（只读快照，零 LLM）。"""
     out: List[Dict[str, object]] = []
     for order in orders:
         if not isinstance(order, dict):
@@ -275,11 +547,18 @@ def build_covert_floor_payload(db: Any, orders: Sequence[Mapping[str, object]]) 
         if status != "active":
             continue
         minister = str(order.get("minister_name") or "")
-        floor = compute_floor_for_minister(db, minister)
+        contract = _order_contract(db, order)
+        floor = compute_floor_for_minister(db, minister, contract=contract)
         dossier = db.get_dossier_for_secret_order(oid)
         prior_units = 0.0
+        target_units = contract_target_units(
+            contract,
+            deadline_span=int(order.get("deadline_span") or 0),
+            due_turn=int(order.get("due_turn") or 0),
+        )
         if dossier is not None:
             prior_units = float(db.sum_dossier_actual_progress_units(int(dossier["id"])))
+        axes, direction = contract_axes_direction(contract)
         out.append({
             "order_id": oid,
             "minister_name": minister,
@@ -287,6 +566,10 @@ def build_covert_floor_payload(db: Any, orders: Sequence[Mapping[str, object]]) 
             "floor": floor,
             "allowed_states": list(FIDELITY_STATES[_FIDELITY_INDEX[floor]:]),
             "prior_actual_units": prior_units,
+            "target_units": target_units,
+            "kind": str((contract or {}).get("kind") or ""),
+            "axes": axes,
+            "direction": direction,
             "due_turn": int(order.get("due_turn") or 0),
             "deadline_span": int(order.get("deadline_span") or 0),
         })
@@ -307,163 +590,6 @@ def _selection_map(raw_selections: object) -> Dict[int, Dict[str, object]]:
     return mapping
 
 
-def derive_monthly_covert_world_effects(
-    *,
-    fidelity: object,
-    minister_name: str,
-    dossier_id: int,
-    region_id: str = "",
-    title: str = "",
-) -> Dict[str, object]:
-    """由 clamp 后执行态机械派生本月人物/钱粮/地区效果包（纯函数，可 golden）。
-
-    返回喂既有 applier 的结构；每项 origin_ref=dossier:N。不读奏报/sim_note。
-    不派生 皇威 metric / faction satisfaction（canonical applier 无 origin 落点）。
-    """
-    state_name = normalize_fidelity_state(fidelity) or "反噬"
-    coef = dict(_WORLD_EFFECT_BY_FIDELITY.get(state_name) or _WORLD_EFFECT_BY_FIDELITY["反噬"])
-    origin = f"dossier:{int(dossier_id)}"
-    label = str(title or "密令差务").strip()[:24] or "密令差务"
-    reason = f"密令实办（{state_name}）：{label}"
-
-    person_changes: List[Dict[str, object]] = []
-    loyalty = int(coef.get("loyalty") or 0)
-    minister = str(minister_name or "").strip()
-    if loyalty != 0 and minister:
-        person_changes.append({
-            "name": minister,
-            "动作": "评定",
-            "loyalty": loyalty,
-            "reason": reason,
-            "origin_ref": origin,
-        })
-
-    economy_moves: List[Dict[str, object]] = []
-    eco = int(coef.get("economy") or 0)
-    if eco != 0:
-        economy_moves.append({
-            "account": "内库",
-            "delta": eco,
-            "category": "密令差务",
-            "reason": reason,
-            "origin_ref": origin,
-        })
-
-    region_delta: Dict[str, Dict[str, object]] = {}
-    rid = str(region_id or "").strip()
-    unrest = int(coef.get("region_unrest") or 0)
-    if rid and unrest != 0:
-        region_delta[rid] = {
-            "unrest": unrest,
-            "reason": reason,
-            "origin_ref": origin,
-        }
-
-    return {
-        "fidelity": state_name,
-        "origin_ref": origin,
-        "人物变更": person_changes,
-        "economy_moves": economy_moves,
-        "region_delta": region_delta,
-    }
-
-
-def _minister_world_context(db: Any, minister_name: str) -> Dict[str, str]:
-    name = str(minister_name or "").strip()
-    if not name:
-        return {"region_id": ""}
-    row = db.conn.execute(
-        "SELECT location FROM characters WHERE name=?",
-        (name,),
-    ).fetchone()
-    if row is None:
-        return {"region_id": ""}
-    return {
-        "region_id": str(row["location"] or ""),
-    }
-
-
-def _apply_derived_world_effects(
-    db: Any,
-    state: Any,
-    package: Mapping[str, object],
-) -> Dict[str, object]:
-    """经既有 applier 落库；origin 纪律与 apply_score_extraction 同口径。"""
-    from ming_sim.flows import _apply_economy_list
-    from ming_sim.issues import _apply_person_changes
-    from ming_sim.models import Event
-
-    origin = str(package.get("origin_ref") or "").strip()
-    out: Dict[str, object] = {
-        "origin_ref": origin,
-        "人物变更": [],
-        "economy_moves": [],
-        "region_delta": [],
-    }
-
-    people = list(package.get("人物变更") or [])
-    if people:
-        results = _apply_person_changes(
-            db,
-            state,
-            people,
-            content=getattr(db, "content", None),
-            origin_ref=origin,
-            require_origin=True,
-            external_transaction=True,
-        )
-        out["人物变更"] = [r for r in results if not r.get("rejected")]
-        out["人物变更_rejections"] = [r for r in results if r.get("rejected")]
-
-    economy = list(package.get("economy_moves") or [])
-    if economy:
-        eco_out = _apply_economy_list(
-            db,
-            state,
-            economy,
-            commit=False,
-            require_origin=True,
-            origin_ref=origin,
-        )
-        out["economy_moves"] = [r for r in eco_out if not r.get("rejected")]
-        out["economy_rejections"] = [r for r in eco_out if r.get("rejected")]
-
-    regions = package.get("region_delta") or {}
-    if isinstance(regions, dict) and regions:
-        pseudo = Event(
-            id="covert_monthly",
-            title="密令月度实办",
-            kind="密令",
-            summary="",
-            urgency=0,
-            severity=0,
-            credibility=100,
-            interests=[],
-            audiences=[],
-        )
-        region_changes: List[Dict[str, object]] = []
-        for region_id, raw_changes in regions.items():
-            if not isinstance(raw_changes, dict):
-                continue
-            payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
-            region_changes.extend(
-                db.apply_region_deltas(
-                    state,
-                    pseudo,
-                    None,
-                    "密令实办",
-                    {str(region_id): payload},
-                    commit=False,
-                    origin_ref=origin,
-                    require_origin=True,
-                )
-            )
-        out["region_delta"] = [r for r in region_changes if not r.get("rejected")]
-        out["region_rejections"] = [r for r in region_changes if r.get("rejected")]
-
-    return out
-
-
 def apply_monthly_covert_actual_progress(
     db: Any,
     state: Any,
@@ -471,12 +597,9 @@ def apply_monthly_covert_actual_progress(
     selections: object = None,
     commit: bool = False,
 ) -> List[Dict[str, object]]:
-    """当月实况轨落笔：clamp 执行态 → actual_progress + 真实后果经既有 applier。
+    """当月实况轨落笔：clamp 执行态 + 当月 origin 真实效果 → dossier_actual_progress。
 
-    与 apply_score_extraction 同 atomic 调用（commit=False）。
-    不读/不写 dossier_progress_json；奏报仍走既有 0058 路径。
-    旧档 pending_review 已由 DB 一次迁移为 active，本函数只扫 active。
-    资格：发令月（turn_issued==current）不计进度；承办缺行/非 active 不写进度不派生后果。
+    不发明人物/钱粮/地区固定套餐；奏报永不入 apply。
     """
     orders = list(db.list_secret_orders(status="active"))
     by_sel = _selection_map(selections)
@@ -484,7 +607,6 @@ def apply_monthly_covert_actual_progress(
     turn = int(state.turn)
     for order in orders:
         oid = int(order["id"])
-        # 发令月不计进度（收窄扫描集合，非平行护栏）
         if int(order.get("turn_issued") or 0) == turn:
             continue
         minister = str(order.get("minister_name") or "")
@@ -501,23 +623,28 @@ def apply_monthly_covert_actual_progress(
                 "order_id": oid, "rejected": True, "reason": "密令缺少案卷",
             })
             continue
-        # 已结案案卷不重复写月度实况
         if str(dossier.get("status") or "") == "closed":
             continue
         did = int(dossier["id"])
-        # 同回合幂等：已有本月实进度行则只刷新 units/态，不重复叠世界后果
-        prior = db.conn.execute(
-            "SELECT id FROM dossier_actual_progress WHERE dossier_id=? AND turn=?",
-            (did, turn),
-        ).fetchone()
-        floor = compute_floor_for_minister(db, minister)
+        contract = read_covert_task_contract(dossier) or build_covert_task_contract(
+            deadline_span=int(order.get("deadline_span") or 0),
+            due_turn=int(order.get("due_turn") or 0),
+            tags=_order_tags(order),
+        )
+        floor = compute_floor_for_minister(db, minister, contract=contract)
         sel = by_sel.get(oid) or {}
         selected = sel.get("fidelity", sel.get("执行态", sel.get("state")))
         fidelity = clamp_fidelity_to_floor(floor, selected)
-        units = progress_units_for_state(fidelity)
+        originated = count_turn_originated_effects(db, did, turn)
+        units = monthly_actual_units(
+            fidelity=fidelity, originated_effect_count=originated,
+        )
         note = str(sel.get("note") or sel.get("备注") or "").strip()
         if not note:
-            note = f"机械实进度：底档{floor}→落态{fidelity}（{units:g}）"
+            note = (
+                f"机械实进度：底档{floor}→落态{fidelity}（{units:g}）"
+                f"；origin_effects={originated}"
+            )
         row = db.record_dossier_actual_progress(
             did,
             turn,
@@ -527,21 +654,7 @@ def apply_monthly_covert_actual_progress(
             note=note,
             commit=False,
         )
-        # 过程态：沿 mark_in_progress 既有特例进入 executing（不改 terminal policy 表）
         db.mark_secret_order_in_progress(oid, commit=False)
-
-        world: Dict[str, object] = {}
-        if prior is None:
-            ctx = _minister_world_context(db, minister)
-            package = derive_monthly_covert_world_effects(
-                fidelity=fidelity,
-                minister_name=minister,
-                dossier_id=did,
-                region_id=str(ctx.get("region_id") or ""),
-                title=str(order.get("title") or ""),
-            )
-            world = _apply_derived_world_effects(db, state, package)
-
         applied.append({
             "order_id": oid,
             "dossier_id": did,
@@ -549,8 +662,14 @@ def apply_monthly_covert_actual_progress(
             "fidelity": fidelity,
             "floor": floor,
             "row_id": row.get("id"),
-            "world_effects": world,
-            "effects_applied": bool(world),
+            "originated_effect_count": originated,
+            "target_units": contract_target_units(
+                contract,
+                deadline_span=int(order.get("deadline_span") or 0),
+                due_turn=int(order.get("due_turn") or 0),
+            ),
+            "contract_kind": contract.get("kind"),
+            "contract_axes": list(contract.get("axes") or []),
         })
     if commit and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0:
         db.conn.commit()
@@ -558,7 +677,6 @@ def apply_monthly_covert_actual_progress(
 
 
 def list_due_secret_orders_for_settlement(db: Any, state: Any) -> List[Dict[str, object]]:
-    """可对账集：active 且 due_turn∈(0, turn]（legacy pending_review 已一次迁 active）。"""
     turn = int(state.turn)
     due: List[Dict[str, object]] = []
     for order in db.list_secret_orders(status="active"):
@@ -575,10 +693,6 @@ def settle_due_secret_orders(
     *,
     commit: bool = False,
 ) -> List[Dict[str, object]]:
-    """settle_with_delta 尾部：当月实况已落后，只读实况轨对账并 close。
-
-    玩家正文复用既有 result/0058 奏报；机面 note 含 Σ 但不写入 result（P7）。
-    """
     results: List[Dict[str, object]] = []
     for order in list_due_secret_orders_for_settlement(db, state):
         oid = int(order["id"])
@@ -592,7 +706,6 @@ def settle_due_secret_orders(
             continue
         did = int(dossier["id"])
         actual = float(db.sum_dossier_actual_progress_units(did))
-        # deadline_span 优先；list 投影若无则回读
         span = int(order.get("deadline_span") or 0)
         if span <= 0:
             row = db.conn.execute(
@@ -601,7 +714,13 @@ def settle_due_secret_orders(
             ).fetchone()
             if row is not None:
                 span = int(row["deadline_span"] or 0)
-        target = target_progress_units(
+        contract = read_covert_task_contract(dossier) or build_covert_task_contract(
+            deadline_span=span,
+            due_turn=int(order.get("due_turn") or 0),
+            tags=_order_tags(order),
+        )
+        target = contract_target_units(
+            contract,
             deadline_span=span,
             due_turn=int(order.get("due_turn") or 0),
         )
@@ -638,7 +757,6 @@ def settle_due_secret_orders(
 
 
 def parse_covert_exec_selections(extracted: Mapping[str, object] | None) -> List[Dict[str, object]]:
-    """从 extractor 合并产物取带内选态；兼容中英字段名。"""
     if not extracted:
         return []
     raw = (

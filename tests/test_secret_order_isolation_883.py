@@ -14,6 +14,7 @@ import pytest
 
 from ming_sim import issues
 from ming_sim.decree import settle_with_delta
+from tests.conftest import with_monthly_reports
 from ming_sim.simulation import build_extractor_shared_context, build_simulator_payload
 
 
@@ -55,7 +56,7 @@ def test_883_two_turn_probe_secret_never_enters_shared_archives(game):
 
     # T1 → T2：纯公开结算叙事（模拟公共 LLM 无密令预读）。
     settle_with_delta(
-        state, db, {}, before_turn=state.turn, content=content,
+        state, db, with_monthly_reports(db, {}), before_turn=state.turn, content=content,
         narrative="本月朝局平缓，无非常之事。",
     )
     db.save_turn_report(state, "邸报：本月朝局平缓。")
@@ -529,7 +530,7 @@ def test_976_pure_public_minister_reply_released_after_settle(game):
 
     mid = db.append_chat_message(minister.name, state.turn, "minister", reply)
     settle_with_delta(
-        state, db, {}, before_turn=state.turn, content=content,
+        state, db, with_monthly_reports(db, {}), before_turn=state.turn, content=content,
         narrative="本月朝局平缓。",
     )
     status = db.conn.execute(

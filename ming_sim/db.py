@@ -12146,9 +12146,22 @@ class GameDB:
                 int(row["turn_closed"] or row["turn_issued"] or 0)
                 if status == "closed" else 0
             )
+            from ming_sim.covert_progress import (
+                CONTRACT_KEY,
+                build_covert_task_contract,
+            )
+            try:
+                tags = json.loads(row["tags"] or "[]")
+            except (TypeError, ValueError):
+                tags = []
             payload = {
                 "title": str(row["title"] or ""),
                 "content": str(row["content"] or ""),
+                CONTRACT_KEY: build_covert_task_contract(
+                    deadline_span=int(row["deadline_span"] or 0),
+                    due_turn=int(row["due_turn"] or 0),
+                    tags=tags,
+                ),
             }
             cur = self.conn.execute(
                 """
@@ -12926,27 +12939,33 @@ class GameDB:
             "fork": bool(fork),
         }
 
-    def list_monthly_dossier_progress_nudges(self) -> List[Dict[str, object]]:
-        """Long protection/audit errands due a monthly report, with history."""
+    def list_monthly_dossier_progress_nudges(self, turn: int | None = None) -> List[Dict[str, object]]:
+        """#1504 / ADR 0073 / 0058：凡带执行判定面的在办密令案卷均可挂月报。
+
+        不再以 deadline/tag/发令月收缩候选；缺项由 record 侧完整覆盖失败。
+        """
+        _ = turn  # 签名保留；0058 候选不按结算回合收缩
         rows = self.conn.execute(
             """
-            SELECT d.*, s.tags FROM decree_dossiers d
+            SELECT d.* FROM decree_dossiers d
             JOIN secret_orders s ON s.id=d.secret_order_id
             WHERE d.status IN ('promulgated','executing') AND s.status='active'
-              AND s.deadline_span >= 2
             ORDER BY d.id
             """
         ).fetchall()
         out: List[Dict[str, object]] = []
         for row in rows:
-            tags = {str(tag).strip() for tag in json.loads(row["tags"] or "[]")}
-            if not (tags & {"护行", "稽核"}):
-                continue
             dossier_id = int(row["id"])
+            try:
+                payload = json.loads(row["payload_json"] or "{}")
+            except (TypeError, ValueError):
+                payload = {}
+            if not isinstance(payload, dict):
+                payload = {}
             item: Dict[str, object] = {
                 "dossier_id": dossier_id,
                 "secret_order_id": int(row["secret_order_id"]),
-                "title": json.loads(row["payload_json"] or "{}").get("title", ""),
+                "title": payload.get("title", ""),
                 "progress": self.list_dossier_progress(dossier_id),
             }
             # #622 AC5：仅当稽核链在场时挂分叉信号键；无链则键不出现。
@@ -12962,12 +12981,14 @@ class GameDB:
         """Persist one valid extractor-authored brief for every eligible dossier."""
         candidates = {
             int(item["dossier_id"]): item
-            for item in self.list_monthly_dossier_progress_nudges()
+            for item in self.list_monthly_dossier_progress_nudges(int(turn))
         }
         if not candidates:
             if generated is None or generated == []:
                 return []
             raise ValueError("无合资格长差案卷却收到本月密奏")
+        if generated is None or generated == []:
+            raise ValueError("合资格长差案卷缺少本月密奏")
         if not isinstance(generated, list):
             raise ValueError("合资格长差案卷缺少本月密奏")
         supplied: Dict[int, Dict[str, object]] = {}
@@ -15299,6 +15320,53 @@ class GameDB:
             (int(secret_order_id),),
         ).fetchone()
         return None if row is None else self._dossier_row(row)
+
+    def _refresh_secret_order_covert_contract(
+        self,
+        secret_order_id: int,
+        *,
+        deadline_span: int,
+        due_turn: int,
+    ) -> None:
+        """期限变更时更新 payload.covert_task_contract.delivery（保轴/方向）。"""
+        from ming_sim.covert_progress import (
+            CONTRACT_KEY,
+            build_covert_task_contract,
+            coerce_covert_task_contract,
+        )
+
+        dossier = self.get_dossier_for_secret_order(int(secret_order_id))
+        if dossier is None:
+            return
+        try:
+            payload = json.loads(str(dossier.get("payload_json") or "{}"))
+        except (TypeError, ValueError):
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        payload_tags = payload.get("tags") if isinstance(payload.get("tags"), list) else []
+        prior = coerce_covert_task_contract(payload.get(CONTRACT_KEY))
+        if payload_tags:
+            contract = build_covert_task_contract(
+                deadline_span=int(deadline_span),
+                due_turn=int(due_turn),
+                tags=payload_tags,
+            )
+        elif prior is not None:
+            contract = build_covert_task_contract(
+                deadline_span=int(deadline_span),
+                due_turn=int(due_turn),
+                kind=prior.get("kind"),
+                axes=prior.get("axes"),
+                direction=prior.get("direction"),
+            )
+        else:
+            contract = build_covert_task_contract(
+                deadline_span=int(deadline_span),
+                due_turn=int(due_turn),
+            )
+        payload[CONTRACT_KEY] = contract
+        self.update_decree_dossier_payload(int(dossier["id"]), payload, commit=False)
 
     def list_endorsed_dossier_candidates(
         self, current_turn: int,
@@ -21882,6 +21950,17 @@ class GameDB:
                 origin_chat_message_ids=origin_chat_message_ids,
                 commit=False,
             )
+            # #1504 Owner A：确认闸一次冻结 typed covert-task contract（动作轴/交付判据）。
+            # 不解析 title/content；轴/方向仅收闭集，缺省用 covert 结构化默认。
+            from ming_sim.covert_progress import (
+                CONTRACT_KEY,
+                build_covert_task_contract,
+            )
+            covert_contract = build_covert_task_contract(
+                deadline_span=int(deadline),
+                due_turn=int(due_turn),
+                tags=list(tags),
+            )
             dossier_id = self.create_decree_dossier(
                 state,
                 action_type="secret_order",
@@ -21900,6 +21979,7 @@ class GameDB:
                     "importance": int(importance),
                     "excluded_names": list(raw_excluded_names),
                     "excluded_offices": list(excluded_offices),
+                    CONTRACT_KEY: covert_contract,
                 },
                 status="promulgated",
                 due_turn=due_turn,
@@ -22034,6 +22114,29 @@ class GameDB:
                 origin_chat_message_id=origin_chat_message_id,
                 origin_chat_message_ids=classify_ids,
                 commit=False,
+            )
+            live = self.conn.execute(
+                "SELECT deadline_span, due_turn FROM secret_orders WHERE id=?",
+                (int(order_id),),
+            ).fetchone()
+            span = int(live["deadline_span"] or 0) if live is not None else 0
+            due = int(live["due_turn"] or 0) if live is not None else 0
+            dossier = self.get_dossier_for_secret_order(int(order_id))
+            if dossier is not None:
+                try:
+                    payload = json.loads(str(dossier.get("payload_json") or "{}"))
+                except (TypeError, ValueError):
+                    payload = {}
+                if not isinstance(payload, dict):
+                    payload = {}
+                payload["title"] = persisted_title
+                payload["content"] = content
+                payload["tags"] = json.loads(tags_json)
+                self.update_decree_dossier_payload(int(dossier["id"]), payload, commit=False)
+            self._refresh_secret_order_covert_contract(
+                int(order_id),
+                deadline_span=span,
+                due_turn=due,
             )
         tlog(f"[secret_order] update id={order_id} title={title[:20]}")
         self.update_secret_order_progress(int(order_id), f"奉旨更新密令要旨：{content}", state.year, state.period)

@@ -16,6 +16,7 @@ import pytest
 
 import ming_sim.cli_backend as cb
 from ming_sim.session import GameSession
+from tests.conftest import covering_monthly_extract
 from tests.dossier_test_helpers import promulgate_proposed_appointments
 
 
@@ -35,7 +36,7 @@ def _canned_no_edict_settlement(monkeypatch):
     )
     monkeypatch.setattr(
         decree_mod, "extract_scores_by_modules_with_agno",
-        lambda *a, **k: ({}, "out", "in"),
+        covering_monthly_extract,
     )
     monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
     monkeypatch.setattr(memories, "run_agent_text", lambda *a, **k: '{"body":"月记","tags":[]}')

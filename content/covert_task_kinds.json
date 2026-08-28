@@ -1,0 +1,26 @@
+{
+  "_comment": "#1504 Owner A：确认闸 typed covert-task 合同由结构化 tags 映射，不解析 title/content。",
+  "unspecified_kind": "_unspecified",
+  "kinds": {
+    "查案": {
+      "axes": ["实务事功"],
+      "direction": 1,
+      "delivery": {"unit": "progress_unit", "target_per_month": 1}
+    },
+    "稽核": {
+      "axes": ["既得利益"],
+      "direction": 1,
+      "delivery": {"unit": "progress_unit", "target_per_month": 1}
+    },
+    "护行": {
+      "axes": ["皇权依附"],
+      "direction": 1,
+      "delivery": {"unit": "progress_unit", "target_per_month": 1}
+    },
+    "_unspecified": {
+      "axes": ["实务事功"],
+      "direction": 1,
+      "delivery": {"unit": "progress_unit", "target_per_month": 1}
+    }
+  }
+}
