@@ -2236,88 +2236,17 @@ def test_dialogue_and_engine_action_types_cannot_create_dossiers(
         )
 
 
-def test_legacy_secret_orders_restore_with_unique_resumable_dossiers(game):
-    from ming_sim.db import GameDB
-
-    db, state, content = game
+def test_create_secret_order_has_resumable_dossier(game):
+    db, state, _content = game
     actor = _active_minister(db)
-    order_ids = {}
-    for status in ("active", "pending_review", "done", "failed"):
-        order_ids[status] = int(db.conn.execute(
-            """
-            INSERT INTO secret_orders
-                (turn_issued,year_issued,period_issued,minister_name,title,
-                 content,status,result,turn_closed)
-            VALUES (?,?,?,?,?,?,?,?,?)
-            """,
-            (
-                state.turn, state.year, state.period, actor, status,
-                f"{status}密令", status,
-                "已有进展" if status != "active" else "",
-                state.turn if status in {"done", "failed"} else None,
-            ),
-        ).lastrowid)
-    db.conn.commit()
-
-    restored = GameDB(db.path, content=content)
-    try:
-        assert {
-            status: restored.get_dossier_for_secret_order(order_id)["status"]
-            for status, order_id in order_ids.items()
-        } == {
-            "active": "promulgated",
-            "pending_review": "executing",
-            "done": "closed",
-            "failed": "closed",
-        }
-        assert restored.update_secret_order_progress(
-            order_ids["active"], "继续查办", state.year, state.period,
-        )
-        assert restored.get_dossier_for_secret_order(
-            order_ids["active"]
-        )["status"] == "executing"
-    finally:
-        restored.close()
-
-    reopened = GameDB(db.path, content=content)
-    try:
-        assert len([
-            row for row in reopened.list_decree_dossiers()
-            if row["secret_order_id"] in order_ids.values()
-        ]) == len(order_ids)
-    finally:
-        reopened.close()
+    order_id = db.create_secret_order(
+        state, actor, "在办密令", "成案即有案卷", [], deadline_months=1,
+    )
+    dossier = db.get_dossier_for_secret_order(order_id)
+    assert dossier is not None
+    assert dossier["status"] in {"promulgated", "executing"}
 
 
-def test_legacy_secret_order_migration_ignores_free_text_progress(game):
-    from ming_sim.db import GameDB
-
-    db, state, content = game
-    actor = _active_minister(db)
-    ids = []
-    for result, sim_note in (("", ""), ("任意说明", "另一段任意说明")):
-        ids.append(int(db.conn.execute(
-            """
-            INSERT INTO secret_orders
-                (turn_issued,year_issued,period_issued,minister_name,title,
-                 content,status,result,sim_note)
-            VALUES (?,?,?,?,?,?,?,?,?)
-            """,
-            (
-                state.turn, state.year, state.period, actor, "旧密令",
-                "相同结构化密令", "active", result, sim_note,
-            ),
-        ).lastrowid))
-    db.conn.commit()
-
-    restored = GameDB(db.path, content=content)
-    try:
-        assert [
-            restored.get_dossier_for_secret_order(order_id)["status"]
-            for order_id in ids
-        ] == ["promulgated", "promulgated"]
-    finally:
-        restored.close()
 
 
 def test_held_dossier_reenters_only_for_next_month_rejudgment(game):

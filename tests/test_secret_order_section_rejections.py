@@ -26,10 +26,6 @@ def test_close_retired_source_rejected(game):
     oid = db.create_secret_order(
         state, "测试密令官", "退役结案", "不应被 closes 结", [], deadline_months=1,
     )
-    db.conn.execute(
-        "UPDATE secret_orders SET status='pending_review' WHERE id=?", (oid,),
-    )
-    db.conn.commit()
 
     run_settle(db, state, content, {
         "secret_order_closes": [
@@ -42,7 +38,7 @@ def test_close_retired_source_rejected(game):
     rows = _rejection_rows(db, turn, "secret_order_closes")
     assert len(rows) >= 3, rows
     assert all(r[2] == "retired_source" for r in rows), rows
-    assert db.get_secret_order(oid)["status"] == "pending_review"
+    assert db.get_secret_order(oid)["status"] == "active"
 
 
 def test_update_nonint_order_id_invalid_enum(game):
@@ -128,7 +124,6 @@ def test_apply_score_extraction_secret_order_close_retired_no_write(game):
     """#1504：closes 退役后 apply 不写库；无事务副作用可回滚。"""
     db, state, content = game
     oid = db.create_secret_order(state, "测试密令官R8", "测试结案密令", "测试内容", [], deadline_months=1)
-    db.conn.execute("UPDATE secret_orders SET status='pending_review' WHERE id=?", (oid,))
     db.conn.commit()
 
     db.conn.execute("BEGIN")
@@ -142,13 +137,13 @@ def test_apply_score_extraction_secret_order_close_retired_no_write(game):
     assert out["secret_order_closes"][0].get("rejected") is True
     in_tx = db.get_secret_order(oid)
     assert in_tx is not None
-    assert in_tx["status"] == "pending_review"
+    assert in_tx["status"] == "active"
     assert "测试密令结案R8" not in (in_tx["result"] or "")
     db.conn.rollback()
 
     row = db.get_secret_order(oid)
     assert row is not None
-    assert row["status"] == "pending_review"
+    assert row["status"] == "active"
     assert row["turn_closed"] is None
 
 

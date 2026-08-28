@@ -2766,15 +2766,15 @@ def test_runtime_cli_conversation_update_uses_configured_runner_without_env(game
         "SELECT content FROM secret_orders WHERE id=?", (oid,)).fetchone()["content"] == "改后内容"
 
 
-def test_conversation_rush_skips_pending_review(game, monkeypatch):
-    """催办目标恰为非 active（legacy pending_review）时不抛错、不误置成功（target_active 守门）。"""
+def test_conversation_rush_skips_non_active(game, monkeypatch):
+    """催办目标恰为非 active 时不抛错、不误置成功（target_active 守门）。"""
     db, state, _ = game
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
     who = "待核承办官"
-    oid = db.create_secret_order(state, who, "待核令", "内容", [], deadline_months=6)
-    db.conn.execute("UPDATE secret_orders SET status='pending_review' WHERE id=?", (oid,))
-    db.conn.commit()  # legacy pending_review 行（#1504 submit 不再产此态）
+    oid = db.create_secret_order(state, who, "已结令", "内容", [], deadline_months=6)
+    db.conn.execute("UPDATE secret_orders SET status='failed' WHERE id=?", (oid,))
+    db.conn.commit()
     monkeypatch.setattr(cb, "extract_minister_actions", lambda *a, **k: {
         "secret_action": "催办", "order_id": oid, "new_title": "", "new_content": "",
         "deadline_months": 0, "cultivate_skill": "", "cultivate_trait": ""})
@@ -2789,6 +2789,6 @@ def test_conversation_rush_skips_pending_review(game, monkeypatch):
             "cultivate_skill": "", "cultivate_trait": "",
         },
     )
-    assert res["secret_order_id"] is None        # pending_review 不被催办，不抛错
+    assert res["secret_order_id"] is None        # 非 active 不被催办，不抛错
     row = db.conn.execute("SELECT status FROM secret_orders WHERE id=?", (oid,)).fetchone()
-    assert row["status"] == "pending_review"     # 状态未被动
+    assert row["status"] == "failed"     # 状态未被动
