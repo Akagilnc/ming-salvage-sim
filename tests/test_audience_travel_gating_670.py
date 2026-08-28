@@ -1644,6 +1644,11 @@ def _assert_secret_order_pending(db, state, *, minister_name: str, pid: int) -> 
     assert row["action"] == "新建"
     assert row["minister_name"] == minister_name
     assert row["status"] == "pending"
+    payload = json.loads(row["payload_json"])
+    assert payload.get("title")
+    assert payload.get("content")
+    # extractor 未冻合同时仍须暂存；禁止 staging 合成 covert_task
+    assert "covert_task" not in payload
 
 
 def _secret_order_runtime(db, state, content, *, stream: bool):
