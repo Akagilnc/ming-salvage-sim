@@ -398,21 +398,3 @@ def with_monthly_reports(db, extracted=None):
     if reports:
         out["dossier_progress_reports"] = reports
     return out
-
-
-def _install_settle_report_cover():
-    """Test stubs often omit 0058; fill only when the field is absent.
-
-    Explicit [] / None stay fail-loud for coverage-contract tests.
-    """
-    import ming_sim.decree as decree
-
-    original = decree.settle_with_delta
-
-    def covered(state, db, extracted, *args, **kwargs):
-        return original(state, db, with_monthly_reports(db, extracted), *args, **kwargs)
-
-    decree.settle_with_delta = covered
-
-
-_install_settle_report_cover()

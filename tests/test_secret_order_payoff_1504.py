@@ -756,18 +756,6 @@ def test_settle_gap_failed_and_reported_divergence(game):
 
 
 def test_legacy_pending_review_migrated_including_due_turn_zero(game):
-    assert "到期对账" not in (order.get("result") or "")
-    assert "machine_settle" not in (order.get("result") or "")
-    dossier = db.get_dossier_for_secret_order(oid)
-    assert dossier["status"] == "closed"
-    assert dossier["execution_outcome"] == "failed"
-    # 奏报链不被机械结案句改写
-    reports = db.list_dossier_progress(did)
-    assert any(r.get("memorial_text") == memorial for r in reports)
-    assert not any("到期对账" in str(r.get("memorial_text") or "") for r in reports)
-
-
-def test_legacy_pending_review_migrated_including_due_turn_zero(game):
     """开库一次迁移：pending_review→active；due_turn=0 得未来实况窗，不立即失败。"""
     db, state, content = game
     name = _minister(db)
