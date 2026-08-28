@@ -37,7 +37,7 @@ from ming_sim.matching import match_army_id_from_text, match_region_id_from_text
 from ming_sim.exceptions import LLMContractError
 from ming_sim.intelligence import OFFICE_SLOTS
 from ming_sim.models import (
-    FRONT_HALF_DONE_PHASES, Character, Event, GameState, TurnPhase, is_vassal_prince,
+    FRONT_HALF_DONE_PHASES, Character, Event, GameState, is_vassal_prince,
     loads_effect_dict, monthly_amount, period_label, reign_period_label,
 )
 from ming_sim.relations import SUMMON_EDGE_ORIGIN_PREFIX
