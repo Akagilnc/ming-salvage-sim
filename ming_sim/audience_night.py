@@ -570,15 +570,20 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
             beat = "opening"
         elif TAG_CLOSE_NIGHT in tags:
             beat = "closing"
-        elif TAG_ENTER in tags or is_offsite_summon:
+        elif TAG_ENTER in tags:
             beat = "entrance"
+        elif is_offsite_summon:
+            # #1566：场外传召（未入殿）投影为结构化非 entrance scene。
+            # ADR 0096：本回合开不成召对、抵京候旨召见——scene 围绕
+            # 「传召已发、人在途」承接，而非入殿。
+            beat = "summon"
         elif TAG_EXIT in tags:
             beat = "exit"
         else:
             beat = "aside" if entry["audibility"] == AUDIBILITY_PRIVATE else "scene"
-        # #657 S4/P7：OPEN/ENTER 口令账仅 body.strip() 非空才投影；
+        # #657 S4/P7：OPEN/ENTER/summon 口令账仅 body.strip() 非空才投影；
         # 空垫位不进 scroll（无空条、无人物锚、无固定句冒充）。
-        if beat in {"opening", "entrance"} and not str(entry.get("body") or "").strip():
+        if beat in {"opening", "entrance", "summon"} and not str(entry.get("body") or "").strip():
             continue
         person = (entry.get("person_names") or [""])[0] if entry.get("person_names") else ""
         if beat == "aside" and person:

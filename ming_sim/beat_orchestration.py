@@ -27,12 +27,13 @@ from __future__ import annotations
 
 from concurrent.futures import Executor, Future
 from dataclasses import dataclass, fields as _dc_fields
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 import json
 import threading
 
 from ming_sim.audience_night import (
     AUDIBILITY_PUBLIC,
+    METHOD_CHUANZHAO,
     METHOD_XUANRU,
     SUMMON_METHODS,
     TAG_ENTER,
@@ -47,6 +48,9 @@ BEAT_OPEN = "open"
 BEAT_ENTER = "enter"
 BEAT_EXIT = "exit"
 BEAT_CLOSE = "close"
+# #1566：场外传召 scene beat ——人在途未入殿，场景围绕「传召已发、人在途」承接，
+# 而非「入殿」。ADR 0096：本回合开不成召对、抵京候旨召见。
+BEAT_SUMMON = "summon"
 
 # 见闻供给接口：character_name -> 角色见闻投影（get_character_knowledge 契约的 dict）。
 # 空名返回 {}。默认实现包 get_character_knowledge（#489 底座）；可注入 fake 做切片验收。
@@ -196,7 +200,7 @@ def assemble_beat_inputs(
     """
     provider = knowledge_provider or _default_knowledge_provider(db, state)
 
-    if beat_kind in (BEAT_ENTER, BEAT_EXIT):
+    if beat_kind in (BEAT_ENTER, BEAT_EXIT, BEAT_SUMMON):
         subject = str(person_name or "").strip()
     else:
         # 夜级框架 beat（开夜/收夜）：视角取常在员额首席（王承恩），无则空。
@@ -215,7 +219,7 @@ def assemble_beat_inputs(
     characterization = ""
     prior_appearances: Tuple[str, ...] = ()
     prior_bound = int(before_entry_id or 0)
-    if beat_kind in (BEAT_ENTER, BEAT_EXIT):
+    if beat_kind in (BEAT_ENTER, BEAT_EXIT, BEAT_SUMMON):
         characterization = _characterization(db, person_name)
         prior_appearances = _person_prior_appearances(
             db, night_id, person_name, before_entry_id=prior_bound,
@@ -223,7 +227,7 @@ def assemble_beat_inputs(
 
     # #1294：open/enter 当期年号事实；复用 models.reign_period_label，不另写投影。
     era_label = ""
-    if beat_kind in (BEAT_OPEN, BEAT_ENTER):
+    if beat_kind in (BEAT_OPEN, BEAT_ENTER, BEAT_SUMMON):
         year = getattr(state, "year", None)
         period = getattr(state, "period", None)
         if year is not None and period is not None:
@@ -243,9 +247,9 @@ def assemble_beat_inputs(
         beat_kind=beat_kind,
         time_of_day=str(time_of_day or ""),
         location=str(location or ""),
-        person_name=str(person_name or "") if beat_kind in (BEAT_ENTER, BEAT_EXIT) else "",
+        person_name=str(person_name or "") if beat_kind in (BEAT_ENTER, BEAT_EXIT, BEAT_SUMMON) else "",
         characterization=characterization,
-        summon_method=str(summon_method or "") if beat_kind == BEAT_ENTER else "",
+        summon_method=str(summon_method or "") if beat_kind in (BEAT_ENTER, BEAT_SUMMON) else "",
         perspectival_world=perspectival_world,
         court_tension=court_tension,
         prior_appearances=prior_appearances,
@@ -323,7 +327,7 @@ def create_llm_beat_generator(llm_config: Any) -> BeatGenerator:
         # #1294/#1313 r4b：仅 open/enter 且 label 非空时发射「当期年月」；
         # exit/close（及空 label）不加入该键，避免越界空键。
         label = str(inputs.reign_period_label or "").strip()
-        if inputs.beat_kind in (BEAT_OPEN, BEAT_ENTER) and label:
+        if inputs.beat_kind in (BEAT_OPEN, BEAT_ENTER, BEAT_SUMMON) and label:
             materials["当期年月"] = label
         # Structured living facts belong only to the open-beat LLM materials.
         # The deterministic fallback remains fixed prose and must not expand.
@@ -367,6 +371,23 @@ def production_beat_generator(inputs: BeatInputs) -> str:
         if identity:
             who = f"{who}（{identity}）"
         body = f"{head}{who}{visit}殿。"
+        if tension:
+            body = f"{body}{tension}"
+        return body
+
+    if inputs.beat_kind == BEAT_SUMMON:
+        # #1566：场外传召 scene——人在途未入殿（ADR 0096）。
+        # 围绕「传召已发、人在途」承接，不写入殿气象。
+        method = str(inputs.summon_method or METHOD_CHUANZHAO).strip() or METHOD_CHUANZHAO
+        name = str(inputs.person_name or "").strip()
+        if not name:
+            return ""
+        identity = _identity_snippet(inputs.characterization)
+        head = f"{place_time}，" if place_time else ""
+        who = f"{method}{name}"
+        if identity:
+            who = f"{who}（{identity}）"
+        body = f"{head}{who}发，人在途。"
         if tension:
             body = f"{body}{tension}"
         return body
@@ -436,6 +457,38 @@ def generate_enter_beat_body(
         summon_method=summon_method,
         knowledge_provider=knowledge_provider,
         extra_public_layer=extra_public_layer,
+    )
+    return run_beat_generator(beat_generator, inputs)
+
+
+def generate_summon_beat_body(
+    db: Any,
+    state: Any,
+    *,
+    night: Dict[str, Any],
+    person_name: str,
+    summon_method: str = METHOD_CHUANZHAO,
+    beat_generator: Optional[BeatGenerator] = None,
+    knowledge_provider: Optional[KnowledgeProvider] = None,
+    before_entry_id: int = 0,
+) -> str:
+    """#1566：场外传召 scene 正文 ——人在途未入殿（ADR 0096）。
+
+    时辰/地点取自夜容器持久属性（cmr R7）。场外传召不建 chat turn、
+    不调大臣回话。beat_kind=BEAT_SUMMON 而非 BEAT_ENTER，生成器
+    围绕「传召已发、人在途」承接。
+    """
+    if beat_generator is None:
+        return ""
+    inputs = assemble_beat_inputs(
+        db, state, beat_kind=BEAT_SUMMON,
+        time_of_day=str(night.get("time_of_day") or ""),
+        location=str(night.get("location") or ""),
+        night_id=int(night.get("id") or 0),
+        person_name=person_name,
+        summon_method=summon_method,
+        knowledge_provider=knowledge_provider,
+        before_entry_id=before_entry_id,
     )
     return run_beat_generator(beat_generator, inputs)
 
@@ -557,6 +610,111 @@ def persist_chat_turn_scene(db: Any, generated: List[Tuple[int, str]]) -> None:
             "UPDATE story_ledger_entries SET body = ? WHERE id = ?",
             (body, int(entry_id)),
         )
+
+
+def discover_offsite_summon_task(
+    db: Any,
+    state: Any,
+    *,
+    origin_id: str,
+    person_name: str,
+    beat_generator: Optional[BeatGenerator] = None,
+) -> Union[Tuple[int, BeatInputs], Tuple[int, str], None]:
+    """#1566：为场外传召账发现/组装 BEAT_SUMMON BeatInputs。
+
+    复用既有 assemble_beat_inputs（单一编排入口），不另建 registry/generator/lifecycle。
+    BEAT_SUMMON（非 BEAT_ENTER）：人在途未入殿，ADR 0096。
+    返回 (entry_id, BeatInputs)、(entry_id, body) 或 None（body 已物化幂等 no-op）。
+    """
+    from ming_sim.audience_night import (
+        SUMMON_METHODS,
+        get_night,
+        list_unsettled_summons,
+    )
+    import json as _json
+
+    origin = str(origin_id or "").strip()
+    name = str(person_name or "").strip()
+    if not origin or not name:
+        raise ValueError(
+            f"discover_offsite_summon_task 须有 origin_id 与 person_name，"
+            f"got origin_id={origin_id!r} person_name={person_name!r}"
+        )
+    item = next(
+        (row for row in list_unsettled_summons(db)
+         if row["origin_id"] == origin and row["person_name"] == name),
+        None,
+    )
+    if item is None:
+        raise RuntimeError(
+            f"场外传召账未落库，无法物化 scene：origin_id={origin!r} person={name!r}"
+        )
+    entry_id = int(item["entry_id"])
+    night_id = int(item["night_id"])
+    row = db.conn.execute(
+        "SELECT body, tags FROM story_ledger_entries WHERE id=?",
+        (entry_id,),
+    ).fetchone()
+    if row is None:
+        raise RuntimeError(f"传召 ledger 行消失：entry_id={entry_id}")
+    # 幂等：body 已由先前物化写入则不再生成。
+    if str(row["body"] or "").strip():
+        return None
+    tags = _json.loads(row["tags"] or "[]")
+    method = next((m for m in SUMMON_METHODS if m in tags), None)
+    if method is None:
+        raise RuntimeError(
+            f"传召账缺召法 tag：entry_id={entry_id} tags={tags!r}"
+        )
+    night = get_night(db, night_id) or {}
+    inputs = assemble_beat_inputs(
+        db, state, beat_kind=BEAT_SUMMON,
+        time_of_day=str(night.get("time_of_day") or ""),
+        location=str(night.get("location") or ""),
+        night_id=night_id,
+        person_name=name,
+        summon_method=method,
+        before_entry_id=entry_id,
+    )
+    if beat_generator is not None:
+        body = run_beat_generator(beat_generator, inputs)
+        return (entry_id, body)
+    return (entry_id, inputs)
+
+
+def materialize_offsite_summon_scene(
+    db: Any,
+    state: Any,
+    *,
+    origin_id: str,
+    person_name: str,
+    beat_generator: Optional[BeatGenerator] = None,
+) -> List[Tuple[int, str]]:
+    """#1566：为已落库的场外传召账生成并持久化自由 scene。
+
+    复用 beat_orchestration 既有 assemble/run/persist 缝；不建 chat turn、
+    不调大臣回话。唯一合法 no-op：该 ledger 行 body 已非空（幂等重入）。
+    传召账缺失、召法 tag 缺失、生成器失败一律上抛，禁止洗成空白成功载荷。
+    调用方须在 write_gate 外等待 LLM。
+
+    BEAT_SUMMON（非 BEAT_ENTER）：人在途未入殿，ADR 0096。
+    """
+    task = discover_offsite_summon_task(
+        db, state, origin_id=origin_id, person_name=person_name,
+        beat_generator=beat_generator,
+    )
+    if task is None:
+        return []
+    entry_id, body = task
+    assert isinstance(body, str), (
+        f"discover_offsite_summon_task returned BeatInputs without beat_generator: "
+        f"entry_id={entry_id}"
+    )
+    generated: List[Tuple[int, str]] = [(entry_id, body)]
+    from ming_sim.applier import atomic
+    with atomic(db):
+        persist_chat_turn_scene(db, generated)
+    return generated
 
 
 class ChatTurnSceneRegistry:
