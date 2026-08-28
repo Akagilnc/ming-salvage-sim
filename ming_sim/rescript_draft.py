@@ -240,16 +240,19 @@ def _project_region_targets(table: object) -> List[Dict[str, str]]:
     """Project the simulator's canonical typed region table into the target catalog."""
     if table is None:
         return []
-    cols = table["cols"]  # type: ignore[index]
-    rows = table["rows"]  # type: ignore[index]
-    indexes = {field: cols.index(field) for field in ("id", "name", "kind")}
-    targets = [
-        {field: str(row[index] or "").strip() for field, index in indexes.items()}
-        for row in rows
-    ]
-    if any(not value for target in targets for value in target.values()):
-        raise ValueError("canonical region target 含空 id/name/kind")
-    return targets
+    try:
+        cols = table["cols"]  # type: ignore[index]
+        rows = table["rows"]  # type: ignore[index]
+        indexes = {field: cols.index(field) for field in ("id", "name", "kind")}
+        targets = [
+            {field: str(row[index] or "").strip() for field, index in indexes.items()}
+            for row in rows
+        ]
+        if any(not value for target in targets for value in target.values()):
+            raise ValueError("canonical region target 含空 id/name/kind")
+        return targets
+    except (KeyError, IndexError, TypeError, ValueError) as exc:
+        raise ValueError("canonical region target table 畸形") from exc
 
 
 def build_rescript_draft_payload(
