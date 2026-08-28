@@ -470,9 +470,8 @@ def test_scripted_ask_vs_order_staging_matrix(
 
 
 def test_classify_prompt_carries_1565_ask_vs_assignment_boundary(monkeypatch):
-    """#1565 判词契约：classify_cli_action_intent 入口的 prompt 里，宫内当场
-    问对（据实/分策/开列回奏）须被界定为无，交办·责成 界定为需在召对后继续执行的
-    工作。仅 mock LLM backend，禁预造 payload。"""
+    """#1565 判词契约：classify 入口 prompt 正向界定交办=召对后仍须执行；
+    当场说明/比较/开列与据实·分策·开列回奏→无。仅 mock backend，禁预造 payload。"""
     captured = {}
 
     def _scripted(prompt, llm_config=None, tag=""):
@@ -481,33 +480,22 @@ def test_classify_prompt_carries_1565_ask_vs_assignment_boundary(monkeypatch):
         return (json.dumps({"动作类型": "无"}, ensure_ascii=False), 0)
 
     monkeypatch.setattr(cb, "_run_backend_for_config", _scripted)
-    cb.classify_cli_action_intent(
+    got = cb.classify_cli_action_intent(
         "杨卿，太仓实存与关宁、陕西边饷核到哪一步？分策回奏",
         recent_context="",
     )
+    assert got == []
     prompt = captured["prompt"]
 
-    # 边界声明块存在：交办·责成 vs 当场问对
     assert "交办·责成 vs 当场问对" in prompt
-    assert "#1565" in prompt
-    assert "ADR 0042" in prompt
+    assert "召对结束后仍须执行的真实交办" in prompt
+    assert "动作类型填无" in prompt and "不得升格交办" in prompt
+    assert "据实回奏" in prompt and "分策回奏" in prompt and "开列回奏" in prompt
 
-    # 交办·责成 被定义为召对后仍需继续执行的政务工作（ongoing 工作）
-    assert "交办·责成 = 需在本次召对之后仍要继续执行的政务工作" in prompt
-    assert "ongoing 工作" in prompt
-
-    # 当场问对 被定义为普通对话 → kind none，零 staging
-    assert "当场问对 = 大臣当场被点名解释/比较/列数" in prompt
-    assert "动作类型=无（kind none）" in prompt
-    assert "不是交办，零 staging" in prompt
-
-    # #1565 三个真实语料的判定片段存在（用独特片段判定，防同文噪声）
-    assert "太仓实存与关宁" in prompt and "分策回奏" in prompt
-    assert "改元之后钱粮如何撑过春月" in prompt and "开列回奏" in prompt
-    assert "入春边事与朝局何者最急" in prompt and "据实回奏" in prompt
-
-    # 这些问对提问必不得上升为交办
-    assert "统一判为无，坚决不得上升为交办" in prompt
+    # #1565 三句真实问法作语义示例（独特片段，不锁全文模板）
+    assert "太仓实存与关宁" in prompt and "盐课积引与畿辅清丈" in prompt
+    assert "改元之后钱粮如何撑过春月" in prompt
+    assert "入春边事与朝局何者最急" in prompt and "厂卫旧线" in prompt
 
 
 # ── P5：双向 barrier，串行实现必须红 ──────────────────────────────────
