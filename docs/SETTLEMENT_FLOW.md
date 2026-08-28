@@ -58,12 +58,15 @@
      c. apply_fixed_period_flows(db, state)       # 月度财政 tick
         ↳ compute_budget_lines 的定额项（旧档 legacy 为田赋/辽饷/盐税/商税；新档 substrate_hub
           为省级起运 + 盐税解京 + 商税解京，并显式列太仓亏空/京运边饷 hub/官俸/宫廷/…）
-        ↳ 军饷按存档级 `fiscal_engine` 分流：
-          - `legacy` 老档：保留旧「各军军饷」预算行 + 逐军从国库扣发；国库不足挂 `armies.arrears`。
-          - `substrate_hub` 新档：旧「各军军饷」流水为 0，不再从该全局路径双付；预算兼容行
-            仍展示 hub 预计实拨。先按本月开账国库能力跑 `边饷hub` outbound，京运给各省
-            grant 与中央份额共用同一个 hub tier，写 `中央军饷`、`central_pay_arrears`、
-            中央欠饷容器与 `C_京运克扣/C_京运运损`。
+        ↳ 军饷按存档级 `fiscal_engine` 分流（预算行共用 `budget_key=army_pay`，
+          `name` 只供呈现；落账跳过与摘要取数认 key 不咬显示名，#1366）：
+          - `legacy` 老档：预算行 name=「各军军饷」、金额=`sum(army_needed)`；
+            逐军从国库扣发，ledger category 仍为「各军军饷」；国库不足挂 `armies.arrears`。
+          - `substrate_hub` 新档：旧全局「各军军饷」流水为 0，不再双付；预算兼容行
+            name=「京运补及中央军饷国库支出」、金额=国库 outbound（京运补+中央份额+
+            转运损耗，非全军名义应发，不得称实拨/实收）。先按本月开账国库能力跑
+            `边饷hub` outbound，京运给各省 grant 与中央份额共用同一个 hub tier，写
+            `中央军饷`、`central_pay_arrears`、中央欠饷容器与 `C_京运克扣/C_京运运损`。
             省份额随后由省级 substrate 写 `province_pay_arrears`，仍用 **应发 =
             ceil(manpower × salary_rate / 10000)**（#44，0 兵=0 饷）。
         ↳ 逐建筑 condition × output_amount → 国库/内库

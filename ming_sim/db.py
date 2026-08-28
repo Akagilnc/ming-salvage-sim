@@ -6586,39 +6586,48 @@ class GameDB:
         def _amt(acc: str, direction: str, name: str) -> int:
             return sum(int(it["amount"]) for it in budget[acc][direction] if it["name"] == name)
 
+        def _amt_key(acc: str, direction: str, budget_key: str) -> int:
+            return sum(
+                int(it["amount"])
+                for it in budget[acc][direction]
+                if it.get("budget_key") == budget_key
+            )
+
+        def _name_key(acc: str, direction: str, budget_key: str) -> str:
+            for it in budget[acc][direction]:
+                if it.get("budget_key") == budget_key:
+                    return str(it["name"])
+            return ""
+
         def _parts(acc: str, direction: str, names: tuple[str, ...]) -> str:
             present = [name for name in names if _amt(acc, direction, name)]
             return "+".join(present) if present else "无"
 
         gk_in, gk_out = _sum("国库", "income"), _sum("国库", "expense")
         nk_in, nk_out = _sum("内库", "income"), _sum("内库", "expense")
+        army_pay_amt = _amt_key("国库", "expense", "army_pay")
+        army_pay_label = _name_key("国库", "expense", "army_pay")
         gk_income_names = _parts(
             "国库", "income",
             ("起运", "田赋辽饷盐商", "盐税", "商税"),
         )
-        if self.is_substrate_hub_fiscal_engine_enabled():
-            expense_present = [
-                "边饷hub" if _amt("国库", "expense", "各军军饷") else "",
-                *(
-                    name for name in (
-                        "中央军饷", "太仓亏空", "宗室禄米", "百官俸禄", "工部",
-                        "赈灾备用", "建筑维护",
-                    )
-                    if _amt("国库", "expense", name)
-                ),
-            ]
-            gk_expense_names = "+".join(name for name in expense_present if name) or "无"
-        else:
-            gk_expense_names = _parts(
-                "国库", "expense",
-                ("各军军饷", "宗室禄米", "百官俸禄", "工部", "赈灾备用", "建筑维护"),
-            )
+        # 军饷科目取数认 budget_key；呈现名跟预算行 name（玩家/摘要同源）。
+        other_expense = (
+            ("中央军饷", "太仓亏空", "宗室禄米", "百官俸禄", "工部", "赈灾备用", "建筑维护")
+            if self.is_substrate_hub_fiscal_engine_enabled()
+            else ("宗室禄米", "百官俸禄", "工部", "赈灾备用", "建筑维护")
+        )
+        expense_present = [
+            army_pay_label if army_pay_amt else "",
+            *(name for name in other_expense if _amt("国库", "expense", name)),
+        ]
+        gk_expense_names = "+".join(name for name in expense_present if name) or "无"
         return (
             f"{TURN_UNIT}度预算基准：国库入{format_money(gk_in)}"
             f"（{gk_income_names}；建筑产出{format_money(_amt('国库', 'income', '建筑产出'))}）"
             f"出{format_money(gk_out)}"
             f"（{gk_expense_names}；军饷"
-            f"{format_money(_amt('国库', 'expense', '各军军饷') + _amt('国库', 'expense', '边饷hub'))}+"
+            f"{format_money(army_pay_amt)}+"
             f"建筑维护{format_money(_amt('国库', 'expense', '建筑维护'))}）"
             f"净{format_money_delta(gk_in - gk_out)}；"
             f"内库入{format_money(nk_in)}"
