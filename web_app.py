@@ -1160,16 +1160,12 @@ class WebGame:
         region_armies: Dict[str, List[Dict[str, Any]]] = {
             str(region["id"]): [] for region in regions
         }
-        claimed: set[str] = set()
         for army in armies:
             aid = str(army["id"])
             rid = station_by_id.get(aid, "")
             if not rid or rid not in region_armies:
                 continue  # empty or unknown: no map hang, no text guess
-            if aid in claimed:
-                continue
             region_armies[rid].append(army)
-            claimed.add(aid)
         nodes: List[Dict[str, Any]] = []
         for region in regions:
             rid = str(region["id"])
