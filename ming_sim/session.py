@@ -3200,32 +3200,6 @@ class GameSession:
         ):
             raise ValueError("月末亲裁期新增拟旨须先核定，不能并入已冻结的结算")
 
-    def _normalize_rescript_request_choices(
-        self,
-        choices: List[Dict[str, object]],
-        desk: List[Dict[str, object]],
-    ) -> List[Dict[str, object]]:
-        """把 idx 序旧载荷或 decision_key 新载荷统一成带 decision_key 的 choice 列表。"""
-        if not choices:
-            return []
-        if any(isinstance(c, dict) and c.get("decision_key") for c in choices):
-            return [dict(c) for c in choices if isinstance(c, dict)]
-        # 旧形：按 desk 中 decision 行 idx 对齐；急务缺省 hold
-        by_idx = {
-            int(r["idx"]): r for r in desk if str(r.get("kind")) == "decision"
-        }
-        out: List[Dict[str, object]] = []
-        for idx, choice in enumerate(choices):
-            if not isinstance(choice, dict):
-                continue
-            row = by_idx.get(idx)
-            if row is None:
-                continue
-            item = dict(choice)
-            item["decision_key"] = row["decision_key"]
-            out.append(item)
-        return out
-
     def prepare_rescript_prewrite(
         self, choices: List[Dict[str, object]],
     ) -> Dict[str, object]:
@@ -3242,7 +3216,9 @@ class GameSession:
 
         self._assert_awaiting_decision_submit()
         desk = list(self.db.list_rescript_desk(int(self.state.turn)))
-        req = self._normalize_rescript_request_choices(choices, desk)
+        # #1589：位置补键/猜绑协议已删——choice 须显式携带 decision_key；
+        # 缺键/重复键/desk 外键由 validate_all（内存）在领域写前整批拒。
+        req = [dict(c) for c in choices if isinstance(c, dict)]
         # C1.1：① 已落 decided、③ phase2 未写 extracted 的崩溃重入——
         # list_rescript_desk 只 pending，须把请求键对应 decided 行并入 desk
         # 供 validate already_applied；ready_replay（extracted 非空）仍短路。
@@ -3684,8 +3660,12 @@ class GameSession:
         on_event=None,
         cheat_directive: str = "",
     ) -> str:
-        """#657 HITL 公共入口：急务/keyed → resolve_rescript_decisions；纯 decision → gate 内 submit_decisions。
+        """#657 HITL 公共入口：desk 非空或 keyed → resolve_rescript_decisions；
+        空 desk 无键 → gate 内 submit_decisions。
 
+        #1589：choice 缺 decision_key 的位置序载荷不再被受理——desk 非空时
+        一律经 validate_all（内存）在领域写前整批拒；仅空 desk 无键批
+        （含 #1322 空 choices 续跑）仍走 submit_decisions。
         空 choices 且 desk 无 pending 急务时：若仍有未消费 durable decided summon，
         交回同一 resolve_rescript_decisions（C1 already_applied → scaffold/registry），
         不得直 submit_decisions 越过召见。
@@ -3697,24 +3677,22 @@ class GameSession:
             for c in (choices or [])
         )
         desk = self.db.list_rescript_desk(int(self.state.turn))
-        has_urgent = any(str(r.get("kind")) == "rescript_draft" for r in (desk or []))
-        if has_urgent or keyed:
+        if desk or keyed:
             return self.resolve_rescript_decisions(
                 choices,
                 write_gate=write_gate,
                 on_event=on_event,
                 cheat_directive=cheat_directive,
             )
-        # 无 key / 无 pending 急务：未消费 durable summon 仍走同一 resolver
-        if not keyed:
-            recovery = self._unconsumed_decided_summon_choices()
-            if recovery:
-                return self.resolve_rescript_decisions(
-                    recovery,
-                    write_gate=write_gate,
-                    on_event=on_event,
-                    cheat_directive=cheat_directive,
-                )
+        # 空 desk 且无 key：未消费 durable summon 仍走同一 resolver
+        recovery = self._unconsumed_decided_summon_choices()
+        if recovery:
+            return self.resolve_rescript_decisions(
+                recovery,
+                write_gate=write_gate,
+                on_event=on_event,
+                cheat_directive=cheat_directive,
+            )
         with write_gate:
             return self.submit_decisions(
                 choices, on_event=on_event, cheat_directive=cheat_directive,

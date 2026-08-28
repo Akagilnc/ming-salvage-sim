@@ -384,8 +384,13 @@ def validate_all(
             # decision 行缺请求：非急务，不默认 hold
             raise ValueError(f"pending 行缺请求 choice：{key}")
 
-        # dossier 批红 decision 行（#1490）
-        if kind == "decision" and decision_has_rescript_capability(row):
+        # dossier 批红 decision 行（#1490）：dossier: 前缀 AND 能力对合取（#1494-F）——
+        # 普通 event_id + 幻觉能力对不得入批红轨，与 bind/phase2/submit_decisions 同判。
+        if (
+            kind == "decision"
+            and str(row.get("event_id") or "").startswith("dossier:")
+            and decision_has_rescript_capability(row)
+        ):
             options = [o for o in (row.get("options") or []) if isinstance(o, dict)]
             option_by_pair = {}
             for option in options:
