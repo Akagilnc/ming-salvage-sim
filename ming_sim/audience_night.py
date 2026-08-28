@@ -567,10 +567,10 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
         else:
             beat = "aside" if entry["audibility"] == AUDIBILITY_PRIVATE else "scene"
         # #657 S4/P7：OPEN/ENTER 口令账仅 body.strip() 非空才投影；
-        # 空垫位不进 scroll（无空条、无人物锩、无固定句冒充）。
-        # #1561：延至普通空 scene 亦过滤——空 scene 不进入 scroll，避免
-        # 固定/空正文冒充特征化 scene。
-        if not str(entry.get("body") or "").strip():
+        # 空垫位不进 scroll（无空条、无人物锚、无固定句冒充）。
+        # #1561：普通公共 scene 同属玩家可见 scene，空正文亦不投影；
+        # aside/exit/closing 等其它 beat 不在本票扩域。
+        if beat in {"opening", "entrance", "scene"} and not str(entry.get("body") or "").strip():
             continue
         events.append((
             _entry_order_key(entry), 10,
