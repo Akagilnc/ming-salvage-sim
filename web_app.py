@@ -3804,6 +3804,7 @@ def _hot_replace_when_idle(game):
                 detail="月末结算或上一步写入进行中，请稍候再操作。",
             )
         yield
+        q.unseal()
     finally:
         gate.release()
 
