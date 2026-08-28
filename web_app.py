@@ -1131,7 +1131,7 @@ class WebGame:
         ]
 
     def map_nodes(self) -> List[Dict[str, Any]]:
-        """地图节点投影。#1505：typed station_region 单归属；一军一挂；liaodong 同 id 合 theater+region。"""
+        """地图节点投影。#1505：typed station_region 单归属；一军一挂；liaodong/dongjiang_area 同 id 合 theater+region。"""
         region_positions = {
             "beizhili": (55.5, 41.2), "nanzhili": (70, 41), "shandong": (56.8, 47.9),
             "shanxi": (48.8, 45.2), "henan": (58, 46), "shaanxi": (51, 38),
@@ -1147,9 +1147,10 @@ class WebGame:
             "japan": (83.0, 49.0), "southwest_frontier": (45.0, 75.0),
             "taiwan": (78, 67),
         }
-        # 仅保留与 region 同 id 的合并 theater 针（辽东）
+        # 仅保留与 region 同 id 的合并 theater 针（辽东、东江）
         theater_positions = {
             "liaodong": (57.76, 42.21),
+            "dongjiang_area": region_positions["dongjiang_area"],
         }
         armies = self.db.army_payload(danger_order=True)
         station_by_id = {
@@ -1206,7 +1207,10 @@ class WebGame:
         return nodes
 
     def _theater_label(self, theater_id: str) -> str:
-        return {"liaodong": "辽东 / 宁锦"}[theater_id]
+        return {
+            "liaodong": "辽东 / 宁锦",
+            "dongjiang_area": "东江 / 皮岛",
+        }[theater_id]
 
     def closed_this_turn_payloads(self) -> List[Dict[str, Any]]:
         """上回合（resolve 后 state.turn 已 +1）关闭的 issue。"""

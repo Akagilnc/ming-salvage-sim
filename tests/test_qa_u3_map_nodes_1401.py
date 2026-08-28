@@ -1,4 +1,4 @@
-"""#1505 QA 包：地图 typed station_region 单归属 + liaodong 同 id 合 theater+region。
+"""#1505 QA 包：地图 typed station_region 单归属 + 同 id 合 theater+region。
 
 钉测：
 1. 一军一挂——同一 army.id 不得出现在两个 map_nodes 的 armies 里
@@ -6,6 +6,7 @@
 3. typed station_region 单归属：东江→dongjiang_area、宣大→shanxi、山海关→beizhili、关宁→liaodong
 4. 外线军不误吞 liaodong：manchu→jianzhou、han_liaoren→shenyang_liaoyang
 5. 空 station_region（如 southwest_tusi）不挂在任何地图节点
+6. dongjiang_area 与 liaodong 一样是前端可渲染的同 id 合并 pin
 """
 
 from __future__ import annotations
@@ -43,7 +44,7 @@ def test_map_nodes_province_garrison_co_node(game):
     """#1505：typed station_region 单归属——province nodes carry tax + garrison。
 
     纯 theater 针（dongjiang/xuan_da/shanhaiguan）不再 emit；军挂在其
-    station_region 对应的 province 节点上，节点同时携带 region tax payload。
+    station_region 对应节点上。dongjiang_area 与 liaodong 同为带 region 的合并 pin。
     """
     db, _state, _content = game
 
@@ -70,14 +71,20 @@ def test_map_nodes_province_garrison_co_node(game):
         for n in nodes for a in (n.get("armies") or [])
     ), "station_region='' 的探针军（station 含省名）不应挂在任何地图节点"
 
-    # dongjiang army → dongjiang_area province node (NOT dongjiang theater pin)
-    assert "dongjiang_area" in by_id, "dongjiang_area province node missing"
-    dongjiang_armies = [str(a["id"]) for a in (by_id["dongjiang_area"].get("armies") or [])]
+    # dongjiang army → dongjiang_area 同 id 合并 pin（NOT 旧 dongjiang 纯 theater）
+    assert "dongjiang" not in by_id, "旧 dongjiang 纯 theater 针不得复活"
+    assert "dongjiang_area" in by_id, "dongjiang_area merged pin missing"
+    dj = by_id["dongjiang_area"]
+    assert dj.get("kind") == "theater", (
+        f"dongjiang_area 须为可点击合并 theater pin，got kind={dj.get('kind')!r}"
+    )
+    assert str(dj.get("label") or "").strip(), "dongjiang_area merged pin missing label"
+    dongjiang_armies = [str(a["id"]) for a in (dj.get("armies") or [])]
     assert "dongjiang" in dongjiang_armies, (
         f"dongjiang army not on dongjiang_area node; armies={dongjiang_armies}"
     )
     # 节点同时携带 region tax payload
-    assert isinstance(by_id["dongjiang_area"].get("region"), dict) and by_id["dongjiang_area"]["region"].get("name"), (
+    assert isinstance(dj.get("region"), dict) and dj["region"].get("name"), (
         "dongjiang_area node must carry region tax payload"
     )
 
@@ -147,7 +154,7 @@ def test_map_nodes_no_nameless_nodes(game):
             assert str(node.get("label") or "").strip(), (
                 f"theater node {node.get('id')!r} missing label"
             )
-            if str(node.get("id")) == "liaodong":
+            if str(node.get("id")) in {"liaodong", "dongjiang_area"}:
                 assert isinstance(node.get("region"), dict) and node["region"].get("name"), (
-                    "liaodong theater must carry region.name (no nameless pin)"
+                    f"{node.get('id')} theater must carry region.name (no nameless pin)"
                 )
