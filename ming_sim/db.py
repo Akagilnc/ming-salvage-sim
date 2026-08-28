@@ -12256,6 +12256,9 @@ class GameDB:
             grant_action = str(normalized.get("grant_action") or "").strip()
             if grant_action in {"加衔", "荫叙"}:
                 normalized.pop("delta", None)
+            elif self._is_army_pay_grant_payload(normalized):
+                # #1503：协饷先且只经 require_explicit_xiexang_fields，不经 amount/account 首错。
+                normalized = self._normalize_army_pay_grant_payload(normalized)
             else:
                 try:
                     amount = strict_int(
@@ -12279,8 +12282,6 @@ class GameDB:
                     else:
                         normalized["execution_surface"] = surface
                     normalized.pop("delta", None)
-                # #1503：拨饷/协饷类 — 成案即结构化补饷载荷；缺字段 fail-loud，不猜散文。
-                normalized = self._normalize_army_pay_grant_payload(normalized)
         elif action == "pay_order_override":
             # #653：结构化载荷 presence 在指令归一边界先验（键形/值域/幻影 region
             # 仍由成案点与物化点共 prepare_pay_order_entries 同一验形，不在此重复）。
