@@ -1194,7 +1194,9 @@ class GameSession:
         """#1566：为已落库的场外传召账生成并持久化自由 scene。
 
         复用 beat_orchestration 既有 assemble/run/persist 缝；不建 chat turn、
-        不调大臣回话。body 已有则幂等 no-op。调用方须在 write_gate 外等待 LLM。
+        不调大臣回话。唯一合法 no-op：该 ledger 行 body 已非空（幂等重入）。
+        其余不变式破坏（缺 origin/账行/state/生成器）一律响亮失败，禁止洗成空载荷。
+        调用方须在 write_gate 外等待 LLM。
         """
         from ming_sim.applier import atomic
         from ming_sim.audience_night import (
@@ -1208,14 +1210,16 @@ class GameSession:
             BEAT_ENTER,
             assemble_beat_inputs,
             persist_chat_turn_scene,
-            production_beat_generator,
             run_beat_generator,
         )
 
         origin = str(origin_id or "").strip()
         name = str(person_name or "").strip()
         if not origin or not name:
-            return []
+            raise ValueError(
+                f"materialize_offsite_summon_scene 须有 origin_id 与 person_name，"
+                f"got origin_id={origin_id!r} person_name={person_name!r}"
+            )
         item = next(
             (
                 row for row in list_unsettled_summons(self.db)
@@ -1224,7 +1228,9 @@ class GameSession:
             None,
         )
         if item is None:
-            return []
+            raise RuntimeError(
+                f"场外传召账未落库，无法物化 scene：origin_id={origin!r} person={name!r}"
+            )
         entry_id = int(item["entry_id"])
         night_id = int(item["night_id"])
         entry = next(
@@ -1232,7 +1238,10 @@ class GameSession:
             None,
         )
         if entry is None:
-            return []
+            raise RuntimeError(
+                f"传召 ledger 行消失：entry_id={entry_id} night_id={night_id}"
+            )
+        # 幂等：body 已由先前物化写入则不再生成。
         if str(entry.get("body") or "").strip():
             return []
         tags = list(entry.get("tags") or [])
@@ -1240,11 +1249,11 @@ class GameSession:
             (m for m in SUMMON_METHODS if m in tags),
             METHOD_CHUANZHAO,
         )
-        night = get_night(self.db, night_id) or {}
-        state = getattr(self, "state", None)
-        if state is None:
-            return []
-        generator = getattr(self, "_beat_generator", None) or production_beat_generator
+        night = get_night(self.db, night_id)
+        if night is None:
+            raise RuntimeError(f"传召夜不存在：night_id={night_id}")
+        state = self.state
+        generator = self._beat_generator
         inputs = assemble_beat_inputs(
             self.db,
             state,
