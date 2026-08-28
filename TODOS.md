@@ -115,16 +115,13 @@
 - **下回合临时处理**：崇祯元年十二月结算时，手动把阉党 leverage 往下压到合理值（先查清改法），并在邸报里叙述"阉党失了要津、号令不行"。
 
 ### B2. CLI 后端(agy)把游戏仓库当工作区，自治探查源码 + 英文行动计划泄进大臣嘴里 ✅ 已修（2026-06-07）
-> 修复：`_run_agy`/`_run_codex` 加 `cwd=_AGY_CWD`（`/tmp/ming_agy_sandbox` 空目录）；`_messages_to_prompt` 加“无文件/工具/命令、禁英文、禁旁白”硬约束——cwd 隔离是治本，后者为输入侧约束。实测孙承宗防务问答 0 英文词。
-> **注意（#1563 修正）**：原行文所称“`_strip_agent_narration` 剥开头英文行动计划兜底”已不符合现行代码事实。该输出侧剥除机制依 **P6** 与 **ADR 0142 / 0143**（输出侧擦洗整族废除）于 #1563 废止，当前 `ming_sim/cli_backend.py` 不再存在该 helper。输出侧 regex 清洗不得作为兜底；现行修复仅保留 cwd 隔离与 prompt 输入侧约束。
+> 修复：`_run_agy`/`_run_codex` 加 `cwd=_AGY_CWD`（`/tmp/ming_agy_sandbox` 空目录）；`_messages_to_prompt` 加“无文件/工具/命令、禁英文、禁旁白”硬约束——cwd 隔离是治本，后者为输入侧约束。输出侧清洗依 P6 与 ADR 0142 / 0143 废止。
 - **现象**(2026-06-07，probe/session-as-llm 分支)：孙承宗被问蓟镇宣大防务，回话开头冒出整段英文："I will list the contents of the workspace directory to locate the relevant database files... check the `data` directory... list the `ming_sim` directory to understand the project structure and see how state queries are implemented." 之后才接中文奏对。
 - **根因**：`ming_sim/cli_backend.py` 的 `_run_agy` 用 `subprocess.run([...], input=prompt)` **没指定 cwd**，agy(自治编程 agent)继承了游戏仓库根目录当 workspace，把"汇报防务进度"当成研究任务，跑去翻 `ming_sim/`、`data/` 找答案。`--sandbox` 只挡写不挡读。
 - **双重危害**：① 英文行动计划 narration 泄进角色对话(出戏)；② **元游戏泄漏**——大臣能读游戏真实源码/存档 DB。
 - **修法(1)**：
   - 主治：`_run_agy`/`_run_codex` 传 `cwd=<空临时目录>`(如 `/tmp/ming_agy_sandbox`，启动时建)，agy 进空 workspace 无可探。
   - 加固 prompt：`_messages_to_prompt` 明示"你没有任何文件/工具/命令可用，不要描述你要做什么，直接以角色身份用中文作答，禁用英文"。
-  - ~~输出侧清洗（**已废止，历史弯路**）~~：曾作为兜底的输出后剥掉开头英文行动计划行(`^(I will|Let me|I'll|First|I need to|Looking at|I'm going to)` 等），依**P6 / ADR 0142 / 0143**废止，当前 `ming_sim/cli_backend.py` 不复存在该 helper，**不再作为兜底**。
-  - cwd 沙箱 + prompt 硬约束为唯一现行措施：前者治本，后者为输入侧约束；不得新增输出侧 regex 清洗。
 
 ### B3. 大臣"自己动手"的动作工具在 CLI 后端不触发(拟旨/下密令不入档) ✅ 已修（2026-06-07）
 > **原版**靠 agno 工具 `propose_directive`/`secret_order`，api 模型 function-call 可靠触发。agy 不做 function-calling = 唯一缺口。
