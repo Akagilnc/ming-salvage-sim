@@ -18,7 +18,6 @@ import pytest
 import ming_sim.issues as issue_engine
 from ming_sim.db import GameDB
 from ming_sim.decree import settle_with_delta
-from tests.dossier_test_helpers import investigation_covert_task
 
 
 ORDERED = 30  # 北极星三路各三十万两量级（引擎以「两」为单位的整数面值）
@@ -52,7 +51,10 @@ def _in_transit_grant(db, state, *, amount=ORDERED, text="拨银押解", target_
 
 def _escort_order(db, state, grant_ids, *, tags=None):
     """密令案卷（新）→ 护卫/稽核 指向既有拨饷案卷（旧）。"""
-    order_id = db.create_secret_order(state, _actor(db), "护行饷银", "沿途按月稽核", tags or ["护行"], deadline_months=4, covert_task=investigation_covert_task("护行饷银"))
+    order_id = db.create_secret_order(
+        state, _actor(db), "护行饷银", "沿途按月稽核",
+        tags or ["护行"], deadline_months=4,
+    )
     escort_dossier = db.get_dossier_for_secret_order(order_id)
     escort_id = int(escort_dossier["id"])
     # 关联要求新→旧：密令案卷 id 须大于被护拨饷 id

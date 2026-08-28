@@ -19,10 +19,7 @@ def _order(db, state, title="护行辽饷", tags=None, deadline=4):
             "kind": "护行差务",
             "axes": ["实务事功"],
             "direction": 1,
-            "delivery": {
-                "unit": "万两", "target_units": float(deadline or 1),
-                "purpose": "护行辽饷", "category": "军饷", "account": "太仓",
-            },
+            "delivery": {"unit": "万两", "target_units": float(deadline or 1)},
         },
     )
     return order_id, int(db.get_dossier_for_secret_order(order_id)["id"])
@@ -412,10 +409,7 @@ def _stage_routed_secret_order(db, state, action, deadline):
                 "kind": "护行差务",
                 "axes": ["实务事功"],
                 "direction": 1,
-                "delivery": {
-                    "unit": "万两", "target_units": float(max(deadline, 1)),
-                    "purpose": "护行辽饷", "category": "军饷", "account": "太仓",
-                },
+                "delivery": {"unit": "万两", "target_units": float(max(deadline, 1))},
             },
         }, target_id=target_id,
     )
