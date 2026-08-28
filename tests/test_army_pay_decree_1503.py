@@ -299,15 +299,10 @@ def test_promulgation_settle_applies_once_ready_replay_no_double_debit(game, mon
     db, state, content = game
     _set_guanning_arrears(db, 60, central=60, province=0)
     state.metrics["国库"] = max(int(state.metrics["国库"]), 100)
-    treasury_before = int(state.metrics["国库"])
 
     ctx = _stage_xiexang(db, state.turn, amount=15, target_id="guanning")
     dossier = _close_night_dossier(db, state, content, ctx.out["pending_action_id"])
     did = int(dossier["id"])
-
-    _promulgate(db, state, content, did)
-    assert int(state.metrics["国库"]) == treasury_before - 15
-    assert len(db.list_economy_moves_for_dossier(did)) == 1
 
     turn = state.turn
     pre_settle(state, db, content=content)
@@ -316,26 +311,20 @@ def test_promulgation_settle_applies_once_ready_replay_no_double_debit(game, mon
 
     persist_resolve_context(
         db, turn,
-        {
-            "economy_moves": [{
-                "account": "国库",
-                "delta": -15,
-                "category": "补饷",
-                "reason": "恢复重放误产",
-                "purpose": "补饷",
-                "target_kind": "army",
-                "target_id": "guanning",
-                "origin_ref": f"dossier:{did}",
-            }],
-        },
+        {},
         decree_text="拨饷诏",
         narrative="已存邸报……",
-        simulator_payload={},
+        simulator_payload={
+            "dossier_verdicts": [{"dossier_id": did, "decision": "promulgated"}],
+        },
         secret_orders=[],
         relevant_memories=[],
     )
     ready = db.get_resolve_context(turn)
     assert ready is not None and ready.get("extracted") is not None
+    assert (ready.get("simulator_payload") or {}).get("dossier_verdicts") == [
+        {"dossier_id": did, "decision": "promulgated"},
+    ]
 
     def _must_not_run(*a, **k):
         raise AssertionError("恢复直入 apply 不应重跑 simulator/extractor")
@@ -361,7 +350,7 @@ def test_promulgation_settle_applies_once_ready_replay_no_double_debit(game, mon
     ]
     assert len(pay_ledger) == 1
     assert int(pay_ledger[0]["delta"]) == -15
-    assert _army_row(db)["arrears"] == pytest.approx(arrears_after_pre)
+    assert _army_row(db)["arrears"] == pytest.approx(arrears_after_pre - 15)
 
 
 def test_rejected_and_hold_leave_zero_ledger(game):
