@@ -433,7 +433,9 @@ def _add_fiscal_container(db: GameDB, key: str, delta: float, note: str) -> None
 def compute_budget_lines(
     db: GameDB, state: GameState, *, project_substrate_hub: bool = True
 ) -> Dict[str, Dict[str, list]]:
-    """唯一定额预算源。返回 {"国库":{"income":[{name,amount,note}],"expense":[...]},"内库":{...}}。
+    """唯一定额预算源。返回 {"国库":{"income":[行],"expense":[行]},"内库":{...}}；
+    每行至少含 {name,amount,note}，可另带 budget_key 等工程元数据（军饷行固定 budget_key=army_pay，
+    供落账/摘要按 key 认科目；消费方不得依赖 name 措辞）。
     税收/皇庄＝calc_province_fiscal 动态值；legacy 军饷＝SUM(明军应发)；
     substrate_hub 军饷由省级基座 / hub 承载，不再列入旧国库固定支出；
     建筑＝按 condition 折产/维护；
