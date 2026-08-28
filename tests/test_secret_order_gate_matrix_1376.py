@@ -16,8 +16,10 @@ V3 回归只在 tests/test_qa_c3_secret_order_path_1357_1376.py，本文件不�
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import pytest
 from fastapi.testclient import TestClient
@@ -34,8 +36,8 @@ from tests.test_session_write_queue_1353 import wait_pending_writes as _wait_pen
 
 # ── 矩阵常量 ───────────────────────────────────────────────────────────
 
-# #670：王之臣 seed 在辽东；矩阵测确认闸，用在京可召朝臣（ADR 0096）。
-MINISTER = "毕自严"
+# 票面 E1/E2/E3 指定王之臣；临时 DB 前置合法置于 beizhili/可召（ADR 0096），不改生产 gate。
+MINISTER = "王之臣"
 E1_MESSAGE = "密令如下：密察关宁欠饷"
 E2_TITLE = "密察关宁欠饷"
 E2_CONTENT = "密察关宁欠饷"
@@ -242,9 +244,31 @@ class _ClassifierStub:
 # ── 公共 fixture ───────────────────────────────────────────────────────
 
 
+def _writable_root_sig(path: Path) -> Tuple[str, int, int]:
+    """轻量 scoped 前后态：存在性 + mtime_ns + size；不递归扫描。"""
+    if not path.exists():
+        return ("missing", 0, 0)
+    st = path.stat()
+    return ("present", int(st.st_mtime_ns), int(st.st_size))
+
+
+def _affected_external_write_paths(real_home: Path) -> list[Path]:
+    """矩阵真实入口可达的仓外/真实 user-data 具体路径（无 override 时）。"""
+    repo = Path(__file__).resolve().parent.parent
+    return [
+        repo / "data" / "runtime_llm.json",
+        repo / "data" / "saves",
+        repo / "data" / "error_packs",
+        real_home / ".ming_sim",
+    ]
+
+
 @pytest.fixture
 def matrix_env(tmp_path, monkeypatch, _offline_scene_beat_generator):
     """临时 HOME + user_data/DB；CLI 通道；LLM 全 stub。"""
+    real_home = Path(os.environ.get("HOME") or Path.home())
+    watched = _affected_external_write_paths(real_home)
+    before = {str(p): _writable_root_sig(p) for p in watched}
     home = tmp_path / "home"
     home.mkdir()
     ud = tmp_path / "user_data"
@@ -289,6 +313,12 @@ def matrix_env(tmp_path, monkeypatch, _offline_scene_beat_generator):
 
     ministers = (new.json() or {}).get("state", {}).get("ministers") or []
     names = {str(m.get("name") or "") for m in ministers if isinstance(m, dict)}
+    game.db.conn.execute(
+        "UPDATE characters SET location='beizhili', transit_to='', "
+        "transit_distance_remaining=NULL WHERE name=?",
+        (MINISTER,),
+    )
+    game.db.conn.commit()
     if MINISTER not in names:
         st = game.db.get_character_status(MINISTER)
         assert st and st[0] == "active", f"{MINISTER} 非 active: {st!r}"
@@ -310,6 +340,9 @@ def matrix_env(tmp_path, monkeypatch, _offline_scene_beat_generator):
             g.session.close()
         finally:
             web_app.web_game = None
+
+    after = {str(p): _writable_root_sig(p) for p in watched}
+    assert after == before, f"仓外/真实 user-data 零写失败: {before=} {after=}"
 
 
 # ── helpers ────────────────────────────────────────────────────────────
