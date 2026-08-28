@@ -18,7 +18,8 @@ import copy
 import json
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
-from ming_sim.person_archive_contract import PERSON_LEGAL_REASON_CODES
+from ming_sim.constants import ECONOMY_ACCOUNTS, REGION_FIELD_ALIASES
+from ming_sim.person_archive_contract import PERSON_ACTIONS, PERSON_LEGAL_REASON_CODES
 from ming_sim.value_matrix import (
     mean_aligned_stance,
     normalize_axes,
@@ -38,19 +39,19 @@ PROGRESS_UNITS: Dict[str, float] = {
 CONTRACT_KEY = "covert_task_contract"
 CONTRACT_VERSION = 1
 _STANCE_SCORE_SCALE = 18.0
-CANONICAL_UNITS = ("万两", "人犯", "亩")
+CANONICAL_UNITS = ("万两", "人犯", "万亩")
 FACT_LANES_KEY = "fact_lanes"
 INVESTIGATION_PROVENANCE_KEY = "investigation_provenance"
 DEFAULT_SUBSTANTIATION_REASON = "依律"
 _FIELD_FOR_UNIT = {
     "万两": ["economy_moves"],
     "人犯": ["人物变更"],
-    "亩": ["region_delta"],
+    "万亩": ["region_delta"],
 }
 _IDENTITY_FOR_UNIT = {
     "万两": ("purpose", "category", "account"),
     "人犯": ("person_action",),
-    "亩": ("region", "field", "target"),
+    "万亩": ("region", "field", "target"),
 }
 
 
@@ -273,21 +274,27 @@ def canonicalize_delivery_unit(unit: object, target: object) -> tuple[str, float
     if qty <= 0.0:
         raise CovertContractError("密令确认交付目标必须为正数")
     if raw not in CANONICAL_UNITS:
-        raise CovertContractError("密令确认交付单位须为万两/人犯/亩")
+        raise CovertContractError("密令确认交付单位须为万两/人犯/万亩")
     return raw, float(qty)
 
 
-def _effect_sign_for_unit(unit: str, raw: object) -> int:
-    if raw is not None:
-        try:
-            sign = int(raw)
-        except (TypeError, ValueError):
-            sign = 0
-        if sign in (-1, 1):
-            return sign
-    if unit == "万两":
-        return -1
-    return 1
+def _require_effect_sign(raw: object) -> int:
+    try:
+        sign = int(raw)
+    except (TypeError, ValueError):
+        raise CovertContractError("密令确认缺少效果符号") from None
+    if sign not in (-1, 1):
+        raise CovertContractError("密令确认效果符号须为 +1 或 -1")
+    return sign
+
+
+def canonicalize_economy_purpose(raw: object) -> str:
+    text = str(raw or "").strip()
+    if not text:
+        raise CovertContractError("密令确认交付 identity 缺少：purpose")
+    if text == "补饷":
+        return "补饷"
+    return "其它"
 
 
 def build_covert_task_contract(
@@ -362,7 +369,7 @@ def build_covert_task_contract(
             raise CovertContractError("密令确认交付目标必须为正数")
         delivery = {
             "target_units": float(qty),
-            "effect_sign": 1,
+            "effect_sign": _require_effect_sign(effect_sign),
             "canonical_fields": [],
             "investigation_target": inv_target,
         }
@@ -376,33 +383,38 @@ def build_covert_task_contract(
             "delivery": delivery,
         }
     unit, target = canonicalize_delivery_unit(delivery_unit, delivery_target_units)
-    sign = _effect_sign_for_unit(unit, effect_sign)
     delivery: Dict[str, object] = {
         "unit": unit,
         "target_units": float(target),
-        "effect_sign": int(sign),
+        "effect_sign": _require_effect_sign(effect_sign),
         "canonical_fields": list(_FIELD_FOR_UNIT[unit]),
     }
-    purpose_text = str(purpose or "").strip()
-    if purpose_text:
-        delivery["purpose"] = purpose_text
+    if unit == "万两":
+        delivery["purpose"] = canonicalize_economy_purpose(purpose)
     category_text = str(category or "").strip()
     if category_text:
         delivery["category"] = category_text
     account_text = str(account or "").strip()
     if account_text:
+        if account_text not in ECONOMY_ACCOUNTS:
+            raise CovertContractError("密令确认钱粮账户须为国库或内库")
         delivery["account"] = account_text
     region_text = str(region or "").strip()
     if region_text:
         delivery["region"] = region_text
     field_text = str(field or "").strip()
     if field_text:
-        delivery["field"] = field_text
+        canonical_field = REGION_FIELD_ALIASES.get(field_text)
+        if not canonical_field:
+            raise CovertContractError("密令确认地区字段不在闭集")
+        delivery["field"] = canonical_field
     target_text = str(region_target or "").strip()
     if target_text:
         delivery["target"] = target_text
     action_text = str(person_action or "").strip()
     if action_text:
+        if action_text not in PERSON_ACTIONS:
+            raise CovertContractError("密令确认人物动作不在闭集")
         delivery["person_action"] = action_text
     missing_identity = [key for key in _IDENTITY_FOR_UNIT[unit] if not delivery.get(key)]
     if missing_identity:
@@ -701,7 +713,6 @@ def _delivery_matches_region(row: Mapping[str, object], delivery: Mapping[str, o
         ((sign < 0 and delta < 0) or (sign > 0 and delta > 0))
         and str(row["region_id"] or "") == str(delivery.get("region") or "")
         and str(row["field"] or "") == str(delivery.get("field") or "")
-        and str(row["new_value"] or "") == str(delivery.get("target") or "")
     )
 
 

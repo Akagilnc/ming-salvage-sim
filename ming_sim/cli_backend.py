@@ -3414,8 +3414,9 @@ def _extract_secret_order(
         "  \"差务\": \"差务类型名，如 补发饷银、缉获人犯、清丈；必须点明，不得用标题或标签猜测\",\n"
         "  \"价值轴\": [\"闭集轴名，如 实务事功、既得利益\"],\n"
         "  \"方向\": 1,\n"
-        "  \"交付单位\": \"canonical applier 单位：万两、人犯或亩；调查差务留空\",\n"
+        "  \"交付单位\": \"canonical applier 单位：万两、人犯或万亩；调查差务留空\",\n"
         "  \"交付目标\": 到期须交付的正数目标（调查为须坐实的事实条数）,\n"
+        "  \"效果符号\": 1,\n"
         "  \"调查对象\": \"查核目标人名，非调查留空\",\n"
         "  \"钱粮用途\": \"钱粮收支 purpose，非钱粮留空\", \"钱粮类别\": \"category\", \"钱粮账户\": \"account\",\n"
         "  \"人物动作\": \"人物变更动作，非人物留空\",\n"
@@ -3550,15 +3551,21 @@ def _extract_secret_order(
             field=obj.get("地区字段"),
             region_target=obj.get("地区目标值"),
             investigation_target=obj.get("调查对象"),
+            effect_sign=obj.get("效果符号"),
         )
-    except CovertContractError:
+    except CovertContractError as exc:
         covert_task = None
+        contract_error = str(exc)
+    else:
+        contract_error = ""
     result = {"title": title, "content": content, "assignee": assignee,
             "deadline_months": deadline, "tags": tags, "excluded_names": excluded_names,
             "excluded_offices": excluded_offices, "dossier_links": dossier_links,
             "excluded_targets": {"people": excluded_names, "offices": excluded_offices}}
     if covert_task is not None:
         result["covert_task"] = covert_task
+    if contract_error:
+        result["contract_error"] = contract_error
     return result
 
 def resolve_minister_actions(

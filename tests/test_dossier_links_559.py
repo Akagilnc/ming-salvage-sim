@@ -64,8 +64,8 @@ def test_secret_order_extractor_only_carries_explicit_confirmed_dossier_ids(monk
         "差务": "清丈",
         "价值轴": ["实务事功"],
         "方向": 1,
-        "交付单位": "亩",
-        "交付目标": 1,
+        "交付单位": "万亩",
+        "交付目标": 1, "效果符号": 1,
         "标签": ["护饷"],
         "排除对象": {"人物": [], "机构": []},
         "案卷关联": [

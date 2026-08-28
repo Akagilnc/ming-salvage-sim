@@ -21,7 +21,7 @@ def _order(db, state, title="护行辽饷", tags=None, deadline=4):
             "axes": ["实务事功"],
             "direction": 1,
             "delivery": {
-                "unit": "万两", "target_units": float(deadline or 1),
+                "unit": "万两", "target_units": float(deadline or 1), "effect_sign": -1,
                 "purpose": "辽饷", "category": "军饷", "account": "国库",
             },
         },
@@ -414,7 +414,7 @@ def _stage_routed_secret_order(db, state, action, deadline):
                 "axes": ["实务事功"],
                 "direction": 1,
                 "delivery": {
-                    "unit": "万两", "target_units": float(max(deadline, 1)),
+                    "unit": "万两", "target_units": float(max(deadline, 1)), "effect_sign": -1,
                     "purpose": "辽饷", "category": "军饷", "account": "国库",
                 },
             },
