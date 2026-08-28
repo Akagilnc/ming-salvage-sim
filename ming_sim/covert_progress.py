@@ -44,6 +44,12 @@ _FIELD_FOR_UNIT = {
     "亩": ["region_delta"],
     "案": ["new_issues"],
 }
+_IDENTITY_FOR_UNIT = {
+    "万两": ("purpose", "category", "account"),
+    "人犯": ("person_action",),
+    "亩": ("region", "field", "target"),
+    "案": (),
+}
 
 
 class CovertContractError(ValueError):
@@ -343,8 +349,6 @@ def build_covert_task_contract(
     if purpose_text:
         delivery["purpose"] = purpose_text
     category_text = str(category or "").strip()
-    if not category_text and unit == "万两":
-        category_text = "密令差务"
     if category_text:
         delivery["category"] = category_text
     account_text = str(account or "").strip()
@@ -362,6 +366,11 @@ def build_covert_task_contract(
     action_text = str(person_action or "").strip()
     if action_text:
         delivery["person_action"] = action_text
+    missing_identity = [key for key in _IDENTITY_FOR_UNIT[unit] if not delivery.get(key)]
+    if missing_identity:
+        raise CovertContractError(
+            f"密令确认交付 identity 缺少：{','.join(missing_identity)}"
+        )
     return {
         "version": CONTRACT_VERSION,
         "action_type": str(action_type or "secret_order"),
@@ -394,6 +403,8 @@ def coerce_covert_task_contract(raw: object) -> Optional[Dict[str, object]]:
     if list(delivery.get("canonical_fields") or []) != canonical_fields_for_delivery(unit=unit):
         return None
     if float(delivery.get("target_units")) != target:
+        return None
+    if any(not delivery.get(key) for key in _IDENTITY_FOR_UNIT[unit]):
         return None
     return copy.deepcopy(dict(raw))
 

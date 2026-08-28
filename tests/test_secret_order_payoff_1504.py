@@ -272,11 +272,12 @@ def test_task_specific_contract_from_explicit_fields_not_tags():
         deadline_span=3, due_turn=10,
         kind="补发饷银", axes=["既得利益"], direction=1,
         delivery_unit="万两", delivery_target_units=3,
+        purpose="其它", category="密令差务", account="内库",
     )
     catch = build_covert_task_contract(
         deadline_span=3, due_turn=10,
         kind="缉获人犯", axes=["实务事功"], direction=1,
-        delivery_unit="人犯", delivery_target_units=3,
+        delivery_unit="人犯", delivery_target_units=3, person_action="处置",
     )
     assert audit["kind"] == "补发饷银" and audit["axes"] == ["既得利益"]
     assert audit["delivery"]["unit"] == "万两"
@@ -286,6 +287,26 @@ def test_task_specific_contract_from_explicit_fields_not_tags():
     with pytest.raises(CovertContractError):
         build_covert_task_contract(
             deadline_span=3, due_turn=10, tags=["辽饷", "兵部", "密查", "稽核"],
+        )
+
+
+@pytest.mark.parametrize(
+    ("unit", "identity"),
+    [
+        ("万两", {"category": "密令差务", "account": "内库"}),
+        ("万两", {"purpose": "其它", "account": "内库"}),
+        ("万两", {"purpose": "其它", "category": "密令差务"}),
+        ("人犯", {}),
+        ("亩", {"field": "registered_land", "region_target": "421"}),
+        ("亩", {"region": "henan", "region_target": "421"}),
+        ("亩", {"region": "henan", "field": "registered_land"}),
+    ],
+)
+def test_confirmation_rejects_incomplete_delivery_identity(unit, identity):
+    with pytest.raises(CovertContractError, match="identity"):
+        build_covert_task_contract(
+            kind="差务", axes=["实务事功"], direction=1,
+            delivery_unit=unit, delivery_target_units=1, **identity,
         )
 
 
@@ -1004,7 +1025,8 @@ def test_fiscal_quantity_tracer_same_unit_done_and_gap(game):
     assert db.get_secret_order(oid2)["status"] == "failed"
 
 
-def test_region_quantity_ignores_same_origin_turn_with_mismatched_identity(game):
+@pytest.mark.parametrize("mismatch", ["region", "field", "target"])
+def test_region_quantity_ignores_same_origin_turn_with_mismatched_identity(game, mismatch):
     db, state, _ = game
     name = _minister(db)
     _set_axes(db, name, loyalty=90, identity=30)
@@ -1012,23 +1034,21 @@ def test_region_quantity_ignores_same_origin_turn_with_mismatched_identity(game)
     did = int(db.get_dossier_for_secret_order(oid)["id"])
     state.turn += 1
     db.save_state(state)
-    origin = f"dossier:{did}"
-    rows = [
-        ("henan", "registered_land", "420", "421", 1),
-        ("shandong", "registered_land", "520", "521", 1),
-        ("henan", "hidden_land", "420", "421", 1),
-        ("henan", "registered_land", "421", "422", 1),
-    ]
-    db.conn.executemany(
+    wrong = {
+        "region": ("shandong", "registered_land", "520", "521"),
+        "field": ("henan", "hidden_land", "420", "421"),
+        "target": ("henan", "registered_land", "421", "422"),
+    }[mismatch]
+    db.conn.execute(
         "INSERT INTO region_logs "
         "(turn, year, period, region_id, field, old_value, new_value, delta, reason, origin_ref) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'test', ?)",
-        [(state.turn, state.year, state.period, *row, origin) for row in rows],
+        "VALUES (?, ?, ?, ?, ?, ?, ?, 7, 'test', ?)",
+        (state.turn, state.year, state.period, *wrong, f"dossier:{did}"),
     )
     apply_monthly_covert_actual_progress(
         db, state, selections=[{"order_id": oid, "fidelity": "忠实"}], commit=True,
     )
-    assert db.sum_dossier_actual_progress_units(did) == 1.0
+    assert db.sum_dossier_actual_progress_units(did) == 0.0
 
 
 def test_catch_quantity_tracer_same_unit_done_and_mismatch_ignored(game):
