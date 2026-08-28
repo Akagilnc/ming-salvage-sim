@@ -300,7 +300,7 @@ def validate_request_keys(
             raise ValueError(f"重复 decision_key：{key}")
         if key not in desk_by_key:
             raise ValueError(f"decision_key 不在当前 desk：{key}")
-        choice_map[key] = canonical_choice(dict(raw))
+        choice_map[key] = dict(raw)
 
     return desk_by_key, choice_map
 
@@ -323,6 +323,7 @@ def validate_all(
       成功时第二返回值若非空则视为 canonical name 写回 choice（仍零 DB 写）。
     """
     desk_by_key, choice_map = validate_request_keys(desk_rows, request_choices)
+    choice_map = {key: canonical_choice(raw) for key, raw in choice_map.items()}
 
     batch = ValidatedBatch()
     for key, row in desk_by_key.items():

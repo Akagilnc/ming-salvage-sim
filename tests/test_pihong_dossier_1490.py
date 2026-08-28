@@ -2545,6 +2545,17 @@ def test_1589_ready_replay_rejects_bad_keys(web_game, monkeypatch):
     assert row["status"] == "pending"
     assert row["choice"] is None
 
+    # 有效 key + 无关畸形字段不得挡 extracted_ready 的 phase2 重放
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
+    r_ok = asyncio.run(_post_resolve([
+        {"decision_key": d_key, "label": "战", "dossier_id": "stale"},
+    ]))
+    assert r_ok.status_code == 200, r_ok.text
+    assert "event: error" not in r_ok.text, r_ok.text
+    assert "event: done" in r_ok.text, r_ok.text
+    assert phase2_calls == [1], "有效 key 携无关字段须进入冻结 extracted 的 phase2 重放"
+
 
 def test_1589_empty_desk_rejects_nonempty_keyless_choices(web_game, monkeypatch):
     """#1589 fix5：desk 空（无 pending 急务/decision）时非空无键载荷同样整批拒——
