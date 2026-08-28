@@ -798,11 +798,11 @@ def test_manual_directive_admission_real_http_tracer_1591(
 ):
     """#1591 真实入口 tracer：同一 WebGame/TestClient 内证两支外部行为。
 
-    ① 召对协饷候选 account=太仓 经 #1503 typed grant 单轨成案后 canonical 为国库。
-    ② `POST /api/directives` 手工拟旨 account 非法，且有无关非旨 pending action 并存时，
+    ① `POST /api/directives` 手工拟旨 account=太仓 经 capture 透传五字段后 canonical 为国库。
+    ② 同入口 account 非法，且有无关非旨 pending action 并存时，
     `POST /api/decree/issue` 外部响应须是真实 admission 拒因，不得被掩盖为「至少一条草案」。
 
-    stub 仅 LLM payload 产出边界（分类器/拟旨抽取/结算外层）；不 mock
+    stub 仅 LLM payload 产出边界（拟旨抽取/结算外层）；不 mock
     ensure_dossiers_for_draft_directives / list_dossiered_draft_directives /
     preview_pending_directives / list_pending_actions / resolve_turn。
     """
@@ -815,31 +815,30 @@ def test_manual_directive_admission_real_http_tracer_1591(
     )
     from tests.test_session_write_queue_1353 import wait_pending_writes
 
-    class _CannedHubuAgent:
-        def run(self, *_a, **_k):
-            return SimpleNamespace(
-                content="臣请户部发帑十五万两协济关宁军前，请陛下定夺准驳。", tools=[],
-            )
+    captured_ok = {
+        "draft_action": "拟旨",
+        "dossier_action_type": "grant_allocation",
+        "grant_action": "协饷",
+        "purpose": "补饷",
+        "target_kind": "army",
+        "target_id": "guanning",
+        "mode": "ordinary",
+        "amount": 15,
+        "account": "太仓",
+    }
+    captured_bad = dict(captured_ok, account="藩库")
+    captures = [captured_ok, captured_bad]
 
-        def get_last_run_output(self):
-            return None
+    def fake_extract(*_a, **_k):
+        return dict(captures.pop(0))
 
-    scripted = _scripted_xiexang_candidates(amount=15, account="太仓", target_id="guanning")
-
-    def fake_classify(text, *_a, **_k):
-        if str(text or "").strip() == "准":
-            return []
-        return list(scripted)
-
-    def fake_confirm(player_message, *_a, **_k):
-        return "应允" if str(player_message or "").strip() == "准" else "无"
-
+    real_capture = cb.capture_manual_directive_payload
     monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     _stub_outer_llm_seams(monkeypatch)
-    monkeypatch.setattr(cb, "classify_cli_action_intent", fake_classify)
-    monkeypatch.setattr(cb, "extract_confirmation_intent", fake_confirm)
+    monkeypatch.setattr(cb, "extract_draft_intent_with_roster_heal", fake_extract)
+    monkeypatch.setattr(cb, "capture_manual_directive_payload", real_capture)
 
     game = web_app.WebGame(fresh=False)
     monkeypatch.setattr(web_app, "web_game", game)
@@ -851,7 +850,6 @@ def test_manual_directive_admission_real_http_tracer_1591(
             and getattr(ch, "power_id", "ming") == "ming"
             and game.db.get_character_status(getattr(ch, "name", key))[0] == "active"
         )
-        game.session.registry.get = lambda _ch: _CannedHubuAgent()
         if getattr(game.session, "llm_config", None) is not None:
             try:
                 game.session.llm_config.channel = "cli"
@@ -860,15 +858,13 @@ def test_manual_directive_admission_real_http_tracer_1591(
 
         client = TestClient(web_app.app)
 
-        # ── ① 太仓→国库 canonical：真实召对候选走 #1503 typed grant 单轨成案 ──
+        # ── ① 手工拟旨太仓→国库：原票 POST /api/directives 入口 ──
         turn1 = int(game.state.turn)
-        petition = client.post(
-            f"/api/ministers/{name}/chat", json={"message": "拨关宁军饷十五万两。"},
+        directive_ok = client.post(
+            "/api/directives",
+            json={"text": "准从太仓见银拨关宁军饷十五万两即发。", "notes": ""},
         )
-        assert petition.status_code == 200, petition.text
-        wait_pending_writes(game)
-        confirm = client.post(f"/api/ministers/{name}/chat", json={"message": "准"})
-        assert confirm.status_code == 200, confirm.text
+        assert directive_ok.status_code == 200, directive_ok.text
         wait_pending_writes(game)
         _post_issue_stream(client, expected_turn=turn1, step="1591①太仓 issue/stream")
         after = _get_state(client)
@@ -882,14 +878,9 @@ def test_manual_directive_admission_real_http_tracer_1591(
 
         # ── ② 手工拟旨 account 非法 + 无关非旨 pending 并存：issue 须回真实拒因 ──
         turn2 = int(game.state.turn)
-        monkeypatch.setattr(cb, "capture_manual_directive_payload", lambda *_a, **_k: {
-            "dossier_action_type": "grant_allocation",
-            "target_kind": "army", "target_id": "guanning",
-            "mode": "ordinary", "amount": 15, "account": "太仓",
-        })
         directive = client.post(
             "/api/directives",
-            json={"text": "准从太仓见银拨关宁军饷十五万两即发。", "notes": ""},
+            json={"text": "准从藩库见银拨关宁军饷十五万两即发。", "notes": ""},
         )
         assert directive.status_code == 200, directive.text
         directive_id = int(directive.json()["directive"]["id"])
@@ -1048,6 +1039,9 @@ def test_real_chat_explicit_prefix_pay_decree_stages_grant_pending(game, monkeyp
     scripted = _scripted_xiexang_candidates(
         amount=15, account="太仓", target_id="guanning",
     ) + candidates_from_classifier_payload({
+        "kind": "draft", "draft_action": "拟旨",
+        "text": "敕户部发太仓银十五万两协济关宁军前。",
+    }, soft=False) + candidates_from_classifier_payload({
         "kind": "appointment", "appoint_action": "任命",
         "name": actor, "office": "经略关宁",
     }, soft=False)
@@ -1090,7 +1084,7 @@ def test_real_chat_explicit_prefix_pay_decree_stages_grant_pending(game, monkeyp
     ):
         monkeypatch.setattr(
             cb, name,
-            lambda *a, **k: (_ for _ in ()).throw(
+            lambda *a, name=name, **k: (_ for _ in ()).throw(
                 AssertionError(f"must not call {name} on explicit draft prefix")
             ),
         )
