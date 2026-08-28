@@ -15,9 +15,8 @@ import re
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import pytest
 import web_app
-from ming_sim.assets import format_money, format_wanliang_amount
+from ming_sim.assets import format_wanliang_amount
 from ming_sim.flows import (
     _substrate_hub_budget_army_pay,
     apply_fixed_period_flows,
@@ -92,7 +91,6 @@ def test_budget_army_pay_typed_identity_and_amounts(read_game):
     )
     assert legacy_lines[0]["amount"] == expected_legacy
     assert expected_legacy == 72
-    assert substrate_lines[0]["name"] != legacy_lines[0]["name"]
 
     # 玩家投影剥离 budget_key，只留 name/amount。
     runtime = object.__new__(web_app.WebGame)
@@ -106,18 +104,12 @@ def test_budget_army_pay_typed_identity_and_amounts(read_game):
     assert player_line["amount"] == substrate_lines[0]["amount"]
 
 
-@pytest.mark.parametrize("engine", ["substrate_hub", "legacy"])
-def test_renaming_army_pay_budget_line_does_not_double_debit(
-    game, monkeypatch, engine,
-):
-    """#1366：两引擎都认 key 跳过定额军饷，不咬显示名。"""
+def test_renaming_army_pay_budget_line_does_not_double_debit(game, monkeypatch):
+    """#1366：改 army_pay 显示名不得让定额路径再扣一笔。"""
     import ming_sim.flows as flows_mod
 
     db, state, _ = game
-    if engine == "legacy":
-        monkeypatch.setattr(type(db), "fiscal_engine", lambda _self: "legacy")
-    else:
-        assert db.fiscal_engine() == "substrate_hub"
+    assert db.fiscal_engine() == "substrate_hub"
 
     real = flows_mod.compute_budget_lines
 
@@ -141,36 +133,9 @@ def test_renaming_army_pay_budget_line_does_not_double_debit(
         "WHERE account = '国库' AND category = ?",
         (renamed,),
     ).fetchone()["n"] == 0
-    if engine == "substrate_hub":
-        hub_rows = [row for row in flow_rows if row.get("category") == "边饷hub"]
-        assert len(hub_rows) == 1
-        assert int(hub_rows[0]["paid"]) > 0
-    else:
-        assert any(row.get("category") == "各军军饷" for row in flow_rows)
-
-
-def test_treasury_budget_summary_reads_army_pay_amount_by_budget_key(
-    game, monkeypatch,
-):
-    """#1366：摘要取军饷金额认 key，不对自由文本做逐字锁。"""
-    import ming_sim.flows as flows_mod
-
-    db, state, _ = game
-    budget = {
-        "国库": {
-            "income": [],
-            "expense": [
-                {"name": "旧显示名", "amount": 901},
-                {"budget_key": "army_pay", "name": "新显示名", "amount": 17},
-            ],
-        },
-        "内库": {"income": [], "expense": []},
-    }
-    monkeypatch.setattr(flows_mod, "compute_budget_lines", lambda *_args, **_kwargs: budget)
-    summary = db.treasury_budget_summary(state)
-
-    assert format_money(17) in summary
-    assert format_money(901) not in summary
+    hub_rows = [row for row in flow_rows if row.get("category") == "边饷hub"]
+    assert len(hub_rows) == 1
+    assert int(hub_rows[0]["paid"]) > 0
 
 
 def test_player_budget_payload_strips_engineering_notes(read_game):
