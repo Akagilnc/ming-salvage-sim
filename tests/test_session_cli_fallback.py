@@ -1760,8 +1760,8 @@ def test_api_channel_secret_prefix_extracts_deadline_without_cli_helper(game, mo
     assert row["due_turn"] == state.turn + 3
 
 
-def test_api_channel_extract_failure_does_not_stage_incomplete_contract(game, monkeypatch):
-    """#1504: API extraction failure must fail loud instead of staging an untyped fallback."""
+def test_api_channel_mixed_confirmation_keeps_supplement_when_extract_fails(game, monkeypatch):
+    """#354: mixed confirmation still stages the edict plus supplement when extract fails."""
     db, state, _ = game
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
     minister = "魏忠贤"
@@ -1780,8 +1780,16 @@ def test_api_channel_extract_failure_does_not_stage_incomplete_contract(game, mo
         secret_order_id=None,
     )
 
-    assert res["pending_action_id"] == 0
+    assert res["pending_action_id"] > 0
     assert res["secret_order_id"] is None
+    row = db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?",
+        (res["pending_action_id"],),
+    ).fetchone()
+    payload = json.loads(row["payload_json"])
+    assert "督办陕西赈灾" in payload["content"]
+    assert "三月内回奏" in payload["content"]
+    assert "covert_task" not in payload
 
 
 def test_secret_context_path_preserves_multiple_related_emperor_task_lines(game, monkeypatch):
