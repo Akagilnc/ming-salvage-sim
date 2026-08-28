@@ -3181,6 +3181,9 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                     # #1376：修改=原地更新同一 pending 候选内容（owner 既裁）
                     frozenset({"应允", "拒绝", "留中", "修改", "无"}), "无",
                 ),
+                # #1376：修改判词携带 typed 新内容——唯一权威正文，禁从 player_message 散文裁剪
+                FieldSpec("new_content", "新内容", None, ""),
+                FieldSpec("target_ids", "目标编号", None, []),
             ),
         ),
         ActionCluster(
@@ -3192,7 +3195,7 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 ),
                 FieldSpec("order_id", "目标密令编号", None, 0, as_int=True),
                 FieldSpec("new_title", "新标题", None, ""),
-                FieldSpec("new_content", "新内容", None, "", max_len=500),
+                FieldSpec("new_content", "新内容", None, ""),
                 FieldSpec("deadline_months", "期限月数", None, 0, as_int=True, int_hi=36),
             ),
             materialize_fn=secret_fn,

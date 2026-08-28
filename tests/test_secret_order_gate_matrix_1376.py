@@ -1,23 +1,25 @@
-"""#1376 密令确认闸验证矩阵（v4.3）：3 入口 × 3 语义 = 9 格 + V3 回归。
+"""#1376 密令确认闸验证矩阵：3 入口 × 3 语义 = 9 格。
 
 接缝（票面钉）：
-- E1=`POST /api/ministers/毕自严/chat` 正文「密令如下：密察关宁欠饷」
+- E1=`POST /api/ministers/毕自严/chat` 正文「密令如下：…」
 - E2=`POST /api/ministers/毕自严/secret_order` 结构化载荷
 - E3=`POST .../chat` 无前缀 + 分类器 stub 结构化密令判词
 - S1 过月默认准 / S2 修改后准或过月 / S3 拒绝后过月不复活
 - settle=`POST /api/decree/issue/stream` 消费到终态
-- LLM 全 stub 于 registry/agent/分类器/确认/抽取/结算边界；断言判词→状态转移
+- LLM 全 stub；确认/抽取/分类器只消费用例显式灌入的 typed 结果
+- 行定位：调用前后 order-id 集差、pending id、候选 payload→落地 payload 动态传递
 
 零写：复用 conftest 的 user-data 隔离，并将每例 HOME/DB 定向到 tmp_path。
+V3 回归只在 tests/test_qa_c3_secret_order_path_1357_1376.py，本文件不包装重跑。
 """
 
 from __future__ import annotations
 
 import json
-import re
-import time
+import os
+from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import pytest
 from fastapi.testclient import TestClient
@@ -32,28 +34,41 @@ import web_app
 from ming_sim import audience_night as an
 from tests.test_session_write_queue_1353 import wait_pending_writes as _wait_pending_writes
 
-# ── 矩阵常量（票面原轨）────────────────────────────────────────────────
+# ── 矩阵常量 ───────────────────────────────────────────────────────────
 
-# #670：王之臣 seed 在辽东，普通 /chat 依法 409；矩阵测确认闸语义，改用在京可召朝臣。
-MINISTER = "毕自严"
+# 票面 E1/E2/E3 指定王之臣；临时 DB 前置合法置于 beizhili/可召（ADR 0096），不改生产 gate。
+MINISTER = "王之臣"
 E1_MESSAGE = "密令如下：密察关宁欠饷"
 E2_TITLE = "密察关宁欠饷"
 E2_CONTENT = "密察关宁欠饷"
 E3_MESSAGE = "你替朕悄悄查一查关宁欠饷实数"
 
-# stub 结构化 content：复述版 / 修改版（不断言散文匹配，只钉判词→落库映射）
+# 抽取 stub 默认 typed 载荷（用例可覆盖）；S2 修改 material=测试自送正文
 RESTATED_CONTENT = "密察关宁欠饷，据实密奏，不得声张。"
-# 修改正文=去「修改：」前缀后的御旨材料（P5：不二次抽取；与 production strip 同口径）
-MODIFIED_CONTENT = "只查饷银去向，不查动向"
-MODIFIED_TITLE = "只查饷银去向"
-
-S2_MODIFY_MESSAGE = "修改：只查饷银去向，不查动向"
+# 玩家修改输入是确定性材料（非 LLM 生成物）；S2 新正文唯取 typed new_content
+S2_MODIFY_BODY = "  " + ("只查饷银去向" * 90) + "  "
+# 自然语言修改表达（不含结构化「修改：」前缀），保证旧 prefix parser 无法直接产出
+# S2_MODIFY_BODY——proof-of-red：生产须从 typed new_content 消费而非裁剪散文。
+S2_MODIFY_MESSAGE = "朕要修改密令正文为只查饷银去向，不查动向"
 S2_APPROVE_MESSAGE = "准"
-S3_REJECT = {
+# S3 三格分别使用的真实拒绝表达（stub 仅灌「拒绝」判词，不扫/不断言措辞）。
+S3_REJECT_MESSAGES = {
     "E1S3": "此事作罢",
     "E2S3": "朕再思之，不必查了",
     "E3S3": "算了",
 }
+
+DEFAULT_EXTRACT_PAYLOAD: Dict[str, Any] = {
+    "title": E2_TITLE,
+    "content": RESTATED_CONTENT,
+    "assignee": MINISTER,
+    "tags": ["关宁", "欠饷"],
+    "deadline_months": 3,
+    "excluded_names": [],
+    "excluded_offices": [],
+    "dossier_links": [],
+}
+
 
 # ── LLM / 结算边界 stub ────────────────────────────────────────────────
 
@@ -87,14 +102,11 @@ class _CannedMindreading:
 
 
 class _CannedRelationJudge:
-    """召对/收夜关系判官外层——零事件 canned，禁真网。"""
-
     def run(self, _prompt):
         return SimpleNamespace(content='{"events":[]}')
 
 
 def _install_settlement_llm_stubs(monkeypatch) -> None:
-    """过月 SSE 外层 LLM 边界 canned（与 #1468 tracer 同形，结算核真跑）。"""
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
     monkeypatch.setattr(
         agents_mod, "create_audience_extractor_agent",
@@ -108,8 +120,6 @@ def _install_settlement_llm_stubs(monkeypatch) -> None:
         mindreading_mod, "create_mindreading_agent",
         lambda *a, **k: _CannedMindreading(),
     )
-    # #642：关系判官同属外层 LLM 缝——漏 stub → 有 window 时真网挂起占票，
-    # xdist 下 pending drain 墙钟假红。
     monkeypatch.setattr(
         agents_mod, "create_relation_judge_agent",
         lambda *a, **k: _CannedRelationJudge(),
@@ -161,37 +171,18 @@ def _install_settlement_llm_stubs(monkeypatch) -> None:
     )
 
 
-def _secret_payload_from_command(
-    player_command: str, default_assignee: str,
-) -> Dict[str, Any]:
-    """结构化密令 stub：按命令材料在复述版/修改版间切换（不扫自由散文语义）。"""
-    cmd = player_command or ""
-    if "只查饷银" in cmd or "不查动向" in cmd:
-        title, content = MODIFIED_TITLE, MODIFIED_CONTENT
-    else:
-        title, content = E2_TITLE, RESTATED_CONTENT
-    return {
-        "title": title,
-        "content": content,
-        "assignee": default_assignee or MINISTER,
-        "tags": ["关宁", "欠饷"],
-        "deadline_months": 3,
-        "excluded_names": [],
-        "excluded_offices": [],
-        "dossier_links": [],
-    }
-
-
 class _ConfirmStub:
-    """确认判词 stub：按格灌入队列；断言判词→状态转移，不断言散文匹配。"""
+    """确认判词 stub：只弹用例显式 push 的 typed 枚举，不读玩家散文。
+
+    #1376：修改判词携带 typed new_content 作为唯一权威正文。push 接收
+    (confirmation, new_content="")；new_content 仅修改判词时填写。
+    """
 
     def __init__(self) -> None:
-        self.queue: List[str] = []
-        self.calls: List[str] = []
-        self.results: List[str] = []
+        self.queue: List[tuple] = []
 
-    def push(self, *values: str) -> None:
-        self.queue.extend(values)
+    def push(self, confirmation: str, new_content: str = "") -> None:
+        self.queue.append((confirmation, new_content))
 
     def __call__(
         self,
@@ -199,74 +190,23 @@ class _ConfirmStub:
         minister_reply: str,
         pending_summaries: List[str],
         llm_config: Any = None,
-    ) -> str:
-        del minister_reply, pending_summaries, llm_config
-        text = (player_message or "").strip()
-        self.calls.append(text)
-        # 测试边界模拟结构化 LLM 枚举：短应允句 / 队列灌入的修改·拒绝
-        compact = re.sub(r"[\s，,。.!！?？；;：:、]+", "", text)
-        if compact in {"准", "可", "允", "好", "行", "善"} or compact in {
-            "准奏", "照准", "准了", "照办",
-        }:
-            result = "应允"
-        elif self.queue:
-            result = self.queue.pop(0)
+    ) -> Dict[str, Any]:
+        del player_message, minister_reply, pending_summaries, llm_config
+        if self.queue:
+            confirmation, new_content = self.queue.pop(0)
         else:
-            result = "无"
-        self.results.append(result)
-        return result
+            confirmation, new_content = "无", ""
+        return {"confirmation": confirmation, "target_ids": [], "new_content": new_content}
 
 
-class _ClassifierStub:
-    """分类器 stub：E3 入口返回结构化密令判词；其它默认 []。记录真实调用契约。"""
+class _ExtractStub:
+    """密令抽取 stub：返回用例配置的 typed 载荷，不扫 player_command 关键词。"""
 
     def __init__(self) -> None:
-        self.mode: str = "none"  # none | secret_new | secret_modify
-        self.calls: List[str] = []
-        self.results: List[List[Dict[str, Any]]] = []
+        self.payload: Dict[str, Any] = dict(DEFAULT_EXTRACT_PAYLOAD)
 
-    def __call__(self, player_message: str, *args, **kwargs) -> List[Dict[str, Any]]:
-        del args, kwargs
-        text = (player_message or "").strip()
-        self.calls.append(text)
-        if self.mode == "secret_new":
-            result: List[Dict[str, Any]] = [{"kind": "secret", "secret_action": "新建"}]
-        elif self.mode == "secret_modify":
-            result = [{
-                "kind": "secret",
-                "secret_action": "新建",
-                "new_title": MODIFIED_TITLE,
-                "new_content": MODIFIED_CONTENT,
-            }]
-        else:
-            result = []
-        self.results.append(result)
-        return result
-
-
-# ── 公共 fixture：临时 HOME/DB + TestClient ─────────────────────────────
-
-@pytest.fixture
-def matrix_env(tmp_path, monkeypatch, _offline_scene_beat_generator):
-    """临时 HOME + user_data/DB；CLI 通道以便 E3 分类器路径可达；LLM 全 stub。"""
-    home = tmp_path / "home"
-    home.mkdir()
-    # conftest 已建 tmp_path/user_data；复用
-    ud = tmp_path / "user_data"
-    ud.mkdir(exist_ok=True)
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(ud))
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    # CLI 通道：E3 无前缀分类器路径；E1/E2 前缀仍确定性路由
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
-    monkeypatch.delenv("MING_SIM_DB", raising=False)
-
-    _install_settlement_llm_stubs(monkeypatch)
-
-    confirm = _ConfirmStub()
-    classifier = _ClassifierStub()
-
-    def _fake_extract(
+    def __call__(
+        self,
         player_command: str,
         minister_reply: str,
         default_assignee: str,
@@ -274,13 +214,96 @@ def matrix_env(tmp_path, monkeypatch, _offline_scene_beat_generator):
         force_default_assignee: bool = False,
         dossier_candidates: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
-        del minister_reply, llm_config, force_default_assignee, dossier_candidates
-        return _secret_payload_from_command(player_command, default_assignee)
+        del player_command, minister_reply, llm_config, force_default_assignee, dossier_candidates
+        out = dict(self.payload)
+        if default_assignee and not out.get("assignee"):
+            out["assignee"] = default_assignee
+        return out
+
+
+class _ClassifierStub:
+    """分类器 stub：mode 驱动 typed 返回；不解析消息语义。
+
+    #1376 E1/E2 专项契约：mode=fail_if_called → 被调用即失败，证明
+    E1/E2 经结构性前缀/端点路由达 stage，未经 classifier。
+    """
+
+    def __init__(self) -> None:
+        self.mode: str = "fail_if_called"  # fail_if_called | secret_new
+
+    def __call__(self, player_message: str, *args, **kwargs) -> List[Dict[str, Any]]:
+        del player_message, args, kwargs
+        if self.mode == "secret_new":
+            return [{"kind": "secret", "secret_action": "新建"}]
+        # fail_if_called：任何调用皆为契约违反
+        raise AssertionError(
+            "classifier must not be called for E1/E2 (fail-if-called)"
+        )
+
+
+# ── 公共 fixture ───────────────────────────────────────────────────────
+
+
+def _item_sig(path: Path) -> Tuple[str, int, int]:
+    """单路径轻量态：存在性 + mtime_ns + size；不读内容、不递归。"""
+    if not path.exists():
+        return ("missing", 0, 0)
+    st = path.stat()
+    kind = "file" if path.is_file() else "dir"
+    return (kind, int(st.st_mtime_ns), int(st.st_size))
+
+
+def _snapshot_write_surface(real_home: Path) -> dict:
+    """真实入口可达的直写文件/文件族与必要子根的轻量前后态。
+
+    覆盖 data/active_db.txt、data/ming_sim_*.db（仅 data 根 glob）、
+    runtime_llm.json，以及 saves/error_packs/~/.ming_sim 的直接子项。
+    不递归 hash。
+    """
+    repo = Path(__file__).resolve().parent.parent
+    data = repo / "data"
+    snap: dict = {}
+    for p in (data / "active_db.txt", data / "runtime_llm.json"):
+        snap[str(p)] = _item_sig(p)
+    family: dict = {}
+    if data.is_dir():
+        for p in sorted(data.glob("ming_sim_*.db")):
+            if p.is_file():
+                family[p.name] = _item_sig(p)
+    snap["data:ming_sim_*.db"] = family
+    for root in (data / "saves", data / "error_packs", real_home / ".ming_sim"):
+        kids: dict = {}
+        if root.is_dir():
+            for child in sorted(root.iterdir(), key=lambda x: x.name):
+                kids[child.name] = _item_sig(child)
+        snap[str(root)] = {"root": _item_sig(root), "children": kids}
+    return snap
+
+
+@pytest.fixture
+def matrix_env(tmp_path, monkeypatch, _offline_scene_beat_generator):
+    """临时 HOME + user_data/DB；CLI 通道；LLM 全 stub。"""
+    real_home = Path(os.environ.get("HOME") or Path.home())
+    before = _snapshot_write_surface(real_home)
+    home = tmp_path / "home"
+    home.mkdir()
+    ud = tmp_path / "user_data"
+    ud.mkdir(exist_ok=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(ud))
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
+    monkeypatch.delenv("MING_SIM_DB", raising=False)
+
+    _install_settlement_llm_stubs(monkeypatch)
+
+    confirm = _ConfirmStub()
+    classifier = _ClassifierStub()
+    extract = _ExtractStub()
 
     monkeypatch.setattr(cli_backend, "extract_confirmation_intent", confirm)
     monkeypatch.setattr(cli_backend, "classify_cli_action_intent", classifier)
-    monkeypatch.setattr(cli_backend, "_extract_secret_order", _fake_extract)
-    # resolve_minister_actions 内调 _extract_secret_order——已 patch 模块属性即可
+    monkeypatch.setattr(cli_backend, "_extract_secret_order", extract)
 
     monkeypatch.setattr(web_app, "web_game", None)
     client = TestClient(web_app.app)
@@ -289,9 +312,8 @@ def matrix_env(tmp_path, monkeypatch, _offline_scene_beat_generator):
     assert new.status_code == 200, new.text
     game = web_app.web_game
     assert game is not None
-    # 大臣回话 agent 边界
+
     game.session.registry.get = lambda _ch: _CannedAgent()
-    # 强制 CLI 通道（runtime 可能被 load 覆盖）
     cfg = game.session.llm_config
     if getattr(cfg, "channel", None) != "cli":
         try:
@@ -305,11 +327,15 @@ def matrix_env(tmp_path, monkeypatch, _offline_scene_beat_generator):
                 }
             )
 
-    # 毕自严必须可召（在京）
     ministers = (new.json() or {}).get("state", {}).get("ministers") or []
     names = {str(m.get("name") or "") for m in ministers if isinstance(m, dict)}
+    game.db.conn.execute(
+        "UPDATE characters SET location='beizhili', transit_to='', "
+        "transit_distance_remaining=NULL WHERE name=?",
+        (MINISTER,),
+    )
+    game.db.conn.commit()
     if MINISTER not in names:
-        # 名册投影可能截断；以 DB/content 为准校验 active
         st = game.db.get_character_status(MINISTER)
         assert st and st[0] == "active", f"{MINISTER} 非 active: {st!r}"
 
@@ -318,11 +344,11 @@ def matrix_env(tmp_path, monkeypatch, _offline_scene_beat_generator):
         "game": game,
         "confirm": confirm,
         "classifier": classifier,
+        "extract": extract,
         "home": home,
         "ud": ud,
     }
 
-    # teardown：Condition 等票排空；fail-loud——wait_idle=False/异常不得吞掉后继续关库。
     g = web_app.web_game
     if g is not None:
         try:
@@ -330,6 +356,9 @@ def matrix_env(tmp_path, monkeypatch, _offline_scene_beat_generator):
             g.session.close()
         finally:
             web_app.web_game = None
+
+    after = _snapshot_write_surface(real_home)
+    assert after == before, f"仓外/真实 user-data 零写失败: {before=} {after=}"
 
 
 # ── helpers ────────────────────────────────────────────────────────────
@@ -349,10 +378,6 @@ def _parse_sse(text: str) -> list[dict]:
     return events
 
 
-def _turn_of_game(game) -> int:
-    return int(game.state.turn)
-
-
 def _list_orders(client: TestClient) -> list[dict]:
     resp = client.get("/api/secret_orders")
     assert resp.status_code == 200, resp.text
@@ -360,39 +385,24 @@ def _list_orders(client: TestClient) -> list[dict]:
     return list(body.get("orders") or [])
 
 
-def _orders_matching(orders: list[dict], *, needle: str) -> list[dict]:
-    """按 title/content 子串找本矩阵令（避免与开局种子密令混淆）。"""
-    out = []
-    for o in orders:
-        blob = f"{o.get('title') or ''}{o.get('content') or ''}"
-        if needle in blob or "关宁" in blob or "饷" in blob and "只查" in blob:
-            # 收窄：本矩阵 stub 标题/内容
-            if (
-                needle in blob
-                or E2_TITLE in blob
-                or MODIFIED_TITLE in blob
-                or RESTATED_CONTENT in blob
-                or MODIFIED_CONTENT in blob
-                or "关宁欠饷" in blob
-            ):
-                out.append(o)
-    # 去重逻辑简化：用 stub 指纹再滤
-    filtered = []
-    for o in out:
-        blob = f"{o.get('title') or ''}{o.get('content') or ''}"
-        if any(
-            token in blob
-            for token in (E2_TITLE, MODIFIED_TITLE, RESTATED_CONTENT, MODIFIED_CONTENT, "关宁欠饷", "欠饷实数")
-        ):
-            filtered.append(o)
-    return filtered
+def _order_ids(client: TestClient) -> Set[int]:
+    return {int(o["id"]) for o in _list_orders(client)}
+
+
+def _orders_by_ids(client: TestClient, ids: Set[int]) -> list[dict]:
+    return [o for o in _list_orders(client) if int(o["id"]) in ids]
+
+
+def _db_order_ids(game) -> Set[int]:
+    return {int(o["id"]) for o in game.db.list_secret_orders()}
 
 
 def _db_pending_secret_new(game) -> list[dict]:
     rows = game.db.list_pending_actions(game.state.turn, minister_name=MINISTER)
     return [
         r for r in rows
-        if r.get("kind") == "secret_order" and str(r.get("action") or "") == "新建"
+        if r.get("kind") == "secret_order"
+        and str(r.get("action") or "") == "新建"
         and str(r.get("status") or "") == "pending"
     ]
 
@@ -405,20 +415,21 @@ def _payload_of(row: dict) -> dict:
     return p if isinstance(p, dict) else {}
 
 
-def _issue_entry(env: dict, *, message: Optional[str] = None, entry: str = "E1") -> dict:
-    """三入口之一注入密令；返回 chat/secret_order JSON。"""
+def _issue_entry(env: dict, *, entry: str = "E1") -> dict:
     client: TestClient = env["client"]
     game = env["game"]
     classifier: _ClassifierStub = env["classifier"]
 
     if entry == "E1":
-        classifier.mode = "none"  # 前缀确定性路由，不经分类器
+        # E1：显式前缀路由，classifier 不得被调用
+        classifier.mode = "fail_if_called"
         resp = client.post(
             f"/api/ministers/{MINISTER}/chat",
-            json={"message": message or E1_MESSAGE},
+            json={"message": E1_MESSAGE},
         )
     elif entry == "E2":
-        classifier.mode = "none"
+        # E2：结构化端点路由，classifier 不得被调用
+        classifier.mode = "fail_if_called"
         resp = client.post(
             f"/api/ministers/{MINISTER}/secret_order",
             json={
@@ -429,17 +440,17 @@ def _issue_entry(env: dict, *, message: Optional[str] = None, entry: str = "E1")
             },
         )
     elif entry == "E3":
+        # E3：无前缀 + classifier stub 返回 secret_new 判词
         classifier.mode = "secret_new"
         resp = client.post(
             f"/api/ministers/{MINISTER}/chat",
-            json={"message": message or E3_MESSAGE},
+            json={"message": E3_MESSAGE},
         )
     else:
         raise AssertionError(f"unknown entry {entry}")
 
     assert resp.status_code == 200, f"{entry} inject → {resp.status_code}: {resp.text}"
     _wait_pending_writes(game)
-    # registry 可能在 begin_turn 后仍在；确保 canned
     game.session.registry.get = lambda _ch: _CannedAgent()
     return resp.json() or {}
 
@@ -458,15 +469,11 @@ def _chat(env: dict, message: str) -> dict:
 
 
 def _settle_month(env: dict) -> dict:
-    """POST /api/decree/issue/stream 消费到终态（票面 S1/S2/S3 过月）。"""
     client: TestClient = env["client"]
     game = env["game"]
     _wait_pending_writes(game)
 
-    # 无诏亦可过月：先试 advance_without_edict 同语义的 issue 空诏路径；
-    # 票面钉 issue/stream——若需草案则补一条最小拟旨再颁。
-    turn = _turn_of_game(game)
-    # 最小拟旨，保证 issue 路径有可颁材料（不过度扩大 scope）
+    turn = int(game.state.turn)
     d = client.post(
         "/api/directives",
         json={"text": "着户部清核辽饷（#1376 矩阵过月）。", "notes": ""},
@@ -491,7 +498,6 @@ def _settle_month(env: dict) -> dict:
     if ev == "error":
         raise AssertionError(f"issue/stream error: {data!r}; sse={resp.text!r}")
     if ev == "decisions":
-        # 亲裁最短续跑
         decisions = (data or {}).get("decisions") or []
         assert decisions, data
         choices = []
@@ -502,7 +508,10 @@ def _settle_month(env: dict) -> dict:
             # #1589：公共 resolve 缝不再接受无键位置载荷，须显式携带 decision_key
             key = str(dec.get("decision_key") or "")
             assert key, f"decision 行缺 decision_key：{dec}"
-            label = str(opt0.get("label") or "准") if isinstance(opt0, dict) else str(opt0)
+            if isinstance(opt0, dict):
+                label = str(opt0.get("label") or "准")
+            else:
+                label = str(opt0) or "准"
             choices.append({"decision_key": key, "label": label})
         resolve = client.post(
             "/api/decree/resolve_decisions/stream",
@@ -515,15 +524,10 @@ def _settle_month(env: dict) -> dict:
         raise AssertionError(f"unexpected terminal {ev!r}: {resp.text!r}")
 
     _wait_pending_writes(game)
-    # 夜应收
     open_n = an.get_open_night(game.db)
     assert open_n is None or str(open_n.get("status")) == an.NIGHT_STATUS_CLOSED, open_n
     game.session.registry.get = lambda _ch: _CannedAgent()
     return data if isinstance(data, dict) else {}
-
-
-def _matrix_orders(client: TestClient) -> list[dict]:
-    return _orders_matching(_list_orders(client), needle="关宁")
 
 
 # ── 9 格 ───────────────────────────────────────────────────────────────
@@ -539,72 +543,50 @@ def _matrix_orders(client: TestClient) -> list[dict]:
     ids=["E1S1", "E2S1", "E3S1"],
 )
 def test_matrix_S1_default_commit_on_settle(matrix_env, cell, entry):
-    """S1：下令→先观测列表不含→不确认→过月→唯一一行 id>0 content=复述版。"""
+    """S1：下令→列表无新 id→不确认→过月→唯一新 id，content=候选 payload 动态传递。"""
     env = matrix_env
     client = env["client"]
     game = env["game"]
+    extract: _ExtractStub = env["extract"]
+
+    ids_before = _order_ids(client)
+    db_ids_before = _db_order_ids(game)
 
     inject = _issue_entry(env, entry=entry)
-    # 首包设计口径：secret_order_id=0（暂存态）
     assert int(inject.get("secret_order_id") or 0) == 0, f"{cell} 首包应 id=0: {inject!r}"
 
-    classifier: _ClassifierStub = env["classifier"]
-    # 结构性信号：E1/E2 不经分类器亦达 stage；E3 经分类器 stub
     pending = _db_pending_secret_new(game)
     assert len(pending) >= 1, f"{cell} stage 后须有 secret_order/新建 候选: {pending!r}"
     cand = pending[0]
     cand_id = int(cand["id"])
-    payload = _payload_of(cand)
-    assert str(payload.get("content") or "") == RESTATED_CONTENT, (
-        f"{cell} 候选 content 须为完整复述版: {payload!r}"
+    staged_payload = _payload_of(cand)
+    staged_content = str(staged_payload.get("content") or "")
+    # 候选 content = 用例灌入的抽取 typed 字段（外部 pending 可见）
+    assert staged_content == str(extract.payload.get("content") or ""), (
+        f"{cell} 候选 content 须等于抽取 stub typed 载荷: "
+        f"staged={staged_content!r} stub={extract.payload!r}"
     )
 
-    if entry == "E3":
-        # 真实分类器调用契约：注入文被记录，且返回含 kind=secret 的结构化判词
-        assert classifier.calls, f"{cell} E3 须打到分类器 stub"
-        assert any(
-            E3_MESSAGE == c or E3_MESSAGE in c or "悄悄查" in c
-            for c in classifier.calls
-        ), f"{cell} E3 分类器须收到无前缀密令文: {classifier.calls!r}"
-        assert classifier.results, f"{cell} E3 分类器须有返回记录"
-        assert any(
-            isinstance(item, dict) and item.get("kind") == "secret"
-            for result in classifier.results
-            for item in result
-        ), f"{cell} E3 分类器返回须含 secret 判词: {classifier.results!r}"
-    else:
-        # E1/E2：前缀/端点确定性路由——mode=none 时 stub 返回 []，仍达 stage（上面 pending）
-        assert classifier.mode == "none", f"{cell} 结构性入口 classifier.mode 须为 none"
-        assert all(
-            not any(
-                isinstance(item, dict) and item.get("kind") == "secret"
-                for item in result
-            )
-            for result in classifier.results
-        ), (
-            f"{cell} E1/E2 不得依赖分类器密令判词达 stage: "
-            f"calls={classifier.calls!r} results={classifier.results!r}"
-        )
+    assert _order_ids(client) == ids_before, (
+        f"{cell} settle 前不得新增可见密令 id: before={ids_before!r} "
+        f"now={_order_ids(client)!r}"
+    )
 
-    # 先观测 settle 前不可见（票面 v4.3 观测序）
-    before = _matrix_orders(client)
-    assert before == [], f"{cell} settle 前列表须不含此令: {before!r}"
-
-    # 不确认 → 过月默认准
     _settle_month(env)
 
-    after = _matrix_orders(client)
-    assert len(after) == 1, f"{cell} settle 后须唯一一行: {after!r}"
-    row = after[0]
+    new_ids = _order_ids(client) - ids_before
+    assert len(new_ids) == 1, f"{cell} settle 后须唯一新 id: {new_ids!r}"
+    row = _orders_by_ids(client, new_ids)[0]
     assert int(row["id"]) > 0
-    content = str(row.get("content") or "")
-    assert content == RESTATED_CONTENT, (
-        f"{cell} content 须为完整复述版 {RESTATED_CONTENT!r}，得 {content!r}"
+    landed = str(row.get("content") or "")
+    assert landed == staged_content, (
+        f"{cell} 落地 content 须=候选 payload 动态传递: "
+        f"landed={landed!r} staged={staged_content!r}"
     )
-    # 候选已消费
-    assert _db_pending_secret_new(game) == [] or all(
-        int(p["id"]) != cand_id for p in _db_pending_secret_new(game)
+    assert all(int(p["id"]) != cand_id for p in _db_pending_secret_new(game)), (
+        f"{cell} 候选 {cand_id} 须已消费"
     )
+    assert _db_order_ids(game) - db_ids_before == new_ids
 
 
 @pytest.mark.parametrize(
@@ -617,25 +599,27 @@ def test_matrix_S1_default_commit_on_settle(matrix_env, cell, entry):
     ids=["E1S2", "E2S2", "E3S2"],
 )
 def test_matrix_S2_modify_then_land(matrix_env, cell, entry, via_approve):
-    """S2：下令→修改（判词 stub=修改+新内容）→准或过月；候选 id 不变；真表 content=修改版。"""
+    """S2：下令→确认判词=修改+new_content→准或过月；候选 id 不变；落地=typed new_content。"""
     env = matrix_env
     client = env["client"]
     game = env["game"]
     confirm: _ConfirmStub = env["confirm"]
     classifier: _ClassifierStub = env["classifier"]
 
+    ids_before = _order_ids(client)
+
     _issue_entry(env, entry=entry)
     pending_before = _db_pending_secret_new(game)
     assert len(pending_before) == 1, f"{cell} 须恰一候选: {pending_before!r}"
     cand_id = int(pending_before[0]["id"])
-    assert _matrix_orders(client) == []
+    staged_content = str(_payload_of(pending_before[0]).get("content") or "")
+    assert _order_ids(client) == ids_before
 
-    # 修改轮：确认判词 stub=修改；分类器/抽取给新内容
-    confirm.push("修改")
-    if entry == "E3":
-        classifier.mode = "secret_modify"
-    else:
-        classifier.mode = "none"
+    # 修改轮：确认判词 stub=修改 + typed new_content（不读玩家散文）
+    # S2_MODIFY_MESSAGE 不含结构化「修改：」前缀→旧 prefix parser 无法直接产出 S2_MODIFY_BODY，
+    # 证明生产须从 typed new_content 消费而非裁剪玩家散文。
+    confirm.push("修改", new_content=S2_MODIFY_BODY)
+    classifier.mode = "none"
     _chat(env, S2_MODIFY_MESSAGE)
 
     pending_mid = _db_pending_secret_new(game)
@@ -647,30 +631,27 @@ def test_matrix_S2_modify_then_land(matrix_env, cell, entry, via_approve):
     )
     mid_payload = _payload_of(pending_mid[0])
     mid_content = str(mid_payload.get("content") or "")
-    assert MODIFIED_CONTENT in mid_content or mid_content == MODIFIED_CONTENT, (
-        f"{cell} 修改后候选 content 须=修改版: {mid_payload!r}"
+    # 外部可见：候选 content = typed new_content（唯一权威正文）
+    assert mid_content == S2_MODIFY_BODY, (
+        f"{cell} 修改后候选 content 须=typed new_content: "
+        f"got={mid_content!r} want={S2_MODIFY_BODY!r} staged={staged_content!r}"
     )
-    # 确认判词→修改 映射被消费（results 记录结构化枚举，非散文自证）
-    assert "修改" in confirm.results, (
-        f"{cell} 修改轮须消费确认判词=修改: calls={confirm.calls!r} results={confirm.results!r}"
-    )
-    assert any(S2_MODIFY_MESSAGE == c or "只查饷银" in c for c in confirm.calls), confirm.calls
 
     if via_approve:
+        confirm.push("应允")
         out = _chat(env, S2_APPROVE_MESSAGE)
         oid = int(out.get("secret_order_id") or 0)
         assert oid > 0, f"{cell} 准后 secret_order_id 须>0: {out!r}"
     else:
-        # E2S2：不准→过月默认准
         _settle_month(env)
 
-    after = _matrix_orders(client)
-    assert len(after) == 1, f"{cell} 落地后须唯一一行: {after!r}"
-    content = str(after[0].get("content") or "")
-    assert MODIFIED_CONTENT in content or content == MODIFIED_CONTENT, (
-        f"{cell} 真表 content 须=修改版: {content!r}"
+    new_ids = _order_ids(client) - ids_before
+    assert len(new_ids) == 1, f"{cell} 落地后须唯一新 id: {new_ids!r}"
+    landed = str(_orders_by_ids(client, new_ids)[0].get("content") or "")
+    assert landed == S2_MODIFY_BODY, (
+        f"{cell} 真表 content 须=typed new_content: "
+        f"landed={landed!r} want={S2_MODIFY_BODY!r}"
     )
-    assert int(after[0]["id"]) > 0
 
 
 @pytest.mark.parametrize(
@@ -683,60 +664,35 @@ def test_matrix_S2_modify_then_land(matrix_env, cell, entry, via_approve):
     ids=["E1S3", "E2S3", "E3S3"],
 )
 def test_matrix_S3_reject_then_settle_no_resurrection(matrix_env, cell, entry):
-    """S3：下令→拒绝判词 stub→过月；真表无此令；候选取消；过月不复活。"""
+    """S3：下令→确认判词=拒绝→过月；无新 order id；候选取消；过月不复活。"""
     env = matrix_env
     client = env["client"]
     game = env["game"]
     confirm: _ConfirmStub = env["confirm"]
 
+    ids_before = _order_ids(client)
+    db_ids_before = _db_order_ids(game)
+
     _issue_entry(env, entry=entry)
     assert len(_db_pending_secret_new(game)) >= 1
-    assert _matrix_orders(client) == []
+    assert _order_ids(client) == ids_before
 
-    reject_msg = S3_REJECT[cell]
+    # S3 三格分别使用不同的真实拒绝表达；stub 仅灌「拒绝」判词，不扫/不断言措辞
+    s3_reject_msg = S3_REJECT_MESSAGES[cell]
     confirm.push("拒绝")
-    _chat(env, reject_msg)
+    classifier_mode = env["classifier"]
+    classifier_mode.mode = "none"  # 确认轮 classifier 可跑但不得影响判词
+    _chat(env, s3_reject_msg)
 
-    # 候选态=取消/清除
     assert _db_pending_secret_new(game) == [], (
         f"{cell} 拒绝后 pending 新建候选须清除: {_db_pending_secret_new(game)!r}"
     )
-    assert _matrix_orders(client) == []
-    # 拒绝判词须被真实消费（禁 `or confirm.calls` 恒真尾）
-    assert reject_msg in confirm.calls, (
-        f"{cell} 拒绝轮须调用确认判词: calls={confirm.calls!r}"
-    )
-    assert "拒绝" in confirm.results, (
-        f"{cell} 拒绝轮须消费确认判词=拒绝: results={confirm.results!r}"
-    )
+    assert _order_ids(client) == ids_before
 
-    # 过月不复活
     _settle_month(env)
-    assert _matrix_orders(client) == [], (
-        f"{cell} 过月后不得复活: {_matrix_orders(client)!r}"
+    assert _order_ids(client) - ids_before == set(), (
+        f"{cell} 过月后不得新增密令 id: {_order_ids(client) - ids_before!r}"
     )
-    # DB 真表亦无
-    db_orders = [
-        o for o in game.db.list_secret_orders()
-        if any(
-            t in f"{o.get('title')}{o.get('content')}"
-            for t in (E2_TITLE, MODIFIED_TITLE, RESTATED_CONTENT, "关宁欠饷", "欠饷实数")
-        )
-    ]
-    assert db_orders == [], f"{cell} DB 真表不得有此令: {db_orders!r}"
-
-
-# ── V3 回归引用 ─────────────────────────────────────────────────────────
-
-
-def test_V3_regression_confirm_visible(
-    tmp_path, monkeypatch, _offline_scene_beat_generator,
-):
-    """V3：既有 test_qa_c3… 准后 id>0 + 立刻可见——全绿保持。"""
-    from tests.test_qa_c3_secret_order_path_1357_1376 import (
-        test_confirm_secret_order_http_returns_id_and_list_visible,
-    )
-
-    test_confirm_secret_order_http_returns_id_and_list_visible(
-        tmp_path, monkeypatch, _offline_scene_beat_generator,
+    assert _db_order_ids(game) - db_ids_before == set(), (
+        f"{cell} DB 真表不得新增密令 id: {_db_order_ids(game) - db_ids_before!r}"
     )

@@ -251,10 +251,6 @@ def _snapshot_secret_order_people(
     return list(dict.fromkeys(names))
 
 
-_SECRET_EXCLUSION_CLAUSE_RE = re.compile(
-    r"(?:不走|不经|勿走|勿经|瞒住|瞒着|瞒过|不可令|勿令|不得让|不得告知|勿使|莫让|别让|不要让|不许|严禁)\s*"
-    r"([^，。；;\s]{2,40}?)(?=(?:知晓|知道|得知|知情|过问|插手|，|。|；|\s|$))"
-)
 _SECRET_OFFICE_TYPES = (
     "吏部", "户部", "礼部", "兵部", "刑部", "工部", "都察院", "大理寺", "通政司",
     "司礼监", "内阁", "东厂", "锦衣卫", "翰林院", "詹事府",
@@ -283,75 +279,24 @@ def _canonical_secret_exclusion_target(
     return "", target
 
 
-def _recover_secret_order_exclusions(
-    content: Any, text: object,
-) -> tuple[List[str], List[str]]:
-    """Recover explicit secrecy targets at the sole durable-order boundary.
-
-    Structured callers may omit an exclusion field, but an explicit ``瞒住``
-    clause in the order itself must survive every staging path.  Resolve names,
-    aliases, office types, and current office titles against the same content
-    registry that is used to snapshot the durable blacklist.
-    """
-    people: List[str] = []
-    offices: List[str] = []
-    characters = list(getattr(content, "characters", {}).values())
-    by_name = {
-        token: character.name
-        for character in characters
-        for token in [character.name, *(character.aliases or [])]
-        if token
-    }
-    office_types = {str(character.office_type).strip() for character in characters if character.office_type}
-    office_titles = {str(character.office).strip() for character in characters if character.office}
-    clauses = _SECRET_EXCLUSION_CLAUSE_RE.findall(str(text or ""))
-    clauses += re.findall(
-        r"(?:对|向)\s*([^，。；;\s]{2,40}?)\s*(?:保密|秘而不宣|不得透露)",
-        str(text or ""),
-    )
-    for clause in clauses:
-        for target in re.split(r"[、，,和与及]", clause):
-            target = target.strip("，。；、 ")
-            if not target or target in {"他们", "他", "她", "此人", "诸人"}:
-                continue
-            canonical_name = by_name.get(target)
-            if canonical_name:
-                people.append(canonical_name)
-            else:
-                kind, canonical_target = _canonical_secret_exclusion_target(
-                    target, office_types, office_titles,
-                )
-                if kind == "office":
-                    offices.append(canonical_target)
-                else:
-                    # The CLI adapter has no content registry, but must use
-                    # this same parser.  Preserve an unresolved explicit name
-                    # for issuance-time canonicalisation instead of dropping
-                    # it or maintaining a second CLI classifier.
-                    people.append(target)
-    return list(dict.fromkeys(people)), list(dict.fromkeys(offices))
-
-
 def canonical_secret_order_exclusions(
     content: Any, explicit_people: Iterable[str], explicit_offices: Iterable[str], text: object,
 ) -> tuple[List[str], List[str]]:
-    """Canonicalize every secret-order exclusion before it enters staging or DB.
+    """Canonicalize structured extractor targets before staging or DB.
 
-    Explicit structured fields and natural-language clauses describe one
-    authorization invariant: excluded people and offices never receive a later
-    projection.  Resolve aliases and registry-backed office targets together so
-    function calls, CLI recovery, and durable issuance cannot drift apart.
+    Player prose is not a machine contract.  Only typed people/offices reach
+    this boundary; roster aliases and office titles are canonicalized here.
+    ``text`` remains accepted for callers that also pass the order body, but is
+    deliberately not consumed.
     """
-    recovered_people, recovered_offices = _recover_secret_order_exclusions(content, text)
-    people = _snapshot_secret_order_people(
-        content, [*explicit_people, *recovered_people], [],
-    )
+    del text
+    people = _snapshot_secret_order_people(content, explicit_people, [])
     office_types = {str(character.office_type).strip() for character in getattr(content, "characters", {}).values()
                     if character.office_type}
     office_titles = {str(character.office).strip() for character in getattr(content, "characters", {}).values()
                      if character.office}
     offices = []
-    for value in [*explicit_offices, *recovered_offices]:
+    for value in explicit_offices:
         kind, target = _canonical_secret_exclusion_target(str(value), office_types, office_titles)
         if kind == "office":
             offices.append(target)
@@ -18767,9 +18712,9 @@ class GameDB:
             oid = pa["target_id"]
             if pa["action"] == "新建":
                 title = str(payload.get("title") or "").strip()
-                content_text = str(payload.get("content") or "").strip()
+                content_text = str(payload.get("content") or "")
                 assignee = str(payload.get("assignee") or pa["minister_name"] or "").strip()
-                if not title or not content_text or not assignee:
+                if not title or not content_text.strip() or not assignee:
                     return False
                 tags_raw = payload.get("tags") or []
                 tags = [str(t).strip() for t in tags_raw if str(t).strip()] if isinstance(tags_raw, list) else []
