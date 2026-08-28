@@ -291,17 +291,6 @@ def run_beat_generator(beat_generator: Optional[BeatGenerator], inputs: BeatInpu
     return body
 
 
-def _identity_snippet(characterization: str) -> str:
-    """从 ADR 0033 特征化串取身份短句（生产日记用；不锁文案质量）。"""
-    raw = str(characterization or "").strip()
-    if not raw:
-        return ""
-    # minister_dossier 形如「身份：…；脾性：…」——只取身份段作入殿气象种子。
-    if raw.startswith("身份："):
-        raw = raw[3:]
-    return raw.split("；", 1)[0].strip()
-
-
 def create_llm_beat_generator(llm_config: Any) -> BeatGenerator:
     """创建真实 scene LLM adapter。
 
@@ -315,8 +304,7 @@ def create_llm_beat_generator(llm_config: Any) -> BeatGenerator:
 
     instructions = [
         "你是御前召对的叙事声音。依据人物自身可知的朝局与殿上前情，让场景从具体人物、时地和局势中自然长出。",
-        # #1295/#1314(2)：开场/入殿只立局势与悬念——与 production_beat_generator 同口径，
-        # 不写皇帝答复、不预演奏对（entrance 在玩家首句落库前生成，LLM 无从知问话）。
+        # #1295/#1314(2)：开场/入殿只立局势与悬念——不写皇帝答复、不预演奏对
         "开场与入殿只立局势与悬念，不预告后来结果；入殿写人物入殿气象，不写皇帝答复、不预演奏对；"
         "收束忠于已经发生的史实。玩家可见文案不要把召对硬称为夜。",
     ]
@@ -345,7 +333,7 @@ def create_llm_beat_generator(llm_config: Any) -> BeatGenerator:
         if inputs.beat_kind in (BEAT_OPEN, BEAT_ENTER, BEAT_SUMMON) and label:
             materials["当期年月"] = label
         # Structured living facts: open-beat 场面；summon 场外传召（#1566）。
-        # The deterministic fallback remains fixed prose and must not expand.
+        # Without a generator, opening remains an empty typed placeholder.
         if inputs.beat_kind == BEAT_OPEN and inputs.audience_scenes:
             materials["待呈御前的结构化场面事实"] = inputs.audience_scenes
         if inputs.beat_kind == BEAT_SUMMON and inputs.audience_scenes:
@@ -353,62 +341,6 @@ def create_llm_beat_generator(llm_config: Any) -> BeatGenerator:
         return extract_agent_text(agent.run(json.dumps(materials, ensure_ascii=False)))
 
     return generate
-
-
-def production_beat_generator(inputs: BeatInputs) -> str:
-    """#503 生产默认生成器：把编排层路由后的 BeatInputs 落成日记式账正文。
-
-    内容质量/声音形态仍归 #472/#478（#542 真实 LLM 走 create_llm_beat_generator 同一 seam）；
-    本生成器保证 Web/CLI/收夜生产路径**接通**编排缝，使入殿账随身份/召法/时地输入不同而不同
-    （AC1，不做文案质量断言），不再永久塌成 #498 一行兜底。
-
-    只读 BeatInputs（零形式约束、无裸数值），失败/空输入返回 ""；run_beat_generator 对空白 fail-loud。
-    """
-    tod = str(inputs.time_of_day or "").strip()
-    loc = str(inputs.location or "").strip()
-    place_time = "·".join(p for p in (loc, tod) if p)
-    tension = str(inputs.court_tension or "").strip()
-
-    if inputs.beat_kind == BEAT_OPEN:
-        head = f"{place_time}，召对启。" if place_time else "召对启。"
-        if tension:
-            return f"{head}{tension}"
-        return head
-
-    if inputs.beat_kind == BEAT_ENTER:
-        method = str(inputs.summon_method or METHOD_XUANRU).strip() or METHOD_XUANRU
-        name = str(inputs.person_name or "").strip()
-        if not name:
-            return ""
-        identity = _identity_snippet(inputs.characterization)
-        # 二次入殿与首次不同（US5 输入面已含 prior；生产正文用「再入/初入」区分）。
-        visit = "再入" if inputs.prior_appearances else "初入"
-        head = f"{place_time}，" if place_time else ""
-        who = f"{method}{name}"
-        if identity:
-            who = f"{who}（{identity}）"
-        body = f"{head}{who}{visit}殿。"
-        if tension:
-            body = f"{body}{tension}"
-        return body
-
-    if inputs.beat_kind == BEAT_EXIT:
-        name = str(inputs.person_name or "").strip()
-        if not name:
-            return ""
-        head = f"{place_time}，" if place_time else ""
-        body = f"{head}帝令{name}退下，{name}告退。"
-        if tension:
-            body = f"{body}{tension}"
-        return body
-
-    if inputs.beat_kind == BEAT_CLOSE:
-        head = f"{place_time}，退朝，召对到此。" if place_time else "退朝，召对到此。"
-        if tension:
-            return f"{head}{tension}"
-        return head
-
-    return ""
 
 
 def generate_open_beat_body(
@@ -420,7 +352,7 @@ def generate_open_beat_body(
     beat_generator: Optional[BeatGenerator] = None,
     knowledge_provider: Optional[KnowledgeProvider] = None,
 ) -> str:
-    """开夜账正文（夜级框架气氛）。无生成器返空（调用方沿用确定性兜底）。"""
+    """开夜账正文（夜级框架气氛）；无生成器时保留空垫位。"""
     if beat_generator is None:
         return ""
     inputs = assemble_beat_inputs(
