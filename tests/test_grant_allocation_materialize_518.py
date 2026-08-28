@@ -70,6 +70,8 @@ def _stage_grant(db, turn, *, action, amount=0, account="", cadence="",
         payload["name"] = name
     if target_id:
         payload["target_id"] = target_id
+    if action == "协饷":
+        payload["target_kind"] = "army"
     candidate = candidates_from_classifier_payload(payload, soft=False)
     spoken = message or f"{action}。"
     ctx = _ctx(
@@ -723,6 +725,8 @@ def test_grant_target_field_carries_region_project_army_through_normalize(game):
             "金额": 12,
             "账户": "国库",
         }
+        if action == "协饷":
+            payload[_grant_field_zh("target_kind")] = "army"
         candidates = candidates_from_classifier_payload(payload, soft=False)
         assert len(candidates) == 1, action
         assert candidates[0]["target_id"] == target, action
