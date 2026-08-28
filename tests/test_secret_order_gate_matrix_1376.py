@@ -41,13 +41,20 @@ E2_TITLE = "密察关宁欠饷"
 E2_CONTENT = "密察关宁欠饷"
 E3_MESSAGE = "你替朕悄悄查一查关宁欠饷实数"
 
-# 抽取 stub 默认 typed 载荷（用例可覆盖）；S2 修改材料=测试自送正文经 production strip
+# 抽取 stub 默认 typed 载荷（用例可覆盖）；S2 修改 material=测试自送正文
 RESTATED_CONTENT = "密察关宁欠饷，据实密奏，不得声张。"
-# 玩家修改输入是确定性材料（非 LLM 生成物）；规范化正文=去结构性「修改：」前缀
+# 玩家修改输入是确定性材料（非 LLM 生成物）；S2 新正文唯取 typed new_content
 S2_MODIFY_BODY = "只查饷银去向，不查动向"
-S2_MODIFY_MESSAGE = f"修改：{S2_MODIFY_BODY}"
+# 自然语言修改表达（不含结构化「修改：」前缀），保证旧 prefix parser 无法直接产出
+# S2_MODIFY_BODY——proof-of-red：生产须从 typed new_content 消费而非裁剪散文。
+S2_MODIFY_MESSAGE = "朕要修改密令正文为只查饷银去向，不查动向"
 S2_APPROVE_MESSAGE = "准"
-S3_REJECT_MESSAGE = "此事作罢"
+# S3 三格分别使用的真实拒绝表达（stub 仅灌「拒绝」判词，不扫/不断言措辞）。
+S3_REJECT_MESSAGES = {
+    "E1S3": "此事作罢",
+    "E2S3": "朕再思之，不必查了",
+    "E3S3": "算了",
+}
 
 DEFAULT_EXTRACT_PAYLOAD: Dict[str, Any] = {
     "title": E2_TITLE,
@@ -163,13 +170,17 @@ def _install_settlement_llm_stubs(monkeypatch) -> None:
 
 
 class _ConfirmStub:
-    """确认判词 stub：只弹用例显式 push 的 typed 枚举，不读玩家散文。"""
+    """确认判词 stub：只弹用例显式 push 的 typed 枚举，不读玩家散文。
+
+    #1376：修改判词携带 typed new_content 作为唯一权威正文。push 接收
+    (confirmation, new_content="")；new_content 仅修改判词时填写。
+    """
 
     def __init__(self) -> None:
-        self.queue: List[str] = []
+        self.queue: List[tuple] = []
 
-    def push(self, *values: str) -> None:
-        self.queue.extend(values)
+    def push(self, confirmation: str, new_content: str = "") -> None:
+        self.queue.append((confirmation, new_content))
 
     def __call__(
         self,
@@ -179,8 +190,11 @@ class _ConfirmStub:
         llm_config: Any = None,
     ) -> Dict[str, Any]:
         del player_message, minister_reply, pending_summaries, llm_config
-        result = self.queue.pop(0) if self.queue else "无"
-        return {"confirmation": result, "target_ids": []}
+        if self.queue:
+            confirmation, new_content = self.queue.pop(0)
+        else:
+            confirmation, new_content = "无", ""
+        return {"confirmation": confirmation, "target_ids": [], "new_content": new_content}
 
 
 class _ExtractStub:
@@ -206,16 +220,23 @@ class _ExtractStub:
 
 
 class _ClassifierStub:
-    """分类器 stub：mode 驱动 typed 返回；不解析消息语义。"""
+    """分类器 stub：mode 驱动 typed 返回；不解析消息语义。
+
+    #1376 E1/E2 专项契约：mode=fail_if_called → 被调用即失败，证明
+    E1/E2 经结构性前缀/端点路由达 stage，未经 classifier。
+    """
 
     def __init__(self) -> None:
-        self.mode: str = "none"  # none | secret_new
+        self.mode: str = "fail_if_called"  # fail_if_called | secret_new
 
     def __call__(self, player_message: str, *args, **kwargs) -> List[Dict[str, Any]]:
         del player_message, args, kwargs
         if self.mode == "secret_new":
             return [{"kind": "secret", "secret_action": "新建"}]
-        return []
+        # fail_if_called：任何调用皆为契约违反
+        raise AssertionError(
+            "classifier must not be called for E1/E2 (fail-if-called)"
+        )
 
 
 # ── 公共 fixture ───────────────────────────────────────────────────────
@@ -350,13 +371,15 @@ def _issue_entry(env: dict, *, entry: str = "E1") -> dict:
     classifier: _ClassifierStub = env["classifier"]
 
     if entry == "E1":
-        classifier.mode = "none"
+        # E1：显式前缀路由，classifier 不得被调用
+        classifier.mode = "fail_if_called"
         resp = client.post(
             f"/api/ministers/{MINISTER}/chat",
             json={"message": E1_MESSAGE},
         )
     elif entry == "E2":
-        classifier.mode = "none"
+        # E2：结构化端点路由，classifier 不得被调用
+        classifier.mode = "fail_if_called"
         resp = client.post(
             f"/api/ministers/{MINISTER}/secret_order",
             json={
@@ -367,6 +390,7 @@ def _issue_entry(env: dict, *, entry: str = "E1") -> dict:
             },
         )
     elif entry == "E3":
+        # E3：无前缀 + classifier stub 返回 secret_new 判词
         classifier.mode = "secret_new"
         resp = client.post(
             f"/api/ministers/{MINISTER}/chat",
@@ -434,7 +458,7 @@ def _settle_month(env: dict) -> dict:
             if isinstance(opt0, dict):
                 choices.append({"label": str(opt0.get("label") or "准")})
             else:
-                choices.append({"label": str(opt0)})
+                choices.append({"label": str(opt0) or "准"})
         resolve = client.post(
             "/api/decree/resolve_decisions/stream",
             json={"choices": choices},
@@ -521,7 +545,7 @@ def test_matrix_S1_default_commit_on_settle(matrix_env, cell, entry):
     ids=["E1S2", "E2S2", "E3S2"],
 )
 def test_matrix_S2_modify_then_land(matrix_env, cell, entry, via_approve):
-    """S2：下令→确认判词=修改→准或过月；候选 id 不变；落地=修改后候选 payload。"""
+    """S2：下令→确认判词=修改+new_content→准或过月；候选 id 不变；落地=typed new_content。"""
     env = matrix_env
     client = env["client"]
     game = env["game"]
@@ -537,8 +561,10 @@ def test_matrix_S2_modify_then_land(matrix_env, cell, entry, via_approve):
     staged_content = str(_payload_of(pending_before[0]).get("content") or "")
     assert _order_ids(client) == ids_before
 
-    # 修改轮：显式灌确认判词=修改（不读玩家散文）
-    confirm.push("修改")
+    # 修改轮：确认判词 stub=修改 + typed new_content（不读玩家散文）
+    # S2_MODIFY_MESSAGE 不含结构化「修改：」前缀→旧 prefix parser 无法直接产出 S2_MODIFY_BODY，
+    # 证明生产须从 typed new_content 消费而非裁剪玩家散文。
+    confirm.push("修改", new_content=S2_MODIFY_BODY)
     classifier.mode = "none"
     _chat(env, S2_MODIFY_MESSAGE)
 
@@ -551,9 +577,9 @@ def test_matrix_S2_modify_then_land(matrix_env, cell, entry, via_approve):
     )
     mid_payload = _payload_of(pending_mid[0])
     mid_content = str(mid_payload.get("content") or "")
-    # 外部可见：候选 content = 用户所下修改正文（确定性输入的规范化结果）
+    # 外部可见：候选 content = typed new_content（唯一权威正文）
     assert mid_content == S2_MODIFY_BODY, (
-        f"{cell} 修改后候选 content 须=用户修改正文: "
+        f"{cell} 修改后候选 content 须=typed new_content: "
         f"got={mid_content!r} want={S2_MODIFY_BODY!r} staged={staged_content!r}"
     )
 
@@ -569,7 +595,7 @@ def test_matrix_S2_modify_then_land(matrix_env, cell, entry, via_approve):
     assert len(new_ids) == 1, f"{cell} 落地后须唯一新 id: {new_ids!r}"
     landed = str(_orders_by_ids(client, new_ids)[0].get("content") or "")
     assert landed == S2_MODIFY_BODY, (
-        f"{cell} 真表 content 须=用户修改正文: "
+        f"{cell} 真表 content 须=typed new_content: "
         f"landed={landed!r} want={S2_MODIFY_BODY!r}"
     )
 
@@ -597,8 +623,12 @@ def test_matrix_S3_reject_then_settle_no_resurrection(matrix_env, cell, entry):
     assert len(_db_pending_secret_new(game)) >= 1
     assert _order_ids(client) == ids_before
 
+    # S3 三格分别使用不同的真实拒绝表达；stub 仅灌「拒绝」判词，不扫/不断言措辞
+    s3_reject_msg = S3_REJECT_MESSAGES[cell]
     confirm.push("拒绝")
-    _chat(env, S3_REJECT_MESSAGE)
+    classifier_mode = env["classifier"]
+    classifier_mode.mode = "none"  # 确认轮 classifier 可跑但不得影响判词
+    _chat(env, s3_reject_msg)
 
     assert _db_pending_secret_new(game) == [], (
         f"{cell} 拒绝后 pending 新建候选须清除: {_db_pending_secret_new(game)!r}"

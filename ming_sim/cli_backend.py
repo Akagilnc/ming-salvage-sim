@@ -2774,7 +2774,8 @@ def extract_confirmation_intent(
     确认判读只许结构化 LLM JSON 枚举（ADR 0028 2026-07-23 / ADR 0142）；
     禁自由散文 regex/词表快路（准/不准/作罢/算了…）。结构性前缀/端点路由在调用方。
 
-    返回 {"confirmation": 应允|拒绝|留中|修改|无, "target_ids": [合法候选 id...]}。
+    返回 {"confirmation": 应允|拒绝|留中|修改|无, "target_ids": [合法候选 id...],
+    "new_content": "修改正文（仅修改时填充）"}。
     #1509：同一次 confirmation JSON 可选「目标编号」——修改多候选时由调用方按编号过滤；
     编号只接受摘要里方括号列出的合法 id，非法/空由调用方作含糊，不在此机械读玩家散文。
     """
@@ -2800,9 +2801,11 @@ def extract_confirmation_intent(
         "  修改=要求改/更正/收窄/扩充该暂存内容（未应允也未拒绝，继续改同一候选）；\n"
         "  无=没提这些、继续说别的、含糊未表态。\n"
         "只输出一个 JSON（无代码围栏、无多余字）：\n"
-        '{"确认":"应允|拒绝|留中|修改|无","目标编号":[方括号里的候选编号...]}。\n'
+        '{"确认":"应允|拒绝|留中|修改|无","目标编号":[方括号里的候选编号...],"新内容":""}。\n'
         "指向具体某道（含修改第几道/某道）就填其编号；单道可留空目标编号；"
-        "多道修改未指明哪道=确认仍为修改、目标编号留空。语义判断，别拘字面。\n\n"
+        "多道修改未指明哪道=确认仍为修改、目标编号留空。语义判断，别拘字面。\n"
+        "修改时「新内容」=玩家所下修改正文（去结构化「修改：」前缀后的御旨材料），"
+        "应允/拒绝/留中/无时「新内容」留空。\n\n"
         "【待皇帝定夺的暂存动作】\n" + listing + "\n"
         "【皇帝】" + (player_message or "（无）") + "\n"
         "【大臣回话】" + (minister_reply or "（无）") + "\n"
@@ -2825,7 +2828,12 @@ def extract_confirmation_intent(
             digits = "".join(ch for ch in str(t) if ch.isdigit())
             if digits and int(digits) in by_id and int(digits) not in target_ids:
                 target_ids.append(int(digits))
-    return {"confirmation": v, "target_ids": target_ids}
+    # #1376：修改判词携带 typed 新内容——唯一权威正文。ADR 0142 禁从自由散文机械提取，
+    # 此字段仅从结构化 LLM JSON 吸收；未填/非修改时留空。
+    new_content = str(obj.get("新内容") or "").strip()
+    if v != "修改":
+        new_content = ""
+    return {"confirmation": v, "target_ids": target_ids, "new_content": new_content}
 
 
 def extract_directive_confirmation(
