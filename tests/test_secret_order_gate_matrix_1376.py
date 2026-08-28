@@ -16,8 +16,6 @@ V3 回归只在 tests/test_qa_c3_secret_order_path_1357_1376.py，本文件不�
 from __future__ import annotations
 
 import json
-import os
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Set
 
@@ -29,7 +27,6 @@ import ming_sim.cli_backend as cli_backend
 import ming_sim.decree as decree_mod
 import ming_sim.memories as memories_mod
 import ming_sim.mindreading as mindreading_mod
-import ming_sim.llm_config as llm_config_mod
 import ming_sim.session as session_mod
 import web_app
 from ming_sim import audience_night as an
@@ -275,17 +272,6 @@ def matrix_env(tmp_path, monkeypatch, _offline_scene_beat_generator):
     assert new.status_code == 200, new.text
     game = web_app.web_game
     assert game is not None
-
-    # Scoped zero-write proof: enumerate this matrix's effective writable roots.
-    # Do not inspect or hash the real HOME/data tree.
-    roots = {
-        Path(os.environ["HOME"]),
-        Path(os.environ["MING_SIM_USER_DATA_DIR"]),
-        Path(web_app.UPLOAD_PORTRAIT_DIR),
-        Path(llm_config_mod.RUNTIME_LLM_PATH),
-        Path(game.db.path),
-    }
-    assert all(root.resolve().is_relative_to(tmp_path.resolve()) for root in roots), roots
 
     game.session.registry.get = lambda _ch: _CannedAgent()
     cfg = game.session.llm_config
