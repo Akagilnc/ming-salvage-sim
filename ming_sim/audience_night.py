@@ -2791,7 +2791,8 @@ def attach_chat_turn_to_night(
     """开夜（若需）+ 首次对话落宣入账 + 建 generating 对话轮挂 night_id/night_seq。
 
     beat_generator 注入时（#503 编排）：开夜/入殿账正文经编排层路由输入后由内容生成填充，
-    落为对应账正文；不注入则沿用 #498 确定性兜底正文。见 beat_orchestration。
+    落为对应账正文。不注入时 opening 按 #1561 留空；仅既有 entrance 路径仍可能使用
+    #498 确定性兜底正文。见 beat_orchestration。
     """
     from ming_sim import beat_orchestration as beats
 
