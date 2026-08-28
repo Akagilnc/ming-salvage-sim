@@ -1285,8 +1285,13 @@ def build_extractor_shared_context(
                 "WHERE region_id <> '' ORDER BY name, region_id"
             ).fetchall()
         ])
-        from ming_sim.covert_progress import build_secret_covert_effect_briefs
-        slim["secret_covert_effect_briefs"] = build_secret_covert_effect_briefs(db)
+    from ming_sim.covert_progress import build_secret_covert_effect_briefs
+    if module in {"internal", "personnel_secret"}:
+        allowed = MODULE_FIELDS[module]
+        slim["secret_covert_effect_briefs"] = [
+            brief for brief in build_secret_covert_effect_briefs(db)
+            if allowed.intersection(brief.get("canonical_fields") or [])
+        ]
     # #613：执行格读端字段随案卷进 extractor；优先沿用推演装配已写字段，缺则现场补投影。
     from ming_sim.decree import execution_side_read_fields
 

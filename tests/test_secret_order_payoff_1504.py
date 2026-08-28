@@ -50,7 +50,7 @@ def _task(*, kind, axes, unit, target, direction=1):
 
 
 def _issue(db, state, name, title, content, *, months, target, kind="查案",
-           axes=None, unit="人犯", tags=None):
+           axes=None, unit="两", tags=None):
     return db.create_secret_order(
         state, name, title, content, tags if tags is not None else [],
         deadline_months=months,
@@ -126,6 +126,38 @@ def _delta_work(oid, dossier_id, *, fidelity="忠实", memorial="本月密奏已
     if report:
         extracted["dossier_progress_reports"] = [_report(dossier_id, memorial)]
     return extracted
+
+
+def _catch_names(db, exclude, n=3):
+    rows = db.conn.execute(
+        "SELECT name FROM characters "
+        "WHERE status='active' AND power_id='ming' "
+        "AND office_type NOT IN ('后宫','宗藩','未仕') AND name!=? "
+        "ORDER BY name LIMIT ?",
+        (exclude, int(n)),
+    ).fetchall()
+    names = [str(r["name"]) for r in rows]
+    assert len(names) >= int(n)
+    return names
+
+
+def _originate_catches(db, state, content, dossier_id, names):
+    apply_score_extraction(
+        db, state,
+        {
+            "人物变更": [
+                {
+                    "name": name,
+                    "动作": "处置",
+                    "status": "imprisoned",
+                    "reason": "密令缉获",
+                    "origin_ref": f"dossier:{int(dossier_id)}",
+                }
+                for name in names
+            ],
+        },
+        content=content,
+    )
 
 
 # ── 纯函数 golden ─────────────────────────────────────────────────────
@@ -250,10 +282,11 @@ def test_task_specific_contract_from_explicit_fields_not_tags():
     assert tagged["delivery"]["target_units"] == 0.0
 
 
-def test_actual_units_require_originated_effects():
-    assert monthly_actual_units(fidelity="忠实", originated_effect_count=1) == 1.0
-    assert monthly_actual_units(fidelity="忠实", originated_effect_count=0) == 0.0
-    assert monthly_actual_units(fidelity="反噬", originated_effect_count=2) == 0.0
+def test_actual_units_share_originated_quantity():
+    assert monthly_actual_units(fidelity="忠实", originated_quantity=5000) == 5000.0
+    assert monthly_actual_units(fidelity="打折", originated_quantity=4) == 2.0
+    assert monthly_actual_units(fidelity="忠实", originated_quantity=0) == 0.0
+    assert monthly_actual_units(fidelity="反噬", originated_quantity=3) == 0.0
 
 
 def test_confirm_persists_task_specific_contract_absent_before(game):
@@ -563,12 +596,6 @@ def test_secret_order_closes_no_longer_applies(game):
     db, state, content = game
     name = _minister(db)
     oid = _issue(db, state, name, "旧链密令", "不应被 closes 结", months=3, target=3)
-    # 旧路径依赖 pending_review；即便强行改状态，apply 也不应 close
-    db.conn.execute(
-        "UPDATE secret_orders SET status='pending_review' WHERE id=?", (oid,),
-    )
-    db.conn.commit()
-
     out = apply_score_extraction(
         db, state,
         {
@@ -581,7 +608,7 @@ def test_secret_order_closes_no_longer_applies(game):
     closes = out.get("secret_order_closes") or []
     # 退役：不落成功结案
     assert all(item.get("rejected") or item.get("retired") for item in closes) or closes == []
-    assert db.get_secret_order(oid)["status"] == "pending_review"
+    assert db.get_secret_order(oid)["status"] == "active"
 
 
 def test_auto_submit_due_no_longer_flips_pending_review(game):
@@ -641,7 +668,7 @@ def test_monthly_actual_does_not_invent_generic_world_package(game):
     )
     row = next(r for r in out if r["order_id"] == oid)
     assert row["units"] == 0.0
-    assert row.get("originated_effect_count") == 0
+    assert row.get("originated_quantity") == 0
     after_loyalty = int(db.conn.execute(
         "SELECT loyalty FROM characters WHERE name=?", (name,)
     ).fetchone()["loyalty"])
@@ -656,7 +683,7 @@ def test_settle_originated_effects_drive_actual_and_restore(game):
     name = _minister(db)
     _set_axes(db, name, loyalty=90, identity=30)
 
-    oid = _issue(db, state, name, "一月实办", "限期一月查明", months=1, target=1)
+    oid = _issue(db, state, name, "一月实办", "限期一月查明", months=1, target=3)
     did = int(db.get_dossier_for_secret_order(oid)["id"])
     settle_with_delta(
         state, db, {"dossier_progress_reports": [_report(did, "发令月密奏")]},
@@ -675,7 +702,7 @@ def test_settle_originated_effects_drive_actual_and_restore(game):
         content=content,
     )
 
-    assert db.sum_dossier_actual_progress_units(did) == 1.0
+    assert db.sum_dossier_actual_progress_units(did) == 3.0
     actual_row = db.list_dossier_actual_progress(did)[0]
     assert actual_row["fidelity_state"] == "忠实"
     assert actual_row["origin_ref"] == f"dossier:{did}"
@@ -695,7 +722,7 @@ def test_settle_originated_effects_drive_actual_and_restore(game):
     db2 = GameDB(path, content)
     try:
         state2 = db2.load_state()
-        assert db2.sum_dossier_actual_progress_units(did) == 1.0
+        assert db2.sum_dossier_actual_progress_units(did) == 3.0
         assert int(db2.conn.execute(
             "SELECT loyalty FROM characters WHERE name=?", (name,)
         ).fetchone()["loyalty"]) == after_loyalty
@@ -747,150 +774,6 @@ def test_settle_gap_failed_and_reported_divergence(game):
     assert dossier["status"] == "closed"
     assert dossier["execution_outcome"] == "failed"
     assert db.list_dossier_progress(did)
-
-
-def test_legacy_pending_review_migrated_including_due_turn_zero(game):
-    """开库一次迁移：pending_review→active；due_turn=0 得未来实况窗，不立即失败。"""
-    db, state, content = game
-    name = _minister(db)
-    _set_axes(db, name, loyalty=90, identity=30)
-    oid = _issue(db, state, name, "旧核议令", "应被迁移", months=0, target=0)
-    # 模拟旧档：pending_review + due_turn=0（旧 list_due 永不会收）
-    db.conn.execute(
-        "UPDATE secret_orders SET status='pending_review', due_turn=0 WHERE id=?",
-        (oid,),
-    )
-    db.conn.commit()
-    assert db.get_secret_order(oid)["status"] == "pending_review"
-    issued_turn = int(state.turn)
-
-    path = db.path
-    db.close()
-    db2 = GameDB(path, content)
-    try:
-        state2 = db2.load_state()
-        row = db2.get_secret_order(oid)
-        assert row["status"] == "active", row
-        assert int(row["due_turn"] or 0) > 0, row
-        # 发令当月迁入：窗口在未来，不 due<=current 立即结算
-        assert int(row["due_turn"]) > int(state2.turn), row
-        did = int(db2.get_dossier_for_secret_order(oid)["id"])
-        # 迁入当月：不立即 failed
-        settle_with_delta(
-            state2, db2,
-            _delta_work(oid, did, memorial="迁入当月密奏"),
-            before_turn=state2.turn,
-            content=content,
-        )
-        assert db2.get_secret_order(oid)["status"] == "active"
-        assert db2.sum_dossier_actual_progress_units(did) == 0.0
-
-        # 次月：产实进度并对账 done
-        settle_with_delta(
-            state2, db2,
-            _delta_work(oid, did, memorial="迁入次月密奏", report=True),
-            before_turn=state2.turn,
-            content=content,
-        )
-        closed = db2.get_secret_order(oid)
-        assert closed["status"] == "done", closed
-        assert db2.sum_dossier_actual_progress_units(did) == 1.0
-        assert int(closed["due_turn"]) == issued_turn + 1
-    finally:
-        db2.close()
-
-
-def test_legacy_multimonth_pending_review_reopen_not_instant_fail(game):
-    """多月旧令重开：不空实况立即失败；只按新实况结案；不回填奏报/sim_note。"""
-    db, state, content = game
-    name = _minister(db)
-    _set_axes(db, name, loyalty=90, identity=30)
-    oid = _issue(db, state, name, "三月旧核议", "多月旧令", months=3, target=3)
-    did = int(db.get_dossier_for_secret_order(oid)["id"])
-    # 表报/sim_note 灌满——迁移不得当实况
-    db.record_dossier_progress(
-        did, state.turn, "在办", "臣称三月皆已办妥", is_terminal=False,
-    )
-    db.conn.execute(
-        "UPDATE secret_orders SET status='pending_review', sim_note=? WHERE id=?",
-        ("推演称已办成", oid),
-    )
-    db.conn.commit()
-
-    path = db.path
-    db.close()
-    db2 = GameDB(path, content)
-    try:
-        state2 = db2.load_state()
-        row = db2.get_secret_order(oid)
-        assert row["status"] == "active"
-        assert row["status"] != "pending_review"
-        # 尚缺 3 units → 未来窗，不立即 due 结算
-        assert int(row["due_turn"]) > int(state2.turn), row
-        assert db2.sum_dossier_actual_progress_units(did) == 0.0
-        memorial = "臣称三月皆已办妥"
-
-        # 重开当月不得 failed
-        settle_with_delta(
-            state2, db2,
-            {"dossier_progress_reports": [_report(did, memorial)]},
-            before_turn=state2.turn, content=content,
-        )
-        assert db2.get_secret_order(oid)["status"] == "active"
-
-        for _ in range(3):
-            settle_with_delta(
-                state2, db2,
-                _delta_work(oid, did, memorial=memorial, report=True),
-                before_turn=state2.turn,
-                content=content,
-            )
-        closed = db2.get_secret_order(oid)
-        assert closed["status"] == "done", closed
-        assert db2.sum_dossier_actual_progress_units(did) == 3.0
-        # 禁复活 pending_review
-        assert closed["status"] != "pending_review"
-        assert db2.list_secret_orders(status="pending_review") == []
-        reports = db2.list_dossier_progress(did)
-        assert reports
-        assert not any(r.get("is_terminal") for r in reports)
-    finally:
-        db2.close()
-
-
-def test_legacy_with_partial_actual_only_fills_remaining_window(game):
-    """已有 actual 行：迁移只补剩余窗口，不回填、不重算已有实况。"""
-    db, state, content = game
-    name = _minister(db)
-    _set_axes(db, name, loyalty=90, identity=30)
-    oid = _issue(db, state, name, "半程旧令", "已有一笔实况", months=3, target=3)
-    did = int(db.get_dossier_for_secret_order(oid)["id"])
-    # 先有 1.0 实况
-    db.record_dossier_actual_progress(
-        did, state.turn, units=1.0, fidelity_state="忠实", floor_state="忠实",
-        note="旧实况", commit=True,
-    )
-    db.conn.execute(
-        "UPDATE secret_orders SET status='pending_review', due_turn=? WHERE id=?",
-        (int(state.turn), oid),  # 旧错误：due 已到
-    )
-    db.conn.commit()
-
-    path = db.path
-    db.close()
-    db2 = GameDB(path, content)
-    try:
-        state2 = db2.load_state()
-        row = db2.get_secret_order(oid)
-        assert row["status"] == "active"
-        # remaining = 2 → due = current+1（issued < current 时）或更远
-        # turn_issued == current → due = current + 2
-        assert int(row["due_turn"]) >= int(state2.turn) + 1
-        assert db2.sum_dossier_actual_progress_units(did) == 1.0
-        # 不得从任何奏报灌实况
-        assert len(db2.list_dossier_actual_progress(did)) == 1
-    finally:
-        db2.close()
 
 
 def test_zero_target_is_not_delivered():
@@ -998,7 +881,135 @@ def test_internal_extractor_receives_origin_linked_typed_briefs_without_secret_p
     }
     assert briefs[fiscal_id]["origin_ref"].startswith("dossier:")
     assert briefs[fiscal_id]["delivery"] == {"unit": "两", "target_units": 5000.0}
-    assert briefs[fiscal_id]["canonical_fields"] == ["fiscal_changes"]
-    assert briefs[catch_id]["origin_ref"].startswith("dossier:")
-    assert briefs[catch_id]["delivery"] == {"unit": "人犯", "target_units": 3.0}
-    assert briefs[catch_id]["canonical_fields"] == ["economy_moves"]
+    assert briefs[fiscal_id]["canonical_fields"] == ["economy_moves"]
+    assert catch_id not in briefs
+    personnel_ctx = build_extractor_shared_context(db, state, "", "", module="personnel_secret")
+    assert secret_prose not in str(personnel_ctx)
+    pbriefs = {
+        int(brief["order_id"]): brief
+        for brief in personnel_ctx["secret_covert_effect_briefs"]
+    }
+    assert fiscal_id not in pbriefs
+    assert pbriefs[catch_id]["canonical_fields"] == ["人物变更"]
+    assert pbriefs[catch_id]["delivery"] == {"unit": "人犯", "target_units": 3.0}
+
+
+def test_no_legacy_pending_review_or_dossier_backfill():
+    assert not hasattr(GameDB, "_migrate_legacy_pending_review_secret_orders")
+    assert not hasattr(GameDB, "_migrate_legacy_secret_order_dossiers")
+
+
+def test_extract_secret_order_schema_and_confirm_typed_contract(game, monkeypatch):
+    import json
+    from ming_sim import cli_backend as cb
+
+    db, state, content = game
+    name = _minister(db)
+    canned = json.dumps({
+        "标题": "核辽饷侵冒",
+        "内容": "按数追赃补发五千两",
+        "承办人": name,
+        "期限月数": 1,
+        "标签": ["辽饷"],
+        "差务": "补发饷银",
+        "价值轴": ["既得利益"],
+        "方向": 1,
+        "交付单位": "两",
+        "交付目标": 5000,
+    }, ensure_ascii=False)
+
+    def fake_json(prompt, llm_config=None, tag=""):
+        assert "\"差务\"" in prompt
+        assert "\"价值轴\"" in prompt
+        assert "\"交付单位\"" in prompt
+        assert "\"交付目标\"" in prompt
+        return canned, 1
+
+    monkeypatch.setattr(cb, "_run_json_extractor_for_config", fake_json)
+    extracted = cb._extract_secret_order("按数补发五千两", "臣领密旨", name)
+    assert extracted["covert_task"]["kind"] == "补发饷银"
+    assert extracted["covert_task"]["delivery"]["unit"] == "两"
+    assert extracted["covert_task"]["delivery"]["target_units"] == 5000.0
+    pid = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建",
+        minister_name=name, target_id=None,
+        payload={
+            "title": extracted["title"],
+            "content": extracted["content"],
+            "assignee": extracted["assignee"],
+            "tags": extracted["tags"],
+            "deadline_months": extracted["deadline_months"],
+            "covert_task": extracted["covert_task"],
+        },
+    )
+    db.commit_pending_actions(state, content=content, action_ids=[pid])
+    oid = int(db.list_secret_orders(status="active")[0]["id"])
+    contract = read_covert_task_contract(db.get_dossier_for_secret_order(oid))
+    assert contract["kind"] == "补发饷银"
+    assert contract["delivery"]["target_units"] == 5000.0
+
+
+def test_fiscal_quantity_tracer_same_unit_done_and_gap(game):
+    db, state, content = game
+    name = _minister(db)
+    _set_axes(db, name, loyalty=90, identity=30)
+    oid = _issue(
+        db, state, name, "补发五千", "补发饷银",
+        months=1, target=20, kind="补发饷银", axes=["既得利益"], unit="两",
+    )
+    did = int(db.get_dossier_for_secret_order(oid)["id"])
+    settle_with_delta(
+        state, db, {"dossier_progress_reports": [_report(did, "发令")]},
+        before_turn=state.turn, content=content,
+    )
+    settle_with_delta(
+        state, db,
+        _delta_work(oid, did, memorial="已补发", eco=-20, report=True),
+        before_turn=state.turn, content=content,
+    )
+    assert db.sum_dossier_actual_progress_units(did) == 20.0
+    assert db.get_secret_order(oid)["status"] == "done"
+
+    oid2 = _issue(
+        db, state, name, "补发缺口", "补发饷银",
+        months=1, target=20, kind="补发饷银", axes=["既得利益"], unit="两",
+    )
+    did2 = int(db.get_dossier_for_secret_order(oid2)["id"])
+    settle_with_delta(
+        state, db, {"dossier_progress_reports": [_report(did2, "发令")]},
+        before_turn=state.turn, content=content,
+    )
+    settle_with_delta(
+        state, db,
+        _delta_work(oid2, did2, memorial="只补四", eco=-4, report=True),
+        before_turn=state.turn, content=content,
+    )
+    assert db.sum_dossier_actual_progress_units(did2) == 4.0
+    assert db.get_secret_order(oid2)["status"] == "failed"
+
+
+def test_catch_quantity_tracer_same_unit_done_and_mismatch_ignored(game):
+    db, state, content = game
+    name = _minister(db)
+    _set_axes(db, name, loyalty=90, identity=30)
+    targets = _catch_names(db, name, n=3)
+    oid = _issue(
+        db, state, name, "缉获三人", "拿人犯",
+        months=1, target=3, kind="缉获人犯", unit="人犯",
+    )
+    did = int(db.get_dossier_for_secret_order(oid)["id"])
+    settle_with_delta(
+        state, db, {"dossier_progress_reports": [_report(did, "发令")]},
+        before_turn=state.turn, content=content,
+    )
+    _originate_work(db, state, content, did, delta=-9)
+    _originate_catches(db, state, content, did, targets)
+    apply_monthly_covert_actual_progress(
+        db, state, selections=[{"order_id": oid, "fidelity": "忠实"}], commit=True,
+    )
+    assert db.sum_dossier_actual_progress_units(did) == 3.0
+    out = settle_due_secret_orders(db, state, commit=True)
+    row = next(r for r in out if r["order_id"] == oid)
+    assert row["status"] == "done"
+    assert row["actual_units"] == 3.0
+    assert row["target_units"] == 3.0
