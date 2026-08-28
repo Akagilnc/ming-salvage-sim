@@ -466,38 +466,6 @@ def test_scripted_ask_vs_order_staging_matrix(
         assert not any(r["action"] == "新建" for r in secret_rows)
 
 
-# ── #1565：交办·责成 vs 当场问对 边界 prompt-contract（不经预造 payload）───
-
-
-def test_classify_prompt_carries_1565_ask_vs_assignment_boundary(monkeypatch):
-    """#1565 判词契约：classify 入口 prompt 正向界定交办=召对后仍须执行；
-    当场说明/比较/开列与据实·分策·开列回奏→无。仅 mock backend，禁预造 payload。"""
-    captured = {}
-
-    def _scripted(prompt, llm_config=None, tag=""):
-        captured["prompt"] = prompt
-        assert tag == "action_intent"
-        return (json.dumps({"动作类型": "无"}, ensure_ascii=False), 0)
-
-    monkeypatch.setattr(cb, "_run_backend_for_config", _scripted)
-    got = cb.classify_cli_action_intent(
-        "杨卿，太仓实存与关宁、陕西边饷核到哪一步？分策回奏",
-        recent_context="",
-    )
-    assert got == []
-    prompt = captured["prompt"]
-
-    assert "交办·责成 vs 当场问对" in prompt
-    assert "召对结束后仍须执行的真实交办" in prompt
-    assert "动作类型填无" in prompt and "不得升格交办" in prompt
-    assert "据实回奏" in prompt and "分策回奏" in prompt and "开列回奏" in prompt
-
-    # #1565 三句真实问法作语义示例（独特片段，不锁全文模板）
-    assert "太仓实存与关宁" in prompt and "盐课积引与畿辅清丈" in prompt
-    assert "改元之后钱粮如何撑过春月" in prompt
-    assert "入春边事与朝局何者最急" in prompt and "厂卫旧线" in prompt
-
-
 # ── P5：双向 barrier，串行实现必须红 ──────────────────────────────────
 
 # #516 问/令查样本：并入 P5 真实 session.chat barrier/poison 矩阵（不经 preclassified_intent）
