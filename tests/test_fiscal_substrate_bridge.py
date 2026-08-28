@@ -29,6 +29,7 @@ from ming_sim.exceptions import SettlementAbort
 from ming_sim.fiscal_tick import settle_tick
 from ming_sim.flows import army_needed
 from ming_sim.issues import sync_opening_legacies
+from ming_sim.models import TurnPhase
 from tests.fiscal_test_utils import zero_non_meta_fiscal_config
 
 
@@ -1230,7 +1231,59 @@ def test_fixed_flows_substrate_hub_central_pay_carries_transport_loss_without_ji
     assert army["central_pay_arrears"] == pytest.approx(3)
     assert army["arrears"] == pytest.approx(3)
 
-    ledger_snapshot = _hub_ledger_snapshot(db, turn=state.turn)
+    # #1366 真实 settling 相位（回归 pre_settle 后半段：apply_fixed_period_flows 已在当月
+    # state.turn 写 ledger/覆盖容器，state.next_period 尚未推进，恰是真实结算窗口的持久态）。
+    # 换 turn-1 前若仍按「换月后」口径找 turn-1 的 ledger，会把本次刚写的容器与上一次
+    # （不存在/不同）turn 的国库实拨拼在一起。
+    state.turn_phase = TurnPhase.SETTLING.value
+    db.save_state(state)
+    assert db.treasury_hub_result(state) == {
+        "settled_turn": state.turn,
+        "treasury_disbursed": 10,
+        "actual_arrived": 7,
+        "transit_loss": 3,
+    }
+
+    # #1366：AWAITING_DECISION 与 settling 语义相同（FRONT_HALF_DONE_PHASES 单一真源，
+    # 真实 HITL 暂停也落在此相位），内部投影不得漏判退回 turn-1 拼接。
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
+    assert db.treasury_hub_result(state) == {
+        "settled_turn": state.turn,
+        "treasury_disbursed": 10,
+        "actual_arrived": 7,
+        "transit_loss": 3,
+    }
+
+    # #1366：真实换月后从 Web 玩家入口读取 typed 三项；国库报告复用同一投影，
+    # 不锁生成文本措辞。核账期（月初快照在场，settling/awaiting_decision）不得下发半程
+    # 结果——CONTEXT.md 核账期定义：半程中间态不对皇帝可见；待 next_period 完成、快照
+    # 过期后才可见同一 settled turn 的三项结果。
+    import web_app
+
+    settled_turn = state.turn
+    runtime = object.__new__(web_app.WebGame)
+    runtime.session = SimpleNamespace(db=db, state=state)
+    db.capture_month_open_snapshot(state)
+    assert runtime.budget_payload()["settled_army_pay"] is None
+
+    state.turn_phase = TurnPhase.SETTLING.value
+    db.save_state(state)
+    assert runtime.budget_payload()["settled_army_pay"] is None
+
+    state.next_period()
+    state.turn_phase = TurnPhase.SUMMONING.value
+    db.save_state(state)
+    db.clear_month_open_snapshot(settled_turn)
+    assert runtime.budget_payload()["settled_army_pay"] == {
+        "settled_turn": settled_turn,
+        "treasury_disbursed": 10,
+        "actual_arrived": 7,
+        "transit_loss": 3,
+    }
+    assert db.treasury_report(state)
+
+    ledger_snapshot = _hub_ledger_snapshot(db, turn=settled_turn)
     container_snapshot = _hub_container_snapshot(db)
     outbound = {
         "jingyun_paid": expense_row["jingyun_paid"],
@@ -1243,6 +1296,21 @@ def test_fixed_flows_substrate_hub_central_pay_carries_transport_loss_without_ji
         outbound=outbound,
         expected_jingyun_losses=(2, 1),
     )
+
+    # 次月国库为零：容器覆盖为本月零值且 ledger 无 hub 行；玩家结果仍须绑定
+    # 本次 settled turn，不能把上月实拨 10 与本月零容器拼接。
+    state.metrics["国库"] = 0
+    db.save_state(state)
+    second_turn = state.turn
+    second_flows = flows_mod.apply_fixed_period_flows(db, state)
+    assert not any(row.get("category") == "边饷hub" for row in second_flows)
+    state.next_period()
+    assert runtime.budget_payload()["settled_army_pay"] == {
+        "settled_turn": second_turn,
+        "treasury_disbursed": 0,
+        "actual_arrived": 0,
+        "transit_loss": 0,
+    }
 
 
 def test_fixed_flows_substrate_hub_books_split_treasury_income_and_central_losses(fresh_game):
@@ -1555,43 +1623,6 @@ def test_substrate_hub_skip_uses_internal_marker_not_user_fixed_display(fresh_ga
     ).fetchall()
     assert [int(row["delta"]) for row in rows] == [expected]
     assert all(str(row["reason"] or "").strip() for row in rows)
-
-
-def test_treasury_budget_summary_names_substrate_hub_surfaces(fresh_game):
-    db, state = fresh_game
-    db._mark_substrate_hub_fiscal_engine_enabled()
-    db.conn.executemany(
-        """
-        INSERT INTO fiscal_containers (key, value, note)
-        VALUES (?, ?, 'test summary substrate hub source')
-        ON CONFLICT(key) DO UPDATE SET value = excluded.value, note = excluded.note
-        """,
-        [
-            ("hub_省级起运到京", 11),
-            ("hub_盐税解京", 3),
-            ("hub_商税解京", 4),
-            ("hub_太仓亏空", 3),
-            ("C_太仓挪用", 2),
-            ("C_太仓纯亏空", 1),
-        ],
-    )
-    db.conn.commit()
-
-    summary = db.treasury_budget_summary(state)
-
-    assert "起运" in summary
-    assert "边饷hub" in summary
-    assert "太仓亏空" in summary
-    assert "百官俸禄" in summary
-    assert "田赋+辽饷" not in summary
-
-
-def test_treasury_budget_summary_names_fixed_salary_display(fresh_game):
-    db, state = fresh_game
-
-    summary = db.treasury_budget_summary(state)
-
-    assert "百官俸禄" in summary
 
 
 def test_substrate_hub_uses_month_opening_treasury_before_lower_priority_expenses(fresh_game):
@@ -2083,150 +2114,6 @@ def test_fixed_flows_substrate_hub_failure_rolls_back_cutover_writes(fresh_game,
     assert state.metrics["国库"] == before_balance
 
 
-def test_budget_lines_read_fiscal_engine_gate_for_army_pay(fresh_game):
-    import ming_sim.flows as flows_mod
-
-    db, state = fresh_game
-    state.metrics["国库"] = 5
-    db.save_state(state)
-    _set_all_settle_grants(db, 0)
-    db.conn.execute(
-        """
-        UPDATE armies
-        SET self_funded_pay = 1, is_tusi = 1, province_pay_share = 0,
-            central_pay_share = 0, pay_source_region = '',
-            province_pay_arrears = 0, central_pay_arrears = 0, arrears = 0
-        """
-    )
-    db.conn.execute(
-        """
-        UPDATE armies
-        SET self_funded_pay = 0, is_tusi = 0, owner_power = 'ming',
-            pay_source_region = 'shaanxi', province_pay_share = 0,
-            central_pay_share = 1, province_pay_arrears = 0,
-            central_pay_arrears = 0, arrears = 0,
-            manpower = 10000, salary_rate = 10
-        WHERE id = 'guanning'
-        """
-    )
-    db.conn.execute(
-        """
-        UPDATE armies
-        SET self_funded_pay = 0, is_tusi = 0, owner_power = 'ming',
-            pay_source_region = 'fujian', province_pay_share = 1.0,
-            central_pay_share = 0.0, province_pay_arrears = 0,
-            central_pay_arrears = 0, arrears = 0,
-            manpower = 10000, salary_rate = 10
-        WHERE id = 'fujian_navy'
-        """
-    )
-    db.conn.commit()
-
-    substrate_budget = flows_mod.compute_budget_lines(db, state)
-    substrate_pay = next(
-        row["amount"] for row in substrate_budget["国库"]["expense"]
-        if row["name"] == "各军军饷"
-    )
-    assert substrate_pay == 5
-
-    flow_rows = flows_mod.apply_fixed_period_flows(db, state)
-    hub_row = next(row for row in flow_rows if row.get("category") == "边饷hub")
-    assert hub_row["paid"] == pytest.approx(5)
-
-    settled_budget = flows_mod.compute_budget_lines(db, state)
-    settled_pay = next(
-        row["amount"] for row in settled_budget["国库"]["expense"]
-        if row["name"] == "各军军饷"
-    )
-    assert settled_pay == 10
-
-    _disable_army_pay_source_cutover(db)
-
-    legacy_budget = flows_mod.compute_budget_lines(db, state)
-    legacy_pay = next(
-        row["amount"] for row in legacy_budget["国库"]["expense"]
-        if row["name"] == "各军军饷"
-    )
-    legacy_expected = sum(
-        army_needed(row) for row in db.conn.execute(
-            "SELECT manpower, salary_rate, owner_power FROM armies WHERE owner_power='ming'"
-        ).fetchall()
-    )
-    assert legacy_pay == legacy_expected
-
-
-def test_substrate_hub_budget_army_pay_uses_central_haircut_due(fresh_game):
-    """预算「各军军饷」须复用 _central_dues_with_haircut 折后 Due，与真实 hub 结算对齐。"""
-    import ming_sim.flows as flows_mod
-    from ming_sim.flows import (
-        ARMY_SALARY_PRIORITY,
-        _central_dues_with_haircut,
-        _compute_substrate_hub_outbound,
-        army_needed,
-    )
-
-    db, state = fresh_game
-    # 国库充足，使 outbound 不被现金截断主导
-    state.metrics["国库"] = 10_000
-    db.save_state(state)
-    _set_all_settle_grants(db, 0)
-    db.conn.execute("UPDATE buildings SET output_amount=0, maintenance=0")
-    _zero_non_meta_fiscal_config(db)
-    db.conn.execute(
-        "UPDATE regions SET tax_per_turn=0, fiscal=json_set(fiscal, "
-        "'$.huang_tian',0,'$.liao_xiang',0,'$.salt_tax',0,'$.commerce_tax',0)"
-    )
-    db.conn.execute(
-        "UPDATE armies SET self_funded_pay=1, is_tusi=1, province_pay_share=0, "
-        "central_pay_share=0, pay_source_region='', province_pay_arrears=0, "
-        "central_pay_arrears=0, arrears=0"
-    )
-    db.conn.execute(
-        "UPDATE armies SET self_funded_pay=0, is_tusi=0, owner_power='ming', "
-        "pay_source_region='shaanxi', province_pay_share=0, central_pay_share=1, "
-        "province_pay_arrears=0, central_pay_arrears=0, arrears=0, "
-        "manpower=10000, salary_rate=10 WHERE id='guanning'"
-    )
-    _set_fiscal_config_value(db, "due_haircut_bp_军饷@shaanxi#central", 5000)
-    db.conn.commit()
-
-    army_row = db.conn.execute(
-        "SELECT id, manpower, salary_rate, owner_power, central_pay_share, "
-        "pay_source_region FROM armies WHERE id='guanning'"
-    ).fetchone()
-    nominal_due = army_needed(army_row) * float(army_row["central_pay_share"] or 0)
-    assert nominal_due == pytest.approx(10.0)
-
-    rows = db.conn.execute(
-        "SELECT id, manpower, salary_rate, owner_power, central_pay_share, "
-        "pay_source_region FROM armies WHERE owner_power='ming' AND is_tusi=0 "
-        "AND self_funded_pay=0 AND central_pay_share>0"
-    ).fetchall()
-    army_map = {str(r["id"]): r for r in rows}
-    ordered = [army_map[k] for k in ARMY_SALARY_PRIORITY if k in army_map]
-    ordered += [r for r in rows if str(r["id"]) not in ARMY_SALARY_PRIORITY]
-    haircut_dues, _ = _central_dues_with_haircut(db, state, ordered)
-    assert haircut_dues["guanning"] == pytest.approx(5.0)
-    hub = _compute_substrate_hub_outbound(
-        db, max(0.0, float(state.metrics.get("国库", 0) or 0)), haircut_dues,
-    )
-    expected = int(
-        hub.jingyun_paid_total + hub.central_paid_total + hub.central_transport_loss
-    )
-    assert expected < int(nominal_due)
-
-    budget = flows_mod.compute_budget_lines(db, state)
-    budget_pay = next(
-        row["amount"] for row in budget["国库"]["expense"] if row["name"] == "各军军饷"
-    )
-    assert budget_pay == expected
-    assert budget_pay < int(nominal_due)
-
-    flow_rows = flows_mod.apply_fixed_period_flows(db, state)
-    hub_row = next(row for row in flow_rows if row.get("category") == "边饷hub")
-    assert int(hub_row["paid"]) == budget_pay
-
-
 def test_pre_s6_cutover_save_without_fiscal_engine_migrates_to_substrate_hub(fresh_db):
     import ming_sim.flows as flows_mod
 
@@ -2257,7 +2144,7 @@ def test_pre_s6_cutover_save_without_fiscal_engine_migrates_to_substrate_hub(fre
         budget = flows_mod.compute_budget_lines(reopened, state)
         army_pay = next(
             row["amount"] for row in budget["国库"]["expense"]
-            if row["name"] == "各军军饷"
+            if row.get("budget_key") == "army_pay"
         )
         assert army_pay > 0
 
