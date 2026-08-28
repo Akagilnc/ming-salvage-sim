@@ -451,7 +451,7 @@ def test_scripted_ask_vs_order_staging_matrix(
             "dossier_links": [],
             "covert_task": {
                 "kind": "清丈", "axes": ["实务事功"], "direction": 1,
-                "delivery": {"unit": "亩", "target_units": 1.0},
+                "delivery": {"unit": "万亩", "target_units": 1.0, "effect_sign": 1, "region": "henan", "field": "registered_land", "target": "421"},
             },
         },
     )
@@ -725,7 +725,7 @@ def test_real_chat_bidirectional_barrier_parallel_required(
             "dossier_links": [],
             "covert_task": {
                 "kind": "清丈", "axes": ["实务事功"], "direction": 1,
-                "delivery": {"unit": "亩", "target_units": 1.0},
+                "delivery": {"unit": "万亩", "target_units": 1.0, "effect_sign": 1, "region": "henan", "field": "registered_land", "target": "421"},
             },
         },
     )

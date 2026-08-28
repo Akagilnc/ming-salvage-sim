@@ -178,11 +178,22 @@ def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
             dossier_candidates=session.db.list_referenceable_dossiers(
                 minister_name, session.state.turn),
         )
-        ctx.conversation_intent_handled = True
         frozen = secret.get("covert_task") if isinstance(secret.get("covert_task"), dict) else None
         if frozen is None:
+            reason = str(secret.get("contract_error") or "密令抽取未能冻结合同").strip()
+            failures = list(ctx.out.get("pending_action_failures") or [])
+            failures.append({
+                "kind": "secret_order",
+                "action": "新建",
+                "minister_name": minister_name,
+                "retryable": True,
+                "message": f"密令未能正式落库：{reason}",
+            })
+            ctx.out["pending_action_failures"] = failures
             ctx.out["pending_action_id"] = 0
+            ctx.conversation_intent_handled = True
             return
+        ctx.conversation_intent_handled = True
         ctx.out["pending_action_id"] = session.db.stage_pending_action(
             session.state.turn,
             kind="secret_order",

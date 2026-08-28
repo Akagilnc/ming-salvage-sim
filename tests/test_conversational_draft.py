@@ -461,7 +461,7 @@ def test_explicit_secret_order_prefix_stages_pending_candidate(game, monkeypatch
             "价值轴": ["实务事功"],
             "方向": 1,
             "交付单位": "万两",
-            "交付目标": 1,
+            "交付目标": 1, "效果符号": 1,
             "钱粮用途": "辽饷",
             "钱粮类别": "军饷",
             "钱粮账户": "国库",
@@ -503,7 +503,7 @@ def test_natural_language_secret_order_stages_pending_candidate(game, monkeypatc
                 "差务": "查虚冒兵额",
                 "价值轴": ["实务事功"],
                 "方向": 1,
-                "交付目标": 1,
+                "交付目标": 1, "效果符号": 1,
                 "调查对象": name,
                 "标签": ["关宁", "兵额"],
             }, ensure_ascii=False), 1)
@@ -564,8 +564,8 @@ def test_secret_order_status_query_does_not_stage_new_hidden_order(game, monkeyp
                 "差务": "清丈",
                 "价值轴": ["实务事功"],
                 "方向": 1,
-                "交付单位": "亩",
-                "交付目标": 1,
+                "交付单位": "万亩",
+                "交付目标": 1, "效果符号": 1,
                 "标签": [],
             }, ensure_ascii=False), 1)
         return (json.dumps({
@@ -662,7 +662,7 @@ def test_new_secret_order_with_existing_order_stages_only_new_candidate(game, mo
                 "价值轴": ["实务事功"],
                 "方向": 1,
                 "交付单位": "万两",
-                "交付目标": 1,
+                "交付目标": 1, "效果符号": 1,
                 "钱粮用途": "辽饷",
                 "钱粮类别": "军饷",
                 "钱粮账户": "国库",

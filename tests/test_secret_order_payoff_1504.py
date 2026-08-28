@@ -49,8 +49,9 @@ from ming_sim.simulation import (
 )
 
 
-def _task(*, kind, axes, unit, target, direction=1, investigation_target=""):
+def _task(*, kind, axes, unit, target, direction=1, investigation_target="", effect_sign=None):
     if investigation_target:
+        sign = 1 if effect_sign is None else int(effect_sign)
         return {
             "kind": kind,
             "axes": list(axes),
@@ -58,14 +59,17 @@ def _task(*, kind, axes, unit, target, direction=1, investigation_target=""):
             "investigation_target": investigation_target,
             "delivery": {
                 "target_units": float(target),
+                "effect_sign": sign,
                 "investigation_target": investigation_target,
             },
         }
     identity = {
-        "万两": {"purpose": "其它", "category": "密令差务", "account": "内库"},
-        "人犯": {"person_action": "处置"},
-        "亩": {"region": "henan", "field": "registered_land", "target": "421"},
+        "万两": {"purpose": "其它", "category": "密令差务", "account": "内库", "effect_sign": -1},
+        "人犯": {"person_action": "处置", "effect_sign": 1},
+        "万亩": {"region": "henan", "field": "registered_land", "target": "421", "effect_sign": 1},
     }[unit]
+    if effect_sign is not None:
+        identity = {**identity, "effect_sign": int(effect_sign)}
     return {
         "kind": kind,
         "axes": list(axes),
@@ -287,13 +291,13 @@ def test_task_specific_contract_from_explicit_fields_not_tags():
     audit = build_covert_task_contract(
         deadline_span=3, due_turn=10,
         kind="补发饷银", axes=["既得利益"], direction=1,
-        delivery_unit="万两", delivery_target_units=3,
+        delivery_unit="万两", delivery_target_units=3, effect_sign=-1,
         purpose="其它", category="密令差务", account="内库",
     )
     catch = build_covert_task_contract(
         deadline_span=3, due_turn=10,
         kind="缉获人犯", axes=["实务事功"], direction=1,
-        delivery_unit="人犯", delivery_target_units=3, person_action="处置",
+        delivery_unit="人犯", delivery_target_units=3, effect_sign=1, person_action="处置",
     )
     assert audit["kind"] == "补发饷银" and audit["axes"] == ["既得利益"]
     assert audit["delivery"]["unit"] == "万两"
@@ -313,16 +317,16 @@ def test_task_specific_contract_from_explicit_fields_not_tags():
         ("万两", {"purpose": "其它", "account": "内库"}),
         ("万两", {"purpose": "其它", "category": "密令差务"}),
         ("人犯", {}),
-        ("亩", {"field": "registered_land", "region_target": "421"}),
-        ("亩", {"region": "henan", "region_target": "421"}),
-        ("亩", {"region": "henan", "field": "registered_land"}),
+        ("万亩", {"field": "registered_land", "region_target": "421"}),
+        ("万亩", {"region": "henan", "region_target": "421"}),
+        ("万亩", {"region": "henan", "field": "registered_land"}),
     ],
 )
 def test_confirmation_rejects_incomplete_delivery_identity(unit, identity):
     with pytest.raises(CovertContractError, match="identity"):
         build_covert_task_contract(
             kind="差务", axes=["实务事功"], direction=1,
-            delivery_unit=unit, delivery_target_units=1, **identity,
+            delivery_unit=unit, delivery_target_units=1, effect_sign=1, **identity,
         )
 
 
@@ -955,6 +959,7 @@ def _confirm_investigation(db, state, content, monkeypatch, *, minister, target)
         "价值轴": ["既得利益"],
         "方向": 1,
         "交付目标": 2,
+        "效果符号": 1,
         "调查对象": target,
     }, ensure_ascii=False)
 
@@ -1194,19 +1199,18 @@ def test_fiscal_quantity_tracer_same_unit_done_and_gap(game):
     assert db.get_secret_order(oid2)["status"] == "failed"
 
 
-@pytest.mark.parametrize("mismatch", ["region", "field", "target"])
+@pytest.mark.parametrize("mismatch", ["region", "field"])
 def test_region_quantity_ignores_same_origin_turn_with_mismatched_identity(game, mismatch):
     db, state, _ = game
     name = _minister(db)
     _set_axes(db, name, loyalty=90, identity=30)
-    oid = _issue(db, state, name, "清丈河南", "清丈", months=1, target=1, unit="亩")
+    oid = _issue(db, state, name, "清丈河南", "清丈", months=1, target=1, unit="万亩")
     did = int(db.get_dossier_for_secret_order(oid)["id"])
     state.turn += 1
     db.save_state(state)
     wrong = {
         "region": ("shandong", "registered_land", "520", "521"),
         "field": ("henan", "hidden_land", "420", "421"),
-        "target": ("henan", "registered_land", "421", "422"),
     }[mismatch]
     db.conn.execute(
         "INSERT INTO region_logs "
@@ -1285,6 +1289,9 @@ def test_incomplete_extract_does_not_stage_zero_contract(game, monkeypatch):
     )
     run_materialize_pipeline(ctx)
     assert int(ctx.out.get("pending_action_id") or 0) == 0
+    failures = list(ctx.out.get("pending_action_failures") or [])
+    assert failures
+    assert all(row.get("kind") == "secret_order" for row in failures)
     assert db.list_secret_orders() == []
 
 
@@ -1296,3 +1303,106 @@ def test_create_secret_order_rejects_missing_contract(game):
             state, name, "无合同密令", "无显式差务", [], deadline_months=1,
         )
     assert db.list_secret_orders() == []
+
+
+def test_purpose_liaoxiang_canonicalizes_to_other_and_counts(game):
+    db, state, content = game
+    name = _minister(db)
+    _set_axes(db, name, loyalty=90, identity=30)
+    frozen = build_covert_task_contract(
+        kind="核发辽饷", axes=["实务事功"], direction=1,
+        delivery_unit="万两", delivery_target_units=3, effect_sign=-1,
+        purpose="辽饷", category="密令差务", account="内库",
+    )
+    assert frozen["delivery"]["purpose"] == "其它"
+    with pytest.raises(CovertContractError):
+        build_covert_task_contract(
+            kind="核发辽饷", axes=["实务事功"], direction=1,
+            delivery_unit="万两", delivery_target_units=3,
+            purpose="辽饷", category="密令差务", account="内库",
+        )
+    oid = db.create_secret_order(
+        state, name, "核发辽饷", "核发辽饷", [],
+        deadline_months=1, covert_task=frozen,
+    )
+    did = int(db.get_dossier_for_secret_order(oid)["id"])
+    contract = read_covert_task_contract(db.get_dossier_for_secret_order(oid))
+    assert contract["delivery"]["purpose"] == "其它"
+    settle_with_delta(
+        state, db, {"dossier_progress_reports": [_report(did, "发令")]},
+        before_turn=state.turn, content=content,
+    )
+    settle_with_delta(
+        state, db,
+        _delta_work(oid, did, memorial="实发", eco=-3, report=True),
+        before_turn=state.turn, content=content,
+    )
+    assert db.sum_dossier_actual_progress_units(did) == 3.0
+    assert db.get_secret_order(oid)["status"] == "done"
+
+
+def test_region_monthly_progress_sums_increments_without_final_value_gate(game):
+    db, state, _ = game
+    name = _minister(db)
+    _set_axes(db, name, loyalty=90, identity=30)
+    oid = _issue(db, state, name, "清丈河南", "清丈", months=2, target=5, unit="万亩")
+    did = int(db.get_dossier_for_secret_order(oid)["id"])
+    state.turn += 1
+    db.save_state(state)
+    db.conn.execute(
+        "INSERT INTO region_logs "
+        "(turn, year, period, region_id, field, old_value, new_value, delta, reason, origin_ref) "
+        "VALUES (?, ?, ?, 'henan', 'registered_land', '420', '422', 2, 'test', ?)",
+        (state.turn, state.year, state.period, f"dossier:{did}"),
+    )
+    apply_monthly_covert_actual_progress(
+        db, state, selections=[{"order_id": oid, "fidelity": "忠实"}], commit=True,
+    )
+    assert db.sum_dossier_actual_progress_units(did) == 2.0
+    state.turn += 1
+    db.save_state(state)
+    db.conn.execute(
+        "INSERT INTO region_logs "
+        "(turn, year, period, region_id, field, old_value, new_value, delta, reason, origin_ref) "
+        "VALUES (?, ?, ?, 'henan', 'registered_land', '422', '425', 3, 'test', ?)",
+        (state.turn, state.year, state.period, f"dossier:{did}"),
+    )
+    apply_monthly_covert_actual_progress(
+        db, state, selections=[{"order_id": oid, "fidelity": "忠实"}], commit=True,
+    )
+    assert db.sum_dossier_actual_progress_units(did) == 5.0
+    out = settle_due_secret_orders(db, state, commit=True)
+    row = next(r for r in out if r["order_id"] == oid)
+    assert row["status"] == "done"
+
+
+def test_public_secret_order_forwards_investigation_without_unit(game):
+    from ming_sim.tools import build_minister_tools
+
+    db, state, _ = game
+    name = _minister(db)
+    target = db.conn.execute(
+        "SELECT name FROM characters WHERE name<>? AND status='active' LIMIT 1",
+        (name,),
+    ).fetchone()["name"]
+    ctx = SimpleNamespace(db=db, state=state)
+    character = SimpleNamespace(name=name, office_type="文官")
+    tools = build_minister_tools(character, ctx)
+    secret_order = next(fn for fn in tools if getattr(fn, "__name__", "") == "secret_order")
+    out = secret_order(
+        "issue",
+        title="查核侵冒",
+        content="查核侵冒",
+        kind="查核辽饷侵冒",
+        axes_json='["既得利益"]',
+        direction=1,
+        delivery_target_units=2,
+        investigation_target=target,
+        effect_sign=1,
+    )
+    assert out.startswith("__secret_order__")
+    payload = json.loads(out[len("__secret_order__"):])
+    contract = payload["covert_task"]
+    assert contract["investigation_target"] == target
+    assert contract["delivery"]["effect_sign"] == 1
+    assert "unit" not in contract["delivery"]

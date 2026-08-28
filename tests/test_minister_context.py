@@ -827,7 +827,7 @@ def test_secret_order_tool_preserves_long_title_without_formal_cap(game):
     result = tools["secret_order"](
         action="issue", title=title, content="核发军饷并回奏。",
         kind="核发辽饷", axes_json='["实务事功"]', delivery_unit="万两",
-        delivery_target_units=1, purpose="辽饷", category="军饷", account="国库",
+        delivery_target_units=1, effect_sign=-1, purpose="辽饷", category="军饷", account="国库",
     )
 
     assert result.startswith("__secret_order__")
