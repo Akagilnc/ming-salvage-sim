@@ -1,6 +1,6 @@
 # 案卷 store 摘取（DossierStore）
 
-Status: proposed（大理寺审理中，收敛后转 accepted；落地物归 issue #1571；grill 2026-08-27 三轮 12 题定稿，owner 逐轮确认，设计树原话存档 = <https://github.com/Akagilnc/ming-salvage-sim/issues/1571#issuecomment-5437649299>；依赖 ADR 0150 的目录法源与无兼容层纪律 0150-D8）
+Status: accepted（大理寺十五审 run 01a0462d-28cb-7d8b-b8c6-7edf1fc3ca71 判 converged 收口；一至十四审逐轮修订细账见 issue #1571 与 `docs/evidence/issue-1571/` 审理史；落地物归 issue #1571；grill 2026-08-27 三轮 12 题定稿，owner 逐轮确认，设计树原话存档 = <https://github.com/Akagilnc/ming-salvage-sim/issues/1571#issuecomment-5437649299>；依赖 ADR 0150 的目录法源与无兼容层纪律 0150-D8）
 
 案卷的全部持久化读写与案卷表 schema 从 GameDB 摘出，归独立的 `DossierStore`（`ming_sim/entities/dossier/` 包，0150 实体目录法源的首例 store 形态），GameDB 侧不留任何转发 facade；verdict 效果物化（0150 决定 5）与判官 LLM 生产侧留外，不归它。
 
