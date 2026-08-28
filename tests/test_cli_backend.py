@@ -1347,9 +1347,13 @@ def test_clichat_invoke_builds_prompt_and_completion_structure(monkeypatch):
     cc = cb.CliChat(id="cli-test", backend="agy")
     seen = {}
 
+    # Deterministic fixture the old _strip_agent_narration would have rewritten
+    # (drop leading "I will …" line). Public content must equal the stub verbatim.
+    runner_text = "I will check the files.\nBODY_ZH_REPLY"
+
     def fake_cli(prompt):
         seen["prompt"] = prompt
-        return ("CLI_REPLY_PLACEHOLDER", 1)
+        return (runner_text, 1)
 
     monkeypatch.setattr(cc, "_call_cli", fake_cli)
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
@@ -1372,11 +1376,11 @@ def test_clichat_invoke_builds_prompt_and_completion_structure(monkeypatch):
     assert "【你此前的回答】" in p and "PRIOR_ASST" in p
     assert "12345" in p
     assert "【执行约束·必读】" in p
-    # typed completion structure only — no body prose / spy on _fake_completion
+    # typed completion + passthrough on structured content (fixture, not LLM prose)
     assert out.role == "assistant"
     assert out.event == "AssistantResponse"
-    assert isinstance(out.content, str)
     assert out.tool_calls == []
+    assert out.content == runner_text
 
 
 def test_clichat_invoke_json_constraint_and_no_constraint(monkeypatch):
