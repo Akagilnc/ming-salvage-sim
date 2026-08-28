@@ -20,6 +20,7 @@ from ming_sim.simulation import (
     _sanitize_module_output,
 )
 from tests.conftest import active_ming_character
+from tests.dossier_test_helpers import investigation_covert_task
 
 
 def _promulgated_dossier(db, state, decree_text, target_id="毛文龙"):
@@ -2368,7 +2369,7 @@ def test_create_secret_order_rejects_vassal_prince(read_game):
     db, state, content = read_game
     name = _materialize_active_prince(db, state, content)
     with pytest.raises(ValueError, match="宗室"):
-        db.create_secret_order(state, name, "密查", "着尔暗中查访", [])
+        db.create_secret_order(state, name, "密查", "着尔暗中查访", [], covert_task=investigation_covert_task("密查"))
 
 
 def test_create_secret_order_rejects_vassal_prince_by_alias(read_game):
@@ -2386,7 +2387,7 @@ def test_create_secret_order_rejects_vassal_prince_by_alias(read_game):
     db.add_character(state, content.characters[prince], source="测试")
     alias = next(a for a in content.characters[prince].aliases if a != prince)
     with pytest.raises(ValueError, match="宗室"):
-        db.create_secret_order(state, alias, "密查", "着尔暗中查访", [])
+        db.create_secret_order(state, alias, "密查", "着尔暗中查访", [], covert_task=investigation_covert_task("密查"))
 
 
 def test_create_secret_order_persists_canonical_name(game):
@@ -2404,7 +2405,7 @@ def test_create_secret_order_persists_canonical_name(game):
     if target is None:
         pytest.skip("无带别名的在册大臣")
     alias = next(a for a in content.characters[target].aliases if a != target)
-    oid = db.create_secret_order(state, alias, "密查", "着尔暗中查访", [])
+    oid = db.create_secret_order(state, alias, "密查", "着尔暗中查访", [], covert_task=investigation_covert_task("密查"))
     row = db.conn.execute("SELECT minister_name FROM secret_orders WHERE id=?", (oid,)).fetchone()
     assert row["minister_name"] == target  # 存规范名，非别名
 
@@ -2421,7 +2422,7 @@ def test_create_secret_order_rejects_foreign_power(game):
     if enemy is None:
         pytest.skip("基底盘面无外藩人物")
     with pytest.raises(ValueError, match="不属大明朝廷"):
-        db.create_secret_order(state, enemy, "密查", "着尔暗中查访", [])
+        db.create_secret_order(state, enemy, "密查", "着尔暗中查访", [], covert_task=investigation_covert_task("密查"))
 
 
 def test_create_secret_order_rejects_foreign_power_by_alias(game):
@@ -2439,7 +2440,7 @@ def test_create_secret_order_rejects_foreign_power_by_alias(game):
         pytest.skip("基底盘面无带别名的外藩")
     alias = next(a for a in content.characters[enemy].aliases if a != enemy)
     with pytest.raises(ValueError, match="不属大明朝廷"):
-        db.create_secret_order(state, alias, "密查", "着尔暗中查访", [])
+        db.create_secret_order(state, alias, "密查", "着尔暗中查访", [], covert_task=investigation_covert_task("密查"))
 
 
 def test_create_secret_order_allows_returned_defector(game):
@@ -2454,7 +2455,7 @@ def test_create_secret_order_allows_returned_defector(game):
         pytest.skip("基底盘面无可招抚人物")
     db.conn.execute("UPDATE characters SET power_id='ming' WHERE name=?", (defector,))
     db.conn.commit()
-    oid = db.create_secret_order(state, defector, "密查", "着尔暗中查访", [])
+    oid = db.create_secret_order(state, defector, "密查", "着尔暗中查访", [], covert_task=investigation_covert_task("密查"))
     assert oid > 0  # DB 已归明 → 不被资格闸拒
 
 

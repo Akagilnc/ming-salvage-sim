@@ -5,6 +5,7 @@ import json
 from ming_sim.models import Character
 import pytest
 from ming_sim.knowledge import build_character_knowledge
+from tests.dossier_test_helpers import investigation_covert_task
 
 def test_role_roster_only_lists_current_active_ming_people(game):
     db, state, content = game
@@ -33,7 +34,7 @@ def test_chapter_aggregate_never_projects_paraphrased_restricted_source(game):
 
 def test_secret_alias_exclusion_is_canonicalized_before_projection(game):
     db, state, _content = game
-    order = db.create_secret_order(state, "毕自严", "密查", "查账", [], excluded_names=["九千岁"])
+    order = db.create_secret_order(state, "毕自严", "密查", "查账", [], excluded_names=["九千岁"], covert_task=investigation_covert_task("密查"))
     row = db.conn.execute("SELECT excluded_names FROM secret_orders WHERE id=?", (order,)).fetchone()
     assert "魏忠贤" in row["excluded_names"]
 
@@ -43,9 +44,7 @@ def test_secret_order_commit_recovers_named_alias_and_office_targets_from_conten
     excluded = content.characters["魏忠贤"]
     academy = next(c for c in content.characters.values() if c.office_type == "翰林院")
 
-    order = db.create_secret_order(
-        state, "毕自严", "密查", "密查账目，瞒住九千岁与翰林院诸官。", []
-    )
+    order = db.create_secret_order(state, "毕自严", "密查", "密查账目，瞒住九千岁与翰林院诸官。", [], covert_task=investigation_covert_task("密查"))
 
     row = db.conn.execute(
         "SELECT excluded_names, excluded_targets FROM secret_orders WHERE id=?", (order,)
@@ -60,9 +59,7 @@ def test_secret_order_commit_recovers_non_disclosure_clause(game):
     """持久化边界不能因措辞不同丢失具体官职排除。"""
     db, state, _content = game
 
-    order = db.create_secret_order(
-        state, "毕自严", "密查", "不可令翰林院侍读学士知情。", []
-    )
+    order = db.create_secret_order(state, "毕自严", "密查", "不可令翰林院侍读学士知情。", [], covert_task=investigation_covert_task("密查"))
 
     row = db.conn.execute(
         "SELECT excluded_targets FROM secret_orders WHERE id=?", (order,)
@@ -82,6 +79,7 @@ def test_secret_order_tool_path_canonicalizes_omitted_exclusions_before_staging(
         action="issue", title="密查", content="密查账目，勿使翰林院诸官知晓。",
         kind="清丈", axes_json='["实务事功"]', delivery_unit="亩",
         delivery_target_units=1,
+        region="henan", field="registered_land", region_target="421",
     ).removeprefix("__secret_order__")
 
     staged = json.loads(payload)
@@ -302,9 +300,7 @@ def test_restored_knowledge_uses_current_db_office_after_transfer(tmp_path, cont
 def test_public_directive_is_seen_by_uninvolved_minister_but_secret_exclusion_wins(game):
     db, state, content = game
     minister = next(c for c in content.characters.values() if c.office_type == "礼部")
-    order = db.create_secret_order(
-        state, "毕自严", "暗查亏空", "查户部旧账", [], excluded_names=[minister.name]
-    )
+    order = db.create_secret_order(state, "毕自严", "暗查亏空", "查户部旧账", [], excluded_names=[minister.name], covert_task=investigation_covert_task("暗查亏空"))
     db.record_public_knowledge_event(state, "明发清丈诏", "全国清丈田亩")
 
     view = db.get_character_knowledge(state, minister.name)
@@ -315,9 +311,7 @@ def test_public_directive_is_seen_by_uninvolved_minister_but_secret_exclusion_wi
 def test_turn_report_keeps_source_specific_secret_exclusion_boundary(game):
     db, state, content = game
     minister = next(c for c in content.characters.values() if c.office_type == "礼部")
-    order = db.create_secret_order(
-        state, "毕自严", "暗查亏空", "密事不得告知礼部", [], excluded_names=[minister.name]
-    )
+    order = db.create_secret_order(state, "毕自严", "暗查亏空", "密事不得告知礼部", [], excluded_names=[minister.name], covert_task=investigation_covert_task("暗查亏空"))
     db.record_public_knowledge_event(
         state, "密事记录", "SECRET_SOURCE_MARKER_490", source_id=f"secret_order:{order}"
     )
@@ -504,9 +498,7 @@ def test_excluded_participant_event_is_not_visible_to_excluded_character(game):
 def test_secret_blacklist_survives_later_public_projection(game):
     db, state, content = game
     minister = next(c for c in content.characters.values() if c.office_type == "礼部")
-    order = db.create_secret_order(
-        state, "毕自严", "暗查亏空", "查户部旧账", [], excluded_names=[minister.name]
-    )
+    order = db.create_secret_order(state, "毕自严", "暗查亏空", "查户部旧账", [], excluded_names=[minister.name], covert_task=investigation_covert_task("暗查亏空"))
     db.record_public_knowledge_event(
         state, "密查公开", "该案已奉明发", source_id=f"secret_order:{order}"
     )
@@ -586,9 +578,7 @@ def test_knowledge_world_keeps_countable_fiscal_facts_but_not_abstract_axes(game
 def test_secret_office_exclusion_does_not_hide_unrelated_world_bucket(game):
     db, state, content = game
     clerk = next(c for c in content.characters.values() if c.office_type == "户部")
-    order = db.create_secret_order(
-        state, "毕自严", "暗查亏空", "查户部旧账", [], excluded_offices=["户部"]
-    )
+    order = db.create_secret_order(state, "毕自严", "暗查亏空", "查户部旧账", [], excluded_offices=["户部"], covert_task=investigation_covert_task("暗查亏空"))
     view = db.get_character_knowledge(state, clerk.name)
 
     assert db.list_secret_orders()[0]["excluded_targets"] == {"people": [], "offices": ["户部"]}
@@ -601,15 +591,7 @@ def test_secret_office_snapshot_keeps_explicit_people_target_separate(game):
     office_member = next(c for c in content.characters.values() if c.office_type == "户部")
     explicit_person = next(c for c in content.characters.values() if c.name != office_member.name)
 
-    order = db.create_secret_order(
-        state,
-        "毕自严",
-        "暗查亏空",
-        "查户部旧账",
-        [],
-        excluded_names=[explicit_person.name],
-        excluded_offices=["户部"],
-    )
+    order = db.create_secret_order(state, "毕自严", "暗查亏空", "查户部旧账", [], excluded_names=[explicit_person.name], excluded_offices=["户部"], covert_task=investigation_covert_task("暗查亏空"))
 
     row = db.conn.execute(
         "SELECT excluded_names, excluded_targets FROM secret_orders WHERE id=?", (order,)
@@ -626,9 +608,7 @@ def test_secret_office_snapshot_keeps_explicit_people_target_separate(game):
 def test_secret_office_exclusion_snapshots_people_before_transfer_and_publication(game):
     db, state, content = game
     excluded = next(c for c in content.characters.values() if c.office_type == "户部")
-    order = db.create_secret_order(
-        state, "毕自严", "暗查亏空", "查户部旧账", [], excluded_offices=["户部"]
-    )
+    order = db.create_secret_order(state, "毕自严", "暗查亏空", "查户部旧账", [], excluded_offices=["户部"], covert_task=investigation_covert_task("暗查亏空"))
 
     db.set_character_office(excluded.name, "礼部尚书", office_type="礼部")
     db.record_public_knowledge_event(
@@ -646,10 +626,7 @@ def test_disclosed_secret_source_keeps_its_public_projection(game):
     """A later public disclosure must not be replaced by the private source payload."""
     db, state, content = game
     excluded = next(c for c in content.characters.values() if c.office_type == "户部")
-    order = db.create_secret_order(
-        state, "毕自严", "暗查亏空", "查户部旧账", [],
-        excluded_names=[excluded.name],
-    )
+    order = db.create_secret_order(state, "毕自严", "暗查亏空", "查户部旧账", [], excluded_names=[excluded.name], covert_task=investigation_covert_task("暗查亏空"))
     db.record_public_knowledge_event(
         state, "密查公开", "该案已奉明发", source_id=f"secret_order:{order}"
     )
@@ -694,7 +671,7 @@ def test_long_knowledge_bodies_survive_storage_without_brief_card_cap(game):
 
 def test_secret_amendment_preserves_legacy_blacklist_and_public_disclosure(game):
     db, state, _content = game
-    order = db.create_secret_order(state, "毕自严", "密查", "查账", [])
+    order = db.create_secret_order(state, "毕自严", "密查", "查账", [], covert_task=investigation_covert_task("密查"))
     db.conn.execute(
         "UPDATE secret_orders SET excluded_names=?, excluded_targets='{}' WHERE id=?",
         (json.dumps(["魏忠贤"], ensure_ascii=False), order),
@@ -718,9 +695,7 @@ def test_secret_exclusion_is_source_scoped_not_global_for_same_bucket(game):
     treasury_ministers = [c for c in content.characters.values() if c.office_type == "户部"]
     excluded = treasury_ministers[0]
     unaffected = treasury_ministers[1]
-    db.create_secret_order(
-        state, "毕自严", "暗查亏空", "查户部旧账", [], excluded_offices=[excluded.office]
-    )
+    db.create_secret_order(state, "毕自严", "暗查亏空", "查户部旧账", [], excluded_offices=[excluded.office], covert_task=investigation_covert_task("暗查亏空"))
 
     excluded_view = db.get_character_knowledge(state, excluded.name)
     unaffected_view = db.get_character_knowledge(state, unaffected.name)
@@ -790,9 +765,7 @@ def test_participant_roster_is_discovered_from_persistent_record_without_adapter
 def test_office_blacklist_preserves_unrelated_court_domain_fact(game):
     db, state, content = game
     minister = next(c for c in content.characters.values() if c.office_type == "内阁")
-    db.create_secret_order(
-        state, "毕自严", "暗查亏空", "查户部旧账", [], excluded_offices=["户部"]
-    )
+    db.create_secret_order(state, "毕自严", "暗查亏空", "查户部旧账", [], excluded_offices=["户部"], covert_task=investigation_covert_task("暗查亏空"))
 
     view = db.get_character_knowledge(state, minister.name)
 
@@ -911,9 +884,7 @@ def test_secret_order_dossier_never_leaks_through_shared_roster_projection(game)
     db, state, content = game
     member = next(c for c in content.characters.values() if c.office_type == "礼部")
     outsider = next(c for c in content.characters.values() if c.name != member.name)
-    order_id = db.create_secret_order(
-        state, member.name, "密核历书", "暗查历局底稿。", [], deadline_months=0,
-    )
+    order_id = db.create_secret_order(state, member.name, "密核历书", "暗查历局底稿。", [], deadline_months=0, covert_task=investigation_covert_task("密核历书"))
     dossier = next(d for d in db.list_decree_dossiers() if d["secret_order_id"] == order_id)
     db.conn.execute(
         "UPDATE decree_dossiers SET participant_roster=? WHERE id=?",

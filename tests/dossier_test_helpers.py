@@ -14,6 +14,24 @@ def create_test_secret_order(db, state, minister, title, content, tags, **kwargs
     return db.create_secret_order(state, minister, title, content, tags, **kwargs)
 
 
+def investigation_covert_task(kind: str) -> dict:
+    """Confirmation freezes a typed contract for every secret order (#1504 Owner A).
+
+    Tests whose assertions are about isolation/pending-actions/dossier participants
+    etc. — not delivery semantics — get an investigation (案) contract keyed off
+    their own real title. 案 carries no identity fields (_IDENTITY_FOR_UNIT["案"]
+    is empty), so this never fabricates money/land/person specifics the test's
+    own narrative doesn't have.
+    """
+    resolved = str(kind or "").strip() or "密查"
+    return {
+        "kind": resolved,
+        "axes": ["实务事功"],
+        "direction": 1,
+        "delivery": {"unit": "案", "target_units": 1.0},
+    }
+
+
 TYPED_COVERT_EXTRACT = {
     "差务": "清丈",
     "价值轴": ["实务事功"],
