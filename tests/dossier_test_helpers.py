@@ -3,7 +3,10 @@ TYPED_COVERT_TASK = {
     "kind": "清丈",
     "axes": ["实务事功"],
     "direction": 1,
-    "delivery": {"unit": "亩", "target_units": 1.0},
+    "delivery": {
+        "unit": "亩", "target_units": 1.0,
+        "region": "henan", "field": "registered_land", "target": "421",
+    },
 }
 def create_test_secret_order(db, state, minister, title, content, tags, **kwargs):
     """Canonical neutral contract for tests whose behavior is unrelated to delivery semantics."""

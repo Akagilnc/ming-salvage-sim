@@ -204,6 +204,15 @@ def covert_task_from_payload(payload: object) -> Optional[Dict[str, object]]:
     account = delivery.get("account")
     if account is None:
         account = source.get("account")
+    region = delivery.get("region")
+    if region is None:
+        region = source.get("region")
+    field = delivery.get("field")
+    if field is None:
+        field = source.get("field")
+    region_target = delivery.get("target")
+    if region_target is None:
+        region_target = source.get("target")
     person_action = delivery.get("person_action")
     if not kind and not unit and target is None and not normalize_axes(axes):
         return None
@@ -226,6 +235,12 @@ def covert_task_from_payload(payload: object) -> Optional[Dict[str, object]]:
         out["category"] = category
     if account is not None:
         out["account"] = account
+    if region is not None:
+        out["region"] = region
+    if field is not None:
+        out["field"] = field
+    if region_target is not None:
+        out["target"] = region_target
     if person_action is not None:
         out["person_action"] = person_action
     return out or None
@@ -273,6 +288,9 @@ def build_covert_task_contract(
     purpose: object = None,
     category: object = None,
     account: object = None,
+    region: object = None,
+    field: object = None,
+    region_target: object = None,
     person_action: object = None,
 ) -> Dict[str, object]:
     """确认闸一次生成可被 canonical applier 接受的 typed contract。缺字段响亮失败。"""
@@ -298,6 +316,12 @@ def build_covert_task_contract(
             category = extracted.get("category")
         if account is None:
             account = extracted.get("account")
+        if region is None:
+            region = extracted.get("region")
+        if field is None:
+            field = extracted.get("field")
+        if region_target is None:
+            region_target = extracted.get("target")
         if person_action is None:
             person_action = extracted.get("person_action")
     resolved_kind = str(kind or "").strip()
@@ -326,6 +350,15 @@ def build_covert_task_contract(
     account_text = str(account or "").strip()
     if account_text:
         delivery["account"] = account_text
+    region_text = str(region or "").strip()
+    if region_text:
+        delivery["region"] = region_text
+    field_text = str(field or "").strip()
+    if field_text:
+        delivery["field"] = field_text
+    target_text = str(region_target or "").strip()
+    if target_text:
+        delivery["target"] = target_text
     action_text = str(person_action or "").strip()
     if action_text:
         delivery["person_action"] = action_text
@@ -581,15 +614,29 @@ def _delivery_matches_economy(item: Mapping[str, object], delivery: Mapping[str,
     if sign > 0 and delta <= 0:
         return False
     purpose = str(delivery.get("purpose") or "").strip()
-    if purpose and str(item.get("purpose") or "") != purpose:
+    if str(item.get("purpose") or "").strip() != purpose:
         return False
     category = str(delivery.get("category") or "").strip()
-    if category and str(item.get("category") or "") != category:
+    if str(item.get("category") or "").strip() != category:
         return False
     account = str(delivery.get("account") or "").strip()
-    if account and str(item.get("account") or "") != account:
+    if str(item.get("account") or "").strip() != account:
         return False
     return True
+
+
+def _delivery_matches_region(row: Mapping[str, object], delivery: Mapping[str, object]) -> bool:
+    try:
+        delta = float(row["delta"] or 0)
+    except (TypeError, ValueError, KeyError):
+        return False
+    sign = int(delivery.get("effect_sign") or 0)
+    return (
+        ((sign < 0 and delta < 0) or (sign > 0 and delta > 0))
+        and str(row["region_id"] or "") == str(delivery.get("region") or "")
+        and str(row["field"] or "") == str(delivery.get("field") or "")
+        and str(row["new_value"] or "") == str(delivery.get("target") or "")
+    )
 
 
 def originated_quantity_this_turn(
@@ -618,16 +665,10 @@ def originated_quantity_this_turn(
                 continue
     if "人物变更" in fields:
         action = str(delivery.get("person_action") or "").strip()
-        if action:
-            rows = db.conn.execute(
-                "SELECT id FROM person_logs WHERE origin_ref=? AND turn=? AND action=?",
-                (origin, current, action),
-            ).fetchall()
-        else:
-            rows = db.conn.execute(
-                "SELECT id FROM person_logs WHERE origin_ref=? AND turn=?",
-                (origin, current),
-            ).fetchall()
+        rows = db.conn.execute(
+            "SELECT id FROM person_logs WHERE origin_ref=? AND turn=? AND action=?",
+            (origin, current, action),
+        ).fetchall()
         qty += float(len(rows))
     if "new_issues" in fields:
         rows = db.conn.execute(
@@ -637,20 +678,13 @@ def originated_quantity_this_turn(
         qty += float(len(rows))
     if "region_delta" in fields:
         rows = db.conn.execute(
-            "SELECT delta FROM region_logs WHERE origin_ref=? AND turn=?",
+            "SELECT region_id, field, new_value, delta FROM region_logs "
+            "WHERE origin_ref=? AND turn=?",
             (origin, current),
         ).fetchall()
         for row in rows:
-            try:
-                delta = float(row["delta"] or 0)
-            except (TypeError, ValueError, KeyError):
-                continue
-            sign = int(delivery.get("effect_sign") or 0)
-            if sign < 0 and delta >= 0:
-                continue
-            if sign > 0 and delta <= 0:
-                continue
-            qty += abs(delta)
+            if _delivery_matches_region(row, delivery):
+                qty += abs(float(row["delta"] or 0))
     return qty
 
 
