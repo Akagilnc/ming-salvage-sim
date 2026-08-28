@@ -839,11 +839,33 @@ def test_xiexang_taicang_alias_and_cadence_share_admission_seam():
     assert "cadence" in exc.value.missing_fields
 
 
-def test_non_xiexang_purpose_does_not_claim_army_pay_identity(game):
-    db, _state, _content = game
-    assert not db._is_army_pay_grant_payload({
-        "grant_action": "项目经费", "purpose": "补饷",
+def test_non_xiexang_payload_cannot_smuggle_army_pay_purpose(game):
+    db, state, content = game
+    _set_guanning_arrears(db, 60, central=60, province=0)
+    before = _army_row(db)
+    actor = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
+    ).fetchone()["name"]
+    pending_id = db.stage_directive_candidate(state.turn, actor, payload={
+        "text": "拨关宁军械项目经费十万两。",
+        "actor": actor,
+        "dossier_action_type": "grant_allocation",
+        "grant_action": "项目经费",
+        "target_kind": "army",
+        "target_id": "guanning",
+        "amount": 10,
+        "account": "国库",
+        "purpose": "补饷",
+        "mode": "ordinary",
     })
+
+    db.commit_pending_actions(state, content=content, action_ids=[pending_id])
+
+    assert not any(
+        row["pending_action_id"] == pending_id for row in db.list_decree_dossiers()
+    )
+    assert db.list_economy_moves_for_dossier(pending_id) == []
+    assert _army_row(db) == before
 
 
 def test_explicit_draft_prefix_without_grant_candidate_stays_generic(game, monkeypatch):
