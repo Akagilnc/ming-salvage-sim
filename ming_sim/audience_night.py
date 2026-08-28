@@ -476,9 +476,10 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
     The two durable stores remain untouched.  This projection merges them, omits
     extraction-derived ledger cards by structural provenance
     (`source_chat_turn_id>0`, same shape as cascade_echo production marks — no
-    text-stare paraphrase detection), derives scene dividers from exit/next-entry
-    facts, and leaves the coda generation slot empty. Memory consumers still read
-    `list_ledger` directly and see every story fact.
+    text-stare paraphrase detection), derives scene dividers from handoff or
+    exit facts (named for the next entrance), and leaves the coda generation
+    slot empty. Memory consumers still read `list_ledger` directly and see every
+    story fact.
     """
     night = get_night(db, night_id)
     if night is None:
@@ -583,85 +584,50 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
                     content=entry["body"], beat=beat),
         ))
 
-    # #1585：divider 真源改为软段切换事实（交接 entry 或新入殿），不再要求物理 EXIT。
-    # 显式令退/叙事真实离殿仍独占既有 TAG_EXIT/presence_effect 路径。
-    # 紧随其后的交接/新入殿与物理 EXIT 去重为一个 divider。
+    # #1585：divider 由交接事实或既有 EXIT 承载；handoff→divider(B)→entrance(B)，
+    # 显式退场为 exit→divider(B)→entrance(B)。不在每个新入殿后再造平行 divider。
     facts = sorted(ledgers, key=lambda e: (_entry_order_key(e), int(e["id"])))
     divided_identities: set[tuple[str, float]] = set()
-    # Initialize presence with standing roster (常在员额) — they enter at opening, not mid-night.
-    present_so_far: set[str] = set()
-    for e in facts:
-        et = set(e.get("tags") or [])
-        if _is_command_entry(e) and TAG_ENTER in et and TAG_STANDING_ROSTER in et:
-            for p in (e.get("person_names") or []):
-                if p:
-                    present_so_far.add(p)
     for index, entry in enumerate(facts):
         tags = set(entry.get("tags") or [])
         is_exit = (_is_command_entry(entry) and TAG_EXIT in tags) or entry.get("presence_effect") == PRESENCE_EXIT
-        is_enter = (_is_command_entry(entry) and TAG_ENTER in tags) or entry.get("presence_effect") == PRESENCE_ENTER
         is_handoff = _is_command_entry(entry) and TAG_HANDOFF in tags and TAG_STAY_ATTEND in tags
-        # Standing roster entries are opening-frame presence, not mid-night dividers.
-        is_roster = _is_command_entry(entry) and TAG_STANDING_ROSTER in tags
-        new_entrance = False
-        if is_enter and not is_roster:
-            persons = entry.get("person_names") or []
-            for p in persons:
-                if p and p not in present_so_far:
-                    new_entrance = True
-                    break
         fact_order = _entry_order_key(entry)
         person = (entry.get("person_names") or [""])[0]
         identity_key = (person, fact_order)
 
-        previous_tags = set(facts[index - 1].get("tags") or []) if index else set()
-        follows_handoff = bool(index and _is_command_entry(facts[index - 1])
-                               and TAG_HANDOFF in previous_tags
-                               and TAG_STAY_ATTEND in previous_tags)
         following = facts[index + 1] if index + 1 < len(facts) else None
         following_tags = set(following.get("tags") or []) if following else set()
-        followed_by_soft_segment = bool(following and (
-            (_is_command_entry(following) and (
-                TAG_ENTER in following_tags or (
-                    TAG_HANDOFF in following_tags and TAG_STAY_ATTEND in following_tags
-                )
-            )) or following.get("presence_effect") == PRESENCE_ENTER
-        ))
+        followed_by_handoff = bool(following and _is_command_entry(following)
+                                   and TAG_HANDOFF in following_tags
+                                   and TAG_STAY_ATTEND in following_tags)
 
         if is_handoff and identity_key not in divided_identities:
             divided_identities.add(identity_key)
             next_name = person
-            for following in facts[index + 1:]:
-                following_tags = set(following.get("tags") or [])
-                if ((_is_command_entry(following) and TAG_ENTER in following_tags)
-                        or following.get("presence_effect") == PRESENCE_ENTER):
-                    next_name = (following.get("person_names") or [""])[0] or person
+            for later in facts[index + 1:]:
+                later_tags = set(later.get("tags") or [])
+                if ((_is_command_entry(later) and TAG_ENTER in later_tags)
+                        or later.get("presence_effect") == PRESENCE_ENTER):
+                    next_name = (later.get("person_names") or [""])[0] or person
                     break
             events.append((fact_order, 90,
                 message(role="scene", speaker=next_name, audibility=AUDIBILITY_PUBLIC,
                         time=entry["created_at"], content="", beat="divider", soft_boundary=True),
             ))
-        elif new_entrance and not follows_handoff and identity_key not in divided_identities:
-            divided_identities.add(identity_key)
-            events.append((fact_order, 90,
-                message(role="scene", speaker=person, audibility=AUDIBILITY_PUBLIC,
-                        time=entry["created_at"], content="", beat="divider", soft_boundary=True),
-            ))
-        elif is_exit and not followed_by_soft_segment and identity_key not in divided_identities:
+        elif is_exit and not followed_by_handoff and identity_key not in divided_identities:
             divided_identities.add(identity_key)
             next_name = ""
-            for following in facts[index + 1:]:
-                following_tags = set(following.get("tags") or [])
-                if ((_is_command_entry(following) and TAG_ENTER in following_tags)
-                        or following.get("presence_effect") == PRESENCE_ENTER):
-                    next_name = (following.get("person_names") or [""])[0]
+            for later in facts[index + 1:]:
+                later_tags = set(later.get("tags") or [])
+                if ((_is_command_entry(later) and TAG_ENTER in later_tags)
+                        or later.get("presence_effect") == PRESENCE_ENTER):
+                    next_name = (later.get("person_names") or [""])[0]
                     break
             events.append((fact_order, 90,
                 message(role="scene", speaker=next_name, audibility=AUDIBILITY_PUBLIC,
                         time=entry["created_at"], content="", beat="divider", soft_boundary=True),
             ))
-        # Update presence tracking for new-entrance detection.
-        _apply_presence(present_so_far, entry)
 
     events.sort(key=lambda item: (item[0], item[1]))
     scroll = [item[2] for item in events]
