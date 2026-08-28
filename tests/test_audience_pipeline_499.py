@@ -391,6 +391,79 @@ def test_real_chat_persistence_atomically_accepts_mindreading_task(game, monkeyp
     assert _wait_for(lambda: db.get_mindreading_status(cid) in {"skip", "failed"})
 
 
+def test_real_chat_poll_survives_shared_connection_reads(game, monkeypatch):
+    """chat-worker 写与 poll 读共用 GameDB 连接时不得 sqlite3.InterfaceError。
+
+    公共入口：chat_stream + mindreading_for_minister。基线 fdb6cc07 在 Python 3.12
+    四读线程下稳定 InterfaceError；cached_statements=0 后应无异常且回话仍原子接受。
+    """
+    import threading as _t
+
+    import web_app as web_app_mod
+    from tests.test_audience_background import (
+        _FakeAgent, _web_game, _wait_for, _wait_for_pending_writes_to_drain,
+    )
+
+    db, state, content = game
+    minister = "温体仁"
+    web_game = _web_game(db, state, content, _FakeAgent(chunks=["臣遵旨。"]))
+    release = _t.Event()
+    stop = _t.Event()
+    errors: list[BaseException] = []
+
+    def blocked(**_kwargs):
+        release.wait()
+        return None
+
+    monkeypatch.setattr(web_app_mod, "run_mindreading_for_turn", blocked)
+    monkeypatch.setattr(web_app_mod, "run_highlight_judge", lambda **_k: [])
+
+    def poller():
+        while not stop.is_set():
+            try:
+                web_game.mindreading_for_minister(minister)
+                row = db.get_last_active_chat_turn(minister, state.turn)
+                if row:
+                    db.get_mindreading_status(int(row["id"]))
+                    db.list_mindreading_records(int(row["id"]))
+            except BaseException as exc:
+                errors.append(exc)
+                stop.set()
+                break
+
+    pollers = [_t.Thread(target=poller, daemon=True) for _ in range(4)]
+    for t in pollers:
+        t.start()
+    stream_thread = _t.Thread(
+        target=lambda: list(web_game.chat_stream(minister, "问？")),
+        daemon=True,
+    )
+    stream_thread.start()
+    holder: dict = {}
+    try:
+        assert _wait_for(
+            lambda: (
+                (row := db.get_last_active_chat_turn(minister, state.turn))
+                and row.get("minister_message_id")
+                and db.get_mindreading_status(int(row["id"])) == "running"
+                and holder.update(cid=int(row["id"])) is None
+            ),
+            timeout=2.0,
+        )
+        assert web_game.mindreading_for_minister(minister, holder["cid"])[
+            "mindreading_pending"
+        ] is True
+        assert errors == []
+    finally:
+        release.set()
+        stop.set()
+        stream_thread.join(timeout=5.0)
+        for t in pollers:
+            t.join(timeout=1.0)
+        _wait_for_pending_writes_to_drain(web_game)
+    assert errors == []
+
+
 def test_persist_minister_reply_atomic_transaction_rolls_back(content, tmp_path):
     """单一事务：成功路径公共 API 同时暴露「链接」+「running」；事务内提交前故障 → 整体回滚，
     重开后既无可见孤儿回话、也无接受任务（rollback 不留半成品；分开插入实现无此保证）。"""

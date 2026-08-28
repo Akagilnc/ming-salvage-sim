@@ -932,11 +932,17 @@ class GameDB:
         self.content = content if content is not None else GameContent.load()
         self.llm_config = llm_config
         # check_same_thread=False：流式颁诏/召对 worker 与轮询读共用同一连接。
-        # SQLite C API 串行化由 _SuspendableConnection 持锁完成。
+        # cached_statements=0：关掉 CPython sqlite3 statement cache，避免 3.12/3.13
+        # 共享连接并发 fetch 的 InterfaceError（CPython #118172）。
         # factory=_SuspendableConnection：使 atomic() 能暂停全库 commit（ADR 0008 决定 2/8）。
         # 暂停标志默认 off，下面 init_schema 建表照常提交。
         from ming_sim.applier import _SuspendableConnection
-        self.conn = sqlite3.connect(path, check_same_thread=False, factory=_SuspendableConnection)
+        self.conn = sqlite3.connect(
+            path,
+            check_same_thread=False,
+            cached_statements=0,
+            factory=_SuspendableConnection,
+        )
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
         if int(self.conn.execute("PRAGMA foreign_keys").fetchone()[0]) != 1:
