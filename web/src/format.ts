@@ -180,7 +180,7 @@ export const EN_VALUE_CN: Record<string, string> = {
   appoint: "新进朝堂", promote: "升迁", transfer: "调任", demote: "贬", reinstate: "起复",
   resolved: "已了", failed: "崩坏", dropped: "撤销",
   situation: "时局", initiative: "举措", crisis: "危机", reform: "改革", decree: "诏令",
-  done: "办结", pending: "在办", pending_review: "遗留待对账", active: "进行中",
+  done: "办结", pending: "在办", active: "进行中",
   draft: "草案", rejected: "已驳回", cancelled: "已取消",
 };
 

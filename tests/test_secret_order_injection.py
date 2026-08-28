@@ -24,12 +24,12 @@ def test_select_only_active(game):
     db.conn.execute("DELETE FROM secret_orders")
     for i in range(5):
         _insert_order(db, state, f"active令{i}", "active")
-    _insert_order(db, state, "旧待核议", "pending_review", due_turn=0)
+    _insert_order(db, state, "已结令", "done", due_turn=0)
     db.conn.commit()
 
     sel = _select_secret_orders_for_sim(db, cap=20)
     assert all(o["status"] == "active" for o in sel)
-    assert "旧待核议" not in [o["title"] for o in sel]
+    assert "已结令" not in [o["title"] for o in sel]
 
 
 def test_active_capped(game):

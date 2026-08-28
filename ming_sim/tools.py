@@ -580,7 +580,7 @@ def build_minister_tools(character: Character, context: CourtContext,
         （大臣已复述确认的说明）。示例：[{"target_dossier_id":12,"relation_type":"护卫",
         "note":"护送辽饷"}]。未明确确认则传 []。
         issue 的 typed 合同：kind（差务名，如补发饷银/缉获人犯）、axes_json（价值轴闭集）、
-        direction（1 或 -1）、delivery_unit（两/人犯/亩等可数单位）、delivery_target_units（到期交付目标）。
+        direction（1 或 -1）、delivery_unit（万两/人犯/亩）、delivery_target_units（到期交付目标，与 applier 同量纲）。
         tags_json 只作检索关键词，不用于猜 kind。
         """
         # 恢复窗总闸（PR #90 R2 codex P2）：FRONT_HALF_DONE 时四个 action 都是
@@ -613,8 +613,8 @@ def build_minister_tools(character: Character, context: CourtContext,
         kind：差务类型名（补发饷银/缉获人犯/清丈等），不得用 tags 猜测。
         axes_json：价值轴闭集 JSON 数组，如 '["既得利益"]'。
         direction：1 顺轴，-1 逆轴。
-        delivery_unit：可数交付单位（两/人犯/亩）。
-        delivery_target_units：到期须交付的可数目标。
+        delivery_unit：可数交付单位（万两/人犯/亩）；银钱与 economy_moves.delta 同为整数万两。
+        delivery_target_units：到期须交付的正数目标。
         dossier_links_json：只填当前提示所列旧案卷，格式为 [{"target_dossier_id": 12,
         "relation_type": "护卫/稽核/接应", "note": "已复述确认的说明"}]。
         """
@@ -696,7 +696,18 @@ def build_minister_tools(character: Character, context: CourtContext,
             deadline = max(0, min(int(deadline_months or 0), 36))
         except (TypeError, ValueError):
             deadline = 0
-        return f"__secret_order__{json.dumps({'title': t, 'content': c, 'tags': tags_clean, 'assignee': real_assignee, 'deadline_months': deadline, 'excluded_names': excluded, 'excluded_offices': excluded_offices, 'dossier_links': dossier_links, 'covert_task': {'kind': str(kind or '').strip(), 'axes': axes_clean, 'direction': dir_i, 'delivery': {'unit': str(delivery_unit or '').strip(), 'target_units': target_units}}}, ensure_ascii=False)}"
+        from ming_sim.covert_progress import CovertContractError, build_covert_task_contract
+        try:
+            frozen = build_covert_task_contract(
+                kind=kind,
+                axes=axes_clean,
+                direction=dir_i,
+                delivery_unit=delivery_unit,
+                delivery_target_units=delivery_target_units,
+            )
+        except CovertContractError as exc:
+            return f"密令下达失败：{exc}"
+        return f"__secret_order__{json.dumps({'title': t, 'content': c, 'tags': tags_clean, 'assignee': real_assignee, 'deadline_months': deadline, 'excluded_names': excluded, 'excluded_offices': excluded_offices, 'dossier_links': dossier_links, 'covert_task': frozen}, ensure_ascii=False)}"
 
     def _pending_secret_action(action_name: str, order_id: int, payload: Dict[str, object]) -> str:
         # Non-create tools (记进展/催办/提交核议) do **not** pin latest held.
