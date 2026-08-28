@@ -669,33 +669,18 @@ def _confirmation_targets_for_message(pending_actions: List[Dict[str, Any]], mes
     return non_directive or directive
 
 
-_AMEND_PREFIXES = ("修改：", "修改:", "改：", "改:")
-_AMEND_ORDINAL_PREFIX_RE = re.compile(
-    r"^(?:修改|改)\s*第[一二三四五六七八九十百零0-9]+(?:道|条|件|个)?\s*[：:]\s*"
-)
 _CONFIRM_ENUM = frozenset({"应允", "拒绝", "留中", "修改", "无"})
 
 
-def _strip_secret_amendment_prefix(message: str) -> str:
-    """Strip 修改：/改：/修改第N道： so amendment text does not re-enter content."""
-    text = (message or "").strip()
-    for prefix in _AMEND_PREFIXES:
-        if text.startswith(prefix):
-            return text[len(prefix):].strip()
-    m = _AMEND_ORDINAL_PREFIX_RE.match(text)
-    if m:
-        return text[m.end():].strip()
-    return text
-
-
-def _coerce_confirmation_result(raw: Any) -> Tuple[str, List[int]]:
-    """Normalize extract_confirmation_intent / stub → (确认枚举, 合法目标 id 列表)。
+def _coerce_confirmation_result(raw: Any) -> Tuple[str, List[int], str]:
+    """Normalize extract_confirmation_intent / stub → (确认枚举, 合法目标 id 列表, new_content)。
 
     生产契约返回 dict；既有测试 stub 可仍返回纯字符串（目标 id 视为空）。
+    #1376：修改判词携带 typed new_content 作为唯一权威正文。
     """
     if isinstance(raw, str):
         v = raw.strip()
-        return (v if v in _CONFIRM_ENUM else "无"), []
+        return (v if v in _CONFIRM_ENUM else "无"), [], ""
     if isinstance(raw, dict):
         v = str(raw.get("confirmation") or raw.get("确认") or "无").strip()
         if v not in _CONFIRM_ENUM:
@@ -717,8 +702,9 @@ def _coerce_confirmation_result(raw: Any) -> Tuple[str, List[int]]:
                 if i > 0 and i not in tids:
                     tids.append(i)
             break
-        return v, tids
-    return "无", []
+        new_content = str(raw.get("new_content") or raw.get("新内容") or "")
+        return v, tids, new_content
+    return "无", [], ""
 
 
 def _pending_action_failure_payload(pa: Dict[str, Any], state: Optional[GameState] = None) -> Dict[str, Any]:
@@ -1456,7 +1442,7 @@ class GameSession:
         summaries = [
             f"[{int(p['id'])}] {_pending_action_brief(p)}" for p in confirm_targets
         ]
-        confirm, named = _coerce_confirmation_result(
+        confirm, named, new_content = _coerce_confirmation_result(
             extract_confirmation_intent(
                 player_message, reply, summaries,
                 llm_config=getattr(self, "llm_config", None),
@@ -1471,7 +1457,9 @@ class GameSession:
             }
             if named:
                 payload["target_ids"] = list(named)
-            # target_ids 仅经 payload→normalize_one_candidate 单一路径保留（#1509）
+            if new_content:
+                payload["new_content"] = new_content
+            # target_ids/new_content 仅经 payload→normalize_one_candidate 单一路径保留
             cand = normalize_one_candidate(payload, soft=False)
             return [cand]
         return candidates
@@ -1993,15 +1981,17 @@ class GameSession:
                 f"[{int(p['id'])}] {_pending_action_brief(p)}" for p in confirm_targets
             ]
             confirm_named_ids: List[int] = []
+            confirm_new_content: str = ""
             if intent is not None:
                 # #1509 r3：preclassification 已跑过同次 confirmation 抽取时，
                 # 确认枚举与目标编号均取自 intent（禁二调 extractor / 禁散文机械解析）。
+                # #1376：修改判词携带 typed new_content，下游修改支路以此为权威正文。
                 if cluster_effect(intent_kind) == EFFECT_ANSWER_EXISTING:
-                    confirm, confirm_named_ids = _coerce_confirmation_result(intent)
+                    confirm, confirm_named_ids, confirm_new_content = _coerce_confirmation_result(intent)
                 else:
                     confirm = "无"
             else:
-                confirm, confirm_named_ids = _coerce_confirmation_result(
+                confirm, confirm_named_ids, confirm_new_content = _coerce_confirmation_result(
                     extract_confirmation_intent(
                         player_message, reply, summaries, llm_config=llm_config)
                 )
@@ -2137,14 +2127,10 @@ class GameSession:
             elif confirm == "修改":
                 # #1376 owner：修改=更新同一 pending 密令候选内容（id 不变），不 commit、不新建。
                 # 仅 secret_order/新建；非密令整改不得吞掉既有 kind 物化缝（回落 confirm=无）。
-                # P5：不二次串行 _extract_secret_order——正文取去前缀御旨材料，元数据仅在
-                # 修改句显式给出时覆盖（保留未提及字段）。
+                # #1376 修订：正文仅从 typed new_content 消费，删除对 player_message 散文的
+                # 裁剪、元数据与承办人机梅解析；未填 new_content 则不覆写正文。
                 # #1509：多候选目标只信同次 confirmation JSON 的合法「目标编号」，
-                # 禁 regex/序数/title 机械读玩家散文；无唯一合法编号 → ambiguity。
-                from ming_sim.cli_backend import (
-                    _extract_imperative_assignee,
-                    _secret_metadata_from_command,
-                )
+                # 禁 regex/序数/title 机梅读玩家散文；无唯一合法编号 → ambiguity。
                 secret_new = [
                     p for p in confirm_targets
                     if (
@@ -2179,9 +2165,19 @@ class GameSession:
                         resolved = [
                             p for p in secret_new if int(p["id"]) in named_set
                         ]
-                    material = _strip_secret_amendment_prefix(player_message)
-                    meta_tags, meta_deadline = _secret_metadata_from_command(material)
-                    named_assignee = _extract_imperative_assignee(material)
+                    # A modification without a complete typed body did not succeed.
+                    # Keep every candidate unchanged and do not advertise a pending id.
+                    if not confirm_new_content.strip():
+                        out["directive_confirmation_ambiguous"] = {
+                            "candidates": [
+                                {
+                                    "id": int(p["id"]),
+                                    "summary": _pending_action_brief(p),
+                                }
+                                for p in resolved
+                            ],
+                        }
+                        return out
                     for pending in resolved:
                         try:
                             payload = json.loads(pending.get("payload_json") or "{}")
@@ -2189,16 +2185,8 @@ class GameSession:
                             payload = {}
                         if not isinstance(payload, dict):
                             payload = {}
-                        # 正文：去「修改：」后的御旨材料；空材料不覆写。
-                        if material:
-                            payload["content"] = material
-                        # 仅修改句显式给出的字段才覆盖；未提及保留原候选。
-                        if named_assignee:
-                            payload["assignee"] = named_assignee
-                        if meta_tags:
-                            payload["tags"] = meta_tags
-                        if meta_deadline:
-                            payload["deadline_months"] = meta_deadline
+                        # #1376：正文唯取完整、非空 typed new_content。
+                        payload["content"] = confirm_new_content
                         encoded = json.dumps(payload, ensure_ascii=False)
                         cur = self.db.conn.execute(
                             "UPDATE pending_actions SET payload_json=? "
