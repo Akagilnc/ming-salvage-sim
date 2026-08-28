@@ -1238,20 +1238,15 @@ def _resolve_xiexang_army_id(db: Any, raw_target: str) -> str:
     return ""
 
 
-XIE_XANG_EXPLICIT_FIELDS = (
-    "amount", "account", "purpose", "target_kind", "target_id",
-)
-
-
-def collect_xiexang_missing_fields(
+def require_explicit_xiexang_fields(
     *,
     amount: object = 0,
     account: str = "",
     purpose: str = "",
     target_kind: str = "",
     target_id: str = "",
-) -> list:
-    """#1503 权威缺项收集：协饷五字段一次列全，不补值。"""
+) -> Dict[str, Any]:
+    """#1503 单一权威接缝：一次收集缺项且不补值。"""
     missing: list = []
     try:
         n = int(amount or 0)
@@ -1267,25 +1262,6 @@ def collect_xiexang_missing_fields(
         missing.append("target_kind")
     if not str(target_id or "").strip():
         missing.append("target_id")
-    return missing
-
-
-def require_explicit_xiexang_fields(
-    *,
-    amount: object = 0,
-    account: str = "",
-    purpose: str = "",
-    target_kind: str = "",
-    target_id: str = "",
-) -> Dict[str, Any]:
-    """#1503 单一权威接缝：缺任一即响亮失败；零写入由调用方保证。"""
-    missing = collect_xiexang_missing_fields(
-        amount=amount,
-        account=account,
-        purpose=purpose,
-        target_kind=target_kind,
-        target_id=target_id,
-    )
     if missing:
         raise ValueError(
             "拨饷旨意缺少结构化字段：" + "/".join(missing) + "（不猜散文）"
