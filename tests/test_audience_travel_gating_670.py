@@ -70,7 +70,11 @@ def _chat_turn_count(db):
 
 
 def _web_hall_runtime(db, state, content, *, session_chat):
-    """#670：常规 Web.chat（gate_already_held=False）殿上入口壳；挂真 admission。"""
+    """#670：常规 Web.chat（gate_already_held=False）殿上入口壳；挂真 admission。
+
+    #1566：同壳挂场外 scene 物化（production beat，禁 LLM）。WebGame 类方法经
+    __new__ 实例可直接解析，不再手绑 _finish/_summon_payload 等类方法。
+    """
     from ming_sim.beat_orchestration import production_beat_generator
     from tests.test_qa_c3_secret_order_path_1357_1376 import (
         webgame_shell_for_secret_order,
@@ -79,31 +83,13 @@ def _web_hall_runtime(db, state, content, *, session_chat):
     runtime = webgame_shell_for_secret_order(
         db, state, content, session_chat=session_chat,
     )
-    runtime.session.admit_audience = MethodType(
-        GameSession.admit_audience, runtime.session,
+    s = runtime.session
+    s.admit_audience = MethodType(GameSession.admit_audience, s)
+    s.consume_audience_admission = MethodType(GameSession.consume_audience_admission, s)
+    s._beat_generator = production_beat_generator
+    s.materialize_offsite_summon_scene = MethodType(
+        GameSession.materialize_offsite_summon_scene, s,
     )
-    runtime.session.consume_audience_admission = MethodType(
-        GameSession.consume_audience_admission, runtime.session,
-    )
-    # #1566：场外记召 scene 物化缝（生产 beat 生成器，禁 LLM）。
-    runtime.session._beat_generator = production_beat_generator
-    runtime.session.materialize_offsite_summon_scene = MethodType(
-        GameSession.materialize_offsite_summon_scene, runtime.session,
-    )
-    # stream 密令绕闸后进入 payload 缝；无 CLI 通道时 action-intent 为空 Future。
-    runtime.session._start_cli_action_intent = lambda *_a, **_k: None
-    runtime.session._finish_cli_action_intent = lambda *_a, **_k: None
-    runtime.session._dispatch_relation_judge = lambda *_a, **_k: None
-    runtime._finish_offsite_summon_scene = (
-        __import__("web_app").WebGame._finish_offsite_summon_scene.__get__(runtime)
-    )
-    runtime._message_is_formal_secret_order = (
-        __import__("web_app").WebGame._message_is_formal_secret_order
-    )
-    runtime._summon_admission_success_payload = (
-        __import__("web_app").WebGame._summon_admission_success_payload.__get__(runtime)
-    )
-    runtime._dispatch_relation_judge = lambda *_a, **_k: None
     return runtime
 
 
@@ -1273,47 +1259,28 @@ def test_web_chat_stream_summon_success_exits_error_channel(game):
     assert moving.name in entrance_speakers
 
 
-def _bind_real_secret_order_session(runtime, *, stream: bool = False):
-    """#1566：hall 壳挂真实密令主干（chat 或 stream payload）。
+def _install_secret_order_agent(runtime, *, stream: bool = False) -> None:
+    """#1566：在既有 hall 壳上只换 LLM 边界 agent + 密令落地真方法。
 
-    只 stub 大臣 agent.run（LLM 边界）；前缀密令经 resolve_minister_actions
-    零 LLM 落 pending secret_order。channel=api 使显式前缀走 #344 前缀路。
-    stream=True 时 agent 产流式 chunk，并挂真实 _chat_stream_payload。
+    复用 tests/test_audience_background._FakeAgent 流式形态；channel=api 走 #344
+    前缀密令 resolve 路。WebGame._chat_stream_payload 经类实例解析，不手绑。
     """
-    import web_app as _web_app
+    from tests.test_audience_background import RunContent, RunOutput, _FakeAgent
 
-    class _CannedRun:
-        content = "臣领密旨。"
-        tools: list = []
-
-    class _CannedAgent:
+    class _SyncAgent(_FakeAgent):
         def run(self, *_a, **_k):
-            return _CannedRun()
+            return SimpleNamespace(content="".join(self.chunks), tools=self.tools)
 
         def get_last_run_output(self):
             return None
 
-    class _StreamChunk:
-        event = "RunContent"
-
-        def __init__(self, content: str) -> None:
-            self.content = content
-
-    class _StreamDone:
-        tools: list = []
-        content = None
-
-    class _StreamAgent:
-        def run(self, *_a, **_k):
-            yield _StreamChunk("臣")
-            yield _StreamChunk("领密旨。")
-            yield _StreamDone()
-
-        def get_last_run_output(self):
-            return None
+    agent: Any
+    if stream:
+        agent = _FakeAgent(chunks=["臣", "领密旨。"])
+    else:
+        agent = _SyncAgent(chunks=["臣领密旨。"])
 
     s = runtime.session
-    agent = _StreamAgent() if stream else _CannedAgent()
     s.registry = SimpleNamespace(get=lambda _ch: agent, session_ids={})
     s.llm_config = SimpleNamespace(channel="api")
     s._audience_prompt_for_message = (
@@ -1322,6 +1289,7 @@ def _bind_real_secret_order_session(runtime, *, stream: bool = False):
     s._start_cli_action_intent = lambda *_a, **_k: None
     s._finish_cli_action_intent = lambda *_a, **_k: None
     s.start_exit_scene_from_dismiss_tools = lambda *_a, **_k: False
+    # 密令落库唯一真源：apply_cli_conversation_actions 及其 chat 入口。
     for name in (
         "chat",
         "_cli_backend_fallback_actions",
@@ -1332,26 +1300,29 @@ def _bind_real_secret_order_session(runtime, *, stream: bool = False):
         "_merge_staged_new_secret_order_content",
     ):
         setattr(s, name, MethodType(getattr(GameSession, name), s))
-    if stream:
-        runtime._chat_stream_payload = (
-            _web_app.WebGame._chat_stream_payload.__get__(runtime)
-        )
-        if hasattr(_web_app.WebGame, "_chat_stream_interpret_tools"):
-            runtime._chat_stream_interpret_tools = (
-                _web_app.WebGame._chat_stream_interpret_tools.__get__(runtime)
-            )
 
 
 def _assert_secret_order_pending(db, state, *, minister_name: str, pid: int) -> None:
     assert pid > 0, f"密令须落入 pending 管线，got pending_action_id={pid}"
-    pending_rows = [
-        p for p in db.list_pending_actions(state.turn) if int(p["id"]) == pid
-    ]
-    assert len(pending_rows) == 1
-    assert pending_rows[0]["kind"] == "secret_order"
-    assert pending_rows[0]["action"] == "新建"
-    assert pending_rows[0]["minister_name"] == minister_name
-    assert pending_rows[0]["status"] == "pending"
+    row = next(
+        (p for p in db.list_pending_actions(state.turn) if int(p["id"]) == pid),
+        None,
+    )
+    assert row is not None
+    assert row["kind"] == "secret_order"
+    assert row["action"] == "新建"
+    assert row["minister_name"] == minister_name
+    assert row["status"] == "pending"
+
+
+def _secret_order_runtime(db, state, content, *, stream: bool):
+    """hall 壳 + 密令 agent 一次装配（chat/stream 共用）。"""
+    runtime = _web_hall_runtime(
+        db, state, content,
+        session_chat=lambda *_a, **_k: ChatTurnResult(answer="不应到达。"),
+    )
+    _install_secret_order_agent(runtime, stream=stream)
+    return runtime
 
 
 def test_web_chat_formal_secret_order_bypasses_audience_admission(game):
@@ -1363,54 +1334,42 @@ def test_web_chat_formal_secret_order_bypasses_audience_admission(game):
     db, state, content = game
     remote = _set_place(game, "洪承畴", location="shaanxi")
     before_summons = list(an.list_unsettled_summons(db))
-    before_pending = [
-        p for p in db.list_pending_actions(state.turn)
-        if p.get("kind") == "secret_order"
-    ]
-
-    runtime = _web_hall_runtime(
-        db, state, content,
-        session_chat=lambda *_a, **_k: ChatTurnResult(answer="不应到达。"),
+    before_n = sum(
+        1 for p in db.list_pending_actions(state.turn) if p.get("kind") == "secret_order"
     )
-    _bind_real_secret_order_session(runtime, stream=False)
-    secret_text = "密令如下：陕北赈抚探报\n速报陕西军情。"
 
-    payload = runtime.chat(remote.name, secret_text)
+    runtime = _secret_order_runtime(db, state, content, stream=False)
+    payload = runtime.chat(remote.name, "密令如下：陕北赈抚探报\n速报陕西军情。")
     assert not payload.get("admission"), (
         f"正式密令不得被 SUMMON_* admission 截获，got admission={payload.get('admission')!r}"
     )
-    pid = int(payload.get("pending_action_id") or 0)
-    _assert_secret_order_pending(db, state, minister_name=remote.name, pid=pid)
+    _assert_secret_order_pending(
+        db, state, minister_name=remote.name,
+        pid=int(payload.get("pending_action_id") or 0),
+    )
     assert an.list_unsettled_summons(db) == before_summons
-    after_pending = [
-        p for p in db.list_pending_actions(state.turn)
-        if p.get("kind") == "secret_order"
-    ]
-    assert len(after_pending) == len(before_pending) + 1
+    assert sum(
+        1 for p in db.list_pending_actions(state.turn) if p.get("kind") == "secret_order"
+    ) == before_n + 1
 
 
 def test_web_chat_stream_formal_secret_order_bypasses_audience_admission(game):
     """#1566：公开 chat_stream 正式密令前缀绕过 location admission，汇入密令管线。
 
-    真实入口 chat_stream → 真实 _chat_stream_payload（不 mock）→ pending secret_order；
+    真实入口 chat_stream → 真实 _chat_stream_payload（类方法，不 mock）→ pending；
     不得 SUMMON_* 空 done；零传召账。
     """
     db, state, content = game
     remote = _set_place(game, "洪承畴", location="shaanxi")
     before_summons = list(an.list_unsettled_summons(db))
-    before_pending = [
-        p for p in db.list_pending_actions(state.turn)
-        if p.get("kind") == "secret_order"
-    ]
-
-    runtime = _web_hall_runtime(
-        db, state, content,
-        session_chat=lambda *_a, **_k: ChatTurnResult(answer="不应到达。"),
+    before_n = sum(
+        1 for p in db.list_pending_actions(state.turn) if p.get("kind") == "secret_order"
     )
-    _bind_real_secret_order_session(runtime, stream=True)
-    secret_text = "密令如下：陕北赈抚探报\n速报陕西军情。"
 
-    events = list(runtime.chat_stream(remote.name, secret_text))
+    runtime = _secret_order_runtime(db, state, content, stream=True)
+    events = list(runtime.chat_stream(
+        remote.name, "密令如下：陕北赈抚探报\n速报陕西军情。",
+    ))
     types = [ev.get("type") for ev in events]
     assert "error" not in types, f"stream secret order errored: {events!r}"
     done_events = [ev for ev in events if ev.get("type") == "done"]
@@ -1419,14 +1378,14 @@ def test_web_chat_stream_formal_secret_order_bypasses_audience_admission(game):
     assert not done_payload.get("admission"), (
         f"stream 正式密令不得 SUMMON_* admission，got {done_payload.get('admission')!r}"
     )
-    pid = int(done_payload.get("pending_action_id") or 0)
-    _assert_secret_order_pending(db, state, minister_name=remote.name, pid=pid)
+    _assert_secret_order_pending(
+        db, state, minister_name=remote.name,
+        pid=int(done_payload.get("pending_action_id") or 0),
+    )
     assert an.list_unsettled_summons(db) == before_summons
-    after_pending = [
-        p for p in db.list_pending_actions(state.turn)
-        if p.get("kind") == "secret_order"
-    ]
-    assert len(after_pending) == len(before_pending) + 1
+    assert sum(
+        1 for p in db.list_pending_actions(state.turn) if p.get("kind") == "secret_order"
+    ) == before_n + 1
 
 
 def test_web_chat_ledger_append_failure_has_no_side_effects(game, monkeypatch):

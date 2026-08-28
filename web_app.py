@@ -1826,11 +1826,14 @@ class WebGame:
         return (message or "").strip().startswith(_SECRET_PREFIXES)
 
     def _finish_offsite_summon_scene(self, *, origin_id: str, minister_name: str) -> None:
-        """#1566：admission 已落传召账后，在 write_gate 外为同一 ledger 行生成自由 scene。"""
-        materialize = getattr(self.session, "materialize_offsite_summon_scene", None)
-        if materialize is None:
-            return
-        materialize(origin_id=origin_id, person_name=minister_name)
+        """#1566：admission 已落传召账后，在 write_gate 外为同一 ledger 行生成自由 scene。
+
+        session 必须实现 materialize_offsite_summon_scene；缺能力即 AttributeError 响亮失败，
+        禁止 getattr 软退把呈现断口洗成空白成功载荷。
+        """
+        self.session.materialize_offsite_summon_scene(
+            origin_id=origin_id, person_name=minister_name,
+        )
 
     def _summon_admission_success_payload(
         self, minister_name: str, admission_result: str,
