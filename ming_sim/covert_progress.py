@@ -493,10 +493,7 @@ def build_secret_covert_effect_briefs(db: Any, orders: Sequence[Mapping[str, obj
     """internal 档房私密输入：typed 合同 + origin，不含密令正文（#883）。"""
     rows = list(orders or [])
     if not rows:
-        try:
-            rows = list(db.list_secret_orders(status="active"))
-        except Exception:
-            rows = []
+        rows = list(db.list_secret_orders(status="active"))
     out: List[Dict[str, object]] = []
     for order in rows:
         if not isinstance(order, Mapping):
