@@ -434,19 +434,8 @@ def _run_codex(
     timeout: Optional[float] = None,
     reasoning_strength: Optional[str] = None,
 ) -> Tuple[str, int]:
-    """调 codex exec -（stdin pipe，绝不 positional）。返回 (文本, 尝试次数=1)。
-
-    实测三坑（见 docs/LLM_BACKEND_BENCH.md §9）：
-    - `--skip-git-repo-check`：cwd 是非 git 沙箱目录，不加则秒报 "Not inside a trusted directory"。
-    - `--ephemeral`：不落盘 session，否则并发多调撞共享 session 状态（rollout thread not found）丢空输出。
-    - 干净最终回话在 **stdout**，诊断/日志在 stderr —— 只取 stdout，绝不合并（合并会把
-      "OpenAI Codex v…/tokens used" 等日志混进角色回话）。stdout 空时兜底从合并流剥壳。
-    reasoning：默认不强加，尊重用户 ~/.codex/config.toml；设 MING_SIM_CODEX_REASONING 才传 -c。"""
-    cmd = [_resolve_cli_bin("codex", _CODEX_BIN), "exec", "--model", (model or _CODEX_MODEL)]
-    reasoning = _codex_reasoning_effort(reasoning_strength)
-    if reasoning:
-        cmd += ["-c", f'model_reasoning_effort="{reasoning}"']
-    cmd += ["--ephemeral", "--skip-git-repo-check", "-"]
+    """调 codex exec --json -，从 typed agent_message 事件返回最终正文。"""
+    cmd = _codex_cmd(model, json_events=True, reasoning_strength=reasoning_strength)
     try:
         # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit,python.lang.security.audit.dangerous-subprocess-use-tainted-env-args
         # 安全审计(Sourcery):list-form argv、无 shell=True;runner 已 allowlist、model 为独立 argv、prompt 走 stdin → 无注入面。
@@ -456,14 +445,23 @@ def _run_codex(
         )
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError("codex 调用超时") from exc
-    out = (proc.stdout or "").strip()
-    if not out:  # 兜底：干净段在合并流 "OpenAI Codex v" 之前
-        combined = (proc.stdout or "") + (proc.stderr or "")
-        out = combined.split("OpenAI Codex v")[0].strip()
-    # 非零退出 / 最终空输出 → 抛错，不静默当空回复落库（CMR F2）。
-    if proc.returncode != 0 or not out:
+    final_text = ""
+    for line in (proc.stdout or "").splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if event.get("type") != "item.completed":
+            continue
+        item = event.get("item")
+        if isinstance(item, dict) and item.get("type") == "agent_message":
+            text = item.get("text")
+            if isinstance(text, str):
+                final_text = text
+    # 非零退出 / 缺 typed 最终消息 → 抛错，不把 stdout 包装当角色回复落库。
+    if proc.returncode != 0 or not final_text.strip():
         raise RuntimeError(f"codex 调用失败（退出码 {proc.returncode}）：{(proc.stderr or '')[:200]}")
-    return out, 1
+    return final_text.strip(), 1
 
 
 def _codex_cmd(
