@@ -982,14 +982,14 @@ def test_codex_stream_watchdog_kills_hung_process(monkeypatch):
     assert killed.is_set()
 
 
-def test_codex_final_text_handles_item_completed_shape():
+def test_codex_final_text_accepts_only_completed_agent_message():
     assert cb._codex_final_text(
         {"type": "item.completed", "item": {"type": "agent_message", "text": "BODY"}}
     ) == "BODY"
     assert cb._codex_final_text(
         {"type": "item.completed", "item": {"type": "reasoning", "text": "DRAFT"}}
     ) == ""
-    assert cb._codex_final_text({"type": "agent_message", "message": "TOP"}) == "TOP"
+    assert cb._codex_final_text({"type": "agent_message", "message": "WRAPPER"}) == ""
 
 
 @pytest.mark.parametrize(
