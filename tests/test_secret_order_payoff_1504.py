@@ -1071,4 +1071,3 @@ def test_monthly_and_due_fail_loud_without_contract(game):
         apply_monthly_covert_actual_progress(db, state, commit=True)
     with pytest.raises(CovertContractError):
         settle_due_secret_orders(db, state, commit=True)
-
