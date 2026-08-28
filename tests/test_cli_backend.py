@@ -1340,26 +1340,23 @@ def test_extract_preserves_array_trailing_comma_via_loads_path(monkeypatch):
     assert act["order_id"] == 6
 
 
-# ── CliChat public: prompt shape + narration strip + dispatch ──
+# ── CliChat public: prompt shape + typed completion structure ──
 
-def test_clichat_invoke_builds_prompt_and_strips_narration(monkeypatch):
+def test_clichat_invoke_builds_prompt_and_completion_structure(monkeypatch):
+    """#1563：公开 invoke 只证 prompt 角色标签顺序与 typed completion 结构；不锁生成正文。"""
     cc = cb.CliChat(id="cli-test", backend="agy")
     seen = {}
 
+    # Deterministic fixture the old _strip_agent_narration would have rewritten
+    # (drop leading "I will …" line). Public content must equal the stub verbatim.
+    runner_text = "I will check the files.\nBODY_ZH_REPLY"
+
     def fake_cli(prompt):
         seen["prompt"] = prompt
-        return ("I will check the files.\nBODY_ZH_REPLY", 1)
+        return (runner_text, 1)
 
     monkeypatch.setattr(cc, "_call_cli", fake_cli)
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
-    captured = {}
-    real_fake = cb._fake_completion
-
-    def spy(text, model_id, *a, **k):
-        captured["text"] = text
-        return real_fake(text, model_id, *a, **k)
-
-    monkeypatch.setattr(cb, "_fake_completion", spy)
     msgs = [
         SimpleNamespace(role="system", content="SYS_ROLE"),
         SimpleNamespace(role="user", content="USER_MSG"),
@@ -1369,9 +1366,9 @@ def test_clichat_invoke_builds_prompt_and_strips_narration(monkeypatch):
         SimpleNamespace(role="tool", content="TOOL_OUT"),
         SimpleNamespace(role="developer", content=12345),
     ]
-    cc.invoke(msgs, Message(role="assistant"))
+    out = cc.invoke(msgs, Message(role="assistant"))
     p = seen["prompt"]
-    # role tags + order (structural markers, not free prose pins beyond tag keys)
+    # role tags + order (structural markers from deterministic inputs)
     for tag in ("【系统设定】", "【皇帝/输入】", "【你此前的回答】", "【工具结果】", "【developer】"):
         assert tag in p
     assert p.index("【系统设定】") < p.index("【皇帝/输入】")
@@ -1379,29 +1376,11 @@ def test_clichat_invoke_builds_prompt_and_strips_narration(monkeypatch):
     assert "【你此前的回答】" in p and "PRIOR_ASST" in p
     assert "12345" in p
     assert "【执行约束·必读】" in p
-    assert captured["text"] == "BODY_ZH_REPLY"
-
-
-def test_clichat_invoke_all_narration_falls_back_to_original(monkeypatch):
-    """全英文 narration 无中文正文 → strip 退回原文，非空 completion 抵达 _fake_completion。"""
-    cc = cb.CliChat(id="cli-test", backend="agy")
-    raw = "I will do this.\nLet me start."
-    monkeypatch.setattr(cc, "_call_cli", lambda p: (raw, 1))
-    monkeypatch.setattr(cb, "_trace", lambda rec: None)
-    captured = {}
-    real_fake = cb._fake_completion
-
-    def spy(text, model_id, *a, **k):
-        captured["text"] = text
-        return real_fake(text, model_id, *a, **k)
-
-    monkeypatch.setattr(cb, "_fake_completion", spy)
-    cc.invoke(
-        [SimpleNamespace(role="user", content="USER_MSG")],
-        Message(role="assistant"),
-    )
-    assert captured["text"] == raw.strip()
-    assert captured["text"]  # nonempty fail-safe, not emptied by strip
+    # typed completion + passthrough on structured content (fixture, not LLM prose)
+    assert out.role == "assistant"
+    assert out.event == "AssistantResponse"
+    assert out.tool_calls == []
+    assert out.content == runner_text
 
 
 def test_clichat_invoke_json_constraint_and_no_constraint(monkeypatch):
