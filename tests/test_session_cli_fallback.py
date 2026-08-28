@@ -1300,6 +1300,11 @@ def test_secret_prefix_ignores_mismatched_directive_tool_output(game, monkeypatc
             "标题": "暗查辽饷",
             "内容": "暗查辽饷侵冒。",
             "承办人": minister,
+            "差务": "清丈",
+            "价值轴": ["实务事功"],
+            "方向": 1,
+            "交付单位": "亩",
+            "交付目标": 1,
             "标签": ["辽饷"],
             "期限月数": 0,
         },
@@ -1496,6 +1501,11 @@ def test_secret_order_extract_keeps_explicit_zero_deadline(monkeypatch):
             "内容": "暗查辽饷侵冒。",
             "承办人": "魏忠贤",
             "期限月数": explicit_zero,
+            "差务": "清丈",
+            "价值轴": ["实务事功"],
+            "方向": 1,
+            "交付单位": "亩",
+            "交付目标": 1,
             "标签": [],
         }, ensure_ascii=False), 1),
     )
@@ -1555,6 +1565,11 @@ def test_secret_prefix_confirmation_uses_recent_context_for_order_body(game, mon
         "内容": f"命洪承畴督办陕西赈灾 {task_mark}，东厂暗助护赈银并查截留。",
         "承办人": minister,
         "期限月数": 0,
+        "差务": "清丈",
+        "价值轴": ["实务事功"],
+        "方向": 1,
+        "交付单位": "亩",
+        "交付目标": 1,
         "标签": ["陕西", "赈灾", "东厂"],
     }
     row, captured = _cli_stage_secret_from_prefix(
@@ -1731,6 +1746,11 @@ def test_secret_prefix_confirmation_with_supplement_keeps_recent_context(game, m
         "内容": f"{supplement_mark}。",
         "承办人": minister,
         "期限月数": 3,
+        "差务": "清丈",
+        "价值轴": ["实务事功"],
+        "方向": 1,
+        "交付单位": "亩",
+        "交付目标": 1,
         "标签": ["陕西"],
     }
     row, captured = _cli_stage_secret_from_prefix(
@@ -1758,6 +1778,11 @@ def test_api_channel_secret_prefix_confirmation_uses_recent_context(game, monkey
             "内容": "命洪承畴督办陕西赈灾，东厂暗助护赈银并查截留。",
             "承办人": minister,
             "期限月数": 0,
+            "差务": "清丈",
+            "价值轴": ["实务事功"],
+            "方向": 1,
+            "交付单位": "亩",
+            "交付目标": 1,
             "标签": ["陕西"],
         }, ensure_ascii=False), 1)
 
@@ -1794,6 +1819,11 @@ def test_api_channel_secret_prefix_extracts_deadline_without_cli_helper(game, mo
             "内容": "命洪承畴督办陕西赈灾，三月内回奏。",
             "承办人": minister,
             "期限月数": 3,
+            "差务": "清丈",
+            "价值轴": ["实务事功"],
+            "方向": 1,
+            "交付单位": "亩",
+            "交付目标": 1,
             "标签": ["陕西"],
         }, ensure_ascii=False), 1)
 
@@ -1852,7 +1882,7 @@ def test_secret_context_path_preserves_multiple_related_emperor_task_lines(game,
         db, state, monkeypatch, minister,
         fake_payload={
             "标题": "护赈银", "内容": f"再令东厂护赈银、查截留 {mark_follow}。",
-            "承办人": minister, "期限月数": 0, "标签": ["东厂"],
+            "承办人": minister, "期限月数": 0, "差务": "清丈", "价值轴": ["实务事功"], "方向": 1, "交付单位": "亩", "交付目标": 1, "标签": ["东厂"],
         },
     )
     body = row["content"]
@@ -1873,7 +1903,7 @@ def test_secret_context_path_preserves_related_bingming_continuation(game, monke
         db, state, monkeypatch, minister,
         fake_payload={
             "标题": "护赈银", "内容": f"并命东厂护赈银、查截留 {mark_follow}。",
-            "承办人": minister, "期限月数": 0, "标签": ["东厂"],
+            "承办人": minister, "期限月数": 0, "差务": "清丈", "价值轴": ["实务事功"], "方向": 1, "交付单位": "亩", "交付目标": 1, "标签": ["东厂"],
         },
     )
     body = row["content"]
@@ -1895,7 +1925,7 @@ def test_secret_order_body_excludes_audience_role_labels(game, monkeypatch):
         fake_payload={
             "标题": "暗护陕西赈银",
             "内容": f"命洪承畴督办陕西赈灾 {task_mark}，东厂暗助护赈银并查截留。",
-            "承办人": minister, "期限月数": 0, "标签": ["陕西"],
+            "承办人": minister, "期限月数": 0, "差务": "清丈", "价值轴": ["实务事功"], "方向": 1, "交付单位": "亩", "交付目标": 1, "标签": ["陕西"],
         },
         message=f"密令如下：可，{confirm_noise}",
     )
@@ -1920,7 +1950,7 @@ def test_secret_context_path_minister_supplement_not_prose_merged(game, monkeypa
         fake_payload={
             "标题": "暗查阉党",
             "内容": f"命李若琏暗查阉党余孽 {task_mark}。",
-            "承办人": minister, "期限月数": 0, "标签": ["阉党"],
+            "承办人": minister, "期限月数": 0, "差务": "清丈", "价值轴": ["实务事功"], "方向": 1, "交付单位": "亩", "交付目标": 1, "标签": ["阉党"],
         },
     )
     assert supp_mark not in row["content"]
@@ -1941,7 +1971,7 @@ def test_secret_context_path_minister_supplement_via_extractor_field(game, monke
         fake_payload={
             "标题": "暗查阉党",
             "内容": f"命李若琏暗查阉党余孽 {task_mark}；封存兵部辽饷册 {supp_mark}。",
-            "承办人": minister, "期限月数": 0, "标签": ["阉党"],
+            "承办人": minister, "期限月数": 0, "差务": "清丈", "价值轴": ["实务事功"], "方向": 1, "交付单位": "亩", "交付目标": 1, "标签": ["阉党"],
         },
     )
     assert supp_mark in row["content"]
@@ -1961,7 +1991,7 @@ def test_secret_context_path_ignores_unrelated_prior_conversation(game, monkeypa
         db, state, monkeypatch, minister,
         fake_payload={
             "标题": "暗查阉党", "内容": f"命李若琏暗查阉党余孽 {task_mark}。",
-            "承办人": minister, "期限月数": 0, "标签": ["阉党"],
+            "承办人": minister, "期限月数": 0, "差务": "清丈", "价值轴": ["实务事功"], "方向": 1, "交付单位": "亩", "交付目标": 1, "标签": ["阉党"],
         },
     )
     body = row["content"]
@@ -1982,7 +2012,7 @@ def test_secret_context_path_ignores_unrelated_prior_task_like_command(game, mon
         db, state, monkeypatch, minister,
         fake_payload={
             "标题": "暗查阉党", "内容": f"命李若琏暗查阉党余孽 {task_mark}。",
-            "承办人": minister, "期限月数": 0, "标签": ["阉党"],
+            "承办人": minister, "期限月数": 0, "差务": "清丈", "价值轴": ["实务事功"], "方向": 1, "交付单位": "亩", "交付目标": 1, "标签": ["阉党"],
         },
     )
     body = row["content"]
@@ -2003,7 +2033,7 @@ def test_secret_context_path_ignores_prior_task_with_same_assignee(game, monkeyp
         db, state, monkeypatch, minister,
         fake_payload={
             "标题": "密查军饷", "内容": f"命李若琏密查关宁军饷 {current_mark}。",
-            "承办人": minister, "期限月数": 0, "标签": ["关宁", "军饷"],
+            "承办人": minister, "期限月数": 0, "差务": "清丈", "价值轴": ["实务事功"], "方向": 1, "交付单位": "亩", "交付目标": 1, "标签": ["关宁", "军饷"],
         },
     )
     body = row["content"]
@@ -2024,7 +2054,7 @@ def test_secret_context_path_ignores_unrelated_prior_task_before_lingqian(game, 
         db, state, monkeypatch, minister,
         fake_payload={
             "标题": "密查军饷", "内容": f"另遣李若琏密查关宁军饷 {current_mark}。",
-            "承办人": minister, "期限月数": 0, "标签": ["关宁", "军饷"],
+            "承办人": minister, "期限月数": 0, "差务": "清丈", "价值轴": ["实务事功"], "方向": 1, "交付单位": "亩", "交付目标": 1, "标签": ["关宁", "军饷"],
         },
     )
     body = row["content"]
@@ -2045,7 +2075,7 @@ def test_secret_context_path_preserves_confidentiality_constraint_line(game, mon
         db, state, monkeypatch, minister,
         fake_payload={
             "标题": "保密约束", "内容": f"此事机密，不可泄露 {constraint_mark}。",
-            "承办人": minister, "期限月数": 0, "标签": ["机密"],
+            "承办人": minister, "期限月数": 0, "差务": "清丈", "价值轴": ["实务事功"], "方向": 1, "交付单位": "亩", "交付目标": 1, "标签": ["机密"],
         },
     )
     body = row["content"]
@@ -2066,7 +2096,7 @@ def test_secret_context_path_keeps_offtopic_llm_guard(game, monkeypatch):
         fake_payload={
             "标题": "清查盐政",
             "内容": f"命毕自严清查两淮盐政 {offtopic_mark}，追比积欠。",
-            "承办人": minister, "期限月数": 0, "标签": ["盐政"],
+            "承办人": minister, "期限月数": 0, "差务": "清丈", "价值轴": ["实务事功"], "方向": 1, "交付单位": "亩", "交付目标": 1, "标签": ["盐政"],
         },
     )
     body = row["content"]
@@ -2474,6 +2504,11 @@ def test_runtime_cli_secret_prefix_merges_via_configured_runner(game, monkeypatc
         "内容": "查辽东军饷有无侵冒，三月内回奏；着李若琏暗查。",
         "承办人": "李若琏",
         "期限月数": 3,
+        "差务": "清丈",
+        "价值轴": ["实务事功"],
+        "方向": 1,
+        "交付单位": "亩",
+        "交付目标": 1,
         "标签": ["辽饷"],
     }, ensure_ascii=False)
 
@@ -2513,6 +2548,11 @@ def test_secret_prefix_creates_order(game, monkeypatch):
         "内容": "查辽东军饷有无侵冒，三月内回奏；可授李若琏暗查。",
         "承办人": "王在晋",
         "期限月数": 0,
+        "差务": "清丈",
+        "价值轴": ["实务事功"],
+        "方向": 1,
+        "交付单位": "亩",
+        "交付目标": 1,
         "标签": [],
     }, ensure_ascii=False)
     monkeypatch.setattr(cb, "_run_agy", lambda p, timeout=None: (canned, 1))
@@ -2547,7 +2587,7 @@ def test_secret_prefix_upserts_not_duplicates_and_refreshes(game, monkeypatch):
         else:
             content = "查甲"
         return (json.dumps({"标题": "查甲", "内容": content, "承办人": who,
-                            "期限月数": 0, "标签": []}, ensure_ascii=False), 1)
+                            "期限月数": 0, "差务": "清丈", "价值轴": ["实务事功"], "方向": 1, "交付单位": "亩", "交付目标": 1, "标签": []}, ensure_ascii=False), 1)
     monkeypatch.setattr(cb, "_run_agy", fake_agy)
 
     r1 = _result(); r1.answer = "臣领旨一。"
