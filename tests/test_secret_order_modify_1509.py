@@ -366,7 +366,7 @@ def test_modify_empty_typed_body_keeps_candidate_and_reports_no_success(game, mo
     monkeypatch.setattr(
         cb, "_run_backend_for_config",
         lambda *a, **k: (
-            json.dumps({"确认": "修改", "目标编号": [pending_id], "新内容": ""}), 1,
+            json.dumps({"确认": "修改", "目标编号": [pending_id], "新内容": "   "}), 1,
         ),
     )
 

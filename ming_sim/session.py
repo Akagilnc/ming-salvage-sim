@@ -2141,7 +2141,7 @@ class GameSession:
                         ]
                     # A modification without a complete typed body did not succeed.
                     # Keep every candidate unchanged and do not advertise a pending id.
-                    if not confirm_new_content:
+                    if not confirm_new_content.strip():
                         out["directive_confirmation_ambiguous"] = {
                             "candidates": [
                                 {
