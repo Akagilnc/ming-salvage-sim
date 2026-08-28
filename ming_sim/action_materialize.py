@@ -100,6 +100,8 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
         grant_staged = False
         for candidate in candidates:
             kind = str(candidate.get("kind") or "")
+            if grant_staged and kind == "draft" and ctx.explicit_prefixed:
+                continue
             cluster = cluster_by_kind(kind)
             if cluster is None or cluster.effect != EFFECT_MATERIALIZE:
                 continue
