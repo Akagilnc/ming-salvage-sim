@@ -931,6 +931,59 @@ def test_explicit_draft_prefix_without_grant_candidate_stays_generic(game, monke
     assert pending.get("purpose") != "补饷"
 
 
+def test_explicit_prefix_grant_missing_target_fail_loud_no_pending(game, monkeypatch):
+    """载荷式拟旨缺 target：fail-loud，不成案、不落 generic、不静默丢旨。"""
+    import types
+
+    import ming_sim.cli_backend as cb
+    from ming_sim.session import GameSession
+
+    db, state, content = game
+    actor = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
+    ).fetchone()["name"]
+    character = content.characters[actor]
+    # kind/grant_action 合法但缺 target_id —— 旧洞：跳过 generic 后 materialize 静默 return
+    scripted = candidates_from_classifier_payload(
+        {
+            "kind": "grant_allocation",
+            "grant_action": "协饷",
+            "amount": 15,
+            "account": "国库",
+            # 无 target_id / name
+        },
+        soft=False,
+    )
+    monkeypatch.setattr(cb, "extract_minister_actions", lambda *a, **k: {
+        "secret_action": "无", "order_id": 0, "new_title": "", "new_content": "",
+        "deadline_months": 0, "cultivate_skill": "", "cultivate_trait": "",
+    })
+    monkeypatch.setattr(cb, "extract_confirmation_intent", lambda *a, **k: "无")
+
+    sess = types.SimpleNamespace(
+        db=db,
+        state=state,
+        content=content,
+        llm_config=types.SimpleNamespace(channel="cli"),
+        registry=None,
+    )
+    sess.apply_cli_conversation_actions = types.MethodType(
+        GameSession.apply_cli_conversation_actions, sess,
+    )
+    before = db.list_pending_actions(state.turn, minister_name=actor)
+    with pytest.raises(ValueError, match=r"协饷旨意缺少 target"):
+        sess.apply_cli_conversation_actions(
+            character,
+            "拟旨如下：准拨军饷十五万两。",
+            "臣遵旨。请拨军饷十五万两。钦此。",
+            has_directive=False,
+            secret_order_id=None,
+            preclassified_intent=scripted,
+        )
+    after = db.list_pending_actions(state.turn, minister_name=actor)
+    assert len(after) == len(before)
+
+
 def test_real_chat_explicit_prefix_pay_decree_promulgates_once(game, monkeypatch):
     """真实 session.chat 入口：拟旨如下 + classifier grant → 收夜成案 → 顺颁扣库销欠恰一次。"""
     import types
