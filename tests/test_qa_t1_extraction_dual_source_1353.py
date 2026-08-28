@@ -184,6 +184,9 @@ def test_drain_fail_cleanup_does_not_hide_blocking_turn(game, tmp_path, monkeypa
         def start_close(self, *_a, **_k):
             return None
 
+        def start_exit(self, *_a, **_k):
+            return None
+
         def abandon(self, chat_turn_id: int):
             abandoned.append(int(chat_turn_id))
 
