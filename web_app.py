@@ -1007,7 +1007,11 @@ class WebGame:
 
     @property
     def last_report(self) -> str:
-        return self.session.last_report
+        """#1382：上一已完成月 turn_reports 原文；禁 session 瞬态缓存。"""
+        previous_turn = int(self.state.turn) - 1
+        if previous_turn < 0:
+            return ""
+        return self.db.get_turn_report(previous_turn)
 
     def _runtime_write_queue(self) -> SessionWriteQueue:
         return get_session_write_queue(self)
@@ -1554,6 +1558,7 @@ class WebGame:
             # 不把 decided 塞回 pending 列表；前端空 POST 既有 resolve_decisions/stream。
             "resume_phase2": self._resume_phase2_signal(),
             "last_decree": self.last_decree,
+            # #1382：与 last_attendant_message 同口径——按 state.turn-1 读 turn_reports 原文
             "last_report": self.last_report,
             # #671：上一已完成月王承恩独立递话（与 last_report 同级 typed 字段）
             "last_attendant_message": self.db.previous_turn_attendant_message(self.state),

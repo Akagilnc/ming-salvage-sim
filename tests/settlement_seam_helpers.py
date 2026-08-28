@@ -25,7 +25,7 @@ def make_light_session(db, state, content):
     session.deaths_this_turn = []
     session.debuts_this_turn = []
     session.last_decree = ""
-    session.last_report = ""
+    # #1382：不再挂 session.last_report 平行缓存
     session._decree_draft_fingerprint = ()
     session._scene_registry = None
     session._beat_generator = None
