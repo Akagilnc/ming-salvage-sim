@@ -13,16 +13,10 @@ import json
 import re
 
 from types import SimpleNamespace
-from unittest.mock import patch
 
 import web_app
 from ming_sim.assets import format_wanliang_amount
-from ming_sim.flows import (
-    _substrate_hub_budget_army_pay,
-    apply_fixed_period_flows,
-    army_needed,
-    compute_budget_lines,
-)
+from ming_sim.flows import apply_fixed_period_flows, compute_budget_lines
 
 
 # 多于一位小数的 IEEE 残渣（如 1.2000000000000002 / 0.09999999999999964）
@@ -66,42 +60,28 @@ def _army_pay_budget_lines(budget):
     ]
 
 
-def test_budget_army_pay_typed_identity_and_amounts(read_game):
-    """#1366：两引擎各恰一条 army_pay；金额跟现行算法，不靠显示名。"""
+def test_substrate_budget_splits_proposals_without_projecting_settlement(read_game, monkeypatch):
+    """#1366：预算从真实入口分列两项拟拨，不调用未来损耗分配。"""
+    import ming_sim.flows as flows_mod
+
     db, state, _ = read_game
-    assert db.fiscal_engine() == "substrate_hub"
-
-    substrate_budget = compute_budget_lines(db, state)
-    substrate_lines = _army_pay_budget_lines(substrate_budget)
-    assert len(substrate_lines) == 1
-    assert substrate_lines[0]["amount"] == _substrate_hub_budget_army_pay(db, state)
-    assert substrate_lines[0]["amount"] == 87
-
-    # legacy 引擎：金额 = sum(army_needed)，仍是唯一 army_pay 行。
-    with patch.object(type(db), "fiscal_engine", return_value="legacy"):
-        legacy_budget = compute_budget_lines(db, state)
-    legacy_lines = _army_pay_budget_lines(legacy_budget)
-    assert len(legacy_lines) == 1
-    expected_legacy = sum(
-        army_needed(row)
-        for row in db.conn.execute(
-            "SELECT manpower, salary_rate, owner_power FROM armies "
-            "WHERE owner_power='ming'"
-        ).fetchall()
+    monkeypatch.setattr(
+        flows_mod,
+        "_compute_substrate_hub_outbound",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("future settlement")),
     )
-    assert legacy_lines[0]["amount"] == expected_legacy
-    assert expected_legacy == 72
 
-    # 玩家投影剥离 budget_key，只留 name/amount。
-    runtime = object.__new__(web_app.WebGame)
-    runtime.session = SimpleNamespace(db=db, state=state)
-    payload = runtime.budget_payload()
-    player_line = next(
-        row for row in payload["国库"]["expense"]
-        if row["name"] == substrate_lines[0]["name"]
-    )
-    assert set(player_line.keys()) == {"name", "amount"}
-    assert player_line["amount"] == substrate_lines[0]["amount"]
+    first = compute_budget_lines(db, state)
+    first_lines = _army_pay_budget_lines(first)
+    assert len(first_lines) == 2
+    first_amounts = [line["amount"] for line in first_lines]
+
+    state.metrics["国库"] = 0
+    second_amounts = [
+        line["amount"] for line in _army_pay_budget_lines(compute_budget_lines(db, state))
+    ]
+    assert second_amounts == first_amounts
+
 
 
 def test_renaming_army_pay_budget_line_does_not_double_debit(game, monkeypatch):

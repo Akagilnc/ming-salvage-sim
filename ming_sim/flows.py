@@ -426,8 +426,8 @@ def _add_fiscal_container(db: GameDB, key: str, delta: float, note: str) -> None
 # 固定月度收支科目目录现走数据驱动：db.iter_budget_items() 从 fiscal_config 读
 # budget_role=fixed 的 base 项（account/direction/display）。加新税源只改 content/fiscal_config.json。
 # 税收/皇庄走 calc_province_fiscal（动态）；legacy 军饷走 army_needed，substrate_hub 军饷
-# 旧流水归零，预算兼容行改读 hub 预计实拨。compute_budget_lines 是预算展示同源，
-# flows 落账 / UI budget_payload / db.treasury_budget_summary 三处共用，禁止各自重算。
+# 旧流水归零，预算只列京运补与中央份额拟拨，不预演结算分配或损耗。compute_budget_lines
+# 是预算展示同源，flows 落账 / UI budget_payload / db.treasury_budget_summary 三处共用。
 
 
 def compute_budget_lines(
@@ -437,7 +437,7 @@ def compute_budget_lines(
     每行至少含 {name,amount,note}，可另带 budget_key 等工程元数据（军饷行固定 budget_key=army_pay，
     供落账/摘要按 key 认科目；消费方不得依赖 name 措辞）。
     税收/皇庄＝calc_province_fiscal 动态值；legacy 军饷＝SUM(明军应发)；
-    substrate_hub 军饷由省级基座 / hub 承载，不再列入旧国库固定支出；
+    substrate_hub 预算分列京运补与中央份额拟拨，不预演分配或损耗；
     建筑＝按 condition 折产/维护；
     其余＝fiscal_config base×rate（全月值）。三处调用方据此各取所需，不重算。"""
     cfg = db.get_fiscal_config()
@@ -453,40 +453,54 @@ def compute_budget_lines(
              "note": "各省田赋+辽饷+盐税+商税（按腐败度/士绅阻力/民变动态折算）"}
         ]
         hub_expense_lines = []
-    # #44 军饷=SUM(应发)，应发挂钩兵力(army_needed=ceil(manpower×salary_rate/10000))，非旧 maintenance 定额。
-    # #307 substrate_hub 下旧「户部直扣国库发饷」全局路径退役；预算行改读 hub 预计实拨，
-    # 与 apply_fixed_period_flows 的 边饷hub 扣款同源，避免预算净额虚高。
+    # #44 legacy 军饷=SUM(应发)。#1366 substrate 预算只陈列结算前拟拨事实：
+    # 京运补与中央份额分开，均不受当月国库能力或未来转运损耗影响。
     if db.fiscal_engine() == "legacy":
-        army_total = sum(
-            army_needed(r) for r in db.conn.execute(
-                "SELECT manpower, salary_rate, owner_power FROM armies WHERE owner_power='ming'"
-            ).fetchall()
-        )
+        army_pay_lines = [{
+            "budget_key": "army_pay",
+            "name": "各军军饷",
+            "amount": sum(
+                army_needed(r) for r in db.conn.execute(
+                    "SELECT manpower, salary_rate, owner_power FROM armies WHERE owner_power='ming'"
+                ).fetchall()
+            ),
+            "note": "各军月度名义应发军饷合计",
+        }]
     else:
-        army_total = _substrate_hub_budget_army_pay(db, state)
+        rows = db.conn.execute(
+            """
+            SELECT id, manpower, salary_rate, owner_power, central_pay_share,
+                   pay_source_region
+            FROM armies
+            WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0
+              AND central_pay_share > 0
+            """
+        ).fetchall()
+        army_map = {str(row["id"]): row for row in rows}
+        ordered = [army_map[key] for key in ARMY_SALARY_PRIORITY if key in army_map]
+        ordered += [row for row in rows if str(row["id"]) not in ARMY_SALARY_PRIORITY]
+        central_due_by_army, _ = _central_dues_with_haircut(db, state, ordered)
+        army_pay_lines = [
+            {
+                "budget_key": "army_pay",
+                "name": "中央军饷拟拨",
+                "amount": int(sum(max(0.0, due) for due in central_due_by_army.values())),
+                "note": "中央承担份额拟拨；不含未来转运损耗",
+            },
+            {
+                "budget_key": "army_pay",
+                "name": "京运补拟拨",
+                "amount": int(sum(_substrate_hub_jingyun_due_by_region(db).values())),
+                "note": "各省京运补拟拨；不含未来转运损耗",
+            },
+        ]
 
     budget: Dict[str, Dict[str, list]] = {
         "国库": {"income": [], "expense": []},
         "内库": {"income": [], "expense": []},
     }
     budget["国库"]["income"].extend(hub_income_lines)
-    # #1366：两引擎金额口径不同，但共用稳定机器身份 budget_key=army_pay；
-    # name 只供玩家/摘要呈现。legacy=全军名义应发；substrate=国库 outbound
-    # （京运补+中央份额+转运损耗），不得与应发混名，不得称实拨/实收。
-    if db.fiscal_engine() == "legacy":
-        army_pay_name = "各军军饷"
-        army_pay_note = "各军月度名义应发军饷合计"
-    else:
-        army_pay_name = "京运补及中央军饷国库支出"
-        army_pay_note = "京运补及中央军饷国库支出（含转运损耗；非全军名义应发合计）"
-    budget["国库"]["expense"].append(
-        {
-            "budget_key": "army_pay",
-            "name": army_pay_name,
-            "amount": int(army_total),
-            "note": army_pay_note,
-        }
-    )
+    budget["国库"]["expense"].extend(army_pay_lines)
     budget["国库"]["expense"].extend(hub_expense_lines)
     # 皇庄＝fiscal_config 基准（开局校准月额）＋ calc_province_fiscal 的没收藩田增量（开局 0）。
     huang_base = round(int(cfg.get("皇庄_base", 20)) * cfg.get("皇庄_rate", 100) / 100)
@@ -523,37 +537,6 @@ def compute_budget_lines(
         if bld_out[acc] > 0:
             budget[acc]["expense"].append({"name": "建筑维护", "amount": bld_out[acc], "note": "建筑月维护"})
     return budget
-
-
-def _substrate_hub_budget_army_pay(db: GameDB, state: GameState) -> int:
-    """Return the fixed-budget army-pay outflow for substrate_hub saves.
-
-    与 ``apply_fixed_period_flows`` 同源：按 ``ARMY_SALARY_PRIORITY`` 编序后走
-    ``_central_dues_with_haircut`` 折后 Due，再交 ``_compute_substrate_hub_outbound``。
-    """
-    rows = db.conn.execute(
-        """
-        SELECT id, manpower, salary_rate, owner_power, central_pay_share,
-               pay_source_region
-        FROM armies
-        WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0
-          AND central_pay_share > 0
-        """
-    ).fetchall()
-    army_map = {str(r["id"]): r for r in rows}
-    ordered = [army_map[k] for k in ARMY_SALARY_PRIORITY if k in army_map]
-    ordered += [r for r in rows if str(r["id"]) not in ARMY_SALARY_PRIORITY]
-    central_due_by_army, _exempts = _central_dues_with_haircut(db, state, ordered)
-    hub_outbound = _compute_substrate_hub_outbound(
-        db,
-        max(0.0, float(state.metrics.get("国库", 0) or 0)),
-        central_due_by_army,
-    )
-    return int(
-        hub_outbound.jingyun_paid_total
-        + hub_outbound.central_paid_total
-        + hub_outbound.central_transport_loss
-    )
 
 
 ISSUE_METRIC_KEYS = {"民心", "皇威"}

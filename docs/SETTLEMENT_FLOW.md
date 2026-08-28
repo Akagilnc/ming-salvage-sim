@@ -62,11 +62,12 @@
           `name` 只供呈现；落账跳过与摘要取数认 key 不咬显示名，#1366）：
           - `legacy` 老档：预算行 name=「各军军饷」、金额=`sum(army_needed)`；
             逐军从国库扣发，ledger category 仍为「各军军饷」；国库不足挂 `armies.arrears`。
-          - `substrate_hub` 新档：旧全局「各军军饷」流水为 0，不再双付；预算兼容行
-            name=「京运补及中央军饷国库支出」、金额=国库 outbound（京运补+中央份额+
-            转运损耗，非全军名义应发，不得称实拨/实收）。先按本月开账国库能力跑
+          - `substrate_hub` 新档：旧全局「各军军饷」流水为 0，不再双付；预算分列
+            中央军饷拟拨与京运补拟拨，只陈列结算前应拟支的两项来源，不受国库余额
+            截断，也不预演或显示未来精确损耗。结算时再按本月开账国库能力跑
             `边饷hub` outbound，京运给各省 grant 与中央份额共用同一个 hub tier，写
-            `中央军饷`、`central_pay_arrears`、中央欠饷容器与 `C_京运克扣/C_京运运损`。
+            `中央军饷`、`central_pay_arrears`、中央欠饷容器与 `C_京运克扣/C_京运运损`；
+            国库报告从既有 ledger/container 呈现已执行的国库实拨、实际到达、途中损耗。
             省份额随后由省级 substrate 写 `province_pay_arrears`，仍用 **应发 =
             ceil(manpower × salary_rate / 10000)**（#44，0 兵=0 饷）。
         ↳ 逐建筑 condition × output_amount → 国库/内库
