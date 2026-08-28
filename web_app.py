@@ -1927,9 +1927,13 @@ class WebGame:
                         origin_id=summon_origin, minister_name=summon_name,
                         gate_cm=gate_cm,
                     )
-                    return self._summon_admission_success_payload(
-                        summon_name, summon_result,
-                    )
+                    # #1566：成功载荷的同连接 DB 投影读须纳入 ticketed gate 短临界段，
+                    # 与并发同源请求的读/写在同一 sqlite connection 上互斥；LLM 早已在
+                    # write_back 内结清，此处只剩纯读。
+                    with gate_cm:
+                        return self._summon_admission_success_payload(
+                            summon_name, summon_result,
+                        )
                 chat_signature = inspect.signature(self.session.chat)
                 # #634 P5：判官拍与回话并行发出（先于回话生成，TD-9 零额外等待）。
                 self._dispatch_relation_judge(chat_turn_id)
@@ -3219,9 +3223,13 @@ class WebGame:
                     origin_id=summon_origin, minister_name=summon_name,
                     gate_cm=write_gate,
                 )
-                payload = self._summon_admission_success_payload(
-                    summon_name, summon_result,
-                )
+                # #1566：成功载荷的同连接 DB 投影读须纳入 ticketed gate 短临界段，
+                # 与并发同源请求的读/写在同一 sqlite connection 上互斥；LLM 早已在
+                # write_back 内结清，此处只剩纯读。
+                with write_gate:
+                    payload = self._summon_admission_success_payload(
+                        summon_name, summon_result,
+                    )
                 yield {"type": "done", "payload": payload}
                 yield {"type": "end"}
             finally:
