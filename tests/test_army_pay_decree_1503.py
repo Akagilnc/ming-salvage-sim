@@ -917,7 +917,7 @@ def test_manual_directive_admission_real_http_tracer_1591(
         rejection_row = rejection_rows[0]
         assert rejection_row["category"] == "locality_fanout_failed", dict(rejection_row)
         assert rejection_row["source"] == "player_decree", dict(rejection_row)
-        assert str(message) == rejection_row["reason"], (message, rejection_row["reason"])
+        assert message == rejection_row["reason"], (message, rejection_row["reason"])
         assert int(game.state.turn) == turn2, "拒案不得推进回合"
     finally:
         try:
