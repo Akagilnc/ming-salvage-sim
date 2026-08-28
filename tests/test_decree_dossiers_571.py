@@ -21,6 +21,15 @@ def _active_people(db, count):
     return people
 
 
+def _create_secret_order(db, state, minister, title, content, tags, **kwargs):
+    """Issue through the current typed confirmation contract."""
+    kwargs.setdefault("covert_task", {
+        "kind": str(title), "axes": ["实务事功"], "direction": 1,
+        "delivery": {"unit": "案", "target_units": 1.0},
+    })
+    return db.create_secret_order(state, minister, title, content, tags, **kwargs)
+
+
 def _active_minister(db):
     return _active_people(db, 1)[0]
 
@@ -350,7 +359,7 @@ def test_driver_settle_freezes_dossier_roster_authority_at_input(game, monkeypat
         participants=[{"character_id": lead, "tier": "主办"}],
     )
     db.conn.execute("UPDATE decree_dossiers SET status='closed' WHERE id=?", (closed_id,))
-    secret_order_id = db.create_secret_order(
+    secret_order_id = _create_secret_order(db,
         state, lead, "密修历", "暗修历书。", [], deadline_months=0,
     )
     secret_id = next(
@@ -615,6 +624,7 @@ def test_secret_pending_action_carries_chat_turn_and_pending_provenance(game):
         action="新建",
         minister_name=minister,
         payload={
+            "covert_task": TYPED_COVERT_TASK,
             "title": "密查饷银",
             "content": "暗中核清关宁军饷",
             "assignee": minister,
@@ -711,14 +721,14 @@ def test_secret_order_and_dossier_roll_back_as_one_unit(game, monkeypatch):
 
     monkeypatch.setattr(db, "create_decree_dossier", fail_dossier)
     with pytest.raises(RuntimeError):
-        db.create_secret_order(state, minister, "密查", "查账", [])
+        _create_secret_order(db, state, minister, "密查", "查账", [])
     assert db.conn.execute("SELECT COUNT(*) FROM secret_orders").fetchone()[0] == 0
 
 
 def test_character_terminal_state_closes_secret_order_and_execution_slot(game):
     db, state, _content = game
     minister = _active_minister(db)
-    order_id = db.create_secret_order(state, minister, "密查", "查账", [])
+    order_id = _create_secret_order(db, state, minister, "密查", "查账", [])
     dossier = db.get_dossier_for_secret_order(order_id)
     db.transition_decree_dossier(dossier["id"], "executing")
 
@@ -918,7 +928,7 @@ def test_real_resolve_entry_applies_promulgation_verdict_and_payload_effect(
         target_kind="issue", target_id="published-policy",
     )
     db.record_dossier_decision(published_id, "promulgated")
-    secret_order_id = db.create_secret_order(
+    secret_order_id = _create_secret_order(db,
         state, actor, "密查军饷", "暗中核清关宁军饷", [],
         covert_task=TYPED_COVERT_TASK,
     )
@@ -2123,7 +2133,7 @@ def test_secret_order_progress_persists_executing_until_terminal(game):
 
     db, state, content = game
     actor = _active_minister(db)
-    order_id = db.create_secret_order(state, actor, "密查仓储", "核清仓储", [])
+    order_id = _create_secret_order(db, state, actor, "密查仓储", "核清仓储", [])
     dossier = db.get_dossier_for_secret_order(order_id)
     assert dossier["status"] == "promulgated"
 
@@ -2146,7 +2156,7 @@ def test_secret_order_progress_persists_executing_until_terminal(game):
 def test_secret_order_progress_undo_restores_order_and_dossier_axes(game):
     db, state, _content = game
     actor = _active_minister(db)
-    order_id = db.create_secret_order(
+    order_id = _create_secret_order(db,
         state, actor, "密查仓储", "核清仓储", [],
     )
     chat_turn_id = db.create_chat_turn(state, actor, "dossier-undo", 0)
@@ -2175,7 +2185,7 @@ def test_secret_order_close_failure_rolls_back_only_its_two_axes(game, monkeypat
     from ming_sim.applier import atomic
 
     db, state, _content = game
-    order_id = db.create_secret_order(
+    order_id = _create_secret_order(db,
         state, _active_minister(db), "密查仓储", "核清仓储", [],
     )
     dossier_before = db.get_dossier_for_secret_order(order_id)
@@ -2205,7 +2215,7 @@ def test_secret_order_progress_rolls_back_both_axes_in_outer_atomic(game):
     from ming_sim.applier import atomic
 
     db, state, _content = game
-    order_id = db.create_secret_order(
+    order_id = _create_secret_order(db,
         state, _active_minister(db), "密查仓储", "核清仓储", [],
     )
     with pytest.raises(RuntimeError):
@@ -2240,7 +2250,7 @@ def test_dialogue_and_engine_action_types_cannot_create_dossiers(
 def test_create_secret_order_has_resumable_dossier(game):
     db, state, _content = game
     actor = _active_minister(db)
-    order_id = db.create_secret_order(
+    order_id = _create_secret_order(db,
         state, actor, "在办密令", "成案即有案卷", [], deadline_months=1,
     )
     dossier = db.get_dossier_for_secret_order(order_id)
@@ -2617,7 +2627,7 @@ def test_mechanical_directive_missing_target_fails_loudly_at_real_entry(game):
 
 def test_secret_order_commitment_origin_maps_to_its_own_dossier(game):
     db, state, _content = game
-    order_id = db.create_secret_order(
+    order_id = _create_secret_order(db,
         state, _active_minister(db), "安抚诸将", "每月拨银安抚诸将", [],
         deadline_months=3,
     )
@@ -2844,7 +2854,7 @@ def test_secret_order_target_survives_restore_and_is_queryable(game):
     from ming_sim.db import GameDB
 
     db, state, content = game
-    order_id = db.create_secret_order(
+    order_id = _create_secret_order(db,
         state, _active_minister(db), "密查仓储", "核清仓储", [],
     )
     restored = GameDB(db.path, content=content)
