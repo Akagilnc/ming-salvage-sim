@@ -578,46 +578,53 @@ def test_open_and_close_beat_bodies_land(game):
     assert close_body and close_body.startswith(f"kind={BEAT_CLOSE}")
 
 
-def test_no_generator_keeps_deterministic_fallback(game):
-    """无生成器/registry 缺失 = 确定性 open/close 兜底；文案从时地长出，不硬称夜。"""
+def test_no_generator_leaves_opening_empty_and_keeps_close_fallback(game):
+    """无生成器/registry 时 opening 留空；既有 close-only fallback 不硬称夜。"""
+    from ming_sim.due_review import list_due_review_scenes
+    from ming_sim.staged_commitment import ENTRY_KIND_RUSH_REMONSTRANCE, ENTRY_KIND_STAGED
+    from ming_sim.urge_lever import list_urge_audience_scenes
+
     db, state, content = game
     minister = _active_minister(db, content)
+    issue_id = int(db.conn.execute("SELECT id FROM issues ORDER BY id LIMIT 1").fetchone()["id"])
+    db.insert_next_audience_todo(
+        commitment_ref=issue_id,
+        stage_idx=0,
+        due_turn=int(state.turn),
+        criterion_text="火器见眉目",
+        origin_context="三年火器见眉目",
+        entry_kind=ENTRY_KIND_STAGED,
+        created_turn=int(state.turn),
+    )
+    db.insert_next_audience_todo(
+        commitment_ref=issue_id,
+        stage_idx=0,
+        due_turn=int(state.turn),
+        criterion_text="期限过急",
+        origin_context="催办之诺",
+        entry_kind=ENTRY_KIND_RUSH_REMONSTRANCE,
+        created_turn=int(state.turn),
+    )
+    due_scenes = list_due_review_scenes(db, state)
+    urge_scenes = list_urge_audience_scenes(db, state)
+    assert due_scenes and "scene_text" in due_scenes[0]
+    assert urge_scenes and "scene_text" in urge_scenes[0]
     night_id, _cid = an.attach_chat_turn_to_night(
         db, state, minister, agno_session_id="s", agno_runs_before=0,
         time_of_day="戌时", location="乾清宫",
     )
     open_body = _ledger_body(db, night_id, an.TAG_OPEN_NIGHT)
-    assert open_body == "乾清宫·戌时，召对启。"
-    assert "夜" not in open_body
-    enter_body = _enter_body(db, night_id, minister)
-    assert enter_body and "kind=" not in enter_body
+    # N1：无 beat_generator + 无 body 时 opening body 为空（不写固定 fallback）；
+    # pending due/urge 不得把空垫位填成确定性正文。
+    assert open_body == ""
+    scroll = an.read_night_scroll(db, night_id)
+    assert all(m.get("beat") != "opening" for m in scroll)
     _land_reply(db, state, minister, _cid, night_id)
     # 无 beat_generator、无 scene_registry：走空 body close 兜底
     an.close_night(db, state, night_id=night_id, content=content)
     close_body = _ledger_body(db, night_id, an.TAG_CLOSE_NIGHT)
     assert close_body == "退朝，召对到此。"
     assert "夜" not in close_body
-
-
-def test_production_beat_generator_open_close_fallback_no_night_hardcode():
-    """#542 r3：production open/close 确定性正文从时地长出，不硬称夜。"""
-    open_with = bo.production_beat_generator(
-        BeatInputs(beat_kind=BEAT_OPEN, time_of_day="戌时", location="乾清宫"),
-    )
-    assert open_with == "乾清宫·戌时，召对启。"
-    assert "夜" not in open_with
-    open_bare = bo.production_beat_generator(BeatInputs(beat_kind=BEAT_OPEN))
-    assert open_bare == "召对启。"
-    assert "夜" not in open_bare
-
-    close_with = bo.production_beat_generator(
-        BeatInputs(beat_kind=BEAT_CLOSE, time_of_day="戌时", location="乾清宫"),
-    )
-    assert close_with == "乾清宫·戌时，退朝，召对到此。"
-    assert "夜" not in close_with
-    close_bare = bo.production_beat_generator(BeatInputs(beat_kind=BEAT_CLOSE))
-    assert close_bare == "退朝，召对到此。"
-    assert "夜" not in close_bare
 
 
 def test_auto_close_fallback_body_no_night_hardcode(game):
@@ -777,22 +784,18 @@ def test_web_start_chat_turn_wires_session_beat_generator(web_game):
     assert "kind=open" in (_ledger_body(game.db, night_id, an.TAG_OPEN_NIGHT) or "")
 
 
-def test_web_auto_close_uses_session_beat_generator(web_game, monkeypatch):
-    """#542: Web 自动收夜走 session._beat_generator，不旁路 production_beat_generator。"""
+def test_web_auto_close_uses_session_beat_generator(web_game):
+    """#542: Web 自动收夜走 session._beat_generator。"""
     game = web_game
     for ctid in list(game.session._scene_registry.active_turn_ids()):
         game.session.abandon_chat_turn_scene(ctid)
     an.open_night(game.db, game.state, time_of_day="戌时", location="乾清宫")
-    seen: list[str] = []
-    game.session._beat_generator = (
-        lambda inputs: seen.append(inputs.beat_kind) or f"session-owned-{inputs.beat_kind}"
-    )
-    monkeypatch.setattr(
-        bo, "production_beat_generator",
-        lambda _i: (_ for _ in ()).throw(AssertionError("production bypass")),
-    )
+    seen: list[BeatInputs] = []
+    game.session._beat_generator = lambda inputs: seen.append(inputs) or "closed"
     web_app._auto_close_open_night_gate_free(game, inflight_wait_s=0.0)
-    assert BEAT_CLOSE in seen and an.get_open_night(game.db) is None
+    assert any(inputs.beat_kind == BEAT_CLOSE for inputs in seen)
+    assert all(inputs.location == "乾清宫" for inputs in seen)
+    assert an.get_open_night(game.db) is None
 
 
 def test_close_night_routes_scene_through_chat_turn_registry(game, monkeypatch):
