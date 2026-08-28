@@ -21734,6 +21734,11 @@ class GameDB:
             ).fetchone()
             if source_row is not None:
                 source_chat_turn_id = int(source_row["id"])
+        from ming_sim.covert_progress import CONTRACT_KEY, build_covert_task_contract
+        covert_contract = (
+            build_covert_task_contract(covert_task=covert_task)
+            if covert_task is not None else None
+        )
         with atomic(self):
             cur = self.conn.execute(
                 """
@@ -21756,10 +21761,6 @@ class GameDB:
             )
             # #1504 Owner A：确认闸一次冻结 typed covert-task contract（动作轴/可数交付）。
             # 不解析 title/content/tags；轴与交付单位来自 #1376 候选显式字段。
-            from ming_sim.covert_progress import CONTRACT_KEY, CovertContractError, build_covert_task_contract
-            covert_contract = None
-            if covert_task is not None:
-                covert_contract = build_covert_task_contract(covert_task=covert_task)
             payload = {
                 "title": title,
                 "content": content,
@@ -21770,8 +21771,6 @@ class GameDB:
             }
             if covert_contract is not None:
                 payload[CONTRACT_KEY] = covert_contract
-            elif covert_task is not None:
-                raise CovertContractError("密令确认缺少完整 typed covert-task contract")
             dossier_id = self.create_decree_dossier(
                 state,
                 action_type="secret_order",
@@ -22292,7 +22291,6 @@ class GameDB:
 
     def auto_submit_due_secret_orders(self, state: GameState) -> List[Dict[str, object]]:
         """#1504：到期只记 typed 机器事实，保持 active；玩家文字走 0058 密奏。"""
-        from ming_sim.covert_progress import CONTRACT_KEY, read_covert_task_contract
 
         rows = self.conn.execute(
             """
@@ -22307,21 +22305,6 @@ class GameDB:
             for row in rows:
                 oid = int(row["id"])
                 self.mark_secret_order_in_progress(oid, commit=False)
-                dossier = self.get_dossier_for_secret_order(oid)
-                if dossier is not None:
-                    try:
-                        payload = json.loads(str(dossier.get("payload_json") or "{}"))
-                    except (TypeError, ValueError):
-                        payload = {}
-                    if not isinstance(payload, dict):
-                        payload = {}
-                    payload["due_machine"] = {
-                        "order_id": oid,
-                        "due_turn": int(state.turn),
-                    }
-                    if read_covert_task_contract(dossier) is None and CONTRACT_KEY not in payload:
-                        pass
-                    self.update_decree_dossier_payload(int(dossier["id"]), payload, commit=False)
                 submitted.append({
                     "id": oid,
                     "title": row["title"],

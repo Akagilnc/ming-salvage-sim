@@ -14,8 +14,8 @@
 
 from __future__ import annotations
 
+import copy
 import json
-import math
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from ming_sim.value_matrix import (
@@ -37,18 +37,13 @@ PROGRESS_UNITS: Dict[str, float] = {
 CONTRACT_KEY = "covert_task_contract"
 CONTRACT_VERSION = 1
 _STANCE_SCORE_SCALE = 18.0
-CANONICAL_UNITS = ("万两", "人犯", "亩")
-_UNIT_ALIASES = {
-    "两": "万两",
-    "银两": "万两",
-    "饷银": "万两",
-}
+CANONICAL_UNITS = ("万两", "人犯", "亩", "案")
 _FIELD_FOR_UNIT = {
     "万两": ["economy_moves"],
     "人犯": ["人物变更"],
     "亩": ["region_delta"],
+    "案": ["new_issues"],
 }
-_LIANG_PER_WAN = 10000.0
 
 
 class CovertContractError(ValueError):
@@ -244,13 +239,9 @@ def canonicalize_delivery_unit(unit: object, target: object) -> tuple[str, float
         raise CovertContractError("密令确认缺少可数交付目标") from None
     if qty <= 0.0:
         raise CovertContractError("密令确认交付目标必须为正数")
-    aliased = _UNIT_ALIASES.get(raw, raw)
-    if aliased not in CANONICAL_UNITS:
-        raise CovertContractError("密令确认交付单位须为万两/人犯/亩")
-    if raw in _UNIT_ALIASES and aliased == "万两":
-        wan = math.ceil(qty / _LIANG_PER_WAN)
-        qty = float(max(wan, 1))
-    return aliased, float(qty)
+    if raw not in CANONICAL_UNITS:
+        raise CovertContractError("密令确认交付单位须为万两/人犯/亩/案")
+    return raw, float(qty)
 
 
 def _effect_sign_for_unit(unit: str, raw: object) -> int:
@@ -349,52 +340,29 @@ def build_covert_task_contract(
 
 
 def coerce_covert_task_contract(raw: object) -> Optional[Dict[str, object]]:
-    if not isinstance(raw, Mapping):
+    """Validate a frozen contract without rebuilding or supplying read-time defaults."""
+    if not isinstance(raw, Mapping) or raw.get("version") != CONTRACT_VERSION:
+        return None
+    delivery = raw.get("delivery")
+    if not isinstance(delivery, Mapping):
+        return None
+    if not str(raw.get("kind") or "").strip() or not normalize_axes(raw.get("axes")):
+        return None
+    if raw.get("direction") not in (-1, 1):
         return None
     try:
-        return build_covert_task_contract(
-            kind=raw.get("kind"),
-            axes=raw.get("axes"),
-            direction=raw.get("direction"),
-            covert_task=raw,
-            delivery_unit=(
-                raw.get("delivery", {}).get("unit")
-                if isinstance(raw.get("delivery"), Mapping)
-                else None
-            ),
-            delivery_target_units=(
-                raw.get("delivery", {}).get("target_units")
-                if isinstance(raw.get("delivery"), Mapping)
-                else None
-            ),
-            effect_sign=(
-                raw.get("delivery", {}).get("effect_sign")
-                if isinstance(raw.get("delivery"), Mapping)
-                else None
-            ),
-            purpose=(
-                raw.get("delivery", {}).get("purpose")
-                if isinstance(raw.get("delivery"), Mapping)
-                else None
-            ),
-            category=(
-                raw.get("delivery", {}).get("category")
-                if isinstance(raw.get("delivery"), Mapping)
-                else None
-            ),
-            account=(
-                raw.get("delivery", {}).get("account")
-                if isinstance(raw.get("delivery"), Mapping)
-                else None
-            ),
-            person_action=(
-                raw.get("delivery", {}).get("person_action")
-                if isinstance(raw.get("delivery"), Mapping)
-                else None
-            ),
+        unit, target = canonicalize_delivery_unit(
+            delivery.get("unit"), delivery.get("target_units"),
         )
     except CovertContractError:
         return None
+    if delivery.get("effect_sign") not in (-1, 1):
+        return None
+    if list(delivery.get("canonical_fields") or []) != canonical_fields_for_delivery(unit=unit):
+        return None
+    if float(delivery.get("target_units")) != target:
+        return None
+    return copy.deepcopy(dict(raw))
 
 
 def read_covert_task_contract(dossier: Mapping[str, object] | None) -> Optional[Dict[str, object]]:
@@ -590,12 +558,7 @@ def build_secret_covert_effect_briefs(db: Any, orders: Sequence[Mapping[str, obj
             "kind": str(contract.get("kind") or ""),
             "axes": list(contract.get("axes") or []),
             "direction": int(contract.get("direction") or 1),
-            "delivery": {
-                "unit": unit,
-                "target_units": float(delivery.get("target_units") or 0),
-                "effect_sign": int(delivery.get("effect_sign") or 0),
-                "canonical_fields": list(fields),
-            },
+            "delivery": copy.deepcopy(dict(delivery)),
             "effect_owner": owner,
             "canonical_fields": fields,
         })
@@ -665,6 +628,12 @@ def originated_quantity_this_turn(
                 "SELECT id FROM person_logs WHERE origin_ref=? AND turn=?",
                 (origin, current),
             ).fetchall()
+        qty += float(len(rows))
+    if "new_issues" in fields:
+        rows = db.conn.execute(
+            "SELECT id FROM issues WHERE origin_ref=? AND origin_turn=? AND kind=?",
+            (origin, current, str(contract.get("kind") or "")),
+        ).fetchall()
         qty += float(len(rows))
     if "region_delta" in fields:
         rows = db.conn.execute(

@@ -28,7 +28,19 @@ import ming_sim.audience_night as audience_night
 import ming_sim.cli_backend as cb
 import ming_sim.session as session_mod
 from ming_sim.session import GameSession
-from tests.dossier_test_helpers import TYPED_COVERT_EXTRACT, promulgate_proposed_appointments
+from tests.dossier_test_helpers import TYPED_COVERT_EXTRACT, TYPED_COVERT_TASK, promulgate_proposed_appointments
+
+
+def _create_secret_order(db, state, minister, title, content, tags, **kwargs):
+    """Session fixtures issue a task-specific current contract at the real DB seam."""
+    return db.create_secret_order(
+        state, minister, title, content, tags,
+        covert_task={
+            "kind": str(title), "axes": ["实务事功"], "direction": 1,
+            "delivery": {"unit": "案", "target_units": 1.0},
+        },
+        **kwargs,
+    )
 
 
 def _result():
@@ -42,7 +54,7 @@ def test_non_streaming_path_surfaces_pending_action_id(game, monkeypatch):
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
     who = "非流式承办官"
-    oid = db.create_secret_order(state, who, "原标题", "原内容", [], deadline_months=0)
+    oid = _create_secret_order(db, state, who, "原标题", "原内容", [], deadline_months=0)
     monkeypatch.setattr(cb, "extract_minister_actions", lambda *a, **k: {
         "secret_action": "更新", "order_id": oid, "new_title": "改", "new_content": "改",
         "deadline_months": 0, "cultivate_skill": "", "cultivate_trait": ""})
@@ -149,7 +161,7 @@ def test_draft_prefix_with_active_secret_order_runs_zero_llm(game, monkeypatch):
     db, state, _ = game
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
     who = "前缀零LLM承办官"
-    db.create_secret_order(state, who, "原密令", "查某亏空", [], deadline_months=0)
+    _create_secret_order(db, state, who, "原密令", "查某亏空", [], deadline_months=0)
     _forbid_post_prefix_extractors(monkeypatch)
 
     seed = "臣遵旨，当即清核辽饷。"
@@ -224,6 +236,7 @@ def test_tool_call_staged_new_secret_order_merges_emperor_not_reply(game, monkey
     pid = db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
         payload={
+            "covert_task": TYPED_COVERT_TASK,
             "title": "暗查辽饷",
             "content": "暗查辽饷侵冒。",
             "assignee": minister,
@@ -270,6 +283,7 @@ def test_tool_call_staged_secret_order_structured_merge_keeps_completion(game, m
     pid = db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
         payload={
+            "covert_task": TYPED_COVERT_TASK,
             "title": "密查关宁欠饷",
             "content": "密查关宁欠饷。\n方法：密访核册",
             "assignee": minister,
@@ -308,6 +322,7 @@ def test_tool_call_staged_secret_order_merge_updates_reply_assignee(game, monkey
     pid = db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
         payload={
+            "covert_task": TYPED_COVERT_TASK,
             "title": "暗查辽饷",
             "content": "暗查辽饷侵冒。",
             "assignee": minister,
@@ -349,6 +364,7 @@ def test_staged_secret_order_assignee_merge_uses_llm_field_contract(game, monkey
     pid = db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
         payload={
+            "covert_task": TYPED_COVERT_TASK,
             "title": "暗查辽饷",
             "content": "暗查辽饷侵冒。",
             "assignee": "王在晋",
@@ -392,6 +408,7 @@ def test_tool_call_staged_new_secret_order_merges_missing_metadata(game, monkeyp
     pid = db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
         payload={
+            "covert_task": TYPED_COVERT_TASK,
             "title": "暗查辽饷",
             "content": "暗查辽饷侵冒。",
             "assignee": minister,
@@ -422,6 +439,7 @@ def test_tool_call_staged_new_secret_order_keeps_explicit_zero_deadline(game, mo
     pid = db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
         payload={
+            "covert_task": TYPED_COVERT_TASK,
             "title": "暗查辽饷",
             "content": "暗查辽饷侵冒。",
             "assignee": minister,
@@ -448,7 +466,7 @@ def test_secret_order_tool_progress_stages_pending_action_not_direct_write(game)
     """function-call 密令进展工具也要过 pending 确认闸门，不得直接改真实表。"""
     db, state, content = game
     minister = "毕自严"
-    oid = db.create_secret_order(state, minister, "查辽饷", "查辽饷侵冒。", [], deadline_months=0)
+    oid = _create_secret_order(db, state, minister, "查辽饷", "查辽饷侵冒。", [], deadline_months=0)
     db.conn.execute("UPDATE secret_orders SET turn_issued=? WHERE id=?", (state.turn - 1, oid))
     db.conn.commit()
 
@@ -575,6 +593,7 @@ def test_api_channel_rejects_existing_pending_action(game, monkeypatch):
     db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
         payload={
+            "covert_task": TYPED_COVERT_TASK,
             "title": "暗查辽饷",
             "content": "暗查辽饷侵冒。",
             "assignee": minister,
@@ -607,6 +626,7 @@ def test_api_channel_uses_api_extractor_for_nonliteral_confirmation(game, monkey
     db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
         payload={
+            "covert_task": TYPED_COVERT_TASK,
             "title": "暗查辽饷",
             "content": "暗查辽饷侵冒。",
             "assignee": minister,
@@ -766,6 +786,7 @@ def test_mixed_directive_and_secret_confirmation_commits_both(game):
     db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
         payload={
+            "covert_task": TYPED_COVERT_TASK,
             "title": "暗查辽饷",
             "content": "暗查辽饷侵冒。",
             "assignee": minister,
@@ -926,6 +947,7 @@ def test_mixed_directive_secret_confirmation_does_not_commit_unmentioned_office(
     db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
         payload={
+            "covert_task": TYPED_COVERT_TASK,
             "title": "暗查辽饷",
             "content": "暗查辽饷侵冒。",
             "assignee": minister,
@@ -976,6 +998,7 @@ def test_duchayuan_does_not_confirm_directive_as_all_targets(game):
     db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
         payload={
+            "covert_task": TYPED_COVERT_TASK,
             "title": "暗查辽饷",
             "content": "暗查辽饷侵冒。",
             "assignee": minister,
@@ -1011,6 +1034,7 @@ def test_secret_confirmation_does_not_drop_office_pending(game):
     db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
         payload={
+            "covert_task": TYPED_COVERT_TASK,
             "title": "暗查辽饷",
             "content": "暗查辽饷侵冒。",
             "assignee": minister,
@@ -1045,6 +1069,7 @@ def test_mixed_directive_and_secret_rejection_drops_both(game):
     db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
         payload={
+            "covert_task": TYPED_COVERT_TASK,
             "title": "暗查辽饷",
             "content": "暗查辽饷侵冒。",
             "assignee": minister,
@@ -1079,6 +1104,7 @@ def test_mixed_directive_and_secret_bare_doubuzhun_drops_both(game):
     db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
         payload={
+            "covert_task": TYPED_COVERT_TASK,
             "title": "暗查辽饷",
             "content": "暗查辽饷侵冒。",
             "assignee": minister,
@@ -1230,6 +1256,7 @@ def test_confirmation_turn_ignores_same_turn_secret_order_tool_output(game, monk
     old_id = db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
         payload={
+            "covert_task": TYPED_COVERT_TASK,
             "title": "旧候选",
             "content": "旧候选内容",
             "assignee": minister,
@@ -1349,14 +1376,15 @@ def test_confirmation_commit_only_visible_pending_ids(game, monkeypatch):
     """同句新 stage 的动作即便同大臣同 kind，也不能被本句确认顺手提交。"""
     db, state, _content = game
     minister = "毕自严"
-    oid = db.create_secret_order(state, minister, "原标题", "原内容", [], deadline_months=0)
+    oid = _create_secret_order(db, state, minister, "原标题", "原内容", [], deadline_months=0)
     old_id = db.stage_pending_action(
         state.turn, kind="secret_order", action="更新", minister_name=minister, target_id=oid,
         payload={"new_title": "旧候选", "new_content": "旧候选内容", "deadline_months": 0},
     )
     new_id = db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
-        payload={"title": "同句新令", "content": "同句新令内容", "assignee": minister,
+        payload={
+            "covert_task": TYPED_COVERT_TASK,"title": "同句新令", "content": "同句新令内容", "assignee": minister,
                  "tags": [], "deadline_months": 0},
     )
     monkeypatch.setattr(
@@ -1390,14 +1418,15 @@ def test_confirmation_reject_only_visible_pending_ids(game, monkeypatch):
     """拒绝确认也只能丢本轮开始前可见的 pending，不能删同句新 stage。"""
     db, state, _content = game
     minister = "毕自严"
-    oid = db.create_secret_order(state, minister, "原标题", "原内容", [], deadline_months=0)
+    oid = _create_secret_order(db, state, minister, "原标题", "原内容", [], deadline_months=0)
     old_id = db.stage_pending_action(
         state.turn, kind="secret_order", action="更新", minister_name=minister, target_id=oid,
         payload={"new_title": "旧候选", "new_content": "旧候选内容", "deadline_months": 0},
     )
     new_id = db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
-        payload={"title": "同句新令", "content": "同句新令内容", "assignee": minister,
+        payload={
+            "covert_task": TYPED_COVERT_TASK,"title": "同句新令", "content": "同句新令内容", "assignee": minister,
                  "tags": [], "deadline_months": 0},
     )
     monkeypatch.setattr(
@@ -1424,47 +1453,6 @@ def test_confirmation_reject_only_visible_pending_ids(game, monkeypatch):
     ).fetchone()
     pending_ids = [p["id"] for p in db.list_pending_actions(state.turn)]
     assert pending_ids == [new_id]
-
-
-def test_legacy_registered_secret_order_marker_parser_restages(game):
-    """旧 __secret_order_registered__<id>__ marker 经 chat parser 也要反转回 pending。"""
-    db, state, content = game
-    minister = "毕自严"
-    oid = db.create_secret_order(state, minister, "暗查辽饷", "暗查辽饷侵冒。", [], deadline_months=0)
-
-    class Agent:
-        def run(self, _message):
-            return SimpleNamespace(
-                content="臣领旨，请陛下定夺。",
-                tools=[SimpleNamespace(
-                    tool_name="secret_order",
-                    result=f"__secret_order_registered__{oid}__密令已登记入档",
-                )],
-            )
-
-    class Registry:
-        def get(self, _character):
-            return Agent()
-
-        def build_draft_line(self):
-            return "无"
-
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-    sess.content = content
-    sess.registry = Registry()
-    sess.llm_config = SimpleNamespace(channel="api")
-    sess.temporary_characters = set()
-    sess._audience_prompt_for_message = lambda message: message
-    sess._start_cli_action_intent = lambda *_args, **_kwargs: None
-    sess._finish_cli_action_intent = lambda *_args, **_kwargs: None
-
-    result = GameSession.chat(sess, minister, "密令如下：暗查辽饷")
-
-    assert result.pending_action_id
-    assert db.list_secret_orders() == []
-    assert db.list_pending_actions(state.turn)[0]["kind"] == "secret_order"
 
 
 def test_secret_order_extract_fallback_preserves_structured_metadata(monkeypatch):
@@ -1613,7 +1601,8 @@ def test_api_tool_staged_secret_order_skips_prefix_fallback_extraction(game, mon
     minister = "魏忠贤"
     pid = db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
-        payload={"title": "暗查辽饷", "content": "暗查辽饷。", "assignee": minister},
+        payload={
+            "covert_task": TYPED_COVERT_TASK,"title": "暗查辽饷", "content": "暗查辽饷。", "assignee": minister},
     )
 
     def forbidden_resolve(*args, **kwargs):
@@ -1632,67 +1621,6 @@ def test_api_tool_staged_secret_order_skips_prefix_fallback_extraction(game, mon
     assert not result.get("pending_action_id")
     pending = db.list_pending_actions(state.turn)
     assert len(pending) == 1 and pending[0]["id"] == pid
-
-
-def test_legacy_registered_secret_order_marker_is_restaged(game):
-    """#413 review fix：旧 __secret_order_registered__ 直写结果也要转回 pending，不能绕过确认闸门。"""
-    db, state, _ = game
-    minister = "魏忠贤"
-    title, content = "暗查辽饷", "暗查辽饷侵冒。"
-    tags, deadline = ["辽饷"], 3
-    excluded_names, excluded_offices = ["毕自严"], ["户部"]
-    oid = db.create_secret_order(
-        state, minister, title, content, tags, deadline_months=deadline,
-        excluded_names=excluded_names, excluded_offices=excluded_offices,
-    )
-    s = _session(db, state)
-
-    pid = GameSession._stage_legacy_registered_secret_order(s, oid, minister)
-
-    assert pid
-    assert db.list_secret_orders() == []
-    pending = db.list_pending_actions(state.turn)
-    assert len(pending) == 1
-    assert pending[0]["id"] == pid
-    payload = json.loads(pending[0]["payload_json"])
-    assert payload["title"] == title
-    assert payload["content"] == content
-    assert payload["assignee"] == minister
-    assert payload["tags"] == tags
-    assert payload["deadline_months"] == deadline
-    # create 路径会按 exclusion 规范化扩展名单；至少保留显式传入项
-    assert set(excluded_names) <= set(payload["excluded_names"])
-    assert payload["excluded_offices"] == excluded_offices
-    assert not db.conn.execute(
-        "SELECT 1 FROM character_knowledge_sources WHERE source_id=?", (f"secret_order:{oid}",)
-    ).fetchone()
-
-
-def test_legacy_registered_secret_order_restaging_rolls_back_pending_if_delete_fails(game, monkeypatch):
-    """旧直写密令转 pending 时若删除源行失败，不得留下 duplicate pending 候选。"""
-    db, state, _ = game
-    minister = "魏忠贤"
-    oid = db.create_secret_order(state, minister, "暗查辽饷", "暗查辽饷侵冒。", ["辽饷"], deadline_months=3)
-    s = _session(db, state)
-    original_execute = db.conn.execute
-
-    def fail_delete(sql, *args, **kwargs):
-        if str(sql).lstrip().startswith("DELETE FROM secret_orders"):
-            raise RuntimeError("delete failed")
-        return original_execute(sql, *args, **kwargs)
-
-    monkeypatch.setattr(db.conn, "execute", fail_delete)
-
-    with pytest.raises(RuntimeError):
-        GameSession._stage_legacy_registered_secret_order(s, oid, minister)
-
-    monkeypatch.setattr(db.conn, "execute", original_execute)
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM pending_actions WHERE kind='secret_order'"
-    ).fetchone()[0] == 0
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM secret_orders WHERE id=?", (oid,)
-    ).fetchone()[0] == 1
 
 
 def test_noop_appointment_intent_is_not_staged(read_game, monkeypatch):
@@ -2639,7 +2567,7 @@ def test_conversation_update_lands_via_session_path(game, monkeypatch):
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
     who = "会话动作承办官"
-    oid = db.create_secret_order(state, who, "原标题", "原内容", ["甲"], deadline_months=0)
+    oid = _create_secret_order(db, state, who, "原标题", "原内容", ["甲"], deadline_months=0)
     # LLM 判意图：更新该密令（不走真 backend，直接喂结构化动作）
     monkeypatch.setattr(cb, "extract_minister_actions", lambda *a, **k: {
         "secret_action": "更新", "order_id": oid, "new_title": "改后标题",
@@ -2675,7 +2603,7 @@ def test_secret_conversation_actions_persist_complete_minister_reply(
     db, state, _content = game
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
     who = "长回话承办官"
-    oid = db.create_secret_order(state, who, "查核边饷", "逐项查核", [])
+    oid = _create_secret_order(db, state, who, "查核边饷", "逐项查核", [])
     if action == "记进展":
         db.conn.execute("UPDATE secret_orders SET turn_issued=? WHERE id=?", (state.turn - 1, oid))
         db.conn.commit()
@@ -2710,7 +2638,7 @@ def test_preclassified_secret_update_uses_reply_aware_extractor(game, monkeypatc
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
     who = "并发更新承办官"
-    oid = db.create_secret_order(state, who, "原标题", "原内容", [], deadline_months=0)
+    oid = _create_secret_order(db, state, who, "原标题", "原内容", [], deadline_months=0)
 
     def reply_aware_extract(player_message, reply, active, is_consort, llm_config=None):
         assert "臣补充" in reply
@@ -2759,7 +2687,7 @@ def test_runtime_cli_conversation_update_uses_configured_runner_without_env(game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
     who = "配置通道承办官"
-    oid = db.create_secret_order(state, who, "原标题", "原内容", [], deadline_months=0)
+    oid = _create_secret_order(db, state, who, "原标题", "原内容", [], deadline_months=0)
     calls = []
     canned = json.dumps({
         "密令动作": "更新",
@@ -2813,7 +2741,7 @@ def test_conversation_rush_skips_non_active(game, monkeypatch):
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
     who = "待核承办官"
-    oid = db.create_secret_order(state, who, "已结令", "内容", [], deadline_months=6)
+    oid = _create_secret_order(db, state, who, "已结令", "内容", [], deadline_months=6)
     db.conn.execute("UPDATE secret_orders SET status='failed' WHERE id=?", (oid,))
     db.conn.commit()
     monkeypatch.setattr(cb, "extract_minister_actions", lambda *a, **k: {
