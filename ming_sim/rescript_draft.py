@@ -237,25 +237,16 @@ def _project_issue_qualitatively(issue: object) -> Optional[Dict[str, object]]:
 
 
 def _project_region_targets(table: object) -> List[Dict[str, str]]:
-    """Project the simulator's typed region table into the option target catalog."""
-    if not isinstance(table, dict):
+    """Project the simulator's canonical typed region table into the target catalog."""
+    if table is None:
         return []
-    cols = table.get("cols")
-    rows = table.get("rows")
-    if not isinstance(cols, list) or not isinstance(rows, list):
-        return []
-    required = ("id", "name", "kind")
-    if any(field not in cols for field in required):
-        return []
-    indexes = {field: cols.index(field) for field in required}
-    targets: List[Dict[str, str]] = []
-    for row in rows:
-        if not isinstance(row, list) or any(indexes[field] >= len(row) for field in required):
-            continue
-        target = {field: str(row[indexes[field]] or "").strip() for field in required}
-        if all(target.values()):
-            targets.append(target)
-    return targets
+    cols = table["cols"]  # type: ignore[index]
+    rows = table["rows"]  # type: ignore[index]
+    indexes = {field: cols.index(field) for field in ("id", "name", "kind")}
+    return [
+        {field: str(row[index]).strip() for field, index in indexes.items()}
+        for row in rows
+    ]
 
 
 def build_rescript_draft_payload(
@@ -388,6 +379,18 @@ def validate_rescript_draft_items(
     return drafts
 
 
+def _assert_region_targets_grounded(
+    drafts: List[Dict[str, object]], region_target_ids: set[str]
+) -> None:
+    for draft in drafts:
+        for option in draft["options"]:  # type: ignore[union-attr]
+            if option["target_kind"] == "region" \
+                    and option["target_id"] not in region_target_ids:
+                raise ValueError(
+                    f"票拟 option.target_id 不在同批 region_targets：{option['target_id']!r}"
+                )
+
+
 def _board_issue_ids(active_issues: object) -> set[int]:
     ids: set[int] = set()
     if isinstance(active_issues, list):
@@ -446,9 +449,15 @@ def generate_rescript_draft(
         return None
     try:
         data = _parse_rescript_json_strict(raw)
+        region_targets = payload.get("region_targets")
+        region_target_ids = {
+            str(row["id"]) for row in region_targets
+            if isinstance(row, dict) and isinstance(row.get("id"), str)
+        } if isinstance(region_targets, list) else set()
         drafts = validate_rescript_draft_items(
             data, _board_issue_ids(payload.get("active_issues"))
         )
+        _assert_region_targets_grounded(drafts, region_target_ids)
     except (LLMContractError, ValueError) as exc:  # 解析/shape 缝：只收契约违约
         _degrade(exc)
         return None

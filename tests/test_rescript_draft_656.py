@@ -393,6 +393,27 @@ def test_payload_projects_consumable_region_targets_from_real_monthly_board(game
     }
     assert "ningyuan" not in targets
 
+    bad = dict(simulator_payload)
+    bad["regions"] = {"cols": ["id", "name", "kind"], "rows": [["liaodong"]]}
+    with pytest.raises(IndexError):
+        build_rescript_draft_payload(
+            state, "邸报", bad,
+            {"name": "首辅", "office": "内阁首辅", "faction": "阉党"},
+        )
+
+
+def test_generate_rejects_region_id_outside_same_batch_catalog(monkeypatch):
+    item = _legal_item()
+    item["options"][0]["target_id"] = "ningyuan"
+    monkeypatch.setattr(
+        rescript_mod, "run_agent_text",
+        lambda *a, **k: json.dumps({"items": [item]}, ensure_ascii=False),
+    )
+    assert generate_rescript_draft(object(), {
+        "active_issues": [],
+        "region_targets": [{"id": "liaodong", "name": "辽东 / 宁锦", "kind": "边镇"}],
+    }, 1) is None
+
 
 def test_payload_projection_without_active_issues_degrades_to_empty():
     from ming_sim.models import GameState
@@ -596,7 +617,12 @@ def test_settlement_persists_drafts_verbatim_and_survives_clear(game, monkeypatc
     _settle_after_narrative(
         state, db, None, None,
         decree_text="减赋诏", narrative=narrative,
-        simulator_payload={"active_issues": [{"issue_id": 42, "title": "陕西告饥"}], "transit_semantics": []},
+        simulator_payload={
+            "active_issues": [{"issue_id": 42, "title": "陕西告饥"}],
+            "regions": {"cols": ["id", "name", "kind"],
+                        "rows": [["shaanxi", "陕西", "布政司"]]},
+            "transit_semantics": [],
+        },
         relevant_memories=[], secret_orders={},
         before_turn=turn, _emit=lambda *a: None, content=content,
     )
@@ -733,7 +759,12 @@ def test_mixed_batch_shape_failure_degrades_whole_month(game, monkeypatch, tmp_p
     _settle_after_narrative(
         state, db, None, None,
         decree_text="诏", narrative="邸报",
-        simulator_payload={"active_issues": [{"issue_id": 42, "title": "陕西告饥"}], "transit_semantics": []},
+        simulator_payload={
+            "active_issues": [{"issue_id": 42, "title": "陕西告饥"}],
+            "regions": {"cols": ["id", "name", "kind"],
+                        "rows": [["shaanxi", "陕西", "布政司"]]},
+            "transit_semantics": [],
+        },
         relevant_memories=[], secret_orders={},
         before_turn=turn, _emit=lambda *a: None, content=content,
     )
