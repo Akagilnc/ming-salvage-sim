@@ -1229,6 +1229,14 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
         wait_pending_writes(game)
         assert int(game.state.metrics["国库"]) == treasury_before
         assert _army_row(game.db)["arrears"] == pytest.approx(arrears_before["arrears"])
+        from ming_sim.audience_night import get_open_night
+        night = get_open_night(game.db)
+        assert night is not None
+        approved_ids = {
+            int(row["id"])
+            for row in game.db.list_night_approved_pending(int(night["id"]))
+        }
+        assert pending_id not in approved_ids
 
         confirm = client.post(
             f"/api/ministers/{name}/chat",
@@ -1238,6 +1246,13 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
         wait_pending_writes(game)
         assert int(game.state.metrics["国库"]) == treasury_before
         assert _army_row(game.db)["arrears"] == pytest.approx(arrears_before["arrears"])
+        night = get_open_night(game.db)
+        assert night is not None
+        approved_ids = {
+            int(row["id"])
+            for row in game.db.list_night_approved_pending(int(night["id"]))
+        }
+        assert pending_id in approved_ids
 
         body = _post_issue_stream(
             client, expected_turn=turn_before, step="1503 issue/stream",
