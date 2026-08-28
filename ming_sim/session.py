@@ -574,6 +574,30 @@ def apply_appointment(
     return (name, displaced)
 
 
+def _typed_grant_candidate_present(
+    intent: Optional[Dict[str, Any]],
+    intent_candidates: Optional[List[Dict[str, Any]]],
+) -> bool:
+    """#1503：classifier 是否已给出可物化的 grant_allocation 候选。
+
+    真则显式拟旨前缀不得先落 generic special_decree，改由既有 grant 单轨成案。
+    """
+    import ming_sim.action_materialize as am  # catalog side-effect ok
+
+    valid = am.GRANT_ACTIONS - {"无"}
+
+    def _ok(candidate: Any) -> bool:
+        if not isinstance(candidate, dict):
+            return False
+        if str(candidate.get("kind") or "").strip() != "grant_allocation":
+            return False
+        return str(candidate.get("grant_action") or "").strip() in valid
+
+    if _ok(intent or {}):
+        return True
+    return any(_ok(c) for c in (intent_candidates or []))
+
+
 def coalesce_pending_action_id(prior: int, staged: int) -> int:
     """Same-turn tool aggregation: non-zero staged wins; zero must not erase prior success."""
     staged_id = int(staged or 0)
@@ -1181,11 +1205,12 @@ class GameSession:
     def _start_cli_action_intent(self, character: Character, message: str) -> Optional[Future]:
         """召对动作判断只读皇帝消息，可与大臣回话并发。
 
-        #1502：API 与 CLI 非前缀自然语言均并行提交既有 classifier；
-        显式前缀仍跳过（#344）。无可用通道时不启动。
+        #1502：API 与 CLI 自然语言并行提交既有 classifier。
+        #1503 / ADR 0028：显式拟旨前缀亦提交一次 typed classifier（载荷式成案）；
+        密令前缀仍跳过（权威路由，不跑其它分类器）。无可用通道时不启动。
         """
         from ming_sim.cli_backend import (
-            _DRAFT_PREFIXES, _SECRET_PREFIXES, classify_cli_action_intent,
+            _SECRET_PREFIXES, classify_cli_action_intent,
             cli_backend_from_env,
         )
         channel = (getattr(getattr(self, "llm_config", None), "channel", "") or "").strip().lower()
@@ -1194,7 +1219,8 @@ class GameSession:
             return None
         # CLI 动作分类器与大臣回话一律并发；不按 runner 退串行。
         text = (message or "").strip()
-        if text.startswith(_DRAFT_PREFIXES) or text.startswith(_SECRET_PREFIXES):
+        # 密令前缀 = 权威类别声明，不跑动作分类器；拟旨前缀见 #1503。
+        if text.startswith(_SECRET_PREFIXES):
             return None
         minister_name = character.name
         pend_for_minister = self.db.list_pending_actions(self.state.turn, minister_name=minister_name)
@@ -1628,7 +1654,11 @@ class GameSession:
                             result.next_minister = target.name
                         # #670 P6'/P7：拒入殿只不设 court_action/next_minister；闸文不进 LLM answer。
             elif tool_name == "propose_directive" or tool_result.startswith("__pending_directive__"):
-                if confirmation_turn or explicit_secret_prefix:
+                if (
+                    confirmation_turn
+                    or explicit_secret_prefix
+                    or _typed_grant_candidate_present(None, preclassified_intent)
+                ):
                     continue
                 args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
                 if not isinstance(args, dict):
@@ -1929,11 +1959,12 @@ class GameSession:
         minister_name = character.name
         reply = (answer or "").strip()
         llm_config = getattr(self, "llm_config", None)
-        # 显式前缀(拟旨如下:/密令如下:)= 皇帝已明示动作，由 resolve_minister_actions 零 LLM 落地。
-        # 单一真源在此前置判定，统一把门【所有】后置 LLM 抽取器（确认/密令/调教/拟旨/任免），
-        # 杜绝前缀路多跑任何 LLM extractor（#344 US3「按钮前缀路零 LLM」）。确认闸门尤其要跳过：
-        # 否则前缀消息在有 pending 待确认动作时既多跑 extract_confirmation_intent(LLM)，还可能被
-        # 误判「应允/拒绝」提前 return、把这道前缀拟旨/密令整个吞掉（确认句本无前缀，跳过无损）。
+        # 显式前缀(拟旨如下:/密令如下:)= 皇帝已明示动作类别。
+        # 后置 LLM 抽取器（确认/密令/调教/拟旨/任免）仍由本闸统一跳过（#344 US3）。
+        # #1503：拟旨前缀可携带**并发** typed classifier 候选；载荷式（grant_allocation）
+        # 走既有 stage_grant_allocation_candidate，不再先落 generic special_decree。
+        # 确认闸门仍跳过：否则前缀消息在有 pending 时既多跑 extract_confirmation_intent，
+        # 还可能被误判「应允/拒绝」提前 return、吞掉这道前缀拟旨/密令（确认句本无前缀）。
         message_text = (player_message or "").strip()
         explicit_prefixed = message_text.startswith(_DRAFT_PREFIXES) or message_text.startswith(_SECRET_PREFIXES)
         channel = (getattr(getattr(self, "llm_config", None), "channel", "") or "").strip().lower()
@@ -2200,7 +2231,8 @@ class GameSession:
             # 拒绝丢弃）针对的是窗前已暂存的 pending，保持可用（ship-pre r2 设计）。
             # 抽取器（LLM 调用）一并跳过。
             return out
-        needs_draft_fallback = not has_directive and message_text.startswith(_DRAFT_PREFIXES)
+        # generic 拟旨 fallback 必须等 typed materialize 的真实结果；候选形状不代表成案。
+        needs_draft_fallback = False
         needs_secret_fallback = (
             not has_directive
             and not out["secret_order_id"]
@@ -2274,6 +2306,23 @@ class GameSession:
             chat_turn_id=active_chat_turn_id,
         )
         run_materialize_pipeline(mat_ctx)
+        if (
+            not has_directive
+            and not out.get("pending_action_id")
+            and message_text.startswith(_DRAFT_PREFIXES)
+        ):
+            fallback = resolve_minister_actions(
+                reply, player_message, default_assignee=minister_name,
+                llm_config=llm_config,
+                dossier_candidates=self.db.list_referenceable_dossiers(
+                    minister_name, self.state.turn,
+                ),
+            )
+            if fallback["decree_text"]:
+                out["pending_action_id"] = self.db.stage_explicit_directive(
+                    self.state.turn, minister_name, fallback["decree_text"],
+                    mode=message_text,
+                )
         return out
 
     @staticmethod
@@ -3100,7 +3149,7 @@ class GameSession:
             self.db.confirm_directive(int(pending["id"]), self.state)
         # #658：Web/CLI free-form draft 在真实颁诏链进入唯一成案接缝（confirm/commit
         # 已各自 ensure；本口覆盖 add_directive 直落 draft 的路径，幂等）。
-        self.db.ensure_dossiers_for_draft_directives(self.state)
+        dossier_rejections = self.db.ensure_dossiers_for_draft_directives(self.state)
         directives = list(self.db.list_dossiered_draft_directives(self.state))
         # DB owner supplies the canonical read-only default-approval projection.
         # Negative preview ids participate in stale-decree fingerprinting without
@@ -3119,6 +3168,10 @@ class GameSession:
         # Pending non-directive actions (secret orders etc.) enter resolve_directives
         # so pre_settle owns materialization with the rest of the settlement spine.
         pending_action_due = bool(self.db.list_pending_actions(self.state.turn))
+        if not directives and dossier_rejections:
+            # #1591：草案的真实成案拒因优先于无关 pending 动作或既有结算工作。
+            # recovery/allow-empty 只豁免真正的无旨月，不得洗掉已存在的坏草案。
+            raise ValueError(dossier_rejections[-1])
         if not directives and not settlement_due and not pending_action_due:
             # 恢复态且有存诏：免草案要求（零草案 settling=driver 档/逃生口降级后是真实态，
             # 而 add 已冻结——硬要草案=循环死路，ship-pre r5）。directives 仅作非空哨兵。
