@@ -132,78 +132,26 @@ def test_xiexang_stages_structured_pay_payload(game):
     assert payload["account"] == "国库"
 
 
-def test_army_pay_missing_fields_fail_loud_at_admission(game, monkeypatch):
-    """显式拟旨 typed carrier 同时缺五项：一次收集、响亮失败、零 pending/案卷/账本写。"""
-    import types
-
-    import ming_sim.cli_backend as cb
-    from ming_sim.session import GameSession
-
-    db, state, content = game
-    actor = db.conn.execute(
-        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
-    ).fetchone()["name"]
-    character = content.characters[actor]
-    monkeypatch.setattr(cb, "extract_minister_actions", lambda *a, **k: {
-        "secret_action": "无", "order_id": 0, "new_title": "", "new_content": "",
-        "deadline_months": 0, "cultivate_skill": "", "cultivate_trait": "",
-    })
-    monkeypatch.setattr(cb, "extract_confirmation_intent", lambda *a, **k: "无")
-
-    treasury_before = int(state.metrics["国库"])
-    ledger_before = db.conn.execute("SELECT COUNT(*) AS n FROM economy_ledger").fetchone()["n"]
-    before_ids = {int(d["id"]) for d in db.list_decree_dossiers()}
-    before_pending = db.list_pending_actions(state.turn, minister_name=actor)
-    scripted = candidates_from_classifier_payload(
-        {"kind": "grant_allocation", "grant_action": "协饷"},
-        soft=False,
-    )
-    sess = types.SimpleNamespace(
-        db=db,
-        state=state,
-        content=content,
-        llm_config=types.SimpleNamespace(channel="cli"),
-        registry=None,
-    )
-    sess.apply_cli_conversation_actions = types.MethodType(
-        GameSession.apply_cli_conversation_actions, sess,
-    )
-    from ming_sim.action_materialize import IncompleteXiexangPayloadError
-
-    with pytest.raises(IncompleteXiexangPayloadError) as caught:
-        sess.apply_cli_conversation_actions(
-            character,
-            "拟旨如下：准拨军饷。",
-            "臣遵旨。请拨军饷。钦此。",
-            has_directive=False,
-            secret_order_id=None,
-            preclassified_intent=scripted,
-        )
-    assert caught.value.missing_fields == (
-        "amount", "account", "purpose", "target_kind", "target_id",
-    )
-    after_pending = db.list_pending_actions(state.turn, minister_name=actor)
-    assert len(after_pending) == len(before_pending)
-    assert {int(d["id"]) for d in db.list_decree_dossiers()} == before_ids
-    assert int(state.metrics["国库"]) == treasury_before
-    ledger_after = db.conn.execute("SELECT COUNT(*) AS n FROM economy_ledger").fetchone()["n"]
-    assert ledger_after == ledger_before
-
-
-def test_create_decree_dossier_xiexang_missing_five_fields_zero_writes(game):
-    """直接 admission：create_decree_dossier 同时缺五项一次 typed 聚合，零案卷/账本/国库写。"""
+def test_army_pay_missing_fields_fail_loud_at_admission(game):
+    """真实成案 admission 同时缺五项：一次 typed 聚合，案卷/账本/国库零写。"""
     db, state, content = game
     treasury_before = int(state.metrics["国库"])
     ledger_before = db.conn.execute("SELECT COUNT(*) AS n FROM economy_ledger").fetchone()["n"]
     before_ids = {int(d["id"]) for d in db.list_decree_dossiers()}
+    candidate_id = db.stage_pending_action(
+        state.turn, "directive", "拟旨", "兵部尚书",
+        {"text": "拟旨如下：准拨军饷。"},
+    )
     from ming_sim.action_materialize import IncompleteXiexangPayloadError
 
     with pytest.raises(IncompleteXiexangPayloadError) as caught:
-        db.create_decree_dossier(
-            state,
-            action_type="grant_allocation",
-            decree_text="拟旨如下：准拨军饷。",
-            payload={"kind": "grant_allocation", "grant_action": "协饷"},
+        db.update_directive_candidate(
+            candidate_id,
+            {
+                "text": "拟旨如下：准拨军饷。",
+                "dossier_action_type": "grant_allocation",
+                "grant_action": "协饷",
+            },
         )
     assert caught.value.missing_fields == (
         "amount", "account", "purpose", "target_kind", "target_id",
