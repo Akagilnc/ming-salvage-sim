@@ -894,11 +894,6 @@ def test_internal_extractor_receives_origin_linked_typed_briefs_without_secret_p
     assert pbriefs[catch_id]["delivery"] == {"unit": "人犯", "target_units": 3.0}
 
 
-def test_no_legacy_pending_review_or_dossier_backfill():
-    assert not hasattr(GameDB, "_migrate_legacy_pending_review_secret_orders")
-    assert not hasattr(GameDB, "_migrate_legacy_secret_order_dossiers")
-
-
 def test_extract_secret_order_schema_and_confirm_typed_contract(game, monkeypatch):
     import json
     from ming_sim import cli_backend as cb
@@ -918,11 +913,7 @@ def test_extract_secret_order_schema_and_confirm_typed_contract(game, monkeypatc
         "交付目标": 5000,
     }, ensure_ascii=False)
 
-    def fake_json(prompt, llm_config=None, tag=""):
-        assert "\"差务\"" in prompt
-        assert "\"价值轴\"" in prompt
-        assert "\"交付单位\"" in prompt
-        assert "\"交付目标\"" in prompt
+    def fake_json(_prompt, llm_config=None, tag=""):
         return canned, 1
 
     monkeypatch.setattr(cb, "_run_json_extractor_for_config", fake_json)

@@ -512,9 +512,7 @@ def build_secret_covert_effect_briefs(db: Any, orders: Sequence[Mapping[str, obj
         )
         delivery = contract.get("delivery") if isinstance(contract.get("delivery"), Mapping) else {}
         unit = str(delivery.get("unit") or "")
-        fields = canonical_fields_for_delivery(
-            unit=unit, kind=str(contract.get("kind") or ""),
-        )
+        fields = canonical_fields_for_delivery(unit=unit)
         owner = "internal"
         if fields == ["人物变更"]:
             owner = "personnel_secret"
@@ -534,9 +532,8 @@ def build_secret_covert_effect_briefs(db: Any, orders: Sequence[Mapping[str, obj
     return out
 
 
-def canonical_fields_for_delivery(*, unit: object = None, kind: object = None) -> List[str]:
+def canonical_fields_for_delivery(*, unit: object = None) -> List[str]:
     """差务可数单位 → 既有 extractor 字段/applier，不发明第三轨。"""
-    del kind
     u = str(unit or "").strip()
     if u in {"两", "银两", "饷银"}:
         return ["economy_moves"]
@@ -561,18 +558,10 @@ def originated_quantity_this_turn(
     unit = ""
     if isinstance(delivery, Mapping):
         unit = str(delivery.get("unit") or "")
-    kind = str((contract or {}).get("kind") or "") if isinstance(contract, Mapping) else ""
-    fields = canonical_fields_for_delivery(unit=unit, kind=kind)
+    fields = canonical_fields_for_delivery(unit=unit)
     qty = 0.0
     if "economy_moves" in fields:
         for item in db.list_economy_moves_for_dossier(did):
-            if int(item.get("turn") or 0) == current:
-                try:
-                    qty += abs(float(item.get("delta") or 0))
-                except (TypeError, ValueError):
-                    continue
-    if "fiscal_changes" in fields:
-        for item in db.list_fiscal_effects_for_dossier(did):
             if int(item.get("turn") or 0) == current:
                 try:
                     qty += abs(float(item.get("delta") or 0))
