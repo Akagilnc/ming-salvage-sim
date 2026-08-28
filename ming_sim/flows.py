@@ -483,12 +483,14 @@ def compute_budget_lines(
         army_pay_lines = [
             {
                 "budget_key": "army_pay",
+                "budget_part": "central",
                 "name": "中央军饷拟拨",
                 "amount": int(sum(max(0.0, due) for due in central_due_by_army.values())),
                 "note": "中央承担份额拟拨；不含未来转运损耗",
             },
             {
                 "budget_key": "army_pay",
+                "budget_part": "jingyun",
                 "name": "京运补拟拨",
                 "amount": int(sum(_substrate_hub_jingyun_due_by_region(db).values())),
                 "note": "各省京运补拟拨；不含未来转运损耗",
