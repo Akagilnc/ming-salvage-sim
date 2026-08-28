@@ -6643,11 +6643,15 @@ class GameDB:
             return None
         hub_debit = self.conn.execute(
             """
-            SELECT COALESCE(SUM(-delta), 0) AS amount
+            SELECT turn, COALESCE(SUM(-delta), 0) AS amount
             FROM economy_ledger
-            WHERE turn = ? AND account = '国库' AND category = '边饷hub'
-            """,
-            (state.turn,),
+            WHERE account = '国库' AND category = '边饷hub'
+              AND turn = (
+                SELECT MAX(turn) FROM economy_ledger
+                WHERE account = '国库' AND category = '边饷hub'
+              )
+            GROUP BY turn
+            """
         ).fetchone()
         containers = self.conn.execute(
             """
@@ -6656,9 +6660,10 @@ class GameDB:
             """
         ).fetchall()
         values = {str(row["key"]): float(row["value"] or 0) for row in containers}
-        if not int(hub_debit["amount"] or 0) and len(values) != 3:
+        if hub_debit is None or len(values) != 3:
             return None
         return {
+            "settled_turn": int(hub_debit["turn"]),
             "treasury_disbursed": int(hub_debit["amount"] or 0),
             "actual_arrived": int(
                 values.get("hub_京运实拨", 0) + values.get("hub_中央军饷实拨", 0)

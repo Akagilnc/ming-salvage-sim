@@ -1373,6 +1373,8 @@ class WebGame:
             ]
             account["movements"] = movements
             account["movements_total"] = sum(m["delta"] for m in movements)
+        # #1366：结算后的 typed 玩家结果；treasury_report 与 Web 共用同一 DB 投影。
+        budget["settled_army_pay"] = self.db.treasury_hub_result(self.state)
         return budget
 
     def ending_payload(self) -> Optional[Dict[str, Any]]:
