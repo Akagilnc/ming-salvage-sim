@@ -33,8 +33,19 @@ from ming_sim.db import GameDB
 from ming_sim.decree import pre_settle, reload_state_from_db, settle_with_delta
 from ming_sim.registry import MinisterRegistry
 from ming_sim.session import GameSession, TurnPhase, _pending_action_failure_payload
-from tests.dossier_test_helpers import TYPED_COVERT_TASK, promulgate_proposed_appointments
+from tests.dossier_test_helpers import promulgate_proposed_appointments
 from tests.conftest import covering_monthly_extract
+
+
+LIAO_PAY_COvERT_TASK = {
+    "kind": "核发辽饷",
+    "axes": ["实务事功"],
+    "direction": 1,
+    "delivery": {
+        "unit": "万两", "target_units": 1.0,
+        "purpose": "辽饷", "category": "军饷", "account": "国库",
+    },
+}
 
 
 def _canned_no_edict_settlement(monkeypatch):
@@ -313,6 +324,7 @@ def test_silent_new_secret_order_lands_at_checkpoint_without_pending_visibility(
             "assignee": name,
             "tags": ["辽饷"],
             "deadline_months": 3,
+            "covert_task": LIAO_PAY_COvERT_TASK,
         })
 
     assert db.list_secret_orders() == []
@@ -505,7 +517,7 @@ def test_commit_rejects_blank_new_secret_order_payload(game):
     db, state, _ = game
     pid = db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name="魏忠贤", target_id=None,
-        payload={"title": "", "content": "", "assignee": "魏忠贤", "tags": [], "deadline_months": 0},
+        payload={"title": "", "content": "", "assignee": "魏忠贤", "tags": [], "deadline_months": 0, "covert_task": LIAO_PAY_COvERT_TASK},
     )
 
     applied = db.commit_pending_actions(state)
@@ -604,7 +616,7 @@ def test_advance_without_edict_commits_staged(game, monkeypatch):
     name = _active_minister_name(db, content)
     oid = db.create_secret_order(
         state, name, "原标题", "原内容", [], deadline_months=0,
-        covert_task=TYPED_COVERT_TASK,
+        covert_task=LIAO_PAY_COvERT_TASK,
     )
     db.stage_pending_action(state.turn, kind="secret_order", action="更新",
                             minister_name=name, target_id=oid,
@@ -726,7 +738,7 @@ def test_pending_actions_endpoint_hides_new_secret_order_candidates(game, monkey
         state.turn, kind="secret_order", action="新建", minister_name=name,
         target_id=None,
         payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
-                 "tags": [], "deadline_months": 0})
+                 "tags": [], "deadline_months": 0, "covert_task": LIAO_PAY_COvERT_TASK})
     monkeypatch.setattr(web_app, "get_game", lambda: types.SimpleNamespace(db=db, state=state))
 
     listed = asyncio.run(web_app.api_pending_actions())
@@ -751,7 +763,7 @@ def test_web_advance_without_edict_lands_hidden_pending_secret_order(game, monke
             "assignee": name,
             "tags": ["辽饷"],
             "deadline_months": 3,
-            "covert_task": TYPED_COVERT_TASK,
+            "covert_task": LIAO_PAY_COvERT_TASK,
         },
     )
     _canned_no_edict_settlement(monkeypatch)
@@ -1437,7 +1449,7 @@ def test_dialogue_affirm_secret_order_landing_failure_is_reported(game, monkeypa
     pending_id = db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
         payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
-                 "tags": [], "deadline_months": 0},
+                 "tags": [], "deadline_months": 0, "covert_task": LIAO_PAY_COvERT_TASK},
     )
 
     monkeypatch.setattr(cb, "_run_backend_for_config",
@@ -1465,7 +1477,7 @@ def test_retry_failed_secret_order_reuses_stored_payload(game):
     pending_id = db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
         payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
-                 "tags": ["辽饷"], "deadline_months": 0},
+                 "tags": ["辽饷"], "deadline_months": 0, "covert_task": LIAO_PAY_COvERT_TASK},
     )
     db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
     db.conn.commit()
@@ -1490,7 +1502,7 @@ def test_retry_failed_secret_order_rejects_settlement_recovery_phase(game):
     pending_id = db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
         payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
-                 "tags": ["辽饷"], "deadline_months": 0},
+                 "tags": ["辽饷"], "deadline_months": 0, "covert_task": LIAO_PAY_COvERT_TASK},
     )
     db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
     db.conn.commit()
@@ -1516,6 +1528,7 @@ def test_retry_failed_secret_order_status_failure_rolls_back_created_order(game,
             "assignee": name,
             "tags": ["辽饷"],
             "deadline_months": 0,
+            "covert_task": LIAO_PAY_COvERT_TASK,
         },
     )
     db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
@@ -1548,6 +1561,7 @@ def test_retry_failed_secret_order_apply_exception_rolls_back_side_effects(game,
             "assignee": name,
             "tags": ["辽饷"],
             "deadline_months": 0,
+            "covert_task": LIAO_PAY_COvERT_TASK,
         },
     )
     db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
@@ -1581,6 +1595,7 @@ def test_commit_pending_action_false_rolls_back_side_effects(game, monkeypatch):
             "assignee": name,
             "tags": ["辽饷"],
             "deadline_months": 0,
+            "covert_task": LIAO_PAY_COvERT_TASK,
         },
     )
 
@@ -1612,6 +1627,7 @@ def test_retry_failed_secret_order_false_rolls_back_side_effects(game, monkeypat
             "assignee": name,
             "tags": ["辽饷"],
             "deadline_months": 0,
+            "covert_task": LIAO_PAY_COvERT_TASK,
         },
     )
     db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
@@ -1705,6 +1721,7 @@ def test_retry_api_retire_failure_rolls_back_created_order(game, monkeypatch):
             "assignee": name,
             "tags": ["辽饷"],
             "deadline_months": 0,
+            "covert_task": LIAO_PAY_COvERT_TASK,
         },
     )
     db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
@@ -1737,7 +1754,7 @@ def test_retry_failed_secret_order_refresh_failure_does_not_duplicate(game):
     pending_id = db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
         payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
-                 "tags": [], "deadline_months": 0},
+                 "tags": [], "deadline_months": 0, "covert_task": LIAO_PAY_COvERT_TASK},
     )
     db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
     db.conn.commit()
@@ -1764,7 +1781,7 @@ def test_retry_failed_secret_order_retires_confirmation_chat_undo(game):
     pending_id = db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
         payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
-                 "tags": [], "deadline_months": 0},
+                 "tags": [], "deadline_months": 0, "covert_task": LIAO_PAY_COvERT_TASK},
     )
 
     chat_turn_id = db.create_chat_turn(state, name, "sess-retry-undo", 0)
@@ -1804,7 +1821,7 @@ def test_retry_failed_secret_order_retires_creation_and_confirmation_chat_undo(g
     pending_id = db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
         payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
-                 "tags": [], "deadline_months": 0},
+                 "tags": [], "deadline_months": 0, "covert_task": LIAO_PAY_COvERT_TASK},
     )
     db.record_chat_turn_rollback_diffs(create_turn_id, before_create, db.capture_chat_rollback_snapshot())
 
@@ -1844,7 +1861,7 @@ def test_retry_pending_action_endpoint_returns_fresh_undo_state(game, monkeypatc
     pending_id = db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
         payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
-                 "tags": [], "deadline_months": 0},
+                 "tags": [], "deadline_months": 0, "covert_task": LIAO_PAY_COvERT_TASK},
     )
     chat_turn_id = db.create_chat_turn(state, name, "sess-retry-api", 0)
     db.update_chat_turn_messages(
@@ -1933,7 +1950,7 @@ def test_failed_secret_order_does_not_block_later_audience(game, monkeypatch):
     db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
         payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
-                 "tags": [], "deadline_months": 0},
+                 "tags": [], "deadline_months": 0, "covert_task": LIAO_PAY_COvERT_TASK},
     )
     db.conn.execute("UPDATE pending_actions SET status='failed'")
     db.conn.commit()
@@ -1959,7 +1976,7 @@ def test_unresolved_failed_secret_order_is_ignored_after_turn_boundary(game, mon
     pending_id = db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
         payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
-                 "tags": [], "deadline_months": 0},
+                 "tags": [], "deadline_months": 0, "covert_task": LIAO_PAY_COvERT_TASK},
     )
     db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
     db.conn.commit()
@@ -1982,7 +1999,7 @@ def test_default_approval_secret_order_failure_surfaces_after_turn_boundary(game
     pending_id = db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
         payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
-                 "tags": [], "deadline_months": 0},
+                 "tags": [], "deadline_months": 0, "covert_task": LIAO_PAY_COvERT_TASK},
     )
     original_create = db.create_secret_order
 
@@ -2016,7 +2033,7 @@ def test_retry_failed_secret_order_preserves_original_issue_turn(game):
     pending_id = db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
         payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
-                 "tags": [], "deadline_months": 3},
+                 "tags": [], "deadline_months": 3, "covert_task": LIAO_PAY_COvERT_TASK},
     )
     db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
     db.conn.commit()
@@ -2041,7 +2058,7 @@ def test_successful_secret_order_confirmation_stays_quiet(game, monkeypatch):
     db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
         payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
-                 "tags": [], "deadline_months": 0},
+                 "tags": [], "deadline_months": 0, "covert_task": LIAO_PAY_COvERT_TASK},
     )
 
     monkeypatch.setattr(cb, "_run_backend_for_config",

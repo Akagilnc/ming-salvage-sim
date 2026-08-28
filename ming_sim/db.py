@@ -18596,9 +18596,13 @@ class GameDB:
                 origin_mid = self._parse_origin_chat_message_id(payload)
                 from ming_sim.covert_progress import build_covert_task_contract, covert_task_from_payload
                 raw_task = covert_task_from_payload(payload) or payload.get("covert_task")
-                frozen_task = None
-                if raw_task:
-                    frozen_task = build_covert_task_contract(covert_task=raw_task)
+                # Real producers reject incomplete extraction before staging. Keep
+                # pre-contract pending rows usable for non-delivery lifecycle paths;
+                # when typed fields are present, freeze and validate them here.
+                frozen_task = (
+                    build_covert_task_contract(covert_task=raw_task)
+                    if raw_task else None
+                )
                 order_id = self.create_secret_order(
                     state, assignee, title, content_text, tags, deadline_months=deadline,
                     excluded_names=excluded, excluded_offices=excluded_offices,
@@ -21735,7 +21739,10 @@ class GameDB:
             if source_row is not None:
                 source_chat_turn_id = int(source_row["id"])
         from ming_sim.covert_progress import CONTRACT_KEY, build_covert_task_contract
-        covert_contract = build_covert_task_contract(covert_task=covert_task)
+        covert_contract = (
+            build_covert_task_contract(covert_task=covert_task)
+            if covert_task is not None else None
+        )
         with atomic(self):
             cur = self.conn.execute(
                 """
@@ -21766,7 +21773,8 @@ class GameDB:
                 "excluded_names": list(raw_excluded_names),
                 "excluded_offices": list(excluded_offices),
             }
-            payload[CONTRACT_KEY] = covert_contract
+            if covert_contract is not None:
+                payload[CONTRACT_KEY] = covert_contract
             dossier_id = self.create_decree_dossier(
                 state,
                 action_type="secret_order",
@@ -21816,6 +21824,7 @@ class GameDB:
         tags: List[str],
         importance: int = 4,
         deadline_months: int = 0,
+        covert_task: Optional[Mapping[str, object]] = None,
     ) -> Tuple[int, bool]:
         """同一承办大臣已有 active 密令 → 更新其要旨(title/content/tags/限期)并记一条
         「奉旨更新」进展；否则新建。返回 (order_id, was_update)。
@@ -21827,7 +21836,8 @@ class GameDB:
         ).fetchone()
         if existing is None:
             oid = self.create_secret_order(
-                state, minister_name, title, content, tags, importance, deadline_months
+                state, minister_name, title, content, tags, importance, deadline_months,
+                covert_task=covert_task,
             )
             return oid, False
         oid = int(existing["id"])
