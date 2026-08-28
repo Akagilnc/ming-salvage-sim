@@ -259,11 +259,8 @@ def test_discover_open_enter_tasks_restores_yueci_summon_method(game):
     assert not any(f"method={an.METHOD_XUANRU}" in b and "enter" in b for b in bodies), bodies
 
 
-def test_discover_open_enter_tasks_discovers_handoff_when_prior_speaker_present(game):
-    """#1585: 当 A 在场且 B 宣入时，discover_open_enter_tasks 同桶发现交接+入殿任务。
-
-    二者同 ChatTurnSceneRegistry bucket 并行生成，join 回填。
-    """
+def test_open_enter_registry_persists_handoff_and_soft_segment(game):
+    """#1585: 真实 attach→registry→persist→scroll 链保留 A 并切到 B。"""
     db, state, content = game
     first_minister = _active_minister(db, content)
     # A (first_minister) 先入殿并奏对。
@@ -276,14 +273,6 @@ def test_discover_open_enter_tasks_discovers_handoff_when_prior_speaker_present(
         db, state, second_minister, agno_session_id="b-turn", agno_runs_before=0,
     )
 
-    # 发现任务：应同时找到 enter + handoff。
-    tasks = bo.discover_open_enter_tasks(
-        db, state, minister_name=second_minister, chat_turn_id=ctid,
-    )
-    beat_kinds = [inp.beat_kind for _eid, inp in tasks]
-    assert bo.BEAT_ENTER in beat_kinds, beat_kinds
-    assert bo.BEAT_HANDOFF in beat_kinds, beat_kinds
-
     # 回显生成器：输出 beat_kind + person_name。
     def echo(inputs: BeatInputs) -> str:
         return f"kind={inputs.beat_kind}|person={inputs.person_name}"
@@ -293,14 +282,28 @@ def test_discover_open_enter_tasks_discovers_handoff_when_prior_speaker_present(
         db, state, minister_name=second_minister, chat_turn_id=ctid,
         beat_generator=echo,
     )
-    bodies = [body for _eid, body in registry.join(ctid)]
-    # 交接 body 由 A 视角生成（person_name=A = first_minister）。
-    handoff_bodies = [b for b in bodies if "kind=handoff" in b]
-    enter_bodies = [b for b in bodies if "kind=enter" in b]
-    assert len(handoff_bodies) == 1, bodies
-    assert len(enter_bodies) == 1, bodies
-    assert f"person={first_minister}" in handoff_bodies[0], handoff_bodies
-    assert f"person={second_minister}" in enter_bodies[0], enter_bodies
+    generated = registry.join(ctid)
+    bo.persist_chat_turn_scene(db, generated)
+    db.conn.commit()
+
+    scroll = an.read_night_scroll(db, night_id)
+    scenes = [item for item in scroll if item["beat"] in {"handoff", "entrance"}]
+    assert [(item["beat"], item["content"]) for item in scenes[-2:]] == [
+        ("handoff", f"kind=handoff|person={first_minister}"),
+        ("entrance", f"kind=enter|person={second_minister}"),
+    ]
+    dividers = [item for item in scroll if item["beat"] == "divider"]
+    assert [item["speaker"] for item in dividers].count(second_minister) == 1
+    assert dividers[-1]["speaker"] == second_minister
+    assert {first_minister, second_minister} <= an.present_names_at(db, night_id)
+
+    handoff = next(
+        entry for entry in an.list_ledger(db, night_id)
+        if an.TAG_HANDOFF in (entry.get("tags") or [])
+    )
+    assert an.TAG_STAY_ATTEND in handoff["tags"]
+    assert an.TAG_EXIT not in handoff["tags"]
+    assert int(handoff["origin_chat_turn_id"]) == int(ctid)
 
 
 def test_start_open_enter_claims_atomically_under_concurrent_calls(game, monkeypatch):
