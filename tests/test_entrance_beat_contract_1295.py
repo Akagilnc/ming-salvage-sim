@@ -35,7 +35,7 @@ def _load_fresh_beat_module(monkeypatch, *, capture: dict):
 
     class _FakeAgent:
         def __init__(self, **kwargs):
-            capture.setdefault("agents", []).append(kwargs)
+            pass
 
         def run(self, prompt):
             capture.setdefault("prompts", []).append(prompt)
