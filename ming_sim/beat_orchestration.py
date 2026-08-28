@@ -36,6 +36,7 @@ from ming_sim.audience_night import (
     METHOD_XUANRU,
     SUMMON_METHODS,
     TAG_ENTER,
+    TAG_HANDOFF,
     TAG_OPEN_NIGHT,
     get_night,
     list_chat_turns_for_night,
@@ -47,6 +48,7 @@ BEAT_OPEN = "open"
 BEAT_ENTER = "enter"
 BEAT_EXIT = "exit"
 BEAT_CLOSE = "close"
+BEAT_HANDOFF = "handoff"
 
 # 见闻供给接口：character_name -> 角色见闻投影（get_character_knowledge 契约的 dict）。
 # 空名返回 {}。默认实现包 get_character_knowledge（#489 底座）；可注入 fake 做切片验收。
@@ -196,7 +198,7 @@ def assemble_beat_inputs(
     """
     provider = knowledge_provider or _default_knowledge_provider(db, state)
 
-    if beat_kind in (BEAT_ENTER, BEAT_EXIT):
+    if beat_kind in (BEAT_ENTER, BEAT_EXIT, BEAT_HANDOFF):
         subject = str(person_name or "").strip()
     else:
         # 夜级框架 beat（开夜/收夜）：视角取常在员额首席（王承恩），无则空。
@@ -215,7 +217,7 @@ def assemble_beat_inputs(
     characterization = ""
     prior_appearances: Tuple[str, ...] = ()
     prior_bound = int(before_entry_id or 0)
-    if beat_kind in (BEAT_ENTER, BEAT_EXIT):
+    if beat_kind in (BEAT_ENTER, BEAT_EXIT, BEAT_HANDOFF):
         characterization = _characterization(db, person_name)
         prior_appearances = _person_prior_appearances(
             db, night_id, person_name, before_entry_id=prior_bound,
@@ -243,7 +245,7 @@ def assemble_beat_inputs(
         beat_kind=beat_kind,
         time_of_day=str(time_of_day or ""),
         location=str(location or ""),
-        person_name=str(person_name or "") if beat_kind in (BEAT_ENTER, BEAT_EXIT) else "",
+        person_name=str(person_name or "") if beat_kind in (BEAT_ENTER, BEAT_EXIT, BEAT_HANDOFF) else "",
         characterization=characterization,
         summon_method=str(summon_method or "") if beat_kind == BEAT_ENTER else "",
         perspectival_world=perspectival_world,
@@ -254,6 +256,36 @@ def assemble_beat_inputs(
         ),
         audience_scenes=audience_scenes,
         reign_period_label=era_label,
+    )
+
+
+def assemble_handoff_beat_inputs(
+    db: Any,
+    state: Any,
+    *,
+    night: Dict[str, Any],
+    prior_speaker: str,
+    new_speaker: str,
+    night_id: int,
+    summon_method: str = "",
+    knowledge_provider: Optional[KnowledgeProvider] = None,
+    before_entry_id: int = 0,
+) -> BeatInputs:
+    """组装交接（handoff）beat 的 in-world 输入。
+
+    当已开夜中前一位奏对者 A 仍在场时，新召入 B 须补一笔「让出当前奏对位」的
+    持久可撤回叙事旁白（TAG_STAY_ATTEND，不写 TAG_EXIT、不改 presence）。
+    handoff body 由 A 视角生成（A 交出殿上讲述权），person_name=A。
+    """
+    return assemble_beat_inputs(
+        db, state, beat_kind=BEAT_HANDOFF,
+        time_of_day=str(night.get("time_of_day") or ""),
+        location=str(night.get("location") or ""),
+        night_id=int(night.get("id") or 0) or night_id,
+        person_name=prior_speaker,
+        summon_method=str(summon_method or ""),
+        knowledge_provider=knowledge_provider,
+        before_entry_id=before_entry_id,
     )
 
 
@@ -440,6 +472,39 @@ def generate_enter_beat_body(
     return run_beat_generator(beat_generator, inputs)
 
 
+def generate_handoff_beat_body(
+    db: Any,
+    state: Any,
+    *,
+    night: Dict[str, Any],
+    prior_speaker: str,
+    new_speaker: str,
+    night_id: int,
+    summon_method: str = "",
+    beat_generator: Optional[BeatGenerator] = None,
+    knowledge_provider: Optional[KnowledgeProvider] = None,
+    before_entry_id: int = 0,
+) -> str:
+    """交接（handoff）beat 正文：A 在场时 B 宣入，A 让出奏对位。
+
+    不写 TAG_EXIT、不改 presence——A 仍在殿。body 由 A 视角生成。
+    无生成器返空（调用方沿用确定性兜底或留空）。
+    """
+    if beat_generator is None:
+        return ""
+    inputs = assemble_beat_inputs(
+        db, state, beat_kind=BEAT_HANDOFF,
+        time_of_day=str(night.get("time_of_day") or ""),
+        location=str(night.get("location") or ""),
+        night_id=int(night.get("id") or 0) or night_id,
+        person_name=prior_speaker,
+        summon_method=str(summon_method or ""),
+        knowledge_provider=knowledge_provider,
+        before_entry_id=before_entry_id,
+    )
+    return run_beat_generator(beat_generator, inputs)
+
+
 def generate_exit_beat_body(
     db: Any,
     state: Any,
@@ -547,6 +612,23 @@ def discover_open_enter_tasks(
             person_name=minister_name, summon_method=summon_method,
             before_entry_id=enter_id,
         )))
+        # #1585：发现同轮交接任务（A 在场时 B 宣入），与 enter 同桶并行生成。
+        handoff_entry = next(
+            (e for e in entries
+             if int(e.get("origin_chat_turn_id") or 0) == int(chat_turn_id)
+             and TAG_HANDOFF in (e.get("tags") or [])),
+            None,
+        )
+        if handoff_entry is not None:
+            handoff_id = int(handoff_entry["id"])
+            handoff_person = (handoff_entry.get("person_names") or [minister_name])[0]
+            tasks.append((handoff_id, assemble_beat_inputs(
+                db, state, beat_kind=BEAT_HANDOFF,
+                time_of_day=str(night.get("time_of_day") or ""),
+                location=str(night.get("location") or ""), night_id=night_id,
+                person_name=handoff_person, summon_method=summon_method,
+                before_entry_id=handoff_id,
+            )))
     return tasks
 
 
