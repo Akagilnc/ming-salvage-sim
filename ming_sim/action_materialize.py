@@ -1262,11 +1262,46 @@ def stage_grant_allocation_candidate(
     action = str(grant_action or "").strip()
     target = str(target_id or "").strip()
     kind = str(target_kind or "").strip()
-    if not target or not kind or action not in (GRANT_ACTIONS - {"无"}):
-        return 0
     body = str(text or "").strip()
-    if not body:
+    if action not in (GRANT_ACTIONS - {"无"}):
         return 0
+    # #1503：协饷必填字段在入 pending 前 fail-loud——不得因缺 target 早退成
+    # 「跳过 generic 又不成案」的静默丢旨（typed 候选占位后的失败路径）。
+    if action == "协饷":
+        try:
+            n = int(amount or 0)
+        except (TypeError, ValueError):
+            n = 0
+        if n <= 0:
+            raise ValueError("协饷旨意缺少正数 amount（不猜散文）")
+        if account not in {"国库", "内库"}:
+            raise ValueError("协饷旨意缺少合法 account（不猜散文）")
+        if not kind:
+            kind = "army"
+        if kind != "army":
+            raise ValueError(
+                f"协饷旨意 target_kind 须为 army，不得为 {kind!r}（不猜散文）"
+            )
+        if not target:
+            raise ValueError("协饷旨意缺少 target（不猜散文）")
+        if not body:
+            raise ValueError("协饷旨意缺少正文（不猜散文）")
+        army_id = _resolve_xiexang_army_id(db, target)
+        if not army_id:
+            raise ValueError(
+                f"协饷旨意 target 无法解析为军队：{target!r}（不猜散文）"
+            )
+        if cadence and cadence not in {"一次性", "每月"}:
+            raise ValueError("协饷旨意 cadence 非法（不猜散文）")
+    else:
+        if not target or not kind:
+            return 0
+        if not body:
+            return 0
+        try:
+            n = int(amount or 0)
+        except (TypeError, ValueError):
+            n = 0
 
     pending_rows = list(pend_for_minister or [])
     if not pending_rows:
@@ -1314,30 +1349,11 @@ def stage_grant_allocation_candidate(
         staged["account"] = account
     if cadence in {"一次性", "每月"}:
         staged["cadence"] = cadence
-    try:
-        n = int(amount or 0)
-    except (TypeError, ValueError):
-        n = 0
     if n > 0:
         staged["amount"] = n
     # #1503：仅显式协饷成案带 purpose=补饷；army 对象的军械/筑城/项目经费不得升格销欠。
     if action == "协饷":
-        # 入 pending 前 fail-loud：缺字段/非军目标不得静默写残载荷。
-        if n <= 0:
-            raise ValueError("协饷旨意缺少正数 amount（不猜散文）")
-        if account not in {"国库", "内库"}:
-            raise ValueError("协饷旨意缺少合法 account（不猜散文）")
-        if kind and kind != "army":
-            raise ValueError(
-                f"协饷旨意 target_kind 须为 army，不得为 {kind!r}（不猜散文）"
-            )
-        army_id = _resolve_xiexang_army_id(db, target)
-        if not army_id:
-            raise ValueError(
-                f"协饷旨意 target 无法解析为军队：{target!r}（不猜散文）"
-            )
-        if cadence and cadence not in {"一次性", "每月"}:
-            raise ValueError("协饷旨意 cadence 非法（不猜散文）")
+        # fail-loud 已在上方完成；army_id 已解析通过，此处只归一化载荷。
         if not cadence:
             staged["cadence"] = "一次性"
             cadence = "一次性"
@@ -1377,7 +1393,8 @@ def _materialize_grant_allocation(ctx: MaterializeCtx) -> None:
     if grant_action not in (GRANT_ACTIONS - {"无"}):
         return
     target_kind, target_id = _grant_target(intent)
-    if not target_id:
+    # 协饷缺 target 仍交 stage fail-loud；其它 grant 无目标则无物化。
+    if not target_id and grant_action != "协饷":
         return
     pending_id = stage_grant_allocation_candidate(
         ctx.session.db,
