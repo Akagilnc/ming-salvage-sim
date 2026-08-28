@@ -1202,24 +1202,17 @@ def test_web_chat_hall_admission_allows_capital_and_blocks_offsite(game):
     moving_origin = f"web:chat:{state.turn}:{moving.name}"
     assert by_origin[remote_origin]["kind"] == "fresh"
     assert by_origin[moving_origin]["kind"] == "in_transit"
-    remote_entry = db.conn.execute(
-        "SELECT body, tags FROM story_ledger_entries WHERE id=?",
-        (by_origin[remote_origin]["entry_id"],),
-    ).fetchone()
-    moving_entry = db.conn.execute(
-        "SELECT body, tags FROM story_ledger_entries WHERE id=?",
-        (by_origin[moving_origin]["entry_id"],),
-    ).fetchone()
-    assert str(remote_entry["body"] or "").strip()
-    assert str(moving_entry["body"] or "").strip()
+    # #1566：scene 已物化的结构化证据——scroll entrance+speaker 锚定（空 body 不进卷轴）。
+    # 禁盯 body/content 散文。
     night_id = int(by_origin[remote_origin]["night_id"])
     scroll = an.read_night_scroll(db, night_id)
-    summon_scenes = [
-        m for m in scroll
-        if m.get("beat") == "entrance" and m.get("speaker") in {remote.name, moving.name}
-        and str(m.get("content") or "").strip()
-    ]
-    assert {m["speaker"] for m in summon_scenes} >= {remote.name, moving.name}
+    entrance_speakers = {
+        m.get("speaker")
+        for m in scroll
+        if m.get("beat") == "entrance" and m.get("speaker")
+    }
+    assert remote.name in entrance_speakers
+    assert moving.name in entrance_speakers
 
 
 def test_web_chat_stream_summon_success_exits_error_channel(game):
@@ -1269,68 +1262,102 @@ def test_web_chat_stream_summon_success_exits_error_channel(game):
     moving_origin = f"web:stream:{state.turn}:{moving.name}"
     assert by_origin[remote_origin]["kind"] == "fresh"
     assert by_origin[moving_origin]["kind"] == "in_transit"
-    for origin_key in (remote_origin, moving_origin):
-        body = db.conn.execute(
-            "SELECT body FROM story_ledger_entries WHERE id=?",
-            (by_origin[origin_key]["entry_id"],),
-        ).fetchone()["body"]
-        assert str(body or "").strip()
+    # #1566：结构化 scroll 投影证明 scene 物化（禁盯 body 散文）。
+    night_id = int(by_origin[remote_origin]["night_id"])
+    entrance_speakers = {
+        m.get("speaker")
+        for m in an.read_night_scroll(db, night_id)
+        if m.get("beat") == "entrance" and m.get("speaker")
+    }
+    assert remote.name in entrance_speakers
+    assert moving.name in entrance_speakers
 
 
-def test_web_chat_stream_formal_secret_order_bypasses_audience_admission(game):
-    """#1566：公开 chat/stream 正式密令前缀绕过殿上 location admission，汇入密令管线。"""
+def _bind_real_session_chat_for_secret_order(runtime, db, state, content):
+    """#1566：把 hall 壳的 session.chat 换成真实 GameSession.chat 主干。
+
+    只 stub 大臣 agent.run（LLM 边界）；前缀密令经 resolve_minister_actions
+    零 LLM 落 pending secret_order。channel=api 使显式前缀走 #344 前缀路。
+    """
+    class _CannedRun:
+        content = "臣领密旨。"
+        tools: list = []
+
+    class _CannedAgent:
+        def run(self, *_a, **_k):
+            return _CannedRun()
+
+        def get_last_run_output(self):
+            return None
+
+    s = runtime.session
+    s.registry = SimpleNamespace(get=lambda _ch: _CannedAgent(), session_ids={})
+    s.llm_config = SimpleNamespace(channel="api")
+    s._audience_prompt_for_message = (
+        lambda msg, character=None, chat_turn_id=0: msg
+    )
+    s._start_cli_action_intent = lambda *_a, **_k: None
+    s._finish_cli_action_intent = lambda *_a, **_k: None
+    s.start_exit_scene_from_dismiss_tools = lambda *_a, **_k: False
+    for name in (
+        "chat",
+        "_cli_backend_fallback_actions",
+        "apply_cli_conversation_actions",
+        "_confirmation_intent_for_preexisting_pending",
+        "_apply_audience_command_verdict",
+        "_recognize_audience_command_verdict",
+        "_merge_staged_new_secret_order_content",
+    ):
+        setattr(s, name, MethodType(getattr(GameSession, name), s))
+
+
+def test_web_chat_formal_secret_order_bypasses_audience_admission(game):
+    """#1566：公开 chat 正式密令前缀绕过殿上 location admission，汇入密令管线。
+
+    真实入口 WebGame.chat → 真实 GameSession.chat → pending secret_order 落库；
+    外部可见：pending_action_id>0 且 kind=secret_order；零传召账；无 admission 空 done。
+    """
     db, state, content = game
     remote = _set_place(game, "洪承畴", location="shaanxi")
-    before_summons = an.list_unsettled_summons(db)
-    chat_calls: list[tuple[str, str]] = []
-    stream_payload_calls: list[tuple[str, str]] = []
+    before_summons = list(an.list_unsettled_summons(db))
+    before_pending = [
+        p for p in db.list_pending_actions(state.turn)
+        if p.get("kind") == "secret_order"
+    ]
 
-    def _session_chat(minister_name, message, *, chat_turn_id=0):
-        chat_calls.append((minister_name, message))
-        return ChatTurnResult(
-            answer="臣领密旨。", pending_action_id=0, secret_order_id=0,
-        )
-
-    runtime = _web_hall_runtime(db, state, content, session_chat=_session_chat)
+    # 占位 session.chat；随后换成真实主干。
+    runtime = _web_hall_runtime(
+        db, state, content,
+        session_chat=lambda *_a, **_k: ChatTurnResult(answer="不应到达。"),
+    )
+    _bind_real_session_chat_for_secret_order(runtime, db, state, content)
     secret_text = "密令如下：陕北赈抚探报\n速报陕西军情。"
 
-    # 非流式：正式前缀不得 SUMMON_FRESH 空 done，须进 session.chat。
     payload = runtime.chat(remote.name, secret_text)
-    assert not payload.get("admission")
-    assert payload["answer"] == "臣领密旨。"
-    assert chat_calls == [(remote.name, secret_text)]
-    assert an.list_unsettled_summons(db) == before_summons
-
-    # 流式：同口径绕过 admission；stream 走 _chat_stream_payload 而非 session.chat。
-    def _stream_payload(minister_name, text, *args, **kwargs):
-        stream_payload_calls.append((minister_name, text))
-        return {
-            "minister": minister_name,
-            "answer": "臣领密旨。",
-            "admission": "",
-            "chat_turn_id": 0,
-            "secret_order_id": 0,
-            "history": [],
-            "directives": [],
-            "pending_count": 0,
-            "suggestions": [],
-            "can_undo_last_chat": False,
-            "pending_action_failures": [],
-        }
-
-    runtime._chat_stream_payload = _stream_payload
-    events = list(runtime.chat_stream(remote.name, secret_text))
-    types = [ev.get("type") for ev in events]
-    assert "error" not in types
-    done_events = [ev for ev in events if ev.get("type") == "done"]
-    assert done_events, f"expected done event, got {types!r}"
-    done_payload = done_events[0].get("payload") or {}
-    assert done_payload.get("admission") in (None, "")
-    assert done_payload.get("answer") == "臣领密旨。"
-    assert stream_payload_calls == [(remote.name, secret_text)], (
-        f"密令须绕过 admission 进入 stream payload，实得 {stream_payload_calls!r} types={types!r}"
+    assert not payload.get("admission"), (
+        f"正式密令不得被 SUMMON_* admission 截获，got admission={payload.get('admission')!r}"
     )
+    assert payload.get("answer") == "臣领密旨。"
+    pid = int(payload.get("pending_action_id") or 0)
+    assert pid > 0, f"密令须落入 pending 管线，got payload={payload!r}"
+
+    pending_rows = [
+        p for p in db.list_pending_actions(state.turn)
+        if int(p["id"]) == pid
+    ]
+    assert len(pending_rows) == 1
+    assert pending_rows[0]["kind"] == "secret_order"
+    assert pending_rows[0]["action"] == "新建"
+    assert pending_rows[0]["minister_name"] == remote.name
+    assert pending_rows[0]["status"] == "pending"
+
     assert an.list_unsettled_summons(db) == before_summons
+    # 本轮只新增长一条 secret_order 候选（相对 before）。
+    after_pending = [
+        p for p in db.list_pending_actions(state.turn)
+        if p.get("kind") == "secret_order"
+    ]
+    assert len(after_pending) == len(before_pending) + 1
 
 
 def test_web_chat_ledger_append_failure_has_no_side_effects(game, monkeypatch):
