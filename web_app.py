@@ -1558,7 +1558,6 @@ class WebGame:
             # 不把 decided 塞回 pending 列表；前端空 POST 既有 resolve_decisions/stream。
             "resume_phase2": self._resume_phase2_signal(),
             "last_decree": self.last_decree,
-            # #1382：与 last_attendant_message 同口径——按 state.turn-1 读 turn_reports 原文
             "last_report": self.last_report,
             # #671：上一已完成月王承恩独立递话（与 last_report 同级 typed 字段）
             "last_attendant_message": self.db.previous_turn_attendant_message(self.state),

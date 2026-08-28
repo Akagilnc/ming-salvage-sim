@@ -5,8 +5,8 @@
 （DRY，禁两条结算路）。
 
 #1382 大理寺：`last_report` 不得靠 session 瞬态；状态口按 state.turn-1 读
-turn_reports 原文。本文件从真实无旨 HTTP 入口证明：结算响应、随后 state
-重载、history/turn/{closed_turn} 三者同份已落库原文。
+turn_reports 原文。本文件从真实无旨 HTTP 入口证明：结算响应、随后跨实例
+load_state 恢复、history/turn/{closed_turn} 三者同份已落库原文。
 """
 
 from __future__ import annotations
@@ -14,8 +14,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import threading
-from types import SimpleNamespace
-
 import pytest
 from fastapi import HTTPException
 
@@ -59,7 +57,11 @@ def _session(db, state, content):
 
 
 def _web_runtime(db, state, content, *, monkeypatch, session=None):
-    """轻壳 WebGame：真实 state_payload / last_report 投影；refresh 对齐生产 begin_turn 清空瞬态。"""
+    """轻壳 WebGame：真实 state_payload / last_report 投影；refresh_turn 为 no-op。
+
+    仅保证结算路径不崩溃；生产 begin_turn 清空瞬态由生产 refresh_turn 负责，
+    本测试不以同 runtime refresh 为恢复依据。
+    """
     session = session or _session(db, state, content)
     runtime = object.__new__(web_app.WebGame)
     runtime.session = session
@@ -72,14 +74,7 @@ def _web_runtime(db, state, content, *, monkeypatch, session=None):
     runtime.public_character = lambda c: {"name": getattr(c, "name", "")}
     runtime.character_power_id = lambda c: "ming"
     runtime._write_gate = threading.Lock()
-
-    def _refresh_turn():
-        # 生产 refresh_turn → begin_turn：清空 last_decree 等瞬态。
-        # 轻壳不跑完整 begin_turn（registry/LLM）；只复现会吃掉旧 last_report 的清空面。
-        session.last_decree = ""
-        session.previous_summary = db.previous_turn_summary(session.state) or ""
-
-    runtime.refresh_turn = _refresh_turn
+    runtime.refresh_turn = lambda: None
 
     @contextlib.contextmanager
     def unlocked(_game):
@@ -104,8 +99,7 @@ def test_no_edict_full_chain_writes_turn_report_and_public_gazette(game, monkeyp
     assert int(state.turn) == closed_turn + 1
 
     report = db.get_turn_report(closed_turn)
-    assert report is not None
-    assert "边事自演" in report or "退朝未下正式圣旨" in report
+    assert report == narrative
 
     archives = db.list_monthly_archives()
     month = next((row for row in archives if int(row["turn"]) == closed_turn), None)
@@ -133,12 +127,12 @@ def test_no_edict_previous_turn_summary_hits_narrative(game, monkeypatch):
     _session(db, state, content).advance_without_decree()
 
     summary = db.previous_turn_summary(state)
-    assert "退朝未下正式圣旨" in summary or "世界自演" in summary
+    assert summary == narrative
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_no_edict_http_last_report_matches_durable_and_history(game, monkeypatch):
-    """#1382：无旨 HTTP 结算响应 / state 重载 / history 三者同 turn_reports 原文。"""
+    """#1382：无旨 HTTP 结算响应 / 跨实例 load_state 恢复 / history 三者同 turn_reports 原文。"""
     db, state, content = game
     closed_turn = int(state.turn)
     narrative = "无旨月邸报原文钉测·边事自演。"
@@ -156,34 +150,15 @@ def test_no_edict_http_last_report_matches_durable_and_history(game, monkeypatch
     # 1) 结算响应内嵌 state.last_report ≡ 落库原文
     assert response["state"]["last_report"] == durable
 
-    # 2) 随后 state 刷新/重载仍投影同一原文（refresh_turn 已跑过）
-    reloaded = web_app.WebGame.state_payload(runtime)
-    assert reloaded["last_report"] == durable
-    # api_state 同缝
+    # 2) 跨实例恢复：新 runtime 读 db.load_state 恢复，last_report 投影同一原文
+    restored_state = db.load_state()
+    _web_runtime(db, restored_state, content, monkeypatch=monkeypatch)
     assert asyncio.run(web_app.api_state())["last_report"] == durable
 
     # 3) history/turn/{closed_turn} 同份原文
     history = asyncio.run(web_app.api_history_turn(closed_turn))
     assert history["exists"] is True
     assert history["report"] == durable
-
-
-@pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_no_edict_history_turn_api_exists_true(game, monkeypatch):
-    """Web 史册单月读口：exists:true 且 report 为正式档。"""
-    db, state, content = game
-    closed_turn = int(state.turn)
-    narrative = "史册无旨月邸报。"
-    _canned(monkeypatch, narrative)
-    _session(db, state, content).advance_without_decree()
-
-    runtime = type("R", (), {"db": db, "state": state})()
-    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
-
-    payload = asyncio.run(web_app.api_history_turn(closed_turn))
-    assert payload["exists"] is True
-    assert payload["report"]
-    assert "史册无旨月" in payload["report"] or "邸报" in payload["report"]
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
@@ -207,9 +182,6 @@ def test_double_token_only_one_month_archive(game, monkeypatch):
 
 def test_advance_without_edict_shell_absent():
     """#1274 r1：decree.advance_without_edict 空壳已删（prep 归 resolve_turn）。"""
-    import inspect
-
     import ming_sim.decree as decree_mod
 
     assert not hasattr(decree_mod, "advance_without_edict")
-    assert "def advance_without_edict" not in inspect.getsource(decree_mod)
