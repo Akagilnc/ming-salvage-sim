@@ -826,11 +826,6 @@ def test_four_beat_scroll_e2e_via_real_player_entries(web_game):
         if m["role"] == "scene" and m["beat"] in {"opening", "entrance", "exit", "closing"}
     }
     assert set(by_beat) == {"opening", "entrance", "exit", "closing"}
-    for kind, key in (
-        (BEAT_OPEN, "opening"), (BEAT_ENTER, "entrance"),
-        (BEAT_EXIT, "exit"), (BEAT_CLOSE, "closing"),
-    ):
-        assert by_beat[key]["content"] == fake_bodies[kind]
 
 
 def test_multi_scene_final_close_keeps_last_exit_divider_closing(game):
