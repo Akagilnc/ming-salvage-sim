@@ -55,11 +55,6 @@ from ming_sim.llm_model import create_agno_db, extract_agent_text
 from ming_sim.models import Character, CourtContext, GameState, LLMConfig, is_vassal_prince, is_weishi
 from ming_sim.paths import user_data_path
 from ming_sim.registry import MinisterRegistry, bind_content as _bind_registry
-from ming_sim.settlement_payload import (
-    bind_decisions_to_candidate_events,
-    decision_has_rescript_capability,
-    parse_rescript_capability_pair,
-)
 from ming_sim.skills import bind_content as _bind_skills
 
 
@@ -579,6 +574,30 @@ def apply_appointment(
     return (name, displaced)
 
 
+def _typed_grant_candidate_present(
+    intent: Optional[Dict[str, Any]],
+    intent_candidates: Optional[List[Dict[str, Any]]],
+) -> bool:
+    """#1503：classifier 是否已给出可物化的 grant_allocation 候选。
+
+    真则显式拟旨前缀不得先落 generic special_decree，改由既有 grant 单轨成案。
+    """
+    import ming_sim.action_materialize as am  # catalog side-effect ok
+
+    valid = am.GRANT_ACTIONS - {"无"}
+
+    def _ok(candidate: Any) -> bool:
+        if not isinstance(candidate, dict):
+            return False
+        if str(candidate.get("kind") or "").strip() != "grant_allocation":
+            return False
+        return str(candidate.get("grant_action") or "").strip() in valid
+
+    if _ok(intent or {}):
+        return True
+    return any(_ok(c) for c in (intent_candidates or []))
+
+
 def coalesce_pending_action_id(prior: int, staged: int) -> int:
     """Same-turn tool aggregation: non-zero staged wins; zero must not erase prior success."""
     staged_id = int(staged or 0)
@@ -650,33 +669,18 @@ def _confirmation_targets_for_message(pending_actions: List[Dict[str, Any]], mes
     return non_directive or directive
 
 
-_AMEND_PREFIXES = ("修改：", "修改:", "改：", "改:")
-_AMEND_ORDINAL_PREFIX_RE = re.compile(
-    r"^(?:修改|改)\s*第[一二三四五六七八九十百零0-9]+(?:道|条|件|个)?\s*[：:]\s*"
-)
 _CONFIRM_ENUM = frozenset({"应允", "拒绝", "留中", "修改", "无"})
 
 
-def _strip_secret_amendment_prefix(message: str) -> str:
-    """Strip 修改：/改：/修改第N道： so amendment text does not re-enter content."""
-    text = (message or "").strip()
-    for prefix in _AMEND_PREFIXES:
-        if text.startswith(prefix):
-            return text[len(prefix):].strip()
-    m = _AMEND_ORDINAL_PREFIX_RE.match(text)
-    if m:
-        return text[m.end():].strip()
-    return text
-
-
-def _coerce_confirmation_result(raw: Any) -> Tuple[str, List[int]]:
-    """Normalize extract_confirmation_intent / stub → (确认枚举, 合法目标 id 列表)。
+def _coerce_confirmation_result(raw: Any) -> Tuple[str, List[int], str]:
+    """Normalize extract_confirmation_intent / stub → (确认枚举, 合法目标 id 列表, new_content)。
 
     生产契约返回 dict；既有测试 stub 可仍返回纯字符串（目标 id 视为空）。
+    #1376：修改判词携带 typed new_content 作为唯一权威正文。
     """
     if isinstance(raw, str):
         v = raw.strip()
-        return (v if v in _CONFIRM_ENUM else "无"), []
+        return (v if v in _CONFIRM_ENUM else "无"), [], ""
     if isinstance(raw, dict):
         v = str(raw.get("confirmation") or raw.get("确认") or "无").strip()
         if v not in _CONFIRM_ENUM:
@@ -698,8 +702,9 @@ def _coerce_confirmation_result(raw: Any) -> Tuple[str, List[int]]:
                 if i > 0 and i not in tids:
                     tids.append(i)
             break
-        return v, tids
-    return "无", []
+        new_content = str(raw.get("new_content") or raw.get("新内容") or "")
+        return v, tids, new_content
+    return "无", [], ""
 
 
 def _pending_action_failure_payload(pa: Dict[str, Any], state: Optional[GameState] = None) -> Dict[str, Any]:
@@ -1186,11 +1191,12 @@ class GameSession:
     def _start_cli_action_intent(self, character: Character, message: str) -> Optional[Future]:
         """召对动作判断只读皇帝消息，可与大臣回话并发。
 
-        #1502：API 与 CLI 非前缀自然语言均并行提交既有 classifier；
-        显式前缀仍跳过（#344）。无可用通道时不启动。
+        #1502：API 与 CLI 自然语言并行提交既有 classifier。
+        #1503 / ADR 0028：显式拟旨前缀亦提交一次 typed classifier（载荷式成案）；
+        密令前缀仍跳过（权威路由，不跑其它分类器）。无可用通道时不启动。
         """
         from ming_sim.cli_backend import (
-            _DRAFT_PREFIXES, _SECRET_PREFIXES, classify_cli_action_intent,
+            _SECRET_PREFIXES, classify_cli_action_intent,
             cli_backend_from_env,
         )
         channel = (getattr(getattr(self, "llm_config", None), "channel", "") or "").strip().lower()
@@ -1199,7 +1205,8 @@ class GameSession:
             return None
         # CLI 动作分类器与大臣回话一律并发；不按 runner 退串行。
         text = (message or "").strip()
-        if text.startswith(_DRAFT_PREFIXES) or text.startswith(_SECRET_PREFIXES):
+        # 密令前缀 = 权威类别声明，不跑动作分类器；拟旨前缀见 #1503。
+        if text.startswith(_SECRET_PREFIXES):
             return None
         minister_name = character.name
         pend_for_minister = self.db.list_pending_actions(self.state.turn, minister_name=minister_name)
@@ -1435,7 +1442,7 @@ class GameSession:
         summaries = [
             f"[{int(p['id'])}] {_pending_action_brief(p)}" for p in confirm_targets
         ]
-        confirm, named = _coerce_confirmation_result(
+        confirm, named, new_content = _coerce_confirmation_result(
             extract_confirmation_intent(
                 player_message, reply, summaries,
                 llm_config=getattr(self, "llm_config", None),
@@ -1450,7 +1457,9 @@ class GameSession:
             }
             if named:
                 payload["target_ids"] = list(named)
-            # target_ids 仅经 payload→normalize_one_candidate 单一路径保留（#1509）
+            if new_content:
+                payload["new_content"] = new_content
+            # target_ids/new_content 仅经 payload→normalize_one_candidate 单一路径保留
             cand = normalize_one_candidate(payload, soft=False)
             return [cand]
         return candidates
@@ -1633,7 +1642,11 @@ class GameSession:
                             result.next_minister = target.name
                         # #670 P6'/P7：拒入殿只不设 court_action/next_minister；闸文不进 LLM answer。
             elif tool_name == "propose_directive" or tool_result.startswith("__pending_directive__"):
-                if confirmation_turn or explicit_secret_prefix:
+                if (
+                    confirmation_turn
+                    or explicit_secret_prefix
+                    or _typed_grant_candidate_present(None, preclassified_intent)
+                ):
                     continue
                 args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
                 if not isinstance(args, dict):
@@ -1934,11 +1947,12 @@ class GameSession:
         minister_name = character.name
         reply = (answer or "").strip()
         llm_config = getattr(self, "llm_config", None)
-        # 显式前缀(拟旨如下:/密令如下:)= 皇帝已明示动作，由 resolve_minister_actions 零 LLM 落地。
-        # 单一真源在此前置判定，统一把门【所有】后置 LLM 抽取器（确认/密令/调教/拟旨/任免），
-        # 杜绝前缀路多跑任何 LLM extractor（#344 US3「按钮前缀路零 LLM」）。确认闸门尤其要跳过：
-        # 否则前缀消息在有 pending 待确认动作时既多跑 extract_confirmation_intent(LLM)，还可能被
-        # 误判「应允/拒绝」提前 return、把这道前缀拟旨/密令整个吞掉（确认句本无前缀，跳过无损）。
+        # 显式前缀(拟旨如下:/密令如下:)= 皇帝已明示动作类别。
+        # 后置 LLM 抽取器（确认/密令/调教/拟旨/任免）仍由本闸统一跳过（#344 US3）。
+        # #1503：拟旨前缀可携带**并发** typed classifier 候选；载荷式（grant_allocation）
+        # 走既有 stage_grant_allocation_candidate，不再先落 generic special_decree。
+        # 确认闸门仍跳过：否则前缀消息在有 pending 时既多跑 extract_confirmation_intent，
+        # 还可能被误判「应允/拒绝」提前 return、吞掉这道前缀拟旨/密令（确认句本无前缀）。
         message_text = (player_message or "").strip()
         explicit_prefixed = message_text.startswith(_DRAFT_PREFIXES) or message_text.startswith(_SECRET_PREFIXES)
         channel = (getattr(getattr(self, "llm_config", None), "channel", "") or "").strip().lower()
@@ -1967,15 +1981,17 @@ class GameSession:
                 f"[{int(p['id'])}] {_pending_action_brief(p)}" for p in confirm_targets
             ]
             confirm_named_ids: List[int] = []
+            confirm_new_content: str = ""
             if intent is not None:
                 # #1509 r3：preclassification 已跑过同次 confirmation 抽取时，
                 # 确认枚举与目标编号均取自 intent（禁二调 extractor / 禁散文机械解析）。
+                # #1376：修改判词携带 typed new_content，下游修改支路以此为权威正文。
                 if cluster_effect(intent_kind) == EFFECT_ANSWER_EXISTING:
-                    confirm, confirm_named_ids = _coerce_confirmation_result(intent)
+                    confirm, confirm_named_ids, confirm_new_content = _coerce_confirmation_result(intent)
                 else:
                     confirm = "无"
             else:
-                confirm, confirm_named_ids = _coerce_confirmation_result(
+                confirm, confirm_named_ids, confirm_new_content = _coerce_confirmation_result(
                     extract_confirmation_intent(
                         player_message, reply, summaries, llm_config=llm_config)
                 )
@@ -2111,14 +2127,10 @@ class GameSession:
             elif confirm == "修改":
                 # #1376 owner：修改=更新同一 pending 密令候选内容（id 不变），不 commit、不新建。
                 # 仅 secret_order/新建；非密令整改不得吞掉既有 kind 物化缝（回落 confirm=无）。
-                # P5：不二次串行 _extract_secret_order——正文取去前缀御旨材料，元数据仅在
-                # 修改句显式给出时覆盖（保留未提及字段）。
+                # #1376 修订：正文仅从 typed new_content 消费，删除对 player_message 散文的
+                # 裁剪、元数据与承办人机梅解析；未填 new_content 则不覆写正文。
                 # #1509：多候选目标只信同次 confirmation JSON 的合法「目标编号」，
-                # 禁 regex/序数/title 机械读玩家散文；无唯一合法编号 → ambiguity。
-                from ming_sim.cli_backend import (
-                    _extract_imperative_assignee,
-                    _secret_metadata_from_command,
-                )
+                # 禁 regex/序数/title 机梅读玩家散文；无唯一合法编号 → ambiguity。
                 secret_new = [
                     p for p in confirm_targets
                     if (
@@ -2153,9 +2165,19 @@ class GameSession:
                         resolved = [
                             p for p in secret_new if int(p["id"]) in named_set
                         ]
-                    material = _strip_secret_amendment_prefix(player_message)
-                    meta_tags, meta_deadline = _secret_metadata_from_command(material)
-                    named_assignee = _extract_imperative_assignee(material)
+                    # A modification without a complete typed body did not succeed.
+                    # Keep every candidate unchanged and do not advertise a pending id.
+                    if not confirm_new_content.strip():
+                        out["directive_confirmation_ambiguous"] = {
+                            "candidates": [
+                                {
+                                    "id": int(p["id"]),
+                                    "summary": _pending_action_brief(p),
+                                }
+                                for p in resolved
+                            ],
+                        }
+                        return out
                     for pending in resolved:
                         try:
                             payload = json.loads(pending.get("payload_json") or "{}")
@@ -2163,16 +2185,8 @@ class GameSession:
                             payload = {}
                         if not isinstance(payload, dict):
                             payload = {}
-                        # 正文：去「修改：」后的御旨材料；空材料不覆写。
-                        if material:
-                            payload["content"] = material
-                        # 仅修改句显式给出的字段才覆盖；未提及保留原候选。
-                        if named_assignee:
-                            payload["assignee"] = named_assignee
-                        if meta_tags:
-                            payload["tags"] = meta_tags
-                        if meta_deadline:
-                            payload["deadline_months"] = meta_deadline
+                        # #1376：正文唯取完整、非空 typed new_content。
+                        payload["content"] = confirm_new_content
                         encoded = json.dumps(payload, ensure_ascii=False)
                         cur = self.db.conn.execute(
                             "UPDATE pending_actions SET payload_json=? "
@@ -2205,7 +2219,8 @@ class GameSession:
             # 拒绝丢弃）针对的是窗前已暂存的 pending，保持可用（ship-pre r2 设计）。
             # 抽取器（LLM 调用）一并跳过。
             return out
-        needs_draft_fallback = not has_directive and message_text.startswith(_DRAFT_PREFIXES)
+        # generic 拟旨 fallback 必须等 typed materialize 的真实结果；候选形状不代表成案。
+        needs_draft_fallback = False
         needs_secret_fallback = (
             not has_directive
             and not out["secret_order_id"]
@@ -2279,6 +2294,23 @@ class GameSession:
             chat_turn_id=active_chat_turn_id,
         )
         run_materialize_pipeline(mat_ctx)
+        if (
+            not has_directive
+            and not out.get("pending_action_id")
+            and message_text.startswith(_DRAFT_PREFIXES)
+        ):
+            fallback = resolve_minister_actions(
+                reply, player_message, default_assignee=minister_name,
+                llm_config=llm_config,
+                dossier_candidates=self.db.list_referenceable_dossiers(
+                    minister_name, self.state.turn,
+                ),
+            )
+            if fallback["decree_text"]:
+                out["pending_action_id"] = self.db.stage_explicit_directive(
+                    self.state.turn, minister_name, fallback["decree_text"],
+                    mode=message_text,
+                )
         return out
 
     @staticmethod
@@ -3105,7 +3137,7 @@ class GameSession:
             self.db.confirm_directive(int(pending["id"]), self.state)
         # #658：Web/CLI free-form draft 在真实颁诏链进入唯一成案接缝（confirm/commit
         # 已各自 ensure；本口覆盖 add_directive 直落 draft 的路径，幂等）。
-        self.db.ensure_dossiers_for_draft_directives(self.state)
+        dossier_rejections = self.db.ensure_dossiers_for_draft_directives(self.state)
         directives = list(self.db.list_dossiered_draft_directives(self.state))
         # DB owner supplies the canonical read-only default-approval projection.
         # Negative preview ids participate in stale-decree fingerprinting without
@@ -3124,6 +3156,10 @@ class GameSession:
         # Pending non-directive actions (secret orders etc.) enter resolve_directives
         # so pre_settle owns materialization with the rest of the settlement spine.
         pending_action_due = bool(self.db.list_pending_actions(self.state.turn))
+        if not directives and dossier_rejections:
+            # #1591：草案的真实成案拒因优先于无关 pending 动作或既有结算工作。
+            # recovery/allow-empty 只豁免真正的无旨月，不得洗掉已存在的坏草案。
+            raise ValueError(dossier_rejections[-1])
         if not directives and not settlement_due and not pending_action_due:
             # 恢复态且有存诏：免草案要求（零草案 settling=driver 档/逃生口降级后是真实态，
             # 而 add 已冻结——硬要草案=循环死路，ship-pre r5）。directives 仅作非空哨兵。
@@ -3200,32 +3236,6 @@ class GameSession:
         ):
             raise ValueError("月末亲裁期新增拟旨须先核定，不能并入已冻结的结算")
 
-    def _normalize_rescript_request_choices(
-        self,
-        choices: List[Dict[str, object]],
-        desk: List[Dict[str, object]],
-    ) -> List[Dict[str, object]]:
-        """把 idx 序旧载荷或 decision_key 新载荷统一成带 decision_key 的 choice 列表。"""
-        if not choices:
-            return []
-        if any(isinstance(c, dict) and c.get("decision_key") for c in choices):
-            return [dict(c) for c in choices if isinstance(c, dict)]
-        # 旧形：按 desk 中 decision 行 idx 对齐；急务缺省 hold
-        by_idx = {
-            int(r["idx"]): r for r in desk if str(r.get("kind")) == "decision"
-        }
-        out: List[Dict[str, object]] = []
-        for idx, choice in enumerate(choices):
-            if not isinstance(choice, dict):
-                continue
-            row = by_idx.get(idx)
-            if row is None:
-                continue
-            item = dict(choice)
-            item["decision_key"] = row["decision_key"]
-            out.append(item)
-        return out
-
     def prepare_rescript_prewrite(
         self, choices: List[Dict[str, object]],
     ) -> Dict[str, object]:
@@ -3242,7 +3252,22 @@ class GameSession:
 
         self._assert_awaiting_decision_submit()
         desk = list(self.db.list_rescript_desk(int(self.state.turn)))
-        req = self._normalize_rescript_request_choices(choices, desk)
+        ctx = self.db.get_resolve_context(self.state.turn)
+        # #389：event_id 缺失/回显越权（越出本回合候选快照）时以候选快照重绑——
+        # 迁自旧 submit_decisions 的绑定步（与 choices[idx] 位置写协议无关，非
+        # 猜绑，唯一权威仍是 bind_decisions_to_candidate_events）；scope 与旧
+        # list_pending_decisions 同款只收 kind='decision'，rescript_draft 行不动。
+        if ctx is not None:
+            from ming_sim.settlement_payload import bind_decisions_to_candidate_events
+            decision_rows = [r for r in desk if str(r.get("kind") or "") == "decision"]
+            other_rows = [r for r in desk if str(r.get("kind") or "") != "decision"]
+            desk = other_rows + bind_decisions_to_candidate_events(
+                decision_rows, ctx.get("simulator_payload"),
+            )
+        # #1589：位置补键/猜绑协议已删——choice 须显式携带 decision_key；
+        # 缺键/重复键/desk 外键/非 object 项由 validate_request_keys（内存）
+        # 在领域写前整批拒，此处不再静默丢非 object 项。
+        req = list(choices)
         # C1.1：① 已落 decided、③ phase2 未写 extracted 的崩溃重入——
         # list_rescript_desk 只 pending，须把请求键对应 decided 行并入 desk
         # 供 validate already_applied；ready_replay（extracted 非空）仍短路。
@@ -3256,9 +3281,12 @@ class GameSession:
         ]
         if missing_keys:
             desk.extend(self.db.get_rescript_desk_rows_by_keys(missing_keys))
-        ctx = self.db.get_resolve_context(self.state.turn)
         ready_replay = ctx is not None and ctx.get("extracted") is not None
         if ready_replay:
+            # #1589 Spec-1：ready-replay 短路前仍须过 validate_all 同一权威请求索引
+            # 校验（缺键/重复键/desk 外键整批拒）；只校 envelope/key membership，
+            # 不比较/采纳重交 choice 内容——冻结 extracted 语义不变（§B.3）。
+            ra.validate_request_keys(desk, req)
             return {
                 "ready_replay": True,
                 "batch": None,
@@ -3684,37 +3712,37 @@ class GameSession:
         on_event=None,
         cheat_directive: str = "",
     ) -> str:
-        """#657 HITL 公共入口：急务/keyed → resolve_rescript_decisions；纯 decision → gate 内 submit_decisions。
+        """#657 HITL 公共入口：desk 非空或 choices 非空 → resolve_rescript_decisions；
+        desk 与 choices 均空 → gate 内 submit_decisions。
 
-        空 choices 且 desk 无 pending 急务时：若仍有未消费 durable decided summon，
-        交回同一 resolve_rescript_decisions（C1 already_applied → scaffold/registry），
-        不得直 submit_decisions 越过召见。
+        #1589：choice 缺 decision_key / 非 object 的位置序载荷不再被受理——
+        desk 非空或原始 choices 非空一律经 resolve_rescript_decisions →
+        validate_request_keys（内存，唯一 envelope/key membership 权威）在
+        领域写前整批拒；不在此处平行探测 keyed 或另拒空-desk 非空批。
+        仅 desk 空且原始 choices 真空时（含 #1322 空 choices 续跑）仍走
+        submit_decisions；desk 无 pending 急务但仍有未消费 durable decided
+        summon 时，交回同一 resolve_rescript_decisions（C1 already_applied →
+        scaffold/registry），不得直 submit_decisions 越过召见。
         """
         if write_gate is None:
             raise ValueError("submit_hitl_choices 须注入既有 write_gate")
-        keyed = any(
-            isinstance(c, dict) and str(c.get("decision_key") or "").strip()
-            for c in (choices or [])
-        )
         desk = self.db.list_rescript_desk(int(self.state.turn))
-        has_urgent = any(str(r.get("kind")) == "rescript_draft" for r in (desk or []))
-        if has_urgent or keyed:
+        if desk or choices:
             return self.resolve_rescript_decisions(
                 choices,
                 write_gate=write_gate,
                 on_event=on_event,
                 cheat_directive=cheat_directive,
             )
-        # 无 key / 无 pending 急务：未消费 durable summon 仍走同一 resolver
-        if not keyed:
-            recovery = self._unconsumed_decided_summon_choices()
-            if recovery:
-                return self.resolve_rescript_decisions(
-                    recovery,
-                    write_gate=write_gate,
-                    on_event=on_event,
-                    cheat_directive=cheat_directive,
-                )
+        # 空 desk 且无 key：未消费 durable summon 仍走同一 resolver
+        recovery = self._unconsumed_decided_summon_choices()
+        if recovery:
+            return self.resolve_rescript_decisions(
+                recovery,
+                write_gate=write_gate,
+                on_event=on_event,
+                cheat_directive=cheat_directive,
+            )
         with write_gate:
             return self.submit_decisions(
                 choices, on_event=on_event, cheat_directive=cheat_directive,
@@ -3723,82 +3751,18 @@ class GameSession:
     def submit_decisions(
         self, choices: List[Dict[str, object]], on_event=None, cheat_directive: str = ""
     ) -> str:
-        """皇帝亲裁完决策点，续跑 phase2 结算。
+        """空 desk 续跑：复算既有 decided 行 / 重放 ready-replay，零新增领域写。
 
-        #657：本方法**仅**纯 decision/#1490 路径（不内部 join LLM）。
-        急务/keyed 批必须走 resolve_rescript_decisions / submit_hitl_choices
-        （调用方注入既有 write_gate）。
+        #657/#1589：本方法仅接受空 choices——旧 choices[idx] 位置补键/猜绑写协议
+        已删；已裁批（含纯 decision/#1490）一律须经 resolve_rescript_decisions /
+        submit_hitl_choices（keyed，调用方注入既有 write_gate），desk 空亦无例外。
         """
         self._assert_awaiting_decision_submit()
-
-        # ── #1490 / 纯 decision 路径 ──────────────────────────────────
-        stored = self.db.list_pending_decisions(self.state.turn)
-        ctx_for_event_binding = self.db.get_resolve_context(self.state.turn)
-        ready_replay = (
-            ctx_for_event_binding is not None
-            and ctx_for_event_binding.get("extracted") is not None
-        )
-        if ctx_for_event_binding is not None:
-            stored = bind_decisions_to_candidate_events(
-                stored, ctx_for_event_binding.get("simulator_payload")
+        if choices:
+            raise ValueError(
+                "submit_decisions 仅续跑空 choices；已裁批须经 submit_hitl_choices/"
+                "resolve_rescript_decisions 显式携 decision_key"
             )
-        if not ready_replay:
-            import json as _json
-            rebuilt_by_idx: Dict[int, Dict[str, object]] = {}
-            for d in stored:
-                if str(d.get("status") or "") == "decided":
-                    continue
-                if not str(d.get("event_id") or "").startswith("dossier:"):
-                    continue
-                if not decision_has_rescript_capability(d):
-                    continue
-                options = [
-                    option for option in (d.get("options") or [])
-                    if isinstance(option, dict)
-                ]
-                idx = int(d["idx"])
-                choice = choices[idx] if idx < len(choices) else None
-                option_by_pair: Dict[tuple, Dict[str, object]] = {}
-                for option in options:
-                    pair = parse_rescript_capability_pair(option)
-                    if pair is not None:
-                        option_by_pair[pair] = option
-                allowed = set(option_by_pair)
-                selected = (
-                    parse_rescript_capability_pair(choice)
-                    if isinstance(choice, dict) else None
-                )
-                if selected is None or selected not in allowed:
-                    raise ValueError("批红选择必须是本案提供的强颁、收回或留中选项")
-                matched = option_by_pair[selected]
-                rebuilt: Dict[str, object] = {
-                    "label": matched.get("label"),
-                    "hint": matched.get("hint") or "",
-                    "dossier_id": selected[0],
-                    "dossier_decision": selected[1],
-                }
-                if isinstance(choice, dict) and choice.get("note") is not None:
-                    rebuilt["note"] = choice.get("note")
-                rebuilt_by_idx[idx] = rebuilt
-            for d in stored:
-                if str(d.get("status") or "") == "decided":
-                    continue
-                idx = int(d["idx"])
-                if idx in rebuilt_by_idx:
-                    choice = rebuilt_by_idx[idx]
-                else:
-                    choice = choices[idx] if idx < len(choices) else None
-                    if not isinstance(choice, dict):
-                        choice = {}
-                self.db.conn.execute(
-                    "UPDATE pending_decisions SET choice_json=?, status='decided' WHERE turn=? AND idx=?",
-                    (_json.dumps(choice, ensure_ascii=False), self.state.turn, idx),
-                )
-                event_id = str(d.get("event_id") or "").strip()
-                if event_id and not event_id.startswith("dossier:"):
-                    self.db.record_event_decision_choice(
-                        self.state, event_id, choice, commit=False)
-            self.db.conn.commit()
         if not (self.last_decree or "").strip():
             ctx0 = self.db.get_resolve_context(self.state.turn)
             if ctx0 is not None:

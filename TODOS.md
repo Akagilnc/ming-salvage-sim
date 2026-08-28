@@ -115,21 +115,20 @@
 - **下回合临时处理**：崇祯元年十二月结算时，手动把阉党 leverage 往下压到合理值（先查清改法），并在邸报里叙述"阉党失了要津、号令不行"。
 
 ### B2. CLI 后端(agy)把游戏仓库当工作区，自治探查源码 + 英文行动计划泄进大臣嘴里 ✅ 已修（2026-06-07）
-> 修复：`_run_agy`/`_run_codex` 加 `cwd=_AGY_CWD`（`/tmp/ming_agy_sandbox` 空目录）；`_messages_to_prompt` 加“无文件/工具/命令、禁英文、禁旁白”硬约束；`_strip_agent_narration` 剥开头英文行动计划兜底。实测孙承宗防务问答 0 英文词。
+> 修复：`_run_agy`/`_run_codex` 加 `cwd=_AGY_CWD`（`/tmp/ming_agy_sandbox` 空目录）；`_messages_to_prompt` 加“无文件/工具/命令、禁英文、禁旁白”硬约束——cwd 隔离是治本，后者为输入侧约束。输出侧清洗依 P6 与 ADR 0142 / 0143 废止。
 - **现象**(2026-06-07，probe/session-as-llm 分支)：孙承宗被问蓟镇宣大防务，回话开头冒出整段英文："I will list the contents of the workspace directory to locate the relevant database files... check the `data` directory... list the `ming_sim` directory to understand the project structure and see how state queries are implemented." 之后才接中文奏对。
 - **根因**：`ming_sim/cli_backend.py` 的 `_run_agy` 用 `subprocess.run([...], input=prompt)` **没指定 cwd**，agy(自治编程 agent)继承了游戏仓库根目录当 workspace，把"汇报防务进度"当成研究任务，跑去翻 `ming_sim/`、`data/` 找答案。`--sandbox` 只挡写不挡读。
 - **双重危害**：① 英文行动计划 narration 泄进角色对话(出戏)；② **元游戏泄漏**——大臣能读游戏真实源码/存档 DB。
 - **修法(1)**：
   - 主治：`_run_agy`/`_run_codex` 传 `cwd=<空临时目录>`(如 `/tmp/ming_agy_sandbox`，启动时建)，agy 进空 workspace 无可探。
   - 加固 prompt：`_messages_to_prompt` 明示"你没有任何文件/工具/命令可用，不要描述你要做什么，直接以角色身份用中文作答，禁用英文"。
-  - 兜底：输出后剥掉开头的英文行动计划行(`^(I will|Let me|I'll|First|I need to|Looking at|I'm going to)` 等)。
-  - cwd 是治本，后两者兜底。
 
 ### B3. 大臣"自己动手"的动作工具在 CLI 后端不触发(拟旨/下密令不入档) ✅ 已修（2026-06-07）
 > **原版**靠 agno 工具 `propose_directive`/`secret_order`，api 模型 function-call 可靠触发。agy 不做 function-calling = 唯一缺口。
 > **最终方案（简单可靠，绕了几道弯才想明白）**：玩家用拟旨/密令按钮 = 消息带「拟旨如下：/密令如下：」前缀 = 已表态要下旨，那大臣**这一句回话原文整段入档**即可——不解析圣旨边界、不用 JSON、不用正则。大臣本就把相关衙门/人等写进回话（原 prompt 行为），所以回话原文就是补全版圣旨。多轮聊出多道 → 颁诏时玩家去重。
+> **后出修订（#1503，2026-08-28）**：上句仍适用于非载荷拟旨；拨饷/协饷等载荷式拟旨会并发调用一次既有动作分类器，产出结构化 payload 后沿拨款单轨成案。密令前缀零其它分类器、后置串行 extractor 仍禁跑；权威口径见 ADR 0028。
 > - `cli_backend.resolve_minister_actions(minister_reply, player_message, default_assignee)`：前缀命中则把回话原文当 directive。
-> - **密令的结构化字段**（title/content/承办人/期限/标签）原版靠 function-call 让大臣顺手填，agy 无 function-call 丢了。补法 = `_extract_secret_order`：下密令时**多一次聚焦提取 agy 调用**（纯抽取、不扮演，与月末 extractor 同款可靠，~12s）把命令+回话抽成四字段。实测能正确抓到「皇帝点名的承办人」「三月内回奏=期限3」「干净标题」。圣旨**不需要**此步——圣旨在原版也只是文本，机械后果（一次性 vs 常设月支 vs 建军/任命）由月末 extractor 算，agy 版同源无损。
+> - **密令的结构化字段**（title/content/承办人/期限/标签）原版靠 function-call 让大臣顺手填，agy 无 function-call 丢了。补法 = `_extract_secret_order`：下密令时**多一次聚焦提取 agy 调用**（纯抽取、不扮演，与月末 extractor 同款可靠，~12s）把命令+回话抽成四字段。实测能正确抓到「皇帝点名的承办人」「三月内回奏=期限3」「干净标题」。当时普通圣旨不需要此步；#1503 后，拨饷/协饷等载荷式拟旨例外地需要一次并发 typed 分类，非载荷拟旨仍以回话原文成 generic 草案。
 > - `session.chat`（CLI）+ `web_app` 流式 handler（web）各调一次。core 改动小、CLI 后端 gated。`invoke` 只出文本（不再 JSON/正则）。
 > - 实测：web 流式拟旨 directive（含户部/巡抚/洪承畴）+ 密令 secret_order 均落库；普通对话不误触发；月末结算无回归。
 > - **弯路记录**（别重蹈）：先后试过 ① agno 合成 tool_call（流式 run_output 不 surface）② 散文正则捞「…钦此」（agy 时而不写正式圣旨）③ 强制大臣输出 JSON（被角色扮演 prompt 压制，agy 不遵守）。都不如「前缀已表态 → 抓回话原文」简单可靠。教训：别和 agy 的非确定性输出较劲，用玩家已有的明确信号。
