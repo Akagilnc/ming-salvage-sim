@@ -885,7 +885,6 @@ class GameSession:
         self.registry: Optional[MinisterRegistry] = None
         self.temporary_characters: Dict[str, Character] = {}
         self.last_decree = ""
-        # #1382：删 last_report 平行缓存——状态口按 state.turn-1 直读 turn_reports。
         # P1-1：last_decree 所覆盖的 draft 指纹（write_decree 时记，颁诏时校验是否已陈旧）。
         self._decree_draft_fingerprint: Tuple[Tuple[int, str], ...] = ()
         self._begun = False
@@ -3178,7 +3177,6 @@ class GameSession:
             self.db.save_state(self.state)
             return result
         # resolve_directives 已 next_period + save_state；阶段标 issued
-        # #1382：月报权威在 turn_reports，不再写 session 瞬态 last_report
         self.state.turn_phase = TurnPhase.ISSUED.value
         self.db.save_state(self.state)
         return result
@@ -3596,7 +3594,6 @@ class GameSession:
             cheat_directive=cheat_directive,
         )
         # return_revise 清锚已纳入 settle_with_delta 单一终态（与 next_period 同 atomic）
-        # #1382：月报权威在 turn_reports，不再写 session 瞬态 last_report
 
         self.state.turn_phase = TurnPhase.ISSUED.value
         self.db.save_state(self.state)
@@ -3811,7 +3808,6 @@ class GameSession:
             on_event=on_event, content=self.content, registry=self.registry,
             cheat_directive=cheat_directive,
         )
-        # #1382：月报权威在 turn_reports，不再写 session 瞬态 last_report
         self.state.turn_phase = TurnPhase.ISSUED.value
         self.db.save_state(self.state)
         return report
