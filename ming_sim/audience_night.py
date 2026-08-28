@@ -1501,6 +1501,8 @@ def close_night(
             )
 
     if primary_exc is not None or join_exc is not None:
+        if close_scaffold_owned and close_ctid and hasattr(db, "fail_chat_turn"):
+            db.fail_chat_turn(int(close_ctid))
         with gate:
             _set_night_fields(
                 db, night_id, status=NIGHT_STATUS_OPEN, closed_at=None,
@@ -1523,6 +1525,8 @@ def close_night(
             # settle path should have advanced this; missing watermark is a hard fault.
             # Restore OPEN so the player can retry (ADR 0036); keep code + diagnostics.
             fault_cursor = int(cursor)
+            if close_scaffold_owned and close_ctid and hasattr(db, "fail_chat_turn"):
+                db.fail_chat_turn(int(close_ctid))
             _set_night_fields(
                 db, night_id, status=NIGHT_STATUS_OPEN, closed_at=None,
                 close_commit_cursor=0,
@@ -1597,6 +1601,9 @@ def close_night(
                 closed_at=_now_iso(),
                 close_commit_cursor=CLOSE_STEP_FINALIZE,
             )
+        if close_scaffold_owned and close_ctid:
+            from ming_sim import beat_orchestration as beats
+            beats.retire_owned_close_scaffold(db, int(close_ctid))
         final = get_night(db, night_id)
 
     return {

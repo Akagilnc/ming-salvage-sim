@@ -792,7 +792,7 @@ def _named_scene_beats(scroll):
 
 
 def test_four_beat_scroll_e2e_via_real_player_entries(web_game):
-    """#1585/#542：单场真实入口 open→entrance/dialogue→close_night，closed 末段 exit→divider→closing。"""
+    """#1585/#542：单场真实 court_break 收夜入口，closed 末段 exit→divider→closing。"""
     game = web_game
     minister = _active_minister(game.db, game.content)
     fake_bodies = {
@@ -814,11 +814,7 @@ def test_four_beat_scroll_e2e_via_real_player_entries(web_game):
     game.db.persist_minister_reply(minister, game.state.turn, "臣请据实核账。", int(ctid))
     game.db.settle_story_extraction(int(ctid), night_id, [], 0)
     game.db.conn.commit()
-    registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=2))
-    an.close_night(
-        game.db, game.state, night_id=night_id, content=game.content,
-        beat_generator=fake_gen, scene_registry=registry, wait_timeout_s=0.0,
-    )
+    game.session.close_night_after_chat_if_needed("court_break")
     scroll = an.read_night_scroll(game.db, night_id)
     beats = _named_scene_beats(scroll)
     assert beats[-3:] == ["exit", "divider", "closing"]
@@ -2030,6 +2026,47 @@ def test_close_scene_early_phase1_failure_drains_and_reopens(game, monkeypatch):
     rows = db.conn.execute(
         "SELECT status FROM chat_turns WHERE night_id = ? AND minister_name = '收夜'",
         (night_id,),
+    ).fetchall()
+    assert rows
+    assert all(str(r["status"]) == "failed" for r in rows)
+
+
+def test_close_endorsement_failure_rolls_back_final_exit(game, monkeypatch):
+    """#1585：endorsement 失败、exit/closing 成功时须 OPEN、无本轮 TAG_EXIT、末位仍在场。"""
+    db, state, content = game
+    minister = _active_minister(db, content)
+    night_id, ctid = an.attach_chat_turn_to_night(
+        db, state, minister, agno_session_id="endorsement-fail-exit", agno_runs_before=0,
+    )
+    _land_reply(db, state, minister, ctid, night_id)
+    assert minister in an.present_names_at(db, int(night_id))
+
+    def boom_endorsement(*_a, **_k):
+        raise RuntimeError("endorsement sibling boom")
+
+    monkeypatch.setattr(
+        "ming_sim.audience_extraction.run_endorsement_batch_for_night",
+        boom_endorsement,
+    )
+    registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=2))
+    with pytest.raises(RuntimeError, match="endorsement sibling boom"):
+        an.close_night(
+            db, state, night_id=int(night_id), content=content,
+            beat_generator=_echo_generator, scene_registry=registry,
+            wait_timeout_s=0.0,
+        )
+    failed = an.get_night(db, int(night_id))
+    assert failed["status"] == an.NIGHT_STATUS_OPEN
+    assert int(failed["close_commit_cursor"] or 0) == 0
+    exits = [
+        e for e in an.list_ledger(db, int(night_id))
+        if an.TAG_EXIT in (e.get("tags") or [])
+    ]
+    assert exits == []
+    assert minister in an.present_names_at(db, int(night_id))
+    rows = db.conn.execute(
+        "SELECT status FROM chat_turns WHERE night_id = ? AND minister_name = '收夜'",
+        (int(night_id),),
     ).fetchall()
     assert rows
     assert all(str(r["status"]) == "failed" for r in rows)
