@@ -81,7 +81,8 @@ def test_secret_order_tool_path_canonicalizes_omitted_exclusions_before_staging(
     payload = tools["secret_order"](
         action="issue", title="密查", content="密查账目，勿使翰林院诸官知晓。",
         kind="清丈", axes_json='["实务事功"]', delivery_unit="亩",
-        delivery_target_units=1,
+        delivery_target_units=1, region="henan", field="registered_land",
+        region_target="421",
     ).removeprefix("__secret_order__")
 
     staged = json.loads(payload)

@@ -191,7 +191,10 @@ def _secret_payload_from_command(
             "kind": "查核关宁欠饷",
             "axes": ["实务事功"],
             "direction": 1,
-            "delivery": {"unit": "万两", "target_units": 1},
+            "delivery": {
+                "unit": "万两", "target_units": 1,
+                "purpose": "关宁欠饷", "category": "军饷", "account": "国库",
+            },
         },
     }
 

@@ -461,6 +461,7 @@ def test_explicit_secret_order_prefix_stages_pending_candidate(game, monkeypatch
             "方向": 1,
             "交付单位": "亩",
             "交付目标": 1,
+            "地区": "henan", "地区字段": "registered_land", "地区目标值": "421",
             "标签": ["辽东", "军饷"],
         }, ensure_ascii=False), 1)
 
@@ -501,6 +502,7 @@ def test_natural_language_secret_order_stages_pending_candidate(game, monkeypatc
                 "方向": 1,
                 "交付单位": "亩",
                 "交付目标": 1,
+                "地区": "henan", "地区字段": "registered_land", "地区目标值": "421",
                 "标签": ["关宁", "兵额"],
             }, ensure_ascii=False), 1)
         return (json.dumps({"任免动作": "无", "拟旨意图": "无"}, ensure_ascii=False), 1)
@@ -659,6 +661,7 @@ def test_new_secret_order_with_existing_order_stages_only_new_candidate(game, mo
                 "方向": 1,
                 "交付单位": "亩",
                 "交付目标": 1,
+                "地区": "henan", "地区字段": "registered_land", "地区目标值": "421",
                 "标签": [],
             }, ensure_ascii=False), 1)
         return (json.dumps({

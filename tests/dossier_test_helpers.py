@@ -1,4 +1,15 @@
 # #1504 typed covert-task contract fixtures (applier-native 亩 / 实务事功).
+LIAO_PAY_COVERT_TASK = {
+    "kind": "核发辽饷",
+    "axes": ["实务事功"],
+    "direction": 1,
+    "delivery": {
+        "unit": "万两", "target_units": 1.0,
+        "purpose": "辽饷", "category": "军饷", "account": "国库",
+    },
+}
+
+
 TYPED_COVERT_TASK = {
     "kind": "清丈",
     "axes": ["实务事功"],
