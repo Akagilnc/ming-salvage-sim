@@ -1,14 +1,15 @@
 """#1583：同批连续任命 — 批前统一荐人快照校验，批内有序物化。
 
 验收：同一批两份任命案卷，候选为同一在职人物、均携相同批前快照，
-目标官职依次不同；经 apply_dossier_verdicts 真入口按序生效，末职=第二条目标；
-批外真实陈旧快照仍拒。
+目标官职依次不同；经正常 settle（apply_dossier_verdicts 嵌于 settle_with_delta）
+按序生效，末职=第二条目标，turn 恰好推进 1；批外真实陈旧快照仍拒。
 """
 
 from __future__ import annotations
 
 import pytest
 
+from ming_sim.decree import settle_with_delta
 from tests.dossier_test_helpers import promulgate_proposed_appointments
 
 
@@ -37,8 +38,16 @@ def _stage_recommendation(db, state, recommender_name, row, office, reason):
     )
 
 
+def _proposed_appointment_dossier_id(db, pending_id):
+    return next(
+        row["id"] for row in db.list_decree_dossiers(status="proposed")
+        if row["action_type"] == "appointment"
+        and int(row.get("pending_action_id") or 0) == int(pending_id)
+    )
+
+
 def test_same_batch_consecutive_appointments_keep_prebatch_recommendation_snapshot(game):
-    """tracer：同人同批两任命、同批前快照 → 按序物化，末职=第二条，不卡物化。"""
+    """tracer：同人同批两任命、同批前快照 → 正常 settle 按序物化，末职=第二条，turn+1。"""
     db, state, content = game
     recommender = _pick_recommender(content)
     row = next(
@@ -63,9 +72,18 @@ def test_same_batch_consecutive_appointments_keep_prebatch_recommendation_snapsh
     )
     assert {item["id"] for item in committed} == {id1, id2}
 
-    # 真入口：批量判决顺颁（非直测 helper）。第一条物化后候选人现职已变，
-    # 若仍按批内中间态二次校验，第二条会误判快照过期并抛物化失败。
-    promulgate_proposed_appointments(db, state, content)
+    # 真入口：正常 settle 内顺颁（非直测 helper / 非单独 apply）。第一条物化后
+    # 候选人现职已变；若仍按批内中间态二次校验，第二条会误判快照过期并卡月。
+    before_turn = int(state.turn)
+    settle_with_delta(
+        state, db, {}, before_turn=before_turn, content=content,
+        dossier_verdicts=[
+            {"dossier_id": _proposed_appointment_dossier_id(db, id1), "decision": "promulgated"},
+            {"dossier_id": _proposed_appointment_dossier_id(db, id2), "decision": "promulgated"},
+        ],
+    )
+
+    assert state.turn == before_turn + 1
 
     char = db.conn.execute(
         "SELECT office, status FROM characters WHERE name=?", (name,),
