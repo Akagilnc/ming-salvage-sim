@@ -285,6 +285,10 @@ def normalize_one_candidate(obj: Mapping[str, Any], *, soft: bool) -> Dict[str, 
         out["target_ids"] = obj.get("target_ids")
     elif "目标编号" in obj and obj.get("目标编号") is not None:
         out["target_ids"] = obj.get("目标编号")
+    # CLI classifier 先归一一次，Future join 后还会再归一；保留本模块生成的来源标记，
+    # 让同一句里原生 grant 与其 draft 别名仍能在既有 materialize 去重缝相认。
+    if obj.get("_promoted_from_draft") is True:
+        out["_promoted_from_draft"] = True
     _promote_draft_xiexang_payload(out)
     return out
 
@@ -295,6 +299,7 @@ def _promote_draft_xiexang_payload(candidate: Dict[str, Any]) -> None:
         return
     if str(candidate.get("grant_action") or "").strip() != "协饷":
         return
+    candidate["_promoted_from_draft"] = True
     candidate["kind"] = "grant_allocation"
 
 
