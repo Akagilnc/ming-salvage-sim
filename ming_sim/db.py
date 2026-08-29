@@ -12805,9 +12805,10 @@ class GameDB:
         }
 
     def list_monthly_dossier_progress_nudges(self, turn: int | None = None) -> List[Dict[str, object]]:
-        """#1504 / ADR 0073 / 0058：凡带执行判定面的在办密令案卷均可挂月报。
+        """#1504 / 0058：列出在办且关联密令 active 的案卷月报候选。
 
-        不再以 deadline/tag/发令月收缩候选；缺项由 record 侧完整覆盖失败。
+        在办状态为 promulgated/executing；不以 deadline/tag/发令月收缩候选，
+        缺项由 record 侧完整覆盖失败。
         """
         _ = turn  # 签名保留；0058 候选不按结算回合收缩
         rows = self.conn.execute(

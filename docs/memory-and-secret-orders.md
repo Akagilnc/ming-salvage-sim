@@ -225,9 +225,16 @@ db.prune_event_memories_for_turn(state.turn, per_subject=3)
 dossier_progress_json                         # 奏报轨，只供玩家阅读
 dossier_actual_progress                       # 实况轨，只认真实交付
   → settle_due_secret_orders()
-  → Σ actual_units 对比 covert_task_contract.target_units
+  → 交付差务：Σ actual_units 对比 covert_task_contract.delivery.target_units
+  → 专题查核（investigation_target 非空）：Σ actual_units 对比
+     target_progress_units(deadline_span, due_turn)，每个期限月计 1.0
+     （无期限案经提交核议或奉旨即核变为当月到期时，最低按 1 个月配额）
   → db.close_secret_order(done/failed, player_facing_result, turn)
 ```
+
+专题查核的月度实进度直接按当月执行态累计：忠实 `1.0`、打折 `0.5`、
+阳奉阴违或反噬 `0.0`；是否新绑定事实线索不再决定当月差务进度。
+非查核的交付差务仍只认与合同身份和来源案卷相符的真实交付数量。
 
 奏报内容不能改变世界状态，也不能决定结案；恢复存档后两轨都从 DB 原边界继续。
 
