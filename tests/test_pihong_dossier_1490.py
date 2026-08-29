@@ -3712,6 +3712,7 @@ def test_1625_inflight_phase2_does_not_advertise_resume(web_game, monkeypatch):
     payload = asyncio.run(_get_state())
     assert payload["turn"]["phase"] == TurnPhase.AWAITING_DECISION.value
     assert payload.get("resume_phase2") is False
+    assert payload.get("settlement_entry_inflight") is True
     assert payload.get("pending_decisions") == []
     release.set()
     t.join(5.0)
@@ -3719,6 +3720,7 @@ def test_1625_inflight_phase2_does_not_advertise_resume(web_game, monkeypatch):
     assert result["r"].status_code == 200
     done = asyncio.run(_get_state())
     assert done.get("resume_phase2") is False
+    assert done.get("settlement_entry_inflight") is False
 
 
 def test_657_resume_phase2_signal_empty_desk_http(web_game, monkeypatch):

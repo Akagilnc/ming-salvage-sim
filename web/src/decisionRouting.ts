@@ -90,12 +90,17 @@ export function routeRefreshDecisions(
   phase: string | undefined,
   events: unknown[],
   resumePhase2Signal?: boolean,
+  settlementEntryInflight?: boolean,
 ): DecisionRouteOutcome {
   // #1307：settling 中间态 pending=[] 正常——轮询/等待呈现，不报错不喊重拉。
   if (phase === "settling") {
     return { pendingDecisions: null, error: SETTLING_WAIT_MSG || null };
   }
   if (phase !== "awaiting_decision") {
+    return { pendingDecisions: null, error: null };
+  }
+  // #1625：入口在飞沿用 settling 的等待呈现，不打回、不挂续跑。
+  if (settlementEntryInflight) {
     return { pendingDecisions: null, error: null };
   }
   // #1374/#1418 r2 / #657：phase2 在办——不重开批红；接到 settle-resume。
@@ -113,6 +118,7 @@ export function routeRetryDecisions(
   phase: string | undefined,
   events: unknown[],
   resumePhase2Signal?: boolean,
+  settlementEntryInflight?: boolean,
 ): DecisionRouteOutcome {
   // #1307：settling 重拉也不报错；空批红只在 awaiting_decision 才响亮。
   if (phase === "settling") {
@@ -120,6 +126,10 @@ export function routeRetryDecisions(
   }
   if (phase !== "awaiting_decision") {
     return { pendingDecisions: [], error: "" };
+  }
+  // #1625：重拉撞上仍在飞的入口只等待，不清成成功、不触发续跑。
+  if (settlementEntryInflight) {
+    return { pendingDecisions: null, error: null };
   }
   // #1418 r2 / #657：all-decided 或 typed resume 信号 → phase2 续跑 affordance。
   if (resumePhase2Signal || isAllDecisionsDecided(events)) {

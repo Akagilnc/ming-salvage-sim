@@ -1476,6 +1476,8 @@ class WebGame:
             # #657：phase1 已落 decided、desk 只查 pending 为空时，投影 typed 续跑信号。
             # 不把 decided 塞回 pending 列表；前端空 POST 既有 resolve_decisions/stream。
             "resume_phase2": self._resume_phase2_signal(),
+            # #1625：只投影进程内既有入口计数；供刷新/重拉区分在飞与真暂停。
+            "settlement_entry_inflight": _settlement_entry_inflight(self) > 0,
             "last_decree": self.last_decree,
             "last_report": self.last_report,
             # #671：上一已完成月王承恩独立递话（与 last_report 同级 typed 字段）
