@@ -1036,9 +1036,7 @@ def test_real_chat_explicit_prefix_pay_decree_stages_grant_pending(game, monkeyp
         "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
     ).fetchone()
     actor = actor_row["name"]
-    scripted = _scripted_xiexang_candidates(
-        amount=15, account="太仓", target_id="guanning",
-    ) + candidates_from_classifier_payload({
+    scripted = candidates_from_classifier_payload({
         "kind": "draft", "draft_action": "拟旨",
         "text": "敕户部发太仓银十五万两协济关宁军前。",
         "grant_action": "协饷", "amount": 15, "account": "太仓",
@@ -1254,9 +1252,11 @@ def test_web_stream_propose_directive_skips_when_typed_grant_present(
         def get_last_run_output(self):
             return None
 
-    scripted = _scripted_xiexang_candidates(
-        amount=15, account="太仓", target_id="guanning",
-    )
+    scripted = candidates_from_classifier_payload({
+        "kind": "draft", "draft_action": "拟旨", "grant_action": "协饷",
+        "amount": 15, "account": "太仓", "purpose": "补饷",
+        "target_kind": "army", "target_id": "guanning",
+    }, soft=False)
 
     def fake_classify(*_a, **_k):
         return list(scripted)

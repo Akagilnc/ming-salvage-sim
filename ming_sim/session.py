@@ -577,8 +577,11 @@ def apply_appointment(
 def _typed_grant_candidate_present(
     intent: Optional[Dict[str, Any]],
     intent_candidates: Optional[List[Dict[str, Any]]],
+    *,
+    db: Any,
+    reply: object,
 ) -> bool:
-    """#1503：classifier 是否已给出可物化的 grant_allocation 候选。
+    """#1503：classifier 是否已给出可物化的 grant 或 draft 协饷载荷。
 
     真则显式拟旨前缀不得先落 generic special_decree，改由既有 grant 单轨成案。
     """
@@ -589,9 +592,13 @@ def _typed_grant_candidate_present(
     def _ok(candidate: Any) -> bool:
         if not isinstance(candidate, dict):
             return False
-        if str(candidate.get("kind") or "").strip() != "grant_allocation":
-            return False
-        return str(candidate.get("grant_action") or "").strip() in valid
+        kind = str(candidate.get("kind") or "").strip()
+        action = str(candidate.get("grant_action") or "").strip()
+        if kind == "grant_allocation":
+            return action in valid
+        if kind == "draft" and action == "协饷":
+            return am.xiexang_candidate_signature(db, reply, candidate) is not None
+        return False
 
     if _ok(intent or {}):
         return True
@@ -1647,7 +1654,9 @@ class GameSession:
                 if (
                     confirmation_turn
                     or explicit_secret_prefix
-                    or _typed_grant_candidate_present(None, preclassified_intent)
+                    or _typed_grant_candidate_present(
+                        None, preclassified_intent, db=self.db, reply=answer,
+                    )
                 ):
                     continue
                 args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
