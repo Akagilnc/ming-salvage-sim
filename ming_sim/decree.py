@@ -2305,6 +2305,15 @@ def pre_settle(
             )
             if committed:
                 tlog(f"[pending_actions] 颁诏批量落库 {len(committed)} 条：{[(c['kind'], c['action']) for c in committed]}")
+            leftover_directives = db.list_directives(state, statuses=("pending",))
+            leftover_staged = [
+                row for row in db.list_pending_actions(state.turn)
+                if row.get("kind") == "directive"
+            ]
+            if leftover_directives or leftover_staged:
+                # #1627：commit 之后仍留 kind=directive pending / turn_directives pending
+                # 不得进 simulator。atomic 回滚，相位不入 awaiting_decision。
+                raise ValueError("尚有待澄清/未核定拟旨，不能颁诏。")
             fiscal_levies = apply_historical_fiscal_rates(state, db, commit=False)
             if fiscal_levies:
                 tlog(
