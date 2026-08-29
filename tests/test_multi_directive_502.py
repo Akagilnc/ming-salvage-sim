@@ -479,26 +479,74 @@ def test_night_promulgated_directives_identifiable_by_night_and_range(game):
     assert len({p["directive_id"] for p in rng}) == 3
 
 
-def test_needs_clarification_directive_skipped_by_default_commit(game):
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
+def test_needs_clarification_directive_skipped_by_default_commit(game, monkeypatch):
     """含糊待澄清候选不被「不回→默认同意」批量提交（AC5：颁诏时不误提交）；
-    对照：未标待澄清的那道照常默认提交入 turn_directives。"""
+    #1627：走 resolve_turn 真入口——含糊剩余响亮拒、相位非 awaiting_decision；
+    普通 pending 仍能颁诏，带 decision_key 的 submit_hitl_choices 过亲裁期门。"""
+    import threading
+
+    import ming_sim.session as session_mod
+    from ming_sim.models import TurnPhase
+    from ming_sim.session import GameSession, ResolveResult
+
     db, state, content = game
     name = _active_minister_name(db, content)
     an.open_night(db, state, location="乾清宫", time_of_day="夜")
     id_a, id_b = _stage_two_night_candidates(db, state, name)
     db.flag_directive_needs_clarification(id_a)  # A 含糊待澄清；B 未表态
 
-    applied = db.commit_pending_actions(state)  # 默认批量（action_ids=None）
+    sess = GameSession.__new__(GameSession)
+    sess.db, sess.state, sess.content = db, state, content
+    sess.registry = sess.llm_config = sess.agno_db = None
+    sess.last_decree = sess.last_report = ""
+    sess.deaths_this_turn, sess.debuts_this_turn = [], []
+    sess.auto_save = lambda _tag: None
+    phase_before = state.turn_phase
 
-    committed_ids = {int(a.get("pending_action_id") or a.get("id") or 0) for a in applied}
-    # A 被跳过、仍 pending；B 默认提交
+    def _must_not_settle(*_a, **_k):
+        raise AssertionError("含糊剩余不得进 simulator")
+
+    monkeypatch.setattr(session_mod, "resolve_directives", _must_not_settle)
+    with pytest.raises(ValueError, match="尚有待澄清/未核定拟旨"):
+        sess.resolve_turn(inflight_wait_s=0.0)
+    assert "亲裁期新增" not in "尚有待澄清/未核定拟旨，不能颁诏。"
+    assert "恢复期新增" not in "尚有待澄清/未核定拟旨，不能颁诏。"
+    assert state.turn_phase == phase_before
+    assert state.turn_phase != TurnPhase.AWAITING_DECISION.value
     pend_ids = {p["id"] for p in _pending_directives(db, state.turn)}
-    assert id_a in pend_ids, "待澄清候选不应被默认提交"
-    rows = db.conn.execute(
-        "SELECT text FROM turn_directives WHERE turn=?", (state.turn,)).fetchall()
-    joined = "".join(str(r["text"] or "") for r in rows)
-    assert "兵部核饷" in joined, "未标待澄清的那道应照常默认提交"
-    assert "户部清查" not in joined, "待澄清那道不应进 turn_directives"
+    assert id_a in pend_ids and id_b in pend_ids
+
+    db.clear_directive_needs_clarification(id_a)
+
+    def fake_write(_config, _agno, _state, directives, **_kwargs):
+        return "诏书[" + "；".join(str(d["text"]) for d in directives) + "]"
+
+    def fake_resolve(st, gdb, _agno, _config, directives, decree_text, **_kwargs):
+        gdb.commit_pending_actions(st, content=content, registry=None)
+        gdb.save_pending_decisions(st.turn, [{
+            "title": "辽东战和",
+            "context": "请裁",
+            "decision_key": "dk-ordinary",
+            "options": [{"label": "战", "hint": ""}, {"label": "和", "hint": ""}],
+        }])
+        return ResolveResult(awaiting=True, decisions=gdb.list_rescript_desk(int(st.turn)))
+
+    monkeypatch.setattr(session_mod, "write_decree_with_agno", fake_write)
+    monkeypatch.setattr(session_mod, "resolve_directives", fake_resolve)
+    result = sess.resolve_turn(inflight_wait_s=0.0)
+    assert result.awaiting is True
+    assert state.turn_phase == TurnPhase.AWAITING_DECISION.value
+
+    def fake_rescript(choices, **_kw):
+        sess._assert_awaiting_decision_submit()
+        assert any(c.get("decision_key") == "dk-ordinary" for c in choices)
+        return "ok"
+
+    monkeypatch.setattr(sess, "resolve_rescript_decisions", fake_rescript)
+    assert sess.submit_hitl_choices(
+        [{"decision_key": "dk-ordinary"}], write_gate=threading.Lock(),
+    ) == "ok"
 
 
 def test_supplement_targets_named_candidate_others_unchanged(game, monkeypatch):
