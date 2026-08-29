@@ -107,6 +107,7 @@ function mountHarness(opts: {
         <div data-testid="minxin">{String(metrics["民心"] ?? "")}</div>
         <div data-testid="huangwei">{String(metrics["皇威"] ?? "")}</div>
         <div data-testid="pending-count">{String(hookRef.current.pendingDecisions.length)}</div>
+        <div data-testid="phase">{turn?.phase || ""}</div>
         <div data-testid="settlement-display">{String(Boolean(turn?.settlement_display))}</div>
       </div>
     );
@@ -130,9 +131,67 @@ function mountHarness(opts: {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   document.body.innerHTML = "";
+});
+
+describe("#1625 useSettlementFlow — observation refresh convergence", () => {
+  it("throttles inflight reloads and converges to the visible phase returned after waiting", async () => {
+    vi.useFakeTimers();
+    // Real prior phase while entry is in flight: accept sets settlement_display +
+    // inflight before pre_settle writes SETTLING (still summoning/reviewing).
+    const inflightState = {
+      ...awaitingState,
+      turn: { ...awaitingState.turn, phase: "summoning", settlement_display: true },
+      pending_decisions: [],
+      settlement_entry_inflight: true,
+    } as GameState;
+    const visibleDesk = [validDecision];
+    const settledState = {
+      ...awaitingState,
+      pending_decisions: visibleDesk,
+      settlement_entry_inflight: false,
+    } as GameState;
+    const pollError = new Error("transient poll failure");
+    const loadState = vi
+      .fn<() => Promise<GameState | null>>()
+      .mockResolvedValueOnce(null)
+      .mockRejectedValueOnce(pollError)
+      .mockResolvedValueOnce(settledState);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { host, cleanup } = mountHarness({ initial: inflightState, loadState });
+
+    expect(loadState).not.toHaveBeenCalled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(999);
+    });
+    expect(loadState).not.toHaveBeenCalled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(loadState).toHaveBeenCalledTimes(1);
+    expect(host.querySelector('[data-testid="phase"]')?.textContent).toBe("summoning");
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    expect(loadState).toHaveBeenCalledTimes(2);
+    expect(host.querySelector('[data-testid="phase"]')?.textContent).toBe("summoning");
+    expect(host.querySelector('[data-testid="error"]')?.textContent).toBe("");
+    expect(warn.mock.calls.some((call) => call.includes(pollError))).toBe(true);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    expect(loadState).toHaveBeenCalledTimes(3);
+    expect(host.querySelector('[data-testid="phase"]')?.textContent).toBe("awaiting_decision");
+    expect(host.querySelector('[data-testid="pending-count"]')?.textContent).toBe("1");
+    expect(host.querySelector('[data-testid="error"]')?.textContent).toBe("");
+    expect(vi.getTimerCount()).toBe(0);
+    cleanup();
+  });
 });
 
 describe("#1351 useSettlementFlow — advanceWithoutEdict 令牌与 409 幂等", () => {

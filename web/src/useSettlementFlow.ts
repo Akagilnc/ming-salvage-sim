@@ -44,6 +44,31 @@ export function useSettlementFlow({
   // #657：typed resume_phase2 时空 pending 不报 PAUSED，接到 phase2 空 POST 续跑。
   React.useEffect(() => {
     if (!state) return;
+    // #1625: an observation-page refresh can land while another settlement entry
+    // is consuming the desk. Reuse the injected state loader until that wait ends.
+    // Gate on inflight alone — entry begins before turn_phase becomes settling
+    // (still summoning/reviewing under settlement_display), so phase conjunction
+    // would stall the observation page on the locked pre-settle face.
+    if (state.settlement_entry_inflight) {
+      let cancelled = false;
+      let refreshTimer: number;
+      const refresh = () => {
+        refreshTimer = window.setTimeout(() => {
+          void loadState()
+            .catch((err) => {
+              console.warn("[settlement] inflight refresh failed", err);
+            })
+            .finally(() => {
+              if (!cancelled) refresh();
+            });
+        }, 1000);
+      };
+      refresh();
+      return () => {
+        cancelled = true;
+        window.clearTimeout(refreshTimer);
+      };
+    }
     const route = routeRefreshDecisions(
       state.turn.phase,
       state.pending_decisions || [],
@@ -54,7 +79,7 @@ export function useSettlementFlow({
       setPendingDecisions((prev) => replacePendingDecisionsOnRefresh(prev, next) || []);
     }
     if (route.error !== null) setPausedDecisionError(route.error);
-  }, [state]);
+  }, [state, loadState]);
 
   // 颁诏/续裁共用：消费 SSE 推演流（settleStream.ts），stage/thinking/text 实时更新进度区。
   const consumeSettle = (response: Response) => consumeSettleStream(response, {
@@ -197,6 +222,7 @@ export function useSettlementFlow({
       const events = freshState.pending_decisions || [];
       const route = routeRetryDecisions(
         freshState.turn.phase, events, freshState.resume_phase2,
+        freshState.settlement_entry_inflight,
       );
       // #1418 r2 / #657：all-decided 或 typed resume 不得当成功空批清横幅——接到 phase2 续跑。
       // 移交 resumePhase2 前先放行本函数 busy，避免 finally 清掉续跑中的「月末结算」。

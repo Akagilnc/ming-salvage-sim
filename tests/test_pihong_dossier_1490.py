@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 
 import httpx
 import pytest
@@ -56,6 +57,13 @@ async def _post_resolve(choices: list[dict]) -> httpx.Response:
             "/api/decree/resolve_decisions/stream",
             json={"choices": choices},
         )
+
+
+async def _get_state() -> dict:
+    async with _client() as client:
+        r = await client.get("/api/game/state")
+        assert r.status_code == 200, r.text
+        return r.json()
 
 
 def _plant_dossier_awaiting(db, state):
@@ -3803,6 +3811,196 @@ def test_657_summon_single_flight_concurrent_http(web_game, monkeypatch):
     assert db.conn.execute(
         "SELECT status FROM chat_turns WHERE id=?", (ctid,),
     ).fetchone()["status"] == "consumed"
+
+
+def test_1625_phase1_publication_projects_only_coherent_recovery_tuples(web_game):
+    """#1625：真实 GET 横穿 phase1 发布时，旧相位必须携带 typed in-flight。"""
+    db, original_state = web_game.db, web_game.state
+    phase_sampled = threading.Event()
+    phase_published = threading.Event()
+    entry_ended = threading.Event()
+    entry_lock = web_app._settlement_entry_lock(web_game)
+
+    class PhaseRaceState(type(original_state)):
+        _race_armed = False
+
+        def __getattribute__(self, name):
+            value = super().__getattribute__(name)
+            if name == "turn_phase" and super().__getattribute__("_race_armed"):
+                super().__setattr__("_race_armed", False)
+                phase_sampled.set()
+                assert phase_published.wait(2.0), "phase1 publication did not complete"
+                # Before the fix state_payload held no entry lock here, so require
+                # the real entry finally to finish and deterministically expose its
+                # mixed old-phase/zero-count tuple.  With the fix, returning lets
+                # the snapshot release that lock and the finally complete afterward.
+                if not entry_lock.locked():
+                    assert entry_ended.wait(2.0), "settlement entry did not finish"
+            return value
+
+    state = PhaseRaceState(**original_state.__dict__)
+    state.turn_phase = TurnPhase.SETTLING.value
+    web_game.session.state = state
+    db.save_state(state)
+    db.conn.commit()
+    web_app._begin_settlement_entry(web_game)
+
+    desk_holder = {}
+
+    def _publish_phase1():
+        assert phase_sampled.wait(2.0), "GET did not sample phase"
+        desk_holder["desk"] = _657_plant_awaiting_web(web_game, drafts=[{
+            "title": "发布中的案头", "context": "c",
+            "options": [
+                {"label": "准", "hint": "h", "draft_capability": "approve"},
+                {"label": "驳", "hint": "h", "draft_capability": "reject"},
+            ],
+            "actor_name": "杨嗣昌", "actor_office": "兵部尚书", "actor_faction": "帝党",
+        }])
+        phase_published.set()
+        web_app._end_settlement_entry(web_game)
+        entry_ended.set()
+
+    publisher = threading.Thread(target=_publish_phase1)
+    publisher.start()
+    state._race_armed = True
+    crossed = asyncio.run(_get_state())
+    publisher.join(5.0)
+    assert not publisher.is_alive()
+
+    assert crossed["turn"]["phase"] == TurnPhase.SETTLING.value
+    assert crossed["settlement_entry_inflight"] is True
+    assert crossed["pending_decisions"] == []
+    assert crossed["resume_phase2"] is False
+
+    durable = asyncio.run(_get_state())
+    assert durable["turn"]["phase"] == TurnPhase.AWAITING_DECISION.value
+    assert durable["settlement_entry_inflight"] is False
+    assert durable["pending_decisions"] == desk_holder["desk"]
+    assert durable["resume_phase2"] is False
+
+
+def test_1625_inflight_phase2_does_not_advertise_resume(web_game, monkeypatch):
+    """#1625：在飞 phase2 吃空案头时 GET 不得 resume_phase2。
+
+    含反向 interleaving：GET 已进入案头读缝时，并发 resolve begin 试图吃空桌——
+    快照临界区须挡住 begin，使本 GET 不得投出 resume_phase2=true。
+    """
+    from ming_sim.models import TurnPhase
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+
+    db, state = web_game.db, web_game.state
+    opt = normalize_rescript_layer_a_option({
+        "label": "备", "hint": "h", "action_type": "assignment",
+        "assignee_name": "", "target_kind": "region", "target_id": "shaanxi",
+        "locality_scope": "single", "region_id": "shaanxi",
+        "transaction_category": "督赈",
+    })
+    desk = _657_plant_awaiting_web(web_game, drafts=[{
+        "title": "在飞窗", "context": "c",
+        "options": [opt, {"label": "x", "hint": "h", "draft_capability": "z"}],
+        "actor_name": "杨嗣昌", "actor_office": "o", "actor_faction": "f",
+    }])
+    key = desk[0]["decision_key"]
+    kind, turn_s, idx_s = key.split(":")
+    choice_json = json.dumps(
+        {"decision_key": key, "action": "follow_draft", "label": "备"},
+        ensure_ascii=False,
+    )
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
+    db.conn.commit()
+    assert web_game.session.pending_decisions(), "reverse 窗起点须有 pending 案头"
+    assert db.get_resolve_context(state.turn) is not None
+
+    # ── reverse interleaving ──────────────────────────────────────────
+    # GET reaches desk read while concurrent begin tries to empty it.
+    # Fixed path holds entry lock through desk/resume; begin blocks and this
+    # GET keeps the live desk (resume stays false). Legacy path read desk
+    # outside the lock and could advertise resume_phase2 with stale zero-count.
+    entry_lock = web_app._settlement_entry_lock(web_game)
+    desk_read = threading.Event()
+    resolve_begun = threading.Event()
+    original_pending = web_game.session.pending_decisions
+
+    def _pending_with_reverse_race():
+        desk_read.set()
+        if not entry_lock.locked():
+            assert resolve_begun.wait(2.0), "resolve begin did not empty desk"
+        return original_pending()
+
+    monkeypatch.setattr(
+        web_game.session, "pending_decisions", _pending_with_reverse_race,
+    )
+
+    def _begin_and_empty_desk():
+        assert desk_read.wait(2.0), "GET did not reach desk read"
+        web_app._begin_settlement_entry(web_game)
+        db.conn.execute(
+            "UPDATE pending_decisions SET status='decided', choice_json=? "
+            "WHERE kind=? AND turn=? AND idx=?",
+            (choice_json, kind, int(turn_s), int(idx_s)),
+        )
+        db.conn.commit()
+        resolve_begun.set()
+
+    beginner = threading.Thread(target=_begin_and_empty_desk)
+    beginner.start()
+    crossed = asyncio.run(_get_state())
+    beginner.join(5.0)
+    assert not beginner.is_alive()
+
+    assert crossed["turn"]["phase"] == TurnPhase.AWAITING_DECISION.value
+    assert crossed.get("resume_phase2") is False
+    assert (
+        crossed.get("pending_decisions")
+        or crossed.get("settlement_entry_inflight") is True
+    )
+
+    # Close reverse-race bookkeeping before the forward in-flight window.
+    monkeypatch.setattr(
+        web_game.session, "pending_decisions", original_pending,
+    )
+    while web_app._settlement_entry_inflight(web_game) > 0:
+        web_app._end_settlement_entry(web_game)
+
+    # ── forward window: phase2 already in flight with emptied desk ───
+    db.conn.execute(
+        "UPDATE pending_decisions SET status='decided', choice_json=? "
+        "WHERE kind=? AND turn=? AND idx=?",
+        (choice_json, kind, int(turn_s), int(idx_s)),
+    )
+    db.conn.commit()
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    def _phase2(*_a, **_k):
+        entered.set()
+        assert release.wait(2.0)
+        return "邸报"
+
+    monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _phase2)
+    result = {}
+
+    def _run():
+        result["r"] = asyncio.run(_post_resolve([]))
+
+    t = threading.Thread(target=_run)
+    t.start()
+    assert entered.wait(2.0), "phase2 须进入在飞窗"
+    payload = asyncio.run(_get_state())
+    assert payload["turn"]["phase"] == TurnPhase.AWAITING_DECISION.value
+    assert payload.get("resume_phase2") is False
+    assert payload.get("settlement_entry_inflight") is True
+    assert payload.get("pending_decisions") == []
+    release.set()
+    t.join(5.0)
+    assert not t.is_alive()
+    assert result["r"].status_code == 200
+    done = asyncio.run(_get_state())
+    assert done.get("resume_phase2") is False
+    assert done.get("settlement_entry_inflight") is False
 
 
 def test_657_resume_phase2_signal_empty_desk_http(web_game, monkeypatch):
