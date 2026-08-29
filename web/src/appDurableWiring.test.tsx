@@ -878,6 +878,45 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     expect((host2.querySelector('[data-testid="decision-recovery"] button') as HTMLButtonElement).disabled).toBe(false);
   });
 
+  it("#1620 落印 SSE error 挂 decision-recovery", async () => {
+    const state = settlementBaseState("awaiting_decision", {
+      pending_decisions: [validDecision],
+    });
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      const u = new URL(String(url), "http://t.local");
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) return jsonResp(state);
+      if (u.pathname.endsWith("/api/history/turns")) return jsonResp({
+        turns: [{ kind: "month", turn: 4, year: 1627, period: 9, has_report: true, has_attendant: false, has_directive: true }],
+      });
+      if (u.pathname.includes("/api/history/turn/")) return jsonResp({
+        turn: 4, year: 1627, period: 9, report: SNAP_GAZETTE, decree: "",
+      });
+      if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
+      if (u.pathname.endsWith("/api/decree/resolve_decisions/stream")) {
+        return sseResp("error", { message: "stream-fail" });
+      }
+      return jsonResp({});
+    }));
+    const host = await mountApp();
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[data-testid="decision-modal"]')).not.toBeNull());
+    });
+    const option = Array.from(host.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("固守"),
+    ) as HTMLButtonElement | undefined;
+    expect(option).toBeTruthy();
+    await click(option);
+    const seal = host.querySelector('[aria-label="批红落印，续推时局"]') as HTMLButtonElement | null;
+    expect(seal).not.toBeNull();
+    await click(seal);
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[data-testid="decision-recovery"]')).not.toBeNull());
+    });
+  });
+
   it("#1418 r2 awaiting + 全员 decided + settlement_display：接到 settle-resume，不重开批红", async () => {
     const decided = { ...validDecision, status: "decided", choice: { label: "固守" } };
     stubSettlementFetch(settlementBaseState("awaiting_decision", {
