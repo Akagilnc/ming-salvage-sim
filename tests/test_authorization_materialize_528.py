@@ -479,3 +479,84 @@ def test_default_privilege_is_便宜行事_when_unspecified(game):
     assert pending_id
     pending = _pending_payload(db, pending_id)
     assert pending["privilege"] == "便宜行事"
+
+
+def test_duplicate_active_authority_soft_fails_second_dossier_not_whole_batch(game):
+    """#1628：跨案同一三元组不得升格 ValueError；第二案 failed close，同批无关仍落。"""
+    db, state, content = game
+    holder = _minister(db)
+    first_domain = "1628-first"
+    second_domain = "1628-other"
+
+    first_ctx = _stage(
+        db, state.turn,
+        {
+            "kind": "authorization",
+            "privilege": "便宜行事",
+            "holder_id": holder,
+            "target_id": first_domain,
+        },
+        actor=holder,
+        message="许你便宜行事。",
+    )
+    first = _close_night_dossier(db, state, content, first_ctx.out["pending_action_id"])
+    db.apply_dossier_verdicts(
+        state,
+        [{"dossier_id": first["id"], "decision": "promulgated"}],
+        content=content,
+    )
+
+    dup_ctx = _stage(
+        db, state.turn,
+        {
+            "kind": "authorization",
+            "privilege": "便宜行事",
+            "holder_id": holder,
+            "target_id": first_domain,
+        },
+        actor=holder,
+        message="再许你便宜行事。",
+    )
+    other_ctx = _stage(
+        db, state.turn,
+        {
+            "kind": "authorization",
+            "privilege": "便宜行事",
+            "holder_id": holder,
+            "target_id": second_domain,
+        },
+        actor=holder,
+        message="另域亦许便宜行事。",
+    )
+    dup = _close_night_dossier(db, state, content, dup_ctx.out["pending_action_id"])
+    other = _close_night_dossier(db, state, content, other_ctx.out["pending_action_id"])
+
+    db.apply_dossier_verdicts(
+        state,
+        [
+            {"dossier_id": dup["id"], "decision": "promulgated"},
+            {"dossier_id": other["id"], "decision": "promulgated"},
+        ],
+        content=content,
+    )
+
+    rows = db.conn.execute(
+        "SELECT dossier_id FROM authority_records "
+        "WHERE holder_id=? AND privilege=? AND scope=? AND revoked=0",
+        (holder, "便宜行事", f"issue:{first_domain}"),
+    ).fetchall()
+    assert [int(r["dossier_id"]) for r in rows] == [int(first["id"])]
+
+    dup_row = db.conn.execute(
+        "SELECT execution_outcome, status FROM decree_dossiers WHERE id=?",
+        (dup["id"],),
+    ).fetchone()
+    assert dup_row["execution_outcome"] == "failed"
+    assert dup_row["status"] == "closed"
+
+    other_active = [
+        r for r in db.list_active_authorities(state.turn, holder_id=holder)
+        if r["scope"] == f"issue:{second_domain}"
+    ]
+    assert len(other_active) == 1
+    assert int(other_active[0]["dossier_id"]) == int(other["id"])
