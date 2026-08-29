@@ -1147,6 +1147,57 @@ def test_real_chat_explicit_prefix_suppresses_tool_twin_and_durable_one_dossier(
     )
 
 
+def test_real_chat_draft_xiexang_plus_punish_tool_keeps_both_pending(
+    game, monkeypatch,
+):
+    """真实 session.chat：draft+协饷 classifier 不得 turn-wide 吞掉带 punish 字段的 tool。
+
+    外部可见：pending 恰两行，dossier_action_type ∈ {grant_allocation, punishment}。
+    根因样本：tool 循环层 continue 把整枚 propose_directive 跳过；generic 尾路抑制
+    只挡孪生 special_decree，惩处显式字段分支仍须入档。
+    """
+    db, state, content = game
+    actor = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
+    ).fetchone()["name"]
+    target = next(
+        ch for ch in content.characters.values()
+        if getattr(ch, "office_type", "") not in ("后宫", "宗藩")
+        and db.resolve_power_id(ch) == "ming"
+        and db.get_character_status(ch.name)[0] == "active"
+        and ch.name != actor
+        and str(getattr(ch, "office", "") or "").strip()
+    )
+    scripted = candidates_from_classifier_payload({
+        "kind": "draft", "draft_action": "拟旨",
+        "grant_action": "协饷", "amount": 15, "account": "太仓",
+        "purpose": "补饷", "target_kind": "army", "target_id": "guanning",
+    }, soft=False)
+    punish_tools = [SimpleNamespace(
+        tool_name="propose_directive",
+        result=f"__pending_directive__着罚{target.name}俸示惩。",
+        arguments={
+            "decree_text": f"着罚{target.name}俸示惩。",
+            "punish_action": "罚俸",
+            "target_id": target.name,
+            "amount": 120,
+        },
+    )]
+    sess = _real_chat_session(
+        db, state, content, monkeypatch, scripted=scripted, agent_tools=punish_tools,
+    )
+
+    result = sess.chat(actor, f"拟旨如下：准拨关宁军饷，并罚{target.name}俸。")
+    assert int(getattr(result, "pending_action_id", 0) or 0) > 0
+    rows = list(db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE turn=? AND kind='directive'",
+        (state.turn,),
+    ).fetchall())
+    assert len(rows) == 2
+    types = {json.loads(row["payload_json"]).get("dossier_action_type") for row in rows}
+    assert types == {"grant_allocation", "punishment"}
+
+
 def test_explicit_prefix_grant_and_assignment_two_durable_dossiers(game, monkeypatch):
     """真实 session.chat：grant+assignment 一次吐出，commit 后两道独立 durable dossiers。"""
     db, state, content = game
