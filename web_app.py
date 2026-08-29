@@ -1411,22 +1411,24 @@ class WebGame:
         snap = self._month_open_snapshot()
         settlement_display = snap is not None
         display_metrics = self._display_metrics()
-        # #1625: phase and entry count form one recovery snapshot.  The entry
-        # lifecycle keeps the count non-zero until phase1 publication is complete,
-        # so this cannot pair an old phase with a post-publication zero count.
+        # #1625: phase/count/desk/resume form one recovery snapshot under the
+        # existing settlement-entry lock. Holding the lock through the desk read
+        # keeps a concurrent resolve begin from emptying the desk after this GET
+        # already sampled inflight=false (false resume_phase2).
         with _settlement_entry_lock(self):
             turn_phase = self.state.turn_phase
             settlement_entry_inflight = (
                 int(getattr(self, "_settlement_entry_inflight", 0) or 0) > 0
             )
-        awaiting_decision = turn_phase == TurnPhase.AWAITING_DECISION.value
-        # One GET derives desk and resume from that same phase snapshot.
-        pending_decisions = self.session.pending_decisions() if awaiting_decision else []
-        durable_phase2_resume = (
-            awaiting_decision
-            and self.db.get_resolve_context(self.state.turn) is not None
-            and not pending_decisions
-        )
+            awaiting_decision = turn_phase == TurnPhase.AWAITING_DECISION.value
+            pending_decisions = (
+                self.session.pending_decisions() if awaiting_decision else []
+            )
+            durable_phase2_resume = (
+                awaiting_decision
+                and self.db.get_resolve_context(self.state.turn) is not None
+                and not pending_decisions
+            )
         return {
             "turn": {"year": self.state.year, "period": self.state.period,
                      "turn": self.state.turn, "phase": turn_phase,
