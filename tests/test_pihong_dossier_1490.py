@@ -1292,6 +1292,58 @@ def _657_plant_awaiting_web(web_game, *, drafts=None, decisions=None, title="陕
     return db.list_rescript_desk(int(state.turn))
 
 
+def test_1627_stamp_ignores_pre_edict_clarification_directive(web_game):
+    """亲裁落印不被颁诏前留下的待澄清拟旨阻断。"""
+    from ming_sim.content import GameContent
+    from ming_sim.db import GameDB
+
+    db_path = _657_db_path_of(web_game)
+    desk = _657_plant_awaiting_web(
+        web_game,
+        decisions=[{
+            "title": "科参驳还", "context": "科臣封驳",
+            "options": [{"label": "打回", "hint": "驳"}, {"label": "准", "hint": ""}],
+            "event_id": "",
+        }],
+    )
+    turn = int(web_game.state.turn)
+    pending_id = web_game.db.stage_pending_action(
+        turn, kind="directive", action="拟旨", minister_name="张居正",
+        target_id=None, payload={
+            "text": "着兵部再议边防。", "_needs_clarification": True,
+            "dossier_action_type": "policy", "target_kind": "issue",
+            "target_id": "border-defense",
+        },
+    )
+    web_game.db.conn.commit()
+    decision_key = str(desk[0]["decision_key"])
+    web_game.session.close()
+
+    result = _657_subprocess_resolve(db_path, [{
+        "decision_key": decision_key, "label": "准", "hint": "", "action": "decision",
+    }])
+    assert result.get("done") is True, result
+    assert result.get("error") is False, result
+
+    probe = GameDB(db_path, GameContent.load())
+    try:
+        row = probe.conn.execute(
+            "SELECT status, turn, night_id, night_approved "
+            "FROM pending_actions WHERE id=?", (pending_id,),
+        ).fetchone()
+        assert row is not None and row["status"] == "pending"
+        next_turn = int(probe.load_state().turn)
+        assert next_turn == turn + 1
+        assert row["turn"] == next_turn
+        assert row["night_id"] == 0
+        assert row["night_approved"] == 0
+        assert pending_id in {
+            int(action["id"]) for action in probe.list_pending_actions(next_turn)
+        }
+    finally:
+        probe.close()
+
+
 def test_657_record_event_choice_failure_rolls_back_batch(game, monkeypatch):
     """Class 5：record_event_decision_choice 抛错 → 整批回滚，零 decided/零事件账。"""
     from ming_sim import rescript_actions as ra

@@ -3150,14 +3150,6 @@ class GameSession:
     def _assert_awaiting_decision_submit(self) -> None:
         if self.current_phase() != TurnPhase.AWAITING_DECISION:
             raise ValueError("当前不在待裁决策阶段，无法提交亲裁。")
-        if (
-            self.db.list_directives(self.state, statuses=("pending",))
-            or any(
-                row.get("kind") == "directive"
-                for row in self.db.list_pending_actions(self.state.turn)
-            )
-        ):
-            raise ValueError("月末亲裁期新增拟旨须先核定，不能并入已冻结的结算")
 
     def prepare_rescript_prewrite(
         self, choices: List[Dict[str, object]],
