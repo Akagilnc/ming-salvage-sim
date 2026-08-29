@@ -619,9 +619,24 @@ def _skip_directive_tool_candidate(
         return grant_present
     if identity == "grant_allocation":
         return grant_present
+
+    identity_fields = (
+        "dossier_action_type", "target_id", "name", "punish_action",
+        "issue_id", "backing_dossier_id", "transaction_category", "amount",
+    )
+
+    def _identity(candidate: Dict[str, Any]) -> tuple:
+        pairs = []
+        for key in identity_fields:
+            value = candidate.get(key)
+            if value in (None, "", 0, "无"):
+                continue
+            pairs.append((key, str(value).strip()))
+        return tuple(pairs)
+
+    tool_identity = _identity(args)
     return any(
-        isinstance(candidate, dict)
-        and str(candidate.get("dossier_action_type") or "").strip() == identity
+        isinstance(candidate, dict) and _identity(candidate) == tool_identity
         for candidate in (intent_candidates or [])
     )
 
