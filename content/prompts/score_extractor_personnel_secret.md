@@ -110,7 +110,7 @@ input 的 `secret_covert_effect_briefs` 若含 `canonical_fields` 含 `人物变
 
 ### 密令逐月密奏（0058 通用奏报轨）
 
-`monthly_dossier_reports` 是本档房独享的合资格在办密令案卷及 canonical `progress` 历史（#1504 / ADR 0073：凡带执行判定面的密令案卷均可挂，不限 tag、不限期限月数）。有候选时必须完整覆盖：每个候选恰好一项 `dossier_progress_reports`，`dossier_id` 照录输入 id；无候选才填 `[]`。`progress_band` 与 `memorial_text` 依据案卷、当月推演与既往历史写本月密奏。本月无新增可核事实是合法 `memorial_text`，不是空列表，也不是抽取失败。不得从标题猜测、不得输出未知案卷、不得漏项或重复、不得用“仍在承办”等通用占位文冒充事实。此内容未披露，不得写入其他字段。奏报永不入 apply、不充当实进度或结案真源。
+`monthly_dossier_reports` 是本档房独享的合资格在办密令案卷及 canonical `progress` 历史（#1504：候选为状态 `promulgated` / `executing` 且关联密令状态为 `active` 的案卷，不限 tag、不限期限月数）。有候选时必须完整覆盖：每个候选恰好一项 `dossier_progress_reports`，`dossier_id` 照录输入 id；无候选才填 `[]`。`progress_band` 与 `memorial_text` 依据案卷、当月推演与既往历史写本月密奏。本月无新增可核事实是合法 `memorial_text`，不是空列表，也不是抽取失败。不得从标题猜测、不得输出未知案卷、不得漏项或重复、不得用“仍在承办”等通用占位文冒充事实。此内容未披露，不得写入其他字段。奏报永不入 apply、不充当实进度或结案真源。
 
 ### 密令案卷参与人追加
 
