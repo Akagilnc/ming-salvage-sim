@@ -1157,6 +1157,7 @@ def test_explicit_prefix_materializes_grant_and_independent_typed_draft(game):
         message="拟旨如下：拨饷，并另行清查。",
         reply="臣遵旨。",
     )
+    ctx.explicit_prefixed = True
 
     run_materialize_pipeline(ctx)
 
@@ -1363,9 +1364,15 @@ def test_web_stream_propose_directive_skips_when_typed_grant_present(
         game.state.metrics["国库"] = max(int(game.state.metrics["国库"]), 100)
         game.db.save_state(game.state)
         client = TestClient(web_app.app)
+        message = (
+            "拟旨如下：准拨关宁军饷十五万两，并着户部清查辽饷收支。"
+            if (tool_identity, classifier_assignment_target, tool_target)
+            == ("assignment", "hubu", "hubu")
+            else "拟旨如下：准拨关宁军饷十五万两。"
+        )
         resp = client.post(
             f"/api/ministers/{name}/chat/stream",
-            json={"message": "拟旨如下：准拨关宁军饷十五万两。"},
+            json={"message": message},
         )
         assert resp.status_code == 200, resp.text
         wait_pending_writes(game)
