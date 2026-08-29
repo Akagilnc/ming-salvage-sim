@@ -508,10 +508,10 @@ def test_needs_clarification_directive_skipped_by_default_commit(game, monkeypat
         raise AssertionError("含糊剩余不得进 simulator")
 
     monkeypatch.setattr(session_mod, "resolve_directives", _must_not_settle)
-    with pytest.raises(ValueError, match="尚有待澄清/未核定拟旨"):
+    with pytest.raises(ValueError, match="尚有待澄清/未核定拟旨") as refused:
         sess.resolve_turn(inflight_wait_s=0.0)
-    assert "亲裁期新增" not in "尚有待澄清/未核定拟旨，不能颁诏。"
-    assert "恢复期新增" not in "尚有待澄清/未核定拟旨，不能颁诏。"
+    assert "亲裁期新增" not in str(refused.value)
+    assert "恢复期新增" not in str(refused.value)
     assert state.turn_phase == phase_before
     assert state.turn_phase != TurnPhase.AWAITING_DECISION.value
     pend_ids = {p["id"] for p in _pending_directives(db, state.turn)}
