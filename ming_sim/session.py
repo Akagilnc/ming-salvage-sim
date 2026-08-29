@@ -2841,21 +2841,6 @@ class GameSession:
             if self.db.get_dossier_for_directive(int(r["id"])) is None
         ]
 
-    def _commit_would_leave_directive_pending(self) -> bool:
-        """commit_pending_actions 默认批量会 skip-and-leave 的 kind=directive。
-
-        #502 AC5：含糊不得误提交；#1627：不得带着未核定拟旨进 simulator / awaiting_decision。
-        """
-        for pa in self.db.list_pending_actions(self.state.turn):
-            if pa.get("kind") != "directive":
-                continue
-            prepared = self.db._prepare_pending_directive(
-                self.state, pa, content=getattr(self, "content", None),
-            )
-            if prepared.get("classification") == "needs_clarification":
-                return True
-        return False
-
     @staticmethod
     def _proposal_blocked(state) -> bool:
         """FRONT_HALF_DONE 时 chat 提案不得插 pending directive（ship-pre r2 软死锁环源头）：
@@ -3035,13 +3020,6 @@ class GameSession:
                     stored = str(ctx.get("decree_text") or "").strip()
                     if stored:
                         self.last_decree = stored
-        # #1627：第一次颁诏。commit 会 skip-and-leave 的含糊拟旨须在入结算前响亮拒，
-        # 相位仍 summoning，玩家可点名准驳。禁冒用亲裁期/恢复期文案。
-        if (
-            self.state.turn_phase not in FRONT_HALF_DONE_PHASES
-            and self._commit_would_leave_directive_pending()
-        ):
-            raise ValueError("尚有待澄清/未核定拟旨，不能颁诏。")
         # #1234/#1235：点击受理即独立提交月初快照（不进 pre_settle 事务）。
         # accept_settlement_period：FRONT_HALF_DONE 跳过（恢复态已有快照/半程活值不可重写）。
         # Web 入口另在 await/close 前先 capture（点即入时序）；此处幂等兜底 CLI/直调。
@@ -3172,14 +3150,6 @@ class GameSession:
     def _assert_awaiting_decision_submit(self) -> None:
         if self.current_phase() != TurnPhase.AWAITING_DECISION:
             raise ValueError("当前不在待裁决策阶段，无法提交亲裁。")
-        if (
-            self.db.list_directives(self.state, statuses=("pending",))
-            or any(
-                row.get("kind") == "directive"
-                for row in self.db.list_pending_actions(self.state.turn)
-            )
-        ):
-            raise ValueError("月末亲裁期新增拟旨须先核定，不能并入已冻结的结算")
 
     def prepare_rescript_prewrite(
         self, choices: List[Dict[str, object]],
