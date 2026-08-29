@@ -107,6 +107,7 @@ function mountHarness(opts: {
         <div data-testid="minxin">{String(metrics["民心"] ?? "")}</div>
         <div data-testid="huangwei">{String(metrics["皇威"] ?? "")}</div>
         <div data-testid="pending-count">{String(hookRef.current.pendingDecisions.length)}</div>
+        <div data-testid="phase">{turn?.phase || ""}</div>
         <div data-testid="settlement-display">{String(Boolean(turn?.settlement_display))}</div>
       </div>
     );
@@ -161,7 +162,7 @@ describe("#1625 useSettlementFlow — observation refresh convergence", () => {
     });
 
     expect(loadState).toHaveBeenCalledTimes(2);
-    expect(host.querySelector('[data-testid="pending-count"]')?.textContent).toBe("0");
+    expect(host.querySelector('[data-testid="phase"]')?.textContent).toBe("player");
     cleanup();
   });
 });
