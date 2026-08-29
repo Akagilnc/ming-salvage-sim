@@ -472,6 +472,30 @@ def test_generate_rejects_army_id_outside_same_batch_catalog(monkeypatch):
     }, 1) is None
 
 
+def test_generate_rejects_military_order_with_region_target(monkeypatch):
+    item = _legal_item()
+    item["options"][0].update({
+        "action_type": "military_order",
+        "target_kind": "region",
+        "target_id": "liaodong",
+        "assignee_name": "祖大寿",
+        "station": "宁远",
+        "deadline_months": 1,
+    })
+    monkeypatch.setattr(
+        rescript_mod, "run_agent_text",
+        lambda *a, **k: json.dumps({"items": [item]}, ensure_ascii=False),
+    )
+    assert generate_rescript_draft(object(), {
+        "active_issues": [],
+        "region_targets": [
+            {"id": "liaodong", "name": "辽东 / 宁锦", "kind": "边镇"},
+            {"id": "shaanxi", "name": "陕西", "kind": "腹地"},
+        ],
+        "army_targets": [{"id": "guanning", "name": "关宁军 / 宁锦防线", "station": "辽东 / 宁远锦州"}],
+    }, 1) is None
+
+
 def test_generate_rejects_military_order_empty_assignee(monkeypatch):
     item = _legal_item()
     item["options"][0].update({

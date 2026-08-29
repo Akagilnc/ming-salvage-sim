@@ -442,6 +442,9 @@ def _assert_army_targets_grounded(
 ) -> None:
     for draft in drafts:
         for option in draft["options"]:  # type: ignore[union-attr]
+            if option["action_type"] == "military_order" \
+                    and option["target_kind"] != "army":
+                raise ValueError("票拟 military_order 的 target_kind 须为 army")
             if option["target_kind"] == "army" \
                     and option["target_id"] not in army_target_ids:
                 raise ValueError(
