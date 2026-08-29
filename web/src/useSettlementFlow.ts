@@ -47,8 +47,12 @@ export function useSettlementFlow({
     // #1625: an observation-page refresh can land while another settlement entry
     // is consuming the desk. Reuse the injected state loader until that wait ends.
     if (state.turn.phase === "awaiting_decision" && state.settlement_entry_inflight) {
-      void loadState();
-      return;
+      const refreshTimer = window.setTimeout(() => {
+        void loadState().catch((err) => {
+          setError(err instanceof Error ? err.message : String(err));
+        });
+      }, 1000);
+      return () => window.clearTimeout(refreshTimer);
     }
     const route = routeRefreshDecisions(
       state.turn.phase,
