@@ -18342,12 +18342,20 @@ class GameDB:
                     if row is not None and row["secret_order_id"] is not None:
                         item["secret_order_id"] = int(row["secret_order_id"])
                     else:
-                        try:
-                            merged_oid = int(ok or 0)
-                        except (TypeError, ValueError):
-                            merged_oid = 0
-                        if merged_oid > 0:
-                            item["secret_order_id"] = merged_oid
+                        from ming_sim.covert_progress import (
+                            build_covert_task_contract,
+                            covert_task_from_payload,
+                            find_active_investigation_order_id,
+                            _investigation_target_of,
+                        )
+                        raw_task = covert_task_from_payload(payload) or payload.get("covert_task")
+                        if raw_task:
+                            frozen = build_covert_task_contract(covert_task=raw_task) or {}
+                            inv_target = _investigation_target_of(frozen)
+                            if inv_target:
+                                merged_oid = find_active_investigation_order_id(self, inv_target)
+                                if merged_oid > 0:
+                                    item["secret_order_id"] = int(merged_oid)
                 # Direct person mutations (调教/密令…) surface names for outer-commit
                 # registry projection when settle passes registry=None.
                 affected = self._affected_people_from_pending_action(pa, payload)
@@ -18631,7 +18639,7 @@ class GameDB:
                         registry.refresh(assignee)
                     except Exception as exc:
                         tlog(f"[pending_actions] 密令已落库但刷新 Agent 失败 assignee={assignee}：{exc}")
-                return order_id
+                return order_id is not None
             if oid is None:
                 return False
             # Non-create: consume explicit stage/API pin only.  No auto-pin of
