@@ -1505,8 +1505,12 @@ def test_pay_delivery_requires_army_identity(game):
         purpose="补饷", category="密令差务", account="内库",
         target_kind="army", target_id=army_id,
         effect_sign=-1,
+        dossier_links_json='[{"target_dossier_id": 999, "relation_type": "稽核", "note": "关联旧卷"}]',
     )
     assert public_ok.startswith("__secret_order__")
+    payload = json.loads(public_ok[len("__secret_order__"):])
+    assert payload["covert_task"]["delivery"]["target_id"] == army_id
+    assert payload["covert_task"]["delivery"]["target_id"] != "999"
     oid = db.create_secret_order(
         state, name, "补发饷银", "补发欠饷", [],
         deadline_months=1, covert_task=frozen,

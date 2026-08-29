@@ -712,13 +712,13 @@ def build_minister_tools(character: Character, context: CourtContext,
             ):
                 continue
             try:
-                target_id = strict_int(raw_target_id)
+                link_dossier_id = strict_int(raw_target_id)
             except (TypeError, ValueError, OverflowError):
                 continue
             relation = str(link.get("relation_type") or "").strip()
             note = str(link.get("note") or "").strip()
-            if target_id in visible_ids and relation in DOSSIER_LINK_TYPES and note:
-                dossier_links.append({"target_dossier_id": target_id, "relation_type": relation, "note": note})
+            if link_dossier_id in visible_ids and relation in DOSSIER_LINK_TYPES and note:
+                dossier_links.append({"target_dossier_id": link_dossier_id, "relation_type": relation, "note": note})
         try:
             deadline = max(0, min(int(deadline_months or 0), 36))
         except (TypeError, ValueError):
