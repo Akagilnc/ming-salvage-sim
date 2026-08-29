@@ -140,6 +140,16 @@ describe("decision routing — refresh entry (routeRefreshDecisions)", () => {
     expect(route.resumePhase2).toBe(true);
   });
 
+  it("#1625 awaiting 空案头且入口在飞：刷新与重拉都只等待", () => {
+    const refresh = routeRefreshDecisions("awaiting_decision", [], false, true);
+    const retry = routeRetryDecisions("awaiting_decision", [], false, true);
+    for (const route of [refresh, retry]) {
+      expect(route.pendingDecisions).toBeNull();
+      expect(route.error).toBeNull();
+      expect(route.resumePhase2).toBeFalsy();
+    }
+  });
+
   it("accepts a valid batch on refresh", () => {
     const route = routeRefreshDecisions("awaiting_decision", [validDecision]);
     expect(route.pendingDecisions).toEqual([validDecision]);

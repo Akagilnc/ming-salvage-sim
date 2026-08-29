@@ -48,6 +48,7 @@ export function useSettlementFlow({
       state.turn.phase,
       state.pending_decisions || [],
       state.resume_phase2,
+      state.settlement_entry_inflight,
     );
     if (route.pendingDecisions !== null) {
       const next = route.pendingDecisions;
@@ -197,6 +198,7 @@ export function useSettlementFlow({
       const events = freshState.pending_decisions || [];
       const route = routeRetryDecisions(
         freshState.turn.phase, events, freshState.resume_phase2,
+        freshState.settlement_entry_inflight,
       );
       // #1418 r2 / #657：all-decided 或 typed resume 不得当成功空批清横幅——接到 phase2 续跑。
       // 移交 resumePhase2 前先放行本函数 busy，避免 finally 清掉续跑中的「月末结算」。

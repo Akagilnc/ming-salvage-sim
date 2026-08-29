@@ -401,6 +401,8 @@ export type GameState = {
   pending_decisions?: PendingDecision[];
   /** #657：awaiting + resolve_context + 空 pending desk → 续跑 phase2（空 POST 既有 stream） */
   resume_phase2?: boolean;
+  /** #1625：结算入口进程内在飞；刷新/重拉只等待，不打回或续跑。 */
+  settlement_entry_inflight?: boolean;
   last_decree: string;
   last_report: string;
   /** #671：上一已完成月王承恩独立递话；空＝无递话区 */
