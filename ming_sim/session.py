@@ -578,9 +578,11 @@ def _typed_grant_candidate_present(
     intent: Optional[Dict[str, Any]],
     intent_candidates: Optional[List[Dict[str, Any]]],
 ) -> bool:
-    """#1503：classifier 是否已给出可物化的 grant_allocation 候选。
+    """#1503：classifier 是否已给出 typed grant 或 draft 协饷信号。
 
-    真则显式拟旨前缀不得先落 generic special_decree，改由既有 grant 单轨成案。
+    唯一消费点：_stage_directive_tool_candidate 的 generic special_decree 尾路——
+    真则不写 generic 孪生；招抚 cue / 惩处显式字段分支不受影响。
+    draft+协饷仅作 typed 信号；完整性仍交 materialize fail-loud。
     """
     import ming_sim.action_materialize as am  # catalog side-effect ok
 
@@ -589,9 +591,12 @@ def _typed_grant_candidate_present(
     def _ok(candidate: Any) -> bool:
         if not isinstance(candidate, dict):
             return False
-        if str(candidate.get("kind") or "").strip() != "grant_allocation":
-            return False
-        return str(candidate.get("grant_action") or "").strip() in valid
+        kind = str(candidate.get("kind") or "").strip()
+        action = str(candidate.get("grant_action") or "").strip()
+        if kind == "grant_allocation":
+            return action in valid
+        # 协饷 typed 信号即抑制；残缺/非法由 materialize 原样抛，此处不预校验。
+        return kind == "draft" and action == "协饷"
 
     if _ok(intent or {}):
         return True
@@ -1644,11 +1649,9 @@ class GameSession:
                             result.next_minister = target.name
                         # #670 P6'/P7：拒入殿只不设 court_action/next_minister；闸文不进 LLM answer。
             elif tool_name == "propose_directive" or tool_result.startswith("__pending_directive__"):
-                if (
-                    confirmation_turn
-                    or explicit_secret_prefix
-                    or _typed_grant_candidate_present(None, preclassified_intent)
-                ):
+                # confirmation / secret 前缀仍整枚跳过；孪生抑制在
+                # _stage_directive_tool_candidate generic 尾路按 kind 分派。
+                if confirmation_turn or explicit_secret_prefix:
                     continue
                 args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
                 if not isinstance(args, dict):
@@ -1687,6 +1690,7 @@ class GameSession:
                             ),
                             issue_id=args.get("issue_id"),
                             issue_disposition=args.get("issue_disposition"),
+                            intent_candidates=preclassified_intent,
                         ),
                     )
                     if stage_failures:
@@ -2541,6 +2545,7 @@ class GameSession:
         backing_dossier_id: object = None,
         issue_id: object = None,
         issue_disposition: object = None,
+        intent_candidates: Optional[List[Dict[str, Any]]] = None,
     ) -> int:
         """API/stream/CLI tool propose_directive → structured candidate seam (#522/#517).
 
@@ -2549,6 +2554,10 @@ class GameSession:
         come only from explicit tool/action-candidate fields — never prose keyword
         or number guessing. Incomplete structured punishment fails loud and never
         degrades to special_decree; ordinary prose discussion keeps the special_decree path.
+        Typed action kinds come only from the classifier → registered handlers;
+        this tool path is not a second typed writer. When classifier already carries
+        typed grant / draft+协饷, the generic special_decree tail is suppressed so
+        the tool cannot twin that lane — punishment/pacification branches still run.
         """
         text = str(draft_text or "").strip()
         if not text:
@@ -2650,6 +2659,11 @@ class GameSession:
                     failures_out.append(failure)
                 return 0
             return int(pending_id)
+
+        # #1503：classifier 已给 typed grant / draft+协饷时，不写 generic 孪生。
+        # 招抚/惩处分支已先行；本谓词只守 generic 尾路。
+        if _typed_grant_candidate_present(None, intent_candidates):
+            return 0
 
         return self.db.stage_explicit_directive(
             self.state.turn, minister_name, text, mode=message_text,
