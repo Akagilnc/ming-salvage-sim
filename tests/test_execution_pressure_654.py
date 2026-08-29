@@ -24,7 +24,6 @@ from ming_sim.execution_pressure import (
     ming_province_ids,
     normalize_locality_scope,
     resolve_dossier_region_ids,
-    write_locality_scope_for_target_kind,
 )
 from ming_sim.paths import bundled_path
 from ming_sim.simulation import build_extractor_shared_context, build_simulator_payload
@@ -62,12 +61,6 @@ def test_normalize_locality_scope(raw, expected):
 def test_normalize_locality_scope_rejects_unknown():
     with pytest.raises(ValueError, match="locality_scope"):
         normalize_locality_scope("全省")
-
-
-def test_write_locality_scope_for_target_kind():
-    assert write_locality_scope_for_target_kind("region") == "single"
-    assert write_locality_scope_for_target_kind("issue") == "none"
-    assert write_locality_scope_for_target_kind("character") == "none"
 
 
 def test_mapper_overwrites_llm_locality_scope_from_target_kind():
