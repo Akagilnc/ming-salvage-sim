@@ -96,6 +96,9 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
                     is_promoted_draft_candidate(candidate),
                 )
             )
+        else:
+            # 协饷 draft 别名的升格跨通道生效；原生 grant 须先成案，别名后到才可吞。
+            candidates.sort(key=is_promoted_draft_candidate)
         kind_counts: Dict[str, int] = {}
         for candidate in candidates:
             kind = str(candidate.get("kind") or "")
@@ -106,9 +109,8 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
             kind = str(candidate.get("kind") or "")
             if (
                 grant_staged
-                and ctx.explicit_prefixed
                 and (
-                    kind == "draft"
+                    (ctx.explicit_prefixed and kind == "draft")
                     or is_promoted_draft_candidate(candidate)
                 )
             ):

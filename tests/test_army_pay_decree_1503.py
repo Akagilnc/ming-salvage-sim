@@ -1159,6 +1159,33 @@ def test_explicit_prefix_keeps_distinct_native_grants(game):
     assert sorted(int(payload["amount"]) for payload in payloads) == [8, 15]
 
 
+def test_nonprefixed_grant_and_promoted_draft_alias_stage_once(game):
+    """draft 协饷别名的去重不依赖拟旨前缀。"""
+    db, state, _content = game
+    actor = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
+    ).fetchone()["name"]
+    candidates = _scripted_xiexang_candidates(
+        amount=15, account="太仓", target_id="guanning",
+    ) + candidates_from_classifier_payload({
+        "kind": "draft", "draft_action": "拟旨", "grant_action": "协饷",
+        "amount": 15, "account": "太仓", "purpose": "补饷",
+        "target_kind": "army", "target_id": "guanning",
+    }, soft=False)
+    ctx = _ctx(
+        db, actor, candidates, state.turn,
+        message="着户部拨关宁军饷十五万两。",
+        reply="臣遵旨。",
+    )
+
+    run_materialize_pipeline(ctx)
+
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM pending_actions WHERE turn=? AND kind='directive'",
+        (state.turn,),
+    ).fetchone()[0] == 1
+
+
 def test_web_stream_propose_directive_skips_when_typed_grant_present(
     tmp_path, monkeypatch, _offline_scene_beat_generator,
 ):
@@ -1457,6 +1484,20 @@ def test_draft_kind_neitang_does_not_promote():
     )
     assert candidate[0]["kind"] == "draft"
     assert candidate[0]["grant_action"] == "发内帑"
+
+
+def test_incomplete_draft_xiexang_payload_does_not_promote():
+    """不完整 typed 载荷仍是普通拟旨，不把硬异常穿透给玩家。"""
+    candidate = candidates_from_classifier_payload(
+        {
+            "kind": "draft",
+            "draft_action": "拟旨",
+            "text": "拟旨如下：准拨军饷。",
+            "grant_action": "协饷",
+        },
+        soft=False,
+    )
+    assert candidate[0]["kind"] == "draft"
 
 
 def test_draft_kind_with_xiexang_fields_uses_grant_track(game):
