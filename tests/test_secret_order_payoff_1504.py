@@ -724,7 +724,7 @@ def test_judge_selection_cannot_lighten_floor(game):
 
 
 def test_monthly_actual_does_not_invent_generic_world_package(game):
-    """月度实况不发明 loyalty/内库/unrest 套餐；无 origin 效果则 units=0。"""
+    """月度实况不发明 loyalty/内库/unrest 套餐；交付差务无 origin 则 units=0（不锁查核机械带）。"""
     db, state, content = game
     name = _minister(db)
     _set_axes(db, name, loyalty=90, identity=30)
@@ -1212,8 +1212,10 @@ def test_closed_case_blocks_same_fact_on_later_case_and_due(game):
     db.conn.commit()
     out = settle_due_secret_orders(db, state, commit=True)
     by_id = {r["order_id"]: r for r in out}
-    assert by_id[oid2]["status"] == "failed"
+    assert by_id[oid2]["status"] == "done"
+    assert by_id[oid2]["actual_units"] == 1.0
     assert by_id[oid_other]["status"] == "failed"
+    assert by_id[oid_other]["actual_units"] == 0.5
 
 
 def test_fiscal_quantity_tracer_same_unit_done_and_gap(game):
@@ -1603,3 +1605,80 @@ def test_pay_delivery_requires_army_identity(game):
     )
     applied = next(r for r in out if r.get("order_id") == oid)
     assert applied.get("originated_quantity") == 1.0
+
+
+def test_topic_investigation_confirm_and_faithful_done(game, monkeypatch):
+    """北极星：专题查核确认成案；忠实机械带到期可 done。不预植 seed_guilt。"""
+    db, state, content = game
+    name = _minister(db)
+    _set_axes(db, name, loyalty=90, identity=30)
+    topic = "辽饷转运及押运相关人员"
+    applied = _confirm_investigation(
+        db, state, content, monkeypatch, minister=name, target=topic,
+    )
+    oid = int(applied["secret_order_id"])
+    assert oid > 0
+    assert db.get_secret_order(oid)["status"] == "active"
+    dossier = db.get_dossier_for_secret_order(oid)
+    contract = read_covert_task_contract(dossier)
+    assert contract["investigation_target"] == topic
+    did = int(dossier["id"])
+    assert db.conn.execute(
+        "SELECT seed_guilt FROM characters WHERE name=?",
+        (topic,),
+    ).fetchone() is None
+    state.turn += 1
+    db.save_state(state)
+    apply_monthly_covert_actual_progress(
+        db, state, selections=[{"order_id": oid, "fidelity": "忠实"}], commit=True,
+    )
+    state.turn += 1
+    db.save_state(state)
+    apply_monthly_covert_actual_progress(
+        db, state, selections=[{"order_id": oid, "fidelity": "忠实"}], commit=True,
+    )
+    assert db.sum_dossier_actual_progress_units(did) == 2.0
+    db.conn.execute("UPDATE secret_orders SET due_turn=? WHERE id=?", (state.turn, oid))
+    db.conn.commit()
+    out = settle_due_secret_orders(db, state, commit=True)
+    row = next(r for r in out if r["order_id"] == oid)
+    assert row["status"] == "done"
+    assert row["actual_units"] == 2.0
+    assert db.get_secret_order(oid)["status"] == "done"
+    assert db.list_economy_moves_for_dossier(did) == []
+
+
+def test_topic_investigation_backlash_fails_without_world_package(game):
+    db, state, _ = game
+    name = _minister(db)
+    _set_axes(db, name, loyalty=90, identity=30)
+    topic = "辽饷转运及押运相关人员"
+    oid = _issue(
+        db, state, name, "查核辽饷侵冒、勿使杨嗣昌与闻", "查核辽饷侵冒、勿使杨嗣昌与闻",
+        months=1, target=4, kind="查核辽饷侵冒", axes=["既得利益"],
+        investigation_target=topic,
+    )
+    did = int(db.get_dossier_for_secret_order(oid)["id"])
+    before_loyalty = int(db.conn.execute(
+        "SELECT loyalty FROM characters WHERE name=?", (name,)
+    ).fetchone()["loyalty"])
+    before_neiku = int(state.metrics.get("内库", 0))
+    state.turn += 1
+    db.save_state(state)
+    out = apply_monthly_covert_actual_progress(
+        db, state, selections=[{"order_id": oid, "fidelity": "反噬"}], commit=True,
+    )
+    row = next(r for r in out if r["order_id"] == oid)
+    assert row["units"] == 0.0
+    after_loyalty = int(db.conn.execute(
+        "SELECT loyalty FROM characters WHERE name=?", (name,)
+    ).fetchone()["loyalty"])
+    assert after_loyalty == before_loyalty
+    assert int(state.metrics.get("内库", 0)) == before_neiku
+    assert db.list_economy_moves_for_dossier(did) == []
+    db.conn.execute("UPDATE secret_orders SET due_turn=? WHERE id=?", (state.turn, oid))
+    db.conn.commit()
+    settled = settle_due_secret_orders(db, state, commit=True)
+    close = next(r for r in settled if r["order_id"] == oid)
+    assert close["status"] == "failed"
+    assert close["actual_units"] == 0.0
