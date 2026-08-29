@@ -456,14 +456,16 @@ def test_payload_projects_consumable_army_targets_from_real_monthly_board(game):
 
 def test_generate_rejects_army_id_outside_same_batch_catalog(monkeypatch):
     item = _legal_item()
-    item["options"][0].update({
+    army_opt = {
         "action_type": "military_order",
         "target_kind": "army",
         "target_id": "liaodong",
         "assignee_name": "祖大寿",
         "station": "宁远",
         "deadline_months": 1,
-    })
+    }
+    for opt in item["options"]:
+        opt.update(army_opt)
     monkeypatch.setattr(
         rescript_mod, "run_agent_text",
         lambda *a, **k: json.dumps({"items": [item]}, ensure_ascii=False),
@@ -476,14 +478,16 @@ def test_generate_rejects_army_id_outside_same_batch_catalog(monkeypatch):
 
 def test_generate_rejects_military_order_empty_assignee(monkeypatch):
     item = _legal_item()
-    item["options"][0].update({
+    empty_assignee = {
         "action_type": "military_order",
         "target_kind": "army",
         "target_id": "guanning",
         "assignee_name": "",
         "station": "宁远",
         "deadline_months": 1,
-    })
+    }
+    for opt in item["options"]:
+        opt.update(empty_assignee)
     monkeypatch.setattr(
         rescript_mod, "run_agent_text",
         lambda *a, **k: json.dumps({"items": [item]}, ensure_ascii=False),
