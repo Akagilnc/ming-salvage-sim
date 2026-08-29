@@ -2455,10 +2455,6 @@ class GameDB:
         )
         self._ensure_decree_dossier_locality_indexes()
         self._backfill_proposed_appointment_break_ranks()
-        self._migrate_legacy_secret_order_dossiers()
-        # #1504 SURVEY §5.2 F2：须在案卷补建之后——先按 pending_review→executing 建轴，
-        # 再一次迁 active+到期标记（含 due_turn=0），案卷保持 executing。
-        self._migrate_legacy_pending_review_secret_orders()
         # #498：旧档 chat_turns 无 night_id/night_seq 列；必须先 ensure 列再建索引
         # （旧档 CREATE TABLE IF NOT EXISTS 不重建 chat_turns，索引若先建会引用缺列失败）。
         self.ensure_column("chat_turns", "night_id", "INTEGER NOT NULL DEFAULT 0")
@@ -12060,145 +12056,6 @@ class GameDB:
 
     # ── #571 旨意案卷公共接口 ──────────────────────────────────────
 
-    def _migrate_legacy_pending_review_secret_orders(self) -> None:
-        """#1504 SURVEY §5.2 F2：旧档 pending_review → active + 未来实况窗口（一次确定）。
-
-        必须覆盖 due_turn=0：对账选择器要求 due_turn>0，否则旧行永不结案。
-        迁 active 后按尚缺 target units 设未来对账窗，禁止 due<=current 空实况立即判败。
-        已有 actual 行只补剩余窗口；禁从 dossier_progress_json/sim_note 回填实况；
-        禁复活 pending_review 核议消费链。due_commitment ACK 不经本表。
-        """
-        import math
-
-        try:
-            rows = self.conn.execute(
-                """
-                SELECT id, due_turn, turn_issued, deadline_span
-                FROM secret_orders
-                WHERE status='pending_review'
-                ORDER BY id
-                """
-            ).fetchall()
-        except Exception:
-            return
-        if not rows:
-            return
-        gs = self.conn.execute("SELECT turn FROM game_state LIMIT 1").fetchone()
-        current_turn = int(gs["turn"] if gs is not None else 1) or 1
-        for row in rows:
-            oid = int(row["id"])
-            due = int(row["due_turn"] or 0)
-            issued = int(row["turn_issued"] or 0)
-            span = int(row["deadline_span"] or 0)
-            # 目标 Σ：有期限按 span；span=0 的旧令至少 1 个实况单位
-            target = float(max(span, 1))
-            actual = 0.0
-            try:
-                dossier = self.get_dossier_for_secret_order(oid)
-                if dossier is not None:
-                    # 只读实况轨；绝不从 progress_json/sim_note 回填
-                    actual = float(self.sum_dossier_actual_progress_units(int(dossier["id"])))
-            except Exception:
-                actual = 0.0
-            remaining = target - actual
-            if remaining <= 1e-9:
-                # 实况已交付：当月可对账结 done
-                need_due = current_turn
-            else:
-                months_needed = max(1, int(math.ceil(remaining - 1e-9)))
-                # 发令月不计进度：若 turn_issued==current，窗口从下月起算
-                if issued >= current_turn:
-                    need_due = current_turn + months_needed
-                else:
-                    need_due = current_turn + months_needed - 1
-            # 已有更远 due 则保留；绝不把未来窗压成 current 立即失败
-            if due > need_due:
-                new_due = due
-            else:
-                new_due = max(need_due, 1)
-            # 只改结构化 status/due；result 原样保留（P7：不写机械迁移模板）
-            self.conn.execute(
-                """
-                UPDATE secret_orders
-                SET status='active',
-                    due_turn=?,
-                    updated_at=CURRENT_TIMESTAMP
-                WHERE id=? AND status='pending_review'
-                """,
-                (int(new_due), oid),
-            )
-            # 核议中本就在办：保持/补齐案卷 executing（幂等）
-            try:
-                self.mark_secret_order_in_progress(oid, commit=False)
-            except Exception:
-                pass
-
-    def _migrate_legacy_secret_order_dossiers(self) -> None:
-        """旧密令单向补建案卷；唯一索引使重复开库幂等。"""
-        self.conn.execute(
-            "UPDATE decree_dossiers SET action_type='protection' "
-            "WHERE action_type='private_protection'"
-        )
-        rows = self.conn.execute(
-            """
-            SELECT s.* FROM secret_orders s
-            LEFT JOIN decree_dossiers d ON d.secret_order_id=s.id
-            WHERE d.id IS NULL
-            ORDER BY s.id
-            """
-        ).fetchall()
-        for row in rows:
-            secret_status = str(row["status"] or "active")
-            if secret_status in {"done", "completed"}:
-                status, outcome = "closed", "fulfilled"
-            elif secret_status == "failed":
-                status, outcome = "closed", "failed"
-            elif secret_status in {"pending_review", "in-progress", "in_progress"}:
-                status, outcome = "executing", "executing"
-            else:
-                status, outcome = "promulgated", ""
-            note = str(row["result"] or row["sim_note"] or "")
-            closed_turn = (
-                int(row["turn_closed"] or row["turn_issued"] or 0)
-                if status == "closed" else 0
-            )
-            payload = {
-                "title": str(row["title"] or ""),
-                "content": str(row["content"] or ""),
-            }
-            cur = self.conn.execute(
-                """
-                INSERT INTO decree_dossiers
-                    (action_type,target_kind,target_id,executor_kind,executor_id,secret_order_id,
-                     decree_text,payload_json,status,promulgation_decision,
-                     promulgation_blocked_layer,promulgation_reason,due_turn,
-                     execution_outcome,execution_note,closed_turn,
-                     interruption_reason,created_turn,created_year,created_period)
-                VALUES
-                    ('secret_order','secret_order',?,'character',?,?,?,?,?,'promulgated',
-                     'palace_rescript','内批自动顺颁',?,?,?,?,?,?,?,?)
-                """,
-                (
-                    int(row["id"]), str(row["minister_name"] or ""), int(row["id"]),
-                    str(row["content"] or row["title"] or ""),
-                    json.dumps(payload, ensure_ascii=False), status,
-                    int(row["due_turn"] or 0), outcome, note, closed_turn,
-                    note if outcome == "failed" else "",
-                    int(row["turn_issued"] or 0),
-                    int(row["year_issued"] or 0),
-                    int(row["period_issued"] or 0),
-                ),
-            )
-            self.conn.execute(
-                """
-                INSERT INTO decree_dossier_decisions
-                    (dossier_id,turn,decision,blocked_layer,reason)
-                VALUES (?,?,'promulgated','palace_rescript','内批自动顺颁')
-                """,
-                (int(cur.lastrowid), int(row["turn_issued"] or 0)),
-            )
-        self.conn.commit()
-
     _DOSSIER_STATUSES = frozenset({"proposed", "promulgated", "executing", "closed"})
     _DOSSIER_ACTION_TYPES = DOSSIER_ACTION_TYPES
     _DOSSIER_TRANSITIONS = {
@@ -12945,27 +12802,33 @@ class GameDB:
             "fork": bool(fork),
         }
 
-    def list_monthly_dossier_progress_nudges(self) -> List[Dict[str, object]]:
-        """Long protection/audit errands due a monthly report, with history."""
+    def list_monthly_dossier_progress_nudges(self, turn: int | None = None) -> List[Dict[str, object]]:
+        """#1504 / ADR 0073 / 0058：凡带执行判定面的在办密令案卷均可挂月报。
+
+        不再以 deadline/tag/发令月收缩候选；缺项由 record 侧完整覆盖失败。
+        """
+        _ = turn  # 签名保留；0058 候选不按结算回合收缩
         rows = self.conn.execute(
             """
-            SELECT d.*, s.tags FROM decree_dossiers d
+            SELECT d.* FROM decree_dossiers d
             JOIN secret_orders s ON s.id=d.secret_order_id
             WHERE d.status IN ('promulgated','executing') AND s.status='active'
-              AND s.deadline_span >= 2
             ORDER BY d.id
             """
         ).fetchall()
         out: List[Dict[str, object]] = []
         for row in rows:
-            tags = {str(tag).strip() for tag in json.loads(row["tags"] or "[]")}
-            if not (tags & {"护行", "稽核"}):
-                continue
             dossier_id = int(row["id"])
+            try:
+                payload = json.loads(row["payload_json"] or "{}")
+            except (TypeError, ValueError):
+                payload = {}
+            if not isinstance(payload, dict):
+                payload = {}
             item: Dict[str, object] = {
                 "dossier_id": dossier_id,
                 "secret_order_id": int(row["secret_order_id"]),
-                "title": json.loads(row["payload_json"] or "{}").get("title", ""),
+                "title": payload.get("title", ""),
                 "progress": self.list_dossier_progress(dossier_id),
             }
             # #622 AC5：仅当稽核链在场时挂分叉信号键；无链则键不出现。
@@ -12981,12 +12844,14 @@ class GameDB:
         """Persist one valid extractor-authored brief for every eligible dossier."""
         candidates = {
             int(item["dossier_id"]): item
-            for item in self.list_monthly_dossier_progress_nudges()
+            for item in self.list_monthly_dossier_progress_nudges(int(turn))
         }
         if not candidates:
             if generated is None or generated == []:
                 return []
             raise ValueError("无合资格长差案卷却收到本月密奏")
+        if generated is None or generated == []:
+            raise ValueError("合资格长差案卷缺少本月密奏")
         if not isinstance(generated, list):
             raise ValueError("合资格长差案卷缺少本月密奏")
         supplied: Dict[int, Dict[str, object]] = {}
@@ -17681,7 +17546,7 @@ class GameDB:
                     "SELECT status,result FROM secret_orders WHERE id=?",
                     (int(order_id),),
                 ).fetchone()
-                if order is not None and order["status"] in {"active", "pending_review"}:
+                if order is not None and order["status"] == "active":
                     previous = str(order["result"] or "")
                     result = "\n".join(x for x in (previous, reason) if x)
                     self.close_secret_order(
@@ -18406,7 +18271,7 @@ class GameDB:
                     payload = {}
             except (ValueError, TypeError):
                 payload = {}
-            # apply 抛错(如 催办 对已转 pending_review 的密令)= 当 False:下面标 failed、
+            # apply 抛错(如 催办 对已非 active 的密令)= 当 False:下面标 failed、
             # 不中断本轮其余动作、更不能崩整个结算(CMR P0)。
             cm = atomic(self) if owns_transaction else contextlib.nullcontext()
             with cm:
@@ -18440,7 +18305,7 @@ class GameDB:
                     else:
                         self.conn.execute(f"ROLLBACK TO {savepoint}")
                         restore_office_memory()
-                        # 落不了的(目标已转 pending_review、未知动作、坏 payload)标 failed,不留 pending——
+                        # 落不了的(目标已非 active、未知动作、坏 payload)标 failed,不留 pending——
                         # 否则回合推进后成旧回合不可见死行,永不再处理(ship-pre CMR codex)。
                         self.conn.execute(
                             "UPDATE pending_actions SET status='failed' WHERE id=?", (int(pa["id"]),))
@@ -18476,6 +18341,21 @@ class GameDB:
                     ).fetchone()
                     if row is not None and row["secret_order_id"] is not None:
                         item["secret_order_id"] = int(row["secret_order_id"])
+                    else:
+                        from ming_sim.covert_progress import (
+                            build_covert_task_contract,
+                            covert_task_from_payload,
+                            find_active_investigation_order_id,
+                            _investigation_target_of,
+                        )
+                        raw_task = covert_task_from_payload(payload) or payload.get("covert_task")
+                        if raw_task:
+                            frozen = build_covert_task_contract(covert_task=raw_task) or {}
+                            inv_target = _investigation_target_of(frozen)
+                            if inv_target:
+                                merged_oid = find_active_investigation_order_id(self, inv_target)
+                                if merged_oid > 0:
+                                    item["secret_order_id"] = int(merged_oid)
                 # Direct person mutations (调教/密令…) surface names for outer-commit
                 # registry projection when settle passes registry=None.
                 affected = self._affected_people_from_pending_action(pa, payload)
@@ -18727,12 +18607,22 @@ class GameDB:
                 # decree; may differ from final assignee (跨人承办).
                 # Stage-time pin: do not re-guess max(held) after confirm utterance.
                 origin_mid = self._parse_origin_chat_message_id(payload)
+                from ming_sim.covert_progress import (
+                    CovertContractError,
+                    build_covert_task_contract,
+                    covert_task_from_payload,
+                )
+                raw_task = covert_task_from_payload(payload) or payload.get("covert_task")
+                if not raw_task:
+                    raise CovertContractError("密令确认缺少差务类型")
+                frozen_task = build_covert_task_contract(covert_task=raw_task)
                 order_id = self.create_secret_order(
                     state, assignee, title, content_text, tags, deadline_months=deadline,
                     excluded_names=excluded, excluded_offices=excluded_offices,
                     origin_minister_name=str(pa.get("minister_name") or "") or None,
                     origin_chat_message_id=origin_mid,
                     pending_action_id=int(pa["id"]),
+                    covert_task=frozen_task,
                 )
                 if order_id is not None and payload.get("dossier_links") is not None:
                     links = payload.get("dossier_links")
@@ -21346,7 +21236,7 @@ class GameDB:
             row = self.conn.execute(
                 "SELECT 1 FROM secret_order_briefs b "
                 "INNER JOIN secret_orders o ON o.id = b.order_id "
-                "WHERE b.minister_name=? AND o.status IN ('active', 'pending_review') LIMIT 1",
+                "WHERE b.minister_name=? AND o.status='active' LIMIT 1",
                 (name,),
             ).fetchone()
         except sqlite3.OperationalError:
@@ -21798,6 +21688,7 @@ class GameDB:
         origin_chat_message_id: Optional[int] = None,
         origin_chat_message_ids: Optional[Iterable[int]] = None,
         pending_action_id: int = 0,
+        covert_task: Optional[Mapping[str, object]] = None,
     ) -> int:
         # 宗藩/外藩 非朝堂命官，不可受密令——密令创建的唯一 DB 写口，集中守此一处即覆盖
         # API / 大臣工具 / CLI 自然语言 / upsert 回落 create 全路（cmr R6 cross-section）。
@@ -21821,6 +21712,30 @@ class GameDB:
                 raise ValueError(f"{_ch.name}为就藩宗室，非朝廷命官，不可受密令。")
             if _ch is not None and self.resolve_power_id(_ch) != "ming":
                 raise ValueError(f"{_ch.name}不属大明朝廷，不可受密令。")
+        provenance_message_ids = self._coerce_positive_message_ids([
+            *([] if origin_chat_message_id is None else [origin_chat_message_id]),
+            *(origin_chat_message_ids or []),
+        ])
+        from ming_sim.covert_progress import (
+            CONTRACT_KEY,
+            build_covert_task_contract,
+            find_active_investigation_order_id,
+            merge_investigation_confirmation,
+            _investigation_target_of,
+        )
+        covert_contract = build_covert_task_contract(covert_task=covert_task)
+        inv_target = _investigation_target_of(covert_contract or {})
+        if inv_target:
+            existing_oid = find_active_investigation_order_id(self, inv_target)
+            if existing_oid:
+                return merge_investigation_confirmation(
+                    self,
+                    state,
+                    existing_oid,
+                    pending_action_id=int(pending_action_id or 0),
+                    origin_chat_message_ids=provenance_message_ids,
+                    commit=True,
+                )
         active_count = self.conn.execute(
             "SELECT COUNT(*) FROM secret_orders WHERE status='active'"
         ).fetchone()[0]
@@ -21845,10 +21760,6 @@ class GameDB:
         tags_json = json.dumps(tags, ensure_ascii=False)
         deadline = max(0, min(int(deadline_months or 0), 36))
         due_turn = int(state.turn) + deadline if deadline else 0
-        provenance_message_ids = self._coerce_positive_message_ids([
-            *([] if origin_chat_message_id is None else [origin_chat_message_id]),
-            *(origin_chat_message_ids or []),
-        ])
         source_chat_turn_id = 0
         if provenance_message_ids:
             placeholders = ",".join("?" for _ in provenance_message_ids)
@@ -21883,6 +21794,26 @@ class GameDB:
                 origin_chat_message_ids=origin_chat_message_ids,
                 commit=False,
             )
+            # #1504 Owner A：确认闸一次冻结 typed covert-task contract（动作轴/可数交付）。
+            # 不解析 title/content/tags；轴与交付单位来自 #1376 候选显式字段。
+            payload = {
+                "title": title,
+                "content": content,
+                "tags": list(tags),
+                "importance": int(importance),
+                "excluded_names": list(raw_excluded_names),
+                "excluded_offices": list(excluded_offices),
+            }
+            payload[CONTRACT_KEY] = covert_contract
+            from ming_sim.covert_progress import (
+                live_investigation_fact_keys,
+                FACT_LANES_KEY,
+            )
+            if inv_target:
+                payload[FACT_LANES_KEY] = [
+                    {"fact_key": key, "progress": 0.0, "used": False}
+                    for key in live_investigation_fact_keys(self, inv_target)
+                ]
             dossier_id = self.create_decree_dossier(
                 state,
                 action_type="secret_order",
@@ -21894,14 +21825,7 @@ class GameDB:
                 source_chat_turn_id=source_chat_turn_id,
                 pending_action_id=int(pending_action_id or 0),
                 secret_order_id=order_id,
-                payload={
-                    "title": title,
-                    "content": content,
-                    "tags": list(tags),
-                    "importance": int(importance),
-                    "excluded_names": list(raw_excluded_names),
-                    "excluded_offices": list(excluded_offices),
-                },
+                payload=payload,
                 status="promulgated",
                 due_turn=due_turn,
                 commit=False,
@@ -21939,6 +21863,7 @@ class GameDB:
         tags: List[str],
         importance: int = 4,
         deadline_months: int = 0,
+        covert_task: Optional[Mapping[str, object]] = None,
     ) -> Tuple[int, bool]:
         """同一承办大臣已有 active 密令 → 更新其要旨(title/content/tags/限期)并记一条
         「奉旨更新」进展；否则新建。返回 (order_id, was_update)。
@@ -21950,7 +21875,8 @@ class GameDB:
         ).fetchone()
         if existing is None:
             oid = self.create_secret_order(
-                state, minister_name, title, content, tags, importance, deadline_months
+                state, minister_name, title, content, tags, importance, deadline_months,
+                covert_task=covert_task,
             )
             return oid, False
         oid = int(existing["id"])
@@ -22036,6 +21962,18 @@ class GameDB:
                 origin_chat_message_ids=classify_ids,
                 commit=False,
             )
+            dossier = self.get_dossier_for_secret_order(int(order_id))
+            if dossier is not None:
+                try:
+                    payload = json.loads(str(dossier.get("payload_json") or "{}"))
+                except (TypeError, ValueError):
+                    payload = {}
+                if not isinstance(payload, dict):
+                    payload = {}
+                payload["title"] = persisted_title
+                payload["content"] = content
+                payload["tags"] = json.loads(tags_json)
+                self.update_decree_dossier_payload(int(dossier["id"]), payload, commit=False)
         tlog(f"[secret_order] update id={order_id} title={title[:20]}")
         self.update_secret_order_progress(int(order_id), f"奉旨更新密令要旨：{content}", state.year, state.period)
         if registry is not None:
@@ -22091,10 +22029,8 @@ class GameDB:
         ]
 
     def get_active_secret_orders_for_minister(self, minister_name: str) -> List[Dict[str, object]]:
-        """返回该大臣名下未结案密令（active + pending_review）。done/failed 已结案不再返回。"""
-        active = self.list_secret_orders(status="active", minister_name=minister_name)
-        pending = self.list_secret_orders(status="pending_review", minister_name=minister_name)
-        return active + pending
+        """返回该大臣名下未结案密令（active）。done/failed 已结案不再返回。"""
+        return self.list_secret_orders(status="active", minister_name=minister_name)
 
     def close_secret_order(
         self,
@@ -22172,7 +22108,7 @@ class GameDB:
         tlog(f"[secret_order] close id={order_id} status={status}")
 
     def submit_secret_order_for_review(self, order_id: int, claim: str, year: int, period: int) -> bool:
-        """#1504：大臣自认办结 → 缩 due_turn 至当月，月末机械对账；不再进 pending_review 核议链。
+        """#1504：大臣自认办结 → 缩 due_turn 至当月，月末机械对账。
 
         claim 按月戳追加进 result（奏报/陈词轨），不入实况对账真源。仅 active 可提交。
         """
@@ -22327,7 +22263,7 @@ class GameDB:
         deadline_months: int = 1,
         reason: str = "",
     ) -> Dict[str, object]:
-        """缩短 active 密令期限。deadline_months<=0 表示本月到期对账（#1504 不再 pending_review）。"""
+        """缩短 active 密令期限。deadline_months<=0 表示本月到期对账。"""
         row = self.conn.execute(
             "SELECT id, title, status, result, due_turn FROM secret_orders WHERE id = ?",
             (int(order_id),),
@@ -22399,10 +22335,8 @@ class GameDB:
         }
 
     def auto_submit_due_secret_orders(self, state: GameState) -> List[Dict[str, object]]:
-        """#1504：到期只打「期限届满」陈词戳，保持 active；结案改 settle 尾部机械对账。
+        """#1504：到期只记 typed 机器事实，保持 active；玩家文字走 0058 密奏。"""
 
-        不再翻 pending_review（拆 LLM secret_order_closes 核议消费链）。
-        """
         rows = self.conn.execute(
             """
             SELECT id, title, result FROM secret_orders
@@ -22414,30 +22348,17 @@ class GameDB:
         submitted: List[Dict[str, object]] = []
         with atomic(self):
             for row in rows:
-                stamp = f"〔{period_label(state.year, state.period)}〕[期限届满] "
-                note = "御限已至，本月结算按实进度对账定成败（不入核议链）。"
-                prev = row["result"] or ""
-                lines = [ln for ln in prev.split("\n") if ln.strip()]
-                if not any("[期限届满]" in ln for ln in lines):
-                    lines.append(f"{stamp}{note}")
-                    self.conn.execute(
-                        """
-                        UPDATE secret_orders
-                        SET result = ?, updated_at = CURRENT_TIMESTAMP
-                        WHERE id = ? AND status = 'active'
-                        """,
-                        ("\n".join(lines), int(row["id"])),
-                    )
-                self.mark_secret_order_in_progress(int(row["id"]), commit=False)
+                oid = int(row["id"])
+                self.mark_secret_order_in_progress(oid, commit=False)
                 submitted.append({
-                    "id": int(row["id"]),
+                    "id": oid,
                     "title": row["title"],
                     "status": "active",
                 })
         if rows:
             tlog(
-                f"[secret_order] due_stamp count={len(submitted)} "
-                f"ids={[x['id'] for x in submitted]} (no pending_review)"
+                f"[secret_order] due_typed count={len(submitted)} "
+                f"ids={[x['id'] for x in submitted]} (status unchanged)"
             )
         return submitted
 

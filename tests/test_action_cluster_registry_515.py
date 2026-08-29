@@ -42,6 +42,7 @@ _EXPECTED_MIGRATED_KINDS = frozenset({
 })
 from ming_sim.session import GameSession
 from web_app import WebGame
+from tests.dossier_test_helpers import create_test_secret_order
 
 
 # ── 单一挂点 ──────────────────────────────────────────────────────────
@@ -448,11 +449,15 @@ def test_scripted_ask_vs_order_staging_matrix(
             "excluded_names": [],
             "excluded_offices": [],
             "dossier_links": [],
+            "covert_task": {
+                "kind": "清丈", "axes": ["实务事功"], "direction": 1,
+                "delivery": {"unit": "万亩", "target_units": 1.0, "effect_sign": 1, "region": "henan", "field": "registered_land", "target": "421"},
+            },
         },
     )
     oid = 0
     if seed_existing:
-        oid = db.create_secret_order(
+        oid = create_test_secret_order(db,
             state, minister.name, "查其家产", "密查家产", [],
         )
         for cand in scripted:
@@ -718,6 +723,10 @@ def test_real_chat_bidirectional_barrier_parallel_required(
             "excluded_names": [],
             "excluded_offices": [],
             "dossier_links": [],
+            "covert_task": {
+                "kind": "清丈", "axes": ["实务事功"], "direction": 1,
+                "delivery": {"unit": "万亩", "target_units": 1.0, "effect_sign": 1, "region": "henan", "field": "registered_land", "target": "421"},
+            },
         },
     )
 

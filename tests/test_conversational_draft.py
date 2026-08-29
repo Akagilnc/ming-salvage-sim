@@ -21,6 +21,7 @@ import pytest
 import ming_sim.cli_backend as cb
 from ming_sim.models import TurnPhase
 from ming_sim.session import GameSession
+from tests.dossier_test_helpers import TYPED_COVERT_TASK, create_test_secret_order
 
 _POLICY_FIELDS = {
     "dossier_action_type": "policy",
@@ -456,6 +457,14 @@ def test_explicit_secret_order_prefix_stages_pending_candidate(game, monkeypatch
             "内容": "查辽东军饷有无侵冒，并封存兵部辽饷册。",
             "承办人": name,
             "期限月数": 3,
+            "差务": "核发辽饷",
+            "价值轴": ["实务事功"],
+            "方向": 1,
+            "交付单位": "万两",
+            "交付目标": 1, "效果符号": 1,
+            "钱粮用途": "辽饷",
+            "钱粮类别": "军饷",
+            "钱粮账户": "国库",
             "标签": ["辽东", "军饷"],
         }, ensure_ascii=False), 1)
 
@@ -491,6 +500,11 @@ def test_natural_language_secret_order_stages_pending_candidate(game, monkeypatc
                 "内容": "暗查关宁诸将虚冒兵额，并密访粮道账册。",
                 "承办人": name,
                 "期限月数": 2,
+                "差务": "查虚冒兵额",
+                "价值轴": ["实务事功"],
+                "方向": 1,
+                "交付目标": 1, "效果符号": 1,
+                "调查对象": name,
                 "标签": ["关宁", "兵额"],
             }, ensure_ascii=False), 1)
         return (json.dumps({"任免动作": "无", "拟旨意图": "无"}, ensure_ascii=False), 1)
@@ -536,7 +550,7 @@ def test_secret_order_status_query_does_not_stage_new_hidden_order(game, monkeyp
     db, state, content = game
     name = _active_minister_name(db, content)
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
-    db.create_secret_order(state, name, "暗查辽饷", "密查辽饷侵冒。", [], deadline_months=0)
+    create_test_secret_order(db, state, name, "暗查辽饷", "密查辽饷侵冒。", [], deadline_months=0)
     calls = []
 
     def _extractors(prompt, llm_config=None, tag=""):
@@ -547,6 +561,11 @@ def test_secret_order_status_query_does_not_stage_new_hidden_order(game, monkeyp
                 "内容": "给朕查一下密令进展。",
                 "承办人": name,
                 "期限月数": 0,
+                "差务": "清丈",
+                "价值轴": ["实务事功"],
+                "方向": 1,
+                "交付单位": "万亩",
+                "交付目标": 1, "效果符号": 1,
                 "标签": [],
             }, ensure_ascii=False), 1)
         return (json.dumps({
@@ -630,7 +649,7 @@ def test_new_secret_order_with_existing_order_stages_only_new_candidate(game, mo
     db, state, content = game
     name = _active_minister_name(db, content)
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
-    oid = db.create_secret_order(state, name, "旧令", "旧令内容。", [], deadline_months=0)
+    oid = create_test_secret_order(db, state, name, "旧令", "旧令内容。", [], deadline_months=0)
 
     def _extractors(prompt, llm_config=None, tag=""):
         if tag == "secret_extract":
@@ -639,6 +658,14 @@ def test_new_secret_order_with_existing_order_stages_only_new_candidate(game, mo
                 "内容": "另下一道密令暗查粮道。",
                 "承办人": name,
                 "期限月数": 2,
+                "差务": "核发辽饷",
+                "价值轴": ["实务事功"],
+                "方向": 1,
+                "交付单位": "万两",
+                "交付目标": 1, "效果符号": 1,
+                "钱粮用途": "辽饷",
+                "钱粮类别": "军饷",
+                "钱粮账户": "国库",
                 "标签": [],
             }, ensure_ascii=False), 1)
         return (json.dumps({
@@ -714,6 +741,7 @@ def test_dialogue_affirm_commits_pending_new_secret_order(game, monkeypatch):
             "assignee": name,
             "tags": ["关宁"],
             "deadline_months": 2,
+            "covert_task": TYPED_COVERT_TASK,
         },
     )
 

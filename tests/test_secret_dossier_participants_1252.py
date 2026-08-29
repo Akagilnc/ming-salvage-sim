@@ -7,6 +7,10 @@ import types
 
 import pytest
 
+from tests.conftest import with_monthly_reports
+from tests.dossier_test_helpers import TYPED_COVERT_TASK
+from tests.dossier_test_helpers import create_test_secret_order
+
 
 def _actor(db):
     return str(db.conn.execute(
@@ -25,8 +29,9 @@ def _people(db, count):
 
 def _secret(db, state, *, title="密查漕弊", body="暗访仓胥", tags=None):
     lead = _actor(db)
-    order_id = db.create_secret_order(
+    order_id = create_test_secret_order(db,
         state, lead, title, body, tags or ["稽核"], deadline_months=3,
+        covert_task=TYPED_COVERT_TASK,
     )
     dossier = db.get_dossier_for_secret_order(order_id)
     assert dossier is not None
@@ -119,8 +124,9 @@ def test_s2_secret_field_appends_via_real_settle_and_recovery_replays(game, monk
     db, state, content = game
     lead, worker = _people(db, 2)
     # Non 护行/稽核 tags + short deadline: avoid #566 monthly-progress fail-loud.
-    order_id = db.create_secret_order(
+    order_id = create_test_secret_order(db,
         state, lead, "密查仓胥", "暗访通州仓", ["密访"], deadline_months=1,
+        covert_task=TYPED_COVERT_TASK,
     )
     dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
     db.append_decree_dossier_participants(dossier_id, [{
@@ -137,7 +143,7 @@ def test_s2_secret_field_appends_via_real_settle_and_recovery_replays(game, monk
         }],
     }
     driver.run_prepare(db, state, content)
-    driver.run_settle(db, state, content, delta)
+    driver.run_settle(db, state, content, with_monthly_reports(db, delta))
 
     roster = db.get_decree_dossier(dossier_id)["participant_roster"]
     assert any(
@@ -168,7 +174,7 @@ def test_s2_secret_field_appends_via_real_settle_and_recovery_replays(game, monk
         state.turn, "", "",
         {"decree_dossiers": []},
         secret_orders=grouped,
-        extracted=delta,
+        extracted=with_monthly_reports(db, delta),
     )
     ctx = db.get_resolve_context(state.turn)
     monkeypatch.setattr(decree, "create_chapter_memory_agent", lambda *a, **k: None)
@@ -193,7 +199,7 @@ def test_s2_tracer_613_565_readers_see_appended_roster(game):
 
     db, state, content = game
     lead, worker = _people(db, 2)
-    order_id = db.create_secret_order(
+    order_id = create_test_secret_order(db,
         state, lead, "密查仓胥", "暗访通州仓", ["稽核"], deadline_months=3,
     )
     dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
@@ -241,7 +247,7 @@ def test_s2_public_dossier_participants_still_rejects_secret_id(game):
 
     db, state, _content = game
     lead, worker = _people(db, 2)
-    order_id = db.create_secret_order(
+    order_id = create_test_secret_order(db,
         state, lead, "密查仓胥", "暗访通州仓", ["稽核"], deadline_months=3,
     )
     secret_id = int(db.get_dossier_for_secret_order(order_id)["id"])
@@ -333,7 +339,7 @@ def test_s2_driver_persists_secret_orders_and_freezes_secret_authority(game, mon
 
     db, state, content = game
     lead, worker = _people(db, 2)
-    order_id = db.create_secret_order(
+    order_id = create_test_secret_order(db,
         state, lead, "密查仓胥", "暗访通州仓", ["稽核"], deadline_months=3,
     )
     dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])

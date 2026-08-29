@@ -87,7 +87,6 @@ TOP_LEVEL_ALIASES = {
     "person_changes": "人物变更",
     "人物变更": "人物变更",
     "密令副作用": "secret_order_updates",
-    "密令结案": "secret_order_closes",
     "密令执行态": "covert_exec_selections",
     "崇祯结局": "emperor_fate",
     "大臣互动": "relation_edge_events",
@@ -973,7 +972,6 @@ EMPTY_EXTRACTION: Dict[str, object] = {
     "character_power_changes": [],
     "人物变更": [],
     "secret_order_updates": [],
-    "secret_order_closes": [],
     "covert_exec_selections": [],
     "dossier_executions": [],
     "dossier_participants": [],
@@ -1285,6 +1283,13 @@ def build_extractor_shared_context(
                 "WHERE region_id <> '' ORDER BY name, region_id"
             ).fetchall()
         ])
+    from ming_sim.covert_progress import build_secret_covert_effect_briefs
+    if module in {"internal", "personnel_secret"}:
+        allowed = MODULE_FIELDS[module]
+        slim["secret_covert_effect_briefs"] = [
+            brief for brief in build_secret_covert_effect_briefs(db, turn=state.turn)
+            if allowed.intersection(brief.get("canonical_fields") or [])
+        ]
     # #613：执行格读端字段随案卷进 extractor；优先沿用推演装配已写字段，缺则现场补投影。
     from ming_sim.decree import execution_side_read_fields
 

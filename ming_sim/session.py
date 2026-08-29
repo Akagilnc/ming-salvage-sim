@@ -1762,7 +1762,6 @@ class GameSession:
                         )
             elif (
                 tool_name == "secret_order"
-                or tool_result.startswith("__secret_order_registered__")
                 or tool_result.startswith("__secret_order__")
                 or tool_result.startswith("__secret_action__")
             ):
@@ -1826,21 +1825,9 @@ class GameSession:
                                         payload.get("dossier_links"),
                                         llm_config=self.llm_config,
                                     ),
+                                    "covert_task": payload.get("covert_task") if isinstance(payload.get("covert_task"), dict) else None,
                                 },
                             ),
-                        )
-                elif tool_result.startswith("__secret_order_registered__"):
-                    try:
-                        order_id = int(
-                            tool_result.removeprefix("__secret_order_registered__").split("__", 1)[0]
-                        )
-                    except Exception:
-                        order_id = 0
-                    if order_id:
-                        result.pending_action_id = coalesce_pending_action_id(
-                            result.pending_action_id,
-                            self._stage_legacy_registered_secret_order(
-                                order_id, character.name),
                         )
         # CLI 后端（agy/codex）：玩家用拟旨/密令按钮（消息带前缀）时，把大臣这句回话原文入档。
         # #568：chat_turn_id 经 session 作用域透传至 materialize（apply 签名不动）。
@@ -2246,21 +2233,25 @@ class GameSession:
                 self.state.turn, minister_name, acts["decree_text"], mode=message_text)
         def _stage_secret_order_candidate(so: Dict[str, Any]) -> int:
             assignee = so.get("assignee") or minister_name
+            payload = {
+                "title": so["title"],
+                "content": so["content"],
+                "assignee": assignee,
+                "tags": so.get("tags") or [],
+                "deadline_months": so.get("deadline_months", 0),
+                "excluded_names": so.get("excluded_names") or [],
+                "excluded_offices": so.get("excluded_offices") or [],
+                # The extractor emits only links explicitly narrowed in the
+                # minister's confirmation; carry that immutable set to commit.
+                "dossier_links": so.get("dossier_links") or [],
+            }
+            frozen = so.get("covert_task") if isinstance(so.get("covert_task"), dict) else None
+            if frozen is not None:
+                payload["covert_task"] = frozen
             return self.db.stage_pending_action(
                 self.state.turn, kind="secret_order", action="新建",
                 minister_name=minister_name, target_id=None,
-                payload={
-                    "title": so["title"],
-                    "content": so["content"],
-                    "assignee": assignee,
-                    "tags": so.get("tags") or [],
-                    "deadline_months": so.get("deadline_months", 0),
-                    "excluded_names": so.get("excluded_names") or [],
-                    "excluded_offices": so.get("excluded_offices") or [],
-                    # The extractor emits only links explicitly narrowed in the
-                    # minister's confirmation; carry that immutable set to commit.
-                    "dossier_links": so.get("dossier_links") or [],
-                },
+                payload=payload,
             )
         if not out["secret_order_id"] and acts["secret_order"]:
             out["pending_action_id"] = _stage_secret_order_candidate(acts["secret_order"])
@@ -2818,76 +2809,6 @@ class GameSession:
             # minister_name = audience speaker (may differ from assignee).
             origin_minister_name=minister_name,
         )
-
-    def _stage_legacy_registered_secret_order(self, order_id: int, fallback_minister: str) -> int:
-        """Convert a legacy already-registered same-turn secret order into a pending candidate.
-
-        Older tool results used `__secret_order_registered__<id>__` after directly creating
-        `secret_orders`. #413 requires those requests to pass through audience confirmation.
-        """
-        if GameSession._proposal_blocked(self.state):
-            return 0
-        row = self.db.conn.execute(
-            "SELECT * FROM secret_orders WHERE id=?", (int(order_id),)
-        ).fetchone()
-        if row is None:
-            return 0
-        if str(row["status"] or "") != "active" or int(row["turn_issued"] or 0) != int(self.state.turn):
-            return 0
-        try:
-            tags = json.loads(row["tags"] or "[]")
-        except (ValueError, TypeError):
-            tags = []
-        if not isinstance(tags, list):
-            tags = []
-        try:
-            excluded_names = json.loads(row["excluded_names"] or "[]")
-        except (ValueError, TypeError):
-            excluded_names = []
-        if not isinstance(excluded_names, list):
-            excluded_names = []
-        try:
-            excluded_targets = json.loads(row["excluded_targets"] or "{}")
-        except (ValueError, TypeError):
-            excluded_targets = {}
-        if not isinstance(excluded_targets, dict):
-            excluded_targets = {}
-        excluded_offices = excluded_targets.get("offices") or []
-        if not isinstance(excluded_offices, list):
-            excluded_offices = []
-        due_turn = int(row["due_turn"] or 0)
-        deadline = max(0, due_turn - int(self.state.turn)) if due_turn else 0
-        from ming_sim.applier import atomic
-
-        with atomic(self.db):
-            pending_id = self.db.stage_pending_action(
-                self.state.turn, kind="secret_order", action="新建",
-                minister_name=str(fallback_minister or row["minister_name"] or ""),
-                target_id=None,
-                payload={
-                    "title": str(row["title"] or "").strip(),
-                    "content": str(row["content"] or "").strip(),
-                    "assignee": str(row["minister_name"] or fallback_minister or "").strip(),
-                    "tags": [str(t).strip() for t in tags if str(t).strip()],
-                    "deadline_months": deadline,
-                    "excluded_names": [str(name).strip() for name in excluded_names if str(name).strip()],
-                    "excluded_offices": [str(office).strip() for office in excluded_offices if str(office).strip()],
-                },
-            )
-            cur = self.db.conn.execute(
-                "DELETE FROM secret_orders WHERE id=? AND status='active' AND turn_issued=?",
-                (int(order_id), int(self.state.turn)),
-            )
-            if cur.rowcount != 1:
-                raise RuntimeError("legacy secret order conversion lost source row")
-            self.db.conn.execute(
-                "DELETE FROM character_knowledge_sources WHERE source_id=?",
-                (f"secret_order:{int(order_id)}",),
-            )
-            self.db.conn.execute(
-                "DELETE FROM secret_order_briefs WHERE order_id=?", (int(order_id),)
-            )
-        return pending_id
 
     def _apply_close_secret_order(self, payload: str) -> None:
         """report_secret_order_result 哨兵落库。"""

@@ -19,6 +19,7 @@ import pytest
 
 import ming_sim.decree as decree_mod
 from ming_sim.decree import pre_settle
+from tests.dossier_test_helpers import create_test_secret_order
 
 
 def _ledger_count(db, turn: int) -> int:
@@ -434,7 +435,7 @@ def test_guarded_early_return_does_not_consume_pending(game):
 
     pre_settle(state, db)  # 落 settling
     # 崩溃重载后玩家召对新 stage 的动作
-    oid = db.create_secret_order(state, name, "原标题", "原内容", [], deadline_months=0)
+    oid = create_test_secret_order(db, state, name, "原标题", "原内容", [], deadline_months=0)
     db.stage_pending_action(
         state.turn, kind="secret_order", action="更新", minister_name=name, target_id=oid,
         payload={"new_title": "守门后标题", "new_content": "x", "deadline_months": 0})

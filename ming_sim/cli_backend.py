@@ -3410,8 +3410,20 @@ def _extract_secret_order(
         "  \"标签\": [\"相关人名/地区/事项关键词\"],\n"
         "  \"排除对象\": {\"人物\": [\"明确说要瞒住的人名\"], \"机构\": [\"不走的衙门\"]},\n"
         "  \"案卷关联\": [{\"目标案卷ID\": 123, \"类型\": \"护卫/稽核/接应\", "
-        "\"说明\": \"一句说明\"}]\n"
+        "\"说明\": \"一句说明\"}],\n"
+        "  \"差务\": \"差务类型名，如 补发饷银、缉获人犯、清丈；必须点明，不得用标题或标签猜测\",\n"
+        "  \"价值轴\": [\"闭集轴名，如 实务事功、既得利益\"],\n"
+        "  \"方向\": 1,\n"
+        "  \"交付单位\": \"canonical applier 单位：万两、人犯或万亩；调查差务留空\",\n"
+        "  \"交付目标\": 到期须交付的正数目标（调查为须坐实的事实条数）,\n"
+        "  \"效果符号\": 1,\n"
+        "  \"调查对象\": \"查核目标人名，非调查留空\",\n"
+        "  \"钱粮用途\": \"支出 purpose（补饷/其它）；收入留空\", \"钱粮类别\": \"category\", \"钱粮账户\": \"account\",\n"
+        "  \"钱粮标靶种类\": \"补饷时填 army，其余留空\", \"钱粮标靶编号\": \"补饷时填军队 id，其余留空\",\n"
+        "  \"人物动作\": \"人物变更动作，非人物留空\",\n"
+        "  \"地区\": \"region_delta 地区 id\", \"地区字段\": \"落库字段\", \"地区目标值\": \"落库后的目标值\"\n"
         "}\n"
+        "差务、价值轴、交付单位、交付目标缺一项则抽取失败；不得填空字符串或 0 凑数。\n"
         "案卷关联只能填写大臣回话中已明确复述确认、且在下列候选中的具体旧案卷 ID；模糊指代、未确认或没有 ID 时填空列表。\n"
         "【可引用旧案卷】\n" + "\n".join(
             f"- #{int(row['id'])} {row.get('secret_title') or row.get('decree_text') or row.get('action_type') or ''}"
@@ -3514,10 +3526,50 @@ def _extract_secret_order(
     else:
         dossier_links = confirm_dossier_links(
             minister_reply, dossier_candidates, dossier_links, llm_config=llm_config)
-    return {"title": title, "content": content, "assignee": assignee,
+    kind = str(obj.get("差务") or obj.get("kind") or "").strip()
+    axes = obj.get("价值轴")
+    axes = [str(a).strip() for a in axes if str(a).strip()] if isinstance(axes, list) else []
+    unit = str(obj.get("交付单位") or "").strip()
+    try:
+        direction = int(obj.get("方向") or 1)
+    except (TypeError, ValueError):
+        direction = 1
+    if direction not in (1, -1):
+        direction = 1
+    from ming_sim.covert_progress import CovertContractError, build_covert_task_contract
+    try:
+        covert_task = build_covert_task_contract(
+            kind=kind,
+            axes=axes,
+            direction=direction,
+            delivery_unit=unit,
+            delivery_target_units=obj.get("交付目标"),
+            purpose=obj.get("钱粮用途"),
+            category=obj.get("钱粮类别"),
+            account=obj.get("钱粮账户"),
+            target_kind=obj.get("钱粮标靶种类"),
+            target_id=obj.get("钱粮标靶编号"),
+            person_action=obj.get("人物动作"),
+            region=obj.get("地区"),
+            field=obj.get("地区字段"),
+            region_target=obj.get("地区目标值"),
+            investigation_target=obj.get("调查对象"),
+            effect_sign=obj.get("效果符号"),
+        )
+    except CovertContractError as exc:
+        covert_task = None
+        contract_error = str(exc)
+    else:
+        contract_error = ""
+    result = {"title": title, "content": content, "assignee": assignee,
             "deadline_months": deadline, "tags": tags, "excluded_names": excluded_names,
             "excluded_offices": excluded_offices, "dossier_links": dossier_links,
             "excluded_targets": {"people": excluded_names, "offices": excluded_offices}}
+    if covert_task is not None:
+        result["covert_task"] = covert_task
+    if contract_error:
+        result["contract_error"] = contract_error
+    return result
 
 def resolve_minister_actions(
     minister_reply: str, player_message: str = "", default_assignee: str = "", llm_config: Any = None,

@@ -12,6 +12,7 @@ import pytest
 
 import ming_sim.issues as issue_engine
 from ming_sim.db import GameDB
+from tests.dossier_test_helpers import create_test_secret_order
 
 
 DOSSIER_REPORT_MONTHLY = "dossier-report:monthly_errand"
@@ -124,8 +125,8 @@ def test_secret_monthly_path_unchanged_and_stays_on_private_rail(game):
     actor = db.conn.execute(
         "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
     ).fetchone()["name"]
-    order_id = db.create_secret_order(
-        state, actor, "护行辽饷", "逐月办理", ["护行"], deadline_months=4,
+    order_id = create_test_secret_order(
+        db, state, actor, "护行辽饷", "逐月办理", ["护行"], deadline_months=4,
     )
     dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
 
@@ -154,18 +155,21 @@ def test_short_and_one_shot_dossiers_have_no_empty_monthly_shell(game):
     actor = db.conn.execute(
         "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
     ).fetchone()["name"]
-    short_id = db.create_secret_order(
-        state, actor, "护行急件", "一月即结", ["护行"], deadline_months=1,
+    short_id = create_test_secret_order(
+        db, state, actor, "护行急件", "一月即结", ["护行"], deadline_months=1,
     )
     short_dossier = int(db.get_dossier_for_secret_order(short_id)["id"])
     one_shot = _executing_assignment(db, state, text="一次性清查", target="one-shot-619")
 
-    assert db.list_monthly_dossier_progress_nudges() == []
+    # 一月期密令仍入 0058；非密令一次性案卷不入密令月报候选
+    assert [item["dossier_id"] for item in db.list_monthly_dossier_progress_nudges()] == [short_dossier]
     assert db.list_dossier_progress(short_dossier) == []
     assert db.list_dossier_progress(one_shot) == []
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM dossier_reported_progress"
     ).fetchone()["n"] == 0
+    with pytest.raises(ValueError, match="缺少本月密奏"):
+        db.record_monthly_dossier_progress(state.turn, [])
 
 
 def test_origin_namespace_minimum_closed_set_and_open_append(game):

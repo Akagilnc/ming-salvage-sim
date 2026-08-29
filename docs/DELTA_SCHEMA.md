@@ -50,7 +50,6 @@
   // ── personnel_secret 模块 ──
   "人物变更":                    [],  // ADR 0009 单一人物入口：每项必带「动作」
   "secret_order_updates":       [],  // 密令副作用
-  "secret_order_closes":        [],  // #1504 退役（拒收）；结案改 settle 对账
   "covert_exec_selections":     [],  // #1504 密令带内选态
   "dossier_progress_reports":   [],  // 长差密令逐月密奏（#566 / ADR 0058）
   "emperor_fate":               null, // "abdicate" | "suicide" | null
@@ -439,9 +438,9 @@ personnel_secret 模块产出；settle 内经 `record_monthly_dossier_progress` 
 
 > **旧四 key（appointments / character_status_changes / character_power_changes / office_changes）不在本契约文档化**（ADR 0009 决定11「alias 保留但不写文档」）：新产出的 delta 只写 `人物变更`；旧 key 仅作历史 delta / ready=1 重试真源的内部兼容翻译层，永不获得新能力（`行止` / `方式` 仅新 key；`reason_code` 系 处置/罢黜 通用辅助字段，legacy `character_status_changes` 翻译保真带过、非新增能力），自然枯死。翻译保真（执行序、spillover 殿后、legacy_gate/legacy_partial 注记）由 `ming_sim/person_delta_adapter.py` + `tests/test_person_delta_adapter.py` 覆盖，不在用户面 schema 重复。
 
-### `secret_order_updates` / `covert_exec_selections`（`secret_order_closes` 已退役）
+### `secret_order_updates` / `covert_exec_selections`
 - updates：`order_id` int + `sim_note`（本月推进实况）+ 可选 `impact` + 可选布尔 `disclosed`（中文键 `泄漏结论`；可省略）。`disclosed`/`泄漏结论`：密令情节已**实际公开**才为 true（被目击、闹至公堂、承办人被拿获、目标公开反击、明发上谕、科道公开参劾等）；为 true 时触发 `secret_order_disclosure:` 公开知识事件（简报升公共面的唯一闸）。风声/警觉/暴露风险仍为不填或 false。
-- closes：`order_id` + `result`（核议结论）+ `approved` bool（done=approved true）
+- 结案真源是 `settle_due_secret_orders`，不接受 extractor 结案字段。
 
 ### `emperor_fate`
 - 顶层标量，不是 list/dict

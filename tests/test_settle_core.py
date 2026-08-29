@@ -17,7 +17,8 @@ from ming_sim.decree import pre_settle, settle_with_delta
 from ming_sim.memories import effect_brief
 from ming_sim.models import Event
 from ming_sim import issues
-from tests.conftest import active_ming_character
+from tests.conftest import active_ming_character, covering_monthly_extract, with_monthly_reports
+from tests.dossier_test_helpers import create_test_secret_order
 
 
 def test_settle_with_delta_applies_region_and_advances_turn(game):
@@ -113,7 +114,7 @@ def test_settle_persists_public_and_restricted_sources_before_archive_projection
         and db.get_character_status(character.name)[0] == "active"
     ]
     knower, excluded = ministers[:2]
-    order = db.create_secret_order(
+    order = create_test_secret_order(db,
         state,
         knower.name,
         "生产链密查",
@@ -138,7 +139,7 @@ def test_settle_persists_public_and_restricted_sources_before_archive_projection
     settle_with_delta(
         state,
         db,
-        {},
+        with_monthly_reports(db, {}),
         before_turn=before_turn,
         content=content,
         narrative="生产链公开事项",
@@ -185,7 +186,7 @@ def test_private_audience_does_not_erase_independent_public_settlement(game):
     )
 
     settle_with_delta(
-        state, db, {}, before_turn=state.turn, content=content,
+        state, db, with_monthly_reports(db, {}), before_turn=state.turn, content=content,
         narrative="本月公开邸报",
     )
 
@@ -211,7 +212,7 @@ def test_settlement_pure_public_narrative_excludes_secret_brief_from_public_view
     ]
     knower, excluded = ministers[:2]
     secret_marker = "混合结算密令标记"
-    order = db.create_secret_order(
+    order = create_test_secret_order(db,
         state, knower.name, "混合密查", secret_marker, [],
         excluded_names=[excluded.name],
     )
@@ -224,7 +225,7 @@ def test_settlement_pure_public_narrative_excludes_secret_brief_from_public_view
     )
 
     settle_with_delta(
-        state, db, {}, before_turn=before_turn, content=content,
+        state, db, with_monthly_reports(db, {}), before_turn=before_turn, content=content,
         narrative=narrative,
     )
 
@@ -253,14 +254,14 @@ def test_settlement_pure_public_narrative_lands_while_secret_brief_active(game):
     ]
     knower, excluded = ministers[:2]
     secret_body = "核验边镇欠饷密令"
-    order = db.create_secret_order(
+    order = create_test_secret_order(db,
         state, knower.name, "改写密查", secret_body, [],
         excluded_names=[excluded.name],
     )
 
     # Structural producer path: narrative is pure public (no secret preload).
     settle_with_delta(
-        state, db, {}, before_turn=state.turn, content=content,
+        state, db, with_monthly_reports(db, {}), before_turn=state.turn, content=content,
         narrative="邸报旁述：另报山东漕运如常。",
     )
 
@@ -383,4 +384,4 @@ def test_settle_with_delta_enter_failure_preserves_original(game, monkeypatch):
     monkeypatch.setattr(decree, "atomic", _atomic_boom)
 
     with pytest.raises(_EnterBoom):
-        settle_with_delta(state, db, {}, before_turn=state.turn, content=content)
+        settle_with_delta(state, db, with_monthly_reports(db, {}), before_turn=state.turn, content=content)

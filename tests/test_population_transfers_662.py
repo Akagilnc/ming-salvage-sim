@@ -110,7 +110,7 @@ def _module_response(module, transfers):
                      "class_delta": {}, "population_transfers": transfers, "region_delta": {}},
         "military_external": {"army_delta": {}, "new_armies": [], "power_updates": {}, "world_advance": {}},
         "issues": {"issue_advances": [], "new_issues": [], "事件结局": {}, "cancels": [], "close_issues": []},
-        "personnel_secret": {"人物变更": [], "secret_order_updates": [], "secret_order_closes": [], "emperor_fate": None},
+        "personnel_secret": {"人物变更": [], "secret_order_updates": [], "emperor_fate": None},
         "relations": {"relation_edge_events": []},
     }[module]
     return json.dumps(payload, ensure_ascii=False)

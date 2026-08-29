@@ -145,7 +145,7 @@ def saved_game(content):
     probe.db 隔离，缺则**明确 skip 并注明原因**（非隐藏假绿，#5）——区别于原 `game` 缺 probe.db
     时静默 skip 掉**全部**盘面用例。后续应逐个 deterministic 化（测试自带 setup 注入所需状态），
     见 #5 followup。"""
-    if not os.path.exists(_SEED_DB):
+    if not os.path.exists(_SEED_DB) or os.path.getsize(_SEED_DB) == 0:
         pytest.skip("缺玩过存档 data/probe.db（gitignored）；本用例依赖运行时状态，待 deterministic 化（#5 followup）")
     fd, path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
@@ -153,6 +153,9 @@ def saved_game(content):
     try:
         shutil.copy(_SEED_DB, path)
         db = GameDB(path, content)
+        region_n = db.conn.execute("SELECT COUNT(*) AS n FROM regions").fetchone()["n"]
+        if int(region_n or 0) == 0:
+            pytest.skip("data/probe.db 无盘面（空库）；本用例依赖玩过存档")
         state = db.load_state()
         yield db, state, content
     finally:
@@ -368,3 +371,30 @@ def _isolate_cli_bin_resolution():
     yield
     mp.undo()
     _cb._BIN_CACHE.clear()
+
+
+def covering_monthly_extract(_agents, db, state, _narrative=None, *args, **kwargs):
+    """Settlement extractor stub that satisfies 0058 complete-coverage for active secret orders."""
+    extracted = with_monthly_reports(db, {})
+    return extracted, "out", "in"
+
+
+def monthly_progress_reports(db):
+    return [
+        {
+            "dossier_id": item["dossier_id"],
+            "progress_band": "在办",
+            "memorial_text": "本月密奏已达",
+        }
+        for item in db.list_monthly_dossier_progress_nudges()
+    ]
+
+
+def with_monthly_reports(db, extracted=None):
+    out = dict(extracted or {})
+    if "dossier_progress_reports" in out:
+        return out
+    reports = monthly_progress_reports(db)
+    if reports:
+        out["dossier_progress_reports"] = reports
+    return out

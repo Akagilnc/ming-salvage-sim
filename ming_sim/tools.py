@@ -563,6 +563,22 @@ def build_minister_tools(character: Character, context: CourtContext,
         excluded_names_json: str = "[]",
         excluded_offices_json: str = "[]",
         dossier_links_json: str = "[]",
+        kind: str = "",
+        axes_json: str = "[]",
+        direction: int = 1,
+        delivery_unit: str = "",
+        delivery_target_units: float = 0,
+        purpose: str = "",
+        category: str = "",
+        account: str = "",
+        target_kind: str = "",
+        target_id: str = "",
+        person_action: str = "",
+        region: str = "",
+        field: str = "",
+        region_target: str = "",
+        investigation_target: str = "",
+        effect_sign: int = 0,
     ) -> str:
         """密令统一入口。action 取值：
         - "issue"：下达新密令。需填 title、content；assignee 留空默认当前大臣；deadline_months=0 无硬限。
@@ -574,6 +590,16 @@ def build_minister_tools(character: Character, context: CourtContext,
         target_dossier_id（旧案卷整数 ID）、relation_type（护卫/稽核/接应之一）和 note
         （大臣已复述确认的说明）。示例：[{"target_dossier_id":12,"relation_type":"护卫",
         "note":"护送辽饷"}]。未明确确认则传 []。
+        issue 的 typed 合同：kind（差务名，如补发饷银/缉获人犯）、axes_json（价值轴闭集，
+        六轴：礼法名节/既得利益/实务事功/皇权依附/华夷战和/民本恤民）、
+        direction（1 或 -1）、effect_sign（生产者 +1 或 -1，不得从 direction 导出）、
+        delivery_unit（万两/人犯/万亩；调查差务可空）、delivery_target_units（到期交付目标，与 applier 同量纲）、
+        investigation_target（查核目标人名；非调查留空）。
+        delivery_unit 决定还须填哪组 identity（缺则确认时响亮拒绝）：
+        万两支出 → purpose（补饷须另填 target_kind=army 与 target_id；其余非空写成其它）、category、account；收入不填 purpose；
+        人犯 → person_action（人物变更动作）；
+        万亩 → region（地区 id）、field（落库字段）、region_target（落库后的目标值）。
+        tags_json 只作检索关键词，不用于猜 kind。
         """
         # 恢复窗总闸（PR #90 R2 codex P2）：FRONT_HALF_DONE 时四个 action 都是
         # settle 重试事务边界外的直写，重放中止回滚不回滚它们——dispatcher 一处冻全部。
@@ -581,7 +607,13 @@ def build_minister_tools(character: Character, context: CourtContext,
             return "本月结算未完（恢复中），密令房暂不办事；请先续跑结算，再行降旨。"
         act = (action or "").strip().lower()
         if act == "issue":
-            return _secret_order_issue(title, content, tags_json, assignee, deadline_months, excluded_names_json, excluded_offices_json, dossier_links_json)
+            return _secret_order_issue(
+                title, content, tags_json, assignee, deadline_months,
+                excluded_names_json, excluded_offices_json, dossier_links_json,
+                kind, axes_json, direction, delivery_unit, delivery_target_units,
+                purpose, category, account, target_kind, target_id, person_action, region, field, region_target,
+                investigation_target, effect_sign,
+            )
         if act == "progress":
             return _secret_order_progress(order_id, progress)
         if act == "submit":
@@ -590,7 +622,15 @@ def build_minister_tools(character: Character, context: CourtContext,
             return _secret_order_rush(order_id, deadline_months, reason)
         return f"未知 action={action!r}，可选：issue / progress / submit / rush。"
 
-    def _secret_order_issue(title: str, content: str, tags_json: str = "[]", assignee: str = "", deadline_months: int = 0, excluded_names_json: str = "[]", excluded_offices_json: str = "[]", dossier_links_json: str = "[]") -> str:
+    def _secret_order_issue(
+        title: str, content: str, tags_json: str = "[]", assignee: str = "", deadline_months: int = 0,
+        excluded_names_json: str = "[]", excluded_offices_json: str = "[]", dossier_links_json: str = "[]",
+        kind: str = "", axes_json: str = "[]", direction: int = 1, delivery_unit: str = "", delivery_target_units: float = 0,
+        purpose: str = "", category: str = "", account: str = "",
+        target_kind: str = "", target_id: str = "",
+        person_action: str = "", region: str = "", field: str = "", region_target: str = "",
+        investigation_target: str = "", effect_sign: int = 0,
+    ) -> str:
         """皇帝下达密令，返回待确认密令 payload，由召对确认闸门决定是否正式落库。
 
         title：密令标题。
@@ -598,6 +638,16 @@ def build_minister_tools(character: Character, context: CourtContext,
         tags_json：JSON 数组，填相关人名/地区/事项关键词，用于日后检索，如 '["辽饷","兵部","密查"]'。
         assignee：实际承办人姓名。留空则默认为当前召见的大臣；若皇帝指名他人承办（如"命毕自严去查"），填该人全名。
         deadline_months：硬期限月数；0 表示无硬期限。若皇帝说"下月务必结案"填 1，说"三个月内结案"填 3。
+        kind：差务类型名（补发饷银/缉获人犯/清丈等），不得用 tags 猜测。
+        axes_json：价值轴闭集 JSON 数组，如 '["既得利益"]'。
+        direction：1 顺轴，-1 逆轴。
+        delivery_unit：可数交付单位（万两/人犯/万亩）；调查差务留空。
+        delivery_target_units：到期须交付的正数目标；调查为须坐实的事实条数。
+        investigation_target：查核目标人名；非调查留空。
+        effect_sign：生产者效果符号 +1 或 -1；缺则确认拒绝。
+        purpose/category/account：delivery_unit=万两 且支出时必填；purpose=补饷 须另填 target_kind=army 与 target_id。
+        person_action：delivery_unit=人犯 时必填，对应 person_logs 的落库动作名。
+        region/field/region_target：delivery_unit=万亩 时必填，对应 region_logs 的地区 id/落库字段/目标值。
         dossier_links_json：只填当前提示所列旧案卷，格式为 [{"target_dossier_id": 12,
         "relation_type": "护卫/稽核/接应", "note": "已复述确认的说明"}]。
         """
@@ -612,6 +662,19 @@ def build_minister_tools(character: Character, context: CourtContext,
         except (ValueError, TypeError):
             tags = []
         tags_clean = [str(k).strip() for k in tags if str(k).strip()]
+        try:
+            raw_axes = json.loads(axes_json or "[]")
+            if not isinstance(raw_axes, list):
+                raw_axes = []
+        except (ValueError, TypeError):
+            raw_axes = []
+        axes_clean = [str(k).strip() for k in raw_axes if str(k).strip()]
+        try:
+            dir_i = int(direction)
+        except (TypeError, ValueError):
+            dir_i = 1
+        if dir_i not in (1, -1):
+            dir_i = 1
         try:
             excluded = json.loads(excluded_names_json or "[]")
             excluded = [str(k).strip() for k in excluded if str(k).strip()] if isinstance(excluded, list) else []
@@ -649,18 +712,40 @@ def build_minister_tools(character: Character, context: CourtContext,
             ):
                 continue
             try:
-                target_id = strict_int(raw_target_id)
+                link_dossier_id = strict_int(raw_target_id)
             except (TypeError, ValueError, OverflowError):
                 continue
             relation = str(link.get("relation_type") or "").strip()
             note = str(link.get("note") or "").strip()
-            if target_id in visible_ids and relation in DOSSIER_LINK_TYPES and note:
-                dossier_links.append({"target_dossier_id": target_id, "relation_type": relation, "note": note})
+            if link_dossier_id in visible_ids and relation in DOSSIER_LINK_TYPES and note:
+                dossier_links.append({"target_dossier_id": link_dossier_id, "relation_type": relation, "note": note})
         try:
             deadline = max(0, min(int(deadline_months or 0), 36))
         except (TypeError, ValueError):
             deadline = 0
-        return f"__secret_order__{json.dumps({'title': t, 'content': c, 'tags': tags_clean, 'assignee': real_assignee, 'deadline_months': deadline, 'excluded_names': excluded, 'excluded_offices': excluded_offices, 'dossier_links': dossier_links}, ensure_ascii=False)}"
+        from ming_sim.covert_progress import CovertContractError, build_covert_task_contract
+        try:
+            frozen = build_covert_task_contract(
+                kind=kind,
+                axes=axes_clean,
+                direction=dir_i,
+                delivery_unit=delivery_unit,
+                delivery_target_units=delivery_target_units,
+                purpose=purpose,
+                category=category,
+                account=account,
+                target_kind=target_kind,
+                target_id=target_id,
+                person_action=person_action,
+                region=region,
+                field=field,
+                region_target=region_target,
+                investigation_target=investigation_target,
+                effect_sign=effect_sign,
+            )
+        except CovertContractError as exc:
+            return f"密令下达失败：{exc}"
+        return f"__secret_order__{json.dumps({'title': t, 'content': c, 'tags': tags_clean, 'assignee': real_assignee, 'deadline_months': deadline, 'excluded_names': excluded, 'excluded_offices': excluded_offices, 'dossier_links': dossier_links, 'covert_task': frozen}, ensure_ascii=False)}"
 
     def _pending_secret_action(action_name: str, order_id: int, payload: Dict[str, object]) -> str:
         # Non-create tools (记进展/催办/提交核议) do **not** pin latest held.

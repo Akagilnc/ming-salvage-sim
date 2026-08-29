@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 
 from ming_sim.db import GameDB
+from tests.dossier_test_helpers import create_test_secret_order
 from ming_sim.decree_vocabulary import (
     DEFORMATION_BANNED_PLAYER_TOKENS,
     format_public_progress_disclosure,
@@ -277,8 +278,8 @@ def test_ac5_audit_fork_signal_present_only_with_audit_link(game):
     )
 
     # 正：长差稽核密令 + 稽核链指向目标
-    audit_order = db.create_secret_order(
-        state, actor, "密查清丈浮收", "逐月密奏", ["稽核"], deadline_months=4,
+    audit_order = create_test_secret_order(
+        db, state, actor, "密查清丈浮收", "逐月密奏", ["稽核"], deadline_months=4,
     )
     audit_dossier = int(db.get_dossier_for_secret_order(audit_order)["id"])
     db.add_dossier_links(
@@ -298,8 +299,8 @@ def test_ac5_audit_fork_signal_present_only_with_audit_link(game):
     assert "已竣" in hit["reported_bands"]
 
     # 负：护行长差无稽核链 → 不出现 audit_fork_signals 键
-    escort_order = db.create_secret_order(
-        state, actor, "护行辽饷", "逐月办理", ["护行"], deadline_months=4,
+    escort_order = create_test_secret_order(
+        db, state, actor, "护行辽饷", "逐月办理", ["护行"], deadline_months=4,
     )
     escort_dossier = int(db.get_dossier_for_secret_order(escort_order)["id"])
     nudges2 = db.list_monthly_dossier_progress_nudges()
