@@ -78,35 +78,20 @@ def _draft_path_took_effect(ctx: MaterializeCtx) -> bool:
 def _materializable_draft_xiexang(
     ctx: MaterializeCtx,
     candidate: Dict[str, Any],
-) -> Tuple[Dict[str, Any], bool, Optional[Tuple[Any, ...]]]:
-    """在真实写入前置条件齐全时，把 draft 协饷投影为本轮 grant 候选。"""
+) -> Dict[str, Any]:
+    """在真实写入前置条件齐全时，把 draft 协饷投影为本轮 grant 候选。
+
+    列表契约逐项独立物化；不按付款字段相等折叠。
+    """
     if (
         str(candidate.get("kind") or "").strip() != "draft"
         or str(candidate.get("grant_action") or "").strip() != "协饷"
     ):
-        return candidate, False, None
-    signature = xiexang_candidate_signature(
-        ctx.session.db, ctx.reply, candidate,
-    )
-    if signature is None:
-        return candidate, False, None
-    promoted = dict(candidate)
-    promoted["kind"] = "grant_allocation"
-    return promoted, True, signature
-
-
-def xiexang_candidate_signature(
-    db: Any,
-    text: object,
-    candidate: Dict[str, Any],
-) -> Optional[Tuple[Any, ...]]:
-    """同一道可物化协饷的规范化身份；无效载荷不参与别名去重。"""
-    if str(candidate.get("grant_action") or "").strip() != "协饷":
-        return None
+        return candidate
     try:
-        resolved = require_materializable_xiexang_payload(
-            db,
-            text=text,
+        require_materializable_xiexang_payload(
+            ctx.session.db,
+            text=ctx.reply,
             amount=candidate.get("amount"),
             account=str(candidate.get("account") or ""),
             purpose=str(candidate.get("purpose") or ""),
@@ -115,16 +100,10 @@ def xiexang_candidate_signature(
             cadence=str(candidate.get("cadence") or ""),
         )
     except (IncompleteXiexangPayloadError, ValueError):
-        return None
-    return (
-        "协饷",
-        int(resolved["amount"]),
-        str(resolved["account"]),
-        str(resolved["purpose"]),
-        str(resolved["target_kind"]),
-        str(resolved["target_id"]),
-        str(resolved["cadence"]),
-    )
+        return candidate
+    promoted = dict(candidate)
+    promoted["kind"] = "grant_allocation"
+    return promoted
 
 
 def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
@@ -145,25 +124,17 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
         ]
         if ctx.explicit_prefixed:
             candidates.sort(
-                key=lambda row: (
-                    str(row[0].get("kind") or "") != "grant_allocation",
-                    row[1],
-                )
+                key=lambda candidate: str(candidate.get("kind") or "")
+                != "grant_allocation"
             )
-        else:
-            # 协饷 draft 别名的升格跨通道生效；原生 grant 须先成案，别名后到才可吞。
-            candidates.sort(key=lambda row: row[1])
         kind_counts: Dict[str, int] = {}
-        for candidate, _promoted, _signature in candidates:
+        for candidate in candidates:
             kind = str(candidate.get("kind") or "")
             kind_counts[kind] = kind_counts.get(kind, 0) + 1
         kind_indexes: Dict[str, int] = {}
         grant_staged = False
-        staged_xiexang_signatures: set = set()
-        for candidate, promoted, signature in candidates:
+        for candidate in candidates:
             kind = str(candidate.get("kind") or "")
-            if promoted and signature in staged_xiexang_signatures:
-                continue
             cluster = cluster_by_kind(kind)
             if cluster is None or cluster.effect != EFFECT_MATERIALIZE:
                 continue
@@ -191,11 +162,6 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
                 candidate_out.get("pending_action_id") or 0
             ) > int(baseline_out.get("pending_action_id") or 0):
                 grant_staged = True
-                staged_signature = signature or xiexang_candidate_signature(
-                    ctx.session.db, ctx.reply, candidate,
-                )
-                if staged_signature is not None:
-                    staged_xiexang_signatures.add(staged_signature)
             ctx.out.update(candidate_out)
             if candidate_ctx.draft_staged:
                 ctx.draft_staged = True
@@ -404,13 +370,7 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
     ):
         return
 
-    typed_draft = (
-        intent is not None
-        and intent_kind == "draft"
-        and bool(str(intent.get("draft_text") or "").strip())
-        and bool(str(intent.get("dossier_action_type") or "").strip())
-    )
-    if (ctx.explicit_prefixed or ctx.has_directive or ctx.out.get("pending_action_id")) and not typed_draft:
+    if ctx.explicit_prefixed or ctx.has_directive or ctx.out.get("pending_action_id"):
         return
 
     dir_candidates = []
@@ -450,16 +410,7 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
             }
             return None
 
-    if typed_draft:
-        # The classifier supplied this sibling's complete typed identity and body.
-        # Transport it unchanged; explicit-prefix batches must not re-extract from
-        # either the player's prose or the minister's combined reply.
-        draft_res = {
-            **intent,
-            "draft_action": "拟旨",
-            "target_candidate": "",
-        }
-    elif (
+    if (
         intent is not None
         and intent_kind == "draft"
         and ctx.candidate_kind_count > 1
@@ -1900,10 +1851,12 @@ def _assignment_dossier_text(ctx: MaterializeCtx) -> str:
 
 
 def _materialize_assignment(ctx: MaterializeCtx) -> None:
-    """暂存交办·责成案卷；initiative 按 ADR 0055 判决后落。"""
+    """暂存交办·责成案卷；initiative 按 ADR 0055 判决后落。
+
+    #1503：显式拟旨前缀若带真实 assignment 候选，仍走本单轨（不再因 explicit_prefixed 早退）。
+    """
     if (
         ctx.intent_kind != "assignment"
-        or ctx.explicit_prefixed
         or ctx.draft_staged
         or ctx.out.get("pending_action_id")
         or ctx.conversation_intent_handled
@@ -3342,11 +3295,7 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
         ),
         ActionCluster(
             "拟旨", "draft", EFFECT_MATERIALIZE, priority=50,
-            fields=(
-                # Classifier `text` is the sole alias for the typed draft body.
-                FieldSpec("draft_text", "text", None, ""),
-                FieldSpec("dossier_action_type", "案卷动作类型", None, ""),
-            ),
+            fields=(),
             materialize_fn=_materialize_draft,
         ),
         ActionCluster(

@@ -19,7 +19,6 @@ EFFECT_NOOP = "noop"
 EFFECT_ANSWER_EXISTING = "answer_existing"
 EFFECT_MATERIALIZE = "materialize"
 
-
 @dataclass(frozen=True)
 class FieldSpec:
     name: str
@@ -278,6 +277,8 @@ def normalize_one_candidate(obj: Mapping[str, Any], *, soft: bool) -> Dict[str, 
             if spec.max_len is not None:
                 s = s[: spec.max_len]
             out[name] = s
+    if "draft_text" in obj:
+        out["draft_text"] = obj.get("draft_text")
     # #1509：confirmation 同次抽取的目标编号非 classifier FieldSpec，须随 candidate 过缝
     # （normalize_intent_candidates 会再走本函数；丢了则真实 chat 路多候选修改必歧义）。
     if "target_ids" in obj and obj.get("target_ids") is not None:
