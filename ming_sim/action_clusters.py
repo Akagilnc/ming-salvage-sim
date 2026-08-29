@@ -305,10 +305,26 @@ def normalize_one_candidate(obj: Mapping[str, Any], *, soft: bool) -> Dict[str, 
 
 
 def _promote_draft_xiexang_payload(candidate: Dict[str, Any]) -> None:
-    """#1503：kind=draft 且显式 grant_action=协饷 → grant 单轨。身份不另猜。"""
+    """#1503：完整 draft 协饷载荷 → grant 单轨；缺项仍留普通拟旨。"""
     if str(candidate.get("kind") or "").strip() != "draft":
         return
     if str(candidate.get("grant_action") or "").strip() != "协饷":
+        return
+    # 完备性只读协饷既有权威缝；升格不得把普通拟旨变成玩家可见硬异常。
+    from ming_sim.action_materialize import (
+        IncompleteXiexangPayloadError,
+        require_explicit_xiexang_fields,
+    )
+    try:
+        require_explicit_xiexang_fields(
+            amount=candidate.get("amount"),
+            account=str(candidate.get("account") or ""),
+            purpose=str(candidate.get("purpose") or ""),
+            target_kind=str(candidate.get("target_kind") or ""),
+            target_id=str(candidate.get("target_id") or ""),
+            cadence=str(candidate.get("cadence") or ""),
+        )
+    except IncompleteXiexangPayloadError:
         return
     candidate[_PROMOTED_FROM_DRAFT_KEY] = _PROMOTED_FROM_DRAFT_SENTINEL
     candidate["kind"] = "grant_allocation"
