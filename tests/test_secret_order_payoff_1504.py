@@ -427,6 +427,31 @@ def test_settle_due_reads_actual_rail_only_report_does_not_flip_verdict(game):
     assert closed["status"] == "failed"
 
 
+def test_settle_due_keeps_existing_progress_result_over_memorial(game):
+    db, state, _ = game
+    name = _minister(db)
+    _set_axes(db, name, loyalty=20, identity=80)
+    oid = _issue(db, state, name, "空转密查", "查无实据之案", months=1, target=1)
+    dossier = db.get_dossier_for_secret_order(oid)
+    did = int(dossier["id"])
+    progress_text = "承办人已报进展时间线"
+    db.update_secret_order_progress(oid, progress_text, year=state.year, period=state.period)
+    db.record_dossier_progress(
+        did, state.turn, "办成", "臣已查明全部", is_terminal=False,
+    )
+    db.conn.execute(
+        "UPDATE secret_orders SET due_turn=? WHERE id=?",
+        (state.turn, oid),
+    )
+    db.conn.commit()
+
+    out = settle_due_secret_orders(db, state, commit=True)
+    row = next(r for r in out if r["order_id"] == oid)
+    closed = db.get_secret_order(oid)
+    assert progress_text in str(closed["result"] or "")
+    assert closed["result"] == row["result"]
+
+
 # ── 月度实进度 + 到期对账 ─────────────────────────────────────────────
 
 
@@ -940,6 +965,8 @@ def test_internal_extractor_receives_origin_linked_typed_briefs_without_secret_p
         "purpose": "其它", "category": "密令差务", "account": "内库",
     }
     assert briefs[fiscal_id]["canonical_fields"] == ["economy_moves"]
+    assert briefs[fiscal_id]["prior_actual_units"] == 0.0
+    assert briefs[fiscal_id]["remaining_units"] == briefs[fiscal_id]["delivery"]["target_units"]
     assert catch_id not in briefs
     personnel_ctx = build_extractor_shared_context(db, state, "", "", module="personnel_secret")
     assert secret_prose not in str(personnel_ctx)
@@ -952,6 +979,23 @@ def test_internal_extractor_receives_origin_linked_typed_briefs_without_secret_p
     assert pbriefs[catch_id]["delivery"]["unit"] == "人犯"
     assert pbriefs[catch_id]["delivery"]["person_action"] == "处置"
     assert pbriefs[catch_id]["delivery"]["target_units"] == 3.0
+
+    did = int(db.get_dossier_for_secret_order(fiscal_id)["id"])
+    db.record_dossier_actual_progress(
+        did, state.turn, units=5.0, fidelity_state="忠实", floor_state="忠实",
+        note="满标实况",
+    )
+    state.turn += 1
+    db.save_state(state)
+    later = {
+        int(brief["order_id"]): brief
+        for brief in build_extractor_shared_context(
+            db, state, "", "", module="internal",
+        )["secret_covert_effect_briefs"]
+    }
+    assert later[fiscal_id]["prior_actual_units"] == later[fiscal_id]["delivery"]["target_units"]
+    assert later[fiscal_id]["remaining_units"] == 0.0
+    assert later[fiscal_id]["delivery"]["target_units"] == 5.0
 
 
 def _confirm_investigation(db, state, content, monkeypatch, *, minister, target):
@@ -986,8 +1030,16 @@ def _confirm_investigation(db, state, content, monkeypatch, *, minister, target)
     )
     run_materialize_pipeline(ctx)
     pid = int(ctx.out["pending_action_id"])
-    db.commit_pending_actions(state, content=content, action_ids=[pid])
-    return pid
+    applied = db.commit_pending_actions(state, content=content, action_ids=[pid])
+    oid = 0
+    for item in applied or []:
+        if item.get("kind") == "secret_order" and str(item.get("action") or "") == "新建":
+            try:
+                oid = int(item.get("secret_order_id") or 0)
+            except (TypeError, ValueError):
+                oid = 0
+            break
+    return {"pid": pid, "secret_order_id": oid}
 
 
 def test_same_target_confirmations_merge_into_one_open_case(game, monkeypatch):
@@ -997,9 +1049,12 @@ def test_same_target_confirmations_merge_into_one_open_case(game, monkeypatch):
         "SELECT name FROM characters WHERE name<>? AND status='active' LIMIT 1",
         (name,),
     ).fetchone()["name"]
-    first_pid = _confirm_investigation(
+    first_applied = _confirm_investigation(
         db, state, content, monkeypatch, minister=name, target=target,
     )
+    first_pid = first_applied["pid"]
+    first_oid = first_applied["secret_order_id"]
+    assert first_oid > 0
     while len(db.list_secret_orders(status="active")) < 20:
         n = len(db.list_secret_orders(status="active"))
         _issue(
@@ -1007,9 +1062,12 @@ def test_same_target_confirmations_merge_into_one_open_case(game, monkeypatch):
             months=1, target=1, kind="补发饷银", axes=["既得利益"], unit="万两",
         )
     assert len(db.list_secret_orders(status="active")) == 20
-    second_pid = _confirm_investigation(
+    second_applied = _confirm_investigation(
         db, state, content, monkeypatch, minister=name, target=target,
     )
+    second_pid = second_applied["pid"]
+    assert second_applied["secret_order_id"] == first_oid
+    assert second_applied["secret_order_id"] > 0
     active = db.list_secret_orders(status="active")
     assert len(active) == 20
     matched = []

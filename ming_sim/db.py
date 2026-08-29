@@ -18341,6 +18341,13 @@ class GameDB:
                     ).fetchone()
                     if row is not None and row["secret_order_id"] is not None:
                         item["secret_order_id"] = int(row["secret_order_id"])
+                    else:
+                        try:
+                            merged_oid = int(ok or 0)
+                        except (TypeError, ValueError):
+                            merged_oid = 0
+                        if merged_oid > 0:
+                            item["secret_order_id"] = merged_oid
                 # Direct person mutations (调教/密令…) surface names for outer-commit
                 # registry projection when settle passes registry=None.
                 affected = self._affected_people_from_pending_action(pa, payload)
@@ -18624,7 +18631,7 @@ class GameDB:
                         registry.refresh(assignee)
                     except Exception as exc:
                         tlog(f"[pending_actions] 密令已落库但刷新 Agent 失败 assignee={assignee}：{exc}")
-                return order_id is not None
+                return order_id
             if oid is None:
                 return False
             # Non-create: consume explicit stage/API pin only.  No auto-pin of

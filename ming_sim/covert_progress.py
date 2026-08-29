@@ -620,7 +620,9 @@ def player_facing_secret_order_close_text(
     order: Mapping[str, object],
     reports: Sequence[Mapping[str, object]],
 ) -> str:
-    del order
+    existing = str(order.get("result") or "").strip()
+    if existing:
+        return existing
     for item in reversed(list(reports or [])):
         if not isinstance(item, Mapping):
             continue
@@ -741,6 +743,9 @@ def build_secret_covert_effect_briefs(
         owner = "internal"
         if fields == ["人物变更"]:
             owner = "personnel_secret"
+        prior_units = float(db.sum_dossier_actual_progress_units(int(dossier["id"])))
+        target_units = contract_target_units(contract)
+        remaining_units = max(0.0, target_units - prior_units)
         out.append({
             "origin_ref": f"dossier:{int(dossier['id'])}",
             "order_id": oid,
@@ -750,6 +755,8 @@ def build_secret_covert_effect_briefs(
             "delivery": copy.deepcopy(dict(delivery)),
             "effect_owner": owner,
             "canonical_fields": fields,
+            "prior_actual_units": prior_units,
+            "remaining_units": remaining_units,
         })
     return out
 
