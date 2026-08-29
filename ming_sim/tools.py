@@ -571,6 +571,8 @@ def build_minister_tools(character: Character, context: CourtContext,
         purpose: str = "",
         category: str = "",
         account: str = "",
+        target_kind: str = "",
+        target_id: str = "",
         person_action: str = "",
         region: str = "",
         field: str = "",
@@ -594,7 +596,7 @@ def build_minister_tools(character: Character, context: CourtContext,
         delivery_unit（万两/人犯/万亩；调查差务可空）、delivery_target_units（到期交付目标，与 applier 同量纲）、
         investigation_target（查核目标人名；非调查留空）。
         delivery_unit 决定还须填哪组 identity（缺则确认时响亮拒绝）：
-        万两 → purpose（用途：补饷保留，其余非空写成其它）、category（类别）、account（国库/内库）；
+        万两支出 → purpose（补饷须另填 target_kind=army 与 target_id；其余非空写成其它）、category、account；收入不填 purpose；
         人犯 → person_action（人物变更动作）；
         万亩 → region（地区 id）、field（落库字段）、region_target（落库后的目标值）。
         tags_json 只作检索关键词，不用于猜 kind。
@@ -609,7 +611,7 @@ def build_minister_tools(character: Character, context: CourtContext,
                 title, content, tags_json, assignee, deadline_months,
                 excluded_names_json, excluded_offices_json, dossier_links_json,
                 kind, axes_json, direction, delivery_unit, delivery_target_units,
-                purpose, category, account, person_action, region, field, region_target,
+                purpose, category, account, target_kind, target_id, person_action, region, field, region_target,
                 investigation_target, effect_sign,
             )
         if act == "progress":
@@ -625,6 +627,7 @@ def build_minister_tools(character: Character, context: CourtContext,
         excluded_names_json: str = "[]", excluded_offices_json: str = "[]", dossier_links_json: str = "[]",
         kind: str = "", axes_json: str = "[]", direction: int = 1, delivery_unit: str = "", delivery_target_units: float = 0,
         purpose: str = "", category: str = "", account: str = "",
+        target_kind: str = "", target_id: str = "",
         person_action: str = "", region: str = "", field: str = "", region_target: str = "",
         investigation_target: str = "", effect_sign: int = 0,
     ) -> str:
@@ -642,7 +645,7 @@ def build_minister_tools(character: Character, context: CourtContext,
         delivery_target_units：到期须交付的正数目标；调查为须坐实的事实条数。
         investigation_target：查核目标人名；非调查留空。
         effect_sign：生产者效果符号 +1 或 -1；缺则确认拒绝。
-        purpose/category/account：delivery_unit=万两 时必填，对应 economy_moves 的用途/类别/账户。
+        purpose/category/account：delivery_unit=万两 且支出时必填；purpose=补饷 须另填 target_kind=army 与 target_id。
         person_action：delivery_unit=人犯 时必填，对应 person_logs 的落库动作名。
         region/field/region_target：delivery_unit=万亩 时必填，对应 region_logs 的地区 id/落库字段/目标值。
         dossier_links_json：只填当前提示所列旧案卷，格式为 [{"target_dossier_id": 12,
@@ -731,6 +734,8 @@ def build_minister_tools(character: Character, context: CourtContext,
                 purpose=purpose,
                 category=category,
                 account=account,
+                target_kind=target_kind,
+                target_id=target_id,
                 person_action=person_action,
                 region=region,
                 field=field,

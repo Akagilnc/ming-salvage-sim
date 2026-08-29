@@ -23,6 +23,7 @@ from ming_sim.covert_progress import (
     INVESTIGATION_PROVENANCE_KEY,
     CovertContractError,
     build_covert_task_contract,
+    build_secret_covert_effect_briefs,
     build_minister_snapshot,
     clamp_fidelity_to_floor,
     compute_willingness_floor,
@@ -311,22 +312,22 @@ def test_task_specific_contract_from_explicit_fields_not_tags():
 
 
 @pytest.mark.parametrize(
-    ("unit", "identity"),
+    ("unit", "identity", "sign"),
     [
-        ("万两", {"category": "密令差务", "account": "内库"}),
-        ("万两", {"purpose": "其它", "account": "内库"}),
-        ("万两", {"purpose": "其它", "category": "密令差务"}),
-        ("人犯", {}),
-        ("万亩", {"field": "registered_land", "region_target": "421"}),
-        ("万亩", {"region": "henan", "region_target": "421"}),
-        ("万亩", {"region": "henan", "field": "registered_land"}),
+        ("万两", {"category": "密令差务", "account": "内库"}, -1),
+        ("万两", {"purpose": "其它", "account": "内库"}, -1),
+        ("万两", {"purpose": "其它", "category": "密令差务"}, -1),
+        ("人犯", {}, 1),
+        ("万亩", {"field": "registered_land", "region_target": "421"}, 1),
+        ("万亩", {"region": "henan", "region_target": "421"}, 1),
+        ("万亩", {"region": "henan", "field": "registered_land"}, 1),
     ],
 )
-def test_confirmation_rejects_incomplete_delivery_identity(unit, identity):
+def test_confirmation_rejects_incomplete_delivery_identity(unit, identity, sign):
     with pytest.raises(CovertContractError, match="identity"):
         build_covert_task_contract(
             kind="差务", axes=["实务事功"], direction=1,
-            delivery_unit=unit, delivery_target_units=1, effect_sign=1, **identity,
+            delivery_unit=unit, delivery_target_units=1, effect_sign=sign, **identity,
         )
 
 
@@ -499,6 +500,7 @@ def test_n_month_deadline_yields_exactly_n_ticks(game):
     assert not any(r.get("order_id") == oid and not r.get("skipped") and r.get("units") is not None
                    and not r.get("rejected") for r in out0 if r.get("order_id") == oid and "units" in r)
     assert db.sum_dossier_actual_progress_units(did) == 0.0
+    assert all(int(b.get("order_id") or 0) != oid for b in build_secret_covert_effect_briefs(db, turn=state.turn))
 
     ticks = 0
     for _ in range(n):
@@ -916,6 +918,12 @@ def test_internal_extractor_receives_origin_linked_typed_briefs_without_secret_p
         db, state, name, "缉私枭", secret_prose,
         months=1, target=3, kind="缉获人犯", unit="人犯", tags=["密查"],
     )
+    assert all(
+        int(b.get("order_id") or 0) not in {fiscal_id, catch_id}
+        for b in build_secret_covert_effect_briefs(db, turn=state.turn)
+    )
+    state.turn += 1
+    db.save_state(state)
 
     internal_ctx = build_extractor_shared_context(db, state, "", "", module="internal")
     assert secret_prose not in str(internal_ctx)
@@ -1406,3 +1414,128 @@ def test_public_secret_order_forwards_investigation_without_unit(game):
     assert contract["investigation_target"] == target
     assert contract["delivery"]["effect_sign"] == 1
     assert "unit" not in contract["delivery"]
+
+
+def test_positive_inflow_does_not_freeze_purpose_and_counts(game):
+    db, state, content = game
+    name = _minister(db)
+    _set_axes(db, name, loyalty=90, identity=30)
+    frozen = build_covert_task_contract(
+        kind="抄家入帑", axes=["实务事功"], direction=1,
+        delivery_unit="万两", delivery_target_units=1, effect_sign=1,
+        purpose="其它", category="密令差务", account="内库",
+    )
+    assert "purpose" not in frozen["delivery"]
+    with pytest.raises(CovertContractError):
+        build_covert_task_contract(
+            kind="抄家入帑", axes=["实务事功"], direction=1,
+            delivery_unit="万两", delivery_target_units=1, effect_sign=1,
+            purpose="补饷", category="密令差务", account="内库",
+        )
+    oid = db.create_secret_order(
+        state, name, "抄家入帑", "入内库", [],
+        deadline_months=1, covert_task=frozen,
+    )
+    did = int(db.get_dossier_for_secret_order(oid)["id"])
+    state.turn += 1
+    db.save_state(state)
+    _originate_work(db, state, content, did, delta=1)
+    row = db.conn.execute(
+        "SELECT purpose, delta FROM economy_ledger WHERE origin_ref=? ORDER BY id DESC LIMIT 1",
+        (f"dossier:{did}",),
+    ).fetchone()
+    assert row is not None
+    assert int(row["delta"]) == 1
+    assert row["purpose"] in (None, "")
+    out = apply_monthly_covert_actual_progress(
+        db, state, selections=[{"order_id": oid, "fidelity": "忠实"}], commit=True,
+    )
+    applied = next(r for r in out if r.get("order_id") == oid)
+    assert applied.get("originated_quantity") == 1.0
+    assert db.sum_dossier_actual_progress_units(did) == 1.0
+    settled = settle_due_secret_orders(db, state, commit=True)
+    row_s = next(r for r in settled if r["order_id"] == oid)
+    assert row_s["status"] == "done"
+
+
+def test_pay_delivery_requires_army_identity(game):
+    from ming_sim.tools import build_minister_tools
+
+    db, state, content = game
+    name = _minister(db)
+    _set_axes(db, name, loyalty=90, identity=30)
+    with pytest.raises(CovertContractError):
+        build_covert_task_contract(
+            kind="补发饷银", axes=["既得利益"], direction=1,
+            delivery_unit="万两", delivery_target_units=1, effect_sign=-1,
+            purpose="补饷", category="密令差务", account="内库",
+        )
+    ctx = SimpleNamespace(db=db, state=state)
+    character = SimpleNamespace(name=name, office_type="文官")
+    tools = build_minister_tools(character, ctx)
+    secret_order = next(fn for fn in tools if getattr(fn, "__name__", "") == "secret_order")
+    public_out = secret_order(
+        "issue",
+        title="补发京营欠饷", content="补发京营欠饷",
+        kind="补发饷银", axes_json='["既得利益"]', direction=1,
+        delivery_unit="万两", delivery_target_units=1,
+        purpose="补饷", category="密令差务", account="内库",
+        effect_sign=-1,
+    )
+    assert public_out.startswith("密令下达失败")
+    assert db.list_secret_orders() == []
+    army_id = db.conn.execute(
+        "SELECT id FROM armies WHERE owner_power='ming' ORDER BY id LIMIT 1"
+    ).fetchone()["id"]
+    db.conn.execute("UPDATE armies SET arrears=? WHERE id=?", (50, army_id))
+    db.conn.commit()
+    frozen = build_covert_task_contract(
+        kind="补发饷银", axes=["既得利益"], direction=1,
+        delivery_unit="万两", delivery_target_units=1, effect_sign=-1,
+        purpose="补饷", category="密令差务", account="内库",
+        target_kind="army", target_id=army_id,
+    )
+    assert frozen["delivery"]["target_kind"] == "army"
+    assert frozen["delivery"]["target_id"] == army_id
+    public_ok = secret_order(
+        "issue",
+        title="补发京营欠饷", content="补发京营欠饷",
+        kind="补发饷银", axes_json='["既得利益"]', direction=1,
+        delivery_unit="万两", delivery_target_units=1,
+        purpose="补饷", category="密令差务", account="内库",
+        target_kind="army", target_id=army_id,
+        effect_sign=-1,
+    )
+    assert public_ok.startswith("__secret_order__")
+    oid = db.create_secret_order(
+        state, name, "补发饷银", "补发欠饷", [],
+        deadline_months=1, covert_task=frozen,
+    )
+    did = int(db.get_dossier_for_secret_order(oid)["id"])
+    contract = read_covert_task_contract(db.get_dossier_for_secret_order(oid))
+    assert contract["delivery"]["purpose"] == "补饷"
+    assert contract["delivery"]["target_kind"] == "army"
+    assert contract["delivery"]["target_id"] == army_id
+    state.turn += 1
+    db.save_state(state)
+    apply_score_extraction(
+        db, state,
+        {
+            "economy_moves": [{
+                "account": "内库",
+                "delta": -1,
+                "category": "密令差务",
+                "reason": "补发欠饷",
+                "purpose": "补饷",
+                "target_kind": "army",
+                "target_id": army_id,
+                "origin_ref": f"dossier:{did}",
+            }],
+        },
+        content=content,
+    )
+    out = apply_monthly_covert_actual_progress(
+        db, state, selections=[{"order_id": oid, "fidelity": "忠实"}], commit=True,
+    )
+    applied = next(r for r in out if r.get("order_id") == oid)
+    assert applied.get("originated_quantity") == 1.0

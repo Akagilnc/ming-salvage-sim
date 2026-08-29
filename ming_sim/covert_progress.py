@@ -55,6 +55,21 @@ _IDENTITY_FOR_UNIT = {
 }
 
 
+def _is_issuance_turn(order: Mapping[str, object], turn: int) -> bool:
+    return int(order.get("turn_issued") or 0) == int(turn)
+
+
+def _identity_keys_for_unit(unit: str, *, effect_sign: int, purpose: object = None) -> tuple[str, ...]:
+    if unit != "万两":
+        return _IDENTITY_FOR_UNIT[unit]
+    if int(effect_sign) > 0:
+        return ("category", "account")
+    keys = ("purpose", "category", "account")
+    if str(purpose or "").strip() == "补饷":
+        return keys + ("target_kind", "target_id")
+    return keys
+
+
 class CovertContractError(ValueError):
     """确认闸未冻结合同，或后续读端找不到可落库合同。"""
 
@@ -213,6 +228,16 @@ def covert_task_from_payload(payload: object) -> Optional[Dict[str, object]]:
     account = delivery.get("account")
     if account is None:
         account = source.get("account")
+    target_kind = delivery.get("target_kind")
+    if target_kind is None:
+        target_kind = source.get("target_kind")
+    if target_kind is None:
+        target_kind = payload.get("target_kind")
+    target_id = delivery.get("target_id")
+    if target_id is None:
+        target_id = source.get("target_id")
+    if target_id is None:
+        target_id = payload.get("target_id")
     region = delivery.get("region")
     if region is None:
         region = source.get("region")
@@ -252,6 +277,10 @@ def covert_task_from_payload(payload: object) -> Optional[Dict[str, object]]:
         out["category"] = category
     if account is not None:
         out["account"] = account
+    if target_kind is not None:
+        out["target_kind"] = target_kind
+    if target_id is not None:
+        out["target_id"] = target_id
     if region is not None:
         out["region"] = region
     if field is not None:
@@ -313,6 +342,8 @@ def build_covert_task_contract(
     purpose: object = None,
     category: object = None,
     account: object = None,
+    target_kind: object = None,
+    target_id: object = None,
     region: object = None,
     field: object = None,
     region_target: object = None,
@@ -342,6 +373,10 @@ def build_covert_task_contract(
             category = extracted.get("category")
         if account is None:
             account = extracted.get("account")
+        if target_kind is None:
+            target_kind = extracted.get("target_kind")
+        if target_id is None:
+            target_id = extracted.get("target_id")
         if region is None:
             region = extracted.get("region")
         if field is None:
@@ -390,7 +425,19 @@ def build_covert_task_contract(
         "canonical_fields": list(_FIELD_FOR_UNIT[unit]),
     }
     if unit == "万两":
-        delivery["purpose"] = canonicalize_economy_purpose(purpose)
+        purpose_text = str(purpose or "").strip()
+        if int(delivery["effect_sign"]) > 0:
+            if purpose_text == "补饷":
+                raise CovertContractError("密令确认收入不得指定补饷")
+        else:
+            delivery["purpose"] = canonicalize_economy_purpose(purpose)
+            if delivery["purpose"] == "补饷":
+                kind_text = str(target_kind or "").strip()
+                id_text = str(target_id or "").strip()
+                if kind_text != "army" or not id_text:
+                    raise CovertContractError("密令确认补饷必须指定 target_kind=army 与有效 target_id")
+                delivery["target_kind"] = kind_text
+                delivery["target_id"] = id_text
     category_text = str(category or "").strip()
     if category_text:
         delivery["category"] = category_text
@@ -416,7 +463,14 @@ def build_covert_task_contract(
         if action_text not in PERSON_ACTIONS:
             raise CovertContractError("密令确认人物动作不在闭集")
         delivery["person_action"] = action_text
-    missing_identity = [key for key in _IDENTITY_FOR_UNIT[unit] if not delivery.get(key)]
+    missing_identity = [
+        key for key in _identity_keys_for_unit(
+            unit,
+            effect_sign=int(delivery["effect_sign"]),
+            purpose=delivery.get("purpose"),
+        )
+        if not delivery.get(key)
+    ]
     if missing_identity:
         raise CovertContractError(
             f"密令确认交付 identity 缺少：{','.join(missing_identity)}"
@@ -471,7 +525,14 @@ def coerce_covert_task_contract(raw: object) -> Optional[Dict[str, object]]:
         return None
     if float(delivery.get("target_units")) != target:
         return None
-    if any(not delivery.get(key) for key in _IDENTITY_FOR_UNIT[unit]):
+    if any(
+        not delivery.get(key)
+        for key in _identity_keys_for_unit(
+            str(unit),
+            effect_sign=int(delivery.get("effect_sign") or 0),
+            purpose=delivery.get("purpose"),
+        )
+    ):
         return None
     return copy.deepcopy(dict(raw))
 
@@ -639,16 +700,33 @@ def _order_contract(db: Any, order: Mapping[str, object]) -> Dict[str, object]:
     return require_covert_task_contract(dossier)
 
 
-def build_secret_covert_effect_briefs(db: Any, orders: Sequence[Mapping[str, object]] | None = None) -> List[Dict[str, object]]:
+def _current_game_turn(db: Any, turn: object = None) -> int:
+    if turn is not None:
+        return int(turn)
+    row = db.conn.execute("SELECT turn FROM game_state WHERE id=1").fetchone()
+    if row is not None:
+        return int(row["turn"])
+    return 0
+
+
+def build_secret_covert_effect_briefs(
+    db: Any,
+    orders: Sequence[Mapping[str, object]] | None = None,
+    *,
+    turn: object = None,
+) -> List[Dict[str, object]]:
     """internal 档房私密输入：typed 合同 + origin，不含密令正文（#883）。"""
     rows = list(orders or [])
     if not rows:
         rows = list(db.list_secret_orders(status="active"))
+    current_turn = _current_game_turn(db, turn)
     out: List[Dict[str, object]] = []
     for order in rows:
         if not isinstance(order, Mapping):
             continue
         if str(order.get("status") or "active") != "active":
+            continue
+        if _is_issuance_turn(order, current_turn):
             continue
         oid = int(order.get("id") or 0)
         if oid <= 0:
@@ -691,9 +769,15 @@ def _delivery_matches_economy(item: Mapping[str, object], delivery: Mapping[str,
         return False
     if sign > 0 and delta <= 0:
         return False
-    purpose = str(delivery.get("purpose") or "").strip()
-    if str(item.get("purpose") or "").strip() != purpose:
-        return False
+    if sign < 0:
+        purpose = str(delivery.get("purpose") or "").strip()
+        if str(item.get("purpose") or "").strip() != purpose:
+            return False
+        if purpose == "补饷":
+            if str(item.get("target_kind") or "").strip() != str(delivery.get("target_kind") or "").strip():
+                return False
+            if str(item.get("target_id") or "").strip() != str(delivery.get("target_id") or "").strip():
+                return False
     category = str(delivery.get("category") or "").strip()
     if str(item.get("category") or "").strip() != category:
         return False
@@ -1088,7 +1172,7 @@ def apply_monthly_covert_actual_progress(
     turn = int(state.turn)
     for order in orders:
         oid = int(order["id"])
-        if int(order.get("turn_issued") or 0) == turn:
+        if _is_issuance_turn(order, turn):
             continue
         minister = str(order.get("minister_name") or "")
         if not minister_eligible_for_monthly_covert(db, minister):
