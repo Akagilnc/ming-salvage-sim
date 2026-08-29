@@ -3881,7 +3881,11 @@ def test_1625_phase1_publication_projects_only_coherent_recovery_tuples(web_game
 
 
 def test_1625_inflight_phase2_does_not_advertise_resume(web_game, monkeypatch):
-    """#1625：在飞 phase2 吃空案头时 GET 不得 resume_phase2。"""
+    """#1625：在飞 phase2 吃空案头时 GET 不得 resume_phase2。
+
+    含反向 interleaving：GET 已进入案头读缝时，并发 resolve begin 试图吃空桌——
+    快照临界区须挡住 begin，使本 GET 不得投出 resume_phase2=true。
+    """
     from ming_sim.models import TurnPhase
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
 
@@ -3899,14 +3903,73 @@ def test_1625_inflight_phase2_does_not_advertise_resume(web_game, monkeypatch):
     }])
     key = desk[0]["decision_key"]
     kind, turn_s, idx_s = key.split(":")
-    db.conn.execute(
-        "UPDATE pending_decisions SET status='decided', choice_json=? "
-        "WHERE kind=? AND turn=? AND idx=?",
-        (json.dumps({"decision_key": key, "action": "follow_draft", "label": "备"},
-                    ensure_ascii=False), kind, int(turn_s), int(idx_s)),
+    choice_json = json.dumps(
+        {"decision_key": key, "action": "follow_draft", "label": "备"},
+        ensure_ascii=False,
     )
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)
+    db.conn.commit()
+    assert web_game.session.pending_decisions(), "reverse 窗起点须有 pending 案头"
+    assert db.get_resolve_context(state.turn) is not None
+
+    # ── reverse interleaving ──────────────────────────────────────────
+    # GET reaches desk read while concurrent begin tries to empty it.
+    # Fixed path holds entry lock through desk/resume; begin blocks and this
+    # GET keeps the live desk (resume stays false). Legacy path read desk
+    # outside the lock and could advertise resume_phase2 with stale zero-count.
+    entry_lock = web_app._settlement_entry_lock(web_game)
+    desk_read = threading.Event()
+    resolve_begun = threading.Event()
+    original_pending = web_game.session.pending_decisions
+
+    def _pending_with_reverse_race():
+        desk_read.set()
+        if not entry_lock.locked():
+            assert resolve_begun.wait(2.0), "resolve begin did not empty desk"
+        return original_pending()
+
+    monkeypatch.setattr(
+        web_game.session, "pending_decisions", _pending_with_reverse_race,
+    )
+
+    def _begin_and_empty_desk():
+        assert desk_read.wait(2.0), "GET did not reach desk read"
+        web_app._begin_settlement_entry(web_game)
+        db.conn.execute(
+            "UPDATE pending_decisions SET status='decided', choice_json=? "
+            "WHERE kind=? AND turn=? AND idx=?",
+            (choice_json, kind, int(turn_s), int(idx_s)),
+        )
+        db.conn.commit()
+        resolve_begun.set()
+
+    beginner = threading.Thread(target=_begin_and_empty_desk)
+    beginner.start()
+    crossed = asyncio.run(_get_state())
+    beginner.join(5.0)
+    assert not beginner.is_alive()
+
+    assert crossed["turn"]["phase"] == TurnPhase.AWAITING_DECISION.value
+    assert crossed.get("resume_phase2") is False
+    assert (
+        crossed.get("pending_decisions")
+        or crossed.get("settlement_entry_inflight") is True
+    )
+
+    # Close reverse-race bookkeeping before the forward in-flight window.
+    monkeypatch.setattr(
+        web_game.session, "pending_decisions", original_pending,
+    )
+    while web_app._settlement_entry_inflight(web_game) > 0:
+        web_app._end_settlement_entry(web_game)
+
+    # ── forward window: phase2 already in flight with emptied desk ───
+    db.conn.execute(
+        "UPDATE pending_decisions SET status='decided', choice_json=? "
+        "WHERE kind=? AND turn=? AND idx=?",
+        (choice_json, kind, int(turn_s), int(idx_s)),
+    )
     db.conn.commit()
 
     entered = threading.Event()
