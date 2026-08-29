@@ -36,6 +36,7 @@ from ming_sim.decree_vocabulary import (
     TARGET_KINDS,
     derive_draft_capability,
 )
+from ming_sim.execution_pressure import write_locality_scope_for_target_kind
 from ming_sim.settlement_payload import (
     decision_has_rescript_capability,
     parse_rescript_capability_pair,
@@ -653,7 +654,6 @@ def map_rescript_option_or_choice(
     decree_text = note_raw if note_raw.strip() else label_raw
     label = label_raw
     assignee_name = str(src.get("assignee_name") or src.get("assignee") or "").strip()
-    locality_scope = str(src.get("locality_scope") or "none").strip() or "none"
     region_id = str(src.get("region_id") or "").strip()
 
     payload: Dict[str, object] = {
@@ -661,7 +661,6 @@ def map_rescript_option_or_choice(
         "mode": "midzhi" if mode == "midzhi" else "ordinary",
         "target_kind": target_kind,
         "target_id": target_id,
-        "locality_scope": locality_scope,
         "region_id": region_id,
         "label": label,
         "hint": str(src.get("hint") or ""),
@@ -947,6 +946,9 @@ def map_rescript_option_or_choice(
     ):
         payload["name"] = str(payload.get("target_id") or payload.get("name") or "")
 
+    payload["locality_scope"] = write_locality_scope_for_target_kind(
+        payload.get("target_kind")
+    )
     payload["_decree_text"] = decree_text
     payload["_emitted_action_type"] = emitted
     return payload
