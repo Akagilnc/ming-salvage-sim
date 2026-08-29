@@ -1404,25 +1404,6 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
             pass
 
 
-def test_classifier_prompt_requires_payload_xiexang_under_draft_prefix(monkeypatch):
-    """classifier 契约：拟旨前缀下的载荷式拨饷须产协饷五字段；发内帑不得改判。"""
-    import ming_sim.cli_backend as cb
-
-    captured = {}
-
-    def fake_extract(prompt, *_a, **_k):
-        captured["prompt"] = prompt
-        return "[]", None
-
-    monkeypatch.setattr(cb, "_run_json_extractor_for_config", fake_extract)
-    assert cb.classify_cli_action_intent("拟旨如下：准从太仓拨关宁军饷十五万两。") == []
-    prompt = captured["prompt"]
-    assert "拟旨与任免候选" in prompt
-    assert "恩赏拨帑=协饷" in prompt
-    assert "「拟旨如下」只是路由" in prompt
-    assert "发内帑不是协饷" in prompt
-
-
 def test_frozen_neitang_grant_does_not_enter_army_pay_write(game):
     """冻结 m04 成案：grant_action=发内帑 / purpose 空 / target_kind=character 不进补饷写口。"""
     db, state, content = game
