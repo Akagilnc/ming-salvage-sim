@@ -904,6 +904,47 @@ def test_rush_preserves_frozen_contract(game):
     assert contract["delivery"]["unit"] == "人犯"
 
 
+@pytest.mark.parametrize("due_action", ["submit", "rush"])
+def test_unlimited_investigation_due_now_uses_one_month_quota(game, due_action):
+    """新档无期限查核经提交/即核到期，按一月实况配额结案。"""
+    db, state, _ = game
+    name = _minister(db)
+    target = db.conn.execute(
+        "SELECT name FROM characters WHERE name<>? AND status='active' LIMIT 1",
+        (name,),
+    ).fetchone()["name"]
+    _set_axes(db, name, loyalty=90, identity=30)
+    oid = _issue(
+        db, state, name, "无期查核", "查核侵冒",
+        months=0, target=4, kind="查核侵冒", axes=["既得利益"],
+        investigation_target=target,
+    )
+    state.turn += 1
+    db.save_state(state)
+    apply_monthly_covert_actual_progress(
+        db, state, selections=[{"order_id": oid, "fidelity": "忠实"}], commit=True,
+    )
+
+    if due_action == "submit":
+        assert db.submit_secret_order_for_review(
+            oid, "臣已办结", state.year, state.period,
+        ) is True
+    else:
+        db.rush_secret_order(oid, state, deadline_months=0, reason="即核")
+
+    live = db.get_secret_order(oid)
+    assert int(live["due_turn"]) == int(state.turn)
+    span = db.conn.execute(
+        "SELECT deadline_span FROM secret_orders WHERE id=?", (oid,),
+    ).fetchone()["deadline_span"]
+    assert int(span) == 0
+    out = settle_due_secret_orders(db, state, commit=True)
+    row = next(item for item in out if item["order_id"] == oid)
+    assert row["status"] == "done"
+    assert row["actual_units"] == 1.0
+    assert row["target_units"] == 1.0
+
+
 def test_1376_candidate_confirm_freezes_explicit_typed_contract(game):
     db, state, content = game
     name = _minister(db)
