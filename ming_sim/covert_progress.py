@@ -1282,7 +1282,13 @@ def settle_due_secret_orders(
         did = int(dossier["id"])
         contract = require_covert_task_contract(dossier)
         actual = float(db.sum_dossier_actual_progress_units(did))
-        target = contract_target_units(contract)
+        if _investigation_target_of(contract):
+            target = target_progress_units(
+                deadline_span=int(order.get("deadline_span") or 0),
+                due_turn=int(order.get("due_turn") or 0),
+            )
+        else:
+            target = contract_target_units(contract)
         reports = list(db.list_dossier_progress(did))
         verdict = decide_secret_order_settlement({
             "actual_units": actual,

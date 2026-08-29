@@ -1001,19 +1001,22 @@ def test_internal_extractor_receives_origin_linked_typed_briefs_without_secret_p
     assert later[fiscal_id]["delivery"]["target_units"] == 5.0
 
 
-def _confirm_investigation(db, state, content, monkeypatch, *, minister, target):
+def _confirm_investigation(
+    db, state, content, monkeypatch, *, minister, target,
+    months=6, player_message="查核辽饷侵冒",
+):
     from ming_sim import cli_backend as cb
 
     canned = json.dumps({
         "标题": "查核辽饷侵冒",
         "内容": "查核辽饷侵冒",
         "承办人": minister,
-        "期限月数": 6,
+        "期限月数": int(months),
         "标签": ["辽饷"],
         "差务": "查核辽饷侵冒",
         "价值轴": ["既得利益"],
         "方向": 1,
-        "交付目标": 2,
+        "交付目标": 4,
         "效果符号": 1,
         "调查对象": target,
     }, ensure_ascii=False)
@@ -1025,8 +1028,8 @@ def _confirm_investigation(db, state, content, monkeypatch, *, minister, target)
     ctx = MaterializeCtx(
         session=SimpleNamespace(db=db, state=state),
         character=SimpleNamespace(name=minister, office_type="文官"),
-        player_message="查核辽饷侵冒", reply="臣领密旨",
-        message_text="查核辽饷侵冒", explicit_prefixed=False,
+        player_message=player_message, reply="臣领密旨",
+        message_text=player_message, explicit_prefixed=False,
         has_directive=False, pend_for_minister=[], out={},
         intent={"secret_action": "新建"}, intent_kind="secret",
         llm_config=None, intent_candidates=[],
@@ -1163,7 +1166,7 @@ def test_closed_case_blocks_same_fact_on_later_case_and_due(game):
     db.conn.commit()
     oid = _issue(
         db, state, name, "查核辽饷侵冒", "查核辽饷侵冒",
-        months=6, target=1, kind="查核辽饷侵冒", axes=["既得利益"],
+        months=1, target=1, kind="查核辽饷侵冒", axes=["既得利益"],
         investigation_target=target,
     )
     state.turn += 1
@@ -1171,20 +1174,18 @@ def test_closed_case_blocks_same_fact_on_later_case_and_due(game):
     apply_monthly_covert_actual_progress(
         db, state, selections=[{"order_id": oid, "fidelity": "忠实"}], commit=True,
     )
-    db.conn.execute("UPDATE secret_orders SET due_turn=? WHERE id=?", (state.turn, oid))
-    db.conn.commit()
     first = settle_due_secret_orders(db, state, commit=True)
     assert first and first[0]["status"] == "done"
     assert db.get_secret_order(oid)["status"] == "done"
 
     oid2 = _issue(
         db, state, name, "再查同人", "再查同人",
-        months=6, target=1, kind="查核辽饷侵冒", axes=["既得利益"],
+        months=1, target=1, kind="查核辽饷侵冒", axes=["既得利益"],
         investigation_target=target,
     )
     oid_other = _issue(
         db, state, name, "另一对象", "另一对象",
-        months=6, target=1, kind="查核辽饷侵冒", axes=["既得利益"],
+        months=1, target=1, kind="查核辽饷侵冒", axes=["既得利益"],
         investigation_target=other,
     )
     state.turn += 1
@@ -1205,11 +1206,6 @@ def test_closed_case_blocks_same_fact_on_later_case_and_due(game):
     assert other_lanes[other]["used"] is False
     assert other_lanes[other]["progress"] == 0.5
 
-    db.conn.execute(
-        "UPDATE secret_orders SET due_turn=? WHERE id IN (?,?)",
-        (state.turn, oid2, oid_other),
-    )
-    db.conn.commit()
     out = settle_due_secret_orders(db, state, commit=True)
     by_id = {r["order_id"]: r for r in out}
     assert by_id[oid2]["status"] == "done"
@@ -1613,12 +1609,19 @@ def test_topic_investigation_confirm_and_faithful_done(game, monkeypatch):
     name = _minister(db)
     _set_axes(db, name, loyalty=90, identity=30)
     topic = "辽饷转运及押运相关人员"
+    polaris = "查核辽饷侵冒、勿使杨嗣昌与闻"
     applied = _confirm_investigation(
         db, state, content, monkeypatch, minister=name, target=topic,
+        months=3, player_message=polaris,
     )
     oid = int(applied["secret_order_id"])
     assert oid > 0
-    assert db.get_secret_order(oid)["status"] == "active"
+    order = db.get_secret_order(oid)
+    assert order["status"] == "active"
+    span = db.conn.execute(
+        "SELECT deadline_span FROM secret_orders WHERE id=?", (oid,)
+    ).fetchone()["deadline_span"]
+    assert int(span) == 3
     dossier = db.get_dossier_for_secret_order(oid)
     contract = read_covert_task_contract(dossier)
     assert contract["investigation_target"] == topic
@@ -1627,23 +1630,17 @@ def test_topic_investigation_confirm_and_faithful_done(game, monkeypatch):
         "SELECT seed_guilt FROM characters WHERE name=?",
         (topic,),
     ).fetchone() is None
-    state.turn += 1
-    db.save_state(state)
-    apply_monthly_covert_actual_progress(
-        db, state, selections=[{"order_id": oid, "fidelity": "忠实"}], commit=True,
-    )
-    state.turn += 1
-    db.save_state(state)
-    apply_monthly_covert_actual_progress(
-        db, state, selections=[{"order_id": oid, "fidelity": "忠实"}], commit=True,
-    )
-    assert db.sum_dossier_actual_progress_units(did) == 2.0
-    db.conn.execute("UPDATE secret_orders SET due_turn=? WHERE id=?", (state.turn, oid))
-    db.conn.commit()
+    for _ in range(3):
+        state.turn += 1
+        db.save_state(state)
+        apply_monthly_covert_actual_progress(
+            db, state, selections=[{"order_id": oid, "fidelity": "忠实"}], commit=True,
+        )
+    assert db.sum_dossier_actual_progress_units(did) == 3.0
     out = settle_due_secret_orders(db, state, commit=True)
     row = next(r for r in out if r["order_id"] == oid)
     assert row["status"] == "done"
-    assert row["actual_units"] == 2.0
+    assert row["actual_units"] == 3.0
     assert db.get_secret_order(oid)["status"] == "done"
     assert db.list_economy_moves_for_dossier(did) == []
 
