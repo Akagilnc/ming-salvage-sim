@@ -722,7 +722,7 @@ def build_simulator_payload(
 
     army_rows = _army_rows_with_needed(
         db,
-        "SELECT name,station,station_region,theater,commander,controller,troop_type,manpower,"
+        "SELECT id,name,station,station_region,theater,commander,controller,troop_type,manpower,"
         "supply,morale,training,equipment,arrears,mobility,"
         "loyalty,firearm_equipment,cannon_equipment,status,owner_power,salary_rate,"
         "is_mutinied,mutiny_probation "
