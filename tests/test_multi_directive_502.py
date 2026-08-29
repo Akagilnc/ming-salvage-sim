@@ -549,6 +549,41 @@ def test_needs_clarification_directive_skipped_by_default_commit(game, monkeypat
     ) == "ok"
 
 
+def test_pre_settle_rolls_back_leftover_clarification_directives(game):
+    """#1627 leftover：直接 pre_settle（绕过 resolve_turn 第一道门）。
+    含糊 skip-and-leave 后 leftover 响亮拒、atomic 回滚（pending 仍在、相位非 settling/awaiting_decision）；
+    普通 pending 走真实 pre_settle commit 后 leftover 为 0。"""
+    from ming_sim.decree import pre_settle
+    from ming_sim.models import TurnPhase
+
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    an.open_night(db, state, location="乾清宫", time_of_day="夜")
+    id_a, id_b = _stage_two_night_candidates(db, state, name)
+    db.flag_directive_needs_clarification(id_a)
+    phase_before = state.turn_phase
+
+    with pytest.raises(ValueError, match="尚有待澄清/未核定拟旨") as refused:
+        pre_settle(state, db, content=content)
+    assert "亲裁期新增" not in str(refused.value)
+    assert "恢复期新增" not in str(refused.value)
+    assert state.turn_phase == phase_before
+    assert state.turn_phase != TurnPhase.SETTLING.value
+    assert state.turn_phase != TurnPhase.AWAITING_DECISION.value
+    pend_ids = {p["id"] for p in _pending_directives(db, state.turn)}
+    assert id_a in pend_ids and id_b in pend_ids
+
+    db.clear_directive_needs_clarification(id_a)
+    pre_settle(state, db, content=content)
+    leftover_directives = db.list_directives(state, statuses=("pending",))
+    leftover_staged = [
+        row for row in db.list_pending_actions(state.turn)
+        if row.get("kind") == "directive"
+    ]
+    assert leftover_directives == []
+    assert leftover_staged == []
+
+
 def test_supplement_targets_named_candidate_others_unchanged(game, monkeypatch):
     """L8/AC2 真实入口改草 tracer：两道并存，点名补 A（canned target=id_a 合并正文）→
     仍 2 行、A 更新、B 不变。"""
