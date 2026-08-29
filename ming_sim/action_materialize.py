@@ -90,8 +90,10 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
         candidates = list(ctx.intent_candidates)
         if ctx.explicit_prefixed:
             candidates.sort(
-                key=lambda candidate: str(candidate.get("kind") or "")
-                != "grant_allocation"
+                key=lambda candidate: (
+                    str(candidate.get("kind") or "") != "grant_allocation",
+                    bool(candidate.get("_promoted_from_draft")),
+                )
             )
         kind_counts: Dict[str, int] = {}
         for candidate in candidates:
@@ -101,7 +103,14 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
         grant_staged = False
         for candidate in candidates:
             kind = str(candidate.get("kind") or "")
-            if grant_staged and kind == "draft" and ctx.explicit_prefixed:
+            if (
+                grant_staged
+                and ctx.explicit_prefixed
+                and (
+                    kind == "draft"
+                    or bool(candidate.get("_promoted_from_draft"))
+                )
+            ):
                 continue
             cluster = cluster_by_kind(kind)
             if cluster is None or cluster.effect != EFFECT_MATERIALIZE:

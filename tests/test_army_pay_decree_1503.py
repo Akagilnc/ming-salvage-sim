@@ -1041,6 +1041,8 @@ def test_real_chat_explicit_prefix_pay_decree_stages_grant_pending(game, monkeyp
     ) + candidates_from_classifier_payload({
         "kind": "draft", "draft_action": "拟旨",
         "text": "敕户部发太仓银十五万两协济关宁军前。",
+        "grant_action": "协饷", "amount": 15, "account": "太仓",
+        "purpose": "补饷", "target_kind": "army", "target_id": "guanning",
     }, soft=False) + candidates_from_classifier_payload({
         "kind": "appointment", "appoint_action": "任命",
         "name": actor, "office": "经略关宁",
@@ -1120,6 +1122,37 @@ def test_real_chat_explicit_prefix_pay_decree_stages_grant_pending(game, monkeyp
     # 成案前零落账
     assert int(state.metrics["国库"]) == treasury_before
     assert _army_row(db)["arrears"] == pytest.approx(arrears_before)
+
+
+def test_explicit_prefix_keeps_distinct_native_grants(game):
+    """去重只吞 draft 别名；同次分类出的两笔不同拨款仍各自成案。"""
+    db, state, _content = game
+    actor = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
+    ).fetchone()["name"]
+    candidates = _scripted_xiexang_candidates(
+        amount=15, account="太仓", target_id="guanning",
+    ) + _scripted_xiexang_candidates(
+        amount=8, account="太仓", target_id="guanning",
+    )
+    ctx = _ctx(
+        db, actor, candidates, state.turn,
+        message="拟旨如下：分别拨关宁军饷十五万与八万两。",
+        reply="臣遵旨。",
+    )
+    ctx.explicit_prefixed = True
+
+    run_materialize_pipeline(ctx)
+
+    payloads = [
+        json.loads(row["payload_json"])
+        for row in db.conn.execute(
+            "SELECT payload_json FROM pending_actions "
+            "WHERE turn=? AND kind='directive'",
+            (state.turn,),
+        ).fetchall()
+    ]
+    assert sorted(int(payload["amount"]) for payload in payloads) == [8, 15]
 
 
 def test_web_stream_propose_directive_skips_when_typed_grant_present(
