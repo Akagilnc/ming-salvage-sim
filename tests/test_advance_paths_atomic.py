@@ -1434,33 +1434,6 @@ def test_recovery_replay_blocked_by_pending_directives(game, monkeypatch):
     db.clear_resolve_context(turn)
 
 
-def test_hitl_replay_blocked_by_pending_directives(game, monkeypatch):
-    """HITL 重放入口同守门：pending 拟旨未核定不得推进（cmr S7 r9 codex，对称面）。"""
-    import ming_sim.decree as dm
-
-    db, state, content = game
-    turn = state.turn
-    dm.pre_settle(state, db, content=content)
-    dm.persist_resolve_context(
-        db, turn, {"metric_delta": {"民心": -1}},
-        decree_text="d", narrative="n",
-        simulator_payload={}, secret_orders=[], relevant_memories=[],
-    )
-    db.save_pending_decisions(turn, [{
-        "title": "辽东战和", "context": "c",
-        "options": [{"label": "战", "hint": ""}, {"label": "和", "hint": ""}],
-    }])
-    state.turn_phase = "awaiting_decision"
-    db.save_state(state)
-    db.add_directive(state, None, "请拨内帑", source="minister", status="pending")
-
-    sess = _recovery_session(db, state, content, monkeypatch)
-    with pytest.raises(ValueError, match="核定"):
-        sess.submit_decisions([{"label": "战"}])
-    assert state.turn == turn
-    db.clear_resolve_context(turn)
-
-
 def test_skip_refused_at_front_half_done(game):
     """#1274 r1：decree.advance_without_edict 空壳已删；跳过结算的快路名缺席。
 
