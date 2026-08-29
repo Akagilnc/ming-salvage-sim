@@ -1018,93 +1018,6 @@ def test_explicit_draft_prefix_without_grant_candidate_stays_generic(game, monke
     assert _army_row(db)["arrears"] == pytest.approx(before["arrears"])
 
 
-def test_promoted_draft_xiexang_durable_one_dossier(game):
-    """单协饷 draft 升格：收夜/颁布后恰一 dossier 且扣库销欠。"""
-    db, state, content = game
-    _set_guanning_arrears(db, 60, central=60, province=0)
-    state.metrics["国库"] = max(int(state.metrics["国库"]), 100)
-    treasury_before = int(state.metrics["国库"])
-    arrears_before = _army_row(db)
-    actor = db.conn.execute(
-        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
-    ).fetchone()["name"]
-    candidates = candidates_from_classifier_payload({
-        "kind": "draft", "draft_action": "拟旨", "grant_action": "协饷",
-        "amount": 15, "account": "太仓", "purpose": "补饷",
-        "target_kind": "army", "target_id": "guanning",
-    }, soft=False)
-    ctx = _ctx(
-        db, actor, candidates, state.turn,
-        message="拟旨如下：准从太仓拨关宁军饷十五万两。",
-        reply="臣请户部发太仓银十五万两协济关宁。",
-    )
-    ctx.explicit_prefixed = True
-    run_materialize_pipeline(ctx)
-    pending_id = int(ctx.out["pending_action_id"] or 0)
-    assert pending_id > 0
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM pending_actions WHERE turn=? AND kind='directive'",
-        (state.turn,),
-    ).fetchone()[0] == 1
-
-    dossier = _close_night_dossier(db, state, content, pending_id)
-    _promulgate(db, state, content, dossier["id"])
-    moves = [
-        m for m in db.list_economy_moves_for_dossier(dossier["id"])
-        if m.get("purpose") == "补饷" and m.get("target_id") == "guanning"
-    ]
-    assert len(moves) == 1
-    assert int(moves[0]["delta"]) == -15
-    assert int(state.metrics["国库"]) == treasury_before - 15
-    after = _army_row(db)
-    assert after["arrears"] == pytest.approx(float(arrears_before["arrears"]) - 15)
-    assert after["central_pay_arrears"] == pytest.approx(
-        float(arrears_before["central_pay_arrears"]) - 15
-    )
-
-
-def test_explicit_prefix_grant_and_assignment_two_durable_dossiers(game):
-    """grant + 真实 assignment：commit 后两道独立 durable dossiers。"""
-    db, state, content = game
-    actor = db.conn.execute(
-        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
-    ).fetchone()["name"]
-    candidates = _scripted_xiexang_candidates(
-        amount=15, account="太仓", target_id="guanning",
-    ) + candidates_from_classifier_payload({
-        "kind": "assignment",
-        "title": "清查辽饷收支",
-        "target_id": "hubu",
-        "transaction_category": "钱粮",
-    }, soft=False)
-    ctx = _ctx(
-        db, actor, candidates, state.turn,
-        message="拟旨如下：拨饷，并另行清查。",
-        reply="臣遵旨。拨关宁军饷十五万两，并着户部清查辽饷收支。",
-    )
-    ctx.explicit_prefixed = True
-    run_materialize_pipeline(ctx)
-
-    rows = list(db.conn.execute(
-        "SELECT id, payload_json FROM pending_actions WHERE turn=? AND kind='directive'",
-        (state.turn,),
-    ).fetchall())
-    assert len(rows) == 2
-    payloads = [json.loads(row["payload_json"]) for row in rows]
-    assert {p.get("dossier_action_type") for p in payloads} == {
-        "grant_allocation", "assignment",
-    }
-
-    pending_ids = [int(row["id"]) for row in rows]
-    db.commit_pending_actions(state, content=content, action_ids=pending_ids)
-    dossiers = [
-        d for d in db.list_decree_dossiers()
-        if int(d["pending_action_id"] or 0) in set(pending_ids)
-    ]
-    assert len(dossiers) == 2
-    assert {d["action_type"] for d in dossiers} == {"grant_allocation", "assignment"}
-
-
 def test_identical_payment_fields_two_array_items_stage_twice(game):
     """付款字段完全相同的两个数组项仍各成一案（列表契约，内容相等不合并）。"""
     db, state, _content = game
@@ -1135,23 +1048,13 @@ def test_identical_payment_fields_two_array_items_stage_twice(game):
     ).fetchone()[0] == 2
 
 
-def test_real_chat_explicit_prefix_suppresses_untyped_tool_twin(
-    game, monkeypatch,
-):
-    """真实 session.chat：classifier 已产 grant 时，无类型 tool 叙事孪生不得第二写。"""
+def _real_chat_session(db, state, content, monkeypatch, *, scripted, agent_tools=None):
+    """本文件 session.chat 真实入口共用装配；stub 仅 classifier/agent/确认边界。"""
     import ming_sim.cli_backend as cb
     import ming_sim.session as session_mod
     from ming_sim.session import GameSession
 
-    db, state, content = game
-    actor = db.conn.execute(
-        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
-    ).fetchone()["name"]
-    scripted = candidates_from_classifier_payload({
-        "kind": "draft", "draft_action": "拟旨",
-        "grant_action": "协饷", "amount": 15, "account": "太仓",
-        "purpose": "补饷", "target_kind": "army", "target_id": "guanning",
-    }, soft=False)
+    tools = agent_tools if agent_tools is not None else []
 
     def fake_classify(*_a, **_k):
         return list(scripted)
@@ -1160,11 +1063,7 @@ def test_real_chat_explicit_prefix_suppresses_untyped_tool_twin(
         def run(self, _msg):
             return SimpleNamespace(
                 content="臣遵旨。敕户部发太仓银十五万两协济关宁军前。钦此。",
-                tools=[SimpleNamespace(
-                    tool_name="propose_directive",
-                    result="__pending_directive__敕户部发太仓银十五万两协济关宁军前。",
-                    arguments={"decree_text": "敕户部发太仓银十五万两协济关宁军前。"},
-                )],
+                tools=list(tools),
             )
 
     sess = GameSession.__new__(GameSession)
@@ -1192,9 +1091,38 @@ def test_real_chat_explicit_prefix_suppresses_untyped_tool_twin(
                 AssertionError(f"must not call {name} on explicit draft prefix")
             ),
         )
+    return sess
+
+
+def test_real_chat_explicit_prefix_suppresses_tool_twin_and_durable_one_dossier(
+    game, monkeypatch,
+):
+    """真实 session.chat：draft 协饷升格、tool 孪生抑制，commit/颁布后唯一 durable 扣库销欠。"""
+    db, state, content = game
+    actor = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
+    ).fetchone()["name"]
+    _set_guanning_arrears(db, 60, central=60, province=0)
+    state.metrics["国库"] = max(int(state.metrics["国库"]), 100)
+    treasury_before = int(state.metrics["国库"])
+    arrears_before = _army_row(db)
+    scripted = candidates_from_classifier_payload({
+        "kind": "draft", "draft_action": "拟旨",
+        "grant_action": "协饷", "amount": 15, "account": "太仓",
+        "purpose": "补饷", "target_kind": "army", "target_id": "guanning",
+    }, soft=False)
+    twin_tools = [SimpleNamespace(
+        tool_name="propose_directive",
+        result="__pending_directive__敕户部发太仓银十五万两协济关宁军前。",
+        arguments={"decree_text": "敕户部发太仓银十五万两协济关宁军前。"},
+    )]
+    sess = _real_chat_session(
+        db, state, content, monkeypatch, scripted=scripted, agent_tools=twin_tools,
+    )
 
     result = sess.chat(actor, "拟旨如下：准拨关宁军饷十五万两。")
-    assert int(getattr(result, "pending_action_id", 0) or 0) > 0
+    pending_id = int(getattr(result, "pending_action_id", 0) or 0)
+    assert pending_id > 0
     rows = list(db.conn.execute(
         "SELECT payload_json FROM pending_actions WHERE turn=? AND kind='directive'",
         (state.turn,),
@@ -1203,33 +1131,72 @@ def test_real_chat_explicit_prefix_suppresses_untyped_tool_twin(
     pending = json.loads(rows[0]["payload_json"])
     assert pending["dossier_action_type"] == "grant_allocation"
 
+    dossier = _close_night_dossier(db, state, content, pending_id)
+    _promulgate(db, state, content, dossier["id"])
+    moves = [
+        m for m in db.list_economy_moves_for_dossier(dossier["id"])
+        if m.get("purpose") == "补饷" and m.get("target_id") == "guanning"
+    ]
+    assert len(moves) == 1
+    assert int(moves[0]["delta"]) == -15
+    assert int(state.metrics["国库"]) == treasury_before - 15
+    after = _army_row(db)
+    assert after["arrears"] == pytest.approx(float(arrears_before["arrears"]) - 15)
+    assert after["central_pay_arrears"] == pytest.approx(
+        float(arrears_before["central_pay_arrears"]) - 15
+    )
 
-@pytest.mark.parametrize(
-    "payload",
-    [
-        {
-            "kind": "draft", "grant_action": "发内帑", "amount": 15,
-            "account": "内库", "target_kind": "character", "target_id": "关宁军",
-        },
-        {
-            "kind": "draft", "draft_action": "拟旨", "grant_action": "协饷",
-        },
-        {
-            "kind": "draft", "draft_action": "拟旨", "grant_action": "协饷",
-            "amount": 15, "account": "太仓", "purpose": "补饷",
-            "target_kind": "army", "target_id": "liaodong",
-        },
-    ],
-    ids=["neitang", "incomplete_xiexang", "unresolvable_target"],
-)
-def test_draft_not_promoted_when_not_materializable(game, monkeypatch, payload):
-    """升格缝真实入口：不可物化 draft 不得成 grant_allocation pending。"""
+
+def test_explicit_prefix_grant_and_assignment_two_durable_dossiers(game, monkeypatch):
+    """真实 session.chat：grant+assignment 一次吐出，commit 后两道独立 durable dossiers。"""
+    db, state, content = game
+    actor = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
+    ).fetchone()["name"]
+    scripted = _scripted_xiexang_candidates(
+        amount=15, account="太仓", target_id="guanning",
+    ) + candidates_from_classifier_payload({
+        "kind": "assignment",
+        "title": "清查辽饷收支",
+        "target_id": "hubu",
+        "transaction_category": "钱粮",
+    }, soft=False)
+    sess = _real_chat_session(db, state, content, monkeypatch, scripted=scripted)
+
+    result = sess.chat(actor, "拟旨如下：拨饷，并另行清查。")
+    assert int(getattr(result, "pending_action_id", 0) or 0) > 0
+    rows = list(db.conn.execute(
+        "SELECT id, payload_json FROM pending_actions WHERE turn=? AND kind='directive'",
+        (state.turn,),
+    ).fetchall())
+    assert len(rows) == 2
+    payloads = [json.loads(row["payload_json"]) for row in rows]
+    assert {p.get("dossier_action_type") for p in payloads} == {
+        "grant_allocation", "assignment",
+    }
+
+    pending_ids = [int(row["id"]) for row in rows]
+    db.commit_pending_actions(state, content=content, action_ids=pending_ids)
+    dossiers = [
+        d for d in db.list_decree_dossiers()
+        if int(d["pending_action_id"] or 0) in set(pending_ids)
+    ]
+    assert len(dossiers) == 2
+    assert {d["action_type"] for d in dossiers} == {"grant_allocation", "assignment"}
+
+
+def test_draft_neitang_stays_generic_special_decree(game, monkeypatch):
+    """真非协饷 draft（发内帑）不升格 grant：恰一 generic special_decree。"""
     import ming_sim.cli_backend as cb
 
     db, state, _content = game
     actor = db.conn.execute(
         "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
     ).fetchone()["name"]
+    payload = {
+        "kind": "draft", "grant_action": "发内帑", "amount": 15,
+        "account": "内库", "target_kind": "character", "target_id": "关宁军",
+    }
     candidates = candidates_from_classifier_payload(payload, soft=False)
     monkeypatch.setattr(
         cb,
@@ -1250,9 +1217,53 @@ def test_draft_not_promoted_when_not_materializable(game, monkeypatch, payload):
         "SELECT payload_json FROM pending_actions WHERE turn=? AND kind='directive'",
         (state.turn,),
     ).fetchall())
-    for row in rows:
-        pending = json.loads(row["payload_json"])
-        assert pending.get("dossier_action_type") != "grant_allocation"
+    assert len(rows) == 1
+    pending = json.loads(rows[0]["payload_json"])
+    assert pending.get("dossier_action_type") != "grant_allocation"
+    assert pending.get("dossier_action_type", "special_decree") == "special_decree"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            "kind": "draft", "draft_action": "拟旨", "grant_action": "协饷",
+        },
+        {
+            "kind": "draft", "draft_action": "拟旨", "grant_action": "协饷",
+            "amount": 15, "account": "太仓", "purpose": "补饷",
+            "target_kind": "army", "target_id": "liaodong",
+        },
+    ],
+    ids=["incomplete_xiexang", "unresolvable_target"],
+)
+def test_draft_xiexang_incomplete_or_illegal_fail_loud_zero_write(game, payload):
+    """残缺/非法协饷 draft：materialize fail-loud，pending/dossier 零增。"""
+    from ming_sim.action_materialize import IncompleteXiexangPayloadError
+
+    db, state, _content = game
+    actor = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
+    ).fetchone()["name"]
+    pending_before = db.conn.execute(
+        "SELECT COUNT(*) FROM pending_actions WHERE turn=? AND kind='directive'",
+        (state.turn,),
+    ).fetchone()[0]
+    dossier_before = {int(d["id"]) for d in db.list_decree_dossiers()}
+    candidates = candidates_from_classifier_payload(payload, soft=False)
+    ctx = _ctx(
+        db, actor, candidates, state.turn,
+        message="拟旨如下：准拨军饷。",
+        reply="准拨，数目另议。",
+    )
+    with pytest.raises((IncompleteXiexangPayloadError, ValueError)):
+        run_materialize_pipeline(ctx)
+    pending_after = db.conn.execute(
+        "SELECT COUNT(*) FROM pending_actions WHERE turn=? AND kind='directive'",
+        (state.turn,),
+    ).fetchone()[0]
+    assert pending_after == pending_before
+    assert {int(d["id"]) for d in db.list_decree_dossiers()} == dossier_before
 
 
 def test_http_chat_issue_stream_pay_decree_advances_month(
@@ -1449,4 +1460,3 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
             game.session.close()
         except Exception:
             pass
-
