@@ -105,7 +105,7 @@
      外部据已提交盘面产叙事+delta 后再 `driver settle --delta` 升 ready=1（见 8.5）。
 
   4. chapter_memories = db.list_chapter_memories(upto_turn=state.turn, recent=6)
-     secret_orders = group_secret_orders_for_sim(active + legacy pending_review 行)  # 分中文键两组；#1504 结案不靠 pending 核议
+     secret_orders = group_secret_orders_for_sim(active 行)  # 密令只进「在办」；#1504 结案不靠 pending 核议
      secret_orders = augment_secret_orders_with_due_commitments(secret_orders, db, state)
        ↳ form③ 承诺（有 end_turn、无 ongoing_effects）到期时写入「待核议」分组（entry_kind=due_commitment）
        ↳ #883 分流：分组只喂 personnel_secret extractor 独立 rail；

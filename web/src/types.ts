@@ -533,7 +533,7 @@ export type SecretOrder = {
   content: string;
   tags: string[];
   importance: number;
-  status: "active" | "pending_review" | "done" | "failed" | "cancelled";
+  status: "active" | "done" | "failed" | "cancelled";
   result: string;
   sim_note: string;
   dossier_progress?: DossierProgressReport[];

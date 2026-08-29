@@ -12,6 +12,7 @@ import ming_sim.cli_backend as cb
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.session import GameSession
 from ming_sim.skills import bind_content as bind_skills_content
+from tests.dossier_test_helpers import TYPED_COVERT_TASK
 from tests.web_audience_test_doubles import HallAdmissionSessionMixin
 from web_app import WebGame
 
@@ -359,6 +360,7 @@ def test_stream_confirmation_ignores_same_turn_secret_order_tool_output(game, mo
             "assignee": minister_name,
             "tags": [],
             "deadline_months": 0,
+            "covert_task": TYPED_COVERT_TASK,
         },
     )
     tool_payload = json.dumps({

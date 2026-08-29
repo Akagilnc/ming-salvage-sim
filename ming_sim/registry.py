@@ -257,14 +257,10 @@ def build_secret_order_brief(character: Character, context: CourtContext) -> str
         "在册密令：",
     ]
     for o in orders:
-        status = o.get("status", "active")
-        if status == "pending_review":
-            tag = "⏳ 遗留待核议（月末按实进度对账）"
-        else:
-            advanced = context.db._has_secret_order_period_line(
-                int(o["id"]), "result", context.state.year, context.state.period
-            )
-            tag = "✅ 本月已推进" if advanced else "⚠️ 本月尚未推进"
+        advanced = context.db._has_secret_order_period_line(
+            int(o["id"]), "result", context.state.year, context.state.period
+        )
+        tag = "✅ 本月已推进" if advanced else "⚠️ 本月尚未推进"
         due_turn = int(o.get("due_turn") or 0)
         due_text = f"；御限剩 {max(0, due_turn - int(context.state.turn))} 月" if due_turn else ""
         lines.append(f"  - #{o['id']}「{o['title']}」 {tag}{due_text}")

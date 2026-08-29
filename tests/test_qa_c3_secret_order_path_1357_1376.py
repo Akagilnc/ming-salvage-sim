@@ -18,6 +18,7 @@ import pytest
 import web_app
 from ming_sim.models import TurnPhase
 from ming_sim.session import ChatTurnResult, GameSession
+from tests.dossier_test_helpers import TYPED_COVERT_TASK
 
 
 def _active_minister_name(db, content) -> str:
@@ -358,6 +359,7 @@ def test_confirm_secret_order_http_returns_id_and_list_visible(
                 "assignee": name,
                 "tags": ["辽饷"],
                 "deadline_months": 3,
+                "covert_task": TYPED_COVERT_TASK,
             },
         )
         assert pending_id > 0

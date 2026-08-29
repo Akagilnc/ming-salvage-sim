@@ -67,6 +67,19 @@ DEFAULT_EXTRACT_PAYLOAD: Dict[str, Any] = {
     "excluded_names": [],
     "excluded_offices": [],
     "dossier_links": [],
+    "covert_task": {
+        "kind": "查核关宁欠饷",
+        "axes": ["实务事功"],
+        "direction": 1,
+        "delivery": {
+            "unit": "万两",
+            "target_units": 1,
+            "effect_sign": -1,
+            "purpose": "关宁欠饷",
+            "category": "军饷",
+            "account": "国库",
+        },
+    },
 }
 
 
@@ -155,10 +168,18 @@ def _install_settlement_llm_stubs(monkeypatch) -> None:
     monkeypatch.setattr(
         decree_mod, "create_score_extractor_module_agent", lambda *a, **k: None,
     )
+    def _extract(_agents, db, state, _narrative, *args, **kwargs):
+        reports = [{
+            "dossier_id": item["dossier_id"],
+            "progress_band": "在办",
+            "memorial_text": "本月密奏已达",
+        } for item in db.list_monthly_dossier_progress_nudges()]
+        return {"dossier_progress_reports": reports}, "out", "in"
+
     monkeypatch.setattr(
         decree_mod,
         "extract_scores_by_modules_with_agno",
-        lambda *a, **k: ({}, "out", "in"),
+        _extract,
     )
     monkeypatch.setattr(
         session_mod, "write_decree_with_agno",

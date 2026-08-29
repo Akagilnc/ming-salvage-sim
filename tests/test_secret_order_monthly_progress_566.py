@@ -3,6 +3,7 @@
 import json
 
 import pytest
+from tests.dossier_test_helpers import create_test_secret_order
 
 
 def _actor(db):
@@ -12,9 +13,18 @@ def _actor(db):
 
 
 def _order(db, state, title="护行辽饷", tags=None, deadline=4):
-    order_id = db.create_secret_order(
+    order_id = create_test_secret_order(db,
         state, _actor(db), title, "逐月办理", tags or ["护行"],
         deadline_months=deadline,
+        covert_task={
+            "kind": "护行差务",
+            "axes": ["实务事功"],
+            "direction": 1,
+            "delivery": {
+                "unit": "万两", "target_units": float(deadline or 1), "effect_sign": -1,
+                "purpose": "辽饷", "category": "军饷", "account": "国库",
+            },
+        },
     )
     return order_id, int(db.get_dossier_for_secret_order(order_id)["id"])
 
@@ -236,31 +246,53 @@ def test_disclosure_promotes_monthly_report_to_public_event_only_after_disclosur
     assert marker in disclosure["body"]
 
 
-def test_titles_do_not_classify_long_orders_and_short_orders_do_not_report(game):
+def test_titles_do_not_classify_and_all_active_secret_orders_are_candidates(game):
     db, state, content = game
     _, title_only = _order(db, state, title="保护堤岸", tags=["河工"])
     _, unrelated = _order(db, state, title="清查库藏", tags=["财政"])
     _, short = _order(db, state, tags=["护行"], deadline=1)
 
-    _settle(db, state, content)
-    assert db.list_dossier_progress(title_only) == []
-    assert db.list_dossier_progress(unrelated) == []
-    assert db.list_dossier_progress(short) == []
+    ids = {title_only, unrelated, short}
+    assert {item["dossier_id"] for item in db.list_monthly_dossier_progress_nudges()} == ids
+    reports = [
+        {
+            "dossier_id": did,
+            "progress_band": "在办",
+            "memorial_text": f"密奏{did}",
+        }
+        for did in ids
+    ]
+    from ming_sim.decree import settle_with_delta
+    settle_with_delta(
+        state, db, {"dossier_progress_reports": reports},
+        before_turn=state.turn, content=content, narrative="本月邸报",
+    )
+    assert db.list_dossier_progress(title_only)
+    assert db.list_dossier_progress(unrelated)
+    assert db.list_dossier_progress(short)
 
 
 def test_only_an_existing_monthly_chain_gets_terminal_progress(game):
     db, state, content = game
     eligible_id, eligible = _order(db, state)
     ordinary_id, ordinary = _order(db, state, title="保护堤岸", tags=["河工"])
-    _settle(db, state, content, progress={
-        "dossier_id": eligible, "progress_band": "在途", "memorial_text": "已出京",
-    })
+    state.turn += 1
+    db.save_state(state)
+    reports = [
+        {"dossier_id": eligible, "progress_band": "在途", "memorial_text": "已出京"},
+        {"dossier_id": ordinary, "progress_band": "在办", "memorial_text": "河工并列密奏"},
+    ]
+    from ming_sim.decree import settle_with_delta
+    settle_with_delta(
+        state, db, {"dossier_progress_reports": reports},
+        before_turn=state.turn, content=content, narrative="本月邸报",
+    )
 
     db.close_secret_order(eligible_id, "failed", "护行中止", state.turn)
     db.close_secret_order(ordinary_id, "failed", "河工中止", state.turn)
 
     assert db.list_dossier_progress(eligible)[-1]["is_terminal"] is True
-    assert db.list_dossier_progress(ordinary) == []
+    assert db.list_dossier_progress(ordinary)
 
 
 def test_character_terminal_status_closes_secret_orders_through_canonical_progress_rail(game):
@@ -270,11 +302,25 @@ def test_character_terminal_status_closes_secret_orders_through_canonical_progre
     unchained_id, unchained_dossier = _order(
         db, state, title="清查库藏", tags=["财政"],
     )
-    _settle(db, state, content, progress={
-        "dossier_id": chained_dossier,
-        "progress_band": "在途",
-        "memorial_text": "首批已出京",
-    })
+    state.turn += 1
+    db.save_state(state)
+    reports = [
+        {
+            "dossier_id": chained_dossier,
+            "progress_band": "在途",
+            "memorial_text": "首批已出京",
+        },
+        {
+            "dossier_id": unchained_dossier,
+            "progress_band": "在办",
+            "memorial_text": "库藏并列密奏",
+        },
+    ]
+    from ming_sim.decree import settle_with_delta
+    settle_with_delta(
+        state, db, {"dossier_progress_reports": reports},
+        before_turn=state.turn, content=content, narrative="本月邸报",
+    )
 
     db.set_character_status(state, assignee, "dead", "途中病故")
 
@@ -293,7 +339,7 @@ def test_character_terminal_status_closes_secret_orders_through_canonical_progre
     terminal = db.list_dossier_progress(chained_dossier)[-1]
     assert terminal["is_terminal"] is True
     assert "人物终态：dead；途中病故" in terminal["memorial_text"]
-    assert db.list_dossier_progress(unchained_dossier) == []
+    assert db.list_dossier_progress(unchained_dossier)
 
 
 def test_real_module_extractor_traces_private_context_through_settlement(game, monkeypatch):
@@ -304,6 +350,8 @@ def test_real_module_extractor_traces_private_context_through_settlement(game, m
 
     db, state, content = game
     _, dossier_id = _order(db, state)
+    state.turn += 1
+    db.save_state(state)
     context = simulation.build_extractor_shared_context(
         db, state, "本月邸报", "", module="personnel_secret",
     )
@@ -338,19 +386,15 @@ def test_real_module_extractor_traces_private_context_through_settlement(game, m
 def test_current_secret_order_deadline_controls_monthly_eligibility(game):
     db, state, content = game
     order_id, dossier_id = _order(db, state, deadline=1)
-    assert db.list_monthly_dossier_progress_nudges() == []
+    assert [item["dossier_id"] for item in db.list_monthly_dossier_progress_nudges()] == [dossier_id]
 
-    # The current effective deadline is authoritative; the dossier copy and the
-    # requested rush duration are not.
     rushed = db.rush_secret_order(order_id, state, 3)
     row = db.conn.execute(
         "SELECT deadline_span FROM secret_orders WHERE id=?", (order_id,),
     ).fetchone()
-    # The older due date wins, so the stored span must describe that effective date,
-    # not the caller's three-month request.
     assert rushed["due_turn"] == state.turn + 1
     assert row["deadline_span"] == 1
-    assert db.list_monthly_dossier_progress_nudges() == []
+    assert [item["dossier_id"] for item in db.list_monthly_dossier_progress_nudges()] == [dossier_id]
     db.update_secret_order_by_id(state, order_id, "护行辽饷", "继续逐月办理", ["护行"], 3)
     assert db.get_decree_dossier(dossier_id)["due_turn"] != state.turn + 3
     assert [item["dossier_id"] for item in db.list_monthly_dossier_progress_nudges()] == [dossier_id]
@@ -365,6 +409,15 @@ def _stage_routed_secret_order(db, state, action, deadline):
             "title": "护行辽饷", "content": "逐月稽核", "tags": ["护行"],
             "new_title": "护行辽饷", "new_content": "继续逐月稽核",
             "deadline_months": deadline,
+            "covert_task": {
+                "kind": "护行差务",
+                "axes": ["实务事功"],
+                "direction": 1,
+                "delivery": {
+                    "unit": "万两", "target_units": float(max(deadline, 1)), "effect_sign": -1,
+                    "purpose": "辽饷", "category": "军饷", "account": "国库",
+                },
+            },
         }, target_id=target_id,
     )
     return pending_id, target_id
@@ -415,8 +468,8 @@ def test_pending_short_secret_order_uses_full_settlement_no_monthly_progress(
     ).fetchone()
     assert stored["deadline_span"] == 1
     dossier_id = int(db.get_dossier_for_secret_order(order["id"])["id"])
-    # 短差 terminal：月度 nudge 不入轨 → progress 空（与长差对照）
-    assert db.list_dossier_progress(dossier_id) == []
+    # 短差亦入 0058；canned extractor 按完整覆盖契约落密奏
+    assert db.list_dossier_progress(dossier_id)
 
 
 @pytest.mark.parametrize("action", ["新建", "更新"])
@@ -492,7 +545,7 @@ def test_web_short_order_full_settlement_no_monthly_progress(game, monkeypatch, 
     order = next(order for order in db.list_secret_orders()
                  if target_id is None or order["id"] == target_id)
     dossier_id = int(db.get_dossier_for_secret_order(order["id"])["id"])
-    assert db.list_dossier_progress(dossier_id) == []
+    assert db.list_dossier_progress(dossier_id)
 
 
 def _rows(db, table, where="", params=()):
@@ -635,7 +688,8 @@ def test_simulator_fallback_missing_private_report_aborts_without_advancing(game
     monkeypatch.setattr(decree, "create_json_sanitizer_agent", lambda *a, **k: None)
     monkeypatch.setattr(decree, "create_score_extractor_module_agent", lambda *a, **k: None)
     monkeypatch.setattr(
-        decree, "extract_scores_by_modules_with_agno", lambda *a, **k: ({}, "out", "in"),
+        decree, "extract_scores_by_modules_with_agno",
+        lambda *a, **k: ({"dossier_progress_reports": []}, "out", "in"),
     )
     with pytest.raises(SettlementAbort, match="本月结算失败"):
         decree.resolve_directives(
@@ -715,10 +769,15 @@ def test_eligible_missing_report_aborts_settlement_but_empty_month_succeeds(game
     before = state.turn
     _order(db, state)
     with pytest.raises(SettlementAbort):
-        _settle(db, state, content)
+        from ming_sim.decree import settle_with_delta
+        settle_with_delta(
+            state, db, {"dossier_progress_reports": []},
+            before_turn=state.turn, content=content, narrative="本月邸报",
+        )
     assert state.turn == before
 
     db.conn.execute("UPDATE secret_orders SET status='cancelled'")
+    db.conn.commit()
     _settle(db, state, content)
     assert state.turn == before + 1
 

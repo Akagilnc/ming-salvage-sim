@@ -18,6 +18,7 @@ import pytest
 from ming_sim import audience_night as an
 from ming_sim.audience_night import AudienceNightError
 from ming_sim.db import GameDB
+from tests.dossier_test_helpers import create_test_secret_order
 
 
 def _active_minister(db, content, *, exclude: set[str] | None = None) -> str:
@@ -193,7 +194,7 @@ def test_audit_passes_whitelisted_and_catches_unwhitelisted_night_write(game):
 
     # 合法夜：仅「密令落地」直写真实盘面 → 审计通过，报出观测到的白名单操作
     def _land_secret(night_id: int, chat_id: int) -> None:
-        db.create_secret_order(
+        create_test_secret_order(db,
             state, m, "密查盐引", "密查两淮盐引亏空", ["盐政"], importance=4,
         )
     legal_night, _ = _run_round(
@@ -262,7 +263,7 @@ def test_undo_full_reversal_survives_kill_and_reopen(game):
     m = _active_minister(db, content)
 
     def _land_secret(night_id: int, chat_id: int) -> None:
-        db.create_secret_order(state, m, "密查军资", "密查蓟镇军资挪用", ["军务"])
+        create_test_secret_order(db, state, m, "密查军资", "密查蓟镇军资挪用", ["军务"])
     night_id, chat_id = _run_round(
         db, state, m, writes=_land_secret,
         facts=[{"person_names": [m], "presence_effect": "enter", "body": "领旨。"}],
@@ -319,7 +320,7 @@ def test_undo_reversal_is_atomic_on_midway_crash(game, monkeypatch):
     m = _active_minister(db, content)
 
     def _land_secret(night_id: int, chat_id: int) -> None:
-        db.create_secret_order(state, m, "密查漕运", "密查漕运折耗", ["漕运"])
+        create_test_secret_order(db, state, m, "密查漕运", "密查漕运折耗", ["漕运"])
     night_id, chat_id = _run_round(
         db, state, m, writes=_land_secret,
         facts=[{"person_names": [m], "presence_effect": "enter", "body": "领旨。"}],
@@ -419,7 +420,7 @@ def test_undo_landed_secret_decree_removes_all_structured_records(game):
     m = _active_minister(db, content)
 
     def _land(night_id: int, chat_id: int) -> None:
-        db.create_secret_order(
+        create_test_secret_order(db,
             state, m, "密核盐课", "密核长芦盐课隐没", ["盐政", "稽核"],
             importance=5, deadline_months=6,
             excluded_names=[_active_minister(db, content, exclude={m})],

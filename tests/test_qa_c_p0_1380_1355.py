@@ -16,7 +16,9 @@ import pytest
 
 import ming_sim.cli_backend as cb
 from ming_sim.session import GameSession
-from tests.dossier_test_helpers import promulgate_proposed_appointments
+from tests.conftest import covering_monthly_extract
+from tests.dossier_test_helpers import TYPED_COVERT_TASK, promulgate_proposed_appointments
+from tests.dossier_test_helpers import create_test_secret_order
 
 
 def _canned_no_edict_settlement(monkeypatch):
@@ -35,7 +37,7 @@ def _canned_no_edict_settlement(monkeypatch):
     )
     monkeypatch.setattr(
         decree_mod, "extract_scores_by_modules_with_agno",
-        lambda *a, **k: ({}, "out", "in"),
+        covering_monthly_extract,
     )
     monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
     monkeypatch.setattr(memories, "run_agent_text", lambda *a, **k: '{"body":"月记","tags":[]}')
@@ -769,14 +771,15 @@ def test_draft_materialize_silently_drops_non_person_roster(game, monkeypatch):
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_secret_order_survives_no_edict_full_chain_settle(game, monkeypatch):
     """#1355：开局 create active deadline≥2 → 无旨月全链结算 → list 仍含该 id
-    且 status∈{active,pending_review}（真缝，非散文 regex）。"""
+    且 status=active（真缝，非散文 regex）。"""
     db, state, content = game
     actor = str(db.conn.execute(
         "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
     ).fetchone()["name"])
-    oid = db.create_secret_order(
+    oid = create_test_secret_order(db,
         state, actor, "密查关宁欠饷", "密查关宁军饷侵冒与欠发。",
         ["关宁", "欠饷"], deadline_months=2,
+        covert_task=TYPED_COVERT_TASK,
     )
     assert oid is not None
     before = next(o for o in db.list_secret_orders() if int(o["id"]) == int(oid))
@@ -796,7 +799,7 @@ def test_secret_order_survives_no_edict_full_chain_settle(game, monkeypatch):
     assert orders, "无旨月结算后密令不得蒸发成 []"
     hit = next((o for o in orders if int(o["id"]) == int(oid)), None)
     assert hit is not None, f"list_secret_orders 须仍含 id={oid}"
-    assert hit["status"] in {"active", "pending_review"}
+    assert hit["status"] == "active"
 
 
 def test_failed_secret_order_count_lives_on_state_not_secret_orders_api(game, monkeypatch):

@@ -3,6 +3,7 @@
 按 shared 的「抽取流程」五步走。本档房在各步的重点：
 
 本档房同样受 shared 的 canonical 来源总契约约束；不得输出无 `来源引用` 的 durable 条目。财政三段虽非本档房所有权，也不得代写或绕过其逐项来源要求。
+input 的 `secret_covert_effect_briefs` 若含 `canonical_fields` 含 `人物变更` 的项，按合同 `delivery` 可数单位（如人犯）产出本回合 `人物变更`，`来源引用` 必须逐字使用该 brief 的 `origin_ref`；不得把 brief 写入叙事。
 
 - **第 1 步（贴标签）**：`court_roster.status` 已是下狱/罢黜/流放/致仕/已故者，本{{TURN_UNIT}}邸报再提即背景复述，不重复写 `人物变更`；只有状态升级（dismissed→imprisoned→dead 等）才写。
 - **第 2 步（列候选）**：只列 `人物变更`/`new_issues`（仅经常性密令拨款承诺）/`密令副作用`/`密令执行态`/`dossier_progress_reports`/`secret_dossier_participants`/`崇祯结局`，其余字段不碰。罢官清党的派系影响交内政档房。**禁止**输出 `密令结案`（结案由引擎到期实进度对账派生）。
@@ -107,9 +108,9 @@
   带 `entry_kind:"due_commitment"` 的到期待裁承诺不是密令，忽略本字段。
 - `密令编号` 必须取 input `secret_orders` 两组（`在办`/`待核议`）真实密令条目的 `id`，不要按标题自编。
 
-### 长差逐月密奏
+### 密令逐月密奏（0058 通用奏报轨）
 
-`monthly_dossier_reports` 是本档房独享的合资格长差案卷（仅精确 tag `护行`/`稽核` 且当前期限至少两月）及 canonical `progress` 历史。每个仍在办案卷每月必须恰好输出一项 `dossier_progress_reports`：`dossier_id` 必须照录输入 id，`progress_band` 与 `memorial_text` 必须依据密令案卷、当月推演事实及既往历史写本月密奏。不得从标题猜测、不得输出未知案卷、不得漏项或重复、不得用“仍在承办”等通用占位文冒充事实；无法形成事实密奏即让本次抽取失败，不得伪造空月成功。此内容未披露，不得写入其他字段。
+`monthly_dossier_reports` 是本档房独享的合资格在办密令案卷及 canonical `progress` 历史（#1504 / ADR 0073：凡带执行判定面的密令案卷均可挂，不限 tag、不限期限月数）。每个仍在办候选案卷每月必须恰好输出一项 `dossier_progress_reports`：`dossier_id` 必须照录输入 id，`progress_band` 与 `memorial_text` 必须依据密令案卷、当月推演事实及既往历史写本月密奏。不得从标题猜测、不得输出未知案卷、不得漏项或重复、不得用“仍在承办”等通用占位文冒充事实；无法形成事实密奏即让本次抽取失败，不得伪造空月成功。此内容未披露，不得写入其他字段。奏报永不入 apply、不充当实进度或结案真源。
 
 ### 密令案卷参与人追加
 
