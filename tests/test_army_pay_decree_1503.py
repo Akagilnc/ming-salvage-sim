@@ -1276,12 +1276,17 @@ def test_nonprefixed_grant_and_promoted_draft_alias_stage_once(game):
 
 
 @pytest.mark.parametrize(
-    ("tool_identity", "expected_directives"),
-    [("", 1), ("assignment", 2)],
+    ("tool_identity", "classifier_assignment_target", "tool_target", "expected_directives"),
+    [
+        ("", "", "", 1),
+        ("assignment", "", "hubu", 2),
+        ("assignment", "hubu", "hubu", 2),
+        ("assignment", "bingbu", "hubu", 3),
+    ],
 )
 def test_web_stream_propose_directive_skips_when_typed_grant_present(
     tmp_path, monkeypatch, _offline_scene_beat_generator,
-    tool_identity, expected_directives,
+    tool_identity, classifier_assignment_target, tool_target, expected_directives,
 ):
     """真 HTTP：无身份孪生跳过，独立 typed tool 与 grant 分别成案。"""
     from fastapi.testclient import TestClient
@@ -1305,7 +1310,7 @@ def test_web_stream_propose_directive_skips_when_typed_grant_present(
                 arguments={
                     "decree_text": "敕户部发太仓银十五万两协济关宁军前。",
                     "dossier_action_type": tool_identity,
-                    "target_id": "hubu" if tool_identity else "",
+                    "target_id": tool_target,
                 },
             )]
             yield SimpleNamespace(
@@ -1322,6 +1327,12 @@ def test_web_stream_propose_directive_skips_when_typed_grant_present(
         "amount": 15, "account": "太仓", "purpose": "补饷",
         "target_kind": "army", "target_id": "guanning",
     }, soft=False)
+    if classifier_assignment_target:
+        scripted += candidates_from_classifier_payload({
+            "kind": "draft", "text": "另行交办。",
+            "dossier_action_type": "assignment",
+            "target_id": classifier_assignment_target,
+        }, soft=False)
 
     def fake_classify(*_a, **_k):
         return list(scripted)
@@ -1374,8 +1385,11 @@ def test_web_stream_propose_directive_skips_when_typed_grant_present(
                 payload for payload in payloads
                 if payload.get("dossier_action_type") == tool_identity
             ]
-            assert len(independent) == 1
-            assert independent[0]["target_id"] == "hubu"
+            expected_targets = {tool_target}
+            if classifier_assignment_target:
+                expected_targets.add(classifier_assignment_target)
+            assert len(independent) == len(expected_targets)
+            assert {payload["target_id"] for payload in independent} == expected_targets
     finally:
         try:
             game.session.close()
