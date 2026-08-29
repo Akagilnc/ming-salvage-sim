@@ -285,7 +285,39 @@ def normalize_one_candidate(obj: Mapping[str, Any], *, soft: bool) -> Dict[str, 
         out["target_ids"] = obj.get("target_ids")
     elif "目标编号" in obj and obj.get("目标编号") is not None:
         out["target_ids"] = obj.get("目标编号")
+    _promote_draft_xiexang_payload(out)
     return out
+
+
+def _promote_draft_xiexang_payload(candidate: Dict[str, Any]) -> None:
+    """#1503：同次调用 kind=draft 但已带结构化协饷字段 → grant 单轨。
+
+    不读散文。发内帑及其它非协饷 grant 不升格。纯 draft 无协饷字段保持 draft。
+    升格后缺项由 grant 成案 fail-loud。
+    """
+    if str(candidate.get("kind") or "").strip() != "draft":
+        return
+    grant_action = str(candidate.get("grant_action") or "").strip()
+    if grant_action and grant_action != "协饷":
+        return
+    purpose = str(candidate.get("purpose") or "").strip()
+    target_kind = str(candidate.get("target_kind") or "").strip()
+    target_id = str(candidate.get("target_id") or "").strip()
+    account = str(candidate.get("account") or "").strip()
+    amount = candidate.get("amount")
+    has_amount = amount not in (None, "", 0)
+    looks_xiexang = grant_action == "协饷" or (
+        purpose == "补饷"
+        and target_kind == "army"
+        and bool(target_id)
+        and bool(account)
+        and has_amount
+    )
+    if not looks_xiexang:
+        return
+    candidate["kind"] = "grant_allocation"
+    if not grant_action:
+        candidate["grant_action"] = "协饷"
 
 
 def candidates_from_classifier_payload(raw: Any, *, soft: bool = True) -> List[Dict[str, Any]]:

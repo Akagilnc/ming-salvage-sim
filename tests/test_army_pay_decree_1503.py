@@ -1402,3 +1402,149 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
             game.session.close()
         except Exception:
             pass
+
+
+def test_classifier_prompt_requires_payload_xiexang_under_draft_prefix(monkeypatch):
+    """classifier 契约：拟旨前缀下的载荷式拨饷须产协饷五字段；发内帑不得改判。"""
+    import ming_sim.cli_backend as cb
+
+    captured = {}
+
+    def fake_extract(prompt, *_a, **_k):
+        captured["prompt"] = prompt
+        return "[]", None
+
+    monkeypatch.setattr(cb, "_run_json_extractor_for_config", fake_extract)
+    assert cb.classify_cli_action_intent("拟旨如下：准从太仓拨关宁军饷十五万两。") == []
+    prompt = captured["prompt"]
+    assert "拟旨与任免候选" in prompt
+    assert "恩赏拨帑=协饷" in prompt
+    assert "「拟旨如下」只是路由" in prompt
+    assert "发内帑不是协饷" in prompt
+
+
+def test_frozen_neitang_grant_does_not_enter_army_pay_write(game):
+    """冻结 m04 成案：grant_action=发内帑 / purpose 空 / target_kind=character 不进补饷写口。"""
+    db, state, content = game
+    _set_guanning_arrears(db, 60, central=60, province=0)
+    before = _army_row(db)
+    treasury_before = int(state.metrics["国库"])
+    actor = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
+    ).fetchone()["name"]
+    candidate = candidates_from_classifier_payload(
+        {
+            "kind": "grant_allocation",
+            "grant_action": "发内帑",
+            "amount": 150000,
+            "account": "内库",
+            "purpose": "",
+            "target_kind": "character",
+            "target_id": "关宁军",
+        },
+        soft=False,
+    )
+    assert candidate[0]["grant_action"] == "发内帑"
+    ctx = _ctx(
+        db, actor, candidate, state.turn,
+        message="拟旨如下：发内帑十五万赏关宁军。",
+        reply="臣遵旨，发内帑。",
+    )
+    run_materialize_pipeline(ctx)
+    pending_id = ctx.out.get("pending_action_id")
+    assert pending_id
+    pending = json.loads(db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
+    ).fetchone()["payload_json"])
+    assert pending.get("grant_action") == "发内帑"
+    assert pending.get("purpose") != "补饷"
+    db.commit_pending_actions(state, content=content, action_ids=[pending_id])
+    dossiers = [
+        d for d in db.list_decree_dossiers()
+        if d["pending_action_id"] == pending_id
+    ]
+    if dossiers:
+        _promulgate(db, state, content, dossiers[0]["id"])
+        origin = f"dossier:{dossiers[0]['id']}"
+    else:
+        origin = None
+    assert _army_row(db)["arrears"] == pytest.approx(before["arrears"])
+    assert int(state.metrics["国库"]) == treasury_before
+    if origin:
+        pay_ledger = list(db.conn.execute(
+            "SELECT 1 FROM economy_ledger WHERE purpose='补饷' AND origin_ref=?",
+            (origin,),
+        ).fetchall())
+        assert pay_ledger == []
+
+
+def test_draft_kind_with_xiexang_fields_uses_grant_track(game):
+    """同次调用 kind=draft 但协饷五字段已在 → 按字段走 grant 单轨。"""
+    db, state, content = game
+    actor = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
+    ).fetchone()["name"]
+    candidate = candidates_from_classifier_payload(
+        {
+            "kind": "draft",
+            "grant_action": "协饷",
+            "amount": 15,
+            "account": "太仓",
+            "purpose": "补饷",
+            "target_kind": "army",
+            "target_id": "guanning",
+        },
+        soft=False,
+    )
+    assert candidate[0]["kind"] == "grant_allocation"
+    assert candidate[0]["grant_action"] == "协饷"
+    ctx = _ctx(
+        db, actor, candidate, state.turn,
+        message="拟旨如下：准从太仓拨关宁军饷十五万两。",
+        reply="臣请户部发太仓银十五万两协济关宁。",
+    )
+    run_materialize_pipeline(ctx)
+    pending_id = ctx.out["pending_action_id"]
+    pending = json.loads(db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
+    ).fetchone()["payload_json"])
+    assert pending["dossier_action_type"] == "grant_allocation"
+    assert pending["grant_action"] == "协饷"
+    assert pending["purpose"] == "补饷"
+    assert pending["account"] == "国库"
+    assert pending["target_kind"] == "army"
+    assert pending["target_id"] == "guanning"
+    assert int(pending["amount"]) == 15
+
+
+def test_draft_kind_xiexang_missing_fields_fail_loud(game):
+    """kind=draft 且 grant_action=协饷 但缺项 → 升格后 fail-loud，零写。"""
+    from ming_sim.action_materialize import IncompleteXiexangPayloadError
+
+    db, state, content = game
+    treasury_before = int(state.metrics["国库"])
+    actor = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
+    ).fetchone()["name"]
+    candidate = candidates_from_classifier_payload(
+        {
+            "kind": "draft",
+            "grant_action": "协饷",
+            "amount": 15,
+            "account": "国库",
+            "purpose": "补饷",
+            "target_kind": "army",
+            "target_id": "",
+        },
+        soft=False,
+    )
+    assert candidate[0]["kind"] == "grant_allocation"
+    ctx = _ctx(
+        db, actor, candidate, state.turn,
+        message="拟旨如下：准拨军饷。",
+        reply="臣遵旨。",
+    )
+    with pytest.raises(IncompleteXiexangPayloadError):
+        run_materialize_pipeline(ctx)
+    assert not ctx.out.get("pending_action_id")
+    assert int(state.metrics["国库"]) == treasury_before
