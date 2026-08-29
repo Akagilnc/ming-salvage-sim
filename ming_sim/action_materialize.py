@@ -75,6 +75,35 @@ def _draft_path_took_effect(ctx: MaterializeCtx) -> bool:
     return False
 
 
+def _materializable_draft_xiexang(
+    ctx: MaterializeCtx,
+    candidate: Dict[str, Any],
+) -> Dict[str, Any]:
+    """在真实写入前置条件齐全时，把 draft 协饷投影为本轮 grant 候选。
+
+    列表契约逐项独立物化；不按付款字段相等折叠。
+    draft+协饷验证失败原样抛出（fail-loud，零写，不退回 ordinary draft）。
+    """
+    if (
+        str(candidate.get("kind") or "").strip() != "draft"
+        or str(candidate.get("grant_action") or "").strip() != "协饷"
+    ):
+        return candidate
+    require_materializable_xiexang_payload(
+        ctx.session.db,
+        text=ctx.reply,
+        amount=candidate.get("amount"),
+        account=str(candidate.get("account") or ""),
+        purpose=str(candidate.get("purpose") or ""),
+        target_kind=str(candidate.get("target_kind") or ""),
+        target_id=str(candidate.get("target_id") or ""),
+        cadence=str(candidate.get("cadence") or ""),
+    )
+    promoted = dict(candidate)
+    promoted["kind"] = "grant_allocation"
+    return promoted
+
+
 def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
     """按登记 priority 依次调用已注册 materializer。
 
@@ -87,7 +116,10 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
         # 裁决并提前返回。每项复用登记行自带的同一 handler，不复制 kind 分支。
         baseline_out = dict(ctx.out)
         multi_batch = len(ctx.intent_candidates) > 1
-        candidates = list(ctx.intent_candidates)
+        candidates = [
+            _materializable_draft_xiexang(ctx, candidate)
+            for candidate in ctx.intent_candidates
+        ]
         if ctx.explicit_prefixed:
             candidates.sort(
                 key=lambda candidate: str(candidate.get("kind") or "")
@@ -101,8 +133,6 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
         grant_staged = False
         for candidate in candidates:
             kind = str(candidate.get("kind") or "")
-            if grant_staged and kind == "draft" and ctx.explicit_prefixed:
-                continue
             cluster = cluster_by_kind(kind)
             if cluster is None or cluster.effect != EFFECT_MATERIALIZE:
                 continue
@@ -1322,6 +1352,43 @@ def require_explicit_xiexang_fields(
     }
 
 
+def require_materializable_xiexang_payload(
+    db: Any,
+    *,
+    text: object,
+    amount: object = 0,
+    account: str = "",
+    purpose: str = "",
+    target_kind: str = "",
+    target_id: str = "",
+    cadence: str = "",
+) -> Dict[str, Any]:
+    """协饷真实写入的完整前置条件；原生 grant 与 draft 投影共用。"""
+    explicit = require_explicit_xiexang_fields(
+        amount=amount,
+        account=account,
+        purpose=purpose,
+        target_kind=target_kind,
+        target_id=target_id,
+        cadence=cadence,
+    )
+    body = str(text or "").strip()
+    if not body:
+        raise ValueError("协饷旨意缺少正文（不猜散文）")
+    army_id = _resolve_xiexang_army_id(db, str(explicit["target_id"]))
+    if not army_id:
+        raise ValueError(
+            f"协饷旨意 target 无法解析为军队：{explicit['target_id']!r}（不猜散文）"
+        )
+    cadence_value = str(cadence or "").strip() or "一次性"
+    return {
+        **explicit,
+        "text": body,
+        "target_id": army_id,
+        "cadence": cadence_value,
+    }
+
+
 def stage_grant_allocation_candidate(
     db: Any,
     turn: int,
@@ -1354,9 +1421,11 @@ def stage_grant_allocation_candidate(
     body = str(text or "").strip()
     if action not in (GRANT_ACTIONS - {"无"}):
         return 0
-    # #1503：协饷五字段由 require_explicit_xiexang_fields 一次收集；此处不补值。
+    # #1503：协饷完整写入前置由同一权威缝收集；此处不补值。
     if action == "协饷":
-        explicit = require_explicit_xiexang_fields(
+        explicit = require_materializable_xiexang_payload(
+            db,
+            text=body,
             amount=amount,
             account=account,
             purpose=purpose,
@@ -1369,13 +1438,8 @@ def stage_grant_allocation_candidate(
         purpose = str(explicit["purpose"])
         kind = str(explicit["target_kind"])
         target = str(explicit["target_id"])
-        if not body:
-            raise ValueError("协饷旨意缺少正文（不猜散文）")
-        army_id = _resolve_xiexang_army_id(db, target)
-        if not army_id:
-            raise ValueError(
-                f"协饷旨意 target 无法解析为军队：{target!r}（不猜散文）"
-            )
+        cadence = str(explicit["cadence"])
+        army_id = target
     else:
         if not target or not kind:
             return 0
@@ -1785,10 +1849,12 @@ def _assignment_dossier_text(ctx: MaterializeCtx) -> str:
 
 
 def _materialize_assignment(ctx: MaterializeCtx) -> None:
-    """暂存交办·责成案卷；initiative 按 ADR 0055 判决后落。"""
+    """暂存交办·责成案卷；initiative 按 ADR 0055 判决后落。
+
+    #1503：显式拟旨前缀若带真实 assignment 候选，仍走本单轨（不再因 explicit_prefixed 早退）。
+    """
     if (
         ctx.intent_kind != "assignment"
-        or ctx.explicit_prefixed
         or ctx.draft_staged
         or ctx.out.get("pending_action_id")
         or ctx.conversation_intent_handled
