@@ -164,12 +164,6 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
             kind = str(candidate.get("kind") or "")
             if promoted and signature in staged_xiexang_signatures:
                 continue
-            if (
-                grant_staged
-                and ctx.explicit_prefixed
-                and kind == "draft"
-            ):
-                continue
             cluster = cluster_by_kind(kind)
             if cluster is None or cluster.effect != EFFECT_MATERIALIZE:
                 continue
@@ -410,7 +404,13 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
     ):
         return
 
-    if ctx.explicit_prefixed or ctx.has_directive or ctx.out.get("pending_action_id"):
+    typed_draft = (
+        intent is not None
+        and intent_kind == "draft"
+        and bool(str(intent.get("draft_text") or "").strip())
+        and bool(str(intent.get("dossier_action_type") or "").strip())
+    )
+    if (ctx.explicit_prefixed or ctx.has_directive or ctx.out.get("pending_action_id")) and not typed_draft:
         return
 
     dir_candidates = []
@@ -450,7 +450,16 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
             }
             return None
 
-    if (
+    if typed_draft:
+        # The classifier supplied this sibling's complete typed identity and body.
+        # Transport it unchanged; explicit-prefix batches must not re-extract from
+        # either the player's prose or the minister's combined reply.
+        draft_res = {
+            **intent,
+            "draft_action": "拟旨",
+            "target_candidate": "",
+        }
+    elif (
         intent is not None
         and intent_kind == "draft"
         and ctx.candidate_kind_count > 1
@@ -3333,7 +3342,11 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
         ),
         ActionCluster(
             "拟旨", "draft", EFFECT_MATERIALIZE, priority=50,
-            fields=(),
+            fields=(
+                # Classifier `text` is the sole alias for the typed draft body.
+                FieldSpec("draft_text", "text", None, ""),
+                FieldSpec("dossier_action_type", "案卷动作类型", None, ""),
+            ),
             materialize_fn=_materialize_draft,
         ),
         ActionCluster(
