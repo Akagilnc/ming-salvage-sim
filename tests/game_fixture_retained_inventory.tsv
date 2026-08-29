@@ -27,7 +27,6 @@ tests/test_advance_paths_atomic.py	test_resim_path_does_not_preconsume_pending	9
 tests/test_advance_paths_atomic.py	test_fallback_path_commits_pending	983	writable isolation required: line 990 invokes pre_settle
 tests/test_advance_paths_atomic.py	test_recovery_restores_last_decree_for_web_display	1010	writable isolation required: line 1016 invokes pre_settle
 tests/test_advance_paths_atomic.py	test_recovery_replay_blocked_by_pending_directives	1034	writable isolation required: line 1043 invokes pre_settle
-tests/test_advance_paths_atomic.py	test_hitl_replay_blocked_by_pending_directives	1059	writable isolation required: line 1065 invokes pre_settle
 tests/test_advance_paths_atomic.py	test_skip_refused_at_front_half_done	1086	writable isolation required: line 1094 invokes pre_settle
 tests/test_advance_paths_atomic.py	test_draft_mutators_frozen_at_front_half_done	1108	writable isolation required: mutates shared GameState recovery/settling phase before exercising the guard
 tests/test_advance_paths_atomic.py	test_noready_recovery_uses_persisted_decree	1132	writable isolation required: isolated read_game/query_only probe reaches a real SQLite write in test_noready_recovery_uses_persisted_decree
