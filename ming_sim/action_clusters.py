@@ -18,6 +18,17 @@ from typing import Any, Callable, Dict, FrozenSet, List, Mapping, Optional, Sequ
 EFFECT_NOOP = "noop"
 EFFECT_ANSWER_EXISTING = "answer_existing"
 EFFECT_MATERIALIZE = "materialize"
+_PROMOTED_FROM_DRAFT_KEY = "_promoted_from_draft"
+_PROMOTED_FROM_DRAFT_SENTINEL = object()
+
+
+def is_promoted_draft_candidate(candidate: Mapping[str, Any]) -> bool:
+    """只认本进程归一器生成的 draft 来源身份；classifier 同名字段无权伪造。"""
+    return (
+        candidate.get(_PROMOTED_FROM_DRAFT_KEY)
+        is _PROMOTED_FROM_DRAFT_SENTINEL
+    )
+
 
 @dataclass(frozen=True)
 class FieldSpec:
@@ -287,8 +298,8 @@ def normalize_one_candidate(obj: Mapping[str, Any], *, soft: bool) -> Dict[str, 
         out["target_ids"] = obj.get("目标编号")
     # CLI classifier 先归一一次，Future join 后还会再归一；保留本模块生成的来源标记，
     # 让同一句里原生 grant 与其 draft 别名仍能在既有 materialize 去重缝相认。
-    if obj.get("_promoted_from_draft") is True:
-        out["_promoted_from_draft"] = True
+    if is_promoted_draft_candidate(obj):
+        out[_PROMOTED_FROM_DRAFT_KEY] = _PROMOTED_FROM_DRAFT_SENTINEL
     _promote_draft_xiexang_payload(out)
     return out
 
@@ -299,7 +310,7 @@ def _promote_draft_xiexang_payload(candidate: Dict[str, Any]) -> None:
         return
     if str(candidate.get("grant_action") or "").strip() != "协饷":
         return
-    candidate["_promoted_from_draft"] = True
+    candidate[_PROMOTED_FROM_DRAFT_KEY] = _PROMOTED_FROM_DRAFT_SENTINEL
     candidate["kind"] = "grant_allocation"
 
 

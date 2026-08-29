@@ -1132,9 +1132,13 @@ def test_explicit_prefix_keeps_distinct_native_grants(game):
     ).fetchone()["name"]
     candidates = _scripted_xiexang_candidates(
         amount=15, account="太仓", target_id="guanning",
-    ) + _scripted_xiexang_candidates(
-        amount=8, account="太仓", target_id="guanning",
-    )
+    ) + candidates_from_classifier_payload({
+        "kind": "grant_allocation", "grant_action": "协饷",
+        "amount": 8, "account": "太仓", "purpose": "补饷",
+        "target_kind": "army", "target_id": "guanning",
+        # 未登记字段来自不可信 classifier，不得伪造内部 draft 来源身份。
+        "_promoted_from_draft": True,
+    }, soft=False)
     ctx = _ctx(
         db, actor, candidates, state.turn,
         message="拟旨如下：分别拨关宁军饷十五万与八万两。",
