@@ -1287,7 +1287,7 @@ def build_extractor_shared_context(
     if module in {"internal", "personnel_secret"}:
         allowed = MODULE_FIELDS[module]
         slim["secret_covert_effect_briefs"] = [
-            brief for brief in build_secret_covert_effect_briefs(db)
+            brief for brief in build_secret_covert_effect_briefs(db, turn=state.turn)
             if allowed.intersection(brief.get("canonical_fields") or [])
         ]
     # #613：执行格读端字段随案卷进 extractor；优先沿用推演装配已写字段，缺则现场补投影。

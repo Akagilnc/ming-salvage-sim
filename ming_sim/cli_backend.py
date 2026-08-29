@@ -3418,7 +3418,8 @@ def _extract_secret_order(
         "  \"交付目标\": 到期须交付的正数目标（调查为须坐实的事实条数）,\n"
         "  \"效果符号\": 1,\n"
         "  \"调查对象\": \"查核目标人名，非调查留空\",\n"
-        "  \"钱粮用途\": \"钱粮收支 purpose，非钱粮留空\", \"钱粮类别\": \"category\", \"钱粮账户\": \"account\",\n"
+        "  \"钱粮用途\": \"支出 purpose（补饷/其它）；收入留空\", \"钱粮类别\": \"category\", \"钱粮账户\": \"account\",\n"
+        "  \"钱粮标靶种类\": \"补饷时填 army，其余留空\", \"钱粮标靶编号\": \"补饷时填军队 id，其余留空\",\n"
         "  \"人物动作\": \"人物变更动作，非人物留空\",\n"
         "  \"地区\": \"region_delta 地区 id\", \"地区字段\": \"落库字段\", \"地区目标值\": \"落库后的目标值\"\n"
         "}\n"
@@ -3546,6 +3547,8 @@ def _extract_secret_order(
             purpose=obj.get("钱粮用途"),
             category=obj.get("钱粮类别"),
             account=obj.get("钱粮账户"),
+            target_kind=obj.get("钱粮标靶种类"),
+            target_id=obj.get("钱粮标靶编号"),
             person_action=obj.get("人物动作"),
             region=obj.get("地区"),
             field=obj.get("地区字段"),
