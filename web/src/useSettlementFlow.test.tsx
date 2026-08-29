@@ -150,10 +150,13 @@ describe("#1625 useSettlementFlow — observation refresh convergence", () => {
       turn: { ...preClickState.turn, turn: 6 },
       settlement_entry_inflight: false,
     } as GameState;
+    const pollError = new Error("transient poll failure");
     const loadState = vi
       .fn<() => Promise<GameState | null>>()
       .mockResolvedValueOnce(null)
+      .mockRejectedValueOnce(pollError)
       .mockResolvedValueOnce(settledState);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { host, cleanup } = mountHarness({ initial: inflightState, loadState });
 
     expect(loadState).not.toHaveBeenCalled();
@@ -171,7 +174,16 @@ describe("#1625 useSettlementFlow — observation refresh convergence", () => {
       await vi.advanceTimersByTimeAsync(1000);
     });
     expect(loadState).toHaveBeenCalledTimes(2);
+    expect(host.querySelector('[data-testid="phase"]')?.textContent).toBe("awaiting_decision");
+    expect(host.querySelector('[data-testid="error"]')?.textContent).toBe("");
+    expect(warn.mock.calls.some((call) => call.includes(pollError))).toBe(true);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    expect(loadState).toHaveBeenCalledTimes(3);
     expect(host.querySelector('[data-testid="phase"]')?.textContent).toBe("player");
+    expect(host.querySelector('[data-testid="error"]')?.textContent).toBe("");
     expect(vi.getTimerCount()).toBe(0);
     cleanup();
   });

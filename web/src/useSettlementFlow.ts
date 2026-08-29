@@ -53,7 +53,7 @@ export function useSettlementFlow({
         refreshTimer = window.setTimeout(() => {
           void loadState()
             .catch((err) => {
-              setError(err instanceof Error ? err.message : String(err));
+              console.warn("[settlement] inflight refresh failed", err);
             })
             .finally(() => {
               if (!cancelled) refresh();
