@@ -456,44 +456,42 @@ def test_payload_projects_consumable_army_targets_from_real_monthly_board(game):
 
 def test_generate_rejects_army_id_outside_same_batch_catalog(monkeypatch):
     item = _legal_item()
-    army_opt = {
+    item["options"][0].update({
         "action_type": "military_order",
         "target_kind": "army",
         "target_id": "liaodong",
         "assignee_name": "祖大寿",
         "station": "宁远",
         "deadline_months": 1,
-    }
-    for opt in item["options"]:
-        opt.update(army_opt)
+    })
     monkeypatch.setattr(
         rescript_mod, "run_agent_text",
         lambda *a, **k: json.dumps({"items": [item]}, ensure_ascii=False),
     )
     assert generate_rescript_draft(object(), {
         "active_issues": [],
+        "region_targets": [{"id": "shaanxi", "name": "陕西", "kind": "腹地"}],
         "army_targets": [{"id": "guanning", "name": "关宁军 / 宁锦防线", "station": "辽东 / 宁远锦州"}],
     }, 1) is None
 
 
 def test_generate_rejects_military_order_empty_assignee(monkeypatch):
     item = _legal_item()
-    empty_assignee = {
+    item["options"][0].update({
         "action_type": "military_order",
         "target_kind": "army",
         "target_id": "guanning",
         "assignee_name": "",
         "station": "宁远",
         "deadline_months": 1,
-    }
-    for opt in item["options"]:
-        opt.update(empty_assignee)
+    })
     monkeypatch.setattr(
         rescript_mod, "run_agent_text",
         lambda *a, **k: json.dumps({"items": [item]}, ensure_ascii=False),
     )
     assert generate_rescript_draft(object(), {
         "active_issues": [],
+        "region_targets": [{"id": "shaanxi", "name": "陕西", "kind": "腹地"}],
         "army_targets": [{"id": "guanning", "name": "关宁军 / 宁锦防线", "station": "辽东 / 宁远锦州"}],
     }, 1) is None
 
