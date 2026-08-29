@@ -3147,40 +3147,6 @@ class GameSession:
         """
         return self.db.list_rescript_desk(int(self.state.turn))
 
-    def empty_choices_resume_allowed(self) -> bool:
-        """B.3 空 choices 续跑：extracted is not None，或案头宇宙行全部 decided 且 choice 在。
-
-        零行 + 占位 resolve_context（extracted is None）不是续跑——那是假空案头。
-        合法 {} extracted 算 ready。禁止「任意一条 decided」。
-        """
-        turn = int(self.state.turn)
-        ctx = self.db.get_resolve_context(turn)
-        if ctx is not None and ctx.get("extracted") is not None:
-            return True
-        rows = self.db.conn.execute(
-            """
-            SELECT status, choice_json FROM pending_decisions
-            WHERE kind = 'rescript_draft'
-               OR (kind = 'decision' AND turn = ?)
-            """,
-            (turn,),
-        ).fetchall()
-        if not rows:
-            return False
-        for r in rows:
-            if str(r["status"] or "") != "decided":
-                return False
-            raw = (r["choice_json"] or "").strip()
-            if not raw:
-                return False
-            try:
-                choice = json.loads(raw)
-            except Exception:
-                return False
-            if not isinstance(choice, dict):
-                return False
-        return True
-
     def _assert_awaiting_decision_submit(self) -> None:
         if self.current_phase() != TurnPhase.AWAITING_DECISION:
             raise ValueError("当前不在待裁决策阶段，无法提交亲裁。")
@@ -3720,8 +3686,6 @@ class GameSession:
                 "submit_decisions 仅续跑空 choices；已裁批须经 submit_hitl_choices/"
                 "resolve_rescript_decisions 显式携 decision_key"
             )
-        if not self.empty_choices_resume_allowed():
-            raise ValueError("案头未齐，不能空提交续跑结算")
         if not (self.last_decree or "").strip():
             ctx0 = self.db.get_resolve_context(self.state.turn)
             if ctx0 is not None:
