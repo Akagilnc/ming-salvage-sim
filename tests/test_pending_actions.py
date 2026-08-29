@@ -1024,6 +1024,14 @@ def test_resolve_turn_previews_only_canonical_default_eligible_directives(game, 
             "target_id": "liao-pay-audit",
         },
     )
+    unclear_id = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=name,
+        target_id=None, payload={
+            "text": "着兵部再议边防。", "_needs_clarification": True,
+            "dossier_action_type": "policy", "target_kind": "issue",
+            "target_id": "border-defense",
+        },
+    )
     invalid_id = db.stage_pending_action(
         state.turn, kind="directive", action="拟旨", minister_name=name,
         target_id=None, payload={
@@ -1078,6 +1086,9 @@ def test_resolve_turn_previews_only_canonical_default_eligible_directives(game, 
     assert db.conn.execute(
         "SELECT status FROM pending_actions WHERE id=?", (legal_id,)
     ).fetchone()["status"] == "committed"
+    assert db.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (unclear_id,)
+    ).fetchone()["status"] == "pending"
     for rejected_id in (invalid_id, malformed_id, non_object_id):
         assert db.conn.execute(
             "SELECT status FROM pending_actions WHERE id=?", (rejected_id,)
