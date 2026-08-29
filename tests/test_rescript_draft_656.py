@@ -422,6 +422,78 @@ def test_generate_rejects_region_id_outside_same_batch_catalog(monkeypatch):
     }, 1) is None
 
 
+def test_payload_projects_consumable_army_targets_from_real_monthly_board(game):
+    """系统票拟看到同批盘面的合法 army id，而非把省 id 当军."""
+    from ming_sim.simulation import build_simulator_payload
+
+    db, state, _content = game
+    simulator_payload = build_simulator_payload(state, db, "", "")
+    payload = build_rescript_draft_payload(
+        state, "邸报", simulator_payload,
+        {"name": "首辅", "office": "内阁首辅", "faction": "阉党"},
+    )
+
+    targets = {row["id"]: row for row in payload["army_targets"]}
+    assert targets["guanning"]["id"] == "guanning"
+    assert targets["guanning"]["name"]
+    assert "liaodong" not in targets
+
+    bad = dict(simulator_payload)
+    for table in (
+        {"cols": ["id", "name", "station"], "rows": [["guanning"]]},
+        {"cols": ["id", "name", "station"], "rows": [["", "关宁军", "宁远"]]},
+        {"cols": ["id", "name", "station"], "rows": [[123, "关宁军", "宁远"]]},
+        {"cols": ["id", "name", "station"], "rows": [["guanning", ["关宁军"], "宁远"]]},
+        {"cols": ["id", "name", "station"], "rows": ["abc"]},
+    ):
+        bad["armies"] = table
+        with pytest.raises(ValueError):
+            build_rescript_draft_payload(
+                state, "邸报", bad,
+                {"name": "首辅", "office": "内阁首辅", "faction": "阉党"},
+            )
+
+
+def test_generate_rejects_army_id_outside_same_batch_catalog(monkeypatch):
+    item = _legal_item()
+    item["options"][0].update({
+        "action_type": "military_order",
+        "target_kind": "army",
+        "target_id": "liaodong",
+        "assignee_name": "祖大寿",
+        "station": "宁远",
+        "deadline_months": 1,
+    })
+    monkeypatch.setattr(
+        rescript_mod, "run_agent_text",
+        lambda *a, **k: json.dumps({"items": [item]}, ensure_ascii=False),
+    )
+    assert generate_rescript_draft(object(), {
+        "active_issues": [],
+        "army_targets": [{"id": "guanning", "name": "关宁军 / 宁锦防线", "station": "辽东 / 宁远锦州"}],
+    }, 1) is None
+
+
+def test_generate_rejects_military_order_empty_assignee(monkeypatch):
+    item = _legal_item()
+    item["options"][0].update({
+        "action_type": "military_order",
+        "target_kind": "army",
+        "target_id": "guanning",
+        "assignee_name": "",
+        "station": "宁远",
+        "deadline_months": 1,
+    })
+    monkeypatch.setattr(
+        rescript_mod, "run_agent_text",
+        lambda *a, **k: json.dumps({"items": [item]}, ensure_ascii=False),
+    )
+    assert generate_rescript_draft(object(), {
+        "active_issues": [],
+        "army_targets": [{"id": "guanning", "name": "关宁军 / 宁锦防线", "station": "辽东 / 宁远锦州"}],
+    }, 1) is None
+
+
 def test_payload_projection_without_active_issues_degrades_to_empty():
     from ming_sim.models import GameState
 

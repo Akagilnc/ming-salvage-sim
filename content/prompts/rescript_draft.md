@@ -24,7 +24,7 @@
     - `hint`：方向性陈词（如此举所安者谁、所拂者谁）
     - `action_type`：七类之一——`assignment` / `military_order` / `grant_allocation` / `appointment` / `punishment` / `authorization` / `pacification`
     - `target_kind`：目标类（如 `region` / `character` / `army` / `issue`）
-    - `target_id`：目标标识（如区域 id、人名、军 id）。`target_kind=region` 时必须从 input 的 `region_targets` 选择 `id`，地名须按同项 `name` 对照，不得自造区域 id
+    - `target_id`：目标标识（如区域 id、人名、军 id）。`target_kind=region` 时必须从 input 的 `region_targets` 选择 `id`，地名须按同项 `name` 对照，不得自造区域 id。`target_kind=army` 时必须从同批 `army_targets` 选择 `id`，中文军名按同项 `name` 对照，不得用省 id/地名冒充军 id。`military_order` 的 `assignee_name` 不得空串
     - `locality_scope`：`national` / `single` / `none`
     - 类相关键（按 action_type 填写；`assignee_name`/`region_id`/`transaction_category` **必须输出**，值可空串）：以及该类所需的 `grant_action` / `amount` / `station` / `office` / `appoint_action` / `punish_action` / `deadline_months` 等
     - **不要**写 `draft_capability` 或 `verdict`——服务端派生
