@@ -12179,6 +12179,8 @@ class GameDB:
                 raise ValueError(f"{action} 旨意缺少 canonical assignee")
             if assignee:
                 normalized["assignee_id"] = assignee
+            else:
+                normalized.pop("assignee_id", None)
             normalized.pop("assignee", None)
             # Authorization identity and applicability live exclusively in
             # authority_records; legacy dossier payload ids are not retained.
@@ -14367,7 +14369,16 @@ class GameDB:
         if not canonical_assignee:
             canonical_assignee = str(payload_map.get("assignee") or "").strip()
         if canonical_assignee:
+            from ming_sim.session import _find_existing_minister
+            content = self.content
+            canonical_assignee = (
+                _find_existing_minister(content, canonical_assignee, self) or ""
+                if content is not None else ""
+            )
+        if canonical_assignee:
             payload_map["assignee_id"] = canonical_assignee
+        else:
+            payload_map.pop("assignee_id", None)
         payload_map.pop("assignee", None)
 
         base_roster_source = participants
