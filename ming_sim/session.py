@@ -3161,7 +3161,9 @@ class GameSession:
             create_rescript_revise_agent,
         )
         from ming_sim.rescript_draft import (
+            _assert_army_targets_grounded,
             _parse_rescript_json_strict,
+            _project_army_targets,
             normalize_rescript_layer_a_option,
         )
 
@@ -3242,12 +3244,16 @@ class GameSession:
         def _revise_runner(item: ra.ValidatedItem) -> List[Dict[str, object]]:
             # 单行改票：专用 agent + 唯一 {"options":[...]} shape；禁 monthly items[] / drafts[0]
             agent = create_rescript_revise_agent(self.llm_config, self.agno_db)
+            simulator_payload = ctx.get("simulator_payload") if ctx is not None else None
+            armies = simulator_payload.get("armies") if isinstance(simulator_payload, dict) else None
+            army_targets = _project_army_targets(armies)
             payload = {
                 "mode": "single_row_revise",
                 "title": item.row.get("title"),
                 "context": item.row.get("context"),
                 "prior_options": item.row.get("options"),
                 "note": item.choice.get("note") or "",
+                "army_targets": army_targets,
             }
             from ming_sim.agents import run_agent_text
             raw = run_agent_text(
@@ -3259,7 +3265,11 @@ class GameSession:
             options_raw = data.get("options")
             if not isinstance(options_raw, list) or not options_raw:
                 raise ValueError("改票 LLM 未产出非空 options")
-            return [normalize_rescript_layer_a_option(opt) for opt in options_raw]
+            options = [normalize_rescript_layer_a_option(opt) for opt in options_raw]
+            _assert_army_targets_grounded(
+                [{"options": options}], {str(row["id"]) for row in army_targets},
+            )
+            return options
 
         def _deliberate_runner(item: ra.ValidatedItem) -> Dict[str, object]:
             # #658：站台意愿 + typed supporter_ids；读关系账/派系态势切片，禁第二 roster
