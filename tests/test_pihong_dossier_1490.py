@@ -2291,6 +2291,75 @@ def test_657_s10_http_five_actions_and_1490_no_regress(web_game, monkeypatch):
             labels = [str(o.get("label") or "") for o in (hit["options"] or [])]
             assert "新甲" in labels
 
+
+def test_1621_http_follow_draft_uses_catalog_army_id(web_game, monkeypatch):
+    """合法军 id 从生成边界进 HTTP follow_draft，案卷 target_id 为真军 id。"""
+    from ming_sim.models import TurnPhase
+    from ming_sim.rescript_draft import build_rescript_draft_payload, generate_rescript_draft
+    from ming_sim.simulation import build_simulator_payload
+    import ming_sim.rescript_draft as draft_mod
+
+    db, state = web_game.db, web_game.state
+    army_raw = {
+        "label": "敕关宁严守",
+        "hint": "所安者宁锦",
+        "action_type": "military_order",
+        "assignee_name": "祖大寿",
+        "target_kind": "army",
+        "target_id": "guanning",
+        "locality_scope": "none",
+        "region_id": "",
+        "transaction_category": "",
+        "station": "辽东 / 宁远锦州",
+        "deadline_months": 1,
+    }
+    generated_json = json.dumps({"items": [{
+        "title": "宁锦急务", "context": "关宁待敕。",
+        "options": [army_raw, {**army_raw, "label": "备拟"}],
+    }]}, ensure_ascii=False)
+    monkeypatch.setattr(draft_mod, "run_agent_text", lambda *a, **k: generated_json)
+    generated = generate_rescript_draft(
+        object(),
+        build_rescript_draft_payload(
+            state, "邸报", build_simulator_payload(state, db, "", ""),
+            {"name": "杨嗣昌", "office": "兵部尚书", "faction": "东林"},
+        ),
+        int(state.turn),
+    )
+    assert generated is not None
+    army_opt = generated[0]["options"][0]
+    assert army_opt["target_id"] == "guanning"
+
+    _657_install_real_phase2_llm_boundary(monkeypatch)
+    db.conn.execute("DELETE FROM pending_decisions")
+    db.conn.commit()
+    db.save_rescript_drafts(int(state.turn), [{
+        "title": "急务-军令", "context": "c",
+        "options": [army_opt, {"label": "备", "hint": "h", "draft_capability": "x"}],
+        "actor_name": "杨嗣昌", "actor_office": "兵部尚书", "actor_faction": "东林",
+    }])
+    db.conn.commit()
+    db.save_resolve_context(
+        int(state.turn), "诏", "邸报", {"candidate_events": [], "transit_semantics": []},
+        secret_orders=[], relevant_memories=[],
+    )
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
+    desk = db.list_rescript_desk(int(state.turn))
+    key = desk[0]["decision_key"]
+    r = asyncio.run(_post_resolve([{
+        "decision_key": key,
+        "action": "follow_draft",
+        "label": army_opt["label"],
+        "draft_capability": army_opt["draft_capability"],
+    }]))
+    assert r.status_code == 200, r.text
+    assert "event: error" not in r.text, r.text
+    assert "event: done" in r.text, r.text
+    dossiers = db.list_decree_dossiers()
+    assert dossiers and dossiers[-1]["target_id"] == "guanning"
+
+
 def test_657_mixed_batch_follow_plus_decision_and_no_context_copy(web_game, monkeypatch):
     """C1.1：急务 follow + decision 打回；真 HTTP；③后 extracted 空杀进程；
     同 DB 同 body 重 POST 无双写；resolve_context 无批副本键。"""
