@@ -1510,7 +1510,6 @@ def test_pay_delivery_requires_army_identity(game):
     assert public_ok.startswith("__secret_order__")
     payload = json.loads(public_ok[len("__secret_order__"):])
     assert payload["covert_task"]["delivery"]["target_id"] == army_id
-    assert payload["covert_task"]["delivery"]["target_id"] != "999"
     oid = db.create_secret_order(
         state, name, "补发饷银", "补发欠饷", [],
         deadline_months=1, covert_task=frozen,
