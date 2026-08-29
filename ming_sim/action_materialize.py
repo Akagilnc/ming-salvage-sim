@@ -82,25 +82,23 @@ def _materializable_draft_xiexang(
     """在真实写入前置条件齐全时，把 draft 协饷投影为本轮 grant 候选。
 
     列表契约逐项独立物化；不按付款字段相等折叠。
+    draft+协饷验证失败原样抛出（fail-loud，零写，不退回 ordinary draft）。
     """
     if (
         str(candidate.get("kind") or "").strip() != "draft"
         or str(candidate.get("grant_action") or "").strip() != "协饷"
     ):
         return candidate
-    try:
-        require_materializable_xiexang_payload(
-            ctx.session.db,
-            text=ctx.reply,
-            amount=candidate.get("amount"),
-            account=str(candidate.get("account") or ""),
-            purpose=str(candidate.get("purpose") or ""),
-            target_kind=str(candidate.get("target_kind") or ""),
-            target_id=str(candidate.get("target_id") or ""),
-            cadence=str(candidate.get("cadence") or ""),
-        )
-    except (IncompleteXiexangPayloadError, ValueError):
-        return candidate
+    require_materializable_xiexang_payload(
+        ctx.session.db,
+        text=ctx.reply,
+        amount=candidate.get("amount"),
+        account=str(candidate.get("account") or ""),
+        purpose=str(candidate.get("purpose") or ""),
+        target_kind=str(candidate.get("target_kind") or ""),
+        target_id=str(candidate.get("target_id") or ""),
+        cadence=str(candidate.get("cadence") or ""),
+    )
     promoted = dict(candidate)
     promoted["kind"] = "grant_allocation"
     return promoted

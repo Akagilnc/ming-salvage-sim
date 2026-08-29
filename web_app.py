@@ -2453,7 +2453,7 @@ class WebGame:
                         confirmation_turn
                         or explicit_secret_prefix
                         or _typed_grant_candidate_present(
-                            None, preclassified_intent, db=self.db, reply=answer,
+                            None, preclassified_intent,
                         )
                     ):
                         continue

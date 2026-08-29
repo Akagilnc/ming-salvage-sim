@@ -577,14 +577,12 @@ def apply_appointment(
 def _typed_grant_candidate_present(
     intent: Optional[Dict[str, Any]],
     intent_candidates: Optional[List[Dict[str, Any]]],
-    *,
-    db: Any,
-    reply: object,
 ) -> bool:
-    """#1503：classifier 是否已给出可物化的 grant 或 draft 协饷载荷。
+    """#1503：classifier 是否已给出 typed grant 或 draft 协饷信号。
 
     真则显式拟旨前缀不得先落 generic special_decree，改由既有 grant 单轨成案；
     tool 叙事孪生亦据此抑制，不另开 identity 矩阵。
+    draft+协饷仅作 typed 信号（抑制 tool/抢跑 generic）；完整性仍交 materialize fail-loud。
     """
     import ming_sim.action_materialize as am  # catalog side-effect ok
 
@@ -597,22 +595,8 @@ def _typed_grant_candidate_present(
         action = str(candidate.get("grant_action") or "").strip()
         if kind == "grant_allocation":
             return action in valid
-        if kind == "draft" and action == "协饷":
-            try:
-                am.require_materializable_xiexang_payload(
-                    db,
-                    text=reply,
-                    amount=candidate.get("amount"),
-                    account=str(candidate.get("account") or ""),
-                    purpose=str(candidate.get("purpose") or ""),
-                    target_kind=str(candidate.get("target_kind") or ""),
-                    target_id=str(candidate.get("target_id") or ""),
-                    cadence=str(candidate.get("cadence") or ""),
-                )
-            except (am.IncompleteXiexangPayloadError, ValueError):
-                return False
-            return True
-        return False
+        # 协饷 typed 信号即抑制；残缺/非法由 materialize 原样抛，此处不预校验。
+        return kind == "draft" and action == "协饷"
 
     if _ok(intent or {}):
         return True
@@ -1669,7 +1653,7 @@ class GameSession:
                     confirmation_turn
                     or explicit_secret_prefix
                     or _typed_grant_candidate_present(
-                        None, preclassified_intent, db=self.db, reply=answer,
+                        None, preclassified_intent,
                     )
                 ):
                     continue
