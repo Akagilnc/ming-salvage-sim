@@ -87,6 +87,8 @@ hermes proxy 当 OpenAI 兼容后端：`hermes proxy start --provider nous|xai`�
 
 GitHub Issues（`Akagilnc/ming-salvage-sim`，已设为本 clone 的 gh 默认仓库（`gh repo set-default`），`--repo` 可省；跨 clone / CI / 重设 remote 后仍建议显式带 `--repo` 防误打 upstream）。See `docs/agents/issue-tracker.md`.
 
+**发票纪律（2026-08-29 owner 拍）**：方向票/施工票一律挂当届 milestone（本轮 = milestone #17「架构深化 · 八方向收口」）；父子与依赖关系一律用 GitHub 原生（sub_issues / blocked_by API），body 里的 `## Parent` / `## Blocked by` 文本只作人类可读副本，不再是关系真源。
+
 ### Triage labels
 
 **Matt 纯化（2026-06-17）**：全仓只剩 7 个标签——`bug` / `enhancement`（category）+ 五态 `needs-triage` / `needs-info` / `ready-for-agent` / `ready-for-human` / `wontfix`（state）。旧 `priority/area/type` 已删。See `docs/agents/triage-labels.md`.
