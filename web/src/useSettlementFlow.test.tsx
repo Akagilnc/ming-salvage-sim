@@ -142,12 +142,14 @@ describe("#1625 useSettlementFlow — observation refresh convergence", () => {
     vi.useFakeTimers();
     const inflightState = {
       ...awaitingState,
+      turn: { ...awaitingState.turn, phase: "settling" },
       pending_decisions: [],
       settlement_entry_inflight: true,
     } as GameState;
+    const visibleDesk = [validDecision];
     const settledState = {
-      ...preClickState,
-      turn: { ...preClickState.turn, turn: 6 },
+      ...awaitingState,
+      pending_decisions: visibleDesk,
       settlement_entry_inflight: false,
     } as GameState;
     const pollError = new Error("transient poll failure");
@@ -168,13 +170,13 @@ describe("#1625 useSettlementFlow — observation refresh convergence", () => {
       await vi.advanceTimersByTimeAsync(1);
     });
     expect(loadState).toHaveBeenCalledTimes(1);
-    expect(host.querySelector('[data-testid="phase"]')?.textContent).toBe("awaiting_decision");
+    expect(host.querySelector('[data-testid="phase"]')?.textContent).toBe("settling");
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1000);
     });
     expect(loadState).toHaveBeenCalledTimes(2);
-    expect(host.querySelector('[data-testid="phase"]')?.textContent).toBe("awaiting_decision");
+    expect(host.querySelector('[data-testid="phase"]')?.textContent).toBe("settling");
     expect(host.querySelector('[data-testid="error"]')?.textContent).toBe("");
     expect(warn.mock.calls.some((call) => call.includes(pollError))).toBe(true);
 
@@ -182,7 +184,8 @@ describe("#1625 useSettlementFlow — observation refresh convergence", () => {
       await vi.advanceTimersByTimeAsync(1000);
     });
     expect(loadState).toHaveBeenCalledTimes(3);
-    expect(host.querySelector('[data-testid="phase"]')?.textContent).toBe("player");
+    expect(host.querySelector('[data-testid="phase"]')?.textContent).toBe("awaiting_decision");
+    expect(host.querySelector('[data-testid="pending-count"]')?.textContent).toBe("1");
     expect(host.querySelector('[data-testid="error"]')?.textContent).toBe("");
     expect(vi.getTimerCount()).toBe(0);
     cleanup();

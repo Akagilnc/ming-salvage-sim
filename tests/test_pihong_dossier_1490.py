@@ -3813,6 +3813,42 @@ def test_657_summon_single_flight_concurrent_http(web_game, monkeypatch):
     ).fetchone()["status"] == "consumed"
 
 
+def test_1625_phase1_publication_projects_only_coherent_recovery_tuples(web_game):
+    """#1625：phase1 发布横穿状态口时，旧相位携在飞；新相位携真实案头。"""
+    db, state = web_game.db, web_game.state
+    state.turn_phase = TurnPhase.SETTLING.value
+    db.save_state(state)
+    db.conn.commit()
+    web_app._begin_settlement_entry(web_game)
+
+    old = asyncio.run(_get_state())
+    assert old["turn"]["phase"] == TurnPhase.SETTLING.value
+    assert old["settlement_entry_inflight"] is True
+    assert old["pending_decisions"] == []
+    assert old["resume_phase2"] is False
+
+    desk = _657_plant_awaiting_web(web_game, drafts=[{
+        "title": "发布中的案头", "context": "c",
+        "options": [
+            {"label": "准", "hint": "h", "draft_capability": "approve"},
+            {"label": "驳", "hint": "h", "draft_capability": "reject"},
+        ],
+        "actor_name": "杨嗣昌", "actor_office": "兵部尚书", "actor_faction": "帝党",
+    }])
+    published = asyncio.run(_get_state())
+    assert published["turn"]["phase"] == TurnPhase.AWAITING_DECISION.value
+    assert published["settlement_entry_inflight"] is True
+    assert published["pending_decisions"] == desk
+    assert published["resume_phase2"] is False
+
+    web_app._end_settlement_entry(web_game)
+    durable = asyncio.run(_get_state())
+    assert durable["turn"]["phase"] == TurnPhase.AWAITING_DECISION.value
+    assert durable["settlement_entry_inflight"] is False
+    assert durable["pending_decisions"] == desk
+    assert durable["resume_phase2"] is False
+
+
 def test_1625_inflight_phase2_does_not_advertise_resume(web_game, monkeypatch):
     """#1625：在飞 phase2 吃空案头时 GET 不得 resume_phase2。"""
     from ming_sim.models import TurnPhase

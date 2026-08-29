@@ -1411,20 +1411,25 @@ class WebGame:
         snap = self._month_open_snapshot()
         settlement_display = snap is not None
         display_metrics = self._display_metrics()
-        awaiting_decision = self.state.turn_phase == TurnPhase.AWAITING_DECISION.value
-        # #1625: one GET derives all three recovery fields from one desk snapshot,
-        # followed by one inflight sample.  Thus resume cannot be true with either
-        # a non-empty sampled desk or an inflight settlement entry.
+        # #1625: phase and entry count form one recovery snapshot.  The entry
+        # lifecycle keeps the count non-zero until phase1 publication is complete,
+        # so this cannot pair an old phase with a post-publication zero count.
+        with _settlement_entry_lock(self):
+            turn_phase = self.state.turn_phase
+            settlement_entry_inflight = (
+                int(getattr(self, "_settlement_entry_inflight", 0) or 0) > 0
+            )
+        awaiting_decision = turn_phase == TurnPhase.AWAITING_DECISION.value
+        # One GET derives desk and resume from that same phase snapshot.
         pending_decisions = self.session.pending_decisions() if awaiting_decision else []
         durable_phase2_resume = (
             awaiting_decision
             and self.db.get_resolve_context(self.state.turn) is not None
             and not pending_decisions
         )
-        settlement_entry_inflight = _settlement_entry_inflight(self) > 0
         return {
             "turn": {"year": self.state.year, "period": self.state.period,
-                     "turn": self.state.turn, "phase": self.state.turn_phase,
+                     "turn": self.state.turn, "phase": turn_phase,
                      "settlement_display": settlement_display,
                      # #1356：年号纪年投影单真源，前端报头直显，禁第二份 epoch 表
                      "reign_period_label": reign_period_label(

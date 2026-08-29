@@ -46,7 +46,10 @@ export function useSettlementFlow({
     if (!state) return;
     // #1625: an observation-page refresh can land while another settlement entry
     // is consuming the desk. Reuse the injected state loader until that wait ends.
-    if (state.turn.phase === "awaiting_decision" && state.settlement_entry_inflight) {
+    if (
+      (state.turn.phase === "settling" || state.turn.phase === "awaiting_decision")
+      && state.settlement_entry_inflight
+    ) {
       let cancelled = false;
       let refreshTimer: number;
       const refresh = () => {
