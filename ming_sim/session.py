@@ -605,6 +605,27 @@ def _typed_grant_candidate_present(
     return any(_ok(c) for c in (intent_candidates or []))
 
 
+def _skip_directive_tool_candidate(
+    args: Dict[str, Any], intent_candidates: Optional[List[Dict[str, Any]]],
+    *, grant_present: bool,
+) -> bool:
+    """Suppress only a classifier sibling with the same typed identity.
+
+    An untyped proposal accompanying a materialized grant is its generic narrative
+    twin. A distinct typed dossier identity remains an independent directive.
+    """
+    identity = str(args.get("dossier_action_type") or "").strip()
+    if not identity:
+        return grant_present
+    if identity == "grant_allocation":
+        return grant_present
+    return any(
+        isinstance(candidate, dict)
+        and str(candidate.get("dossier_action_type") or "").strip() == identity
+        for candidate in (intent_candidates or [])
+    )
+
+
 def coalesce_pending_action_id(prior: int, staged: int) -> int:
     """Same-turn tool aggregation: non-zero staged wins; zero must not erase prior success."""
     staged_id = int(staged or 0)
@@ -1651,17 +1672,20 @@ class GameSession:
                             result.next_minister = target.name
                         # #670 P6'/P7：拒入殿只不设 court_action/next_minister；闸文不进 LLM answer。
             elif tool_name == "propose_directive" or tool_result.startswith("__pending_directive__"):
-                if (
-                    confirmation_turn
-                    or explicit_secret_prefix
-                    or _typed_grant_candidate_present(
-                        None, preclassified_intent, db=self.db, reply=answer,
-                    )
-                ):
-                    continue
                 args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
                 if not isinstance(args, dict):
                     args = {}
+                grant_present = _typed_grant_candidate_present(
+                    None, preclassified_intent, db=self.db, reply=answer,
+                )
+                if (
+                    confirmation_turn
+                    or explicit_secret_prefix
+                    or _skip_directive_tool_candidate(
+                        args, preclassified_intent, grant_present=grant_present,
+                    )
+                ):
+                    continue
                 draft_text = tool_result.removeprefix("__pending_directive__").strip()
                 if not draft_text:
                     draft_text = (args.get("decree_text") or "").strip()
@@ -1696,6 +1720,7 @@ class GameSession:
                             ),
                             issue_id=args.get("issue_id"),
                             issue_disposition=args.get("issue_disposition"),
+                            dossier_action_type=args.get("dossier_action_type"),
                         ),
                     )
                     if stage_failures:
@@ -2550,6 +2575,7 @@ class GameSession:
         backing_dossier_id: object = None,
         issue_id: object = None,
         issue_disposition: object = None,
+        dossier_action_type: object = None,
     ) -> int:
         """API/stream/CLI tool propose_directive → structured candidate seam (#522/#517).
 
@@ -2562,6 +2588,27 @@ class GameSession:
         text = str(draft_text or "").strip()
         if not text:
             return 0
+        typed_dossier = str(dossier_action_type or "").strip()
+        if typed_dossier and typed_dossier != "grant_allocation":
+            payload = {
+                "text": text,
+                "actor": minister_name,
+                "dossier_action_type": typed_dossier,
+            }
+            for key, value in (
+                ("target_id", target_id),
+                ("amount", amount),
+                ("transaction_category", transaction_category),
+                ("backing_dossier_id", backing_dossier_id),
+                ("issue_id", issue_id),
+                ("issue_disposition", issue_disposition),
+            ):
+                if value not in (None, ""):
+                    payload[key] = value
+            return int(self.db.stage_directive_candidate(
+                self.state.turn, minister_name, payload=payload,
+            ) or 0)
+
         # Cue + target bind only to propose_directive draft_text — never message_text.
         if any(cue in text for cue in GameSession._PACIFICATION_TOOL_CUES):
             target = self._mentioned_pacification_target(text)
