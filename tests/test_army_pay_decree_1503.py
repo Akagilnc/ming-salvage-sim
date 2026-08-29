@@ -1132,13 +1132,9 @@ def test_explicit_prefix_keeps_distinct_native_grants(game):
     ).fetchone()["name"]
     candidates = _scripted_xiexang_candidates(
         amount=15, account="太仓", target_id="guanning",
-    ) + candidates_from_classifier_payload({
-        "kind": "grant_allocation", "grant_action": "协饷",
-        "amount": 8, "account": "太仓", "purpose": "补饷",
-        "target_kind": "army", "target_id": "guanning",
-        # 未登记字段来自不可信 classifier，不得伪造内部 draft 来源身份。
-        "_promoted_from_draft": True,
-    }, soft=False)
+    ) + _scripted_xiexang_candidates(
+        amount=8, account="太仓", target_id="guanning",
+    )
     ctx = _ctx(
         db, actor, candidates, state.turn,
         message="拟旨如下：分别拨关宁军饷十五万与八万两。",
@@ -1157,6 +1153,45 @@ def test_explicit_prefix_keeps_distinct_native_grants(game):
         ).fetchall()
     ]
     assert sorted(int(payload["amount"]) for payload in payloads) == [8, 15]
+
+
+@pytest.mark.parametrize("explicit_prefixed", [False, True])
+def test_distinct_promoted_draft_grant_is_not_an_alias(
+    game, explicit_prefixed,
+):
+    """内容不同的 draft 协饷是第二道真旨，不得被前一 grant 吞掉。"""
+    db, state, _content = game
+    actor = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
+    ).fetchone()["name"]
+    candidates = _scripted_xiexang_candidates(
+        amount=15, account="太仓", target_id="guanning",
+    ) + candidates_from_classifier_payload({
+        "kind": "draft", "draft_action": "拟旨", "grant_action": "协饷",
+        "amount": 8, "account": "太仓", "purpose": "补饷",
+        "target_kind": "army", "target_id": "shaanxi_army",
+    }, soft=False)
+    ctx = _ctx(
+        db, actor, candidates, state.turn,
+        message="分别拨关宁军饷十五万与陕西军饷八万两。",
+        reply="臣遵旨。",
+    )
+    ctx.explicit_prefixed = explicit_prefixed
+
+    run_materialize_pipeline(ctx)
+
+    payloads = [
+        json.loads(row["payload_json"])
+        for row in db.conn.execute(
+            "SELECT payload_json FROM pending_actions "
+            "WHERE turn=? AND kind='directive'",
+            (state.turn,),
+        ).fetchall()
+    ]
+    assert sorted(
+        (str(payload["target_id"]), int(payload["amount"]))
+        for payload in payloads
+    ) == [("guanning", 15), ("shaanxi_army", 8)]
 
 
 def test_nonprefixed_grant_and_promoted_draft_alias_stage_once(game):
@@ -1500,6 +1535,47 @@ def test_incomplete_draft_xiexang_payload_does_not_promote():
     assert candidate[0]["kind"] == "draft"
 
 
+def test_invalid_target_draft_xiexang_falls_back_to_draft(game, monkeypatch):
+    """draft 投影不满足真实 grant 前置时仍按普通拟旨成案；native 仍另测 fail-loud。"""
+    import ming_sim.cli_backend as cb
+
+    db, state, _content = game
+    actor = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
+    ).fetchone()["name"]
+    candidate = candidates_from_classifier_payload(
+        {
+            "kind": "draft", "draft_action": "拟旨", "grant_action": "协饷",
+            "amount": 15, "account": "太仓", "purpose": "补饷",
+            "target_kind": "army", "target_id": "liaodong",
+        },
+        soft=False,
+    )
+    monkeypatch.setattr(
+        cb,
+        "extract_draft_intent_with_roster_heal",
+        lambda **_kwargs: {
+            "draft_action": "拟旨",
+            "draft_text": "准拨辽东军饷，数目另议。",
+            "target_candidate": "",
+        },
+    )
+    ctx = _ctx(
+        db, actor, candidate, state.turn,
+        message="拟一道拨辽东军饷的旨。",
+        reply="准拨辽东军饷，数目另议。",
+    )
+
+    run_materialize_pipeline(ctx)
+
+    pending_id = int(ctx.out.get("pending_action_id") or 0)
+    assert pending_id > 0
+    pending = json.loads(db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
+    ).fetchone()["payload_json"])
+    assert pending.get("dossier_action_type") != "grant_allocation"
+
+
 def test_draft_kind_with_xiexang_fields_uses_grant_track(game):
     """同次调用 kind=draft 但协饷五字段已在 → 按字段走 grant 单轨。"""
     db, state, content = game
@@ -1518,7 +1594,7 @@ def test_draft_kind_with_xiexang_fields_uses_grant_track(game):
         },
         soft=False,
     )
-    assert candidate[0]["kind"] == "grant_allocation"
+    assert candidate[0]["kind"] == "draft"
     assert candidate[0]["grant_action"] == "协饷"
     ctx = _ctx(
         db, actor, candidate, state.turn,

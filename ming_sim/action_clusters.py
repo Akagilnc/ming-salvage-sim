@@ -18,16 +18,6 @@ from typing import Any, Callable, Dict, FrozenSet, List, Mapping, Optional, Sequ
 EFFECT_NOOP = "noop"
 EFFECT_ANSWER_EXISTING = "answer_existing"
 EFFECT_MATERIALIZE = "materialize"
-_PROMOTED_FROM_DRAFT_KEY = "_promoted_from_draft"
-_PROMOTED_FROM_DRAFT_SENTINEL = object()
-
-
-def is_promoted_draft_candidate(candidate: Mapping[str, Any]) -> bool:
-    """只认本进程归一器生成的 draft 来源身份；classifier 同名字段无权伪造。"""
-    return (
-        candidate.get(_PROMOTED_FROM_DRAFT_KEY)
-        is _PROMOTED_FROM_DRAFT_SENTINEL
-    )
 
 
 @dataclass(frozen=True)
@@ -296,38 +286,7 @@ def normalize_one_candidate(obj: Mapping[str, Any], *, soft: bool) -> Dict[str, 
         out["target_ids"] = obj.get("target_ids")
     elif "目标编号" in obj and obj.get("目标编号") is not None:
         out["target_ids"] = obj.get("目标编号")
-    # CLI classifier 先归一一次，Future join 后还会再归一；保留本模块生成的来源标记，
-    # 让同一句里原生 grant 与其 draft 别名仍能在既有 materialize 去重缝相认。
-    if is_promoted_draft_candidate(obj):
-        out[_PROMOTED_FROM_DRAFT_KEY] = _PROMOTED_FROM_DRAFT_SENTINEL
-    _promote_draft_xiexang_payload(out)
     return out
-
-
-def _promote_draft_xiexang_payload(candidate: Dict[str, Any]) -> None:
-    """#1503：完整 draft 协饷载荷 → grant 单轨；缺项仍留普通拟旨。"""
-    if str(candidate.get("kind") or "").strip() != "draft":
-        return
-    if str(candidate.get("grant_action") or "").strip() != "协饷":
-        return
-    # 完备性只读协饷既有权威缝；升格不得把普通拟旨变成玩家可见硬异常。
-    from ming_sim.action_materialize import (
-        IncompleteXiexangPayloadError,
-        require_explicit_xiexang_fields,
-    )
-    try:
-        require_explicit_xiexang_fields(
-            amount=candidate.get("amount"),
-            account=str(candidate.get("account") or ""),
-            purpose=str(candidate.get("purpose") or ""),
-            target_kind=str(candidate.get("target_kind") or ""),
-            target_id=str(candidate.get("target_id") or ""),
-            cadence=str(candidate.get("cadence") or ""),
-        )
-    except IncompleteXiexangPayloadError:
-        return
-    candidate[_PROMOTED_FROM_DRAFT_KEY] = _PROMOTED_FROM_DRAFT_SENTINEL
-    candidate["kind"] = "grant_allocation"
 
 
 def candidates_from_classifier_payload(raw: Any, *, soft: bool = True) -> List[Dict[str, Any]]:
