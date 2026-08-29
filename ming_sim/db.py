@@ -16114,9 +16114,10 @@ class GameDB:
             elif row["action_type"] == "authorization":
                 # #528 / #611：公开委任只接 authority_changes 授予槽；判后物化。
                 # Skill grants are a distinct character-skill mechanic, not an authority map.
-                self._apply_authorization_verdict_effect(
+                if not self._apply_authorization_verdict_effect(
                     state, row, payload, dossier_id,
-                )
+                ):
+                    return affected_people
             elif row["action_type"] == "secret_authorization":
                 # 密授不归本片（#528）；#611 privileges 仍只经 authority_changes 生产。
                 # Skill grants are a distinct character-skill mechanic, not an authority map.
@@ -16770,11 +16771,14 @@ class GameDB:
 
     def _apply_authorization_verdict_effect(
         self, state, row, payload, dossier_id,
-    ) -> None:
+    ) -> bool:
         """#528：公开委任案卷顺颁后走 #611 authority_changes 授予槽。
 
         完整授予条目：动作=授予 + dossier_id + holder_id + privilege + scope。
         不直写 authority_records，不写 skill_grants / grant_skill。
+        Returns False when duplicate_active_authority was soft-rejected and
+        terminal failure already recorded — caller must return early.
+        Returns True when the grant landed.
         """
         from ming_sim.issues import apply_score_extraction
 
@@ -16815,7 +16819,18 @@ class GameDB:
         item = rows[0] if rows else {"rejected": True, "reason": "授予未落"}
         if item.get("rejected"):
             reason = str(item.get("reason") or "授予被拒")
+            # #1628 / 0150-D5-a：跨案 duplicate 接到 assignment 软通道，不得升格整批。
+            if reason == "duplicate_active_authority":
+                self.transition_decree_dossier(
+                    dossier_id, "executing", commit=False,
+                )
+                self.record_dossier_execution(
+                    dossier_id, "failed", reason, state.turn,
+                    close=True, commit=False,
+                )
+                return False
             raise ValueError(reason)
+        return True
 
     def _apply_revoke_authority_verdict_effect(
         self, state, row, payload, dossier_id,
