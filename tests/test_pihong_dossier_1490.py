@@ -3623,7 +3623,7 @@ def test_657_summon_single_flight_concurrent_http(web_game, monkeypatch):
 
 
 def test_1625_inflight_phase2_does_not_advertise_resume(web_game, monkeypatch):
-    """#1625：在飞 phase2 吃空案头时 GET 不得 resume_phase2；月只推进一次。"""
+    """#1625：在飞 phase2 吃空案头时 GET 不得 resume_phase2。"""
     from ming_sim.models import TurnPhase
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
 
