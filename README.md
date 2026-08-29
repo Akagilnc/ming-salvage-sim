@@ -301,6 +301,7 @@ AI 适合判断官场反应、地方推诿、政策代价、突发事件和叙�
 
 - [省级财政基座设计](docs/FISCAL_PROVINCE_SUBSTRATE.md)
 - [月末结算管线](docs/SETTLEMENT_FLOW.md)
+- [大臣记忆与密令系统](docs/memory-and-secret-orders.md)
 - [LLM 后端基准](docs/LLM_BACKEND_BENCH.md)
 - [系统模块索引](docs/system-modules.md)
 - [设定草案](docs/setting-outline.md)
