@@ -428,6 +428,17 @@ def test_payload_projects_consumable_army_targets_from_real_monthly_board(game):
 
     db, state, _content = game
     simulator_payload = build_simulator_payload(state, db, "", "")
+    enemy_ids = {
+        "manchu_banners_main",
+        "han_liaoren_corps",
+        "mongol_chahar_host",
+        "korean_border_army",
+        "bandit_wangjiayin",
+    }
+    army_board = simulator_payload["armies"]
+    id_index = army_board["cols"].index("id")
+    assert enemy_ids <= {row[id_index] for row in army_board["rows"]}
+
     payload = build_rescript_draft_payload(
         state, "邸报", simulator_payload,
         {"name": "首辅", "office": "内阁首辅", "faction": "阉党"},
@@ -437,6 +448,7 @@ def test_payload_projects_consumable_army_targets_from_real_monthly_board(game):
     assert targets["guanning"]["id"] == "guanning"
     assert targets["guanning"]["name"]
     assert "liaodong" not in targets
+    assert enemy_ids.isdisjoint(targets)
 
 
 def test_generate_rejects_army_id_outside_same_batch_catalog(monkeypatch):

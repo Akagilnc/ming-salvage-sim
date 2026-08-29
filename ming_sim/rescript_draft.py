@@ -247,13 +247,18 @@ def _project_region_targets(table: object) -> List[Dict[str, str]]:
 
 
 def _project_army_targets(table: object) -> List[Dict[str, str]]:
-    """Project the simulator's canonical typed army table into the target catalog."""
-    return _project_board_targets(
+    """Project Ming-controlled armies from the simulator's full army board."""
+    armies = _project_board_targets(
         table,
-        fields=("id", "name", "station"),
-        required=("id", "name"),
+        fields=("id", "name", "station", "owner_power"),
+        required=("id", "name", "owner_power"),
         label="army",
     )
+    return [
+        {field: army[field] for field in ("id", "name", "station")}
+        for army in armies
+        if army["owner_power"] == "ming"
+    ]
 
 
 def _project_board_targets(
