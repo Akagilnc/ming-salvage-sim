@@ -152,7 +152,7 @@ describe("#1625 useSettlementFlow — observation refresh convergence", () => {
     } as GameState;
     const loadState = vi
       .fn<() => Promise<GameState | null>>()
-      .mockResolvedValueOnce({ ...inflightState })
+      .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(settledState);
     const { host, cleanup } = mountHarness({ initial: inflightState, loadState });
 
