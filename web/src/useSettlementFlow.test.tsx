@@ -140,9 +140,11 @@ afterEach(() => {
 describe("#1625 useSettlementFlow — observation refresh convergence", () => {
   it("throttles inflight reloads and converges to the visible phase returned after waiting", async () => {
     vi.useFakeTimers();
+    // Real prior phase while entry is in flight: accept sets settlement_display +
+    // inflight before pre_settle writes SETTLING (still summoning/reviewing).
     const inflightState = {
       ...awaitingState,
-      turn: { ...awaitingState.turn, phase: "settling" },
+      turn: { ...awaitingState.turn, phase: "summoning", settlement_display: true },
       pending_decisions: [],
       settlement_entry_inflight: true,
     } as GameState;
@@ -170,13 +172,13 @@ describe("#1625 useSettlementFlow — observation refresh convergence", () => {
       await vi.advanceTimersByTimeAsync(1);
     });
     expect(loadState).toHaveBeenCalledTimes(1);
-    expect(host.querySelector('[data-testid="phase"]')?.textContent).toBe("settling");
+    expect(host.querySelector('[data-testid="phase"]')?.textContent).toBe("summoning");
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1000);
     });
     expect(loadState).toHaveBeenCalledTimes(2);
-    expect(host.querySelector('[data-testid="phase"]')?.textContent).toBe("settling");
+    expect(host.querySelector('[data-testid="phase"]')?.textContent).toBe("summoning");
     expect(host.querySelector('[data-testid="error"]')?.textContent).toBe("");
     expect(warn.mock.calls.some((call) => call.includes(pollError))).toBe(true);
 
