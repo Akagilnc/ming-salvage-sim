@@ -1024,14 +1024,6 @@ def test_resolve_turn_previews_only_canonical_default_eligible_directives(game, 
             "target_id": "liao-pay-audit",
         },
     )
-    unclear_id = db.stage_pending_action(
-        state.turn, kind="directive", action="拟旨", minister_name=name,
-        target_id=None, payload={
-            "text": "着兵部再议边防。", "_needs_clarification": True,
-            "dossier_action_type": "policy", "target_kind": "issue",
-            "target_id": "border-defense",
-        },
-    )
     invalid_id = db.stage_pending_action(
         state.turn, kind="directive", action="拟旨", minister_name=name,
         target_id=None, payload={
@@ -1078,15 +1070,28 @@ def test_resolve_turn_previews_only_canonical_default_eligible_directives(game, 
     monkeypatch.setattr(session_mod, "write_decree_with_agno", write_decree)
     monkeypatch.setattr(session_mod, "resolve_directives", settle)
 
-    with pytest.raises(ValueError, match="尚有待澄清/未核定拟旨"):
-        session.resolve_turn(inflight_wait_s=0.0)
-    assert not seen, "含糊剩余不得进拟诏/simulator"
-    assert db.conn.execute(
-        "SELECT status FROM pending_actions WHERE id=?", (unclear_id,)
-    ).fetchone()["status"] == "pending"
+    session.resolve_turn(inflight_wait_s=0.0)
+
+    assert [row["text"] for row in seen["write"]] == ["着户部清核辽饷。"]
+    assert seen["settle"] == seen["write"]
+    assert seen["write"][0]["actor"] == name
     assert db.conn.execute(
         "SELECT status FROM pending_actions WHERE id=?", (legal_id,)
-    ).fetchone()["status"] == "pending"
+    ).fetchone()["status"] == "committed"
+    for rejected_id in (invalid_id, malformed_id, non_object_id):
+        assert db.conn.execute(
+            "SELECT status FROM pending_actions WHERE id=?", (rejected_id,)
+        ).fetchone()["status"] == "failed"
+    directive_texts = [
+        row["text"] for row in db.conn.execute(
+            "SELECT text FROM turn_directives WHERE turn=?", (state.turn - 1,)
+        ).fetchall()
+    ]
+    assert directive_texts == ["着户部清核辽饷。"]
+    dossiers = db.list_decree_dossiers()
+    assert [row["pending_action_id"] for row in dossiers] == [legal_id]
+    joined = "".join(row["text"] for row in seen["settle"])
+    assert "兵部再议" not in joined and "内库拨银" not in joined
 
 
 def test_web_advance_without_edict_routes_existing_draft_to_settlement(game, monkeypatch):
