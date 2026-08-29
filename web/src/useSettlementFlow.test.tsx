@@ -131,13 +131,15 @@ function mountHarness(opts: {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   document.body.innerHTML = "";
 });
 
 describe("#1625 useSettlementFlow — observation refresh convergence", () => {
-  it("reloads existing state while settlement entry is inflight until awaiting wait ends", async () => {
+  it("throttles inflight reloads and converges to the visible phase returned after waiting", async () => {
+    vi.useFakeTimers();
     const inflightState = {
       ...awaitingState,
       pending_decisions: [],
@@ -154,15 +156,23 @@ describe("#1625 useSettlementFlow — observation refresh convergence", () => {
       .mockResolvedValueOnce(settledState);
     const { host, cleanup } = mountHarness({ initial: inflightState, loadState });
 
+    expect(loadState).not.toHaveBeenCalled();
     await act(async () => {
-      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(999);
     });
+    expect(loadState).not.toHaveBeenCalled();
     await act(async () => {
-      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(1);
     });
+    expect(loadState).toHaveBeenCalledTimes(1);
+    expect(host.querySelector('[data-testid="phase"]')?.textContent).toBe("awaiting_decision");
 
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
     expect(loadState).toHaveBeenCalledTimes(2);
     expect(host.querySelector('[data-testid="phase"]')?.textContent).toBe("player");
+    expect(vi.getTimerCount()).toBe(0);
     cleanup();
   });
 });
