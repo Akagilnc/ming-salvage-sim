@@ -15,6 +15,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from ming_sim.decree_vocabulary import TARGET_KINDS
+from ming_sim.execution_pressure import write_locality_scope_for_target_kind
 
 from ming_sim.action_clusters import (
     ActionCluster,
@@ -1426,7 +1427,7 @@ def stage_grant_allocation_candidate(
         "mode": mode,
     }
     # #654：每次完整写出 locality_scope，region→非 region 改草须覆盖 merge 旧 single
-    staged["locality_scope"] = "single" if kind == "region" else "none"
+    staged["locality_scope"] = write_locality_scope_for_target_kind(kind)
     if account in {"国库", "内库"}:
         staged["account"] = account
     if cadence in {"一次性", "每月"}:
@@ -2154,7 +2155,7 @@ def stage_authorization_candidate(
         "mode": mode,
     }
     # #654：每次完整写出 locality_scope，region→非 region 改草须覆盖 merge 旧 single
-    staged["locality_scope"] = "single" if kind == "region" else "none"
+    staged["locality_scope"] = write_locality_scope_for_target_kind(kind)
     if existing_id:
         return db.update_directive_candidate(existing_id, staged)
     return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
