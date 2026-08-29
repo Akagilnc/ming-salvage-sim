@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 
 import httpx
 import pytest
@@ -56,6 +57,13 @@ async def _post_resolve(choices: list[dict]) -> httpx.Response:
             "/api/decree/resolve_decisions/stream",
             json={"choices": choices},
         )
+
+
+async def _get_state() -> dict:
+    async with _client() as client:
+        r = await client.get("/api/game/state")
+        assert r.status_code == 200, r.text
+        return r.json()
 
 
 def _plant_dossier_awaiting(db, state):
@@ -3612,6 +3620,64 @@ def test_657_summon_single_flight_concurrent_http(web_game, monkeypatch):
     assert db.conn.execute(
         "SELECT status FROM chat_turns WHERE id=?", (ctid,),
     ).fetchone()["status"] == "consumed"
+
+
+def test_1625_inflight_phase2_does_not_advertise_resume(web_game, monkeypatch):
+    """#1625：在飞 phase2 吃空案头时 GET 不得 resume_phase2；月只推进一次。"""
+    from ming_sim.models import TurnPhase
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+
+    db, state = web_game.db, web_game.state
+    opt = normalize_rescript_layer_a_option({
+        "label": "备", "hint": "h", "action_type": "assignment",
+        "assignee_name": "", "target_kind": "region", "target_id": "shaanxi",
+        "locality_scope": "single", "region_id": "shaanxi",
+        "transaction_category": "督赈",
+    })
+    desk = _657_plant_awaiting_web(web_game, drafts=[{
+        "title": "在飞窗", "context": "c",
+        "options": [opt, {"label": "x", "hint": "h", "draft_capability": "z"}],
+        "actor_name": "杨嗣昌", "actor_office": "o", "actor_faction": "f",
+    }])
+    key = desk[0]["decision_key"]
+    kind, turn_s, idx_s = key.split(":")
+    db.conn.execute(
+        "UPDATE pending_decisions SET status='decided', choice_json=? "
+        "WHERE kind=? AND turn=? AND idx=?",
+        (json.dumps({"decision_key": key, "action": "follow_draft", "label": "备"},
+                    ensure_ascii=False), kind, int(turn_s), int(idx_s)),
+    )
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
+    db.conn.commit()
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    def _phase2(*_a, **_k):
+        entered.set()
+        assert release.wait(2.0)
+        return "邸报"
+
+    monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _phase2)
+    result = {}
+
+    def _run():
+        result["r"] = asyncio.run(_post_resolve([]))
+
+    t = threading.Thread(target=_run)
+    t.start()
+    assert entered.wait(2.0), "phase2 须进入在飞窗"
+    payload = asyncio.run(_get_state())
+    assert payload["turn"]["phase"] == TurnPhase.AWAITING_DECISION.value
+    assert payload.get("resume_phase2") is False
+    assert payload.get("pending_decisions") == []
+    release.set()
+    t.join(5.0)
+    assert not t.is_alive()
+    assert result["r"].status_code == 200
+    done = asyncio.run(_get_state())
+    assert done.get("resume_phase2") is False
 
 
 def test_657_resume_phase2_signal_empty_desk_http(web_game, monkeypatch):

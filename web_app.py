@@ -1483,8 +1483,14 @@ class WebGame:
         }
 
     def _resume_phase2_signal(self) -> bool:
-        """durable：awaiting_decision + resolve_context 在 + 合并 desk 无 pending。"""
+        """durable：awaiting_decision + resolve_context 在 + 合并 desk 无 pending。
+
+        #1625：结算入口在飞时案头会先被吃空、相位未离 awaiting——不得投影续跑，
+        否则 GET 把在飞窗当成可空 POST 的 ready。框未齐（inflight>0）不得 resume。
+        """
         if self.state.turn_phase != TurnPhase.AWAITING_DECISION.value:
+            return False
+        if _settlement_entry_inflight(self) > 0:
             return False
         ctx = self.db.get_resolve_context(self.state.turn)
         if ctx is None:
