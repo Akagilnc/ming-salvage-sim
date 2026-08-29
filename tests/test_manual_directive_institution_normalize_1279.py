@@ -106,6 +106,22 @@ def test_capture_manual_directive_drops_ministry_name_as_participant(game, monke
     dv = session.add_directive(text, dossier_payload=payload)
     assert dv.id > 0
     assert db.list_directives(state)
+    payload["assignee"] = "户部"
+    db.conn.execute(
+        "UPDATE turn_directives SET dossier_payload_json=? WHERE id=?",
+        (json.dumps(payload, ensure_ascii=False), int(dv.id)),
+    )
+    db.conn.commit()
+    db.ensure_dossiers_for_draft_directives(state)
+    rows = db.list_decree_dossiers()
+    assert rows
+    for row in rows:
+        roster = row.get("participant_roster") or []
+        ids = [
+            str(e.get("character_id") or "")
+            for e in roster if isinstance(e, dict)
+        ]
+        assert "户部" not in ids
 
 
 def test_web_create_directive_accepts_ministry_subject_without_409(game, monkeypatch):
