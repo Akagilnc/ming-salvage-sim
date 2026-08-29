@@ -3814,38 +3814,69 @@ def test_657_summon_single_flight_concurrent_http(web_game, monkeypatch):
 
 
 def test_1625_phase1_publication_projects_only_coherent_recovery_tuples(web_game):
-    """#1625：phase1 发布横穿状态口时，旧相位携在飞；新相位携真实案头。"""
-    db, state = web_game.db, web_game.state
+    """#1625：真实 GET 横穿 phase1 发布时，旧相位必须携带 typed in-flight。"""
+    db, original_state = web_game.db, web_game.state
+    phase_sampled = threading.Event()
+    phase_published = threading.Event()
+    entry_ended = threading.Event()
+    entry_lock = web_app._settlement_entry_lock(web_game)
+
+    class PhaseRaceState(type(original_state)):
+        _race_armed = False
+
+        def __getattribute__(self, name):
+            value = super().__getattribute__(name)
+            if name == "turn_phase" and super().__getattribute__("_race_armed"):
+                super().__setattr__("_race_armed", False)
+                phase_sampled.set()
+                assert phase_published.wait(2.0), "phase1 publication did not complete"
+                # Before the fix state_payload held no entry lock here, so require
+                # the real entry finally to finish and deterministically expose its
+                # mixed old-phase/zero-count tuple.  With the fix, returning lets
+                # the snapshot release that lock and the finally complete afterward.
+                if not entry_lock.locked():
+                    assert entry_ended.wait(2.0), "settlement entry did not finish"
+            return value
+
+    state = PhaseRaceState(**original_state.__dict__)
     state.turn_phase = TurnPhase.SETTLING.value
+    web_game.session.state = state
     db.save_state(state)
     db.conn.commit()
     web_app._begin_settlement_entry(web_game)
 
-    old = asyncio.run(_get_state())
-    assert old["turn"]["phase"] == TurnPhase.SETTLING.value
-    assert old["settlement_entry_inflight"] is True
-    assert old["pending_decisions"] == []
-    assert old["resume_phase2"] is False
+    desk_holder = {}
 
-    desk = _657_plant_awaiting_web(web_game, drafts=[{
-        "title": "发布中的案头", "context": "c",
-        "options": [
-            {"label": "准", "hint": "h", "draft_capability": "approve"},
-            {"label": "驳", "hint": "h", "draft_capability": "reject"},
-        ],
-        "actor_name": "杨嗣昌", "actor_office": "兵部尚书", "actor_faction": "帝党",
-    }])
-    published = asyncio.run(_get_state())
-    assert published["turn"]["phase"] == TurnPhase.AWAITING_DECISION.value
-    assert published["settlement_entry_inflight"] is True
-    assert published["pending_decisions"] == desk
-    assert published["resume_phase2"] is False
+    def _publish_phase1():
+        assert phase_sampled.wait(2.0), "GET did not sample phase"
+        desk_holder["desk"] = _657_plant_awaiting_web(web_game, drafts=[{
+            "title": "发布中的案头", "context": "c",
+            "options": [
+                {"label": "准", "hint": "h", "draft_capability": "approve"},
+                {"label": "驳", "hint": "h", "draft_capability": "reject"},
+            ],
+            "actor_name": "杨嗣昌", "actor_office": "兵部尚书", "actor_faction": "帝党",
+        }])
+        phase_published.set()
+        web_app._end_settlement_entry(web_game)
+        entry_ended.set()
 
-    web_app._end_settlement_entry(web_game)
+    publisher = threading.Thread(target=_publish_phase1)
+    publisher.start()
+    state._race_armed = True
+    crossed = asyncio.run(_get_state())
+    publisher.join(5.0)
+    assert not publisher.is_alive()
+
+    assert crossed["turn"]["phase"] == TurnPhase.SETTLING.value
+    assert crossed["settlement_entry_inflight"] is True
+    assert crossed["pending_decisions"] == []
+    assert crossed["resume_phase2"] is False
+
     durable = asyncio.run(_get_state())
     assert durable["turn"]["phase"] == TurnPhase.AWAITING_DECISION.value
     assert durable["settlement_entry_inflight"] is False
-    assert durable["pending_decisions"] == desk
+    assert durable["pending_decisions"] == desk_holder["desk"]
     assert durable["resume_phase2"] is False
 
 
