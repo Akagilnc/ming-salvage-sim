@@ -2975,6 +2975,16 @@ def _settle_after_extract_body(
     from ming_sim.rescript_actions import clear_return_revise_choice_anchors
     clear_return_revise_choice_anchors(db, None)
     state.next_period()
+    # 颁诏前要求澄清的拟旨不会在 commit_pending_actions 中落印；推进后把它们移交新回合，
+    # 使当前 turn 的唯一发现口仍能供后续召对核定，并解除已关闭召对夜的绑定。
+    for pending_action in db.list_pending_actions(before_turn):
+        prepared = db._prepare_pending_directive(state, pending_action, content=content)
+        if prepared["classification"] == "needs_clarification":
+            db.conn.execute(
+                "UPDATE pending_actions "
+                "SET turn=?, night_id=0, night_approved=0 WHERE id=?",
+                (int(state.turn), int(pending_action["id"])),
+            )
     # 不变式先验后再写：assert 排在 clear 之后的话，失败时重试真源已被删（cmr r4 codex）。
     assert state.turn == before_turn + 1
     # settling 随推进复位（同笔 save_state 落库）：不复位的话下一回合 pre_settle 被守门

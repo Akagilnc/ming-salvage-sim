@@ -705,6 +705,7 @@ def create_rescript_revise_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Ag
             '{"options":[{...},...]}' "——禁止 items 数组、禁止草稿列表外壳。\n"
             "每个 option 须含 label/hint/action_type/target_kind/target_id/"
             "locality_scope/assignee_name/region_id/army_id 等层 A 键。"
+            "军队目标的 target_id 只可从同批 army_targets 中选择。"
         ),
     ]
     return Agent(
