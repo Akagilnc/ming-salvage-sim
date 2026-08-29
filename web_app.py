@@ -1411,6 +1411,17 @@ class WebGame:
         snap = self._month_open_snapshot()
         settlement_display = snap is not None
         display_metrics = self._display_metrics()
+        awaiting_decision = self.state.turn_phase == TurnPhase.AWAITING_DECISION.value
+        # #1625: one GET derives all three recovery fields from one desk snapshot,
+        # followed by one inflight sample.  Thus resume cannot be true with either
+        # a non-empty sampled desk or an inflight settlement entry.
+        pending_decisions = self.session.pending_decisions() if awaiting_decision else []
+        durable_phase2_resume = (
+            awaiting_decision
+            and self.db.get_resolve_context(self.state.turn) is not None
+            and not pending_decisions
+        )
+        settlement_entry_inflight = _settlement_entry_inflight(self) > 0
         return {
             "turn": {"year": self.state.year, "period": self.state.period,
                      "turn": self.state.turn, "phase": self.state.turn_phase,
@@ -1469,36 +1480,17 @@ class WebGame:
             "pending_non_directive_action_count": len(visible_non_directive_pending),
             "failed_secret_order_count": sum(
                 1 for _a in self.db.list_failed_secret_order_actions()),
-            "pending_decisions": (
-                self.session.pending_decisions()
-                if self.state.turn_phase == TurnPhase.AWAITING_DECISION.value else []
-            ),
+            "pending_decisions": pending_decisions,
             # #657：phase1 已落 decided、desk 只查 pending 为空时，投影 typed 续跑信号。
             # 不把 decided 塞回 pending 列表；前端空 POST 既有 resolve_decisions/stream。
-            "resume_phase2": self._resume_phase2_signal(),
+            "resume_phase2": durable_phase2_resume and not settlement_entry_inflight,
             # #1625：只投影进程内既有入口计数；供刷新/重拉区分在飞与真暂停。
-            "settlement_entry_inflight": _settlement_entry_inflight(self) > 0,
+            "settlement_entry_inflight": settlement_entry_inflight,
             "last_decree": self.last_decree,
             "last_report": self.last_report,
             # #671：上一已完成月王承恩独立递话（与 last_report 同级 typed 字段）
             "last_attendant_message": self.db.previous_turn_attendant_message(self.state),
         }
-
-    def _resume_phase2_signal(self) -> bool:
-        """durable：awaiting_decision + resolve_context 在 + 合并 desk 无 pending。
-
-        #1625：结算入口在飞时案头会先被吃空、相位未离 awaiting——不得投影续跑，
-        否则 GET 把在飞窗当成可空 POST 的 ready。框未齐（inflight>0）不得 resume。
-        """
-        if self.state.turn_phase != TurnPhase.AWAITING_DECISION.value:
-            return False
-        if _settlement_entry_inflight(self) > 0:
-            return False
-        ctx = self.db.get_resolve_context(self.state.turn)
-        if ctx is None:
-            return False
-        desk = self.session.pending_decisions()
-        return len(desk) == 0
 
     # ── 聊天 ──────────────────────────────────────────────────────────────
     def _persistent_chat_minister(self, minister_name: str) -> bool:

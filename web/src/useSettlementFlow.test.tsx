@@ -135,6 +135,37 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 
+describe("#1625 useSettlementFlow — observation refresh convergence", () => {
+  it("reloads existing state while settlement entry is inflight until awaiting wait ends", async () => {
+    const inflightState = {
+      ...awaitingState,
+      pending_decisions: [],
+      settlement_entry_inflight: true,
+    } as GameState;
+    const settledState = {
+      ...preClickState,
+      turn: { ...preClickState.turn, turn: 6 },
+      settlement_entry_inflight: false,
+    } as GameState;
+    const loadState = vi
+      .fn<() => Promise<GameState | null>>()
+      .mockResolvedValueOnce({ ...inflightState })
+      .mockResolvedValueOnce(settledState);
+    const { host, cleanup } = mountHarness({ initial: inflightState, loadState });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(loadState).toHaveBeenCalledTimes(2);
+    expect(host.querySelector('[data-testid="pending-count"]')?.textContent).toBe("0");
+    cleanup();
+  });
+});
+
 describe("#1351 useSettlementFlow — advanceWithoutEdict 令牌与 409 幂等", () => {
   it("POST 携 state.turn 为 expected_turn", async () => {
     const fetchMock = vi.fn(async () => ({
