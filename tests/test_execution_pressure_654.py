@@ -24,6 +24,7 @@ from ming_sim.execution_pressure import (
     ming_province_ids,
     normalize_locality_scope,
     resolve_dossier_region_ids,
+    write_locality_scope_for_target_kind,
 )
 from ming_sim.paths import bundled_path
 from ming_sim.simulation import build_extractor_shared_context, build_simulator_payload
@@ -61,6 +62,43 @@ def test_normalize_locality_scope(raw, expected):
 def test_normalize_locality_scope_rejects_unknown():
     with pytest.raises(ValueError, match="locality_scope"):
         normalize_locality_scope("全省")
+
+
+def test_write_locality_scope_for_target_kind():
+    assert write_locality_scope_for_target_kind("region") == "single"
+    assert write_locality_scope_for_target_kind("issue") == "none"
+    assert write_locality_scope_for_target_kind("character") == "none"
+
+
+def test_mapper_overwrites_llm_locality_scope_from_target_kind():
+    from ming_sim.rescript_actions import map_rescript_option_or_choice
+
+    qa_shape = map_rescript_option_or_choice({
+        "action_type": "authorization",
+        "label": "赈抚",
+        "target_kind": "issue",
+        "target_id": "relief",
+        "locality_scope": "single",
+        "holder_id": "毕自严",
+        "privilege": "便宜行事",
+    })
+    assert qa_shape["locality_scope"] == "none"
+    assert resolve_dossier_region_ids(
+        None,
+        action_type="authorization",
+        payload=qa_shape,
+    ) == [""]
+
+    region_shape = map_rescript_option_or_choice({
+        "action_type": "authorization",
+        "label": "陕赈",
+        "target_kind": "region",
+        "target_id": "shaanxi",
+        "locality_scope": "none",
+        "holder_id": "毕自严",
+        "privilege": "便宜行事",
+    })
+    assert region_shape["locality_scope"] == "single"
 
 
 # ── 距离档（r4-A / D1–D6）────────────────────────────────────────
