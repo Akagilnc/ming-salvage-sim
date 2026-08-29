@@ -63,6 +63,37 @@ def test_normalize_locality_scope_rejects_unknown():
         normalize_locality_scope("全省")
 
 
+def test_mapper_overwrites_llm_locality_scope_from_target_kind():
+    from ming_sim.rescript_actions import map_rescript_option_or_choice
+
+    qa_shape = map_rescript_option_or_choice({
+        "action_type": "authorization",
+        "label": "赈抚",
+        "target_kind": "issue",
+        "target_id": "relief",
+        "locality_scope": "single",
+        "holder_id": "毕自严",
+        "privilege": "便宜行事",
+    })
+    assert qa_shape["locality_scope"] == "none"
+    assert resolve_dossier_region_ids(
+        None,
+        action_type="authorization",
+        payload=qa_shape,
+    ) == [""]
+
+    region_shape = map_rescript_option_or_choice({
+        "action_type": "authorization",
+        "label": "陕赈",
+        "target_kind": "region",
+        "target_id": "shaanxi",
+        "locality_scope": "none",
+        "holder_id": "毕自严",
+        "privilege": "便宜行事",
+    })
+    assert region_shape["locality_scope"] == "single"
+
+
 # ── 距离档（r4-A / D1–D6）────────────────────────────────────────
 
 
