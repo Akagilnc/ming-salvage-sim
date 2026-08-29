@@ -44,6 +44,12 @@ export function useSettlementFlow({
   // #657：typed resume_phase2 时空 pending 不报 PAUSED，接到 phase2 空 POST 续跑。
   React.useEffect(() => {
     if (!state) return;
+    // #1625: an observation-page refresh can land while another settlement entry
+    // is consuming the desk. Reuse the injected state loader until that wait ends.
+    if (state.turn.phase === "awaiting_decision" && state.settlement_entry_inflight) {
+      void loadState();
+      return;
+    }
     const route = routeRefreshDecisions(
       state.turn.phase,
       state.pending_decisions || [],
@@ -55,7 +61,7 @@ export function useSettlementFlow({
       setPendingDecisions((prev) => replacePendingDecisionsOnRefresh(prev, next) || []);
     }
     if (route.error !== null) setPausedDecisionError(route.error);
-  }, [state]);
+  }, [state, loadState]);
 
   // 颁诏/续裁共用：消费 SSE 推演流（settleStream.ts），stage/thinking/text 实时更新进度区。
   const consumeSettle = (response: Response) => consumeSettleStream(response, {
