@@ -25,6 +25,7 @@ from ming_sim.action_clusters import (
     EFFECT_NOOP,
     cluster_by_kind,
     install_action_catalog,
+    is_promoted_draft_candidate,
     materialize_clusters_ordered,
     validate_action_candidate_shape,
 )
@@ -92,7 +93,7 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
             candidates.sort(
                 key=lambda candidate: (
                     str(candidate.get("kind") or "") != "grant_allocation",
-                    bool(candidate.get("_promoted_from_draft")),
+                    is_promoted_draft_candidate(candidate),
                 )
             )
         kind_counts: Dict[str, int] = {}
@@ -108,7 +109,7 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
                 and ctx.explicit_prefixed
                 and (
                     kind == "draft"
-                    or bool(candidate.get("_promoted_from_draft"))
+                    or is_promoted_draft_candidate(candidate)
                 )
             ):
                 continue
