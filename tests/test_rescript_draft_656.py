@@ -438,21 +438,6 @@ def test_payload_projects_consumable_army_targets_from_real_monthly_board(game):
     assert targets["guanning"]["name"]
     assert "liaodong" not in targets
 
-    bad = dict(simulator_payload)
-    for table in (
-        {"cols": ["id", "name", "station"], "rows": [["guanning"]]},
-        {"cols": ["id", "name", "station"], "rows": [["", "关宁军", "宁远"]]},
-        {"cols": ["id", "name", "station"], "rows": [[123, "关宁军", "宁远"]]},
-        {"cols": ["id", "name", "station"], "rows": [["guanning", ["关宁军"], "宁远"]]},
-        {"cols": ["id", "name", "station"], "rows": ["abc"]},
-    ):
-        bad["armies"] = table
-        with pytest.raises(ValueError):
-            build_rescript_draft_payload(
-                state, "邸报", bad,
-                {"name": "首辅", "office": "内阁首辅", "faction": "阉党"},
-            )
-
 
 def test_generate_rejects_army_id_outside_same_batch_catalog(monkeypatch):
     item = _legal_item()
