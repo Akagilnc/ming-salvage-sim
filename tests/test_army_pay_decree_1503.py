@@ -1275,10 +1275,15 @@ def test_nonprefixed_grant_and_promoted_draft_alias_stage_once(game):
     ).fetchone()[0] == 1
 
 
+@pytest.mark.parametrize(
+    ("tool_identity", "expected_directives"),
+    [("", 1), ("assignment", 2)],
+)
 def test_web_stream_propose_directive_skips_when_typed_grant_present(
     tmp_path, monkeypatch, _offline_scene_beat_generator,
+    tool_identity, expected_directives,
 ):
-    """真 HTTP /chat/stream：propose_directive + typed grant 只落一条拨款 pending。"""
+    """真 HTTP：无身份孪生跳过，独立 typed tool 与 grant 分别成案。"""
     from fastapi.testclient import TestClient
 
     import ming_sim.cli_backend as cb
@@ -1297,7 +1302,11 @@ def test_web_stream_propose_directive_skips_when_typed_grant_present(
             tools = [SimpleNamespace(
                 tool_name="propose_directive",
                 result="__pending_directive__敕户部发太仓银十五万两协济关宁军前。",
-                arguments={"decree_text": "敕户部发太仓银十五万两协济关宁军前。"},
+                arguments={
+                    "decree_text": "敕户部发太仓银十五万两协济关宁军前。",
+                    "dossier_action_type": tool_identity,
+                    "target_id": "hubu" if tool_identity else "",
+                },
             )]
             yield SimpleNamespace(
                 event="RunContent",
@@ -1354,8 +1363,19 @@ def test_web_stream_propose_directive_skips_when_typed_grant_present(
             (game.state.turn,),
         ).fetchall())
         payloads = [json.loads(row["payload_json"]) for row in rows]
-        assert len(payloads) == 1
-        assert payloads[0].get("dossier_action_type") == "grant_allocation"
+        assert len(payloads) == expected_directives
+        grants = [
+            payload for payload in payloads
+            if payload.get("dossier_action_type") == "grant_allocation"
+        ]
+        assert len(grants) == 1
+        if tool_identity:
+            independent = [
+                payload for payload in payloads
+                if payload.get("dossier_action_type") == tool_identity
+            ]
+            assert len(independent) == 1
+            assert independent[0]["target_id"] == "hubu"
     finally:
         try:
             game.session.close()
