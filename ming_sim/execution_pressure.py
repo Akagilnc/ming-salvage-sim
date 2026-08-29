@@ -40,6 +40,11 @@ BAND_MID = "中途之程，全程约二三月量级"
 BAND_FAR = "边远之途，全程约三月以上量级"
 
 
+def write_locality_scope_for_target_kind(target_kind: object) -> str:
+    """#654：每次完整写出 locality_scope；region→single，其余→none。"""
+    return "single" if str(target_kind or "").strip() == "region" else "none"
+
+
 def normalize_locality_scope(raw: object) -> str:
     """{'全国'/'单省'/'无'/缺省 → national/single/none}；枚举外 fail-loud。"""
     if raw is None:
