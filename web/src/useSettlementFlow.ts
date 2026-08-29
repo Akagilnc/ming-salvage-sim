@@ -73,7 +73,6 @@ export function useSettlementFlow({
       state.turn.phase,
       state.pending_decisions || [],
       state.resume_phase2,
-      state.settlement_entry_inflight,
     );
     if (route.pendingDecisions !== null) {
       const next = route.pendingDecisions;

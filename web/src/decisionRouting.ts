@@ -90,7 +90,6 @@ export function routeRefreshDecisions(
   phase: string | undefined,
   events: unknown[],
   resumePhase2Signal?: boolean,
-  settlementEntryInflight?: boolean,
 ): DecisionRouteOutcome {
   // #1307：settling 中间态 pending=[] 正常——轮询/等待呈现，不报错不喊重拉。
   if (phase === "settling") {
@@ -99,10 +98,8 @@ export function routeRefreshDecisions(
   if (phase !== "awaiting_decision") {
     return { pendingDecisions: null, error: null };
   }
-  // #1625：入口在飞沿用 settling 的等待呈现，不打回、不挂续跑。
-  if (settlementEntryInflight) {
-    return { pendingDecisions: null, error: null };
-  }
+  // #1625 inflight wait is owned by useSettlementFlow's refresh effect gate;
+  // this path only runs after inflight is false.
   // #1374/#1418 r2 / #657：phase2 在办——不重开批红；接到 settle-resume。
   if (resumePhase2Signal || isAllDecisionsDecided(events)) {
     return { pendingDecisions: null, error: null, resumePhase2: true };

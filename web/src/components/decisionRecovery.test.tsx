@@ -140,16 +140,6 @@ describe("decision routing — refresh entry (routeRefreshDecisions)", () => {
     expect(route.resumePhase2).toBe(true);
   });
 
-  it("#1625 awaiting 空案头且入口在飞：刷新与重拉都只等待", () => {
-    const refresh = routeRefreshDecisions("awaiting_decision", [], false, true);
-    const retry = routeRetryDecisions("awaiting_decision", [], false, true);
-    for (const route of [refresh, retry]) {
-      expect(route.pendingDecisions).toBeNull();
-      expect(route.error).toBeNull();
-      expect(route.resumePhase2).toBeFalsy();
-    }
-  });
-
   it("accepts a valid batch on refresh", () => {
     const route = routeRefreshDecisions("awaiting_decision", [validDecision]);
     expect(route.pendingDecisions).toEqual([validDecision]);
@@ -173,6 +163,15 @@ describe("decision routing — refresh entry (routeRefreshDecisions)", () => {
 });
 
 describe("decision routing — retry (routeRetryDecisions: stale-phase vs still-corrupted)", () => {
+  it("#1625 awaiting 空案头且入口在飞：重拉只等待", () => {
+    // refresh inflight wait is owned by useSettlementFlow's effect gate;
+    // routeRefreshDecisions no longer takes an inflight flag.
+    const route = routeRetryDecisions("awaiting_decision", [], false, true);
+    expect(route.pendingDecisions).toBeNull();
+    expect(route.error).toBeNull();
+    expect(route.resumePhase2).toBeFalsy();
+  });
+
   it("clears the error banner when the turn has already advanced (not a failure)", () => {
     const route = routeRetryDecisions("issued", []);
     expect(route.pendingDecisions).toEqual([]);
