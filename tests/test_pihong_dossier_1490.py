@@ -3557,7 +3557,7 @@ def test_657_punishment_name_target_id_conflict_zero_writes(web_game, monkeypatc
 
 
 def test_657_revise_deliberate_strict_contracts_zero_write_on_bad_shape(game, monkeypatch):
-    """revise 拒 monthly items[]；deliberate 拒缺 stance；合法 options 进入 prewrite。"""
+    """revise 拒 monthly items[]/目录外军；deliberate 拒缺 stance；合法 options 进入 prewrite。"""
     from ming_sim.rescript_actions import PrewriteResults
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
     from ming_sim.session import GameSession
@@ -3579,7 +3579,16 @@ def test_657_revise_deliberate_strict_contracts_zero_write_on_bad_shape(game, mo
     }])
     db.save_resolve_context(
         int(state.turn), "诏", "邸报",
-        {"candidate_events": [], "transit_semantics": []},
+        {
+            "candidate_events": [], "transit_semantics": [],
+            "armies": {
+                "cols": ["id", "name", "station", "owner_power"],
+                "rows": [
+                    ["guanning", "关宁军", "宁远", "ming"],
+                    ["manchu_banners_main", "八旗主力", "辽东", "qing"],
+                ],
+            },
+        },
         secret_orders=[], relevant_memories=[],
     )
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
@@ -3611,15 +3620,35 @@ def test_657_revise_deliberate_strict_contracts_zero_write_on_bad_shape(game, mo
     hit = next(r for r in db.list_rescript_drafts() if r["title"] == "改票契约")
     assert hit["status"] == "pending"
 
-    legal_opt = normalize_rescript_layer_a_option({
-        "label": "改后", "hint": "h2", "action_type": "assignment",
-        "assignee_name": "", "target_kind": "region", "target_id": "shaanxi",
-        "locality_scope": "single", "region_id": "shaanxi",
-        "transaction_category": "督赈",
-    })
+    def _military_option(target_id):
+        return normalize_rescript_layer_a_option({
+            "label": "调驻", "hint": "h2", "action_type": "military_order",
+            "assignee_name": "祖大寿", "target_kind": "army", "target_id": target_id,
+            "locality_scope": "none", "region_id": "",
+            "transaction_category": "调驻",
+        })
+
+    seen_payload = {}
+
+    def _outside_army_revise_text(_agent, raw_payload, **_kwargs):
+        seen_payload.update(json.loads(raw_payload))
+        return json.dumps(
+            {"options": [_military_option("manchu_banners_main")]}, ensure_ascii=False,
+        )
+
+    monkeypatch.setattr(agents_mod, "run_agent_text", _outside_army_revise_text)
+    with pytest.raises(RuntimeError, match="不在同批 army_targets"):
+        sess.prepare_rescript_prewrite([{
+            "decision_key": key, "action": "return_revise", "note": "再拟",
+        }])
+    assert seen_payload["army_targets"] == [
+        {"id": "guanning", "name": "关宁军", "station": "宁远"},
+    ]
+    hit = next(r for r in db.list_rescript_drafts() if r["title"] == "改票契约")
+    assert hit["status"] == "pending"
 
     def _ok_revise_text(*_a, **_k):
-        return json.dumps({"options": [legal_opt]}, ensure_ascii=False)
+        return json.dumps({"options": [_military_option("guanning")]}, ensure_ascii=False)
 
     monkeypatch.setattr(agents_mod, "run_agent_text", _ok_revise_text)
     pre = sess.prepare_rescript_prewrite([{
