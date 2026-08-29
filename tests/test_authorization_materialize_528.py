@@ -552,7 +552,6 @@ def test_duplicate_active_authority_soft_fails_second_dossier_not_whole_batch(ga
         (dup["id"],),
     ).fetchone()
     assert dup_row["execution_outcome"] == "failed"
-    assert dup_row["execution_outcome"] != "fulfilled"
     assert dup_row["status"] == "closed"
 
     other_active = [
