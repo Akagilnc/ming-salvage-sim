@@ -1205,12 +1205,13 @@ def apply_monthly_covert_actual_progress(
         fidelity = clamp_fidelity_to_floor(floor, selected)
         inv_target = _investigation_target_of(contract)
         bound_key = ""
+        originated = 0.0
         if inv_target:
             seed_investigation_fact_lanes(db, did, inv_target, commit=False)
-            units, bound_key = advance_investigation_lanes(
+            _, bound_key = advance_investigation_lanes(
                 db, did, inv_target, fidelity, commit=False,
             )
-            originated = 1.0 if units > 0.0 else 0.0
+            units = progress_units_for_state(fidelity)
         else:
             originated = originated_quantity_this_turn(db, did, turn, contract)
             units = monthly_actual_units(
@@ -1280,11 +1281,14 @@ def settle_due_secret_orders(
             continue
         did = int(dossier["id"])
         contract = require_covert_task_contract(dossier)
+        actual = float(db.sum_dossier_actual_progress_units(did))
         if _investigation_target_of(contract):
-            actual = investigation_lane_actual_units(db, did)
+            target = target_progress_units(
+                deadline_span=int(order.get("deadline_span") or 0),
+                due_turn=int(order.get("due_turn") or 0),
+            )
         else:
-            actual = float(db.sum_dossier_actual_progress_units(did))
-        target = contract_target_units(contract)
+            target = contract_target_units(contract)
         reports = list(db.list_dossier_progress(did))
         verdict = decide_secret_order_settlement({
             "actual_units": actual,
