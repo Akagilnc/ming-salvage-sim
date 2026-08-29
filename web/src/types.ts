@@ -399,8 +399,10 @@ export type GameState = {
   pending_non_directive_action_count?: number;  // 可见的非拟旨 pending_actions（不含隐藏新密令候选）
   failed_secret_order_count?: number;
   pending_decisions?: PendingDecision[];
-  /** #657：awaiting + resolve_context + 空 pending desk → 续跑 phase2（空 POST 既有 stream） */
+  /** #657/#1625：awaiting + 空 pending desk + extracted_ready 或行已应用 → 续跑 phase2 */
   resume_phase2?: boolean;
+  /** B.3：resolve_context.extracted is not None（含合法 {}） */
+  extracted_ready?: boolean;
   last_decree: string;
   last_report: string;
   /** #671：上一已完成月王承恩独立递话；空＝无递话区 */

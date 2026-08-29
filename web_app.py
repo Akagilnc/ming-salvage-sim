@@ -1473,24 +1473,27 @@ class WebGame:
                 self.session.pending_decisions()
                 if self.state.turn_phase == TurnPhase.AWAITING_DECISION.value else []
             ),
-            # #657：phase1 已落 decided、desk 只查 pending 为空时，投影 typed 续跑信号。
+            # #657/#1625：空 pending desk 时仅 extracted_ready 或行已应用才投影续跑。
             # 不把 decided 塞回 pending 列表；前端空 POST 既有 resolve_decisions/stream。
             "resume_phase2": self._resume_phase2_signal(),
+            "extracted_ready": self._extracted_ready(),
             "last_decree": self.last_decree,
             "last_report": self.last_report,
             # #671：上一已完成月王承恩独立递话（与 last_report 同级 typed 字段）
             "last_attendant_message": self.db.previous_turn_attendant_message(self.state),
         }
 
+    def _extracted_ready(self) -> bool:
+        ctx = self.db.get_resolve_context(self.state.turn)
+        return ctx is not None and ctx.get("extracted") is not None
+
     def _resume_phase2_signal(self) -> bool:
-        """durable：awaiting_decision + resolve_context 在 + 合并 desk 无 pending。"""
+        """durable：awaiting_decision + 空 pending desk + B.3 续跑谓词。"""
         if self.state.turn_phase != TurnPhase.AWAITING_DECISION.value:
             return False
-        ctx = self.db.get_resolve_context(self.state.turn)
-        if ctx is None:
+        if self.session.pending_decisions():
             return False
-        desk = self.session.pending_decisions()
-        return len(desk) == 0
+        return self.session.empty_choices_resume_allowed()
 
     # ── 聊天 ──────────────────────────────────────────────────────────────
     def _persistent_chat_minister(self, minister_name: str) -> bool:
