@@ -147,6 +147,7 @@ export function useSettlementFlow({
     setSettleThinking("");
     setSettleNarrative("");
     setError("");
+    setPausedDecisionError("");
     try {
       const response = await fetch("/api/decree/resolve_decisions/stream", {
         method: "POST",
@@ -158,11 +159,14 @@ export function useSettlementFlow({
         // #1418 r2：同会话 phase2 失败后 loadState，使 settle-resume 续跑面可挂上
         // （pending=[] 且 error 横幅被清时仍有 affordance）。
         await loadState();
+        const msg = typeof outcome.data === "string" ? outcome.data : (outcome.data.message || "结算失败。");
         if (await surfacePendingActionFailures(outcome.data?.pending_action_failures || [])) {
-          setError(typeof outcome.data === "string" ? outcome.data : (outcome.data.message || "结算失败。"));
+          setPausedDecisionError(msg);
+          setError(msg);
           return;
         }
-        setError(typeof outcome.data === "string" ? outcome.data : (outcome.data.message || "结算失败。"));
+        setPausedDecisionError(msg);
+        setError(msg);
         setBusy("");
         return;
       }
@@ -174,7 +178,9 @@ export function useSettlementFlow({
       return;
     } catch (err) {
       await loadState();
-      setError(err instanceof Error ? err.message : String(err));
+      const msg = err instanceof Error ? err.message : String(err);
+      setPausedDecisionError(msg);
+      setError(msg);
       setBusy("");
     }
   };
