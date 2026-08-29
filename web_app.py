@@ -2452,7 +2452,9 @@ class WebGame:
                     if (
                         confirmation_turn
                         or explicit_secret_prefix
-                        or _typed_grant_candidate_present(None, preclassified_intent)
+                        or _typed_grant_candidate_present(
+                            None, preclassified_intent, db=self.db, reply=answer,
+                        )
                     ):
                         continue
                     args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}

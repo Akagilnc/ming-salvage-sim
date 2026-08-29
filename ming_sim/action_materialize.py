@@ -85,7 +85,9 @@ def _materializable_draft_xiexang(
         or str(candidate.get("grant_action") or "").strip() != "协饷"
     ):
         return candidate, False, None
-    signature = _xiexang_candidate_signature(ctx, candidate)
+    signature = xiexang_candidate_signature(
+        ctx.session.db, ctx.reply, candidate,
+    )
     if signature is None:
         return candidate, False, None
     promoted = dict(candidate)
@@ -93,8 +95,9 @@ def _materializable_draft_xiexang(
     return promoted, True, signature
 
 
-def _xiexang_candidate_signature(
-    ctx: MaterializeCtx,
+def xiexang_candidate_signature(
+    db: Any,
+    text: object,
     candidate: Dict[str, Any],
 ) -> Optional[Tuple[Any, ...]]:
     """同一道可物化协饷的规范化身份；无效载荷不参与别名去重。"""
@@ -102,8 +105,8 @@ def _xiexang_candidate_signature(
         return None
     try:
         resolved = require_materializable_xiexang_payload(
-            ctx.session.db,
-            text=ctx.reply,
+            db,
+            text=text,
             amount=candidate.get("amount"),
             account=str(candidate.get("account") or ""),
             purpose=str(candidate.get("purpose") or ""),
@@ -194,8 +197,8 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
                 candidate_out.get("pending_action_id") or 0
             ) > int(baseline_out.get("pending_action_id") or 0):
                 grant_staged = True
-                staged_signature = signature or _xiexang_candidate_signature(
-                    ctx, candidate,
+                staged_signature = signature or xiexang_candidate_signature(
+                    ctx.session.db, ctx.reply, candidate,
                 )
                 if staged_signature is not None:
                     staged_xiexang_signatures.add(staged_signature)
