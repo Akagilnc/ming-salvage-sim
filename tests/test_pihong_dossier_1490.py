@@ -2582,34 +2582,12 @@ def test_1589_empty_desk_rejects_nonempty_keyless_choices(web_game, monkeypatch)
     assert "event: done" not in r1.text, r1.text
     assert phase2_calls == [], "空 desk + 非空无键载荷须整批拒，不得进 phase2"
 
-    # #1625：零行 + 占位 ctx（extracted is None）空 POST 是假续跑，须拒
-    from ming_sim.models import TurnPhase
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)
-    payload0 = web_game.state_payload()
-    assert payload0.get("resume_phase2") is False
-    assert payload0.get("extracted_ready") is False
-    r_false = asyncio.run(_post_resolve([]))
-    assert r_false.status_code == 200, r_false.text
-    assert "event: error" in r_false.text, r_false.text
-    assert "event: done" not in r_false.text, r_false.text
-    assert phase2_calls == [], "假空案头不得进 phase2"
-
-    # 合法 {} extracted_ready：空 POST 续跑
-    db.save_resolve_context(
-        turn, "诏", "邸报",
-        {"candidate_events": [], "transit_semantics": []},
-        secret_orders=[], relevant_memories=[], extracted={},
-    )
-    state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.save_state(state)
-    payload1 = web_game.state_payload()
-    assert payload1.get("extracted_ready") is True
-    assert payload1.get("resume_phase2") is True
     r2 = asyncio.run(_post_resolve([]))
     assert r2.status_code == 200, r2.text
     assert "event: done" in r2.text, r2.text
-    assert phase2_calls == [1], "extracted_ready 空 choices 续跑仍合法"
+    assert phase2_calls == [1], "真正空 choices 续跑仍合法，走 submit_decisions"
 
 
 def test_657_s5_http_generator_failure_blocks_phase2_and_same_body_retry(
@@ -3673,7 +3651,6 @@ def test_657_resume_phase2_signal_empty_desk_http(web_game, monkeypatch):
     db.conn.commit()
 
     payload = web_game.state_payload()
-    assert payload.get("extracted_ready") is False
     assert payload.get("resume_phase2") is True
     assert payload.get("pending_decisions") == []
 
