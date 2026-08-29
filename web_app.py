@@ -74,7 +74,6 @@ from ming_sim.session import (
     _is_summonable_court_minister,
     _pending_action_failure_payload,
     _typed_grant_candidate_present,
-    _skip_directive_tool_candidate,
     coalesce_pending_action_id,
 )
 from ming_sim.audience_pipeline import run_mindreading_for_turn
@@ -2450,20 +2449,17 @@ class WebGame:
                 res = str(getattr(tool_exec, "result", "") or "")
                 tool_name = getattr(tool_exec, "tool_name", "")
                 if tool_name == "propose_directive" or res.startswith("__pending_directive__"):
-                    args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
-                    if not isinstance(args, dict):
-                        args = {}
-                    grant_present = _typed_grant_candidate_present(
-                        None, preclassified_intent, db=self.db, reply=answer,
-                    )
                     if (
                         confirmation_turn
                         or explicit_secret_prefix
-                        or _skip_directive_tool_candidate(
-                            args, preclassified_intent, grant_present=grant_present,
+                        or _typed_grant_candidate_present(
+                            None, preclassified_intent, db=self.db, reply=answer,
                         )
                     ):
                         continue
+                    args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
+                    if not isinstance(args, dict):
+                        args = {}
                     draft_text = res.removeprefix("__pending_directive__").strip()
                     if not draft_text:
                         draft_text = (args.get("decree_text") or "").strip()
@@ -2486,7 +2482,6 @@ class WebGame:
                                 backing_dossier_id=args.get("backing_dossier_id"),
                                 issue_id=args.get("issue_id"),
                                 issue_disposition=args.get("issue_disposition"),
-                                dossier_action_type=args.get("dossier_action_type"),
                             ),
                         )
                         if stage_failures:

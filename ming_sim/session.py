@@ -583,7 +583,8 @@ def _typed_grant_candidate_present(
 ) -> bool:
     """#1503：classifier 是否已给出可物化的 grant 或 draft 协饷载荷。
 
-    真则显式拟旨前缀不得先落 generic special_decree，改由既有 grant 单轨成案。
+    真则显式拟旨前缀不得先落 generic special_decree，改由既有 grant 单轨成案；
+    tool 叙事孪生亦据此抑制，不另开 identity 矩阵。
     """
     import ming_sim.action_materialize as am  # catalog side-effect ok
 
@@ -597,48 +598,25 @@ def _typed_grant_candidate_present(
         if kind == "grant_allocation":
             return action in valid
         if kind == "draft" and action == "协饷":
-            return am.xiexang_candidate_signature(db, reply, candidate) is not None
+            try:
+                am.require_materializable_xiexang_payload(
+                    db,
+                    text=reply,
+                    amount=candidate.get("amount"),
+                    account=str(candidate.get("account") or ""),
+                    purpose=str(candidate.get("purpose") or ""),
+                    target_kind=str(candidate.get("target_kind") or ""),
+                    target_id=str(candidate.get("target_id") or ""),
+                    cadence=str(candidate.get("cadence") or ""),
+                )
+            except (am.IncompleteXiexangPayloadError, ValueError):
+                return False
+            return True
         return False
 
     if _ok(intent or {}):
         return True
     return any(_ok(c) for c in (intent_candidates or []))
-
-
-def _skip_directive_tool_candidate(
-    args: Dict[str, Any], intent_candidates: Optional[List[Dict[str, Any]]],
-    *, grant_present: bool,
-) -> bool:
-    """Suppress only a classifier sibling with the same typed identity.
-
-    An untyped proposal accompanying a materialized grant is its generic narrative
-    twin. A distinct typed dossier identity remains an independent directive.
-    """
-    identity = str(args.get("dossier_action_type") or "").strip()
-    if not identity:
-        return grant_present
-    if identity == "grant_allocation":
-        return grant_present
-
-    identity_fields = (
-        "dossier_action_type", "target_id", "name", "punish_action",
-        "issue_id", "backing_dossier_id", "transaction_category", "amount",
-    )
-
-    def _identity(candidate: Dict[str, Any]) -> tuple:
-        pairs = []
-        for key in identity_fields:
-            value = candidate.get(key)
-            if value in (None, "", 0, "无"):
-                continue
-            pairs.append((key, str(value).strip()))
-        return tuple(pairs)
-
-    tool_identity = _identity(args)
-    return any(
-        isinstance(candidate, dict) and _identity(candidate) == tool_identity
-        for candidate in (intent_candidates or [])
-    )
 
 
 def coalesce_pending_action_id(prior: int, staged: int) -> int:
@@ -1687,20 +1665,17 @@ class GameSession:
                             result.next_minister = target.name
                         # #670 P6'/P7：拒入殿只不设 court_action/next_minister；闸文不进 LLM answer。
             elif tool_name == "propose_directive" or tool_result.startswith("__pending_directive__"):
-                args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
-                if not isinstance(args, dict):
-                    args = {}
-                grant_present = _typed_grant_candidate_present(
-                    None, preclassified_intent, db=self.db, reply=answer,
-                )
                 if (
                     confirmation_turn
                     or explicit_secret_prefix
-                    or _skip_directive_tool_candidate(
-                        args, preclassified_intent, grant_present=grant_present,
+                    or _typed_grant_candidate_present(
+                        None, preclassified_intent, db=self.db, reply=answer,
                     )
                 ):
                     continue
+                args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
+                if not isinstance(args, dict):
+                    args = {}
                 draft_text = tool_result.removeprefix("__pending_directive__").strip()
                 if not draft_text:
                     draft_text = (args.get("decree_text") or "").strip()
@@ -1735,7 +1710,6 @@ class GameSession:
                             ),
                             issue_id=args.get("issue_id"),
                             issue_disposition=args.get("issue_disposition"),
-                            dossier_action_type=args.get("dossier_action_type"),
                         ),
                     )
                     if stage_failures:
@@ -2590,7 +2564,6 @@ class GameSession:
         backing_dossier_id: object = None,
         issue_id: object = None,
         issue_disposition: object = None,
-        dossier_action_type: object = None,
     ) -> int:
         """API/stream/CLI tool propose_directive → structured candidate seam (#522/#517).
 
@@ -2599,31 +2572,12 @@ class GameSession:
         come only from explicit tool/action-candidate fields — never prose keyword
         or number guessing. Incomplete structured punishment fails loud and never
         degrades to special_decree; ordinary prose discussion keeps the special_decree path.
+        Typed action kinds come only from the classifier → registered handlers;
+        this tool path is not a second typed writer.
         """
         text = str(draft_text or "").strip()
         if not text:
             return 0
-        typed_dossier = str(dossier_action_type or "").strip()
-        if typed_dossier and typed_dossier != "grant_allocation":
-            payload = {
-                "text": text,
-                "actor": minister_name,
-                "dossier_action_type": typed_dossier,
-            }
-            for key, value in (
-                ("target_id", target_id),
-                ("amount", amount),
-                ("transaction_category", transaction_category),
-                ("backing_dossier_id", backing_dossier_id),
-                ("issue_id", issue_id),
-                ("issue_disposition", issue_disposition),
-            ):
-                if value not in (None, ""):
-                    payload[key] = value
-            return int(self.db.stage_directive_candidate(
-                self.state.turn, minister_name, payload=payload,
-            ) or 0)
-
         # Cue + target bind only to propose_directive draft_text — never message_text.
         if any(cue in text for cue in GameSession._PACIFICATION_TOOL_CUES):
             target = self._mentioned_pacification_target(text)

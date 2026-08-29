@@ -1018,16 +1018,10 @@ def test_explicit_draft_prefix_without_grant_candidate_stays_generic(game, monke
     assert _army_row(db)["arrears"] == pytest.approx(before["arrears"])
 
 
-@pytest.mark.parametrize(
-    ("tool_identity", "expected_directives"),
-    [("", 1), ("assignment", 2)],
-)
-def test_real_chat_explicit_prefix_pay_decree_stages_grant_pending(
-    game, monkeypatch, tool_identity, expected_directives,
+def test_real_chat_explicit_prefix_suppresses_untyped_tool_twin(
+    game, monkeypatch,
 ):
-    """真实 session.chat 入口：typed tool identity 决定孪生抑制或独立成案。"""
-    import types
-
+    """真实 session.chat：classifier 已产 grant 时，无类型 tool 叙事孪生不得第二写。"""
     import ming_sim.cli_backend as cb
     import ming_sim.session as session_mod
     from ming_sim.session import GameSession
@@ -1064,11 +1058,7 @@ def test_real_chat_explicit_prefix_pay_decree_stages_grant_pending(
                 tools=[SimpleNamespace(
                     tool_name="propose_directive",
                     result="__pending_directive__敕户部发太仓银十五万两协济关宁军前。",
-                    arguments={
-                        "decree_text": "敕户部发太仓银十五万两协济关宁军前。",
-                        "dossier_action_type": tool_identity,
-                        "target_id": "hubu" if tool_identity else "",
-                    },
+                    arguments={"decree_text": "敕户部发太仓银十五万两协济关宁军前。"},
                 )],
             )
 
@@ -1085,7 +1075,6 @@ def test_real_chat_explicit_prefix_pay_decree_stages_grant_pending(
     sess._retrieve_memories_for_message = lambda message: message
     monkeypatch.setattr(session_mod, "_dump_llm_messages", lambda *a, **k: None)
     monkeypatch.setattr(cb, "classify_cli_action_intent", fake_classify)
-    # 后置串行抽取器不得因前缀复活
     for name in (
         "extract_minister_actions",
         "extract_draft_intent",
@@ -1110,64 +1099,103 @@ def test_real_chat_explicit_prefix_pay_decree_stages_grant_pending(
             (state.turn,),
         ).fetchall()
     ]
-    pending = next(
-        payload for payload in payloads
-        if payload.get("dossier_action_type") == "grant_allocation"
-    )
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM pending_actions WHERE turn=? AND kind='office'",
-        (state.turn,),
-    ).fetchone()[0] == 1
+    assert len(payloads) == 1
+    pending = payloads[0]
     assert pending["dossier_action_type"] == "grant_allocation"
     assert pending["purpose"] == "补饷"
     assert pending["account"] == "国库"
     assert int(pending["amount"]) == 15
     assert pending["target_id"] == "guanning"
     assert db.conn.execute(
-        "SELECT COUNT(*) FROM pending_actions WHERE turn=? AND kind='directive'",
+        "SELECT COUNT(*) FROM pending_actions WHERE turn=? AND kind='office'",
         (state.turn,),
-    ).fetchone()[0] == expected_directives
-    if tool_identity:
-        independent = next(
-            payload for payload in payloads
-            if payload.get("dossier_action_type") == tool_identity
-        )
-        assert independent["target_id"] == "hubu"
-    # 成案前零落账
+    ).fetchone()[0] == 1
     assert int(state.metrics["国库"]) == treasury_before
     assert _army_row(db)["arrears"] == pytest.approx(arrears_before)
 
 
-def test_explicit_prefix_materializes_grant_and_independent_typed_draft(game):
-    """One classifier payload with two typed intents stages two distinct directives."""
-    db, state, _content = game
+def test_promoted_draft_xiexang_durable_one_dossier(game):
+    """单协饷 draft 升格：确认/收夜/颁布后恰一 dossier 且扣库销欠。"""
+    db, state, content = game
+    _set_guanning_arrears(db, 60, central=60, province=0)
+    state.metrics["国库"] = max(int(state.metrics["国库"]), 100)
+    treasury_before = int(state.metrics["国库"])
+    arrears_before = _army_row(db)
+    actor = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
+    ).fetchone()["name"]
+    candidates = candidates_from_classifier_payload({
+        "kind": "draft", "draft_action": "拟旨", "grant_action": "协饷",
+        "amount": 15, "account": "太仓", "purpose": "补饷",
+        "target_kind": "army", "target_id": "guanning",
+    }, soft=False)
+    ctx = _ctx(
+        db, actor, candidates, state.turn,
+        message="拟旨如下：准从太仓拨关宁军饷十五万两。",
+        reply="臣请户部发太仓银十五万两协济关宁。",
+    )
+    ctx.explicit_prefixed = True
+    run_materialize_pipeline(ctx)
+    pending_id = int(ctx.out["pending_action_id"] or 0)
+    assert pending_id > 0
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM pending_actions WHERE turn=? AND kind='directive'",
+        (state.turn,),
+    ).fetchone()[0] == 1
+    pending = json.loads(db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
+    ).fetchone()["payload_json"])
+    assert pending["dossier_action_type"] == "grant_allocation"
+    assert int(pending["amount"]) == 15
+    assert pending["account"] == "国库"
+
+    dossier = _close_night_dossier(db, state, content, pending_id)
+    _promulgate(db, state, content, dossier["id"])
+    moves = [
+        m for m in db.list_economy_moves_for_dossier(dossier["id"])
+        if m.get("purpose") == "补饷" and m.get("target_id") == "guanning"
+    ]
+    assert len(moves) == 1
+    assert int(moves[0]["delta"]) == -15
+    assert int(state.metrics["国库"]) == treasury_before - 15
+    after = _army_row(db)
+    assert after["arrears"] == pytest.approx(float(arrears_before["arrears"]) - 15)
+    assert after["central_pay_arrears"] == pytest.approx(
+        float(arrears_before["central_pay_arrears"]) - 15
+    )
+    assert len([
+        d for d in db.list_decree_dossiers()
+        if d["pending_action_id"] == pending_id
+    ]) == 1
+
+
+def test_explicit_prefix_grant_and_assignment_two_durable_dossiers(game):
+    """grant + 真实 assignment：确认/commit 后两道独立 durable dossiers。"""
+    db, state, content = game
     actor = db.conn.execute(
         "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
     ).fetchone()["name"]
     candidates = _scripted_xiexang_candidates(
         amount=15, account="太仓", target_id="guanning",
     ) + candidates_from_classifier_payload({
-        "kind": "draft",
-        "text": "着户部清查辽饷收支并具册复奏。",
-        "dossier_action_type": "assignment",
+        "kind": "assignment",
+        "title": "清查辽饷收支",
         "target_id": "hubu",
+        "transaction_category": "钱粮",
     }, soft=False)
     ctx = _ctx(
         db, actor, candidates, state.turn,
         message="拟旨如下：拨饷，并另行清查。",
-        reply="臣遵旨。",
+        reply="臣遵旨。拨关宁军饷十五万两，并着户部清查辽饷收支。",
     )
     ctx.explicit_prefixed = True
-
     run_materialize_pipeline(ctx)
 
-    payloads = [
-        json.loads(row["payload_json"])
-        for row in db.conn.execute(
-            "SELECT payload_json FROM pending_actions WHERE turn=? AND kind='directive'",
-            (state.turn,),
-        ).fetchall()
-    ]
+    rows = list(db.conn.execute(
+        "SELECT id, payload_json FROM pending_actions WHERE turn=? AND kind='directive'",
+        (state.turn,),
+    ).fetchall())
+    payloads = [json.loads(row["payload_json"]) for row in rows]
     assert len(payloads) == 2
     grants = [p for p in payloads if p.get("dossier_action_type") == "grant_allocation"]
     assignments = [p for p in payloads if p.get("dossier_action_type") == "assignment"]
@@ -1178,9 +1206,19 @@ def test_explicit_prefix_materializes_grant_and_independent_typed_draft(game):
     assert len(assignments) == 1
     assert assignments[0]["target_id"] == "hubu"
 
+    pending_ids = [int(row["id"]) for row in rows]
+    db.commit_pending_actions(state, content=content, action_ids=pending_ids)
+    dossiers = [
+        d for d in db.list_decree_dossiers()
+        if int(d["pending_action_id"] or 0) in set(pending_ids)
+    ]
+    assert len(dossiers) == 2
+    action_types = {d["action_type"] for d in dossiers}
+    assert action_types == {"grant_allocation", "assignment"}
+
 
 def test_explicit_prefix_keeps_distinct_native_grants(game):
-    """去重只吞 draft 别名；同次分类出的两笔不同拨款仍各自成案。"""
+    """同次分类出的两笔不同拨款仍各自成案。"""
     db, state, _content = game
     actor = db.conn.execute(
         "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
@@ -1214,7 +1252,7 @@ def test_explicit_prefix_keeps_distinct_native_grants(game):
 def test_distinct_promoted_draft_grant_is_not_an_alias(
     game, explicit_prefixed,
 ):
-    """内容不同的 draft 协饷是第二道真旨，不得被前一 grant 吞掉。"""
+    """内容不同的 draft 协饷是第二道真旨，各自成案。"""
     db, state, _content = game
     actor = db.conn.execute(
         "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
@@ -1249,47 +1287,40 @@ def test_distinct_promoted_draft_grant_is_not_an_alias(
     ) == [("guanning", 15), ("shaanxi_army", 8)]
 
 
-def test_nonprefixed_grant_and_promoted_draft_alias_stage_once(game):
-    """draft 协饷别名的去重不依赖拟旨前缀。"""
+def test_identical_payment_fields_two_array_items_stage_twice(game):
+    """付款字段完全相同的两个数组项仍各成一案（列表契约，内容相等不合并）。"""
     db, state, _content = game
     actor = db.conn.execute(
         "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
     ).fetchone()["name"]
-    candidates = _scripted_xiexang_candidates(
-        amount=15, account="太仓", target_id="guanning",
-    ) + candidates_from_classifier_payload({
-        "kind": "draft", "draft_action": "拟旨", "grant_action": "协饷",
-        "amount": 15, "account": "太仓", "purpose": "补饷",
-        "target_kind": "army", "target_id": "guanning",
-    }, soft=False)
+    item = {
+        "kind": "grant_allocation",
+        "grant_action": "协饷",
+        "amount": 15,
+        "account": "太仓",
+        "purpose": "补饷",
+        "target_kind": "army",
+        "target_id": "guanning",
+    }
+    candidates = candidates_from_classifier_payload([item, dict(item)], soft=False)
+    assert len(candidates) == 2
     ctx = _ctx(
         db, actor, candidates, state.turn,
-        message="着户部拨关宁军饷十五万两。",
+        message="分别拨关宁军饷十五万两、再拨十五万两。",
         reply="臣遵旨。",
     )
-
     run_materialize_pipeline(ctx)
 
     assert db.conn.execute(
         "SELECT COUNT(*) FROM pending_actions WHERE turn=? AND kind='directive'",
         (state.turn,),
-    ).fetchone()[0] == 1
+    ).fetchone()[0] == 2
 
 
-@pytest.mark.parametrize(
-    ("tool_identity", "classifier_assignment_target", "tool_target", "expected_directives"),
-    [
-        ("", "", "", 1),
-        ("assignment", "", "hubu", 2),
-        ("assignment", "hubu", "hubu", 2),
-        ("assignment", "bingbu", "hubu", 3),
-    ],
-)
 def test_web_stream_propose_directive_skips_when_typed_grant_present(
     tmp_path, monkeypatch, _offline_scene_beat_generator,
-    tool_identity, classifier_assignment_target, tool_target, expected_directives,
 ):
-    """真 HTTP：无身份孪生跳过，独立 typed tool 与 grant 分别成案。"""
+    """真 HTTP：classifier 已产 typed grant 时，无类型 propose_directive 孪生跳过。"""
     from fastapi.testclient import TestClient
 
     import ming_sim.cli_backend as cb
@@ -1308,11 +1339,7 @@ def test_web_stream_propose_directive_skips_when_typed_grant_present(
             tools = [SimpleNamespace(
                 tool_name="propose_directive",
                 result="__pending_directive__敕户部发太仓银十五万两协济关宁军前。",
-                arguments={
-                    "decree_text": "敕户部发太仓银十五万两协济关宁军前。",
-                    "dossier_action_type": tool_identity,
-                    "target_id": tool_target,
-                },
+                arguments={"decree_text": "敕户部发太仓银十五万两协济关宁军前。"},
             )]
             yield SimpleNamespace(
                 event="RunContent",
@@ -1328,12 +1355,6 @@ def test_web_stream_propose_directive_skips_when_typed_grant_present(
         "amount": 15, "account": "太仓", "purpose": "补饷",
         "target_kind": "army", "target_id": "guanning",
     }, soft=False)
-    if classifier_assignment_target:
-        scripted += candidates_from_classifier_payload({
-            "kind": "draft", "text": "另行交办。",
-            "dossier_action_type": "assignment",
-            "target_id": classifier_assignment_target,
-        }, soft=False)
 
     def fake_classify(*_a, **_k):
         return list(scripted)
@@ -1364,15 +1385,9 @@ def test_web_stream_propose_directive_skips_when_typed_grant_present(
         game.state.metrics["国库"] = max(int(game.state.metrics["国库"]), 100)
         game.db.save_state(game.state)
         client = TestClient(web_app.app)
-        message = (
-            "拟旨如下：准拨关宁军饷十五万两，并着户部清查辽饷收支。"
-            if (tool_identity, classifier_assignment_target, tool_target)
-            == ("assignment", "hubu", "hubu")
-            else "拟旨如下：准拨关宁军饷十五万两。"
-        )
         resp = client.post(
             f"/api/ministers/{name}/chat/stream",
-            json={"message": message},
+            json={"message": "拟旨如下：准拨关宁军饷十五万两。"},
         )
         assert resp.status_code == 200, resp.text
         wait_pending_writes(game)
@@ -1381,22 +1396,9 @@ def test_web_stream_propose_directive_skips_when_typed_grant_present(
             (game.state.turn,),
         ).fetchall())
         payloads = [json.loads(row["payload_json"]) for row in rows]
-        assert len(payloads) == expected_directives
-        grants = [
-            payload for payload in payloads
-            if payload.get("dossier_action_type") == "grant_allocation"
-        ]
-        assert len(grants) == 1
-        if tool_identity:
-            independent = [
-                payload for payload in payloads
-                if payload.get("dossier_action_type") == tool_identity
-            ]
-            expected_targets = {tool_target}
-            if classifier_assignment_target:
-                expected_targets.add(classifier_assignment_target)
-            assert len(independent) == len(expected_targets)
-            assert {payload["target_id"] for payload in independent} == expected_targets
+        assert len(payloads) == 1
+        assert payloads[0].get("dossier_action_type") == "grant_allocation"
+        assert int(payloads[0]["amount"]) == 15
     finally:
         try:
             game.session.close()
