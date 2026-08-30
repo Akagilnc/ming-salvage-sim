@@ -176,6 +176,8 @@ def test_money_units_and_season_option_contract_project_from_catalog():
         {**valid, "action_type": " grant_allocation "}
     ) == "grant_allocation"
     with pytest.raises(ValueError):
+        validate_season_option({**valid, "target_kind": "character"})
+    with pytest.raises(ValueError):
         validate_season_option({**valid, "action_type": "grant_allocaton"})
     for key in season_option_fields("grant_allocation")[1:]:
         with pytest.raises(ValueError):

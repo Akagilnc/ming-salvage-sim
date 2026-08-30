@@ -35,6 +35,8 @@ class FieldSpec:
     execution_coverage: Optional[Mapping[str, Optional[str]]] = None
     # Field is populated only when another canonical field has one of these values.
     populated_when: Optional[Tuple[str, FrozenSet[str]]] = None
+    # A controller value may narrow this enum's effective allowed values.
+    allowed_when: Optional[Tuple[str, str, FrozenSet[str]]] = None
 
 
 @dataclass(frozen=True)
@@ -205,7 +207,8 @@ def validate_season_option(option: Mapping[str, object]) -> str:
             not isinstance(value, str) or not value.strip()
         ):
             raise ValueError(f"choice.{spec.name} 不可空")
-        if spec.allowed is not None and value not in spec.allowed:
+        allowed = effective_field_allowed(spec, option)
+        if allowed is not None and value not in allowed:
             raise ValueError(f"choice.{spec.name} 非法：{value!r}")
         if spec.as_int:
             number = strict_int(value, accept_numeric_strings=False)
@@ -218,10 +221,11 @@ def season_option_contract_prompt(kind: str) -> str:
     """Human-facing season option contract projected from FieldSpec."""
     specs = _season_specs(kind)
     details = []
+    effective_values: Dict[str, FrozenSet[str]] = {}
     for spec in specs:
         detail = spec.name
         if spec.allowed is not None:
-            allowed = (
+            allowed = frozenset(
                 value for value in spec.allowed
                 if all(
                     field_population_allowed(kind, dependent.name, {spec.name: value})
@@ -230,6 +234,15 @@ def season_option_contract_prompt(kind: str) -> str:
                     and dependent.populated_when[0] == spec.name
                 )
             )
+            effective_values[spec.name] = allowed
+            if spec.allowed_when is not None:
+                controller = spec.allowed_when[0]
+                controller_values = effective_values.get(controller, frozenset())
+                context = (
+                    {controller: next(iter(controller_values))}
+                    if len(controller_values) == 1 else {}
+                )
+                allowed = effective_field_allowed(spec, context) or frozenset()
             detail += f'（{"|".join(sorted(allowed))}）'
         if spec.as_int:
             detail += f"（JSON integer，{spec.int_lo}..{spec.int_hi}，禁数字字符串）"
@@ -355,6 +368,17 @@ def validate_action_candidate_shape(obj: Any) -> Tuple[bool, str]:
         if normalized not in spec.allowed:
             return False, f"{spec.name} out of enum: {raw!r}"
     return True, ""
+
+
+def effective_field_allowed(
+    spec: FieldSpec, candidate: Mapping[str, Any],
+) -> Optional[FrozenSet[str]]:
+    """Project the enum values allowed for this candidate from one field row."""
+    if spec.allowed_when is not None:
+        controller, controller_value, allowed = spec.allowed_when
+        if str(candidate.get(controller) or "").strip() == controller_value:
+            return allowed
+    return spec.allowed
 
 
 def field_population_allowed(
