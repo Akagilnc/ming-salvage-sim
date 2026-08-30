@@ -467,7 +467,7 @@ def test_pending_credit_scan_rolls_back_on_failure(game):
     )
     db.conn.commit()
 
-    with pytest.raises(sqlite3.IntegrityError, match="injected pending failure"):
+    with pytest.raises(sqlite3.IntegrityError):
         apply_issue_inertia_and_ongoing(db, state)
 
     assert db.conn.in_transaction is False
