@@ -1,5 +1,5 @@
 import React, { act } from "react";
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./main";
@@ -25,7 +25,13 @@ const makeState = () => ({
 
 const tick = () => act(async () => { await new Promise((r) => setTimeout(r, 0)); });
 
-afterEach(() => { vi.unstubAllGlobals(); document.body.innerHTML = ""; });
+let root: Root | undefined;
+afterEach(() => {
+  if (root) act(() => { root!.unmount(); });
+  root = undefined;
+  vi.unstubAllGlobals();
+  document.body.innerHTML = "";
+});
 
 // 回归：ESC 全局处理器的 effect 依赖曾漏 5 个抽屉 state（stale closure），
 // 打开兵/省/工/户/吏抽屉后 ESC 闭包里的布尔永远是 false → 关不掉。
@@ -48,7 +54,7 @@ describe("全局 ESC 关闭抽屉（stale closure 回归）", () => {
 
     const host = document.createElement("div");
     document.body.appendChild(host);
-    await act(async () => { createRoot(host).render(<App />); });
+    await act(async () => { (root = createRoot(host)).render(<App />); });
     await tick();
     expect(host.querySelector(".hud2-stage")).not.toBeNull();  // 已进入游戏视图
 
@@ -77,7 +83,7 @@ describe("全局 ESC 关闭抽屉的交互面", () => {
 
     const host = document.createElement("div");
     document.body.appendChild(host);
-    await act(async () => { createRoot(host).render(<App />); });
+    await act(async () => { (root = createRoot(host)).render(<App />); });
     await tick();
 
     const coveredDrawerShapes = new Set<string>();
@@ -135,7 +141,7 @@ describe("全局 ESC 关闭结局页（endingDismissed）", () => {
 
     const host = document.createElement("div");
     document.body.appendChild(host);
-    await act(async () => { createRoot(host).render(<App />); });
+    await act(async () => { (root = createRoot(host)).render(<App />); });
     await tick();
     expect(host.querySelector(".modal-bg-ending")).not.toBeNull();
 
