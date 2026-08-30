@@ -1324,6 +1324,8 @@ def build_extractor_shared_context(
             "due_turn": int(row.get("due_turn") or 0),
             "participant_roster": list(row.get("participant_roster") or []),
         }
+        if row.get("_late_decision_dossier"):
+            entry["decision_key"] = str(row["payload"]["decision_key"])
         if all(key in row for key in side_keys):
             for key in side_keys:
                 entry[key] = row[key]

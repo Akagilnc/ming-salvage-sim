@@ -160,9 +160,7 @@ def validate_season_option(option: Mapping[str, object]) -> None:
 
     for spec in _season_specs(str(option.get("action_type") or "")):
         if spec.name not in option:
-            if spec.as_int and spec.default is None:
-                raise ValueError(f"choice.{spec.name} 不可空")
-            continue
+            raise ValueError(f"choice.{spec.name} 不可空")
         if spec.as_int and spec.default is None and option[spec.name] is None:
             raise ValueError(f"choice.{spec.name} 不可空")
         value = option[spec.name]

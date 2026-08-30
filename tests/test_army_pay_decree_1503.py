@@ -1376,7 +1376,7 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
 
     def capture_extractor_input(_config, _agno_db, module, **kwargs):
         extractor_inputs[module] = [
-            (int(row["id"]), str(row["status"]))
+            (int(row["id"]), str(row["status"]), str(row.get("decision_key") or ""))
             for row in kwargs["supplemental_context"].get("decree_dossiers") or []
         ]
         return None
@@ -1388,7 +1388,7 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
     )
     decision_report = """本月邸报。
 <<DECISION>>
-{"title":"再济关宁","context":"关宁欠饷尚重，奏请圣裁","options":[{"label":"发内帑银三十万两济关宁","hint":"军心稍定，内帑益绌","action_type":"grant_allocation","grant_action":"协饷","account":"内库","amount":30,"purpose":"补饷","target_kind":"army","target_id":"guanning","cadence":"一次性"},{"label":"暂缓再拨","hint":"内帑得保，边军仍困"}]}
+{"title":"再济关宁","context":"关宁欠饷尚重，奏请圣裁","options":[{"label":"发国库银三十万两济关宁","hint":"军心稍定，国库益绌","action_type":"grant_allocation","grant_action":"协饷","account":"国库","amount":30,"purpose":"补饷","target_kind":"army","target_id":"guanning","cadence":"一次性"},{"label":"暂缓再拨","hint":"国库得保，边军仍困"}]}
 <<END>>"""
     monkeypatch.setattr(
         decree_mod, "simulate_season_with_payload",
@@ -1492,19 +1492,19 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
             (decision_dossier["id"],),
         ).fetchone()[0])
         assert decision_payload["decision_key"] == decisions[0]["decision_key"]
-        assert decision_dossier["status"] == "closed"
-        assert decision_dossier["promulgation_decision"] == "promulgated"
-        late_fact = (int(decision_dossier["id"]), "closed")
+        assert decision_dossier["status"] == "proposed"
+        assert not decision_dossier["promulgation_decision"]
+        late_fact = (
+            int(decision_dossier["id"]), "proposed", decisions[0]["decision_key"],
+        )
         assert late_fact in extractor_inputs["issues"]
-        assert late_fact in extractor_inputs["internal"]
+        assert late_fact not in extractor_inputs["internal"]
         assert all(
             late_fact not in extractor_inputs[module]
             for module in ("military_external", "personnel_secret", "relations")
         )
-        assert [
-            row["decision"]
-            for row in game.db.list_decree_dossier_decisions(decision_dossier["id"])
-        ] == ["promulgated"]
+        assert game.db.list_decree_dossier_decisions(decision_dossier["id"]) == []
+        assert game.db.list_economy_moves_for_dossier(decision_dossier["id"]) == []
         moves = game.db.list_economy_moves_for_dossier(dossier["id"])
         pay_moves = [
             m for m in moves
@@ -1534,10 +1534,7 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
                 (f"dossier:{decision_dossier['id']}",),
             ).fetchall()
         ]
-        assert decision_ledger == [{
-            "account": "内库", "delta": -30,
-            "origin_ref": f"dossier:{decision_dossier['id']}",
-        }]
+        assert decision_ledger == []
         logs = [
             dict(row) for row in game.db.conn.execute(
                 """
@@ -1552,9 +1549,9 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
         assert float(logs[0]["delta"]) == pytest.approx(-15)
         after_army = _army_row(game.db)
         assert int(after["metrics"]["国库"]) == 293
-        assert int(after["metrics"]["内库"]) == 432
-        assert after_army["arrears"] == pytest.approx(16)
-        assert after_army["central_pay_arrears"] == pytest.approx(16)
+        assert int(after["metrics"]["内库"]) == 462
+        assert after_army["arrears"] == pytest.approx(46)
+        assert after_army["central_pay_arrears"] == pytest.approx(46)
         decision_logs = game.db.conn.execute(
             """
             SELECT delta, new_value FROM army_logs
@@ -1562,8 +1559,7 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
             """,
             (f"dossier:{decision_dossier['id']}",),
         ).fetchall()
-        assert len(decision_logs) == 1
-        assert float(decision_logs[0]["delta"]) == pytest.approx(-30)
+        assert decision_logs == []
 
     finally:
         try:

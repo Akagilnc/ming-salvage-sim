@@ -431,10 +431,7 @@ def _format_decision_directive(decisions: List[Dict[str, object]]) -> str:
         if not label and not note:
             continue
         title = str(d.get("title") or f"抉择{i}").strip()
-        try:
-            selected = bind_decision_options(d.get("options") or []).get(label)
-        except ValueError:
-            selected = None
+        selected = bind_decision_options(d.get("options") or []).get(label)
         # Typed grants are governed by their dossier status, not generic
         # "already happened" prose.  Their note remains an imperial fact.
         if isinstance(selected, Mapping) and selected.get("action_type") == "grant_allocation":

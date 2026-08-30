@@ -343,7 +343,9 @@ def test_financial_decision_uses_stored_option_not_client_payload(amount):
 
 @pytest.mark.parametrize("labels", [["", "乙"], ["甲", " 甲 "]])
 def test_decision_parser_rejects_empty_or_ambiguous_labels(labels):
-    from ming_sim.settlement_payload import parse_decision_blocks
+    from ming_sim.settlement_payload import (
+        _format_decision_directive, parse_decision_blocks,
+    )
 
     block = {
         "title": "歧义抉择", "context": "c",
@@ -353,6 +355,12 @@ def test_decision_parser_rejects_empty_or_ambiguous_labels(labels):
     clean, decisions = parse_decision_blocks(raw)
     assert clean == ""
     assert decisions == []
+    if labels == ["甲", " 甲 "]:
+        with pytest.raises(ValueError):
+            _format_decision_directive([{
+                "title": "歧义抉择", "options": block["options"],
+                "choice": {"label": "甲"},
+            }])
 
 
 def test_657_capability_revalidate_on_follow(game):
