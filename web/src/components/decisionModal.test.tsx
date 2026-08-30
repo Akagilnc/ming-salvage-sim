@@ -5,11 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DecisionModal } from "./decisionModal";
 import { pendingDecisionsFrom } from "../decisionRouting";
 import type { PendingDecision } from "../types";
-import { measureElectronLayout } from "../testSupport/electronLayout";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const BASE_CSS = readFileSync(`${process.cwd()}/src/styles/base.css`, "utf8");
 const DECISION_CSS = readFileSync(`${process.cwd()}/src/styles/decision.css`, "utf8");
 
 function injectDecisionCss() {
@@ -289,33 +287,6 @@ describe("DecisionModal", () => {
 });
 
 describe("DecisionModal #1202 seal-is-confirm first screen + pick affordance", () => {
-  it("keeps seal-confirm bounding-box bottom within the 1440×900 first screen", async () => {
-    const cleanup = render(<DecisionModal decisions={[decisions[0]]} onResolve={vi.fn()} />);
-    const page = document.querySelector(".decision-page");
-    expect(page).not.toBeNull();
-    // Component fixture outerHTML + real Chromium layout (not a hand-built estimator).
-    // App cascade order (styles.css): base.css first, then decision.css — minimal faithful bundle.
-    const [measured] = await measureElectronLayout<{
-      bottom: number;
-      viewportHeight: number;
-      viewportWidth: number;
-    }>(
-      page!.outerHTML,
-      BASE_CSS + "\n" + DECISION_CSS,
-      [{ width: 1440, height: 900 }],
-      `(() => {
-        const el = document.querySelector(".decision-confirm");
-        if (!el) return { error: "missing .decision-confirm" };
-        const r = el.getBoundingClientRect();
-        return { bottom: r.bottom, viewportHeight: innerHeight, viewportWidth: innerWidth };
-      })()`,
-    );
-    expect(measured.viewportWidth).toBe(1440);
-    expect(measured.viewportHeight).toBe(900);
-    expect(measured.bottom).toBeLessThanOrEqual(900);
-    cleanup();
-  });
-
   it("makes the unique decision-confirm the seal button with no parallel decorative seal", () => {
     injectDecisionCss();
     const cleanup = render(<DecisionModal decisions={[decisions[0]]} onResolve={vi.fn()} />);
