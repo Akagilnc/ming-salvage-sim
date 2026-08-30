@@ -278,8 +278,10 @@ describe("EdictModal — #1431 placeholder 去失实具名", () => {
 });
 
 describe("EdictModal — hidden secret-order default approval", () => {
-  it("shows generic no-edict advance without exposing hidden secret-order pending state", () => {
+  it("confirms generic no-edict advance without exposing hidden secret-order pending state", () => {
     const onAdvance = vi.fn();
+    const confirm = vi.fn(() => false);
+    vi.stubGlobal("confirm", confirm);
     const { host } = renderEdictModal({
       state: baseGameState({ pending_secret_order_count: 0, pending_non_directive_action_count: 0 }),
       onAdvanceWithoutEdict: onAdvance,
@@ -292,10 +294,12 @@ describe("EdictModal — hidden secret-order default approval", () => {
     expect(host.textContent).not.toContain("密令已候旨");
     expect(host.textContent).not.toContain("尚有召对事项候旨");
     expect(host.textContent).toContain("本月尚无明发诏令");
-    act(() => {
-      button?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
+    act(() => button?.click());
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(onAdvance).not.toHaveBeenCalled();
 
+    confirm.mockReturnValue(true);
+    act(() => button?.click());
     expect(onAdvance).toHaveBeenCalledTimes(1);
   });
 
@@ -335,24 +339,6 @@ describe("EdictModal — hidden secret-order default approval", () => {
     act(() => { button?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     expect(onIssue).toHaveBeenCalledTimes(1);
     expect(onAdvance).not.toHaveBeenCalled();
-  });
-
-  it("#1277 0 草案保留退朝结束本月 → advanceWithoutEdict", () => {
-    const onAdvance = vi.fn();
-    const onIssue = vi.fn();
-    const { host } = renderEdictModal({
-      state: baseGameState({ directives: [] }),
-      onAdvanceWithoutEdict: onAdvance,
-      onIssueDecree: onIssue,
-    });
-    const button = Array.from(host.querySelectorAll("button")).find((item) =>
-      item.textContent?.includes("退朝结束本月")
-    ) as HTMLButtonElement | undefined;
-    expect(button).toBeTruthy();
-    expect(host.textContent).not.toMatch(/盖玺颁诏过月/);
-    act(() => { button?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-    expect(onAdvance).toHaveBeenCalledTimes(1);
-    expect(onIssue).not.toHaveBeenCalled();
   });
 
   it("does not review already-approved conversational directives", () => {

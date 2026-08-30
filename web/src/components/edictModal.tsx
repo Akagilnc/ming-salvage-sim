@@ -49,6 +49,9 @@ export function EdictModal({
   const hasPendingConversationalDraft = (state.pending_directive_count ?? 0) > 0;
   const hasNonEdictPendingActions = (state.pending_non_directive_action_count ?? 0) > 0;
   const hasFailedSecretOrders = (state.failed_secret_order_count ?? 0) > 0;
+  const confirmAdvanceWithoutEdict = () => {
+    if (window.confirm("本月尚无明发诏令，确定退朝结束本月？")) onAdvanceWithoutEdict();
+  };
 
   // 御案只列尚未成案的候选；结束回合是唯一提交边界，不再生成月末复审工作台。
   return (
@@ -116,7 +119,7 @@ export function EdictModal({
         {/* #1277：drafts>0 名实相符——盖玺颁诏过月→issueDecree；0 草案保留退朝。 */}
         <button
           className={hasDrafts ? "seal-btn-issue" : "seal-btn-compose"}
-          onClick={hasDrafts ? onIssueDecree : onAdvanceWithoutEdict}
+          onClick={hasDrafts ? onIssueDecree : confirmAdvanceWithoutEdict}
           disabled={!!busy}
         >
           {hasDrafts ? "盖玺颁诏过月 →" : "退朝结束本月 →"}
