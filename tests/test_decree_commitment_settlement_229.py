@@ -7,6 +7,7 @@ from ming_sim.credit_events import (
     KIND_BETRAY,
     KIND_FULFILL,
     KIND_SCAPEGOAT,
+    derive_loyalty_from_credit_event,
     write_credit_event,
 )
 from ming_sim.relations import EMPEROR_NODE
@@ -260,6 +261,11 @@ def test_credit_event_is_the_idempotent_loyalty_write_source(
 
 def test_old_loyalty_watermark_schema_upgrades_before_new_credit_event(game):
     db, state, content = game
+    consumed_id = db.record_relation_edge_event(
+        source=EMPEROR_NODE, target="毛文龙", event_kind=KIND_BACK,
+        context="旧版本已消费", origin="dossier:old:credit:back",
+        turn=state.turn, year=state.year, period=state.period,
+    )
     db.conn.execute("DROP TABLE loyalty_credit_event_applied")
     db.conn.execute(
         "CREATE TABLE loyalty_credit_event_applied ("
@@ -267,6 +273,11 @@ def test_old_loyalty_watermark_schema_upgrades_before_new_credit_event(game):
         "character_name TEXT NOT NULL, delta INTEGER NOT NULL, "
         "applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
     )
+    db.conn.execute(
+        "INSERT INTO loyalty_credit_event_applied(event_id, character_name, delta) "
+        "VALUES(?,?,?)", (consumed_id, "毛文龙", 5),
+    )
+    before = _character_loyalty(db, "毛文龙")
     db.init_schema()
 
     columns = {
@@ -274,6 +285,12 @@ def test_old_loyalty_watermark_schema_upgrades_before_new_credit_event(game):
         for row in db.conn.execute("PRAGMA table_info(loyalty_credit_event_applied)")
     }
     assert columns == {"event_id"}
+    assert db.conn.execute(
+        "SELECT event_id FROM loyalty_credit_event_applied WHERE event_id=?", (consumed_id,)
+    ).fetchone() is not None
+    assert derive_loyalty_from_credit_event(db, consumed_id) is None
+    assert _character_loyalty(db, "毛文龙") == before
+
     event_id = write_credit_event(
         db, state, person="毛文龙", event_kind=KIND_BACK,
         context="旧档升级后撑腰", origin="dossier:upgrade:credit:back",
