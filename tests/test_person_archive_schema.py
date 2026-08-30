@@ -120,6 +120,7 @@ def test_add_character_persists_transit_to(game):
         integrity=50,
         courage=50,
         intrigue=63,
+        defected_from="阉党",
         style="测试人物",
         power_id="ming",
         location="beizhili",
@@ -135,7 +136,7 @@ def test_add_character_persists_transit_to(game):
         "location": "beizhili",
         "transit_to": "liaodong",
         "intrigue": 63,
-        "defected_from": None,
+        "defected_from": "阉党",
     }
 
 
