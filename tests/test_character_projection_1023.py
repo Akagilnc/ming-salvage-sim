@@ -36,9 +36,11 @@ def test_simulator_context_projects_character_axes_but_keeps_world_numbers(game)
     assert row["清廉"] == "操守平常"
     assert row["胆略"] == "敢任其事"
     assert row["党派认同"] == "党色极深"
-    assert row["阴谋"] == qualitative_character_axis(
+    expected_intrigue = qualitative_character_axis(
         "intrigue", CHARACTER_AXIS_SENTINEL["intrigue"]
     )
+    assert row["阴谋"] == expected_intrigue
+    assert expected_intrigue in rendered_character_line.split("\t")
     character_rendered = character_context(character)
     assert "忠诚离心已显" in character_rendered
     assert "能力才具有限" in character_rendered
