@@ -3354,7 +3354,10 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 # 政务拨款对象：赈灾地区 / 项目 / 协饷军队 / 恩赏人物
                 FieldSpec("target_id", "目标", None, "", max_len=80),
                 FieldSpec("target_kind", "目标类型", TARGET_KINDS, ""),
-                FieldSpec("amount", "金额", None, None, as_int=True, int_lo=1),
+                FieldSpec(
+                    "amount", "金额", None, None, as_int=True, int_lo=1,
+                    quantity_unit="万两",
+                ),
                 FieldSpec(
                     "account", "账户",
                     frozenset({"国库", "内库", "太仓"}), "",
