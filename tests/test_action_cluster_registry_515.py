@@ -155,7 +155,9 @@ def test_registry_rows_generate_shape_contract_matrix():
 
 def test_money_units_and_season_option_contract_project_from_catalog():
     """同名金额各守所属 action 单位；season option 不另立字段表。"""
-    from ming_sim.action_clusters import season_option_fields
+    from ming_sim.action_clusters import (
+        season_option_contract_prompt, season_option_fields, validate_season_option,
+    )
 
     grant = next(c for c in ACTION_CLUSTERS if c.kind == "grant_allocation")
     punishment = next(c for c in ACTION_CLUSTERS if c.kind == "punishment")
@@ -165,6 +167,20 @@ def test_money_units_and_season_option_contract_project_from_catalog():
         "action_type", "grant_action", "target_id", "target_kind", "amount",
         "account", "purpose", "cadence",
     )
+    contract = season_option_contract_prompt("grant_allocation")
+    assert all(value in contract for value in ("国库", "内库", "太仓"))
+    assert "JSON integer，1..1000000000，禁数字字符串" in contract
+    assert "单位=万两" in contract
+    valid = {
+        "action_type": "grant_allocation", "grant_action": "协饷",
+        "target_id": "guanning", "target_kind": "army", "amount": 1,
+        "account": "内库", "purpose": "补饷", "cadence": "一次性",
+    }
+    validate_season_option(valid)
+    for key, bad in (("account", "太仓银"), ("amount", None),
+                     ("amount", "1"), ("amount", True), ("amount", 0)):
+        with pytest.raises(ValueError):
+            validate_season_option({**valid, key: bad})
 
 
 def test_strict_shape_rejects_unknown_kind_and_out_of_enum_subfield():
