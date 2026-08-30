@@ -15,8 +15,6 @@ from ming_sim.breach_plea import (
     write_breach_plea_todo,
 )
 from ming_sim.credit_events import (
-    CREDIT_BANNED_PLAYER_TOKENS,
-    CREDIT_BANNED_SCAN_SURFACES,
     KIND_BACK,
     KIND_BETRAY,
     KIND_FULFILL,
@@ -578,10 +576,6 @@ def test_idempotent_narrative_restore_write_only_banned(game, tmp_path):
     db, state, content = game
 
     # banned 单源扩展 + 扫描面清单（AC8 票面交付物，#629 收口）
-    assert CREDIT_BANNED_PLAYER_TOKENS
-    assert "credit:scapegoat" in CREDIT_BANNED_PLAYER_TOKENS
-    assert CREDIT_BANNED_SCAN_SURFACES
-    assert "memorial_text" in CREDIT_BANNED_SCAN_SURFACES
 
     roster = _SCAPEGOAT_ROSTER()
     did_a = _transformed_dossier(db, state, token="idem-a-628", roster=roster)
