@@ -65,11 +65,7 @@ describe("全局 ESC 关闭抽屉（stale closure 回归）", () => {
 });
 
 describe("全局 ESC 关闭抽屉的交互面", () => {
-  it.each([
-    ["朝堂·召见大臣", ".court-drawer:not(.harem-drawer)"],
-    ["后宫", ".harem-drawer"],
-    ["官员任免", ".right-drawer-appointment"],
-  ])("%s 抽屉关闭后原生 inert，DOM 仍常驻", async (navLabel, drawerSelector) => {
+  it("打开时仅当前抽屉可交互，ESC 后恢复 inert 且 DOM 常驻", async () => {
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
       const u = new URL(String(url), "http://t.local");
       if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
@@ -84,17 +80,32 @@ describe("全局 ESC 关闭抽屉的交互面", () => {
     await act(async () => { createRoot(host).render(<App />); });
     await tick();
 
-    const nav = host.querySelector(`button[aria-label="${navLabel}"]`);
-    act(() => { nav!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-    await tick();
-    expect(host.querySelector(`${drawerSelector}.open`)).not.toBeNull();
+    const drawers = [
+      ["朝堂·召见大臣", ".court-drawer:not(.harem-drawer)"],
+      ["后宫", ".harem-drawer"],
+      ["官员任免", ".right-drawer-appointment"],
+    ];
+    for (const [navLabel, drawerSelector] of drawers) {
+      const nav = host.querySelector(`button[aria-label="${navLabel}"]`);
+      expect(nav).not.toBeNull();
+      act(() => { nav!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+      await tick();
 
-    act(() => { window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
-    await tick();
-    const closedDrawer = host.querySelector(drawerSelector);
-    expect(closedDrawer).not.toBeNull();
-    expect(closedDrawer!.hasAttribute("inert")).toBe(true);
-    expect(host.querySelector("button.drawer-scrim")).toBeNull();
+      const openDrawer = host.querySelector(`aside${drawerSelector}.open`);
+      expect(openDrawer).not.toBeNull();
+      expect(openDrawer!.hasAttribute("inert")).toBe(false);
+      const closedDrawers = host.querySelectorAll("aside.court-drawer:not(.open), aside.right-drawer:not(.open)");
+      expect([...closedDrawers].every((drawer) => drawer.hasAttribute("inert"))).toBe(true);
+      expect(host.querySelectorAll("button.drawer-scrim")).toHaveLength(1);
+
+      act(() => { window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
+      await tick();
+      const closedDrawer = host.querySelector(`aside${drawerSelector}`);
+      expect(closedDrawer).not.toBeNull();
+      expect(closedDrawer!.classList.contains("open")).toBe(false);
+      expect(closedDrawer!.hasAttribute("inert")).toBe(true);
+      expect(host.querySelector("button.drawer-scrim")).toBeNull();
+    }
   });
 });
 
