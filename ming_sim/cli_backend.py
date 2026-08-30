@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor
@@ -2028,6 +2029,7 @@ def extract_draft_intent_with_semantic_heal(
     prior_ids_at_fail: List[str] = []
     # 首抽权威快照：首次校验失败后冻结，后续失败不得覆写 baseline/闸基线。
     baseline_result: Optional[Dict[str, Any]] = None
+    locality_baseline: Optional[Dict[str, Any]] = None
     for attempt in range(retries + 1):
         # llm_config 关键字传：别族 fake_draft(msg, reply, **kw) 形仍合法，
         # 不得因 heal 多塞第 3 位置参把旧 mock 签名整族打爆。
@@ -2043,6 +2045,12 @@ def extract_draft_intent_with_semantic_heal(
                 **extract_kwargs,
             )
         except _DraftLocalityValidationError as exc:
+            if locality_baseline is None:
+                locality_baseline = copy.deepcopy(exc.extracted_result)
+            elif not _same_non_locality_semantics(
+                locality_baseline, exc.extracted_result,
+            ):
+                _log(f"拟旨属地纠错发生非属地语义漂移 {attempt + 1}/{retries}")
             if attempt >= retries:
                 raise ValueError(str(exc)) from exc
             correction = (
@@ -2050,6 +2058,17 @@ def extract_draft_intent_with_semantic_heal(
                 "目标类型、目标ID和动作类型的无、全国或单省。"
             )
             _log(f"拟旨属地纠错重试 {attempt + 1}/{retries}: {exc}")
+            continue
+        if locality_baseline is not None and not _same_non_locality_semantics(
+            locality_baseline, result,
+        ):
+            if attempt >= retries:
+                raise ValueError("属地纠错期间非属地结构发生漂移")
+            correction = (
+                "施行范围仍须纠正，且动作、目标、承办人、参与人、条目、方式及多旨结构"
+                "必须保持不变。"
+            )
+            _log(f"拟旨属地纠错发生非属地语义漂移 {attempt + 1}/{retries}")
             continue
         if db is not None:
             result = _ground_relative_pay_order_deadlines(result, db)
@@ -2242,6 +2261,7 @@ def extract_draft_intent(
         obj = _loads_lenient(raw) or {}
         values = obj.get("成品旨稿") if isinstance(obj, dict) else None
         drafts = []
+        locality_checks = []
         seen_texts = set()
         invalid_batch = not isinstance(values, list) or len(values) != draft_count
         for value in values if isinstance(values, list) else []:
@@ -2301,11 +2321,9 @@ def extract_draft_intent(
             mechanical["locality_scope"] = _coerce_draft_locality_scope(value.get("施行范围"))
             # multi 路目标类型同样 fail-loud
             target_kind = _coerce_draft_target_kind(target_kind)
-            _validate_extracted_locality(
-                db=db, content=content, action_type=action,
-                target_kind=target_kind, target_id=target_id,
-                locality_scope=mechanical["locality_scope"],
-            )
+            locality_checks.append((
+                action, target_kind, target_id, mechanical["locality_scope"],
+            ))
             # #653：pay_order_override 结构化载荷（entries）随草案整道转交，
             # 成案点/物化点共 prepare_pay_order_entries 同一验形。
             entries = value.get("entries")
@@ -2325,12 +2343,19 @@ def extract_draft_intent(
             })
         if invalid_batch or not any(draft is not None for draft in drafts):
             drafts = []
-        return {
+        extracted_result = {
             "draft_action": "拟旨" if drafts else "无",
             "draft_text": "",
             "drafts": drafts,
             "target_candidate": "",
         }
+        for action, target_kind, target_id, locality_scope in locality_checks:
+            _validate_extracted_locality(
+                db=db, content=content, action_type=action,
+                target_kind=target_kind, target_id=target_id,
+                locality_scope=locality_scope, extracted_result=extracted_result,
+            )
+        return extracted_result
 
     _candidates = [c for c in (existing_candidates or []) if c]
     _by_id = {int(c["id"]): c for c in _candidates}
@@ -2483,11 +2508,6 @@ def extract_draft_intent(
         # #653：pay_order_override 结构化载荷随 capture 整道转交（禁旁路）。
         "entries": obj.get("entries"),
     }
-    _validate_extracted_locality(
-        db=db, content=content, action_type=dossier_action,
-        target_kind=target_kind, target_id=target_id_value,
-        locality_scope=mechanical["locality_scope"],
-    )
     mode = _directive_mode(obj.get("颁布方式"))
     if mode is not None:
         mechanical["mode"] = mode
@@ -2503,10 +2523,18 @@ def extract_draft_intent(
             draft_text = merged if merged else _existing_draft_text
         else:
             draft_text = (minister_reply or "").strip()
-        return {"draft_action": _action, "draft_text": draft_text, "target_candidate": "",
-                "dossier_action_type": dossier_action,
-                "target_kind": target_kind, "target_id": target_id_value,
-                "participant_roster": obj["参与人"] if "参与人" in obj else [], **mechanical}
+        extracted_result = {
+            "draft_action": _action, "draft_text": draft_text, "target_candidate": "",
+            "dossier_action_type": dossier_action,
+            "target_kind": target_kind, "target_id": target_id_value,
+            "participant_roster": obj["参与人"] if "参与人" in obj else [], **mechanical,
+        }
+        _validate_extracted_locality(
+            db=db, content=content, action_type=dossier_action,
+            target_kind=target_kind, target_id=target_id_value,
+            locality_scope=mechanical["locality_scope"], extracted_result=extracted_result,
+        )
+        return extracted_result
     # 多道：归一目标——命中候选 id=补那道；「新」=明确另拟；否则含糊兜底（#502 L7）：
     # 单条→补那条（沿用 last-write-wins），**多条不静默新建第三道**→「含糊」交 session 追问哪一道。
     target_raw = str(obj.get("目标草案") or "").strip()
@@ -2532,12 +2560,18 @@ def extract_draft_intent(
         existing = str(_by_id[int(target)].get("text") or "")
         # 补某道：优先合并全文；LLM 未合并时保留原文（避免用确认语覆盖），原文亦空则退回话。
         draft_text = merged if merged else (existing if existing else (minister_reply or "").strip())
-    return {
+    extracted_result = {
         "draft_action": _action, "draft_text": draft_text, "target_candidate": target,
         "dossier_action_type": dossier_action,
         "target_kind": target_kind, "target_id": target_id_value,
         "participant_roster": obj["参与人"] if "参与人" in obj else [], **mechanical,
     }
+    _validate_extracted_locality(
+        db=db, content=content, action_type=dossier_action,
+        target_kind=target_kind, target_id=target_id_value,
+        locality_scope=mechanical["locality_scope"], extracted_result=extracted_result,
+    )
+    return extracted_result
 
 
 # 手工拟诏 capture 总罩（#1327 / #1274 V-1 owner 2026-08-20）：
@@ -2558,17 +2592,39 @@ def _draft_target_kind_guidance() -> str:
 
 
 class _DraftLocalityValidationError(Exception):
-    """A locality-oracle rejection that the semantic correction loop may retry."""
+    """A typed locality combination rejection carrying the complete extraction."""
+
+    def __init__(self, message: str, extracted_result: Dict[str, Any]):
+        super().__init__(message)
+        self.extracted_result = extracted_result
+
+
+def _same_non_locality_semantics(left: object, right: object) -> bool:
+    """Compare typed extraction trees while permitting only locality correction."""
+    if isinstance(left, dict) and isinstance(right, dict):
+        left_keys = set(left) - {"locality_scope"}
+        right_keys = set(right) - {"locality_scope"}
+        return left_keys == right_keys and all(
+            _same_non_locality_semantics(left[key], right[key]) for key in left_keys
+        )
+    if isinstance(left, list) and isinstance(right, list):
+        return len(left) == len(right) and all(
+            _same_non_locality_semantics(a, b) for a, b in zip(left, right)
+        )
+    return left == right
 
 
 def _validate_extracted_locality(
     *, db: Any, content: Any, action_type: str, target_kind: str,
-    target_id: str, locality_scope: object,
+    target_id: str, locality_scope: object, extracted_result: Dict[str, Any],
 ) -> None:
     """在 extractor semantic payload 边界复用 #654 locality oracle。"""
     if db is None:
         return
-    from ming_sim.execution_pressure import resolve_dossier_region_ids
+    from ming_sim.execution_pressure import (
+        LocalityCombinationError,
+        resolve_dossier_region_ids,
+    )
 
     try:
         resolve_dossier_region_ids(
@@ -2581,8 +2637,8 @@ def _validate_extracted_locality(
             },
             regions_content=getattr(content, "regions", None),
         )
-    except ValueError as exc:
-        raise _DraftLocalityValidationError(str(exc)) from exc
+    except LocalityCombinationError as exc:
+        raise _DraftLocalityValidationError(str(exc), extracted_result) from exc
 
 
 def _coerce_draft_target_kind(raw: object) -> str:
