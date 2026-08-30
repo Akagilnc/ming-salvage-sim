@@ -7,12 +7,13 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Mapping
+from typing import Iterable, Mapping
 
 from ming_sim.assets import load_json_asset, require_dict
 from ming_sim.centrifuge_ledger import CENTRIFUGE_AXES
 
 _ASSET = "value_matrix.json"
+_VALUE_FACTIONS = frozenset({"东林", "阉党", "军队", "皇党", "宗室", "西学", "中立"})
 
 
 @lru_cache(maxsize=1)
@@ -22,37 +23,28 @@ def _loaded() -> tuple[tuple[str, ...], dict[str, dict[str, int]]]:
     if not isinstance(axes_raw, list) or not axes_raw:
         raise SystemExit(f"content/{_ASSET}: axes 必须为非空数组")
     axes = tuple(str(item) for item in axes_raw)
-    if frozenset(axes) != CENTRIFUGE_AXES:
+    if len(axes) != 6 or frozenset(axes) != CENTRIFUGE_AXES:
         raise SystemExit(f"content/{_ASSET}: axes 必须等于六轴闭集")
     factions = require_dict(raw.get("factions"), f"{_ASSET}.factions")
+    if frozenset(factions) != _VALUE_FACTIONS:
+        raise SystemExit(f"content/{_ASSET}: factions 必须等于七派闭集")
     matrix: dict[str, dict[str, int]] = {}
     for faction, row in factions.items():
         cells = require_dict(row, f"{_ASSET}.factions.{faction}")
+        if frozenset(cells) != CENTRIFUGE_AXES:
+            raise SystemExit(f"content/{_ASSET}: {faction} 必须恰有六轴")
         parsed: dict[str, int] = {}
         for axis in axes:
-            if axis not in cells:
-                raise SystemExit(f"content/{_ASSET}: {faction} 缺轴 {axis}")
-            parsed[axis] = int(cells[axis])
+            value = cells[axis]
+            if isinstance(value, bool) or not isinstance(value, int) or not -2 <= value <= 2:
+                raise SystemExit(f"content/{_ASSET}: {faction}.{axis} 必须为 -2..2 整数")
+            parsed[axis] = value
         matrix[str(faction)] = parsed
-    if len(matrix) * len(axes) != 42:
-        raise SystemExit(f"content/{_ASSET}: 须为 7 派 × 6 轴 = 42 格")
     return axes, matrix
 
 
 def value_axes() -> tuple[str, ...]:
     return _loaded()[0]
-
-
-VALUE_AXES: tuple[str, ...] = ()  # 兼容旧 import；运行时用 value_axes()
-
-
-def _ensure_axes_alias() -> tuple[str, ...]:
-    global VALUE_AXES
-    VALUE_AXES = value_axes()
-    return VALUE_AXES
-
-
-_ensure_axes_alias()
 
 
 def normalize_axis(raw: object) -> str | None:
@@ -103,6 +95,42 @@ def faction_axis_stance(faction: object, axis: object) -> int:
     if row is None:
         return 0
     return int(row.get(ax, 0))
+
+
+def axis_collision_stances(
+    collisions: Iterable[Mapping[str, object]],
+    *,
+    target_faction: object,
+) -> list[dict[str, object]]:
+    """逐格读取目标感知撞轴集的 ``stance × direction``。"""
+    target = str(target_faction or "").strip()
+    factions = _loaded()[1]
+    results: list[dict[str, object]] = []
+    for collision in collisions:
+        axis = normalize_axis(collision.get("axis"))
+        scope = collision.get("scope")
+        if axis is None:
+            continue
+        direction = normalize_direction(collision.get("direction"), default=1)
+        if scope == "泛化":
+            recipients = (
+                faction for faction in factions if faction_axis_stance(faction, axis) != 0
+            )
+        elif scope == "目标命门" and target in factions:
+            recipients = (target,)
+        else:
+            continue
+        for faction in recipients:
+            results.append(
+                {
+                    "faction": faction,
+                    "axis": axis,
+                    "direction": direction,
+                    "scope": scope,
+                    "aligned_stance": faction_axis_stance(faction, axis) * direction,
+                }
+            )
+    return results
 
 
 def mean_aligned_stance(
