@@ -35,6 +35,7 @@ from ming_sim.decree_vocabulary import (
     RESCRIPT_ROUTABLE_ACTION_TYPES,
     TARGET_KINDS,
     derive_draft_capability,
+    dossier_action_policy,
 )
 from ming_sim.execution_pressure import write_locality_scope_for_target_kind
 from ming_sim.settlement_payload import (
@@ -1318,16 +1319,20 @@ def apply_rescript_batch(
                         raise ValueError(
                             f"decision grant 成案零行：{item.decision_key}"
                         )
-                    # The selected stored option is already the sovereign verdict:
-                    # promulgate and execute its dossier in this same atomic write.
-                    db.apply_dossier_verdicts(
-                        state,
-                        [
-                            {"dossier_id": dossier_id, "decision": "promulgated"}
-                            for dossier_id in created
-                        ],
-                        content=content,
-                    )
+                    # Canonical policy exempts only inner-treasury grants from
+                    # external review.  Promulgate those dossiers individually;
+                    # reviewed grants stay proposed for the regular verdict batch.
+                    for dossier_id in created:
+                        dossier = db.get_decree_dossier(dossier_id)
+                        payload = (dossier or {}).get("payload")
+                        if not isinstance(payload, dict):
+                            payload = json.loads(str((dossier or {}).get("payload_json") or "{}"))
+                        if not dossier_action_policy(
+                            "grant_allocation", payload,
+                        )["external_review"]:
+                            db.apply_dossier_promulgation(
+                                state, dossier_id, "promulgated", content=content,
+                            )
                 # decision 行：写 choice + decided（#1490 / 普通 HITL）
                 # 事件账失败必须穿透 atomic → 整批回滚（§B.1）；禁 swallow。
                 _cas_decided(db, item)
