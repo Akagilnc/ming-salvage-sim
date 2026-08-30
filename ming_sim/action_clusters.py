@@ -161,8 +161,8 @@ def cluster_fields_prompt(kind: str) -> str:
 def project_cluster_fields(kind: str, obj: Mapping[str, Any]) -> Dict[str, Any]:
     """Project one catalog row from Chinese/English transport keys.
 
-    Validation remains at the durable admission seam so malformed extracted
-    values retain their real rejection reason instead of being defaulted here.
+    Projection only maps catalog fields and defaults. Transport and durable
+    admission seams validate their respective candidate shapes.
     """
     cluster = cluster_by_kind(kind)
     if cluster is None:

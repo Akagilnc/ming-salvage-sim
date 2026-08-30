@@ -15,7 +15,10 @@ from types import SimpleNamespace
 import pytest
 
 import ming_sim.action_materialize  # noqa: F401 -- installs package catalog
-from ming_sim.action_clusters import candidates_from_classifier_payload
+from ming_sim.action_clusters import (
+    ActionCandidateShapeError,
+    candidates_from_classifier_payload,
+)
 from ming_sim.action_materialize import MaterializeCtx, run_materialize_pipeline
 from ming_sim.issues import apply_score_extraction
 from tests.dossier_test_helpers import rejected_verdict as _rejected_verdict
@@ -1304,12 +1307,12 @@ def test_explicit_prefix_grant_and_assignment_two_durable_dossiers(game, monkeyp
 
     for invalid_mode in ("普通", "beyond-catalog"):
         raw["成品旨稿"][0]["颁布方式"] = invalid_mode
-        with pytest.raises(ValueError, match="mode out of enum"):
+        with pytest.raises(ActionCandidateShapeError):
             real_extract("请拟两道旨", "拨饷并清查", draft_count=2)
         backend_payload[0] = {
             "拟旨意图": "拟旨", **raw["成品旨稿"][0],
         }
-        with pytest.raises(ValueError, match="mode out of enum"):
+        with pytest.raises(ActionCandidateShapeError):
             real_extract("请拟旨", "拨饷")
         backend_payload[0] = raw
     raw["成品旨稿"][0]["颁布方式"] = "ordinary"
@@ -1336,7 +1339,9 @@ def test_explicit_prefix_grant_and_assignment_two_durable_dossiers(game, monkeyp
     }
     assignment = next(p for p in payloads if p.get("dossier_action_type") == "assignment")
     assert assignment.get("title") == "清查辽饷收支"
+    assert assignment.get("target_kind") == "issue"
     assert assignment.get("target_id") == "hubu"
+    assert assignment.get("transaction_category") == "钱粮"
     assert assignment.get("mode") == "ordinary"
 
     pending_ids = [int(row["id"]) for row in rows]
@@ -1350,7 +1355,9 @@ def test_explicit_prefix_grant_and_assignment_two_durable_dossiers(game, monkeyp
     durable_assignment = next(d for d in dossiers if d["action_type"] == "assignment")
     assignment_payload = json.loads(durable_assignment["payload_json"])
     assert assignment_payload.get("title") == "清查辽饷收支"
+    assert assignment_payload.get("target_kind") == "issue"
     assert assignment_payload.get("target_id") == "hubu"
+    assert assignment_payload.get("transaction_category") == "钱粮"
     assert assignment_payload.get("mode") == "ordinary"
     durable_grant = next(d for d in dossiers if d["action_type"] == "grant_allocation")
     durable_payload = json.loads(durable_grant["payload_json"])
