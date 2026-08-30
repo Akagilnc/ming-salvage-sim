@@ -89,6 +89,29 @@ def classifier_action_types_prompt() -> str:
     return "|".join(c.label_zh for c in ACTION_CLUSTERS)
 
 
+def _render_field_specs(specs: Sequence[FieldSpec]) -> Tuple[List[str], List[str]]:
+    """Render transport examples and constraints from canonical field rows."""
+    lines: List[str] = []
+    notes: List[str] = []
+    for spec in specs:
+        if spec.allowed is not None:
+            values = sorted(spec.allowed, key=lambda value: (value != "无", value))
+            example = f'"{"|".join(values)}"'
+        elif spec.as_int:
+            example = "null" if spec.default is None else "0"
+            if spec.int_lo > 0:
+                constraint = (
+                    f"可null；命中 JSON integer>={spec.int_lo}；禁数字字符串"
+                    if spec.default is None
+                    else f"JSON integer>={spec.int_lo}"
+                )
+                notes.append(f"{spec.zh}：{constraint}")
+        else:
+            example = '""'
+        lines.append(f'  "{spec.zh}": {example},')
+    return lines, notes
+
+
 def classifier_json_fields_prompt() -> str:
     """从登记 FieldSpec 生成 JSON 字段行（无手写字段副本）。
 
@@ -97,30 +120,15 @@ def classifier_json_fields_prompt() -> str:
     """
     _ensure_catalog()
     lines = [f'  "动作类型": "{classifier_action_types_prompt()}",']
-    notes: list[str] = []
     seen_zh: set = set()
+    unique_specs: List[FieldSpec] = []
     for c in ACTION_CLUSTERS:
-        for f in c.fields:
-            if f.zh in seen_zh:
-                continue
-            seen_zh.add(f.zh)
-            if f.allowed is not None:
-                # stable order for prompt: put 无 first when present
-                vals = sorted(f.allowed, key=lambda x: (x != "无", x))
-                lines.append(f'  "{f.zh}": "{"|".join(vals)}",')
-            elif f.as_int:
-                # 合法 JSON 缺省示例：optional→null，否则 0；约束说明派生到对象外
-                example = "null" if f.default is None else "0"
-                lines.append(f'  "{f.zh}": {example},')
-                if f.int_lo > 0:
-                    constraint = (
-                        f"可null；命中 JSON integer>={f.int_lo}；禁数字字符串"
-                        if f.default is None
-                        else f"JSON integer>={f.int_lo}"
-                    )
-                    notes.append(f"{f.zh}：{constraint}")
-            else:
-                lines.append(f'  "{f.zh}": "",')
+        for spec in c.fields:
+            if spec.zh not in seen_zh:
+                seen_zh.add(spec.zh)
+                unique_specs.append(spec)
+    field_lines, notes = _render_field_specs(unique_specs)
+    lines.extend(field_lines)
     # trailing comma cleanup on last line
     if lines:
         lines[-1] = lines[-1].rstrip(",")
@@ -143,17 +151,11 @@ def cluster_fields_prompt(kind: str) -> str:
     cluster = cluster_by_kind(kind)
     if cluster is None:
         return ""
-    lines: List[str] = []
-    for spec in cluster.fields:
-        if spec.allowed is not None:
-            values = sorted(spec.allowed, key=lambda value: (value != "无", value))
-            example = f'"{"|".join(values)}"'
-        elif spec.as_int:
-            example = "null" if spec.default is None else "0"
-        else:
-            example = '""'
-        lines.append(f'  "{spec.zh}": {example},')
-    return "\n".join(lines) + ("\n" if lines else "")
+    lines, notes = _render_field_specs(cluster.fields)
+    rendered = "\n".join(lines) + ("\n" if lines else "")
+    if notes:
+        rendered += "  // " + "；".join(notes) + "\n"
+    return rendered
 
 
 def project_cluster_fields(kind: str, obj: Mapping[str, Any]) -> Dict[str, Any]:

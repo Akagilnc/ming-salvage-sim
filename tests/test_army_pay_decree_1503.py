@@ -822,8 +822,8 @@ def test_manual_directive_admission_real_http_tracer_1591(
             "恩赏拨帑": "协饷",
             "用途": "补饷",
             "目标类型": "army",
-            "目标ID": "guanning",
-            "颁布方式": "普通",
+            "目标": "guanning",
+            "颁布方式": "ordinary",
             "金额": 15,
             "账户": "太仓",
             "执行面": "immediate",
@@ -840,8 +840,8 @@ def test_manual_directive_admission_real_http_tracer_1591(
             "恩赏拨帑": "赏赉",
             "用途": "",
             "目标类型": "army",
-            "目标ID": "guanning",
-            "颁布方式": "普通",
+            "目标": "guanning",
+            "颁布方式": "ordinary",
             "金额": 15,
             "账户": "藩库",
             "执行面": "immediate",
@@ -1276,9 +1276,9 @@ def test_explicit_prefix_grant_and_assignment_two_durable_dossiers(game, monkeyp
     raw = {"成品旨稿": [
         {
             "正文": "敕户部发太仓银十五万两协济关宁军前。",
-            "动作类型": "grant_allocation", "目标类型": "army", "目标ID": "guanning",
+            "动作类型": "grant_allocation", "目标类型": "army", "目标": "guanning",
             "恩赏拨帑": "协饷", "用途": "补饷", "金额": 15, "账户": "太仓",
-            "颁布方式": "普通", "施行范围": "无",
+            "颁布方式": "ordinary", "施行范围": "无",
         },
         {
             "正文": "着户部清查辽饷收支。", "动作类型": "assignment",
@@ -1329,6 +1329,14 @@ def test_explicit_prefix_grant_and_assignment_two_durable_dossiers(game, monkeyp
     ]
     assert len(dossiers) == 2
     assert {d["action_type"] for d in dossiers} == {"grant_allocation", "assignment"}
+    durable_grant = next(d for d in dossiers if d["action_type"] == "grant_allocation")
+    durable_payload = json.loads(durable_grant["payload_json"])
+    assert {key: durable_payload.get(key) for key in (
+        "grant_action", "purpose", "amount", "account", "target_kind", "target_id",
+    )} == {
+        "grant_action": "协饷", "purpose": "补饷", "amount": 15,
+        "account": "国库", "target_kind": "army", "target_id": "guanning",
+    }
 
 
 def test_draft_neitang_stays_generic_special_decree(game, monkeypatch):

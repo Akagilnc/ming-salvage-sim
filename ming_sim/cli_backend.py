@@ -2222,7 +2222,7 @@ def extract_draft_intent(
             + roster_facts
             + pay_order_facts
             + stalled_push_facts
-            + "御笔强推逐道只填目标案卷ID，普通旨逐道只填动作类型/目标类型/目标ID；两种形状不得并存。\n"
+            + "御笔强推逐道只填目标案卷ID；普通非拨帑旨使用示例中的目标类型/目标ID/颁布方式，拨帑旨只用 ACTION_CLUSTERS 字段。两种形状不得并存。\n"
             + "【皇帝】" + (player_message or "（无）") + "\n"
             + "【大臣完整回话】" + (minister_reply or "（无）") + "\n"
         )
@@ -2245,9 +2245,16 @@ def extract_draft_intent(
                 break
             text = str(value.get("正文") or "").strip()
             action = str(value.get("动作类型") or "").strip()
-            mode = _directive_mode(value.get("颁布方式"))
-            target_kind = str(value.get("目标类型") or "").strip()
-            target_id = str(value.get("目标ID") or "").strip()
+            projected = project_cluster_fields(action, value)
+            mode = _directive_mode(
+                projected.get("mode") if action == "grant_allocation" else value.get("颁布方式")
+            )
+            target_kind = str(
+                projected.get("target_kind") if action == "grant_allocation" else value.get("目标类型") or ""
+            ).strip()
+            target_id = str(
+                projected.get("target_id") if action == "grant_allocation" else value.get("目标ID") or ""
+            ).strip()
             probe: Dict[str, Any] = {}
             if value.get("目标案卷ID") is not None:
                 probe["target_dossier_id"] = value.get("目标案卷ID")
@@ -2292,9 +2299,7 @@ def extract_draft_intent(
                     ("期限月数", "deadline_months"),
                 )
             }
-            mechanical.update(project_cluster_fields(
-                action, {**value, "mode": mode, "target_id": target_id},
-            ))
+            mechanical.update(projected)
             mechanical["locality_scope"] = _coerce_draft_locality_scope(value.get("施行范围"))
             # multi 路目标类型同样 fail-loud
             target_kind = _coerce_draft_target_kind(target_kind)
@@ -2349,9 +2354,6 @@ def extract_draft_intent(
         '                             // 形如 [{"key":"due_haircut_bp_宗禄","value":5000,"duration_months":3}]；\n'
         '                             // key∈due_priority_<科目>[@省]|arrears_priority_<欠科目>[@省]|'
         'due_haircut_bp_<科目>[@省][#province|#central]；haircut 值=万分数(0,10000]；非该动作留 []\n'
-        f'  "目标类型": "{_draft_target_kind_guidance()}",\n'
-        '  "目标ID": "",\n'
-        '  "颁布方式": "普通|中旨直发", // 皇帝预先声明中旨直发时选后者\n'
         + grant_fields_prompt
         + '  "执行面": "immediate|in_transit", // 仅拨帑：账内即时划转或在途执行\n'
         '  "承办人": "",\n'
@@ -2396,6 +2398,7 @@ def extract_draft_intent(
         + merge_schema_line
         + "}\n"
         "判定要点：皇帝明确让大臣拟旨/起草圣旨→拟旨；仅商议/问询/催办/评论不算。语义判断，别拘字面。\n"
+        f'非拨帑旨另输出“目标类型”({_draft_target_kind_guidance()})、“目标ID”及“颁布方式”(普通|中旨直发)；拨帑旨只用 ACTION_CLUSTERS 字段。\n'
         "御笔强推议而不决事项亦归拟旨，并填目标案卷ID。\n\n"
         + correction_block
         + roster_facts
@@ -2434,8 +2437,13 @@ def extract_draft_intent(
     if _raw_target is not None:
         _probe["target_dossier_id"] = _raw_target
     _act = str(obj.get("动作类型") or "").strip()
-    _tk = str(obj.get("目标类型") or "").strip()
-    _tid = str(obj.get("目标ID") or "").strip()
+    _projected = project_cluster_fields(_act, obj)
+    _tk = str(
+        _projected.get("target_kind") if _act == "grant_allocation" else obj.get("目标类型") or ""
+    ).strip()
+    _tid = str(
+        _projected.get("target_id") if _act == "grant_allocation" else obj.get("目标ID") or ""
+    ).strip()
     if _act:
         _probe["dossier_action_type"] = _act
     if _tk:
@@ -2462,10 +2470,14 @@ def extract_draft_intent(
         return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
     if dossier_action not in DRAFT_ACTION_TYPES:
         raise ValueError(f"动作类型非法：{dossier_action!r}")
-    _tk_raw = obj.get("目标类型")
+    _tk_raw = _projected.get("target_kind") if dossier_action == "grant_allocation" else obj.get("目标类型")
     target_kind = _coerce_draft_target_kind(_tk_raw if _tk_raw not in (None, "") else "policy")
-    target_id_value = str(obj.get("目标ID") or "").strip()
-    mode = _directive_mode(obj.get("颁布方式"))
+    target_id_value = str(
+        _projected.get("target_id") if dossier_action == "grant_allocation" else obj.get("目标ID") or ""
+    ).strip()
+    mode = _directive_mode(
+        _projected.get("mode") if dossier_action == "grant_allocation" else obj.get("颁布方式")
+    )
     mechanical = {
         "execution_surface": obj.get("执行面"),
         "assignee": obj.get("承办人"),
@@ -2475,9 +2487,7 @@ def extract_draft_intent(
         "entries": obj.get("entries"),
     }
     if dossier_action == "grant_allocation":
-        mechanical.update(project_cluster_fields(
-            "grant_allocation", {**obj, "mode": mode, "target_id": target_id_value},
-        ))
+        mechanical.update(_projected)
     if mode is not None:
         mechanical["mode"] = mode
     merged = str(obj.get("合并草案") or "").strip()
