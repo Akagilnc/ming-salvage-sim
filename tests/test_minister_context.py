@@ -346,8 +346,7 @@ def test_character_context_scopes_faction_hides_raw_scores_and_zero_buckets(game
     assert lowest_satisfaction in high
     assert lowest_leverage in high
     for label, band in axes.items():
-        if label != "阴谋":
-            assert band in high
+        assert band in high
     assert not re.search(r"(?:忠诚|能力|清廉|胆略|党派认同)\s*[:：]?\s*\d+", high)
 
     minister.identity = 40

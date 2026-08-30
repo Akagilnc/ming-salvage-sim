@@ -2,7 +2,6 @@
 
 from ming_sim.agents import build_simulator_context
 from ming_sim.context import character_context
-from ming_sim.qualitative import qualitative_character_axis
 from ming_sim.simulation import build_simulator_payload
 from tests.conftest import (
     CHARACTER_AXIS_SENTINEL,
@@ -33,15 +32,13 @@ def test_simulator_context_projects_character_axes_but_keeps_world_numbers(game)
     assert row["清廉"] == "操守平常"
     assert row["胆略"] == "敢任其事"
     assert row["党派认同"] == "党色极深"
-    expected_intrigue = qualitative_character_axis(
-        "intrigue", CHARACTER_AXIS_SENTINEL["intrigue"]
-    )
-    assert row["阴谋"] == expected_intrigue
+    assert row["阴谋"] == "深谙机变"
     character_rendered = character_context(character)
     assert "忠诚离心已显" in character_rendered
     assert "能力才具有限" in character_rendered
     assert "清廉操守平常" in character_rendered
     assert "胆略敢任其事" in character_rendered
+    assert "阴谋深谙机变" in character_rendered
     assert not {"loyalty", "ability", "integrity", "courage", "identity", "intrigue"} & set(
         columns
     )

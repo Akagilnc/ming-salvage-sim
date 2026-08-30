@@ -31,10 +31,9 @@ def qualitative_character_axes(character: object) -> Mapping[str, str]:
         CHARACTER_AXIS_LABELS[field]: qualitative_character_axis(
             field, getattr(character, field)
         )
-        for field in ("loyalty", "ability", "integrity", "courage")
+        for field in CHARACTER_QUALITATIVE_BANDS
     }
     projected["党派认同"] = identity_band(getattr(character, "identity"))
-    projected["阴谋"] = qualitative_character_axis("intrigue", getattr(character, "intrigue"))
     return projected
 
 

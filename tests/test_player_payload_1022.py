@@ -156,7 +156,6 @@ def test_cli_skill_card_command_uses_qualitative_character_bands(capsys, monkeyp
         ability=77,
         integrity=66,
         courage=55,
-        intrigue=44,
         style="刚毅",
     )
     monkeypatch.setattr(skills, "available_skill_ids", lambda character, db=None: [])
