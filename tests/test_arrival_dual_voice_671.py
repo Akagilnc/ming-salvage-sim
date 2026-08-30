@@ -329,10 +329,10 @@ def test_arrival_dual_voice_hitl_pending_restores_and_completes(game, monkeypatc
         reopened.close()
 
 
-def test_arrival_dual_voice_companion_failure_not_swallowed_as_sim_fallback(
+def test_arrival_dual_voice_companion_failure_remains_independent(
     game, monkeypatch,
 ):
-    """companion 异常归属独立：不得进 simulator 宽 except 被误标为 sim fallback。"""
+    """companion 异常归属独立，不得被 simulator 异常处理吞掉。"""
     import ming_sim.decree as decree_mod
     import ming_sim.memories as memories
     from ming_sim.exceptions import LLMContractError
@@ -361,7 +361,7 @@ def test_arrival_dual_voice_companion_failure_not_swallowed_as_sim_fallback(
         decree_mod.resolve_directives(
             state, db, None, None, [], "", content=content,
         )
-    # simulator 已跑完；失败是 companion 独立抛出，不是 sim fallback 叙事推进
+    # simulator 已跑完；失败仍由 companion 独立抛出。
     assert sim_ran["n"] == 1
     assert db.get_turn_report(int(state.turn)) == ""
     assert db.get_turn_attendant_message(int(state.turn)) == ""
@@ -378,7 +378,7 @@ def test_arrival_dual_voice_companion_failure_not_swallowed_as_sim_fallback(
 def test_arrival_dual_voice_sim_fail_still_surfaces_companion_error(
     game, monkeypatch,
 ):
-    """sim 已失败时 companion 错仍以独立异常出，不被 fallback 吞掉。"""
+    """sim 已失败时 companion 错仍以独立异常抛出。"""
     import ming_sim.decree as decree_mod
     import ming_sim.memories as memories
     from ming_sim.exceptions import LLMContractError
