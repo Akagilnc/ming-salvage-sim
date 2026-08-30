@@ -377,6 +377,14 @@ def test_decision_parser_rejects_unknown_typed_action_and_keeps_sibling():
             malformed["options"][1],
         ],
     }
+    bare_incompatible_discriminator = {
+        **malformed,
+        "title": "裸错类",
+        "options": [
+            {"label": "惩处", "hint": "候旨", "action_type": "punishment"},
+            malformed["options"][1],
+        ],
+    }
     spaced_legal = {
         **malformed,
         "title": "犒军",
@@ -395,7 +403,8 @@ def test_decision_parser_rejects_unknown_typed_action_and_keeps_sibling():
         f"<<DECISION>>{json.dumps(block, ensure_ascii=False)}<<END>>"
         for block in (
             malformed, blank_discriminator, missing_discriminator,
-            incompatible_discriminator, spaced_legal, sibling,
+            incompatible_discriminator, bare_incompatible_discriminator,
+            spaced_legal, sibling,
         )
     )
 

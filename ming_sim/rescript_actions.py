@@ -27,10 +27,10 @@ from ming_sim.action_materialize import (
     _resolve_xiexang_army_id,
     punish_actions_effective,
 )
-from ming_sim.applier import atomic
 from ming_sim.action_clusters import validate_season_option
 from ming_sim.authority_privileges import AUTHORITY_PRIVILEGE_SET
 from ming_sim.credit_events import KIND_BETRAY, write_credit_event
+from ming_sim.decree import atomic_and_reload
 from ming_sim.decree_vocabulary import (
     RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES,
     RESCRIPT_ROUTABLE_ACTION_TYPES,
@@ -1300,7 +1300,7 @@ def apply_rescript_batch(
     禁任何 resolve_context 键承载本批 choices。
     """
     result = ApplyResult()
-    with atomic(db):
+    with atomic_and_reload(db, state, content=content):
         for item in batch.items:
             if item.already_applied:
                 result.skipped_keys.append(item.decision_key)
