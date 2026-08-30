@@ -2045,20 +2045,44 @@ def extract_draft_intent_with_semantic_heal(
                 **extract_kwargs,
             )
         except DraftLocalityValidationError as exc:
+            failed_result = exc.extracted_result
+            if db is not None:
+                failed_result = _ground_relative_pay_order_deadlines(failed_result, db)
             if locality_baseline is None:
-                locality_baseline = copy.deepcopy(exc.extracted_result)
+                locality_baseline = copy.deepcopy(failed_result)
             elif not _same_non_locality_semantics(
-                locality_baseline, exc.extracted_result,
+                locality_baseline, failed_result,
             ):
                 _log(f"拟旨属地纠错发生非属地语义漂移 {attempt + 1}/{retries}")
+            participant_correction = ""
+            if db is not None and content is not None:
+                try:
+                    _apply_validated_roster_to_extract_result(
+                        failed_result, db=db, content=content,
+                    )
+                except ValueError as participant_exc:
+                    if not is_unknown_participant_ref_error(participant_exc):
+                        raise
+                    if baseline_result is None:
+                        pending_unknown = _invalid_participant_names_from_error(
+                            participant_exc,
+                        )
+                        prior_ids_at_fail = _person_ids_from_extract_result(failed_result)
+                        baseline_result = dict(failed_result)
+                    participant_correction = build_participant_correction_feedback(
+                        participant_exc,
+                        roster_facts=_draft_intent_character_roster_facts(content),
+                    )
             if attempt >= retries:
                 raise DraftLocalityValidationError(
-                    str(exc), exc.extracted_result,
+                    str(exc), failed_result,
                 ) from exc
             correction = (
                 "施行范围与目标结构不一致，请保留其余字段，只把施行范围改为符合"
                 "目标类型、目标ID和动作类型的无、全国或单省。"
             )
+            if participant_correction:
+                correction += "\n" + participant_correction
             _log(f"拟旨属地纠错重试 {attempt + 1}/{retries}: {exc}")
             continue
         if db is not None:
@@ -2145,6 +2169,20 @@ def extract_draft_intent_with_semantic_heal(
             )
             if backfilled is None:
                 raise UnknownParticipantEscalate(pending_unknown)
+            if locality_baseline is not None:
+                if "locality_scope" in result:
+                    backfilled["locality_scope"] = result["locality_scope"]
+                backfilled_drafts = backfilled.get("drafts")
+                result_drafts = result.get("drafts")
+                if isinstance(backfilled_drafts, list) and isinstance(result_drafts, list):
+                    for index, draft in enumerate(backfilled_drafts):
+                        if (
+                            isinstance(draft, dict)
+                            and index < len(result_drafts)
+                            and isinstance(result_drafts[index], dict)
+                            and "locality_scope" in result_drafts[index]
+                        ):
+                            draft["locality_scope"] = result_drafts[index]["locality_scope"]
             if locality_baseline is not None:
                 locality_guard = _backfill_healed_participant_refs(
                     locality_baseline,

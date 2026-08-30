@@ -66,13 +66,12 @@ def test_manual_directive_locality_heals_before_admission(tracer_client, monkeyp
     calls = []
     replies = [
         _extracted("无", "毕自"),
-        _extracted("单省", "毕自"),
         _extracted("单省", "毕自严"),
     ]
 
     def backend(*_args, **_kwargs):
         calls.append(1)
-        return json.dumps(replies[min(len(calls) - 1, 2)], ensure_ascii=False), 1
+        return json.dumps(replies[min(len(calls) - 1, 1)], ensure_ascii=False), 1
 
     monkeypatch.setattr(cli_backend, "capture_manual_directive_payload", _real_capture)
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
@@ -81,7 +80,7 @@ def test_manual_directive_locality_heals_before_admission(tracer_client, monkeyp
     )
 
     assert response.status_code == 200
-    assert len(calls) == 3
+    assert len(calls) == 2
     turn_before = game.state.turn
     _post_issue_stream(
         tracer_client, expected_turn=turn_before, step="#1685 locality issue/stream",
@@ -123,7 +122,7 @@ def test_manual_directive_non_combination_failure_does_not_retry(game, monkeypat
         "/api/directives", json={"text": "着依旨施行。", "notes": ""},
     )
 
-    assert response.status_code != 200
+    assert response.status_code == 409
     assert len(calls) == 1
     assert db.conn.execute("SELECT COUNT(*) FROM turn_directives").fetchone()[0] == 0
     assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0] == 0
