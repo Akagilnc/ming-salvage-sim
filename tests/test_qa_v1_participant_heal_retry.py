@@ -160,7 +160,7 @@ def test_capture_unknown_person_escalates_no_draft(game, monkeypatch):
     assert text == "着不存在之人甲核清太仓，边饷优先"
     # 不得落库（直断计数 0，禁 before/after 同点恒真）
     assert len(db.list_directives(state) or []) == 0
-    max_retries = int(cli_backend.DRAFT_PARTICIPANT_HEAL_RETRIES)
+    max_retries = int(cli_backend.DRAFT_INTENT_HEAL_RETRIES)
     # heal 环 1+retries；回禀产文可再 +1
     draft_calls = sum(1 for p in calls if "拟旨意图" in p or "参与人" in p or _CORRECTION_MARK in p or "请据此拟旨" in p or "信息抽取器" in p)
     assert draft_calls >= 1 + max_retries
@@ -347,7 +347,7 @@ def test_capture_heal_retry_bounded(game, monkeypatch):
     db, _state, content = game
     text = "着毕自严核拨辽饷"
     calls: list[str] = []
-    max_retries = int(cli_backend.DRAFT_PARTICIPANT_HEAL_RETRIES)
+    max_retries = int(cli_backend.DRAFT_INTENT_HEAL_RETRIES)
 
     def backend(prompt, *_a, tag="", **_k):
         calls.append(tag or "draft")
@@ -750,7 +750,7 @@ def test_materialize_unknown_escalates_report_no_draft(game, monkeypatch):
     cued = GameSession._ensure_unknown_participant_report_cue(answer0, report)
     assert answer0 in cued
     assert report in cued
-    assert len(draft_calls) == 1 + int(cb.DRAFT_PARTICIPANT_HEAL_RETRIES)
+    assert len(draft_calls) == 1 + int(cb.DRAFT_INTENT_HEAL_RETRIES)
 
 
 def test_materialize_unknown_removal_attempt_escalates(game, monkeypatch):
@@ -889,7 +889,7 @@ def test_batch_drafts_heal_truncation(game, monkeypatch):
         return (json.dumps(payload, ensure_ascii=False), 1)
 
     monkeypatch.setattr(cb, "_run_backend_for_config", backend)
-    result = cb.extract_draft_intent_with_roster_heal(
+    result = cb.extract_draft_intent_with_semantic_heal(
         "两道旨着毕自严核拨辽饷", "臣遵拟。",
         db=db, content=content, draft_count=2,
     )
@@ -935,7 +935,7 @@ def test_heal_second_fail_keeps_first_prior_valid(game, monkeypatch):
         cb.capture_manual_directive_payload(text, None, db=db, content=content)
     _assert_inworld_escalate(str(ei.value), "不存在之人甲")
     assert len(db.list_directives(state) or []) == 0
-    assert n["c"] == 1 + int(cb.DRAFT_PARTICIPANT_HEAL_RETRIES)
+    assert n["c"] == 1 + int(cb.DRAFT_INTENT_HEAL_RETRIES)
 
 
 def test_heal_keeps_first_extract_non_roster_fields(game, monkeypatch):
@@ -982,7 +982,7 @@ def test_heal_keeps_first_extract_non_roster_fields(game, monkeypatch):
         ), ensure_ascii=False), 1)
 
     monkeypatch.setattr(cb, "_run_backend_for_config", backend)
-    result = cb.extract_draft_intent_with_roster_heal(
+    result = cb.extract_draft_intent_with_semantic_heal(
         text, text, db=db, content=content,
     )
     ids = [
@@ -1066,7 +1066,7 @@ def test_batch_heal_keeps_first_extract_non_roster_fields(game, monkeypatch):
         ), ensure_ascii=False), 1)
 
     monkeypatch.setattr(cb, "_run_backend_for_config", backend)
-    result = cb.extract_draft_intent_with_roster_heal(
+    result = cb.extract_draft_intent_with_semantic_heal(
         "两道旨着毕自严核拨并整饬", "臣遵拟。",
         db=db, content=content, draft_count=2,
     )
@@ -1134,7 +1134,7 @@ def test_player_bi_shangshu_su_bo_xiang_alias_grounds_and_heals(game, monkeypatc
         return (json.dumps(_ok_payload(person=person), ensure_ascii=False), 1)
 
     monkeypatch.setattr(cb, "_run_backend_for_config", backend)
-    result = cb.extract_draft_intent_with_roster_heal(
+    result = cb.extract_draft_intent_with_semantic_heal(
         player, minister_reply, db=db, content=content,
     )
     ids = [
@@ -1171,7 +1171,7 @@ def test_minister_reply_only_grounding_escalates(game, monkeypatch):
 
     monkeypatch.setattr(cb, "_run_backend_for_config", backend)
     with pytest.raises(cb.UnknownParticipantEscalate) as ei:
-        cb.extract_draft_intent_with_roster_heal(
+        cb.extract_draft_intent_with_semantic_heal(
             player, minister_reply, db=db, content=content,
         )
     assert "不存在之人甲" in ei.value.names
@@ -1219,7 +1219,7 @@ def test_heal_freezes_first_roster_shape_against_drift(game, monkeypatch):
         return (json.dumps(_payload(roster), ensure_ascii=False), 1)
 
     monkeypatch.setattr(cb, "_run_backend_for_config", backend)
-    result = cb.extract_draft_intent_with_roster_heal(
+    result = cb.extract_draft_intent_with_semantic_heal(
         player, minister_reply, db=db, content=content,
     )
     roster = result.get("participant_roster") or []
@@ -1309,7 +1309,7 @@ def test_grounded_extra_front_must_not_fill_failed_slot(game, monkeypatch):
 
     monkeypatch.setattr(cb, "_run_backend_for_config", backend)
     with pytest.raises(cb.UnknownParticipantEscalate) as ei:
-        cb.extract_draft_intent_with_roster_heal(
+        cb.extract_draft_intent_with_semantic_heal(
             player, minister_reply, db=db, content=content,
         )
     assert "不存在之人甲" in ei.value.names
@@ -1355,7 +1355,7 @@ def test_two_unknown_refs_escalates_first_error_stop(game, monkeypatch):
 
     monkeypatch.setattr(cb, "_run_backend_for_config", backend)
     with pytest.raises(cb.UnknownParticipantEscalate) as ei:
-        cb.extract_draft_intent_with_roster_heal(
+        cb.extract_draft_intent_with_semantic_heal(
             player, minister_reply, db=db, content=content,
         )
     # 首错即停至少钉到甲；不得静默按池回填两槽
@@ -1477,7 +1477,7 @@ def test_single_unknown_with_institution_heals(game, monkeypatch):
     assert cb._count_failed_person_slots(
         {"participant_roster": first_roster}, db=db, content=content,
     ) == 1
-    result = cb.extract_draft_intent_with_roster_heal(
+    result = cb.extract_draft_intent_with_semantic_heal(
         player, minister_reply, db=db, content=content,
     )
     ids = [
