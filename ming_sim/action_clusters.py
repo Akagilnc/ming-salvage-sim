@@ -33,6 +33,8 @@ class FieldSpec:
     season_option: bool = False
     # Optional per-enum execution metadata lives on the canonical field row.
     execution_coverage: Optional[Mapping[str, Optional[str]]] = None
+    # Field is populated only when another canonical field has one of these values.
+    populated_when: Optional[Tuple[str, FrozenSet[str]]] = None
 
 
 @dataclass(frozen=True)
@@ -91,6 +93,38 @@ def classifier_action_types_prompt() -> str:
     return "|".join(c.label_zh for c in ACTION_CLUSTERS)
 
 
+def _render_field_specs(specs: Sequence[FieldSpec]) -> Tuple[List[str], List[str]]:
+    """Render transport examples and constraints from canonical field rows."""
+    lines: List[str] = []
+    notes: List[str] = []
+    for spec in specs:
+        if spec.allowed is not None:
+            values = sorted(spec.allowed, key=lambda value: (value != "无", value))
+            example = f'"{"|".join(values)}"'
+        elif spec.as_int:
+            example = "null" if spec.default is None else "0"
+            if spec.int_lo > 0 or spec.quantity_unit:
+                constraint = (
+                    f"可null；命中 JSON integer>={spec.int_lo}；禁数字字符串"
+                    if spec.default is None
+                    else f"JSON integer>={spec.int_lo}"
+                )
+                if spec.quantity_unit:
+                    constraint += f"；单位={spec.quantity_unit}"
+                notes.append(f"{spec.zh}：{constraint}")
+        else:
+            example = '""'
+        lines.append(f'  "{spec.zh}": {example},')
+        if spec.populated_when is not None:
+            controller_name, controller_values = spec.populated_when
+            controller = _field_specs()[controller_name]
+            values = "|".join(sorted(controller_values))
+            notes.append(
+                f"{spec.zh}：仅{controller.zh}={values}时填写；其它留空"
+            )
+    return lines, notes
+
+
 def classifier_json_fields_prompt() -> str:
     """从登记 FieldSpec 生成 JSON 字段行（无手写字段副本）。
 
@@ -99,31 +133,15 @@ def classifier_json_fields_prompt() -> str:
     """
     _ensure_catalog()
     lines = [f'  "动作类型": "{classifier_action_types_prompt()}",']
-    notes: list[str] = []
     seen_zh: set = set()
+    unique_specs: List[FieldSpec] = []
     for c in ACTION_CLUSTERS:
-        for f in c.fields:
-            if f.zh not in seen_zh:
-                seen_zh.add(f.zh)
-                if f.allowed is not None:
-                    # stable order for prompt: put 无 first when present
-                    vals = sorted(f.allowed, key=lambda x: (x != "无", x))
-                    lines.append(f'  "{f.zh}": "{"|".join(vals)}",')
-                elif f.as_int:
-                    # 合法 JSON 缺省示例：optional→null，否则 0
-                    example = "null" if f.default is None else "0"
-                    lines.append(f'  "{f.zh}": {example},')
-                else:
-                    lines.append(f'  "{f.zh}": "",')
-            if f.as_int and (f.int_lo > 0 or f.quantity_unit):
-                constraint = (
-                    f"可null；命中 JSON integer>={f.int_lo}；禁数字字符串"
-                    if f.default is None
-                    else f"JSON integer>={f.int_lo}"
-                )
-                if f.quantity_unit:
-                    constraint += f"；单位={f.quantity_unit}"
-                notes.append(f"{c.label_zh}.{f.zh}：{constraint}")
+        for spec in c.fields:
+            if spec.zh not in seen_zh:
+                seen_zh.add(spec.zh)
+                unique_specs.append(spec)
+    field_lines, notes = _render_field_specs(unique_specs)
+    lines.extend(field_lines)
     # trailing comma cleanup on last line
     if lines:
         lines[-1] = lines[-1].rstrip(",")
@@ -195,6 +213,34 @@ def season_option_contract_prompt(kind: str) -> str:
         + "、".join(details)
         + "；不拨帑的 option 不携带这些字段。"
     )
+
+
+def cluster_fields_prompt(kind: str) -> str:
+    """Render one catalog row's extraction fields without a parallel schema."""
+    cluster = cluster_by_kind(kind)
+    if cluster is None:
+        return ""
+    lines, notes = _render_field_specs(cluster.fields)
+    rendered = "\n".join(lines) + ("\n" if lines else "")
+    if notes:
+        rendered += "  // " + "；".join(notes) + "\n"
+    return rendered
+
+
+def project_cluster_fields(kind: str, obj: Mapping[str, Any]) -> Dict[str, Any]:
+    """Project one catalog row from Chinese/English transport keys.
+
+    Projection only maps catalog fields and defaults. Transport and durable
+    admission seams validate their respective candidate shapes.
+    """
+    cluster = cluster_by_kind(kind)
+    if cluster is None:
+        return {}
+    return {
+        spec.name: _field_raw(obj, spec)
+        if _field_raw(obj, spec) is not None else spec.default
+        for spec in cluster.fields
+    }
 
 
 def materialize_clusters_ordered() -> Tuple[ActionCluster, ...]:
@@ -277,6 +323,22 @@ def validate_action_candidate_shape(obj: Any) -> Tuple[bool, str]:
         if normalized not in spec.allowed:
             return False, f"{spec.name} out of enum: {raw!r}"
     return True, ""
+
+
+def field_population_allowed(
+    kind: str, field_name: str, candidate: Mapping[str, Any],
+) -> bool:
+    """Read a field's canonical population condition from its cluster row."""
+    cluster = cluster_by_kind(kind)
+    if cluster is None:
+        return False
+    spec = next((field for field in cluster.fields if field.name == field_name), None)
+    if spec is None:
+        return False
+    if spec.populated_when is None:
+        return True
+    controller, allowed = spec.populated_when
+    return str(candidate.get(controller) or "").strip() in allowed
 
 
 def assert_action_candidate_shape(obj: Any) -> Dict[str, Any]:
