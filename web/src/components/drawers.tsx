@@ -681,7 +681,7 @@ export function CourtDrawer({
   return (
     <>
       {open && <button className="drawer-scrim" aria-label="收起" onClick={onClose} />}
-      <aside className={`court-drawer ${open ? "open" : ""}`}>
+      <aside inert={!open} className={`court-drawer ${open ? "open" : ""}`}>
         <div className="drawer-brand">
           <div className="panel-title">
             <Landmark size={17} />
@@ -749,7 +749,7 @@ export function HaremDrawer({
   return (
     <>
       {open && <button className="drawer-scrim" aria-label="收起" onClick={onClose} />}
-      <aside className={`court-drawer harem-drawer overlay-panel ${open ? "open" : ""}`}>
+      <aside inert={!open} className={`court-drawer harem-drawer overlay-panel ${open ? "open" : ""}`}>
         <div className="drawer-brand">
           <div className="panel-title">
             <Crown size={17} />
