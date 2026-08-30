@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 import web_app
 from ming_sim.models import LLMConfig
+from tests.http_test_support import run_to_terminal
 
 
 def test_runtime_cli_slot_builds_cli_llm_config_without_backend_env(monkeypatch):
@@ -993,26 +994,8 @@ def test_continue_load_save_reset_reach_hud_zero_llm_calls(tmp_path, monkeypatch
             pass
 
 
-def _post_reaches_terminal(path: str):
-    """Bound an HTTP assertion without changing or cancelling production work."""
-    finished = threading.Event()
-    result = []
-
-    def send():
-        try:
-            result.append(TestClient(web_app.app).post(path))
-        finally:
-            finished.set()
-
-    worker = threading.Thread(target=send, daemon=True)
-    worker.start()
-    assert finished.wait(2.0), f"POST {path} did not reach a terminal response"
-    worker.join(2.0)
-    return result[0]
-
-
 @pytest.mark.parametrize("op", ["load", "reset"])
-def test_hot_replace_http_success_runs_catch_up_and_reopens_writes(tmp_path, monkeypatch, op):
+def test_hot_replace_http_success_reopens_state_and_writes(tmp_path, monkeypatch, op):
     db_path = tmp_path / "ming.db"
     monkeypatch.setenv("MING_SIM_DB", str(db_path))
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
@@ -1023,10 +1006,27 @@ def test_hot_replace_http_success_runs_catch_up_and_reopens_writes(tmp_path, mon
     marker, write_minister = list(runtime.content.characters)[:2]
     runtime.favorites.add(marker)
     runtime.db.kv_set("favorites", json.dumps(sorted(runtime.favorites), ensure_ascii=False))
+    catch_up_done = None
+    if op == "load":
+        from ming_sim import audience_extraction
+        from tests.test_audience_extraction_501 import (
+            _minister,
+            _open_night_with_persisted_reply,
+        )
+
+        _open_night_with_persisted_reply(
+            runtime.db, runtime.state, _minister(runtime.db, runtime.content),
+        )
+        assert runtime.db.list_unextracted_replies()
+        catch_up_done = threading.Event()
+        monkeypatch.setattr(
+            audience_extraction, "extract_story_facts",
+            lambda *_a, **_k: catch_up_done.set() or [],
+        )
     runtime.save_to("before")
 
     path = "/api/saves/before/load" if op == "load" else "/api/game/reset"
-    response = _post_reaches_terminal(path)
+    response = run_to_terminal(lambda: TestClient(web_app.app).post(path))
     assert response.status_code == 200
     state = TestClient(web_app.app).get("/api/game/state")
     assert state.status_code == 200
@@ -1036,6 +1036,8 @@ def test_hot_replace_http_success_runs_catch_up_and_reopens_writes(tmp_path, mon
     assert write_minister in write.json()["favorites"]
     if op == "load":
         assert marker in write.json()["favorites"]
+        assert catch_up_done is not None and catch_up_done.wait(2.0)
+        assert runtime.db.list_unextracted_replies() == []
     runtime.session.close()
 
 
@@ -1076,7 +1078,7 @@ def test_hot_replace_http_failure_keeps_old_state_and_writes_usable(
         )
 
     path = "/api/saves/before/load" if op == "load" else "/api/game/reset"
-    response = _post_reaches_terminal(path)
+    response = run_to_terminal(lambda: TestClient(web_app.app).post(path))
     assert response.status_code == 500
     state = TestClient(web_app.app).get("/api/game/state")
     assert state.status_code == 200
