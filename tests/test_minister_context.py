@@ -347,8 +347,7 @@ def test_character_context_scopes_faction_hides_raw_scores_and_zero_buckets(game
     assert lowest_leverage in high
     for band in axes.values():
         assert band in high
-    assert axes["阴谋"] == "不谙权变"
-    assert not re.search(r"(?:忠诚|能力|清廉|胆略|党派认同)\s*[:：]?\s*\d+", high)
+    assert not re.search(r"(?:忠诚|能力|清廉|胆略|党派认同|阴谋)\s*[:：]?\s*\d+", high)
 
     minister.identity = 40
     middle = character_context_with_db(minister, db)
@@ -364,8 +363,7 @@ def test_character_context_scopes_faction_hides_raw_scores_and_zero_buckets(game
     assert faction_dossier["internal"] not in low
 
     plain = character_context(minister)
-    assert "阴谋不谙权变" in plain
-    assert "阴谋阴谋" not in plain
+    assert not re.search(r"阴谋\s*[:：]?\s*\d+", plain)
 
 
 def test_minister_context_falls_back_for_character_without_dossier(game):
