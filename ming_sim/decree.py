@@ -3076,7 +3076,10 @@ def resolve_decisions_phase2(
         except ValueError as exc:
             raise LLMContractError(str(exc)) from exc
         if isinstance(option, dict) and option.get("action_type") == "grant_allocation":
-            selected_keys.add(str(decision.get("decision_key") or ""))
+            selected_keys.add(
+                str(decision.get("decision_key") or "").strip()
+                or f"{str(decision.get('kind') or 'decision')}:{int(decision.get('source_turn') if decision.get('source_turn') is not None else decision.get('turn') or state.turn)}:{int(decision.get('idx') or 0)}"
+            )
     dossiers = list(sim_payload.get("decree_dossiers") or [])
     seen_dossiers = {int(row["id"]) for row in dossiers if isinstance(row, dict) and row.get("id")}
     for row in db.list_decree_dossiers():
