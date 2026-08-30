@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from types import SimpleNamespace
 
 import pytest
+from fastapi.testclient import TestClient
 
 import web_app
 from ming_sim.models import LLMConfig
@@ -991,76 +993,98 @@ def test_continue_load_save_reset_reach_hud_zero_llm_calls(tmp_path, monkeypatch
             pass
 
 
+def _post_reaches_terminal(path: str):
+    """Bound an HTTP assertion without changing or cancelling production work."""
+    finished = threading.Event()
+    result = []
+
+    def send():
+        try:
+            result.append(TestClient(web_app.app).post(path))
+        finally:
+            finished.set()
+
+    worker = threading.Thread(target=send, daemon=True)
+    worker.start()
+    assert finished.wait(2.0), f"POST {path} did not reach a terminal response"
+    worker.join(2.0)
+    return result[0]
+
+
 @pytest.mark.parametrize("op", ["load", "reset"])
-def test_hot_replace_constructor_failure_restores_old_runtime(tmp_path, monkeypatch, op):
-    """A failed candidate must leave the pre-replacement data usable through the HTTP entry."""
+def test_hot_replace_http_success_runs_catch_up_and_reopens_writes(tmp_path, monkeypatch, op):
     db_path = tmp_path / "ming.db"
     monkeypatch.setenv("MING_SIM_DB", str(db_path))
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
-    monkeypatch.setattr(web_app.WebGame, "_spawn_startup_extraction_catch_up", lambda self: None)
     runtime = web_app.WebGame(fresh=True)
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
-    marker_minister, write_minister = list(runtime.content.characters)[:2]
-    asyncio.run(web_app.api_remove_favorite(marker_minister))
-    asyncio.run(web_app.api_add_favorite(marker_minister))
+    marker, write_minister = list(runtime.content.characters)[:2]
+    runtime.favorites.add(marker)
+    runtime.db.kv_set("favorites", json.dumps(sorted(runtime.favorites), ensure_ascii=False))
     runtime.save_to("before")
 
-    real_session = web_app.GameSession
-    attempts = 0
-
-    def fail_first_candidate(*args, **kwargs):
-        nonlocal attempts
-        attempts += 1
-        if attempts == 1:
-            raise RuntimeError("candidate sentinel")
-        return real_session(*args, **kwargs)
-
-    monkeypatch.setattr(web_app, "GameSession", fail_first_candidate)
-    with pytest.raises(web_app.HTTPException) as exc:
-        if op == "load":
-            asyncio.run(web_app.api_load_save("before"))
-        else:
-            asyncio.run(web_app.api_reset_game())
-    assert exc.value.status_code == 500
-    favorite_response = asyncio.run(web_app.api_remove_favorite(write_minister))
-    assert marker_minister in favorite_response["favorites"]
-    favorite_response = asyncio.run(web_app.api_add_favorite(write_minister))
-    assert write_minister in favorite_response["favorites"]
-    state_response = asyncio.run(web_app.api_state())
-    assert state_response["turn"]["turn"] == runtime.state.turn
+    path = "/api/saves/before/load" if op == "load" else "/api/game/reset"
+    response = _post_reaches_terminal(path)
+    assert response.status_code == 200
+    state = TestClient(web_app.app).get("/api/game/state")
+    assert state.status_code == 200
+    assert "turn" in state.json()
+    write = TestClient(web_app.app).post(f"/api/favorites/{write_minister}")
+    assert write.status_code == 200
+    assert write_minister in write.json()["favorites"]
+    if op == "load":
+        assert marker in write.json()["favorites"]
     runtime.session.close()
 
 
 @pytest.mark.parametrize("op", ["load", "reset"])
-def test_hot_replace_backup_failure_keeps_live_session(tmp_path, monkeypatch, op):
-    """Prepare failure must not close or replace the currently usable session."""
+@pytest.mark.parametrize("failure", ["candidate", "backup"])
+def test_hot_replace_http_failure_keeps_old_state_and_writes_usable(
+    tmp_path, monkeypatch, op, failure,
+):
     db_path = tmp_path / "ming.db"
     monkeypatch.setenv("MING_SIM_DB", str(db_path))
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
-    monkeypatch.setattr(web_app.WebGame, "_spawn_startup_extraction_catch_up", lambda self: None)
     runtime = web_app.WebGame(fresh=True)
-    runtime.save_to("before")
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
+    marker, write_minister = list(runtime.content.characters)[:2]
+    runtime.favorites.add(marker)
+    runtime.db.kv_set("favorites", json.dumps(sorted(runtime.favorites), ensure_ascii=False))
+    runtime.save_to("before")
+    old_turn = runtime.state.turn
 
-    def fail_backup(_path):
-        raise RuntimeError("backup sentinel")
+    if failure == "candidate":
+        real_session = web_app.GameSession
+        attempts = 0
 
-    monkeypatch.setattr(runtime.db, "backup_to", fail_backup)
-    with pytest.raises(web_app.HTTPException) as exc:
-        if op == "load":
-            asyncio.run(web_app.api_load_save("before"))
-        else:
-            asyncio.run(web_app.api_reset_game())
-    assert exc.value.status_code == 500
-    minister = next(iter(runtime.content.characters))
-    asyncio.run(web_app.api_remove_favorite(minister))
-    favorite_response = asyncio.run(web_app.api_add_favorite(minister))
-    assert minister in favorite_response["favorites"]
-    assert asyncio.run(web_app.api_state())["turn"]["turn"] == runtime.state.turn
+        def fail_first_candidate(*args, **kwargs):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise RuntimeError("candidate sentinel")
+            return real_session(*args, **kwargs)
+
+        monkeypatch.setattr(web_app, "GameSession", fail_first_candidate)
+    else:
+        monkeypatch.setattr(
+            runtime.db, "backup_to",
+            lambda _path: (_ for _ in ()).throw(RuntimeError("backup sentinel")),
+        )
+
+    path = "/api/saves/before/load" if op == "load" else "/api/game/reset"
+    response = _post_reaches_terminal(path)
+    assert response.status_code == 500
+    state = TestClient(web_app.app).get("/api/game/state")
+    assert state.status_code == 200
+    assert state.json()["turn"]["turn"] == old_turn
+    write = TestClient(web_app.app).post(f"/api/favorites/{write_minister}")
+    assert write.status_code == 200
+    assert marker in write.json()["favorites"]
+    assert write_minister in write.json()["favorites"]
     runtime.session.close()
 
 

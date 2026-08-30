@@ -9,6 +9,7 @@ from types import MethodType, SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 
 from ming_sim.db import GameDB
 from ming_sim.session import AudienceAdmission, ChatTurnResult, GameSession
@@ -1455,6 +1456,7 @@ def test_hot_replace_409_while_offsite_scene_ticket_open(game, monkeypatch, op):
     runtime.load_save = lambda _name: replacements.append("load")
     runtime.reset_game = lambda: replacements.append("reset")
     runtime.state_payload = lambda: {"ok": True}
+    runtime.favorites = set()
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
 
     chat_error: list[BaseException] = []
@@ -1470,18 +1472,42 @@ def test_hot_replace_409_while_offsite_scene_ticket_open(game, monkeypatch, op):
     assert started.wait(2.0), "offsite scene generator did not start"
     db.conn.execute("SELECT 1").fetchone()
 
-    with pytest.raises(HTTPException) as ei:
-        if op == "load":
-            asyncio.run(web_app.api_load_save("存档"))
-        else:
-            asyncio.run(web_app.api_reset_game())
-    assert ei.value.status_code == 409
+    path = "/api/saves/存档/load" if op == "load" else "/api/game/reset"
+
+    def bounded_post():
+        finished = threading.Event()
+        responses = []
+
+        def send():
+            try:
+                responses.append(TestClient(web_app.app).post(path))
+            finally:
+                finished.set()
+
+        request_worker = threading.Thread(target=send, daemon=True)
+        request_worker.start()
+        assert finished.wait(2.0), f"POST {path} did not reach a terminal response"
+        request_worker.join(2.0)
+        return responses[0]
+
+    busy = bounded_post()
+    assert busy.status_code == 409
     assert replacements == []
     db.conn.execute("SELECT 1").fetchone()
 
     release.set()
     worker.join(2.0)
     assert not chat_error, chat_error
+
+    retried = bounded_post()
+    assert retried.status_code == 200
+    assert replacements == [op]
+    state_response = TestClient(web_app.app).get("/api/game/state")
+    assert state_response.status_code == 200
+    assert state_response.json() == {"ok": True}
+    minister = next(iter(content.characters))
+    write_response = TestClient(web_app.app).post(f"/api/favorites/{minister}")
+    assert write_response.status_code == 200
 
 
 def test_offsite_scene_assembles_under_gate_generates_without_gate(game):
