@@ -1206,6 +1206,7 @@ def test_rejected_dossier_retries_simulator_before_entering_rescript_rail(
     )
 
     calls = {"promulgation": 0, "simulator": 0}
+    failure = RuntimeError("simulator unavailable")
 
     def _verdicts(_dossiers, _state, **_kwargs):
         calls["promulgation"] += 1
@@ -1217,17 +1218,18 @@ def test_rejected_dossier_retries_simulator_before_entering_rescript_rail(
     def _simulate(*args, **kwargs):
         calls["simulator"] += 1
         if calls["simulator"] == 1:
-            raise RuntimeError("simulator unavailable")
+            raise failure
         return ("月报", kwargs.get("simulator_payload") or {})
 
     monkeypatch.setattr(decree_mod, "simulate_season_with_payload", _simulate)
 
     turn = state.turn
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError) as exc_info:
         decree_mod.resolve_directives(
             state, db, None, None, [object()], "拨帑赈济", content=content,
         )
 
+    assert exc_info.value is failure
     assert state.turn == turn
     assert state.turn_phase == "settling"
     assert db.list_pending_decisions(turn) == []
