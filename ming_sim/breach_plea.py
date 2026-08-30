@@ -887,25 +887,24 @@ def finalize_persist(
     # 所载含撤人 → 按主办集合落辜负；仅跳过本 finalize 0056 已实写同人
     # （不重复）；其它承诺/案卷同人边不在 already，不得吞（不遗漏）
     # 无撤人且无案卷且未走 0056 → 兜底辜负
+    from ming_sim.credit_events import KIND_BETRAY, write_credit_event
     if BREACH_KIND_REMOVE_SPONSOR in kinds:
         sponsors = _sponsor_names_for_commitment(db, row) if row is not None else []
         already = set(tail.get("guofu_from_0056") or ())
         for person in sponsors:
             if person in already:
                 continue
-            db.record_relation_edge_event(
-                source="皇帝", target=person, event_kind="辜负", context=reason,
-                origin=f"issue:{commitment_ref}:breach_plea", turn=state.turn,
-                year=state.year, period=state.period,
+            write_credit_event(
+                db, state, person=person, event_kind=KIND_BETRAY, context=reason,
+                origin=f"issue:{commitment_ref}:breach_plea",
             )
     elif target_dossier_id <= 0 and not breach_applied:
         # 无案卷且未走 0056：兜底辜负
         sponsors = _sponsor_names_for_commitment(db, row) if row is not None else []
         for person in sponsors:
-            db.record_relation_edge_event(
-                source="皇帝", target=person, event_kind="辜负", context=reason,
-                origin=f"issue:{commitment_ref}:breach_plea", turn=state.turn,
-                year=state.year, period=state.period,
+            write_credit_event(
+                db, state, person=person, event_kind=KIND_BETRAY, context=reason,
+                origin=f"issue:{commitment_ref}:breach_plea",
             )
 
     consumed = db.mark_next_audience_todo_status(

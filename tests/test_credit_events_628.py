@@ -158,11 +158,20 @@ def test_ac1_breach_plea_guofu_not_reimplemented(game):
         if int(t["id"]) == todo_id
     )
     before = len(_credit_edges(db, event_kind="辜负", target=holder))
+    loyalty_before = db.conn.execute(
+        "SELECT loyalty FROM characters WHERE name=?", (holder,)
+    ).fetchone()["loyalty"]
     result = finalize_persist(db, state, todo, commit=True)
     assert result["decision"] == "persist"
     edges = _credit_edges(db, event_kind="辜负", target=holder)
     assert len(edges) == before + 1
     assert any("breach_plea" in str(e["origin"]) for e in edges)
+    assert db.conn.execute(
+        "SELECT loyalty FROM characters WHERE name=?", (holder,)
+    ).fetchone()["loyalty"] < loyalty_before
+    assert db.conn.execute(
+        "SELECT 1 FROM loyalty_credit_event_applied WHERE event_id=?", (edges[-1]["id"],)
+    ).fetchone() is not None
     # 本片 resolve 不吞、不重写该 origin
     resolve_credit_events_from_extraction(db, state, {}, commit=True)
     edges2 = _credit_edges(db, event_kind="辜负", target=holder)
