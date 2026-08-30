@@ -2168,6 +2168,66 @@ def test_657_abi_mapper_matrix_a1_a12(game):
 
 
 
+def test_1682_late_grants_follow_policy_without_consuming_verdict_batch(game):
+    """Late HITL grants auto-promulgate only canonical review-exempt dossiers."""
+    from ming_sim import rescript_actions as ra
+
+    db, state, content = game
+    target = str(db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
+    ).fetchone()["name"])
+    options = [
+        {
+            "label": "发内帑", "hint": "h", "action_type": "grant_allocation",
+            "grant_action": "发内帑", "account": "内库", "amount": 7,
+            "execution_surface": "immediate",
+            "target_kind": "character", "target_id": target,
+        },
+        {
+            "label": "国库赏赉", "hint": "h", "action_type": "grant_allocation",
+            "grant_action": "赏赉", "account": "国库", "amount": 11,
+            "target_kind": "character", "target_id": target,
+        },
+    ]
+    db.save_pending_decisions(state.turn, [
+        {"event_id": "", "title": "内帑", "context": "c", "options": [options[0]]},
+        {"event_id": "", "title": "国库", "context": "c", "options": [options[1]]},
+    ])
+    desk = db.list_rescript_desk(int(state.turn))
+    choices = [
+        {"decision_key": row["decision_key"], "label": row["options"][0]["label"]}
+        for row in desk
+    ]
+    unrelated_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="待判旧案",
+        target_kind="issue", target_id="unrelated-1682",
+    )
+    pending = {"dossier_id": unrelated_id, "decision": "promulgated"}
+    db.save_pending_promulgation_verdicts(state.turn, [pending])
+
+    batch = ra.validate_all(desk, choices)
+    ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(), content=content)
+
+    grants = [
+        row for row in db.list_decree_dossiers()
+        if row["action_type"] == "grant_allocation"
+        and _dossier_payload(row).get("decision_key") in {
+            choice["decision_key"] for choice in choices
+        }
+    ]
+    assert len(grants) == 2
+    by_account = {_dossier_payload(row)["account"]: row for row in grants}
+    inner = by_account["内库"]
+    assert inner["status"] == "closed"
+    assert inner["promulgation_decision"] == "promulgated"
+    assert len(db.list_economy_moves_for_dossier(int(inner["id"]))) == 1
+    reviewed = by_account["国库"]
+    assert reviewed["status"] == "proposed"
+    assert reviewed["promulgation_decision"] == ""
+    assert db.list_economy_moves_for_dossier(int(reviewed["id"])) == []
+    assert db.get_pending_promulgation_verdicts(state.turn) == [pending]
+
+
 def test_657_s10_http_five_actions_and_1490_no_regress(web_game, monkeypatch):
     """P3+S10(+S1)：六动作参数表真 HTTP + 真 phase2 外部结构化终局。
 
