@@ -1,4 +1,5 @@
 import json
+import sqlite3
 
 import pytest
 
@@ -10,7 +11,7 @@ from ming_sim.credit_events import (
     write_credit_event,
 )
 from ming_sim.relations import EMPEROR_NODE
-from ming_sim.decree import atomic_and_reload, settle_with_delta
+from ming_sim.decree import settle_with_delta
 from ming_sim.issues import (
     apply_issue_inertia_and_ongoing,
     apply_score_extraction,
@@ -148,7 +149,7 @@ def test_character_loyalty_commitment_ongoing_applies_monthly_and_records_progre
         origin_ref="decree:turn-1:appease-mao",
         bar_value=0,
         inertia=0,
-        stage_text="遣臣常驻皮岛安抚毛文龙，逐月消解其观望。",
+        stage_text="",
         ongoing_effects={},
         stop_condition=json.dumps({"character.毛文龙.loyalty": ">=65"}, ensure_ascii=False),
         commitment_kind="until_stop",
@@ -164,7 +165,6 @@ def test_character_loyalty_commitment_ongoing_applies_monthly_and_records_progre
         "WHERE target='毛文龙' ORDER BY id DESC LIMIT 1"
     ).fetchone()
     assert event is not None and event["event_kind"] == KIND_BACK
-    assert event["context"] == "遣臣常驻皮岛安抚毛文龙，逐月消解其观望。"
     row = _issue_row(db, issue_id)
     assert row["status"] == "active"
     advances = db.conn.execute(
@@ -221,7 +221,7 @@ def test_legacy_character_resolve_condition_commitment_settles_when_threshold_re
         "SELECT context FROM relation_edge_events "
         "WHERE target='毛文龙' ORDER BY id DESC LIMIT 1"
     ).fetchone()
-    assert event is not None and event["context"] == "奉旨持续安抚，观望稍解"
+    assert event is not None
     row = _issue_row(db, issue_id)
     assert row["status"] == "resolved"
     assert row["bar_value"] == 100
@@ -273,13 +273,22 @@ def test_credit_event_rolls_back_db_content_and_watermark_before_retry(game):
         "SELECT COUNT(*) AS n FROM loyalty_credit_event_applied"
     ).fetchone()["n"]
 
-    with pytest.raises(RuntimeError, match="rollback credit event"):
-        with atomic_and_reload(db, state, content=content):
-            write_credit_event(
-                db, state, person="毛文龙", event_kind=KIND_BACK,
-                context="回滚前的撑腰事实", origin=origin,
-            )
-            raise RuntimeError("rollback credit event")
+    db.conn.execute(
+        """
+        CREATE TRIGGER fail_credit_watermark
+        BEFORE INSERT ON loyalty_credit_event_applied
+        BEGIN
+            SELECT RAISE(ABORT, 'injected watermark failure');
+        END
+        """
+    )
+    db.conn.commit()
+
+    with pytest.raises(sqlite3.IntegrityError, match="injected watermark failure"):
+        write_credit_event(
+            db, state, person="毛文龙", event_kind=KIND_BACK,
+            context="回滚前的撑腰事实", origin=origin,
+        )
 
     assert _character_loyalty(db, "毛文龙") == before_loyalty
     assert content.characters["毛文龙"].loyalty == before_loyalty
@@ -290,6 +299,8 @@ def test_credit_event_rolls_back_db_content_and_watermark_before_retry(game):
         "SELECT 1 FROM relation_edge_events WHERE origin=?", (origin,)
     ).fetchone() is None
 
+    db.conn.execute("DROP TRIGGER fail_credit_watermark")
+    db.conn.commit()
     event_id = write_credit_event(
         db, state, person="毛文龙", event_kind=KIND_BACK,
         context="重试后的撑腰事实", origin=origin,

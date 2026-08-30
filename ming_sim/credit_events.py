@@ -233,7 +233,15 @@ def derive_loyalty_from_credit_event(db: Any, event_id: int) -> Optional[Dict[st
     db.conn.execute("UPDATE characters SET loyalty=? WHERE name=?", (new, person))
     content = getattr(db, "content", None)
     if content is not None and person in content.characters:
-        content.characters[person].loyalty = new
+        from ming_sim.applier import register_runtime_outcome_callbacks
+
+        character = content.characters[person]
+        old_runtime_loyalty = character.loyalty
+        character.loyalty = new
+        register_runtime_outcome_callbacks(
+            db,
+            on_rollback=lambda: setattr(character, "loyalty", old_runtime_loyalty),
+        )
     db.conn.execute(
         "INSERT INTO loyalty_credit_event_applied(event_id) VALUES(?)",
         (int(event_id),),
@@ -269,13 +277,13 @@ def write_credit_event(
     """四字段薄记录写口：方向由 CREDIT_DIRECTION 决定，落 record_relation_edge_event。"""
     person = str(person or "").strip()
     kind = str(event_kind or "").strip()
-    context = str(context or "").strip()
+    context = str(context or "")
     origin = str(origin or "").strip()
     if not person:
         raise ValueError("信用事件缺少当事人")
     if kind not in _WRITE_KINDS:
         raise ValueError(f"非本片信用事件类目: {kind!r}")
-    if not context:
+    if not context.strip():
         raise ValueError("信用事件语境不能为空")
     if not origin:
         raise ValueError("信用事件 origin 不能为空")
@@ -284,26 +292,29 @@ def write_credit_event(
         source, target = EMPEROR_NODE, person
     else:
         source, target = person, EMPEROR_NODE
-    existing = _existing_edge_id(
-        db, source=source, target=target, event_kind=kind, origin=origin,
-    )
-    if existing is not None:
-        derive_loyalty_from_credit_event(db, existing)
-        return existing
-    event_id = int(
-        db.record_relation_edge_event(
-            source=source,
-            target=target,
-            event_kind=kind,
-            context=context,
-            origin=origin,
-            turn=int(state.turn),
-            year=int(state.year),
-            period=int(state.period),
+    from ming_sim.applier import atomic
+
+    with atomic(db):
+        existing = _existing_edge_id(
+            db, source=source, target=target, event_kind=kind, origin=origin,
         )
-    )
-    derive_loyalty_from_credit_event(db, event_id)
-    return event_id
+        if existing is not None:
+            derive_loyalty_from_credit_event(db, existing)
+            return existing
+        event_id = int(
+            db.record_relation_edge_event(
+                source=source,
+                target=target,
+                event_kind=kind,
+                context=context,
+                origin=origin,
+                turn=int(state.turn),
+                year=int(state.year),
+                period=int(state.period),
+            )
+        )
+        derive_loyalty_from_credit_event(db, event_id)
+        return event_id
 
 
 def _sponsor_names(db: Any, dossier_id: int) -> List[str]:
