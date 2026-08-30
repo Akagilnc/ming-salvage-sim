@@ -29,7 +29,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, Type, Union
+from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Tuple, Type, Union
 
 from agno.models.message import Message
 from agno.models.openai import OpenAIChat
@@ -2197,6 +2197,28 @@ def extract_draft_intent(
     if correction_block and not correction_block.endswith("\n"):
         correction_block += "\n"
     stalled_push_facts = _stalled_deliberation_push_facts(db)
+    from ming_sim.action_clusters import (
+        assert_action_candidate_shape,
+        cluster_fields_prompt,
+        project_cluster_fields,
+    )
+    grant_fields_prompt = cluster_fields_prompt("grant_allocation")
+
+    def _normalize_grant_transport(value: Mapping[str, Any]) -> Dict[str, Any]:
+        transport = dict(value)
+        # Draft transport historically used 目标ID and Chinese mode labels;
+        # canonical FieldSpec validation happens only after those aliases normalize.
+        if "target_id" not in transport and "目标" not in transport and "目标ID" in transport:
+            transport["target_id"] = transport["目标ID"]
+        raw_mode = transport.get("mode", transport.get("颁布方式"))
+        if raw_mode not in (None, ""):
+            transport["mode"] = _directive_mode(raw_mode) or raw_mode
+        normalized = assert_action_candidate_shape({**transport, "kind": "grant_allocation"})
+        projected = project_cluster_fields("grant_allocation", normalized)
+        if projected.get("grant_action") != "协饷" and not projected.get("target_kind"):
+            projected["target_kind"] = "policy"
+        return projected
+
     if draft_count > 1:
         prompt = (
             "你是信息抽取器，不扮演。皇帝同一句要求拟多道彼此独立的圣旨，大臣已在一段回话中"
@@ -2207,18 +2229,20 @@ def extract_draft_intent(
             f'"目标类型":"{_draft_target_kind_guidance()}","目标ID":"...","目标案卷ID":null,'
             '"颁布方式":"普通|中旨直发","施行范围":"无|全国|单省"},'
             f'{{"正文":"……共 {draft_count} 道","动作类型":"military_order","目标类型":"army",'
-            '"目标ID":"...","金额":null,"账户":"","执行面":"immediate|in_transit",'
+            '"目标ID":"...","执行面":"immediate|in_transit",'
             '"承办人":"...","期限月数":3,"颁布方式":"普通|中旨直发","施行范围":"无",'
             '"参与人":[{"character_id":"规范名","tier":"主办|协办|知情","role":"本案职分","delegator_id":null}]}]}\n'
             'entries 仅 pay_order_override 非空，形如 '
             '[{"key":"due_priority_军饷@shaanxi","value":40,"duration_months":3}]；'
             'military_order 等非该动作不写或 []。\n'
-            "不得把同一段文字复制成多道；不得遗漏皇帝要求的任一道拟旨事项。\n\n"
+            "拨帑动作逐道使用以下 ACTION_CLUSTERS 字段（其余动作留缺省）：\n"
+            + grant_fields_prompt
+            + "不得把同一段文字复制成多道；不得遗漏皇帝要求的任一道拟旨事项。\n\n"
             + correction_block
             + roster_facts
             + pay_order_facts
             + stalled_push_facts
-            + "御笔强推逐道只填目标案卷ID，普通旨逐道只填动作类型/目标类型/目标ID；两种形状不得并存。\n"
+            + "御笔强推逐道只填目标案卷ID；普通非拨帑旨使用示例中的目标类型/目标ID/颁布方式，拨帑旨只用 ACTION_CLUSTERS 字段。两种形状不得并存。\n"
             + "【皇帝】" + (player_message or "（无）") + "\n"
             + "【大臣完整回话】" + (minister_reply or "（无）") + "\n"
         )
@@ -2241,9 +2265,20 @@ def extract_draft_intent(
                 break
             text = str(value.get("正文") or "").strip()
             action = str(value.get("动作类型") or "").strip()
-            mode = _directive_mode(value.get("颁布方式"))
-            target_kind = str(value.get("目标类型") or "").strip()
-            target_id = str(value.get("目标ID") or "").strip()
+            if action == "grant_allocation":
+                projected = _normalize_grant_transport(value)
+            else:
+                projected = {}
+            mode = _directive_mode(
+                projected.get("mode") if action == "grant_allocation" else value.get("颁布方式")
+            )
+            target_kind = str(
+                projected.get("target_kind")
+                if action == "grant_allocation" else value.get("目标类型") or ""
+            ).strip()
+            target_id = str(
+                projected.get("target_id") if action == "grant_allocation" else value.get("目标ID") or ""
+            ).strip()
             probe: Dict[str, Any] = {}
             if value.get("目标案卷ID") is not None:
                 probe["target_dossier_id"] = value.get("目标案卷ID")
@@ -2284,14 +2319,20 @@ def extract_draft_intent(
             mechanical = {
                 target: value.get(source)
                 for source, target in (
-                    ("金额", "amount"), ("账户", "account"),
                     ("执行面", "execution_surface"), ("承办人", "assignee"),
-                    ("期限月数", "deadline_months"),
+                    ("期限月数", "deadline_months"), ("标题", "title"),
+                    ("事务类别", "transaction_category"),
                 )
             }
+            if action == "grant_allocation":
+                mechanical.update(
+                    (key, item) for key, item in projected.items()
+                    if key != "target_kind"
+                )
             mechanical["locality_scope"] = _coerce_draft_locality_scope(value.get("施行范围"))
-            # multi 路目标类型同样 fail-loud
-            target_kind = _coerce_draft_target_kind(target_kind)
+            # grant 缺 target_kind 留给其 canonical admission 聚合报错；其它动作在此闭集校验。
+            if action != "grant_allocation":
+                target_kind = _coerce_draft_target_kind(target_kind)
             # #653：pay_order_override 结构化载荷（entries）随草案整道转交，
             # 成案点/物化点共 prepare_pay_order_entries 同一验形。
             entries = value.get("entries")
@@ -2343,12 +2384,8 @@ def extract_draft_intent(
         '                             // 形如 [{"key":"due_haircut_bp_宗禄","value":5000,"duration_months":3}]；\n'
         '                             // key∈due_priority_<科目>[@省]|arrears_priority_<欠科目>[@省]|'
         'due_haircut_bp_<科目>[@省][#province|#central]；haircut 值=万分数(0,10000]；非该动作留 []\n'
-        f'  "目标类型": "{_draft_target_kind_guidance()}",\n'
-        '  "目标ID": "",\n'
-        '  "颁布方式": "普通|中旨直发", // 皇帝预先声明中旨直发时选后者\n'
-        '  "金额": null,             // 奉旨拨付额填正整数；非拨帑留 null\n'
-        '  "账户": "",\n'
-        '  "执行面": "immediate|in_transit", // 仅拨帑：账内即时划转或在途执行\n'
+        + grant_fields_prompt
+        + '  "执行面": "immediate|in_transit", // 仅拨帑：账内即时划转或在途执行\n'
         '  "承办人": "",\n'
         '  "参与人": [{"character_id":"规范名","tier":"主办|协办|知情","role":"本案职分","delegator_id":null}],\n'
         '  "施行范围": "无|全国|单省", // 全国性政令填全国；明指某省填单省；京内/任免等无属地语义留无\n'
@@ -2391,6 +2428,7 @@ def extract_draft_intent(
         + merge_schema_line
         + "}\n"
         "判定要点：皇帝明确让大臣拟旨/起草圣旨→拟旨；仅商议/问询/催办/评论不算。语义判断，别拘字面。\n"
+        f'非拨帑旨另输出“目标类型”({_draft_target_kind_guidance()})、“目标ID”及“颁布方式”(普通|中旨直发)；拨帑旨只用 ACTION_CLUSTERS 字段。\n'
         "御笔强推议而不决事项亦归拟旨，并填目标案卷ID。\n\n"
         + correction_block
         + roster_facts
@@ -2429,8 +2467,17 @@ def extract_draft_intent(
     if _raw_target is not None:
         _probe["target_dossier_id"] = _raw_target
     _act = str(obj.get("动作类型") or "").strip()
-    _tk = str(obj.get("目标类型") or "").strip()
-    _tid = str(obj.get("目标ID") or "").strip()
+    if _act == "grant_allocation":
+        _projected = _normalize_grant_transport(obj)
+    else:
+        _projected = {}
+    _tk = str(
+        _projected.get("target_kind")
+        if _act == "grant_allocation" else obj.get("目标类型") or ""
+    ).strip()
+    _tid = str(
+        _projected.get("target_id") if _act == "grant_allocation" else obj.get("目标ID") or ""
+    ).strip()
     if _act:
         _probe["dossier_action_type"] = _act
     if _tk:
@@ -2457,11 +2504,19 @@ def extract_draft_intent(
         return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
     if dossier_action not in DRAFT_ACTION_TYPES:
         raise ValueError(f"动作类型非法：{dossier_action!r}")
-    _tk_raw = obj.get("目标类型")
-    target_kind = _coerce_draft_target_kind(_tk_raw if _tk_raw not in (None, "") else "policy")
-    target_id_value = str(obj.get("目标ID") or "").strip()
+    _tk_raw = _projected.get("target_kind") if dossier_action == "grant_allocation" else obj.get("目标类型")
+    target_kind = (
+        str(_tk_raw or "").strip()
+        if dossier_action == "grant_allocation"
+        else _coerce_draft_target_kind(_tk_raw if _tk_raw not in (None, "") else "policy")
+    )
+    target_id_value = str(
+        _projected.get("target_id") if dossier_action == "grant_allocation" else obj.get("目标ID") or ""
+    ).strip()
+    mode = _directive_mode(
+        _projected.get("mode") if dossier_action == "grant_allocation" else obj.get("颁布方式")
+    )
     mechanical = {
-        "amount": obj.get("金额"), "account": obj.get("账户"),
         "execution_surface": obj.get("执行面"),
         "assignee": obj.get("承办人"),
         "deadline_months": obj.get("期限月数"),
@@ -2469,7 +2524,11 @@ def extract_draft_intent(
         # #653：pay_order_override 结构化载荷随 capture 整道转交（禁旁路）。
         "entries": obj.get("entries"),
     }
-    mode = _directive_mode(obj.get("颁布方式"))
+    if dossier_action == "grant_allocation":
+        mechanical.update(
+            (key, item) for key, item in _projected.items()
+            if key != "target_kind"
+        )
     if mode is not None:
         mechanical["mode"] = mode
     merged = str(obj.get("合并草案") or "").strip()
@@ -2653,6 +2712,19 @@ def capture_manual_directive_payload(
         if captured.get(field) not in (None, ""):
             payload[field] = captured[field]
     # heal 已 normalize+validate；无 db/content 时保持抽取原样（旧调用兼容）。
+    if (
+        payload.get("dossier_action_type") == "grant_allocation"
+        and payload.get("grant_action") == "协饷"
+    ):
+        from ming_sim.action_materialize import require_explicit_xiexang_fields
+        payload.update(require_explicit_xiexang_fields(
+            amount=payload.get("amount"),
+            account=str(payload.get("account") or ""),
+            purpose=str(payload.get("purpose") or ""),
+            target_kind=str(payload.get("target_kind") or ""),
+            target_id=str(payload.get("target_id") or ""),
+            cadence=str(payload.get("cadence") or ""),
+        ))
     if payload.get("dossier_action_type") == "dismiss_assignment":
         # Manual CLI/Web directives bypass pending office actions, so preserve
         # the same structured materialization fields at this capture seam.
