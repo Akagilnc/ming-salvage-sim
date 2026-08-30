@@ -22,7 +22,10 @@ def test_value_matrix_matches_adr_0011_3_and_routes_opposite_signs():
     assert value_matrix.mean_aligned_stance("东林", "既得利益", direction=-1) == 1
 
 
-@pytest.mark.parametrize("corrupt", ["missing_cell", "extra_cell", "unknown_faction"])
+@pytest.mark.parametrize(
+    "corrupt",
+    ["missing_cell", "extra_cell", "unknown_faction", "bool_value", "out_of_range", "string_value"],
+)
 def test_value_matrix_fails_closed_when_the_42_cell_closed_set_is_corrupt(monkeypatch, corrupt):
     raw = {
         "axes": list(value_matrix.value_axes()),
@@ -32,8 +35,14 @@ def test_value_matrix_fails_closed_when_the_42_cell_closed_set_is_corrupt(monkey
         del raw["factions"]["东林"]["礼法名节"]
     elif corrupt == "extra_cell":
         raw["factions"]["东林"]["新轴"] = 1
-    else:
+    elif corrupt == "unknown_faction":
         raw["factions"]["新党"] = raw["factions"].pop("中立")
+    elif corrupt == "bool_value":
+        raw["factions"]["东林"]["礼法名节"] = True
+    elif corrupt == "out_of_range":
+        raw["factions"]["东林"]["礼法名节"] = 3
+    else:
+        raw["factions"]["东林"]["礼法名节"] = "2"
 
     monkeypatch.setattr(value_matrix, "load_json_asset", lambda _path: raw)
     value_matrix._loaded.cache_clear()
