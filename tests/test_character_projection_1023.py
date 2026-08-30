@@ -8,6 +8,18 @@ def test_simulator_payload_projects_character_axes_without_raw_columns(game):
     db, state, content = game
     character_name = active_ming_character(db, content)
     character = content.characters[character_name]
+    axis_values = (17, 37, 57, 77, 97, 67)
+    db.conn.execute(
+        "UPDATE characters SET loyalty=?, ability=?, integrity=?, courage=?, identity=?, intrigue=? "
+        "WHERE name=?",
+        (*axis_values, character.name),
+    )
+    db.conn.commit()
+    for field, value in zip(
+        ("loyalty", "ability", "integrity", "courage", "identity", "intrigue"),
+        axis_values,
+    ):
+        setattr(character, field, value)
 
     payload = build_simulator_payload(state, db, "", "")
     columns = payload["court_roster"]["cols"]
@@ -17,12 +29,18 @@ def test_simulator_payload_projects_character_axes_without_raw_columns(game):
         if values[columns.index("name")] == character.name
     )
 
-    assert row["忠诚"]
-    assert row["能力"]
-    assert row["清廉"]
-    assert row["胆略"]
-    assert row["党派认同"]
-    assert row["阴谋"]
+    assert {
+        key: row[key]
+        for key in ("忠诚", "能力", "清廉", "胆略", "党派认同", "阴谋")
+    } == {
+        "忠诚": "离心已显",
+        "能力": "才具有限",
+        "清廉": "操守平常",
+        "胆略": "敢任其事",
+        "党派认同": "党色极深",
+        "阴谋": "深谙机变",
+    }
+    assert not set(map(str, axis_values)) & set(row.values())
     assert not {"loyalty", "ability", "integrity", "courage", "identity", "intrigue"} & set(
         columns
     )
