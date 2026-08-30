@@ -823,8 +823,8 @@ class WebGame:
         # 先于补跑、一条调用、勿复制谓词（与在飞守卫单一真源 = list_in_flight_chat_turns）。
         if hasattr(self.db, "conn"):
             self.db.reconcile_interrupted_chat_turns()
-        # #501：换档/重建后同样补跑丢失的叙事抽取账（后台、从不锁档）。
-        self._spawn_startup_extraction_catch_up()
+        # 启动补跑由热替换编排在旧 gate 释放后触发；这里仍处于调用方的临界区，
+        # 同线程重取非重入 runtime gate 会自锁（#1687）。
 
     def build_llm_config(
         self,
@@ -3820,15 +3820,27 @@ def _hot_replace_when_idle(game):
     q.seal()
     try:
         if q.inflight_count() > 0:
-            q.unseal()
             raise HTTPException(
                 status_code=409,
                 detail="月末结算或上一步写入进行中，请稍候再操作。",
             )
         yield
-        q.unseal()
     finally:
+        q.unseal()
         gate.release()
+
+
+def _run_hot_replace(game, replace: Callable[[], None], *, failure_label: str) -> None:
+    """独占热替换核心；释放旧 gate 后才让新 session 的补跑领票。"""
+    try:
+        with _hot_replace_when_idle(game):
+            replace()
+        game._spawn_startup_extraction_catch_up()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("%s", failure_label)
+        raise HTTPException(status_code=500, detail=f"{failure_label}：{exc}") from exc
 
 
 @contextlib.contextmanager
@@ -4423,6 +4435,7 @@ async def api_menu_load_save(name: str) -> Dict[str, Any]:
     except LLMUnavailable as exc:
         raise HTTPException(status_code=412, detail=_llm_error_detail(exc))
     web_game.load_save(name)
+    web_game._spawn_startup_extraction_catch_up()
     return {"state": web_game.state_payload()}
 
 
@@ -5612,8 +5625,7 @@ async def api_load_save(name: str) -> Dict[str, Any]:
     # 会让 worker 崩在「closed database」。非阻塞抢 _write_gate：忙时 409，让玩家待 worker 落定
     # 再载（cmr Gate2 r5；强制中断在途 worker 的取消语义属 #382 通用并发模型，本轮不做）。
     game = get_game()
-    with _hot_replace_when_idle(game):
-        game.load_save(name)
+    _run_hot_replace(game, lambda: game.load_save(name), failure_label="载入存档失败")
     return {"state": get_game().state_payload()}
 
 
@@ -5623,8 +5635,7 @@ async def api_reset_game() -> Dict[str, Any]:
     # reset_game 关连接 + 删 sqlite 文件 + 重建——同 load_save，正持锁的 worker 会崩在关连接上。
     # 非阻塞抢 _write_gate：忙时 409（cmr Gate2 r5；强制中断在途属 #382）。
     game = get_game()
-    with _hot_replace_when_idle(game):
-        game.reset_game()
+    _run_hot_replace(game, lambda: game.reset_game(), failure_label="重开新局失败")
     return steam_events.with_events(
         {"state": get_game().state_payload()},
         [steam_events.add_stat(steam_events.STAT_RUNS_STARTED)],
