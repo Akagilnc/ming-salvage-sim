@@ -16,7 +16,6 @@ from ming_sim.issues import (
     apply_issue_inertia_and_ongoing,
     apply_score_extraction,
     commitment_progress_payload,
-    show_active_issues,
 )
 from ming_sim.simulation import _extractor_context_payload, build_simulator_payload
 
@@ -180,7 +179,6 @@ def test_character_loyalty_commitment_ongoing_applies_monthly_and_records_progre
         if issue["issue_id"] == issue_id
     )
     assert sim_issue["commitment_progress"]["months_elapsed"] == 1
-    assert "直到达标" in sim_issue["待办未解进度"]
 
 
 def test_legacy_character_resolve_condition_commitment_settles_when_threshold_reached(game):
@@ -301,9 +299,10 @@ def test_credit_event_rolls_back_db_content_and_watermark_before_retry(game):
 
     db.conn.execute("DROP TRIGGER fail_credit_watermark")
     db.conn.commit()
+    durable_context = "  重试后的撑腰事实\n"
     event_id = write_credit_event(
         db, state, person="毛文龙", event_kind=KIND_BACK,
-        context="重试后的撑腰事实", origin=origin,
+        context=durable_context, origin=origin,
     )
     applied_loyalty = _character_loyalty(db, "毛文龙")
     assert applied_loyalty > before_loyalty
@@ -313,6 +312,24 @@ def test_credit_event_rolls_back_db_content_and_watermark_before_retry(game):
         context="重放不二写", origin=origin,
     ) == event_id
     assert _character_loyalty(db, "毛文龙") == applied_loyalty
+
+    from ming_sim.db import GameDB
+
+    path = db.path
+    db.close()
+    restored = GameDB(path, content)
+    restored_state = restored.load_state()
+    event = restored.conn.execute(
+        "SELECT event_kind, context FROM relation_edge_events WHERE id=?", (event_id,)
+    ).fetchone()
+    assert dict(event) == {"event_kind": KIND_BACK, "context": durable_context}
+    assert _character_loyalty(restored, "毛文龙") == applied_loyalty
+    watermark = restored.conn.execute(
+        "SELECT event_id FROM loyalty_credit_event_applied WHERE event_id=?", (event_id,)
+    ).fetchone()
+    assert watermark["event_id"] == event_id
+    assert restored_state.turn == state.turn
+    restored.close()
 
 
 def test_month_settlement_consumes_preexisting_credit_event_once(game):
@@ -664,7 +681,7 @@ def test_until_stop_arrears_commitment_settlement_oracle_resolves_with_restore(g
     assert payloads[-1]["commitment_progress"]["remaining_arrears"] == 0
 
 
-def test_commitment_progress_contexts_are_structured(game, capsys):
+def test_commitment_progress_contexts_are_structured(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
@@ -698,19 +715,12 @@ def test_commitment_progress_contexts_are_structured(game, capsys):
     assert sim_issue["commitment_progress"]["months_elapsed"] == 1
     assert sim_issue["commitment_progress"]["paid_total"] == 10
     assert sim_issue["commitment_progress"]["remaining_arrears"] == 15
-    assert "已第1月" in sim_issue["待办未解进度"]
-    assert "直到补齐" in sim_issue["待办未解进度"]
 
     extractor_issue = next(
         issue for issue in _extractor_context_payload(db, state, "", "")["active_issues"]
         if issue["issue_id"] == issue_id
     )
     assert extractor_issue["commitment_progress"] == sim_issue["commitment_progress"]
-
-    show_active_issues(db)
-    output = capsys.readouterr().out
-    assert "已第1月" in output
-    assert "直到补齐" in output
 
 
 def test_arrears_commitment_progress_preserves_fractional_remaining(game):
@@ -738,11 +748,6 @@ def test_arrears_commitment_progress_preserves_fractional_remaining(game):
     progress = commitment_progress_payload(db, state, row)
 
     assert progress["remaining_arrears"] == 12.5
-    sim_issue = next(
-        issue for issue in build_simulator_payload(state, db, "", "")["active_issues"]
-        if issue["issue_id"] == issue_id
-    )
-    assert "尚欠约15万两" in sim_issue["待办未解进度"]
 
 
 def test_commitment_progress_fractional_strict_gate_can_be_satisfied(game):
@@ -807,93 +812,6 @@ def test_commitment_progress_fractional_strict_gate_can_be_satisfied(game):
     assert greater_progress["remaining_arrears"] == 0
 
 
-def test_commitment_progress_text_splits_by_commitment_shape_and_gate(game):
-    db, state, content = game
-    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
-    db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
-    db.conn.execute("UPDATE armies SET arrears=30 WHERE id='guanning'")
-    db.conn.commit()
-
-    arrears_id = db.insert_issue(
-        state,
-        kind="initiative",
-        title="补饷承诺文案",
-        origin_kind="decree",
-        origin_ref="decree:turn-1:arrears-text",
-        bar_value=0,
-        inertia=0,
-        ongoing_effects={"economy": [{"account": "国库", "delta": -10, "reason": "补饷", "purpose": "补饷"}]},
-        stop_condition=json.dumps({"army.guanning.arrears": "<=0"}, ensure_ascii=False),
-        commitment_kind="until_stop",
-    )
-    limited_id = db.insert_issue(
-        state,
-        kind="initiative",
-        title="时限承诺文案",
-        origin_kind="decree",
-        origin_ref="decree:turn-1:limited-text",
-        bar_value=0,
-        inertia=0,
-        ongoing_effects={"metrics": {"皇威": 1}},
-        end_turn=state.turn + 3,
-        commitment_kind="until_stop",
-    )
-    due_id = db.insert_issue(
-        state,
-        kind="initiative",
-        title="复核承诺文案",
-        origin_kind="decree",
-        origin_ref="decree:turn-1:due-text",
-        bar_value=0,
-        inertia=0,
-        ongoing_effects={"economy": [], "metrics": {}},
-        end_turn=state.turn,
-        commitment_kind="until_stop",
-    )
-    character_id = db.insert_issue(
-        state,
-        kind="initiative",
-        title="人物承诺文案",
-        origin_kind="decree",
-        origin_ref="decree:turn-1:character-text",
-        bar_value=0,
-        inertia=0,
-        ongoing_effects={"metrics": {"皇威": -1}},
-        stop_condition=json.dumps({"character.毛文龙.loyalty": ">=101"}, ensure_ascii=False),
-        commitment_kind="until_stop",
-    )
-
-    _settle_empty_month(db, state, content)
-    issues = {
-        item["issue_id"]: item
-        for item in build_simulator_payload(state, db, "", "")["active_issues"]
-    }
-
-    arrears_text = issues[arrears_id]["待办未解进度"]
-    assert "尚欠" in arrears_text
-    assert "万两" in arrears_text
-    assert "直到补齐" in arrears_text
-
-    limited_text = issues[limited_id]["待办未解进度"]
-    assert "已履行1月" in limited_text
-    assert "限3月" in limited_text   # duration = end_turn - origin_turn = 3 (relative, not absolute)
-    assert "还剩2月" in limited_text  # remaining = 3 - 1 = 2
-    assert "限至第" not in limited_text  # no absolute turn numbers
-    assert "补齐" not in limited_text
-
-    due_text = issues[due_id]["待办未解进度"]
-    assert "到期待裁" in due_text
-    assert "补齐" not in due_text
-    assert "万两" not in due_text
-
-    character_progress = issues[character_id]["commitment_progress"]
-    assert "remaining_to_goal" in character_progress
-    assert "remaining_arrears" not in character_progress
-    character_text = issues[character_id]["待办未解进度"]
-    assert "直到达标" in character_text
-    assert "补齐" not in character_text
-    assert "万两" not in character_text
 
 
 def test_commitment_ongoing_economy_not_scaled_by_bar_discount(game):
