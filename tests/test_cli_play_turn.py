@@ -14,7 +14,7 @@ import pytest
 
 import ming_sim.cli.terminal as term
 import ming_sim.issues as issues_mod
-from ming_sim.exceptions import LLMUnavailable, SettlementAbort
+from ming_sim.exceptions import LLMContractError, LLMUnavailable, SettlementAbort
 from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
 from ming_sim.session import TurnPhase
 
@@ -578,6 +578,61 @@ def test_play_turn_skip_settlement_abort_stays_in_player_loop(monkeypatch, capsy
 
     assert "可重试" in capsys.readouterr().out
     assert session.calls == ["begin", "advance", "advance"]
+
+
+@pytest.mark.parametrize("action", ["issue", "skip"])
+def test_play_turn_llm_contract_error_retries_same_turn(monkeypatch, capsys, action):
+    """#1700：空 simulator 的 LLMContractError 留在 play_turn 同 turn 可重按，不落到 run_cli 中止。"""
+
+    class Session:
+        previous_summary = ""
+
+        def __init__(self):
+            self.db = SimpleNamespace(list_pending_actions=lambda *a, **k: [])
+            self.state = SimpleNamespace(turn=7)
+            self.calls = []
+
+        def begin_turn(self):
+            self.calls.append("begin")
+            return _Snap()
+
+        def current_phase(self):
+            return TurnPhase.REVIEWING
+
+        def resolve_turn(self):
+            self.calls.append("resolve")
+            if self.calls.count("resolve") == 1:
+                raise LLMContractError("simulator 流式无内容且无终结事件")
+            return SimpleNamespace(report="ok", decisions=[])
+
+        def advance_without_decree(self):
+            self.calls.append("advance")
+            if self.calls.count("advance") == 1:
+                raise LLMContractError("simulator 流式无内容且无终结事件")
+            return None
+
+        def end_turn(self):
+            self.calls.append("end")
+
+        def submit_hitl_choices(self, choices, write_gate=None):
+            return "ok"
+
+    actions = iter([action, action])
+    monkeypatch.setattr(term, "review_directives", lambda s: next(actions))
+    monkeypatch.setattr(term, "_print_header", lambda s: None)
+    monkeypatch.setattr(issues_mod, "show_active_issues", lambda db: None)
+    monkeypatch.setattr(term, "_submit_first_cli_decisions", lambda session, result: "ok")
+    session = Session()
+
+    term.play_turn(session)
+
+    out = capsys.readouterr().out
+    assert "simulator 流式无内容" in out
+    assert "程序中止" not in out
+    if action == "issue":
+        assert session.calls == ["begin", "resolve", "resolve", "end"]
+    else:
+        assert session.calls == ["begin", "advance", "advance"]
 
 
 def test_play_turn_reports_secret_order_failure_when_settlement_aborts(monkeypatch, capsys):
