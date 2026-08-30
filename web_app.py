@@ -3603,7 +3603,7 @@ class WebGame:
         """
         return [
             {"label": "拟旨", "text": "拟旨如下：", "prefix": True},
-            {"label": "下密令", "text": "密令如下：", "prefix": True},
+            {"label": "下密令", "text": "", "prefix": True, "intent": "secret_order"},
         ]
 
 
