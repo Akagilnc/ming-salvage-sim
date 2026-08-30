@@ -28,6 +28,7 @@ from ming_sim.action_materialize import (
     punish_actions_effective,
 )
 from ming_sim.applier import atomic
+from ming_sim.action_clusters import cluster_by_kind
 from ming_sim.authority_privileges import AUTHORITY_PRIVILEGE_SET
 from ming_sim.credit_events import KIND_BETRAY, write_credit_event
 from ming_sim.decree_vocabulary import (
@@ -42,6 +43,7 @@ from ming_sim.settlement_payload import (
     decision_has_rescript_capability,
     parse_rescript_capability_pair,
 )
+from ming_sim.strict_types import strict_int
 
 # 急务六动作（层 B）
 RESCRIPT_DESK_ACTIONS = frozenset({
@@ -161,6 +163,19 @@ def canonical_choice(raw: object) -> Dict[str, object]:
     out.setdefault("label", str(raw.get("label") or ""))
     out.setdefault("hint", str(raw.get("hint") or ""))
     return out
+
+
+def _validate_season_option_ints(option: Mapping[str, object]) -> None:
+    """Validate raw typed option integers against their canonical FieldSpec rows."""
+    cluster = cluster_by_kind(str(option.get("action_type") or ""))
+    if cluster is None:
+        return
+    for spec in cluster.fields:
+        if not spec.season_option or not spec.as_int or spec.name not in option:
+            continue
+        value = strict_int(option[spec.name], accept_numeric_strings=False)
+        if value < spec.int_lo or value > spec.int_hi:
+            raise ValueError(f"choice.{spec.name} 超出范围：{value!r}")
 
 
 def _row_key(row: Mapping[str, object]) -> _DecisionKey:
@@ -449,6 +464,8 @@ def validate_all(
             if label not in labels:
                 raise ValueError(f"decision 选项不在当前 options：{key}")
             matched = labels[label]
+            # Validate the raw stored shape before canonicalization can coerce it.
+            _validate_season_option_ints(matched)
             # The stored option is authority for executable fields; the client
             # selects only by label and may not overlay a second payload.
             rebuilt = canonical_choice({

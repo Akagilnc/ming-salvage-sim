@@ -286,29 +286,58 @@ def test_657_canonical_choice_stable_key_order():
     assert a["action"] == "follow_draft"
 
 
-def test_financial_decision_uses_stored_option_not_client_payload():
-    """普通亲裁只按 label 选项；机械拨帑字段由服务端 option 定权。"""
+@pytest.mark.parametrize("amount", ["30", True, 30.75, 30])
+def test_financial_decision_uses_stored_option_not_client_payload(amount):
+    """Raw season options retain strict catalog types and remain server-authoritative."""
     from ming_sim import rescript_actions as ra
+    from ming_sim.settlement_payload import parse_decision_blocks
 
-    key = "decision:3:0"
-    stored = {
-        "label": "发内帑三十万两", "hint": "济军",
-        "action_type": "grant_allocation", "grant_action": "协饷",
-        "account": "内库", "amount": 30, "purpose": "补饷",
-        "target_kind": "army", "target_id": "guanning", "cadence": "一次性",
-    }
+    blocks = [
+        {
+            "title": "发帑", "context": "济军", "options": [{
+                "label": "发内帑三十万两", "hint": "济军",
+                "action_type": "grant_allocation", "grant_action": "协饷",
+                "account": "内库", "amount": amount, "purpose": "补饷",
+                "target_kind": "army", "target_id": "guanning", "cadence": "一次性",
+            }, {"label": "暂缓", "hint": "守财"}],
+        },
+        {
+            "title": "巡河", "context": "河工", "options": [
+                {"label": "遣员巡河", "hint": "查勘"},
+                {"label": "暂缓巡河", "hint": "候报"},
+            ],
+        },
+    ]
+    raw = "邸报" + "".join(
+        f"<<DECISION>>{json.dumps(block, ensure_ascii=False)}<<END>>"
+        for block in blocks
+    )
+    _clean, decisions = parse_decision_blocks(raw)
     desk = [{
-        "decision_key": key, "kind": "decision", "turn": 3, "idx": 0,
-        "status": "pending", "options": [stored, {"label": "暂缓", "hint": "守财"}],
-    }]
-    batch = ra.validate_all(desk, [{
-        "decision_key": key, "label": stored["label"],
-        "action_type": "punishment", "account": "国库", "amount": 999,
-    }])
+        "decision_key": f"decision:3:{idx}", "kind": "decision", "turn": 3,
+        "idx": idx, "status": "pending", "options": decision["options"],
+    } for idx, decision in enumerate(decisions)]
+    requests = [
+        {
+            "decision_key": "decision:3:0", "label": "发内帑三十万两",
+            "action_type": "punishment", "account": "国库", "amount": 999,
+        },
+        {"decision_key": "decision:3:1", "label": "遣员巡河"},
+    ]
+
+    if type(amount) is not int:
+        with pytest.raises(ValueError):
+            ra.validate_all(desk, requests)
+        assert [row["status"] for row in desk] == ["pending", "pending"]
+        return
+
+    batch = ra.validate_all(desk, requests)
+    assert len(batch.items) == 2
     choice = batch.items[0].choice
     assert choice["action_type"] == "grant_allocation"
     assert choice["account"] == "内库"
     assert choice["amount"] == 30
+    assert type(choice["amount"]) is int
 
 
 def test_657_capability_revalidate_on_follow(game):
