@@ -113,7 +113,9 @@ def axis_collision_stances(
             continue
         direction = normalize_direction(collision.get("direction"), default=1)
         if scope == "泛化":
-            recipients = factions
+            recipients = (
+                faction for faction in factions if faction_axis_stance(faction, axis) != 0
+            )
         elif scope == "目标命门" and target in factions:
             recipients = (target,)
         else:
