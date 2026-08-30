@@ -2197,7 +2197,11 @@ def extract_draft_intent(
     if correction_block and not correction_block.endswith("\n"):
         correction_block += "\n"
     stalled_push_facts = _stalled_deliberation_push_facts(db)
-    from ming_sim.action_clusters import cluster_fields_prompt, project_cluster_fields
+    from ming_sim.action_clusters import (
+        assert_action_candidate_shape,
+        cluster_fields_prompt,
+        project_cluster_fields,
+    )
     grant_fields_prompt = cluster_fields_prompt("grant_allocation")
     if draft_count > 1:
         prompt = (
@@ -2245,7 +2249,14 @@ def extract_draft_intent(
                 break
             text = str(value.get("正文") or "").strip()
             action = str(value.get("动作类型") or "").strip()
-            projected = project_cluster_fields(action, value)
+            if action == "grant_allocation":
+                assert_action_candidate_shape({
+                    "kind": action,
+                    "mode": value.get("mode", value.get("颁布方式")),
+                })
+                projected = project_cluster_fields(action, value)
+            else:
+                projected = {}
             mode = _directive_mode(
                 projected.get("mode") if action == "grant_allocation" else value.get("颁布方式")
             )
@@ -2296,10 +2307,12 @@ def extract_draft_intent(
                 target: value.get(source)
                 for source, target in (
                     ("执行面", "execution_surface"), ("承办人", "assignee"),
-                    ("期限月数", "deadline_months"),
+                    ("期限月数", "deadline_months"), ("标题", "title"),
+                    ("事务类别", "transaction_category"),
                 )
             }
-            mechanical.update(projected)
+            if action == "grant_allocation":
+                mechanical.update(projected)
             mechanical["locality_scope"] = _coerce_draft_locality_scope(value.get("施行范围"))
             # multi 路目标类型同样 fail-loud
             target_kind = _coerce_draft_target_kind(target_kind)
@@ -2437,7 +2450,14 @@ def extract_draft_intent(
     if _raw_target is not None:
         _probe["target_dossier_id"] = _raw_target
     _act = str(obj.get("动作类型") or "").strip()
-    _projected = project_cluster_fields(_act, obj)
+    if _act == "grant_allocation":
+        assert_action_candidate_shape({
+            "kind": _act,
+            "mode": obj.get("mode", obj.get("颁布方式")),
+        })
+        _projected = project_cluster_fields(_act, obj)
+    else:
+        _projected = {}
     _tk = str(
         _projected.get("target_kind") if _act == "grant_allocation" else obj.get("目标类型") or ""
     ).strip()
