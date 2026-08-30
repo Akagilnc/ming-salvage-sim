@@ -602,7 +602,7 @@ def test_nonstream_api_chat_llm_unavailable_is_structured_not_500(monkeypatch):
     provider = "Unknown model error: top_p not supported"
 
     class _BoomChat:
-        def chat(self, minister_name: str, message: str):
+        def chat(self, minister_name: str, message: str, intent=None):
             raise LLMUnavailable(
                 CLI_RUNNER_PLAYER_MESSAGE,
                 code="llm_cli_error",

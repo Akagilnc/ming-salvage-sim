@@ -1742,7 +1742,7 @@ class GameSession:
                 tool_name == "rush_staged_commitment"
                 or tool_result.startswith("__commitment_rush__")
             ):
-                if confirmation_turn or explicit_draft_prefix:
+                if confirmation_turn or explicit_draft_prefix or explicit_secret_route:
                     continue
                 if self._proposal_blocked(self.state):
                     continue

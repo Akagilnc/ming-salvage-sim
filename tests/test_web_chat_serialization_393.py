@@ -257,7 +257,7 @@ def test_chat_stream_sse_waits_for_sync_generator_in_executor(monkeypatch):
     events: list[str] = []
 
     class _BlockingGame:
-        def chat_stream(self, minister_name: str, message: str):
+        def chat_stream(self, minister_name: str, message: str, intent=None):
             time.sleep(0.05)
             events.append("stream")
             yield {"type": "done", "payload": {"ok": True}}
@@ -294,7 +294,7 @@ def test_nonstream_api_chat_keeps_game_state_responsive_while_chat_blocks(monkey
     class _SlowLLMGame:
         """离线慢 LLM 替身：chat 阻塞数十毫秒模拟 cli subprocess.run。"""
 
-        def chat(self, minister_name: str, message: str):
+        def chat(self, minister_name: str, message: str, intent=None):
             time.sleep(0.08)
             events.append("chat")
             return {"answer": "臣已知悉。"}

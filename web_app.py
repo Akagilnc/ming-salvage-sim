@@ -2612,7 +2612,7 @@ class WebGame:
                                 character.name, int(chat_turn_id), int(entry_id),
                             )
                 elif res.startswith("__commitment_rush__"):
-                    if confirmation_turn or explicit_draft_prefix:
+                    if confirmation_turn or explicit_draft_prefix or explicit_secret_route:
                         continue
                     if GameSession._proposal_blocked(self.state):
                         continue
@@ -3607,7 +3607,7 @@ class WebGame:
         """
         return [
             {"label": "拟旨", "text": "拟旨如下：", "prefix": True},
-            {"label": "下密令", "text": "", "prefix": True, "intent": "secret_order"},
+            {"label": "下密令", "text": "密令如下：", "prefix": True, "intent": "secret_order"},
         ]
 
 
