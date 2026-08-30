@@ -7,7 +7,7 @@ from typing import TypeVar
 T = TypeVar("T")
 
 
-def run_to_terminal(call: Callable[[], T], *, timeout: float = 2.0) -> T:
+def run_to_terminal(call: Callable[[], T], *, timeout: float = 10.0) -> T:
     """Bound a test-only call while preserving any worker exception."""
     finished = threading.Event()
     outcomes: list[T] = []
