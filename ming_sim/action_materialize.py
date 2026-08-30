@@ -552,15 +552,18 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
                 ctx.player_message, draft_res.get("mode"), existing_mode,
             )
 
+        grant_cluster = cluster_by_kind("grant_allocation")
+        grant_carriers = tuple(
+            spec.name for spec in (grant_cluster.fields if grant_cluster else ())
+        )
         mechanical_fields = (
-            "dossier_action_type", "target_kind", "target_id", "mode", "amount", "account",
-            "execution_surface", "assignee", "deadline_months", "punish_action",
-            "locality_scope",
+            "dossier_action_type", "mode", "execution_surface", "assignee",
+            "deadline_months", "punish_action", "locality_scope",
             # #653：pay_order_override 结构化载荷随拟旨草案整道入 staging payload。
             "entries",
             # #658：御笔强推 target 须随对话拟旨 staging 完整保留，禁第二案卷。
             "target_dossier_id",
-        )
+        ) + grant_carriers
         for field_name in mechanical_fields:
             if draft_res.get(field_name) not in (None, ""):
                 semantic_payload[field_name] = draft_res[field_name]
@@ -1312,7 +1315,6 @@ class IncompleteXiexangPayloadError(ValueError):
 def require_explicit_xiexang_fields(
     *,
     amount: object = 0,
-    amount_unit: str = "万两",
     account: str = "",
     purpose: str = "",
     target_kind: str = "",
@@ -1329,8 +1331,6 @@ def require_explicit_xiexang_fields(
         n = 0
     if n <= 0:
         missing.append("amount")
-    if str(amount_unit or "").strip() != "万两":
-        missing.append("amount_unit")
     raw_account = str(account or "").strip()
     canonical_account = "国库" if raw_account == "太仓" else raw_account
     if canonical_account not in {"国库", "内库"}:
