@@ -1042,17 +1042,18 @@ def _apply_appease_commitment_credit(
     if not person or (legacy and not legacy_changes):
         return None
     if current:
-        context = str(row["stage_text"] or "").strip()
+        candidates = (row["stage_text"], row["title"])
     else:
-        context = next(
-            (
-                str(item.get("reason") or "").strip()
-                for item in legacy_changes
-                if str(item.get("name") or "").strip() == person
-                and str(item.get("reason") or "").strip()
-            ),
-            str(row["stage_text"] or "").strip(),
+        reasons = (
+            item.get("reason")
+            for item in legacy_changes
+            if str(item.get("name") or "").strip() == person
         )
+        candidates = (*reasons, row["stage_text"], row["title"])
+    context = next(
+        (value for value in candidates if str(value or "").strip()),
+        "",
+    )
     if not context:
         return None
     from ming_sim.credit_events import KIND_BACK, write_credit_event
