@@ -1464,6 +1464,51 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     });
   });
 
+  it("#1560 pending-only 拟诏主钮走 issue/stream 单轨", async () => {
+    const paths: string[] = [];
+    const reload = vi.fn();
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...window.location, reload },
+    });
+    const state = {
+      ...settlementBaseState("player"),
+      directives: [],
+      pending_directive_count: 1,
+      pending_secret_order_count: 0,
+      pending_non_directive_action_count: 0,
+      failed_secret_order_count: 0,
+      turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
+      previous_summary: "",
+      pending_decisions: [],
+    };
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = new URL(String(url), "http://t.local");
+      paths.push(`${init?.method || "GET"} ${u.pathname}`);
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) return jsonResp(state);
+      if (u.pathname.endsWith("/api/decree/issue/stream")) return sseResp("done", { ok: true });
+      if (u.pathname.endsWith("/api/history/turns")) return jsonResp({ turns: [] });
+      if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
+      return jsonResp({});
+    }));
+    const host = await mountApp();
+    await click(edictCommand(host));
+    await tick();
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
+    });
+    const footer = host.querySelector<HTMLButtonElement>(".desk-footer button");
+    expect(footer?.disabled).toBe(false);
+    await click(footer);
+    await act(async () => {
+      await vi.waitFor(() => expect(paths.some((path) => path === "POST /api/decree/issue/stream")).toBe(true));
+    });
+    expect(paths.some((path) => path === "POST /api/decree/advance_without_edict")).toBe(false);
+  });
+
   it("#1305 court/harem nav 互斥：开后宫即关朝堂", async () => {
     stubSettlementFetch({
       ...settlementBaseState("player"),

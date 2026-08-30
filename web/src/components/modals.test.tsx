@@ -279,7 +279,13 @@ describe("EdictModal — decree desk behavior", () => {
   it("keeps the zero-draft footer disabled", () => {
     const onIssue = vi.fn();
     const { host } = renderEdictModal({
-      state: baseGameState({ pending_secret_order_count: 0, pending_non_directive_action_count: 0 }),
+      state: baseGameState({
+        directives: [],
+        pending_directive_count: 0,
+        pending_secret_order_count: 0,
+        pending_non_directive_action_count: 0,
+        failed_secret_order_count: 0,
+      }),
       onIssueDecree: onIssue,
     });
     const button = host.querySelector<HTMLButtonElement>(".desk-footer button");
@@ -287,6 +293,25 @@ describe("EdictModal — decree desk behavior", () => {
     expect(button?.disabled).toBe(true);
     act(() => button?.click());
     expect(onIssue).not.toHaveBeenCalled();
+  });
+
+  it("enables the footer for pending-only settle work via onIssueDecree", () => {
+    const onIssue = vi.fn();
+    const { host } = renderEdictModal({
+      state: baseGameState({
+        directives: [],
+        pending_directive_count: 1,
+        pending_secret_order_count: 0,
+        pending_non_directive_action_count: 0,
+        failed_secret_order_count: 0,
+      }),
+      onIssueDecree: onIssue,
+    });
+    const button = host.querySelector<HTMLButtonElement>(".desk-footer button");
+
+    expect(button?.disabled).toBe(false);
+    act(() => button?.click());
+    expect(onIssue).toHaveBeenCalledTimes(1);
   });
 
   it("issues an approved conversational draft without a second review gate", () => {
