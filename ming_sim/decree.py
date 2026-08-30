@@ -3056,7 +3056,10 @@ def resolve_decisions_phase2(
     # 行（本月票拟）不再出现在任何 HITL envelope 消费面，无需调用方重复过滤；
     # 批红案卷动作仍由 _chosen_rescript_actions 按 dossier: 前缀自筛，行为零变。
     decisions = db.list_pending_decisions(state.turn)
-    decision_directive = _format_decision_directive(decisions)
+    try:
+        decision_directive = _format_decision_directive(decisions)
+    except ValueError as exc:
+        raise LLMContractError(str(exc)) from exc
     rescript_actions = _chosen_rescript_actions(decisions)
     # #48 / #883 恢复端闭环：HITL 续跑复用存档的 narrative + simulator_payload（不重推演）。
     # 密令分组真源在 ctx["secret_orders"]，经独立 rail 喂 personnel_secret extractor
