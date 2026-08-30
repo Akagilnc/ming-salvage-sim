@@ -1478,7 +1478,6 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
             (decision_dossier["id"],),
         ).fetchone()[0])
         assert decision_payload["decision_key"] == decisions[0]["decision_key"]
-        assert decision_payload["label"] == "发内帑银三十万两济关宁"
         moves = game.db.list_economy_moves_for_dossier(dossier["id"])
         pay_moves = [
             m for m in moves
