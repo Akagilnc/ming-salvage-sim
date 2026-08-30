@@ -2180,12 +2180,13 @@ def test_1682_late_grants_follow_policy_without_consuming_verdict_batch(game):
         {
             "label": "发内帑", "hint": "h", "action_type": "grant_allocation",
             "grant_action": "发内帑", "account": "内库", "amount": 7,
-            "execution_surface": "immediate",
+            "purpose": "补饷", "cadence": "一次性", "execution_surface": "immediate",
             "target_kind": "character", "target_id": target,
         },
         {
             "label": "国库赏赉", "hint": "h", "action_type": "grant_allocation",
             "grant_action": "赏赉", "account": "国库", "amount": 11,
+            "purpose": "补饷", "cadence": "一次性",
             "target_kind": "character", "target_id": target,
         },
     ]
@@ -2505,10 +2506,21 @@ def test_657_mixed_batch_follow_plus_decision_and_no_context_copy(web_game, monk
             "title": "打回件", "context": "科臣封驳",
             "options": [{"label": "打回", "hint": "驳"}, {"label": "准", "hint": ""}],
             "event_id": "",  # 无事件父行；决策仍落 decided（C1.1 不测事件账）
+        }, {
+            "title": "发帑件", "context": "协济军需",
+            "options": [{
+                "label": "发内帑", "hint": "济军", "action_type": "grant_allocation",
+                "grant_action": "协饷", "account": "内库", "amount": 3,
+                "purpose": "补饷", "target_kind": "army", "target_id": "guanning",
+                "cadence": "一次性",
+            }, {"label": "暂缓", "hint": "守财"}],
+            "event_id": "",
         }],
     )
     u_key = next(r["decision_key"] for r in desk if r["kind"] == "rescript_draft")
-    d_key = next(r["decision_key"] for r in desk if r["kind"] == "decision")
+    decision_rows = [r for r in desk if r["kind"] == "decision"]
+    d_key = next(r["decision_key"] for r in decision_rows if r["title"] == "打回件")
+    grant_key = next(r["decision_key"] for r in decision_rows if r["title"] == "发帑件")
     body = [
         {
             "decision_key": u_key,
@@ -2517,6 +2529,7 @@ def test_657_mixed_batch_follow_plus_decision_and_no_context_copy(web_game, monk
             "label": opt["label"],
         },
         {"decision_key": d_key, "label": "打回", "hint": "驳", "action": "decision"},
+        {"decision_key": grant_key, "label": "发内帑"},
     ]
     body_canon = json.dumps(body, ensure_ascii=False, separators=(",", ":"))
 
@@ -2536,8 +2549,12 @@ def test_657_mixed_batch_follow_plus_decision_and_no_context_copy(web_game, monk
         hit = next(r for r in probe.list_rescript_drafts() if r["title"] == "混批急务")
         assert hit["status"] == "decided"
         decs = probe.list_pending_decisions(int(probe.load_state().turn))
-        assert decs and decs[0]["status"] == "decided"
-        assert (decs[0]["choice"] or {}).get("label") == "打回"
+        assert decs and all(row["status"] == "decided" for row in decs)
+        by_key = {str(row["decision_key"]): row for row in decs}
+        assert (by_key[d_key]["choice"] or {}).get("label") == "打回"
+        assert by_key[grant_key]["choice"] == {
+            "decision_key": grant_key, "label": "发内帑", "hint": "",
+        }
         ctx = probe.get_resolve_context(int(probe.load_state().turn))
         assert ctx is None or ctx.get("extracted") is None
         mid_dossiers = len(probe.list_decree_dossiers())

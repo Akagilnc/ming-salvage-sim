@@ -173,6 +173,9 @@ def test_money_units_and_season_option_contract_project_from_catalog():
         "account": "内库", "purpose": "补饷", "cadence": "一次性",
     }
     validate_season_option(valid)
+    for key in season_option_fields("grant_allocation")[1:]:
+        with pytest.raises(ValueError):
+            validate_season_option({k: v for k, v in valid.items() if k != key})
     for key, bad in (("account", "太仓银"), ("amount", None),
                      ("amount", "1"), ("amount", True), ("amount", 0)):
         with pytest.raises(ValueError):

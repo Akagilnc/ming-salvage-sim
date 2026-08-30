@@ -1306,8 +1306,8 @@ def apply_rescript_batch(
             if kind == "decision":
                 # A financial choice is itself the legal origin of the grant.
                 # Its canonical payload came from the server-stored option.
-                execution = item.execution_option or item.choice
-                if str(execution.get("action_type") or "") == "grant_allocation":
+                execution = item.execution_option
+                if execution is not None and str(execution.get("action_type") or "") == "grant_allocation":
                     mapped = map_rescript_option_or_choice(
                         execution, mode="ordinary", db=db, content=content, state=state,
                     )
