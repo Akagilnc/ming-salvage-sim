@@ -333,15 +333,27 @@ describe("EdictModal — decree desk behavior", () => {
 
   it("offers durable recovery entry for failed secret orders", () => {
     const onOpenFailureRecovery = vi.fn();
+    const onIssue = vi.fn();
     const { host } = renderEdictModal({
-      state: baseGameState({ failed_secret_order_count: 1 }),
+      state: baseGameState({
+        directives: [],
+        pending_directive_count: 0,
+        pending_secret_order_count: 0,
+        pending_non_directive_action_count: 0,
+        failed_secret_order_count: 1,
+      }),
+      onIssueDecree: onIssue,
       onOpenFailureRecovery,
     });
     const branch = host.querySelector(".failed-secret-note");
-    const button = branch?.querySelector("button");
+    const recovery = branch?.querySelector("button");
+    const footer = host.querySelector<HTMLButtonElement>(".desk-footer button");
 
     expect(branch).not.toBeNull();
-    act(() => button?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(footer?.disabled).toBe(true);
+    act(() => footer?.click());
+    expect(onIssue).not.toHaveBeenCalled();
+    act(() => recovery?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     expect(onOpenFailureRecovery).toHaveBeenCalledTimes(1);
   });
 
