@@ -177,6 +177,50 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     expect(host.textContent).toContain("杨嗣昌御前低语");
   });
 
+  it("typed SSE error 经真实召对链只向玩家呈现结构化 message", async () => {
+    const minister = { name: "洪承畴", office: "兵部", office_type: "内阁", faction: "", style: "", status: "active", status_label: "在朝", summary: "", favorite: false, skills: [] };
+    const detail = {
+      code: "llm_run_error",
+      message: "通传未达，请稍后再召。",
+      provider_message: "provider stack trace",
+    };
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      const u = new URL(String(url), "http://t.local");
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) return jsonResp(makeState(1, [], [minister]));
+      if (u.pathname.endsWith("/api/audience/scroll")) return jsonResp({ night_id: 23, messages: [] });
+      if (u.pathname.endsWith("/chat/stream")) return sseResp("error", detail);
+      if (decodeURIComponent(u.pathname).endsWith("/api/ministers/洪承畴/chat")) {
+        return jsonResp({ campaign_id: "c", night_id: 23, minister, history: [], suggestions: [], can_undo_last_chat: false });
+      }
+      return jsonResp({});
+    }));
+
+    const host = document.createElement("div"); document.body.appendChild(host);
+    await act(async () => { trackRoot(host).render(<App />); });
+    await tick();
+    await click(host.querySelector('[title="朝堂·召见大臣"]'));
+    await tick();
+    await click(Array.from(host.querySelectorAll(".minister-card")).find((node) => node.textContent?.includes(minister.name)));
+    await act(async () => { await vi.waitFor(() => expect(host.querySelector("textarea")).not.toBeNull()); });
+    const textarea = host.querySelector("textarea")!;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+      setter.call(textarea, "边务如何");
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await click(findButton(host, "发送"));
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="alert"]')).not.toBeNull());
+    });
+
+    const alert = host.querySelector('[role="alert"]')!;
+    expect(alert.textContent).toBe(detail.message);
+    expect(alert.textContent).not.toContain(detail.code);
+  });
+
   it("中断回话重试直接消费洪承畴 payload，并刷新夜卷轴而不重拉目标历史", async () => {
     const minister = (name: string) => ({ name, office: "兵部", office_type: "内阁", faction: "", style: "", status: "active", status_label: "在朝", summary: "", favorite: false, skills: [] });
     const calls: string[] = [];
