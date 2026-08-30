@@ -589,7 +589,8 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
             spec.name for spec in (dossier_cluster.fields if dossier_cluster else ())
         )
         mechanical_fields = (
-            "dossier_action_type", "mode", "execution_surface", "assignee",
+            "dossier_action_type", "target_kind", "target_id", "mode",
+            "execution_surface", "assignee",
             "deadline_months", "punish_action", "locality_scope",
             # #653：pay_order_override 结构化载荷随拟旨草案整道入 staging payload。
             "entries",
