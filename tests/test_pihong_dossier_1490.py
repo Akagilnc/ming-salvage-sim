@@ -2174,21 +2174,18 @@ def test_1682_late_grants_follow_policy_without_consuming_verdict_batch(game, mo
     from ming_sim import rescript_actions as ra
 
     db, state, content = game
-    target = str(db.conn.execute(
-        "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
-    ).fetchone()["name"])
     options = [
         {
             "label": "发内帑", "hint": "h", "action_type": "grant_allocation",
-            "grant_action": "发内帑", "account": "内库", "amount": 7,
+            "grant_action": "协饷", "account": "内库", "amount": 7,
             "purpose": "补饷", "cadence": "一次性", "execution_surface": "immediate",
-            "target_kind": "character", "target_id": target,
+            "target_kind": "army", "target_id": "guanning",
         },
         {
             "label": "国库赏赉", "hint": "h", "action_type": "grant_allocation",
-            "grant_action": "赏赉", "account": "国库", "amount": 11,
+            "grant_action": "协饷", "account": "国库", "amount": 11,
             "purpose": "补饷", "cadence": "一次性",
-            "target_kind": "character", "target_id": target,
+            "target_kind": "army", "target_id": "guanning",
         },
     ]
     db.save_pending_decisions(state.turn, [
