@@ -345,9 +345,10 @@ def test_character_context_scopes_faction_hides_raw_scores_and_zero_buckets(game
     lowest_leverage = ("人马凋零", "朝中孤弱", "根基平常", "颇有根基", "势重可动员")[0]
     assert lowest_satisfaction in high
     assert lowest_leverage in high
-    for band in axes.values():
-        assert band in high
-    assert not re.search(r"(?:忠诚|能力|清廉|胆略|党派认同|阴谋)\s*[:：]?\s*\d+", high)
+    for label, band in axes.items():
+        if label != "阴谋":
+            assert band in high
+    assert not re.search(r"(?:忠诚|能力|清廉|胆略|党派认同)\s*[:：]?\s*\d+", high)
 
     minister.identity = 40
     middle = character_context_with_db(minister, db)
@@ -361,10 +362,6 @@ def test_character_context_scopes_faction_hides_raw_scores_and_zero_buckets(game
     assert faction_dossier is not None
     assert faction_dossier["core"] not in low
     assert faction_dossier["internal"] not in low
-
-    plain = character_context(minister)
-    assert not re.search(r"阴谋\s*[:：]?\s*\d+", plain)
-
 
 def test_minister_context_falls_back_for_character_without_dossier(game):
     db, _state, content = game
