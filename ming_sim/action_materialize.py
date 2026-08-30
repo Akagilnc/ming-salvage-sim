@@ -568,6 +568,20 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
                 ctx.player_message, draft_res.get("mode"), existing_mode,
             )
 
+        if (
+            str(draft_res.get("dossier_action_type") or "") == "grant_allocation"
+            and str(draft_res.get("grant_action") or "") == "协饷"
+        ):
+            draft_res.update(require_materializable_xiexang_payload(
+                session.db,
+                text=draft_res.get("draft_text"),
+                amount=draft_res.get("amount"),
+                account=str(draft_res.get("account") or ""),
+                purpose=str(draft_res.get("purpose") or ""),
+                target_kind=str(draft_res.get("target_kind") or ""),
+                target_id=str(draft_res.get("target_id") or ""),
+                cadence=str(draft_res.get("cadence") or ""),
+            ))
         dossier_cluster = cluster_by_kind(
             str(draft_res.get("dossier_action_type") or "")
         )

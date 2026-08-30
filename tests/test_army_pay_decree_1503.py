@@ -1287,22 +1287,23 @@ def test_explicit_prefix_grant_and_assignment_two_durable_dossiers(game, monkeyp
             "施行范围": "无",
         },
     ]}
-    monkeypatch.setattr(
-        cb, "_run_backend_for_config",
-        lambda *_a, **_k: (json.dumps(raw, ensure_ascii=False), {}),
-    )
-    extracted = cb.extract_draft_intent(
-        "拟两道旨：拨饷，并另行清查。", "臣已拟就。", draft_count=2,
-    )
-    candidates = [
-        {"kind": "draft", **draft} for draft in extracted["drafts"]
-    ]
-    ctx = _ctx(
-        db, actor, candidates, state.turn,
-        message="拟两道旨：拨饷，并另行清查。", reply="臣已拟就。",
-    )
-    run_materialize_pipeline(ctx)
+    backend_calls = []
 
+    def fake_backend(*_args, **kwargs):
+        backend_calls.append(kwargs.get("tag"))
+        return json.dumps(raw, ensure_ascii=False), {}
+
+    real_extract = cb.extract_draft_intent
+    scripted = candidates_from_classifier_payload(
+        [{"kind": "draft"}, {"kind": "draft"}], soft=False,
+    )
+    sess = _real_chat_session(db, state, content, monkeypatch, scripted=scripted)
+    monkeypatch.setattr(cb, "extract_draft_intent", real_extract)
+    monkeypatch.setattr(cb, "_run_backend_for_config", fake_backend)
+
+    result = sess.chat(actor, "请拟两道旨：拨饷，并另行清查。")
+    assert int(getattr(result, "pending_action_id", 0) or 0) > 0
+    assert backend_calls == ["draft_intent"]
     rows = list(db.conn.execute(
         "SELECT id, payload_json FROM pending_actions WHERE turn=? AND kind='directive'",
         (state.turn,),
