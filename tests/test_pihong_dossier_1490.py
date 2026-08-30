@@ -3407,6 +3407,38 @@ def test_657_preferred_hitl_choice_urgent_follow_draft_ordinary_intact():
     assert "follow_draft" not in str(pref2.get("action") or "")
 
 
+def test_1682_phase2_surfaces_ambiguous_stored_choice(game):
+    """The real phase2 entry exposes an ambiguous stored choice as a contract error."""
+    import ming_sim.decree as dm
+    from ming_sim.llm_contract import LLMContractError
+    from ming_sim.models import TurnPhase
+
+    db, state, content = game
+    turn = int(state.turn)
+    db.save_resolve_context(
+        turn, "诏", "邸报正文",
+        {"candidate_events": [], "transit_semantics": [], "decree_text": "诏"},
+        secret_orders=[], relevant_memories=[],
+    )
+    db.save_pending_decisions(turn, [{
+        "title": "歧义亲裁", "context": "c",
+        "options": [{"label": "同名", "hint": "一"}, {"label": " 同名 ", "hint": "二"}],
+    }])
+    db.conn.execute(
+        "UPDATE pending_decisions SET status='decided', choice_json=? "
+        "WHERE turn=? AND kind='decision'",
+        (json.dumps({"label": "同名"}, ensure_ascii=False), turn),
+    )
+    db.conn.commit()
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
+
+    with pytest.raises(LLMContractError):
+        dm.resolve_decisions_phase2(
+            state, db, None, None, content=content, registry=None,
+        )
+
+
 def test_657_phase2_preserve_backlog_and_generate_current_drafts(game, monkeypatch):
     """③ 真入口 resolve_decisions_phase2：保留既有急务并追加本回合新票拟；清锚同终态。
 
@@ -3438,25 +3470,6 @@ def test_657_phase2_preserve_backlog_and_generate_current_drafts(game, monkeypat
     )
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)
-
-    # The real phase2 entry must surface an ambiguous stored choice instead of
-    # continuing with a generic "already happened" directive.
-    db.save_pending_decisions(turn, [{
-        "title": "歧义亲裁", "context": "c",
-        "options": [{"label": "同名", "hint": "一"}, {"label": " 同名 ", "hint": "二"}],
-    }])
-    db.conn.execute(
-        "UPDATE pending_decisions SET status='decided', choice_json=? "
-        "WHERE turn=? AND kind='decision'",
-        (json.dumps({"label": "同名"}, ensure_ascii=False), turn),
-    )
-    db.conn.commit()
-    from ming_sim.llm_contract import LLMContractError
-    with pytest.raises(LLMContractError):
-        dm.resolve_decisions_phase2(
-            state, db, None, None, content=content, registry=None,
-        )
-    db.clear_pending_decisions(turn)
 
     canned = (
         '{"economy_moves": [], "new_armies": [], "new_issues": [], '
