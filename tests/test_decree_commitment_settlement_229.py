@@ -9,6 +9,7 @@ from ming_sim.credit_events import (
     KIND_SCAPEGOAT,
     write_credit_event,
 )
+from ming_sim.relations import EMPEROR_NODE
 from ming_sim.decree import settle_with_delta
 from ming_sim.issues import (
     apply_issue_inertia_and_ongoing,
@@ -233,17 +234,25 @@ def test_legacy_character_resolve_condition_commitment_settles_when_threshold_re
 
 
 @pytest.mark.parametrize(
-    ("kind", "origin", "expected"),
+    ("kind", "origin", "starting", "expected"),
     [
-        (KIND_FULFILL, "dossier:701:credit:fulfill", 55),
-        (KIND_BACK, "dossier:702:credit:back", 55),
-        (KIND_BETRAY, "issue:703:credit:reject_grace", 45),
-        (KIND_SCAPEGOAT, "dossier:704:credit:scapegoat:pawn:毛文龙", 45),
+        (KIND_FULFILL, "dossier:701:credit:fulfill", 50, 55),
+        (KIND_BACK, "dossier:702:credit:back", 50, 55),
+        (KIND_BETRAY, "issue:703:credit:reject_grace", 50, 45),
+        (KIND_SCAPEGOAT, "dossier:704:credit:scapegoat:pawn:毛文龙", 50, 45),
+        (KIND_SCAPEGOAT, "faction:705:credit:scapegoat:pawn:毛文龙", 50, 50),
+        (KIND_SCAPEGOAT, "unknown:706:credit:scapegoat:pawn:毛文龙", 50, 50),
+        (KIND_FULFILL, "dossier:707:credit:fulfill", 0, 10),
+        (KIND_BETRAY, "issue:708:credit:reject_grace", 99, 98),
+        (KIND_FULFILL, "dossier:709:credit:fulfill", 100, 100),
+        (KIND_BETRAY, "issue:710:credit:reject_grace", 0, 0),
     ],
 )
-def test_credit_event_is_the_idempotent_loyalty_write_source(game, kind, origin, expected):
+def test_credit_event_is_the_idempotent_loyalty_write_source(
+    game, kind, origin, starting, expected,
+):
     db, state, _content = game
-    db.conn.execute("UPDATE characters SET loyalty=50 WHERE name='毛文龙'")
+    db.conn.execute("UPDATE characters SET loyalty=? WHERE name='毛文龙'", (starting,))
     event_id = write_credit_event(
         db, state, person="毛文龙", event_kind=kind, context="结构化信用事实", origin=origin,
     )
@@ -253,6 +262,26 @@ def test_credit_event_is_the_idempotent_loyalty_write_source(game, kind, origin,
         db, state, person="毛文龙", event_kind=kind, context="重放语境不参与判重", origin=origin,
     ) == event_id
     assert _character_loyalty(db, "毛文龙") == expected
+
+
+def test_month_settlement_consumes_preexisting_credit_event_once(game):
+    db, state, content = game
+    db.conn.execute("UPDATE characters SET loyalty=50 WHERE name='毛文龙'")
+    db.record_relation_edge_event(
+        source=EMPEROR_NODE,
+        target="毛文龙",
+        event_kind=KIND_BACK,
+        context="升级前已经落库的撑腰事实",
+        origin="dossier:711:credit:back",
+        turn=state.turn,
+        year=state.year,
+        period=state.period,
+    )
+
+    _settle_empty_month(db, state, content)
+    assert _character_loyalty(db, "毛文龙") == 55
+    _settle_empty_month(db, state, content)
+    assert _character_loyalty(db, "毛文龙") == 55
 
 
 def test_retired_person_rating_cannot_write_loyalty(game):
