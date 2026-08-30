@@ -94,14 +94,13 @@ def test_manual_directive_locality_heals_before_admission(tracer_client, monkeyp
     assert [p["character_id"] for p in payload["participant_roster"]] == ["毕自严"]
 
 
-def test_manual_directive_participant_first_preserves_recovered_locality(game, monkeypatch):
+def test_manual_directive_locality_canonicalizes_roster_before_drift_guard(game, monkeypatch):
     import ming_sim.cli_backend as cli_backend
 
     db, _state, content = game
     calls = []
     replies = [
-        _extracted("单省", "毕自"),
-        _extracted("无", "毕自严"),
+        _extracted("无", "毕尚书"),
         _extracted("单省", "毕自严"),
     ]
 
@@ -111,14 +110,16 @@ def test_manual_directive_participant_first_preserves_recovered_locality(game, m
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
     payload = cli_backend.capture_manual_directive_payload(
-        "着毕自严办理陕西事务。", None, db=db, content=content,
+        "着毕尚书办理陕西事务。", None, db=db, content=content,
     )
 
-    assert len(calls) == 3
+    assert len(calls) == 2
     assert payload["locality_scope"] == "单省"
     assert [
         person["character_id"] for person in payload["participant_roster"]
     ] == ["毕自严"]
+    assert db.conn.execute("SELECT COUNT(*) FROM turn_directives").fetchone()[0] == 0
+    assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0] == 0
 
 
 def test_manual_directive_locality_rejects_non_locality_drift(game, monkeypatch):
