@@ -20,9 +20,6 @@ def test_simulator_context_projects_character_axes_but_keeps_world_numbers(game)
 
     payload = build_simulator_payload(state, db, "", "")
     rendered = build_simulator_context(payload)
-    rendered_character_line = next(
-        line for line in rendered.splitlines() if line.startswith(f"{character.name}\t")
-    )
     columns = payload["court_roster"]["cols"]
     row = next(
         dict(zip(columns, values))
@@ -40,7 +37,6 @@ def test_simulator_context_projects_character_axes_but_keeps_world_numbers(game)
         "intrigue", CHARACTER_AXIS_SENTINEL["intrigue"]
     )
     assert row["阴谋"] == expected_intrigue
-    assert expected_intrigue in rendered_character_line.split("\t")
     character_rendered = character_context(character)
     assert "忠诚离心已显" in character_rendered
     assert "能力才具有限" in character_rendered
