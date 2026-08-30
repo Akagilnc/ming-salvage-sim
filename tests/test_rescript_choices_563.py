@@ -385,6 +385,18 @@ def test_decision_parser_rejects_unknown_typed_action_and_keeps_sibling():
             malformed["options"][1],
         ],
     }
+    inapplicable_grant_action = {
+        **malformed,
+        "title": "错配内帑",
+        "options": [
+            {
+                **malformed["options"][0],
+                "action_type": "grant_allocation",
+                "grant_action": "发内帑",
+            },
+            malformed["options"][1],
+        ],
+    }
     spaced_legal = {
         **malformed,
         "title": "犒军",
@@ -404,7 +416,7 @@ def test_decision_parser_rejects_unknown_typed_action_and_keeps_sibling():
         for block in (
             malformed, blank_discriminator, missing_discriminator,
             incompatible_discriminator, bare_incompatible_discriminator,
-            spaced_legal, sibling,
+            inapplicable_grant_action, spaced_legal, sibling,
         )
     )
 

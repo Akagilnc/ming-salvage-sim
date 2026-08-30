@@ -198,6 +198,8 @@ def validate_season_option(option: Mapping[str, object]) -> str:
             raise ValueError(f"choice.{spec.name} 不可空")
         if spec.as_int and spec.default is None and option[spec.name] is None:
             raise ValueError(f"choice.{spec.name} 不可空")
+        if not field_population_allowed(action_type, spec.name, option):
+            raise ValueError(f"choice.{spec.name} 不适用于当前选项")
         value = option[spec.name]
         if spec.allowed is None and not spec.as_int and (
             not isinstance(value, str) or not value.strip()
@@ -214,11 +216,21 @@ def validate_season_option(option: Mapping[str, object]) -> str:
 
 def season_option_contract_prompt(kind: str) -> str:
     """Human-facing season option contract projected from FieldSpec."""
+    specs = _season_specs(kind)
     details = []
-    for spec in _season_specs(kind):
+    for spec in specs:
         detail = spec.name
         if spec.allowed is not None:
-            detail += f'（{"|".join(sorted(spec.allowed))}）'
+            allowed = (
+                value for value in spec.allowed
+                if all(
+                    field_population_allowed(kind, dependent.name, {spec.name: value})
+                    for dependent in specs
+                    if dependent.populated_when is not None
+                    and dependent.populated_when[0] == spec.name
+                )
+            )
+            detail += f'（{"|".join(sorted(allowed))}）'
         if spec.as_int:
             detail += f"（JSON integer，{spec.int_lo}..{spec.int_hi}，禁数字字符串）"
         if spec.quantity_unit:
