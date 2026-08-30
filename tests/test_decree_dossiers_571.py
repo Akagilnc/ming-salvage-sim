@@ -1582,15 +1582,15 @@ def test_payload_owned_appointment_dedup_preserves_same_person_different_effect(
 
     result = issue_engine.apply_score_extraction(db, state, {
         "人物变更": [{
-            "name": person["name"], "动作": "评定", "loyalty": 1,
+            "name": person["name"], "动作": "性情", "style": "沉着",
             "origin_ref": f"dossier:{dossier_id}",
         }],
     }, content=content)
 
-    assert result["applied_person_changes"][0]["动作"] == "评定"
+    assert result["applied_person_changes"][0]["动作"] == "性情"
     assert db.conn.execute(
-        "SELECT loyalty FROM characters WHERE name=?", (person["name"],)
-    ).fetchone()[0] == person["loyalty"] + 1
+        "SELECT style FROM characters WHERE name=?", (person["name"],)
+    ).fetchone()[0] == "沉着"
 
 
 def test_executing_execution_record_never_closes_or_stamps_closed_turn(game):

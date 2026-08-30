@@ -10,7 +10,7 @@ from ming_sim.constants import DOSSIER_LINK_TYPES, TURN_UNIT
 from ming_sim.context import _ctx as _content_ctx, state_context
 from ming_sim.models import FRONT_HALF_DONE_PHASES, Character, CourtContext
 from ming_sim.issues import TravelTone, normalize_travel_tone
-from ming_sim.person_archive_contract import PERSON_ACTIONS
+from ming_sim.person_archive_contract import format_person_actions
 from ming_sim.qualitative import progress_band, qualitative_band
 from ming_sim.strict_types import strict_int
 from ming_sim.token_stats import tlog
@@ -1223,7 +1223,8 @@ def build_extractor_tools(context: CourtContext):
                               origin_ref(只能从 extractor_context.decree_dossiers 选择
                               dossier:<id>),commitment_kind:"until_stop"；
                               直到补齐/达标：ongoing_effects 语义非空 + stop_condition(dict)
-                              人物安抚类不得写忠诚数值；引擎按信用事件机械结算
+                              人物安抚类可只写唯一的 character.<name>.loyalty stop_condition，
+                              不写 ongoing_effects 或忠诚数值；引擎按信用事件机械结算
                               连续N月/半年为限：ongoing_effects 语义非空 + end_turn(turn+N，且必须大于当前turn)
                               未来一次性复试/复核：end_turn，ongoing_effects 可为空/语义空
                               stop_condition 只收 dict，如 {"army.guanning.arrears":"<=0"}；
@@ -1287,6 +1288,6 @@ def build_extractor_tools(context: CourtContext):
 
     submit_extraction.__doc__ = submit_extraction.__doc__.replace(
         "__PERSON_ACTIONS__",
-        "/".join(PERSON_ACTIONS),
+        format_person_actions(),
     )
     return tools + [submit_extraction]

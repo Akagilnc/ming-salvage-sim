@@ -231,9 +231,12 @@ def derive_loyalty_from_credit_event(db: Any, event_id: int) -> Optional[Dict[st
     new = max(0, min(100, old + requested))
     delta = new - old
     db.conn.execute("UPDATE characters SET loyalty=? WHERE name=?", (new, person))
+    content = getattr(db, "content", None)
+    if content is not None and person in content.characters:
+        content.characters[person].loyalty = new
     db.conn.execute(
-        "INSERT INTO loyalty_credit_event_applied(event_id, character_name, delta) VALUES(?,?,?)",
-        (int(event_id), person, delta),
+        "INSERT INTO loyalty_credit_event_applied(event_id) VALUES(?)",
+        (int(event_id),),
     )
     return {"event_id": int(event_id), "name": person, "old_loyalty": old,
             "new_loyalty": new, "delta": delta}

@@ -2146,10 +2146,7 @@ class GameDB:
             -- #702 / ADR 0104：信用事件→人物忠诚派生的 event-id 幂等水位。
             -- 事件本身仍是唯一业务真源；本表只记录已消费身份，禁止承载第二份事件值。
             CREATE TABLE IF NOT EXISTS loyalty_credit_event_applied (
-                event_id INTEGER PRIMARY KEY REFERENCES relation_edge_events(id),
-                character_name TEXT NOT NULL,
-                delta INTEGER NOT NULL,
-                applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                event_id INTEGER PRIMARY KEY REFERENCES relation_edge_events(id)
             );
 
             -- #636 关系摘要层 S5：两段式摘要（奠基段机械只增不改＋近况段整段重酿，ID-9）。
