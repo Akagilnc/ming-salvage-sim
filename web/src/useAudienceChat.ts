@@ -143,7 +143,7 @@ export function useAudienceChat(
   );
 
   const sendChat = React.useCallback(
-    async (minister: string, message: string, cb: SendChatCallbacks): Promise<void> => {
+    async (minister: string, message: string, cb: SendChatCallbacks, intent?: "secret_order"): Promise<void> => {
       const token = ++requestTokenRef.current;
       const gen = ++chatGenRef.current;  // 作废在飞的历史加载，防陈旧快照迟到回覆本轮
       const initiatingPanelName = selectedMinisterRef.current;
@@ -168,6 +168,7 @@ export function useAudienceChat(
           },
           {
             signal: abort.signal,
+            intent,
             onAccepted: (identity) => {
               if (panelMatches()) {
                 setCurrentCampaignId(identity.campaign_id);

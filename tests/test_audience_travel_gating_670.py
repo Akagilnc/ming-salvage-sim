@@ -1640,13 +1640,13 @@ def _secret_order_runtime(db, state, content, *, stream: bool):
 
 def _formal_secret_order_payload(runtime, minister_name, message, *, stream):
     if stream:
-        events = list(runtime.chat_stream(minister_name, message))
+        events = list(runtime.chat_stream(minister_name, message, "secret_order"))
         types = [ev.get("type") for ev in events]
         assert "error" not in types, f"stream secret order errored: {events!r}"
         done_events = [ev for ev in events if ev.get("type") == "done"]
         assert done_events, f"expected done, got types={types!r}"
         return done_events[0].get("payload") or {}
-    return runtime.chat(minister_name, message)
+    return runtime.chat(minister_name, message, "secret_order")
 
 
 @pytest.mark.parametrize("stream", [False, True], ids=["sync", "stream"])
@@ -1662,7 +1662,7 @@ def test_web_chat_formal_secret_order_hangs_night_without_enter(game, stream):
     runtime = _secret_order_runtime(db, state, content, stream=stream)
     edict = "陕北赈抚探报\n速报陕西军情。"
     payload = _formal_secret_order_payload(
-        runtime, remote.name, f"密令如下：{edict}",
+        runtime, remote.name, edict,
         stream=stream,
     )
     assert not payload.get("admission"), (

@@ -490,7 +490,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
   });
 
   it("成功密令的 done 与 end 分别重读权威夜卷轴，且不显示系统通知", async () => {
-    let sentSecretOrder = false;
+    let sentSecretOrder: Record<string, unknown> | null = null;
     let scrollCalls = 0;
     let doneReached = false;
     let endReached = false;
@@ -517,13 +517,13 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
         return jsonResp({ night_id: 1, messages });
       }
       if (u.pathname.endsWith("/api/ministers/%E6%9D%A8%E5%97%A3%E6%98%8C/chat/stream") && init?.method === "POST") {
-        sentSecretOrder = true;
+        sentSecretOrder = JSON.parse(String(init.body));
         return new Response(new ReadableStream<Uint8Array>({
           start(controller) { streamController = controller; },
         }), { status: 200, headers: { "Content-Type": "text/event-stream" } });
       }
       if (u.pathname.endsWith("/api/ministers/%E6%9D%A8%E5%97%A3%E6%98%8C/chat")) {
-        return jsonResp({ minister, history: [], suggestions: [], pending_action_failures: [], pending_turn_ids: [], night_id: 1 });
+        return jsonResp({ minister, history: [], suggestions: [{ label: "下密令", text: "密令如下：", prefix: true }], pending_action_failures: [], pending_turn_ids: [], night_id: 1 });
       }
       return jsonResp({});
     }));
@@ -535,13 +535,17 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     await click(findButton(host, "杨嗣昌"));
     await act(async () => { await vi.waitFor(() => expect(host.querySelector('textarea')).not.toBeNull()); });
 
+    await click(findButton(host, "下密令"));
     const textarea = host.querySelector("textarea") as HTMLTextAreaElement;
     await act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(textarea, "密令如下：整饬边备。");
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(textarea, "整饬边备。");
       textarea.dispatchEvent(new Event("input", { bubbles: true }));
     });
     await click(findButton(host, "发送"));
-    await act(async () => { await vi.waitFor(() => expect(sentSecretOrder).toBe(true)); });
+    await act(async () => {
+      await vi.waitFor(() => expect(sentSecretOrder).not.toBeNull());
+      expect(sentSecretOrder).toEqual({ message: "整饬边备。", intent: "secret_order" });
+    });
     const beforeDone = scrollCalls;
 
     doneReached = true;
