@@ -10,6 +10,11 @@ from ming_sim.session import _sync_offices_from_db_impl
 
 def test_identity_and_seed_guilt_are_loaded_from_roster_and_seeded(game):
     db, state, content = game
+    assert all(0 <= character.intrigue <= 100 for character in content.characters.values())
+    assert min(content.characters[name].intrigue for name in ("魏忠贤", "田尔耕", "许显纯")) > max(
+        content.characters[name].intrigue for name in ("钱谦益", "黄道周")
+    )
+    assert {"张惟贤", "周奎"} <= set(content.characters)
     row = db.conn.execute(
         "SELECT faction, identity, seed_guilt FROM characters WHERE name=?",
         ("王承恩",),
@@ -32,19 +37,23 @@ def test_identity_and_seed_guilt_are_loaded_from_roster_and_seeded(game):
 def test_identity_and_seed_guilt_survive_restore(game):
     db, state, content = game
     before = db.conn.execute(
-        "SELECT identity, seed_guilt FROM characters WHERE name=?", ("魏忠贤",)
+        "SELECT identity, seed_guilt, intrigue, defected_from FROM characters WHERE name=?", ("魏忠贤",)
     ).fetchone()
     content.characters["魏忠贤"].identity = 0
+    content.characters["魏忠贤"].intrigue = 0
+    content.characters["魏忠贤"].defected_from = "阉党"
     content.characters["魏忠贤"].seed_guilt = {}
     _sync_offices_from_db_impl(content, db)
     after = db.conn.execute(
-        "SELECT identity, seed_guilt FROM characters WHERE name=?", ("魏忠贤",)
+        "SELECT identity, seed_guilt, intrigue, defected_from FROM characters WHERE name=?", ("魏忠贤",)
     ).fetchone()
     assert dict(after) == dict(before)
     guilt = json.loads(after["seed_guilt"])
     assert guilt["severity"] == "重"
     assert content.characters["魏忠贤"].identity == before["identity"]
     assert content.characters["魏忠贤"].seed_guilt == guilt
+    assert content.characters["魏忠贤"].intrigue == before["intrigue"]
+    assert content.characters["魏忠贤"].defected_from is None
 
 
 def test_existing_save_migrates_seed_identity_and_inserts_missing_roster_member(tmp_path, content):
@@ -148,6 +157,7 @@ def test_roster_rejects_duplicate_canonical_name(monkeypatch):
     "field,value,match",
     [
         ("identity", 101, "identity"),
+        ("intrigue", 101, "intrigue"),
         ("seed_guilt", {"crime": "", "severity": "轻"}, "crime"),
         ("seed_guilt", {"crime": "无", "severity": "未知"}, "severity"),
     ],

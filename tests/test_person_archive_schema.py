@@ -25,6 +25,7 @@ def test_characters_table_has_person_archive_fields(read_game):
 
     assert "reason_code" in cols
     assert "transit_to" in cols
+    assert {"intrigue", "defected_from"} <= cols
     assert {"transit_distance_remaining", "transit_speed_factor"} <= cols
     info = _column_info(db, "characters")
     for name in ("transit_distance_remaining", "transit_speed_factor"):
@@ -118,6 +119,7 @@ def test_add_character_persists_transit_to(game):
         ability=50,
         integrity=50,
         courage=50,
+        intrigue=63,
         style="测试人物",
         power_id="ming",
         location="beizhili",
@@ -127,9 +129,14 @@ def test_add_character_persists_transit_to(game):
     db.add_character(state, character)
 
     row = db.conn.execute(
-        "SELECT location, transit_to FROM characters WHERE name=?", (character.name,)
+        "SELECT location, transit_to, intrigue, defected_from FROM characters WHERE name=?", (character.name,)
     ).fetchone()
-    assert dict(row) == {"location": "beizhili", "transit_to": "liaodong"}
+    assert dict(row) == {
+        "location": "beizhili",
+        "transit_to": "liaodong",
+        "intrigue": 63,
+        "defected_from": None,
+    }
 
 
 def test_reload_restores_complete_transit_ledger_from_db(game):
