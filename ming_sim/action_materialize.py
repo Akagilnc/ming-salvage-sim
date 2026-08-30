@@ -1312,6 +1312,7 @@ class IncompleteXiexangPayloadError(ValueError):
 def require_explicit_xiexang_fields(
     *,
     amount: object = 0,
+    amount_unit: str = "万两",
     account: str = "",
     purpose: str = "",
     target_kind: str = "",
@@ -1328,6 +1329,8 @@ def require_explicit_xiexang_fields(
         n = 0
     if n <= 0:
         missing.append("amount")
+    if str(amount_unit or "").strip() != "万两":
+        missing.append("amount_unit")
     raw_account = str(account or "").strip()
     canonical_account = "国库" if raw_account == "太仓" else raw_account
     if canonical_account not in {"国库", "内库"}:
