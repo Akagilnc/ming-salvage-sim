@@ -104,10 +104,10 @@ def parse_decision_blocks(narrative: str) -> tuple[str, List[Dict[str, object]]]
             }
             # Deterministic financial options carry their executable payload;
             # label/hint remain presentation only.
-            action_type = str(o.get("action_type") or "")
+            action_type = str(o.get("action_type") or "").strip()
             for key in season_option_fields(action_type):
                 if key in o:
-                    option[key] = o[key]
+                    option[key] = action_type if key == "action_type" else o[key]
             options.append(option)
         try:
             bind_decision_options(options)

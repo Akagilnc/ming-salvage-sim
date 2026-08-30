@@ -352,6 +352,14 @@ def test_decision_parser_rejects_unknown_typed_action_and_keeps_sibling():
             "target_kind": "army", "target_id": "guanning", "cadence": "一次性",
         }, {"label": "暂缓", "hint": "守财"}],
     }
+    spaced_legal = {
+        **malformed,
+        "title": "犒军",
+        "options": [
+            {**malformed["options"][0], "action_type": " grant_allocation "},
+            malformed["options"][1],
+        ],
+    }
     sibling = {
         "title": "巡河", "context": "河工", "options": [
             {"label": "遣员巡河", "hint": "查勘"},
@@ -360,12 +368,14 @@ def test_decision_parser_rejects_unknown_typed_action_and_keeps_sibling():
     }
     raw = "".join(
         f"<<DECISION>>{json.dumps(block, ensure_ascii=False)}<<END>>"
-        for block in (malformed, sibling)
+        for block in (malformed, spaced_legal, sibling)
     )
 
     _clean, decisions = parse_decision_blocks(raw)
 
-    assert [decision["title"] for decision in decisions] == ["巡河"]
+    assert [decision["title"] for decision in decisions] == ["犒军", "巡河"]
+    assert decisions[0]["options"][0]["action_type"] == "grant_allocation"
+    assert decisions[0]["options"][0]["amount"] == 30
 
 
 @pytest.mark.parametrize("labels", [["", "乙"], ["甲", " 甲 "]])
