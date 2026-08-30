@@ -974,6 +974,19 @@ def test_continue_load_save_reset_reach_hud_zero_llm_calls(tmp_path, monkeypatch
         preresolve_path = Path(seed.session.auto_save("preresolve"))
         begin_bytes = begin_path.read_bytes()
         preresolve_bytes = preresolve_path.read_bytes()
+
+        # 真正建立下一回合的 end_turn 产出 begin；重复普通 begin_turn 刷新不改写内容。
+        seed.state.turn += 1
+        seed.state.period += 1
+        seed.db.save_state(seed.state)
+        seed.session.end_turn()
+        next_begin_path = next((ud / "saves").glob(
+            f"auto_*_{seed.state.year:04d}_{seed.state.period:02d}_t{seed.state.turn:04d}_begin.db"
+        ))
+        next_begin_bytes = next_begin_path.read_bytes()
+        seed.session.begin_turn()
+        seed.session.begin_turn()
+        assert next_begin_path.read_bytes() == next_begin_bytes
     finally:
         try:
             seed.session.close()
