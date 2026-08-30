@@ -7,6 +7,9 @@ import types
 
 from fastapi.testclient import TestClient
 
+from ming_sim.cli_backend import capture_manual_directive_payload as _real_capture
+from tests.test_month_loop_tracer_1468 import _post_issue_stream, tracer_client
+
 
 def _client(game, monkeypatch, replies):
     import ming_sim.cli_backend as cli_backend
@@ -52,27 +55,73 @@ def _extracted(scope):
     }
 
 
-def test_manual_directive_locality_heals_before_admission(game, monkeypatch):
-    db, state, _content = game
-    client, calls = _client(
-        game, monkeypatch, [_extracted("无"), _extracted("单省")],
-    )
+def test_manual_directive_locality_heals_before_admission(tracer_client, monkeypatch):
+    import ming_sim.cli_backend as cli_backend
+    import web_app
 
-    response = client.post(
+    new = tracer_client.post("/api/menu/new_game")
+    assert new.status_code == 200
+    game = web_app.web_game
+    assert game is not None
+    calls = []
+    replies = [_extracted("无"), _extracted("单省")]
+
+    def backend(*_args, **_kwargs):
+        calls.append(1)
+        return json.dumps(replies[min(len(calls) - 1, 1)], ensure_ascii=False), 1
+
+    monkeypatch.setattr(cli_backend, "capture_manual_directive_payload", _real_capture)
+    monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
+    response = tracer_client.post(
         "/api/directives", json={"text": "着依旨施行。", "notes": ""},
     )
 
     assert response.status_code == 200
     assert len(calls) == 2
-    directives = db.list_directives(state)
-    assert len(directives) == 1
-    assert directives[0]["status"] == "draft"
-    db.ensure_dossiers_for_draft_directives(state)
-    dossiers = db.list_decree_dossiers()
+    turn_before = game.state.turn
+    _post_issue_stream(
+        tracer_client, expected_turn=turn_before, step="#1685 locality issue/stream",
+    )
+    assert game.state.turn == turn_before + 1
+    dossiers = game.db.list_decree_dossiers()
     assert len(dossiers) == 1
     assert dossiers[0]["region_id"] == "shaanxi"
     payload = json.loads(dossiers[0]["payload_json"])
     assert payload["locality_scope"] == "single"
+
+
+def test_manual_directive_locality_rejects_non_locality_drift(game, monkeypatch):
+    import ming_sim.cli_backend as cli_backend
+
+    db, _state, _content = game
+    changed = _extracted("单省")
+    changed["动作类型"] = "military_order"
+    client, calls = _client(game, monkeypatch, [_extracted("无"), changed])
+
+    response = client.post(
+        "/api/directives", json={"text": "着依旨施行。", "notes": ""},
+    )
+
+    assert response.status_code == 409
+    assert len(calls) == 1 + cli_backend.DRAFT_INTENT_HEAL_RETRIES
+    assert db.conn.execute("SELECT COUNT(*) FROM turn_directives").fetchone()[0] == 0
+    assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0] == 0
+
+
+def test_manual_directive_non_combination_failure_does_not_retry(game, monkeypatch):
+    db, _state, _content = game
+    missing = _extracted("单省")
+    missing["目标ID"] = "不存在的省"
+    client, calls = _client(game, monkeypatch, [missing])
+
+    response = client.post(
+        "/api/directives", json={"text": "着依旨施行。", "notes": ""},
+    )
+
+    assert response.status_code != 200
+    assert len(calls) == 1
+    assert db.conn.execute("SELECT COUNT(*) FROM turn_directives").fetchone()[0] == 0
+    assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0] == 0
 
 
 def test_manual_directive_locality_retry_exhaustion_admits_nothing(game, monkeypatch):

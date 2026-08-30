@@ -158,6 +158,10 @@ def _region_row_to_locality(row) -> str:
     return ""
 
 
+class LocalityCombinationError(ValueError):
+    """A valid typed locality value conflicts with the target/action matrix."""
+
+
 def resolve_dossier_region_ids(
     conn,
     *,
@@ -183,7 +187,7 @@ def resolve_dossier_region_ids(
     # r4-B / owner A 8×3：R1 = region ∧ single；dossier 仅 none → 单行 ''
     if target_kind == "region":
         if scope != "single":
-            raise ValueError(
+            raise LocalityCombinationError(
                 f"region 目标与 locality_scope={scope!r} 矛盾（须 single）"
             )
         return [_resolve_single_region_id(
@@ -192,24 +196,24 @@ def resolve_dossier_region_ids(
 
     if target_kind == "dossier":
         if scope != "none":
-            raise ValueError(
+            raise LocalityCombinationError(
                 f"target_kind=dossier 与 locality_scope={scope!r} 矛盾（须 none）"
             )
         return [""]
 
     if scope == "single":
-        raise ValueError(
+        raise LocalityCombinationError(
             f"locality_scope=single 只配 region 目标，得 target_kind={target_kind!r}"
         )
 
     if scope == "national":
         if target_kind in {"character", "office", "army", "dossier"}:
-            raise ValueError(
+            raise LocalityCombinationError(
                 f"target_kind={target_kind!r} 不得 national fan-out"
             )
         # policy / issue / account
         if action not in NATIONAL_FANOUT_ACTION_TYPES:
-            raise ValueError(
+            raise LocalityCombinationError(
                 f"national fan-out 动作不在白名单：{action!r}"
             )
         provinces = ming_province_ids(conn)
