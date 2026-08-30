@@ -831,7 +831,32 @@ def test_materialize_invalid_batch_skips_discarded_locality(
     assert not [p for p in db.list_pending_actions(state.turn) if p["kind"] == "directive"]
 
 
-def test_batch_locality_heal_preserves_valid_sibling(game, monkeypatch):
+@pytest.mark.parametrize(
+    ("scope_schedule", "expected_calls"),
+    [
+        ([("无", "无", "无"), ("单省", "单省", "无")], 2),
+        (
+            [
+                ("无", "无", "无"),
+                ("单省", "无", "无"),
+                ("单省", "单省", "无"),
+            ],
+            3,
+        ),
+        (
+            [
+                ("无", "无", "无"),
+                ("单省", "单省", "全国"),
+                ("单省", "单省", "无"),
+            ],
+            3,
+        ),
+    ],
+    ids=["simultaneous", "sequential", "valid-sibling-drift"],
+)
+def test_batch_locality_heal_preserves_valid_sibling(
+    game, monkeypatch, scope_schedule, expected_calls,
+):
     import ming_sim.cli_backend as cb
 
     db, _state, content = game
@@ -846,6 +871,13 @@ def test_batch_locality_heal_preserves_valid_sibling(game, monkeypatch):
                     "颁布方式": "普通",
                 },
                 {
+                    "正文": "着张居正署理户部。",
+                    "动作类型": "acting_appointment",
+                    "目标类型": "character",
+                    "目标ID": "张居正",
+                    "颁布方式": "普通",
+                },
+                {
                     "正文": "着户部办理陕西事务。",
                     "动作类型": "policy",
                     "目标类型": "region",
@@ -855,19 +887,26 @@ def test_batch_locality_heal_preserves_valid_sibling(game, monkeypatch):
                     "参与人": [],
                 },
                 {
-                    "正文": "着户部整饬全国政务。",
+                    "正文": "着户部办理河南事务。",
                     "动作类型": "policy",
-                    "目标类型": "policy",
-                    "目标ID": "national-policy",
+                    "目标类型": "region",
+                    "目标ID": "henan",
                     "颁布方式": "普通",
                     "施行范围": second_scope,
                     "参与人": [],
                 },
+                {
+                    "正文": "着户部清查京内政务。",
+                    "动作类型": "policy",
+                    "目标类型": "policy",
+                    "目标ID": "court-policy",
+                    "颁布方式": "普通",
+                    "施行范围": sibling_scope,
+                    "参与人": [],
+                },
             ]
         }
-        for first_scope, second_scope in (
-            ("无", "无"), ("单省", "全国"), ("单省", "无"),
-        )
+        for first_scope, second_scope, sibling_scope in scope_schedule
     ]
 
     def backend(_prompt, llm_config=None, tag=""):
@@ -878,14 +917,15 @@ def test_batch_locality_heal_preserves_valid_sibling(game, monkeypatch):
 
     monkeypatch.setattr(cb, "_run_backend_for_config", backend)
     result = cb.extract_draft_intent_with_semantic_heal(
-        "分别拟两道旨。", "臣已拟妥。",
-        db=db, content=content, draft_count=3,
+        "分别拟五道旨。", "臣已拟妥。",
+        db=db, content=content, draft_count=5,
     )
 
-    assert calls["n"] == 3
+    assert calls["n"] == expected_calls
+    assert result["drafts"][1] is None
     assert [
-        draft["locality_scope"] for draft in result["drafts"][1:]
-    ] == ["单省", "无"]
+        draft["locality_scope"] for draft in result["drafts"][2:]
+    ] == ["单省", "单省", "无"]
 
 
 def test_materialize_locality_exhaustion_rejects_only_draft(game, monkeypatch):
