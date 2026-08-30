@@ -79,6 +79,9 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
         identity = int_field(character_fields, "identity", path)
         if not 0 <= identity <= 100:
             raise SystemExit(f"设定字段超出范围：{path}.identity（应为 0–100）")
+        intrigue = int_field(character_fields, "intrigue", path)
+        if not 0 <= intrigue <= 100:
+            raise SystemExit(f"设定字段超出范围：{path}.intrigue（应为 0–100）")
         seed_guilt_raw = item.get("seed_guilt")
         if seed_guilt_raw is None:
             seed_guilt_raw = {}
@@ -108,6 +111,10 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
             )
         if not seed_guilt_raw:
             seed_guilt = {}
+        defected_from = item.get("defected_from")
+        if defected_from is not None and not isinstance(defected_from, str):
+            raise SystemExit(f"characters.json.characters[{idx}].defected_from 必须是字符串。")
+        defected_from = defected_from.strip() or None if defected_from is not None else None
         if name in characters:
             raise SystemExit(f"characters.json 不得存在重复人物名：{name}")
         characters[name] = Character(
@@ -136,6 +143,8 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
             summary=str(item.get("summary") or ""),
             portrait_id=str(item.get("portrait_id") or ""),
             identity=identity,
+            intrigue=intrigue,
+            defected_from=defected_from,
             seed_guilt=seed_guilt,
         )
 
