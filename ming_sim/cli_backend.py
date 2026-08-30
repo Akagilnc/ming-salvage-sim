@@ -2273,7 +2273,7 @@ def extract_draft_intent(
                 projected.get("mode") if action == "grant_allocation" else value.get("颁布方式")
             )
             target_kind = str(
-                (projected.get("target_kind") or "policy")
+                projected.get("target_kind")
                 if action == "grant_allocation" else value.get("目标类型") or ""
             ).strip()
             target_id = str(
@@ -2330,8 +2330,9 @@ def extract_draft_intent(
                     if key != "target_kind"
                 )
             mechanical["locality_scope"] = _coerce_draft_locality_scope(value.get("施行范围"))
-            # multi 路目标类型同样 fail-loud
-            target_kind = _coerce_draft_target_kind(target_kind)
+            # grant 缺 target_kind 留给其 canonical admission 聚合报错；其它动作在此闭集校验。
+            if action != "grant_allocation":
+                target_kind = _coerce_draft_target_kind(target_kind)
             # #653：pay_order_override 结构化载荷（entries）随草案整道转交，
             # 成案点/物化点共 prepare_pay_order_entries 同一验形。
             entries = value.get("entries")
@@ -2471,7 +2472,7 @@ def extract_draft_intent(
     else:
         _projected = {}
     _tk = str(
-        (_projected.get("target_kind") or "policy")
+        _projected.get("target_kind")
         if _act == "grant_allocation" else obj.get("目标类型") or ""
     ).strip()
     _tid = str(
@@ -2504,7 +2505,11 @@ def extract_draft_intent(
     if dossier_action not in DRAFT_ACTION_TYPES:
         raise ValueError(f"动作类型非法：{dossier_action!r}")
     _tk_raw = _projected.get("target_kind") if dossier_action == "grant_allocation" else obj.get("目标类型")
-    target_kind = _coerce_draft_target_kind(_tk_raw if _tk_raw not in (None, "") else "policy")
+    target_kind = (
+        str(_tk_raw or "").strip()
+        if dossier_action == "grant_allocation"
+        else _coerce_draft_target_kind(_tk_raw if _tk_raw not in (None, "") else "policy")
+    )
     target_id_value = str(
         _projected.get("target_id") if dossier_action == "grant_allocation" else obj.get("目标ID") or ""
     ).strip()
