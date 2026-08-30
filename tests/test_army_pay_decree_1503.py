@@ -1478,6 +1478,12 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
             (decision_dossier["id"],),
         ).fetchone()[0])
         assert decision_payload["decision_key"] == decisions[0]["decision_key"]
+        assert decision_dossier["status"] == "closed"
+        assert decision_dossier["promulgation_decision"] == "promulgated"
+        assert [
+            row["decision"]
+            for row in game.db.list_decree_dossier_decisions(decision_dossier["id"])
+        ] == ["promulgated"]
         moves = game.db.list_economy_moves_for_dossier(dossier["id"])
         pay_moves = [
             m for m in moves
@@ -1524,23 +1530,10 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
         assert len(logs) == 1
         assert float(logs[0]["delta"]) == pytest.approx(-15)
         after_army = _army_row(game.db)
-        tick_delta = sum(
-            float(row["delta"] or 0)
-            for row in game.db.conn.execute(
-                """
-                SELECT delta FROM army_logs
-                WHERE army_id='guanning' AND field='arrears'
-                  AND turn=? AND (origin_ref IS NULL OR origin_ref='')
-                """,
-                (turn_before,),
-            ).fetchall()
-        )
-        assert after_army["arrears"] == pytest.approx(
-            float(arrears_before["arrears"]) - 45 + tick_delta
-        )
-        assert after_army["central_pay_arrears"] == pytest.approx(
-            float(arrears_before["central_pay_arrears"]) - 45 + tick_delta
-        )
+        assert int(after["metrics"]["国库"]) == 293
+        assert int(after["metrics"]["内库"]) == 432
+        assert after_army["arrears"] == pytest.approx(16)
+        assert after_army["central_pay_arrears"] == pytest.approx(16)
         decision_logs = game.db.conn.execute(
             """
             SELECT delta, new_value FROM army_logs

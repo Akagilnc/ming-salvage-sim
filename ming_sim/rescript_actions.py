@@ -1318,6 +1318,16 @@ def apply_rescript_batch(
                         raise ValueError(
                             f"decision grant 成案零行：{item.decision_key}"
                         )
+                    # The selected stored option is already the sovereign verdict:
+                    # promulgate and execute its dossier in this same atomic write.
+                    db.apply_dossier_verdicts(
+                        state,
+                        [
+                            {"dossier_id": dossier_id, "decision": "promulgated"}
+                            for dossier_id in created
+                        ],
+                        content=content,
+                    )
                 # decision 行：写 choice + decided（#1490 / 普通 HITL）
                 # 事件账失败必须穿透 atomic → 整批回滚（§B.1）；禁 swallow。
                 _cas_decided(db, item)
