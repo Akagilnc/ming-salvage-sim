@@ -414,46 +414,16 @@ describe("QA A-1 #1276/#1282/#1285 GameHud HUD 对齐", () => {
     expect(opened).toEqual(["state"]);
   });
 
-  it("#1277 拟诏木牌：0 草案写退朝过月；有草案同步盖玺颁诏过月", () => {
-    // makeState 默认带 1 道草案；0 草案须显式清空
-    const { host: host0, opened } = mountHud({
-      state: makeState(false, { directives: [] }),
-    });
-    const edict0 = Array.from(host0.querySelectorAll(".hud2-cmd-caption")).find((b) =>
-      (b.getAttribute("aria-label") || "").includes("拟诏"),
-    );
-    expect(edict0).toBeTruthy();
-    expect(edict0?.textContent).toMatch(/拟诏·退朝过月/);
-    expect(edict0?.textContent).not.toContain("结束回合");
-    act(() => { edict0?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-    expect(opened).toEqual(["edict"]);
-
-    // 有草案（makeState 默认）：木牌与拟诏台主钮同步为盖玺颁诏过月
-    const { host: hostDraft } = mountHud();
-    const edict1 = Array.from(hostDraft.querySelectorAll(".hud2-cmd-caption")).find((b) =>
-      (b.getAttribute("aria-label") || "").includes("拟诏"),
-    );
-    expect(edict1?.textContent).toMatch(/拟诏·盖玺颁诏过月/);
-    expect(edict1?.textContent).not.toMatch(/退朝过月/);
-  });
-
-  it("#1454 拟诏台开着：木牌名实降为收起，不再与主钮同文盖玺颁诏过月", () => {
-    const { host } = mountHud({ edictOpen: true });
-    const edict = Array.from(host.querySelectorAll(".hud2-cmd-caption")).find((b) =>
-      (b.getAttribute("aria-label") || "").includes("拟诏"),
-    );
-    expect(edict).toBeTruthy();
-    expect(edict?.textContent).toMatch(/拟诏·收起/);
-    expect(edict?.textContent).toMatch(/收起拟诏台/);
-    // 名实：台开时不得再挂与 seal-btn-issue 同文的「盖玺颁诏过月」
-    expect(edict?.textContent).not.toMatch(/盖玺颁诏过月/);
-    expect(edict?.getAttribute("aria-label") || "").not.toMatch(/盖玺颁诏过月/);
-    // 图钮 aria 同步
-    const cmd = Array.from(host.querySelectorAll("button.hud2-cmd")).find((b) =>
-      (b.getAttribute("aria-label") || "").includes("拟诏"),
-    );
-    expect(cmd?.getAttribute("aria-label") || "").toMatch(/拟诏·收起/);
-    expect(cmd?.getAttribute("aria-label") || "").not.toMatch(/盖玺颁诏过月/);
+  it("拟诏木牌在零/有草案时都只打开拟诏台，并投影草案数", () => {
+    for (const directives of [[], makeState(false).directives]) {
+      const { host, opened } = mountHud({ state: makeState(false, { directives }) });
+      const edict = Array.from(host.querySelectorAll<HTMLButtonElement>("button.hud2-cmd")).at(-1);
+      expect(edict).toBeTruthy();
+      const caption = Array.from(host.querySelectorAll(".hud2-cmd-caption")).at(-1);
+      expect(caption?.querySelector("small")?.textContent).toBe(`${directives.length} 道草案`);
+      act(() => { edict?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+      expect(opened).toEqual(["edict"]);
+    }
   });
 
   it("#1454 拟诏台开着：木牌可点收起，不二次打开/不造第二条颁诏路径", () => {

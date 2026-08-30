@@ -1,5 +1,4 @@
 import React from "react";
-import { ApiRequestError, api } from "./api";
 import { consumeSettleStream } from "./settleStream";
 import {
   needsPhase2Resume,
@@ -13,7 +12,7 @@ import type {
   DecisionChoice, GameState, PendingActionFailure, PendingDecision,
 } from "./types";
 
-// 颁诏结算流：盖玺颁诏 / 退朝 / HITL 决策点续裁 / 失败重拉，共用 SSE 推演进度区。
+// 颁诏结算流：盖玺颁诏 / HITL 决策点续裁 / 失败重拉，共用 SSE 推演进度区。
 // 结算完成一律整页刷新，草案/对话/局势/closed 弹窗全部按新 state 重新初始化。
 export function useSettlementFlow({
   setBusy,
@@ -95,7 +94,7 @@ export function useSettlementFlow({
     setSettleNarrative("");
     setError("");
     // #1277/#1351：携客户端所见 turn 作令牌；409 且服务端已更大 → 视作已推进刷新，不报假错。
-    // 与 advanceWithoutEdict 同口径；禁前端防抖顶替服务端令牌。
+    // 禁前端防抖顶替服务端令牌。
     const expectedTurn = state?.turn?.turn;
     try {
       // 作弊强制结算项随颁诏一次性穿入；发出即清空，绝不跨回合。
@@ -248,69 +247,6 @@ export function useSettlementFlow({
     }
   };
 
-  const advanceWithoutEdict = async () => {
-    setBusy("退朝");
-    setError("");
-    // #1351 A1：携客户端所见 turn 作令牌；409 且服务端已更大 → 视作已推进刷新，不报假错。
-    const expectedTurn = state?.turn?.turn;
-    try {
-      const data = await api<{
-        state: GameState;
-        awaiting_decision?: boolean;
-        decisions?: PendingDecision[];
-        pending_action_failures?: PendingActionFailure[];
-      }>(
-        "/api/decree/advance_without_edict",
-        {
-          method: "POST",
-          body: JSON.stringify(
-            expectedTurn != null && Number.isFinite(Number(expectedTurn))
-              ? { expected_turn: Number(expectedTurn) }
-              : {},
-          ),
-        },
-      );
-      if (await surfacePendingActionFailures(data.pending_action_failures || [])) {
-        return;
-      }
-      // #1433 / #1337 hop 族：退朝若停在批红，消费 awaiting_decision/decisions（同 issueDecree），
-      // 不盲 reload——整页刷新只在月完成；批红面经 loadState 状态口投影不丢。
-      if (data.awaiting_decision) {
-        const failures = data.pending_action_failures || [];
-        setDecisionFailures(failures);
-        const route = routeIssueDecisions(data.decisions || []);
-        if (route.pendingDecisions !== null) setPendingDecisions(route.pendingDecisions);
-        if (route.error !== null) setPausedDecisionError(route.error);
-        await loadState();
-        return;
-      }
-      window.location.reload();
-    } catch (err: any) {
-      const detail = err instanceof ApiRequestError
-        ? err.detail
-        : (err?.detail && typeof err.detail === "object" ? err.detail : err);
-      const serverTurn = Number(detail?.turn);
-      if (
-        Number(detail?.status_code) === 409
-        && expectedTurn != null
-        && Number.isFinite(serverTurn)
-        && serverTurn > Number(expectedTurn)
-      ) {
-        window.location.reload();
-        return;
-      }
-      const failures = detail?.pending_action_failures;
-      if (Array.isArray(failures) && await surfacePendingActionFailures(failures)) {
-        setError(detail?.message || "退朝失败。");
-        return;
-      }
-      const errMsg = err instanceof Error ? err.message : String(err);
-      setError(errMsg);
-    } finally {
-      setBusy("");
-    }
-  };
-
   return {
     settleStage,
     settleThinking,
@@ -322,6 +258,5 @@ export function useSettlementFlow({
     submitDecisions,
     resumePhase2,
     retryPendingDecisions,
-    advanceWithoutEdict,
   };
 }
