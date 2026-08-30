@@ -2049,7 +2049,8 @@ def extract_draft_intent_with_semantic_heal(
             failed_result = exc.extracted_result
             if db is not None:
                 failed_result = _ground_relative_pay_order_deadlines(failed_result, db)
-            if locality_baseline is None:
+            first_locality_failure = locality_baseline is None
+            if first_locality_failure:
                 locality_baseline = copy.deepcopy(failed_result)
                 locality_paths = exc.locality_paths
             elif not _same_non_locality_semantics(
@@ -2060,9 +2061,11 @@ def extract_draft_intent_with_semantic_heal(
             participant_unknown_exc: Optional[ValueError] = None
             if db is not None and content is not None:
                 try:
-                    _apply_validated_roster_to_extract_result(
+                    canonical_failed_result = _apply_validated_roster_to_extract_result(
                         failed_result, db=db, content=content,
                     )
+                    if first_locality_failure:
+                        locality_baseline = canonical_failed_result
                 except ValueError as participant_exc:
                     if not is_unknown_participant_ref_error(participant_exc):
                         raise
@@ -2216,7 +2219,7 @@ def extract_draft_intent_with_semantic_heal(
                     )
             return backfilled
         if locality_baseline is not None and not _same_non_locality_semantics(
-            locality_baseline, result, locality_paths,
+            locality_baseline, validated, locality_paths,
         ):
             if attempt >= retries:
                 raise DraftLocalityValidationError(
