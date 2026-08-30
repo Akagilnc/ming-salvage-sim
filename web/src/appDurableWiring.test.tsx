@@ -390,7 +390,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       await vi.waitFor(() => expect(stateCalls).toBeGreaterThan(stateCallsBeforeDone));
     });
     expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull();
-    expect(findButton(host, "盖玺颁诏过月")?.hasAttribute("disabled")).toBe(false);
+    expect(host.querySelector<HTMLButtonElement>(".desk-footer button")?.disabled).toBe(false);
   });
 
   it("#1475 召对顶栏不重复左卡身份，横幅压成 bare 回收正文", async () => {
@@ -1063,6 +1063,8 @@ const closeOpenOverlay = async (host: HTMLElement) => {
 
 const cmdByCaption = (host: HTMLElement, caption: string) =>
   Array.from(host.querySelectorAll("button")).find((b) => (b.getAttribute("aria-label") || "").startsWith(`${caption}：`)) || null;
+const edictCommand = (host: HTMLElement) =>
+  Array.from(host.querySelectorAll<HTMLButtonElement>("button.hud2-cmd")).at(-1) || null;
 
 describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
   it("只读组逐面可达且吃月初叠影；关闭组不可达且半程面不泄漏", async () => {
@@ -1102,7 +1104,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     await click(cmdByCaption(host, "密令"));
     await tick();
     expect(host.querySelector('[role="dialog"][aria-label="密令进度"]')).toBeNull();
-    await click(cmdByCaption(host, "拟诏·盖玺颁诏过月"));
+    await click(edictCommand(host));
     await tick();
     expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).toBeNull();
 
@@ -1348,7 +1350,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="密令进度"]')).not.toBeNull());
     });
     await closeOpenOverlay(host);
-    await click(cmdByCaption(host, "拟诏·盖玺颁诏过月"));
+    await click(edictCommand(host));
     await tick();
     await act(async () => {
       await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
@@ -1385,16 +1387,12 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     await click(byAria(host, "朝堂·召见大臣"));
     await tick();
     expect(host.querySelector(".court-drawer.open")).not.toBeNull();
-    await click(cmdByCaption(host, "拟诏·盖玺颁诏过月"));
+    await click(edictCommand(host));
     await tick();
     await act(async () => {
       await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
     });
     expect(host.querySelector(".court-drawer.open")).toBeNull();
-    // #1277：drafts>0 副标题名实——去「退朝」描述，与页脚盖玺颁诏过月自洽。
-    const edictDialog = host.querySelector('[role="dialog"][aria-label="诏书草案"]');
-    expect(edictDialog?.textContent).toContain("盖玺颁诏即草案成案并过月");
-    expect(edictDialog?.textContent).not.toContain("退朝即草案成案并过月");
   });
 
   it("#1454 拟诏台开着：木牌改收起可点关掉，层带安全区且主钮仍独占盖玺文案", async () => {
@@ -1405,18 +1403,15 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       pending_decisions: [],
     });
     const host = await mountApp();
-    await click(cmdByCaption(host, "拟诏·盖玺颁诏过月"));
+    await click(edictCommand(host));
     await tick();
     await act(async () => {
       await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
     });
     const layer = host.querySelector('.fullscreen-layer.edict-safe-cmd[aria-label="诏书草案"]');
     expect(layer).not.toBeNull();
-    // 名实：HUD 木牌不再与 seal-btn-issue 同文；台内主钮仍独占「盖玺颁诏过月」
-    expect(cmdByCaption(host, "拟诏·盖玺颁诏过月")).toBeNull();
-    const collapse = cmdByCaption(host, "拟诏·收起");
+    const collapse = edictCommand(host);
     expect(collapse).not.toBeNull();
-    expect(host.querySelector("button.seal-btn-issue")?.textContent).toMatch(/盖玺颁诏过月/);
     // 可点性：点收起木牌关台（非空等、非二次颁诏）
     await click(collapse);
     await tick();

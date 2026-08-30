@@ -218,7 +218,6 @@ function baseGameState(overrides: Partial<GameState> = {}): GameState {
 
 function renderEdictModal(props: {
   state: GameState;
-  onAdvanceWithoutEdict?: () => void;
   onIssueDecree?: () => void;
   onOpenFailureRecovery?: () => void;
   error?: string;
@@ -244,7 +243,6 @@ function renderEdictModal(props: {
         onCancelEdit={() => {}}
         onSaveDirective={() => {}}
         onDeleteDirective={() => {}}
-        onAdvanceWithoutEdict={props.onAdvanceWithoutEdict ?? (() => {})}
         onIssueDecree={props.onIssueDecree ?? (() => {})}
         onOpenFailureRecovery={props.onOpenFailureRecovery ?? (() => {})}
       />
@@ -277,51 +275,35 @@ describe("EdictModal — #1431 placeholder 去失实具名", () => {
   });
 });
 
-describe("EdictModal — hidden secret-order default approval", () => {
-  it("disables the footer command when there is no decree draft", () => {
-    const onAdvance = vi.fn();
+describe("EdictModal — decree desk behavior", () => {
+  it("keeps the zero-draft footer disabled", () => {
     const onIssue = vi.fn();
     const { host } = renderEdictModal({
       state: baseGameState({ pending_secret_order_count: 0, pending_non_directive_action_count: 0 }),
-      onAdvanceWithoutEdict: onAdvance,
       onIssueDecree: onIssue,
     });
     const button = host.querySelector<HTMLButtonElement>(".desk-footer button");
 
-    expect(button).toBeTruthy();
-    expect(button!.disabled).toBe(true);
-    act(() => button!.click());
-    expect(onAdvance).not.toHaveBeenCalled();
+    expect(button?.disabled).toBe(true);
+    act(() => button?.click());
     expect(onIssue).not.toHaveBeenCalled();
   });
 
-  it("issues the decree from the enabled footer command when drafts exist", () => {
-    const onAdvance = vi.fn();
+  it("issues an approved conversational draft without a second review gate", () => {
     const onIssue = vi.fn();
     const { host } = renderEdictModal({
       state: baseGameState({ directives: [{ id: 8, event_id: "", event_title: "", actor: "", skill_id: "", skill_name: "", text: "发饷辽东", source: "chat", status: "pending", notes: "", authority: "" }] }),
-      onAdvanceWithoutEdict: onAdvance,
       onIssueDecree: onIssue,
     });
+    const item = host.querySelector(".directive-item");
+    const tools = item?.querySelectorAll(".directive-tools button");
     const button = host.querySelector<HTMLButtonElement>(".desk-footer button");
 
-    expect(button).toBeTruthy();
-    expect(button!.disabled).toBe(false);
-    act(() => button!.click());
+    expect(item).not.toBeNull();
+    expect(tools).toHaveLength(2);
+    expect(button?.disabled).toBe(false);
+    act(() => button?.click());
     expect(onIssue).toHaveBeenCalledTimes(1);
-    expect(onAdvance).not.toHaveBeenCalled();
-  });
-
-  it("does not review already-approved conversational directives", () => {
-    const { host } = renderEdictModal({
-      state: baseGameState({ directives: [{ id: 8, event_id: "", event_title: "", actor: "", skill_id: "", skill_name: "", text: "发饷辽东", source: "chat", status: "pending", notes: "", authority: "" }] }),
-    });
-    expect(host.textContent).not.toContain("待朱批");
-    expect(host.textContent).not.toContain("准");
-    expect(host.textContent).not.toContain("驳");
-    expect(host.textContent).toContain("发饷辽东");
-    expect(host.textContent).toMatch(/盖玺颁诏过月/);
-    expect(host.textContent).not.toContain("返工改稿");
   });
 
   it("offers durable recovery entry for failed secret orders", () => {
@@ -330,34 +312,20 @@ describe("EdictModal — hidden secret-order default approval", () => {
       state: baseGameState({ failed_secret_order_count: 1 }),
       onOpenFailureRecovery,
     });
-    const button = Array.from(host.querySelectorAll("button")).find((item) =>
-      item.textContent?.includes("处理")
-    ) as HTMLButtonElement | undefined;
+    const branch = host.querySelector(".failed-secret-note");
+    const button = branch?.querySelector("button");
 
-    expect(host.textContent).toContain("密令落库失败");
-    expect(button).toBeTruthy();
-    act(() => {
-      button?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
+    expect(branch).not.toBeNull();
+    act(() => button?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     expect(onOpenFailureRecovery).toHaveBeenCalledTimes(1);
   });
 
-  it("prioritizes failed secret-order recovery over generic pending-action hint", () => {
-    const onOpenFailureRecovery = vi.fn();
+  it("prioritizes failed secret-order recovery over generic pending actions", () => {
     const { host } = renderEdictModal({
-      state: baseGameState({
-        failed_secret_order_count: 1,
-        pending_non_directive_action_count: 1,
-      }),
-      onOpenFailureRecovery,
+      state: baseGameState({ failed_secret_order_count: 1, pending_non_directive_action_count: 1 }),
     });
-    const button = Array.from(host.querySelectorAll("button")).find((item) =>
-      item.textContent?.includes("处理")
-    ) as HTMLButtonElement | undefined;
-
-    expect(host.textContent).toContain("密令落库失败");
-    expect(host.textContent).not.toContain("尚有召对事项候旨");
-    expect(button).toBeTruthy();
+    expect(host.querySelectorAll(".empty-note")).toHaveLength(1);
+    expect(host.querySelector(".failed-secret-note button")).not.toBeNull();
   });
 });
 

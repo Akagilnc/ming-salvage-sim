@@ -18,7 +18,6 @@ export function EdictModal({
   onCancelEdit,
   onSaveDirective,
   onDeleteDirective,
-  onAdvanceWithoutEdict,
   onIssueDecree,
   onOpenFailureRecovery,
 }: {
@@ -37,7 +36,6 @@ export function EdictModal({
   onCancelEdit: () => void;
   onSaveDirective: (directive: Directive) => void;
   onDeleteDirective: (directiveId: number) => void;
-  onAdvanceWithoutEdict: () => void;
   /** #1277/#1560：有草案时主钮走盖玺颁诏；0 草案时主钮禁用。 */
   onIssueDecree: () => void;
   onOpenFailureRecovery: () => void;
@@ -83,16 +81,16 @@ export function EdictModal({
                 )}
               </div>
             ))}
-            {!draftDirectives.length && !hasPendingConversationalDraft && !hasNonEdictPendingActions && !hasFailedSecretOrders && <div className="empty-note">本月尚无明发诏令，可退朝结束本月或在右侧御笔自拟。</div>}
-            {!draftDirectives.length && hasPendingConversationalDraft && <div className="empty-note pending-draft-hint">大臣已奉旨起草，退朝结束本月时按既有规则成案。</div>}
+            {!draftDirectives.length && !hasPendingConversationalDraft && !hasNonEdictPendingActions && !hasFailedSecretOrders && <div className="empty-note">本月尚无明发诏令，可在右侧御笔自拟。</div>}
+            {!draftDirectives.length && hasPendingConversationalDraft && <div className="empty-note pending-draft-hint">大臣已奉旨起草，按既有规则成案。</div>}
             {!draftDirectives.length && !hasPendingConversationalDraft && hasFailedSecretOrders && (
               <div className="empty-note failed-secret-note">
-                <span>尚有密令落库失败可稍后处理；可先退朝结束本月，不阻断推进。</span>
+                <span>尚有密令落库失败可稍后处理。</span>
                 <button type="button" onClick={onOpenFailureRecovery} disabled={!!busy}>处理</button>
               </div>
             )}
             {!draftDirectives.length && !hasPendingConversationalDraft && !hasFailedSecretOrders && hasNonEdictPendingActions && (
-              <div className="empty-note">尚有召对事项候旨，退朝结束本月后按沉默准行处理。</div>
+              <div className="empty-note">尚有召对事项候旨，将按沉默准行处理。</div>
             )}
           </div>
         </section>
@@ -116,10 +114,10 @@ export function EdictModal({
         {/* #1560：未成案时保留主钮但禁用；成案后盖玺颁诏过月。 */}
         <button
           className={hasDrafts ? "seal-btn-issue" : "seal-btn-compose"}
-          onClick={hasDrafts ? onIssueDecree : onAdvanceWithoutEdict}
+          onClick={onIssueDecree}
           disabled={!!busy || !hasDrafts}
         >
-          {hasDrafts ? "盖玺颁诏过月 →" : "退朝结束本月 →"}
+          {hasDrafts ? "盖玺颁诏过月 →" : "尚无草案"}
         </button>
       </div>
     </div>

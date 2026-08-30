@@ -32,7 +32,7 @@ export type SettlementFaceKey =
   | "army"                 // 兵
   | "node_intel"           // 地图节点详情 / 点选开详
   | "secret_orders"        // 密令（含角标+自动弹出）
-  | "edict"                // 拟诏·退朝
+  | "edict"                // 拟诏台
   | "chat_entry"           // 召对写入口（朝堂/吏部/后宫/任免行）
   | "court_roster"         // 朝堂名册
   | "appointment_roster"   // 吏部名册
