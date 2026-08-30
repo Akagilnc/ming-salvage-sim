@@ -28,7 +28,6 @@ from ming_sim.action_clusters import (
     ActionCandidateShapeError,
     assert_action_candidate_shape,
     candidates_from_classifier_payload,
-    classifier_json_fields_prompt,
     cluster_by_kind,
     materialize_clusters_ordered,
     normalize_intent_candidates,
@@ -154,10 +153,11 @@ def test_registry_rows_generate_shape_contract_matrix():
         assert raw_str[spec.name] == "12"
 
 
-def test_grant_amount_classifier_contract_declares_quantity_unit():
-    """拨帑金额单位须进入分类器真实字段契约，不靠正文金额 parser 猜测。"""
-    contract = classifier_json_fields_prompt()
-    assert "金额：可null；命中 JSON integer>=1；禁数字字符串；单位=万两" in contract
+def test_grant_amount_catalog_declares_classifier_quantity_unit():
+    """拨帑金额单位由 typed catalog 契约声明，不机械锁定 prompt 文案。"""
+    grant = next(c for c in ACTION_CLUSTERS if c.kind == "grant_allocation")
+    amount = next(f for f in grant.fields if f.name == "amount")
+    assert amount.quantity_unit == "万两"
 
 
 def test_strict_shape_rejects_unknown_kind_and_out_of_enum_subfield():
