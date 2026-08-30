@@ -841,6 +841,11 @@ def test_batch_locality_heal_preserves_valid_sibling(game, monkeypatch):
         {
             "成品旨稿": [
                 {
+                    "正文": "着依前议施行。",
+                    "目标案卷ID": 1,
+                    "颁布方式": "普通",
+                },
+                {
                     "正文": "着户部办理陕西事务。",
                     "动作类型": "policy",
                     "目标类型": "region",
@@ -874,11 +879,13 @@ def test_batch_locality_heal_preserves_valid_sibling(game, monkeypatch):
     monkeypatch.setattr(cb, "_run_backend_for_config", backend)
     result = cb.extract_draft_intent_with_semantic_heal(
         "分别拟两道旨。", "臣已拟妥。",
-        db=db, content=content, draft_count=2,
+        db=db, content=content, draft_count=3,
     )
 
     assert calls["n"] == 3
-    assert [draft["locality_scope"] for draft in result["drafts"]] == ["单省", "无"]
+    assert [
+        draft["locality_scope"] for draft in result["drafts"][1:]
+    ] == ["单省", "无"]
 
 
 def test_materialize_locality_exhaustion_rejects_only_draft(game, monkeypatch):
