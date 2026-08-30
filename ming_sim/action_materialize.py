@@ -1270,6 +1270,7 @@ GRANT_ACTIONS = frozenset({
 })
 GRANT_HONORIFICS = frozenset({"加衔", "荫叙"})
 GRANT_MONEY_ACTIONS = GRANT_ACTIONS - {"无"} - GRANT_HONORIFICS
+XIEXIANG_TARGET_KINDS = frozenset({"army"})
 
 
 def _grant_account(intent: Dict[str, Any]) -> str:
@@ -1370,7 +1371,8 @@ def require_explicit_xiexang_fields(
         missing.append("account")
     if str(purpose or "").strip() != "补饷":
         missing.append("purpose")
-    if str(target_kind or "").strip() != "army":
+    canonical_target_kind = str(target_kind or "").strip()
+    if canonical_target_kind not in XIEXIANG_TARGET_KINDS:
         missing.append("target_kind")
     if not str(target_id or "").strip():
         missing.append("target_id")
@@ -1383,7 +1385,7 @@ def require_explicit_xiexang_fields(
         "amount": n,
         "account": canonical_account,
         "purpose": "补饷",
-        "target_kind": "army",
+        "target_kind": canonical_target_kind,
         "target_id": str(target_id).strip(),
     }
 
@@ -3395,7 +3397,7 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 FieldSpec(
                     "target_kind", "目标类型", TARGET_KINDS, "",
                     season_option=True,
-                    allowed_when=("grant_action", "协饷", frozenset({"army"})),
+                    allowed_when=("grant_action", "协饷", XIEXIANG_TARGET_KINDS),
                 ),
                 FieldSpec(
                     "amount", "金额", None, None, as_int=True, int_lo=1,
