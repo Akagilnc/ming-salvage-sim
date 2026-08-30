@@ -1365,7 +1365,6 @@ def resolve_directives(
     )
 
     attendant_message = ""
-    sim_failed = False
     narrative = ""
     # companion 腿刚成功（含 checkpoint 重试叫通）时须在下游前 durable；
     # 仅复用已持久 attendant / 无 companion 在飞 不置位——避免给 clear_for_resimulation 重推演误打标记。
@@ -1431,18 +1430,32 @@ def resolve_directives(
                     on_thinking=lambda c: _emit("thinking", c),
                     on_text=lambda c: _emit("text", c),
                 )
-            except Exception as exc:
-                sim_failed = True
-                print(f"[WARN] 推演 agent 失败：{exc}；本{TURN_UNIT}用简化邸报兜底，继续正常抽取结算。")
-                narrative = (
-                    f"奉天承运皇帝诏曰：本{TURN_UNIT}推演 agent 被服务方拦截，无完整邸报。"
-                    f"已颁诏书：\n{executable_decree_text}\n"
-                    f"固定收支已落账，事项 inertia 自然漂移；本{TURN_UNIT}无新立 issue。"
-                )
+            except Exception as sim_exc:
+                # 两腿已并行起跑：sim 失败仍须收割 companion。成功递话写入
+                # ready=0 checkpoint 后重抛原异常；双失败由 companion 主报、sim 作因。
+                if attendant_future is not None:
+                    try:
+                        attendant_message = str(attendant_future.result() or "")
+                    except Exception as companion_exc:
+                        raise companion_exc from sim_exc
+                    if attendant_message:
+                        checkpoint_payload = (
+                            dict(simulator_payload)
+                            if isinstance(simulator_payload, dict)
+                            else {}
+                        )
+                        checkpoint_payload.pop(ARRIVAL_COMPANION_SIM_DONE_KEY, None)
+                        db.save_resolve_context(
+                            state.turn, decree_text, "", checkpoint_payload,
+                            secret_orders=secret_orders_for_sim,
+                            relevant_memories=relevant_memories,
+                            source=Provenance(source).value,
+                            attendant_message=attendant_message,
+                        )
+                raise
             # sim 真成功且 companion 在飞：join 前落 durable 完成态（ready=0 + 标记）。
-            # 不给 sim 宽 except fallback 叙事打标记（fallback 便宜；标记会永久跳过真 sim）。
             # companion 未在飞时不写空 attendant（避免覆盖 clear_for_resimulation 已保留原文）。
-            if not sim_failed and attendant_future is not None:
+            if attendant_future is not None:
                 ckpt_payload = (
                     dict(simulator_payload)
                     if isinstance(simulator_payload, dict)
@@ -1468,17 +1481,12 @@ def resolve_directives(
     # 同一 simulator 叙事/payload 与原样 attendant 一并 durable。
     # 真 sim 成功：checkpoint 带 ARRIVAL_COMPANION_SIM_DONE_KEY，下游失败重试
     # 既不重跑 sim 也不重叫 companion。
-    # fallback（sim_failed）：显式剥 marker，attendant 仍 durable；重试重跑真 sim，
-    # 经 prior_resolve_ctx.attendant_message 复用递话、不重叫 companion。
     # 随后 HITL/settle 整行 upsert 用已 pop 的内存 payload 清标转存。
     if companion_just_succeeded and attendant_message:
         ckpt_payload = (
             dict(simulator_payload) if isinstance(simulator_payload, dict) else {}
         )
-        if sim_failed:
-            ckpt_payload.pop(ARRIVAL_COMPANION_SIM_DONE_KEY, None)
-        else:
-            ckpt_payload[ARRIVAL_COMPANION_SIM_DONE_KEY] = True
+        ckpt_payload[ARRIVAL_COMPANION_SIM_DONE_KEY] = True
         db.save_resolve_context(
             state.turn, decree_text, narrative, ckpt_payload,
             secret_orders=secret_orders_for_sim,
@@ -1488,39 +1496,6 @@ def resolve_directives(
         )
     if isinstance(simulator_payload, dict):
         simulator_payload.pop(ARRIVAL_COMPANION_SIM_DONE_KEY, None)
-
-    if sim_failed:
-        rescript_decisions = _rescript_decisions(verdict_rows, proposed_dossiers)
-        paused = _maybe_pause_for_rescript_desk(
-            state, db, decree_text, narrative, simulator_payload,
-            secret_orders=secret_orders_for_sim,
-            relevant_memories=relevant_memories,
-            source=source,
-            content=content,
-            registry=registry,
-            new_decisions=rescript_decisions,
-            attendant_message=attendant_message,
-        )
-        if paused is not None:
-            return paused
-        # Fallback only replaces the unavailable narrative.  Extraction,
-        # private-context merge, durable resolve context, and atomic settlement
-        # remain on the normal single rail; a missing required report therefore
-        # raises SettlementAbort and leaves the turn unadvanced.
-        # companion 已成功则 attendant_message 仍进 durable。
-        report = _settle_after_narrative(
-            state, db, agno_db, llm_config, decree_text, narrative,
-            simulator_payload=simulator_payload,
-            relevant_memories=relevant_memories,
-            secret_orders=secret_orders_for_sim,
-            before_turn=before_turn, _emit=_emit,
-            content=content, registry=registry,
-            cheat_directive=cheat_directive,
-            source=source,
-            dossier_verdicts=verdict_rows,
-            attendant_message=attendant_message,
-        )
-        return ResolveResult(awaiting=False, report=report)
 
     # 2.4) HITL 决策点：从邸报抽 <<DECISION>> 块。有 → 存上下文+决策点，暂停等皇帝亲裁。
     #      剥离后的干净邸报落库/展示；决策点选完由 resolve_decisions_phase2 续跑结算。
