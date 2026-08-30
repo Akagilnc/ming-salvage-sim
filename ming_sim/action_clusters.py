@@ -93,11 +93,15 @@ def classifier_action_types_prompt() -> str:
     return "|".join(c.label_zh for c in ACTION_CLUSTERS)
 
 
-def _render_field_specs(specs: Sequence[FieldSpec]) -> Tuple[List[str], List[str]]:
-    """Render transport examples and constraints from canonical field rows."""
+def _render_field_specs(
+    specs: Sequence[Tuple[str, FieldSpec]],
+) -> Tuple[List[str], List[str]]:
+    """Render transport examples and action-scoped constraints from catalog rows."""
     lines: List[str] = []
     notes: List[str] = []
-    for spec in specs:
+    seen_zh: set = set()
+    for action, spec in specs:
+        prefix = f"{action}·" if action else ""
         if spec.allowed is not None:
             values = sorted(spec.allowed, key=lambda value: (value != "无", value))
             example = f'"{"|".join(values)}"'
@@ -111,16 +115,18 @@ def _render_field_specs(specs: Sequence[FieldSpec]) -> Tuple[List[str], List[str
                 )
                 if spec.quantity_unit:
                     constraint += f"；单位={spec.quantity_unit}"
-                notes.append(f"{spec.zh}：{constraint}")
+                notes.append(f"{prefix}{spec.zh}：{constraint}")
         else:
             example = '""'
-        lines.append(f'  "{spec.zh}": {example},')
+        if spec.zh not in seen_zh:
+            seen_zh.add(spec.zh)
+            lines.append(f'  "{spec.zh}": {example},')
         if spec.populated_when is not None:
             controller_name, controller_values = spec.populated_when
             controller = _field_specs()[controller_name]
             values = "|".join(sorted(controller_values))
             notes.append(
-                f"{spec.zh}：仅{controller.zh}={values}时填写；其它留空"
+                f"{prefix}{spec.zh}：仅{controller.zh}={values}时填写；其它留空"
             )
     return lines, notes
 
@@ -133,14 +139,11 @@ def classifier_json_fields_prompt() -> str:
     """
     _ensure_catalog()
     lines = [f'  "动作类型": "{classifier_action_types_prompt()}",']
-    seen_zh: set = set()
-    unique_specs: List[FieldSpec] = []
-    for c in ACTION_CLUSTERS:
-        for spec in c.fields:
-            if spec.zh not in seen_zh:
-                seen_zh.add(spec.zh)
-                unique_specs.append(spec)
-    field_lines, notes = _render_field_specs(unique_specs)
+    field_lines, notes = _render_field_specs([
+        (c.label_zh, spec)
+        for c in ACTION_CLUSTERS
+        for spec in c.fields
+    ])
     lines.extend(field_lines)
     # trailing comma cleanup on last line
     if lines:
@@ -176,7 +179,10 @@ def validate_season_option(option: Mapping[str, object]) -> None:
     """Validate a typed season option from its canonical FieldSpec rows."""
     from ming_sim.strict_types import strict_int
 
-    for spec in _season_specs(str(option.get("action_type") or "")):
+    action_type = str(option.get("action_type") or "").strip()
+    if action_type and cluster_by_kind(action_type) is None:
+        raise ValueError(f"choice.action_type 非法：{action_type!r}")
+    for spec in _season_specs(action_type):
         if spec.name not in option:
             raise ValueError(f"choice.{spec.name} 不可空")
         if spec.as_int and spec.default is None and option[spec.name] is None:
@@ -220,7 +226,9 @@ def cluster_fields_prompt(kind: str) -> str:
     cluster = cluster_by_kind(kind)
     if cluster is None:
         return ""
-    lines, notes = _render_field_specs(cluster.fields)
+    lines, notes = _render_field_specs([
+        (cluster.label_zh, spec) for spec in cluster.fields
+    ])
     rendered = "\n".join(lines) + ("\n" if lines else "")
     if notes:
         rendered += "  // " + "；".join(notes) + "\n"

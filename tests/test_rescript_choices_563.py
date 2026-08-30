@@ -341,6 +341,33 @@ def test_financial_decision_uses_stored_option_not_client_payload(amount):
     assert type(execution["amount"]) is int
 
 
+def test_decision_parser_rejects_unknown_typed_action_and_keeps_sibling():
+    from ming_sim.settlement_payload import parse_decision_blocks
+
+    malformed = {
+        "title": "发帑", "context": "济军", "options": [{
+            "label": "发内帑三十万两", "hint": "济军",
+            "action_type": "grant_allocaton", "grant_action": "协饷",
+            "account": "内库", "amount": 30, "purpose": "补饷",
+            "target_kind": "army", "target_id": "guanning", "cadence": "一次性",
+        }, {"label": "暂缓", "hint": "守财"}],
+    }
+    sibling = {
+        "title": "巡河", "context": "河工", "options": [
+            {"label": "遣员巡河", "hint": "查勘"},
+            {"label": "暂缓巡河", "hint": "候报"},
+        ],
+    }
+    raw = "".join(
+        f"<<DECISION>>{json.dumps(block, ensure_ascii=False)}<<END>>"
+        for block in (malformed, sibling)
+    )
+
+    _clean, decisions = parse_decision_blocks(raw)
+
+    assert [decision["title"] for decision in decisions] == ["巡河"]
+
+
 @pytest.mark.parametrize("labels", [["", "乙"], ["甲", " 甲 "]])
 def test_decision_parser_rejects_empty_or_ambiguous_labels(labels):
     from ming_sim.settlement_payload import parse_decision_blocks
