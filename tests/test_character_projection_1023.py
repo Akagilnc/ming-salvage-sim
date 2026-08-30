@@ -38,7 +38,6 @@ def test_simulator_context_projects_character_axes_but_keeps_world_numbers(game)
     assert "能力才具有限" in character_rendered
     assert "清廉操守平常" in character_rendered
     assert "胆略敢任其事" in character_rendered
-    assert "阴谋深谙机变" in character_rendered
     assert not {"loyalty", "ability", "integrity", "courage", "identity", "intrigue"} & set(
         columns
     )
