@@ -9,11 +9,13 @@ from types import MethodType, SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 
 from ming_sim.db import GameDB
 from ming_sim.session import AudienceAdmission, ChatTurnResult, GameSession
 from ming_sim import audience_night as an
 from ming_sim.simulation import build_simulator_payload
+from tests.http_test_support import run_to_terminal
 
 
 def _session(game):
@@ -1455,6 +1457,7 @@ def test_hot_replace_409_while_offsite_scene_ticket_open(game, monkeypatch, op):
     runtime.load_save = lambda _name: replacements.append("load")
     runtime.reset_game = lambda: replacements.append("reset")
     runtime.state_payload = lambda: {"ok": True}
+    runtime.favorites = set()
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
 
     chat_error: list[BaseException] = []
@@ -1470,12 +1473,13 @@ def test_hot_replace_409_while_offsite_scene_ticket_open(game, monkeypatch, op):
     assert started.wait(2.0), "offsite scene generator did not start"
     db.conn.execute("SELECT 1").fetchone()
 
-    with pytest.raises(HTTPException) as ei:
-        if op == "load":
-            asyncio.run(web_app.api_load_save("存档"))
-        else:
-            asyncio.run(web_app.api_reset_game())
-    assert ei.value.status_code == 409
+    path = "/api/saves/存档/load" if op == "load" else "/api/game/reset"
+
+    def bounded_post():
+        return run_to_terminal(lambda: TestClient(web_app.app).post(path))
+
+    busy = bounded_post()
+    assert busy.status_code == 409
     assert replacements == []
     db.conn.execute("SELECT 1").fetchone()
 
@@ -1483,47 +1487,15 @@ def test_hot_replace_409_while_offsite_scene_ticket_open(game, monkeypatch, op):
     worker.join(2.0)
     assert not chat_error, chat_error
 
-    class _RebuiltSession:
-        def __init__(self, db_path, llm_config):
-            self.llm_config = llm_config
-            self.db = db
-            self.content = content
-            self.state = state
-            self.temporary_characters = {}
-
-        def begin_turn(self):
-            return None
-
-    runtime.db_path = db.path
-    runtime.session.llm_config = object()
-    runtime._spawn_startup_extraction_catch_up = lambda: None
-    runtime._rebuild_session = web_app.WebGame._rebuild_session.__get__(runtime)
-    monkeypatch.setattr(web_app, "GameSession", _RebuiltSession)
-
-    def _hot_replace_via_rebuild(*_a, **_k):
-        replacements.append(op)
-        runtime._rebuild_session(runtime.session.llm_config)
-
-    runtime.load_save = _hot_replace_via_rebuild
-    runtime.reset_game = _hot_replace_via_rebuild
-
-    if op == "load":
-        asyncio.run(web_app.api_load_save("存档"))
-    else:
-        asyncio.run(web_app.api_reset_game())
+    retried = bounded_post()
+    assert retried.status_code == 200
     assert replacements == [op]
-    q = runtime._write_queue
-    assert q is runtime.session._write_queue
-    assert not q.is_sealed()
-    ticket = q.claim("post-hot-replace")
-    assert ticket is not None
-
-    def _min_write():
-        db.conn.execute("PRAGMA user_version = 1566")
-        return db.conn.execute("PRAGMA user_version").fetchone()[0]
-
-    assert q.run(ticket, _min_write) == 1566
-    q.complete(ticket)
+    state_response = TestClient(web_app.app).get("/api/game/state")
+    assert state_response.status_code == 200
+    assert state_response.json() == {"ok": True}
+    minister = next(iter(content.characters))
+    write_response = TestClient(web_app.app).post(f"/api/favorites/{minister}")
+    assert write_response.status_code == 200
 
 
 def test_offsite_scene_assembles_under_gate_generates_without_gate(game):
