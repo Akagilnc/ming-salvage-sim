@@ -36,7 +36,7 @@ Status: accepted（实现分波次,见末节;#73 产出问题 1/4 的答案;r1 �
 
 ## 实施波次(每 PR 可 review,295 测试护航)
 
-- **PR1**:applier.py 契约类型 + 拒收收集器(落库+commit 后 jsonl)+ 事务包裹(factory/代理式 commit 暂停;**覆盖全部三条推进路:正常 apply / simulator-fallback / advance_without_edict**)+ **重跑契约三件套**(resolve_context 无条件持久化+事务内清 / pre_settle 自事务+完成相位+begin_turn 白名单 / 内存态重载)+ `decree.py:406` 改响亮中止 + 错误包(backup API 存档副本,user-data 路径)。
+- **PR1**:applier.py 契约类型 + 拒收收集器(落库+commit 后 jsonl)+ 事务包裹(factory/代理式 commit 暂停;**当时覆盖三条推进路:正常 apply / simulator-fallback / advance_without_edict；其中 simulator-fallback 已由 #1700 退役**)+ **重跑契约三件套**(resolve_context 无条件持久化+事务内清 / pre_settle 自事务+完成相位+begin_turn 白名单 / 内存态重载)+ `decree.py:406` 改响亮中止 + 错误包(backup API 存档副本,user-data 路径)。
 - **PR2**:两个整段吞(power×2)+ 四个裸奔段迁入契约 + provenance 字段灌注。
 - **后续**:其余 section 分批;邸报 in-world 提示;与财政线对齐后 flows 侧(候选 4)。
 
