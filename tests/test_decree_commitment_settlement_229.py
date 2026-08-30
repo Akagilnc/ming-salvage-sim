@@ -1,5 +1,14 @@
 import json
 
+import pytest
+
+from ming_sim.credit_events import (
+    KIND_BACK,
+    KIND_BETRAY,
+    KIND_FULFILL,
+    KIND_SCAPEGOAT,
+    write_credit_event,
+)
 from ming_sim.decree import settle_with_delta
 from ming_sim.issues import (
     apply_issue_inertia_and_ongoing,
@@ -156,7 +165,11 @@ def test_character_loyalty_commitment_ongoing_applies_monthly_and_records_progre
 
     _settle_empty_month(db, state, content)
 
-    assert _character_loyalty(db, "毛文龙") == 46
+    assert _character_loyalty(db, "毛文龙") == 50
+    event = db.conn.execute(
+        "SELECT event_kind FROM relation_edge_events WHERE target='毛文龙' ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    assert event is not None and event["event_kind"] == KIND_BACK
     row = _issue_row(db, issue_id)
     assert row["status"] == "active"
     advances = db.conn.execute(
@@ -166,7 +179,7 @@ def test_character_loyalty_commitment_ongoing_applies_monthly_and_records_progre
     assert [row["trigger_kind"] for row in advances] == ["ongoing"]
     payload = json.loads(advances[0]["metric_delta"])
     assert payload["commitment_progress"]["months_elapsed"] == 1
-    assert payload["commitment_progress"]["remaining_to_goal"] == 19
+    assert payload["commitment_progress"]["remaining_to_goal"] == 15
     sim_issue = next(
         issue for issue in build_simulator_payload(state, db, "", "")["active_issues"]
         if issue["issue_id"] == issue_id
@@ -208,7 +221,7 @@ def test_legacy_character_resolve_condition_commitment_settles_when_threshold_re
 
     _settle_empty_month(db, state, content)
 
-    assert _character_loyalty(db, "毛文龙") == 66
+    assert _character_loyalty(db, "毛文龙") == 68
     row = _issue_row(db, issue_id)
     assert row["status"] == "resolved"
     assert row["bar_value"] == 100
@@ -217,6 +230,45 @@ def test_legacy_character_resolve_condition_commitment_settles_when_threshold_re
         (issue_id,),
     ).fetchall()
     assert [row["trigger_kind"] for row in advances] == ["ongoing", "commitment_resolve"]
+
+
+@pytest.mark.parametrize(
+    ("kind", "origin", "expected"),
+    [
+        (KIND_FULFILL, "dossier:701:credit:fulfill", 55),
+        (KIND_BACK, "dossier:702:credit:back", 55),
+        (KIND_BETRAY, "issue:703:credit:reject_grace", 45),
+        (KIND_SCAPEGOAT, "dossier:704:credit:scapegoat:pawn:毛文龙", 45),
+    ],
+)
+def test_credit_event_is_the_idempotent_loyalty_write_source(game, kind, origin, expected):
+    db, state, _content = game
+    db.conn.execute("UPDATE characters SET loyalty=50 WHERE name='毛文龙'")
+    event_id = write_credit_event(
+        db, state, person="毛文龙", event_kind=kind, context="结构化信用事实", origin=origin,
+    )
+
+    assert _character_loyalty(db, "毛文龙") == expected
+    assert write_credit_event(
+        db, state, person="毛文龙", event_kind=kind, context="重放语境不参与判重", origin=origin,
+    ) == event_id
+    assert _character_loyalty(db, "毛文龙") == expected
+
+
+def test_retired_person_rating_cannot_write_loyalty(game):
+    db, state, content = game
+    before = _character_loyalty(db, "毛文龙")
+    out = apply_score_extraction(
+        db, state,
+        {"人物变更": [{"name": "毛文龙", "动作": "评定", "loyalty": 99,
+                      "来源引用": "dossier:1"}]},
+        content=content,
+    )
+
+    assert _character_loyalty(db, "毛文龙") == before
+    rejected = out["applied_person_changes"][0]
+    assert rejected["rejected"] is True
+    assert rejected["category"] == "retired_action"
 
 
 def test_faction_class_commitment_ongoing_applies_monthly_when_counted(game):

@@ -16,8 +16,8 @@ PERSON_ACTIONS = PERSON_TRANSITION_ACTIONS + PERSON_NON_TRANSITION_ACTIONS
 
 
 def format_person_actions() -> str:
-    """Project PERSON_ACTIONS for machine-consumed closed-set surfaces."""
-    return " / ".join(f"`{action}`" for action in PERSON_ACTIONS)
+    """Project currently writable actions; legacy 评定 remains parseable only for rejection/migration."""
+    return " / ".join(f"`{action}`" for action in PERSON_ACTIONS if action != "评定")
 
 
 PERSON_STATUSES = (

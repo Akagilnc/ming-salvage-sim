@@ -1020,22 +1020,26 @@ def _apply_monthly_ongoing_entities(
 
     person_changes = _monthly_person_rating_changes(effect)
     if person_changes:
-        effective_content = content if content is not None else _ctx()
-        results = _apply_person_changes(
-            db,
-            state,
-            person_changes,
-            content=effective_content,
-            registry=registry,
-            llm_config=llm_config,
-            source="system_simulation",
-            derived_from=label,
-            origin_ref=origin_ref,
-        )
-        applied_people = [item for item in results if not item.get("rejected")]
-        if applied_people:
-            applied["人物变更"] = applied_people
-        rejections.extend(item for item in results if item.get("rejected"))
+        # ADR 0104 活跃旧档迁移：旧评定仅作“安抚承诺对象”识别，不再提供 delta；
+        # 每月由引擎产生一条 0079 撑腰事件，再由信用事件读端统一派生 loyalty。
+        from ming_sim.credit_events import KIND_BACK, write_credit_event
+        results: List[Dict[str, object]] = []
+        for item in person_changes:
+            name = str(item.get("name") or "").strip()
+            context = str(item.get("reason") or label).strip() or label
+            edge_id = write_credit_event(
+                db,
+                state,
+                person=name,
+                event_kind=KIND_BACK,
+                context=context,
+                origin=f"{origin_ref}:credit:appease:{int(state.turn)}:{name}",
+            )
+            result = {"name": name, "动作": "信用事件", "event_kind": KIND_BACK,
+                      "edge_id": edge_id}
+            results.append(result)
+        if results:
+            applied["人物变更"] = results
         if applied_person_changes is not None:
             applied_person_changes.extend(results)
 
@@ -6709,42 +6713,11 @@ def _apply_person_changes(
                 name = canon
 
         if action == "评定":
-            if content is not None and name not in content.characters:
-                applied.append(rejected(item, "非既有人物", "hallucinated_id"))
-                continue
-            row = db.conn.execute(
-                "SELECT name, loyalty FROM characters WHERE name=?", (name,)
-            ).fetchone()
-            if row is None:
-                applied.append(rejected(item, "非既有人物", "hallucinated_id"))
-                continue
-            raw_delta = item.get("loyalty")
-            if isinstance(raw_delta, bool) or not isinstance(raw_delta, int) or raw_delta == 0:
-                applied.append(rejected(item, "评定 loyalty 须为非零整数增量", "invalid_enum"))
-                continue
-            old_loyalty = int(row["loyalty"])
-            new_loyalty = max(0, min(100, old_loyalty + raw_delta))
-            origin_error = origin_rejected(item)
-            if origin_error:
-                applied.append(origin_error)
-                continue
-            db.conn.execute(
-                "UPDATE characters SET loyalty=? WHERE name=?",
-                (new_loyalty, name),
-            )
-            if content is not None and name in content.characters:
-                content.characters[name].loyalty = new_loyalty
-            result = {
-                "name": name,
-                "动作": action,
-                "loyalty": raw_delta,
-                "old_loyalty": old_loyalty,
-                "new_loyalty": new_loyalty,
-                "reason": str(item.get("reason") or ""),
-            }
-            applied.append(result)
-            log_applied(result, item, commit=False)
-            needs_person_change_commit = True
+            applied.append(rejected(
+                item,
+                "评定动作已退役；loyalty 只由信用事件机械派生",
+                "retired_action",
+            ))
             continue
 
         if action == "性情":
@@ -9570,6 +9543,8 @@ def apply_issue_inertia_and_ongoing(
     # advance 的 delta_bar 是皇帝本月实旨推动的额外量，与 inertia 叠加，互不顶替。
     _ = touched_ids  # 保留入参不破坏调用方；inertia 漂移不再按它跳过
     inertia_rejections: List[Dict[str, object]] = []
+    from ming_sim.credit_events import derive_pending_loyalty_from_credit_events
+    derive_pending_loyalty_from_credit_events(db)
     active = db.list_active_issues()
     commit_local = not bool(getattr(db.conn, "in_transaction", False))
     # 累计单月 metric 落账，用于上限 clamp
