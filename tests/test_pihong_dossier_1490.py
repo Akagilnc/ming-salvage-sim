@@ -2554,6 +2554,7 @@ def test_657_mixed_batch_follow_plus_decision_and_no_context_copy(web_game, monk
         assert (by_key[d_key]["choice"] or {}).get("label") == "打回"
         assert by_key[grant_key]["choice"] == {
             "decision_key": grant_key, "label": "发内帑", "hint": "",
+            "action": "decision",
         }
         ctx = probe.get_resolve_context(int(probe.load_state().turn))
         assert ctx is None or ctx.get("extracted") is None

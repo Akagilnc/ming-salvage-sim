@@ -329,6 +329,16 @@ def validate_all(
     """
     desk_by_key, choice_map = validate_request_keys(desk_rows, request_choices)
     choice_map = {key: canonical_choice(raw) for key, raw in choice_map.items()}
+    for key, choice in choice_map.items():
+        row = desk_by_key[key]
+        if (
+            str(row.get("kind") or "decision") == "decision"
+            and not (
+                str(row.get("event_id") or "").startswith("dossier:")
+                and decision_has_rescript_capability(row)
+            )
+        ):
+            choice.setdefault("action", "decision")
 
     batch = ValidatedBatch()
     for key, row in desk_by_key.items():
@@ -1323,9 +1333,9 @@ def apply_rescript_batch(
                     # reviewed grants stay proposed for the regular verdict batch.
                     for dossier_id in created:
                         dossier = db.get_decree_dossier(dossier_id)
-                        payload = (dossier or {}).get("payload")
-                        if not isinstance(payload, dict):
-                            payload = json.loads(str((dossier or {}).get("payload_json") or "{}"))
+                        if dossier is None:
+                            raise ValueError(f"新建案卷查无记录：{dossier_id}")
+                        payload = dossier["payload"]
                         if not dossier_action_policy(
                             "grant_allocation", payload,
                         )["external_review"]:
