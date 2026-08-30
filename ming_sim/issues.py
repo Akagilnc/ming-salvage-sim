@@ -1038,12 +1038,27 @@ def _apply_appease_commitment_credit(
     person = _person_loyalty_gate(gate)
     current = bool(str(row["commitment_kind"] or "").strip())
     legacy = not current and bool(_legacy_commitment_stop_gate(row["resolve_condition"]))
-    if not person or (legacy and not _monthly_person_rating_changes(ongoing)):
+    legacy_changes = _monthly_person_rating_changes(ongoing) if legacy else []
+    if not person or (legacy and not legacy_changes):
+        return None
+    if current:
+        context = str(row["stage_text"] or "").strip()
+    else:
+        context = next(
+            (
+                str(item.get("reason") or "").strip()
+                for item in legacy_changes
+                if str(item.get("name") or "").strip() == person
+                and str(item.get("reason") or "").strip()
+            ),
+            str(row["stage_text"] or "").strip(),
+        )
+    if not context:
         return None
     from ming_sim.credit_events import KIND_BACK, write_credit_event
     edge_id = write_credit_event(
         db, state, person=person, event_kind=KIND_BACK,
-        context=f"局势#{int(row['id'])}安抚承诺",
+        context=context,
         origin=f"{origin_ref}:credit:appease:{int(state.turn)}:{person}",
     )
     return {"name": person, "动作": "信用事件", "event_kind": KIND_BACK, "edge_id": edge_id}
