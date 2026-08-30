@@ -210,7 +210,6 @@ export function useChatActions({
           setChatFailures([]);
           setReplyRetry(null);
           setSelectedMinister(data.next_minister);
-          setActiveModal("chat");
         }
         if (data.court_action === "dismiss") {
           clearPendingText();
