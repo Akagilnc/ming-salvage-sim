@@ -181,17 +181,19 @@ def validate_season_option(option: Mapping[str, object]) -> str:
 
     has_action_type = "action_type" in option
     action_type = str(option.get("action_type") or "").strip()
+    _ensure_catalog()
+    has_typed_fields = any(
+        spec.season_option and spec.name in option
+        for cluster in ACTION_CLUSTERS
+        for spec in cluster.fields
+    )
     if has_action_type and not action_type:
         raise ValueError("choice.action_type 不可空")
-    if not has_action_type:
-        _ensure_catalog()
-        if any(
-            spec.season_option and spec.name in option
-            for cluster in ACTION_CLUSTERS
-            for spec in cluster.fields
-        ):
-            raise ValueError("choice.action_type 不可空")
+    if not has_action_type and has_typed_fields:
+        raise ValueError("choice.action_type 不可空")
     if action_type and cluster_by_kind(action_type) is None:
+        raise ValueError(f"choice.action_type 非法：{action_type!r}")
+    if has_typed_fields and not _season_specs(action_type):
         raise ValueError(f"choice.action_type 非法：{action_type!r}")
     for spec in _season_specs(action_type):
         if spec.name not in option:
