@@ -32,6 +32,7 @@ def test_target_aware_axis_collisions_route_only_the_target_faction_vitals():
     by_cell = {(row["faction"], row["axis"]): row["aligned_stance"] for row in results}
     assert by_cell[("阉党", "皇权依附")] == -2
     assert by_cell[("东林", "既得利益")] == 1
+    assert ("中立", "既得利益") not in by_cell
     assert ("皇党", "皇权依附") not in by_cell
 
 
