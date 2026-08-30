@@ -88,7 +88,7 @@
 - `origin_ref`：只能从 `extractor_context.decree_dossiers` 选择本承诺所属行的
   `origin_ref`（格式 `dossier:<id>`）；不得自造 `decree:turn-*` 或按诏文猜绑。
 - `commitment_kind:"until_stop"`（或中文 `承诺标记:"until_stop"`）：这是承诺专门标记，不能只靠 `来源类型:"decree"`。
-- `ongoing_effects`/`持续效果`：每{{TURN_UNIT}}固定动作，例如每{{TURN_UNIT}}从国库拨银补某军欠饷；人物安抚类承诺必须写每{{TURN_UNIT}}的 `人物变更.评定` 忠诚增量，不能只写停止条件。
+- `ongoing_effects`/`持续效果`：每{{TURN_UNIT}}固定动作，例如每{{TURN_UNIT}}从国库拨银补某军欠饷；人物安抚类承诺只写停止条件与安抚叙事，忠诚变化由引擎按信用事件机械派生，不得输出 `人物变更.评定`。
 - **专款/附带不动款**：诏书明定某账户专供本诺、不得挪作他用时，写 `tags` 含 `"专款:<账户>"`（账户仅 `国库`/`内库`），并在 `ongoing_effects.economy` 用同一账户承载月供；专款标签是挪用检测的真实写口，勿写进 `stop_condition`（那是停诺阈值 dict）。
 - `stop_condition`/`停止条件`：必须是 dict JSON，不要写成扁平字符串；key 带表前缀和英文 slug，比较算符写在 value 内，例如 `{"army.guanning.arrears":"<=0"}`，多军合计写 `{"army.xuan_da|jizhen.arrears.sum":"<=0"}`，人物忠诚写 `{"character.毛文龙.loyalty":">=65"}`。
 - 承诺 issue 的 `可撤销` 写 `decree`；`解决效果` 留空 `{}`，不要给承诺补普通国策的 resolve-effect。
@@ -126,8 +126,8 @@
 
 **人物承诺型事项要立局势**：若诏书明文要求“安抚/羁縻/招抚/稳住”某个关键人物，且结果取决于后续奏对、承办、回信、观望变化，就立 `initiative`。例如“安抚毛文龙”应立标题类似 `安抚毛文龙·进行中` 的局势，并同时写：
 - `stop_condition`：dict，例 `{"character.毛文龙.loyalty":">=65"}`，供系统判断何时达标。
-- `ongoing_effects`：每{{TURN_UNIT}}的真实持续动作，例 `{"人物变更":[{"name":"毛文龙","动作":"评定","loyalty":2,"reason":"奉旨持续安抚，观望稍解"}]}`。
-只写 `stop_condition`、没有 `ongoing_effects` 的安抚承诺会被拒收，因为它看似有目标但每{{TURN_UNIT}}不做事。**人物承诺型 `stop_condition` 不套用 `resolve_condition` 达标即结案规则**：即使当前 `loyalty` 已达阈值，本片也只记录/推进承诺，不要写 `结案局势`；自动按条件完成属于 #136。若只是一次性赏赐、抚恤、给银给物，当{{TURN_UNIT}}即办完，则不立局势，交内政财政档房写一次性 `钱粮收支`，人物态度变化交人事密令档房写 `人物变更`。
+- `ongoing_effects`：每{{TURN_UNIT}}的真实持续动作；不得写人物忠诚数值，安抚承诺的忠诚变化由引擎机械结算。
+安抚承诺可只写 `stop_condition` 与安抚叙事，逐月信用事件由引擎产生。**人物承诺型 `stop_condition` 不套用 `resolve_condition` 达标即结案规则**：即使当前 `loyalty` 已达阈值，本片也只记录/推进承诺，不要写 `结案局势`；自动按条件完成属于 #136。若只是一次性赏赐、抚恤、给银给物，当{{TURN_UNIT}}即办完，则不立局势，交内政财政档房写一次性 `钱粮收支`，人物态度变化由信用事件机械派生。
 
 **实体营建 / 科技新法强制单立**：诏书明文推动下列两类，**各必须单立一条 `来源类型:"decree"` 工程 issue**：
 - **实体营建**——新建/设立一座建筑（设局/办厂/开矿/筑堡/设仓/建坞/立学堂等，含 category=科技 的译算学堂/火器局/铜矿厂）：单立的 issue 其 `解决效果` **必带 `buildings:create`**。

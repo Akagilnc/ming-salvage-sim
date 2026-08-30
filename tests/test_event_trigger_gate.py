@@ -6042,32 +6042,6 @@ def test_issue_tracker_cancel_cost_respects_outer_transaction_rollback(game):
     ).fetchone()[0] == 0
 
 
-def test_mao_wenlong_event_pool_rechecks_after_same_turn_loyalty_assessment(game):
-    """post-merge CMR：同回合人物评定应先影响 event_pool 前提门。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1629
-    state.period = 6
-    db.conn.execute("UPDATE characters SET loyalty = ?, status = ? WHERE name = ?", (60, "active", "毛文龙"))
-    db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "袁崇焕"))
-
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}],
-            "人物变更": [{"origin_ref": "盘面自发", "name": "毛文龙", "动作": "评定", "loyalty": 10, "reason": "同回合安抚见效"}],
-        },
-        content=content,
-    )
-
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert "候选" in out["issue_summary"]["new_issues"][0]["reason"]
-    assert not db.has_event_triggered("mao_wenlong")
-    assert db.get_character_status("毛文龙")[0] == "active"
-    assert db.conn.execute("SELECT loyalty FROM characters WHERE name=?", ("毛文龙",)).fetchone()["loyalty"] == 70
-
-
 def test_mao_wenlong_event_pool_rechecks_after_same_turn_yuan_dismissal(game):
     """post-merge CMR R2：同回合袁崇焕退场应阻断袁斩毛文龙事件。"""
     db, state, content = game

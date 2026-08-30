@@ -223,7 +223,7 @@ def test_ordinary_entity_log_families_persist_origin_at_write_seam(game):
         "region_delta": {region_id: {"public_support": 1, "origin_ref": SPONTANEOUS}},
         "army_delta": {army_id: {"morale": 1, "origin_ref": SPONTANEOUS}},
         "power_updates": {power_id: {"leverage": 1, "origin_ref": SPONTANEOUS}},
-        "人物变更": [{"name": person, "动作": "评定", "loyalty": 1,
+        "人物变更": [{"name": person, "动作": "性情", "style": "沉着",
                     "origin_ref": SPONTANEOUS}],
     }, content=content)
 
@@ -275,7 +275,7 @@ def test_missing_origins_are_rejected_at_entity_write_seams_without_logs(game):
         "region_delta": {region: {"public_support": 1}},
         "army_delta": {army: {"morale": 1}},
         "power_updates": {power: {"leverage": 1}},
-        "人物变更": [{"name": person, "动作": "评定", "loyalty": 1}],
+        "人物变更": [{"name": person, "动作": "性情", "style": "沉着"}],
     }, content=content)
 
     assert result["region_changes"][0]["category"] == "missing_origin_ref"
