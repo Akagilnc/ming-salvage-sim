@@ -1184,7 +1184,7 @@ def test_rejected_dossier_uses_player_rescript_choice_and_resume(
         ) == -10
 
 
-def test_rejected_dossier_survives_simulator_failure_on_rescript_rail(
+def test_rejected_dossier_retries_simulator_before_entering_rescript_rail(
     game, monkeypatch,
 ):
     import ming_sim.decree as decree_mod
@@ -1205,31 +1205,47 @@ def test_rejected_dossier_survives_simulator_failure_on_rescript_rail(
         if row["pending_action_id"] == candidate_id
     )
 
-    monkeypatch.setattr(
-        decree_mod, "llm_promulgation_verdicts",
-        lambda _dossiers, _state, **_kwargs: [_rejected_verdict(dossier["id"])],
-    )
+    calls = {"promulgation": 0, "simulator": 0}
+
+    def _verdicts(_dossiers, _state, **_kwargs):
+        calls["promulgation"] += 1
+        return [_rejected_verdict(dossier["id"])]
+
+    monkeypatch.setattr(decree_mod, "llm_promulgation_verdicts", _verdicts)
     monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
 
-    def _fail_simulator(*args, **kwargs):
-        raise RuntimeError("simulator unavailable")
+    def _simulate(*args, **kwargs):
+        calls["simulator"] += 1
+        if calls["simulator"] == 1:
+            raise RuntimeError("simulator unavailable")
+        return ("月报", kwargs.get("simulator_payload") or {})
 
-    monkeypatch.setattr(
-        decree_mod, "simulate_season_with_payload", _fail_simulator,
-    )
+    monkeypatch.setattr(decree_mod, "simulate_season_with_payload", _simulate)
 
     turn = state.turn
+    with pytest.raises(RuntimeError):
+        decree_mod.resolve_directives(
+            state, db, None, None, [object()], "拨帑赈济", content=content,
+        )
+
+    assert state.turn == turn
+    assert state.turn_phase == "settling"
+    assert db.list_pending_decisions(turn) == []
+    assert db.get_turn_report(turn) == ""
+    assert db.get_pending_promulgation_verdicts(turn) == [
+        _rejected_verdict(dossier["id"]),
+    ]
+
     result = decree_mod.resolve_directives(
         state, db, None, None, [object()], "拨帑赈济", content=content,
     )
-
     assert result.awaiting is True
     assert state.turn == turn
     assert state.turn_phase == "awaiting_decision"
-    assert db.get_resolve_context(turn) is not None
     assert [option["label"] for option in result.decisions[0]["options"]] == [
         "强颁", "收回", "留中",
     ]
+    assert calls == {"promulgation": 1, "simulator": 2}
 
     withdraw = result.decisions[0]["options"][1]
     db.conn.execute(
