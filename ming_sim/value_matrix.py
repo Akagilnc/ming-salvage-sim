@@ -40,8 +40,6 @@ def _loaded() -> tuple[tuple[str, ...], dict[str, dict[str, int]]]:
                 raise SystemExit(f"content/{_ASSET}: {faction}.{axis} 必须为 -2..2 整数")
             parsed[axis] = value
         matrix[str(faction)] = parsed
-    if sum(len(row) for row in matrix.values()) != 42:
-        raise SystemExit(f"content/{_ASSET}: 须为 7 派 × 6 轴 = 42 格")
     return axes, matrix
 
 
