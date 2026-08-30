@@ -948,13 +948,17 @@ def test_heal_keeps_first_extract_non_roster_fields(game, monkeypatch):
 
     def _payload(person: str, *,
                  amount, target_id, mode, body, action="grant_allocation"):
+        target_key = "目标" if action == "grant_allocation" else "目标ID"
+        canonical_mode = {
+            "普通": "ordinary", "中旨直发": "midzhi",
+        }.get(mode, mode) if action == "grant_allocation" else mode
         return {
             "拟旨意图": "拟旨",
             "动作类型": action,
             "目标类型": "issue",
-            "目标ID": target_id,
+            target_key: target_id,
             "正文": body,
-            "颁布方式": mode,
+            "颁布方式": canonical_mode,
             "金额": amount,
             "账户": "太仓",
             "执行面": "immediate",
@@ -1019,8 +1023,10 @@ def test_batch_heal_keeps_first_extract_non_roster_fields(game, monkeypatch):
                     "正文": body1,
                     "动作类型": "grant_allocation",
                     "目标类型": "issue",
-                    "目标ID": target1,
-                    "颁布方式": mode1,
+                    "目标": target1,
+                    "颁布方式": {
+                        "普通": "ordinary", "中旨直发": "midzhi",
+                    }.get(mode1, mode1),
                     "金额": amount1,
                     "账户": "太仓",
                     "执行面": "immediate",

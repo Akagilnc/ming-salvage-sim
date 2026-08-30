@@ -15,7 +15,10 @@ from types import SimpleNamespace
 import pytest
 
 import ming_sim.action_materialize  # noqa: F401 -- installs package catalog
-from ming_sim.action_clusters import candidates_from_classifier_payload
+from ming_sim.action_clusters import (
+    ActionCandidateShapeError,
+    candidates_from_classifier_payload,
+)
 from ming_sim.action_materialize import MaterializeCtx, run_materialize_pipeline
 from ming_sim.issues import apply_score_extraction
 from tests.dossier_test_helpers import rejected_verdict as _rejected_verdict
@@ -815,29 +818,73 @@ def test_manual_directive_admission_real_http_tracer_1591(
     )
     from tests.test_session_write_queue_1353 import wait_pending_writes
 
-    captured_ok = {
-        "draft_action": "拟旨",
-        "dossier_action_type": "grant_allocation",
-        "grant_action": "协饷",
-        "purpose": "补饷",
-        "target_kind": "army",
-        "target_id": "guanning",
-        "mode": "ordinary",
-        "amount": 15,
-        "account": "太仓",
-    }
-    captured_bad = dict(captured_ok, account="藩库")
-    captures = [captured_ok, captured_bad]
+    raw_captures = [
+        {
+            "拟旨意图": "拟旨",
+            "动作类型": "grant_allocation",
+            "恩赏拨帑": "协饷",
+            "用途": "补饷",
+            "目标类型": "army",
+            "目标": "guanning",
+            "颁布方式": "ordinary",
+            "金额": 15,
+            "账户": "太仓",
+            "执行面": "immediate",
+            "承办人": "",
+            "参与人": [],
+            "施行范围": "无",
+            "期限月数": None,
+            "目标案卷ID": None,
+            "entries": [],
+        },
+        {
+            "拟旨意图": "拟旨",
+            "动作类型": "grant_allocation",
+            "恩赏拨帑": "协饷",
+            "用途": "补饷",
+            "目标类型": "army",
+            "目标": "guanning",
+            "颁布方式": "ordinary",
+            "金额": 15,
+            "账户": "国库",
+            "拨付节奏": "每季",
+            "执行面": "immediate",
+            "承办人": "",
+            "参与人": [],
+            "施行范围": "无",
+            "期限月数": None,
+            "目标案卷ID": None,
+            "entries": [],
+        },
+        {
+            "拟旨意图": "拟旨",
+            "动作类型": "grant_allocation",
+            "恩赏拨帑": "协饷",
+            "用途": "补饷",
+            "目标类型": "army",
+            "目标": "guanning",
+            "颁布方式": "ordinary",
+            "金额": 15,
+            "账户": "藩库",
+            "执行面": "immediate",
+            "承办人": "",
+            "参与人": [],
+            "施行范围": "无",
+            "期限月数": None,
+            "目标案卷ID": None,
+            "entries": [],
+        },
+    ]
 
-    def fake_extract(*_a, **_k):
-        return dict(captures.pop(0))
+    def fake_backend(*_a, **_k):
+        return json.dumps(raw_captures.pop(0), ensure_ascii=False), {}
 
     real_capture = cb.capture_manual_directive_payload
     monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     _stub_outer_llm_seams(monkeypatch)
-    monkeypatch.setattr(cb, "extract_draft_intent_with_semantic_heal", fake_extract)
+    monkeypatch.setattr(cb, "_run_backend_for_config", fake_backend)
     monkeypatch.setattr(cb, "capture_manual_directive_payload", real_capture)
 
     game = web_app.WebGame(fresh=False)
@@ -860,6 +907,15 @@ def test_manual_directive_admission_real_http_tracer_1591(
 
         # ── ① 手工拟旨太仓→国库：原票 POST /api/directives 入口 ──
         turn1 = int(game.state.turn)
+        _set_guanning_arrears(game.db, 60, central=60, province=0)
+        game.state.metrics["国库"] = max(int(game.state.metrics["国库"]), 100)
+        arrears_before = _army_row(game.db)["arrears"]
+        logs_before = game.db.conn.execute(
+            "SELECT COUNT(*) FROM army_logs WHERE army_id='guanning'"
+        ).fetchone()[0]
+        ledger_before_id = game.db.conn.execute(
+            "SELECT COALESCE(MAX(id), 0) FROM economy_ledger"
+        ).fetchone()[0]
         directive_ok = client.post(
             "/api/directives",
             json={"text": "准从太仓见银拨关宁军饷十五万两即发。", "notes": ""},
@@ -874,17 +930,75 @@ def test_manual_directive_admission_real_http_tracer_1591(
             if d["action_type"] == "grant_allocation"
         )
         payload = json.loads(dossier["payload_json"])
-        assert payload.get("account") == "国库", payload
+        assert {
+            key: payload.get(key)
+            for key in ("grant_action", "purpose", "amount", "account", "target_kind", "target_id")
+        } == {
+            "grant_action": "协饷", "purpose": "补饷", "amount": 15,
+            "account": "国库", "target_kind": "army", "target_id": "guanning",
+        }
+        moves = [
+            move for move in game.db.list_economy_moves_for_dossier(dossier["id"])
+            if move.get("purpose") == "补饷"
+        ]
+        assert len(moves) == 1
+        assert int(moves[0]["delta"]) == -15
+        dossier_logs = list(game.db.conn.execute(
+            "SELECT delta FROM army_logs WHERE army_id='guanning' AND field='arrears' "
+            "AND origin_ref=?", (f"dossier:{dossier['id']}",),
+        ).fetchall())
+        assert len(dossier_logs) == 1
+        assert float(dossier_logs[0]["delta"]) == pytest.approx(-15)
+        tick_delta = sum(float(row["delta"] or 0) for row in game.db.conn.execute(
+            "SELECT delta FROM army_logs WHERE army_id='guanning' AND field='arrears' "
+            "AND turn=? AND (origin_ref IS NULL OR origin_ref='')", (turn1,),
+        ).fetchall())
+        assert _army_row(game.db)["arrears"] == pytest.approx(
+            arrears_before - 15 + tick_delta
+        )
+        assert game.db.conn.execute(
+            "SELECT COUNT(*) FROM army_logs WHERE army_id='guanning'"
+        ).fetchone()[0] >= logs_before + 1
+        dossier_ledger = list(game.db.conn.execute(
+            "SELECT delta FROM economy_ledger WHERE id>? AND account='国库' AND origin_ref=?",
+            (ledger_before_id, f"dossier:{dossier['id']}"),
+        ).fetchall())
+        assert [int(row["delta"]) for row in dossier_ledger] == [-15]
 
-        # ── ② 手工拟旨 account 非法 + 无关非旨 pending 并存：issue 须回真实拒因 ──
+        # ── ② manual capture 须在写入前拒绝非法 cadence ──
         turn2 = int(game.state.turn)
-        directive = client.post(
+        invalid_cadence = client.post(
+            "/api/directives",
+            json={"text": "准每季拨关宁军饷十五万两。", "notes": ""},
+        )
+        assert invalid_cadence.status_code == 409, invalid_cadence.text
+        assert int(game.state.turn) == turn2
+
+        # ── ③ account 是唯一坏因；HTTP 409 后所有相关表零写 ──
+        counts_before = {
+            table: game.db.conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in ("turn_directives", "pending_actions", "decree_dossiers", "economy_ledger", "army_logs")
+        }
+        invalid_account = client.post(
             "/api/directives",
             json={"text": "准从藩库见银拨关宁军饷十五万两即发。", "notes": ""},
         )
-        assert directive.status_code == 200, directive.text
-        directive_id = int(directive.json()["directive"]["id"])
-        wait_pending_writes(game)
+        assert invalid_account.status_code == 409, invalid_account.text
+        assert int(game.state.turn) == turn2
+        assert {
+            table: game.db.conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in counts_before
+        } == counts_before
+
+        # ── ④ #1591：既存非法草案在 issue 边界转发真实 admission 拒因 ──
+        directive_id = game.db.add_directive(
+            game.state, None, "准从藩库见银拨关宁军饷十五万两即发。",
+            "player", status="draft", dossier_payload={
+                "dossier_action_type": "grant_allocation", "grant_action": "协饷",
+                "purpose": "补饷", "target_kind": "army", "target_id": "guanning",
+                "mode": "ordinary", "amount": 15, "account": "藩库",
+            },
+        )
 
         game.db.stage_pending_action(
             turn2, kind="office", action="任命", minister_name=name,
@@ -1199,32 +1313,91 @@ def test_real_chat_draft_xiexang_plus_punish_tool_keeps_both_pending(
 
 
 def test_explicit_prefix_grant_and_assignment_two_durable_dossiers(game, monkeypatch):
-    """真实 session.chat：grant+assignment 一次吐出，commit 后两道独立 durable dossiers。"""
+    """批量抽取真实投影：一句两旨独立暂存，commit 后两道 durable dossiers。"""
+    import ming_sim.cli_backend as cb
+
     db, state, content = game
     actor = db.conn.execute(
         "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
     ).fetchone()["name"]
-    scripted = _scripted_xiexang_candidates(
-        amount=15, account="太仓", target_id="guanning",
-    ) + candidates_from_classifier_payload({
-        "kind": "assignment",
-        "title": "清查辽饷收支",
-        "target_id": "hubu",
-        "transaction_category": "钱粮",
-    }, soft=False)
-    sess = _real_chat_session(db, state, content, monkeypatch, scripted=scripted)
+    raw = {"成品旨稿": [
+        {
+            "正文": "敕户部发太仓银十五万两协济关宁军前。",
+            "动作类型": "grant_allocation", "目标类型": "army", "目标ID": "guanning",
+            "恩赏拨帑": "协饷", "用途": "补饷", "金额": 15, "账户": "太仓",
+            "颁布方式": "普通", "施行范围": "无",
+        },
+        {
+            "正文": "着户部清查辽饷收支。", "动作类型": "assignment",
+            "标题": "清查辽饷收支", "事务类别": "钱粮",
+            "目标类型": "issue", "目标ID": "hubu", "颁布方式": "普通",
+            "施行范围": "无",
+        },
+    ]}
+    backend_calls = []
+    backend_payload = [raw]
 
-    result = sess.chat(actor, "拟旨如下：拨饷，并另行清查。")
+    def fake_backend(*_args, **kwargs):
+        backend_calls.append(kwargs.get("tag"))
+        return json.dumps(backend_payload[0], ensure_ascii=False), {}
+
+    real_extract = cb.extract_draft_intent
+    scripted = candidates_from_classifier_payload(
+        [{"kind": "draft"}, {"kind": "draft"}], soft=False,
+    )
+    sess = _real_chat_session(db, state, content, monkeypatch, scripted=scripted)
+    monkeypatch.setattr(cb, "extract_draft_intent", real_extract)
+    monkeypatch.setattr(cb, "_run_backend_for_config", fake_backend)
+
+    for field, invalid in (("颁布方式", "beyond-catalog"), ("恩赏拨帑", "协饷近似值")):
+        original = raw["成品旨稿"][0][field]
+        raw["成品旨稿"][0][field] = invalid
+        with pytest.raises(ActionCandidateShapeError):
+            real_extract("请拟两道旨", "拨饷并清查", draft_count=2)
+        backend_payload[0] = {
+            "拟旨意图": "拟旨", **raw["成品旨稿"][0],
+        }
+        with pytest.raises(ActionCandidateShapeError):
+            real_extract("请拟旨", "拨饷")
+        raw["成品旨稿"][0][field] = original
+        backend_payload[0] = raw
+
+    generic = dict(raw["成品旨稿"][0])
+    generic.update({"恩赏拨帑": "赈灾", "用途": ""})
+    generic.pop("目标类型")
+    backend_payload[0] = {"拟旨意图": "拟旨", **generic}
+    assert real_extract("请拟旨", "拨款")["target_kind"] == "policy"
+    backend_payload[0] = {"成品旨稿": [generic, raw["成品旨稿"][1]]}
+    batch = real_extract("请拟两道旨", "拨款并清查", draft_count=2)
+    assert batch["drafts"][0]["target_kind"] == "policy"
+    backend_payload[0] = raw
+    backend_calls.clear()
+
+    result = sess.chat(actor, "请拟两道旨：拨饷，并另行清查。")
     assert int(getattr(result, "pending_action_id", 0) or 0) > 0
+    assert backend_calls == ["draft_intent"]
     rows = list(db.conn.execute(
         "SELECT id, payload_json FROM pending_actions WHERE turn=? AND kind='directive'",
         (state.turn,),
     ).fetchall())
     assert len(rows) == 2
     payloads = [json.loads(row["payload_json"]) for row in rows]
+    grant = next(p for p in payloads if p.get("dossier_action_type") == "grant_allocation")
+    assert {key: grant.get(key) for key in (
+        "grant_action", "purpose", "amount", "account", "target_kind", "target_id",
+    )} == {
+        "grant_action": "协饷", "purpose": "补饷", "amount": 15,
+        "account": "国库", "target_kind": "army", "target_id": "guanning",
+    }
     assert {p.get("dossier_action_type") for p in payloads} == {
         "grant_allocation", "assignment",
     }
+    assignment = next(p for p in payloads if p.get("dossier_action_type") == "assignment")
+    assert assignment.get("title") == "清查辽饷收支"
+    assert assignment.get("target_kind") == "issue"
+    assert assignment.get("target_id") == "hubu"
+    assert assignment.get("transaction_category") == "钱粮"
+    assert assignment.get("mode") == "ordinary"
 
     pending_ids = [int(row["id"]) for row in rows]
     db.commit_pending_actions(state, content=content, action_ids=pending_ids)
@@ -1234,6 +1407,21 @@ def test_explicit_prefix_grant_and_assignment_two_durable_dossiers(game, monkeyp
     ]
     assert len(dossiers) == 2
     assert {d["action_type"] for d in dossiers} == {"grant_allocation", "assignment"}
+    durable_assignment = next(d for d in dossiers if d["action_type"] == "assignment")
+    assignment_payload = json.loads(durable_assignment["payload_json"])
+    assert assignment_payload.get("title") == "清查辽饷收支"
+    assert assignment_payload.get("target_kind") == "issue"
+    assert assignment_payload.get("target_id") == "hubu"
+    assert assignment_payload.get("transaction_category") == "钱粮"
+    assert assignment_payload.get("mode") == "ordinary"
+    durable_grant = next(d for d in dossiers if d["action_type"] == "grant_allocation")
+    durable_payload = json.loads(durable_grant["payload_json"])
+    assert {key: durable_payload.get(key) for key in (
+        "grant_action", "purpose", "amount", "account", "target_kind", "target_id",
+    )} == {
+        "grant_action": "协饷", "purpose": "补饷", "amount": 15,
+        "account": "国库", "target_kind": "army", "target_id": "guanning",
+    }
 
 
 def test_draft_neitang_stays_generic_special_decree(game, monkeypatch):
