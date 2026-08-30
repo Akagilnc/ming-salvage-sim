@@ -62,7 +62,8 @@ describe.sequential("medium: shared Electron geometry", () => {
       viewportHeight: number;
       intersections: boolean;
       alertFitsWidth: boolean;
-      scrollReachable: boolean;
+      startReachable: boolean;
+      endReachable: boolean;
       buttonEnabled: boolean;
       buttonHit: boolean;
     }>(page, css("base", "court", "modals", "edict", "modal-theme", "situation"), [
@@ -75,7 +76,11 @@ describe.sequential("medium: shared Electron geometry", () => {
       const button = document.querySelector('.desk-footer button');
       if (!alert || !textarea || !footer || !button) return { error: 'missing edict fixture element' };
       const overlaps = (a, b) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+      alert.scrollTop = 0;
       const alertRect = alert.getBoundingClientRect();
+      const alertContents = document.createRange();
+      alertContents.selectNodeContents(alert);
+      const startReachable = alertContents.getBoundingClientRect().top >= alertRect.top + alert.clientTop;
       const buttonRect = button.getBoundingClientRect();
       alert.scrollTop = alert.scrollHeight;
       return {
@@ -83,7 +88,8 @@ describe.sequential("medium: shared Electron geometry", () => {
         viewportHeight: innerHeight,
         intersections: overlaps(alertRect, textarea.getBoundingClientRect()) || overlaps(alertRect, footer.getBoundingClientRect()),
         alertFitsWidth: alert.scrollWidth <= alert.clientWidth,
-        scrollReachable: alert.scrollHeight <= alert.clientHeight || Math.ceil(alert.scrollTop + alert.clientHeight) >= alert.scrollHeight,
+        startReachable,
+        endReachable: alert.scrollHeight <= alert.clientHeight || Math.ceil(alert.scrollTop + alert.clientHeight) >= alert.scrollHeight,
         buttonEnabled: !button.disabled,
         buttonHit: document.elementFromPoint(buttonRect.left + buttonRect.width / 2, buttonRect.top + buttonRect.height / 2) === button,
       };
@@ -93,7 +99,8 @@ describe.sequential("medium: shared Electron geometry", () => {
     for (const result of results) {
       expect(result.intersections).toBe(false);
       expect(result.alertFitsWidth).toBe(true);
-      expect(result.scrollReachable).toBe(true);
+      expect(result.startReachable).toBe(true);
+      expect(result.endReachable).toBe(true);
       expect(result.buttonEnabled).toBe(true);
       expect(result.buttonHit).toBe(true);
     }

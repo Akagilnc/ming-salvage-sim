@@ -182,6 +182,7 @@
 }
 
 .edict-stage-desk > .error-line {
+  align-items: flex-start;
   flex: 0 1 auto;
   min-height: 0;
   max-height: min(30%, 180px);
