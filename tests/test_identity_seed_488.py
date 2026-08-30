@@ -59,31 +59,30 @@ def test_identity_and_seed_guilt_survive_restore(game):
     assert content.characters["魏忠贤"].defected_from == "东林"
 
 
-def test_existing_save_migrates_seed_identity_and_inserts_missing_roster_member(tmp_path, content):
-    """旧档已有角色不能跳过后来批准的 roster identity seed。"""
+def test_current_schema_rebuilds_missing_roster_member_from_content(tmp_path, content):
+    """The current schema rebuilds a missing roster member from content."""
     from ming_sim.db import GameDB
 
-    path = tmp_path / "pre-family.db"
+    character = content.characters["王承恩"]
+    character.intrigue = 47
+    character.defected_from = "司礼监旧党"
+    path = tmp_path / "current-schema.db"
     first = GameDB(str(path), content)
     first.seed_static_data()
-    first.conn.execute("DELETE FROM character_offices WHERE character_name=?", ("王承恩",))
-    first.conn.execute("DELETE FROM characters WHERE name=?", ("王承恩",))
-    first.conn.execute("UPDATE characters SET identity=50, seed_guilt='' WHERE name=?", ("魏忠贤",))
-    first.conn.execute("DELETE FROM metrics WHERE key='__identity_seed_v1'")
+    first.conn.execute("DELETE FROM character_offices WHERE character_name=?", (character.name,))
+    first.conn.execute("DELETE FROM characters WHERE name=?", (character.name,))
     first.conn.commit()
     first.close()
 
     restored = GameDB(str(path), content)
-    row = restored.conn.execute(
-        "SELECT identity, seed_guilt FROM characters WHERE name=?", ("魏忠贤",)
-    ).fetchone()
     inserted = restored.conn.execute(
-        "SELECT identity, seed_guilt FROM characters WHERE name=?", ("王承恩",)
+        "SELECT identity, seed_guilt, intrigue, defected_from FROM characters WHERE name=?",
+        (character.name,),
     ).fetchone()
-    assert row["identity"] == content.characters["魏忠贤"].identity
-    assert json.loads(row["seed_guilt"]) == content.characters["魏忠贤"].seed_guilt
-    assert inserted["identity"] == content.characters["王承恩"].identity
-    assert json.loads(inserted["seed_guilt"]) == content.characters["王承恩"].seed_guilt
+    assert inserted["identity"] == character.identity
+    assert json.loads(inserted["seed_guilt"]) == character.seed_guilt
+    assert inserted["intrigue"] == character.intrigue
+    assert inserted["defected_from"] == character.defected_from
     restored.close()
 
 
@@ -161,6 +160,7 @@ def test_roster_rejects_duplicate_canonical_name(monkeypatch):
     [
         ("identity", 101, "identity"),
         ("intrigue", 101, "intrigue"),
+        ("defected_from", {}, "defected_from"),
         ("seed_guilt", {"crime": "", "severity": "轻"}, "crime"),
         ("seed_guilt", {"crime": "无", "severity": "未知"}, "severity"),
     ],
