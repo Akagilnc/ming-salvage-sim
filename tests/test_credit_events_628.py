@@ -15,8 +15,6 @@ from ming_sim.breach_plea import (
     write_breach_plea_todo,
 )
 from ming_sim.credit_events import (
-    CREDIT_BANNED_PLAYER_TOKENS,
-    CREDIT_BANNED_SCAN_SURFACES,
     KIND_BACK,
     KIND_BETRAY,
     KIND_FULFILL,
@@ -160,11 +158,20 @@ def test_ac1_breach_plea_guofu_not_reimplemented(game):
         if int(t["id"]) == todo_id
     )
     before = len(_credit_edges(db, event_kind="辜负", target=holder))
+    loyalty_before = db.conn.execute(
+        "SELECT loyalty FROM characters WHERE name=?", (holder,)
+    ).fetchone()["loyalty"]
     result = finalize_persist(db, state, todo, commit=True)
     assert result["decision"] == "persist"
     edges = _credit_edges(db, event_kind="辜负", target=holder)
     assert len(edges) == before + 1
     assert any("breach_plea" in str(e["origin"]) for e in edges)
+    assert db.conn.execute(
+        "SELECT loyalty FROM characters WHERE name=?", (holder,)
+    ).fetchone()["loyalty"] < loyalty_before
+    assert db.conn.execute(
+        "SELECT 1 FROM loyalty_credit_event_applied WHERE event_id=?", (edges[-1]["id"],)
+    ).fetchone() is not None
     # 本片 resolve 不吞、不重写该 origin
     resolve_credit_events_from_extraction(db, state, {}, commit=True)
     edges2 = _credit_edges(db, event_kind="辜负", target=holder)
@@ -578,10 +585,6 @@ def test_idempotent_narrative_restore_write_only_banned(game, tmp_path):
     db, state, content = game
 
     # banned 单源扩展 + 扫描面清单（AC8 票面交付物，#629 收口）
-    assert CREDIT_BANNED_PLAYER_TOKENS
-    assert "credit:scapegoat" in CREDIT_BANNED_PLAYER_TOKENS
-    assert CREDIT_BANNED_SCAN_SURFACES
-    assert "memorial_text" in CREDIT_BANNED_SCAN_SURFACES
 
     roster = _SCAPEGOAT_ROSTER()
     did_a = _transformed_dossier(db, state, token="idem-a-628", roster=roster)

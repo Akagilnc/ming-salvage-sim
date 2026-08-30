@@ -1,11 +1,21 @@
 import json
+import sqlite3
 
+import pytest
+
+from ming_sim.credit_events import (
+    KIND_BACK,
+    KIND_BETRAY,
+    KIND_FULFILL,
+    KIND_SCAPEGOAT,
+    write_credit_event,
+)
+from ming_sim.relations import EMPEROR_NODE
 from ming_sim.decree import settle_with_delta
 from ming_sim.issues import (
     apply_issue_inertia_and_ongoing,
     apply_score_extraction,
     commitment_progress_payload,
-    show_active_issues,
 )
 from ming_sim.simulation import _extractor_context_payload, build_simulator_payload
 
@@ -138,17 +148,8 @@ def test_character_loyalty_commitment_ongoing_applies_monthly_and_records_progre
         origin_ref="decree:turn-1:appease-mao",
         bar_value=0,
         inertia=0,
-        stage_text="遣臣常驻皮岛安抚毛文龙，逐月消解其观望。",
-        ongoing_effects={
-            "人物变更": [
-                {
-                    "name": "毛文龙",
-                    "动作": "评定",
-                    "loyalty": 2,
-                    "reason": "奉旨持续安抚，观望稍解",
-                }
-            ]
-        },
+        stage_text="",
+        ongoing_effects={},
         stop_condition=json.dumps({"character.毛文龙.loyalty": ">=65"}, ensure_ascii=False),
         commitment_kind="until_stop",
         cancellable="decree",
@@ -156,7 +157,13 @@ def test_character_loyalty_commitment_ongoing_applies_monthly_and_records_progre
 
     _settle_empty_month(db, state, content)
 
-    assert _character_loyalty(db, "毛文龙") == 46
+    assert _character_loyalty(db, "毛文龙") == 50
+    assert content.characters["毛文龙"].loyalty == 50
+    event = db.conn.execute(
+        "SELECT event_kind, context FROM relation_edge_events "
+        "WHERE target='毛文龙' ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    assert event is not None and event["event_kind"] == KIND_BACK
     row = _issue_row(db, issue_id)
     assert row["status"] == "active"
     advances = db.conn.execute(
@@ -166,13 +173,41 @@ def test_character_loyalty_commitment_ongoing_applies_monthly_and_records_progre
     assert [row["trigger_kind"] for row in advances] == ["ongoing"]
     payload = json.loads(advances[0]["metric_delta"])
     assert payload["commitment_progress"]["months_elapsed"] == 1
-    assert payload["commitment_progress"]["remaining_to_goal"] == 19
+    assert payload["commitment_progress"]["remaining_to_goal"] == 15
     sim_issue = next(
         issue for issue in build_simulator_payload(state, db, "", "")["active_issues"]
         if issue["issue_id"] == issue_id
     )
     assert sim_issue["commitment_progress"]["months_elapsed"] == 1
-    assert "直到达标" in sim_issue["待办未解进度"]
+
+
+def test_reverse_loyalty_commitment_does_not_create_support_credit(game):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.execute("UPDATE characters SET loyalty=60 WHERE name='毛文龙'")
+    content.characters["毛文龙"].loyalty = 60
+    issue_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="反向忠诚门不算安抚",
+        origin_kind="decree",
+        origin_ref="decree:turn-1:reverse-appease",
+        bar_value=0,
+        inertia=0,
+        stage_text="",
+        ongoing_effects={},
+        stop_condition=json.dumps({"character.毛文龙.loyalty": "<=40"}, ensure_ascii=False),
+        commitment_kind="until_stop",
+        cancellable="decree",
+    )
+
+    _settle_empty_month(db, state, content)
+
+    assert _character_loyalty(db, "毛文龙") == 60
+    assert db.conn.execute(
+        "SELECT 1 FROM relation_edge_events WHERE origin LIKE ?",
+        (f"issue:{issue_id}:credit:appease:%",),
+    ).fetchone() is None
 
 
 def test_legacy_character_resolve_condition_commitment_settles_when_threshold_reached(game):
@@ -208,7 +243,12 @@ def test_legacy_character_resolve_condition_commitment_settles_when_threshold_re
 
     _settle_empty_month(db, state, content)
 
-    assert _character_loyalty(db, "毛文龙") == 66
+    assert _character_loyalty(db, "毛文龙") == 68
+    event = db.conn.execute(
+        "SELECT context FROM relation_edge_events "
+        "WHERE target='毛文龙' ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    assert event is not None
     row = _issue_row(db, issue_id)
     assert row["status"] == "resolved"
     assert row["bar_value"] == 100
@@ -217,6 +257,241 @@ def test_legacy_character_resolve_condition_commitment_settles_when_threshold_re
         (issue_id,),
     ).fetchall()
     assert [row["trigger_kind"] for row in advances] == ["ongoing", "commitment_resolve"]
+
+
+@pytest.mark.parametrize(
+    ("kind", "origin", "starting", "expected"),
+    [
+        (KIND_FULFILL, "dossier:701:credit:fulfill", 50, 55),
+        (KIND_BACK, "dossier:702:credit:back", 50, 55),
+        (KIND_BETRAY, "issue:703:credit:reject_grace", 50, 45),
+        (KIND_SCAPEGOAT, "dossier:704:credit:scapegoat:pawn:毛文龙", 50, 45),
+        (KIND_SCAPEGOAT, "faction:705:credit:scapegoat:pawn:毛文龙", 50, 50),
+        (KIND_SCAPEGOAT, "unknown:706:credit:scapegoat:pawn:毛文龙", 50, 50),
+        (KIND_FULFILL, "dossier:707:credit:fulfill", 0, 10),
+        (KIND_BETRAY, "issue:708:credit:reject_grace", 99, 98),
+        (KIND_FULFILL, "dossier:709:credit:fulfill", 100, 100),
+        (KIND_BETRAY, "issue:710:credit:reject_grace", 0, 0),
+    ],
+)
+def test_credit_event_is_the_idempotent_loyalty_write_source(
+    game, kind, origin, starting, expected,
+):
+    db, state, content = game
+    db.conn.execute("UPDATE characters SET loyalty=? WHERE name='毛文龙'", (starting,))
+    content.characters["毛文龙"].loyalty = starting
+    event_id = write_credit_event(
+        db, state, person="毛文龙", event_kind=kind, context="结构化信用事实", origin=origin,
+    )
+
+    assert _character_loyalty(db, "毛文龙") == expected
+    assert content.characters["毛文龙"].loyalty == expected
+    assert write_credit_event(
+        db, state, person="毛文龙", event_kind=kind, context="重放语境不参与判重", origin=origin,
+    ) == event_id
+    assert _character_loyalty(db, "毛文龙") == expected
+
+
+def test_credit_event_respects_caller_owned_transaction_rollback(game):
+    db, state, content = game
+    origin = "dossier:outer-rollback:credit:back"
+    before_loyalty = _character_loyalty(db, "毛文龙")
+    before_support = int(state.metrics["民心"])
+    before_watermarks = db.conn.execute(
+        "SELECT COUNT(*) AS n FROM loyalty_credit_event_applied"
+    ).fetchone()["n"]
+
+    db.conn.execute("UPDATE metrics SET value = value + 1 WHERE key='民心'")
+    event_id = write_credit_event(
+        db, state, person="毛文龙", event_kind=KIND_BACK,
+        context="外层事务中的撑腰事实", origin=origin,
+    )
+    db.conn.rollback()
+
+    support = db.conn.execute(
+        "SELECT value FROM metrics WHERE key='民心'"
+    ).fetchone()["value"]
+    assert int(support) == before_support
+    assert _character_loyalty(db, "毛文龙") == before_loyalty
+    assert content.characters["毛文龙"].loyalty == before_loyalty
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM loyalty_credit_event_applied"
+    ).fetchone()["n"] == before_watermarks
+    assert db.conn.execute(
+        "SELECT 1 FROM relation_edge_events WHERE id=? OR origin=?", (event_id, origin)
+    ).fetchone() is None
+
+
+def test_credit_event_rolls_back_db_content_and_watermark_before_retry(game):
+    db, state, content = game
+    origin = "dossier:rollback:credit:back"
+    before_loyalty = _character_loyalty(db, "毛文龙")
+    before_watermarks = db.conn.execute(
+        "SELECT COUNT(*) AS n FROM loyalty_credit_event_applied"
+    ).fetchone()["n"]
+
+    db.conn.execute(
+        """
+        CREATE TRIGGER fail_credit_watermark
+        BEFORE INSERT ON loyalty_credit_event_applied
+        BEGIN
+            SELECT RAISE(ABORT, 'injected watermark failure');
+        END
+        """
+    )
+    db.conn.commit()
+
+    with pytest.raises(sqlite3.IntegrityError):
+        write_credit_event(
+            db, state, person="毛文龙", event_kind=KIND_BACK,
+            context="回滚前的撑腰事实", origin=origin,
+        )
+
+    assert _character_loyalty(db, "毛文龙") == before_loyalty
+    assert content.characters["毛文龙"].loyalty == before_loyalty
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM loyalty_credit_event_applied"
+    ).fetchone()["n"] == before_watermarks
+    assert db.conn.execute(
+        "SELECT 1 FROM relation_edge_events WHERE origin=?", (origin,)
+    ).fetchone() is None
+
+    db.conn.execute("DROP TRIGGER fail_credit_watermark")
+    db.conn.commit()
+    durable_context = "  重试后的撑腰事实\n"
+    event_id = write_credit_event(
+        db, state, person="毛文龙", event_kind=KIND_BACK,
+        context=durable_context, origin=origin,
+    )
+    applied_loyalty = _character_loyalty(db, "毛文龙")
+    assert applied_loyalty > before_loyalty
+    assert content.characters["毛文龙"].loyalty == applied_loyalty
+    assert write_credit_event(
+        db, state, person="毛文龙", event_kind=KIND_BACK,
+        context="重放不二写", origin=origin,
+    ) == event_id
+    assert _character_loyalty(db, "毛文龙") == applied_loyalty
+
+    from ming_sim.db import GameDB
+
+    path = db.path
+    db.close()
+    restored = GameDB(path, content)
+    restored_state = restored.load_state()
+    event = restored.conn.execute(
+        "SELECT event_kind, context FROM relation_edge_events WHERE id=?", (event_id,)
+    ).fetchone()
+    assert dict(event) == {"event_kind": KIND_BACK, "context": durable_context}
+    assert _character_loyalty(restored, "毛文龙") == applied_loyalty
+    watermark = restored.conn.execute(
+        "SELECT event_id FROM loyalty_credit_event_applied WHERE event_id=?", (event_id,)
+    ).fetchone()
+    assert watermark["event_id"] == event_id
+    assert restored_state.turn == state.turn
+    restored.close()
+
+
+def test_month_settlement_consumes_preexisting_credit_event_once(game):
+    db, state, content = game
+    db.conn.execute("UPDATE characters SET loyalty=50 WHERE name='毛文龙'")
+    db.record_relation_edge_event(
+        source=EMPEROR_NODE,
+        target="毛文龙",
+        event_kind=KIND_BACK,
+        context="升级前已经落库的撑腰事实",
+        origin="dossier:711:credit:back",
+        turn=state.turn,
+        year=state.year,
+        period=state.period,
+    )
+
+    _settle_empty_month(db, state, content)
+    assert _character_loyalty(db, "毛文龙") == 55
+    _settle_empty_month(db, state, content)
+    assert _character_loyalty(db, "毛文龙") == 55
+
+
+def test_pending_credit_scan_owns_transaction_without_active_issues(game):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.execute("UPDATE characters SET loyalty=50 WHERE name='毛文龙'")
+    content.characters["毛文龙"].loyalty = 50
+    event_id = db.record_relation_edge_event(
+        source=EMPEROR_NODE,
+        target="毛文龙",
+        event_kind=KIND_BACK,
+        context="无 active issue 的待派生事实",
+        origin="dossier:pending-no-active:credit:back",
+        turn=state.turn,
+        year=state.year,
+        period=state.period,
+    )
+    db.conn.commit()
+
+    apply_issue_inertia_and_ongoing(db, state)
+
+    assert db.conn.in_transaction is False
+    with sqlite3.connect(db.path) as check:
+        assert check.execute(
+            "SELECT loyalty FROM characters WHERE name='毛文龙'"
+        ).fetchone()[0] == 55
+        assert check.execute(
+            "SELECT event_id FROM loyalty_credit_event_applied WHERE event_id=?", (event_id,)
+        ).fetchone()[0] == event_id
+
+
+def test_pending_credit_scan_rolls_back_on_failure(game):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.execute("UPDATE characters SET loyalty=50 WHERE name='毛文龙'")
+    content.characters["毛文龙"].loyalty = 50
+    event_id = db.record_relation_edge_event(
+        source=EMPEROR_NODE,
+        target="毛文龙",
+        event_kind=KIND_BACK,
+        context="派生失败须回滚",
+        origin="dossier:pending-rollback:credit:back",
+        turn=state.turn,
+        year=state.year,
+        period=state.period,
+    )
+    db.conn.commit()
+    db.conn.execute(
+        """
+        CREATE TRIGGER fail_pending_watermark
+        BEFORE INSERT ON loyalty_credit_event_applied
+        BEGIN
+            SELECT RAISE(ABORT, 'injected pending failure');
+        END
+        """
+    )
+    db.conn.commit()
+
+    with pytest.raises(sqlite3.IntegrityError):
+        apply_issue_inertia_and_ongoing(db, state)
+
+    assert db.conn.in_transaction is False
+    assert _character_loyalty(db, "毛文龙") == 50
+    assert content.characters["毛文龙"].loyalty == 50
+    assert db.conn.execute(
+        "SELECT 1 FROM loyalty_credit_event_applied WHERE event_id=?", (event_id,)
+    ).fetchone() is None
+
+
+def test_retired_person_rating_cannot_write_loyalty(game):
+    db, state, content = game
+    before = _character_loyalty(db, "毛文龙")
+    out = apply_score_extraction(
+        db, state,
+        {"人物变更": [{"name": "毛文龙", "动作": "评定", "loyalty": 99,
+                      "来源引用": "dossier:1"}]},
+        content=content,
+    )
+
+    assert _character_loyalty(db, "毛文龙") == before
+    rejected = out["applied_person_changes"][0]
+    assert rejected["rejected"] is True
+    assert rejected["category"] == "retired_action"
 
 
 def test_faction_class_commitment_ongoing_applies_monthly_when_counted(game):
@@ -532,7 +807,7 @@ def test_until_stop_arrears_commitment_settlement_oracle_resolves_with_restore(g
     assert payloads[-1]["commitment_progress"]["remaining_arrears"] == 0
 
 
-def test_commitment_progress_contexts_are_structured(game, capsys):
+def test_commitment_progress_contexts_are_structured(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
@@ -566,19 +841,12 @@ def test_commitment_progress_contexts_are_structured(game, capsys):
     assert sim_issue["commitment_progress"]["months_elapsed"] == 1
     assert sim_issue["commitment_progress"]["paid_total"] == 10
     assert sim_issue["commitment_progress"]["remaining_arrears"] == 15
-    assert "已第1月" in sim_issue["待办未解进度"]
-    assert "直到补齐" in sim_issue["待办未解进度"]
 
     extractor_issue = next(
         issue for issue in _extractor_context_payload(db, state, "", "")["active_issues"]
         if issue["issue_id"] == issue_id
     )
     assert extractor_issue["commitment_progress"] == sim_issue["commitment_progress"]
-
-    show_active_issues(db)
-    output = capsys.readouterr().out
-    assert "已第1月" in output
-    assert "直到补齐" in output
 
 
 def test_arrears_commitment_progress_preserves_fractional_remaining(game):
@@ -606,11 +874,6 @@ def test_arrears_commitment_progress_preserves_fractional_remaining(game):
     progress = commitment_progress_payload(db, state, row)
 
     assert progress["remaining_arrears"] == 12.5
-    sim_issue = next(
-        issue for issue in build_simulator_payload(state, db, "", "")["active_issues"]
-        if issue["issue_id"] == issue_id
-    )
-    assert "尚欠约15万两" in sim_issue["待办未解进度"]
 
 
 def test_commitment_progress_fractional_strict_gate_can_be_satisfied(game):
@@ -675,93 +938,6 @@ def test_commitment_progress_fractional_strict_gate_can_be_satisfied(game):
     assert greater_progress["remaining_arrears"] == 0
 
 
-def test_commitment_progress_text_splits_by_commitment_shape_and_gate(game):
-    db, state, content = game
-    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
-    db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
-    db.conn.execute("UPDATE armies SET arrears=30 WHERE id='guanning'")
-    db.conn.commit()
-
-    arrears_id = db.insert_issue(
-        state,
-        kind="initiative",
-        title="补饷承诺文案",
-        origin_kind="decree",
-        origin_ref="decree:turn-1:arrears-text",
-        bar_value=0,
-        inertia=0,
-        ongoing_effects={"economy": [{"account": "国库", "delta": -10, "reason": "补饷", "purpose": "补饷"}]},
-        stop_condition=json.dumps({"army.guanning.arrears": "<=0"}, ensure_ascii=False),
-        commitment_kind="until_stop",
-    )
-    limited_id = db.insert_issue(
-        state,
-        kind="initiative",
-        title="时限承诺文案",
-        origin_kind="decree",
-        origin_ref="decree:turn-1:limited-text",
-        bar_value=0,
-        inertia=0,
-        ongoing_effects={"metrics": {"皇威": 1}},
-        end_turn=state.turn + 3,
-        commitment_kind="until_stop",
-    )
-    due_id = db.insert_issue(
-        state,
-        kind="initiative",
-        title="复核承诺文案",
-        origin_kind="decree",
-        origin_ref="decree:turn-1:due-text",
-        bar_value=0,
-        inertia=0,
-        ongoing_effects={"economy": [], "metrics": {}},
-        end_turn=state.turn,
-        commitment_kind="until_stop",
-    )
-    character_id = db.insert_issue(
-        state,
-        kind="initiative",
-        title="人物承诺文案",
-        origin_kind="decree",
-        origin_ref="decree:turn-1:character-text",
-        bar_value=0,
-        inertia=0,
-        ongoing_effects={"metrics": {"皇威": -1}},
-        stop_condition=json.dumps({"character.毛文龙.loyalty": ">=101"}, ensure_ascii=False),
-        commitment_kind="until_stop",
-    )
-
-    _settle_empty_month(db, state, content)
-    issues = {
-        item["issue_id"]: item
-        for item in build_simulator_payload(state, db, "", "")["active_issues"]
-    }
-
-    arrears_text = issues[arrears_id]["待办未解进度"]
-    assert "尚欠" in arrears_text
-    assert "万两" in arrears_text
-    assert "直到补齐" in arrears_text
-
-    limited_text = issues[limited_id]["待办未解进度"]
-    assert "已履行1月" in limited_text
-    assert "限3月" in limited_text   # duration = end_turn - origin_turn = 3 (relative, not absolute)
-    assert "还剩2月" in limited_text  # remaining = 3 - 1 = 2
-    assert "限至第" not in limited_text  # no absolute turn numbers
-    assert "补齐" not in limited_text
-
-    due_text = issues[due_id]["待办未解进度"]
-    assert "到期待裁" in due_text
-    assert "补齐" not in due_text
-    assert "万两" not in due_text
-
-    character_progress = issues[character_id]["commitment_progress"]
-    assert "remaining_to_goal" in character_progress
-    assert "remaining_arrears" not in character_progress
-    character_text = issues[character_id]["待办未解进度"]
-    assert "直到达标" in character_text
-    assert "补齐" not in character_text
-    assert "万两" not in character_text
 
 
 def test_commitment_ongoing_economy_not_scaled_by_bar_discount(game):

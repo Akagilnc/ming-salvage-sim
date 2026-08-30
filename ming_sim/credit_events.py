@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import re
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
@@ -55,79 +56,6 @@ _PUNISH_STATUSES = frozenset({
 })
 _DOSSIER_REF_RE = re.compile(r"^dossier:([1-9][0-9]*)$")
 _ISSUE_REF_RE = re.compile(r"^issue:([1-9][0-9]*)$")
-
-# 玩家可见面禁词（内部 origin 片段 + 机读键；全族终验归 #629）
-CREDIT_BANNED_PLAYER_TOKENS = (
-    "credit:fulfill",
-    "credit:back",
-    "credit:scapegoat",
-    "credit:cover",
-    "credit:grant_grace",
-    "credit:reject_grace",
-    "credit:reject_remonstrance",
-    "scapegoat_actor_kind",
-    "credit_events",
-    "CREDIT_EDGE_KINDS",
-)
-
-# 扫描面清单（与 #624/#622 同形；#629 收口全族）
-CREDIT_BANNED_SCAN_SURFACES = (
-    "scene_text",
-    "narrative",
-    "turn_report",
-    "knowledge_items",
-    "memorial_text",
-    "origin_context",
-    "criterion_text",
-)
-
-# 根基档/哭谏通道系统词（#623 场面投影剥离；#629 并入全族）
-FOUNDATION_BANNED_PLAYER_TOKENS = (
-    "foundation_tier",
-    "assess_foundation_tier",
-    "just_started",
-    "halfway",
-    "rooted",
-    "midcourse_breach_plea",
-)
-
-
-def _family_p4_banned_tokens() -> tuple[str, ...]:
-    """全族 P4 禁词并集——变形/真伪底/信用事件/钝化/根基档。"""
-    from ming_sim.commitment_backlash import BACKLASH_BANNED_PLAYER_TOKENS
-    from ming_sim.decree_vocabulary import (
-        DEFORMATION_BANNED_PLAYER_TOKENS,
-        URGE_TRUTH_BANNED_PLAYER_TOKENS,
-    )
-    from ming_sim.supervision import SUPERVISION_BANNED_PLAYER_TOKENS
-
-    ordered: list[str] = []
-    seen: set[str] = set()
-    for token in (
-        *DEFORMATION_BANNED_PLAYER_TOKENS,
-        *URGE_TRUTH_BANNED_PLAYER_TOKENS,
-        *SUPERVISION_BANNED_PLAYER_TOKENS,
-        *CREDIT_BANNED_PLAYER_TOKENS,
-        *BACKLASH_BANNED_PLAYER_TOKENS,
-        *FOUNDATION_BANNED_PLAYER_TOKENS,
-    ):
-        if token in seen:
-            continue
-        seen.add(token)
-        ordered.append(token)
-    return tuple(ordered)
-
-
-FAMILY_P4_BANNED_PLAYER_TOKENS = _family_p4_banned_tokens()
-
-
-def assert_no_family_p4_banned_tokens(text: object, *, surface: str) -> None:
-    """#629 全族 P4 哨兵：七扫描面共用。"""
-    raw = str(text or "")
-    for token in FAMILY_P4_BANNED_PLAYER_TOKENS:
-        if token in raw:
-            raise AssertionError(f"{surface} 裸露禁词：{token!r}")
-
 
 def scapegoat_actor_kind_from_origin(origin: object) -> Optional[str]:
     """方案 b 消费侧契约：由 origin 类型机械派生施弃方∈{皇帝,党魁}。
@@ -199,6 +127,72 @@ def _existing_edge_id(
     return int(row["id"]) if row is not None else None
 
 
+def _loyalty_delta(current: int, event_kind: str) -> int:
+    """ADR 0104 首版惯性：越接近铁杆端越难移动，四类共用同一尺度。"""
+    sign = 1 if event_kind in {KIND_FULFILL, KIND_BACK} else -1
+    magnitude = max(1, round(10 * (100 - max(0, min(100, current))) / 100))
+    return sign * magnitude
+
+
+def derive_loyalty_from_credit_event(db: Any, event_id: int) -> Optional[Dict[str, object]]:
+    """消费一条 0079 事件；event id 是唯一幂等键，缺结构判别时 fail-closed。"""
+    event = db.conn.execute(
+        "SELECT * FROM relation_edge_events WHERE id=?", (int(event_id),)
+    ).fetchone()
+    if event is None or str(event["event_kind"]) not in _WRITE_KINDS:
+        return None
+    if db.conn.execute(
+        "SELECT 1 FROM loyalty_credit_event_applied WHERE event_id=?", (int(event_id),)
+    ).fetchone() is not None:
+        return None
+    kind = str(event["event_kind"])
+    if kind == KIND_SCAPEGOAT and scapegoat_actor_kind_from_origin(event["origin"]) != "皇帝":
+        return None
+    person = str(event["target"] if event["source"] == EMPEROR_NODE else event["source"])
+    row = db.conn.execute(
+        "SELECT loyalty FROM characters WHERE name=?", (person,)
+    ).fetchone()
+    if row is None:
+        return None
+    old = int(row["loyalty"])
+    requested = _loyalty_delta(old, kind)
+    new = max(0, min(100, old + requested))
+    delta = new - old
+    db.conn.execute("UPDATE characters SET loyalty=? WHERE name=?", (new, person))
+    content = getattr(db, "content", None)
+    if content is not None and person in content.characters:
+        from ming_sim.applier import register_runtime_outcome_callbacks
+
+        character = content.characters[person]
+        old_runtime_loyalty = character.loyalty
+        character.loyalty = new
+        register_runtime_outcome_callbacks(
+            db,
+            on_rollback=lambda: setattr(character, "loyalty", old_runtime_loyalty),
+        )
+    db.conn.execute(
+        "INSERT INTO loyalty_credit_event_applied(event_id) VALUES(?)",
+        (int(event_id),),
+    )
+    return {"event_id": int(event_id), "name": person, "old_loyalty": old,
+            "new_loyalty": new, "delta": delta}
+
+
+def derive_pending_loyalty_from_credit_events(db: Any) -> List[Dict[str, object]]:
+    """恢复/升级后接续：消费事件薄中尚未落幂等水位的既有信用事件。"""
+    rows = db.conn.execute(
+        """
+        SELECT e.id FROM relation_edge_events e
+        LEFT JOIN loyalty_credit_event_applied a ON a.event_id=e.id
+        WHERE a.event_id IS NULL AND e.event_kind IN (?,?,?,?)
+        ORDER BY e.id
+        """,
+        (KIND_FULFILL, KIND_BETRAY, KIND_BACK, KIND_SCAPEGOAT),
+    ).fetchall()
+    return [result for row in rows
+            if (result := derive_loyalty_from_credit_event(db, int(row["id"]))) is not None]
+
+
 def write_credit_event(
     db: Any,
     state: Any,
@@ -211,13 +205,13 @@ def write_credit_event(
     """四字段薄记录写口：方向由 CREDIT_DIRECTION 决定，落 record_relation_edge_event。"""
     person = str(person or "").strip()
     kind = str(event_kind or "").strip()
-    context = str(context or "").strip()
+    context = str(context or "")
     origin = str(origin or "").strip()
     if not person:
         raise ValueError("信用事件缺少当事人")
     if kind not in _WRITE_KINDS:
         raise ValueError(f"非本片信用事件类目: {kind!r}")
-    if not context:
+    if not context.strip():
         raise ValueError("信用事件语境不能为空")
     if not origin:
         raise ValueError("信用事件 origin 不能为空")
@@ -226,23 +220,30 @@ def write_credit_event(
         source, target = EMPEROR_NODE, person
     else:
         source, target = person, EMPEROR_NODE
-    existing = _existing_edge_id(
-        db, source=source, target=target, event_kind=kind, origin=origin,
-    )
-    if existing is not None:
-        return existing
-    return int(
-        db.record_relation_edge_event(
-            source=source,
-            target=target,
-            event_kind=kind,
-            context=context,
-            origin=origin,
-            turn=int(state.turn),
-            year=int(state.year),
-            period=int(state.period),
+    from ming_sim.applier import atomic
+
+    transaction = atomic(db) if db.owns_transaction() else contextlib.nullcontext()
+    with transaction:
+        existing = _existing_edge_id(
+            db, source=source, target=target, event_kind=kind, origin=origin,
         )
-    )
+        if existing is not None:
+            derive_loyalty_from_credit_event(db, existing)
+            return existing
+        event_id = int(
+            db.record_relation_edge_event(
+                source=source,
+                target=target,
+                event_kind=kind,
+                context=context,
+                origin=origin,
+                turn=int(state.turn),
+                year=int(state.year),
+                period=int(state.period),
+            )
+        )
+        derive_loyalty_from_credit_event(db, event_id)
+        return event_id
 
 
 def _sponsor_names(db: Any, dossier_id: int) -> List[str]:

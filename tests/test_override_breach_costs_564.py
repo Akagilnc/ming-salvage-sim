@@ -170,10 +170,19 @@ def test_force_then_breach_charges_each_real_entry_independently(game):
     authority = state.metrics["皇威"]
     db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
     after_force = _sat(db, "factions", "东林")
+    loyalty_before = db.conn.execute(
+        "SELECT loyalty FROM characters WHERE name='倪元璐'"
+    ).fetchone()["loyalty"]
 
     assert db.breach_decree_dossier(state, dossier_id, reason="撤回成命") is True
     assert state.metrics["皇威"] == max(0, authority - 10)
     assert _sat(db, "factions", "东林") == max(0, after_force - 4)
+    assert db.conn.execute(
+        "SELECT loyalty FROM characters WHERE name='倪元璐'"
+    ).fetchone()["loyalty"] < loyalty_before
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM loyalty_credit_event_applied"
+    ).fetchone()["n"] == 1
     authority_events = [
         row for row in _cost_events(db, dossier_id)
         if row["cost_kind"] == "authority"

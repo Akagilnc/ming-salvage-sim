@@ -94,7 +94,14 @@ class _SettlementGame:
     def state_payload(self):
         return {
             "extraction": {"economy_moves": [{"account": "国库", "delta": -20}]},
-            "character": {"loyalty": 88, "ability": 77, "integrity": 66, "courage": 55},
+            "character": {
+                "loyalty": 88,
+                "ability": 77,
+                "integrity": 66,
+                "courage": 55,
+                "identity": 44,
+                "intrigue": 33,
+            },
         }
 
 
@@ -141,7 +148,10 @@ def test_settlement_sse_routes_serialize_only_player_narrative(
         elif isinstance(value, list):
             pending.extend(value)
     assert not (
-        {"state", "extraction", "extractor_output", "character", "loyalty", "ability", "integrity", "courage"}
+        {
+            "state", "extraction", "extractor_output", "character",
+            "loyalty", "ability", "integrity", "courage", "identity", "intrigue",
+        }
         & structured_keys
     )
 
@@ -170,4 +180,7 @@ def test_cli_skill_card_command_uses_qualitative_character_bands(capsys, monkeyp
     assert "能力才具出众" in rendered
     assert "清廉操守清正" in rendered
     assert "胆略进退审慎" in rendered
-    assert all(raw not in rendered for raw in ("忠诚88", "能力77", "清廉66", "胆略55"))
+    assert all(
+        raw not in rendered
+        for raw in ("忠诚88", "能力77", "清廉66", "胆略55")
+    )

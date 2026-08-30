@@ -10,7 +10,7 @@ import json
 import math
 import re
 import sqlite3
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from ming_sim.applier import atomic
@@ -475,6 +475,17 @@ def _commitment_stop_gate(row: sqlite3.Row) -> Dict[str, str]:
     return _legacy_commitment_stop_gate(row["resolve_condition"] if "resolve_condition" in keys else "")
 
 
+def _person_loyalty_gate(gate: object) -> str:
+    """Return the sole character named by a typed loyalty gate, otherwise fail closed."""
+    if not isinstance(gate, dict) or len(gate) != 1:
+        return ""
+    key, condition = next(iter(gate.items()))
+    match = re.fullmatch(r"character\.([^.]+)\.loyalty", str(key).strip())
+    if not match or not re.fullmatch(r"(?:>=|>)\s*-?\d+", str(condition or "").strip()):
+        return ""
+    return match.group(1).strip()
+
+
 def _commitment_remaining_from_gate(
     gate: Dict[str, str],
     state: GameState,
@@ -883,24 +894,14 @@ def _invalid_monthly_person_rating_reason(effect: Dict[str, object]) -> str:
         for item in raw:
             if not isinstance(item, dict):
                 continue
-            name = str(item.get("name") or item.get("人物") or "").strip()
             action = str(item.get("动作") or item.get("action") or "").strip()
-            if not name or action != "评定":
-                continue
-            loyalty = item.get("loyalty")
-            if isinstance(loyalty, bool) or not isinstance(loyalty, int) or loyalty == 0:
-                return f"{key}.评定 loyalty 须为非零整数增量"
+            if action == "评定":
+                return f"{key}.评定 已退役；新承诺须使用 typed loyalty stop_condition"
     raw_character = effect.get("character")
-    if isinstance(raw_character, list):
-        for item in raw_character:
-            if not isinstance(item, dict):
-                continue
-            name = str(item.get("name") or item.get("人物") or "").strip()
-            if not name or "loyalty" not in item:
-                continue
-            loyalty = item.get("loyalty")
-            if isinstance(loyalty, bool) or not isinstance(loyalty, int) or loyalty == 0:
-                return "character.loyalty 须为非零整数增量"
+    if isinstance(raw_character, list) and any(
+        isinstance(item, dict) and "loyalty" in item for item in raw_character
+    ):
+        return "character.loyalty 已退役；新承诺须使用 typed loyalty stop_condition"
     return ""
 
 
@@ -1018,28 +1019,42 @@ def _apply_monthly_ongoing_entities(
             applied["power_updates"] = applied_power
         rejections.extend(item for item in power_changes if item.get("rejected"))
 
-    person_changes = _monthly_person_rating_changes(effect)
-    if person_changes:
-        effective_content = content if content is not None else _ctx()
-        results = _apply_person_changes(
-            db,
-            state,
-            person_changes,
-            content=effective_content,
-            registry=registry,
-            llm_config=llm_config,
-            source="system_simulation",
-            derived_from=label,
-            origin_ref=origin_ref,
-        )
-        applied_people = [item for item in results if not item.get("rejected")]
-        if applied_people:
-            applied["人物变更"] = applied_people
-        rejections.extend(item for item in results if item.get("rejected"))
-        if applied_person_changes is not None:
-            applied_person_changes.extend(results)
-
     return applied, rejections
+
+
+def _apply_appease_commitment_credit(
+    db: GameDB, state: GameState, row: sqlite3.Row, ongoing: Dict[str, object], origin_ref: str,
+) -> Dict[str, object] | None:
+    """Migrate one active appeasement promise through the credit-event write seam."""
+    gate = _commitment_stop_gate(row)
+    person = _person_loyalty_gate(gate)
+    current = bool(str(row["commitment_kind"] or "").strip())
+    legacy = not current and bool(_legacy_commitment_stop_gate(row["resolve_condition"]))
+    legacy_changes = _monthly_person_rating_changes(ongoing) if legacy else []
+    if not person or (legacy and not legacy_changes):
+        return None
+    if current:
+        candidates = (row["stage_text"], row["title"])
+    else:
+        reasons = (
+            item.get("reason")
+            for item in legacy_changes
+            if str(item.get("name") or "").strip() == person
+        )
+        candidates = (*reasons, row["stage_text"], row["title"])
+    context = next(
+        (value for value in candidates if str(value or "").strip()),
+        "",
+    )
+    if not context:
+        return None
+    from ming_sim.credit_events import KIND_BACK, write_credit_event
+    edge_id = write_credit_event(
+        db, state, person=person, event_kind=KIND_BACK,
+        context=context,
+        origin=f"{origin_ref}:credit:appease:{int(state.turn)}:{person}",
+    )
+    return {"name": person, "动作": "信用事件", "event_kind": KIND_BACK, "edge_id": edge_id}
 
 
 def _resolve_commitment_issue(
@@ -5589,7 +5604,11 @@ def apply_issue_tracker_output(
                     origin_turn=int(state.turn),
                 )
                 has_stages = bool(stages_for_commitment)
-                if not ongoing_has_work and end_turn_for_commitment <= 0 and not has_stages:
+                typed_appease_gate = (
+                    bool(commitment_kind)
+                    and _person_loyalty_gate(stop_condition_raw)
+                )
+                if not ongoing_has_work and end_turn_for_commitment <= 0 and not has_stages and not typed_appease_gate:
                     raise ValueError("ongoing_effects、end_turn 或 stages 至少一项必填")
                 if stop_condition_raw in (None, "", {}):
                     if end_turn_for_commitment <= 0 and not ongoing_has_work and not has_stages:
@@ -6709,42 +6728,11 @@ def _apply_person_changes(
                 name = canon
 
         if action == "评定":
-            if content is not None and name not in content.characters:
-                applied.append(rejected(item, "非既有人物", "hallucinated_id"))
-                continue
-            row = db.conn.execute(
-                "SELECT name, loyalty FROM characters WHERE name=?", (name,)
-            ).fetchone()
-            if row is None:
-                applied.append(rejected(item, "非既有人物", "hallucinated_id"))
-                continue
-            raw_delta = item.get("loyalty")
-            if isinstance(raw_delta, bool) or not isinstance(raw_delta, int) or raw_delta == 0:
-                applied.append(rejected(item, "评定 loyalty 须为非零整数增量", "invalid_enum"))
-                continue
-            old_loyalty = int(row["loyalty"])
-            new_loyalty = max(0, min(100, old_loyalty + raw_delta))
-            origin_error = origin_rejected(item)
-            if origin_error:
-                applied.append(origin_error)
-                continue
-            db.conn.execute(
-                "UPDATE characters SET loyalty=? WHERE name=?",
-                (new_loyalty, name),
-            )
-            if content is not None and name in content.characters:
-                content.characters[name].loyalty = new_loyalty
-            result = {
-                "name": name,
-                "动作": action,
-                "loyalty": raw_delta,
-                "old_loyalty": old_loyalty,
-                "new_loyalty": new_loyalty,
-                "reason": str(item.get("reason") or ""),
-            }
-            applied.append(result)
-            log_applied(result, item, commit=False)
-            needs_person_change_commit = True
+            applied.append(rejected(
+                item,
+                "评定动作已退役；loyalty 只由信用事件机械派生",
+                "retired_action",
+            ))
             continue
 
         if action == "性情":
@@ -9563,6 +9551,23 @@ def apply_issue_inertia_and_ongoing(
     touched_ids: Optional[set] = None,
     applied_person_changes: Optional[List[Dict[str, object]]] = None,
 ) -> List[Dict[str, object]]:
+    owns_transaction = db.owns_transaction()
+    transaction = atomic(db) if owns_transaction else nullcontext()
+    with transaction:
+        return _apply_issue_inertia_and_ongoing_in_transaction(
+            db,
+            state,
+            touched_ids=touched_ids,
+            applied_person_changes=applied_person_changes,
+        )
+
+
+def _apply_issue_inertia_and_ongoing_in_transaction(
+    db: GameDB,
+    state: GameState,
+    touched_ids: Optional[set] = None,
+    applied_person_changes: Optional[List[Dict[str, object]]] = None,
+) -> List[Dict[str, object]]:
     """返回 inertia 自然结案路产生的容忍拒收项——settle 在 inertia 之后补收进
     收集器(桥接跑在 inertia 前,只 tlog 等于这条路脱离 rejection_reports 管线,
     与 tracker-close 路同输入两判;ship-pre r1)。"""
@@ -9570,8 +9575,10 @@ def apply_issue_inertia_and_ongoing(
     # advance 的 delta_bar 是皇帝本月实旨推动的额外量，与 inertia 叠加，互不顶替。
     _ = touched_ids  # 保留入参不破坏调用方；inertia 漂移不再按它跳过
     inertia_rejections: List[Dict[str, object]] = []
+    from ming_sim.credit_events import derive_pending_loyalty_from_credit_events
+    derive_pending_loyalty_from_credit_events(db)
     active = db.list_active_issues()
-    commit_local = not bool(getattr(db.conn, "in_transaction", False))
+    commit_local = False
     # 累计单月 metric 落账，用于上限 clamp
     period_metric_acc: Dict[str, int] = {}
 
@@ -9652,7 +9659,14 @@ def apply_issue_inertia_and_ongoing(
                 bar = int(row["bar_value"])
 
         ongoing = loads_effect_dict(row["ongoing_effects"])
-        ongoing_has_work = _monthly_ongoing_effects_has_work(ongoing)
+        appease_person = _person_loyalty_gate(_commitment_stop_gate(row))
+        legacy_appease = (
+            not str(row["commitment_kind"] or "").strip()
+            and bool(appease_person)
+            and bool(_monthly_person_rating_changes(ongoing))
+        )
+        current_appease = bool(str(row["commitment_kind"] or "").strip() and appease_person)
+        ongoing_has_work = _monthly_ongoing_effects_has_work(ongoing) or current_appease or legacy_appease
         if is_commitment:
             stop_gate = _commitment_stop_gate(row)
             if stop_gate and _gate_passed(stop_gate, state.metrics, db):
@@ -9672,7 +9686,7 @@ def apply_issue_inertia_and_ongoing(
         metric_part: Dict[str, int] = {}
         economy_part: List[Dict[str, object]] = []
         applied_monthly_parts: Dict[str, object] = {}
-        if _monthly_ongoing_effects_has_work(ongoing):
+        if ongoing_has_work:
             if parent_origin_ref is None:
                 parent_origin_ref = _canonical_issue_origin(db, row)
             # 折扣系数：bar 越高（越好）越少扣
@@ -9748,6 +9762,12 @@ def apply_issue_inertia_and_ongoing(
                 applied_person_changes=applied_person_changes,
                 origin_ref=parent_origin_ref,
             )
+            if current_appease or legacy_appease:
+                credit = _apply_appease_commitment_credit(db, state, row, ongoing, parent_origin_ref)
+                if credit:
+                    applied_monthly_parts["人物变更"] = [credit]
+                    if applied_person_changes is not None:
+                        applied_person_changes.append(credit)
             issue_monthly_rejections.extend(monthly_rejections)
             inertia_rejections.extend(monthly_rejections)
         else:

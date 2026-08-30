@@ -746,7 +746,7 @@ def build_simulator_payload(
         # web visible_in_court 同口径；宗室就藩非朝堂命官 PR#121；诸生待铨非在朝命官）。
         # #613：任别进盘面简报（character_offices；缺档按真除）。
         "SELECT c.name,c.office,c.office_type,c.faction,c.status,c.power_id,c.location,"
-        "c.transit_to,c.loyalty,c.ability,c.integrity,c.courage,c.identity,"
+        "c.transit_to,c.loyalty,c.ability,c.integrity,c.courage,c.identity,c.intrigue,"
         "COALESCE(co.appointment_tenure, '真除') AS appointment_tenure "
         "FROM characters c "
         "LEFT JOIN character_offices co ON co.character_name=c.name "
@@ -755,7 +755,7 @@ def build_simulator_payload(
     ).fetchall():
         raw = dict(row)
         raw.update(qualitative_character_axes(SimpleNamespace(**raw)))
-        for field in ("loyalty", "ability", "integrity", "courage", "identity"):
+        for field in ("loyalty", "ability", "integrity", "courage", "identity", "intrigue"):
             raw.pop(field)
         court_rows.append(raw)
     court_roster = _auto_table(court_rows)

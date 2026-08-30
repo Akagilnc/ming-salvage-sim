@@ -958,6 +958,8 @@ class GameDB:
                 transit_speed_factor REAL,
                 transit_start_turn INTEGER NOT NULL DEFAULT 0,
                 identity INTEGER NOT NULL DEFAULT 50,
+                intrigue INTEGER NOT NULL,
+                defected_from TEXT,
                 seed_guilt TEXT NOT NULL DEFAULT ''
             );
 
@@ -2142,6 +2144,12 @@ class GameDB:
 
             CREATE INDEX IF NOT EXISTS idx_relation_edges_person
             ON relation_edge_events(source, target, event_kind, id);
+
+            -- #702 / ADR 0104：信用事件→人物忠诚派生的 event-id 幂等水位。
+            -- 事件本身仍是唯一业务真源；本表只记录已消费身份，禁止承载第二份事件值。
+            CREATE TABLE IF NOT EXISTS loyalty_credit_event_applied (
+                event_id INTEGER PRIMARY KEY REFERENCES relation_edge_events(id)
+            );
 
             -- #636 关系摘要层 S5：两段式摘要（奠基段机械只增不改＋近况段整段重酿，ID-9）。
             -- 零数值强度字段（P4/ADR 0083）；结构字段首发集＝有向关系对、维度标记、
@@ -3749,10 +3757,10 @@ class GameDB:
                 self.conn.execute(
                     """
                     INSERT INTO characters
-                    (name, office, office_type, faction, aliases, personal_skills, loyalty, ability, integrity, courage, style, identity, seed_guilt,
+                    (name, office, office_type, faction, aliases, personal_skills, loyalty, ability, integrity, courage, style, identity, intrigue, defected_from, seed_guilt,
                      birth_year, historical_death_year, historical_death_month, debut_year, debut_month,
                      status, status_reason, reason_code, status_changed_turn, portrait_id, power_id, location, transit_to, summary)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         character.name,
@@ -3767,6 +3775,8 @@ class GameDB:
                         character.courage,
                         character.style,
                         character.identity,
+                        character.intrigue,
+                        character.defected_from,
                         _seed_guilt_storage_value(character.seed_guilt),
                         character.birth_year,
                         character.historical_death_year,
@@ -5300,14 +5310,14 @@ class GameDB:
             office_type = infer_office_type_from_office(office, character.office_type, self.llm_config, use_llm=False)
             self.conn.execute(
                 """INSERT OR IGNORE INTO characters
-                   (name, office, office_type, faction, aliases, personal_skills, loyalty, ability, integrity, courage, style, identity, seed_guilt,
+                   (name, office, office_type, faction, aliases, personal_skills, loyalty, ability, integrity, courage, style, identity, seed_guilt, intrigue, defected_from,
                     birth_year, historical_death_year, historical_death_month, debut_year, debut_month, status, status_reason, reason_code, status_changed_turn,
                     portrait_id, power_id, location, transit_to, summary)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)""",
                 (character.name, office, office_type, character.faction,
                  json.dumps(character.aliases, ensure_ascii=False), json.dumps(character.personal_skills, ensure_ascii=False),
                  character.loyalty, character.ability, character.integrity, character.courage, character.style,
-                 character.identity, _seed_guilt_storage_value(character.seed_guilt), character.birth_year, character.historical_death_year,
+                 character.identity, _seed_guilt_storage_value(character.seed_guilt), character.intrigue, character.defected_from, character.birth_year, character.historical_death_year,
                  character.historical_death_month, character.debut_year, character.debut_month, character.status,
                  character.status_reason, character.reason_code,
                  character.portrait_id, character.power_id, character.location, character.transit_to, character.summary),
@@ -6437,10 +6447,10 @@ class GameDB:
         self.conn.execute(
             """
             INSERT INTO characters
-            (name, office, office_type, faction, aliases, personal_skills, loyalty, ability, integrity, courage, style, identity, seed_guilt,
+            (name, office, office_type, faction, aliases, personal_skills, loyalty, ability, integrity, courage, style, identity, intrigue, defected_from, seed_guilt,
              birth_year, historical_death_year, historical_death_month, debut_year, debut_month,
              status, status_reason, status_changed_turn, portrait_id, power_id, location, transit_to, summary)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 character.name,
@@ -6455,6 +6465,8 @@ class GameDB:
                 character.courage,
                 character.style,
                 character.identity,
+                character.intrigue,
+                character.defected_from,
                 _seed_guilt_storage_value(character.seed_guilt),
                 character.birth_year,
                 character.historical_death_year,
@@ -16387,10 +16399,10 @@ class GameDB:
                 if str(row["status"]) == "dead":
                     logging.getLogger(__name__).warning("跳过已故参与者%s", person)
                     continue
-                self.record_relation_edge_event(
-                    source="皇帝", target=person, event_kind="辜负", context=reason,
-                    origin=f"dossier:{dossier_id}:breach", turn=state.turn,
-                    year=state.year, period=state.period,
+                from ming_sim.credit_events import KIND_BETRAY, write_credit_event
+                write_credit_event(
+                    self, state, person=person, event_kind=KIND_BETRAY, context=reason,
+                    origin=f"dossier:{dossier_id}:breach",
                 )
             registered_factions = {
                 str(row["name"])
