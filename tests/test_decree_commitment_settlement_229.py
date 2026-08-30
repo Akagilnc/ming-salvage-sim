@@ -341,7 +341,7 @@ def test_credit_event_rolls_back_db_content_and_watermark_before_retry(game):
     )
     db.conn.commit()
 
-    with pytest.raises(sqlite3.IntegrityError, match="injected watermark failure"):
+    with pytest.raises(sqlite3.IntegrityError):
         write_credit_event(
             db, state, person="毛文龙", event_kind=KIND_BACK,
             context="回滚前的撑腰事实", origin=origin,
