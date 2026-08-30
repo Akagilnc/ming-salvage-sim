@@ -5,9 +5,11 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from fastapi.testclient import TestClient
 
 import web_app
 from ming_sim.models import LLMConfig
+from tests.http_test_support import run_to_terminal
 
 
 def test_runtime_cli_slot_builds_cli_llm_config_without_backend_env(monkeypatch):
@@ -989,6 +991,113 @@ def test_continue_load_save_reset_reach_hud_zero_llm_calls(tmp_path, monkeypatch
             cont.session.close()
         except Exception:
             pass
+
+
+@pytest.mark.parametrize("op", ["load", "reset"])
+def test_hot_replace_http_success_reopens_state_and_writes(tmp_path, monkeypatch, op):
+    db_path = tmp_path / "ming.db"
+    monkeypatch.setenv("MING_SIM_DB", str(db_path))
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
+    runtime = web_app.WebGame(fresh=True)
+    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
+    saved_marker, live_marker, write_minister = list(runtime.content.characters)[:3]
+    runtime.favorites = {saved_marker}
+    runtime.db.kv_set("favorites", json.dumps(sorted(runtime.favorites), ensure_ascii=False))
+    if op == "load":
+        from ming_sim import audience_extraction
+        from tests.test_audience_extraction_501 import (
+            _minister,
+            _open_night_with_persisted_reply,
+        )
+
+        _open_night_with_persisted_reply(
+            runtime.db, runtime.state, _minister(runtime.db, runtime.content),
+        )
+        assert runtime.db.list_unextracted_replies()
+        monkeypatch.setattr(
+            audience_extraction, "extract_story_facts", lambda *_a, **_k: [],
+        )
+    runtime.save_to("before")
+    if op == "load":
+        runtime.favorites = {live_marker}
+        runtime.db.kv_set("favorites", json.dumps(sorted(runtime.favorites), ensure_ascii=False))
+
+    path = "/api/saves/before/load" if op == "load" else "/api/game/reset"
+    response = run_to_terminal(lambda: TestClient(web_app.app).post(path))
+    assert response.status_code == 200
+    state = TestClient(web_app.app).get("/api/game/state")
+    assert state.status_code == 200
+    assert "turn" in state.json()
+    write = TestClient(web_app.app).post(f"/api/favorites/{write_minister}")
+    assert write.status_code == 200
+    favorites = write.json()["favorites"]
+    assert write_minister in favorites
+    if op == "load":
+        assert saved_marker in favorites
+        assert live_marker not in favorites
+        runtime._runtime_write_queue().barrier(lambda: None)
+        assert runtime.db.list_unextracted_replies() == []
+    else:
+        assert saved_marker not in favorites
+    runtime.session.close()
+
+
+@pytest.mark.parametrize("op", ["load", "reset"])
+@pytest.mark.parametrize("failure", ["candidate", "backup"])
+def test_hot_replace_http_failure_keeps_old_state_and_writes_usable(
+    tmp_path, monkeypatch, op, failure,
+):
+    db_path = tmp_path / "ming.db"
+    monkeypatch.setenv("MING_SIM_DB", str(db_path))
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
+    runtime = web_app.WebGame(fresh=True)
+    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
+    saved_marker, live_marker, write_minister = list(runtime.content.characters)[:3]
+    runtime.favorites = {saved_marker}
+    runtime.db.kv_set("favorites", json.dumps(sorted(runtime.favorites), ensure_ascii=False))
+    runtime.save_to("before")
+    if op == "load":
+        runtime.favorites = {live_marker}
+        runtime.db.kv_set("favorites", json.dumps(sorted(runtime.favorites), ensure_ascii=False))
+    old_turn = runtime.state.turn
+
+    if failure == "candidate":
+        real_session = web_app.GameSession
+        attempts = 0
+
+        def fail_first_candidate(*args, **kwargs):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise RuntimeError("candidate sentinel")
+            return real_session(*args, **kwargs)
+
+        monkeypatch.setattr(web_app, "GameSession", fail_first_candidate)
+    else:
+        monkeypatch.setattr(
+            runtime.db, "backup_to",
+            lambda _path: (_ for _ in ()).throw(RuntimeError("backup sentinel")),
+        )
+
+    path = "/api/saves/before/load" if op == "load" else "/api/game/reset"
+    response = run_to_terminal(lambda: TestClient(web_app.app).post(path))
+    assert response.status_code == 500
+    state = TestClient(web_app.app).get("/api/game/state")
+    assert state.status_code == 200
+    assert state.json()["turn"]["turn"] == old_turn
+    write = TestClient(web_app.app).post(f"/api/favorites/{write_minister}")
+    assert write.status_code == 200
+    favorites = write.json()["favorites"]
+    expected_marker = live_marker if op == "load" else saved_marker
+    rejected_marker = saved_marker if op == "load" else live_marker
+    assert expected_marker in favorites
+    assert rejected_marker not in favorites
+    assert write_minister in favorites
+    runtime.session.close()
 
 
 def test_menu_save_llm_api_channel_rejects_placeholder_existing_key(monkeypatch):
