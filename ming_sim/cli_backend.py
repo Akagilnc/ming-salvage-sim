@@ -2444,7 +2444,8 @@ def extract_draft_intent(
             if action != "grant_allocation":
                 target_kind = _coerce_draft_target_kind(target_kind)
             locality_checks.append((
-                action, target_kind, target_id, mechanical["locality_scope"],
+                len(drafts), action, target_kind, target_id,
+                mechanical["locality_scope"],
             ))
             # #653：pay_order_override 结构化载荷（entries）随草案整道转交，
             # 成案点/物化点共 prepare_pay_order_entries 同一验形。
@@ -2473,9 +2474,9 @@ def extract_draft_intent(
         }
         if not drafts:
             return extracted_result
-        for index, (
-            action, target_kind, target_id, locality_scope,
-        ) in enumerate(locality_checks):
+        for (
+            index, action, target_kind, target_id, locality_scope,
+        ) in locality_checks:
             _validate_extracted_locality(
                 db=db, content=content, action_type=action,
                 target_kind=target_kind, target_id=target_id,
