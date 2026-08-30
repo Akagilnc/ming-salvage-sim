@@ -1,4 +1,5 @@
 import React, { act } from "react";
+import { readFileSync } from "node:fs";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AudienceArchiveModal } from "./audienceArchiveModal";
@@ -10,6 +11,7 @@ import { ReportModal } from "./reportModal";
 import { parseLeadingStageDirection } from "../format";
 import type { BudgetAccount, ChatMessage, GameState, Minister, PendingActionFailure, Suggestion } from "../types";
 import { chatReducer, type ChatAction } from "../mindreading";
+import { measureElectronLayout } from "../testSupport/electronLayout";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -17,6 +19,9 @@ import { chatReducer, type ChatAction } from "../mindreading";
 // FAILED assertion (which aborts the test body before any inline cleanup) can never
 // leak a mounted React root into the next test (gemini cmr r1).
 const mountedRoots: Array<{ root: Root; host: HTMLElement }> = [];
+const EDICT_LAYOUT_CSS = ["base", "court", "modals", "edict", "modal-theme", "situation"]
+  .map((name) => readFileSync(`${process.cwd()}/src/styles/${name}.css`, "utf8"))
+  .join("\n");
 
 const MINISTER_MOCK: Minister = {
   name: "周延儒",
@@ -263,6 +268,74 @@ afterEach(() => {
   mountedRoots.length = 0;
   document.body.innerHTML = "";
   vi.unstubAllGlobals();
+});
+
+describe("EdictModal — #1699 settlement failure geometry", () => {
+  it("keeps the complete alert separate and reachable at desktop and narrow viewports", async () => {
+    const marker = "ERROR-END-MARKER";
+    const error = `结算中止，请重试。\n错误包：/Users/player/Library/Application Support/Ming Salvage/error-packs/settlement-with-an-intentionally-unbroken-and-very-long-directory-name/${marker}\n请将整个目录发给作者。`;
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    act(() => root.render(
+      <FullscreenModal title="拟诏" subtitle="" bgClass="modal-bg-edict" layerClassName="edict-safe-cmd" onClose={() => {}}>
+        <EdictModal
+          state={baseGameState({ directives: [{ id: 8, event_id: "", event_title: "", actor: "", skill_id: "", skill_name: "", text: "发饷辽东", source: "chat", status: "pending", notes: "", authority: "" }] })}
+          directiveText="" editingDirectiveId={null} editingDirectiveText="" decree="" report="" busy="" error={error}
+          onDirectiveTextChange={() => {}} onEditingTextChange={() => {}} onCreateDirective={() => {}}
+          onStartEdit={() => {}} onCancelEdit={() => {}} onSaveDirective={() => {}} onDeleteDirective={() => {}}
+          onAdvanceWithoutEdict={() => {}} onIssueDecree={() => {}} onOpenFailureRecovery={() => {}}
+        />
+      </FullscreenModal>,
+    ));
+    mountedRoots.push({ root, host });
+    const layer = host.querySelector(".fullscreen-layer");
+    expect(layer).not.toBeNull();
+
+    const results = await measureElectronLayout<{
+      viewportWidth: number;
+      viewportHeight: number;
+      intersections: boolean;
+      alertFitsWidth: boolean;
+      markerPresent: boolean;
+      scrollReachable: boolean;
+      buttonEnabled: boolean;
+      buttonHit: boolean;
+    }>(layer!.outerHTML, EDICT_LAYOUT_CSS, [
+      { width: 1280, height: 720 },
+      { width: 800, height: 800 },
+    ], `(() => {
+      const alert = document.querySelector('[role="alert"]');
+      const textarea = document.querySelector('.desk-compose textarea');
+      const footer = document.querySelector('.desk-footer');
+      const button = document.querySelector('.desk-footer button');
+      if (!alert || !textarea || !footer || !button) return { error: 'missing edict fixture element' };
+      const overlaps = (a, b) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+      const ar = alert.getBoundingClientRect();
+      const br = button.getBoundingClientRect();
+      alert.scrollTop = alert.scrollHeight;
+      return {
+        viewportWidth: innerWidth,
+        viewportHeight: innerHeight,
+        intersections: overlaps(ar, textarea.getBoundingClientRect()) || overlaps(ar, footer.getBoundingClientRect()),
+        alertFitsWidth: alert.scrollWidth <= alert.clientWidth,
+        markerPresent: alert.textContent.includes(${JSON.stringify(marker)}),
+        scrollReachable: alert.scrollHeight <= alert.clientHeight || Math.ceil(alert.scrollTop + alert.clientHeight) >= alert.scrollHeight,
+        buttonEnabled: !button.disabled,
+        buttonHit: document.elementFromPoint(br.left + br.width / 2, br.top + br.height / 2) === button,
+      };
+    })()`);
+
+    expect(results.map(({ viewportWidth, viewportHeight }) => [viewportWidth, viewportHeight])).toEqual([[1280, 720], [800, 800]]);
+    for (const result of results) {
+      expect(result.intersections).toBe(false);
+      expect(result.alertFitsWidth).toBe(true);
+      expect(result.markerPresent).toBe(true);
+      expect(result.scrollReachable).toBe(true);
+      expect(result.buttonEnabled).toBe(true);
+      expect(result.buttonHit).toBe(true);
+    }
+  });
 });
 
 describe("EdictModal — #1431 placeholder 去失实具名", () => {

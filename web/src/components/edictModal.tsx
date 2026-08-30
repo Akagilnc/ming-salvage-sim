@@ -108,9 +108,10 @@ export function EdictModal({
             <Edit3 size={14} />新增草案
           </button>
           {busy && <div className="busy-line"><Loader2 size={15} />{busy}...</div>}
-          {error && <div className="error-line" role="alert">{error}</div>}
         </section>
       </div>
+
+      {error && <div className="error-line" role="alert">{error}</div>}
 
       <div className="desk-footer">
         {/* #1277：drafts>0 名实相符——盖玺颁诏过月→issueDecree；0 草案保留退朝。 */}

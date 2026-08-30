@@ -1,20 +1,14 @@
 import React, { act } from "react";
-import { execFile } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { promisify } from "node:util";
+import { readFileSync } from "node:fs";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DecisionModal } from "./decisionModal";
 import { pendingDecisionsFrom } from "../decisionRouting";
 import type { PendingDecision } from "../types";
+import { measureElectronLayout } from "../testSupport/electronLayout";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const require = createRequire(import.meta.url);
-const execFileAsync = promisify(execFile);
 const BASE_CSS = readFileSync(`${process.cwd()}/src/styles/base.css`, "utf8");
 const DECISION_CSS = readFileSync(`${process.cwd()}/src/styles/decision.css`, "utf8");
 
@@ -42,80 +36,6 @@ function ruleExact(selector: string): CSSStyleRule | undefined {
   return cssRulesMatching(selector).find((rule) => rule.selectorText === selector);
 }
 
-/** True Chromium layout measure via already-declared electron binary (jsdom has no layout). */
-async function measureConfirmBottomAtViewport(
-  pageHtml: string,
-  css: string,
-  viewportWidth = 1440,
-  viewportHeight = 900,
-): Promise<{ bottom: number; viewportHeight: number; viewportWidth: number }> {
-  const dir = mkdtempSync(join(tmpdir(), "decision-bbox-"));
-  try {
-    const htmlPath = join(dir, "fixture.html");
-    const mainPath = join(dir, "main.cjs");
-    const safeCss = css.replace(/</g, "\\u003c");
-    writeFileSync(
-      htmlPath,
-      `<!doctype html><html><head><meta charset="utf-8" /><style>${safeCss}</style></head><body>${pageHtml}</body></html>`,
-    );
-    const measureSource = `(() => {
-  const el = document.querySelector(".decision-confirm");
-  if (!el) return { error: "missing .decision-confirm" };
-  const r = el.getBoundingClientRect();
-  return {
-    top: r.top,
-    bottom: r.bottom,
-    height: r.height,
-    width: r.width,
-    viewportHeight: window.innerHeight,
-    viewportWidth: window.innerWidth,
-  };
-})()`;
-    writeFileSync(
-      mainPath,
-      [
-        'const { app, BrowserWindow } = require("electron");',
-        'const path = require("path");',
-        'app.commandLine.appendSwitch("headless");',
-        'app.commandLine.appendSwitch("no-sandbox");',
-        "app.whenReady().then(async () => {",
-        "  const win = new BrowserWindow({",
-        `    width: ${viewportWidth},`,
-        `    height: ${viewportHeight},`,
-        "    show: false,",
-        "    webPreferences: { offscreen: true },",
-        "  });",
-        '  await win.loadFile(path.join(__dirname, "fixture.html"));',
-        `  const result = await win.webContents.executeJavaScript(${JSON.stringify(measureSource)});`,
-        "  process.stdout.write(JSON.stringify(result));",
-        "  app.exit(result && result.error ? 1 : 0);",
-        "});",
-        "",
-      ].join("\n"),
-    );
-    const electronPath = require("electron") as string;
-    const { stdout } = await execFileAsync(electronPath, [mainPath], {
-      timeout: 60_000,
-      env: { ...process.env, ELECTRON_NO_ATTACH_CONSOLE: "1" },
-    });
-    const measured = JSON.parse(stdout) as {
-      bottom?: number;
-      viewportHeight?: number;
-      viewportWidth?: number;
-      error?: string;
-    };
-    if (measured.error || measured.bottom == null) {
-      throw new Error(measured.error || "electron layout measure returned no bottom");
-    }
-    return {
-      bottom: measured.bottom,
-      viewportHeight: measured.viewportHeight ?? viewportHeight,
-      viewportWidth: measured.viewportWidth ?? viewportWidth,
-    };
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-}
 
 const decisions: PendingDecision[] = [
   {
@@ -375,11 +295,20 @@ describe("DecisionModal #1202 seal-is-confirm first screen + pick affordance", (
     expect(page).not.toBeNull();
     // Component fixture outerHTML + real Chromium layout (not a hand-built estimator).
     // App cascade order (styles.css): base.css first, then decision.css — minimal faithful bundle.
-    const measured = await measureConfirmBottomAtViewport(
+    const [measured] = await measureElectronLayout<{
+      bottom: number;
+      viewportHeight: number;
+      viewportWidth: number;
+    }>(
       page!.outerHTML,
       BASE_CSS + "\n" + DECISION_CSS,
-      1440,
-      900,
+      [{ width: 1440, height: 900 }],
+      `(() => {
+        const el = document.querySelector(".decision-confirm");
+        if (!el) return { error: "missing .decision-confirm" };
+        const r = el.getBoundingClientRect();
+        return { bottom: r.bottom, viewportHeight: innerHeight, viewportWidth: innerWidth };
+      })()`,
     );
     expect(measured.viewportWidth).toBe(1440);
     expect(measured.viewportHeight).toBe(900);
