@@ -29,7 +29,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, Type, Union
+from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Tuple, Type, Union
 
 from agno.models.message import Message
 from agno.models.openai import OpenAIChat

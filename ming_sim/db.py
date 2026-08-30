@@ -12134,13 +12134,11 @@ class GameDB:
                 normalized = self._normalize_army_pay_grant_payload(normalized)
             else:
                 from ming_sim.action_clusters import field_population_allowed
-                if (
-                    str(normalized.get("purpose") or "").strip()
-                    and not field_population_allowed(
-                        "grant_allocation", "purpose", normalized,
-                    )
+                purpose = str(normalized.get("purpose") or "").strip()
+                if purpose and not field_population_allowed(
+                    "grant_allocation", "purpose", normalized,
                 ):
-                    raise ValueError("非协饷拨帑不得夹带 purpose=补饷")
+                    raise ValueError(f"非协饷拨帑不得夹带 purpose={purpose}")
                 try:
                     amount = strict_int(
                         normalized.get("amount"), accept_numeric_strings=False
