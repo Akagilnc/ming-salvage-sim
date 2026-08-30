@@ -69,7 +69,7 @@ export function useChatActions({
   clearPendingText: () => void;
   applyHistory: (history: ServerChatMessage[]) => void;
   loadHistoryProjection: (minister: string) => Promise<AudienceHistoryData | null>;
-  runAudienceTurn: (minister: string, message: string, cb: SendChatCallbacks) => Promise<void>;
+  runAudienceTurn: (minister: string, message: string, cb: SendChatCallbacks, intent?: "secret_order") => Promise<void>;
   invalidateAudienceScroll: () => void;
   currentNightId: number;
 }) {
@@ -80,6 +80,7 @@ export function useChatActions({
   const [canUndoLastChat, setCanUndoLastChat] = React.useState(false);
   const [composerHint, setComposerHint] = React.useState("");
   const [input, setInput] = React.useState("");
+  const [composerIntent, setComposerIntent] = React.useState<"secret_order" | undefined>();
   const [failureRecoveryMode, setFailureRecoveryMode] = React.useState(false);
   const [temporaryActiveMinister, setTemporaryActiveMinister] = React.useState<Minister | null>(null);
 
@@ -166,6 +167,7 @@ export function useChatActions({
   };
 
   const sendChat = async (targetMinisterName: string, text = input) => {
+    const intent = text === input ? composerIntent : undefined;
     if (busy) return;
     const message = text.trim();
     if (!message) {
@@ -183,6 +185,7 @@ export function useChatActions({
     setReplyRetry(null);
     if (fromComposer) {
       setInput("");
+      setComposerIntent(undefined);
     }
     // 面板归属与卷轴当前奏对者是两种身份：前者只用于判断玩家是否已离开发起面板。
     const initiatingPanelName = selectedMinisterRef.current;
@@ -223,10 +226,11 @@ export function useChatActions({
       onError: (err) => {
         if (fromComposer) {
           setInput(message);
+          setComposerIntent(intent);
         }
         setError(err instanceof Error ? err.message : String(err));
       },
-    });
+    }, intent);
   };
 
   const openChat = (minister: Minister) => {
@@ -413,6 +417,7 @@ export function useChatActions({
     composerHint,
     setComposerHint,
     input,
+    setComposerIntent,
     setInput,
     failureRecoveryMode,
     activeMinister,

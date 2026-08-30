@@ -23,7 +23,7 @@ import tempfile
 import time
 import threading
 from concurrent.futures import Future
-from typing import Any, AsyncIterator, Callable, Dict, Iterator, List, Optional
+from typing import Any, AsyncIterator, Callable, Dict, Iterator, List, Literal, Optional
 
 # 源码模式 `uvicorn web_app:app` 在 nohup/重定向（>> web_server.log）下 Python stdout 块缓冲，
 # 日志滞后数分钟、结算中段 tail 看不见进度（#84）。强制行缓冲让 tlog + 各 print 近实时落盘；
@@ -518,6 +518,7 @@ def _api_reasoning_supported_for_effective_model(
 
 class ChatRequest(BaseModel):
     message: str
+    intent: Optional[Literal["secret_order"]] = None
 
 
 class DirectiveRequest(BaseModel):
@@ -1864,11 +1865,11 @@ class WebGame:
             "admission": str(admission_result or ""),
         }
 
-    def chat(self, minister_name: str, message: str) -> Dict[str, Any]:
+    def chat(self, minister_name: str, message: str, intent: Optional[str] = None) -> Dict[str, Any]:
         # #498 AC10：LLM 生成不持 write_gate，使颁诏入口可观测 in-flight 并有界超时；
         # 仅 prologue/epilogue 写库持锁。
         # #670 / ADR 0096：殿上入口——自持闸 prologue 内消费 admission（与 chat_stream 同口径）。
-        return self._chat_core(minister_name, message, gate_already_held=False)
+        return self._chat_core(minister_name, message, gate_already_held=False, intent=intent)
 
     def _chat_with_write_gate_held(self, minister_name: str, message: str) -> Dict[str, Any]:
         """#1357：兼容密令按钮端点已由 `_serialized_web_write` 持 write_gate。
@@ -1886,6 +1887,7 @@ class WebGame:
         message: str,
         *,
         gate_already_held: bool,
+        intent: Optional[str] = None,
     ) -> Dict[str, Any]:
         if minister_name not in self.content.characters and minister_name not in self.session.temporary_characters:
             raise HTTPException(status_code=404, detail=f"未找到大臣：{minister_name}")
@@ -1944,10 +1946,8 @@ class WebGame:
                     # #670：殿上 chat 自持闸时消费 admission；密疏兼容路（gate_already_held）不消费。
                     # 闸只管殿上召对——书信/密疏只受基础资格（_require_active_minister/can_summon）。
                     # #1566：正式密令前缀须先入密令管线，不得被 location admission 抢先截获。
-                    secret_order_bypass = (
-                        gate_already_held
-                        or self._message_is_formal_secret_order(text)
-                    )
+                    explicit_secret_order = intent == "secret_order" or self._message_is_formal_secret_order(text)
+                    secret_order_bypass = gate_already_held or explicit_secret_order
                     offsite_secret_order = False
                     if not secret_order_bypass:
                         origin_id = f"web:chat:{accepted_turn}:{minister_name}"
@@ -1982,7 +1982,7 @@ class WebGame:
                                 )
                     elif (
                         not gate_already_held
-                        and self._message_is_formal_secret_order(text)
+                        and explicit_secret_order
                     ):
                         decision = self.session.admit_audience(
                             self.session._character(minister_name),
@@ -2023,12 +2023,23 @@ class WebGame:
                 # #634 P5：判官拍与回话并行发出（先于回话生成，TD-9 零额外等待）。
                 self._dispatch_relation_judge(chat_turn_id)
                 try:
-                    chat_signature.bind(minister_name, text, chat_turn_id=chat_turn_id)
+                    chat_signature.bind(
+                        minister_name, text, chat_turn_id=chat_turn_id,
+                        explicit_secret_order=explicit_secret_order,
+                    )
                 except TypeError:
-                    chat_signature.bind(minister_name, text)
-                    result = self.session.chat(minister_name, text)
+                    try:
+                        chat_signature.bind(minister_name, text, chat_turn_id=chat_turn_id)
+                    except TypeError:
+                        chat_signature.bind(minister_name, text)
+                        result = self.session.chat(minister_name, text)
+                    else:
+                        result = self.session.chat(minister_name, text, chat_turn_id=chat_turn_id)
                 else:
-                    result = self.session.chat(minister_name, text, chat_turn_id=chat_turn_id)
+                    result = self.session.chat(
+                        minister_name, text, chat_turn_id=chat_turn_id,
+                        explicit_secret_order=explicit_secret_order,
+                    )
                 proposed = None
                 if result.proposed_directive is not None:
                     d = result.proposed_directive
@@ -2330,6 +2341,7 @@ class WebGame:
         emit_delta,
         write_gate: Optional[threading.Lock] = None,
         action_intent_future: Optional[Future] = None,
+        explicit_secret_order: bool = False,
     ) -> Dict[str, Any]:
         character = self.session._character(minister_name)
         chunks: List[str] = []
@@ -2394,7 +2406,7 @@ class WebGame:
         # 短事务原子持久化 reply + 本轮全部 scene。join 不得早于 start_exit。
         interpreted = self._chat_stream_interpret_tools(
             minister_name, text, character, answer, run_output,
-            action_intent_future, chat_turn_id,
+            action_intent_future, chat_turn_id, explicit_secret_order,
         )
         scene_generated = self.session.join_chat_turn_scene(chat_turn_id)
         cm = write_gate if write_gate is not None else contextlib.nullcontext()
@@ -2429,6 +2441,7 @@ class WebGame:
         run_output: Any,
         action_intent_future: Any,
         chat_turn_id: int,
+        explicit_secret_order: bool = False,
     ) -> Dict[str, Any]:
         # 截 propose_directive：入 pending_actions；截 propose_appointment：吏部铨选建档
         proposed = None
@@ -2738,6 +2751,7 @@ class WebGame:
                 secret_order_id=secret_order_id,
                 preclassified_intent=preclassified_intent,
                 confirm_target_ids=preexisting_pending_action_ids,
+                explicit_secret_order=explicit_secret_order,
             )
         finally:
             self.session._active_chat_turn_id = prev_turn
@@ -3156,7 +3170,7 @@ class WebGame:
             out["night_status"] = night_status
         return out
 
-    def chat_stream(self, minister_name: str, message: str) -> Iterator[Dict[str, Any]]:
+    def chat_stream(self, minister_name: str, message: str, intent: Optional[str] = None) -> Iterator[Dict[str, Any]]:
         if minister_name not in self.content.characters and minister_name not in self.session.temporary_characters:
             yield {"type": "error", "message": f"未找到大臣：{minister_name}"}
             return
@@ -3232,7 +3246,8 @@ class WebGame:
             accepted_turn = int(self.state.turn)
             # #1566：正式密令前缀先入密令管线；场外记召成功后在 gate 外物化 scene。
             offsite_secret_order = False
-            if not self._message_is_formal_secret_order(text):
+            explicit_secret_order = intent == "secret_order" or self._message_is_formal_secret_order(text)
+            if not explicit_secret_order:
                 stream_origin = f"web:stream:{accepted_turn}:{minister_name}"
                 admission = self.session.consume_audience_admission(
                     self.session._character(minister_name),
@@ -3406,6 +3421,7 @@ class WebGame:
                         accepted_turn, emit_delta,
                         write_gate=write_gate,
                         action_intent_future=action_intent_future,
+                        explicit_secret_order=explicit_secret_order,
                     )
 
                     # P5：先 done（回话可见），再读心∥高亮∥抽取补挂，最后 end——玩家无「为后处理黑屏」。
@@ -5034,7 +5050,7 @@ async def api_chat(minister_name: str, request: ChatRequest) -> Dict[str, Any]:
         # #1291+#1322: 全同步 chat（→ session → cli subprocess.run）须卸出事件循环，
         # 与 retry_interrupted_reply / secret_order 同构 run_in_threadpool；
         # 流式路走 run_in_executor，directives 走 to_thread——禁在 async handler 内直调。
-        return await run_in_threadpool(get_game().chat, minister_name, request.message)
+        return await run_in_threadpool(get_game().chat, minister_name, request.message, request.intent)
     except AudienceNightError as e:
         # CLOSING / night admission → 409 (retryable); same family as stream path.
         raise _retryable_audience_close_http(e) from None
@@ -5057,7 +5073,7 @@ async def api_undo_chat(minister_name: str) -> Dict[str, Any]:
 async def api_chat_stream(minister_name: str, request: ChatRequest) -> StreamingResponse:
     _require_active_minister(minister_name)
     async def generate() -> AsyncIterator[str]:
-        iterator = iter(get_game().chat_stream(minister_name, request.message))
+        iterator = iter(get_game().chat_stream(minister_name, request.message, request.intent))
         loop = asyncio.get_running_loop()
         while True:
             item = await loop.run_in_executor(None, _next_or_none, iterator)

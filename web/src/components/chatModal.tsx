@@ -39,6 +39,7 @@ export function ChatModal({
   secretOrders,
   replyRetry,
   onInput,
+  onIntent,
   onSend,
   onRetryFailure,
   onRetryReply,
@@ -79,6 +80,7 @@ export function ChatModal({
   /** #505：系统层回话重试（崩溃后问话保留）。 */
   replyRetry?: { chat_turn_id: number; question: string } | null;
   onInput: (value: string) => void;
+  onIntent?: (intent: "secret_order" | undefined) => void;
   onSend: (ministerName: string, text?: string) => void;
   onRetryFailure: (failure: PendingActionFailure) => void;
   onRetryReply?: (ministerName: string) => void;
@@ -263,8 +265,12 @@ export function ChatModal({
 
   const sendSuggestion = (suggestion: Suggestion) => {
     if (suggestion.prefix) {
-      // 填前缀到输入框，不直接发送，光标跟到末尾
-      onInput(suggestion.text);
+      if (suggestion.label === "下密令") {
+        onIntent?.("secret_order");
+      } else {
+        onIntent?.(undefined);
+        onInput(suggestion.text);
+      }
       setTimeout(() => inputRef.current?.focus(), 0);
     } else {
       onSend(currentMinister.name, suggestion.text);

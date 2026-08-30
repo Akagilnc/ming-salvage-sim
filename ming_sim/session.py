@@ -1556,7 +1556,10 @@ class GameSession:
         """委托编排层排空本轮 scene（cancel 或 join drain，不落库）。"""
         self._scene_registry.abandon(int(chat_turn_id or 0))
 
-    def chat(self, minister_name: str, message: str, *, chat_turn_id: int = 0) -> ChatTurnResult:
+    def chat(
+        self, minister_name: str, message: str, *, chat_turn_id: int = 0,
+        explicit_secret_order: bool = False,
+    ) -> ChatTurnResult:
         """与大臣对话一轮，统一处理 court tool 截获。
         大臣 propose_directive 产生的草案先进 pending_actions 闸门，
         作为 pending_action_id 返回，确认/驳回由对话或颁诏 checkpoint 处理。"""
@@ -1840,6 +1843,7 @@ class GameSession:
             preclassified_intent=preclassified_intent,
             confirm_target_ids=preexisting_pending_action_ids,
             chat_turn_id=int(chat_turn_id or 0),
+            explicit_secret_order=explicit_secret_order,
         )
         return result
 
@@ -1903,6 +1907,7 @@ class GameSession:
         has_directive: bool, secret_order_id: Optional[int],
         preclassified_intent: Optional[Any] = None,
         confirm_target_ids: Optional[set[int]] = None,
+        explicit_secret_order: bool = False,
     ) -> Dict[str, Any]:
         """CLI 后端（无 function-calling）会话落地的【唯一真源】，session.chat 非流式路径与
         web streaming 路径共用，杜绝两边逻辑漂移（CMR F3 / codexC-1）。
@@ -2202,7 +2207,7 @@ class GameSession:
                 # 故确认轮直接返回,不再抽新动作(线上 codex P2)。确认句无前缀,前缀路无损失。
                 return out
         # #1502：classifier 未跑 → API 仍早退；已跑（list，含空）→ 进入 materialize
-        if api_or_no_cli_passthrough and intent_candidates is None:
+        if api_or_no_cli_passthrough and intent_candidates is None and not explicit_secret_order:
             return out
         if GameSession._proposal_blocked(self.state):
             # 恢复窗总闸（PR #90 R1/R2/R3 收束为单一出口）：前缀拟旨/密令与自然语言
@@ -2217,15 +2222,20 @@ class GameSession:
         needs_secret_fallback = (
             not has_directive
             and not out["secret_order_id"]
-            and message_text.startswith(_SECRET_PREFIXES)
+            and (explicit_secret_order or message_text.startswith(_SECRET_PREFIXES))
         )
         secret_context = ""
         if needs_secret_fallback:
             secret_context = _recent_audience_context_for_secret_order(
                 getattr(self, "db", None), minister_name, int(self.state.turn), message_text)
         if needs_draft_fallback or needs_secret_fallback:
+            # Typed Web intent joins the existing explicit-secret extractor seam only here;
+            # the player's wire text, chat record, and role-play prompt remain untouched.
+            extraction_message = player_message
+            if explicit_secret_order and not message_text.startswith(_SECRET_PREFIXES):
+                extraction_message = f"{_SECRET_PREFIXES[0]}{player_message}"
             acts = resolve_minister_actions(
-                reply, player_message, default_assignee=minister_name, llm_config=llm_config,
+                reply, extraction_message, default_assignee=minister_name, llm_config=llm_config,
                 secret_context=secret_context,
                 dossier_candidates=self.db.list_referenceable_dossiers(
                     minister_name, self.state.turn))
@@ -2438,6 +2448,7 @@ class GameSession:
         preclassified_intent: Optional[Any] = None,
         confirm_target_ids: Optional[set[int]] = None,
         chat_turn_id: int = 0,
+        explicit_secret_order: bool = False,
     ) -> None:
         """session.chat 非流式路径：调共享会话落地，映射回 ChatTurnResult（agno 工具不触发时）。"""
         preexisting_pending_id = int(getattr(result, "pending_action_id", 0) or 0)
@@ -2451,6 +2462,7 @@ class GameSession:
                 secret_order_id=result.secret_order_id,
                 preclassified_intent=preclassified_intent,
                 confirm_target_ids=confirm_target_ids,
+                explicit_secret_order=explicit_secret_order,
             )
         finally:
             self._active_chat_turn_id = prev_turn

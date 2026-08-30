@@ -151,6 +151,7 @@ export function App() {
     composerHint,
     setComposerHint,
     input,
+    setComposerIntent,
     setInput,
     failureRecoveryMode,
     activeMinister,
@@ -658,6 +659,7 @@ export function App() {
             secretOrders={secretOrders.filter((o) => o.status === "active")}
             replyRetry={replyRetry}
             onInput={setInput}
+            onIntent={setComposerIntent}
             onSend={sendChat}
             onRetryFailure={retryPendingAction}
             onRetryReply={retryInterruptedReply}
