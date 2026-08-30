@@ -2044,7 +2044,7 @@ def extract_draft_intent_with_semantic_heal(
                 db=db,
                 **extract_kwargs,
             )
-        except _DraftLocalityValidationError as exc:
+        except DraftLocalityValidationError as exc:
             if locality_baseline is None:
                 locality_baseline = copy.deepcopy(exc.extracted_result)
             elif not _same_non_locality_semantics(
@@ -2052,27 +2052,24 @@ def extract_draft_intent_with_semantic_heal(
             ):
                 _log(f"拟旨属地纠错发生非属地语义漂移 {attempt + 1}/{retries}")
             if attempt >= retries:
-                raise ValueError(str(exc)) from exc
+                raise DraftLocalityValidationError(
+                    str(exc), exc.extracted_result,
+                ) from exc
             correction = (
                 "施行范围与目标结构不一致，请保留其余字段，只把施行范围改为符合"
                 "目标类型、目标ID和动作类型的无、全国或单省。"
             )
             _log(f"拟旨属地纠错重试 {attempt + 1}/{retries}: {exc}")
             continue
-        if locality_baseline is not None and not _same_non_locality_semantics(
-            locality_baseline, result,
-        ):
-            if attempt >= retries:
-                raise ValueError("属地纠错期间非属地结构发生漂移")
-            correction = (
-                "施行范围仍须纠正，且动作、目标、承办人、参与人、条目、方式及多旨结构"
-                "必须保持不变。"
-            )
-            _log(f"拟旨属地纠错发生非属地语义漂移 {attempt + 1}/{retries}")
-            continue
         if db is not None:
             result = _ground_relative_pay_order_deadlines(result, db)
         if db is None or content is None:
+            if locality_baseline is not None and not _same_non_locality_semantics(
+                locality_baseline, result,
+            ):
+                raise DraftLocalityValidationError(
+                    "属地纠错期间非属地结构发生漂移", result,
+                )
             return result
         has_roster_field = (
             ("participant_roster" in result and result.get("participant_roster") is not None)
@@ -2085,6 +2082,12 @@ def extract_draft_intent_with_semantic_heal(
             # 纠错路上抽掉参与人字段 = 除名企图 → 篡改，回禀
             if pending_unknown:
                 raise UnknownParticipantEscalate(pending_unknown)
+            if locality_baseline is not None and not _same_non_locality_semantics(
+                locality_baseline, result,
+            ):
+                raise DraftLocalityValidationError(
+                    "属地纠错期间非属地结构发生漂移", result,
+                )
             return result
         try:
             validated = _apply_validated_roster_to_extract_result(
@@ -2142,7 +2145,35 @@ def extract_draft_intent_with_semantic_heal(
             )
             if backfilled is None:
                 raise UnknownParticipantEscalate(pending_unknown)
+            if locality_baseline is not None:
+                locality_guard = _backfill_healed_participant_refs(
+                    locality_baseline,
+                    result,
+                    pending_unknown=pending_unknown,
+                    player_message=player_message,
+                    db=db,
+                    content=content,
+                )
+                if locality_guard is None:
+                    raise UnknownParticipantEscalate(pending_unknown)
+                if not _same_non_locality_semantics(locality_guard, backfilled):
+                    raise DraftLocalityValidationError(
+                        "属地纠错期间非属地结构发生漂移", backfilled,
+                    )
             return backfilled
+        if locality_baseline is not None and not _same_non_locality_semantics(
+            locality_baseline, result,
+        ):
+            if attempt >= retries:
+                raise DraftLocalityValidationError(
+                    "属地纠错期间非属地结构发生漂移", result,
+                )
+            correction = (
+                "施行范围仍须纠正，且动作、目标、承办人、参与人、条目、方式及多旨结构"
+                "必须保持不变。"
+            )
+            _log(f"拟旨属地纠错发生非属地语义漂移 {attempt + 1}/{retries}")
+            continue
         return validated
 
 
@@ -2390,6 +2421,8 @@ def extract_draft_intent(
             "drafts": drafts,
             "target_candidate": "",
         }
+        if not drafts:
+            return extracted_result
         for action, target_kind, target_id, locality_scope in locality_checks:
             _validate_extracted_locality(
                 db=db, content=content, action_type=action,
@@ -2650,7 +2683,7 @@ def _draft_target_kind_guidance() -> str:
     return _DRAFT_TARGET_KIND_GUIDANCE
 
 
-class _DraftLocalityValidationError(Exception):
+class DraftLocalityValidationError(ValueError):
     """A typed locality combination rejection carrying the complete extraction."""
 
     def __init__(self, message: str, extracted_result: Dict[str, Any]):
@@ -2697,7 +2730,7 @@ def _validate_extracted_locality(
             regions_content=getattr(content, "regions", None),
         )
     except LocalityCombinationError as exc:
-        raise _DraftLocalityValidationError(str(exc), extracted_result) from exc
+        raise DraftLocalityValidationError(str(exc), extracted_result) from exc
 
 
 def _coerce_draft_target_kind(raw: object) -> str:
