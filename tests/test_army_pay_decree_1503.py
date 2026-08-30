@@ -1372,18 +1372,20 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
     # The first grant enters through audience night; the second is a season
     # decision whose selected server option is its legal origin.
     import ming_sim.decree as decree_mod
-    original_context_builder = decree_mod.build_extractor_shared_context
-    observed_late_dossiers = {}
+    extractor_inputs = {}
 
-    def capture_context(*args, **kwargs):
-        context = original_context_builder(*args, **kwargs)
-        observed_late_dossiers.setdefault(kwargs.get("module"), []).extend(
+    def capture_extractor_input(_config, _agno_db, module, **kwargs):
+        extractor_inputs[module] = [
             (int(row["id"]), str(row["status"]))
-            for row in context.get("decree_dossiers") or []
-        )
-        return context
+            for row in kwargs["supplemental_context"].get("decree_dossiers") or []
+        ]
+        return None
 
-    monkeypatch.setattr(decree_mod, "build_extractor_shared_context", capture_context)
+    # Observe the structured payload at the real extractor boundary; the outer
+    # LLM remains canned by _stub_outer_llm_seams.
+    monkeypatch.setattr(
+        decree_mod, "create_score_extractor_module_agent", capture_extractor_input,
+    )
     decision_report = """本月邸报。
 <<DECISION>>
 {"title":"再济关宁","context":"关宁欠饷尚重，奏请圣裁","options":[{"label":"发内帑银三十万两济关宁","hint":"军心稍定，内帑益绌","action_type":"grant_allocation","grant_action":"协饷","account":"内库","amount":30,"purpose":"补饷","target_kind":"army","target_id":"guanning","cadence":"一次性"},{"label":"暂缓再拨","hint":"内帑得保，边军仍困"}]}
@@ -1493,10 +1495,10 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
         assert decision_dossier["status"] == "closed"
         assert decision_dossier["promulgation_decision"] == "promulgated"
         late_fact = (int(decision_dossier["id"]), "closed")
-        assert late_fact in observed_late_dossiers["issues"]
-        assert late_fact in observed_late_dossiers["internal"]
+        assert late_fact in extractor_inputs["issues"]
+        assert late_fact in extractor_inputs["internal"]
         assert all(
-            late_fact not in observed_late_dossiers[module]
+            late_fact not in extractor_inputs[module]
             for module in ("military_external", "personnel_secret", "relations")
         )
         assert [
