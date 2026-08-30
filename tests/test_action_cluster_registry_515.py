@@ -611,11 +611,11 @@ def test_cli_chat_materializes_each_top_level_candidate(game, monkeypatch):
             "正文": "着户部发帑十万两赈济陕西灾民。",
             "动作类型": "grant_allocation",
             "目标类型": "region",
-            "目标ID": "shaanxi",
+            "目标": "shaanxi",
             "金额": 100000,
             "账户": "国库",
             "执行面": "in_transit",
-            "颁布方式": "普通",
+            "颁布方式": "ordinary",
         },
         {
             "正文": "着孙传庭巡抚陕西，整饬军政。",
