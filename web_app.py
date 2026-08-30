@@ -2477,7 +2477,7 @@ class WebGame:
         preclassified_intent = self.session._finish_cli_action_intent(action_intent_future)
         confirmation_intent_for_pending = getattr(
             self.session, "_confirmation_intent_for_preexisting_pending", None)
-        if confirmation_intent_for_pending is not None:
+        if confirmation_intent_for_pending is not None and not explicit_secret_order:
             preclassified_intent = confirmation_intent_for_pending(
                 character.name, text, answer, preclassified_intent, preexisting_pending_action_ids)
         message_text = (text or "").strip()
@@ -2485,6 +2485,7 @@ class WebGame:
         from ming_sim.action_clusters import is_confirmation_decision, resolve_primary_intent
         explicit_draft_prefix = message_text.startswith(_DRAFT_PREFIXES)
         explicit_secret_prefix = message_text.startswith(_SECRET_PREFIXES)
+        explicit_secret_route = explicit_secret_order or explicit_secret_prefix
         confirmation_turn = is_confirmation_decision(
             resolve_primary_intent(preclassified_intent))
         if run_output is not None:
@@ -2494,7 +2495,7 @@ class WebGame:
                 if tool_name == "propose_directive" or res.startswith("__pending_directive__"):
                     # confirmation / secret 前缀仍整枚跳过；孪生抑制在
                     # _stage_directive_tool_candidate generic 尾路按 kind 分派。
-                    if confirmation_turn or explicit_secret_prefix:
+                    if confirmation_turn or explicit_secret_route:
                         continue
                     args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
                     if not isinstance(args, dict):
@@ -2533,7 +2534,7 @@ class WebGame:
                     or res.startswith("__pending_appointment__")
                     or res.startswith("__pending_recommendation__")
                 ):
-                    if confirmation_turn or explicit_draft_prefix or explicit_secret_prefix:
+                    if confirmation_turn or explicit_draft_prefix or explicit_secret_route:
                         continue
                     payload_json = res.removeprefix("__pending_recommendation__")
                     payload_json = payload_json.removeprefix("__pending_appointment__").strip()
@@ -2547,7 +2548,7 @@ class WebGame:
                         ),
                     )
                 elif tool_name == "register_unlisted_person" or res.startswith("__pending_unlisted_person__"):
-                    if confirmation_turn or explicit_draft_prefix or explicit_secret_prefix:
+                    if confirmation_turn or explicit_draft_prefix or explicit_secret_route:
                         continue
                     payload_json = res.removeprefix("__pending_unlisted_person__").strip()
                     if not payload_json:
@@ -3409,7 +3410,10 @@ class WebGame:
                     # 回奏（return_report）须先写见闻再组回话 prompt，是回话前置依赖、非并行调用，
                     # 由 _audience_prompt_for_message 单次落地，不在此重复发起。
                     character = self.session._character(minister_name)
-                    action_intent_future = self.session._start_cli_action_intent(character, text)
+                    action_intent_future = (
+                        None if explicit_secret_order
+                        else self.session._start_cli_action_intent(character, text)
+                    )
 
                     # #634 P5：召对判官拍——唯一不依赖本轮回话输出的记账腿，与回话
                     # 生成并行发出（TD-9 零额外等待）；写库经自有票据，join 于收夜前。

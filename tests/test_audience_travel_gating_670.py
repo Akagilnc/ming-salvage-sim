@@ -1568,7 +1568,7 @@ def _install_secret_order_agent(runtime, *, stream: bool = False) -> None:
     复用 tests/test_audience_background._FakeAgent 流式形态；channel=api 走 #344
     前缀密令 resolve 路。WebGame._chat_stream_payload 经类实例解析，不手绑。
     """
-    from tests.test_audience_background import RunContent, RunOutput, _FakeAgent
+    from tests.test_audience_background import RunContent, RunOutput, ToolExec, _FakeAgent
 
     class _SyncAgent(_FakeAgent):
         def run(self, *_a, **_k):
@@ -1578,10 +1578,13 @@ def _install_secret_order_agent(runtime, *, stream: bool = False) -> None:
             return None
 
     agent: Any
+    non_secret_tools = [
+        ToolExec("propose_directive", "__pending_directive__不得物化的普通旨意")
+    ]
     if stream:
-        agent = _FakeAgent(chunks=["臣", "领密旨。"])
+        agent = _FakeAgent(tools=non_secret_tools, chunks=["臣", "领密旨。"])
     else:
-        agent = _SyncAgent(chunks=["臣领密旨。"])
+        agent = _SyncAgent(tools=non_secret_tools, chunks=["臣领密旨。"])
 
     s = runtime.session
     s.registry = SimpleNamespace(get=lambda _ch: agent, session_ids={})
@@ -1589,7 +1592,11 @@ def _install_secret_order_agent(runtime, *, stream: bool = False) -> None:
     s._audience_prompt_for_message = (
         lambda msg, character=None, chat_turn_id=0: msg
     )
-    s._start_cli_action_intent = lambda *_a, **_k: None
+    s._secret_order_classifier_calls = []
+    s._secret_order_confirmation_calls = []
+    s._start_cli_action_intent = (
+        lambda *_a, **_k: s._secret_order_classifier_calls.append(True)
+    )
     s._finish_cli_action_intent = lambda *_a, **_k: None
     s.start_exit_scene_from_dismiss_tools = lambda *_a, **_k: False
     # 密令落库唯一真源：apply_cli_conversation_actions 及其 chat 入口。
@@ -1603,6 +1610,13 @@ def _install_secret_order_agent(runtime, *, stream: bool = False) -> None:
         "_merge_staged_new_secret_order_content",
     ):
         setattr(s, name, MethodType(getattr(GameSession, name), s))
+    confirmation_impl = s._confirmation_intent_for_preexisting_pending
+
+    def _track_confirmation(*args, **kwargs):
+        s._secret_order_confirmation_calls.append(True)
+        return confirmation_impl(*args, **kwargs)
+
+    s._confirmation_intent_for_preexisting_pending = _track_confirmation
 
 
 def _assert_secret_order_pending(db, state, *, minister_name: str, pid: int, edict: str) -> None:
@@ -1660,6 +1674,17 @@ def test_web_chat_formal_secret_order_hangs_night_without_enter(game, stream):
     )
 
     runtime = _secret_order_runtime(db, state, content, stream=stream)
+    old_pending_id = int(db.stage_pending_action(
+        state.turn,
+        "directive",
+        "新建",
+        remote.name,
+        {"decree_text": "既存候选", "mode": "special_decree"},
+    ))
+    old_pending = next(
+        p for p in db.list_pending_actions(state.turn)
+        if int(p["id"]) == old_pending_id
+    )
     edict = "陕北赈抚探报\n速报陕西军情。"
     payload = _formal_secret_order_payload(
         runtime, remote.name, edict,
@@ -1676,6 +1701,13 @@ def test_web_chat_formal_secret_order_hangs_night_without_enter(game, stream):
     assert sum(
         1 for p in db.list_pending_actions(state.turn) if p.get("kind") == "secret_order"
     ) == before_n + 1
+    after_pending = db.list_pending_actions(state.turn)
+    assert next(
+        p for p in after_pending if int(p["id"]) == old_pending_id
+    ) == old_pending
+    assert sum(p.get("kind") == "directive" for p in after_pending) == 1
+    assert runtime.session._secret_order_classifier_calls == []
+    assert runtime.session._secret_order_confirmation_calls == []
     chat_turn_id = int(payload.get("chat_turn_id") or 0)
     assert chat_turn_id > 0
     turn = db.conn.execute(
