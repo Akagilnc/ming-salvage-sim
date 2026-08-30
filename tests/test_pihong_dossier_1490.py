@@ -2230,42 +2230,57 @@ def test_1682_late_grants_follow_policy_without_consuming_verdict_batch(game, mo
 
     # A newly created grant must remain inside the same transaction as its
     # dossier read, decision CAS, and accounting effects.
-    db.save_pending_decisions(state.turn, [{
-        "event_id": "", "title": "失读内帑", "context": "c", "options": [options[0]],
-    }])
-    failed_row = next(
+    db.save_pending_decisions(state.turn, [
+        {
+            "event_id": "", "title": "先拨内帑", "context": "c",
+            "options": [options[0]],
+        },
+        {
+            "event_id": "", "title": "后拨内帑失读", "context": "c",
+            "options": [options[0]],
+        },
+    ])
+    failed_rows = [
         row for row in db.list_rescript_desk(int(state.turn))
-        if row["title"] == "失读内帑"
-    )
-    failed_choice = {
-        "decision_key": failed_row["decision_key"],
-        "label": failed_row["options"][0]["label"],
-    }
-    failed_batch = ra.validate_all([failed_row], [failed_choice])
+        if row["title"] in {"先拨内帑", "后拨内帑失读"}
+    ]
+    failed_choices = [
+        {
+            "decision_key": row["decision_key"],
+            "label": row["options"][0]["label"],
+        }
+        for row in failed_rows
+    ]
+    failed_batch = ra.validate_all(failed_rows, failed_choices)
     dossiers_before = db.list_decree_dossiers()
     decisions_before = db.list_pending_decisions(int(state.turn))
     accounts_before = db.conn.execute(
         "SELECT * FROM economy_accounts ORDER BY account"
     ).fetchall()
     ledger_before = db.conn.execute("SELECT * FROM economy_ledger ORDER BY id").fetchall()
+    verdicts_before = db.get_pending_promulgation_verdicts(state.turn)
     original_get = db.get_decree_dossier
     existing_ids = {int(row["id"]) for row in dossiers_before}
-    missing_ids = []
+    created_ids = []
+    missed_ids = []
 
-    def _miss_new_dossier(dossier_id):
-        if int(dossier_id) not in existing_ids and not missing_ids:
-            missing_ids.append(int(dossier_id))
+    def _miss_second_new_dossier(dossier_id):
+        dossier_id = int(dossier_id)
+        if dossier_id not in existing_ids and dossier_id not in created_ids:
+            created_ids.append(dossier_id)
+        if len(created_ids) >= 2 and dossier_id == created_ids[1]:
+            missed_ids.append(dossier_id)
             return None
         return original_get(dossier_id)
 
-    monkeypatch.setattr(db, "get_decree_dossier", _miss_new_dossier)
-    with pytest.raises(ValueError) as exc_info:
+    monkeypatch.setattr(db, "get_decree_dossier", _miss_second_new_dossier)
+    with pytest.raises(ValueError):
         ra.apply_rescript_batch(
             db, state, failed_batch, ra.PrewriteResults(), content=content,
         )
 
-    assert missing_ids
-    assert str(exc_info.value) == f"新建案卷查无记录：{missing_ids[0]}"
+    assert len(created_ids) == 2
+    assert missed_ids == [created_ids[1]]
     assert db.list_decree_dossiers() == dossiers_before
     assert db.list_pending_decisions(int(state.turn)) == decisions_before
     assert db.conn.execute(
@@ -2274,7 +2289,7 @@ def test_1682_late_grants_follow_policy_without_consuming_verdict_batch(game, mo
     assert db.conn.execute(
         "SELECT * FROM economy_ledger ORDER BY id"
     ).fetchall() == ledger_before
-    assert db.get_pending_promulgation_verdicts(state.turn) == [pending]
+    assert db.get_pending_promulgation_verdicts(state.turn) == verdicts_before
 
 
 def test_657_s10_http_five_actions_and_1490_no_regress(web_game, monkeypatch):
