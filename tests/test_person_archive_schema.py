@@ -25,8 +25,15 @@ def test_characters_table_has_person_archive_fields(read_game):
 
     assert "reason_code" in cols
     assert "transit_to" in cols
+    assert {"intrigue", "defected_from"} <= cols
     assert {"transit_distance_remaining", "transit_speed_factor"} <= cols
     info = _column_info(db, "characters")
+    assert info["intrigue"]["type"] == "INTEGER"
+    assert info["intrigue"]["notnull"] == 1
+    assert info["intrigue"]["dflt_value"] is None
+    assert info["defected_from"]["type"] == "TEXT"
+    assert info["defected_from"]["notnull"] == 0
+    assert info["defected_from"]["dflt_value"] is None
     for name in ("transit_distance_remaining", "transit_speed_factor"):
         assert info[name]["type"] == "REAL"
         assert info[name]["notnull"] == 0
@@ -118,6 +125,8 @@ def test_add_character_persists_transit_to(game):
         ability=50,
         integrity=50,
         courage=50,
+        intrigue=63,
+        defected_from="阉党",
         style="测试人物",
         power_id="ming",
         location="beizhili",
@@ -127,9 +136,14 @@ def test_add_character_persists_transit_to(game):
     db.add_character(state, character)
 
     row = db.conn.execute(
-        "SELECT location, transit_to FROM characters WHERE name=?", (character.name,)
+        "SELECT location, transit_to, intrigue, defected_from FROM characters WHERE name=?", (character.name,)
     ).fetchone()
-    assert dict(row) == {"location": "beizhili", "transit_to": "liaodong"}
+    assert dict(row) == {
+        "location": "beizhili",
+        "transit_to": "liaodong",
+        "intrigue": 63,
+        "defected_from": "阉党",
+    }
 
 
 def test_reload_restores_complete_transit_ledger_from_db(game):
