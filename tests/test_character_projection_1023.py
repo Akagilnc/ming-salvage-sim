@@ -35,17 +35,16 @@ def test_simulator_context_projects_character_axes_but_keeps_world_numbers(game)
     assert row["清廉"] == "操守平常"
     assert row["胆略"] == "敢任其事"
     assert row["党派认同"] == "党色极深"
-    assert row["阴谋"] == "阴谋能力未详，暂以查案行事表现推知"
+    assert row["阴谋"] == "深谙机变"
     assert rendered_character_line.endswith(
-        "离心已显\t才具有限\t操守平常\t敢任其事\t党色极深\t"
-        "阴谋能力未详，暂以查案行事表现推知"
+        "离心已显\t才具有限\t操守平常\t敢任其事\t党色极深\t深谙机变"
     )
     character_rendered = character_context(character)
     assert "忠诚离心已显" in character_rendered
     assert "能力才具有限" in character_rendered
     assert "清廉操守平常" in character_rendered
     assert "胆略敢任其事" in character_rendered
-    assert not {"loyalty", "ability", "integrity", "courage", "identity"} & set(
+    assert not {"loyalty", "ability", "integrity", "courage", "identity", "intrigue"} & set(
         columns
     )
     assert not any(

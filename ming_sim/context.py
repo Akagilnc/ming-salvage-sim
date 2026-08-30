@@ -243,7 +243,7 @@ def character_context(character: Character) -> str:
         f"{minister_dossier(character)}；专长：{skills}。"
         f"人物行事可见为：忠诚{axes['忠诚']}、能力{axes['能力']}、"
         f"清廉{axes['清廉']}、胆略{axes['胆略']}、党派认同{axes['党派认同']}、"
-        f"{axes['阴谋']}。"
+        f"阴谋{axes['阴谋']}。"
     )
 
 

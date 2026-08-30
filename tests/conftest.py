@@ -186,13 +186,14 @@ CHARACTER_AXIS_SENTINEL = {
     "integrity": 57,
     "courage": 77,
     "identity": 97,
+    "intrigue": 67,
 }
 
 
 def plant_character_axis_sentinels(db, content, name: str) -> dict[str, int]:
-    """把人物五轴写成 CHARACTER_AXIS_SENTINEL（DB + content 内存镜像同步）。"""
+    """把人物六轴写成 CHARACTER_AXIS_SENTINEL（DB + content 内存镜像同步）。"""
     db.conn.execute(
-        "UPDATE characters SET loyalty=?, ability=?, integrity=?, courage=?, identity=? "
+        "UPDATE characters SET loyalty=?, ability=?, integrity=?, courage=?, identity=?, intrigue=? "
         "WHERE name=?",
         (*CHARACTER_AXIS_SENTINEL.values(), name),
     )

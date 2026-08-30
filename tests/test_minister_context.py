@@ -32,7 +32,6 @@ from ming_sim.registry import (
 )
 from ming_sim.tools import build_minister_tools, _progress_band
 from ming_sim.qualitative import (
-    INTRIGUE_QUALITATIVE_PLACEHOLDER,
     building_condition_description,
     building_level_description,
     building_output_effect,
@@ -332,6 +331,7 @@ def test_character_context_scopes_faction_hides_raw_scores_and_zero_buckets(game
     minister.integrity = 0
     minister.courage = 0
     minister.identity = 80
+    minister.intrigue = 0
     high = character_context_with_db(minister, db)
     axes = qualitative_character_axes(minister)
 
@@ -345,12 +345,9 @@ def test_character_context_scopes_faction_hides_raw_scores_and_zero_buckets(game
     lowest_leverage = ("人马凋零", "朝中孤弱", "根基平常", "颇有根基", "势重可动员")[0]
     assert lowest_satisfaction in high
     assert lowest_leverage in high
-    for label, band in axes.items():
-        if label == "阴谋":
-            assert band == INTRIGUE_QUALITATIVE_PLACEHOLDER
-            assert high.count(INTRIGUE_QUALITATIVE_PLACEHOLDER) == 1
-            continue
+    for band in axes.values():
         assert band in high
+    assert axes["阴谋"] == "不谙权变"
     assert not re.search(r"(?:忠诚|能力|清廉|胆略|党派认同)\s*[:：]?\s*\d+", high)
 
     minister.identity = 40
@@ -367,7 +364,7 @@ def test_character_context_scopes_faction_hides_raw_scores_and_zero_buckets(game
     assert faction_dossier["internal"] not in low
 
     plain = character_context(minister)
-    assert plain.count(INTRIGUE_QUALITATIVE_PLACEHOLDER) == 1
+    assert "阴谋不谙权变" in plain
     assert "阴谋阴谋" not in plain
 
 

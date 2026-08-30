@@ -13,6 +13,7 @@ CHARACTER_QUALITATIVE_BANDS = {
     "ability": ("才具浅薄", "才具有限", "堪当常务", "才具出众", "足任大事"),
     "integrity": ("操守多亏", "操守未稳", "操守平常", "操守清正", "清介可称"),
     "courage": ("临事易退", "多有顾忌", "进退审慎", "敢任其事", "临难不屈"),
+    "intrigue": ("不谙权变", "少有心机", "颇有心计", "深谙机变", "权术老辣"),
 }
 
 CHARACTER_AXIS_LABELS = {
@@ -20,9 +21,8 @@ CHARACTER_AXIS_LABELS = {
     "ability": "能力",
     "integrity": "清廉",
     "courage": "胆略",
+    "intrigue": "阴谋",
 }
-
-INTRIGUE_QUALITATIVE_PLACEHOLDER = "阴谋能力未详，暂以查案行事表现推知"
 
 
 def qualitative_character_axes(character: object) -> Mapping[str, str]:
@@ -31,10 +31,10 @@ def qualitative_character_axes(character: object) -> Mapping[str, str]:
         CHARACTER_AXIS_LABELS[field]: qualitative_character_axis(
             field, getattr(character, field)
         )
-        for field in CHARACTER_QUALITATIVE_BANDS
+        for field in ("loyalty", "ability", "integrity", "courage")
     }
     projected["党派认同"] = identity_band(getattr(character, "identity"))
-    projected["阴谋"] = INTRIGUE_QUALITATIVE_PLACEHOLDER
+    projected["阴谋"] = qualitative_character_axis("intrigue", getattr(character, "intrigue"))
     return projected
 
 
