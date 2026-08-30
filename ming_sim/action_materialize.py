@@ -3348,27 +3348,33 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
             fields=(
                 FieldSpec(
                     "grant_action", "恩赏拨帑",
-                    GRANT_ACTIONS, "无",
+                    GRANT_ACTIONS, "无", season_option=True,
                 ),
                 FieldSpec("name", "姓名", None, "", max_len=20),
                 # 政务拨款对象：赈灾地区 / 项目 / 协饷军队 / 恩赏人物
-                FieldSpec("target_id", "目标", None, "", max_len=80),
-                FieldSpec("target_kind", "目标类型", TARGET_KINDS, ""),
+                FieldSpec(
+                    "target_id", "目标", None, "", max_len=80,
+                    season_option=True,
+                ),
+                FieldSpec(
+                    "target_kind", "目标类型", TARGET_KINDS, "",
+                    season_option=True,
+                ),
                 FieldSpec(
                     "amount", "金额", None, None, as_int=True, int_lo=1,
-                    quantity_unit="万两",
+                    quantity_unit="万两", season_option=True,
                 ),
                 FieldSpec(
                     "account", "账户",
-                    frozenset({"国库", "内库", "太仓"}), "",
+                    frozenset({"国库", "内库", "太仓"}), "", season_option=True,
                 ),
                 FieldSpec(
                     "purpose", "用途",
-                    frozenset({"补饷"}), "",
+                    frozenset({"补饷"}), "", season_option=True,
                 ),
                 FieldSpec(
                     "cadence", "拨付节奏",
-                    frozenset({"一次性", "每月"}), "",
+                    frozenset({"一次性", "每月"}), "", season_option=True,
                 ),
                 FieldSpec(
                     "mode", "颁布方式",
@@ -3416,7 +3422,10 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 FieldSpec("name", "姓名", None, "", max_len=20),
                 # 与 pacification/grant_allocation 共享 target_id 中文键（#518 契约）
                 FieldSpec("target_id", "目标", None, "", max_len=80),
-                FieldSpec("amount", "金额", None, 0, as_int=True),
+                FieldSpec(
+                    "amount", "金额", None, 0, as_int=True,
+                    quantity_unit="两",
+                ),
                 FieldSpec(
                     "transaction_category", "事务类别",
                     frozenset({"钱粮", "清丈", "督赈", "缉拿", "缉捕", "河工"}), "",

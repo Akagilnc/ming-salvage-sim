@@ -153,11 +153,18 @@ def test_registry_rows_generate_shape_contract_matrix():
         assert raw_str[spec.name] == "12"
 
 
-def test_grant_amount_catalog_declares_classifier_quantity_unit():
-    """拨帑金额单位由 typed catalog 契约声明，不机械锁定 prompt 文案。"""
+def test_money_units_and_season_option_contract_project_from_catalog():
+    """同名金额各守所属 action 单位；season option 不另立字段表。"""
+    from ming_sim.action_clusters import season_option_fields
+
     grant = next(c for c in ACTION_CLUSTERS if c.kind == "grant_allocation")
-    amount = next(f for f in grant.fields if f.name == "amount")
-    assert amount.quantity_unit == "万两"
+    punishment = next(c for c in ACTION_CLUSTERS if c.kind == "punishment")
+    assert next(f for f in grant.fields if f.name == "amount").quantity_unit == "万两"
+    assert next(f for f in punishment.fields if f.name == "amount").quantity_unit == "两"
+    assert season_option_fields("grant_allocation") == (
+        "action_type", "grant_action", "target_id", "target_kind", "amount",
+        "account", "purpose", "cadence",
+    )
 
 
 def test_strict_shape_rejects_unknown_kind_and_out_of_enum_subfield():

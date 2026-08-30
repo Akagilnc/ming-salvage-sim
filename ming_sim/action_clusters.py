@@ -30,6 +30,7 @@ class FieldSpec:
     int_lo: int = 0  # symmetric lower bound; >0 marks positive integer
     int_hi: int = 10**9
     quantity_unit: Optional[str] = None
+    season_option: bool = False
     # Optional per-enum execution metadata lives on the canonical field row.
     execution_coverage: Optional[Mapping[str, Optional[str]]] = None
 
@@ -102,28 +103,27 @@ def classifier_json_fields_prompt() -> str:
     seen_zh: set = set()
     for c in ACTION_CLUSTERS:
         for f in c.fields:
-            if f.zh in seen_zh:
-                continue
-            seen_zh.add(f.zh)
-            if f.allowed is not None:
-                # stable order for prompt: put 无 first when present
-                vals = sorted(f.allowed, key=lambda x: (x != "无", x))
-                lines.append(f'  "{f.zh}": "{"|".join(vals)}",')
-            elif f.as_int:
-                # 合法 JSON 缺省示例：optional→null，否则 0；约束说明派生到对象外
-                example = "null" if f.default is None else "0"
-                lines.append(f'  "{f.zh}": {example},')
-                if f.int_lo > 0:
-                    constraint = (
-                        f"可null；命中 JSON integer>={f.int_lo}；禁数字字符串"
-                        if f.default is None
-                        else f"JSON integer>={f.int_lo}"
-                    )
-                    if f.quantity_unit:
-                        constraint += f"；单位={f.quantity_unit}"
-                    notes.append(f"{f.zh}：{constraint}")
-            else:
-                lines.append(f'  "{f.zh}": "",')
+            if f.zh not in seen_zh:
+                seen_zh.add(f.zh)
+                if f.allowed is not None:
+                    # stable order for prompt: put 无 first when present
+                    vals = sorted(f.allowed, key=lambda x: (x != "无", x))
+                    lines.append(f'  "{f.zh}": "{"|".join(vals)}",')
+                elif f.as_int:
+                    # 合法 JSON 缺省示例：optional→null，否则 0
+                    example = "null" if f.default is None else "0"
+                    lines.append(f'  "{f.zh}": {example},')
+                else:
+                    lines.append(f'  "{f.zh}": "",')
+            if f.as_int and (f.int_lo > 0 or f.quantity_unit):
+                constraint = (
+                    f"可null；命中 JSON integer>={f.int_lo}；禁数字字符串"
+                    if f.default is None
+                    else f"JSON integer>={f.int_lo}"
+                )
+                if f.quantity_unit:
+                    constraint += f"；单位={f.quantity_unit}"
+                notes.append(f"{c.label_zh}.{f.zh}：{constraint}")
     # trailing comma cleanup on last line
     if lines:
         lines[-1] = lines[-1].rstrip(",")
@@ -139,6 +139,33 @@ def cluster_by_kind(kind: str) -> Optional[ActionCluster]:
         if c.kind == kind:
             return c
     return None
+
+
+def season_option_fields(kind: str) -> Tuple[str, ...]:
+    """Typed season-option keys projected from the canonical action row."""
+    cluster = cluster_by_kind(kind)
+    if cluster is None:
+        return ()
+    return ("action_type", *(f.name for f in cluster.fields if f.season_option))
+
+
+def season_option_contract_prompt(kind: str) -> str:
+    """Human-facing season option contract projected from FieldSpec."""
+    cluster = cluster_by_kind(kind)
+    if cluster is None:
+        return ""
+    fields = [f for f in cluster.fields if f.season_option]
+    details = []
+    for spec in fields:
+        detail = spec.name
+        if spec.quantity_unit:
+            detail += f"（{spec.quantity_unit}）"
+        details.append(detail)
+    return (
+        f'确定拨帑的 option 须携带 action_type="{kind}"、'
+        + "、".join(details)
+        + "；不拨帑的 option 不携带这些字段。"
+    )
 
 
 def materialize_clusters_ordered() -> Tuple[ActionCluster, ...]:

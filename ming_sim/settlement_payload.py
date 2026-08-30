@@ -15,6 +15,7 @@ import json
 import re
 from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
 
+from ming_sim.action_clusters import season_option_fields
 from ming_sim.models import effect_dict_has_work
 
 if TYPE_CHECKING:  # GameDB 仅用于 _select_secret_orders_for_sim 的类型注解（已 `from __future__ annotations`
@@ -83,13 +84,10 @@ def parse_decision_blocks(narrative: str) -> tuple[str, List[Dict[str, object]]]
             }
             # Deterministic financial options carry their executable payload;
             # label/hint remain presentation only.
-            if str(o.get("action_type") or "") == "grant_allocation":
-                for key in (
-                    "action_type", "grant_action", "account", "amount", "purpose",
-                    "target_kind", "target_id", "cadence",
-                ):
-                    if key in o:
-                        option[key] = o[key]
+            action_type = str(o.get("action_type") or "")
+            for key in season_option_fields(action_type):
+                if key in o:
+                    option[key] = o[key]
             options.append(option)
         if len(options) < 2:  # 至少给 2 个选项才算有效抉择
             continue
