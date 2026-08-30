@@ -167,7 +167,7 @@ export function RightDrawer({
   return (
     <>
       {open && <button className="drawer-scrim" aria-label="收起" onClick={onClose} />}
-      <aside className={`right-drawer ${extraClass || ""} ${open ? "open" : ""}`}>
+      <aside inert={!open} className={`right-drawer ${extraClass || ""} ${open ? "open" : ""}`}>
         <div className="right-drawer-brand">
           <div className="panel-title">
             {icon}
