@@ -28,6 +28,12 @@ def test_characters_table_has_person_archive_fields(read_game):
     assert {"intrigue", "defected_from"} <= cols
     assert {"transit_distance_remaining", "transit_speed_factor"} <= cols
     info = _column_info(db, "characters")
+    assert info["intrigue"]["type"] == "INTEGER"
+    assert info["intrigue"]["notnull"] == 1
+    assert info["intrigue"]["dflt_value"] is None
+    assert info["defected_from"]["type"] == "TEXT"
+    assert info["defected_from"]["notnull"] == 0
+    assert info["defected_from"]["dflt_value"] is None
     for name in ("transit_distance_remaining", "transit_speed_factor"):
         assert info[name]["type"] == "REAL"
         assert info[name]["notnull"] == 0
