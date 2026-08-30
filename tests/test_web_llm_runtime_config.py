@@ -991,6 +991,78 @@ def test_continue_load_save_reset_reach_hud_zero_llm_calls(tmp_path, monkeypatch
             pass
 
 
+@pytest.mark.parametrize("op", ["load", "reset"])
+def test_hot_replace_constructor_failure_restores_old_runtime(tmp_path, monkeypatch, op):
+    """A failed candidate must leave the pre-replacement data usable through the HTTP entry."""
+    db_path = tmp_path / "ming.db"
+    monkeypatch.setenv("MING_SIM_DB", str(db_path))
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
+    monkeypatch.setattr(web_app.WebGame, "_spawn_startup_extraction_catch_up", lambda self: None)
+    runtime = web_app.WebGame(fresh=True)
+    runtime.db.kv_set("hot_replace_marker", "old")
+    runtime.save_to("before")
+    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
+
+    real_session = web_app.GameSession
+    attempts = 0
+
+    def fail_first_candidate(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("candidate sentinel")
+        return real_session(*args, **kwargs)
+
+    monkeypatch.setattr(web_app, "GameSession", fail_first_candidate)
+    with pytest.raises(web_app.HTTPException) as exc:
+        if op == "load":
+            asyncio.run(web_app.api_load_save("before"))
+        else:
+            asyncio.run(web_app.api_reset_game())
+    assert exc.value.status_code == 500
+    assert "candidate sentinel" in exc.value.detail
+    assert runtime.db.kv_get("hot_replace_marker") == "old"
+    runtime.db.kv_set("after_failed_replace", "writable")
+    assert runtime.db.kv_get("after_failed_replace") == "writable"
+    assert runtime.state_payload()["turn"]["turn"] == runtime.state.turn
+    assert not runtime._write_queue.is_sealed()
+    assert not runtime._write_queue.write_gate.locked()
+    runtime.session.close()
+
+
+@pytest.mark.parametrize("op", ["load", "reset"])
+def test_hot_replace_backup_failure_keeps_live_session(tmp_path, monkeypatch, op):
+    """Prepare failure must not close or replace the currently usable session."""
+    db_path = tmp_path / "ming.db"
+    monkeypatch.setenv("MING_SIM_DB", str(db_path))
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
+    monkeypatch.setattr(web_app.WebGame, "_spawn_startup_extraction_catch_up", lambda self: None)
+    runtime = web_app.WebGame(fresh=True)
+    runtime.save_to("before")
+    old_session = runtime.session
+    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
+
+    def fail_backup(_path):
+        raise RuntimeError("backup sentinel")
+
+    monkeypatch.setattr(runtime.db, "backup_to", fail_backup)
+    with pytest.raises(web_app.HTTPException) as exc:
+        if op == "load":
+            asyncio.run(web_app.api_load_save("before"))
+        else:
+            asyncio.run(web_app.api_reset_game())
+    assert exc.value.status_code == 500
+    assert "backup sentinel" in exc.value.detail
+    assert runtime.session is old_session
+    runtime.db.kv_set("prepare_failure", "still writable")
+    assert runtime.db.kv_get("prepare_failure") == "still writable"
+    runtime.session.close()
+
+
 def test_menu_save_llm_api_channel_rejects_placeholder_existing_key(monkeypatch):
     # ship-pre CMR Group A：API 通道存档，空 api_key 时不能把占位符 cli-backend 当真 key 复用。
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
