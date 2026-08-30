@@ -163,6 +163,12 @@ def test_army_pay_missing_fields_fail_loud_at_admission(game):
             target_kind="army", target_id="guanning", cadence="每季",
         )
     assert "cadence" in cadence_error.value.missing_fields
+    with pytest.raises(IncompleteXiexangPayloadError) as unit_error:
+        require_explicit_xiexang_fields(
+            amount=15, amount_unit="两", account="国库", purpose="补饷",
+            target_kind="army", target_id="guanning",
+        )
+    assert "amount_unit" in unit_error.value.missing_fields
     assert {int(d["id"]) for d in db.list_decree_dossiers()} == before_ids
     assert int(state.metrics["国库"]) == treasury_before
     ledger_after = db.conn.execute("SELECT COUNT(*) AS n FROM economy_ledger").fetchone()["n"]

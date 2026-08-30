@@ -2663,12 +2663,11 @@ def capture_manual_directive_payload(
         payload.get("dossier_action_type") == "grant_allocation"
         and payload.get("grant_action") == "协饷"
     ):
-        if payload.get("amount_unit") != "万两":
-            from ming_sim.action_materialize import IncompleteXiexangPayloadError
-            raise IncompleteXiexangPayloadError(["amount_unit"])
         from ming_sim.action_materialize import require_explicit_xiexang_fields
         payload.update(require_explicit_xiexang_fields(
-            amount=payload.get("amount"), account=str(payload.get("account") or ""),
+            amount=payload.get("amount"),
+            amount_unit=str(payload.get("amount_unit") or ""),
+            account=str(payload.get("account") or ""),
             purpose=str(payload.get("purpose") or ""),
             target_kind=str(payload.get("target_kind") or ""),
             target_id=str(payload.get("target_id") or ""),
