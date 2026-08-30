@@ -94,7 +94,7 @@ def parse_decision_blocks(narrative: str) -> tuple[str, List[Dict[str, object]]]
             if not label:
                 continue
             try:
-                validate_season_option(o)
+                action_type = validate_season_option(o)
             except ValueError:
                 options = []
                 break
@@ -104,7 +104,6 @@ def parse_decision_blocks(narrative: str) -> tuple[str, List[Dict[str, object]]]
             }
             # Deterministic financial options carry their executable payload;
             # label/hint remain presentation only.
-            action_type = str(o.get("action_type") or "").strip()
             for key in season_option_fields(action_type):
                 if key in o:
                     option[key] = action_type if key == "action_type" else o[key]

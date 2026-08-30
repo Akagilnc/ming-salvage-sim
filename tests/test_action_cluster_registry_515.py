@@ -172,7 +172,9 @@ def test_money_units_and_season_option_contract_project_from_catalog():
         "target_id": "guanning", "target_kind": "army", "amount": 1,
         "account": "内库", "purpose": "补饷", "cadence": "一次性",
     }
-    validate_season_option(valid)
+    assert validate_season_option(
+        {**valid, "action_type": " grant_allocation "}
+    ) == "grant_allocation"
     with pytest.raises(ValueError):
         validate_season_option({**valid, "action_type": "grant_allocaton"})
     for key in season_option_fields("grant_allocation")[1:]:

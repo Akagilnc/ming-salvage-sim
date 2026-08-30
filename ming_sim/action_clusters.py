@@ -175,8 +175,8 @@ def _season_specs(kind: str) -> Tuple[FieldSpec, ...]:
     return tuple(f for f in cluster.fields if f.season_option) if cluster else ()
 
 
-def validate_season_option(option: Mapping[str, object]) -> None:
-    """Validate a typed season option from its canonical FieldSpec rows."""
+def validate_season_option(option: Mapping[str, object]) -> str:
+    """Validate a typed season option and return its canonical action type."""
     from ming_sim.strict_types import strict_int
 
     action_type = str(option.get("action_type") or "").strip()
@@ -198,6 +198,7 @@ def validate_season_option(option: Mapping[str, object]) -> None:
             number = strict_int(value, accept_numeric_strings=False)
             if number < spec.int_lo or number > spec.int_hi:
                 raise ValueError(f"choice.{spec.name} 超出范围：{number!r}")
+    return action_type
 
 
 def season_option_contract_prompt(kind: str) -> str:
