@@ -13,7 +13,7 @@ export class ApiRequestError extends Error {
     chatIdentity?: { campaign_id: string; night_id: number; chat_turn_id: number },
   ) {
     const message = detail.message || fallback;
-    super(detail.code ? `[${detail.code}] ${message}` : message);
+    super(message);
     this.name = "ApiRequestError";
     this.detail = detail;
     this.chatIdentity = chatIdentity;
