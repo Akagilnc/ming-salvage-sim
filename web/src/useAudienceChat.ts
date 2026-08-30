@@ -188,6 +188,8 @@ export function useAudienceChat(
                 dispatchChat({ type: "history", history: doneData.history });
                 if (typeof doneData.night_id === "number") setCurrentNightId(doneData.night_id);
               }
+              // done 已持久化本轮，立即重读公共卷轴；end 再失效一次以接回尾随落账。
+              onScrollSettled?.();
               // 持久后果：done 到手即消费，不按 token 门控、不拖到 end（防 120s 读心期间被新轮吞掉）
               cb.onDone?.(doneData);
             },
