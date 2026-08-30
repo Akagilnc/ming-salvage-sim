@@ -1001,9 +1001,11 @@ def test_hot_replace_constructor_failure_restores_old_runtime(tmp_path, monkeypa
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
     monkeypatch.setattr(web_app.WebGame, "_spawn_startup_extraction_catch_up", lambda self: None)
     runtime = web_app.WebGame(fresh=True)
-    runtime.db.kv_set("hot_replace_marker", "old")
-    runtime.save_to("before")
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
+    marker_minister, write_minister = list(runtime.content.characters)[:2]
+    asyncio.run(web_app.api_remove_favorite(marker_minister))
+    asyncio.run(web_app.api_add_favorite(marker_minister))
+    runtime.save_to("before")
 
     real_session = web_app.GameSession
     attempts = 0
@@ -1022,11 +1024,10 @@ def test_hot_replace_constructor_failure_restores_old_runtime(tmp_path, monkeypa
         else:
             asyncio.run(web_app.api_reset_game())
     assert exc.value.status_code == 500
-    assert runtime.db.kv_get("hot_replace_marker") == "old"
-    minister = next(iter(runtime.content.characters))
-    asyncio.run(web_app.api_remove_favorite(minister))
-    favorite_response = asyncio.run(web_app.api_add_favorite(minister))
-    assert minister in favorite_response["favorites"]
+    favorite_response = asyncio.run(web_app.api_remove_favorite(write_minister))
+    assert marker_minister in favorite_response["favorites"]
+    favorite_response = asyncio.run(web_app.api_add_favorite(write_minister))
+    assert write_minister in favorite_response["favorites"]
     state_response = asyncio.run(web_app.api_state())
     assert state_response["turn"]["turn"] == runtime.state.turn
     runtime.session.close()
