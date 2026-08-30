@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import re
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
@@ -221,7 +222,8 @@ def write_credit_event(
         source, target = person, EMPEROR_NODE
     from ming_sim.applier import atomic
 
-    with atomic(db):
+    transaction = atomic(db) if db.owns_transaction() else contextlib.nullcontext()
+    with transaction:
         existing = _existing_edge_id(
             db, source=source, target=target, event_kind=kind, origin=origin,
         )

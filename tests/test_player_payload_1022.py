@@ -94,7 +94,14 @@ class _SettlementGame:
     def state_payload(self):
         return {
             "extraction": {"economy_moves": [{"account": "国库", "delta": -20}]},
-            "character": {"loyalty": 88, "ability": 77, "integrity": 66, "courage": 55},
+            "character": {
+                "loyalty": 88,
+                "ability": 77,
+                "integrity": 66,
+                "courage": 55,
+                "identity": 44,
+                "intrigue": 33,
+            },
         }
 
 
@@ -141,7 +148,10 @@ def test_settlement_sse_routes_serialize_only_player_narrative(
         elif isinstance(value, list):
             pending.extend(value)
     assert not (
-        {"state", "extraction", "extractor_output", "character", "loyalty", "ability", "integrity", "courage"}
+        {
+            "state", "extraction", "extractor_output", "character",
+            "loyalty", "ability", "integrity", "courage", "identity", "intrigue",
+        }
         & structured_keys
     )
 
