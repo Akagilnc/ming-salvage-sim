@@ -16,10 +16,23 @@ EXPECTED_MATRIX = {
 }
 
 
-def test_value_matrix_matches_adr_0011_3_and_routes_opposite_signs():
+def test_value_matrix_matches_adr_0011_3():
     assert value_matrix.matrix_snapshot() == EXPECTED_MATRIX
-    assert value_matrix.mean_aligned_stance("阉党", "既得利益", direction=-1) == -2
-    assert value_matrix.mean_aligned_stance("东林", "既得利益", direction=-1) == 1
+
+
+def test_target_aware_axis_collisions_route_only_the_target_faction_vitals():
+    results = value_matrix.axis_collision_stances(
+        [
+            {"axis": "既得利益", "direction": -1, "scope": "泛化"},
+            {"axis": "皇权依附", "direction": -1, "scope": "目标命门"},
+        ],
+        target_faction="阉党",
+    )
+
+    by_cell = {(row["faction"], row["axis"]): row["aligned_stance"] for row in results}
+    assert by_cell[("阉党", "皇权依附")] == -2
+    assert by_cell[("东林", "既得利益")] == 1
+    assert ("皇党", "皇权依附") not in by_cell
 
 
 @pytest.mark.parametrize(

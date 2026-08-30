@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Mapping
+from typing import Iterable, Mapping
 
 from ming_sim.assets import load_json_asset, require_dict
 from ming_sim.centrifuge_ledger import CENTRIFUGE_AXES
@@ -45,18 +45,6 @@ def _loaded() -> tuple[tuple[str, ...], dict[str, dict[str, int]]]:
 
 def value_axes() -> tuple[str, ...]:
     return _loaded()[0]
-
-
-VALUE_AXES: tuple[str, ...] = ()  # 兼容旧 import；运行时用 value_axes()
-
-
-def _ensure_axes_alias() -> tuple[str, ...]:
-    global VALUE_AXES
-    VALUE_AXES = value_axes()
-    return VALUE_AXES
-
-
-_ensure_axes_alias()
 
 
 def normalize_axis(raw: object) -> str | None:
@@ -107,6 +95,40 @@ def faction_axis_stance(faction: object, axis: object) -> int:
     if row is None:
         return 0
     return int(row.get(ax, 0))
+
+
+def axis_collision_stances(
+    collisions: Iterable[Mapping[str, object]],
+    *,
+    target_faction: object,
+) -> list[dict[str, object]]:
+    """逐格读取目标感知撞轴集的 ``stance × direction``。"""
+    target = str(target_faction or "").strip()
+    factions = _loaded()[1]
+    results: list[dict[str, object]] = []
+    for collision in collisions:
+        axis = normalize_axis(collision.get("axis"))
+        scope = collision.get("scope")
+        if axis is None:
+            continue
+        direction = normalize_direction(collision.get("direction"), default=1)
+        if scope == "泛化":
+            recipients = factions
+        elif scope == "目标命门" and target in factions:
+            recipients = (target,)
+        else:
+            continue
+        for faction in recipients:
+            results.append(
+                {
+                    "faction": faction,
+                    "axis": axis,
+                    "direction": direction,
+                    "scope": scope,
+                    "aligned_stance": faction_axis_stance(faction, axis) * direction,
+                }
+            )
+    return results
 
 
 def mean_aligned_stance(
