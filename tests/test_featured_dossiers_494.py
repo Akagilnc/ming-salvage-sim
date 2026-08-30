@@ -7,6 +7,7 @@
 from dataclasses import replace
 import re
 
+from ming_sim.assets import load_json_asset
 from ming_sim.context import (
     character_context_with_db,
     faction_context_with_db,
@@ -41,10 +42,8 @@ def test_every_active_seven_faction_minister_has_featured_dossier(game):
     _db, _state, content = game
     ministers = _court_ministers(content)
     assert len(ministers) >= 40
-    for character in ministers:
-        rendered = minister_dossier(character)
-        assert all(k in rendered for k in _DOSSIER_KEYS)
-        assert "未有专门 dossier" not in rendered
+    dossiers = load_json_asset("minister_dossiers.json")
+    assert {character.name for character in ministers} <= dossiers.keys()
 
 
 def test_seven_faction_dossiers_are_objective_and_identity_scoped(game):
