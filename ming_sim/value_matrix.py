@@ -13,6 +13,7 @@ from ming_sim.assets import load_json_asset, require_dict
 from ming_sim.centrifuge_ledger import CENTRIFUGE_AXES
 
 _ASSET = "value_matrix.json"
+_VALUE_FACTIONS = frozenset({"东林", "阉党", "军队", "皇党", "宗室", "西学", "中立"})
 
 
 @lru_cache(maxsize=1)
@@ -22,19 +23,24 @@ def _loaded() -> tuple[tuple[str, ...], dict[str, dict[str, int]]]:
     if not isinstance(axes_raw, list) or not axes_raw:
         raise SystemExit(f"content/{_ASSET}: axes 必须为非空数组")
     axes = tuple(str(item) for item in axes_raw)
-    if frozenset(axes) != CENTRIFUGE_AXES:
+    if len(axes) != 6 or frozenset(axes) != CENTRIFUGE_AXES:
         raise SystemExit(f"content/{_ASSET}: axes 必须等于六轴闭集")
     factions = require_dict(raw.get("factions"), f"{_ASSET}.factions")
+    if frozenset(factions) != _VALUE_FACTIONS:
+        raise SystemExit(f"content/{_ASSET}: factions 必须等于七派闭集")
     matrix: dict[str, dict[str, int]] = {}
     for faction, row in factions.items():
         cells = require_dict(row, f"{_ASSET}.factions.{faction}")
+        if frozenset(cells) != CENTRIFUGE_AXES:
+            raise SystemExit(f"content/{_ASSET}: {faction} 必须恰有六轴")
         parsed: dict[str, int] = {}
         for axis in axes:
-            if axis not in cells:
-                raise SystemExit(f"content/{_ASSET}: {faction} 缺轴 {axis}")
-            parsed[axis] = int(cells[axis])
+            value = cells[axis]
+            if isinstance(value, bool) or not isinstance(value, int) or not -2 <= value <= 2:
+                raise SystemExit(f"content/{_ASSET}: {faction}.{axis} 必须为 -2..2 整数")
+            parsed[axis] = value
         matrix[str(faction)] = parsed
-    if len(matrix) * len(axes) != 42:
+    if sum(len(row) for row in matrix.values()) != 42:
         raise SystemExit(f"content/{_ASSET}: 须为 7 派 × 6 轴 = 42 格")
     return axes, matrix
 
