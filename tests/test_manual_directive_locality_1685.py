@@ -122,6 +122,35 @@ def test_manual_directive_locality_canonicalizes_roster_before_drift_guard(game,
     assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0] == 0
 
 
+def test_manual_directive_participant_first_preserves_recovered_locality(game, monkeypatch):
+    import ming_sim.cli_backend as cli_backend
+
+    db, _state, content = game
+    calls = []
+    replies = [
+        _extracted("单省", "毕自"),
+        _extracted("无", "毕自严"),
+        _extracted("单省", "毕自严"),
+    ]
+
+    def backend(*_args, **_kwargs):
+        calls.append(1)
+        return json.dumps(replies[len(calls) - 1], ensure_ascii=False), 1
+
+    monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
+    payload = cli_backend.capture_manual_directive_payload(
+        "着毕自严办理陕西事务。", None, db=db, content=content,
+    )
+
+    assert len(calls) == 3
+    assert payload["locality_scope"] == "单省"
+    assert [
+        person["character_id"] for person in payload["participant_roster"]
+    ] == ["毕自严"]
+    assert db.conn.execute("SELECT COUNT(*) FROM turn_directives").fetchone()[0] == 0
+    assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0] == 0
+
+
 def test_manual_directive_locality_rejects_non_locality_drift(game, monkeypatch):
     import ming_sim.cli_backend as cli_backend
 
