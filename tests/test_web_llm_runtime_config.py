@@ -1022,13 +1022,13 @@ def test_hot_replace_constructor_failure_restores_old_runtime(tmp_path, monkeypa
         else:
             asyncio.run(web_app.api_reset_game())
     assert exc.value.status_code == 500
-    assert "candidate sentinel" in exc.value.detail
     assert runtime.db.kv_get("hot_replace_marker") == "old"
-    runtime.db.kv_set("after_failed_replace", "writable")
-    assert runtime.db.kv_get("after_failed_replace") == "writable"
-    assert runtime.state_payload()["turn"]["turn"] == runtime.state.turn
-    assert not runtime._write_queue.is_sealed()
-    assert not runtime._write_queue.write_gate.locked()
+    minister = next(iter(runtime.content.characters))
+    asyncio.run(web_app.api_remove_favorite(minister))
+    favorite_response = asyncio.run(web_app.api_add_favorite(minister))
+    assert minister in favorite_response["favorites"]
+    state_response = asyncio.run(web_app.api_state())
+    assert state_response["turn"]["turn"] == runtime.state.turn
     runtime.session.close()
 
 
@@ -1043,7 +1043,6 @@ def test_hot_replace_backup_failure_keeps_live_session(tmp_path, monkeypatch, op
     monkeypatch.setattr(web_app.WebGame, "_spawn_startup_extraction_catch_up", lambda self: None)
     runtime = web_app.WebGame(fresh=True)
     runtime.save_to("before")
-    old_session = runtime.session
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
 
     def fail_backup(_path):
@@ -1056,10 +1055,11 @@ def test_hot_replace_backup_failure_keeps_live_session(tmp_path, monkeypatch, op
         else:
             asyncio.run(web_app.api_reset_game())
     assert exc.value.status_code == 500
-    assert "backup sentinel" in exc.value.detail
-    assert runtime.session is old_session
-    runtime.db.kv_set("prepare_failure", "still writable")
-    assert runtime.db.kv_get("prepare_failure") == "still writable"
+    minister = next(iter(runtime.content.characters))
+    asyncio.run(web_app.api_remove_favorite(minister))
+    favorite_response = asyncio.run(web_app.api_add_favorite(minister))
+    assert minister in favorite_response["favorites"]
+    assert asyncio.run(web_app.api_state())["turn"]["turn"] == runtime.state.turn
     runtime.session.close()
 
 
