@@ -1576,7 +1576,10 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
     )
     decision_report = """本月邸报。
 <<DECISION>>
-{"title":"再济关宁","context":"关宁欠饷尚重，奏请圣裁","options":[{"label":"发国库银三十万两济关宁","hint":"军心稍定，国库益绌","action_type":"grant_allocation","grant_action":"协饷","account":"国库","amount":30,"purpose":"补饷","target_kind":"army","target_id":"guanning","cadence":"一次性"},{"label":"暂缓再拨","hint":"国库得保，边军仍困"}]}
+{"title":"内帑济关宁","context":"关宁欠饷尚重，奏请圣裁","options":[{"label":"发内库银三十万两济关宁","hint":"军心稍定，内帑益绌","action_type":"grant_allocation","grant_action":"协饷","account":"内库","amount":30,"purpose":"补饷","target_kind":"army","target_id":"guanning","cadence":"一次性"},{"label":"暂缓内帑","hint":"内帑得保，边军仍困"}]}
+<<END>>
+<<DECISION>>
+{"title":"国帑济关宁","context":"关宁欠饷尚重，奏请圣裁","options":[{"label":"发国库银三十万两济关宁","hint":"军心稍定，国库益绌","action_type":"grant_allocation","grant_action":"协饷","account":"国库","amount":30,"purpose":"补饷","target_kind":"army","target_id":"guanning","cadence":"一次性"},{"label":"暂缓国帑","hint":"国库得保，边军仍困"}]}
 <<END>>"""
     monkeypatch.setattr(
         decree_mod, "simulate_season_with_payload",
@@ -1607,7 +1610,11 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
         game.state.metrics["国库"] = max(int(game.state.metrics["国库"]), 100)
         game.db.save_state(game.state)
         treasury_before = int(game.state.metrics["国库"])
+        inner_treasury_before = int(game.state.metrics["内库"])
         arrears_before = _army_row(game.db)
+        liaodong_issue_before = dict(game.db.conn.execute(
+            "SELECT id, status, bar_value FROM issues WHERE title='辽东索饷'"
+        ).fetchone())
         turn_before = int(game.state.turn)
 
         client = TestClient(web_app.app)
@@ -1651,14 +1658,21 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
         )
         if body.get("awaiting_decision"):
             decisions = body.get("decisions") or []
-            assert decisions, f"awaiting_decision with empty decisions: {body!r}"
-            selected = decisions[0]["options"][0]
+            assert len(decisions) == 2, body
+            decisions_by_account = {
+                decision["options"][0]["account"]: decision
+                for decision in decisions
+            }
+            assert set(decisions_by_account) == {"内库", "国库"}
             resolved = client.post(
                 "/api/decree/resolve_decisions/stream",
-                json={"choices": [{
-                    "decision_key": decisions[0]["decision_key"],
-                    "label": selected["label"],
-                }]},
+                json={"choices": [
+                    {
+                        "decision_key": decision["decision_key"],
+                        "label": decision["options"][0]["label"],
+                    }
+                    for decision in decisions_by_account.values()
+                ]},
             )
             assert resolved.status_code == 200, resolved.text
             assert "event: error" not in resolved.text, resolved.text
@@ -1674,16 +1688,31 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
             and d["target_id"] == "guanning"
         ]
         dossier = next(d for d in dossiers if d["pending_action_id"] == pending_id)
-        decision_dossier = next(d for d in dossiers if d["id"] != dossier["id"])
-        decision_payload = json.loads(game.db.conn.execute(
-            "SELECT payload_json FROM decree_dossiers WHERE id=?",
-            (decision_dossier["id"],),
-        ).fetchone()[0])
-        assert decision_payload["decision_key"] == decisions[0]["decision_key"]
+        decision_dossiers = [d for d in dossiers if d["id"] != dossier["id"]]
+        assert len(decision_dossiers) == 2, dossiers
+        decision_payloads = {
+            json.loads(game.db.conn.execute(
+                "SELECT payload_json FROM decree_dossiers WHERE id=?", (d["id"],),
+            ).fetchone()[0])["account"]: d
+            for d in decision_dossiers
+        }
+        assert set(decision_payloads) == {"内库", "国库"}
+        inner_dossier = decision_payloads["内库"]
+        decision_dossier = decision_payloads["国库"]
+        for account, selected_dossier in decision_payloads.items():
+            payload = json.loads(game.db.conn.execute(
+                "SELECT payload_json FROM decree_dossiers WHERE id=?",
+                (selected_dossier["id"],),
+            ).fetchone()[0])
+            assert payload["decision_key"] == decisions_by_account[account]["decision_key"]
+        assert inner_dossier["status"] == "closed"
+        assert inner_dossier["promulgation_decision"]
+        assert len(game.db.list_decree_dossier_decisions(inner_dossier["id"])) == 1
         assert decision_dossier["status"] == "proposed"
         assert not decision_dossier["promulgation_decision"]
         late_fact = (
-            int(decision_dossier["id"]), "proposed", decisions[0]["decision_key"],
+            int(decision_dossier["id"]), "proposed",
+            decisions_by_account["国库"]["decision_key"],
         )
         assert late_fact in extractor_inputs["issues"]
         assert late_fact not in extractor_inputs["internal"]
@@ -1693,6 +1722,11 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
         )
         assert game.db.list_decree_dossier_decisions(decision_dossier["id"]) == []
         assert game.db.list_economy_moves_for_dossier(decision_dossier["id"]) == []
+        inner_moves = game.db.list_economy_moves_for_dossier(inner_dossier["id"])
+        assert len(inner_moves) == 1, inner_moves
+        assert inner_moves[0]["account"] == "内库"
+        assert int(inner_moves[0]["delta"]) == -30
+        assert inner_moves[0]["purpose"] == "补饷"
         moves = game.db.list_economy_moves_for_dossier(dossier["id"])
         pay_moves = [
             m for m in moves
@@ -1713,6 +1747,25 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
         assert len(ledger) == 1
         assert int(ledger[0]["delta"]) == -15
         assert ledger[0]["account"] == "国库"
+        inner_ledger = [
+            dict(r) for r in game.db.conn.execute(
+                """
+                SELECT account, delta, purpose, origin_ref FROM economy_ledger
+                WHERE purpose='补饷' AND target_id='guanning' AND origin_ref=?
+                """,
+                (f"dossier:{inner_dossier['id']}",),
+            ).fetchall()
+        ]
+        assert len(inner_ledger) == 1
+        assert inner_ledger[0]["account"] == "内库"
+        assert int(inner_ledger[0]["delta"]) == -30
+        assert {
+            ledger[0]["origin_ref"], inner_ledger[0]["origin_ref"],
+            f"dossier:{decision_dossier['id']}",
+        } == {
+            f"dossier:{dossier['id']}", f"dossier:{inner_dossier['id']}",
+            f"dossier:{decision_dossier['id']}",
+        }
         decision_ledger = [
             dict(r) for r in game.db.conn.execute(
                 """
@@ -1735,11 +1788,37 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
         ]
         assert len(logs) == 1
         assert float(logs[0]["delta"]) == pytest.approx(-15)
+        inner_logs = game.db.conn.execute(
+            """
+            SELECT delta, new_value FROM army_logs
+            WHERE army_id='guanning' AND field='arrears' AND origin_ref=?
+            """,
+            (f"dossier:{inner_dossier['id']}",),
+        ).fetchall()
+        assert len(inner_logs) == 1
+        assert float(inner_logs[0]["delta"]) == pytest.approx(-30)
         after_army = _army_row(game.db)
-        assert int(after["metrics"]["国库"]) == 293
-        assert int(after["metrics"]["内库"]) == 462
-        assert after_army["arrears"] == pytest.approx(46)
-        assert after_army["central_pay_arrears"] == pytest.approx(46)
+        assert int(after["metrics"]["国库"]) == int(game.state.metrics["国库"])
+        assert int(after["metrics"]["内库"]) == int(game.state.metrics["内库"])
+        fixed_treasury_flow = int(after["metrics"]["国库"]) - treasury_before + 15
+        fixed_inner_flow = int(after["metrics"]["内库"]) - inner_treasury_before + 30
+        assert fixed_treasury_flow == -12
+        assert fixed_inner_flow == 22
+        fixed_arrears_flow = after_army["arrears"] - arrears_before["arrears"] + 45
+        fixed_central_arrears_flow = (
+            after_army["central_pay_arrears"]
+            - arrears_before["central_pay_arrears"] + 45
+        )
+        assert fixed_arrears_flow == pytest.approx(1)
+        assert fixed_central_arrears_flow == pytest.approx(1)
+        liaodong_issue_after = dict(game.db.conn.execute(
+            "SELECT id, status, bar_value FROM issues WHERE id=?",
+            (liaodong_issue_before["id"],),
+        ).fetchone())
+        assert liaodong_issue_after["status"] in {
+            liaodong_issue_before["status"], "resolved",
+        }
+        assert liaodong_issue_after["bar_value"] <= liaodong_issue_before["bar_value"]
         decision_logs = game.db.conn.execute(
             """
             SELECT delta, new_value FROM army_logs
