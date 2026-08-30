@@ -3439,6 +3439,25 @@ def test_657_phase2_preserve_backlog_and_generate_current_drafts(game, monkeypat
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)
 
+    # The real phase2 entry must surface an ambiguous stored choice instead of
+    # continuing with a generic "already happened" directive.
+    db.save_pending_decisions(turn, [{
+        "title": "歧义亲裁", "context": "c",
+        "options": [{"label": "同名", "hint": "一"}, {"label": " 同名 ", "hint": "二"}],
+    }])
+    db.conn.execute(
+        "UPDATE pending_decisions SET status='decided', choice_json=? "
+        "WHERE turn=? AND kind='decision'",
+        (json.dumps({"label": "同名"}, ensure_ascii=False), turn),
+    )
+    db.conn.commit()
+    from ming_sim.llm_contract import LLMContractError
+    with pytest.raises(LLMContractError):
+        dm.resolve_decisions_phase2(
+            state, db, None, None, content=content, registry=None,
+        )
+    db.clear_pending_decisions(turn)
+
     canned = (
         '{"economy_moves": [], "new_armies": [], "new_issues": [], '
         '"secret_order_updates": []}'
