@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+import sqlite3
 from types import SimpleNamespace
 
 import pytest
@@ -984,9 +985,18 @@ def test_continue_load_save_reset_reach_hud_zero_llm_calls(tmp_path, monkeypatch
             f"auto_*_{seed.state.year:04d}_{seed.state.period:02d}_t{seed.state.turn:04d}_begin.db"
         ))
         next_begin_bytes = next_begin_path.read_bytes()
+        after_begin_marker = "__after_begin_1702__"
+        seed.favorites = {after_begin_marker}
+        seed.db.kv_set("favorites", json.dumps(sorted(seed.favorites), ensure_ascii=False))
         seed.session.begin_turn()
         seed.session.begin_turn()
         assert next_begin_path.read_bytes() == next_begin_bytes
+        with sqlite3.connect(next_begin_path) as checkpoint:
+            archived_favorites = json.loads(checkpoint.execute(
+                "SELECT value FROM kv_store WHERE key = 'favorites'"
+            ).fetchone()[0])
+        assert archived_favorites == [preresolve_marker]
+        assert after_begin_marker in json.loads(seed.db.kv_get("favorites"))
     finally:
         try:
             seed.session.close()
@@ -997,7 +1007,7 @@ def test_continue_load_save_reset_reach_hud_zero_llm_calls(tmp_path, monkeypatch
     cont = web_app.WebGame(fresh=False)
     try:
         _assert_hud(cont.state_payload())
-        assert preresolve_marker in cont.favorites, (
+        assert after_begin_marker in cont.favorites, (
             "continue 须加载最后写入的可辨识持久状态，证明读的是既存主库"
         )
         cont.save_to("slot_a")
