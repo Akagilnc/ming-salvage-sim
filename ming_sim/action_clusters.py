@@ -149,18 +149,45 @@ def season_option_fields(kind: str) -> Tuple[str, ...]:
     return ("action_type", *(f.name for f in cluster.fields if f.season_option))
 
 
+def _season_specs(kind: str) -> Tuple[FieldSpec, ...]:
+    cluster = cluster_by_kind(kind)
+    return tuple(f for f in cluster.fields if f.season_option) if cluster else ()
+
+
+def validate_season_option(option: Mapping[str, object]) -> None:
+    """Validate a typed season option from its canonical FieldSpec rows."""
+    from ming_sim.strict_types import strict_int
+
+    for spec in _season_specs(str(option.get("action_type") or "")):
+        if spec.name not in option:
+            if spec.as_int and spec.default is None:
+                raise ValueError(f"choice.{spec.name} 不可空")
+            continue
+        if spec.as_int and spec.default is None and option[spec.name] is None:
+            raise ValueError(f"choice.{spec.name} 不可空")
+        value = option[spec.name]
+        if spec.allowed is not None and value not in spec.allowed:
+            raise ValueError(f"choice.{spec.name} 非法：{value!r}")
+        if spec.as_int:
+            number = strict_int(value, accept_numeric_strings=False)
+            if number < spec.int_lo or number > spec.int_hi:
+                raise ValueError(f"choice.{spec.name} 超出范围：{number!r}")
+
+
 def season_option_contract_prompt(kind: str) -> str:
     """Human-facing season option contract projected from FieldSpec."""
-    cluster = cluster_by_kind(kind)
-    if cluster is None:
-        return ""
-    fields = [f for f in cluster.fields if f.season_option]
     details = []
-    for spec in fields:
+    for spec in _season_specs(kind):
         detail = spec.name
+        if spec.allowed is not None:
+            detail += f'（{"|".join(sorted(spec.allowed))}）'
+        if spec.as_int:
+            detail += f"（JSON integer，{spec.int_lo}..{spec.int_hi}，禁数字字符串）"
         if spec.quantity_unit:
-            detail += f"（{spec.quantity_unit}）"
+            detail += f"（单位={spec.quantity_unit}）"
         details.append(detail)
+    if not details:
+        return ""
     return (
         f'确定拨帑的 option 须携带 action_type="{kind}"、'
         + "、".join(details)
