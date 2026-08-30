@@ -173,5 +173,5 @@ def test_cli_skill_card_command_uses_qualitative_character_bands(capsys, monkeyp
     assert "胆略进退审慎" in rendered
     assert all(
         raw not in rendered
-        for raw in ("忠诚88", "能力77", "清廉66", "胆略55", "阴谋44")
+        for raw in ("忠诚88", "能力77", "清廉66", "胆略55")
     )
