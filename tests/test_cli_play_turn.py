@@ -61,6 +61,8 @@ class _Sess:
     SettlementAbort("本月结算失败，进度已保存，可重试。", turn=1, stage="extract"),
     # #1353 fold-in r8：统一重试耗尽的 LLMUnavailable 与结算中止同形——留本回合可重按。
     LLMUnavailable(CLI_RUNNER_PLAYER_MESSAGE, code="pending_extraction"),
+    # #1700：空 simulator 的 LLMContractError 同形，issue catch 扩员后留本回合。
+    LLMContractError("simulator 流式无内容且无终结事件"),
 ])
 def test_issue_refusal_stays_in_loop(monkeypatch, capsys, exc):
     sess = _Sess(exc)
@@ -546,7 +548,12 @@ def test_play_turn_skip_prints_dossier_settlement_report_and_ends_turn(monkeypat
     assert session.calls == ["begin", "end"]
 
 
-def test_play_turn_skip_settlement_abort_stays_in_player_loop(monkeypatch, capsys):
+@pytest.mark.parametrize("exc", [
+    SettlementAbort("退朝结算中止，可重试。", turn=7, stage="settle"),
+    # #1700：skip catch 同形纳入 LLMContractError；同 turn 再 skip 成功。
+    LLMContractError("simulator 流式无内容且无终结事件"),
+])
+def test_play_turn_skip_settlement_abort_stays_in_player_loop(monkeypatch, capsys, exc):
     class Session:
         previous_summary = ""
 
@@ -565,7 +572,7 @@ def test_play_turn_skip_settlement_abort_stays_in_player_loop(monkeypatch, capsy
         def advance_without_decree(self):
             self.calls.append("advance")
             if self.calls.count("advance") == 1:
-                raise SettlementAbort("退朝结算中止，可重试。", turn=7, stage="settle")
+                raise exc
             return None
 
     actions = iter(["skip", "skip"])
@@ -576,63 +583,8 @@ def test_play_turn_skip_settlement_abort_stays_in_player_loop(monkeypatch, capsy
 
     term.play_turn(session)
 
-    assert "可重试" in capsys.readouterr().out
+    assert str(exc) in capsys.readouterr().out
     assert session.calls == ["begin", "advance", "advance"]
-
-
-@pytest.mark.parametrize("action", ["issue", "skip"])
-def test_play_turn_llm_contract_error_retries_same_turn(monkeypatch, capsys, action):
-    """#1700：空 simulator 的 LLMContractError 留在 play_turn 同 turn 可重按，不落到 run_cli 中止。"""
-
-    class Session:
-        previous_summary = ""
-
-        def __init__(self):
-            self.db = SimpleNamespace(list_pending_actions=lambda *a, **k: [])
-            self.state = SimpleNamespace(turn=7)
-            self.calls = []
-
-        def begin_turn(self):
-            self.calls.append("begin")
-            return _Snap()
-
-        def current_phase(self):
-            return TurnPhase.REVIEWING
-
-        def resolve_turn(self):
-            self.calls.append("resolve")
-            if self.calls.count("resolve") == 1:
-                raise LLMContractError("simulator 流式无内容且无终结事件")
-            return SimpleNamespace(report="ok", decisions=[])
-
-        def advance_without_decree(self):
-            self.calls.append("advance")
-            if self.calls.count("advance") == 1:
-                raise LLMContractError("simulator 流式无内容且无终结事件")
-            return None
-
-        def end_turn(self):
-            self.calls.append("end")
-
-        def submit_hitl_choices(self, choices, write_gate=None):
-            return "ok"
-
-    actions = iter([action, action])
-    monkeypatch.setattr(term, "review_directives", lambda s: next(actions))
-    monkeypatch.setattr(term, "_print_header", lambda s: None)
-    monkeypatch.setattr(issues_mod, "show_active_issues", lambda db: None)
-    monkeypatch.setattr(term, "_submit_first_cli_decisions", lambda session, result: "ok")
-    session = Session()
-
-    term.play_turn(session)
-
-    out = capsys.readouterr().out
-    assert "simulator 流式无内容" in out
-    assert "程序中止" not in out
-    if action == "issue":
-        assert session.calls == ["begin", "resolve", "resolve", "end"]
-    else:
-        assert session.calls == ["begin", "advance", "advance"]
 
 
 def test_play_turn_reports_secret_order_failure_when_settlement_aborts(monkeypatch, capsys):
