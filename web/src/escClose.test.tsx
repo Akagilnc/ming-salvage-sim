@@ -64,6 +64,40 @@ describe("全局 ESC 关闭抽屉（stale closure 回归）", () => {
   });
 });
 
+describe("全局 ESC 关闭抽屉的交互面", () => {
+  it.each([
+    ["朝堂·召见大臣", ".court-drawer:not(.harem-drawer)"],
+    ["后宫", ".harem-drawer"],
+    ["官员任免", ".right-drawer-appointment"],
+  ])("%s 抽屉关闭后原生 inert，DOM 仍常驻", async (navLabel, drawerSelector) => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      const u = new URL(String(url), "http://t.local");
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) return jsonResp(makeState());
+      return jsonResp({});
+    }));
+
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    await act(async () => { createRoot(host).render(<App />); });
+    await tick();
+
+    const nav = host.querySelector(`button[aria-label="${navLabel}"]`);
+    act(() => { nav!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await tick();
+    expect(host.querySelector(`${drawerSelector}.open`)).not.toBeNull();
+
+    act(() => { window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
+    await tick();
+    const closedDrawer = host.querySelector(drawerSelector);
+    expect(closedDrawer).not.toBeNull();
+    expect(closedDrawer!.hasAttribute("inert")).toBe(true);
+    expect(host.querySelector("button.drawer-scrim")).toBeNull();
+  });
+});
+
 describe("全局 ESC 关闭结局页（endingDismissed）", () => {
   it("ESC 关闭结局后不会被 auto-open effect 立刻重开", async () => {
     const endingState = {
