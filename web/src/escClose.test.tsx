@@ -80,32 +80,36 @@ describe("全局 ESC 关闭抽屉的交互面", () => {
     await act(async () => { createRoot(host).render(<App />); });
     await tick();
 
-    const drawers = [
-      ["朝堂·召见大臣", ".court-drawer:not(.harem-drawer)"],
-      ["后宫", ".harem-drawer"],
-      ["官员任免", ".right-drawer-appointment"],
-    ];
-    for (const [navLabel, drawerSelector] of drawers) {
-      const nav = host.querySelector(`button[aria-label="${navLabel}"]`);
-      expect(nav).not.toBeNull();
-      act(() => { nav!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    const coveredDrawerShapes = new Set<string>();
+    const navButtons = host.querySelectorAll("button.hud2-nav");
+    for (const nav of navButtons) {
+      act(() => { nav.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
       await tick();
 
-      const openDrawer = host.querySelector(`aside${drawerSelector}.open`);
-      expect(openDrawer).not.toBeNull();
-      expect(openDrawer!.hasAttribute("inert")).toBe(false);
-      const closedDrawers = host.querySelectorAll("aside.court-drawer:not(.open), aside.right-drawer:not(.open)");
-      expect([...closedDrawers].every((drawer) => drawer.hasAttribute("inert"))).toBe(true);
-      expect(host.querySelectorAll("button.drawer-scrim")).toHaveLength(1);
+      const openDrawer = host.querySelector("aside.court-drawer.open, aside.right-drawer.open");
+      if (!openDrawer) continue;
+
+      const drawerShape = openDrawer.classList.contains("harem-drawer")
+        ? "harem-drawer"
+        : openDrawer.classList.contains("court-drawer")
+          ? "court-drawer"
+          : "right-drawer";
+      if (!coveredDrawerShapes.has(drawerShape)) {
+        coveredDrawerShapes.add(drawerShape);
+        expect(openDrawer.hasAttribute("inert")).toBe(false);
+        const closedDrawers = host.querySelectorAll("aside.court-drawer:not(.open), aside.right-drawer:not(.open)");
+        expect([...closedDrawers].every((drawer) => drawer.hasAttribute("inert"))).toBe(true);
+        expect(host.querySelectorAll("button.drawer-scrim")).toHaveLength(1);
+      }
 
       act(() => { window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
       await tick();
-      const closedDrawer = host.querySelector(`aside${drawerSelector}`);
-      expect(closedDrawer).not.toBeNull();
-      expect(closedDrawer!.classList.contains("open")).toBe(false);
-      expect(closedDrawer!.hasAttribute("inert")).toBe(true);
+      expect(openDrawer.classList.contains("open")).toBe(false);
+      expect(openDrawer.hasAttribute("inert")).toBe(true);
       expect(host.querySelector("button.drawer-scrim")).toBeNull();
+      if (coveredDrawerShapes.size === 3) break;
     }
+    expect(coveredDrawerShapes).toEqual(new Set(["court-drawer", "harem-drawer", "right-drawer"]));
   });
 });
 
