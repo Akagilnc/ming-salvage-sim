@@ -1811,6 +1811,23 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
         assert liaodong_issue_after["status"] in {
             liaodong_issue_before["status"], "resolved",
         }
+        active_liaodong = [
+            issue for issue in after["issues"]
+            if issue["id"] == liaodong_issue_after["id"]
+        ]
+        closed_liaodong = [
+            issue for issue in after["closed_this_turn"]
+            if issue["id"] == liaodong_issue_after["id"]
+        ]
+        assert len(active_liaodong) + len(closed_liaodong) == 1
+        if liaodong_issue_after["status"] == "resolved":
+            assert not active_liaodong
+            assert len(closed_liaodong) == 1
+        else:
+            assert len(active_liaodong) == 1
+            assert not closed_liaodong
+        visible_liaodong = (active_liaodong + closed_liaodong)[0]
+        assert visible_liaodong["bar_value"] == liaodong_issue_after["bar_value"]
         assert liaodong_issue_after["bar_value"] <= liaodong_issue_before["bar_value"]
         decision_logs = game.db.conn.execute(
             """
