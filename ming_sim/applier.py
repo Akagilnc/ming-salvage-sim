@@ -386,9 +386,12 @@ def register_runtime_outcome_callbacks(
 
     Nested owners register on the shared connection so side effects (JSONL mirror,
     registry refresh) only fire after the outermost commit, and are discarded on
-    rollback. Depth 0 runs on_commit immediately.
+    rollback. Without a connection transaction, on_commit runs immediately.
     """
-    if getattr(db.conn, "_atomic_depth", 0) == 0:
+    if (
+        not db.conn.in_transaction
+        and getattr(db.conn, "_atomic_depth", 0) == 0
+    ):
         if on_commit is not None:
             on_commit()
         return

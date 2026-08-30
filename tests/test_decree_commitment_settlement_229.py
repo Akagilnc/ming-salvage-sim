@@ -263,6 +263,36 @@ def test_credit_event_is_the_idempotent_loyalty_write_source(
     assert _character_loyalty(db, "毛文龙") == expected
 
 
+def test_credit_event_respects_caller_owned_transaction_rollback(game):
+    db, state, content = game
+    origin = "dossier:outer-rollback:credit:back"
+    before_loyalty = _character_loyalty(db, "毛文龙")
+    before_support = int(state.metrics["民心"])
+    before_watermarks = db.conn.execute(
+        "SELECT COUNT(*) AS n FROM loyalty_credit_event_applied"
+    ).fetchone()["n"]
+
+    db.conn.execute("UPDATE metrics SET value = value + 1 WHERE key='民心'")
+    event_id = write_credit_event(
+        db, state, person="毛文龙", event_kind=KIND_BACK,
+        context="外层事务中的撑腰事实", origin=origin,
+    )
+    db.conn.rollback()
+
+    support = db.conn.execute(
+        "SELECT value FROM metrics WHERE key='民心'"
+    ).fetchone()["value"]
+    assert int(support) == before_support
+    assert _character_loyalty(db, "毛文龙") == before_loyalty
+    assert content.characters["毛文龙"].loyalty == before_loyalty
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM loyalty_credit_event_applied"
+    ).fetchone()["n"] == before_watermarks
+    assert db.conn.execute(
+        "SELECT 1 FROM relation_edge_events WHERE id=? OR origin=?", (event_id, origin)
+    ).fetchone() is None
+
+
 def test_credit_event_rolls_back_db_content_and_watermark_before_retry(game):
     db, state, content = game
     origin = "dossier:rollback:credit:back"
