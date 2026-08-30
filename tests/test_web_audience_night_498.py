@@ -770,6 +770,73 @@ def test_sync_advance_endpoint_does_not_stall_event_loop(web_game, monkeypatch):
     assert status == 200, f"advance after chat terminal expected 200, got {status}"
 
 
+def test_asgi_locality_exhaustion_keeps_completed_chat_without_directive(web_game, monkeypatch):
+    import ming_sim.cli_backend as cb
+
+    game = web_game
+    minister = _active_minister(game)
+    game.session.registry.get = lambda ch: _FakeAgent()
+    directives_before = _count(game.db, "turn_directives")
+    payload = {
+        "拟旨意图": "拟旨",
+        "动作类型": "policy",
+        "目标类型": "region",
+        "目标ID": "shaanxi",
+        "正文": "着毕自严核查陕西事务。",
+        "参与人": [{"character_id": "毕自严", "tier": "主办", "role": "核查"}],
+        "施行范围": "无",
+    }
+
+    def backend(_prompt, llm_config=None, tag=""):
+        return (json.dumps(payload, ensure_ascii=False), 1) if tag == "draft_intent" else ("{}", 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", backend)
+    monkeypatch.setattr(
+        cb,
+        "_run_json_extractor_for_config",
+        lambda _prompt, _config, tag="": (
+            json.dumps({"动作类型": "拟旨"}, ensure_ascii=False), 1
+        ) if tag == "action_intent" else ("{}", 1),
+    )
+
+    async def scenario():
+        async with _client() as client:
+            response = await client.post(
+                f"/api/ministers/{minister}/chat/stream",
+                json={"message": "着毕自严核查陕西事务，卿其拟旨。"},
+            )
+            events = _parse_sse(response.text)
+            return json.loads(next(event["data"] for event in events if event["event"] == "done"))
+
+    done = asyncio.run(scenario())
+    chat_turn_id = int(done["chat_turn_id"])
+    minister_message_id = int(done["minister_message_id"])
+    assert chat_turn_id > 0 and minister_message_id > 0
+    assert done["minister"] == minister
+    assert done["pending_count"] == 0
+    assert done["proposed_directive"] is None
+
+    turn = game.db.conn.execute(
+        "SELECT status, minister_name, minister_message_id FROM chat_turns WHERE id=?",
+        (chat_turn_id,),
+    ).fetchone()
+    assert dict(turn) == {
+        "status": "active",
+        "minister_name": minister,
+        "minister_message_id": minister_message_id,
+    }
+    message = game.db.conn.execute(
+        "SELECT role, minister_name FROM chat_messages WHERE id=?",
+        (minister_message_id,),
+    ).fetchone()
+    assert dict(message) == {"role": "minister", "minister_name": minister}
+    assert not [
+        row for row in game.db.list_pending_actions(game.state.turn)
+        if row["kind"] == "directive"
+    ]
+    assert _count(game.db, "turn_directives") == directives_before
+
+
 # ── ④ TOCTOU：等 gate 期间相位翻到亲裁 → 持锁内权威复查经真实 /chat/stream SSE 拒 ──
 def test_asgi_phase_flip_while_waiting_gate_rejected(web_game):
     game = web_game
