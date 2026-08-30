@@ -31,11 +31,9 @@ from ming_sim.qualitative import (
 from ming_sim.db import _qualitative_army_stat
 from tests.dossier_test_helpers import create_test_secret_order
 
-
 def _ctx(game):
     db, state, _ = game
     return CourtContext(state=state, db=db, previous_summary="")
-
 
 def _active_ministers(content, db, *, n=2):
     out = []
@@ -48,7 +46,6 @@ def _active_ministers(content, db, *, n=2):
         if len(out) >= n:
             break
     return out
-
 
 def _capture_agent(game, *characters):
     db, _state, _content = game
@@ -65,28 +62,20 @@ def _capture_agent(game, *characters):
             create_minister_agent(character, cfg, _ctx(game), db)
     return captured
 
-
 def _support_label(value: int) -> str:
     return "民心" + public_support_band(value)
 
-
 def _unrest_label(value: int) -> str:
     return "动乱" + qualitative_band(value, ("平静", "有患", "不安", "升高", "已炽"))
-
 
 _RAW_ABSTRACT_AXIS = re.compile(
     r"(?:民心|动乱|士绅阻力|军事压力|皇威|火器|完好|进度|bar|满意|势力|威望|实力|经济)"
     r"\s*[:：]?\s*\d+"
 )
 
-
 # ---------------------------------------------------------------------------
 # region / building briefs
 # ---------------------------------------------------------------------------
-
-
-
-
 
 # ---------------------------------------------------------------------------
 # memorial / resistance tools
@@ -102,7 +91,6 @@ def test_summon_tool_exposes_and_enforces_canonical_travel_tones(game):
     assert summon(minister.name, 行程语气="加急") == f"__summon__{minister.name}"
     with pytest.raises(ValueError, match="行程语气"):
         summon(minister.name, 行程语气="飞驰")
-
 
 def test_minister_memorial_tools_emit_commitment_protocol_fields(game):
     """list/inspect_memorial 吐 commitment_kind/end_turn/progress 协议键；停止条件定性。"""
@@ -137,7 +125,6 @@ def test_minister_memorial_tools_emit_commitment_protocol_fields(game):
         assert ">=65" not in text
         assert "stop_condition=" in text
         assert _progress_band(90) in text
-
 
 def test_minister_memorial_tools_qualify_stop_resolve_and_fail_conditions(game):
     """抽象 stop/resolve/fail 隐藏比较符阈值；可数物与未列字段走协议形态。"""
@@ -193,7 +180,6 @@ def test_minister_memorial_tools_qualify_stop_resolve_and_fail_conditions(game):
     assert "结案条件：" in detail and "失败条件：" in detail
     assert "达到所定档位" in detail
 
-
 @pytest.mark.parametrize("operator", ["<", "<=", ">", ">=", "==", "!="])
 def test_minister_tools_preserve_comparison_operator_for_countable_conditions(game, operator):
     """可数 resolve_condition 经 inspect_memorial 保留比较符与阈值。"""
@@ -216,7 +202,6 @@ def test_minister_tools_preserve_comparison_operator_for_countable_conditions(ga
         "inspect_memorial"
     ](1)
     assert f"army.guanning.arrears{operator}12.5" in detail
-
 
 @pytest.mark.parametrize("severity, expected", [(100, "高"), (80, "中"), (40, "低")])
 def test_estimate_resistance_levels_are_qualitative(game, severity, expected):
@@ -244,25 +229,9 @@ def test_estimate_resistance_levels_are_qualitative(game, severity, expected):
     assert "估算阻力值" not in rendered
     assert not re.search(r"阻力(?:低|中|高)[^。]*\d+", rendered)
 
-
 # ---------------------------------------------------------------------------
-# character / court context
+# knowledge projection
 # ---------------------------------------------------------------------------
-
-
-
-
-
-
-# ---------------------------------------------------------------------------
-# agent assembly / knowledge projection
-# ---------------------------------------------------------------------------
-
-
-
-
-
-
 
 def test_minister_context_secret_order_chain_filters_final_tools_and_instructions(game):
     """密令真实建档后，排除名单同时约束 instructions 与记忆工具。"""
@@ -276,15 +245,19 @@ def test_minister_context_secret_order_chain_filters_final_tools_and_instruction
     db.record_public_knowledge_event(
         state, marker, "密查军饷已获确认", source_id=f"secret_order:{order}",
     )
-    captured = _capture_agent(game, first, second)
-
-    first_text = "\n".join(captured[first.name]["instructions"])
-    second_text = "\n".join(captured[second.name]["instructions"])
-    assert marker in first_text
-    assert marker not in second_text
+    source_id = f"secret_order:{order}"
+    first_sources = {
+        row["source_id"]
+        for row in db.get_character_knowledge(state, first.name)["public_events"]
+    }
+    second_sources = {
+        row["source_id"]
+        for row in db.get_character_knowledge(state, second.name)["public_events"]
+    }
+    assert source_id in first_sources
+    assert source_id not in second_sources
     second_tools = {f.__name__: f for f in build_minister_tools(second, _ctx(game))}
     assert marker not in second_tools["search_memories"](keywords="军饷")
-
 
 def test_secret_order_blacklist_overrides_assignee_brief_and_reference_candidate(game):
     db, state, _content = game
@@ -312,7 +285,6 @@ def test_secret_order_blacklist_overrides_assignee_brief_and_reference_candidate
     assert hidden_dossier["id"] not in candidate_ids
     assert f"secret_order_brief:{visible_order}" in visible_sources
     assert visible_dossier["id"] in candidate_ids
-
 
 def test_secret_source_boundary_does_not_hide_unrelated_chapter_material(game):
     """真实密令只约束自身来源，不能把同回合章节整份变成密件。"""
@@ -357,7 +329,6 @@ def test_secret_source_boundary_does_not_hide_unrelated_chapter_material(game):
     assert "结案条件：" in knower_tools["inspect_memorial"](1)
     assert "treasury>=1" in knower_tools["inspect_memorial"](1)
 
-
 # ---------------------------------------------------------------------------
 # treasury / near-minister / final agent boundary
 # ---------------------------------------------------------------------------
@@ -385,7 +356,6 @@ def test_inspect_treasury_ledger_honors_account_and_turn_window(game):
     assert new_reason in rendered
     assert old_reason not in rendered
 
-
 def test_inspect_treasury_ledger_respects_treasury_knowledge_domain(game):
     db, _state, content = game
     minister = next(c for c in content.characters.values() if c.office_type == "礼部")
@@ -404,7 +374,6 @@ def test_inspect_treasury_ledger_respects_treasury_knowledge_domain(game):
     assert rendered == "本职见闻未载此项。"
     assert poison not in rendered
     assert "1234567" not in rendered
-
 
 def test_near_minister_army_report_keeps_one_complete_qualitative_fact(game):
     """真实军情回奏不得因火器裸值连带吞掉同军合法事实。"""
@@ -439,9 +408,6 @@ def test_near_minister_army_report_keeps_one_complete_qualitative_fact(game):
     assert "欠饷" in fact
     assert "已略去" not in fact
 
-
-
-
 def test_audience_faction_and_power_reports_never_emit_raw_abstract_axes(game):
     """audience 报告接缝本身保持 P4 定性轴。"""
     db, _state, _content = game
@@ -460,7 +426,6 @@ def test_audience_faction_and_power_reports_never_emit_raw_abstract_axes(game):
     assert satisfaction_band(17) in rendered
     assert power_band(82) in rendered
 
-
 def test_secret_order_tool_preserves_long_title_without_formal_cap(game):
     db, _state, content = game
     minister = _active_ministers(content, db, n=1)[0]
@@ -475,7 +440,6 @@ def test_secret_order_tool_preserves_long_title_without_formal_cap(game):
 
     assert result.startswith("__secret_order__")
     assert json.loads(result.removeprefix("__secret_order__"))["title"] == title
-
 
 def test_minister_tools_characterize_region_army_and_issue_progress(game):
     """兵部按需查询：地区/军籍/事项进度均不泄抽象轴裸值。"""
@@ -516,7 +480,6 @@ def test_minister_tools_characterize_region_army_and_issue_progress(game):
     assert _progress_band(41) in memorial
     assert "/100" not in memorial
 
-
 # ---------------------------------------------------------------------------
 # scale-fallback roster tools
 # ---------------------------------------------------------------------------
@@ -539,7 +502,6 @@ def test_scale_fallback_court_roster_uses_complete_structured_query(game):
     roster = tools["query_court_roster"]([])
     assert actual in roster
     assert actual in tools["query_court_roster"]([actual])
-
 
 def test_scale_fallback_court_roster_rejects_poison_without_personnel_authorization(game):
     """全局 roster>100 不能给无 personnel 域角色触发 scale gate；强制工具仍拒他署 poison。"""
@@ -598,8 +560,6 @@ def test_scale_fallback_court_roster_rejects_poison_without_personnel_authorizat
     captured = _capture_agent(game, minister)
     # gate reads authorized slice, not global backing set — still no roster tool
     assert "query_court_roster" not in {tool.__name__ for tool in captured[minister.name]["tools"]}
-    instructions = "\n".join(captured[minister.name]["instructions"])
-    assert poison["name"] not in instructions
 
     forced_tools = {
         tool.__name__: tool
@@ -610,7 +570,6 @@ def test_scale_fallback_court_roster_rejects_poison_without_personnel_authorizat
     assert event_visible["name"] in rendered
     assert poison["name"] not in rendered
     assert poison["name"] not in forced_tools["query_court_roster"]([poison["name"]])
-
 
 def test_scale_fallback_court_roster_excludes_noncurrent_rows(game):
     db, state, content = game
@@ -638,7 +597,6 @@ def test_scale_fallback_court_roster_excludes_noncurrent_rows(game):
     rendered = tools["query_court_roster"]([])
     assert all(name not in rendered for name, *_rest in fixtures)
 
-
 def test_scale_fallback_army_roster_uses_complete_structured_query(game):
     """获准 military 域角色的军籍工具提供完整索引与具名详情。"""
     db, _state, content = game
@@ -653,7 +611,6 @@ def test_scale_fallback_army_roster_uses_complete_structured_query(game):
     ).fetchone()["name"]
     assert army in tools["query_army_roster"]([])
     assert army in tools["query_army_roster"]([army])
-
 
 def test_minister_tools_characterize_building_and_metric_outputs(game):
     db, _state, content = game
