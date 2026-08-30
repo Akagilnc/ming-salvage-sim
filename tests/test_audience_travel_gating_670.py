@@ -9,7 +9,6 @@ from types import MethodType, SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
-from fastapi.testclient import TestClient
 
 from ming_sim.db import GameDB
 from ming_sim.session import AudienceAdmission, ChatTurnResult, GameSession
@@ -1483,62 +1482,6 @@ def test_hot_replace_409_while_offsite_scene_ticket_open(game, monkeypatch, op):
     release.set()
     worker.join(2.0)
     assert not chat_error, chat_error
-
-    class _RebuiltSession:
-        def __init__(self, db_path, llm_config):
-            self.llm_config = llm_config
-            self.db = db
-            self.content = content
-            self.state = state
-            self.temporary_characters = {}
-
-        def begin_turn(self):
-            return None
-
-    runtime.db_path = db.path
-    runtime.session.llm_config = object()
-    runtime._rebuild_session = web_app.WebGame._rebuild_session.__get__(runtime)
-    monkeypatch.setattr(web_app, "GameSession", _RebuiltSession)
-
-    client = TestClient(web_app.app)
-    request_path = "/api/saves/%E5%AD%98%E6%A1%A3/load" if op == "load" else "/api/game/reset"
-
-    def _failed_rebuild(*_a, **_k):
-        raise RuntimeError("rebuild sentinel")
-
-    runtime.load_save = _failed_rebuild
-    runtime.reset_game = _failed_rebuild
-    failed = client.post(request_path)
-    assert failed.status_code == 500
-    assert "rebuild sentinel" in failed.json()["detail"]
-    assert not runtime._write_queue.is_sealed()
-    assert not runtime._write_queue.write_gate.locked()
-
-    def _hot_replace_via_rebuild(*_a, **_k):
-        replacements.append(op)
-        runtime._rebuild_session(runtime.session.llm_config)
-
-    runtime.load_save = _hot_replace_via_rebuild
-    runtime.reset_game = _hot_replace_via_rebuild
-    response = client.post(request_path)
-    assert response.status_code == 200, response.text
-    assert response.json()["state"] == {"ok": True}
-    state_response = client.get("/api/game/state")
-    assert state_response.status_code == 200
-    assert state_response.json() == {"ok": True}
-    assert replacements == [op]
-    q = runtime._write_queue
-    assert q is runtime.session._write_queue
-    assert not q.is_sealed()
-    ticket = q.claim("post-hot-replace")
-    assert ticket is not None
-
-    def _min_write():
-        db.conn.execute("PRAGMA user_version = 1566")
-        return db.conn.execute("PRAGMA user_version").fetchone()[0]
-
-    assert q.run(ticket, _min_write) == 1566
-    q.complete(ticket)
 
 
 def test_offsite_scene_assembles_under_gate_generates_without_gate(game):

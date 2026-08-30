@@ -19,6 +19,7 @@ import re
 import shutil
 import sqlite3
 import sys
+import tempfile
 import time
 import threading
 from concurrent.futures import Future
@@ -762,69 +763,92 @@ class WebGame:
             raise HTTPException(status_code=404, detail="存档不存在。")
         os.remove(target)
 
-    def reset_game(self) -> None:
-        """全清主 DB：关连接 → 删 sqlite 主/wal/shm → 重建空 session。
-        存档目录不动。"""
-        llm_config = self.session.llm_config
+    def _replace_database(self, destructive_replace: Callable[[], None]) -> None:
+        """Replace the main DB transactionally, preserving the live runtime on prepare failure."""
+        backup_fd, backup_path = tempfile.mkstemp(prefix="ming-hot-replace-", suffix=".db")
+        os.close(backup_fd)
+        old_session = self.session
+        old_config = old_session.llm_config
+        backup_complete = False
         try:
-            self.session.close()
-        except Exception:
-            pass
-        _delete_sqlite_db_files_or_raise(self.db_path)
-        self._rebuild_session(llm_config)
+            # Prepare is deliberately non-destructive: a failed backup leaves the old runtime intact.
+            self.db.backup_to(backup_path)
+            backup_complete = True
+            old_session.close()
+            destructive_replace()
+            self._rebuild_session(old_config)
+        except Exception as replace_exc:
+            if not backup_complete:
+                raise
+            try:
+                _delete_sqlite_db_files_or_raise(self.db_path)
+                shutil.copy2(backup_path, self.db_path)
+                self._rebuild_session(old_config)
+            except Exception as recovery_exc:
+                logger.exception("hot replace recovery failed")
+                raise replace_exc from recovery_exc
+            raise
+        finally:
+            try:
+                os.remove(backup_path)
+            except OSError:
+                logger.exception("failed to remove hot replace backup %s", backup_path)
+
+    def reset_game(self) -> None:
+        """全清主 DB；失败时恢复替换前的数据库与 runtime。"""
+        self._replace_database(lambda: _delete_sqlite_db_files_or_raise(self.db_path))
 
     def load_save(self, name: str) -> None:
-        """从存档热替换主 DB：备份当前 → 拷源到主 DB → 重建 session。"""
+        """从存档热替换主 DB；失败时恢复替换前的数据库与 runtime。"""
         safe = self._safe_save_name(name)
         source = os.path.join(self.saves_dir(), f"{safe}.db")
         if not os.path.isfile(source):
             raise HTTPException(status_code=404, detail="存档不存在。")
-        # 先关闭当前 session 的 DB 连接，避免 Windows/某些平台上的 file lock。
-        try:
-            self.session.close()
-        except Exception:
-            pass
-        # 用 sqlite backup 把存档拷回主路径
-        import sqlite3 as _sqlite3
-        src_conn = _sqlite3.connect(source)
-        dst_conn = _sqlite3.connect(self.db_path)
-        try:
-            src_conn.backup(dst_conn)
-        finally:
-            src_conn.close()
-            dst_conn.close()
-        self._rebuild_session(self.session.llm_config)
+
+        def replace_from_save() -> None:
+            src_conn = sqlite3.connect(source)
+            dst_conn = sqlite3.connect(self.db_path)
+            try:
+                src_conn.backup(dst_conn)
+            finally:
+                src_conn.close()
+                dst_conn.close()
+
+        self._replace_database(replace_from_save)
 
     def _rebuild_session(self, llm_config: LLMConfig) -> None:
-        """用新 llm_config（或换完 DB 后）重建 GameSession + 内存缓存。"""
-        self.session = GameSession(self.db_path, llm_config)
-        # 换档后仍共享既有 runtime 队列 / write_gate（#1353 口令收夜穿锁）。
+        """Fully initialize a candidate before publishing it as the active session."""
+        candidate = GameSession(self.db_path, llm_config)
         q = getattr(self, "_write_queue", None)
         if not isinstance(q, SessionWriteQueue):
-            q = get_session_write_queue(self.session)
-            self._write_queue = q
-            self._write_gate = q.write_gate
+            q = get_session_write_queue(candidate)
         else:
-            # 新 session 挂上既有队列（不断开在途 barrier 语义；换档前应已 drain）。
-            self.session._write_queue = q  # type: ignore[attr-defined]
-            self.session._write_gate = q.write_gate  # type: ignore[attr-defined]
-            self._write_gate = q.write_gate
-        self.session.begin_turn()
-        self.chat_history = {name: [] for name in self.session.content.characters}
-        for name, msgs in self.db.load_all_chat_history().items():
-            self.chat_history.setdefault(name, []).extend(msgs)
-        _DEFAULT_FAVORITES = {"王承恩", "曹化淳", "李若琏", "魏忠贤", "田尔耕"}
-        _fav_raw = self.db.kv_get("favorites")
-        self.favorites = set(json.loads(_fav_raw)) if _fav_raw else set(_DEFAULT_FAVORITES)
-        if not _fav_raw:
-            self.db.kv_set("favorites", json.dumps(sorted(self.favorites)))
-        # #505 finding2：换档/reset 后与 __init__ 同序重开对账——存档可备份于在飞中，
-        # 带 generating/无回话孤儿轮的档 load 后同样会永挡续问/收夜（违 AC1/ADR 续夜）。
-        # 先于补跑、一条调用、勿复制谓词（与在飞守卫单一真源 = list_in_flight_chat_turns）。
-        if hasattr(self.db, "conn"):
-            self.db.reconcile_interrupted_chat_turns()
-        # 启动补跑由热替换编排在旧 gate 释放后触发；这里仍处于调用方的临界区，
-        # 同线程重取非重入 runtime gate 会自锁（#1687）。
+            candidate._write_queue = q  # type: ignore[attr-defined]
+            candidate._write_gate = q.write_gate  # type: ignore[attr-defined]
+        try:
+            candidate.begin_turn()
+            chat_history = {name: [] for name in candidate.content.characters}
+            for name, msgs in candidate.db.load_all_chat_history().items():
+                chat_history.setdefault(name, []).extend(msgs)
+            default_favorites = {"王承恩", "曹化淳", "李若琏", "魏忠贤", "田尔耕"}
+            fav_raw = candidate.db.kv_get("favorites")
+            favorites = set(json.loads(fav_raw)) if fav_raw else set(default_favorites)
+            if not fav_raw:
+                candidate.db.kv_set("favorites", json.dumps(sorted(favorites)))
+            if hasattr(candidate.db, "conn"):
+                candidate.db.reconcile_interrupted_chat_turns()
+        except Exception:
+            try:
+                candidate.close()
+            except Exception:
+                logger.exception("failed to close rejected replacement session")
+            raise
+
+        self.session = candidate
+        self._write_queue = q
+        self._write_gate = q.write_gate
+        self.chat_history = chat_history
+        self.favorites = favorites
 
     def build_llm_config(
         self,
@@ -3830,17 +3854,25 @@ def _hot_replace_when_idle(game):
         gate.release()
 
 
+def _spawn_startup_catch_up_nonfatal(game) -> None:
+    """Start post-replacement catch-up without turning a successful replacement into failure."""
+    try:
+        game._spawn_startup_extraction_catch_up()
+    except Exception:
+        logger.exception("startup extraction catch-up scheduling failed")
+
+
 def _run_hot_replace(game, replace: Callable[[], None], *, failure_label: str) -> None:
     """独占热替换核心；释放旧 gate 后才让新 session 的补跑领票。"""
     try:
         with _hot_replace_when_idle(game):
             replace()
-        game._spawn_startup_extraction_catch_up()
     except HTTPException:
         raise
     except Exception as exc:
         logger.exception("%s", failure_label)
         raise HTTPException(status_code=500, detail=f"{failure_label}：{exc}") from exc
+    _spawn_startup_catch_up_nonfatal(game)
 
 
 @contextlib.contextmanager
@@ -4435,7 +4467,7 @@ async def api_menu_load_save(name: str) -> Dict[str, Any]:
     except LLMUnavailable as exc:
         raise HTTPException(status_code=412, detail=_llm_error_detail(exc))
     web_game.load_save(name)
-    web_game._spawn_startup_extraction_catch_up()
+    _spawn_startup_catch_up_nonfatal(web_game)
     return {"state": web_game.state_payload()}
 
 
