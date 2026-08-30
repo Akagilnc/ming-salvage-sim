@@ -252,9 +252,9 @@ def season_option_contract_prompt(kind: str) -> str:
     if not details:
         return ""
     return (
-        f'确定拨帑的 option 须携带 action_type="{kind}"、'
+        f'协饷 option 须携带 action_type="{kind}"、'
         + "、".join(details)
-        + "；不拨帑的 option 不携带这些字段。"
+        + "；非协饷 option 保持既有 label/hint，不携带这些字段。"
     )
 
 
