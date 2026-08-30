@@ -1026,9 +1026,20 @@ def test_continue_load_save_reset_reach_hud_zero_llm_calls(tmp_path, monkeypatch
         cont.db.kv_set("favorites", json.dumps(sorted(cont.favorites), ensure_ascii=False))
         assert seed_marker in json.loads(cont.db.kv_get("favorites"))
 
-        # 重置：清主库重建
+        # 重置：清主库重建，并为重建后新 campaign 的首月留下唯一 begin。
         cont.reset_game()
         _assert_hud(cont.state_payload())
+        reset_campaign_id = cont.db.kv_get("campaign_id")
+        reset_begin_paths = list((ud / "saves").glob(
+            f"auto_{reset_campaign_id}_{cont.state.year:04d}_{cont.state.period:02d}_"
+            f"t{cont.state.turn:04d}_begin.db"
+        ))
+        assert len(reset_begin_paths) == 1
+        with sqlite3.connect(reset_begin_paths[0]) as checkpoint:
+            archived_turn = checkpoint.execute(
+                "SELECT year, period, turn FROM game_state WHERE id = 1"
+            ).fetchone()
+        assert archived_turn == (cont.state.year, cont.state.period, cont.state.turn)
 
         assert calls == [], f"continue/load_save/重置不应触发 LLM 调用，实得 {calls}"
     finally:

@@ -902,6 +902,8 @@ class GameSession:
         from ming_sim.session_write_queue import SessionWriteQueue
         self._write_queue = SessionWriteQueue()
         self._write_gate = self._write_queue.write_gate
+        if fresh_save:
+            self.auto_save("begin")
 
     # ── 回合生命周期 ──────────────────────────────────────────────────────
 

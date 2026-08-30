@@ -696,8 +696,6 @@ class WebGame:
         self._settlement_entry_inflight = 0
         _stage("重整朝堂名册...")
         self.session.begin_turn()
-        if fresh:
-            self.session.auto_save("begin")
         # #1234：唯一服务进程启动缝——孤儿月初快照清除（相位常态∧快照在→清+一行日志；
         # settling/awaiting 不清，交既有恢复）。与故障注入 oracle 同调具名函数。
         from ming_sim.month_open_snapshot import clear_orphan_month_open_snapshot
