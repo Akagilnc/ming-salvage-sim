@@ -29,16 +29,15 @@ def test_target_aware_axis_collisions_route_only_the_target_faction_vitals():
         target_faction="阉党",
     )
 
-    by_cell = {(row["faction"], row["axis"]): row["aligned_stance"] for row in results}
-    assert by_cell == {
-        ("东林", "既得利益"): 1,
-        ("阉党", "既得利益"): -2,
-        ("军队", "既得利益"): -1,
-        ("皇党", "既得利益"): 1,
-        ("宗室", "既得利益"): -2,
-        ("西学", "既得利益"): 1,
-        ("阉党", "皇权依附"): -2,
-    }
+    assert results == [
+        {"faction": "东林", "axis": "既得利益", "direction": -1, "scope": "泛化", "aligned_stance": 1},
+        {"faction": "阉党", "axis": "既得利益", "direction": -1, "scope": "泛化", "aligned_stance": -2},
+        {"faction": "军队", "axis": "既得利益", "direction": -1, "scope": "泛化", "aligned_stance": -1},
+        {"faction": "皇党", "axis": "既得利益", "direction": -1, "scope": "泛化", "aligned_stance": 1},
+        {"faction": "宗室", "axis": "既得利益", "direction": -1, "scope": "泛化", "aligned_stance": -2},
+        {"faction": "西学", "axis": "既得利益", "direction": -1, "scope": "泛化", "aligned_stance": 1},
+        {"faction": "阉党", "axis": "皇权依附", "direction": -1, "scope": "目标命门", "aligned_stance": -2},
+    ]
 
 
 @pytest.mark.parametrize(
