@@ -329,6 +329,70 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     }
   });
 
+  it("#1684 晚到 next_minister 不抢回已切换的拟诏台", async () => {
+    const roster = [
+      { id: "a", name: "温体仁", office: "首辅", summary: "", status: "active" },
+      { id: "b", name: "周延儒", office: "次辅", summary: "", status: "active" },
+    ];
+    let resolveStream!: (response: Response) => void;
+    const streamGate = new Promise<Response>((resolve) => { resolveStream = resolve; });
+    let streamStarted = false;
+    let stateCalls = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = new URL(String(url), "http://t.local");
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) {
+        stateCalls += 1;
+        return jsonResp(makeState(1, [directive()], roster));
+      }
+      if (u.pathname.endsWith("/chat/stream")) {
+        streamStarted = true;
+        return streamGate;
+      }
+      if (/\/api\/ministers\/[^/]+\/chat$/.test(u.pathname)) {
+        const name = decodeURIComponent(u.pathname.split("/").at(-2) || "");
+        return jsonResp({ minister: roster.find((m) => m.name === name), history: [], suggestions: [], campaign_id: "c1", night_id: 77, pending_turn_ids: [] });
+      }
+      if (u.pathname.endsWith("/api/audience/extraction/pending")) return jsonResp({ count: 0 });
+      return jsonResp({});
+    }));
+
+    const host = document.createElement("div"); document.body.appendChild(host);
+    await act(async () => { trackRoot(host).render(<App />); });
+    await tick();
+    await click(host.querySelector('[aria-label="朝堂·召见大臣"]'));
+    await tick();
+    await click(Array.from(host.querySelectorAll("button")).find((b) => b.textContent?.includes("温体仁")));
+    await tick();
+    const textarea = host.querySelector("textarea")!;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+      setter.call(textarea, "边务如何");
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await click(findButton(host, "发送"));
+    await act(async () => { await vi.waitFor(() => expect(streamStarted).toBe(true)); });
+
+    await click(host.querySelector('[aria-label="关闭弹窗"]'));
+    await click(findButton(host, "拟诏"));
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
+    });
+
+    const stateCallsBeforeDone = stateCalls;
+    resolveStream(sseResp("done", {
+      response: "臣遵旨", directives: [directive()], pending_count: 0, suggestions: [],
+      can_undo_last_chat: false, pending_action_failures: [], next_minister: "周延儒",
+    }));
+    await act(async () => {
+      await vi.waitFor(() => expect(stateCalls).toBeGreaterThan(stateCallsBeforeDone));
+    });
+    expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull();
+    expect(findButton(host, "盖玺颁诏过月")?.hasAttribute("disabled")).toBe(false);
+  });
+
   it("#1475 召对顶栏不重复左卡身份，横幅压成 bare 回收正文", async () => {
     const roster = [
       { id: "a", name: "曹化淳", office: "信邸内官（候补司礼监）", summary: "东厂", status: "active" },
