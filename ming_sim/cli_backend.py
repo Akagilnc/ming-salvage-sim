@@ -2030,6 +2030,7 @@ def extract_draft_intent_with_semantic_heal(
     # 首抽权威快照：首次校验失败后冻结，后续失败不得覆写 baseline/闸基线。
     baseline_result: Optional[Dict[str, Any]] = None
     locality_baseline: Optional[Dict[str, Any]] = None
+    locality_path: Optional[tuple[object, ...]] = None
     for attempt in range(retries + 1):
         # llm_config 关键字传：别族 fake_draft(msg, reply, **kw) 形仍合法，
         # 不得因 heal 多塞第 3 位置参把旧 mock 签名整族打爆。
@@ -2050,8 +2051,9 @@ def extract_draft_intent_with_semantic_heal(
                 failed_result = _ground_relative_pay_order_deadlines(failed_result, db)
             if locality_baseline is None:
                 locality_baseline = copy.deepcopy(failed_result)
+                locality_path = exc.locality_path
             elif not _same_non_locality_semantics(
-                locality_baseline, failed_result,
+                locality_baseline, failed_result, locality_path,
             ):
                 _log(f"拟旨属地纠错发生非属地语义漂移 {attempt + 1}/{retries}")
             participant_correction = ""
@@ -2075,7 +2077,7 @@ def extract_draft_intent_with_semantic_heal(
                     )
             if attempt >= retries:
                 raise DraftLocalityValidationError(
-                    str(exc), failed_result,
+                    str(exc), failed_result, locality_path,
                 ) from exc
             correction = (
                 "施行范围与目标结构不一致，请保留其余字段，只把施行范围改为符合"
@@ -2089,10 +2091,10 @@ def extract_draft_intent_with_semantic_heal(
             result = _ground_relative_pay_order_deadlines(result, db)
         if db is None or content is None:
             if locality_baseline is not None and not _same_non_locality_semantics(
-                locality_baseline, result,
+                locality_baseline, result, locality_path,
             ):
                 raise DraftLocalityValidationError(
-                    "属地纠错期间非属地结构发生漂移", result,
+                    "属地纠错期间非属地结构发生漂移", result, locality_path,
                 )
             return result
         has_roster_field = (
@@ -2107,10 +2109,10 @@ def extract_draft_intent_with_semantic_heal(
             if pending_unknown:
                 raise UnknownParticipantEscalate(pending_unknown)
             if locality_baseline is not None and not _same_non_locality_semantics(
-                locality_baseline, result,
+                locality_baseline, result, locality_path,
             ):
                 raise DraftLocalityValidationError(
-                    "属地纠错期间非属地结构发生漂移", result,
+                    "属地纠错期间非属地结构发生漂移", result, locality_path,
                 )
             return result
         try:
@@ -2184,27 +2186,37 @@ def extract_draft_intent_with_semantic_heal(
                         ):
                             draft["locality_scope"] = result_drafts[index]["locality_scope"]
             if locality_baseline is not None:
-                locality_guard = _backfill_healed_participant_refs(
-                    locality_baseline,
-                    result,
-                    pending_unknown=pending_unknown,
-                    player_message=player_message,
-                    db=db,
-                    content=content,
-                )
+                if _count_failed_person_slots(
+                    locality_baseline, db=db, content=content,
+                ) == 0:
+                    locality_guard = _apply_validated_roster_to_extract_result(
+                        copy.deepcopy(locality_baseline), db=db, content=content,
+                    )
+                else:
+                    locality_guard = _backfill_healed_participant_refs(
+                        locality_baseline,
+                        result,
+                        pending_unknown=pending_unknown,
+                        player_message=player_message,
+                        db=db,
+                        content=content,
+                    )
                 if locality_guard is None:
                     raise UnknownParticipantEscalate(pending_unknown)
-                if not _same_non_locality_semantics(locality_guard, backfilled):
+                if not _same_non_locality_semantics(
+                    locality_guard, backfilled, locality_path,
+                ):
                     raise DraftLocalityValidationError(
                         "属地纠错期间非属地结构发生漂移", backfilled,
+                        locality_path,
                     )
             return backfilled
         if locality_baseline is not None and not _same_non_locality_semantics(
-            locality_baseline, result,
+            locality_baseline, result, locality_path,
         ):
             if attempt >= retries:
                 raise DraftLocalityValidationError(
-                    "属地纠错期间非属地结构发生漂移", result,
+                    "属地纠错期间非属地结构发生漂移", result, locality_path,
                 )
             correction = (
                 "施行范围仍须纠正，且动作、目标、承办人、参与人、条目、方式及多旨结构"
@@ -2461,11 +2473,14 @@ def extract_draft_intent(
         }
         if not drafts:
             return extracted_result
-        for action, target_kind, target_id, locality_scope in locality_checks:
+        for index, (
+            action, target_kind, target_id, locality_scope,
+        ) in enumerate(locality_checks):
             _validate_extracted_locality(
                 db=db, content=content, action_type=action,
                 target_kind=target_kind, target_id=target_id,
                 locality_scope=locality_scope, extracted_result=extracted_result,
+                locality_path=("drafts", index, "locality_scope"),
             )
         return extracted_result
 
@@ -2663,6 +2678,7 @@ def extract_draft_intent(
             db=db, content=content, action_type=dossier_action,
             target_kind=target_kind, target_id=target_id_value,
             locality_scope=mechanical["locality_scope"], extracted_result=extracted_result,
+            locality_path=("locality_scope",),
         )
         return extracted_result
     # 多道：归一目标——命中候选 id=补那道；「新」=明确另拟；否则含糊兜底（#502 L7）：
@@ -2700,6 +2716,7 @@ def extract_draft_intent(
         db=db, content=content, action_type=dossier_action,
         target_kind=target_kind, target_id=target_id_value,
         locality_scope=mechanical["locality_scope"], extracted_result=extracted_result,
+        locality_path=("locality_scope",),
     )
     return extracted_result
 
@@ -2724,22 +2741,35 @@ def _draft_target_kind_guidance() -> str:
 class DraftLocalityValidationError(ValueError):
     """A typed locality combination rejection carrying the complete extraction."""
 
-    def __init__(self, message: str, extracted_result: Dict[str, Any]):
+    def __init__(
+        self, message: str, extracted_result: Dict[str, Any],
+        locality_path: Optional[tuple[object, ...]],
+    ):
         super().__init__(message)
         self.extracted_result = extracted_result
+        self.locality_path = locality_path
 
 
-def _same_non_locality_semantics(left: object, right: object) -> bool:
-    """Compare typed extraction trees while permitting only locality correction."""
+def _same_non_locality_semantics(
+    left: object, right: object, locality_path: Optional[tuple[object, ...]],
+    current_path: tuple[object, ...] = (),
+) -> bool:
+    """Compare typed extraction trees while permitting one failed locality path."""
+    if current_path == locality_path:
+        return True
     if isinstance(left, dict) and isinstance(right, dict):
-        left_keys = set(left) - {"locality_scope"}
-        right_keys = set(right) - {"locality_scope"}
-        return left_keys == right_keys and all(
-            _same_non_locality_semantics(left[key], right[key]) for key in left_keys
+        return set(left) == set(right) and all(
+            _same_non_locality_semantics(
+                left[key], right[key], locality_path, current_path + (key,),
+            )
+            for key in left
         )
     if isinstance(left, list) and isinstance(right, list):
         return len(left) == len(right) and all(
-            _same_non_locality_semantics(a, b) for a, b in zip(left, right)
+            _same_non_locality_semantics(
+                a, b, locality_path, current_path + (index,),
+            )
+            for index, (a, b) in enumerate(zip(left, right))
         )
     return left == right
 
@@ -2747,6 +2777,7 @@ def _same_non_locality_semantics(left: object, right: object) -> bool:
 def _validate_extracted_locality(
     *, db: Any, content: Any, action_type: str, target_kind: str,
     target_id: str, locality_scope: object, extracted_result: Dict[str, Any],
+    locality_path: tuple[object, ...],
 ) -> None:
     """在 extractor semantic payload 边界复用 #654 locality oracle。"""
     if db is None:
@@ -2768,7 +2799,9 @@ def _validate_extracted_locality(
             regions_content=getattr(content, "regions", None),
         )
     except LocalityCombinationError as exc:
-        raise DraftLocalityValidationError(str(exc), extracted_result) from exc
+        raise DraftLocalityValidationError(
+            str(exc), extracted_result, locality_path,
+        ) from exc
 
 
 def _coerce_draft_target_kind(raw: object) -> str:
