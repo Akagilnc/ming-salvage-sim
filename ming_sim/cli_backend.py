@@ -2219,6 +2219,7 @@ def extract_draft_intent(
             + pay_order_facts
             + stalled_push_facts
             + "御笔强推逐道只填目标案卷ID，普通旨逐道只填动作类型/目标类型/目标ID；两种形状不得并存。\n"
+            + _draft_locality_guidance()
             + "【皇帝】" + (player_message or "（无）") + "\n"
             + "【大臣完整回话】" + (minister_reply or "（无）") + "\n"
         )
@@ -2292,6 +2293,11 @@ def extract_draft_intent(
             mechanical["locality_scope"] = _coerce_draft_locality_scope(value.get("施行范围"))
             # multi 路目标类型同样 fail-loud
             target_kind = _coerce_draft_target_kind(target_kind)
+            _validate_extracted_locality(
+                db=db, content=content, action_type=action,
+                target_kind=target_kind, target_id=target_id,
+                locality_scope=mechanical["locality_scope"],
+            )
             # #653：pay_order_override 结构化载荷（entries）随草案整道转交，
             # 成案点/物化点共 prepare_pay_order_entries 同一验形。
             entries = value.get("entries")
@@ -2391,7 +2397,9 @@ def extract_draft_intent(
         + merge_schema_line
         + "}\n"
         "判定要点：皇帝明确让大臣拟旨/起草圣旨→拟旨；仅商议/问询/催办/评论不算。语义判断，别拘字面。\n"
-        "御笔强推议而不决事项亦归拟旨，并填目标案卷ID。\n\n"
+        "御笔强推议而不决事项亦归拟旨，并填目标案卷ID。\n"
+        + _draft_locality_guidance()
+        + "\n"
         + correction_block
         + roster_facts
         + pay_order_facts
@@ -2469,6 +2477,11 @@ def extract_draft_intent(
         # #653：pay_order_override 结构化载荷随 capture 整道转交（禁旁路）。
         "entries": obj.get("entries"),
     }
+    _validate_extracted_locality(
+        db=db, content=content, action_type=dossier_action,
+        target_kind=target_kind, target_id=target_id_value,
+        locality_scope=mechanical["locality_scope"],
+    )
     mode = _directive_mode(obj.get("颁布方式"))
     if mode is not None:
         mechanical["mode"] = mode
@@ -2536,6 +2549,34 @@ _DRAFT_TARGET_KIND_GUIDANCE = "|".join(sorted(_VALID_DRAFT_TARGET_KINDS))
 
 def _draft_target_kind_guidance() -> str:
     return _DRAFT_TARGET_KIND_GUIDANCE
+
+
+def _draft_locality_guidance() -> str:
+    return (
+        "施行范围按结构填写：目标类型为 region 时一律填单省（辽东、宁锦等名称亦同）；"
+        "policy、issue、account 仅在全国性且动作类型允许全国施行时填全国；其余填无。\n"
+    )
+
+
+def _validate_extracted_locality(
+    *, db: Any, content: Any, action_type: str, target_kind: str,
+    target_id: str, locality_scope: object,
+) -> None:
+    """在 extractor semantic payload 边界复用 #654 locality oracle。"""
+    if db is None:
+        return
+    from ming_sim.execution_pressure import resolve_dossier_region_ids
+
+    resolve_dossier_region_ids(
+        db.conn,
+        action_type=action_type,
+        payload={
+            "target_kind": target_kind,
+            "target_id": target_id,
+            "locality_scope": locality_scope,
+        },
+        regions_content=getattr(content, "regions", None),
+    )
 
 
 def _coerce_draft_target_kind(raw: object) -> str:
