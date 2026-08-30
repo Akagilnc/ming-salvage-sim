@@ -1288,10 +1288,11 @@ def test_explicit_prefix_grant_and_assignment_two_durable_dossiers(game, monkeyp
         },
     ]}
     backend_calls = []
+    backend_payload = [raw]
 
     def fake_backend(*_args, **kwargs):
         backend_calls.append(kwargs.get("tag"))
-        return json.dumps(raw, ensure_ascii=False), {}
+        return json.dumps(backend_payload[0], ensure_ascii=False), {}
 
     real_extract = cb.extract_draft_intent
     scripted = candidates_from_classifier_payload(
@@ -1300,6 +1301,19 @@ def test_explicit_prefix_grant_and_assignment_two_durable_dossiers(game, monkeyp
     sess = _real_chat_session(db, state, content, monkeypatch, scripted=scripted)
     monkeypatch.setattr(cb, "extract_draft_intent", real_extract)
     monkeypatch.setattr(cb, "_run_backend_for_config", fake_backend)
+
+    for invalid_mode in ("普通", "beyond-catalog"):
+        raw["成品旨稿"][0]["颁布方式"] = invalid_mode
+        with pytest.raises(ValueError, match="mode out of enum"):
+            real_extract("请拟两道旨", "拨饷并清查", draft_count=2)
+        backend_payload[0] = {
+            "拟旨意图": "拟旨", **raw["成品旨稿"][0],
+        }
+        with pytest.raises(ValueError, match="mode out of enum"):
+            real_extract("请拟旨", "拨饷")
+        backend_payload[0] = raw
+    raw["成品旨稿"][0]["颁布方式"] = "ordinary"
+    backend_calls.clear()
 
     result = sess.chat(actor, "请拟两道旨：拨饷，并另行清查。")
     assert int(getattr(result, "pending_action_id", 0) or 0) > 0
@@ -1320,6 +1334,10 @@ def test_explicit_prefix_grant_and_assignment_two_durable_dossiers(game, monkeyp
     assert {p.get("dossier_action_type") for p in payloads} == {
         "grant_allocation", "assignment",
     }
+    assignment = next(p for p in payloads if p.get("dossier_action_type") == "assignment")
+    assert assignment.get("title") == "清查辽饷收支"
+    assert assignment.get("target_id") == "hubu"
+    assert assignment.get("mode") == "ordinary"
 
     pending_ids = [int(row["id"]) for row in rows]
     db.commit_pending_actions(state, content=content, action_ids=pending_ids)
@@ -1329,6 +1347,11 @@ def test_explicit_prefix_grant_and_assignment_two_durable_dossiers(game, monkeyp
     ]
     assert len(dossiers) == 2
     assert {d["action_type"] for d in dossiers} == {"grant_allocation", "assignment"}
+    durable_assignment = next(d for d in dossiers if d["action_type"] == "assignment")
+    assignment_payload = json.loads(durable_assignment["payload_json"])
+    assert assignment_payload.get("title") == "清查辽饷收支"
+    assert assignment_payload.get("target_id") == "hubu"
+    assert assignment_payload.get("mode") == "ordinary"
     durable_grant = next(d for d in dossiers if d["action_type"] == "grant_allocation")
     durable_payload = json.loads(durable_grant["payload_json"])
     assert {key: durable_payload.get(key) for key in (
