@@ -2203,6 +2203,19 @@ def extract_draft_intent(
         project_cluster_fields,
     )
     grant_fields_prompt = cluster_fields_prompt("grant_allocation")
+
+    def _normalize_grant_transport(value: Mapping[str, Any]) -> Dict[str, Any]:
+        transport = dict(value)
+        # Draft transport historically used 目标ID and Chinese mode labels;
+        # canonical FieldSpec validation happens only after those aliases normalize.
+        if "target_id" not in transport and "目标" not in transport and "目标ID" in transport:
+            transport["target_id"] = transport["目标ID"]
+        raw_mode = transport.get("mode", transport.get("颁布方式"))
+        if raw_mode not in (None, ""):
+            transport["mode"] = _directive_mode(raw_mode) or raw_mode
+        normalized = assert_action_candidate_shape({**transport, "kind": "grant_allocation"})
+        return project_cluster_fields("grant_allocation", normalized)
+
     if draft_count > 1:
         prompt = (
             "你是信息抽取器，不扮演。皇帝同一句要求拟多道彼此独立的圣旨，大臣已在一段回话中"
@@ -2250,18 +2263,15 @@ def extract_draft_intent(
             text = str(value.get("正文") or "").strip()
             action = str(value.get("动作类型") or "").strip()
             if action == "grant_allocation":
-                assert_action_candidate_shape({
-                    "kind": action,
-                    "mode": value.get("mode", value.get("颁布方式")),
-                })
-                projected = project_cluster_fields(action, value)
+                projected = _normalize_grant_transport(value)
             else:
                 projected = {}
             mode = _directive_mode(
                 projected.get("mode") if action == "grant_allocation" else value.get("颁布方式")
             )
             target_kind = str(
-                projected.get("target_kind") if action == "grant_allocation" else value.get("目标类型") or ""
+                (projected.get("target_kind") or "policy")
+                if action == "grant_allocation" else value.get("目标类型") or ""
             ).strip()
             target_id = str(
                 projected.get("target_id") if action == "grant_allocation" else value.get("目标ID") or ""
@@ -2451,15 +2461,12 @@ def extract_draft_intent(
         _probe["target_dossier_id"] = _raw_target
     _act = str(obj.get("动作类型") or "").strip()
     if _act == "grant_allocation":
-        assert_action_candidate_shape({
-            "kind": _act,
-            "mode": obj.get("mode", obj.get("颁布方式")),
-        })
-        _projected = project_cluster_fields(_act, obj)
+        _projected = _normalize_grant_transport(obj)
     else:
         _projected = {}
     _tk = str(
-        _projected.get("target_kind") if _act == "grant_allocation" else obj.get("目标类型") or ""
+        (_projected.get("target_kind") or "policy")
+        if _act == "grant_allocation" else obj.get("目标类型") or ""
     ).strip()
     _tid = str(
         _projected.get("target_id") if _act == "grant_allocation" else obj.get("目标ID") or ""
@@ -2702,6 +2709,7 @@ def capture_manual_directive_payload(
             purpose=str(payload.get("purpose") or ""),
             target_kind=str(payload.get("target_kind") or ""),
             target_id=str(payload.get("target_id") or ""),
+            cadence=str(payload.get("cadence") or ""),
         ))
     if payload.get("dossier_action_type") == "dismiss_assignment":
         # Manual CLI/Web directives bypass pending office actions, so preserve

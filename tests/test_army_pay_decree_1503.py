@@ -840,8 +840,8 @@ def test_manual_directive_admission_real_http_tracer_1591(
         {
             "拟旨意图": "拟旨",
             "动作类型": "grant_allocation",
-            "恩赏拨帑": "赏赉",
-            "用途": "",
+            "恩赏拨帑": "协饷",
+            "用途": "补饷",
             "目标类型": "army",
             "目标": "guanning",
             "颁布方式": "ordinary",
@@ -946,15 +946,24 @@ def test_manual_directive_admission_real_http_tracer_1591(
         ).fetchall())
         assert [int(row["delta"]) for row in dossier_ledger] == [-15]
 
-        # ── ② 手工拟旨 account 非法 + 无关非旨 pending 并存：issue 须回真实拒因 ──
+        # ── ② account 是唯一坏因：完整协饷 transport 在 HTTP capture 边界响亮拒绝 ──
         turn2 = int(game.state.turn)
-        directive = client.post(
+        invalid_account = client.post(
             "/api/directives",
             json={"text": "准从藩库见银拨关宁军饷十五万两即发。", "notes": ""},
         )
-        assert directive.status_code == 200, directive.text
-        directive_id = int(directive.json()["directive"]["id"])
-        wait_pending_writes(game)
+        assert invalid_account.status_code == 409, invalid_account.text
+        assert int(game.state.turn) == turn2
+
+        # ── ③ #1591：既存非法草案在 issue 边界转发真实 admission 拒因 ──
+        directive_id = game.db.add_directive(
+            game.state, None, "准从藩库见银拨关宁军饷十五万两即发。",
+            "player", status="draft", dossier_payload={
+                "dossier_action_type": "grant_allocation", "grant_action": "协饷",
+                "purpose": "补饷", "target_kind": "army", "target_id": "guanning",
+                "mode": "ordinary", "amount": 15, "account": "藩库",
+            },
+        )
 
         game.db.stage_pending_action(
             turn2, kind="office", action="任命", minister_name=name,
@@ -1279,9 +1288,9 @@ def test_explicit_prefix_grant_and_assignment_two_durable_dossiers(game, monkeyp
     raw = {"成品旨稿": [
         {
             "正文": "敕户部发太仓银十五万两协济关宁军前。",
-            "动作类型": "grant_allocation", "目标类型": "army", "目标": "guanning",
+            "动作类型": "grant_allocation", "目标类型": "army", "目标ID": "guanning",
             "恩赏拨帑": "协饷", "用途": "补饷", "金额": 15, "账户": "太仓",
-            "颁布方式": "ordinary", "施行范围": "无",
+            "颁布方式": "普通", "施行范围": "无",
         },
         {
             "正文": "着户部清查辽饷收支。", "动作类型": "assignment",
@@ -1305,7 +1314,7 @@ def test_explicit_prefix_grant_and_assignment_two_durable_dossiers(game, monkeyp
     monkeypatch.setattr(cb, "extract_draft_intent", real_extract)
     monkeypatch.setattr(cb, "_run_backend_for_config", fake_backend)
 
-    for invalid_mode in ("普通", "beyond-catalog"):
+    for invalid_mode in ("beyond-catalog",):
         raw["成品旨稿"][0]["颁布方式"] = invalid_mode
         with pytest.raises(ActionCandidateShapeError):
             real_extract("请拟两道旨", "拨饷并清查", draft_count=2)
@@ -1315,7 +1324,7 @@ def test_explicit_prefix_grant_and_assignment_two_durable_dossiers(game, monkeyp
         with pytest.raises(ActionCandidateShapeError):
             real_extract("请拟旨", "拨饷")
         backend_payload[0] = raw
-    raw["成品旨稿"][0]["颁布方式"] = "ordinary"
+    raw["成品旨稿"][0]["颁布方式"] = "普通"
     backend_calls.clear()
 
     result = sess.chat(actor, "请拟两道旨：拨饷，并另行清查。")

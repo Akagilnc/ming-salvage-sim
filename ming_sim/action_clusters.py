@@ -109,6 +109,8 @@ def _render_field_specs(specs: Sequence[FieldSpec]) -> Tuple[List[str], List[str
         else:
             example = '""'
         lines.append(f'  "{spec.zh}": {example},')
+        if spec.name == "purpose" and spec.allowed == frozenset({"补饷"}):
+            notes.append("用途：仅恩赏拨帑=协饷时填补饷；非协饷留空")
     return lines, notes
 
 
