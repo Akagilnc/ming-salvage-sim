@@ -352,6 +352,23 @@ def test_decision_parser_rejects_unknown_typed_action_and_keeps_sibling():
             "target_kind": "army", "target_id": "guanning", "cadence": "一次性",
         }, {"label": "暂缓", "hint": "守财"}],
     }
+    blank_discriminator = {
+        **malformed,
+        "title": "空白拨帑",
+        "options": [
+            {**malformed["options"][0], "action_type": "   "},
+            malformed["options"][1],
+        ],
+    }
+    missing_discriminator = {
+        **malformed,
+        "title": "无类拨帑",
+        "options": [
+            {k: v for k, v in malformed["options"][0].items()
+             if k != "action_type"},
+            malformed["options"][1],
+        ],
+    }
     spaced_legal = {
         **malformed,
         "title": "犒军",
@@ -368,7 +385,10 @@ def test_decision_parser_rejects_unknown_typed_action_and_keeps_sibling():
     }
     raw = "".join(
         f"<<DECISION>>{json.dumps(block, ensure_ascii=False)}<<END>>"
-        for block in (malformed, spaced_legal, sibling)
+        for block in (
+            malformed, blank_discriminator, missing_discriminator,
+            spaced_legal, sibling,
+        )
     )
 
     _clean, decisions = parse_decision_blocks(raw)
