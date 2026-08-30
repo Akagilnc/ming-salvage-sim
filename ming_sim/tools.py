@@ -592,9 +592,11 @@ def build_minister_tools(character: Character, context: CourtContext,
         "note":"护送辽饷"}]。未明确确认则传 []。
         issue 的 typed 合同：kind（差务名，如补发饷银/缉获人犯）、axes_json（价值轴闭集，
         六轴：礼法名节/既得利益/实务事功/皇权依附/华夷战和/民本恤民）、
-        direction（1 或 -1）、effect_sign（生产者 +1 或 -1，不得从 direction 导出）、
-        delivery_unit（万两/人犯/万亩；调查差务可空）、delivery_target_units（到期交付目标，与 applier 同量纲）、
-        investigation_target（查核目标人名；非调查留空）。
+        direction（1 或 -1）、effect_sign（生产者 +1 或 -1，不得从 direction 导出）。
+        专题查核须填写非空 investigation_target，值为相关人员范围；同时填写正数
+        delivery_target_units（须坐实的事实条数）和 effect_sign（+1 或 -1），delivery_unit 留空。
+        普通交付差务须填写 canonical delivery_unit（万两/人犯/万亩）、正数 delivery_target_units
+        及该单位既有 identity 字段；非调查留空 investigation_target。
         delivery_unit 决定还须填哪组 identity（缺则确认时响亮拒绝）：
         万两支出 → purpose（补饷须另填 target_kind=army 与 target_id；其余非空写成其它）、category、account；收入不填 purpose；
         人犯 → person_action（人物变更动作）；
@@ -631,26 +633,7 @@ def build_minister_tools(character: Character, context: CourtContext,
         person_action: str = "", region: str = "", field: str = "", region_target: str = "",
         investigation_target: str = "", effect_sign: int = 0,
     ) -> str:
-        """皇帝下达密令，返回待确认密令 payload，由召对确认闸门决定是否正式落库。
-
-        title：密令标题。
-        content：密令详情，交代任务目标、保密要求、期限等。
-        tags_json：JSON 数组，填相关人名/地区/事项关键词，用于日后检索，如 '["辽饷","兵部","密查"]'。
-        assignee：实际承办人姓名。留空则默认为当前召见的大臣；若皇帝指名他人承办（如"命毕自严去查"），填该人全名。
-        deadline_months：硬期限月数；0 表示无硬期限。若皇帝说"下月务必结案"填 1，说"三个月内结案"填 3。
-        kind：差务类型名（补发饷银/缉获人犯/清丈等），不得用 tags 猜测。
-        axes_json：价值轴闭集 JSON 数组，如 '["既得利益"]'。
-        direction：1 顺轴，-1 逆轴。
-        delivery_unit：可数交付单位（万两/人犯/万亩）；调查差务留空。
-        delivery_target_units：到期须交付的正数目标；调查为须坐实的事实条数。
-        investigation_target：查核目标人名；非调查留空。
-        effect_sign：生产者效果符号 +1 或 -1；缺则确认拒绝。
-        purpose/category/account：delivery_unit=万两 且支出时必填；purpose=补饷 须另填 target_kind=army 与 target_id。
-        person_action：delivery_unit=人犯 时必填，对应 person_logs 的落库动作名。
-        region/field/region_target：delivery_unit=万亩 时必填，对应 region_logs 的地区 id/落库字段/目标值。
-        dossier_links_json：只填当前提示所列旧案卷，格式为 [{"target_dossier_id": 12,
-        "relation_type": "护卫/稽核/接应", "note": "已复述确认的说明"}]。
-        """
+        """接收已注册入口参数并构造待确认的密令 payload。"""
         t = (title or "").strip()
         c = (content or "").strip()
         if not t or not c:
