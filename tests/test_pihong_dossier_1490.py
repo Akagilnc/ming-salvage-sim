@@ -14,6 +14,7 @@ D. 命中 allowed 后从服务端 option 重建 label/hint/能力字段，客户
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import threading
 
@@ -2259,6 +2260,7 @@ def test_1682_late_grants_follow_policy_without_consuming_verdict_batch(game, mo
     ).fetchall()
     ledger_before = db.conn.execute("SELECT * FROM economy_ledger ORDER BY id").fetchall()
     verdicts_before = db.get_pending_promulgation_verdicts(state.turn)
+    metrics_before = copy.deepcopy(state.metrics)
     original_get = db.get_decree_dossier
     existing_ids = {int(row["id"]) for row in dossiers_before}
     created_ids = []
@@ -2290,6 +2292,8 @@ def test_1682_late_grants_follow_policy_without_consuming_verdict_batch(game, mo
         "SELECT * FROM economy_ledger ORDER BY id"
     ).fetchall() == ledger_before
     assert db.get_pending_promulgation_verdicts(state.turn) == verdicts_before
+    assert state.metrics == metrics_before
+    assert db.load_state().metrics == metrics_before
 
 
 def test_657_s10_http_five_actions_and_1490_no_regress(web_game, monkeypatch):
