@@ -411,12 +411,15 @@ def test_web_advance_entry_exposes_settlement_display(game, monkeypatch):
     before = _click_before_metrics(state)
     runtime = _runtime(db, state)
     runtime.directive_rows = lambda: []
-    runtime.refresh_turn = lambda: None
+    actions = []
+    runtime.session.end_turn = lambda: actions.append("end_turn")
+    runtime.refresh_turn = lambda: actions.append("refresh")
     runtime._write_gate = threading.Lock()
     mid = {}
 
     def _observe_then_done(**_kw):
         # 点即入已在 entry accept 完成——结算入口即可见核账脸与点击前四键。
+        actions.append("resolve")
         mid["snap"] = db.get_month_open_snapshot(int(state.turn))
         mid["payload"] = runtime.state_payload()
         state.metrics["国库"] = before["国库"] + 9
@@ -435,6 +438,7 @@ def test_web_advance_entry_exposes_settlement_display(game, monkeypatch):
     monkeypatch.setattr(web_app, "_new_secret_order_failure_payloads_for_turn", lambda *_a, **_k: [])
 
     result = web_app.api_advance_without_edict()
+    assert actions == ["resolve", "end_turn", "refresh"]
     assert mid["snap"] == before
     assert mid["payload"]["turn"]["settlement_display"] is True
     assert mid["payload"]["metrics"]["国库"] == before["国库"]

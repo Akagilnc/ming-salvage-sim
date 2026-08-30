@@ -155,10 +155,11 @@ class _ResolveGame:
         self.session.state = self.state
         self.db = SimpleNamespace(list_pending_actions=lambda *_a, **_k: [])
         self._write_gate = gate
-        self.refresh_calls = 0
+        self.actions = []
+        self.session.end_turn = lambda: self.actions.append("end_turn")
 
     def refresh_turn(self):
-        self.refresh_calls += 1
+        self.actions.append("refresh")
 
 
 async def _consume_resolve_sse() -> list[tuple[str, object]]:
@@ -212,7 +213,7 @@ def test_resolve_decisions_stream_phase_precheck_before_lock(monkeypatch):
     message = payload["message"] if isinstance(payload, dict) else str(payload)
     assert "待裁" in message or "亲裁" in message
     assert game.session._submit_called is False
-    assert game.refresh_calls == 0
+    assert game.actions == []
 
 
 def test_resolve_decisions_stream_awaiting_still_submits_under_lock(monkeypatch):
@@ -224,6 +225,7 @@ def test_resolve_decisions_stream_awaiting_still_submits_under_lock(monkeypatch)
     def _submit_hitl(choices, *, write_gate, on_event=None, cheat_directive=""):
         with write_gate:
             assert gate.locked(), "submit must run while write gate held"
+            game.actions.append("submit")
             submitted["ok"] = True
             if on_event:
                 on_event("stage", "数值推演结算")
@@ -239,6 +241,7 @@ def test_resolve_decisions_stream_awaiting_still_submits_under_lock(monkeypatch)
 
     events = asyncio.run(_consume_resolve_sse())
     assert submitted["ok"] is True
+    assert game.actions == ["submit", "end_turn", "refresh"]
     kinds = [ev for ev, _ in events]
     assert "stage" in kinds
     assert kinds[-1] == "done"
