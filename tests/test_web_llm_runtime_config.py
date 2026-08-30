@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -961,6 +962,18 @@ def test_continue_load_save_reset_reach_hud_zero_llm_calls(tmp_path, monkeypatch
         seed.favorites = {seed_marker}
         seed.db.kv_set("favorites", json.dumps(sorted(seed.favorites), ensure_ascii=False))
         assert db_path.exists()
+
+        # 构造同一回合可区分的 begin/preresolve 自动档；热加载不得改写任一源档。
+        begin_marker = "__begin_1702__"
+        preresolve_marker = "__preresolve_1702__"
+        seed.favorites = {begin_marker}
+        seed.db.kv_set("favorites", json.dumps(sorted(seed.favorites), ensure_ascii=False))
+        begin_path = Path(seed.session.auto_save("begin"))
+        seed.favorites = {preresolve_marker}
+        seed.db.kv_set("favorites", json.dumps(sorted(seed.favorites), ensure_ascii=False))
+        preresolve_path = Path(seed.session.auto_save("preresolve"))
+        begin_bytes = begin_path.read_bytes()
+        preresolve_bytes = preresolve_path.read_bytes()
     finally:
         try:
             seed.session.close()
@@ -971,15 +984,24 @@ def test_continue_load_save_reset_reach_hud_zero_llm_calls(tmp_path, monkeypatch
     cont = web_app.WebGame(fresh=False)
     try:
         _assert_hud(cont.state_payload())
-        assert seed_marker in cont.favorites, (
-            "continue 须加载 seed 写入的可辨识持久状态，证明读的是既存主库"
+        assert preresolve_marker in cont.favorites, (
+            "continue 须加载最后写入的可辨识持久状态，证明读的是既存主库"
         )
         cont.save_to("slot_a")
 
-        # load_save：热替换主 DB
-        cont.load_save("slot_a")
+        # load_save：真实热替换不改写源自动档，并可切回原月初 begin 状态继续写。
+        cont.load_save(preresolve_path.stem)
         _assert_hud(cont.state_payload())
-        assert seed_marker in cont.favorites
+        assert preresolve_marker in cont.favorites
+        assert begin_path.read_bytes() == begin_bytes
+        assert preresolve_path.read_bytes() == preresolve_bytes
+
+        cont.load_save(begin_path.stem)
+        _assert_hud(cont.state_payload())
+        assert begin_marker in cont.favorites
+        cont.favorites.add(seed_marker)
+        cont.db.kv_set("favorites", json.dumps(sorted(cont.favorites), ensure_ascii=False))
+        assert seed_marker in json.loads(cont.db.kv_get("favorites"))
 
         # 重置：清主库重建
         cont.reset_game()

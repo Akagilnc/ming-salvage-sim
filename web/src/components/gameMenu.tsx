@@ -154,7 +154,6 @@ export function LoadTab({ onAfterLoad }: { onAfterLoad: () => void }) {
   }, [refresh]);
 
   const onLoad = async (n: string) => {
-    if (!window.confirm(`确定加载 ${n}.db？当前未保存进度会丢失。`)) return;
     setBusy(n);
     setErr("");
     try {
