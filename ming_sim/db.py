@@ -2145,6 +2145,12 @@ class GameDB:
             CREATE INDEX IF NOT EXISTS idx_relation_edges_person
             ON relation_edge_events(source, target, event_kind, id);
 
+            -- #702 / ADR 0104：信用事件→人物忠诚派生的 event-id 幂等水位。
+            -- 事件本身仍是唯一业务真源；本表只记录已消费身份，禁止承载第二份事件值。
+            CREATE TABLE IF NOT EXISTS loyalty_credit_event_applied (
+                event_id INTEGER PRIMARY KEY REFERENCES relation_edge_events(id)
+            );
+
             -- #636 关系摘要层 S5：两段式摘要（奠基段机械只增不改＋近况段整段重酿，ID-9）。
             -- 零数值强度字段（P4/ADR 0083）；结构字段首发集＝有向关系对、维度标记、
             -- 奠基段、近况段、最近事件回指（last_event_id 水位）、最后重酿回合。

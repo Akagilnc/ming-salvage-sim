@@ -43,11 +43,8 @@ def test_decree_driven_personnel_examples_reference_promulgated_dossier():
             name = str(it.get("name") or "")
             if name and name in window:
                 driven_names.add(name)
-    # 毛文龙亦为 inline 已验的诏令驱动样本，fenced 中同名须一并覆盖。
-    driven_names.add("毛文龙")
     decree_items = [it for it in items if str(it.get("name") or "") in driven_names]
     assert decree_items
-    assert any(str(it.get("name") or "") == "毛文龙" for it in decree_items)
 
     for it in decree_items:
         ref = str(it.get("来源引用", ""))

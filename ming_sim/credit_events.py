@@ -199,6 +199,64 @@ def _existing_edge_id(
     return int(row["id"]) if row is not None else None
 
 
+def _loyalty_delta(current: int, event_kind: str) -> int:
+    """ADR 0104 首版惯性：越接近铁杆端越难移动，四类共用同一尺度。"""
+    sign = 1 if event_kind in {KIND_FULFILL, KIND_BACK} else -1
+    magnitude = max(1, round(10 * (100 - max(0, min(100, current))) / 100))
+    return sign * magnitude
+
+
+def derive_loyalty_from_credit_event(db: Any, event_id: int) -> Optional[Dict[str, object]]:
+    """消费一条 0079 事件；event id 是唯一幂等键，缺结构判别时 fail-closed。"""
+    event = db.conn.execute(
+        "SELECT * FROM relation_edge_events WHERE id=?", (int(event_id),)
+    ).fetchone()
+    if event is None or str(event["event_kind"]) not in _WRITE_KINDS:
+        return None
+    if db.conn.execute(
+        "SELECT 1 FROM loyalty_credit_event_applied WHERE event_id=?", (int(event_id),)
+    ).fetchone() is not None:
+        return None
+    kind = str(event["event_kind"])
+    if kind == KIND_SCAPEGOAT and scapegoat_actor_kind_from_origin(event["origin"]) != "皇帝":
+        return None
+    person = str(event["target"] if event["source"] == EMPEROR_NODE else event["source"])
+    row = db.conn.execute(
+        "SELECT loyalty FROM characters WHERE name=?", (person,)
+    ).fetchone()
+    if row is None:
+        return None
+    old = int(row["loyalty"])
+    requested = _loyalty_delta(old, kind)
+    new = max(0, min(100, old + requested))
+    delta = new - old
+    db.conn.execute("UPDATE characters SET loyalty=? WHERE name=?", (new, person))
+    content = getattr(db, "content", None)
+    if content is not None and person in content.characters:
+        content.characters[person].loyalty = new
+    db.conn.execute(
+        "INSERT INTO loyalty_credit_event_applied(event_id) VALUES(?)",
+        (int(event_id),),
+    )
+    return {"event_id": int(event_id), "name": person, "old_loyalty": old,
+            "new_loyalty": new, "delta": delta}
+
+
+def derive_pending_loyalty_from_credit_events(db: Any) -> List[Dict[str, object]]:
+    """恢复/升级后接续：消费事件薄中尚未落幂等水位的既有信用事件。"""
+    rows = db.conn.execute(
+        """
+        SELECT e.id FROM relation_edge_events e
+        LEFT JOIN loyalty_credit_event_applied a ON a.event_id=e.id
+        WHERE a.event_id IS NULL AND e.event_kind IN (?,?,?,?)
+        ORDER BY e.id
+        """,
+        (KIND_FULFILL, KIND_BETRAY, KIND_BACK, KIND_SCAPEGOAT),
+    ).fetchall()
+    return [result for row in rows
+            if (result := derive_loyalty_from_credit_event(db, int(row["id"]))) is not None]
+
+
 def write_credit_event(
     db: Any,
     state: Any,
@@ -230,8 +288,9 @@ def write_credit_event(
         db, source=source, target=target, event_kind=kind, origin=origin,
     )
     if existing is not None:
+        derive_loyalty_from_credit_event(db, existing)
         return existing
-    return int(
+    event_id = int(
         db.record_relation_edge_event(
             source=source,
             target=target,
@@ -243,6 +302,8 @@ def write_credit_event(
             period=int(state.period),
         )
     )
+    derive_loyalty_from_credit_event(db, event_id)
+    return event_id
 
 
 def _sponsor_names(db: Any, dossier_id: int) -> List[str]:
