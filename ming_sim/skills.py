@@ -91,7 +91,8 @@ def print_skill_card(character: Character, db: Optional[GameDB] = None) -> None:
         f"属性：忠诚{qualitative_character_axis('loyalty', character.loyalty)} | "
         f"能力{qualitative_character_axis('ability', character.ability)} | "
         f"清廉{qualitative_character_axis('integrity', character.integrity)} | "
-        f"胆略{qualitative_character_axis('courage', character.courage)} | 风格：{character.style}"
+        f"胆略{qualitative_character_axis('courage', character.courage)} | "
+        f"阴谋{qualitative_character_axis('intrigue', character.intrigue)} | 风格：{character.style}"
     )
     for skill_id in available_skill_ids(character, db):
         print(skill_summary_line(character, skill_id, db))
