@@ -831,6 +831,56 @@ def test_materialize_invalid_batch_skips_discarded_locality(
     assert not [p for p in db.list_pending_actions(state.turn) if p["kind"] == "directive"]
 
 
+def test_batch_locality_heal_preserves_valid_sibling(game, monkeypatch):
+    import ming_sim.cli_backend as cb
+
+    db, _state, content = game
+    calls = {"n": 0}
+
+    replies = [
+        {
+            "成品旨稿": [
+                {
+                    "正文": "着户部办理陕西事务。",
+                    "动作类型": "policy",
+                    "目标类型": "region",
+                    "目标ID": "shaanxi",
+                    "颁布方式": "普通",
+                    "施行范围": first_scope,
+                    "参与人": [],
+                },
+                {
+                    "正文": "着户部整饬全国政务。",
+                    "动作类型": "policy",
+                    "目标类型": "policy",
+                    "目标ID": "national-policy",
+                    "颁布方式": "普通",
+                    "施行范围": second_scope,
+                    "参与人": [],
+                },
+            ]
+        }
+        for first_scope, second_scope in (
+            ("无", "无"), ("单省", "全国"), ("单省", "无"),
+        )
+    ]
+
+    def backend(_prompt, llm_config=None, tag=""):
+        assert tag == "draft_intent"
+        reply = replies[calls["n"]]
+        calls["n"] += 1
+        return json.dumps(reply, ensure_ascii=False), 1
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", backend)
+    result = cb.extract_draft_intent_with_semantic_heal(
+        "分别拟两道旨。", "臣已拟妥。",
+        db=db, content=content, draft_count=2,
+    )
+
+    assert calls["n"] == 3
+    assert [draft["locality_scope"] for draft in result["drafts"]] == ["单省", "无"]
+
+
 def test_materialize_locality_exhaustion_rejects_only_draft(game, monkeypatch):
     """召对属地纠错耗尽只拒草案；该轮结构化结果仍正常返回。"""
     import ming_sim.cli_backend as cb
