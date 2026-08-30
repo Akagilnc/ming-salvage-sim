@@ -783,6 +783,7 @@ def test_commitment_rejects_new_person_loyalty_ongoing_effect(game, monkeypatch)
     rejected = out["issue_summary"]["new_issues"][0]
     assert rejected["rejected"] is True
     assert rejected["category"] == "invalid_enum"
+    assert rejected["item"]["ongoing_effects"]["人物变更"][0]["动作"] == "评定"
     assert _issue_by_title(db, "字符串忠诚安抚承诺") is None
 
 
