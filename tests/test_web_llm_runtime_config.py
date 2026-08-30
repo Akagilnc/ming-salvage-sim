@@ -1002,8 +1002,8 @@ def test_hot_replace_http_success_reopens_state_and_writes(tmp_path, monkeypatch
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
     runtime = web_app.WebGame(fresh=True)
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
-    marker, write_minister = list(runtime.content.characters)[:2]
-    runtime.favorites.add(marker)
+    saved_marker, live_marker, write_minister = list(runtime.content.characters)[:3]
+    runtime.favorites = {saved_marker}
     runtime.db.kv_set("favorites", json.dumps(sorted(runtime.favorites), ensure_ascii=False))
     if op == "load":
         from ming_sim import audience_extraction
@@ -1020,6 +1020,9 @@ def test_hot_replace_http_success_reopens_state_and_writes(tmp_path, monkeypatch
             audience_extraction, "extract_story_facts", lambda *_a, **_k: [],
         )
     runtime.save_to("before")
+    if op == "load":
+        runtime.favorites = {live_marker}
+        runtime.db.kv_set("favorites", json.dumps(sorted(runtime.favorites), ensure_ascii=False))
 
     path = "/api/saves/before/load" if op == "load" else "/api/game/reset"
     response = run_to_terminal(lambda: TestClient(web_app.app).post(path))
@@ -1029,11 +1032,15 @@ def test_hot_replace_http_success_reopens_state_and_writes(tmp_path, monkeypatch
     assert "turn" in state.json()
     write = TestClient(web_app.app).post(f"/api/favorites/{write_minister}")
     assert write.status_code == 200
-    assert write_minister in write.json()["favorites"]
+    favorites = write.json()["favorites"]
+    assert write_minister in favorites
     if op == "load":
-        assert marker in write.json()["favorites"]
+        assert saved_marker in favorites
+        assert live_marker not in favorites
         runtime._runtime_write_queue().barrier(lambda: None)
         assert runtime.db.list_unextracted_replies() == []
+    else:
+        assert saved_marker not in favorites
     runtime.session.close()
 
 
@@ -1049,10 +1056,13 @@ def test_hot_replace_http_failure_keeps_old_state_and_writes_usable(
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
     runtime = web_app.WebGame(fresh=True)
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
-    marker, write_minister = list(runtime.content.characters)[:2]
-    runtime.favorites.add(marker)
+    saved_marker, live_marker, write_minister = list(runtime.content.characters)[:3]
+    runtime.favorites = {saved_marker}
     runtime.db.kv_set("favorites", json.dumps(sorted(runtime.favorites), ensure_ascii=False))
     runtime.save_to("before")
+    if op == "load":
+        runtime.favorites = {live_marker}
+        runtime.db.kv_set("favorites", json.dumps(sorted(runtime.favorites), ensure_ascii=False))
     old_turn = runtime.state.turn
 
     if failure == "candidate":
@@ -1081,8 +1091,12 @@ def test_hot_replace_http_failure_keeps_old_state_and_writes_usable(
     assert state.json()["turn"]["turn"] == old_turn
     write = TestClient(web_app.app).post(f"/api/favorites/{write_minister}")
     assert write.status_code == 200
-    assert marker in write.json()["favorites"]
-    assert write_minister in write.json()["favorites"]
+    favorites = write.json()["favorites"]
+    expected_marker = live_marker if op == "load" else saved_marker
+    rejected_marker = saved_marker if op == "load" else live_marker
+    assert expected_marker in favorites
+    assert rejected_marker not in favorites
+    assert write_minister in favorites
     runtime.session.close()
 
 
