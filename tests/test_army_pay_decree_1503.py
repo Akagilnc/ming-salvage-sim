@@ -639,39 +639,6 @@ def test_closed_army_pay_provenance_injects_when_decree_dossiers_prepassed(game)
         assert did not in other_ids
 
 
-@pytest.mark.parametrize(
-    ("status", "visible_modules"),
-    [("proposed", {"issues"}), ("closed", {"issues", "internal"})],
-)
-def test_late_decision_dossier_status_controls_extractor_visibility(
-    game, status, visible_modules,
-):
-    """#1682 phase2 late evidence follows verdict status, never generic prose."""
-    from ming_sim.simulation import EXTRACTION_MODULES, build_extractor_shared_context
-
-    db, state, _content = game
-    did = db.create_decree_dossier(
-        state, action_type="grant_allocation", decree_text="协饷待裁",
-        target_kind="army", target_id="guanning", status="proposed",
-        payload={
-            "dossier_action_type": "grant_allocation", "grant_action": "协饷",
-            "target_kind": "army", "target_id": "guanning", "amount": 10,
-            "account": "国库", "purpose": "补饷", "cadence": "一次性",
-            "decision_key": "decision:1:0",
-        },
-    )
-    late = db.get_decree_dossier(did)
-    late["status"] = status
-    late["_late_decision_dossier"] = True
-    for module in EXTRACTION_MODULES:
-        context = build_extractor_shared_context(
-            db, state, narrative="", decree_text="", module=module,
-            decree_dossiers=[late],
-        )
-        ids = {int(row["id"]) for row in context["decree_dossiers"]}
-        assert (did in ids) is (module in visible_modules)
-
-
 def test_army_pay_already_cleared_spent_zero_is_fulfilled(game):
     """#1507-F5：颁布时军已清（spent=0, still_owed=0）记 fulfilled，非 failed。"""
     db, state, content = game
@@ -1405,6 +1372,18 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
     # The first grant enters through audience night; the second is a season
     # decision whose selected server option is its legal origin.
     import ming_sim.decree as decree_mod
+    original_context_builder = decree_mod.build_extractor_shared_context
+    observed_late_dossiers = {}
+
+    def capture_context(*args, **kwargs):
+        context = original_context_builder(*args, **kwargs)
+        observed_late_dossiers.setdefault(kwargs.get("module"), []).extend(
+            (int(row["id"]), str(row["status"]))
+            for row in context.get("decree_dossiers") or []
+        )
+        return context
+
+    monkeypatch.setattr(decree_mod, "build_extractor_shared_context", capture_context)
     decision_report = """本月邸报。
 <<DECISION>>
 {"title":"再济关宁","context":"关宁欠饷尚重，奏请圣裁","options":[{"label":"发内帑银三十万两济关宁","hint":"军心稍定，内帑益绌","action_type":"grant_allocation","grant_action":"协饷","account":"内库","amount":30,"purpose":"补饷","target_kind":"army","target_id":"guanning","cadence":"一次性"},{"label":"暂缓再拨","hint":"内帑得保，边军仍困"}]}
@@ -1513,6 +1492,13 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
         assert decision_payload["decision_key"] == decisions[0]["decision_key"]
         assert decision_dossier["status"] == "closed"
         assert decision_dossier["promulgation_decision"] == "promulgated"
+        late_fact = (int(decision_dossier["id"]), "closed")
+        assert late_fact in observed_late_dossiers["issues"]
+        assert late_fact in observed_late_dossiers["internal"]
+        assert all(
+            late_fact not in observed_late_dossiers[module]
+            for module in ("military_external", "personnel_secret", "relations")
+        )
         assert [
             row["decision"]
             for row in game.db.list_decree_dossier_decisions(decision_dossier["id"])
