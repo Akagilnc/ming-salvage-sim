@@ -116,22 +116,34 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
         # 裁决并提前返回。每项复用登记行自带的同一 handler，不复制 kind 分支。
         baseline_out = dict(ctx.out)
         multi_batch = len(ctx.intent_candidates) > 1
-        candidates = [
-            _materializable_draft_xiexang(ctx, candidate)
+        draft_total = sum(
+            str(candidate.get("kind") or "") == "draft"
             for candidate in ctx.intent_candidates
-        ]
+        )
+        draft_index = 0
+        candidate_records = []
+        for candidate in ctx.intent_candidates:
+            original_kind = str(candidate.get("kind") or "")
+            original_draft_index = draft_index
+            if original_kind == "draft":
+                draft_index += 1
+            candidate_records.append((
+                _materializable_draft_xiexang(ctx, candidate),
+                original_kind,
+                original_draft_index,
+            ))
         if ctx.explicit_prefixed:
-            candidates.sort(
-                key=lambda candidate: str(candidate.get("kind") or "")
+            candidate_records.sort(
+                key=lambda record: str(record[0].get("kind") or "")
                 != "grant_allocation"
             )
         kind_counts: Dict[str, int] = {}
-        for candidate in candidates:
+        for candidate, _original_kind, _original_index in candidate_records:
             kind = str(candidate.get("kind") or "")
             kind_counts[kind] = kind_counts.get(kind, 0) + 1
         kind_indexes: Dict[str, int] = {}
         grant_staged = False
-        for candidate in candidates:
+        for candidate, original_kind, original_draft_index in candidate_records:
             kind = str(candidate.get("kind") or "")
             cluster = cluster_by_kind(kind)
             if cluster is None or cluster.effect != EFFECT_MATERIALIZE:
@@ -149,8 +161,12 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
                 intent_kind=cluster.kind,
                 intent_candidates=None,
                 explicit_prefixed=ctx.explicit_prefixed and not grant_staged,
-                candidate_kind_index=kind_index,
-                candidate_kind_count=kind_counts[kind],
+                candidate_kind_index=(
+                    original_draft_index if original_kind == "draft" else kind_index
+                ),
+                candidate_kind_count=(
+                    draft_total if original_kind == "draft" else kind_counts[kind]
+                ),
                 multi_intent_batch=multi_batch,
                 conversation_intent_handled=False,
                 draft_staged=False,
@@ -552,9 +568,11 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
                 ctx.player_message, draft_res.get("mode"), existing_mode,
             )
 
-        grant_cluster = cluster_by_kind("grant_allocation")
-        grant_carriers = tuple(
-            spec.name for spec in (grant_cluster.fields if grant_cluster else ())
+        dossier_cluster = cluster_by_kind(
+            str(draft_res.get("dossier_action_type") or "")
+        )
+        dossier_carriers = tuple(
+            spec.name for spec in (dossier_cluster.fields if dossier_cluster else ())
         )
         mechanical_fields = (
             "dossier_action_type", "mode", "execution_surface", "assignee",
@@ -563,7 +581,7 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
             "entries",
             # #658：御笔强推 target 须随对话拟旨 staging 完整保留，禁第二案卷。
             "target_dossier_id",
-        ) + grant_carriers
+        ) + dossier_carriers
         for field_name in mechanical_fields:
             if draft_res.get(field_name) not in (None, ""):
                 semantic_payload[field_name] = draft_res[field_name]

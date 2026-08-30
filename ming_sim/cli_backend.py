@@ -2292,10 +2292,9 @@ def extract_draft_intent(
                     ("期限月数", "deadline_months"),
                 )
             }
-            if action == "grant_allocation":
-                mechanical.update(project_cluster_fields(
-                    "grant_allocation", {**value, "mode": mode, "target_id": target_id},
-                ))
+            mechanical.update(project_cluster_fields(
+                action, {**value, "mode": mode, "target_id": target_id},
+            ))
             mechanical["locality_scope"] = _coerce_draft_locality_scope(value.get("施行范围"))
             # multi 路目标类型同样 fail-loud
             target_kind = _coerce_draft_target_kind(target_kind)

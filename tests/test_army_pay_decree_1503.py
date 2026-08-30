@@ -1282,6 +1282,7 @@ def test_explicit_prefix_grant_and_assignment_two_durable_dossiers(game, monkeyp
         },
         {
             "正文": "着户部清查辽饷收支。", "动作类型": "assignment",
+            "标题": "清查辽饷收支", "事务类别": "钱粮",
             "目标类型": "issue", "目标ID": "hubu", "颁布方式": "普通",
             "施行范围": "无",
         },
@@ -1293,9 +1294,9 @@ def test_explicit_prefix_grant_and_assignment_two_durable_dossiers(game, monkeyp
     extracted = cb.extract_draft_intent(
         "拟两道旨：拨饷，并另行清查。", "臣已拟就。", draft_count=2,
     )
-    candidates = candidates_from_classifier_payload([
+    candidates = [
         {"kind": "draft", **draft} for draft in extracted["drafts"]
-    ], soft=False)
+    ]
     ctx = _ctx(
         db, actor, candidates, state.turn,
         message="拟两道旨：拨饷，并另行清查。", reply="臣已拟就。",
@@ -1316,7 +1317,7 @@ def test_explicit_prefix_grant_and_assignment_two_durable_dossiers(game, monkeyp
         "account": "国库", "target_kind": "army", "target_id": "guanning",
     }
     assert {p.get("dossier_action_type") for p in payloads} == {
-        "grant_allocation", "special_decree",
+        "grant_allocation", "assignment",
     }
 
     pending_ids = [int(row["id"]) for row in rows]
@@ -1326,7 +1327,7 @@ def test_explicit_prefix_grant_and_assignment_two_durable_dossiers(game, monkeyp
         if int(d["pending_action_id"] or 0) in set(pending_ids)
     ]
     assert len(dossiers) == 2
-    assert {d["action_type"] for d in dossiers} == {"grant_allocation", "special_decree"}
+    assert {d["action_type"] for d in dossiers} == {"grant_allocation", "assignment"}
 
 
 def test_draft_neitang_stays_generic_special_decree(game, monkeypatch):
