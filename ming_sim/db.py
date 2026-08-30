@@ -16399,10 +16399,10 @@ class GameDB:
                 if str(row["status"]) == "dead":
                     logging.getLogger(__name__).warning("跳过已故参与者%s", person)
                     continue
-                self.record_relation_edge_event(
-                    source="皇帝", target=person, event_kind="辜负", context=reason,
-                    origin=f"dossier:{dossier_id}:breach", turn=state.turn,
-                    year=state.year, period=state.period,
+                from ming_sim.credit_events import KIND_BETRAY, write_credit_event
+                write_credit_event(
+                    self, state, person=person, event_kind=KIND_BETRAY, context=reason,
+                    origin=f"dossier:{dossier_id}:breach",
                 )
             registered_factions = {
                 str(row["name"])

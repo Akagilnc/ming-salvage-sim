@@ -181,6 +181,35 @@ def test_character_loyalty_commitment_ongoing_applies_monthly_and_records_progre
     assert sim_issue["commitment_progress"]["months_elapsed"] == 1
 
 
+def test_reverse_loyalty_commitment_does_not_create_support_credit(game):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.execute("UPDATE characters SET loyalty=60 WHERE name='毛文龙'")
+    content.characters["毛文龙"].loyalty = 60
+    issue_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="反向忠诚门不算安抚",
+        origin_kind="decree",
+        origin_ref="decree:turn-1:reverse-appease",
+        bar_value=0,
+        inertia=0,
+        stage_text="",
+        ongoing_effects={},
+        stop_condition=json.dumps({"character.毛文龙.loyalty": "<=40"}, ensure_ascii=False),
+        commitment_kind="until_stop",
+        cancellable="decree",
+    )
+
+    _settle_empty_month(db, state, content)
+
+    assert _character_loyalty(db, "毛文龙") == 60
+    assert db.conn.execute(
+        "SELECT 1 FROM relation_edge_events WHERE origin LIKE ?",
+        (f"issue:{issue_id}:credit:appease:%",),
+    ).fetchone() is None
+
+
 def test_legacy_character_resolve_condition_commitment_settles_when_threshold_reached(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
@@ -380,6 +409,73 @@ def test_month_settlement_consumes_preexisting_credit_event_once(game):
     assert _character_loyalty(db, "毛文龙") == 55
     _settle_empty_month(db, state, content)
     assert _character_loyalty(db, "毛文龙") == 55
+
+
+def test_pending_credit_scan_owns_transaction_without_active_issues(game):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.execute("UPDATE characters SET loyalty=50 WHERE name='毛文龙'")
+    content.characters["毛文龙"].loyalty = 50
+    event_id = db.record_relation_edge_event(
+        source=EMPEROR_NODE,
+        target="毛文龙",
+        event_kind=KIND_BACK,
+        context="无 active issue 的待派生事实",
+        origin="dossier:pending-no-active:credit:back",
+        turn=state.turn,
+        year=state.year,
+        period=state.period,
+    )
+    db.conn.commit()
+
+    apply_issue_inertia_and_ongoing(db, state)
+
+    assert db.conn.in_transaction is False
+    with sqlite3.connect(db.path) as check:
+        assert check.execute(
+            "SELECT loyalty FROM characters WHERE name='毛文龙'"
+        ).fetchone()[0] == 55
+        assert check.execute(
+            "SELECT event_id FROM loyalty_credit_event_applied WHERE event_id=?", (event_id,)
+        ).fetchone()[0] == event_id
+
+
+def test_pending_credit_scan_rolls_back_on_failure(game):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.execute("UPDATE characters SET loyalty=50 WHERE name='毛文龙'")
+    content.characters["毛文龙"].loyalty = 50
+    event_id = db.record_relation_edge_event(
+        source=EMPEROR_NODE,
+        target="毛文龙",
+        event_kind=KIND_BACK,
+        context="派生失败须回滚",
+        origin="dossier:pending-rollback:credit:back",
+        turn=state.turn,
+        year=state.year,
+        period=state.period,
+    )
+    db.conn.commit()
+    db.conn.execute(
+        """
+        CREATE TRIGGER fail_pending_watermark
+        BEFORE INSERT ON loyalty_credit_event_applied
+        BEGIN
+            SELECT RAISE(ABORT, 'injected pending failure');
+        END
+        """
+    )
+    db.conn.commit()
+
+    with pytest.raises(sqlite3.IntegrityError, match="injected pending failure"):
+        apply_issue_inertia_and_ongoing(db, state)
+
+    assert db.conn.in_transaction is False
+    assert _character_loyalty(db, "毛文龙") == 50
+    assert content.characters["毛文龙"].loyalty == 50
+    assert db.conn.execute(
+        "SELECT 1 FROM loyalty_credit_event_applied WHERE event_id=?", (event_id,)
+    ).fetchone() is None
 
 
 def test_retired_person_rating_cannot_write_loyalty(game):

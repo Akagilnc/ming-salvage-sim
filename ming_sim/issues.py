@@ -10,7 +10,7 @@ import json
 import math
 import re
 import sqlite3
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from ming_sim.applier import atomic
@@ -479,9 +479,11 @@ def _person_loyalty_gate(gate: object) -> str:
     """Return the sole character named by a typed loyalty gate, otherwise fail closed."""
     if not isinstance(gate, dict) or len(gate) != 1:
         return ""
-    key = next(iter(gate))
+    key, condition = next(iter(gate.items()))
     match = re.fullmatch(r"character\.([^.]+)\.loyalty", str(key).strip())
-    return match.group(1).strip() if match else ""
+    if not match or not re.fullmatch(r"(?:>=|>)\s*-?\d+", str(condition or "").strip()):
+        return ""
+    return match.group(1).strip()
 
 
 def _commitment_remaining_from_gate(
@@ -892,24 +894,14 @@ def _invalid_monthly_person_rating_reason(effect: Dict[str, object]) -> str:
         for item in raw:
             if not isinstance(item, dict):
                 continue
-            name = str(item.get("name") or item.get("人物") or "").strip()
             action = str(item.get("动作") or item.get("action") or "").strip()
-            if not name or action != "评定":
-                continue
-            loyalty = item.get("loyalty")
-            if isinstance(loyalty, bool) or not isinstance(loyalty, int) or loyalty == 0:
-                return f"{key}.评定 loyalty 须为非零整数增量"
+            if action == "评定":
+                return f"{key}.评定 已退役；新承诺须使用 typed loyalty stop_condition"
     raw_character = effect.get("character")
-    if isinstance(raw_character, list):
-        for item in raw_character:
-            if not isinstance(item, dict):
-                continue
-            name = str(item.get("name") or item.get("人物") or "").strip()
-            if not name or "loyalty" not in item:
-                continue
-            loyalty = item.get("loyalty")
-            if isinstance(loyalty, bool) or not isinstance(loyalty, int) or loyalty == 0:
-                return "character.loyalty 须为非零整数增量"
+    if isinstance(raw_character, list) and any(
+        isinstance(item, dict) and "loyalty" in item for item in raw_character
+    ):
+        return "character.loyalty 已退役；新承诺须使用 typed loyalty stop_condition"
     return ""
 
 
@@ -9559,6 +9551,23 @@ def apply_issue_inertia_and_ongoing(
     touched_ids: Optional[set] = None,
     applied_person_changes: Optional[List[Dict[str, object]]] = None,
 ) -> List[Dict[str, object]]:
+    owns_transaction = db.owns_transaction()
+    transaction = atomic(db) if owns_transaction else nullcontext()
+    with transaction:
+        return _apply_issue_inertia_and_ongoing_in_transaction(
+            db,
+            state,
+            touched_ids=touched_ids,
+            applied_person_changes=applied_person_changes,
+        )
+
+
+def _apply_issue_inertia_and_ongoing_in_transaction(
+    db: GameDB,
+    state: GameState,
+    touched_ids: Optional[set] = None,
+    applied_person_changes: Optional[List[Dict[str, object]]] = None,
+) -> List[Dict[str, object]]:
     """返回 inertia 自然结案路产生的容忍拒收项——settle 在 inertia 之后补收进
     收集器(桥接跑在 inertia 前,只 tlog 等于这条路脱离 rejection_reports 管线,
     与 tracker-close 路同输入两判;ship-pre r1)。"""
@@ -9569,7 +9578,7 @@ def apply_issue_inertia_and_ongoing(
     from ming_sim.credit_events import derive_pending_loyalty_from_credit_events
     derive_pending_loyalty_from_credit_events(db)
     active = db.list_active_issues()
-    commit_local = not bool(getattr(db.conn, "in_transaction", False))
+    commit_local = False
     # 累计单月 metric 落账，用于上限 clamp
     period_metric_acc: Dict[str, int] = {}
 

@@ -747,8 +747,8 @@ def test_until_stop_commitment_supports_character_loyalty_condition(game, monkey
     assert json.loads(row["stop_condition"]) == {"character.毛文龙.loyalty": ">=65"}
 
 
-def test_commitment_rejects_string_numeric_person_loyalty_ongoing_effect(read_game, monkeypatch):
-    db, state, content = read_game
+def test_commitment_rejects_new_person_loyalty_ongoing_effect(game, monkeypatch):
+    db, state, content = game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
     out = I.apply_score_extraction(
@@ -758,7 +758,7 @@ def test_commitment_rejects_string_numeric_person_loyalty_ongoing_effect(read_ga
             "new_issues": [
                 {
                     "origin_kind": "decree",
-                    "origin_ref": "decree:turn-1:string-loyalty-appease",
+                    "origin_ref": _promulgated_commitment_origin(db, state, "new-rating"),
                     "kind": "initiative",
                     "title": "字符串忠诚安抚承诺",
                     "stage_text": "每月安抚毛文龙，但 loyalty 错写成字符串。",
@@ -767,7 +767,7 @@ def test_commitment_rejects_string_numeric_person_loyalty_ongoing_effect(read_ga
                             {
                                 "name": "毛文龙",
                                 "动作": "评定",
-                                "loyalty": "2",
+                                "loyalty": 2,
                                 "reason": "奉旨持续安抚",
                             }
                         ]
@@ -783,7 +783,7 @@ def test_commitment_rejects_string_numeric_person_loyalty_ongoing_effect(read_ga
     rejected = out["issue_summary"]["new_issues"][0]
     assert rejected["rejected"] is True
     assert rejected["category"] == "invalid_enum"
-    assert "loyalty" in rejected["reason"]
+    assert "评定" in rejected["reason"]
     assert _issue_by_title(db, "字符串忠诚安抚承诺") is None
 
 
@@ -904,6 +904,34 @@ def test_person_loyalty_commitment_accepts_typed_gate_without_ongoing_effects(ga
     assert row is not None
     assert json.loads(row["ongoing_effects"]) == {}
     assert json.loads(row["stop_condition"]) == {"character.毛文龙.loyalty": ">=65"}
+
+
+def test_reverse_person_loyalty_gate_gets_no_empty_ongoing_exemption(read_game, monkeypatch):
+    db, state, content = read_game
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+
+    out = I.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [
+                {
+                    "origin_kind": "decree",
+                    "origin_ref": "decree:turn-1:reverse-loyalty-gate",
+                    "kind": "initiative",
+                    "title": "反向忠诚门",
+                    "stop_condition": {"character.毛文龙.loyalty": "<=40"},
+                    "commitment_kind": "until_stop",
+                }
+            ]
+        },
+        content=content,
+    )
+
+    rejected = out["issue_summary"]["new_issues"][0]
+    assert rejected["rejected"] is True
+    assert rejected["category"] == "invalid_enum"
+    assert _issue_by_title(db, "反向忠诚门") is None
 
 
 def test_until_stop_commitment_rejects_semantically_empty_ongoing_effects(read_game, monkeypatch):
