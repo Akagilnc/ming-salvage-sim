@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import threading
 from types import SimpleNamespace
 
 import pytest
@@ -1006,7 +1005,6 @@ def test_hot_replace_http_success_reopens_state_and_writes(tmp_path, monkeypatch
     marker, write_minister = list(runtime.content.characters)[:2]
     runtime.favorites.add(marker)
     runtime.db.kv_set("favorites", json.dumps(sorted(runtime.favorites), ensure_ascii=False))
-    catch_up_done = None
     if op == "load":
         from ming_sim import audience_extraction
         from tests.test_audience_extraction_501 import (
@@ -1018,10 +1016,8 @@ def test_hot_replace_http_success_reopens_state_and_writes(tmp_path, monkeypatch
             runtime.db, runtime.state, _minister(runtime.db, runtime.content),
         )
         assert runtime.db.list_unextracted_replies()
-        catch_up_done = threading.Event()
         monkeypatch.setattr(
-            audience_extraction, "extract_story_facts",
-            lambda *_a, **_k: catch_up_done.set() or [],
+            audience_extraction, "extract_story_facts", lambda *_a, **_k: [],
         )
     runtime.save_to("before")
 
@@ -1036,7 +1032,7 @@ def test_hot_replace_http_success_reopens_state_and_writes(tmp_path, monkeypatch
     assert write_minister in write.json()["favorites"]
     if op == "load":
         assert marker in write.json()["favorites"]
-        assert catch_up_done is not None and catch_up_done.wait(2.0)
+        runtime._runtime_write_queue().barrier(lambda: None)
         assert runtime.db.list_unextracted_replies() == []
     runtime.session.close()
 
