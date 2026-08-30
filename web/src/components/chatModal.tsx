@@ -265,8 +265,8 @@ export function ChatModal({
 
   const sendSuggestion = (suggestion: Suggestion) => {
     if (suggestion.prefix) {
-      if (suggestion.label === "下密令") {
-        onIntent?.("secret_order");
+      if (suggestion.intent === "secret_order") {
+        onIntent?.(suggestion.intent);
       } else {
         onIntent?.(undefined);
         onInput(suggestion.text);
@@ -360,6 +360,7 @@ export function ChatModal({
                 key={`${suggestion.label}-${suggestion.text}`}
                 onClick={() => sendSuggestion(suggestion)}
                 disabled={!!busy}
+                data-intent={suggestion.intent}
                 title={suggestion.prefix ? `填入前缀：${suggestion.text}` : suggestion.text}
                 className={suggestion.prefix ? "hitl-prefix" : ""}
               >

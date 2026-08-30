@@ -456,7 +456,7 @@ describe("ChatModal — #527 prefix chips only (拟旨/下密令)", () => {
   /** Production suggestions_for payload after ADR 0042 / #527 cut. */
   const PREFIX_SUGGESTIONS: Suggestion[] = [
     { label: "拟旨", text: "拟旨如下：", prefix: true },
-    { label: "下密令", text: "密令如下：", prefix: true },
+    { label: "机密差事", text: "", prefix: true, intent: "secret_order" },
   ];
 
   it("keeps draft prefix but stores secret-order intent without changing the textarea", () => {
@@ -471,8 +471,7 @@ describe("ChatModal — #527 prefix chips only (拟旨/下密令)", () => {
     });
 
     const hitlButtons = Array.from(host.querySelectorAll(".hitl-bar button"));
-    const labels = hitlButtons.map((b) => b.textContent?.trim());
-    expect(labels).toEqual(["拟旨", "下密令"]);
+    expect(hitlButtons).toHaveLength(2);
 
     const textarea = host.querySelector("textarea") as HTMLTextAreaElement;
     expect(textarea).toBeTruthy();
@@ -484,7 +483,7 @@ describe("ChatModal — #527 prefix chips only (拟旨/下密令)", () => {
     expect(textarea.value).toBe("拟旨如下：");
     expect(onSend).not.toHaveBeenCalled();
 
-    const secretBtn = hitlButtons.find((b) => b.textContent?.trim() === "下密令") as HTMLButtonElement;
+    const secretBtn = host.querySelector('[data-intent="secret_order"]') as HTMLButtonElement;
     act(() => {
       secretBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
