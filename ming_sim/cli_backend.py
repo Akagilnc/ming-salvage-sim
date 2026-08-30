@@ -2197,6 +2197,8 @@ def extract_draft_intent(
     if correction_block and not correction_block.endswith("\n"):
         correction_block += "\n"
     stalled_push_facts = _stalled_deliberation_push_facts(db)
+    from ming_sim.action_clusters import cluster_fields_prompt, project_cluster_fields
+    grant_fields_prompt = cluster_fields_prompt("grant_allocation")
     if draft_count > 1:
         prompt = (
             "你是信息抽取器，不扮演。皇帝同一句要求拟多道彼此独立的圣旨，大臣已在一段回话中"
@@ -2207,13 +2209,15 @@ def extract_draft_intent(
             f'"目标类型":"{_draft_target_kind_guidance()}","目标ID":"...","目标案卷ID":null,'
             '"颁布方式":"普通|中旨直发","施行范围":"无|全国|单省"},'
             f'{{"正文":"……共 {draft_count} 道","动作类型":"military_order","目标类型":"army",'
-            '"目标ID":"...","金额":null,"账户":"","执行面":"immediate|in_transit",'
+            '"目标ID":"...","执行面":"immediate|in_transit",'
             '"承办人":"...","期限月数":3,"颁布方式":"普通|中旨直发","施行范围":"无",'
             '"参与人":[{"character_id":"规范名","tier":"主办|协办|知情","role":"本案职分","delegator_id":null}]}]}\n'
             'entries 仅 pay_order_override 非空，形如 '
             '[{"key":"due_priority_军饷@shaanxi","value":40,"duration_months":3}]；'
             'military_order 等非该动作不写或 []。\n'
-            "不得把同一段文字复制成多道；不得遗漏皇帝要求的任一道拟旨事项。\n\n"
+            "拨帑动作逐道使用以下 ACTION_CLUSTERS 字段（其余动作留缺省）：\n"
+            + grant_fields_prompt
+            + "不得把同一段文字复制成多道；不得遗漏皇帝要求的任一道拟旨事项。\n\n"
             + correction_block
             + roster_facts
             + pay_order_facts
@@ -2284,11 +2288,14 @@ def extract_draft_intent(
             mechanical = {
                 target: value.get(source)
                 for source, target in (
-                    ("金额", "amount"), ("账户", "account"),
                     ("执行面", "execution_surface"), ("承办人", "assignee"),
                     ("期限月数", "deadline_months"),
                 )
             }
+            if action == "grant_allocation":
+                mechanical.update(project_cluster_fields(
+                    "grant_allocation", {**value, "mode": mode, "target_id": target_id},
+                ))
             mechanical["locality_scope"] = _coerce_draft_locality_scope(value.get("施行范围"))
             # multi 路目标类型同样 fail-loud
             target_kind = _coerce_draft_target_kind(target_kind)
@@ -2346,12 +2353,8 @@ def extract_draft_intent(
         f'  "目标类型": "{_draft_target_kind_guidance()}",\n'
         '  "目标ID": "",\n'
         '  "颁布方式": "普通|中旨直发", // 皇帝预先声明中旨直发时选后者\n'
-        '  "恩赏拨帑": "",         // 仅拨帑；协济军饷填协饷，其余填既有拨帑动作值\n'
-        '  "用途": "",             // 协饷固定填补饷；非拨帑留空\n'
-        '  "金额": null,             // 奉旨拨付额填正整数；非拨帑留 null\n'
-        '  "金额单位": "",         // 拨帑固定填万两；非拨帑留空\n'
-        '  "账户": "",\n'
-        '  "执行面": "immediate|in_transit", // 仅拨帑：账内即时划转或在途执行\n'
+        + grant_fields_prompt
+        + '  "执行面": "immediate|in_transit", // 仅拨帑：账内即时划转或在途执行\n'
         '  "承办人": "",\n'
         '  "参与人": [{"character_id":"规范名","tier":"主办|协办|知情","role":"本案职分","delegator_id":null}],\n'
         '  "施行范围": "无|全国|单省", // 全国性政令填全国；明指某省填单省；京内/任免等无属地语义留无\n'
@@ -2463,10 +2466,8 @@ def extract_draft_intent(
     _tk_raw = obj.get("目标类型")
     target_kind = _coerce_draft_target_kind(_tk_raw if _tk_raw not in (None, "") else "policy")
     target_id_value = str(obj.get("目标ID") or "").strip()
+    mode = _directive_mode(obj.get("颁布方式"))
     mechanical = {
-        "amount": obj.get("金额"), "amount_unit": obj.get("金额单位"),
-        "account": obj.get("账户"), "grant_action": obj.get("恩赏拨帑"),
-        "purpose": obj.get("用途"),
         "execution_surface": obj.get("执行面"),
         "assignee": obj.get("承办人"),
         "deadline_months": obj.get("期限月数"),
@@ -2474,7 +2475,10 @@ def extract_draft_intent(
         # #653：pay_order_override 结构化载荷随 capture 整道转交（禁旁路）。
         "entries": obj.get("entries"),
     }
-    mode = _directive_mode(obj.get("颁布方式"))
+    if dossier_action == "grant_allocation":
+        mechanical.update(project_cluster_fields(
+            "grant_allocation", {**obj, "mode": mode, "target_id": target_id_value},
+        ))
     if mode is not None:
         mechanical["mode"] = mode
     merged = str(obj.get("合并草案") or "").strip()
@@ -2651,7 +2655,6 @@ def capture_manual_directive_payload(
     for field in (
         "amount", "account", "execution_surface", "assignee",
         "deadline_months", "participant_roster", "locality_scope", "entries",
-        "amount_unit",
         # #658：自由下旨御笔强推 stalled 廷议
         "target_dossier_id",
         "grant_action", "purpose", "cadence",
@@ -2666,13 +2669,11 @@ def capture_manual_directive_payload(
         from ming_sim.action_materialize import require_explicit_xiexang_fields
         payload.update(require_explicit_xiexang_fields(
             amount=payload.get("amount"),
-            amount_unit=str(payload.get("amount_unit") or ""),
             account=str(payload.get("account") or ""),
             purpose=str(payload.get("purpose") or ""),
             target_kind=str(payload.get("target_kind") or ""),
             target_id=str(payload.get("target_id") or ""),
         ))
-        payload.pop("amount_unit", None)
     if payload.get("dossier_action_type") == "dismiss_assignment":
         # Manual CLI/Web directives bypass pending office actions, so preserve
         # the same structured materialization fields at this capture seam.

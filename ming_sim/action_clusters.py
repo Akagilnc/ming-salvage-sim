@@ -138,6 +138,40 @@ def cluster_by_kind(kind: str) -> Optional[ActionCluster]:
     return None
 
 
+def cluster_fields_prompt(kind: str) -> str:
+    """Render one catalog row's extraction fields without a parallel schema."""
+    cluster = cluster_by_kind(kind)
+    if cluster is None:
+        return ""
+    lines: List[str] = []
+    for spec in cluster.fields:
+        if spec.allowed is not None:
+            values = sorted(spec.allowed, key=lambda value: (value != "无", value))
+            example = f'"{"|".join(values)}"'
+        elif spec.as_int:
+            example = "null" if spec.default is None else "0"
+        else:
+            example = '""'
+        lines.append(f'  "{spec.zh}": {example},')
+    return "\n".join(lines) + ("\n" if lines else "")
+
+
+def project_cluster_fields(kind: str, obj: Mapping[str, Any]) -> Dict[str, Any]:
+    """Project one catalog row from Chinese/English transport keys.
+
+    Validation remains at the durable admission seam so malformed extracted
+    values retain their real rejection reason instead of being defaulted here.
+    """
+    cluster = cluster_by_kind(kind)
+    if cluster is None:
+        return {}
+    return {
+        spec.name: _field_raw(obj, spec)
+        if _field_raw(obj, spec) is not None else spec.default
+        for spec in cluster.fields
+    }
+
+
 def materialize_clusters_ordered() -> Tuple[ActionCluster, ...]:
     _ensure_catalog()
     return tuple(
