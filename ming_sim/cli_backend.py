@@ -2214,7 +2214,10 @@ def extract_draft_intent(
         if raw_mode not in (None, ""):
             transport["mode"] = _directive_mode(raw_mode) or raw_mode
         normalized = assert_action_candidate_shape({**transport, "kind": "grant_allocation"})
-        return project_cluster_fields("grant_allocation", normalized)
+        projected = project_cluster_fields("grant_allocation", normalized)
+        if projected.get("grant_action") != "协饷" and not projected.get("target_kind"):
+            projected["target_kind"] = "policy"
+        return projected
 
     if draft_count > 1:
         prompt = (
@@ -2322,7 +2325,10 @@ def extract_draft_intent(
                 )
             }
             if action == "grant_allocation":
-                mechanical.update(projected)
+                mechanical.update(
+                    (key, item) for key, item in projected.items()
+                    if key != "target_kind"
+                )
             mechanical["locality_scope"] = _coerce_draft_locality_scope(value.get("施行范围"))
             # multi 路目标类型同样 fail-loud
             target_kind = _coerce_draft_target_kind(target_kind)
@@ -2514,7 +2520,10 @@ def extract_draft_intent(
         "entries": obj.get("entries"),
     }
     if dossier_action == "grant_allocation":
-        mechanical.update(_projected)
+        mechanical.update(
+            (key, item) for key, item in _projected.items()
+            if key != "target_kind"
+        )
     if mode is not None:
         mechanical["mode"] = mode
     merged = str(obj.get("合并草案") or "").strip()

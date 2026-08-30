@@ -31,6 +31,8 @@ class FieldSpec:
     int_hi: int = 10**9
     # Optional per-enum execution metadata lives on the canonical field row.
     execution_coverage: Optional[Mapping[str, Optional[str]]] = None
+    # Field is populated only when another canonical field has one of these values.
+    populated_when: Optional[Tuple[str, FrozenSet[str]]] = None
 
 
 @dataclass(frozen=True)
@@ -109,8 +111,13 @@ def _render_field_specs(specs: Sequence[FieldSpec]) -> Tuple[List[str], List[str
         else:
             example = '""'
         lines.append(f'  "{spec.zh}": {example},')
-        if spec.name == "purpose" and spec.allowed == frozenset({"补饷"}):
-            notes.append("用途：仅恩赏拨帑=协饷时填补饷；非协饷留空")
+        if spec.populated_when is not None:
+            controller_name, controller_values = spec.populated_when
+            controller = _field_specs()[controller_name]
+            values = "|".join(sorted(controller_values))
+            notes.append(
+                f"{spec.zh}：仅{controller.zh}={values}时填写；其它留空"
+            )
     return lines, notes
 
 
@@ -256,6 +263,22 @@ def validate_action_candidate_shape(obj: Any) -> Tuple[bool, str]:
         if normalized not in spec.allowed:
             return False, f"{spec.name} out of enum: {raw!r}"
     return True, ""
+
+
+def field_population_allowed(
+    kind: str, field_name: str, candidate: Mapping[str, Any],
+) -> bool:
+    """Read a field's canonical population condition from its cluster row."""
+    cluster = cluster_by_kind(kind)
+    if cluster is None:
+        return False
+    spec = next((field for field in cluster.fields if field.name == field_name), None)
+    if spec is None:
+        return False
+    if spec.populated_when is None:
+        return True
+    controller, allowed = spec.populated_when
+    return str(candidate.get(controller) or "").strip() in allowed
 
 
 def assert_action_candidate_shape(obj: Any) -> Dict[str, Any]:

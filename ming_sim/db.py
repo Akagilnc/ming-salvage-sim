@@ -12133,7 +12133,13 @@ class GameDB:
                 # #1503：协饷先且只经 require_explicit_xiexang_fields，不经 amount/account 首错。
                 normalized = self._normalize_army_pay_grant_payload(normalized)
             else:
-                if str(normalized.get("purpose") or "").strip() == "补饷":
+                from ming_sim.action_clusters import field_population_allowed
+                if (
+                    str(normalized.get("purpose") or "").strip()
+                    and not field_population_allowed(
+                        "grant_allocation", "purpose", normalized,
+                    )
+                ):
                     raise ValueError("非协饷拨帑不得夹带 purpose=补饷")
                 try:
                     amount = strict_int(
