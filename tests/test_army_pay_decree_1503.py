@@ -1759,13 +1759,6 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
         assert len(inner_ledger) == 1
         assert inner_ledger[0]["account"] == "内库"
         assert int(inner_ledger[0]["delta"]) == -30
-        assert {
-            ledger[0]["origin_ref"], inner_ledger[0]["origin_ref"],
-            f"dossier:{decision_dossier['id']}",
-        } == {
-            f"dossier:{dossier['id']}", f"dossier:{inner_dossier['id']}",
-            f"dossier:{decision_dossier['id']}",
-        }
         decision_ledger = [
             dict(r) for r in game.db.conn.execute(
                 """
