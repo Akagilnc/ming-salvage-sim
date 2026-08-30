@@ -1331,7 +1331,6 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
     from tests.test_month_loop_tracer_1468 import (
         _get_state,
         _post_issue_stream,
-        _resolve_decisions_via_stream,
         _stub_outer_llm_seams,
         _turn_of,
     )
@@ -1370,6 +1369,17 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     _stub_outer_llm_seams(monkeypatch)
+    # The first grant enters through audience night; the second is a season
+    # decision whose selected server option is its legal origin.
+    import ming_sim.decree as decree_mod
+    decision_report = """本月邸报。
+<<DECISION>>
+{"title":"再济关宁","context":"关宁欠饷尚重，奏请圣裁","options":[{"label":"发内帑银三十万两济关宁","hint":"军心稍定，内帑益绌","action_type":"grant_allocation","grant_action":"协饷","account":"内库","amount":30,"purpose":"补饷","target_kind":"army","target_id":"guanning","cadence":"一次性"},{"label":"暂缓再拨","hint":"内帑得保，边军仍困"}]}
+<<END>>"""
+    monkeypatch.setattr(
+        decree_mod, "simulate_season_with_payload",
+        lambda *a, **k: (decision_report, k.get("simulator_payload") or {}),
+    )
     monkeypatch.setattr(cb, "classify_cli_action_intent", fake_classify)
     monkeypatch.setattr(cb, "extract_confirmation_intent", fake_confirm)
 
@@ -1440,18 +1450,35 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
         if body.get("awaiting_decision"):
             decisions = body.get("decisions") or []
             assert decisions, f"awaiting_decision with empty decisions: {body!r}"
-            _resolve_decisions_via_stream(
-                client, decisions, step="1503 resolve_decisions",
+            selected = decisions[0]["options"][0]
+            resolved = client.post(
+                "/api/decree/resolve_decisions/stream",
+                json={"choices": [{
+                    "decision_key": decisions[0]["decision_key"],
+                    "label": selected["label"],
+                }]},
             )
+            assert resolved.status_code == 200, resolved.text
+            assert "event: error" not in resolved.text, resolved.text
+            assert "event: done" in resolved.text, resolved.text
         wait_pending_writes(game)
 
         after = _get_state(client)
         assert _turn_of(after) == turn_before + 1, after.get("turn")
 
-        dossier = next(
+        dossiers = [
             d for d in game.db.list_decree_dossiers()
-            if d["pending_action_id"] == pending_id
-        )
+            if d["action_type"] == "grant_allocation"
+            and d["target_id"] == "guanning"
+        ]
+        dossier = next(d for d in dossiers if d["pending_action_id"] == pending_id)
+        decision_dossier = next(d for d in dossiers if d["id"] != dossier["id"])
+        decision_payload = json.loads(game.db.conn.execute(
+            "SELECT payload_json FROM decree_dossiers WHERE id=?",
+            (decision_dossier["id"],),
+        ).fetchone()[0])
+        assert decision_payload["decision_key"] == decisions[0]["decision_key"]
+        assert decision_payload["label"] == "发内帑银三十万两济关宁"
         moves = game.db.list_economy_moves_for_dossier(dossier["id"])
         pay_moves = [
             m for m in moves
@@ -1472,6 +1499,19 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
         assert len(ledger) == 1
         assert int(ledger[0]["delta"]) == -15
         assert ledger[0]["account"] == "国库"
+        decision_ledger = [
+            dict(r) for r in game.db.conn.execute(
+                """
+                SELECT account, delta, origin_ref FROM economy_ledger
+                WHERE purpose='补饷' AND target_id='guanning' AND origin_ref=?
+                """,
+                (f"dossier:{decision_dossier['id']}",),
+            ).fetchall()
+        ]
+        assert decision_ledger == [{
+            "account": "内库", "delta": -30,
+            "origin_ref": f"dossier:{decision_dossier['id']}",
+        }]
         logs = [
             dict(row) for row in game.db.conn.execute(
                 """
@@ -1497,15 +1537,21 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
             ).fetchall()
         )
         assert after_army["arrears"] == pytest.approx(
-            float(arrears_before["arrears"]) - 15 + tick_delta
+            float(arrears_before["arrears"]) - 45 + tick_delta
         )
         assert after_army["central_pay_arrears"] == pytest.approx(
-            float(arrears_before["central_pay_arrears"]) - 15 + tick_delta
+            float(arrears_before["central_pay_arrears"]) - 45 + tick_delta
         )
-        assert after_army["arrears"] == pytest.approx(float(logs[0]["new_value"]))
-        assert after_army["central_pay_arrears"] == pytest.approx(
-            float(logs[0]["new_value"])
-        )
+        decision_logs = game.db.conn.execute(
+            """
+            SELECT delta, new_value FROM army_logs
+            WHERE army_id='guanning' AND field='arrears' AND origin_ref=?
+            """,
+            (f"dossier:{decision_dossier['id']}",),
+        ).fetchall()
+        assert len(decision_logs) == 1
+        assert float(decision_logs[0]["delta"]) == pytest.approx(-30)
+
     finally:
         try:
             game.session.close()

@@ -70,14 +70,27 @@ def parse_decision_blocks(narrative: str) -> tuple[str, List[Dict[str, object]]]
         raw_opts = obj.get("options")
         if not title or not isinstance(raw_opts, list):
             continue
-        options: List[Dict[str, str]] = []
+        options: List[Dict[str, object]] = []
         for o in raw_opts:
             if not isinstance(o, dict):
                 continue
             label = str(o.get("label") or "").strip()
             if not label:
                 continue
-            options.append({"label": label, "hint": str(o.get("hint") or "").strip()})
+            option: Dict[str, object] = {
+                "label": label,
+                "hint": str(o.get("hint") or "").strip(),
+            }
+            # Deterministic financial options carry their executable payload;
+            # label/hint remain presentation only.
+            if str(o.get("action_type") or "") == "grant_allocation":
+                for key in (
+                    "action_type", "grant_action", "account", "amount", "purpose",
+                    "target_kind", "target_id", "cadence",
+                ):
+                    if key in o:
+                        option[key] = o[key]
+            options.append(option)
         if len(options) < 2:  # 至少给 2 个选项才算有效抉择
             continue
         decision = {

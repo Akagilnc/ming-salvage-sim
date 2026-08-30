@@ -29,6 +29,7 @@ class FieldSpec:
     as_int: bool = False
     int_lo: int = 0  # symmetric lower bound; >0 marks positive integer
     int_hi: int = 10**9
+    quantity_unit: Optional[str] = None
     # Optional per-enum execution metadata lives on the canonical field row.
     execution_coverage: Optional[Mapping[str, Optional[str]]] = None
 
@@ -118,6 +119,8 @@ def classifier_json_fields_prompt() -> str:
                         if f.default is None
                         else f"JSON integer>={f.int_lo}"
                     )
+                    if f.quantity_unit:
+                        constraint += f"；单位={f.quantity_unit}"
                     notes.append(f"{f.zh}：{constraint}")
             else:
                 lines.append(f'  "{f.zh}": "",')

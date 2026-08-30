@@ -448,7 +448,10 @@ def validate_all(
             if label not in labels:
                 raise ValueError(f"decision 选项不在当前 options：{key}")
             matched = labels[label]
+            # The stored option is authority for executable fields; the client
+            # selects only by label and may not overlay a second payload.
             rebuilt = canonical_choice({
+                **matched,
                 "decision_key": key,
                 "label": matched.get("label"),
                 "hint": matched.get("hint") or "",
@@ -1302,6 +1305,19 @@ def apply_rescript_batch(
             kind = item.kind
 
             if kind == "decision":
+                # A financial choice is itself the legal origin of the grant.
+                # Its canonical payload came from the server-stored option.
+                if str(item.choice.get("action_type") or "") == "grant_allocation":
+                    mapped = map_rescript_option_or_choice(
+                        item.choice, mode="ordinary", db=db, content=content, state=state,
+                    )
+                    created = _create_from_mapped(
+                        db, state, content, mapped, status="proposed", mode="ordinary",
+                    )
+                    if not created:
+                        raise ValueError(
+                            f"decision grant 成案零行：{item.decision_key}"
+                        )
                 # decision 行：写 choice + decided（#1490 / 普通 HITL）
                 # 事件账失败必须穿透 atomic → 整批回滚（§B.1）；禁 swallow。
                 _cas_decided(db, item)
