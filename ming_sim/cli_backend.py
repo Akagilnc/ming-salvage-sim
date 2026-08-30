@@ -2346,7 +2346,10 @@ def extract_draft_intent(
         f'  "目标类型": "{_draft_target_kind_guidance()}",\n'
         '  "目标ID": "",\n'
         '  "颁布方式": "普通|中旨直发", // 皇帝预先声明中旨直发时选后者\n'
+        '  "恩赏拨帑": "",         // 仅拨帑；协济军饷填协饷，其余填既有拨帑动作值\n'
+        '  "用途": "",             // 协饷固定填补饷；非拨帑留空\n'
         '  "金额": null,             // 奉旨拨付额填正整数；非拨帑留 null\n'
+        '  "金额单位": "",         // 拨帑固定填万两；非拨帑留空\n'
         '  "账户": "",\n'
         '  "执行面": "immediate|in_transit", // 仅拨帑：账内即时划转或在途执行\n'
         '  "承办人": "",\n'
@@ -2461,7 +2464,9 @@ def extract_draft_intent(
     target_kind = _coerce_draft_target_kind(_tk_raw if _tk_raw not in (None, "") else "policy")
     target_id_value = str(obj.get("目标ID") or "").strip()
     mechanical = {
-        "amount": obj.get("金额"), "account": obj.get("账户"),
+        "amount": obj.get("金额"), "amount_unit": obj.get("金额单位"),
+        "account": obj.get("账户"), "grant_action": obj.get("恩赏拨帑"),
+        "purpose": obj.get("用途"),
         "execution_surface": obj.get("执行面"),
         "assignee": obj.get("承办人"),
         "deadline_months": obj.get("期限月数"),
@@ -2646,6 +2651,7 @@ def capture_manual_directive_payload(
     for field in (
         "amount", "account", "execution_surface", "assignee",
         "deadline_months", "participant_roster", "locality_scope", "entries",
+        "amount_unit",
         # #658：自由下旨御笔强推 stalled 廷议
         "target_dossier_id",
         "grant_action", "purpose", "cadence",
@@ -2653,6 +2659,21 @@ def capture_manual_directive_payload(
         if captured.get(field) not in (None, ""):
             payload[field] = captured[field]
     # heal 已 normalize+validate；无 db/content 时保持抽取原样（旧调用兼容）。
+    if (
+        payload.get("dossier_action_type") == "grant_allocation"
+        and payload.get("grant_action") == "协饷"
+    ):
+        if payload.get("amount_unit") != "万两":
+            from ming_sim.action_materialize import IncompleteXiexangPayloadError
+            raise IncompleteXiexangPayloadError(["amount_unit"])
+        from ming_sim.action_materialize import require_explicit_xiexang_fields
+        payload.update(require_explicit_xiexang_fields(
+            amount=payload.get("amount"), account=str(payload.get("account") or ""),
+            purpose=str(payload.get("purpose") or ""),
+            target_kind=str(payload.get("target_kind") or ""),
+            target_id=str(payload.get("target_id") or ""),
+        ))
+        payload.pop("amount_unit", None)
     if payload.get("dossier_action_type") == "dismiss_assignment":
         # Manual CLI/Web directives bypass pending office actions, so preserve
         # the same structured materialization fields at this capture seam.

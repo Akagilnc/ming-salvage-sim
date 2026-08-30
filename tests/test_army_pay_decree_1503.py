@@ -815,29 +815,56 @@ def test_manual_directive_admission_real_http_tracer_1591(
     )
     from tests.test_session_write_queue_1353 import wait_pending_writes
 
-    captured_ok = {
-        "draft_action": "拟旨",
-        "dossier_action_type": "grant_allocation",
-        "grant_action": "协饷",
-        "purpose": "补饷",
-        "target_kind": "army",
-        "target_id": "guanning",
-        "mode": "ordinary",
-        "amount": 15,
-        "account": "太仓",
-    }
-    captured_bad = dict(captured_ok, account="藩库")
-    captures = [captured_ok, captured_bad]
+    raw_captures = [
+        {
+            "拟旨意图": "拟旨",
+            "动作类型": "grant_allocation",
+            "恩赏拨帑": "协饷",
+            "用途": "补饷",
+            "目标类型": "army",
+            "目标ID": "guanning",
+            "颁布方式": "普通",
+            "金额": 15,
+            "金额单位": "万两",
+            "账户": "太仓",
+            "执行面": "immediate",
+            "承办人": "",
+            "参与人": [],
+            "施行范围": "无",
+            "期限月数": None,
+            "目标案卷ID": None,
+            "entries": [],
+        },
+        {
+            "拟旨意图": "拟旨",
+            "动作类型": "grant_allocation",
+            "恩赏拨帑": "赏赉",
+            "用途": "",
+            "目标类型": "army",
+            "目标ID": "guanning",
+            "颁布方式": "普通",
+            "金额": 15,
+            "金额单位": "万两",
+            "账户": "藩库",
+            "执行面": "immediate",
+            "承办人": "",
+            "参与人": [],
+            "施行范围": "无",
+            "期限月数": None,
+            "目标案卷ID": None,
+            "entries": [],
+        },
+    ]
 
-    def fake_extract(*_a, **_k):
-        return dict(captures.pop(0))
+    def fake_backend(*_a, **_k):
+        return json.dumps(raw_captures.pop(0), ensure_ascii=False), {}
 
     real_capture = cb.capture_manual_directive_payload
     monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     _stub_outer_llm_seams(monkeypatch)
-    monkeypatch.setattr(cb, "extract_draft_intent_with_roster_heal", fake_extract)
+    monkeypatch.setattr(cb, "_run_backend_for_config", fake_backend)
     monkeypatch.setattr(cb, "capture_manual_directive_payload", real_capture)
 
     game = web_app.WebGame(fresh=False)
