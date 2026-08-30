@@ -876,8 +876,8 @@ def test_until_stop_commitment_requires_origin_ref(read_game, monkeypatch):
     assert _issue_by_title(db, "每月补辽饷但无诏书引用") is None
 
 
-def test_until_stop_commitment_requires_ongoing_effects(read_game, monkeypatch):
-    db, state, content = read_game
+def test_person_loyalty_commitment_accepts_typed_gate_without_ongoing_effects(game, monkeypatch):
+    db, state, content = game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
     out = I.apply_score_extraction(
@@ -887,10 +887,10 @@ def test_until_stop_commitment_requires_ongoing_effects(read_game, monkeypatch):
             "new_issues": [
                 {
                     "origin_kind": "decree",
-                    "origin_ref": "decree:turn-1:empty-monthly-action",
+                    "origin_ref": _promulgated_commitment_origin(db, state, "appease-mao"),
                     "kind": "initiative",
-                    "title": "每月补辽饷但没有月度动作",
-                    "stop_condition": {"army.guanning.arrears": "<=0"},
+                    "title": "安抚毛文龙",
+                    "stop_condition": {"character.毛文龙.loyalty": ">=65"},
                     "commitment_kind": "until_stop",
                 }
             ]
@@ -898,11 +898,12 @@ def test_until_stop_commitment_requires_ongoing_effects(read_game, monkeypatch):
         content=content,
     )
 
-    rejected = out["issue_summary"]["new_issues"][0]
-    assert rejected["rejected"] is True
-    assert rejected["category"] == "invalid_enum"
-    assert "ongoing_effects" in rejected["reason"]
-    assert _issue_by_title(db, "每月补辽饷但没有月度动作") is None
+    created = out["issue_summary"]["new_issues"][0]
+    assert created.get("rejected") is not True
+    row = _issue_by_title(db, "安抚毛文龙")
+    assert row is not None
+    assert json.loads(row["ongoing_effects"]) == {}
+    assert json.loads(row["stop_condition"]) == {"character.毛文龙.loyalty": ">=65"}
 
 
 def test_until_stop_commitment_rejects_semantically_empty_ongoing_effects(read_game, monkeypatch):

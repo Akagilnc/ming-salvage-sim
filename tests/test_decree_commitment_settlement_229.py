@@ -149,16 +149,7 @@ def test_character_loyalty_commitment_ongoing_applies_monthly_and_records_progre
         bar_value=0,
         inertia=0,
         stage_text="遣臣常驻皮岛安抚毛文龙，逐月消解其观望。",
-        ongoing_effects={
-            "人物变更": [
-                {
-                    "name": "毛文龙",
-                    "动作": "评定",
-                    "loyalty": 2,
-                    "reason": "奉旨持续安抚，观望稍解",
-                }
-            ]
-        },
+        ongoing_effects={},
         stop_condition=json.dumps({"character.毛文龙.loyalty": ">=65"}, ensure_ascii=False),
         commitment_kind="until_stop",
         cancellable="decree",
@@ -167,6 +158,7 @@ def test_character_loyalty_commitment_ongoing_applies_monthly_and_records_progre
     _settle_empty_month(db, state, content)
 
     assert _character_loyalty(db, "毛文龙") == 50
+    assert content.characters["毛文龙"].loyalty == 50
     event = db.conn.execute(
         "SELECT event_kind FROM relation_edge_events WHERE target='毛文龙' ORDER BY id DESC LIMIT 1"
     ).fetchone()
@@ -251,13 +243,15 @@ def test_legacy_character_resolve_condition_commitment_settles_when_threshold_re
 def test_credit_event_is_the_idempotent_loyalty_write_source(
     game, kind, origin, starting, expected,
 ):
-    db, state, _content = game
+    db, state, content = game
     db.conn.execute("UPDATE characters SET loyalty=? WHERE name='毛文龙'", (starting,))
+    content.characters["毛文龙"].loyalty = starting
     event_id = write_credit_event(
         db, state, person="毛文龙", event_kind=kind, context="结构化信用事实", origin=origin,
     )
 
     assert _character_loyalty(db, "毛文龙") == expected
+    assert content.characters["毛文龙"].loyalty == expected
     assert write_credit_event(
         db, state, person="毛文龙", event_kind=kind, context="重放语境不参与判重", origin=origin,
     ) == event_id

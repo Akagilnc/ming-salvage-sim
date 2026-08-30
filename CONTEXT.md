@@ -224,7 +224,7 @@ _Avoid_: transcript、只有对白
 _Avoid_: 人事变更、人物状态变化（旧四 key，仅作兼容翻译）
 
 **动作（人物变更）**:
-人物变更条目声明的意图；闭集唯一真源为 `ming_sim.person_archive_contract.PERSON_ACTIONS`（transition + 评定/性情）。意图是声明的，不靠出现了哪些字段反推；评定用于忠诚软判增量，性情用于人物固有层完整替换。
+人物变更条目声明的意图；当前可写动作由 `ming_sim.person_archive_contract.format_person_actions()` 投影。意图是声明的，不靠出现了哪些字段反推；性情用于人物固有层完整替换。内部 `PERSON_ACTIONS` 保留退役评定，仅供旧档解析、安抚承诺迁移身份与明确拒绝。
 _Avoid_: 操作类型、event type
 
 **名分**:

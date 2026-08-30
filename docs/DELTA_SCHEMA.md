@@ -268,7 +268,7 @@ canonical 段形＝list，每项落一道加派旨：逐省累积账当回合落
 
 ⚠️ **数量上限**：active `kind=initiative` 的 issue **总数不超过 15**，超过新立直接拒（"已有十五事在办，朝廷分身乏术"）。
 
-「每月 X 直到补齐」这类旨意承诺必须建 `kind="initiative"` 的承诺 issue：带 `commitment_kind="until_stop"`、`ongoing_effects`、`stop_condition`，落库时会按承诺路径处理为 `inertia=0`、`cancellable="decree"`，并跳过普通国策的 resolve-effect 补全。多军合计可写 `{"army.xuan_da|jizhen.arrears.sum":"<=0"}`，人物阈值可写 `{"character.毛文龙.loyalty":">=65"}`。
+「每月 X 直到补齐」这类旨意承诺必须建 `kind="initiative"` 的承诺 issue：带 `commitment_kind="until_stop"`、`ongoing_effects`、`stop_condition`，落库时会按承诺路径处理为 `inertia=0`、`cancellable="decree"`，并跳过普通国策的 resolve-effect 补全。多军合计可写 `{"army.xuan_da|jizhen.arrears.sum":"<=0"}`。人物安抚承诺只写唯一的 typed gate（如 `{"character.毛文龙.loyalty":">=65"}`），可不写 `ongoing_effects`；忠诚由信用事件机械派生。
 
 「连续 N 月 / 半年为限」这类时限承诺也必须建 `kind="initiative"` 的承诺 issue：带 `commitment_kind="until_stop"`、`ongoing_effects`、`end_turn`。立项公式是 `end_turn = turn + N`，且 `end_turn` 必须严格大于当前 turn；当前回合或过去回合会被拒收，避免立项即过期的持续承诺空壳。半年按 6 个回合计。若同时要求「直到补齐」，同时写 `stop_condition`；`stop_condition` 或 `end_turn` 谁先到谁停。时限到期由结算写 `issue_advances.trigger_kind="expire"` 并标 `dropped`，不要在 delta 里伪造成 `close_issues resolved/failed`，也不要给承诺补普通 resolve/fail 效果。
 
@@ -314,7 +314,7 @@ canonical 段形＝list，每项落一道加派旨：逐省累积账当回合落
 生命周期：段到期当回合结算内确定性写入；下一召对回合 `list_next_audience_todos` 可读；未消费可滚存；restore 只读 DB 接续。
 
 
-人物承诺型事项也属 `initiative`：如皇帝命臣安抚毛文龙，应立标题类似 `安抚毛文龙·进行中` 的玩家可见 issue，并同时写两件事：`stop_condition` 表达意图阈值（如 `{"character.毛文龙.loyalty":">=65"}`），`ongoing_effects` 表达每月持续动作（如 `{"人物变更":[{"name":"毛文龙","动作":"评定","loyalty":2,"reason":"奉旨持续安抚"}]}`）。只写 `stop_condition`、没有月度动作的载体会被拒收；一次性赏赐、抚恤、拨银若当回合办完，不立 issue，只走 `economy_moves` 与必要的 `人物变更`。
+人物安抚承诺也属 `initiative`：写 `commitment_kind="until_stop"` 与唯一的人物 loyalty `stop_condition`（如 `{"character.毛文龙.loyalty":">=65"}`），不写忠诚数值，且可省略 `ongoing_effects`。引擎每月生成信用事件并机械派生忠诚。一次性赏赐、抚恤、拨银若当回合办完，不立 issue，只走对应的一次性结构化入口。
 
 ### `dossier_participants` — S2 案卷参与人追加
 - 每项必须带 `dossier_id`、`character_id`、`tier`、`delegator_id`；`tier` 只收 `主办` / `协办` / `知情`，`role` 可选。
@@ -405,7 +405,7 @@ personnel_secret 模块产出；settle 内经 `record_monthly_dossier_progress` 
 - 一般由 issue bar=100/0 自动了结；这里用于强行结案。`acknowledged` 只用于已到期 form③ 承诺被皇帝明确裁决/确认处理后的 ACK 收尾。
 
 ### `人物变更` — 人事档案单一入口
-每条必须带 `name`（必须在 `characters` 名册）和 `动作`。`动作` 闭集唯一真源为 `ming_sim.person_archive_contract.PERSON_ACTIONS`（transition + 评定/性情）；未知动作、查无此人、缺必填字段、非法枚举或非法状态迁移都会逐项拒收留痕。
+每条必须带 `name`（必须在 `characters` 名册）和 `动作`。当前可写动作由 `ming_sim.person_archive_contract.format_person_actions()` 投影；内部 `PERSON_ACTIONS` 中的退役动作只供旧档解析与明确拒绝。未知动作、查无此人、缺必填字段、非法枚举或非法状态迁移都会逐项拒收留痕。
 
 共通字段：
 | 字段 | 约束 |
@@ -427,7 +427,6 @@ personnel_secret 模块产出；settle 内经 `record_monthly_dossier_progress` 
 | `行止` | 非空 `transit_to` | `行程语气`、`reason_code` | 唯一 payload 为 `动作:"行止"` + `transit_to`；不得提供 `location`；语气闭合枚举 `常行`/`加急`/`星夜兼程`，默认常行；引擎据矩阵持久化剩余距离及 1.0/1.5/2.0 系数，extractor 不得提供数值 |
 
 行止任一端无法解析为 canonical region 时不产机械项、仅保留叙事；显式非法 region/语气逐项拒收。canonical 非对角矩阵值为 NaN、+∞、-∞、缺键或非正值均属于系统契约故障，写前响亮失败并由事务回滚。同 region 直接落位而不进入在途；同目的地重复幂等且不重置账；在途改道拒收。迁出 active 时完整清空在途账；抵达仅由引擎事实写路产生，不接受人物变更 payload 抵达。
-| `评定` | `loyalty` | — | 人物忠诚软判增量（integer，非新值），用于安抚/离心等叙事裁判后的结构化数值变化 |
 | `性情` | `style`(非空 str) | — | 人物固有层完整替换；关系变化禁止写入 style，改走关系边事件 |
 
 `任别` 只收 `真除` / `署理` / `兼署` / `加衔`；缺省按 `真除`，用于兼容旧档且不重判历史任命。非法值逐项拒收留痕。
