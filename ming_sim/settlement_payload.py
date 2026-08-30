@@ -93,6 +93,11 @@ def parse_decision_blocks(narrative: str) -> tuple[str, List[Dict[str, object]]]
             label = str(o.get("label") or "").strip()
             if not label:
                 continue
+            try:
+                validate_season_option(o)
+            except ValueError:
+                options = []
+                break
             option: Dict[str, object] = {
                 "label": label,
                 "hint": str(o.get("hint") or "").strip(),
@@ -103,11 +108,6 @@ def parse_decision_blocks(narrative: str) -> tuple[str, List[Dict[str, object]]]
             for key in season_option_fields(action_type):
                 if key in o:
                     option[key] = o[key]
-            try:
-                validate_season_option(option)
-            except ValueError:
-                options = []
-                break
             options.append(option)
         try:
             bind_decision_options(options)
