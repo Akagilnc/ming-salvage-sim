@@ -36,7 +36,7 @@ export function EdictModal({
   onCancelEdit: () => void;
   onSaveDirective: (directive: Directive) => void;
   onDeleteDirective: (directiveId: number) => void;
-  /** #1277/#1560：有草案时主钮走盖玺颁诏；0 草案时主钮禁用。 */
+  /** #1277/#1560：有可结算工作（草案或 resolve_turn 可消费 pending）时主钮走盖玺颁诏；真空禁用。 */
   onIssueDecree: () => void;
   onOpenFailureRecovery: () => void;
 }) {
@@ -46,7 +46,11 @@ export function EdictModal({
   const hasDrafts = draftDirectives.length > 0;
   const hasPendingConversationalDraft = (state.pending_directive_count ?? 0) > 0;
   const hasNonEdictPendingActions = (state.pending_non_directive_action_count ?? 0) > 0;
+  const hasPendingSecretOrders = (state.pending_secret_order_count ?? 0) > 0;
   const hasFailedSecretOrders = (state.failed_secret_order_count ?? 0) > 0;
+  // failed_secret_order_count 走 onOpenFailureRecovery，不单开主钮（非 resolve_turn 常规 pending）。
+  const hasSettleWork =
+    hasDrafts || hasPendingConversationalDraft || hasNonEdictPendingActions || hasPendingSecretOrders;
 
   // 御案只列尚未成案的候选；结束回合是唯一提交边界，不再生成月末复审工作台。
   return (
@@ -111,13 +115,13 @@ export function EdictModal({
       </div>
 
       <div className="desk-footer">
-        {/* #1560：未成案时保留主钮但禁用；成案后盖玺颁诏过月。 */}
+        {/* #1560：真空禁用；任一既有可结算工作沿 onIssueDecree 单轨。 */}
         <button
-          className={hasDrafts ? "seal-btn-issue" : "seal-btn-compose"}
+          className={hasSettleWork ? "seal-btn-issue" : "seal-btn-compose"}
           onClick={onIssueDecree}
-          disabled={!!busy || !hasDrafts}
+          disabled={!!busy || !hasSettleWork}
         >
-          {hasDrafts ? "盖玺颁诏过月 →" : "尚无草案"}
+          {hasSettleWork ? "盖玺颁诏过月 →" : "尚无草案"}
         </button>
       </div>
     </div>
