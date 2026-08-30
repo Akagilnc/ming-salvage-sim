@@ -958,6 +958,8 @@ class GameDB:
                 transit_speed_factor REAL,
                 transit_start_turn INTEGER NOT NULL DEFAULT 0,
                 identity INTEGER NOT NULL DEFAULT 50,
+                intrigue INTEGER NOT NULL,
+                defected_from TEXT,
                 seed_guilt TEXT NOT NULL DEFAULT ''
             );
 
@@ -3749,10 +3751,10 @@ class GameDB:
                 self.conn.execute(
                     """
                     INSERT INTO characters
-                    (name, office, office_type, faction, aliases, personal_skills, loyalty, ability, integrity, courage, style, identity, seed_guilt,
+                    (name, office, office_type, faction, aliases, personal_skills, loyalty, ability, integrity, courage, style, identity, intrigue, defected_from, seed_guilt,
                      birth_year, historical_death_year, historical_death_month, debut_year, debut_month,
                      status, status_reason, reason_code, status_changed_turn, portrait_id, power_id, location, transit_to, summary)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         character.name,
@@ -3767,6 +3769,8 @@ class GameDB:
                         character.courage,
                         character.style,
                         character.identity,
+                        character.intrigue,
+                        character.defected_from,
                         _seed_guilt_storage_value(character.seed_guilt),
                         character.birth_year,
                         character.historical_death_year,
@@ -6437,10 +6441,10 @@ class GameDB:
         self.conn.execute(
             """
             INSERT INTO characters
-            (name, office, office_type, faction, aliases, personal_skills, loyalty, ability, integrity, courage, style, identity, seed_guilt,
+            (name, office, office_type, faction, aliases, personal_skills, loyalty, ability, integrity, courage, style, identity, intrigue, defected_from, seed_guilt,
              birth_year, historical_death_year, historical_death_month, debut_year, debut_month,
              status, status_reason, status_changed_turn, portrait_id, power_id, location, transit_to, summary)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 character.name,
@@ -6455,6 +6459,8 @@ class GameDB:
                 character.courage,
                 character.style,
                 character.identity,
+                character.intrigue,
+                character.defected_from,
                 _seed_guilt_storage_value(character.seed_guilt),
                 character.birth_year,
                 character.historical_death_year,

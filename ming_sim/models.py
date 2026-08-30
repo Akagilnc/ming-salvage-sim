@@ -403,6 +403,8 @@ class Character:
     portrait_id: str = ""  # 头像文件标识：空=无专属；"minister_pool_3"=用第3号预设头像
     seed_guilt: Dict[str, str] = field(default_factory=dict)  # 开局罪谱；引擎内部值，不进入人物呈现上下文
     identity: int = 50  # 党派认同度；引擎内部值，不进入人物呈现上下文
+    intrigue: int = 50  # 阴谋能力；静态 seed 能力轴
+    defected_from: str | None = None
 
 
 VASSAL_PRINCE_OFFICE_TYPE = "宗藩"
