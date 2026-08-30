@@ -118,6 +118,7 @@ from ming_sim.settlement_payload import (  # noqa: E402
     _select_secret_orders_for_sim,
     _strip_player_internal_fields,
     augment_secret_orders_with_due_commitments,
+    bind_decision_options,
     bind_decisions_to_candidate_events,
     group_secret_orders_for_sim,
     iter_secret_order_ids,
@@ -3060,7 +3061,39 @@ def resolve_decisions_phase2(
     # #48 / #883 恢复端闭环：HITL 续跑复用存档的 narrative + simulator_payload（不重推演）。
     # 密令分组真源在 ctx["secret_orders"]，经独立 rail 喂 personnel_secret extractor
     # （_recovered_grouped 归一 list/dict）；simulator_payload 是公共轨，不含密令正文。
-    sim_payload = ctx["simulator_payload"] if isinstance(ctx["simulator_payload"], dict) else {}
+    sim_payload = dict(ctx["simulator_payload"]) if isinstance(ctx["simulator_payload"], dict) else {}
+    # Phase1's payload is frozen before the choice creates its dossier.  Bind the
+    # selected stored option and append that canonical row as same-batch evidence.
+    selected_keys: set[str] = set()
+    for decision in decisions:
+        choice = decision.get("choice")
+        if not isinstance(choice, dict):
+            continue
+        try:
+            option = bind_decision_options(decision.get("options") or []).get(
+                str(choice.get("label") or "").strip()
+            )
+        except ValueError as exc:
+            raise LLMContractError(str(exc)) from exc
+        if isinstance(option, dict) and option.get("action_type") == "grant_allocation":
+            selected_keys.add(str(decision.get("decision_key") or ""))
+    dossiers = list(sim_payload.get("decree_dossiers") or [])
+    seen_dossiers = {int(row["id"]) for row in dossiers if isinstance(row, dict) and row.get("id")}
+    for row in db.list_decree_dossiers():
+        try:
+            payload = json.loads(str(row.get("payload_json") or "{}"))
+        except (TypeError, ValueError):
+            payload = {}
+        if (
+            isinstance(payload, dict)
+            and str(payload.get("decision_key") or "") in selected_keys
+            and int(row["id"]) not in seen_dossiers
+        ):
+            late = dict(row)
+            late["_late_decision_dossier"] = True
+            dossiers.append(late)
+            seen_dossiers.add(int(row["id"]))
+    sim_payload["decree_dossiers"] = dossiers
     # #146 A：来源从 ctx 继承（phase1 皇帝下旨存的 player_decree）。HITL 续跑 / 崩溃重抽都不改来源
     # ——皇帝原旨没变、来源就没变。非法/缺失回落 system_simulation（旧档兼容，同 resolve_settling_recovery）。
     ctx_source = _provenance_from_stored(ctx.get("source"))

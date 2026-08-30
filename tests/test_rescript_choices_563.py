@@ -313,6 +313,10 @@ def test_financial_decision_uses_stored_option_not_client_payload(amount):
         for block in blocks
     )
     _clean, decisions = parse_decision_blocks(raw)
+    if type(amount) is not int:
+        # Parse/save boundary rejects the whole malformed typed decision.
+        assert [decision["title"] for decision in decisions] == ["巡河"]
+        return
     desk = [{
         "decision_key": f"decision:3:{idx}", "kind": "decision", "turn": 3,
         "idx": idx, "status": "pending", "options": decision["options"],
@@ -325,19 +329,16 @@ def test_financial_decision_uses_stored_option_not_client_payload(amount):
         {"decision_key": "decision:3:1", "label": "遣员巡河"},
     ]
 
-    if type(amount) is not int:
-        with pytest.raises(ValueError):
-            ra.validate_all(desk, requests)
-        assert [row["status"] for row in desk] == ["pending", "pending"]
-        return
-
     batch = ra.validate_all(desk, requests)
     assert len(batch.items) == 2
     choice = batch.items[0].choice
-    assert choice["action_type"] == "grant_allocation"
-    assert choice["account"] == "内库"
-    assert choice["amount"] == 30
-    assert type(choice["amount"]) is int
+    assert choice["action_type"] == "punishment"  # persisted request identity
+    execution = batch.items[0].execution_option
+    assert execution is not None
+    assert execution["action_type"] == "grant_allocation"
+    assert execution["account"] == "内库"
+    assert execution["amount"] == 30
+    assert type(execution["amount"]) is int
 
 
 def test_657_capability_revalidate_on_follow(game):

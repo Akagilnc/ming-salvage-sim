@@ -28,7 +28,7 @@ from ming_sim.action_materialize import (
     punish_actions_effective,
 )
 from ming_sim.applier import atomic
-from ming_sim.action_clusters import cluster_by_kind
+from ming_sim.action_clusters import validate_season_option
 from ming_sim.authority_privileges import AUTHORITY_PRIVILEGE_SET
 from ming_sim.credit_events import KIND_BETRAY, write_credit_event
 from ming_sim.decree_vocabulary import (
@@ -40,10 +40,10 @@ from ming_sim.decree_vocabulary import (
 )
 from ming_sim.execution_pressure import write_locality_scope_for_target_kind
 from ming_sim.settlement_payload import (
+    bind_decision_options,
     decision_has_rescript_capability,
     parse_rescript_capability_pair,
 )
-from ming_sim.strict_types import strict_int
 
 # 急务六动作（层 B）
 RESCRIPT_DESK_ACTIONS = frozenset({
@@ -165,19 +165,6 @@ def canonical_choice(raw: object) -> Dict[str, object]:
     return out
 
 
-def _validate_season_option_ints(option: Mapping[str, object]) -> None:
-    """Validate raw typed option integers against their canonical FieldSpec rows."""
-    cluster = cluster_by_kind(str(option.get("action_type") or ""))
-    if cluster is None:
-        return
-    for spec in cluster.fields:
-        if not spec.season_option or not spec.as_int or spec.name not in option:
-            continue
-        value = strict_int(option[spec.name], accept_numeric_strings=False)
-        if value < spec.int_lo or value > spec.int_hi:
-            raise ValueError(f"choice.{spec.name} 超出范围：{value!r}")
-
-
 def _row_key(row: Mapping[str, object]) -> _DecisionKey:
     if row.get("decision_key"):
         return str(row["decision_key"])
@@ -247,6 +234,7 @@ class ValidatedItem:
     idx: int
     row: Dict[str, object]
     choice: Dict[str, object]
+    execution_option: Optional[Dict[str, object]] = None
     already_applied: bool = False
     needs_revise_llm: bool = False
     needs_deliberate_llm: bool = False
@@ -455,34 +443,27 @@ def validate_all(
 
         # 普通 decision（打回三选等）：按 label 匹配 option
         if kind == "decision":
-            labels = {
-                str(o.get("label") or ""): o
-                for o in (row.get("options") or [])
-                if isinstance(o, dict)
-            }
+            labels = bind_decision_options(row.get("options") or [])
             label = str(req.get("label") or "").strip()
             if label not in labels:
                 raise ValueError(f"decision 选项不在当前 options：{key}")
             matched = labels[label]
-            # Validate the raw stored shape before canonicalization can coerce it.
-            _validate_season_option_ints(matched)
-            # The stored option is authority for executable fields; the client
-            # selects only by label and may not overlay a second payload.
-            rebuilt = canonical_choice({
-                **matched,
-                "decision_key": key,
-                "label": matched.get("label"),
-                "hint": matched.get("hint") or "",
-                "note": req.get("note"),
-                "action": action or "decision",
-            })
+            validate_season_option(matched)
+            # Persist only the canonical request identity.  The stored option is
+            # batch-local execution authority and never changes retry identity.
             batch.items.append(ValidatedItem(
                 decision_key=key,
                 kind=kind,
                 source_turn=int(row.get("source_turn") if row.get("source_turn") is not None else row.get("turn") or 0),
                 idx=int(row.get("idx") or 0),
                 row=row,
-                choice=rebuilt,
+                choice=req,
+                execution_option={
+                    **matched,
+                    "decision_key": key,
+                    "note": req.get("note"),
+                    "action": action or "decision",
+                },
             ))
             continue
 
@@ -1325,9 +1306,10 @@ def apply_rescript_batch(
             if kind == "decision":
                 # A financial choice is itself the legal origin of the grant.
                 # Its canonical payload came from the server-stored option.
-                if str(item.choice.get("action_type") or "") == "grant_allocation":
+                execution = item.execution_option or item.choice
+                if str(execution.get("action_type") or "") == "grant_allocation":
                     mapped = map_rescript_option_or_choice(
-                        item.choice, mode="ordinary", db=db, content=content, state=state,
+                        execution, mode="ordinary", db=db, content=content, state=state,
                     )
                     created = _create_from_mapped(
                         db, state, content, mapped, status="proposed", mode="ordinary",
