@@ -639,6 +639,39 @@ def test_closed_army_pay_provenance_injects_when_decree_dossiers_prepassed(game)
         assert did not in other_ids
 
 
+@pytest.mark.parametrize(
+    ("status", "visible_modules"),
+    [("proposed", {"issues"}), ("closed", {"issues", "internal"})],
+)
+def test_late_decision_dossier_status_controls_extractor_visibility(
+    game, status, visible_modules,
+):
+    """#1682 phase2 late evidence follows verdict status, never generic prose."""
+    from ming_sim.simulation import EXTRACTION_MODULES, build_extractor_shared_context
+
+    db, state, _content = game
+    did = db.create_decree_dossier(
+        state, action_type="grant_allocation", decree_text="协饷待裁",
+        target_kind="army", target_id="guanning", status="proposed",
+        payload={
+            "dossier_action_type": "grant_allocation", "grant_action": "协饷",
+            "target_kind": "army", "target_id": "guanning", "amount": 10,
+            "account": "国库", "purpose": "补饷", "cadence": "一次性",
+            "decision_key": "decision:1:0",
+        },
+    )
+    late = db.get_decree_dossier(did)
+    late["status"] = status
+    late["_late_decision_dossier"] = True
+    for module in EXTRACTION_MODULES:
+        context = build_extractor_shared_context(
+            db, state, narrative="", decree_text="", module=module,
+            decree_dossiers=[late],
+        )
+        ids = {int(row["id"]) for row in context["decree_dossiers"]}
+        assert (did in ids) is (module in visible_modules)
+
+
 def test_army_pay_already_cleared_spent_zero_is_fulfilled(game):
     """#1507-F5：颁布时军已清（spent=0, still_owed=0）记 fulfilled，非 failed。"""
     db, state, content = game

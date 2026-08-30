@@ -341,6 +341,20 @@ def test_financial_decision_uses_stored_option_not_client_payload(amount):
     assert type(execution["amount"]) is int
 
 
+@pytest.mark.parametrize("labels", [["", "乙"], ["甲", " 甲 "]])
+def test_decision_parser_rejects_empty_or_ambiguous_labels(labels):
+    from ming_sim.settlement_payload import parse_decision_blocks
+
+    block = {
+        "title": "歧义抉择", "context": "c",
+        "options": [{"label": label, "hint": "h"} for label in labels],
+    }
+    raw = f"<<DECISION>>{json.dumps(block, ensure_ascii=False)}<<END>>"
+    clean, decisions = parse_decision_blocks(raw)
+    assert clean == ""
+    assert decisions == []
+
+
 def test_657_capability_revalidate_on_follow(game):
     """服务端回验：请求 capability 必须等于对当前 option 结构化字段重算值。"""
     from ming_sim.decree_vocabulary import derive_draft_capability
