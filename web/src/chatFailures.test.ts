@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { normalizeApiError, streamChat } from "./api";
+import { ApiRequestError, normalizeApiError, streamChat } from "./api";
 import { mergePendingActionFailures, refreshRetriedPendingActionFailures } from "./chatFailures";
 import type { PendingActionFailure } from "./types";
 
@@ -89,6 +89,32 @@ describe("normalizeApiError", () => {
       code: undefined,
       pending_action_failures,
     });
+  });
+});
+
+describe("streamChat typed error projection", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("shows the payload message while preserving diagnostic fields", async () => {
+    const detail = {
+      code: "llm_run_error",
+      message: "通传未达，请稍后再召。",
+      provider_message: "provider stack trace",
+    };
+    const body = `event: error\ndata: ${JSON.stringify(detail)}\n\n`;
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(body, {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" },
+    })));
+
+    const error = await streamChat("洪承畴", "传来。", () => {}).catch((reason) => reason);
+
+    expect(error).toBeInstanceOf(ApiRequestError);
+    expect(error.message).toBe(detail.message);
+    expect(error.detail.code).toBe(detail.code);
+    expect(error.detail.provider_message).toBe(detail.provider_message);
   });
 });
 
