@@ -758,6 +758,7 @@ def test_materialize_unknown_escalates_report_no_draft(
     assert "report" in esc
     assert composer_calls == [(["不存在之人甲"], "minister", minister.name)]
     assert draft_calls == 1 + int(cb.DRAFT_INTENT_HEAL_RETRIES)
+    assert len(db.list_directives(state) or []) == 0
     assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0] == 0
 
 
