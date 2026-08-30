@@ -1,0 +1,101 @@
+import React from "react";
+import { readFileSync } from "node:fs";
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it, vi } from "vitest";
+import { DecisionModal } from "./decisionModal";
+import { EdictModal } from "./edictModal";
+import { FullscreenModal } from "./hud";
+import type { GameState, PendingDecision } from "../types";
+import { measureElectronLayout } from "../testSupport/electronLayout";
+
+const css = (...names: string[]) => names
+  .map((name) => readFileSync(`${process.cwd()}/src/styles/${name}.css`, "utf8"))
+  .join("\n");
+
+const decision: PendingDecision = {
+  idx: 0,
+  title: "关宁军饷",
+  context: "辽东急报：军中已三月未饷。",
+  options: [{ label: "拨帑速发", hint: "先解燃眉之急。" }],
+};
+
+const edictState = {
+  directives: [{ id: 8, text: "发饷辽东", source: "chat", status: "pending" }],
+  pending_directive_count: 0,
+  pending_non_directive_action_count: 0,
+  failed_secret_order_count: 0,
+} as GameState;
+
+const noop = () => {};
+
+describe.sequential("medium: shared Electron geometry", () => {
+  it("keeps DecisionModal confirmation within the first viewport", async () => {
+    const page = renderToStaticMarkup(<DecisionModal decisions={[decision]} onResolve={vi.fn()} />);
+    const [measured] = await measureElectronLayout<{ bottom: number; viewportHeight: number }>(
+      page,
+      css("base", "decision"),
+      [{ width: 1440, height: 900 }],
+      `(() => {
+        const button = document.querySelector('.decision-confirm');
+        if (!button) return { error: 'missing decision confirmation' };
+        return { bottom: button.getBoundingClientRect().bottom, viewportHeight: innerHeight };
+      })()`,
+    );
+    expect(measured.bottom).toBeLessThanOrEqual(measured.viewportHeight);
+  });
+
+  it("keeps the settlement alert and primary action independently reachable at two viewports", async () => {
+    const page = renderToStaticMarkup(
+      <FullscreenModal title="拟诏" subtitle="" bgClass="modal-bg-edict" layerClassName="edict-safe-cmd" onClose={noop}>
+        <EdictModal
+          state={edictState} directiveText="" editingDirectiveId={null} editingDirectiveText=""
+          decree="" report="" busy=""
+          error={`结算中止，请重试。\n错误包：/${"long-directory/".repeat(18)}error-pack\n请将整个目录发给作者。`}
+          onDirectiveTextChange={noop} onEditingTextChange={noop} onCreateDirective={noop}
+          onStartEdit={noop} onCancelEdit={noop} onSaveDirective={noop} onDeleteDirective={noop}
+          onAdvanceWithoutEdict={noop} onIssueDecree={noop} onOpenFailureRecovery={noop}
+        />
+      </FullscreenModal>,
+    );
+    const results = await measureElectronLayout<{
+      viewportWidth: number;
+      viewportHeight: number;
+      intersections: boolean;
+      alertFitsWidth: boolean;
+      scrollReachable: boolean;
+      buttonEnabled: boolean;
+      buttonHit: boolean;
+    }>(page, css("base", "court", "modals", "edict", "modal-theme", "situation"), [
+      { width: 1280, height: 720 },
+      { width: 800, height: 800 },
+    ], `(() => {
+      const alert = document.querySelector('[role="alert"]');
+      const textarea = document.querySelector('.desk-compose textarea');
+      const footer = document.querySelector('.desk-footer');
+      const button = document.querySelector('.desk-footer button');
+      if (!alert || !textarea || !footer || !button) return { error: 'missing edict fixture element' };
+      const overlaps = (a, b) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+      const alertRect = alert.getBoundingClientRect();
+      const buttonRect = button.getBoundingClientRect();
+      alert.scrollTop = alert.scrollHeight;
+      return {
+        viewportWidth: innerWidth,
+        viewportHeight: innerHeight,
+        intersections: overlaps(alertRect, textarea.getBoundingClientRect()) || overlaps(alertRect, footer.getBoundingClientRect()),
+        alertFitsWidth: alert.scrollWidth <= alert.clientWidth,
+        scrollReachable: alert.scrollHeight <= alert.clientHeight || Math.ceil(alert.scrollTop + alert.clientHeight) >= alert.scrollHeight,
+        buttonEnabled: !button.disabled,
+        buttonHit: document.elementFromPoint(buttonRect.left + buttonRect.width / 2, buttonRect.top + buttonRect.height / 2) === button,
+      };
+    })()`);
+
+    expect(results.map(({ viewportWidth, viewportHeight }) => [viewportWidth, viewportHeight])).toEqual([[1280, 720], [800, 800]]);
+    for (const result of results) {
+      expect(result.intersections).toBe(false);
+      expect(result.alertFitsWidth).toBe(true);
+      expect(result.scrollReachable).toBe(true);
+      expect(result.buttonEnabled).toBe(true);
+      expect(result.buttonHit).toBe(true);
+    }
+  });
+});
