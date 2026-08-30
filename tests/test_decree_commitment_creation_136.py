@@ -906,8 +906,8 @@ def test_person_loyalty_commitment_accepts_typed_gate_without_ongoing_effects(ga
     assert json.loads(row["stop_condition"]) == {"character.毛文龙.loyalty": ">=65"}
 
 
-def test_reverse_person_loyalty_gate_gets_no_empty_ongoing_exemption(read_game, monkeypatch):
-    db, state, content = read_game
+def test_reverse_person_loyalty_gate_gets_no_empty_ongoing_exemption(game, monkeypatch):
+    db, state, content = game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
     out = I.apply_score_extraction(
@@ -917,7 +917,7 @@ def test_reverse_person_loyalty_gate_gets_no_empty_ongoing_exemption(read_game, 
             "new_issues": [
                 {
                     "origin_kind": "decree",
-                    "origin_ref": "decree:turn-1:reverse-loyalty-gate",
+                    "origin_ref": _promulgated_commitment_origin(db, state, "reverse-loyalty-gate"),
                     "kind": "initiative",
                     "title": "反向忠诚门",
                     "stop_condition": {"character.毛文龙.loyalty": "<=40"},
@@ -931,6 +931,7 @@ def test_reverse_person_loyalty_gate_gets_no_empty_ongoing_exemption(read_game, 
     rejected = out["issue_summary"]["new_issues"][0]
     assert rejected["rejected"] is True
     assert rejected["category"] == "invalid_enum"
+    assert rejected["item"]["stop_condition"] == {"character.毛文龙.loyalty": "<=40"}
     assert _issue_by_title(db, "反向忠诚门") is None
 
 
