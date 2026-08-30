@@ -112,9 +112,9 @@ describe("streamChat typed error projection", () => {
     const error = await streamChat("洪承畴", "传来。", () => {}).catch((reason) => reason);
 
     expect(error).toBeInstanceOf(ApiRequestError);
-    expect(error.message).toBe("通传未达，请稍后再召。");
-    expect(error.detail.code).toBe("llm_run_error");
-    expect(error.detail.provider_message).toBe("provider stack trace");
+    expect(error.message).toBe(detail.message);
+    expect(error.detail.code).toBe(detail.code);
+    expect(error.detail.provider_message).toBe(detail.provider_message);
   });
 });
 
