@@ -38,7 +38,7 @@ export function EdictModal({
   onSaveDirective: (directive: Directive) => void;
   onDeleteDirective: (directiveId: number) => void;
   onAdvanceWithoutEdict: () => void;
-  /** #1277：有草案时主钮走盖玺颁诏（issueDecree）；0 草案仍退朝。 */
+  /** #1277/#1560：有草案时主钮走盖玺颁诏；0 草案时主钮禁用。 */
   onIssueDecree: () => void;
   onOpenFailureRecovery: () => void;
 }) {
@@ -49,9 +49,6 @@ export function EdictModal({
   const hasPendingConversationalDraft = (state.pending_directive_count ?? 0) > 0;
   const hasNonEdictPendingActions = (state.pending_non_directive_action_count ?? 0) > 0;
   const hasFailedSecretOrders = (state.failed_secret_order_count ?? 0) > 0;
-  const confirmAdvanceWithoutEdict = () => {
-    if (window.confirm("本月尚无明发诏令，确定退朝结束本月？")) onAdvanceWithoutEdict();
-  };
 
   // 御案只列尚未成案的候选；结束回合是唯一提交边界，不再生成月末复审工作台。
   return (
@@ -116,11 +113,11 @@ export function EdictModal({
       </div>
 
       <div className="desk-footer">
-        {/* #1277：drafts>0 名实相符——盖玺颁诏过月→issueDecree；0 草案保留退朝。 */}
+        {/* #1560：未成案时保留主钮但禁用；成案后盖玺颁诏过月。 */}
         <button
           className={hasDrafts ? "seal-btn-issue" : "seal-btn-compose"}
-          onClick={hasDrafts ? onIssueDecree : confirmAdvanceWithoutEdict}
-          disabled={!!busy}
+          onClick={hasDrafts ? onIssueDecree : onAdvanceWithoutEdict}
+          disabled={!!busy || !hasDrafts}
         >
           {hasDrafts ? "盖玺颁诏过月 →" : "退朝结束本月 →"}
         </button>
