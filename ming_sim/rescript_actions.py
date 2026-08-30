@@ -338,7 +338,7 @@ def validate_all(
                 and decision_has_rescript_capability(row)
             )
         ):
-            choice.setdefault("action", "decision")
+            choice["action"] = "decision"
 
     batch = ValidatedBatch()
     for key, row in desk_by_key.items():
