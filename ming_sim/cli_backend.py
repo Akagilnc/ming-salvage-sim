@@ -2057,6 +2057,7 @@ def extract_draft_intent_with_semantic_heal(
             ):
                 _log(f"拟旨属地纠错发生非属地语义漂移 {attempt + 1}/{retries}")
             participant_correction = ""
+            participant_unknown_exc: Optional[ValueError] = None
             if db is not None and content is not None:
                 try:
                     _apply_validated_roster_to_extract_result(
@@ -2065,6 +2066,7 @@ def extract_draft_intent_with_semantic_heal(
                 except ValueError as participant_exc:
                     if not is_unknown_participant_ref_error(participant_exc):
                         raise
+                    participant_unknown_exc = participant_exc
                     if baseline_result is None:
                         pending_unknown = _invalid_participant_names_from_error(
                             participant_exc,
@@ -2076,6 +2078,8 @@ def extract_draft_intent_with_semantic_heal(
                         roster_facts=_draft_intent_character_roster_facts(content),
                     )
             if attempt >= retries:
+                if participant_unknown_exc is not None:
+                    raise UnknownParticipantEscalate(pending_unknown) from participant_unknown_exc
                 raise DraftLocalityValidationError(
                     str(exc), failed_result, locality_paths,
                 ) from exc
@@ -2455,7 +2459,9 @@ def extract_draft_intent(
             ):
                 invalid_batch = True
                 break
-            if entries is not None:
+            if entries is not None and not (
+                action != "pay_order_override" and entries == []
+            ):
                 mechanical["entries"] = entries
             drafts.append({
                 "draft_action": "拟旨", "draft_text": text,

@@ -133,37 +133,43 @@ def test_capture_truncation_bi_zi_heals_to_biziyan(game, monkeypatch):
     assert dv.id > 0
 
 
-def test_capture_unknown_person_escalates_no_draft(game, monkeypatch):
-    """真不在册→戏内回禀；草案不落；输入原文由调用方保留（capture 不吞文）。"""
+@pytest.mark.parametrize("dual_locality_error", [False, True], ids=["unknown", "unknown-and-locality"])
+def test_capture_unknown_person_escalates_no_draft(
+    game, monkeypatch, dual_locality_error,
+):
+    """最终轮仍有真未知人物时保留 typed escalation；草案不落。"""
     import ming_sim.cli_backend as cli_backend
 
     db, state, content = game
     text = "着不存在之人甲核清太仓，边饷优先"
-    calls: list[str] = []
+    draft_calls = 0
+    composer_calls: list[tuple[list[str], str]] = []
 
-    def backend(prompt, *_a, tag="", **_k):
-        calls.append(prompt)
-        if tag == "participant_escalate_report":
-            return ("通政司启：朝中查无「不存在之人甲」，乞陛下明示。", 1)
-        return (
-            json.dumps(_ok_payload(person="不存在之人甲"), ensure_ascii=False),
-            1,
-        )
+    def backend(_prompt, *_a, tag="", **_k):
+        nonlocal draft_calls
+        assert tag == "draft_intent"
+        draft_calls += 1
+        payload = _ok_payload(person="不存在之人甲")
+        if dual_locality_error:
+            payload.update({"目标类型": "region", "目标ID": "shaanxi", "施行范围": "无"})
+        return (json.dumps(payload, ensure_ascii=False), 1)
+
+    def compose(names, *, voice, **_kwargs):
+        composer_calls.append((list(names), voice))
+        return "generated report"
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
+    monkeypatch.setattr(cli_backend, "compose_unknown_participant_inworld_report", compose)
     with pytest.raises(ValueError) as ei:
         cli_backend.capture_manual_directive_payload(
             text, None, db=db, content=content,
         )
-    _assert_inworld_escalate(str(ei.value), "不存在之人甲")
-    # 输入文未改（调用方仍持有原 text）
-    assert text == "着不存在之人甲核清太仓，边饷优先"
-    # 不得落库（直断计数 0，禁 before/after 同点恒真）
+    assert isinstance(ei.value.__cause__, cli_backend.UnknownParticipantEscalate)
+    assert ei.value.__cause__.names == ["不存在之人甲"]
+    assert composer_calls == [(["不存在之人甲"], "tongzheng")]
+    assert draft_calls == 1 + int(cli_backend.DRAFT_INTENT_HEAL_RETRIES)
     assert len(db.list_directives(state) or []) == 0
-    max_retries = int(cli_backend.DRAFT_INTENT_HEAL_RETRIES)
-    # heal 环 1+retries；回禀产文可再 +1
-    draft_calls = sum(1 for p in calls if "拟旨意图" in p or "参与人" in p or _CORRECTION_MARK in p or "请据此拟旨" in p or "信息抽取器" in p)
-    assert draft_calls >= 1 + max_retries
+    assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0] == 0
 
 
 def test_capture_unknown_then_removal_still_escalates(game, monkeypatch):
@@ -707,36 +713,40 @@ def test_materialize_truncation_bi_zi_heals_to_biziyan(game, monkeypatch):
     assert len(calls) == 2
 
 
-def test_materialize_unknown_escalates_report_no_draft(game, monkeypatch):
-    """召对路：真不在册→不落草案、回话保留、戏内回禀（禁整轮回滚）。"""
+@pytest.mark.parametrize("dual_locality_error", [False, True], ids=["unknown", "unknown-and-locality"])
+def test_materialize_unknown_escalates_report_no_draft(
+    game, monkeypatch, dual_locality_error,
+):
+    """召对路最终轮仍有真未知人物时投影 typed escalation，不落草案。"""
     import ming_sim.cli_backend as cb
 
     db, state, content = game
     minister = _active_minister(db, content)
-    draft_calls: list[str] = []
+    draft_calls = 0
+    composer_calls: list[tuple[list[str], str, str]] = []
 
-    def backend(prompt, llm_config=None, tag=""):
-        if tag == "participant_escalate_report":
-            return (f"臣{minister.name}启：朝中查无不存在之人甲，乞陛下明示。", 1)
-        if tag != "draft_intent":
-            return ("{}", 1)
-        draft_calls.append(prompt)
-        return (
-            json.dumps(_ok_payload(person="不存在之人甲"), ensure_ascii=False),
-            1,
-        )
+    def backend(_prompt, llm_config=None, tag=""):
+        nonlocal draft_calls
+        assert tag == "draft_intent"
+        draft_calls += 1
+        payload = _ok_payload(person="不存在之人甲")
+        if dual_locality_error:
+            payload.update({"目标类型": "region", "目标ID": "shaanxi", "施行范围": "无"})
+        return (json.dumps(payload, ensure_ascii=False), 1)
+
+    def compose(names, *, voice, speaker_name, **_kwargs):
+        composer_calls.append((list(names), voice, speaker_name))
+        return "generated report"
 
     monkeypatch.setattr(cb, "_run_backend_for_config", backend)
+    monkeypatch.setattr(cb, "compose_unknown_participant_inworld_report", compose)
     _silence_side_extractors(monkeypatch, cb)
 
     sess = _fake_session(db, state, content)
-    answer0 = "臣遵旨拟稿，已草就。"
-    # 非流式路径：apply 后走 _cli_backend_fallback 会附回禀；此处直接测 apply 出参
-    # + session post-pass 同构：手工附 cue 验证 out 信号。
     res = GameSession.apply_cli_conversation_actions(
         sess, minister,
         player_message="着不存在之人甲核清太仓，卿其拟旨。",
-        answer=answer0,
+        answer="臣遵旨拟稿，已草就。",
         has_directive=False, secret_order_id=None,
         preclassified_intent={"kind": "draft"},
     )
@@ -744,13 +754,11 @@ def test_materialize_unknown_escalates_report_no_draft(game, monkeypatch):
     pending = [p for p in db.list_pending_actions(state.turn) if p["kind"] == "directive"]
     assert not pending, "查无此人不得落草案"
     esc = res.get("unknown_participant_escalate") or {}
-    report = str(esc.get("report") or "")
-    _assert_inworld_escalate(report, "不存在之人甲")
-    # 回话原文仍在（apply 不改 answer；post-pass 另附）
-    cued = GameSession._ensure_unknown_participant_report_cue(answer0, report)
-    assert answer0 in cued
-    assert report in cued
-    assert len(draft_calls) == 1 + int(cb.DRAFT_INTENT_HEAL_RETRIES)
+    assert esc["names"] == ["不存在之人甲"]
+    assert "report" in esc
+    assert composer_calls == [(["不存在之人甲"], "minister", minister.name)]
+    assert draft_calls == 1 + int(cb.DRAFT_INTENT_HEAL_RETRIES)
+    assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0] == 0
 
 
 def test_materialize_unknown_removal_attempt_escalates(game, monkeypatch):
@@ -894,6 +902,7 @@ def test_batch_locality_heal_preserves_valid_sibling(
                     "颁布方式": "普通",
                     "施行范围": second_scope,
                     "参与人": [],
+                    **({"entries": []} if reply_index else {}),
                 },
                 {
                     "正文": "着户部清查京内政务。",
@@ -906,7 +915,7 @@ def test_batch_locality_heal_preserves_valid_sibling(
                 },
             ]
         }
-        for first_scope, second_scope, sibling_scope in scope_schedule
+        for reply_index, (first_scope, second_scope, sibling_scope) in enumerate(scope_schedule)
     ]
 
     def backend(_prompt, llm_config=None, tag=""):
@@ -926,6 +935,7 @@ def test_batch_locality_heal_preserves_valid_sibling(
     assert [
         draft["locality_scope"] for draft in result["drafts"][2:]
     ] == ["单省", "单省", "无"]
+    assert "entries" not in result["drafts"][3]
 
 
 def test_materialize_locality_exhaustion_rejects_only_draft(game, monkeypatch):
