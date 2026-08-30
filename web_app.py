@@ -5214,6 +5214,7 @@ def api_advance_without_edict(
             # 16ms 快路已废；decree.advance_without_edict 空壳已删；有草案时 advance 内转 resolve_turn。
             settlement_result = game.session.advance_without_decree(inflight_wait_s=0.0)
             if settlement_result is None or not settlement_result.awaiting:
+                game.session.end_turn()
                 game.refresh_turn()
     except HTTPException:
         # 令牌/相位/锁门 409 等既有 HTTP 面原样上抛，禁被下方 Exception 改包。
@@ -5321,6 +5322,7 @@ def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> Dict[st
                     "awaiting_decision": True,
                 }
             report = result.report
+            game.session.end_turn()
             game.refresh_turn()
             events = [
                 steam_events.add_stat(steam_events.STAT_DECREES_ISSUED),
@@ -5399,6 +5401,7 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
                     ))
                 else:
                     report = result.report
+                    game.session.end_turn()
                     game.refresh_turn()
                     events = [
                         steam_events.add_stat(steam_events.STAT_DECREES_ISSUED),
@@ -5520,6 +5523,7 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
                 failures = _new_secret_order_failure_payloads_for_turn(
                     game, turn_before, failed_before,
                 )
+                game.session.end_turn()
                 game.refresh_turn()
                 events = [
                     steam_events.add_stat(steam_events.STAT_DECREES_ISSUED),

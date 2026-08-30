@@ -3016,7 +3016,8 @@ class GameSession:
                     self.state, self.db, self.agno_db, self.llm_config, ctx,
                     on_event=on_event, content=self.content, registry=self.registry,
                 )
-                self.end_turn()
+                self.state.turn_phase = TurnPhase.ISSUED.value
+                self.db.save_state(self.state)
                 return result
             # 无 ready context：fallthrough 到正常流程重跑推演（前半段被守门跳过）。
             # 来源按构造保真（#146 cmr r2）：恢复 fallthrough 把存档 ctx['source'] 经
@@ -3148,8 +3149,9 @@ class GameSession:
             self.state.turn_phase = TurnPhase.AWAITING_DECISION.value
             self.db.save_state(self.state)
             return result
-        # resolve_directives 已 next_period + save_state；在真实新回合接缝留月初档。
-        self.end_turn()
+        # resolve_directives 已 next_period + save_state；阶段标 issued
+        self.state.turn_phase = TurnPhase.ISSUED.value
+        self.db.save_state(self.state)
         return result
 
     def pending_decisions(self) -> List[Dict[str, object]]:
@@ -3559,7 +3561,9 @@ class GameSession:
             cheat_directive=cheat_directive,
         )
         # return_revise 清锚已纳入 settle_with_delta 单一终态（与 next_period 同 atomic）
-        self.end_turn()
+
+        self.state.turn_phase = TurnPhase.ISSUED.value
+        self.db.save_state(self.state)
         return report
 
     def resolve_rescript_decisions(
@@ -3707,7 +3711,8 @@ class GameSession:
             on_event=on_event, content=self.content, registry=self.registry,
             cheat_directive=cheat_directive,
         )
-        self.end_turn()
+        self.state.turn_phase = TurnPhase.ISSUED.value
+        self.db.save_state(self.state)
         return report
 
     def advance_without_decree(self, inflight_wait_s: float | None = None):
