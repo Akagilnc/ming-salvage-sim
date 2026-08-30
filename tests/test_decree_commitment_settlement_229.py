@@ -258,6 +258,32 @@ def test_credit_event_is_the_idempotent_loyalty_write_source(
     assert _character_loyalty(db, "毛文龙") == expected
 
 
+def test_old_loyalty_watermark_schema_upgrades_before_new_credit_event(game):
+    db, state, content = game
+    db.conn.execute("DROP TABLE loyalty_credit_event_applied")
+    db.conn.execute(
+        "CREATE TABLE loyalty_credit_event_applied ("
+        "event_id INTEGER PRIMARY KEY REFERENCES relation_edge_events(id), "
+        "character_name TEXT NOT NULL, delta INTEGER NOT NULL, "
+        "applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+    )
+    db.init_schema()
+
+    columns = {
+        row["name"]
+        for row in db.conn.execute("PRAGMA table_info(loyalty_credit_event_applied)")
+    }
+    assert columns == {"event_id"}
+    event_id = write_credit_event(
+        db, state, person="毛文龙", event_kind=KIND_BACK,
+        context="旧档升级后撑腰", origin="dossier:upgrade:credit:back",
+    )
+    assert db.conn.execute(
+        "SELECT event_id FROM loyalty_credit_event_applied WHERE event_id=?", (event_id,)
+    ).fetchone() is not None
+    assert content.characters["毛文龙"].loyalty == _character_loyalty(db, "毛文龙")
+
+
 def test_month_settlement_consumes_preexisting_credit_event_once(game):
     db, state, content = game
     db.conn.execute("UPDATE characters SET loyalty=50 WHERE name='毛文龙'")
