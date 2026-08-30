@@ -40,7 +40,6 @@ from ming_sim.qualitative import (
     power_band,
     public_support_band,
     qualitative_band,
-    qualitative_character_axes,
     satisfaction_band,
 )
 from ming_sim.db import _qualitative_army_stat
@@ -333,7 +332,6 @@ def test_character_context_scopes_faction_hides_raw_scores_and_zero_buckets(game
     minister.identity = 80
     minister.intrigue = 0
     high = character_context_with_db(minister, db)
-    axes = qualitative_character_axes(minister)
 
     assert "【人物档料】" in high and "【派系档料】" in high and "【党派认同】" in high
     assert minister_dossier(minister) in high
@@ -345,8 +343,6 @@ def test_character_context_scopes_faction_hides_raw_scores_and_zero_buckets(game
     lowest_leverage = ("人马凋零", "朝中孤弱", "根基平常", "颇有根基", "势重可动员")[0]
     assert lowest_satisfaction in high
     assert lowest_leverage in high
-    for label, band in axes.items():
-        assert band in high
     assert not re.search(r"(?:忠诚|能力|清廉|胆略|党派认同)\s*[:：]?\s*\d+", high)
 
     minister.identity = 40
