@@ -3395,6 +3395,7 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 FieldSpec(
                     "target_kind", "目标类型", TARGET_KINDS, "",
                     season_option=True,
+                    allowed_when=("grant_action", "协饷", frozenset({"army"})),
                 ),
                 FieldSpec(
                     "amount", "金额", None, None, as_int=True, int_lo=1,
