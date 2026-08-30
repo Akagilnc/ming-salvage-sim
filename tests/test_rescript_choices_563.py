@@ -286,6 +286,31 @@ def test_657_canonical_choice_stable_key_order():
     assert a["action"] == "follow_draft"
 
 
+def test_financial_decision_uses_stored_option_not_client_payload():
+    """普通亲裁只按 label 选项；机械拨帑字段由服务端 option 定权。"""
+    from ming_sim import rescript_actions as ra
+
+    key = "decision:3:0"
+    stored = {
+        "label": "发内帑三十万两", "hint": "济军",
+        "action_type": "grant_allocation", "grant_action": "协饷",
+        "account": "内库", "amount": 30, "purpose": "补饷",
+        "target_kind": "army", "target_id": "guanning", "cadence": "一次性",
+    }
+    desk = [{
+        "decision_key": key, "kind": "decision", "turn": 3, "idx": 0,
+        "status": "pending", "options": [stored, {"label": "暂缓", "hint": "守财"}],
+    }]
+    batch = ra.validate_all(desk, [{
+        "decision_key": key, "label": stored["label"],
+        "action_type": "punishment", "account": "国库", "amount": 999,
+    }])
+    choice = batch.items[0].choice
+    assert choice["action_type"] == "grant_allocation"
+    assert choice["account"] == "内库"
+    assert choice["amount"] == 30
+
+
 def test_657_capability_revalidate_on_follow(game):
     """服务端回验：请求 capability 必须等于对当前 option 结构化字段重算值。"""
     from ming_sim.decree_vocabulary import derive_draft_capability

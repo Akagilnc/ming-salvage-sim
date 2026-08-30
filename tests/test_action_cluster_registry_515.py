@@ -153,6 +153,13 @@ def test_registry_rows_generate_shape_contract_matrix():
         assert raw_str[spec.name] == "12"
 
 
+def test_grant_amount_catalog_declares_classifier_quantity_unit():
+    """拨帑金额单位由 catalog 结构字段派生，不靠正文金额 parser 猜测。"""
+    grant = next(c for c in ACTION_CLUSTERS if c.kind == "grant_allocation")
+    amount = next(f for f in grant.fields if f.name == "amount")
+    assert amount.quantity_unit == "万两"
+
+
 def test_strict_shape_rejects_unknown_kind_and_out_of_enum_subfield():
     ok, reason = validate_action_candidate_shape({"kind": "treasury"})
     assert ok is False and "unknown" in reason
