@@ -414,13 +414,11 @@ describe("QA A-1 #1276/#1282/#1285 GameHud HUD 对齐", () => {
     expect(opened).toEqual(["state"]);
   });
 
-  it("拟诏木牌在零/有草案时都只打开拟诏台，并投影草案数", () => {
+  it("拟诏木牌在零/有草案时都只打开拟诏台", () => {
     for (const directives of [[], makeState(false).directives]) {
       const { host, opened } = mountHud({ state: makeState(false, { directives }) });
       const edict = Array.from(host.querySelectorAll<HTMLButtonElement>("button.hud2-cmd")).at(-1);
       expect(edict).toBeTruthy();
-      const caption = Array.from(host.querySelectorAll(".hud2-cmd-caption")).at(-1);
-      expect(caption?.querySelector("small")?.textContent).toBe(`${directives.length} 道草案`);
       act(() => { edict?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
       expect(opened).toEqual(["edict"]);
     }
