@@ -7,11 +7,10 @@ from ming_sim.credit_events import (
     KIND_BETRAY,
     KIND_FULFILL,
     KIND_SCAPEGOAT,
-    derive_loyalty_from_credit_event,
     write_credit_event,
 )
 from ming_sim.relations import EMPEROR_NODE
-from ming_sim.decree import settle_with_delta
+from ming_sim.decree import atomic_and_reload, settle_with_delta
 from ming_sim.issues import (
     apply_issue_inertia_and_ongoing,
     apply_score_extraction,
@@ -161,9 +160,11 @@ def test_character_loyalty_commitment_ongoing_applies_monthly_and_records_progre
     assert _character_loyalty(db, "毛文龙") == 50
     assert content.characters["毛文龙"].loyalty == 50
     event = db.conn.execute(
-        "SELECT event_kind FROM relation_edge_events WHERE target='毛文龙' ORDER BY id DESC LIMIT 1"
+        "SELECT event_kind, context FROM relation_edge_events "
+        "WHERE target='毛文龙' ORDER BY id DESC LIMIT 1"
     ).fetchone()
     assert event is not None and event["event_kind"] == KIND_BACK
+    assert event["context"] == "遣臣常驻皮岛安抚毛文龙，逐月消解其观望。"
     row = _issue_row(db, issue_id)
     assert row["status"] == "active"
     advances = db.conn.execute(
@@ -216,6 +217,11 @@ def test_legacy_character_resolve_condition_commitment_settles_when_threshold_re
     _settle_empty_month(db, state, content)
 
     assert _character_loyalty(db, "毛文龙") == 68
+    event = db.conn.execute(
+        "SELECT context FROM relation_edge_events "
+        "WHERE target='毛文龙' ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    assert event is not None and event["context"] == "奉旨持续安抚，观望稍解"
     row = _issue_row(db, issue_id)
     assert row["status"] == "resolved"
     assert row["bar_value"] == 100
@@ -259,46 +265,43 @@ def test_credit_event_is_the_idempotent_loyalty_write_source(
     assert _character_loyalty(db, "毛文龙") == expected
 
 
-def test_old_loyalty_watermark_schema_upgrades_before_new_credit_event(game):
+def test_credit_event_rolls_back_db_content_and_watermark_before_retry(game):
     db, state, content = game
-    consumed_id = db.record_relation_edge_event(
-        source=EMPEROR_NODE, target="毛文龙", event_kind=KIND_BACK,
-        context="旧版本已消费", origin="dossier:old:credit:back",
-        turn=state.turn, year=state.year, period=state.period,
-    )
-    db.conn.execute("DROP TABLE loyalty_credit_event_applied")
-    db.conn.execute(
-        "CREATE TABLE loyalty_credit_event_applied ("
-        "event_id INTEGER PRIMARY KEY REFERENCES relation_edge_events(id), "
-        "character_name TEXT NOT NULL, delta INTEGER NOT NULL, "
-        "applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
-    )
-    db.conn.execute(
-        "INSERT INTO loyalty_credit_event_applied(event_id, character_name, delta) "
-        "VALUES(?,?,?)", (consumed_id, "毛文龙", 5),
-    )
-    before = _character_loyalty(db, "毛文龙")
-    db.init_schema()
+    origin = "dossier:rollback:credit:back"
+    before_loyalty = _character_loyalty(db, "毛文龙")
+    before_watermarks = db.conn.execute(
+        "SELECT COUNT(*) AS n FROM loyalty_credit_event_applied"
+    ).fetchone()["n"]
 
-    columns = {
-        row["name"]
-        for row in db.conn.execute("PRAGMA table_info(loyalty_credit_event_applied)")
-    }
-    assert columns == {"event_id"}
+    with pytest.raises(RuntimeError, match="rollback credit event"):
+        with atomic_and_reload(db, state, content=content):
+            write_credit_event(
+                db, state, person="毛文龙", event_kind=KIND_BACK,
+                context="回滚前的撑腰事实", origin=origin,
+            )
+            raise RuntimeError("rollback credit event")
+
+    assert _character_loyalty(db, "毛文龙") == before_loyalty
+    assert content.characters["毛文龙"].loyalty == before_loyalty
     assert db.conn.execute(
-        "SELECT event_id FROM loyalty_credit_event_applied WHERE event_id=?", (consumed_id,)
-    ).fetchone() is not None
-    assert derive_loyalty_from_credit_event(db, consumed_id) is None
-    assert _character_loyalty(db, "毛文龙") == before
+        "SELECT COUNT(*) AS n FROM loyalty_credit_event_applied"
+    ).fetchone()["n"] == before_watermarks
+    assert db.conn.execute(
+        "SELECT 1 FROM relation_edge_events WHERE origin=?", (origin,)
+    ).fetchone() is None
 
     event_id = write_credit_event(
         db, state, person="毛文龙", event_kind=KIND_BACK,
-        context="旧档升级后撑腰", origin="dossier:upgrade:credit:back",
+        context="重试后的撑腰事实", origin=origin,
     )
-    assert db.conn.execute(
-        "SELECT event_id FROM loyalty_credit_event_applied WHERE event_id=?", (event_id,)
-    ).fetchone() is not None
-    assert content.characters["毛文龙"].loyalty == _character_loyalty(db, "毛文龙")
+    applied_loyalty = _character_loyalty(db, "毛文龙")
+    assert applied_loyalty > before_loyalty
+    assert content.characters["毛文龙"].loyalty == applied_loyalty
+    assert write_credit_event(
+        db, state, person="毛文龙", event_kind=KIND_BACK,
+        context="重放不二写", origin=origin,
+    ) == event_id
+    assert _character_loyalty(db, "毛文龙") == applied_loyalty
 
 
 def test_month_settlement_consumes_preexisting_credit_event_once(game):

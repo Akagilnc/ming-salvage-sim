@@ -2238,7 +2238,6 @@ class GameDB:
             );
             """.replace("__AUTHORITY_PRIVILEGES__", AUTHORITY_PRIVILEGE_SQL_IN)
         )
-        self._migrate_loyalty_credit_event_watermark()
         # #637 S6：老档迁移——relation_brew_pending 泛化身份列（新档建表已含，此处幂等）。
         self.ensure_column(
             "relation_brew_pending", "item_kind", "TEXT NOT NULL DEFAULT '关系'"
@@ -3329,29 +3328,6 @@ class GameDB:
         if commit:
             self.conn.commit()
         return base_key
-
-    def _migrate_loyalty_credit_event_watermark(self) -> None:
-        """Narrow the pre-#702 watermark table while preserving consumed event ids."""
-        columns = {
-            row["name"]
-            for row in self.conn.execute(
-                "PRAGMA table_info(loyalty_credit_event_applied)"
-            ).fetchall()
-        }
-        if columns == {"event_id"}:
-            return
-        self.conn.execute(
-            "ALTER TABLE loyalty_credit_event_applied RENAME TO loyalty_credit_event_applied_old"
-        )
-        self.conn.execute(
-            "CREATE TABLE loyalty_credit_event_applied ("
-            "event_id INTEGER PRIMARY KEY REFERENCES relation_edge_events(id))"
-        )
-        self.conn.execute(
-            "INSERT INTO loyalty_credit_event_applied(event_id) "
-            "SELECT event_id FROM loyalty_credit_event_applied_old"
-        )
-        self.conn.execute("DROP TABLE loyalty_credit_event_applied_old")
 
     def ensure_column(self, table: str, column: str, definition: str) -> bool:
         """确保 table.column 存在。返回 True=本次新增了该列（真·一次性迁移），
