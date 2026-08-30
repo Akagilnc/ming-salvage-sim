@@ -111,6 +111,10 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
             )
         if not seed_guilt_raw:
             seed_guilt = {}
+        defected_from = item.get("defected_from")
+        if defected_from is not None and not isinstance(defected_from, str):
+            raise SystemExit(f"characters.json.characters[{idx}].defected_from 必须是字符串。")
+        defected_from = defected_from.strip() or None if defected_from is not None else None
         if name in characters:
             raise SystemExit(f"characters.json 不得存在重复人物名：{name}")
         characters[name] = Character(
@@ -140,7 +144,7 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
             portrait_id=str(item.get("portrait_id") or ""),
             identity=identity,
             intrigue=intrigue,
-            defected_from=(str(item["defected_from"]).strip() or None) if item.get("defected_from") is not None else None,
+            defected_from=defected_from,
             seed_guilt=seed_guilt,
         )
 

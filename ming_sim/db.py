@@ -5304,14 +5304,14 @@ class GameDB:
             office_type = infer_office_type_from_office(office, character.office_type, self.llm_config, use_llm=False)
             self.conn.execute(
                 """INSERT OR IGNORE INTO characters
-                   (name, office, office_type, faction, aliases, personal_skills, loyalty, ability, integrity, courage, style, identity, seed_guilt,
+                   (name, office, office_type, faction, aliases, personal_skills, loyalty, ability, integrity, courage, style, identity, seed_guilt, intrigue, defected_from,
                     birth_year, historical_death_year, historical_death_month, debut_year, debut_month, status, status_reason, reason_code, status_changed_turn,
                     portrait_id, power_id, location, transit_to, summary)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)""",
                 (character.name, office, office_type, character.faction,
                  json.dumps(character.aliases, ensure_ascii=False), json.dumps(character.personal_skills, ensure_ascii=False),
                  character.loyalty, character.ability, character.integrity, character.courage, character.style,
-                 character.identity, _seed_guilt_storage_value(character.seed_guilt), character.birth_year, character.historical_death_year,
+                 character.identity, _seed_guilt_storage_value(character.seed_guilt), character.intrigue, character.defected_from, character.birth_year, character.historical_death_year,
                  character.historical_death_month, character.debut_year, character.debut_month, character.status,
                  character.status_reason, character.reason_code,
                  character.portrait_id, character.power_id, character.location, character.transit_to, character.summary),
