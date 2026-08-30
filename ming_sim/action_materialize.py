@@ -338,7 +338,7 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
     from ming_sim.cli_backend import (
         UnknownParticipantEscalate,
         compose_unknown_participant_inworld_report,
-        extract_draft_intent_with_roster_heal,
+        extract_draft_intent_with_semantic_heal,
         normalize_draft_person_roster,
         resolve_directive_mode,
     )
@@ -394,7 +394,7 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
     def _heal_or_escalate(**kwargs: Any) -> Optional[Dict[str, Any]]:
         """自愈抽取；真不在册 → 戏内回禀、不落草案、不炸整轮。"""
         try:
-            return extract_draft_intent_with_roster_heal(**kwargs)
+            return extract_draft_intent_with_semantic_heal(**kwargs)
         except UnknownParticipantEscalate as exc:
             report = compose_unknown_participant_inworld_report(
                 exc.names,

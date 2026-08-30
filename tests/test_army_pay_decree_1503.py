@@ -837,7 +837,7 @@ def test_manual_directive_admission_real_http_tracer_1591(
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     _stub_outer_llm_seams(monkeypatch)
-    monkeypatch.setattr(cb, "extract_draft_intent_with_roster_heal", fake_extract)
+    monkeypatch.setattr(cb, "extract_draft_intent_with_semantic_heal", fake_extract)
     monkeypatch.setattr(cb, "capture_manual_directive_payload", real_capture)
 
     game = web_app.WebGame(fresh=False)
@@ -1251,7 +1251,7 @@ def test_draft_neitang_stays_generic_special_decree(game, monkeypatch):
     candidates = candidates_from_classifier_payload(payload, soft=False)
     monkeypatch.setattr(
         cb,
-        "extract_draft_intent_with_roster_heal",
+        "extract_draft_intent_with_semantic_heal",
         lambda **_kwargs: {
             "draft_action": "拟旨",
             "draft_text": "准拨，数目另议。",

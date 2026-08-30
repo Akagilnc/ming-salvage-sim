@@ -1338,8 +1338,8 @@ def _draft_intent_character_roster_facts(content: Any) -> str:
 # #1274 QA V-1：参与人校验失败有界纠错重试（owner 2026-08-20 三连拍板）。
 # 宪法：查无此人不告诉皇帝、底下人偷偷划掉=篡改圣旨，绝对禁止。
 # 自愈只许修 LLM 自己的抄写错（修完仍是皇帝说的那个人）；真不在册→戏内回禀。
-# 1–2 次；happy path 零额外调用。只在「参与人物/委派人不存在」路上触发。
-DRAFT_PARTICIPANT_HEAL_RETRIES = 2
+# 参与人或属地语义失败共用同一有界预算；happy path 零额外调用。
+DRAFT_INTENT_HEAL_RETRIES = 2
 _PARTICIPANT_REF_MISSING_RE = re.compile(
     r"(?:参与人物|委派人)不存在[：:]\s*([^。\n]+)"
 )
@@ -2007,21 +2007,20 @@ def _ground_relative_pay_order_deadlines(result: Dict[str, Any], db: Any) -> Dic
     return result
 
 
-def extract_draft_intent_with_roster_heal(
+def extract_draft_intent_with_semantic_heal(
     player_message: Optional[str],
     minister_reply: str,
     llm_config: Any = None,
     *,
     db: Any = None,
     content: Any = None,
-    heal_retries: int = DRAFT_PARTICIPANT_HEAL_RETRIES,
+    heal_retries: int = DRAFT_INTENT_HEAL_RETRIES,
     **extract_kwargs: Any,
 ) -> Dict[str, Any]:
-    """extract → 名册校验；「参与人物不存在」时有界纠错重抽（P5 只走失败路）。
+    """Extract and semantically validate a draft with bounded correction retries.
 
-    自愈只许抄写纠错（修完仍是皇帝所指之人）。真不在册 / 擅自除名 →
-    raise UnknownParticipantEscalate（调用方戏内回禀，不落草案）。
-    db/content 缺一则只抽不校验（与旧 extract 同）。LLM 在纠错路上挂死 → 原样上抛。
+    Participant references and locality share one retry budget and correction seam.
+    Unknown participants escalate in-world; unrelated validation failures remain loud.
     """
     retries = max(0, int(heal_retries))
     correction = ""
@@ -2032,16 +2031,26 @@ def extract_draft_intent_with_roster_heal(
     for attempt in range(retries + 1):
         # llm_config 关键字传：别族 fake_draft(msg, reply, **kw) 形仍合法，
         # 不得因 heal 多塞第 3 位置参把旧 mock 签名整族打爆。
-        result = extract_draft_intent(
-            player_message,
-            minister_reply,
-            llm_config=llm_config,
-            content=content,
-            pay_order_facts=_pay_order_grounding_facts(content, db),
-            correction_feedback=correction,
-            db=db,
-            **extract_kwargs,
-        )
+        try:
+            result = extract_draft_intent(
+                player_message,
+                minister_reply,
+                llm_config=llm_config,
+                content=content,
+                pay_order_facts=_pay_order_grounding_facts(content, db),
+                correction_feedback=correction,
+                db=db,
+                **extract_kwargs,
+            )
+        except _DraftLocalityValidationError as exc:
+            if attempt >= retries:
+                raise ValueError(str(exc)) from exc
+            correction = (
+                "施行范围与目标结构不一致，请保留其余字段，只把施行范围改为符合"
+                "目标类型、目标ID和动作类型的无、全国或单省。"
+            )
+            _log(f"拟旨属地纠错重试 {attempt + 1}/{retries}: {exc}")
+            continue
         if db is not None:
             result = _ground_relative_pay_order_deadlines(result, db)
         if db is None or content is None:
@@ -2219,7 +2228,6 @@ def extract_draft_intent(
             + pay_order_facts
             + stalled_push_facts
             + "御笔强推逐道只填目标案卷ID，普通旨逐道只填动作类型/目标类型/目标ID；两种形状不得并存。\n"
-            + _draft_locality_guidance()
             + "【皇帝】" + (player_message or "（无）") + "\n"
             + "【大臣完整回话】" + (minister_reply or "（无）") + "\n"
         )
@@ -2397,9 +2405,7 @@ def extract_draft_intent(
         + merge_schema_line
         + "}\n"
         "判定要点：皇帝明确让大臣拟旨/起草圣旨→拟旨；仅商议/问询/催办/评论不算。语义判断，别拘字面。\n"
-        "御笔强推议而不决事项亦归拟旨，并填目标案卷ID。\n"
-        + _draft_locality_guidance()
-        + "\n"
+        "御笔强推议而不决事项亦归拟旨，并填目标案卷ID。\n\n"
         + correction_block
         + roster_facts
         + pay_order_facts
@@ -2551,11 +2557,8 @@ def _draft_target_kind_guidance() -> str:
     return _DRAFT_TARGET_KIND_GUIDANCE
 
 
-def _draft_locality_guidance() -> str:
-    return (
-        "施行范围按结构填写：目标类型为 region 时一律填单省（辽东、宁锦等名称亦同）；"
-        "policy、issue、account 仅在全国性且动作类型允许全国施行时填全国；其余填无。\n"
-    )
+class _DraftLocalityValidationError(Exception):
+    """A locality-oracle rejection that the semantic correction loop may retry."""
 
 
 def _validate_extracted_locality(
@@ -2567,16 +2570,19 @@ def _validate_extracted_locality(
         return
     from ming_sim.execution_pressure import resolve_dossier_region_ids
 
-    resolve_dossier_region_ids(
-        db.conn,
-        action_type=action_type,
-        payload={
-            "target_kind": target_kind,
-            "target_id": target_id,
-            "locality_scope": locality_scope,
-        },
-        regions_content=getattr(content, "regions", None),
-    )
+    try:
+        resolve_dossier_region_ids(
+            db.conn,
+            action_type=action_type,
+            payload={
+                "target_kind": target_kind,
+                "target_id": target_id,
+                "locality_scope": locality_scope,
+            },
+            regions_content=getattr(content, "regions", None),
+        )
+    except ValueError as exc:
+        raise _DraftLocalityValidationError(str(exc)) from exc
 
 
 def _coerce_draft_target_kind(raw: object) -> str:
@@ -2636,7 +2642,7 @@ def capture_manual_directive_payload(
 
     def _run_extract() -> Dict[str, Any]:
         # #1274 V-1：extract→validate 有界纠错；db/content 齐时参与人名册自愈。
-        return extract_draft_intent_with_roster_heal(
+        return extract_draft_intent_with_semantic_heal(
             prompt, directive_text, llm_config=llm_config,
             db=db, content=content,
         )
