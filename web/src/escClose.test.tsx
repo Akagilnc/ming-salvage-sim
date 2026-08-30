@@ -1,5 +1,5 @@
 import React, { act } from "react";
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./main";
@@ -25,7 +25,13 @@ const makeState = () => ({
 
 const tick = () => act(async () => { await new Promise((r) => setTimeout(r, 0)); });
 
-afterEach(() => { vi.unstubAllGlobals(); document.body.innerHTML = ""; });
+let root: Root | undefined;
+afterEach(() => {
+  if (root) act(() => { root!.unmount(); });
+  root = undefined;
+  vi.unstubAllGlobals();
+  document.body.innerHTML = "";
+});
 
 // 回归：ESC 全局处理器的 effect 依赖曾漏 5 个抽屉 state（stale closure），
 // 打开兵/省/工/户/吏抽屉后 ESC 闭包里的布尔永远是 false → 关不掉。
@@ -48,7 +54,7 @@ describe("全局 ESC 关闭抽屉（stale closure 回归）", () => {
 
     const host = document.createElement("div");
     document.body.appendChild(host);
-    await act(async () => { createRoot(host).render(<App />); });
+    await act(async () => { (root = createRoot(host)).render(<App />); });
     await tick();
     expect(host.querySelector(".hud2-stage")).not.toBeNull();  // 已进入游戏视图
 
@@ -61,6 +67,55 @@ describe("全局 ESC 关闭抽屉（stale closure 回归）", () => {
     act(() => { window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
     await tick();
     expect(host.querySelector(`aside.${drawerClass}.open`)).toBeNull();      // ESC 后抽屉已关
+  });
+});
+
+describe("全局 ESC 关闭抽屉的交互面", () => {
+  it("打开时仅当前抽屉可交互，ESC 后恢复 inert 且 DOM 常驻", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      const u = new URL(String(url), "http://t.local");
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) return jsonResp(makeState());
+      return jsonResp({});
+    }));
+
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    await act(async () => { (root = createRoot(host)).render(<App />); });
+    await tick();
+
+    const coveredDrawerShapes = new Set<string>();
+    const navButtons = host.querySelectorAll("button.hud2-nav");
+    for (const nav of navButtons) {
+      act(() => { nav.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+      await tick();
+
+      const openDrawer = host.querySelector("aside.court-drawer.open, aside.right-drawer.open");
+      if (!openDrawer) continue;
+
+      const drawerShape = openDrawer.classList.contains("harem-drawer")
+        ? "harem-drawer"
+        : openDrawer.classList.contains("court-drawer")
+          ? "court-drawer"
+          : "right-drawer";
+      if (!coveredDrawerShapes.has(drawerShape)) {
+        coveredDrawerShapes.add(drawerShape);
+        expect(openDrawer.hasAttribute("inert")).toBe(false);
+        const closedDrawers = host.querySelectorAll("aside.court-drawer:not(.open), aside.right-drawer:not(.open)");
+        expect([...closedDrawers].every((drawer) => drawer.hasAttribute("inert"))).toBe(true);
+        expect(host.querySelectorAll("button.drawer-scrim")).toHaveLength(1);
+      }
+
+      act(() => { window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
+      await tick();
+      expect(openDrawer.classList.contains("open")).toBe(false);
+      expect(openDrawer.hasAttribute("inert")).toBe(true);
+      expect(host.querySelector("button.drawer-scrim")).toBeNull();
+      if (coveredDrawerShapes.size === 3) break;
+    }
+    expect(coveredDrawerShapes).toEqual(new Set(["court-drawer", "harem-drawer", "right-drawer"]));
   });
 });
 
@@ -86,7 +141,7 @@ describe("全局 ESC 关闭结局页（endingDismissed）", () => {
 
     const host = document.createElement("div");
     document.body.appendChild(host);
-    await act(async () => { createRoot(host).render(<App />); });
+    await act(async () => { (root = createRoot(host)).render(<App />); });
     await tick();
     expect(host.querySelector(".modal-bg-ending")).not.toBeNull();
 
