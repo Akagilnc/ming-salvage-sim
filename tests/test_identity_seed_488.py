@@ -36,12 +36,15 @@ def test_identity_and_seed_guilt_are_loaded_from_roster_and_seeded(game):
 
 def test_identity_and_seed_guilt_survive_restore(game):
     db, state, content = game
+    db.conn.execute(
+        "UPDATE characters SET defected_from=? WHERE name=?", ("东林", "魏忠贤")
+    )
     before = db.conn.execute(
         "SELECT identity, seed_guilt, intrigue, defected_from FROM characters WHERE name=?", ("魏忠贤",)
     ).fetchone()
     content.characters["魏忠贤"].identity = 0
     content.characters["魏忠贤"].intrigue = 0
-    content.characters["魏忠贤"].defected_from = "阉党"
+    content.characters["魏忠贤"].defected_from = None
     content.characters["魏忠贤"].seed_guilt = {}
     _sync_offices_from_db_impl(content, db)
     after = db.conn.execute(
@@ -53,7 +56,7 @@ def test_identity_and_seed_guilt_survive_restore(game):
     assert content.characters["魏忠贤"].identity == before["identity"]
     assert content.characters["魏忠贤"].seed_guilt == guilt
     assert content.characters["魏忠贤"].intrigue == before["intrigue"]
-    assert content.characters["魏忠贤"].defected_from is None
+    assert content.characters["魏忠贤"].defected_from == "东林"
 
 
 def test_existing_save_migrates_seed_identity_and_inserts_missing_roster_member(tmp_path, content):
