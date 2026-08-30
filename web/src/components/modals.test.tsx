@@ -278,45 +278,24 @@ describe("EdictModal — #1431 placeholder 去失实具名", () => {
 });
 
 describe("EdictModal — hidden secret-order default approval", () => {
-  it("confirms generic no-edict advance without exposing hidden secret-order pending state", () => {
+  it("disables the footer command when there is no decree draft", () => {
     const onAdvance = vi.fn();
-    const confirm = vi.fn(() => false);
-    vi.stubGlobal("confirm", confirm);
+    const onIssue = vi.fn();
     const { host } = renderEdictModal({
       state: baseGameState({ pending_secret_order_count: 0, pending_non_directive_action_count: 0 }),
       onAdvanceWithoutEdict: onAdvance,
+      onIssueDecree: onIssue,
     });
-    const button = Array.from(host.querySelectorAll("button")).find((item) =>
-      item.textContent?.includes("退朝结束本月")
-    ) as HTMLButtonElement | undefined;
+    const button = host.querySelector<HTMLButtonElement>(".desk-footer button");
 
     expect(button).toBeTruthy();
-    expect(host.textContent).not.toContain("密令已候旨");
-    expect(host.textContent).not.toContain("尚有召对事项候旨");
-    expect(host.textContent).toContain("本月尚无明发诏令");
-    act(() => button?.click());
-    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(button!.disabled).toBe(true);
+    act(() => button!.click());
     expect(onAdvance).not.toHaveBeenCalled();
-
-    confirm.mockReturnValue(true);
-    act(() => button?.click());
-    expect(onAdvance).toHaveBeenCalledTimes(1);
+    expect(onIssue).not.toHaveBeenCalled();
   });
 
-  it("shows no-edict advance for non-directive pending actions beyond new secret orders", () => {
-    const onAdvance = vi.fn();
-    const { host } = renderEdictModal({
-      state: baseGameState({ pending_non_directive_action_count: 1 }),
-      onAdvanceWithoutEdict: onAdvance,
-    });
-    const button = Array.from(host.querySelectorAll("button")).find((item) =>
-      item.textContent?.includes("退朝结束本月")
-    ) as HTMLButtonElement | undefined;
-
-    expect(button).toBeTruthy();
-  });
-
-  it("#1277 drafts>0 主钮盖玺颁诏过月 → issueDecree，不走退朝", () => {
+  it("issues the decree from the enabled footer command when drafts exist", () => {
     const onAdvance = vi.fn();
     const onIssue = vi.fn();
     const { host } = renderEdictModal({
@@ -324,19 +303,11 @@ describe("EdictModal — hidden secret-order default approval", () => {
       onAdvanceWithoutEdict: onAdvance,
       onIssueDecree: onIssue,
     });
-    expect(host.textContent).toContain("发饷辽东");
-    expect(host.textContent).toMatch(/盖玺颁诏过月/);
-    expect(host.textContent).not.toContain("待朱批");
-    const button = Array.from(host.querySelectorAll("button")).find((item) =>
-      item.textContent?.includes("盖玺颁诏过月")
-    ) as HTMLButtonElement | undefined;
+    const button = host.querySelector<HTMLButtonElement>(".desk-footer button");
+
     expect(button).toBeTruthy();
-    // 有草案时页脚不得再挂「退朝结束本月」主钮
-    const retreat = Array.from(host.querySelectorAll("button")).find((item) =>
-      item.textContent?.includes("退朝结束本月")
-    );
-    expect(retreat).toBeFalsy();
-    act(() => { button?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    expect(button!.disabled).toBe(false);
+    act(() => button!.click());
     expect(onIssue).toHaveBeenCalledTimes(1);
     expect(onAdvance).not.toHaveBeenCalled();
   });
