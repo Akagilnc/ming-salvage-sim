@@ -164,6 +164,10 @@ def validate_season_option(option: Mapping[str, object]) -> None:
         if spec.as_int and spec.default is None and option[spec.name] is None:
             raise ValueError(f"choice.{spec.name} 不可空")
         value = option[spec.name]
+        if spec.allowed is None and not spec.as_int and (
+            not isinstance(value, str) or not value.strip()
+        ):
+            raise ValueError(f"choice.{spec.name} 不可空")
         if spec.allowed is not None and value not in spec.allowed:
             raise ValueError(f"choice.{spec.name} 非法：{value!r}")
         if spec.as_int:
