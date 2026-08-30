@@ -1587,7 +1587,10 @@ class GameSession:
                 augmented = audience_prompt(message)
             else:
                 augmented = audience_prompt(message, character, chat_turn_id=chat_turn_id)
-        action_intent_future = self._start_cli_action_intent(character, message)
+        action_intent_future = (
+            None if explicit_secret_order
+            else self._start_cli_action_intent(character, message)
+        )
         # #526：收夜/留侍口令为确定性封闭集，同步识别（无耗时软判，不建 Future）。
         audience_command_verdict = self._recognize_audience_command_verdict(message)
         run_output = agent.run(augmented)
@@ -1610,13 +1613,15 @@ class GameSession:
             chat_turn_id=int(chat_turn_id or 0),
         )
         preclassified_intent = self._finish_cli_action_intent(action_intent_future)
-        preclassified_intent = self._confirmation_intent_for_preexisting_pending(
-            character.name, message, answer, preclassified_intent, preexisting_pending_action_ids)
+        if not explicit_secret_order:
+            preclassified_intent = self._confirmation_intent_for_preexisting_pending(
+                character.name, message, answer, preclassified_intent, preexisting_pending_action_ids)
         message_text = (message or "").strip()
         from ming_sim.cli_backend import _DRAFT_PREFIXES, _SECRET_PREFIXES
         from ming_sim.action_clusters import is_confirmation_decision, resolve_primary_intent
         explicit_draft_prefix = message_text.startswith(_DRAFT_PREFIXES)
         explicit_secret_prefix = message_text.startswith(_SECRET_PREFIXES)
+        explicit_secret_route = explicit_secret_order or explicit_secret_prefix
         primary_intent = resolve_primary_intent(preclassified_intent)
         confirmation_turn = is_confirmation_decision(primary_intent)
         for tool_exec in getattr(run_output, "tools", None) or []:
@@ -1654,7 +1659,7 @@ class GameSession:
             elif tool_name == "propose_directive" or tool_result.startswith("__pending_directive__"):
                 # confirmation / secret 前缀仍整枚跳过；孪生抑制在
                 # _stage_directive_tool_candidate generic 尾路按 kind 分派。
-                if confirmation_turn or explicit_secret_prefix:
+                if confirmation_turn or explicit_secret_route:
                     continue
                 args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
                 if not isinstance(args, dict):
@@ -1703,7 +1708,7 @@ class GameSession:
             elif (tool_name == "propose_appointment"
                   or tool_result.startswith("__pending_appointment__")
                   or tool_result.startswith("__pending_recommendation__")):
-                if confirmation_turn or explicit_draft_prefix or explicit_secret_prefix:
+                if confirmation_turn or explicit_draft_prefix or explicit_secret_route:
                     continue
                 payload = tool_result.removeprefix("__pending_recommendation__")
                 payload = payload.removeprefix("__pending_appointment__").strip()
@@ -1714,7 +1719,7 @@ class GameSession:
                     ),
                 )
             elif tool_name == "register_unlisted_person" or tool_result.startswith("__pending_unlisted_person__"):
-                if confirmation_turn or explicit_draft_prefix or explicit_secret_prefix:
+                if confirmation_turn or explicit_draft_prefix or explicit_secret_route:
                     continue
                 payload = tool_result.removeprefix("__pending_unlisted_person__").strip()
                 registered, summon_after = self._apply_unlisted_person_registration(payload)
@@ -1952,7 +1957,11 @@ class GameSession:
         # 确认闸门仍跳过：否则前缀消息在有 pending 时既多跑 extract_confirmation_intent，
         # 还可能被误判「应允/拒绝」提前 return、吞掉这道前缀拟旨/密令（确认句本无前缀）。
         message_text = (player_message or "").strip()
-        explicit_prefixed = message_text.startswith(_DRAFT_PREFIXES) or message_text.startswith(_SECRET_PREFIXES)
+        explicit_prefixed = (
+            explicit_secret_order
+            or message_text.startswith(_DRAFT_PREFIXES)
+            or message_text.startswith(_SECRET_PREFIXES)
+        )
         channel = (getattr(getattr(self, "llm_config", None), "channel", "") or "").strip().lower()
         api_explicit_prefix = channel == "api" and explicit_prefixed
         # #1502：API 仅在 classifier 未运行（preclassified is None）时 passthrough 早退；
