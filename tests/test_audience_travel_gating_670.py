@@ -1579,7 +1579,11 @@ def _install_secret_order_agent(runtime, *, stream: bool = False) -> None:
 
     agent: Any
     non_secret_tools = [
-        ToolExec("propose_directive", "__pending_directive__不得物化的普通旨意")
+        ToolExec("propose_directive", "__pending_directive__不得物化的普通旨意"),
+        ToolExec(
+            "rush_staged_commitment",
+            '__commitment_rush__{"issue_id": 1, "stage_idx": 0, "deadline_months": 1}',
+        ),
     ]
     if stream:
         agent = _FakeAgent(tools=non_secret_tools, chunks=["臣", "领密旨。"])
@@ -1706,6 +1710,7 @@ def test_web_chat_formal_secret_order_hangs_night_without_enter(game, stream):
         p for p in after_pending if int(p["id"]) == old_pending_id
     ) == old_pending
     assert sum(p.get("kind") == "directive" for p in after_pending) == 1
+    assert sum(p.get("kind") == "commitment" for p in after_pending) == 0
     assert runtime.session._secret_order_classifier_calls == []
     assert runtime.session._secret_order_confirmation_calls == []
     chat_turn_id = int(payload.get("chat_turn_id") or 0)
