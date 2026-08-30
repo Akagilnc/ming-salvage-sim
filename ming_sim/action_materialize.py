@@ -3398,6 +3398,7 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 FieldSpec(
                     "purpose", "用途",
                     frozenset({"补饷"}), "",
+                    populated_when=("grant_action", frozenset({"协饷"})),
                 ),
                 FieldSpec(
                     "cadence", "拨付节奏",

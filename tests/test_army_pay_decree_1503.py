@@ -846,6 +846,25 @@ def test_manual_directive_admission_real_http_tracer_1591(
             "目标": "guanning",
             "颁布方式": "ordinary",
             "金额": 15,
+            "账户": "国库",
+            "拨付节奏": "每季",
+            "执行面": "immediate",
+            "承办人": "",
+            "参与人": [],
+            "施行范围": "无",
+            "期限月数": None,
+            "目标案卷ID": None,
+            "entries": [],
+        },
+        {
+            "拟旨意图": "拟旨",
+            "动作类型": "grant_allocation",
+            "恩赏拨帑": "协饷",
+            "用途": "补饷",
+            "目标类型": "army",
+            "目标": "guanning",
+            "颁布方式": "ordinary",
+            "金额": 15,
             "账户": "藩库",
             "执行面": "immediate",
             "承办人": "",
@@ -946,16 +965,32 @@ def test_manual_directive_admission_real_http_tracer_1591(
         ).fetchall())
         assert [int(row["delta"]) for row in dossier_ledger] == [-15]
 
-        # ── ② account 是唯一坏因：完整协饷 transport 在 HTTP capture 边界响亮拒绝 ──
+        # ── ② manual capture 须在写入前拒绝非法 cadence ──
         turn2 = int(game.state.turn)
+        invalid_cadence = client.post(
+            "/api/directives",
+            json={"text": "准每季拨关宁军饷十五万两。", "notes": ""},
+        )
+        assert invalid_cadence.status_code == 409, invalid_cadence.text
+        assert int(game.state.turn) == turn2
+
+        # ── ③ account 是唯一坏因；HTTP 409 后所有相关表零写 ──
+        counts_before = {
+            table: game.db.conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in ("turn_directives", "pending_actions", "decree_dossiers", "economy_ledger", "army_logs")
+        }
         invalid_account = client.post(
             "/api/directives",
             json={"text": "准从藩库见银拨关宁军饷十五万两即发。", "notes": ""},
         )
         assert invalid_account.status_code == 409, invalid_account.text
         assert int(game.state.turn) == turn2
+        assert {
+            table: game.db.conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in counts_before
+        } == counts_before
 
-        # ── ③ #1591：既存非法草案在 issue 边界转发真实 admission 拒因 ──
+        # ── ④ #1591：既存非法草案在 issue 边界转发真实 admission 拒因 ──
         directive_id = game.db.add_directive(
             game.state, None, "准从藩库见银拨关宁军饷十五万两即发。",
             "player", status="draft", dossier_payload={
@@ -1314,8 +1349,9 @@ def test_explicit_prefix_grant_and_assignment_two_durable_dossiers(game, monkeyp
     monkeypatch.setattr(cb, "extract_draft_intent", real_extract)
     monkeypatch.setattr(cb, "_run_backend_for_config", fake_backend)
 
-    for invalid_mode in ("beyond-catalog",):
-        raw["成品旨稿"][0]["颁布方式"] = invalid_mode
+    for field, invalid in (("颁布方式", "beyond-catalog"), ("恩赏拨帑", "协饷近似值")):
+        original = raw["成品旨稿"][0][field]
+        raw["成品旨稿"][0][field] = invalid
         with pytest.raises(ActionCandidateShapeError):
             real_extract("请拟两道旨", "拨饷并清查", draft_count=2)
         backend_payload[0] = {
@@ -1323,8 +1359,18 @@ def test_explicit_prefix_grant_and_assignment_two_durable_dossiers(game, monkeyp
         }
         with pytest.raises(ActionCandidateShapeError):
             real_extract("请拟旨", "拨饷")
+        raw["成品旨稿"][0][field] = original
         backend_payload[0] = raw
-    raw["成品旨稿"][0]["颁布方式"] = "普通"
+
+    generic = dict(raw["成品旨稿"][0])
+    generic.update({"恩赏拨帑": "赈灾", "用途": ""})
+    generic.pop("目标类型")
+    backend_payload[0] = {"拟旨意图": "拟旨", **generic}
+    assert real_extract("请拟旨", "拨款")["target_kind"] == "policy"
+    backend_payload[0] = {"成品旨稿": [generic, raw["成品旨稿"][1]]}
+    batch = real_extract("请拟两道旨", "拨款并清查", draft_count=2)
+    assert batch["drafts"][0]["target_kind"] == "policy"
+    backend_payload[0] = raw
     backend_calls.clear()
 
     result = sess.chat(actor, "请拟两道旨：拨饷，并另行清查。")
