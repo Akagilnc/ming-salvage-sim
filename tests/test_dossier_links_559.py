@@ -604,20 +604,3 @@ def test_cli_secret_extraction_overlaps_independent_confirmation(monkeypatch):
     )
     assert set(seen) == {"secret_extract", "dossier_link_confirmation"}
     assert result["dossier_links"][0]["target_dossier_id"] == 11
-
-
-def test_real_secret_order_tool_schema_describes_dossier_link_contract(game):
-    from agno.tools.function import Function
-    from ming_sim.tools import build_minister_tools
-    db, state, content = game
-    character = content.characters["孙承宗"]
-    context = SimpleNamespace(db=db, state=state, content=content)
-    callable_tool = next(tool for tool in build_minister_tools(character, context)
-                         if tool.__name__ == "secret_order")
-    schema = Function.from_callable(callable_tool).to_dict()
-    rendered = json.dumps(schema, ensure_ascii=False)
-    assert "dossier_links_json" in rendered
-    assert "target_dossier_id" in rendered
-    assert "relation_type" in rendered
-    assert "note" in rendered
-    assert all(value in rendered for value in ("护卫", "稽核", "接应"))

@@ -1706,7 +1706,7 @@ def test_appointment_alias_uses_canonical_dossier_identity(game):
     (
         ("web", "allocation", {
             "动作类型": "grant_allocation", "目标类型": "issue",
-            "目标ID": "relief", "金额": 30000, "账户": "内库",
+            "目标": "relief", "金额": 30000, "账户": "内库",
             "执行面": "immediate",
         }),
         ("cli", "authorization", {
@@ -2049,11 +2049,11 @@ def test_cli_edit_replaces_text_and_mechanics_before_promulgation(game, monkeypa
         "拟旨意图": "拟旨",
         "动作类型": "grant_allocation",
         "目标类型": "issue",
-        "目标ID": "relief",
+        "目标": "relief",
         "金额": 25,
         "账户": "国库",
         "执行面": "immediate",
-        "颁布方式": "普通",
+        "颁布方式": "ordinary",
     }
     prompts = []
 
@@ -2693,11 +2693,11 @@ def test_batch_draft_extraction_preserves_each_mechanical_payload(monkeypatch):
                 "正文": "拨国库银一万两赈陕",
                 "动作类型": "grant_allocation",
                 "目标类型": "region",
-                "目标ID": "shaanxi",
+                "目标": "shaanxi",
                 "金额": 10000,
                 "账户": "国库",
                 "执行面": "in_transit",
-                "颁布方式": "普通",
+                "颁布方式": "ordinary",
             },
             {
                 "正文": "命洪承畴三月出师",
@@ -3002,12 +3002,12 @@ def test_web_inner_treasury_allocation_closes_next_month_without_replay(
     responses = iter((
         {
             "拟旨意图": "拟旨", "动作类型": "grant_allocation",
-            "目标类型": "issue", "目标ID": "relief", "金额": 10,
+            "目标类型": "issue", "目标": "relief", "金额": 10,
             "账户": "内库", "执行面": "in_transit",
         },
         {
             "拟旨意图": "拟旨", "动作类型": "grant_allocation",
-            "目标类型": "issue", "目标ID": "relief", "金额": 15,
+            "目标类型": "issue", "目标": "relief", "金额": 15,
             "账户": "内库", "执行面": "in_transit",
         },
     ))
