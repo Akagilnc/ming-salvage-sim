@@ -80,16 +80,9 @@ input 的 `secret_covert_effect_briefs` 若含 `canonical_fields` 含 `人物变
 - `行程语气` 只可为 `常行` / `加急` / `星夜兼程`：从旨文修饰抽取，无修饰默认 `常行`。
 - `transit_to` 填 input `region_ids` 里的英文 id（region 标识符，非其中文显示名）；目的地无法解析为合法 id 时不产机械行止项，只保留叙事。
 
-### 评定（忠诚软判）
-
-- 诏书、承办或邸报明确改变某人在朝廷眼中的忠诚倾向，但不是任免/处置/易主/行止时，写 `人物变更` 的 `评定`。
-- 字段：`name`、`动作:"评定"`、`loyalty`、`reason`。`loyalty` 是增量 integer，正为转向朝廷，负为离心；不要填新值。
-- 例：input 已列出并颁布案卷 `dossier:17`，奉旨安抚毛文龙后裁判判断其观望稍解，可写 `{"name":"毛文龙","动作":"评定","loyalty":8,"reason":"奉旨安抚，软判其观望稍解","来源引用":"dossier:17"}`。
-- 一次性赏赐/抚恤若只造成当月态度变化，只写本项；是否另立持续承诺 issue 由局势档房按“是否多回合承诺”判断。
-
 ### 性情（人物固有层完整替换）
 
-- 诏书、承办或邸报明确改写某人自身性情/处世分寸（固有层），且不是任免/处置/易主/行止/评定时，写 `人物变更` 的 `性情`。
+- 诏书、承办或邸报明确改写某人自身性情/处世分寸（固有层），且不是任免/处置/易主/行止时，写 `人物变更` 的 `性情`。
 - 字段：`name`、`动作:"性情"`、非空字符串 `style`、`reason`。`style` 是该人物固有层的**完整替换**文本，不是追加流水。
 - **禁止**把人物之间的关系变化写入 `style`；关系变化一律走关系档房的边事件（`大臣互动` / `relation_edge_events`）。
 - 例：input 已列出并颁布案卷 `dossier:17`，奉旨安抚后裁判判断毛文龙处世分寸有变，可写 `{"name":"毛文龙","动作":"性情","style":"旧恨未消，却更沉得住气，临事少作张扬。","reason":"经事锤炼，固有层改写","来源引用":"dossier:17"}`。
@@ -150,8 +143,7 @@ input 的 `secret_covert_effect_briefs` 若含 `canonical_fields` 含 `人物变
     {"name": "魏忠贤", "动作": "处置", "status": "exiled", "reason": "发配凤阳", "来源引用": "盘面自发"},
     {"name": "祖大寿", "动作": "易主", "new_power": "houjin", "方式": "被俘而降", "反噬": {}, "reason": "大凌河降清", "来源引用": "盘面自发"},
     {"name": "田氏", "动作": "册封", "office": "贵妃", "office_type": "后宫", "reason": "诏书明文册封", "来源引用": "dossier:17"},
-    {"name": "袁崇焕", "动作": "行止", "transit_to": "liaodong", "reason": "启程赴辽", "来源引用": "盘面自发"},
-    {"name": "毛文龙", "动作": "评定", "loyalty": 8, "reason": "奉旨安抚，软判其观望稍解", "来源引用": "dossier:17"}
+    {"name": "袁崇焕", "动作": "行止", "transit_to": "liaodong", "reason": "启程赴辽", "来源引用": "盘面自发"}
   ],
   "new_issues": [
     {"origin_kind": "decree", "origin_ref": "secret_order:5", "kind": "initiative", "title": "内库月拨安抚诸将", "ongoing_effects": {"economy": [{"account": "内库", "delta": -20, "category": "安抚诸将", "reason": "密令每月拨给诸将"}]}, "commitment_kind": "until_stop"}

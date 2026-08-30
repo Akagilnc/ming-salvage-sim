@@ -1223,7 +1223,7 @@ def build_extractor_tools(context: CourtContext):
                               origin_ref(只能从 extractor_context.decree_dossiers 选择
                               dossier:<id>),commitment_kind:"until_stop"；
                               直到补齐/达标：ongoing_effects 语义非空 + stop_condition(dict)
-                              人物安抚类 ongoing_effects 写 {"人物变更":[{"name":"毛文龙","动作":"评定","loyalty":2}]}
+                              人物安抚类不得写忠诚数值；引擎按信用事件机械结算
                               连续N月/半年为限：ongoing_effects 语义非空 + end_turn(turn+N，且必须大于当前turn)
                               未来一次性复试/复核：end_turn，ongoing_effects 可为空/语义空
                               stop_condition 只收 dict，如 {"army.guanning.arrears":"<=0"}；
@@ -1244,7 +1244,7 @@ def build_extractor_tools(context: CourtContext):
                             内廷俸_base/内廷俸_rate/妃嫔_base/妃嫔_rate
         人物变更            ADR0009 人事档案唯一生产入口；每项必须含 name、动作、origin_ref。
                             动作∈__PERSON_ACTIONS__；按动作补 office、
-                            office_type、status、new_power、loyalty、style、reason；行止只补非空 transit_to 启程，
+                            office_type、status、new_power、style、reason；行止只补非空 transit_to 启程，
                             不得提交 location，抵达只由引擎倒数 tick 处理。
 
         ══ 档位判定标准 ══
