@@ -787,6 +787,103 @@ def test_materialize_unknown_removal_attempt_escalates(game, monkeypatch):
     _assert_inworld_escalate(str(esc.get("report") or ""), "不存在之人甲")
 
 
+@pytest.mark.parametrize("invalid_kind", ["wrong_count", "duplicate_text"])
+def test_materialize_invalid_batch_skips_discarded_locality(
+    game, monkeypatch, invalid_kind,
+):
+    """被整批拒收的多旨不再让坏属地进入后处理。"""
+    import ming_sim.cli_backend as cb
+
+    db, state, content = game
+    minister = _active_minister(db, content)
+    calls = {"n": 0}
+    item = {
+        "正文": "着户部清查三边粮饷。",
+        "动作类型": "policy",
+        "目标类型": "region",
+        "目标ID": "shaanxi",
+        "颁布方式": "普通",
+        "施行范围": "无",
+    }
+    values = [dict(item), dict(item)]
+    if invalid_kind == "wrong_count":
+        values.append({**item, "正文": "着兵部核查九边军械。"})
+
+    def backend(_prompt, llm_config=None, tag=""):
+        if tag != "draft_intent":
+            return ("{}", 1)
+        calls["n"] += 1
+        return (json.dumps({"成品旨稿": values}, ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", backend)
+    _silence_side_extractors(monkeypatch, cb)
+    sess = _fake_session(db, state, content)
+
+    GameSession.apply_cli_conversation_actions(
+        sess, minister,
+        player_message="分别拟两道旨。",
+        answer="臣已拟妥。",
+        has_directive=False, secret_order_id=None,
+        preclassified_intent=[{"kind": "draft"}, {"kind": "draft"}],
+    )
+
+    assert calls["n"] == 1
+    assert not [p for p in db.list_pending_actions(state.turn) if p["kind"] == "directive"]
+
+
+def test_materialize_locality_exhaustion_rejects_only_draft(game, monkeypatch):
+    """召对属地纠错耗尽只拒草案；该轮结构化结果仍正常返回。"""
+    import ming_sim.cli_backend as cb
+
+    db, state, content = game
+    minister = _active_minister(db, content)
+    calls = {"n": 0}
+    payload = _ok_payload(person="毕自严")
+    payload.update({"目标类型": "region", "目标ID": "shaanxi", "施行范围": "无"})
+
+    def backend(_prompt, llm_config=None, tag=""):
+        if tag != "draft_intent":
+            return ("{}", 1)
+        calls["n"] += 1
+        return (json.dumps(payload, ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", backend)
+    _silence_side_extractors(monkeypatch, cb)
+    sess = _fake_session(db, state, content)
+    result = GameSession.apply_cli_conversation_actions(
+        sess, minister,
+        player_message="着毕自严办理陕西事务，卿其拟旨。",
+        answer="臣已拟妥。",
+        has_directive=False, secret_order_id=None,
+        preclassified_intent={"kind": "draft"},
+    )
+
+    assert calls["n"] == 1 + cb.DRAFT_INTENT_HEAL_RETRIES
+    assert not [p for p in db.list_pending_actions(state.turn) if p["kind"] == "directive"]
+    assert "unknown_participant_escalate" not in result
+
+
+def test_materialize_does_not_swallow_untyped_value_error(game, monkeypatch):
+    """召对拒收边界只接 typed locality，不接普通 ValueError。"""
+    import ming_sim.cli_backend as cb
+
+    db, state, content = game
+    minister = _active_minister(db, content)
+    monkeypatch.setattr(
+        cb, "extract_draft_intent_with_semantic_heal",
+        lambda *_a, **_k: (_ for _ in ()).throw(ValueError("untyped failure")),
+    )
+    _silence_side_extractors(monkeypatch, cb)
+
+    with pytest.raises(ValueError, match="untyped failure"):
+        GameSession.apply_cli_conversation_actions(
+            _fake_session(db, state, content), minister,
+            player_message="卿其拟旨。", answer="臣已拟妥。",
+            has_directive=False, secret_order_id=None,
+            preclassified_intent={"kind": "draft"},
+        )
+
+
 def test_materialize_happy_path_single_draft_intent_call(game, monkeypatch):
     """召对 happy path：draft_intent 只调一次。"""
     import ming_sim.cli_backend as cb

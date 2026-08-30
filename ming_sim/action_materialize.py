@@ -352,6 +352,7 @@ def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
 
 def _materialize_draft(ctx: MaterializeCtx) -> None:
     from ming_sim.cli_backend import (
+        DraftLocalityValidationError,
         UnknownParticipantEscalate,
         compose_unknown_participant_inworld_report,
         extract_draft_intent_with_semantic_heal,
@@ -411,6 +412,8 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
         """自愈抽取；真不在册 → 戏内回禀、不落草案、不炸整轮。"""
         try:
             return extract_draft_intent_with_semantic_heal(**kwargs)
+        except DraftLocalityValidationError:
+            return None
         except UnknownParticipantEscalate as exc:
             report = compose_unknown_participant_inworld_report(
                 exc.names,

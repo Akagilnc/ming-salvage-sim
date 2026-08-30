@@ -42,7 +42,7 @@ def _client(game, monkeypatch, replies):
     return TestClient(web_app.app), calls
 
 
-def _extracted(scope):
+def _extracted(scope, person="毕自严"):
     return {
         "拟旨意图": "拟旨",
         "动作类型": "policy",
@@ -51,7 +51,7 @@ def _extracted(scope):
         "颁布方式": "普通",
         "施行范围": scope,
         "承办人": "毕自严",
-        "参与人": [{"character_id": "毕自严", "tier": "主办"}],
+        "参与人": [{"character_id": person, "tier": "主办"}],
     }
 
 
@@ -64,11 +64,15 @@ def test_manual_directive_locality_heals_before_admission(tracer_client, monkeyp
     game = web_app.web_game
     assert game is not None
     calls = []
-    replies = [_extracted("无"), _extracted("单省")]
+    replies = [
+        _extracted("无", "毕自"),
+        _extracted("单省", "毕自"),
+        _extracted("单省", "毕自严"),
+    ]
 
     def backend(*_args, **_kwargs):
         calls.append(1)
-        return json.dumps(replies[min(len(calls) - 1, 1)], ensure_ascii=False), 1
+        return json.dumps(replies[min(len(calls) - 1, 2)], ensure_ascii=False), 1
 
     monkeypatch.setattr(cli_backend, "capture_manual_directive_payload", _real_capture)
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
@@ -77,7 +81,7 @@ def test_manual_directive_locality_heals_before_admission(tracer_client, monkeyp
     )
 
     assert response.status_code == 200
-    assert len(calls) == 2
+    assert len(calls) == 3
     turn_before = game.state.turn
     _post_issue_stream(
         tracer_client, expected_turn=turn_before, step="#1685 locality issue/stream",
@@ -88,6 +92,7 @@ def test_manual_directive_locality_heals_before_admission(tracer_client, monkeyp
     assert dossiers[0]["region_id"] == "shaanxi"
     payload = json.loads(dossiers[0]["payload_json"])
     assert payload["locality_scope"] == "single"
+    assert [p["character_id"] for p in payload["participant_roster"]] == ["毕自严"]
 
 
 def test_manual_directive_locality_rejects_non_locality_drift(game, monkeypatch):
