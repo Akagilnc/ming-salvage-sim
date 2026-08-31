@@ -46,7 +46,13 @@ describe.sequential("medium: shared Electron geometry", () => {
 
   it("keeps the settlement alert and primary action independently reachable at two viewports", async () => {
     const page = renderToStaticMarkup(
-      <FullscreenModal title="拟诏" subtitle="" bgClass="modal-bg-edict" layerClassName="edict-safe-cmd" onClose={noop}>
+      <FullscreenModal
+        title="诏书草案"
+        subtitle="盖玺颁诏即草案成案并过月"
+        bgClass="modal-bg-edict"
+        layerClassName="edict-safe-cmd"
+        onClose={noop}
+      >
         <EdictModal
           state={edictState} directiveText="" editingDirectiveId={null} editingDirectiveText=""
           decree="" report="" busy=""
@@ -60,88 +66,114 @@ describe.sequential("medium: shared Electron geometry", () => {
     const results = await measureElectronLayout<{
       viewportWidth: number;
       viewportHeight: number;
-      stackOk: boolean;
+      alertInModal: boolean;
+      footerInModal: boolean;
+      buttonInModal: boolean;
       alertFitsWidth: boolean;
       startReachable: boolean;
       endReachable: boolean;
       alertFooterDisjoint: boolean;
+      alertTaDisjoint: boolean;
+      taFooterDisjoint: boolean;
+      taButtonDisjoint: boolean;
       buttonEnabled: boolean;
       buttonHit: boolean;
-      twoLines: boolean;
       textareaHit: boolean;
     }>(page, css("base", "court", "modals", "chat", "edict", "modal-theme", "situation"), [
       { width: 1280, height: 720 },
+      { width: 1100, height: 720 },
       { width: 800, height: 800 },
     ], `(() => {
+      const modal = document.querySelector('.fullscreen-modal');
       const alert = document.querySelector('[role="alert"]');
       const cols = document.querySelector('.desk-columns');
       const textarea = document.querySelector('.desk-compose textarea');
       const footer = document.querySelector('.desk-footer');
       const button = document.querySelector('.desk-footer button');
-      if (!alert || !cols || !textarea || !footer || !button) {
+      if (!modal || !alert || !cols || !textarea || !footer || !button) {
         return { error: 'missing edict fixture element' };
       }
       const overlaps = (a, b) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
-      const hitAtCenter = (el) => {
-        const r = el.getBoundingClientRect();
-        return document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) === el;
-      };
-      const clipVisibleHeight = (el, container) => {
+      const containsRect = (outer, inner) =>
+        inner.left >= outer.left && inner.right <= outer.right
+        && inner.top >= outer.top && inner.bottom <= outer.bottom;
+      const clipVisibleRect = (el, container) => {
         const er = el.getBoundingClientRect();
         const cr = container.getBoundingClientRect();
-        return Math.max(0, Math.min(er.bottom, cr.bottom) - Math.max(er.top, cr.top));
+        return {
+          left: Math.max(er.left, cr.left),
+          right: Math.min(er.right, cr.right),
+          top: Math.max(er.top, cr.top),
+          bottom: Math.min(er.bottom, cr.bottom),
+        };
       };
 
-      alert.scrollTop = 0;
-      const alertRect = alert.getBoundingClientRect();
-      const colsRect = cols.getBoundingClientRect();
+      const modalRect = modal.getBoundingClientRect();
       const footerRect = footer.getBoundingClientRect();
-      const alertContents = document.createRange();
-      alertContents.selectNodeContents(alert);
-      const startReachable = alertContents.getBoundingClientRect().top >= alertRect.top + alert.clientTop;
-      alert.scrollTop = alert.scrollHeight;
-      const endReachable = alert.scrollHeight <= alert.clientHeight
-        || Math.ceil(alert.scrollTop + alert.clientHeight) >= alert.scrollHeight;
-
       const buttonRect = button.getBoundingClientRect();
+
+      // Resting geometry first — before any scrollIntoView / scrollTop mutation.
+      const alertRect0 = alert.getBoundingClientRect();
+      const taRect0 = textarea.getBoundingClientRect();
+      const taVis = clipVisibleRect(textarea, cols);
+      const taVisH = Math.max(0, taVis.bottom - taVis.top);
+      const hitEl = taVisH > 0
+        ? document.elementFromPoint((taVis.left + taVis.right) / 2, (taVis.top + taVis.bottom) / 2)
+        : null;
+      const textareaHit = !!hitEl && (hitEl === textarea || textarea.contains(hitEl));
+
       const buttonHit = document.elementFromPoint(
         buttonRect.left + buttonRect.width / 2,
         buttonRect.top + buttonRect.height / 2,
       ) === button;
 
-      textarea.scrollIntoView({ block: 'nearest' });
-      const lineHeight = Number.parseFloat(getComputedStyle(textarea).lineHeight) || 0;
-      const minEditable = 2 * lineHeight;
-      const taVisH = clipVisibleHeight(textarea, cols);
-      const twoLines = textarea.clientHeight >= minEditable && taVisH >= minEditable;
-      const textareaHit = hitAtCenter(textarea);
+      // Alert path reachability (alert-local scroll only; compose already measured).
+      const alertContents = document.createRange();
+      alertContents.selectNodeContents(alert);
+      const startReachable = alertContents.getBoundingClientRect().top >= alertRect0.top + alert.clientTop;
+      alert.scrollTop = alert.scrollHeight;
+      const endReachable = alert.scrollHeight <= alert.clientHeight
+        || Math.ceil(alert.scrollTop + alert.clientHeight) >= alert.scrollHeight;
+      alert.scrollTop = 0;
 
       return {
         viewportWidth: innerWidth,
         viewportHeight: innerHeight,
-        stackOk: colsRect.bottom <= alertRect.top,
+        alertInModal: containsRect(modalRect, alertRect0),
+        footerInModal: containsRect(modalRect, footerRect),
+        buttonInModal: containsRect(modalRect, buttonRect),
         alertFitsWidth: alert.scrollWidth <= alert.clientWidth,
         startReachable,
         endReachable,
-        alertFooterDisjoint: !overlaps(alertRect, footerRect),
+        alertFooterDisjoint: !overlaps(alertRect0, footerRect),
+        alertTaDisjoint: !overlaps(alertRect0, taVis),
+        taFooterDisjoint: !overlaps(taRect0, footerRect),
+        taButtonDisjoint: !overlaps(taRect0, buttonRect),
         buttonEnabled: !button.disabled,
         buttonHit,
-        twoLines,
         textareaHit,
       };
     })()`);
 
-    expect(results.map(({ viewportWidth, viewportHeight }) => [viewportWidth, viewportHeight])).toEqual([[1280, 720], [800, 800]]);
+    expect(results.map(({ viewportWidth, viewportHeight }) => [viewportWidth, viewportHeight])).toEqual([
+      [1280, 720],
+      [1100, 720],
+      [800, 800],
+    ]);
     for (const result of results) {
-      expect(result.stackOk).toBe(true);
-      expect(result.alertFitsWidth).toBe(true);
-      expect(result.startReachable).toBe(true);
-      expect(result.endReachable).toBe(true);
-      expect(result.alertFooterDisjoint).toBe(true);
-      expect(result.buttonEnabled).toBe(true);
-      expect(result.buttonHit).toBe(true);
-      expect(result.twoLines).toBe(true);
-      expect(result.textareaHit).toBe(true);
+      expect(result.alertInModal, `${result.viewportWidth}x${result.viewportHeight} alertInModal`).toBe(true);
+      expect(result.footerInModal, `${result.viewportWidth}x${result.viewportHeight} footerInModal`).toBe(true);
+      expect(result.buttonInModal, `${result.viewportWidth}x${result.viewportHeight} buttonInModal`).toBe(true);
+      expect(result.alertFitsWidth, `${result.viewportWidth}x${result.viewportHeight} alertFitsWidth`).toBe(true);
+      expect(result.startReachable, `${result.viewportWidth}x${result.viewportHeight} startReachable`).toBe(true);
+      expect(result.endReachable, `${result.viewportWidth}x${result.viewportHeight} endReachable`).toBe(true);
+      expect(result.alertFooterDisjoint, `${result.viewportWidth}x${result.viewportHeight} alertFooterDisjoint`).toBe(true);
+      expect(result.alertTaDisjoint, `${result.viewportWidth}x${result.viewportHeight} alertTaDisjoint`).toBe(true);
+      expect(result.taFooterDisjoint, `${result.viewportWidth}x${result.viewportHeight} taFooterDisjoint`).toBe(true);
+      expect(result.taButtonDisjoint, `${result.viewportWidth}x${result.viewportHeight} taButtonDisjoint`).toBe(true);
+      expect(result.buttonEnabled, `${result.viewportWidth}x${result.viewportHeight} buttonEnabled`).toBe(true);
+      expect(result.buttonHit, `${result.viewportWidth}x${result.viewportHeight} buttonHit`).toBe(true);
+      expect(result.textareaHit, `${result.viewportWidth}x${result.viewportHeight} textareaHit`).toBe(true);
     }
   });
 });

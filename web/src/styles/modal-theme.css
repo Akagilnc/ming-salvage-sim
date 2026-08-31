@@ -54,6 +54,9 @@
     rgba(250, 242, 219, 0.82);
   border-radius: 3px;
 }
+.modal-bg-edict .error-line {
+  background: rgba(185, 73, 55, 0.12);
+}
 .modal-bg-edict .directive-item.pending {
   background:
     linear-gradient(95deg, rgba(176, 58, 40, 0.12), transparent 55%),
