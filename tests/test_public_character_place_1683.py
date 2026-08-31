@@ -1,4 +1,8 @@
-"""#1683：public_character 官印态 ⊥ 物理去向；袁可立新档 location=henan。"""
+"""#1683：public_character 官印态 ⊥ 物理去向；袁可立新档 location=henan。
+
+active+空 transit+在事/非在朝 由 test_yuan_keli_appointment_no_summon_stays_henan
+（原票 tracer）承接；本文件只留种子与 transit 投影主干。
+"""
 
 from __future__ import annotations
 
@@ -29,37 +33,11 @@ def _runtime(db, state, content):
     return runtime
 
 
-def test_public_character_active_not_zaichao_and_projects_place(game):
-    """active + 外地 location + 空 transit → status_label 非「在朝」；含 location/transit 键。"""
-    db, state, content = game
-    # 用既有在册人物造「已授官但未启程、人在河南」态
-    name = "袁崇焕"
-    db.conn.execute(
-        "UPDATE characters SET status='active', office=?, location=?, transit_to='', "
-        "transit_distance_remaining=NULL WHERE name=?",
-        ("巡抚登莱", "henan", name),
-    )
-    db.conn.commit()
-    ch = content.characters[name]
-    ch.status = "active"
-    ch.office = "巡抚登莱"
-    ch.location = "henan"
-    ch.transit_to = ""
-
-    pub = web_app.WebGame.public_character(_runtime(db, state, content), ch)
-    assert pub["status"] == "active"
-    assert pub["status_label"] != "在朝"
-    assert pub["status_label"] == "在事"
-    assert pub["location"] == "henan"
-    assert pub["location_label"] == "河南"
-    assert pub["transit_to"] == ""
-    assert pub.get("transit_to_label", "") == ""
-    assert "transit_distance_remaining" not in pub
-
-
 def test_public_character_projects_transit(game):
+    """transit_to → transit_to_label；不泄漏 transit_distance_remaining。"""
     db, state, content = game
     name = "袁崇焕"
+    # public_character 从 DB 读 location/transit；status 亦经 DB
     db.conn.execute(
         "UPDATE characters SET status='active', office=?, location=?, transit_to=?, "
         "transit_distance_remaining=? WHERE name=?",
@@ -73,7 +51,6 @@ def test_public_character_projects_transit(game):
     ch.transit_to = "shandong"
 
     pub = web_app.WebGame.public_character(_runtime(db, state, content), ch)
-    assert pub["status_label"] != "在朝"
     assert pub["location"] == "henan"
     assert pub["location_label"] == "河南"
     assert pub["transit_to"] == "shandong"

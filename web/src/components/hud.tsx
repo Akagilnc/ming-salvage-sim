@@ -18,14 +18,25 @@ export function MinisterPlaceOffice({
   officeClassName: string;
 }) {
   const { location, location_label, transit_to, transit_to_label, office } = minister;
+  const origin = (location_label || location || "").trim();
+  const dest = (transit_to_label || transit_to || "").trim();
+  let place: React.ReactNode = null;
+  if (transit_to) {
+    // 在途：同一 badge 结构化方向 origin → dest；缺 origin 则仅 dest + 在途 accessible name
+    const visible = origin ? `${origin} → ${dest}` : dest;
+    const ariaLabel = origin ? `在途：${origin}→${dest}` : `在途：${dest}`;
+    place = (
+      <span className="minister-place minister-transit" aria-label={ariaLabel}>
+        {visible}
+      </span>
+    );
+  } else if (location) {
+    const label = location_label || location;
+    place = <span className="minister-place">{label}</span>;
+  }
   return (
     <>
-      {transit_to && (
-        <span className="minister-place minister-transit">{transit_to_label || transit_to}</span>
-      )}
-      {!transit_to && location && (
-        <span className="minister-place">{location_label || location}</span>
-      )}
+      {place}
       {office && <span className={officeClassName}>{office}</span>}
     </>
   );
