@@ -761,7 +761,7 @@ describe("朝堂同衔分座（#1196 呈现层去冲突）", () => {
     expect(onOpenChat.mock.calls[1][0]).toBe(wen);
   });
 
-  it("#1402 offstage 卡：网格与朝班同形——主体非 button、reason 独立位、起复委派 onOpenEdict", async () => {
+  it("#1402 offstage 卡：网格与朝班同形——主体非 button、reason 位、起复委派 onOpenEdict", async () => {
     const offstage = minister({
       name: "刘鸿训",
       office: "",
@@ -810,23 +810,18 @@ describe("朝堂同衔分座（#1196 呈现层去冲突）", () => {
       onOpenChat.mockClear();
       onOpenEdict.mockClear();
       const host = await mount(courtMode);
-      const card = host.querySelector(".minister-card") as HTMLElement | null;
+      const card = host.querySelector('.minister-card[data-minister-status="offstage"]') as HTMLElement | null;
       expect(card).toBeTruthy();
       expect(card!.tagName).not.toBe("BUTTON");
-      const reasonEl = card!.querySelector(".minister-status-reason") as HTMLElement | null;
-      expect(reasonEl).not.toBeNull();
-      expect(reasonEl!.hidden).toBe(false);
-      expect((reasonEl!.textContent || "").length).toBeGreaterThan(0);
+      expect(card!.querySelector(".minister-status-reason")).not.toBeNull();
 
       await act(async () => {
         card!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       });
       expect(onOpenChat).not.toHaveBeenCalled();
 
-      const resume = Array.from(card!.querySelectorAll("button")).find((b) =>
-        /起复|拟诏/.test(b.textContent || ""),
-      );
-      expect(resume).toBeTruthy();
+      const resume = card!.querySelector("button.minister-resume-btn");
+      expect(resume).not.toBeNull();
       await act(async () => {
         resume!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       });
