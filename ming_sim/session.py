@@ -902,6 +902,8 @@ class GameSession:
         from ming_sim.session_write_queue import SessionWriteQueue
         self._write_queue = SessionWriteQueue()
         self._write_gate = self._write_queue.write_gate
+        if fresh_save:
+            self.auto_save("begin")
 
     # ── 回合生命周期 ──────────────────────────────────────────────────────
 
@@ -934,7 +936,6 @@ class GameSession:
             self.state.turn_phase = TurnPhase.SUMMONING.value
             self.db.save_state(self.state)
         self._begun = True
-        self.auto_save("begin")
         return self.turn_snapshot()
 
     def current_phase(self) -> TurnPhase:
@@ -956,9 +957,10 @@ class GameSession:
         )
 
     def end_turn(self) -> None:
-        """回合结束（resolve 已推进 state.turn）；阶段回 summoning。"""
+        """新回合建立（resolve 已推进 state.turn）；阶段回 summoning 并留月初档。"""
         self.state.turn_phase = TurnPhase.SUMMONING.value
         self.db.save_state(self.state)
+        self.auto_save("begin")
 
     def note_chat_rollback(self, deleted_committed_draft_ids: Optional[List[int]] = None) -> None:
         """P1-2：撤回召对若删了 write_decree 已 commit 的对话草案（committed draft），

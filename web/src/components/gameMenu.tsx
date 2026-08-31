@@ -154,6 +154,7 @@ export function LoadTab({ onAfterLoad }: { onAfterLoad: () => void }) {
   }, [refresh]);
 
   const onLoad = async (n: string) => {
+    // #1702 B：恢复与同文件其它破坏性操作同形的确认门控（取消零请求）。
     if (!window.confirm(`确定加载 ${n}.db？当前未保存进度会丢失。`)) return;
     setBusy(n);
     setErr("");
