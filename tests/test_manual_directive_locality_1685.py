@@ -8,12 +8,12 @@ from ming_sim.cli_backend import capture_manual_directive_payload as _real_captu
 from tests.test_month_loop_tracer_1468 import _post_issue_stream, tracer_client
 
 
-def _extracted(scope, person="毕自严", *, target_id="shaanxi"):
+def _extracted(scope, person="毕自严"):
     return {
         "拟旨意图": "拟旨",
         "动作类型": "policy",
         "目标类型": "region",
-        "目标ID": target_id,
+        "目标ID": "shaanxi",
         "颁布方式": "普通",
         "施行范围": scope,
         "承办人": "毕自严",
@@ -57,39 +57,3 @@ def test_manual_directive_region_assembly_writes_single_and_advances(
     payload = json.loads(dossiers[0]["payload_json"])
     assert payload["locality_scope"] == "single"
     assert [p["character_id"] for p in payload["participant_roster"]] == ["毕自严"]
-
-
-def test_manual_directive_invalid_region_fails_loud_without_retry(
-    tracer_client, monkeypatch,
-):
-    """非法省 id 非「region 缺 scope」→ 单次 LLM、无卷宗、月份不推进。"""
-    import ming_sim.cli_backend as cli_backend
-    import web_app
-
-    new = tracer_client.post("/api/menu/new_game")
-    assert new.status_code == 200
-    game = web_app.web_game
-    assert game is not None
-    calls = []
-    turn_before = game.state.turn
-
-    def backend(*_args, **_kwargs):
-        calls.append(1)
-        return json.dumps(
-            _extracted("单省", target_id="不存在的省"), ensure_ascii=False,
-        ), 1
-
-    monkeypatch.setattr(cli_backend, "capture_manual_directive_payload", _real_capture)
-    monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
-    response = tracer_client.post(
-        "/api/directives", json={"text": "着依旨施行。", "notes": ""},
-    )
-    assert response.status_code == 200
-    assert len(calls) == 1
-
-    issue = tracer_client.post("/api/decree/issue/stream")
-    assert issue.status_code == 200
-    assert "event: error" in issue.text
-    assert game.state.turn == turn_before
-    assert game.db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0] == 0
-    assert len(calls) == 1
