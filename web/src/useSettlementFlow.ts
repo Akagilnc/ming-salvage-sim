@@ -13,7 +13,7 @@ import type {
   DecisionChoice, GameState, PendingActionFailure, PendingDecision,
 } from "./types";
 
-// 颁诏结算流：盖玺颁诏 / 退朝 / HITL 决策点续裁 / 失败重拉，共用 SSE 推演进度区。
+// 颁诏结算流：盖玺颁诏 / failed-only 退朝 / HITL 决策点续裁 / 失败重拉，共用 SSE 推演进度区。
 // 结算完成一律整页刷新，草案/对话/局势/closed 弹窗全部按新 state 重新初始化。
 export function useSettlementFlow({
   setBusy,
@@ -217,41 +217,8 @@ export function useSettlementFlow({
   /** #1418 r2：all-decided 续跑——重发 resolve_decisions/stream（空载荷；服务端用已存 choice）。 */
   const resumePhase2 = async () => submitDecisions([]);
 
-  const retryPendingDecisions = async () => {
-    setBusy("重新拉取批红");
-    setPausedDecisionError("");
-    try {
-      const freshState = await loadState();
-      if (!freshState) return;  // 陈旧代次被协调器拒收（返 null）→ 拒收陈旧 cargo，不据此路由决策
-      const events = freshState.pending_decisions || [];
-      const route = routeRetryDecisions(
-        freshState.turn.phase, events, freshState.resume_phase2,
-        freshState.settlement_entry_inflight,
-      );
-      // #1418 r2 / #657：all-decided 或 typed resume 不得当成功空批清横幅——接到 phase2 续跑。
-      // 移交 resumePhase2 前先放行本函数 busy，避免 finally 清掉续跑中的「月末结算」。
-      if (
-        route.resumePhase2
-        || needsPhase2Resume(
-          freshState.turn.phase,
-          events,
-          freshState.turn.settlement_display,
-          freshState.resume_phase2,
-        )
-      ) {
-        setBusy("");
-        await resumePhase2();
-        return;
-      }
-      if (route.pendingDecisions !== null) setPendingDecisions(route.pendingDecisions);
-      if (route.error !== null) setPausedDecisionError(route.error);
-    } catch (err) {
-      setPausedDecisionError(`重新拉取待批决策失败：${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      setBusy("");
-    }
-  };
-
+  // #1560：failed-only 拟诏台确认后退朝；复用既有 /api/decree/advance_without_edict 接缝。
+  // 真空仍禁用；draft/pending 走 issueDecree，不经此路。
   const advanceWithoutEdict = async () => {
     setBusy("退朝");
     setError("");
@@ -315,6 +282,41 @@ export function useSettlementFlow({
     }
   };
 
+  const retryPendingDecisions = async () => {
+    setBusy("重新拉取批红");
+    setPausedDecisionError("");
+    try {
+      const freshState = await loadState();
+      if (!freshState) return;  // 陈旧代次被协调器拒收（返 null）→ 拒收陈旧 cargo，不据此路由决策
+      const events = freshState.pending_decisions || [];
+      const route = routeRetryDecisions(
+        freshState.turn.phase, events, freshState.resume_phase2,
+        freshState.settlement_entry_inflight,
+      );
+      // #1418 r2 / #657：all-decided 或 typed resume 不得当成功空批清横幅——接到 phase2 续跑。
+      // 移交 resumePhase2 前先放行本函数 busy，避免 finally 清掉续跑中的「月末结算」。
+      if (
+        route.resumePhase2
+        || needsPhase2Resume(
+          freshState.turn.phase,
+          events,
+          freshState.turn.settlement_display,
+          freshState.resume_phase2,
+        )
+      ) {
+        setBusy("");
+        await resumePhase2();
+        return;
+      }
+      if (route.pendingDecisions !== null) setPendingDecisions(route.pendingDecisions);
+      if (route.error !== null) setPausedDecisionError(route.error);
+    } catch (err) {
+      setPausedDecisionError(`重新拉取待批决策失败：${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setBusy("");
+    }
+  };
+
   return {
     settleStage,
     settleThinking,
@@ -323,9 +325,9 @@ export function useSettlementFlow({
     decisionFailures,
     pausedDecisionError,
     issueDecree,
+    advanceWithoutEdict,
     submitDecisions,
     resumePhase2,
     retryPendingDecisions,
-    advanceWithoutEdict,
   };
 }

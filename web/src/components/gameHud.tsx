@@ -213,13 +213,11 @@ export function GameHud({
         onClick={() => gatedModal("history", "history")} />
       <CommandSlot slotKey="拟诏" img="拟诏" badge={isFaceReachable("edict", settlementDisplay) ? state.directives.length : 0}
         className={edictOpen ? "edict-toggle-open" : undefined}
-        caption={edictOpen
-          ? "拟诏·收起"
-          : (state.directives.length > 0 ? "拟诏·盖玺颁诏过月" : "拟诏·退朝过月")}
+        caption={edictOpen ? "拟诏·收起" : "拟诏"}
         sub={edictOpen
           ? "收起拟诏台"
           : (isFaceReachable("edict", settlementDisplay)
-            ? (state.directives.length ? `${state.directives.length} 道草案` : "成案并过月")
+            ? `${state.directives.length} 道草案`
             : closedReason)}
         onClick={() => {
           // #1454：台开时木牌=收起开关，不造第二条「盖玺颁诏过月」路径。
