@@ -1190,45 +1190,37 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     expect(resume2!.disabled).toBe(false);
   });
 
-  it("#1620 settling recovery：ready=1 显示 abort 指引+续跑；ready=0 显示重新推演", async () => {
+  it("#1620 settling recovery：ready=1 → data-recovery-action=resume；ready=0 → resimulate", async () => {
+    // 契约只落 typed action 与可见容器；不锁 message/button 散文措辞。
     const packPath = "/tmp/error_packs/turn5_attempt1";
-    const abortMsg = [
-      "本月结算失败，进度已保存，可重试。",
-      `错误包已生成：${packPath}`,
-      "请把该文件夹发给作者，以便排查。",
-    ].join("\n");
     stubSettlementFetch(settlementBaseState("settling", {
       settlement_recovery: {
         ready_replay: true,
         error_pack_path: packPath,
-        message: abortMsg,
+        message: "abort-guidance",
       },
     }));
     const host = await mountApp();
     const banner = host.querySelector('[data-testid="settle-resume"]') as HTMLElement | null;
     expect(banner).not.toBeNull();
-    expect(banner!.textContent).toContain("进度已保存");
-    expect(banner!.textContent).toContain(packPath);
-    expect(banner!.textContent).toContain("发给作者");
     const resume = banner!.querySelector("button") as HTMLButtonElement;
-    expect(resume.textContent).toContain("续跑结算");
+    expect(resume.getAttribute("data-recovery-action")).toBe("resume");
+    expect(resume.disabled).toBe(false);
 
     unmountTrackedRoots();
     stubSettlementFetch(settlementBaseState("settling", {
       settlement_recovery: {
         ready_replay: false,
         error_pack_path: packPath,
-        message: abortMsg,
+        message: "abort-guidance",
       },
     }));
     const host2 = await mountApp();
     const banner2 = host2.querySelector('[data-testid="settle-resume"]') as HTMLElement | null;
     expect(banner2).not.toBeNull();
-    expect(banner2!.textContent).toContain(packPath);
-    expect(banner2!.textContent).toContain("发给作者");
     const resim = banner2!.querySelector("button") as HTMLButtonElement;
-    expect(resim.textContent).toContain("重新推演");
-    expect(resim.textContent).not.toContain("续跑结算");
+    expect(resim.getAttribute("data-recovery-action")).toBe("resimulate");
+    expect(resim.disabled).toBe(false);
   });
 
   it("awaiting_decision + 合法 pending：DecisionModal 可点；刷新重挂后仍在", async () => {
