@@ -1124,8 +1124,9 @@ def test_web_advance_without_edict_routes_existing_draft_to_settlement(game, mon
         session=types.SimpleNamespace(
             registry=None,
             advance_without_decree=_advance,
+            end_turn=lambda: calls.append("end_turn"),
         ),
-        refresh_turn=lambda: None,
+        refresh_turn=lambda: calls.append("refresh"),
         state_payload=lambda: {"turn": {"turn": state.turn}},
         directive_rows=lambda: db.list_directives(state, statuses=("pending", "draft")),
     )
@@ -1134,7 +1135,7 @@ def test_web_advance_without_edict_routes_existing_draft_to_settlement(game, mon
     out = web_app.api_advance_without_edict()
 
     assert out["awaiting_decision"] is False
-    assert calls == ["resolve"]
+    assert calls == ["resolve", "end_turn", "refresh"]
     assert state.turn == 1
 
 
