@@ -256,13 +256,12 @@ select {
 }
 
 textarea {
+  min-height: 94px;
   resize: vertical;
   padding: 9px;
 }
 
-/* Floor stays chat-scoped — must not pollute .desk-compose textarea. */
-.chat-input textarea,
-.chat-full-grid textarea {
+.chat-input textarea {
   min-height: 86px;
   max-height: 190px;
 }

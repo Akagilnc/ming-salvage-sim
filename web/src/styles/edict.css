@@ -164,8 +164,7 @@
 }
 
 .desk-compose textarea {
-  flex: 1 1 0;
-  min-height: 0;
+  flex: 1;
   line-height: 1.6;
   font-family: "Noto Serif SC", "Songti SC", serif;
 }
@@ -189,47 +188,6 @@
   overflow: auto;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-}
-
-/* ≤1100px 单列高链（权威只在本文件）：御笔占余量保 resting 两行；纪念行自为滚动 owner */
-@media (max-width: 1100px) {
-  .desk-columns {
-    grid-template-columns: 1fr;
-    /* edict-safe-cmd 下列高≈210：纪念行只留非零滚动口，余量给御笔两行+铬 */
-    /* 根字 19px：1.75rem≈33px；gap 8 回收 chrome 空隙给 ta 内容区两行 */
-    grid-template-rows: minmax(1.75rem, 0.15fr) minmax(0, 1fr);
-    gap: 8px;
-    /* 覆盖基线 overflow-y:auto：单列草案滚动只认纪念行，外层不再并行承接 */
-    overflow-y: hidden;
-  }
-
-  .desk-memorials {
-    min-height: 0;
-    /* 单一滚动归属：行高被压时整窗可滚，避免 hidden + listH=0 双死 */
-    overflow-x: hidden;
-    overflow-y: auto;
-  }
-
-  .desk-memorials .directive-list {
-    /* 内容随高度贡献给纪念行 scrollHeight；不在零高 list 上再套一层空滚 */
-    flex: 0 0 auto;
-    overflow: visible;
-  }
-
-  .desk-compose {
-    min-height: 0;
-    /* 覆盖 pane gap 10：两缝回收给 ta 内容区真实两行 */
-    gap: 4px;
-    overflow: hidden;
-  }
-
-  .edict-stage-desk > .error-line {
-    max-height: min(18%, 96px);
-  }
-
-  .decree-scroll {
-    width: 100%;
-  }
 }
 
 .desk-footer {
