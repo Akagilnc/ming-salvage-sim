@@ -760,4 +760,78 @@ describe("朝堂同衔分座（#1196 呈现层去冲突）", () => {
     expect(onOpenChat.mock.calls[0][0]).toBe(lai);
     expect(onOpenChat.mock.calls[1][0]).toBe(wen);
   });
+
+  it("#1402 offstage 卡：网格与朝班同形——主体非 button、reason 独立位、起复委派 onOpenEdict", async () => {
+    const offstage = minister({
+      name: "刘鸿训",
+      office: "",
+      status: "offstage",
+      status_label: "罢居",
+      status_reason: "因病乞休",
+    });
+    const onOpenChat = vi.fn();
+    const onOpenEdict = vi.fn();
+
+    async function mount(courtMode: boolean) {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string) => {
+          if (String(url).includes("/api/court_layout")) {
+            return { ok: true, json: async () => ({ layout: "{}" }) } as Response;
+          }
+          return { ok: true, json: async () => ({}) } as Response;
+        }),
+      );
+      const host = document.createElement("div");
+      document.body.appendChild(host);
+      const root = createRoot(host);
+      await act(async () => {
+        root.render(
+          <MinisterCardList
+            list={[offstage]}
+            portraitPrefix="minister_"
+            selectedMinister=""
+            emptyNote="empty"
+            onOpenChat={onOpenChat}
+            onOpenEdict={onOpenEdict}
+            courtMode={courtMode}
+          />,
+        );
+      });
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      mountedRoots.push({ root, host });
+      return host;
+    }
+
+    for (const courtMode of [false, true]) {
+      onOpenChat.mockClear();
+      onOpenEdict.mockClear();
+      const host = await mount(courtMode);
+      const card = host.querySelector(".minister-card") as HTMLElement | null;
+      expect(card).toBeTruthy();
+      expect(card!.tagName).not.toBe("BUTTON");
+      const reasonEl = card!.querySelector(".minister-status-reason") as HTMLElement | null;
+      expect(reasonEl).not.toBeNull();
+      expect(reasonEl!.hidden).toBe(false);
+      expect((reasonEl!.textContent || "").length).toBeGreaterThan(0);
+
+      await act(async () => {
+        card!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+      expect(onOpenChat).not.toHaveBeenCalled();
+
+      const resume = Array.from(card!.querySelectorAll("button")).find((b) =>
+        /起复|拟诏/.test(b.textContent || ""),
+      );
+      expect(resume).toBeTruthy();
+      await act(async () => {
+        resume!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+      expect(onOpenEdict).toHaveBeenCalledTimes(1);
+      expect(onOpenChat).not.toHaveBeenCalled();
+    }
+  });
 });

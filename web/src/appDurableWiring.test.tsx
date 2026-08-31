@@ -1540,4 +1540,83 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     await tick();
     expect(host.querySelector(".harem-drawer.open")).toBeNull();
   });
+
+  it("#1402 在野 offstage 卡：主体不可召对、status_reason 独立位、起复开拟诏", async () => {
+    const calls: string[] = [];
+    const offstage = {
+      name: "刘鸿训",
+      office: "",
+      office_type: "",
+      faction: "",
+      style: "",
+      status: "offstage",
+      status_label: "罢居",
+      status_reason: "因病乞休",
+      summary: "前辅",
+      favorite: false,
+      skills: [] as string[],
+    };
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = new URL(String(url), "http://t.local");
+      calls.push(`${init?.method || "GET"} ${u.pathname}`);
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) {
+        return jsonResp({
+          ...settlementBaseState("player"),
+          turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
+          previous_summary: "",
+          pending_decisions: [],
+          talent_pool: [offstage],
+        });
+      }
+      if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
+      return jsonResp({});
+    }));
+    const host = await mountApp();
+    await click(byAria(host, "朝堂·召见大臣"));
+    await tick();
+    const zaiye = Array.from(host.querySelectorAll(".court-drawer .segmented button")).find(
+      (b) => (b.textContent || "") === "在野",
+    );
+    expect(zaiye).toBeTruthy();
+    await click(zaiye);
+    await tick();
+
+    const card = Array.from(host.querySelectorAll(".court-drawer .minister-card")).find((el) =>
+      (el.textContent || "").includes(offstage.name),
+    ) as HTMLElement | undefined;
+    expect(card).toBeTruthy();
+    expect(card!.tagName).not.toBe("BUTTON");
+
+    // 卡主体点击不发起召对
+    await click(card);
+    await tick();
+    expect(host.querySelector("textarea")).toBeNull();
+    expect(host.querySelector('[role="dialog"][aria-label^="召对"]')).toBeNull();
+
+    // status_reason 独立承载位：有节点且可见（不锁具体文案）
+    const reasonEl = card!.querySelector(".minister-status-reason") as HTMLElement | null;
+    expect(reasonEl).not.toBeNull();
+    expect(reasonEl!.hidden).toBe(false);
+    expect((reasonEl!.textContent || "").length).toBeGreaterThan(0);
+
+    const resumeBtn = Array.from(card!.querySelectorAll("button")).find((b) =>
+      /起复|拟诏/.test(b.textContent || ""),
+    );
+    expect(resumeBtn).toBeTruthy();
+    await click(resumeBtn);
+    await tick();
+    await act(async () => {
+      await vi.waitFor(() =>
+        expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull(),
+      );
+    });
+    // 拟诏台自带草案 textarea；不得出现召对面/chat 写入口
+    expect(host.querySelector('[role="dialog"][aria-label^="召对"]')).toBeNull();
+    expect(host.querySelector(".chat-stage, .modal-bg-chat")).toBeNull();
+    expect(calls.some((c) => c.startsWith("POST ") && c.includes("secret_order"))).toBe(false);
+    expect(calls.some((c) => c.startsWith("POST ") && c.includes("/chat"))).toBe(false);
+  });
 });
