@@ -1349,8 +1349,20 @@ def test_secret_prefix_ignores_mismatched_directive_tool_output(game, monkeypatc
     sess.llm_config = SimpleNamespace(channel="api")
     sess.temporary_characters = set()
     sess._audience_prompt_for_message = lambda message: message
-    sess._start_cli_action_intent = lambda *_args, **_kwargs: None
-    sess._finish_cli_action_intent = lambda *_args, **_kwargs: None
+
+    def _forbid_cli_action_intent(*_args, **_kwargs):
+        raise AssertionError("explicit secret route must not start ordinary action classification")
+
+    def _forbid_confirmation_intent(*_args, **_kwargs):
+        raise AssertionError("explicit secret route must not run confirmation classification")
+
+    def _finish_cli_action_intent(future, *_args, **_kwargs):
+        assert future is None
+        return None
+
+    sess._start_cli_action_intent = _forbid_cli_action_intent
+    sess._confirmation_intent_for_preexisting_pending = _forbid_confirmation_intent
+    sess._finish_cli_action_intent = _finish_cli_action_intent
 
     result = GameSession.chat(sess, minister, "密令如下：暗查辽饷侵冒。")
 
