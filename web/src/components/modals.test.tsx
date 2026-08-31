@@ -1702,7 +1702,7 @@ describe("ChatModal — explicit legacy authority", () => {
 });
 
 describe("#1683 ChatModal place ⊥ office DOM", () => {
-  it("shows transit direction and keeps office when transit_to is set", () => {
+  it("shows transit destination and keeps office when transit_to is set", () => {
     renderModal({
       minister: {
         ...MINISTER_MOCK,
@@ -1714,10 +1714,9 @@ describe("#1683 ChatModal place ⊥ office DOM", () => {
       portraitPrefix: "minister_",
     });
 
-    const transit = document.querySelector(".minister-place");
+    const transit = document.querySelector(".minister-place.minister-transit");
     expect(transit).not.toBeNull();
-    expect(transit!.textContent).toBe("河南 → 山东");
-    expect(transit!.getAttribute("aria-label")).toBe("在途：河南→山东");
+    expect(transit!.textContent).toBe("山东");
     expect(document.querySelectorAll(".minister-place")).toHaveLength(1);
     expect(document.querySelector(".profile-office")?.textContent).toBe("内阁首辅");
   });
@@ -1734,9 +1733,8 @@ describe("#1683 ChatModal place ⊥ office DOM", () => {
 
     const place = document.querySelector(".minister-place");
     expect(place).not.toBeNull();
+    expect(place!.classList.contains("minister-transit")).toBe(false);
     expect(place!.textContent).toBe("河南");
-    expect(place!.textContent).not.toContain("→");
-    expect(place!.getAttribute("aria-label") ?? "").not.toContain("在途");
     expect(document.querySelector(".profile-office")?.textContent).toBe("内阁首辅");
   });
 });
