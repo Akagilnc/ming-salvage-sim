@@ -1660,6 +1660,37 @@ def _formal_secret_order_payload(runtime, minister_name, message, *, stream):
     return runtime.chat(minister_name, message, "secret_order")
 
 
+def _http_typed_secret_order_payload(client, minister_name, message, *, stream):
+    """#1566：经真实 FastAPI POST 读出机面 payload（sync JSON / stream SSE done）。"""
+    body = {"message": message, "intent": "secret_order"}
+    path = (
+        f"/api/ministers/{minister_name}/chat/stream"
+        if stream
+        else f"/api/ministers/{minister_name}/chat"
+    )
+    response = client.post(path, json=body)
+    assert response.status_code == 200, response.text
+    if not stream:
+        return response.json()
+    events: list[tuple[str, dict]] = []
+    for block in response.text.strip().split("\n\n"):
+        if not block.strip():
+            continue
+        ev_name = ""
+        data_raw = ""
+        for line in block.splitlines():
+            if line.startswith("event: "):
+                ev_name = line[7:].strip()
+            elif line.startswith("data: "):
+                data_raw += line[6:]
+        if ev_name and data_raw:
+            events.append((ev_name, json.loads(data_raw)))
+    assert not any(name == "error" for name, _ in events), f"stream errored: {events!r}"
+    done = [data for name, data in events if name == "done"]
+    assert done, f"expected done SSE, got {events!r}"
+    return done[0]
+
+
 @pytest.mark.parametrize("stream", [False, True], ids=["sync", "stream"])
 def test_web_chat_formal_secret_order_hangs_night_without_enter(game, stream):
     """#1566：场外正式密令挂当前夜轮，不 consume 传召、不入殿；
@@ -1751,6 +1782,35 @@ def test_web_chat_formal_secret_order_hangs_night_without_enter(game, stream):
     open_night = an.get_open_night(db)
     assert open_night is not None
     assert str(open_night.get("status") or "") == "open"
+
+
+@pytest.mark.parametrize("stream", [False, True], ids=["sync", "stream"])
+def test_http_typed_secret_order_intent_forwards_to_webgame(game, stream, monkeypatch):
+    """#1566：HTTP typed-intent 接缝——ChatRequest.intent 经真实 FastAPI 入口到 WebGame。
+
+    场外大臣 + 无密令前缀正文；删 api_chat / api_chat_stream 的 request.intent 转发须转红
+    （远人 SUMMON admission 截获，密令 pending 不落）。
+    """
+    import web_app
+
+    db, state, content = game
+    remote = _set_place(game, "洪承畴", location="shaanxi")
+    runtime = _secret_order_runtime(db, state, content, stream=stream)
+    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
+    monkeypatch.setattr(web_app, "web_game", runtime)
+
+    # 无 _SECRET_PREFIXES 前缀：仅靠 JSON intent 入密令路（禁前缀自救掩盖转发洞）。
+    edict = "陕北赈抚探报\n速报陕西军情。"
+    payload = _http_typed_secret_order_payload(
+        TestClient(web_app.app), remote.name, edict, stream=stream,
+    )
+    assert not payload.get("admission"), (
+        f"typed intent 须走密令路，不得 SUMMON admission，got {payload!r}"
+    )
+    pid = int(payload.get("pending_action_id") or 0)
+    _assert_secret_order_pending(
+        db, state, minister_name=remote.name, pid=pid, edict=edict,
+    )
 
 
 def test_web_chat_ledger_append_failure_has_no_side_effects(game, monkeypatch):
