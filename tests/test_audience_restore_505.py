@@ -411,7 +411,7 @@ class _FailingRetrySession(_RetrySession):
     """session.chat 在返回前 durable 落副作用（改 characters.loyalty）随后失败——
     测重试失败尾声：本次落下的副作用回滚、问话不删、翻回 interrupted 保持可再重试。"""
 
-    def chat(self, minister_name, message, *, chat_turn_id=0):
+    def chat(self, minister_name, message, *, chat_turn_id=0, explicit_secret_order=False):
         assert chat_turn_id != 0
         self.db.conn.execute(
             "UPDATE characters SET loyalty = loyalty + 40 WHERE name = ?", (self._minister,)

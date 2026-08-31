@@ -2216,28 +2216,12 @@ class WebGame:
                         self.session.start_chat_turn_scene(minister_name, chat_turn_id)
                 # #634 P5：重试同形——判官拍与回话并行发出（不依赖本轮回话）。
                 self._dispatch_relation_judge(chat_turn_id)
-                chat_signature = inspect.signature(self.session.chat)
-                try:
-                    chat_signature.bind(
-                        minister_name, question, chat_turn_id=chat_turn_id,
-                        explicit_secret_order=retry_route["explicit_secret_order"],
-                    )
-                except TypeError:
-                    try:
-                        chat_signature.bind(
-                            minister_name, question, chat_turn_id=chat_turn_id,
-                        )
-                    except TypeError:
-                        result = self.session.chat(minister_name, question)
-                    else:
-                        result = self.session.chat(
-                            minister_name, question, chat_turn_id=chat_turn_id,
-                        )
-                else:
-                    result = self.session.chat(
-                        minister_name, question, chat_turn_id=chat_turn_id,
-                        explicit_secret_order=retry_route["explicit_secret_order"],
-                    )
+                # #1566：生产契约直调（chat_turn_id + explicit_secret_order）；禁签名探测降级。
+                result = self.session.chat(
+                    minister_name, question,
+                    chat_turn_id=chat_turn_id,
+                    explicit_secret_order=retry_route["explicit_secret_order"],
+                )
                 proposed = None
                 if result.proposed_directive is not None:
                     d = result.proposed_directive
