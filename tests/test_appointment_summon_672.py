@@ -96,51 +96,6 @@ def _runtime_for_public(db, state, content):
     return runtime
 
 
-def test_decree_prefix_appointment_summon_typed_office_path(game, monkeypatch):
-    """#1683：显式拟旨前缀 + typed appointment → office/appointment dossier 真源；
-    顺颁后 office 已授；summon_after 才写 transit；前缀零 extract LLM。
-    打回/留中零行止契约复用 test_appointment_summon_rejected_leaves_no_travel。"""
-    db, state, content = game
-    before = _yuan_row(db)
-
-    pending, origin = _stage_yuan_appointment_summon(
-        game, monkeypatch,
-        player_message="拟旨如下：起复袁崇焕为辽东巡抚，传召入京。",
-        ban_appointment_extract=True,
-    )
-    payload = json.loads(pending["payload_json"])
-    assert payload["name"] == "袁崇焕"
-    assert payload["office"] == "辽东巡抚"
-    # 颁布前人物不动、无 transit
-    mid_stage = _yuan_row(db)
-    assert (mid_stage["status"], mid_stage["office"], mid_stage["transit_to"] or "") == (
-        before["status"], before["office"], before["transit_to"] or "",
-    )
-
-    dossier_id = _close_office_to_dossier(db, state, content, pending["id"])
-    dossier = next(d for d in db.list_decree_dossiers() if int(d["id"]) == int(dossier_id))
-    assert dossier["action_type"] == "appointment"
-    assert int(dossier.get("pending_action_id") or 0) == int(pending["id"])
-
-    settle_with_delta(
-        state, db, {}, before_turn=int(state.turn), content=content,
-        dossier_verdicts=[{"dossier_id": dossier_id, "decision": "promulgated"}],
-    )
-    after = _yuan_row(db)
-    assert (after["status"], after["office"], after["location"], after["transit_to"]) == (
-        "active", "辽东巡抚", before["location"], "beizhili",
-    )
-    # 人物效果由 appointment dossier payload 物化（非仅 special_decree + extractor）
-    assert origin.startswith("office:")
-    office_recs = db.conn.execute(
-        "SELECT dossier_id, character_name, office_title FROM office_change_records "
-        "WHERE dossier_id=? AND character_name=?",
-        (int(dossier_id), "袁崇焕"),
-    ).fetchall()
-    assert office_recs, "appointment dossier 须写入 office_change_records"
-    assert any("辽东巡抚" in str(r["office_title"] or "") for r in office_recs)
-
-
 def test_yuan_keli_appointment_no_summon_stays_henan(game, monkeypatch):
     """#1683 原票：拟旨起复袁可立巡抚登莱、无传召 → 授官驻河南、过月不误启程。"""
     import web_app

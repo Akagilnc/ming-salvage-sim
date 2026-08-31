@@ -2757,10 +2757,7 @@ def extract_appointment_action(
     llm_config: Any = None,
 ) -> Dict[str, Any]:
     """LLM 判皇帝本轮口头是否在任免某人（任命/罢免），返回结构化动作。失败/无 → 「无」。
-
-    只判自然语言。显式「拟旨如下：」前缀路径不得调用本函数（#344 US3 零 LLM）；
-    前缀下 typed appointment 候选走 action_materialize 单轨 stage office（#1683 / #1503 同构），
-    不再旁路到 settlement extractor office_changes 作人物效果真源。
+    只判自然语言；显式「拟旨如下：」里的任免走 extractor 的 office_changes，不在此。
 
     字段/枚举唯一真源 = appointment catalog FieldSpec（含 summon_after）；
     串行 fallback 与分类器同形，禁止手写第二份字段定义。

@@ -4,7 +4,7 @@
 apply_dossier_promulgation→_commit_office_action。
 P5：appointment 须在结构化 intent/candidates 中给出（multi draft+appointment）；
 分类器已跑且无 appointment 结构 → 禁串行 extract_appointment_action（#568）。
-前缀「拟旨如下」仍禁 LLM 补抽（#344 US3）；structured appointment 走 office 单轨（#1683）。
+前缀「拟旨如下」任免走随诏 extractor office_changes（#344 US3），不入并行抽取。
 """
 
 from __future__ import annotations
@@ -77,7 +77,7 @@ def test_draft_reinstatement_yuan_stages_office_and_lands_same_turn(game, monkey
     """#1380：拟旨+起复结构化 multi → office 暂存；确认/颁诏同回合
     active + 新职 + office_change_records≥1；跨月 talent_pool 不再罢居。
 
-    非前缀路（前缀 structured 见 #1683）。
+    非前缀路（#344 US3：前缀任免走 extractor office_changes）。
     P5：appointment 走结构化 candidates，禁依赖串行 extract_appointment_action。
     """
     from web_app import in_talent_pool
