@@ -164,7 +164,8 @@
 }
 
 .desk-compose textarea {
-  flex: 1 1 auto;
+  flex: 1 1 0;
+  min-height: 0;
   line-height: 1.6;
   font-family: "Noto Serif SC", "Songti SC", serif;
 }
@@ -188,6 +189,38 @@
   overflow: auto;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* ≤1100px 单列高链（权威只在本文件）：纪念可缩可滚，御笔占余量，错误条让高 */
+@media (max-width: 1100px) {
+  .desk-columns {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 0.15fr) minmax(0, 0.85fr);
+    overflow-y: auto;
+  }
+
+  .desk-memorials {
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .desk-memorials .directive-list {
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .desk-compose {
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .edict-stage-desk > .error-line {
+    max-height: min(18%, 96px);
+  }
+
+  .decree-scroll {
+    width: 100%;
+  }
 }
 
 .desk-footer {

@@ -97,31 +97,33 @@ describe.sequential("medium: shared Electron geometry", () => {
       const containsRect = (outer, inner) =>
         inner.left >= outer.left && inner.right <= outer.right
         && inner.top >= outer.top && inner.bottom <= outer.bottom;
-      const hitAtCenter = (el) => {
-        const r = el.getBoundingClientRect();
-        return document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) === el;
-      };
-      const clipVisibleHeight = (el, container) => {
+      const clipVisibleRect = (el, container) => {
         const er = el.getBoundingClientRect();
         const cr = container.getBoundingClientRect();
-        return Math.max(0, Math.min(er.bottom, cr.bottom) - Math.max(er.top, cr.top));
+        return {
+          left: Math.max(er.left, cr.left),
+          right: Math.min(er.right, cr.right),
+          top: Math.max(er.top, cr.top),
+          bottom: Math.min(er.bottom, cr.bottom),
+        };
       };
 
       const modalRect = modal.getBoundingClientRect();
       const footerRect = footer.getBoundingClientRect();
       const buttonRect = button.getBoundingClientRect();
 
-      // Phase 1: initial geometry — no scrollIntoView.
-      alert.scrollTop = 0;
+      // Resting geometry first — Class A before any scrollIntoView / scrollTop mutation.
       const alertRect0 = alert.getBoundingClientRect();
       const taRect0 = textarea.getBoundingClientRect();
-      const alertContents = document.createRange();
-      alertContents.selectNodeContents(alert);
-      const startReachable = alertContents.getBoundingClientRect().top >= alertRect0.top + alert.clientTop;
-      alert.scrollTop = alert.scrollHeight;
-      const endReachable = alert.scrollHeight <= alert.clientHeight
-        || Math.ceil(alert.scrollTop + alert.clientHeight) >= alert.scrollHeight;
-      alert.scrollTop = 0;
+      const lineHeight = Number.parseFloat(getComputedStyle(textarea).lineHeight) || 0;
+      const minEditable = 2 * lineHeight;
+      const taVis = clipVisibleRect(textarea, cols);
+      const taVisH = Math.max(0, taVis.bottom - taVis.top);
+      const twoLines = taVisH >= minEditable;
+      const hitEl = taVisH > 0
+        ? document.elementFromPoint((taVis.left + taVis.right) / 2, (taVis.top + taVis.bottom) / 2)
+        : null;
+      const textareaHit = !!hitEl && (hitEl === textarea || textarea.contains(hitEl));
 
       const buttonHit = document.elementFromPoint(
         buttonRect.left + buttonRect.width / 2,
@@ -135,7 +137,18 @@ describe.sequential("medium: shared Electron geometry", () => {
         && alertBg !== 'rgba(0, 0, 0, 0)'
         && alertBg !== 'rgba(0,0,0,0)';
 
-      const phase1 = {
+      // Alert path reachability (alert-local scroll only; compose already measured).
+      const alertContents = document.createRange();
+      alertContents.selectNodeContents(alert);
+      const startReachable = alertContents.getBoundingClientRect().top >= alertRect0.top + alert.clientTop;
+      alert.scrollTop = alert.scrollHeight;
+      const endReachable = alert.scrollHeight <= alert.clientHeight
+        || Math.ceil(alert.scrollTop + alert.clientHeight) >= alert.scrollHeight;
+      alert.scrollTop = 0;
+
+      return {
+        viewportWidth: innerWidth,
+        viewportHeight: innerHeight,
         alertInModal: containsRect(modalRect, alertRect0),
         footerInModal: containsRect(modalRect, footerRect),
         buttonInModal: containsRect(modalRect, buttonRect),
@@ -148,20 +161,6 @@ describe.sequential("medium: shared Electron geometry", () => {
         alertBgOpaque,
         buttonEnabled: !button.disabled,
         buttonHit,
-      };
-
-      // Phase 2: after scrollIntoView — editable floor remains two lines.
-      textarea.scrollIntoView({ block: 'nearest' });
-      const lineHeight = Number.parseFloat(getComputedStyle(textarea).lineHeight) || 0;
-      const minEditable = 2 * lineHeight;
-      const taVisH = clipVisibleHeight(textarea, cols);
-      const twoLines = textarea.clientHeight >= minEditable && taVisH >= minEditable;
-      const textareaHit = hitAtCenter(textarea);
-
-      return {
-        viewportWidth: innerWidth,
-        viewportHeight: innerHeight,
-        ...phase1,
         twoLines,
         textareaHit,
       };
