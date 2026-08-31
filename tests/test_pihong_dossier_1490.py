@@ -3283,7 +3283,7 @@ def test_1620_layer_a_money_grant_requires_positive_amount():
 
 
 def test_1620_materialize_rejects_illegal_account_like_shape(game):
-    """#1620：materialize 真入口太仓→国库（resolve_grant_account 唯一权威）。"""
+    """#1620：真 pipeline——太仓→国库成案；缺/0/bool/float amount 写前失败零 pending。"""
     import types
 
     from ming_sim.action_materialize import MaterializeCtx, run_materialize_pipeline
@@ -3297,29 +3297,39 @@ def test_1620_materialize_rejects_illegal_account_like_shape(game):
         "AND name!=? LIMIT 1",
         (actor,),
     ).fetchone()["name"]
-    ctx = MaterializeCtx(
-        session=types.SimpleNamespace(
-            db=db, state=types.SimpleNamespace(turn=int(state.turn)),
-        ),
-        character=types.SimpleNamespace(name=actor, office_type="文官"),
-        player_message="赏银。",
-        reply="臣请奉行：赏银。请陛下定夺准驳。",
-        message_text="赏银。",
-        explicit_prefixed=False,
-        has_directive=False,
-        pend_for_minister=[],
-        out={},
-        intent={
-            "kind": "grant_allocation",
-            "grant_action": "赏赉",
-            "amount": 10,
-            "account": "太仓",
-            "name": target,
-        },
-        intent_kind="grant_allocation",
-        llm_config=None,
-        intent_candidates=None,
-    )
+
+    def _count_pending() -> int:
+        return int(db.conn.execute(
+            "SELECT COUNT(*) AS n FROM pending_actions WHERE status='pending'"
+        ).fetchone()["n"])
+
+    def _run(amount, account="国库"):
+        return MaterializeCtx(
+            session=types.SimpleNamespace(
+                db=db, state=types.SimpleNamespace(turn=int(state.turn)),
+            ),
+            character=types.SimpleNamespace(name=actor, office_type="文官"),
+            player_message="赏银。",
+            reply="臣请奉行：赏银。请陛下定夺准驳。",
+            message_text="赏银。",
+            explicit_prefixed=False,
+            has_directive=False,
+            pend_for_minister=[],
+            out={},
+            intent={
+                "kind": "grant_allocation",
+                "grant_action": "赏赉",
+                "amount": amount,
+                "account": account,
+                "name": target,
+            },
+            intent_kind="grant_allocation",
+            llm_config=None,
+            intent_candidates=None,
+        )
+
+    # 合法正整数 + 太仓→国库
+    ctx = _run(10, account="太仓")
     run_materialize_pipeline(ctx)
     pending_id = ctx.out.get("pending_action_id")
     assert pending_id, "太仓应归一国库并成案"
@@ -3329,6 +3339,15 @@ def test_1620_materialize_rejects_illegal_account_like_shape(game):
     payload = json.loads(str(row["payload_json"] or "{}"))
     assert str(payload.get("account") or "") == "国库"
     assert int(payload.get("amount") or 0) == 10
+
+    # normalized classifier candidate：缺/0/bool/float 均须 DB 写前失败且零新增 pending
+    before = _count_pending()
+    for bad in (None, 0, True, 1.5):
+        bad_ctx = _run(bad)
+        with pytest.raises(ValueError):
+            run_materialize_pipeline(bad_ctx)
+        assert bad_ctx.out.get("pending_action_id") in (None, 0, "")
+        assert _count_pending() == before
 
 
 def test_657_follow_draft_ignores_client_field_overlay(game):

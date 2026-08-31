@@ -1532,10 +1532,14 @@ def stage_grant_allocation_candidate(
             return 0
         if not body:
             return 0
-        try:
-            n = int(amount or 0)
-        except (TypeError, ValueError):
-            n = 0
+        # #1620：非协饷写 pending 前消费 shape 唯一权威；删宽松 int(amount or 0)
+        shaped = require_grant_allocation_shape(
+            grant_action=action,
+            amount=amount,
+            account=account,
+        )
+        n = int(shaped["amount"]) if "amount" in shaped else 0
+        account = str(shaped.get("account") or "")
 
     pending_rows = list(pend_for_minister or [])
     if not pending_rows:
