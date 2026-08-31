@@ -73,6 +73,7 @@ describe.sequential("medium: shared Electron geometry", () => {
       startReachable: boolean;
       endReachable: boolean;
       alertFooterDisjoint: boolean;
+      alertTaDisjoint: boolean;
       taFooterDisjoint: boolean;
       taButtonDisjoint: boolean;
       buttonEnabled: boolean;
@@ -145,6 +146,7 @@ describe.sequential("medium: shared Electron geometry", () => {
         startReachable,
         endReachable,
         alertFooterDisjoint: !overlaps(alertRect0, footerRect),
+        alertTaDisjoint: !overlaps(alertRect0, taVis),
         taFooterDisjoint: !overlaps(taRect0, footerRect),
         taButtonDisjoint: !overlaps(taRect0, buttonRect),
         buttonEnabled: !button.disabled,
@@ -166,6 +168,7 @@ describe.sequential("medium: shared Electron geometry", () => {
       expect(result.startReachable, `${result.viewportWidth}x${result.viewportHeight} startReachable`).toBe(true);
       expect(result.endReachable, `${result.viewportWidth}x${result.viewportHeight} endReachable`).toBe(true);
       expect(result.alertFooterDisjoint, `${result.viewportWidth}x${result.viewportHeight} alertFooterDisjoint`).toBe(true);
+      expect(result.alertTaDisjoint, `${result.viewportWidth}x${result.viewportHeight} alertTaDisjoint`).toBe(true);
       expect(result.taFooterDisjoint, `${result.viewportWidth}x${result.viewportHeight} taFooterDisjoint`).toBe(true);
       expect(result.taButtonDisjoint, `${result.viewportWidth}x${result.viewportHeight} taButtonDisjoint`).toBe(true);
       expect(result.buttonEnabled, `${result.viewportWidth}x${result.viewportHeight} buttonEnabled`).toBe(true);
