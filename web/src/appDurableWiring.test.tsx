@@ -53,6 +53,9 @@ const makeState = (turn: number, directives: unknown[] = [], ministers: unknown[
 
 const tick = () => act(async () => { await new Promise((r) => setTimeout(r, 0)); });
 const click = (el: Element | null | undefined) => act(() => { el?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+const cmdByCaption = (host: HTMLElement, caption: string) =>
+  Array.from(host.querySelectorAll("button")).find((b) => (b.getAttribute("aria-label") || "").startsWith(caption)) || null;
+const edictCommand = (host: HTMLElement) => cmdByCaption(host, "拟诏");
 const findButton = (host: HTMLElement, text: string) =>
   Array.from(host.querySelectorAll("button")).find((b) => (b.textContent || "").includes(text));
 
@@ -434,7 +437,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       await vi.waitFor(() => expect(stateCalls).toBeGreaterThan(stateCallsBeforeDone));
     });
     expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull();
-    expect(findButton(host, "盖玺颁诏过月")?.hasAttribute("disabled")).toBe(false);
+    expect(host.querySelector<HTMLButtonElement>(".desk-footer button")?.disabled).toBe(false);
   });
 
   it("#1475 召对顶栏不重复左卡身份，横幅压成 bare 回收正文", async () => {
@@ -917,12 +920,17 @@ const settlementBaseState = (phase: string, extra: Record<string, unknown> = {})
   ...extra,
 });
 
-const stubSettlementFetch = (state: unknown) => {
-  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+const stubSettlementFetch = (
+  state: unknown,
+  saves: unknown[] = [],
+  load?: (url: URL, init?: RequestInit) => Promise<Response> | Response,
+) => {
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     const u = new URL(String(url), "http://t.local");
     if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
     if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
-    if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+    if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves });
+    if (u.pathname.includes("/api/saves/") && u.pathname.endsWith("/load") && load) return load(u, init);
     if (u.pathname.endsWith("/api/game/state")) return jsonResp(state);
     if (u.pathname.endsWith("/api/history/turns")) return jsonResp({
       turns: [{ kind: "month", turn: 4, year: 1627, period: 9, has_report: true, has_attendant: false, has_directive: true }],
@@ -1082,7 +1090,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     }));
     const host = await mountApp();
     expect(host.querySelector('[data-testid="settle-resume"]')).toBeNull();
-    await click(cmdByCaption(host, "拟诏·盖玺颁诏过月"));
+    await click(edictCommand(host));
     await tick();
     await act(async () => {
       await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
@@ -1153,17 +1161,21 @@ const closeOpenOverlay = async (host: HTMLElement) => {
   await tick();
 };
 
-const cmdByCaption = (host: HTMLElement, caption: string) =>
-  Array.from(host.querySelectorAll("button")).find((b) => (b.getAttribute("aria-label") || "").startsWith(`${caption}：`)) || null;
-
 describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
   it("只读组逐面可达且吃月初叠影；关闭组不可达且半程面不泄漏", async () => {
     // phase=settling：续跑小条不挡 HUD；settlement_display 叠影照常
     // #1366：核账期（settling/awaiting_decision）不得下发半程已结算三项——只给结算前
     // 事实（全军名义应发），settled_army_pay 由后端置 null，与顶栏月初快照同一展示边界。
+    let releaseFirstLoad!: (response: Response) => void;
+    const firstLoad = new Promise<Response>((resolve) => { releaseFirstLoad = resolve; });
+    const loadRequests: Array<{ path: string; method: string }> = [];
     stubSettlementFetch({
       ...settlementBaseState("settling"),
       budget: { ...settlementBaseState("settling").budget, settled_army_pay: null },
+    }, [{ name: "auto_begin", mtime: 1, size: 1024 }], (url, init) => {
+      loadRequests.push({ path: url.pathname, method: String(init?.method || "GET") });
+      if (loadRequests.length === 1) return firstLoad;
+      return jsonResp({ turn: { year: 1627, period: 10, turn: 5 } });
     });
     const host = await mountApp();
 
@@ -1194,7 +1206,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     await click(cmdByCaption(host, "密令"));
     await tick();
     expect(host.querySelector('[role="dialog"][aria-label="密令进度"]')).toBeNull();
-    await click(cmdByCaption(host, "拟诏·盖玺颁诏过月"));
+    await click(edictCommand(host));
     await tick();
     expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).toBeNull();
 
@@ -1301,12 +1313,51 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     });
     await closeOpenOverlay(host);
 
-    // menu：可开；存档允许
+    // menu：#1702 B 确认门控 + 409 可见且同一行恢复重试（不锁确认文案措辞）。
+    const confirmCalls: boolean[] = [];
+    let confirmNext = false;
+    vi.stubGlobal("confirm", () => {
+      confirmCalls.push(confirmNext);
+      return confirmNext;
+    });
     await click(byAria(host, "游戏菜单"));
     await tick();
     await act(async () => {
-      await vi.waitFor(() => expect(findButton(host, "保存")).toBeTruthy());
+      await vi.waitFor(() => expect(findButton(host, "加载存档")).toBeTruthy());
     });
+    await click(findButton(host, "加载存档"));
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector(".saves-row .menu-btn.primary")).not.toBeNull());
+    });
+    const loadButton = host.querySelector(".saves-row .menu-btn.primary") as HTMLButtonElement;
+    // confirm false → 零 /load POST
+    confirmNext = false;
+    await click(loadButton);
+    await tick();
+    expect(confirmCalls.length).toBeGreaterThanOrEqual(1);
+    expect(loadRequests).toEqual([]);
+    // confirm true → POST；409 可见；同行重试第二次 POST
+    confirmNext = true;
+    await click(loadButton);
+    expect(loadRequests).toEqual([{ path: "/api/saves/auto_begin/load", method: "POST" }]);
+    expect(loadButton.disabled).toBe(true);
+    await act(async () => {
+      releaseFirstLoad({
+        ok: false,
+        status: 409,
+        statusText: "Conflict",
+        json: async () => ({ detail: { code: "write_busy", message: "busy" } }),
+      } as Response);
+    });
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector(".menu-error")).not.toBeNull());
+    });
+    expect(loadButton.disabled).toBe(false);
+    await click(loadButton);
+    await act(async () => {
+      await vi.waitFor(() => expect(loadRequests).toHaveLength(2));
+    });
+    expect(loadRequests[1]).toEqual({ path: "/api/saves/auto_begin/load", method: "POST" });
     await closeOpenOverlay(host);
 
     // closed_issues：只读可达；半程议题零泄漏；不误弹局势了结全屏
@@ -1440,7 +1491,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="密令进度"]')).not.toBeNull());
     });
     await closeOpenOverlay(host);
-    await click(cmdByCaption(host, "拟诏·盖玺颁诏过月"));
+    await click(edictCommand(host));
     await tick();
     await act(async () => {
       await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
@@ -1477,16 +1528,12 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     await click(byAria(host, "朝堂·召见大臣"));
     await tick();
     expect(host.querySelector(".court-drawer.open")).not.toBeNull();
-    await click(cmdByCaption(host, "拟诏·盖玺颁诏过月"));
+    await click(edictCommand(host));
     await tick();
     await act(async () => {
       await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
     });
     expect(host.querySelector(".court-drawer.open")).toBeNull();
-    // #1277：drafts>0 副标题名实——去「退朝」描述，与页脚盖玺颁诏过月自洽。
-    const edictDialog = host.querySelector('[role="dialog"][aria-label="诏书草案"]');
-    expect(edictDialog?.textContent).toContain("盖玺颁诏即草案成案并过月");
-    expect(edictDialog?.textContent).not.toContain("退朝即草案成案并过月");
   });
 
   it("#1454 拟诏台开着：木牌改收起可点关掉，层带安全区且主钮仍独占盖玺文案", async () => {
@@ -1497,24 +1544,163 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       pending_decisions: [],
     });
     const host = await mountApp();
-    await click(cmdByCaption(host, "拟诏·盖玺颁诏过月"));
+    await click(edictCommand(host));
     await tick();
     await act(async () => {
       await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
     });
     const layer = host.querySelector('.fullscreen-layer.edict-safe-cmd[aria-label="诏书草案"]');
     expect(layer).not.toBeNull();
-    // 名实：HUD 木牌不再与 seal-btn-issue 同文；台内主钮仍独占「盖玺颁诏过月」
-    expect(cmdByCaption(host, "拟诏·盖玺颁诏过月")).toBeNull();
-    const collapse = cmdByCaption(host, "拟诏·收起");
+    const collapse = edictCommand(host);
     expect(collapse).not.toBeNull();
-    expect(host.querySelector("button.seal-btn-issue")?.textContent).toMatch(/盖玺颁诏过月/);
     // 可点性：点收起木牌关台（非空等、非二次颁诏）
     await click(collapse);
     await tick();
     await act(async () => {
       await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).toBeNull());
     });
+  });
+
+  it("#1560 pending-only 拟诏主钮走 issue/stream 单轨", async () => {
+    const paths: string[] = [];
+    const reload = vi.fn();
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...window.location, reload },
+    });
+    const state = {
+      ...settlementBaseState("player"),
+      directives: [],
+      pending_directive_count: 1,
+      pending_secret_order_count: 0,
+      pending_non_directive_action_count: 0,
+      failed_secret_order_count: 0,
+      turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
+      previous_summary: "",
+      pending_decisions: [],
+    };
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = new URL(String(url), "http://t.local");
+      paths.push(`${init?.method || "GET"} ${u.pathname}`);
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) return jsonResp(state);
+      if (u.pathname.endsWith("/api/decree/issue/stream")) return sseResp("done", { ok: true });
+      if (u.pathname.endsWith("/api/history/turns")) return jsonResp({ turns: [] });
+      if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
+      return jsonResp({});
+    }));
+    const host = await mountApp();
+    await click(edictCommand(host));
+    await tick();
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
+    });
+    const footer = host.querySelector<HTMLButtonElement>(".desk-footer button");
+    expect(footer?.disabled).toBe(false);
+    await click(footer);
+    await act(async () => {
+      await vi.waitFor(() => expect(paths.some((path) => path === "POST /api/decree/issue/stream")).toBe(true));
+    });
+    expect(paths.some((path) => path === "POST /api/decree/advance_without_edict")).toBe(false);
+  });
+
+  it("#1560 failed-only：取消确认零请求；确认后 POST advance", async () => {
+    const paths: string[] = [];
+    const reload = vi.fn();
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...window.location, reload },
+    });
+    const confirm = vi.fn(() => false);
+    vi.stubGlobal("confirm", confirm);
+    const failedOnly = {
+      ...settlementBaseState("player"),
+      directives: [],
+      pending_directive_count: 0,
+      pending_secret_order_count: 0,
+      pending_non_directive_action_count: 0,
+      failed_secret_order_count: 1,
+      turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
+      previous_summary: "",
+      pending_decisions: [],
+    };
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = new URL(String(url), "http://t.local");
+      paths.push(`${init?.method || "GET"} ${u.pathname}`);
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) return jsonResp(failedOnly);
+      if (u.pathname.endsWith("/api/decree/advance_without_edict")) {
+        return jsonResp({
+          state: { ...failedOnly, turn: { ...failedOnly.turn, turn: 6 } },
+          pending_action_failures: [],
+        });
+      }
+      if (u.pathname.endsWith("/api/decree/issue/stream")) return sseResp("done", { ok: true });
+      if (u.pathname.endsWith("/api/history/turns")) return jsonResp({ turns: [] });
+      if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
+      return jsonResp({});
+    }));
+
+    const host = await mountApp();
+    await click(edictCommand(host));
+    await tick();
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
+    });
+    const footer = host.querySelector<HTMLButtonElement>(".desk-footer button");
+    expect(footer?.disabled).toBe(false);
+
+    const settlePostsBefore = paths.filter((p) => p.startsWith("POST /api/decree/")).length;
+    await click(footer);
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(paths.filter((p) => p.startsWith("POST /api/decree/")).length).toBe(settlePostsBefore);
+
+    confirm.mockReturnValue(true);
+    await click(footer);
+    await act(async () => {
+      await vi.waitFor(() => expect(paths.some((p) => p === "POST /api/decree/advance_without_edict")).toBe(true));
+    });
+    expect(paths.some((p) => p === "POST /api/decree/issue/stream")).toBe(false);
+  });
+
+  it("#1560 真空拟诏主钮禁用，不发结算请求", async () => {
+    const paths: string[] = [];
+    const vacuum = {
+      ...settlementBaseState("player"),
+      directives: [],
+      pending_directive_count: 0,
+      pending_secret_order_count: 0,
+      pending_non_directive_action_count: 0,
+      failed_secret_order_count: 0,
+      turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
+      previous_summary: "",
+      pending_decisions: [],
+    };
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = new URL(String(url), "http://t.local");
+      paths.push(`${init?.method || "GET"} ${u.pathname}`);
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) return jsonResp(vacuum);
+      if (u.pathname.endsWith("/api/history/turns")) return jsonResp({ turns: [] });
+      if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
+      return jsonResp({});
+    }));
+    const host = await mountApp();
+    await click(edictCommand(host));
+    await tick();
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
+    });
+    const footer = host.querySelector<HTMLButtonElement>(".desk-footer button");
+    expect(footer?.disabled).toBe(true);
+    await click(footer);
+    expect(paths.some((p) => p.startsWith("POST /api/decree/"))).toBe(false);
   });
 
   it("#1305 court/harem nav 互斥：开后宫即关朝堂", async () => {
@@ -1539,5 +1725,57 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     await click(byAria(host, "后宫"));
     await tick();
     expect(host.querySelector(".harem-drawer.open")).toBeNull();
+  });
+
+  // 组件层已证 offstage 卡结构/回调；此处只证 App 真链：起复 → 既有拟诏面，且无 chat/写 POST。
+  it("#1402 offstage 起复接 openModal(edict)，不触发召对写", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = new URL(String(url), "http://t.local");
+      calls.push(`${init?.method || "GET"} ${u.pathname}`);
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) {
+        return jsonResp({
+          ...settlementBaseState("player"),
+          turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
+          previous_summary: "",
+          pending_decisions: [],
+          talent_pool: [{
+            name: "刘鸿训", office: "", office_type: "", faction: "", style: "",
+            status: "offstage", status_label: "罢居", status_reason: "因病乞休",
+            summary: "前辅", favorite: false, skills: [],
+          }],
+        });
+      }
+      if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
+      return jsonResp({});
+    }));
+    const host = await mountApp();
+    await click(byAria(host, "朝堂·召见大臣"));
+    await tick();
+    // 夹具保证仅 talent_pool 有 offstage → 仅一分组会挂起复键。
+    // 按可见结果探测入口，不锁分组文案 / data-* / DOM 下标。
+    let resumeBtn: Element | null = host.querySelector(
+      ".court-drawer .minister-card button.minister-resume-btn",
+    );
+    if (!resumeBtn) {
+      for (const btn of Array.from(host.querySelectorAll(".court-drawer .segmented button"))) {
+        await click(btn);
+        await tick();
+        resumeBtn = host.querySelector(".court-drawer .minister-card button.minister-resume-btn");
+        if (resumeBtn) break;
+      }
+    }
+    expect(resumeBtn).not.toBeNull();
+    await click(resumeBtn);
+    await tick();
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector(".fullscreen-modal.modal-bg-edict")).not.toBeNull());
+    });
+    expect(host.querySelector(".fullscreen-modal.modal-bg-chat")).toBeNull();
+    expect(calls.some((c) => c.startsWith("POST ") && c.includes("secret_order"))).toBe(false);
+    expect(calls.some((c) => c.startsWith("POST ") && c.includes("/chat"))).toBe(false);
   });
 });

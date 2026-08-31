@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
+import sqlite3
 from types import SimpleNamespace
 
 import pytest
@@ -961,6 +963,40 @@ def test_continue_load_save_reset_reach_hud_zero_llm_calls(tmp_path, monkeypatch
         seed.favorites = {seed_marker}
         seed.db.kv_set("favorites", json.dumps(sorted(seed.favorites), ensure_ascii=False))
         assert db_path.exists()
+
+        # 构造同一回合可区分的 begin/preresolve 自动档；热加载不得改写任一源档。
+        begin_marker = "__begin_1702__"
+        preresolve_marker = "__preresolve_1702__"
+        seed.favorites = {begin_marker}
+        seed.db.kv_set("favorites", json.dumps(sorted(seed.favorites), ensure_ascii=False))
+        begin_path = Path(seed.session.auto_save("begin"))
+        seed.favorites = {preresolve_marker}
+        seed.db.kv_set("favorites", json.dumps(sorted(seed.favorites), ensure_ascii=False))
+        preresolve_path = Path(seed.session.auto_save("preresolve"))
+        begin_bytes = begin_path.read_bytes()
+        preresolve_bytes = preresolve_path.read_bytes()
+
+        # 真正建立下一回合的 end_turn 产出 begin；重复普通 begin_turn 刷新不改写内容。
+        seed.state.turn += 1
+        seed.state.period += 1
+        seed.db.save_state(seed.state)
+        seed.session.end_turn()
+        next_begin_path = next((ud / "saves").glob(
+            f"auto_*_{seed.state.year:04d}_{seed.state.period:02d}_t{seed.state.turn:04d}_begin.db"
+        ))
+        next_begin_bytes = next_begin_path.read_bytes()
+        after_begin_marker = "__after_begin_1702__"
+        seed.favorites = {after_begin_marker}
+        seed.db.kv_set("favorites", json.dumps(sorted(seed.favorites), ensure_ascii=False))
+        seed.session.begin_turn()
+        seed.session.begin_turn()
+        assert next_begin_path.read_bytes() == next_begin_bytes
+        with sqlite3.connect(next_begin_path) as checkpoint:
+            archived_favorites = json.loads(checkpoint.execute(
+                "SELECT value FROM kv_store WHERE key = 'favorites'"
+            ).fetchone()[0])
+        assert archived_favorites == [preresolve_marker]
+        assert after_begin_marker in json.loads(seed.db.kv_get("favorites"))
     finally:
         try:
             seed.session.close()
@@ -971,19 +1007,39 @@ def test_continue_load_save_reset_reach_hud_zero_llm_calls(tmp_path, monkeypatch
     cont = web_app.WebGame(fresh=False)
     try:
         _assert_hud(cont.state_payload())
-        assert seed_marker in cont.favorites, (
-            "continue 须加载 seed 写入的可辨识持久状态，证明读的是既存主库"
+        assert after_begin_marker in cont.favorites, (
+            "continue 须加载最后写入的可辨识持久状态，证明读的是既存主库"
         )
         cont.save_to("slot_a")
 
-        # load_save：热替换主 DB
-        cont.load_save("slot_a")
+        # load_save：真实热替换不改写源自动档，并可切回原月初 begin 状态继续写。
+        cont.load_save(preresolve_path.stem)
         _assert_hud(cont.state_payload())
-        assert seed_marker in cont.favorites
+        assert preresolve_marker in cont.favorites
+        assert begin_path.read_bytes() == begin_bytes
+        assert preresolve_path.read_bytes() == preresolve_bytes
 
-        # 重置：清主库重建
+        cont.load_save(begin_path.stem)
+        _assert_hud(cont.state_payload())
+        assert begin_marker in cont.favorites
+        cont.favorites.add(seed_marker)
+        cont.db.kv_set("favorites", json.dumps(sorted(cont.favorites), ensure_ascii=False))
+        assert seed_marker in json.loads(cont.db.kv_get("favorites"))
+
+        # 重置：清主库重建，并为重建后新 campaign 的首月留下唯一 begin。
         cont.reset_game()
         _assert_hud(cont.state_payload())
+        reset_campaign_id = cont.db.kv_get("campaign_id")
+        reset_begin_paths = list((ud / "saves").glob(
+            f"auto_{reset_campaign_id}_{cont.state.year:04d}_{cont.state.period:02d}_"
+            f"t{cont.state.turn:04d}_begin.db"
+        ))
+        assert len(reset_begin_paths) == 1
+        with sqlite3.connect(reset_begin_paths[0]) as checkpoint:
+            archived_turn = checkpoint.execute(
+                "SELECT year, period, turn FROM game_state WHERE id = 1"
+            ).fetchone()
+        assert archived_turn == (cont.state.year, cont.state.period, cont.state.turn)
 
         assert calls == [], f"continue/load_save/重置不应触发 LLM 调用，实得 {calls}"
     finally:

@@ -175,7 +175,7 @@ export function useChatActions({
 
     const fromComposer = text === input;
     // #526 / ADR 0047：退朝钮与手输口令同一收夜管线（chat stream）；
-    // 词表真源在后端 COURT_BREAK_COMMANDS，前端不复制、不旁路 advanceWithoutEdict。
+    // 词表真源在后端 COURT_BREAK_COMMANDS，前端不复制。
     setError("");
     setComposerHint("");
     setChatNotice("");

@@ -51,6 +51,7 @@ from pydantic import BaseModel
 from ming_sim.models import CODEX_DEFAULT_MODEL, CLAUDE_DEFAULT_MODEL, LLMConfig
 from ming_sim.constants import DOSSIER_LINK_TYPES
 from ming_sim.decree_vocabulary import DIRECTIVE_ACTION_TYPES
+from ming_sim.execution_pressure import write_locality_scope_for_target_kind
 from ming_sim.participant_roster import (
     BARE_INSTITUTION_PARTICIPANT_NAMES as _BARE_INSTITUTION_PARTICIPANT_NAMES,
     INSTITUTION_PARTICIPANT_TOKENS as _ASSIGNEE_HINT_INSTITUTION_TOKENS,
@@ -2730,6 +2731,9 @@ def capture_manual_directive_payload(
         # the same structured materialization fields at this capture seam.
         payload["name"] = str(payload.get("target_id") or "").strip()
         payload["_office_action"] = "罢免"
+    # #1685：region 无取舍，入卷前 assembly 强制 single（复用 #654 helper）。
+    if str(payload.get("target_kind") or "").strip() == "region":
+        payload["locality_scope"] = write_locality_scope_for_target_kind("region")
     # #658：互斥权威——纯强推 / 普通 triad；并存响亮拒绝，禁静默吞旨
     from ming_sim.db import (
         classify_directive_structured_kind,

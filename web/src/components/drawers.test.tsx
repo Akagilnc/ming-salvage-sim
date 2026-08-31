@@ -760,6 +760,103 @@ describe("朝堂同衔分座（#1196 呈现层去冲突）", () => {
     expect(onOpenChat.mock.calls[0][0]).toBe(lai);
     expect(onOpenChat.mock.calls[1][0]).toBe(wen);
   });
+
+  it("#1402 offstage 卡：网格与朝班同形——主体非 button、reason 位、起复委派 onOpenEdict", async () => {
+    const offstage = minister({
+      name: "刘鸿训",
+      office: "",
+      status: "offstage",
+      status_label: "罢居",
+      status_reason: "因病乞休",
+    });
+    const onOpenChat = vi.fn();
+    const onOpenEdict = vi.fn();
+    const onUploadPortrait = vi.fn(async () => undefined);
+
+    async function mount(
+      courtMode: boolean,
+      opts: { chatEntryEnabled?: boolean; withPortrait?: boolean } = {},
+    ) {
+      const { chatEntryEnabled = true, withPortrait = false } = opts;
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string) => {
+          if (String(url).includes("/api/court_layout")) {
+            return { ok: true, json: async () => ({ layout: "{}" }) } as Response;
+          }
+          return { ok: true, json: async () => ({}) } as Response;
+        }),
+      );
+      const host = document.createElement("div");
+      document.body.appendChild(host);
+      const root = createRoot(host);
+      await act(async () => {
+        root.render(
+          <MinisterCardList
+            list={[offstage]}
+            portraitPrefix="minister_"
+            selectedMinister=""
+            emptyNote="empty"
+            onOpenChat={onOpenChat}
+            onOpenEdict={onOpenEdict}
+            courtMode={courtMode}
+            chatEntryEnabled={chatEntryEnabled}
+            onUploadPortrait={withPortrait ? onUploadPortrait : undefined}
+            phase={chatEntryEnabled ? undefined : "settling"}
+          />,
+        );
+      });
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      mountedRoots.push({ root, host });
+      return host;
+    }
+
+    for (const courtMode of [false, true]) {
+      onOpenChat.mockClear();
+      onOpenEdict.mockClear();
+      const host = await mount(courtMode);
+      // 单卡夹具：唯一 .minister-card；结构辅 .minister-status-reason / resume btn
+      const card = host.querySelector(".minister-card") as HTMLElement | null;
+      expect(card).toBeTruthy();
+      expect(card!.tagName).not.toBe("BUTTON");
+      expect(card!.querySelector(".minister-status-reason")).not.toBeNull();
+
+      await act(async () => {
+        card!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+      expect(onOpenChat).not.toHaveBeenCalled();
+
+      const resume = card!.querySelector("button.minister-resume-btn") as HTMLButtonElement | null;
+      expect(resume).not.toBeNull();
+      expect(resume!.disabled).toBe(false);
+      await act(async () => {
+        resume!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+      expect(onOpenEdict).toHaveBeenCalledTimes(1);
+      expect(onOpenChat).not.toHaveBeenCalled();
+    }
+
+    // Class1：核账门控——resume 禁点且不调 onOpenEdict
+    onOpenEdict.mockClear();
+    const gatedHost = await mount(false, { chatEntryEnabled: false });
+    const gatedResume = gatedHost.querySelector("button.minister-resume-btn") as HTMLButtonElement | null;
+    expect(gatedResume).not.toBeNull();
+    expect(gatedResume!.disabled).toBe(true);
+    expect(gatedResume!.getAttribute("aria-disabled")).toBe("true");
+    await act(async () => {
+      gatedResume!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onOpenEdict).not.toHaveBeenCalled();
+
+    // Class3：offstage 恢复头像上传入口（基线 chatEntryEnabled）
+    const portraitHost = await mount(false, { withPortrait: true });
+    expect(portraitHost.querySelector(".minister-card .portrait-upload-btn")).not.toBeNull();
+    const portraitGated = await mount(false, { withPortrait: true, chatEntryEnabled: false });
+    expect(portraitGated.querySelector(".minister-card .portrait-upload-btn")).toBeNull();
+  });
 });
 
 describe("#1683 MinisterCardList place ⊥ office DOM", () => {
