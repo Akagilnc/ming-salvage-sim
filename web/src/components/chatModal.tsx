@@ -281,6 +281,12 @@ export function ChatModal({
               {currentMinister.status !== "active" && (
                 <span className={`minister-status status-${currentMinister.status}`}>{currentMinister.status_label}</span>
               )}
+              {currentMinister.transit_to && (
+                <span className="minister-place minister-transit">{currentMinister.transit_to_label || currentMinister.transit_to}</span>
+              )}
+              {!currentMinister.transit_to && currentMinister.location && (
+                <span className="minister-place">{currentMinister.location_label || currentMinister.location}</span>
+              )}
               {currentMinister.office && <span className="profile-office">{currentMinister.office}</span>}
             </p>
           </div>
