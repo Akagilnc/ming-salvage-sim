@@ -123,6 +123,7 @@ export function useChatActions({
       }
       setCanUndoLastChat(false);
       setComposerHint("");
+      setComposerIntent(undefined);
       return;
     }
     resetPanel();
@@ -132,9 +133,18 @@ export function useChatActions({
     }
     setCanUndoLastChat(false);
     setComposerHint("");
+    setComposerIntent(undefined);
     loadMinisterChat(selectedMinister, failureRecoveryMode ? { mergeFailures: true } : undefined)
       .catch((err) => setError(err.message));
   }, [selectedMinister, loadMinisterChat, failureRecoveryMode]);
+
+  // 关召对只 setActiveModal("none"), 不改 selectedMinister / 不走 resetPanel；
+  // composerIntent 是 composer-session 态，离 chat 面必须随 session 死。
+  React.useEffect(() => {
+    if (activeModal !== "chat") {
+      setComposerIntent(undefined);
+    }
+  }, [activeModal]);
 
   const activeMinister = state && selectedMinister
     ? [...state.ministers, ...(state.consorts || [])].find((m) => m.name === selectedMinister) || temporaryActiveMinister

@@ -620,6 +620,67 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     expect(host.querySelector(".chat-system-note")).toBeNull();
   });
 
+  it("#1566 点机密差事不发、退出召对后再发普通问话，POST body 不带残留 intent", async () => {
+    let sentChat: Record<string, unknown> | null = null;
+    const minister = {
+      name: "杨嗣昌", office: "兵部右侍郎", office_type: "兵部", faction: "",
+      style: "", status: "active", status_label: "在朝", summary: "", favorite: false, skills: [],
+    };
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = new URL(String(url), "http://t.local");
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) return jsonResp(makeState(1, [], [minister]));
+      if (u.pathname.endsWith("/api/audience/extraction/pending")) return jsonResp({ count: 0 });
+      if (u.pathname.endsWith("/api/audience/scroll")) return jsonResp({ night_id: 1, messages: [] });
+      if (u.pathname.endsWith("/api/ministers/%E6%9D%A8%E5%97%A3%E6%98%8C/chat/stream") && init?.method === "POST") {
+        sentChat = JSON.parse(String(init.body));
+        return sseResp("done", {
+          history: [], suggestions: [], directives: [], pending_count: 0,
+          pending_action_failures: [], can_undo_last_chat: false, night_id: 1,
+        });
+      }
+      if (u.pathname.endsWith("/api/ministers/%E6%9D%A8%E5%97%A3%E6%98%8C/chat")) {
+        return jsonResp({
+          minister, history: [],
+          suggestions: [{ label: "机密差事", text: "", prefix: true, intent: "secret_order" }],
+          pending_action_failures: [], pending_turn_ids: [], night_id: 1,
+        });
+      }
+      return jsonResp({});
+    }));
+
+    const host = document.createElement("div"); document.body.appendChild(host);
+    await act(async () => { trackRoot(host).render(<App />); });
+    await act(async () => { await vi.waitFor(() => expect(findButton(host, "杨嗣昌")).toBeTruthy()); });
+    await click(host.querySelector('[aria-label="朝堂·召见大臣"]'));
+    await click(findButton(host, "杨嗣昌"));
+    await act(async () => { await vi.waitFor(() => expect(host.querySelector("textarea")).not.toBeNull()); });
+
+    await click(host.querySelector('[data-intent="secret_order"]'));
+    await click(findButton(host, "退出召对"));
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector("textarea")).toBeNull());
+    });
+
+    await click(host.querySelector('[aria-label="朝堂·召见大臣"]'));
+    await click(findButton(host, "杨嗣昌"));
+    await act(async () => { await vi.waitFor(() => expect(host.querySelector("textarea")).not.toBeNull()); });
+
+    const textarea = host.querySelector("textarea") as HTMLTextAreaElement;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(textarea, "边事如何？");
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await click(findButton(host, "发送"));
+    await act(async () => {
+      await vi.waitFor(() => expect(sentChat).not.toBeNull());
+    });
+    expect(sentChat).toEqual({ message: "边事如何？" });
+    expect(sentChat).not.toHaveProperty("intent");
+  });
+
   it("延迟刷新竞争：草案删除后旧 state 刷新迟到不覆盖——新 DOM 权威（beginDurableMutation 代次归属）", async () => {
     let releaseStale!: () => void;
     const staleGate = new Promise<void>((r) => { releaseStale = r; });
