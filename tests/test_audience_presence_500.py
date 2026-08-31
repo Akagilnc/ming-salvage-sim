@@ -85,7 +85,7 @@ def test_dismiss_noop_when_not_present(game):
 def _cli_session(db, state, content):
     from types import SimpleNamespace
 
-    def chat(_name, _question, chat_turn_id=0):
+    def chat(_name, _question, *, chat_turn_id=0, explicit_secret_order=False):
         return SimpleNamespace(
             answer="臣有本奏。", proposed_directive=None, appointed_minister="",
             registered_minister="", displaced_minister="", court_action="",

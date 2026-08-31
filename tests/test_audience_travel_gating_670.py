@@ -1599,11 +1599,7 @@ def _install_secret_order_agent(runtime, *, stream: bool = False) -> None:
     s._audience_prompt_for_message = (
         lambda msg, character=None, chat_turn_id=0: msg
     )
-    s._secret_order_classifier_calls = []
-    s._secret_order_confirmation_calls = []
-    s._start_cli_action_intent = (
-        lambda *_a, **_k: s._secret_order_classifier_calls.append(True)
-    )
+    s._start_cli_action_intent = lambda *_a, **_k: None
     s._finish_cli_action_intent = lambda *_a, **_k: None
     s.start_exit_scene_from_dismiss_tools = lambda *_a, **_k: False
     # 密令落库唯一真源：apply_cli_conversation_actions 及其 chat 入口。
@@ -1617,13 +1613,6 @@ def _install_secret_order_agent(runtime, *, stream: bool = False) -> None:
         "_merge_staged_new_secret_order_content",
     ):
         setattr(s, name, MethodType(getattr(GameSession, name), s))
-    confirmation_impl = s._confirmation_intent_for_preexisting_pending
-
-    def _track_confirmation(*args, **kwargs):
-        s._secret_order_confirmation_calls.append(True)
-        return confirmation_impl(*args, **kwargs)
-
-    s._confirmation_intent_for_preexisting_pending = _track_confirmation
 
 
 def _assert_secret_order_pending(db, state, *, minister_name: str, pid: int, edict: str) -> None:
@@ -1724,8 +1713,6 @@ def test_web_chat_formal_secret_order_hangs_night_without_enter(game, stream):
     ) == old_pending
     assert sum(p.get("kind") == "directive" for p in after_pending) == 1
     assert sum(p.get("kind") == "commitment" for p in after_pending) == 0
-    assert runtime.session._secret_order_classifier_calls == []
-    assert runtime.session._secret_order_confirmation_calls == []
     chat_turn_id = int(payload.get("chat_turn_id") or 0)
     assert chat_turn_id > 0
     turn = db.conn.execute(

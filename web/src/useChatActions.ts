@@ -34,7 +34,7 @@ export function useChatActions({
   setError,
   activeModal,
   setActiveModal,
-  chatComposerLiveRef,
+  chatComposerOwnerRef,
   selectedMinister,
   setSelectedMinister,
   selectedMinisterRef,
@@ -58,7 +58,7 @@ export function useChatActions({
   setError: (error: string) => void;
   activeModal: ModalName;
   setActiveModal: (modal: ModalName) => void;
-  chatComposerLiveRef: React.MutableRefObject<boolean>;
+  chatComposerOwnerRef: React.MutableRefObject<object | null>;
   selectedMinister: string;
   setSelectedMinister: (name: string) => void;
   selectedMinisterRef: React.MutableRefObject<string>;
@@ -188,6 +188,8 @@ export function useChatActions({
     }
 
     const fromComposer = text === input;
+    // #1566：发起时捕获 owner token；onError 仅当同一 session 仍存活才回填。
+    const owner = chatComposerOwnerRef.current;
     // #526 / ADR 0047：退朝钮与手输口令同一收夜管线（chat stream）；
     // 词表真源在后端 COURT_BREAK_COMMANDS，前端不复制、不旁路 advanceWithoutEdict。
     setError("");
@@ -236,8 +238,8 @@ export function useChatActions({
         setError("");
       },
       onError: (err) => {
-        // #1566：仅 composer 仍在面时回填；离面同步 ref=false，关面后迟到失败不复活 intent。
-        if (fromComposer && chatComposerLiveRef.current) {
+        // #1566：仅同一 composer session 仍存活时回填；关→重开新 token，旧 reject 不得污染。
+        if (fromComposer && owner !== null && chatComposerOwnerRef.current === owner) {
           setInput(message);
           setComposerIntent(intent);
         }
