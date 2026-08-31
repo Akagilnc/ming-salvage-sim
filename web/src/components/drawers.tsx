@@ -259,6 +259,12 @@ export function MinisterCardList({
                 <div className="minister-card-top">
                   <span className="minister-name">{minister.name}</span>
                   {ousted && <span className={`minister-status status-${minister.status}`}>{minister.status_label}</span>}
+                  {minister.transit_to && (
+                    <span className="minister-place minister-transit">{minister.transit_to_label || minister.transit_to}</span>
+                  )}
+                  {!minister.transit_to && minister.location && (
+                    <span className="minister-place">{minister.location_label || minister.location}</span>
+                  )}
                   {minister.office && <span className="minister-office">{minister.office}</span>}
                 </div>
                 <span className="minister-bio">{minister.summary}</span>
@@ -320,6 +326,12 @@ export function MinisterCardList({
               <div className="minister-card-top">
                 <span className="minister-name">{minister.name}</span>
                 {ousted && <span className={`minister-status status-${minister.status}`}>{minister.status_label}</span>}
+                {minister.transit_to && (
+                  <span className="minister-place minister-transit">{minister.transit_to_label || minister.transit_to}</span>
+                )}
+                {!minister.transit_to && minister.location && (
+                  <span className="minister-place">{minister.location_label || minister.location}</span>
+                )}
                 {minister.office && <span className="minister-office">{minister.office}</span>}
               </div>
               <span className="minister-bio">{minister.summary}</span>
