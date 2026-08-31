@@ -237,12 +237,13 @@ class _RetrySession:
     def pending_count(self):
         return 0
 
-    def chat(self, minister_name, message, *, chat_turn_id=0):
-        # 关键：retry 复用既有 chat_turn，绝不再落问话——只产回话。
+    def chat(self, minister_name, message, *, chat_turn_id=0, explicit_secret_order=False):
+        # 关键：retry 复用既有 chat_turn，绝再不落问话——只产回话。
         assert chat_turn_id != 0
         return ChatTurnResult(answer="臣重奏：剿为先。")
 
     # #542 scene lifecycle seams：retry 入口会 start/join/persist/abandon；替身 no-op。
+    # #1566：场外密令重试不得启殿上 scene——外可见靠 scroll 无 entrance，不记 spy。
     def start_chat_turn_scene(self, *_a, **_k):
         return None
 
@@ -259,10 +260,11 @@ class _RetrySession:
         return None
 
 
-def _retry_runtime(db, state, minister):
+def _retry_runtime(db, state, minister, *, session=None):
+    """Web retry 入口唯一装配壳。session 默认轻量 _RetrySession；可注入生产 chat session。"""
     rt = object.__new__(web_app.WebGame)
     # WebGame.db/state 均为只读 property（读 session.db / session.state）——经 session 供给。
-    rt.session = _RetrySession(db, state, minister)
+    rt.session = session if session is not None else _RetrySession(db, state, minister)
     rt.chat_history = {minister: []}
     rt._write_gate = __import__("threading").Lock()
     rt._runtime_write_gate = lambda: rt._write_gate
@@ -315,6 +317,7 @@ def test_retry_regenerates_reply_without_duplicate_question(restore_env):
     assert db.get_interrupted_reply_retries(minister) == []
 
 
+
 def test_retry_without_interrupted_turn_is_rejected(restore_env):
     """负向：无待重试轮时重试响亮拒绝，不静默造轮。"""
     env = restore_env
@@ -332,7 +335,7 @@ class _FailingRetrySession(_RetrySession):
     """session.chat 在返回前 durable 落副作用（改 characters.loyalty）随后失败——
     测重试失败尾声：本次落下的副作用回滚、问话不删、翻回 interrupted 保持可再重试。"""
 
-    def chat(self, minister_name, message, *, chat_turn_id=0):
+    def chat(self, minister_name, message, *, chat_turn_id=0, explicit_secret_order=False):
         assert chat_turn_id != 0
         self.db.conn.execute(
             "UPDATE characters SET loyalty = loyalty + 40 WHERE name = ?", (self._minister,)
@@ -930,4 +933,74 @@ def test_657_s15_origin_unique_empty_nonempty_and_nontarget_integrity(game):
         (origin_nt,),
     ).fetchone()["c"] == 0
 
+def test_web_retry_offsite_secret_order_via_production_chat(game):
+    """#1566 主干：Web retry_interrupted_reply → 真实 GameSession.chat 密令路径。
 
+    前置：generating + route=secret_order_offsite + 无前缀问话已落。
+    后：回话落库；scroll 无 entrance；密令 pending 由生产 chat staged（非替身自写）。
+    """
+    from tests.test_audience_travel_gating_670 import (
+        _assert_secret_order_pending,
+        _secret_order_runtime,
+        _set_place,
+    )
+
+    db, state, content = game
+    remote = _set_place(game, "洪承畴", location="shaanxi")
+    night = an.open_night(db, state, location="乾清宫", time_of_day="戌时")
+    night_id = int(night["id"])
+    question = "整饬边备，密查欠饷。"
+    ct = db.create_chat_turn(
+        state, remote.name, "sess-offsite-secret", 0,
+        night_id=night_id, status="generating",
+        route="secret_order_offsite",
+    )
+    mid = db.append_chat_message(remote.name, state.turn, "user", question)
+    db.update_chat_turn_messages(ct, user_message_id=mid)
+    ledger_before = an.list_ledger(db, night_id)
+    before_n = sum(
+        1 for p in db.list_pending_actions(state.turn) if p.get("kind") == "secret_order"
+    )
+    db.reconcile_interrupted_chat_turns()
+    assert str(db.get_interrupted_reply_retries(remote.name)[-1].get("route") or "") == (
+        "secret_order_offsite"
+    )
+
+    secret_rt = _secret_order_runtime(db, state, content, stream=False)
+    # 场外 route 不得启殿上 scene。
+    secret_rt.session.start_chat_turn_scene = lambda *_a, **_k: (_ for _ in ()).throw(
+        AssertionError("offsite secret retry must not start_chat_turn_scene")
+    )
+    rt = _retry_runtime(db, state, remote.name, session=secret_rt.session)
+    payload = rt.retry_interrupted_reply(remote.name)
+
+    users = [
+        r["content"]
+        for r in db.conn.execute(
+            "SELECT content FROM chat_messages WHERE role='user' AND minister_name=?",
+            (remote.name,),
+        ).fetchall()
+    ]
+    assert users == [question]
+    assert len(db.conn.execute(
+        "SELECT id FROM chat_messages WHERE role='minister' AND minister_name=?",
+        (remote.name,),
+    ).fetchall()) == 1
+    row = db.conn.execute(
+        "SELECT status, minister_message_id, route FROM chat_turns WHERE id=?", (ct,),
+    ).fetchone()
+    assert row["status"] == "active"
+    assert row["minister_message_id"]
+    assert str(row["route"] or "") == "secret_order_offsite"
+    scroll = an.read_night_scroll(db, night_id)
+    assert not any(
+        m.get("beat") == "entrance" and m.get("speaker") == remote.name for m in scroll
+    )
+    assert an.list_ledger(db, night_id) == ledger_before
+    pid = int(payload.get("pending_action_id") or 0)
+    _assert_secret_order_pending(
+        db, state, minister_name=remote.name, pid=pid, edict=question,
+    )
+    assert sum(
+        1 for p in db.list_pending_actions(state.turn) if p.get("kind") == "secret_order"
+    ) == before_n + 1

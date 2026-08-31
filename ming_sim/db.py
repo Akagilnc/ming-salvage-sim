@@ -1406,6 +1406,9 @@ class GameDB:
                 -- #501 叙事抽取水位（确定性可判、补跑不重复/不漏）：
                 --   ''=未抽 / 'done'=已抽落账 / 'pending'=待补（抽取失败，给玩家原地重试）
                 extract_status TEXT NOT NULL DEFAULT '',
+                -- #1566：typed 密令 route（'' / secret_order / secret_order_offsite）；
+                -- 中断重试经 decode_chat_turn_route 恢复 explicit_secret_order / 殿上 scene。
+                route TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 undone_at TEXT
             );
@@ -2471,6 +2474,8 @@ class GameDB:
         # #506 轮级撤销：undo_chat_turn 写 undone_at；旧档 chat_turns 建于该列进 CREATE 之前
         # 时缺列，undo 的 UPDATE 会 OperationalError（no such column: undone_at）→ 整撤回回滚。
         self.ensure_column("chat_turns", "undone_at", "TEXT")
+        # #1566：typed 密令 route 旧档补列（中断重试恢复 explicit_secret_order / 殿上 scene）。
+        self.ensure_column("chat_turns", "route", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column(
             "story_ledger_entries", "source_chat_turn_id", "INTEGER NOT NULL DEFAULT 0")
         # #506 轮级撤销：口令账（入殿/告退等，source_chat_turn_id==0）由某一轮 attach 创建时
@@ -9428,7 +9433,7 @@ class GameDB:
         where = " AND ".join(clauses)
         rows = self.conn.execute(
             f"""
-            SELECT t.id, t.minister_name, t.turn, m.content AS question
+            SELECT t.id, t.minister_name, t.turn, t.route, m.content AS question
             FROM chat_turns t
             JOIN chat_messages m ON m.id = t.user_message_id
             WHERE {where}
@@ -9442,6 +9447,7 @@ class GameDB:
                 "minister_name": str(r["minister_name"]),
                 "turn": int(r["turn"]),
                 "question": str(r["question"]),
+                "route": str(r["route"] or ""),
             }
             for r in rows
         ]
@@ -9510,6 +9516,7 @@ class GameDB:
         night_id: int = 0,
         status: Optional[str] = None,
         night_seq: Optional[int] = None,
+        route: str = "",
     ) -> int:
         # #498：挂夜的对话轮以 generating 起笔，回话落库后 update_chat_turn_messages 升 active。
         # 未挂夜路径保持历史默认 active，避免旧调用方/测试面语义漂移。
@@ -9518,6 +9525,9 @@ class GameDB:
             initial_status = "generating" if int(night_id or 0) else "active"
         if initial_status not in {"active", "generating", "failed", "undone", "consumed"}:
             raise ValueError(f"unsupported chat_turn status: {initial_status!r}")
+        # #1566：route 闭集唯一真源 = audience_night.normalize_chat_turn_route（未知非空响亮失败）。
+        from ming_sim.audience_night import normalize_chat_turn_route
+        route_value = normalize_chat_turn_route(route)
         nid = int(night_id or 0)
         seq = int(night_seq) if night_seq is not None else (
             self.allocate_night_seq(nid) if nid > 0 else 0
@@ -9526,8 +9536,8 @@ class GameDB:
             """
             INSERT INTO chat_turns
                 (minister_name, turn, year, period, agno_session_id, agno_runs_before,
-                 night_id, night_seq, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 night_id, night_seq, status, route)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 minister_name,
@@ -9539,6 +9549,7 @@ class GameDB:
                 nid,
                 seq,
                 initial_status,
+                route_value,
             ),
         )
         if (

@@ -358,7 +358,7 @@ def test_secret_order_endpoint_delegates_to_chat_confirmation_flow(game, monkeyp
     name = _active_minister_name(db, content)
     calls = []
 
-    def _session_chat(minister_name, message, *, chat_turn_id=0):
+    def _session_chat(minister_name, message, *, chat_turn_id=0, explicit_secret_order=False):
         calls.append((minister_name, message))
         return ChatTurnResult(
             answer="臣领密旨，拟先封存账册，再密访诸将，请陛下定夺。",
@@ -401,7 +401,7 @@ def test_api_create_secret_order_preserves_explicit_zero_deadline(game, monkeypa
     name = _active_minister_name(db, content)
     calls = []
 
-    def _session_chat(minister_name, message, *, chat_turn_id=0):
+    def _session_chat(minister_name, message, *, chat_turn_id=0, explicit_secret_order=False):
         calls.append((minister_name, message))
         return ChatTurnResult(answer="臣领密旨。", pending_action_id=7, secret_order_id=0)
 
@@ -431,7 +431,7 @@ def test_api_create_secret_order_supports_pydantic_v1_fields_set(game, monkeypat
     name = _active_minister_name(db, content)
     calls = []
 
-    def _session_chat(minister_name, message, *, chat_turn_id=0):
+    def _session_chat(minister_name, message, *, chat_turn_id=0, explicit_secret_order=False):
         calls.append((minister_name, message))
         return ChatTurnResult(answer="臣领密旨。", pending_action_id=7, secret_order_id=0)
 
@@ -461,7 +461,7 @@ def test_api_create_secret_order_ignores_malformed_tags(game, monkeypatch):
     name = _active_minister_name(db, content)
     calls = []
 
-    def _session_chat(minister_name, message, *, chat_turn_id=0):
+    def _session_chat(minister_name, message, *, chat_turn_id=0, explicit_secret_order=False):
         calls.append((minister_name, message))
         return ChatTurnResult(answer="臣领旨。", pending_action_id=7, secret_order_id=0)
 

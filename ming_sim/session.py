@@ -1558,7 +1558,10 @@ class GameSession:
         """委托编排层排空本轮 scene（cancel 或 join drain，不落库）。"""
         self._scene_registry.abandon(int(chat_turn_id or 0))
 
-    def chat(self, minister_name: str, message: str, *, chat_turn_id: int = 0) -> ChatTurnResult:
+    def chat(
+        self, minister_name: str, message: str, *, chat_turn_id: int = 0,
+        explicit_secret_order: bool = False,
+    ) -> ChatTurnResult:
         """与大臣对话一轮，统一处理 court tool 截获。
         大臣 propose_directive 产生的草案先进 pending_actions 闸门，
         作为 pending_action_id 返回，确认/驳回由对话或颁诏 checkpoint 处理。"""
@@ -1586,42 +1589,58 @@ class GameSession:
                 augmented = audience_prompt(message)
             else:
                 augmented = audience_prompt(message, character, chat_turn_id=chat_turn_id)
-        action_intent_future = self._start_cli_action_intent(character, message)
+        # #1566：密令 route 须在 command-verdict / exit / summon·dismiss 之前成立。
+        message_text = (message or "").strip()
+        from ming_sim.cli_backend import _DRAFT_PREFIXES, _SECRET_PREFIXES
+        from ming_sim.action_clusters import is_confirmation_decision, resolve_primary_intent
+        explicit_draft_prefix = message_text.startswith(_DRAFT_PREFIXES)
+        explicit_secret_prefix = message_text.startswith(_SECRET_PREFIXES)
+        explicit_secret_route = explicit_secret_order or explicit_secret_prefix
+        action_intent_future = (
+            None if explicit_secret_route
+            else self._start_cli_action_intent(character, message)
+        )
         # #526：收夜/留侍口令为确定性封闭集，同步识别（无耗时软判，不建 Future）。
-        audience_command_verdict = self._recognize_audience_command_verdict(message)
+        # #1566：密令 route 跳过 command-verdict（typed 退朝不得收夜/留侍）。
+        audience_command_verdict = (
+            "" if explicit_secret_route
+            else self._recognize_audience_command_verdict(message)
+        )
         run_output = agent.run(augmented)
         _dump_llm_messages(run_output, f"大臣对话/{minister_name}")
         answer = extract_agent_text(run_output)
         result = ChatTurnResult(answer=answer)
         # #542：run_output.tools 已含 dismiss → 立刻 start_exit，与仍在飞的
         # action_intent 和/或本轮 open/enter 重叠；不得等 finish action_intent。
-        self.start_exit_scene_from_dismiss_tools(
-            character.name, int(chat_turn_id or 0),
-            getattr(run_output, "tools", None) or [],
-        )
+        # #1566：密令 route 跳过 exit scene（dismiss tool 亦不启退场）。
+        if not explicit_secret_route:
+            self.start_exit_scene_from_dismiss_tools(
+                character.name, int(chat_turn_id or 0),
+                getattr(run_output, "tools", None) or [],
+            )
         preexisting_pending_action_ids = {
             int(p["id"]) for p in self.db.list_pending_actions(self.state.turn, minister_name=character.name)
         }
         # #526：先落口令机械面（收夜/留侍/含糊确认），再 finish 动作分类。
-        self._apply_audience_command_verdict(
-            result, character, message,
-            verdict=audience_command_verdict,
-            chat_turn_id=int(chat_turn_id or 0),
-        )
+        if not explicit_secret_route:
+            self._apply_audience_command_verdict(
+                result, character, message,
+                verdict=audience_command_verdict,
+                chat_turn_id=int(chat_turn_id or 0),
+            )
         preclassified_intent = self._finish_cli_action_intent(action_intent_future)
-        preclassified_intent = self._confirmation_intent_for_preexisting_pending(
-            character.name, message, answer, preclassified_intent, preexisting_pending_action_ids)
-        message_text = (message or "").strip()
-        from ming_sim.cli_backend import _DRAFT_PREFIXES, _SECRET_PREFIXES
-        from ming_sim.action_clusters import is_confirmation_decision, resolve_primary_intent
-        explicit_draft_prefix = message_text.startswith(_DRAFT_PREFIXES)
-        explicit_secret_prefix = message_text.startswith(_SECRET_PREFIXES)
+        if not explicit_secret_route:
+            preclassified_intent = self._confirmation_intent_for_preexisting_pending(
+                character.name, message, answer, preclassified_intent, preexisting_pending_action_ids)
         primary_intent = resolve_primary_intent(preclassified_intent)
         confirmation_turn = is_confirmation_decision(primary_intent)
         for tool_exec in getattr(run_output, "tools", None) or []:
             tool_name = getattr(tool_exec, "tool_name", "")
             tool_result = str(getattr(tool_exec, "result", "") or "")
             if tool_name == "dismiss_minister" or tool_result == "__dismiss__":
+                # #1566：密令 route 跳过 dismiss / exit。
+                if explicit_secret_route:
+                    continue
                 result.court_action = "dismiss"
                 # AC1（#500）：令退单缝；垫位+exit 已在 tools 可知时启动（上），
                 # 此处再调 start_exit_scene_from_dismiss_tools 幂等（人已退 → no-op）。
@@ -1629,6 +1648,9 @@ class GameSession:
                     character.name, int(chat_turn_id or 0), [tool_exec],
                 )
             elif tool_name == "summon_minister" or tool_result.startswith("__summon__"):
+                # #1566：密令 route 跳过 summon / 换人。
+                if explicit_secret_route:
+                    continue
                 next_name = tool_result.removeprefix("__summon__").strip()
                 if next_name not in self.content.characters:
                     args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
@@ -1653,7 +1675,7 @@ class GameSession:
             elif tool_name == "propose_directive" or tool_result.startswith("__pending_directive__"):
                 # confirmation / secret 前缀仍整枚跳过；孪生抑制在
                 # _stage_directive_tool_candidate generic 尾路按 kind 分派。
-                if confirmation_turn or explicit_secret_prefix:
+                if confirmation_turn or explicit_secret_route:
                     continue
                 args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
                 if not isinstance(args, dict):
@@ -1702,7 +1724,7 @@ class GameSession:
             elif (tool_name == "propose_appointment"
                   or tool_result.startswith("__pending_appointment__")
                   or tool_result.startswith("__pending_recommendation__")):
-                if confirmation_turn or explicit_draft_prefix or explicit_secret_prefix:
+                if confirmation_turn or explicit_draft_prefix or explicit_secret_route:
                     continue
                 payload = tool_result.removeprefix("__pending_recommendation__")
                 payload = payload.removeprefix("__pending_appointment__").strip()
@@ -1713,7 +1735,7 @@ class GameSession:
                     ),
                 )
             elif tool_name == "register_unlisted_person" or tool_result.startswith("__pending_unlisted_person__"):
-                if confirmation_turn or explicit_draft_prefix or explicit_secret_prefix:
+                if confirmation_turn or explicit_draft_prefix or explicit_secret_route:
                     continue
                 payload = tool_result.removeprefix("__pending_unlisted_person__").strip()
                 registered, summon_after = self._apply_unlisted_person_registration(payload)
@@ -1736,7 +1758,7 @@ class GameSession:
                 tool_name == "rush_staged_commitment"
                 or tool_result.startswith("__commitment_rush__")
             ):
-                if confirmation_turn or explicit_draft_prefix:
+                if confirmation_turn or explicit_draft_prefix or explicit_secret_route:
                     continue
                 if self._proposal_blocked(self.state):
                     continue
@@ -1842,6 +1864,7 @@ class GameSession:
             preclassified_intent=preclassified_intent,
             confirm_target_ids=preexisting_pending_action_ids,
             chat_turn_id=int(chat_turn_id or 0),
+            explicit_secret_order=explicit_secret_order,
         )
         return result
 
@@ -1905,6 +1928,7 @@ class GameSession:
         has_directive: bool, secret_order_id: Optional[int],
         preclassified_intent: Optional[Any] = None,
         confirm_target_ids: Optional[set[int]] = None,
+        explicit_secret_order: bool = False,
     ) -> Dict[str, Any]:
         """CLI 后端（无 function-calling）会话落地的【唯一真源】，session.chat 非流式路径与
         web streaming 路径共用，杜绝两边逻辑漂移（CMR F3 / codexC-1）。
@@ -1949,7 +1973,11 @@ class GameSession:
         # 确认闸门仍跳过：否则前缀消息在有 pending 时既多跑 extract_confirmation_intent，
         # 还可能被误判「应允/拒绝」提前 return、吞掉这道前缀拟旨/密令（确认句本无前缀）。
         message_text = (player_message or "").strip()
-        explicit_prefixed = message_text.startswith(_DRAFT_PREFIXES) or message_text.startswith(_SECRET_PREFIXES)
+        explicit_prefixed = (
+            explicit_secret_order
+            or message_text.startswith(_DRAFT_PREFIXES)
+            or message_text.startswith(_SECRET_PREFIXES)
+        )
         channel = (getattr(getattr(self, "llm_config", None), "channel", "") or "").strip().lower()
         api_explicit_prefix = channel == "api" and explicit_prefixed
         # #1502：API 仅在 classifier 未运行（preclassified is None）时 passthrough 早退；
@@ -2204,7 +2232,7 @@ class GameSession:
                 # 故确认轮直接返回,不再抽新动作(线上 codex P2)。确认句无前缀,前缀路无损失。
                 return out
         # #1502：classifier 未跑 → API 仍早退；已跑（list，含空）→ 进入 materialize
-        if api_or_no_cli_passthrough and intent_candidates is None:
+        if api_or_no_cli_passthrough and intent_candidates is None and not explicit_secret_order:
             return out
         if GameSession._proposal_blocked(self.state):
             # 恢复窗总闸（PR #90 R1/R2/R3 收束为单一出口）：前缀拟旨/密令与自然语言
@@ -2219,15 +2247,20 @@ class GameSession:
         needs_secret_fallback = (
             not has_directive
             and not out["secret_order_id"]
-            and message_text.startswith(_SECRET_PREFIXES)
+            and (explicit_secret_order or message_text.startswith(_SECRET_PREFIXES))
         )
         secret_context = ""
         if needs_secret_fallback:
             secret_context = _recent_audience_context_for_secret_order(
                 getattr(self, "db", None), minister_name, int(self.state.turn), message_text)
         if needs_draft_fallback or needs_secret_fallback:
+            # Typed Web intent joins the existing explicit-secret extractor seam only here;
+            # the player's wire text, chat record, and role-play prompt remain untouched.
+            extraction_message = player_message
+            if explicit_secret_order and not message_text.startswith(_SECRET_PREFIXES):
+                extraction_message = f"{_SECRET_PREFIXES[0]}{player_message}"
             acts = resolve_minister_actions(
-                reply, player_message, default_assignee=minister_name, llm_config=llm_config,
+                reply, extraction_message, default_assignee=minister_name, llm_config=llm_config,
                 secret_context=secret_context,
                 dossier_candidates=self.db.list_referenceable_dossiers(
                     minister_name, self.state.turn))
@@ -2440,6 +2473,7 @@ class GameSession:
         preclassified_intent: Optional[Any] = None,
         confirm_target_ids: Optional[set[int]] = None,
         chat_turn_id: int = 0,
+        explicit_secret_order: bool = False,
     ) -> None:
         """session.chat 非流式路径：调共享会话落地，映射回 ChatTurnResult（agno 工具不触发时）。"""
         preexisting_pending_id = int(getattr(result, "pending_action_id", 0) or 0)
@@ -2453,6 +2487,7 @@ class GameSession:
                 secret_order_id=result.secret_order_id,
                 preclassified_intent=preclassified_intent,
                 confirm_target_ids=confirm_target_ids,
+                explicit_secret_order=explicit_secret_order,
             )
         finally:
             self._active_chat_turn_id = prev_turn

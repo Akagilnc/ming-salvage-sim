@@ -652,7 +652,7 @@ def test_cli_minister_chat_anchors_turn_to_night(game, monkeypatch):
                      and getattr(c, "power_id", "ming") == "ming"
                      and getattr(c, "office_type", "") != "后宫")
 
-    def chat(_name, _question, chat_turn_id=0):
+    def chat(_name, _question, *, chat_turn_id=0, explicit_secret_order=False):
         assert chat_turn_id > 0  # 挂夜轮以 generating 起笔，回话须带 chat_turn_id
         return SimpleNamespace(
             answer="臣有本奏。", proposed_directive=None, appointed_minister="",

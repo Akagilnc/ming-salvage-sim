@@ -64,6 +64,7 @@ function renderModal(props: {
   suggestions?: Suggestion[];
   secretOrders?: React.ComponentProps<typeof ChatModal>["secretOrders"];
   onSend?: (ministerName: string, text?: string) => void;
+  onIntent?: (intent: "secret_order" | undefined) => void;
   onUndo?: (ministerName: string) => void;
   canUndoLastChat?: boolean;
   onFavorite?: (minister: Minister) => void;
@@ -127,6 +128,7 @@ function renderModal(props: {
         secretOrders={props.secretOrders ?? []}
         replyRetry={props.replyRetry}
         onInput={(value) => setInput(value)}
+        onIntent={props.onIntent}
         onSend={props.onSend ?? (() => {})}
         onRetryFailure={props.onRetryFailure ?? (() => {})}
         onRetryReply={props.onRetryReply}
@@ -346,21 +348,22 @@ describe("ChatModal — #527 prefix chips only (拟旨/下密令)", () => {
   /** Production suggestions_for payload after ADR 0042 / #527 cut. */
   const PREFIX_SUGGESTIONS: Suggestion[] = [
     { label: "拟旨", text: "拟旨如下：", prefix: true },
-    { label: "下密令", text: "密令如下：", prefix: true },
+    { label: "下密令", text: "密令如下：", prefix: true, intent: "secret_order" },
   ];
 
-  it("renders both prefix buttons; click fills textarea; never auto-sends", () => {
+  it("switching from draft to typed secret-order replaces composer content and does not auto-send", () => {
     const onSend = vi.fn();
+    const onIntent = vi.fn();
     const host = renderModal({
       minister: MINISTER_MOCK,
       portraitPrefix: "minister_",
       suggestions: PREFIX_SUGGESTIONS,
       onSend,
+      onIntent,
     });
 
     const hitlButtons = Array.from(host.querySelectorAll(".hitl-bar button"));
-    const labels = hitlButtons.map((b) => b.textContent?.trim());
-    expect(labels).toEqual(["拟旨", "下密令"]);
+    expect(hitlButtons).toHaveLength(2);
 
     const textarea = host.querySelector("textarea") as HTMLTextAreaElement;
     expect(textarea).toBeTruthy();
@@ -377,6 +380,7 @@ describe("ChatModal — #527 prefix chips only (拟旨/下密令)", () => {
       secretBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     expect(textarea.value).toBe("密令如下：");
+    expect(onIntent).toHaveBeenLastCalledWith("secret_order");
     expect(onSend).not.toHaveBeenCalled();
   });
 });

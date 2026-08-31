@@ -72,6 +72,7 @@ export const parseSseMessage = (raw: string): { event: string; data: string } | 
 
 export type StreamChatOptions = {
   signal?: AbortSignal;
+  intent?: "secret_order";
   /** #499 读心就绪即浮现：回话 done 后后台旁白到达时回调（不阻塞回话展示）；
    *  mindreading 携持久记录身份 id，前端按 (chat_turn_id, id) 归位/去重 */
   onMindreading?: (payload: {
@@ -105,7 +106,7 @@ export const streamChat = async (
   const response = await fetch(`/api/ministers/${encodeURIComponent(ministerName)}/chat/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message }),
+    body: JSON.stringify({ message, ...(options.intent ? { intent: options.intent } : {}) }),
     signal: options.signal,
   });
   if (!response.ok) {

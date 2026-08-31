@@ -69,7 +69,7 @@ export function useChatActions({
   clearPendingText: () => void;
   applyHistory: (history: ServerChatMessage[]) => void;
   loadHistoryProjection: (minister: string) => Promise<AudienceHistoryData | null>;
-  runAudienceTurn: (minister: string, message: string, cb: SendChatCallbacks) => Promise<void>;
+  runAudienceTurn: (minister: string, message: string, cb: SendChatCallbacks, intent?: "secret_order") => Promise<void>;
   invalidateAudienceScroll: () => void;
   currentNightId: number;
 }) {
@@ -80,6 +80,7 @@ export function useChatActions({
   const [canUndoLastChat, setCanUndoLastChat] = React.useState(false);
   const [composerHint, setComposerHint] = React.useState("");
   const [input, setInput] = React.useState("");
+  const [composerIntent, setComposerIntent] = React.useState<"secret_order" | undefined>();
   const [failureRecoveryMode, setFailureRecoveryMode] = React.useState(false);
   const [temporaryActiveMinister, setTemporaryActiveMinister] = React.useState<Minister | null>(null);
 
@@ -122,6 +123,7 @@ export function useChatActions({
       }
       setCanUndoLastChat(false);
       setComposerHint("");
+      setComposerIntent(undefined);
       return;
     }
     resetPanel();
@@ -131,9 +133,18 @@ export function useChatActions({
     }
     setCanUndoLastChat(false);
     setComposerHint("");
+    setComposerIntent(undefined);
     loadMinisterChat(selectedMinister, failureRecoveryMode ? { mergeFailures: true } : undefined)
       .catch((err) => setError(err.message));
   }, [selectedMinister, loadMinisterChat, failureRecoveryMode]);
+
+  // 关召对只 setActiveModal("none"), 不改 selectedMinister / 不走 resetPanel；
+  // composerIntent 是 composer-session 态，离 chat 面必须随 session 死。
+  React.useEffect(() => {
+    if (activeModal !== "chat") {
+      setComposerIntent(undefined);
+    }
+  }, [activeModal]);
 
   const activeMinister = state && selectedMinister
     ? [...state.ministers, ...(state.consorts || [])].find((m) => m.name === selectedMinister) || temporaryActiveMinister
@@ -166,6 +177,7 @@ export function useChatActions({
   };
 
   const sendChat = async (targetMinisterName: string, text = input) => {
+    const intent = text === input ? composerIntent : undefined;
     if (busy) return;
     const message = text.trim();
     if (!message) {
@@ -183,6 +195,7 @@ export function useChatActions({
     setReplyRetry(null);
     if (fromComposer) {
       setInput("");
+      setComposerIntent(undefined);
     }
     // 面板归属与卷轴当前奏对者是两种身份：前者只用于判断玩家是否已离开发起面板。
     const initiatingPanelName = selectedMinisterRef.current;
@@ -221,12 +234,15 @@ export function useChatActions({
         setError("");
       },
       onError: (err) => {
-        if (fromComposer) {
+        // 回填归属由 useAudienceChat 的 generation+面板 freshness 门控后才入此回调；
+        // 此处再按发起面板守一次，防切大臣后的同 token 尾巴。
+        if (fromComposer && selectedMinisterRef.current === initiatingPanelName) {
           setInput(message);
+          setComposerIntent(intent);
         }
         setError(err instanceof Error ? err.message : String(err));
       },
-    });
+    }, intent);
   };
 
   const openChat = (minister: Minister) => {
@@ -413,6 +429,7 @@ export function useChatActions({
     composerHint,
     setComposerHint,
     input,
+    setComposerIntent,
     setInput,
     failureRecoveryMode,
     activeMinister,

@@ -125,7 +125,7 @@ class _RecordingDB:
     def capture_chat_rollback_snapshot(self):
         return {}
 
-    def create_chat_turn(self, state, minister_name, agno_session_id, agno_runs_before):
+    def create_chat_turn(self, state, minister_name, agno_session_id, agno_runs_before, route=""):
         return 7
 
     def append_chat_message(self, minister_name: str, turn: int, role: str, content: str) -> int:
@@ -257,7 +257,7 @@ def test_chat_stream_sse_waits_for_sync_generator_in_executor(monkeypatch):
     events: list[str] = []
 
     class _BlockingGame:
-        def chat_stream(self, minister_name: str, message: str):
+        def chat_stream(self, minister_name: str, message: str, intent=None):
             time.sleep(0.05)
             events.append("stream")
             yield {"type": "done", "payload": {"ok": True}}
@@ -294,7 +294,7 @@ def test_nonstream_api_chat_keeps_game_state_responsive_while_chat_blocks(monkey
     class _SlowLLMGame:
         """离线慢 LLM 替身：chat 阻塞数十毫秒模拟 cli subprocess.run。"""
 
-        def chat(self, minister_name: str, message: str):
+        def chat(self, minister_name: str, message: str, intent=None, *, explicit_secret_order=False):
             time.sleep(0.08)
             events.append("chat")
             return {"answer": "臣已知悉。"}
@@ -358,7 +358,7 @@ def test_drain_waits_for_in_flight_nonstream_chat():
     db = _RecordingDB(threading.Event())
 
     class _SlowChatSession(_FakeSession):
-        def chat(self, minister_name: str, message: str, *, chat_turn_id: int = 0):
+        def chat(self, minister_name: str, message: str, *, chat_turn_id: int = 0, explicit_secret_order: bool = False):
             chat_entered.set()
             assert allow_finish.wait(2.0), "slow nonstream LLM timed out"
             return SimpleNamespace(
