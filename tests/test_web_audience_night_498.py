@@ -541,7 +541,7 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
     real_chat = game.session.chat
     real_spawn = game._spawn_pending_write_thread
     game.session.chat = (
-        lambda minister_name, message, *, chat_turn_id=0: ChatTurnResult(
+        lambda minister_name, message, *, chat_turn_id=0, explicit_secret_order=False: ChatTurnResult(
             answer="臣重奏：边饷当清。",
         )
     )

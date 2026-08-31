@@ -129,7 +129,7 @@ def test_terminal_minister_chat_persists_messages_before_session_chat(monkeypatc
             self.content = SimpleNamespace(characters={"魏忠贤": object(), "韩爌": object()})
             self.temporary_characters = set()
 
-        def chat(self, minister_name, question):
+        def chat(self, minister_name, question, *, chat_turn_id=0, explicit_secret_order=False):
             assert self.db.messages == [
                 ("魏忠贤", 7, "user", "命洪承畴督办陕西赈灾，东厂暗助护赈银。")
             ]
@@ -181,7 +181,7 @@ def test_terminal_minister_chat_removes_user_message_when_session_chat_fails(mon
             self.content = SimpleNamespace(characters={"魏忠贤": object(), "韩爌": object()})
             self.temporary_characters = set()
 
-        def chat(self, minister_name, question):
+        def chat(self, minister_name, question, *, chat_turn_id=0, explicit_secret_order=False):
             assert self.db.messages == [
                 ("魏忠贤", 6, "user", "前一轮召对内容"),
                 ("魏忠贤", 7, "user", "命洪承畴督办陕西赈灾，东厂暗助护赈银。"),
@@ -227,7 +227,7 @@ def test_terminal_minister_chat_removes_user_message_when_session_chat_interrupt
             self.content = SimpleNamespace(characters={"魏忠贤": object(), "韩爌": object()})
             self.temporary_characters = set()
 
-        def chat(self, minister_name, question):
+        def chat(self, minister_name, question, *, chat_turn_id=0, explicit_secret_order=False):
             assert self.db.messages == [
                 ("魏忠贤", 6, "user", "前一轮召对内容"),
                 ("魏忠贤", 7, "user", "命洪承畴督办陕西赈灾，东厂暗助护赈银。"),
@@ -263,7 +263,7 @@ def test_terminal_minister_chat_preserves_chat_error_when_rollback_fails(monkeyp
             self.content = SimpleNamespace(characters={"魏忠贤": object(), "韩爌": object()})
             self.temporary_characters = set()
 
-        def chat(self, minister_name, question):
+        def chat(self, minister_name, question, *, chat_turn_id=0, explicit_secret_order=False):
             raise RuntimeError("LLM down")
 
     answers = iter(["命洪承畴督办陕西赈灾，东厂暗助护赈银。"])
@@ -297,7 +297,7 @@ def test_terminal_minister_chat_reply_persist_failure_keeps_user_message(monkeyp
             self.content = SimpleNamespace(characters={"魏忠贤": object(), "韩爌": object()})
             self.temporary_characters = set()
 
-        def chat(self, minister_name, question):
+        def chat(self, minister_name, question, *, chat_turn_id=0, explicit_secret_order=False):
             return SimpleNamespace(
                 answer="臣领密旨，当令东厂暗中护送赈银。",
                 proposed_directive=None,
@@ -343,7 +343,7 @@ def test_terminal_persistent_chat_finalization_failure_rolls_back_real_turn(game
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
     received_chat_turn_ids = []
 
-    def chat(_name, _question, chat_turn_id=0):
+    def chat(_name, _question, *, chat_turn_id=0, explicit_secret_order=False):
         assert chat_turn_id > 0
         received_chat_turn_ids.append(chat_turn_id)
         db.persist_return_report(
@@ -412,7 +412,7 @@ def test_terminal_minister_chat_can_retry_failed_secret_order(monkeypatch, capsy
             self.registry = object()
             self.temporary_characters = set()
 
-        def chat(self, minister_name, question):
+        def chat(self, minister_name, question, *, chat_turn_id=0, explicit_secret_order=False):
             raise AssertionError("retry 命令不应进入普通召对")
 
     answers = iter(["retry 42", "done"])
@@ -441,7 +441,7 @@ def test_terminal_minister_chat_blocks_retry_during_settlement_recovery(monkeypa
             self.registry = object()
             self.temporary_characters = set()
 
-        def chat(self, minister_name, question):
+        def chat(self, minister_name, question, *, chat_turn_id=0, explicit_secret_order=False):
             raise AssertionError("retry 命令不应进入普通召对")
 
     answers = iter(["retry 42", "done"])
