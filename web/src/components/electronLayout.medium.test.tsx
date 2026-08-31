@@ -148,20 +148,15 @@ describe.sequential("medium: shared Electron geometry", () => {
         buttonRect.top + buttonRect.height / 2,
       ) === button;
 
-      // Draft 改/删: resting hit inside memorials/cols, else scroll the memorials owner (then cols fallback).
-      const draftRestingHit = hitAtVisibleCenter(draftTool, memorials) || hitAtVisibleCenter(draftTool, cols);
+      // Draft 改/删: sole owner is .desk-memorials (no cols fallback — locks the ≤1100px scroll seam).
+      const draftRestingHit = hitAtVisibleCenter(draftTool, memorials);
       let draftToolsReachable = draftRestingHit;
       if (!draftToolsReachable) {
         const prevMemScroll = memorials.scrollTop;
-        const prevColsScroll = cols.scrollTop;
+        const canScroll = memorials.scrollHeight > memorials.clientHeight + 1;
         memorials.scrollTop = memorials.scrollHeight;
-        if (!hitAtVisibleCenter(draftTool, memorials)) {
-          cols.scrollTop = Math.max(0, draftTool.getBoundingClientRect().top
-            - cols.getBoundingClientRect().top - cols.clientTop + cols.scrollTop);
-        }
-        draftToolsReachable = hitAtVisibleCenter(draftTool, memorials) || hitAtVisibleCenter(draftTool, cols);
+        draftToolsReachable = canScroll && hitAtVisibleCenter(draftTool, memorials);
         memorials.scrollTop = prevMemScroll;
-        cols.scrollTop = prevColsScroll;
       }
 
       // Theme * wash must not zero the error-line background under modal-bg-edict.
