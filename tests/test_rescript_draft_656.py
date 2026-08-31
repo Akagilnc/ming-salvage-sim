@@ -1535,9 +1535,14 @@ def test_1620_layer_a_reward_with_army_target_stays_reward():
     pytest.param({"grant_action": "赏赉"}, (), id="conflict-reward"),
     pytest.param({"grant_kind": "other"}, (), id="unknown-kind"),
     pytest.param({"grant_action": "补发军饷"}, ("grant_kind",), id="zh-synonym"),
+    # 非 grant 携 grant_kind：不得因 allowed 白名单静默丢键
+    pytest.param(
+        {"action_type": "assignment", "assignee_name": "杨嗣昌"}, (),
+        id="non-grant-kind",
+    ),
 ])
 def test_1620_layer_a_army_pay_rejects_bad_typed_shape(extra, drop):
-    """层 A：矛盾 kind/action、未知 kind、中文同义动作名均 fail-loud。"""
+    """层 A：矛盾 kind/action、未知 kind、中文同义、非 grant 携 kind 均 fail-loud。"""
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
 
     raw = _army_pay_grant_option(**extra)
