@@ -1014,7 +1014,8 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     expect((host2.querySelector('[data-testid="decision-recovery"] button') as HTMLButtonElement).disabled).toBe(false);
   });
 
-  it("#1620 落印 SSE error 同页保留 picks + typed alert + 可再落印", async () => {
+  it("#1620 落印 SSE error 同页保留 picks + 单一 recovery alert + 可再落印", async () => {
+    // 多疏 fixture：只经结构化控件操作，不锁 option/error 自由文案。
     const d1 = {
       idx: 0, title: "疏一", context: "c1",
       options: [{ label: "甲策", hint: "h1" }, { label: "乙策", hint: "h2" }],
@@ -1026,7 +1027,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     const state = settlementBaseState("awaiting_decision", {
       pending_decisions: [d1, d2],
     });
-    let resolveCalls = 0;
+    const resolveBodies: unknown[] = [];
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       const u = new URL(String(url), "http://t.local");
       if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
@@ -1041,8 +1042,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       });
       if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
       if (u.pathname.endsWith("/api/decree/resolve_decisions/stream")) {
-        resolveCalls += 1;
-        void init;
+        resolveBodies.push(JSON.parse(String(init?.body || "{}")));
         return sseResp("error", { message: "stream-fail" });
       }
       return jsonResp({});
@@ -1052,43 +1052,60 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     await act(async () => {
       await vi.waitFor(() => expect(host.querySelector('[data-testid="decision-modal"]')).not.toBeNull());
     });
-    const pickByLabel = (label: string) =>
-      Array.from(host.querySelectorAll("button")).find((b) =>
-        (b.textContent || "").includes(label),
-      ) as HTMLButtonElement | undefined;
-    await click(pickByLabel("甲策"));
-    expect(host.querySelector(".decision-option.is-picked")?.textContent || "").toContain("甲策");
-    await click(host.querySelector('[aria-label="批下一疏"]'));
+    const optionButtons = () =>
+      Array.from(host.querySelectorAll("button.decision-option")) as HTMLButtonElement[];
+    const seal = () =>
+      host.querySelector('[aria-label="批红落印，续推时局"]') as HTMLButtonElement | null;
+    const next疏 = () =>
+      host.querySelector('[aria-label="批下一疏"]') as HTMLButtonElement | null;
+
+    // 第 1 疏：点首 option（结构化 class，不按文案找）
+    expect(optionButtons().length).toBeGreaterThan(0);
+    await click(optionButtons()[0]);
+    expect(host.querySelector("button.decision-option.is-picked")).not.toBeNull();
+    expect(next疏()).not.toBeNull();
+    await click(next疏());
     await act(async () => {
-      await vi.waitFor(() => expect(host.textContent || "").toContain("疏二"));
+      await vi.waitFor(() => expect(optionButtons().length).toBeGreaterThan(0));
     });
-    await click(pickByLabel("丙策"));
-    const seal = () => host.querySelector('[aria-label="批红落印，续推时局"]') as HTMLButtonElement | null;
+    // 第 2 疏：点首 option 后落印
+    await click(optionButtons()[0]);
     expect(seal()).not.toBeNull();
     expect(seal()!.disabled).toBe(false);
     await click(seal());
+
     await act(async () => {
       await vi.waitFor(() => {
-        // 同页 typed alert（结构化 role=alert）；不锁自由文案措辞模板以外的特征
-        const alert = host.querySelector('[data-testid="decision-stream-alert"]');
-        expect(alert).not.toBeNull();
-        expect(alert!.textContent || "").toContain("stream-fail");
-        expect(host.querySelector('[role="alert"]')).not.toBeNull();
+        expect(host.querySelector('[data-testid="decision-recovery"]')).not.toBeNull();
+        expect(resolveBodies.length).toBe(1);
       });
     });
-    // modal 不卸载；已选批语仍在；可再落印
+    // 单一 role=alert：只经 decision-recovery，不与 modal 双播
+    const alerts = host.querySelectorAll('[role="alert"]');
+    expect(alerts.length).toBe(1);
+    expect(
+      host.querySelector('[data-testid="decision-recovery"] [role="alert"]'),
+    ).toBe(alerts[0]);
+
+    // modal 不卸载；已选态仍在；可再落印
     expect(host.querySelector('[data-testid="decision-modal"]')).not.toBeNull();
-    expect(host.querySelector(".decision-option.is-picked")?.textContent || "").toContain("丙策");
+    expect(host.querySelector("button.decision-option.is-picked")).not.toBeNull();
     expect(seal()).not.toBeNull();
     expect(seal()!.disabled).toBe(false);
-    expect(resolveCalls).toBe(1);
+
     await click(seal());
     await act(async () => {
-      await vi.waitFor(() => expect(resolveCalls).toBe(2));
+      await vi.waitFor(() => expect(resolveBodies.length).toBe(2));
     });
-    // refresh 后 stream 错不被空串冲掉
-    expect(host.querySelector('[data-testid="decision-stream-alert"]')?.textContent || "").toContain("stream-fail");
+    // 两次 resolve 结构化 choices 相同（picks 保留的行为证据）
+    expect(resolveBodies[0]).toEqual(resolveBodies[1]);
+    const body0 = resolveBodies[0] as { choices?: unknown[] };
+    expect(Array.isArray(body0.choices)).toBe(true);
+    expect(body0.choices!.length).toBe(2);
+
+    // refresh 后 recovery 仍在且仍单一 alert（error 不被空串冲掉）
     expect(host.querySelector('[data-testid="decision-recovery"]')).not.toBeNull();
+    expect(host.querySelectorAll('[role="alert"]').length).toBe(1);
   });
 
   it("#1700 phase-1 SSE error → loadState 挂 settle-resume", async () => {
