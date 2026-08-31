@@ -165,13 +165,18 @@ def _terminal_sse(response: httpx.Response) -> tuple[str, object]:
 def test_ready_recovery_issue_stream_clears_context_and_advances(
     recovery_web_game, monkeypatch,
 ):
-    """current-schema ready → 真 HTTP /api/decree/issue/stream → 清 context、离 settling、turn+1。
+    """current-schema ready → 真 HTTP /api/decree/issue/stream → 清 context、离 settling、turn+1 与 year/period 一次推进。
 
     复用 ASGI seam；不覆盖 version=0 旧档，不 mock 掉恢复入口。
     """
     game = recovery_web_game
     db, state = game.db, game.state
     turn = int(state.turn)
+    start_year = int(state.year)
+    start_period = int(state.period)
+    # 一次 next_period 的外部月历契约（跨年语义由 models.next_period 最低层专测覆盖）
+    expected_year = start_year + (1 if start_period >= 12 else 0)
+    expected_period = 1 if start_period >= 12 else start_period + 1
 
     persist_resolve_context(
         db, turn, {"metric_delta": {"民心": -1}},
@@ -212,6 +217,8 @@ def test_ready_recovery_issue_stream_clears_context_and_advances(
     assert event == "done", resp.text
 
     assert int(game.state.turn) == turn + 1
+    assert int(game.state.year) == expected_year
+    assert int(game.state.period) == expected_period
     assert game.state.turn_phase != TurnPhase.SETTLING.value
     assert db.get_resolve_context(turn) is None
     assert game.state_payload().get("settlement_recovery") is None
