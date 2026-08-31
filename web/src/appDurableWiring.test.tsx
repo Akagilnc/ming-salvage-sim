@@ -620,8 +620,13 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     expect(host.querySelector(".chat-system-note")).toBeNull();
   });
 
-  it("#1566 点下密令不发、退出召对后再发普通问话，POST body 不带残留 intent", async () => {
+  it("#1566 密令在飞时同步退出+非 Abort 失败，重开普通问话 POST body 无残留 intent", async () => {
+    // 同一 act 内：真实退出召对 → 紧接非 Abort reject（effect 前）→ 重开普通问话。
+    // 根因：onError 无条件回填 intent；关面只改 modal 时 effect/闭包时序留窗口。
+    let releaseFail!: (err: Error) => void;
+    const failGate = new Promise<never>((_, reject) => { releaseFail = reject; });
     let sentChat: Record<string, unknown> | null = null;
+    let streamPosts = 0;
     const minister = {
       name: "杨嗣昌", office: "兵部右侍郎", office_type: "兵部", faction: "",
       style: "", status: "active", status_label: "在朝", summary: "", favorite: false, skills: [],
@@ -635,6 +640,11 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       if (u.pathname.endsWith("/api/audience/extraction/pending")) return jsonResp({ count: 0 });
       if (u.pathname.endsWith("/api/audience/scroll")) return jsonResp({ night_id: 1, messages: [] });
       if (u.pathname.endsWith("/api/ministers/%E6%9D%A8%E5%97%A3%E6%98%8C/chat/stream") && init?.method === "POST") {
+        streamPosts += 1;
+        if (streamPosts === 1) {
+          // 首发密令：挂起后由测试同步 reject（非 Abort）。
+          return failGate as unknown as Response;
+        }
         sentChat = JSON.parse(String(init.body));
         return sseResp("done", {
           history: [], suggestions: [], directives: [], pending_count: 0,
@@ -659,19 +669,33 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     await act(async () => { await vi.waitFor(() => expect(host.querySelector("textarea")).not.toBeNull()); });
 
     await click(host.querySelector('[data-intent="secret_order"]'));
-    await click(findButton(host, "退出召对"));
+    const textarea = host.querySelector("textarea") as HTMLTextAreaElement;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(textarea, "整饬边备。");
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    // 发送密令（stream 挂起）
+    await click(findButton(host, "发送"));
+    await act(async () => { await vi.waitFor(() => expect(streamPosts).toBe(1)); });
+
+    // 同一 act 同步块：退出召对 + 非 Abort reject（effect 尚未跑）
+    await act(async () => {
+      findButton(host, "退出召对")?.click();
+      releaseFail(new Error("network boom"));
+    });
     await act(async () => {
       await vi.waitFor(() => expect(host.querySelector("textarea")).toBeNull());
     });
 
+    // 重开普通问话：body 不得带 secret_order intent
     await click(host.querySelector('[aria-label="朝堂·召见大臣"]'));
     await click(findButton(host, "杨嗣昌"));
     await act(async () => { await vi.waitFor(() => expect(host.querySelector("textarea")).not.toBeNull()); });
 
-    const textarea = host.querySelector("textarea") as HTMLTextAreaElement;
+    const textarea2 = host.querySelector("textarea") as HTMLTextAreaElement;
     await act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(textarea, "边事如何？");
-      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(textarea2, "边事如何？");
+      textarea2.dispatchEvent(new Event("input", { bubbles: true }));
     });
     await click(findButton(host, "发送"));
     await act(async () => {

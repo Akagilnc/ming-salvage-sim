@@ -1587,47 +1587,58 @@ class GameSession:
                 augmented = audience_prompt(message)
             else:
                 augmented = audience_prompt(message, character, chat_turn_id=chat_turn_id)
-        action_intent_future = (
-            None if explicit_secret_order
-            else self._start_cli_action_intent(character, message)
-        )
-        # #526：收夜/留侍口令为确定性封闭集，同步识别（无耗时软判，不建 Future）。
-        audience_command_verdict = self._recognize_audience_command_verdict(message)
-        run_output = agent.run(augmented)
-        _dump_llm_messages(run_output, f"大臣对话/{minister_name}")
-        answer = extract_agent_text(run_output)
-        result = ChatTurnResult(answer=answer)
-        # #542：run_output.tools 已含 dismiss → 立刻 start_exit，与仍在飞的
-        # action_intent 和/或本轮 open/enter 重叠；不得等 finish action_intent。
-        self.start_exit_scene_from_dismiss_tools(
-            character.name, int(chat_turn_id or 0),
-            getattr(run_output, "tools", None) or [],
-        )
-        preexisting_pending_action_ids = {
-            int(p["id"]) for p in self.db.list_pending_actions(self.state.turn, minister_name=character.name)
-        }
-        # #526：先落口令机械面（收夜/留侍/含糊确认），再 finish 动作分类。
-        self._apply_audience_command_verdict(
-            result, character, message,
-            verdict=audience_command_verdict,
-            chat_turn_id=int(chat_turn_id or 0),
-        )
-        preclassified_intent = self._finish_cli_action_intent(action_intent_future)
-        if not explicit_secret_order:
-            preclassified_intent = self._confirmation_intent_for_preexisting_pending(
-                character.name, message, answer, preclassified_intent, preexisting_pending_action_ids)
+        # #1566：密令 route 须在 command-verdict / exit / summon·dismiss 之前成立。
         message_text = (message or "").strip()
         from ming_sim.cli_backend import _DRAFT_PREFIXES, _SECRET_PREFIXES
         from ming_sim.action_clusters import is_confirmation_decision, resolve_primary_intent
         explicit_draft_prefix = message_text.startswith(_DRAFT_PREFIXES)
         explicit_secret_prefix = message_text.startswith(_SECRET_PREFIXES)
         explicit_secret_route = explicit_secret_order or explicit_secret_prefix
+        action_intent_future = (
+            None if explicit_secret_order
+            else self._start_cli_action_intent(character, message)
+        )
+        # #526：收夜/留侍口令为确定性封闭集，同步识别（无耗时软判，不建 Future）。
+        # #1566：密令 route 跳过 command-verdict（typed 退朝不得收夜/留侍）。
+        audience_command_verdict = (
+            "" if explicit_secret_route
+            else self._recognize_audience_command_verdict(message)
+        )
+        run_output = agent.run(augmented)
+        _dump_llm_messages(run_output, f"大臣对话/{minister_name}")
+        answer = extract_agent_text(run_output)
+        result = ChatTurnResult(answer=answer)
+        # #542：run_output.tools 已含 dismiss → 立刻 start_exit，与仍在飞的
+        # action_intent 和/或本轮 open/enter 重叠；不得等 finish action_intent。
+        # #1566：密令 route 跳过 exit scene（dismiss tool 亦不启退场）。
+        if not explicit_secret_route:
+            self.start_exit_scene_from_dismiss_tools(
+                character.name, int(chat_turn_id or 0),
+                getattr(run_output, "tools", None) or [],
+            )
+        preexisting_pending_action_ids = {
+            int(p["id"]) for p in self.db.list_pending_actions(self.state.turn, minister_name=character.name)
+        }
+        # #526：先落口令机械面（收夜/留侍/含糊确认），再 finish 动作分类。
+        if not explicit_secret_route:
+            self._apply_audience_command_verdict(
+                result, character, message,
+                verdict=audience_command_verdict,
+                chat_turn_id=int(chat_turn_id or 0),
+            )
+        preclassified_intent = self._finish_cli_action_intent(action_intent_future)
+        if not explicit_secret_order:
+            preclassified_intent = self._confirmation_intent_for_preexisting_pending(
+                character.name, message, answer, preclassified_intent, preexisting_pending_action_ids)
         primary_intent = resolve_primary_intent(preclassified_intent)
         confirmation_turn = is_confirmation_decision(primary_intent)
         for tool_exec in getattr(run_output, "tools", None) or []:
             tool_name = getattr(tool_exec, "tool_name", "")
             tool_result = str(getattr(tool_exec, "result", "") or "")
             if tool_name == "dismiss_minister" or tool_result == "__dismiss__":
+                # #1566：密令 route 跳过 dismiss / exit。
+                if explicit_secret_route:
+                    continue
                 result.court_action = "dismiss"
                 # AC1（#500）：令退单缝；垫位+exit 已在 tools 可知时启动（上），
                 # 此处再调 start_exit_scene_from_dismiss_tools 幂等（人已退 → no-op）。
@@ -1635,6 +1646,9 @@ class GameSession:
                     character.name, int(chat_turn_id or 0), [tool_exec],
                 )
             elif tool_name == "summon_minister" or tool_result.startswith("__summon__"):
+                # #1566：密令 route 跳过 summon / 换人。
+                if explicit_secret_route:
+                    continue
                 next_name = tool_result.removeprefix("__summon__").strip()
                 if next_name not in self.content.characters:
                     args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}

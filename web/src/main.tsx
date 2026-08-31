@@ -72,7 +72,14 @@ export function App() {
   const [ministerGroup, setMinisterGroup] = React.useState("内阁+六部");
   const [haremGroup, setHaremGroup] = React.useState("全部");
   const [selectedMinister, setSelectedMinister] = React.useState<string>("");
-  const [activeModal, setActiveModal] = React.useState<ModalName>("none");
+  const [activeModal, setActiveModalState] = React.useState<ModalName>("none");
+  // #1566：composer 存活位——离面与 setState 同栈同步翻 false，先于 effect / onError；
+  // 关面后迟到失败不得回填 secret_order intent。唯一 setActiveModal 写入口。
+  const chatComposerLiveRef = React.useRef(false);
+  const setActiveModal = React.useCallback((modal: ModalName) => {
+    chatComposerLiveRef.current = modal === "chat";
+    setActiveModalState(modal);
+  }, []);
   const [decree, setDecree] = React.useState("");
   const [report, setReport] = React.useState("");
   const [gazetteReport, setGazetteReport] = React.useState("");
@@ -170,6 +177,7 @@ export function App() {
     setError,
     activeModal,
     setActiveModal,
+    chatComposerLiveRef,
     selectedMinister,
     setSelectedMinister,
     selectedMinisterRef,

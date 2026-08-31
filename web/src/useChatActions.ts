@@ -34,6 +34,7 @@ export function useChatActions({
   setError,
   activeModal,
   setActiveModal,
+  chatComposerLiveRef,
   selectedMinister,
   setSelectedMinister,
   selectedMinisterRef,
@@ -57,6 +58,7 @@ export function useChatActions({
   setError: (error: string) => void;
   activeModal: ModalName;
   setActiveModal: (modal: ModalName) => void;
+  chatComposerLiveRef: React.MutableRefObject<boolean>;
   selectedMinister: string;
   setSelectedMinister: (name: string) => void;
   selectedMinisterRef: React.MutableRefObject<string>;
@@ -234,7 +236,8 @@ export function useChatActions({
         setError("");
       },
       onError: (err) => {
-        if (fromComposer) {
+        // #1566：仅 composer 仍在面时回填；离面同步 ref=false，关面后迟到失败不复活 intent。
+        if (fromComposer && chatComposerLiveRef.current) {
           setInput(message);
           setComposerIntent(intent);
         }
