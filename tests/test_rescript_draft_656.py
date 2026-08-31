@@ -1491,7 +1491,7 @@ def _army_pay_grant_option(**extra) -> dict:
 
 
 def test_1620_validate_army_pay_grant_kind_maps_to_xiexang():
-    """真实票拟入口：grant_kind=army_pay → 内部协饷，不整批作废。"""
+    """真实票拟入口：合法 kind 映射；无 kind 直写协饷与 kind+action 并存整批拒。"""
     drafts = validate_rescript_draft_items(
         {"items": [{
             "title": "关宁欠饷",
@@ -1508,6 +1508,22 @@ def test_1620_validate_army_pay_grant_kind_maps_to_xiexang():
     assert opt["amount"] == 300
     assert opt.get("purpose") == "补饷"
     assert "grant_kind" not in opt
+
+    hold = _layer_a_opt(label="暂缓", hint="候报", transaction_category="")
+    for bad in (
+        _army_pay_grant_option(grant_action="协饷"),  # kind+action 并存
+        {k: v for k, v in _army_pay_grant_option(grant_action="协饷").items()
+         if k != "grant_kind"},  # 无 kind 直写协饷
+    ):
+        with pytest.raises(ValueError):
+            validate_rescript_draft_items(
+                {"items": [{
+                    "title": "关宁欠饷",
+                    "context": "边军待哺。",
+                    "options": [bad, hold],
+                }]},
+                set(),
+            )
 
 
 def test_1620_layer_a_reward_with_army_target_stays_reward():
@@ -1559,31 +1575,6 @@ def test_1620_layer_a_army_pay_rejects_bad_typed_shape(extra, drop):
         raw.pop(key, None)
     with pytest.raises(ValueError):
         normalize_rescript_layer_a_option(raw)
-
-
-@pytest.mark.parametrize("extra,drop", [
-    # 真实生成入口：kind 与显式 action 不得并存
-    pytest.param({"grant_action": "协饷"}, (), id="kind-plus-action"),
-    # 真实生成入口：无 kind 直写协饷旁路 → 整批失败
-    pytest.param({"grant_action": "协饷"}, ("grant_kind",), id="gen-direct-xiexang"),
-])
-def test_1620_validate_army_pay_generation_rejects_discriminator_bypass(extra, drop):
-    """真实票拟生成入口：discriminator 旁路整批响亮失败（不测内部布尔开关）。"""
-    bad = _army_pay_grant_option(**extra)
-    for key in drop:
-        bad.pop(key, None)
-    with pytest.raises(ValueError):
-        validate_rescript_draft_items(
-            {"items": [{
-                "title": "关宁欠饷",
-                "context": "边军待哺。",
-                "options": [
-                    bad,
-                    _layer_a_opt(label="暂缓", hint="候报", transaction_category=""),
-                ],
-            }]},
-            set(),
-        )
 
 
 def test_1620_internal_canonical_xiexang_renormalizes_without_kind():
