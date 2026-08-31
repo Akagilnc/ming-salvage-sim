@@ -136,6 +136,15 @@ def _click_before(state) -> dict[str, int]:
     return {k: int(state.metrics[k]) for k in MONTH_OPEN_KEYS}
 
 
+def _terminal_sse(response: httpx.Response) -> tuple[str, dict]:
+    blocks = [block for block in response.text.split("\n\n") if block.strip()]
+    assert blocks
+    lines = blocks[-1].splitlines()
+    event = next(line[7:] for line in lines if line.startswith("event: "))
+    data = next(line[6:] for line in lines if line.startswith("data: "))
+    return event, json.loads(data)
+
+
 def _open_night_with_unextracted_reply(game, minister, reply="臣愿肩起此事。"):
     """票面夹具：开夜 + 回话已落、story 抽取未落（extract_status 待补）。"""
     db, state = game.db, game.state
@@ -209,6 +218,59 @@ def test_advance_with_unextracted_reply_accepts_and_continues(web_game, monkeypa
     assert game.db.get_month_open_snapshot(turn_before) is None
     assert body["state"]["turn"]["settlement_display"] is False
     assert saw_capture.get("snap") == before
+
+
+def test_issue_stream_retries_failed_simulator_on_same_turn(web_game, monkeypatch):
+    game = web_game
+    minister = _active_minister(game)
+    _fake_settlement_llm(monkeypatch)
+    turn = int(game.state.turn)
+    calls = {"simulator": 0, "extractor": 0}
+
+    game.db.add_directive(
+        game.state, None, "着户部核边饷", "retry-1700", actor=minister,
+        status="draft",
+        dossier_payload={
+            "dossier_action_type": "policy",
+            "target_kind": "issue",
+            "target_id": "retry-1700",
+        },
+    )
+
+    def _simulate(*_args, **kwargs):
+        calls["simulator"] += 1
+        if calls["simulator"] == 1:
+            raise RuntimeError("simulator unavailable")
+        return ("月报", kwargs.get("simulator_payload") or {})
+
+    def _extract(*_args, **_kwargs):
+        calls["extractor"] += 1
+        return ({}, "out", "in")
+
+    monkeypatch.setattr(decree_mod, "simulate_season_with_payload", _simulate)
+    monkeypatch.setattr(decree_mod, "extract_scores_by_modules_with_agno", _extract)
+
+    async def issue():
+        async with _client() as client:
+            return await client.post(
+                "/api/decree/issue/stream", json={"expected_turn": turn},
+            )
+
+    first = asyncio.run(issue())
+    assert first.status_code == 200
+    assert _terminal_sse(first)[0] == "error"
+    assert int(game.state.turn) == turn
+    assert game.db.list_turn_reports() == []
+    assert calls == {"simulator": 1, "extractor": 0}
+
+    retry = asyncio.run(issue())
+    assert retry.status_code == 200
+    assert _terminal_sse(retry)[0] == "done"
+    assert int(game.state.turn) == turn + 1
+    reports = game.db.list_turn_reports()
+    assert len(reports) == 1
+    assert int(reports[0]["turn"]) == turn
+    assert calls == {"simulator": 2, "extractor": 1}
 
 
 def test_issue_with_unextracted_reply_accepts_and_continues(web_game, monkeypatch):
