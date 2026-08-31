@@ -278,21 +278,21 @@ def _drive_resolve_directives(db, state, content, monkeypatch, *, simulator_beha
     )
 
 
-def test_simulator_fallback_tail_resets_settling(game, monkeypatch):
-    """第三条推进尾（simulator-fallback）也要复位 settling（cmr S4 r2 F1）。
-
-    不复位的话推进后的新回合持久化为 settling，下回合前半段被守门跳过
-    ——而那个月的财政/暂存/密令从未做过。
-    """
+def test_simulator_failure_keeps_settling_for_retry(game, monkeypatch):
+    """simulator 失败响亮中止，保留 pre_settle 相位供原月重试。"""
     db, state, content = game
     turn = state.turn
-    res = _drive_resolve_directives(db, state, content, monkeypatch,
-                                    simulator_behavior="fail")
-    assert res.awaiting is False
-    assert state.turn == turn + 1
-    assert state.turn_phase == "summoning"
-    row = db.conn.execute("SELECT turn_phase FROM game_state").fetchone()
-    assert row[0] == "summoning"  # 落库的也复位
+
+    with pytest.raises(RuntimeError, match="simulated simulator crash"):
+        _drive_resolve_directives(db, state, content, monkeypatch,
+                                  simulator_behavior="fail")
+
+    assert state.turn == turn
+    assert db.get_turn_report(turn) == ""
+    row = db.conn.execute(
+        "SELECT turn, turn_phase FROM game_state"
+    ).fetchone()
+    assert tuple(row) == (turn, "settling")
 
 
 def test_hitl_pause_persists_awaiting_phase_durably(game, monkeypatch):
@@ -425,9 +425,9 @@ def test_resolve_turn_idempotent_at_awaiting(game, monkeypatch):
 def test_guarded_early_return_does_not_consume_pending(game):
     """守门早退不消费暂存动作（cmr S7 r5 改约）。
 
-    所有权规则：推进回合的终端写路（settle/advance/fallback）各自在 atomic 内 commit；
+    所有权规则：推进回合的终端写路（settle/advance）各自在 atomic 内 commit；
     早退路事务外 commit 会造成跨事务半写。孤儿防线由终端路测试接管
-    （test_advance_paths_atomic 的 settle 回滚/HITL 重抽/fallback/advance 各条）。"""
+    （test_advance_paths_atomic 的 settle 回滚/HITL 重抽/advance 各条）。"""
     from ming_sim.decree import pre_settle
     from tests.test_pending_actions import _active_minister_name
     db, state, content = game

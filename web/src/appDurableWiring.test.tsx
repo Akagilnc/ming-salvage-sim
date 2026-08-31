@@ -1058,6 +1058,54 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     });
   });
 
+  it("#1700 phase-1 SSE error → loadState 挂 settle-resume", async () => {
+    // 初态可开拟诏；SSE error 后服务端已持久化 settling，客户端须 loadState 投影续跑条。
+    let liveState: Record<string, unknown> = {
+      ...settlementBaseState("player"),
+      turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
+    };
+    const settlingState = settlementBaseState("settling");
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      const u = new URL(String(url), "http://t.local");
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) return jsonResp(liveState);
+      if (u.pathname.endsWith("/api/history/turns")) return jsonResp({
+        turns: [{ kind: "month", turn: 4, year: 1627, period: 9, has_report: true, has_attendant: false, has_directive: true }],
+      });
+      if (u.pathname.includes("/api/history/turn/")) return jsonResp({
+        turn: 4, year: 1627, period: 9, report: SNAP_GAZETTE, decree: "",
+      });
+      if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
+      if (u.pathname.endsWith("/api/decree/issue/stream")) {
+        // 模拟 pre_settle 已提交：失败后权威态为 settling + settlement_display。
+        liveState = settlingState;
+        return sseResp("error", { message: "simulator 流式无内容" });
+      }
+      return jsonResp({});
+    }));
+    const host = await mountApp();
+    expect(host.querySelector('[data-testid="settle-resume"]')).toBeNull();
+    await click(cmdByCaption(host, "拟诏·盖玺颁诏过月"));
+    await tick();
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
+    });
+    const seal = host.querySelector("button.seal-btn-issue") as HTMLButtonElement | null;
+    expect(seal).not.toBeNull();
+    await click(seal);
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[data-testid="settle-resume"]')).not.toBeNull());
+    });
+    const resume = host.querySelector('[data-testid="settle-resume"] button') as HTMLButtonElement | null;
+    expect(resume).not.toBeNull();
+    expect(resume!.disabled).toBe(false);
+    expect(resume!.textContent).toContain("续跑结算");
+    // 陈旧常态写面不再当权威：settling 门控已投影续跑，busy 已清。
+    expect(host.querySelector(".settlement-lock")).toBeNull();
+  });
+
   it("#1418 r2 awaiting + 全员 decided + settlement_display：接到 settle-resume，不重开批红", async () => {
     const decided = { ...validDecision, status: "decided", choice: { label: "固守" } };
     stubSettlementFetch(settlementBaseState("awaiting_decision", {
