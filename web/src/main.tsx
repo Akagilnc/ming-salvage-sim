@@ -804,31 +804,29 @@ export function App() {
             {state.settlement_recovery?.message
               || "上月结算未完成（进度已保存）。"}
           </span>
-          <button
-            className="seal-btn-issue"
-            onClick={
-              needsPhase2Resume(
-                state.turn.phase,
-                state.pending_decisions || [],
-                state.turn.settlement_display,
-                state.resume_phase2,
-              )
-                ? resumePhase2
-                : issueDecree
-            }
-            disabled={!!busy}
-          >
-            {needsPhase2Resume(
+          {(() => {
+            const phase2 = needsPhase2Resume(
               state.turn.phase,
               state.pending_decisions || [],
               state.turn.settlement_display,
               state.resume_phase2,
-            )
-              ? "续跑结算"
-              : (state.settlement_recovery?.ready_replay === false
-                ? "重新推演"
-                : "续跑结算")}
-          </button>
+            );
+            // #1620：typed 恢复动作——phase2 / ready 重放 → resume；ready=0 → resimulate。
+            // 文案为人服务；契约断言落 data-recovery-action，不锁措辞。
+            const recoveryAction = phase2 || state.settlement_recovery?.ready_replay !== false
+              ? "resume"
+              : "resimulate";
+            return (
+              <button
+                className="seal-btn-issue"
+                data-recovery-action={recoveryAction}
+                onClick={phase2 ? resumePhase2 : issueDecree}
+                disabled={!!busy}
+              >
+                {recoveryAction === "resimulate" ? "重新推演" : "续跑结算"}
+              </button>
+            );
+          })()}
         </div>
       ) : null}
 
