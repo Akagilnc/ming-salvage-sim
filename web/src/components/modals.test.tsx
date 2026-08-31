@@ -459,7 +459,7 @@ describe("ChatModal — #527 prefix chips only (拟旨/下密令)", () => {
     { label: "机密差事", text: "", prefix: true, intent: "secret_order" },
   ];
 
-  it("keeps draft prefix but stores secret-order intent without changing the textarea", () => {
+  it("switching from draft to typed secret-order replaces composer content and does not auto-send", () => {
     const onSend = vi.fn();
     const onIntent = vi.fn();
     const host = renderModal({
@@ -487,7 +487,7 @@ describe("ChatModal — #527 prefix chips only (拟旨/下密令)", () => {
     act(() => {
       secretBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
-    expect(textarea.value).toBe("拟旨如下：");
+    expect(textarea.value).toBe("");
     expect(onIntent).toHaveBeenLastCalledWith("secret_order");
     expect(onSend).not.toHaveBeenCalled();
   });
