@@ -75,10 +75,11 @@ def test_humanize_non_character_condition_keeps_existing_region_translation():
 
 def test_humanize_character_status_condition_hides_machine_key():
     text = _h("character.袁崇焕.status == active")
-    # 人物 / 字段 / 值
+    # 人物 / 字段 / 值；#1683 active 官印态标签=在事（非物理「在朝」）
     assert "袁崇焕" in text
     assert "状态" in text
-    assert "在朝" in text
+    assert "在事" in text
+    assert "在朝" not in text
     for tok in ("character", "status", "active"):
         _no_token(text, tok)
 

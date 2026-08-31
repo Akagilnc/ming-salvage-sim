@@ -122,7 +122,13 @@ export type Minister = {
   style: string;
   status: string;  // active/dismissed/imprisoned/exiled/retired/dead/offstage
   status_reason?: string;
-  status_label: string;  // 中文：在朝/已罢黜/下狱/流放/致仕…
+  status_label: string;  // 中文：在事/已罢黜/下狱/流放/致仕…（官印态，非物理所在）
+  /** region_id；与 status 正交的物理所在 */
+  location?: string;
+  location_label?: string;
+  /** 在途目的地 region_id；空=未启程 */
+  transit_to?: string;
+  transit_to_label?: string;
   summary: string;
   favorite: boolean;
   portrait_id?: string;  // 空/undefined=无专属，前端 fallback 到池
@@ -619,7 +625,6 @@ export type ApiErrorDetail = {
   message?: string;
   provider_message?: string;
   status_code?: number | null;
-  /** #1351 A1：advance_without_edict 令牌冲突时服务端当前 turn */
   turn?: number;
   pending_action_failures?: PendingActionFailure[];
 };

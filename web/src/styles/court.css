@@ -343,13 +343,63 @@
 .minister-status.status-dismissed,
 .minister-status.status-exiled { background: rgba(150, 70, 30, 0.9); }
 .minister-status.status-retired { background: rgba(90, 90, 100, 0.85); }
+/* #1683：物理所在/在途与 status 正交，另徽标呈现 */
+.minister-place {
+  flex: 0 0 auto;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 9px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  white-space: nowrap;
+  color: #f5f0e6;
+  background: rgba(60, 90, 110, 0.85);
+}
+.minister-place.minister-transit {
+  background: rgba(70, 110, 70, 0.9);
+}
 /* 状态徽标在前时，紧随的 office 不再独占右端 */
 .minister-status + .minister-office { margin-left: 6px; }
+.minister-place + .minister-office { margin-left: 6px; }
 
 /* 去职大臣卡片：灰化提示不可召见 */
 .minister-card.ousted {
   opacity: 0.62;
   filter: grayscale(0.35);
+  cursor: default;
+}
+
+/* #1402：offstage 来历原样直显；卡内起复入口可点 */
+.minister-status-reason {
+  max-width: 100%;
+  padding: 0 4px 2px;
+  font-size: 0.65rem;
+  line-height: 1.3;
+  color: rgba(255, 220, 180, 0.78);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+  white-space: normal;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}
+
+.minister-resume-btn {
+  margin: 4px 0 6px;
+  padding: 3px 10px;
+  border: 1px solid rgba(255, 210, 120, 0.55);
+  border-radius: 4px;
+  color: #ffe8a0;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  background: rgba(90, 50, 18, 0.85);
+  cursor: pointer;
+}
+
+.minister-resume-btn:hover {
+  background: rgba(143, 47, 37, 0.9);
 }
 
 /* 详情卡副标题里的官职，与状态徽标并排 */

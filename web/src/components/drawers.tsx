@@ -1,6 +1,6 @@
 import React from "react";
 import { Crown, Landmark, MapPinned, ScrollText, Star, Swords, X } from "lucide-react";
-import { ArmyPaySection, MinisterPortrait, PortraitUploadButton, RightDrawer, cacheBust, courtSlots, loadCourtPos, saveCourtPos, snapToSlot } from "./hud";
+import { ArmyPaySection, MinisterPlaceOffice, MinisterPortrait, PortraitUploadButton, RightDrawer, cacheBust, courtSlots, loadCourtPos, saveCourtPos, snapToSlot } from "./hud";
 import { formatMoney, formatSignedMoney, qualitativeArmyStat } from "../format";
 import { settlementClosedReason } from "../settlementPresentation";
 import type { Army, Building, GameState, MapNode, Minister, Region } from "../types";
@@ -11,6 +11,7 @@ export function MinisterCardList({
   selectedMinister,
   emptyNote,
   onOpenChat,
+  onOpenEdict,
   onUploadPortrait,
   courtMode = false,
   chatEntryEnabled = true,
@@ -21,6 +22,8 @@ export function MinisterCardList({
   selectedMinister: string;
   emptyNote: string;
   onOpenChat: (minister: Minister) => void;
+  /** #1402：在野 offstage 卡内起复入口 → 既有拟诏面，不走召对。 */
+  onOpenEdict?: () => void;
   onUploadPortrait?: (ministerName: string, file: File) => Promise<void>;
   courtMode?: boolean;
   /** #1236：核账期拔召对写入口，名册仍只读保留。 */
@@ -232,38 +235,77 @@ export function MinisterCardList({
 
   if (!list.length) return <div className={courtMode ? "minister-list minister-list-court" : "minister-list"}><div className="empty-note">{emptyNote}</div></div>;
 
+  const cardBody = (minister: Minister, ousted: boolean, isOffstage: boolean) => {
+    const isCustom = minister.portrait_id?.startsWith("custom:");
+    const dedicated = isCustom
+      ? `/portraits/custom/${encodeURIComponent(minister.name)}?t=${cacheBust(minister.portrait_id!)}`
+      : `/portraits/${portraitPrefix}${minister.id ?? minister.name}.png`;
+    const poolFallback = !isCustom && minister.portrait_id ? `/portraits/${minister.portrait_id}.png` : undefined;
+    return (
+      <>
+        <div className="minister-card-portrait-wrap">
+          <MinisterPortrait primary={dedicated} fallback={poolFallback} name={minister.name} />
+          {onUploadPortrait && chatEntryEnabled && (
+            <PortraitUploadButton ministerName={minister.name} onUpload={onUploadPortrait} />
+          )}
+        </div>
+        <div className="minister-card-info">
+          <div className="minister-card-top">
+            <span className="minister-name">{minister.name}</span>
+            {ousted && <span className={`minister-status status-${minister.status}`}>{minister.status_label}</span>}
+            <MinisterPlaceOffice minister={minister} officeClassName="minister-office" />
+          </div>
+          {isOffstage && minister.status_reason ? (
+            <span className="minister-status-reason">{minister.status_reason}</span>
+          ) : null}
+          <span className="minister-bio">{minister.summary}</span>
+        </div>
+        {minister.favorite && <Star className="favorite-mark" size={13} />}
+        {isOffstage && onOpenEdict ? (
+          <button
+            type="button"
+            className="minister-resume-btn"
+            disabled={!chatEntryEnabled}
+            aria-disabled={!chatEntryEnabled}
+            title={closedTitle}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!chatEntryEnabled) return;
+              onOpenEdict();
+            }}
+          >
+            起复传召
+          </button>
+        ) : null}
+      </>
+    );
+  };
+
   // 非朝班模式（全部tab）：普通网格
   if (!courtMode) {
     return (
       <div className="minister-list">
         {list.map((minister) => {
-          const isCustom = minister.portrait_id?.startsWith("custom:");
-          const dedicated = isCustom
-            ? `/portraits/custom/${encodeURIComponent(minister.name)}?t=${cacheBust(minister.portrait_id!)}`
-            : `/portraits/${portraitPrefix}${minister.id ?? minister.name}.png`;
-          const poolFallback = !isCustom && minister.portrait_id ? `/portraits/${minister.portrait_id}.png` : undefined;
           const ousted = minister.status !== "active";
+          const isOffstage = minister.status === "offstage";
+          const className = `minister-card ${selectedMinister === minister.name ? "selected" : ""} ${ousted ? "ousted" : ""}`;
+          // #1402：offstage 卡主体不可召对；起复走卡内拟诏入口。
+          if (isOffstage) {
+            return (
+              <div key={minister.name} className={className}>
+                {cardBody(minister, ousted, true)}
+              </div>
+            );
+          }
           return (
             <button key={minister.name}
               type="button"
-              className={`minister-card ${selectedMinister === minister.name ? "selected" : ""} ${ousted ? "ousted" : ""}`}
+              className={className}
               disabled={!chatEntryEnabled}
               aria-disabled={!chatEntryEnabled}
               title={closedTitle}
               onClick={() => { if (chatEntryEnabled) onOpenChat(minister); }}>
-              <div className="minister-card-portrait-wrap">
-                <MinisterPortrait primary={dedicated} fallback={poolFallback} name={minister.name} />
-                {onUploadPortrait && chatEntryEnabled && <PortraitUploadButton ministerName={minister.name} onUpload={onUploadPortrait} />}
-              </div>
-              <div className="minister-card-info">
-                <div className="minister-card-top">
-                  <span className="minister-name">{minister.name}</span>
-                  {ousted && <span className={`minister-status status-${minister.status}`}>{minister.status_label}</span>}
-                  {minister.office && <span className="minister-office">{minister.office}</span>}
-                </div>
-                <span className="minister-bio">{minister.summary}</span>
-              </div>
-              {minister.favorite && <Star className="favorite-mark" size={13} />}
+              {cardBody(minister, ousted, false)}
             </button>
           );
         })}
@@ -274,32 +316,35 @@ export function MinisterCardList({
   return (
     <div className="minister-list minister-list-court" ref={containerRef}>
       {list.map((minister) => {
-        const isCustom = minister.portrait_id?.startsWith("custom:");
-        const dedicated = isCustom
-          ? `/portraits/custom/${encodeURIComponent(minister.name)}?t=${cacheBust(minister.portrait_id!)}`
-          : `/portraits/${portraitPrefix}${minister.id ?? minister.name}.png`;
-        const poolFallback = !isCustom && minister.portrait_id
-          ? `/portraits/${minister.portrait_id}.png`
-          : undefined;
         const ousted = minister.status !== "active";
+        const isOffstage = minister.status === "offstage";
         const pct = positions[minister.name];
         // 透视缩放：py=0最远最小，py=1最近最大
         const perspScale = pct ? 0.38 + 0.62 * pct.py : 1;
-        // 卡片宽用 vh 单位（CSS），这里只控制 scale
+        const className = `minister-card ${selectedMinister === minister.name ? "selected" : ""} ${ousted ? "ousted" : ""}`;
+        const style = pct ? {
+          position: "absolute" as const,
+          left: `${pct.px * 100}%`,
+          top: `${pct.py * 100}%`,
+          cursor: (!isOffstage && chatEntryEnabled) ? "grab" : "default",
+          transform: `scale(${perspScale.toFixed(3)})`,
+          transformOrigin: "bottom center",
+          zIndex: Math.round(pct.py * 1000),
+        } : { visibility: "hidden" as const };
+        // #1402：offstage 卡主体不可召对/拖座；起复走卡内拟诏入口。
+        if (isOffstage) {
+          return (
+            <div key={minister.name} className={className} style={style}>
+              {cardBody(minister, ousted, true)}
+            </div>
+          );
+        }
         return (
           <button
             key={minister.name}
             type="button"
-            className={`minister-card ${selectedMinister === minister.name ? "selected" : ""} ${ousted ? "ousted" : ""}`}
-            style={pct ? {
-              position: "absolute",
-              left: `${pct.px * 100}%`,
-              top: `${pct.py * 100}%`,
-              cursor: chatEntryEnabled ? "grab" : "default",
-              transform: `scale(${perspScale.toFixed(3)})`,
-              transformOrigin: "bottom center",
-              zIndex: Math.round(pct.py * 1000),
-            } : { visibility: "hidden" }}
+            className={className}
+            style={style}
             onMouseDown={(e) => { if (chatEntryEnabled) onMouseDown(e, minister.name); }}
             disabled={!chatEntryEnabled}
             aria-disabled={!chatEntryEnabled}
@@ -310,21 +355,7 @@ export function MinisterCardList({
               onOpenChat(minister);
             }}
           >
-            <div className="minister-card-portrait-wrap">
-              <MinisterPortrait primary={dedicated} fallback={poolFallback} name={minister.name} />
-              {onUploadPortrait && chatEntryEnabled && (
-                <PortraitUploadButton ministerName={minister.name} onUpload={onUploadPortrait} />
-              )}
-            </div>
-            <div className="minister-card-info">
-              <div className="minister-card-top">
-                <span className="minister-name">{minister.name}</span>
-                {ousted && <span className={`minister-status status-${minister.status}`}>{minister.status_label}</span>}
-                {minister.office && <span className="minister-office">{minister.office}</span>}
-              </div>
-              <span className="minister-bio">{minister.summary}</span>
-            </div>
-            {minister.favorite && <Star className="favorite-mark" size={13} />}
+            {cardBody(minister, ousted, false)}
           </button>
         );
       })}
@@ -660,6 +691,7 @@ export function CourtDrawer({
   onGroupChange,
   onClose,
   onOpenChat,
+  onOpenEdict,
   onUploadPortrait,
   chatEntryEnabled = true,
 }: {
@@ -671,6 +703,8 @@ export function CourtDrawer({
   onGroupChange: (group: string) => void;
   onClose: () => void;
   onOpenChat: (minister: Minister) => void;
+  /** #1402：在野 offstage 起复 → 既有拟诏面。 */
+  onOpenEdict?: () => void;
   onUploadPortrait: (ministerName: string, file: File) => Promise<void>;
   /** #1236：核账期拔召对写入口，名册只读。 */
   chatEntryEnabled?: boolean;
@@ -709,6 +743,7 @@ export function CourtDrawer({
           selectedMinister={selectedMinister}
           emptyNote={q ? "无匹配大臣。" : (ministerGroup === "在野" ? "暂无在野前臣可起复。" : "此栏暂无可召见大臣。")}
           onOpenChat={onOpenChat}
+          onOpenEdict={onOpenEdict}
           courtMode={ministerGroup === "内阁+六部" || ministerGroup === "收藏"}
           onUploadPortrait={onUploadPortrait}
           chatEntryEnabled={chatEntryEnabled}

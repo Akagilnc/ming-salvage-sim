@@ -18,8 +18,8 @@ export function EdictModal({
   onCancelEdit,
   onSaveDirective,
   onDeleteDirective,
-  onAdvanceWithoutEdict,
   onIssueDecree,
+  onAdvanceWithoutEdict,
   onOpenFailureRecovery,
 }: {
   state: GameState;
@@ -37,9 +37,10 @@ export function EdictModal({
   onCancelEdit: () => void;
   onSaveDirective: (directive: Directive) => void;
   onDeleteDirective: (directiveId: number) => void;
-  onAdvanceWithoutEdict: () => void;
-  /** #1277：有草案时主钮走盖玺颁诏（issueDecree）；0 草案仍退朝。 */
+  /** #1277/#1560：有可结算工作（草案或 resolve_turn 可消费 pending）时主钮走盖玺颁诏；真空禁用。 */
   onIssueDecree: () => void;
+  /** #1560：failed-only 确认后退朝；复用既有 advance_without_edict 客户端接缝。 */
+  onAdvanceWithoutEdict: () => void;
   onOpenFailureRecovery: () => void;
 }) {
   // Conversational directives are approved when the audience turn settles (ADR 0049).
@@ -48,7 +49,22 @@ export function EdictModal({
   const hasDrafts = draftDirectives.length > 0;
   const hasPendingConversationalDraft = (state.pending_directive_count ?? 0) > 0;
   const hasNonEdictPendingActions = (state.pending_non_directive_action_count ?? 0) > 0;
+  const hasPendingSecretOrders = (state.pending_secret_order_count ?? 0) > 0;
   const hasFailedSecretOrders = (state.failed_secret_order_count ?? 0) > 0;
+  // draft/pending 走 issue/stream；failed-only 另开确认后退朝；真空禁用。
+  const hasSettleWork =
+    hasDrafts || hasPendingConversationalDraft || hasNonEdictPendingActions || hasPendingSecretOrders;
+  const failedOnly = !hasSettleWork && hasFailedSecretOrders;
+  const confirmFailedOnlyAdvance = () => {
+    if (window.confirm()) {
+      onAdvanceWithoutEdict();
+    }
+  };
+  const onFooterClick = hasSettleWork
+    ? onIssueDecree
+    : failedOnly
+      ? confirmFailedOnlyAdvance
+      : undefined;
 
   // 御案只列尚未成案的候选；结束回合是唯一提交边界，不再生成月末复审工作台。
   return (
@@ -83,16 +99,10 @@ export function EdictModal({
                 )}
               </div>
             ))}
-            {!draftDirectives.length && !hasPendingConversationalDraft && !hasNonEdictPendingActions && !hasFailedSecretOrders && <div className="empty-note">本月尚无明发诏令，可退朝结束本月或在右侧御笔自拟。</div>}
-            {!draftDirectives.length && hasPendingConversationalDraft && <div className="empty-note pending-draft-hint">大臣已奉旨起草，退朝结束本月时按既有规则成案。</div>}
             {!draftDirectives.length && !hasPendingConversationalDraft && hasFailedSecretOrders && (
               <div className="empty-note failed-secret-note">
-                <span>尚有密令落库失败可稍后处理；可先退朝结束本月，不阻断推进。</span>
                 <button type="button" onClick={onOpenFailureRecovery} disabled={!!busy}>处理</button>
               </div>
-            )}
-            {!draftDirectives.length && !hasPendingConversationalDraft && !hasFailedSecretOrders && hasNonEdictPendingActions && (
-              <div className="empty-note">尚有召对事项候旨，退朝结束本月后按沉默准行处理。</div>
             )}
           </div>
         </section>
@@ -114,13 +124,13 @@ export function EdictModal({
       {error && <div className="error-line" role="alert">{error}</div>}
 
       <div className="desk-footer">
-        {/* #1277：drafts>0 名实相符——盖玺颁诏过月→issueDecree；0 草案保留退朝。 */}
+        {/* #1560：真空禁用；draft/pending 走 issue；failed-only 确认后 advance。 */}
         <button
-          className={hasDrafts ? "seal-btn-issue" : "seal-btn-compose"}
-          onClick={hasDrafts ? onIssueDecree : onAdvanceWithoutEdict}
-          disabled={!!busy}
+          className={hasSettleWork || failedOnly ? "seal-btn-issue" : "seal-btn-compose"}
+          onClick={onFooterClick}
+          disabled={!!busy || (!hasSettleWork && !failedOnly)}
         >
-          {hasDrafts ? "盖玺颁诏过月 →" : "退朝结束本月 →"}
+          {hasSettleWork ? "盖玺颁诏过月 →" : "退朝结束本月 →"}
         </button>
       </div>
     </div>
