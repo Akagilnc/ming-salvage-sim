@@ -1959,7 +1959,7 @@ def test_failed_secret_order_does_not_block_later_audience(game, monkeypatch):
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_unresolved_failed_secret_order_is_ignored_after_turn_boundary(game, monkeypatch):
-    """未处理的 failed 密令暂存跨回合后不再进入当前回合 pending,不阻断退朝推进。"""
+    """#1560 / CONTEXT：未处理的 failed 密令意图在真实过回合时丢弃，不阻断推进、不留恢复面。"""
     db, state, content = game
     name = _active_minister_name(db, content)
     old_turn = state.turn
@@ -1976,16 +1976,26 @@ def test_unresolved_failed_secret_order_is_ignored_after_turn_boundary(game, mon
 
     assert state.turn == old_turn + 1
     assert db.list_pending_actions(state.turn) == []
-    old_failed = db.list_pending_actions(old_turn, status="failed")
-    assert len(old_failed) == 1 and old_failed[0]["id"] == pending_id
+    assert db.list_pending_actions(old_turn, status="failed") == []
+    assert db.list_failed_secret_order_actions() == []
+    row = db.conn.execute("SELECT id FROM pending_actions WHERE id=?", (pending_id,)).fetchone()
+    assert row is None
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_default_approval_secret_order_failure_surfaces_after_turn_boundary(game, monkeypatch):
-    """#415: checkpoint/default approval failure must remain visible and retryable after turn advance."""
+    """#415/#1560: 结束回合过程中 commit 新产生的 failure 仍跨月可见、可重试（清旧在 commit 前）。"""
     db, state, content = game
     name = _active_minister_name(db, content)
     old_turn = state.turn
+    # 旧 failure：应在 pre_settle commit 前被丢弃，不得挡住新 failure 的恢复面。
+    stale_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
+        payload={"title": "陈年失败", "content": "应被过回合丢弃", "assignee": name,
+                 "tags": [], "deadline_months": 0, "covert_task": LIAO_PAY_COVERT_TASK},
+    )
+    db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (stale_id,))
+    db.conn.commit()
     pending_id = db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
         payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
@@ -2003,6 +2013,9 @@ def test_default_approval_secret_order_failure_surfaces_after_turn_boundary(game
     assert state.turn == old_turn + 1
     failed = db.list_failed_secret_order_actions(name)
     assert [f["id"] for f in failed] == [pending_id]
+    assert all(f["id"] != stale_id for f in failed)
+    stale_row = db.conn.execute("SELECT id FROM pending_actions WHERE id=?", (stale_id,)).fetchone()
+    assert stale_row is None
     payload = web_app.WebGame.pending_action_failures_for(
         types.SimpleNamespace(db=db), name)
     assert payload and payload[0]["id"] == pending_id

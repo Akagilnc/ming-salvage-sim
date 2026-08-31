@@ -19,6 +19,7 @@ export function EdictModal({
   onSaveDirective,
   onDeleteDirective,
   onIssueDecree,
+  onAdvanceWithoutEdict,
   onOpenFailureRecovery,
 }: {
   state: GameState;
@@ -38,6 +39,8 @@ export function EdictModal({
   onDeleteDirective: (directiveId: number) => void;
   /** #1277/#1560：有可结算工作（草案或 resolve_turn 可消费 pending）时主钮走盖玺颁诏；真空禁用。 */
   onIssueDecree: () => void;
+  /** #1560：failed-only 确认后退朝；复用既有 advance_without_edict 客户端接缝。 */
+  onAdvanceWithoutEdict: () => void;
   onOpenFailureRecovery: () => void;
 }) {
   // Conversational directives are approved when the audience turn settles (ADR 0049).
@@ -48,9 +51,20 @@ export function EdictModal({
   const hasNonEdictPendingActions = (state.pending_non_directive_action_count ?? 0) > 0;
   const hasPendingSecretOrders = (state.pending_secret_order_count ?? 0) > 0;
   const hasFailedSecretOrders = (state.failed_secret_order_count ?? 0) > 0;
-  // failed_secret_order_count 走 onOpenFailureRecovery，不单开主钮（非 resolve_turn 常规 pending）。
+  // draft/pending 走 issue/stream；failed-only 另开确认后退朝；真空禁用。
   const hasSettleWork =
     hasDrafts || hasPendingConversationalDraft || hasNonEdictPendingActions || hasPendingSecretOrders;
+  const failedOnly = !hasSettleWork && hasFailedSecretOrders;
+  const confirmFailedOnlyAdvance = () => {
+    if (window.confirm("尚有密令落库失败未处理。确定结束本月？未处理的失败意图将被丢弃。")) {
+      onAdvanceWithoutEdict();
+    }
+  };
+  const onFooterClick = hasSettleWork
+    ? onIssueDecree
+    : failedOnly
+      ? confirmFailedOnlyAdvance
+      : undefined;
 
   // 御案只列尚未成案的候选；结束回合是唯一提交边界，不再生成月末复审工作台。
   return (
@@ -115,13 +129,13 @@ export function EdictModal({
       </div>
 
       <div className="desk-footer">
-        {/* #1560：真空禁用；任一既有可结算工作沿 onIssueDecree 单轨。 */}
+        {/* #1560：真空禁用；draft/pending 走 issue；failed-only 确认后 advance。 */}
         <button
-          className={hasSettleWork ? "seal-btn-issue" : "seal-btn-compose"}
-          onClick={onIssueDecree}
-          disabled={!!busy || !hasSettleWork}
+          className={hasSettleWork || failedOnly ? "seal-btn-issue" : "seal-btn-compose"}
+          onClick={onFooterClick}
+          disabled={!!busy || (!hasSettleWork && !failedOnly)}
         >
-          {hasSettleWork ? "盖玺颁诏过月 →" : "尚无草案"}
+          {hasSettleWork ? "盖玺颁诏过月 →" : failedOnly ? "退朝结束本月 →" : "尚无草案"}
         </button>
       </div>
     </div>
