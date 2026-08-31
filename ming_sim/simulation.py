@@ -1305,6 +1305,16 @@ def build_extractor_shared_context(
     for row in authorized_dossiers:
         if row["action_type"] == "secret_order":
             continue
+        if row.get("_late_decision_dossier"):
+            status = str(row.get("status") or "")
+            if module == "issues":
+                if status not in {"closed", "proposed"}:
+                    continue
+            elif module == "internal":
+                if status != "closed":
+                    continue
+            else:
+                continue
         entry: Dict[str, object] = {
             "id": int(row["id"]),
             "origin_ref": f"dossier:{int(row['id'])}",
@@ -1314,6 +1324,8 @@ def build_extractor_shared_context(
             "due_turn": int(row.get("due_turn") or 0),
             "participant_roster": list(row.get("participant_roster") or []),
         }
+        if row.get("_late_decision_dossier"):
+            entry["decision_key"] = str(row["payload"]["decision_key"])
         if all(key in row for key in side_keys):
             for key in side_keys:
                 entry[key] = row[key]

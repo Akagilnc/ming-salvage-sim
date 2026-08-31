@@ -13,8 +13,9 @@ from __future__ import annotations
 
 import json
 import re
-from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Dict, List, Mapping, Optional, Set, Tuple
 
+from ming_sim.action_clusters import season_option_fields, validate_season_option
 from ming_sim.models import effect_dict_has_work
 
 if TYPE_CHECKING:  # GameDB 仅用于 _select_secret_orders_for_sim 的类型注解（已 `from __future__ annotations`
@@ -49,6 +50,21 @@ _DECISION_RE = re.compile(r"<<DECISION>>\s*(\{.*?\})\s*<<END>>", re.DOTALL)
 MAX_DECISIONS_PER_TURN = 5
 
 
+def bind_decision_options(options: object) -> Dict[str, Dict[str, object]]:
+    """Bind normalized labels to stored options, rejecting ambiguous decisions."""
+    bound: Dict[str, Dict[str, object]] = {}
+    if not isinstance(options, list):
+        raise ValueError("decision options 须为 list")
+    for option in options:
+        if not isinstance(option, dict):
+            continue
+        label = str(option.get("label") or "").strip()
+        if not label or label in bound:
+            raise ValueError(f"decision option label 为空或重复：{label!r}")
+        bound[label] = option
+    return bound
+
+
 def parse_decision_blocks(narrative: str) -> tuple[str, List[Dict[str, object]]]:
     """从邸报抽 <<DECISION>>...<<END>> JSON 块，返回 (剥离后的干净邸报, 决策列表)。
 
@@ -70,14 +86,32 @@ def parse_decision_blocks(narrative: str) -> tuple[str, List[Dict[str, object]]]
         raw_opts = obj.get("options")
         if not title or not isinstance(raw_opts, list):
             continue
-        options: List[Dict[str, str]] = []
+        options: List[Dict[str, object]] = []
         for o in raw_opts:
             if not isinstance(o, dict):
                 continue
             label = str(o.get("label") or "").strip()
             if not label:
                 continue
-            options.append({"label": label, "hint": str(o.get("hint") or "").strip()})
+            try:
+                action_type = validate_season_option(o)
+            except ValueError:
+                options = []
+                break
+            option: Dict[str, object] = {
+                "label": label,
+                "hint": str(o.get("hint") or "").strip(),
+            }
+            # Deterministic financial options carry their executable payload;
+            # label/hint remain presentation only.
+            for key in season_option_fields(action_type):
+                if key in o:
+                    option[key] = action_type if key == "action_type" else o[key]
+            options.append(option)
+        try:
+            bind_decision_options(options)
+        except ValueError:
+            continue
         if len(options) < 2:  # 至少给 2 个选项才算有效抉择
             continue
         decision = {
@@ -396,6 +430,13 @@ def _format_decision_directive(decisions: List[Dict[str, object]]) -> str:
         if not label and not note:
             continue
         title = str(d.get("title") or f"抉择{i}").strip()
+        selected = bind_decision_options(d.get("options") or []).get(label)
+        # Typed grants are governed by their dossier status, not generic
+        # "already happened" prose.  Their note remains an imperial fact.
+        if isinstance(selected, Mapping) and selected.get("action_type") == "grant_allocation":
+            if note:
+                lines.append(f"{i}. 【{title}】朱批：{note}")
+            continue
         seg = f"{i}. 【{title}】陛下御断：{label or '（未选预设项）'}"
         hint = str(choice.get("hint") or "").strip()
         if hint:
