@@ -20,7 +20,7 @@ from ming_sim.constants import (
 )
 from ming_sim.assets import wrap
 from ming_sim.context import match_minister_from_text
-from ming_sim.exceptions import ExitGame, LLMUnavailable, SettlementAbort
+from ming_sim.exceptions import ExitGame, LLMContractError, LLMUnavailable, SettlementAbort
 from ming_sim.models import API_DEFAULT_TIMEOUT_SECONDS, Character, GameState
 from ming_sim.session import (
     FRONT_HALF_DONE_PHASES,
@@ -968,9 +968,10 @@ def play_turn(session: GameSession) -> None:
                 _cli_write_gate(session)
                 result = session.advance_without_decree()
                 report = _submit_first_cli_decisions(session, result)
-            except (ValueError, SettlementAbort, LLMUnavailable) as error:
+            except (ValueError, SettlementAbort, LLMUnavailable, LLMContractError) as error:
                 # 跳过与颁诏共享可恢复结算语义：失败后留在本回合循环，允许重试。
                 # #1353 fold-in r8：统一重试耗尽的 LLMUnavailable 不退出 CLI。
+                # #1700：空 simulator 的 LLMContractError 同形，不落到 run_cli「程序中止」。
                 print(f"\n{error}")
                 _print_pending_action_failures(
                     _new_secret_order_failure_payloads(session, turn_before, failed_before)
@@ -991,8 +992,8 @@ def play_turn(session: GameSession) -> None:
                 _cli_write_gate(session)
                 result = session.resolve_turn()
                 report = _submit_first_cli_decisions(session, result)
-            except (ValueError, SettlementAbort, LLMUnavailable) as error:
-                # 恢复态守门 / 结算中止 / 欠账耗尽（#1353 r8）：打印指引后留在
+            except (ValueError, SettlementAbort, LLMUnavailable, LLMContractError) as error:
+                # 恢复态守门 / 结算中止 / 欠账耗尽（#1353 r8）/ 契约失败（#1700）：打印指引后留在
                 # 本回合交互循环——玩家重按 issue/skip 即重试整段，CLI 不退出。
                 print(f"\n{error}")
                 _print_pending_action_failures(

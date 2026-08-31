@@ -14,7 +14,7 @@ import pytest
 
 import ming_sim.cli.terminal as term
 import ming_sim.issues as issues_mod
-from ming_sim.exceptions import LLMUnavailable, SettlementAbort
+from ming_sim.exceptions import LLMContractError, LLMUnavailable, SettlementAbort
 from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
 from ming_sim.session import TurnPhase
 
@@ -61,6 +61,8 @@ class _Sess:
     SettlementAbort("本月结算失败，进度已保存，可重试。", turn=1, stage="extract"),
     # #1353 fold-in r8：统一重试耗尽的 LLMUnavailable 与结算中止同形——留本回合可重按。
     LLMUnavailable(CLI_RUNNER_PLAYER_MESSAGE, code="pending_extraction"),
+    # #1700：空 simulator 的 LLMContractError 同形，issue catch 扩员后留本回合。
+    LLMContractError("simulator 流式无内容且无终结事件"),
 ])
 def test_issue_refusal_stays_in_loop(monkeypatch, capsys, exc):
     sess = _Sess(exc)
@@ -546,7 +548,12 @@ def test_play_turn_skip_prints_dossier_settlement_report_and_ends_turn(monkeypat
     assert session.calls == ["begin", "end"]
 
 
-def test_play_turn_skip_settlement_abort_stays_in_player_loop(monkeypatch, capsys):
+@pytest.mark.parametrize("exc", [
+    SettlementAbort("退朝结算中止，可重试。", turn=7, stage="settle"),
+    # #1700：skip catch 同形纳入 LLMContractError；同 turn 再 skip 成功。
+    LLMContractError("simulator 流式无内容且无终结事件"),
+])
+def test_play_turn_skip_settlement_abort_stays_in_player_loop(monkeypatch, capsys, exc):
     class Session:
         previous_summary = ""
 
@@ -565,7 +572,7 @@ def test_play_turn_skip_settlement_abort_stays_in_player_loop(monkeypatch, capsy
         def advance_without_decree(self):
             self.calls.append("advance")
             if self.calls.count("advance") == 1:
-                raise SettlementAbort("退朝结算中止，可重试。", turn=7, stage="settle")
+                raise exc
             return None
 
     actions = iter(["skip", "skip"])
@@ -576,7 +583,7 @@ def test_play_turn_skip_settlement_abort_stays_in_player_loop(monkeypatch, capsy
 
     term.play_turn(session)
 
-    assert "可重试" in capsys.readouterr().out
+    assert str(exc) in capsys.readouterr().out
     assert session.calls == ["begin", "advance", "advance"]
 
 

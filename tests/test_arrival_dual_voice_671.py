@@ -329,10 +329,10 @@ def test_arrival_dual_voice_hitl_pending_restores_and_completes(game, monkeypatc
         reopened.close()
 
 
-def test_arrival_dual_voice_companion_failure_not_swallowed_as_sim_fallback(
+def test_arrival_dual_voice_companion_failure_remains_independent(
     game, monkeypatch,
 ):
-    """companion 异常归属独立：不得进 simulator 宽 except 被误标为 sim fallback。"""
+    """companion 异常归属独立，不得被 simulator 异常处理吞掉。"""
     import ming_sim.decree as decree_mod
     import ming_sim.memories as memories
     from ming_sim.exceptions import LLMContractError
@@ -361,7 +361,7 @@ def test_arrival_dual_voice_companion_failure_not_swallowed_as_sim_fallback(
         decree_mod.resolve_directives(
             state, db, None, None, [], "", content=content,
         )
-    # simulator 已跑完；失败是 companion 独立抛出，不是 sim fallback 叙事推进
+    # simulator 已跑完；失败仍由 companion 独立抛出。
     assert sim_ran["n"] == 1
     assert db.get_turn_report(int(state.turn)) == ""
     assert db.get_turn_attendant_message(int(state.turn)) == ""
@@ -373,13 +373,12 @@ def test_arrival_dual_voice_companion_failure_not_swallowed_as_sim_fallback(
     payload = ctx["simulator_payload"]
     assert isinstance(payload, dict)
     assert payload.get(ARRIVAL_COMPANION_SIM_DONE_KEY) is True
-    assert "推演 agent 被服务方拦截" not in str(ctx.get("narrative") or "")
 
 
 def test_arrival_dual_voice_sim_fail_still_surfaces_companion_error(
     game, monkeypatch,
 ):
-    """sim 已失败时 companion 错仍以独立异常出，不被 fallback 吞掉。"""
+    """sim 已失败时 companion 错仍以独立异常抛出。"""
     import ming_sim.decree as decree_mod
     import ming_sim.memories as memories
     from ming_sim.exceptions import LLMContractError
@@ -402,11 +401,12 @@ def test_arrival_dual_voice_sim_fail_still_surfaces_companion_error(
         decree_mod, memories, monkeypatch, simulate=_simulate, attendant=_attendant,
     )
 
-    with pytest.raises(LLMContractError, match="王承恩独立腿失败"):
+    with pytest.raises(LLMContractError, match="王承恩独立腿失败") as error:
         decree_mod.resolve_directives(
             state, db, None, None, [], "", content=content,
         )
-    # 不得以 sim fallback 叙事完成月（companion 错优先于 fallback 推进）
+    assert isinstance(error.value.__cause__, RuntimeError)
+    assert str(error.value.__cause__) == "simulator boom"
     assert db.get_turn_attendant_message(int(state.turn)) == ""
     assert int(state.turn) == 1  # 未推进
 
@@ -571,17 +571,12 @@ def test_arrival_companion_success_extractor_fail_retry_skips_both(
     assert db.get_turn_attendant_message(completed) == ATTENDANT_TEXT
 
 
-def test_arrival_sim_fail_companion_success_extractor_fail_retry_reruns_sim_keeps_attendant(
+def test_arrival_sim_failure_checkpoints_companion_then_retry_reruns_sim(
     game, monkeypatch, tmp_path,
 ):
-    """sim fallback + companion 成功 + extractor 失败；重试重跑真 sim、不重叫 companion。
-
-    咬住 #671 durable B：fallback 叙事下 companion 成功后 durable 原样 attendant，
-    且不得写 ARRIVAL_COMPANION_SIM_DONE_KEY（重试仍跑真 sim）。
-    """
+    """sim 失败不进入 extractor；成功 companion 留待同页重试复用。"""
     import ming_sim.decree as decree_mod
     import ming_sim.memories as memories
-    from ming_sim.exceptions import SettlementAbort
 
     db, state, content = game
     names = ["洪承畴", "孙传庭"]
@@ -602,8 +597,6 @@ def test_arrival_sim_fail_companion_success_extractor_fail_retry_reruns_sim_keep
 
     def _extract(*_a, **_k):
         extract_ran["n"] += 1
-        if extract_ran["n"] == 1:
-            raise RuntimeError("extractor boom after companion on fallback")
         return ({}, "out", "in")
 
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
@@ -618,15 +611,19 @@ def test_arrival_sim_fail_companion_success_extractor_fail_retry_reruns_sim_keep
         decree_mod, "extract_scores_by_modules_with_agno", _extract,
     )
 
-    with pytest.raises(SettlementAbort):
+    with pytest.raises(RuntimeError, match="sim boom before companion durable"):
         decree_mod.resolve_directives(
             state, db, None, None, [], "", content=content,
         )
     assert sim_ran["n"] == 1
     assert attendant_ran["n"] == 1
-    assert extract_ran["n"] == 1
+    assert extract_ran["n"] == 0
+    assert int(state.turn) == 1
+    assert db.get_turn_report(int(state.turn)) == ""
     failed_ctx = db.get_resolve_context(state.turn)
     assert failed_ctx is not None
+    assert failed_ctx["narrative"] == ""
+    assert failed_ctx["extracted"] is None
     assert failed_ctx["attendant_message"] == ATTENDANT_TEXT
     failed_payload = failed_ctx.get("simulator_payload") or {}
     assert not (
@@ -641,9 +638,9 @@ def test_arrival_sim_fail_companion_success_extractor_fail_retry_reruns_sim_keep
         state, db, None, None, [], "", content=content,
     )
     assert result.awaiting is False
-    assert sim_ran["n"] == 2  # fallback 无 marker → 重跑真 sim
-    assert attendant_ran["n"] == 1  # archived attendant 复用，不重叫
-    assert extract_ran["n"] == 2
+    assert sim_ran["n"] == 2
+    assert attendant_ran["n"] == 1
+    assert extract_ran["n"] == 1
     completed = int(state.turn) - 1
     assert db.get_turn_report(completed) == SIM_REPORT
     assert db.get_turn_attendant_message(completed) == ATTENDANT_TEXT
