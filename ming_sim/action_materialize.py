@@ -1276,11 +1276,15 @@ XIEXIANG_TARGET_KINDS = frozenset({"army"})
 def resolve_grant_account(*, grant_action: object = None, account: object = None) -> str:
     """grant account 归一唯一权威（无 DB）。
 
-    #1620：shape 与 materialize 共用——禁平行第二套 if 树。
-    发内帑→内库；协饷 raw 透传；金钱动作非法非空 raise、空→国库；其余（含 honorific）→""。
+    #1620：shape / materialize / 协饷 共用——禁平行第二套 if 树。
+    入口先太仓→国库；发内帑→内库；协饷已归一 raw 透传（空保持空，非法值留给
+    xiexang 集缺，不在此 raise/默认国库）；其它金钱动作非法非空 raise、空→国库；
+    其余（含 honorific）→""。
     """
     ga = str(grant_action or "").strip()
     raw_account = str(account or "").strip()
+    if raw_account == "太仓":
+        raw_account = "国库"
     if ga == "发内帑":
         return "内库"
     if ga == "协饷":
@@ -1301,20 +1305,26 @@ def require_grant_allocation_shape(
     """grant_allocation 金额/account shape 唯一权威（无 DB）。
 
     #1620：层 A 上桌与 rescript mapper 共用——禁平行第二套规则。
-    account 走 resolve_grant_account；本函数继续独掌 amount。
-    返回 grant_action、account；非 honorific 另含正 amount。
+    顺序：action 闭集 → account（resolve_grant_account）→ amount（本函数独掌）。
+    返回 grant_action、account；非 honorific 另含正 int amount。
     """
+    from ming_sim.strict_types import strict_int
+
     ga = str(grant_action or "").strip()
     if not ga:
         raise ValueError("grant_allocation 缺 grant_action")
+    if ga not in (GRANT_ACTIONS - {"无"}):
+        raise ValueError(f"grant 非法 grant_action：{ga!r}")
     resolved_account = resolve_grant_account(grant_action=ga, account=account)
     out: Dict[str, Any] = {"grant_action": ga, "account": resolved_account}
     if ga in GRANT_HONORIFICS:
         return out
+    if amount is None or amount == "":
+        raise ValueError("grant 金钱缺正 amount")
     try:
-        amt = int(amount or 0)
-    except (TypeError, ValueError):
-        amt = 0
+        amt = strict_int(amount, accept_numeric_strings=False)
+    except ValueError as exc:
+        raise ValueError(f"grant 金钱 amount 须为正整数，拒 {amount!r}") from exc
     if amt <= 0:
         raise ValueError("grant 金钱缺正 amount")
     out["amount"] = amt
@@ -1399,8 +1409,8 @@ def require_explicit_xiexang_fields(
         n = 0
     if n <= 0:
         missing.append("amount")
-    raw_account = str(account or "").strip()
-    canonical_account = "国库" if raw_account == "太仓" else raw_account
+    # #1620：太仓→国库唯一权威 resolve_grant_account；此处不再平行 if。
+    canonical_account = resolve_grant_account(grant_action="协饷", account=account)
     if canonical_account not in {"国库", "内库"}:
         missing.append("account")
     if str(purpose or "").strip() != "补饷":

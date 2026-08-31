@@ -1108,6 +1108,125 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     expect(host.querySelectorAll('[role="alert"]').length).toBe(1);
   });
 
+  it("#1620 本地 pending 后权威 refresh all-decided/resume_phase2 清 stale modal", async () => {
+    // 只证：曾有本地 pending → 权威态切 all-decided/resume_phase2 → modal 卸 + settle-resume。
+    // 不夹 SSE picks 恢复、不夹 busy 二提交。loadState 车辆=落印 stream error（仅触发刷新）。
+    const d = {
+      idx: 0, title: "疏", context: "c",
+      options: [{ label: "甲策", hint: "h" }],
+    };
+    const decided = { ...d, status: "decided", choice: { label: "甲策" } };
+    let liveState: Record<string, unknown> = settlementBaseState("awaiting_decision", {
+      pending_decisions: [d],
+    });
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = new URL(String(url), "http://t.local");
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) return jsonResp(liveState);
+      if (u.pathname.endsWith("/api/history/turns")) return jsonResp({
+        turns: [{ kind: "month", turn: 4, year: 1627, period: 9, has_report: true, has_attendant: false, has_directive: true }],
+      });
+      if (u.pathname.includes("/api/history/turn/")) return jsonResp({
+        turn: 4, year: 1627, period: 9, report: SNAP_GAZETTE, decree: "",
+      });
+      if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
+      if (u.pathname.endsWith("/api/decree/resolve_decisions/stream")) {
+        // 权威态已 all-decided + resume_phase2；error 只作 loadState 触发器。
+        liveState = settlementBaseState("awaiting_decision", {
+          pending_decisions: [decided],
+          resume_phase2: true,
+        });
+        return sseResp("error", { message: "trigger-refresh" });
+      }
+      return jsonResp({});
+    }));
+    const host = await mountApp();
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[data-testid="decision-modal"]')).not.toBeNull());
+    });
+    const optionButtons = () =>
+      Array.from(host.querySelectorAll("button.decision-option")) as HTMLButtonElement[];
+    const seal = () =>
+      host.querySelector('[aria-label="批红落印，续推时局"]') as HTMLButtonElement | null;
+    await click(optionButtons()[0]);
+    expect(seal()).not.toBeNull();
+    await click(seal());
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(host.querySelector('[data-testid="decision-modal"]')).toBeNull();
+        expect(host.querySelector('[data-testid="settle-resume"]')).not.toBeNull();
+      });
+    });
+  });
+
+  it("#1620 落印后 deferred resolve 在飞期间禁二提交", async () => {
+    // 只证：真 App 入口点落印，resolve 挂起期间再点 → POST 仍为 1；busy 下控件 disabled。
+    // 不夹 SSE picks 恢复、不夹 all-decided 清窗。
+    const d = {
+      idx: 0, title: "疏", context: "c",
+      options: [{ label: "甲策", hint: "h" }],
+    };
+    const state = settlementBaseState("awaiting_decision", {
+      pending_decisions: [d],
+    });
+    let resolveCount = 0;
+    let releaseResolve: ((value: Response) => void) | null = null;
+    const deferredResolve = new Promise<Response>((resolve) => {
+      releaseResolve = resolve;
+    });
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = new URL(String(url), "http://t.local");
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) return jsonResp(state);
+      if (u.pathname.endsWith("/api/history/turns")) return jsonResp({
+        turns: [{ kind: "month", turn: 4, year: 1627, period: 9, has_report: true, has_attendant: false, has_directive: true }],
+      });
+      if (u.pathname.includes("/api/history/turn/")) return jsonResp({
+        turn: 4, year: 1627, period: 9, report: SNAP_GAZETTE, decree: "",
+      });
+      if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
+      if (u.pathname.endsWith("/api/decree/resolve_decisions/stream")) {
+        resolveCount += 1;
+        if (resolveCount === 1) return deferredResolve;
+        return sseResp("error", { message: "should-not-fire" });
+      }
+      return jsonResp({});
+    }));
+    const host = await mountApp();
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[data-testid="decision-modal"]')).not.toBeNull());
+    });
+    const optionButtons = () =>
+      Array.from(host.querySelectorAll("button.decision-option")) as HTMLButtonElement[];
+    const seal = () =>
+      host.querySelector('[aria-label="批红落印，续推时局"]') as HTMLButtonElement | null;
+    await click(optionButtons()[0]);
+    expect(seal()).not.toBeNull();
+    expect(seal()!.disabled).toBe(false);
+    await click(seal());
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(resolveCount).toBe(1);
+        expect(seal()!.disabled).toBe(true);
+        expect(optionButtons().every((b) => b.disabled)).toBe(true);
+      });
+    });
+    // busy 期间再点落印——disabled + handler 短路，POST 仍 1
+    await click(seal());
+    await click(seal());
+    expect(resolveCount).toBe(1);
+    // 放行挂起的 resolve，避免泄漏（收尾不纳入本契约）
+    await act(async () => {
+      releaseResolve!(sseResp("error", { message: "done-for-test" }));
+      await Promise.resolve();
+    });
+    expect(resolveCount).toBe(1);
+  });
+
   it("#1700 phase-1 SSE error → loadState 挂 settle-resume", async () => {
     // 初态可开拟诏；SSE error 后服务端已持久化 settling，客户端须 loadState 投影续跑条。
     let liveState: Record<string, unknown> = {

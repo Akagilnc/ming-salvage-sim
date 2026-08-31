@@ -3233,38 +3233,20 @@ def test_1620_http_follow_draft_grant_uses_stored_amount(web_game, monkeypatch):
         "SELECT name FROM characters WHERE status='active' AND power_id='ming' LIMIT 1"
     ).fetchone()
     mname = str(mrow["name"])
-    # rescript_draft:turn:3 同形——多种急务后取 idx=3
-    drafts = []
-    grant_opt = None
-    for i in range(4):
-        if i == 3:
-            grant_opt = normalize_rescript_layer_a_option({
-                "label": "赏银", "hint": "赏功",
-                "action_type": "grant_allocation",
-                "assignee_name": "",
-                "target_kind": "character", "target_id": mname,
-                "locality_scope": "none", "region_id": "",
-                "transaction_category": "",
-                "grant_action": "赏赉", "amount": 500, "name": mname,
-            })
-            opt = grant_opt
-        else:
-            opt = _layer_a_option(label=f"备{i}")
-        drafts.append({
-            "title": f"急务{i}", "context": "c",
-            "options": [opt, _layer_a_option(label=f"次{i}")],
-            "actor_name": "杨嗣昌", "actor_office": "兵部尚书", "actor_faction": "东林",
-        })
-    assert grant_opt is not None
-    assert "amount" in grant_opt and int(grant_opt["amount"]) == 500
+    grant_opt = normalize_rescript_layer_a_option({
+        "label": "赏银", "hint": "赏功",
+        "action_type": "grant_allocation",
+        "assignee_name": "",
+        "target_kind": "character", "target_id": mname,
+        "locality_scope": "none", "region_id": "",
+        "transaction_category": "",
+        "grant_action": "赏赉", "amount": 500, "name": mname,
+    })
+    assert int(grant_opt["amount"]) == 500
 
-    db.conn.execute("DELETE FROM pending_decisions")
-    db.conn.commit()
-    db.save_rescript_drafts(int(state.turn), drafts)
-    db.conn.commit()
-    desk = db.list_rescript_desk(int(state.turn))
-    urgent = next(r for r in desk if r["decision_key"].endswith(":3"))
-    assert urgent["decision_key"].endswith(":3")
+    urgent, _ = _plant_urgent_desk(
+        db, state, options=[grant_opt, _layer_a_option(label="备")],
+    )
     stored = next(
         o for o in (urgent["options"] or [])
         if isinstance(o, dict) and o.get("draft_capability") == grant_opt["draft_capability"]
@@ -3303,7 +3285,7 @@ def test_1620_http_follow_draft_grant_uses_stored_amount(web_game, monkeypatch):
 
 
 def test_1620_layer_a_money_grant_requires_positive_amount():
-    """#1620 B：残缺金钱 grant 在层 A shape 失败，不得上桌。"""
+    """#1620：层 A shape 独掌 grant——正 amount/honorific/私库 + 非法 action/非积分 amount。"""
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
 
     base = {
@@ -3321,6 +3303,16 @@ def test_1620_layer_a_money_grant_requires_positive_amount():
         normalize_rescript_layer_a_option({**base, "amount": 0})
     with pytest.raises(ValueError, match="account"):
         normalize_rescript_layer_a_option({**base, "amount": 10, "account": "私库"})
+    # 非法 grant_action 闭集（含「无」/未知）
+    with pytest.raises(ValueError, match="grant_action"):
+        normalize_rescript_layer_a_option({**base, "amount": 10, "grant_action": "无"})
+    with pytest.raises(ValueError, match="grant_action"):
+        normalize_rescript_layer_a_option({**base, "amount": 10, "grant_action": "未知赏"})
+    # 非积分 amount（bool/float）拒
+    with pytest.raises(ValueError, match="amount"):
+        normalize_rescript_layer_a_option({**base, "amount": True})
+    with pytest.raises(ValueError, match="amount"):
+        normalize_rescript_layer_a_option({**base, "amount": 1.5})
     ok = normalize_rescript_layer_a_option({**base, "amount": 10})
     assert int(ok["amount"]) == 10
     # 加衔不要求 amount
@@ -3328,14 +3320,11 @@ def test_1620_layer_a_money_grant_requires_positive_amount():
         **base, "grant_action": "加衔", "label": "加衔",
     })
     assert honor.get("grant_action") == "加衔"
+    assert "amount" not in honor
 
 
 def test_1620_materialize_rejects_illegal_account_like_shape(game):
-    """#1620：materialize 入口与 shape 同拒非法 account（禁静默落国库）。
-
-    Layer-A shape 拒 account 已由 test_1620_layer_a_money_grant_requires_positive_amount
-    覆盖；本测只证 materialize 真入口，不重复 helper/shape 断言。
-    """
+    """#1620：materialize 真入口太仓→国库（resolve_grant_account 唯一权威）。"""
     import types
 
     from ming_sim.action_materialize import MaterializeCtx, run_materialize_pipeline
@@ -3349,7 +3338,6 @@ def test_1620_materialize_rejects_illegal_account_like_shape(game):
         "AND name!=? LIMIT 1",
         (actor,),
     ).fetchone()["name"]
-    # 直设 intent 绕过 classifier enum；契约落在 materialize 入口同拒
     ctx = MaterializeCtx(
         session=types.SimpleNamespace(
             db=db, state=types.SimpleNamespace(turn=int(state.turn)),
@@ -3366,15 +3354,22 @@ def test_1620_materialize_rejects_illegal_account_like_shape(game):
             "kind": "grant_allocation",
             "grant_action": "赏赉",
             "amount": 10,
-            "account": "私库",
+            "account": "太仓",
             "name": target,
         },
         intent_kind="grant_allocation",
         llm_config=None,
         intent_candidates=None,
     )
-    with pytest.raises(ValueError, match="account"):
-        run_materialize_pipeline(ctx)
+    run_materialize_pipeline(ctx)
+    pending_id = ctx.out.get("pending_action_id")
+    assert pending_id, "太仓应归一国库并成案"
+    row = db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?", (int(pending_id),),
+    ).fetchone()
+    payload = json.loads(str(row["payload_json"] or "{}"))
+    assert str(payload.get("account") or "") == "国库"
+    assert int(payload.get("amount") or 0) == 10
 
 
 def test_657_follow_draft_ignores_client_field_overlay(game):
