@@ -219,6 +219,7 @@ function baseGameState(overrides: Partial<GameState> = {}): GameState {
 function renderEdictModal(props: {
   state: GameState;
   onIssueDecree?: () => void;
+  onAdvanceWithoutEdict?: () => void;
   onOpenFailureRecovery?: () => void;
   error?: string;
 }) {
@@ -244,6 +245,7 @@ function renderEdictModal(props: {
         onSaveDirective={() => {}}
         onDeleteDirective={() => {}}
         onIssueDecree={props.onIssueDecree ?? (() => {})}
+        onAdvanceWithoutEdict={props.onAdvanceWithoutEdict ?? (() => {})}
         onOpenFailureRecovery={props.onOpenFailureRecovery ?? (() => {})}
       />
     )
@@ -331,9 +333,12 @@ describe("EdictModal — decree desk behavior", () => {
     expect(onIssue).toHaveBeenCalledTimes(1);
   });
 
-  it("offers durable recovery entry for failed secret orders", () => {
+  it("#1560 failed-only：确认后退朝；取消零请求；恢复入口仍在", () => {
     const onOpenFailureRecovery = vi.fn();
     const onIssue = vi.fn();
+    const onAdvance = vi.fn();
+    const confirm = vi.fn(() => false);
+    vi.stubGlobal("confirm", confirm);
     const { host } = renderEdictModal({
       state: baseGameState({
         directives: [],
@@ -343,6 +348,7 @@ describe("EdictModal — decree desk behavior", () => {
         failed_secret_order_count: 1,
       }),
       onIssueDecree: onIssue,
+      onAdvanceWithoutEdict: onAdvance,
       onOpenFailureRecovery,
     });
     const branch = host.querySelector(".failed-secret-note");
@@ -350,9 +356,17 @@ describe("EdictModal — decree desk behavior", () => {
     const footer = host.querySelector<HTMLButtonElement>(".desk-footer button");
 
     expect(branch).not.toBeNull();
-    expect(footer?.disabled).toBe(true);
+    expect(footer?.disabled).toBe(false);
     act(() => footer?.click());
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(onAdvance).not.toHaveBeenCalled();
     expect(onIssue).not.toHaveBeenCalled();
+
+    confirm.mockReturnValue(true);
+    act(() => footer?.click());
+    expect(onAdvance).toHaveBeenCalledTimes(1);
+    expect(onIssue).not.toHaveBeenCalled();
+
     act(() => recovery?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     expect(onOpenFailureRecovery).toHaveBeenCalledTimes(1);
   });

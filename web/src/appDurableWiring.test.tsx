@@ -53,6 +53,9 @@ const makeState = (turn: number, directives: unknown[] = [], ministers: unknown[
 
 const tick = () => act(async () => { await new Promise((r) => setTimeout(r, 0)); });
 const click = (el: Element | null | undefined) => act(() => { el?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+const cmdByCaption = (host: HTMLElement, caption: string) =>
+  Array.from(host.querySelectorAll("button")).find((b) => (b.getAttribute("aria-label") || "").startsWith(caption)) || null;
+const edictCommand = (host: HTMLElement) => cmdByCaption(host, "拟诏");
 const findButton = (host: HTMLElement, text: string) =>
   Array.from(host.querySelectorAll("button")).find((b) => (b.textContent || "").includes(text));
 
@@ -1082,7 +1085,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     }));
     const host = await mountApp();
     expect(host.querySelector('[data-testid="settle-resume"]')).toBeNull();
-    await click(cmdByCaption(host, "拟诏·盖玺颁诏过月"));
+    await click(edictCommand(host));
     await tick();
     await act(async () => {
       await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
@@ -1152,10 +1155,6 @@ const closeOpenOverlay = async (host: HTMLElement) => {
   if (closer) await click(closer);
   await tick();
 };
-
-const cmdByCaption = (host: HTMLElement, caption: string) =>
-  Array.from(host.querySelectorAll("button")).find((b) => (b.getAttribute("aria-label") || "").startsWith(caption)) || null;
-const edictCommand = (host: HTMLElement) => cmdByCaption(host, "拟诏");
 
 describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
   it("只读组逐面可达且吃月初叠影；关闭组不可达且半程面不泄漏", async () => {
@@ -1554,6 +1553,103 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       await vi.waitFor(() => expect(paths.some((path) => path === "POST /api/decree/issue/stream")).toBe(true));
     });
     expect(paths.some((path) => path === "POST /api/decree/advance_without_edict")).toBe(false);
+  });
+
+  it("#1560 failed-only：取消确认零请求；确认后 POST advance", async () => {
+    const paths: string[] = [];
+    const reload = vi.fn();
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...window.location, reload },
+    });
+    const confirm = vi.fn(() => false);
+    vi.stubGlobal("confirm", confirm);
+    const failedOnly = {
+      ...settlementBaseState("player"),
+      directives: [],
+      pending_directive_count: 0,
+      pending_secret_order_count: 0,
+      pending_non_directive_action_count: 0,
+      failed_secret_order_count: 1,
+      turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
+      previous_summary: "",
+      pending_decisions: [],
+    };
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = new URL(String(url), "http://t.local");
+      paths.push(`${init?.method || "GET"} ${u.pathname}`);
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) return jsonResp(failedOnly);
+      if (u.pathname.endsWith("/api/decree/advance_without_edict")) {
+        return jsonResp({
+          state: { ...failedOnly, turn: { ...failedOnly.turn, turn: 6 } },
+          pending_action_failures: [],
+        });
+      }
+      if (u.pathname.endsWith("/api/decree/issue/stream")) return sseResp("done", { ok: true });
+      if (u.pathname.endsWith("/api/history/turns")) return jsonResp({ turns: [] });
+      if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
+      return jsonResp({});
+    }));
+
+    const host = await mountApp();
+    await click(edictCommand(host));
+    await tick();
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
+    });
+    const footer = host.querySelector<HTMLButtonElement>(".desk-footer button");
+    expect(footer?.disabled).toBe(false);
+
+    const settlePostsBefore = paths.filter((p) => p.startsWith("POST /api/decree/")).length;
+    await click(footer);
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(paths.filter((p) => p.startsWith("POST /api/decree/")).length).toBe(settlePostsBefore);
+
+    confirm.mockReturnValue(true);
+    await click(footer);
+    await act(async () => {
+      await vi.waitFor(() => expect(paths.some((p) => p === "POST /api/decree/advance_without_edict")).toBe(true));
+    });
+    expect(paths.some((p) => p === "POST /api/decree/issue/stream")).toBe(false);
+  });
+
+  it("#1560 真空拟诏主钮禁用，不发结算请求", async () => {
+    const paths: string[] = [];
+    const vacuum = {
+      ...settlementBaseState("player"),
+      directives: [],
+      pending_directive_count: 0,
+      pending_secret_order_count: 0,
+      pending_non_directive_action_count: 0,
+      failed_secret_order_count: 0,
+      turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
+      previous_summary: "",
+      pending_decisions: [],
+    };
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = new URL(String(url), "http://t.local");
+      paths.push(`${init?.method || "GET"} ${u.pathname}`);
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) return jsonResp(vacuum);
+      if (u.pathname.endsWith("/api/history/turns")) return jsonResp({ turns: [] });
+      if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
+      return jsonResp({});
+    }));
+    const host = await mountApp();
+    await click(edictCommand(host));
+    await tick();
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
+    });
+    const footer = host.querySelector<HTMLButtonElement>(".desk-footer button");
+    expect(footer?.disabled).toBe(true);
+    await click(footer);
+    expect(paths.some((p) => p.startsWith("POST /api/decree/"))).toBe(false);
   });
 
   it("#1305 court/harem nav 互斥：开后宫即关朝堂", async () => {
