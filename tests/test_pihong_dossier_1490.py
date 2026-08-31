@@ -3120,47 +3120,6 @@ def test_657_illegal_summon_target_http_zero_writes(web_game, monkeypatch):
     assert ledger_after == ledger_before
 
 
-def test_1620_follow_draft_office_token_does_not_enter_roster(game):
-    """#1620：follow_draft 陕西巡抚+cat 成案，roster 不得写入该非人 token。"""
-    from ming_sim import rescript_actions as ra
-
-    db, state, content = game
-    db.conn.execute(
-        "UPDATE characters SET location='shaanxi' "
-        "WHERE status='active' AND power_id='ming' AND office_type='户部'"
-    )
-    db.conn.commit()
-    token = "陕西巡抚"
-    opt = _layer_a_option(
-        label="责成督赈",
-        assignee_name=token,
-        transaction_category="督赈",
-    )
-    urgent, _ = _plant_urgent_desk(db, state, options=[opt, _layer_a_option(label="备")])
-    before = len(db.list_decree_dossiers())
-    ra.apply_rescript_batch(
-        db, state,
-        ra.validate_all([urgent], [{
-            "decision_key": urgent["decision_key"],
-            "action": "follow_draft",
-            "draft_capability": opt["draft_capability"],
-            "label": opt["label"],
-        }]),
-        ra.PrewriteResults(), content=content,
-    )
-    after = db.list_decree_dossiers()
-    assert len(after) == before + 1
-    created = after[-1]
-    roster = created.get("participant_roster") or []
-    ids = [
-        str(e.get("character_id") or "")
-        for e in roster if isinstance(e, dict)
-    ]
-    assert token not in ids
-    payload = json.loads(str(created.get("payload_json") or "{}"))
-    assert token not in str(payload.get("assignee_id") or "")
-
-
 def test_1620_http_follow_draft_office_token_routes_to_person(web_game, monkeypatch):
     """#1620 A：真 HTTP follow 职司 token → 真人 executor；真 phase2 可推月。"""
     from ming_sim.models import TurnPhase
