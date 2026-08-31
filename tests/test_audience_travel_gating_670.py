@@ -604,7 +604,7 @@ def test_secret_order_path_does_not_consume_audience_admission(game, monkeypatch
     remote = _set_place(game, "洪承畴", location="shaanxi")
     before = an.list_unsettled_summons(db)
 
-    def _session_chat(minister_name, message, *, chat_turn_id=0):
+    def _session_chat(minister_name, message, *, chat_turn_id=0, explicit_secret_order=False):
         return ChatTurnResult(answer="臣领密旨。", pending_action_id=0, secret_order_id=0)
 
     runtime = webgame_shell_for_secret_order(
@@ -1153,7 +1153,7 @@ def test_web_chat_hall_admission_allows_capital_and_blocks_offsite(game):
     moving_before = _travel_row(db, moving.name)
     chat_calls: list[str] = []
 
-    def _session_chat(minister_name, message, *, chat_turn_id=0):
+    def _session_chat(minister_name, message, *, chat_turn_id=0, explicit_secret_order=False):
         chat_calls.append(minister_name)
         return ChatTurnResult(answer=f"{minister_name}入对。", pending_action_id=0, secret_order_id=0)
 
@@ -1218,7 +1218,7 @@ def test_web_chat_stream_summon_success_exits_error_channel(game):
     )
     chat_calls: list[str] = []
 
-    def _session_chat(minister_name, message, *, chat_turn_id=0):
+    def _session_chat(minister_name, message, *, chat_turn_id=0, explicit_secret_order=False):
         chat_calls.append(minister_name)
         return ChatTurnResult(answer="不应到达。", pending_action_id=0, secret_order_id=0)
 
@@ -1273,7 +1273,7 @@ def test_web_chat_offsite_summon_scene_generator_failure_is_loud(game):
     remote = _set_place(game, "洪承畴", location="shaanxi")
     before_turns = _chat_turn_count(db)
 
-    def _session_chat(minister_name, message, *, chat_turn_id=0):
+    def _session_chat(minister_name, message, *, chat_turn_id=0, explicit_secret_order=False):
         raise AssertionError("scene 失败路径不得调回话")
 
     runtime = _web_hall_runtime(db, state, content, session_chat=_session_chat)
@@ -1314,7 +1314,7 @@ def test_web_chat_offsite_summon_generator_receives_structured_travel_facts(game
     remote = _set_place(game, "洪承畴", location="shaanxi")
     captured: list = []
 
-    def _session_chat(minister_name, message, *, chat_turn_id=0):
+    def _session_chat(minister_name, message, *, chat_turn_id=0, explicit_secret_order=False):
         raise AssertionError("场外记召不得调回话")
 
     runtime = _web_hall_runtime(db, state, content, session_chat=_session_chat)
@@ -1343,7 +1343,7 @@ def test_web_chat_offsite_scene_keeps_pending_until_settled(game, stream):
     db, state, content = game
     remote = _set_place(game, "洪承畴", location="shaanxi")
 
-    def _session_chat(minister_name, message, *, chat_turn_id=0):
+    def _session_chat(minister_name, message, *, chat_turn_id=0, explicit_secret_order=False):
         raise AssertionError("场外记召不得调回话")
 
     runtime = _web_hall_runtime(db, state, content, session_chat=_session_chat)
@@ -1391,7 +1391,7 @@ def test_web_chat_offsite_scene_failure_releases_close_barrier(game, stream):
     db, state, content = game
     remote = _set_place(game, "洪承畴", location="shaanxi")
 
-    def _session_chat(minister_name, message, *, chat_turn_id=0):
+    def _session_chat(minister_name, message, *, chat_turn_id=0, explicit_secret_order=False):
         raise AssertionError("场外记召不得调回话")
 
     runtime = _web_hall_runtime(db, state, content, session_chat=_session_chat)
@@ -1766,7 +1766,7 @@ def test_web_chat_ledger_append_failure_has_no_side_effects(game, monkeypatch):
     before_turns = _chat_turn_count(db)
     chat_calls: list[str] = []
 
-    def _session_chat(minister_name, message, *, chat_turn_id=0):
+    def _session_chat(minister_name, message, *, chat_turn_id=0, explicit_secret_order=False):
         chat_calls.append(minister_name)
         return ChatTurnResult(answer="不应到达。", pending_action_id=0, secret_order_id=0)
 

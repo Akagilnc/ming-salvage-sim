@@ -265,7 +265,7 @@ def test_chat_nonstream_folds_judge_within_timeout(game, monkeypatch):
     _patch_mindreading_skip(monkeypatch)
 
     # session.chat 非流式路径
-    def fake_chat(name, message, *, chat_turn_id=0):
+    def fake_chat(name, message, *, chat_turn_id=0, explicit_secret_order=False):
         from ming_sim.session import ChatTurnResult
         return ChatTurnResult(answer="臣陈辽饷。")
 
@@ -294,7 +294,7 @@ def test_chat_nonstream_timeout_returns_reply_without_highlights(game, monkeypat
     web_game = _web_game(db, state, content, _FakeAgent(chunks=["臣遵旨。"]))
     _patch_mindreading_skip(monkeypatch)
 
-    def fake_chat(name, message, *, chat_turn_id=0):
+    def fake_chat(name, message, *, chat_turn_id=0, explicit_secret_order=False):
         from ming_sim.session import ChatTurnResult
         return ChatTurnResult(answer="臣遵旨。")
 
