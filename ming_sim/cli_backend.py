@@ -2666,9 +2666,10 @@ def extract_draft_intent(
         "assignee": obj.get("承办人"),
         "deadline_months": obj.get("期限月数"),
         "locality_scope": _coerce_draft_locality_scope(obj.get("施行范围")),
-        # #653：pay_order_override 结构化载荷随 capture 整道转交（禁旁路）。
-        "entries": obj.get("entries"),
     }
+    # #653：pay_order_override 结构化载荷随 capture 整道转交（禁旁路）。
+    # #1685：非 pay 空 entries 与省略同批旨规范化——不落键，避免 None vs [] 假漂移。
+    entries = obj.get("entries")
     if dossier_action == "grant_allocation":
         mechanical.update(
             (key, item) for key, item in _projected.items()
@@ -2679,9 +2680,13 @@ def extract_draft_intent(
     merged = str(obj.get("合并草案") or "").strip()
     # #654 H 已在上方对 _action=="无" 短路；此处仅保留 #653 pay_order 验形。
     if dossier_action == "pay_order_override" and (
-        not isinstance(mechanical["entries"], list) or not mechanical["entries"]
+        not isinstance(entries, list) or not entries
     ):
         return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
+    if entries is not None and not (
+        dossier_action != "pay_order_override" and entries == []
+    ):
+        mechanical["entries"] = entries
     if not _candidates:
         # 无候选：沿用单条语义——补充模式合并、否则大臣回话即草案。
         if _supplement_mode:
