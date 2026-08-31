@@ -1,6 +1,6 @@
 import React from "react";
 import { Crown, Landmark, MapPinned, ScrollText, Star, Swords, X } from "lucide-react";
-import { ArmyPaySection, MinisterPortrait, PortraitUploadButton, RightDrawer, cacheBust, courtSlots, loadCourtPos, saveCourtPos, snapToSlot } from "./hud";
+import { ArmyPaySection, MinisterPlaceOffice, MinisterPortrait, PortraitUploadButton, RightDrawer, cacheBust, courtSlots, loadCourtPos, saveCourtPos, snapToSlot } from "./hud";
 import { formatMoney, formatSignedMoney, qualitativeArmyStat } from "../format";
 import { settlementClosedReason } from "../settlementPresentation";
 import type { Army, Building, GameState, MapNode, Minister, Region } from "../types";
@@ -253,7 +253,7 @@ export function MinisterCardList({
           <div className="minister-card-top">
             <span className="minister-name">{minister.name}</span>
             {ousted && <span className={`minister-status status-${minister.status}`}>{minister.status_label}</span>}
-            {minister.office && <span className="minister-office">{minister.office}</span>}
+            <MinisterPlaceOffice minister={minister} officeClassName="minister-office" />
           </div>
           {isOffstage && minister.status_reason ? (
             <span className="minister-status-reason">{minister.status_reason}</span>

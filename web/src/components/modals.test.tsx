@@ -1592,3 +1592,41 @@ describe("ChatModal — explicit legacy authority", () => {
     expect(document.body.textContent?.match(/宫中旧话照常/g)).toHaveLength(1);
   });
 });
+
+describe("#1683 ChatModal place ⊥ office DOM", () => {
+  it("shows transit destination and keeps office when transit_to is set", () => {
+    renderModal({
+      minister: {
+        ...MINISTER_MOCK,
+        location: "henan",
+        location_label: "河南",
+        transit_to: "shandong",
+        transit_to_label: "山东",
+      },
+      portraitPrefix: "minister_",
+    });
+
+    const transit = document.querySelector(".minister-place.minister-transit");
+    expect(transit).not.toBeNull();
+    expect(transit!.textContent).toBe("山东");
+    expect(document.querySelectorAll(".minister-place")).toHaveLength(1);
+    expect(document.querySelector(".profile-office")?.textContent).toBe("内阁首辅");
+  });
+
+  it("shows location and keeps office when only location is set", () => {
+    renderModal({
+      minister: {
+        ...MINISTER_MOCK,
+        location: "henan",
+        location_label: "河南",
+      },
+      portraitPrefix: "minister_",
+    });
+
+    const place = document.querySelector(".minister-place");
+    expect(place).not.toBeNull();
+    expect(place!.classList.contains("minister-transit")).toBe(false);
+    expect(place!.textContent).toBe("河南");
+    expect(document.querySelector(".profile-office")?.textContent).toBe("内阁首辅");
+  });
+});
