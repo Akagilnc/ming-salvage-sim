@@ -462,7 +462,6 @@ def test_web_advance_entry_awaiting_keeps_phase_and_decisions(game, monkeypatch)
     runtime = _runtime(db, state)
     runtime.directive_rows = lambda: []
     runtime._write_gate = threading.Lock()
-    actions: list[str] = []
     decisions = [
         {
             "event_id": "evt-await-c2",
@@ -474,20 +473,18 @@ def test_web_advance_entry_awaiting_keeps_phase_and_decisions(game, monkeypatch)
 
     def _advance_awaiting(**_kw):
         # entry accept 已 capture；桩内保持快照，落生产 awaiting 相位。
-        actions.append("resolve")
         state.turn_phase = TurnPhase.AWAITING_DECISION.value
         db.save_state(state)
         return ResolveResult(awaiting=True, decisions=list(decisions))
 
     def _end_turn():
         # 镜像 session.end_turn durable 副作用（只置 SUMMONING 并 save，不推进 turn）。
-        actions.append("end_turn")
         state.turn_phase = TurnPhase.SUMMONING.value
         db.save_state(state)
 
     runtime.session.advance_without_decree = _advance_awaiting
     runtime.session.end_turn = _end_turn
-    runtime.refresh_turn = lambda: actions.append("refresh")
+    runtime.refresh_turn = lambda: None
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
     monkeypatch.setattr(web_app, "_serialized_web_write", _null_cm)
@@ -498,6 +495,9 @@ def test_web_advance_entry_awaiting_keeps_phase_and_decisions(game, monkeypatch)
 
     result = web_app.api_advance_without_edict()
 
+    reloaded = db.load_state()
+    assert reloaded.turn == turn_before
+    assert reloaded.turn_phase == TurnPhase.AWAITING_DECISION.value
     assert result["awaiting_decision"] is True
     assert result["decisions"] == decisions
     assert result["state"]["turn"]["turn"] == turn_before
