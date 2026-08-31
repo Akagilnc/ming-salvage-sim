@@ -1569,15 +1569,19 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     const host = await mountApp();
     await click(byAria(host, "朝堂·召见大臣"));
     await tick();
-    const yeBtn = Array.from(host.querySelectorAll<HTMLButtonElement>(".court-drawer .segmented button"))
-      .find((btn) => btn.textContent === "在野");
-    expect(yeBtn).toBeTruthy();
-    await click(yeBtn);
-    await tick();
-
-    const resumeBtn = host.querySelector(
+    // 夹具保证仅 talent_pool 有 offstage → 仅一分组会挂起复键。
+    // 按可见结果探测入口，不锁分组文案 / data-* / DOM 下标。
+    let resumeBtn: Element | null = host.querySelector(
       ".court-drawer .minister-card button.minister-resume-btn",
     );
+    if (!resumeBtn) {
+      for (const btn of Array.from(host.querySelectorAll(".court-drawer .segmented button"))) {
+        await click(btn);
+        await tick();
+        resumeBtn = host.querySelector(".court-drawer .minister-card button.minister-resume-btn");
+        if (resumeBtn) break;
+      }
+    }
     expect(resumeBtn).not.toBeNull();
     await click(resumeBtn);
     await tick();
