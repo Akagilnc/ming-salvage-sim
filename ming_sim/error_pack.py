@@ -117,6 +117,27 @@ def settlement_abort_message(pack_path: str) -> str:
     )
 
 
+def latest_error_pack_for_turn(turn: int) -> Optional[str]:
+    """同 turn 最新错误包目录绝对路径；无则 None（供恢复面投影 ADR 0008 决定 7 指引）。"""
+    root = error_packs_root()
+    if not root.exists():
+        return None
+    prefix = f"turn{int(turn)}_attempt"
+    best: Optional[Path] = None
+    best_n = -1
+    for path in root.iterdir():
+        if not (path.is_dir() and path.name.startswith(prefix)):
+            continue
+        try:
+            n = int(path.name[len(prefix):])
+        except ValueError:
+            continue
+        if n > best_n:
+            best_n = n
+            best = path
+    return str(best.resolve()) if best is not None else None
+
+
 def write_error_pack(
     db: Any,
     state: Any,
