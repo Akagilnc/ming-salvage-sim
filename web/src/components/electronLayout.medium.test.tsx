@@ -91,8 +91,9 @@ describe.sequential("medium: shared Electron geometry", () => {
       const alert = document.querySelector('[role="alert"]');
       const cols = document.querySelector('.desk-columns');
       const memorials = document.querySelector('.desk-memorials');
-      const editTool = document.querySelector('.directive-tools button[data-action="edit"]');
-      const deleteTool = document.querySelector('.directive-tools button[data-action="delete"]');
+      const toolButtons = Array.from(document.querySelectorAll('.directive-tools button'));
+      const editTool = toolButtons.find((b) => (b.textContent || '').includes('改'));
+      const deleteTool = toolButtons.find((b) => (b.textContent || '').includes('删'));
       const textarea = document.querySelector('.desk-compose textarea');
       const footer = document.querySelector('.desk-footer');
       const button = document.querySelector('.desk-footer button');
