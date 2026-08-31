@@ -417,7 +417,9 @@ describe("QA A-1 #1276/#1282/#1285 GameHud HUD 对齐", () => {
   it("拟诏木牌在零/有草案时都只打开拟诏台", () => {
     for (const directives of [[], makeState(false).directives]) {
       const { host, opened } = mountHud({ state: makeState(false, { directives }) });
-      const edict = Array.from(host.querySelectorAll<HTMLButtonElement>("button.hud2-cmd")).at(-1);
+      const edict = Array.from(host.querySelectorAll<HTMLButtonElement>("button.hud2-cmd")).find((b) =>
+        (b.getAttribute("aria-label") || "").startsWith("拟诏"),
+      );
       expect(edict).toBeTruthy();
       act(() => { edict?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
       expect(opened).toEqual(["edict"]);

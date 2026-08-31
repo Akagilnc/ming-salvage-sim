@@ -1106,9 +1106,8 @@ const closeOpenOverlay = async (host: HTMLElement) => {
 };
 
 const cmdByCaption = (host: HTMLElement, caption: string) =>
-  Array.from(host.querySelectorAll("button")).find((b) => (b.getAttribute("aria-label") || "").startsWith(`${caption}：`)) || null;
-const edictCommand = (host: HTMLElement) =>
-  Array.from(host.querySelectorAll<HTMLButtonElement>("button.hud2-cmd")).at(-1) || null;
+  Array.from(host.querySelectorAll("button")).find((b) => (b.getAttribute("aria-label") || "").startsWith(caption)) || null;
+const edictCommand = (host: HTMLElement) => cmdByCaption(host, "拟诏");
 
 describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
   it("只读组逐面可达且吃月初叠影；关闭组不可达且半程面不泄漏", async () => {
