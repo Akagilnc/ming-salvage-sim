@@ -120,6 +120,22 @@ def test_state_payload_settlement_recovery_ready_and_resim(
     assert isinstance(recovery_io.get("message"), str) and recovery_io["message"]
     monkeypatch.setattr(error_pack_mod, "error_packs_root", real_root)
 
+    # 完整包 entry stat（is_file）OSError：同一 soft-fail 边界，state 仍可达
+    real_is_file = Path.is_file
+
+    def _boom_pack_entry_stat(self):
+        if self.name in error_pack_mod._COMPLETE_PACK_FILES:
+            raise OSError("pack entry stat failed")
+        return real_is_file(self)
+
+    monkeypatch.setattr(Path, "is_file", _boom_pack_entry_stat)
+    recovery_stat = game.state_payload().get("settlement_recovery")
+    assert isinstance(recovery_stat, dict)
+    assert recovery_stat["ready_replay"] is True
+    assert recovery_stat["error_pack_path"] == ""
+    assert isinstance(recovery_stat.get("message"), str) and recovery_stat["message"]
+    monkeypatch.setattr(Path, "is_file", real_is_file)
+
     clear_for_resimulation(db, turn)
     recovery2 = game.state_payload().get("settlement_recovery")
     assert isinstance(recovery2, dict)

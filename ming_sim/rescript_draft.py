@@ -60,12 +60,15 @@ _LOCALITY_ALIASES = {
 
 
 # 层 A 允许键 = C.3 必填/须在 + C.4 闭集 + draft_capability（服务端覆盖，LLM 自带不准）
+# grant_kind：生成侧 machine discriminator（#1620）；层 A 映射后不落库。
 _LAYER_A_ALLOWED_KEYS = frozenset(
     list(_LAYER_A_REQUIRED_KEYS)
     + list(_LAYER_A_PRESENT_KEYS)
     + [key for key, _default in _DRAFT_CAPABILITY_KEYS]
-    + ["draft_capability"]
+    + ["draft_capability", "grant_kind"]
 )
+# 生成侧军饷类别；层 A 等值映射到内部 grant_action=协饷（禁同义词/散文）。
+_GRANT_KIND_ARMY_PAY = "army_pay"
 
 
 def normalize_stop_condition(raw: object) -> str:
@@ -155,9 +158,23 @@ def normalize_rescript_layer_a_option(raw: object) -> Dict[str, object]:
     # 禁残缺 option 上桌；空 account 不回写默认，免 draft_capability 漂移；
     # 非空 account 回写 shape 返回的 canonical（太仓→国库），与显式国库同 capability。
     # amount 传 raw 原值；用返回值写 out["amount"]（honorific 无则不写）。
+    # grant_kind=army_pay → 内部 grant_action=协饷；矛盾 typed shape 响亮拒绝；
+    # 不按 target_kind/label 升格，不补 purpose/target（#1503 五字段仍须显式）。
     if action_type == "grant_allocation":
         from ming_sim.action_materialize import require_grant_allocation_shape
 
+        grant_kind = ""
+        if "grant_kind" in raw and raw["grant_kind"] is not None:
+            grant_kind = str(raw["grant_kind"]).strip()
+        if grant_kind:
+            if grant_kind != _GRANT_KIND_ARMY_PAY:
+                raise ValueError(f"grant 非法 grant_kind：{grant_kind!r}")
+            existing_ga = str(out.get("grant_action") or "").strip()
+            if existing_ga and existing_ga != "协饷":
+                raise ValueError(
+                    f"grant_kind=army_pay 与 grant_action={existing_ga!r} 矛盾"
+                )
+            out["grant_action"] = "协饷"
         input_account = str(out.get("account") or "").strip()
         shaped = require_grant_allocation_shape(
             grant_action=out.get("grant_action"),
@@ -337,7 +354,8 @@ def build_rescript_draft_payload(
         (_project_issue_qualitatively(issue) for issue in raw_issues)
         if projected is not None
     ]
-    # #1620：grant_action 闭集与 Layer-A GRANT_ACTIONS 同源，注入生成契约禁同义动作名。
+    # #1620：非军饷 grant_action 闭集与 Layer-A 同源；军饷用 grant_kind=army_pay
+    # （生成侧 machine discriminator），层 A 映射到内部 grant_action=协饷。
     from ming_sim.action_materialize import GRANT_ACTIONS
 
     return {
@@ -352,7 +370,8 @@ def build_rescript_draft_payload(
         "active_issues": active_issues,
         "region_targets": _project_region_targets(simulator_payload.get("regions")),
         "army_targets": _project_army_targets(simulator_payload.get("armies")),
-        "grant_actions": sorted(GRANT_ACTIONS - {"无"}),
+        "grant_actions": sorted(GRANT_ACTIONS - {"无", "协饷"}),
+        "grant_kinds": [_GRANT_KIND_ARMY_PAY],
         "target": {"min_items": 3, "max_items": MAX_RESCRIPT_DRAFTS},
     }
 
