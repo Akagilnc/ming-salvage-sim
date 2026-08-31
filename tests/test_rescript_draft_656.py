@@ -1531,41 +1531,59 @@ def test_1620_layer_a_reward_with_army_target_stays_reward():
     assert opt["grant_action"] == "赏赉"
 
 
-@pytest.mark.parametrize("extra,drop,generation", [
-    pytest.param({"grant_action": "赏赉"}, (), False, id="conflict-reward"),
-    pytest.param({"grant_kind": "other"}, (), False, id="unknown-kind"),
-    pytest.param({"grant_action": "补发军饷"}, ("grant_kind",), False, id="zh-synonym"),
+@pytest.mark.parametrize("extra,drop", [
+    pytest.param({"grant_action": "赏赉"}, (), id="conflict-reward"),
+    pytest.param({"grant_kind": "other"}, (), id="unknown-kind"),
+    pytest.param({"grant_action": "补发军饷"}, ("grant_kind",), id="zh-synonym"),
     # 非 grant 携 grant_kind：不得因 allowed 白名单静默丢键
     pytest.param(
-        {"action_type": "assignment", "assignee_name": "杨嗣昌"}, (), False,
+        {"action_type": "assignment", "assignee_name": "杨嗣昌"}, (),
         id="non-grant-kind",
     ),
     # #1503 五字段 admission：缺 purpose/account、非法 target_kind
-    pytest.param({"purpose": ""}, (), False, id="empty-purpose"),
-    pytest.param({}, ("purpose",), False, id="drop-purpose"),
-    pytest.param({"account": ""}, (), False, id="empty-account"),
-    pytest.param({}, ("account",), False, id="drop-account"),
+    pytest.param({"purpose": ""}, (), id="empty-purpose"),
+    pytest.param({}, ("purpose",), id="drop-purpose"),
+    pytest.param({"account": ""}, (), id="empty-account"),
+    pytest.param({}, ("account",), id="drop-account"),
     pytest.param(
-        {"target_kind": "region", "target_id": "shaanxi"}, (), False,
+        {"target_kind": "region", "target_id": "shaanxi"}, (),
         id="region-target",
     ),
-    # kind 与显式 action 不得并存（含 action=协饷）
-    pytest.param({"grant_action": "协饷"}, (), False, id="kind-plus-action"),
-    # 生成 admission：无 kind 直写协饷旁路
-    pytest.param(
-        {"grant_action": "协饷"}, ("grant_kind",), True,
-        id="gen-direct-xiexang",
-    ),
 ])
-def test_1620_layer_a_army_pay_rejects_bad_typed_shape(extra, drop, generation):
-    """层 A：五字段缺漏、discriminator 旁路、kind/action 并存均 fail-loud。"""
+def test_1620_layer_a_army_pay_rejects_bad_typed_shape(extra, drop):
+    """层 A：五字段缺漏、矛盾 kind、未知 kind、中文同义、非 grant 携 kind 均 fail-loud。"""
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
 
     raw = _army_pay_grant_option(**extra)
     for key in drop:
         raw.pop(key, None)
     with pytest.raises(ValueError):
-        normalize_rescript_layer_a_option(raw, generation_admission=generation)
+        normalize_rescript_layer_a_option(raw)
+
+
+@pytest.mark.parametrize("extra,drop", [
+    # 真实生成入口：kind 与显式 action 不得并存
+    pytest.param({"grant_action": "协饷"}, (), id="kind-plus-action"),
+    # 真实生成入口：无 kind 直写协饷旁路 → 整批失败
+    pytest.param({"grant_action": "协饷"}, ("grant_kind",), id="gen-direct-xiexang"),
+])
+def test_1620_validate_army_pay_generation_rejects_discriminator_bypass(extra, drop):
+    """真实票拟生成入口：discriminator 旁路整批响亮失败（不测内部布尔开关）。"""
+    bad = _army_pay_grant_option(**extra)
+    for key in drop:
+        bad.pop(key, None)
+    with pytest.raises(ValueError):
+        validate_rescript_draft_items(
+            {"items": [{
+                "title": "关宁欠饷",
+                "context": "边军待哺。",
+                "options": [
+                    bad,
+                    _layer_a_opt(label="暂缓", hint="候报", transaction_category=""),
+                ],
+            }]},
+            set(),
+        )
 
 
 def test_1620_internal_canonical_xiexang_renormalizes_without_kind():
