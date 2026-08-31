@@ -189,21 +189,36 @@
   transform: translateX(-50%);
   z-index: 9300;
   display: flex;
-  align-items: center;
+  flex-wrap: wrap;
+  align-items: flex-start;
   gap: 12px;
   padding: 10px 18px;
+  box-sizing: border-box;
+  width: min(720px, 92vw);
+  max-width: min(720px, 92vw);
   background: rgba(120, 30, 30, 0.92);
   color: #f5e9d0;
   border: 1px solid #a4862f;
   border-radius: 8px;
   font-size: 14px;
-  max-width: min(720px, 92vw);
 }
 
-/* #1620：ADR 0008 决定 7 多行指引（错误包路径 / 发给作者） */
+/* #1620：ADR 0008 决定 7 多行指引（错误包路径 / 发给作者）
+   消息可收缩+任意断行+区内滚动；按钮不收缩，顶对齐保证窄视口可命中。 */
 .recovery-banner-message {
   white-space: pre-line;
   line-height: 1.45;
+  min-width: 0;
+  flex: 1 1 12rem;
+  max-height: min(40vh, 240px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.recovery-banner > button {
+  flex: 0 0 auto;
 }
 
 .decision-recovery-banner {

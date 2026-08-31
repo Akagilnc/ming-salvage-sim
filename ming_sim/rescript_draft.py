@@ -88,11 +88,17 @@ def normalize_stop_condition(raw: object) -> str:
     )
 
 
-def normalize_rescript_layer_a_option(raw: object) -> Dict[str, object]:
+def normalize_rescript_layer_a_option(
+    raw: object,
+    *,
+    generation_admission: bool = False,
+) -> Dict[str, object]:
     """#657 层 A option shape 校验 + 服务端写 draft_capability（生产票拟/改票单真源）。
 
     自由文本（label/hint 等）strip 只作判空临时值，落库原文；
     draft_capability 一律服务端重算覆盖，禁止 LLM 自带为准。
+    generation_admission=True：生成批次拒绝无 kind 直写 grant_action=协饷；
+    内部 canonical 二次归一保持默认 False。
     """
     if not isinstance(raw, dict):
         raise ValueError("票拟 option 非 object（层 A shape）")
@@ -166,23 +172,33 @@ def normalize_rescript_layer_a_option(raw: object) -> Dict[str, object]:
     # 禁残缺 option 上桌；空 account 不回写默认，免 draft_capability 漂移；
     # 非空 account 回写 shape 返回的 canonical（太仓→国库），与显式国库同 capability。
     # amount 传 raw 原值；用返回值写 out["amount"]（honorific 无则不写）。
-    # grant_kind=army_pay → 内部 grant_action=协饷；矛盾 typed shape 响亮拒绝；
-    # 不按 target_kind/label 升格，不补 purpose/target（#1503 五字段仍须显式）。
+    # grant_kind=army_pay → 内部 grant_action=协饷；kind 与显式 action 不得并存；
+    # 生成批次禁无 kind 直写协饷；内部 canonical 二次归一仍可（generation_admission=False）；
+    # 协饷五字段复用 require_explicit_xiexang_fields，不补 purpose/target。
     if action_type == "grant_allocation":
-        from ming_sim.action_materialize import require_grant_allocation_shape
+        from ming_sim.action_materialize import (
+            require_explicit_xiexang_fields,
+            require_grant_allocation_shape,
+        )
 
         grant_kind = ""
         if "grant_kind" in raw and raw["grant_kind"] is not None:
             grant_kind = str(raw["grant_kind"]).strip()
+        raw_ga = ""
+        if "grant_action" in raw and raw["grant_action"] is not None:
+            raw_ga = str(raw["grant_action"]).strip()
         if grant_kind:
             if grant_kind != _GRANT_KIND_ARMY_PAY:
                 raise ValueError(f"grant 非法 grant_kind：{grant_kind!r}")
-            existing_ga = str(out.get("grant_action") or "").strip()
-            if existing_ga and existing_ga != "协饷":
+            if raw_ga:
                 raise ValueError(
-                    f"grant_kind=army_pay 与 grant_action={existing_ga!r} 矛盾"
+                    f"grant_kind=army_pay 不得同时显式给 grant_action：{raw_ga!r}"
                 )
             out["grant_action"] = "协饷"
+        elif generation_admission and raw_ga == "协饷":
+            raise ValueError(
+                "生成侧军饷须用 grant_kind=army_pay，不得直接 grant_action=协饷"
+            )
         input_account = str(out.get("account") or "").strip()
         shaped = require_grant_allocation_shape(
             grant_action=out.get("grant_action"),
@@ -193,6 +209,20 @@ def normalize_rescript_layer_a_option(raw: object) -> Dict[str, object]:
             out["amount"] = shaped["amount"]
         if input_account:
             out["account"] = shaped["account"]
+        if str(out.get("grant_action") or "").strip() == "协饷":
+            explicit = require_explicit_xiexang_fields(
+                amount=out.get("amount", 0),
+                account=str(out.get("account") or ""),
+                purpose=str(out.get("purpose") or ""),
+                target_kind=str(out.get("target_kind") or ""),
+                target_id=str(out.get("target_id") or ""),
+                cadence=str(out.get("cadence") or ""),
+            )
+            out["amount"] = explicit["amount"]
+            out["account"] = explicit["account"]
+            out["purpose"] = explicit["purpose"]
+            out["target_kind"] = explicit["target_kind"]
+            out["target_id"] = explicit["target_id"]
     out["draft_capability"] = derive_draft_capability(out)
     return out
 
@@ -444,8 +474,11 @@ def validate_rescript_draft_items(
             if not isinstance(opt, dict):
                 raise ValueError(f"票拟 option 非 object（整批失败，F2.2）：{title!r}")
             # 层 A 单真源：完整 option + 服务端 draft_capability
+            # 生成 admission：落实 grant_kind discriminator，拒直写协饷旁路
             try:
-                normalized_opt = normalize_rescript_layer_a_option(opt)
+                normalized_opt = normalize_rescript_layer_a_option(
+                    opt, generation_admission=True,
+                )
             except ValueError as exc:
                 raise ValueError(
                     f"票拟 option 层 A shape 失败（整批失败，F2.2/F2.5）：{title!r} {exc}"

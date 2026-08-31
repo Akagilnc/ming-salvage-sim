@@ -1531,25 +1531,53 @@ def test_1620_layer_a_reward_with_army_target_stays_reward():
     assert opt["grant_action"] == "赏赉"
 
 
-@pytest.mark.parametrize("extra,drop", [
-    pytest.param({"grant_action": "赏赉"}, (), id="conflict-reward"),
-    pytest.param({"grant_kind": "other"}, (), id="unknown-kind"),
-    pytest.param({"grant_action": "补发军饷"}, ("grant_kind",), id="zh-synonym"),
+@pytest.mark.parametrize("extra,drop,generation", [
+    pytest.param({"grant_action": "赏赉"}, (), False, id="conflict-reward"),
+    pytest.param({"grant_kind": "other"}, (), False, id="unknown-kind"),
+    pytest.param({"grant_action": "补发军饷"}, ("grant_kind",), False, id="zh-synonym"),
     # 非 grant 携 grant_kind：不得因 allowed 白名单静默丢键
     pytest.param(
-        {"action_type": "assignment", "assignee_name": "杨嗣昌"}, (),
+        {"action_type": "assignment", "assignee_name": "杨嗣昌"}, (), False,
         id="non-grant-kind",
     ),
+    # #1503 五字段 admission：缺 purpose/account、非法 target_kind
+    pytest.param({"purpose": ""}, (), False, id="empty-purpose"),
+    pytest.param({}, ("purpose",), False, id="drop-purpose"),
+    pytest.param({"account": ""}, (), False, id="empty-account"),
+    pytest.param({}, ("account",), False, id="drop-account"),
+    pytest.param(
+        {"target_kind": "region", "target_id": "shaanxi"}, (), False,
+        id="region-target",
+    ),
+    # kind 与显式 action 不得并存（含 action=协饷）
+    pytest.param({"grant_action": "协饷"}, (), False, id="kind-plus-action"),
+    # 生成 admission：无 kind 直写协饷旁路
+    pytest.param(
+        {"grant_action": "协饷"}, ("grant_kind",), True,
+        id="gen-direct-xiexang",
+    ),
 ])
-def test_1620_layer_a_army_pay_rejects_bad_typed_shape(extra, drop):
-    """层 A：矛盾 kind/action、未知 kind、中文同义、非 grant 携 kind 均 fail-loud。"""
+def test_1620_layer_a_army_pay_rejects_bad_typed_shape(extra, drop, generation):
+    """层 A：五字段缺漏、discriminator 旁路、kind/action 并存均 fail-loud。"""
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
 
     raw = _army_pay_grant_option(**extra)
     for key in drop:
         raw.pop(key, None)
     with pytest.raises(ValueError):
-        normalize_rescript_layer_a_option(raw)
+        normalize_rescript_layer_a_option(raw, generation_admission=generation)
+
+
+def test_1620_internal_canonical_xiexang_renormalizes_without_kind():
+    """内部 canonical（无 kind、grant_action=协饷）二次归一仍通；生成旁路另闸。"""
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+
+    raw = _army_pay_grant_option(grant_action="协饷")
+    raw.pop("grant_kind", None)
+    opt = normalize_rescript_layer_a_option(raw)
+    assert opt["grant_action"] == "协饷"
+    assert opt["purpose"] == "补饷"
+    assert opt["account"] == "国库"
 
 
 def test_657_s1_list_rescript_desk_merges_cross_month_and_decisions(game):
