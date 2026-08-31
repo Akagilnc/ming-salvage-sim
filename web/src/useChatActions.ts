@@ -191,7 +191,7 @@ export function useChatActions({
     // #1566：发起时捕获 owner token；onError 仅当同一 session 仍存活才回填。
     const owner = chatComposerOwnerRef.current;
     // #526 / ADR 0047：退朝钮与手输口令同一收夜管线（chat stream）；
-    // 词表真源在后端 COURT_BREAK_COMMANDS，前端不复制、不旁路 advanceWithoutEdict。
+    // 词表真源在后端 COURT_BREAK_COMMANDS，前端不复制。
     setError("");
     setComposerHint("");
     setChatNotice("");

@@ -220,8 +220,8 @@ function baseGameState(overrides: Partial<GameState> = {}): GameState {
 
 function renderEdictModal(props: {
   state: GameState;
-  onAdvanceWithoutEdict?: () => void;
   onIssueDecree?: () => void;
+  onAdvanceWithoutEdict?: () => void;
   onOpenFailureRecovery?: () => void;
   error?: string;
 }) {
@@ -246,8 +246,8 @@ function renderEdictModal(props: {
         onCancelEdit={() => {}}
         onSaveDirective={() => {}}
         onDeleteDirective={() => {}}
-        onAdvanceWithoutEdict={props.onAdvanceWithoutEdict ?? (() => {})}
         onIssueDecree={props.onIssueDecree ?? (() => {})}
+        onAdvanceWithoutEdict={props.onAdvanceWithoutEdict ?? (() => {})}
         onOpenFailureRecovery={props.onOpenFailureRecovery ?? (() => {})}
       />
     )
@@ -279,130 +279,22 @@ describe("EdictModal — #1431 placeholder 去失实具名", () => {
   });
 });
 
-describe("EdictModal — hidden secret-order default approval", () => {
-  it("shows generic no-edict advance without exposing hidden secret-order pending state", () => {
-    const onAdvance = vi.fn();
-    const { host } = renderEdictModal({
-      state: baseGameState({ pending_secret_order_count: 0, pending_non_directive_action_count: 0 }),
-      onAdvanceWithoutEdict: onAdvance,
-    });
-    const button = Array.from(host.querySelectorAll("button")).find((item) =>
-      item.textContent?.includes("退朝结束本月")
-    ) as HTMLButtonElement | undefined;
-
-    expect(button).toBeTruthy();
-    expect(host.textContent).not.toContain("密令已候旨");
-    expect(host.textContent).not.toContain("尚有召对事项候旨");
-    expect(host.textContent).toContain("本月尚无明发诏令");
-    act(() => {
-      button?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-
-    expect(onAdvance).toHaveBeenCalledTimes(1);
-  });
-
-  it("shows no-edict advance for non-directive pending actions beyond new secret orders", () => {
-    const onAdvance = vi.fn();
-    const { host } = renderEdictModal({
-      state: baseGameState({ pending_non_directive_action_count: 1 }),
-      onAdvanceWithoutEdict: onAdvance,
-    });
-    const button = Array.from(host.querySelectorAll("button")).find((item) =>
-      item.textContent?.includes("退朝结束本月")
-    ) as HTMLButtonElement | undefined;
-
-    expect(button).toBeTruthy();
-  });
-
-  it("#1277 drafts>0 主钮盖玺颁诏过月 → issueDecree，不走退朝", () => {
-    const onAdvance = vi.fn();
+describe("EdictModal — decree desk behavior", () => {
+  it("issues an approved conversational draft without a second review gate", () => {
     const onIssue = vi.fn();
     const { host } = renderEdictModal({
       state: baseGameState({ directives: [{ id: 8, event_id: "", event_title: "", actor: "", skill_id: "", skill_name: "", text: "发饷辽东", source: "chat", status: "pending", notes: "", authority: "" }] }),
-      onAdvanceWithoutEdict: onAdvance,
       onIssueDecree: onIssue,
     });
-    expect(host.textContent).toContain("发饷辽东");
-    expect(host.textContent).toMatch(/盖玺颁诏过月/);
-    expect(host.textContent).not.toContain("待朱批");
-    const button = Array.from(host.querySelectorAll("button")).find((item) =>
-      item.textContent?.includes("盖玺颁诏过月")
-    ) as HTMLButtonElement | undefined;
-    expect(button).toBeTruthy();
-    // 有草案时页脚不得再挂「退朝结束本月」主钮
-    const retreat = Array.from(host.querySelectorAll("button")).find((item) =>
-      item.textContent?.includes("退朝结束本月")
-    );
-    expect(retreat).toBeFalsy();
-    act(() => { button?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    const item = host.querySelector(".directive-item");
+    const tools = item?.querySelectorAll(".directive-tools button");
+    const button = host.querySelector<HTMLButtonElement>(".desk-footer button");
+
+    expect(item).not.toBeNull();
+    expect(tools).toHaveLength(2);
+    expect(button?.disabled).toBe(false);
+    act(() => button?.click());
     expect(onIssue).toHaveBeenCalledTimes(1);
-    expect(onAdvance).not.toHaveBeenCalled();
-  });
-
-  it("#1277 0 草案保留退朝结束本月 → advanceWithoutEdict", () => {
-    const onAdvance = vi.fn();
-    const onIssue = vi.fn();
-    const { host } = renderEdictModal({
-      state: baseGameState({ directives: [] }),
-      onAdvanceWithoutEdict: onAdvance,
-      onIssueDecree: onIssue,
-    });
-    const button = Array.from(host.querySelectorAll("button")).find((item) =>
-      item.textContent?.includes("退朝结束本月")
-    ) as HTMLButtonElement | undefined;
-    expect(button).toBeTruthy();
-    expect(host.textContent).not.toMatch(/盖玺颁诏过月/);
-    act(() => { button?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-    expect(onAdvance).toHaveBeenCalledTimes(1);
-    expect(onIssue).not.toHaveBeenCalled();
-  });
-
-  it("does not review already-approved conversational directives", () => {
-    const { host } = renderEdictModal({
-      state: baseGameState({ directives: [{ id: 8, event_id: "", event_title: "", actor: "", skill_id: "", skill_name: "", text: "发饷辽东", source: "chat", status: "pending", notes: "", authority: "" }] }),
-    });
-    expect(host.textContent).not.toContain("待朱批");
-    expect(host.textContent).not.toContain("准");
-    expect(host.textContent).not.toContain("驳");
-    expect(host.textContent).toContain("发饷辽东");
-    expect(host.textContent).toMatch(/盖玺颁诏过月/);
-    expect(host.textContent).not.toContain("返工改稿");
-  });
-
-  it("offers durable recovery entry for failed secret orders", () => {
-    const onOpenFailureRecovery = vi.fn();
-    const { host } = renderEdictModal({
-      state: baseGameState({ failed_secret_order_count: 1 }),
-      onOpenFailureRecovery,
-    });
-    const button = Array.from(host.querySelectorAll("button")).find((item) =>
-      item.textContent?.includes("处理")
-    ) as HTMLButtonElement | undefined;
-
-    expect(host.textContent).toContain("密令落库失败");
-    expect(button).toBeTruthy();
-    act(() => {
-      button?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    expect(onOpenFailureRecovery).toHaveBeenCalledTimes(1);
-  });
-
-  it("prioritizes failed secret-order recovery over generic pending-action hint", () => {
-    const onOpenFailureRecovery = vi.fn();
-    const { host } = renderEdictModal({
-      state: baseGameState({
-        failed_secret_order_count: 1,
-        pending_non_directive_action_count: 1,
-      }),
-      onOpenFailureRecovery,
-    });
-    const button = Array.from(host.querySelectorAll("button")).find((item) =>
-      item.textContent?.includes("处理")
-    ) as HTMLButtonElement | undefined;
-
-    expect(host.textContent).toContain("密令落库失败");
-    expect(host.textContent).not.toContain("尚有召对事项候旨");
-    expect(button).toBeTruthy();
   });
 });
 

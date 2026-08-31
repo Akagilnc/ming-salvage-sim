@@ -19131,6 +19131,18 @@ class GameDB:
         )
         return cur.rowcount
 
+    def discard_failed_secret_order_intents(self) -> int:
+        """过回合前丢弃既有 failed secret-order intents（CONTEXT：未处理失败下达在过回合丢弃）。
+
+        须在 commit_pending_actions 之前调用：清掉玩家已选择结束回合时仍未重试的旧 failure，
+        再提交本轮 pending，使同次 commit 新产生的 failure 仍保留、可恢复。
+        返回删除条数；不拥有 commit（嵌在 pre_settle owning transaction 内）。
+        """
+        cur = self.conn.execute(
+            "DELETE FROM pending_actions WHERE status='failed' AND kind='secret_order'"
+        )
+        return cur.rowcount
+
     def save_resolve_context(
         self, turn: int, decree_text: str, narrative: str,
         simulator_payload: Dict[str, object],

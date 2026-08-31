@@ -2275,6 +2275,11 @@ def pre_settle(
             # 动作闸门(ADR 0006)：颁诏最前批量落库本回合暂存的结构化聊天写动作（密令更新/催办/任免/…），
             # 在跑 LLM 结算管线前，使 simulator/extractor 读到的盘面与旧「召对期直写」时序一致。
             # driver 路径无聊天暂存 → 空 no-op。幂等（committed 行不重跑）。
+            # #1560 / CONTEXT：过回合丢弃既有 failed secret-order intents，再 commit；
+            # 顺序在 commit 前，避免误清同次 commit 新产生的 failure。
+            discarded_failed = db.discard_failed_secret_order_intents()
+            if discarded_failed:
+                tlog(f"[pending_actions] 过回合丢弃既有 failed 密令意图 {discarded_failed} 条")
             committed = db.commit_pending_actions(
                 state, content=content, registry=registry,
                 rejection_collector=collector,
