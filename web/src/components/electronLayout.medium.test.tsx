@@ -80,7 +80,8 @@ describe.sequential("medium: shared Electron geometry", () => {
       buttonHit: boolean;
       twoLines: boolean;
       textareaHit: boolean;
-      draftToolsReachable: boolean;
+      editToolReachable: boolean;
+      deleteToolReachable: boolean;
     }>(page, css("base", "court", "modals", "chat", "edict", "modal-theme", "situation"), [
       { width: 1280, height: 720 },
       { width: 1100, height: 720 },
@@ -90,11 +91,13 @@ describe.sequential("medium: shared Electron geometry", () => {
       const alert = document.querySelector('[role="alert"]');
       const cols = document.querySelector('.desk-columns');
       const memorials = document.querySelector('.desk-memorials');
-      const draftTool = document.querySelector('.directive-tools button');
+      const toolButtons = Array.from(document.querySelectorAll('.directive-tools button'));
+      const editTool = toolButtons.find((b) => (b.textContent || '').includes('改'));
+      const deleteTool = toolButtons.find((b) => (b.textContent || '').includes('删'));
       const textarea = document.querySelector('.desk-compose textarea');
       const footer = document.querySelector('.desk-footer');
       const button = document.querySelector('.desk-footer button');
-      if (!modal || !alert || !cols || !memorials || !draftTool || !textarea || !footer || !button) {
+      if (!modal || !alert || !cols || !memorials || !editTool || !deleteTool || !textarea || !footer || !button) {
         return { error: 'missing edict fixture element' };
       }
       const overlaps = (a, b) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
@@ -111,19 +114,24 @@ describe.sequential("medium: shared Electron geometry", () => {
           bottom: Math.min(er.bottom, cr.bottom),
         };
       };
-      const hitAtVisibleCenter = (el, container) => {
+      // Self-only hit: no sibling / tools-container stand-in.
+      const hitSelf = (el, container) => {
         const vis = clipVisibleRect(el, container);
         const w = vis.right - vis.left;
         const h = vis.bottom - vis.top;
         if (w <= 0 || h <= 0) return false;
         const hit = document.elementFromPoint((vis.left + vis.right) / 2, (vis.top + vis.bottom) / 2);
-        return !!hit && (
-          hit === el
-          || el.contains(hit)
-          || hit === draftTool
-          || draftTool.contains(hit)
-          || (hit.closest && hit.closest('.directive-tools') === draftTool.closest('.directive-tools'))
-        );
+        return !!hit && (hit === el || el.contains(hit));
+      };
+      // Reachable at rest via memorials, or after memorials-only scroll. No cols fallback.
+      const reachableViaMemorials = (el) => {
+        if (hitSelf(el, memorials)) return true;
+        const prevMemScroll = memorials.scrollTop;
+        const canScroll = memorials.scrollHeight > memorials.clientHeight + 1;
+        memorials.scrollTop = memorials.scrollHeight;
+        const ok = canScroll && hitSelf(el, memorials);
+        memorials.scrollTop = prevMemScroll;
+        return ok;
       };
 
       const modalRect = modal.getBoundingClientRect();
@@ -133,11 +141,13 @@ describe.sequential("medium: shared Electron geometry", () => {
       // Resting geometry first — Class A before any scrollIntoView / scrollTop mutation.
       const alertRect0 = alert.getBoundingClientRect();
       const taRect0 = textarea.getBoundingClientRect();
-      const lineHeight = Number.parseFloat(getComputedStyle(textarea).lineHeight) || 0;
-      const minEditable = 2 * lineHeight;
+      const taStyle = getComputedStyle(textarea);
+      const lineHeight = Number.parseFloat(taStyle.lineHeight) || 0;
+      const padY = (Number.parseFloat(taStyle.paddingTop) || 0) + (Number.parseFloat(taStyle.paddingBottom) || 0);
+      const contentH = Math.max(0, textarea.clientHeight - padY);
+      const twoLines = contentH >= 2 * lineHeight;
       const taVis = clipVisibleRect(textarea, cols);
       const taVisH = Math.max(0, taVis.bottom - taVis.top);
-      const twoLines = taVisH >= minEditable;
       const hitEl = taVisH > 0
         ? document.elementFromPoint((taVis.left + taVis.right) / 2, (taVis.top + taVis.bottom) / 2)
         : null;
@@ -148,16 +158,9 @@ describe.sequential("medium: shared Electron geometry", () => {
         buttonRect.top + buttonRect.height / 2,
       ) === button;
 
-      // Draft 改/删: sole owner is .desk-memorials (no cols fallback — locks the ≤1100px scroll seam).
-      const draftRestingHit = hitAtVisibleCenter(draftTool, memorials);
-      let draftToolsReachable = draftRestingHit;
-      if (!draftToolsReachable) {
-        const prevMemScroll = memorials.scrollTop;
-        const canScroll = memorials.scrollHeight > memorials.clientHeight + 1;
-        memorials.scrollTop = memorials.scrollHeight;
-        draftToolsReachable = canScroll && hitAtVisibleCenter(draftTool, memorials);
-        memorials.scrollTop = prevMemScroll;
-      }
+      // Draft 改/删 separately: sole owner is .desk-memorials (no cols / sibling fallback).
+      const editToolReachable = reachableViaMemorials(editTool);
+      const deleteToolReachable = reachableViaMemorials(deleteTool);
 
       // Theme * wash must not zero the error-line background under modal-bg-edict.
       const alertBg = getComputedStyle(alert).backgroundColor;
@@ -192,7 +195,8 @@ describe.sequential("medium: shared Electron geometry", () => {
         buttonHit,
         twoLines,
         textareaHit,
-        draftToolsReachable,
+        editToolReachable,
+        deleteToolReachable,
       };
     })()`);
 
@@ -216,7 +220,8 @@ describe.sequential("medium: shared Electron geometry", () => {
       expect(result.buttonHit, `${result.viewportWidth}x${result.viewportHeight} buttonHit`).toBe(true);
       expect(result.twoLines, `${result.viewportWidth}x${result.viewportHeight} twoLines`).toBe(true);
       expect(result.textareaHit, `${result.viewportWidth}x${result.viewportHeight} textareaHit`).toBe(true);
-      expect(result.draftToolsReachable, `${result.viewportWidth}x${result.viewportHeight} draftToolsReachable`).toBe(true);
+      expect(result.editToolReachable, `${result.viewportWidth}x${result.viewportHeight} editToolReachable`).toBe(true);
+      expect(result.deleteToolReachable, `${result.viewportWidth}x${result.viewportHeight} deleteToolReachable`).toBe(true);
     }
   });
 });
