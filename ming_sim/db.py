@@ -14153,12 +14153,19 @@ class GameDB:
     def _normalize_army_pay_grant_payload(
         self, payload: Dict[str, object],
     ) -> Dict[str, object]:
-        """#1503：拨饷类成案载荷 — 五字段显式；缺则一次收集响亮；不补值。"""
+        """#1503：拨饷类成案载荷 — 五字段显式；缺则一次收集响亮；不补值。
+
+        #1620：target_id 经 _resolve_xiexang_army_id 取得 canonical army id
+        （展示名关宁军→guanning）；成案/落库前完成，不改 apply 查询。
+        """
         if not self._is_army_pay_grant_payload(payload):
             return payload
         if self._grant_allocation_is_honorific(payload):
             return payload
-        from ming_sim.action_materialize import require_explicit_xiexang_fields
+        from ming_sim.action_materialize import (
+            _resolve_xiexang_army_id,
+            require_explicit_xiexang_fields,
+        )
 
         normalized = dict(payload)
         explicit = require_explicit_xiexang_fields(
@@ -14169,6 +14176,12 @@ class GameDB:
             target_id=str(normalized.get("target_id") or ""),
             cadence=str(normalized.get("cadence") or ""),
         )
+        army_id = _resolve_xiexang_army_id(self, str(explicit["target_id"]))
+        if not army_id:
+            raise ValueError(
+                f"协饷旨意 target 无法解析为军队：{explicit['target_id']!r}（不猜散文）"
+            )
+        explicit["target_id"] = army_id
         normalized.update(explicit)
         if self._grant_allocation_is_monthly(normalized):
             return normalized

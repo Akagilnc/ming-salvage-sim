@@ -337,6 +337,9 @@ def build_rescript_draft_payload(
         (_project_issue_qualitatively(issue) for issue in raw_issues)
         if projected is not None
     ]
+    # #1620：grant_action 闭集与 Layer-A GRANT_ACTIONS 同源，注入生成契约禁同义动作名。
+    from ming_sim.action_materialize import GRANT_ACTIONS
+
     return {
         "turn": {
             "year": state.year,
@@ -349,6 +352,7 @@ def build_rescript_draft_payload(
         "active_issues": active_issues,
         "region_targets": _project_region_targets(simulator_payload.get("regions")),
         "army_targets": _project_army_targets(simulator_payload.get("armies")),
+        "grant_actions": sorted(GRANT_ACTIONS - {"无"}),
         "target": {"min_items": 3, "max_items": MAX_RESCRIPT_DRAFTS},
     }
 

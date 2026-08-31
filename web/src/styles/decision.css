@@ -197,6 +197,13 @@
   border: 1px solid #a4862f;
   border-radius: 8px;
   font-size: 14px;
+  max-width: min(720px, 92vw);
+}
+
+/* #1620：ADR 0008 决定 7 多行指引（错误包路径 / 发给作者） */
+.recovery-banner-message {
+  white-space: pre-line;
+  line-height: 1.45;
 }
 
 .decision-recovery-banner {

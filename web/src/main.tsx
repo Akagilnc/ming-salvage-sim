@@ -800,7 +800,10 @@ export function App() {
         )
         ? (
         <div className="recovery-banner" data-testid="settle-resume">
-          <span>上月结算未完成（进度已保存）。</span>
+          <span className="recovery-banner-message">
+            {state.settlement_recovery?.message
+              || "上月结算未完成（进度已保存）。"}
+          </span>
           <button
             className="seal-btn-issue"
             onClick={
@@ -815,7 +818,16 @@ export function App() {
             }
             disabled={!!busy}
           >
-            续跑结算
+            {needsPhase2Resume(
+              state.turn.phase,
+              state.pending_decisions || [],
+              state.turn.settlement_display,
+              state.resume_phase2,
+            )
+              ? "续跑结算"
+              : (state.settlement_recovery?.ready_replay === false
+                ? "重新推演"
+                : "续跑结算")}
           </button>
         </div>
       ) : null}

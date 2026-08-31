@@ -1474,6 +1474,26 @@ class WebGame:
                 and self.db.get_resolve_context(self.state.turn) is not None
                 and not pending_decisions
             )
+            # #1620 / ADR 0008 决定 6/7：settling 恢复面投影既有 abort message + ready 判别。
+            # ready_replay=True → 续跑结算（重放 apply）；False → 重新推演（fallthrough）。
+            settlement_recovery = None
+            if turn_phase == TurnPhase.SETTLING.value:
+                from ming_sim.error_pack import (
+                    latest_error_pack_for_turn,
+                    settlement_abort_message,
+                )
+                ctx = self.db.get_resolve_context(self.state.turn)
+                ready_replay = ctx is not None and ctx.get("extracted") is not None
+                pack_path = latest_error_pack_for_turn(int(self.state.turn))
+                settlement_recovery = {
+                    "ready_replay": bool(ready_replay),
+                    "error_pack_path": pack_path or "",
+                    "message": (
+                        settlement_abort_message(pack_path)
+                        if pack_path
+                        else "上月结算未完成（进度已保存）。"
+                    ),
+                }
         return {
             "turn": {"year": self.state.year, "period": self.state.period,
                      "turn": self.state.turn, "phase": turn_phase,
@@ -1538,6 +1558,8 @@ class WebGame:
             "resume_phase2": durable_phase2_resume and not settlement_entry_inflight,
             # #1625：只投影进程内既有入口计数；供刷新/重拉区分在飞与真暂停。
             "settlement_entry_inflight": settlement_entry_inflight,
+            # #1620：settling 恢复面（ADR 0008 决定 6/7 message + ready_replay）
+            "settlement_recovery": settlement_recovery,
             "last_decree": self.last_decree,
             "last_report": self.last_report,
             # #671：上一已完成月王承恩独立递话（与 last_report 同级 typed 字段）
