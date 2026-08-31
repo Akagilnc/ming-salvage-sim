@@ -17,6 +17,7 @@ import ming_sim.issues as issues_mod
 from ming_sim.exceptions import LLMContractError, LLMUnavailable, SettlementAbort
 from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
 from ming_sim.session import TurnPhase
+from ming_sim import audience_night as an
 
 
 @contextmanager
@@ -639,6 +640,108 @@ def test_play_turn_reports_secret_order_failure_when_settlement_aborts(monkeypat
     assert "【密令落库失败 #42】" in out
     assert "retry 42" in out
     assert session.calls == ["begin", "resolve", "advance"]
+
+
+
+def test_terminal_minister_chat_retry_offsite_secret_route(game, monkeypatch, capsys):
+    """#1566：CLI 经 minister_chat 输入「重试回话」消费 durable route。
+
+    DB 形与 Web 同构的场外密令 interrupted 轮：回话落库、无新 entrance、密令 stage。
+    不直调 _retry_interrupted_reply_cli；不 spy helper。
+    """
+    db, state, content = game
+    character = next(c for c in content.characters.values() if c.status == "active")
+    night = an.open_night(db, state, location="乾清宫", time_of_day="戌时")
+    night_id = int(night["id"])
+    question = "整饬边备，密查欠饷。"
+    ct = db.create_chat_turn(
+        state, character.name, f"cli:{character.name}", 0,
+        night_id=night_id, status="generating",
+        route="secret_order_offsite",
+    )
+    mid = db.append_chat_message(character.name, state.turn, "user", question)
+    db.update_chat_turn_messages(ct, user_message_id=mid)
+    db.conn.execute(
+        "UPDATE chat_turns SET status='interrupted' WHERE id=?", (ct,),
+    )
+    db.conn.commit()
+    ledger_before = an.list_ledger(db, night_id)
+    before_secret = sum(
+        1 for p in db.list_pending_actions(state.turn) if p.get("kind") == "secret_order"
+    )
+
+    answers = iter(["重试回话", "done"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+
+    def chat(name, message, *, chat_turn_id=0, explicit_secret_order=False):
+        assert chat_turn_id == ct
+        assert message == question
+        # durable route 解码须把 explicit_secret_order 交到 chat
+        assert explicit_secret_order is True
+        pending_id = int(db.stage_pending_action(
+            state.turn,
+            kind="secret_order",
+            action="新建",
+            minister_name=name,
+            payload={"title": message[:14], "content": message},
+        ))
+        return SimpleNamespace(
+            answer="臣领密旨。",
+            proposed_directive=None,
+            appointed_minister="",
+            registered_minister="",
+            displaced_minister="",
+            court_action="",
+            next_minister="",
+            pending_action_id=pending_id,
+            pending_action_failures=[],
+            secret_order_id=0,
+        )
+
+    session = SimpleNamespace(
+        db=db,
+        state=state,
+        content=content,
+        temporary_characters=set(),
+        chat=chat,
+        start_chat_turn_scene=lambda *_a, **_k: None,
+        start_chat_turn_exit_scene=lambda *_a, **_k: None,
+        join_chat_turn_scene=lambda *_a, **_k: [],
+        persist_chat_turn_scene=lambda *_a, **_k: None,
+        abandon_chat_turn_scene=lambda *_a, **_k: None,
+    )
+
+    assert term.minister_chat(session, character) == "dismiss"
+
+    # 回话落库、问话不重复
+    users = db.conn.execute(
+        "SELECT content FROM chat_messages WHERE role='user' AND minister_name=?",
+        (character.name,),
+    ).fetchall()
+    assert [r["content"] for r in users] == [question]
+    replies = db.conn.execute(
+        "SELECT content FROM chat_messages WHERE role='minister' AND minister_name=?",
+        (character.name,),
+    ).fetchall()
+    assert [r["content"] for r in replies] == ["臣领密旨。"]
+    row = db.conn.execute(
+        "SELECT status, minister_message_id, route FROM chat_turns WHERE id=?", (ct,),
+    ).fetchone()
+    assert row["status"] == "active"
+    assert row["minister_message_id"]
+    assert str(row["route"] or "") == "secret_order_offsite"
+    # 无新 entrance
+    scroll = an.read_night_scroll(db, night_id)
+    assert not any(
+        m.get("beat") == "entrance" and m.get("speaker") == character.name
+        for m in scroll
+    )
+    assert an.list_ledger(db, night_id) == ledger_before
+    after_secret = [
+        p for p in db.list_pending_actions(state.turn) if p.get("kind") == "secret_order"
+    ]
+    assert len(after_secret) == before_secret + 1
+    assert after_secret[-1]["minister_name"] == character.name
 
 
 def test_cli_write_gate_canonical_session_attr():

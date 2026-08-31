@@ -237,12 +237,26 @@ class _RetrySession:
     def pending_count(self):
         return 0
 
-    def chat(self, minister_name, message, *, chat_turn_id=0):
-        # 关键：retry 复用既有 chat_turn，绝不再落问话——只产回话。
+    def chat(self, minister_name, message, *, chat_turn_id=0, explicit_secret_order=False):
+        # 关键：retry 复用既有 chat_turn，绝再不落问话——只产回话。
         assert chat_turn_id != 0
-        return ChatTurnResult(answer="臣重奏：剿为先。")
+        # #1566：消费 durable route 的 explicit_secret_order → 密令 stage（外可见）。
+        pending_id = 0
+        if explicit_secret_order:
+            pending_id = int(self.db.stage_pending_action(
+                self.state.turn,
+                kind="secret_order",
+                action="新建",
+                minister_name=minister_name,
+                payload={"title": str(message)[:14], "content": str(message)},
+            ))
+        return ChatTurnResult(
+            answer="臣重奏：剿为先。" if not explicit_secret_order else "臣领密旨。",
+            pending_action_id=pending_id,
+        )
 
     # #542 scene lifecycle seams：retry 入口会 start/join/persist/abandon；替身 no-op。
+    # #1566：场外密令重试不得启殿上 scene——外可见靠 scroll 无 entrance，不记 spy。
     def start_chat_turn_scene(self, *_a, **_k):
         return None
 
@@ -313,6 +327,71 @@ def test_retry_regenerates_reply_without_duplicate_question(restore_env):
     assert row["minister_message_id"]
     # 重试后该轮不再挂在待重试面板。
     assert db.get_interrupted_reply_retries(minister) == []
+
+
+
+def test_retry_offsite_secret_order_route_keeps_no_entrance_and_stages(restore_env):
+    """#1566：场外密令 interrupted 轮经 Web retry 消费 durable route。
+
+    前置：generating + route=secret_order_offsite + 无前缀问话已落。
+    后：回话落库；scroll/ledger 无新增 entrance；密令 pending stage；不重复问话。
+    """
+    env = restore_env
+    db, state, content = env.db, env.state, env.content
+    minister = _active_minister(db, content)
+    night = an.open_night(db, state, location="乾清宫", time_of_day="戌时")
+    night_id = int(night["id"])
+    # 场外密令：挂夜但不入殿（无 entrance），route 落 secret_order_offsite。
+    question = "整饬边备，密查欠饷。"
+    ct = db.create_chat_turn(
+        state, minister, "sess-offsite-secret", 0,
+        night_id=night_id, status="generating",
+        route="secret_order_offsite",
+    )
+    mid = db.append_chat_message(minister, state.turn, "user", question)
+    db.update_chat_turn_messages(ct, user_message_id=mid)
+    ledger_before = an.list_ledger(db, night_id)
+    before_secret = sum(
+        1 for p in db.list_pending_actions(state.turn) if p.get("kind") == "secret_order"
+    )
+    db.reconcile_interrupted_chat_turns()
+    retries = db.get_interrupted_reply_retries(minister)
+    assert retries and str(retries[-1].get("route") or "") == "secret_order_offsite"
+
+    rt = _retry_runtime(db, state, minister)
+    payload = rt.retry_interrupted_reply(minister)
+
+    assert payload["answer"] == "臣领密旨。"
+    users = db.conn.execute(
+        "SELECT content FROM chat_messages WHERE role='user'"
+    ).fetchall()
+    assert [r["content"] for r in users] == [question]
+    replies = db.conn.execute(
+        "SELECT content FROM chat_messages WHERE role='minister'"
+    ).fetchall()
+    assert [r["content"] for r in replies] == ["臣领密旨。"]
+    row = db.conn.execute(
+        "SELECT status, minister_message_id, route FROM chat_turns WHERE id=?", (ct,),
+    ).fetchone()
+    assert row["status"] == "active"
+    assert row["minister_message_id"]
+    assert str(row["route"] or "") == "secret_order_offsite"
+    # 无新增 entrance（场外密令重试不得启殿上 scene）。
+    scroll_after = an.read_night_scroll(db, night_id)
+    assert not any(
+        m.get("beat") == "entrance" and m.get("speaker") == minister
+        for m in scroll_after
+    )
+    assert an.list_ledger(db, night_id) == ledger_before
+    # 密令 structured stage
+    after_secret = [
+        p for p in db.list_pending_actions(state.turn) if p.get("kind") == "secret_order"
+    ]
+    assert len(after_secret) == before_secret + 1
+    staged = after_secret[-1]
+    assert staged["minister_name"] == minister
+    assert staged["action"] == "新建"
+    assert int(payload.get("pending_action_id") or 0) == int(staged["id"])
 
 
 def test_retry_without_interrupted_turn_is_rejected(restore_env):

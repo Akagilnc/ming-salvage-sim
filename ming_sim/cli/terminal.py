@@ -486,11 +486,21 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> No
     if not db.reopen_interrupted_chat_turn_for_retry(chat_turn_id):
         print(f"{minister_name}上一轮回奏仍在进行，请稍候再问。\n")
         return
+    # #1566：route 权威解码——与 Web retry 同核；场外密令不启殿上 scene。
+    from ming_sim.audience_night import decode_chat_turn_route
+    retry_route = decode_chat_turn_route(target.get("route"))
     # #634：重试回话同形——判官拍先于重新生成派发（与回话并行）。
     _dispatch_relation_judge_cli(session, chat_turn_id)
     try:
-        session.start_chat_turn_scene(minister_name, chat_turn_id)
-        result = session.chat(minister_name, question, chat_turn_id=chat_turn_id)
+        if retry_route["start_hall_scene"]:
+            session.start_chat_turn_scene(minister_name, chat_turn_id)
+        try:
+            result = session.chat(
+                minister_name, question, chat_turn_id=chat_turn_id,
+                explicit_secret_order=retry_route["explicit_secret_order"],
+            )
+        except TypeError:
+            result = session.chat(minister_name, question, chat_turn_id=chat_turn_id)
         answer = str(getattr(result, "answer", "") or "")
         if hasattr(db, "persist_minister_reply"):
             scene_generated = session.join_chat_turn_scene(chat_turn_id)
@@ -690,6 +700,11 @@ def minister_chat(session: GameSession, character: Character) -> str:
             "update_chat_turn_messages", "record_chat_turn_rollback_diffs", "fail_chat_turn",
         ))
         try:
+            # #1566：CLI 前缀密令落 route=secret_order，供中断重试权威解码。
+            from ming_sim.cli_backend import _SECRET_PREFIXES
+            cli_explicit_secret = question.startswith(_SECRET_PREFIXES)
+            from ming_sim.audience_night import encode_chat_turn_route
+            cli_route = encode_chat_turn_route(explicit_secret_order=cli_explicit_secret)
             if persistent_chat:
                 if lifecycle_supported:
                     rollback_snapshot = session.db.capture_chat_rollback_snapshot()
@@ -703,6 +718,7 @@ def minister_chat(session: GameSession, character: Character) -> str:
                         agno_session_id=f"cli:{character.name}",
                         agno_runs_before=0,
                         beat_generator=None,
+                        route=cli_route,
                     )
                     session.start_chat_turn_scene(character.name, chat_turn_id)
                 user_message_id = session.db.append_chat_message(
@@ -714,10 +730,18 @@ def minister_chat(session: GameSession, character: Character) -> str:
                     )
             # #634：判官拍先于回话派发（与回话生成并行，TD-9）。
             _dispatch_relation_judge_cli(session, chat_turn_id)
-            result = (
-                session.chat(character.name, question, chat_turn_id=chat_turn_id)
-                if chat_turn_id else session.chat(character.name, question)
-            )
+            if chat_turn_id:
+                try:
+                    result = session.chat(
+                        character.name, question, chat_turn_id=chat_turn_id,
+                        explicit_secret_order=cli_explicit_secret,
+                    )
+                except TypeError:
+                    result = session.chat(
+                        character.name, question, chat_turn_id=chat_turn_id,
+                    )
+            else:
+                result = session.chat(character.name, question)
             if persistent_chat:
                 if (chat_turn_id and hasattr(session.db, "persist_minister_reply")
                         and hasattr(session, "join_chat_turn_scene")):

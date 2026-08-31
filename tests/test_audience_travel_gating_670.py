@@ -1578,12 +1578,15 @@ def _install_secret_order_agent(runtime, *, stream: bool = False) -> None:
             return None
 
     agent: Any
+    # #1566：密令 route 须吞 summon+dismiss court actions，仍只 stage 密令。
     non_secret_tools = [
         ToolExec("propose_directive", "__pending_directive__不得物化的普通旨意"),
         ToolExec(
             "rush_staged_commitment",
             '__commitment_rush__{"issue_id": 1, "stage_idx": 0, "deadline_months": 1}',
         ),
+        ToolExec("summon_minister", "__summon__杨嗣昌"),
+        ToolExec("dismiss_minister", "__dismiss__"),
     ]
     if stream:
         agent = _FakeAgent(tools=non_secret_tools, chunks=["臣", "领密旨。"])
@@ -1669,7 +1672,10 @@ def _formal_secret_order_payload(runtime, minister_name, message, *, stream):
 
 @pytest.mark.parametrize("stream", [False, True], ids=["sync", "stream"])
 def test_web_chat_formal_secret_order_hangs_night_without_enter(game, stream):
-    """#1566：场外正式密令挂当前夜轮，不 consume 传召、不入殿。"""
+    """#1566：场外正式密令挂当前夜轮，不 consume 传召、不入殿；
+
+    summon+dismiss tool 与 typed 退朝均不得派 court_action / 换人 / exit / 留侍 / 收夜。
+    """
     db, state, content = game
     remote = _set_place(game, "洪承畴", location="shaanxi")
     before_summons = list(an.list_unsettled_summons(db))
@@ -1697,6 +1703,13 @@ def test_web_chat_formal_secret_order_hangs_night_without_enter(game, stream):
     assert not payload.get("admission"), (
         f"正式密令不得被 SUMMON_* admission 截获，got admission={payload.get('admission')!r}"
     )
+    # #1566：密令 route 吞 court actions（agent 带 summon+dismiss）。
+    assert not payload.get("court_action"), (
+        f"密令不得派 court_action，got {payload.get('court_action')!r}"
+    )
+    assert not payload.get("next_minister"), (
+        f"密令不得换人，got next_minister={payload.get('next_minister')!r}"
+    )
     pid = int(payload.get("pending_action_id") or 0)
     _assert_secret_order_pending(
         db, state, minister_name=remote.name, pid=pid, edict=edict,
@@ -1716,11 +1729,13 @@ def test_web_chat_formal_secret_order_hangs_night_without_enter(game, stream):
     chat_turn_id = int(payload.get("chat_turn_id") or 0)
     assert chat_turn_id > 0
     turn = db.conn.execute(
-        "SELECT night_id, status FROM chat_turns WHERE id=?",
+        "SELECT night_id, status, route FROM chat_turns WHERE id=?",
         (chat_turn_id,),
     ).fetchone()
     assert turn is not None
     assert int(turn["night_id"] or 0) > 0
+    # 场外密令 route 须 durable 落 secret_order_offsite。
+    assert str(turn["route"] or "") == "secret_order_offsite"
     scroll = an.read_night_scroll(db, int(turn["night_id"]))
     assert not any(
         m.get("beat") == "entrance" and m.get("speaker") == remote.name
@@ -1730,6 +1745,24 @@ def test_web_chat_formal_secret_order_hangs_night_without_enter(game, stream):
     roles = {m.get("role") for m in owned}
     assert "user" in roles
     assert "minister" in roles
+
+    # #1566：typed 退朝在密令 intent 下不得收夜/留侍/court_break。
+    before_nights = db.conn.execute(
+        "SELECT COUNT(*) AS c FROM audience_nights"
+    ).fetchone()["c"]
+    break_payload = _formal_secret_order_payload(
+        runtime, remote.name, "退朝", stream=stream,
+    )
+    assert not break_payload.get("court_action"), (
+        f"typed 退朝+密令 intent 不得 court_action，got {break_payload.get('court_action')!r}"
+    )
+    after_nights = db.conn.execute(
+        "SELECT COUNT(*) AS c FROM audience_nights"
+    ).fetchone()["c"]
+    assert after_nights == before_nights
+    open_night = an.get_open_night(db)
+    assert open_night is not None
+    assert str(open_night.get("status") or "") == "open"
 
 
 def test_web_chat_ledger_append_failure_has_no_side_effects(game, monkeypatch):

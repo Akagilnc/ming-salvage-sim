@@ -407,6 +407,27 @@ def list_ledger(db: Any, night_id: int) -> List[Dict[str, Any]]:
     return out
 
 
+def encode_chat_turn_route(*, explicit_secret_order: bool, offsite: bool = False) -> str:
+    """#1566：创建 chat_turns.route 的权威编码（'' / secret_order / secret_order_offsite）。"""
+    if not explicit_secret_order:
+        return ""
+    return "secret_order_offsite" if offsite else "secret_order"
+
+
+def decode_chat_turn_route(route: object) -> Dict[str, bool]:
+    """#1566：中断重试消费 chat_turns.route 的权威解码。
+
+    返回 {explicit_secret_order, start_hall_scene}；Web/CLI 重试只消费此结果，
+    禁止各端自造 if-else 分叉。
+    """
+    value = str(route or "").strip()
+    if value == "secret_order_offsite":
+        return {"explicit_secret_order": True, "start_hall_scene": False}
+    if value == "secret_order":
+        return {"explicit_secret_order": True, "start_hall_scene": True}
+    return {"explicit_secret_order": False, "start_hall_scene": True}
+
+
 def list_chat_turns_for_night(db: Any, night_id: int) -> List[Dict[str, Any]]:
     # 撤回的轮（status='undone'）从「按夜取数」隐去——与「该轮未发生」等价（#506）。
     # failed 半场轮 / consumed 空问话召见 scaffold 同样不计入夜时间线。
@@ -2871,6 +2892,7 @@ def attach_chat_turn_to_night(
     summon_method: str = METHOD_XUANRU,
     beat_generator: Any = None,
     knowledge_provider: Any = None,
+    route: str = "",
 ) -> tuple[int, int]:
     """开夜（若需）+ 首次对话落宣入账 + 建 generating 对话轮挂 night_id/night_seq。
 
@@ -2956,6 +2978,7 @@ def attach_chat_turn_to_night(
             agno_session_id,
             agno_runs_before,
             night_id=night_id,
+            route=route,
         )
         if handoff_entry_id:
             db.conn.execute(
