@@ -593,7 +593,13 @@ def create_season_simulator_agent(
     tlog(f"[simulator] 使用模型 {describe_effective_model(cfg)}")
     # simulator_context 与 extractor 共用 build_simulator_context → 字节一致 → 暖好 extractor 前缀缓存。
     simulator_context = build_simulator_context(simulator_payload)
-    instructions = [_ctx().game_world_prompt, simulator_context, _ctx().season_simulator_prompt]
+    from ming_sim.action_clusters import season_option_contract_prompt
+    instructions = [
+        _ctx().game_world_prompt,
+        simulator_context,
+        _ctx().season_simulator_prompt,
+        season_option_contract_prompt("grant_allocation"),
+    ]
     if is_minimax_base_url(cfg.base_url):
         instructions.insert(0, _MINIMAX_SHORT_THINKING_PROMPT)
 

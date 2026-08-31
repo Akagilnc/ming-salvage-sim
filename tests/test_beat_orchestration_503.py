@@ -2317,7 +2317,6 @@ def test_657_s2_s3_lock_boundary_and_parallel_summons(game, monkeypatch):
     单 target 失败门闩响亮，另一 target 已 persist 正文保留。
     """
     import threading
-    import time
     from concurrent.futures import ThreadPoolExecutor
 
     from ming_sim.audience_night import rescript_summon_origin_ref
@@ -2381,24 +2380,19 @@ def test_657_s2_s3_lock_boundary_and_parallel_summons(game, monkeypatch):
     sess._write_gate = threading.Lock()
     sess._write_queue = type("Q", (), {"write_gate": sess._write_gate})()
 
-    started = {}
-    lock = threading.Lock()
+    generators_ready = threading.Barrier(2, timeout=2.0)
+    join_started = threading.Event()
     join_saw_free = []
-    in_join_phase = {"v": False}
     gen_ok_body = f"{ok_name}入殿请安。"
 
     def mixed_gen(inputs):
         name = str(getattr(inputs, "person_name", "") or "") or ""
-        with lock:
-            if name:
-                started[f"{name}-{id(inputs)}"] = time.time()
-        time.sleep(0.05)
-        if in_join_phase["v"]:
-            free = sess._write_gate.acquire(False)
-            if free:
-                sess._write_gate.release()
-            join_saw_free.append(bool(free))
-        time.sleep(0.12)
+        generators_ready.wait()
+        assert join_started.wait(timeout=2.0)
+        free = sess._write_gate.acquire(False)
+        if free:
+            sess._write_gate.release()
+        join_saw_free.append(bool(free))
         if name == bad_name:
             raise RuntimeError("target B boom")
         if name == ok_name:
@@ -2414,11 +2408,8 @@ def test_657_s2_s3_lock_boundary_and_parallel_summons(game, monkeypatch):
     real_join = sess.join_rescript_summons
 
     def _join_probe(p1):
-        in_join_phase["v"] = True
-        try:
-            return real_join(p1)
-        finally:
-            in_join_phase["v"] = False
+        join_started.set()
+        return real_join(p1)
 
     sess.join_rescript_summons = _join_probe  # type: ignore[method-assign]
 
@@ -2436,10 +2427,7 @@ def test_657_s2_s3_lock_boundary_and_parallel_summons(game, monkeypatch):
     except ValueError:
         raised = True
     assert raised, "单 target 失败门闩须响亮 ValueError"
-    assert join_saw_free and all(join_saw_free), f"join 期间 gate 应空闲: {join_saw_free}"
-    times = [t for k, t in started.items() if ok_name in k or bad_name in k]
-    if len(times) >= 2:
-        assert max(times) - min(times) < 0.12, f"Futures 未重叠: {started}"
+    assert join_saw_free == [True, True], f"join 期间 gate 应空闲: {join_saw_free}"
 
     # 成功 target 正文仍在（S7 失败域）
     k0 = next(k for k, n in zip(keys, ministers) if n == ok_name)
