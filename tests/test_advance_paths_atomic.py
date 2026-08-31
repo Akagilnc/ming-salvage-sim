@@ -1,6 +1,6 @@
 """S7 (ADR 0008 PR1) — 三条推进回合写路径统一 atomic 事务包裹 + 恢复入口消费。
 
-决定 2：任何推进回合的写序列(正常 settle / simulator-fallback / 无旨 session.advance_without_decree)
+决定 2：任何推进回合的写序列（正常 settle / 无旨 session.advance_without_decree）
 全有或全无——整体包 atomic，崩在中途整体回滚、内存从 DB 重载、相位/回合不前进。
 决定 3：跨进程恢复入口(session.resolve_turn)在 settling 态分流——有 ready context 直入
 apply(不重跑贵的 simulator/extractor)；无则重跑推演(验收③)。
@@ -111,75 +111,6 @@ def test_advance_without_edict_atomic(game, monkeypatch):
     # 后半未推进：无完整月档（或有 pre_settle 副作用但不 next_period）
     _ = before_ledger, before_log, before_phase, Provenance  # keep imports meaningful
 
-
-# ---------------------------------------------------------------------------
-# 路 2：simulator-fallback 整体 atomic
-# ---------------------------------------------------------------------------
-
-def _drive_fallback(db, state, content, monkeypatch):
-    """stub 驱动真实 resolve_directives，令 simulator 抛错走 fallback 分支。"""
-    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
-
-    def _stub_sim(*a, **k):
-        raise RuntimeError("simulated simulator crash")
-    monkeypatch.setattr(decree_mod, "simulate_season_with_payload", _stub_sim)
-    # Fallback now replaces only the narrative and deliberately stays on the
-    # normal extractor→atomic-settle rail.
-    monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
-    monkeypatch.setattr(decree_mod, "create_score_extractor_module_agent", lambda *a, **k: None)
-    monkeypatch.setattr(
-        decree_mod, "extract_scores_by_modules_with_agno",
-        lambda *a, **k: (
-            with_monthly_reports(db, {}),
-            "fallback-extractor-output",
-            "fallback-extractor-input",
-        ),
-    )
-    monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
-    monkeypatch.setattr(decree_mod, "record_chapter_memory", lambda *a, **k: None)
-
-    return decree_mod.resolve_directives(
-        state, db, None, None, [1], "减赋诏",
-        content=content, registry=None,
-    )
-
-
-def test_fallback_branch_atomic(game, monkeypatch):
-    """simulator-fallback 分支中途崩(apply_issue_inertia_and_ongoing 抛)→ 全回滚：
-    record_log/turn_report 都不留、turn 未推进、内存与 DB 同源(ADR 0008 决定 2)。"""
-    db, state, content = game
-    # pre_settle 在 resolve_directives 早期跑(自有 atomic)，先让它走完落 settling；
-    # 然后 fallback 分支跑推进尾，在 inertia 处注入崩溃。
-    turn = state.turn
-
-    def _boom(*a, **k):
-        raise RuntimeError("fallback inertia boom")
-    monkeypatch.setattr(decree_mod, "apply_issue_inertia_and_ongoing", _boom)
-
-    before_report = db.conn.execute(
-        "SELECT COUNT(*) FROM turn_reports WHERE turn=?", (turn,)).fetchone()[0]
-
-    from ming_sim.exceptions import SettlementAbort
-    with pytest.raises(SettlementAbort) as error:
-        _drive_fallback(db, state, content, monkeypatch)
-    assert error.value.stage == "settle"
-    assert isinstance(error.value.__cause__, RuntimeError)
-    assert str(error.value.__cause__) == "fallback inertia boom"
-
-    other = sqlite3.connect(db.path)
-    try:
-        on_disk_report = other.execute(
-            "SELECT COUNT(*) FROM turn_reports WHERE turn=?", (turn,)).fetchone()[0]
-        on_disk_turn = other.execute("SELECT turn FROM game_state").fetchone()[0]
-    finally:
-        other.close()
-    assert on_disk_report == before_report  # fallback 写序列回滚
-    assert on_disk_turn == turn  # 回合未推进
-    assert state.turn == turn  # 内存与 DB 同源
-    # 真正咬住 reload：settling 相位是 pre_settle 已提交的 DB 真相，fallback 回滚后
-    # 内存须与之同源；metrics 同断言（cmr S7 r1 claude）。
-    assert state.metrics == db.load_state().metrics
-    assert not db.conn.in_transaction
 
 
 # ---------------------------------------------------------------------------
@@ -681,7 +612,10 @@ def test_submit_event_decision_persists_choice_after_pending_cleanup(game, monke
 
     d_key = db.list_rescript_desk(turn)[0]["decision_key"]
     sess.submit_hitl_choices(
-        [{"decision_key": d_key, "label": "留", "hint": "暂稳东江", "note": "姑留观后效"}],
+        [{
+            "decision_key": d_key, "action": "follow_draft",
+            "label": "留", "hint": "暂稳东江", "note": "姑留观后效",
+        }],
         write_gate=threading.Lock(),
     )
 
@@ -1320,69 +1254,8 @@ def test_resim_path_does_not_preconsume_pending(game, monkeypatch, tmp_path):
     assert title == "原标题"  # 真表无半写
 
 
-def test_fallback_path_commits_pending(game, monkeypatch):
-    """fallback 终端路（推进回合）在自己的 atomic 内 commit 暂存动作（cmr S7 r5）。"""
-    import ming_sim.decree as dm
-    from tests.test_pending_actions import _active_minister_name
-
-    db, state, content = game
-    turn = state.turn
-    dm.pre_settle(state, db, content=content)  # settling：守门早退不再消费
-    name = _active_minister_name(db, content)
-    oid = create_test_secret_order(db,
-        state, name, "原标题", "原内容", [], deadline_months=0,
-        covert_task=TYPED_COVERT_TASK,
-    )
-    db.stage_pending_action(
-        turn, kind="secret_order", action="更新", minister_name=name, target_id=oid,
-        payload={"new_title": "fallback标题", "new_content": "x", "deadline_months": 0})
-
-    res = _drive_fallback(db, state, content, monkeypatch)
-
-    assert res.awaiting is False
-    assert state.turn == turn + 1
-    row = db.conn.execute(
-        "SELECT status FROM pending_actions WHERE turn=? AND target_id=?",
-        (turn, oid)).fetchone()
-    assert row is not None and row["status"] == "committed"  # 真 committed 非 failed（ship-pre r1）
-    title = db.conn.execute(
-        "SELECT title FROM secret_orders WHERE id=?", (oid,)).fetchone()["title"]
-    assert title == "fallback标题"
 
 
-def test_fallback_persists_sources_created_by_inertia_before_archive(game, monkeypatch):
-    """降级结算也须在 inertia 产生见闻后再投影聚合档案。"""
-    db, state, content = game
-    turn = state.turn
-    dm = decree_mod
-    original = dm.apply_issue_inertia_and_ongoing
-    minister = next(
-        character for character in content.characters.values()
-        if character.office_type not in ("后宫", "宗藩")
-        and db.get_character_status(character.name)[0] == "active"
-    )
-
-    def _inertia_with_source(*args, **kwargs):
-        db.register_character_knowledge_source(
-            state,
-            [{"character_id": minister.name, "tier": "inertia"}],
-            "inertia",
-            "降级见闻",
-            "inertia 受限事项",
-            source_id="test:fallback-inertia-source",
-        )
-        return original(*args, **kwargs)
-
-    monkeypatch.setattr(dm, "apply_issue_inertia_and_ongoing", _inertia_with_source)
-    _drive_fallback(db, state, content, monkeypatch)
-
-    row = db.conn.execute(
-        "SELECT body FROM character_knowledge_events "
-        "WHERE character_name='' AND turn=? AND source_id=?",
-        (turn, "test:fallback-inertia-source"),
-    ).fetchone()
-    assert row is not None
-    assert row["body"] == "inertia 受限事项"
 
 
 def test_recovery_restores_last_decree_for_web_display(game, monkeypatch):
@@ -1492,7 +1365,7 @@ def test_noready_recovery_uses_persisted_decree(game, monkeypatch):
     db, state, content = game
     turn = state.turn
 
-    # 崩在 simulator payload 构建（pre_settle 之后、fallback try 之前）=真崩溃窗口
+    # 崩在 simulator payload 构建（pre_settle 之后、推演之前）=真崩溃窗口
     def _crash(*a, **k):
         raise RuntimeError("crash before simulation")
     monkeypatch.setattr(dm, "build_simulator_payload", _crash)

@@ -672,34 +672,6 @@ def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write
     assert reloaded.metrics == before["metrics"]
 
 
-def test_simulator_fallback_missing_private_report_aborts_without_advancing(game, monkeypatch):
-    import pytest
-    import ming_sim.decree as decree
-    from ming_sim.exceptions import SettlementAbort
-
-    db, state, content = game
-    _order_id, dossier_id = _order(db, state)
-    turn = state.turn
-    monkeypatch.setattr(decree, "create_season_simulator_agent", lambda *a, **k: None)
-    monkeypatch.setattr(
-        decree, "simulate_season_with_payload",
-        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("simulator unavailable")),
-    )
-    monkeypatch.setattr(decree, "create_json_sanitizer_agent", lambda *a, **k: None)
-    monkeypatch.setattr(decree, "create_score_extractor_module_agent", lambda *a, **k: None)
-    monkeypatch.setattr(
-        decree, "extract_scores_by_modules_with_agno",
-        lambda *a, **k: ({"dossier_progress_reports": []}, "out", "in"),
-    )
-    with pytest.raises(SettlementAbort, match="本月结算失败"):
-        decree.resolve_directives(
-            state, db, None, None, [], "", content=content, registry=None,
-        )
-    assert state.turn == turn
-    assert db.load_state().turn == turn
-    assert db.list_dossier_progress(dossier_id) == []
-
-
 def test_no_eligible_dossier_unknown_report_aborts_atomically(game):
     """The production settlement seam delegates eligibility to the DB contract."""
     from ming_sim.decree import settle_with_delta
