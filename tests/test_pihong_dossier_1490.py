@@ -3331,22 +3331,14 @@ def test_1620_layer_a_money_grant_requires_positive_amount():
 
 
 def test_1620_materialize_rejects_illegal_account_like_shape(game):
-    """#1620：materialize 入口与 shape 同拒非法 account（禁静默落国库）。"""
+    """#1620：materialize 入口与 shape 同拒非法 account（禁静默落国库）。
+
+    Layer-A shape 拒 account 已由 test_1620_layer_a_money_grant_requires_positive_amount
+    覆盖；本测只证 materialize 真入口，不重复 helper/shape 断言。
+    """
     import types
 
-    from ming_sim.action_materialize import (
-        MaterializeCtx,
-        require_grant_allocation_shape,
-        resolve_grant_account,
-        run_materialize_pipeline,
-    )
-
-    with pytest.raises(ValueError, match="account"):
-        resolve_grant_account(grant_action="赏赉", account="私库")
-    with pytest.raises(ValueError, match="account"):
-        require_grant_allocation_shape(
-            grant_action="赏赉", amount=10, account="私库",
-        )
+    from ming_sim.action_materialize import MaterializeCtx, run_materialize_pipeline
 
     db, state, _content = game
     actor = db.conn.execute(
@@ -3358,13 +3350,6 @@ def test_1620_materialize_rejects_illegal_account_like_shape(game):
         (actor,),
     ).fetchone()["name"]
     # 直设 intent 绕过 classifier enum；契约落在 materialize 入口同拒
-    intent = {
-        "kind": "grant_allocation",
-        "grant_action": "赏赉",
-        "amount": 10,
-        "account": "私库",
-        "name": target,
-    }
     ctx = MaterializeCtx(
         session=types.SimpleNamespace(
             db=db, state=types.SimpleNamespace(turn=int(state.turn)),
@@ -3377,7 +3362,13 @@ def test_1620_materialize_rejects_illegal_account_like_shape(game):
         has_directive=False,
         pend_for_minister=[],
         out={},
-        intent=intent,
+        intent={
+            "kind": "grant_allocation",
+            "grant_action": "赏赉",
+            "amount": 10,
+            "account": "私库",
+            "name": target,
+        },
         intent_kind="grant_allocation",
         llm_config=None,
         intent_candidates=None,
