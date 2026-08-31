@@ -818,4 +818,23 @@ describe("#1683 MinisterCardList place ⊥ office DOM", () => {
     expect(place!.textContent).toBe("河南");
     expect(host.querySelector(".minister-office")?.textContent).toBe("兵部右侍郎");
   });
+
+  it("courtMode=true shows transit destination and keeps office", async () => {
+    const host = await renderCourtList([
+      minister({
+        name: "袁崇焕",
+        office: "辽东巡抚",
+        location: "henan",
+        location_label: "河南",
+        transit_to: "shandong",
+        transit_to_label: "山东",
+      }),
+    ]);
+
+    const transit = host.querySelector(".minister-place.minister-transit");
+    expect(transit).not.toBeNull();
+    expect(transit!.textContent).toBe("山东");
+    expect(host.querySelectorAll(".minister-place")).toHaveLength(1);
+    expect(host.querySelector(".minister-office")?.textContent).toBe("辽东巡抚");
+  });
 });
