@@ -260,10 +260,11 @@ class _RetrySession:
         return None
 
 
-def _retry_runtime(db, state, minister):
+def _retry_runtime(db, state, minister, *, session=None):
+    """Web retry 入口唯一装配壳。session 默认轻量 _RetrySession；可注入生产 chat session。"""
     rt = object.__new__(web_app.WebGame)
     # WebGame.db/state 均为只读 property（读 session.db / session.state）——经 session 供给。
-    rt.session = _RetrySession(db, state, minister)
+    rt.session = session if session is not None else _RetrySession(db, state, minister)
     rt.chat_history = {minister: []}
     rt._write_gate = __import__("threading").Lock()
     rt._runtime_write_gate = lambda: rt._write_gate
@@ -936,10 +937,8 @@ def test_web_retry_offsite_secret_order_via_production_chat(game):
     """#1566 主干：Web retry_interrupted_reply → 真实 GameSession.chat 密令路径。
 
     前置：generating + route=secret_order_offsite + 无前缀问话已落。
-    后：回话落库；scroll 无 entrance；密令 pending 由生产 chat  staged（非替身自写）。
+    后：回话落库；scroll 无 entrance；密令 pending 由生产 chat staged（非替身自写）。
     """
-    import web_app
-    from ming_sim.session_write_queue import SessionWriteQueue
     from tests.test_audience_travel_gating_670 import (
         _assert_secret_order_pending,
         _secret_order_runtime,
@@ -967,35 +966,13 @@ def test_web_retry_offsite_secret_order_via_production_chat(game):
         "secret_order_offsite"
     )
 
-    runtime = _secret_order_runtime(db, state, content, stream=False)
-    # retry 入口所需 write-queue / 尾随 no-op（与既有 _retry_runtime 同形，不替 chat）。
-    runtime._write_queue = SessionWriteQueue()
-    runtime._write_gate = runtime._write_queue.write_gate
-    runtime._runtime_write_queue = lambda: runtime._write_queue
-    runtime._runtime_write_gate = lambda: runtime._write_gate
-    runtime._mark_pending_write = (
-        lambda key=None: runtime._write_queue.claim(key=key or ("pending",))
-    )
-    runtime._complete_pending_write = (
-        lambda ticket=None: runtime._write_queue.complete(ticket)
-    )
-    runtime._spawn_pending_write_thread = lambda *a, **k: False
-    runtime._spawn_extraction_trail = lambda *a, **k: None
-    runtime._audience_turn_in_flight = lambda _n: False
-    runtime._dispatch_relation_judge = lambda *_a, **_k: None
-    runtime._trail_highlight_judge_after_reply = lambda *a, **k: None
-    runtime._record_chat_rollback_items = lambda *a, **k: None
-    runtime.chat_history.setdefault(remote.name, [])
-    # 场外 route 不得启殿上 scene；缺方法则若误调会响亮失败。
-    runtime.session.start_chat_turn_scene = lambda *_a, **_k: (_ for _ in ()).throw(
+    secret_rt = _secret_order_runtime(db, state, content, stream=False)
+    # 场外 route 不得启殿上 scene。
+    secret_rt.session.start_chat_turn_scene = lambda *_a, **_k: (_ for _ in ()).throw(
         AssertionError("offsite secret retry must not start_chat_turn_scene")
     )
-    runtime.session.join_chat_turn_scene = lambda *_a, **_k: []
-    runtime.session.persist_chat_turn_scene = lambda *_a, **_k: None
-    runtime.session.abandon_chat_turn_scene = lambda *_a, **_k: None
-    # chat 已是生产 GameSession.chat（_install_secret_order_agent）
-
-    payload = web_app.WebGame.retry_interrupted_reply(runtime, remote.name)
+    rt = _retry_runtime(db, state, remote.name, session=secret_rt.session)
+    payload = rt.retry_interrupted_reply(remote.name)
 
     users = [
         r["content"]
@@ -1005,11 +982,10 @@ def test_web_retry_offsite_secret_order_via_production_chat(game):
         ).fetchall()
     ]
     assert users == [question]
-    replies = db.conn.execute(
+    assert len(db.conn.execute(
         "SELECT id FROM chat_messages WHERE role='minister' AND minister_name=?",
         (remote.name,),
-    ).fetchall()
-    assert len(replies) == 1
+    ).fetchall()) == 1
     row = db.conn.execute(
         "SELECT status, minister_message_id, route FROM chat_turns WHERE id=?", (ct,),
     ).fetchone()
@@ -1028,4 +1004,3 @@ def test_web_retry_offsite_secret_order_via_production_chat(game):
     assert sum(
         1 for p in db.list_pending_actions(state.turn) if p.get("kind") == "secret_order"
     ) == before_n + 1
-
