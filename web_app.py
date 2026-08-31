@@ -1090,11 +1090,28 @@ class WebGame:
     # ── 序列化 ────────────────────────────────────────────────────────────
     def public_character(self, character: Character) -> Dict[str, Any]:
         status, status_reason = self.db.get_character_status(character.name)
-        status_label = _STATUS_LABEL_WEB.get(status, "在朝" if status == "active" else status)
+        # #1683：active=官印/在事态，不得单独译成物理「在朝」；去向另投影 location/transit。
+        status_label = _STATUS_LABEL_WEB.get(status, status)
         office = character.office  # 去职者已被清空，可能为空串
         # summary 不含官职（卡片/详情已单独显 office），避免重复
         summary = f"{character.faction}一系，行事{character.style}。"
         power_id = self.db.resolve_power_id(character)  # 权威解析单一真源（#125）
+        loc_row = self.db.conn.execute(
+            "SELECT location, transit_to "
+            "FROM characters WHERE name=?",
+            (character.name,),
+        ).fetchone()
+        location = str(loc_row["location"] or "") if loc_row is not None else ""
+        transit_to = str(loc_row["transit_to"] or "") if loc_row is not None else ""
+        regions = getattr(self.content, "regions", None) or {}
+
+        def _region_label(region_id: str) -> str:
+            if not region_id:
+                return ""
+            region = regions.get(region_id) if hasattr(regions, "get") else None
+            name = getattr(region, "name", None) if region is not None else None
+            return str(name or region_id)
+
         return {
             "name": character.name,
             "office": office,
@@ -1104,6 +1121,10 @@ class WebGame:
             "status": status,
             "status_reason": status_reason,
             "status_label": status_label,
+            "location": location,
+            "location_label": _region_label(location),
+            "transit_to": transit_to,
+            "transit_to_label": _region_label(transit_to),
             "summary": summary,
             "portrait_id": character.portrait_id,
             "power_id": power_id,
@@ -4922,7 +4943,8 @@ async def api_remove_favorite(minister_name: str) -> Dict[str, Any]:
 
 
 _STATUS_LABEL_WEB = {
-    "active": "在朝", "offstage": "尚未登场", "dead": "已殁", "dismissed": "已罢黜",
+    # #1683：active 是广义在事/官印态（ADR 0009），不是物理「在朝」
+    "active": "在事", "offstage": "尚未登场", "dead": "已殁", "dismissed": "已罢黜",
     "imprisoned": "下狱", "exiled": "流放", "retired": "致仕",
 }
 
