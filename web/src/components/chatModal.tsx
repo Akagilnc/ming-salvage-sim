@@ -265,12 +265,8 @@ export function ChatModal({
 
   const sendSuggestion = (suggestion: Suggestion) => {
     if (suggestion.prefix) {
-      if (suggestion.intent === "secret_order") {
-        onIntent?.(suggestion.intent);
-      } else {
-        onIntent?.(undefined);
-        onInput(suggestion.text);
-      }
+      onIntent?.(suggestion.intent === "secret_order" ? suggestion.intent : undefined);
+      onInput(suggestion.text);
       setTimeout(() => inputRef.current?.focus(), 0);
     } else {
       onSend(currentMinister.name, suggestion.text);
