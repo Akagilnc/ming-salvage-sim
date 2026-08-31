@@ -199,7 +199,8 @@
     /* 根字 19px：1.75rem≈33px；gap 12 相对 2.5vw 把行高还给 ta */
     grid-template-rows: minmax(1.75rem, 0.15fr) minmax(0, 1fr);
     gap: 12px;
-    overflow-y: auto;
+    /* 覆盖基线 overflow-y:auto：单列草案滚动只认纪念行，外层不再并行承接 */
+    overflow-y: hidden;
   }
 
   .desk-memorials {
