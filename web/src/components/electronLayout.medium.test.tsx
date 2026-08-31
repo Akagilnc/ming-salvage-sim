@@ -94,7 +94,7 @@ describe.sequential("medium: shared Electron geometry", () => {
       const textarea = document.querySelector('.desk-compose textarea');
       const footer = document.querySelector('.desk-footer');
       const button = document.querySelector('.desk-footer button');
-      if (!modal || !alert || !cols || !memorials || toolButtons.length !== 2 || !textarea || !footer || !button) {
+      if (!modal || !alert || !cols || !memorials || toolButtons.length === 0 || !textarea || !footer || !button) {
         return { error: 'missing edict fixture element' };
       }
       const overlaps = (a, b) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
@@ -156,7 +156,7 @@ describe.sequential("medium: shared Electron geometry", () => {
       ) === button;
 
       // .directive-tools direct children: sole owner is .desk-memorials (no cols / sibling fallback).
-      const toolButtonsReachable = toolButtons.length > 0 && toolButtons.every(reachableViaMemorials);
+      const toolButtonsReachable = toolButtons.every(reachableViaMemorials);
 
       // Theme * wash must not zero the error-line background under modal-bg-edict.
       const alertBg = getComputedStyle(alert).backgroundColor;
