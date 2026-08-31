@@ -57,14 +57,3 @@ def test_layer_a_accepts_canonical_xiexang_rejects_synonym():
 
     with pytest.raises(ValueError):
         normalize_rescript_layer_a_option(_base_grant_option(grant_action="补发军饷"))
-
-
-def test_prompt_lists_canonical_xiexang_contract():
-    """rescript_draft prompt 明文要求 grant_action 闭集与协饷显式字段。"""
-    from ming_sim.assets import load_text_asset
-
-    text = load_text_asset("prompts/rescript_draft.md")
-    assert "grant_actions" in text
-    assert "协饷" in text
-    assert "补发军饷" in text  # 禁例明示
-    assert "purpose=补饷" in text

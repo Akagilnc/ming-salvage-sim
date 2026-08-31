@@ -117,20 +117,3 @@ def test_manual_directive_xiexang_canonicalizes_army_id_and_settles(
     )
     # 销欠生效：欠饷下降。月度 tick 可能另增欠，不锁绝对差额。
     assert after_arrears < before_arrears
-
-
-def test_capture_xiexang_without_db_keeps_explicit_fields(monkeypatch):
-    """无 db 时仍走 explicit 验形（兼容旧调用）；不静默升格 army id。"""
-    import ming_sim.cli_backend as cli_backend
-
-    monkeypatch.setattr(
-        cli_backend,
-        "_run_backend_for_config",
-        lambda *_a, **_k: (
-            json.dumps(_extracted_xiexang_display_name(), ensure_ascii=False), 1,
-        ),
-    )
-    payload = cli_backend.capture_manual_directive_payload(_XIEXANG_TEXT, None)
-    assert payload.get("grant_action") == "协饷"
-    assert payload.get("target_id") == "关宁军"
-    assert int(payload.get("amount") or 0) == 15

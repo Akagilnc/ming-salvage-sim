@@ -10,7 +10,6 @@ import web_app
 from ming_sim.decree import persist_resolve_context
 from ming_sim.error_pack import (
     clear_for_resimulation,
-    latest_error_pack_for_turn,
     settlement_abort_message,
     write_error_pack,
 )
@@ -33,22 +32,10 @@ def recovery_web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
         pass
 
 
-def test_latest_error_pack_for_turn_picks_highest_attempt(game, monkeypatch, tmp_path):
-    db, state, _content = game
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    turn = int(state.turn)
-    p1 = Path(write_error_pack(db, state, exc=RuntimeError("a1")))
-    p2 = Path(write_error_pack(db, state, exc=RuntimeError("a2")))
-    latest = latest_error_pack_for_turn(turn)
-    assert latest is not None
-    assert Path(latest) == p2.resolve()
-    assert p1.resolve() != Path(latest)
-
-
 def test_state_payload_settlement_recovery_ready_and_resim(
     recovery_web_game, monkeypatch, tmp_path,
 ):
-    """ready=1 投影续跑语义；clear 后 ready=0 投影重新推演 + abort message。"""
+    """ready=1 投影续跑语义；两次错误包取最新；clear 后 ready=0 重新推演。"""
     game = recovery_web_game
     db, state = game.db, game.state
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
@@ -60,14 +47,18 @@ def test_state_payload_settlement_recovery_ready_and_resim(
     payload = game.state_payload()
     assert payload.get("settlement_recovery") is None
 
-    # settling + ready extracted → ready_replay True
+    # settling + ready extracted；写两份错误包，投影须取 attempt 更高者
     persist_resolve_context(
         db, turn, {"metric_delta": {"民心": -1}},
         decree_text="d", narrative="n",
         simulator_payload={}, secret_orders=[], relevant_memories=[],
     )
-    pack = write_error_pack(
-        db, state, exc=RuntimeError("settlement-fail"),
+    write_error_pack(
+        db, state, exc=RuntimeError("settlement-fail-1"),
+        extracted={"metric_delta": {"民心": -1}},
+    )
+    pack2 = write_error_pack(
+        db, state, exc=RuntimeError("settlement-fail-2"),
         extracted={"metric_delta": {"民心": -1}},
     )
     state.turn_phase = TurnPhase.SETTLING.value
@@ -77,7 +68,7 @@ def test_state_payload_settlement_recovery_ready_and_resim(
     recovery = ready_payload.get("settlement_recovery")
     assert isinstance(recovery, dict)
     assert recovery["ready_replay"] is True
-    assert recovery["error_pack_path"] == str(Path(pack).resolve())
+    assert recovery["error_pack_path"] == str(Path(pack2).resolve())
     assert recovery["message"] == settlement_abort_message(recovery["error_pack_path"])
     assert "进度已保存" in recovery["message"]
     assert "发给作者" in recovery["message"]
