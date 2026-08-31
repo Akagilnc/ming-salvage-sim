@@ -129,7 +129,6 @@ export type Minister = {
   /** 在途目的地 region_id；空=未启程 */
   transit_to?: string;
   transit_to_label?: string;
-  transit_distance_remaining?: number | null;
   summary: string;
   favorite: boolean;
   portrait_id?: string;  // 空/undefined=无专属，前端 fallback 到池
