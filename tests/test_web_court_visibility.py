@@ -449,7 +449,7 @@ def test_secret_order_endpoint_preserves_long_title_into_confirmation(game, monk
     )
     seen = {}
 
-    def _session_chat(minister_name, message, *, chat_turn_id=0):
+    def _session_chat(minister_name, message, *, chat_turn_id=0, explicit_secret_order=False):
         seen.update(name=minister_name, message=message)
         return ChatTurnResult(answer="臣领旨。")
 

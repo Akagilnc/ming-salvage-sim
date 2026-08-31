@@ -104,7 +104,7 @@ def test_secret_order_endpoint_production_path_no_attribute_error(game, monkeypa
     name = _active_minister_name(db, content)
     seen: list[tuple[str, str]] = []
 
-    def _session_chat(minister_name, message, *, chat_turn_id=0):
+    def _session_chat(minister_name, message, *, chat_turn_id=0, explicit_secret_order=False):
         seen.append((minister_name, message))
         return ChatTurnResult(
             answer="臣领密旨，请陛下定夺。",
@@ -149,7 +149,7 @@ def test_webgame_chat_with_write_gate_held_is_callable_when_gate_held(game, monk
     seen: list[str] = []
     judge_calls: list[int] = []
 
-    def _session_chat(minister_name, message, *, chat_turn_id=0):
+    def _session_chat(minister_name, message, *, chat_turn_id=0, explicit_secret_order=False):
         seen.append(message)
         return ChatTurnResult(answer="臣领旨。边情已探。")
 

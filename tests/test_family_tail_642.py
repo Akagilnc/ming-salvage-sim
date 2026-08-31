@@ -131,7 +131,7 @@ def test_yang_typed_failure_blocks_semantic_wash(monkeypatch):
     judge_calls = {"n": 0}
     chat_calls = {"n": 0}
 
-    def _fake_chat(self, minister_name, message, *, chat_turn_id=0):
+    def _fake_chat(self, minister_name, message, *, chat_turn_id=0, explicit_secret_order=False):
         del message, chat_turn_id
         chat_calls["n"] += 1
         return ChatTurnResult(answer=f"臣{minister_name}领旨。")
@@ -214,7 +214,7 @@ def test_yang_acceptance_tracer_production_chain_not_direct_write(monkeypatch):
 
     monkeypatch.setattr(GameDB, "record_relation_edge_event", _spy_record)
 
-    def _fake_chat(self, minister_name, message, *, chat_turn_id=0):
+    def _fake_chat(self, minister_name, message, *, chat_turn_id=0, explicit_secret_order=False):
         # 三拍答问只驱动真实召对入口；边事件由 canned 判官按拍递进，不锁答词。
         chat_calls["n"] += 1
         n = chat_calls["n"]
