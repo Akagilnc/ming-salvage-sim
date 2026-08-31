@@ -146,23 +146,16 @@ def normalize_rescript_layer_a_option(raw: object) -> Dict[str, object]:
                 out[key] = int(raw[key])  # type: ignore[arg-type]
             except (TypeError, ValueError) as exc:
                 raise ValueError(f"票拟 option.{key} 非法：{raw[key]!r}") from exc
-    # #1620：金钱 grant 须在层 A 即具备正 amount，禁残缺 option 上桌后 follow 才响亮失败。
+    # #1620：grant 金额/account 走 require_grant_allocation_shape 唯一权威（与 mapper 同缝），
+    # 禁残缺 option 上桌；层 A 只校验不回写默认 account，免 draft_capability 漂移。
     if action_type == "grant_allocation":
-        from ming_sim.action_materialize import GRANT_HONORIFICS, GRANT_MONEY_ACTIONS
+        from ming_sim.action_materialize import require_grant_allocation_shape
 
-        ga = str(out.get("grant_action") or "").strip()
-        if ga in GRANT_MONEY_ACTIONS:
-            try:
-                amount = int(out.get("amount") or 0)
-            except (TypeError, ValueError):
-                amount = 0
-            if amount <= 0:
-                raise ValueError("grant 金钱缺正 amount")
-            raw_account = str(out.get("account") or "").strip()
-            if ga not in {"发内帑", "协饷"} and raw_account and raw_account not in {"国库", "内库"}:
-                raise ValueError(f"grant 非法 account：{raw_account!r}")
-        elif ga in GRANT_HONORIFICS:
-            pass  # 加衔/荫叙不要求 amount
+        require_grant_allocation_shape(
+            grant_action=out.get("grant_action"),
+            amount=out.get("amount"),
+            account=out.get("account"),
+        )
     out["draft_capability"] = derive_draft_capability(out)
     return out
 

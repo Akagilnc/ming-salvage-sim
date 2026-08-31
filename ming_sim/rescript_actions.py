@@ -21,11 +21,11 @@ from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Seque
 
 from ming_sim.action_materialize import (
     GRANT_HONORIFICS,
-    GRANT_MONEY_ACTIONS,
     _assignment_absolute_end_turn,
     _grant_target,
     _resolve_xiexang_army_id,
     punish_actions_effective,
+    require_grant_allocation_shape,
 )
 from ming_sim.action_clusters import validate_season_option
 from ming_sim.authority_privileges import AUTHORITY_PRIVILEGE_SET
@@ -757,22 +757,15 @@ def map_rescript_option_or_choice(
             payload["transaction_category"] = cat
 
     elif action_type == "grant_allocation":
-        ga = str(src.get("grant_action") or "").strip()
-        if not ga:
-            raise ValueError("grant_allocation 缺 grant_action")
+        # #1620：金额/account shape 唯一权威 require_grant_allocation_shape（层 A 同缝）
+        shaped = require_grant_allocation_shape(
+            grant_action=src.get("grant_action"),
+            amount=src.get("amount"),
+            account=src.get("account"),
+        )
+        ga = str(shaped["grant_action"])
+        account = str(shaped["account"])
         payload["grant_action"] = ga
-        # account 处理序（mapper 内，normalize 前）
-        raw_account = str(src.get("account") or "").strip()
-        if ga == "发内帑":
-            account = "内库"
-        elif ga == "协饷":
-            account = raw_account
-        elif ga in GRANT_MONEY_ACTIONS:
-            if raw_account and raw_account not in {"国库", "内库"}:
-                raise ValueError(f"grant 非法 account：{raw_account!r}")
-            account = raw_account if raw_account in {"国库", "内库"} else "国库"
-        else:
-            account = ""
         payload["account"] = account
         g_kind, g_tid = _grant_target({
             "grant_action": ga,
@@ -784,7 +777,7 @@ def map_rescript_option_or_choice(
         if ga == "协饷":
             from ming_sim.action_materialize import require_explicit_xiexang_fields
             explicit = require_explicit_xiexang_fields(
-                amount=src.get("amount"),
+                amount=shaped.get("amount", src.get("amount")),
                 account=account,
                 purpose=str(src.get("purpose") or ""),
                 target_kind=g_kind,
@@ -813,13 +806,7 @@ def map_rescript_option_or_choice(
             payload["execution_surface"] = "terminal"
             payload["name"] = target_id
         else:
-            try:
-                amount = int(src.get("amount") or 0)
-            except (TypeError, ValueError):
-                amount = 0
-            if amount <= 0:
-                raise ValueError("grant 金钱缺正 amount")
-            payload["amount"] = amount
+            payload["amount"] = int(shaped["amount"])
             cadence = str(src.get("cadence") or "").strip() or "一次性"
             payload["cadence"] = cadence
             if ga == "协饷" and cadence == "一次性":
