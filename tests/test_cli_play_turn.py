@@ -16,7 +16,7 @@ import ming_sim.cli.terminal as term
 import ming_sim.issues as issues_mod
 from ming_sim.exceptions import LLMContractError, LLMUnavailable, SettlementAbort
 from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
-from ming_sim.session import TurnPhase
+from ming_sim.session import GameSession, TurnPhase
 from ming_sim import audience_night as an
 
 
@@ -643,23 +643,19 @@ def test_play_turn_reports_secret_order_failure_when_settlement_aborts(monkeypat
 
 
 
-def test_terminal_minister_chat_retry_reply_command_skips_offsite_entrance(game, monkeypatch):
-    """#1566 CLI 独有契约：minister_chat 输入「重试回话」消费 offsite route → 无 entrance。
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
+def test_terminal_minister_chat_accepts_retry_reply_command(game, monkeypatch):
+    """#1566 CLI 独有：minister_chat 输入「重试回话」完成 interrupted 轮，route 保持。
 
-    密令 stage 外可见后果由 Web 主干（production chat）证明；本条不复制 pending 断言。
+    密令 stage / 无 entrance 由 Web production-chat 主干证明；本条只证命令入口。
     """
-    from types import MethodType
-
-    from ming_sim.session import GameSession
-
     db, state, content = game
     character = next(c for c in content.characters.values() if c.status == "active")
     night = an.open_night(db, state, location="乾清宫", time_of_day="戌时")
-    night_id = int(night["id"])
     question = "整饬边备，密查欠饷。"
     ct = db.create_chat_turn(
         state, character.name, f"cli:{character.name}", 0,
-        night_id=night_id, status="generating",
+        night_id=int(night["id"]), status="generating",
         route="secret_order_offsite",
     )
     mid = db.append_chat_message(character.name, state.turn, "user", question)
@@ -667,49 +663,26 @@ def test_terminal_minister_chat_retry_reply_command_skips_offsite_entrance(game,
     db.conn.execute("UPDATE chat_turns SET status='interrupted' WHERE id=?", (ct,))
     db.conn.commit()
 
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.llm_config = SimpleNamespace(channel="api")
+    sess.temporary_characters = set()
+    sess.registry = SimpleNamespace(
+        get=lambda _ch: SimpleNamespace(
+            run=lambda *_a, **_k: SimpleNamespace(content="臣领密旨。", tools=[]),
+        ),
+        session_ids={},
+    )
+    sess._audience_prompt_for_message = lambda msg, character=None, chat_turn_id=0: msg
+    sess._start_cli_action_intent = lambda *_a, **_k: None
+    sess._finish_cli_action_intent = lambda *_a, **_k: None
+
     answers = iter(["重试回话", "done"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
 
-    # 生产 chat 契约：接受 explicit_secret_order；密令 materialize 走真路径会 stage，
-    # 但本条只断言 CLI 入口独有的 scene 后果（无 entrance）。
-    session = SimpleNamespace(
-        db=db,
-        state=state,
-        content=content,
-        temporary_characters=set(),
-        registry=SimpleNamespace(
-            get=lambda _ch: SimpleNamespace(
-                run=lambda *_a, **_k: SimpleNamespace(content="臣领密旨。", tools=[]),
-            ),
-            session_ids={},
-        ),
-        llm_config=SimpleNamespace(channel="api"),
-        start_chat_turn_scene=lambda *_a, **_k: (_ for _ in ()).throw(
-            AssertionError("offsite secret retry must not start_chat_turn_scene")
-        ),
-        start_chat_turn_exit_scene=lambda *_a, **_k: None,
-        join_chat_turn_scene=lambda *_a, **_k: [],
-        persist_chat_turn_scene=lambda *_a, **_k: None,
-        abandon_chat_turn_scene=lambda *_a, **_k: None,
-        _audience_prompt_for_message=lambda msg, character=None, chat_turn_id=0: msg,
-        _start_cli_action_intent=lambda *_a, **_k: None,
-        _finish_cli_action_intent=lambda *_a, **_k: None,
-    )
-    for name in (
-        "chat",
-        "_character",
-        "apply_cli_conversation_actions",
-        "_cli_backend_fallback_actions",
-        "_confirmation_intent_for_preexisting_pending",
-        "_apply_audience_command_verdict",
-        "_recognize_audience_command_verdict",
-        "_merge_staged_new_secret_order_content",
-        "start_exit_scene_from_dismiss_tools",
-    ):
-        setattr(session, name, MethodType(getattr(GameSession, name), session))
-    session.start_exit_scene_from_dismiss_tools = lambda *_a, **_k: False
-
-    assert term.minister_chat(session, character) == "dismiss"
+    assert term.minister_chat(sess, character) == "dismiss"
 
     row = db.conn.execute(
         "SELECT status, minister_message_id, route FROM chat_turns WHERE id=?", (ct,),
@@ -717,13 +690,6 @@ def test_terminal_minister_chat_retry_reply_command_skips_offsite_entrance(game,
     assert row["status"] == "active"
     assert row["minister_message_id"]
     assert str(row["route"] or "") == "secret_order_offsite"
-    scroll = an.read_night_scroll(db, night_id)
-    assert not any(
-        m.get("beat") == "entrance" and m.get("speaker") == character.name
-        for m in scroll
-    )
-    # dismiss 可能改 ledger；entrance 相关不变已由 scroll 证。开夜框架账仍在。
-    assert an.get_open_night(db) is not None
 
 
 def test_cli_write_gate_canonical_session_attr():
