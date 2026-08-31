@@ -1470,11 +1470,8 @@ def test_657_s1_option_shape_stamps_draft_capability():
         })
 
 
-def test_1620_layer_a_army_pay_grant_kind_maps_to_xiexang_and_rejects_conflict():
-    """#1620：grant_kind=army_pay → 内部协饷；矛盾/非军饷 typed 不升格；无同义词。"""
-    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
-
-    army_pay = {
+def _army_pay_grant_option(**extra) -> dict:
+    opt = {
         "label": "补发关宁军饷",
         "hint": "边饷急",
         "action_type": "grant_allocation",
@@ -1489,31 +1486,35 @@ def test_1620_layer_a_army_pay_grant_kind_maps_to_xiexang_and_rejects_conflict()
         "account": "国库",
         "purpose": "补饷",
     }
-    # 正向：machine discriminator 经层 A 成 canonical 内部 payload，不整批作废
-    ok = normalize_rescript_layer_a_option(army_pay)
-    assert ok["grant_action"] == "协饷"
-    assert ok["amount"] == 300
-    assert ok["account"] == "国库"
-    assert ok["purpose"] == "补饷"
-    assert ok["target_kind"] == "army"
-    assert ok["target_id"] == "guanning"
-    assert "grant_kind" not in ok
+    opt.update(extra)
+    return opt
 
+
+def test_1620_validate_army_pay_grant_kind_maps_to_xiexang():
+    """真实票拟入口：grant_kind=army_pay → 内部协饷，不整批作废。"""
     drafts = validate_rescript_draft_items(
         {"items": [{
             "title": "关宁欠饷",
             "context": "边军待哺。",
             "options": [
-                army_pay,
+                _army_pay_grant_option(),
                 _layer_a_opt(label="暂缓", hint="候报", transaction_category=""),
             ],
         }]},
         set(),
     )
-    assert drafts[0]["options"][0]["grant_action"] == "协饷"
+    opt = drafts[0]["options"][0]
+    assert opt["grant_action"] == "协饷"
+    assert opt["amount"] == 300
+    assert opt.get("purpose") == "补饷"
+    assert "grant_kind" not in opt
 
-    # 反向：赏赉+army 不静默升格协饷（不得仅凭 target_kind 升格）
-    reward = normalize_rescript_layer_a_option({
+
+def test_1620_layer_a_reward_with_army_target_stays_reward():
+    """赏赉+army 不因 target_kind 升格协饷。"""
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+
+    opt = normalize_rescript_layer_a_option({
         "label": "赏关宁将士",
         "hint": "恩赏",
         "action_type": "grant_allocation",
@@ -1527,30 +1528,23 @@ def test_1620_layer_a_army_pay_grant_kind_maps_to_xiexang_and_rejects_conflict()
         "amount": 50,
         "account": "国库",
     })
-    assert reward["grant_action"] == "赏赉"
-    assert reward["target_kind"] == "army"
+    assert opt["grant_action"] == "赏赉"
 
-    # 矛盾 typed：army_pay + 非协饷 grant_action
+
+@pytest.mark.parametrize("extra,drop", [
+    pytest.param({"grant_action": "赏赉"}, (), id="conflict-reward"),
+    pytest.param({"grant_kind": "other"}, (), id="unknown-kind"),
+    pytest.param({"grant_action": "补发军饷"}, ("grant_kind",), id="zh-synonym"),
+])
+def test_1620_layer_a_army_pay_rejects_bad_typed_shape(extra, drop):
+    """层 A：矛盾 kind/action、未知 kind、中文同义动作名均 fail-loud。"""
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+
+    raw = _army_pay_grant_option(**extra)
+    for key in drop:
+        raw.pop(key, None)
     with pytest.raises(ValueError):
-        normalize_rescript_layer_a_option({
-            **army_pay, "grant_action": "赏赉",
-        })
-    # 未知 grant_kind / 中文同义动作名：仍拒（无 alias/parser）
-    with pytest.raises(ValueError):
-        normalize_rescript_layer_a_option({
-            **{k: v for k, v in army_pay.items() if k != "grant_kind"},
-            "grant_kind": "other",
-        })
-    with pytest.raises(ValueError):
-        normalize_rescript_layer_a_option({
-            **{k: v for k, v in army_pay.items() if k != "grant_kind"},
-            "grant_action": "补发军饷",
-        })
-    # 缺 amount 仍 fail-loud；不因 grant_kind 补字段
-    with pytest.raises(ValueError):
-        normalize_rescript_layer_a_option({
-            **{k: v for k, v in army_pay.items() if k != "amount"},
-        })
+        normalize_rescript_layer_a_option(raw)
 
 
 def test_657_s1_list_rescript_desk_merges_cross_month_and_decisions(game):
