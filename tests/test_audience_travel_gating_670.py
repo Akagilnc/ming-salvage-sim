@@ -576,8 +576,9 @@ def test_arrived_summon_continuation_survives_failed_apply_across_months(game, m
 
 def test_fresh_seed_closes_ticket_670_named_locations(content):
     expected = {
-        **{name: "beizhili" for name in "韩爌 张瑞图 来宗道 施凤来 黄立极 王绍徽 毕自严 郭允厚 杨嗣昌 温体仁 钱龙锡 刘鸿训 钱谦益 李标 孙承宗 崔呈秀 王在晋 徐光启 徐应秋 袁可立 周延儒 倪元璐 黄道周 曹化淳 王体乾 王承恩 魏忠贤 田尔耕 许显纯 李若琏 客氏 周皇后 周贵人 田贵妃 袁贵妃 慧妃 懿安皇后 高起潜 孙元化 许誉卿 乔允升 韩一良".split()},
+        **{name: "beizhili" for name in "韩爌 张瑞图 来宗道 施凤来 黄立极 王绍徽 毕自严 郭允厚 杨嗣昌 温体仁 钱龙锡 刘鸿训 钱谦益 李标 孙承宗 崔呈秀 王在晋 徐光启 徐应秋 周延儒 倪元璐 黄道周 曹化淳 王体乾 王承恩 魏忠贤 田尔耕 许显纯 李若琏 客氏 周皇后 周贵人 田贵妃 袁贵妃 慧妃 懿安皇后 高起潜 孙元化 许誉卿 乔允升 韩一良".split()},
         "袁崇焕": "guangdong",
+        "袁可立": "henan",
         **{name: "shaanxi" for name in "曹文诏 洪承畴 孙传庭 李从心".split()},
         **{name: "liaodong" for name in "祖大寿 赵率教 王之臣 阎鸣泰".split()},
         "满桂": "shanxi", "毛文龙": "dongjiang_area", "卢象升": "nanzhili",

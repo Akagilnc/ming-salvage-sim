@@ -1,6 +1,6 @@
 import React from "react";
 import { Loader2, Lock, RotateCcw, Send, Star, X } from "lucide-react";
-import { MinisterPortrait } from "./hud";
+import { MinisterPlaceOffice, MinisterPortrait } from "./hud";
 import { api } from "../api";
 import { filterScrollForSelectedMinister } from "../ministerScrollLens";
 import { ScrollMessages, portraitSources } from "./scrollMessages";
@@ -283,7 +283,7 @@ export function ChatModal({
               {currentMinister.status !== "active" && (
                 <span className={`minister-status status-${currentMinister.status}`}>{currentMinister.status_label}</span>
               )}
-              {currentMinister.office && <span className="profile-office">{currentMinister.office}</span>}
+              <MinisterPlaceOffice minister={currentMinister} officeClassName="profile-office" />
             </p>
           </div>
           <button className="icon-button" aria-label="收藏大臣" onClick={() => onFavorite(currentMinister)}>

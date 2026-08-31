@@ -34,18 +34,26 @@ class _FakeRegistry:
 
 def _stage_yuan_appointment_summon(
     game, monkeypatch, *, summon_after="是", appt_name="袁崇焕",
+    office="辽东巡抚", player_message=None, ban_appointment_extract=False,
 ):
     db, state, content = game
     minister = _minister_wang_shaohui(db, content)
     open_night(db, state, empty_scaffold=True)
-    monkeypatch.setattr(cb, "_run_backend_for_config", lambda *a, **k: ("{}", 1))
+
+    def _backend(*a, **k):
+        if ban_appointment_extract and k.get("tag") == "appointment":
+            raise AssertionError("#1683 prefix path must not call extract_appointment_action")
+        return ("{}", 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _backend)
+    spoken = player_message or f"起复{appt_name}为{office}，传召入京。"
     GameSession.apply_cli_conversation_actions(
         _fake_session(db, state, content), minister,
-        player_message=f"起复{appt_name}为辽东巡抚，传召入京。", answer="遵旨。",
+        player_message=spoken, answer="遵旨。",
         has_directive=False, secret_order_id=None,
         preclassified_intent=[{
             "kind": "appointment", "appoint_action": "任命",
-            "name": appt_name, "office": "辽东巡抚", "summon_after": summon_after,
+            "name": appt_name, "office": office, "summon_after": summon_after,
         }],
     )
     pending = next(row for row in db.list_pending_actions(state.turn) if row["kind"] == "office")
@@ -67,11 +75,75 @@ def _close_office_to_dossier(db, state, content, pending_id):
     )
 
 
-def _yuan_row(db):
+def _yuan_row(db, name="袁崇焕"):
     return db.conn.execute(
         "SELECT status, office, location, transit_to, transit_distance_remaining, "
-        "transit_speed_factor, transit_start_turn FROM characters WHERE name='袁崇焕'"
+        "transit_speed_factor, transit_start_turn FROM characters WHERE name=?",
+        (name,),
     ).fetchone()
+
+
+def _runtime_for_public(db, state, content):
+    from types import SimpleNamespace
+
+    from ming_sim.skills import bind_content as bind_skills_content
+    import web_app
+
+    bind_skills_content(content)
+    runtime = object.__new__(web_app.WebGame)
+    runtime.favorites = set()
+    runtime.session = SimpleNamespace(db=db, state=state, content=content)
+    return runtime
+
+
+def test_yuan_keli_appointment_no_summon_stays_henan(game, monkeypatch):
+    """#1683 原票：拟旨起复袁可立巡抚登莱、无传召 → 授官驻河南、过月不误启程。"""
+    import web_app
+
+    db, state, content = game
+    before = _yuan_row(db, "袁可立")
+    assert before["location"] == "henan"
+
+    pending, _origin = _stage_yuan_appointment_summon(
+        game, monkeypatch,
+        appt_name="袁可立",
+        office="巡抚登莱",
+        summon_after="否",
+        player_message="拟旨起复袁可立巡抚登莱",
+        ban_appointment_extract=True,
+    )
+    payload = json.loads(pending["payload_json"])
+    assert payload["name"] == "袁可立"
+    assert payload["office"] == "巡抚登莱"
+    assert payload.get("summon_after") == "否"
+
+    dossier_id = _close_office_to_dossier(db, state, content, pending["id"])
+    settle_with_delta(
+        state, db, {}, before_turn=int(state.turn), content=content,
+        dossier_verdicts=[{"dossier_id": dossier_id, "decision": "promulgated"}],
+    )
+    after = _yuan_row(db, "袁可立")
+    assert (after["status"], after["office"], after["location"], after["transit_to"] or "") == (
+        "active", "巡抚登莱", "henan", "",
+    )
+    assert list_unsettled_summons(db) == []
+
+    # 最小过月一次：无传召不得误启程
+    prepare_resolve_front_half(state, db, content=content)
+    next_month = _yuan_row(db, "袁可立")
+    assert (next_month["location"], next_month["transit_to"] or "") == ("henan", "")
+    assert list_unsettled_summons(db) == []
+
+    ch = content.characters["袁可立"]
+    pub = web_app.WebGame.public_character(_runtime_for_public(db, state, content), ch)
+    assert pub["status"] == "active"
+    assert pub["office"] == "巡抚登莱"
+    assert pub["status_label"] == "在事"
+    assert pub["status_label"] != "在朝"
+    assert pub["location"] == "henan"
+    assert pub["location_label"]
+    assert pub["transit_to"] == ""
+    assert pub.get("transit_to_label", "") == ""
 
 
 @pytest.mark.parametrize("appt_name", ["袁崇焕", "前辽东"])
