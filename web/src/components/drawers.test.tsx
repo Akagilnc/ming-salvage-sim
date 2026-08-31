@@ -771,8 +771,13 @@ describe("朝堂同衔分座（#1196 呈现层去冲突）", () => {
     });
     const onOpenChat = vi.fn();
     const onOpenEdict = vi.fn();
+    const onUploadPortrait = vi.fn(async () => undefined);
 
-    async function mount(courtMode: boolean) {
+    async function mount(
+      courtMode: boolean,
+      opts: { chatEntryEnabled?: boolean; withPortrait?: boolean } = {},
+    ) {
+      const { chatEntryEnabled = true, withPortrait = false } = opts;
       vi.stubGlobal(
         "fetch",
         vi.fn(async (url: string) => {
@@ -795,6 +800,9 @@ describe("朝堂同衔分座（#1196 呈现层去冲突）", () => {
             onOpenChat={onOpenChat}
             onOpenEdict={onOpenEdict}
             courtMode={courtMode}
+            chatEntryEnabled={chatEntryEnabled}
+            onUploadPortrait={withPortrait ? onUploadPortrait : undefined}
+            phase={chatEntryEnabled ? undefined : "settling"}
           />,
         );
       });
@@ -810,7 +818,8 @@ describe("朝堂同衔分座（#1196 呈现层去冲突）", () => {
       onOpenChat.mockClear();
       onOpenEdict.mockClear();
       const host = await mount(courtMode);
-      const card = host.querySelector('.minister-card[data-minister-status="offstage"]') as HTMLElement | null;
+      // 单卡夹具：唯一 .minister-card；结构辅 .minister-status-reason / resume btn
+      const card = host.querySelector(".minister-card") as HTMLElement | null;
       expect(card).toBeTruthy();
       expect(card!.tagName).not.toBe("BUTTON");
       expect(card!.querySelector(".minister-status-reason")).not.toBeNull();
@@ -820,13 +829,32 @@ describe("朝堂同衔分座（#1196 呈现层去冲突）", () => {
       });
       expect(onOpenChat).not.toHaveBeenCalled();
 
-      const resume = card!.querySelector("button.minister-resume-btn");
+      const resume = card!.querySelector("button.minister-resume-btn") as HTMLButtonElement | null;
       expect(resume).not.toBeNull();
+      expect(resume!.disabled).toBe(false);
       await act(async () => {
         resume!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       });
       expect(onOpenEdict).toHaveBeenCalledTimes(1);
       expect(onOpenChat).not.toHaveBeenCalled();
     }
+
+    // Class1：核账门控——resume 禁点且不调 onOpenEdict
+    onOpenEdict.mockClear();
+    const gatedHost = await mount(false, { chatEntryEnabled: false });
+    const gatedResume = gatedHost.querySelector("button.minister-resume-btn") as HTMLButtonElement | null;
+    expect(gatedResume).not.toBeNull();
+    expect(gatedResume!.disabled).toBe(true);
+    expect(gatedResume!.getAttribute("aria-disabled")).toBe("true");
+    await act(async () => {
+      gatedResume!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onOpenEdict).not.toHaveBeenCalled();
+
+    // Class3：offstage 恢复头像上传入口（基线 chatEntryEnabled）
+    const portraitHost = await mount(false, { withPortrait: true });
+    expect(portraitHost.querySelector(".minister-card .portrait-upload-btn")).not.toBeNull();
+    const portraitGated = await mount(false, { withPortrait: true, chatEntryEnabled: false });
+    expect(portraitGated.querySelector(".minister-card .portrait-upload-btn")).toBeNull();
   });
 });
