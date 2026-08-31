@@ -17,7 +17,6 @@
 
 from __future__ import annotations
 
-import copy
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor
@@ -1340,8 +1339,8 @@ def _draft_intent_character_roster_facts(content: Any) -> str:
 # #1274 QA V-1：参与人校验失败有界纠错重试（owner 2026-08-20 三连拍板）。
 # 宪法：查无此人不告诉皇帝、底下人偷偷划掉=篡改圣旨，绝对禁止。
 # 自愈只许修 LLM 自己的抄写错（修完仍是皇帝说的那个人）；真不在册→戏内回禀。
-# 参与人或属地语义失败共用同一有界预算；happy path 零额外调用。
-DRAFT_INTENT_HEAL_RETRIES = 2
+# 1–2 次；happy path 零额外调用。只在「参与人物/委派人不存在」路上触发。
+DRAFT_PARTICIPANT_HEAL_RETRIES = 2
 _PARTICIPANT_REF_MISSING_RE = re.compile(
     r"(?:参与人物|委派人)不存在[：:]\s*([^。\n]+)"
 )
@@ -2009,20 +2008,21 @@ def _ground_relative_pay_order_deadlines(result: Dict[str, Any], db: Any) -> Dic
     return result
 
 
-def extract_draft_intent_with_semantic_heal(
+def extract_draft_intent_with_roster_heal(
     player_message: Optional[str],
     minister_reply: str,
     llm_config: Any = None,
     *,
     db: Any = None,
     content: Any = None,
-    heal_retries: int = DRAFT_INTENT_HEAL_RETRIES,
+    heal_retries: int = DRAFT_PARTICIPANT_HEAL_RETRIES,
     **extract_kwargs: Any,
 ) -> Dict[str, Any]:
-    """Extract and semantically validate a draft with bounded correction retries.
+    """extract → 名册校验；「参与人物不存在」时有界纠错重抽（P5 只走失败路）。
 
-    Participant references and locality share one retry budget and correction seam.
-    Unknown participants escalate in-world; unrelated validation failures remain loud.
+    自愈只许抄写纠错（修完仍是皇帝所指之人）。真不在册 / 擅自除名 →
+    raise UnknownParticipantEscalate（调用方戏内回禀，不落草案）。
+    db/content 缺一则只抽不校验（与旧 extract 同）。LLM 在纠错路上挂死 → 原样上抛。
     """
     retries = max(0, int(heal_retries))
     correction = ""
@@ -2030,80 +2030,22 @@ def extract_draft_intent_with_semantic_heal(
     prior_ids_at_fail: List[str] = []
     # 首抽权威快照：首次校验失败后冻结，后续失败不得覆写 baseline/闸基线。
     baseline_result: Optional[Dict[str, Any]] = None
-    locality_baseline: Optional[Dict[str, Any]] = None
-    locality_paths: Optional[frozenset[tuple[object, ...]]] = None
     for attempt in range(retries + 1):
         # llm_config 关键字传：别族 fake_draft(msg, reply, **kw) 形仍合法，
         # 不得因 heal 多塞第 3 位置参把旧 mock 签名整族打爆。
-        try:
-            result = extract_draft_intent(
-                player_message,
-                minister_reply,
-                llm_config=llm_config,
-                content=content,
-                pay_order_facts=_pay_order_grounding_facts(content, db),
-                correction_feedback=correction,
-                db=db,
-                **extract_kwargs,
-            )
-        except DraftLocalityValidationError as exc:
-            failed_result = exc.extracted_result
-            if db is not None:
-                failed_result = _ground_relative_pay_order_deadlines(failed_result, db)
-            first_locality_failure = locality_baseline is None
-            if first_locality_failure:
-                locality_baseline = copy.deepcopy(failed_result)
-                locality_paths = exc.locality_paths
-            elif not _same_non_locality_semantics(
-                locality_baseline, failed_result, locality_paths,
-            ):
-                _log(f"拟旨属地纠错发生非属地语义漂移 {attempt + 1}/{retries}")
-            participant_correction = ""
-            participant_unknown_exc: Optional[ValueError] = None
-            if db is not None and content is not None:
-                try:
-                    canonical_failed_result = _apply_validated_roster_to_extract_result(
-                        failed_result, db=db, content=content,
-                    )
-                    if first_locality_failure:
-                        locality_baseline = canonical_failed_result
-                except ValueError as participant_exc:
-                    if not is_unknown_participant_ref_error(participant_exc):
-                        raise
-                    participant_unknown_exc = participant_exc
-                    if baseline_result is None:
-                        pending_unknown = _invalid_participant_names_from_error(
-                            participant_exc,
-                        )
-                        prior_ids_at_fail = _person_ids_from_extract_result(failed_result)
-                        baseline_result = dict(failed_result)
-                    participant_correction = build_participant_correction_feedback(
-                        participant_exc,
-                        roster_facts=_draft_intent_character_roster_facts(content),
-                    )
-            if attempt >= retries:
-                if participant_unknown_exc is not None:
-                    raise UnknownParticipantEscalate(pending_unknown) from participant_unknown_exc
-                raise DraftLocalityValidationError(
-                    str(exc), failed_result, locality_paths,
-                ) from exc
-            correction = (
-                "施行范围与目标结构不一致，请保留其余字段，只把施行范围改为符合"
-                "目标类型、目标ID和动作类型的无、全国或单省。"
-            )
-            if participant_correction:
-                correction += "\n" + participant_correction
-            _log(f"拟旨属地纠错重试 {attempt + 1}/{retries}: {exc}")
-            continue
+        result = extract_draft_intent(
+            player_message,
+            minister_reply,
+            llm_config=llm_config,
+            content=content,
+            pay_order_facts=_pay_order_grounding_facts(content, db),
+            correction_feedback=correction,
+            db=db,
+            **extract_kwargs,
+        )
         if db is not None:
             result = _ground_relative_pay_order_deadlines(result, db)
         if db is None or content is None:
-            if locality_baseline is not None and not _same_non_locality_semantics(
-                locality_baseline, result, locality_paths,
-            ):
-                raise DraftLocalityValidationError(
-                    "属地纠错期间非属地结构发生漂移", result, locality_paths,
-                )
             return result
         has_roster_field = (
             ("participant_roster" in result and result.get("participant_roster") is not None)
@@ -2116,12 +2058,6 @@ def extract_draft_intent_with_semantic_heal(
             # 纠错路上抽掉参与人字段 = 除名企图 → 篡改，回禀
             if pending_unknown:
                 raise UnknownParticipantEscalate(pending_unknown)
-            if locality_baseline is not None and not _same_non_locality_semantics(
-                locality_baseline, result, locality_paths,
-            ):
-                raise DraftLocalityValidationError(
-                    "属地纠错期间非属地结构发生漂移", result, locality_paths,
-                )
             return result
         try:
             validated = _apply_validated_roster_to_extract_result(
@@ -2179,59 +2115,7 @@ def extract_draft_intent_with_semantic_heal(
             )
             if backfilled is None:
                 raise UnknownParticipantEscalate(pending_unknown)
-            if locality_baseline is not None:
-                if "locality_scope" in result:
-                    backfilled["locality_scope"] = result["locality_scope"]
-                backfilled_drafts = backfilled.get("drafts")
-                result_drafts = result.get("drafts")
-                if isinstance(backfilled_drafts, list) and isinstance(result_drafts, list):
-                    for index, draft in enumerate(backfilled_drafts):
-                        if (
-                            isinstance(draft, dict)
-                            and index < len(result_drafts)
-                            and isinstance(result_drafts[index], dict)
-                            and "locality_scope" in result_drafts[index]
-                        ):
-                            draft["locality_scope"] = result_drafts[index]["locality_scope"]
-            if locality_baseline is not None:
-                if _count_failed_person_slots(
-                    locality_baseline, db=db, content=content,
-                ) == 0:
-                    locality_guard = _apply_validated_roster_to_extract_result(
-                        copy.deepcopy(locality_baseline), db=db, content=content,
-                    )
-                else:
-                    locality_guard = _backfill_healed_participant_refs(
-                        locality_baseline,
-                        result,
-                        pending_unknown=pending_unknown,
-                        player_message=player_message,
-                        db=db,
-                        content=content,
-                    )
-                if locality_guard is None:
-                    raise UnknownParticipantEscalate(pending_unknown)
-                if not _same_non_locality_semantics(
-                    locality_guard, backfilled, locality_paths,
-                ):
-                    raise DraftLocalityValidationError(
-                        "属地纠错期间非属地结构发生漂移", backfilled,
-                        locality_paths,
-                    )
             return backfilled
-        if locality_baseline is not None and not _same_non_locality_semantics(
-            locality_baseline, validated, locality_paths,
-        ):
-            if attempt >= retries:
-                raise DraftLocalityValidationError(
-                    "属地纠错期间非属地结构发生漂移", result, locality_paths,
-                )
-            correction = (
-                "施行范围仍须纠正，且动作、目标、承办人、参与人、条目、方式及多旨结构"
-                "必须保持不变。"
-            )
-            _log(f"拟旨属地纠错发生非属地语义漂移 {attempt + 1}/{retries}")
-            continue
         return validated
 
 
@@ -2374,7 +2258,6 @@ def extract_draft_intent(
         obj = _loads_lenient(raw) or {}
         values = obj.get("成品旨稿") if isinstance(obj, dict) else None
         drafts = []
-        locality_checks = []
         seen_texts = set()
         invalid_batch = not isinstance(values, list) or len(values) != draft_count
         for value in values if isinstance(values, list) else []:
@@ -2447,23 +2330,10 @@ def extract_draft_intent(
                     (key, item) for key, item in projected.items()
                     if key != "target_kind"
                 )
-            # #1685：grant ACTION_CLUSTERS 无施行范围；省略时由 target_kind 派生，禁默认成「无」。
-            _raw_scope = value.get("施行范围")
-            if action == "grant_allocation" and (
-                _raw_scope is None or str(_raw_scope).strip() == ""
-            ):
-                mechanical["locality_scope"] = write_locality_scope_for_target_kind(
-                    target_kind,
-                )
-            else:
-                mechanical["locality_scope"] = _coerce_draft_locality_scope(_raw_scope)
+            mechanical["locality_scope"] = _coerce_draft_locality_scope(value.get("施行范围"))
             # grant 缺 target_kind 留给其 canonical admission 聚合报错；其它动作在此闭集校验。
             if action != "grant_allocation":
                 target_kind = _coerce_draft_target_kind(target_kind)
-            locality_checks.append((
-                len(drafts), action, target_kind, target_id,
-                mechanical["locality_scope"],
-            ))
             # #653：pay_order_override 结构化载荷（entries）随草案整道转交，
             # 成案点/物化点共 prepare_pay_order_entries 同一验形。
             entries = value.get("entries")
@@ -2472,9 +2342,7 @@ def extract_draft_intent(
             ):
                 invalid_batch = True
                 break
-            if entries is not None and not (
-                action != "pay_order_override" and entries == []
-            ):
+            if entries is not None:
                 mechanical["entries"] = entries
             drafts.append({
                 "draft_action": "拟旨", "draft_text": text,
@@ -2485,34 +2353,12 @@ def extract_draft_intent(
             })
         if invalid_batch or not any(draft is not None for draft in drafts):
             drafts = []
-        extracted_result = {
+        return {
             "draft_action": "拟旨" if drafts else "无",
             "draft_text": "",
             "drafts": drafts,
             "target_candidate": "",
         }
-        if not drafts:
-            return extracted_result
-        locality_paths = set()
-        locality_message = ""
-        for (
-            index, action, target_kind, target_id, locality_scope,
-        ) in locality_checks:
-            try:
-                _validate_extracted_locality(
-                    db=db, content=content, action_type=action,
-                    target_kind=target_kind, target_id=target_id,
-                    locality_scope=locality_scope, extracted_result=extracted_result,
-                    locality_path=("drafts", index, "locality_scope"),
-                )
-            except DraftLocalityValidationError as exc:
-                locality_paths.update(exc.locality_paths)
-                locality_message = str(exc)
-        if locality_paths:
-            raise DraftLocalityValidationError(
-                locality_message, extracted_result, frozenset(locality_paths),
-            )
-        return extracted_result
 
     _candidates = [c for c in (existing_candidates or []) if c]
     _by_id = {int(c["id"]): c for c in _candidates}
@@ -2671,23 +2517,14 @@ def extract_draft_intent(
     mode = _directive_mode(
         _projected.get("mode") if dossier_action == "grant_allocation" else obj.get("颁布方式")
     )
-    # #1685：grant ACTION_CLUSTERS 无施行范围；省略时由 target_kind 派生，禁默认成「无」。
-    _raw_scope = obj.get("施行范围")
-    if dossier_action == "grant_allocation" and (
-        _raw_scope is None or str(_raw_scope).strip() == ""
-    ):
-        _locality_scope = write_locality_scope_for_target_kind(target_kind)
-    else:
-        _locality_scope = _coerce_draft_locality_scope(_raw_scope)
     mechanical = {
         "execution_surface": obj.get("执行面"),
         "assignee": obj.get("承办人"),
         "deadline_months": obj.get("期限月数"),
-        "locality_scope": _locality_scope,
+        "locality_scope": _coerce_draft_locality_scope(obj.get("施行范围")),
+        # #653：pay_order_override 结构化载荷随 capture 整道转交（禁旁路）。
+        "entries": obj.get("entries"),
     }
-    # #653：pay_order_override 结构化载荷随 capture 整道转交（禁旁路）。
-    # #1685：非 pay 空 entries 与省略同批旨规范化——不落键，避免 None vs [] 假漂移。
-    entries = obj.get("entries")
     if dossier_action == "grant_allocation":
         mechanical.update(
             (key, item) for key, item in _projected.items()
@@ -2698,32 +2535,19 @@ def extract_draft_intent(
     merged = str(obj.get("合并草案") or "").strip()
     # #654 H 已在上方对 _action=="无" 短路；此处仅保留 #653 pay_order 验形。
     if dossier_action == "pay_order_override" and (
-        not isinstance(entries, list) or not entries
+        not isinstance(mechanical["entries"], list) or not mechanical["entries"]
     ):
         return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
-    if entries is not None and not (
-        dossier_action != "pay_order_override" and entries == []
-    ):
-        mechanical["entries"] = entries
     if not _candidates:
         # 无候选：沿用单条语义——补充模式合并、否则大臣回话即草案。
         if _supplement_mode:
             draft_text = merged if merged else _existing_draft_text
         else:
             draft_text = (minister_reply or "").strip()
-        extracted_result = {
-            "draft_action": _action, "draft_text": draft_text, "target_candidate": "",
-            "dossier_action_type": dossier_action,
-            "target_kind": target_kind, "target_id": target_id_value,
-            "participant_roster": obj["参与人"] if "参与人" in obj else [], **mechanical,
-        }
-        _validate_extracted_locality(
-            db=db, content=content, action_type=dossier_action,
-            target_kind=target_kind, target_id=target_id_value,
-            locality_scope=mechanical["locality_scope"], extracted_result=extracted_result,
-            locality_path=("locality_scope",),
-        )
-        return extracted_result
+        return {"draft_action": _action, "draft_text": draft_text, "target_candidate": "",
+                "dossier_action_type": dossier_action,
+                "target_kind": target_kind, "target_id": target_id_value,
+                "participant_roster": obj["参与人"] if "参与人" in obj else [], **mechanical}
     # 多道：归一目标——命中候选 id=补那道；「新」=明确另拟；否则含糊兜底（#502 L7）：
     # 单条→补那条（沿用 last-write-wins），**多条不静默新建第三道**→「含糊」交 session 追问哪一道。
     target_raw = str(obj.get("目标草案") or "").strip()
@@ -2749,19 +2573,12 @@ def extract_draft_intent(
         existing = str(_by_id[int(target)].get("text") or "")
         # 补某道：优先合并全文；LLM 未合并时保留原文（避免用确认语覆盖），原文亦空则退回话。
         draft_text = merged if merged else (existing if existing else (minister_reply or "").strip())
-    extracted_result = {
+    return {
         "draft_action": _action, "draft_text": draft_text, "target_candidate": target,
         "dossier_action_type": dossier_action,
         "target_kind": target_kind, "target_id": target_id_value,
         "participant_roster": obj["参与人"] if "参与人" in obj else [], **mechanical,
     }
-    _validate_extracted_locality(
-        db=db, content=content, action_type=dossier_action,
-        target_kind=target_kind, target_id=target_id_value,
-        locality_scope=mechanical["locality_scope"], extracted_result=extracted_result,
-        locality_path=("locality_scope",),
-    )
-    return extracted_result
 
 
 # 手工拟诏 capture 总罩（#1327 / #1274 V-1 owner 2026-08-20）：
@@ -2779,73 +2596,6 @@ _DRAFT_TARGET_KIND_GUIDANCE = "|".join(sorted(_VALID_DRAFT_TARGET_KINDS))
 
 def _draft_target_kind_guidance() -> str:
     return _DRAFT_TARGET_KIND_GUIDANCE
-
-
-class DraftLocalityValidationError(ValueError):
-    """A typed locality combination rejection carrying the complete extraction."""
-
-    def __init__(
-        self, message: str, extracted_result: Dict[str, Any],
-        locality_paths: Optional[frozenset[tuple[object, ...]]],
-    ):
-        super().__init__(message)
-        self.extracted_result = extracted_result
-        self.locality_paths = locality_paths or frozenset()
-
-
-def _same_non_locality_semantics(
-    left: object, right: object,
-    locality_paths: Optional[frozenset[tuple[object, ...]]],
-    current_path: tuple[object, ...] = (),
-) -> bool:
-    """Compare typed extraction trees while permitting original failed localities."""
-    if current_path in (locality_paths or ()):
-        return True
-    if isinstance(left, dict) and isinstance(right, dict):
-        return set(left) == set(right) and all(
-            _same_non_locality_semantics(
-                left[key], right[key], locality_paths, current_path + (key,),
-            )
-            for key in left
-        )
-    if isinstance(left, list) and isinstance(right, list):
-        return len(left) == len(right) and all(
-            _same_non_locality_semantics(
-                a, b, locality_paths, current_path + (index,),
-            )
-            for index, (a, b) in enumerate(zip(left, right))
-        )
-    return left == right
-
-
-def _validate_extracted_locality(
-    *, db: Any, content: Any, action_type: str, target_kind: str,
-    target_id: str, locality_scope: object, extracted_result: Dict[str, Any],
-    locality_path: tuple[object, ...],
-) -> None:
-    """在 extractor semantic payload 边界复用 #654 locality oracle。"""
-    if db is None:
-        return
-    from ming_sim.execution_pressure import (
-        LocalityCombinationError,
-        resolve_dossier_region_ids,
-    )
-
-    try:
-        resolve_dossier_region_ids(
-            db.conn,
-            action_type=action_type,
-            payload={
-                "target_kind": target_kind,
-                "target_id": target_id,
-                "locality_scope": locality_scope,
-            },
-            regions_content=getattr(content, "regions", None),
-        )
-    except LocalityCombinationError as exc:
-        raise DraftLocalityValidationError(
-            str(exc), extracted_result, frozenset({locality_path}),
-        ) from exc
 
 
 def _coerce_draft_target_kind(raw: object) -> str:
@@ -2905,7 +2655,7 @@ def capture_manual_directive_payload(
 
     def _run_extract() -> Dict[str, Any]:
         # #1274 V-1：extract→validate 有界纠错；db/content 齐时参与人名册自愈。
-        return extract_draft_intent_with_semantic_heal(
+        return extract_draft_intent_with_roster_heal(
             prompt, directive_text, llm_config=llm_config,
             db=db, content=content,
         )
@@ -2981,6 +2731,9 @@ def capture_manual_directive_payload(
         # the same structured materialization fields at this capture seam.
         payload["name"] = str(payload.get("target_id") or "").strip()
         payload["_office_action"] = "罢免"
+    # #1685：region 无取舍，入卷前 assembly 强制 single（复用 #654 helper）。
+    if str(payload.get("target_kind") or "").strip() == "region":
+        payload["locality_scope"] = write_locality_scope_for_target_kind("region")
     # #658：互斥权威——纯强推 / 普通 triad；并存响亮拒绝，禁静默吞旨
     from ming_sim.db import (
         classify_directive_structured_kind,

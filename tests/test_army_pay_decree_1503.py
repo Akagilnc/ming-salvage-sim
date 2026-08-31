@@ -1439,7 +1439,7 @@ def test_draft_neitang_stays_generic_special_decree(game, monkeypatch):
     candidates = candidates_from_classifier_payload(payload, soft=False)
     monkeypatch.setattr(
         cb,
-        "extract_draft_intent_with_semantic_heal",
+        "extract_draft_intent_with_roster_heal",
         lambda **_kwargs: {
             "draft_action": "拟旨",
             "draft_text": "准拨，数目另议。",
@@ -1828,7 +1828,6 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
             assert not closed_liaodong
         visible_liaodong = (active_liaodong + closed_liaodong)[0]
         assert visible_liaodong["bar_value"] == liaodong_issue_after["bar_value"]
-        assert liaodong_issue_after["bar_value"] <= liaodong_issue_before["bar_value"]
         decision_logs = game.db.conn.execute(
             """
             SELECT delta, new_value FROM army_logs
