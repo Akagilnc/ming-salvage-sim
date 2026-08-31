@@ -80,8 +80,7 @@ describe.sequential("medium: shared Electron geometry", () => {
       buttonHit: boolean;
       twoLines: boolean;
       textareaHit: boolean;
-      editToolReachable: boolean;
-      deleteToolReachable: boolean;
+      toolButtonsReachable: boolean;
     }>(page, css("base", "court", "modals", "chat", "edict", "modal-theme", "situation"), [
       { width: 1280, height: 720 },
       { width: 1100, height: 720 },
@@ -91,13 +90,11 @@ describe.sequential("medium: shared Electron geometry", () => {
       const alert = document.querySelector('[role="alert"]');
       const cols = document.querySelector('.desk-columns');
       const memorials = document.querySelector('.desk-memorials');
-      const toolButtons = Array.from(document.querySelectorAll('.directive-tools button'));
-      const editTool = toolButtons.find((b) => (b.textContent || '').includes('改'));
-      const deleteTool = toolButtons.find((b) => (b.textContent || '').includes('删'));
+      const toolButtons = Array.from(document.querySelectorAll('.directive-tools > button'));
       const textarea = document.querySelector('.desk-compose textarea');
       const footer = document.querySelector('.desk-footer');
       const button = document.querySelector('.desk-footer button');
-      if (!modal || !alert || !cols || !memorials || !editTool || !deleteTool || !textarea || !footer || !button) {
+      if (!modal || !alert || !cols || !memorials || toolButtons.length !== 2 || !textarea || !footer || !button) {
         return { error: 'missing edict fixture element' };
       }
       const overlaps = (a, b) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
@@ -158,9 +155,8 @@ describe.sequential("medium: shared Electron geometry", () => {
         buttonRect.top + buttonRect.height / 2,
       ) === button;
 
-      // Draft 改/删 separately: sole owner is .desk-memorials (no cols / sibling fallback).
-      const editToolReachable = reachableViaMemorials(editTool);
-      const deleteToolReachable = reachableViaMemorials(deleteTool);
+      // .directive-tools direct children: sole owner is .desk-memorials (no cols / sibling fallback).
+      const toolButtonsReachable = toolButtons.length > 0 && toolButtons.every(reachableViaMemorials);
 
       // Theme * wash must not zero the error-line background under modal-bg-edict.
       const alertBg = getComputedStyle(alert).backgroundColor;
@@ -195,8 +191,7 @@ describe.sequential("medium: shared Electron geometry", () => {
         buttonHit,
         twoLines,
         textareaHit,
-        editToolReachable,
-        deleteToolReachable,
+        toolButtonsReachable,
       };
     })()`);
 
@@ -220,8 +215,7 @@ describe.sequential("medium: shared Electron geometry", () => {
       expect(result.buttonHit, `${result.viewportWidth}x${result.viewportHeight} buttonHit`).toBe(true);
       expect(result.twoLines, `${result.viewportWidth}x${result.viewportHeight} twoLines`).toBe(true);
       expect(result.textareaHit, `${result.viewportWidth}x${result.viewportHeight} textareaHit`).toBe(true);
-      expect(result.editToolReachable, `${result.viewportWidth}x${result.viewportHeight} editToolReachable`).toBe(true);
-      expect(result.deleteToolReachable, `${result.viewportWidth}x${result.viewportHeight} deleteToolReachable`).toBe(true);
+      expect(result.toolButtonsReachable, `${result.viewportWidth}x${result.viewportHeight} toolButtonsReachable`).toBe(true);
     }
   });
 });

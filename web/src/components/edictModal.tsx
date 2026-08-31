@@ -76,8 +76,8 @@ export function EdictModal({
                     <p>{directive.text}</p>
                     {directive.notes ? <small>{directive.notes}</small> : null}
                     <div className="directive-tools">
-                      <button type="button" onClick={() => onStartEdit(directive)}><Edit3 size={14} />改</button>
-                      <button type="button" onClick={() => onDeleteDirective(directive.id)}><Trash2 size={14} />删</button>
+                      <button onClick={() => onStartEdit(directive)}><Edit3 size={14} />改</button>
+                      <button onClick={() => onDeleteDirective(directive.id)}><Trash2 size={14} />删</button>
                     </div>
                   </>
                 )}
