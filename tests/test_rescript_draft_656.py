@@ -450,8 +450,10 @@ def test_payload_projects_consumable_army_targets_from_real_monthly_board(game):
     assert targets["guanning"]["name"]
     assert "liaodong" not in targets
     assert enemy_ids.isdisjoint(targets)
-    # #1620：grant_action 闭集与 Layer-A GRANT_ACTIONS 同源投影
-    assert payload["grant_actions"] == sorted(GRANT_ACTIONS - {"无"})
+    # #1620：非军饷 grant_action 闭集同源；军饷走 grant_kind=army_pay
+    assert payload["grant_actions"] == sorted(GRANT_ACTIONS - {"无", "协饷"})
+    assert "协饷" not in payload["grant_actions"]
+    assert payload["grant_kinds"] == ["army_pay"]
 
 
 def test_generate_rejects_army_id_outside_same_batch_catalog(monkeypatch):
@@ -1465,6 +1467,89 @@ def test_657_s1_option_shape_stamps_draft_capability():
     with pytest.raises(ValueError):
         normalize_rescript_layer_a_option({
             **raw, "action_type": "policy",  # 非七类 routable
+        })
+
+
+def test_1620_layer_a_army_pay_grant_kind_maps_to_xiexang_and_rejects_conflict():
+    """#1620：grant_kind=army_pay → 内部协饷；矛盾/非军饷 typed 不升格；无同义词。"""
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+
+    army_pay = {
+        "label": "补发关宁军饷",
+        "hint": "边饷急",
+        "action_type": "grant_allocation",
+        "assignee_name": "",
+        "target_kind": "army",
+        "target_id": "guanning",
+        "locality_scope": "none",
+        "region_id": "",
+        "transaction_category": "",
+        "grant_kind": "army_pay",
+        "amount": 300,
+        "account": "国库",
+        "purpose": "补饷",
+    }
+    # 正向：machine discriminator 经层 A 成 canonical 内部 payload，不整批作废
+    ok = normalize_rescript_layer_a_option(army_pay)
+    assert ok["grant_action"] == "协饷"
+    assert ok["amount"] == 300
+    assert ok["account"] == "国库"
+    assert ok["purpose"] == "补饷"
+    assert ok["target_kind"] == "army"
+    assert ok["target_id"] == "guanning"
+    assert "grant_kind" not in ok
+
+    drafts = validate_rescript_draft_items(
+        {"items": [{
+            "title": "关宁欠饷",
+            "context": "边军待哺。",
+            "options": [
+                army_pay,
+                _layer_a_opt(label="暂缓", hint="候报", transaction_category=""),
+            ],
+        }]},
+        set(),
+    )
+    assert drafts[0]["options"][0]["grant_action"] == "协饷"
+
+    # 反向：赏赉+army 不静默升格协饷（不得仅凭 target_kind 升格）
+    reward = normalize_rescript_layer_a_option({
+        "label": "赏关宁将士",
+        "hint": "恩赏",
+        "action_type": "grant_allocation",
+        "assignee_name": "",
+        "target_kind": "army",
+        "target_id": "guanning",
+        "locality_scope": "none",
+        "region_id": "",
+        "transaction_category": "",
+        "grant_action": "赏赉",
+        "amount": 50,
+        "account": "国库",
+    })
+    assert reward["grant_action"] == "赏赉"
+    assert reward["target_kind"] == "army"
+
+    # 矛盾 typed：army_pay + 非协饷 grant_action
+    with pytest.raises(ValueError):
+        normalize_rescript_layer_a_option({
+            **army_pay, "grant_action": "赏赉",
+        })
+    # 未知 grant_kind / 中文同义动作名：仍拒（无 alias/parser）
+    with pytest.raises(ValueError):
+        normalize_rescript_layer_a_option({
+            **{k: v for k, v in army_pay.items() if k != "grant_kind"},
+            "grant_kind": "other",
+        })
+    with pytest.raises(ValueError):
+        normalize_rescript_layer_a_option({
+            **{k: v for k, v in army_pay.items() if k != "grant_kind"},
+            "grant_action": "补发军饷",
+        })
+    # 缺 amount 仍 fail-loud；不因 grant_kind 补字段
+    with pytest.raises(ValueError):
+        normalize_rescript_layer_a_option({
+            **{k: v for k, v in army_pay.items() if k != "amount"},
         })
 
 

@@ -88,10 +88,12 @@ _COMPLETE_PACK_FILES = frozenset({
 
 
 def _read_complete_pack_manifest(path: Path) -> Optional[Dict[str, object]]:
-    """完整五件包的 manifest 身份；残缺/坏 JSON → None。complete/latest 共用。"""
-    if not path.is_dir() or not all((path / name).is_file() for name in _COMPLETE_PACK_FILES):
-        return None
+    """完整五件包的 manifest 身份；残缺/坏 JSON/条目 stat OSError → None。complete/latest 共用。"""
     try:
+        if not path.is_dir() or not all(
+            (path / name).is_file() for name in _COMPLETE_PACK_FILES
+        ):
+            return None
         manifest = json.loads((path / "manifest.json").read_text(encoding="utf-8"))
     except (OSError, ValueError, TypeError):
         return None
