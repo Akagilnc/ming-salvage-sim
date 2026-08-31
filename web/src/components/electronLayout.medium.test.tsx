@@ -80,17 +80,21 @@ describe.sequential("medium: shared Electron geometry", () => {
       buttonHit: boolean;
       twoLines: boolean;
       textareaHit: boolean;
+      draftToolsReachable: boolean;
     }>(page, css("base", "court", "modals", "chat", "edict", "modal-theme", "situation"), [
       { width: 1280, height: 720 },
+      { width: 1100, height: 720 },
       { width: 800, height: 800 },
     ], `(() => {
       const modal = document.querySelector('.fullscreen-modal');
       const alert = document.querySelector('[role="alert"]');
       const cols = document.querySelector('.desk-columns');
+      const memorials = document.querySelector('.desk-memorials');
+      const draftTool = document.querySelector('.directive-tools button');
       const textarea = document.querySelector('.desk-compose textarea');
       const footer = document.querySelector('.desk-footer');
       const button = document.querySelector('.desk-footer button');
-      if (!modal || !alert || !cols || !textarea || !footer || !button) {
+      if (!modal || !alert || !cols || !memorials || !draftTool || !textarea || !footer || !button) {
         return { error: 'missing edict fixture element' };
       }
       const overlaps = (a, b) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
@@ -106,6 +110,20 @@ describe.sequential("medium: shared Electron geometry", () => {
           top: Math.max(er.top, cr.top),
           bottom: Math.min(er.bottom, cr.bottom),
         };
+      };
+      const hitAtVisibleCenter = (el, container) => {
+        const vis = clipVisibleRect(el, container);
+        const w = vis.right - vis.left;
+        const h = vis.bottom - vis.top;
+        if (w <= 0 || h <= 0) return false;
+        const hit = document.elementFromPoint((vis.left + vis.right) / 2, (vis.top + vis.bottom) / 2);
+        return !!hit && (
+          hit === el
+          || el.contains(hit)
+          || hit === draftTool
+          || draftTool.contains(hit)
+          || (hit.closest && hit.closest('.directive-tools') === draftTool.closest('.directive-tools'))
+        );
       };
 
       const modalRect = modal.getBoundingClientRect();
@@ -129,6 +147,22 @@ describe.sequential("medium: shared Electron geometry", () => {
         buttonRect.left + buttonRect.width / 2,
         buttonRect.top + buttonRect.height / 2,
       ) === button;
+
+      // Draft 改/删: resting hit inside memorials/cols, else scroll the memorials owner (then cols fallback).
+      const draftRestingHit = hitAtVisibleCenter(draftTool, memorials) || hitAtVisibleCenter(draftTool, cols);
+      let draftToolsReachable = draftRestingHit;
+      if (!draftToolsReachable) {
+        const prevMemScroll = memorials.scrollTop;
+        const prevColsScroll = cols.scrollTop;
+        memorials.scrollTop = memorials.scrollHeight;
+        if (!hitAtVisibleCenter(draftTool, memorials)) {
+          cols.scrollTop = Math.max(0, draftTool.getBoundingClientRect().top
+            - cols.getBoundingClientRect().top - cols.clientTop + cols.scrollTop);
+        }
+        draftToolsReachable = hitAtVisibleCenter(draftTool, memorials) || hitAtVisibleCenter(draftTool, cols);
+        memorials.scrollTop = prevMemScroll;
+        cols.scrollTop = prevColsScroll;
+      }
 
       // Theme * wash must not zero the error-line background under modal-bg-edict.
       const alertBg = getComputedStyle(alert).backgroundColor;
@@ -163,10 +197,15 @@ describe.sequential("medium: shared Electron geometry", () => {
         buttonHit,
         twoLines,
         textareaHit,
+        draftToolsReachable,
       };
     })()`);
 
-    expect(results.map(({ viewportWidth, viewportHeight }) => [viewportWidth, viewportHeight])).toEqual([[1280, 720], [800, 800]]);
+    expect(results.map(({ viewportWidth, viewportHeight }) => [viewportWidth, viewportHeight])).toEqual([
+      [1280, 720],
+      [1100, 720],
+      [800, 800],
+    ]);
     for (const result of results) {
       expect(result.alertInModal, `${result.viewportWidth}x${result.viewportHeight} alertInModal`).toBe(true);
       expect(result.footerInModal, `${result.viewportWidth}x${result.viewportHeight} footerInModal`).toBe(true);
@@ -182,6 +221,7 @@ describe.sequential("medium: shared Electron geometry", () => {
       expect(result.buttonHit, `${result.viewportWidth}x${result.viewportHeight} buttonHit`).toBe(true);
       expect(result.twoLines, `${result.viewportWidth}x${result.viewportHeight} twoLines`).toBe(true);
       expect(result.textareaHit, `${result.viewportWidth}x${result.viewportHeight} textareaHit`).toBe(true);
+      expect(result.draftToolsReachable, `${result.viewportWidth}x${result.viewportHeight} draftToolsReachable`).toBe(true);
     }
   });
 });
