@@ -22,15 +22,12 @@ def test_single_pay_order_capture_grounds_relative_deadline_at_current_turn(game
             "目标类型": "account",
             "目标ID": "pay_order",
             "颁布方式": "普通",
-            "施行范围": "单省" if len(prompts) == 1 else "无",
         }, ensure_ascii=False), {}
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", fake)
     result = cli_backend.capture_manual_directive_payload(
         "拟旨让陕西边饷居末、官俸优先三个月", None, db=db, content=content,
     )
-    assert len(prompts) == 2
-    assert result["locality_scope"] == "无"
     assert result["entries"] == [
         {"key": "due_priority_军饷@shaanxi", "value": 40, "until_turn": 9},
         {"key": "due_priority_官俸@shaanxi", "value": 10, "until_turn": 9},

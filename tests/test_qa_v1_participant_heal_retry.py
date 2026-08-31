@@ -133,43 +133,37 @@ def test_capture_truncation_bi_zi_heals_to_biziyan(game, monkeypatch):
     assert dv.id > 0
 
 
-@pytest.mark.parametrize("dual_locality_error", [False, True], ids=["unknown", "unknown-and-locality"])
-def test_capture_unknown_person_escalates_no_draft(
-    game, monkeypatch, dual_locality_error,
-):
-    """最终轮仍有真未知人物时保留 typed escalation；草案不落。"""
+def test_capture_unknown_person_escalates_no_draft(game, monkeypatch):
+    """真不在册→戏内回禀；草案不落；输入原文由调用方保留（capture 不吞文）。"""
     import ming_sim.cli_backend as cli_backend
 
     db, state, content = game
     text = "着不存在之人甲核清太仓，边饷优先"
-    draft_calls = 0
-    composer_calls: list[tuple[list[str], str]] = []
+    calls: list[str] = []
 
-    def backend(_prompt, *_a, tag="", **_k):
-        nonlocal draft_calls
-        assert tag == "draft_intent"
-        draft_calls += 1
-        payload = _ok_payload(person="不存在之人甲")
-        if dual_locality_error:
-            payload.update({"目标类型": "region", "目标ID": "shaanxi", "施行范围": "无"})
-        return (json.dumps(payload, ensure_ascii=False), 1)
-
-    def compose(names, *, voice, **_kwargs):
-        composer_calls.append((list(names), voice))
-        return "generated report"
+    def backend(prompt, *_a, tag="", **_k):
+        calls.append(prompt)
+        if tag == "participant_escalate_report":
+            return ("通政司启：朝中查无「不存在之人甲」，乞陛下明示。", 1)
+        return (
+            json.dumps(_ok_payload(person="不存在之人甲"), ensure_ascii=False),
+            1,
+        )
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
-    monkeypatch.setattr(cli_backend, "compose_unknown_participant_inworld_report", compose)
     with pytest.raises(ValueError) as ei:
         cli_backend.capture_manual_directive_payload(
             text, None, db=db, content=content,
         )
-    assert isinstance(ei.value.__cause__, cli_backend.UnknownParticipantEscalate)
-    assert ei.value.__cause__.names == ["不存在之人甲"]
-    assert composer_calls == [(["不存在之人甲"], "tongzheng")]
-    assert draft_calls == 1 + int(cli_backend.DRAFT_INTENT_HEAL_RETRIES)
+    _assert_inworld_escalate(str(ei.value), "不存在之人甲")
+    # 输入文未改（调用方仍持有原 text）
+    assert text == "着不存在之人甲核清太仓，边饷优先"
+    # 不得落库（直断计数 0，禁 before/after 同点恒真）
     assert len(db.list_directives(state) or []) == 0
-    assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0] == 0
+    max_retries = int(cli_backend.DRAFT_PARTICIPANT_HEAL_RETRIES)
+    # heal 环 1+retries；回禀产文可再 +1
+    draft_calls = sum(1 for p in calls if "拟旨意图" in p or "参与人" in p or _CORRECTION_MARK in p or "请据此拟旨" in p or "信息抽取器" in p)
+    assert draft_calls >= 1 + max_retries
 
 
 def test_capture_unknown_then_removal_still_escalates(game, monkeypatch):
@@ -353,7 +347,7 @@ def test_capture_heal_retry_bounded(game, monkeypatch):
     db, _state, content = game
     text = "着毕自严核拨辽饷"
     calls: list[str] = []
-    max_retries = int(cli_backend.DRAFT_INTENT_HEAL_RETRIES)
+    max_retries = int(cli_backend.DRAFT_PARTICIPANT_HEAL_RETRIES)
 
     def backend(prompt, *_a, tag="", **_k):
         calls.append(tag or "draft")
@@ -713,40 +707,36 @@ def test_materialize_truncation_bi_zi_heals_to_biziyan(game, monkeypatch):
     assert len(calls) == 2
 
 
-@pytest.mark.parametrize("dual_locality_error", [False, True], ids=["unknown", "unknown-and-locality"])
-def test_materialize_unknown_escalates_report_no_draft(
-    game, monkeypatch, dual_locality_error,
-):
-    """召对路最终轮仍有真未知人物时投影 typed escalation，不落草案。"""
+def test_materialize_unknown_escalates_report_no_draft(game, monkeypatch):
+    """召对路：真不在册→不落草案、回话保留、戏内回禀（禁整轮回滚）。"""
     import ming_sim.cli_backend as cb
 
     db, state, content = game
     minister = _active_minister(db, content)
-    draft_calls = 0
-    composer_calls: list[tuple[list[str], str, str]] = []
+    draft_calls: list[str] = []
 
-    def backend(_prompt, llm_config=None, tag=""):
-        nonlocal draft_calls
-        assert tag == "draft_intent"
-        draft_calls += 1
-        payload = _ok_payload(person="不存在之人甲")
-        if dual_locality_error:
-            payload.update({"目标类型": "region", "目标ID": "shaanxi", "施行范围": "无"})
-        return (json.dumps(payload, ensure_ascii=False), 1)
-
-    def compose(names, *, voice, speaker_name, **_kwargs):
-        composer_calls.append((list(names), voice, speaker_name))
-        return "generated report"
+    def backend(prompt, llm_config=None, tag=""):
+        if tag == "participant_escalate_report":
+            return (f"臣{minister.name}启：朝中查无不存在之人甲，乞陛下明示。", 1)
+        if tag != "draft_intent":
+            return ("{}", 1)
+        draft_calls.append(prompt)
+        return (
+            json.dumps(_ok_payload(person="不存在之人甲"), ensure_ascii=False),
+            1,
+        )
 
     monkeypatch.setattr(cb, "_run_backend_for_config", backend)
-    monkeypatch.setattr(cb, "compose_unknown_participant_inworld_report", compose)
     _silence_side_extractors(monkeypatch, cb)
 
     sess = _fake_session(db, state, content)
+    answer0 = "臣遵旨拟稿，已草就。"
+    # 非流式路径：apply 后走 _cli_backend_fallback 会附回禀；此处直接测 apply 出参
+    # + session post-pass 同构：手工附 cue 验证 out 信号。
     res = GameSession.apply_cli_conversation_actions(
         sess, minister,
         player_message="着不存在之人甲核清太仓，卿其拟旨。",
-        answer="臣遵旨拟稿，已草就。",
+        answer=answer0,
         has_directive=False, secret_order_id=None,
         preclassified_intent={"kind": "draft"},
     )
@@ -754,12 +744,13 @@ def test_materialize_unknown_escalates_report_no_draft(
     pending = [p for p in db.list_pending_actions(state.turn) if p["kind"] == "directive"]
     assert not pending, "查无此人不得落草案"
     esc = res.get("unknown_participant_escalate") or {}
-    assert esc["names"] == ["不存在之人甲"]
-    assert "report" in esc
-    assert composer_calls == [(["不存在之人甲"], "minister", minister.name)]
-    assert draft_calls == 1 + int(cb.DRAFT_INTENT_HEAL_RETRIES)
-    assert len(db.list_directives(state) or []) == 0
-    assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0] == 0
+    report = str(esc.get("report") or "")
+    _assert_inworld_escalate(report, "不存在之人甲")
+    # 回话原文仍在（apply 不改 answer；post-pass 另附）
+    cued = GameSession._ensure_unknown_participant_report_cue(answer0, report)
+    assert answer0 in cued
+    assert report in cued
+    assert len(draft_calls) == 1 + int(cb.DRAFT_PARTICIPANT_HEAL_RETRIES)
 
 
 def test_materialize_unknown_removal_attempt_escalates(game, monkeypatch):
@@ -794,249 +785,6 @@ def test_materialize_unknown_removal_attempt_escalates(game, monkeypatch):
     assert not pending
     esc = res.get("unknown_participant_escalate") or {}
     _assert_inworld_escalate(str(esc.get("report") or ""), "不存在之人甲")
-
-
-@pytest.mark.parametrize("invalid_kind", ["wrong_count", "duplicate_text"])
-def test_materialize_invalid_batch_skips_discarded_locality(
-    game, monkeypatch, invalid_kind,
-):
-    """被整批拒收的多旨不再让坏属地进入后处理。"""
-    import ming_sim.cli_backend as cb
-
-    db, state, content = game
-    minister = _active_minister(db, content)
-    calls = {"n": 0}
-    item = {
-        "正文": "着户部清查三边粮饷。",
-        "动作类型": "policy",
-        "目标类型": "region",
-        "目标ID": "shaanxi",
-        "颁布方式": "普通",
-        "施行范围": "无",
-    }
-    values = [dict(item), dict(item)]
-    if invalid_kind == "wrong_count":
-        values.append({**item, "正文": "着兵部核查九边军械。"})
-
-    def backend(_prompt, llm_config=None, tag=""):
-        if tag != "draft_intent":
-            return ("{}", 1)
-        calls["n"] += 1
-        return (json.dumps({"成品旨稿": values}, ensure_ascii=False), 1)
-
-    monkeypatch.setattr(cb, "_run_backend_for_config", backend)
-    _silence_side_extractors(monkeypatch, cb)
-    sess = _fake_session(db, state, content)
-
-    GameSession.apply_cli_conversation_actions(
-        sess, minister,
-        player_message="分别拟两道旨。",
-        answer="臣已拟妥。",
-        has_directive=False, secret_order_id=None,
-        preclassified_intent=[{"kind": "draft"}, {"kind": "draft"}],
-    )
-
-    assert calls["n"] == 1
-    assert not [p for p in db.list_pending_actions(state.turn) if p["kind"] == "directive"]
-
-
-@pytest.mark.parametrize(
-    ("scope_schedule", "expected_calls"),
-    [
-        ([("无", "无", "无"), ("单省", "单省", "无")], 2),
-        (
-            [
-                ("无", "无", "无"),
-                ("单省", "无", "无"),
-                ("单省", "单省", "无"),
-            ],
-            3,
-        ),
-        (
-            [
-                ("无", "无", "无"),
-                ("单省", "单省", "全国"),
-                ("单省", "单省", "无"),
-            ],
-            3,
-        ),
-    ],
-    ids=["simultaneous", "sequential", "valid-sibling-drift"],
-)
-def test_batch_locality_heal_preserves_valid_sibling(
-    game, monkeypatch, scope_schedule, expected_calls,
-):
-    import ming_sim.cli_backend as cb
-
-    db, _state, content = game
-    calls = {"n": 0}
-
-    replies = [
-        {
-            "成品旨稿": [
-                {
-                    "正文": "着依前议施行。",
-                    "目标案卷ID": 1,
-                    "颁布方式": "普通",
-                },
-                {
-                    "正文": "着张居正署理户部。",
-                    "动作类型": "acting_appointment",
-                    "目标类型": "character",
-                    "目标ID": "张居正",
-                    "颁布方式": "普通",
-                },
-                {
-                    "正文": "着户部办理陕西事务。",
-                    "动作类型": "policy",
-                    "目标类型": "region",
-                    "目标ID": "shaanxi",
-                    "颁布方式": "普通",
-                    "施行范围": first_scope,
-                    "参与人": [],
-                },
-                {
-                    "正文": "着户部办理河南事务。",
-                    "动作类型": "policy",
-                    "目标类型": "region",
-                    "目标ID": "henan",
-                    "颁布方式": "普通",
-                    "施行范围": second_scope,
-                    "参与人": [],
-                    **({"entries": []} if reply_index else {}),
-                },
-                {
-                    "正文": "着户部清查京内政务。",
-                    "动作类型": "policy",
-                    "目标类型": "policy",
-                    "目标ID": "court-policy",
-                    "颁布方式": "普通",
-                    "施行范围": sibling_scope,
-                    "参与人": [],
-                },
-            ]
-        }
-        for reply_index, (first_scope, second_scope, sibling_scope) in enumerate(scope_schedule)
-    ]
-
-    def backend(_prompt, llm_config=None, tag=""):
-        assert tag == "draft_intent"
-        reply = replies[calls["n"]]
-        calls["n"] += 1
-        return json.dumps(reply, ensure_ascii=False), 1
-
-    monkeypatch.setattr(cb, "_run_backend_for_config", backend)
-    result = cb.extract_draft_intent_with_semantic_heal(
-        "分别拟五道旨。", "臣已拟妥。",
-        db=db, content=content, draft_count=5,
-    )
-
-    assert calls["n"] == expected_calls
-    assert result["drafts"][1] is None
-    assert [
-        draft["locality_scope"] for draft in result["drafts"][2:]
-    ] == ["单省", "单省", "无"]
-    assert "entries" not in result["drafts"][3]
-
-
-def test_batch_grant_omitted_locality_derives_from_target_kind(game, monkeypatch):
-    """#1685: prompt-conforming grant omits 施行范围; assembly derives region→single."""
-    import ming_sim.cli_backend as cb
-    from ming_sim.execution_pressure import normalize_locality_scope
-
-    db, _state, content = game
-    calls = {"n": 0}
-    # Shape from test_batch_draft_extraction_preserves_each_mechanical_payload:
-    # grant uses ACTION_CLUSTERS fields only — no 施行范围.
-    grant = {
-        "正文": "拨国库银一万两赈陕",
-        "动作类型": "grant_allocation",
-        "目标类型": "region",
-        "目标": "shaanxi",
-        "金额": 10000,
-        "账户": "国库",
-        "执行面": "in_transit",
-        "颁布方式": "ordinary",
-    }
-    sibling = {
-        "正文": "着户部办理河南事务。",
-        "动作类型": "policy",
-        "目标类型": "region",
-        "目标ID": "henan",
-        "颁布方式": "普通",
-        "施行范围": "单省",
-        "参与人": [],
-    }
-
-    def backend(_prompt, llm_config=None, tag=""):
-        assert tag == "draft_intent"
-        calls["n"] += 1
-        # Keep omitting 施行范围 even if heal would re-prompt.
-        return json.dumps({"成品旨稿": [grant, sibling]}, ensure_ascii=False), 1
-
-    monkeypatch.setattr(cb, "_run_backend_for_config", backend)
-    result = cb.extract_draft_intent_with_semantic_heal(
-        "分别拟两道旨。", "臣已拟妥。",
-        db=db, content=content, draft_count=2,
-    )
-
-    assert calls["n"] == 1
-    assert result["drafts"][0]["dossier_action_type"] == "grant_allocation"
-    assert normalize_locality_scope(result["drafts"][0]["locality_scope"]) == "single"
-    assert result["drafts"][1]["locality_scope"] == "单省"
-
-
-def test_materialize_locality_exhaustion_rejects_only_draft(game, monkeypatch):
-    """召对属地纠错耗尽只拒草案；该轮结构化结果仍正常返回。"""
-    import ming_sim.cli_backend as cb
-
-    db, state, content = game
-    minister = _active_minister(db, content)
-    calls = {"n": 0}
-    payload = _ok_payload(person="毕自严")
-    payload.update({"目标类型": "region", "目标ID": "shaanxi", "施行范围": "无"})
-
-    def backend(_prompt, llm_config=None, tag=""):
-        if tag != "draft_intent":
-            return ("{}", 1)
-        calls["n"] += 1
-        return (json.dumps(payload, ensure_ascii=False), 1)
-
-    monkeypatch.setattr(cb, "_run_backend_for_config", backend)
-    _silence_side_extractors(monkeypatch, cb)
-    sess = _fake_session(db, state, content)
-    result = GameSession.apply_cli_conversation_actions(
-        sess, minister,
-        player_message="着毕自严办理陕西事务，卿其拟旨。",
-        answer="臣已拟妥。",
-        has_directive=False, secret_order_id=None,
-        preclassified_intent={"kind": "draft"},
-    )
-
-    assert calls["n"] == 1 + cb.DRAFT_INTENT_HEAL_RETRIES
-    assert not [p for p in db.list_pending_actions(state.turn) if p["kind"] == "directive"]
-    assert "unknown_participant_escalate" not in result
-
-
-def test_materialize_does_not_swallow_untyped_value_error(game, monkeypatch):
-    """召对拒收边界只接 typed locality，不接普通 ValueError。"""
-    import ming_sim.cli_backend as cb
-
-    db, state, content = game
-    minister = _active_minister(db, content)
-    monkeypatch.setattr(
-        cb, "extract_draft_intent_with_semantic_heal",
-        lambda *_a, **_k: (_ for _ in ()).throw(ValueError("untyped failure")),
-    )
-    _silence_side_extractors(monkeypatch, cb)
-
-    with pytest.raises(ValueError, match="untyped failure"):
-        GameSession.apply_cli_conversation_actions(
-            _fake_session(db, state, content), minister,
-            player_message="卿其拟旨。", answer="臣已拟妥。",
-            has_directive=False, secret_order_id=None,
-            preclassified_intent={"kind": "draft"},
-        )
 
 
 def test_materialize_happy_path_single_draft_intent_call(game, monkeypatch):
@@ -1141,7 +889,7 @@ def test_batch_drafts_heal_truncation(game, monkeypatch):
         return (json.dumps(payload, ensure_ascii=False), 1)
 
     monkeypatch.setattr(cb, "_run_backend_for_config", backend)
-    result = cb.extract_draft_intent_with_semantic_heal(
+    result = cb.extract_draft_intent_with_roster_heal(
         "两道旨着毕自严核拨辽饷", "臣遵拟。",
         db=db, content=content, draft_count=2,
     )
@@ -1187,7 +935,7 @@ def test_heal_second_fail_keeps_first_prior_valid(game, monkeypatch):
         cb.capture_manual_directive_payload(text, None, db=db, content=content)
     _assert_inworld_escalate(str(ei.value), "不存在之人甲")
     assert len(db.list_directives(state) or []) == 0
-    assert n["c"] == 1 + int(cb.DRAFT_INTENT_HEAL_RETRIES)
+    assert n["c"] == 1 + int(cb.DRAFT_PARTICIPANT_HEAL_RETRIES)
 
 
 def test_heal_keeps_first_extract_non_roster_fields(game, monkeypatch):
@@ -1238,7 +986,7 @@ def test_heal_keeps_first_extract_non_roster_fields(game, monkeypatch):
         ), ensure_ascii=False), 1)
 
     monkeypatch.setattr(cb, "_run_backend_for_config", backend)
-    result = cb.extract_draft_intent_with_semantic_heal(
+    result = cb.extract_draft_intent_with_roster_heal(
         text, text, db=db, content=content,
     )
     ids = [
@@ -1324,7 +1072,7 @@ def test_batch_heal_keeps_first_extract_non_roster_fields(game, monkeypatch):
         ), ensure_ascii=False), 1)
 
     monkeypatch.setattr(cb, "_run_backend_for_config", backend)
-    result = cb.extract_draft_intent_with_semantic_heal(
+    result = cb.extract_draft_intent_with_roster_heal(
         "两道旨着毕自严核拨并整饬", "臣遵拟。",
         db=db, content=content, draft_count=2,
     )
@@ -1392,7 +1140,7 @@ def test_player_bi_shangshu_su_bo_xiang_alias_grounds_and_heals(game, monkeypatc
         return (json.dumps(_ok_payload(person=person), ensure_ascii=False), 1)
 
     monkeypatch.setattr(cb, "_run_backend_for_config", backend)
-    result = cb.extract_draft_intent_with_semantic_heal(
+    result = cb.extract_draft_intent_with_roster_heal(
         player, minister_reply, db=db, content=content,
     )
     ids = [
@@ -1429,7 +1177,7 @@ def test_minister_reply_only_grounding_escalates(game, monkeypatch):
 
     monkeypatch.setattr(cb, "_run_backend_for_config", backend)
     with pytest.raises(cb.UnknownParticipantEscalate) as ei:
-        cb.extract_draft_intent_with_semantic_heal(
+        cb.extract_draft_intent_with_roster_heal(
             player, minister_reply, db=db, content=content,
         )
     assert "不存在之人甲" in ei.value.names
@@ -1477,7 +1225,7 @@ def test_heal_freezes_first_roster_shape_against_drift(game, monkeypatch):
         return (json.dumps(_payload(roster), ensure_ascii=False), 1)
 
     monkeypatch.setattr(cb, "_run_backend_for_config", backend)
-    result = cb.extract_draft_intent_with_semantic_heal(
+    result = cb.extract_draft_intent_with_roster_heal(
         player, minister_reply, db=db, content=content,
     )
     roster = result.get("participant_roster") or []
@@ -1567,7 +1315,7 @@ def test_grounded_extra_front_must_not_fill_failed_slot(game, monkeypatch):
 
     monkeypatch.setattr(cb, "_run_backend_for_config", backend)
     with pytest.raises(cb.UnknownParticipantEscalate) as ei:
-        cb.extract_draft_intent_with_semantic_heal(
+        cb.extract_draft_intent_with_roster_heal(
             player, minister_reply, db=db, content=content,
         )
     assert "不存在之人甲" in ei.value.names
@@ -1613,7 +1361,7 @@ def test_two_unknown_refs_escalates_first_error_stop(game, monkeypatch):
 
     monkeypatch.setattr(cb, "_run_backend_for_config", backend)
     with pytest.raises(cb.UnknownParticipantEscalate) as ei:
-        cb.extract_draft_intent_with_semantic_heal(
+        cb.extract_draft_intent_with_roster_heal(
             player, minister_reply, db=db, content=content,
         )
     # 首错即停至少钉到甲；不得静默按池回填两槽
@@ -1735,7 +1483,7 @@ def test_single_unknown_with_institution_heals(game, monkeypatch):
     assert cb._count_failed_person_slots(
         {"participant_roster": first_roster}, db=db, content=content,
     ) == 1
-    result = cb.extract_draft_intent_with_semantic_heal(
+    result = cb.extract_draft_intent_with_roster_heal(
         player, minister_reply, db=db, content=content,
     )
     ids = [
