@@ -607,7 +607,7 @@ def test_nonstream_web_chat_surfaces_ambiguous():
         state = SimpleNamespace(turn=1, turn_phase="")
         db = SimpleNamespace()
 
-        def chat(self, minister_name, text, chat_turn_id=0):
+        def chat(self, minister_name, text, *, chat_turn_id=0, explicit_secret_order=False):
             return ChatTurnResult(
                 answer="请陛下明示是哪一道。", directive_confirmation_ambiguous=amb)
 
@@ -666,7 +666,7 @@ def test_nonstream_web_chat_no_ambiguous_key_is_none():
         state = SimpleNamespace(turn=1, turn_phase="")
         db = SimpleNamespace()
 
-        def chat(self, minister_name, text, chat_turn_id=0):
+        def chat(self, minister_name, text, *, chat_turn_id=0, explicit_secret_order=False):
             return ChatTurnResult(answer="臣遵旨。")
 
         def pending_count(self):

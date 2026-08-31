@@ -73,11 +73,18 @@ export function App() {
   const [haremGroup, setHaremGroup] = React.useState("全部");
   const [selectedMinister, setSelectedMinister] = React.useState<string>("");
   const [activeModal, setActiveModalState] = React.useState<ModalName>("none");
-  // #1566：composer 存活位——离面与 setState 同栈同步翻 false，先于 effect / onError；
-  // 关面后迟到失败不得回填 secret_order intent。唯一 setActiveModal 写入口。
-  const chatComposerLiveRef = React.useRef(false);
+  // #1566：composer owner token——null=无存活面；非 null object=当前 session 身份。
+  // 关→重开铸造新 token，旧 onError 捕获的 owner 引用不相等，不得回填 intent。
+  // 唯一 setActiveModal 写入口：只看目标 modal + 当前 owner，不读 React prev。
+  const chatComposerOwnerRef = React.useRef<object | null>(null);
   const setActiveModal = React.useCallback((modal: ModalName) => {
-    chatComposerLiveRef.current = modal === "chat";
+    if (modal === "chat") {
+      if (chatComposerOwnerRef.current === null) {
+        chatComposerOwnerRef.current = {};
+      }
+    } else {
+      chatComposerOwnerRef.current = null;
+    }
     setActiveModalState(modal);
   }, []);
   const [decree, setDecree] = React.useState("");
@@ -177,7 +184,7 @@ export function App() {
     setError,
     activeModal,
     setActiveModal,
-    chatComposerLiveRef,
+    chatComposerOwnerRef,
     selectedMinister,
     setSelectedMinister,
     selectedMinisterRef,

@@ -620,9 +620,10 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     expect(host.querySelector(".chat-system-note")).toBeNull();
   });
 
-  it("#1566 密令在飞时同步退出+非 Abort 失败，重开普通问话 POST body 无残留 intent", async () => {
-    // 同一 act 内：真实退出召对 → 紧接非 Abort reject（effect 前）→ 重开普通问话。
-    // 根因：onError 无条件回填 intent；关面只改 modal 时 effect/闭包时序留窗口。
+  it("#1566 密令在飞时退出→重开→旧非 Abort reject，普通问话 POST body 无残留 intent", async () => {
+    // 时序：密令挂起 → 退出召对 → 重开 chat（新 owner）→ 旧请求非 Abort reject → 普通问话。
+    // boolean live 在重开后变 true，旧 onError 会把 secret_order 回填进新 composer；
+    // owner token 引用相等才回填，新旧 session 不相等则不污染。
     let releaseFail!: (err: Error) => void;
     const failGate = new Promise<never>((_, reject) => { releaseFail = reject; });
     let sentChat: Record<string, unknown> | null = null;
@@ -642,7 +643,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       if (u.pathname.endsWith("/api/ministers/%E6%9D%A8%E5%97%A3%E6%98%8C/chat/stream") && init?.method === "POST") {
         streamPosts += 1;
         if (streamPosts === 1) {
-          // 首发密令：挂起后由测试同步 reject（非 Abort）。
+          // 首发密令：挂起；reject 延后到重开之后。
           return failGate as unknown as Response;
         }
         sentChat = JSON.parse(String(init.body));
@@ -678,19 +679,21 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     await click(findButton(host, "发送"));
     await act(async () => { await vi.waitFor(() => expect(streamPosts).toBe(1)); });
 
-    // 同一 act 同步块：退出召对 + 非 Abort reject（effect 尚未跑）
-    await act(async () => {
-      findButton(host, "退出召对")?.click();
-      releaseFail(new Error("network boom"));
-    });
+    // 退出召对（作废 owner）；旧请求仍挂起
+    await click(findButton(host, "退出召对"));
     await act(async () => {
       await vi.waitFor(() => expect(host.querySelector("textarea")).toBeNull());
     });
 
-    // 重开普通问话：body 不得带 secret_order intent
+    // 重开 chat（铸造新 owner）——此时旧 reject 才会暴露 boolean 方案漏洞
     await click(host.querySelector('[aria-label="朝堂·召见大臣"]'));
     await click(findButton(host, "杨嗣昌"));
     await act(async () => { await vi.waitFor(() => expect(host.querySelector("textarea")).not.toBeNull()); });
+
+    // 旧密令请求非 Abort reject：不得把 secret_order 回填进新 composer
+    await act(async () => {
+      releaseFail(new Error("network boom"));
+    });
 
     const textarea2 = host.querySelector("textarea") as HTMLTextAreaElement;
     await act(async () => {
