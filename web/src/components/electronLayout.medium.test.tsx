@@ -83,7 +83,7 @@ describe.sequential("medium: shared Electron geometry", () => {
       { width: 1280, height: 720 },
       { width: 800, height: 800 },
     ], `(() => {
-      const modal = document.querySelector('.modal-pane') || document.querySelector('[role="dialog"]');
+      const modal = document.querySelector('.fullscreen-modal');
       const alert = document.querySelector('[role="alert"]');
       const cols = document.querySelector('.desk-columns');
       const textarea = document.querySelector('.desk-compose textarea');
