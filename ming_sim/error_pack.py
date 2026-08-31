@@ -101,14 +101,22 @@ def _read_complete_pack_manifest(path: Path) -> Optional[Dict[str, object]]:
 
 
 def complete_error_packs_for_ready(db_path: object, turn: int, payload: object) -> list[Path]:
-    """Return complete packs for this database, turn, and exact ready payload."""
+    """Return complete packs for this database, turn, and exact ready payload.
+
+    目录 exists / 惰性 glob 枚举的 OSError 视为无匹配包——不得拖垮
+    SettlementAbort 恢复缝（ADR 0008 保留 ready／降级重新推演）。
+    """
     expected = ready_payload_digest(payload)
     expected_db_path = str(db_path)
     root = error_packs_root()
-    if not root.exists():
+    try:
+        if not root.exists():
+            return []
+        candidates = list(root.glob(f"turn{int(turn)}_attempt*"))
+    except OSError:
         return []
     matches: list[Path] = []
-    for path in root.glob(f"turn{int(turn)}_attempt*"):
+    for path in candidates:
         manifest = _read_complete_pack_manifest(path)
         if manifest is None:
             continue
