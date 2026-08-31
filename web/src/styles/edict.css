@@ -165,7 +165,6 @@
 
 .desk-compose textarea {
   flex: 1;
-  min-height: 0;
   line-height: 1.6;
   font-family: "Noto Serif SC", "Songti SC", serif;
 }
