@@ -1054,25 +1054,23 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     });
     const optionButtons = () =>
       Array.from(host.querySelectorAll("button.decision-option")) as HTMLButtonElement[];
-    const seal = () =>
-      host.querySelector('[aria-label="批红落印，续推时局"]') as HTMLButtonElement | null;
-    const next疏 = () =>
-      host.querySelector('[aria-label="批下一疏"]') as HTMLButtonElement | null;
+    const confirm = () =>
+      host.querySelector('[data-testid="decision-modal"] button.decision-confirm') as HTMLButtonElement | null;
 
     // 第 1 疏：点首 option（结构化 class，不按文案找）
     expect(optionButtons().length).toBeGreaterThan(0);
     await click(optionButtons()[0]);
     expect(host.querySelector("button.decision-option.is-picked")).not.toBeNull();
-    expect(next疏()).not.toBeNull();
-    await click(next疏());
+    expect(confirm()).not.toBeNull();
+    await click(confirm());
     await act(async () => {
       await vi.waitFor(() => expect(optionButtons().length).toBeGreaterThan(0));
     });
     // 第 2 疏：点首 option 后落印
     await click(optionButtons()[0]);
-    expect(seal()).not.toBeNull();
-    expect(seal()!.disabled).toBe(false);
-    await click(seal());
+    expect(confirm()).not.toBeNull();
+    expect(confirm()!.disabled).toBe(false);
+    await click(confirm());
 
     await act(async () => {
       await vi.waitFor(() => {
@@ -1090,10 +1088,10 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     // modal 不卸载；已选态仍在；可再落印
     expect(host.querySelector('[data-testid="decision-modal"]')).not.toBeNull();
     expect(host.querySelector("button.decision-option.is-picked")).not.toBeNull();
-    expect(seal()).not.toBeNull();
-    expect(seal()!.disabled).toBe(false);
+    expect(confirm()).not.toBeNull();
+    expect(confirm()!.disabled).toBe(false);
 
-    await click(seal());
+    await click(confirm());
     await act(async () => {
       await vi.waitFor(() => expect(resolveBodies.length).toBe(2));
     });
@@ -1148,11 +1146,11 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     });
     const optionButtons = () =>
       Array.from(host.querySelectorAll("button.decision-option")) as HTMLButtonElement[];
-    const seal = () =>
-      host.querySelector('[aria-label="批红落印，续推时局"]') as HTMLButtonElement | null;
+    const confirm = () =>
+      host.querySelector('[data-testid="decision-modal"] button.decision-confirm') as HTMLButtonElement | null;
     await click(optionButtons()[0]);
-    expect(seal()).not.toBeNull();
-    await click(seal());
+    expect(confirm()).not.toBeNull();
+    await click(confirm());
     await act(async () => {
       await vi.waitFor(() => {
         expect(host.querySelector('[data-testid="decision-modal"]')).toBeNull();
@@ -1202,22 +1200,22 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     });
     const optionButtons = () =>
       Array.from(host.querySelectorAll("button.decision-option")) as HTMLButtonElement[];
-    const seal = () =>
-      host.querySelector('[aria-label="批红落印，续推时局"]') as HTMLButtonElement | null;
+    const confirm = () =>
+      host.querySelector('[data-testid="decision-modal"] button.decision-confirm') as HTMLButtonElement | null;
     await click(optionButtons()[0]);
-    expect(seal()).not.toBeNull();
-    expect(seal()!.disabled).toBe(false);
-    await click(seal());
+    expect(confirm()).not.toBeNull();
+    expect(confirm()!.disabled).toBe(false);
+    await click(confirm());
     await act(async () => {
       await vi.waitFor(() => {
         expect(resolveCount).toBe(1);
-        expect(seal()!.disabled).toBe(true);
+        expect(confirm()!.disabled).toBe(true);
         expect(optionButtons().every((b) => b.disabled)).toBe(true);
       });
     });
     // busy 期间再点落印——disabled + handler 短路，POST 仍 1
-    await click(seal());
-    await click(seal());
+    await click(confirm());
+    await click(confirm());
     expect(resolveCount).toBe(1);
     // 放行挂起的 resolve，避免泄漏（收尾不纳入本契约）
     await act(async () => {
