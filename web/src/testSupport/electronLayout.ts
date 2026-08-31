@@ -36,7 +36,20 @@ export async function measureElectronLayout<T>(
         "  const results = [];",
         "  for (const viewport of viewports) {",
         "    win.setContentSize(viewport.width, viewport.height);",
-        "    await new Promise((resolve) => setTimeout(resolve, 0));",
+        // Wait until the renderer actually observes the target content size.
+        // setContentSize is async w.r.t. window.innerWidth/innerHeight; a 0ms
+        // timer races under full-suite load and measures the previous viewport.
+        "    await win.webContents.executeJavaScript(",
+        "      '(async (w, h) => {' +",
+        "      '  const deadline = Date.now() + 5000;' +",
+        "      '  while (innerWidth !== w || innerHeight !== h) {' +",
+        "      '    if (Date.now() > deadline) {' +",
+        "      '      throw new Error(\"viewport resize timeout: \" + innerWidth + \"x\" + innerHeight + \" != \" + w + \"x\" + h);' +",
+        "      '    }' +",
+        "      '    await new Promise((r) => requestAnimationFrame(r));' +",
+        "      '  }' +",
+        "      '})(' + viewport.width + ', ' + viewport.height + ')'",
+        "    );",
         `    results.push(await win.webContents.executeJavaScript(${JSON.stringify(measureSource)}));`,
         "  }",
         "  process.stdout.write(JSON.stringify(results));",
