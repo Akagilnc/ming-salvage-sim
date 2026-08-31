@@ -286,6 +286,58 @@ describe("#1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 �
   });
 });
 
+describe("#1433 useSettlementFlow — 退朝 awaiting 消费面（禁盲 reload hop）", () => {
+  it("advance 回 awaiting_decision 时消费 decisions + loadState，不 reload", async () => {
+    const loadState = vi.fn(async () => awaitingState);
+    const reload = vi.fn();
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...window.location, reload },
+    });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (String(url).includes("/api/decree/advance_without_edict")) {
+          return {
+            ok: true,
+            json: async () => ({
+              state: awaitingState,
+              awaiting_decision: true,
+              decisions: [validDecision],
+              pending_action_failures: [],
+            }),
+          };
+        }
+        throw new Error(`unexpected fetch: ${url}`);
+      }),
+    );
+
+    const { host, hookRef, cleanup } = mountHarness({
+      loadState,
+      initial: preClickState,
+    });
+
+    expect(host.querySelector("[data-testid=pending-count]")?.textContent).toBe("0");
+    expect(host.querySelector("[data-testid=settlement-display]")?.textContent).toBe("false");
+
+    await act(async () => {
+      await hookRef.current!.advanceWithoutEdict();
+    });
+
+    expect(loadState).toHaveBeenCalledTimes(1);
+    expect(reload).not.toHaveBeenCalled();
+    // 批红面不丢：同会话停窗弹决策，HUD 读状态口投影
+    expect(host.querySelector("[data-testid=pending-count]")?.textContent).toBe("1");
+    expect(host.querySelector("[data-testid=year-month]")?.textContent).toBe("1627 年 10 月 · 待批");
+    expect(host.querySelector("[data-testid=settlement-display]")?.textContent).toBe("true");
+    expect(host.querySelector("[data-testid=busy]")?.textContent).toBe("");
+    expect(host.querySelector("[data-testid=error]")?.textContent).toBe("");
+
+    cleanup();
+  });
+});
+
 function sseErrorResponse(payload: Record<string, unknown>): Response {
   const body = [
     "event: error",
