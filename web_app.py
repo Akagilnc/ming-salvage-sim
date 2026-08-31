@@ -1097,15 +1097,12 @@ class WebGame:
         summary = f"{character.faction}一系，行事{character.style}。"
         power_id = self.db.resolve_power_id(character)  # 权威解析单一真源（#125）
         loc_row = self.db.conn.execute(
-            "SELECT location, transit_to, transit_distance_remaining "
+            "SELECT location, transit_to "
             "FROM characters WHERE name=?",
             (character.name,),
         ).fetchone()
         location = str(loc_row["location"] or "") if loc_row is not None else ""
         transit_to = str(loc_row["transit_to"] or "") if loc_row is not None else ""
-        transit_remaining = (
-            loc_row["transit_distance_remaining"] if loc_row is not None else None
-        )
         regions = getattr(self.content, "regions", None) or {}
 
         def _region_label(region_id: str) -> str:
@@ -1128,7 +1125,6 @@ class WebGame:
             "location_label": _region_label(location),
             "transit_to": transit_to,
             "transit_to_label": _region_label(transit_to),
-            "transit_distance_remaining": transit_remaining,
             "summary": summary,
             "portrait_id": character.portrait_id,
             "power_id": power_id,

@@ -6,8 +6,6 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-import pytest
-
 import web_app
 from ming_sim.content import GameContent
 
@@ -73,7 +71,7 @@ def test_public_character_active_not_zaichao_and_projects_place(game):
     assert pub["location_label"] == "河南"
     assert pub["transit_to"] == ""
     assert pub.get("transit_to_label", "") == ""
-    assert "transit_distance_remaining" in pub
+    assert "transit_distance_remaining" not in pub
 
 
 def test_public_character_projects_transit(game):
@@ -97,4 +95,4 @@ def test_public_character_projects_transit(game):
     assert pub["location_label"] == "河南"
     assert pub["transit_to"] == "shandong"
     assert pub["transit_to_label"] == "山东"
-    assert pub["transit_distance_remaining"] == pytest.approx(12.5)
+    assert "transit_distance_remaining" not in pub
