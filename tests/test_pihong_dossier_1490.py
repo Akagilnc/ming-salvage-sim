@@ -3993,7 +3993,7 @@ def test_657_punishment_name_target_id_conflict_zero_writes(web_game, monkeypatc
 
 
 def test_657_revise_deliberate_strict_contracts_zero_write_on_bad_shape(game, monkeypatch):
-    """revise 拒 monthly items[]/目录外军；deliberate 拒缺 stance；合法 options 进入 prewrite。"""
+    """revise 拒 monthly items[]/目录外军/无 kind 直写协饷；deliberate 拒缺 stance；合法进 prewrite。"""
     from ming_sim.rescript_actions import PrewriteResults
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
     from ming_sim.session import GameSession
@@ -4055,6 +4055,7 @@ def test_657_revise_deliberate_strict_contracts_zero_write_on_bad_shape(game, mo
         }])
     hit = next(r for r in db.list_rescript_drafts() if r["title"] == "改票契约")
     assert hit["status"] == "pending"
+    assert hit.get("choice") in (None, {},)
 
     def _military_option(target_id):
         return normalize_rescript_layer_a_option({
@@ -4082,6 +4083,33 @@ def test_657_revise_deliberate_strict_contracts_zero_write_on_bad_shape(game, mo
     ]
     hit = next(r for r in db.list_rescript_drafts() if r["title"] == "改票契约")
     assert hit["status"] == "pending"
+    assert hit.get("choice") in (None, {},)
+
+    # 改票真实入口：无 grant_kind 直写协饷、kind+action 并存 → 响亮失败且零写
+    army_pay_base = {
+        "label": "补发关宁军饷", "hint": "边饷急",
+        "action_type": "grant_allocation", "assignee_name": "",
+        "target_kind": "army", "target_id": "guanning",
+        "locality_scope": "none", "region_id": "", "transaction_category": "",
+        "amount": 300, "account": "国库", "purpose": "补饷",
+    }
+    for bad_opt in (
+        {**army_pay_base, "grant_action": "协饷"},  # 无 kind 直写
+        {**army_pay_base, "grant_kind": "army_pay", "grant_action": "协饷"},  # 并存
+    ):
+        monkeypatch.setattr(
+            agents_mod, "run_agent_text",
+            lambda *_a, _opt=bad_opt, **_k: json.dumps(
+                {"options": [_opt]}, ensure_ascii=False,
+            ),
+        )
+        with pytest.raises(RuntimeError):
+            sess.prepare_rescript_prewrite([{
+                "decision_key": key, "action": "return_revise", "note": "再拟",
+            }])
+        hit = next(r for r in db.list_rescript_drafts() if r["title"] == "改票契约")
+        assert hit["status"] == "pending"
+        assert hit.get("choice") in (None, {},)
 
     def _ok_revise_text(*_a, **_k):
         return json.dumps({"options": [_military_option("guanning")]}, ensure_ascii=False)
@@ -4106,6 +4134,7 @@ def test_657_revise_deliberate_strict_contracts_zero_write_on_bad_shape(game, mo
         }])
     hit2 = next(r for r in db.list_rescript_drafts() if r["title"] == "改票契约")
     assert hit2["status"] == "pending"
+    assert hit2.get("choice") in (None, {},)
 
 
 def test_657_summon_single_flight_concurrent_http(web_game, monkeypatch):

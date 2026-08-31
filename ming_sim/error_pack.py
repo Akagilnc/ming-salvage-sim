@@ -81,23 +81,44 @@ def ready_payload_digest(payload: object) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+_COMPLETE_PACK_FILES = frozenset({
+    "traceback.txt", "delta.json", "resolve_context.json",
+    "save_backup.db", "manifest.json",
+})
+
+
+def _read_complete_pack_manifest(path: Path) -> Optional[Dict[str, object]]:
+    """完整五件包的 manifest 身份；残缺/坏 JSON/条目 stat OSError → None。complete/latest 共用。"""
+    try:
+        if not path.is_dir() or not all(
+            (path / name).is_file() for name in _COMPLETE_PACK_FILES
+        ):
+            return None
+        manifest = json.loads((path / "manifest.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return None
+    return manifest if isinstance(manifest, dict) else None
+
+
 def complete_error_packs_for_ready(db_path: object, turn: int, payload: object) -> list[Path]:
-    """Return complete packs for this database, turn, and exact ready payload."""
+    """Return complete packs for this database, turn, and exact ready payload.
+
+    目录 exists / 惰性 glob 枚举的 OSError 视为无匹配包——不得拖垮
+    SettlementAbort 恢复缝（ADR 0008 保留 ready／降级重新推演）。
+    """
     expected = ready_payload_digest(payload)
     expected_db_path = str(db_path)
-    required = {"traceback.txt", "delta.json", "resolve_context.json", "save_backup.db", "manifest.json"}
     root = error_packs_root()
-    if not root.exists():
+    try:
+        if not root.exists():
+            return []
+        candidates = list(root.glob(f"turn{int(turn)}_attempt*"))
+    except OSError:
         return []
     matches: list[Path] = []
-    for path in root.glob(f"turn{int(turn)}_attempt*"):
-        if not path.is_dir() or not all((path / name).is_file() for name in required):
-            continue
-        try:
-            manifest = json.loads((path / "manifest.json").read_text(encoding="utf-8"))
-        except (OSError, ValueError, TypeError):
-            continue
-        if not isinstance(manifest, dict):
+    for path in candidates:
+        manifest = _read_complete_pack_manifest(path)
+        if manifest is None:
             continue
         if (
             str(manifest.get("db_path")) == expected_db_path
@@ -115,6 +136,50 @@ def settlement_abort_message(pack_path: str) -> str:
         f"错误包已生成：{pack_path}\n"
         "请把该文件夹发给作者，以便排查。"
     )
+
+
+def latest_error_pack_for_turn(db_path: object, turn: int) -> Optional[str]:
+    """同 DB + turn 最新完整错误包绝对路径；无则 None（ADR 0008 决定 7 恢复面）。
+
+    身份与 complete_error_packs_for_ready 同缝：manifest.db_path + turn，
+    禁跨存档串包（同 user-data 下另一 DB 的更高 attempt 不得入选）。
+    目录扫描/条目 stat 的 OSError 视为无诊断包——不得拖垮 settling 恢复面。
+    """
+    root = error_packs_root()
+    try:
+        if not root.exists():
+            return None
+        entries = list(root.iterdir())
+    except OSError:
+        return None
+    expected_db_path = str(db_path)
+    prefix = f"turn{int(turn)}_attempt"
+    best: Optional[Path] = None
+    best_n = -1
+    for path in entries:
+        try:
+            if not (path.is_dir() and path.name.startswith(prefix)):
+                continue
+            n = int(path.name[len(prefix):])
+        except (OSError, ValueError):
+            continue
+        manifest = _read_complete_pack_manifest(path)
+        if manifest is None:
+            continue
+        if (
+            str(manifest.get("db_path")) != expected_db_path
+            or manifest.get("turn") != int(turn)
+        ):
+            continue
+        if n > best_n:
+            best_n = n
+            best = path
+    if best is None:
+        return None
+    try:
+        return str(best.resolve())
+    except OSError:
+        return None
 
 
 def write_error_pack(

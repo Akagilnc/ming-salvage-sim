@@ -424,6 +424,7 @@ def test_generate_rejects_region_id_outside_same_batch_catalog(monkeypatch):
 
 def test_payload_projects_consumable_army_targets_from_real_monthly_board(game):
     """系统票拟看到同批盘面的合法 army id，而非把省 id 当军."""
+    from ming_sim.action_materialize import GRANT_ACTIONS
     from ming_sim.simulation import build_simulator_payload
 
     db, state, _content = game
@@ -449,6 +450,10 @@ def test_payload_projects_consumable_army_targets_from_real_monthly_board(game):
     assert targets["guanning"]["name"]
     assert "liaodong" not in targets
     assert enemy_ids.isdisjoint(targets)
+    # #1620：非军饷 grant_action 闭集同源；军饷走 grant_kind=army_pay
+    assert payload["grant_actions"] == sorted(GRANT_ACTIONS - {"无", "协饷"})
+    assert "协饷" not in payload["grant_actions"]
+    assert payload["grant_kinds"] == ["army_pay"]
 
 
 def test_generate_rejects_army_id_outside_same_batch_catalog(monkeypatch):
@@ -1463,6 +1468,125 @@ def test_657_s1_option_shape_stamps_draft_capability():
         normalize_rescript_layer_a_option({
             **raw, "action_type": "policy",  # 非七类 routable
         })
+
+
+def _army_pay_grant_option(**extra) -> dict:
+    opt = {
+        "label": "补发关宁军饷",
+        "hint": "边饷急",
+        "action_type": "grant_allocation",
+        "assignee_name": "",
+        "target_kind": "army",
+        "target_id": "guanning",
+        "locality_scope": "none",
+        "region_id": "",
+        "transaction_category": "",
+        "grant_kind": "army_pay",
+        "amount": 300,
+        "account": "国库",
+        "purpose": "补饷",
+    }
+    opt.update(extra)
+    return opt
+
+
+def test_1620_validate_army_pay_grant_kind_maps_to_xiexang():
+    """真实票拟入口：合法 kind 映射；无 kind 直写协饷与 kind+action 并存整批拒。"""
+    drafts = validate_rescript_draft_items(
+        {"items": [{
+            "title": "关宁欠饷",
+            "context": "边军待哺。",
+            "options": [
+                _army_pay_grant_option(),
+                _layer_a_opt(label="暂缓", hint="候报", transaction_category=""),
+            ],
+        }]},
+        set(),
+    )
+    opt = drafts[0]["options"][0]
+    assert opt["grant_action"] == "协饷"
+    assert opt["amount"] == 300
+    assert opt.get("purpose") == "补饷"
+    assert "grant_kind" not in opt
+
+    hold = _layer_a_opt(label="暂缓", hint="候报", transaction_category="")
+    for bad in (
+        _army_pay_grant_option(grant_action="协饷"),  # kind+action 并存
+        {k: v for k, v in _army_pay_grant_option(grant_action="协饷").items()
+         if k != "grant_kind"},  # 无 kind 直写协饷
+    ):
+        with pytest.raises(ValueError):
+            validate_rescript_draft_items(
+                {"items": [{
+                    "title": "关宁欠饷",
+                    "context": "边军待哺。",
+                    "options": [bad, hold],
+                }]},
+                set(),
+            )
+
+
+def test_1620_layer_a_reward_with_army_target_stays_reward():
+    """赏赉+army 不因 target_kind 升格协饷。"""
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+
+    opt = normalize_rescript_layer_a_option({
+        "label": "赏关宁将士",
+        "hint": "恩赏",
+        "action_type": "grant_allocation",
+        "assignee_name": "",
+        "target_kind": "army",
+        "target_id": "guanning",
+        "locality_scope": "none",
+        "region_id": "",
+        "transaction_category": "",
+        "grant_action": "赏赉",
+        "amount": 50,
+        "account": "国库",
+    })
+    assert opt["grant_action"] == "赏赉"
+
+
+@pytest.mark.parametrize("extra,drop", [
+    pytest.param({"grant_action": "赏赉"}, (), id="conflict-reward"),
+    pytest.param({"grant_kind": "other"}, (), id="unknown-kind"),
+    pytest.param({"grant_action": "补发军饷"}, ("grant_kind",), id="zh-synonym"),
+    # 非 grant 携 grant_kind：不得因 allowed 白名单静默丢键
+    pytest.param(
+        {"action_type": "assignment", "assignee_name": "杨嗣昌"}, (),
+        id="non-grant-kind",
+    ),
+    # #1503 五字段 admission：缺 purpose/account、非法 target_kind
+    pytest.param({"purpose": ""}, (), id="empty-purpose"),
+    pytest.param({}, ("purpose",), id="drop-purpose"),
+    pytest.param({"account": ""}, (), id="empty-account"),
+    pytest.param({}, ("account",), id="drop-account"),
+    pytest.param(
+        {"target_kind": "region", "target_id": "shaanxi"}, (),
+        id="region-target",
+    ),
+])
+def test_1620_layer_a_army_pay_rejects_bad_typed_shape(extra, drop):
+    """层 A：五字段缺漏、矛盾 kind、未知 kind、中文同义、非 grant 携 kind 均 fail-loud。"""
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+
+    raw = _army_pay_grant_option(**extra)
+    for key in drop:
+        raw.pop(key, None)
+    with pytest.raises(ValueError):
+        normalize_rescript_layer_a_option(raw)
+
+
+def test_1620_internal_canonical_xiexang_renormalizes_without_kind():
+    """内部 canonical（无 kind、grant_action=协饷）二次归一仍通；生成旁路另闸。"""
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+
+    raw = _army_pay_grant_option(grant_action="协饷")
+    raw.pop("grant_kind", None)
+    opt = normalize_rescript_layer_a_option(raw)
+    assert opt["grant_action"] == "协饷"
+    assert opt["purpose"] == "补饷"
+    assert opt["account"] == "国库"
 
 
 def test_657_s1_list_rescript_desk_merges_cross_month_and_decisions(game):

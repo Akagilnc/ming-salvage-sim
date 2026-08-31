@@ -11,7 +11,7 @@ export function DecisionRecoveryPanel({
 }) {
   return (
     <div className="recovery-banner decision-recovery-banner" role="alert" aria-live="assertive">
-      <span>{message}</span>
+      <span className="recovery-banner-message">{message}</span>
       <button type="button" className="seal-btn-issue" onClick={onRetry} disabled={!!busy}>
         重新拉取待批决策
       </button>

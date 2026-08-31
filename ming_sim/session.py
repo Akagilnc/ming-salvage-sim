@@ -3316,7 +3316,10 @@ class GameSession:
             options_raw = data.get("options")
             if not isinstance(options_raw, list) or not options_raw:
                 raise ValueError("改票 LLM 未产出非空 options")
-            options = [normalize_rescript_layer_a_option(opt) for opt in options_raw]
+            options = [
+                normalize_rescript_layer_a_option(opt, generation_admission=True)
+                for opt in options_raw
+            ]
             _assert_army_targets_grounded(
                 [{"options": options}], {str(row["id"]) for row in army_targets},
             )

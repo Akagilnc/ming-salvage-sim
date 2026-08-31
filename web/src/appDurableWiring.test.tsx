@@ -1190,6 +1190,48 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     expect(resume2!.disabled).toBe(false);
   });
 
+  it("#1620 settling recovery：真实按钮 click → POST /api/decree/issue/stream", async () => {
+    // 契约：recovery banner 按钮进入生产 handler，发出恢复 POST。
+    // ready 分型由后端 settlement_recovery.ready_replay 承重；不锁 button/message 措辞。
+    const paths: string[] = [];
+    const liveState = settlementBaseState("settling", {
+      settlement_recovery: {
+        ready_replay: true,
+        error_pack_path: "/tmp/error_packs/turn5_attempt1",
+        message: "abort-guidance",
+      },
+    });
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = new URL(String(url), "http://t.local");
+      paths.push(`${init?.method || "GET"} ${u.pathname}`);
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) return jsonResp(liveState);
+      if (u.pathname.endsWith("/api/history/turns")) return jsonResp({
+        turns: [{ kind: "month", turn: 4, year: 1627, period: 9, has_report: true, has_attendant: false, has_directive: true }],
+      });
+      if (u.pathname.includes("/api/history/turn/")) return jsonResp({
+        turn: 4, year: 1627, period: 9, report: SNAP_GAZETTE, decree: "",
+      });
+      if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
+      if (u.pathname.endsWith("/api/decree/issue/stream")) {
+        return sseResp("done", { ok: true });
+      }
+      return jsonResp({});
+    }));
+    const host = await mountApp();
+    const resume = host.querySelector('[data-testid="settle-resume"] button') as HTMLButtonElement | null;
+    expect(resume).not.toBeNull();
+    expect(resume!.disabled).toBe(false);
+    await click(resume);
+    await act(async () => {
+      await vi.waitFor(() =>
+        expect(paths.some((path) => path === "POST /api/decree/issue/stream")).toBe(true),
+      );
+    });
+  });
+
   it("awaiting_decision + 合法 pending：DecisionModal 可点；刷新重挂后仍在", async () => {
     stubSettlementFetch(settlementBaseState("awaiting_decision", {
       pending_decisions: [validDecision],
