@@ -19,7 +19,7 @@
   grid-template-columns: minmax(0, 1.15fr) minmax(280px, 0.85fr);
   gap: clamp(14px, 2.5vw, 32px);
   min-height: 0;
-  flex: 1;
+  flex: 1 1 0;
   overflow-y: auto;
 }
 
@@ -164,7 +164,8 @@
 }
 
 .desk-compose textarea {
-  flex: 1;
+  flex: 1 1 auto;
+  min-height: 94px;
   line-height: 1.6;
   font-family: "Noto Serif SC", "Songti SC", serif;
 }
@@ -192,6 +193,7 @@
 
 .desk-footer {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: flex-end;
   gap: 14px;
