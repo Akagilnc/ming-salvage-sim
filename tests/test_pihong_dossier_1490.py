@@ -3162,7 +3162,7 @@ def test_1620_follow_draft_office_token_does_not_enter_roster(game):
 
 
 def test_1620_http_follow_draft_office_token_routes_to_person(web_game, monkeypatch):
-    """#1620 A：真 HTTP follow 职司 token → 真人 executor；token 不入 roster。"""
+    """#1620 A：真 HTTP follow 职司 token → 真人 executor；真 phase2 可推月。"""
     from ming_sim.models import TurnPhase
 
     db, state = web_game.db, web_game.state
@@ -3171,59 +3171,56 @@ def test_1620_http_follow_draft_office_token_routes_to_person(web_game, monkeypa
         "WHERE status='active' AND power_id='ming' AND office_type='户部'"
     )
     db.conn.commit()
-    tokens = ("陕西巡抚", "户部尚书", "户部")
+    # 代表链最短单 token；routing 已有 domain 测覆盖多职司
+    token = "陕西巡抚"
+    # 只中和 phase2 LLM 边界；保留真结算/推月（同 s5/1621）
+    _657_install_real_phase2_llm_boundary(monkeypatch)
 
-    def _phase2(_state, _db, *_a, **_k):
-        return "邸报：职司已落。"
-
-    monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _phase2)
-
-    for token in tokens:
-        # phase2/refresh 可能换 state 对象——每轮从 session 重取真源（同 s10）
-        state = web_game.session.state
-        db = web_game.db
-        db.conn.execute("DELETE FROM pending_decisions")
-        db.conn.commit()
-        opt = _layer_a_option(
-            label=f"责成{token}",
-            assignee_name=token,
-            transaction_category="督赈",
-        )
-        urgent, _ = _plant_urgent_desk(
-            db, state, options=[opt, _layer_a_option(label="备")],
-        )
-        db.save_resolve_context(
-            int(state.turn), "诏", "邸报",
-            {"candidate_events": [], "transit_semantics": []},
-            secret_orders=[], relevant_memories=[],
-        )
-        state.turn_phase = TurnPhase.AWAITING_DECISION.value
-        db.save_state(state)
-        before = len(db.list_decree_dossiers())
-        # 浏览器同形精简 follow：无 assignee overlay
-        r = asyncio.run(_post_resolve([{
-            "decision_key": urgent["decision_key"],
-            "action": "follow_draft",
-            "draft_capability": opt["draft_capability"],
-            "label": opt["label"],
-        }]))
-        assert r.status_code == 200, r.text
-        assert "event: error" not in r.text, r.text
-        assert "event: done" in r.text, r.text
-        after = db.list_decree_dossiers()
-        assert len(after) == before + 1, token
-        created = after[-1]
-        executor = str(created.get("executor_id") or "")
-        assert executor, f"{token}: 须落到真实人物 executor"
-        assert token not in executor, f"{token} 不得作 executor"
-        roster = created.get("participant_roster") or []
-        ids = [
-            str(e.get("character_id") or "")
-            for e in roster if isinstance(e, dict)
-        ]
-        assert token not in ids, f"{token} 不得入 roster：{ids}"
-        payload = json.loads(str(created.get("payload_json") or "{}"))
-        assert token not in str(payload.get("assignee_id") or "")
+    db.conn.execute("DELETE FROM pending_decisions")
+    db.conn.commit()
+    opt = _layer_a_option(
+        label=f"责成{token}",
+        assignee_name=token,
+        transaction_category="督赈",
+    )
+    urgent, _ = _plant_urgent_desk(
+        db, state, options=[opt, _layer_a_option(label="备")],
+    )
+    db.save_resolve_context(
+        int(state.turn), "诏", "邸报",
+        {"candidate_events": [], "transit_semantics": []},
+        secret_orders=[], relevant_memories=[],
+    )
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
+    before = len(db.list_decree_dossiers())
+    turn_before = int(web_game.state.turn)
+    # 浏览器同形精简 follow：无 assignee overlay
+    r = asyncio.run(_post_resolve([{
+        "decision_key": urgent["decision_key"],
+        "action": "follow_draft",
+        "draft_capability": opt["draft_capability"],
+        "label": opt["label"],
+    }]))
+    assert r.status_code == 200, r.text
+    assert "event: error" not in r.text, r.text
+    assert "event: done" in r.text, r.text
+    after = db.list_decree_dossiers()
+    assert len(after) == before + 1, token
+    created = after[-1]
+    executor = str(created.get("executor_id") or "")
+    assert executor, f"{token}: 须落到真实人物 executor"
+    assert token not in executor, f"{token} 不得作 executor"
+    roster = created.get("participant_roster") or []
+    ids = [
+        str(e.get("character_id") or "")
+        for e in roster if isinstance(e, dict)
+    ]
+    assert token not in ids, f"{token} 不得入 roster：{ids}"
+    payload = json.loads(str(created.get("payload_json") or "{}"))
+    assert token not in str(payload.get("assignee_id") or "")
+    # 真 phase2 契约：消费成功且月可推
+    assert int(web_game.state.turn) == turn_before + 1
 
 
 def test_1620_http_follow_draft_grant_uses_stored_amount(web_game, monkeypatch):
@@ -3331,6 +3328,62 @@ def test_1620_layer_a_money_grant_requires_positive_amount():
         **base, "grant_action": "加衔", "label": "加衔",
     })
     assert honor.get("grant_action") == "加衔"
+
+
+def test_1620_materialize_rejects_illegal_account_like_shape(game):
+    """#1620：materialize 入口与 shape 同拒非法 account（禁静默落国库）。"""
+    import types
+
+    from ming_sim.action_materialize import (
+        MaterializeCtx,
+        require_grant_allocation_shape,
+        resolve_grant_account,
+        run_materialize_pipeline,
+    )
+
+    with pytest.raises(ValueError, match="account"):
+        resolve_grant_account(grant_action="赏赉", account="私库")
+    with pytest.raises(ValueError, match="account"):
+        require_grant_allocation_shape(
+            grant_action="赏赉", amount=10, account="私库",
+        )
+
+    db, state, _content = game
+    actor = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
+    ).fetchone()["name"]
+    target = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' "
+        "AND name!=? LIMIT 1",
+        (actor,),
+    ).fetchone()["name"]
+    # 直设 intent 绕过 classifier enum；契约落在 materialize 入口同拒
+    intent = {
+        "kind": "grant_allocation",
+        "grant_action": "赏赉",
+        "amount": 10,
+        "account": "私库",
+        "name": target,
+    }
+    ctx = MaterializeCtx(
+        session=types.SimpleNamespace(
+            db=db, state=types.SimpleNamespace(turn=int(state.turn)),
+        ),
+        character=types.SimpleNamespace(name=actor, office_type="文官"),
+        player_message="赏银。",
+        reply="臣请奉行：赏银。请陛下定夺准驳。",
+        message_text="赏银。",
+        explicit_prefixed=False,
+        has_directive=False,
+        pend_for_minister=[],
+        out={},
+        intent=intent,
+        intent_kind="grant_allocation",
+        llm_config=None,
+        intent_candidates=None,
+    )
+    with pytest.raises(ValueError, match="account"):
+        run_materialize_pipeline(ctx)
 
 
 def test_657_follow_draft_ignores_client_field_overlay(game):
