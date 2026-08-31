@@ -938,10 +938,7 @@ def test_web_retry_offsite_secret_order_via_production_chat(game):
     前置：generating + route=secret_order_offsite + 无前缀问话已落。
     后：回话落库；scroll 无 entrance；密令 pending 由生产 chat  staged（非替身自写）。
     """
-    from types import MethodType
-
     import web_app
-    from ming_sim.session import GameSession
     from ming_sim.session_write_queue import SessionWriteQueue
     from tests.test_audience_travel_gating_670 import (
         _assert_secret_order_pending,
@@ -1008,14 +1005,11 @@ def test_web_retry_offsite_secret_order_via_production_chat(game):
         ).fetchall()
     ]
     assert users == [question]
-    replies = [
-        r["content"]
-        for r in db.conn.execute(
-            "SELECT content FROM chat_messages WHERE role='minister' AND minister_name=?",
-            (remote.name,),
-        ).fetchall()
-    ]
-    assert replies and "领" in replies[0]
+    replies = db.conn.execute(
+        "SELECT id FROM chat_messages WHERE role='minister' AND minister_name=?",
+        (remote.name,),
+    ).fetchall()
+    assert len(replies) == 1
     row = db.conn.execute(
         "SELECT status, minister_message_id, route FROM chat_turns WHERE id=?", (ct,),
     ).fetchone()

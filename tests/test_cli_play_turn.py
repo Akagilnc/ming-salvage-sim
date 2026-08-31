@@ -650,7 +650,7 @@ def test_terminal_minister_chat_retry_reply_command_skips_offsite_entrance(game,
     """
     from types import MethodType
 
-    from ming_sim.session import ChatTurnResult, GameSession
+    from ming_sim.session import GameSession
 
     db, state, content = game
     character = next(c for c in content.characters.values() if c.status == "active")
@@ -666,7 +666,6 @@ def test_terminal_minister_chat_retry_reply_command_skips_offsite_entrance(game,
     db.update_chat_turn_messages(ct, user_message_id=mid)
     db.conn.execute("UPDATE chat_turns SET status='interrupted' WHERE id=?", (ct,))
     db.conn.commit()
-    ledger_before = an.list_ledger(db, night_id)
 
     answers = iter(["重试回话", "done"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
