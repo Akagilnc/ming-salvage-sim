@@ -72,21 +72,7 @@ export function App() {
   const [ministerGroup, setMinisterGroup] = React.useState("内阁+六部");
   const [haremGroup, setHaremGroup] = React.useState("全部");
   const [selectedMinister, setSelectedMinister] = React.useState<string>("");
-  const [activeModal, setActiveModalState] = React.useState<ModalName>("none");
-  // #1566：composer owner token——null=无存活面；非 null object=当前 session 身份。
-  // 关→重开铸造新 token，旧 onError 捕获的 owner 引用不相等，不得回填 intent。
-  // 唯一 setActiveModal 写入口：只看目标 modal + 当前 owner，不读 React prev。
-  const chatComposerOwnerRef = React.useRef<object | null>(null);
-  const setActiveModal = React.useCallback((modal: ModalName) => {
-    if (modal === "chat") {
-      if (chatComposerOwnerRef.current === null) {
-        chatComposerOwnerRef.current = {};
-      }
-    } else {
-      chatComposerOwnerRef.current = null;
-    }
-    setActiveModalState(modal);
-  }, []);
+  const [activeModal, setActiveModal] = React.useState<ModalName>("none");
   const [decree, setDecree] = React.useState("");
   const [report, setReport] = React.useState("");
   const [gazetteReport, setGazetteReport] = React.useState("");
@@ -184,7 +170,6 @@ export function App() {
     setError,
     activeModal,
     setActiveModal,
-    chatComposerOwnerRef,
     selectedMinister,
     setSelectedMinister,
     selectedMinisterRef,
