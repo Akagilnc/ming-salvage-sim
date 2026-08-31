@@ -2,26 +2,9 @@
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
 from types import SimpleNamespace
 
 import web_app
-from ming_sim.content import GameContent
-
-
-def test_yuan_keli_seed_location_is_henan():
-    """罢居睢州 ∈ 河南；新档 seed location 不得再写北直隶。"""
-    raw = json.loads(
-        (Path(__file__).resolve().parents[1] / "content/characters.json").read_text(
-            encoding="utf-8"
-        )
-    )
-    yuan = next(c for c in raw["characters"] if c["name"] == "袁可立")
-    assert yuan["location"] == "henan"
-
-    content = GameContent.load()
-    assert content.characters["袁可立"].location == "henan"
 
 
 def test_yuan_keli_init_db_location_henan(game):

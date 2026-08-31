@@ -761,3 +761,61 @@ describe("朝堂同衔分座（#1196 呈现层去冲突）", () => {
     expect(onOpenChat.mock.calls[1][0]).toBe(wen);
   });
 });
+
+describe("#1683 MinisterCardList place ⊥ office DOM", () => {
+  function renderList(list: Minister[]) {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    act(() => {
+      root.render(
+        <MinisterCardList
+          list={list}
+          portraitPrefix="minister_"
+          selectedMinister=""
+          emptyNote="empty"
+          onOpenChat={() => {}}
+          courtMode={false}
+        />
+      );
+    });
+    mountedRoots.push({ root, host });
+    return host;
+  }
+
+  it("shows transit destination and keeps office when transit_to is set", () => {
+    const host = renderList([
+      minister({
+        name: "袁崇焕",
+        office: "辽东巡抚",
+        location: "henan",
+        location_label: "河南",
+        transit_to: "shandong",
+        transit_to_label: "山东",
+      }),
+    ]);
+
+    const transit = host.querySelector(".minister-place.minister-transit");
+    expect(transit).not.toBeNull();
+    expect(transit!.textContent).toBe("山东");
+    expect(host.querySelectorAll(".minister-place")).toHaveLength(1);
+    expect(host.querySelector(".minister-office")?.textContent).toBe("辽东巡抚");
+  });
+
+  it("shows location and keeps office when only location is set", () => {
+    const host = renderList([
+      minister({
+        name: "袁可立",
+        office: "兵部右侍郎",
+        location: "henan",
+        location_label: "河南",
+      }),
+    ]);
+
+    const place = host.querySelector(".minister-place");
+    expect(place).not.toBeNull();
+    expect(place!.classList.contains("minister-transit")).toBe(false);
+    expect(place!.textContent).toBe("河南");
+    expect(host.querySelector(".minister-office")?.textContent).toBe("兵部右侍郎");
+  });
+});
