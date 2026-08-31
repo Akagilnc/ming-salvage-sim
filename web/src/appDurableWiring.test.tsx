@@ -1014,11 +1014,20 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     expect((host2.querySelector('[data-testid="decision-recovery"] button') as HTMLButtonElement).disabled).toBe(false);
   });
 
-  it("#1620 落印 SSE error 挂 decision-recovery", async () => {
+  it("#1620 落印 SSE error 同页保留 picks + typed alert + 可再落印", async () => {
+    const d1 = {
+      idx: 0, title: "疏一", context: "c1",
+      options: [{ label: "甲策", hint: "h1" }, { label: "乙策", hint: "h2" }],
+    };
+    const d2 = {
+      idx: 1, title: "疏二", context: "c2",
+      options: [{ label: "丙策", hint: "h3" }],
+    };
     const state = settlementBaseState("awaiting_decision", {
-      pending_decisions: [validDecision],
+      pending_decisions: [d1, d2],
     });
-    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+    let resolveCalls = 0;
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       const u = new URL(String(url), "http://t.local");
       if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
@@ -1032,25 +1041,54 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       });
       if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
       if (u.pathname.endsWith("/api/decree/resolve_decisions/stream")) {
+        resolveCalls += 1;
+        void init;
         return sseResp("error", { message: "stream-fail" });
       }
       return jsonResp({});
-    }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
     const host = await mountApp();
     await act(async () => {
       await vi.waitFor(() => expect(host.querySelector('[data-testid="decision-modal"]')).not.toBeNull());
     });
-    const option = Array.from(host.querySelectorAll("button")).find((b) =>
-      (b.textContent || "").includes("固守"),
-    ) as HTMLButtonElement | undefined;
-    expect(option).toBeTruthy();
-    await click(option);
-    const seal = host.querySelector('[aria-label="批红落印，续推时局"]') as HTMLButtonElement | null;
-    expect(seal).not.toBeNull();
-    await click(seal);
+    const pickByLabel = (label: string) =>
+      Array.from(host.querySelectorAll("button")).find((b) =>
+        (b.textContent || "").includes(label),
+      ) as HTMLButtonElement | undefined;
+    await click(pickByLabel("甲策"));
+    expect(host.querySelector(".decision-option.is-picked")?.textContent || "").toContain("甲策");
+    await click(host.querySelector('[aria-label="批下一疏"]'));
     await act(async () => {
-      await vi.waitFor(() => expect(host.querySelector('[data-testid="decision-recovery"]')).not.toBeNull());
+      await vi.waitFor(() => expect(host.textContent || "").toContain("疏二"));
     });
+    await click(pickByLabel("丙策"));
+    const seal = () => host.querySelector('[aria-label="批红落印，续推时局"]') as HTMLButtonElement | null;
+    expect(seal()).not.toBeNull();
+    expect(seal()!.disabled).toBe(false);
+    await click(seal());
+    await act(async () => {
+      await vi.waitFor(() => {
+        // 同页 typed alert（结构化 role=alert）；不锁自由文案措辞模板以外的特征
+        const alert = host.querySelector('[data-testid="decision-stream-alert"]');
+        expect(alert).not.toBeNull();
+        expect(alert!.textContent || "").toContain("stream-fail");
+        expect(host.querySelector('[role="alert"]')).not.toBeNull();
+      });
+    });
+    // modal 不卸载；已选批语仍在；可再落印
+    expect(host.querySelector('[data-testid="decision-modal"]')).not.toBeNull();
+    expect(host.querySelector(".decision-option.is-picked")?.textContent || "").toContain("丙策");
+    expect(seal()).not.toBeNull();
+    expect(seal()!.disabled).toBe(false);
+    expect(resolveCalls).toBe(1);
+    await click(seal());
+    await act(async () => {
+      await vi.waitFor(() => expect(resolveCalls).toBe(2));
+    });
+    // refresh 后 stream 错不被空串冲掉
+    expect(host.querySelector('[data-testid="decision-stream-alert"]')?.textContent || "").toContain("stream-fail");
+    expect(host.querySelector('[data-testid="decision-recovery"]')).not.toBeNull();
   });
 
   it("#1700 phase-1 SSE error → loadState 挂 settle-resume", async () => {

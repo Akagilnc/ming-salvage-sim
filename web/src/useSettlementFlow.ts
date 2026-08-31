@@ -168,9 +168,8 @@ export function useSettlementFlow({
   // 皇帝亲裁完所有决策点 / phase2 续跑：走 resolve_decisions/stream。
   // choices 按决策点 idx 顺序；all-decided 续跑可传 []——服务端幂等保留已存 choice。
   // dossier 批红 choice 须带回 dossier_id / dossier_decision（#1490）；勿收窄剥字段。
+  // #1620：成功前不清 pendingDecisions——失败时 DecisionModal 不卸载，已选批语自然保留。
   const submitDecisions = async (choices: DecisionChoice[]) => {
-    setPendingDecisions([]);
-    setDecisionFailures([]);
     setBusy("月末结算");
     setSettleStage("圣意亲裁，续推时局");
     setSettleThinking("");
@@ -185,8 +184,8 @@ export function useSettlementFlow({
       });
       const outcome = await consumeSettle(response);
       if (outcome.kind === "error") {
-        // #1418 r2：同会话 phase2 失败后 loadState，使 settle-resume 续跑面可挂上
-        // （pending=[] 且 error 横幅被清时仍有 affordance）。
+        // #1418 r2：同会话 phase2 失败后 loadState，使 settle-resume 续跑面可挂上。
+        // #1620：loadState 刷新合法 pending 时 route 不碰 stream error；pending 保留 → picks 仍在。
         await loadState();
         const msg = typeof outcome.data === "string" ? outcome.data : (outcome.data.message || "结算失败。");
         if (await surfacePendingActionFailures(outcome.data?.pending_action_failures || [])) {
@@ -199,6 +198,10 @@ export function useSettlementFlow({
         setBusy("");
         return;
       }
+      // 成功：清空案头态再 reload（整页刷新仍是月完成权威入口）。
+      setPendingDecisions([]);
+      setDecisionFailures([]);
+      setPausedDecisionError("");
       await forwardSteamEvents(outcome.data);
       if (await surfacePendingActionFailures(outcome.data?.pending_action_failures || [])) {
         return;
