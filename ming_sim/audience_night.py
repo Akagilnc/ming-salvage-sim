@@ -407,6 +407,18 @@ def list_ledger(db: Any, night_id: int) -> List[Dict[str, Any]]:
     return out
 
 
+# #1566：chat_turns.route 闭集唯一真源（encode/decode/normalize 共用，禁平行闭集）。
+CHAT_TURN_ROUTES = frozenset({"", "secret_order", "secret_order_offsite"})
+
+
+def normalize_chat_turn_route(route: object) -> str:
+    """#1566：route 闭集校验。'' 合法；未知非空响亮失败（禁静默洗成普通 route）。"""
+    value = str(route or "").strip()
+    if value not in CHAT_TURN_ROUTES:
+        raise ValueError(f"unsupported chat_turn route: {value!r}")
+    return value
+
+
 def encode_chat_turn_route(*, explicit_secret_order: bool, offsite: bool = False) -> str:
     """#1566：创建 chat_turns.route 的权威编码（'' / secret_order / secret_order_offsite）。"""
     if not explicit_secret_order:
@@ -418,9 +430,9 @@ def decode_chat_turn_route(route: object) -> Dict[str, bool]:
     """#1566：中断重试消费 chat_turns.route 的权威解码。
 
     返回 {explicit_secret_order, start_hall_scene}；Web/CLI 重试只消费此结果，
-    禁止各端自造 if-else 分叉。
+    禁止各端自造 if-else 分叉。未知非空经 normalize 响亮失败。
     """
-    value = str(route or "").strip()
+    value = normalize_chat_turn_route(route)
     if value == "secret_order_offsite":
         return {"explicit_secret_order": True, "start_hall_scene": False}
     if value == "secret_order":

@@ -9525,10 +9525,9 @@ class GameDB:
             initial_status = "generating" if int(night_id or 0) else "active"
         if initial_status not in {"active", "generating", "failed", "undone", "consumed"}:
             raise ValueError(f"unsupported chat_turn status: {initial_status!r}")
-        # #1566：route 闭集（'' / secret_order / secret_order_offsite）；未知值降为 ''。
-        route_value = str(route or "").strip()
-        if route_value not in {"", "secret_order", "secret_order_offsite"}:
-            route_value = ""
+        # #1566：route 闭集唯一真源 = audience_night.normalize_chat_turn_route（未知非空响亮失败）。
+        from ming_sim.audience_night import normalize_chat_turn_route
+        route_value = normalize_chat_turn_route(route)
         nid = int(night_id or 0)
         seq = int(night_seq) if night_seq is not None else (
             self.allocate_night_seq(nid) if nid > 0 else 0

@@ -7,6 +7,7 @@ play_turn 状态机搬入此处；GameSession 持游戏状态，terminal 只做 
 from __future__ import annotations
 
 import logging
+import inspect
 import re
 import threading
 from typing import List, Optional
@@ -465,6 +466,50 @@ def _print_interrupted_reply_retry_hint(session: GameSession, minister_name: str
     )
 
 
+
+def _call_session_chat(
+    session: "GameSession",
+    minister_name: str,
+    question: str,
+    *,
+    chat_turn_id: int = 0,
+    explicit_secret_order: bool = False,
+):
+    """#1566：调用前按签名选择 kwargs（与 Web retry 同形）。
+
+    只认 inspect.signature.bind 判定；禁 except TypeError 回退——那会把 chat 函数体
+    内部真实 TypeError 误判为「不支持参数」并二次调用、洗掉真因。
+    """
+    chat = session.chat
+    try:
+        signature = inspect.signature(chat)
+    except (TypeError, ValueError):
+        # 不可检签名：按生产契约直调（含 explicit_secret_order）。
+        if chat_turn_id:
+            return chat(
+                minister_name, question, chat_turn_id=chat_turn_id,
+                explicit_secret_order=explicit_secret_order,
+            )
+        return chat(minister_name, question)
+    if chat_turn_id:
+        try:
+            signature.bind(
+                minister_name, question, chat_turn_id=chat_turn_id,
+                explicit_secret_order=explicit_secret_order,
+            )
+        except TypeError:
+            try:
+                signature.bind(minister_name, question, chat_turn_id=chat_turn_id)
+            except TypeError:
+                return chat(minister_name, question)
+            return chat(minister_name, question, chat_turn_id=chat_turn_id)
+        return chat(
+            minister_name, question, chat_turn_id=chat_turn_id,
+            explicit_secret_order=explicit_secret_order,
+        )
+    return chat(minister_name, question)
+
+
 def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> None:
     """#505 CLI：复用已持久问话重新生成回话（与 web retry 同核语义：不重记问话）。"""
     db = getattr(session, "db", None)
@@ -494,13 +539,11 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> No
     try:
         if retry_route["start_hall_scene"]:
             session.start_chat_turn_scene(minister_name, chat_turn_id)
-        try:
-            result = session.chat(
-                minister_name, question, chat_turn_id=chat_turn_id,
-                explicit_secret_order=retry_route["explicit_secret_order"],
-            )
-        except TypeError:
-            result = session.chat(minister_name, question, chat_turn_id=chat_turn_id)
+        result = _call_session_chat(
+            session, minister_name, question,
+            chat_turn_id=chat_turn_id,
+            explicit_secret_order=retry_route["explicit_secret_order"],
+        )
         answer = str(getattr(result, "answer", "") or "")
         if hasattr(db, "persist_minister_reply"):
             scene_generated = session.join_chat_turn_scene(chat_turn_id)
@@ -730,18 +773,11 @@ def minister_chat(session: GameSession, character: Character) -> str:
                     )
             # #634：判官拍先于回话派发（与回话生成并行，TD-9）。
             _dispatch_relation_judge_cli(session, chat_turn_id)
-            if chat_turn_id:
-                try:
-                    result = session.chat(
-                        character.name, question, chat_turn_id=chat_turn_id,
-                        explicit_secret_order=cli_explicit_secret,
-                    )
-                except TypeError:
-                    result = session.chat(
-                        character.name, question, chat_turn_id=chat_turn_id,
-                    )
-            else:
-                result = session.chat(character.name, question)
+            result = _call_session_chat(
+                session, character.name, question,
+                chat_turn_id=chat_turn_id,
+                explicit_secret_order=cli_explicit_secret,
+            )
             if persistent_chat:
                 if (chat_turn_id and hasattr(session.db, "persist_minister_reply")
                         and hasattr(session, "join_chat_turn_scene")):
