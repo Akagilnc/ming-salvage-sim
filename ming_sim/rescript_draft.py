@@ -152,11 +152,13 @@ def normalize_rescript_layer_a_option(raw: object) -> Dict[str, object]:
             except (TypeError, ValueError) as exc:
                 raise ValueError(f"票拟 option.{key} 非法：{raw[key]!r}") from exc
     # #1620：grant 金额/account 走 require_grant_allocation_shape 唯一权威（与 mapper 同缝），
-    # 禁残缺 option 上桌；层 A 只校验不回写默认 account，免 draft_capability 漂移。
+    # 禁残缺 option 上桌；空 account 不回写默认，免 draft_capability 漂移；
+    # 非空 account 回写 shape 返回的 canonical（太仓→国库），与显式国库同 capability。
     # amount 传 raw 原值；用返回值写 out["amount"]（honorific 无则不写）。
     if action_type == "grant_allocation":
         from ming_sim.action_materialize import require_grant_allocation_shape
 
+        input_account = str(out.get("account") or "").strip()
         shaped = require_grant_allocation_shape(
             grant_action=out.get("grant_action"),
             amount=raw.get("amount") if "amount" in raw else None,
@@ -164,6 +166,8 @@ def normalize_rescript_layer_a_option(raw: object) -> Dict[str, object]:
         )
         if "amount" in shaped:
             out["amount"] = shaped["amount"]
+        if input_account:
+            out["account"] = shaped["account"]
     out["draft_capability"] = derive_draft_capability(out)
     return out
 

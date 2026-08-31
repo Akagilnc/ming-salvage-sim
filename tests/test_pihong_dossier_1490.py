@@ -3274,6 +3274,19 @@ def test_1620_layer_a_money_grant_requires_positive_amount():
         normalize_rescript_layer_a_option({**base, "amount": 1.5})
     ok = normalize_rescript_layer_a_option({**base, "amount": 10})
     assert int(ok["amount"]) == 10
+    # 空 account 保持空——不回写 shape 默认国库
+    assert str(ok.get("account") or "") == ""
+    # 太仓持久化为国库，与显式国库同一 draft_capability
+    taicang = normalize_rescript_layer_a_option({
+        **base, "amount": 10, "account": "太仓",
+    })
+    guoku = normalize_rescript_layer_a_option({
+        **base, "amount": 10, "account": "国库",
+    })
+    assert str(taicang.get("account") or "") == "国库"
+    assert str(guoku.get("account") or "") == "国库"
+    assert taicang["draft_capability"] == guoku["draft_capability"]
+    assert taicang["draft_capability"] != ok["draft_capability"]
     # 加衔不要求 amount
     honor = normalize_rescript_layer_a_option({
         **base, "grant_action": "加衔", "label": "加衔",
