@@ -939,6 +939,53 @@ def test_batch_locality_heal_preserves_valid_sibling(
     assert "entries" not in result["drafts"][3]
 
 
+def test_batch_grant_omitted_locality_derives_from_target_kind(game, monkeypatch):
+    """#1685: prompt-conforming grant omits 施行范围; assembly derives region→single."""
+    import ming_sim.cli_backend as cb
+    from ming_sim.execution_pressure import normalize_locality_scope
+
+    db, _state, content = game
+    calls = {"n": 0}
+    # Shape from test_batch_draft_extraction_preserves_each_mechanical_payload:
+    # grant uses ACTION_CLUSTERS fields only — no 施行范围.
+    grant = {
+        "正文": "拨国库银一万两赈陕",
+        "动作类型": "grant_allocation",
+        "目标类型": "region",
+        "目标": "shaanxi",
+        "金额": 10000,
+        "账户": "国库",
+        "执行面": "in_transit",
+        "颁布方式": "ordinary",
+    }
+    sibling = {
+        "正文": "着户部办理河南事务。",
+        "动作类型": "policy",
+        "目标类型": "region",
+        "目标ID": "henan",
+        "颁布方式": "普通",
+        "施行范围": "单省",
+        "参与人": [],
+    }
+
+    def backend(_prompt, llm_config=None, tag=""):
+        assert tag == "draft_intent"
+        calls["n"] += 1
+        # Keep omitting 施行范围 even if heal would re-prompt.
+        return json.dumps({"成品旨稿": [grant, sibling]}, ensure_ascii=False), 1
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", backend)
+    result = cb.extract_draft_intent_with_semantic_heal(
+        "分别拟两道旨。", "臣已拟妥。",
+        db=db, content=content, draft_count=2,
+    )
+
+    assert calls["n"] == 1
+    assert result["drafts"][0]["dossier_action_type"] == "grant_allocation"
+    assert normalize_locality_scope(result["drafts"][0]["locality_scope"]) == "single"
+    assert result["drafts"][1]["locality_scope"] == "单省"
+
+
 def test_materialize_locality_exhaustion_rejects_only_draft(game, monkeypatch):
     """召对属地纠错耗尽只拒草案；该轮结构化结果仍正常返回。"""
     import ming_sim.cli_backend as cb

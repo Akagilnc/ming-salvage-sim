@@ -52,6 +52,7 @@ from pydantic import BaseModel
 from ming_sim.models import CODEX_DEFAULT_MODEL, CLAUDE_DEFAULT_MODEL, LLMConfig
 from ming_sim.constants import DOSSIER_LINK_TYPES
 from ming_sim.decree_vocabulary import DIRECTIVE_ACTION_TYPES
+from ming_sim.execution_pressure import write_locality_scope_for_target_kind
 from ming_sim.participant_roster import (
     BARE_INSTITUTION_PARTICIPANT_NAMES as _BARE_INSTITUTION_PARTICIPANT_NAMES,
     INSTITUTION_PARTICIPANT_TOKENS as _ASSIGNEE_HINT_INSTITUTION_TOKENS,
@@ -2446,7 +2447,16 @@ def extract_draft_intent(
                     (key, item) for key, item in projected.items()
                     if key != "target_kind"
                 )
-            mechanical["locality_scope"] = _coerce_draft_locality_scope(value.get("施行范围"))
+            # #1685：grant ACTION_CLUSTERS 无施行范围；省略时由 target_kind 派生，禁默认成「无」。
+            _raw_scope = value.get("施行范围")
+            if action == "grant_allocation" and (
+                _raw_scope is None or str(_raw_scope).strip() == ""
+            ):
+                mechanical["locality_scope"] = write_locality_scope_for_target_kind(
+                    target_kind,
+                )
+            else:
+                mechanical["locality_scope"] = _coerce_draft_locality_scope(_raw_scope)
             # grant 缺 target_kind 留给其 canonical admission 聚合报错；其它动作在此闭集校验。
             if action != "grant_allocation":
                 target_kind = _coerce_draft_target_kind(target_kind)
@@ -2661,11 +2671,19 @@ def extract_draft_intent(
     mode = _directive_mode(
         _projected.get("mode") if dossier_action == "grant_allocation" else obj.get("颁布方式")
     )
+    # #1685：grant ACTION_CLUSTERS 无施行范围；省略时由 target_kind 派生，禁默认成「无」。
+    _raw_scope = obj.get("施行范围")
+    if dossier_action == "grant_allocation" and (
+        _raw_scope is None or str(_raw_scope).strip() == ""
+    ):
+        _locality_scope = write_locality_scope_for_target_kind(target_kind)
+    else:
+        _locality_scope = _coerce_draft_locality_scope(_raw_scope)
     mechanical = {
         "execution_surface": obj.get("执行面"),
         "assignee": obj.get("承办人"),
         "deadline_months": obj.get("期限月数"),
-        "locality_scope": _coerce_draft_locality_scope(obj.get("施行范围")),
+        "locality_scope": _locality_scope,
     }
     # #653：pay_order_override 结构化载荷随 capture 整道转交（禁旁路）。
     # #1685：非 pay 空 entries 与省略同批旨规范化——不落键，避免 None vs [] 假漂移。
