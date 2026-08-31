@@ -151,6 +151,32 @@ def test_manual_directive_participant_first_preserves_recovered_locality(game, m
     assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0] == 0
 
 
+def test_manual_directive_empty_entries_locality_only_heal_does_not_drift(game, monkeypatch):
+    """#1685: omitted entries vs locality-only [] must not exhaust heal."""
+    import ming_sim.cli_backend as cli_backend
+
+    db, _state, content = game
+    calls = []
+    first = _extracted("无")
+    second = _extracted("单省")
+    second["entries"] = []
+
+    def backend(*_args, **_kwargs):
+        calls.append(1)
+        reply = first if len(calls) == 1 else second
+        return json.dumps(reply, ensure_ascii=False), 1
+
+    monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
+    payload = cli_backend.capture_manual_directive_payload(
+        "着办理陕西事务。", None, db=db, content=content,
+    )
+
+    assert len(calls) == 2
+    assert payload["locality_scope"] == "单省"
+    assert db.conn.execute("SELECT COUNT(*) FROM turn_directives").fetchone()[0] == 0
+    assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0] == 0
+
+
 def test_manual_directive_locality_rejects_non_locality_drift(game, monkeypatch):
     import ming_sim.cli_backend as cli_backend
 
