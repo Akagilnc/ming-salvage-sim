@@ -285,7 +285,7 @@ export function MinisterCardList({
           // #1402：offstage 卡主体不可召对；起复走卡内拟诏入口。
           if (isOffstage) {
             return (
-              <div key={minister.name} className={className}>
+              <div key={minister.name} className={className} data-minister-status={minister.status}>
                 {cardBody(minister, ousted, true)}
               </div>
             );
@@ -294,6 +294,7 @@ export function MinisterCardList({
             <button key={minister.name}
               type="button"
               className={className}
+              data-minister-status={minister.status}
               disabled={!chatEntryEnabled}
               aria-disabled={!chatEntryEnabled}
               title={closedTitle}
@@ -327,7 +328,7 @@ export function MinisterCardList({
         // #1402：offstage 卡主体不可召对/拖座；起复走卡内拟诏入口。
         if (isOffstage) {
           return (
-            <div key={minister.name} className={className} style={style}>
+            <div key={minister.name} className={className} style={style} data-minister-status={minister.status}>
               {cardBody(minister, ousted, true)}
             </div>
           );
@@ -338,6 +339,7 @@ export function MinisterCardList({
             type="button"
             className={className}
             style={style}
+            data-minister-status={minister.status}
             onMouseDown={(e) => { if (chatEntryEnabled) onMouseDown(e, minister.name); }}
             disabled={!chatEntryEnabled}
             aria-disabled={!chatEntryEnabled}
@@ -721,6 +723,7 @@ export function CourtDrawer({
             <button
               className={ministerGroup === group ? "active" : ""}
               key={group}
+              data-minister-group={group}
               onClick={() => onGroupChange(group)}
             >
               {group}
