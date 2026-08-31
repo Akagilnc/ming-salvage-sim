@@ -1484,7 +1484,9 @@ class WebGame:
                 )
                 ctx = self.db.get_resolve_context(self.state.turn)
                 ready_replay = ctx is not None and ctx.get("extracted") is not None
-                pack_path = latest_error_pack_for_turn(int(self.state.turn))
+                pack_path = latest_error_pack_for_turn(
+                    self.db.path, int(self.state.turn),
+                )
                 settlement_recovery = {
                     "ready_replay": bool(ready_replay),
                     "error_pack_path": pack_path or "",
