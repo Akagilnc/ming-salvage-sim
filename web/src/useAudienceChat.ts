@@ -9,8 +9,9 @@ import type { ChatIdentity, ChatMessage, ChatResponse, PendingActionFailure, Min
  *
  * - 短暂请求态（待答文 / 流式文 / busy / 取消句柄）：归 requestToken。更新的 send 接手即
  *   旧流尾巴不得改动——只门控这四样。
- * - 历史快照（/chat 加载、回话 done 的整串投影）：归 generation + 当前大臣。send/reset/新
+ * - 历史快照（/chat 加载、回话 done 的整串投影）：归 generation + 当前大臣。send/reset/close/新
  *   load 都推进 generation，陈旧快照（更旧的 GET 迟到）据此丢弃，不抹掉新完成的轮。
+ *   close 推进同一代次，使离面后迟到的非 Abort 失败不得再回调 composer 回填。
  * - 读心事件（持久、turn-identified）：只认当前大臣面板即入 reducer（不按 token/gen）。迟到的
  *   旧流读心仍按归属轮定位插入——绝不因新 send 作废 token 而永久丢失。
  * - 持久后果（草案/密令/换人/退下/loadState 等）：done 载荷到手即由 App 幂等消费（不按 token
@@ -70,18 +71,20 @@ export function useAudienceChat(
     for (const controller of activeAbortsRef.current) controller.abort();
     activeAbortsRef.current.clear();
   }, []);
-  // 历史快照 generation：load / send / reset 都推进；陈旧历史响应据此丢弃。
+  // 历史快照 generation：load / send / reset / close 都推进；陈旧历史响应与失败回填据此丢弃。
   const chatGenRef = React.useRef(0);
   // 读心 poll-batch 归属：一次「面板观察会话」的全部待读心轮轮询共此代次。close / reset /
   // 新接受的历史快照替换旧批（推进代次作废旧批）；**send 不推进**（同面板同待读心轮仍有效，
   // 旧轮读心不该因新一轮发出而停）。给 hook 唯一 poll-batch 归属，避免同大臣重开叠加重复轮询环。
   const pollBatchRef = React.useRef(0);
 
-  // 唯一 chat-exit 归属 effect：面板关闭即取消流观察者 + 作废 poll-batch（selectedMinister 不变也停）。
+  // 唯一 chat-exit 归属 effect：面板关闭即取消流观察者 + 作废 poll-batch/generation
+  // （selectedMinister 不变也停；同代次接缝让离面后的失败回调失去 freshness）。
   React.useEffect(() => {
     if (!chatOpen) {
       abortAll();
       pollBatchRef.current += 1;
+      chatGenRef.current += 1;
     }
   }, [chatOpen, abortAll]);
 
@@ -222,8 +225,11 @@ export function useAudienceChat(
         setPendingUserMessage("");
         setPendingIdentity(null);
         setStreamingMinisterMessage("");
-        if (err instanceof Error && err.name === "AbortError") cb.onLeave?.();
-        else {
+        if (err instanceof Error && err.name === "AbortError") {
+          cb.onLeave?.();
+        } else if (historyFresh()) {
+          // 失败回填只属于发起时仍存活的同一 composer（generation + 面板）；
+          // 关闭/重开已推进 gen，旧非 Abort reject 不得污染新 session。
           if (err instanceof ApiRequestError && err.chatIdentity) setFailedIdentity(err.chatIdentity);
           cb.onError?.(err);
         }
