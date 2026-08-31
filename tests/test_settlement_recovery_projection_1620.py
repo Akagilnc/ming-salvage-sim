@@ -101,6 +101,25 @@ def test_state_payload_settlement_recovery_ready_and_resim(
     # message 有值即证明 abort 指引已挂上；不锁散文措辞
     assert isinstance(recovery.get("message"), str) and recovery["message"]
 
+    # 诊断目录不可遍历：恢复面仍可达，ready 保留，path 缺席（ADR 0008 逃生口）
+    import ming_sim.error_pack as error_pack_mod
+
+    class _BoomRoot:
+        def exists(self):
+            return True
+
+        def iterdir(self):
+            raise OSError("error_packs root not traversable")
+
+    real_root = error_pack_mod.error_packs_root
+    monkeypatch.setattr(error_pack_mod, "error_packs_root", lambda: _BoomRoot())
+    recovery_io = game.state_payload().get("settlement_recovery")
+    assert isinstance(recovery_io, dict)
+    assert recovery_io["ready_replay"] is True
+    assert recovery_io["error_pack_path"] == ""
+    assert isinstance(recovery_io.get("message"), str) and recovery_io["message"]
+    monkeypatch.setattr(error_pack_mod, "error_packs_root", real_root)
+
     clear_for_resimulation(db, turn)
     recovery2 = game.state_payload().get("settlement_recovery")
     assert isinstance(recovery2, dict)

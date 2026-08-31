@@ -1366,7 +1366,7 @@ def _grant_target(intent: Dict[str, Any]) -> Tuple[str, str]:
 
 
 def _resolve_xiexang_army_id(db: Any, raw_target: str) -> str:
-    """#1503：协饷 target 必须解析为真实 army id；region/散文不得静默升格。"""
+    """#1503/#1620：协饷 target → 真实 army id；仅 compact 精确等值，禁模糊升格。"""
     tid = str(raw_target or "").strip()
     if not tid:
         return ""
@@ -1376,8 +1376,8 @@ def _resolve_xiexang_army_id(db: Any, raw_target: str) -> str:
     content = getattr(db, "content", None)
     armies = getattr(content, "armies", None) if content is not None else None
     if armies:
-        from ming_sim.matching import match_army_id_from_text
-        matched = match_army_id_from_text(tid, armies)
+        from ming_sim.matching import canonical_army_id_exact
+        matched = canonical_army_id_exact(tid, armies)
         if matched:
             hit = db.conn.execute(
                 "SELECT id FROM armies WHERE id=?", (matched,),
@@ -1385,6 +1385,17 @@ def _resolve_xiexang_army_id(db: Any, raw_target: str) -> str:
             if hit is not None:
                 return str(hit["id"])
     return ""
+
+
+def canonicalize_xiexang_army_target(db: Any, raw_target: object) -> str:
+    """显式 target → canonical army id；不可解析响亮拒绝（admission/dossier 共用）。"""
+    tid = str(raw_target or "").strip()
+    army_id = _resolve_xiexang_army_id(db, tid)
+    if not army_id:
+        raise ValueError(
+            f"协饷旨意 target 无法解析为军队：{tid!r}（不猜散文）"
+        )
+    return army_id
 
 
 class IncompleteXiexangPayloadError(ValueError):
@@ -1462,11 +1473,7 @@ def require_materializable_xiexang_payload(
     body = str(text or "").strip()
     if not body:
         raise ValueError("协饷旨意缺少正文（不猜散文）")
-    army_id = _resolve_xiexang_army_id(db, str(explicit["target_id"]))
-    if not army_id:
-        raise ValueError(
-            f"协饷旨意 target 无法解析为军队：{explicit['target_id']!r}（不猜散文）"
-        )
+    army_id = canonicalize_xiexang_army_target(db, explicit["target_id"])
     cadence_value = str(cadence or "").strip() or "一次性"
     return {
         **explicit,

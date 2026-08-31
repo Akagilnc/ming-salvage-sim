@@ -825,7 +825,8 @@ def test_manual_directive_admission_real_http_tracer_1591(
             "恩赏拨帑": "协饷",
             "用途": "补饷",
             "目标类型": "army",
-            "目标": "guanning",
+            # #1620：展示名入 capture；admission 须 canonicalize → guanning
+            "目标": "关宁军",
             "颁布方式": "ordinary",
             "金额": 15,
             "账户": "太仓",
@@ -866,6 +867,25 @@ def test_manual_directive_admission_real_http_tracer_1591(
             "颁布方式": "ordinary",
             "金额": 15,
             "账户": "藩库",
+            "执行面": "immediate",
+            "承办人": "",
+            "参与人": [],
+            "施行范围": "无",
+            "期限月数": None,
+            "目标案卷ID": None,
+            "entries": [],
+        },
+        {
+            # #1620：theater/地域散文不得模糊升格为真实军队
+            "拟旨意图": "拟旨",
+            "动作类型": "grant_allocation",
+            "恩赏拨帑": "协饷",
+            "用途": "补饷",
+            "目标类型": "army",
+            "目标": "辽东",
+            "颁布方式": "ordinary",
+            "金额": 15,
+            "账户": "国库",
             "执行面": "immediate",
             "承办人": "",
             "参与人": [],
@@ -922,6 +942,13 @@ def test_manual_directive_admission_real_http_tracer_1591(
         )
         assert directive_ok.status_code == 200, directive_ok.text
         wait_pending_writes(game)
+        # #1620：POST 后、结算前——首次承重 payload 已是 canonical guanning
+        draft_row = game.db.conn.execute(
+            "SELECT dossier_payload_json FROM turn_directives ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        assert draft_row is not None
+        draft_payload = json.loads(str(draft_row["dossier_payload_json"] or "{}"))
+        assert draft_payload.get("target_id") == "guanning"
         _post_issue_stream(client, expected_turn=turn1, step="1591①太仓 issue/stream")
         after = _get_state(client)
         assert _turn_of(after) == turn1 + 1, after.get("turn")
@@ -989,6 +1016,22 @@ def test_manual_directive_admission_real_http_tracer_1591(
             table: game.db.conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
             for table in counts_before
         } == counts_before
+
+        # ── ③b #1620：地域「辽东」不得升格 guanning；相关表零写 ──
+        treasury_before = int(game.state.metrics.get("国库") or 0)
+        arrears_now = float(_army_row(game.db)["arrears"])
+        region_reject = client.post(
+            "/api/directives",
+            json={"text": "准从国库见银拨辽东军饷十五万两即发。", "notes": ""},
+        )
+        assert region_reject.status_code == 409, region_reject.text
+        assert int(game.state.turn) == turn2
+        assert {
+            table: game.db.conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in counts_before
+        } == counts_before
+        assert int(game.state.metrics.get("国库") or 0) == treasury_before
+        assert float(_army_row(game.db)["arrears"]) == pytest.approx(arrears_now)
 
         # ── ④ #1591：既存非法草案在 issue 边界转发真实 admission 拒因 ──
         directive_id = game.db.add_directive(

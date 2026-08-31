@@ -424,6 +424,7 @@ def test_generate_rejects_region_id_outside_same_batch_catalog(monkeypatch):
 
 def test_payload_projects_consumable_army_targets_from_real_monthly_board(game):
     """系统票拟看到同批盘面的合法 army id，而非把省 id 当军."""
+    from ming_sim.action_materialize import GRANT_ACTIONS
     from ming_sim.simulation import build_simulator_payload
 
     db, state, _content = game
@@ -449,6 +450,8 @@ def test_payload_projects_consumable_army_targets_from_real_monthly_board(game):
     assert targets["guanning"]["name"]
     assert "liaodong" not in targets
     assert enemy_ids.isdisjoint(targets)
+    # #1620：grant_action 闭集与 Layer-A GRANT_ACTIONS 同源投影
+    assert payload["grant_actions"] == sorted(GRANT_ACTIONS - {"无"})
 
 
 def test_generate_rejects_army_id_outside_same_batch_catalog(monkeypatch):
