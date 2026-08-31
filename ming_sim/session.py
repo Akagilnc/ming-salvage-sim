@@ -1597,7 +1597,7 @@ class GameSession:
         explicit_secret_prefix = message_text.startswith(_SECRET_PREFIXES)
         explicit_secret_route = explicit_secret_order or explicit_secret_prefix
         action_intent_future = (
-            None if explicit_secret_order
+            None if explicit_secret_route
             else self._start_cli_action_intent(character, message)
         )
         # #526：收夜/留侍口令为确定性封闭集，同步识别（无耗时软判，不建 Future）。
@@ -1629,7 +1629,7 @@ class GameSession:
                 chat_turn_id=int(chat_turn_id or 0),
             )
         preclassified_intent = self._finish_cli_action_intent(action_intent_future)
-        if not explicit_secret_order:
+        if not explicit_secret_route:
             preclassified_intent = self._confirmation_intent_for_preexisting_pending(
                 character.name, message, answer, preclassified_intent, preexisting_pending_action_ids)
         primary_intent = resolve_primary_intent(preclassified_intent)
