@@ -3837,12 +3837,25 @@ class _NonBlockingWebWriteGate:
 
 @contextlib.contextmanager
 def _hot_replace_when_idle(game):
-    """load/reset 热替换：非阻塞抢 gate 后 seal queue；有 open ticket 立即 409。"""
+    """load/reset 热替换：非阻塞抢 gate + entry_lock 后 seal queue；在办 entry/ticket 立即 409。
+
+    #1702：与 settlement entry 共用临界区——锁序先 write_gate 后 entry_lock
+    （同 `_exit_settlement_display_on_failure`），持锁全程覆盖 inflight 检与 replace，
+    杜绝 gate-free 窗（HITL 尾/join）下 TOCTOU 热替换。
+    """
     _refuse_settling_or_busy_write_phase(game)
     gate = _try_acquire_serialized_web_write_gate(game)
+    entry_lock = _settlement_entry_lock(game)
+    entry_lock.acquire()
     q = get_session_write_queue(game)
     q.seal()
     try:
+        # 直接读计数；禁止调 `_settlement_entry_inflight()`（会二次抢同一 entry_lock）。
+        if int(getattr(game, "_settlement_entry_inflight", 0) or 0) > 0:
+            raise HTTPException(
+                status_code=409,
+                detail="月末结算或上一步写入进行中，请稍候再操作。",
+            )
         if q.inflight_count() > 0:
             raise HTTPException(
                 status_code=409,
@@ -3851,6 +3864,7 @@ def _hot_replace_when_idle(game):
         yield
     finally:
         q.unseal()
+        entry_lock.release()
         gate.release()
 
 
@@ -5521,8 +5535,11 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
                 failures = _new_secret_order_failure_payloads_for_turn(
                     game, turn_before, failed_before,
                 )
-                game.session.end_turn()
-                game.refresh_turn()
+                # #1702 A2：尾写短持既有 write_gate，与热替换/其它持闸写者单写；
+                # 不整段 body 持锁（join 仍在 gate 外）；成功 clear 仍走样板 False 支短持。
+                with _game_write_gate(game):
+                    game.session.end_turn()
+                    game.refresh_turn()
                 events = [
                     steam_events.add_stat(steam_events.STAT_DECREES_ISSUED),
                     steam_events.add_stat(steam_events.STAT_TURNS_PLAYED),

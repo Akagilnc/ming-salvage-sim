@@ -1313,7 +1313,13 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     });
     await closeOpenOverlay(host);
 
-    // menu：从 App 真实入口进入加载；409 可见且同一行恢复重试。
+    // menu：#1702 B 确认门控 + 409 可见且同一行恢复重试（不锁确认文案措辞）。
+    const confirmCalls: boolean[] = [];
+    let confirmNext = false;
+    vi.stubGlobal("confirm", () => {
+      confirmCalls.push(confirmNext);
+      return confirmNext;
+    });
     await click(byAria(host, "游戏菜单"));
     await tick();
     await act(async () => {
@@ -1324,6 +1330,14 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       await vi.waitFor(() => expect(host.querySelector(".saves-row .menu-btn.primary")).not.toBeNull());
     });
     const loadButton = host.querySelector(".saves-row .menu-btn.primary") as HTMLButtonElement;
+    // confirm false → 零 /load POST
+    confirmNext = false;
+    await click(loadButton);
+    await tick();
+    expect(confirmCalls.length).toBeGreaterThanOrEqual(1);
+    expect(loadRequests).toEqual([]);
+    // confirm true → POST；409 可见；同行重试第二次 POST
+    confirmNext = true;
     await click(loadButton);
     expect(loadRequests).toEqual([{ path: "/api/saves/auto_begin/load", method: "POST" }]);
     expect(loadButton.disabled).toBe(true);
