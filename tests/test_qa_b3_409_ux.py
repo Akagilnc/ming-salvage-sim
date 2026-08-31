@@ -250,11 +250,11 @@ def test_resolve_decisions_stream_awaiting_still_submits_under_lock(monkeypatch)
 
 
 def test_load_save_409_during_resolve_body_keeps_old_session_tail(monkeypatch):
-    """#1702：resolve 在办（submit 后、尾写前）时 load → 409；旧 session 尾写完整、无 replace。
+    """#1702: load during resolve post-submit pre-tail window → 409; old session tail intact.
 
-    真 API 入口 + Event 握手卡在 gate-free body 窗；外部可见结局唯一：
-    load 409 且 end_turn/refresh 落在原 session。既有 awaiting_still_submits 覆盖
-    成功序与尾写短持路径，不另锁 gate.locked / entry_lock 内部手段。
+    Real API entry + Event handshake after submit returns ISSUED (gate free, inflight>0)
+    and before tail write grabs the gate. Externally: load 409, end_turn/refresh on the
+    original session. Does not lock gate.locked / entry_lock internals.
     """
     gate = threading.Lock()
     game = _ResolveGame(TurnPhase.AWAITING_DECISION.value, gate)
@@ -270,9 +270,15 @@ def test_load_save_409_during_resolve_body_keeps_old_session_tail(monkeypatch):
             game.actions.append("submit")
             if on_event:
                 on_event("stage", "数值推演结算")
-        body_ready.set()
-        assert release_body.wait(5.0), "测试须放行 resolve body"
+            # Production finish_rescript_phase2 sets ISSUED before returning under the gate.
+            game.state.turn_phase = TurnPhase.ISSUED.value
         return "邸报：已裁。"
+
+    def _failures_after_submit(*_a, **_k):
+        # web_app resolve stream calls this after submit returns, before tail write.
+        body_ready.set()
+        assert release_body.wait(5.0), "test must release post-submit pre-tail window"
+        return []
 
     def _end_turn():
         game.actions.append("end_turn")
@@ -287,7 +293,7 @@ def test_load_save_409_during_resolve_body_keeps_old_session_tail(monkeypatch):
     monkeypatch.setattr(web_app, "get_game", lambda: game)
     monkeypatch.setattr(web_app, "_failed_secret_order_ids_for_turn", lambda *_a, **_k: set())
     monkeypatch.setattr(
-        web_app, "_new_secret_order_failure_payloads_for_turn", lambda *_a, **_k: []
+        web_app, "_new_secret_order_failure_payloads_for_turn", _failures_after_submit
     )
     monkeypatch.setattr(web_app, "_accept_settlement_period", lambda _g: False)
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
@@ -300,7 +306,7 @@ def test_load_save_409_during_resolve_body_keeps_old_session_tail(monkeypatch):
 
     t_resolve = threading.Thread(target=_run_resolve, daemon=True)
     t_resolve.start()
-    assert body_ready.wait(5.0), "resolve 须进入 body 窗"
+    assert body_ready.wait(5.0), "resolve must enter post-submit pre-tail window"
 
     with pytest.raises(HTTPException) as ei:
         asyncio.run(web_app.api_load_save("存档"))
@@ -309,7 +315,7 @@ def test_load_save_409_during_resolve_body_keeps_old_session_tail(monkeypatch):
     assert game.session is old_session
 
     release_body.set()
-    assert resolve_done.wait(5.0), "resolve 须完成"
+    assert resolve_done.wait(5.0), "resolve must finish"
     t_resolve.join(2.0)
 
     assert game.actions == ["submit", "end_turn", "refresh"]
