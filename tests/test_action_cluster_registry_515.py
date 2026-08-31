@@ -153,6 +153,42 @@ def test_registry_rows_generate_shape_contract_matrix():
         assert raw_str[spec.name] == "12"
 
 
+def test_money_units_and_season_option_contract_project_from_catalog():
+    """同名金额各守所属 action 单位；season option 不另立字段表。"""
+    from ming_sim.action_clusters import (
+        season_option_fields, validate_season_option,
+    )
+
+    grant = next(c for c in ACTION_CLUSTERS if c.kind == "grant_allocation")
+    punishment = next(c for c in ACTION_CLUSTERS if c.kind == "punishment")
+    assert next(f for f in grant.fields if f.name == "amount").quantity_unit == "万两"
+    assert next(f for f in punishment.fields if f.name == "amount").quantity_unit == "两"
+    assert season_option_fields("grant_allocation") == (
+        "action_type", "grant_action", "target_id", "target_kind", "amount",
+        "account", "purpose", "cadence",
+    )
+    valid = {
+        "action_type": "grant_allocation", "grant_action": "协饷",
+        "target_id": "guanning", "target_kind": "army", "amount": 1,
+        "account": "内库", "purpose": "补饷", "cadence": "一次性",
+    }
+    assert validate_season_option(
+        {**valid, "action_type": " grant_allocation "}
+    ) == "grant_allocation"
+    with pytest.raises(ValueError):
+        validate_season_option({**valid, "target_kind": "character"})
+    with pytest.raises(ValueError):
+        validate_season_option({**valid, "action_type": "grant_allocaton"})
+    for key in season_option_fields("grant_allocation")[1:]:
+        with pytest.raises(ValueError):
+            validate_season_option({k: v for k, v in valid.items() if k != key})
+    for key, bad in (("account", "太仓银"), ("target_id", ""),
+                     ("target_id", "   "), ("amount", None),
+                     ("amount", "1"), ("amount", True), ("amount", 0)):
+        with pytest.raises(ValueError):
+            validate_season_option({**valid, key: bad})
+
+
 def test_strict_shape_rejects_unknown_kind_and_out_of_enum_subfield():
     ok, reason = validate_action_candidate_shape({"kind": "treasury"})
     assert ok is False and "unknown" in reason
