@@ -1591,4 +1591,56 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     await tick();
     expect(host.querySelector(".harem-drawer.open")).toBeNull();
   });
+
+  // 组件层已证 offstage 卡结构/回调；此处只证 App 真链：起复 → 既有拟诏面，且无 chat/写 POST。
+  it("#1402 offstage 起复接 openModal(edict)，不触发召对写", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = new URL(String(url), "http://t.local");
+      calls.push(`${init?.method || "GET"} ${u.pathname}`);
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) {
+        return jsonResp({
+          ...settlementBaseState("player"),
+          turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
+          previous_summary: "",
+          pending_decisions: [],
+          talent_pool: [{
+            name: "刘鸿训", office: "", office_type: "", faction: "", style: "",
+            status: "offstage", status_label: "罢居", status_reason: "因病乞休",
+            summary: "前辅", favorite: false, skills: [],
+          }],
+        });
+      }
+      if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
+      return jsonResp({});
+    }));
+    const host = await mountApp();
+    await click(byAria(host, "朝堂·召见大臣"));
+    await tick();
+    // 夹具保证仅 talent_pool 有 offstage → 仅一分组会挂起复键。
+    // 按可见结果探测入口，不锁分组文案 / data-* / DOM 下标。
+    let resumeBtn: Element | null = host.querySelector(
+      ".court-drawer .minister-card button.minister-resume-btn",
+    );
+    if (!resumeBtn) {
+      for (const btn of Array.from(host.querySelectorAll(".court-drawer .segmented button"))) {
+        await click(btn);
+        await tick();
+        resumeBtn = host.querySelector(".court-drawer .minister-card button.minister-resume-btn");
+        if (resumeBtn) break;
+      }
+    }
+    expect(resumeBtn).not.toBeNull();
+    await click(resumeBtn);
+    await tick();
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector(".fullscreen-modal.modal-bg-edict")).not.toBeNull());
+    });
+    expect(host.querySelector(".fullscreen-modal.modal-bg-chat")).toBeNull();
+    expect(calls.some((c) => c.startsWith("POST ") && c.includes("secret_order"))).toBe(false);
+    expect(calls.some((c) => c.startsWith("POST ") && c.includes("/chat"))).toBe(false);
+  });
 });
