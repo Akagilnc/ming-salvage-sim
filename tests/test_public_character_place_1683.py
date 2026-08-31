@@ -70,8 +70,7 @@ def test_public_character_active_not_zaichao_and_projects_place(game):
     assert pub["status_label"] != "在朝"
     assert pub["status_label"] == "在事"
     assert pub["location"] == "henan"
-    assert pub["location_label"]  # 河南
-    assert "河南" in pub["location_label"] or pub["location_label"] == "henan"
+    assert pub["location_label"] == "河南"
     assert pub["transit_to"] == ""
     assert pub.get("transit_to_label", "") == ""
     assert "transit_distance_remaining" in pub
@@ -95,6 +94,7 @@ def test_public_character_projects_transit(game):
     pub = web_app.WebGame.public_character(_runtime(db, state, content), ch)
     assert pub["status_label"] != "在朝"
     assert pub["location"] == "henan"
+    assert pub["location_label"] == "河南"
     assert pub["transit_to"] == "shandong"
-    assert pub["transit_to_label"]
+    assert pub["transit_to_label"] == "山东"
     assert pub["transit_distance_remaining"] == pytest.approx(12.5)
