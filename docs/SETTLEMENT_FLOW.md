@@ -262,7 +262,7 @@ session.advance_without_decree / POST /api/decree/advance_without_edict:
 - **assert turn==before_turn+1**：phase2 完整跑完必须推进一回合，没推进就是 bug。
 - **HITL 暂停时不要推进**：return awaiting=True 时 state.turn 不动，玩家亲裁后续跑 phase2 才推。
 - **结算只判一次结局**：state.ended=True 后保持不动，继续推月只走 fixed flows。
-- **推进尾同款**（settle_with_delta / simulator 失败 fallback 仍归 settle 核）：atomic 内同笔做完「清 resolve_context → next_period → 相位复位 summoning → save_state」。#1274：无旨月推进只经 settle_with_delta（decree.advance_without_edict 空壳已删）。
+- **推进尾唯一正轨**：只有 simulator 成功并完成 extractor 后，`settle_with_delta` 才在 atomic 内同笔做完「清 resolve_context → next_period → 相位复位 summoning → save_state」。simulator 异常不进 extractor、不产邸报、不推进，保留 `settling` 供原月重试；并行 companion 若已成功则只存 ready=0 递话 checkpoint。#1274：无旨月推进只经 settle_with_delta（decree.advance_without_edict 空壳已删）。
 - **回滚后必 reload**：事务回滚只回 SQLite，内存副作用（metrics 直加 / 脏 settling 相位）必须 `reload_state_from_db` 刷净——脏 settling 被 pre_settle 守门跳过=下月财政永久丢。atomic 体内禁止 reload（读到未提交脏写）；嵌套时只有最外层回滚后才重载。
 - **毒 payload 不入真源**：`persist_resolve_context` 前必过 `validate_delta_shape`；shape 垃圾走 SettlementAbort+错误包，不许静默吞、也不许钉进 ready=1 重试真源。
 - **settling 可见 ⟹ context 行可见**：settling 相位与 resolve_context 行（引擎/driver 共用 prepare 的 ready=0 占位）必须同一事务提交；driver settle 再把 ready=0 升 ready=1。prepare 不许拆成两笔——拆了就是「相位卡 settling、恢复入口无米下锅、玩家手改旨意原文蒸发」。
