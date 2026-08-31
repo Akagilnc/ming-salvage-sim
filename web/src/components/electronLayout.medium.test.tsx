@@ -75,6 +75,7 @@ describe.sequential("medium: shared Electron geometry", () => {
       alertFooterDisjoint: boolean;
       taFooterDisjoint: boolean;
       taButtonDisjoint: boolean;
+      alertBgOpaque: boolean;
       buttonEnabled: boolean;
       buttonHit: boolean;
       twoLines: boolean;
@@ -127,6 +128,13 @@ describe.sequential("medium: shared Electron geometry", () => {
         buttonRect.top + buttonRect.height / 2,
       ) === button;
 
+      // Theme * wash must not zero the error-line background under modal-bg-edict.
+      const alertBg = getComputedStyle(alert).backgroundColor;
+      const alertBgOpaque = !!alertBg
+        && alertBg !== 'transparent'
+        && alertBg !== 'rgba(0, 0, 0, 0)'
+        && alertBg !== 'rgba(0,0,0,0)';
+
       const phase1 = {
         alertInModal: containsRect(modalRect, alertRect0),
         footerInModal: containsRect(modalRect, footerRect),
@@ -137,6 +145,7 @@ describe.sequential("medium: shared Electron geometry", () => {
         alertFooterDisjoint: !overlaps(alertRect0, footerRect),
         taFooterDisjoint: !overlaps(taRect0, footerRect),
         taButtonDisjoint: !overlaps(taRect0, buttonRect),
+        alertBgOpaque,
         buttonEnabled: !button.disabled,
         buttonHit,
       };
@@ -169,6 +178,7 @@ describe.sequential("medium: shared Electron geometry", () => {
       expect(result.alertFooterDisjoint, `${result.viewportWidth}x${result.viewportHeight} alertFooterDisjoint`).toBe(true);
       expect(result.taFooterDisjoint, `${result.viewportWidth}x${result.viewportHeight} taFooterDisjoint`).toBe(true);
       expect(result.taButtonDisjoint, `${result.viewportWidth}x${result.viewportHeight} taButtonDisjoint`).toBe(true);
+      expect(result.alertBgOpaque, `${result.viewportWidth}x${result.viewportHeight} alertBgOpaque`).toBe(true);
       expect(result.buttonEnabled, `${result.viewportWidth}x${result.viewportHeight} buttonEnabled`).toBe(true);
       expect(result.buttonHit, `${result.viewportWidth}x${result.viewportHeight} buttonHit`).toBe(true);
       expect(result.twoLines, `${result.viewportWidth}x${result.viewportHeight} twoLines`).toBe(true);
