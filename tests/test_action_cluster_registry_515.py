@@ -683,6 +683,7 @@ def test_cli_chat_materializes_each_top_level_candidate(game, monkeypatch):
     ]
     assert payloads[1]["amount"] == 100000
     assert payloads[2]["assignee"] == "孙传庭"
+    assert payloads[1]["locality_scope"] == payloads[2]["locality_scope"] == "single"
 
 
 @pytest.mark.parametrize(
