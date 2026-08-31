@@ -200,7 +200,7 @@ export function App() {
     deleteDirective,
   } = useEdictActions({ setBusy, setError, setState, beginDurableMutation });
 
-  // 颁诏结算流（useSettlementFlow.ts）：盖玺颁诏/退朝/HITL 决策点续裁/失败重拉。
+  // 颁诏结算流（useSettlementFlow.ts）：盖玺颁诏/failed-only 退朝/HITL 决策点续裁/失败重拉。
   // hook 必须在 menu/loading 早退之前调用。
   const {
     settleStage,
@@ -210,10 +210,10 @@ export function App() {
     decisionFailures,
     pausedDecisionError,
     issueDecree,
+    advanceWithoutEdict,
     submitDecisions,
     resumePhase2,
     retryPendingDecisions,
-    advanceWithoutEdict,
   } = useSettlementFlow({
     setBusy,
     setError,
@@ -556,6 +556,7 @@ export function App() {
         onGroupChange={setMinisterGroup}
         onClose={() => setDrawerOpen(false)}
         onOpenChat={openChat}
+        onOpenEdict={() => openModal("edict")}
         onUploadPortrait={uploadPortrait}
         chatEntryEnabled={chatEntryEnabled}
       />
@@ -686,12 +687,7 @@ export function App() {
       {edictOpen ? (
         <FullscreenModal
           title="诏书草案"
-          subtitle={
-            // #1277：drafts>0 名实自洽——副标题不得再以「退朝」描述过月。
-            (state.directives?.length ?? 0) > 0
-              ? "盖玺颁诏即草案成案并过月"
-              : "退朝即草案成案并过月"
-          }
+          subtitle={(state.directives?.length ?? 0) > 0 ? "盖玺颁诏即草案成案并过月" : ""}
           bgClass="modal-bg-edict"
           // #1454：底栏安全区——desk-footer 不得挡 HUD 拟诏木牌（台开时为收起开关）。
           layerClassName="edict-safe-cmd"
@@ -713,8 +709,8 @@ export function App() {
             onCancelEdit={cancelEditDirective}
             onSaveDirective={saveDirective}
             onDeleteDirective={deleteDirective}
-            onAdvanceWithoutEdict={advanceWithoutEdict}
             onIssueDecree={issueDecree}
+            onAdvanceWithoutEdict={advanceWithoutEdict}
             onOpenFailureRecovery={openFailureRecovery}
           />
         </FullscreenModal>

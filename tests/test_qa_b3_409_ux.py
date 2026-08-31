@@ -155,10 +155,11 @@ class _ResolveGame:
         self.session.state = self.state
         self.db = SimpleNamespace(list_pending_actions=lambda *_a, **_k: [])
         self._write_gate = gate
-        self.refresh_calls = 0
+        self.actions = []
+        self.session.end_turn = lambda: self.actions.append("end_turn")
 
     def refresh_turn(self):
-        self.refresh_calls += 1
+        self.actions.append("refresh")
 
 
 async def _consume_resolve_sse() -> list[tuple[str, object]]:
@@ -212,7 +213,7 @@ def test_resolve_decisions_stream_phase_precheck_before_lock(monkeypatch):
     message = payload["message"] if isinstance(payload, dict) else str(payload)
     assert "待裁" in message or "亲裁" in message
     assert game.session._submit_called is False
-    assert game.refresh_calls == 0
+    assert game.actions == []
 
 
 def test_resolve_decisions_stream_awaiting_still_submits_under_lock(monkeypatch):
@@ -224,6 +225,7 @@ def test_resolve_decisions_stream_awaiting_still_submits_under_lock(monkeypatch)
     def _submit_hitl(choices, *, write_gate, on_event=None, cheat_directive=""):
         with write_gate:
             assert gate.locked(), "submit must run while write gate held"
+            game.actions.append("submit")
             submitted["ok"] = True
             if on_event:
                 on_event("stage", "数值推演结算")
@@ -239,10 +241,84 @@ def test_resolve_decisions_stream_awaiting_still_submits_under_lock(monkeypatch)
 
     events = asyncio.run(_consume_resolve_sse())
     assert submitted["ok"] is True
+    assert game.actions == ["submit", "end_turn", "refresh"]
     kinds = [ev for ev, _ in events]
     assert "stage" in kinds
     assert kinds[-1] == "done"
     payload = events[-1][1]
     assert payload["report"] == "邸报：已裁。"
+
+
+def test_load_save_409_during_resolve_body_keeps_old_session_tail(monkeypatch):
+    """#1702: load during resolve post-submit pre-tail window → 409; old session tail intact.
+
+    Real API entry + Event handshake after submit returns ISSUED (gate free, inflight>0)
+    and before tail write grabs the gate. Externally: load 409, end_turn/refresh on the
+    original session. Does not lock gate.locked / entry_lock internals.
+    """
+    gate = threading.Lock()
+    game = _ResolveGame(TurnPhase.AWAITING_DECISION.value, gate)
+    old_session = game.session
+    replacements: list[str] = []
+    tail_sessions: list[object] = []
+    body_ready = threading.Event()
+    release_body = threading.Event()
+    resolve_done = threading.Event()
+
+    def _submit_hitl(choices, *, write_gate, on_event=None, cheat_directive=""):
+        with write_gate:
+            game.actions.append("submit")
+            if on_event:
+                on_event("stage", "数值推演结算")
+            # Production finish_rescript_phase2 sets ISSUED before returning under the gate.
+            game.state.turn_phase = TurnPhase.ISSUED.value
+        return "邸报：已裁。"
+
+    def _failures_after_submit(*_a, **_k):
+        # web_app resolve stream calls this after submit returns, before tail write.
+        body_ready.set()
+        assert release_body.wait(5.0), "test must release post-submit pre-tail window"
+        return []
+
+    def _end_turn():
+        game.actions.append("end_turn")
+        tail_sessions.append(game.session)
+
+    game.session.submit_hitl_choices = _submit_hitl  # type: ignore[method-assign]
+    game.session.end_turn = _end_turn  # type: ignore[method-assign]
+    game.session.last_decree = "诏曰：发帑。"
+    game.load_save = lambda name: replacements.append(name)  # type: ignore[attr-defined]
+    game.state_payload = lambda: {"ok": True}  # type: ignore[attr-defined]
+
+    monkeypatch.setattr(web_app, "get_game", lambda: game)
+    monkeypatch.setattr(web_app, "_failed_secret_order_ids_for_turn", lambda *_a, **_k: set())
+    monkeypatch.setattr(
+        web_app, "_new_secret_order_failure_payloads_for_turn", _failures_after_submit
+    )
+    monkeypatch.setattr(web_app, "_accept_settlement_period", lambda _g: False)
+    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
+
+    def _run_resolve():
+        try:
+            asyncio.run(_consume_resolve_sse())
+        finally:
+            resolve_done.set()
+
+    t_resolve = threading.Thread(target=_run_resolve, daemon=True)
+    t_resolve.start()
+    assert body_ready.wait(5.0), "resolve must enter post-submit pre-tail window"
+
+    with pytest.raises(HTTPException) as ei:
+        asyncio.run(web_app.api_load_save("存档"))
+    assert ei.value.status_code == 409
+    assert replacements == []
+    assert game.session is old_session
+
+    release_body.set()
+    assert resolve_done.wait(5.0), "resolve must finish"
+    t_resolve.join(2.0)
+
+    assert game.actions == ["submit", "end_turn", "refresh"]
+    assert tail_sessions == [old_session]
 
 

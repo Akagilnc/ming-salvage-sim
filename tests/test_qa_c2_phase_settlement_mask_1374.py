@@ -52,7 +52,9 @@ def _runtime(db, state):
     runtime.ending_payload = lambda: None
     runtime.public_character = lambda c: {"name": getattr(c, "name", "")}
     runtime.character_power_id = lambda c: "ming"
-    runtime.refresh_turn = lambda: None
+    runtime.actions = []
+    runtime.session.end_turn = lambda: runtime.actions.append("end_turn")
+    runtime.refresh_turn = lambda: runtime.actions.append("refresh")
     runtime._write_gate = threading.Lock()
     runtime._settlement_entry_lock = threading.Lock()
     runtime._settlement_entry_inflight = 0
@@ -104,6 +106,7 @@ def test_resolve_stream_uses_settlement_period_entry(game, monkeypatch):
 
     def _submit_hitl(choices, *, write_gate, on_event=None, cheat_directive=""):
         # 生产协议：submit_hitl_choices；纯 decision 路径持 write_gate。
+        runtime.actions.append("submit")
         with write_gate:
             # 模拟 decided 先写（崩溃安全时序）——本刀不改 session 真写序，仅证展示态窗口。
             db.conn.execute(
@@ -141,6 +144,7 @@ def test_resolve_stream_uses_settlement_period_entry(game, monkeypatch):
 
     serialized = asyncio.run(_go())
     assert entered["n"] == 1
+    assert runtime.actions == ["submit", "end_turn", "refresh"]
     assert "event: done" in serialized
     # 快照仍在（本替身 submit 未推进月份）；phase2 窗内展示态真源不灭
     assert db.get_month_open_snapshot(int(state.turn)) == before
@@ -185,6 +189,7 @@ def test_resolve_stream_clear_throw_emits_error_not_done(game, monkeypatch):
     }])
 
     def _submit_hitl(choices, *, write_gate, on_event=None, cheat_directive=""):
+        runtime.actions.append("submit")
         with write_gate:
             if on_event:
                 on_event("stage", "数值推演结算")
@@ -207,6 +212,7 @@ def test_resolve_stream_clear_throw_emits_error_not_done(game, monkeypatch):
     monkeypatch.setattr(mos, "clear_orphan_month_open_snapshot", _boom_orphan)
 
     serialized = asyncio.run(_drain_resolve_sse([{"label": "发"}]))
+    assert runtime.actions == ["submit", "end_turn", "refresh"]
     assert "event: done" not in serialized, "clear 抛后禁推 done"
     assert "event: error" in serialized
     assert "stream clear boom" in serialized
