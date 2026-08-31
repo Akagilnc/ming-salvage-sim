@@ -74,7 +74,11 @@ export function useSettlementFlow({
       state.pending_decisions || [],
       state.resume_phase2,
     );
-    if (route.pendingDecisions !== null) {
+    // #1620：all-decided / resume_phase2 时 route 返 pendingDecisions:null——须清本地 residual modal，
+    // 接到 settle-resume；未决 pending（!== null）仍走 replace，保留 picks。
+    if (route.resumePhase2 === true) {
+      setPendingDecisions([]);
+    } else if (route.pendingDecisions !== null) {
       const next = route.pendingDecisions;
       setPendingDecisions((prev) => replacePendingDecisionsOnRefresh(prev, next) || []);
     }
