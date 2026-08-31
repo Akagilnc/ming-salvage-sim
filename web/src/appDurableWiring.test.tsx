@@ -579,7 +579,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     await click(findButton(host, "杨嗣昌"));
     await act(async () => { await vi.waitFor(() => expect(host.querySelector('textarea')).not.toBeNull()); });
 
-    await click(host.querySelector('[data-intent="secret_order"]'));
+    await click(findButton(host, "下密令"));
     const textarea = host.querySelector("textarea") as HTMLTextAreaElement;
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(textarea, "整饬边备。");
@@ -669,7 +669,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     await click(findButton(host, "杨嗣昌"));
     await act(async () => { await vi.waitFor(() => expect(host.querySelector("textarea")).not.toBeNull()); });
 
-    await click(host.querySelector('[data-intent="secret_order"]'));
+    await click(findButton(host, "下密令"));
     const textarea = host.querySelector("textarea") as HTMLTextAreaElement;
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(textarea, "整饬边备。");

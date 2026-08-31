@@ -356,7 +356,6 @@ export function ChatModal({
                 key={`${suggestion.label}-${suggestion.text}`}
                 onClick={() => sendSuggestion(suggestion)}
                 disabled={!!busy}
-                data-intent={suggestion.intent}
                 title={suggestion.prefix ? `填入前缀：${suggestion.text}` : suggestion.text}
                 className={suggestion.prefix ? "hitl-prefix" : ""}
               >
