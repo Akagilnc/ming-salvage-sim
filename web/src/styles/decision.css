@@ -214,7 +214,6 @@
   overflow-x: hidden;
   overflow-y: auto;
   overflow-wrap: anywhere;
-  word-break: break-word;
 }
 
 .recovery-banner > button {
