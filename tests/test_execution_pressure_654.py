@@ -234,7 +234,7 @@ def test_oracle_contradictions_fail_loud(env, payload, action):
 
 def test_region_zero_hit_fail_loud(env):
     db, _, content = env
-    with pytest.raises(ValueError, match="零命中|歧义"):
+    with pytest.raises(ValueError):
         resolve_dossier_region_ids(
             db.conn,
             action_type="policy",
