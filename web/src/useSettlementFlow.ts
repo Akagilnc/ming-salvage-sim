@@ -124,6 +124,8 @@ export function useSettlementFlow({
           window.location.reload();
           return;
         }
+        // #1700 / #1418 r2 对称：phase-1 失败后 loadState，使 settling 续跑面可挂上。
+        await loadState();
         // main #1442：pending_action_failures 落库面优先。欠账耗尽走失败单源（#1353 fold-in），无补写 CTA。
         const errMsg = typeof outcome.data === "string" ? outcome.data : (errData.message || "颁诏失败。");
         if (await surfacePendingActionFailures(errData?.pending_action_failures || [])) {
@@ -155,6 +157,8 @@ export function useSettlementFlow({
       window.location.reload();
       return;
     } catch (err) {
+      // #1700：与 phase-2 catch 对称，失败后刷新权威相位。
+      await loadState();
       setError(err instanceof Error ? err.message : String(err));
       setBusy("");
     }
