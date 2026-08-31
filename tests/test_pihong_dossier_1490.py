@@ -3161,6 +3161,178 @@ def test_1620_follow_draft_office_token_does_not_enter_roster(game):
     assert token not in str(payload.get("assignee_id") or "")
 
 
+def test_1620_http_follow_draft_office_token_routes_to_person(web_game, monkeypatch):
+    """#1620 A：真 HTTP follow 职司 token → 真人 executor；token 不入 roster。"""
+    from ming_sim.models import TurnPhase
+
+    db, state = web_game.db, web_game.state
+    db.conn.execute(
+        "UPDATE characters SET location='shaanxi' "
+        "WHERE status='active' AND power_id='ming' AND office_type='户部'"
+    )
+    db.conn.commit()
+    tokens = ("陕西巡抚", "户部尚书", "户部")
+
+    def _phase2(_state, _db, *_a, **_k):
+        return "邸报：职司已落。"
+
+    monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _phase2)
+
+    for token in tokens:
+        # phase2/refresh 可能换 state 对象——每轮从 session 重取真源（同 s10）
+        state = web_game.session.state
+        db = web_game.db
+        db.conn.execute("DELETE FROM pending_decisions")
+        db.conn.commit()
+        opt = _layer_a_option(
+            label=f"责成{token}",
+            assignee_name=token,
+            transaction_category="督赈",
+        )
+        urgent, _ = _plant_urgent_desk(
+            db, state, options=[opt, _layer_a_option(label="备")],
+        )
+        db.save_resolve_context(
+            int(state.turn), "诏", "邸报",
+            {"candidate_events": [], "transit_semantics": []},
+            secret_orders=[], relevant_memories=[],
+        )
+        state.turn_phase = TurnPhase.AWAITING_DECISION.value
+        db.save_state(state)
+        before = len(db.list_decree_dossiers())
+        # 浏览器同形精简 follow：无 assignee overlay
+        r = asyncio.run(_post_resolve([{
+            "decision_key": urgent["decision_key"],
+            "action": "follow_draft",
+            "draft_capability": opt["draft_capability"],
+            "label": opt["label"],
+        }]))
+        assert r.status_code == 200, r.text
+        assert "event: error" not in r.text, r.text
+        assert "event: done" in r.text, r.text
+        after = db.list_decree_dossiers()
+        assert len(after) == before + 1, token
+        created = after[-1]
+        executor = str(created.get("executor_id") or "")
+        assert executor, f"{token}: 须落到真实人物 executor"
+        assert token not in executor, f"{token} 不得作 executor"
+        roster = created.get("participant_roster") or []
+        ids = [
+            str(e.get("character_id") or "")
+            for e in roster if isinstance(e, dict)
+        ]
+        assert token not in ids, f"{token} 不得入 roster：{ids}"
+        payload = json.loads(str(created.get("payload_json") or "{}"))
+        assert token not in str(payload.get("assignee_id") or "")
+
+
+def test_1620_http_follow_draft_grant_uses_stored_amount(web_game, monkeypatch):
+    """#1620 B：完整 grant option + 浏览器精简 follow（无 amount/account）真 HTTP 成案。"""
+    from ming_sim.models import TurnPhase
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+
+    db, state = web_game.db, web_game.state
+    mrow = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' LIMIT 1"
+    ).fetchone()
+    mname = str(mrow["name"])
+    # rescript_draft:turn:3 同形——多种急务后取 idx=3
+    drafts = []
+    grant_opt = None
+    for i in range(4):
+        if i == 3:
+            grant_opt = normalize_rescript_layer_a_option({
+                "label": "赏银", "hint": "赏功",
+                "action_type": "grant_allocation",
+                "assignee_name": "",
+                "target_kind": "character", "target_id": mname,
+                "locality_scope": "none", "region_id": "",
+                "transaction_category": "",
+                "grant_action": "赏赉", "amount": 500, "name": mname,
+            })
+            opt = grant_opt
+        else:
+            opt = _layer_a_option(label=f"备{i}")
+        drafts.append({
+            "title": f"急务{i}", "context": "c",
+            "options": [opt, _layer_a_option(label=f"次{i}")],
+            "actor_name": "杨嗣昌", "actor_office": "兵部尚书", "actor_faction": "东林",
+        })
+    assert grant_opt is not None
+    assert "amount" in grant_opt and int(grant_opt["amount"]) == 500
+
+    db.conn.execute("DELETE FROM pending_decisions")
+    db.conn.commit()
+    db.save_rescript_drafts(int(state.turn), drafts)
+    db.conn.commit()
+    desk = db.list_rescript_desk(int(state.turn))
+    urgent = next(r for r in desk if r["decision_key"].endswith(":3"))
+    assert urgent["decision_key"].endswith(":3")
+    stored = next(
+        o for o in (urgent["options"] or [])
+        if isinstance(o, dict) and o.get("draft_capability") == grant_opt["draft_capability"]
+    )
+    assert int(stored.get("amount") or 0) == 500, "option 持久化须含 amount"
+
+    def _phase2(_state, _db, *_a, **_k):
+        return "邸报：赏已落。"
+
+    monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _phase2)
+    db.save_resolve_context(
+        int(state.turn), "诏", "邸报",
+        {"candidate_events": [], "transit_semantics": []},
+        secret_orders=[], relevant_memories=[],
+    )
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
+    before = len(db.list_decree_dossiers())
+    # 浏览器 projectFollowDraftFromOption 同形：无 amount/account
+    r = asyncio.run(_post_resolve([{
+        "decision_key": urgent["decision_key"],
+        "action": "follow_draft",
+        "draft_capability": grant_opt["draft_capability"],
+        "label": grant_opt["label"],
+    }]))
+    assert r.status_code == 200, r.text
+    assert "event: error" not in r.text, r.text
+    assert "event: done" in r.text, r.text
+    after = db.list_decree_dossiers()
+    assert len(after) == before + 1
+    created = after[-1]
+    assert str(created.get("action_type") or "") == "grant_allocation"
+    payload = json.loads(str(created.get("payload_json") or "{}"))
+    assert int(payload.get("amount") or 0) == 500
+    assert str(payload.get("grant_action") or "") == "赏赉"
+
+
+def test_1620_layer_a_money_grant_requires_positive_amount():
+    """#1620 B：残缺金钱 grant 在层 A shape 失败，不得上桌。"""
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+
+    base = {
+        "label": "赏银", "hint": "赏功",
+        "action_type": "grant_allocation",
+        "assignee_name": "",
+        "target_kind": "character", "target_id": "张瑞图",
+        "locality_scope": "none", "region_id": "",
+        "transaction_category": "",
+        "grant_action": "赏赉", "name": "张瑞图",
+    }
+    with pytest.raises(ValueError, match="amount"):
+        normalize_rescript_layer_a_option(base)
+    with pytest.raises(ValueError, match="amount"):
+        normalize_rescript_layer_a_option({**base, "amount": 0})
+    with pytest.raises(ValueError, match="account"):
+        normalize_rescript_layer_a_option({**base, "amount": 10, "account": "私库"})
+    ok = normalize_rescript_layer_a_option({**base, "amount": 10})
+    assert int(ok["amount"]) == 10
+    # 加衔不要求 amount
+    honor = normalize_rescript_layer_a_option({
+        **base, "grant_action": "加衔", "label": "加衔",
+    })
+    assert honor.get("grant_action") == "加衔"
+
+
 def test_657_follow_draft_ignores_client_field_overlay(game):
     """Spec1/A12：同 capability 不得靠客户端字段 overlay 改机械载荷。"""
     from ming_sim import rescript_actions as ra

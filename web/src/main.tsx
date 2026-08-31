@@ -841,10 +841,16 @@ export function App() {
         />
       ) : null}
 
-      {/* 必达：DecisionModal——核账展示态门控不得盖住本面 */}
+      {/* 必达：DecisionModal——核账展示态门控不得盖住本面。
+          #1620：落印 SSE typed 错同页挂 decision-failure-list，已选批语不因失败卸载。 */}
       {pendingDecisions.length > 0 ? (
         <div data-testid="decision-modal">
-          <DecisionModal decisions={pendingDecisions} failures={decisionFailures} onResolve={submitDecisions} />
+          <DecisionModal
+            decisions={pendingDecisions}
+            failures={decisionFailures}
+            alertMessage={pausedDecisionError}
+            onResolve={submitDecisions}
+          />
         </div>
       ) : null}
     </main>

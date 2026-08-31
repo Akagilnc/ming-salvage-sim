@@ -50,10 +50,13 @@ function decisionKeyOf(d: PendingDecision, fallbackIdx: number): string | undefi
 export function DecisionModal({
   decisions,
   failures = [],
+  alertMessage = "",
   onResolve,
 }: {
   decisions: PendingDecision[];
   failures?: PendingActionFailure[];
+  /** #1620：同页 SSE/落印 typed 错（role=alert）；不锁措辞。 */
+  alertMessage?: string;
   onResolve: (choices: DecisionChoice[]) => void;
 }) {
   const [cursor, setCursor] = React.useState(0);
@@ -273,7 +276,8 @@ export function DecisionModal({
           </span>
           <h2 id="decision-page-title" className="decision-title">奏疏批红</h2>
         </div>
-        {failures.length ? <div className="decision-failure-list" role="alert">
+        {(failures.length || alertMessage) ? <div className="decision-failure-list" role="alert">
+          {alertMessage ? <div className="decision-failure-item" data-testid="decision-stream-alert">{alertMessage}</div> : null}
           {failures.map((failure) => <div className="decision-failure-item" key={failure.id}>{failure.message}</div>)}
         </div> : null}
         <section aria-labelledby="decision-document-title">
