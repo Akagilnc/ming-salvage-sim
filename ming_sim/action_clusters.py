@@ -29,10 +29,14 @@ class FieldSpec:
     as_int: bool = False
     int_lo: int = 0  # symmetric lower bound; >0 marks positive integer
     int_hi: int = 10**9
+    quantity_unit: Optional[str] = None
+    season_option: bool = False
     # Optional per-enum execution metadata lives on the canonical field row.
     execution_coverage: Optional[Mapping[str, Optional[str]]] = None
     # Field is populated only when another canonical field has one of these values.
     populated_when: Optional[Tuple[str, FrozenSet[str]]] = None
+    # A controller value may narrow this enum's effective allowed values.
+    allowed_when: Optional[Tuple[str, str, FrozenSet[str]]] = None
 
 
 @dataclass(frozen=True)
@@ -91,32 +95,40 @@ def classifier_action_types_prompt() -> str:
     return "|".join(c.label_zh for c in ACTION_CLUSTERS)
 
 
-def _render_field_specs(specs: Sequence[FieldSpec]) -> Tuple[List[str], List[str]]:
-    """Render transport examples and constraints from canonical field rows."""
+def _render_field_specs(
+    specs: Sequence[Tuple[str, FieldSpec]],
+) -> Tuple[List[str], List[str]]:
+    """Render transport examples and action-scoped constraints from catalog rows."""
     lines: List[str] = []
     notes: List[str] = []
-    for spec in specs:
+    seen_zh: set = set()
+    for action, spec in specs:
+        prefix = f"{action}·" if action else ""
         if spec.allowed is not None:
             values = sorted(spec.allowed, key=lambda value: (value != "无", value))
             example = f'"{"|".join(values)}"'
         elif spec.as_int:
             example = "null" if spec.default is None else "0"
-            if spec.int_lo > 0:
+            if spec.int_lo > 0 or spec.quantity_unit:
                 constraint = (
                     f"可null；命中 JSON integer>={spec.int_lo}；禁数字字符串"
                     if spec.default is None
                     else f"JSON integer>={spec.int_lo}"
                 )
-                notes.append(f"{spec.zh}：{constraint}")
+                if spec.quantity_unit:
+                    constraint += f"；单位={spec.quantity_unit}"
+                notes.append(f"{prefix}{spec.zh}：{constraint}")
         else:
             example = '""'
-        lines.append(f'  "{spec.zh}": {example},')
+        if spec.zh not in seen_zh:
+            seen_zh.add(spec.zh)
+            lines.append(f'  "{spec.zh}": {example},')
         if spec.populated_when is not None:
             controller_name, controller_values = spec.populated_when
             controller = _field_specs()[controller_name]
             values = "|".join(sorted(controller_values))
             notes.append(
-                f"{spec.zh}：仅{controller.zh}={values}时填写；其它留空"
+                f"{prefix}{spec.zh}：仅{controller.zh}={values}时填写；其它留空"
             )
     return lines, notes
 
@@ -129,14 +141,11 @@ def classifier_json_fields_prompt() -> str:
     """
     _ensure_catalog()
     lines = [f'  "动作类型": "{classifier_action_types_prompt()}",']
-    seen_zh: set = set()
-    unique_specs: List[FieldSpec] = []
-    for c in ACTION_CLUSTERS:
-        for spec in c.fields:
-            if spec.zh not in seen_zh:
-                seen_zh.add(spec.zh)
-                unique_specs.append(spec)
-    field_lines, notes = _render_field_specs(unique_specs)
+    field_lines, notes = _render_field_specs([
+        (c.label_zh, spec)
+        for c in ACTION_CLUSTERS
+        for spec in c.fields
+    ])
     lines.extend(field_lines)
     # trailing comma cleanup on last line
     if lines:
@@ -155,12 +164,108 @@ def cluster_by_kind(kind: str) -> Optional[ActionCluster]:
     return None
 
 
+def season_option_fields(kind: str) -> Tuple[str, ...]:
+    """Typed season-option keys projected from the canonical action row."""
+    cluster = cluster_by_kind(kind)
+    if cluster is None:
+        return ()
+    return ("action_type", *(f.name for f in cluster.fields if f.season_option))
+
+
+def _season_specs(kind: str) -> Tuple[FieldSpec, ...]:
+    cluster = cluster_by_kind(kind)
+    return tuple(f for f in cluster.fields if f.season_option) if cluster else ()
+
+
+def validate_season_option(option: Mapping[str, object]) -> str:
+    """Validate a typed season option and return its canonical action type."""
+    from ming_sim.strict_types import strict_int
+
+    has_action_type = "action_type" in option
+    action_type = str(option.get("action_type") or "").strip()
+    _ensure_catalog()
+    has_typed_fields = any(
+        spec.season_option and spec.name in option
+        for cluster in ACTION_CLUSTERS
+        for spec in cluster.fields
+    )
+    if has_action_type and not action_type:
+        raise ValueError("choice.action_type 不可空")
+    if not has_action_type and has_typed_fields:
+        raise ValueError("choice.action_type 不可空")
+    if action_type and not _season_specs(action_type):
+        raise ValueError(f"choice.action_type 非法：{action_type!r}")
+    for spec in _season_specs(action_type):
+        if spec.name not in option:
+            raise ValueError(f"choice.{spec.name} 不可空")
+        if spec.as_int and spec.default is None and option[spec.name] is None:
+            raise ValueError(f"choice.{spec.name} 不可空")
+        if not field_population_allowed(action_type, spec.name, option):
+            raise ValueError(f"choice.{spec.name} 不适用于当前选项")
+        value = option[spec.name]
+        if spec.allowed is None and not spec.as_int and (
+            not isinstance(value, str) or not value.strip()
+        ):
+            raise ValueError(f"choice.{spec.name} 不可空")
+        allowed = effective_field_allowed(spec, option)
+        if allowed is not None and value not in allowed:
+            raise ValueError(f"choice.{spec.name} 非法：{value!r}")
+        if spec.as_int:
+            number = strict_int(value, accept_numeric_strings=False)
+            if number < spec.int_lo or number > spec.int_hi:
+                raise ValueError(f"choice.{spec.name} 超出范围：{number!r}")
+    return action_type
+
+
+def season_option_contract_prompt(kind: str) -> str:
+    """Human-facing season option contract projected from FieldSpec."""
+    specs = _season_specs(kind)
+    details = []
+    effective_values: Dict[str, FrozenSet[str]] = {}
+    for spec in specs:
+        detail = spec.name
+        if spec.allowed is not None:
+            allowed = frozenset(
+                value for value in spec.allowed
+                if all(
+                    field_population_allowed(kind, dependent.name, {spec.name: value})
+                    for dependent in specs
+                    if dependent.populated_when is not None
+                    and dependent.populated_when[0] == spec.name
+                )
+            )
+            effective_values[spec.name] = allowed
+            if spec.allowed_when is not None:
+                controller = spec.allowed_when[0]
+                controller_values = effective_values.get(controller, frozenset())
+                context = (
+                    {controller: next(iter(controller_values))}
+                    if len(controller_values) == 1 else {}
+                )
+                allowed = effective_field_allowed(spec, context) or frozenset()
+            detail += f'（{"|".join(sorted(allowed))}）'
+        if spec.as_int:
+            detail += f"（JSON integer，{spec.int_lo}..{spec.int_hi}，禁数字字符串）"
+        if spec.quantity_unit:
+            detail += f"（单位={spec.quantity_unit}）"
+        details.append(detail)
+    if not details:
+        return ""
+    return (
+        f'协饷 option 须携带 action_type="{kind}"、'
+        + "、".join(details)
+        + "；非协饷 option 保持既有 label/hint，不携带这些字段。"
+    )
+
+
 def cluster_fields_prompt(kind: str) -> str:
     """Render one catalog row's extraction fields without a parallel schema."""
     cluster = cluster_by_kind(kind)
     if cluster is None:
         return ""
-    lines, notes = _render_field_specs(cluster.fields)
+    lines, notes = _render_field_specs([
+        (cluster.label_zh, spec) for spec in cluster.fields
+    ])
     rendered = "\n".join(lines) + ("\n" if lines else "")
     if notes:
         rendered += "  // " + "；".join(notes) + "\n"
@@ -263,6 +368,17 @@ def validate_action_candidate_shape(obj: Any) -> Tuple[bool, str]:
         if normalized not in spec.allowed:
             return False, f"{spec.name} out of enum: {raw!r}"
     return True, ""
+
+
+def effective_field_allowed(
+    spec: FieldSpec, candidate: Mapping[str, Any],
+) -> Optional[FrozenSet[str]]:
+    """Project the enum values allowed for this candidate from one field row."""
+    if spec.allowed_when is not None:
+        controller, controller_value, allowed = spec.allowed_when
+        if str(candidate.get(controller) or "").strip() == controller_value:
+            return allowed
+    return spec.allowed
 
 
 def field_population_allowed(
