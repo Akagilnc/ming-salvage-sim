@@ -130,7 +130,8 @@ describe("decision routing — refresh entry (routeRefreshDecisions)", () => {
     ];
     const route = routeRefreshDecisions("awaiting_decision", swapped);
     expect(route.pendingDecisions).toEqual(swapped);
-    expect(route.error).toBe("");
+    // #1620：合法 pending 刷新 error:null，不洗 stream 错
+    expect(route.error).toBeNull();
   });
 
   it("#657 typed resume_phase2 空 pending → 续跑，不报 PAUSED", () => {
@@ -143,7 +144,8 @@ describe("decision routing — refresh entry (routeRefreshDecisions)", () => {
   it("accepts a valid batch on refresh", () => {
     const route = routeRefreshDecisions("awaiting_decision", [validDecision]);
     expect(route.pendingDecisions).toEqual([validDecision]);
-    expect(route.error).toBe("");
+    // #1620：不返回 error:""——由 effect 的 null 语义保留既有 stream 错
+    expect(route.error).toBeNull();
   });
 
   it("#1374 phase2 全员 decided：刷新不重开批红弹窗（无「可再提交」假象）", () => {

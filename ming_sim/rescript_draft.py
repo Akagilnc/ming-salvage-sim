@@ -140,12 +140,34 @@ def normalize_rescript_layer_a_option(raw: object) -> Dict[str, object]:
             out[key] = str(raw[key])
     if "stop_condition" in raw and raw["stop_condition"] is not None:
         out["stop_condition"] = normalize_stop_condition(raw["stop_condition"])
-    for key in ("end_turn", "deadline_months", "due_turn", "amount"):
+    # #1620：grant amount 不走通用 int()——由 require_grant_allocation_shape 独掌
+    # （strict_int 拒 bool/float）；非 grant 整数字段维持既有 int()。
+    int_keys = ("end_turn", "deadline_months", "due_turn")
+    if action_type != "grant_allocation":
+        int_keys = (*int_keys, "amount")
+    for key in int_keys:
         if key in raw and raw[key] is not None and raw[key] != "":
             try:
                 out[key] = int(raw[key])  # type: ignore[arg-type]
             except (TypeError, ValueError) as exc:
                 raise ValueError(f"票拟 option.{key} 非法：{raw[key]!r}") from exc
+    # #1620：grant 金额/account 走 require_grant_allocation_shape 唯一权威（与 mapper 同缝），
+    # 禁残缺 option 上桌；空 account 不回写默认，免 draft_capability 漂移；
+    # 非空 account 回写 shape 返回的 canonical（太仓→国库），与显式国库同 capability。
+    # amount 传 raw 原值；用返回值写 out["amount"]（honorific 无则不写）。
+    if action_type == "grant_allocation":
+        from ming_sim.action_materialize import require_grant_allocation_shape
+
+        input_account = str(out.get("account") or "").strip()
+        shaped = require_grant_allocation_shape(
+            grant_action=out.get("grant_action"),
+            amount=raw.get("amount") if "amount" in raw else None,
+            account=out.get("account"),
+        )
+        if "amount" in shaped:
+            out["amount"] = shaped["amount"]
+        if input_account:
+            out["account"] = shaped["account"]
     out["draft_capability"] = derive_draft_capability(out)
     return out
 

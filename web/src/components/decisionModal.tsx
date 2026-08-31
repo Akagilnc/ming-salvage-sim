@@ -51,10 +51,13 @@ export function DecisionModal({
   decisions,
   failures = [],
   onResolve,
+  busy = "",
 }: {
   decisions: PendingDecision[];
   failures?: PendingActionFailure[];
   onResolve: (choices: DecisionChoice[]) => void;
+  /** #1620：truthy 时禁用票拟/六动作/亲批/召见/翻页与落印，handler 入口短路——禁二提交。 */
+  busy?: string;
 }) {
   const [cursor, setCursor] = React.useState(0);
   const [picks, setPicks] = React.useState<DecisionChoice[]>(() =>
@@ -64,6 +67,7 @@ export function DecisionModal({
     }),
   );
   const pageRef = React.useRef<HTMLElement>(null);
+  const locked = !!busy;
 
   const cur = decisions[cursor];
   const pick = picks[cursor] || {};
@@ -82,7 +86,8 @@ export function DecisionModal({
       ? !!pick.label
       : !!(pick.label || (pick.note || "").trim());
   const last = cursor >= decisions.length - 1;
-  const setPick = (choice: DecisionChoice) =>
+  const setPick = (choice: DecisionChoice) => {
+    if (locked) return;
     setPicks((all) =>
       all.map((item, i) => {
         if (i !== cursor) return item;
@@ -92,14 +97,16 @@ export function DecisionModal({
           : { ...item, ...choice };
       }),
     );
+  };
 
   const next = () => {
-    if (!decided) return;
+    if (locked || !decided) return;
     if (last) onResolve(picks);
     else setCursor((value) => value + 1);
   };
 
   const pickRescriptAction = (action: RescriptDeskAction) => {
+    if (locked) return;
     if (action === "follow_draft") {
       // 需先选票拟 option；若已选 option 则带 capability
       const opt = cur.options.find((o) => o.label === pick.label) || cur.options[0];
@@ -303,6 +310,7 @@ export function DecisionModal({
                       key={option.label}
                       type="button"
                       className={"decision-option" + (pick.label === option.label && pick.action === "follow_draft" ? " is-picked" : "")}
+                      disabled={locked}
                       onClick={() => {
                         setPick(projectFollowDraftFromOption(option));
                       }}
@@ -322,6 +330,7 @@ export function DecisionModal({
                       type="button"
                       className={"decision-option" + (pick.action === item.action ? " is-picked" : "")}
                       data-action={item.action}
+                      disabled={locked}
                       onClick={() => pickRescriptAction(item.action)}
                     >
                       <span className="decision-option-label">{item.label}</span>
@@ -336,6 +345,7 @@ export function DecisionModal({
                       type="text"
                       value={pick.summon_target || ""}
                       placeholder={cur.actor_name || "大臣名"}
+                      disabled={locked}
                       onChange={(event) => setPick({
                         action: "summon",
                         label: "召见",
@@ -355,6 +365,7 @@ export function DecisionModal({
                     key={option.label}
                     type="button"
                     className={"decision-option" + (pick.label === option.label ? " is-picked" : "")}
+                    disabled={locked}
                     onClick={() => setPick(option)}
                   >
                     <span className="decision-option-label">拟批：{option.label}</span>
@@ -372,13 +383,14 @@ export function DecisionModal({
               className="decision-note"
               placeholder="亲笔补批（可选）"
               value={pick.note || ""}
+              disabled={locked}
               onChange={(event) => setPick({ note: event.target.value })}
             />
           </div>
           <button
             type="button"
             className="decision-confirm"
-            disabled={!decided}
+            disabled={locked || !decided}
             onClick={next}
             aria-label={last ? "批红落印，续推时局" : "批下一疏"}
           >
