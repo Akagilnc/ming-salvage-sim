@@ -456,7 +456,7 @@ describe("ChatModal — #527 prefix chips only (拟旨/下密令)", () => {
   /** Production suggestions_for payload after ADR 0042 / #527 cut. */
   const PREFIX_SUGGESTIONS: Suggestion[] = [
     { label: "拟旨", text: "拟旨如下：", prefix: true },
-    { label: "机密差事", text: "", prefix: true, intent: "secret_order" },
+    { label: "下密令", text: "密令如下：", prefix: true, intent: "secret_order" },
   ];
 
   it("switching from draft to typed secret-order replaces composer content and does not auto-send", () => {
@@ -487,7 +487,7 @@ describe("ChatModal — #527 prefix chips only (拟旨/下密令)", () => {
     act(() => {
       secretBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
-    expect(textarea.value).toBe("");
+    expect(textarea.value).toBe("密令如下：");
     expect(onIntent).toHaveBeenLastCalledWith("secret_order");
     expect(onSend).not.toHaveBeenCalled();
   });

@@ -567,7 +567,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
         }), { status: 200, headers: { "Content-Type": "text/event-stream" } });
       }
       if (u.pathname.endsWith("/api/ministers/%E6%9D%A8%E5%97%A3%E6%98%8C/chat")) {
-        return jsonResp({ minister, history: [], suggestions: [{ label: "机密差事", text: "", prefix: true, intent: "secret_order" }], pending_action_failures: [], pending_turn_ids: [], night_id: 1 });
+        return jsonResp({ minister, history: [], suggestions: [{ label: "下密令", text: "密令如下：", prefix: true, intent: "secret_order" }], pending_action_failures: [], pending_turn_ids: [], night_id: 1 });
       }
       return jsonResp({});
     }));
@@ -620,7 +620,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     expect(host.querySelector(".chat-system-note")).toBeNull();
   });
 
-  it("#1566 点机密差事不发、退出召对后再发普通问话，POST body 不带残留 intent", async () => {
+  it("#1566 点下密令不发、退出召对后再发普通问话，POST body 不带残留 intent", async () => {
     let sentChat: Record<string, unknown> | null = null;
     const minister = {
       name: "杨嗣昌", office: "兵部右侍郎", office_type: "兵部", faction: "",
@@ -644,7 +644,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       if (u.pathname.endsWith("/api/ministers/%E6%9D%A8%E5%97%A3%E6%98%8C/chat")) {
         return jsonResp({
           minister, history: [],
-          suggestions: [{ label: "机密差事", text: "", prefix: true, intent: "secret_order" }],
+          suggestions: [{ label: "下密令", text: "密令如下：", prefix: true, intent: "secret_order" }],
           pending_action_failures: [], pending_turn_ids: [], night_id: 1,
         });
       }
