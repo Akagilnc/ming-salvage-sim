@@ -716,7 +716,8 @@ def test_grant_target_field_carries_region_project_army_through_normalize(game):
         # #1503：协饷 stage 前解析为真实 army id；赈灾/项目保持原文。
         ("赈灾", "陕西", "region", "陕西"),
         ("项目经费", "运河疏浚", "issue", "运河疏浚"),
-        ("协饷", "辽东边军", "army", "guanning"),
+        # #1620：仅身份别名 exact；关宁军→guanning，禁 theater 子串升格
+        ("协饷", "关宁军", "army", "guanning"),
     )
     for action, target, expected_kind, expected_staged in cases:
         payload = {
