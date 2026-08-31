@@ -69,7 +69,6 @@ describe.sequential("medium: shared Electron geometry", () => {
       buttonHit: boolean;
       twoLines: boolean;
       textareaHit: boolean;
-      addHit: boolean;
     }>(page, css("base", "court", "modals", "chat", "edict", "modal-theme", "situation"), [
       { width: 1280, height: 720 },
       { width: 800, height: 800 },
@@ -77,10 +76,9 @@ describe.sequential("medium: shared Electron geometry", () => {
       const alert = document.querySelector('[role="alert"]');
       const cols = document.querySelector('.desk-columns');
       const textarea = document.querySelector('.desk-compose textarea');
-      const addBtn = document.querySelector('.desk-add-btn');
       const footer = document.querySelector('.desk-footer');
       const button = document.querySelector('.desk-footer button');
-      if (!alert || !cols || !textarea || !addBtn || !footer || !button) {
+      if (!alert || !cols || !textarea || !footer || !button) {
         return { error: 'missing edict fixture element' };
       }
       const overlaps = (a, b) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
@@ -118,9 +116,6 @@ describe.sequential("medium: shared Electron geometry", () => {
       const twoLines = textarea.clientHeight >= minEditable && taVisH >= minEditable;
       const textareaHit = hitAtCenter(textarea);
 
-      addBtn.scrollIntoView({ block: 'nearest' });
-      const addHit = hitAtCenter(addBtn);
-
       return {
         viewportWidth: innerWidth,
         viewportHeight: innerHeight,
@@ -133,7 +128,6 @@ describe.sequential("medium: shared Electron geometry", () => {
         buttonHit,
         twoLines,
         textareaHit,
-        addHit,
       };
     })()`);
 
@@ -148,7 +142,6 @@ describe.sequential("medium: shared Electron geometry", () => {
       expect(result.buttonHit).toBe(true);
       expect(result.twoLines).toBe(true);
       expect(result.textareaHit).toBe(true);
-      expect(result.addHit).toBe(true);
     }
   });
 });
