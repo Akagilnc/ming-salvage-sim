@@ -605,7 +605,7 @@ def test_secret_order_path_does_not_consume_audience_admission(game, monkeypatch
     remote = _set_place(game, "洪承畴", location="shaanxi")
     before = an.list_unsettled_summons(db)
 
-    def _session_chat(minister_name, message, *, chat_turn_id=0):
+    def _session_chat(minister_name, message, *, chat_turn_id=0, explicit_secret_order=False):
         return ChatTurnResult(answer="臣领密旨。", pending_action_id=0, secret_order_id=0)
 
     runtime = webgame_shell_for_secret_order(
@@ -1154,7 +1154,7 @@ def test_web_chat_hall_admission_allows_capital_and_blocks_offsite(game):
     moving_before = _travel_row(db, moving.name)
     chat_calls: list[str] = []
 
-    def _session_chat(minister_name, message, *, chat_turn_id=0):
+    def _session_chat(minister_name, message, *, chat_turn_id=0, explicit_secret_order=False):
         chat_calls.append(minister_name)
         return ChatTurnResult(answer=f"{minister_name}入对。", pending_action_id=0, secret_order_id=0)
 
@@ -1219,7 +1219,7 @@ def test_web_chat_stream_summon_success_exits_error_channel(game):
     )
     chat_calls: list[str] = []
 
-    def _session_chat(minister_name, message, *, chat_turn_id=0):
+    def _session_chat(minister_name, message, *, chat_turn_id=0, explicit_secret_order=False):
         chat_calls.append(minister_name)
         return ChatTurnResult(answer="不应到达。", pending_action_id=0, secret_order_id=0)
 
@@ -1274,7 +1274,7 @@ def test_web_chat_offsite_summon_scene_generator_failure_is_loud(game):
     remote = _set_place(game, "洪承畴", location="shaanxi")
     before_turns = _chat_turn_count(db)
 
-    def _session_chat(minister_name, message, *, chat_turn_id=0):
+    def _session_chat(minister_name, message, *, chat_turn_id=0, explicit_secret_order=False):
         raise AssertionError("scene 失败路径不得调回话")
 
     runtime = _web_hall_runtime(db, state, content, session_chat=_session_chat)
@@ -1315,7 +1315,7 @@ def test_web_chat_offsite_summon_generator_receives_structured_travel_facts(game
     remote = _set_place(game, "洪承畴", location="shaanxi")
     captured: list = []
 
-    def _session_chat(minister_name, message, *, chat_turn_id=0):
+    def _session_chat(minister_name, message, *, chat_turn_id=0, explicit_secret_order=False):
         raise AssertionError("场外记召不得调回话")
 
     runtime = _web_hall_runtime(db, state, content, session_chat=_session_chat)
@@ -1344,7 +1344,7 @@ def test_web_chat_offsite_scene_keeps_pending_until_settled(game, stream):
     db, state, content = game
     remote = _set_place(game, "洪承畴", location="shaanxi")
 
-    def _session_chat(minister_name, message, *, chat_turn_id=0):
+    def _session_chat(minister_name, message, *, chat_turn_id=0, explicit_secret_order=False):
         raise AssertionError("场外记召不得调回话")
 
     runtime = _web_hall_runtime(db, state, content, session_chat=_session_chat)
@@ -1392,7 +1392,7 @@ def test_web_chat_offsite_scene_failure_releases_close_barrier(game, stream):
     db, state, content = game
     remote = _set_place(game, "洪承畴", location="shaanxi")
 
-    def _session_chat(minister_name, message, *, chat_turn_id=0):
+    def _session_chat(minister_name, message, *, chat_turn_id=0, explicit_secret_order=False):
         raise AssertionError("场外记召不得调回话")
 
     runtime = _web_hall_runtime(db, state, content, session_chat=_session_chat)
@@ -1569,7 +1569,7 @@ def _install_secret_order_agent(runtime, *, stream: bool = False) -> None:
     复用 tests/test_audience_background._FakeAgent 流式形态；channel=api 走 #344
     前缀密令 resolve 路。WebGame._chat_stream_payload 经类实例解析，不手绑。
     """
-    from tests.test_audience_background import RunContent, RunOutput, _FakeAgent
+    from tests.test_audience_background import RunContent, RunOutput, ToolExec, _FakeAgent
 
     class _SyncAgent(_FakeAgent):
         def run(self, *_a, **_k):
@@ -1579,10 +1579,20 @@ def _install_secret_order_agent(runtime, *, stream: bool = False) -> None:
             return None
 
     agent: Any
+    # #1566：密令 route 须吞 summon+dismiss court actions，仍只 stage 密令。
+    non_secret_tools = [
+        ToolExec("propose_directive", "__pending_directive__不得物化的普通旨意"),
+        ToolExec(
+            "rush_staged_commitment",
+            '__commitment_rush__{"issue_id": 1, "stage_idx": 0, "deadline_months": 1}',
+        ),
+        ToolExec("summon_minister", "__summon__杨嗣昌"),
+        ToolExec("dismiss_minister", "__dismiss__"),
+    ]
     if stream:
-        agent = _FakeAgent(chunks=["臣", "领密旨。"])
+        agent = _FakeAgent(tools=non_secret_tools, chunks=["臣", "领密旨。"])
     else:
-        agent = _SyncAgent(chunks=["臣领密旨。"])
+        agent = _SyncAgent(tools=non_secret_tools, chunks=["臣领密旨。"])
 
     s = runtime.session
     s.registry = SimpleNamespace(get=lambda _ch: agent, session_ids={})
@@ -1641,18 +1651,52 @@ def _secret_order_runtime(db, state, content, *, stream: bool):
 
 def _formal_secret_order_payload(runtime, minister_name, message, *, stream):
     if stream:
-        events = list(runtime.chat_stream(minister_name, message))
+        events = list(runtime.chat_stream(minister_name, message, "secret_order"))
         types = [ev.get("type") for ev in events]
         assert "error" not in types, f"stream secret order errored: {events!r}"
         done_events = [ev for ev in events if ev.get("type") == "done"]
         assert done_events, f"expected done, got types={types!r}"
         return done_events[0].get("payload") or {}
-    return runtime.chat(minister_name, message)
+    return runtime.chat(minister_name, message, "secret_order")
+
+
+def _http_typed_secret_order_payload(client, minister_name, message, *, stream):
+    """#1566：经真实 FastAPI POST 读出机面 payload（sync JSON / stream SSE done）。"""
+    body = {"message": message, "intent": "secret_order"}
+    path = (
+        f"/api/ministers/{minister_name}/chat/stream"
+        if stream
+        else f"/api/ministers/{minister_name}/chat"
+    )
+    response = client.post(path, json=body)
+    assert response.status_code == 200, response.text
+    if not stream:
+        return response.json()
+    events: list[tuple[str, dict]] = []
+    for block in response.text.strip().split("\n\n"):
+        if not block.strip():
+            continue
+        ev_name = ""
+        data_raw = ""
+        for line in block.splitlines():
+            if line.startswith("event: "):
+                ev_name = line[7:].strip()
+            elif line.startswith("data: "):
+                data_raw += line[6:]
+        if ev_name and data_raw:
+            events.append((ev_name, json.loads(data_raw)))
+    assert not any(name == "error" for name, _ in events), f"stream errored: {events!r}"
+    done = [data for name, data in events if name == "done"]
+    assert done, f"expected done SSE, got {events!r}"
+    return done[0]
 
 
 @pytest.mark.parametrize("stream", [False, True], ids=["sync", "stream"])
 def test_web_chat_formal_secret_order_hangs_night_without_enter(game, stream):
-    """#1566：场外正式密令挂当前夜轮，不 consume 传召、不入殿。"""
+    """#1566：场外正式密令挂当前夜轮，不 consume 传召、不入殿；
+
+    summon+dismiss tool 与 typed 退朝均不得派 court_action / 换人 / exit / 留侍 / 收夜。
+    """
     db, state, content = game
     remote = _set_place(game, "洪承畴", location="shaanxi")
     before_summons = list(an.list_unsettled_summons(db))
@@ -1661,13 +1705,31 @@ def test_web_chat_formal_secret_order_hangs_night_without_enter(game, stream):
     )
 
     runtime = _secret_order_runtime(db, state, content, stream=stream)
+    old_pending_id = int(db.stage_pending_action(
+        state.turn,
+        "directive",
+        "新建",
+        remote.name,
+        {"decree_text": "既存候选", "mode": "special_decree"},
+    ))
+    old_pending = next(
+        p for p in db.list_pending_actions(state.turn)
+        if int(p["id"]) == old_pending_id
+    )
     edict = "陕北赈抚探报\n速报陕西军情。"
     payload = _formal_secret_order_payload(
-        runtime, remote.name, f"密令如下：{edict}",
+        runtime, remote.name, edict,
         stream=stream,
     )
     assert not payload.get("admission"), (
         f"正式密令不得被 SUMMON_* admission 截获，got admission={payload.get('admission')!r}"
+    )
+    # #1566：密令 route 吞 court actions（agent 带 summon+dismiss）。
+    assert not payload.get("court_action"), (
+        f"密令不得派 court_action，got {payload.get('court_action')!r}"
+    )
+    assert not payload.get("next_minister"), (
+        f"密令不得换人，got next_minister={payload.get('next_minister')!r}"
     )
     pid = int(payload.get("pending_action_id") or 0)
     _assert_secret_order_pending(
@@ -1677,14 +1739,22 @@ def test_web_chat_formal_secret_order_hangs_night_without_enter(game, stream):
     assert sum(
         1 for p in db.list_pending_actions(state.turn) if p.get("kind") == "secret_order"
     ) == before_n + 1
+    after_pending = db.list_pending_actions(state.turn)
+    assert next(
+        p for p in after_pending if int(p["id"]) == old_pending_id
+    ) == old_pending
+    assert sum(p.get("kind") == "directive" for p in after_pending) == 1
+    assert sum(p.get("kind") == "commitment" for p in after_pending) == 0
     chat_turn_id = int(payload.get("chat_turn_id") or 0)
     assert chat_turn_id > 0
     turn = db.conn.execute(
-        "SELECT night_id, status FROM chat_turns WHERE id=?",
+        "SELECT night_id, status, route FROM chat_turns WHERE id=?",
         (chat_turn_id,),
     ).fetchone()
     assert turn is not None
     assert int(turn["night_id"] or 0) > 0
+    # 场外密令 route 须 durable 落 secret_order_offsite。
+    assert str(turn["route"] or "") == "secret_order_offsite"
     scroll = an.read_night_scroll(db, int(turn["night_id"]))
     assert not any(
         m.get("beat") == "entrance" and m.get("speaker") == remote.name
@@ -1694,6 +1764,53 @@ def test_web_chat_formal_secret_order_hangs_night_without_enter(game, stream):
     roles = {m.get("role") for m in owned}
     assert "user" in roles
     assert "minister" in roles
+
+    # #1566：typed 退朝在密令 intent 下不得收夜/留侍/court_break。
+    before_nights = db.conn.execute(
+        "SELECT COUNT(*) AS c FROM audience_nights"
+    ).fetchone()["c"]
+    break_payload = _formal_secret_order_payload(
+        runtime, remote.name, "退朝", stream=stream,
+    )
+    assert not break_payload.get("court_action"), (
+        f"typed 退朝+密令 intent 不得 court_action，got {break_payload.get('court_action')!r}"
+    )
+    after_nights = db.conn.execute(
+        "SELECT COUNT(*) AS c FROM audience_nights"
+    ).fetchone()["c"]
+    assert after_nights == before_nights
+    open_night = an.get_open_night(db)
+    assert open_night is not None
+    assert str(open_night.get("status") or "") == "open"
+
+
+@pytest.mark.parametrize("stream", [False, True], ids=["sync", "stream"])
+def test_http_typed_secret_order_intent_forwards_to_webgame(game, stream, monkeypatch):
+    """#1566：HTTP typed-intent 接缝——ChatRequest.intent 经真实 FastAPI 入口到 WebGame。
+
+    场外大臣 + 无密令前缀正文；删 api_chat / api_chat_stream 的 request.intent 转发须转红
+    （远人 SUMMON admission 截获，密令 pending 不落）。
+    """
+    import web_app
+
+    db, state, content = game
+    remote = _set_place(game, "洪承畴", location="shaanxi")
+    runtime = _secret_order_runtime(db, state, content, stream=stream)
+    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
+    monkeypatch.setattr(web_app, "web_game", runtime)
+
+    # 无 _SECRET_PREFIXES 前缀：仅靠 JSON intent 入密令路（禁前缀自救掩盖转发洞）。
+    edict = "陕北赈抚探报\n速报陕西军情。"
+    payload = _http_typed_secret_order_payload(
+        TestClient(web_app.app), remote.name, edict, stream=stream,
+    )
+    assert not payload.get("admission"), (
+        f"typed intent 须走密令路，不得 SUMMON admission，got {payload!r}"
+    )
+    pid = int(payload.get("pending_action_id") or 0)
+    _assert_secret_order_pending(
+        db, state, minister_name=remote.name, pid=pid, edict=edict,
+    )
 
 
 def test_web_chat_ledger_append_failure_has_no_side_effects(game, monkeypatch):
@@ -1710,7 +1827,7 @@ def test_web_chat_ledger_append_failure_has_no_side_effects(game, monkeypatch):
     before_turns = _chat_turn_count(db)
     chat_calls: list[str] = []
 
-    def _session_chat(minister_name, message, *, chat_turn_id=0):
+    def _session_chat(minister_name, message, *, chat_turn_id=0, explicit_secret_order=False):
         chat_calls.append(minister_name)
         return ChatTurnResult(answer="不应到达。", pending_action_id=0, secret_order_id=0)
 

@@ -16,7 +16,8 @@ import ming_sim.cli.terminal as term
 import ming_sim.issues as issues_mod
 from ming_sim.exceptions import LLMContractError, LLMUnavailable, SettlementAbort
 from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
-from ming_sim.session import TurnPhase
+from ming_sim.session import GameSession, TurnPhase
+from ming_sim import audience_night as an
 
 
 @contextmanager
@@ -128,7 +129,7 @@ def test_terminal_minister_chat_persists_messages_before_session_chat(monkeypatc
             self.content = SimpleNamespace(characters={"魏忠贤": object(), "韩爌": object()})
             self.temporary_characters = set()
 
-        def chat(self, minister_name, question):
+        def chat(self, minister_name, question, *, chat_turn_id=0, explicit_secret_order=False):
             assert self.db.messages == [
                 ("魏忠贤", 7, "user", "命洪承畴督办陕西赈灾，东厂暗助护赈银。")
             ]
@@ -180,7 +181,7 @@ def test_terminal_minister_chat_removes_user_message_when_session_chat_fails(mon
             self.content = SimpleNamespace(characters={"魏忠贤": object(), "韩爌": object()})
             self.temporary_characters = set()
 
-        def chat(self, minister_name, question):
+        def chat(self, minister_name, question, *, chat_turn_id=0, explicit_secret_order=False):
             assert self.db.messages == [
                 ("魏忠贤", 6, "user", "前一轮召对内容"),
                 ("魏忠贤", 7, "user", "命洪承畴督办陕西赈灾，东厂暗助护赈银。"),
@@ -226,7 +227,7 @@ def test_terminal_minister_chat_removes_user_message_when_session_chat_interrupt
             self.content = SimpleNamespace(characters={"魏忠贤": object(), "韩爌": object()})
             self.temporary_characters = set()
 
-        def chat(self, minister_name, question):
+        def chat(self, minister_name, question, *, chat_turn_id=0, explicit_secret_order=False):
             assert self.db.messages == [
                 ("魏忠贤", 6, "user", "前一轮召对内容"),
                 ("魏忠贤", 7, "user", "命洪承畴督办陕西赈灾，东厂暗助护赈银。"),
@@ -262,7 +263,7 @@ def test_terminal_minister_chat_preserves_chat_error_when_rollback_fails(monkeyp
             self.content = SimpleNamespace(characters={"魏忠贤": object(), "韩爌": object()})
             self.temporary_characters = set()
 
-        def chat(self, minister_name, question):
+        def chat(self, minister_name, question, *, chat_turn_id=0, explicit_secret_order=False):
             raise RuntimeError("LLM down")
 
     answers = iter(["命洪承畴督办陕西赈灾，东厂暗助护赈银。"])
@@ -296,7 +297,7 @@ def test_terminal_minister_chat_reply_persist_failure_keeps_user_message(monkeyp
             self.content = SimpleNamespace(characters={"魏忠贤": object(), "韩爌": object()})
             self.temporary_characters = set()
 
-        def chat(self, minister_name, question):
+        def chat(self, minister_name, question, *, chat_turn_id=0, explicit_secret_order=False):
             return SimpleNamespace(
                 answer="臣领密旨，当令东厂暗中护送赈银。",
                 proposed_directive=None,
@@ -342,7 +343,7 @@ def test_terminal_persistent_chat_finalization_failure_rolls_back_real_turn(game
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
     received_chat_turn_ids = []
 
-    def chat(_name, _question, chat_turn_id=0):
+    def chat(_name, _question, *, chat_turn_id=0, explicit_secret_order=False):
         assert chat_turn_id > 0
         received_chat_turn_ids.append(chat_turn_id)
         db.persist_return_report(
@@ -411,7 +412,7 @@ def test_terminal_minister_chat_can_retry_failed_secret_order(monkeypatch, capsy
             self.registry = object()
             self.temporary_characters = set()
 
-        def chat(self, minister_name, question):
+        def chat(self, minister_name, question, *, chat_turn_id=0, explicit_secret_order=False):
             raise AssertionError("retry 命令不应进入普通召对")
 
     answers = iter(["retry 42", "done"])
@@ -440,7 +441,7 @@ def test_terminal_minister_chat_blocks_retry_during_settlement_recovery(monkeypa
             self.registry = object()
             self.temporary_characters = set()
 
-        def chat(self, minister_name, question):
+        def chat(self, minister_name, question, *, chat_turn_id=0, explicit_secret_order=False):
             raise AssertionError("retry 命令不应进入普通召对")
 
     answers = iter(["retry 42", "done"])
@@ -639,6 +640,56 @@ def test_play_turn_reports_secret_order_failure_when_settlement_aborts(monkeypat
     assert "【密令落库失败 #42】" in out
     assert "retry 42" in out
     assert session.calls == ["begin", "resolve", "advance"]
+
+
+
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
+def test_terminal_minister_chat_accepts_retry_reply_command(game, monkeypatch):
+    """#1566 CLI 独有：minister_chat 输入「重试回话」完成 interrupted 轮，route 保持。
+
+    密令 stage / 无 entrance 由 Web production-chat 主干证明；本条只证命令入口。
+    """
+    db, state, content = game
+    character = next(c for c in content.characters.values() if c.status == "active")
+    night = an.open_night(db, state, location="乾清宫", time_of_day="戌时")
+    question = "整饬边备，密查欠饷。"
+    ct = db.create_chat_turn(
+        state, character.name, f"cli:{character.name}", 0,
+        night_id=int(night["id"]), status="generating",
+        route="secret_order_offsite",
+    )
+    mid = db.append_chat_message(character.name, state.turn, "user", question)
+    db.update_chat_turn_messages(ct, user_message_id=mid)
+    db.conn.execute("UPDATE chat_turns SET status='interrupted' WHERE id=?", (ct,))
+    db.conn.commit()
+
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.llm_config = SimpleNamespace(channel="api")
+    sess.temporary_characters = set()
+    sess.registry = SimpleNamespace(
+        get=lambda _ch: SimpleNamespace(
+            run=lambda *_a, **_k: SimpleNamespace(content="臣领密旨。", tools=[]),
+        ),
+        session_ids={},
+    )
+    sess._audience_prompt_for_message = lambda msg, character=None, chat_turn_id=0: msg
+    sess._start_cli_action_intent = lambda *_a, **_k: None
+    sess._finish_cli_action_intent = lambda *_a, **_k: None
+
+    answers = iter(["重试回话", "done"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+
+    assert term.minister_chat(sess, character) == "dismiss"
+
+    row = db.conn.execute(
+        "SELECT status, minister_message_id, route FROM chat_turns WHERE id=?", (ct,),
+    ).fetchone()
+    assert row["status"] == "active"
+    assert row["minister_message_id"]
+    assert str(row["route"] or "") == "secret_order_offsite"
 
 
 def test_cli_write_gate_canonical_session_attr():
