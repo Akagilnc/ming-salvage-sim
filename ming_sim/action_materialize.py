@@ -1273,6 +1273,25 @@ GRANT_MONEY_ACTIONS = GRANT_ACTIONS - {"无"} - GRANT_HONORIFICS
 XIEXIANG_TARGET_KINDS = frozenset({"army"})
 
 
+def resolve_grant_account(*, grant_action: object = None, account: object = None) -> str:
+    """grant account 归一唯一权威（无 DB）。
+
+    #1620：shape 与 materialize 共用——禁平行第二套 if 树。
+    发内帑→内库；协饷 raw 透传；金钱动作非法非空 raise、空→国库；其余（含 honorific）→""。
+    """
+    ga = str(grant_action or "").strip()
+    raw_account = str(account or "").strip()
+    if ga == "发内帑":
+        return "内库"
+    if ga == "协饷":
+        return raw_account
+    if ga in GRANT_MONEY_ACTIONS:
+        if raw_account and raw_account not in {"国库", "内库"}:
+            raise ValueError(f"grant 非法 account：{raw_account!r}")
+        return raw_account if raw_account in {"国库", "内库"} else "国库"
+    return ""
+
+
 def require_grant_allocation_shape(
     *,
     grant_action: object = None,
@@ -1282,22 +1301,13 @@ def require_grant_allocation_shape(
     """grant_allocation 金额/account shape 唯一权威（无 DB）。
 
     #1620：层 A 上桌与 rescript mapper 共用——禁平行第二套规则。
+    account 走 resolve_grant_account；本函数继续独掌 amount。
     返回 grant_action、account；非 honorific 另含正 amount。
     """
     ga = str(grant_action or "").strip()
     if not ga:
         raise ValueError("grant_allocation 缺 grant_action")
-    raw_account = str(account or "").strip()
-    if ga == "发内帑":
-        resolved_account = "内库"
-    elif ga == "协饷":
-        resolved_account = raw_account
-    elif ga in GRANT_MONEY_ACTIONS:
-        if raw_account and raw_account not in {"国库", "内库"}:
-            raise ValueError(f"grant 非法 account：{raw_account!r}")
-        resolved_account = raw_account if raw_account in {"国库", "内库"} else "国库"
-    else:
-        resolved_account = ""
+    resolved_account = resolve_grant_account(grant_action=ga, account=account)
     out: Dict[str, Any] = {"grant_action": ga, "account": resolved_account}
     if ga in GRANT_HONORIFICS:
         return out
@@ -1309,20 +1319,6 @@ def require_grant_allocation_shape(
         raise ValueError("grant 金钱缺正 amount")
     out["amount"] = amt
     return out
-
-
-def _grant_account(intent: Dict[str, Any]) -> str:
-    action = str(intent.get("grant_action") or "").strip()
-    account = str(intent.get("account") or "").strip()
-    if action == "发内帑":
-        return "内库"
-    if account in {"国库", "内库"}:
-        return account
-    if action == "协饷":
-        return account
-    if action in GRANT_MONEY_ACTIONS:
-        return "国库"
-    return ""
 
 
 def _grant_cadence(intent: Dict[str, Any]) -> str:
@@ -1630,7 +1626,10 @@ def _materialize_grant_allocation(ctx: MaterializeCtx) -> None:
         emperor_text=ctx.player_message,
         extracted_mode=intent.get("mode"),
         amount=intent.get("amount"),
-        account=_grant_account(intent),
+        account=resolve_grant_account(
+            grant_action=grant_action,
+            account=intent.get("account"),
+        ),
         purpose=str(intent.get("purpose") or "").strip(),
         cadence=_grant_cadence(intent),
         target_candidate=intent.get("target_candidate"),
