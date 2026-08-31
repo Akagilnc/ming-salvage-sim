@@ -2,7 +2,34 @@ import React from "react";
 import { createPortal } from "react-dom";
 import { Upload, X } from "lucide-react";
 import { formatLegacyEffect, formatMoney, formatSignedMoney } from "../format";
-import type { BudgetAccount, BudgetItem, BudgetMovement, Legacy, SettledArmyPay } from "../types";
+import type { BudgetAccount, BudgetItem, BudgetMovement, Legacy, Minister, SettledArmyPay } from "../types";
+
+type PlaceOfficeMinister = Pick<
+  Minister,
+  "location" | "location_label" | "transit_to" | "transit_to_label" | "office"
+>;
+
+/** place badge (transit_to ≻ location) orthogonal to office; single authority for drawers + chat profile. */
+export function MinisterPlaceOffice({
+  minister,
+  officeClassName,
+}: {
+  minister: PlaceOfficeMinister;
+  officeClassName: string;
+}) {
+  const { location, location_label, transit_to, transit_to_label, office } = minister;
+  return (
+    <>
+      {transit_to && (
+        <span className="minister-place minister-transit">{transit_to_label || transit_to}</span>
+      )}
+      {!transit_to && location && (
+        <span className="minister-place">{location_label || location}</span>
+      )}
+      {office && <span className={officeClassName}>{office}</span>}
+    </>
+  );
+}
 
 export function MinisterPortrait({ primary, fallback, name, className = "minister-card-portrait" }: { primary: string; fallback?: string; name: string; className?: string }) {
   // 两级 fallback：primary（专属）→ fallback（pool 预设）→ 占位符
