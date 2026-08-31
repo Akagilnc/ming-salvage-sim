@@ -133,16 +133,18 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
                 original_draft_index,
             ))
         if ctx.explicit_prefixed:
+            # #1503/#1683：载荷式 typed 候选（grant/appointment）优先于 generic draft
+            _typed_first = frozenset({"grant_allocation", "appointment"})
             candidate_records.sort(
                 key=lambda record: str(record[0].get("kind") or "")
-                != "grant_allocation"
+                not in _typed_first
             )
         kind_counts: Dict[str, int] = {}
         for candidate, _original_kind, _original_index in candidate_records:
             kind = str(candidate.get("kind") or "")
             kind_counts[kind] = kind_counts.get(kind, 0) + 1
         kind_indexes: Dict[str, int] = {}
-        grant_staged = False
+        typed_payload_staged = False
         for candidate, original_kind, original_draft_index in candidate_records:
             kind = str(candidate.get("kind") or "")
             cluster = cluster_by_kind(kind)
@@ -160,7 +162,7 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
                 intent=candidate,
                 intent_kind=cluster.kind,
                 intent_candidates=None,
-                explicit_prefixed=ctx.explicit_prefixed and not grant_staged,
+                explicit_prefixed=ctx.explicit_prefixed and not typed_payload_staged,
                 candidate_kind_index=(
                     original_draft_index if original_kind == "draft" else kind_index
                 ),
@@ -172,15 +174,16 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
                 draft_staged=False,
             )
             fn(candidate_ctx)
-            if kind == "grant_allocation" and int(
+            if kind in {"grant_allocation", "appointment"} and int(
                 candidate_out.get("pending_action_id") or 0
             ) > int(baseline_out.get("pending_action_id") or 0):
-                grant_staged = True
+                typed_payload_staged = True
             ctx.out.update(candidate_out)
             if candidate_ctx.draft_staged:
                 ctx.draft_staged = True
-        # #1380：拟旨优先后仍须并行 office（仅 LLM 分类路；前缀路禁，见 #344 US3）
-        if _draft_path_took_effect(ctx) and not ctx.explicit_prefixed:
+        # #1380：拟旨优先后仍须并行 office。
+        # #1683：前缀仍禁 LLM 补抽，但不禁 structured appointment 落 office（对齐 #1503 grant）。
+        if _draft_path_took_effect(ctx):
             parallel_stage_office_from_appointment_intent(ctx)
         return
 
@@ -191,10 +194,9 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
             continue
         seen.add(fn)
         fn(ctx)
-    # #1380：LLM 分类拟旨路并行 office（无任免意图则 no-op）。
-    # 显式「拟旨如下」前缀任免走随诏 extractor office_changes（#344 US3 / ADR 0028 /
-    # test_decree_prefix_appointment_not_double_staged）；禁并行 LLM 抽取。
-    if _draft_path_took_effect(ctx) and not ctx.explicit_prefixed:
+    # #1380：拟旨路并行 office（无任免意图则 no-op）。
+    # #1683：前缀仍禁 LLM 补抽；structured appointment 与非前缀同形落 office（#1503 同构）。
+    if _draft_path_took_effect(ctx):
         parallel_stage_office_from_appointment_intent(ctx)
 
 
@@ -923,29 +925,29 @@ def _stage_office_pending_core(
 def parallel_stage_office_from_appointment_intent(ctx: MaterializeCtx) -> Optional[int]:
     """#1380 处方 A：拟旨通道并行 stage kind=office。
 
-    仅作用于非前缀（explicit_prefixed=False）的分类/串行拟旨路。
-    前缀「拟旨如下」任免走随诏 extractor office_changes（#344 US3 / ADR 0028）。
     P5 三态：
       1) intent/candidates 含 appointment 结构 → 用之，禁 LLM；
       2) 分类器/预分类已跑（intent 或 candidates 非 None）且无 appointment
          → 结构化缺席即定论，禁 LLM（#568 strategy_selection 等）；
-      3) 分类器未跑（二者皆 None）→ 才允许 extract_appointment_action。
+      3) 分类器未跑（二者皆 None）→ 才允许 extract_appointment_action（仅非前缀）。
+    #1683：显式「拟旨如下」前缀仍走本缝消费 **已有** structured appointment
+    （对齐 #1503 grant 单轨）；前缀路径禁止 extract_appointment_action（#344 US3）。
     multi 已含 appointment 时主路径 _materialize_appointment 先落库；本缝以
     实时 DB 去重并入，禁因 pend_for_minister 快照过期而双 stage（#515/#519）。
     无任免意图 → 不写 office（负向契约）。返回新建/并入的 pending id；无动作返回 None。
     """
     from ming_sim.cli_backend import extract_appointment_action
 
-    # 前缀路零 LLM（#344 US3）——调用方亦应闸，此处双保险
-    if ctx.explicit_prefixed:
-        return None
     # 主路径 appointment 单项物化中；禁本缝重复
     if ctx.intent_kind == "appointment":
         return None
 
-    # P5：结构化优先
+    # P5：结构化优先（前缀与自然语言同消费已有 structure）
     appt = _structured_appointment_from_ctx(ctx)
     if appt is None:
+        # 前缀零 LLM（#344 US3 / #1683）：无 structure 即停，不补抽
+        if ctx.explicit_prefixed:
+            return None
         # 分类器/预分类已给出结构化产物且无 appointment → 不得补串行抽取
         # （#568 点策 draft/strategy_selection 本就有结构，禁 must-not-call 违约）
         has_structure = ctx.intent is not None or ctx.intent_candidates is not None
@@ -3144,10 +3146,17 @@ def _write_path_nature_ledger(
 
 
 def _materialize_appointment(ctx: MaterializeCtx) -> None:
+    """暂存任免 office 候选。
+
+    #1683：显式拟旨前缀若带 typed appointment 候选，仍走本单轨（不再因
+    explicit_prefixed 早退；对齐 #1503 grant）。前缀路径禁止
+    extract_appointment_action（#344 US3 零 LLM）。draft_staged / 已有
+    primary pending 仍互斥，避免与无关 draft 双写。
+    """
     from ming_sim.cli_backend import extract_appointment_action
 
     if (
-        ctx.explicit_prefixed or ctx.draft_staged
+        ctx.draft_staged
         or ctx.out.get("pending_action_id") or ctx.conversation_intent_handled
     ):
         return
@@ -3162,6 +3171,9 @@ def _materialize_appointment(ctx: MaterializeCtx) -> None:
             intent if intent_kind == "appointment"
             else {"appoint_action": "无", "name": "", "office": ""}
         )
+    elif ctx.explicit_prefixed:
+        # 前缀零 LLM：无 structured intent 则不抽，留给 parallel/无动作
+        return
     else:
         appt = extract_appointment_action(
             ctx.player_message, ctx.reply, llm_config=ctx.llm_config)
