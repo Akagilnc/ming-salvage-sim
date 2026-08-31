@@ -483,7 +483,7 @@ describe("ChatModal — #527 prefix chips only (拟旨/下密令)", () => {
     expect(textarea.value).toBe("拟旨如下：");
     expect(onSend).not.toHaveBeenCalled();
 
-    const secretBtn = host.querySelector('[data-intent="secret_order"]') as HTMLButtonElement;
+    const secretBtn = hitlButtons.find((b) => b.textContent?.trim() === "下密令") as HTMLButtonElement;
     act(() => {
       secretBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
