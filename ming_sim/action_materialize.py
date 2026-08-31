@@ -1273,6 +1273,7 @@ GRANT_ACTIONS = frozenset({
 })
 GRANT_HONORIFICS = frozenset({"加衔", "荫叙"})
 GRANT_MONEY_ACTIONS = GRANT_ACTIONS - {"无"} - GRANT_HONORIFICS
+XIEXIANG_TARGET_KINDS = frozenset({"army"})
 
 
 def _grant_account(intent: Dict[str, Any]) -> str:
@@ -1373,7 +1374,8 @@ def require_explicit_xiexang_fields(
         missing.append("account")
     if str(purpose or "").strip() != "补饷":
         missing.append("purpose")
-    if str(target_kind or "").strip() != "army":
+    canonical_target_kind = str(target_kind or "").strip()
+    if canonical_target_kind not in XIEXIANG_TARGET_KINDS:
         missing.append("target_kind")
     if not str(target_id or "").strip():
         missing.append("target_id")
@@ -1386,7 +1388,7 @@ def require_explicit_xiexang_fields(
         "amount": n,
         "account": canonical_account,
         "purpose": "补饷",
-        "target_kind": "army",
+        "target_kind": canonical_target_kind,
         "target_id": str(target_id).strip(),
     }
 
@@ -3387,25 +3389,35 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
             fields=(
                 FieldSpec(
                     "grant_action", "恩赏拨帑",
-                    GRANT_ACTIONS, "无",
+                    GRANT_ACTIONS, "无", season_option=True,
                 ),
                 FieldSpec("name", "姓名", None, "", max_len=20),
                 # 政务拨款对象：赈灾地区 / 项目 / 协饷军队 / 恩赏人物
-                FieldSpec("target_id", "目标", None, "", max_len=80),
-                FieldSpec("target_kind", "目标类型", TARGET_KINDS, ""),
-                FieldSpec("amount", "金额", None, None, as_int=True, int_lo=1),
                 FieldSpec(
-                    "account", "账户",
-                    frozenset({"国库", "内库", "太仓"}), "",
+                    "target_id", "目标", None, "", max_len=80,
+                    season_option=True,
                 ),
                 FieldSpec(
-                    "purpose", "用途",
-                    frozenset({"补饷"}), "",
+                    "target_kind", "目标类型", TARGET_KINDS, "",
+                    season_option=True,
+                    allowed_when=("grant_action", "协饷", XIEXIANG_TARGET_KINDS),
+                ),
+                FieldSpec(
+                    "amount", "金额", None, None, as_int=True, int_lo=1,
+                    quantity_unit="万两", season_option=True,
+                ),
+                FieldSpec(
+                    "account", "账户",
+                    frozenset({"国库", "内库", "太仓"}), "", season_option=True,
+                ),
+                FieldSpec(
+                    "purpose", "用途", frozenset({"补饷"}), "",
+                    season_option=True,
                     populated_when=("grant_action", frozenset({"协饷"})),
                 ),
                 FieldSpec(
                     "cadence", "拨付节奏",
-                    frozenset({"一次性", "每月"}), "",
+                    frozenset({"一次性", "每月"}), "", season_option=True,
                 ),
                 FieldSpec(
                     "mode", "颁布方式",
@@ -3453,7 +3465,10 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 FieldSpec("name", "姓名", None, "", max_len=20),
                 # 与 pacification/grant_allocation 共享 target_id 中文键（#518 契约）
                 FieldSpec("target_id", "目标", None, "", max_len=80),
-                FieldSpec("amount", "金额", None, 0, as_int=True),
+                FieldSpec(
+                    "amount", "金额", None, 0, as_int=True,
+                    quantity_unit="两",
+                ),
                 FieldSpec(
                     "transaction_category", "事务类别",
                     frozenset({"钱粮", "清丈", "督赈", "缉拿", "缉捕", "河工"}), "",

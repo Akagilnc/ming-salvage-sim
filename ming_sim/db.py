@@ -11620,7 +11620,7 @@ class GameDB:
         rows = self.conn.execute(
             "SELECT idx, event_id, title, context, rejection_reason, opposition, "
             "options_json, choice_json, status, kind, actor_name, actor_office, actor_faction, "
-            "revision_round, prior_options_json "
+            "turn, revision_round, prior_options_json "
             "FROM pending_decisions WHERE turn = ? AND kind = 'decision' ORDER BY idx",
             (int(turn),),
         ).fetchall()
@@ -11642,8 +11642,14 @@ class GameDB:
             except Exception as exc:
                 tlog(f"[db] prior_options_json 损坏，回空：{exc}")  # #14 surface
                 prior = []
+            source_turn = int(r["turn"])
+            idx = int(r["idx"])
+            kind = str(r["kind"] or "decision")
             out.append({
-                "idx": int(r["idx"]),
+                "idx": idx,
+                "decision_key": f"{kind}:{source_turn}:{idx}",
+                "source_turn": source_turn,
+                "turn": source_turn,
                 "event_id": r["event_id"],
                 "title": r["title"],
                 "context": r["context"],
@@ -11652,7 +11658,7 @@ class GameDB:
                 "options": options if isinstance(options, list) else [],
                 "choice": choice,
                 "status": r["status"],
-                "kind": r["kind"] or "decision",
+                "kind": kind,
                 "actor_name": r["actor_name"],
                 "actor_office": r["actor_office"],
                 "actor_faction": r["actor_faction"],
@@ -12514,6 +12520,7 @@ class GameDB:
             raise ValueError(f"案卷#{out['id']} payload_json 无效") from exc
         if not isinstance(payload, dict):
             raise ValueError(f"案卷#{out['id']} payload_json 非对象")
+        out["payload"] = payload
         out["mode"] = cls._normalize_dossier_mode(
             payload["mode"] if "mode" in payload else "ordinary"
         )
