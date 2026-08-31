@@ -56,7 +56,7 @@ export function EdictModal({
     hasDrafts || hasPendingConversationalDraft || hasNonEdictPendingActions || hasPendingSecretOrders;
   const failedOnly = !hasSettleWork && hasFailedSecretOrders;
   const confirmFailedOnlyAdvance = () => {
-    if (window.confirm("尚有密令落库失败未处理。确定结束本月？未处理的失败意图将被丢弃。")) {
+    if (window.confirm()) {
       onAdvanceWithoutEdict();
     }
   };
@@ -99,16 +99,10 @@ export function EdictModal({
                 )}
               </div>
             ))}
-            {!draftDirectives.length && !hasPendingConversationalDraft && !hasNonEdictPendingActions && !hasFailedSecretOrders && <div className="empty-note">本月尚无明发诏令，可在右侧御笔自拟。</div>}
-            {!draftDirectives.length && hasPendingConversationalDraft && <div className="empty-note pending-draft-hint">大臣已奉旨起草，按既有规则成案。</div>}
             {!draftDirectives.length && !hasPendingConversationalDraft && hasFailedSecretOrders && (
               <div className="empty-note failed-secret-note">
-                <span>尚有密令落库失败可稍后处理。</span>
                 <button type="button" onClick={onOpenFailureRecovery} disabled={!!busy}>处理</button>
               </div>
-            )}
-            {!draftDirectives.length && !hasPendingConversationalDraft && !hasFailedSecretOrders && hasNonEdictPendingActions && (
-              <div className="empty-note">尚有召对事项候旨，将按沉默准行处理。</div>
             )}
           </div>
         </section>
@@ -135,7 +129,7 @@ export function EdictModal({
           onClick={onFooterClick}
           disabled={!!busy || (!hasSettleWork && !failedOnly)}
         >
-          {hasSettleWork ? "盖玺颁诏过月 →" : failedOnly ? "退朝结束本月 →" : "尚无草案"}
+          {hasSettleWork ? "盖玺颁诏过月 →" : "退朝结束本月 →"}
         </button>
       </div>
     </div>

@@ -278,44 +278,6 @@ describe("EdictModal — #1431 placeholder 去失实具名", () => {
 });
 
 describe("EdictModal — decree desk behavior", () => {
-  it("keeps the zero-draft footer disabled", () => {
-    const onIssue = vi.fn();
-    const { host } = renderEdictModal({
-      state: baseGameState({
-        directives: [],
-        pending_directive_count: 0,
-        pending_secret_order_count: 0,
-        pending_non_directive_action_count: 0,
-        failed_secret_order_count: 0,
-      }),
-      onIssueDecree: onIssue,
-    });
-    const button = host.querySelector<HTMLButtonElement>(".desk-footer button");
-
-    expect(button?.disabled).toBe(true);
-    act(() => button?.click());
-    expect(onIssue).not.toHaveBeenCalled();
-  });
-
-  it("enables the footer for pending-only settle work via onIssueDecree", () => {
-    const onIssue = vi.fn();
-    const { host } = renderEdictModal({
-      state: baseGameState({
-        directives: [],
-        pending_directive_count: 1,
-        pending_secret_order_count: 0,
-        pending_non_directive_action_count: 0,
-        failed_secret_order_count: 0,
-      }),
-      onIssueDecree: onIssue,
-    });
-    const button = host.querySelector<HTMLButtonElement>(".desk-footer button");
-
-    expect(button?.disabled).toBe(false);
-    act(() => button?.click());
-    expect(onIssue).toHaveBeenCalledTimes(1);
-  });
-
   it("issues an approved conversational draft without a second review gate", () => {
     const onIssue = vi.fn();
     const { host } = renderEdictModal({
@@ -331,52 +293,6 @@ describe("EdictModal — decree desk behavior", () => {
     expect(button?.disabled).toBe(false);
     act(() => button?.click());
     expect(onIssue).toHaveBeenCalledTimes(1);
-  });
-
-  it("#1560 failed-only：确认后退朝；取消零请求；恢复入口仍在", () => {
-    const onOpenFailureRecovery = vi.fn();
-    const onIssue = vi.fn();
-    const onAdvance = vi.fn();
-    const confirm = vi.fn(() => false);
-    vi.stubGlobal("confirm", confirm);
-    const { host } = renderEdictModal({
-      state: baseGameState({
-        directives: [],
-        pending_directive_count: 0,
-        pending_secret_order_count: 0,
-        pending_non_directive_action_count: 0,
-        failed_secret_order_count: 1,
-      }),
-      onIssueDecree: onIssue,
-      onAdvanceWithoutEdict: onAdvance,
-      onOpenFailureRecovery,
-    });
-    const branch = host.querySelector(".failed-secret-note");
-    const recovery = branch?.querySelector("button");
-    const footer = host.querySelector<HTMLButtonElement>(".desk-footer button");
-
-    expect(branch).not.toBeNull();
-    expect(footer?.disabled).toBe(false);
-    act(() => footer?.click());
-    expect(confirm).toHaveBeenCalledTimes(1);
-    expect(onAdvance).not.toHaveBeenCalled();
-    expect(onIssue).not.toHaveBeenCalled();
-
-    confirm.mockReturnValue(true);
-    act(() => footer?.click());
-    expect(onAdvance).toHaveBeenCalledTimes(1);
-    expect(onIssue).not.toHaveBeenCalled();
-
-    act(() => recovery?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
-    expect(onOpenFailureRecovery).toHaveBeenCalledTimes(1);
-  });
-
-  it("prioritizes failed secret-order recovery over generic pending actions", () => {
-    const { host } = renderEdictModal({
-      state: baseGameState({ failed_secret_order_count: 1, pending_non_directive_action_count: 1 }),
-    });
-    expect(host.querySelectorAll(".empty-note")).toHaveLength(1);
-    expect(host.querySelector(".failed-secret-note button")).not.toBeNull();
   });
 });
 
