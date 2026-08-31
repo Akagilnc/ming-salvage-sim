@@ -812,14 +812,13 @@ export function App() {
               state.resume_phase2,
             );
             // #1620：typed 恢复动作——phase2 / ready 重放 → resume；ready=0 → resimulate。
-            // 文案为人服务；契约断言落 data-recovery-action，不锁措辞。
+            // 文案为人服务；契约只落真实 click→POST，不锁措辞、不挂测试专用属性。
             const recoveryAction = phase2 || state.settlement_recovery?.ready_replay !== false
               ? "resume"
               : "resimulate";
             return (
               <button
                 className="seal-btn-issue"
-                data-recovery-action={recoveryAction}
                 onClick={phase2 ? resumePhase2 : issueDecree}
                 disabled={!!busy}
               >

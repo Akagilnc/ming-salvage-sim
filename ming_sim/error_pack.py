@@ -133,20 +133,25 @@ def latest_error_pack_for_turn(db_path: object, turn: int) -> Optional[str]:
 
     身份与 complete_error_packs_for_ready 同缝：manifest.db_path + turn，
     禁跨存档串包（同 user-data 下另一 DB 的更高 attempt 不得入选）。
+    目录扫描/条目 stat 的 OSError 视为无诊断包——不得拖垮 settling 恢复面。
     """
     root = error_packs_root()
-    if not root.exists():
+    try:
+        if not root.exists():
+            return None
+        entries = list(root.iterdir())
+    except OSError:
         return None
     expected_db_path = str(db_path)
     prefix = f"turn{int(turn)}_attempt"
     best: Optional[Path] = None
     best_n = -1
-    for path in root.iterdir():
-        if not (path.is_dir() and path.name.startswith(prefix)):
-            continue
+    for path in entries:
         try:
+            if not (path.is_dir() and path.name.startswith(prefix)):
+                continue
             n = int(path.name[len(prefix):])
-        except ValueError:
+        except (OSError, ValueError):
             continue
         manifest = _read_complete_pack_manifest(path)
         if manifest is None:
@@ -159,7 +164,12 @@ def latest_error_pack_for_turn(db_path: object, turn: int) -> Optional[str]:
         if n > best_n:
             best_n = n
             best = path
-    return str(best.resolve()) if best is not None else None
+    if best is None:
+        return None
+    try:
+        return str(best.resolve())
+    except OSError:
+        return None
 
 
 def write_error_pack(

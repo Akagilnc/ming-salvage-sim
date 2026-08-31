@@ -128,34 +128,25 @@ def match_region_id_from_text(text: str, regions: Dict[str, Region]) -> Optional
     return None
 
 
-def army_aliases(army: Army) -> List[str]:
-    aliases = [
-        army.id,
-        army.name,
-        compact_name(army.name),
-        army.station,
-        army.theater,
-        army.commander,
-        army.controller,
-    ]
-    for part in re.split(r"\s*/\s*|\s*／\s*", army.name):
-        if part.strip():
-            aliases.append(part.strip())
-    special = {
-        "jingying": ["京营", "京军", "京师兵", "京畿兵"],
-        "guanning": ["关宁", "宁锦", "辽东军", "关宁军", "宁锦防线", "袁军"],
-        "shanhaiguan": ["山海关", "关门守军", "山海关守军"],
-        "xuan_da": ["宣大", "宣府", "大同", "宣大边军"],
-        "jizhen": ["蓟镇", "蓟镇兵"],
-        "denglai": ["登莱", "登莱兵", "山东水师"],
-        "dongjiang": ["东江", "皮岛", "东江镇"],
-        "shaanxi_army": ["陕西兵", "陕西边军", "西北边军"],
-        "nanjing_garrison": ["南京兵", "南京守备", "南兵", "南京守备军"],
-        "fujian_navy": ["福建水师", "闽海水师"],
-        "guangdong_navy": ["广东水师", "南海水师"],
-        "southwest_tusi": ["土司兵", "西南土司", "西南土兵"],
-    }
-    aliases.extend(special.get(army.id, []))
+# 单一真源：军队身份别名（id/军名/受控别名）。协饷 exact canonicalize 与模糊
+# matcher 共用；theater/station/commander/controller 不得混入身份别名。
+ARMY_SPECIAL_ALIASES: Dict[str, Tuple[str, ...]] = {
+    "jingying": ("京营", "京军", "京师兵", "京畿兵"),
+    "guanning": ("关宁", "宁锦", "辽东军", "关宁军", "宁锦防线", "袁军"),
+    "shanhaiguan": ("山海关", "关门守军", "山海关守军"),
+    "xuan_da": ("宣大", "宣府", "大同", "宣大边军"),
+    "jizhen": ("蓟镇", "蓟镇兵"),
+    "denglai": ("登莱", "登莱兵", "山东水师"),
+    "dongjiang": ("东江", "皮岛", "东江镇"),
+    "shaanxi_army": ("陕西兵", "陕西边军", "西北边军"),
+    "nanjing_garrison": ("南京兵", "南京守备", "南兵", "南京守备军"),
+    "fujian_navy": ("福建水师", "闽海水师"),
+    "guangdong_navy": ("广东水师", "南海水师"),
+    "southwest_tusi": ("土司兵", "西南土司", "西南土兵"),
+}
+
+
+def _unique_aliases(aliases: List[str]) -> List[str]:
     unique: List[str] = []
     seen: set = set()
     for alias in aliases:
@@ -165,6 +156,46 @@ def army_aliases(army: Army) -> List[str]:
         seen.add(key)
         unique.append(alias)
     return unique
+
+
+def army_identity_aliases(army: Army) -> List[str]:
+    """军队身份别名：id / 军名 / 受控别名。不含驻地/战区/将领上下文。"""
+    aliases = [army.id, army.name, compact_name(army.name)]
+    for part in re.split(r"\s*/\s*|\s*／\s*", army.name):
+        if part.strip():
+            aliases.append(part.strip())
+    aliases.extend(ARMY_SPECIAL_ALIASES.get(army.id, ()))
+    return _unique_aliases(aliases)
+
+
+def army_aliases(army: Army) -> List[str]:
+    """模糊匹配候选：身份别名 + 驻地/战区/将领上下文（仅 prose matcher 用）。"""
+    aliases = list(army_identity_aliases(army))
+    aliases.extend([army.station, army.theater, army.commander, army.controller])
+    return _unique_aliases(aliases)
+
+
+def canonical_army_id_exact(
+    raw: object, armies: Dict[str, Army],
+) -> Optional[str]:
+    """协饷等写缝专用：仅 compact 精确等值（id/军名/受控身份别名）。
+
+    空串 → ''；未知非空 → None（调用方 fail-loud）。
+    禁止子串/模糊；不调用 match_army_id_from_text；不吃 theater 等上下文。
+    """
+    if raw is None:
+        return ""
+    text = str(raw).strip()
+    if not text:
+        return ""
+    key = compact_name(text)
+    if not key:
+        return ""
+    for army in armies.values():
+        for alias in army_identity_aliases(army):
+            if compact_name(alias) == key:
+                return army.id
+    return None
 
 
 def match_army_id_from_text(text: str, armies: Dict[str, Army]) -> Optional[str]:

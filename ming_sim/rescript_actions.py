@@ -23,7 +23,6 @@ from ming_sim.action_materialize import (
     GRANT_HONORIFICS,
     _assignment_absolute_end_turn,
     _grant_target,
-    _resolve_xiexang_army_id,
     punish_actions_effective,
     require_grant_allocation_shape,
 )
@@ -775,7 +774,10 @@ def map_rescript_option_or_choice(
         })
         # 协饷必须真 army；五字段走单一权威接缝，禁止默认国库/army/purpose。
         if ga == "协饷":
-            from ming_sim.action_materialize import require_explicit_xiexang_fields
+            from ming_sim.action_materialize import (
+                canonicalize_xiexang_army_target,
+                require_explicit_xiexang_fields,
+            )
             explicit = require_explicit_xiexang_fields(
                 amount=shaped.get("amount", src.get("amount")),
                 account=account,
@@ -784,10 +786,10 @@ def map_rescript_option_or_choice(
                 target_id=g_tid,
                 cadence=str(src.get("cadence") or ""),
             )
-            army_id = explicit["target_id"]
+            army_id = str(explicit["target_id"])
             if db is not None:
-                army_id = _resolve_xiexang_army_id(db, army_id) or ""
-            if not army_id:
+                army_id = canonicalize_xiexang_army_target(db, army_id)
+            elif not army_id:
                 raise ValueError("协饷 target 须为真实 army id")
             payload["target_kind"] = "army"
             payload["target_id"] = army_id
