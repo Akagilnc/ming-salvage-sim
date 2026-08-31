@@ -1273,6 +1273,44 @@ GRANT_MONEY_ACTIONS = GRANT_ACTIONS - {"无"} - GRANT_HONORIFICS
 XIEXIANG_TARGET_KINDS = frozenset({"army"})
 
 
+def require_grant_allocation_shape(
+    *,
+    grant_action: object = None,
+    amount: object = None,
+    account: object = None,
+) -> Dict[str, Any]:
+    """grant_allocation 金额/account shape 唯一权威（无 DB）。
+
+    #1620：层 A 上桌与 rescript mapper 共用——禁平行第二套规则。
+    返回 grant_action、account；非 honorific 另含正 amount。
+    """
+    ga = str(grant_action or "").strip()
+    if not ga:
+        raise ValueError("grant_allocation 缺 grant_action")
+    raw_account = str(account or "").strip()
+    if ga == "发内帑":
+        resolved_account = "内库"
+    elif ga == "协饷":
+        resolved_account = raw_account
+    elif ga in GRANT_MONEY_ACTIONS:
+        if raw_account and raw_account not in {"国库", "内库"}:
+            raise ValueError(f"grant 非法 account：{raw_account!r}")
+        resolved_account = raw_account if raw_account in {"国库", "内库"} else "国库"
+    else:
+        resolved_account = ""
+    out: Dict[str, Any] = {"grant_action": ga, "account": resolved_account}
+    if ga in GRANT_HONORIFICS:
+        return out
+    try:
+        amt = int(amount or 0)
+    except (TypeError, ValueError):
+        amt = 0
+    if amt <= 0:
+        raise ValueError("grant 金钱缺正 amount")
+    out["amount"] = amt
+    return out
+
+
 def _grant_account(intent: Dict[str, Any]) -> str:
     action = str(intent.get("grant_action") or "").strip()
     account = str(intent.get("account") or "").strip()
