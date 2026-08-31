@@ -286,6 +286,174 @@ def test_657_canonical_choice_stable_key_order():
     assert a["action"] == "follow_draft"
 
 
+@pytest.mark.parametrize("amount", ["30", True, 30.75, 30])
+def test_financial_decision_uses_stored_option_not_client_payload(amount):
+    """Raw season options retain strict catalog types and remain server-authoritative."""
+    from ming_sim import rescript_actions as ra
+    from ming_sim.settlement_payload import parse_decision_blocks
+
+    blocks = [
+        {
+            "title": "发帑", "context": "济军", "options": [{
+                "label": "发内帑三十万两", "hint": "济军",
+                "action_type": "grant_allocation", "grant_action": "协饷",
+                "account": "内库", "amount": amount, "purpose": "补饷",
+                "target_kind": "army", "target_id": "guanning", "cadence": "一次性",
+            }, {"label": "暂缓", "hint": "守财"}],
+        },
+        {
+            "title": "巡河", "context": "河工", "options": [
+                {"label": "遣员巡河", "hint": "查勘"},
+                {"label": "暂缓巡河", "hint": "候报"},
+            ],
+        },
+    ]
+    raw = "邸报" + "".join(
+        f"<<DECISION>>{json.dumps(block, ensure_ascii=False)}<<END>>"
+        for block in blocks
+    )
+    _clean, decisions = parse_decision_blocks(raw)
+    if type(amount) is not int:
+        # Parse/save boundary rejects the whole malformed typed decision.
+        assert [decision["title"] for decision in decisions] == ["巡河"]
+        return
+    desk = [{
+        "decision_key": f"decision:3:{idx}", "kind": "decision", "turn": 3,
+        "idx": idx, "status": "pending", "options": decision["options"],
+    } for idx, decision in enumerate(decisions)]
+    requests = [
+        {
+            "decision_key": "decision:3:0", "label": "发内帑三十万两",
+            "action_type": "punishment", "account": "国库", "amount": 999,
+        },
+        {"decision_key": "decision:3:1", "label": "遣员巡河"},
+    ]
+
+    batch = ra.validate_all(desk, requests)
+    assert len(batch.items) == 2
+    choice = batch.items[0].choice
+    assert choice["action_type"] == "punishment"  # persisted request identity
+    execution = batch.items[0].execution_option
+    assert execution is not None
+    assert execution["action_type"] == "grant_allocation"
+    assert execution["account"] == "内库"
+    assert execution["amount"] == 30
+    assert type(execution["amount"]) is int
+
+
+def test_decision_parser_rejects_unknown_typed_action_and_keeps_sibling():
+    from ming_sim.settlement_payload import parse_decision_blocks
+
+    malformed = {
+        "title": "发帑", "context": "济军", "options": [{
+            "label": "发内帑三十万两", "hint": "济军",
+            "action_type": "grant_allocaton", "grant_action": "协饷",
+            "account": "内库", "amount": 30, "purpose": "补饷",
+            "target_kind": "army", "target_id": "guanning", "cadence": "一次性",
+        }, {"label": "暂缓", "hint": "守财"}],
+    }
+    blank_discriminator = {
+        **malformed,
+        "title": "空白拨帑",
+        "options": [
+            {**malformed["options"][0], "action_type": "   "},
+            malformed["options"][1],
+        ],
+    }
+    missing_discriminator = {
+        **malformed,
+        "title": "无类拨帑",
+        "options": [
+            {k: v for k, v in malformed["options"][0].items()
+             if k != "action_type"},
+            malformed["options"][1],
+        ],
+    }
+    incompatible_discriminator = {
+        **malformed,
+        "title": "错类拨帑",
+        "options": [
+            {**malformed["options"][0], "action_type": "punishment"},
+            malformed["options"][1],
+        ],
+    }
+    bare_incompatible_discriminator = {
+        **malformed,
+        "title": "裸错类",
+        "options": [
+            {"label": "惩处", "hint": "候旨", "action_type": "punishment"},
+            malformed["options"][1],
+        ],
+    }
+    inapplicable_grant_action = {
+        **malformed,
+        "title": "错配内帑",
+        "options": [
+            {
+                **malformed["options"][0],
+                "action_type": "grant_allocation",
+                "grant_action": "发内帑",
+            },
+            malformed["options"][1],
+        ],
+    }
+    inapplicable_target_kind = {
+        **malformed,
+        "title": "错配协饷目标",
+        "options": [
+            {
+                **malformed["options"][0],
+                "action_type": "grant_allocation",
+                "target_kind": "character",
+            },
+            malformed["options"][1],
+        ],
+    }
+    spaced_legal = {
+        **malformed,
+        "title": "犒军",
+        "options": [
+            {**malformed["options"][0], "action_type": " grant_allocation "},
+            malformed["options"][1],
+        ],
+    }
+    sibling = {
+        "title": "巡河", "context": "河工", "options": [
+            {"label": "遣员巡河", "hint": "查勘"},
+            {"label": "暂缓巡河", "hint": "候报"},
+        ],
+    }
+    raw = "".join(
+        f"<<DECISION>>{json.dumps(block, ensure_ascii=False)}<<END>>"
+        for block in (
+            malformed, blank_discriminator, missing_discriminator,
+            incompatible_discriminator, bare_incompatible_discriminator,
+            inapplicable_grant_action, inapplicable_target_kind,
+            spaced_legal, sibling,
+        )
+    )
+
+    _clean, decisions = parse_decision_blocks(raw)
+
+    assert [decision["title"] for decision in decisions] == ["犒军", "巡河"]
+    assert decisions[0]["options"][0]["action_type"] == "grant_allocation"
+    assert decisions[0]["options"][0]["amount"] == 30
+
+
+@pytest.mark.parametrize("labels", [["", "乙"], ["甲", " 甲 "]])
+def test_decision_parser_rejects_empty_or_ambiguous_labels(labels):
+    from ming_sim.settlement_payload import parse_decision_blocks
+
+    block = {
+        "title": "歧义抉择", "context": "c",
+        "options": [{"label": label, "hint": "h"} for label in labels],
+    }
+    raw = f"<<DECISION>>{json.dumps(block, ensure_ascii=False)}<<END>>"
+    clean, decisions = parse_decision_blocks(raw)
+    assert clean == ""
+    assert decisions == []
+
+
 def test_657_capability_revalidate_on_follow(game):
     """服务端回验：请求 capability 必须等于对当前 option 结构化字段重算值。"""
     from ming_sim.decree_vocabulary import derive_draft_capability
