@@ -20,6 +20,7 @@
   gap: clamp(14px, 2.5vw, 32px);
   min-height: 0;
   flex: 1;
+  overflow-y: auto;
 }
 
 .desk-pane {
@@ -164,7 +165,6 @@
 
 .desk-compose textarea {
   flex: 1;
-  min-height: 200px;
   line-height: 1.6;
   font-family: "Noto Serif SC", "Songti SC", serif;
 }
@@ -178,6 +178,16 @@
   padding: 7px 18px;
   border-radius: 3px;
   font-family: "Noto Serif SC", "Songti SC", serif;
+}
+
+.edict-stage-desk > .error-line {
+  align-items: flex-start;
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: min(30%, 180px);
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .desk-footer {
