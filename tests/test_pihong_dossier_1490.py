@@ -14,6 +14,7 @@ D. 命中 allowed 后从服务端 option 重建 label/hint/能力字段，客户
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import threading
 
@@ -2168,6 +2169,130 @@ def test_657_abi_mapper_matrix_a1_a12(game):
 
 
 
+def test_1682_late_grants_follow_policy_without_consuming_verdict_batch(game, monkeypatch):
+    """Late HITL grants auto-promulgate only canonical review-exempt dossiers."""
+    from ming_sim import rescript_actions as ra
+
+    db, state, content = game
+    options = [
+        {
+            "label": "发内帑", "hint": "h", "action_type": "grant_allocation",
+            "grant_action": "协饷", "account": "内库", "amount": 7,
+            "purpose": "补饷", "cadence": "一次性", "execution_surface": "immediate",
+            "target_kind": "army", "target_id": "guanning",
+        },
+        {
+            "label": "国库赏赉", "hint": "h", "action_type": "grant_allocation",
+            "grant_action": "协饷", "account": "国库", "amount": 11,
+            "purpose": "补饷", "cadence": "一次性",
+            "target_kind": "army", "target_id": "guanning",
+        },
+    ]
+    db.save_pending_decisions(state.turn, [
+        {"event_id": "", "title": "内帑", "context": "c", "options": [options[0]]},
+        {"event_id": "", "title": "国库", "context": "c", "options": [options[1]]},
+    ])
+    desk = db.list_rescript_desk(int(state.turn))
+    choices = [
+        {"decision_key": row["decision_key"], "label": row["options"][0]["label"]}
+        for row in desk
+    ]
+    unrelated_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="待判旧案",
+        target_kind="issue", target_id="unrelated-1682",
+    )
+    pending = {"dossier_id": unrelated_id, "decision": "promulgated"}
+    db.save_pending_promulgation_verdicts(state.turn, [pending])
+
+    batch = ra.validate_all(desk, choices)
+    ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(), content=content)
+
+    grants = [
+        row for row in db.list_decree_dossiers()
+        if row["action_type"] == "grant_allocation"
+        and _dossier_payload(row).get("decision_key") in {
+            choice["decision_key"] for choice in choices
+        }
+    ]
+    assert len(grants) == 2
+    by_account = {_dossier_payload(row)["account"]: row for row in grants}
+    inner = by_account["内库"]
+    assert inner["status"] == "closed"
+    assert inner["promulgation_decision"] == "promulgated"
+    assert len(db.list_economy_moves_for_dossier(int(inner["id"]))) == 1
+    reviewed = by_account["国库"]
+    assert reviewed["status"] == "proposed"
+    assert reviewed["promulgation_decision"] == ""
+    assert db.list_economy_moves_for_dossier(int(reviewed["id"])) == []
+    assert db.get_pending_promulgation_verdicts(state.turn) == [pending]
+
+    # A newly created grant must remain inside the same transaction as its
+    # dossier read, decision CAS, and accounting effects.
+    db.save_pending_decisions(state.turn, [
+        {
+            "event_id": "", "title": "先拨内帑", "context": "c",
+            "options": [options[0]],
+        },
+        {
+            "event_id": "", "title": "后拨内帑失读", "context": "c",
+            "options": [options[0]],
+        },
+    ])
+    failed_rows = [
+        row for row in db.list_rescript_desk(int(state.turn))
+        if row["title"] in {"先拨内帑", "后拨内帑失读"}
+    ]
+    failed_choices = [
+        {
+            "decision_key": row["decision_key"],
+            "label": row["options"][0]["label"],
+        }
+        for row in failed_rows
+    ]
+    failed_batch = ra.validate_all(failed_rows, failed_choices)
+    dossiers_before = db.list_decree_dossiers()
+    decisions_before = db.list_pending_decisions(int(state.turn))
+    accounts_before = db.conn.execute(
+        "SELECT * FROM economy_accounts ORDER BY account"
+    ).fetchall()
+    ledger_before = db.conn.execute("SELECT * FROM economy_ledger ORDER BY id").fetchall()
+    verdicts_before = db.get_pending_promulgation_verdicts(state.turn)
+    metrics_before = copy.deepcopy(state.metrics)
+    original_get = db.get_decree_dossier
+    existing_ids = {int(row["id"]) for row in dossiers_before}
+    created_ids = []
+    missed_ids = []
+
+    def _miss_second_new_dossier(dossier_id):
+        dossier_id = int(dossier_id)
+        if dossier_id not in existing_ids and dossier_id not in created_ids:
+            created_ids.append(dossier_id)
+        if len(created_ids) >= 2 and dossier_id == created_ids[1]:
+            missed_ids.append(dossier_id)
+            return None
+        return original_get(dossier_id)
+
+    monkeypatch.setattr(db, "get_decree_dossier", _miss_second_new_dossier)
+    with pytest.raises(ValueError):
+        ra.apply_rescript_batch(
+            db, state, failed_batch, ra.PrewriteResults(), content=content,
+        )
+
+    assert len(created_ids) == 2
+    assert missed_ids == [created_ids[1]]
+    assert db.list_decree_dossiers() == dossiers_before
+    assert db.list_pending_decisions(int(state.turn)) == decisions_before
+    assert db.conn.execute(
+        "SELECT * FROM economy_accounts ORDER BY account"
+    ).fetchall() == accounts_before
+    assert db.conn.execute(
+        "SELECT * FROM economy_ledger ORDER BY id"
+    ).fetchall() == ledger_before
+    assert db.get_pending_promulgation_verdicts(state.turn) == verdicts_before
+    assert state.metrics == metrics_before
+    assert db.load_state().metrics == metrics_before
+
+
 def test_657_s10_http_five_actions_and_1490_no_regress(web_game, monkeypatch):
     """P3+S10(+S1)：六动作参数表真 HTTP + 真 phase2 外部结构化终局。
 
@@ -2445,10 +2570,21 @@ def test_657_mixed_batch_follow_plus_decision_and_no_context_copy(web_game, monk
             "title": "打回件", "context": "科臣封驳",
             "options": [{"label": "打回", "hint": "驳"}, {"label": "准", "hint": ""}],
             "event_id": "",  # 无事件父行；决策仍落 decided（C1.1 不测事件账）
+        }, {
+            "title": "发帑件", "context": "协济军需",
+            "options": [{
+                "label": "发内帑", "hint": "济军", "action_type": "grant_allocation",
+                "grant_action": "协饷", "account": "内库", "amount": 3,
+                "purpose": "补饷", "target_kind": "army", "target_id": "guanning",
+                "cadence": "一次性",
+            }, {"label": "暂缓", "hint": "守财"}],
+            "event_id": "",
         }],
     )
     u_key = next(r["decision_key"] for r in desk if r["kind"] == "rescript_draft")
-    d_key = next(r["decision_key"] for r in desk if r["kind"] == "decision")
+    decision_rows = [r for r in desk if r["kind"] == "decision"]
+    d_key = next(r["decision_key"] for r in decision_rows if r["title"] == "打回件")
+    grant_key = next(r["decision_key"] for r in decision_rows if r["title"] == "发帑件")
     body = [
         {
             "decision_key": u_key,
@@ -2457,6 +2593,7 @@ def test_657_mixed_batch_follow_plus_decision_and_no_context_copy(web_game, monk
             "label": opt["label"],
         },
         {"decision_key": d_key, "label": "打回", "hint": "驳", "action": "decision"},
+        {"decision_key": grant_key, "label": "发内帑"},
     ]
     body_canon = json.dumps(body, ensure_ascii=False, separators=(",", ":"))
 
@@ -2476,8 +2613,13 @@ def test_657_mixed_batch_follow_plus_decision_and_no_context_copy(web_game, monk
         hit = next(r for r in probe.list_rescript_drafts() if r["title"] == "混批急务")
         assert hit["status"] == "decided"
         decs = probe.list_pending_decisions(int(probe.load_state().turn))
-        assert decs and decs[0]["status"] == "decided"
-        assert (decs[0]["choice"] or {}).get("label") == "打回"
+        assert decs and all(row["status"] == "decided" for row in decs)
+        by_key = {str(row["decision_key"]): row for row in decs}
+        assert (by_key[d_key]["choice"] or {}).get("label") == "打回"
+        assert by_key[grant_key]["choice"] == {
+            "decision_key": grant_key, "label": "发内帑", "hint": "",
+            "action": "decision",
+        }
         ctx = probe.get_resolve_context(int(probe.load_state().turn))
         assert ctx is None or ctx.get("extracted") is None
         mid_dossiers = len(probe.list_decree_dossiers())
@@ -3328,6 +3470,38 @@ def test_657_preferred_hitl_choice_urgent_follow_draft_ordinary_intact():
     assert pref2["dossier_id"] == 3
     assert pref2["dossier_decision"] == "hold"
     assert "follow_draft" not in str(pref2.get("action") or "")
+
+
+def test_1682_phase2_surfaces_ambiguous_stored_choice(game):
+    """The real phase2 entry exposes an ambiguous stored choice as a contract error."""
+    import ming_sim.decree as dm
+    from ming_sim.llm_contract import LLMContractError
+    from ming_sim.models import TurnPhase
+
+    db, state, content = game
+    turn = int(state.turn)
+    db.save_resolve_context(
+        turn, "诏", "邸报正文",
+        {"candidate_events": [], "transit_semantics": [], "decree_text": "诏"},
+        secret_orders=[], relevant_memories=[],
+    )
+    db.save_pending_decisions(turn, [{
+        "title": "歧义亲裁", "context": "c",
+        "options": [{"label": "同名", "hint": "一"}, {"label": " 同名 ", "hint": "二"}],
+    }])
+    db.conn.execute(
+        "UPDATE pending_decisions SET status='decided', choice_json=? "
+        "WHERE turn=? AND kind='decision'",
+        (json.dumps({"label": "同名"}, ensure_ascii=False), turn),
+    )
+    db.conn.commit()
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
+
+    with pytest.raises(LLMContractError):
+        dm.resolve_decisions_phase2(
+            state, db, None, None, content=content, registry=None,
+        )
 
 
 def test_657_phase2_preserve_backlog_and_generate_current_drafts(game, monkeypatch):
