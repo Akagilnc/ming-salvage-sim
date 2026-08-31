@@ -800,23 +800,32 @@ export function App() {
         )
         ? (
         <div className="recovery-banner" data-testid="settle-resume">
-          <span>上月结算未完成（进度已保存）。</span>
-          <button
-            className="seal-btn-issue"
-            onClick={
-              needsPhase2Resume(
-                state.turn.phase,
-                state.pending_decisions || [],
-                state.turn.settlement_display,
-                state.resume_phase2,
-              )
-                ? resumePhase2
-                : issueDecree
-            }
-            disabled={!!busy}
-          >
-            续跑结算
-          </button>
+          <span className="recovery-banner-message">
+            {state.settlement_recovery?.message
+              || "上月结算未完成（进度已保存）。"}
+          </span>
+          {(() => {
+            const phase2 = needsPhase2Resume(
+              state.turn.phase,
+              state.pending_decisions || [],
+              state.turn.settlement_display,
+              state.resume_phase2,
+            );
+            // #1620：typed 恢复动作——phase2 / ready 重放 → resume；ready=0 → resimulate。
+            // 文案为人服务；契约只落真实 click→POST，不锁措辞、不挂测试专用属性。
+            const recoveryAction = phase2 || state.settlement_recovery?.ready_replay !== false
+              ? "resume"
+              : "resimulate";
+            return (
+              <button
+                className="seal-btn-issue"
+                onClick={phase2 ? resumePhase2 : issueDecree}
+                disabled={!!busy}
+              >
+                {recoveryAction === "resimulate" ? "重新推演" : "续跑结算"}
+              </button>
+            );
+          })()}
         </div>
       ) : null}
 

@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { DecisionModal } from "./decisionModal";
+import { DecisionRecoveryPanel } from "./decisionRecovery";
 import { EdictModal } from "./edictModal";
 import { FullscreenModal } from "./hud";
 import type { GameState, PendingDecision } from "../types";
@@ -174,6 +175,71 @@ describe.sequential("medium: shared Electron geometry", () => {
       expect(result.buttonEnabled, `${result.viewportWidth}x${result.viewportHeight} buttonEnabled`).toBe(true);
       expect(result.buttonHit, `${result.viewportWidth}x${result.viewportHeight} buttonHit`).toBe(true);
       expect(result.textareaHit, `${result.viewportWidth}x${result.viewportHeight} textareaHit`).toBe(true);
+    }
+  });
+
+  it("#1620 recovery banner：长错误包路径下按钮仍在视口且可命中", async () => {
+    const longPath = `/${"long-directory/".repeat(24)}error-pack-1620`;
+    const page = renderToStaticMarkup(
+      <div data-testid="decision-recovery">
+        <DecisionRecoveryPanel
+          message={`结算中止，请重试。\n错误包：${longPath}\n请将整个目录发给作者。`}
+          busy=""
+          onRetry={noop}
+        />
+      </div>,
+    );
+    const results = await measureElectronLayout<{
+      viewportWidth: number;
+      viewportHeight: number;
+      buttonInViewport: boolean;
+      buttonHit: boolean;
+      buttonEnabled: boolean;
+      messageFitsWidth: boolean;
+    }>(page, css("base", "decision", "edict"), [
+      { width: 1280, height: 720 },
+      { width: 800, height: 600 },
+      { width: 480, height: 720 },
+    ], `(() => {
+      const banner = document.querySelector('.recovery-banner');
+      const message = document.querySelector('.recovery-banner-message');
+      const button = document.querySelector('.recovery-banner button');
+      if (!banner || !message || !button) {
+        return { error: 'missing recovery banner fixture element' };
+      }
+      const buttonRect = button.getBoundingClientRect();
+      const buttonInViewport =
+        buttonRect.left >= 0
+        && buttonRect.top >= 0
+        && buttonRect.right <= innerWidth
+        && buttonRect.bottom <= innerHeight
+        && buttonRect.width > 0
+        && buttonRect.height > 0;
+      const hit = document.elementFromPoint(
+        buttonRect.left + buttonRect.width / 2,
+        buttonRect.top + buttonRect.height / 2,
+      );
+      const buttonHit = !!hit && (hit === button || button.contains(hit));
+      return {
+        viewportWidth: innerWidth,
+        viewportHeight: innerHeight,
+        buttonInViewport,
+        buttonHit,
+        buttonEnabled: !button.disabled,
+        messageFitsWidth: message.scrollWidth <= message.clientWidth + 1,
+      };
+    })()`);
+
+    expect(results.map(({ viewportWidth, viewportHeight }) => [viewportWidth, viewportHeight])).toEqual([
+      [1280, 720],
+      [800, 600],
+      [480, 720],
+    ]);
+    for (const result of results) {
+      expect(result.buttonInViewport, `${result.viewportWidth}x${result.viewportHeight} buttonInViewport`).toBe(true);
+      expect(result.buttonHit, `${result.viewportWidth}x${result.viewportHeight} buttonHit`).toBe(true);
+      expect(result.buttonEnabled, `${result.viewportWidth}x${result.viewportHeight} buttonEnabled`).toBe(true);
+      expect(result.messageFitsWidth, `${result.viewportWidth}x${result.viewportHeight} messageFitsWidth`).toBe(true);
     }
   });
 });

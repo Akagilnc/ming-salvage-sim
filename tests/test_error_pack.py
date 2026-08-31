@@ -432,3 +432,30 @@ def test_complete_ready_packs_match_database_turn_digest_and_manifest_shape(game
     pack(f"turn{state.turn}_attempt4", ["not", "an", "object"])
 
     assert complete_error_packs_for_ready(db.path, state.turn, payload) == [good]
+
+    # 目录 exists / 惰性 glob 枚举 OSError → []（SettlementAbort 恢复缝不得被覆盖）
+    import ming_sim.error_pack as error_pack_mod
+
+    class _BoomExists:
+        def exists(self):
+            raise OSError("root stat failed")
+
+        def glob(self, _pattern):
+            raise AssertionError("glob must not run after exists OSError")
+
+    monkeypatch.setattr(error_pack_mod, "error_packs_root", lambda: _BoomExists())
+    assert complete_error_packs_for_ready(db.path, state.turn, payload) == []
+
+    class _BoomGlob:
+        def exists(self):
+            return True
+
+        def glob(self, _pattern):
+            def _iter():
+                raise OSError("root enumeration failed")
+                yield  # pragma: no cover — makes this a generator
+
+            return _iter()
+
+    monkeypatch.setattr(error_pack_mod, "error_packs_root", lambda: _BoomGlob())
+    assert complete_error_packs_for_ready(db.path, state.turn, payload) == []

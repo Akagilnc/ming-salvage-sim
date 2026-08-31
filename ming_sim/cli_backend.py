@@ -2713,19 +2713,29 @@ def capture_manual_directive_payload(
         if captured.get(field) not in (None, ""):
             payload[field] = captured[field]
     # heal 已 normalize+validate；无 db/content 时保持抽取原样（旧调用兼容）。
+    # #1620：有 db 时协饷在承重落库前 canonicalize army id（关宁军→guanning）；
+    # 复用 require_materializable_xiexang_payload，禁 apply 侧名称 fallback。
     if (
         payload.get("dossier_action_type") == "grant_allocation"
         and payload.get("grant_action") == "协饷"
     ):
-        from ming_sim.action_materialize import require_explicit_xiexang_fields
-        payload.update(require_explicit_xiexang_fields(
+        xiexang_kwargs = dict(
             amount=payload.get("amount"),
             account=str(payload.get("account") or ""),
             purpose=str(payload.get("purpose") or ""),
             target_kind=str(payload.get("target_kind") or ""),
             target_id=str(payload.get("target_id") or ""),
             cadence=str(payload.get("cadence") or ""),
-        ))
+        )
+        if db is not None:
+            from ming_sim.action_materialize import require_materializable_xiexang_payload
+            material = require_materializable_xiexang_payload(
+                db, text=directive_text, **xiexang_kwargs,
+            )
+            payload.update({k: v for k, v in material.items() if k != "text"})
+        else:
+            from ming_sim.action_materialize import require_explicit_xiexang_fields
+            payload.update(require_explicit_xiexang_fields(**xiexang_kwargs))
     if payload.get("dossier_action_type") == "dismiss_assignment":
         # Manual CLI/Web directives bypass pending office actions, so preserve
         # the same structured materialization fields at this capture seam.
