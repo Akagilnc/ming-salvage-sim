@@ -612,7 +612,10 @@ def test_submit_event_decision_persists_choice_after_pending_cleanup(game, monke
 
     d_key = db.list_rescript_desk(turn)[0]["decision_key"]
     sess.submit_hitl_choices(
-        [{"decision_key": d_key, "label": "留", "hint": "暂稳东江", "note": "姑留观后效"}],
+        [{
+            "decision_key": d_key, "action": "follow_draft",
+            "label": "留", "hint": "暂稳东江", "note": "姑留观后效",
+        }],
         write_gate=threading.Lock(),
     )
 

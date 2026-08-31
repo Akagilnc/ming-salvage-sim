@@ -27,17 +27,20 @@ from ming_sim.action_materialize import (
     _resolve_xiexang_army_id,
     punish_actions_effective,
 )
-from ming_sim.applier import atomic
+from ming_sim.action_clusters import validate_season_option
 from ming_sim.authority_privileges import AUTHORITY_PRIVILEGE_SET
 from ming_sim.credit_events import KIND_BETRAY, write_credit_event
+from ming_sim.decree import atomic_and_reload
 from ming_sim.decree_vocabulary import (
     RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES,
     RESCRIPT_ROUTABLE_ACTION_TYPES,
     TARGET_KINDS,
     derive_draft_capability,
+    dossier_action_policy,
 )
 from ming_sim.execution_pressure import write_locality_scope_for_target_kind
 from ming_sim.settlement_payload import (
+    bind_decision_options,
     decision_has_rescript_capability,
     parse_rescript_capability_pair,
 )
@@ -231,6 +234,7 @@ class ValidatedItem:
     idx: int
     row: Dict[str, object]
     choice: Dict[str, object]
+    execution_option: Optional[Dict[str, object]] = None
     already_applied: bool = False
     needs_revise_llm: bool = False
     needs_deliberate_llm: bool = False
@@ -325,6 +329,16 @@ def validate_all(
     """
     desk_by_key, choice_map = validate_request_keys(desk_rows, request_choices)
     choice_map = {key: canonical_choice(raw) for key, raw in choice_map.items()}
+    for key, choice in choice_map.items():
+        row = desk_by_key[key]
+        if (
+            str(row.get("kind") or "decision") == "decision"
+            and not (
+                str(row.get("event_id") or "").startswith("dossier:")
+                and decision_has_rescript_capability(row)
+            )
+        ):
+            choice["action"] = "decision"
 
     batch = ValidatedBatch()
     for key, row in desk_by_key.items():
@@ -439,29 +453,27 @@ def validate_all(
 
         # 普通 decision（打回三选等）：按 label 匹配 option
         if kind == "decision":
-            labels = {
-                str(o.get("label") or ""): o
-                for o in (row.get("options") or [])
-                if isinstance(o, dict)
-            }
+            labels = bind_decision_options(row.get("options") or [])
             label = str(req.get("label") or "").strip()
             if label not in labels:
                 raise ValueError(f"decision 选项不在当前 options：{key}")
             matched = labels[label]
-            rebuilt = canonical_choice({
-                "decision_key": key,
-                "label": matched.get("label"),
-                "hint": matched.get("hint") or "",
-                "note": req.get("note"),
-                "action": action or "decision",
-            })
+            validate_season_option(matched)
+            # Persist only the canonical request identity.  The stored option is
+            # batch-local execution authority and never changes retry identity.
             batch.items.append(ValidatedItem(
                 decision_key=key,
                 kind=kind,
                 source_turn=int(row.get("source_turn") if row.get("source_turn") is not None else row.get("turn") or 0),
                 idx=int(row.get("idx") or 0),
                 row=row,
-                choice=rebuilt,
+                choice=req,
+                execution_option={
+                    **matched,
+                    "decision_key": key,
+                    "note": req.get("note"),
+                    "action": action or "decision",
+                },
             ))
             continue
 
@@ -1288,7 +1300,7 @@ def apply_rescript_batch(
     禁任何 resolve_context 键承载本批 choices。
     """
     result = ApplyResult()
-    with atomic(db):
+    with atomic_and_reload(db, state, content=content):
         for item in batch.items:
             if item.already_applied:
                 result.skipped_keys.append(item.decision_key)
@@ -1302,6 +1314,34 @@ def apply_rescript_batch(
             kind = item.kind
 
             if kind == "decision":
+                # A financial choice is itself the legal origin of the grant.
+                # Its canonical payload came from the server-stored option.
+                execution = item.execution_option
+                if execution is not None and str(execution.get("action_type") or "") == "grant_allocation":
+                    mapped = map_rescript_option_or_choice(
+                        execution, mode="ordinary", db=db, content=content, state=state,
+                    )
+                    created = _create_from_mapped(
+                        db, state, content, mapped, status="proposed", mode="ordinary",
+                    )
+                    if not created:
+                        raise ValueError(
+                            f"decision grant 成案零行：{item.decision_key}"
+                        )
+                    # Canonical policy exempts only inner-treasury grants from
+                    # external review.  Promulgate those dossiers individually;
+                    # reviewed grants stay proposed for the regular verdict batch.
+                    for dossier_id in created:
+                        dossier = db.get_decree_dossier(dossier_id)
+                        if dossier is None:
+                            raise ValueError(f"新建案卷查无记录：{dossier_id}")
+                        payload = dossier["payload"]
+                        if not dossier_action_policy(
+                            "grant_allocation", payload,
+                        )["external_review"]:
+                            db.apply_dossier_promulgation(
+                                state, dossier_id, "promulgated", content=content,
+                            )
                 # decision 行：写 choice + decided（#1490 / 普通 HITL）
                 # 事件账失败必须穿透 atomic → 整批回滚（§B.1）；禁 swallow。
                 _cas_decided(db, item)
