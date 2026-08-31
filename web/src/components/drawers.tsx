@@ -245,7 +245,7 @@ export function MinisterCardList({
       <>
         <div className="minister-card-portrait-wrap">
           <MinisterPortrait primary={dedicated} fallback={poolFallback} name={minister.name} />
-          {onUploadPortrait && chatEntryEnabled && !isOffstage && (
+          {onUploadPortrait && chatEntryEnabled && (
             <PortraitUploadButton ministerName={minister.name} onUpload={onUploadPortrait} />
           )}
         </div>
@@ -265,7 +265,14 @@ export function MinisterCardList({
           <button
             type="button"
             className="minister-resume-btn"
-            onClick={(e) => { e.stopPropagation(); onOpenEdict(); }}
+            disabled={!chatEntryEnabled}
+            aria-disabled={!chatEntryEnabled}
+            title={closedTitle}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!chatEntryEnabled) return;
+              onOpenEdict();
+            }}
           >
             起复传召
           </button>
@@ -285,7 +292,7 @@ export function MinisterCardList({
           // #1402：offstage 卡主体不可召对；起复走卡内拟诏入口。
           if (isOffstage) {
             return (
-              <div key={minister.name} className={className} data-minister-status={minister.status}>
+              <div key={minister.name} className={className}>
                 {cardBody(minister, ousted, true)}
               </div>
             );
@@ -294,7 +301,6 @@ export function MinisterCardList({
             <button key={minister.name}
               type="button"
               className={className}
-              data-minister-status={minister.status}
               disabled={!chatEntryEnabled}
               aria-disabled={!chatEntryEnabled}
               title={closedTitle}
@@ -328,7 +334,7 @@ export function MinisterCardList({
         // #1402：offstage 卡主体不可召对/拖座；起复走卡内拟诏入口。
         if (isOffstage) {
           return (
-            <div key={minister.name} className={className} style={style} data-minister-status={minister.status}>
+            <div key={minister.name} className={className} style={style}>
               {cardBody(minister, ousted, true)}
             </div>
           );
@@ -339,7 +345,6 @@ export function MinisterCardList({
             type="button"
             className={className}
             style={style}
-            data-minister-status={minister.status}
             onMouseDown={(e) => { if (chatEntryEnabled) onMouseDown(e, minister.name); }}
             disabled={!chatEntryEnabled}
             aria-disabled={!chatEntryEnabled}
@@ -723,7 +728,6 @@ export function CourtDrawer({
             <button
               className={ministerGroup === group ? "active" : ""}
               key={group}
-              data-minister-group={group}
               onClick={() => onGroupChange(group)}
             >
               {group}
