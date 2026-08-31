@@ -191,22 +191,28 @@
   overflow-wrap: anywhere;
 }
 
-/* ≤1100px 单列高链（权威只在本文件）：纪念可缩可滚，御笔占余量，错误条让高 */
+/* ≤1100px 单列高链（权威只在本文件）：御笔占余量保 resting 两行；纪念行自为滚动 owner */
 @media (max-width: 1100px) {
   .desk-columns {
     grid-template-columns: 1fr;
-    grid-template-rows: minmax(0, 0.15fr) minmax(0, 0.85fr);
+    /* edict-safe-cmd 下列高≈210：纪念行只留非零滚动口，余量给御笔两行+铬 */
+    /* 根字 19px：1.75rem≈33px；gap 12 相对 2.5vw 把行高还给 ta */
+    grid-template-rows: minmax(1.75rem, 0.15fr) minmax(0, 1fr);
+    gap: 12px;
     overflow-y: auto;
   }
 
   .desk-memorials {
     min-height: 0;
-    overflow: hidden;
+    /* 单一滚动归属：行高被压时整窗可滚，避免 hidden + listH=0 双死 */
+    overflow-x: hidden;
+    overflow-y: auto;
   }
 
   .desk-memorials .directive-list {
-    min-height: 0;
-    overflow-y: auto;
+    /* 内容随高度贡献给纪念行 scrollHeight；不在零高 list 上再套一层空滚 */
+    flex: 0 0 auto;
+    overflow: visible;
   }
 
   .desk-compose {
