@@ -917,12 +917,17 @@ const settlementBaseState = (phase: string, extra: Record<string, unknown> = {})
   ...extra,
 });
 
-const stubSettlementFetch = (state: unknown) => {
-  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+const stubSettlementFetch = (
+  state: unknown,
+  saves: unknown[] = [],
+  load?: (url: URL, init?: RequestInit) => Promise<Response> | Response,
+) => {
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     const u = new URL(String(url), "http://t.local");
     if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
     if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
-    if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+    if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves });
+    if (u.pathname.includes("/api/saves/") && u.pathname.endsWith("/load") && load) return load(u, init);
     if (u.pathname.endsWith("/api/game/state")) return jsonResp(state);
     if (u.pathname.endsWith("/api/history/turns")) return jsonResp({
       turns: [{ kind: "month", turn: 4, year: 1627, period: 9, has_report: true, has_attendant: false, has_directive: true }],
@@ -1161,9 +1166,16 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     // phase=settling：续跑小条不挡 HUD；settlement_display 叠影照常
     // #1366：核账期（settling/awaiting_decision）不得下发半程已结算三项——只给结算前
     // 事实（全军名义应发），settled_army_pay 由后端置 null，与顶栏月初快照同一展示边界。
+    let releaseFirstLoad!: (response: Response) => void;
+    const firstLoad = new Promise<Response>((resolve) => { releaseFirstLoad = resolve; });
+    const loadRequests: Array<{ path: string; method: string }> = [];
     stubSettlementFetch({
       ...settlementBaseState("settling"),
       budget: { ...settlementBaseState("settling").budget, settled_army_pay: null },
+    }, [{ name: "auto_begin", mtime: 1, size: 1024 }], (url, init) => {
+      loadRequests.push({ path: url.pathname, method: String(init?.method || "GET") });
+      if (loadRequests.length === 1) return firstLoad;
+      return jsonResp({ turn: { year: 1627, period: 10, turn: 5 } });
     });
     const host = await mountApp();
 
@@ -1301,12 +1313,51 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     });
     await closeOpenOverlay(host);
 
-    // menu：可开；存档允许
+    // menu：#1702 B 确认门控 + 409 可见且同一行恢复重试（不锁确认文案措辞）。
+    const confirmCalls: boolean[] = [];
+    let confirmNext = false;
+    vi.stubGlobal("confirm", () => {
+      confirmCalls.push(confirmNext);
+      return confirmNext;
+    });
     await click(byAria(host, "游戏菜单"));
     await tick();
     await act(async () => {
-      await vi.waitFor(() => expect(findButton(host, "保存")).toBeTruthy());
+      await vi.waitFor(() => expect(findButton(host, "加载存档")).toBeTruthy());
     });
+    await click(findButton(host, "加载存档"));
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector(".saves-row .menu-btn.primary")).not.toBeNull());
+    });
+    const loadButton = host.querySelector(".saves-row .menu-btn.primary") as HTMLButtonElement;
+    // confirm false → 零 /load POST
+    confirmNext = false;
+    await click(loadButton);
+    await tick();
+    expect(confirmCalls.length).toBeGreaterThanOrEqual(1);
+    expect(loadRequests).toEqual([]);
+    // confirm true → POST；409 可见；同行重试第二次 POST
+    confirmNext = true;
+    await click(loadButton);
+    expect(loadRequests).toEqual([{ path: "/api/saves/auto_begin/load", method: "POST" }]);
+    expect(loadButton.disabled).toBe(true);
+    await act(async () => {
+      releaseFirstLoad({
+        ok: false,
+        status: 409,
+        statusText: "Conflict",
+        json: async () => ({ detail: { code: "write_busy", message: "busy" } }),
+      } as Response);
+    });
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector(".menu-error")).not.toBeNull());
+    });
+    expect(loadButton.disabled).toBe(false);
+    await click(loadButton);
+    await act(async () => {
+      await vi.waitFor(() => expect(loadRequests).toHaveLength(2));
+    });
+    expect(loadRequests[1]).toEqual({ path: "/api/saves/auto_begin/load", method: "POST" });
     await closeOpenOverlay(host);
 
     // closed_issues：只读可达；半程议题零泄漏；不误弹局势了结全屏
