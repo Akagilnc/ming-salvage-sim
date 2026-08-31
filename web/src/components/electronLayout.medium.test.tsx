@@ -60,49 +60,95 @@ describe.sequential("medium: shared Electron geometry", () => {
     const results = await measureElectronLayout<{
       viewportWidth: number;
       viewportHeight: number;
-      intersections: boolean;
+      stackOk: boolean;
       alertFitsWidth: boolean;
       startReachable: boolean;
       endReachable: boolean;
+      alertFooterDisjoint: boolean;
       buttonEnabled: boolean;
       buttonHit: boolean;
-    }>(page, css("base", "court", "modals", "edict", "modal-theme", "situation"), [
+      twoLines: boolean;
+      textareaHit: boolean;
+      addHit: boolean;
+    }>(page, css("base", "court", "modals", "chat", "edict", "modal-theme", "situation"), [
       { width: 1280, height: 720 },
       { width: 800, height: 800 },
     ], `(() => {
       const alert = document.querySelector('[role="alert"]');
+      const cols = document.querySelector('.desk-columns');
       const textarea = document.querySelector('.desk-compose textarea');
+      const addBtn = document.querySelector('.desk-add-btn');
       const footer = document.querySelector('.desk-footer');
       const button = document.querySelector('.desk-footer button');
-      if (!alert || !textarea || !footer || !button) return { error: 'missing edict fixture element' };
+      if (!alert || !cols || !textarea || !addBtn || !footer || !button) {
+        return { error: 'missing edict fixture element' };
+      }
       const overlaps = (a, b) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+      const hitAtCenter = (el) => {
+        const r = el.getBoundingClientRect();
+        return document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) === el;
+      };
+      const clipVisibleHeight = (el, container) => {
+        const er = el.getBoundingClientRect();
+        const cr = container.getBoundingClientRect();
+        return Math.max(0, Math.min(er.bottom, cr.bottom) - Math.max(er.top, cr.top));
+      };
+
       alert.scrollTop = 0;
       const alertRect = alert.getBoundingClientRect();
+      const colsRect = cols.getBoundingClientRect();
+      const footerRect = footer.getBoundingClientRect();
       const alertContents = document.createRange();
       alertContents.selectNodeContents(alert);
       const startReachable = alertContents.getBoundingClientRect().top >= alertRect.top + alert.clientTop;
-      const buttonRect = button.getBoundingClientRect();
       alert.scrollTop = alert.scrollHeight;
+      const endReachable = alert.scrollHeight <= alert.clientHeight
+        || Math.ceil(alert.scrollTop + alert.clientHeight) >= alert.scrollHeight;
+
+      const buttonRect = button.getBoundingClientRect();
+      const buttonHit = document.elementFromPoint(
+        buttonRect.left + buttonRect.width / 2,
+        buttonRect.top + buttonRect.height / 2,
+      ) === button;
+
+      textarea.scrollIntoView({ block: 'nearest' });
+      const lineHeight = Number.parseFloat(getComputedStyle(textarea).lineHeight) || 0;
+      const minEditable = 2 * lineHeight;
+      const taVisH = clipVisibleHeight(textarea, cols);
+      const twoLines = textarea.clientHeight >= minEditable && taVisH >= minEditable;
+      const textareaHit = hitAtCenter(textarea);
+
+      addBtn.scrollIntoView({ block: 'nearest' });
+      const addHit = hitAtCenter(addBtn);
+
       return {
         viewportWidth: innerWidth,
         viewportHeight: innerHeight,
-        intersections: overlaps(alertRect, textarea.getBoundingClientRect()) || overlaps(alertRect, footer.getBoundingClientRect()),
+        stackOk: colsRect.bottom <= alertRect.top,
         alertFitsWidth: alert.scrollWidth <= alert.clientWidth,
         startReachable,
-        endReachable: alert.scrollHeight <= alert.clientHeight || Math.ceil(alert.scrollTop + alert.clientHeight) >= alert.scrollHeight,
+        endReachable,
+        alertFooterDisjoint: !overlaps(alertRect, footerRect),
         buttonEnabled: !button.disabled,
-        buttonHit: document.elementFromPoint(buttonRect.left + buttonRect.width / 2, buttonRect.top + buttonRect.height / 2) === button,
+        buttonHit,
+        twoLines,
+        textareaHit,
+        addHit,
       };
     })()`);
 
     expect(results.map(({ viewportWidth, viewportHeight }) => [viewportWidth, viewportHeight])).toEqual([[1280, 720], [800, 800]]);
     for (const result of results) {
-      expect(result.intersections).toBe(false);
+      expect(result.stackOk).toBe(true);
       expect(result.alertFitsWidth).toBe(true);
       expect(result.startReachable).toBe(true);
       expect(result.endReachable).toBe(true);
+      expect(result.alertFooterDisjoint).toBe(true);
       expect(result.buttonEnabled).toBe(true);
       expect(result.buttonHit).toBe(true);
+      expect(result.twoLines).toBe(true);
+      expect(result.textareaHit).toBe(true);
+      expect(result.addHit).toBe(true);
     }
   });
 });
