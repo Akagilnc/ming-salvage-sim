@@ -447,6 +447,68 @@ def test_web_advance_entry_exposes_settlement_display(game, monkeypatch):
     assert db.get_month_open_snapshot(int(state.turn)) is None
 
 
+def test_web_advance_entry_awaiting_keeps_phase_and_decisions(game, monkeypatch):
+    """真实退朝 API：awaiting 分支不下 end_turn/refresh，留待裁面与 decisions（#1702 C2）。
+
+    外部可见 + durable：响应 awaiting_decision/decisions 原样下发、turn 不推进、
+    持久 phase 仍 awaiting。end_turn 桩镜像生产（只置 SUMMONING 并 save）——
+    若入口误调 end_turn，相位/核账脸断言红；不得以 mock 调用序单独当契约。
+    """
+    import threading
+    from ming_sim.decree import ResolveResult
+
+    db, state, _content = game
+    turn_before = int(state.turn)
+    runtime = _runtime(db, state)
+    runtime.directive_rows = lambda: []
+    runtime._write_gate = threading.Lock()
+    actions: list[str] = []
+    decisions = [
+        {
+            "event_id": "evt-await-c2",
+            "title": "辽饷批红",
+            "context": "是否准发",
+            "options": [{"label": "准"}],
+        }
+    ]
+
+    def _advance_awaiting(**_kw):
+        # entry accept 已 capture；桩内保持快照，落生产 awaiting 相位。
+        actions.append("resolve")
+        state.turn_phase = TurnPhase.AWAITING_DECISION.value
+        db.save_state(state)
+        return ResolveResult(awaiting=True, decisions=list(decisions))
+
+    def _end_turn():
+        # 镜像 session.end_turn durable 副作用（只置 SUMMONING 并 save，不推进 turn）。
+        actions.append("end_turn")
+        state.turn_phase = TurnPhase.SUMMONING.value
+        db.save_state(state)
+
+    runtime.session.advance_without_decree = _advance_awaiting
+    runtime.session.end_turn = _end_turn
+    runtime.refresh_turn = lambda: actions.append("refresh")
+    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
+    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
+    monkeypatch.setattr(web_app, "_serialized_web_write", _null_cm)
+    monkeypatch.setattr(web_app, "_failed_secret_order_ids_for_turn", lambda *_a, **_k: set())
+    monkeypatch.setattr(
+        web_app, "_new_secret_order_failure_payloads_for_turn", lambda *_a, **_k: []
+    )
+
+    result = web_app.api_advance_without_edict()
+
+    assert result["awaiting_decision"] is True
+    assert result["decisions"] == decisions
+    assert result["state"]["turn"]["turn"] == turn_before
+    assert state.turn == turn_before
+    # durable 红证：误调 end_turn 会把相位打回 summoning 并清核账脸。
+    assert state.turn_phase == TurnPhase.AWAITING_DECISION.value
+    assert result["state"]["turn"]["phase"] == TurnPhase.AWAITING_DECISION.value
+    assert result["state"]["turn"]["settlement_display"] is True
+    assert db.get_month_open_snapshot(turn_before) is not None
+
+
 def test_recovery_path_keeps_settlement_display(game, monkeypatch):
     """改造回归：settling 恢复路径上核账展示态仍在；完成后态清。"""
     import ming_sim.decree as dm
