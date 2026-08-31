@@ -234,7 +234,9 @@ export function useChatActions({
         setError("");
       },
       onError: (err) => {
-        if (fromComposer) {
+        // 回填归属由 useAudienceChat 的 generation+面板 freshness 门控后才入此回调；
+        // 此处再按发起面板守一次，防切大臣后的同 token 尾巴。
+        if (fromComposer && selectedMinisterRef.current === initiatingPanelName) {
           setInput(message);
           setComposerIntent(intent);
         }
