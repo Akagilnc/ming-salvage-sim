@@ -7,7 +7,6 @@ tests/test_adr0015_per_item_rejection.py	test_utf8_safe_serialization_preserves_
 tests/test_adr0015_per_item_rejection.py	test_sqlite_text_sanitization_covers_resolve_report_and_extraction_rows	192	writable isolation required: line 199 invokes persist_resolve_context
 tests/test_adr0015_per_item_rejection.py	test_sqlite_text_sanitization_covers_issue_rows_and_advances	229	writable isolation required: line 233 invokes insert_issue
 tests/test_advance_paths_atomic.py	test_advance_without_edict_atomic	43	writable isolation required: line 58 invokes advance_without_edict
-tests/test_advance_paths_atomic.py	test_fallback_branch_atomic	101	writable isolation required: isolated read_game/query_only probe reaches a real SQLite write in test_fallback_branch_atomic
 tests/test_advance_paths_atomic.py	test_settle_crash_after_savestate_before_clear_rolls_back	139	writable isolation required: line 150 invokes persist_resolve_context
 tests/test_advance_paths_atomic.py	test_settle_code_exception_writes_pack_and_aborts	189	writable isolation required: line 199 invokes persist_resolve_context
 tests/test_advance_paths_atomic.py	test_recovery_path_commits_pending_actions	359	writable isolation required: line 371 invokes pre_settle
@@ -24,7 +23,6 @@ tests/test_advance_paths_atomic.py	test_pending_commit_rolls_back_with_failed_re
 tests/test_advance_paths_atomic.py	test_hitl_reextract_branch_commits_pending	862	writable isolation required: line 870 invokes pre_settle
 tests/test_advance_paths_atomic.py	test_escape_hatch_failure_does_not_mask_abort	907	writable isolation required: line 915 invokes pre_settle
 tests/test_advance_paths_atomic.py	test_resim_path_does_not_preconsume_pending	937	writable isolation required: line 950 invokes pre_settle
-tests/test_advance_paths_atomic.py	test_fallback_path_commits_pending	983	writable isolation required: line 990 invokes pre_settle
 tests/test_advance_paths_atomic.py	test_recovery_restores_last_decree_for_web_display	1010	writable isolation required: line 1016 invokes pre_settle
 tests/test_advance_paths_atomic.py	test_recovery_replay_blocked_by_pending_directives	1034	writable isolation required: line 1043 invokes pre_settle
 tests/test_advance_paths_atomic.py	test_skip_refused_at_front_half_done	1086	writable isolation required: line 1094 invokes pre_settle
@@ -749,7 +747,7 @@ tests/test_pre_settle_transaction.py	test_crash_inside_pre_settle_no_missing_fis
 tests/test_pre_settle_transaction.py	test_two_consecutive_driver_settles_both_get_fiscal_tick	182	writable isolation required: line 191 invokes run_settle
 tests/test_pre_settle_transaction.py	test_enter_review_does_not_clobber_settling	203	writable isolation required: line 211 invokes save_state
 tests/test_pre_settle_transaction.py	test_advance_without_edict_refused_after_settling	224	writable isolation required: line 229 invokes pre_settle
-tests/test_pre_settle_transaction.py	test_simulator_fallback_tail_resets_settling	274	writable isolation required: settlement lifecycle: _drive_resolve_directives mutates and then verifies settling-state cleanup
+tests/test_pre_settle_transaction.py	test_simulator_failure_keeps_settling_for_retry	274	writable isolation required: real resolve entry persists settling state and verifies simulator failure remains retryable without advancing
 tests/test_pre_settle_transaction.py	test_hitl_pause_persists_awaiting_phase_durably	291	writable isolation required at line 305: production mutation/isolation call: clear_resolve_context
 tests/test_pre_settle_transaction.py	test_pre_settle_guard_covers_awaiting_decision	308	writable isolation required at line 316: in-memory state/content mutation: state.turn_phase
 tests/test_pre_settle_transaction.py	test_sticky_phases_cover_awaiting_decision	332	writable isolation required: line 340 invokes save_state
