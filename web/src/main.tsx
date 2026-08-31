@@ -556,6 +556,7 @@ export function App() {
         onGroupChange={setMinisterGroup}
         onClose={() => setDrawerOpen(false)}
         onOpenChat={openChat}
+        onOpenEdict={() => openModal("edict")}
         onUploadPortrait={uploadPortrait}
         chatEntryEnabled={chatEntryEnabled}
       />
