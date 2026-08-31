@@ -609,6 +609,11 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
             semantic_payload["source_chat_turn_id"] = origin_pin
         if isinstance(draft_res.get("participant_roster"), list):
             semantic_payload["participant_roster"] = draft_res["participant_roster"]
+        # #1685：region 无取舍，入卷前 assembly 强制 single（复用 #654 helper）。
+        if str(semantic_payload.get("target_kind") or "").strip() == "region":
+            semantic_payload["locality_scope"] = write_locality_scope_for_target_kind(
+                "region",
+            )
         # #658：纯强推不得 setdefault 普通 triad，否则混载触发互斥拒收 / 造第二案卷
         from ming_sim.db import classify_directive_structured_kind
         if not is_existing_update and classify_directive_structured_kind(

@@ -61,6 +61,7 @@ class _SettlementSession:
 
     def __init__(self, state):
         self.state = state
+        self.actions = []
 
     def current_phase(self):
         from ming_sim.models import TurnPhase
@@ -74,10 +75,14 @@ class _SettlementSession:
 
     def submit_hitl_choices(self, *_args, write_gate=None, **_kwargs):
         # 生产协议：resolve/stream 唯一走 submit_hitl_choices
+        self.actions.append("submit")
         if write_gate is not None:
             with write_gate:
                 return "邸报：国丈家赀约数十万两，三十万两帑银与五千援军已抵辽东。"
         return "邸报：国丈家赀约数十万两，三十万两帑银与五千援军已抵辽东。"
+
+    def end_turn(self):
+        self.actions.append("end_turn")
 
 
 class _SettlementGame:
@@ -89,7 +94,7 @@ class _SettlementGame:
         self._write_gate = threading.Lock()
 
     def refresh_turn(self):
-        return None
+        self.session.actions.append("refresh")
 
     def state_payload(self):
         return {
@@ -121,11 +126,14 @@ async def _serialized_terminal_event(route_name: str) -> tuple[str, dict]:
 def test_settlement_sse_routes_serialize_only_player_narrative(
     monkeypatch, route_name, expected_event,
 ):
-    monkeypatch.setattr(web_app, "get_game", lambda: _SettlementGame())
+    game = _SettlementGame()
+    monkeypatch.setattr(web_app, "get_game", lambda: game)
 
     event, payload = asyncio.run(_serialized_terminal_event(route_name))
 
     assert event == expected_event
+    if route_name == "resolve":
+        assert game.session.actions == ["submit", "end_turn", "refresh"]
     assert payload["decree"] == "诏曰：国丈家赀约数十万两，仍发帑三十万两、调兵五千赈辽。"
     if expected_event == "decisions":
         assert payload["decisions"] == [{"title": "辽饷", "context": "家赀约十万两，是否发帑"}]
