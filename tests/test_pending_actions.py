@@ -1287,23 +1287,44 @@ def test_appointment_intent_stages_office_action(game, monkeypatch):
         "SELECT name FROM characters WHERE name=?", (new_name,)).fetchone() is None
 
 
-def test_decree_prefix_appointment_not_double_staged(game, monkeypatch):
-    """显式「拟旨如下：」里的任免随诏书走 extractor(office_changes),不在自然语言路径
-    重复 stage office。判据=显式前缀=皇帝已明示,按既定例外直接走,不入自然语言闸门。"""
+def test_decree_prefix_appointment_stages_typed_office(game, monkeypatch):
+    """#1683：显式「拟旨如下：」+ typed appointment 候选 → stage kind=office。
+
+    对齐 #1503 grant 单轨：前缀不改语义路径；零 extract_appointment_action LLM。
+    旧钉「前缀不 stage office」已按 0055/0047/判词撤销。
+    """
     db, state, content = game
     name = _active_minister_name(db, content)
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
-    monkeypatch.setattr(cb, "_run_backend_for_config",
-                        lambda prompt, llm_config=None, tag="": (json.dumps(
-                            {"任免动作": "任命", "姓名": "钱某", "官职": "礼部主事", "顶替": ""},
-                            ensure_ascii=False), 1))
+    extract_calls = {"n": 0}
+
+    def _backend(prompt, llm_config=None, tag=""):
+        if tag == "appointment":
+            extract_calls["n"] += 1
+            raise AssertionError("#1683 prefix path must not call extract_appointment_action")
+        return ("{}", 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _backend)
     GameSession.apply_cli_conversation_actions(
         _fake_session(db, state), ch,
         player_message="拟旨如下：着钱某任礼部主事",
         answer="奉天承运皇帝诏曰,着钱某任礼部主事。",
-        has_directive=False, secret_order_id=None)
-    # 拟旨入档为 directive,但【不】另 stage 一条 office —— 任免随诏书走 extractor
-    assert all(pa["kind"] != "office" for pa in db.list_pending_actions(state.turn))
+        has_directive=False, secret_order_id=None,
+        preclassified_intent=[{
+            "kind": "appointment", "appoint_action": "任命",
+            "name": "钱某", "office": "礼部主事",
+        }],
+    )
+    office_rows = [pa for pa in db.list_pending_actions(state.turn) if pa["kind"] == "office"]
+    assert len(office_rows) == 1
+    payload = json.loads(office_rows[0]["payload_json"])
+    assert payload["name"] == "钱某"
+    assert payload["office"] == "礼部主事"
+    assert extract_calls["n"] == 0
+    # 颁布前 characters 不动
+    assert db.conn.execute(
+        "SELECT name FROM characters WHERE name=?", ("钱某",)
+    ).fetchone() is None
 
 
 def test_commit_appointment_applies_at_decree(game, monkeypatch):

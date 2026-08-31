@@ -1942,8 +1942,9 @@ class GameSession:
         llm_config = getattr(self, "llm_config", None)
         # 显式前缀(拟旨如下:/密令如下:)= 皇帝已明示动作类别。
         # 后置 LLM 抽取器（确认/密令/调教/拟旨/任免）仍由本闸统一跳过（#344 US3）。
-        # #1503：拟旨前缀可携带**并发** typed classifier 候选；载荷式（grant_allocation）
-        # 走既有 stage_grant_allocation_candidate，不再先落 generic special_decree。
+        # #1503/#1683：拟旨前缀可携带**并发** typed classifier 候选；载荷式
+        # （grant_allocation / appointment）走既有 stage 单轨，不再先落 generic
+        # special_decree 作人物效果真源。
         # 确认闸门仍跳过：否则前缀消息在有 pending 时既多跑 extract_confirmation_intent，
         # 还可能被误判「应允/拒绝」提前 return、吞掉这道前缀拟旨/密令（确认句本无前缀）。
         message_text = (player_message or "").strip()
