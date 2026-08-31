@@ -3120,45 +3120,247 @@ def test_657_illegal_summon_target_http_zero_writes(web_game, monkeypatch):
     assert ledger_after == ledger_before
 
 
-def test_1620_follow_draft_office_token_does_not_enter_roster(game):
-    """#1620：follow_draft 陕西巡抚+cat 成案，roster 不得写入该非人 token。"""
-    from ming_sim import rescript_actions as ra
+def test_1620_http_follow_draft_office_token_routes_to_person(web_game, monkeypatch):
+    """#1620 A：真 HTTP follow 职司 token → 真人 executor；真 phase2 可推月。"""
+    from ming_sim.models import TurnPhase
 
-    db, state, content = game
+    db, state = web_game.db, web_game.state
     db.conn.execute(
         "UPDATE characters SET location='shaanxi' "
         "WHERE status='active' AND power_id='ming' AND office_type='户部'"
     )
     db.conn.commit()
+    # 代表链最短单 token；routing 已有 domain 测覆盖多职司
     token = "陕西巡抚"
+    # 只中和 phase2 LLM 边界；保留真结算/推月（同 s5/1621）
+    _657_install_real_phase2_llm_boundary(monkeypatch)
+
+    db.conn.execute("DELETE FROM pending_decisions")
+    db.conn.commit()
     opt = _layer_a_option(
-        label="责成督赈",
+        label=f"责成{token}",
         assignee_name=token,
         transaction_category="督赈",
     )
-    urgent, _ = _plant_urgent_desk(db, state, options=[opt, _layer_a_option(label="备")])
-    before = len(db.list_decree_dossiers())
-    ra.apply_rescript_batch(
-        db, state,
-        ra.validate_all([urgent], [{
-            "decision_key": urgent["decision_key"],
-            "action": "follow_draft",
-            "draft_capability": opt["draft_capability"],
-            "label": opt["label"],
-        }]),
-        ra.PrewriteResults(), content=content,
+    urgent, _ = _plant_urgent_desk(
+        db, state, options=[opt, _layer_a_option(label="备")],
     )
+    db.save_resolve_context(
+        int(state.turn), "诏", "邸报",
+        {"candidate_events": [], "transit_semantics": []},
+        secret_orders=[], relevant_memories=[],
+    )
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
+    before = len(db.list_decree_dossiers())
+    turn_before = int(web_game.state.turn)
+    # 浏览器同形精简 follow：无 assignee overlay
+    r = asyncio.run(_post_resolve([{
+        "decision_key": urgent["decision_key"],
+        "action": "follow_draft",
+        "draft_capability": opt["draft_capability"],
+        "label": opt["label"],
+    }]))
+    assert r.status_code == 200, r.text
+    assert "event: error" not in r.text, r.text
+    assert "event: done" in r.text, r.text
     after = db.list_decree_dossiers()
-    assert len(after) == before + 1
+    assert len(after) == before + 1, token
     created = after[-1]
+    executor = str(created.get("executor_id") or "")
+    assert executor, f"{token}: 须落到真实人物 executor"
+    assert token not in executor, f"{token} 不得作 executor"
     roster = created.get("participant_roster") or []
     ids = [
         str(e.get("character_id") or "")
         for e in roster if isinstance(e, dict)
     ]
-    assert token not in ids
+    assert token not in ids, f"{token} 不得入 roster：{ids}"
     payload = json.loads(str(created.get("payload_json") or "{}"))
     assert token not in str(payload.get("assignee_id") or "")
+    # 真 phase2 契约：消费成功且月可推
+    assert int(web_game.state.turn) == turn_before + 1
+
+
+def test_1620_http_follow_draft_grant_uses_stored_amount(web_game, monkeypatch):
+    """#1620 B：完整 grant option + 浏览器精简 follow（无 amount/account）真 HTTP 成案。"""
+    from ming_sim.models import TurnPhase
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+
+    db, state = web_game.db, web_game.state
+    mrow = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' LIMIT 1"
+    ).fetchone()
+    mname = str(mrow["name"])
+    grant_opt = normalize_rescript_layer_a_option({
+        "label": "赏银", "hint": "赏功",
+        "action_type": "grant_allocation",
+        "assignee_name": "",
+        "target_kind": "character", "target_id": mname,
+        "locality_scope": "none", "region_id": "",
+        "transaction_category": "",
+        "grant_action": "赏赉", "amount": 500, "name": mname,
+    })
+    assert int(grant_opt["amount"]) == 500
+
+    urgent, _ = _plant_urgent_desk(
+        db, state, options=[grant_opt, _layer_a_option(label="备")],
+    )
+    stored = next(
+        o for o in (urgent["options"] or [])
+        if isinstance(o, dict) and o.get("draft_capability") == grant_opt["draft_capability"]
+    )
+    assert int(stored.get("amount") or 0) == 500, "option 持久化须含 amount"
+
+    def _phase2(_state, _db, *_a, **_k):
+        return "邸报：赏已落。"
+
+    monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _phase2)
+    db.save_resolve_context(
+        int(state.turn), "诏", "邸报",
+        {"candidate_events": [], "transit_semantics": []},
+        secret_orders=[], relevant_memories=[],
+    )
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
+    before = len(db.list_decree_dossiers())
+    # 浏览器 projectFollowDraftFromOption 同形：无 amount/account
+    r = asyncio.run(_post_resolve([{
+        "decision_key": urgent["decision_key"],
+        "action": "follow_draft",
+        "draft_capability": grant_opt["draft_capability"],
+        "label": grant_opt["label"],
+    }]))
+    assert r.status_code == 200, r.text
+    assert "event: error" not in r.text, r.text
+    assert "event: done" in r.text, r.text
+    after = db.list_decree_dossiers()
+    assert len(after) == before + 1
+    created = after[-1]
+    assert str(created.get("action_type") or "") == "grant_allocation"
+    payload = json.loads(str(created.get("payload_json") or "{}"))
+    assert int(payload.get("amount") or 0) == 500
+    assert str(payload.get("grant_action") or "") == "赏赉"
+
+
+def test_1620_layer_a_money_grant_requires_positive_amount():
+    """#1620：层 A shape 独掌 grant——正 amount/honorific/私库 + 非法 action/非积分 amount。"""
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+
+    base = {
+        "label": "赏银", "hint": "赏功",
+        "action_type": "grant_allocation",
+        "assignee_name": "",
+        "target_kind": "character", "target_id": "张瑞图",
+        "locality_scope": "none", "region_id": "",
+        "transaction_category": "",
+        "grant_action": "赏赉", "name": "张瑞图",
+    }
+    with pytest.raises(ValueError):
+        normalize_rescript_layer_a_option(base)
+    with pytest.raises(ValueError):
+        normalize_rescript_layer_a_option({**base, "amount": 0})
+    with pytest.raises(ValueError):
+        normalize_rescript_layer_a_option({**base, "amount": 10, "account": "私库"})
+    # 非法 grant_action 闭集（含「无」/未知）
+    with pytest.raises(ValueError):
+        normalize_rescript_layer_a_option({**base, "amount": 10, "grant_action": "无"})
+    with pytest.raises(ValueError):
+        normalize_rescript_layer_a_option({**base, "amount": 10, "grant_action": "未知赏"})
+    # 非积分 amount（bool/float）拒
+    with pytest.raises(ValueError):
+        normalize_rescript_layer_a_option({**base, "amount": True})
+    with pytest.raises(ValueError):
+        normalize_rescript_layer_a_option({**base, "amount": 1.5})
+    ok = normalize_rescript_layer_a_option({**base, "amount": 10})
+    assert int(ok["amount"]) == 10
+    # 空 account 保持空——不回写 shape 默认国库
+    assert str(ok.get("account") or "") == ""
+    # 太仓持久化为国库，与显式国库同一 draft_capability
+    taicang = normalize_rescript_layer_a_option({
+        **base, "amount": 10, "account": "太仓",
+    })
+    guoku = normalize_rescript_layer_a_option({
+        **base, "amount": 10, "account": "国库",
+    })
+    assert str(taicang.get("account") or "") == "国库"
+    assert str(guoku.get("account") or "") == "国库"
+    assert taicang["draft_capability"] == guoku["draft_capability"]
+    assert taicang["draft_capability"] != ok["draft_capability"]
+    # 加衔不要求 amount
+    honor = normalize_rescript_layer_a_option({
+        **base, "grant_action": "加衔", "label": "加衔",
+    })
+    assert honor.get("grant_action") == "加衔"
+    assert "amount" not in honor
+
+
+def test_1620_materialize_rejects_illegal_account_like_shape(game):
+    """#1620：真 pipeline——太仓→国库成案；缺/0/bool/float amount 写前失败零 pending。"""
+    import types
+
+    from ming_sim.action_materialize import MaterializeCtx, run_materialize_pipeline
+
+    db, state, _content = game
+    actor = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
+    ).fetchone()["name"]
+    target = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' "
+        "AND name!=? LIMIT 1",
+        (actor,),
+    ).fetchone()["name"]
+
+    def _count_pending() -> int:
+        return int(db.conn.execute(
+            "SELECT COUNT(*) AS n FROM pending_actions WHERE status='pending'"
+        ).fetchone()["n"])
+
+    def _run(amount, account="国库"):
+        return MaterializeCtx(
+            session=types.SimpleNamespace(
+                db=db, state=types.SimpleNamespace(turn=int(state.turn)),
+            ),
+            character=types.SimpleNamespace(name=actor, office_type="文官"),
+            player_message="赏银。",
+            reply="臣请奉行：赏银。请陛下定夺准驳。",
+            message_text="赏银。",
+            explicit_prefixed=False,
+            has_directive=False,
+            pend_for_minister=[],
+            out={},
+            intent={
+                "kind": "grant_allocation",
+                "grant_action": "赏赉",
+                "amount": amount,
+                "account": account,
+                "name": target,
+            },
+            intent_kind="grant_allocation",
+            llm_config=None,
+            intent_candidates=None,
+        )
+
+    # 合法正整数 + 太仓→国库
+    ctx = _run(10, account="太仓")
+    run_materialize_pipeline(ctx)
+    pending_id = ctx.out.get("pending_action_id")
+    assert pending_id, "太仓应归一国库并成案"
+    row = db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?", (int(pending_id),),
+    ).fetchone()
+    payload = json.loads(str(row["payload_json"] or "{}"))
+    assert str(payload.get("account") or "") == "国库"
+    assert int(payload.get("amount") or 0) == 10
+
+    # normalized classifier candidate：缺/0/bool/float 均须 DB 写前失败且零新增 pending
+    before = _count_pending()
+    for bad in (None, 0, True, 1.5):
+        bad_ctx = _run(bad)
+        with pytest.raises(ValueError):
+            run_materialize_pipeline(bad_ctx)
+        assert bad_ctx.out.get("pending_action_id") in (None, 0, "")
+        assert _count_pending() == before
 
 
 def test_657_follow_draft_ignores_client_field_overlay(game):

@@ -1022,11 +1022,21 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     expect((host2.querySelector('[data-testid="decision-recovery"] button') as HTMLButtonElement).disabled).toBe(false);
   });
 
-  it("#1620 落印 SSE error 挂 decision-recovery", async () => {
+  it("#1620 落印 SSE error 同页保留 picks + 单一 recovery alert + 可再落印", async () => {
+    // 多疏 fixture：只经结构化控件操作，不锁 option/error 自由文案。
+    const d1 = {
+      idx: 0, title: "疏一", context: "c1",
+      options: [{ label: "甲策", hint: "h1" }, { label: "乙策", hint: "h2" }],
+    };
+    const d2 = {
+      idx: 1, title: "疏二", context: "c2",
+      options: [{ label: "丙策", hint: "h3" }],
+    };
     const state = settlementBaseState("awaiting_decision", {
-      pending_decisions: [validDecision],
+      pending_decisions: [d1, d2],
     });
-    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+    const resolveBodies: unknown[] = [];
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       const u = new URL(String(url), "http://t.local");
       if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
@@ -1040,7 +1050,101 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       });
       if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
       if (u.pathname.endsWith("/api/decree/resolve_decisions/stream")) {
+        resolveBodies.push(JSON.parse(String(init?.body || "{}")));
         return sseResp("error", { message: "stream-fail" });
+      }
+      return jsonResp({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const host = await mountApp();
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[data-testid="decision-modal"]')).not.toBeNull());
+    });
+    const optionButtons = () =>
+      Array.from(host.querySelectorAll("button.decision-option")) as HTMLButtonElement[];
+    const confirm = () =>
+      host.querySelector('[data-testid="decision-modal"] button.decision-confirm') as HTMLButtonElement | null;
+
+    // 第 1 疏：点首 option（结构化 class，不按文案找）
+    expect(optionButtons().length).toBeGreaterThan(0);
+    await click(optionButtons()[0]);
+    expect(host.querySelector("button.decision-option.is-picked")).not.toBeNull();
+    expect(confirm()).not.toBeNull();
+    await click(confirm());
+    await act(async () => {
+      await vi.waitFor(() => expect(optionButtons().length).toBeGreaterThan(0));
+    });
+    // 第 2 疏：点首 option 后落印
+    await click(optionButtons()[0]);
+    expect(confirm()).not.toBeNull();
+    expect(confirm()!.disabled).toBe(false);
+    await click(confirm());
+
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(host.querySelector('[data-testid="decision-recovery"]')).not.toBeNull();
+        expect(resolveBodies.length).toBe(1);
+      });
+    });
+    // 单一 role=alert：只经 decision-recovery，不与 modal 双播
+    const alerts = host.querySelectorAll('[role="alert"]');
+    expect(alerts.length).toBe(1);
+    expect(
+      host.querySelector('[data-testid="decision-recovery"] [role="alert"]'),
+    ).toBe(alerts[0]);
+
+    // modal 不卸载；已选态仍在；可再落印
+    expect(host.querySelector('[data-testid="decision-modal"]')).not.toBeNull();
+    expect(host.querySelector("button.decision-option.is-picked")).not.toBeNull();
+    expect(confirm()).not.toBeNull();
+    expect(confirm()!.disabled).toBe(false);
+
+    await click(confirm());
+    await act(async () => {
+      await vi.waitFor(() => expect(resolveBodies.length).toBe(2));
+    });
+    // 两次 resolve 结构化 choices 相同（picks 保留的行为证据）
+    expect(resolveBodies[0]).toEqual(resolveBodies[1]);
+    const body0 = resolveBodies[0] as { choices?: unknown[] };
+    expect(Array.isArray(body0.choices)).toBe(true);
+    expect(body0.choices!.length).toBe(2);
+
+    // refresh 后 recovery 仍在且仍单一 alert（error 不被空串冲掉）
+    expect(host.querySelector('[data-testid="decision-recovery"]')).not.toBeNull();
+    expect(host.querySelectorAll('[role="alert"]').length).toBe(1);
+  });
+
+  it("#1620 本地 pending 后权威 refresh all-decided/resume_phase2 清 stale modal", async () => {
+    // 只证：曾有本地 pending → 权威态切 all-decided/resume_phase2 → modal 卸 + settle-resume。
+    // 不夹 SSE picks 恢复、不夹 busy 二提交。loadState 车辆=落印 stream error（仅触发刷新）。
+    const d = {
+      idx: 0, title: "疏", context: "c",
+      options: [{ label: "甲策", hint: "h" }],
+    };
+    const decided = { ...d, status: "decided", choice: { label: "甲策" } };
+    let liveState: Record<string, unknown> = settlementBaseState("awaiting_decision", {
+      pending_decisions: [d],
+    });
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = new URL(String(url), "http://t.local");
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) return jsonResp(liveState);
+      if (u.pathname.endsWith("/api/history/turns")) return jsonResp({
+        turns: [{ kind: "month", turn: 4, year: 1627, period: 9, has_report: true, has_attendant: false, has_directive: true }],
+      });
+      if (u.pathname.includes("/api/history/turn/")) return jsonResp({
+        turn: 4, year: 1627, period: 9, report: SNAP_GAZETTE, decree: "",
+      });
+      if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
+      if (u.pathname.endsWith("/api/decree/resolve_decisions/stream")) {
+        // 权威态已 all-decided + resume_phase2；error 只作 loadState 触发器。
+        liveState = settlementBaseState("awaiting_decision", {
+          pending_decisions: [decided],
+          resume_phase2: true,
+        });
+        return sseResp("error", { message: "trigger-refresh" });
       }
       return jsonResp({});
     }));
@@ -1048,17 +1152,85 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     await act(async () => {
       await vi.waitFor(() => expect(host.querySelector('[data-testid="decision-modal"]')).not.toBeNull());
     });
-    const option = Array.from(host.querySelectorAll("button")).find((b) =>
-      (b.textContent || "").includes("固守"),
-    ) as HTMLButtonElement | undefined;
-    expect(option).toBeTruthy();
-    await click(option);
-    const seal = host.querySelector('[aria-label="批红落印，续推时局"]') as HTMLButtonElement | null;
-    expect(seal).not.toBeNull();
-    await click(seal);
+    const optionButtons = () =>
+      Array.from(host.querySelectorAll("button.decision-option")) as HTMLButtonElement[];
+    const confirm = () =>
+      host.querySelector('[data-testid="decision-modal"] button.decision-confirm') as HTMLButtonElement | null;
+    await click(optionButtons()[0]);
+    expect(confirm()).not.toBeNull();
+    await click(confirm());
     await act(async () => {
-      await vi.waitFor(() => expect(host.querySelector('[data-testid="decision-recovery"]')).not.toBeNull());
+      await vi.waitFor(() => {
+        expect(host.querySelector('[data-testid="decision-modal"]')).toBeNull();
+        expect(host.querySelector('[data-testid="settle-resume"]')).not.toBeNull();
+      });
     });
+  });
+
+  it("#1620 落印后 deferred resolve 在飞期间禁二提交", async () => {
+    // 只证：真 App 入口点落印，resolve 挂起期间再点 → POST 仍为 1；busy 下控件 disabled。
+    // 不夹 SSE picks 恢复、不夹 all-decided 清窗。
+    const d = {
+      idx: 0, title: "疏", context: "c",
+      options: [{ label: "甲策", hint: "h" }],
+    };
+    const state = settlementBaseState("awaiting_decision", {
+      pending_decisions: [d],
+    });
+    let resolveCount = 0;
+    let releaseResolve: ((value: Response) => void) | null = null;
+    const deferredResolve = new Promise<Response>((resolve) => {
+      releaseResolve = resolve;
+    });
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = new URL(String(url), "http://t.local");
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) return jsonResp(state);
+      if (u.pathname.endsWith("/api/history/turns")) return jsonResp({
+        turns: [{ kind: "month", turn: 4, year: 1627, period: 9, has_report: true, has_attendant: false, has_directive: true }],
+      });
+      if (u.pathname.includes("/api/history/turn/")) return jsonResp({
+        turn: 4, year: 1627, period: 9, report: SNAP_GAZETTE, decree: "",
+      });
+      if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
+      if (u.pathname.endsWith("/api/decree/resolve_decisions/stream")) {
+        resolveCount += 1;
+        if (resolveCount === 1) return deferredResolve;
+        return sseResp("error", { message: "should-not-fire" });
+      }
+      return jsonResp({});
+    }));
+    const host = await mountApp();
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[data-testid="decision-modal"]')).not.toBeNull());
+    });
+    const optionButtons = () =>
+      Array.from(host.querySelectorAll("button.decision-option")) as HTMLButtonElement[];
+    const confirm = () =>
+      host.querySelector('[data-testid="decision-modal"] button.decision-confirm') as HTMLButtonElement | null;
+    await click(optionButtons()[0]);
+    expect(confirm()).not.toBeNull();
+    expect(confirm()!.disabled).toBe(false);
+    await click(confirm());
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(resolveCount).toBe(1);
+        expect(confirm()!.disabled).toBe(true);
+        expect(optionButtons().every((b) => b.disabled)).toBe(true);
+      });
+    });
+    // busy 期间再点落印——disabled + handler 短路，POST 仍 1
+    await click(confirm());
+    await click(confirm());
+    expect(resolveCount).toBe(1);
+    // 放行挂起的 resolve，避免泄漏（收尾不纳入本契约）
+    await act(async () => {
+      releaseResolve!(sseResp("error", { message: "done-for-test" }));
+      await Promise.resolve();
+    });
+    expect(resolveCount).toBe(1);
   });
 
   it("#1700 phase-1 SSE error → loadState 挂 settle-resume", async () => {

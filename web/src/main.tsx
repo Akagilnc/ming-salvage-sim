@@ -837,10 +837,11 @@ export function App() {
         />
       ) : null}
 
-      {/* 必达：DecisionModal——核账展示态门控不得盖住本面 */}
+      {/* 必达：DecisionModal——核账展示态门控不得盖住本面。
+          #1620：落印失败保留 pending/picks；typed 错只经上方 decision-recovery 单一 role=alert，不在此复制。 */}
       {pendingDecisions.length > 0 ? (
         <div data-testid="decision-modal">
-          <DecisionModal decisions={pendingDecisions} failures={decisionFailures} onResolve={submitDecisions} />
+          <DecisionModal decisions={pendingDecisions} failures={decisionFailures} onResolve={submitDecisions} busy={busy} />
         </div>
       ) : null}
     </main>

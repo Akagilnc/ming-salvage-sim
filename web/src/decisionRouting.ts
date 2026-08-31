@@ -108,7 +108,9 @@ export function routeRefreshDecisions(
   if (decisions.length === 0) {
     return { pendingDecisions: [], error: PAUSED_DECISION_MSG };
   }
-  return { pendingDecisions: decisions, error: "" };
+  // #1620：合法 pending 刷新不碰已有 stream error（error:null）；
+  // 禁 error:"" 在 loadState 后洗掉刚写入的落印失败文案。损坏批仍写 PAUSED。
+  return { pendingDecisions: decisions, error: null };
 }
 
 export function routeRetryDecisions(
