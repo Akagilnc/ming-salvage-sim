@@ -111,6 +111,14 @@ def normalize_rescript_layer_a_option(raw: object) -> Dict[str, object]:
     if action_type not in RESCRIPT_ROUTABLE_ACTION_TYPES:
         raise ValueError(f"票拟 option.action_type 非七类 routable：{action_type!r}")
     out["action_type"] = action_type
+    # #1620：grant_kind 仅 grant_allocation 合法；非 grant 不得因 allowed 白名单静默丢键。
+    # 内部 canonical（无 grant_kind、grant_action=协饷）仍可二次归一——本闸只咬显式 kind。
+    if action_type != "grant_allocation":
+        raw_kind = raw.get("grant_kind") if "grant_kind" in raw else None
+        if raw_kind is not None and str(raw_kind).strip():
+            raise ValueError(
+                f"非 grant_allocation 不得带 grant_kind：{raw_kind!r}"
+            )
     target_kind = str(out["target_kind"]).strip()
     if target_kind not in TARGET_KINDS:
         raise ValueError(f"票拟 option.target_kind 非法：{target_kind!r}")
