@@ -9699,8 +9699,34 @@ class GameDB:
         )
         self.conn.commit()
 
+    def _agno_session_columns(self) -> set:
+        if not self._table_exists("agno_sessions"):
+            return set()
+        return {
+            row["name"]
+            for row in self.conn.execute("PRAGMA table_info(agno_sessions)").fetchall()
+        }
+
     def agno_runs_length(self, session_id: str) -> int:
-        if not session_id or not self._table_exists("agno_sessions"):
+        """Count Agno run history for a session.
+
+        Agno 3 stores runs in the authoritative ``agno_runs`` table. Legacy
+        Agno 2 archives keep a JSON blob on ``agno_sessions.runs``; that path
+        remains only for old-save migration. Missing tables/columns mean a
+        fresh session with no history yet (length 0)—schema drift must not be
+        swallowed via OperationalError→0.
+        """
+        if not session_id:
+            return 0
+        # Agno 3.x authority: independent runs table ordered like Agno itself.
+        if self._table_exists("agno_runs"):
+            row = self.conn.execute(
+                "SELECT COUNT(*) AS c FROM agno_runs WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+            return int((row["c"] if row is not None else 0) or 0)
+        # Legacy Agno 2.x blob on agno_sessions.runs (old archives only).
+        if "runs" not in self._agno_session_columns():
             return 0
         row = self.conn.execute(
             "SELECT runs FROM agno_sessions WHERE session_id = ?",
@@ -9729,7 +9755,32 @@ class GameDB:
         return json.dumps(runs, ensure_ascii=False)
 
     def _truncate_agno_runs_in_tx(self, session_id: str, keep_count: int) -> None:
-        if not session_id or not self._table_exists("agno_sessions"):
+        """Truncate session run history back to keep_count (retry/undo/reconcile).
+
+        Agno 3: delete this session's rows after keep_count in Agno order
+        ``(run_index, created_at, run_id)``. Legacy Agno 2: rewrite the blob.
+        """
+        if not session_id:
+            return
+        keep = max(0, int(keep_count))
+        if self._table_exists("agno_runs"):
+            rows = self.conn.execute(
+                """
+                SELECT run_id FROM agno_runs
+                WHERE session_id = ?
+                ORDER BY run_index ASC, created_at ASC, run_id ASC
+                """,
+                (session_id,),
+            ).fetchall()
+            drop_ids = [str(r["run_id"]) for r in rows[keep:]]
+            if not drop_ids:
+                return
+            self.conn.executemany(
+                "DELETE FROM agno_runs WHERE session_id = ? AND run_id = ?",
+                [(session_id, rid) for rid in drop_ids],
+            )
+            return
+        if "runs" not in self._agno_session_columns():
             return
         row = self.conn.execute(
             "SELECT runs FROM agno_sessions WHERE session_id = ?",
@@ -9738,7 +9789,7 @@ class GameDB:
         if row is None:
             return
         runs, encoded_as_string = self._decode_agno_runs(row["runs"])
-        kept = runs[: max(0, int(keep_count))]
+        kept = runs[:keep]
         self.conn.execute(
             "UPDATE agno_sessions SET runs = ?, updated_at = strftime('%s','now') WHERE session_id = ?",
             (self._encode_agno_runs(kept, encoded_as_string), session_id),
