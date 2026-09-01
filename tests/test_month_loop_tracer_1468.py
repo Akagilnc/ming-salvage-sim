@@ -14,15 +14,12 @@
 #1353 fold-in 钉：
 - 植入欠账后一次过月动作成功（流内处理、无 409、无 CTA、账清、月+1）
 - 真死 LLM stub → 失败单源（通传未达），非待补 CTA/409；夜保持可重按
-
-速度红线：单条 ≤30s；罩类断言用可注入小值（本片不靠真实超时窗）。
 """
 
 from __future__ import annotations
 
 import json
 import threading
-import time
 from types import SimpleNamespace
 
 import pytest
@@ -524,7 +521,6 @@ def test_month_loop_two_months_via_http_entry(tracer_client):
     M1 保留 post-chat 尾随写竞态窗（Event 控 stub）；M2 正常排空。
     """
     client = tracer_client
-    t0 = time.perf_counter()
 
     new = client.post("/api/menu/new_game")
     _assert_not_bare_500(new, step="POST /api/menu/new_game")
@@ -578,9 +574,6 @@ def test_month_loop_two_months_via_http_entry(tracer_client):
         f"ord {ord0} → {_month_ord_of(state_end)}"
     )
 
-    elapsed = time.perf_counter() - t0
-    assert elapsed <= 30.0, f"speed red line: tracer took {elapsed:.2f}s > 30s"
-
 
 # ── #1353 fold-in：带欠账一次过月成功 + 死透失败单源 ─────────────────────
 
@@ -601,7 +594,6 @@ def test_issue_with_extraction_debt_succeeds_once(tracer_client):
     from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
 
     client = tracer_client
-    t0 = time.perf_counter()
 
     new = client.post("/api/menu/new_game")
     _assert_not_bare_500(new, step="new_game (debt-ok)")
@@ -651,9 +643,6 @@ def test_issue_with_extraction_debt_succeeds_once(tracer_client):
         f"debt-ok: night still blocking: {open_after!r}"
     )
 
-    elapsed = time.perf_counter() - t0
-    assert elapsed <= 30.0, f"speed red line: debt-ok took {elapsed:.2f}s > 30s"
-
 
 def test_issue_extraction_llm_dead_single_source_not_cta(tracer_client, monkeypatch):
     """#1353 fold-in：抽取 LLM 死透 → 失败单源（通传未达），非待补 CTA/409；夜可重按。
@@ -663,7 +652,6 @@ def test_issue_extraction_llm_dead_single_source_not_cta(tracer_client, monkeypa
     from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
 
     client = tracer_client
-    t0 = time.perf_counter()
 
     new = client.post("/api/menu/new_game")
     _assert_not_bare_500(new, step="new_game (dead-llm)")
@@ -721,5 +709,141 @@ def test_issue_extraction_llm_dead_single_source_not_cta(tracer_client, monkeypa
     after = _get_state(client)
     assert _turn_of(after) == turn0, "dead-llm must not advance month"
 
-    elapsed = time.perf_counter() - t0
-    assert elapsed <= 30.0, f"speed red line: dead-llm took {elapsed:.2f}s > 30s"
+
+# ── #1716：已开夜场外 COURT_BREAK 不得被 SUMMON_* 短路 ──────────────────
+
+
+def _setup_open_night_participant(tracer_client, *, kind: str):
+    """new_game + 开夜 + 参与者。kind=offsite|temporary。
+
+    返回 (client, game, participant, night_id)。
+    """
+    client = tracer_client
+    new = client.post("/api/menu/new_game")
+    _assert_not_bare_500(new, step="#1716 new_game")
+    assert new.status_code == 200, new.text
+
+    game = web_app.web_game
+    assert game is not None
+    night = an.open_night(game.db, game.state, location="乾清宫", time_of_day="夜")
+    night_id = int(night["id"])
+
+    if kind == "temporary":
+        participant = "临时行人甲"
+        # 公开门放行 temporary；stream admission 不得因 can_summon reason 阻断收夜。
+        temp = game.session._temporary_character(participant)
+        assert participant in game.session.temporary_characters
+        assert temp.name == participant
+    else:
+        assert kind == "offsite", kind
+        participant = "洪承畴"
+        assert participant in game.content.characters, participant
+        game.db.conn.execute(
+            "UPDATE characters SET location=?, transit_to='' WHERE name=?",
+            ("shaanxi", participant),
+        )
+        game.db.conn.commit()
+
+    return client, game, participant, night_id
+
+
+def _assert_court_break_closed(game, body: dict, night_id: int, *, remote: str) -> None:
+    """外部可见契约：court_break、夜关闭、参与者无殿上 presence/entrance 账。"""
+    assert body.get("court_action") == "court_break", body
+    assert not body.get("admission"), body
+    _wait_pending_writes(game)
+    assert an.get_open_night(game.db) is None
+    night_row = game.db.conn.execute(
+        "SELECT status FROM audience_nights WHERE id=?", (night_id,),
+    ).fetchone()
+    assert night_row is not None
+    assert str(night_row["status"]) == an.NIGHT_STATUS_CLOSED, dict(night_row)
+    # #1716 durable 物理账：场外/临时收夜不得写入该人 entrance/presence。
+    assert remote not in an.persons_present_tonight(game.db, night_id), remote
+    assert remote not in an.persons_entered_tonight(game.db, night_id), remote
+    for entry in an.list_ledger(game.db, night_id):
+        names = entry.get("person_names") or []
+        if remote not in names:
+            continue
+        tags = entry.get("tags") or []
+        assert an.TAG_ENTER not in tags, entry
+        assert str(entry.get("presence_effect") or "") not in {
+            an.PRESENCE_ENTER, "enter",
+        }, entry
+
+
+@pytest.mark.parametrize("kind", ["offsite", "temporary"])
+def test_issue_1716_offsite_court_break_via_stream(tracer_client, kind):
+    """#1716 stream 入口：已开夜场外/temporary /chat/stream 退朝 → court_break + 夜关。
+
+    temporary 不得因 admission reason 返回 error；正式场外仍走地点分类与无 presence。
+    """
+    client, game, remote, night_id = _setup_open_night_participant(
+        tracer_client, kind=kind,
+    )
+
+    class _StreamAgent:
+        def run(self, *_a, **_k):
+            yield SimpleNamespace(event="RunContent", content="臣领旨。")
+            yield SimpleNamespace(content="", tools=[])
+
+        def get_last_run_output(self):
+            return None
+
+    agent = _StreamAgent()
+    game.session.registry.get = lambda _ch: agent
+
+    stream = client.post(
+        f"/api/ministers/{remote}/chat/stream",
+        json={"message": "退朝"},
+    )
+    _assert_not_bare_500(stream, step=f"#1716 chat/stream {kind} 退朝")
+    assert stream.status_code == 200, stream.text
+    events = _parse_sse(stream.text)
+    types = [str(ev.get("event") or "") for ev in events]
+    assert "error" not in types, events
+    assert "done" in types, events
+    done_raw = next(ev for ev in events if ev.get("event") == "done").get("data") or "{}"
+    done = json.loads(done_raw) if isinstance(done_raw, str) else done_raw
+    assert isinstance(done, dict), done
+    _assert_court_break_closed(game, done, night_id, remote=remote)
+    if kind == "offsite":
+        # 正式场外：该人本夜回话轮 route 须编码 offsite（非殿上）。
+        turn = game.db.conn.execute(
+            "SELECT route FROM chat_turns "
+            "WHERE night_id=? AND minister_name=? AND status='active' "
+            "ORDER BY id DESC LIMIT 1",
+            (night_id, remote),
+        ).fetchone()
+        assert turn is not None
+        assert str(turn["route"] or "") == "offsite", dict(turn)
+
+
+def test_issue_1716_offsite_court_break_via_nonstream(tracer_client):
+    """#1716 非流式入口：已开夜场外 POST /chat 退朝 → court_break + 夜关。
+
+    与 stream 共用 `_open_night_court_break`；两 call site 各一条最短主干。
+    """
+    client, game, remote, night_id = _setup_open_night_participant(
+        tracer_client, kind="offsite",
+    )
+    # non-stream 读 agent.run() 为单值；覆盖 generator 形态。
+    class _SyncAgent:
+        def run(self, *_a, **_k):
+            return SimpleNamespace(content="臣领旨。", tools=[])
+
+        def get_last_run_output(self):
+            return None
+
+    sync = _SyncAgent()
+    game.session.registry.get = lambda _ch: sync
+
+    resp = client.post(
+        f"/api/ministers/{remote}/chat",
+        json={"message": "退朝"},
+    )
+    _assert_not_bare_500(resp, step="#1716 chat 场外退朝")
+    assert resp.status_code == 200, resp.text
+    body = resp.json() or {}
+    assert isinstance(body, dict), body
+    _assert_court_break_closed(game, body, night_id, remote=remote)

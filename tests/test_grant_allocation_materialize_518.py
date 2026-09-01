@@ -99,7 +99,7 @@ def test_oneshot_treasury_relief_lands_economy_move_only_after_verdict(game):
     inner_before = int(state.metrics["内库"])
 
     ctx = _stage_grant(
-        db, state.turn, action="赈灾", amount=30, account="国库",
+        db, state.turn, action="赈灾", amount="30", account="国库",
         target_id="shaanxi",
         message="调银三十万两赈灾。",
         reply="臣请户部发帑三十万两赈陕西灾民，请陛下定夺准驳。",
@@ -145,7 +145,7 @@ def test_inner_treasury_grant_lands_immediately_at_close_night(game):
     inner_before = int(state.metrics["内库"])
 
     ctx = _stage_grant(
-        db, state.turn, action="发内帑", amount=8, name=target.name,
+        db, state.turn, action="发内帑", amount="8", name=target.name,
         message=f"发内帑八万两赐{target.name}。",
         reply=f"臣请内库发银八万两赏{target.name}。",
     )
@@ -724,7 +724,8 @@ def test_grant_target_field_carries_region_project_army_through_normalize(game):
             "动作类型": "恩赏·拨帑",
             "恩赏拨帑": action,
             target_zh: target,
-            "金额": 12,
+            # #1716：非协饷走 grant shape 整数字符串；协饷 amount 仍由 xiexang 接缝独掌。
+            "金额": 12 if action == "协饷" else "12",
             "账户": "国库",
         }
         if action == "协饷":
@@ -781,7 +782,7 @@ def test_target_candidate_survives_classifier_normalize_to_materialize(game):
         "恩赏拨帑": "赏赉",
         "姓名": target.name,
         target_zh: target.name,
-        "金额": 5,
+        "金额": "5",
         "账户": "国库",
         "拨付节奏": "每月",
         candidate_zh: str(first_id),
@@ -808,3 +809,56 @@ def test_target_candidate_survives_classifier_normalize_to_materialize(game):
     assert staged[first_id].get("cadence") == "每月"
     assert int(staged[other_id].get("amount") or 0) == 3
     assert staged[other_id].get("cadence") == "一次性"
+
+
+def test_grant_shape_accepts_integer_string_rejects_bool_float():
+    """#1716：grant shape 唯一权威接纳整数字符串；bool/float 仍 fail-loud（#1620）。"""
+    import pytest
+    from ming_sim.action_materialize import require_grant_allocation_shape
+
+    shaped = require_grant_allocation_shape(
+        grant_action="赈灾", amount="8", account="国库",
+    )
+    assert shaped["amount"] == 8
+    assert shaped["account"] == "国库"
+    with pytest.raises(ValueError):
+        require_grant_allocation_shape(
+            grant_action="赈灾", amount=True, account="国库",
+        )
+    with pytest.raises(ValueError):
+        require_grant_allocation_shape(
+            grant_action="赈灾", amount=1.5, account="国库",
+        )
+
+
+def test_legacy_grant_allocation_requires_explicit_account(game):
+    """#1716：普通/legacy fallback 缺 grant_action 时不得默认国库；空串/None 均拒。"""
+    import pytest
+
+    db, _state, _content = game
+    base = {
+        "dossier_action_type": "grant_allocation",
+        "amount": 10,
+        "target_kind": "issue",
+        "target_id": "relief",
+        "execution_surface": "immediate",
+    }
+    for account in (None, "", "  "):
+        payload = dict(base)
+        if account is not None:
+            payload["account"] = account
+        with pytest.raises(ValueError):
+            db._normalize_directive_dossier_payload(payload)
+    with pytest.raises(ValueError):
+        db._normalize_directive_dossier_payload({**base, "grant_action": "无"})
+    explicit = db._normalize_directive_dossier_payload({
+        **base, "grant_action": "赈灾", "account": "",
+    })
+    assert explicit["account"] == "国库"
+    assert int(explicit["amount"]) == 10
+    fallback = db._normalize_directive_dossier_payload({
+        **base, "account": "内库",
+    })
+    assert fallback["account"] == "内库"
+    assert int(fallback["amount"]) == 10
+    assert str(fallback.get("grant_action") or "") != "赏赉"

@@ -1176,6 +1176,15 @@ class WebGame:
             if int(row["id"]) in visible_ids
         ]
 
+    def pending_directive_count(
+        self, pending_actions: Optional[List[Dict[str, Any]]] = None,
+    ) -> int:
+        """对话式拟旨暂存数（pending_actions kind=directive）唯一计数缝——state/chat done 共用。"""
+        rows = pending_actions
+        if rows is None:
+            rows = self.db.list_pending_actions(int(self.state.turn))
+        return sum(1 for a in rows if a["kind"] == "directive")
+
     def map_nodes(self) -> List[Dict[str, Any]]:
         """地图节点投影。#1505：typed station_region 单归属；一军一挂；liaodong/dongjiang_area 同 id 合 theater+region。"""
         region_positions = {
@@ -1542,9 +1551,7 @@ class WebGame:
             ],
             "directives": directives,
             "pending_count": self.session.pending_count(),
-            "pending_directive_count": sum(
-                1 for a in pending_actions
-                if a["kind"] == "directive"),
+            "pending_directive_count": self.pending_directive_count(pending_actions),
             # #1376：staged 密令候选如实入投影计数（可见性）。
             # #414 默认准行口径不变：确认闸门/落库时序仍走收夜·退朝 commit，
             # 本字段不把候选升成 player-facing secret_orders 行，禁静默漂成恒 0。
@@ -1751,6 +1758,7 @@ class WebGame:
             "history": self.chat_projection(minister_name),
             "directives": [self.directive_payload(row) for row in self.directive_rows()],
             "pending_count": self.session.pending_count(),
+            "pending_directive_count": self.pending_directive_count(),
             "secret_orders": self.db.list_secret_orders(),
             "suggestions": self.suggestions_for(character),
             "can_undo_last_chat": self.can_undo_last_chat(minister_name),
@@ -1827,6 +1835,8 @@ class WebGame:
             "directive_confirmation_ambiguous": directive_confirmation_ambiguous or None,
             "directives": [self.directive_payload(row) for row in self.directive_rows()],
             "pending_count": self.session.pending_count(),
+            # #1716：done 载荷同步 pending_directive_count——onDone 直接落 UI，不单靠 refresh 竞态。
+            "pending_directive_count": self.pending_directive_count(),
             "suggestions": self.suggestions_for(character),
             "can_undo_last_chat": self.can_undo_last_chat(minister_name),
         }
@@ -1846,6 +1856,22 @@ class WebGame:
         """
         from ming_sim.cli_backend import _SECRET_PREFIXES
         return (message or "").strip().startswith(_SECRET_PREFIXES)
+
+    def _open_night_court_break(self, message: str) -> bool:
+        """#1716：已开夜的收夜口令不得被场外记召短路。
+
+        场外 SUMMON_* 早退会吞掉「退朝/散夜」，夜停 open、chat 无落、拟诏台真空。
+        封闭集 COURT_BREAK 且本夜已开 → 放行既有 command verdict / close_night 缝。
+        """
+        from ming_sim.audience_night import (
+            CMD_CLOSE_NIGHT,
+            get_open_night,
+            recognize_audience_command,
+        )
+
+        if recognize_audience_command(message) != CMD_CLOSE_NIGHT:
+            return False
+        return get_open_night(self.db) is not None
 
     def _finish_offsite_summon_scene(
         self, *, origin_id: str, minister_name: str, gate_cm: Any,
@@ -1994,9 +2020,13 @@ class WebGame:
                     # #670：殿上 chat 自持闸时消费 admission；密疏兼容路（gate_already_held）不消费。
                     # 闸只管殿上召对——书信/密疏只受基础资格（_require_active_minister/can_summon）。
                     # #1566：正式密令前缀须先入密令管线，不得被 location admission 抢先截获。
+                    # #1716：已开夜收夜口令跳过场外记召（与 stream 同缝）。
                     explicit_secret_order = intent == "secret_order" or self._message_is_formal_secret_order(text)
-                    secret_order_bypass = gate_already_held or explicit_secret_order
-                    offsite_secret_order = False
+                    court_break_open_night = self._open_night_court_break(text)
+                    secret_order_bypass = (
+                        gate_already_held or explicit_secret_order or court_break_open_night
+                    )
+                    offsite_turn = False
                     if not secret_order_bypass:
                         origin_id = f"web:chat:{accepted_turn}:{minister_name}"
                         admission = self.session.consume_audience_admission(
@@ -2028,18 +2058,18 @@ class WebGame:
                                         if admission.result is not None else ""
                                     ),
                                 )
-                    elif (
-                        not gate_already_held
-                        and explicit_secret_order
+                    elif not gate_already_held and (
+                        explicit_secret_order or court_break_open_night
                     ):
+                        # #1716：收夜/密令 bypass 后仍取非消费地点分流；收夜不因 reason 拦截。
                         decision = self.session.admit_audience(
                             self.session._character(minister_name),
                         )
-                        if decision.reason:
+                        if decision.reason and not court_break_open_night:
                             raise HTTPException(
                                 status_code=409, detail=decision.reason,
                             )
-                        offsite_secret_order = decision.result in (
+                        offsite_turn = decision.result in (
                             AudienceAdmission.SUMMON_FRESH,
                             AudienceAdmission.SUMMON_IN_TRANSIT,
                         )
@@ -2048,10 +2078,10 @@ class WebGame:
                             from ming_sim.audience_night import encode_chat_turn_route
                             chat_turn_id, before_snapshot = self._start_chat_turn(
                                 minister_name,
-                                attach_to_hall=not offsite_secret_order,
+                                attach_to_hall=not offsite_turn,
                                 route=encode_chat_turn_route(
                                     explicit_secret_order=explicit_secret_order,
-                                    offsite=offsite_secret_order,
+                                    offsite=offsite_turn,
                                 ),
                             )
                         self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})
@@ -3312,9 +3342,11 @@ class WebGame:
                 return
             accepted_turn = int(self.state.turn)
             # #1566：正式密令前缀先入密令管线；场外记召成功后在 gate 外物化 scene。
+            # #1716：已开夜收夜口令跳过场外记召，否则散夜被 SUMMON_* 短路、夜永不关。
             offsite_secret_order = False
             explicit_secret_order = intent == "secret_order" or self._message_is_formal_secret_order(text)
-            if not explicit_secret_order:
+            court_break_open_night = self._open_night_court_break(text)
+            if not explicit_secret_order and not court_break_open_night:
                 stream_origin = f"web:stream:{accepted_turn}:{minister_name}"
                 admission = self.session.consume_audience_admission(
                     self.session._character(minister_name),
@@ -3352,7 +3384,9 @@ class WebGame:
                 decision = self.session.admit_audience(
                     self.session._character(minister_name),
                 )
-                if decision.reason:
+                # #1716：与 nonstream 同缝——court_break_open_night 不因 temporary
+                # admission reason 阻断；仍保留正式场外人物的地点分类 / offsite route。
+                if decision.reason and not court_break_open_night:
                     self._complete_pending_write(pending_ticket)
                     pending_ticket = None
                     yield {"type": "error", "message": decision.reason}

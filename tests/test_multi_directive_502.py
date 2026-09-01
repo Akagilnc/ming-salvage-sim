@@ -605,7 +605,8 @@ def test_nonstream_web_chat_surfaces_ambiguous():
         temporary_characters = {name}
         content = SimpleNamespace(characters={name: minister_double(name)})
         state = SimpleNamespace(turn=1, turn_phase="")
-        db = SimpleNamespace()
+        # #1716：_chat_payload 经 pending_directive_count 读 list_pending_actions
+        db = SimpleNamespace(list_pending_actions=lambda turn, *a, **k: [])
 
         def chat(self, minister_name, text, *, chat_turn_id=0, explicit_secret_order=False):
             return ChatTurnResult(
@@ -664,7 +665,8 @@ def test_nonstream_web_chat_no_ambiguous_key_is_none():
         temporary_characters = {name}
         content = SimpleNamespace(characters={name: minister_double(name)})
         state = SimpleNamespace(turn=1, turn_phase="")
-        db = SimpleNamespace()
+        # #1716：_chat_payload 经 pending_directive_count 读 list_pending_actions
+        db = SimpleNamespace(list_pending_actions=lambda turn, *a, **k: [])
 
         def chat(self, minister_name, text, *, chat_turn_id=0, explicit_secret_order=False):
             return ChatTurnResult(answer="臣遵旨。")

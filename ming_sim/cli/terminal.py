@@ -466,8 +466,12 @@ def _print_interrupted_reply_retry_hint(session: GameSession, minister_name: str
 
 
 
-def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> None:
-    """#505 CLI：复用已持久问话重新生成回话（与 web retry 同核语义：不重记问话）。"""
+def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Optional[str]:
+    """#505 CLI：复用已持久问话重新生成回话（与 web retry 同核语义：不重记问话）。
+
+    成功且 court_action 为 court_break 时返回 typed 'court_break'，供 minister_chat
+    退出对话进入 play_turn 审阅；收夜失败仍返回 None，留在原对话。
+    """
     db = getattr(session, "db", None)
     if db is None or not hasattr(db, "get_interrupted_reply_retries"):
         print("当前会话不支持回话重试。\n")
@@ -530,6 +534,25 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> No
             pass
         session.abandon_chat_turn_scene(chat_turn_id)
         print(f"重试回话失败：{exc}\n")
+        return None
+    # #1716：与 Web retry 同缝——回话已落库后消费 court_action 收夜。
+    # 收夜失败响亮可观察，不得回滚已成回话；夜可恢复，仍留原对话。
+    # 成功收夜（court_action=court_break）传播 typed court_break → minister_chat → 审阅。
+    court_action = str(getattr(result, "court_action", "") or "")
+    close_after = getattr(session, "close_night_after_chat_if_needed", None)
+    if close_after is not None:
+        from ming_sim.audience_night import AudienceNightError
+        try:
+            close_after(
+                court_action,
+                write_gate=_cli_write_gate(session),
+            )
+        except (AudienceNightError, LLMUnavailable) as err:
+            print(f"\n收夜未成：{err}\n")
+            return None
+    if court_action == "court_break":
+        return "court_break"
+    return None
 
 
 def _cli_write_gate(session: GameSession):
@@ -652,7 +675,10 @@ def minister_chat(session: GameSession, character: Character) -> str:
         # #505 系统层恢复命令（非皇帝内容选项）。禁抽取手动补写平行面（#1353）。
         low_q = question.lower().strip()
         if low_q in {"重试回话", "retry reply", "retry_reply"}:
-            _retry_interrupted_reply_cli(session, character.name)
+            retry_action = _retry_interrupted_reply_cli(session, character.name)
+            if retry_action == "court_break":
+                print(f"{character.name}退下。\n")
+                return "court_break"
             continue
         cmd = _handle_court_command(session, question, character)
         if cmd == "handled":

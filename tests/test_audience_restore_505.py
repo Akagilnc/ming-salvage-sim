@@ -1004,3 +1004,156 @@ def test_web_retry_offsite_secret_order_via_production_chat(game):
     assert sum(
         1 for p in db.list_pending_actions(state.turn) if p.get("kind") == "secret_order"
     ) == before_n + 1
+
+
+def test_web_retry_ordinary_offsite_court_break_skips_hall_scene(game):
+    """#1716：route=offsite 中断恢复经真实 retry 入口，不得启殿上 scene / 写 presence·entrance。
+
+    与上条 secret_order_offsite 同形恢复主干；本条覆盖普通场外（收夜口令）route 解码分支。
+    """
+    from tests.test_audience_travel_gating_670 import _set_place
+
+    db, state, _content = game
+    remote = _set_place(game, "洪承畴", location="shaanxi")
+    night = an.open_night(db, state, location="乾清宫", time_of_day="戌时")
+    night_id = int(night["id"])
+    question = "退朝"
+    ct = db.create_chat_turn(
+        state, remote.name, "sess-offsite-break", 0,
+        night_id=night_id, status="generating",
+        route="offsite",
+    )
+    mid = db.append_chat_message(remote.name, state.turn, "user", question)
+    db.update_chat_turn_messages(ct, user_message_id=mid)
+    ledger_before = an.list_ledger(db, night_id)
+    present_before = set(an.persons_present_tonight(db, night_id))
+    entered_before = set(an.persons_entered_tonight(db, night_id))
+    db.reconcile_interrupted_chat_turns()
+    interrupted = db.get_interrupted_reply_retries(remote.name)[-1]
+    assert str(interrupted.get("route") or "") == "offsite"
+    # decode 契约：offsite → start_hall_scene=False（与 secret_order_offsite 同值域）。
+    decoded = an.decode_chat_turn_route(interrupted.get("route"))
+    assert decoded == {"explicit_secret_order": False, "start_hall_scene": False}
+
+    session = _RetrySession(db, state, remote.name)
+
+    def _chat(minister_name, message, *, chat_turn_id=0, explicit_secret_order=False):
+        assert chat_turn_id == ct
+        assert explicit_secret_order is False
+        assert message == question
+        return ChatTurnResult(answer="臣领旨。", court_action="court_break")
+
+    session.chat = _chat  # type: ignore[method-assign]
+    session.start_chat_turn_scene = lambda *_a, **_k: (_ for _ in ()).throw(
+        AssertionError("ordinary offsite retry must not start_chat_turn_scene")
+    )
+    rt = _retry_runtime(db, state, remote.name, session=session)
+    payload = rt.retry_interrupted_reply(remote.name)
+
+    assert payload.get("court_action") == "court_break", payload
+    row = db.conn.execute(
+        "SELECT status, minister_message_id, route FROM chat_turns WHERE id=?", (ct,),
+    ).fetchone()
+    assert row["status"] == "active"
+    assert row["minister_message_id"]
+    assert str(row["route"] or "") == "offsite"
+    # 外部可见物理账：恢复不得把场外人物写入殿上 presence/entrance/ENTER。
+    assert set(an.persons_present_tonight(db, night_id)) == present_before
+    assert set(an.persons_entered_tonight(db, night_id)) == entered_before
+    assert remote.name not in an.persons_present_tonight(db, night_id)
+    assert remote.name not in an.persons_entered_tonight(db, night_id)
+    assert an.list_ledger(db, night_id) == ledger_before
+    for entry in an.list_ledger(db, night_id):
+        names = entry.get("person_names") or []
+        if remote.name not in names:
+            continue
+        tags = entry.get("tags") or []
+        assert an.TAG_ENTER not in tags, entry
+        assert str(entry.get("presence_effect") or "") not in {
+            an.PRESENCE_ENTER, "enter",
+        }, entry
+    scroll = an.read_night_scroll(db, night_id)
+    assert not any(
+        m.get("beat") == "entrance" and m.get("speaker") == remote.name for m in scroll
+    )
+
+
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
+def test_cli_retry_ordinary_offsite_court_break_closes_night(game, monkeypatch):
+    """#1716：CLI restore 消费 court_action，场外退朝后夜 CLOSED 且无 entrance/presence。"""
+    from ming_sim.cli import terminal as term
+    from ming_sim.session import GameSession
+    from tests.test_audience_travel_gating_670 import _set_place
+
+    db, state, content = game
+    remote = _set_place(game, "洪承畴", location="shaanxi")
+    night = an.open_night(db, state, location="乾清宫", time_of_day="戌时")
+    night_id = int(night["id"])
+    question = "退朝"
+    ct = db.create_chat_turn(
+        state, remote.name, "cli-offsite-break", 0,
+        night_id=night_id, status="generating",
+        route="offsite",
+    )
+    mid = db.append_chat_message(remote.name, state.turn, "user", question)
+    db.update_chat_turn_messages(ct, user_message_id=mid)
+    db.reconcile_interrupted_chat_turns()
+    interrupted = db.get_interrupted_reply_retries(remote.name)[-1]
+    assert str(interrupted.get("route") or "") == "offsite"
+    present_before = set(an.persons_present_tonight(db, night_id))
+    entered_before = set(an.persons_entered_tonight(db, night_id))
+
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.llm_config = SimpleNamespace(channel="api")
+    sess.temporary_characters = set()
+    sess.registry = None
+
+    def _chat(minister_name, message, *, chat_turn_id=0, explicit_secret_order=False):
+        assert chat_turn_id == ct
+        assert explicit_secret_order is False
+        assert message == question
+        return ChatTurnResult(answer="臣领旨。", court_action="court_break")
+
+    sess.chat = _chat  # type: ignore[method-assign]
+    sess.start_chat_turn_scene = lambda *_a, **_k: (_ for _ in ()).throw(
+        AssertionError("ordinary offsite retry must not start_chat_turn_scene")
+    )
+    sess.join_chat_turn_scene = lambda *_a, **_k: []
+    sess.persist_chat_turn_scene = lambda *_a, **_k: None
+    sess.abandon_chat_turn_scene = lambda *_a, **_k: None
+    sess.close_night_after_chat_if_needed = GameSession.close_night_after_chat_if_needed.__get__(
+        sess, GameSession,
+    )
+    monkeypatch.setattr(term, "_dispatch_relation_judge_cli", lambda *_a, **_k: None)
+
+    def _trail(_session, _name, _reply, chat_turn_id):
+        db.conn.execute(
+            "UPDATE chat_turns SET extract_status='done' WHERE id=?",
+            (int(chat_turn_id),),
+        )
+        db.conn.commit()
+
+    monkeypatch.setattr(term, "_trail_extraction_after_reply_cli", _trail)
+
+    term._retry_interrupted_reply_cli(sess, remote.name)
+
+    night_row = an.get_night(db, night_id)
+    assert night_row is not None and night_row["status"] == an.NIGHT_STATUS_CLOSED
+    assert an.get_open_night(db) is None
+    assert set(an.persons_present_tonight(db, night_id)) == present_before
+    assert set(an.persons_entered_tonight(db, night_id)) == entered_before
+    assert remote.name not in an.persons_present_tonight(db, night_id)
+    assert remote.name not in an.persons_entered_tonight(db, night_id)
+    scroll = an.read_night_scroll(db, night_id)
+    assert not any(
+        m.get("beat") == "entrance" and m.get("speaker") == remote.name for m in scroll
+    )
+    row = db.conn.execute(
+        "SELECT status, minister_message_id, route FROM chat_turns WHERE id=?", (ct,),
+    ).fetchone()
+    assert row["status"] == "active"
+    assert row["minister_message_id"]
+    assert str(row["route"] or "") == "offsite"
