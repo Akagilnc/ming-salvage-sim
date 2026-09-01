@@ -713,8 +713,11 @@ def test_issue_extraction_llm_dead_single_source_not_cta(tracer_client, monkeypa
 # ── #1716：已开夜场外 COURT_BREAK 不得被 SUMMON_* 短路 ──────────────────
 
 
-def _setup_open_night_offsite(tracer_client):
-    """new_game + 开夜 + 场外大臣 + canned agent。返回 (client, game, remote, night_id)。"""
+def _setup_open_night_participant(tracer_client, *, kind: str):
+    """new_game + 开夜 + 参与者。kind=offsite|temporary。
+
+    返回 (client, game, participant, night_id)。
+    """
     client = tracer_client
     new = client.post("/api/menu/new_game")
     _assert_not_bare_500(new, step="#1716 new_game")
@@ -725,19 +728,32 @@ def _setup_open_night_offsite(tracer_client):
     night = an.open_night(game.db, game.state, location="乾清宫", time_of_day="夜")
     night_id = int(night["id"])
 
-    remote = "洪承畴"
-    assert remote in game.content.characters, remote
-    game.db.conn.execute(
-        "UPDATE characters SET location=?, transit_to='' WHERE name=?",
-        ("shaanxi", remote),
-    )
-    game.db.conn.commit()
+    if kind == "temporary":
+        participant = "临时行人甲"
+        # 公开门放行 temporary；stream admission 不得因 can_summon reason 阻断收夜。
+        temp = game.session._temporary_character(participant)
+        assert participant in game.session.temporary_characters
+        assert temp.name == participant
+    else:
+        assert kind == "offsite", kind
+        participant = "洪承畴"
+        assert participant in game.content.characters, participant
+        game.db.conn.execute(
+            "UPDATE characters SET location=?, transit_to='' WHERE name=?",
+            ("shaanxi", participant),
+        )
+        game.db.conn.commit()
 
-    return client, game, remote, night_id
+    return client, game, participant, night_id
+
+
+def _setup_open_night_offsite(tracer_client):
+    """兼容别名：场外正式人物开夜。"""
+    return _setup_open_night_participant(tracer_client, kind="offsite")
 
 
 def _assert_court_break_closed(game, body: dict, night_id: int, *, remote: str) -> None:
-    """外部可见契约：court_break、夜关闭、场外人物无殿上 presence/entrance 账。"""
+    """外部可见契约：court_break、夜关闭、参与者无殿上 presence/entrance 账。"""
     assert body.get("court_action") == "court_break", body
     assert not body.get("admission"), body
     _wait_pending_writes(game)
@@ -747,7 +763,7 @@ def _assert_court_break_closed(game, body: dict, night_id: int, *, remote: str) 
     ).fetchone()
     assert night_row is not None
     assert str(night_row["status"]) == an.NIGHT_STATUS_CLOSED, dict(night_row)
-    # #1716 durable 物理账：场外收夜不得写入该人 entrance/presence。
+    # #1716 durable 物理账：场外/临时收夜不得写入该人 entrance/presence。
     assert remote not in an.persons_present_tonight(game.db, night_id), remote
     assert remote not in an.persons_entered_tonight(game.db, night_id), remote
     for entry in an.list_ledger(game.db, night_id):
@@ -761,9 +777,15 @@ def _assert_court_break_closed(game, body: dict, night_id: int, *, remote: str) 
         }, entry
 
 
-def test_issue_1716_offsite_court_break_via_stream(tracer_client):
-    """#1716 stream 入口：已开夜场外 /chat/stream 退朝 → court_break + 夜关。"""
-    client, game, remote, night_id = _setup_open_night_offsite(tracer_client)
+@pytest.mark.parametrize("kind", ["offsite", "temporary"])
+def test_issue_1716_offsite_court_break_via_stream(tracer_client, kind):
+    """#1716 stream 入口：已开夜场外/temporary /chat/stream 退朝 → court_break + 夜关。
+
+    temporary 不得因 admission reason 返回 error；正式场外仍走地点分类与无 presence。
+    """
+    client, game, remote, night_id = _setup_open_night_participant(
+        tracer_client, kind=kind,
+    )
 
     class _StreamAgent:
         def run(self, *_a, **_k):
@@ -780,7 +802,7 @@ def test_issue_1716_offsite_court_break_via_stream(tracer_client):
         f"/api/ministers/{remote}/chat/stream",
         json={"message": "退朝"},
     )
-    _assert_not_bare_500(stream, step="#1716 chat/stream 场外退朝")
+    _assert_not_bare_500(stream, step=f"#1716 chat/stream {kind} 退朝")
     assert stream.status_code == 200, stream.text
     events = _parse_sse(stream.text)
     types = [str(ev.get("event") or "") for ev in events]
@@ -790,6 +812,16 @@ def test_issue_1716_offsite_court_break_via_stream(tracer_client):
     done = json.loads(done_raw) if isinstance(done_raw, str) else done_raw
     assert isinstance(done, dict), done
     _assert_court_break_closed(game, done, night_id, remote=remote)
+    if kind == "offsite":
+        # 正式场外：该人本夜回话轮 route 须编码 offsite（非殿上）。
+        turn = game.db.conn.execute(
+            "SELECT route FROM chat_turns "
+            "WHERE night_id=? AND minister_name=? AND status='active' "
+            "ORDER BY id DESC LIMIT 1",
+            (night_id, remote),
+        ).fetchone()
+        assert turn is not None
+        assert str(turn["route"] or "") == "offsite", dict(turn)
 
 
 def test_issue_1716_offsite_court_break_via_nonstream(tracer_client):
