@@ -1769,7 +1769,6 @@ class WebGame:
             "history": self.chat_projection(minister_name),
             "directives": [self.directive_payload(row) for row in self.directive_rows()],
             "pending_count": self.session.pending_count(),
-            "pending_directive_count": self.pending_directive_count(),
             "secret_orders": self.db.list_secret_orders(),
             "suggestions": self.suggestions_for(character),
             "can_undo_last_chat": self.can_undo_last_chat(minister_name),
@@ -1946,7 +1945,6 @@ class WebGame:
             "directive_confirmation_ambiguous": None,
             "directives": [self.directive_payload(row) for row in self.directive_rows()],
             "pending_count": self.session.pending_count(),
-            "pending_directive_count": self.pending_directive_count(),
             "suggestions": self.suggestions_for(character),
             "can_undo_last_chat": self.can_undo_last_chat(minister_name),
             # 机面字段：不渲染；前端 refresh 故事账/卷轴即可。

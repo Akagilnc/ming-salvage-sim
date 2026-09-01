@@ -315,8 +315,8 @@ export function useChatActions({
         ...current,
         directives: data.directives,
         pending_count: data.pending_count,
-        pending_directive_count: data.pending_directive_count ?? current.pending_directive_count,
       } : current));
+      // undo 后立即权威 reload；不平行投影 pending_directive_count。
       await loadState();
       // Read the ref FRESH at the panel-write point (the minister could switch
       // during the awaits above), mirroring sendChat's post-await check.
