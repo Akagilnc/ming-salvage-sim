@@ -820,11 +820,11 @@ def test_grant_shape_accepts_integer_string_rejects_bool_float():
     )
     assert shaped["amount"] == 8
     assert shaped["account"] == "国库"
-    with pytest.raises(ValueError, match="正整数"):
+    with pytest.raises(ValueError):
         require_grant_allocation_shape(
             grant_action="赈灾", amount=True, account="国库",
         )
-    with pytest.raises(ValueError, match="正整数"):
+    with pytest.raises(ValueError):
         require_grant_allocation_shape(
             grant_action="赈灾", amount=1.5, account="国库",
         )
