@@ -757,29 +757,6 @@ def _install_stream_minister(game, *, answer: str) -> None:
     game.session.registry.get = lambda _ch: agent
 
 
-def _sse_events(resp_text: str) -> list[tuple[str, dict]]:
-    out: list[tuple[str, dict]] = []
-    for block in (resp_text or "").strip().split("\n\n"):
-        ev = ""
-        raw = ""
-        for line in block.splitlines():
-            if line.startswith("event:"):
-                ev = line[len("event:"):].strip()
-            elif line.startswith("data:"):
-                raw = line[len("data:"):].strip()
-        data: dict = {}
-        if raw:
-            try:
-                parsed = json.loads(raw)
-            except json.JSONDecodeError:
-                parsed = {"message": raw}
-            if isinstance(parsed, dict):
-                data = parsed
-        if ev:
-            out.append((ev, data))
-    return out
-
-
 def test_issue_1716_stream_draft_scroll_offsite_break_issue(tracer_client, monkeypatch):
     """#1716 最短真实主链：classifier 字符串 amount 的「拟旨如下」经 /chat/stream
     → accepted/done/end + pending_directive_count=1 + chat_turn 完成 + scroll 可恢复
@@ -842,15 +819,17 @@ def test_issue_1716_stream_draft_scroll_offsite_break_issue(tracer_client, monke
     assert stream.status_code == 200, stream.text
     assert stream.headers.get("content-type", "").startswith("text/event-stream"), stream.headers
 
-    events = _sse_events(stream.text)
-    types = [ev for ev, _ in events]
+    events = _parse_sse(stream.text)
+    types = [str(ev.get("event") or "") for ev in events]
     assert "error" not in types, f"stream error: {events!r}"
     assert "accepted" in types, events
     assert "done" in types, events
     assert types[-1] == "end", types
 
     # SSE done 的 data 即 chat payload 本体（api 层已剥 type/payload 壳）。
-    done_payload = next(data for ev, data in events if ev == "done")
+    done_raw = next(ev for ev in events if ev.get("event") == "done").get("data") or "{}"
+    done_payload = json.loads(done_raw) if isinstance(done_raw, str) else done_raw
+    assert isinstance(done_payload, dict), done_payload
     assert int(done_payload.get("pending_directive_count") or 0) == 1, done_payload
     chat_turn_id = int(done_payload.get("chat_turn_id") or 0)
     assert chat_turn_id > 0, done_payload
@@ -920,12 +899,14 @@ def test_issue_1716_stream_draft_scroll_offsite_break_issue(tracer_client, monke
     )
     _assert_not_bare_500(break_stream, step="#1716 chat/stream 场外退朝")
     assert break_stream.status_code == 200, break_stream.text
-    break_events = _sse_events(break_stream.text)
-    break_types = [ev for ev, _ in break_events]
+    break_events = _parse_sse(break_stream.text)
+    break_types = [str(ev.get("event") or "") for ev in break_events]
     assert "error" not in break_types, break_events
     assert "done" in break_types, break_events
     assert break_types[-1] == "end", break_types
-    break_done = next(data for ev, data in break_events if ev == "done")
+    break_raw = next(ev for ev in break_events if ev.get("event") == "done").get("data") or "{}"
+    break_done = json.loads(break_raw) if isinstance(break_raw, str) else break_raw
+    assert isinstance(break_done, dict), break_done
     assert break_done.get("court_action") == "court_break", break_done
     assert not break_done.get("admission"), break_done
     assert consumed == [], f"退朝不得 consume admission，got {consumed}"
