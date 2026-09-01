@@ -551,6 +551,54 @@ def test_legacy_agno_sessions_runs_blob_still_counts_and_truncates(restore_env):
     assert [r["run_id"] for r in runs] == ["r1"]
 
 
+def test_logical_history_dedupes_duplicate_run_ids_across_blob_and_table(restore_env):
+    """Same run_id in blob (even repeated) + table counts once; truncate by that length."""
+    env = restore_env
+    db = env.db
+    # blob carries duplicate r0 then r1; table has the same ids (migrated overlap).
+    db.conn.execute("DROP TABLE IF EXISTS agno_runs")
+    db.conn.execute("DROP TABLE IF EXISTS agno_sessions")
+    db.conn.execute(
+        "CREATE TABLE agno_sessions ("
+        "session_id TEXT PRIMARY KEY, session_type TEXT NOT NULL, "
+        "runs TEXT, created_at INTEGER NOT NULL, updated_at INTEGER)"
+    )
+    _ensure_agno_runs_table(db)
+    blob = [{"run_id": "r0"}, {"run_id": "r0"}, {"run_id": "r1"}]
+    db.conn.execute(
+        "INSERT INTO agno_sessions "
+        "(session_id, session_type, runs, created_at, updated_at) VALUES (?, 'agent', ?, 0, 0)",
+        ("sess", json.dumps(blob)),
+    )
+    for i, rid in enumerate(("r0", "r1")):
+        db.conn.execute(
+            "INSERT INTO agno_runs "
+            "(run_id, session_id, run_type, status, run_index, run_data, created_at) "
+            "VALUES (?, 'sess', 'agent', 'COMPLETED', ?, ?, ?)",
+            (rid, i, json.dumps({"run_id": rid}), i + 1),
+        )
+    db.conn.commit()
+
+    assert db.agno_runs_length("sess") == 2
+    db._truncate_agno_runs_in_tx("sess", 1)
+    db.conn.commit()
+    assert db.agno_runs_length("sess") == 1
+    table_ids = [
+        r["run_id"]
+        for r in db.conn.execute(
+            "SELECT run_id FROM agno_runs WHERE session_id=? ORDER BY run_index",
+            ("sess",),
+        ).fetchall()
+    ]
+    assert table_ids == ["r0"]
+    runs, _ = db._decode_agno_runs(
+        db.conn.execute(
+            "SELECT runs FROM agno_sessions WHERE session_id=?", ("sess",)
+        ).fetchone()["runs"]
+    )
+    assert [r["run_id"] for r in runs] == ["r0", "r0"]
+
+
 def test_reconcile_blob_baseline_drops_table_only_new_run(restore_env):
     """#1716 mixed-state A: blob-only baseline → table-only failed run must drop."""
     env = restore_env
