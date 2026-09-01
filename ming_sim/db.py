@@ -12158,7 +12158,12 @@ class GameDB:
                 ):
                     raise ValueError(f"非协饷拨帑不得夹带 purpose={purpose}")
                 # #1716：amount/account 唯一验形；分类默认 grant_action=「无」时只借金钱动作过 shape，不回写。
+                # 普通/legacy fallback（缺/空 grant_action）须显式非空 account，禁默认国库。
                 shape_ga = grant_action if grant_action not in {"", "无"} else "赏赉"
+                if grant_action in {"", "无"}:
+                    account_raw = normalized.get("account")
+                    if account_raw is None or not str(account_raw).strip():
+                        raise ValueError("拨帑旨意缺少 account")
                 shaped = require_grant_allocation_shape(
                     grant_action=shape_ga,
                     amount=normalized.get("amount"),

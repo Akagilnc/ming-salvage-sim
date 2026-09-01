@@ -631,6 +631,7 @@ export type ChatUndoResponse = {
   suggestions: Suggestion[];
   directives: Directive[];
   pending_count: number;
+  pending_directive_count?: number;
   secret_orders: SecretOrder[];
   can_undo_last_chat: boolean;
   pending_action_failures?: PendingActionFailure[];
