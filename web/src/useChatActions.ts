@@ -314,9 +314,10 @@ export function useChatActions({
       setState((current) => (current ? {
         ...current,
         directives: data.directives,
-        pending_count: data.pending_count,
+        pending_count: data.pending_count ?? current.pending_count,
+        pending_directive_count: data.pending_directive_count ?? current.pending_directive_count,
       } : current));
-      // undo 后立即权威 reload；不平行投影 pending_directive_count。
+      // reload 不承担计数正确性：post-undo count 已由 pending_directive_count 即时投影。
       await loadState();
       // Read the ref FRESH at the panel-write point (the minister could switch
       // during the awaits above), mirroring sendChat's post-await check.
@@ -346,6 +347,14 @@ export function useChatActions({
       const data = await api<ChatResponse>(`/api/ministers/${encodeURIComponent(targetMinisterName)}/reply/retry`, {
         method: "POST",
       });
+      // 拟旨计数是全局态：面板切走仍须即时投影，不得等 refresh / 不得被陈旧判断吞掉。
+      setState((current) => (current ? {
+        ...current,
+        directives: data.directives,
+        pending_count: data.pending_count ?? current.pending_count,
+        pending_directive_count: data.pending_directive_count ?? current.pending_directive_count,
+      } : current));
+      void refreshDurableProjection({ secretOrders: true });
       if (selectedMinisterRef.current !== initiatingPanelName) return;
       applyHistory(data.history);
       setSuggestions(data.suggestions);
@@ -354,7 +363,6 @@ export function useChatActions({
       setReplyRetry(null);
       setChatNotice("已重新生成回话。");
       invalidateAudienceScroll();
-      void refreshDurableProjection({ secretOrders: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {

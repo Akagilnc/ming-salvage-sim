@@ -829,3 +829,36 @@ def test_grant_shape_accepts_integer_string_rejects_bool_float():
         require_grant_allocation_shape(
             grant_action="赈灾", amount=1.5, account="国库",
         )
+
+
+def test_legacy_grant_allocation_requires_explicit_account(game):
+    """#1716：普通/legacy fallback 缺 grant_action 时不得默认国库；空串/None 均拒。"""
+    import pytest
+
+    db, _state, _content = game
+    base = {
+        "dossier_action_type": "grant_allocation",
+        "amount": 10,
+        "target_kind": "issue",
+        "target_id": "relief",
+        "execution_surface": "immediate",
+    }
+    for account in (None, "", "  "):
+        payload = dict(base)
+        if account is not None:
+            payload["account"] = account
+        with pytest.raises(ValueError):
+            db._normalize_directive_dossier_payload(payload)
+    with pytest.raises(ValueError):
+        db._normalize_directive_dossier_payload({**base, "grant_action": "无"})
+    explicit = db._normalize_directive_dossier_payload({
+        **base, "grant_action": "赈灾", "account": "",
+    })
+    assert explicit["account"] == "国库"
+    assert int(explicit["amount"]) == 10
+    fallback = db._normalize_directive_dossier_payload({
+        **base, "account": "内库",
+    })
+    assert fallback["account"] == "内库"
+    assert int(fallback["amount"]) == 10
+    assert str(fallback.get("grant_action") or "") != "赏赉"

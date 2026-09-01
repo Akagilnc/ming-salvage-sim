@@ -530,6 +530,19 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> No
             pass
         session.abandon_chat_turn_scene(chat_turn_id)
         print(f"重试回话失败：{exc}\n")
+        return
+    # #1716：与 Web retry 同缝——回话已落库后消费 court_action 收夜。
+    # 收夜失败响亮上抛/可观察，不得回滚已成回话；夜可恢复。
+    close_after = getattr(session, "close_night_after_chat_if_needed", None)
+    if close_after is not None:
+        from ming_sim.audience_night import AudienceNightError
+        try:
+            close_after(
+                getattr(result, "court_action", "") or "",
+                write_gate=_cli_write_gate(session),
+            )
+        except (AudienceNightError, LLMUnavailable) as err:
+            print(f"\n收夜未成：{err}\n")
 
 
 def _cli_write_gate(session: GameSession):
