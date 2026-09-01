@@ -645,18 +645,22 @@ def test_play_turn_reports_secret_order_failure_when_settlement_aborts(monkeypat
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_terminal_minister_chat_accepts_retry_reply_command(game, monkeypatch):
-    """#1566 CLI 独有：minister_chat 输入「重试回话」完成 interrupted 轮，route 保持。
+    """#1716 CLI：minister_chat「重试回话」成功收夜后返回 court_break，关夜且无 presence。
 
-    密令 stage / 无 entrance 由 Web production-chat 主干证明；本条只证命令入口。
+    入口仍是 minister_chat 的重试命令；route 保持、不重记问话既有契约一并覆盖。
     """
+    import types
+
     db, state, content = game
     character = next(c for c in content.characters.values() if c.status == "active")
     night = an.open_night(db, state, location="乾清宫", time_of_day="戌时")
-    question = "整饬边备，密查欠饷。"
+    night_id = int(night["id"])
+    # 中断轮问话为收夜口令——retry 再生后 court_action=court_break。
+    question = "退朝"
     ct = db.create_chat_turn(
         state, character.name, f"cli:{character.name}", 0,
-        night_id=int(night["id"]), status="generating",
-        route="secret_order_offsite",
+        night_id=night_id, status="generating",
+        route="offsite",
     )
     mid = db.append_chat_message(character.name, state.turn, "user", question)
     db.update_chat_turn_messages(ct, user_message_id=mid)
@@ -671,25 +675,50 @@ def test_terminal_minister_chat_accepts_retry_reply_command(game, monkeypatch):
     sess.temporary_characters = set()
     sess.registry = SimpleNamespace(
         get=lambda _ch: SimpleNamespace(
-            run=lambda *_a, **_k: SimpleNamespace(content="臣领密旨。", tools=[]),
+            run=lambda *_a, **_k: SimpleNamespace(content="臣遵旨。", tools=[]),
         ),
         session_ids={},
     )
     sess._audience_prompt_for_message = lambda msg, character=None, chat_turn_id=0: msg
     sess._start_cli_action_intent = lambda *_a, **_k: None
     sess._finish_cli_action_intent = lambda *_a, **_k: None
+    sess.close_night_after_chat_if_needed = types.MethodType(
+        GameSession.close_night_after_chat_if_needed, sess,
+    )
 
-    answers = iter(["重试回话", "done"])
+    # 尾随抽取不入本契约；标 done 使收夜不被待补抽取挡住。
+    def _trail_done(_session, _minister, _reply, chat_turn_id):
+        db.conn.execute(
+            "UPDATE chat_turns SET extract_status='done', mindreading_status='skip' "
+            "WHERE id=?",
+            (int(chat_turn_id),),
+        )
+        db.conn.commit()
+
+    monkeypatch.setattr(term, "_trail_extraction_after_reply_cli", _trail_done)
+    monkeypatch.setattr(term, "_dispatch_relation_judge_cli", lambda *_a, **_k: None)
+
+    answers = iter(["重试回话"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
 
-    assert term.minister_chat(sess, character) == "dismiss"
+    assert term.minister_chat(sess, character) == "court_break"
 
     row = db.conn.execute(
         "SELECT status, minister_message_id, route FROM chat_turns WHERE id=?", (ct,),
     ).fetchone()
     assert row["status"] == "active"
     assert row["minister_message_id"]
-    assert str(row["route"] or "") == "secret_order_offsite"
+    assert str(row["route"] or "") == "offsite"
+
+    assert an.get_open_night(db) is None
+    night_row = db.conn.execute(
+        "SELECT status FROM audience_nights WHERE id=?", (night_id,),
+    ).fetchone()
+    assert night_row is not None
+    assert str(night_row["status"]) == an.NIGHT_STATUS_CLOSED
+    # 场外收夜：该人不得入殿 presence/entrance。
+    assert character.name not in an.persons_present_tonight(db, night_id)
+    assert character.name not in an.persons_entered_tonight(db, night_id)
 
 
 def test_cli_write_gate_canonical_session_attr():

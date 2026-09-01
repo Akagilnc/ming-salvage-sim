@@ -1406,7 +1406,7 @@ class GameDB:
                 -- #501 叙事抽取水位（确定性可判、补跑不重复/不漏）：
                 --   ''=未抽 / 'done'=已抽落账 / 'pending'=待补（抽取失败，给玩家原地重试）
                 extract_status TEXT NOT NULL DEFAULT '',
-                -- #1566：typed 密令 route（'' / secret_order / secret_order_offsite）；
+                -- #1566/#1716：typed route（'' / offsite / secret_order / secret_order_offsite）；
                 -- 中断重试经 decode_chat_turn_route 恢复 explicit_secret_order / 殿上 scene。
                 route TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -12151,33 +12151,33 @@ class GameDB:
                 normalized = self._normalize_army_pay_grant_payload(normalized)
             else:
                 from ming_sim.action_clusters import field_population_allowed
+                from ming_sim.action_materialize import require_grant_allocation_shape
                 purpose = str(normalized.get("purpose") or "").strip()
                 if purpose and not field_population_allowed(
                     "grant_allocation", "purpose", normalized,
                 ):
                     raise ValueError(f"非协饷拨帑不得夹带 purpose={purpose}")
-                try:
-                    amount = strict_int(
-                        normalized.get("amount"), accept_numeric_strings=False
-                    )
-                except ValueError:
-                    amount = 0
-                account = str(normalized.get("account") or "").strip()
-                if amount <= 0 or not account:
-                    raise ValueError("拨帑旨意缺少正数 amount 或 account")
-                if account not in {"国库", "内库"}:
-                    raise ValueError("拨帑旨意 account 仅可为国库或内库")
-                else:
-                    normalized["amount"] = amount
-                    normalized["account"] = account
-                    surface = str(
-                        normalized.get("execution_surface") or "in_transit"
-                    ).strip()
-                    if surface not in {"immediate", "in_transit"}:
-                        raise ValueError("拨帑旨意 execution_surface 非法")
-                    else:
-                        normalized["execution_surface"] = surface
-                    normalized.pop("delta", None)
+                # #1716：amount/account 唯一验形；分类默认 grant_action=「无」时只借金钱动作过 shape，不回写。
+                # 普通/legacy fallback（缺/空 grant_action）须显式非空 account，禁默认国库。
+                shape_ga = grant_action if grant_action not in {"", "无"} else "赏赉"
+                if grant_action in {"", "无"}:
+                    account_raw = normalized.get("account")
+                    if account_raw is None or not str(account_raw).strip():
+                        raise ValueError("拨帑旨意缺少 account")
+                shaped = require_grant_allocation_shape(
+                    grant_action=shape_ga,
+                    amount=normalized.get("amount"),
+                    account=normalized.get("account"),
+                )
+                normalized["amount"] = int(shaped["amount"])
+                normalized["account"] = str(shaped["account"])
+                surface = str(
+                    normalized.get("execution_surface") or "in_transit"
+                ).strip()
+                if surface not in {"immediate", "in_transit"}:
+                    raise ValueError("拨帑旨意 execution_surface 非法")
+                normalized["execution_surface"] = surface
+                normalized.pop("delta", None)
         elif action == "pay_order_override":
             # #653：结构化载荷 presence 在指令归一边界先验（键形/值域/幻影 region
             # 仍由成案点与物化点共 prepare_pay_order_entries 同一验形，不在此重复）。

@@ -172,6 +172,10 @@ class _RecordingDB:
         # #1402 can_summon 真源依赖：轻壳无 characters 表，回落同真源默认 ming
         return getattr(character, "power_id", "ming") or "ming"
 
+    def list_pending_actions(self, turn, *a, **k):
+        # #1716：_chat_payload 经 pending_directive_count 读此口；轻壳无拟旨暂存
+        return []
+
 
 def _runtime_for_stream_race():
     allow_finish = threading.Event()
