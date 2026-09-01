@@ -204,8 +204,14 @@ export function useChatActions({
       // 回话 done：done 载荷即含全部持久后果，立即消费——不拖到 SSE end（读心可延后 end 达
       // 120s），不按请求 token 门控（后果持久）。全局态无条件落；面板态按当前大臣归属落。
       onDone: (data) => {
-        // 单调即时字段直接落 done 载荷（各 done 递新，无竞争）：指令 / pending_count。
-        setState((current) => (current ? { ...current, directives: data.directives, pending_count: data.pending_count ?? current.pending_count } : current));
+        // 单调即时字段直接落 done 载荷（各 done 递新，无竞争）：指令 / pending 计数。
+        // #1716：pending_directive_count 同落——拟诏台 hasSettleWork 不得等 refresh 竞态。
+        setState((current) => (current ? {
+          ...current,
+          directives: data.directives,
+          pending_count: data.pending_count ?? current.pending_count,
+          pending_directive_count: data.pending_directive_count ?? current.pending_directive_count,
+        } : current));
         // 重取型刷新（state + 密令列表）经唯一协调器：撤回/相邻轮等任一新刷新都会作废本次旧响应。
         void refreshDurableProjection({ secretOrders: true });
         // 面板态：仅当前大臣面板未切走才落。
@@ -305,7 +311,12 @@ export function useChatActions({
         night_id: data.night_id,
         chat_turn_id: data.undone_chat_turn_id,
       });
-      setState((current) => (current ? { ...current, directives: data.directives, pending_count: data.pending_count } : current));
+      setState((current) => (current ? {
+        ...current,
+        directives: data.directives,
+        pending_count: data.pending_count,
+        pending_directive_count: data.pending_directive_count ?? current.pending_directive_count,
+      } : current));
       await loadState();
       // Read the ref FRESH at the panel-write point (the minister could switch
       // during the awaits above), mirroring sendChat's post-await check.
