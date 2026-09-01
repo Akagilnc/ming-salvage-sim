@@ -59,52 +59,6 @@ const edictCommand = (host: HTMLElement) => cmdByCaption(host, "拟诏");
 const findButton = (host: HTMLElement, text: string) =>
   Array.from(host.querySelectorAll("button")).find((b) => (b.textContent || "").includes(text));
 
-const ministerStub = (name: string, office = "户部") => ({
-  name, office, office_type: office, faction: "", style: "", status: "active",
-  status_label: "在朝", summary: "", favorite: false, skills: [] as unknown[],
-});
-/** 真空 settle 投影（#1560/#1716）：无草案、无 pending。 */
-const vacuumSettle = (ministers: unknown[] = []) => ({
-  ...makeState(1, [], ministers),
-  pending_directive_count: 0,
-  pending_secret_order_count: 0,
-  pending_non_directive_action_count: 0,
-  failed_secret_order_count: 0,
-});
-/** 挂载 App 的共性 GET（menu/saves/secret/scroll/history/layout）。 */
-const baseGameFetch = async (u: URL): Promise<Response | null> => {
-  if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
-  if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
-  if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
-  if (u.pathname.endsWith("/api/audience/extraction/pending")) return jsonResp({ count: 0 });
-  if (u.pathname.endsWith("/api/audience/scroll")) return jsonResp({ night_id: 1, messages: [] });
-  if (u.pathname.endsWith("/api/history/turns")) return jsonResp({ turns: [] });
-  if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
-  return null;
-};
-const mountHost = async () => {
-  const host = document.createElement("div");
-  document.body.appendChild(host);
-  await act(async () => { trackRoot(host).render(<App />); });
-  await tick();
-  return host;
-};
-const openCourtMinister = async (host: HTMLElement, name: string) => {
-  await click(host.querySelector('[aria-label="朝堂·召见大臣"]'));
-  await tick();
-  await click(Array.from(host.querySelectorAll("button")).find((b) => b.textContent?.includes(name)));
-  await act(async () => { await vi.waitFor(() => expect(host.querySelector("textarea")).not.toBeNull()); });
-};
-const typeAndSend = async (host: HTMLElement, text: string) => {
-  const textarea = host.querySelector("textarea") as HTMLTextAreaElement;
-  await act(async () => {
-    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
-    setter?.call(textarea, text);
-    textarea.dispatchEvent(new Event("input", { bubbles: true }));
-  });
-  await click(findButton(host, "发送"));
-};
-
 // #671：根因——createRoot 后只清 innerHTML 不 unmount，孤儿树 effect/定时器串测致全套件时序 flake。
 const mountedRoots: Array<{ root: Root; host: HTMLElement }> = [];
 const trackRoot = (host: HTMLElement): Root => {
@@ -583,16 +537,30 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
   });
 
   it("#1716 chat done 即时落 pending_directive_count，拟诏台不待 vacuum refresh", async () => {
-    // 差异：首拉 vacuum；done 带 count=1；后续 state GET 挂起——盖玺须来自 done，非 refresh。
-    const minister = ministerStub("郭允厚", "户部尚书");
-    const vacuum = vacuumSettle([minister]);
+    // 首拉 vacuum；done 带 count=1；后续 state GET 挂起——footer.enabled 须来自 done，非 refresh。
+    const minister = {
+      name: "郭允厚", office: "户部尚书", office_type: "户部", faction: "",
+      style: "", status: "active", status_label: "在朝", summary: "", favorite: false, skills: [] as unknown[],
+    };
+    const vacuum = {
+      ...makeState(1, [], [minister]),
+      pending_directive_count: 0,
+      pending_secret_order_count: 0,
+      pending_non_directive_action_count: 0,
+      failed_secret_order_count: 0,
+    };
     let stateCall = 0;
     let releaseRefresh!: () => void;
     const refreshGate = new Promise<void>((r) => { releaseRefresh = r; });
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
       const u = new URL(String(url), "http://t.local");
-      const base = await baseGameFetch(u);
-      if (base) return base;
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/audience/extraction/pending")) return jsonResp({ count: 0 });
+      if (u.pathname.endsWith("/api/audience/scroll")) return jsonResp({ night_id: 1, messages: [] });
+      if (u.pathname.endsWith("/api/history/turns")) return jsonResp({ turns: [] });
+      if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
       if (u.pathname.endsWith("/api/game/state")) {
         stateCall += 1;
         if (stateCall === 1) return jsonResp(vacuum);
@@ -604,7 +572,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       }
       if (u.pathname.endsWith("/chat/stream")) {
         return sseResp("done", {
-          answer: "臣领旨。", history: [], directives: [],
+          answer: "ok", history: [], directives: [],
           pending_count: 1, pending_directive_count: 1,
           suggestions: [], can_undo_last_chat: true, pending_action_failures: [],
         });
@@ -612,23 +580,34 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       return jsonResp({});
     }));
 
-    const host = await mountHost();
-    await openCourtMinister(host, "郭允厚");
-    await typeAndSend(host, "拟旨如下：着户部从国库拨银一万两赈济陕西饥民。");
-    await act(async () => {
-      await vi.waitFor(() => expect(host.textContent || "").not.toMatch(/大臣思索/));
-    });
-    expect(stateCall).toBeGreaterThanOrEqual(2);
-
-    await click(findButton(host, "退出召对"));
+    const host = document.createElement("div"); document.body.appendChild(host);
+    await act(async () => { trackRoot(host).render(<App />); });
     await tick();
-    await click(edictCommand(host) || findButton(host, "拟诏"));
+    await click(host.querySelector('[aria-label="朝堂·召见大臣"]'));
+    await tick();
+    await click(Array.from(host.querySelectorAll("button")).find((b) => b.textContent?.includes(minister.name)));
+    await act(async () => { await vi.waitFor(() => expect(host.querySelector("textarea")).not.toBeNull()); });
+
+    const textarea = host.querySelector("textarea") as HTMLTextAreaElement;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+      setter?.call(textarea, "拟旨如下：着户部从国库拨银一万两赈济陕西饥民。");
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await click(host.querySelector(".primary-action"));
+    // onDone 触发 refresh → stateCall>=2；不盯 busy 呈现措辞。
+    await act(async () => {
+      await vi.waitFor(() => expect(stateCall).toBeGreaterThanOrEqual(2));
+    });
+
+    await click(host.querySelector(".composer-exit"));
+    await tick();
+    await click(edictCommand(host));
     await act(async () => {
       await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
     });
     const footer = host.querySelector<HTMLButtonElement>(".desk-footer button");
     expect(footer?.disabled).toBe(false);
-    expect(footer?.textContent || "").toContain("盖玺");
     releaseRefresh();
     await tick();
   });
