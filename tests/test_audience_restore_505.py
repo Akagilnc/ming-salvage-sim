@@ -551,8 +551,24 @@ def test_legacy_agno_sessions_runs_blob_still_counts_and_truncates(restore_env):
     assert [r["run_id"] for r in runs] == ["r1"]
 
 
-def test_logical_history_dedupes_duplicate_run_ids_across_blob_and_table(restore_env):
-    """Same run_id in blob (even repeated) + table counts once; truncate by that length."""
+def _agno_public_run_ids(db_path: str, session_id: str) -> list:
+    """Visible run_id history via Agno SqliteDb.get_session (merge authority)."""
+    from agno.db.sqlite import SqliteDb
+
+    adb = SqliteDb(
+        db_file=db_path,
+        session_table="agno_sessions",
+        runs_table="agno_runs",
+    )
+    raw = adb.get_session(session_id, session_type="agent", deserialize=False)
+    assert raw is not None
+    return [
+        r.get("run_id") for r in (raw.get("runs") or []) if isinstance(r, dict)
+    ]
+
+
+def test_logical_history_matches_agno_merge_with_duplicate_legacy_ids(restore_env):
+    """Agno keeps legacy duplicate run_ids; local count/truncate must match get_session."""
     env = restore_env
     db = env.db
     # blob carries duplicate r0 then r1; table has the same ids (migrated overlap).
@@ -561,7 +577,10 @@ def test_logical_history_dedupes_duplicate_run_ids_across_blob_and_table(restore
     db.conn.execute(
         "CREATE TABLE agno_sessions ("
         "session_id TEXT PRIMARY KEY, session_type TEXT NOT NULL, "
-        "runs TEXT, created_at INTEGER NOT NULL, updated_at INTEGER)"
+        "agent_id TEXT, team_id TEXT, workflow_id TEXT, user_id TEXT, "
+        "session_data TEXT, agent_data TEXT, team_data TEXT, workflow_data TEXT, "
+        "metadata TEXT, summary TEXT, runs TEXT, "
+        "created_at INTEGER NOT NULL, updated_at INTEGER)"
     )
     _ensure_agno_runs_table(db)
     blob = [{"run_id": "r0"}, {"run_id": "r0"}, {"run_id": "r1"}]
@@ -579,10 +598,14 @@ def test_logical_history_dedupes_duplicate_run_ids_across_blob_and_table(restore
         )
     db.conn.commit()
 
-    assert db.agno_runs_length("sess") == 2
+    # Agno merge walks every legacy slot: length 3, not unique-2.
+    assert db.agno_runs_length("sess") == 3
+    assert _agno_public_run_ids(env.path, "sess") == ["r0", "r0", "r1"]
+
     db._truncate_agno_runs_in_tx("sess", 1)
     db.conn.commit()
     assert db.agno_runs_length("sess") == 1
+    assert _agno_public_run_ids(env.path, "sess") == ["r0"]
     table_ids = [
         r["run_id"]
         for r in db.conn.execute(
@@ -591,12 +614,6 @@ def test_logical_history_dedupes_duplicate_run_ids_across_blob_and_table(restore
         ).fetchall()
     ]
     assert table_ids == ["r0"]
-    runs, _ = db._decode_agno_runs(
-        db.conn.execute(
-            "SELECT runs FROM agno_sessions WHERE session_id=?", ("sess",)
-        ).fetchone()["runs"]
-    )
-    assert [r["run_id"] for r in runs] == ["r0", "r0"]
 
 
 def test_reconcile_blob_baseline_drops_table_only_new_run(restore_env):
@@ -677,24 +694,8 @@ def test_truncate_migrated_overlap_does_not_resurrect_via_agno_read(restore_env)
     assert db.agno_runs_length("sess") == 2
     assert db.agno_runs_length("other") == 1
 
-    from agno.db.sqlite import SqliteDb
-
-    adb = SqliteDb(
-        db_file=env.path,
-        session_table="agno_sessions",
-        runs_table="agno_runs",
-    )
-    raw = adb.get_session("sess", session_type="agent", deserialize=False)
-    assert raw is not None
-    merged_ids = [
-        r.get("run_id") for r in (raw.get("runs") or []) if isinstance(r, dict)
-    ]
-    assert merged_ids == ["r0", "r1"]
-    other_raw = adb.get_session("other", session_type="agent", deserialize=False)
-    other_ids = [
-        r.get("run_id") for r in (other_raw.get("runs") or []) if isinstance(r, dict)
-    ]
-    assert other_ids == ["other-0"]
+    assert _agno_public_run_ids(env.path, "sess") == ["r0", "r1"]
+    assert _agno_public_run_ids(env.path, "other") == ["other-0"]
 
 
 def test_reconcile_marks_questionless_orphan_failed(restore_env):
