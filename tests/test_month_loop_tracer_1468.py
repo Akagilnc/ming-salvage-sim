@@ -736,8 +736,8 @@ def _setup_open_night_offsite(tracer_client):
     return client, game, remote, night_id
 
 
-def _assert_court_break_closed(game, body: dict, night_id: int) -> None:
-    """外部可见契约：court_break、无 admission 短路载荷、夜关闭。"""
+def _assert_court_break_closed(game, body: dict, night_id: int, *, remote: str) -> None:
+    """外部可见契约：court_break、夜关闭、场外人物无殿上 presence/entrance 账。"""
     assert body.get("court_action") == "court_break", body
     assert not body.get("admission"), body
     _wait_pending_writes(game)
@@ -747,6 +747,18 @@ def _assert_court_break_closed(game, body: dict, night_id: int) -> None:
     ).fetchone()
     assert night_row is not None
     assert str(night_row["status"]) == an.NIGHT_STATUS_CLOSED, dict(night_row)
+    # #1716 durable 物理账：场外收夜不得写入该人 entrance/presence。
+    assert remote not in an.persons_present_tonight(game.db, night_id), remote
+    assert remote not in an.persons_entered_tonight(game.db, night_id), remote
+    for entry in an.list_ledger(game.db, night_id):
+        names = entry.get("person_names") or []
+        if remote not in names:
+            continue
+        tags = entry.get("tags") or []
+        assert an.TAG_ENTER not in tags, entry
+        assert str(entry.get("presence_effect") or "") not in {
+            an.PRESENCE_ENTER, "enter",
+        }, entry
 
 
 def test_issue_1716_offsite_court_break_via_stream(tracer_client):
@@ -777,7 +789,7 @@ def test_issue_1716_offsite_court_break_via_stream(tracer_client):
     done_raw = next(ev for ev in events if ev.get("event") == "done").get("data") or "{}"
     done = json.loads(done_raw) if isinstance(done_raw, str) else done_raw
     assert isinstance(done, dict), done
-    _assert_court_break_closed(game, done, night_id)
+    _assert_court_break_closed(game, done, night_id, remote=remote)
 
 
 def test_issue_1716_offsite_court_break_via_nonstream(tracer_client):
@@ -805,4 +817,4 @@ def test_issue_1716_offsite_court_break_via_nonstream(tracer_client):
     assert resp.status_code == 200, resp.text
     body = resp.json() or {}
     assert isinstance(body, dict), body
-    _assert_court_break_closed(game, body, night_id)
+    _assert_court_break_closed(game, body, night_id, remote=remote)

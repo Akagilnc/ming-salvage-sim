@@ -625,18 +625,6 @@ def _audience_prompt_for_web_chat(session: Any, text: str, character: Character,
     return prompt_builder(text, character, chat_turn_id=chat_turn_id)
 
 
-def _count_pending_directives(
-    db: Any,
-    turn: int,
-    pending_actions: Optional[List[Dict[str, Any]]] = None,
-) -> int:
-    """对话式拟旨暂存数（pending_actions kind=directive）唯一计数缝。"""
-    rows = pending_actions
-    if rows is None:
-        rows = db.list_pending_actions(int(turn))
-    return sum(1 for a in rows if a["kind"] == "directive")
-
-
 class WebGame:
     """Web 端会话包装：持一个 GameSession + 网页专属态（聊天历史、收藏）。"""
 
@@ -1191,10 +1179,11 @@ class WebGame:
     def pending_directive_count(
         self, pending_actions: Optional[List[Dict[str, Any]]] = None,
     ) -> int:
-        """对话式拟旨暂存数——委托模块唯一计数缝（state/chat/create 同口径）。"""
-        return _count_pending_directives(
-            self.db, int(self.state.turn), pending_actions,
-        )
+        """对话式拟旨暂存数（pending_actions kind=directive）唯一计数缝——state/chat done 共用。"""
+        rows = pending_actions
+        if rows is None:
+            rows = self.db.list_pending_actions(int(self.state.turn))
+        return sum(1 for a in rows if a["kind"] == "directive")
 
     def map_nodes(self) -> List[Dict[str, Any]]:
         """地图节点投影。#1505：typed station_region 单归属；一军一挂；liaodong/dongjiang_area 同 id 合 theater+region。"""
@@ -1881,8 +1870,6 @@ class WebGame:
 
         if recognize_audience_command(message) != CMD_CLOSE_NIGHT:
             return False
-        if not hasattr(self.db, "conn"):
-            return False
         return get_open_night(self.db) is not None
 
     def _finish_offsite_summon_scene(
@@ -2038,7 +2025,7 @@ class WebGame:
                     secret_order_bypass = (
                         gate_already_held or explicit_secret_order or court_break_open_night
                     )
-                    offsite_secret_order = False
+                    offsite_turn = False
                     if not secret_order_bypass:
                         origin_id = f"web:chat:{accepted_turn}:{minister_name}"
                         admission = self.session.consume_audience_admission(
@@ -2070,18 +2057,18 @@ class WebGame:
                                         if admission.result is not None else ""
                                     ),
                                 )
-                    elif (
-                        not gate_already_held
-                        and explicit_secret_order
+                    elif not gate_already_held and (
+                        explicit_secret_order or court_break_open_night
                     ):
+                        # #1716：收夜/密令 bypass 后仍取非消费地点分流；收夜不因 reason 拦截。
                         decision = self.session.admit_audience(
                             self.session._character(minister_name),
                         )
-                        if decision.reason:
+                        if decision.reason and not court_break_open_night:
                             raise HTTPException(
                                 status_code=409, detail=decision.reason,
                             )
-                        offsite_secret_order = decision.result in (
+                        offsite_turn = decision.result in (
                             AudienceAdmission.SUMMON_FRESH,
                             AudienceAdmission.SUMMON_IN_TRANSIT,
                         )
@@ -2090,10 +2077,10 @@ class WebGame:
                             from ming_sim.audience_night import encode_chat_turn_route
                             chat_turn_id, before_snapshot = self._start_chat_turn(
                                 minister_name,
-                                attach_to_hall=not offsite_secret_order,
+                                attach_to_hall=not offsite_turn,
                                 route=encode_chat_turn_route(
                                     explicit_secret_order=explicit_secret_order,
-                                    offsite=offsite_secret_order,
+                                    offsite=offsite_turn,
                                 ),
                             )
                         self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})

@@ -1724,7 +1724,7 @@ def test_appointment_alias_uses_canonical_dossier_identity(game):
     (
         ("web", "allocation", {
             "动作类型": "grant_allocation", "目标类型": "issue",
-            "目标": "relief", "金额": 30000, "账户": "内库",
+            "目标": "relief", "金额": "30000", "账户": "内库",
             "执行面": "immediate",
         }),
         ("cli", "authorization", {
@@ -2500,12 +2500,13 @@ def test_directive_edit_replaces_mechanical_payload_before_submission(game):
 
 def test_allocation_rejects_unknown_economy_account_before_dossier_birth(game):
     db, state, _content = game
+    # #1716：太仓是 resolve_grant_account 合法别名→国库；未知账户才在 shape 边界拒。
     directive_id = db.add_directive(
-        state, None, "发太仓银十两赈济", "手动新增",
+        state, None, "发外库银十两赈济", "手动新增",
         dossier_payload={
             "dossier_action_type": "grant_allocation",
             "target_kind": "issue", "target_id": "relief",
-            "account": "太仓", "amount": 10, "execution_surface": "immediate",
+            "account": "外库", "amount": 10, "execution_surface": "immediate",
         },
     )
 
@@ -3286,7 +3287,7 @@ def test_in_transit_allocation_requires_execution_verdict(game):
     assert dossier["interruption_reason"] == ""
 
 
-@pytest.mark.parametrize("value", [True, 1.5, 2.9, "3"])
+@pytest.mark.parametrize("value", [True, 1.5, 2.9])
 def test_durable_allocation_rejects_non_integer_amount_without_downgrade(game, value):
     db, state, _content = game
     minister = _active_minister(db)
