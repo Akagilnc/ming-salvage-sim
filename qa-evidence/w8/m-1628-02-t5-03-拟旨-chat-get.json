@@ -1,0 +1,108 @@
+{
+  "minister": {
+    "name": "洪承畴",
+    "office": "陕西督粮参政",
+    "office_type": "地方",
+    "faction": "中立",
+    "style": "深沉权变",
+    "status": "active",
+    "status_reason": "",
+    "status_label": "在事",
+    "location": "shaanxi",
+    "location_label": "陕西",
+    "transit_to": "",
+    "transit_to_label": "",
+    "summary": "中立一系，行事深沉权变。",
+    "portrait_id": "",
+    "power_id": "ming",
+    "skills": [
+      {
+        "id": "view_state",
+        "name": "查看国势",
+        "sources": [
+          "通用"
+        ],
+        "description": "看核心国势、钱粮与派系态势。"
+      },
+      {
+        "id": "list_memorials",
+        "name": "查看奏报",
+        "sources": [
+          "通用"
+        ],
+        "description": "列出本月需要皇帝过目的奏报。"
+      },
+      {
+        "id": "inspect_memorial",
+        "name": "查看奏报细节",
+        "sources": [
+          "通用"
+        ],
+        "description": "追问某条奏报的细节、可信度和牵涉利益。"
+      },
+      {
+        "id": "list_regions",
+        "name": "查看地区警讯",
+        "sources": [
+          "通用"
+        ],
+        "description": "查看两京十三省最危险地区、账面月税和核心警讯。"
+      },
+      {
+        "id": "inspect_region",
+        "name": "查看地区详情",
+        "sources": [
+          "通用"
+        ],
+        "description": "查看某一地区的人口、民心、动乱、天灾、人祸、田亩和税收。"
+      },
+      {
+        "id": "estimate_resistance",
+        "name": "估算阻力",
+        "sources": [
+          "通用"
+        ],
+        "description": "估算一道旨意会被谁拖、谁反弹。"
+      },
+      {
+        "id": "draft_directive",
+        "name": "草拟指令",
+        "sources": [
+          "通用"
+        ],
+        "description": "把皇帝口谕登记为本月诏书草案，不立刻结算。"
+      },
+      {
+        "id": "draft_edict",
+        "name": "草拟圣旨",
+        "sources": [
+          "通用"
+        ],
+        "description": "按奏报和政策方向拟一段可批准的圣旨文本。"
+      }
+    ],
+    "favorite": false
+  },
+  "campaign_id": "432b362b8f66",
+  "night_id": 5,
+  "history": [],
+  "suggestions": [
+    {
+      "label": "拟旨",
+      "text": "拟旨如下：",
+      "prefix": true
+    },
+    {
+      "label": "下密令",
+      "text": "密令如下：",
+      "prefix": true,
+      "intent": "secret_order"
+    }
+  ],
+  "can_undo_last_chat": false,
+  "pending_action_failures": [],
+  "chat_turn_id": 0,
+  "mindreading_pending": false,
+  "pending_turn_ids": [],
+  "reply_retry": null
+}
