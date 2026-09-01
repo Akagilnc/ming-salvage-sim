@@ -9699,17 +9699,26 @@ class GameDB:
         )
         self.conn.commit()
 
+    def _agno_session_columns(self) -> set:
+        if not self._table_exists("agno_sessions"):
+            return set()
+        return {
+            row["name"]
+            for row in self.conn.execute("PRAGMA table_info(agno_sessions)").fetchall()
+        }
+
     def agno_runs_length(self, session_id: str) -> int:
-        if not session_id or not self._table_exists("agno_sessions"):
+        """Count Agno run history for a session (single logical list).
+
+        Authority is Agno's ``merge_runs_table_with_legacy_blob``: legacy blob
+        order first (duplicates preserved); same run_id prefers the table copy;
+        table-only rows append in ``(run_index, created_at, run_id)``. Missing
+        tables/columns mean a fresh session with no history yet (length 0)—
+        schema drift must not be swallowed via OperationalError→0.
+        """
+        if not session_id:
             return 0
-        row = self.conn.execute(
-            "SELECT runs FROM agno_sessions WHERE session_id = ?",
-            (session_id,),
-        ).fetchone()
-        if row is None:
-            return 0
-        runs, _encoded_as_string = self._decode_agno_runs(row["runs"])
-        return len(runs)
+        return len(self._agno_merged_runs(session_id))
 
     def _decode_agno_runs(self, raw: Any) -> Tuple[List[Any], bool]:
         if raw in (None, ""):
@@ -9728,8 +9737,62 @@ class GameDB:
             return json.dumps(json.dumps(runs, ensure_ascii=False), ensure_ascii=False)
         return json.dumps(runs, ensure_ascii=False)
 
-    def _truncate_agno_runs_in_tx(self, session_id: str, keep_count: int) -> None:
-        if not session_id or not self._table_exists("agno_sessions"):
+    def _agno_table_run_dicts(self, session_id: str) -> List[Dict[str, Any]]:
+        if not self._table_exists("agno_runs"):
+            return []
+        rows = self.conn.execute(
+            """
+            SELECT run_id, run_data FROM agno_runs
+            WHERE session_id = ?
+            ORDER BY run_index ASC, created_at ASC, run_id ASC
+            """,
+            (session_id,),
+        ).fetchall()
+        out: List[Dict[str, Any]] = []
+        for row in rows:
+            rid = row["run_id"]
+            if rid is None:
+                continue
+            payload: Dict[str, Any] = {"run_id": str(rid)}
+            raw = row["run_data"]
+            if raw not in (None, ""):
+                try:
+                    decoded = json.loads(raw) if isinstance(raw, str) else raw
+                except (TypeError, ValueError):
+                    decoded = None
+                if isinstance(decoded, dict):
+                    payload = dict(decoded)
+                    payload["run_id"] = str(rid)
+            out.append(payload)
+        return out
+
+    def _agno_legacy_runs_blob(self, session_id: str) -> Tuple[List[Any], bool]:
+        """Legacy ``agno_sessions.runs`` list for one session (empty if absent)."""
+        if "runs" not in self._agno_session_columns():
+            return [], False
+        row = self.conn.execute(
+            "SELECT runs FROM agno_sessions WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+        if row is None:
+            return [], False
+        return self._decode_agno_runs(row["runs"])
+
+    def _agno_merged_runs(self, session_id: str) -> List[Dict[str, Any]]:
+        """Session run history in Agno merge order (single count/truncate domain)."""
+        from agno.db.utils import merge_runs_table_with_legacy_blob
+
+        table_runs = self._agno_table_run_dicts(session_id)
+        legacy_runs, _encoded = self._agno_legacy_runs_blob(session_id)
+        merged = merge_runs_table_with_legacy_blob(
+            table_runs, legacy_runs if legacy_runs else None
+        )
+        return [run for run in merged if isinstance(run, dict)]
+
+    def _rewrite_session_legacy_runs_blob(
+        self, session_id: str, runs: List[Any]
+    ) -> None:
+        if "runs" not in self._agno_session_columns():
             return
         row = self.conn.execute(
             "SELECT runs FROM agno_sessions WHERE session_id = ?",
@@ -9737,12 +9800,51 @@ class GameDB:
         ).fetchone()
         if row is None:
             return
-        runs, encoded_as_string = self._decode_agno_runs(row["runs"])
-        kept = runs[: max(0, int(keep_count))]
+        _old, encoded_as_string = self._decode_agno_runs(row["runs"])
         self.conn.execute(
-            "UPDATE agno_sessions SET runs = ?, updated_at = strftime('%s','now') WHERE session_id = ?",
-            (self._encode_agno_runs(kept, encoded_as_string), session_id),
+            "UPDATE agno_sessions SET runs = ?, updated_at = strftime('%s','now') "
+            "WHERE session_id = ?",
+            (self._encode_agno_runs(list(runs), encoded_as_string), session_id),
         )
+
+    def _truncate_agno_runs_in_tx(self, session_id: str, keep_count: int) -> None:
+        """Truncate session run history back to keep_count (retry/undo/reconcile).
+
+        Uses the same Agno-merged history as ``agno_runs_length``. Keeps the
+        prefix as the new legacy blob and drops table rows whose run_id is not
+        in that prefix, so a subsequent Agno merge read matches the prefix.
+        Other sessions are untouched.
+        """
+        if not session_id:
+            return
+        keep = max(0, int(keep_count))
+        merged = self._agno_merged_runs(session_id)
+        if len(merged) <= keep:
+            return
+        kept = merged[:keep]
+        kept_ids = {
+            str(run["run_id"])
+            for run in kept
+            if run.get("run_id") is not None
+        }
+        if self._table_exists("agno_runs"):
+            rows = self.conn.execute(
+                "SELECT run_id FROM agno_runs WHERE session_id = ?",
+                (session_id,),
+            ).fetchall()
+            drop_ids = [
+                str(r["run_id"])
+                for r in rows
+                if r["run_id"] is not None and str(r["run_id"]) not in kept_ids
+            ]
+            if drop_ids:
+                self.conn.executemany(
+                    "DELETE FROM agno_runs WHERE session_id = ? AND run_id = ?",
+                    [(session_id, rid) for rid in drop_ids],
+                )
+        # Rewrite blob to the kept prefix so duplicate-id multiplicity and order
+        # stay identical to what Agno merge would return for that prefix.
+        self._rewrite_session_legacy_runs_blob(session_id, kept)
 
     def get_last_active_chat_turn(self, minister_name: str, turn: int) -> Optional[Dict[str, Any]]:
         row = self.conn.execute(
