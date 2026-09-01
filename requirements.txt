@@ -1,4 +1,4 @@
-agno[openai,sqlite]>=2.6.7
+agno[openai,sqlite]>=3.0.0,<4
 debugpy>=1.8.20
 fastapi>=0.115.0
 pexpect>=4.9.0

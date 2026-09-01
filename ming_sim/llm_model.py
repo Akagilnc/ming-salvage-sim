@@ -228,9 +228,12 @@ def create_chat_model(
 
 
 def create_agno_db(sqlite_path: str) -> SqliteDb:
+    # Pin Agno 3 run store explicitly: runs live in agno_runs, not a
+    # sessions.runs blob. Matches GameDB.agno_runs_length / truncate seam.
     return SqliteDb(
         db_file=sqlite_path,
         session_table="agno_sessions",
+        runs_table="agno_runs",
         memory_table="agno_memories",
     )
 

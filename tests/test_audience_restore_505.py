@@ -14,6 +14,7 @@ reconcile 保留问话消息行（区别于 fail_chat_turn 的删问话善后）
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -435,21 +436,80 @@ def test_retry_rejected_in_settlement_phase(restore_env):
 # ── finding5：reconcile 截断在飞轮的 Agno runs 到本轮起点（retry 上下文不双倍）──
 
 
+def _ensure_agno_runs_table(db) -> None:
+    # Columns match Agno 3 SqliteDb so public get_session can read mixed-state.
+    db.conn.execute(
+        "CREATE TABLE IF NOT EXISTS agno_runs ("
+        "run_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, "
+        "run_type TEXT NOT NULL, agent_id TEXT, team_id TEXT, workflow_id TEXT, "
+        "user_id TEXT, parent_run_id TEXT, status TEXT, run_index INTEGER, "
+        "run_data TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER)"
+    )
+
+
+def _seed_agno_v3_runs(db, session_id: str, run_count: int) -> None:
+    """Seed real Agno 3 schema (agno_sessions + agno_runs rows), not the v2 blob."""
+    db.conn.execute(
+        "CREATE TABLE IF NOT EXISTS agno_sessions ("
+        "session_id TEXT PRIMARY KEY, session_type TEXT NOT NULL, "
+        "created_at INTEGER NOT NULL, updated_at INTEGER)"
+    )
+    _ensure_agno_runs_table(db)
+    db.conn.execute(
+        "INSERT OR IGNORE INTO agno_sessions "
+        "(session_id, session_type, created_at, updated_at) VALUES (?, 'agent', 0, 0)",
+        (session_id,),
+    )
+    for i in range(int(run_count)):
+        rid = f"run-{session_id}-{i}"
+        db.conn.execute(
+            "INSERT INTO agno_runs "
+            "(run_id, session_id, run_type, status, run_index, run_data, created_at) "
+            "VALUES (?, ?, 'agent', 'COMPLETED', ?, ?, ?)",
+            (rid, session_id, i, json.dumps({"run_id": rid}), i + 1),
+        )
+    db.conn.commit()
+
+
+def _seed_agno_legacy_blob(db, session_id: str, run_ids, *, with_table: bool = False) -> None:
+    """Seed sessions.runs blob; optional empty agno_runs table for mixed-state."""
+    runs = [{"run_id": rid} for rid in run_ids]
+    db.conn.execute("DROP TABLE IF EXISTS agno_sessions")
+    if not with_table:
+        db.conn.execute("DROP TABLE IF EXISTS agno_runs")
+    db.conn.execute(
+        "CREATE TABLE agno_sessions ("
+        "session_id TEXT PRIMARY KEY, session_type TEXT NOT NULL, "
+        "runs TEXT, created_at INTEGER NOT NULL, updated_at INTEGER)"
+    )
+    if with_table:
+        _ensure_agno_runs_table(db)
+    db.conn.execute(
+        "INSERT INTO agno_sessions "
+        "(session_id, session_type, runs, created_at, updated_at) VALUES (?, 'agent', ?, 0, 0)",
+        (session_id, json.dumps(runs, ensure_ascii=False)),
+    )
+    db.conn.commit()
+
+
+def _insert_agno_table_run(db, session_id: str, run_id: str, run_index: int) -> None:
+    _ensure_agno_runs_table(db)
+    db.conn.execute(
+        "INSERT INTO agno_runs "
+        "(run_id, session_id, run_type, status, run_index, run_data, created_at) "
+        "VALUES (?, ?, 'agent', 'FAILED', ?, ?, ?)",
+        (run_id, session_id, run_index, json.dumps({"run_id": run_id}), run_index + 1),
+    )
+    db.conn.commit()
+
+
 def test_reconcile_truncates_agno_runs_to_turn_start(restore_env):
     env = restore_env
     db, state, content = env.db, env.state, env.content
     minister = _active_minister(db, content)
     an.open_night(db, state, location="乾清宫", time_of_day="戌时")
-    # 本轮起点 agno_runs_before=1；崩溃时 runs 已长到 2（半途生成写入未随回话回滚）。
-    db.conn.execute(
-        "CREATE TABLE IF NOT EXISTS agno_sessions "
-        "(session_id TEXT PRIMARY KEY, runs TEXT, updated_at INTEGER)"
-    )
-    db.conn.execute(
-        "INSERT INTO agno_sessions (session_id, runs, updated_at) VALUES (?, ?, 0)",
-        ("sess", '[{"r": 1}, {"r": 2}]'),
-    )
-    db.conn.commit()
+    # 本轮起点 agno_runs_before=1；崩溃时 Agno 3 runs 已长到 2（半途生成写入未随回话回滚）。
+    _seed_agno_v3_runs(db, "sess", run_count=2)
     _nid, ct = attach_chat_turn_to_night(
         db, state, minister, agno_session_id="sess", agno_runs_before=1,
     )
@@ -458,11 +518,184 @@ def test_reconcile_truncates_agno_runs_to_turn_start(restore_env):
     assert db.agno_runs_length("sess") == 2
 
     db.reconcile_interrupted_chat_turns()
-    # 截回起点，只丢没落完那半句的 LLM 工作态——问话/账未删。
+    # 截回起点，只丢没落完那半句的 LLM 工作态——问话/账未删；本 session 只留 keep_count 之前。
     assert db.agno_runs_length("sess") == 1
+    kept = [
+        r["run_id"]
+        for r in db.conn.execute(
+            "SELECT run_id FROM agno_runs WHERE session_id=? "
+            "ORDER BY run_index ASC, created_at ASC, run_id ASC",
+            ("sess",),
+        ).fetchall()
+    ]
+    assert kept == ["run-sess-0"]
     assert db.conn.execute(
         "SELECT status FROM chat_turns WHERE id=?", (ct,)
     ).fetchone()["status"] == "interrupted"
+
+
+def test_legacy_agno_sessions_runs_blob_still_counts_and_truncates(restore_env):
+    """Old Agno 2 archives: sessions.runs blob path remains readable/writable."""
+    env = restore_env
+    db = env.db
+    _seed_agno_legacy_blob(db, "legacy", ["r1", "r2", "r3"], with_table=False)
+    assert db.agno_runs_length("legacy") == 3
+    db._truncate_agno_runs_in_tx("legacy", 1)
+    db.conn.commit()
+    assert db.agno_runs_length("legacy") == 1
+    runs, _ = db._decode_agno_runs(
+        db.conn.execute(
+            "SELECT runs FROM agno_sessions WHERE session_id=?", ("legacy",)
+        ).fetchone()["runs"]
+    )
+    assert [r["run_id"] for r in runs] == ["r1"]
+
+
+def _agno_public_run_ids(db_path: str, session_id: str) -> list:
+    """Visible run_id history via Agno SqliteDb.get_session (merge authority)."""
+    from agno.db.sqlite import SqliteDb
+
+    adb = SqliteDb(
+        db_file=db_path,
+        session_table="agno_sessions",
+        runs_table="agno_runs",
+    )
+    raw = adb.get_session(session_id, session_type="agent", deserialize=False)
+    assert raw is not None
+    return [
+        r.get("run_id") for r in (raw.get("runs") or []) if isinstance(r, dict)
+    ]
+
+
+def test_logical_history_matches_agno_merge_with_duplicate_legacy_ids(restore_env):
+    """Agno keeps legacy duplicate run_ids; local count/truncate must match get_session."""
+    env = restore_env
+    db = env.db
+    # blob carries duplicate r0 then r1; table has the same ids (migrated overlap).
+    db.conn.execute("DROP TABLE IF EXISTS agno_runs")
+    db.conn.execute("DROP TABLE IF EXISTS agno_sessions")
+    db.conn.execute(
+        "CREATE TABLE agno_sessions ("
+        "session_id TEXT PRIMARY KEY, session_type TEXT NOT NULL, "
+        "agent_id TEXT, team_id TEXT, workflow_id TEXT, user_id TEXT, "
+        "session_data TEXT, agent_data TEXT, team_data TEXT, workflow_data TEXT, "
+        "metadata TEXT, summary TEXT, runs TEXT, "
+        "created_at INTEGER NOT NULL, updated_at INTEGER)"
+    )
+    _ensure_agno_runs_table(db)
+    blob = [{"run_id": "r0"}, {"run_id": "r0"}, {"run_id": "r1"}]
+    db.conn.execute(
+        "INSERT INTO agno_sessions "
+        "(session_id, session_type, runs, created_at, updated_at) VALUES (?, 'agent', ?, 0, 0)",
+        ("sess", json.dumps(blob)),
+    )
+    for i, rid in enumerate(("r0", "r1")):
+        db.conn.execute(
+            "INSERT INTO agno_runs "
+            "(run_id, session_id, run_type, status, run_index, run_data, created_at) "
+            "VALUES (?, 'sess', 'agent', 'COMPLETED', ?, ?, ?)",
+            (rid, i, json.dumps({"run_id": rid}), i + 1),
+        )
+    db.conn.commit()
+
+    # Agno merge walks every legacy slot: length 3, not unique-2.
+    assert db.agno_runs_length("sess") == 3
+    assert _agno_public_run_ids(env.path, "sess") == ["r0", "r0", "r1"]
+
+    db._truncate_agno_runs_in_tx("sess", 1)
+    db.conn.commit()
+    assert db.agno_runs_length("sess") == 1
+    assert _agno_public_run_ids(env.path, "sess") == ["r0"]
+    table_ids = [
+        r["run_id"]
+        for r in db.conn.execute(
+            "SELECT run_id FROM agno_runs WHERE session_id=? ORDER BY run_index",
+            ("sess",),
+        ).fetchall()
+    ]
+    assert table_ids == ["r0"]
+
+
+def test_reconcile_blob_baseline_drops_table_only_new_run(restore_env):
+    """#1716 mixed-state A: blob-only baseline → table-only failed run must drop."""
+    env = restore_env
+    db, state, content = env.db, env.state, env.content
+    minister = _active_minister(db, content)
+    an.open_night(db, state, location="乾清宫", time_of_day="戌时")
+    # 起轮时只有 legacy blob（baseline=2）；同轮 Agno 3 写入 table-only 新失败 run。
+    _seed_agno_legacy_blob(db, "sess", ["legacy-0", "legacy-1"], with_table=True)
+    _insert_agno_table_run(db, "sess", "table-new", run_index=0)
+    assert db.agno_runs_length("sess") == 3
+
+    _nid, ct = attach_chat_turn_to_night(
+        db, state, minister, agno_session_id="sess", agno_runs_before=2,
+    )
+    mid = db.append_chat_message(minister, state.turn, "user", "剿抚孰先？")
+    db.update_chat_turn_messages(ct, user_message_id=mid)
+
+    db.reconcile_interrupted_chat_turns()
+    assert db.agno_runs_length("sess") == 2
+    table_ids = [
+        r["run_id"]
+        for r in db.conn.execute(
+            "SELECT run_id FROM agno_runs WHERE session_id=? ORDER BY run_index, created_at, run_id",
+            ("sess",),
+        ).fetchall()
+    ]
+    assert table_ids == []
+    runs, _ = db._decode_agno_runs(
+        db.conn.execute(
+            "SELECT runs FROM agno_sessions WHERE session_id=?", ("sess",)
+        ).fetchone()["runs"]
+    )
+    assert [r["run_id"] for r in runs] == ["legacy-0", "legacy-1"]
+    assert db.conn.execute(
+        "SELECT status FROM chat_turns WHERE id=?", (ct,)
+    ).fetchone()["status"] == "interrupted"
+
+
+def test_truncate_migrated_overlap_does_not_resurrect_via_agno_read(restore_env):
+    """#1716 mixed-state B: official table+blob overlap must not resurrect tail."""
+    env = restore_env
+    db = env.db
+    overlap = ["r0", "r1", "r2"]
+    other = ["other-0"]
+    # Official v3 migration shape: runs copied into table, legacy blob retained.
+    db.conn.execute("DROP TABLE IF EXISTS agno_runs")
+    db.conn.execute("DROP TABLE IF EXISTS agno_sessions")
+    db.conn.execute(
+        "CREATE TABLE agno_sessions ("
+        "session_id TEXT PRIMARY KEY, session_type TEXT NOT NULL, "
+        "agent_id TEXT, team_id TEXT, workflow_id TEXT, user_id TEXT, "
+        "session_data TEXT, agent_data TEXT, team_data TEXT, workflow_data TEXT, "
+        "metadata TEXT, summary TEXT, runs TEXT, "
+        "created_at INTEGER NOT NULL, updated_at INTEGER)"
+    )
+    _ensure_agno_runs_table(db)
+    for sid, ids in (("sess", overlap), ("other", other)):
+        db.conn.execute(
+            "INSERT INTO agno_sessions "
+            "(session_id, session_type, runs, created_at, updated_at) "
+            "VALUES (?, 'agent', ?, 1, 1)",
+            (sid, json.dumps([{"run_id": rid} for rid in ids])),
+        )
+        for i, rid in enumerate(ids):
+            db.conn.execute(
+                "INSERT INTO agno_runs "
+                "(run_id, session_id, run_type, status, run_index, run_data, created_at) "
+                "VALUES (?, ?, 'agent', 'COMPLETED', ?, ?, ?)",
+                (rid, sid, i, json.dumps({"run_id": rid}), i + 1),
+            )
+    db.conn.commit()
+
+    assert db.agno_runs_length("sess") == 3
+    db._truncate_agno_runs_in_tx("sess", 2)
+    db.conn.commit()
+    assert db.agno_runs_length("sess") == 2
+    assert db.agno_runs_length("other") == 1
+
+    assert _agno_public_run_ids(env.path, "sess") == ["r0", "r1"]
+    assert _agno_public_run_ids(env.path, "other") == ["other-0"]
 
 
 def test_reconcile_marks_questionless_orphan_failed(restore_env):
@@ -509,6 +742,31 @@ def web_game(tmp_path, monkeypatch):
         game.session.close()
     except Exception:
         pass
+
+
+def test_start_chat_turn_second_turn_reads_agno_v3_runs(web_game):
+    """#1716：fresh Agno 3 首轮已落 run 后，生产 _start_chat_turn 第二轮须受理。
+
+    复现窗：首轮 LLM 建出 agno_runs 后，第二次发送在 _start_chat_turn 读 runs 长度；
+    旧缝直查 agno_sessions.runs 列 → OperationalError。本 tracer 走真实入口，
+    断言第二轮 create 成功且 agno_runs_before=既有 run 数。
+    """
+    game = web_game
+    minister = _active_minister(game.db, game.content)
+    sid = game._minister_agno_session_id(minister)
+    # 首轮完成后的 Agno 3 态：session + 1 COMPLETED run（无 sessions.runs 列）。
+    _seed_agno_v3_runs(game.db, sid, run_count=1)
+    assert game.db.agno_runs_length(sid) == 1
+
+    chat_turn_id, _snapshot = game._start_chat_turn(minister)
+    row = game.db.conn.execute(
+        "SELECT agno_session_id, agno_runs_before, status FROM chat_turns WHERE id=?",
+        (chat_turn_id,),
+    ).fetchone()
+    assert row is not None
+    assert row["agno_session_id"] == sid
+    assert int(row["agno_runs_before"]) == 1
+    assert row["status"] == "generating"
 
 
 def test_load_save_reconciles_interrupted_orphan(web_game):
