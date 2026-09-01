@@ -9765,9 +9765,9 @@ class GameDB:
     def _agno_logical_run_ids(self, session_id: str) -> List[str]:
         """Agno-merge ordered run_ids for one session (single count domain).
 
-        legacy order first; same run_id once (table wins); table-only rows
-        append in table order. Pure-blob entries without run_id stay positional
-        via synthetic keys only used inside this seam.
+        legacy order first; each run_id appears once (first legacy sighting wins
+        the slot; table supplies the authoritative copy of that id); table-only
+        rows append in table order. Entries without run_id are skipped (Agno).
         """
         table_ids = self._agno_table_run_ids(session_id)
         legacy_runs, _encoded = self._agno_legacy_runs_blob(session_id)
@@ -9775,29 +9775,26 @@ class GameDB:
         if not legacy_runs:
             return list(table_ids)
 
-        table_by_id = {rid: rid for rid in table_ids}
-        legacy_seen: Set[str] = set()
+        seen: Set[str] = set()
         merged: List[str] = []
-        positional_only = not table_ids
 
-        for index, legacy_run in enumerate(legacy_runs):
+        for legacy_run in legacy_runs:
             if not isinstance(legacy_run, dict):
-                if positional_only:
-                    merged.append(f"__legacy_pos_{index}")
                 continue
             rid = legacy_run.get("run_id")
             if rid is None:
-                if positional_only:
-                    merged.append(f"__legacy_pos_{index}")
                 continue
             rid_s = str(rid)
-            legacy_seen.add(rid_s)
-            # table version wins on conflict but run_id is the same key either way
-            merged.append(table_by_id.get(rid_s, rid_s))
+            if rid_s in seen:
+                continue
+            seen.add(rid_s)
+            merged.append(rid_s)
 
         for rid in table_ids:
-            if rid not in legacy_seen:
-                merged.append(rid)
+            if rid in seen:
+                continue
+            seen.add(rid)
+            merged.append(rid)
         return merged
 
     def _scrub_run_ids_from_session_legacy_blob(
@@ -9815,14 +9812,15 @@ class GameDB:
         runs, encoded_as_string = self._decode_agno_runs(row["runs"])
         if not runs:
             return
-        kept: List[Any] = []
-        for index, run in enumerate(runs):
-            if isinstance(run, dict) and run.get("run_id") is not None:
-                if str(run.get("run_id")) in drop_ids:
-                    continue
-            elif f"__legacy_pos_{index}" in drop_ids:
-                continue
-            kept.append(run)
+        kept = [
+            run
+            for run in runs
+            if not (
+                isinstance(run, dict)
+                and run.get("run_id") is not None
+                and str(run.get("run_id")) in drop_ids
+            )
+        ]
         if len(kept) == len(runs):
             return
         self.conn.execute(
@@ -9841,16 +9839,14 @@ class GameDB:
         if not session_id:
             return
         keep = max(0, int(keep_count))
-        logical_ids = self._agno_logical_run_ids(session_id)
-        drop_ids = logical_ids[keep:]
+        drop_ids = self._agno_logical_run_ids(session_id)[keep:]
         if not drop_ids:
             return
         drop_set = set(drop_ids)
-        real_drop_ids = [rid for rid in drop_ids if not rid.startswith("__legacy_pos_")]
-        if real_drop_ids and self._table_exists("agno_runs"):
+        if self._table_exists("agno_runs"):
             self.conn.executemany(
                 "DELETE FROM agno_runs WHERE session_id = ? AND run_id = ?",
-                [(session_id, rid) for rid in real_drop_ids],
+                [(session_id, rid) for rid in drop_ids],
             )
         self._scrub_run_ids_from_session_legacy_blob(session_id, drop_set)
 
