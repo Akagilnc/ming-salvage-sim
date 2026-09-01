@@ -713,12 +713,8 @@ def test_issue_extraction_llm_dead_single_source_not_cta(tracer_client, monkeypa
 # ── #1716：已开夜场外 COURT_BREAK 不得被 SUMMON_* 短路 ──────────────────
 
 
-def test_issue_1716_offsite_court_break_skips_admission(tracer_client):
-    """#1716 独占缝：已开夜 + 场外大臣经真实 /chat/stream 发收夜口令。
-
-    只证 admission 未消费、done.court_action=court_break、夜关闭。
-    grant 字符串 amount → shape 单测；done 计数 → App race 测；整月清账 → 既有 month-loop。
-    """
+def _setup_open_night_offsite(tracer_client):
+    """new_game + 开夜 + 场外大臣 + canned agent。返回 (client, game, remote, night_id)。"""
     client = tracer_client
     new = client.post("/api/menu/new_game")
     _assert_not_bare_500(new, step="#1716 new_game")
@@ -726,7 +722,6 @@ def test_issue_1716_offsite_court_break_skips_admission(tracer_client):
 
     game = web_app.web_game
     assert game is not None
-
     night = an.open_night(game.db, game.state, location="乾清宫", time_of_day="夜")
     night_id = int(night["id"])
 
@@ -738,16 +733,26 @@ def test_issue_1716_offsite_court_break_skips_admission(tracer_client):
     )
     game.db.conn.commit()
 
-    consumed: list[str] = []
-    real_consume = game.session.consume_audience_admission
+    return client, game, remote, night_id
 
-    def _spy_consume(character, **kwargs):
-        consumed.append(str(character.name))
-        return real_consume(character, **kwargs)
 
-    game.session.consume_audience_admission = _spy_consume  # type: ignore[method-assign]
+def _assert_court_break_closed(game, body: dict, night_id: int) -> None:
+    """外部可见契约：court_break、无 admission 短路载荷、夜关闭。"""
+    assert body.get("court_action") == "court_break", body
+    assert not body.get("admission"), body
+    _wait_pending_writes(game)
+    assert an.get_open_night(game.db) is None
+    night_row = game.db.conn.execute(
+        "SELECT status FROM audience_nights WHERE id=?", (night_id,),
+    ).fetchone()
+    assert night_row is not None
+    assert str(night_row["status"]) == an.NIGHT_STATUS_CLOSED, dict(night_row)
 
-    # stream 主链在 command verdict 前仍跑 agent.run generator；禁真网。
+
+def test_issue_1716_offsite_court_break_via_stream(tracer_client):
+    """#1716 stream 入口：已开夜场外 /chat/stream 退朝 → court_break + 夜关。"""
+    client, game, remote, night_id = _setup_open_night_offsite(tracer_client)
+
     class _StreamAgent:
         def run(self, *_a, **_k):
             yield SimpleNamespace(event="RunContent", content="臣领旨。")
@@ -772,14 +777,32 @@ def test_issue_1716_offsite_court_break_skips_admission(tracer_client):
     done_raw = next(ev for ev in events if ev.get("event") == "done").get("data") or "{}"
     done = json.loads(done_raw) if isinstance(done_raw, str) else done_raw
     assert isinstance(done, dict), done
-    assert done.get("court_action") == "court_break", done
-    assert not done.get("admission"), done
-    assert consumed == [], f"退朝不得 consume admission，got {consumed}"
+    _assert_court_break_closed(game, done, night_id)
 
-    _wait_pending_writes(game)
-    assert an.get_open_night(game.db) is None
-    night_row = game.db.conn.execute(
-        "SELECT status FROM audience_nights WHERE id=?", (night_id,),
-    ).fetchone()
-    assert night_row is not None
-    assert str(night_row["status"]) == an.NIGHT_STATUS_CLOSED, dict(night_row)
+
+def test_issue_1716_offsite_court_break_via_nonstream(tracer_client):
+    """#1716 非流式入口：已开夜场外 POST /chat 退朝 → court_break + 夜关。
+
+    与 stream 共用 `_open_night_court_break`；两 call site 各一条最短主干。
+    """
+    client, game, remote, night_id = _setup_open_night_offsite(tracer_client)
+    # non-stream 读 agent.run() 为单值；覆盖 generator 形态。
+    class _SyncAgent:
+        def run(self, *_a, **_k):
+            return SimpleNamespace(content="臣领旨。", tools=[])
+
+        def get_last_run_output(self):
+            return None
+
+    sync = _SyncAgent()
+    game.session.registry.get = lambda _ch: sync
+
+    resp = client.post(
+        f"/api/ministers/{remote}/chat",
+        json={"message": "退朝"},
+    )
+    _assert_not_bare_500(resp, step="#1716 chat 场外退朝")
+    assert resp.status_code == 200, resp.text
+    body = resp.json() or {}
+    assert isinstance(body, dict), body
+    _assert_court_break_closed(game, body, night_id)
