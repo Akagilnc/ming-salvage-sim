@@ -5289,11 +5289,6 @@ async def api_create_directive(request: DirectiveRequest) -> Dict[str, Any]:
     return {
         "directive": {"id": dv.id, "text": dv.text, "status": dv.status},
         "directives": [game.directive_payload(item) for item in game.directive_rows()],
-        # #1716：手工新增后权威 settle 投影同响应回传，禁只靠客户端旧 state。
-        "pending_count": game.session.pending_count(),
-        "pending_directive_count": _count_pending_directives(
-            game.db, int(game.state.turn),
-        ),
     }
 
 

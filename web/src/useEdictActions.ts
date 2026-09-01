@@ -30,11 +30,7 @@ export function useEdictActions({
       setBusy("登记诏书草案…");
     }, 2500);
     try {
-      const data = await api<{
-        directives: Directive[];
-        pending_count?: number;
-        pending_directive_count?: number;
-      }>("/api/directives", {
+      const data = await api<{ directives: Directive[] }>("/api/directives", {
         method: "POST",
         body: JSON.stringify({
           text: directiveText.trim(),
@@ -42,13 +38,7 @@ export function useEdictActions({
       });
       setDirectiveText("");
       beginDurableMutation();  // 应用本变更响应前推进代次，作废在飞旧刷新（防旧 done 覆盖）
-      // #1716：手工新增响应带回 settle 投影字段；directives 非空即 hasSettleWork。
-      setState((current) => (current ? {
-        ...current,
-        directives: data.directives,
-        pending_count: data.pending_count ?? current.pending_count,
-        pending_directive_count: data.pending_directive_count ?? current.pending_directive_count,
-      } : current));
+      setState((current) => (current ? { ...current, directives: data.directives } : current));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
