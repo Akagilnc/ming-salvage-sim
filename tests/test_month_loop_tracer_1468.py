@@ -747,11 +747,6 @@ def _setup_open_night_participant(tracer_client, *, kind: str):
     return client, game, participant, night_id
 
 
-def _setup_open_night_offsite(tracer_client):
-    """兼容别名：场外正式人物开夜。"""
-    return _setup_open_night_participant(tracer_client, kind="offsite")
-
-
 def _assert_court_break_closed(game, body: dict, night_id: int, *, remote: str) -> None:
     """外部可见契约：court_break、夜关闭、参与者无殿上 presence/entrance 账。"""
     assert body.get("court_action") == "court_break", body
@@ -829,7 +824,9 @@ def test_issue_1716_offsite_court_break_via_nonstream(tracer_client):
 
     与 stream 共用 `_open_night_court_break`；两 call site 各一条最短主干。
     """
-    client, game, remote, night_id = _setup_open_night_offsite(tracer_client)
+    client, game, remote, night_id = _setup_open_night_participant(
+        tracer_client, kind="offsite",
+    )
     # non-stream 读 agent.run() 为单值；覆盖 generator 形态。
     class _SyncAgent:
         def run(self, *_a, **_k):
