@@ -99,7 +99,7 @@ def test_oneshot_treasury_relief_lands_economy_move_only_after_verdict(game):
     inner_before = int(state.metrics["内库"])
 
     ctx = _stage_grant(
-        db, state.turn, action="赈灾", amount=30, account="国库",
+        db, state.turn, action="赈灾", amount="30", account="国库",
         target_id="shaanxi",
         message="调银三十万两赈灾。",
         reply="臣请户部发帑三十万两赈陕西灾民，请陛下定夺准驳。",
@@ -145,7 +145,7 @@ def test_inner_treasury_grant_lands_immediately_at_close_night(game):
     inner_before = int(state.metrics["内库"])
 
     ctx = _stage_grant(
-        db, state.turn, action="发内帑", amount=8, name=target.name,
+        db, state.turn, action="发内帑", amount="8", name=target.name,
         message=f"发内帑八万两赐{target.name}。",
         reply=f"臣请内库发银八万两赏{target.name}。",
     )
@@ -724,7 +724,8 @@ def test_grant_target_field_carries_region_project_army_through_normalize(game):
             "动作类型": "恩赏·拨帑",
             "恩赏拨帑": action,
             target_zh: target,
-            "金额": 12,
+            # #1716：非协饷走 grant shape 整数字符串；协饷 amount 仍由 xiexang 接缝独掌。
+            "金额": 12 if action == "协饷" else "12",
             "账户": "国库",
         }
         if action == "协饷":
@@ -781,7 +782,7 @@ def test_target_candidate_survives_classifier_normalize_to_materialize(game):
         "恩赏拨帑": "赏赉",
         "姓名": target.name,
         target_zh: target.name,
-        "金额": 5,
+        "金额": "5",
         "账户": "国库",
         "拨付节奏": "每月",
         candidate_zh: str(first_id),
