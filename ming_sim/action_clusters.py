@@ -434,28 +434,9 @@ def normalize_one_candidate(obj: Mapping[str, Any], *, soft: bool) -> Dict[str, 
         raw = _field_raw(obj, spec)
         if raw is None:
             raw = spec.default
-        # #658：可选正整数（as_int + default None）缺省保持 None，禁 generic clamp 成 lo。
-        # 有值时仍须收成 int：classifier/LLM 常给整数字符串；bool/float 原样留给 shape 拒。
-        # #1716：amount 与 backing_dossier_id 等同缝——字符串 "8" 不得直达 grant shape 再被拒。
+        # #658：可选正整数 id（as_int + default None）禁 generic clamp；raw 直达严格写边界
         if spec.as_int and spec.default is None:
-            raw_val = _field_raw(obj, spec)
-            if raw_val is None:
-                out[name] = None
-            elif isinstance(raw_val, bool) or isinstance(raw_val, float):
-                out[name] = raw_val
-            elif isinstance(raw_val, int):
-                out[name] = raw_val
-            elif isinstance(raw_val, str):
-                text = raw_val.strip()
-                if not text:
-                    out[name] = None
-                else:
-                    try:
-                        out[name] = int(text, 10)
-                    except ValueError:
-                        out[name] = raw_val
-            else:
-                out[name] = raw_val
+            out[name] = _field_raw(obj, spec)
             continue
         if spec.as_int:
             out[name] = _as_int(raw, lo=int(spec.int_lo), hi=int(spec.int_hi))

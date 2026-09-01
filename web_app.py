@@ -625,6 +625,18 @@ def _audience_prompt_for_web_chat(session: Any, text: str, character: Character,
     return prompt_builder(text, character, chat_turn_id=chat_turn_id)
 
 
+def _count_pending_directives(
+    db: Any,
+    turn: int,
+    pending_actions: Optional[List[Dict[str, Any]]] = None,
+) -> int:
+    """对话式拟旨暂存数（pending_actions kind=directive）唯一计数缝。"""
+    rows = pending_actions
+    if rows is None:
+        rows = db.list_pending_actions(int(turn))
+    return sum(1 for a in rows if a["kind"] == "directive")
+
+
 class WebGame:
     """Web 端会话包装：持一个 GameSession + 网页专属态（聊天历史、收藏）。"""
 
@@ -1176,6 +1188,14 @@ class WebGame:
             if int(row["id"]) in visible_ids
         ]
 
+    def pending_directive_count(
+        self, pending_actions: Optional[List[Dict[str, Any]]] = None,
+    ) -> int:
+        """对话式拟旨暂存数——委托模块唯一计数缝（state/chat/create 同口径）。"""
+        return _count_pending_directives(
+            self.db, int(self.state.turn), pending_actions,
+        )
+
     def map_nodes(self) -> List[Dict[str, Any]]:
         """地图节点投影。#1505：typed station_region 单归属；一军一挂；liaodong/dongjiang_area 同 id 合 theater+region。"""
         region_positions = {
@@ -1542,9 +1562,7 @@ class WebGame:
             ],
             "directives": directives,
             "pending_count": self.session.pending_count(),
-            "pending_directive_count": sum(
-                1 for a in pending_actions
-                if a["kind"] == "directive"),
+            "pending_directive_count": self.pending_directive_count(pending_actions),
             # #1376：staged 密令候选如实入投影计数（可见性）。
             # #414 默认准行口径不变：确认闸门/落库时序仍走收夜·退朝 commit，
             # 本字段不把候选升成 player-facing secret_orders 行，禁静默漂成恒 0。
@@ -1751,10 +1769,7 @@ class WebGame:
             "history": self.chat_projection(minister_name),
             "directives": [self.directive_payload(row) for row in self.directive_rows()],
             "pending_count": self.session.pending_count(),
-            "pending_directive_count": sum(
-                1 for a in self.db.list_pending_actions(int(self.state.turn))
-                if a["kind"] == "directive"
-            ),
+            "pending_directive_count": self.pending_directive_count(),
             "secret_orders": self.db.list_secret_orders(),
             "suggestions": self.suggestions_for(character),
             "can_undo_last_chat": self.can_undo_last_chat(minister_name),
@@ -1832,10 +1847,7 @@ class WebGame:
             "directives": [self.directive_payload(row) for row in self.directive_rows()],
             "pending_count": self.session.pending_count(),
             # #1716：done 载荷同步 pending_directive_count——onDone 直接落 UI，不单靠 refresh 竞态。
-            "pending_directive_count": sum(
-                1 for a in self.db.list_pending_actions(int(self.state.turn))
-                if a["kind"] == "directive"
-            ),
+            "pending_directive_count": self.pending_directive_count(),
             "suggestions": self.suggestions_for(character),
             "can_undo_last_chat": self.can_undo_last_chat(minister_name),
         }
@@ -1934,10 +1946,7 @@ class WebGame:
             "directive_confirmation_ambiguous": None,
             "directives": [self.directive_payload(row) for row in self.directive_rows()],
             "pending_count": self.session.pending_count(),
-            "pending_directive_count": sum(
-                1 for a in self.db.list_pending_actions(int(self.state.turn))
-                if a["kind"] == "directive"
-            ),
+            "pending_directive_count": self.pending_directive_count(),
             "suggestions": self.suggestions_for(character),
             "can_undo_last_chat": self.can_undo_last_chat(minister_name),
             # 机面字段：不渲染；前端 refresh 故事账/卷轴即可。
@@ -5282,9 +5291,8 @@ async def api_create_directive(request: DirectiveRequest) -> Dict[str, Any]:
         "directives": [game.directive_payload(item) for item in game.directive_rows()],
         # #1716：手工新增后权威 settle 投影同响应回传，禁只靠客户端旧 state。
         "pending_count": game.session.pending_count(),
-        "pending_directive_count": sum(
-            1 for a in game.db.list_pending_actions(int(game.state.turn))
-            if a["kind"] == "directive"
+        "pending_directive_count": _count_pending_directives(
+            game.db, int(game.state.turn),
         ),
     }
 

@@ -1326,8 +1326,8 @@ def require_grant_allocation_shape(
         return out
     if amount is None or amount == "":
         raise ValueError("grant 金钱缺正 amount")
-    # #1716：整数字符串是 classifier/LLM 运输常态（normalize 应收成 int）；bool/float 仍拒。
-    # #1620 原 accept_numeric_strings=False 把 "8" 一并拒掉，拟旨 grant 物化响亮中断、pending 零落。
+    # #1716：整数字符串是 classifier/LLM 运输常态（#658 normalize raw 直达本边界）；bool/float 仍拒。
+    # #1620 原 accept_numeric_strings=False 把 "8" 一并拒掉，拟旨 grant 物化中断、pending 零落。
     try:
         amt = strict_int(amount, accept_numeric_strings=True)
     except ValueError as exc:
