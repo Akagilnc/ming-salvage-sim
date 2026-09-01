@@ -604,7 +604,7 @@ export type ChatResponse = {
   suggestions: Suggestion[];
   directives: Directive[];
   pending_count?: number;
-  /** #1716：done/undo 载荷同步对话式拟旨暂存数，拟诏台 settle 不单靠 refresh 竞态。 */
+  /** #1716：chat done 载荷同步对话式拟旨暂存数，拟诏台 settle 不单靠 refresh 竞态。 */
   pending_directive_count?: number;
   can_undo_last_chat?: boolean;
   court_action?: string;
@@ -631,7 +631,6 @@ export type ChatUndoResponse = {
   suggestions: Suggestion[];
   directives: Directive[];
   pending_count: number;
-  pending_directive_count?: number;
   secret_orders: SecretOrder[];
   can_undo_last_chat: boolean;
   pending_action_failures?: PendingActionFailure[];

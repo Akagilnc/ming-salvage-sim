@@ -39,6 +39,30 @@ from ming_sim import audience_night as an
 from ming_sim.session_write_queue import _is_barrier_ticket, get_session_write_queue
 from tests.test_session_write_queue_1353 import wait_pending_writes as _wait_pending_writes
 
+# #1716 stream 主链：canned 流式大臣（event 名/终帧类名与 web_app 生产闸对齐）
+class _StreamRunContent:
+    event = "RunContent"
+
+    def __init__(self, content: str):
+        self.content = content
+
+
+class _StreamRunCompleted:
+    content = ""
+    tools: list = []
+
+
+class _StreamMinisterAgent:
+    def __init__(self, answer: str = "臣领旨。请从国库拨银八万两赈济陕西。"):
+        self.answer = answer
+
+    def run(self, *_a, **_k):
+        yield _StreamRunContent(self.answer)
+        yield _StreamRunCompleted()
+
+    def get_last_run_output(self):
+        return None
+
 
 # ── outermost LLM seams only ─────────────────────────────────────────────
 
@@ -723,3 +747,220 @@ def test_issue_extraction_llm_dead_single_source_not_cta(tracer_client, monkeypa
 
     elapsed = time.perf_counter() - t0
     assert elapsed <= 30.0, f"speed red line: dead-llm took {elapsed:.2f}s > 30s"
+
+
+# ── #1716：真实 /chat/stream 拟旨→scroll→场外退朝→issue 主链 ───────────────
+
+
+def _install_stream_minister(game, *, answer: str) -> None:
+    agent = _StreamMinisterAgent(answer=answer)
+    game.session.registry.get = lambda _ch: agent
+
+
+def _sse_events(resp_text: str) -> list[tuple[str, dict]]:
+    out: list[tuple[str, dict]] = []
+    for block in (resp_text or "").strip().split("\n\n"):
+        ev = ""
+        raw = ""
+        for line in block.splitlines():
+            if line.startswith("event:"):
+                ev = line[len("event:"):].strip()
+            elif line.startswith("data:"):
+                raw = line[len("data:"):].strip()
+        data: dict = {}
+        if raw:
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError:
+                parsed = {"message": raw}
+            if isinstance(parsed, dict):
+                data = parsed
+        if ev:
+            out.append((ev, data))
+    return out
+
+
+def test_issue_1716_stream_draft_scroll_offsite_break_issue(tracer_client, monkeypatch):
+    """#1716 最短真实主链：classifier 字符串 amount 的「拟旨如下」经 /chat/stream
+    → accepted/done/end + pending_directive_count=1 + chat_turn 完成 + scroll 可恢复
+    + DB pending(kind=directive) → 场外大臣 stream 退朝收夜 → issue/stream turn+1。
+
+    场外退朝覆盖 #1716 已开夜 COURT_BREAK 不得被 SUMMON_* 短路；不得平行夹具。
+    """
+    client = tracer_client
+    t0 = time.perf_counter()
+
+    new = client.post("/api/menu/new_game")
+    _assert_not_bare_500(new, step="#1716 new_game")
+    assert new.status_code == 200, new.text
+    state0 = (new.json() or {}).get("state") or {}
+    turn0 = _turn_of(state0)
+    assert turn0 >= 1
+    minister = _pick_active_minister(state0)
+
+    game = web_app.web_game
+    assert game is not None
+
+    # 场外大臣：已开夜后从该面板发「退朝」须走 COURT_BREAK，不得 SUMMON_* 短路。
+    remote = "洪承畴"
+    assert remote in game.content.characters, remote
+    game.db.conn.execute(
+        "UPDATE characters SET location=?, transit_to='' WHERE name=?",
+        ("shaanxi", remote),
+    )
+    game.db.conn.commit()
+
+    draft_msg = "拟旨如下：着户部从国库拨银八万两赈济陕西饥民。"
+    minister_reply = "臣领旨。请从国库拨银八万两赈济陕西。"
+    _install_stream_minister(game, answer=minister_reply)
+
+    # classifier 运输 amount="8"（整数字符串）——grant shape 唯一权威收成 int。
+    monkeypatch.setattr(
+        cli_backend,
+        "classify_cli_action_intent",
+        lambda *a, **k: [{
+            "kind": "grant_allocation",
+            "grant_action": "赈灾",
+            "amount": "8",
+            "account": "国库",
+            "target_id": "shaanxi",
+            "target_kind": "region",
+        }],
+    )
+    # 显式前缀 fallback 不得打真网；grant materialize 成功时本 stub 不触发。
+    monkeypatch.setattr(
+        cli_backend,
+        "resolve_minister_actions",
+        lambda *a, **k: {"decree_text": None, "secret_order": None},
+    )
+
+    stream = client.post(
+        f"/api/ministers/{minister}/chat/stream",
+        json={"message": draft_msg},
+    )
+    _assert_not_bare_500(stream, step="#1716 chat/stream 拟旨")
+    assert stream.status_code == 200, stream.text
+    assert stream.headers.get("content-type", "").startswith("text/event-stream"), stream.headers
+
+    events = _sse_events(stream.text)
+    types = [ev for ev, _ in events]
+    assert "error" not in types, f"stream error: {events!r}"
+    assert "accepted" in types, events
+    assert "done" in types, events
+    assert types[-1] == "end", types
+
+    # SSE done 的 data 即 chat payload 本体（api 层已剥 type/payload 壳）。
+    done_payload = next(data for ev, data in events if ev == "done")
+    assert int(done_payload.get("pending_directive_count") or 0) == 1, done_payload
+    chat_turn_id = int(done_payload.get("chat_turn_id") or 0)
+    assert chat_turn_id > 0, done_payload
+    night_id = int(done_payload.get("night_id") or 0)
+    assert night_id > 0, done_payload
+    answer = str(done_payload.get("answer") or "")
+    assert answer, done_payload
+
+    _wait_pending_writes(game)
+
+    # chat_turn 完成：active + user/minister message 均已落。
+    turn_row = game.db.conn.execute(
+        "SELECT status, user_message_id, minister_message_id FROM chat_turns WHERE id=?",
+        (chat_turn_id,),
+    ).fetchone()
+    assert turn_row is not None
+    assert str(turn_row["status"]) == "active", dict(turn_row)
+    assert int(turn_row["user_message_id"] or 0) > 0, dict(turn_row)
+    assert int(turn_row["minister_message_id"] or 0) > 0, dict(turn_row)
+
+    # 权威 history / scroll 可恢复 user+minister 回话。
+    hist = client.get(f"/api/ministers/{minister}/chat")
+    _assert_not_bare_500(hist, step="#1716 GET chat history")
+    assert hist.status_code == 200, hist.text
+    history = (hist.json() or {}).get("history") or []
+    hist_contents = [str(m.get("content") or "") for m in history if isinstance(m, dict)]
+    assert draft_msg in hist_contents, hist_contents
+    assert any(minister_reply in c or answer in c for c in hist_contents), hist_contents
+
+    scroll = client.get("/api/audience/scroll")
+    _assert_not_bare_500(scroll, step="#1716 GET audience/scroll")
+    assert scroll.status_code == 200, scroll.text
+    scroll_body = scroll.json() or {}
+    assert int(scroll_body.get("night_id") or 0) == night_id, scroll_body
+    scroll_contents = [
+        str(m.get("content") or "")
+        for m in (scroll_body.get("messages") or [])
+        if isinstance(m, dict)
+    ]
+    assert draft_msg in scroll_contents, scroll_contents
+    assert any(minister_reply in c or answer in c for c in scroll_contents), scroll_contents
+
+    # DB 同一 pending_actions(kind=directive) 耐久落账；amount 经 shape 收成 int。
+    pending_rows = [
+        p for p in game.db.list_pending_actions(int(game.state.turn))
+        if p["kind"] == "directive" and p["status"] == "pending"
+    ]
+    assert len(pending_rows) == 1, pending_rows
+    payload = json.loads(pending_rows[0]["payload_json"])
+    assert payload.get("dossier_action_type") == "grant_allocation", payload
+    assert payload.get("amount") == 8, payload
+
+    # 场外退朝：stream 主链覆盖；SUMMON_* 不得吞 COURT_BREAK。
+    consumed: list[str] = []
+    real_consume = game.session.consume_audience_admission
+
+    def _spy_consume(character, **kwargs):
+        consumed.append(str(character.name))
+        return real_consume(character, **kwargs)
+
+    game.session.consume_audience_admission = _spy_consume  # type: ignore[method-assign]
+    _install_stream_minister(game, answer="臣等恭送陛下。")
+
+    break_stream = client.post(
+        f"/api/ministers/{remote}/chat/stream",
+        json={"message": "退朝"},
+    )
+    _assert_not_bare_500(break_stream, step="#1716 chat/stream 场外退朝")
+    assert break_stream.status_code == 200, break_stream.text
+    break_events = _sse_events(break_stream.text)
+    break_types = [ev for ev, _ in break_events]
+    assert "error" not in break_types, break_events
+    assert "done" in break_types, break_events
+    assert break_types[-1] == "end", break_types
+    break_done = next(data for ev, data in break_events if ev == "done")
+    assert break_done.get("court_action") == "court_break", break_done
+    assert not break_done.get("admission"), break_done
+    assert consumed == [], f"退朝不得 consume admission，got {consumed}"
+
+    _wait_pending_writes(game)
+    open_after_break = an.get_open_night(game.db)
+    assert open_after_break is None, open_after_break
+    night_row = game.db.conn.execute(
+        "SELECT status FROM audience_nights WHERE id=?", (night_id,),
+    ).fetchone()
+    assert night_row is not None
+    assert str(night_row["status"]) == an.NIGHT_STATUS_CLOSED, dict(night_row)
+
+    # 真实 issue/stream：turn+1、pending 清零、夜保持 closed。
+    body = _post_issue_stream(
+        client, expected_turn=turn0, step="#1716 issue/stream",
+    )
+    if body.get("awaiting_decision"):
+        decisions = body.get("decisions") or []
+        assert decisions, body
+        _resolve_decisions_via_stream(
+            client, decisions, step="#1716 resolve_decisions",
+        )
+
+    _wait_pending_writes(game)
+    after = _get_state(client)
+    assert _turn_of(after) == turn0 + 1, after.get("turn")
+    pending_after = [
+        p for p in game.db.list_pending_actions(int(game.state.turn))
+        if p["kind"] == "directive" and p["status"] == "pending"
+    ]
+    # 过月后旧 turn 的 pending 已 commit/移交；当前 turn 不应残留未清 directive。
+    assert pending_after == [], pending_after
+    still_open = an.get_open_night(game.db)
+    assert still_open is None or str(still_open.get("status")) == an.NIGHT_STATUS_CLOSED, still_open
+
+    elapsed = time.perf_counter() - t0
+    assert elapsed <= 30.0, f"speed red line: #1716 stream chain took {elapsed:.2f}s > 30s"
