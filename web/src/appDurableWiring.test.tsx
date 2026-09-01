@@ -536,6 +536,93 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     expect(paths.some((path) => path === "POST /api/decree/advance_without_edict")).toBe(false);
   });
 
+  it("#1716 chat done 即时落 pending_directive_count，拟诏台不待 vacuum refresh", async () => {
+    // onDone 写 pending_directive_count 后会 fire refresh；本条挂起后续 GET，
+    // 证明 refresh 未回前 hasSettleWork 已真（外部可见：盖玺可点）。
+    let stateCall = 0;
+    let releaseRefresh!: () => void;
+    const refreshGate = new Promise<void>((r) => { releaseRefresh = r; });
+    const minister = {
+      name: "郭允厚", office: "户部尚书", office_type: "户部", faction: "",
+      style: "", status: "active", status_label: "在朝", summary: "", favorite: false, skills: [],
+    };
+    const vacuum = {
+      ...makeState(1, [], [minister]),
+      pending_directive_count: 0,
+      pending_secret_order_count: 0,
+      pending_non_directive_action_count: 0,
+      failed_secret_order_count: 0,
+    };
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = new URL(String(url), "http://t.local");
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) {
+        stateCall += 1;
+        if (stateCall === 1) return jsonResp(vacuum); // 挂载首拉
+        await refreshGate; // done 后 refresh 挂起——不得覆盖 done 投影
+        return jsonResp(vacuum);
+      }
+      if (u.pathname.endsWith("/api/audience/extraction/pending")) return jsonResp({ count: 0 });
+      if (u.pathname.endsWith("/api/audience/scroll")) return jsonResp({ night_id: 1, messages: [] });
+      if (/\/api\/ministers\/[^/]+\/chat$/.test(u.pathname)) {
+        return jsonResp({
+          minister, history: [], suggestions: [], campaign_id: "c1", night_id: 1, pending_turn_ids: [],
+        });
+      }
+      if (u.pathname.endsWith("/chat/stream")) {
+        return sseResp("done", {
+          answer: "臣领旨。",
+          history: [],
+          directives: [],
+          pending_count: 1,
+          pending_directive_count: 1,
+          suggestions: [],
+          can_undo_last_chat: true,
+          pending_action_failures: [],
+        });
+      }
+      if (u.pathname.endsWith("/api/history/turns")) return jsonResp({ turns: [] });
+      if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
+      return jsonResp({});
+    }));
+
+    const host = document.createElement("div"); document.body.appendChild(host);
+    await act(async () => { trackRoot(host).render(<App />); });
+    await tick();
+    await click(host.querySelector('[aria-label="朝堂·召见大臣"]'));
+    await tick();
+    await click(Array.from(host.querySelectorAll("button")).find((b) => b.textContent?.includes("郭允厚")));
+    await act(async () => { await vi.waitFor(() => expect(host.querySelector("textarea")).not.toBeNull()); });
+
+    const textarea = host.querySelector("textarea") as HTMLTextAreaElement;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+      setter?.call(textarea, "拟旨如下：着户部从国库拨银一万两赈济陕西饥民。");
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await click(findButton(host, "发送"));
+    await act(async () => {
+      await vi.waitFor(() => expect(host.textContent || "").not.toMatch(/大臣思索/));
+    });
+    expect(stateCall).toBeGreaterThanOrEqual(2); // done 后 refresh 已发出并挂起
+
+    await click(findButton(host, "退出召对"));
+    await tick();
+    await click(edictCommand(host) || findButton(host, "拟诏"));
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
+    });
+    const footer = host.querySelector<HTMLButtonElement>(".desk-footer button");
+    expect(footer).not.toBeNull();
+    expect(footer!.disabled).toBe(false);
+    expect((footer!.textContent || "")).toContain("盖玺");
+
+    releaseRefresh(); // 清理挂起；迟到 vacuum 不得作为本断言前提
+    await tick();
+  });
+
   it("成功密令的 done 与 end 分别重读权威夜卷轴，且不显示系统通知", async () => {
     let sentSecretOrder: Record<string, unknown> | null = null;
     let scrollCalls = 0;
