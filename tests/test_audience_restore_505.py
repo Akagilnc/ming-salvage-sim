@@ -435,21 +435,41 @@ def test_retry_rejected_in_settlement_phase(restore_env):
 # ── finding5：reconcile 截断在飞轮的 Agno runs 到本轮起点（retry 上下文不双倍）──
 
 
+def _seed_agno_v3_runs(db, session_id: str, run_count: int) -> None:
+    """Seed real Agno 3 schema (agno_sessions + agno_runs rows), not the v2 blob."""
+    db.conn.execute(
+        "CREATE TABLE IF NOT EXISTS agno_sessions ("
+        "session_id TEXT PRIMARY KEY, session_type TEXT NOT NULL, "
+        "created_at INTEGER NOT NULL, updated_at INTEGER)"
+    )
+    db.conn.execute(
+        "CREATE TABLE IF NOT EXISTS agno_runs ("
+        "run_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, "
+        "run_type TEXT NOT NULL, status TEXT, run_index INTEGER, "
+        "run_data TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER)"
+    )
+    db.conn.execute(
+        "INSERT OR IGNORE INTO agno_sessions "
+        "(session_id, session_type, created_at, updated_at) VALUES (?, 'agent', 0, 0)",
+        (session_id,),
+    )
+    for i in range(int(run_count)):
+        db.conn.execute(
+            "INSERT INTO agno_runs "
+            "(run_id, session_id, run_type, status, run_index, run_data, created_at) "
+            "VALUES (?, ?, 'agent', 'COMPLETED', ?, '{}', ?)",
+            (f"run-{session_id}-{i}", session_id, i, i + 1),
+        )
+    db.conn.commit()
+
+
 def test_reconcile_truncates_agno_runs_to_turn_start(restore_env):
     env = restore_env
     db, state, content = env.db, env.state, env.content
     minister = _active_minister(db, content)
     an.open_night(db, state, location="乾清宫", time_of_day="戌时")
-    # 本轮起点 agno_runs_before=1；崩溃时 runs 已长到 2（半途生成写入未随回话回滚）。
-    db.conn.execute(
-        "CREATE TABLE IF NOT EXISTS agno_sessions "
-        "(session_id TEXT PRIMARY KEY, runs TEXT, updated_at INTEGER)"
-    )
-    db.conn.execute(
-        "INSERT INTO agno_sessions (session_id, runs, updated_at) VALUES (?, ?, 0)",
-        ("sess", '[{"r": 1}, {"r": 2}]'),
-    )
-    db.conn.commit()
+    # 本轮起点 agno_runs_before=1；崩溃时 Agno 3 runs 已长到 2（半途生成写入未随回话回滚）。
+    _seed_agno_v3_runs(db, "sess", run_count=2)
     _nid, ct = attach_chat_turn_to_night(
         db, state, minister, agno_session_id="sess", agno_runs_before=1,
     )
@@ -458,11 +478,42 @@ def test_reconcile_truncates_agno_runs_to_turn_start(restore_env):
     assert db.agno_runs_length("sess") == 2
 
     db.reconcile_interrupted_chat_turns()
-    # 截回起点，只丢没落完那半句的 LLM 工作态——问话/账未删。
+    # 截回起点，只丢没落完那半句的 LLM 工作态——问话/账未删；本 session 只留 keep_count 之前。
     assert db.agno_runs_length("sess") == 1
+    kept = [
+        r["run_id"]
+        for r in db.conn.execute(
+            "SELECT run_id FROM agno_runs WHERE session_id=? "
+            "ORDER BY run_index ASC, created_at ASC, run_id ASC",
+            ("sess",),
+        ).fetchall()
+    ]
+    assert kept == ["run-sess-0"]
     assert db.conn.execute(
         "SELECT status FROM chat_turns WHERE id=?", (ct,)
     ).fetchone()["status"] == "interrupted"
+
+
+def test_legacy_agno_sessions_runs_blob_still_counts_and_truncates(restore_env):
+    """Old Agno 2 archives: sessions.runs blob path remains readable/writable."""
+    env = restore_env
+    db = env.db
+    # No agno_runs table → legacy branch. Drop if a prior test created it in-process.
+    db.conn.execute("DROP TABLE IF EXISTS agno_runs")
+    db.conn.execute("DROP TABLE IF EXISTS agno_sessions")
+    db.conn.execute(
+        "CREATE TABLE agno_sessions "
+        "(session_id TEXT PRIMARY KEY, runs TEXT, updated_at INTEGER)"
+    )
+    db.conn.execute(
+        "INSERT INTO agno_sessions (session_id, runs, updated_at) VALUES (?, ?, 0)",
+        ("legacy", '[{"r": 1}, {"r": 2}, {"r": 3}]'),
+    )
+    db.conn.commit()
+    assert db.agno_runs_length("legacy") == 3
+    db._truncate_agno_runs_in_tx("legacy", 1)
+    db.conn.commit()
+    assert db.agno_runs_length("legacy") == 1
 
 
 def test_reconcile_marks_questionless_orphan_failed(restore_env):
@@ -509,6 +560,31 @@ def web_game(tmp_path, monkeypatch):
         game.session.close()
     except Exception:
         pass
+
+
+def test_start_chat_turn_second_turn_reads_agno_v3_runs(web_game):
+    """#1716：fresh Agno 3 首轮已落 run 后，生产 _start_chat_turn 第二轮须受理。
+
+    复现窗：首轮 LLM 建出 agno_runs 后，第二次发送在 _start_chat_turn 读 runs 长度；
+    旧缝直查 agno_sessions.runs 列 → OperationalError。本 tracer 走真实入口，
+    断言第二轮 create 成功且 agno_runs_before=既有 run 数。
+    """
+    game = web_game
+    minister = _active_minister(game.db, game.content)
+    sid = game._minister_agno_session_id(minister)
+    # 首轮完成后的 Agno 3 态：session + 1 COMPLETED run（无 sessions.runs 列）。
+    _seed_agno_v3_runs(game.db, sid, run_count=1)
+    assert game.db.agno_runs_length(sid) == 1
+
+    chat_turn_id, _snapshot = game._start_chat_turn(minister)
+    row = game.db.conn.execute(
+        "SELECT agno_session_id, agno_runs_before, status FROM chat_turns WHERE id=?",
+        (chat_turn_id,),
+    ).fetchone()
+    assert row is not None
+    assert row["agno_session_id"] == sid
+    assert int(row["agno_runs_before"]) == 1
+    assert row["status"] == "generating"
 
 
 def test_load_save_reconciles_interrupted_orphan(web_game):
