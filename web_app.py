@@ -3384,7 +3384,9 @@ class WebGame:
                 decision = self.session.admit_audience(
                     self.session._character(minister_name),
                 )
-                if decision.reason:
+                # #1716：与 nonstream 同缝——court_break_open_night 不因 temporary
+                # admission reason 阻断；仍保留正式场外人物的地点分类 / offsite route。
+                if decision.reason and not court_break_open_night:
                     self._complete_pending_write(pending_ticket)
                     pending_ticket = None
                     yield {"type": "error", "message": decision.reason}
