@@ -1,0 +1,28 @@
+{
+  "campaign_id": null,
+  "turn": {
+    "year": 1628,
+    "period": 2,
+    "turn": 5,
+    "phase": "summoning",
+    "settlement_display": false,
+    "reign_period_label": "崇祯元年二月"
+  },
+  "国库": 271,
+  "内库": 439,
+  "metrics": {
+    "国库": 271,
+    "内库": 439,
+    "民心": 70,
+    "皇威": 1
+  },
+  "directives_n": 0,
+  "directives": [],
+  "pending_directive_count": 0,
+  "pending_non_directive_action_count": 0,
+  "pending_secret_order_count": 0,
+  "pending_decisions_n": 0,
+  "pending_titles": [],
+  "night_status": null,
+  "failed_secret_order_count": 0
+}

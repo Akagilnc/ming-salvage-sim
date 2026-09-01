@@ -1,0 +1,12 @@
+campaign_id: 432b362b8f66
+verified_via: GET /api/ministers/郭允厚/chat (and 毕自严/杨嗣昌/温体仁/洪承畴) after UI 宣+发送
+NOT from menu.current_campaign (ignored; other-lane)
+GET /api/game/state: no campaign_id key (same as w7)
+chat/decree SSE bodies deferred in spy (not used as id source)
+calendar_start: 1627-10 天启七年十月 turn=1
+calendar_end: 1628-02 崇祯元年二月 turn=5 phase=summoning  (STOP #1680-class empty desk)
+HEAD: ae2e6c3d2ba658d0c3a0ae338c0f695c19282528 (merge #1708 #1566-r2)
+server: http://127.0.0.1:8013 uvicorn PID 28567
+LLM: cli/Codex/gpt-5.6-luna/medium — not edited
+used_advance_without_edict / 退朝结束本月: NO
+time: 2026-09-01 09:23 JST
