@@ -243,21 +243,33 @@ def test_month_end_entry_owner_and_matrix_reject(monkeypatch, game, tmp_path):
     assert not str(monthly.get("assignee_name") or "").strip()
 
     # army+single 首抽 → 纠错轮 army+none 合法接受（共同纠错反馈有界重抽）
-    calls: list[str] = []
+    calls: list[int] = []
+    feedback_hits: list[BaseException] = []
+    real_feedback = rescript_mod.combination_correction_feedback
+
+    def _track_feedback(exc: BaseException) -> str:
+        feedback_hits.append(exc)
+        return real_feedback(exc)
 
     def _heal_once(_agent, prompt, tag=""):
-        del tag
-        calls.append(str(prompt))
+        del prompt, tag
+        calls.append(1)
         if len(calls) == 1:
             return json.dumps({"items": [_army_single_bad_item()]}, ensure_ascii=False)
-        assert "结构组合" in str(prompt) or "共同契约" in str(prompt)
         return json.dumps({"items": [_army_none_legal_item()]}, ensure_ascii=False)
 
+    monkeypatch.setattr(
+        rescript_mod, "combination_correction_feedback", _track_feedback,
+    )
     monkeypatch.setattr(rescript_mod, "run_agent_text", _heal_once)
     healed = rescript_mod.generate_rescript_draft(
         object(), _month_end_ctx(), 2,
     )
     assert len(calls) == 2
+    assert len(feedback_hits) == 1
+    assert isinstance(
+        feedback_hits[0], rescript_mod.StructuredDecreeCombinationError,
+    )
     assert healed is not None and len(healed) == 1
     grant = healed[0]["options"][0]
     assert grant["target_kind"] == "army"
@@ -278,9 +290,11 @@ def test_month_end_entry_owner_and_matrix_reject(monkeypatch, game, tmp_path):
         object(), _month_end_ctx(), 3,
     ) is None
     assert len(exhaust_calls) == rescript_mod.RESCRIPT_COMBO_CORRECTION_RETRIES + 1
-    note = tmp_path / "error_packs" / "rescript_draft_degraded" / "turn3.json"
-    assert note.is_file()
-    assert "army" in note.read_text(encoding="utf-8")
+    note_path = tmp_path / "error_packs" / "rescript_draft_degraded" / "turn3.json"
+    assert note_path.is_file()
+    note = json.loads(note_path.read_text(encoding="utf-8"))
+    assert note.get("turn") == 3
+    assert str(note.get("reason") or "").strip()
 
 
 def test_rescript_follow_draft_routes_hubu(game):
@@ -496,17 +510,27 @@ def test_layer_a_prompt_contract_is_typed_single_source_for_draft_and_revise(mon
     shared = _rescript_option_instructions()
     assert shared == [contract, structured_decree_prompt_contract()]
 
-    # target×locality 可接受面：typed 真源投影进共同 prompt（禁手抄第二份矩阵）
-    from ming_sim.execution_pressure import (
-        TARGET_KIND_LOCALITY_SCOPES,
-        project_target_locality_matrix_prompt,
-    )
+    # target×locality 可接受面：typed 真源 + renderer 调用投影函数（禁措辞锁）
+    import ming_sim.structured_decree as sd_mod
+    from ming_sim.execution_pressure import TARGET_KIND_LOCALITY_SCOPES
 
     assert TARGET_KIND_LOCALITY_SCOPES["army"] == frozenset({"none"})
     assert TARGET_KIND_LOCALITY_SCOPES["region"] == frozenset({"single"})
-    matrix_seg = project_target_locality_matrix_prompt()
-    assert matrix_seg
-    assert matrix_seg in structured_decree_prompt_contract()
+    assert TARGET_KIND_LOCALITY_SCOPES["character"] == frozenset({"none"})
+    assert TARGET_KIND_LOCALITY_SCOPES["office"] == frozenset({"none"})
+    assert "national" in TARGET_KIND_LOCALITY_SCOPES["policy"]
+    matrix_calls: list[int] = []
+    real_project = sd_mod.project_target_locality_matrix_prompt
+
+    def _project_spy() -> str:
+        matrix_calls.append(1)
+        return real_project()
+
+    monkeypatch.setattr(
+        sd_mod, "project_target_locality_matrix_prompt", _project_spy,
+    )
+    sd_mod.structured_decree_prompt_contract()
+    assert matrix_calls == [1]
 
     # 初拟/改票工厂真实组装 instructions：注入同一 renderer 返回值
     bind_content(GameContent.load())
