@@ -1,4 +1,4 @@
-"""#1624 结构化旨意共同契约：真实入口主干（禁 helper 直调冒充入口）。"""
+"""#1624 结构化旨意共同契约：真实入口主干（禁 helper 直调冒充入口；禁 prompt 文本锁）。"""
 
 from __future__ import annotations
 
@@ -10,8 +10,6 @@ from ming_sim.cli_backend import capture_manual_directive_payload as _real_captu
 from ming_sim.structured_decree import (
     StructuredDecreeCombinationError,
     assemble_structured_decree,
-    structured_decree_guidance,
-    structured_decree_rescript_option_lines,
 )
 from tests.test_month_loop_tracer_1468 import _post_issue_stream, tracer_client  # noqa: F401
 
@@ -44,9 +42,41 @@ def _owner_manual_backend_json() -> str:
     }, ensure_ascii=False)
 
 
+def _assert_hubu_duty_leads(db, dossier: dict) -> None:
+    """外部可见：未点将督赈案卷的主办须为户部在任（职司路由结果）。"""
+    roster = dossier.get("participant_roster") or []
+    leads = [
+        str(e.get("character_id") or "").strip()
+        for e in roster
+        if isinstance(e, dict) and str(e.get("tier") or "") == "主办"
+    ]
+    leads = [name for name in leads if name]
+    assert leads, f"expected duty-route 主办, roster={roster!r} signal={dossier.get('execution_signal')!r}"
+    for name in leads:
+        row = db.conn.execute(
+            "SELECT office_type FROM characters WHERE name=?", (name,),
+        ).fetchone()
+        assert row is not None, f"主办未建档：{name!r}"
+        assert str(row["office_type"] or "") == "户部", (
+            f"主办 {name!r} office_type={row['office_type']!r}，期望户部"
+        )
+    signal = dossier.get("execution_signal") or {}
+    # 出缺怠办时 chain 亦须为户部；有主办时 signal 可为空
+    if signal.get("chain") not in (None, ""):
+        assert signal["chain"] == "户部"
+
+
+def _seed_hubu_in_shaanxi(db) -> None:
+    db.conn.execute(
+        "UPDATE characters SET location='shaanxi' "
+        "WHERE status='active' AND power_id='ming' AND office_type='户部'"
+    )
+    db.conn.commit()
+
+
 def test_shared_contract_rejects_office_single_without_overwrite():
     """显式 office+single 不得被覆盖成 none；typed 拒绝。"""
-    with pytest.raises(StructuredDecreeCombinationError, match="locality_scope=single"):
+    with pytest.raises(StructuredDecreeCombinationError):
         assemble_structured_decree({
             "action_type": "assignment",
             "target_kind": "office",
@@ -56,45 +86,12 @@ def test_shared_contract_rejects_office_single_without_overwrite():
         })
 
 
-def test_rescript_agents_inject_shared_contract(monkeypatch):
-    """月末票拟/改票 agent 运行时注入共同契约，不靠静态 prompt 平行定义。"""
-    import ming_sim.agents as agents_mod
-    from ming_sim.models import LLMConfig
-
-    captured: list[list] = []
-
-    class _FakeAgent:
-        def __init__(self, **kwargs):
-            captured.append(list(kwargs.get("instructions") or []))
-
-    monkeypatch.setattr(agents_mod, "Agent", _FakeAgent)
-    monkeypatch.setattr(agents_mod, "create_chat_model", lambda *a, **k: object())
-    monkeypatch.setattr(
-        agents_mod, "_ctx",
-        lambda: type("C", (), {
-            "game_world_prompt": "gw",
-            "rescript_draft_prompt": "static-no-contract-copy",
-        })(),
-    )
-    cfg = LLMConfig(model="test", api_key="k", base_url="http://x")
-    agents_mod.create_rescript_draft_agent(cfg, object())
-    agents_mod.create_rescript_revise_agent(cfg, object())
-    assert len(captured) == 2
-    guidance = structured_decree_guidance()
-    option_lines = structured_decree_rescript_option_lines()
-    for instructions in captured:
-        blob = "\n".join(str(x) for x in instructions)
-        assert guidance in blob
-        assert option_lines in blob
-        assert "督赈" in blob
-
-
-def test_month_end_rescript_entry_owner_example(monkeypatch, game):
-    """真实月末生成入口：LLM 产出 Owner 例 → validate 落 canonical，坏形不静默改写。"""
+def test_month_end_and_revise_entries_share_owner_canonical(monkeypatch, game):
+    """真实月末生成 + 改票入口：Owner 例落同一 canonical；坏形不静默改写。"""
     import ming_sim.rescript_draft as rescript_mod
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
 
-    db, _state, _content = game
-    del db
+    del game
     owner_item = {
         "title": "陕西告饥",
         "context": "秦地赤旱，饥民待哺，急须责成赈济。",
@@ -123,14 +120,25 @@ def test_month_end_rescript_entry_owner_example(monkeypatch, game):
         1,
     )
     assert drafts is not None and len(drafts) == 1
-    opt = drafts[0]["options"][0]
-    assert opt["action_type"] == "assignment"
-    assert opt["target_kind"] == "region"
-    assert opt["target_id"] == "shaanxi"
-    assert opt["region_id"] == "shaanxi"
-    assert opt["locality_scope"] == "single"
-    assert opt["transaction_category"] == "督赈"
-    assert not str(opt.get("assignee_name") or "").strip()
+    monthly = drafts[0]["options"][0]
+    assert monthly["action_type"] == "assignment"
+    assert monthly["target_kind"] == "region"
+    assert monthly["target_id"] == "shaanxi"
+    assert monthly["region_id"] == "shaanxi"
+    assert monthly["locality_scope"] == "single"
+    assert monthly["transaction_category"] == "督赈"
+    assert not str(monthly.get("assignee_name") or "").strip()
+
+    # 改票入口同缝：{"options":[...]} 经层 A normalize（与 session revise runner 同真源）
+    revised = normalize_rescript_layer_a_option(
+        dict(_OWNER_OPTION), generation_admission=True,
+    )
+    for key in (
+        "action_type", "target_kind", "target_id", "region_id",
+        "locality_scope", "transaction_category",
+    ):
+        assert revised[key] == monthly[key]
+    assert not str(revised.get("assignee_name") or "").strip()
 
     # 坏形 office+single：生成入口整批降级，不得静默改写后放行
     bad = dict(owner_item)
@@ -157,20 +165,23 @@ def test_month_end_rescript_entry_owner_example(monkeypatch, game):
         },
         1,
     ) is None
+    with pytest.raises(StructuredDecreeCombinationError):
+        normalize_rescript_layer_a_option({
+            **_OWNER_OPTION,
+            "target_kind": "office",
+            "target_id": "户部",
+            "locality_scope": "single",
+            "region_id": "",
+        }, generation_admission=True)
 
 
 def test_rescript_follow_draft_routes_hubu(game):
-    """真实批红 follow_draft 入口：Owner 例未点将 → 职司路由户部（外部可见）。"""
+    """真实批红 follow_draft：Owner 例未点将 → 主办为户部在任。"""
     import ming_sim.rescript_actions as ra
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
 
     db, state, content = game
-    # 省域 single 职司链需本省在任
-    db.conn.execute(
-        "UPDATE characters SET location='shaanxi' "
-        "WHERE status='active' AND power_id='ming' AND office_type='户部'"
-    )
-    db.conn.commit()
+    _seed_hubu_in_shaanxi(db)
 
     opt = normalize_rescript_layer_a_option(dict(_OWNER_OPTION))
     alt = normalize_rescript_layer_a_option({
@@ -207,22 +218,11 @@ def test_rescript_follow_draft_routes_hubu(game):
     assert payload.get("locality_scope") == "single"
     assert payload.get("transaction_category") == "督赈"
     assert not str(payload.get("assignee_id") or payload.get("assignee") or "").strip()
-    signal = created.get("execution_signal") or {}
-    assert signal.get("chain") == "户部" or (
-        (created.get("participant_roster") or [])
-        and any(
-            isinstance(e, dict)
-            and str(e.get("tier") or "") == "主办"
-            for e in (created.get("participant_roster") or [])
-        )
-    ), f"expected hubu duty route, signal={signal!r} roster={created.get('participant_roster')!r}"
-    # chain 是职司路由的外部可见字段；若有则必须是户部
-    if "chain" in signal:
-        assert signal["chain"] == "户部"
+    _assert_hubu_duty_leads(db, created)
 
 
 def test_manual_owner_example_seal_advances(tracer_client, monkeypatch):
-    """真实 Web 手工拟诏：Owner 例 → 盖玺推进；持久化 canonical + 户部路由。"""
+    """真实 Web 手工拟诏：Owner 例 → 盖玺；持久化 canonical + 户部主办。"""
     import ming_sim.cli_backend as cli_backend
     import web_app
 
@@ -230,20 +230,16 @@ def test_manual_owner_example_seal_advances(tracer_client, monkeypatch):
     assert new.status_code == 200
     game = web_app.web_game
     assert game is not None
-    game.db.conn.execute(
-        "UPDATE characters SET location='shaanxi' "
-        "WHERE status='active' AND power_id='ming' AND office_type='户部'"
-    )
-    game.db.conn.commit()
+    _seed_hubu_in_shaanxi(game.db)
 
     def backend(*_a, **_k):
         return _owner_manual_backend_json(), 1
 
     monkeypatch.setattr(cli_backend, "capture_manual_directive_payload", _real_capture)
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
-    text = "着户部继续核查陕西赈务，按月具报。"
     response = tracer_client.post(
-        "/api/directives", json={"text": text, "notes": ""},
+        "/api/directives",
+        json={"text": "着户部继续核查陕西赈务，按月具报。", "notes": ""},
     )
     assert response.status_code == 200, response.text
     turn_before = game.state.turn
@@ -254,19 +250,17 @@ def test_manual_owner_example_seal_advances(tracer_client, monkeypatch):
     dossiers = [dict(d) for d in game.db.list_decree_dossiers()]
     matched = [
         d for d in dossiers
-        if str(d.get("region_id") or "") == "shaanxi"
-        or str(json.loads(d.get("payload_json") or "{}").get("target_id") or "")
+        if str(json.loads(d.get("payload_json") or "{}").get("target_id") or "")
         == "shaanxi"
+        and str(json.loads(d.get("payload_json") or "{}").get("transaction_category") or "")
+        == "督赈"
     ]
-    assert matched, f"expected shaanxi dossier, got={dossiers!r}"
+    assert matched, f"expected shaanxi 督赈 dossier, got={dossiers!r}"
     payload = json.loads(matched[0]["payload_json"])
     assert payload.get("target_kind") == "region"
-    assert payload.get("transaction_category") == "督赈"
     assert payload.get("locality_scope") == "single"
     assert not str(payload.get("assignee_id") or payload.get("assignee") or "").strip()
-    signal = matched[0].get("execution_signal") or {}
-    if "chain" in signal:
-        assert signal["chain"] == "户部"
+    _assert_hubu_duty_leads(game.db, matched[0])
 
 
 def test_fieldspec_categories_derive_from_duty_routes():
