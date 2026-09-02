@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Mapping, MutableMapping, Optional
 
-from ming_sim.decree_vocabulary import TARGET_KINDS
+from ming_sim.decree_vocabulary import NATIONAL_FANOUT_ACTION_TYPES, TARGET_KINDS
 from ming_sim.execution_pressure import (
     TargetLocalityMatrixError,
     assert_target_locality_matrix,
@@ -57,10 +57,12 @@ STRUCTURED_DECREE_FIELD_KEYS: tuple[str, ...] = (
     "assignee",
 )
 
-# 失败字段 → 同义运输键一并采纳（禁只改英键漏中文同源键）
+# 失败字段 → 同义/依赖键一并采纳（禁只改英键漏中文同源键；
+# target_kind 纠错必须同束带走身份 target_id/region_id，禁留旧身份）
 _FAILED_FIELD_EXPAND: Dict[str, tuple[str, ...]] = {
     "action_type": ("action_type", "dossier_action_type"),
     "dossier_action_type": ("action_type", "dossier_action_type"),
+    "target_kind": ("target_kind", "target_id", "region_id"),
     "assignee_name": ("assignee_name", "assignee_id", "assignee"),
     "assignee_id": ("assignee_name", "assignee_id", "assignee"),
     "assignee": ("assignee_name", "assignee_id", "assignee"),
@@ -111,17 +113,26 @@ def _transaction_categories() -> frozenset[str]:
     return duty_route_categories()
 
 
+def _national_scope_action_restriction() -> str:
+    """national 动作限制：唯一投影 NATIONAL_FANOUT_ACTION_TYPES（禁平行白名单）。"""
+    actions = "|".join(sorted(NATIONAL_FANOUT_ACTION_TYPES))
+    return f"national 仅 action_type∈{actions}"
+
+
 def structured_decree_prompt_contract() -> str:
     """三入口共用结构化旨意契约（唯一真源；禁入口平行复述）。
 
     运输键（中/英）均经 transport_keys_to_canonical 归一；本块只写闭集与语义一次。
+    national 动作限制由 NATIONAL_FANOUT_ACTION_TYPES 投影，不扩票拟七类 action。
     """
     cats = "|".join(sorted(_transaction_categories()))
     kinds = "|".join(sorted(TARGET_KINDS))
+    national_actions = _national_scope_action_restriction()
     return (
         "结构化旨意契约（共同真源；运输键经 transport_keys_to_canonical 归一）："
         f"target_kind/目标类型∈{kinds}；target_id/目标ID；"
         "locality_scope/施行范围∈national|single|none（中文全国|单省|无）；"
+        f"{national_actions}；"
         "region_id/地区ID——仅 target_kind=region 时填且与 target_id 同，非 region 必须空；"
         f"transaction_category/事务类别∈{cats}|——非空须在闭集；"
         "assignment 交办须填类别或点将；assignee_name/承办人仅点将填规范人名，"

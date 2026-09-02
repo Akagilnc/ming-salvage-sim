@@ -410,6 +410,153 @@ def test_layer_a_prompt_contract_is_typed_single_source_for_draft_and_revise(mon
     assert contract in captured.get("rescript-reviser", [])
 
 
+def test_combo_correction_target_kind_carries_identity_bundle(game, monkeypatch):
+    """target_kind 纠错同束采纳 target_id/region_id；名册/动作/类别/旨文冻结。
+
+    样本：office/户部+single → region/shaanxi+single（#1624 owner 归正路径）。
+    真实 extract_draft_intent_with_roster_heal；仅 mock backend。
+    """
+    import ming_sim.cli_backend as cb
+    from ming_sim.structured_decree import expand_combo_failed_fields
+
+    db, _state, content = game
+    first = "毕自严"
+    assert first in content.characters
+    second = next(
+        name for name, ch in content.characters.items()
+        if name != first
+        and getattr(ch, "office_type", "") not in ("后宫", "宗藩")
+        and db.resolve_power_id(ch) == "ming"
+        and db.get_character_status(name)[0] == "active"
+        and str(getattr(ch, "office", "") or "").strip()
+    )
+
+    # 展开表：target_kind 失败必须扩到身份依赖束（根因钉）
+    assert set(expand_combo_failed_fields({"target_kind", "locality_scope"})) == {
+        "target_kind", "target_id", "region_id", "locality_scope",
+    }
+    # 仅 locality 失败不扩身份（无关字段冻结）
+    assert set(expand_combo_failed_fields({"locality_scope"})) == {"locality_scope"}
+
+    def _office_bad() -> dict:
+        return {
+            "拟旨意图": "拟旨",
+            "动作类型": "assignment",
+            "目标类型": "office",
+            "目标ID": "户部",
+            "地区ID": "",
+            "施行范围": "单省",
+            "事务类别": "督赈",
+            "承办人": "",
+            "颁布方式": "普通",
+            "正文": f"着户部继续核查陕西赈务，{first}会同。",
+            "参与人": [{
+                "character_id": first, "tier": "主办", "role": "督赈",
+            }],
+        }
+
+    def _region_fixed_with_drift() -> dict:
+        # 纠错给出正确身份束，同时漂移动作/人物/类别/正文
+        return {
+            "拟旨意图": "拟旨",
+            "动作类型": "punishment",
+            "目标类型": "region",
+            "目标ID": "shaanxi",
+            "地区ID": "shaanxi",
+            "施行范围": "单省",
+            "事务类别": "",
+            "承办人": "",
+            "颁布方式": "普通",
+            "正文": f"着惩处{second}。",
+            "参与人": [{
+                "character_id": second, "tier": "主办", "role": "惩",
+            }],
+        }
+
+    n = {"c": 0}
+
+    def backend(prompt, *_a, tag="", **_k):
+        n["c"] += 1
+        if n["c"] == 1:
+            return (json.dumps(_office_bad(), ensure_ascii=False), 1)
+        return (json.dumps(_region_fixed_with_drift(), ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", backend)
+    result = cb.extract_draft_intent_with_roster_heal(
+        "着户部继续核查陕西赈务，按月具报。", "臣遵拟。",
+        db=db, content=content,
+    )
+    ids = [
+        str(i.get("character_id") or "")
+        for i in (result.get("participant_roster") or [])
+    ]
+    assert ids == [first], f"roster drifted to {ids!r}"
+    assert result.get("dossier_action_type") == "assignment"
+    assert result.get("transaction_category") == "督赈"
+    assert result.get("target_kind") == "region"
+    assert result.get("target_id") == "shaanxi"
+    assert result.get("region_id") == "shaanxi"
+    assert result.get("locality_scope") == "single"
+    assert result.get("draft_text") == "臣遵拟。"
+    assert n["c"] == 2
+    # DB-backed 共同闸：归正后地区身份可解析（禁 region+户部 漏网）
+    assemble_structured_decree(
+        {
+            "action_type": result.get("dossier_action_type"),
+            "target_kind": result.get("target_kind"),
+            "target_id": result.get("target_id"),
+            "region_id": result.get("region_id"),
+            "locality_scope": result.get("locality_scope"),
+            "transaction_category": result.get("transaction_category"),
+        },
+        conn=db.conn,
+        regions_content=content.regions,
+    )
+
+
+def test_shared_prompt_projects_national_action_authority():
+    """共享契约从 NATIONAL_FANOUT 投影 national 限制；票拟七类不扩、admission 拒必败组合。
+
+    禁盯措辞；断言 renderer 段 ∈ 契约、draft/revise 共用 instructions 同源，
+    以及 assignment+policy+national 在层 A 受理失败。
+    """
+    from ming_sim.agents import _rescript_option_instructions
+    from ming_sim.decree_vocabulary import (
+        NATIONAL_FANOUT_ACTION_TYPES,
+        RESCRIPT_ROUTABLE_ACTION_TYPES,
+    )
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+    from ming_sim.structured_decree import (
+        _national_scope_action_restriction,
+        structured_decree_prompt_contract,
+    )
+
+    # 权威：票拟七类与 national 白名单无交（不得借机扩张 RESCRIPT）
+    assert RESCRIPT_ROUTABLE_ACTION_TYPES.isdisjoint(NATIONAL_FANOUT_ACTION_TYPES)
+    assert NATIONAL_FANOUT_ACTION_TYPES == frozenset({"policy", "special_decree"})
+
+    seg = _national_scope_action_restriction()
+    assert seg  # 投影非空
+    # 投影内容由权威 frozenset 派生（排序拼接；改权威则段变）
+    for action in NATIONAL_FANOUT_ACTION_TYPES:
+        assert action in seg
+    contract = structured_decree_prompt_contract()
+    assert seg in contract
+    # draft/revise 共用 instructions 含同一投影（非第二份白名单）
+    shared = _rescript_option_instructions()
+    assert shared[-1] == contract
+    assert seg in shared[-1]
+
+    # 真实 admission：七类动作 + national 必败（层 A → 共同组合闸）
+    with pytest.raises(StructuredDecreeCombinationError):
+        normalize_rescript_layer_a_option({
+            "label": "全国督赈", "hint": "h", "action_type": "assignment",
+            "target_kind": "policy", "target_id": "x",
+            "locality_scope": "national", "region_id": "",
+            "assignee_name": "", "transaction_category": "督赈",
+        })
+
+
 def test_combo_correction_preserves_first_draw_roster(game, monkeypatch):
     """组合纠错：仅采纳失败字段；纠错轮改动作/目标/人物/类别不得漂移。
 
