@@ -1181,6 +1181,7 @@ def _657_subprocess_resolve(
                         (it.choice or {}).get("action") or ""
                     ) == "return_revise":
                         # 完整合法 Layer-A raw（六必填+三 PRESENT）；禁伪造 draft_capability
+                        # #1624：assignment 组合契约须 transaction_category 或点将主办
                         out[it.decision_key] = [
                             {"label": "新拟甲", "hint": "h1",
                              "action_type": "assignment", "target_kind": "region",
@@ -1190,7 +1191,7 @@ def _657_subprocess_resolve(
                             {"label": "新拟乙", "hint": "h2",
                              "action_type": "assignment", "target_kind": "region",
                              "target_id": "shaanxi", "locality_scope": "single",
-                             "region_id": "", "assignee_name": "",
+                             "region_id": "shaanxi", "assignee_name": "杨嗣昌",
                              "transaction_category": ""},
                         ]
                 return ra.PrewriteResults(revise_by_key=out)

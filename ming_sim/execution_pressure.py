@@ -41,7 +41,11 @@ BAND_FAR = "边远之途，全程约三月以上量级"
 
 
 def write_locality_scope_for_target_kind(target_kind: object) -> str:
-    """#654：每次完整写出 locality_scope；region→single，其余→none。"""
+    """缺省 locality 补全（仅输入未给 scope 时）。region→single，其余→none。
+
+    #1624：禁止用本函数覆盖 LLM/层 A 已给的 locality 来掩盖错误目标；
+    显式组合校验见 structured_decree.validate_structured_decree_combination。
+    """
     return "single" if str(target_kind or "").strip() == "region" else "none"
 
 

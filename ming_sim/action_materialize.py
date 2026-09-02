@@ -16,6 +16,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from ming_sim.decree_vocabulary import TARGET_KINDS
 from ming_sim.execution_pressure import write_locality_scope_for_target_kind
+from ming_sim.structured_decree import assemble_structured_decree
 
 from ming_sim.action_clusters import (
     ActionCluster,
@@ -609,11 +610,35 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
             semantic_payload["source_chat_turn_id"] = origin_pin
         if isinstance(draft_res.get("participant_roster"), list):
             semantic_payload["participant_roster"] = draft_res["participant_roster"]
-        # #1685：region 无取舍，入卷前 assembly 强制 single（复用 #654 helper）。
-        if str(semantic_payload.get("target_kind") or "").strip() == "region":
-            semantic_payload["locality_scope"] = write_locality_scope_for_target_kind(
-                "region",
+        # #1624：召对拟旨走共同契约组装（不按 target_kind 覆盖已给 locality）
+        if semantic_payload.get("target_kind") not in (None, ""):
+            assembled = assemble_structured_decree(
+                semantic_payload,
+                conn=getattr(session.db, "conn", None),
+                regions_content=getattr(
+                    getattr(session, "content", None), "regions", None,
+                ),
+                validate=True,
             )
+            semantic_payload["target_kind"] = assembled["target_kind"]
+            semantic_payload["target_id"] = assembled["target_id"]
+            semantic_payload["locality_scope"] = assembled["locality_scope"]
+            if assembled.get("region_id") not in (None, ""):
+                semantic_payload["region_id"] = assembled["region_id"]
+            if assembled.get("transaction_category") not in (None, ""):
+                semantic_payload["transaction_category"] = assembled[
+                    "transaction_category"
+                ]
+            if assembled.get("dossier_action_type") not in (None, ""):
+                semantic_payload["dossier_action_type"] = assembled[
+                    "dossier_action_type"
+                ]
+            if (
+                str(semantic_payload.get("dossier_action_type") or "") == "assignment"
+                and semantic_payload.get("transaction_category")
+                and not assembled.get("assignee_name")
+            ):
+                semantic_payload.pop("assignee", None)
         # #658：纯强推不得 setdefault 普通 triad，否则混载触发互斥拒收 / 造第二案卷
         from ming_sim.db import classify_directive_structured_kind
         if not is_existing_update and classify_directive_structured_kind(

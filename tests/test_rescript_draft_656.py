@@ -1492,13 +1492,18 @@ def _army_pay_grant_option(**extra) -> dict:
 
 def test_1620_validate_army_pay_grant_kind_maps_to_xiexang():
     """真实票拟入口：合法 kind 映射；无 kind 直写协饷与 kind+action 并存整批拒。"""
+    # #1624：assignment 须 transaction_category 或点将主办；hold 支用点将满足组合契约
+    hold = _layer_a_opt(
+        label="暂缓", hint="候报",
+        transaction_category="", assignee_name="杨嗣昌",
+    )
     drafts = validate_rescript_draft_items(
         {"items": [{
             "title": "关宁欠饷",
             "context": "边军待哺。",
             "options": [
                 _army_pay_grant_option(),
-                _layer_a_opt(label="暂缓", hint="候报", transaction_category=""),
+                hold,
             ],
         }]},
         set(),
@@ -1509,7 +1514,6 @@ def test_1620_validate_army_pay_grant_kind_maps_to_xiexang():
     assert opt.get("purpose") == "补饷"
     assert "grant_kind" not in opt
 
-    hold = _layer_a_opt(label="暂缓", hint="候报", transaction_category="")
     for bad in (
         _army_pay_grant_option(grant_action="协饷"),  # kind+action 并存
         {k: v for k, v in _army_pay_grant_option(grant_action="协饷").items()

@@ -1851,6 +1851,8 @@ def test_manual_directive_capture_rejects_malformed_roster(
     response = {
         "拟旨意图": "拟旨", "动作类型": "assignment",
         "目标类型": "issue", "目标ID": "granary-audit",
+        # #1624：组合契约先过；本测专咬参与人，补事务类别以免挡在组合闸
+        "事务类别": "钱粮", "施行范围": "无",
         "参与人": bad_roster,
     }
     monkeypatch.setattr(
@@ -1913,6 +1915,8 @@ def test_manual_directive_capture_rejects_missing_empty_or_invalid_tier_without_
     response = {
         "拟旨意图": "拟旨", "动作类型": "assignment",
         "目标类型": "issue", "目标ID": "granary-audit",
+        # #1624：组合契约先过；本测专咬参与人档位
+        "事务类别": "钱粮", "施行范围": "无",
         "参与人": [roster_item],
     }
     monkeypatch.setattr(
