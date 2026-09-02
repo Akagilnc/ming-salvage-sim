@@ -959,10 +959,14 @@ def test_manual_directive_admission_real_http_tracer_1591(
         payload = json.loads(dossier["payload_json"])
         assert {
             key: payload.get(key)
-            for key in ("grant_action", "purpose", "amount", "account", "target_kind", "target_id")
+            for key in (
+                "grant_action", "purpose", "amount", "account",
+                "target_kind", "target_id", "execution_surface",
+            )
         } == {
             "grant_action": "协饷", "purpose": "补饷", "amount": 15,
             "account": "国库", "target_kind": "army", "target_id": "guanning",
+            "execution_surface": "immediate",
         }
         moves = [
             move for move in game.db.list_economy_moves_for_dossier(dossier["id"])
