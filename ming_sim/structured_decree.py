@@ -11,6 +11,7 @@ from typing import Any, Dict, Mapping, MutableMapping, Optional
 
 from ming_sim.decree_vocabulary import TARGET_KINDS
 from ming_sim.execution_pressure import (
+    TargetLocalityMatrixError,
     assert_target_locality_matrix,
     normalize_locality_scope,
     resolve_dossier_region_ids,
@@ -23,12 +24,23 @@ class StructuredDecreeCombinationError(ValueError):
     """结构化旨意组合校验失败（typed；纠错路径只捕本类，禁异常文本子串识别）。
 
     partial_result：抽取已解析但组合未过的首抽快照（含 participant_roster）；
-    heal 路径冻结 baseline，组合纠错只改结构字段、保留首抽名册。
+    failed_fields：本不变式可修字段边界（单条）；
+    draft_failures：批抽 idx → 可修字段边界；
+    heal 只从纠错轮采纳边界内字段，保留首抽名册与未失败结构。
     """
 
-    def __init__(self, message: object, *, partial_result: Optional[Dict[str, Any]] = None) -> None:
+    def __init__(
+        self,
+        message: object,
+        *,
+        partial_result: Optional[Dict[str, Any]] = None,
+        failed_fields: Optional[frozenset[str]] = None,
+        draft_failures: Optional[Dict[int, frozenset[str]]] = None,
+    ) -> None:
         super().__init__(message)
         self.partial_result = partial_result
+        self.failed_fields = frozenset(failed_fields or ())
+        self.draft_failures = dict(draft_failures or {})
 
 
 # 组合纠错可覆盖的结构字段（与 assemble/validate 核心键同集；名册/旨文不在此列）
@@ -44,6 +56,30 @@ STRUCTURED_DECREE_FIELD_KEYS: tuple[str, ...] = (
     "assignee_id",
     "assignee",
 )
+
+# 失败字段 → 同义运输键一并采纳（禁只改英键漏中文同源键）
+_FAILED_FIELD_EXPAND: Dict[str, tuple[str, ...]] = {
+    "action_type": ("action_type", "dossier_action_type"),
+    "dossier_action_type": ("action_type", "dossier_action_type"),
+    "assignee_name": ("assignee_name", "assignee_id", "assignee"),
+    "assignee_id": ("assignee_name", "assignee_id", "assignee"),
+    "assignee": ("assignee_name", "assignee_id", "assignee"),
+}
+
+
+def expand_combo_failed_fields(fields: object) -> tuple[str, ...]:
+    """把不变式 failed_fields 扩成可 merge 的 STRUCTURED_DECREE_FIELD_KEYS 子集。"""
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in fields or ():  # type: ignore[union-attr]
+        key = str(raw or "").strip()
+        if not key:
+            continue
+        for item in _FAILED_FIELD_EXPAND.get(key, (key,)):
+            if item in STRUCTURED_DECREE_FIELD_KEYS and item not in seen:
+                seen.add(item)
+                out.append(item)
+    return tuple(out)
 
 
 # 抽取/层 A 运输键 → canonical 英键
@@ -142,9 +178,15 @@ def validate_structured_decree_combination(
     target_kind = _as_str(payload.get("target_kind") or "").strip()
     target_id = _as_str(payload.get("target_id") or "").strip()
     if not target_kind:
-        raise StructuredDecreeCombinationError("structured decree 缺 target_kind")
+        raise StructuredDecreeCombinationError(
+            "structured decree 缺 target_kind",
+            failed_fields=frozenset({"target_kind"}),
+        )
     if not target_id:
-        raise StructuredDecreeCombinationError("structured decree 缺 target_id")
+        raise StructuredDecreeCombinationError(
+            "structured decree 缺 target_id",
+            failed_fields=frozenset({"target_id"}),
+        )
 
     try:
         scope = assert_target_locality_matrix(
@@ -152,24 +194,34 @@ def validate_structured_decree_combination(
             target_kind=target_kind,
             locality_scope=payload.get("locality_scope"),
         )
+    except TargetLocalityMatrixError as exc:
+        raise StructuredDecreeCombinationError(
+            str(exc), failed_fields=exc.failed_fields,
+        ) from exc
     except ValueError as exc:
-        raise StructuredDecreeCombinationError(str(exc)) from exc
+        raise StructuredDecreeCombinationError(
+            str(exc),
+            failed_fields=frozenset({"locality_scope", "target_kind", "action_type"}),
+        ) from exc
 
     region_id = _as_str(payload.get("region_id") or "").strip()
     if target_kind == "region":
         if region_id and region_id != target_id:
             raise StructuredDecreeCombinationError(
-                f"region 目标 region_id={region_id!r} 须与 target_id={target_id!r} 一致"
+                f"region 目标 region_id={region_id!r} 须与 target_id={target_id!r} 一致",
+                failed_fields=frozenset({"region_id", "target_id"}),
             )
     elif region_id:
         raise StructuredDecreeCombinationError(
-            f"target_kind={target_kind!r} 不得夹带 region_id={region_id!r}"
+            f"target_kind={target_kind!r} 不得夹带 region_id={region_id!r}",
+            failed_fields=frozenset({"region_id"}),
         )
 
     cat = _as_str(payload.get("transaction_category") or "").strip()
     if cat and cat not in _transaction_categories():
         raise StructuredDecreeCombinationError(
-            f"transaction_category 非法：{cat!r}"
+            f"transaction_category 非法：{cat!r}",
+            failed_fields=frozenset({"transaction_category"}),
         )
     if action == "assignment":
         assignee = _as_str(
@@ -180,7 +232,8 @@ def validate_structured_decree_combination(
         ).strip()
         if not cat and not assignee:
             raise StructuredDecreeCombinationError(
-                "assignment 缺 transaction_category 与主办"
+                "assignment 缺 transaction_category 与主办",
+                failed_fields=frozenset({"transaction_category", "assignee_name"}),
             )
 
     if conn is not None:
@@ -198,8 +251,15 @@ def validate_structured_decree_combination(
                 },
                 regions_content=regions_content,
             )
+        except TargetLocalityMatrixError as exc:
+            raise StructuredDecreeCombinationError(
+                str(exc), failed_fields=exc.failed_fields,
+            ) from exc
         except ValueError as exc:
-            raise StructuredDecreeCombinationError(str(exc)) from exc
+            raise StructuredDecreeCombinationError(
+                str(exc),
+                failed_fields=frozenset({"region_id", "target_id", "locality_scope"}),
+            ) from exc
 
 
 def assemble_structured_decree(

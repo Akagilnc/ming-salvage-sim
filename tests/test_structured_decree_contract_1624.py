@@ -265,10 +265,10 @@ def test_manual_owner_example_seal_advances(tracer_client, monkeypatch):
 
 
 def test_layer_a_prompt_contract_is_typed_single_source_for_draft_and_revise(monkeypatch):
-    """层 A required/present 为 typed 单源；初拟/改票共用 renderer 返回值。
+    """层 A required/present/action-conditional 为 typed 单源；初拟/改票共用。
 
-    键集断言落 layer_a_option_shape()；工厂注入断言同一 renderer 返回值身份
-    （非 prompt 措辞锁）。normalize 缺 required 覆盖见既有 layer_a 测。
+    键集与七类条件断言落 layer_a_option_shape()；工厂注入断言同一 renderer
+    返回值身份（非 prompt 措辞锁）。normalize 消费同一 shape 拒绝缺条件字段。
     """
     import ming_sim.agents as agents_mod
     from ming_sim.agents import (
@@ -278,11 +278,13 @@ def test_layer_a_prompt_contract_is_typed_single_source_for_draft_and_revise(mon
         create_rescript_revise_agent,
     )
     from ming_sim.content import GameContent
+    from ming_sim.decree_vocabulary import RESCRIPT_ROUTABLE_ACTION_TYPES
     from ming_sim.models import LLMConfig
     from ming_sim.rescript_draft import (
         _LAYER_A_PRESENT_KEYS,
         _LAYER_A_REQUIRED_KEYS,
         layer_a_option_shape,
+        normalize_rescript_layer_a_option,
         rescript_layer_a_prompt_contract,
     )
     from ming_sim.structured_decree import structured_decree_prompt_contract
@@ -299,6 +301,37 @@ def test_layer_a_prompt_contract_is_typed_single_source_for_draft_and_revise(mon
     )
     assert shape["grant_kind_army_pay"] == "army_pay"
     assert "draft_capability" in shape["server_only_keys"]  # type: ignore[operator]
+
+    conditional = shape["action_conditional"]
+    assert isinstance(conditional, dict)
+    assert frozenset(conditional) == RESCRIPT_ROUTABLE_ACTION_TYPES
+    appt = conditional["appointment"]
+    assert "appoint_action" in appt["required_nonempty"]  # type: ignore[index]
+    assert "任命" in appt["enum_in"]["appoint_action"]  # type: ignore[index]
+    assert appt["target_kind_in"] == ("character",)
+    mil = conditional["military_order"]
+    assert "assignee_name" in mil["required_nonempty"]  # type: ignore[index]
+    assert mil["target_kind_in"] == ("army",)
+    punish = conditional["punishment"]
+    assert "punish_action" in punish["required_nonempty"]  # type: ignore[index]
+    assert "罚俸" in punish["enum_in"]["punish_action"]  # type: ignore[index]
+
+    # normalize 消费同一条件契约：缺 appoint_action 须失败（复判探针反例）
+    with pytest.raises(ValueError, match="appoint_action"):
+        normalize_rescript_layer_a_option({
+            "label": "授官", "hint": "h", "action_type": "appointment",
+            "target_kind": "character", "target_id": "某官",
+            "locality_scope": "none", "region_id": "",
+            "assignee_name": "", "transaction_category": "",
+            "office": "兵部尚书",
+        })
+    with pytest.raises(ValueError, match="assignee_name"):
+        normalize_rescript_layer_a_option({
+            "label": "调驻", "hint": "h", "action_type": "military_order",
+            "target_kind": "army", "target_id": "xuanfu",
+            "locality_scope": "none", "region_id": "",
+            "assignee_name": "", "transaction_category": "",
+        })
 
     contract = rescript_layer_a_prompt_contract()
     # 共享 instructions 块 = 层 A + structured_decree 子契约（禁 agents 手抄）
@@ -327,9 +360,11 @@ def test_layer_a_prompt_contract_is_typed_single_source_for_draft_and_revise(mon
 
 
 def test_combo_correction_preserves_first_draw_roster(game, monkeypatch):
-    """组合纠错：首抽合法甲 + 坏 locality → 次轮合法乙 + 好 locality；返回甲+好 scope。
+    """组合纠错：仅采纳失败字段；纠错轮改动作/目标/人物/类别不得漂移。
 
-    真实 wrapper，仅 mock 外部 backend（Codex-3）。
+    首抽 assignment/shaanxi/督赈/甲 + 坏 locality；
+    次轮 punishment/character乙/空类别 + 好 locality。
+    真实 wrapper，仅 mock 外部 backend。
     """
     import ming_sim.cli_backend as cb
 
@@ -345,20 +380,38 @@ def test_combo_correction_preserves_first_draw_roster(game, monkeypatch):
         and str(getattr(ch, "office", "") or "").strip()
     )
 
-    def _payload(person: str, *, scope: str) -> dict:
+    def _first_payload() -> dict:
         return {
             "拟旨意图": "拟旨",
             "动作类型": "assignment",
             "目标类型": "region",
             "目标ID": "shaanxi",
             "地区ID": "shaanxi",
-            "施行范围": scope,
+            "施行范围": "无",
             "事务类别": "督赈",
             "承办人": "",
             "颁布方式": "普通",
-            "正文": f"着{person}核查陕西赈务。",
+            "正文": f"着{first}核查陕西赈务。",
             "参与人": [{
-                "character_id": person, "tier": "主办", "role": "督赈",
+                "character_id": first, "tier": "主办", "role": "督赈",
+            }],
+        }
+
+    def _drift_payload() -> dict:
+        # 纠错轮同时改动作/目标/人物/类别，仅 locality 为原失败可修字段
+        return {
+            "拟旨意图": "拟旨",
+            "动作类型": "punishment",
+            "目标类型": "character",
+            "目标ID": second,
+            "地区ID": "",
+            "施行范围": "单省",
+            "事务类别": "",
+            "承办人": "",
+            "颁布方式": "普通",
+            "正文": f"着惩处{second}。",
+            "参与人": [{
+                "character_id": second, "tier": "主办", "role": "惩",
             }],
         }
 
@@ -367,10 +420,8 @@ def test_combo_correction_preserves_first_draw_roster(game, monkeypatch):
     def backend(prompt, *_a, tag="", **_k):
         n["c"] += 1
         if n["c"] == 1:
-            # 甲 + region/none → 组合失败
-            return (json.dumps(_payload(first, scope="无"), ensure_ascii=False), 1)
-        # 乙 + region/single → 组合过，但名册已漂
-        return (json.dumps(_payload(second, scope="单省"), ensure_ascii=False), 1)
+            return (json.dumps(_first_payload(), ensure_ascii=False), 1)
+        return (json.dumps(_drift_payload(), ensure_ascii=False), 1)
 
     monkeypatch.setattr(cb, "_run_backend_for_config", backend)
     result = cb.extract_draft_intent_with_roster_heal(
@@ -383,14 +434,18 @@ def test_combo_correction_preserves_first_draw_roster(game, monkeypatch):
     ]
     assert ids == [first], f"roster drifted to {ids!r}, expected {[first]!r}"
     assert result.get("locality_scope") == "single"
+    assert result.get("dossier_action_type") == "assignment"
     assert result.get("target_kind") == "region"
     assert result.get("target_id") == "shaanxi"
     assert result.get("region_id") == "shaanxi"
+    assert result.get("transaction_category") == "督赈"
+    # 单条路径 draft_text=大臣回话；纠错轮正文漂移不得改写会话正文真源
+    assert result.get("draft_text") == "臣遵拟。"
     assert n["c"] == 2
 
 
 def test_combo_correction_preserves_batch_first_draw_roster(game, monkeypatch):
-    """批抽组合纠错：逐 draft 保留首抽 participant_roster。"""
+    """批抽组合纠错：逐 draft 只更新失败字段，保留首抽名册与未失败结构。"""
     import ming_sim.cli_backend as cb
 
     db, _state, content = game
@@ -404,27 +459,42 @@ def test_combo_correction_preserves_batch_first_draw_roster(game, monkeypatch):
         and str(getattr(ch, "office", "") or "").strip()
     )
 
-    def _batch(person: str, *, scope: str) -> dict:
+    def _batch(*, bad_scope: bool) -> dict:
+        scope0 = "无" if bad_scope else "单省"
+        draft0 = {
+            "正文": f"着{first if bad_scope else second}核查陕西赈务。",
+            "动作类型": "assignment" if bad_scope else "punishment",
+            "目标类型": "region" if bad_scope else "character",
+            "目标ID": "shaanxi" if bad_scope else second,
+            "地区ID": "shaanxi" if bad_scope else "",
+            "施行范围": scope0 if bad_scope else "无",
+            "事务类别": "督赈" if bad_scope else "",
+            "颁布方式": "普通",
+            "参与人": [{
+                "character_id": first if bad_scope else second,
+                "tier": "主办", "role": "督",
+            }],
+        }
+        if not bad_scope:
+            # 纠错轮：好 locality + 漂移动作/目标/人物；military 行也改 target
+            draft0["施行范围"] = "单省"
+            draft0["动作类型"] = "punishment"
+            draft0["目标类型"] = "character"
+            draft0["目标ID"] = second
+            draft0["地区ID"] = ""
+            draft0["事务类别"] = ""
+            draft0["正文"] = f"着惩处{second}。"
+            draft0["参与人"] = [{
+                "character_id": second, "tier": "主办", "role": "惩",
+            }]
         return {
             "成品旨稿": [
-                {
-                    "正文": f"着{person}核查陕西赈务。",
-                    "动作类型": "assignment",
-                    "目标类型": "region",
-                    "目标ID": "shaanxi",
-                    "地区ID": "shaanxi",
-                    "施行范围": scope,
-                    "事务类别": "督赈",
-                    "颁布方式": "普通",
-                    "参与人": [{
-                        "character_id": person, "tier": "主办", "role": "督",
-                    }],
-                },
+                draft0,
                 {
                     "正文": "着边军整饬器械。",
                     "动作类型": "military_order",
                     "目标类型": "army",
-                    "目标ID": "guanning",
+                    "目标ID": "guanning" if bad_scope else "xuanfu",
                     "施行范围": "无",
                     "颁布方式": "普通",
                     "参与人": [],
@@ -437,8 +507,8 @@ def test_combo_correction_preserves_batch_first_draw_roster(game, monkeypatch):
     def backend(prompt, *_a, tag="", **_k):
         n["c"] += 1
         if n["c"] == 1:
-            return (json.dumps(_batch(first, scope="无"), ensure_ascii=False), 1)
-        return (json.dumps(_batch(second, scope="单省"), ensure_ascii=False), 1)
+            return (json.dumps(_batch(bad_scope=True), ensure_ascii=False), 1)
+        return (json.dumps(_batch(bad_scope=False), ensure_ascii=False), 1)
 
     monkeypatch.setattr(cb, "_run_backend_for_config", backend)
     result = cb.extract_draft_intent_with_roster_heal(
@@ -453,5 +523,10 @@ def test_combo_correction_preserves_batch_first_draw_roster(game, monkeypatch):
     ]
     assert ids == [first]
     assert drafts[0].get("locality_scope") == "single"
+    assert drafts[0].get("dossier_action_type") == "assignment"
+    assert drafts[0].get("target_kind") == "region"
+    assert drafts[0].get("target_id") == "shaanxi"
+    assert drafts[0].get("transaction_category") == "督赈"
+    assert first in str(drafts[0].get("draft_text") or "")
     assert drafts[1].get("target_id") == "guanning"
     assert n["c"] == 2
