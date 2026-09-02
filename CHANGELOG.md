@@ -2,7 +2,7 @@
 
 本项目所有重要变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)。
 
-## [未发布]
+## [0.53.0.0] - 2026-09-02
 
 ### Fixed
 - **#1624 结构化旨意契约三入口同源**：召对拟旨、手工拟诏、月末票拟/改票共用 `structured_decree` 真源与单一 prompt 契约块；非 region 不得夹带 `region_id`，任何非空 `transaction_category` 须落在 `duty_routes` 闭集。显式错误组合响亮拒绝，不再按目标类型静默改写施行范围。未点将的交办（如督赈）经职司路由归户部。
