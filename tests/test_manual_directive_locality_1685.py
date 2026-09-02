@@ -14,9 +14,10 @@ def _extracted(scope, person="毕自严"):
         "动作类型": "policy",
         "目标类型": "region",
         "目标ID": "shaanxi",
+        "地区ID": "shaanxi",
         "颁布方式": "普通",
         "施行范围": scope,
-        "承办人": "毕自严",
+        "承办人": person,
         "参与人": [{"character_id": person, "tier": "主办"}],
     }
 
@@ -24,7 +25,7 @@ def _extracted(scope, person="毕自严"):
 def test_manual_directive_region_assembly_writes_single_and_advances(
     tracer_client, monkeypatch,
 ):
-    """#1685 主干：一次 LLM 抽 region+「无」→ assembly 写 single → 封存推进。"""
+    """#1624/#1685 主干：LLM 抽 region+单省 → 共同契约落 single → 封存推进。"""
     import ming_sim.cli_backend as cli_backend
     import web_app
 
@@ -36,7 +37,7 @@ def test_manual_directive_region_assembly_writes_single_and_advances(
 
     def backend(*_args, **_kwargs):
         calls.append(1)
-        return json.dumps(_extracted("无"), ensure_ascii=False), 1
+        return json.dumps(_extracted("单省"), ensure_ascii=False), 1
 
     monkeypatch.setattr(cli_backend, "capture_manual_directive_payload", _real_capture)
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)

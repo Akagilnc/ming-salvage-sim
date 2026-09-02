@@ -41,7 +41,11 @@ BAND_FAR = "边远之途，全程约三月以上量级"
 
 
 def write_locality_scope_for_target_kind(target_kind: object) -> str:
-    """#654：每次完整写出 locality_scope；region→single，其余→none。"""
+    """缺省 locality 补全（仅输入未给 scope 时）。region→single，其余→none。
+
+    #1624：禁止用本函数覆盖 LLM/层 A 已给的 locality 来掩盖错误目标；
+    显式组合校验见 structured_decree.validate_structured_decree_combination。
+    """
     return "single" if str(target_kind or "").strip() == "region" else "none"
 
 
@@ -158,6 +162,72 @@ def _region_row_to_locality(row) -> str:
     return ""
 
 
+class TargetLocalityMatrixError(ValueError):
+    """属地矩阵不变式失败；failed_fields 为可修字段边界（禁异常文本识别）。"""
+
+    def __init__(self, message: object, *, failed_fields: frozenset[str]) -> None:
+        super().__init__(message)
+        self.failed_fields = frozenset(failed_fields)
+
+
+def assert_target_locality_matrix(
+    *,
+    action_type: object,
+    target_kind: object,
+    locality_scope: object,
+) -> str:
+    """#654 / #1624：target_kind × locality_scope 8×3 矩阵唯一实现（无 DB）。
+
+    返回归一后的 locality_scope。resolve_dossier_region_ids 与 structured_decree
+    组合闸共引本函数——禁止平行第二份矩阵。
+    失败带 TargetLocalityMatrixError.failed_fields（逐不变式可修边界）。
+    """
+    kind = str(target_kind or "").strip()
+    action = str(action_type or "").strip()
+    scope = normalize_locality_scope(locality_scope)
+    if kind not in TARGET_KINDS:
+        raise TargetLocalityMatrixError(
+            f"target_kind 非法：{kind!r}",
+            failed_fields=frozenset({"target_kind"}),
+        )
+
+    # r4-B / owner A 8×3：R1 = region ∧ single；dossier 仅 none → 单行 ''
+    if kind == "region":
+        if scope != "single":
+            raise TargetLocalityMatrixError(
+                f"region 目标与 locality_scope={scope!r} 矛盾（须 single）",
+                failed_fields=frozenset({"locality_scope"}),
+            )
+        return scope
+
+    if kind == "dossier":
+        if scope != "none":
+            raise TargetLocalityMatrixError(
+                f"target_kind=dossier 与 locality_scope={scope!r} 矛盾（须 none）",
+                failed_fields=frozenset({"locality_scope"}),
+            )
+        return scope
+
+    if scope == "single":
+        raise TargetLocalityMatrixError(
+            f"locality_scope=single 只配 region 目标，得 target_kind={kind!r}",
+            failed_fields=frozenset({"locality_scope", "target_kind"}),
+        )
+
+    if scope == "national":
+        if kind in {"character", "office", "army", "dossier"}:
+            raise TargetLocalityMatrixError(
+                f"target_kind={kind!r} 不得 national fan-out",
+                failed_fields=frozenset({"locality_scope", "target_kind"}),
+            )
+        if action not in NATIONAL_FANOUT_ACTION_TYPES:
+            raise TargetLocalityMatrixError(
+                f"national fan-out 动作不在白名单：{action!r}",
+                failed_fields=frozenset({"locality_scope", "action_type"}),
+            )
+    return scope
+
+
 def resolve_dossier_region_ids(
     conn,
     *,
@@ -172,46 +242,22 @@ def resolve_dossier_region_ids(
     """
     action = str(action_type or "").strip()
     target_kind = str(payload.get("target_kind") or "").strip()
-    raw_scope = payload.get("locality_scope")
-    scope = normalize_locality_scope(raw_scope)
     target_id = str(payload.get("target_id") or "").strip()
+    scope = assert_target_locality_matrix(
+        action_type=action,
+        target_kind=target_kind,
+        locality_scope=payload.get("locality_scope"),
+    )
 
-    # 八值成员校验先于 8×3 矩阵分派（owner A：无成员校验前旁路）
-    if target_kind not in TARGET_KINDS:
-        raise ValueError(f"target_kind 非法：{target_kind!r}")
-
-    # r4-B / owner A 8×3：R1 = region ∧ single；dossier 仅 none → 单行 ''
     if target_kind == "region":
-        if scope != "single":
-            raise ValueError(
-                f"region 目标与 locality_scope={scope!r} 矛盾（须 single）"
-            )
         return [_resolve_single_region_id(
             conn, target_id, regions_content=regions_content,
         )]
 
     if target_kind == "dossier":
-        if scope != "none":
-            raise ValueError(
-                f"target_kind=dossier 与 locality_scope={scope!r} 矛盾（须 none）"
-            )
         return [""]
 
-    if scope == "single":
-        raise ValueError(
-            f"locality_scope=single 只配 region 目标，得 target_kind={target_kind!r}"
-        )
-
     if scope == "national":
-        if target_kind in {"character", "office", "army", "dossier"}:
-            raise ValueError(
-                f"target_kind={target_kind!r} 不得 national fan-out"
-            )
-        # policy / issue / account
-        if action not in NATIONAL_FANOUT_ACTION_TYPES:
-            raise ValueError(
-                f"national fan-out 动作不在白名单：{action!r}"
-            )
         provinces = ming_province_ids(conn)
         if not provinces:
             raise ValueError("全国 fan-out 省集合为空")

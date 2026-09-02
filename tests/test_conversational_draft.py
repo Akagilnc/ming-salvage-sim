@@ -2068,29 +2068,6 @@ def test_extract_draft_intent_yes_still_validates_action_type(monkeypatch):
         cb.extract_draft_intent("拟旨吧", "臣遵旨草诏。")
 
 
-def test_draft_guidance_includes_dossier_both_paths(monkeypatch):
-    """#654 B：单旨与多旨 prompt guidance 均含 dossier。"""
-    import ming_sim.cli_backend as cb
-
-    captured = []
-
-    def _capture(prompt, *a, **k):
-        captured.append(prompt)
-        if "成品旨稿" in prompt:
-            return ('{"成品旨稿":[]}', None)
-        return ('{"拟旨意图":"无"}', None)
-
-    monkeypatch.setattr(cb, "_run_backend_for_config", _capture)
-    cb.extract_draft_intent("拟旨吧", "臣拟。")
-    cb.extract_draft_intent("拟两道", "臣拟。", draft_count=2)
-    assert len(captured) == 2
-    guidance = cb._draft_target_kind_guidance()
-    assert "dossier" in guidance
-    for prompt in captured:
-        assert guidance in prompt
-        assert "dossier" in prompt
-
-
 def test_multi_draft_prompt_separates_military_order_and_entries(monkeypatch):
     """#654/#653：多旨示例 military_order 不焊 entries；entries 仅 pay_order 说明保留。"""
     import ming_sim.cli_backend as cb

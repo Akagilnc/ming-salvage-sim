@@ -19,17 +19,11 @@
   - `issue_id`（可选）：若该急务对应 `active_issues` 中某条局势，填其 `issue_id`；无对应局势则省略此字段。
   - `title`：≤12 字条目题旨。
   - `context`：40-80 字导语，以你的立场口吻向陛下陈明为何此事要紧、缓急何在。奏疏体措辞。
-  - `options`：2-3 个拟办意见。每项必含：
+  - `options`：2-3 个拟办意见。层 A 必填/须在/action_type/grant_kind 与目标·属地·承办字段：运行时注入的层 A 受理契约 + structured_decree 子契约为唯一真源，本 prompt **不平行定义键表**；须按注入指引填写。
     - `label`：一句可奉行的拟语（如「发帑金赈济陕西」「敕该抚查勘灾情」）
     - `hint`：方向性陈词（如此举所安者谁、所拂者谁）
-    - `action_type`：七类之一——`assignment` / `military_order` / `grant_allocation` / `appointment` / `punishment` / `authorization` / `pacification`
-    - `target_kind`：目标类（如 `region` / `character` / `army` / `issue`）
-    - `target_id`：目标标识（如区域 id、人名、军 id）。`target_kind=region` 时必须从 input 的 `region_targets` 选择 `id`，地名须按同项 `name` 对照，不得自造区域 id。`target_kind=army` 时必须从同批 `army_targets` 选择 `id`，中文军名按同项 `name` 对照，不得用省 id/地名冒充军 id。`military_order` 的 `target_kind` 必须为 `army`，`target_id` 只从同批 `army_targets` 选择；`assignee_name` 不得空串
-    - `locality_scope`：`national` / `single` / `none`
-    - 类相关键（按 action_type 填写；`assignee_name`/`region_id`/`transaction_category` **必须输出**，值可空串）：以及该类所需的 `grant_action` / `amount` / `station` / `office` / `appoint_action` / `punish_action` / `deadline_months` 等
-    - `grant_action`（`action_type=grant_allocation` 且**非**军饷时必填）：只能从 input 的 `grant_actions` 闭集取值，不得自造同义动作名
-    - 军饷补发/补饷：用 `grant_kind=army_pay`（取自 input `grant_kinds`；**不要**写 `grant_action`），并同时显式填 `purpose=补饷`、`account`（`国库` 或 `内库`）、正整数 `amount`、`target_kind=army`、`target_id` 取自同批 `army_targets.id`——缺任一字段即非法，服务端不补
-    - **不要**写 `draft_capability` 或 `verdict`——服务端派生
+    - `target_kind=region` 时 `target_id` 必须从 input 的 `region_targets` 选择 `id`，地名须按同项 `name` 对照，不得自造区域 id。`target_kind=army` 时必须从同批 `army_targets` 选择 `id`，中文军名按同项 `name` 对照，不得用省 id/地名冒充军 id。
+    - `grant_action`（非军饷 grant）只能从 input 的 `grant_actions` 闭集取值；军饷 `grant_kind` 取自 input `grant_kinds`，并显式填 `purpose`/`account`/`amount`/army `target_id`——服务端不补
   - 可**两拟陈两端**——拿不定或不愿独任时，并列两端各陈利弊，由圣断。
 - **通篇用定性文字**：描述轻重、安危、人心向背，一律以定性说法表达——如「需款甚巨」「兵力已疲」「民力已竭」，让陛下从措辞分量里读出缓急。
 

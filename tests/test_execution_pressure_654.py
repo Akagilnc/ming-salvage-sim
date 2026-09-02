@@ -63,15 +63,39 @@ def test_normalize_locality_scope_rejects_unknown():
         normalize_locality_scope("全省")
 
 
-def test_mapper_overwrites_llm_locality_scope_from_target_kind():
+def test_mapper_rejects_contradictory_locality_scope_without_overwrite():
+    """#1624：禁止按 target_kind 覆盖 locality 掩盖错误目标；显式矛盾 fail-loud。"""
     from ming_sim.rescript_actions import map_rescript_option_or_choice
 
+    with pytest.raises(ValueError, match="locality_scope=single"):
+        map_rescript_option_or_choice({
+            "action_type": "authorization",
+            "label": "赈抚",
+            "target_kind": "issue",
+            "target_id": "relief",
+            "locality_scope": "single",
+            "holder_id": "毕自严",
+            "privilege": "便宜行事",
+        })
+
+    with pytest.raises(ValueError, match="region 目标"):
+        map_rescript_option_or_choice({
+            "action_type": "authorization",
+            "label": "陕赈",
+            "target_kind": "region",
+            "target_id": "shaanxi",
+            "locality_scope": "none",
+            "holder_id": "毕自严",
+            "privilege": "便宜行事",
+        })
+
+    # 合法组合：issue+none / region+single 原样通过
     qa_shape = map_rescript_option_or_choice({
         "action_type": "authorization",
         "label": "赈抚",
         "target_kind": "issue",
         "target_id": "relief",
-        "locality_scope": "single",
+        "locality_scope": "none",
         "holder_id": "毕自严",
         "privilege": "便宜行事",
     })
@@ -87,11 +111,12 @@ def test_mapper_overwrites_llm_locality_scope_from_target_kind():
         "label": "陕赈",
         "target_kind": "region",
         "target_id": "shaanxi",
-        "locality_scope": "none",
+        "locality_scope": "single",
         "holder_id": "毕自严",
         "privilege": "便宜行事",
     })
     assert region_shape["locality_scope"] == "single"
+    assert region_shape["region_id"] == "shaanxi"
 
 
 # ── 距离档（r4-A / D1–D6）────────────────────────────────────────
@@ -1457,8 +1482,7 @@ def test_two_axis_tsv_escape_noop_on_clean_cells():
 
 
 def test_cli_target_kinds_accepts_canonical_eight():
-    """producer 与 durable 共八值（含 dossier）：合法通过、法外 fail-loud。
-    单旨/多旨 guidance 均由 TARGET_KINDS 派生，含 dossier、无七值残留。"""
+    """producer 与 durable 共八值（含 dossier）：合法通过、法外 fail-loud。"""
     from ming_sim import cli_backend as cb
     assert TARGET_KINDS is EP_TARGET_KINDS
     assert "dossier" in TARGET_KINDS
@@ -1470,13 +1494,6 @@ def test_cli_target_kinds_accepts_canonical_eight():
         assert cb._coerce_draft_target_kind(kind) == kind
     with pytest.raises(ValueError):
         cb._coerce_draft_target_kind("not_a_real_kind")
-    guidance = cb._draft_target_kind_guidance()
-    assert guidance == "|".join(sorted(TARGET_KINDS))
-    assert "dossier" in guidance
-    # 七值残留（缺 dossier）不得再出现
-    seven = "policy|character|office|army|region|issue|account"
-    assert seven != guidance
-    assert guidance.count("|") == 7  # 八值七分隔
 
 
 def test_revoke_decree_523_producer_durable_oracle_chain(env):

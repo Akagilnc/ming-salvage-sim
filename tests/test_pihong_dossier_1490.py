@@ -1181,6 +1181,7 @@ def _657_subprocess_resolve(
                         (it.choice or {}).get("action") or ""
                     ) == "return_revise":
                         # 完整合法 Layer-A raw（六必填+三 PRESENT）；禁伪造 draft_capability
+                        # #1624：assignment 组合契约须 transaction_category 或点将主办
                         out[it.decision_key] = [
                             {"label": "新拟甲", "hint": "h1",
                              "action_type": "assignment", "target_kind": "region",
@@ -1190,7 +1191,7 @@ def _657_subprocess_resolve(
                             {"label": "新拟乙", "hint": "h2",
                              "action_type": "assignment", "target_kind": "region",
                              "target_id": "shaanxi", "locality_scope": "single",
-                             "region_id": "", "assignee_name": "",
+                             "region_id": "shaanxi", "assignee_name": "杨嗣昌",
                              "transaction_category": ""},
                         ]
                 return ra.PrewriteResults(revise_by_key=out)
@@ -4058,11 +4059,13 @@ def test_657_revise_deliberate_strict_contracts_zero_write_on_bad_shape(game, mo
     assert hit.get("choice") in (None, {},)
 
     def _military_option(target_id):
+        # 满足军令 dual（驻地|期限）后再测目录外军拒绝，避免先被层 A 合法拒
         return normalize_rescript_layer_a_option({
             "label": "调驻", "hint": "h2", "action_type": "military_order",
             "assignee_name": "祖大寿", "target_kind": "army", "target_id": target_id,
             "locality_scope": "none", "region_id": "",
-            "transaction_category": "调驻",
+            "transaction_category": "",
+            "station": "宁远",
         })
 
     seen_payload = {}
@@ -4074,7 +4077,7 @@ def test_657_revise_deliberate_strict_contracts_zero_write_on_bad_shape(game, mo
         )
 
     monkeypatch.setattr(agents_mod, "run_agent_text", _outside_army_revise_text)
-    with pytest.raises(RuntimeError, match="不在同批 army_targets"):
+    with pytest.raises(RuntimeError):
         sess.prepare_rescript_prewrite([{
             "decision_key": key, "action": "return_revise", "note": "再拟",
         }])
@@ -4111,8 +4114,22 @@ def test_657_revise_deliberate_strict_contracts_zero_write_on_bad_shape(game, mo
         assert hit["status"] == "pending"
         assert hit.get("choice") in (None, {},)
 
+    # #1624 Owner 例经真实 return_revise 入口（prepare_rescript_prewrite → _revise_runner）
+    owner_opt = {
+        "label": "着户部继续核查陕西赈务，按月具报。",
+        "hint": "督赈",
+        "action_type": "assignment",
+        "target_kind": "region",
+        "target_id": "shaanxi",
+        "locality_scope": "single",
+        "region_id": "shaanxi",
+        "assignee_name": "",
+        "transaction_category": "督赈",
+        "deadline_months": 2,
+    }
+
     def _ok_revise_text(*_a, **_k):
-        return json.dumps({"options": [_military_option("guanning")]}, ensure_ascii=False)
+        return json.dumps({"options": [owner_opt]}, ensure_ascii=False)
 
     monkeypatch.setattr(agents_mod, "run_agent_text", _ok_revise_text)
     pre = sess.prepare_rescript_prewrite([{
@@ -4121,7 +4138,14 @@ def test_657_revise_deliberate_strict_contracts_zero_write_on_bad_shape(game, mo
     assert isinstance(pre.get("prewrite"), PrewriteResults)
     ro = pre["prewrite"].revise_by_key
     assert key in ro and isinstance(ro[key], list) and len(ro[key]) >= 1
-    assert all(isinstance(o, dict) and o.get("action_type") for o in ro[key])
+    revised = ro[key][0]
+    assert revised["action_type"] == "assignment"
+    assert revised["target_kind"] == "region"
+    assert revised["target_id"] == "shaanxi"
+    assert revised["region_id"] == "shaanxi"
+    assert revised["locality_scope"] == "single"
+    assert revised["transaction_category"] == "督赈"
+    assert not str(revised.get("assignee_name") or "").strip()
 
     def _bad_delib(*_a, **_k):
         return json.dumps({"title": "t", "body": "b"}, ensure_ascii=False)

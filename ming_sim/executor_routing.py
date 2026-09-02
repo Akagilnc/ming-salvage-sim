@@ -74,6 +74,18 @@ def duty_route_office_type(category: object) -> Optional[str]:
     return None
 
 
+def duty_route_categories() -> frozenset[str]:
+    """职司路由事务类别闭集唯一派生（offices.json duty_routes；禁手抄第二份）。"""
+    cats: set[str] = set()
+    for entry in _duty_table().get("routes", []) or []:
+        if not isinstance(entry, dict):
+            continue
+        token = str(entry.get("category") or "").strip()
+        if token:
+            cats.add(token)
+    return frozenset(cats)
+
+
 # ── 在任者查表＋缺位降档链 ───────────────────────────────────────────
 
 

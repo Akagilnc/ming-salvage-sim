@@ -51,7 +51,15 @@ from pydantic import BaseModel
 from ming_sim.models import CODEX_DEFAULT_MODEL, CLAUDE_DEFAULT_MODEL, LLMConfig
 from ming_sim.constants import DOSSIER_LINK_TYPES
 from ming_sim.decree_vocabulary import DIRECTIVE_ACTION_TYPES
-from ming_sim.execution_pressure import write_locality_scope_for_target_kind
+from ming_sim.structured_decree import (
+    StructuredDecreeCombinationError,
+    apply_assembled_to_payload,
+    assemble_structured_decree,
+    combination_correction_feedback,
+    expand_combo_failed_fields,
+    structured_decree_prompt_contract,
+    validate_structured_decree_combination,
+)
 from ming_sim.participant_roster import (
     BARE_INSTITUTION_PARTICIPANT_NAMES as _BARE_INSTITUTION_PARTICIPANT_NAMES,
     INSTITUTION_PARTICIPANT_TOKENS as _ASSIGNEE_HINT_INSTITUTION_TOKENS,
@@ -2008,6 +2016,132 @@ def _ground_relative_pay_order_deadlines(result: Dict[str, Any], db: Any) -> Dic
     return result
 
 
+def _finalize_extract_with_combo(
+    result: Dict[str, Any],
+    *,
+    needs_combo: bool = False,
+    draft_combo_flags: Optional[List[bool]] = None,
+) -> Dict[str, Any]:
+    """结果建成后做组合校验；失败携带 partial + typed 可修字段边界。
+
+    needs_combo / draft_combo_flags 为调用方局部布尔，不写入结果字典。
+    """
+    if draft_combo_flags is not None:
+        drafts = result.get("drafts") or []
+        # 一次收齐全部 draft 失败图；禁首败短接导致其余非法草稿在 heal 后漏检放行。
+        draft_failures: Dict[int, frozenset] = {}
+        first_exc: Optional[StructuredDecreeCombinationError] = None
+        for idx, flag in enumerate(draft_combo_flags):
+            if not flag or idx >= len(drafts):
+                continue
+            draft = drafts[idx]
+            if not isinstance(draft, dict):
+                continue
+            try:
+                validate_structured_decree_combination(draft)
+            except StructuredDecreeCombinationError as exc:
+                draft_failures[idx] = frozenset(exc.failed_fields)
+                if first_exc is None:
+                    first_exc = exc
+        if first_exc is not None:
+            raise StructuredDecreeCombinationError(
+                str(first_exc),
+                partial_result=dict(result),
+                failed_fields=first_exc.failed_fields,
+                draft_failures=draft_failures,
+            ) from first_exc
+        return result
+    if needs_combo:
+        try:
+            validate_structured_decree_combination(result)
+        except StructuredDecreeCombinationError as exc:
+            raise StructuredDecreeCombinationError(
+                str(exc),
+                partial_result=dict(result),
+                failed_fields=exc.failed_fields,
+            ) from exc
+    return result
+
+
+def _apply_failed_fields_from_correction(
+    target: Dict[str, Any],
+    corrected: Mapping[str, Any],
+    failed_fields: object,
+) -> None:
+    """只把 failed_fields 边界内结构键从纠错轮写入 target（就地）。"""
+    for key in expand_combo_failed_fields(failed_fields):
+        if key in corrected:
+            target[key] = corrected[key]
+        else:
+            target.pop(key, None)
+
+
+def _merge_combo_correction_preserving_roster(
+    baseline: Dict[str, Any],
+    corrected: Dict[str, Any],
+    *,
+    failed_fields: Optional[frozenset] = None,
+    draft_failures: Optional[Dict[int, frozenset]] = None,
+) -> Dict[str, Any]:
+    """组合纠错成功：仅采纳 typed 失败字段，逐 draft 保留首抽 participant_roster。
+
+    未失败的动作/目标/承办/类别与旨文、名册一律保留首抽；不另建第二 retry。
+    """
+    out = dict(baseline)
+    top_fields = frozenset(failed_fields or ())
+    if top_fields:
+        _apply_failed_fields_from_correction(out, corrected, top_fields)
+    if "participant_roster" in baseline:
+        out["participant_roster"] = baseline["participant_roster"]
+    base_drafts = baseline.get("drafts")
+    corr_drafts = corrected.get("drafts")
+    if isinstance(base_drafts, list):
+        merged: List[Any] = []
+        corr_list = corr_drafts if isinstance(corr_drafts, list) else []
+        failures = dict(draft_failures or {})
+        for idx, base_draft in enumerate(base_drafts):
+            if not isinstance(base_draft, dict):
+                merged.append(base_draft)
+                continue
+            item = dict(base_draft)
+            corr_item = (
+                corr_list[idx]
+                if idx < len(corr_list) and isinstance(corr_list[idx], dict)
+                else None
+            )
+            draft_fields = frozenset(failures.get(idx) or ())
+            if corr_item is not None and draft_fields:
+                _apply_failed_fields_from_correction(item, corr_item, draft_fields)
+            if "participant_roster" in base_draft:
+                item["participant_roster"] = base_draft["participant_roster"]
+            merged.append(item)
+        out["drafts"] = merged
+    return out
+
+
+def _revalidate_merged_combo_result(
+    result: Dict[str, Any],
+    *,
+    failed_fields: Optional[frozenset] = None,
+    draft_failures: Optional[Dict[int, frozenset]] = None,
+) -> None:
+    """合并失败字段后重走共同组合校验；仍败则 typed 上抛（全图失败一并带回）。
+
+    批 draft 路径复用 _finalize_extract_with_combo 的 collect-all 闸，
+    不平行再写一份 validate→收集→包装循环。
+    """
+    drafts = result.get("drafts")
+    if isinstance(drafts, list) and draft_failures:
+        flags = [False] * len(drafts)
+        for idx, fields in draft_failures.items():
+            if fields and 0 <= int(idx) < len(flags):
+                flags[int(idx)] = True
+        _finalize_extract_with_combo(result, draft_combo_flags=flags)
+        return
+    if failed_fields:
+        validate_structured_decree_combination(result)
+
+
 def extract_draft_intent_with_roster_heal(
     player_message: Optional[str],
     minister_reply: str,
@@ -2018,11 +2152,16 @@ def extract_draft_intent_with_roster_heal(
     heal_retries: int = DRAFT_PARTICIPANT_HEAL_RETRIES,
     **extract_kwargs: Any,
 ) -> Dict[str, Any]:
-    """extract → 名册校验；「参与人物不存在」时有界纠错重抽（P5 只走失败路）。
+    """extract → 共同契约组合校验 + 名册校验；失败有界纠错重抽（P5 只走失败路）。
 
+    #1624：组合校验失败只回喂结构契约，不改写自由文本旨文；不得各入口另造 heal。
+    组合纠错复用 baseline_result：只更新该次不变式 failed_fields 边界内字段，
+    逐 draft 保留首抽 participant_roster 与未失败结构，再走既有名册校验
+    （禁合法甲→合法乙、未失败动作/目标/类别静默漂移）。
     自愈只许抄写纠错（修完仍是皇帝所指之人）。真不在册 / 擅自除名 →
     raise UnknownParticipantEscalate（调用方戏内回禀，不落草案）。
-    db/content 缺一则只抽不校验（与旧 extract 同）。LLM 在纠错路上挂死 → 原样上抛。
+    db/content 缺一则只抽不校验名册（与旧 extract 同）；组合校验在 extract 内已做。
+    LLM 在纠错路上挂死 → 原样上抛。
     """
     retries = max(0, int(heal_retries))
     correction = ""
@@ -2030,19 +2169,91 @@ def extract_draft_intent_with_roster_heal(
     prior_ids_at_fail: List[str] = []
     # 首抽权威快照：首次校验失败后冻结，后续失败不得覆写 baseline/闸基线。
     baseline_result: Optional[Dict[str, Any]] = None
+    baseline_from_combo = False
+    baseline_failed_fields: frozenset = frozenset()
+    baseline_draft_failures: Dict[int, frozenset] = {}
     for attempt in range(retries + 1):
         # llm_config 关键字传：别族 fake_draft(msg, reply, **kw) 形仍合法，
         # 不得因 heal 多塞第 3 位置参把旧 mock 签名整族打爆。
-        result = extract_draft_intent(
-            player_message,
-            minister_reply,
-            llm_config=llm_config,
-            content=content,
-            pay_order_facts=_pay_order_grounding_facts(content, db),
-            correction_feedback=correction,
-            db=db,
-            **extract_kwargs,
-        )
+        try:
+            result = extract_draft_intent(
+                player_message,
+                minister_reply,
+                llm_config=llm_config,
+                content=content,
+                pay_order_facts=_pay_order_grounding_facts(content, db),
+                correction_feedback=correction,
+                db=db,
+                **extract_kwargs,
+            )
+        except StructuredDecreeCombinationError as exc:
+            # 共同契约组合失败：typed 有界重试；首败冻结 partial + 可修字段边界。
+            # 纠错轮整包仍可能因未失败字段漂移而组合失败——此时只取 partial 中
+            # 原失败边界字段合并回首抽，再共同校验（不把漂移整包当成功结果）。
+            partial = getattr(exc, "partial_result", None)
+            if baseline_result is None and isinstance(partial, dict):
+                baseline_result = dict(partial)
+                baseline_from_combo = True
+                baseline_failed_fields = frozenset(getattr(exc, "failed_fields", None) or ())
+                raw_draft_failures = getattr(exc, "draft_failures", None) or {}
+                baseline_draft_failures = {
+                    int(idx): frozenset(fields or ())
+                    for idx, fields in dict(raw_draft_failures).items()
+                }
+                if attempt >= retries:
+                    raise
+                correction = combination_correction_feedback(exc)
+                _log(f"拟旨结构组合纠错重试 {attempt + 1}/{retries}: {exc}")
+                continue
+            if (
+                baseline_from_combo
+                and baseline_result is not None
+                and isinstance(partial, dict)
+            ):
+                result = _merge_combo_correction_preserving_roster(
+                    baseline_result,
+                    partial,
+                    failed_fields=baseline_failed_fields,
+                    draft_failures=baseline_draft_failures,
+                )
+                try:
+                    _revalidate_merged_combo_result(
+                        result,
+                        failed_fields=baseline_failed_fields,
+                        draft_failures=baseline_draft_failures,
+                    )
+                except StructuredDecreeCombinationError as merged_exc:
+                    if attempt >= retries:
+                        raise merged_exc
+                    correction = combination_correction_feedback(merged_exc)
+                    _log(
+                        f"拟旨结构组合纠错重试 {attempt + 1}/{retries}: {merged_exc}"
+                    )
+                    continue
+                baseline_result = dict(result)
+                baseline_from_combo = False
+                # 合并已过共同闸：落入下方 roster 路径（勿再 continue）
+            else:
+                if attempt >= retries:
+                    raise
+                correction = combination_correction_feedback(exc)
+                _log(f"拟旨结构组合纠错重试 {attempt + 1}/{retries}: {exc}")
+                continue
+        # 组合纠错成功（纠错轮整包已过闸）：只采纳失败字段，再共同校验+roster 闸
+        if baseline_from_combo and baseline_result is not None:
+            result = _merge_combo_correction_preserving_roster(
+                baseline_result,
+                result,
+                failed_fields=baseline_failed_fields,
+                draft_failures=baseline_draft_failures,
+            )
+            _revalidate_merged_combo_result(
+                result,
+                failed_fields=baseline_failed_fields,
+                draft_failures=baseline_draft_failures,
+            )
+            baseline_result = dict(result)
+            baseline_from_combo = False
         if db is not None:
             result = _ground_relative_pay_order_deadlines(result, db)
         if db is None or content is None:
@@ -2067,9 +2278,13 @@ def extract_draft_intent_with_roster_heal(
             if not is_unknown_participant_ref_error(exc):
                 raise
             # 仅首败冻结基线；重试失败不得洗掉首抽合法参与人/未知名。
-            if baseline_result is None:
+            # 组合路径可能已冻 baseline：仍要记下 pending_unknown 供 backfill。
+            if not pending_unknown:
                 pending_unknown = _invalid_participant_names_from_error(exc)
-                prior_ids_at_fail = _person_ids_from_extract_result(result)
+                prior_ids_at_fail = _person_ids_from_extract_result(
+                    baseline_result if baseline_result is not None else result,
+                )
+            if baseline_result is None:
                 baseline_result = dict(result)
             if attempt >= retries:
                 raise UnknownParticipantEscalate(pending_unknown) from exc
@@ -2226,16 +2441,19 @@ def extract_draft_intent(
             f"拟了内容。请从完整语义中整理出恰好 {draft_count} 道彼此可区分、可独立暂存的成品旨稿。"
             "只输出一个 JSON 对象（无代码围栏、无多余字）：\n"
             '{"成品旨稿": ['
-            '{"正文":"第一道完整旨稿","动作类型":"policy",'
-            f'"目标类型":"{_draft_target_kind_guidance()}","目标ID":"...","目标案卷ID":null,'
-            '"颁布方式":"普通|中旨直发","施行范围":"无|全国|单省"},'
+            '{"正文":"第一道完整旨稿","动作类型":"assignment",'
+            '"目标类型":"region","目标ID":"shaanxi","地区ID":"shaanxi",'
+            '"施行范围":"单省","事务类别":"督赈","承办人":"","目标案卷ID":null,'
+            '"颁布方式":"普通|中旨直发"},'
             f'{{"正文":"……共 {draft_count} 道","动作类型":"military_order","目标类型":"army",'
             '"目标ID":"...","执行面":"immediate|in_transit",'
             '"承办人":"...","期限月数":3,"颁布方式":"普通|中旨直发","施行范围":"无",'
+            '"事务类别":"","地区ID":"",'
             '"参与人":[{"character_id":"规范名","tier":"主办|协办|知情","role":"本案职分","delegator_id":null}]}]}\n'
             'entries 仅 pay_order_override 非空，形如 '
             '[{"key":"due_priority_军饷@shaanxi","value":40,"duration_months":3}]；'
             'military_order 等非该动作不写或 []。\n'
+            + structured_decree_prompt_contract() + "\n"
             "拨帑动作逐道使用以下 ACTION_CLUSTERS 字段（其余动作留缺省）：\n"
             + grant_fields_prompt
             + "不得把同一段文字复制成多道；不得遗漏皇帝要求的任一道拟旨事项。\n\n"
@@ -2243,7 +2461,7 @@ def extract_draft_intent(
             + roster_facts
             + pay_order_facts
             + stalled_push_facts
-            + "御笔强推逐道只填目标案卷ID；普通非拨帑旨使用示例中的目标类型/目标ID/颁布方式，拨帑旨只用 ACTION_CLUSTERS 字段。两种形状不得并存。\n"
+            + "御笔强推逐道只填目标案卷ID；普通非拨帑旨用共同契约字段，拨帑旨只用 ACTION_CLUSTERS 字段。两种形状不得并存。\n"
             + "【皇帝】" + (player_message or "（无）") + "\n"
             + "【大臣完整回话】" + (minister_reply or "（无）") + "\n"
         )
@@ -2258,6 +2476,7 @@ def extract_draft_intent(
         obj = _loads_lenient(raw) or {}
         values = obj.get("成品旨稿") if isinstance(obj, dict) else None
         drafts = []
+        draft_combo_flags: List[bool] = []
         seen_texts = set()
         invalid_batch = not isinstance(values, list) or len(values) != draft_count
         for value in values if isinstance(values, list) else []:
@@ -2308,11 +2527,13 @@ def extract_draft_intent(
                     "target_candidate": "", "mode": mode,
                     "target_dossier_id": imperial_push_target_dossier_id(probe),
                 })
+                draft_combo_flags.append(False)
                 continue
             if action == "acting_appointment":
                 # #529 署理走既有 pending 人事候选路径应答（0064 任别），不经草案 acting_appointment。
                 # 保留原批次位置，避免后续按候选序号消费时错配 sibling。
                 drafts.append(None)
+                draft_combo_flags.append(False)
                 continue
             if action not in DRAFT_ACTION_TYPES:
                 invalid_batch = True
@@ -2322,7 +2543,7 @@ def extract_draft_intent(
                 for source, target in (
                     ("执行面", "execution_surface"), ("承办人", "assignee"),
                     ("期限月数", "deadline_months"), ("标题", "title"),
-                    ("事务类别", "transaction_category"),
+                    ("事务类别", "transaction_category"), ("地区ID", "region_id"),
                 )
             }
             if action == "grant_allocation":
@@ -2330,10 +2551,32 @@ def extract_draft_intent(
                     (key, item) for key, item in projected.items()
                     if key != "target_kind"
                 )
-            mechanical["locality_scope"] = _coerce_draft_locality_scope(value.get("施行范围"))
-            # grant 缺 target_kind 留给其 canonical admission 聚合报错；其它动作在此闭集校验。
-            if action != "grant_allocation":
-                target_kind = _coerce_draft_target_kind(target_kind)
+            # #1624：共同契约组装目标/属地/承办。
+            # grant 有完整 target 时同走 assembler（缺席→缺省 region→single；
+            # 显式 region+none fail-loud）；缺 target 留给 admission，
+            # 仅携带原始非空属地，绝不把缺席预先洗成显式 none。
+            # 组合校验挪到整批结果建成后：失败时 partial 仍带首抽 participant_roster。
+            needs_combo = action != "grant_allocation" or bool(target_kind and target_id)
+            if needs_combo:
+                assembled = assemble_structured_decree(
+                    {
+                        **value,
+                        **mechanical,
+                        "动作类型": action,
+                        "目标类型": target_kind,
+                        "目标ID": target_id,
+                    },
+                    validate=False,
+                )
+                apply_assembled_to_payload(mechanical, assembled)
+                target_kind = str(assembled["target_kind"])
+                target_id = str(assembled["target_id"])
+            else:
+                explicit_scope = _explicit_draft_locality_scope(
+                    value.get("施行范围") or projected.get("locality_scope")
+                )
+                if explicit_scope is not None:
+                    mechanical["locality_scope"] = explicit_scope
             # #653：pay_order_override 结构化载荷（entries）随草案整道转交，
             # 成案点/物化点共 prepare_pay_order_entries 同一验形。
             entries = value.get("entries")
@@ -2349,16 +2592,22 @@ def extract_draft_intent(
                 "dossier_action_type": action, "target_kind": target_kind,
                 "target_id": target_id, "target_candidate": "",
                 "mode": mode,
-                "participant_roster": value["参与人"] if "参与人" in value else [], **mechanical,
+                "participant_roster": value["参与人"] if "参与人" in value else [],
+                **mechanical,
             })
+            draft_combo_flags.append(needs_combo)
         if invalid_batch or not any(draft is not None for draft in drafts):
             drafts = []
-        return {
+            draft_combo_flags = []
+        batch_result = {
             "draft_action": "拟旨" if drafts else "无",
             "draft_text": "",
             "drafts": drafts,
             "target_candidate": "",
         }
+        return _finalize_extract_with_combo(
+            batch_result, draft_combo_flags=draft_combo_flags,
+        )
 
     _candidates = [c for c in (existing_candidates or []) if c]
     _by_id = {int(c["id"]): c for c in _candidates}
@@ -2387,9 +2636,13 @@ def extract_draft_intent(
         'due_haircut_bp_<科目>[@省][#province|#central]；haircut 值=万分数(0,10000]；非该动作留 []\n'
         + grant_fields_prompt
         + '  "执行面": "immediate|in_transit", // 仅拨帑：账内即时划转或在途执行\n'
+        '  "目标类型": "",\n'
+        '  "目标ID": "",\n'
+        '  "地区ID": "",\n'
+        '  "施行范围": "",\n'
+        '  "事务类别": "",\n'
         '  "承办人": "",\n'
         '  "参与人": [{"character_id":"规范名","tier":"主办|协办|知情","role":"本案职分","delegator_id":null}],\n'
-        '  "施行范围": "无|全国|单省", // 全国性政令填全国；明指某省填单省；京内/任免等无属地语义留无\n'
         '  "期限月数": null,           // 军令必填正整数；非军令留 null\n'
         '  "目标案卷ID": null' + (
             "," if (_candidates or _supplement_mode) else ""
@@ -2429,7 +2682,8 @@ def extract_draft_intent(
         + merge_schema_line
         + "}\n"
         "判定要点：皇帝明确让大臣拟旨/起草圣旨→拟旨；仅商议/问询/催办/评论不算。语义判断，别拘字面。\n"
-        f'非拨帑旨另输出“目标类型”({_draft_target_kind_guidance()})、“目标ID”及“颁布方式”(普通|中旨直发)；拨帑旨只用 ACTION_CLUSTERS 字段。\n'
+        + structured_decree_prompt_contract() + "\n"
+        '非拨帑旨填共同契约目标/属地/事务类别/承办字段及“颁布方式”(普通|中旨直发)；拨帑旨只用 ACTION_CLUSTERS 字段。\n'
         "御笔强推议而不决事项亦归拟旨，并填目标案卷ID。\n\n"
         + correction_block
         + roster_facts
@@ -2521,7 +2775,6 @@ def extract_draft_intent(
         "execution_surface": obj.get("执行面"),
         "assignee": obj.get("承办人"),
         "deadline_months": obj.get("期限月数"),
-        "locality_scope": _coerce_draft_locality_scope(obj.get("施行范围")),
         # #653：pay_order_override 结构化载荷随 capture 整道转交（禁旁路）。
         "entries": obj.get("entries"),
     }
@@ -2530,6 +2783,31 @@ def extract_draft_intent(
             (key, item) for key, item in _projected.items()
             if key != "target_kind"
         )
+    # #1624：共同契约组装；grant 完整 target 同走 assembler，缺席不洗 none。
+    # 组合校验延后到结果建成：失败 partial 仍带首抽 participant_roster。
+    needs_combo = (
+        dossier_action != "grant_allocation" or bool(target_kind and target_id_value)
+    )
+    if needs_combo:
+        assembled = assemble_structured_decree(
+            {
+                **obj,
+                **mechanical,
+                "动作类型": dossier_action,
+                "目标类型": target_kind,
+                "目标ID": target_id_value,
+            },
+            validate=False,
+        )
+        apply_assembled_to_payload(mechanical, assembled)
+        target_kind = str(assembled["target_kind"])
+        target_id_value = str(assembled["target_id"])
+    elif dossier_action == "grant_allocation":
+        explicit_scope = _explicit_draft_locality_scope(
+            obj.get("施行范围") or _projected.get("locality_scope")
+        )
+        if explicit_scope is not None:
+            mechanical["locality_scope"] = explicit_scope
     if mode is not None:
         mechanical["mode"] = mode
     merged = str(obj.get("合并草案") or "").strip()
@@ -2544,10 +2822,14 @@ def extract_draft_intent(
             draft_text = merged if merged else _existing_draft_text
         else:
             draft_text = (minister_reply or "").strip()
-        return {"draft_action": _action, "draft_text": draft_text, "target_candidate": "",
-                "dossier_action_type": dossier_action,
-                "target_kind": target_kind, "target_id": target_id_value,
-                "participant_roster": obj["参与人"] if "参与人" in obj else [], **mechanical}
+        single_result = {
+            "draft_action": _action, "draft_text": draft_text, "target_candidate": "",
+            "dossier_action_type": dossier_action,
+            "target_kind": target_kind, "target_id": target_id_value,
+            "participant_roster": obj["参与人"] if "参与人" in obj else [],
+            **mechanical,
+        }
+        return _finalize_extract_with_combo(single_result, needs_combo=needs_combo)
     # 多道：归一目标——命中候选 id=补那道；「新」=明确另拟；否则含糊兜底（#502 L7）：
     # 单条→补那条（沿用 last-write-wins），**多条不静默新建第三道**→「含糊」交 session 追问哪一道。
     target_raw = str(obj.get("目标草案") or "").strip()
@@ -2573,12 +2855,14 @@ def extract_draft_intent(
         existing = str(_by_id[int(target)].get("text") or "")
         # 补某道：优先合并全文；LLM 未合并时保留原文（避免用确认语覆盖），原文亦空则退回话。
         draft_text = merged if merged else (existing if existing else (minister_reply or "").strip())
-    return {
+    cand_result = {
         "draft_action": _action, "draft_text": draft_text, "target_candidate": target,
         "dossier_action_type": dossier_action,
         "target_kind": target_kind, "target_id": target_id_value,
-        "participant_roster": obj["参与人"] if "参与人" in obj else [], **mechanical,
+        "participant_roster": obj["参与人"] if "参与人" in obj else [],
+        **mechanical,
     }
+    return _finalize_extract_with_combo(cand_result, needs_combo=needs_combo)
 
 
 # 手工拟诏 capture 总罩（#1327 / #1274 V-1 owner 2026-08-20）：
@@ -2589,13 +2873,7 @@ MANUAL_DIRECTIVE_CAPTURE_TIMEOUT_S = 30.0
 
 # 八值 target_kind 真源在 decree_vocabulary.TARGET_KINDS（#654 / owner A 禁双定义）
 from ming_sim.decree_vocabulary import TARGET_KINDS as _VALID_DRAFT_TARGET_KINDS
-_VALID_LOCALITY_SCOPE_ZH = frozenset({"无", "全国", "单省"})
-# 单旨/多旨 prompt 共用一段闭集 guidance（定序派生，禁手写七值）
-_DRAFT_TARGET_KIND_GUIDANCE = "|".join(sorted(_VALID_DRAFT_TARGET_KINDS))
-
-
-def _draft_target_kind_guidance() -> str:
-    return _DRAFT_TARGET_KIND_GUIDANCE
+from ming_sim.execution_pressure import normalize_locality_scope as _normalize_locality_scope
 
 
 def _coerce_draft_target_kind(raw: object) -> str:
@@ -2606,14 +2884,11 @@ def _coerce_draft_target_kind(raw: object) -> str:
     return kind
 
 
-def _coerce_draft_locality_scope(raw: object) -> str:
-    """抽取面中文三值 → 保留中文供 durable 归一；缺省「无」。"""
+def _explicit_draft_locality_scope(raw: object) -> Optional[str]:
+    """仅原始非空属地才归一；缺席返回 None（禁止预先洗成显式 none）。"""
     if raw is None or str(raw).strip() == "":
-        return "无"
-    text = str(raw).strip()
-    if text not in _VALID_LOCALITY_SCOPE_ZH:
-        raise ValueError(f"施行范围非法：{text!r}")
-    return text
+        return None
+    return _normalize_locality_scope(raw)
 
 
 def _manual_special_decree_payload(mode: str) -> Dict[str, object]:
@@ -2709,6 +2984,8 @@ def capture_manual_directive_payload(
         # #658：自由下旨御笔强推 stalled 廷议
         "target_dossier_id",
         "grant_action", "purpose", "cadence",
+        # #1624 共同契约
+        "region_id", "transaction_category",
     ):
         if captured.get(field) not in (None, ""):
             payload[field] = captured[field]
@@ -2741,14 +3018,26 @@ def capture_manual_directive_payload(
         # the same structured materialization fields at this capture seam.
         payload["name"] = str(payload.get("target_id") or "").strip()
         payload["_office_action"] = "罢免"
-    # #1685：region 无取舍，入卷前 assembly 强制 single（复用 #654 helper）。
-    if str(payload.get("target_kind") or "").strip() == "region":
-        payload["locality_scope"] = write_locality_scope_for_target_kind("region")
     # #658：互斥权威——纯强推 / 普通 triad；并存响亮拒绝，禁静默吞旨
     from ming_sim.db import (
         classify_directive_structured_kind,
         imperial_push_target_dossier_id,
     )
+    # #1624：普通 triad 落库前共同契约组装+组合校验（不按 target_kind 覆盖 locality）
+    try:
+        _pre_kind = classify_directive_structured_kind(payload)
+    except ValueError:
+        _pre_kind = "ordinary"
+    if _pre_kind not in {"push", "empty"} and payload.get("target_kind") not in (None, ""):
+        regions_content = getattr(content, "regions", None) if content is not None else None
+        conn = getattr(db, "conn", None) if db is not None else None
+        assembled = assemble_structured_decree(
+            payload,
+            conn=conn,
+            regions_content=regions_content,
+            validate=True,
+        )
+        apply_assembled_to_payload(payload, assembled)
     kind = classify_directive_structured_kind(payload)
     if kind == "push":
         push_id = imperial_push_target_dossier_id(payload)
