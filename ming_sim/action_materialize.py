@@ -16,6 +16,8 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from ming_sim.decree_vocabulary import TARGET_KINDS
 from ming_sim.execution_pressure import write_locality_scope_for_target_kind
+from ming_sim.executor_routing import duty_route_categories
+from ming_sim.structured_decree import assemble_structured_decree, apply_assembled_to_payload
 
 from ming_sim.action_clusters import (
     ActionCluster,
@@ -609,11 +611,17 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
             semantic_payload["source_chat_turn_id"] = origin_pin
         if isinstance(draft_res.get("participant_roster"), list):
             semantic_payload["participant_roster"] = draft_res["participant_roster"]
-        # #1685：region 无取舍，入卷前 assembly 强制 single（复用 #654 helper）。
-        if str(semantic_payload.get("target_kind") or "").strip() == "region":
-            semantic_payload["locality_scope"] = write_locality_scope_for_target_kind(
-                "region",
+        # #1624：召对拟旨走共同契约组装（不按 target_kind 覆盖已给 locality）
+        if semantic_payload.get("target_kind") not in (None, ""):
+            assembled = assemble_structured_decree(
+                semantic_payload,
+                conn=getattr(session.db, "conn", None),
+                regions_content=getattr(
+                    getattr(session, "content", None), "regions", None,
+                ),
+                validate=True,
             )
+            apply_assembled_to_payload(semantic_payload, assembled)
         # #658：纯强推不得 setdefault 普通 triad，否则混载触发互斥拒收 / 造第二案卷
         from ming_sim.db import classify_directive_structured_kind
         if not is_existing_update and classify_directive_structured_kind(
@@ -1050,6 +1058,24 @@ def punish_actions_allowed() -> frozenset:
 def punish_actions_effective() -> frozenset:
     """可物化的惩处动作（排除分类器占位「无」）。"""
     return punish_actions_allowed() - {"无"}
+
+
+def appoint_actions_allowed() -> frozenset:
+    """appoint_action 枚举唯一真源 = ACTION_CLUSTERS appointment FieldSpec.allowed。"""
+    cluster = cluster_by_kind("appointment")
+    if cluster is None:
+        raise RuntimeError("appointment cluster not installed")
+    for field in cluster.fields:
+        if field.name == "appoint_action":
+            if field.allowed is None:
+                raise RuntimeError("appoint_action FieldSpec.allowed missing")
+            return field.allowed
+    raise RuntimeError("appoint_action FieldSpec missing")
+
+
+def appoint_actions_effective() -> frozenset:
+    """可物化的任免动作（排除分类器占位「无」）；层 A 与 mapper 共引。"""
+    return appoint_actions_allowed() - {"无"}
 
 
 def issue_dispositions_allowed() -> frozenset:
@@ -1590,7 +1616,8 @@ def stage_grant_allocation_candidate(
         "grant_action": action,
         "mode": mode,
     }
-    # #654：每次完整写出 locality_scope，region→非 region 改草须覆盖 merge 旧 single
+    # #654/#1624：本路径为 grant materialize 自建 staged（无 LLM 属地字段），
+    # 不属三入口 structured_decree 契约；仅缺省补全，非覆盖已给 locality。
     staged["locality_scope"] = write_locality_scope_for_target_kind(kind)
     if account in {"国库", "内库"}:
         staged["account"] = account
@@ -2323,7 +2350,8 @@ def stage_authorization_candidate(
         "scope": scope_key,
         "mode": mode,
     }
-    # #654：每次完整写出 locality_scope，region→非 region 改草须覆盖 merge 旧 single
+    # #654/#1624：authorization materialize 自建 staged（无 LLM 属地字段），
+    # 不属三入口 structured_decree 契约；仅缺省补全，非覆盖已给 locality。
     staged["locality_scope"] = write_locality_scope_for_target_kind(kind)
     if existing_id:
         return db.update_directive_candidate(existing_id, staged)
@@ -3422,7 +3450,7 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 FieldSpec("title", "标题", None, "", max_len=80),
                 FieldSpec(
                     "transaction_category", "事务类别",
-                    frozenset({"钱粮", "清丈", "督赈", "缉拿", "缉捕", "河工"}), "",
+                    duty_route_categories(), "",
                 ),
                 # owner=当前召对大臣；不设 assignee/name 改派字段（#520 r2）
                 # 与 grant/pacification 共享 target_id：事项锚（跨轮强化身份）
@@ -3533,7 +3561,7 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 ),
                 FieldSpec(
                     "transaction_category", "事务类别",
-                    frozenset({"钱粮", "清丈", "督赈", "缉拿", "缉捕", "河工"}), "",
+                    duty_route_categories(), "",
                 ),
                 FieldSpec(
                     "mode", "颁布方式",
@@ -3558,7 +3586,7 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 FieldSpec("target_id", "目标", None, "", max_len=80),
                 FieldSpec(
                     "transaction_category", "事务类别",
-                    frozenset({"钱粮", "清丈", "督赈", "缉拿", "缉捕", "河工"}), "",
+                    duty_route_categories(), "",
                 ),
                 # 承办人 / 责任军将（admission 映 assignee_id）
                 FieldSpec("name", "姓名", None, "", max_len=20),
