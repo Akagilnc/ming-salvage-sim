@@ -686,6 +686,51 @@ def test_cli_chat_materializes_each_top_level_candidate(game, monkeypatch):
     assert payloads[1]["locality_scope"] == payloads[2]["locality_scope"] == "single"
 
 
+def _grant_region_draft_transport(*, locality_zh: str | None = None) -> dict:
+    """真实抽取入口用的 region grant 运输形；默认不带施行范围（缺席）。"""
+    body = {
+        "拟旨意图": "拟旨",
+        "动作类型": "grant_allocation",
+        "目标类型": "region",
+        "目标": "shaanxi",
+        "金额": 100000,
+        "账户": "国库",
+        "恩赏拨帑": "赈灾",
+        "颁布方式": "ordinary",
+    }
+    if locality_zh is not None:
+        body["施行范围"] = locality_zh
+    return body
+
+
+def test_single_draft_grant_region_absence_defaults_single(monkeypatch):
+    """#1624/#1685：单旨 grant 属地缺席 → 共同 assembler 落 region→single（禁洗成 none）。"""
+    monkeypatch.setattr(
+        cb, "_run_backend_for_config",
+        lambda *_a, **_k: (json.dumps(_grant_region_draft_transport(), ensure_ascii=False), 0),
+    )
+    result = cb.extract_draft_intent("发帑赈陕西", "臣拟发帑赈济陕西。")
+    assert result["dossier_action_type"] == "grant_allocation"
+    assert result["target_kind"] == "region"
+    assert result["target_id"] == "shaanxi"
+    assert result["locality_scope"] == "single"
+    assert result.get("region_id") == "shaanxi"
+
+
+def test_grant_explicit_region_none_fails_loud(monkeypatch):
+    """#1624：显式 region+none 不得按 target_kind 遮蔽；抽取边界 typed 拒绝。"""
+    from ming_sim.structured_decree import StructuredDecreeCombinationError
+
+    monkeypatch.setattr(
+        cb, "_run_backend_for_config",
+        lambda *_a, **_k: (
+            json.dumps(_grant_region_draft_transport(locality_zh="无"), ensure_ascii=False), 0,
+        ),
+    )
+    with pytest.raises(StructuredDecreeCombinationError):
+        cb.extract_draft_intent("发帑赈陕西", "臣拟发帑赈济陕西。")
+
+
 @pytest.mark.parametrize(
     ("utterance", "classify_result", "reply", "expect_secret_stage", "expect_directive_stage"),
     _P5_ASK_VS_ORDER_BARRIER_CASES,
