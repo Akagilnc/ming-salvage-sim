@@ -113,12 +113,6 @@ def _transaction_categories() -> frozenset[str]:
     return duty_route_categories()
 
 
-def _national_scope_action_restriction() -> str:
-    """national 动作限制：唯一投影 NATIONAL_FANOUT_ACTION_TYPES（禁平行白名单）。"""
-    actions = "|".join(sorted(NATIONAL_FANOUT_ACTION_TYPES))
-    return f"national 仅 action_type∈{actions}"
-
-
 def structured_decree_prompt_contract() -> str:
     """三入口共用结构化旨意契约（唯一真源；禁入口平行复述）。
 
@@ -127,12 +121,12 @@ def structured_decree_prompt_contract() -> str:
     """
     cats = "|".join(sorted(_transaction_categories()))
     kinds = "|".join(sorted(TARGET_KINDS))
-    national_actions = _national_scope_action_restriction()
+    national_actions = "|".join(sorted(NATIONAL_FANOUT_ACTION_TYPES))
     return (
         "结构化旨意契约（共同真源；运输键经 transport_keys_to_canonical 归一）："
         f"target_kind/目标类型∈{kinds}；target_id/目标ID；"
         "locality_scope/施行范围∈national|single|none（中文全国|单省|无）；"
-        f"{national_actions}；"
+        f"national 仅 action_type∈{national_actions}；"
         "region_id/地区ID——仅 target_kind=region 时填且与 target_id 同，非 region 必须空；"
         f"transaction_category/事务类别∈{cats}|——非空须在闭集；"
         "assignment 交办须填类别或点将；assignee_name/承办人仅点将填规范人名，"
