@@ -45,8 +45,8 @@ from ming_sim.token_stats import tlog
 MAX_RESCRIPT_DRAFTS = 5
 
 # #657 C.3 层 A option 必填键（缺一 shape 失败）；draft_capability 由服务端派生写入。
-# #1624 / PR#1719：required/present/action-conditional 为 typed 单源——
-# validator（normalize）与初拟/改票 prompt renderer 共用；禁 agents 手抄第二份。
+# #1624 / PR#1719：required/present 为 typed 单源——layer_a_option_shape /
+# normalize / 初拟·改票 prompt renderer 共用同一元组；禁 agents 手抄、禁 markdown 平行键表。
 _LAYER_A_REQUIRED_KEYS = (
     "label", "hint", "action_type", "target_kind", "target_id", "locality_scope",
 )
@@ -58,25 +58,6 @@ _LAYER_A_PRESENT_KEYS = (
 # 生成侧军饷类别；层 A 等值映射到内部 grant_action=协饷（禁同义词/散文）。
 _GRANT_KIND_ARMY_PAY = "army_pay"
 
-# action-conditional：按 action_type 可填的类相关键（值可缺；validator 按类强制）。
-# 目标/属地/承办子契约仍归 structured_decree；此处只列层 A 受理面。
-_LAYER_A_ACTION_CONDITIONAL_KEYS: Dict[str, tuple[str, ...]] = {
-    "assignment": (
-        "deadline_months", "title", "commitment_kind", "stop_condition",
-        "end_turn", "due_turn",
-    ),
-    "military_order": ("deadline_months",),
-    "grant_allocation": (
-        "grant_kind", "grant_action", "amount", "account", "purpose", "cadence",
-    ),
-    "appointment": (
-        "appoint_action", "appointment_tenure", "office", "name", "station",
-    ),
-    "punishment": ("punish_action",),
-    "authorization": ("privilege", "summon_target", "execution_surface"),
-    "pacification": ("deadline_months",),
-}
-
 # 层 A 允许键 = C.3 必填/须在 + C.4 闭集 + draft_capability（服务端覆盖，LLM 自带不准）
 # grant_kind：生成侧 machine discriminator（#1620）；层 A 映射后不落库。
 _LAYER_A_ALLOWED_KEYS = frozenset(
@@ -86,64 +67,57 @@ _LAYER_A_ALLOWED_KEYS = frozenset(
     + ["draft_capability", "grant_kind"]
 )
 
+# capability 闭集中的 str 透传键 / int 键（唯一派生；禁 normalize 再手抄一份）
+_LAYER_A_CAPABILITY_STR_KEYS = tuple(
+    key for key, default in _DRAFT_CAPABILITY_KEYS
+    if isinstance(default, str)
+    and key not in _LAYER_A_REQUIRED_KEYS
+    and key not in _LAYER_A_PRESENT_KEYS
+)
+_LAYER_A_CAPABILITY_INT_KEYS = tuple(
+    key for key, default in _DRAFT_CAPABILITY_KEYS if isinstance(default, int)
+)
+
 
 def layer_a_option_shape() -> Dict[str, object]:
-    """层 A option 受理契约 typed 单源（required/present/action-conditional）。
+    """层 A option 受理契约 typed 视图（required/present/action_types/grant_kind）。
 
-    validator 与 prompt renderer 只读本函数；禁止入口平行手抄键表。
+    与 normalize_rescript_layer_a_option / rescript_layer_a_prompt_contract 共用
+    模块级元组真源；不另建 per-action 键表（capability 闭集已在 _DRAFT_CAPABILITY_KEYS）。
     """
     return {
         "required_keys": _LAYER_A_REQUIRED_KEYS,
         "present_keys": _LAYER_A_PRESENT_KEYS,
         "action_types": tuple(sorted(RESCRIPT_ROUTABLE_ACTION_TYPES)),
-        "action_conditional_keys": {
-            action: keys
-            for action, keys in _LAYER_A_ACTION_CONDITIONAL_KEYS.items()
-            if action in RESCRIPT_ROUTABLE_ACTION_TYPES
-        },
         "grant_kind_army_pay": _GRANT_KIND_ARMY_PAY,
         "server_only_keys": ("draft_capability",),
+        "capability_str_keys": _LAYER_A_CAPABILITY_STR_KEYS,
+        "capability_int_keys": _LAYER_A_CAPABILITY_INT_KEYS,
     }
 
 
 def rescript_layer_a_prompt_contract() -> str:
-    """初拟/改票共用：由 layer_a_option_shape 渲染层 A 完整受理契约。
+    """初拟/改票共用：由 layer_a_option_shape 渲染层 A 受理契约。
 
-    structured_decree_prompt_contract 只承目标/属地/承办子契约；本块补
-    label/hint/action_type 必填、三 PRESENT 键、action-conditional 与 grant_kind。
-    禁 agents.py 手抄键名第二份。
+    structured_decree_prompt_contract 承目标/属地/承办子契约；本块只补
+    required/present/action_types/grant_kind。禁 agents 手抄；禁复述
+    _assert_army_targets_grounded 等 grounding 规则。
     """
     shape = layer_a_option_shape()
     required = "/".join(str(k) for k in shape["required_keys"])  # type: ignore[arg-type]
     present = "/".join(str(k) for k in shape["present_keys"])  # type: ignore[arg-type]
     actions = "|".join(str(a) for a in shape["action_types"])  # type: ignore[arg-type]
-    cond = shape["action_conditional_keys"]
-    cond_parts: List[str] = []
-    if isinstance(cond, dict):
-        for action in sorted(cond):
-            keys = cond[action]
-            if keys:
-                cond_parts.append(
-                    f"{action}:{"/".join(str(k) for k in keys)}"
-                )
     grant_kind = str(shape["grant_kind_army_pay"])
     server_only = "/".join(str(k) for k in shape["server_only_keys"])  # type: ignore[arg-type]
     return (
-        "票拟层 A option 受理契约（typed 单源；与 normalize_rescript_layer_a_option 共用）："
+        "票拟层 A option 受理契约（与 normalize_rescript_layer_a_option 共用 shape）："
         f"每项 options[] 必填非空 {required}；"
         f"action_type∈{actions}；"
         f"{present} 三键必须输出（值可空串）；"
-        + (
-            "action-conditional 按 action_type 选填："
-            + "；".join(cond_parts)
-            + "。"
-            if cond_parts
-            else ""
-        )
-        + f"grant_allocation 军饷用 grant_kind={grant_kind}"
+        f"grant_allocation 军饷用 grant_kind={grant_kind}"
         f"（禁直写 grant_action=协饷；kind 与 grant_action 不得并存）；"
         f"非 grant_allocation 不得带 grant_kind；"
-        f"military_order 的 target_kind 须为 army 且 assignee_name 非空；"
+        f"其余类相关键取自 capability 闭集，按 action_type 需要填写；"
         f"禁止输出 {server_only}（服务端派生）。"
     )
 
@@ -179,19 +153,26 @@ def normalize_rescript_layer_a_option(
     """
     if not isinstance(raw, dict):
         raise ValueError("票拟 option 非 object（层 A shape）")
+    shape = layer_a_option_shape()
+    required_keys = shape["required_keys"]  # type: ignore[assignment]
+    present_keys = shape["present_keys"]  # type: ignore[assignment]
+    action_types = frozenset(shape["action_types"])  # type: ignore[arg-type]
+    grant_kind_army_pay = str(shape["grant_kind_army_pay"])
+    capability_str_keys = shape["capability_str_keys"]  # type: ignore[assignment]
+    capability_int_keys = shape["capability_int_keys"]  # type: ignore[assignment]
     unknown = set(raw) - _LAYER_A_ALLOWED_KEYS
     if unknown:
         raise ValueError(
             f"票拟 option 含未知字段（整批 shape 错，F2.5/F3.3）：{sorted(unknown)}"
         )
     out: Dict[str, object] = {}
-    for key in _LAYER_A_REQUIRED_KEYS:
+    for key in required_keys:  # type: ignore[union-attr]
         value = raw.get(key)
         if not isinstance(value, str) or not str(value).strip():
             raise ValueError(f"票拟 option 缺层 A 必填键或为空白：{key}")
         out[key] = str(value)  # 原文；strip 仅判空
     action_type = str(out["action_type"]).strip()
-    if action_type not in RESCRIPT_ROUTABLE_ACTION_TYPES:
+    if action_type not in action_types:
         raise ValueError(f"票拟 option.action_type 非七类 routable：{action_type!r}")
     out["action_type"] = action_type
     # #1620：grant_kind 仅 grant_allocation 合法；非 grant 不得因 allowed 白名单静默丢键。
@@ -210,7 +191,7 @@ def normalize_rescript_layer_a_option(
     from ming_sim.execution_pressure import normalize_locality_scope
     out["locality_scope"] = normalize_locality_scope(out["locality_scope"])
     # C.3：三键必须在且为 str（可 ""）；禁缺键补全 / None→"" / str(value) 洗值
-    for key in _LAYER_A_PRESENT_KEYS:
+    for key in present_keys:  # type: ignore[union-attr]
         if key not in raw:
             raise ValueError(f"票拟 option 缺层 A 须在键：{key}")
         value = raw[key]
@@ -223,23 +204,19 @@ def normalize_rescript_layer_a_option(
     from ming_sim.structured_decree import validate_structured_decree_combination
     validate_structured_decree_combination(out)
     # 其余 capability 闭集字段透传（有则规范化，无则由 derive 填默认）
-    for key, _default in (
-        ("name", ""), ("title", ""), ("commitment_kind", ""),
-        ("station", ""), ("office", ""),
-        ("grant_action", ""), ("account", ""), ("purpose", ""), ("cadence", ""),
-        ("execution_surface", ""), ("appoint_action", ""),
-        ("appointment_tenure", ""), ("punish_action", ""),
-        ("privilege", ""), ("summon_target", ""),
-    ):
+    for key in capability_str_keys:  # type: ignore[union-attr]
+        if key == "stop_condition":
+            continue
         if key in raw and raw[key] is not None:
             out[key] = str(raw[key])
     if "stop_condition" in raw and raw["stop_condition"] is not None:
         out["stop_condition"] = normalize_stop_condition(raw["stop_condition"])
     # #1620：grant amount 不走通用 int()——由 require_grant_allocation_shape 独掌
     # （strict_int 拒 bool/float）；非 grant 整数字段维持既有 int()。
-    int_keys = ("end_turn", "deadline_months", "due_turn")
-    if action_type != "grant_allocation":
-        int_keys = (*int_keys, "amount")
+    int_keys = tuple(
+        k for k in capability_int_keys  # type: ignore[union-attr]
+        if k != "amount" or action_type != "grant_allocation"
+    )
     for key in int_keys:
         if key in raw and raw[key] is not None and raw[key] != "":
             try:
@@ -266,7 +243,7 @@ def normalize_rescript_layer_a_option(
         if "grant_action" in raw and raw["grant_action"] is not None:
             raw_ga = str(raw["grant_action"]).strip()
         if grant_kind:
-            if grant_kind != _GRANT_KIND_ARMY_PAY:
+            if grant_kind != grant_kind_army_pay:
                 raise ValueError(f"grant 非法 grant_kind：{grant_kind!r}")
             if raw_ga:
                 raise ValueError(

@@ -2016,44 +2016,35 @@ def _ground_relative_pay_order_deadlines(result: Dict[str, Any], db: Any) -> Dic
     return result
 
 
-def _strip_combo_validate_markers(result: Dict[str, Any]) -> Dict[str, Any]:
-    """去掉 extract 内部组合校验标记，不外泄。"""
-    out = dict(result)
-    out.pop("_combo_validate", None)
-    drafts = out.get("drafts")
-    if isinstance(drafts, list):
-        cleaned: List[Any] = []
-        for draft in drafts:
+def _finalize_extract_with_combo(
+    result: Dict[str, Any],
+    *,
+    needs_combo: bool = False,
+    draft_combo_flags: Optional[List[bool]] = None,
+) -> Dict[str, Any]:
+    """结果建成后做组合校验；失败携带 partial（含首抽名册）。
+
+    needs_combo / draft_combo_flags 为调用方局部布尔，不写入结果字典。
+    """
+    targets: List[Dict[str, Any]] = []
+    if draft_combo_flags is not None:
+        drafts = result.get("drafts") or []
+        for idx, flag in enumerate(draft_combo_flags):
+            if not flag or idx >= len(drafts):
+                continue
+            draft = drafts[idx]
             if isinstance(draft, dict):
-                item = dict(draft)
-                item.pop("_combo_validate", None)
-                cleaned.append(item)
-            else:
-                cleaned.append(draft)
-        out["drafts"] = cleaned
-    return out
-
-
-def _raise_combo_with_partial_if_invalid(result: Dict[str, Any]) -> None:
-    """整单/整批结果建成后做组合校验；失败携带 partial（含首抽名册）。"""
-    drafts = result.get("drafts")
-    if isinstance(drafts, list):
-        targets = [
-            draft for draft in drafts
-            if isinstance(draft, dict) and draft.get("_combo_validate") is True
-        ]
-    elif result.get("_combo_validate") is True:
-        targets = [result]
-    else:
-        targets = []
-    partial = _strip_combo_validate_markers(result)
+                targets.append(draft)
+    elif needs_combo:
+        targets.append(result)
     for payload in targets:
         try:
             validate_structured_decree_combination(payload)
         except StructuredDecreeCombinationError as exc:
             raise StructuredDecreeCombinationError(
-                str(exc), partial_result=partial,
+                str(exc), partial_result=dict(result),
             ) from exc
+    return result
 
 
 def _merge_combo_correction_preserving_roster(
@@ -2097,7 +2088,7 @@ def _merge_combo_correction_preserving_roster(
                 item["participant_roster"] = base_draft["participant_roster"]
             merged.append(item)
         out["drafts"] = merged
-    return _strip_combo_validate_markers(out)
+    return out
 
 
 def extract_draft_intent_with_roster_heal(
@@ -2145,7 +2136,7 @@ def extract_draft_intent_with_roster_heal(
             # 共同契约组合失败：typed 有界重试；首败冻结 partial 名册基线
             partial = getattr(exc, "partial_result", None)
             if baseline_result is None and isinstance(partial, dict):
-                baseline_result = _strip_combo_validate_markers(partial)
+                baseline_result = dict(partial)
                 baseline_from_combo = True
             if attempt >= retries:
                 raise
@@ -2381,6 +2372,7 @@ def extract_draft_intent(
         obj = _loads_lenient(raw) or {}
         values = obj.get("成品旨稿") if isinstance(obj, dict) else None
         drafts = []
+        draft_combo_flags: List[bool] = []
         seen_texts = set()
         invalid_batch = not isinstance(values, list) or len(values) != draft_count
         for value in values if isinstance(values, list) else []:
@@ -2431,11 +2423,13 @@ def extract_draft_intent(
                     "target_candidate": "", "mode": mode,
                     "target_dossier_id": imperial_push_target_dossier_id(probe),
                 })
+                draft_combo_flags.append(False)
                 continue
             if action == "acting_appointment":
                 # #529 署理走既有 pending 人事候选路径应答（0064 任别），不经草案 acting_appointment。
                 # 保留原批次位置，避免后续按候选序号消费时错配 sibling。
                 drafts.append(None)
+                draft_combo_flags.append(False)
                 continue
             if action not in DRAFT_ACTION_TYPES:
                 invalid_batch = True
@@ -2495,19 +2489,21 @@ def extract_draft_intent(
                 "target_id": target_id, "target_candidate": "",
                 "mode": mode,
                 "participant_roster": value["参与人"] if "参与人" in value else [],
-                "_combo_validate": needs_combo,
                 **mechanical,
             })
+            draft_combo_flags.append(needs_combo)
         if invalid_batch or not any(draft is not None for draft in drafts):
             drafts = []
+            draft_combo_flags = []
         batch_result = {
             "draft_action": "拟旨" if drafts else "无",
             "draft_text": "",
             "drafts": drafts,
             "target_candidate": "",
         }
-        _raise_combo_with_partial_if_invalid(batch_result)
-        return _strip_combo_validate_markers(batch_result)
+        return _finalize_extract_with_combo(
+            batch_result, draft_combo_flags=draft_combo_flags,
+        )
 
     _candidates = [c for c in (existing_candidates or []) if c]
     _by_id = {int(c["id"]): c for c in _candidates}
@@ -2727,11 +2723,9 @@ def extract_draft_intent(
             "dossier_action_type": dossier_action,
             "target_kind": target_kind, "target_id": target_id_value,
             "participant_roster": obj["参与人"] if "参与人" in obj else [],
-            "_combo_validate": needs_combo,
             **mechanical,
         }
-        _raise_combo_with_partial_if_invalid(single_result)
-        return _strip_combo_validate_markers(single_result)
+        return _finalize_extract_with_combo(single_result, needs_combo=needs_combo)
     # 多道：归一目标——命中候选 id=补那道；「新」=明确另拟；否则含糊兜底（#502 L7）：
     # 单条→补那条（沿用 last-write-wins），**多条不静默新建第三道**→「含糊」交 session 追问哪一道。
     target_raw = str(obj.get("目标草案") or "").strip()
@@ -2762,11 +2756,9 @@ def extract_draft_intent(
         "dossier_action_type": dossier_action,
         "target_kind": target_kind, "target_id": target_id_value,
         "participant_roster": obj["参与人"] if "参与人" in obj else [],
-        "_combo_validate": needs_combo,
         **mechanical,
     }
-    _raise_combo_with_partial_if_invalid(cand_result)
-    return _strip_combo_validate_markers(cand_result)
+    return _finalize_extract_with_combo(cand_result, needs_combo=needs_combo)
 
 
 # 手工拟诏 capture 总罩（#1327 / #1274 V-1 owner 2026-08-20）：
