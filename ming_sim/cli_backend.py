@@ -52,6 +52,7 @@ from ming_sim.models import CODEX_DEFAULT_MODEL, CLAUDE_DEFAULT_MODEL, LLMConfig
 from ming_sim.constants import DOSSIER_LINK_TYPES
 from ming_sim.decree_vocabulary import DIRECTIVE_ACTION_TYPES
 from ming_sim.structured_decree import (
+    StructuredDecreeCombinationError,
     apply_assembled_to_payload,
     assemble_structured_decree,
     combination_correction_feedback,
@@ -2053,17 +2054,9 @@ def extract_draft_intent_with_roster_heal(
                 db=db,
                 **extract_kwargs,
             )
-        except ValueError as exc:
-            # 共同契约组合/shape 失败：有界重试；耗尽上抛
-            msg = str(exc)
-            is_combo = any(
-                token in msg
-                for token in (
-                    "locality_scope", "target_kind", "transaction_category",
-                    "structured decree", "region 目标", "assignment 缺",
-                )
-            )
-            if not is_combo or attempt >= retries:
+        except StructuredDecreeCombinationError as exc:
+            # 共同契约组合失败：typed 有界重试；耗尽上抛（禁异常文本子串识别）
+            if attempt >= retries:
                 raise
             combo_failures += 1
             correction = combination_correction_feedback(exc)

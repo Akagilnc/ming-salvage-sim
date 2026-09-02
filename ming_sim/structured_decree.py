@@ -18,6 +18,11 @@ from ming_sim.execution_pressure import (
 )
 from ming_sim.executor_routing import duty_route_categories
 
+
+class StructuredDecreeCombinationError(ValueError):
+    """结构化旨意组合校验失败（typed；纠错路径只捕本类，禁异常文本子串识别）。"""
+
+
 # 抽取/层 A 运输键 → canonical 英键
 _TRANSPORT_KEY_ALIASES: Dict[str, str] = {
     "动作类型": "action_type",
@@ -125,6 +130,7 @@ def validate_structured_decree_combination(
     """动作×目标×属地×承办组合校验（落库前共同闸）。
 
     属地矩阵唯一走 assert_target_locality_matrix；有 conn 时再 resolve 省 id。
+    失败一律 StructuredDecreeCombinationError（typed）。
     """
     action = _as_str(
         payload.get("action_type") or payload.get("dossier_action_type") or ""
@@ -132,24 +138,27 @@ def validate_structured_decree_combination(
     target_kind = _as_str(payload.get("target_kind") or "").strip()
     target_id = _as_str(payload.get("target_id") or "").strip()
     if not target_kind:
-        raise ValueError("structured decree 缺 target_kind")
+        raise StructuredDecreeCombinationError("structured decree 缺 target_kind")
     if not target_id:
-        raise ValueError("structured decree 缺 target_id")
+        raise StructuredDecreeCombinationError("structured decree 缺 target_id")
 
-    scope = assert_target_locality_matrix(
-        action_type=action or "policy",
-        target_kind=target_kind,
-        locality_scope=payload.get("locality_scope"),
-    )
+    try:
+        scope = assert_target_locality_matrix(
+            action_type=action or "policy",
+            target_kind=target_kind,
+            locality_scope=payload.get("locality_scope"),
+        )
+    except ValueError as exc:
+        raise StructuredDecreeCombinationError(str(exc)) from exc
 
     region_id = _as_str(payload.get("region_id") or "").strip()
     if target_kind == "region":
         if region_id and region_id != target_id:
-            raise ValueError(
+            raise StructuredDecreeCombinationError(
                 f"region 目标 region_id={region_id!r} 须与 target_id={target_id!r} 一致"
             )
     elif region_id and scope == "none":
-        raise ValueError(
+        raise StructuredDecreeCombinationError(
             f"locality_scope=none 不得夹带 region_id={region_id!r}"
         )
 
@@ -162,24 +171,31 @@ def validate_structured_decree_combination(
             or ""
         ).strip()
         if not cat and not assignee:
-            raise ValueError("assignment 缺 transaction_category 与主办")
+            raise StructuredDecreeCombinationError(
+                "assignment 缺 transaction_category 与主办"
+            )
         if cat and cat not in _transaction_categories():
-            raise ValueError(f"transaction_category 非法：{cat!r}")
+            raise StructuredDecreeCombinationError(
+                f"transaction_category 非法：{cat!r}"
+            )
 
     if conn is not None:
-        resolve_dossier_region_ids(
-            conn,
-            action_type=action or "policy",
-            payload={
-                "target_kind": target_kind,
-                "target_id": target_id,
-                "locality_scope": scope,
-                "region_id": region_id or (
-                    target_id if target_kind == "region" else ""
-                ),
-            },
-            regions_content=regions_content,
-        )
+        try:
+            resolve_dossier_region_ids(
+                conn,
+                action_type=action or "policy",
+                payload={
+                    "target_kind": target_kind,
+                    "target_id": target_id,
+                    "locality_scope": scope,
+                    "region_id": region_id or (
+                        target_id if target_kind == "region" else ""
+                    ),
+                },
+                regions_content=regions_content,
+            )
+        except ValueError as exc:
+            raise StructuredDecreeCombinationError(str(exc)) from exc
 
 
 def assemble_structured_decree(
@@ -271,4 +287,18 @@ def combination_correction_feedback(exc: BaseException) -> str:
         f"{exc}\n"
         + structured_decree_guidance()
         + "\n"
+    )
+
+
+def structured_decree_rescript_option_lines() -> str:
+    """月末票拟/改票层 A 英键字段行（闭集同源；禁入口手抄第二份）。"""
+    cats = "|".join(sorted(_transaction_categories()))
+    kinds = "|".join(sorted(TARGET_KINDS))
+    return (
+        "每个 option 结构化字段（共同契约英键）："
+        f"action_type；target_kind∈{kinds}；target_id；"
+        "locality_scope∈national|single|none；region_id；"
+        f"transaction_category∈{cats}|；"
+        "assignee_name（仅点将填规范人名，未点将空串）。"
+        "assignee_name/region_id/transaction_category 三键必须输出，值可空串。"
     )

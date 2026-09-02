@@ -23,10 +23,9 @@
     - `label`：一句可奉行的拟语（如「发帑金赈济陕西」「敕该抚查勘灾情」）
     - `hint`：方向性陈词（如此举所安者谁、所拂者谁）
     - `action_type`：七类之一——`assignment` / `military_order` / `grant_allocation` / `appointment` / `punishment` / `authorization` / `pacification`
-    - `target_kind`：目标类（如 `region` / `character` / `army` / `issue`）
-    - `target_id`：目标标识（如区域 id、人名、军 id）。`target_kind=region` 时必须从 input 的 `region_targets` 选择 `id`，地名须按同项 `name` 对照，不得自造区域 id。`target_kind=army` 时必须从同批 `army_targets` 选择 `id`，中文军名按同项 `name` 对照，不得用省 id/地名冒充军 id。`military_order` 的 `target_kind` 必须为 `army`，`target_id` 只从同批 `army_targets` 选择；`assignee_name` 不得空串
-    - `locality_scope`：`national` / `single` / `none`
-    - 类相关键（按 action_type 填写；`assignee_name`/`region_id`/`transaction_category` **必须输出**，值可空串）：以及该类所需的 `grant_action` / `amount` / `station` / `office` / `appoint_action` / `punish_action` / `deadline_months` 等
+    - 结构化目标/属地/承办/事务类别字段：运行时注入的共同契约（structured_decree）为唯一真源，本 prompt **不平行定义**；须按注入指引填写，且 `assignee_name`/`region_id`/`transaction_category` 三键**必须输出**（值可空串）
+    - `target_kind=region` 时 `target_id` 必须从 input 的 `region_targets` 选择 `id`，地名须按同项 `name` 对照，不得自造区域 id。`target_kind=army` 时必须从同批 `army_targets` 选择 `id`，中文军名按同项 `name` 对照，不得用省 id/地名冒充军 id。`military_order` 的 `target_kind` 必须为 `army`，`target_id` 只从同批 `army_targets` 选择；`assignee_name` 不得空串
+    - 类相关键（按 action_type 填写）：以及该类所需的 `grant_action` / `amount` / `station` / `office` / `appoint_action` / `punish_action` / `deadline_months` 等
     - `grant_action`（`action_type=grant_allocation` 且**非**军饷时必填）：只能从 input 的 `grant_actions` 闭集取值，不得自造同义动作名
     - 军饷补发/补饷：用 `grant_kind=army_pay`（取自 input `grant_kinds`；**不要**写 `grant_action`），并同时显式填 `purpose=补饷`、`account`（`国库` 或 `内库`）、正整数 `amount`、`target_kind=army`、`target_id` 取自同批 `army_targets.id`——缺任一字段即非法，服务端不补
     - **不要**写 `draft_capability` 或 `verdict`——服务端派生

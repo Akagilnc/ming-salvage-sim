@@ -677,6 +677,18 @@ def create_json_sanitizer_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Age
     )
 
 
+def _rescript_structured_decree_instructions() -> list[str]:
+    """月末票拟/改票共用：运行时注入 structured_decree 真源，禁入口平行复述。"""
+    from ming_sim.structured_decree import (
+        structured_decree_guidance,
+        structured_decree_rescript_option_lines,
+    )
+    return [
+        structured_decree_guidance(),
+        structured_decree_rescript_option_lines(),
+    ]
+
+
 def create_rescript_draft_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
     """#656 / ADR 0093 前半：急务分拣＋票拟生成官（phase2 fan-out 第 N+1 路，N=extractor 模块数）。一次性，不持久化。"""
     del agno_db
@@ -692,7 +704,11 @@ def create_rescript_draft_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Age
             enable_thinking=False,
             force_json_output=True,
         ),
-        instructions=[ctx.game_world_prompt, ctx.rescript_draft_prompt],
+        instructions=[
+            ctx.game_world_prompt,
+            ctx.rescript_draft_prompt,
+            *_rescript_structured_decree_instructions(),
+        ],
         add_history_to_context=False,
         markdown=False,
     )
@@ -709,10 +725,9 @@ def create_rescript_revise_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Ag
             "你是批红改票官。根据给定急务行与批语，输出改票 options。\n"
             "只输出一个 JSON 对象，shape 必须是 "
             '{"options":[{...},...]}' "——禁止 items 数组、禁止草稿列表外壳。\n"
-            "每个 option 须含 label/hint/action_type/target_kind/target_id/"
-            "locality_scope/assignee_name/region_id/army_id 等层 A 键。"
             "军队目标的 target_id 只可从同批 army_targets 中选择。"
         ),
+        *_rescript_structured_decree_instructions(),
     ]
     return Agent(
         name="批红改票官",
