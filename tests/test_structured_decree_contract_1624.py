@@ -334,6 +334,14 @@ def test_layer_a_prompt_contract_is_typed_single_source_for_draft_and_revise(mon
         })
 
     contract = rescript_layer_a_prompt_contract()
+    # renderer 必须消费 action_conditional（组合断言；禁措辞锁）。
+    # 抽掉 shape→conditional 渲染后本断言须红——防再退回「按需填写」空壳。
+    from ming_sim.rescript_draft import _render_action_conditional_contract
+
+    conditional_seg = _render_action_conditional_contract(conditional)
+    assert conditional_seg  # 七类条件段非空
+    assert conditional_seg in contract
+
     # 共享 instructions 块 = 层 A + structured_decree 子契约（禁 agents 手抄）
     shared = _rescript_option_instructions()
     assert shared == [contract, structured_decree_prompt_contract()]
