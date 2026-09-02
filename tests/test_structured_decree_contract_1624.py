@@ -77,8 +77,51 @@ def _month_end_ctx() -> dict:
     return {
         "active_issues": [],
         "region_targets": [{"id": "shaanxi", "name": "陕西", "kind": "腹地"}],
-        "army_targets": [{"id": "xuanfu", "name": "宣府"}],
+        "army_targets": [
+            {"id": "xuanfu", "name": "宣府"},
+            {"id": "guanning", "name": "关宁军 / 宁锦防线", "station": "辽东 / 宁远锦州"},
+        ],
     }
+
+
+def _army_single_bad_item() -> dict:
+    """复验残留样本：辽东欠饷 option 层 army+single（矩阵非法）。"""
+    return {
+        "title": "辽东欠饷",
+        "context": "九边欠饷数月，饥溃可待。",
+        "options": [
+            {
+                "label": "补发关宁军饷",
+                "hint": "边饷急",
+                "action_type": "grant_allocation",
+                "assignee_name": "",
+                "target_kind": "army",
+                "target_id": "guanning",
+                "locality_scope": "single",
+                "region_id": "",
+                "transaction_category": "",
+                "grant_kind": "army_pay",
+                "amount": 300,
+                "account": "国库",
+                "purpose": "补饷",
+            },
+            {
+                **_OWNER_OPTION,
+                "label": "缓议加派",
+                "hint": "候报",
+            },
+        ],
+    }
+
+
+def _army_none_legal_item() -> dict:
+    """纠错轮合法：同军目标 + locality_scope=none。"""
+    item = _army_single_bad_item()
+    item["options"][0] = {
+        **item["options"][0],
+        "locality_scope": "none",
+    }
+    return item
 
 
 def test_shared_validate_rejects_region_id_and_category_holes():
@@ -156,15 +199,18 @@ def test_shared_validate_rejects_region_id_and_category_holes():
     assert only_action["dossier_action_type"] == "policy"
 
 
-def test_month_end_entry_owner_and_matrix_reject(monkeypatch, game):
-    """真实月末生成入口：Owner 例落 canonical；office+single 矩阵坏形整批降级。
+def test_month_end_entry_owner_and_matrix_reject(monkeypatch, game, tmp_path):
+    """真实月末入口 tracer：Owner 例；army+single 有界纠错接受；耗尽整批降级。
 
+    首抽 exact army+single（合并后复验残留）；纠错轮合法 army+none 被整批接受。
+    另证纠错仍非法 → F2.5 响亮降级、零部分头版。不静默改写 scope/kind。
     改票真实入口由 test_pihong_dossier_1490 的 return_revise 路径覆盖。
-    region_id/category 原洞见 test_shared_validate_rejects_region_id_and_category_holes。
     """
     import ming_sim.rescript_draft as rescript_mod
 
     del game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+
     owner_item = {
         "title": "陕西告饥",
         "context": "秦地赤旱，饥民待哺，急须责成赈济。",
@@ -196,25 +242,45 @@ def test_month_end_entry_owner_and_matrix_reject(monkeypatch, game):
     assert monthly["transaction_category"] == "督赈"
     assert not str(monthly.get("assignee_name") or "").strip()
 
-    # office+single：矩阵矛盾（非 region_id/category 原洞）→ 整批降级
-    bad = {
-        "title": "坏形",
-        "context": "x",
-        "options": [{
-            **_OWNER_OPTION,
-            "target_kind": "office",
-            "target_id": "户部",
-            "locality_scope": "single",
-            "region_id": "",
-        }, dict(_OWNER_OPTION)],
-    }
-    monkeypatch.setattr(
-        rescript_mod, "run_agent_text",
-        lambda *_a, **_k: json.dumps({"items": [bad]}, ensure_ascii=False),
+    # army+single 首抽 → 纠错轮 army+none 合法接受（共同纠错反馈有界重抽）
+    calls: list[str] = []
+
+    def _heal_once(_agent, prompt, tag=""):
+        del tag
+        calls.append(str(prompt))
+        if len(calls) == 1:
+            return json.dumps({"items": [_army_single_bad_item()]}, ensure_ascii=False)
+        assert "结构组合" in str(prompt) or "共同契约" in str(prompt)
+        return json.dumps({"items": [_army_none_legal_item()]}, ensure_ascii=False)
+
+    monkeypatch.setattr(rescript_mod, "run_agent_text", _heal_once)
+    healed = rescript_mod.generate_rescript_draft(
+        object(), _month_end_ctx(), 2,
     )
+    assert len(calls) == 2
+    assert healed is not None and len(healed) == 1
+    grant = healed[0]["options"][0]
+    assert grant["target_kind"] == "army"
+    assert grant["target_id"] == "guanning"
+    assert grant["locality_scope"] == "none"
+    assert grant.get("grant_action") == "协饷"
+
+    # 纠错耗尽仍 army+single → 整批降级、零部分头版
+    exhaust_calls: list[int] = []
+
+    def _never_heals(_agent, prompt, tag=""):
+        del prompt, tag
+        exhaust_calls.append(1)
+        return json.dumps({"items": [_army_single_bad_item()]}, ensure_ascii=False)
+
+    monkeypatch.setattr(rescript_mod, "run_agent_text", _never_heals)
     assert rescript_mod.generate_rescript_draft(
-        object(), _month_end_ctx(), 1,
+        object(), _month_end_ctx(), 3,
     ) is None
+    assert len(exhaust_calls) == rescript_mod.RESCRIPT_COMBO_CORRECTION_RETRIES + 1
+    note = tmp_path / "error_packs" / "rescript_draft_degraded" / "turn3.json"
+    assert note.is_file()
+    assert "army" in note.read_text(encoding="utf-8")
 
 
 def test_rescript_follow_draft_routes_hubu(game):
@@ -429,6 +495,18 @@ def test_layer_a_prompt_contract_is_typed_single_source_for_draft_and_revise(mon
     # 共享 instructions 块 = 层 A + structured_decree 子契约（禁 agents 手抄）
     shared = _rescript_option_instructions()
     assert shared == [contract, structured_decree_prompt_contract()]
+
+    # target×locality 可接受面：typed 真源投影进共同 prompt（禁手抄第二份矩阵）
+    from ming_sim.execution_pressure import (
+        TARGET_KIND_LOCALITY_SCOPES,
+        project_target_locality_matrix_prompt,
+    )
+
+    assert TARGET_KIND_LOCALITY_SCOPES["army"] == frozenset({"none"})
+    assert TARGET_KIND_LOCALITY_SCOPES["region"] == frozenset({"single"})
+    matrix_seg = project_target_locality_matrix_prompt()
+    assert matrix_seg
+    assert matrix_seg in structured_decree_prompt_contract()
 
     # 初拟/改票工厂真实组装 instructions：注入同一 renderer 返回值
     bind_content(GameContent.load())

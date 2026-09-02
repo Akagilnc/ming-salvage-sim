@@ -40,9 +40,15 @@ from ming_sim.decree_vocabulary import (
 from ming_sim.error_pack import error_packs_root
 from ming_sim.exceptions import LLMContractError, LLMUnavailable
 from ming_sim.models import GameState, reign_period_label
+from ming_sim.structured_decree import (
+    StructuredDecreeCombinationError,
+    combination_correction_feedback,
+)
 from ming_sim.token_stats import tlog
 
 MAX_RESCRIPT_DRAFTS = 5
+# #1624：月末首抽 typed 组合失败 → 共同纠错反馈有界重抽一次；耗尽仍 F2.5 整批降级。
+RESCRIPT_COMBO_CORRECTION_RETRIES = 1
 
 # #657 C.3 层 A option 必填键（缺一 shape 失败）；draft_capability 由服务端派生写入。
 # #1624 / PR#1719：required/present/action-conditional 为 typed 单源——
@@ -862,6 +868,13 @@ def validate_rescript_draft_items(
                 normalized_opt = normalize_rescript_layer_a_option(
                     opt, generation_admission=True,
                 )
+            except StructuredDecreeCombinationError as exc:
+                # typed 组合失败原样上抛（保留 failed_fields）；generate 可有界结构重抽。
+                # 不得包成普通 ValueError 导致月末跳过纠错直接 F2.5。
+                raise StructuredDecreeCombinationError(
+                    f"票拟 option 结构组合失败：{title!r} {exc}",
+                    failed_fields=exc.failed_fields,
+                ) from exc
             except ValueError as exc:
                 raise ValueError(
                     f"票拟 option 层 A shape 失败（整批失败，F2.2/F2.5）：{title!r} {exc}"
@@ -955,13 +968,17 @@ def generate_rescript_draft(
     payload: Dict[str, object],
     turn: int,
 ) -> Optional[List[Dict[str, object]]]:
-    """phase2 fan-out 第 N+1 路（N=同池 extractor 模块数）：跑一次票拟生成 LLM 调用并校验 shape。
+    """phase2 fan-out 第 N+1 路（N=同池 extractor 模块数）：票拟生成 LLM 调用并校验 shape。
 
     响亮降级契约（F2.5）按错误归属拆缝（r2 裁决 B3 / ADR 0005 / relation_brew 同款
     先例）：业务降级面只收声明类型——LLM 调用缝只收 typed LLMUnavailable；解析/shape
     校验缝只收 LLMContractError/ValueError。命中即 tlog 留痕＋诊断目录附记，返回 None，
     本月视作无头版。程序错（RuntimeError/KeyError/TypeError 等）**响亮上抛**——票拟
     业务降级 ≠ 代码故障降级，不再以「非承重支路」为由吞程序错误。
+
+    #1624：首抽若触发 typed StructuredDecreeCombinationError，复用共同
+    combination_correction_feedback 有界结构重抽并重验整批；耗尽后仍 F2.5 整批降级，
+    零部分头版。禁止静默改写 army+single→none / army→region 或另造月末矩阵。
     """
     # payload 序列化是纯程序逻辑：其错误属代码侧错（ADR 0005），不在降级面内，响亮上抛。
     payload_json = json.dumps(payload, ensure_ascii=False, sort_keys=False)
@@ -971,33 +988,52 @@ def generate_rescript_draft(
         tlog(f"[rescript] 票拟生成失败，本月视作无头版：{exc}")
         _write_degraded_note(turn, str(exc))
 
-    try:
-        raw = run_agent_text(agent, payload_json, tag="rescript-draft")
-    except (APITimeoutError, APIConnectionError, APIStatusError) as error:  # 窄捕 provider 已知故障→译 typed（照抄 decree.py:1991 Z3 缝）
-        _degrade(llm_unavailable_from_error(error, "急务票拟生成"))
-        return None
-    except LLMUnavailable as exc:  # LLM 调用缝：只收 typed 声明，程序错上抛
-        _degrade(exc)
-        return None
-    try:
+    region_targets = payload.get("region_targets")
+    region_target_ids = {
+        str(row["id"]) for row in region_targets
+        if isinstance(row, dict) and isinstance(row.get("id"), str)
+    } if isinstance(region_targets, list) else set()
+    army_targets = payload.get("army_targets")
+    army_target_ids = {
+        str(row["id"]) for row in army_targets
+        if isinstance(row, dict) and isinstance(row.get("id"), str)
+    } if isinstance(army_targets, list) else set()
+    board_ids = _board_issue_ids(payload.get("active_issues"))
+
+    def _parse_and_validate(raw: str) -> List[Dict[str, object]]:
         data = _parse_rescript_json_strict(raw)
-        region_targets = payload.get("region_targets")
-        region_target_ids = {
-            str(row["id"]) for row in region_targets
-            if isinstance(row, dict) and isinstance(row.get("id"), str)
-        } if isinstance(region_targets, list) else set()
-        army_targets = payload.get("army_targets")
-        army_target_ids = {
-            str(row["id"]) for row in army_targets
-            if isinstance(row, dict) and isinstance(row.get("id"), str)
-        } if isinstance(army_targets, list) else set()
-        drafts = validate_rescript_draft_items(
-            data, _board_issue_ids(payload.get("active_issues"))
-        )
+        drafts = validate_rescript_draft_items(data, board_ids)
         _assert_region_targets_grounded(drafts, region_target_ids)
         _assert_army_targets_grounded(drafts, army_target_ids)
-    except (LLMContractError, ValueError) as exc:  # 解析/shape 缝：只收契约违约
-        _degrade(exc)
-        return None
-    tlog(f"[rescript] 票拟生成 {len(drafts)} 条。")
-    return drafts
+        return drafts
+
+    correction = ""
+    retries = max(0, int(RESCRIPT_COMBO_CORRECTION_RETRIES))
+    for attempt in range(retries + 1):
+        prompt = payload_json if not correction else f"{correction}\n{payload_json}"
+        try:
+            raw = run_agent_text(agent, prompt, tag="rescript-draft")
+        except (APITimeoutError, APIConnectionError, APIStatusError) as error:
+            # 窄捕 provider 已知故障→译 typed（照抄 decree.py:1991 Z3 缝）
+            _degrade(llm_unavailable_from_error(error, "急务票拟生成"))
+            return None
+        except LLMUnavailable as exc:  # LLM 调用缝：只收 typed 声明，程序错上抛
+            _degrade(exc)
+            return None
+        try:
+            drafts = _parse_and_validate(raw)
+        except StructuredDecreeCombinationError as exc:
+            # typed 组合：有界重抽；耗尽才 F2.5（StructuredDecree 是 ValueError 子类，
+            # 必须先于下方宽捕，否则会跳过纠错）。
+            if attempt >= retries:
+                _degrade(exc)
+                return None
+            correction = combination_correction_feedback(exc)
+            tlog(f"[rescript] 结构组合纠错重试 {attempt + 1}/{retries}: {exc}")
+            continue
+        except (LLMContractError, ValueError) as exc:  # 解析/非组合 shape：整批降级
+            _degrade(exc)
+            return None
+        tlog(f"[rescript] 票拟生成 {len(drafts)} 条。")
+        return drafts
+    return None

@@ -9,11 +9,12 @@ from __future__ import annotations
 
 from typing import Any, Dict, Mapping, MutableMapping, Optional
 
-from ming_sim.decree_vocabulary import NATIONAL_FANOUT_ACTION_TYPES, TARGET_KINDS
+from ming_sim.decree_vocabulary import TARGET_KINDS
 from ming_sim.execution_pressure import (
     TargetLocalityMatrixError,
     assert_target_locality_matrix,
     normalize_locality_scope,
+    project_target_locality_matrix_prompt,
     resolve_dossier_region_ids,
     write_locality_scope_for_target_kind,
 )
@@ -117,16 +118,17 @@ def structured_decree_prompt_contract() -> str:
     """三入口共用结构化旨意契约（唯一真源；禁入口平行复述）。
 
     运输键（中/英）均经 transport_keys_to_canonical 归一；本块只写闭集与语义一次。
-    national 动作限制由 NATIONAL_FANOUT_ACTION_TYPES 投影，不扩票拟七类 action。
+    target×locality 可接受面由 TARGET_KIND_LOCALITY_SCOPES 投影（与 assert 同真源）；
+    national 动作限制同属该投影，不扩票拟七类 action、不手抄第二份矩阵。
     """
     cats = "|".join(sorted(_transaction_categories()))
     kinds = "|".join(sorted(TARGET_KINDS))
-    national_actions = "|".join(sorted(NATIONAL_FANOUT_ACTION_TYPES))
+    matrix_face = project_target_locality_matrix_prompt()
     return (
         "结构化旨意契约（共同真源；运输键经 transport_keys_to_canonical 归一）："
         f"target_kind/目标类型∈{kinds}；target_id/目标ID；"
         "locality_scope/施行范围∈national|single|none（中文全国|单省|无）；"
-        f"national 仅 action_type∈{national_actions}；"
+        f"{matrix_face}；"
         "region_id/地区ID——仅 target_kind=region 时填且与 target_id 同，非 region 必须空；"
         f"transaction_category/事务类别∈{cats}|——非空须在闭集；"
         "assignment 交办须填类别或点将；assignee_name/承办人仅点将填规范人名，"
