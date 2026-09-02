@@ -177,9 +177,15 @@ def validate_structured_decree_combination(
     属地矩阵唯一走 assert_target_locality_matrix；有 conn 时再 resolve 省 id。
     失败一律 StructuredDecreeCombinationError（typed）。
     """
-    action = _as_str(
-        payload.get("action_type") or payload.get("dossier_action_type") or ""
-    ).strip()
+    action_type = _as_str(payload.get("action_type") or "").strip()
+    dossier_action_type = _as_str(payload.get("dossier_action_type") or "").strip()
+    if action_type and dossier_action_type and action_type != dossier_action_type:
+        raise StructuredDecreeCombinationError(
+            "action_type 与 dossier_action_type 冲突："
+            f"{action_type!r} vs {dossier_action_type!r}",
+            failed_fields=frozenset({"action_type", "dossier_action_type"}),
+        )
+    action = action_type or dossier_action_type
     target_kind = _as_str(payload.get("target_kind") or "").strip()
     target_id = _as_str(payload.get("target_id") or "").strip()
     if not target_kind:

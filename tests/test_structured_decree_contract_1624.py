@@ -86,7 +86,8 @@ def test_shared_validate_rejects_region_id_and_category_holes():
 
     class1 原洞 = 非 region + national 夹带 region_id（旧闸只拒 scope==none）；
     class2 原洞 = 非 assignment 非空非法类别（旧闸闭集只罩 assignment）；
-    class3 = 票拟七类动作 + national（NATIONAL_FANOUT 白名单外）必败。
+    class3 = 票拟七类动作 + national（NATIONAL_FANOUT 白名单外）必败；
+    action_alias_conflict = action_type 与 dossier_action_type 双非空且不同。
     不经月末 is None（票拟七类无 policy；军令空承办另有降级面）。
     """
     with pytest.raises(StructuredDecreeCombinationError):
@@ -122,6 +123,37 @@ def test_shared_validate_rejects_region_id_and_category_holes():
             "locality_scope": "none",
             "transaction_category": "INVALID",
         })
+    # 双非空动作身份冲突：默认 validate 入口 typed 拒绝，failed_fields 含两键
+    with pytest.raises(StructuredDecreeCombinationError) as ei:
+        assemble_structured_decree({
+            "action_type": "assignment",
+            "dossier_action_type": "policy",
+            "target_kind": "policy",
+            "target_id": "x",
+            "locality_scope": "none",
+            "transaction_category": "督赈",
+        })
+    assert ei.value.failed_fields == frozenset(
+        {"action_type", "dossier_action_type"}
+    )
+    # 同值或一侧空：维持现状（不因 alias 比较误伤）
+    same = assemble_structured_decree({
+        "action_type": "policy",
+        "dossier_action_type": "policy",
+        "target_kind": "policy",
+        "target_id": "x",
+        "locality_scope": "none",
+    })
+    assert same["action_type"] == "policy"
+    assert same["dossier_action_type"] == "policy"
+    only_action = assemble_structured_decree({
+        "action_type": "policy",
+        "target_kind": "policy",
+        "target_id": "x",
+        "locality_scope": "none",
+    })
+    assert only_action["action_type"] == "policy"
+    assert only_action["dossier_action_type"] == "policy"
 
 
 def test_month_end_entry_owner_and_matrix_reject(monkeypatch, game):
