@@ -677,10 +677,14 @@ def create_json_sanitizer_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Age
     )
 
 
-def _rescript_structured_decree_instructions() -> list[str]:
-    """月末票拟/改票共用：运行时注入 structured_decree 真源，禁入口平行复述。"""
+def _rescript_option_instructions() -> list[str]:
+    """月末票拟/改票共用：层 A 完整受理 + 目标/属地/承办子契约；禁入口手抄。"""
+    from ming_sim.rescript_draft import rescript_layer_a_prompt_contract
     from ming_sim.structured_decree import structured_decree_prompt_contract
-    return [structured_decree_prompt_contract()]
+    return [
+        rescript_layer_a_prompt_contract(),
+        structured_decree_prompt_contract(),
+    ]
 
 
 def create_rescript_draft_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
@@ -701,7 +705,7 @@ def create_rescript_draft_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Age
         instructions=[
             ctx.game_world_prompt,
             ctx.rescript_draft_prompt,
-            *_rescript_structured_decree_instructions(),
+            *_rescript_option_instructions(),
         ],
         add_history_to_context=False,
         markdown=False,
@@ -719,9 +723,10 @@ def create_rescript_revise_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Ag
             "你是批红改票官。根据给定急务行与批语，输出改票 options。\n"
             "只输出一个 JSON 对象，shape 必须是 "
             '{"options":[{...},...]}' "——禁止 items 数组、禁止草稿列表外壳。\n"
+            "每个 option 须满足运行时注入的层 A 受理契约与结构化旨意子契约；"
             "军队目标的 target_id 只可从同批 army_targets 中选择。"
         ),
-        *_rescript_structured_decree_instructions(),
+        *_rescript_option_instructions(),
     ]
     return Agent(
         name="批红改票官",

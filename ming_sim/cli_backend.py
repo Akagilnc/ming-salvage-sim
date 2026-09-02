@@ -52,11 +52,13 @@ from ming_sim.models import CODEX_DEFAULT_MODEL, CLAUDE_DEFAULT_MODEL, LLMConfig
 from ming_sim.constants import DOSSIER_LINK_TYPES
 from ming_sim.decree_vocabulary import DIRECTIVE_ACTION_TYPES
 from ming_sim.structured_decree import (
+    STRUCTURED_DECREE_FIELD_KEYS,
     StructuredDecreeCombinationError,
     apply_assembled_to_payload,
     assemble_structured_decree,
     combination_correction_feedback,
     structured_decree_prompt_contract,
+    validate_structured_decree_combination,
 )
 from ming_sim.participant_roster import (
     BARE_INSTITUTION_PARTICIPANT_NAMES as _BARE_INSTITUTION_PARTICIPANT_NAMES,
@@ -2014,6 +2016,90 @@ def _ground_relative_pay_order_deadlines(result: Dict[str, Any], db: Any) -> Dic
     return result
 
 
+def _strip_combo_validate_markers(result: Dict[str, Any]) -> Dict[str, Any]:
+    """去掉 extract 内部组合校验标记，不外泄。"""
+    out = dict(result)
+    out.pop("_combo_validate", None)
+    drafts = out.get("drafts")
+    if isinstance(drafts, list):
+        cleaned: List[Any] = []
+        for draft in drafts:
+            if isinstance(draft, dict):
+                item = dict(draft)
+                item.pop("_combo_validate", None)
+                cleaned.append(item)
+            else:
+                cleaned.append(draft)
+        out["drafts"] = cleaned
+    return out
+
+
+def _raise_combo_with_partial_if_invalid(result: Dict[str, Any]) -> None:
+    """整单/整批结果建成后做组合校验；失败携带 partial（含首抽名册）。"""
+    drafts = result.get("drafts")
+    if isinstance(drafts, list):
+        targets = [
+            draft for draft in drafts
+            if isinstance(draft, dict) and draft.get("_combo_validate") is True
+        ]
+    elif result.get("_combo_validate") is True:
+        targets = [result]
+    else:
+        targets = []
+    partial = _strip_combo_validate_markers(result)
+    for payload in targets:
+        try:
+            validate_structured_decree_combination(payload)
+        except StructuredDecreeCombinationError as exc:
+            raise StructuredDecreeCombinationError(
+                str(exc), partial_result=partial,
+            ) from exc
+
+
+def _merge_combo_correction_preserving_roster(
+    baseline: Dict[str, Any],
+    corrected: Dict[str, Any],
+) -> Dict[str, Any]:
+    """组合纠错成功：结构字段取纠错轮，逐 draft 保留首抽 participant_roster。
+
+    复用 STRUCTURED_DECREE_FIELD_KEYS；不另建第二 retry 机制。
+    """
+    out = dict(baseline)
+    for key in STRUCTURED_DECREE_FIELD_KEYS:
+        if key in corrected:
+            out[key] = corrected[key]
+        else:
+            out.pop(key, None)
+    if "participant_roster" in baseline:
+        out["participant_roster"] = baseline["participant_roster"]
+    base_drafts = baseline.get("drafts")
+    corr_drafts = corrected.get("drafts")
+    if isinstance(base_drafts, list):
+        merged: List[Any] = []
+        corr_list = corr_drafts if isinstance(corr_drafts, list) else []
+        for idx, base_draft in enumerate(base_drafts):
+            if not isinstance(base_draft, dict):
+                merged.append(base_draft)
+                continue
+            item = dict(base_draft)
+            corr_item = (
+                corr_list[idx]
+                if idx < len(corr_list) and isinstance(corr_list[idx], dict)
+                else None
+            )
+            if corr_item is not None:
+                for key in STRUCTURED_DECREE_FIELD_KEYS:
+                    if key in corr_item:
+                        item[key] = corr_item[key]
+                    else:
+                        item.pop(key, None)
+            if "participant_roster" in base_draft:
+                item["participant_roster"] = base_draft["participant_roster"]
+            merged.append(item)
+        out["drafts"] = merged
+    return _strip_combo_validate_markers(out)
+
+
 def extract_draft_intent_with_roster_heal(
     player_message: Optional[str],
     minister_reply: str,
@@ -2027,6 +2113,8 @@ def extract_draft_intent_with_roster_heal(
     """extract → 共同契约组合校验 + 名册校验；失败有界纠错重抽（P5 只走失败路）。
 
     #1624：组合校验失败只回喂结构契约，不改写自由文本旨文；不得各入口另造 heal。
+    组合纠错复用 baseline_result：只更新结构字段，逐 draft 保留首抽
+    participant_roster，再走既有名册校验（禁合法甲→合法乙静默漂移）。
     自愈只许抄写纠错（修完仍是皇帝所指之人）。真不在册 / 擅自除名 →
     raise UnknownParticipantEscalate（调用方戏内回禀，不落草案）。
     db/content 缺一则只抽不校验名册（与旧 extract 同）；组合校验在 extract 内已做。
@@ -2038,7 +2126,7 @@ def extract_draft_intent_with_roster_heal(
     prior_ids_at_fail: List[str] = []
     # 首抽权威快照：首次校验失败后冻结，后续失败不得覆写 baseline/闸基线。
     baseline_result: Optional[Dict[str, Any]] = None
-    combo_failures = 0
+    baseline_from_combo = False
     for attempt in range(retries + 1):
         # llm_config 关键字传：别族 fake_draft(msg, reply, **kw) 形仍合法，
         # 不得因 heal 多塞第 3 位置参把旧 mock 签名整族打爆。
@@ -2054,13 +2142,23 @@ def extract_draft_intent_with_roster_heal(
                 **extract_kwargs,
             )
         except StructuredDecreeCombinationError as exc:
-            # 共同契约组合失败：typed 有界重试；耗尽上抛（禁异常文本子串识别）
+            # 共同契约组合失败：typed 有界重试；首败冻结 partial 名册基线
+            partial = getattr(exc, "partial_result", None)
+            if baseline_result is None and isinstance(partial, dict):
+                baseline_result = _strip_combo_validate_markers(partial)
+                baseline_from_combo = True
             if attempt >= retries:
                 raise
-            combo_failures += 1
             correction = combination_correction_feedback(exc)
             _log(f"拟旨结构组合纠错重试 {attempt + 1}/{retries}: {exc}")
             continue
+        # 组合纠错成功：结构取本轮，名册保首抽，再走既有 roster 闸
+        if baseline_from_combo and baseline_result is not None:
+            result = _merge_combo_correction_preserving_roster(
+                baseline_result, result,
+            )
+            baseline_result = dict(result)
+            baseline_from_combo = False
         if db is not None:
             result = _ground_relative_pay_order_deadlines(result, db)
         if db is None or content is None:
@@ -2085,9 +2183,13 @@ def extract_draft_intent_with_roster_heal(
             if not is_unknown_participant_ref_error(exc):
                 raise
             # 仅首败冻结基线；重试失败不得洗掉首抽合法参与人/未知名。
-            if baseline_result is None:
+            # 组合路径可能已冻 baseline：仍要记下 pending_unknown 供 backfill。
+            if not pending_unknown:
                 pending_unknown = _invalid_participant_names_from_error(exc)
-                prior_ids_at_fail = _person_ids_from_extract_result(result)
+                prior_ids_at_fail = _person_ids_from_extract_result(
+                    baseline_result if baseline_result is not None else result,
+                )
+            if baseline_result is None:
                 baseline_result = dict(result)
             if attempt >= retries:
                 raise UnknownParticipantEscalate(pending_unknown) from exc
@@ -2355,7 +2457,9 @@ def extract_draft_intent(
             # grant 有完整 target 时同走 assembler（缺席→缺省 region→single；
             # 显式 region+none fail-loud）；缺 target 留给 admission，
             # 仅携带原始非空属地，绝不把缺席预先洗成显式 none。
-            if action != "grant_allocation" or (target_kind and target_id):
+            # 组合校验挪到整批结果建成后：失败时 partial 仍带首抽 participant_roster。
+            needs_combo = action != "grant_allocation" or bool(target_kind and target_id)
+            if needs_combo:
                 assembled = assemble_structured_decree(
                     {
                         **value,
@@ -2364,7 +2468,7 @@ def extract_draft_intent(
                         "目标类型": target_kind,
                         "目标ID": target_id,
                     },
-                    validate=True,
+                    validate=False,
                 )
                 apply_assembled_to_payload(mechanical, assembled)
                 target_kind = str(assembled["target_kind"])
@@ -2390,16 +2494,20 @@ def extract_draft_intent(
                 "dossier_action_type": action, "target_kind": target_kind,
                 "target_id": target_id, "target_candidate": "",
                 "mode": mode,
-                "participant_roster": value["参与人"] if "参与人" in value else [], **mechanical,
+                "participant_roster": value["参与人"] if "参与人" in value else [],
+                "_combo_validate": needs_combo,
+                **mechanical,
             })
         if invalid_batch or not any(draft is not None for draft in drafts):
             drafts = []
-        return {
+        batch_result = {
             "draft_action": "拟旨" if drafts else "无",
             "draft_text": "",
             "drafts": drafts,
             "target_candidate": "",
         }
+        _raise_combo_with_partial_if_invalid(batch_result)
+        return _strip_combo_validate_markers(batch_result)
 
     _candidates = [c for c in (existing_candidates or []) if c]
     _by_id = {int(c["id"]): c for c in _candidates}
@@ -2575,8 +2683,12 @@ def extract_draft_intent(
             (key, item) for key, item in _projected.items()
             if key != "target_kind"
         )
-    # #1624：共同契约组装；grant 完整 target 同走 assembler，缺席不洗 none
-    if dossier_action != "grant_allocation" or (target_kind and target_id_value):
+    # #1624：共同契约组装；grant 完整 target 同走 assembler，缺席不洗 none。
+    # 组合校验延后到结果建成：失败 partial 仍带首抽 participant_roster。
+    needs_combo = (
+        dossier_action != "grant_allocation" or bool(target_kind and target_id_value)
+    )
+    if needs_combo:
         assembled = assemble_structured_decree(
             {
                 **obj,
@@ -2585,7 +2697,7 @@ def extract_draft_intent(
                 "目标类型": target_kind,
                 "目标ID": target_id_value,
             },
-            validate=True,
+            validate=False,
         )
         apply_assembled_to_payload(mechanical, assembled)
         target_kind = str(assembled["target_kind"])
@@ -2610,10 +2722,16 @@ def extract_draft_intent(
             draft_text = merged if merged else _existing_draft_text
         else:
             draft_text = (minister_reply or "").strip()
-        return {"draft_action": _action, "draft_text": draft_text, "target_candidate": "",
-                "dossier_action_type": dossier_action,
-                "target_kind": target_kind, "target_id": target_id_value,
-                "participant_roster": obj["参与人"] if "参与人" in obj else [], **mechanical}
+        single_result = {
+            "draft_action": _action, "draft_text": draft_text, "target_candidate": "",
+            "dossier_action_type": dossier_action,
+            "target_kind": target_kind, "target_id": target_id_value,
+            "participant_roster": obj["参与人"] if "参与人" in obj else [],
+            "_combo_validate": needs_combo,
+            **mechanical,
+        }
+        _raise_combo_with_partial_if_invalid(single_result)
+        return _strip_combo_validate_markers(single_result)
     # 多道：归一目标——命中候选 id=补那道；「新」=明确另拟；否则含糊兜底（#502 L7）：
     # 单条→补那条（沿用 last-write-wins），**多条不静默新建第三道**→「含糊」交 session 追问哪一道。
     target_raw = str(obj.get("目标草案") or "").strip()
@@ -2639,12 +2757,16 @@ def extract_draft_intent(
         existing = str(_by_id[int(target)].get("text") or "")
         # 补某道：优先合并全文；LLM 未合并时保留原文（避免用确认语覆盖），原文亦空则退回话。
         draft_text = merged if merged else (existing if existing else (minister_reply or "").strip())
-    return {
+    cand_result = {
         "draft_action": _action, "draft_text": draft_text, "target_candidate": target,
         "dossier_action_type": dossier_action,
         "target_kind": target_kind, "target_id": target_id_value,
-        "participant_roster": obj["参与人"] if "参与人" in obj else [], **mechanical,
+        "participant_roster": obj["参与人"] if "参与人" in obj else [],
+        "_combo_validate": needs_combo,
+        **mechanical,
     }
+    _raise_combo_with_partial_if_invalid(cand_result)
+    return _strip_combo_validate_markers(cand_result)
 
 
 # 手工拟诏 capture 总罩（#1327 / #1274 V-1 owner 2026-08-20）：
