@@ -63,33 +63,25 @@ def _transaction_categories() -> frozenset[str]:
     return duty_route_categories()
 
 
-def structured_decree_guidance() -> str:
-    """三入口共用语义指引（禁止各入口平行复述）。"""
+def structured_decree_prompt_contract() -> str:
+    """三入口共用结构化旨意契约（唯一真源；禁入口平行复述）。
+
+    运输键（中/英）均经 transport_keys_to_canonical 归一；本块只写闭集与语义一次。
+    """
     cats = "|".join(sorted(_transaction_categories()))
     kinds = "|".join(sorted(TARGET_KINDS))
     return (
-        "结构化旨意契约（共同真源）："
-        f"目标类型∈{kinds}；施行范围∈无|全国|单省（落库 national/single/none）。"
-        "明指某省差务→目标类型=region、目标ID=省 id、施行范围=单省、地区ID=同省 id；"
-        "不得把户部/兵部等机关写成目标类型=office 来承载省务。"
-        f"交办类动作类型=assignment 且填事务类别（{cats}）；"
-        "承办机关只由既有职司路由（如督赈→户部）得出，勿把机关名写入承办人；"
-        "承办人仅在皇帝点将时填规范人名，未点将留空。"
+        "结构化旨意契约（共同真源；运输键经 transport_keys_to_canonical 归一）："
+        f"target_kind/目标类型∈{kinds}；target_id/目标ID；"
+        "locality_scope/施行范围∈national|single|none（中文全国|单省|无）；"
+        "region_id/地区ID——仅 target_kind=region 时填且与 target_id 同，非 region 必须空；"
+        f"transaction_category/事务类别∈{cats}|——非空须在闭集；"
+        "assignment 交办须填类别或点将；assignee_name/承办人仅点将填规范人名，"
+        "机关承办留空，由职司路由（如督赈→户部）得出，勿把机关名写入承办人。"
+        "明指某省差务→target_kind=region、target_id=省 id、locality_scope=single、"
+        "region_id=同省 id；不得用 office 等机关目标承载省务；"
         "禁止用目标类型回写施行范围掩盖错误目标。"
-    )
-
-
-def structured_decree_extract_schema_lines() -> str:
-    """召对/手工拟旨抽取共用 schema 行（中文运输键；组装后转 canonical）。"""
-    cats = "|".join(sorted(_transaction_categories()))
-    kinds = "|".join(sorted(TARGET_KINDS))
-    return (
-        f'  "目标类型": "{kinds}",\n'
-        '  "目标ID": "",\n'
-        '  "地区ID": "",              // region 目标时与目标ID同；非 region 留空\n'
-        '  "施行范围": "无|全国|单省", // 省务=单省；全国政令=全国；无属地=无\n'
-        f'  "事务类别": "{cats}|", // assignment 交办填类别；非交办留空\n'
-        '  "承办人": "",              // 仅点将填规范人名；机关承办留空走职司路由\n'
+        "assignee_name/region_id/transaction_category 输出时键可在、值可空串。"
     )
 
 
@@ -157,13 +149,17 @@ def validate_structured_decree_combination(
             raise StructuredDecreeCombinationError(
                 f"region 目标 region_id={region_id!r} 须与 target_id={target_id!r} 一致"
             )
-    elif region_id and scope == "none":
+    elif region_id:
         raise StructuredDecreeCombinationError(
-            f"locality_scope=none 不得夹带 region_id={region_id!r}"
+            f"target_kind={target_kind!r} 不得夹带 region_id={region_id!r}"
         )
 
+    cat = _as_str(payload.get("transaction_category") or "").strip()
+    if cat and cat not in _transaction_categories():
+        raise StructuredDecreeCombinationError(
+            f"transaction_category 非法：{cat!r}"
+        )
     if action == "assignment":
-        cat = _as_str(payload.get("transaction_category") or "").strip()
         assignee = _as_str(
             payload.get("assignee_name")
             or payload.get("assignee_id")
@@ -173,10 +169,6 @@ def validate_structured_decree_combination(
         if not cat and not assignee:
             raise StructuredDecreeCombinationError(
                 "assignment 缺 transaction_category 与主办"
-            )
-        if cat and cat not in _transaction_categories():
-            raise StructuredDecreeCombinationError(
-                f"transaction_category 非法：{cat!r}"
             )
 
     if conn is not None:
@@ -285,20 +277,6 @@ def combination_correction_feedback(exc: BaseException) -> str:
     return (
         "【结构组合校验失败，请按共同契约重抽结构化字段（勿改旨文正文）】\n"
         f"{exc}\n"
-        + structured_decree_guidance()
+        + structured_decree_prompt_contract()
         + "\n"
-    )
-
-
-def structured_decree_rescript_option_lines() -> str:
-    """月末票拟/改票层 A 英键字段行（闭集同源；禁入口手抄第二份）。"""
-    cats = "|".join(sorted(_transaction_categories()))
-    kinds = "|".join(sorted(TARGET_KINDS))
-    return (
-        "每个 option 结构化字段（共同契约英键）："
-        f"action_type；target_kind∈{kinds}；target_id；"
-        "locality_scope∈national|single|none；region_id；"
-        f"transaction_category∈{cats}|；"
-        "assignee_name（仅点将填规范人名，未点将空串）。"
-        "assignee_name/region_id/transaction_category 三键必须输出，值可空串。"
     )

@@ -679,14 +679,8 @@ def create_json_sanitizer_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Age
 
 def _rescript_structured_decree_instructions() -> list[str]:
     """月末票拟/改票共用：运行时注入 structured_decree 真源，禁入口平行复述。"""
-    from ming_sim.structured_decree import (
-        structured_decree_guidance,
-        structured_decree_rescript_option_lines,
-    )
-    return [
-        structured_decree_guidance(),
-        structured_decree_rescript_option_lines(),
-    ]
+    from ming_sim.structured_decree import structured_decree_prompt_contract
+    return [structured_decree_prompt_contract()]
 
 
 def create_rescript_draft_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:

@@ -56,8 +56,7 @@ from ming_sim.structured_decree import (
     apply_assembled_to_payload,
     assemble_structured_decree,
     combination_correction_feedback,
-    structured_decree_extract_schema_lines,
-    structured_decree_guidance,
+    structured_decree_prompt_contract,
 )
 from ming_sim.participant_roster import (
     BARE_INSTITUTION_PARTICIPANT_NAMES as _BARE_INSTITUTION_PARTICIPANT_NAMES,
@@ -2240,7 +2239,6 @@ def extract_draft_intent(
         return projected
 
     if draft_count > 1:
-        _shared_schema = structured_decree_extract_schema_lines().rstrip("\n")
         prompt = (
             "你是信息抽取器，不扮演。皇帝同一句要求拟多道彼此独立的圣旨，大臣已在一段回话中"
             f"拟了内容。请从完整语义中整理出恰好 {draft_count} 道彼此可区分、可独立暂存的成品旨稿。"
@@ -2258,9 +2256,7 @@ def extract_draft_intent(
             'entries 仅 pay_order_override 非空，形如 '
             '[{"key":"due_priority_军饷@shaanxi","value":40,"duration_months":3}]；'
             'military_order 等非该动作不写或 []。\n'
-            "非拨帑旨结构化字段（共同契约）：\n"
-            + _shared_schema + "\n"
-            + structured_decree_guidance() + "\n"
+            + structured_decree_prompt_contract() + "\n"
             "拨帑动作逐道使用以下 ACTION_CLUSTERS 字段（其余动作留缺省）：\n"
             + grant_fields_prompt
             + "不得把同一段文字复制成多道；不得遗漏皇帝要求的任一道拟旨事项。\n\n"
@@ -2432,8 +2428,13 @@ def extract_draft_intent(
         'due_haircut_bp_<科目>[@省][#province|#central]；haircut 值=万分数(0,10000]；非该动作留 []\n'
         + grant_fields_prompt
         + '  "执行面": "immediate|in_transit", // 仅拨帑：账内即时划转或在途执行\n'
-        + structured_decree_extract_schema_lines()
-        + '  "参与人": [{"character_id":"规范名","tier":"主办|协办|知情","role":"本案职分","delegator_id":null}],\n'
+        '  "目标类型": "",\n'
+        '  "目标ID": "",\n'
+        '  "地区ID": "",\n'
+        '  "施行范围": "",\n'
+        '  "事务类别": "",\n'
+        '  "承办人": "",\n'
+        '  "参与人": [{"character_id":"规范名","tier":"主办|协办|知情","role":"本案职分","delegator_id":null}],\n'
         '  "期限月数": null,           // 军令必填正整数；非军令留 null\n'
         '  "目标案卷ID": null' + (
             "," if (_candidates or _supplement_mode) else ""
@@ -2473,7 +2474,7 @@ def extract_draft_intent(
         + merge_schema_line
         + "}\n"
         "判定要点：皇帝明确让大臣拟旨/起草圣旨→拟旨；仅商议/问询/催办/评论不算。语义判断，别拘字面。\n"
-        + structured_decree_guidance() + "\n"
+        + structured_decree_prompt_contract() + "\n"
         '非拨帑旨填共同契约目标/属地/事务类别/承办字段及“颁布方式”(普通|中旨直发)；拨帑旨只用 ACTION_CLUSTERS 字段。\n'
         "御笔强推议而不决事项亦归拟旨，并填目标案卷ID。\n\n"
         + correction_block
@@ -2655,12 +2656,6 @@ MANUAL_DIRECTIVE_CAPTURE_TIMEOUT_S = 30.0
 # 八值 target_kind 真源在 decree_vocabulary.TARGET_KINDS（#654 / owner A 禁双定义）
 from ming_sim.decree_vocabulary import TARGET_KINDS as _VALID_DRAFT_TARGET_KINDS
 from ming_sim.execution_pressure import normalize_locality_scope as _normalize_locality_scope
-# 单旨/多旨 prompt 共用一段闭集 guidance（定序派生，禁手写七值）
-_DRAFT_TARGET_KIND_GUIDANCE = "|".join(sorted(_VALID_DRAFT_TARGET_KINDS))
-
-
-def _draft_target_kind_guidance() -> str:
-    return _DRAFT_TARGET_KIND_GUIDANCE
 
 
 def _coerce_draft_target_kind(raw: object) -> str:
