@@ -2355,8 +2355,11 @@ def extract_draft_intent(
                     (key, item) for key, item in projected.items()
                     if key != "target_kind"
                 )
-            # #1624：共同契约组装目标/属地/承办；grant 缺 target_kind 留给 admission
-            if action != "grant_allocation":
+            # #1624：共同契约组装目标/属地/承办。
+            # grant 有完整 target 时同走 assembler（缺席→缺省 region→single；
+            # 显式 region+none fail-loud）；缺 target 留给 admission，
+            # 仅携带原始非空属地，绝不把缺席预先洗成显式 none。
+            if action != "grant_allocation" or (target_kind and target_id):
                 assembled = assemble_structured_decree(
                     {
                         **value,
@@ -2371,9 +2374,11 @@ def extract_draft_intent(
                 target_kind = str(assembled["target_kind"])
                 target_id = str(assembled["target_id"])
             else:
-                mechanical["locality_scope"] = _coerce_draft_locality_scope(
+                explicit_scope = _explicit_draft_locality_scope(
                     value.get("施行范围") or projected.get("locality_scope")
                 )
+                if explicit_scope is not None:
+                    mechanical["locality_scope"] = explicit_scope
             # #653：pay_order_override 结构化载荷（entries）随草案整道转交，
             # 成案点/物化点共 prepare_pay_order_entries 同一验形。
             entries = value.get("entries")
@@ -2569,11 +2574,8 @@ def extract_draft_intent(
             (key, item) for key, item in _projected.items()
             if key != "target_kind"
         )
-        mechanical["locality_scope"] = _coerce_draft_locality_scope(
-            obj.get("施行范围") or _projected.get("locality_scope")
-        )
-    else:
-        # #1624：共同契约组装（目标/属地/事务类别/承办）
+    # #1624：共同契约组装；grant 完整 target 同走 assembler，缺席不洗 none
+    if dossier_action != "grant_allocation" or (target_kind and target_id_value):
         assembled = assemble_structured_decree(
             {
                 **obj,
@@ -2587,6 +2589,12 @@ def extract_draft_intent(
         apply_assembled_to_payload(mechanical, assembled)
         target_kind = str(assembled["target_kind"])
         target_id_value = str(assembled["target_id"])
+    elif dossier_action == "grant_allocation":
+        explicit_scope = _explicit_draft_locality_scope(
+            obj.get("施行范围") or _projected.get("locality_scope")
+        )
+        if explicit_scope is not None:
+            mechanical["locality_scope"] = explicit_scope
     if mode is not None:
         mechanical["mode"] = mode
     merged = str(obj.get("合并草案") or "").strip()
@@ -2663,10 +2671,10 @@ def _coerce_draft_target_kind(raw: object) -> str:
     return kind
 
 
-def _coerce_draft_locality_scope(raw: object) -> str:
-    """#1624：属地归一唯一真源 execution_pressure.normalize_locality_scope。"""
+def _explicit_draft_locality_scope(raw: object) -> Optional[str]:
+    """仅原始非空属地才归一；缺席返回 None（禁止预先洗成显式 none）。"""
     if raw is None or str(raw).strip() == "":
-        return "none"
+        return None
     return _normalize_locality_scope(raw)
 
 
