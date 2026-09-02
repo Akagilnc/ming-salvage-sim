@@ -37,7 +37,6 @@ from ming_sim.decree_vocabulary import (
     derive_draft_capability,
     dossier_action_policy,
 )
-from ming_sim.execution_pressure import write_locality_scope_for_target_kind
 from ming_sim.settlement_payload import (
     bind_decision_options,
     decision_has_rescript_capability,
@@ -947,9 +946,19 @@ def map_rescript_option_or_choice(
     ):
         payload["name"] = str(payload.get("target_id") or payload.get("name") or "")
 
-    payload["locality_scope"] = write_locality_scope_for_target_kind(
-        payload.get("target_kind")
+    # #1624：共同契约组装 locality/region/承办；禁止按 target_kind 覆盖已给 scope
+    from ming_sim.structured_decree import assemble_structured_decree, apply_assembled_to_payload
+    assembled = assemble_structured_decree(
+        {
+            **payload,
+            **src,
+            "action_type": emitted,
+            "target_kind": payload.get("target_kind") or target_kind,
+            "target_id": payload.get("target_id") or target_id,
+        },
+        validate=True,
     )
+    apply_assembled_to_payload(payload, assembled)
     payload["_decree_text"] = decree_text
     payload["_emitted_action_type"] = emitted
     return payload

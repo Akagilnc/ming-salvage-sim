@@ -51,12 +51,7 @@ _LAYER_A_REQUIRED_KEYS = (
 _LAYER_A_PRESENT_KEYS = (
     "assignee_name", "region_id", "transaction_category",
 )
-_LOCALITY_SCOPES = frozenset({"national", "single", "none"})
-_LOCALITY_ALIASES = {
-    "全国": "national", "全域": "national",
-    "单地": "single", "一地": "single",
-    "无": "none", "无属地": "none",
-}
+# locality 三值/别名唯一真源 = execution_pressure.normalize_locality_scope（#1624 删平行）
 
 
 # 层 A 允许键 = C.3 必填/须在 + C.4 闭集 + draft_capability（服务端覆盖，LLM 自带不准）
@@ -129,11 +124,9 @@ def normalize_rescript_layer_a_option(
     if target_kind not in TARGET_KINDS:
         raise ValueError(f"票拟 option.target_kind 非法：{target_kind!r}")
     out["target_kind"] = target_kind
-    scope_raw = str(out["locality_scope"]).strip()
-    scope = _LOCALITY_ALIASES.get(scope_raw, scope_raw)
-    if scope not in _LOCALITY_SCOPES:
-        raise ValueError(f"票拟 option.locality_scope 非法：{scope_raw!r}")
-    out["locality_scope"] = scope
+    # #1624：locality 归一唯一真源；禁止平行别名表，禁止按 target_kind 覆盖
+    from ming_sim.execution_pressure import normalize_locality_scope
+    out["locality_scope"] = normalize_locality_scope(out["locality_scope"])
     # C.3：三键必须在且为 str（可 ""）；禁缺键补全 / None→"" / str(value) 洗值
     for key in _LAYER_A_PRESENT_KEYS:
         if key not in raw:
@@ -144,6 +137,9 @@ def normalize_rescript_layer_a_option(
                 f"票拟 option.{key} 须为 str（可空串），拒 {type(value).__name__}"
             )
         out[key] = value
+    # #1624：层 A 即走共同组合校验（动作×目标×属地×承办），落库前不再另写平行闸
+    from ming_sim.structured_decree import validate_structured_decree_combination
+    validate_structured_decree_combination(out)
     # 其余 capability 闭集字段透传（有则规范化，无则由 derive 填默认）
     for key, _default in (
         ("name", ""), ("title", ""), ("commitment_kind", ""),
