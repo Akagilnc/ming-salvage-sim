@@ -16,6 +16,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from ming_sim.decree_vocabulary import TARGET_KINDS
 from ming_sim.execution_pressure import write_locality_scope_for_target_kind
+from ming_sim.executor_routing import duty_route_categories
 from ming_sim.structured_decree import assemble_structured_decree, apply_assembled_to_payload
 
 from ming_sim.action_clusters import (
@@ -1597,7 +1598,8 @@ def stage_grant_allocation_candidate(
         "grant_action": action,
         "mode": mode,
     }
-    # #654：每次完整写出 locality_scope，region→非 region 改草须覆盖 merge 旧 single
+    # #654/#1624：本路径为 grant materialize 自建 staged（无 LLM 属地字段），
+    # 不属三入口 structured_decree 契约；仅缺省补全，非覆盖已给 locality。
     staged["locality_scope"] = write_locality_scope_for_target_kind(kind)
     if account in {"国库", "内库"}:
         staged["account"] = account
@@ -2330,7 +2332,8 @@ def stage_authorization_candidate(
         "scope": scope_key,
         "mode": mode,
     }
-    # #654：每次完整写出 locality_scope，region→非 region 改草须覆盖 merge 旧 single
+    # #654/#1624：authorization materialize 自建 staged（无 LLM 属地字段），
+    # 不属三入口 structured_decree 契约；仅缺省补全，非覆盖已给 locality。
     staged["locality_scope"] = write_locality_scope_for_target_kind(kind)
     if existing_id:
         return db.update_directive_candidate(existing_id, staged)
@@ -3429,7 +3432,7 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 FieldSpec("title", "标题", None, "", max_len=80),
                 FieldSpec(
                     "transaction_category", "事务类别",
-                    frozenset({"钱粮", "清丈", "督赈", "缉拿", "缉捕", "河工"}), "",
+                    duty_route_categories(), "",
                 ),
                 # owner=当前召对大臣；不设 assignee/name 改派字段（#520 r2）
                 # 与 grant/pacification 共享 target_id：事项锚（跨轮强化身份）
@@ -3540,7 +3543,7 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 ),
                 FieldSpec(
                     "transaction_category", "事务类别",
-                    frozenset({"钱粮", "清丈", "督赈", "缉拿", "缉捕", "河工"}), "",
+                    duty_route_categories(), "",
                 ),
                 FieldSpec(
                     "mode", "颁布方式",
@@ -3565,7 +3568,7 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 FieldSpec("target_id", "目标", None, "", max_len=80),
                 FieldSpec(
                     "transaction_category", "事务类别",
-                    frozenset({"钱粮", "清丈", "督赈", "缉拿", "缉捕", "河工"}), "",
+                    duty_route_categories(), "",
                 ),
                 # 承办人 / 责任军将（admission 映 assignee_id）
                 FieldSpec("name", "姓名", None, "", max_len=20),
