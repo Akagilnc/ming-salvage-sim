@@ -199,16 +199,16 @@ def test_shared_validate_rejects_region_id_and_category_holes():
     assert only_action["dossier_action_type"] == "policy"
 
 
-def test_month_end_entry_owner_and_matrix_reject(monkeypatch, game, tmp_path):
+def test_month_end_entry_owner_and_matrix_reject(monkeypatch, tmp_path):
     """真实月末入口 tracer：Owner 例；army+single 有界纠错接受；耗尽整批降级。
 
     首抽 exact army+single（合并后复验残留）；纠错轮合法 army+none 被整批接受。
     另证纠错仍非法 → F2.5 响亮降级、零部分头版。不静默改写 scope/kind。
     改票真实入口由 test_pihong_dossier_1490 的 return_revise 路径覆盖。
+    不申请 game：本 tracer 只经 generate_rescript_draft 真实入口，无 DB。
     """
     import ming_sim.rescript_draft as rescript_mod
 
-    del game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
 
     owner_item = {
