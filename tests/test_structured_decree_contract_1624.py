@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from ming_sim.cli_backend import capture_manual_directive_payload as _real_capture
+from ming_sim.structured_decree import (
+    StructuredDecreeCombinationError,
+    assemble_structured_decree,
+)
 from tests.test_month_loop_tracer_1468 import _post_issue_stream, tracer_client  # noqa: F401
 
 _OWNER_OPTION = {
@@ -75,11 +81,45 @@ def _month_end_ctx() -> dict:
     }
 
 
-def test_month_end_entry_owner_and_combo_rejects(monkeypatch, game):
-    """真实月末生成入口：Owner 例落 canonical；坏形整批降级。
+def test_shared_validate_rejects_region_id_and_category_holes():
+    """共同 assemble/validate 最低可证层：钉原洞 typed 拒绝。
+
+    class1 原洞 = 非 region + national 夹带 region_id（旧闸只拒 scope==none）；
+    class2 原洞 = 非 assignment 非空非法类别（旧闸闭集只罩 assignment）。
+    不经月末 is None（票拟七类无 policy；军令空承办另有降级面）。
+    """
+    with pytest.raises(StructuredDecreeCombinationError):
+        assemble_structured_decree({
+            "action_type": "policy",
+            "target_kind": "policy",
+            "target_id": "x",
+            "locality_scope": "national",
+            "region_id": "shaanxi",
+        })
+    with pytest.raises(StructuredDecreeCombinationError):
+        assemble_structured_decree({
+            "action_type": "military_order",
+            "target_kind": "army",
+            "target_id": "xuanfu",
+            "locality_scope": "none",
+            "assignee_name": "祖大寿",
+            "transaction_category": "INVALID",
+        })
+    with pytest.raises(StructuredDecreeCombinationError):
+        assemble_structured_decree({
+            "action_type": "punishment",
+            "target_kind": "character",
+            "target_id": "某官",
+            "locality_scope": "none",
+            "transaction_category": "INVALID",
+        })
+
+
+def test_month_end_entry_owner_and_matrix_reject(monkeypatch, game):
+    """真实月末生成入口：Owner 例落 canonical；office+single 矩阵坏形整批降级。
 
     改票真实入口由 test_pihong_dossier_1490 的 return_revise 路径覆盖。
-    负向覆盖共同组合闸：office+single、非 region 夹带 region_id、非法事务类别。
+    region_id/category 原洞见 test_shared_validate_rejects_region_id_and_category_holes。
     """
     import ming_sim.rescript_draft as rescript_mod
 
@@ -115,58 +155,25 @@ def test_month_end_entry_owner_and_combo_rejects(monkeypatch, game):
     assert monthly["transaction_category"] == "督赈"
     assert not str(monthly.get("assignee_name") or "").strip()
 
-    bad_options = [
-        {
+    # office+single：矩阵矛盾（非 region_id/category 原洞）→ 整批降级
+    bad = {
+        "title": "坏形",
+        "context": "x",
+        "options": [{
             **_OWNER_OPTION,
             "target_kind": "office",
             "target_id": "户部",
             "locality_scope": "single",
             "region_id": "",
-        },
-        {
-            **_OWNER_OPTION,
-            "action_type": "assignment",
-            "target_kind": "office",
-            "target_id": "户部",
-            "locality_scope": "none",
-            "region_id": "shaanxi",
-        },
-        {
-            "label": "进剿",
-            "hint": "军令",
-            "action_type": "military_order",
-            "target_kind": "army",
-            "target_id": "xuanfu",
-            "locality_scope": "none",
-            "region_id": "",
-            "assignee_name": "",
-            "transaction_category": "INVALID",
-        },
-        {
-            "label": "拿问",
-            "hint": "法司",
-            "action_type": "punishment",
-            "target_kind": "character",
-            "target_id": "某官",
-            "locality_scope": "none",
-            "region_id": "",
-            "assignee_name": "",
-            "transaction_category": "INVALID",
-        },
-    ]
-    for bad_opt in bad_options:
-        bad = {
-            "title": "坏形",
-            "context": "x",
-            "options": [bad_opt, dict(_OWNER_OPTION)],
-        }
-        monkeypatch.setattr(
-            rescript_mod, "run_agent_text",
-            lambda *_a, **_k: json.dumps({"items": [bad]}, ensure_ascii=False),
-        )
-        assert rescript_mod.generate_rescript_draft(
-            object(), _month_end_ctx(), 1,
-        ) is None, f"expected reject for {bad_opt!r}"
+        }, dict(_OWNER_OPTION)],
+    }
+    monkeypatch.setattr(
+        rescript_mod, "run_agent_text",
+        lambda *_a, **_k: json.dumps({"items": [bad]}, ensure_ascii=False),
+    )
+    assert rescript_mod.generate_rescript_draft(
+        object(), _month_end_ctx(), 1,
+    ) is None
 
 
 def test_rescript_follow_draft_routes_hubu(game):
