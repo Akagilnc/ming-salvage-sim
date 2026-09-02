@@ -4112,8 +4112,22 @@ def test_657_revise_deliberate_strict_contracts_zero_write_on_bad_shape(game, mo
         assert hit["status"] == "pending"
         assert hit.get("choice") in (None, {},)
 
+    # #1624 Owner 例经真实 return_revise 入口（prepare_rescript_prewrite → _revise_runner）
+    owner_opt = {
+        "label": "着户部继续核查陕西赈务，按月具报。",
+        "hint": "督赈",
+        "action_type": "assignment",
+        "target_kind": "region",
+        "target_id": "shaanxi",
+        "locality_scope": "single",
+        "region_id": "shaanxi",
+        "assignee_name": "",
+        "transaction_category": "督赈",
+        "deadline_months": 2,
+    }
+
     def _ok_revise_text(*_a, **_k):
-        return json.dumps({"options": [_military_option("guanning")]}, ensure_ascii=False)
+        return json.dumps({"options": [owner_opt]}, ensure_ascii=False)
 
     monkeypatch.setattr(agents_mod, "run_agent_text", _ok_revise_text)
     pre = sess.prepare_rescript_prewrite([{
@@ -4122,7 +4136,14 @@ def test_657_revise_deliberate_strict_contracts_zero_write_on_bad_shape(game, mo
     assert isinstance(pre.get("prewrite"), PrewriteResults)
     ro = pre["prewrite"].revise_by_key
     assert key in ro and isinstance(ro[key], list) and len(ro[key]) >= 1
-    assert all(isinstance(o, dict) and o.get("action_type") for o in ro[key])
+    revised = ro[key][0]
+    assert revised["action_type"] == "assignment"
+    assert revised["target_kind"] == "region"
+    assert revised["target_id"] == "shaanxi"
+    assert revised["region_id"] == "shaanxi"
+    assert revised["locality_scope"] == "single"
+    assert revised["transaction_category"] == "督赈"
+    assert not str(revised.get("assignee_name") or "").strip()
 
     def _bad_delib(*_a, **_k):
         return json.dumps({"title": "t", "body": "b"}, ensure_ascii=False)
