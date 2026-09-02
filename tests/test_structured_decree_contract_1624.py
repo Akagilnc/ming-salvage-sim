@@ -312,6 +312,11 @@ def test_layer_a_prompt_contract_is_typed_single_source_for_draft_and_revise(mon
     mil = conditional["military_order"]
     assert "assignee_name" in mil["required_nonempty"]  # type: ignore[index]
     assert mil["target_kind_in"] == ("army",)
+    mil_any = mil.get("require_any_nonempty") or ()
+    assert any(
+        set(group) >= {"station", "due_turn", "deadline_months"}
+        for group in mil_any  # type: ignore[union-attr]
+    ), f"military dual gate missing in shape: {mil_any!r}"
     punish = conditional["punishment"]
     assert "punish_action" in punish["required_nonempty"]  # type: ignore[index]
     assert "罚俸" in punish["enum_in"]["punish_action"]  # type: ignore[index]
@@ -331,7 +336,41 @@ def test_layer_a_prompt_contract_is_typed_single_source_for_draft_and_revise(mon
             "target_kind": "army", "target_id": "xuanfu",
             "locality_scope": "none", "region_id": "",
             "assignee_name": "", "transaction_category": "",
+            "station": "京师",
         })
+    # 军令 dual：驻地|期限须具其一；双缺不得过层 A（复判用户可见风险）
+    with pytest.raises(ValueError, match="station|due_turn|deadline_months"):
+        normalize_rescript_layer_a_option({
+            "label": "出战", "hint": "h", "action_type": "military_order",
+            "target_kind": "army", "target_id": "xuanfu",
+            "locality_scope": "none", "region_id": "",
+            "assignee_name": "祖大寿", "transaction_category": "",
+        })
+    with pytest.raises(ValueError, match="station|due_turn|deadline_months"):
+        normalize_rescript_layer_a_option({
+            "label": "出战", "hint": "h", "action_type": "military_order",
+            "target_kind": "army", "target_id": "xuanfu",
+            "locality_scope": "none", "region_id": "",
+            "assignee_name": "祖大寿", "transaction_category": "",
+            "station": "", "due_turn": 0, "deadline_months": 0,
+        })
+    # 正控：仅驻地 / 仅期限 均可过层 A
+    only_station = normalize_rescript_layer_a_option({
+        "label": "调驻", "hint": "h", "action_type": "military_order",
+        "target_kind": "army", "target_id": "xuanfu",
+        "locality_scope": "none", "region_id": "",
+        "assignee_name": "祖大寿", "transaction_category": "",
+        "station": "京师",
+    })
+    assert only_station.get("station") == "京师"
+    only_deadline = normalize_rescript_layer_a_option({
+        "label": "限期", "hint": "h", "action_type": "military_order",
+        "target_kind": "army", "target_id": "xuanfu",
+        "locality_scope": "none", "region_id": "",
+        "assignee_name": "祖大寿", "transaction_category": "",
+        "deadline_months": 3,
+    })
+    assert int(only_deadline.get("deadline_months") or 0) == 3
 
     contract = rescript_layer_a_prompt_contract()
     # renderer 必须消费 action_conditional（组合断言；禁措辞锁）。
@@ -538,3 +577,81 @@ def test_combo_correction_preserves_batch_first_draw_roster(game, monkeypatch):
     assert first in str(drafts[0].get("draft_text") or "")
     assert drafts[1].get("target_id") == "guanning"
     assert n["c"] == 2
+
+
+def test_batch_combo_rejects_when_correction_only_heals_first(game, monkeypatch):
+    """批抽两条均非法、纠错只修第一条 → 不得放行第二条非法（复判用户可见风险）。
+
+    根因类：finalize 须一次收齐全部 draft_failures；revalidate 按全图重闸。
+    """
+    import ming_sim.cli_backend as cb
+    from ming_sim.structured_decree import StructuredDecreeCombinationError
+
+    db, _state, content = game
+    first = "毕自严"
+
+    def _batch(*, heal_first_only: bool) -> dict:
+        # 两条 region 交办均 locality=none（矩阵非法）
+        d0_scope = "单省" if heal_first_only else "无"
+        return {
+            "成品旨稿": [
+                {
+                    "正文": f"着{first}核查陕西赈务。",
+                    "动作类型": "assignment",
+                    "目标类型": "region",
+                    "目标ID": "shaanxi",
+                    "地区ID": "shaanxi",
+                    "施行范围": d0_scope,
+                    "事务类别": "督赈",
+                    "颁布方式": "普通",
+                    "参与人": [{
+                        "character_id": first, "tier": "主办", "role": "督",
+                    }],
+                },
+                {
+                    "正文": f"着{first}核查山西赈务。",
+                    "动作类型": "assignment",
+                    "目标类型": "region",
+                    "目标ID": "shanxi",
+                    "地区ID": "shanxi",
+                    "施行范围": "无",  # 始终非法：纠错轮也不修第二条
+                    "事务类别": "督赈",
+                    "颁布方式": "普通",
+                    "参与人": [{
+                        "character_id": first, "tier": "主办", "role": "督",
+                    }],
+                },
+            ]
+        }
+
+    n = {"c": 0}
+
+    def backend(prompt, *_a, tag="", **_k):
+        n["c"] += 1
+        if n["c"] == 1:
+            return (json.dumps(_batch(heal_first_only=False), ensure_ascii=False), 1)
+        return (json.dumps(_batch(heal_first_only=True), ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", backend)
+    with pytest.raises(StructuredDecreeCombinationError) as ei:
+        cb.extract_draft_intent_with_roster_heal(
+            f"两道旨着{first}核查陕晋", "臣遵拟。",
+            db=db, content=content, draft_count=2,
+            heal_retries=1,
+        )
+    exc = ei.value
+    # 首抽须记齐两条失败；不得只咬 idx0 后放行 idx1
+    failures = dict(getattr(exc, "draft_failures", None) or {})
+    partial = getattr(exc, "partial_result", None) or {}
+    drafts = partial.get("drafts") if isinstance(partial, dict) else None
+    if isinstance(drafts, list) and len(drafts) == 2:
+        # 若 partial 是合并后快照：draft0 或已修好，draft1 仍须非法
+        from ming_sim.structured_decree import validate_structured_decree_combination
+        with pytest.raises(StructuredDecreeCombinationError):
+            validate_structured_decree_combination(drafts[1])
+    # 无论停在首抽还是合并重闸，失败图不得丢第二条
+    assert 1 in failures or (
+        isinstance(drafts, list)
+        and len(drafts) == 2
+    ), f"expected draft1 retained in failure path, failures={failures!r}"
+    assert n["c"] >= 2
