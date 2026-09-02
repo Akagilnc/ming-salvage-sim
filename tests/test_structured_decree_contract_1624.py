@@ -507,30 +507,9 @@ def test_layer_a_prompt_contract_is_typed_single_source_for_draft_and_revise(mon
     assert conditional_seg in contract
 
     # 共享 instructions 块 = 层 A + structured_decree 子契约（禁 agents 手抄）
+    # target×locality 可接受面行为由月末入口 tracer + 8×3 矩阵层覆盖，不在此锁内部接线。
     shared = _rescript_option_instructions()
     assert shared == [contract, structured_decree_prompt_contract()]
-
-    # target×locality 可接受面：typed 真源 + renderer 调用投影函数（禁措辞锁）
-    import ming_sim.structured_decree as sd_mod
-    from ming_sim.execution_pressure import TARGET_KIND_LOCALITY_SCOPES
-
-    assert TARGET_KIND_LOCALITY_SCOPES["army"] == frozenset({"none"})
-    assert TARGET_KIND_LOCALITY_SCOPES["region"] == frozenset({"single"})
-    assert TARGET_KIND_LOCALITY_SCOPES["character"] == frozenset({"none"})
-    assert TARGET_KIND_LOCALITY_SCOPES["office"] == frozenset({"none"})
-    assert "national" in TARGET_KIND_LOCALITY_SCOPES["policy"]
-    matrix_calls: list[int] = []
-    real_project = sd_mod.project_target_locality_matrix_prompt
-
-    def _project_spy() -> str:
-        matrix_calls.append(1)
-        return real_project()
-
-    monkeypatch.setattr(
-        sd_mod, "project_target_locality_matrix_prompt", _project_spy,
-    )
-    sd_mod.structured_decree_prompt_contract()
-    assert matrix_calls == [1]
 
     # 初拟/改票工厂真实组装 instructions：注入同一 renderer 返回值
     bind_content(GameContent.load())
