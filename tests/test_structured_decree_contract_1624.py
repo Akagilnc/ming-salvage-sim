@@ -265,10 +265,10 @@ def test_manual_owner_example_seal_advances(tracer_client, monkeypatch):
 
 
 def test_layer_a_prompt_contract_is_typed_single_source_for_draft_and_revise(monkeypatch):
-    """层 A required/present/action-conditional 为 typed 单源；初拟/改票共用 renderer。
+    """层 A required/present 为 typed 单源；初拟/改票共用 renderer 返回值。
 
-    禁 agents 手抄键表；禁 prompt 文本锁——只断言 instructions 含 shape 渲染结果
-    且与 validator 同源键集。
+    键集断言落 layer_a_option_shape()；工厂注入断言同一 renderer 返回值身份
+    （非 prompt 措辞锁）。normalize 缺 required 覆盖见既有 layer_a 测。
     """
     import ming_sim.agents as agents_mod
     from ming_sim.agents import (
@@ -280,42 +280,32 @@ def test_layer_a_prompt_contract_is_typed_single_source_for_draft_and_revise(mon
     from ming_sim.content import GameContent
     from ming_sim.models import LLMConfig
     from ming_sim.rescript_draft import (
+        _LAYER_A_PRESENT_KEYS,
+        _LAYER_A_REQUIRED_KEYS,
         layer_a_option_shape,
-        normalize_rescript_layer_a_option,
         rescript_layer_a_prompt_contract,
     )
     from ming_sim.structured_decree import structured_decree_prompt_contract
 
     shape = layer_a_option_shape()
-    required = tuple(shape["required_keys"])  # type: ignore[arg-type]
-    present = tuple(shape["present_keys"])  # type: ignore[arg-type]
-    assert required == (
+    # shape 与模块级元组同一对象（validator/renderer 共用真源）
+    assert shape["required_keys"] is _LAYER_A_REQUIRED_KEYS
+    assert shape["present_keys"] is _LAYER_A_PRESENT_KEYS
+    assert shape["required_keys"] == (
         "label", "hint", "action_type", "target_kind", "target_id", "locality_scope",
     )
-    assert present == ("assignee_name", "region_id", "transaction_category")
-    assert "grant_allocation" in shape["action_conditional_keys"]  # type: ignore[operator]
+    assert shape["present_keys"] == (
+        "assignee_name", "region_id", "transaction_category",
+    )
     assert shape["grant_kind_army_pay"] == "army_pay"
+    assert "draft_capability" in shape["server_only_keys"]  # type: ignore[operator]
 
     contract = rescript_layer_a_prompt_contract()
-    # renderer 由 shape 派生：改 shape 键即改 contract（同源，非手抄）
-    for key in required + present:
-        assert key in contract
-    assert "army_pay" in contract
-    assert "assignment" in contract
-
     # 共享 instructions 块 = 层 A + structured_decree 子契约（禁 agents 手抄）
     shared = _rescript_option_instructions()
     assert shared == [contract, structured_decree_prompt_contract()]
 
-    # validator 仍咬完整层 A（缺 required → 失败）；不放松
-    with pytest.raises(ValueError):
-        normalize_rescript_layer_a_option({
-            "target_kind": "region", "target_id": "shaanxi",
-            "locality_scope": "single", "region_id": "shaanxi",
-            "assignee_name": "", "transaction_category": "督赈",
-        })
-
-    # 初拟/改票工厂真实组装 instructions（spy Agent/model，不打网）
+    # 初拟/改票工厂真实组装 instructions：注入同一 renderer 返回值
     bind_content(GameContent.load())
     captured: dict[str, list] = {}
 
@@ -332,10 +322,8 @@ def test_layer_a_prompt_contract_is_typed_single_source_for_draft_and_revise(mon
     cfg = LLMConfig(api_key="test", base_url="http://localhost/v1", model="test")
     create_rescript_draft_agent(cfg, None)  # type: ignore[arg-type]
     create_rescript_revise_agent(cfg, None)  # type: ignore[arg-type]
-    draft_text = "\n".join(str(p) for p in captured.get("rescript-drafter", []))
-    revise_text = "\n".join(str(p) for p in captured.get("rescript-reviser", []))
-    assert contract in draft_text
-    assert contract in revise_text
+    assert contract in captured.get("rescript-drafter", [])
+    assert contract in captured.get("rescript-reviser", [])
 
 
 def test_combo_correction_preserves_first_draw_roster(game, monkeypatch):
