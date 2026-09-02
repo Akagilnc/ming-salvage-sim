@@ -86,10 +86,14 @@ def test_shared_contract_rejects_office_single_without_overwrite():
         })
 
 
-def test_month_end_and_revise_entries_share_owner_canonical(monkeypatch, game):
-    """真实月末生成 + 改票入口：Owner 例落同一 canonical；坏形不静默改写。"""
+def test_month_end_entry_owner_canonical(monkeypatch, game):
+    """真实月末生成入口：Owner 例落 canonical；坏形整批降级。
+
+    改票真实入口（return_revise → prepare_rescript_prewrite）由
+    tests/test_pihong_dossier_1490.py::test_657_revise_deliberate_strict_contracts_zero_write_on_bad_shape
+    的 Owner 例路径覆盖，本测不另建平行夹具、不直调 helper 冒充入口。
+    """
     import ming_sim.rescript_draft as rescript_mod
-    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
 
     del game
     owner_item = {
@@ -129,18 +133,7 @@ def test_month_end_and_revise_entries_share_owner_canonical(monkeypatch, game):
     assert monthly["transaction_category"] == "督赈"
     assert not str(monthly.get("assignee_name") or "").strip()
 
-    # 改票入口同缝：{"options":[...]} 经层 A normalize（与 session revise runner 同真源）
-    revised = normalize_rescript_layer_a_option(
-        dict(_OWNER_OPTION), generation_admission=True,
-    )
-    for key in (
-        "action_type", "target_kind", "target_id", "region_id",
-        "locality_scope", "transaction_category",
-    ):
-        assert revised[key] == monthly[key]
-    assert not str(revised.get("assignee_name") or "").strip()
-
-    # 坏形 office+single：生成入口整批降级，不得静默改写后放行
+    # 坏形 office+single：月末生成入口整批降级，不得静默改写后放行
     bad = dict(owner_item)
     bad["options"] = [
         {
@@ -165,6 +158,12 @@ def test_month_end_and_revise_entries_share_owner_canonical(monkeypatch, game):
         },
         1,
     ) is None
+
+
+def test_layer_a_helper_rejects_office_single_boundary():
+    """层 A helper 最低层边界：office+single  typed 拒绝（非改票入口证明）。"""
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+
     with pytest.raises(StructuredDecreeCombinationError):
         normalize_rescript_layer_a_option({
             **_OWNER_OPTION,
