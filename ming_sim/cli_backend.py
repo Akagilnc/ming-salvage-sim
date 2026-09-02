@@ -2028,6 +2028,9 @@ def _finalize_extract_with_combo(
     """
     if draft_combo_flags is not None:
         drafts = result.get("drafts") or []
+        # 一次收齐全部 draft 失败图；禁首败短接导致其余非法草稿在 heal 后漏检放行。
+        draft_failures: Dict[int, frozenset] = {}
+        first_exc: Optional[StructuredDecreeCombinationError] = None
         for idx, flag in enumerate(draft_combo_flags):
             if not flag or idx >= len(drafts):
                 continue
@@ -2037,12 +2040,16 @@ def _finalize_extract_with_combo(
             try:
                 validate_structured_decree_combination(draft)
             except StructuredDecreeCombinationError as exc:
-                raise StructuredDecreeCombinationError(
-                    str(exc),
-                    partial_result=dict(result),
-                    failed_fields=exc.failed_fields,
-                    draft_failures={idx: frozenset(exc.failed_fields)},
-                ) from exc
+                draft_failures[idx] = frozenset(exc.failed_fields)
+                if first_exc is None:
+                    first_exc = exc
+        if first_exc is not None:
+            raise StructuredDecreeCombinationError(
+                str(first_exc),
+                partial_result=dict(result),
+                failed_fields=first_exc.failed_fields,
+                draft_failures=draft_failures,
+            ) from first_exc
         return result
     if needs_combo:
         try:
@@ -2118,15 +2125,30 @@ def _revalidate_merged_combo_result(
     failed_fields: Optional[frozenset] = None,
     draft_failures: Optional[Dict[int, frozenset]] = None,
 ) -> None:
-    """合并失败字段后重走共同组合校验；仍败则 typed 上抛。"""
+    """合并失败字段后重走共同组合校验；仍败则 typed 上抛（全图失败一并带回）。"""
     drafts = result.get("drafts")
     if isinstance(drafts, list) and draft_failures:
+        remaining: Dict[int, frozenset] = {}
+        first_exc: Optional[StructuredDecreeCombinationError] = None
         for idx, fields in draft_failures.items():
             if not fields or idx >= len(drafts):
                 continue
             draft = drafts[idx]
-            if isinstance(draft, dict):
+            if not isinstance(draft, dict):
+                continue
+            try:
                 validate_structured_decree_combination(draft)
+            except StructuredDecreeCombinationError as exc:
+                remaining[idx] = frozenset(exc.failed_fields)
+                if first_exc is None:
+                    first_exc = exc
+        if first_exc is not None:
+            raise StructuredDecreeCombinationError(
+                str(first_exc),
+                partial_result=dict(result),
+                failed_fields=first_exc.failed_fields,
+                draft_failures=remaining,
+            ) from first_exc
         return
     if failed_fields:
         validate_structured_decree_combination(result)
