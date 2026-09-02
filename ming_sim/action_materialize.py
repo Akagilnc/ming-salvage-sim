@@ -1060,6 +1060,24 @@ def punish_actions_effective() -> frozenset:
     return punish_actions_allowed() - {"无"}
 
 
+def appoint_actions_allowed() -> frozenset:
+    """appoint_action 枚举唯一真源 = ACTION_CLUSTERS appointment FieldSpec.allowed。"""
+    cluster = cluster_by_kind("appointment")
+    if cluster is None:
+        raise RuntimeError("appointment cluster not installed")
+    for field in cluster.fields:
+        if field.name == "appoint_action":
+            if field.allowed is None:
+                raise RuntimeError("appoint_action FieldSpec.allowed missing")
+            return field.allowed
+    raise RuntimeError("appoint_action FieldSpec missing")
+
+
+def appoint_actions_effective() -> frozenset:
+    """可物化的任免动作（排除分类器占位「无」）；层 A 与 mapper 共引。"""
+    return appoint_actions_allowed() - {"无"}
+
+
 def issue_dispositions_allowed() -> frozenset:
     """弹劾潮处置枚举唯一真源 = ACTION_CLUSTERS punishment 行。"""
     cluster = cluster_by_kind("punishment")

@@ -58,12 +58,12 @@ _LAYER_A_PRESENT_KEYS = (
 
 # 生成侧军饷类别；层 A 等值映射到内部 grant_action=协饷（禁同义词/散文）。
 _GRANT_KIND_ARMY_PAY = "army_pay"
-_LAYER_A_APPOINT_ACTIONS = frozenset({"任命", "罢免"})
 
 # 七类 action-conditional 必填/互斥/枚举/条件必填（纯 shape，无 DB grounding）。
 # assignment 的 category|assignee 任一已由 structured_decree 组合闸承载；
 # grant_kind↔grant_action 互斥与金额 shape 仍走下方 grant 专缝（同 shape 暴露）。
 # optional_keys 仅供 renderer 列类相关可填键；validator 不因 optional 放宽必填。
+# appoint/punish 枚举动态取 FieldSpec（−{无}），禁第三份字面量闭集。
 _LAYER_A_ACTION_CONDITIONAL: Dict[str, Dict[str, object]] = {
     "assignment": {
         "optional_keys": (
@@ -88,7 +88,7 @@ _LAYER_A_ACTION_CONDITIONAL: Dict[str, Dict[str, object]] = {
     },
     "appointment": {
         "required_nonempty": ("appoint_action",),
-        "enum_in": {"appoint_action": _LAYER_A_APPOINT_ACTIONS},
+        "enum_in_dynamic": {"appoint_action": "appoint_actions_effective"},
         "required_when": (
             ("appoint_action", "任命", ("office",)),
         ),
@@ -97,7 +97,6 @@ _LAYER_A_ACTION_CONDITIONAL: Dict[str, Dict[str, object]] = {
     },
     "punishment": {
         "required_nonempty": ("punish_action",),
-        # enum 运行时取 punish_actions_effective，避免平行拷贝闭集
         "enum_in_dynamic": {"punish_action": "punish_actions_effective"},
         "positive_amount_when": ("punish_action", "罚俸"),
         "forbid_positive_amount_unless": ("punish_action", "罚俸"),
@@ -147,11 +146,16 @@ def _layer_a_resolve_enum_in(rule: Mapping[str, object]) -> Dict[str, frozenset]
             enums[str(key)] = frozenset(allowed)  # type: ignore[arg-type]
     dynamic = rule.get("enum_in_dynamic") or {}
     if isinstance(dynamic, Mapping):
-        from ming_sim.action_materialize import punish_actions_effective
+        from ming_sim.action_materialize import (
+            appoint_actions_effective,
+            punish_actions_effective,
+        )
 
         for key, source in dynamic.items():
             if source == "punish_actions_effective":
                 enums[str(key)] = frozenset(punish_actions_effective())
+            elif source == "appoint_actions_effective":
+                enums[str(key)] = frozenset(appoint_actions_effective())
             else:
                 raise RuntimeError(f"未知 layer-A dynamic enum 源：{source!r}")
     return enums
@@ -881,19 +885,18 @@ def _assert_region_targets_grounded(
 def _assert_army_targets_grounded(
     drafts: List[Dict[str, object]], army_target_ids: set[str]
 ) -> None:
+    """仅 army target_id 对同批 army_targets 接地。
+
+    military_order 的 target_kind/assignee_name 形状由层 A action-conditional
+    单源在 normalize 强制；此处不平行复述。
+    """
     for draft in drafts:
         for option in draft["options"]:  # type: ignore[union-attr]
-            if option["action_type"] == "military_order" \
-                    and option["target_kind"] != "army":
-                raise ValueError("票拟 military_order 的 target_kind 须为 army")
             if option["target_kind"] == "army" \
                     and option["target_id"] not in army_target_ids:
                 raise ValueError(
                     f"票拟 option.target_id 不在同批 army_targets：{option['target_id']!r}"
                 )
-            if option["action_type"] == "military_order" \
-                    and not str(option.get("assignee_name") or "").strip():
-                raise ValueError("票拟 military_order 缺 assignee_name")
 
 
 def _board_issue_ids(active_issues: object) -> set[int]:
