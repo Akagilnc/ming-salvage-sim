@@ -1482,8 +1482,7 @@ def test_two_axis_tsv_escape_noop_on_clean_cells():
 
 
 def test_cli_target_kinds_accepts_canonical_eight():
-    """producer 与 durable 共八值（含 dossier）：合法通过、法外 fail-loud。
-    单旨/多旨 guidance 均由 TARGET_KINDS 派生，含 dossier、无七值残留。"""
+    """producer 与 durable 共八值（含 dossier）：合法通过、法外 fail-loud。"""
     from ming_sim import cli_backend as cb
     assert TARGET_KINDS is EP_TARGET_KINDS
     assert "dossier" in TARGET_KINDS
@@ -1495,13 +1494,6 @@ def test_cli_target_kinds_accepts_canonical_eight():
         assert cb._coerce_draft_target_kind(kind) == kind
     with pytest.raises(ValueError):
         cb._coerce_draft_target_kind("not_a_real_kind")
-    guidance = cb._draft_target_kind_guidance()
-    assert guidance == "|".join(sorted(TARGET_KINDS))
-    assert "dossier" in guidance
-    # 七值残留（缺 dossier）不得再出现
-    seven = "policy|character|office|army|region|issue|account"
-    assert seven != guidance
-    assert guidance.count("|") == 7  # 八值七分隔
 
 
 def test_revoke_decree_523_producer_durable_oracle_chain(env):

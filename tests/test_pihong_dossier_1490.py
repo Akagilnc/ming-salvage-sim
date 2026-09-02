@@ -4063,7 +4063,7 @@ def test_657_revise_deliberate_strict_contracts_zero_write_on_bad_shape(game, mo
             "label": "调驻", "hint": "h2", "action_type": "military_order",
             "assignee_name": "祖大寿", "target_kind": "army", "target_id": target_id,
             "locality_scope": "none", "region_id": "",
-            "transaction_category": "调驻",
+            "transaction_category": "",
         })
 
     seen_payload = {}
