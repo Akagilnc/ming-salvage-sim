@@ -28,6 +28,7 @@ _OWNER_OPTION = {
 
 
 def _owner_manual_backend_json() -> str:
+    # 附件 r3 回显形态：LLM 误带执行面=immediate；assignment 不得透传落库。
     return json.dumps({
         "拟旨意图": "拟旨",
         "动作类型": "assignment",
@@ -38,6 +39,7 @@ def _owner_manual_backend_json() -> str:
         "事务类别": "督赈",
         "承办人": "",
         "颁布方式": "普通",
+        "执行面": "immediate",
         "参与人": [],
     }, ensure_ascii=False)
 
@@ -369,6 +371,8 @@ def test_manual_owner_example_seal_advances(tracer_client, monkeypatch):
     assert payload.get("target_kind") == "region"
     assert payload.get("locality_scope") == "single"
     assert not str(payload.get("assignee_id") or payload.get("assignee") or "").strip()
+    # assignment 策略面为 in_transit；不得残留 LLM 误回显的 immediate（#1624）。
+    assert str(payload.get("execution_surface") or "").strip() != "immediate"
     _assert_hubu_duty_leads(game.db, matched[0])
 
 
