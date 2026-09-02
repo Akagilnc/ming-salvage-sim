@@ -371,8 +371,8 @@ def test_manual_owner_example_seal_advances(tracer_client, monkeypatch):
     assert payload.get("target_kind") == "region"
     assert payload.get("locality_scope") == "single"
     assert not str(payload.get("assignee_id") or payload.get("assignee") or "").strip()
-    # assignment 策略面为 in_transit；不得残留 LLM 误回显的 immediate（#1624）。
-    assert str(payload.get("execution_surface") or "").strip() != "immediate"
+    # assignment 不得跨动作透传执行面（#1624）；与 multi-aim military 同契：字段缺失或空。
+    assert str(payload.get("execution_surface") or "").strip() == ""
     _assert_hubu_duty_leads(game.db, matched[0])
 
 
