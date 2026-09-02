@@ -45,6 +45,8 @@ from ming_sim.token_stats import tlog
 MAX_RESCRIPT_DRAFTS = 5
 
 # #657 C.3 层 A option 必填键（缺一 shape 失败）；draft_capability 由服务端派生写入。
+# #1624 / PR#1719：required/present/action-conditional 为 typed 单源——
+# validator（normalize）与初拟/改票 prompt renderer 共用；禁 agents 手抄第二份。
 _LAYER_A_REQUIRED_KEYS = (
     "label", "hint", "action_type", "target_kind", "target_id", "locality_scope",
 )
@@ -53,6 +55,27 @@ _LAYER_A_PRESENT_KEYS = (
 )
 # locality 三值/别名唯一真源 = execution_pressure.normalize_locality_scope（#1624 删平行）
 
+# 生成侧军饷类别；层 A 等值映射到内部 grant_action=协饷（禁同义词/散文）。
+_GRANT_KIND_ARMY_PAY = "army_pay"
+
+# action-conditional：按 action_type 可填的类相关键（值可缺；validator 按类强制）。
+# 目标/属地/承办子契约仍归 structured_decree；此处只列层 A 受理面。
+_LAYER_A_ACTION_CONDITIONAL_KEYS: Dict[str, tuple[str, ...]] = {
+    "assignment": (
+        "deadline_months", "title", "commitment_kind", "stop_condition",
+        "end_turn", "due_turn",
+    ),
+    "military_order": ("deadline_months",),
+    "grant_allocation": (
+        "grant_kind", "grant_action", "amount", "account", "purpose", "cadence",
+    ),
+    "appointment": (
+        "appoint_action", "appointment_tenure", "office", "name", "station",
+    ),
+    "punishment": ("punish_action",),
+    "authorization": ("privilege", "summon_target", "execution_surface"),
+    "pacification": ("deadline_months",),
+}
 
 # 层 A 允许键 = C.3 必填/须在 + C.4 闭集 + draft_capability（服务端覆盖，LLM 自带不准）
 # grant_kind：生成侧 machine discriminator（#1620）；层 A 映射后不落库。
@@ -62,8 +85,67 @@ _LAYER_A_ALLOWED_KEYS = frozenset(
     + [key for key, _default in _DRAFT_CAPABILITY_KEYS]
     + ["draft_capability", "grant_kind"]
 )
-# 生成侧军饷类别；层 A 等值映射到内部 grant_action=协饷（禁同义词/散文）。
-_GRANT_KIND_ARMY_PAY = "army_pay"
+
+
+def layer_a_option_shape() -> Dict[str, object]:
+    """层 A option 受理契约 typed 单源（required/present/action-conditional）。
+
+    validator 与 prompt renderer 只读本函数；禁止入口平行手抄键表。
+    """
+    return {
+        "required_keys": _LAYER_A_REQUIRED_KEYS,
+        "present_keys": _LAYER_A_PRESENT_KEYS,
+        "action_types": tuple(sorted(RESCRIPT_ROUTABLE_ACTION_TYPES)),
+        "action_conditional_keys": {
+            action: keys
+            for action, keys in _LAYER_A_ACTION_CONDITIONAL_KEYS.items()
+            if action in RESCRIPT_ROUTABLE_ACTION_TYPES
+        },
+        "grant_kind_army_pay": _GRANT_KIND_ARMY_PAY,
+        "server_only_keys": ("draft_capability",),
+    }
+
+
+def rescript_layer_a_prompt_contract() -> str:
+    """初拟/改票共用：由 layer_a_option_shape 渲染层 A 完整受理契约。
+
+    structured_decree_prompt_contract 只承目标/属地/承办子契约；本块补
+    label/hint/action_type 必填、三 PRESENT 键、action-conditional 与 grant_kind。
+    禁 agents.py 手抄键名第二份。
+    """
+    shape = layer_a_option_shape()
+    required = "/".join(str(k) for k in shape["required_keys"])  # type: ignore[arg-type]
+    present = "/".join(str(k) for k in shape["present_keys"])  # type: ignore[arg-type]
+    actions = "|".join(str(a) for a in shape["action_types"])  # type: ignore[arg-type]
+    cond = shape["action_conditional_keys"]
+    cond_parts: List[str] = []
+    if isinstance(cond, dict):
+        for action in sorted(cond):
+            keys = cond[action]
+            if keys:
+                cond_parts.append(
+                    f"{action}:{"/".join(str(k) for k in keys)}"
+                )
+    grant_kind = str(shape["grant_kind_army_pay"])
+    server_only = "/".join(str(k) for k in shape["server_only_keys"])  # type: ignore[arg-type]
+    return (
+        "票拟层 A option 受理契约（typed 单源；与 normalize_rescript_layer_a_option 共用）："
+        f"每项 options[] 必填非空 {required}；"
+        f"action_type∈{actions}；"
+        f"{present} 三键必须输出（值可空串）；"
+        + (
+            "action-conditional 按 action_type 选填："
+            + "；".join(cond_parts)
+            + "。"
+            if cond_parts
+            else ""
+        )
+        + f"grant_allocation 军饷用 grant_kind={grant_kind}"
+        f"（禁直写 grant_action=协饷；kind 与 grant_action 不得并存）；"
+        f"非 grant_allocation 不得带 grant_kind；"
+        f"military_order 的 target_kind 须为 army 且 assignee_name 非空；"
+        f"禁止输出 {server_only}（服务端派生）。"
+    )
 
 
 def normalize_stop_condition(raw: object) -> str:

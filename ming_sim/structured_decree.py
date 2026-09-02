@@ -20,7 +20,30 @@ from ming_sim.executor_routing import duty_route_categories
 
 
 class StructuredDecreeCombinationError(ValueError):
-    """结构化旨意组合校验失败（typed；纠错路径只捕本类，禁异常文本子串识别）。"""
+    """结构化旨意组合校验失败（typed；纠错路径只捕本类，禁异常文本子串识别）。
+
+    partial_result：抽取已解析但组合未过的首抽快照（含 participant_roster）；
+    heal 路径冻结 baseline，组合纠错只改结构字段、保留首抽名册。
+    """
+
+    def __init__(self, message: object, *, partial_result: Optional[Dict[str, Any]] = None) -> None:
+        super().__init__(message)
+        self.partial_result = partial_result
+
+
+# 组合纠错可覆盖的结构字段（与 assemble/validate 核心键同集；名册/旨文不在此列）
+STRUCTURED_DECREE_FIELD_KEYS: tuple[str, ...] = (
+    "action_type",
+    "dossier_action_type",
+    "target_kind",
+    "target_id",
+    "locality_scope",
+    "region_id",
+    "transaction_category",
+    "assignee_name",
+    "assignee_id",
+    "assignee",
+)
 
 
 # 抽取/层 A 运输键 → canonical 英键
@@ -39,18 +62,7 @@ _TRANSPORT_KEY_ALIASES: Dict[str, str] = {
     "holder_id": "assignee_name",
 }
 
-_CORE_KEYS = (
-    "action_type",
-    "dossier_action_type",
-    "target_kind",
-    "target_id",
-    "locality_scope",
-    "region_id",
-    "transaction_category",
-    "assignee_name",
-    "assignee_id",
-    "assignee",
-)
+_CORE_KEYS = STRUCTURED_DECREE_FIELD_KEYS
 
 
 def _as_str(value: object) -> str:
