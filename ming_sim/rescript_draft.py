@@ -323,20 +323,26 @@ def _enforce_layer_a_action_conditional(
             return ""
         return str(val).strip()
 
-    def _is_meaningful(key: str) -> bool:
-        """require_any 在场判定：空串/0/"0" 不算；非数字字符串算在场。"""
-        val = _raw_or_out(key)
-        if val is None or isinstance(val, bool):
-            return False
-        if isinstance(val, (int, float)):
-            return val > 0
-        text = str(val).strip()
-        if not text:
-            return False
-        try:
-            return int(text) > 0
-        except (TypeError, ValueError):
-            return True
+    def _require_any_present(key: str) -> bool:
+        """require_any 在场：通用非空串（202571cc）；due_turn/deadline_months 须正值。
+
+        正值仅罩军令 dual 的期限键，避免把 authorization name/assignee_name
+        的 "0"/布尔等既有字符串语义一并改写。
+        """
+        if key in ("due_turn", "deadline_months"):
+            val = _raw_or_out(key)
+            if val is None or isinstance(val, bool):
+                return False
+            if isinstance(val, (int, float)):
+                return val > 0
+            text = str(val).strip()
+            if not text:
+                return False
+            try:
+                return int(text) > 0
+            except (TypeError, ValueError):
+                return False
+        return bool(_nonempty_str(key))
 
     tk_in = rules.get("target_kind_in")
     if tk_in:
@@ -358,18 +364,16 @@ def _enforce_layer_a_action_conditional(
 
     for group in rules.get("require_any_nonempty") or ():
         keys = tuple(str(k) for k in group)  # type: ignore[union-attr]
-        if not any(_is_meaningful(k) for k in keys):
+        if not any(_require_any_present(k) for k in keys):
             raise ValueError(
                 f"票拟 option.{action} 须具备其一：{'/'.join(keys)}"
             )
+        # 写回保持 202571cc：有非空串则 str 写回（期限 int 归一由后续 int_keys 处理）
         for key_s in keys:
-            if not _is_meaningful(key_s) or key_s in out:
-                continue
-            src = _raw_or_out(key_s)
-            if isinstance(src, (int, float)) and not isinstance(src, bool):
-                out[key_s] = int(src) if float(src) == int(src) else src
-            else:
-                out[key_s] = str(src).strip() if src is not None else ""
+            val = _nonempty_str(key_s)
+            if val and key_s not in out:
+                src = _raw_or_out(key_s)
+                out[key_s] = str(src) if src is not None else val
 
     enums = rules.get("enum_in") or {}
     if isinstance(enums, Mapping):
