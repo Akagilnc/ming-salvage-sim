@@ -52,6 +52,7 @@ from ming_sim.models import CODEX_DEFAULT_MODEL, CLAUDE_DEFAULT_MODEL, LLMConfig
 from ming_sim.constants import DOSSIER_LINK_TYPES
 from ming_sim.decree_vocabulary import DIRECTIVE_ACTION_TYPES
 from ming_sim.structured_decree import (
+    apply_assembled_to_payload,
     assemble_structured_decree,
     combination_correction_feedback,
     structured_decree_extract_schema_lines,
@@ -2373,17 +2374,9 @@ def extract_draft_intent(
                     },
                     validate=True,
                 )
+                apply_assembled_to_payload(mechanical, assembled)
                 target_kind = str(assembled["target_kind"])
                 target_id = str(assembled["target_id"])
-                mechanical["locality_scope"] = assembled["locality_scope"]
-                if assembled.get("region_id") not in (None, ""):
-                    mechanical["region_id"] = assembled["region_id"]
-                if assembled.get("transaction_category") not in (None, ""):
-                    mechanical["transaction_category"] = assembled["transaction_category"]
-                if assembled.get("assignee_name") not in (None, ""):
-                    mechanical["assignee"] = assembled["assignee_name"]
-                else:
-                    mechanical.pop("assignee", None)
             else:
                 mechanical["locality_scope"] = _coerce_draft_locality_scope(
                     value.get("施行范围") or projected.get("locality_scope")
@@ -2598,17 +2591,9 @@ def extract_draft_intent(
             },
             validate=True,
         )
+        apply_assembled_to_payload(mechanical, assembled)
         target_kind = str(assembled["target_kind"])
         target_id_value = str(assembled["target_id"])
-        mechanical["locality_scope"] = assembled["locality_scope"]
-        if assembled.get("region_id") not in (None, ""):
-            mechanical["region_id"] = assembled["region_id"]
-        if assembled.get("transaction_category") not in (None, ""):
-            mechanical["transaction_category"] = assembled["transaction_category"]
-        if assembled.get("assignee_name") not in (None, ""):
-            mechanical["assignee"] = assembled["assignee_name"]
-        else:
-            mechanical.pop("assignee", None)
     if mode is not None:
         mechanical["mode"] = mode
     merged = str(obj.get("合并草案") or "").strip()
@@ -2838,25 +2823,7 @@ def capture_manual_directive_payload(
             regions_content=regions_content,
             validate=True,
         )
-        payload["dossier_action_type"] = assembled.get(
-            "dossier_action_type", payload.get("dossier_action_type"),
-        )
-        payload["target_kind"] = assembled["target_kind"]
-        payload["target_id"] = assembled["target_id"]
-        payload["locality_scope"] = assembled["locality_scope"]
-        if assembled.get("region_id") not in (None, ""):
-            payload["region_id"] = assembled["region_id"]
-        else:
-            payload.pop("region_id", None)
-        if assembled.get("transaction_category") not in (None, ""):
-            payload["transaction_category"] = assembled["transaction_category"]
-        if assembled.get("assignee_name") not in (None, ""):
-            payload["assignee"] = assembled["assignee_name"]
-        elif (
-            str(payload.get("dossier_action_type") or "") == "assignment"
-            and payload.get("transaction_category")
-        ):
-            payload.pop("assignee", None)
+        apply_assembled_to_payload(payload, assembled)
     kind = classify_directive_structured_kind(payload)
     if kind == "push":
         push_id = imperial_push_target_dossier_id(payload)
