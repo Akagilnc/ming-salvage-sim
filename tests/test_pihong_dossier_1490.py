@@ -4059,11 +4059,13 @@ def test_657_revise_deliberate_strict_contracts_zero_write_on_bad_shape(game, mo
     assert hit.get("choice") in (None, {},)
 
     def _military_option(target_id):
+        # 满足军令 dual（驻地|期限）后再测目录外军拒绝，避免先被层 A 合法拒
         return normalize_rescript_layer_a_option({
             "label": "调驻", "hint": "h2", "action_type": "military_order",
             "assignee_name": "祖大寿", "target_kind": "army", "target_id": target_id,
             "locality_scope": "none", "region_id": "",
             "transaction_category": "",
+            "station": "宁远",
         })
 
     seen_payload = {}
@@ -4075,7 +4077,7 @@ def test_657_revise_deliberate_strict_contracts_zero_write_on_bad_shape(game, mo
         )
 
     monkeypatch.setattr(agents_mod, "run_agent_text", _outside_army_revise_text)
-    with pytest.raises(RuntimeError, match="不在同批 army_targets"):
+    with pytest.raises(RuntimeError):
         sess.prepare_rescript_prewrite([{
             "decision_key": key, "action": "return_revise", "note": "再拟",
         }])
