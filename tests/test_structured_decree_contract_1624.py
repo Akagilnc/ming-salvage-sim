@@ -338,39 +338,43 @@ def test_layer_a_prompt_contract_is_typed_single_source_for_draft_and_revise(mon
             "assignee_name": "", "transaction_category": "",
             "station": "京师",
         })
-    # 军令 dual：驻地|期限须具其一；双缺不得过层 A（复判用户可见风险）
-    with pytest.raises(ValueError, match="station|due_turn|deadline_months"):
-        normalize_rescript_layer_a_option({
-            "label": "出战", "hint": "h", "action_type": "military_order",
-            "target_kind": "army", "target_id": "xuanfu",
-            "locality_scope": "none", "region_id": "",
-            "assignee_name": "祖大寿", "transaction_category": "",
-        })
-    with pytest.raises(ValueError, match="station|due_turn|deadline_months"):
-        normalize_rescript_layer_a_option({
-            "label": "出战", "hint": "h", "action_type": "military_order",
-            "target_kind": "army", "target_id": "xuanfu",
-            "locality_scope": "none", "region_id": "",
-            "assignee_name": "祖大寿", "transaction_category": "",
-            "station": "", "due_turn": 0, "deadline_months": 0,
-        })
-    # 正控：仅驻地 / 仅期限 均可过层 A
-    only_station = normalize_rescript_layer_a_option({
-        "label": "调驻", "hint": "h", "action_type": "military_order",
+    # 军令 dual：驻地|正期限须具其一；双缺与 0/"0" 不得过层 A
+    mil_base = {
+        "label": "出战", "hint": "h", "action_type": "military_order",
         "target_kind": "army", "target_id": "xuanfu",
         "locality_scope": "none", "region_id": "",
         "assignee_name": "祖大寿", "transaction_category": "",
-        "station": "京师",
-    })
+    }
+    with pytest.raises(ValueError, match="station|due_turn|deadline_months"):
+        normalize_rescript_layer_a_option(dict(mil_base))
+    with pytest.raises(ValueError, match="station|due_turn|deadline_months"):
+        normalize_rescript_layer_a_option({
+            **mil_base, "station": "", "due_turn": 0, "deadline_months": "0",
+        })
+    only_station = normalize_rescript_layer_a_option({**mil_base, "station": "京师"})
     assert only_station.get("station") == "京师"
     only_deadline = normalize_rescript_layer_a_option({
-        "label": "限期", "hint": "h", "action_type": "military_order",
-        "target_kind": "army", "target_id": "xuanfu",
-        "locality_scope": "none", "region_id": "",
-        "assignee_name": "祖大寿", "transaction_category": "",
-        "deadline_months": 3,
+        **mil_base, "deadline_months": 3,
     })
     assert int(only_deadline.get("deadline_months") or 0) == 3
+
+    # authorization require_any 保持通用非空串语义（禁被军令正值判定误伤）
+    auth_zero = normalize_rescript_layer_a_option({
+        "label": "授权", "hint": "h", "action_type": "authorization",
+        "target_kind": "character", "target_id": "某官",
+        "locality_scope": "none", "region_id": "",
+        "assignee_name": "", "transaction_category": "",
+        "name": "0",
+    })
+    assert auth_zero.get("name") == "0"
+    auth_assignee_zero = normalize_rescript_layer_a_option({
+        "label": "授权", "hint": "h", "action_type": "authorization",
+        "target_kind": "character", "target_id": "某官",
+        "locality_scope": "none", "region_id": "",
+        "assignee_name": "0", "transaction_category": "",
+        "name": "",
+    })
+    assert auth_assignee_zero.get("assignee_name") == "0"
 
     contract = rescript_layer_a_prompt_contract()
     # renderer 必须消费 action_conditional（组合断言；禁措辞锁）。
@@ -491,9 +495,15 @@ def test_combo_correction_preserves_first_draw_roster(game, monkeypatch):
     assert n["c"] == 2
 
 
-def test_combo_correction_preserves_batch_first_draw_roster(game, monkeypatch):
-    """批抽组合纠错：逐 draft 只更新失败字段，保留首抽名册与未失败结构。"""
+@pytest.mark.parametrize("mode", ["freeze_roster", "heal_first_only_reject"])
+def test_batch_combo_correction_real_wrapper(game, monkeypatch, mode):
+    """批抽真实 wrapper 单条 tracer：窄合并保首抽；只修第一条不得放行第二条。
+
+    freeze_roster：draft0 locality 非法→纠错修好但漂移动作/人物；须保留首抽结构与名册。
+    heal_first_only_reject：两条均非法、纠错只修 draft0 → 须仍抛且 draft_failures 含 1。
+    """
     import ming_sim.cli_backend as cb
+    from ming_sim.structured_decree import StructuredDecreeCombinationError
 
     db, _state, content = game
     first = "毕自严"
@@ -506,46 +516,99 @@ def test_combo_correction_preserves_batch_first_draw_roster(game, monkeypatch):
         and str(getattr(ch, "office", "") or "").strip()
     )
 
-    def _batch(*, bad_scope: bool) -> dict:
-        scope0 = "无" if bad_scope else "单省"
-        draft0 = {
-            "正文": f"着{first if bad_scope else second}核查陕西赈务。",
-            "动作类型": "assignment" if bad_scope else "punishment",
-            "目标类型": "region" if bad_scope else "character",
-            "目标ID": "shaanxi" if bad_scope else second,
-            "地区ID": "shaanxi" if bad_scope else "",
-            "施行范围": scope0 if bad_scope else "无",
-            "事务类别": "督赈" if bad_scope else "",
+    def _assignment_draft(
+        *,
+        target_id: str,
+        scope: str,
+        body: str,
+        lead: str = first,
+        category: str = "督赈",
+    ) -> dict:
+        return {
+            "正文": body,
+            "动作类型": "assignment",
+            "目标类型": "region",
+            "目标ID": target_id,
+            "地区ID": target_id,
+            "施行范围": scope,
+            "事务类别": category,
             "颁布方式": "普通",
-            "参与人": [{
-                "character_id": first if bad_scope else second,
-                "tier": "主办", "role": "督",
-            }],
+            "参与人": [{"character_id": lead, "tier": "主办", "role": "督"}],
         }
-        if not bad_scope:
-            # 纠错轮：好 locality + 漂移动作/目标/人物；military 行也改 target
-            draft0["施行范围"] = "单省"
-            draft0["动作类型"] = "punishment"
-            draft0["目标类型"] = "character"
-            draft0["目标ID"] = second
-            draft0["地区ID"] = ""
-            draft0["事务类别"] = ""
-            draft0["正文"] = f"着惩处{second}。"
-            draft0["参与人"] = [{
-                "character_id": second, "tier": "主办", "role": "惩",
-            }]
+
+    def _first_draw() -> dict:
+        if mode == "freeze_roster":
+            return {
+                "成品旨稿": [
+                    _assignment_draft(
+                        target_id="shaanxi", scope="无",
+                        body=f"着{first}核查陕西赈务。",
+                    ),
+                    {
+                        "正文": "着边军整饬器械。",
+                        "动作类型": "military_order",
+                        "目标类型": "army",
+                        "目标ID": "guanning",
+                        "施行范围": "无",
+                        "颁布方式": "普通",
+                        "参与人": [],
+                    },
+                ]
+            }
+        # heal_first_only_reject：两条 region 交办均 locality=none
         return {
             "成品旨稿": [
-                draft0,
-                {
-                    "正文": "着边军整饬器械。",
-                    "动作类型": "military_order",
-                    "目标类型": "army",
-                    "目标ID": "guanning" if bad_scope else "xuanfu",
-                    "施行范围": "无",
-                    "颁布方式": "普通",
-                    "参与人": [],
-                },
+                _assignment_draft(
+                    target_id="shaanxi", scope="无",
+                    body=f"着{first}核查陕西赈务。",
+                ),
+                _assignment_draft(
+                    target_id="shanxi", scope="无",
+                    body=f"着{first}核查山西赈务。",
+                ),
+            ]
+        }
+
+    def _correction() -> dict:
+        if mode == "freeze_roster":
+            # 好 locality + 漂移动作/目标/人物；military 行也改 target
+            return {
+                "成品旨稿": [
+                    {
+                        "正文": f"着惩处{second}。",
+                        "动作类型": "punishment",
+                        "目标类型": "character",
+                        "目标ID": second,
+                        "地区ID": "",
+                        "施行范围": "单省",
+                        "事务类别": "",
+                        "颁布方式": "普通",
+                        "参与人": [{
+                            "character_id": second, "tier": "主办", "role": "惩",
+                        }],
+                    },
+                    {
+                        "正文": "着边军整饬器械。",
+                        "动作类型": "military_order",
+                        "目标类型": "army",
+                        "目标ID": "xuanfu",
+                        "施行范围": "无",
+                        "颁布方式": "普通",
+                        "参与人": [],
+                    },
+                ]
+            }
+        # 只修 draft0 locality；draft1 仍 none
+        return {
+            "成品旨稿": [
+                _assignment_draft(
+                    target_id="shaanxi", scope="单省",
+                    body=f"着{first}核查陕西赈务。",
+                ),
+                _assignment_draft(
+                    target_id="shanxi", scope="无",
+                    body=f"着{first}核查山西赈务。",
+                ),
             ]
         }
 
@@ -553,105 +616,39 @@ def test_combo_correction_preserves_batch_first_draw_roster(game, monkeypatch):
 
     def backend(prompt, *_a, tag="", **_k):
         n["c"] += 1
-        if n["c"] == 1:
-            return (json.dumps(_batch(bad_scope=True), ensure_ascii=False), 1)
-        return (json.dumps(_batch(bad_scope=False), ensure_ascii=False), 1)
+        payload = _first_draw() if n["c"] == 1 else _correction()
+        return (json.dumps(payload, ensure_ascii=False), 1)
 
     monkeypatch.setattr(cb, "_run_backend_for_config", backend)
-    result = cb.extract_draft_intent_with_roster_heal(
-        f"两道旨着{first}核查并整饬", "臣遵拟。",
-        db=db, content=content, draft_count=2,
-    )
-    drafts = result.get("drafts") or []
-    assert len(drafts) == 2
-    ids = [
-        str(i.get("character_id") or "")
-        for i in (drafts[0].get("participant_roster") or [])
-    ]
-    assert ids == [first]
-    assert drafts[0].get("locality_scope") == "single"
-    assert drafts[0].get("dossier_action_type") == "assignment"
-    assert drafts[0].get("target_kind") == "region"
-    assert drafts[0].get("target_id") == "shaanxi"
-    assert drafts[0].get("transaction_category") == "督赈"
-    assert first in str(drafts[0].get("draft_text") or "")
-    assert drafts[1].get("target_id") == "guanning"
-    assert n["c"] == 2
+    if mode == "freeze_roster":
+        result = cb.extract_draft_intent_with_roster_heal(
+            f"两道旨着{first}核查并整饬", "臣遵拟。",
+            db=db, content=content, draft_count=2,
+        )
+        drafts = result.get("drafts") or []
+        assert len(drafts) == 2
+        ids = [
+            str(i.get("character_id") or "")
+            for i in (drafts[0].get("participant_roster") or [])
+        ]
+        assert ids == [first]
+        assert drafts[0].get("locality_scope") == "single"
+        assert drafts[0].get("dossier_action_type") == "assignment"
+        assert drafts[0].get("target_kind") == "region"
+        assert drafts[0].get("target_id") == "shaanxi"
+        assert drafts[0].get("transaction_category") == "督赈"
+        assert first in str(drafts[0].get("draft_text") or "")
+        assert drafts[1].get("target_id") == "guanning"
+        assert n["c"] == 2
+        return
 
-
-def test_batch_combo_rejects_when_correction_only_heals_first(game, monkeypatch):
-    """批抽两条均非法、纠错只修第一条 → 不得放行第二条非法（复判用户可见风险）。
-
-    根因类：finalize 须一次收齐全部 draft_failures；revalidate 按全图重闸。
-    """
-    import ming_sim.cli_backend as cb
-    from ming_sim.structured_decree import StructuredDecreeCombinationError
-
-    db, _state, content = game
-    first = "毕自严"
-
-    def _batch(*, heal_first_only: bool) -> dict:
-        # 两条 region 交办均 locality=none（矩阵非法）
-        d0_scope = "单省" if heal_first_only else "无"
-        return {
-            "成品旨稿": [
-                {
-                    "正文": f"着{first}核查陕西赈务。",
-                    "动作类型": "assignment",
-                    "目标类型": "region",
-                    "目标ID": "shaanxi",
-                    "地区ID": "shaanxi",
-                    "施行范围": d0_scope,
-                    "事务类别": "督赈",
-                    "颁布方式": "普通",
-                    "参与人": [{
-                        "character_id": first, "tier": "主办", "role": "督",
-                    }],
-                },
-                {
-                    "正文": f"着{first}核查山西赈务。",
-                    "动作类型": "assignment",
-                    "目标类型": "region",
-                    "目标ID": "shanxi",
-                    "地区ID": "shanxi",
-                    "施行范围": "无",  # 始终非法：纠错轮也不修第二条
-                    "事务类别": "督赈",
-                    "颁布方式": "普通",
-                    "参与人": [{
-                        "character_id": first, "tier": "主办", "role": "督",
-                    }],
-                },
-            ]
-        }
-
-    n = {"c": 0}
-
-    def backend(prompt, *_a, tag="", **_k):
-        n["c"] += 1
-        if n["c"] == 1:
-            return (json.dumps(_batch(heal_first_only=False), ensure_ascii=False), 1)
-        return (json.dumps(_batch(heal_first_only=True), ensure_ascii=False), 1)
-
-    monkeypatch.setattr(cb, "_run_backend_for_config", backend)
     with pytest.raises(StructuredDecreeCombinationError) as ei:
         cb.extract_draft_intent_with_roster_heal(
             f"两道旨着{first}核查陕晋", "臣遵拟。",
             db=db, content=content, draft_count=2,
             heal_retries=1,
         )
-    exc = ei.value
-    # 首抽须记齐两条失败；不得只咬 idx0 后放行 idx1
-    failures = dict(getattr(exc, "draft_failures", None) or {})
-    partial = getattr(exc, "partial_result", None) or {}
-    drafts = partial.get("drafts") if isinstance(partial, dict) else None
-    if isinstance(drafts, list) and len(drafts) == 2:
-        # 若 partial 是合并后快照：draft0 或已修好，draft1 仍须非法
-        from ming_sim.structured_decree import validate_structured_decree_combination
-        with pytest.raises(StructuredDecreeCombinationError):
-            validate_structured_decree_combination(drafts[1])
-    # 无论停在首抽还是合并重闸，失败图不得丢第二条
-    assert 1 in failures or (
-        isinstance(drafts, list)
-        and len(drafts) == 2
-    ), f"expected draft1 retained in failure path, failures={failures!r}"
+    failures = dict(getattr(ei.value, "draft_failures", None) or {})
+    # 失败图必须含 draft1；禁 OR partial 条数的放松断言
+    assert 1 in failures, f"expected draft1 in draft_failures, got {failures!r}"
     assert n["c"] >= 2

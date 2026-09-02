@@ -2125,30 +2125,18 @@ def _revalidate_merged_combo_result(
     failed_fields: Optional[frozenset] = None,
     draft_failures: Optional[Dict[int, frozenset]] = None,
 ) -> None:
-    """合并失败字段后重走共同组合校验；仍败则 typed 上抛（全图失败一并带回）。"""
+    """合并失败字段后重走共同组合校验；仍败则 typed 上抛（全图失败一并带回）。
+
+    批 draft 路径复用 _finalize_extract_with_combo 的 collect-all 闸，
+    不平行再写一份 validate→收集→包装循环。
+    """
     drafts = result.get("drafts")
     if isinstance(drafts, list) and draft_failures:
-        remaining: Dict[int, frozenset] = {}
-        first_exc: Optional[StructuredDecreeCombinationError] = None
+        flags = [False] * len(drafts)
         for idx, fields in draft_failures.items():
-            if not fields or idx >= len(drafts):
-                continue
-            draft = drafts[idx]
-            if not isinstance(draft, dict):
-                continue
-            try:
-                validate_structured_decree_combination(draft)
-            except StructuredDecreeCombinationError as exc:
-                remaining[idx] = frozenset(exc.failed_fields)
-                if first_exc is None:
-                    first_exc = exc
-        if first_exc is not None:
-            raise StructuredDecreeCombinationError(
-                str(first_exc),
-                partial_result=dict(result),
-                failed_fields=first_exc.failed_fields,
-                draft_failures=remaining,
-            ) from first_exc
+            if fields and 0 <= int(idx) < len(flags):
+                flags[int(idx)] = True
+        _finalize_extract_with_combo(result, draft_combo_flags=flags)
         return
     if failed_fields:
         validate_structured_decree_combination(result)
