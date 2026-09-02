@@ -242,14 +242,8 @@ def test_month_end_entry_owner_and_matrix_reject(monkeypatch, game, tmp_path):
     assert monthly["transaction_category"] == "督赈"
     assert not str(monthly.get("assignee_name") or "").strip()
 
-    # army+single 首抽 → 纠错轮 army+none 合法接受（共同纠错反馈有界重抽）
+    # army+single 首抽 → 一次有界重抽 army+none 合法接受
     calls: list[int] = []
-    feedback_hits: list[BaseException] = []
-    real_feedback = rescript_mod.combination_correction_feedback
-
-    def _track_feedback(exc: BaseException) -> str:
-        feedback_hits.append(exc)
-        return real_feedback(exc)
 
     def _heal_once(_agent, prompt, tag=""):
         del prompt, tag
@@ -258,18 +252,11 @@ def test_month_end_entry_owner_and_matrix_reject(monkeypatch, game, tmp_path):
             return json.dumps({"items": [_army_single_bad_item()]}, ensure_ascii=False)
         return json.dumps({"items": [_army_none_legal_item()]}, ensure_ascii=False)
 
-    monkeypatch.setattr(
-        rescript_mod, "combination_correction_feedback", _track_feedback,
-    )
     monkeypatch.setattr(rescript_mod, "run_agent_text", _heal_once)
     healed = rescript_mod.generate_rescript_draft(
         object(), _month_end_ctx(), 2,
     )
-    assert len(calls) == 2
-    assert len(feedback_hits) == 1
-    assert isinstance(
-        feedback_hits[0], rescript_mod.StructuredDecreeCombinationError,
-    )
+    assert len(calls) == 2  # spec：首抽 + 恰一次结构重抽
     assert healed is not None and len(healed) == 1
     grant = healed[0]["options"][0]
     assert grant["target_kind"] == "army"
@@ -277,7 +264,7 @@ def test_month_end_entry_owner_and_matrix_reject(monkeypatch, game, tmp_path):
     assert grant["locality_scope"] == "none"
     assert grant.get("grant_action") == "协饷"
 
-    # 纠错耗尽仍 army+single → 整批降级、零部分头版
+    # 纠错耗尽仍 army+single → 整批降级、零部分头版（仍恰 2 次调用）
     exhaust_calls: list[int] = []
 
     def _never_heals(_agent, prompt, tag=""):
@@ -289,7 +276,7 @@ def test_month_end_entry_owner_and_matrix_reject(monkeypatch, game, tmp_path):
     assert rescript_mod.generate_rescript_draft(
         object(), _month_end_ctx(), 3,
     ) is None
-    assert len(exhaust_calls) == rescript_mod.RESCRIPT_COMBO_CORRECTION_RETRIES + 1
+    assert len(exhaust_calls) == 2  # spec：有界 1 次重抽后降级，不多抽
     note_path = tmp_path / "error_packs" / "rescript_draft_degraded" / "turn3.json"
     assert note_path.is_file()
     note = json.loads(note_path.read_text(encoding="utf-8"))
