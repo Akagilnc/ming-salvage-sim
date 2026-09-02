@@ -23,7 +23,7 @@ from __future__ import annotations
 import json
 import re
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 from openai import APIConnectionError, APIStatusError, APITimeoutError
 
@@ -45,8 +45,9 @@ from ming_sim.token_stats import tlog
 MAX_RESCRIPT_DRAFTS = 5
 
 # #657 C.3 层 A option 必填键（缺一 shape 失败）；draft_capability 由服务端派生写入。
-# #1624 / PR#1719：required/present 为 typed 单源——layer_a_option_shape /
-# normalize / 初拟·改票 prompt renderer 共用同一元组；禁 agents 手抄、禁 markdown 平行键表。
+# #1624 / PR#1719：required/present/action-conditional 为 typed 单源——
+# layer_a_option_shape / normalize / 初拟·改票 prompt renderer 共用；
+# 禁 agents 手抄、禁 markdown 平行键表、禁只列 capability 后用「按需填写」代规则。
 _LAYER_A_REQUIRED_KEYS = (
     "label", "hint", "action_type", "target_kind", "target_id", "locality_scope",
 )
@@ -57,6 +58,64 @@ _LAYER_A_PRESENT_KEYS = (
 
 # 生成侧军饷类别；层 A 等值映射到内部 grant_action=协饷（禁同义词/散文）。
 _GRANT_KIND_ARMY_PAY = "army_pay"
+_LAYER_A_APPOINT_ACTIONS = frozenset({"任命", "罢免"})
+
+# 七类 action-conditional 必填/互斥/枚举/条件必填（纯 shape，无 DB grounding）。
+# assignment 的 category|assignee 任一已由 structured_decree 组合闸承载；
+# grant_kind↔grant_action 互斥与金额 shape 仍走下方 grant 专缝（同 shape 暴露）。
+# optional_keys 仅供 renderer 列类相关可填键；validator 不因 optional 放宽必填。
+_LAYER_A_ACTION_CONDITIONAL: Dict[str, Dict[str, object]] = {
+    "assignment": {
+        "optional_keys": (
+            "deadline_months", "title", "commitment_kind", "stop_condition",
+            "end_turn", "due_turn",
+        ),
+        "required_when": (
+            ("commitment_kind", "until_stop", ("stop_condition",)),
+        ),
+    },
+    "military_order": {
+        "required_nonempty": ("assignee_name",),
+        "target_kind_in": frozenset({"army"}),
+        "optional_keys": ("station", "due_turn", "deadline_months", "office"),
+    },
+    "grant_allocation": {
+        "optional_keys": (
+            "grant_kind", "grant_action", "amount", "account", "purpose",
+            "cadence", "execution_surface",
+        ),
+        "mutex_nonempty_pairs": (("grant_kind", "grant_action"),),
+    },
+    "appointment": {
+        "required_nonempty": ("appoint_action",),
+        "enum_in": {"appoint_action": _LAYER_A_APPOINT_ACTIONS},
+        "required_when": (
+            ("appoint_action", "任命", ("office",)),
+        ),
+        "target_kind_in": frozenset({"character"}),
+        "optional_keys": ("office", "name", "appointment_tenure"),
+    },
+    "punishment": {
+        "required_nonempty": ("punish_action",),
+        # enum 运行时取 punish_actions_effective，避免平行拷贝闭集
+        "enum_in_dynamic": {"punish_action": "punish_actions_effective"},
+        "positive_amount_when": ("punish_action", "罚俸"),
+        "forbid_positive_amount_unless": ("punish_action", "罚俸"),
+        "target_kind_in": frozenset({"character"}),
+        "optional_keys": ("amount", "name"),
+    },
+    "authorization": {
+        "require_any_nonempty": (("name", "assignee_name"),),
+        "optional_keys": (
+            "privilege", "summon_target", "name", "execution_surface",
+        ),
+    },
+    "pacification": {
+        "target_kind_in": frozenset({"character"}),
+        "optional_keys": ("name", "deadline_months"),
+    },
+}
+assert frozenset(_LAYER_A_ACTION_CONDITIONAL) == RESCRIPT_ROUTABLE_ACTION_TYPES
 
 # 层 A 允许键 = C.3 必填/须在 + C.4 闭集 + draft_capability（服务端覆盖，LLM 自带不准）
 # grant_kind：生成侧 machine discriminator（#1620）；层 A 映射后不落库。
@@ -79,16 +138,71 @@ _LAYER_A_CAPABILITY_INT_KEYS = tuple(
 )
 
 
-def layer_a_option_shape() -> Dict[str, object]:
-    """层 A option 受理契约 typed 视图（required/present/action_types/grant_kind）。
+def _layer_a_resolve_enum_in(rule: Mapping[str, object]) -> Dict[str, frozenset]:
+    """静态 enum_in + 动态 enum 源 → 统一 frozenset 映射。"""
+    enums: Dict[str, frozenset] = {}
+    static = rule.get("enum_in") or {}
+    if isinstance(static, Mapping):
+        for key, allowed in static.items():
+            enums[str(key)] = frozenset(allowed)  # type: ignore[arg-type]
+    dynamic = rule.get("enum_in_dynamic") or {}
+    if isinstance(dynamic, Mapping):
+        from ming_sim.action_materialize import punish_actions_effective
 
-    与 normalize_rescript_layer_a_option / rescript_layer_a_prompt_contract 共用
-    模块级元组真源；不另建 per-action 键表（capability 闭集已在 _DRAFT_CAPABILITY_KEYS）。
+        for key, source in dynamic.items():
+            if source == "punish_actions_effective":
+                enums[str(key)] = frozenset(punish_actions_effective())
+            else:
+                raise RuntimeError(f"未知 layer-A dynamic enum 源：{source!r}")
+    return enums
+
+
+def _layer_a_action_conditional_view() -> Dict[str, Dict[str, object]]:
+    """七类条件契约的 typed 视图（shape/normalize/renderer 共用）。"""
+    out: Dict[str, Dict[str, object]] = {}
+    for action in sorted(RESCRIPT_ROUTABLE_ACTION_TYPES):
+        rule = _LAYER_A_ACTION_CONDITIONAL[action]
+        entry: Dict[str, object] = {
+            "required_nonempty": tuple(rule.get("required_nonempty") or ()),
+            "require_any_nonempty": tuple(rule.get("require_any_nonempty") or ()),
+            "required_when": tuple(rule.get("required_when") or ()),
+            "optional_keys": tuple(rule.get("optional_keys") or ()),
+            "mutex_nonempty_pairs": tuple(rule.get("mutex_nonempty_pairs") or ()),
+            "enum_in": {
+                key: tuple(sorted(allowed))
+                for key, allowed in _layer_a_resolve_enum_in(rule).items()
+            },
+        }
+        tk = rule.get("target_kind_in")
+        if tk is not None:
+            entry["target_kind_in"] = tuple(sorted(tk))  # type: ignore[arg-type]
+        else:
+            entry["target_kind_in"] = None
+        if rule.get("positive_amount_when") is not None:
+            entry["positive_amount_when"] = rule["positive_amount_when"]
+        else:
+            entry["positive_amount_when"] = None
+        if rule.get("forbid_positive_amount_unless") is not None:
+            entry["forbid_positive_amount_unless"] = rule[
+                "forbid_positive_amount_unless"
+            ]
+        else:
+            entry["forbid_positive_amount_unless"] = None
+        out[action] = entry
+    return out
+
+
+def layer_a_option_shape() -> Dict[str, object]:
+    """层 A option 受理契约 typed 单源（required/present/action-conditional）。
+
+    与 normalize_rescript_layer_a_option / rescript_layer_a_prompt_contract 共用；
+    action_conditional 承载七类必填/互斥/枚举/条件必填，禁止入口平行手抄。
     """
     return {
         "required_keys": _LAYER_A_REQUIRED_KEYS,
         "present_keys": _LAYER_A_PRESENT_KEYS,
         "action_types": tuple(sorted(RESCRIPT_ROUTABLE_ACTION_TYPES)),
+        "action_conditional": _layer_a_action_conditional_view(),
         "grant_kind_army_pay": _GRANT_KIND_ARMY_PAY,
         "server_only_keys": ("draft_capability",),
         "capability_str_keys": _LAYER_A_CAPABILITY_STR_KEYS,
@@ -96,12 +210,64 @@ def layer_a_option_shape() -> Dict[str, object]:
     }
 
 
-def rescript_layer_a_prompt_contract() -> str:
-    """初拟/改票共用：由 layer_a_option_shape 渲染层 A 受理契约。
+def _render_action_conditional_contract(conditional: object) -> str:
+    """由 typed action_conditional 渲染 prompt 段（禁手抄规则）。"""
+    if not isinstance(conditional, Mapping):
+        return ""
+    parts: List[str] = []
+    for action in sorted(conditional):
+        rule = conditional[action]
+        if not isinstance(rule, Mapping):
+            continue
+        bits: List[str] = []
+        req = rule.get("required_nonempty") or ()
+        if req:
+            bits.append("必填" + "/".join(str(k) for k in req))  # type: ignore[union-attr]
+        for group in rule.get("require_any_nonempty") or ():
+            bits.append("须具其一" + "|".join(str(k) for k in group))  # type: ignore[union-attr]
+        enums = rule.get("enum_in") or {}
+        if isinstance(enums, Mapping):
+            for key in sorted(enums):
+                allowed = enums[key]
+                bits.append(
+                    f"{key}∈" + "|".join(str(v) for v in allowed)  # type: ignore[union-attr]
+                )
+        for item in rule.get("required_when") or ():
+            if not item or len(item) < 3:  # type: ignore[arg-type]
+                continue
+            ctrl, cval, rks = item[0], item[1], item[2]  # type: ignore[index]
+            bits.append(
+                f"当{ctrl}={cval}必填" + "/".join(str(k) for k in rks)  # type: ignore[union-attr]
+            )
+        tk = rule.get("target_kind_in")
+        if tk:
+            bits.append("target_kind∈" + "|".join(str(k) for k in tk))  # type: ignore[union-attr]
+        pos_when = rule.get("positive_amount_when")
+        if pos_when and len(pos_when) >= 2:  # type: ignore[arg-type]
+            bits.append(f"当{pos_when[0]}={pos_when[1]}须正amount")  # type: ignore[index]
+        forbid = rule.get("forbid_positive_amount_unless")
+        if forbid and len(forbid) >= 2:  # type: ignore[arg-type]
+            bits.append(f"非{forbid[1]}禁正amount")  # type: ignore[index]
+        for pair in rule.get("mutex_nonempty_pairs") or ():
+            bits.append(
+                "互斥不得并存" + "+".join(str(k) for k in pair)  # type: ignore[union-attr]
+            )
+        opt = rule.get("optional_keys") or ()
+        if opt:
+            bits.append("可填" + "/".join(str(k) for k in opt))  # type: ignore[union-attr]
+        if bits:
+            parts.append(f"{action}（" + "；".join(bits) + "）")
+    if not parts:
+        return ""
+    return "action-conditional：" + "。".join(parts) + "。"
 
-    structured_decree_prompt_contract 承目标/属地/承办子契约；本块只补
-    required/present/action_types/grant_kind。禁 agents 手抄；禁复述
-    _assert_army_targets_grounded 等 grounding 规则。
+
+def rescript_layer_a_prompt_contract() -> str:
+    """初拟/改票共用：由 layer_a_option_shape 渲染层 A 完整受理契约。
+
+    structured_decree_prompt_contract 承目标/属地/承办子契约；本块补
+    required/present/action_types/action-conditional/grant_kind。
+    禁 agents 手抄；禁复述 grounding 规则；禁锁本函数措辞。
     """
     shape = layer_a_option_shape()
     required = "/".join(str(k) for k in shape["required_keys"])  # type: ignore[arg-type]
@@ -109,17 +275,149 @@ def rescript_layer_a_prompt_contract() -> str:
     actions = "|".join(str(a) for a in shape["action_types"])  # type: ignore[arg-type]
     grant_kind = str(shape["grant_kind_army_pay"])
     server_only = "/".join(str(k) for k in shape["server_only_keys"])  # type: ignore[arg-type]
+    conditional = _render_action_conditional_contract(shape.get("action_conditional"))
     return (
         "票拟层 A option 受理契约（与 normalize_rescript_layer_a_option 共用 shape）："
         f"每项 options[] 必填非空 {required}；"
         f"action_type∈{actions}；"
         f"{present} 三键必须输出（值可空串）；"
-        f"grant_allocation 军饷用 grant_kind={grant_kind}"
+        + conditional
+        + f"grant_allocation 军饷用 grant_kind={grant_kind}"
         f"（禁直写 grant_action=协饷；kind 与 grant_action 不得并存）；"
         f"非 grant_allocation 不得带 grant_kind；"
-        f"其余类相关键取自 capability 闭集，按 action_type 需要填写；"
         f"禁止输出 {server_only}（服务端派生）。"
     )
+
+
+def _enforce_layer_a_action_conditional(
+    out: Dict[str, object],
+    raw: Mapping[str, object],
+    *,
+    shape: Mapping[str, object],
+) -> None:
+    """按 shape.action_conditional 强制七类必填/互斥/枚举（写回 out）。"""
+    action = str(out["action_type"])
+    conditional = shape.get("action_conditional") or {}
+    if not isinstance(conditional, Mapping):
+        return
+    rules = conditional.get(action) or {}
+    if not isinstance(rules, Mapping):
+        return
+
+    def _raw_or_out(key: str) -> object:
+        if key in out and out[key] is not None:
+            return out[key]
+        if key in raw:
+            return raw[key]
+        return None
+
+    def _nonempty_str(key: str) -> str:
+        val = _raw_or_out(key)
+        if val is None:
+            return ""
+        return str(val).strip()
+
+    tk_in = rules.get("target_kind_in")
+    if tk_in:
+        allowed_tk = frozenset(str(x) for x in tk_in)  # type: ignore[union-attr]
+        got = str(out.get("target_kind") or "").strip()
+        if got not in allowed_tk:
+            raise ValueError(
+                f"票拟 option.{action}.target_kind 须为"
+                f"{'|'.join(sorted(allowed_tk))}，得 {got!r}"
+            )
+
+    for key in rules.get("required_nonempty") or ():
+        key_s = str(key)
+        val = _nonempty_str(key_s)
+        if not val:
+            raise ValueError(f"票拟 option.{action} 缺必填：{key_s}")
+        src = _raw_or_out(key_s)
+        out[key_s] = str(src) if src is not None else val
+
+    for group in rules.get("require_any_nonempty") or ():
+        keys = tuple(str(k) for k in group)  # type: ignore[union-attr]
+        if not any(_nonempty_str(k) for k in keys):
+            raise ValueError(
+                f"票拟 option.{action} 须具备其一：{'/'.join(keys)}"
+            )
+        for key_s in keys:
+            val = _nonempty_str(key_s)
+            if val and key_s not in out:
+                src = _raw_or_out(key_s)
+                out[key_s] = str(src) if src is not None else val
+
+    enums = rules.get("enum_in") or {}
+    if isinstance(enums, Mapping):
+        for key, allowed in enums.items():
+            key_s = str(key)
+            val = _nonempty_str(key_s)
+            if not val:
+                continue
+            allowed_set = frozenset(str(x) for x in allowed)  # type: ignore[union-attr]
+            if val not in allowed_set:
+                raise ValueError(
+                    f"票拟 option.{action}.{key_s} 非法：{val!r}"
+                )
+            out[key_s] = val
+
+    for item in rules.get("required_when") or ():
+        if not item or len(item) < 3:  # type: ignore[arg-type]
+            continue
+        ctrl, cval, rks = str(item[0]), str(item[1]), item[2]  # type: ignore[index]
+        if _nonempty_str(ctrl) != cval:
+            continue
+        for rk in rks:  # type: ignore[union-attr]
+            rk_s = str(rk)
+            if not _nonempty_str(rk_s):
+                raise ValueError(
+                    f"票拟 option.{action} 当 {ctrl}={cval} 时缺 {rk_s}"
+                )
+            src = _raw_or_out(rk_s)
+            out[rk_s] = str(src) if src is not None else _nonempty_str(rk_s)
+
+    for pair in rules.get("mutex_nonempty_pairs") or ():
+        keys = tuple(str(k) for k in pair)  # type: ignore[union-attr]
+        present = [k for k in keys if _nonempty_str(k)]
+        if len(present) > 1:
+            raise ValueError(
+                f"票拟 option.{action} 互斥键不得并存：{'/'.join(present)}"
+            )
+
+    pos_when = rules.get("positive_amount_when")
+    if pos_when and len(pos_when) >= 2:  # type: ignore[arg-type]
+        ctrl, cval = str(pos_when[0]), str(pos_when[1])  # type: ignore[index]
+        if _nonempty_str(ctrl) == cval:
+            amt_raw = _raw_or_out("amount")
+            try:
+                if isinstance(amt_raw, bool) or amt_raw is None or amt_raw == "":
+                    raise ValueError
+                amount = int(amt_raw)  # type: ignore[arg-type]
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"票拟 option.{action} {cval} 须正 amount"
+                ) from exc
+            if amount <= 0:
+                raise ValueError(
+                    f"票拟 option.{action} {cval} 须正 amount"
+                )
+            out["amount"] = amount
+
+    forbid = rules.get("forbid_positive_amount_unless")
+    if forbid and len(forbid) >= 2:  # type: ignore[arg-type]
+        ctrl, cval = str(forbid[0]), str(forbid[1])  # type: ignore[index]
+        if _nonempty_str(ctrl) != cval:
+            amt_raw = _raw_or_out("amount")
+            try:
+                amount = int(amt_raw) if amt_raw not in (None, "") else 0  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                amount = 0
+            if isinstance(amt_raw, bool):
+                amount = 0
+            if amount > 0:
+                raise ValueError(
+                    f"票拟 option.{action} 非 {cval} 不得带正 amount"
+                )
 
 
 def normalize_stop_condition(raw: object) -> str:
@@ -200,6 +498,8 @@ def normalize_rescript_layer_a_option(
                 f"票拟 option.{key} 须为 str（可空串），拒 {type(value).__name__}"
             )
         out[key] = value
+    # 七类 action-conditional（与 shape/renderer 同真源；先于组合闸）
+    _enforce_layer_a_action_conditional(out, raw, shape=shape)
     # #1624：层 A 即走共同组合校验（动作×目标×属地×承办），落库前不再另写平行闸
     from ming_sim.structured_decree import validate_structured_decree_combination
     validate_structured_decree_combination(out)

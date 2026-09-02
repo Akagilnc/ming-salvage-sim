@@ -52,11 +52,11 @@ from ming_sim.models import CODEX_DEFAULT_MODEL, CLAUDE_DEFAULT_MODEL, LLMConfig
 from ming_sim.constants import DOSSIER_LINK_TYPES
 from ming_sim.decree_vocabulary import DIRECTIVE_ACTION_TYPES
 from ming_sim.structured_decree import (
-    STRUCTURED_DECREE_FIELD_KEYS,
     StructuredDecreeCombinationError,
     apply_assembled_to_payload,
     assemble_structured_decree,
     combination_correction_feedback,
+    expand_combo_failed_fields,
     structured_decree_prompt_contract,
     validate_structured_decree_combination,
 )
@@ -2022,45 +2022,68 @@ def _finalize_extract_with_combo(
     needs_combo: bool = False,
     draft_combo_flags: Optional[List[bool]] = None,
 ) -> Dict[str, Any]:
-    """结果建成后做组合校验；失败携带 partial（含首抽名册）。
+    """结果建成后做组合校验；失败携带 partial + typed 可修字段边界。
 
     needs_combo / draft_combo_flags 为调用方局部布尔，不写入结果字典。
     """
-    targets: List[Dict[str, Any]] = []
     if draft_combo_flags is not None:
         drafts = result.get("drafts") or []
         for idx, flag in enumerate(draft_combo_flags):
             if not flag or idx >= len(drafts):
                 continue
             draft = drafts[idx]
-            if isinstance(draft, dict):
-                targets.append(draft)
-    elif needs_combo:
-        targets.append(result)
-    for payload in targets:
+            if not isinstance(draft, dict):
+                continue
+            try:
+                validate_structured_decree_combination(draft)
+            except StructuredDecreeCombinationError as exc:
+                raise StructuredDecreeCombinationError(
+                    str(exc),
+                    partial_result=dict(result),
+                    failed_fields=exc.failed_fields,
+                    draft_failures={idx: frozenset(exc.failed_fields)},
+                ) from exc
+        return result
+    if needs_combo:
         try:
-            validate_structured_decree_combination(payload)
+            validate_structured_decree_combination(result)
         except StructuredDecreeCombinationError as exc:
             raise StructuredDecreeCombinationError(
-                str(exc), partial_result=dict(result),
+                str(exc),
+                partial_result=dict(result),
+                failed_fields=exc.failed_fields,
             ) from exc
     return result
+
+
+def _apply_failed_fields_from_correction(
+    target: Dict[str, Any],
+    corrected: Mapping[str, Any],
+    failed_fields: object,
+) -> None:
+    """只把 failed_fields 边界内结构键从纠错轮写入 target（就地）。"""
+    for key in expand_combo_failed_fields(failed_fields):
+        if key in corrected:
+            target[key] = corrected[key]
+        else:
+            target.pop(key, None)
 
 
 def _merge_combo_correction_preserving_roster(
     baseline: Dict[str, Any],
     corrected: Dict[str, Any],
+    *,
+    failed_fields: Optional[frozenset] = None,
+    draft_failures: Optional[Dict[int, frozenset]] = None,
 ) -> Dict[str, Any]:
-    """组合纠错成功：结构字段取纠错轮，逐 draft 保留首抽 participant_roster。
+    """组合纠错成功：仅采纳 typed 失败字段，逐 draft 保留首抽 participant_roster。
 
-    复用 STRUCTURED_DECREE_FIELD_KEYS；不另建第二 retry 机制。
+    未失败的动作/目标/承办/类别与旨文、名册一律保留首抽；不另建第二 retry。
     """
     out = dict(baseline)
-    for key in STRUCTURED_DECREE_FIELD_KEYS:
-        if key in corrected:
-            out[key] = corrected[key]
-        else:
-            out.pop(key, None)
+    top_fields = frozenset(failed_fields or ())
+    if top_fields:
+        _apply_failed_fields_from_correction(out, corrected, top_fields)
     if "participant_roster" in baseline:
         out["participant_roster"] = baseline["participant_roster"]
     base_drafts = baseline.get("drafts")
@@ -2068,6 +2091,7 @@ def _merge_combo_correction_preserving_roster(
     if isinstance(base_drafts, list):
         merged: List[Any] = []
         corr_list = corr_drafts if isinstance(corr_drafts, list) else []
+        failures = dict(draft_failures or {})
         for idx, base_draft in enumerate(base_drafts):
             if not isinstance(base_draft, dict):
                 merged.append(base_draft)
@@ -2078,17 +2102,34 @@ def _merge_combo_correction_preserving_roster(
                 if idx < len(corr_list) and isinstance(corr_list[idx], dict)
                 else None
             )
-            if corr_item is not None:
-                for key in STRUCTURED_DECREE_FIELD_KEYS:
-                    if key in corr_item:
-                        item[key] = corr_item[key]
-                    else:
-                        item.pop(key, None)
+            draft_fields = frozenset(failures.get(idx) or ())
+            if corr_item is not None and draft_fields:
+                _apply_failed_fields_from_correction(item, corr_item, draft_fields)
             if "participant_roster" in base_draft:
                 item["participant_roster"] = base_draft["participant_roster"]
             merged.append(item)
         out["drafts"] = merged
     return out
+
+
+def _revalidate_merged_combo_result(
+    result: Dict[str, Any],
+    *,
+    failed_fields: Optional[frozenset] = None,
+    draft_failures: Optional[Dict[int, frozenset]] = None,
+) -> None:
+    """合并失败字段后重走共同组合校验；仍败则 typed 上抛。"""
+    drafts = result.get("drafts")
+    if isinstance(drafts, list) and draft_failures:
+        for idx, fields in draft_failures.items():
+            if not fields or idx >= len(drafts):
+                continue
+            draft = drafts[idx]
+            if isinstance(draft, dict):
+                validate_structured_decree_combination(draft)
+        return
+    if failed_fields:
+        validate_structured_decree_combination(result)
 
 
 def extract_draft_intent_with_roster_heal(
@@ -2104,8 +2145,9 @@ def extract_draft_intent_with_roster_heal(
     """extract → 共同契约组合校验 + 名册校验；失败有界纠错重抽（P5 只走失败路）。
 
     #1624：组合校验失败只回喂结构契约，不改写自由文本旨文；不得各入口另造 heal。
-    组合纠错复用 baseline_result：只更新结构字段，逐 draft 保留首抽
-    participant_roster，再走既有名册校验（禁合法甲→合法乙静默漂移）。
+    组合纠错复用 baseline_result：只更新该次不变式 failed_fields 边界内字段，
+    逐 draft 保留首抽 participant_roster 与未失败结构，再走既有名册校验
+    （禁合法甲→合法乙、未失败动作/目标/类别静默漂移）。
     自愈只许抄写纠错（修完仍是皇帝所指之人）。真不在册 / 擅自除名 →
     raise UnknownParticipantEscalate（调用方戏内回禀，不落草案）。
     db/content 缺一则只抽不校验名册（与旧 extract 同）；组合校验在 extract 内已做。
@@ -2118,6 +2160,8 @@ def extract_draft_intent_with_roster_heal(
     # 首抽权威快照：首次校验失败后冻结，后续失败不得覆写 baseline/闸基线。
     baseline_result: Optional[Dict[str, Any]] = None
     baseline_from_combo = False
+    baseline_failed_fields: frozenset = frozenset()
+    baseline_draft_failures: Dict[int, frozenset] = {}
     for attempt in range(retries + 1):
         # llm_config 关键字传：别族 fake_draft(msg, reply, **kw) 形仍合法，
         # 不得因 heal 多塞第 3 位置参把旧 mock 签名整族打爆。
@@ -2133,20 +2177,70 @@ def extract_draft_intent_with_roster_heal(
                 **extract_kwargs,
             )
         except StructuredDecreeCombinationError as exc:
-            # 共同契约组合失败：typed 有界重试；首败冻结 partial 名册基线
+            # 共同契约组合失败：typed 有界重试；首败冻结 partial + 可修字段边界。
+            # 纠错轮整包仍可能因未失败字段漂移而组合失败——此时只取 partial 中
+            # 原失败边界字段合并回首抽，再共同校验（不把漂移整包当成功结果）。
             partial = getattr(exc, "partial_result", None)
             if baseline_result is None and isinstance(partial, dict):
                 baseline_result = dict(partial)
                 baseline_from_combo = True
-            if attempt >= retries:
-                raise
-            correction = combination_correction_feedback(exc)
-            _log(f"拟旨结构组合纠错重试 {attempt + 1}/{retries}: {exc}")
-            continue
-        # 组合纠错成功：结构取本轮，名册保首抽，再走既有 roster 闸
+                baseline_failed_fields = frozenset(getattr(exc, "failed_fields", None) or ())
+                raw_draft_failures = getattr(exc, "draft_failures", None) or {}
+                baseline_draft_failures = {
+                    int(idx): frozenset(fields or ())
+                    for idx, fields in dict(raw_draft_failures).items()
+                }
+                if attempt >= retries:
+                    raise
+                correction = combination_correction_feedback(exc)
+                _log(f"拟旨结构组合纠错重试 {attempt + 1}/{retries}: {exc}")
+                continue
+            if (
+                baseline_from_combo
+                and baseline_result is not None
+                and isinstance(partial, dict)
+            ):
+                result = _merge_combo_correction_preserving_roster(
+                    baseline_result,
+                    partial,
+                    failed_fields=baseline_failed_fields,
+                    draft_failures=baseline_draft_failures,
+                )
+                try:
+                    _revalidate_merged_combo_result(
+                        result,
+                        failed_fields=baseline_failed_fields,
+                        draft_failures=baseline_draft_failures,
+                    )
+                except StructuredDecreeCombinationError as merged_exc:
+                    if attempt >= retries:
+                        raise merged_exc
+                    correction = combination_correction_feedback(merged_exc)
+                    _log(
+                        f"拟旨结构组合纠错重试 {attempt + 1}/{retries}: {merged_exc}"
+                    )
+                    continue
+                baseline_result = dict(result)
+                baseline_from_combo = False
+                # 合并已过共同闸：落入下方 roster 路径（勿再 continue）
+            else:
+                if attempt >= retries:
+                    raise
+                correction = combination_correction_feedback(exc)
+                _log(f"拟旨结构组合纠错重试 {attempt + 1}/{retries}: {exc}")
+                continue
+        # 组合纠错成功（纠错轮整包已过闸）：只采纳失败字段，再共同校验+roster 闸
         if baseline_from_combo and baseline_result is not None:
             result = _merge_combo_correction_preserving_roster(
-                baseline_result, result,
+                baseline_result,
+                result,
+                failed_fields=baseline_failed_fields,
+                draft_failures=baseline_draft_failures,
+            )
+            _revalidate_merged_combo_result(
+                result,
+                failed_fields=baseline_failed_fields,
+                draft_failures=baseline_draft_failures,
             )
             baseline_result = dict(result)
             baseline_from_combo = False
