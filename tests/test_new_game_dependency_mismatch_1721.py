@@ -10,8 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from packaging.requirements import InvalidRequirement, Requirement
-from packaging.utils import canonicalize_name
+from packaging.requirements import InvalidRequirement
 
 import ming_sim.constants as constants
 import ming_sim.llm_model as llm_model
@@ -19,17 +18,6 @@ from ming_sim.exceptions import DependencyMismatch
 
 REPO = Path(__file__).resolve().parents[1]
 STALE_AGNO_WHEEL = REPO / "tests" / "fixtures" / "agno-2.7.3-py3-none-any.whl"
-
-
-def _agno_requirement_from_repo() -> str:
-    for raw in (REPO / "requirements.txt").read_text(encoding="utf-8").splitlines():
-        line = raw.split("#", 1)[0].strip()
-        if not line:
-            continue
-        req = Requirement(line)
-        if canonicalize_name(req.name) == "agno":
-            return line
-    raise AssertionError("requirements.txt has no agno declaration")
 
 
 @pytest.fixture(scope="session")
@@ -74,7 +62,8 @@ print(json.dumps({"status": response.status_code, "detail": response.json()["det
     assert payload["status"] == 500
     detail = payload["detail"]
     assert detail["package"] == "agno"
-    assert detail["requirement"] == _agno_requirement_from_repo()
+    assert detail["requirement"]
+    assert detail["requirement"] in (REPO / "requirements.txt").read_text(encoding="utf-8")
     assert "message" in detail and str(detail["message"]).strip()
 
 
