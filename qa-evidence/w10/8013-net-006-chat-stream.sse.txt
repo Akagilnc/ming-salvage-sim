@@ -1,0 +1,9 @@
+event: accepted
+data: {"campaign_id": "f801f267895f", "night_id": 1, "chat_turn_id": 3}
+
+event: delta
+data: {"content": "臣郭允厚领旨。\n\n谨拟敕旨如下：\n\n「户部尚书郭允厚：关宁军前欠饷，关系边军戍守。著户部即于国库拨银十五万两，专解关宁军前补发欠饷，不得移作别用，不得借此加派民间。限十日内具奏：实发银数、解运日期、经手官员及军前收领情形，毋得虚饰迟延。钦此。」\n\n臣当即会同户部郎中杨嗣昌核出票据，另择专差驰递；银到关宁后，须凭军前收领回报销差。十日之内，臣以实发数目复奏，若有侵冒迟误，臣甘受查究。"}
+
+event: error
+data: {"message": "协饷旨意 target 无法解析为军队：'army.guanning'（不猜散文）", "campaign_id": "f801f267895f", "night_id": 1, "chat_turn_id": 3}
+
