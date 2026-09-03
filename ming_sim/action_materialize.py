@@ -1644,11 +1644,8 @@ def stage_grant_allocation_candidate(
     else:
         # 改案离开协饷时显式清 pay-only 残留，防止 merge 保留 purpose/immediate。
         staged["purpose"] = ""
-        # #1624：普通 grant 已验 execution_surface 原样入 staged；缺省空串由 durable 归一 in_transit。
-        surface = str(execution_surface or "").strip()
-        staged["execution_surface"] = (
-            surface if surface in {"immediate", "in_transit"} else ""
-        )
+        # #1624：普通 grant 原样转发字符串/空值；值域由 durable 独家验并对异常非空 fail-loud。
+        staged["execution_surface"] = str(execution_surface or "").strip()
     if existing_id:
         return db.update_directive_candidate(existing_id, staged)
     return db.stage_directive_candidate(int(turn), minister_name, payload=staged)

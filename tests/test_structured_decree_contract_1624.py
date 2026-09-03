@@ -376,53 +376,14 @@ def test_manual_owner_example_seal_advances(tracer_client, monkeypatch):
     _assert_hubu_duty_leads(game.db, matched[0])
 
 
-def test_layer_a_option_shape_and_normalize_contract():
-    """层 A required/present/action-conditional 为 typed 单源；normalize 消费同一 shape。
+def test_normalize_rescript_layer_a_option_contract():
+    """normalize_rescript_layer_a_option：外部可观察成败与归一结果。
 
-    键集与七类条件断言落 layer_a_option_shape()；normalize 拒绝缺条件字段。
-    prompt/Agent instructions 装配不在此锁（target×locality 由月末入口与矩阵行为测承担）。
+    不锁私有常量、对象身份或 shape 精确布局；prompt/Agent 装配亦不在此锁。
     """
-    from ming_sim.decree_vocabulary import RESCRIPT_ROUTABLE_ACTION_TYPES
-    from ming_sim.rescript_draft import (
-        _LAYER_A_PRESENT_KEYS,
-        _LAYER_A_REQUIRED_KEYS,
-        layer_a_option_shape,
-        normalize_rescript_layer_a_option,
-    )
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
 
-    shape = layer_a_option_shape()
-    # shape 与模块级元组同一对象（validator/renderer 共用真源）
-    assert shape["required_keys"] is _LAYER_A_REQUIRED_KEYS
-    assert shape["present_keys"] is _LAYER_A_PRESENT_KEYS
-    assert shape["required_keys"] == (
-        "label", "hint", "action_type", "target_kind", "target_id", "locality_scope",
-    )
-    assert shape["present_keys"] == (
-        "assignee_name", "region_id", "transaction_category",
-    )
-    assert shape["grant_kind_army_pay"] == "army_pay"
-    assert "draft_capability" in shape["server_only_keys"]  # type: ignore[operator]
-
-    conditional = shape["action_conditional"]
-    assert isinstance(conditional, dict)
-    assert frozenset(conditional) == RESCRIPT_ROUTABLE_ACTION_TYPES
-    appt = conditional["appointment"]
-    assert "appoint_action" in appt["required_nonempty"]  # type: ignore[index]
-    assert "任命" in appt["enum_in"]["appoint_action"]  # type: ignore[index]
-    assert appt["target_kind_in"] == ("character",)
-    mil = conditional["military_order"]
-    assert "assignee_name" in mil["required_nonempty"]  # type: ignore[index]
-    assert mil["target_kind_in"] == ("army",)
-    mil_any = mil.get("require_any_nonempty") or ()
-    assert any(
-        set(group) >= {"station", "due_turn", "deadline_months"}
-        for group in mil_any  # type: ignore[union-attr]
-    ), f"military dual gate missing in shape: {mil_any!r}"
-    punish = conditional["punishment"]
-    assert "punish_action" in punish["required_nonempty"]  # type: ignore[index]
-    assert "罚俸" in punish["enum_in"]["punish_action"]  # type: ignore[index]
-
-    # normalize 消费同一条件契约：缺 appoint_action 须失败（复判探针反例）
+    # 缺 appoint_action 须失败
     with pytest.raises(ValueError, match="appoint_action"):
         normalize_rescript_layer_a_option({
             "label": "授官", "hint": "h", "action_type": "appointment",
