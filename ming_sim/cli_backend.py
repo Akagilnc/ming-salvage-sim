@@ -2446,7 +2446,7 @@ def extract_draft_intent(
             '"施行范围":"单省","事务类别":"督赈","承办人":"","目标案卷ID":null,'
             '"颁布方式":"普通|中旨直发"},'
             f'{{"正文":"……共 {draft_count} 道","动作类型":"military_order","目标类型":"army",'
-            '"目标ID":"...","执行面":"immediate|in_transit",'
+            '"目标ID":"...",'
             '"承办人":"...","期限月数":3,"颁布方式":"普通|中旨直发","施行范围":"无",'
             '"事务类别":"","地区ID":"",'
             '"参与人":[{"character_id":"规范名","tier":"主办|协办|知情","role":"本案职分","delegator_id":null}]}]}\n'
@@ -2538,10 +2538,12 @@ def extract_draft_intent(
             if action not in DRAFT_ACTION_TYPES:
                 invalid_batch = True
                 break
+            # execution_surface 仅 grant 经 _normalize_grant_transport→project_cluster_fields
+            # 投影；禁跨动作无条件透传（#1624）。
             mechanical = {
                 target: value.get(source)
                 for source, target in (
-                    ("执行面", "execution_surface"), ("承办人", "assignee"),
+                    ("承办人", "assignee"),
                     ("期限月数", "deadline_months"), ("标题", "title"),
                     ("事务类别", "transaction_category"), ("地区ID", "region_id"),
                 )
@@ -2635,8 +2637,7 @@ def extract_draft_intent(
         '                             // key∈due_priority_<科目>[@省]|arrears_priority_<欠科目>[@省]|'
         'due_haircut_bp_<科目>[@省][#province|#central]；haircut 值=万分数(0,10000]；非该动作留 []\n'
         + grant_fields_prompt
-        + '  "执行面": "immediate|in_transit", // 仅拨帑：账内即时划转或在途执行\n'
-        '  "目标类型": "",\n'
+        + '  "目标类型": "",\n'
         '  "目标ID": "",\n'
         '  "地区ID": "",\n'
         '  "施行范围": "",\n'
@@ -2771,8 +2772,9 @@ def extract_draft_intent(
     mode = _directive_mode(
         _projected.get("mode") if dossier_action == "grant_allocation" else obj.get("颁布方式")
     )
+    # execution_surface 仅 grant 经 _normalize_grant_transport→project_cluster_fields
+    # 投影；禁跨动作无条件透传（#1624）。
     mechanical = {
-        "execution_surface": obj.get("执行面"),
         "assignee": obj.get("承办人"),
         "deadline_months": obj.get("期限月数"),
         # #653：pay_order_override 结构化载荷随 capture 整道转交（禁旁路）。

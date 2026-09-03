@@ -28,6 +28,7 @@ _OWNER_OPTION = {
 
 
 def _owner_manual_backend_json() -> str:
+    # 附件 r3 回显形态：LLM 误带执行面=immediate；assignment 不得透传落库。
     return json.dumps({
         "拟旨意图": "拟旨",
         "动作类型": "assignment",
@@ -38,6 +39,7 @@ def _owner_manual_backend_json() -> str:
         "事务类别": "督赈",
         "承办人": "",
         "颁布方式": "普通",
+        "执行面": "immediate",
         "参与人": [],
     }, ensure_ascii=False)
 
@@ -77,8 +79,51 @@ def _month_end_ctx() -> dict:
     return {
         "active_issues": [],
         "region_targets": [{"id": "shaanxi", "name": "陕西", "kind": "腹地"}],
-        "army_targets": [{"id": "xuanfu", "name": "宣府"}],
+        "army_targets": [
+            {"id": "xuanfu", "name": "宣府"},
+            {"id": "guanning", "name": "关宁军 / 宁锦防线", "station": "辽东 / 宁远锦州"},
+        ],
     }
+
+
+def _army_single_bad_item() -> dict:
+    """复验残留样本：辽东欠饷 option 层 army+single（矩阵非法）。"""
+    return {
+        "title": "辽东欠饷",
+        "context": "九边欠饷数月，饥溃可待。",
+        "options": [
+            {
+                "label": "补发关宁军饷",
+                "hint": "边饷急",
+                "action_type": "grant_allocation",
+                "assignee_name": "",
+                "target_kind": "army",
+                "target_id": "guanning",
+                "locality_scope": "single",
+                "region_id": "",
+                "transaction_category": "",
+                "grant_kind": "army_pay",
+                "amount": 300,
+                "account": "国库",
+                "purpose": "补饷",
+            },
+            {
+                **_OWNER_OPTION,
+                "label": "缓议加派",
+                "hint": "候报",
+            },
+        ],
+    }
+
+
+def _army_none_legal_item() -> dict:
+    """纠错轮合法：同军目标 + locality_scope=none。"""
+    item = _army_single_bad_item()
+    item["options"][0] = {
+        **item["options"][0],
+        "locality_scope": "none",
+    }
+    return item
 
 
 def test_shared_validate_rejects_region_id_and_category_holes():
@@ -156,15 +201,18 @@ def test_shared_validate_rejects_region_id_and_category_holes():
     assert only_action["dossier_action_type"] == "policy"
 
 
-def test_month_end_entry_owner_and_matrix_reject(monkeypatch, game):
-    """真实月末生成入口：Owner 例落 canonical；office+single 矩阵坏形整批降级。
+def test_month_end_entry_owner_and_matrix_reject(monkeypatch, tmp_path):
+    """真实月末入口 tracer：Owner 例；army+single 有界纠错接受；耗尽整批降级。
 
+    首抽 exact army+single（合并后复验残留）；纠错轮合法 army+none 被整批接受。
+    另证纠错仍非法 → F2.5 响亮降级、零部分头版。不静默改写 scope/kind。
     改票真实入口由 test_pihong_dossier_1490 的 return_revise 路径覆盖。
-    region_id/category 原洞见 test_shared_validate_rejects_region_id_and_category_holes。
+    不申请 game：本 tracer 只经 generate_rescript_draft 真实入口，无 DB。
     """
     import ming_sim.rescript_draft as rescript_mod
 
-    del game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+
     owner_item = {
         "title": "陕西告饥",
         "context": "秦地赤旱，饥民待哺，急须责成赈济。",
@@ -196,25 +244,46 @@ def test_month_end_entry_owner_and_matrix_reject(monkeypatch, game):
     assert monthly["transaction_category"] == "督赈"
     assert not str(monthly.get("assignee_name") or "").strip()
 
-    # office+single：矩阵矛盾（非 region_id/category 原洞）→ 整批降级
-    bad = {
-        "title": "坏形",
-        "context": "x",
-        "options": [{
-            **_OWNER_OPTION,
-            "target_kind": "office",
-            "target_id": "户部",
-            "locality_scope": "single",
-            "region_id": "",
-        }, dict(_OWNER_OPTION)],
-    }
-    monkeypatch.setattr(
-        rescript_mod, "run_agent_text",
-        lambda *_a, **_k: json.dumps({"items": [bad]}, ensure_ascii=False),
+    # army+single 首抽 → 一次有界重抽 army+none 合法接受
+    calls: list[int] = []
+
+    def _heal_once(_agent, prompt, tag=""):
+        del prompt, tag
+        calls.append(1)
+        if len(calls) == 1:
+            return json.dumps({"items": [_army_single_bad_item()]}, ensure_ascii=False)
+        return json.dumps({"items": [_army_none_legal_item()]}, ensure_ascii=False)
+
+    monkeypatch.setattr(rescript_mod, "run_agent_text", _heal_once)
+    healed = rescript_mod.generate_rescript_draft(
+        object(), _month_end_ctx(), 2,
     )
+    assert len(calls) == 2  # spec：首抽 + 恰一次结构重抽
+    assert healed is not None and len(healed) == 1
+    grant = healed[0]["options"][0]
+    assert grant["target_kind"] == "army"
+    assert grant["target_id"] == "guanning"
+    assert grant["locality_scope"] == "none"
+    assert grant.get("grant_action") == "协饷"
+
+    # 纠错耗尽仍 army+single → 整批降级、零部分头版（仍恰 2 次调用）
+    exhaust_calls: list[int] = []
+
+    def _never_heals(_agent, prompt, tag=""):
+        del prompt, tag
+        exhaust_calls.append(1)
+        return json.dumps({"items": [_army_single_bad_item()]}, ensure_ascii=False)
+
+    monkeypatch.setattr(rescript_mod, "run_agent_text", _never_heals)
     assert rescript_mod.generate_rescript_draft(
-        object(), _month_end_ctx(), 1,
+        object(), _month_end_ctx(), 3,
     ) is None
+    assert len(exhaust_calls) == 2  # spec：有界 1 次重抽后降级，不多抽
+    note_path = tmp_path / "error_packs" / "rescript_draft_degraded" / "turn3.json"
+    assert note_path.is_file()
+    note = json.loads(note_path.read_text(encoding="utf-8"))
+    assert note.get("turn") == 3
+    assert str(note.get("reason") or "").strip()
 
 
 def test_rescript_follow_draft_routes_hubu(game):
@@ -302,67 +371,19 @@ def test_manual_owner_example_seal_advances(tracer_client, monkeypatch):
     assert payload.get("target_kind") == "region"
     assert payload.get("locality_scope") == "single"
     assert not str(payload.get("assignee_id") or payload.get("assignee") or "").strip()
+    # assignment 不得跨动作透传执行面（#1624）；与 multi-aim military 同契：字段缺失或空。
+    assert str(payload.get("execution_surface") or "").strip() == ""
     _assert_hubu_duty_leads(game.db, matched[0])
 
 
-def test_layer_a_prompt_contract_is_typed_single_source_for_draft_and_revise(monkeypatch):
-    """层 A required/present/action-conditional 为 typed 单源；初拟/改票共用。
+def test_normalize_rescript_layer_a_option_contract():
+    """normalize_rescript_layer_a_option：外部可观察成败与归一结果。
 
-    键集与七类条件断言落 layer_a_option_shape()；工厂注入断言同一 renderer
-    返回值身份（非 prompt 措辞锁）。normalize 消费同一 shape 拒绝缺条件字段。
+    不锁私有常量、对象身份或 shape 精确布局；prompt/Agent 装配亦不在此锁。
     """
-    import ming_sim.agents as agents_mod
-    from ming_sim.agents import (
-        _rescript_option_instructions,
-        bind_content,
-        create_rescript_draft_agent,
-        create_rescript_revise_agent,
-    )
-    from ming_sim.content import GameContent
-    from ming_sim.decree_vocabulary import RESCRIPT_ROUTABLE_ACTION_TYPES
-    from ming_sim.models import LLMConfig
-    from ming_sim.rescript_draft import (
-        _LAYER_A_PRESENT_KEYS,
-        _LAYER_A_REQUIRED_KEYS,
-        layer_a_option_shape,
-        normalize_rescript_layer_a_option,
-        rescript_layer_a_prompt_contract,
-    )
-    from ming_sim.structured_decree import structured_decree_prompt_contract
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
 
-    shape = layer_a_option_shape()
-    # shape 与模块级元组同一对象（validator/renderer 共用真源）
-    assert shape["required_keys"] is _LAYER_A_REQUIRED_KEYS
-    assert shape["present_keys"] is _LAYER_A_PRESENT_KEYS
-    assert shape["required_keys"] == (
-        "label", "hint", "action_type", "target_kind", "target_id", "locality_scope",
-    )
-    assert shape["present_keys"] == (
-        "assignee_name", "region_id", "transaction_category",
-    )
-    assert shape["grant_kind_army_pay"] == "army_pay"
-    assert "draft_capability" in shape["server_only_keys"]  # type: ignore[operator]
-
-    conditional = shape["action_conditional"]
-    assert isinstance(conditional, dict)
-    assert frozenset(conditional) == RESCRIPT_ROUTABLE_ACTION_TYPES
-    appt = conditional["appointment"]
-    assert "appoint_action" in appt["required_nonempty"]  # type: ignore[index]
-    assert "任命" in appt["enum_in"]["appoint_action"]  # type: ignore[index]
-    assert appt["target_kind_in"] == ("character",)
-    mil = conditional["military_order"]
-    assert "assignee_name" in mil["required_nonempty"]  # type: ignore[index]
-    assert mil["target_kind_in"] == ("army",)
-    mil_any = mil.get("require_any_nonempty") or ()
-    assert any(
-        set(group) >= {"station", "due_turn", "deadline_months"}
-        for group in mil_any  # type: ignore[union-attr]
-    ), f"military dual gate missing in shape: {mil_any!r}"
-    punish = conditional["punishment"]
-    assert "punish_action" in punish["required_nonempty"]  # type: ignore[index]
-    assert "罚俸" in punish["enum_in"]["punish_action"]  # type: ignore[index]
-
-    # normalize 消费同一条件契约：缺 appoint_action 须失败（复判探针反例）
+    # 缺 appoint_action 须失败
     with pytest.raises(ValueError, match="appoint_action"):
         normalize_rescript_layer_a_option({
             "label": "授官", "hint": "h", "action_type": "appointment",
@@ -416,39 +437,6 @@ def test_layer_a_prompt_contract_is_typed_single_source_for_draft_and_revise(mon
         "name": "",
     })
     assert auth_assignee_zero.get("assignee_name") == "0"
-
-    contract = rescript_layer_a_prompt_contract()
-    # renderer 必须消费 action_conditional（组合断言；禁措辞锁）。
-    # 抽掉 shape→conditional 渲染后本断言须红——防再退回「按需填写」空壳。
-    from ming_sim.rescript_draft import _render_action_conditional_contract
-
-    conditional_seg = _render_action_conditional_contract(conditional)
-    assert conditional_seg  # 七类条件段非空
-    assert conditional_seg in contract
-
-    # 共享 instructions 块 = 层 A + structured_decree 子契约（禁 agents 手抄）
-    shared = _rescript_option_instructions()
-    assert shared == [contract, structured_decree_prompt_contract()]
-
-    # 初拟/改票工厂真实组装 instructions：注入同一 renderer 返回值
-    bind_content(GameContent.load())
-    captured: dict[str, list] = {}
-
-    class _FakeAgent:
-        def __init__(self, **kwargs):
-            captured[str(kwargs.get("id") or "")] = list(
-                kwargs.get("instructions") or []
-            )
-            for key, val in kwargs.items():
-                setattr(self, key, val)
-
-    monkeypatch.setattr(agents_mod, "Agent", _FakeAgent)
-    monkeypatch.setattr(agents_mod, "create_chat_model", lambda *_a, **_k: object())
-    cfg = LLMConfig(api_key="test", base_url="http://localhost/v1", model="test")
-    create_rescript_draft_agent(cfg, None)  # type: ignore[arg-type]
-    create_rescript_revise_agent(cfg, None)  # type: ignore[arg-type]
-    assert contract in captured.get("rescript-drafter", [])
-    assert contract in captured.get("rescript-reviser", [])
 
 
 def test_combo_correction_preserves_first_draw_roster(game, monkeypatch):

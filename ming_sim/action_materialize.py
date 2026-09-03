@@ -590,9 +590,10 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
         dossier_carriers = tuple(
             spec.name for spec in (dossier_cluster.fields if dossier_cluster else ())
         )
+        # execution_surface 仅 grant FieldSpec→dossier_carriers 投影，禁通用透传（#1624）。
         mechanical_fields = (
             "dossier_action_type", "target_kind", "target_id", "mode",
-            "execution_surface", "assignee",
+            "assignee",
             "deadline_months", "punish_action", "locality_scope",
             # #653：pay_order_override 结构化载荷随拟旨草案整道入 staging payload。
             "entries",
@@ -1526,6 +1527,7 @@ def stage_grant_allocation_candidate(
     account: str = "",
     purpose: str = "",
     cadence: str = "",
+    execution_surface: object = None,
     target_candidate: object = None,
     pend_for_minister: Optional[List[Dict[str, Any]]] = None,
 ) -> int:
@@ -1642,8 +1644,8 @@ def stage_grant_allocation_candidate(
     else:
         # 改案离开协饷时显式清 pay-only 残留，防止 merge 保留 purpose/immediate。
         staged["purpose"] = ""
-        if "execution_surface" not in staged:
-            staged["execution_surface"] = ""
+        # #1624：普通 grant 原样转发字符串/空值；值域由 durable 独家验并对异常非空 fail-loud。
+        staged["execution_surface"] = str(execution_surface or "").strip()
     if existing_id:
         return db.update_directive_candidate(existing_id, staged)
     return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
@@ -1687,6 +1689,8 @@ def _materialize_grant_allocation(ctx: MaterializeCtx) -> None:
         ),
         purpose=str(intent.get("purpose") or "").strip(),
         cadence=_grant_cadence(intent),
+        # #1624：classifier 已验 execution_surface 交 stage，禁在此静默丢弃。
+        execution_surface=intent.get("execution_surface"),
         target_candidate=intent.get("target_candidate"),
         pend_for_minister=ctx.pend_for_minister,
     )
@@ -3512,6 +3516,11 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 FieldSpec(
                     "mode", "颁布方式",
                     frozenset({"ordinary", "midzhi"}), "",
+                ),
+                # #1624：执行面仅 grant 可选；prompt/投影由此单轨派生，禁通用透传。
+                FieldSpec(
+                    "execution_surface", "执行面",
+                    frozenset({"immediate", "in_transit"}), "",
                 ),
                 # 明确改草指向：分类归一化须保留，供 stage 只更新点名候选
                 FieldSpec("target_candidate", "目标候选", None, "", max_len=40),
