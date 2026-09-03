@@ -38,7 +38,7 @@ except Exception:  # noqa: BLE001 — 缓冲设置失败不该阻断 web 启动
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
@@ -46,7 +46,7 @@ from starlette.concurrency import run_in_threadpool
 from ming_sim.applier import atomic
 from ming_sim.constants import ROOT_DIR
 from ming_sim.paths import bundled_path, user_data_path, user_data_dir
-from ming_sim.exceptions import ExitGame, LLMUnavailable, SettlementAbort
+from ming_sim.exceptions import DependencyMismatch, ExitGame, LLMUnavailable, SettlementAbort
 from ming_sim.llm_config import (
     CLI_DEFAULT_TIMEOUT_SECONDS,
     VALID_CHANNELS,
@@ -4283,6 +4283,21 @@ _menu_generation: int = 0
 
 
 app = FastAPI(title="Ming Salvage MVP Web")
+
+
+@app.exception_handler(DependencyMismatch)
+async def dependency_mismatch_handler(_request: Request, exc: DependencyMismatch) -> JSONResponse:
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": {
+                "code": "dependency_mismatch",
+                "package": exc.package,
+                "requirement": exc.requirement,
+                "message": exc.message,
+            }
+        },
+    )
 
 
 def get_game() -> WebGame:
