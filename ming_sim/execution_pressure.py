@@ -26,6 +26,21 @@ _SCOPE_ALIASES = {
     "single": "single",
     "none": "none",
 }
+
+# #654 r4-B / #1624：target_kind → 可接受 locality_scope 闭集（8×3 scope 轴唯一 typed 真源）。
+# assert_target_locality_matrix 与 prompt 投影共引；national 另受 NATIONAL_FANOUT_ACTION_TYPES。
+# 禁 prompt/入口手抄第二份可接受面。
+TARGET_KIND_LOCALITY_SCOPES: Dict[str, frozenset[str]] = {
+    "region": frozenset({"single"}),
+    "dossier": frozenset({"none"}),
+    "character": frozenset({"none"}),
+    "office": frozenset({"none"}),
+    "army": frozenset({"none"}),
+    "policy": frozenset({"none", "national"}),
+    "issue": frozenset({"none", "national"}),
+    "account": frozenset({"none", "national"}),
+}
+assert frozenset(TARGET_KIND_LOCALITY_SCOPES) == TARGET_KINDS
 PROVINCE_KINDS = frozenset({"两京", "布政司"})
 DISASTER_KINDS = frozenset({"天灾", "灾情", "饥荒"})  # issues.py 灾情族同源
 ABSENT = "不参与"
@@ -170,6 +185,27 @@ class TargetLocalityMatrixError(ValueError):
         self.failed_fields = frozenset(failed_fields)
 
 
+def project_target_locality_matrix_prompt() -> str:
+    """由 TARGET_KIND_LOCALITY_SCOPES 投影可接受面（供共同 prompt 消费；禁手抄）。"""
+    groups: Dict[frozenset[str], list[str]] = {}
+    for kind, scopes in TARGET_KIND_LOCALITY_SCOPES.items():
+        groups.setdefault(scopes, []).append(kind)
+    parts: list[str] = []
+    for scopes in sorted(groups, key=lambda s: (sorted(s), len(s))):
+        kinds = "|".join(sorted(groups[scopes]))
+        if len(scopes) == 1:
+            only = next(iter(scopes))
+            parts.append(f"{kinds}仅{only}")
+        else:
+            parts.append(f"{kinds}∈{'|'.join(sorted(scopes))}")
+    national_actions = "|".join(sorted(NATIONAL_FANOUT_ACTION_TYPES))
+    return (
+        "target_kind×locality_scope 可接受面（"
+        + "；".join(parts)
+        + f"；national 仅 action_type∈{national_actions}）"
+    )
+
+
 def assert_target_locality_matrix(
     *,
     action_type: object,
@@ -178,53 +214,53 @@ def assert_target_locality_matrix(
 ) -> str:
     """#654 / #1624：target_kind × locality_scope 8×3 矩阵唯一实现（无 DB）。
 
-    返回归一后的 locality_scope。resolve_dossier_region_ids 与 structured_decree
-    组合闸共引本函数——禁止平行第二份矩阵。
+    可接受面真源 = TARGET_KIND_LOCALITY_SCOPES；national 另咬 NATIONAL_FANOUT_ACTION_TYPES。
+    resolve_dossier_region_ids 与 structured_decree 组合闸共引本函数——禁止平行第二份矩阵。
     失败带 TargetLocalityMatrixError.failed_fields（逐不变式可修边界）。
     """
     kind = str(target_kind or "").strip()
     action = str(action_type or "").strip()
     scope = normalize_locality_scope(locality_scope)
-    if kind not in TARGET_KINDS:
+    allowed = TARGET_KIND_LOCALITY_SCOPES.get(kind)
+    if allowed is None or kind not in TARGET_KINDS:
         raise TargetLocalityMatrixError(
             f"target_kind 非法：{kind!r}",
             failed_fields=frozenset({"target_kind"}),
         )
 
-    # r4-B / owner A 8×3：R1 = region ∧ single；dossier 仅 none → 单行 ''
-    if kind == "region":
-        if scope != "single":
+    if scope not in allowed:
+        # 保留历史失败措辞（下游测试/诊断认语义，不锁字符串为闸）
+        if kind == "region":
             raise TargetLocalityMatrixError(
                 f"region 目标与 locality_scope={scope!r} 矛盾（须 single）",
                 failed_fields=frozenset({"locality_scope"}),
             )
-        return scope
-
-    if kind == "dossier":
-        if scope != "none":
+        if kind == "dossier":
             raise TargetLocalityMatrixError(
                 f"target_kind=dossier 与 locality_scope={scope!r} 矛盾（须 none）",
                 failed_fields=frozenset({"locality_scope"}),
             )
-        return scope
-
-    if scope == "single":
-        raise TargetLocalityMatrixError(
-            f"locality_scope=single 只配 region 目标，得 target_kind={kind!r}",
-            failed_fields=frozenset({"locality_scope", "target_kind"}),
-        )
-
-    if scope == "national":
-        if kind in {"character", "office", "army", "dossier"}:
+        if scope == "single":
+            raise TargetLocalityMatrixError(
+                f"locality_scope=single 只配 region 目标，得 target_kind={kind!r}",
+                failed_fields=frozenset({"locality_scope", "target_kind"}),
+            )
+        if scope == "national":
             raise TargetLocalityMatrixError(
                 f"target_kind={kind!r} 不得 national fan-out",
                 failed_fields=frozenset({"locality_scope", "target_kind"}),
             )
-        if action not in NATIONAL_FANOUT_ACTION_TYPES:
-            raise TargetLocalityMatrixError(
-                f"national fan-out 动作不在白名单：{action!r}",
-                failed_fields=frozenset({"locality_scope", "action_type"}),
-            )
+        raise TargetLocalityMatrixError(
+            f"target_kind={kind!r} 与 locality_scope={scope!r} 矛盾"
+            f"（允许 {'|'.join(sorted(allowed))}）",
+            failed_fields=frozenset({"locality_scope", "target_kind"}),
+        )
+
+    if scope == "national" and action not in NATIONAL_FANOUT_ACTION_TYPES:
+        raise TargetLocalityMatrixError(
+            f"national fan-out 动作不在白名单：{action!r}",
+            failed_fields=frozenset({"locality_scope", "action_type"}),
+        )
     return scope
 
 

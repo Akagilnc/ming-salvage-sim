@@ -2743,9 +2743,12 @@ def test_batch_draft_extraction_preserves_each_mechanical_payload(monkeypatch):
     assert result["drafts"][0]["amount"] == 10000
     assert result["drafts"][0]["dossier_action_type"] == "grant_allocation"
     assert result["drafts"][0]["mode"] == "ordinary"
+    # #1624：grant 经 cluster 投影保留 in_transit；military 不携带执行面。
+    assert result["drafts"][0].get("execution_surface") == "in_transit"
     assert result["drafts"][1]["deadline_months"] == 3
     assert result["drafts"][1]["dossier_action_type"] == "military_order"
     assert result["drafts"][1]["mode"] == "midzhi"
+    assert str(result["drafts"][1].get("execution_surface") or "").strip() == ""
 
 
 def test_executing_dossier_stays_visible_and_extractor_can_close_it(game):

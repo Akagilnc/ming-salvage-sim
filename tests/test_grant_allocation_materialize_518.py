@@ -15,13 +15,19 @@ import json
 import types
 from types import SimpleNamespace
 
+import pytest
+
 import ming_sim.action_materialize  # noqa: F401 -- installs package catalog
 import ming_sim.cli_backend as cb
 from ming_sim.action_clusters import (
     ACTION_CLUSTERS,
     candidates_from_classifier_payload,
 )
-from ming_sim.action_materialize import MaterializeCtx, run_materialize_pipeline
+from ming_sim.action_materialize import (
+    MaterializeCtx,
+    run_materialize_pipeline,
+    stage_grant_allocation_candidate,
+)
 from ming_sim.decree import reload_state_from_db
 from ming_sim.flows import apply_fixed_period_flows
 from ming_sim.session import GameSession
@@ -52,7 +58,8 @@ def _active_ming(db, content, *, exclude=""):
 
 
 def _stage_grant(db, turn, *, action, amount=0, account="", cadence="",
-                 name="", target_id="", message=None, reply=None):
+                 name="", target_id="", execution_surface="",
+                 message=None, reply=None):
     actor = db.conn.execute(
         "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
     ).fetchone()["name"]
@@ -70,6 +77,8 @@ def _stage_grant(db, turn, *, action, amount=0, account="", cadence="",
         payload["name"] = name
     if target_id:
         payload["target_id"] = target_id
+    if execution_surface:
+        payload["execution_surface"] = execution_surface
     if action == "协饷":
         payload["target_kind"] = "army"
         payload["purpose"] = "补饷"
@@ -749,6 +758,60 @@ def test_grant_target_field_carries_region_project_army_through_normalize(game):
         assert staged["grant_action"] == action
         assert staged["target_id"] == expected_staged
         assert staged["target_kind"] == expected_kind
+
+
+@pytest.mark.parametrize("surface", ["immediate", "in_transit"])
+def test_ordinary_grant_explicit_execution_surface_survives_close_night(game, surface):
+    """#1624：普通 grant 已验 execution_surface 经 classifier→materialize→收夜 durable 原样保留。"""
+    db, state, content = game
+    ctx = _stage_grant(
+        db, state.turn, action="赈灾", amount="12", account="国库",
+        target_id="shaanxi", execution_surface=surface,
+        message=f"调银十二万两赈灾（{surface}）。",
+        reply=f"臣请户部发帑十二万两赈陕西灾民，执行面{surface}，请陛下定夺准驳。",
+    )
+    pending_id = ctx.out["pending_action_id"]
+    assert pending_id
+    pending = json.loads(db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
+    ).fetchone()["payload_json"])
+    assert pending.get("execution_surface") == surface
+
+    dossier = _close_night_dossier(db, state, content, pending_id)
+    payload = json.loads(dossier["payload_json"])
+    assert payload.get("execution_surface") == surface
+    assert dossier["action_type"] == "grant_allocation"
+
+
+def test_ordinary_grant_bogus_execution_surface_fails_at_durable(game):
+    """#1624：非法非空 execution_surface 经 stage→commit 不得成案。
+
+    修前 stage 洗空后 durable 默认 in_transit 静默落 dossier；修后 pending failed、无案卷。
+    """
+    db, state, content = game
+    actor = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
+    ).fetchone()["name"]
+    pending_id = stage_grant_allocation_candidate(
+        db, state.turn, actor,
+        text="调银十二万两赈灾。",
+        grant_action="赈灾",
+        target_kind="region",
+        target_id="shaanxi",
+        amount=12,
+        account="国库",
+        execution_surface="bogus_not_a_surface",
+    )
+    assert pending_id
+    result = db.commit_pending_actions(state, content=content, action_ids=[pending_id])
+    assert result == []
+    row = db.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (pending_id,)
+    ).fetchone()
+    assert row["status"] == "failed"
+    assert not any(
+        d.get("pending_action_id") == pending_id for d in db.list_decree_dossiers()
+    )
 
 
 def test_target_candidate_survives_classifier_normalize_to_materialize(game):
