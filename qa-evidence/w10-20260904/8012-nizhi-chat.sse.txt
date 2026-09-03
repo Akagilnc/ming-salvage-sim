@@ -1,0 +1,9 @@
+event: accepted
+data: {"campaign_id": "0a244439f8e7", "night_id": 1, "chat_turn_id": 3}
+
+event: delta
+data: {"content": "臣遵旨，拟敕如下：\n\n**奉天承运皇帝敕曰：**\n\n户部尚书郭允厚，着即于国库拨银十五万两，专解关宁军前补发欠饷，不得移作别用。限十日内具奏实发数目、解到日期及经手官员姓名，毋得借端加派民间。沿途有司务须妥速解送，毋得稽延侵蚀。钦此。\n\n臣谨拟，请皇上御览定夺。"}
+
+event: error
+data: {"message": "协饷旨意 target 无法解析为军队：'关宁军前'（不猜散文）", "campaign_id": "0a244439f8e7", "night_id": 1, "chat_turn_id": 3}
+
