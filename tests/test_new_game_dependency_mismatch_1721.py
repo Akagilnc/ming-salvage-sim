@@ -10,8 +10,12 @@ from pathlib import Path
 
 import pytest
 
-from packaging.requirements import Requirement
+from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
+
+import ming_sim.constants as constants
+import ming_sim.llm_model as llm_model
+from ming_sim.exceptions import DependencyMismatch
 
 REPO = Path(__file__).resolve().parents[1]
 STALE_AGNO_WHEEL = REPO / "tests" / "fixtures" / "agno-2.7.3-py3-none-any.whl"
@@ -72,3 +76,17 @@ print(json.dumps({"status": response.status_code, "detail": response.json()["det
     assert detail["package"] == "agno"
     assert detail["requirement"] == _agno_requirement_from_repo()
     assert "message" in detail and str(detail["message"]).strip()
+
+
+def test_malformed_requirement_is_not_projected_as_agno(tmp_path, monkeypatch):
+    (tmp_path / "requirements.txt").write_text("agno!!!\n", encoding="utf-8")
+    monkeypatch.setattr(constants, "ROOT_DIR", str(tmp_path))
+    try:
+        llm_model._require_agno()
+    except DependencyMismatch as exc:
+        raise AssertionError(
+            f"malformed requirement must not be typed as package={exc.package!r}"
+        ) from exc
+    except InvalidRequirement:
+        return
+    raise AssertionError("expected InvalidRequirement")
