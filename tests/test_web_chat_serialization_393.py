@@ -318,10 +318,12 @@ def test_nonstream_api_chat_keeps_game_state_responsive_while_chat_blocks(monkey
             await asyncio.to_thread(chat_entered.wait)
             try:
                 payload = await web_app.api_state()
+                # 先落成功标记再放行：set() 先执行则 chat 线程可先记 "chat"，
+                # 与外部断言的严格顺序无 happens-before（#1722 判牒）。
+                events.append("state_done")
             finally:
                 # api_state 抛错也须放行 chat worker，否则 threadpool 永久阻塞。
                 allow_finish.set()
-            events.append("state_done")
             return payload
 
         chat_result, state_payload = await asyncio.gather(
