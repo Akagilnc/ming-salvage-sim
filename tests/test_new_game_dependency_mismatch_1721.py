@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
 
 import ming_sim.constants as constants
@@ -12,25 +13,16 @@ import ming_sim.llm_model as llm_model
 from ming_sim.exceptions import DependencyMismatch
 
 REPO = Path(__file__).resolve().parents[1]
-
-
-def _agno_requirement_line() -> str:
-    for raw in (REPO / "requirements.txt").read_text(encoding="utf-8").splitlines():
-        line = raw.split("#", 1)[0].strip()
-        if line.lower().startswith("agno"):
-            return line
-    raise AssertionError("requirements.txt has no agno line")
+STALE_AGNO_WHEEL = REPO / "tests" / "fixtures" / "agno-2.7.3-py3-none-any.whl"
+# Ticket #1721 frozen constraint; not derived from production parse.
+AGNO_REQUIREMENT = "agno[openai,sqlite]>=3.0.0,<4"
 
 
 def _stale_agno_site(root: Path) -> Path:
-    """Importable agno 2.7.3 discovered by importlib.metadata, no network."""
     site = root / "stale-agno-site"
-    dist = site / "agno-2.7.3.dist-info"
-    dist.mkdir(parents=True)
-    (dist / "METADATA").write_text(
-        "Metadata-Version: 2.1\nName: agno\nVersion: 2.7.3\n",
-        encoding="utf-8",
-    )
+    site.mkdir()
+    with zipfile.ZipFile(STALE_AGNO_WHEEL) as wheel:
+        wheel.extractall(site)
     return site
 
 
@@ -41,7 +33,6 @@ def test_new_game_stale_agno_returns_typed_dependency_facts(tmp_path):
     env["MING_SIM_DB"] = str(tmp_path / "ming.db")
     env["MING_SIM_USER_DATA_DIR"] = str(tmp_path / "ud")
     env["OPENAI_API_KEY"] = "sk-test"
-    expected = _agno_requirement_line()
     probe = tmp_path / "probe.py"
     probe.write_text(
         """\
@@ -70,7 +61,7 @@ print(json.dumps({"status": response.status_code, "detail": response.json()["det
     assert payload["status"] == 500
     detail = payload["detail"]
     assert detail["package"] == "agno"
-    assert detail["requirement"] == expected
+    assert detail["requirement"] == AGNO_REQUIREMENT
     assert "message" in detail and str(detail["message"]).strip()
 
 
