@@ -4285,19 +4285,19 @@ _menu_generation: int = 0
 app = FastAPI(title="Ming Salvage MVP Web")
 
 
+def _dependency_mismatch_detail(exc: DependencyMismatch) -> Dict[str, Any]:
+    """#1721：DependencyMismatch 的唯一 typed 投影（HTTP detail 与 SSE error 共用）。"""
+    return {
+        "code": "dependency_mismatch",
+        "package": exc.package,
+        "requirement": exc.requirement,
+        "message": exc.message,
+    }
+
+
 @app.exception_handler(DependencyMismatch)
 async def dependency_mismatch_handler(_request: Request, exc: DependencyMismatch) -> JSONResponse:
-    return JSONResponse(
-        status_code=500,
-        content={
-            "detail": {
-                "code": "dependency_mismatch",
-                "package": exc.package,
-                "requirement": exc.requirement,
-                "message": exc.message,
-            }
-        },
-    )
+    return JSONResponse(status_code=500, content={"detail": _dependency_mismatch_detail(exc)})
 
 
 def get_game() -> WebGame:
@@ -4591,6 +4591,9 @@ async def api_menu_continue() -> StreamingResponse:
             ev_queue.put(("__done__", {"state": game.state_payload()}))
         except LLMUnavailable as exc:
             ev_queue.put(("__error__", _llm_error_detail(exc)))
+        except DependencyMismatch as exc:
+            # #1721：依赖不合规不得压成 message-only，须带 typed facts 抵达玩家。
+            ev_queue.put(("__error__", _dependency_mismatch_detail(exc)))
         except Exception as exc:  # noqa: BLE001 — SSE 终态收束，不让线程死掉
             ev_queue.put(("__error__", {"message": str(exc)}))
 
