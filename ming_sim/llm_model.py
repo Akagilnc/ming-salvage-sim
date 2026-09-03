@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from importlib.metadata import version as installed_distribution_version
+from pathlib import Path
 from typing import Dict, Optional
 
 from agno.agent import Agent
@@ -9,7 +11,7 @@ from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from openai import APIConnectionError, APIStatusError, APITimeoutError
 
-from ming_sim.exceptions import LLMUnavailable
+from ming_sim.exceptions import DependencyMismatch, LLMUnavailable
 from ming_sim.llm_config import (
     CLI_BACKEND_PLACEHOLDER,
     is_dashscope_base_url,
@@ -227,9 +229,38 @@ def create_chat_model(
     return OpenAIChat(**kwargs)
 
 
+def _require_agno() -> None:
+    from packaging.requirements import Requirement
+    from packaging.utils import canonicalize_name
+    from packaging.version import Version
+    from ming_sim.constants import ROOT_DIR
+
+    for raw in Path(ROOT_DIR, "requirements.txt").read_text(encoding="utf-8").splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        req = Requirement(line)
+        if canonicalize_name(req.name) != "agno":
+            continue
+        installed = installed_distribution_version(req.name)
+        if Version(installed) not in req.specifier:
+            raise DependencyMismatch(
+                f"installed {req.name} {installed} does not satisfy {line}",
+                package=req.name,
+                requirement=line,
+            )
+        return
+    raise DependencyMismatch(
+        "requirements.txt has no declaration for agno",
+        package="agno",
+        requirement="",
+    )
+
+
 def create_agno_db(sqlite_path: str) -> SqliteDb:
     # Pin Agno 3 run store explicitly: runs live in agno_runs, not a
     # sessions.runs blob. Matches GameDB.agno_runs_length / truncate seam.
+    _require_agno()
     return SqliteDb(
         db_file=sqlite_path,
         session_table="agno_sessions",
