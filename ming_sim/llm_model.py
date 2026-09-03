@@ -229,18 +229,22 @@ def create_chat_model(
     return OpenAIChat(**kwargs)
 
 
-def declared_requirement(package: str) -> str:
+def _requirement_declaration(package: str):
+    from packaging.requirements import InvalidRequirement, Requirement
+    from packaging.utils import canonicalize_name
     from ming_sim.constants import ROOT_DIR
 
+    wanted = canonicalize_name(package)
     for raw in Path(ROOT_DIR, "requirements.txt").read_text(encoding="utf-8").splitlines():
         line = raw.split("#", 1)[0].strip()
         if not line:
             continue
-        name = line.split("[", 1)[0]
-        for sep in (">=", "==", "~=", "<=", ">", "<", "!="):
-            name = name.split(sep, 1)[0]
-        if name.strip().lower() == package.lower():
-            return line
+        try:
+            req = Requirement(line)
+        except InvalidRequirement:
+            continue
+        if canonicalize_name(req.name) == wanted:
+            return line, req
     raise DependencyMismatch(
         f"requirements.txt has no declaration for {package}",
         package=package,
@@ -248,12 +252,14 @@ def declared_requirement(package: str) -> str:
     )
 
 
+def declared_requirement(package: str) -> str:
+    return _requirement_declaration(package)[0]
+
+
 def _require_declared_package(package: str) -> None:
-    from packaging.requirements import Requirement
     from packaging.version import Version
 
-    requirement = declared_requirement(package)
-    req = Requirement(requirement)
+    requirement, req = _requirement_declaration(package)
     installed = installed_distribution_version(req.name)
     if Version(installed) not in req.specifier:
         raise DependencyMismatch(
