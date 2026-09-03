@@ -46,37 +46,35 @@ def test_pyinstaller_spec_does_not_duplicate_vite_public_assets():
 
 def test_pyinstaller_spec_bundles_requirements_at_frozen_root():
     import ast
-    spec = (Path(__file__).resolve().parents[1] / "Ming_LLM.spec").read_text(encoding="utf-8")
-    tree = ast.parse(spec)
-    assigns = {}
+    import textwrap
+    spec_path = Path(__file__).resolve().parents[1] / "Ming_LLM.spec"
+    spec_src = spec_path.read_text(encoding="utf-8")
+    tree = ast.parse(spec_src)
+    datas_expr = None
     for node in tree.body:
-        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
-            assigns[node.targets[0].id] = node.value
-    assert "datas" in assigns
-    bound_strings = {
-        name: value.value
-        for name, value in assigns.items()
-        if isinstance(value, ast.Constant) and isinstance(value.value, str)
-    }
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id == "datas"
+        ):
+            datas_expr = node.value
+            break
+    assert datas_expr is not None
+    raw_seg = ast.get_source_segment(spec_src, datas_expr)
+    assert raw_seg
+    expr_src = "(" + textwrap.dedent(raw_seg) + ")"
 
-    def resolve_str(node):
-        if isinstance(node, ast.Constant) and isinstance(node.value, str):
-            return node.value
-        if isinstance(node, ast.Name):
-            return bound_strings.get(node.id)
-        return None
+    class _Seam(dict):
+        def __missing__(self, key):
+            return []
 
-    pairs = set()
-    seen = set()
-    stack = [assigns["datas"]]
-    while stack:
-        for node in ast.walk(stack.pop()):
-            if isinstance(node, (ast.Tuple, ast.List)) and len(node.elts) == 2:
-                src = resolve_str(node.elts[0])
-                dst = resolve_str(node.elts[1])
-                if src is not None and dst is not None:
-                    pairs.add((src, dst))
-            elif isinstance(node, ast.Name) and node.id in assigns and node.id not in seen:
-                seen.add(node.id)
-                stack.append(assigns[node.id])
-    assert ("requirements.txt", ".") in pairs
+    def _tree_datas(root, dest, **kwargs):
+        return []
+
+    datas = eval(
+        compile(expr_src, str(spec_path), "eval"),
+        {"__builtins__": {}},
+        _Seam(tree_datas=_tree_datas),
+    )
+    assert ("requirements.txt", ".") in datas
