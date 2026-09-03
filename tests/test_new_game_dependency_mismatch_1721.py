@@ -5,7 +5,6 @@ import json
 import os
 import subprocess
 import sys
-import zipfile
 from pathlib import Path
 
 import ming_sim.constants as constants
@@ -14,22 +13,12 @@ from ming_sim.exceptions import DependencyMismatch
 
 REPO = Path(__file__).resolve().parents[1]
 STALE_AGNO_WHEEL = REPO / "tests" / "fixtures" / "agno-2.7.3-py3-none-any.whl"
-# Ticket #1721 frozen constraint; not derived from production parse.
 AGNO_REQUIREMENT = "agno[openai,sqlite]>=3.0.0,<4"
 
 
-def _stale_agno_site(root: Path) -> Path:
-    site = root / "stale-agno-site"
-    site.mkdir()
-    with zipfile.ZipFile(STALE_AGNO_WHEEL) as wheel:
-        wheel.extractall(site)
-    return site
-
-
 def test_new_game_stale_agno_returns_typed_dependency_facts(tmp_path):
-    site = _stale_agno_site(tmp_path)
     env = os.environ.copy()
-    env["PYTHONPATH"] = str(site) + os.pathsep + env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = str(STALE_AGNO_WHEEL) + os.pathsep + env.get("PYTHONPATH", "")
     env["MING_SIM_DB"] = str(tmp_path / "ming.db")
     env["MING_SIM_USER_DATA_DIR"] = str(tmp_path / "ud")
     env["OPENAI_API_KEY"] = "sk-test"
