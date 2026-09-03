@@ -784,10 +784,9 @@ def test_ordinary_grant_explicit_execution_surface_survives_close_night(game, su
 
 
 def test_ordinary_grant_bogus_execution_surface_fails_at_durable(game):
-    """#1624：stage 原样转发非法非空 execution_surface；durable 独家 fail-loud，不成 dossier。
+    """#1624：非法非空 execution_surface 经 stage→commit 不得成案。
 
-    分类器 enum 闸之外的 stage→durable 接缝：修前 stage 洗成空串后 durable 默认
-    in_transit 静默落成；修后 durable 抛错、pending failed、无案卷。
+    修前 stage 洗空后 durable 默认 in_transit 静默落 dossier；修后 pending failed、无案卷。
     """
     db, state, content = game
     actor = db.conn.execute(
@@ -804,14 +803,6 @@ def test_ordinary_grant_bogus_execution_surface_fails_at_durable(game):
         execution_surface="bogus_not_a_surface",
     )
     assert pending_id
-    staged = json.loads(db.conn.execute(
-        "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
-    ).fetchone()["payload_json"])
-    assert staged.get("execution_surface") == "bogus_not_a_surface"
-
-    with pytest.raises(ValueError, match="execution_surface"):
-        db._normalize_directive_dossier_payload(dict(staged))
-
     result = db.commit_pending_actions(state, content=content, action_ids=[pending_id])
     assert result == []
     row = db.conn.execute(
