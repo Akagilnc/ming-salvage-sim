@@ -15,7 +15,6 @@ from ming_sim.db import GameDB
 from ming_sim.session import AudienceAdmission, ChatTurnResult, GameSession
 from ming_sim import audience_night as an
 from ming_sim.simulation import build_simulator_payload
-from tests.http_test_support import run_to_terminal
 
 
 def _session(game):
@@ -1476,10 +1475,7 @@ def test_hot_replace_409_while_offsite_scene_ticket_open(game, monkeypatch, op):
 
     path = "/api/saves/存档/load" if op == "load" else "/api/game/reset"
 
-    def bounded_post():
-        return run_to_terminal(lambda: TestClient(web_app.app).post(path))
-
-    busy = bounded_post()
+    busy = TestClient(web_app.app).post(path)
     assert busy.status_code == 409
     assert replacements == []
     db.conn.execute("SELECT 1").fetchone()
@@ -1488,7 +1484,7 @@ def test_hot_replace_409_while_offsite_scene_ticket_open(game, monkeypatch, op):
     worker.join(2.0)
     assert not chat_error, chat_error
 
-    retried = bounded_post()
+    retried = TestClient(web_app.app).post(path)
     assert retried.status_code == 200
     assert replacements == [op]
     state_response = TestClient(web_app.app).get("/api/game/state")
