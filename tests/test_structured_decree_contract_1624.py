@@ -376,30 +376,19 @@ def test_manual_owner_example_seal_advances(tracer_client, monkeypatch):
     _assert_hubu_duty_leads(game.db, matched[0])
 
 
-def test_layer_a_prompt_contract_is_typed_single_source_for_draft_and_revise(monkeypatch):
-    """层 A required/present/action-conditional 为 typed 单源；初拟/改票共用。
+def test_layer_a_option_shape_and_normalize_contract():
+    """层 A required/present/action-conditional 为 typed 单源；normalize 消费同一 shape。
 
-    键集与七类条件断言落 layer_a_option_shape()；工厂注入断言同一 renderer
-    返回值身份（非 prompt 措辞锁）。normalize 消费同一 shape 拒绝缺条件字段。
+    键集与七类条件断言落 layer_a_option_shape()；normalize 拒绝缺条件字段。
+    prompt/Agent instructions 装配不在此锁（target×locality 由月末入口与矩阵行为测承担）。
     """
-    import ming_sim.agents as agents_mod
-    from ming_sim.agents import (
-        _rescript_option_instructions,
-        bind_content,
-        create_rescript_draft_agent,
-        create_rescript_revise_agent,
-    )
-    from ming_sim.content import GameContent
     from ming_sim.decree_vocabulary import RESCRIPT_ROUTABLE_ACTION_TYPES
-    from ming_sim.models import LLMConfig
     from ming_sim.rescript_draft import (
         _LAYER_A_PRESENT_KEYS,
         _LAYER_A_REQUIRED_KEYS,
         layer_a_option_shape,
         normalize_rescript_layer_a_option,
-        rescript_layer_a_prompt_contract,
     )
-    from ming_sim.structured_decree import structured_decree_prompt_contract
 
     shape = layer_a_option_shape()
     # shape 与模块级元组同一对象（validator/renderer 共用真源）
@@ -487,40 +476,6 @@ def test_layer_a_prompt_contract_is_typed_single_source_for_draft_and_revise(mon
         "name": "",
     })
     assert auth_assignee_zero.get("assignee_name") == "0"
-
-    contract = rescript_layer_a_prompt_contract()
-    # renderer 必须消费 action_conditional（组合断言；禁措辞锁）。
-    # 抽掉 shape→conditional 渲染后本断言须红——防再退回「按需填写」空壳。
-    from ming_sim.rescript_draft import _render_action_conditional_contract
-
-    conditional_seg = _render_action_conditional_contract(conditional)
-    assert conditional_seg  # 七类条件段非空
-    assert conditional_seg in contract
-
-    # 共享 instructions 块 = 层 A + structured_decree 子契约（禁 agents 手抄）
-    # target×locality 可接受面行为由月末入口 tracer + 8×3 矩阵层覆盖，不在此锁内部接线。
-    shared = _rescript_option_instructions()
-    assert shared == [contract, structured_decree_prompt_contract()]
-
-    # 初拟/改票工厂真实组装 instructions：注入同一 renderer 返回值
-    bind_content(GameContent.load())
-    captured: dict[str, list] = {}
-
-    class _FakeAgent:
-        def __init__(self, **kwargs):
-            captured[str(kwargs.get("id") or "")] = list(
-                kwargs.get("instructions") or []
-            )
-            for key, val in kwargs.items():
-                setattr(self, key, val)
-
-    monkeypatch.setattr(agents_mod, "Agent", _FakeAgent)
-    monkeypatch.setattr(agents_mod, "create_chat_model", lambda *_a, **_k: object())
-    cfg = LLMConfig(api_key="test", base_url="http://localhost/v1", model="test")
-    create_rescript_draft_agent(cfg, None)  # type: ignore[arg-type]
-    create_rescript_revise_agent(cfg, None)  # type: ignore[arg-type]
-    assert contract in captured.get("rescript-drafter", [])
-    assert contract in captured.get("rescript-reviser", [])
 
 
 def test_combo_correction_preserves_first_draw_roster(game, monkeypatch):

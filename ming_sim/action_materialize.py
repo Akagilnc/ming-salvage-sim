@@ -1527,6 +1527,7 @@ def stage_grant_allocation_candidate(
     account: str = "",
     purpose: str = "",
     cadence: str = "",
+    execution_surface: object = None,
     target_candidate: object = None,
     pend_for_minister: Optional[List[Dict[str, Any]]] = None,
 ) -> int:
@@ -1643,8 +1644,11 @@ def stage_grant_allocation_candidate(
     else:
         # 改案离开协饷时显式清 pay-only 残留，防止 merge 保留 purpose/immediate。
         staged["purpose"] = ""
-        if "execution_surface" not in staged:
-            staged["execution_surface"] = ""
+        # #1624：普通 grant 已验 execution_surface 原样入 staged；缺省空串由 durable 归一 in_transit。
+        surface = str(execution_surface or "").strip()
+        staged["execution_surface"] = (
+            surface if surface in {"immediate", "in_transit"} else ""
+        )
     if existing_id:
         return db.update_directive_candidate(existing_id, staged)
     return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
@@ -1688,6 +1692,8 @@ def _materialize_grant_allocation(ctx: MaterializeCtx) -> None:
         ),
         purpose=str(intent.get("purpose") or "").strip(),
         cadence=_grant_cadence(intent),
+        # #1624：classifier 已验 execution_surface 交 stage，禁在此静默丢弃。
+        execution_surface=intent.get("execution_surface"),
         target_candidate=intent.get("target_candidate"),
         pend_for_minister=ctx.pend_for_minister,
     )
