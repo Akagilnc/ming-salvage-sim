@@ -11,7 +11,6 @@ from fastapi.testclient import TestClient
 
 import web_app
 from ming_sim.models import LLMConfig
-from tests.http_test_support import run_to_terminal
 
 
 def test_runtime_cli_slot_builds_cli_llm_config_without_backend_env(monkeypatch):
@@ -1143,7 +1142,9 @@ def test_hot_replace_http_failure_keeps_old_state_and_writes_usable(
         )
 
     path = "/api/saves/before/load" if op == "load" else "/api/game/reset"
-    response = run_to_terminal(lambda: TestClient(web_app.app).post(path))
+    # Same as the success sibling: rebuild/load work under xdist can exceed the
+    # 2s hang helper without being a freeze. Failure path still reaches 500.
+    response = TestClient(web_app.app).post(path)
     assert response.status_code == 500
     state = TestClient(web_app.app).get("/api/game/state")
     assert state.status_code == 200
