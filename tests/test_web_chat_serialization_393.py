@@ -294,12 +294,15 @@ def test_nonstream_api_chat_keeps_game_state_responsive_while_chat_blocks(monkey
     的可观测序：state 探针先于阻塞 chat 完成。
     """
     events: list[str] = []
+    chat_entered = threading.Event()
+    allow_finish = threading.Event()
 
     class _SlowLLMGame:
-        """离线慢 LLM 替身：chat 阻塞数十毫秒模拟 cli subprocess.run。"""
+        """离线慢 LLM 替身：chat 进入后保持阻塞，直至 state 探针完成。"""
 
         def chat(self, minister_name: str, message: str, intent=None, *, explicit_secret_order=False):
-            time.sleep(0.08)
+            chat_entered.set()
+            assert allow_finish.wait(2.0), "slow nonstream LLM timed out"
             events.append("chat")
             return {"answer": "臣已知悉。"}
 
@@ -312,28 +315,25 @@ def test_nonstream_api_chat_keeps_game_state_responsive_while_chat_blocks(monkey
 
     async def drive_concurrent_state_probe():
         async def state_probe():
-            # 让 chat 先进入阻塞段，再探 state——若 loop 被冻则本协程到不了 api_state
-            await asyncio.sleep(0.01)
-            t0 = time.perf_counter()
+            entered = await asyncio.to_thread(chat_entered.wait, 2.0)
+            assert entered, "chat never entered blocking work"
             payload = await web_app.api_state()
-            elapsed = time.perf_counter() - t0
             events.append("state_done")
-            return payload, elapsed
+            allow_finish.set()
+            return payload
 
-        chat_result, (state_payload, state_elapsed) = await asyncio.gather(
+        chat_result, state_payload = await asyncio.gather(
             web_app.api_chat("测试大臣", web_app.ChatRequest(message="边饷如何？")),
             state_probe(),
         )
-        return chat_result, state_payload, state_elapsed
+        return chat_result, state_payload
 
-    chat_result, state_payload, state_elapsed = asyncio.run(drive_concurrent_state_probe())
+    chat_result, state_payload = asyncio.run(drive_concurrent_state_probe())
 
-    # chat 仍在 0.08s 阻塞中时 state 必须已返回（序：state → state_done → chat）
     assert events == ["state", "state_done", "chat"], (
         f"event loop 被非流式 chat 冻结（events={events}）；"
         "期望 state 探针在 chat 完成前响应"
     )
-    assert state_elapsed < 0.05, f"GET state 过慢（{state_elapsed:.3f}s），疑 loop 仍被占"
     assert state_payload == {"ok": True, "turn": 1}
     assert chat_result["answer"] == "臣已知悉。"
 
