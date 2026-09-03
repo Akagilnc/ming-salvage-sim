@@ -8,6 +8,8 @@ from pathlib import Path
 import re
 import sqlite3
 
+import pytest
+
 from ming_sim import paths
 from ming_sim.db import GameDB
 
@@ -44,37 +46,26 @@ def test_pyinstaller_spec_does_not_duplicate_vite_public_assets():
     assert not re.search(r'[\("]web/public[\)"]', spec)
 
 
-def test_pyinstaller_spec_bundles_requirements_at_frozen_root():
-    import ast
-    import textwrap
-    spec_path = Path(__file__).resolve().parents[1] / "Ming_LLM.spec"
-    spec_src = spec_path.read_text(encoding="utf-8")
-    tree = ast.parse(spec_src)
-    datas_expr = None
-    for node in tree.body:
-        if (
-            isinstance(node, ast.Assign)
-            and len(node.targets) == 1
-            and isinstance(node.targets[0], ast.Name)
-            and node.targets[0].id == "datas"
-        ):
-            datas_expr = node.value
-            break
-    assert datas_expr is not None
-    raw_seg = ast.get_source_segment(spec_src, datas_expr)
-    assert raw_seg
-    expr_src = "(" + textwrap.dedent(raw_seg) + ")"
+def test_frozen_root_requirements_resource_satisfies_require_agno(tmp_path, monkeypatch):
+    import shutil
+    import sys
 
-    class _Seam(dict):
-        def __missing__(self, key):
-            return []
+    from ming_sim import constants as _constants
+    from ming_sim import llm_model as _llm_model
+    from ming_sim.exceptions import DependencyMismatch
 
-    def _tree_datas(root, dest, **kwargs):
-        return []
-
-    datas = eval(
-        compile(expr_src, str(spec_path), "eval"),
-        {"__builtins__": {}},
-        _Seam(tree_datas=_tree_datas),
-    )
-    assert ("requirements.txt", ".") in datas
+    frozen = tmp_path / "meipass"
+    frozen.mkdir()
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "_MEIPASS", str(frozen), raising=False)
+    assert paths.bundled_root() == frozen
+    monkeypatch.setattr(_constants, "ROOT_DIR", str(frozen))
+    with pytest.raises(FileNotFoundError):
+        _llm_model._require_agno()
+    shutil.copy(Path(__file__).resolve().parents[1] / "requirements.txt", frozen / "requirements.txt")
+    try:
+        _llm_model._require_agno()
+    except FileNotFoundError:
+        pytest.fail("frozen ROOT_DIR/requirements.txt unreadable")
+    except DependencyMismatch:
+        pass
