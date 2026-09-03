@@ -230,7 +230,7 @@ def create_chat_model(
 
 
 def _require_agno() -> None:
-    from packaging.requirements import InvalidRequirement, Requirement
+    from packaging.requirements import Requirement
     from packaging.utils import canonicalize_name
     from packaging.version import Version
     from ming_sim.constants import ROOT_DIR
@@ -239,14 +239,7 @@ def _require_agno() -> None:
         line = raw.split("#", 1)[0].strip()
         if not line:
             continue
-        try:
-            req = Requirement(line)
-        except InvalidRequirement as exc:
-            raise DependencyMismatch(
-                f"requirements.txt has an invalid declaration: {line}",
-                package="agno",
-                requirement=line,
-            ) from exc
+        req = Requirement(line)
         if canonicalize_name(req.name) != "agno":
             continue
         installed = installed_distribution_version(req.name)
