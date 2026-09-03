@@ -229,50 +229,45 @@ def create_chat_model(
     return OpenAIChat(**kwargs)
 
 
-def _requirement_declaration(package: str):
+def _require_agno() -> None:
     from packaging.requirements import InvalidRequirement, Requirement
     from packaging.utils import canonicalize_name
+    from packaging.version import Version
     from ming_sim.constants import ROOT_DIR
 
-    wanted = canonicalize_name(package)
     for raw in Path(ROOT_DIR, "requirements.txt").read_text(encoding="utf-8").splitlines():
         line = raw.split("#", 1)[0].strip()
         if not line:
             continue
         try:
             req = Requirement(line)
-        except InvalidRequirement:
+        except InvalidRequirement as exc:
+            raise DependencyMismatch(
+                f"requirements.txt has an invalid declaration: {line}",
+                package="agno",
+                requirement=line,
+            ) from exc
+        if canonicalize_name(req.name) != "agno":
             continue
-        if canonicalize_name(req.name) == wanted:
-            return line, req
+        installed = installed_distribution_version(req.name)
+        if Version(installed) not in req.specifier:
+            raise DependencyMismatch(
+                f"installed {req.name} {installed} does not satisfy {line}",
+                package=req.name,
+                requirement=line,
+            )
+        return
     raise DependencyMismatch(
-        f"requirements.txt has no declaration for {package}",
-        package=package,
+        "requirements.txt has no declaration for agno",
+        package="agno",
         requirement="",
     )
-
-
-def declared_requirement(package: str) -> str:
-    return _requirement_declaration(package)[0]
-
-
-def _require_declared_package(package: str) -> None:
-    from packaging.version import Version
-
-    requirement, req = _requirement_declaration(package)
-    installed = installed_distribution_version(req.name)
-    if Version(installed) not in req.specifier:
-        raise DependencyMismatch(
-            f"installed {req.name} {installed} does not satisfy {requirement}",
-            package=req.name,
-            requirement=requirement,
-        )
 
 
 def create_agno_db(sqlite_path: str) -> SqliteDb:
     # Pin Agno 3 run store explicitly: runs live in agno_runs, not a
     # sessions.runs blob. Matches GameDB.agno_runs_length / truncate seam.
-    _require_declared_package("agno")
+    _require_agno()
     return SqliteDb(
         db_file=sqlite_path,
         session_table="agno_sessions",

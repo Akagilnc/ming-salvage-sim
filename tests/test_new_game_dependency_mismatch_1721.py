@@ -1,24 +1,84 @@
 """#1721 B2: stale importable agno must reach POST /api/menu/new_game as typed facts."""
 from __future__ import annotations
 
-from fastapi.testclient import TestClient
+import os
+import subprocess
+import sys
+from pathlib import Path
 
+import ming_sim.constants as constants
 import ming_sim.llm_model as llm_model
+from ming_sim.exceptions import DependencyMismatch
+
+REPO = Path(__file__).resolve().parents[1]
+
+
+def _agno_requirement_line() -> str:
+    for raw in (REPO / "requirements.txt").read_text(encoding="utf-8").splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if line.lower().startswith("agno"):
+            return line
+    raise AssertionError("requirements.txt has no agno line")
+
+
+def test_new_game_stale_agno_returns_typed_dependency_facts(tmp_path):
+    stale = tmp_path / "stale-agno"
+    subprocess.run(
+        [sys.executable, "-m", "pip", "install", "agno==2.7.3", "--target", str(stale)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(stale) + os.pathsep + env.get("PYTHONPATH", "")
+    env["MING_SIM_DB"] = str(tmp_path / "ming.db")
+    env["MING_SIM_USER_DATA_DIR"] = str(tmp_path / "ud")
+    env["OPENAI_API_KEY"] = "sk-test"
+    env["EXPECTED_REQUIREMENT"] = _agno_requirement_line()
+    probe = tmp_path / "probe.py"
+    probe.write_text(
+        """\
+from importlib.metadata import version
+from fastapi.testclient import TestClient
+import os
+import json
 import web_app
 
+assert version("agno") == "2.7.3"
+web_app.load_runtime_llm = lambda: {}
+web_app.web_game = None
+response = TestClient(web_app.app).post("/api/menu/new_game")
+print(json.dumps({"status": response.status_code, "detail": response.json()["detail"]}))
+""",
+        encoding="utf-8",
+    )
+    proc = subprocess.run(
+        [sys.executable, str(probe)],
+        cwd=str(REPO),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert proc.returncode == 0, proc.stderr
+    import json
 
-def test_new_game_stale_agno_returns_typed_dependency_facts(tmp_path, monkeypatch):
-    monkeypatch.setattr(llm_model, "installed_distribution_version", lambda name: "2.7.3")
-    monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
-    monkeypatch.setattr(web_app, "web_game", None)
-
-    response = TestClient(web_app.app).post("/api/menu/new_game")
-    assert response.status_code == 500
-    detail = response.json()["detail"]
-    assert isinstance(detail, dict)
+    payload = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert payload["status"] == 500
+    detail = payload["detail"]
     assert detail["package"] == "agno"
-    assert detail["requirement"] == llm_model.declared_requirement("agno")
+    assert detail["requirement"] == env["EXPECTED_REQUIREMENT"]
     assert "message" in detail and str(detail["message"]).strip()
+
+
+def test_invalid_requirement_declaration_is_loud(tmp_path, monkeypatch):
+    (tmp_path / "requirements.txt").write_text("agno!!!\n", encoding="utf-8")
+    monkeypatch.setattr(constants, "ROOT_DIR", str(tmp_path))
+    try:
+        llm_model._require_agno()
+    except DependencyMismatch as exc:
+        assert exc.package == "agno"
+        assert exc.requirement == "agno!!!"
+        assert str(exc.message).strip()
+    else:
+        raise AssertionError("expected DependencyMismatch")

@@ -1081,10 +1081,9 @@ def test_hot_replace_http_success_reopens_state_and_writes(tmp_path, monkeypatch
         runtime.db.kv_set("favorites", json.dumps(sorted(runtime.favorites), ensure_ascii=False))
 
     path = "/api/saves/before/load" if op == "load" else "/api/game/reset"
-    # Full GameSession rebuild is real work, not a lock-wait. The default 2s
-    # run_to_terminal bound is hang detection for idle gates, not a legal
-    # wall clock for seed+rebuild under xdist (#1721 C: CI flake
-    # "call did not reach a terminal outcome" on [reset]).
+    # #1721 C: under `pytest tests/test_web_llm_runtime_config.py -n auto`
+    # this [reset] case measured 2.62s call time — over the 2.0s hang helper.
+    # Rebuild is real work, not an idle gate; use unbounded sync POST.
     response = TestClient(web_app.app).post(path)
     assert response.status_code == 200
     state = TestClient(web_app.app).get("/api/game/state")
