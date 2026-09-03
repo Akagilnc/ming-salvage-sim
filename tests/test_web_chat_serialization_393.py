@@ -316,9 +316,12 @@ def test_nonstream_api_chat_keeps_game_state_responsive_while_chat_blocks(monkey
     async def drive_concurrent_state_probe():
         async def state_probe():
             await asyncio.to_thread(chat_entered.wait)
-            payload = await web_app.api_state()
+            try:
+                payload = await web_app.api_state()
+            finally:
+                # api_state 抛错也须放行 chat worker，否则 threadpool 永久阻塞。
+                allow_finish.set()
             events.append("state_done")
-            allow_finish.set()
             return payload
 
         chat_result, state_payload = await asyncio.gather(
