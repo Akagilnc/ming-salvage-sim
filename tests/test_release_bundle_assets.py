@@ -1,6 +1,7 @@
 """发行包资产：portrait 扫 dist 回退 + spec 不重复打 public。
 
 #1185：spec 侧用 tree_datas (source, destination) 参数对断言。
+#1721：requirements.txt 须装入 bundled root（frozen ROOT_DIR），否则新开局先抛 FileNotFoundError。
 """
 
 from pathlib import Path
@@ -41,3 +42,8 @@ def test_pyinstaller_spec_does_not_duplicate_vite_public_assets():
     assert all(src != "web/public" for src, _dst in tree_pairs)
     assert ("web/public", "web/public") not in tree_pairs
     assert not re.search(r'[\("]web/public[\)"]', spec)
+
+
+def test_pyinstaller_spec_bundles_requirements_at_frozen_root():
+    spec = (Path(__file__).resolve().parents[1] / "Ming_LLM.spec").read_text(encoding="utf-8")
+    assert '("requirements.txt", ".")' in spec

@@ -8,6 +8,8 @@ import sys
 import zipfile
 from pathlib import Path
 
+from packaging.requirements import Requirement
+from packaging.utils import canonicalize_name
 import pytest
 
 REPO = Path(__file__).resolve().parents[1]
@@ -56,6 +58,8 @@ print(json.dumps({"status": response.status_code, "detail": response.json()["det
     assert payload["status"] == 500
     detail = payload["detail"]
     assert detail["package"] == "agno"
+    req = Requirement(detail["requirement"])
+    assert canonicalize_name(req.name) == canonicalize_name(detail["package"])
     requirement_lines = {
         line.strip()
         for line in (REPO / "requirements.txt").read_text(encoding="utf-8").splitlines()
