@@ -62,8 +62,12 @@ print(json.dumps({"status": response.status_code, "detail": response.json()["det
     assert payload["status"] == 500
     detail = payload["detail"]
     assert detail["package"] == "agno"
-    assert detail["requirement"]
-    assert detail["requirement"] in (REPO / "requirements.txt").read_text(encoding="utf-8")
+    requirement_lines = {
+        line.strip()
+        for line in (REPO / "requirements.txt").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    }
+    assert detail["requirement"] in requirement_lines
     assert "message" in detail and str(detail["message"]).strip()
 
 
