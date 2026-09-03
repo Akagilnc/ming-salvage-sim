@@ -86,7 +86,6 @@ def _run_start(
         env=run_env,
         capture_output=True,
         text=True,
-        timeout=10,
     )
 
 
