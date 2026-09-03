@@ -5,7 +5,10 @@ import json
 import os
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
+
+import pytest
 
 import ming_sim.constants as constants
 import ming_sim.llm_model as llm_model
@@ -16,9 +19,17 @@ STALE_AGNO_WHEEL = REPO / "tests" / "fixtures" / "agno-2.7.3-py3-none-any.whl"
 AGNO_REQUIREMENT = "agno[openai,sqlite]>=3.0.0,<4"
 
 
-def test_new_game_stale_agno_returns_typed_dependency_facts(tmp_path):
+@pytest.fixture(scope="session")
+def stale_agno_site(tmp_path_factory):
+    site = tmp_path_factory.mktemp("stale-agno")
+    with zipfile.ZipFile(STALE_AGNO_WHEEL) as wheel:
+        wheel.extractall(site)
+    return site
+
+
+def test_new_game_stale_agno_returns_typed_dependency_facts(tmp_path, stale_agno_site):
     env = os.environ.copy()
-    env["PYTHONPATH"] = str(STALE_AGNO_WHEEL) + os.pathsep + env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = str(stale_agno_site) + os.pathsep + env.get("PYTHONPATH", "")
     env["MING_SIM_DB"] = str(tmp_path / "ming.db")
     env["MING_SIM_USER_DATA_DIR"] = str(tmp_path / "ud")
     env["OPENAI_API_KEY"] = "sk-test"
