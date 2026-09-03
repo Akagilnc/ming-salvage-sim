@@ -41,6 +41,7 @@ def _prepare_root(tmp_path: Path) -> Path:
     root.mkdir()
     (root / "start.sh").write_text(REPO_START.read_text(encoding="utf-8"), encoding="utf-8")
     (root / "requirements.txt").write_text("agno[openai,sqlite]>=3.0.0,<4\n", encoding="utf-8")
+    (root / ".env").write_text("", encoding="utf-8")
     _write_fake_python(root / ".venv" / "bin" / "python")
     return root
 
@@ -70,6 +71,17 @@ def test_start_sh_syncs_requirements_before_uvicorn(tmp_path):
     assert steps[1].startswith("uvicorn ")
     assert "--host 127.0.0.1" in steps[1]
     assert "--port 8010" in steps[1]
+
+    (root / "requirements.txt").write_text(
+        "agno[openai,sqlite]>=3.0.0,<4\npackaging>=24.0\n", encoding="utf-8"
+    )
+    log.write_text("", encoding="utf-8")
+    proc = _run_start(root, env)
+    assert proc.returncode == 0, proc.stderr
+    steps = log.read_text(encoding="utf-8").splitlines()
+    assert steps[0].startswith("pip install -r")
+    assert "requirements.txt" in steps[0]
+    assert steps[1].startswith("uvicorn ")
 
 
 def test_start_sh_pip_failure_does_not_start_uvicorn(tmp_path):
