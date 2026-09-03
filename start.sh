@@ -43,6 +43,13 @@ else
   PY="python3"
 fi
 
+# 2b. 对齐 Python 依赖到 requirements.txt（起服务前；失败则不起）
+echo "[start] 同步 Python 依赖"
+if ! "$PY" -m pip install -r "$ROOT/requirements.txt"; then
+  echo "[start] Python 依赖同步失败，不起服务" >&2
+  exit 1
+fi
+
 # 3. 前端 build
 if [[ "$DO_BUILD" -eq 1 ]]; then
   if [[ ! -d web/node_modules ]]; then

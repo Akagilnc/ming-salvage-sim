@@ -7,6 +7,16 @@ class ExitGame(Exception):
     pass
 
 
+class DependencyMismatch(Exception):
+    """Installed Python package does not satisfy requirements.txt."""
+
+    def __init__(self, message: str, *, package: str, requirement: str) -> None:
+        super().__init__(message)
+        self.message = message
+        self.package = package
+        self.requirement = requirement
+
+
 class LLMUnavailable(Exception):
     def __init__(
         self,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Dict, Optional
 
 from agno.agent import Agent
@@ -9,7 +10,7 @@ from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from openai import APIConnectionError, APIStatusError, APITimeoutError
 
-from ming_sim.exceptions import LLMUnavailable
+from ming_sim.exceptions import DependencyMismatch, LLMUnavailable
 from ming_sim.llm_config import (
     CLI_BACKEND_PLACEHOLDER,
     is_dashscope_base_url,
@@ -227,15 +228,44 @@ def create_chat_model(
     return OpenAIChat(**kwargs)
 
 
+def declared_requirement(package: str) -> str:
+    from ming_sim.constants import ROOT_DIR
+
+    for raw in Path(ROOT_DIR, "requirements.txt").read_text(encoding="utf-8").splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        name = line.split("[", 1)[0]
+        for sep in (">=", "==", "~=", "<=", ">", "<", "!="):
+            name = name.split(sep, 1)[0]
+        if name.strip().lower() == package.lower():
+            return line
+    raise DependencyMismatch(
+        f"requirements.txt has no declaration for {package}",
+        package=package,
+        requirement="",
+    )
+
+
 def create_agno_db(sqlite_path: str) -> SqliteDb:
     # Pin Agno 3 run store explicitly: runs live in agno_runs, not a
     # sessions.runs blob. Matches GameDB.agno_runs_length / truncate seam.
-    return SqliteDb(
-        db_file=sqlite_path,
-        session_table="agno_sessions",
-        runs_table="agno_runs",
-        memory_table="agno_memories",
-    )
+    requirement = declared_requirement("agno")
+    try:
+        return SqliteDb(
+            db_file=sqlite_path,
+            session_table="agno_sessions",
+            runs_table="agno_runs",
+            memory_table="agno_memories",
+        )
+    except TypeError as exc:
+        if "runs_table" not in str(exc):
+            raise
+        raise DependencyMismatch(
+            f"installed agno does not satisfy {requirement}",
+            package="agno",
+            requirement=requirement,
+        ) from exc
 
 
 def _run_output_status_is_error(run_output: object) -> bool:
