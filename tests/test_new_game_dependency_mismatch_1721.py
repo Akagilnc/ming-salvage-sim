@@ -71,6 +71,8 @@ print(json.dumps({"status": response.status_code, "detail": response.json()["det
     payload = json.loads(proc.stdout.strip().splitlines()[-1])
     assert payload["status"] == 500
     detail = payload["detail"]
+    # 与 continue SSE 共用同一 typed 投影：HTTP 面不得丢 code。
+    assert detail["code"] == "dependency_mismatch"
     assert detail["package"] == "agno"
     req = Requirement(detail["requirement"])
     assert canonicalize_name(req.name) == canonicalize_name(detail["package"])
