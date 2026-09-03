@@ -48,11 +48,16 @@ def test_pyinstaller_spec_bundles_requirements_at_frozen_root():
     import ast
     spec = (Path(__file__).resolve().parents[1] / "Ming_LLM.spec").read_text(encoding="utf-8")
     tree = ast.parse(spec)
-    bound_strings = {}
+    assigns = {}
     for node in tree.body:
         if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
-            if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
-                bound_strings[node.targets[0].id] = node.value.value
+            assigns[node.targets[0].id] = node.value
+    assert "datas" in assigns
+    bound_strings = {
+        name: value.value
+        for name, value in assigns.items()
+        if isinstance(value, ast.Constant) and isinstance(value.value, str)
+    }
 
     def resolve_str(node):
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
@@ -62,10 +67,16 @@ def test_pyinstaller_spec_bundles_requirements_at_frozen_root():
         return None
 
     pairs = set()
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.Tuple, ast.List)) and len(node.elts) == 2:
-            src = resolve_str(node.elts[0])
-            dst = resolve_str(node.elts[1])
-            if src is not None and dst is not None:
-                pairs.add((src, dst))
+    seen = set()
+    stack = [assigns["datas"]]
+    while stack:
+        for node in ast.walk(stack.pop()):
+            if isinstance(node, (ast.Tuple, ast.List)) and len(node.elts) == 2:
+                src = resolve_str(node.elts[0])
+                dst = resolve_str(node.elts[1])
+                if src is not None and dst is not None:
+                    pairs.add((src, dst))
+            elif isinstance(node, ast.Name) and node.id in assigns and node.id not in seen:
+                seen.add(node.id)
+                stack.append(assigns[node.id])
     assert ("requirements.txt", ".") in pairs
