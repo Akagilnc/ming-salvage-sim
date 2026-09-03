@@ -1,6 +1,7 @@
 """#1721 B2: stale importable agno must reach POST /api/menu/new_game as typed facts."""
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -21,26 +22,31 @@ def _agno_requirement_line() -> str:
     raise AssertionError("requirements.txt has no agno line")
 
 
-def test_new_game_stale_agno_returns_typed_dependency_facts(tmp_path):
-    stale = tmp_path / "stale-agno"
-    subprocess.run(
-        [sys.executable, "-m", "pip", "install", "agno==2.7.3", "--target", str(stale)],
-        check=True,
-        capture_output=True,
-        text=True,
+def _stale_agno_site(root: Path) -> Path:
+    """Importable agno 2.7.3 discovered by importlib.metadata, no network."""
+    site = root / "stale-agno-site"
+    dist = site / "agno-2.7.3.dist-info"
+    dist.mkdir(parents=True)
+    (dist / "METADATA").write_text(
+        "Metadata-Version: 2.1\nName: agno\nVersion: 2.7.3\n",
+        encoding="utf-8",
     )
+    return site
+
+
+def test_new_game_stale_agno_returns_typed_dependency_facts(tmp_path):
+    site = _stale_agno_site(tmp_path)
     env = os.environ.copy()
-    env["PYTHONPATH"] = str(stale) + os.pathsep + env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = str(site) + os.pathsep + env.get("PYTHONPATH", "")
     env["MING_SIM_DB"] = str(tmp_path / "ming.db")
     env["MING_SIM_USER_DATA_DIR"] = str(tmp_path / "ud")
     env["OPENAI_API_KEY"] = "sk-test"
-    env["EXPECTED_REQUIREMENT"] = _agno_requirement_line()
+    expected = _agno_requirement_line()
     probe = tmp_path / "probe.py"
     probe.write_text(
         """\
 from importlib.metadata import version
 from fastapi.testclient import TestClient
-import os
 import json
 import web_app
 
@@ -58,16 +64,13 @@ print(json.dumps({"status": response.status_code, "detail": response.json()["det
         env=env,
         capture_output=True,
         text=True,
-        timeout=120,
     )
     assert proc.returncode == 0, proc.stderr
-    import json
-
     payload = json.loads(proc.stdout.strip().splitlines()[-1])
     assert payload["status"] == 500
     detail = payload["detail"]
     assert detail["package"] == "agno"
-    assert detail["requirement"] == env["EXPECTED_REQUIREMENT"]
+    assert detail["requirement"] == expected
     assert "message" in detail and str(detail["message"]).strip()
 
 
