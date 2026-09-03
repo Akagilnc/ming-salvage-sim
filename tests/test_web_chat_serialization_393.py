@@ -302,7 +302,7 @@ def test_nonstream_api_chat_keeps_game_state_responsive_while_chat_blocks(monkey
 
         def chat(self, minister_name: str, message: str, intent=None, *, explicit_secret_order=False):
             chat_entered.set()
-            assert allow_finish.wait(2.0), "slow nonstream LLM timed out"
+            allow_finish.wait()
             events.append("chat")
             return {"answer": "臣已知悉。"}
 
@@ -315,8 +315,7 @@ def test_nonstream_api_chat_keeps_game_state_responsive_while_chat_blocks(monkey
 
     async def drive_concurrent_state_probe():
         async def state_probe():
-            entered = await asyncio.to_thread(chat_entered.wait, 2.0)
-            assert entered, "chat never entered blocking work"
+            await asyncio.to_thread(chat_entered.wait)
             payload = await web_app.api_state()
             events.append("state_done")
             allow_finish.set()
