@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from importlib.metadata import version as installed_distribution_version
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -247,25 +248,31 @@ def declared_requirement(package: str) -> str:
     )
 
 
+def _require_declared_package(package: str) -> None:
+    from packaging.requirements import Requirement
+    from packaging.version import Version
+
+    requirement = declared_requirement(package)
+    req = Requirement(requirement)
+    installed = installed_distribution_version(req.name)
+    if Version(installed) not in req.specifier:
+        raise DependencyMismatch(
+            f"installed {req.name} {installed} does not satisfy {requirement}",
+            package=req.name,
+            requirement=requirement,
+        )
+
+
 def create_agno_db(sqlite_path: str) -> SqliteDb:
     # Pin Agno 3 run store explicitly: runs live in agno_runs, not a
     # sessions.runs blob. Matches GameDB.agno_runs_length / truncate seam.
-    requirement = declared_requirement("agno")
-    try:
-        return SqliteDb(
-            db_file=sqlite_path,
-            session_table="agno_sessions",
-            runs_table="agno_runs",
-            memory_table="agno_memories",
-        )
-    except TypeError as exc:
-        if "runs_table" not in str(exc):
-            raise
-        raise DependencyMismatch(
-            f"installed agno does not satisfy {requirement}",
-            package="agno",
-            requirement=requirement,
-        ) from exc
+    _require_declared_package("agno")
+    return SqliteDb(
+        db_file=sqlite_path,
+        session_table="agno_sessions",
+        runs_table="agno_runs",
+        memory_table="agno_memories",
+    )
 
 
 def _run_output_status_is_error(run_output: object) -> bool:
