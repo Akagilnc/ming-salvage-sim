@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>#1732 呈现规格 · B 就地消解</title>
+<style>
+  :root {
+    font-family: "Songti SC", "STSong", "SimSun", "Noto Serif SC", serif;
+    font-size: 17px;
+    line-height: 1.5;
+    color: #1a1410;
+    --gold: #d2a34a;
+    --cinnabar: #9e3429;
+    --shadow: 0 22px 54px rgba(24, 18, 11, 0.38);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body {
+    min-height: 100vh;
+    background:
+      radial-gradient(ellipse at 50% 18%, rgba(213, 187, 115, 0.14), transparent 42%),
+      linear-gradient(160deg, #2a2218 0%, #14100a 48%, #0e0c09 100%);
+    color: #f3e6c4;
+    font-weight: 700;
+  }
+  h1, h2, h3 { font-family: inherit; letter-spacing: 0.04em; margin: 0; }
+  code { color: #f0d58a; font-weight: 500; }
+
+  .page { max-width: 1080px; margin: 0 auto; padding: 28px 20px 64px; }
+  .badge {
+    display: inline-block; padding: 3px 10px; border-radius: 999px;
+    border: 1px solid rgba(226, 180, 86, 0.45); color: #f0d58a;
+    font-size: 0.78rem; letter-spacing: 0.12em; margin-bottom: 10px;
+  }
+  .page-title { color: #f5dfad; font-size: 1.55rem; margin-bottom: 6px; }
+  .page-lead { color: #b8a878; font-size: 0.92rem; max-width: 48em; margin: 0 0 22px; font-weight: 500; }
+
+  .scene-nav { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
+  .scene-nav button {
+    font: inherit; font-weight: 700; cursor: pointer;
+    padding: 8px 14px; border-radius: 6px;
+    border: 1px solid rgba(226, 180, 86, 0.4);
+    background: rgba(255, 235, 180, 0.06); color: #f3e6c4;
+  }
+  .scene-nav button.active {
+    background: linear-gradient(180deg, rgba(158, 52, 41, 0.92), rgba(126, 39, 31, 0.92));
+    border-color: rgba(240, 200, 100, 0.8); color: #fff3d0;
+  }
+
+  .stage-shell {
+    position: relative;
+    border: 1px solid rgba(226, 180, 86, 0.38);
+    border-radius: 8px; overflow: hidden; min-height: 560px;
+    background:
+      linear-gradient(180deg, rgba(48, 39, 28, 0.55), rgba(23, 20, 16, 0.72)),
+      #1c1812;
+    box-shadow: var(--shadow);
+  }
+  .stage-label {
+    position: absolute; top: 12px; left: 14px; z-index: 5;
+    font-size: 0.75rem; color: #c9a86f; letter-spacing: 0.08em;
+    background: rgba(20, 16, 10, 0.72); padding: 4px 10px; border-radius: 4px;
+    border: 1px solid rgba(226, 180, 86, 0.28); max-width: calc(100% - 28px);
+  }
+  .scene { display: none; position: absolute; inset: 0; }
+  .scene.active { display: block; }
+
+  .center-layer {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center; padding: 28px 16px;
+  }
+  .center-scrim { position: absolute; inset: 0; background: rgba(18, 15, 11, 0.42); }
+  .center-modal {
+    position: relative; width: min(560px, 94vw);
+    background: #fdfaf3; border: 1px solid rgba(120, 80, 30, 0.4);
+    border-radius: 8px; box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+    color: #2c1f10; overflow: hidden;
+  }
+  .center-modal-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 16px; border-bottom: 1px solid rgba(120, 80, 30, 0.25); background: #f3e9d2;
+  }
+  .center-modal-header h1 { font-size: 1.1rem; color: #4a3014; }
+  .icon-x {
+    width: 32px; height: 32px; border-radius: 6px; border: 1px solid rgba(0,0,0,0.28);
+    background: rgba(255,250,235,0.85); color: #1a1410; cursor: pointer; font: inherit;
+  }
+  .game-menu { display: flex; min-height: 320px; }
+  .game-menu-tabs {
+    display: flex; flex-direction: column; gap: 4px; min-width: 132px;
+    padding: 12px 10px 16px 12px; border-right: 1px solid rgba(120, 80, 30, 0.3);
+  }
+  .game-menu-tabs span {
+    display: block; padding: 8px 12px; border-radius: 4px 0 0 4px;
+    border: 1px solid transparent; color: #4a3014; font-size: 0.9rem;
+  }
+  .game-menu-tabs .active {
+    background: rgba(255, 240, 200, 0.7);
+    border-color: rgba(120, 80, 30, 0.4); border-right-color: transparent; font-weight: 700;
+  }
+  .game-menu-body { flex: 1; padding: 14px 16px 18px; }
+  .menu-section h3 { font-size: 1rem; margin-bottom: 6px; }
+  .menu-hint { margin: 0 0 10px; color: #6a5a3a; font-size: 0.84rem; font-weight: 500; }
+  .menu-hint b { color: #8a1818; }
+  .menu-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+  .menu-input {
+    flex: 1; min-width: 120px; padding: 6px 10px;
+    border: 1px solid rgba(120, 80, 30, 0.4); border-radius: 4px;
+    background: rgba(255, 248, 224, 0.7); color: #1a1410; font: inherit; font-size: 0.88rem;
+  }
+  .menu-btn {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 6px 12px; border-radius: 4px; font: inherit; font-size: 0.85rem; cursor: pointer;
+    border: 1px solid rgba(120, 80, 30, 0.4); background: rgba(255, 240, 200, 0.6); color: #4a3014;
+  }
+  .menu-btn.primary { background: #6a4014; color: #fff5d8; border-color: #6a4014; }
+  .menu-btn.danger { color: #8a1818; border-color: rgba(138, 24, 24, 0.5); }
+  .menu-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+  .menu-btn.armed {
+    background: linear-gradient(180deg, #c0432f, #8a261b);
+    color: #ffe9d8; border-color: rgba(150, 36, 28, 0.6);
+  }
+
+  /* B：就地二次确认条 —— 嵌在面板内，不另起浮层 */
+  .inline-confirm {
+    display: none;
+    margin-top: 12px; padding: 12px 14px;
+    border: 1px solid rgba(158, 52, 41, 0.35);
+    border-left: 4px solid #9e3429;
+    border-radius: 4px;
+    background:
+      linear-gradient(95deg, rgba(176, 58, 40, 0.10), transparent 60%),
+      rgba(252, 244, 222, 0.92);
+  }
+  .inline-confirm.show { display: block; }
+  .inline-confirm .ic-title {
+    font-size: 0.78rem; letter-spacing: 0.14em; color: #9e3429; margin-bottom: 6px;
+  }
+  .inline-confirm .ic-body {
+    font-size: 0.9rem; font-weight: 500; color: #2a1c0e; line-height: 1.65; margin-bottom: 10px;
+  }
+  .inline-confirm .ic-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .toast-done {
+    display: none; margin-top: 10px; padding: 8px 12px;
+    background: rgba(80, 140, 60, 0.15); border-left: 3px solid #4d8a3a;
+    color: #2a4a18; font-size: 0.85rem; font-weight: 500;
+  }
+  .toast-done.show { display: block; }
+
+  /* 行内删除确认 */
+  .saves-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+  .saves-row {
+    display: flex; justify-content: space-between; align-items: center; gap: 12px;
+    padding: 8px 12px; background: rgba(255, 248, 224, 0.55);
+    border: 1px solid rgba(120, 80, 30, 0.25); border-radius: 4px; flex-wrap: wrap;
+  }
+  .saves-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+  .saves-name small { color: #6a5a3a; font-size: 0.78rem; font-weight: 500; }
+  .saves-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .row-confirm {
+    display: none; width: 100%; margin-top: 6px; padding: 8px 10px;
+    background: rgba(176, 58, 40, 0.1); border: 1px solid rgba(138, 24, 24, 0.35); border-radius: 4px;
+    font-size: 0.84rem; font-weight: 500; color: #6a1a1a;
+  }
+  .row-confirm.show { display: block; }
+  .row-confirm .ic-actions { margin-top: 8px; display: flex; gap: 8px; }
+
+  /* 拟诏台 + 页脚就地确认 */
+  .edict-stage {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    padding: 48px 28px 22px;
+    background: linear-gradient(180deg, rgba(244, 236, 216, 0.92), rgba(232, 214, 170, 0.94));
+    color: #1a1410;
+  }
+  .edict-stage h2 { font-size: 1.05rem; letter-spacing: 0.06em; margin-bottom: 10px; }
+  .desk-columns { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 18px; flex: 1; }
+  .empty-note {
+    padding: 14px; border: 1px dashed rgba(170, 50, 36, 0.45); border-radius: 4px;
+    background: rgba(176, 58, 40, 0.08); color: #6a1a1a; font-size: 0.88rem; font-weight: 500;
+  }
+  .desk-compose textarea {
+    width: 100%; min-height: 110px; padding: 10px; resize: vertical;
+    border: 1px solid rgba(120, 86, 42, 0.35); border-radius: 4px;
+    background: rgba(255, 241, 208, 0.92); color: #1a1410; font: inherit; font-weight: 500;
+  }
+  .desk-footer {
+    display: flex; flex-direction: column; align-items: flex-end; gap: 10px; padding-top: 14px;
+  }
+  .seal-btn-issue {
+    font: inherit; font-weight: 700; cursor: pointer; padding: 10px 18px; border-radius: 6px;
+    background: linear-gradient(180deg, #9c392c, #561f19);
+    color: #ffe4b0; border: 1px solid rgba(226, 180, 86, 0.5);
+    box-shadow: 0 3px 10px rgba(86, 31, 25, 0.35);
+  }
+  .footer-confirm {
+    display: none; width: min(480px, 100%);
+    padding: 12px 14px; border-radius: 5px;
+    border: 1px solid rgba(150, 36, 28, 0.45);
+    background:
+      linear-gradient(180deg, rgba(176, 58, 40, 0.10), rgba(176, 58, 40, 0.04)),
+      rgba(252, 244, 222, 0.95);
+    color: #2a1c0e;
+  }
+  .footer-confirm.show { display: block; }
+  .footer-confirm .ic-title { font-size: 0.78rem; letter-spacing: 0.14em; color: #9e3429; margin-bottom: 6px; }
+  .footer-confirm .ic-body { font-size: 0.9rem; font-weight: 500; line-height: 1.65; margin-bottom: 10px; }
+  .footer-confirm .ic-actions { display: flex; gap: 8px; justify-content: flex-end; }
+  .footer-confirm .menu-btn.primary {
+    background: linear-gradient(180deg, #c0432f, #8a261b); color: #ffe9d8; border-color: rgba(150,36,28,0.6);
+  }
+
+  /* 召对撤回：composer 旁就地条 */
+  .chat-mock {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    padding: 48px 24px 20px;
+    background: rgba(244, 237, 221, 0.9); color: #1a1410;
+  }
+  .chat-bubble {
+    align-self: flex-start; max-width: 70%;
+    padding: 12px 14px; margin-bottom: 10px; border-radius: 6px;
+    background: rgba(255,255,255,0.8); border: 1px solid rgba(74, 45, 20, 0.18);
+    font-weight: 500; font-size: 0.92rem;
+  }
+  .composer {
+    margin-top: auto; display: flex; flex-direction: column; gap: 8px;
+    padding: 12px; border-radius: 6px; background: rgba(255,255,255,0.8);
+    border: 1px solid rgba(74, 45, 20, 0.18);
+  }
+  .composer-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .composer-actions button {
+    font: inherit; font-weight: 700; cursor: pointer; padding: 7px 12px; border-radius: 5px;
+    border: 1px solid rgba(0,0,0,0.28); background: rgba(252,249,240,0.92); color: #1a1410;
+  }
+  .composer-inline {
+    display: none; padding: 10px 12px; border-left: 3px solid #9e3429;
+    background: rgba(176, 58, 40, 0.08); font-size: 0.88rem; font-weight: 500; color: #2a1c0e;
+  }
+  .composer-inline.show { display: block; }
+  .composer-inline .ic-actions { margin-top: 8px; display: flex; gap: 8px; }
+
+  /* 主菜单深色覆盖确认 */
+  .menu-screen-mock {
+    position: absolute; inset: 0;
+    background:
+      linear-gradient(to right, rgba(10, 8, 5, 0.78) 0%, rgba(10, 8, 5, 0.35) 38%, rgba(10, 8, 5, 0) 62%),
+      linear-gradient(145deg, #3a2a18, #14100a);
+  }
+  .menu-panel-mock {
+    position: absolute; left: 36px; bottom: 48px; width: min(320px, 80vw); color: #f3e6c4;
+  }
+  .menu-panel-mock .mb {
+    display: block; width: 100%; margin-bottom: 10px; padding: 13px 22px;
+    border: 1px solid rgba(226, 180, 86, 0.5); border-radius: 8px;
+    background: rgba(24, 17, 9, 0.62); color: #f3e6c4; font: inherit; font-weight: 700;
+    letter-spacing: 0.14em; cursor: pointer; text-align: center;
+  }
+  .menu-panel-mock .mb.primary {
+    background: linear-gradient(180deg, rgba(158, 52, 41, 0.92), rgba(126, 39, 31, 0.92));
+    border-color: rgba(240, 200, 100, 0.8); color: #fff3d0;
+  }
+  .menu-dark-confirm {
+    display: none; margin-top: 12px; padding: 14px;
+    background: rgba(35, 28, 18, 0.97); border: 1px solid rgba(226, 180, 86, 0.5);
+    border-radius: 10px; color: #f3e6c4;
+  }
+  .menu-dark-confirm.show { display: block; }
+  .menu-dark-confirm h4 { color: #f3d88b; margin-bottom: 6px; font-size: 1rem; }
+  .menu-dark-confirm p { margin: 0 0 12px; color: #b8a878; font-size: 0.88rem; font-weight: 500; line-height: 1.65; }
+  .menu-dark-confirm .ic-actions { display: flex; gap: 8px; justify-content: flex-end; }
+  .menu-dark-confirm button {
+    font: inherit; font-weight: 700; cursor: pointer; padding: 8px 14px; border-radius: 6px;
+    border: 1px solid rgba(226, 180, 86, 0.4); background: rgba(255, 235, 180, 0.06); color: #f3e6c4;
+  }
+  .menu-dark-confirm button.primary {
+    background: rgba(220, 160, 60, 0.4); border-color: rgba(240, 200, 100, 0.7);
+  }
+
+  .alert-banner {
+    display: none; position: absolute; top: 56px; left: 50%; transform: translateX(-50%);
+    z-index: 6; width: min(420px, 90%);
+    padding: 12px 14px; border-radius: 6px;
+    background: #f4e3b7; border: 1px solid rgba(120, 60, 20, 0.45);
+    color: #2e1b0a; box-shadow: 0 12px 32px rgba(0,0,0,0.35);
+  }
+  .alert-banner.show { display: block; }
+  .alert-banner .ic-title { font-size: 0.75rem; letter-spacing: 0.16em; color: #8a6424; margin-bottom: 4px; }
+  .alert-banner .ic-body { font-weight: 500; margin-bottom: 10px; }
+  .alert-banner button {
+    font: inherit; font-weight: 700; cursor: pointer; padding: 6px 12px; border-radius: 4px;
+    border: 1px solid rgba(120, 80, 30, 0.4); background: #6a4014; color: #fff5d8;
+  }
+
+  .catalog {
+    margin-top: 28px; padding: 18px;
+    border: 1px solid rgba(226, 180, 86, 0.28); border-radius: 8px;
+    background: rgba(20, 16, 10, 0.55);
+  }
+  .catalog h3 { color: #f0d58a; font-size: 1rem; margin-bottom: 8px; }
+  .catalog p { color: #b8a878; font-size: 0.84rem; font-weight: 500; margin: 0 0 10px; }
+  .catalog ul { margin: 0; padding-left: 1.2em; color: #d8c89c; font-size: 0.86rem; font-weight: 500; }
+  .catalog li { margin-bottom: 6px; }
+  .note-strip {
+    margin-top: 14px; padding: 10px 14px; border-radius: 6px;
+    background: rgba(255, 245, 215, 0.06); border: 1px solid rgba(226, 180, 86, 0.22);
+    color: #c9b48a; font-size: 0.84rem; font-weight: 500;
+  }
+</style>
+</head>
+<body>
+  <div class="page">
+    <div class="badge">#1732 · 取向 B · 就地消解</div>
+    <h1 class="page-title">能不弹就不弹：在动作原位收掉确认</h1>
+    <p class="page-lead">
+      核心判断：凡页面<strong>已经</strong>有一整块说明 + 按钮的（回到主菜单 / 重开 / 退出等），
+      那块面板本身就是确认——再弹第二次是冗余。就地把「要做什么、后果、可否撤销」写进面板或行内条，
+      点一次即执行。只在<strong>没有</strong>既有说明面的动作（列表删除、召对撤回、拟诏 failed-only、alert）才展开贴身确认条。
+    </p>
+
+    <div class="scene-nav" id="scene-nav">
+      <button type="button" class="active" data-scene="exit-menu">① 回到主菜单</button>
+      <button type="button" data-scene="reset">② 重开新局</button>
+      <button type="button" data-scene="edict">③ 拟诏台无参确认</button>
+      <button type="button" data-scene="saves">附：行内删除 / 撤回</button>
+      <button type="button" data-scene="menu-over">附：主菜单覆盖</button>
+    </div>
+
+    <div class="stage-shell">
+      <div class="stage-label" id="stage-label">场景：回到主菜单 · 面板已含后果说明 → 按钮直接执行，零第二次确认</div>
+
+      <!-- ① 回到主菜单：单次确认 = 面板本身 -->
+      <div class="scene active" id="scene-exit-menu">
+        <div class="center-layer">
+          <div class="center-scrim"></div>
+          <div class="center-modal">
+            <div class="center-modal-header">
+              <h1>游戏菜单</h1>
+              <button class="icon-x" type="button">×</button>
+            </div>
+            <div class="game-menu">
+              <div class="game-menu-tabs">
+                <span>保存存档</span><span>加载存档</span>
+                <span class="active">回到主菜单</span><span>重开新局</span><span>退出游戏</span>
+              </div>
+              <div class="game-menu-body">
+                <section class="menu-section">
+                  <h3>回到主菜单</h3>
+                  <p class="menu-hint">
+                    关闭当前游戏会话，回到主菜单。数据库与存档不变；可从主菜单「继续上局」或「加载存档」回到游戏。
+                  </p>
+                  <!-- 票面 confirm 原句并入面板，作为可见后果，不再二次弹 -->
+                  <p class="menu-hint" style="border-left:3px solid rgba(106,64,20,0.55);padding-left:10px;color:#4a3014;">
+                    回到主菜单？当前对局会关闭（DB 仍保留，可从「继续上局」回到此处）。
+                  </p>
+                  <div class="menu-row">
+                    <button class="menu-btn primary" type="button" id="btn-exit-direct">回到主菜单</button>
+                  </div>
+                  <div class="toast-done" id="exit-done">已执行：关闭对局会话 → 回主菜单（mock，无原生框）。</div>
+                </section>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ② 重开新局：手打解锁留在面板，点即执行，无第二次 confirm -->
+      <div class="scene" id="scene-reset">
+        <div class="center-layer">
+          <div class="center-scrim"></div>
+          <div class="center-modal">
+            <div class="center-modal-header">
+              <h1>游戏菜单</h1>
+              <button class="icon-x" type="button">×</button>
+            </div>
+            <div class="game-menu">
+              <div class="game-menu-tabs">
+                <span>保存存档</span><span>加载存档</span><span>回到主菜单</span>
+                <span class="active">重开新局</span><span>退出游戏</span>
+              </div>
+              <div class="game-menu-body">
+                <section class="menu-section">
+                  <h3>重开新局</h3>
+                  <p class="menu-hint">
+                    清空主 DB（聊天记录、回合奏报、局势、ledger 全清），重置到开局。
+                    <b>不可撤销</b>。要保留当前局，先到「保存存档」存一份。
+                  </p>
+                  <p class="menu-hint" style="border-left:3px solid #9e3429;padding-left:10px;color:#6a1a1a;">
+                    确定重开新局？当前局所有数据将被永久清空（存档目录不动）。
+                  </p>
+                  <p class="menu-hint">输入「重开」二字以解锁按钮：</p>
+                  <div class="menu-row">
+                    <input class="menu-input" id="reset-input" placeholder="输入：重开" />
+                    <button class="menu-btn danger" type="button" id="btn-reset" disabled>重开新局</button>
+                  </div>
+                  <div class="toast-done" id="reset-done">已执行：POST /api/game/reset（mock）。手打解锁保留，无第二次 confirm。</div>
+                </section>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ③ 拟诏：页脚就地条，补上文案 -->
+      <div class="scene" id="scene-edict">
+        <div class="edict-stage">
+          <div class="desk-columns">
+            <section>
+              <h2>本月指令</h2>
+              <div class="empty-note">
+                failed-only 态：无可结算草案，仍有失败密令。主钮「退朝结束本月 →」。
+                现状 <code style="color:#8a1818">window.confirm()</code> 无参空白。
+              </div>
+            </section>
+            <section class="desk-compose">
+              <h2>御笔自拟</h2>
+              <textarea placeholder="例如：命户部核拨关宁、山海关、蓟镇辽饷一百五十二万两..."></textarea>
+            </section>
+          </div>
+          <div class="desk-footer">
+            <div class="footer-confirm" id="edict-confirm">
+              <div class="ic-title">退朝确认</div>
+              <div class="ic-body">
+                本月无可颁诏草案，仍有失败密令未处理。确认不经盖玺颁诏、直接退朝结束本月？
+              </div>
+              <div class="ic-actions">
+                <button type="button" class="menu-btn" id="edict-cancel">取消</button>
+                <button type="button" class="menu-btn primary" id="edict-yes">退朝结束本月</button>
+              </div>
+            </div>
+            <button class="seal-btn-issue" type="button" id="btn-edict">退朝结束本月 →</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 附：行内删除 + 召对撤回 -->
+      <div class="scene" id="scene-saves">
+        <div class="center-layer">
+          <div class="center-scrim"></div>
+          <div class="center-modal" style="width:min(640px,94vw)">
+            <div class="center-modal-header">
+              <h1>加载存档 · 行内确认示范</h1>
+              <button class="icon-x" type="button">×</button>
+            </div>
+            <div style="padding:14px 16px;color:#2c1f10;">
+              <p class="menu-hint">列表动作无既有说明面 → 在该行下方展开贴身确认，文案用票面原句。</p>
+              <ul class="saves-list">
+                <li class="saves-row" id="row-load">
+                  <div class="saves-name"><b>3</b><small>2026/3/20 · 128.0 KB</small></div>
+                  <div class="saves-actions">
+                    <button class="menu-btn primary" type="button" data-row="load">加载</button>
+                    <button class="menu-btn danger" type="button" data-row="del">删除</button>
+                  </div>
+                  <div class="row-confirm" id="rc-load">
+                    确定加载 3.db？当前未保存进度会丢失。
+                    <div class="ic-actions">
+                      <button type="button" class="menu-btn" data-dismiss="rc-load">取消</button>
+                      <button type="button" class="menu-btn primary" data-dismiss="rc-load">确定加载</button>
+                    </div>
+                  </div>
+                  <div class="row-confirm" id="rc-del">
+                    删除 3.db？
+                    <div class="ic-actions">
+                      <button type="button" class="menu-btn" data-dismiss="rc-del">取消</button>
+                      <button type="button" class="menu-btn danger armed" data-dismiss="rc-del">删除</button>
+                    </div>
+                  </div>
+                </li>
+              </ul>
+
+              <hr style="border:0;border-top:1px solid rgba(120,80,30,0.25);margin:18px 0;" />
+              <h3 style="font-size:1rem;margin-bottom:8px;">召对撤回（composer 旁）</h3>
+              <div class="chat-bubble">卿方才所奏辽饷一事，朕已知悉……</div>
+              <div class="composer">
+                <div class="composer-inline" id="undo-confirm">
+                  将撤回最近一轮召对及其政务影响，是否继续？
+                  <div class="ic-actions">
+                    <button type="button" class="menu-btn" id="undo-no">取消</button>
+                    <button type="button" class="menu-btn danger" id="undo-yes">继续撤回</button>
+                  </div>
+                </div>
+                <div class="composer-actions">
+                  <button type="button" id="btn-undo">撤回上一轮</button>
+                  <button type="button">传旨</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 附：主菜单覆盖 + alert -->
+      <div class="scene" id="scene-menu-over">
+        <div class="menu-screen-mock">
+          <div class="menu-panel-mock">
+            <button class="mb primary" type="button" id="btn-new-game">新开一局</button>
+            <button class="mb" type="button" id="btn-load-menu">加载存档</button>
+            <button class="mb" type="button" id="btn-alert">模拟上传失败</button>
+            <div class="menu-dark-confirm" id="overwrite-confirm">
+              <h4>覆盖主进度</h4>
+              <p>将覆盖当前主进度，是否继续？建议先在游戏中保存为存档。</p>
+              <div class="ic-actions">
+                <button type="button" id="ow-no">取消</button>
+                <button type="button" class="primary" id="ow-yes">继续</button>
+              </div>
+            </div>
+            <div class="menu-dark-confirm" id="delsave-confirm">
+              <h4>删除存档</h4>
+              <p>删除存档「辽饷吃紧」？此操作不可撤销。</p>
+              <div class="ic-actions">
+                <button type="button" id="ds-no">取消</button>
+                <button type="button" class="primary" id="ds-yes">删除</button>
+              </div>
+            </div>
+          </div>
+          <div class="alert-banner" id="alert-banner">
+            <div class="ic-title">系统告警</div>
+            <div class="ic-body">上传失败：网络中断</div>
+            <button type="button" id="alert-ok">知悉</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <p class="note-strip">
+      B 取向要点：有面板的动作（主菜单 / 重开 / 退出）= 单次就地确认，票面 confirm 原句并入面板作后果句；
+      无面板的动作才长出贴身条。双重确认被结构性拆除。代价是交互形态不统一（面板 / 行内 / 页脚 / 深色菜单卡 多套）。
+    </p>
+
+    <div class="catalog">
+      <h3>9+1 文案在本取向中的落点</h3>
+      <p>全部使用票面原句；无 lorem。</p>
+      <ul>
+        <li>回到主菜单 → 并入既有面板，按钮直接执行</li>
+        <li>重开新局 → 并入既有面板 + 手打「重开」解锁，按钮直接执行</li>
+        <li>退出游戏 / 加载存档说明类 → 同形并入面板（退出文案见下）</li>
+        <li>删除 N.db / 删除存档「X」→ 行内展开</li>
+        <li>覆盖主进度 → 主菜单深色就地卡</li>
+        <li>撤回召对 → composer 上方就地条</li>
+        <li>拟诏无参 confirm → 页脚展开，补退朝语义</li>
+        <li>上传失败 alert → 画面内告警条，单钮知悉</li>
+      </ul>
+      <p style="margin-top:12px">退出游戏票面原句（并入面板示范，与重开同形）：「退出整个游戏？前后端进程都会关闭，未保存的进度会丢失。」</p>
+    </div>
+  </div>
+
+<script>
+  document.getElementById("btn-exit-direct").addEventListener("click", () => {
+    document.getElementById("exit-done").classList.add("show");
+  });
+
+  const resetInput = document.getElementById("reset-input");
+  const resetBtn = document.getElementById("btn-reset");
+  resetInput.addEventListener("input", () => {
+    resetBtn.disabled = resetInput.value.trim() !== "重开";
+  });
+  resetBtn.addEventListener("click", () => {
+    if (resetBtn.disabled) return;
+    document.getElementById("reset-done").classList.add("show");
+  });
+
+  const edictConfirm = document.getElementById("edict-confirm");
+  document.getElementById("btn-edict").addEventListener("click", () => {
+    edictConfirm.classList.add("show");
+  });
+  document.getElementById("edict-cancel").addEventListener("click", () => edictConfirm.classList.remove("show"));
+  document.getElementById("edict-yes").addEventListener("click", () => edictConfirm.classList.remove("show"));
+
+  document.querySelectorAll("[data-row]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.getElementById("rc-load").classList.remove("show");
+      document.getElementById("rc-del").classList.remove("show");
+      const id = btn.getAttribute("data-row") === "load" ? "rc-load" : "rc-del";
+      document.getElementById(id).classList.add("show");
+    });
+  });
+  document.querySelectorAll("[data-dismiss]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.getElementById(btn.getAttribute("data-dismiss")).classList.remove("show");
+    });
+  });
+
+  const undoConfirm = document.getElementById("undo-confirm");
+  document.getElementById("btn-undo").addEventListener("click", () => undoConfirm.classList.add("show"));
+  document.getElementById("undo-no").addEventListener("click", () => undoConfirm.classList.remove("show"));
+  document.getElementById("undo-yes").addEventListener("click", () => undoConfirm.classList.remove("show"));
+
+  const ow = document.getElementById("overwrite-confirm");
+  const ds = document.getElementById("delsave-confirm");
+  document.getElementById("btn-new-game").addEventListener("click", () => {
+    ds.classList.remove("show"); ow.classList.add("show");
+  });
+  document.getElementById("btn-load-menu").addEventListener("click", () => {
+    ow.classList.remove("show"); ds.classList.add("show");
+  });
+  document.getElementById("ow-no").addEventListener("click", () => ow.classList.remove("show"));
+  document.getElementById("ow-yes").addEventListener("click", () => ow.classList.remove("show"));
+  document.getElementById("ds-no").addEventListener("click", () => ds.classList.remove("show"));
+  document.getElementById("ds-yes").addEventListener("click", () => ds.classList.remove("show"));
+
+  const alertBanner = document.getElementById("alert-banner");
+  document.getElementById("btn-alert").addEventListener("click", () => alertBanner.classList.add("show"));
+  document.getElementById("alert-ok").addEventListener("click", () => alertBanner.classList.remove("show"));
+
+  const labels = {
+    "exit-menu": "场景：回到主菜单 · 面板已含后果说明 → 按钮直接执行，零第二次确认",
+    reset: "场景：重开新局 · 手打「重开」留在面板，解锁后直接执行，无第二次 confirm",
+    edict: "场景：拟诏 failed-only · 页脚就地展开，补上退朝说明（修复空白弹窗）",
+    saves: "附场景：无既有说明面的动作 → 行内 / composer 旁贴身条",
+    "menu-over": "附场景：主菜单覆盖主进度、删除存档、上传失败 alert 的就地形态",
+  };
+  document.querySelectorAll("#scene-nav button").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll("#scene-nav button").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      const id = btn.getAttribute("data-scene");
+      document.querySelectorAll(".scene").forEach((s) => s.classList.remove("active"));
+      document.getElementById("scene-" + id).classList.add("active");
+      document.getElementById("stage-label").textContent = labels[id];
+    });
+  });
+</script>
+</body>
+</html>
