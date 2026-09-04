@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { consumeSettleStream } from "./settleStream";
-import { resolveSettlementWaitProgress } from "./settlementProgress";
+import {
+  SETTLEMENT_WAIT_STAGES,
+  resolveSettlementWaitProgress,
+} from "./settlementProgress";
 
 function streamResponse(chunks: string[], ok = true): Response {
   const encoder = new TextEncoder();
@@ -101,14 +104,7 @@ describe("consumeSettleStream continue-style stages (#1195)", () => {
 
 describe("#1725 issue/stream stages drive typed wait progress", () => {
   it("six named stages from decree stream resolve to current/total progress", async () => {
-    const stages = [
-      "固定月度财政入账",
-      "回顾近来朝局",
-      "推演月末邸报",
-      "数值推演结算",
-      "落库与事项推进",
-      "记起居注",
-    ];
+    const stages = [...SETTLEMENT_WAIT_STAGES];
     const onStage = vi.fn();
     const chunks = [
       ...stages.map((label) => `event: stage\ndata: ${JSON.stringify({ content: label })}\n\n`),
