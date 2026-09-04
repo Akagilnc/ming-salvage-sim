@@ -1198,12 +1198,15 @@ def classify_cli_action_intent(
         "判断本轮是否属于一个或多个政务动作，并抽出可从皇帝话与相关上下文直接确定的结构字段。"
         "单动作输出一个 JSON 对象，多动作输出 JSON 对象数组（无代码围栏、无多余字）：\n"
         + schema_obj + "\n"
-        "规则：确认优先于新动作；同一话语可同时含拟旨与任免时须同时输出"
-        "拟旨与任免候选（draft+appointment 并存），多候选不得因拟旨省略任免。"
+        "规则：确认优先于新动作；每一道独立旨意只输出一个候选、只判一次颁布方式，"
+        "不得把同一旨意同时输出为拟旨和其任免、拨帑等载荷动作；一句确有多道彼此独立"
+        "的旨意时，才逐旨各输出一个候选。"
+        "颁布方式是在判断皇帝这道旨是不是中旨：只有语义明确是中旨才填 midzhi，"
+        "否则一律填 ordinary；不要判断它该不该走中旨。"
         "「拟旨如下」只是路由，不是动作类型。同一话语带拟旨前缀且为载荷式拨饷"
         "（太仓/国库拨军饷销欠）时须输出恩赏·拨帑：恩赏拨帑=协饷、用途=补饷、"
         "目标类型=army、目标=可解析军队 id、账户太仓归一为国库；"
-        "不得因拟旨前缀改判拟旨而省略拨款候选。拟旨与拨饷并存时不得因拟旨省略拨款。"
+        "不得因拟旨前缀改判拟旨而省略拨款候选，也不得为同一道拨款另添拟旨候选。"
         "发内帑不是协饷，不得改判为协饷。纯无动作仍输出无；非协饷恩赏走各自恩赏拨帑值。"
         "修改待确认动作时，确认=修改、新内容=完整非空修改正文；有多个待确认候选时，"
         "目标编号必须且只能填一个所指候选 id。\n"
@@ -1267,37 +1270,24 @@ def classify_cli_action_intent(
 # 无显式前缀（_DRAFT_PREFIXES）→ LLM 判出意图 → 进 pending_actions(kind=directive)暂存；
 # 大臣回话即草案文本，commit 时再建 turn_directives 条目。
 def _directive_mode(value: object) -> Optional[str]:
-    """Normalize one mode value; authority precedence belongs to resolve_directive_mode.
-
-    Emperor natural-language declarations count only when unambiguous:
-    midzhi keeps prefix-shaped cues; ordinary also accepts full-sentence
-    "按普通程序…" style declarations. Silent supplements ("再补一条") stay None
-    so existing durable mode wins upstream.
-    """
-    normalized = str(value or "").strip()
-    if not normalized:
-        return None
-    if (
-        normalized in {"中旨直发", "midzhi"}
-        or normalized.startswith("中旨直发")
-        or any(normalized.startswith(f"{prefix}中旨直发") for prefix in _DRAFT_PREFIXES)
-    ):
-        return "midzhi"
-    if (
-        normalized in {"普通", "ordinary"}
-        or normalized.startswith("普通")
-        or any(normalized.startswith(f"{prefix}普通") for prefix in _DRAFT_PREFIXES)
-        or "普通程序" in normalized
-    ):
-        return "ordinary"
-    return None
+    """Normalize the extractor's typed mode value, never player prose."""
+    return {
+        "中旨直发": "midzhi",
+        "midzhi": "midzhi",
+        "普通": "ordinary",
+        "ordinary": "ordinary",
+    }.get(str(value or "").strip())
 
 
 def resolve_directive_mode(
     emperor_text: object = None, extracted: object = None, existing: object = None,
 ) -> str:
-    """Own mode authority: emperor declaration > existing > extraction > compatibility default."""
-    for value in (emperor_text, existing, extracted, "ordinary"):
+    """Resolve the typed LLM decision, preserving an existing candidate on edits.
+
+    ``emperor_text`` remains in the call signature while callers migrate, but prose is
+    deliberately opaque here: governance semantics belong to the extractor.
+    """
+    for value in (existing, extracted):
         mode = _directive_mode(value)
         if mode is not None:
             return mode
@@ -2456,7 +2446,9 @@ def extract_draft_intent(
             + structured_decree_prompt_contract() + "\n"
             "拨帑动作逐道使用以下 ACTION_CLUSTERS 字段（其余动作留缺省）：\n"
             + grant_fields_prompt
-            + "不得把同一段文字复制成多道；不得遗漏皇帝要求的任一道拟旨事项。\n\n"
+            + "颁布方式判断皇帝所言这道旨是不是中旨：只有语义明确是中旨才填中旨直发，"
+            "否则填普通；不要判断它该不该走中旨。"
+            "不得把同一段文字复制成多道；不得遗漏皇帝要求的任一道拟旨事项。\n\n"
             + correction_block
             + roster_facts
             + pay_order_facts
@@ -2683,6 +2675,8 @@ def extract_draft_intent(
         + merge_schema_line
         + "}\n"
         "判定要点：皇帝明确让大臣拟旨/起草圣旨→拟旨；仅商议/问询/催办/评论不算。语义判断，别拘字面。\n"
+        "颁布方式判断皇帝所言这道旨是不是中旨：只有语义明确是中旨才填中旨直发，"
+        "否则填普通；不要判断它该不该走中旨。\n"
         + structured_decree_prompt_contract() + "\n"
         '非拨帑旨填共同契约目标/属地/事务类别/承办字段及“颁布方式”(普通|中旨直发)；拨帑旨只用 ACTION_CLUSTERS 字段。\n'
         "御笔强推议而不决事项亦归拟旨，并填目标案卷ID。\n\n"
