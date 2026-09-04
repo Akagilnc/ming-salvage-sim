@@ -1,24 +1,42 @@
-import { SituationPanel } from "./situation";
-import type { GameState } from "../types";
-import { SETTLEMENT_CLOSED_REASON } from "../settlementPresentation";
+import type { GameState, Memorial } from "../types";
 
 /**
- * #1285：奏疏面 = memorials 面键真源。
- * 模态内容复用 SituationPanel 既有列表（禁新数据源）；badge 仍接 issues 计数。
- * showIssues 由调用方喂 isFaceReachable("situation", …)——模态自不判 settlementDisplay。
+ * #1726：奏疏面 = memorials 收件箱真源（进度奏报 + 派系检举）。
+ * 与局势 issues 脱钩；正文原样，不得渲染 id / progress_band / origin / payload。
+ * #1285 面键仍为 memorials；核账期只读可达，内容不借 situation 闸。
  */
-export function StateModal({ state, showIssues }: { state: GameState; showIssues: boolean }) {
-  const issues = showIssues ? (state.issues || []) : [];
-  if (!issues.length) {
+export function StateModal({ state }: { state: GameState }) {
+  const memorials = state.memorials || [];
+  if (!memorials.length) {
     return (
       <article className="state-document modal-scroll">
-        <div className="empty-note">{showIssues ? "本月无疏。" : SETTLEMENT_CLOSED_REASON}</div>
+        <div className="empty-note">本月无疏。</div>
       </article>
     );
   }
   return (
     <article className="state-document modal-scroll" aria-label="奏疏列表">
-      <SituationPanel issues={issues} closedIssues={[]} hasLegacies={false} />
+      <div className="memorial-inbox">
+        {memorials.map((m) => (
+          <MemorialCard key={m.key} memorial={m} />
+        ))}
+      </div>
     </article>
+  );
+}
+
+function MemorialCard({ memorial }: { memorial: Memorial }) {
+  return (
+    <section
+      className={`memorial-card${memorial.unread ? " memorial-card-unread" : ""}`}
+      data-memorial-key={memorial.key}
+      data-unread={memorial.unread ? "1" : "0"}
+    >
+      <header className="memorial-card-head">
+        <span className="memorial-author">{memorial.author_name}</span>
+        {memorial.unread ? <span className="memorial-unread-mark" aria-label="未读">未读</span> : null}
+      </header>
+      <pre className="memorial-text">{memorial.memorial_text}</pre>
+    </section>
   );
 }
