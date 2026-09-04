@@ -110,15 +110,43 @@ def _materializable_draft_xiexang(
     return promoted
 
 
-def _record_decree_validation_failure(
-    ctx: MaterializeCtx, out: Dict[str, Any], exc: BaseException,
+def _record_decree_validation_failures(
+    ctx: MaterializeCtx, out: Dict[str, Any], failures: list[BaseException],
 ) -> None:
-    from ming_sim.cli_backend import compose_decree_validation_recovery, _log
+    """Record every engine rejection, then generate one player-lane recovery report."""
+    from ming_sim.cli_backend import compose_decree_validation_recovery, _trace
 
-    _log(f"旨意校验未通过（未落库）: {exc}")
+    failed_fields = {
+        str(field)
+        for exc in failures
+        for field in (
+            getattr(exc, "failed_fields", ())
+            or getattr(exc, "missing_fields", ())
+            or ()
+        )
+    }
+    _trace({
+        "tag": "decree_validation_failure",
+        "turn": int(ctx.session.state.turn),
+        "failures": [
+            {
+                "type": type(exc).__name__,
+                "message": str(exc),
+                "failed_fields": sorted(
+                    str(field)
+                    for field in (
+                        getattr(exc, "failed_fields", ())
+                        or getattr(exc, "missing_fields", ())
+                        or ()
+                    )
+                ),
+            }
+            for exc in failures
+        ],
+    })
     out["decree_validation_failure"] = {
         "report": compose_decree_validation_recovery(
-            list(getattr(exc, "failed_fields", ()) or ()),
+            sorted(failed_fields),
             speaker_name=ctx.character.name,
             llm_config=ctx.llm_config,
         ),
@@ -143,6 +171,7 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
         )
         draft_index = 0
         candidate_records = []
+        validation_failures: list[BaseException] = []
         for candidate in ctx.intent_candidates:
             original_kind = str(candidate.get("kind") or "")
             original_draft_index = draft_index
@@ -151,7 +180,7 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
             try:
                 materializable = _materializable_draft_xiexang(ctx, candidate)
             except DecreeMaterializationValidationError as exc:
-                _record_decree_validation_failure(ctx, ctx.out, exc)
+                validation_failures.append(exc)
                 continue
             candidate_records.append((
                 materializable, original_kind, original_draft_index,
@@ -201,7 +230,7 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
                 StructuredDecreeCombinationError,
                 DecreeMaterializationValidationError,
             ) as exc:
-                _record_decree_validation_failure(candidate_ctx, candidate_out, exc)
+                validation_failures.append(exc)
             if kind == "grant_allocation" and int(
                 candidate_out.get("pending_action_id") or 0
             ) > int(baseline_out.get("pending_action_id") or 0):
@@ -209,6 +238,8 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
             ctx.out.update(candidate_out)
             if candidate_ctx.draft_staged:
                 ctx.draft_staged = True
+        if validation_failures:
+            _record_decree_validation_failures(ctx, ctx.out, validation_failures)
         # #1380：拟旨优先后仍须并行 office（仅 LLM 分类路；前缀路禁，见 #344 US3）
         if _draft_path_took_effect(ctx) and not ctx.explicit_prefixed:
             parallel_stage_office_from_appointment_intent(ctx)
@@ -1450,13 +1481,18 @@ def canonicalize_xiexang_army_target(db: Any, raw_target: object) -> str:
     army_id = _resolve_xiexang_army_id(db, tid)
     if not army_id:
         raise DecreeMaterializationValidationError(
-            f"协饷旨意 target 无法解析为军队：{tid!r}（不猜散文）"
+            f"协饷旨意 target 无法解析为军队：{tid!r}（不猜散文）",
+            failed_fields=("target_kind", "target_id"),
         )
     return army_id
 
 
 class DecreeMaterializationValidationError(ValueError):
     """Typed rejection raised before a decree candidate can be recorded."""
+
+    def __init__(self, message: str, *, failed_fields: tuple[str, ...] = ()) -> None:
+        self.failed_fields = failed_fields
+        super().__init__(message)
 
 
 class IncompleteXiexangPayloadError(DecreeMaterializationValidationError):
@@ -1533,7 +1569,9 @@ def require_materializable_xiexang_payload(
     )
     body = str(text or "").strip()
     if not body:
-        raise DecreeMaterializationValidationError("协饷旨意缺少正文（不猜散文）")
+        raise DecreeMaterializationValidationError(
+            "协饷旨意缺少正文（不猜散文）", failed_fields=("purpose",),
+        )
     army_id = canonicalize_xiexang_army_target(db, explicit["target_id"])
     cadence_value = str(cadence or "").strip() or "一次性"
     return {

@@ -2346,27 +2346,14 @@ class GameSession:
         return out
 
     @staticmethod
-    def _ensure_unknown_participant_report_cue(answer: str, report: str) -> str:
-        """#1274 V-1：附上 LLM 已产的查无此人回禀（报告正文本身禁在此写死台词）。"""
-        text = (answer or "").strip()
-        body = (report or "").strip()
-        if not body:
-            return text
-        if body in text:
-            return text
-        if not text:
-            return body
-        return text + "\n" + body
-
-    @staticmethod
     def _append_action_reports(answer: str, actions: Dict[str, Any]) -> str:
-        """Single projection seam for LLM-produced action rejection reports."""
-        text = answer or ""
+        """Append LLM-produced reports without inspecting or rewriting their prose."""
+        parts = [answer] if answer else []
         for key in ("unknown_participant_escalate", "decree_validation_failure"):
-            report = str((actions.get(key) or {}).get("report") or "").strip()
+            report = str((actions.get(key) or {}).get("report") or "")
             if report:
-                text = GameSession._ensure_unknown_participant_report_cue(text, report)
-        return text
+                parts.append(report)
+        return "\n".join(parts)
 
     @staticmethod
     def _ensure_clarification_cue(answer: str, ambiguous: Dict[str, Any]) -> str:
