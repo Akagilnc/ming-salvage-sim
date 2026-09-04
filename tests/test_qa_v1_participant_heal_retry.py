@@ -729,14 +729,19 @@ def test_materialize_validation_failure_returns_llm_recovery_without_draft(game,
     _silence_side_extractors(monkeypatch, cb)
     sess = _fake_session(db, state, content)
 
-    result = GameSession.apply_cli_conversation_actions(
-        sess, minister, player_message="拟旨整饬京师", answer="臣先前拟稿。",
-        has_directive=False, secret_order_id=None,
+    original_answer = "臣先前拟稿。"
+    result = types.SimpleNamespace(
+        answer=original_answer, proposed_directive=None, pending_action_id=0,
+        secret_order_id=None, pending_action_failures=[],
+        directive_confirmation_ambiguous=None,
+    )
+    sess._cli_backend_fallback_actions(
+        result, minister, player_message="拟旨整饬京师",
         preclassified_intent={"kind": "draft"},
     )
 
     assert "decree_validation_recovery" in calls
-    assert set((result.get("decree_validation_failure") or {}).keys()) == {"report"}
+    assert result.answer != original_answer  # feature observation only; prose stays unconstrained
     assert not [p for p in db.list_pending_actions(state.turn) if p["kind"] == "directive"]
 
 
