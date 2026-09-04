@@ -1597,8 +1597,9 @@ def test_draft_xiexang_batch_failures_share_recovery_and_leave_zero_writes(
     assert {int(d["id"]) for d in db.list_decree_dossiers()} == dossier_before
 
 
+@pytest.mark.parametrize("validation_case", ["incomplete_xiexang", "region_mismatch"])
 def test_http_chat_stream_exposes_typed_decree_validation_recovery(
-    tmp_path, monkeypatch, _offline_scene_beat_generator,
+    tmp_path, monkeypatch, _offline_scene_beat_generator, validation_case,
 ):
     """真实召对 SSE 以 typed failure 告知玩家恢复可用；生成正文不作机械断言。"""
     from fastapi.testclient import TestClient
@@ -1615,23 +1616,36 @@ def test_http_chat_stream_exposes_typed_decree_validation_recovery(
         def get_last_run_output(self):
             return None
 
-    recovery_fields = []
+    backend_tags = set()
     monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     _stub_outer_llm_seams(monkeypatch)
-    monkeypatch.setattr(
-        cb, "classify_cli_action_intent",
-        lambda *_args, **_kwargs: _scripted_xiexang_candidates(
-            amount=0, account="", target_id="",
-        ),
-    )
-    monkeypatch.setattr(
-        cb, "_run_backend_for_config",
-        lambda _prompt, _config=None, *, tag="": (
-            recovery_fields.append(tag) or "任意生成回禀", 1,
-        ),
-    )
+    def classify(*_args, **_kwargs):
+        if validation_case == "incomplete_xiexang":
+            return _scripted_xiexang_candidates(amount=0, account="", target_id="")
+        return candidates_from_classifier_payload({"kind": "draft"}, soft=False)
+
+    def backend(_prompt, _config=None, *, tag=""):
+        backend_tags.add(tag)
+        if tag == "draft_intent":
+            return json.dumps({
+                "拟旨意图": "拟旨",
+                "动作类型": "policy",
+                "目标类型": "region",
+                "目标ID": "京师",
+                "地区ID": "@beizhili",
+                "施行范围": "single",
+                "事务类别": "",
+                "承办人": "",
+                "参与人": [],
+                "期限月数": None,
+                "目标案卷ID": None,
+            }, ensure_ascii=False), 1
+        return "任意生成回禀", 1
+
+    monkeypatch.setattr(cb, "classify_cli_action_intent", classify)
+    monkeypatch.setattr(cb, "_run_backend_for_config", backend)
 
     game = web_app.WebGame(fresh=False)
     monkeypatch.setattr(web_app, "web_game", game)
@@ -1643,9 +1657,14 @@ def test_http_chat_stream_exposes_typed_decree_validation_recovery(
             and game.db.get_character_status(getattr(ch, "name", key))[0] == "active"
         )
         game.session.registry.get = lambda _character: _AudienceAgent()
+        message = (
+            "拟旨如下：整饬京师"
+            if validation_case == "incomplete_xiexang"
+            else "请拟旨整饬京师"
+        )
         response = TestClient(web_app.app).post(
             f"/api/ministers/{name}/chat/stream",
-            json={"message": "拟旨如下：整饬京师"},
+            json={"message": message},
         )
         assert response.status_code == 200
         events = {}
@@ -1658,8 +1677,13 @@ def test_http_chat_stream_exposes_typed_decree_validation_recovery(
         assert "error" not in events
         done = events["done"]
         failure = done.get("decree_validation_failure") or {}
-        assert {"amount", "account", "target_id"} <= set(failure.get("failed_fields") or [])
-        assert recovery_fields == ["decree_validation_recovery"]
+        expected_fields = (
+            {"amount", "account", "target_id"}
+            if validation_case == "incomplete_xiexang"
+            else {"region_id", "target_id"}
+        )
+        assert expected_fields <= set(failure.get("failed_fields") or [])
+        assert "decree_validation_recovery" in backend_tags
         assert "decree_validation_failure" in (done.get("presented_action_reports") or [])
         assert isinstance(done.get("answer"), str)
         assert not game.db.list_pending_actions(game.state.turn)
