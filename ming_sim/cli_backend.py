@@ -1822,13 +1822,10 @@ def _compose_inworld_fact_report(
 
     def _produce() -> str:
         raw, _ = _run_backend_for_config(prompt, llm_config, tag=tag)
-        text = str(raw or "").strip()
-        if text.startswith("```"):
-            text = re.sub(r"^```\w*\n?", "", text)
-            text = re.sub(r"\n?```$", "", text).strip()
-        if text and not text.lstrip().startswith("{"):
+        text = str(raw or "")
+        if text:
             return text
-        raise cli_runner_unavailable(RuntimeError(f"{tag} 空响或非戏内文"), backend=tag)
+        raise cli_runner_unavailable(RuntimeError(f"{tag} 空响"), backend=tag)
 
     try:
         if timeout_s is None:
@@ -1886,9 +1883,13 @@ def compose_decree_validation_recovery(
 ) -> str:
     """Turn typed decree rejection facts into a player-facing retry cue via the LLM."""
     field_groups = {
+        "银两数目": {"amount"},
+        "款项来源": {"account"},
+        "用途": {"purpose"},
         "所指对象": {"target_kind", "target_id"},
         "所指地域": {"region_id", "locality_scope"},
         "承办人": {"assignee", "assignee_id", "assignee_name"},
+        "拨付节奏": {"cadence"},
         "办理方式": {"action_type", "dossier_action_type", "transaction_category"},
     }
     failed = {str(item).strip() for item in (failed_fields or []) if str(item).strip()}

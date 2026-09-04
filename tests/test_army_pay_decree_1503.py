@@ -1530,12 +1530,14 @@ def test_draft_xiexang_incomplete_or_illegal_returns_recovery_zero_write(
     import ming_sim.cli_backend as cb
 
     recovery_calls = []
+    diagnostics = []
 
     def recovery(*args, **kwargs):
         recovery_calls.append((args, kwargs))
         return "任意生成回禀"
 
     monkeypatch.setattr(cb, "compose_decree_validation_recovery", recovery)
+    monkeypatch.setattr(cb, "_trace", diagnostics.append)
     db, state, _content = game
     actor = db.conn.execute(
         "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
@@ -1552,7 +1554,10 @@ def test_draft_xiexang_incomplete_or_illegal_returns_recovery_zero_write(
         reply="准拨，数目另议。",
     )
     run_materialize_pipeline(ctx)
-    assert recovery_calls
+    assert len(recovery_calls) == 1
+    assert recovery_calls[0][0][0]
+    assert diagnostics[0]["tag"] == "decree_validation_failure"
+    assert diagnostics[0]["failures"][0]["message"]
     assert set((ctx.out.get("decree_validation_failure") or {}).keys()) == {"report"}
     pending_after = db.conn.execute(
         "SELECT COUNT(*) FROM pending_actions WHERE turn=? AND kind='directive'",
@@ -1600,9 +1605,16 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
 
     scripted = _scripted_xiexang_candidates(amount=15, account="太仓", target_id="guanning")
 
+    recovery_fields = []
+
     def fake_classify(text, *_a, **_k):
         if str(text or "").strip() == "准":
             return []
+        if "整饬京师" in str(text or ""):
+            return [{
+                "kind": "draft", "target_kind": "region",
+                "target_id": "京师", "region_id": "@beizhili",
+            }]
         return list(scripted)
 
     def fake_confirm(player_message, *_a, **_k):
@@ -1644,6 +1656,10 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
     )
     monkeypatch.setattr(cb, "classify_cli_action_intent", fake_classify)
     monkeypatch.setattr(cb, "extract_confirmation_intent", fake_confirm)
+    monkeypatch.setattr(
+        cb, "compose_decree_validation_recovery",
+        lambda fields, **_kwargs: recovery_fields.append(set(fields)) or "任意生成回禀",
+    )
 
     game = web_app.WebGame(fresh=False)
     monkeypatch.setattr(web_app, "web_game", game)
@@ -1675,6 +1691,16 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
         turn_before = int(game.state.turn)
 
         client = TestClient(web_app.app)
+        rejected = client.post(
+            f"/api/ministers/{name}/chat/stream",
+            json={"message": "拟旨整饬京师"},
+        )
+        assert rejected.status_code == 200
+        assert "event: done" in rejected.text and "event: error" not in rejected.text
+        assert {"target_id", "region_id"} <= recovery_fields[0]
+        assert not game.db.list_pending_actions(game.state.turn)
+        assert not game.db.list_decree_dossiers()
+
         petition = client.post(
             f"/api/ministers/{name}/chat",
             json={"message": "拨关宁军饷十五万两。"},
