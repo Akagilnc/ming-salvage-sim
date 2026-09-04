@@ -169,6 +169,24 @@ def _record_decree_validation_failures(
     }
 
 
+def _invoke_materializer(
+    ctx: MaterializeCtx,
+    fn: Any,
+    original_item: dict[str, Any],
+    failures: list[tuple[dict[str, Any], BaseException]],
+) -> None:
+    """Run one materializer and route every typed validation failure identically."""
+    try:
+        fn(ctx)
+    except (
+        StructuredDecreeCombinationError,
+        DecreeMaterializationValidationError,
+    ) as exc:
+        failures.append((
+            original_item or dict(getattr(exc, "partial_result", None) or {}), exc,
+        ))
+
+
 def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
     """按登记 priority 依次调用已注册 materializer。
 
@@ -241,13 +259,9 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
                 conversation_intent_handled=False,
                 draft_staged=False,
             )
-            try:
-                fn(candidate_ctx)
-            except (
-                StructuredDecreeCombinationError,
-                DecreeMaterializationValidationError,
-            ) as exc:
-                validation_failures.append((original_candidate, exc))
+            _invoke_materializer(
+                candidate_ctx, fn, original_candidate, validation_failures,
+            )
             if kind == "grant_allocation" and int(
                 candidate_out.get("pending_action_id") or 0
             ) > int(baseline_out.get("pending_action_id") or 0):
@@ -269,15 +283,7 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
         if fn is None or fn in seen:
             continue
         seen.add(fn)
-        try:
-            fn(ctx)
-        except (
-            StructuredDecreeCombinationError,
-            DecreeMaterializationValidationError,
-        ) as exc:
-            validation_failures.append((
-                dict(getattr(exc, "partial_result", None) or {}), exc,
-            ))
+        _invoke_materializer(ctx, fn, {}, validation_failures)
     if validation_failures:
         _record_decree_validation_failures(ctx, ctx.out, validation_failures)
     # #1380：LLM 分类拟旨路并行 office（无任免意图则 no-op）。
