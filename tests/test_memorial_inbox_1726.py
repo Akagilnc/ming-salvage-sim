@@ -5,11 +5,10 @@
 
 from __future__ import annotations
 
-import json
-
-import pytest
+import threading
 
 from ming_sim.db import GameDB
+from ming_sim.models import TurnPhase
 
 
 def _executing_with_owner(db, state, *, owner: str, token: str = "m1726"):
@@ -181,6 +180,8 @@ def test_state_payload_memorials_and_mark_read_api(game, monkeypatch):
     runtime.ending_payload = lambda: None
     runtime.public_character = lambda c: {"name": getattr(c, "name", "")}
     runtime.character_power_id = lambda c: "ming"
+    runtime._write_gate = threading.Lock()
+    runtime._runtime_write_gate = lambda: runtime._write_gate
 
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
     client = TestClient(web_app.app)
@@ -196,6 +197,14 @@ def test_state_payload_memorials_and_mark_read_api(game, monkeypatch):
     assert memorial["unread"] is True
     assert state_payload["unread_memorial_count"] == 1
 
+    # #1726 F1：核账相位经真 HTTP 入口 409，未读不得被吞。
+    for phase in (TurnPhase.SETTLING.value, TurnPhase.AWAITING_DECISION.value):
+        state.turn_phase = phase
+        blocked = client.post("/api/memorials/read", json={"keys": [key]})
+        assert blocked.status_code == 409
+        assert db.unread_memorial_count() == 1
+
+    state.turn_phase = TurnPhase.SUMMONING.value
     resp = client.post("/api/memorials/read", json={"keys": [key]})
     assert resp.status_code == 200
     payload = resp.json()

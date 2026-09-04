@@ -2173,6 +2173,39 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     expect(memorialsDialog.querySelector("pre.memorial-text")?.textContent).toBe(MEMORIAL_BODY);
     expect(memorialsDialog.textContent).not.toContain(SETTLEMENT_CLOSED_REASON);
     expect(memorialsDialog.textContent).not.toContain("progress:11");
+    expect(
+      fetchMock.mock.calls.some(([url, init]) =>
+        String(url).includes("/api/memorials/read") && (init as RequestInit | undefined)?.method === "POST",
+      ),
+    ).toBe(true);
+  });
+
+  it("#1726 核账展示：点开奏疏不发 POST /api/memorials/read", async () => {
+    const MEMORIAL_BODY = "核账期仍可读，但不得点开即已读。";
+    stubSettlementFetch({
+      ...settlementBaseState("settling"),
+      memorials: [{
+        key: "progress:11",
+        kind: "progress",
+        turn: 5,
+        author_name: "杨嗣昌",
+        memorial_text: MEMORIAL_BODY,
+        unread: true,
+      }],
+      unread_memorial_count: 1,
+    });
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    const host = await mountApp();
+    await click(cmdByCaption(host, "奏疏"));
+    await tick();
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="奏疏"]')).not.toBeNull());
+    });
+    expect(
+      fetchMock.mock.calls.some(([url, init]) =>
+        String(url).includes("/api/memorials/read") && (init as RequestInit | undefined)?.method === "POST",
+      ),
+    ).toBe(false);
   });
 
   it("#1342 朝堂抽屉开着时点拟诏：关抽屉并开拟诏台", async () => {
