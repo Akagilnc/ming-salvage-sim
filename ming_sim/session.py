@@ -2679,6 +2679,7 @@ class GameSession:
                 text=text,
                 target_id=target,
                 punish_action=action,
+                extracted_mode=mode,
                 amount=n if action == "罚俸" else 0,
                 transaction_category=transaction_category,
                 backing_dossier_id=backing_dossier_id,
