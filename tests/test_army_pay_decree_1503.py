@@ -1519,13 +1519,13 @@ def test_draft_xiexang_batch_failures_share_recovery_and_leave_zero_writes(
 
     recovery_calls = []
 
-    def recovery(*args, **kwargs):
-        recovery_calls.append((args, kwargs))
+    def recovery_backend(_prompt, _config=None, *, tag=""):
+        recovery_calls.append(tag)
         if recovery_fails:
             raise RuntimeError("recovery backend unavailable")
-        return "任意生成回禀"
+        return "任意生成回禀", 1
 
-    monkeypatch.setattr(cb, "compose_decree_validation_recovery", recovery)
+    monkeypatch.setattr(cb, "_run_backend_for_config", recovery_backend)
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     db, state, _content = game
     actor = db.conn.execute(
@@ -1552,13 +1552,15 @@ def test_draft_xiexang_batch_failures_share_recovery_and_leave_zero_writes(
         reply="准拨，数目另议。",
     )
     if recovery_fails:
-        with pytest.raises(RuntimeError, match="recovery backend unavailable"):
+        from ming_sim.exceptions import LLMUnavailable
+
+        with pytest.raises(LLMUnavailable):
             run_materialize_pipeline(ctx)
     else:
         run_materialize_pipeline(ctx)
     expected_fields = {"amount", "account", "purpose", "target_kind", "target_id"}
     assert recovery_calls
-    assert all(set(call[0][0]) == expected_fields for call in recovery_calls)
+    assert all(tag == "decree_validation_recovery" for tag in recovery_calls)
     if not recovery_fails:
         recovery = ctx.out.get("decree_validation_failure") or {}
         assert set(recovery.get("failed_fields") or []) == expected_fields
@@ -1625,8 +1627,10 @@ def test_http_chat_stream_exposes_typed_decree_validation_recovery(
         ),
     )
     monkeypatch.setattr(
-        cb, "compose_decree_validation_recovery",
-        lambda fields, **_kwargs: recovery_fields.append(set(fields)) or "任意生成回禀",
+        cb, "_run_backend_for_config",
+        lambda _prompt, _config=None, *, tag="": (
+            recovery_fields.append(tag) or "任意生成回禀", 1,
+        ),
     )
 
     game = web_app.WebGame(fresh=False)
@@ -1655,7 +1659,7 @@ def test_http_chat_stream_exposes_typed_decree_validation_recovery(
         done = events["done"]
         failure = done.get("decree_validation_failure") or {}
         assert {"amount", "account", "target_id"} <= set(failure.get("failed_fields") or [])
-        assert recovery_fields
+        assert recovery_fields == ["decree_validation_recovery"]
         assert "decree_validation_failure" in (done.get("presented_action_reports") or [])
         assert isinstance(done.get("answer"), str)
         assert not game.db.list_pending_actions(game.state.turn)
