@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>#1732 呈现规格 · A 统一奏疏牌</title>
+<style>
+  :root {
+    font-family: "Songti SC", "STSong", "SimSun", "Noto Serif SC", serif;
+    font-size: 17px;
+    line-height: 1.5;
+    color: #1a1410;
+    --panel: rgba(239, 222, 177, 0.92);
+    --panel-strong: rgba(249, 236, 196, 0.98);
+    --border: rgba(74, 45, 20, 0.42);
+    --gold: #d2a34a;
+    --gold-soft: #8a6424;
+    --red: #8f2f25;
+    --cinnabar: #9e3429;
+    --muted: #725f42;
+    --ink: #21180f;
+    --paper: #fdfaf3;
+    --paper-deep: #f3e9d2;
+    --wood: #4a3014;
+    --shadow: 0 22px 54px rgba(24, 18, 11, 0.38);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; background: #14100a; }
+  body {
+    min-height: 100vh;
+    background:
+      radial-gradient(ellipse at 50% 18%, rgba(213, 187, 115, 0.14), transparent 42%),
+      linear-gradient(160deg, #2a2218 0%, #14100a 48%, #0e0c09 100%);
+    color: #f3e6c4;
+    font-weight: 700;
+  }
+  h1, h2, h3 { font-family: inherit; letter-spacing: 0.04em; margin: 0; }
+
+  .page { max-width: 1080px; margin: 0 auto; padding: 28px 20px 64px; }
+  .badge {
+    display: inline-block; padding: 3px 10px; border-radius: 999px;
+    border: 1px solid rgba(226, 180, 86, 0.45); color: #f0d58a;
+    font-size: 0.78rem; letter-spacing: 0.12em; margin-bottom: 10px;
+  }
+  .page-title { color: #f5dfad; font-size: 1.55rem; margin-bottom: 6px; }
+  .page-lead { color: #b8a878; font-size: 0.92rem; max-width: 46em; margin: 0 0 22px; font-weight: 500; }
+
+  .scene-nav {
+    display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px;
+  }
+  .scene-nav button {
+    font: inherit; font-weight: 700; cursor: pointer;
+    padding: 8px 14px; border-radius: 6px;
+    border: 1px solid rgba(226, 180, 86, 0.4);
+    background: rgba(255, 235, 180, 0.06); color: #f3e6c4;
+  }
+  .scene-nav button.active {
+    background: linear-gradient(180deg, rgba(158, 52, 41, 0.92), rgba(126, 39, 31, 0.92));
+    border-color: rgba(240, 200, 100, 0.8); color: #fff3d0;
+  }
+  .scene-nav button:hover:not(.active) {
+    background: rgba(48, 33, 15, 0.72); border-color: rgba(240, 200, 100, 0.7);
+  }
+
+  .stage-shell {
+    position: relative;
+    border: 1px solid rgba(226, 180, 86, 0.38);
+    border-radius: 8px;
+    overflow: hidden;
+    min-height: 560px;
+    background:
+      linear-gradient(180deg, rgba(48, 39, 28, 0.55), rgba(23, 20, 16, 0.72)),
+      radial-gradient(circle at 70% 30%, rgba(180, 120, 40, 0.12), transparent 40%),
+      #1c1812;
+    box-shadow: var(--shadow);
+  }
+  .stage-label {
+    position: absolute; top: 12px; left: 14px; z-index: 2;
+    font-size: 0.75rem; color: #c9a86f; letter-spacing: 0.08em;
+    background: rgba(20, 16, 10, 0.72); padding: 4px 10px; border-radius: 4px;
+    border: 1px solid rgba(226, 180, 86, 0.28);
+  }
+
+  /* 局内浅色菜单（模拟 center-modal） */
+  .center-layer {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    padding: 28px 16px;
+  }
+  .center-scrim {
+    position: absolute; inset: 0;
+    background: rgba(18, 15, 11, 0.42);
+  }
+  .center-modal {
+    position: relative; width: min(560px, 94vw);
+    background: #fdfaf3; border: 1px solid rgba(120, 80, 30, 0.4);
+    border-radius: 8px; box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+    color: #2c1f10; overflow: hidden;
+  }
+  .center-modal-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 16px; border-bottom: 1px solid rgba(120, 80, 30, 0.25);
+    background: #f3e9d2;
+  }
+  .center-modal-header h1 { font-size: 1.1rem; color: #4a3014; }
+  .icon-x {
+    width: 32px; height: 32px; border-radius: 6px; border: 1px solid rgba(0,0,0,0.28);
+    background: rgba(255,250,235,0.85); color: #1a1410; cursor: pointer; font: inherit;
+  }
+  .game-menu { display: flex; min-height: 300px; }
+  .game-menu-tabs {
+    display: flex; flex-direction: column; gap: 4px;
+    min-width: 132px; padding: 12px 10px 16px 12px;
+    border-right: 1px solid rgba(120, 80, 30, 0.3);
+  }
+  .game-menu-tabs span, .game-menu-tabs button {
+    display: block; width: 100%; text-align: left;
+    padding: 8px 12px; border-radius: 4px 0 0 4px;
+    border: 1px solid transparent; background: transparent;
+    color: #4a3014; font: inherit; font-size: 0.9rem; cursor: default;
+  }
+  .game-menu-tabs .active {
+    background: rgba(255, 240, 200, 0.7);
+    border-color: rgba(120, 80, 30, 0.4); border-right-color: transparent; font-weight: 700;
+  }
+  .game-menu-body { flex: 1; padding: 14px 16px 18px; }
+  .menu-section h3 { font-size: 1rem; color: #2c1f10; margin-bottom: 6px; }
+  .menu-hint { margin: 0 0 12px; color: #6a5a3a; font-size: 0.84rem; font-weight: 500; }
+  .menu-hint b { color: #8a1818; font-weight: 700; }
+  .menu-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+  .menu-input {
+    flex: 1; min-width: 120px; padding: 6px 10px;
+    border: 1px solid rgba(120, 80, 30, 0.4); border-radius: 4px;
+    background: rgba(255, 248, 224, 0.7); color: #1a1410; font: inherit; font-size: 0.88rem;
+  }
+  .menu-btn {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 6px 12px; border-radius: 4px; font: inherit; font-size: 0.85rem; cursor: pointer;
+    border: 1px solid rgba(120, 80, 30, 0.4); background: rgba(255, 240, 200, 0.6); color: #4a3014;
+  }
+  .menu-btn.primary { background: #6a4014; color: #fff5d8; border-color: #6a4014; }
+  .menu-btn.danger { color: #8a1818; border-color: rgba(138, 24, 24, 0.5); }
+  .menu-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+  .menu-btn:hover:not(:disabled) { filter: brightness(1.05); }
+
+  /* 拟诏台背景 */
+  .edict-stage {
+    position: absolute; inset: 0;
+    display: none; flex-direction: column;
+    padding: 48px 28px 22px;
+    background:
+      linear-gradient(180deg, rgba(244, 236, 216, 0.92), rgba(232, 214, 170, 0.94));
+    color: #1a1410;
+  }
+  .edict-stage h2 { font-size: 1.05rem; letter-spacing: 0.06em; margin-bottom: 10px; }
+  .desk-columns { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 18px; flex: 1; min-height: 0; }
+  .directive-item {
+    padding: 11px 12px 11px 14px; border: 1px solid rgba(120, 86, 42, 0.22); border-radius: 3px;
+    background: linear-gradient(90deg, rgba(120, 86, 42, 0.10), transparent 22px), rgba(250, 242, 219, 0.82);
+    font-size: 0.88rem; font-weight: 500; color: #3e3020; margin-bottom: 8px;
+  }
+  .empty-note {
+    padding: 14px; border: 1px dashed rgba(170, 50, 36, 0.45); border-radius: 4px;
+    background: rgba(176, 58, 40, 0.08); color: #6a1a1a; font-size: 0.88rem; font-weight: 500;
+  }
+  .desk-compose textarea {
+    width: 100%; min-height: 110px; resize: vertical; padding: 10px;
+    border: 1px solid rgba(120, 86, 42, 0.35); border-radius: 4px;
+    background: rgba(255, 241, 208, 0.92); color: #1a1410; font: inherit; font-weight: 500;
+  }
+  .desk-footer { display: flex; justify-content: flex-end; padding-top: 14px; }
+  .seal-btn-issue {
+    font: inherit; font-weight: 700; cursor: pointer;
+    padding: 10px 18px; border-radius: 6px;
+    background: linear-gradient(180deg, #9c392c, #561f19);
+    color: #ffe4b0; border: 1px solid rgba(226, 180, 86, 0.5);
+    box-shadow: 0 3px 10px rgba(86, 31, 25, 0.35);
+  }
+
+  /* A 取向：统一奏疏牌 confirm overlay */
+  .memorial-layer {
+    position: absolute; inset: 0; z-index: 20;
+    display: none; align-items: center; justify-content: center;
+    padding: 20px;
+  }
+  .memorial-layer.show { display: flex; }
+  .memorial-scrim {
+    position: absolute; inset: 0;
+    background: rgba(18, 12, 6, 0.52);
+    backdrop-filter: blur(2px);
+  }
+  .memorial-plaque {
+    position: relative;
+    width: min(420px, 92vw);
+    border: 1px solid rgba(120, 60, 20, 0.5);
+    border-radius: 6px;
+    background:
+      linear-gradient(180deg, rgba(255, 248, 230, 0.98), rgba(244, 227, 183, 0.98)),
+      #f4e3b7;
+    box-shadow:
+      0 22px 62px rgba(18, 12, 6, 0.48),
+      inset 0 1px 0 rgba(255, 250, 235, 0.8),
+      inset 0 0 0 1px rgba(226, 180, 86, 0.18);
+    color: #2e1b0a;
+    overflow: hidden;
+  }
+  .memorial-plaque::before {
+    content: "";
+    position: absolute; left: 0; top: 0; bottom: 0; width: 8px;
+    background: linear-gradient(180deg, #9e3429, #6a1e18 55%, #4a140f);
+  }
+  .memorial-plaque.danger::before {
+    background: linear-gradient(180deg, #c0432f, #8a261b 55%, #5a1810);
+  }
+  .memorial-plaque.alert::before {
+    background: linear-gradient(180deg, #b07020, #8a6424);
+  }
+  .memorial-head {
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+    padding: 16px 18px 10px 22px;
+    border-bottom: 1px solid rgba(120, 60, 20, 0.18);
+  }
+  .memorial-kicker {
+    font-size: 0.72rem; letter-spacing: 0.22em; color: #7a4a10; font-weight: 700;
+  }
+  .memorial-head h2 {
+    margin-top: 4px; font-size: 1.15rem; color: #0e0a06; letter-spacing: 0.08em;
+  }
+  .memorial-seal-mark {
+    flex: 0 0 auto; width: 48px; height: 48px;
+    border: 2px solid rgba(158, 52, 41, 0.75); border-radius: 4px;
+    color: #9e3429; display: grid; place-items: center;
+    font-size: 0.78rem; letter-spacing: 0.12em; line-height: 1.15; text-align: center;
+    transform: rotate(-8deg); opacity: 0.88;
+    background: rgba(158, 52, 41, 0.06);
+  }
+  .memorial-body {
+    padding: 14px 18px 8px 22px;
+    font-size: 0.95rem; font-weight: 500; line-height: 1.75; color: #2a1c0e;
+  }
+  .memorial-consequence {
+    margin: 10px 18px 0 22px; padding: 10px 12px;
+    border-left: 3px solid rgba(158, 52, 41, 0.55);
+    background: rgba(176, 58, 40, 0.08);
+    color: #6a1a1a; font-size: 0.84rem; font-weight: 500;
+  }
+  .memorial-typegate {
+    margin: 12px 18px 0 22px;
+  }
+  .memorial-typegate label {
+    display: block; font-size: 0.82rem; color: #6a5a3a; margin-bottom: 6px; font-weight: 500;
+  }
+  .memorial-typegate input {
+    width: 100%; padding: 8px 10px; font: inherit;
+    border: 1px solid rgba(120, 80, 30, 0.4); border-radius: 4px;
+    background: rgba(255, 248, 224, 0.85); color: #1a1410;
+  }
+  .memorial-actions {
+    display: flex; justify-content: flex-end; gap: 10px;
+    padding: 16px 18px 18px 22px;
+  }
+  .memorial-actions button {
+    font: inherit; font-weight: 700; cursor: pointer;
+    padding: 8px 16px; border-radius: 5px;
+    border: 1px solid rgba(120, 86, 42, 0.4);
+    background: rgba(252, 247, 232, 0.92); color: #2a1c0e;
+  }
+  .memorial-actions button.ghost:hover { background: rgba(255, 240, 210, 0.96); }
+  .memorial-actions button.yes {
+    background: linear-gradient(180deg, #c0432f, #8a261b);
+    color: #ffe9d8; border-color: rgba(150, 36, 28, 0.6);
+  }
+  .memorial-actions button.yes:hover { background: linear-gradient(180deg, #d24c36, #9a2c1f); }
+  .memorial-actions button.yes:disabled { opacity: 0.45; cursor: not-allowed; }
+  .memorial-actions button.primary-ink {
+    background: #6a4014; color: #fff5d8; border-color: #6a4014;
+  }
+
+  .catalog {
+    margin-top: 28px; padding: 18px 18px 8px;
+    border: 1px solid rgba(226, 180, 86, 0.28); border-radius: 8px;
+    background: rgba(20, 16, 10, 0.55);
+  }
+  .catalog h3 { color: #f0d58a; font-size: 1rem; margin-bottom: 10px; }
+  .catalog p { color: #b8a878; font-size: 0.84rem; font-weight: 500; margin: 0 0 12px; }
+  .catalog-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px; }
+  .catalog-grid button {
+    font: inherit; font-size: 0.82rem; font-weight: 600; text-align: left; cursor: pointer;
+    padding: 10px 12px; border-radius: 5px; color: #f3e6c4;
+    border: 1px solid rgba(226, 180, 86, 0.28); background: rgba(255, 245, 215, 0.06);
+  }
+  .catalog-grid button:hover {
+    background: rgba(255, 245, 215, 0.12); border-color: rgba(226, 180, 86, 0.55);
+  }
+  .catalog-grid button small { display: block; color: #b8a878; font-weight: 500; margin-top: 4px; }
+
+  .scene { display: none; }
+  .scene.active { display: block; }
+  .note-strip {
+    margin-top: 14px; padding: 10px 14px; border-radius: 6px;
+    background: rgba(255, 245, 215, 0.06); border: 1px solid rgba(226, 180, 86, 0.22);
+    color: #c9b48a; font-size: 0.84rem; font-weight: 500;
+  }
+</style>
+</head>
+<body>
+  <div class="page">
+    <div class="badge">#1732 · 取向 A · 统一奏疏牌</div>
+    <h1 class="page-title">所有确认 / 告警 → 同一块画面内奏疏牌</h1>
+    <p class="page-lead">
+      以一枚「奏疏牌」浮层替换全部 <code style="color:#f0d58a">window.confirm / alert</code>。
+      牌面结构固定：事由 · 后果 · 准/驳。高危动作仅在牌内加码（手打解锁），不另起形态。
+      本页可点按钮打开各场景；文案均为票面原句。
+    </p>
+
+    <div class="scene-nav" id="scene-nav">
+      <button type="button" class="active" data-scene="exit-menu">① 回到主菜单</button>
+      <button type="button" data-scene="reset">② 重开新局</button>
+      <button type="button" data-scene="edict">③ 拟诏台无参确认</button>
+    </div>
+
+    <div class="stage-shell">
+      <div class="stage-label" id="stage-label">场景：回到主菜单 · 页面内已有确认面板 → 点按钮出奏疏牌（本取向仍弹一次画面内确认；与现状双重不同在于去掉原生框）</div>
+
+      <!-- 场景 1：回到主菜单 -->
+      <div class="scene active" id="scene-exit-menu">
+        <div class="center-layer">
+          <div class="center-scrim"></div>
+          <div class="center-modal">
+            <div class="center-modal-header">
+              <h1>游戏菜单</h1>
+              <button class="icon-x" type="button" aria-label="关闭">×</button>
+            </div>
+            <div class="game-menu">
+              <div class="game-menu-tabs">
+                <span>保存存档</span>
+                <span>加载存档</span>
+                <span class="active">回到主菜单</span>
+                <span>重开新局</span>
+                <span>退出游戏</span>
+              </div>
+              <div class="game-menu-body">
+                <section class="menu-section">
+                  <h3>回到主菜单</h3>
+                  <p class="menu-hint">
+                    关闭当前游戏会话，回到主菜单。数据库与存档不变；可从主菜单「继续上局」或「加载存档」回到游戏。
+                  </p>
+                  <div class="menu-row">
+                    <button class="menu-btn primary" type="button" id="btn-exit-menu">回到主菜单</button>
+                  </div>
+                </section>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 场景 2：重开新局 -->
+      <div class="scene" id="scene-reset">
+        <div class="center-layer">
+          <div class="center-scrim"></div>
+          <div class="center-modal">
+            <div class="center-modal-header">
+              <h1>游戏菜单</h1>
+              <button class="icon-x" type="button" aria-label="关闭">×</button>
+            </div>
+            <div class="game-menu">
+              <div class="game-menu-tabs">
+                <span>保存存档</span>
+                <span>加载存档</span>
+                <span>回到主菜单</span>
+                <span class="active">重开新局</span>
+                <span>退出游戏</span>
+              </div>
+              <div class="game-menu-body">
+                <section class="menu-section">
+                  <h3>重开新局</h3>
+                  <p class="menu-hint">
+                    清空主 DB（聊天记录、回合奏报、局势、ledger 全清），重置到开局。
+                    <b>不可撤销</b>。要保留当前局，先到「保存存档」存一份。
+                  </p>
+                  <p class="menu-hint">本取向把「手打重开」挪进奏疏牌，面板按钮只负责唤起牌面——授权强度不降。</p>
+                  <div class="menu-row">
+                    <button class="menu-btn danger" type="button" id="btn-reset">重开新局</button>
+                  </div>
+                </section>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 场景 3：拟诏台 -->
+      <div class="scene" id="scene-edict" style="position:absolute;inset:0;">
+        <div class="edict-stage" style="display:flex;">
+          <div class="desk-columns">
+            <section>
+              <h2>本月指令</h2>
+              <div class="empty-note">
+                无可颁诏草案。仍有失败密令未处理（可点「处理」进入失败恢复）。
+                主钮呈「退朝结束本月」——现状会弹出<strong>无文案</strong>的原生 confirm。
+              </div>
+            </section>
+            <section class="desk-compose">
+              <h2>御笔自拟</h2>
+              <textarea placeholder="例如：命户部核拨关宁、山海关、蓟镇辽饷一百五十二万两..."></textarea>
+            </section>
+          </div>
+          <div class="desk-footer">
+            <button class="seal-btn-issue" type="button" id="btn-edict">退朝结束本月 →</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 统一奏疏牌 -->
+      <div class="memorial-layer" id="memorial-layer" role="dialog" aria-modal="true" aria-labelledby="memorial-title">
+        <div class="memorial-scrim" id="memorial-scrim"></div>
+        <div class="memorial-plaque" id="memorial-plaque">
+          <div class="memorial-head">
+            <div>
+              <div class="memorial-kicker" id="memorial-kicker">奏疏确认</div>
+              <h2 id="memorial-title">确认</h2>
+            </div>
+            <div class="memorial-seal-mark" id="memorial-seal">准<br>驳</div>
+          </div>
+          <div class="memorial-body" id="memorial-body"></div>
+          <div class="memorial-consequence" id="memorial-consequence" hidden></div>
+          <div class="memorial-typegate" id="memorial-typegate" hidden>
+            <label for="type-input">输入「重开」二字以解锁：</label>
+            <input id="type-input" type="text" placeholder="输入：重开" autocomplete="off" />
+          </div>
+          <div class="memorial-actions">
+            <button type="button" class="ghost" id="memorial-no">取消</button>
+            <button type="button" class="yes" id="memorial-yes">确定</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <p class="note-strip" id="note-strip">
+      A 取向要点：双重确认问题——页面内说明面板仍保留作「导航/说明」，真正的授权落在奏疏牌一次点击上；不再叠加原生框。
+      若 owner 认为说明面板已构成一次确认，可再裁掉牌面（那是 B 取向）。
+    </p>
+
+    <div class="catalog">
+      <h3>其余 7 处同源奏疏牌（点开预览）</h3>
+      <p>同一组件，只换文案与危险级左边条。alert 用「知悉」单钮。</p>
+      <div class="catalog-grid">
+        <button type="button" data-demo="undo">撤回召对<small>将撤回最近一轮召对及其政务影响，是否继续？</small></button>
+        <button type="button" data-demo="load">加载存档<small>确定加载 3.db？当前未保存进度会丢失。</small></button>
+        <button type="button" data-demo="shutdown">退出游戏<small>退出整个游戏？前后端进程都会关闭，未保存的进度会丢失。</small></button>
+        <button type="button" data-demo="del-db">删除局内存档<small>删除 3.db？</small></button>
+        <button type="button" data-demo="overwrite">覆盖主进度<small>将覆盖当前主进度，是否继续？建议先在游戏中保存为存档。</small></button>
+        <button type="button" data-demo="del-save">删除主菜单存档<small>删除存档「辽饷吃紧」？此操作不可撤销。</small></button>
+        <button type="button" data-demo="alert">上传失败 alert<small>上传失败：网络中断</small></button>
+      </div>
+    </div>
+  </div>
+
+<script>
+  const layer = document.getElementById("memorial-layer");
+  const plaque = document.getElementById("memorial-plaque");
+  const titleEl = document.getElementById("memorial-title");
+  const kickerEl = document.getElementById("memorial-kicker");
+  const bodyEl = document.getElementById("memorial-body");
+  const consEl = document.getElementById("memorial-consequence");
+  const gateEl = document.getElementById("memorial-typegate");
+  const inputEl = document.getElementById("type-input");
+  const yesBtn = document.getElementById("memorial-yes");
+  const noBtn = document.getElementById("memorial-no");
+  const sealEl = document.getElementById("memorial-seal");
+
+  const presets = {
+    "exit-menu": {
+      kicker: "会话事务",
+      title: "回到主菜单",
+      body: "回到主菜单？当前对局会关闭（DB 仍保留，可从「继续上局」回到此处）。",
+      consequence: "",
+      danger: false,
+      typegate: false,
+      yes: "回到主菜单",
+      yesClass: "primary-ink",
+      seal: "准\n行",
+    },
+    reset: {
+      kicker: "不可逆清库",
+      title: "重开新局",
+      body: "确定重开新局？当前局所有数据将被永久清空（存档目录不动）。",
+      consequence: "聊天记录、回合奏报、局势、ledger 全清，重置到开局。存档目录中的既有 .db 不受影响。",
+      danger: true,
+      typegate: true,
+      yes: "重开新局",
+      yesClass: "yes",
+      seal: "朱\n批",
+    },
+    edict: {
+      kicker: "拟诏台 · 退朝",
+      title: "退朝结束本月",
+      body: "本月无可颁诏草案，仍有失败密令未处理。确认不经盖玺颁诏、直接退朝结束本月？",
+      consequence: "将走 advance_without_edict；失败密令可稍后在失败恢复中继续处理。",
+      danger: false,
+      typegate: false,
+      yes: "退朝结束本月",
+      yesClass: "yes",
+      seal: "退\n朝",
+    },
+    undo: {
+      kicker: "召对事务",
+      title: "撤回最近一轮",
+      body: "将撤回最近一轮召对及其政务影响，是否继续？",
+      consequence: "",
+      danger: false, typegate: false, yes: "继续撤回", yesClass: "yes", seal: "准\n驳",
+    },
+    load: {
+      kicker: "存档事务",
+      title: "加载存档",
+      body: "确定加载 3.db？当前未保存进度会丢失。",
+      consequence: "",
+      danger: true, typegate: false, yes: "确定加载", yesClass: "yes", seal: "准\n行",
+    },
+    shutdown: {
+      kicker: "进程事务",
+      title: "退出游戏",
+      body: "退出整个游戏？前后端进程都会关闭，未保存的进度会丢失。",
+      consequence: "",
+      danger: true, typegate: false, yes: "退出游戏", yesClass: "yes", seal: "止\n停",
+    },
+    "del-db": {
+      kicker: "存档事务",
+      title: "删除存档",
+      body: "删除 3.db？",
+      consequence: "此删除不可撤销。",
+      danger: true, typegate: false, yes: "删除", yesClass: "yes", seal: "销\n档",
+    },
+    overwrite: {
+      kicker: "主进度",
+      title: "覆盖主进度",
+      body: "将覆盖当前主进度，是否继续？建议先在游戏中保存为存档。",
+      consequence: "",
+      danger: true, typegate: false, yes: "继续覆盖", yesClass: "yes", seal: "准\n行",
+    },
+    "del-save": {
+      kicker: "存档事务",
+      title: "删除存档",
+      body: "删除存档「辽饷吃紧」？此操作不可撤销。",
+      consequence: "",
+      danger: true, typegate: false, yes: "删除", yesClass: "yes", seal: "销\n档",
+    },
+    alert: {
+      kicker: "系统告警",
+      title: "上传失败",
+      body: "上传失败：网络中断",
+      consequence: "",
+      danger: false, typegate: false, yes: "知悉", yesClass: "primary-ink", seal: "阅\n知",
+      alert: true,
+    },
+  };
+
+  function openMemorial(key) {
+    const p = presets[key];
+    if (!p) return;
+    kickerEl.textContent = p.kicker;
+    titleEl.textContent = p.title;
+    bodyEl.textContent = p.body;
+    if (p.consequence) {
+      consEl.hidden = false;
+      consEl.textContent = p.consequence;
+    } else {
+      consEl.hidden = true;
+    }
+    plaque.classList.toggle("danger", !!p.danger);
+    plaque.classList.toggle("alert", !!p.alert);
+    sealEl.innerHTML = p.seal.replace("\n", "<br>");
+    gateEl.hidden = !p.typegate;
+    inputEl.value = "";
+    yesBtn.textContent = p.yes;
+    yesBtn.className = p.yesClass;
+    if (p.alert) {
+      noBtn.hidden = true;
+      yesBtn.disabled = false;
+    } else {
+      noBtn.hidden = false;
+      yesBtn.disabled = !!p.typegate;
+    }
+    layer.classList.add("show");
+    if (p.typegate) inputEl.focus();
+  }
+
+  function closeMemorial() {
+    layer.classList.remove("show");
+  }
+
+  inputEl.addEventListener("input", () => {
+    yesBtn.disabled = inputEl.value.trim() !== "重开";
+  });
+  noBtn.addEventListener("click", closeMemorial);
+  document.getElementById("memorial-scrim").addEventListener("click", closeMemorial);
+  yesBtn.addEventListener("click", () => {
+    if (yesBtn.disabled) return;
+    closeMemorial();
+  });
+
+  document.getElementById("btn-exit-menu").addEventListener("click", () => openMemorial("exit-menu"));
+  document.getElementById("btn-reset").addEventListener("click", () => openMemorial("reset"));
+  document.getElementById("btn-edict").addEventListener("click", () => openMemorial("edict"));
+
+  document.querySelectorAll("[data-demo]").forEach((btn) => {
+    btn.addEventListener("click", () => openMemorial(btn.getAttribute("data-demo")));
+  });
+
+  const scenes = {
+    "exit-menu": "场景：回到主菜单 · 页面内已有确认面板 → 点按钮出奏疏牌（去掉原生框；说明面板 + 奏疏牌各司其职）",
+    reset: "场景：重开新局 · 手打「重开」挪入奏疏牌内解锁，授权强度不降低",
+    edict: "场景：拟诏台 failed-only · 为空的 window.confirm() 补上退朝语义文案",
+  };
+
+  document.querySelectorAll("#scene-nav button").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll("#scene-nav button").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      const id = btn.getAttribute("data-scene");
+      document.querySelectorAll(".scene").forEach((s) => s.classList.remove("active"));
+      const el = document.getElementById("scene-" + id);
+      el.classList.add("active");
+      if (id === "edict") el.style.display = "block";
+      document.getElementById("stage-label").textContent = scenes[id];
+      closeMemorial();
+    });
+  });
+</script>
+</body>
+</html>
