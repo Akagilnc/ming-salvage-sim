@@ -289,6 +289,28 @@ def assemble_structured_decree(
     action = _as_str(src.get("action_type") or "").strip()
     target_kind = _as_str(src.get("target_kind") or "").strip()
     target_id = _as_str(src.get("target_id") or "").strip()
+    region_id = _as_str(src.get("region_id") or "").strip()
+    if target_kind == "region":
+        from ming_sim.matching import (
+            canonical_region_id_exact,
+            resolve_special_region_alias,
+        )
+
+        canonical_target = resolve_special_region_alias(target_id.lstrip("@"))
+        canonical_region = resolve_special_region_alias(
+            (region_id or target_id).lstrip("@"),
+        )
+        if regions_content:
+            canonical_target = canonical_target or canonical_region_id_exact(
+                target_id, dict(regions_content),
+            )
+            canonical_region = canonical_region or canonical_region_id_exact(
+                region_id or target_id, dict(regions_content),
+            )
+        if canonical_target is not None:
+            target_id = canonical_target
+        if canonical_region is not None:
+            region_id = canonical_region
 
     out: Dict[str, object] = dict(src)
     if action:
@@ -305,7 +327,6 @@ def assemble_structured_decree(
     else:
         out["locality_scope"] = write_locality_scope_for_target_kind(target_kind)
 
-    region_id = _as_str(src.get("region_id") or "").strip()
     if target_kind == "region":
         out["region_id"] = region_id or target_id
     elif region_id:
