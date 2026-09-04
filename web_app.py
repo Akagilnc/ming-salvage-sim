@@ -1324,9 +1324,6 @@ class WebGame:
         """#1726 奏疏收件箱投影：进度奏报 + 派系检举；正文原样，已读位随存档。"""
         return list(self.db.list_player_memorials())
 
-    def unread_memorial_count(self) -> int:
-        return int(self.db.unread_memorial_count())
-
     def mark_memorials_read(self, keys: List[str]) -> Dict[str, Any]:
         self.db.mark_memorials_read(keys)
         memorials = self.memorial_payloads()
@@ -1520,6 +1517,8 @@ class WebGame:
                         else "上月结算未完成（进度已保存）。"
                     ),
                 }
+        # #1726：奏疏收件箱与未读数同份 list，禁每请求双跑 list_player_memorials。
+        memorials = self.memorial_payloads()
         return {
             "turn": {"year": self.state.year, "period": self.state.period,
                      "turn": self.state.turn, "phase": turn_phase,
@@ -1536,8 +1535,8 @@ class WebGame:
             # 留 knowledge/simulation/tools 三缝，不动 settlement_display/budget 投影）。
             "issues": self.issue_payloads(),
             # #1726：奏疏收件箱（与局势 issues 脱钩）；未读数与面板同源。
-            "memorials": self.memorial_payloads(),
-            "unread_memorial_count": self.unread_memorial_count(),
+            "memorials": memorials,
+            "unread_memorial_count": sum(1 for m in memorials if m.get("unread")),
             "legacies": self.legacies_payload(),
             "closed_this_turn": self.closed_this_turn_payloads(),
             "budget": self.budget_payload(),

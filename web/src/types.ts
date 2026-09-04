@@ -186,7 +186,7 @@ export type Issue = {
 /** #1726 奏疏收件箱条目（进度奏报 / 派系检举） */
 export type Memorial = {
   key: string;
-  kind: "progress" | "denunciation" | string;
+  kind: "progress" | "denunciation";
   turn: number;
   author_name: string;
   memorial_text: string;

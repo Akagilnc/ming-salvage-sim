@@ -143,7 +143,7 @@ def test_mark_read_binds_to_row_not_dossier_and_persists(game):
 
 
 def test_state_payload_memorials_and_mark_read_api(game, monkeypatch):
-    """真实入口：memorial 投影 + POST /api/memorials/read 后计数归零。"""
+    """真实入口：GET /api/game/state 投影 + POST /api/memorials/read 后计数归零。"""
     from types import SimpleNamespace
 
     import web_app
@@ -157,22 +157,46 @@ def test_state_payload_memorials_and_mark_read_api(game, monkeypatch):
         did, state.turn, "在办", body,
         origin="dossier-report:monthly_errand", commit=True,
     )
+    key = f"progress:{pid}"
 
+    # 与 c3/s2 同形轻壳：经真 state_payload 投影链；object.__new__ 拼装可暂留。
     runtime = object.__new__(web_app.WebGame)
     runtime.favorites = set()
-    runtime.session = SimpleNamespace(db=db, state=state, content=content)
-
-    memorials = web_app.WebGame.memorial_payloads(runtime)
-    assert len(memorials) == 1
-    assert memorials[0]["key"] == f"progress:{pid}"
-    assert memorials[0]["memorial_text"] == body
-    assert memorials[0]["author_name"] == owner
-    assert memorials[0]["unread"] is True
-    assert web_app.WebGame.unread_memorial_count(runtime) == 1
+    runtime.session = SimpleNamespace(
+        db=db,
+        state=state,
+        content=content,
+        pending_count=lambda: 0,
+        pending_decisions=lambda: [],
+        victory=lambda: {"status": "ongoing", "summary": ""},
+        previous_summary="",
+        last_decree="",
+        last_report="",
+    )
+    runtime.directive_rows = lambda: []
+    runtime.issue_payloads = lambda: []
+    runtime.legacies_payload = lambda: []
+    runtime.closed_this_turn_payloads = lambda: []
+    runtime.map_nodes = lambda: []
+    runtime.ending_payload = lambda: None
+    runtime.public_character = lambda c: {"name": getattr(c, "name", "")}
+    runtime.character_power_id = lambda c: "ming"
 
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
     client = TestClient(web_app.app)
-    resp = client.post("/api/memorials/read", json={"keys": [f"progress:{pid}"]})
+
+    # 验收第 7 条：真 HTTP GET /api/game/state；断接线（去 memorials 键）须转红。
+    state_resp = client.get("/api/game/state")
+    assert state_resp.status_code == 200
+    state_payload = state_resp.json()
+    assert any(m.get("key") == key for m in state_payload["memorials"])
+    memorial = next(m for m in state_payload["memorials"] if m["key"] == key)
+    assert memorial["memorial_text"] == body
+    assert memorial["author_name"] == owner
+    assert memorial["unread"] is True
+    assert state_payload["unread_memorial_count"] == 1
+
+    resp = client.post("/api/memorials/read", json={"keys": [key]})
     assert resp.status_code == 200
     payload = resp.json()
     assert payload["unread_memorial_count"] == 0
