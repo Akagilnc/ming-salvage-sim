@@ -3508,6 +3508,8 @@ class WebGame:
         def worker() -> None:
             nonlocal pending_ticket
             payload: Optional[Dict[str, Any]] = None
+            # #1727：court_break 预领屏障；异常出口也须 complete，禁 has_open_barrier 永真。
+            close_barrier_ticket: Optional[WriteTicket] = None
             try:
                 try:
                     # P5：唯一不依赖回话输出的独立调用 = CLI 动作意图分类（只读皇帝消息）。
@@ -3533,10 +3535,9 @@ class WebGame:
                         explicit_secret_order=explicit_secret_order,
                     )
 
-                    # P5：先 done（回话可见），再读心∥高亮∥抽取补挂，最后 end——玩家无「为后处理黑屏」。
-                    ev_queue.put({"type": "done", "payload": payload or {}})
                     answer = str((payload or {}).get("answer") or "")
                     message_id = int((payload or {}).get("minister_message_id") or 0)
+                    court_action = str((payload or {}).get("court_action") or "")
                     # #1353：三腿统一经 _spawn_pending_write_thread（claim→try callee→finally 归还）；
                     # seal/claim 拒绝 → 不起线程、零 LLM 零写。整轮票在 spawn 后空放行。
                     turn_key = ("turn", int(chat_turn_id)) if chat_turn_id else None
@@ -3545,6 +3546,8 @@ class WebGame:
                     mind_thread: Optional[threading.Thread] = None
                     highlight_box: List[str] = []
                     mind_box: List[Optional[Dict[str, Any]]] = []
+                    # #1727：court_break 预领屏障票——须在尾随领票之后、done 之前，
+                    # 使 has_open_barrier 对玩家写入口立刻可见；尾随 seq 更低仍可写。
 
                     if chat_turn_id and answer:
                         extraction_thread = self._spawn_extraction_trail(
@@ -3602,6 +3605,17 @@ class WebGame:
                         self._complete_pending_write(pending_ticket)
                         pending_ticket = None
 
+                    if court_action == "court_break":
+                        # 无尾随时也须放行整轮票，再领屏障（禁自等待）。
+                        if pending_ticket is not None:
+                            self._complete_pending_write(pending_ticket)
+                            pending_ticket = None
+                        close_barrier_ticket = self._runtime_write_queue().claim_barrier()
+
+                    # P5：先 done（回话可见），再 join 尾随 / 收夜 / end——玩家无「为后处理黑屏」。
+                    # #1727：court_break 时 done 前已领屏障，召对写入口不再全活。
+                    ev_queue.put({"type": "done", "payload": payload or {}})
+
                     if mind_thread is not None:
                         mind_thread.join()
                     mind_payload = mind_box[0] if mind_box else None
@@ -3626,11 +3640,15 @@ class WebGame:
 
                     # #526/#1353：尾随票已清后收夜。整轮票已 complete 时 ticketed gate 会
                     # TicketCancelled——收夜短写改走裸 runtime write_gate（腿已终态，无越屏障窗）。
+                    # #1727：预领屏障票交给 close 复用（run_barrier），禁再领第二张。
                     close_after = getattr(self.session, "close_night_after_chat_if_needed", None)
                     if close_after is not None:
+                        # barrier_ticket 由 close.run_barrier / 早退 complete；
+                        # worker finally 再幂等 complete 一次兜底。
                         close_after(
-                            (payload or {}).get("court_action") or "",
+                            court_action,
                             write_gate=bare_write_gate,
+                            barrier_ticket=close_barrier_ticket,
                         )
 
                     ev_queue.put({"type": "end"})
@@ -3672,6 +3690,9 @@ class WebGame:
                         })
                     ev_queue.put({"type": "end"})
             finally:
+                if close_barrier_ticket is not None:
+                    self._runtime_write_queue().complete(close_barrier_ticket)
+                    close_barrier_ticket = None
                 self._complete_pending_write(pending_ticket)
 
         thread = threading.Thread(target=worker, daemon=True)
