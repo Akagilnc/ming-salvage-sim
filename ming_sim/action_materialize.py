@@ -88,7 +88,7 @@ def _materializable_draft_xiexang(
     """在真实写入前置条件齐全时，把 draft 协饷投影为本轮 grant 候选。
 
     列表契约逐项独立物化；不按付款字段相等折叠。
-    draft+协饷验证失败原样抛出（fail-loud，零写，不退回 ordinary draft）。
+    draft+协饷验证失败保持零写且产出 typed 呈现信号，不退回 ordinary draft。
     """
     if (
         str(candidate.get("kind") or "").strip() != "draft"

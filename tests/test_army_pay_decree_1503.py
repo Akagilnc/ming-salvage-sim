@@ -1529,10 +1529,13 @@ def test_draft_xiexang_incomplete_or_illegal_returns_recovery_zero_write(
     """残缺/非法协饷不落旨，并把 LLM 恢复说明交给玩家呈现层。"""
     import ming_sim.cli_backend as cb
 
-    recovery = "opaque-llm-recovery"
-    monkeypatch.setattr(
-        cb, "compose_decree_validation_recovery", lambda *_a, **_k: recovery,
-    )
+    recovery_calls = []
+
+    def recovery(*args, **kwargs):
+        recovery_calls.append((args, kwargs))
+        return "任意生成回禀"
+
+    monkeypatch.setattr(cb, "compose_decree_validation_recovery", recovery)
     db, state, _content = game
     actor = db.conn.execute(
         "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
@@ -1549,7 +1552,8 @@ def test_draft_xiexang_incomplete_or_illegal_returns_recovery_zero_write(
         reply="准拨，数目另议。",
     )
     run_materialize_pipeline(ctx)
-    assert (ctx.out.get("decree_validation_failure") or {}).get("report") == recovery
+    assert recovery_calls
+    assert set((ctx.out.get("decree_validation_failure") or {}).keys()) == {"report"}
     pending_after = db.conn.execute(
         "SELECT COUNT(*) FROM pending_actions WHERE turn=? AND kind='directive'",
         (state.turn,),
