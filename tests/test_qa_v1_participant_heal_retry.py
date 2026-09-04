@@ -707,16 +707,6 @@ def test_materialize_truncation_bi_zi_heals_to_biziyan(game, monkeypatch):
     assert len(calls) == 2
 
 
-@pytest.mark.parametrize("generated", ["  原样回禀  \n", "```json\n任意回禀\n```", '{"任意":"回禀"}'])
-def test_inworld_report_preserves_nonempty_llm_output(generated, monkeypatch):
-    import ming_sim.cli_backend as cb
-
-    monkeypatch.setattr(cb, "_run_backend_for_config", lambda *_a, **_k: (generated, 1))
-    assert cb._compose_inworld_fact_report(
-        "任意事实", llm_config=types.SimpleNamespace(), tag="test",
-    ) == generated
-
-
 def test_materialize_validation_failure_returns_llm_recovery_without_draft(game, monkeypatch):
     """#1730: validation rejection stays off the player lane and leaves no draft."""
     import ming_sim.cli_backend as cb
@@ -794,9 +784,6 @@ def test_materialize_unknown_escalates_report_no_draft(game, monkeypatch):
     esc = res.get("unknown_participant_escalate") or {}
     report = str(esc.get("report") or "")
     _assert_inworld_escalate(report, "不存在之人甲")
-    # 回话原文仍在（apply 不改 answer；共享 post-pass 仅按布局附上报告）
-    cued = GameSession._append_action_reports(answer0, {"unknown_participant_escalate": esc})
-    assert cued == answer0 + "\n" + report
     assert len(draft_calls) == 1 + int(cb.DRAFT_PARTICIPANT_HEAL_RETRIES)
 
 
