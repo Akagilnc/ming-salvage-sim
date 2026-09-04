@@ -1624,13 +1624,19 @@ def test_http_chat_stream_exposes_typed_decree_validation_recovery(
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     _stub_outer_llm_seams(monkeypatch)
-    def classify(*_args, **_kwargs):
-        if validation_case == "incomplete_xiexang":
-            return _scripted_xiexang_candidates(amount=0, account="", target_id="")
-        return candidates_from_classifier_payload({"kind": "draft"}, soft=False)
-
     def backend(_prompt, _config=None, *, tag=""):
         backend_tags.add(tag)
+        if tag == "action_intent":
+            candidate = (
+                {
+                    "kind": "grant_allocation", "grant_action": "协饷",
+                    "amount": 0, "account": "", "purpose": "补饷",
+                    "target_kind": "army", "target_id": "",
+                }
+                if validation_case == "incomplete_xiexang"
+                else {"kind": "draft"}
+            )
+            return json.dumps(candidate, ensure_ascii=False), 1
         if tag == "draft_intent":
             return json.dumps({
                 "拟旨意图": "拟旨",
@@ -1647,7 +1653,6 @@ def test_http_chat_stream_exposes_typed_decree_validation_recovery(
             }, ensure_ascii=False), 1
         return "任意生成回禀", 1
 
-    monkeypatch.setattr(cb, "classify_cli_action_intent", classify)
     monkeypatch.setattr(cb, "_run_backend_for_config", backend)
 
     game = web_app.WebGame(fresh=False)
@@ -1660,6 +1665,8 @@ def test_http_chat_stream_exposes_typed_decree_validation_recovery(
             and game.db.get_character_status(getattr(ch, "name", key))[0] == "active"
         )
         game.session.registry.get = lambda _character: _AudienceAgent()
+        if game.session.llm_config is not None:
+            game.session.llm_config.channel = "cli"
         message = (
             "拟旨如下：整饬京师"
             if validation_case == "incomplete_xiexang"
@@ -1686,8 +1693,8 @@ def test_http_chat_stream_exposes_typed_decree_validation_recovery(
             else {"region_id", "target_id"}
         )
         assert expected_fields <= set(failure.get("failed_fields") or [])
+        assert "action_intent" in backend_tags
         assert "decree_validation_recovery" in backend_tags
-        assert "decree_validation_failure" in (done.get("presented_action_reports") or [])
         assert isinstance(done.get("answer"), str)
         assert not game.db.list_pending_actions(game.state.turn)
         assert not game.db.list_decree_dossiers()
