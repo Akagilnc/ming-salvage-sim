@@ -1198,14 +1198,14 @@ def classify_cli_action_intent(
         "判断本轮是否属于一个或多个政务动作，并抽出可从皇帝话与相关上下文直接确定的结构字段。"
         "单动作输出一个 JSON 对象，多动作输出 JSON 对象数组（无代码围栏、无多余字）：\n"
         + schema_obj + "\n"
-        "规则：确认优先于新动作；每一道独立旨意只输出一个候选、只判一次颁布方式，"
-        "不得把同一旨意同时输出为拟旨和其任免、拨帑等载荷动作；一句确有多道彼此独立"
-        "的旨意时，才逐旨各输出一个候选。"
+        "规则：确认优先于新动作；每一道独立旨意只判一次颁布方式，同一动作类型不得重复候选。"
+        "拟旨与其任免等机械载荷候选可按既有契约并存，以同时保留旨稿和实际动作；"
+        "一句确有多道彼此独立的旨意时，逐旨输出所需候选。"
         + _DIRECTIVE_MODE_PROMPT
         + "「拟旨如下」只是路由，不是动作类型。同一话语带拟旨前缀且为载荷式拨饷"
         "（太仓/国库拨军饷销欠）时须输出恩赏·拨帑：恩赏拨帑=协饷、用途=补饷、"
         "目标类型=army、目标=可解析军队 id、账户太仓归一为国库；"
-        "不得因拟旨前缀改判拟旨而省略拨款候选，也不得为同一道拨款另添拟旨候选。"
+        "不得因拟旨前缀改判拟旨而省略拨款候选。"
         "发内帑不是协饷，不得改判为协饷。纯无动作仍输出无；非协饷恩赏走各自恩赏拨帑值。"
         "修改待确认动作时，确认=修改、新内容=完整非空修改正文；有多个待确认候选时，"
         "目标编号必须且只能填一个所指候选 id。\n"
@@ -1286,13 +1286,9 @@ def _directive_mode(value: object) -> Optional[str]:
 
 
 def resolve_directive_mode(
-    emperor_text: object = None, extracted: object = None, existing: object = None,
+    extracted: object = None, existing: object = None,
 ) -> str:
-    """Resolve the typed LLM decision, preserving an existing candidate on edits.
-
-    ``emperor_text`` remains in the call signature while callers migrate, but prose is
-    deliberately opaque here: governance semantics belong to the extractor.
-    """
+    """Resolve the typed LLM decision, preserving an existing candidate on edits."""
     for value in (extracted, existing):
         mode = _directive_mode(value)
         if mode is not None:
@@ -2914,7 +2910,7 @@ def capture_manual_directive_payload(
     回禀产文超时/失败 → typed LLMUnavailable（禁固定戏内模板当台词）。
     """
     directive_text = str(text or "").strip()
-    fallback_mode = resolve_directive_mode(text, None, existing_mode)
+    fallback_mode = resolve_directive_mode(existing=existing_mode)
     # 空载短路：无正文可抽 → 直落草案结构，零 LLM 调用（P5：禁为省写把可短路 LLM 串回）。
     if not directive_text:
         return _manual_special_decree_payload(fallback_mode)
@@ -2969,7 +2965,9 @@ def capture_manual_directive_payload(
         _log(f"手工拟诏 capture 有界降级 special_decree：{exc}")
         return _manual_special_decree_payload(fallback_mode)
 
-    declared_mode = resolve_directive_mode(text, captured.get("mode"), existing_mode)
+    declared_mode = resolve_directive_mode(
+        extracted=captured.get("mode"), existing=existing_mode,
+    )
     if captured.get("draft_action") != "拟旨":
         return _manual_special_decree_payload(declared_mode)
     payload = {

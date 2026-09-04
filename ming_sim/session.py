@@ -2734,7 +2734,7 @@ class GameSession:
         staged_payload = {"name": name, "office": office, "appointer": appointer.name}
         from ming_sim.cli_backend import resolve_directive_mode
         staged_payload["mode"] = resolve_directive_mode(
-            message_text, data.get("mode") or data.get("颁布方式"),
+            extracted=data.get("mode") or data.get("颁布方式"),
         )
         metadata_aliases = {
             "office_type": "官署类别",

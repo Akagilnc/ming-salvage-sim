@@ -567,7 +567,7 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
             )
         else:
             draft_res["mode"] = resolve_directive_mode(
-                ctx.player_message, draft_res.get("mode"), existing_mode,
+                extracted=draft_res.get("mode"), existing=existing_mode,
             )
 
         if (
@@ -904,7 +904,7 @@ def _stage_office_pending_core(
         "name": appt_name,
         "office": appt_office,
         "appointer": minister_name,
-        "mode": resolve_directive_mode(ctx.player_message, appt.get("mode")),
+        "mode": resolve_directive_mode(extracted=appt.get("mode")),
         "summon_after": "是" if want_summon else "否",
     }
     # 署理等任别随新建候选写入；特旨仅 mode（上已 resolve）
@@ -1029,7 +1029,7 @@ def stage_pacification_candidate(
         existing_mode = payload.get("mode")
         break
 
-    mode = resolve_directive_mode(emperor_text, extracted_mode, existing_mode)
+    mode = resolve_directive_mode(extracted=extracted_mode, existing=existing_mode)
     staged = {
         "text": body,
         "actor": minister_name,
@@ -1186,7 +1186,7 @@ def stage_punishment_candidate(
         existing_mode = payload.get("mode")
         break
 
-    mode = resolve_directive_mode(emperor_text, extracted_mode, existing_mode)
+    mode = resolve_directive_mode(extracted=extracted_mode, existing=existing_mode)
     staged = {
         "text": body,
         "actor": minister_name,
@@ -1608,7 +1608,7 @@ def stage_grant_allocation_candidate(
             existing_mode = payload.get("mode")
             break
 
-    mode = resolve_directive_mode(emperor_text, extracted_mode, existing_mode)
+    mode = resolve_directive_mode(extracted=extracted_mode, existing=existing_mode)
     staged = {
         "text": body,
         "actor": minister_name,
@@ -1901,7 +1901,7 @@ def stage_assignment_candidate(
             existing_mode = payload.get("mode")
             break
 
-    mode = resolve_directive_mode(emperor_text, extracted_mode, existing_mode)
+    mode = resolve_directive_mode(extracted=extracted_mode, existing=existing_mode)
     staged: Dict[str, Any] = {
         "text": body,
         "actor": minister_name,
@@ -2091,7 +2091,7 @@ def stage_military_order_candidate(
             existing_mode = payload.get("mode")
             break
 
-    mode = resolve_directive_mode(emperor_text, extracted_mode, existing_mode)
+    mode = resolve_directive_mode(extracted=extracted_mode, existing=existing_mode)
     staged: Dict[str, Any] = {
         "text": body,
         "actor": minister_name,
@@ -2340,7 +2340,7 @@ def stage_authorization_candidate(
             existing_mode = payload.get("mode")
             break
 
-    mode = resolve_directive_mode(emperor_text, extracted_mode, existing_mode)
+    mode = resolve_directive_mode(extracted=extracted_mode, existing=existing_mode)
     staged: Dict[str, Any] = {
         "text": body,
         "actor": minister_name,
@@ -2461,7 +2461,7 @@ def stage_revoke_authority_candidate(
             existing_mode = payload.get("mode")
             break
 
-    mode = resolve_directive_mode(emperor_text, extracted_mode, existing_mode)
+    mode = resolve_directive_mode(extracted=extracted_mode, existing=existing_mode)
     staged: Dict[str, Any] = {
         "text": body,
         "actor": minister_name,
@@ -2687,7 +2687,7 @@ def stage_revoke_decree_candidate(
             existing_mode = payload.get("mode")
             break
 
-    mode = resolve_directive_mode(emperor_text, extracted_mode, existing_mode)
+    mode = resolve_directive_mode(extracted=extracted_mode, existing=existing_mode)
     staged: Dict[str, Any] = {
         "text": body,
         "actor": minister_name,
@@ -2887,7 +2887,7 @@ def stage_referral_candidate(
             existing_mode = payload.get("mode")
             break
 
-    mode = resolve_directive_mode(emperor_text, extracted_mode, existing_mode)
+    mode = resolve_directive_mode(extracted=extracted_mode, existing=existing_mode)
     staged: Dict[str, Any] = {
         "text": body,
         "actor": minister_name,
