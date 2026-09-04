@@ -90,7 +90,7 @@ def _strip_controlled_namespace(text: str, namespace: str) -> str:
 
 
 def canonical_region_id_exact(
-    raw: object, regions: Dict[str, Region],
+    raw: object, regions: Optional[Dict[str, Region]] = None,
 ) -> Optional[str]:
     """location 写缝专用：仅 compact 精确等值（id/name/region_aliases）。
 
@@ -103,10 +103,13 @@ def canonical_region_id_exact(
     if not text:
         return ""
     text = _strip_controlled_namespace(text, "region")
+    special = resolve_special_region_alias(text)
+    if special is not None:
+        return special
     key = compact_name(text)
     if not key:
         return ""
-    for region in regions.values():
+    for region in (regions or {}).values():
         candidates = [region.id, region.name, *region_aliases(region)]
         for alias in candidates:
             if compact_name(alias) == key:

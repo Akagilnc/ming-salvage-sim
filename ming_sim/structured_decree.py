@@ -291,22 +291,11 @@ def assemble_structured_decree(
     target_id = _as_str(src.get("target_id") or "").strip()
     region_id = _as_str(src.get("region_id") or "").strip()
     if target_kind == "region":
-        from ming_sim.matching import (
-            canonical_region_id_exact,
-            resolve_special_region_alias,
-        )
+        from ming_sim.matching import canonical_region_id_exact
 
-        canonical_target = resolve_special_region_alias(target_id.lstrip("@"))
-        canonical_region = resolve_special_region_alias(
-            (region_id or target_id).lstrip("@"),
-        )
-        if regions_content:
-            canonical_target = canonical_target or canonical_region_id_exact(
-                target_id, dict(regions_content),
-            )
-            canonical_region = canonical_region or canonical_region_id_exact(
-                region_id or target_id, dict(regions_content),
-            )
+        regions = dict(regions_content or {})
+        canonical_target = canonical_region_id_exact(target_id, regions)
+        canonical_region = canonical_region_id_exact(region_id or target_id, regions)
         if canonical_target is not None:
             target_id = canonical_target
         if canonical_region is not None:
