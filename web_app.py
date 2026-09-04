@@ -2868,17 +2868,8 @@ class WebGame:
         directive_ambiguous = res.get("directive_confirmation_ambiguous")
         if directive_ambiguous:
             answer = GameSession._ensure_clarification_cue(answer, directive_ambiguous)
-        # #1274 V-1：查无此人 → 戏内回禀附于回话；不落草案、不回滚整轮。
-        esc = res.get("unknown_participant_escalate") or {}
-        report = str(esc.get("report") or "").strip()
-        if report:
-            answer = GameSession._ensure_unknown_participant_report_cue(answer, report)
-        validation = res.get("decree_validation_failure") or {}
-        validation_report = str(validation.get("report") or "").strip()
-        if validation_report:
-            answer = GameSession._ensure_unknown_participant_report_cue(
-                answer, validation_report,
-            )
+        # Sync/web consume the same typed action-report projection seam.
+        answer = GameSession._append_action_reports(answer, res)
         pending_action_failures = list(res.get("pending_action_failures") or [])
         if tool_stage_failures:
             pending_action_failures = pending_action_failures + list(tool_stage_failures)
