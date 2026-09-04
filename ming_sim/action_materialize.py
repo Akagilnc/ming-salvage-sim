@@ -116,33 +116,23 @@ def _record_decree_validation_failures(
     """Record every engine rejection, then generate one player-lane recovery report."""
     from ming_sim.cli_backend import compose_decree_validation_recovery, _trace
 
-    failed_fields = {
-        str(field)
+    diagnostic_failures = [
+        {
+            "type": type(exc).__name__,
+            "message": str(exc),
+            "failed_fields": sorted(str(field) for field in exc.failed_fields),
+        }
         for exc in failures
-        for field in (
-            getattr(exc, "failed_fields", ())
-            or getattr(exc, "missing_fields", ())
-            or ()
-        )
+    ]
+    failed_fields = {
+        field
+        for failure in diagnostic_failures
+        for field in failure["failed_fields"]
     }
     _trace({
         "tag": "decree_validation_failure",
         "turn": int(ctx.session.state.turn),
-        "failures": [
-            {
-                "type": type(exc).__name__,
-                "message": str(exc),
-                "failed_fields": sorted(
-                    str(field)
-                    for field in (
-                        getattr(exc, "failed_fields", ())
-                        or getattr(exc, "missing_fields", ())
-                        or ()
-                    )
-                ),
-            }
-            for exc in failures
-        ],
+        "failures": diagnostic_failures,
     })
     out["decree_validation_failure"] = {
         "report": compose_decree_validation_recovery(
@@ -1497,9 +1487,11 @@ class DecreeMaterializationValidationError(ValueError):
 
 class IncompleteXiexangPayloadError(DecreeMaterializationValidationError):
     def __init__(self, missing_fields: list) -> None:
-        self.missing_fields = tuple(missing_fields)
+        fields = tuple(missing_fields)
+        self.missing_fields = fields  # compatibility projection for existing callers
         super().__init__(
-            "拨饷旨意缺少结构化字段：" + "/".join(missing_fields) + "（不猜散文）"
+            "拨饷旨意缺少结构化字段：" + "/".join(missing_fields) + "（不猜散文）",
+            failed_fields=fields,
         )
 
 
