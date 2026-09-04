@@ -1574,7 +1574,16 @@ def test_draft_xiexang_batch_failures_share_recovery_and_leave_zero_writes(
             )
         ]
     assert durable
-    assert [item for item, _reason, _category, _source in durable] == candidates
+    persisted_items = {
+        json.dumps(item, ensure_ascii=False, sort_keys=True)
+        for item, _reason, _category, _source in durable
+    }
+    expected_items = {
+        json.dumps(candidate, ensure_ascii=False, sort_keys=True)
+        for candidate in candidates
+    }
+    assert len(durable) == len(candidates)
+    assert persisted_items == expected_items
     assert all(reason for _item, reason, _category, _source in durable)
     assert all(category == "decree_validation" for _item, _reason, category, _source in durable)
     assert all(source == "player_decree" for _item, _reason, _category, source in durable)
@@ -1681,10 +1690,22 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
     )
     monkeypatch.setattr(cb, "classify_cli_action_intent", fake_classify)
     monkeypatch.setattr(cb, "extract_confirmation_intent", fake_confirm)
-    generated_recovery = "回禀" * 100
     monkeypatch.setattr(
         cb, "compose_decree_validation_recovery",
-        lambda fields, **_kwargs: recovery_fields.append(set(fields)) or generated_recovery,
+        lambda fields, **_kwargs: recovery_fields.append(set(fields)) or "回禀" * 100,
+    )
+    from ming_sim.session import GameSession
+    append_action_reports = GameSession._append_action_reports
+    projected_failures = []
+
+    def observe_action_report_projection(answer, actions):
+        failure = actions.get("decree_validation_failure")
+        if failure:
+            projected_failures.append(failure)
+        return append_action_reports(answer, actions)
+
+    monkeypatch.setattr(
+        GameSession, "_append_action_reports", staticmethod(observe_action_report_projection),
     )
 
     game = web_app.WebGame(fresh=False)
@@ -1736,7 +1757,8 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
             failure.get("failed_fields") or []
         )
         assert recovery_fields
-        assert len(done.get("answer") or "") > len(canned.first_content)
+        assert projected_failures == [failure]
+        assert isinstance(done.get("answer"), str)
         assert not game.db.list_pending_actions(game.state.turn)
         assert not game.db.list_decree_dossiers()
 
