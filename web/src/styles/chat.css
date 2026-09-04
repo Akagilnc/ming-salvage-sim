@@ -272,6 +272,32 @@ textarea {
   align-items: center;
   gap: 10px;
 }
+/* #1732 B：召对撤回 composer 上方就地条 */
+.composer-inline-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(120, 60, 20, 0.4);
+  border-radius: 6px;
+  background: linear-gradient(180deg, #fff8e6, #f4e3b7);
+  color: #2e1b0a;
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+.composer-inline-confirm-actions {
+  display: flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+.composer-inline-confirm-actions button {
+  min-height: 32px;
+  padding: 4px 12px;
+  font-size: 0.82rem;
+}
 
 select {
   min-height: 36px;

@@ -795,10 +795,6 @@ class WebGame:
             except OSError:
                 logger.exception("failed to remove hot replace backup %s", backup_path)
 
-    def reset_game(self) -> None:
-        """全清主 DB；失败时恢复替换前的数据库与 runtime。"""
-        self._replace_database(lambda: _delete_sqlite_db_files_or_raise(self.db_path))
-
     def load_save(self, name: str) -> None:
         """从存档热替换主 DB；失败时恢复替换前的数据库与 runtime。"""
         safe = self._safe_save_name(name)
@@ -5824,19 +5820,6 @@ async def api_load_save(name: str) -> Dict[str, Any]:
     game = get_game()
     _run_hot_replace(game, lambda: game.load_save(name), failure_label="载入存档失败")
     return {"state": get_game().state_payload()}
-
-
-@app.post("/api/game/reset")
-async def api_reset_game() -> Dict[str, Any]:
-    """清空主 DB 重开新局。存档目录保留。"""
-    # reset_game 关连接 + 删 sqlite 文件 + 重建——同 load_save，正持锁的 worker 会崩在关连接上。
-    # 非阻塞抢 _write_gate：忙时 409（cmr Gate2 r5；强制中断在途属 #382）。
-    game = get_game()
-    _run_hot_replace(game, lambda: game.reset_game(), failure_label="重开新局失败")
-    return steam_events.with_events(
-        {"state": get_game().state_payload()},
-        [steam_events.add_stat(steam_events.STAT_RUNS_STARTED)],
-    )
 
 
 @app.get("/api/llm/config")

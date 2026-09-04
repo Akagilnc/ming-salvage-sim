@@ -96,6 +96,11 @@ export function ChatModal({
   const chatLogRef = React.useRef<HTMLDivElement | null>(null);
   const inputRef = React.useRef<HTMLTextAreaElement | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = React.useState(0);
+  // #1732 B：撤回确认就地条（composer 上方），取消零请求。
+  const [confirmUndo, setConfirmUndo] = React.useState(false);
+  React.useEffect(() => {
+    setConfirmUndo(false);
+  }, [minister.name, canUndoLastChat]);
   const [scrollState, setScrollState] = React.useState<
     { kind: "loading" } | { kind: "none" } | {
       kind: "night";
@@ -378,12 +383,35 @@ export function ChatModal({
                 : "问大臣军情、钱粮、地方，或要求他拟旨... Enter 发送，Shift+Enter 换行"}
             />
           </label>
+          {confirmUndo ? (
+            <div className="composer-inline-confirm" role="group" aria-label="撤回召对确认">
+              <span>将撤回最近一轮召对及其政务影响，是否继续？</span>
+              <div className="composer-inline-confirm-actions">
+                <button type="button" className="secondary-action" disabled={!!busy} onClick={() => setConfirmUndo(false)}>取消</button>
+                <button
+                  type="button"
+                  className="primary-action"
+                  disabled={!!busy || !canUndoLastChat}
+                  onClick={() => {
+                    setConfirmUndo(false);
+                    onUndo(currentMinister.name);
+                  }}
+                >
+                  继续撤回
+                </button>
+              </div>
+            </div>
+          ) : null}
           <div className="composer-actions">
             <button className={`primary-action ${!input.trim() ? "is-empty" : ""}`} onClick={handleSend} disabled={!!busy}>
               <Send size={15} />
               发送
             </button>
-            <button className="secondary-action composer-undo" onClick={() => onUndo(currentMinister.name)} disabled={!!busy || !canUndoLastChat}>
+            <button
+              className="secondary-action composer-undo"
+              onClick={() => setConfirmUndo(true)}
+              disabled={!!busy || !canUndoLastChat}
+            >
               <RotateCcw size={15} />
               撤回本轮
             </button>

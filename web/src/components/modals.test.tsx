@@ -296,6 +296,76 @@ describe("EdictModal — decree desk behavior", () => {
     act(() => button?.click());
     expect(onIssue).toHaveBeenCalledTimes(1);
   });
+
+  it("#1732 failed-only：页脚就地确认；取消零调用；确认后退朝", () => {
+    const onAdvance = vi.fn();
+    const confirm = vi.spyOn(window, "confirm");
+    const { host } = renderEdictModal({
+      state: baseGameState({
+        directives: [],
+        pending_directive_count: 0,
+        pending_secret_order_count: 0,
+        pending_non_directive_action_count: 0,
+        failed_secret_order_count: 1,
+      }),
+      onAdvanceWithoutEdict: onAdvance,
+    });
+    const footer = host.querySelector<HTMLButtonElement>(".desk-footer button");
+    expect(footer?.disabled).toBe(false);
+    act(() => footer?.click());
+    expect(confirm).not.toHaveBeenCalled();
+    expect(onAdvance).not.toHaveBeenCalled();
+    const panel = host.querySelector('[aria-label="退朝确认"]');
+    expect(panel).not.toBeNull();
+    expect(panel?.textContent).toContain("失败密令未处理");
+    const cancel = Array.from(panel!.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("取消")
+    );
+    act(() => cancel?.click());
+    expect(onAdvance).not.toHaveBeenCalled();
+    expect(host.querySelector('[aria-label="退朝确认"]')).toBeNull();
+
+    const footer2 = host.querySelector<HTMLButtonElement>(".desk-footer button");
+    act(() => footer2?.click());
+    const yes = Array.from(host.querySelector('[aria-label="退朝确认"]')!.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("退朝结束本月")
+    );
+    act(() => yes?.click());
+    expect(onAdvance).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("#1732 ChatModal · 撤回就地确认", () => {
+  it("取消零调用；确认后 onUndo", () => {
+    const onUndo = vi.fn();
+    const confirm = vi.spyOn(window, "confirm");
+    const host = renderModal({
+      minister: MINISTER_MOCK,
+      portraitPrefix: "minister_",
+      canUndoLastChat: true,
+      onUndo,
+    });
+    const undo = Array.from(host.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("撤回本轮")
+    ) as HTMLButtonElement;
+    act(() => undo.click());
+    expect(confirm).not.toHaveBeenCalled();
+    expect(onUndo).not.toHaveBeenCalled();
+    const panel = host.querySelector('[aria-label="撤回召对确认"]');
+    expect(panel).not.toBeNull();
+    const cancel = Array.from(panel!.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("取消")
+    );
+    act(() => cancel?.click());
+    expect(onUndo).not.toHaveBeenCalled();
+
+    act(() => undo.click());
+    const yes = Array.from(host.querySelector('[aria-label="撤回召对确认"]')!.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("继续撤回")
+    );
+    act(() => yes?.click());
+    expect(onUndo).toHaveBeenCalledWith("周延儒");
+  });
 });
 
 describe("ChatModal — #1370 empty audience chrome", () => {
@@ -619,7 +689,9 @@ describe("ChatModal — soft scenes and selected-minister lens (#543 / #1511)", 
     expect(favorite).toHaveBeenCalledWith(hong);
     const clickButton = (text: string) => act(() => Array.from(host.querySelectorAll("button")).find((button) => button.textContent?.includes(text))?.click());
     clickButton("追问");
+    // #1732 B：撤回就地确认
     clickButton("撤回本轮");
+    clickButton("继续撤回");
     clickButton("重新生成回话");
     expect(send).toHaveBeenCalledWith("洪承畴", "细奏边情");
     expect(undo).toHaveBeenCalledWith("洪承畴");
