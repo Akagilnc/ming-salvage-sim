@@ -1610,6 +1610,7 @@ def test_http_chat_stream_exposes_typed_decree_validation_recovery(
     import ming_sim.cli_backend as cb
     import web_app
     from tests.test_audience_background import RunContent, RunOutput
+    from tests.test_menu_continue_stream_1195 import _parse_sse
     from tests.test_month_loop_tracer_1468 import _stub_outer_llm_seams
 
     class _AudienceAgent:
@@ -1689,15 +1690,9 @@ def test_http_chat_stream_exposes_typed_decree_validation_recovery(
             json={"message": message},
         )
         assert response.status_code == 200
-        events = {}
-        for block in response.text.split("\n\n"):
-            lines = block.splitlines()
-            event = next((line[7:] for line in lines if line.startswith("event: ")), "")
-            data = next((line[6:] for line in lines if line.startswith("data: ")), "")
-            if event and data:
-                events[event] = json.loads(data)
-        assert "error" not in events
-        done = events["done"]
+        events = _parse_sse(response.text)
+        assert all(event != "error" for event, _payload in events)
+        done = next(payload for event, payload in events if event == "done")
         failure = done.get("decree_validation_failure") or {}
         expected_fields = (
             {"amount", "account", "target_id"}
