@@ -21,6 +21,7 @@ import pytest
 
 import ming_sim.agents as agents_mod
 import ming_sim.mindreading as mindreading_mod
+import ming_sim.session as session_mod
 import web_app
 from ming_sim import audience_night as an
 from tests.test_month_loop_tracer_1468 import _install_trail_hold
@@ -78,6 +79,16 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
         lambda *a, **k: _CannedRelationJudge(),
     )
     monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
+    # stream worker 在 payload 前启动 _start_cli_action_intent → 真 classify LLM；
+    # 本测只钉写入口锁，动作意图分类确定性空返，禁真网。
+    monkeypatch.setattr(
+        session_mod.GameSession, "_start_cli_action_intent",
+        lambda self, *_a, **_k: None,
+    )
+    monkeypatch.setattr(
+        session_mod.GameSession, "_finish_cli_action_intent",
+        lambda self, *_a, **_k: None,
+    )
     game = web_app.WebGame(fresh=False)
     monkeypatch.setattr(web_app, "web_game", game)
     yield game
@@ -212,10 +223,8 @@ def test_court_break_locks_player_write_between_done_and_end(web_game):
     assert isinstance(done_payload, dict), done_payload
     # D1 同形常绿：判词链无辜——done 已带 court_break。
     assert done_payload.get("court_action") == "court_break", done_payload
-    # 写入口外可见锁：hold 窗内并发 chat 不得成功写入。
+    # 写入口外可见锁：hold 窗内并发 chat 结构化拒写（HTTP 409）；不锁呈现措辞。
     assert concurrent_result.get("status") == 409, concurrent_result
-    body = str(concurrent_result.get("body") or "")
-    assert "收夜中" in body or "night_closing" in body, concurrent_result
     # end 后终态：夜 closed + 收尾三拍。
     row = game.db.conn.execute(
         "SELECT status FROM audience_nights WHERE id=?", (night_id,),
