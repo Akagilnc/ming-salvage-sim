@@ -1645,12 +1645,13 @@ def test_http_chat_stream_exposes_typed_decree_validation_recovery(
                 candidate = {"kind": "none"}
             return json.dumps(candidate, ensure_ascii=False), 1
         if tag == "draft_intent":
+            # Distinct provinces: 京师/@beizhili is alias-same after #1729 canonicalize.
             return json.dumps({
                 "拟旨意图": "拟旨",
                 "动作类型": "policy",
                 "目标类型": "region",
                 "目标ID": "京师",
-                "地区ID": "@beizhili",
+                "地区ID": "陕西",
                 "施行范围": "single",
                 "事务类别": "",
                 "承办人": "",
@@ -1723,9 +1724,9 @@ def test_http_chat_stream_exposes_typed_decree_validation_recovery(
             assert any(item.get("kind") == "draft" for item in items)
         else:
             # serial existing-draft falls back to partial_result; rejected item
-            # must keep typed keys from the failed decree payload.
+            # keeps typed keys from the failed (already-canonicalized) payload.
             assert any(
-                item.get("target_id") == "京师" and item.get("region_id") == "@beizhili"
+                item.get("target_id") == "beizhili" and item.get("region_id") == "shaanxi"
                 for item in items
             )
     finally:
