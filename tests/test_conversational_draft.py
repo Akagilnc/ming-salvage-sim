@@ -114,7 +114,7 @@ def test_conversational_draft_intent_stages_pending(game, monkeypatch):
     assert directives == 0
 
 
-def test_new_conversational_draft_persists_typed_extractor_mode(game, monkeypatch):
+def test_new_conversational_draft_ignores_conflicting_player_prose_mode(game, monkeypatch):
     db, state, content = game
     _run_conversational_draft(
         db, state, content, monkeypatch,
@@ -122,11 +122,11 @@ def test_new_conversational_draft_persists_typed_extractor_mode(game, monkeypatc
         minister_reply="着户部清查辽饷。",
         canned={
             "拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue",
-            "目标ID": "liao-pay", "颁布方式": "中旨直发",
+            "目标ID": "liao-pay", "颁布方式": "普通",
         },
     )
     payload = json.loads(db.list_pending_actions(state.turn)[0]["payload_json"])
-    assert payload["mode"] == "midzhi"
+    assert payload["mode"] == "ordinary"
 
 
 def test_no_draft_pending_when_no_intent(read_game, monkeypatch):
