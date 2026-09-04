@@ -25,21 +25,18 @@ def _rejected_verdict(dossier_id):
     )
 
 
-@pytest.mark.parametrize("extractor_result", ["missing-mode", "failure"])
 def test_real_midzhi_entry_reaches_provider_and_persists_stigma(
-    game, monkeypatch, extractor_result,
+    game, monkeypatch,
 ):
     db, state, content = game
     extracted = json.dumps({
         "拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue",
-        "目标ID": "river-works",
+        "目标ID": "river-works", "颁布方式": "midzhi",
     }, ensure_ascii=False)
-    if extractor_result == "missing-mode":
-        backend = lambda *_args, **_kwargs: (extracted, {})
-    else:
-        def backend(*_args, **_kwargs):
-            raise RuntimeError("extractor unavailable")
-    monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
+    monkeypatch.setattr(
+        cli_backend, "_run_backend_for_config",
+        lambda *_args, **_kwargs: (extracted, {}),
+    )
     payload = cli_backend.capture_manual_directive_payload("中旨直发，清核河工")
     directive_id = db.add_directive(
         state, None, "中旨直发，清核河工", "手动新增", dossier_payload=payload,
@@ -112,13 +109,16 @@ def test_rejected_unpromulgatable_midzhi_omits_force_at_public_resolve_seam(
 
 
 @pytest.mark.parametrize(
-    ("emperor_text", "expected"),
-    [("清核仓场", "ordinary"), ("中旨直发，清核仓场", "midzhi")],
+    ("emperor_text", "extracted_mode", "expected"),
+    [("中旨直发，清核仓场", "普通", "ordinary"),
+     ("清核仓场", "midzhi", "midzhi")],
 )
-def test_manual_mode_declaration_overrides_extractor(monkeypatch, emperor_text, expected):
+def test_manual_mode_uses_typed_extractor_judgment(
+    monkeypatch, emperor_text, extracted_mode, expected,
+):
     extracted = json.dumps({
         "拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue",
-        "目标ID": "granary", "颁布方式": "普通",
+        "目标ID": "granary", "颁布方式": extracted_mode,
     }, ensure_ascii=False)
     monkeypatch.setattr(
         cli_backend, "_run_backend_for_config", lambda *_args, **_kwargs: (extracted, {}),
@@ -155,9 +155,10 @@ def test_missing_dossier_mode_defaults_to_ordinary(game):
 @pytest.mark.parametrize(
     ("caller_mode", "minister_text", "expected"),
     [("ordinary", "中旨直发，清核河工", "ordinary"),
-     (None, "中旨直发，清核河工", "midzhi")],
+     ("midzhi", "清核河工", "midzhi"),
+     (None, "中旨直发，清核河工", "ordinary")],
 )
-def test_explicit_staging_prefers_caller_authority_before_minister_text(
+def test_explicit_staging_uses_typed_mode_not_minister_text(
     game, caller_mode, minister_text, expected,
 ):
     db, state, _content = game
@@ -175,7 +176,7 @@ def test_explicit_staging_prefers_caller_authority_before_minister_text(
 def test_presence_aware_mode_preserves_draft_until_explicit_override(game):
     db, state, _content = game
     candidate_id = db.stage_explicit_directive(
-        state.turn, "温体仁", "中旨直发，清核河工",
+        state.turn, "温体仁", "中旨直发，清核河工", mode="midzhi",
     )
     db.update_directive_candidate(candidate_id, {"text": "增列核验期限"})
     pending = next(
