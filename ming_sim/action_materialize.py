@@ -111,7 +111,9 @@ def _materializable_draft_xiexang(
 
 
 def _record_decree_validation_failures(
-    ctx: MaterializeCtx, out: Dict[str, Any], failures: list[BaseException],
+    ctx: MaterializeCtx,
+    out: Dict[str, Any],
+    failures: list[tuple[dict[str, Any], BaseException]],
 ) -> None:
     """Persist every engine rejection, then generate a player-lane recovery report."""
     from ming_sim.applier import (
@@ -122,11 +124,11 @@ def _record_decree_validation_failures(
 
     diagnostic_failures = [
         {
-            "type": type(exc).__name__,
+            "candidate": candidate,
             "message": str(exc),
             "failed_fields": sorted(str(field) for field in exc.failed_fields),
         }
-        for exc in failures
+        for candidate, exc in failures
     ]
     failed_fields = {
         field
@@ -138,13 +140,10 @@ def _record_decree_validation_failures(
         collector.record(
             "audience_decree",
             RejectedItem(
-                item={
-                    "exception_type": failure["type"],
-                    "failed_fields": failure["failed_fields"],
-                },
+                item=failure["candidate"],
                 reason=failure["message"],
                 category="decree_validation",
-                source=Provenance.unknown,
+                source=Provenance.player_decree,
             ),
             int(ctx.session.state.turn),
         )
@@ -188,8 +187,9 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
         )
         draft_index = 0
         candidate_records = []
-        validation_failures: list[BaseException] = []
+        validation_failures: list[tuple[dict[str, Any], BaseException]] = []
         for candidate in ctx.intent_candidates:
+            original_candidate = dict(candidate)
             original_kind = str(candidate.get("kind") or "")
             original_draft_index = draft_index
             if original_kind == "draft":
@@ -197,10 +197,10 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
             try:
                 materializable = _materializable_draft_xiexang(ctx, candidate)
             except DecreeMaterializationValidationError as exc:
-                validation_failures.append(exc)
+                validation_failures.append((original_candidate, exc))
                 continue
             candidate_records.append((
-                materializable, original_kind, original_draft_index,
+                materializable, original_candidate, original_kind, original_draft_index,
             ))
         if ctx.explicit_prefixed:
             candidate_records.sort(
@@ -208,12 +208,12 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
                 != "grant_allocation"
             )
         kind_counts: Dict[str, int] = {}
-        for candidate, _original_kind, _original_index in candidate_records:
+        for candidate, _original_candidate, _original_kind, _original_index in candidate_records:
             kind = str(candidate.get("kind") or "")
             kind_counts[kind] = kind_counts.get(kind, 0) + 1
         kind_indexes: Dict[str, int] = {}
         grant_staged = False
-        for candidate, original_kind, original_draft_index in candidate_records:
+        for candidate, original_candidate, original_kind, original_draft_index in candidate_records:
             kind = str(candidate.get("kind") or "")
             cluster = cluster_by_kind(kind)
             if cluster is None or cluster.effect != EFFECT_MATERIALIZE:
@@ -247,7 +247,7 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
                 StructuredDecreeCombinationError,
                 DecreeMaterializationValidationError,
             ) as exc:
-                validation_failures.append(exc)
+                validation_failures.append((original_candidate, exc))
             if kind == "grant_allocation" and int(
                 candidate_out.get("pending_action_id") or 0
             ) > int(baseline_out.get("pending_action_id") or 0):
