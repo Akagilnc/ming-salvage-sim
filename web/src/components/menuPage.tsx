@@ -24,6 +24,8 @@ export function MenuPage({
   const [busy, setBusy] = React.useState<string>("");
   const [showApiForm, setShowApiForm] = React.useState(false);
   const [showSaveList, setShowSaveList] = React.useState(false);
+  // #1732 B：覆盖主进度就地确认卡，不走原生 confirm。
+  const [confirmNewGame, setConfirmNewGame] = React.useState(false);
 
   const guard = async (label: string, fn: () => Promise<void>) => {
     setBusy(label);
@@ -37,12 +39,20 @@ export function MenuPage({
     }
   };
 
-  const onNewGame = () =>
+  const executeNewGame = () =>
     guard("新游戏中...", async () => {
-      if (status?.has_main_db && !window.confirm("将覆盖当前主进度，是否继续？建议先在游戏中保存为存档。")) return;
+      setConfirmNewGame(false);
       await api("/api/menu/new_game", { method: "POST" });
       await onEnterGame();
     });
+
+  const onNewGame = () => {
+    if (status?.has_main_db) {
+      setConfirmNewGame(true);
+      return;
+    }
+    void executeNewGame();
+  };
 
   const onContinue = () =>
     guard("载入上次进度...", async () => {
@@ -100,6 +110,16 @@ export function MenuPage({
           <button className="menu-btn primary" disabled={!llmReady || !!busy} onClick={onNewGame}>
             开始新游戏
           </button>
+          {confirmNewGame ? (
+            <div className="menu-inline-confirm" role="group" aria-label="覆盖主进度确认">
+              <h4>覆盖主进度</h4>
+              <p>将覆盖当前主进度，是否继续？建议先在游戏中保存为存档。</p>
+              <div className="menu-inline-confirm-actions">
+                <button type="button" className="menu-btn subtle" disabled={!!busy} onClick={() => setConfirmNewGame(false)}>取消</button>
+                <button type="button" className="menu-btn primary" disabled={!!busy} onClick={() => void executeNewGame()}>继续</button>
+              </div>
+            </div>
+          ) : null}
           <button className="menu-btn" disabled={!llmReady || !hasMainDb || !!busy} onClick={onContinue} title={hasMainDb ? "" : "无上次进度"}>
             继续
           </button>
@@ -423,12 +443,14 @@ export function SaveListModal({
   const hasAny = campaigns.some((c) => c.saves.length);
   const [delBusy, setDelBusy] = React.useState("");
   const [delErr, setDelErr] = React.useState("");
-  const handleDelete = async (name: string, label?: string) => {
-    if (!window.confirm(`删除存档「${label || name}」？此操作不可撤销。`)) return;
+  // #1732 B：删除存档行下贴身展开，不走原生 confirm。
+  const [pendingDelete, setPendingDelete] = React.useState<{ name: string; label: string } | null>(null);
+  const handleDelete = async (name: string) => {
     setDelBusy(name);
     setDelErr("");
     try {
       await onDelete(name);
+      setPendingDelete(null);
     } catch (e) {
       setDelErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -449,22 +471,39 @@ export function SaveListModal({
                   {c.current ? <span className="menu-campaign-badge">本局</span> : null}
                 </div>
                 <ul className="menu-save-list">
-                  {c.saves.map((s) => (
-                    <li key={s.name} className="menu-save-row">
-                      <button className="menu-save-load" onClick={() => onLoad(s.name)}>
-                        <span className="save-name">{s.label || s.name}</span>
-                        <span className="save-meta">{new Date(s.mtime * 1000).toLocaleString("zh-CN")}</span>
-                      </button>
-                      <button
-                        className="menu-save-del"
-                        title="删除存档"
-                        disabled={delBusy === s.name}
-                        onClick={() => handleDelete(s.name, s.label)}
-                      >
-                        {delBusy === s.name ? <Loader2 size={14} className="spin" /> : <Trash2 size={14} />}
-                      </button>
-                    </li>
-                  ))}
+                  {c.saves.map((s) => {
+                    const label = s.label || s.name;
+                    const pending = pendingDelete?.name === s.name;
+                    return (
+                      <li key={s.name} className="menu-save-row-wrap">
+                        <div className="menu-save-row">
+                          <button className="menu-save-load" onClick={() => onLoad(s.name)}>
+                            <span className="save-name">{label}</span>
+                            <span className="save-meta">{new Date(s.mtime * 1000).toLocaleString("zh-CN")}</span>
+                          </button>
+                          <button
+                            className="menu-save-del"
+                            title="删除存档"
+                            disabled={delBusy === s.name}
+                            onClick={() => setPendingDelete({ name: s.name, label })}
+                          >
+                            {delBusy === s.name ? <Loader2 size={14} className="spin" /> : <Trash2 size={14} />}
+                          </button>
+                        </div>
+                        {pending ? (
+                          <div className="menu-row-confirm" role="group" aria-label={`确认删除存档 ${label}`}>
+                            <span>删除存档「{label}」？此操作不可撤销。</span>
+                            <div className="menu-row-confirm-actions">
+                              <button type="button" disabled={delBusy === s.name} onClick={() => setPendingDelete(null)}>取消</button>
+                              <button type="button" className="danger" disabled={delBusy === s.name} onClick={() => void handleDelete(s.name)}>
+                                {delBusy === s.name ? "删除中..." : "删除"}
+                              </button>
+                            </div>
+                          </div>
+                        ) : null}
+                      </li>
+                    );
+                  })}
                 </ul>
               </div>
             ))}

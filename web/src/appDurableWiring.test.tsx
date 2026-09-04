@@ -707,7 +707,12 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     await tick();
     await click(Array.from(host.querySelectorAll("button")).find((b) => b.textContent?.includes(minister.name)));
     await act(async () => { await vi.waitFor(() => expect(findButton(host, "撤回本轮")).toBeTruthy()); });
+    // #1732 B：撤回就地确认条，确认后才 POST undo
     await click(findButton(host, "撤回本轮"));
+    await act(async () => {
+      await vi.waitFor(() => expect(findButton(host, "继续撤回")).toBeTruthy());
+    });
+    await click(findButton(host, "继续撤回"));
     await act(async () => {
       await vi.waitFor(() => expect(stateCall).toBeGreaterThanOrEqual(3));
     });
@@ -1929,13 +1934,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     });
     await closeOpenOverlay(host);
 
-    // menu：#1702 B 确认门控 + 409 可见且同一行恢复重试（不锁确认文案措辞）。
-    const confirmCalls: boolean[] = [];
-    let confirmNext = false;
-    vi.stubGlobal("confirm", () => {
-      confirmCalls.push(confirmNext);
-      return confirmNext;
-    });
+    // menu：#1702/#1732 B 就地确认门控 + 409 可见且同一行恢复重试（不锁确认文案措辞）。
     await click(byAria(host, "游戏菜单"));
     await tick();
     await act(async () => {
@@ -1946,15 +1945,24 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       await vi.waitFor(() => expect(host.querySelector(".saves-row .menu-btn.primary")).not.toBeNull());
     });
     const loadButton = host.querySelector(".saves-row .menu-btn.primary") as HTMLButtonElement;
-    // confirm false → 零 /load POST
-    confirmNext = false;
+    // 展开后取消 → 零 /load POST
     await click(loadButton);
     await tick();
-    expect(confirmCalls.length).toBeGreaterThanOrEqual(1);
+    const loadConfirm = host.querySelector('[aria-label="确认加载 auto_begin"]');
+    expect(loadConfirm).not.toBeNull();
+    const cancelLoad = Array.from(loadConfirm!.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("取消")
+    );
+    await click(cancelLoad as HTMLButtonElement);
+    await tick();
     expect(loadRequests).toEqual([]);
-    // confirm true → POST；409 可见；同行重试第二次 POST
-    confirmNext = true;
+    // 确认 → POST；409 可见；同行重试第二次 POST
     await click(loadButton);
+    await tick();
+    const yesLoad = Array.from(host.querySelector('[aria-label="确认加载 auto_begin"]')!.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("加载")
+    );
+    await click(yesLoad as HTMLButtonElement);
     expect(loadRequests).toEqual([{ path: "/api/saves/auto_begin/load", method: "POST" }]);
     expect(loadButton.disabled).toBe(true);
     await act(async () => {
@@ -1970,6 +1978,11 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     });
     expect(loadButton.disabled).toBe(false);
     await click(loadButton);
+    await tick();
+    const yesLoadAgain = Array.from(host.querySelector('[aria-label="确认加载 auto_begin"]')!.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("加载")
+    );
+    await click(yesLoadAgain as HTMLButtonElement);
     await act(async () => {
       await vi.waitFor(() => expect(loadRequests).toHaveLength(2));
     });
@@ -2222,15 +2235,13 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     expect(paths.some((path) => path === "POST /api/decree/advance_without_edict")).toBe(false);
   });
 
-  it("#1560 failed-only：取消确认零请求；确认后 POST advance", async () => {
+  it("#1560/#1732 failed-only：取消就地确认零请求；确认后 POST advance", async () => {
     const paths: string[] = [];
     const reload = vi.fn();
     Object.defineProperty(window, "location", {
       configurable: true,
       value: { ...window.location, reload },
     });
-    const confirm = vi.fn(() => false);
-    vi.stubGlobal("confirm", confirm);
     const failedOnly = {
       ...settlementBaseState("player"),
       directives: [],
@@ -2272,11 +2283,24 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
 
     const settlePostsBefore = paths.filter((p) => p.startsWith("POST /api/decree/")).length;
     await click(footer);
-    expect(confirm).toHaveBeenCalledTimes(1);
+    // #1732 B：页脚展开就地确认，取消零请求
+    const confirmPanel = host.querySelector('[aria-label="退朝确认"]');
+    expect(confirmPanel).not.toBeNull();
+    const cancelBtn = Array.from(confirmPanel!.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("取消")
+    );
+    expect(cancelBtn).toBeTruthy();
+    await click(cancelBtn as HTMLButtonElement);
     expect(paths.filter((p) => p.startsWith("POST /api/decree/")).length).toBe(settlePostsBefore);
+    expect(host.querySelector('[aria-label="退朝确认"]')).toBeNull();
 
-    confirm.mockReturnValue(true);
-    await click(footer);
+    const footerAgain = host.querySelector<HTMLButtonElement>(".desk-footer button");
+    await click(footerAgain);
+    const confirmAgain = host.querySelector('[aria-label="退朝确认"]');
+    const yesBtn = Array.from(confirmAgain!.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("退朝结束本月")
+    );
+    await click(yesBtn as HTMLButtonElement);
     await act(async () => {
       await vi.waitFor(() => expect(paths.some((p) => p === "POST /api/decree/advance_without_edict")).toBe(true));
     });

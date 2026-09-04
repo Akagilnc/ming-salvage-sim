@@ -136,6 +136,8 @@ export function PortraitUploadButton({
 }) {
   const inputRef = React.useRef<HTMLInputElement>(null);
   const [busy, setBusy] = React.useState(false);
+  // #1732 B：上传失败底栏告警条，不走原生 alert。
+  const [uploadError, setUploadError] = React.useState("");
   return (
     <>
       <button
@@ -161,17 +163,24 @@ export function PortraitUploadButton({
           e.target.value = "";  // 允许重选同一文件
           if (!file) return;
           setBusy(true);
+          setUploadError("");
           try {
             // 立即刷该人物缓存键，loadState 回来后新图不被旧缓存挡住。
             _portraitBust[`custom:${ministerName}`] = Date.now();
             await onUpload(ministerName, file);
           } catch (err) {
-            window.alert(`上传失败：${(err as Error).message}`);
+            setUploadError(`上传失败：${(err as Error).message}`);
           } finally {
             setBusy(false);
           }
         }}
       />
+      {uploadError ? (
+        <div className="inline-alert-bar" role="alert">
+          <span className="inline-alert-bar-body">{uploadError}</span>
+          <button type="button" className="inline-alert-bar-ok" onClick={(e) => { e.stopPropagation(); setUploadError(""); }}>知悉</button>
+        </div>
+      ) : null}
     </>
   );
 }

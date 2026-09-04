@@ -150,6 +150,11 @@
   flex-direction: column;
   gap: 6px;
 }
+.saves-row-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
 .saves-row {
   display: flex;
   justify-content: space-between;
@@ -159,6 +164,43 @@
   background: rgba(255, 248, 224, 0.55);
   border: 1px solid rgba(120, 80, 30, 0.25);
   border-radius: 4px;
+}
+/* #1732 B：局内菜单面板后果句 / 行下贴身确认 */
+.inline-confirm-note {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border-left: 3px solid rgba(106, 64, 20, 0.55);
+  background: rgba(255, 240, 200, 0.45);
+  color: #4a3014;
+  font-size: 0.82rem;
+  line-height: 1.55;
+}
+.inline-confirm-note.danger {
+  border-left-color: #9e3429;
+  background: rgba(176, 58, 40, 0.08);
+  color: #6a1a1a;
+}
+.inline-row-confirm {
+  margin-top: -2px;
+  padding: 10px 12px;
+  background: #fff8e0;
+  border: 1px solid rgba(120, 80, 30, 0.35);
+  border-top: none;
+  border-radius: 0 0 4px 4px;
+  color: #4a3014;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+.inline-row-confirm.danger {
+  background: #fff4ee;
+  border-color: rgba(138, 24, 24, 0.35);
+  color: #6a1a1a;
+}
+.inline-row-confirm-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+  justify-content: flex-end;
 }
 .saves-name {
   display: flex;
@@ -467,6 +509,43 @@
   background: linear-gradient(180deg, rgba(176, 60, 46, 0.95) 0%, rgba(142, 45, 35, 0.95) 100%);
 }
 
+/* #1732 B：主菜单覆盖主进度就地确认卡 */
+.menu-panel .menu-inline-confirm {
+  padding: 12px 14px;
+  background: rgba(24, 17, 9, 0.92);
+  border: 1px solid rgba(226, 180, 86, 0.5);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  color: #f3e6c4;
+  backdrop-filter: blur(6px);
+}
+.menu-panel .menu-inline-confirm h4 {
+  margin: 0 0 6px;
+  font-size: 0.95rem;
+  color: #f0d58a;
+  letter-spacing: 0.08em;
+}
+.menu-panel .menu-inline-confirm p {
+  margin: 0 0 10px;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: #d8c89c;
+  line-height: 1.55;
+  letter-spacing: normal;
+  text-shadow: none;
+}
+.menu-panel .menu-inline-confirm-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.menu-panel .menu-inline-confirm-actions .menu-btn {
+  width: auto;
+  padding: 7px 14px;
+  font-size: 0.85rem;
+  letter-spacing: 0.06em;
+}
+
 /* 次级入口（设置项）：更小、更安静 */
 .menu-panel .menu-btn.subtle {
   padding: 9px 18px;
@@ -694,6 +773,12 @@
 }
 .menu-save-list .save-meta { font-size: 0.78rem; color: #b8a878; }
 
+.menu-save-row-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin-bottom: 8px;
+}
 .menu-save-row {
   display: flex;
   align-items: stretch;
@@ -716,6 +801,47 @@
 .menu-save-row .menu-save-del:hover:not(:disabled) {
   background: rgba(200, 70, 60, 0.28);
   border-color: rgba(220, 110, 100, 0.7);
+}
+/* #1732 B：主菜单删档行下贴身展开 */
+.menu-row-confirm {
+  margin-top: 0;
+  padding: 10px 12px;
+  background: rgba(255, 248, 224, 0.12);
+  border: 1px solid rgba(200, 90, 80, 0.4);
+  border-top: none;
+  border-radius: 0 0 6px 6px;
+  color: #e9c4b8;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+.menu-row-confirm-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+  justify-content: flex-end;
+}
+.menu-row-confirm-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: auto;
+  padding: 5px 12px;
+  border-radius: 4px;
+  border: 1px solid rgba(226, 180, 86, 0.4);
+  background: rgba(255, 235, 180, 0.08);
+  color: #f3e6c4;
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+.menu-row-confirm-actions button.danger {
+  background: linear-gradient(180deg, #c0432f, #8a261b);
+  border-color: #8a261b;
+  color: #ffe9d8;
+}
+.menu-row-confirm-actions button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 .menu-save-row .menu-save-del:disabled { opacity: 0.5; cursor: default; }
 
