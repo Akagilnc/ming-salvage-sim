@@ -567,16 +567,16 @@
   }
 }
 
-/* #1236：SettlementLock 仅同会话非权威装饰——不挡必达三面（z-index 低于 decision/recovery）。 */
+/* #1236：SettlementLock 仅同会话非权威装饰——不挡必达三面（z-index 低于 decision/recovery）。
+   #1725：进度移到画面中心（盖玺后视线停留处）；仍无全屏锁、pointer-events 不吞必达层。 */
 .settlement-lock,
 .settlement-lock-decor {
   position: fixed;
-  right: 18px;
-  bottom: 18px;
+  inset: 0;
   z-index: 40;
   display: flex;
-  align-items: flex-end;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: center;
   background: transparent;
   backdrop-filter: none;
   cursor: default;
@@ -585,25 +585,51 @@
 
 .settlement-lock-card {
   pointer-events: auto;
-  min-width: 240px;
-  max-width: 360px;
-  width: min(360px, 42vw);
-  max-height: 42vh;
+  min-width: 280px;
+  max-width: 440px;
+  width: min(440px, 72vw);
+  max-height: min(56vh, 520px);
   overflow-y: auto;
-  padding: 14px 16px;
+  padding: 18px 20px;
   border: 1px solid rgba(214, 175, 89, 0.45);
-  border-radius: 8px;
-  background: linear-gradient(180deg, rgba(42, 31, 18, 0.94) 0%, rgba(26, 18, 8, 0.94) 100%);
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(42, 31, 18, 0.96) 0%, rgba(26, 18, 8, 0.96) 100%);
   color: #f4e2b8;
   text-align: left;
-  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
 }
 
 .settlement-lock-stage {
-  margin: 0 0 8px;
-  color: #d8c79a;
-  font-size: 14px;
-  line-height: 1.5;
+  margin: 0 0 10px;
+  color: #f0e2b4;
+  font-size: 16px;
+  line-height: 1.55;
+}
+
+.settlement-lock-progress {
+  margin: 0 0 4px;
+}
+
+.settlement-lock-progress-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(214, 175, 89, 0.35);
+  overflow: hidden;
+}
+
+.settlement-lock-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #a4862f 0%, #d6af59 100%);
+  transition: width 240ms ease-out;
+}
+
+.settlement-lock-progress-label {
+  margin: 6px 0 0;
+  color: #cbb98a;
+  font-size: 13px;
+  letter-spacing: 0.04em;
 }
 
 .settlement-stream-block {
