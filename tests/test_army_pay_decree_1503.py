@@ -484,7 +484,6 @@ def test_army_target_non_pay_grant_does_not_clear_arrears(
         grant_action=grant_action,
         target_kind="army",
         target_id="guanning",
-        emperor_text=message,
         amount=10,
         account="国库",
     )
