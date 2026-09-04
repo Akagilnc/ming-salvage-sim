@@ -282,18 +282,26 @@ class SessionWriteQueue:
         """#1727：领屏障票但不 wait——立刻让 has_open_barrier 对玩家写入口可见。
 
         用于 court_break 已在 done 暴露、尾随票尚未清的窗口：召对写入口须先落幕，
-        收夜本体仍等 prior 票（run_barrier / barrier）。seal 时返 None。
+        收夜本体仍等 prior 票（barrier）。seal 时返 None。
         这不是第二把 #1353 写锁——仍是同一队列的 barrier 票。
         """
         return self.claim(key=("barrier",))
 
-    def run_barrier(
+    def barrier(
         self, fn: Callable[[], T], ticket: Optional[WriteTicket] = None,
     ) -> T:
-        """在屏障票上 wait_prior → fn → complete。
+        """Claim a barrier ticket after current claims; run fn when priors clear.
 
-        ticket 为 None 时等价 barrier(fn)（自领自还）；传入 #1727 预领票时复用该票，
-        禁再领第二张 barrier（否则 wait 自锁）。
+        Prior open tickets (trailing legs claimed earlier) must finish first
+        (full complete via wait_prior). Tickets claimed after this barrier wait
+        on the open barrier key via run()/TicketedWriteGate write turns — so
+        they cannot cross the barrier body.
+
+        Sealed queue: still waits for open priors, then runs fn (lifecycle/
+        month-advance must proceed even when new claims are rejected).
+
+        ticket 为 None 时自领自还（既有 barrier(fn) 调用不变）；传入 #1727 预领票时
+        复用该票，禁再领第二张 barrier（否则 wait 自锁）。
         """
         own = ticket is None
         if own:
@@ -309,19 +317,6 @@ class SessionWriteQueue:
             return fn()
         finally:
             self.complete(ticket)
-
-    def barrier(self, fn: Callable[[], T]) -> T:
-        """Claim a barrier ticket after current claims; run fn when priors clear.
-
-        Prior open tickets (trailing legs claimed earlier) must finish first
-        (full complete via wait_prior). Tickets claimed after this barrier wait
-        on the open barrier key via run()/TicketedWriteGate write turns — so
-        they cannot cross the barrier body.
-
-        Sealed queue: still waits for open priors, then runs fn (lifecycle/
-        month-advance must proceed even when new claims are rejected).
-        """
-        return self.run_barrier(fn)
 
     def wait_idle(self, *, timeout_s: Optional[float] = None) -> bool:
         """Wait until no open tickets remain. True if idle, False on timeout.

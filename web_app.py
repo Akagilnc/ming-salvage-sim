@@ -3640,10 +3640,10 @@ class WebGame:
 
                     # #526/#1353：尾随票已清后收夜。整轮票已 complete 时 ticketed gate 会
                     # TicketCancelled——收夜短写改走裸 runtime write_gate（腿已终态，无越屏障窗）。
-                    # #1727：预领屏障票交给 close 复用（run_barrier），禁再领第二张。
+                    # #1727：预领屏障票交给 close 复用（barrier），禁再领第二张。
                     close_after = getattr(self.session, "close_night_after_chat_if_needed", None)
                     if close_after is not None:
-                        # barrier_ticket 由 close.run_barrier / 早退 complete；
+                        # barrier_ticket 由 close.barrier / 早退 complete；
                         # worker finally 再幂等 complete 一次兜底。
                         close_after(
                             court_action,

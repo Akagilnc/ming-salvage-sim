@@ -1403,9 +1403,9 @@ class GameSession:
                 )
 
             # 屏障只等前序票工人终态/空放行（K10a：无 elapsed 熔断）。
-            # #1727：预领票复用 run_barrier，禁再领第二张 barrier。
-            q.run_barrier(_do_close, ticket=barrier_ticket)
-            barrier_ticket = None  # run_barrier 已 complete
+            # #1727：预领票复用 barrier，禁再领第二张 barrier。
+            q.barrier(_do_close, ticket=barrier_ticket)
+            barrier_ticket = None  # barrier 已 complete
         finally:
             # 早退/异常：预领票仍须归还，避免 has_open_barrier 永真（complete 幂等）。
             if barrier_ticket is not None:
