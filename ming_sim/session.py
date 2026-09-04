@@ -1732,7 +1732,7 @@ class GameSession:
                 result.pending_action_id = coalesce_pending_action_id(
                     result.pending_action_id,
                     self._stage_appointment_candidate(
-                        payload, character, message_text,
+                        payload, character,
                     ),
                 )
             elif tool_name == "register_unlisted_person" or tool_result.startswith("__pending_unlisted_person__"):
@@ -2679,7 +2679,6 @@ class GameSession:
                 text=text,
                 target_id=target,
                 punish_action=action,
-                emperor_text=message_text,
                 amount=n if action == "罚俸" else 0,
                 transaction_category=transaction_category,
                 backing_dossier_id=backing_dossier_id,
@@ -2710,7 +2709,7 @@ class GameSession:
         )
 
     def _stage_appointment_candidate(
-        self, payload: str, appointer: Character, message_text: str,
+        self, payload: str, appointer: Character,
     ) -> int:
         """把吏部 propose_appointment 工具结果接入与口头任免相同的确认闸门。"""
         if GameSession._proposal_blocked(self.state):
