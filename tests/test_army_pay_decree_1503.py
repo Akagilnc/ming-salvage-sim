@@ -1549,10 +1549,17 @@ def test_draft_xiexang_batch_failures_share_recovery_and_leave_zero_writes(
         reply="准拨，数目另议。",
     )
     run_materialize_pipeline(ctx)
+    expected_fields = {"amount", "account", "purpose", "target_kind", "target_id"}
     assert len(recovery_calls) == 1
-    assert recovery_calls[0][0][0]
+    assert set(recovery_calls[0][0][0]) == expected_fields
+    assert len(diagnostics) == 1
     assert diagnostics[0]["tag"] == "decree_validation_failure"
     assert len(diagnostics[0]["failures"]) == 2
+    assert {
+        field
+        for failure in diagnostics[0]["failures"]
+        for field in failure["failed_fields"]
+    } == expected_fields
     assert all(failure["message"] for failure in diagnostics[0]["failures"])
     assert set((ctx.out.get("decree_validation_failure") or {}).keys()) == {"report"}
     pending_after = db.conn.execute(
