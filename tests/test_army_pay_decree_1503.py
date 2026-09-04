@@ -1656,6 +1656,7 @@ def test_http_chat_stream_exposes_typed_decree_validation_recovery(
         failure = done.get("decree_validation_failure") or {}
         assert {"amount", "account", "target_id"} <= set(failure.get("failed_fields") or [])
         assert recovery_fields
+        assert "decree_validation_failure" in (done.get("presented_action_reports") or [])
         assert isinstance(done.get("answer"), str)
         assert not game.db.list_pending_actions(game.state.turn)
         assert not game.db.list_decree_dossiers()

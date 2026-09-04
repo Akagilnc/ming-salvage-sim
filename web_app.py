@@ -1782,6 +1782,7 @@ class WebGame:
         accepted_turn: Optional[int] = None,
         directive_confirmation_ambiguous: Optional[Dict[str, Any]] = None,
         decree_validation_failure: Optional[Dict[str, Any]] = None,
+        presented_action_reports: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         character = self.session._character(minister_name)
         # Durable chat_turn message ids first, then memory history.  Publishing
@@ -1835,6 +1836,7 @@ class WebGame:
             # #502 AC5：多道准驳含糊态（候选 id/摘要）供前端展示大臣追问；无则 None。
             "directive_confirmation_ambiguous": directive_confirmation_ambiguous or None,
             "decree_validation_failure": decree_validation_failure or None,
+            "presented_action_reports": presented_action_reports or [],
             "directives": [self.directive_payload(row) for row in self.directive_rows()],
             "pending_count": self.session.pending_count(),
             # #1716：done 载荷同步 pending_directive_count——onDone 直接落 UI，不单靠 refresh 竞态。
@@ -2515,6 +2517,7 @@ class WebGame:
                     accepted_turn=accepted_turn,
                     directive_confirmation_ambiguous=interpreted["directive_ambiguous"],
                     decree_validation_failure=interpreted["decree_validation_failure"],
+                    presented_action_reports=interpreted["presented_action_reports"],
                 )
                 self._record_chat_rollback_items(chat_turn_id, before_snapshot)
         return payload
@@ -2872,7 +2875,7 @@ class WebGame:
         if directive_ambiguous:
             answer = GameSession._ensure_clarification_cue(answer, directive_ambiguous)
         # Sync/web consume the same typed action-report projection seam.
-        answer = GameSession._append_action_reports(answer, res)
+        answer, presented_action_reports = GameSession._project_action_reports(answer, res)
         pending_action_failures = list(res.get("pending_action_failures") or [])
         if tool_stage_failures:
             pending_action_failures = pending_action_failures + list(tool_stage_failures)
@@ -2890,6 +2893,7 @@ class WebGame:
             "pending_action_failures": pending_action_failures,
             "directive_ambiguous": directive_ambiguous,
             "decree_validation_failure": res.get("decree_validation_failure"),
+            "presented_action_reports": presented_action_reports,
         }
 
     def _dispatch_relation_judge(self, chat_turn_id: Any) -> Optional[threading.Thread]:
