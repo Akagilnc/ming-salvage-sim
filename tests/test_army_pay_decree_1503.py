@@ -1595,6 +1595,75 @@ def test_draft_xiexang_batch_failures_share_recovery_and_leave_zero_writes(
     assert {int(d["id"]) for d in db.list_decree_dossiers()} == dossier_before
 
 
+def test_http_chat_stream_exposes_typed_decree_validation_recovery(
+    tmp_path, monkeypatch, _offline_scene_beat_generator,
+):
+    """真实召对 SSE 以 typed failure 告知玩家恢复可用；生成正文不作机械断言。"""
+    from fastapi.testclient import TestClient
+
+    import ming_sim.cli_backend as cb
+    import web_app
+    from tests.test_audience_background import RunContent, RunOutput
+    from tests.test_month_loop_tracer_1468 import _stub_outer_llm_seams
+
+    class _AudienceAgent:
+        def run(self, *_args, **_kwargs):
+            return iter((RunContent("臣已奉旨查议。"), RunOutput([])))
+
+        def get_last_run_output(self):
+            return None
+
+    recovery_fields = []
+    monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    _stub_outer_llm_seams(monkeypatch)
+    monkeypatch.setattr(
+        cb, "classify_cli_action_intent",
+        lambda *_args, **_kwargs: _scripted_xiexang_candidates(
+            amount=0, account="", target_id="",
+        ),
+    )
+    monkeypatch.setattr(
+        cb, "compose_decree_validation_recovery",
+        lambda fields, **_kwargs: recovery_fields.append(set(fields)) or "任意生成回禀",
+    )
+
+    game = web_app.WebGame(fresh=False)
+    monkeypatch.setattr(web_app, "web_game", game)
+    try:
+        name = next(
+            getattr(ch, "name", key)
+            for key, ch in game.content.characters.items()
+            if getattr(ch, "power_id", "ming") == "ming"
+            and game.db.get_character_status(getattr(ch, "name", key))[0] == "active"
+        )
+        game.session.registry.get = lambda _character: _AudienceAgent()
+        response = TestClient(web_app.app).post(
+            f"/api/ministers/{name}/chat/stream",
+            json={"message": "拟旨如下：整饬京师"},
+        )
+        assert response.status_code == 200
+        events = {}
+        for block in response.text.split("\n\n"):
+            lines = block.splitlines()
+            event = next((line[7:] for line in lines if line.startswith("event: ")), "")
+            data = next((line[6:] for line in lines if line.startswith("data: ")), "")
+            if event and data:
+                events[event] = json.loads(data)
+        assert "error" not in events
+        done = events["done"]
+        failure = done.get("decree_validation_failure") or {}
+        assert {"amount", "account", "target_id"} <= set(failure.get("failed_fields") or [])
+        assert recovery_fields
+        assert isinstance(done.get("answer"), str)
+        assert not game.db.list_pending_actions(game.state.turn)
+        assert not game.db.list_decree_dossiers()
+    finally:
+        if game.session:
+            game.session.close()
+
+
 def test_http_chat_issue_stream_pay_decree_advances_month(
     tmp_path, monkeypatch, _offline_scene_beat_generator,
 ):
@@ -1617,8 +1686,6 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
     class _TwoRoundHubuAgent:
         """#1503 独有：召对请拨 + 准后遵旨两轮户部回话。"""
 
-        first_content = "臣请户部发帑十五万两协济关宁军前，请陛下定夺准驳。"
-
         def __init__(self):
             self._calls = 0
 
@@ -1627,7 +1694,7 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
 
             self._calls += 1
             if self._calls == 1:
-                content = self.first_content
+                content = "臣请户部发帑十五万两协济关宁军前，请陛下定夺准驳。"
             else:
                 content = "臣遵旨。敕户部发太仓银十五万两协济关宁军前。钦此。"
             if kwargs.get("stream"):
@@ -1642,13 +1709,9 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
 
     scripted = _scripted_xiexang_candidates(amount=15, account="太仓", target_id="guanning")
 
-    recovery_fields = []
-
     def fake_classify(text, *_a, **_k):
         if str(text or "").strip() == "准":
             return []
-        if "整饬京师" in str(text or ""):
-            return _scripted_xiexang_candidates(amount=0, account="", target_id="")
         return list(scripted)
 
     def fake_confirm(player_message, *_a, **_k):
@@ -1690,23 +1753,6 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
     )
     monkeypatch.setattr(cb, "classify_cli_action_intent", fake_classify)
     monkeypatch.setattr(cb, "extract_confirmation_intent", fake_confirm)
-    monkeypatch.setattr(
-        cb, "compose_decree_validation_recovery",
-        lambda fields, **_kwargs: recovery_fields.append(set(fields)) or "回禀" * 100,
-    )
-    from ming_sim.session import GameSession
-    append_action_reports = GameSession._append_action_reports
-    projected_failures = []
-
-    def observe_action_report_projection(answer, actions):
-        failure = actions.get("decree_validation_failure")
-        if failure:
-            projected_failures.append(failure)
-        return append_action_reports(answer, actions)
-
-    monkeypatch.setattr(
-        GameSession, "_append_action_reports", staticmethod(observe_action_report_projection),
-    )
 
     game = web_app.WebGame(fresh=False)
     monkeypatch.setattr(web_app, "web_game", game)
@@ -1738,30 +1784,6 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
         turn_before = int(game.state.turn)
 
         client = TestClient(web_app.app)
-        rejected = client.post(
-            f"/api/ministers/{name}/chat/stream",
-            json={"message": "拟旨如下：整饬京师"},
-        )
-        assert rejected.status_code == 200
-        events = {}
-        for block in rejected.text.split("\n\n"):
-            lines = block.splitlines()
-            event = next((line[7:] for line in lines if line.startswith("event: ")), "")
-            data = next((line[6:] for line in lines if line.startswith("data: ")), "")
-            if event and data:
-                events[event] = json.loads(data)
-        assert "error" not in events
-        done = events["done"]
-        failure = done.get("decree_validation_failure") or {}
-        assert {"amount", "account", "target_id"} <= set(
-            failure.get("failed_fields") or []
-        )
-        assert recovery_fields
-        assert projected_failures == [failure]
-        assert isinstance(done.get("answer"), str)
-        assert not game.db.list_pending_actions(game.state.turn)
-        assert not game.db.list_decree_dossiers()
-
         petition = client.post(
             f"/api/ministers/{name}/chat",
             json={"message": "拨关宁军饷十五万两。"},
