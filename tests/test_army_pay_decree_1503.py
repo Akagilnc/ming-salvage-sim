@@ -1622,6 +1622,7 @@ def test_http_chat_stream_exposes_typed_decree_validation_recovery(
             return None
 
     backend_tags = set()
+    recovery_report = "decree-validation-recovery-marker"
     # cli_backend resolves its default trace path at import time; isolate the
     # real composer path explicitly so this tracer leaves no repository probe.
     monkeypatch.setattr(cb, "_TRACE_PATH", str(tmp_path / "cli_trace.jsonl"))
@@ -1657,6 +1658,8 @@ def test_http_chat_stream_exposes_typed_decree_validation_recovery(
                 "期限月数": None,
                 "目标案卷ID": None,
             }, ensure_ascii=False), 1
+        if tag == "decree_validation_recovery":
+            return recovery_report, 1
         return "任意生成回禀", 1
 
     monkeypatch.setattr(cb, "_run_backend_for_config", backend)
@@ -1703,15 +1706,28 @@ def test_http_chat_stream_exposes_typed_decree_validation_recovery(
         assert expected_fields <= set(failure.get("failed_fields") or [])
         assert "action_intent" in backend_tags
         assert "decree_validation_recovery" in backend_tags
-        assert isinstance(done.get("answer"), str)
+        assert recovery_report in done["answer"]
         assert [row["id"] for row in game.db.list_pending_actions(game.state.turn)] == pending_before
         assert [row["id"] for row in game.db.list_decree_dossiers()] == dossiers_before
         ledger = game.db.conn.execute(
-            "SELECT source FROM rejection_reports "
+            "SELECT item_json, source FROM rejection_reports "
             "WHERE turn=? AND section='audience_decree' AND category='decree_validation'",
             (game.state.turn,),
         ).fetchall()
         assert ledger and all(row["source"] == "player_decree" for row in ledger)
+        items = [json.loads(row["item_json"]) for row in ledger]
+        assert all(isinstance(item, dict) and item for item in items)
+        if validation_case == "incomplete_xiexang":
+            assert any(item.get("grant_action") == "协饷" for item in items)
+        elif validation_case == "region_mismatch":
+            assert any(item.get("kind") == "draft" for item in items)
+        else:
+            # serial existing-draft falls back to partial_result; rejected item
+            # must keep typed keys from the failed decree payload.
+            assert any(
+                item.get("target_id") == "京师" and item.get("region_id") == "@beizhili"
+                for item in items
+            )
     finally:
         wait_pending_writes(game)
         if game.session:

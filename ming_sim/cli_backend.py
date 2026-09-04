@@ -2170,7 +2170,14 @@ def _revalidate_merged_combo_result(
         _finalize_extract_with_combo(result, draft_combo_flags=flags)
         return
     if failed_fields:
-        validate_structured_decree_combination(result)
+        try:
+            validate_structured_decree_combination(result)
+        except StructuredDecreeCombinationError as exc:
+            raise StructuredDecreeCombinationError(
+                str(exc),
+                partial_result=dict(result),
+                failed_fields=exc.failed_fields,
+            ) from exc
 
 
 def extract_draft_intent_with_roster_heal(
@@ -2255,7 +2262,14 @@ def extract_draft_intent_with_roster_heal(
                     )
                 except StructuredDecreeCombinationError as merged_exc:
                     if attempt >= retries:
-                        raise merged_exc
+                        raise StructuredDecreeCombinationError(
+                            str(merged_exc),
+                            partial_result=dict(result),
+                            failed_fields=merged_exc.failed_fields,
+                            draft_failures=getattr(
+                                merged_exc, "draft_failures", None
+                            ),
+                        ) from merged_exc
                     correction = combination_correction_feedback(merged_exc)
                     _log(
                         f"拟旨结构组合纠错重试 {attempt + 1}/{retries}: {merged_exc}"
