@@ -47,6 +47,7 @@ def _persisted_payload(db, pending_id: int) -> dict:
     [
         (canonical_region_id_exact, "京师赈务"),
         (canonical_region_id_exact, "请接济北直隶"),
+        (canonical_region_id_exact, "@@beizhili"),
         (canonical_army_id_exact, "请拨给关宁军"),
         (canonical_army_id_exact, "宁锦防线欠饷"),
     ],
