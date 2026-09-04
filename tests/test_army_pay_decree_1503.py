@@ -1612,6 +1612,7 @@ def test_http_chat_stream_exposes_typed_decree_validation_recovery(
     from tests.test_audience_background import RunContent, RunOutput
     from tests.test_menu_continue_stream_1195 import _parse_sse
     from tests.test_month_loop_tracer_1468 import _stub_outer_llm_seams
+    from tests.test_session_write_queue_1353 import wait_pending_writes
 
     class _AudienceAgent:
         def run(self, *_args, **_kwargs):
@@ -1712,6 +1713,7 @@ def test_http_chat_stream_exposes_typed_decree_validation_recovery(
         ).fetchall()
         assert ledger and all(row["source"] == "player_decree" for row in ledger)
     finally:
+        wait_pending_writes(game)
         if game.session:
             game.session.close()
 
