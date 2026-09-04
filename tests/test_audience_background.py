@@ -609,7 +609,12 @@ def test_background_audience_appointment_stages_after_observer_departure(game):
         ToolExec(
             "propose_appointment",
             "__pending_appointment__" + json.dumps(
-                {"name": appointee, "office": "户部尚书", "action": "任命"},
+                {
+                    "name": appointee,
+                    "office": "户部尚书",
+                    "action": "任命",
+                    "mode": "midzhi",
+                },
                 ensure_ascii=False,
             ),
         )
@@ -630,6 +635,7 @@ def test_background_audience_appointment_stages_after_observer_departure(game):
     payload = json.loads(pending["payload_json"])
     assert payload["name"] == appointee
     assert payload["office"] == "户部尚书"
+    assert payload["mode"] == "midzhi"
     assert db.conn.execute(
         "SELECT name FROM characters WHERE name=?", (appointee,)
     ).fetchone() is None

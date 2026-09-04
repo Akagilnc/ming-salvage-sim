@@ -1271,6 +1271,7 @@ def test_real_chat_explicit_prefix_suppresses_tool_twin_and_durable_one_dossier(
         "kind": "draft", "draft_action": "拟旨",
         "grant_action": "协饷", "amount": 15, "account": "太仓",
         "purpose": "补饷", "target_kind": "army", "target_id": "guanning",
+        "mode": "midzhi",
     }, soft=False)
     twin_tools = [SimpleNamespace(
         tool_name="propose_directive",
@@ -1291,8 +1292,15 @@ def test_real_chat_explicit_prefix_suppresses_tool_twin_and_durable_one_dossier(
     assert len(rows) == 1
     pending = json.loads(rows[0]["payload_json"])
     assert pending["dossier_action_type"] == "grant_allocation"
+    assert pending["mode"] == "midzhi"
 
     dossier = _close_night_dossier(db, state, content, pending_id)
+    linked = [
+        row for row in db.list_decree_dossiers()
+        if row["pending_action_id"] == pending_id
+    ]
+    assert len(linked) == 1
+    assert dossier["mode"] == "midzhi"
     _promulgate(db, state, content, dossier["id"])
     moves = [
         m for m in db.list_economy_moves_for_dossier(dossier["id"])

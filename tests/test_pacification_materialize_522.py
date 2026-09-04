@@ -871,6 +871,27 @@ def test_same_turn_success_pending_id_survives_later_failed_stage_cli_and_web(ga
         "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
     ).fetchone()["name"]
 
+    # A tool call without a new typed judgment updates the existing candidate
+    # without downgrading its mode or creating a twin.
+    sess = _directive_session(db, state, content)
+    pacification_text = "着招抚张献忠归顺朝廷。"
+    first_id = sess._stage_directive_tool_candidate(
+        pacification_text, minister, "拟旨招抚张献忠。", mode="midzhi",
+    )
+    updated_id = sess._stage_directive_tool_candidate(
+        pacification_text, minister, "拟旨招抚张献忠。",
+    )
+    pacification_rows = [
+        (row_id, staged)
+        for row_id, staged in _pending_directive_payloads(db, state.turn, minister)
+        if staged.get("dossier_action_type") == "pacification"
+    ]
+    assert updated_id == first_id
+    assert len(pacification_rows) == 1
+    assert pacification_rows[0][1]["mode"] == "midzhi"
+    db.conn.execute("DELETE FROM pending_actions WHERE id=?", (first_id,))
+    db.conn.commit()
+
     # Shared aggregation rule: non-zero wins; zero must not erase prior success.
     assert coalesce_pending_action_id(0, 42) == 42
     assert coalesce_pending_action_id(42, 0) == 42
@@ -885,7 +906,10 @@ def test_same_turn_success_pending_id_survives_later_failed_stage_cli_and_web(ga
                     SimpleNamespace(
                         tool_name="propose_directive",
                         result="",
-                        arguments={"decree_text": "着户部速筹军饷，以济边需。"},
+                        arguments={
+                            "decree_text": "着户部速筹军饷，以济边需。",
+                            "mode": "midzhi",
+                        },
                     ),
                     SimpleNamespace(
                         tool_name="propose_directive",
@@ -963,6 +987,8 @@ def test_same_turn_success_pending_id_survives_later_failed_stage_cli_and_web(ga
         int(payload["pending_action_id"])
     ]
     assert web_staged.get("dossier_action_type") == "special_decree"
+    assert web_staged.get("mode") == "midzhi"
+    assert len(_pending_directive_payloads(db, state.turn, minister)) == 1
 
 
 def test_pacification_successful_promulgation_closes_dossier(game):
