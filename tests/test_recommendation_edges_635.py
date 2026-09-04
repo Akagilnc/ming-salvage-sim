@@ -278,7 +278,7 @@ def test_blank_reason_never_forms_durable_payload(game):
     # 会话分发只对 __pending_recommendation__ 前缀接 staging；失败串即使
     # 直递 staging 缝也零入档。
     assert not out.startswith("__pending_recommendation__")
-    assert sess._stage_appointment_candidate(out, recommender, "准奏") == 0
+    assert sess._stage_appointment_candidate(out, recommender) == 0
     assert db.conn.execute(
         "SELECT COUNT(*) FROM pending_actions").fetchone()[0] == 0
     assert db.conn.execute(
@@ -304,7 +304,7 @@ def test_full_chain_tool_reason_verbatim_to_both_legs(game):
 
     action_id = sess._stage_appointment_candidate(
         out.removeprefix("__pending_recommendation__").strip(),
-        recommender, "准奏")
+        recommender)
     assert action_id > 0
 
     _commit_and_promulgate(db, state, content, action_id)
@@ -332,7 +332,7 @@ def test_rejected_blank_call_does_not_poison_same_turn(game):
 
     action_id = sess._stage_appointment_candidate(
         good.removeprefix("__pending_recommendation__").strip(),
-        recommender, "准奏")
+        recommender)
     assert action_id > 0
 
     _commit_and_promulgate(db, state, content, action_id)
