@@ -258,14 +258,20 @@ export function ChatModal({
     }
   };
 
+  // #1732 T3：任何会改变「最近一轮」的发送入口先失效确认条，避免陈旧确认误撤新轮。
+  const dispatchSend = (ministerName: string, text?: string) => {
+    setConfirmUndo(false);
+    onSend(ministerName, text);
+  };
+
   const handleSend = () => {
-    onSend(currentMinister.name, input);
+    dispatchSend(currentMinister.name, input);
   };
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
     event.preventDefault();
-    onSend(currentMinister.name, input);
+    dispatchSend(currentMinister.name, input);
   };
 
   const sendSuggestion = (suggestion: Suggestion) => {
@@ -274,7 +280,7 @@ export function ChatModal({
       onInput(suggestion.text);
       setTimeout(() => inputRef.current?.focus(), 0);
     } else {
-      onSend(currentMinister.name, suggestion.text);
+      dispatchSend(currentMinister.name, suggestion.text);
     }
   };
 
@@ -425,7 +431,7 @@ export function ChatModal({
               <X size={15} />
               退出召对
             </button>
-            <button className="secondary-action composer-retreat" onClick={() => onSend(currentMinister.name, "退朝")} disabled={!!busy}>
+            <button className="secondary-action composer-retreat" onClick={() => dispatchSend(currentMinister.name, "退朝")} disabled={!!busy}>
               散夜
             </button>
             {composerHint && <div className="composer-hint">{composerHint}</div>}
