@@ -175,12 +175,16 @@ export function PortraitUploadButton({
           }
         }}
       />
-      {uploadError ? (
-        <div className="inline-alert-bar" role="alert">
-          <span className="inline-alert-bar-body">{uploadError}</span>
-          <button type="button" className="inline-alert-bar-ok" onClick={(e) => { e.stopPropagation(); setUploadError(""); }}>知悉</button>
-        </div>
-      ) : null}
+      {/* #1732 T2：portal 到 body，避开朝堂卡 transform/overflow 祖先（mock 整屏底栏） */}
+      {uploadError
+        ? createPortal(
+            <div className="inline-alert-bar" role="alert">
+              <span className="inline-alert-bar-body">{uploadError}</span>
+              <button type="button" className="inline-alert-bar-ok" onClick={(e) => { e.stopPropagation(); setUploadError(""); }}>知悉</button>
+            </div>,
+            document.body,
+          )
+        : null}
     </>
   );
 }

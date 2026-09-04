@@ -757,9 +757,8 @@ def test_spawn_pending_write_thread_start_failure_releases_ownership():
 # ── #396 Step5 R4: web_game is None 时 new_game 仍须切换库路径 ───────────
 
 def test_new_game_switches_db_path_when_web_game_is_none(monkeypatch, tmp_path):
-    """#396 Step5 R4 P1: web_game is None（退菜单后 / 服务端首次启动）时，new_game 仍必须切换
-    主库路径到新文件——否则 fresh=True 会解析到旧配置库（MING_SIM_DB env）并删/覆盖，
-    而旧 detach worker 可能仍写旧库。无旧 game 时不归档、不 drain。"""
+    """#396 Step5 R4 P1 + #1732 T1: web_game is None（退菜单后 / 服务端首次启动）时，new_game
+    仍必须切换主库路径到新文件；无活 session 时仍把旧主库归档进 saves/（同一权威实现）。"""
     import sqlite3
 
     old_db_path = str(tmp_path / "old_configured.db")
@@ -772,6 +771,8 @@ def test_new_game_switches_db_path_when_web_game_is_none(monkeypatch, tmp_path):
     monkeypatch.setattr(web_app, "web_game", None)
     monkeypatch.setenv("MING_SIM_DB", old_db_path)
     monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
+    # 无进行中的 exit detach
+    monkeypatch.setattr(web_app, "_menu_exit_detach_done", None)
 
     fake_new_game = SimpleNamespace(state_payload=lambda: {"turn": 1})
     monkeypatch.setattr(web_app, "WebGame", lambda fresh: fake_new_game)
@@ -784,18 +785,22 @@ def test_new_game_switches_db_path_when_web_game_is_none(monkeypatch, tmp_path):
     # env 已切到新路径
     new_path = os.environ["MING_SIM_DB"]
     assert new_path != old_db_path
-    # 旧库未被删/覆盖
-    assert os.path.exists(old_db_path)
-    check = sqlite3.connect(old_db_path)
-    rows = dict(check.execute("SELECT key, value FROM kv_store").fetchall())
-    check.close()
-    assert rows["data"] == "before_new_game"
     # active_db.txt 也已切到新路径
     with open(web_app._active_db_path_file(), "r", encoding="utf-8") as f:
         assert f.read().strip() == new_path
-    # 无旧 game → 不归档
+    # #1732 T1：无活 session 也归档旧主库
+    assert _wait_for(lambda: not os.path.exists(old_db_path))
     saves_dir = tmp_path / "saves"
-    assert not saves_dir.exists() or list(saves_dir.glob("*.db")) == []
+    save_files = list(saves_dir.glob("*.db"))
+    assert len(save_files) == 1
+    check = sqlite3.connect(str(save_files[0]))
+    rows = dict(check.execute("SELECT key, value FROM kv_store").fetchall())
+    check.close()
+    assert rows["data"] == "before_new_game"
+    # 归档名可被存档扫描与 load 名校验接受
+    scanned = web_app._scan_saves()
+    assert len(scanned) == 1
+    assert scanned[0]["name"] == save_files[0].stem
 
 
 def test_new_game_switches_db_path_when_web_game_none_and_no_env(monkeypatch, tmp_path):
@@ -821,8 +826,9 @@ def test_new_game_switches_db_path_when_web_game_none_and_no_env(monkeypatch, tm
 
 
 def test_new_game_after_exit_does_not_clobber_old_db_while_detach_drains(monkeypatch, tmp_path):
-    """#396 Step5 R4 P1 完整路径：退菜单→web_game=None+detach drain 写旧库→
-    new_game 须切到新库路径，不删/覆盖旧库（旧 detach worker 仍写旧库文件）。"""
+    """#396 Step5 R4 P1 + #1732 T1 完整路径：退菜单→web_game=None+detach drain 写旧库→
+    new_game 须切到新库路径，不与仍写的 detach 抢搬；排空关闭后旧库归档进 saves/。
+    exit_to_menu 本身不搬库——「继续上局」在仅 exit 时仍可见主库。"""
     import sqlite3
 
     old_db_path = str(tmp_path / "old_configured.db")
@@ -846,6 +852,9 @@ def test_new_game_after_exit_does_not_clobber_old_db_while_detach_drains(monkeyp
     gate.acquire()
     asyncio.run(web_app.api_menu_exit())
     assert web_app.web_game is None
+    # #1732 T1：exit 本身不搬主库——继续上局仍可见
+    assert os.path.exists(old_db_path)
+    assert web_app._has_main_db()
 
     # new_game：web_game=None，但仍须切到新库路径
     fake_new_game = SimpleNamespace(state_payload=lambda: {"turn": 1})
@@ -866,3 +875,14 @@ def test_new_game_after_exit_does_not_clobber_old_db_while_detach_drains(monkeyp
 
     assert _wait_for(lambda: closed == [1])
     assert not gate.locked()
+    # #1732 T1：排空关闭后旧库归档，含迟到后台回奏；可被存档列表看见
+    assert _wait_for(lambda: not os.path.exists(old_db_path))
+    save_files = list((tmp_path / "saves").glob("*.db"))
+    assert len(save_files) == 1
+    check = sqlite3.connect(str(save_files[0]))
+    rows = dict(check.execute("SELECT key, value FROM kv_store").fetchall())
+    check.close()
+    assert rows["data"] == "before_exit"
+    assert rows["reply"] == "detach_reply"
+    scanned = web_app._scan_saves()
+    assert any(s["name"] == save_files[0].stem for s in scanned)

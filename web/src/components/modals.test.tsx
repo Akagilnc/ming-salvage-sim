@@ -366,6 +366,58 @@ describe("#1732 ChatModal · 撤回就地确认", () => {
     act(() => yes?.click());
     expect(onUndo).toHaveBeenCalledWith("周延儒");
   });
+
+  it("#1732 T3 开着确认条发送后确认条关闭", () => {
+    const onSend = vi.fn();
+    const host = renderModal({
+      minister: MINISTER_MOCK,
+      portraitPrefix: "minister_",
+      canUndoLastChat: true,
+      onSend,
+    });
+    const undo = Array.from(host.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("撤回本轮")
+    ) as HTMLButtonElement;
+    act(() => undo.click());
+    expect(host.querySelector('[aria-label="撤回召对确认"]')).not.toBeNull();
+
+    const textarea = host.querySelector("textarea") as HTMLTextAreaElement;
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+      setter?.call(textarea, "问边饷");
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const send = Array.from(host.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("发送")
+    ) as HTMLButtonElement;
+    act(() => send.click());
+
+    expect(onSend).toHaveBeenCalledWith("周延儒", "问边饷");
+    expect(host.querySelector('[aria-label="撤回召对确认"]')).toBeNull();
+  });
+
+  it("#1732 T3 开着确认条点散夜后确认条关闭", () => {
+    const onSend = vi.fn();
+    const host = renderModal({
+      minister: MINISTER_MOCK,
+      portraitPrefix: "minister_",
+      canUndoLastChat: true,
+      onSend,
+    });
+    const undo = Array.from(host.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("撤回本轮")
+    ) as HTMLButtonElement;
+    act(() => undo.click());
+    expect(host.querySelector('[aria-label="撤回召对确认"]')).not.toBeNull();
+
+    const retreat = Array.from(host.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("散夜")
+    ) as HTMLButtonElement;
+    act(() => retreat.click());
+
+    expect(onSend).toHaveBeenCalledWith("周延儒", "退朝");
+    expect(host.querySelector('[aria-label="撤回召对确认"]')).toBeNull();
+  });
 });
 
 describe("ChatModal — #1370 empty audience chrome", () => {

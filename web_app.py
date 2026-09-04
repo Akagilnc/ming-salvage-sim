@@ -4211,6 +4211,42 @@ def _get_main_db_path() -> str:
     return user_data_path("ming_sim.db")
 
 
+def _archive_drained_db_file(old_db_path: str) -> None:
+    """把已排空关闭的主库文件移入 saves/（#396 / #1732 唯一归档实现）。
+
+    调用方须保证旧连接已关；本函数不碰 session。文件不存在则静默返回。
+    """
+    if not old_db_path or not os.path.exists(old_db_path):
+        return
+    saves_dir = user_data_path("saves")
+    os.makedirs(saves_dir, exist_ok=True)
+    target = os.path.join(saves_dir, f"drained_{time.time_ns()}.db")
+    moved = False
+    try:
+        shutil.move(old_db_path, target)
+        moved = True
+    except Exception:
+        pass
+    if not moved:
+        return
+    wal_path = old_db_path + "-wal"
+    if os.path.exists(wal_path):
+        try:
+            shutil.move(wal_path, target + "-wal")
+        except Exception:
+            try:
+                shutil.move(target, old_db_path)
+            except Exception:
+                pass
+            return
+    shm_path = old_db_path + "-shm"
+    if os.path.exists(shm_path):
+        try:
+            shutil.move(shm_path, target + "-shm")
+        except Exception:
+            pass
+
+
 def _drain_and_close_session(game, archive_db: bool = False) -> None:
     """等在途后台写入（召对 worker / 结算 worker）排空后再关连接。
 
@@ -4243,39 +4279,16 @@ def _drain_and_close_session(game, archive_db: bool = False) -> None:
     if close_failed:
         return
     if archive_db:
-        old_db_path = getattr(game, "db_path", "")
-        if old_db_path and os.path.exists(old_db_path):
-            saves_dir = user_data_path("saves")
-            os.makedirs(saves_dir, exist_ok=True)
-            target = os.path.join(saves_dir, f"drained_{time.time_ns()}.db")
-            moved = False
-            try:
-                shutil.move(old_db_path, target)
-                moved = True
-            except Exception:
-                pass
-            if moved:
-                wal_path = old_db_path + "-wal"
-                if os.path.exists(wal_path):
-                    try:
-                        shutil.move(wal_path, target + "-wal")
-                    except Exception:
-                        try:
-                            shutil.move(target, old_db_path)
-                        except Exception:
-                            pass
-                        return
-                shm_path = old_db_path + "-shm"
-                if os.path.exists(shm_path):
-                    try:
-                        shutil.move(shm_path, target + "-shm")
-                    except Exception:
-                        pass
+        _archive_drained_db_file(getattr(game, "db_path", "") or "")
 
 
 web_game: Optional[WebGame] = None  # 懒加载：菜单页点「新游戏/继续/加载存档」才实例化
 # #1195：菜单生命周期世代。continue worker 发布 web_game 前对号；失配则丢弃白建局。
 _menu_generation: int = 0
+# #1732 T1：exit_to_menu 的 detach 完成信号。new_game 在 old_game is None 时须等此信号
+# 再归档旧主库，避免与仍写旧库的 detach 双移/抢文件（#396 readonly 约束）。
+_menu_exit_detach_lock = threading.Lock()
+_menu_exit_detach_done: Optional[threading.Event] = None
 
 
 app = FastAPI(title="Ming Salvage MVP Web")
@@ -4515,7 +4528,11 @@ async def api_menu_new_game() -> Dict[str, Any]:
     旧 session 的后台召对队列在 daemon 线程里续跑写入、排空 write_gate 后再关连接（detach）。
     先把旧库 park 旁路再 fresh=True 建新库——不在旧 worker 仍写旧连接时 os.remove 底层文件；
     排空后关旧连接并把旁路库归档为存档，玩家可再次进入看到迟到的后台回奏；
-    #382 通用并发模型（Windows file-lock 等）不在本轮 scope。"""
+    #382 通用并发模型（Windows file-lock 等）不在本轮 scope。
+
+    #1732 T1：经 exit_to_menu 后 web_game 已是 None，仍须把旧主库归档进 saves/
+    （裁定二前提「旧局自动归档为存档」）。exit 本身不搬库；归档只在旧连接排空后、
+    由本端点承接同一 _archive_drained_db_file 权威实现。"""
     global web_game, _menu_generation
     _menu_generation += 1
     old_game = web_game
@@ -4525,6 +4542,7 @@ async def api_menu_new_game() -> Dict[str, Any]:
     # #396: 不能在旧后台 worker 仍写旧库时删/重命名旧库文件（SQLite 会报 readonly database）。
     # 改为把主库路径切换到新文件，旧 worker 安全续写旧库；排空关连接后旧库归档为存档。
     snapshot = _snapshot_main_db_path_config()
+    prev_db_path = _get_main_db_path()
     new_db_path = user_data_path(f"ming_sim_{time.time_ns()}.db")
     try:
         # 同步覆写 env + active_db.txt → 新局落新路径，重启也继续新路径。
@@ -4547,6 +4565,18 @@ async def api_menu_new_game() -> Dict[str, Any]:
             args=(old_game, True),
             daemon=True,
         ).start()
+    else:
+        # #1732 T1：退菜单后 / 无活 session 时仍归档旧主库。先等 exit detach 关连接，
+        # 再走同一归档实现——不与仍写旧库的 detach 双移。
+        def _archive_prev_after_exit_detach() -> None:
+            with _menu_exit_detach_lock:
+                done = _menu_exit_detach_done
+            if done is not None:
+                done.wait()
+            if prev_db_path and prev_db_path != new_db_path:
+                _archive_drained_db_file(prev_db_path)
+
+        threading.Thread(target=_archive_prev_after_exit_detach, daemon=True).start()
     return steam_events.with_events(
         {"state": web_game.state_payload()},
         [steam_events.add_stat(steam_events.STAT_RUNS_STARTED)],
@@ -4643,14 +4673,27 @@ async def api_menu_exit() -> Dict[str, Any]:
     """退回菜单：关 session 但不删 DB。
 
     #396：界面立刻退（web_game=None + 响应返回），后台召对 worker 继续跑完、写进档；
-    session.close() 推迟到 write_gate 排空后再执行（detach），不在 worker 写时关。"""
-    global web_game, _menu_generation
+    session.close() 推迟到 write_gate 排空后再执行（detach），不在 worker 写时关。
+
+    #1732 T1：本端点不搬主库文件——「继续上局」须照常可用；归档由后续 new_game 承接。
+    """
+    global web_game, _menu_generation, _menu_exit_detach_done
     _menu_generation += 1
     if web_game is not None:
         old_game = web_game
         web_game = None  # 界面立刻退
-        # detach：等 write_gate 排空后再关连接（#396）
-        threading.Thread(target=_drain_and_close_session, args=(old_game,), daemon=True).start()
+        done = threading.Event()
+        with _menu_exit_detach_lock:
+            _menu_exit_detach_done = done
+
+        def _detach_exit() -> None:
+            try:
+                _drain_and_close_session(old_game)
+            finally:
+                done.set()
+
+        # detach：等 write_gate 排空后再关连接（#396）；不归档（#1732 T1）
+        threading.Thread(target=_detach_exit, daemon=True).start()
     return {"ok": True}
 
 
