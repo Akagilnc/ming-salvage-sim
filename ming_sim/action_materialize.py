@@ -263,12 +263,23 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
         return
 
     seen: set = set()
+    validation_failures: list[tuple[dict[str, Any], BaseException]] = []
     for cluster in materialize_clusters_ordered():
         fn = cluster.materialize_fn
         if fn is None or fn in seen:
             continue
         seen.add(fn)
-        fn(ctx)
+        try:
+            fn(ctx)
+        except (
+            StructuredDecreeCombinationError,
+            DecreeMaterializationValidationError,
+        ) as exc:
+            validation_failures.append((
+                dict(getattr(exc, "partial_result", None) or {}), exc,
+            ))
+    if validation_failures:
+        _record_decree_validation_failures(ctx, ctx.out, validation_failures)
     # #1380：LLM 分类拟旨路并行 office（无任免意图则 no-op）。
     # 显式「拟旨如下」前缀任免走随诏 extractor office_changes（#344 US3 / ADR 0028 /
     # test_decree_prefix_appointment_not_double_staged）；禁并行 LLM 抽取。

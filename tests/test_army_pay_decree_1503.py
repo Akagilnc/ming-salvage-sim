@@ -1597,7 +1597,10 @@ def test_draft_xiexang_batch_failures_share_recovery_and_leave_zero_writes(
     assert {int(d["id"]) for d in db.list_decree_dossiers()} == dossier_before
 
 
-@pytest.mark.parametrize("validation_case", ["incomplete_xiexang", "region_mismatch"])
+@pytest.mark.parametrize(
+    "validation_case",
+    ["incomplete_xiexang", "region_mismatch", "existing_draft_region_mismatch"],
+)
 def test_http_chat_stream_exposes_typed_decree_validation_recovery(
     tmp_path, monkeypatch, _offline_scene_beat_generator, validation_case,
 ):
@@ -1627,15 +1630,16 @@ def test_http_chat_stream_exposes_typed_decree_validation_recovery(
     def backend(_prompt, _config=None, *, tag=""):
         backend_tags.add(tag)
         if tag == "action_intent":
-            candidate = (
-                {
+            if validation_case == "incomplete_xiexang":
+                candidate = {
                     "kind": "grant_allocation", "grant_action": "协饷",
                     "amount": 0, "account": "", "purpose": "补饷",
                     "target_kind": "army", "target_id": "",
                 }
-                if validation_case == "incomplete_xiexang"
-                else {"kind": "draft"}
-            )
+            elif validation_case == "region_mismatch":
+                candidate = {"kind": "draft"}
+            else:
+                candidate = {"kind": "none"}
             return json.dumps(candidate, ensure_ascii=False), 1
         if tag == "draft_intent":
             return json.dumps({
@@ -1667,6 +1671,14 @@ def test_http_chat_stream_exposes_typed_decree_validation_recovery(
         game.session.registry.get = lambda _character: _AudienceAgent()
         if game.session.llm_config is not None:
             game.session.llm_config.channel = "cli"
+        if validation_case == "existing_draft_region_mismatch":
+            game.db.stage_directive_candidate(game.state.turn, name, payload={
+                "text": "整饬京师。", "actor": name,
+                "dossier_action_type": "special_decree",
+                "target_kind": "policy", "target_id": "整饬京师",
+            })
+        pending_before = [row["id"] for row in game.db.list_pending_actions(game.state.turn)]
+        dossiers_before = [row["id"] for row in game.db.list_decree_dossiers()]
         message = (
             "拟旨如下：整饬京师"
             if validation_case == "incomplete_xiexang"
@@ -1696,8 +1708,14 @@ def test_http_chat_stream_exposes_typed_decree_validation_recovery(
         assert "action_intent" in backend_tags
         assert "decree_validation_recovery" in backend_tags
         assert isinstance(done.get("answer"), str)
-        assert not game.db.list_pending_actions(game.state.turn)
-        assert not game.db.list_decree_dossiers()
+        assert [row["id"] for row in game.db.list_pending_actions(game.state.turn)] == pending_before
+        assert [row["id"] for row in game.db.list_decree_dossiers()] == dossiers_before
+        ledger = game.db.conn.execute(
+            "SELECT source FROM rejection_reports "
+            "WHERE turn=? AND section='audience_decree' AND category='decree_validation'",
+            (game.state.turn,),
+        ).fetchall()
+        assert ledger and all(row["source"] == "player_decree" for row in ledger)
     finally:
         if game.session:
             game.session.close()
