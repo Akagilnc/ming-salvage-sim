@@ -478,3 +478,33 @@ describe("#1236 SettlementLock 装饰层自身契约", () => {
     expect(decor?.getAttribute("role")).toBe("status");
   });
 });
+
+describe("#1725 SettlementLock 中心进度呈现", () => {
+  it("六阶 stage 驱动 typed progressbar（current/total），阶段名可见", () => {
+    const host = mount(
+      <SettlementLock stage="推演月末邸报" thinking="" narrative="" />,
+    );
+    const decor = host.querySelector("[data-testid=settlement-lock-decor]");
+    expect(decor).not.toBeNull();
+    expect(decor?.textContent || "").toContain("推演月末邸报");
+
+    const bar = host.querySelector("[data-testid=settlement-wait-progress]");
+    expect(bar).not.toBeNull();
+    expect(bar?.getAttribute("role")).toBe("progressbar");
+    expect(bar?.getAttribute("aria-valuenow")).toBe("3");
+    expect(bar?.getAttribute("aria-valuemax")).toBe("6");
+    expect(bar?.getAttribute("aria-valuemin")).toBe("1");
+    // 玩家侧不见内部枚举／字段名
+    expect(decor?.textContent || "").not.toMatch(/SETTLEMENT_WAIT|stageIndex|progress_current/);
+  });
+
+  it("非冻结六阶标签不伪造进度刻度", () => {
+    const host = mount(
+      <SettlementLock stage="圣意亲裁，续推时局" thinking="" narrative="" />,
+    );
+    expect(host.querySelector("[data-testid=settlement-wait-progress]")).toBeNull();
+    expect(host.querySelector("[data-testid=settlement-lock-decor]")?.textContent || "").toContain(
+      "圣意亲裁，续推时局",
+    );
+  });
+});
