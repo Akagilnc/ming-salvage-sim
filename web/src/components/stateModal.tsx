@@ -29,8 +29,6 @@ function MemorialCard({ memorial }: { memorial: Memorial }) {
   return (
     <section
       className={`memorial-card${memorial.unread ? " memorial-card-unread" : ""}`}
-      data-memorial-key={memorial.key}
-      data-unread={memorial.unread ? "1" : "0"}
     >
       <header className="memorial-card-head">
         <span className="memorial-author">{memorial.author_name}</span>
