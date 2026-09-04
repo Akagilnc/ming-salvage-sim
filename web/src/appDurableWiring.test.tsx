@@ -1256,6 +1256,11 @@ const settlementBaseState = (phase: string, extra: Record<string, unknown> = {})
   metrics: { 民心: SNAP_MINXIN, 皇威: SNAP_HUANGWEI, 国库: SNAP_TREASURY, 内库: SNAP_INNER },
   previous_summary: "",
   issues: [{ id: 9, kind: "situation", title: MIDCOURSE_ISSUE, status: "open", progress: 77, fail_condition: "" }],
+  // #1726：奏疏与局势脱钩；默认空收件箱（具体用例可覆盖）
+  memorials: [] as Array<{
+    key: string; kind: string; turn: number; author_name: string; memorial_text: string; unread: boolean;
+  }>,
+  unread_memorial_count: 0,
   legacies: [{
     id: 1, name: SNAP_LEGACY, narrative_hint: "",
     modifiers: {}, effect_text: "民心+1", remaining_months: 3, clear_condition: "",
@@ -1894,7 +1899,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     expect(haremCard?.disabled).toBe(true);
     await closeOpenOverlay(host);
 
-    // memorials：只读可达；内容闸吃 situation——核账期零半程泄漏（#1236 正向断言）
+    // memorials：只读可达；与局势脱钩——核账期仍可读收件箱，不得泄漏半程议题（#1726）
     await click(cmdByCaption(host, "奏疏"));
     await tick();
     await act(async () => {
@@ -1903,7 +1908,9 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     const memorialsDialog = host.querySelector('[role="dialog"][aria-label="奏疏"]')!;
     expect(memorialsDialog.textContent).not.toContain(MIDCOURSE_ISSUE);
     expect(memorialsDialog.querySelector(".situation-list")).toBeNull();
-    expect(memorialsDialog.textContent).toContain(SETTLEMENT_CLOSED_REASON);
+    expect(memorialsDialog.querySelector(".situation-panel")).toBeNull();
+    expect(memorialsDialog.textContent).toContain("本月无疏");
+    expect(memorialsDialog.textContent).not.toContain(SETTLEMENT_CLOSED_REASON);
     expect(memorialsDialog.textContent).not.toContain(SNAP_MEMORIAL);
     await closeOpenOverlay(host);
 
@@ -2114,12 +2121,44 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     });
   });
 
-  it("#1285 非核账：奏疏模态呈 situation 议题列表（同 settlementBaseState 工厂）", async () => {
+  it("#1726 非核账：奏疏模态呈真实奏疏正文，不借局势议题", async () => {
+    const MEMORIAL_BODY = "臣工办理进度，库藏尚可。";
     stubSettlementFetch({
       ...settlementBaseState("player"),
       turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
       previous_summary: "",
       pending_decisions: [],
+      memorials: [{
+        key: "progress:11",
+        kind: "progress",
+        turn: 5,
+        author_name: "杨嗣昌",
+        memorial_text: MEMORIAL_BODY,
+        unread: true,
+      }],
+      unread_memorial_count: 1,
+    });
+    // 点开即已读：后端回执
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    const prevImpl = fetchMock.getMockImplementation() as
+      ((input: RequestInfo | URL, init?: RequestInit) => Promise<Response>) | undefined;
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/memorials/read") && init?.method === "POST") {
+        return new Response(JSON.stringify({
+          memorials: [{
+            key: "progress:11",
+            kind: "progress",
+            turn: 5,
+            author_name: "杨嗣昌",
+            memorial_text: MEMORIAL_BODY,
+            unread: false,
+          }],
+          unread_memorial_count: 0,
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (prevImpl) return prevImpl(input, init);
+      return new Response("{}", { status: 404 });
     });
     const host = await mountApp();
     await click(cmdByCaption(host, "奏疏"));
@@ -2128,9 +2167,12 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="奏疏"]')).not.toBeNull());
     });
     const memorialsDialog = host.querySelector('[role="dialog"][aria-label="奏疏"]')!;
-    expect(memorialsDialog.querySelector(".situation-panel")).not.toBeNull();
-    expect(memorialsDialog.textContent).toContain(MIDCOURSE_ISSUE);
+    expect(memorialsDialog.querySelector(".situation-panel")).toBeNull();
+    expect(memorialsDialog.textContent).not.toContain(MIDCOURSE_ISSUE);
+    expect(memorialsDialog.textContent).toContain("杨嗣昌");
+    expect(memorialsDialog.querySelector("pre.memorial-text")?.textContent).toBe(MEMORIAL_BODY);
     expect(memorialsDialog.textContent).not.toContain(SETTLEMENT_CLOSED_REASON);
+    expect(memorialsDialog.textContent).not.toContain("progress:11");
   });
 
   it("#1342 朝堂抽屉开着时点拟诏：关抽屉并开拟诏台", async () => {
