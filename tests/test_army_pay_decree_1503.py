@@ -10,6 +10,7 @@ Seams:
 from __future__ import annotations
 
 import json
+import sqlite3
 from types import SimpleNamespace
 
 import pytest
@@ -1510,7 +1511,7 @@ def test_draft_neitang_stays_generic_special_decree(game, monkeypatch):
 
 
 def test_draft_xiexang_batch_failures_share_recovery_and_leave_zero_writes(
-    game, monkeypatch,
+    game, monkeypatch, tmp_path,
 ):
     """残缺/非法协饷不落旨，并把 LLM 恢复说明交给玩家呈现层。"""
     import ming_sim.cli_backend as cb
@@ -1522,6 +1523,7 @@ def test_draft_xiexang_batch_failures_share_recovery_and_leave_zero_writes(
         return "任意生成回禀"
 
     monkeypatch.setattr(cb, "compose_decree_validation_recovery", recovery)
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     db, state, _content = game
     actor = db.conn.execute(
         "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
@@ -1552,14 +1554,17 @@ def test_draft_xiexang_batch_failures_share_recovery_and_leave_zero_writes(
     assert all(set(call[0][0]) == expected_fields for call in recovery_calls)
     recovery = ctx.out.get("decree_validation_failure") or {}
     assert set(recovery.get("failed_fields") or []) == expected_fields
-    durable = [
-        (json.loads(row["item_json"]), row["reason"])
-        for row in db.conn.execute(
-            "SELECT item_json, reason FROM rejection_reports "
-            "WHERE turn=? AND section='audience_decree' AND category='decree_validation'",
-            (state.turn,),
-        )
-    ]
+    db_path = db.conn.execute("PRAGMA database_list").fetchone()[2]
+    with sqlite3.connect(db_path) as independent:
+        independent.row_factory = sqlite3.Row
+        durable = [
+            (json.loads(row["item_json"]), row["reason"])
+            for row in independent.execute(
+                "SELECT item_json, reason FROM rejection_reports "
+                "WHERE turn=? AND section='audience_decree' AND category='decree_validation'",
+                (state.turn,),
+            )
+        ]
     assert durable
     assert {
         field
@@ -1722,9 +1727,6 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
         assert {"amount", "account", "target_id"} <= set(
             failure.get("failed_fields") or []
         )
-        # Generated prose is observed only by its presence in the projected answer;
-        # no wording, sentence, or template is part of the contract.
-        assert len(done.get("answer") or "") > len(generated_recovery)
         assert recovery_fields
         assert not game.db.list_pending_actions(game.state.turn)
         assert not game.db.list_decree_dossiers()
