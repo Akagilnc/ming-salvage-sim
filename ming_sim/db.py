@@ -17897,7 +17897,7 @@ class GameDB:
         payload = {
             "text": text,
             "actor": minister_name,
-            "mode": resolve_directive_mode(mode, text),
+            "mode": resolve_directive_mode(extracted=mode),
         }
         existing = [
             p for p in self.list_pending_actions(int(turn), minister_name=minister_name)
