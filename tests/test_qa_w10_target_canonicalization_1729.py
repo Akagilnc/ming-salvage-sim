@@ -65,6 +65,7 @@ def test_exact_target_canonicalizers_reject_prose(content, canonicalize, raw):
         ("北直隶", "北直隶"),
         ("北直隶 / 京师", "北直隶 / 京师"),
         ("京师", "@beizhili"),
+        ("@beizhili", "@beizhili"),
     ],
 )
 def test_audience_region_draft_persists_canonical_target(
