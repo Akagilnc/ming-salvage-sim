@@ -276,7 +276,9 @@ def test_real_conversation_draft_supplement_preserves_and_appends_roster(
 
     extracted = {
         "draft_action": "拟旨", "draft_text": "补充后的草稿",
-        **_POLICY_FIELDS, "target_candidate": target, "mode": expected_mode,
+        **_POLICY_FIELDS,
+        "target_candidate": target,
+        "mode": None if player_message == "再补一条。" else "ordinary",
     }
     if supplement == "empty":
         extracted["participant_roster"] = []
