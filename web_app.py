@@ -4893,7 +4893,9 @@ async def api_memorials_read(body: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(keys, list):
         keys = []
     clean = [str(k).strip() for k in keys if str(k or "").strip()]
-    return get_game().mark_memorials_read(clean)
+    game = get_game()
+    with _serialized_web_write(game):
+        return game.mark_memorials_read(clean)
 
 
 @app.get("/api/secret_orders")

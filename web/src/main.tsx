@@ -400,11 +400,12 @@ export function App() {
   // #1726：点开奏疏面板即已读（绑具体奏报 key，不绑案卷）；失败不挡阅读。
   const memorialMarkGenRef = React.useRef(0);
   React.useEffect(() => {
+    const gen = ++memorialMarkGenRef.current;
     if (activeModal !== "state" || !state) return;
-    if (!isFaceReachable("memorials", isSettlementDisplay(state.turn))) return;
+    if (isSettlementDisplay(state.turn)) return;
+    if (!isFaceReachable("memorials", false)) return;
     const keys = (state.memorials || []).filter((m) => m.unread).map((m) => m.key);
     if (!keys.length) return;
-    const gen = ++memorialMarkGenRef.current;
     void api<{ memorials: Memorial[]; unread_memorial_count: number }>(
       "/api/memorials/read",
       { method: "POST", body: JSON.stringify({ keys }) },

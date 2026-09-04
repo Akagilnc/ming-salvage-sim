@@ -530,6 +530,62 @@ function SurfaceFailuresFixture({ loadState }: { loadState: () => Promise<void> 
   );
 }
 
+/**
+ * #1726 F2：奏疏已读 gen 须在 early-return 之前自增。
+ * 关面板 / 无未读键 early-return 若不 bump gen，迟到回执会写回陈旧 memorials。
+ */
+function MemorialMarkReadGenFixture({
+  postRead,
+}: {
+  postRead: () => Promise<{ unread_memorial_count: number }>;
+}) {
+  const [activeModal, setActiveModal] = React.useState<"state" | "none">("state");
+  const [unreadKeys, setUnreadKeys] = React.useState(true);
+  const [applied, setApplied] = React.useState<number | null>(null);
+  const genRef = React.useRef(0);
+  React.useEffect(() => {
+    const gen = ++genRef.current;
+    if (activeModal !== "state") return;
+    if (!unreadKeys) return;
+    void postRead().then((result) => {
+      if (gen !== genRef.current) return;
+      setApplied(result.unread_memorial_count);
+    });
+  }, [activeModal, unreadKeys, postRead]);
+  return (
+    <div>
+      <div data-testid="applied">{applied === null ? "" : String(applied)}</div>
+      <button data-testid="close" onClick={() => setActiveModal("none")}>
+        关闭
+      </button>
+      <button data-testid="refresh" onClick={() => { setUnreadKeys(false); setApplied(0); }}>
+        刷新
+      </button>
+    </div>
+  );
+}
+
+describe("奏疏已读陈旧守卫（mark-read gen）", () => {
+  it("关面板再刷新后，迟到已读回执不得写回", async () => {
+    let resolve!: (v: { unread_memorial_count: number }) => void;
+    const pending = new Promise<{ unread_memorial_count: number }>((r) => {
+      resolve = r;
+    });
+    const host = render(<MemorialMarkReadGenFixture postRead={() => pending} />);
+    act(() => {
+      (host.querySelector("[data-testid=close]") as HTMLButtonElement).click();
+    });
+    act(() => {
+      (host.querySelector("[data-testid=refresh]") as HTMLButtonElement).click();
+    });
+    await act(async () => {
+      resolve({ unread_memorial_count: 99 });
+      await pending;
+    });
+    expect(host.querySelector("[data-testid=applied]")?.textContent).toBe("0");
+  });
+});
+
 describe("失败恢复入口 — 无承办人", () => {
   it("没有 minister_name 的失败也会打开全局恢复面板", async () => {
     const host = render(<SurfaceFailuresFixture loadState={() => Promise.resolve()} />);
