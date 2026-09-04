@@ -8,6 +8,7 @@ import types
 import pytest
 
 import ming_sim.cli_backend as cli_backend
+from ming_sim.matching import canonical_army_id_exact, canonical_region_id_exact
 from ming_sim.session import GameSession
 
 
@@ -39,6 +40,21 @@ def _persisted_payload(db, pending_id: int) -> dict:
     ).fetchone()
     assert row is not None
     return json.loads(row["payload_json"])
+
+
+@pytest.mark.parametrize(
+    ("canonicalize", "raw"),
+    [
+        (canonical_region_id_exact, "京师赈务"),
+        (canonical_region_id_exact, "请接济北直隶"),
+        (canonical_army_id_exact, "请拨给关宁军"),
+        (canonical_army_id_exact, "宁锦防线欠饷"),
+    ],
+)
+def test_exact_target_canonicalizers_reject_prose(content, canonicalize, raw):
+    """受控别名/命名空间不放宽 exact seam 为子串或散文匹配。"""
+    entities = content.regions if canonicalize is canonical_region_id_exact else content.armies
+    assert canonicalize(raw, entities) is None
 
 
 @pytest.mark.parametrize(
