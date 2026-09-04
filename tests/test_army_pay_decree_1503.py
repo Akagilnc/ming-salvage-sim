@@ -1617,6 +1617,9 @@ def test_http_chat_stream_exposes_typed_decree_validation_recovery(
             return None
 
     backend_tags = set()
+    # cli_backend resolves its default trace path at import time; isolate the
+    # real composer path explicitly so this tracer leaves no repository probe.
+    monkeypatch.setattr(cb, "_TRACE_PATH", str(tmp_path / "cli_trace.jsonl"))
     monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
