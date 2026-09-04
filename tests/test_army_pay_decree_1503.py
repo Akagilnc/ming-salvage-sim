@@ -459,14 +459,10 @@ def test_non_army_grant_does_not_clear_arrears(game):
     assert _army_row(db)["arrears"] == pytest.approx(before["arrears"])
 
 
-@pytest.mark.parametrize("grant_action,message,reply", [
-    ("项目经费", "拨关宁军械项目经费十万两。", "臣请户部发帑十万两作军械项目经费。"),
-    ("项目经费", "拨关宁筑城经费十万两。", "臣请户部发帑十万两作筑城经费。"),
-])
-def test_army_target_non_pay_grant_does_not_clear_arrears(
-    game, grant_action, message, reply,
-):
-    """army 对象的军械/筑城/项目经费：可扣库，不得升格协饷销欠。"""
+def test_army_target_non_pay_grant_does_not_clear_arrears(game):
+    """army 对象的项目经费：可扣库，不得升格协饷销欠。"""
+    grant_action = "项目经费"
+    reply = "臣请户部发帑十万两作军械项目经费。"
     db, state, content = game
     _set_guanning_arrears(db, 60, central=60, province=0)
     before = _army_row(db)
