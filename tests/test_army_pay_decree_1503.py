@@ -1510,8 +1510,9 @@ def test_draft_neitang_stays_generic_special_decree(game, monkeypatch):
     assert pending.get("dossier_action_type", "special_decree") == "special_decree"
 
 
+@pytest.mark.parametrize("recovery_fails", [False, True])
 def test_draft_xiexang_batch_failures_share_recovery_and_leave_zero_writes(
-    game, monkeypatch, tmp_path,
+    game, monkeypatch, tmp_path, recovery_fails,
 ):
     """残缺/非法协饷不落旨，并把 LLM 恢复说明交给玩家呈现层。"""
     import ming_sim.cli_backend as cb
@@ -1520,6 +1521,8 @@ def test_draft_xiexang_batch_failures_share_recovery_and_leave_zero_writes(
 
     def recovery(*args, **kwargs):
         recovery_calls.append((args, kwargs))
+        if recovery_fails:
+            raise RuntimeError("recovery backend unavailable")
         return "任意生成回禀"
 
     monkeypatch.setattr(cb, "compose_decree_validation_recovery", recovery)
@@ -1548,12 +1551,17 @@ def test_draft_xiexang_batch_failures_share_recovery_and_leave_zero_writes(
         message="拟旨如下：准拨军饷。",
         reply="准拨，数目另议。",
     )
-    run_materialize_pipeline(ctx)
+    if recovery_fails:
+        with pytest.raises(RuntimeError, match="recovery backend unavailable"):
+            run_materialize_pipeline(ctx)
+    else:
+        run_materialize_pipeline(ctx)
     expected_fields = {"amount", "account", "purpose", "target_kind", "target_id"}
     assert recovery_calls
     assert all(set(call[0][0]) == expected_fields for call in recovery_calls)
-    recovery = ctx.out.get("decree_validation_failure") or {}
-    assert set(recovery.get("failed_fields") or []) == expected_fields
+    if not recovery_fails:
+        recovery = ctx.out.get("decree_validation_failure") or {}
+        assert set(recovery.get("failed_fields") or []) == expected_fields
     db_path = db.conn.execute("PRAGMA database_list").fetchone()[2]
     with sqlite3.connect(db_path) as independent:
         independent.row_factory = sqlite3.Row

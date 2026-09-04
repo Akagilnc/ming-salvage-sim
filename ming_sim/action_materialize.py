@@ -133,11 +133,6 @@ def _record_decree_validation_failures(
         for failure in diagnostic_failures
         for field in failure["failed_fields"]
     }
-    report = compose_decree_validation_recovery(
-        sorted(failed_fields),
-        speaker_name=ctx.character.name,
-        llm_config=ctx.llm_config,
-    )
     collector = RejectionCollector()
     for failure in diagnostic_failures:
         collector.record(
@@ -162,6 +157,13 @@ def _record_decree_validation_failures(
         mirror_rejections_after_commit(
             ctx.session.db, collector, rejections_jsonl_path,
         )
+    # Recovery is downstream of the committed engine facts: backend failure
+    # cannot erase the validation causes, and no write transaction spans LLM I/O.
+    report = compose_decree_validation_recovery(
+        sorted(failed_fields),
+        speaker_name=ctx.character.name,
+        llm_config=ctx.llm_config,
+    )
     out["decree_validation_failure"] = {
         "failed_fields": sorted(failed_fields),
         "report": report,
