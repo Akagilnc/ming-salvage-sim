@@ -3510,6 +3510,9 @@ class WebGame:
             payload: Optional[Dict[str, Any]] = None
             # #1727：court_break 预领屏障；异常出口也须 complete，禁 has_open_barrier 永真。
             close_barrier_ticket: Optional[WriteTicket] = None
+            # #1353 r12：payload 已成 ⇒ done 必先于 error（后处理失败回话已可见）。
+            # #1727 把尾随 spawn/屏障领票挪到 done 前，spawn 抛错时须由出口补 done。
+            reply_done_emitted = False
             try:
                 try:
                     # P5：唯一不依赖回话输出的独立调用 = CLI 动作意图分类（只读皇帝消息）。
@@ -3615,6 +3618,7 @@ class WebGame:
                     # P5：先 done（回话可见），再 join 尾随 / 收夜 / end——玩家无「为后处理黑屏」。
                     # #1727：court_break 时 done 前已领屏障，召对写入口不再全活。
                     ev_queue.put({"type": "done", "payload": payload or {}})
+                    reply_done_emitted = True
 
                     if mind_thread is not None:
                         mind_thread.join()
@@ -3656,9 +3660,13 @@ class WebGame:
                     # #1353 r12/r13：worker 单一异常出口——payload / 后处理 / 收夜任一失败
                     # 皆 error→end；禁逐点补丁，禁只走 finally 致消费者永阻。
                     # payload 未成（回话失败）才 fail 本轮；后处理失败回话已可见。
+                    # #1727：done 前尾随/屏障步失败时，此处补 done，保「回话已可见」再 error。
                     # ADR 0005 / #1408：清理二次失败 logger.exception 记 traceback 不宽吞；
                     # abandon / 终态写分 try；清理异常不覆盖原始 error、不阻断 error→end。
                     # Scene drain stays outside write_gate (C9/T1/T10).
+                    if payload is not None and not reply_done_emitted:
+                        ev_queue.put({"type": "done", "payload": payload or {}})
+                        reply_done_emitted = True
                     if payload is None:
                         try:
                             if chat_turn_id:
