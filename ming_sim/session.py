@@ -2329,6 +2329,7 @@ class GameSession:
         if (
             not has_directive
             and not out.get("pending_action_id")
+            and not out.get("decree_validation_failure")
             and message_text.startswith(_DRAFT_PREFIXES)
         ):
             fallback = resolve_minister_actions(

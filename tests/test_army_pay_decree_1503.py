@@ -1509,22 +1509,8 @@ def test_draft_neitang_stays_generic_special_decree(game, monkeypatch):
     assert pending.get("dossier_action_type", "special_decree") == "special_decree"
 
 
-@pytest.mark.parametrize(
-    "payload",
-    [
-        {
-            "kind": "draft", "draft_action": "拟旨", "grant_action": "协饷",
-        },
-        {
-            "kind": "draft", "draft_action": "拟旨", "grant_action": "协饷",
-            "amount": 15, "account": "太仓", "purpose": "补饷",
-            "target_kind": "army", "target_id": "liaodong",
-        },
-    ],
-    ids=["incomplete_xiexang", "unresolvable_target"],
-)
-def test_draft_xiexang_incomplete_or_illegal_returns_recovery_zero_write(
-    game, payload, monkeypatch,
+def test_draft_xiexang_batch_failures_share_recovery_and_leave_zero_writes(
+    game, monkeypatch,
 ):
     """残缺/非法协饷不落旨，并把 LLM 恢复说明交给玩家呈现层。"""
     import ming_sim.cli_backend as cb
@@ -1547,7 +1533,16 @@ def test_draft_xiexang_incomplete_or_illegal_returns_recovery_zero_write(
         (state.turn,),
     ).fetchone()[0]
     dossier_before = {int(d["id"]) for d in db.list_decree_dossiers()}
-    candidates = candidates_from_classifier_payload(payload, soft=False)
+    candidates = candidates_from_classifier_payload([
+        {
+            "kind": "draft", "draft_action": "拟旨", "grant_action": "协饷",
+        },
+        {
+            "kind": "draft", "draft_action": "拟旨", "grant_action": "协饷",
+            "amount": 15, "account": "太仓", "purpose": "补饷",
+            "target_kind": "army", "target_id": "liaodong",
+        },
+    ], soft=False)
     ctx = _ctx(
         db, actor, candidates, state.turn,
         message="拟旨如下：准拨军饷。",
@@ -1557,7 +1552,8 @@ def test_draft_xiexang_incomplete_or_illegal_returns_recovery_zero_write(
     assert len(recovery_calls) == 1
     assert recovery_calls[0][0][0]
     assert diagnostics[0]["tag"] == "decree_validation_failure"
-    assert diagnostics[0]["failures"][0]["message"]
+    assert len(diagnostics[0]["failures"]) == 2
+    assert all(failure["message"] for failure in diagnostics[0]["failures"])
     assert set((ctx.out.get("decree_validation_failure") or {}).keys()) == {"report"}
     pending_after = db.conn.execute(
         "SELECT COUNT(*) FROM pending_actions WHERE turn=? AND kind='directive'",
@@ -1592,12 +1588,19 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
         def __init__(self):
             self._calls = 0
 
-        def run(self, *_a, **_k):
+        def run(self, *_a, **kwargs):
+            from tests.test_audience_background import RunContent, RunOutput
+
             self._calls += 1
             if self._calls == 1:
                 content = "臣请户部发帑十五万两协济关宁军前，请陛下定夺准驳。"
             else:
                 content = "臣遵旨。敕户部发太仓银十五万两协济关宁军前。钦此。"
+            if kwargs.get("stream"):
+                def chunks():
+                    yield RunContent(content)
+                    yield RunOutput([])
+                return chunks()
             return SimpleNamespace(content=content, tools=[])
 
         def get_last_run_output(self):
@@ -1611,10 +1614,7 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
         if str(text or "").strip() == "准":
             return []
         if "整饬京师" in str(text or ""):
-            return [{
-                "kind": "draft", "target_kind": "region",
-                "target_id": "京师", "region_id": "@beizhili",
-            }]
+            return _scripted_xiexang_candidates(amount=0, account="", target_id="")
         return list(scripted)
 
     def fake_confirm(player_message, *_a, **_k):
@@ -1693,11 +1693,11 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
         client = TestClient(web_app.app)
         rejected = client.post(
             f"/api/ministers/{name}/chat/stream",
-            json={"message": "拟旨整饬京师"},
+            json={"message": "拟旨如下：整饬京师"},
         )
         assert rejected.status_code == 200
         assert "event: done" in rejected.text and "event: error" not in rejected.text
-        assert {"target_id", "region_id"} <= recovery_fields[0]
+        assert {"amount", "account", "target_id"} <= recovery_fields[0]
         assert not game.db.list_pending_actions(game.state.turn)
         assert not game.db.list_decree_dossiers()
 
