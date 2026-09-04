@@ -1566,20 +1566,18 @@ def test_draft_xiexang_batch_failures_share_recovery_and_leave_zero_writes(
     with sqlite3.connect(db_path) as independent:
         independent.row_factory = sqlite3.Row
         durable = [
-            (json.loads(row["item_json"]), row["reason"])
+            (json.loads(row["item_json"]), row["reason"], row["category"], row["source"])
             for row in independent.execute(
-                "SELECT item_json, reason FROM rejection_reports "
+                "SELECT item_json, reason, category, source FROM rejection_reports "
                 "WHERE turn=? AND section='audience_decree' AND category='decree_validation'",
                 (state.turn,),
             )
         ]
     assert durable
-    assert {
-        field
-        for item, _reason in durable
-        for field in item.get("failed_fields") or []
-    } == expected_fields
-    assert all(item.get("exception_type") and reason for item, reason in durable)
+    assert [item for item, _reason, _category, _source in durable] == candidates
+    assert all(reason for _item, reason, _category, _source in durable)
+    assert all(category == "decree_validation" for _item, _reason, category, _source in durable)
+    assert all(source == "player_decree" for _item, _reason, _category, source in durable)
     pending_after = db.conn.execute(
         "SELECT COUNT(*) FROM pending_actions WHERE turn=? AND kind='directive'",
         (state.turn,),
@@ -1610,6 +1608,8 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
     class _TwoRoundHubuAgent:
         """#1503 独有：召对请拨 + 准后遵旨两轮户部回话。"""
 
+        first_content = "臣请户部发帑十五万两协济关宁军前，请陛下定夺准驳。"
+
         def __init__(self):
             self._calls = 0
 
@@ -1618,7 +1618,7 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
 
             self._calls += 1
             if self._calls == 1:
-                content = "臣请户部发帑十五万两协济关宁军前，请陛下定夺准驳。"
+                content = self.first_content
             else:
                 content = "臣遵旨。敕户部发太仓银十五万两协济关宁军前。钦此。"
             if kwargs.get("stream"):
@@ -1736,6 +1736,7 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
             failure.get("failed_fields") or []
         )
         assert recovery_fields
+        assert len(done.get("answer") or "") > len(canned.first_content)
         assert not game.db.list_pending_actions(game.state.turn)
         assert not game.db.list_decree_dossiers()
 
