@@ -2873,6 +2873,12 @@ class WebGame:
         report = str(esc.get("report") or "").strip()
         if report:
             answer = GameSession._ensure_unknown_participant_report_cue(answer, report)
+        validation = res.get("decree_validation_failure") or {}
+        validation_report = str(validation.get("report") or "").strip()
+        if validation_report:
+            answer = GameSession._ensure_unknown_participant_report_cue(
+                answer, validation_report,
+            )
         pending_action_failures = list(res.get("pending_action_failures") or [])
         if tool_stage_failures:
             pending_action_failures = pending_action_failures + list(tool_stage_failures)

@@ -2526,6 +2526,12 @@ class GameSession:
             result.answer = GameSession._ensure_unknown_participant_report_cue(
                 result.answer or "", report,
             )
+        validation = res.get("decree_validation_failure") or {}
+        validation_report = str(validation.get("report") or "").strip()
+        if validation_report:
+            result.answer = GameSession._ensure_unknown_participant_report_cue(
+                result.answer or "", validation_report,
+            )
 
     def _apply_appointment(self, payload: str, appointer: Character) -> Tuple[str, str]:
         """吏部 propose_appointment 落地：建档入库 + 注册 Agent，本回合即可召见。

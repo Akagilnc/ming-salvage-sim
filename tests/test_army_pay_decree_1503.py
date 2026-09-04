@@ -1523,10 +1523,16 @@ def test_draft_neitang_stays_generic_special_decree(game, monkeypatch):
     ],
     ids=["incomplete_xiexang", "unresolvable_target"],
 )
-def test_draft_xiexang_incomplete_or_illegal_fail_loud_zero_write(game, payload):
-    """残缺/非法协饷 draft：materialize fail-loud，pending/dossier 零增。"""
-    from ming_sim.action_materialize import IncompleteXiexangPayloadError
+def test_draft_xiexang_incomplete_or_illegal_returns_recovery_zero_write(
+    game, payload, monkeypatch,
+):
+    """残缺/非法协饷不落旨，并把 LLM 恢复说明交给玩家呈现层。"""
+    import ming_sim.cli_backend as cb
 
+    recovery = "opaque-llm-recovery"
+    monkeypatch.setattr(
+        cb, "compose_decree_validation_recovery", lambda *_a, **_k: recovery,
+    )
     db, state, _content = game
     actor = db.conn.execute(
         "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
@@ -1542,8 +1548,8 @@ def test_draft_xiexang_incomplete_or_illegal_fail_loud_zero_write(game, payload)
         message="拟旨如下：准拨军饷。",
         reply="准拨，数目另议。",
     )
-    with pytest.raises((IncompleteXiexangPayloadError, ValueError)):
-        run_materialize_pipeline(ctx)
+    run_materialize_pipeline(ctx)
+    assert (ctx.out.get("decree_validation_failure") or {}).get("report") == recovery
     pending_after = db.conn.execute(
         "SELECT COUNT(*) FROM pending_actions WHERE turn=? AND kind='directive'",
         (state.turn,),
