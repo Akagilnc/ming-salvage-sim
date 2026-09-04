@@ -1518,6 +1518,7 @@ def stage_grant_allocation_candidate(
     target_kind: str,
     target_id: str,
     extracted_mode: object = None,
+    emperor_text: object = None,
     amount: object = 0,
     account: str = "",
     purpose: str = "",
@@ -1531,8 +1532,12 @@ def stage_grant_allocation_candidate(
     Same grant_action+target_id alone must not overwrite. Independent 另拨/再赏
     each stage a new candidate (#502 / #518); only a structured target_candidate
     id updates the named pending grant.
+    emperor_text is accepted from the audience pipeline but is never a mode
+    source (#1731 typed extracted/existing only).
     """
     from ming_sim.cli_backend import resolve_directive_mode
+
+    _ = emperor_text
 
     action = str(grant_action or "").strip()
     target = str(target_id or "").strip()
@@ -1676,6 +1681,7 @@ def _materialize_grant_allocation(ctx: MaterializeCtx) -> None:
         target_kind=target_kind,
         target_id=target_id,
         extracted_mode=intent.get("mode"),
+        emperor_text=ctx.player_message,
         amount=intent.get("amount"),
         account=resolve_grant_account(
             grant_action=grant_action,
