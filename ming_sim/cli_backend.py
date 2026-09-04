@@ -1875,6 +1875,48 @@ def compose_unknown_participant_inworld_report(
         ) from exc
 
 
+def compose_decree_validation_recovery(
+    failed_fields: Optional[List[str]] = None,
+    *,
+    speaker_name: str = "",
+    llm_config: Any = None,
+) -> str:
+    """Turn typed decree rejection facts into a player-facing retry cue via the LLM."""
+    from ming_sim.exceptions import LLMUnavailable
+    from ming_sim.llm_model import cli_runner_unavailable
+
+    field_groups = {
+        "所指对象": {"target_kind", "target_id"},
+        "所指地域": {"region_id", "locality_scope"},
+        "承办人": {"assignee", "assignee_id", "assignee_name"},
+        "办理方式": {"action_type", "dossier_action_type", "transaction_category"},
+    }
+    failed = {str(item).strip() for item in (failed_fields or []) if str(item).strip()}
+    features = [label for label, keys in field_groups.items() if failed & keys]
+    feature = "、".join(features) if features else "旨意所指对象或必需内容"
+    prompt = (
+        f"你是大臣{str(speaker_name or '').strip()}。一份拟旨在记录前校验未通过，"
+        f"需要皇帝重新说明：{feature}。以本职口吻回禀，明确此旨尚未记录，并请皇帝"
+        "补充或改说所需信息后重拟。只输出一两句回禀正文，不要标题、JSON、字段名、"
+        "内部编号或系统术语。"
+    )
+    try:
+        raw, _ = _run_backend_for_config(
+            prompt, llm_config, tag="decree_validation_recovery",
+        )
+        text = str(raw or "").strip()
+        if text and not text.lstrip().startswith("{"):
+            return text
+        raise RuntimeError("旨意校验回禀空响或非戏内文")
+    except LLMUnavailable:
+        raise
+    except Exception as exc:
+        _log(f"旨意校验回禀产文失败：{exc}")
+        raise cli_runner_unavailable(
+            exc, backend="decree_validation_recovery",
+        ) from exc
+
+
 def _canon_person_id_key(raw: Any, *, db: Any, content: Any) -> Optional[str]:
     """单 id：非人滤除 + _canonical_minister_key → 熟键；与 roster 归一同口径。"""
     from ming_sim.session import _canonical_minister_key

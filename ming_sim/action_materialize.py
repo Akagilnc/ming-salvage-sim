@@ -17,7 +17,11 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from ming_sim.decree_vocabulary import TARGET_KINDS
 from ming_sim.execution_pressure import write_locality_scope_for_target_kind
 from ming_sim.executor_routing import duty_route_categories
-from ming_sim.structured_decree import assemble_structured_decree, apply_assembled_to_payload
+from ming_sim.structured_decree import (
+    StructuredDecreeCombinationError,
+    apply_assembled_to_payload,
+    assemble_structured_decree,
+)
 
 from ming_sim.action_clusters import (
     ActionCluster,
@@ -106,6 +110,21 @@ def _materializable_draft_xiexang(
     return promoted
 
 
+def _record_decree_validation_failure(
+    ctx: MaterializeCtx, out: Dict[str, Any], exc: BaseException,
+) -> None:
+    from ming_sim.cli_backend import compose_decree_validation_recovery, _log
+
+    _log(f"旨意校验未通过（未落库）: {exc}")
+    out["decree_validation_failure"] = {
+        "report": compose_decree_validation_recovery(
+            list(getattr(exc, "failed_fields", ()) or ()),
+            speaker_name=ctx.character.name,
+            llm_config=ctx.llm_config,
+        ),
+    }
+
+
 def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
     """按登记 priority 依次调用已注册 materializer。
 
@@ -129,10 +148,13 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
             original_draft_index = draft_index
             if original_kind == "draft":
                 draft_index += 1
+            try:
+                materializable = _materializable_draft_xiexang(ctx, candidate)
+            except DecreeMaterializationValidationError as exc:
+                _record_decree_validation_failure(ctx, ctx.out, exc)
+                continue
             candidate_records.append((
-                _materializable_draft_xiexang(ctx, candidate),
-                original_kind,
-                original_draft_index,
+                materializable, original_kind, original_draft_index,
             ))
         if ctx.explicit_prefixed:
             candidate_records.sort(
@@ -173,7 +195,13 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
                 conversation_intent_handled=False,
                 draft_staged=False,
             )
-            fn(candidate_ctx)
+            try:
+                fn(candidate_ctx)
+            except (
+                StructuredDecreeCombinationError,
+                DecreeMaterializationValidationError,
+            ) as exc:
+                _record_decree_validation_failure(candidate_ctx, candidate_out, exc)
             if kind == "grant_allocation" and int(
                 candidate_out.get("pending_action_id") or 0
             ) > int(baseline_out.get("pending_action_id") or 0):
@@ -1421,13 +1449,17 @@ def canonicalize_xiexang_army_target(db: Any, raw_target: object) -> str:
     tid = str(raw_target or "").strip()
     army_id = _resolve_xiexang_army_id(db, tid)
     if not army_id:
-        raise ValueError(
+        raise DecreeMaterializationValidationError(
             f"协饷旨意 target 无法解析为军队：{tid!r}（不猜散文）"
         )
     return army_id
 
 
-class IncompleteXiexangPayloadError(ValueError):
+class DecreeMaterializationValidationError(ValueError):
+    """Typed rejection raised before a decree candidate can be recorded."""
+
+
+class IncompleteXiexangPayloadError(DecreeMaterializationValidationError):
     def __init__(self, missing_fields: list) -> None:
         self.missing_fields = tuple(missing_fields)
         super().__init__(
@@ -1501,7 +1533,7 @@ def require_materializable_xiexang_payload(
     )
     body = str(text or "").strip()
     if not body:
-        raise ValueError("协饷旨意缺少正文（不猜散文）")
+        raise DecreeMaterializationValidationError("协饷旨意缺少正文（不猜散文）")
     army_id = canonicalize_xiexang_army_target(db, explicit["target_id"])
     cadence_value = str(cadence or "").strip() or "一次性"
     return {
