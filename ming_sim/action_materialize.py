@@ -113,8 +113,9 @@ def _materializable_draft_xiexang(
 def _record_decree_validation_failures(
     ctx: MaterializeCtx, out: Dict[str, Any], failures: list[BaseException],
 ) -> None:
-    """Record every engine rejection, then generate one player-lane recovery report."""
-    from ming_sim.cli_backend import compose_decree_validation_recovery, _trace
+    """Persist every engine rejection, then generate a player-lane recovery report."""
+    from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
+    from ming_sim.cli_backend import compose_decree_validation_recovery
 
     diagnostic_failures = [
         {
@@ -129,12 +130,26 @@ def _record_decree_validation_failures(
         for failure in diagnostic_failures
         for field in failure["failed_fields"]
     }
-    _trace({
-        "tag": "decree_validation_failure",
-        "turn": int(ctx.session.state.turn),
-        "failures": diagnostic_failures,
-    })
+    collector = RejectionCollector()
+    for failure in diagnostic_failures:
+        collector.record(
+            "audience_decree",
+            RejectedItem(
+                item={
+                    "exception_type": failure["type"],
+                    "failed_fields": failure["failed_fields"],
+                },
+                reason=failure["message"],
+                category="decree_validation",
+                source=Provenance.unknown,
+            ),
+            int(ctx.session.state.turn),
+        )
+    # The durable rejection ledger is the engine-lane owner.  Unlike optional
+    # CLI tracing, a write failure here is loud and cannot be washed by recovery.
+    collector.flush_to_db(ctx.session.db)
     out["decree_validation_failure"] = {
+        "failed_fields": sorted(failed_fields),
         "report": compose_decree_validation_recovery(
             sorted(failed_fields),
             speaker_name=ctx.character.name,

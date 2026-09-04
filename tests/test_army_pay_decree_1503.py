@@ -1516,14 +1516,12 @@ def test_draft_xiexang_batch_failures_share_recovery_and_leave_zero_writes(
     import ming_sim.cli_backend as cb
 
     recovery_calls = []
-    diagnostics = []
 
     def recovery(*args, **kwargs):
         recovery_calls.append((args, kwargs))
         return "任意生成回禀"
 
     monkeypatch.setattr(cb, "compose_decree_validation_recovery", recovery)
-    monkeypatch.setattr(cb, "_trace", diagnostics.append)
     db, state, _content = game
     actor = db.conn.execute(
         "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
@@ -1550,18 +1548,25 @@ def test_draft_xiexang_batch_failures_share_recovery_and_leave_zero_writes(
     )
     run_materialize_pipeline(ctx)
     expected_fields = {"amount", "account", "purpose", "target_kind", "target_id"}
-    assert len(recovery_calls) == 1
-    assert set(recovery_calls[0][0][0]) == expected_fields
-    assert len(diagnostics) == 1
-    assert diagnostics[0]["tag"] == "decree_validation_failure"
-    assert len(diagnostics[0]["failures"]) == 2
+    assert recovery_calls
+    assert all(set(call[0][0]) == expected_fields for call in recovery_calls)
+    recovery = ctx.out.get("decree_validation_failure") or {}
+    assert set(recovery.get("failed_fields") or []) == expected_fields
+    durable = [
+        (json.loads(row["item_json"]), row["reason"])
+        for row in db.conn.execute(
+            "SELECT item_json, reason FROM rejection_reports "
+            "WHERE turn=? AND section='audience_decree' AND category='decree_validation'",
+            (state.turn,),
+        )
+    ]
+    assert durable
     assert {
         field
-        for failure in diagnostics[0]["failures"]
-        for field in failure["failed_fields"]
+        for item, _reason in durable
+        for field in item.get("failed_fields") or []
     } == expected_fields
-    assert all(failure["message"] for failure in diagnostics[0]["failures"])
-    assert set((ctx.out.get("decree_validation_failure") or {}).keys()) == {"report"}
+    assert all(item.get("exception_type") and reason for item, reason in durable)
     pending_after = db.conn.execute(
         "SELECT COUNT(*) FROM pending_actions WHERE turn=? AND kind='directive'",
         (state.turn,),
@@ -1663,9 +1668,10 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
     )
     monkeypatch.setattr(cb, "classify_cli_action_intent", fake_classify)
     monkeypatch.setattr(cb, "extract_confirmation_intent", fake_confirm)
+    generated_recovery = "回禀" * 100
     monkeypatch.setattr(
         cb, "compose_decree_validation_recovery",
-        lambda fields, **_kwargs: recovery_fields.append(set(fields)) or "任意生成回禀",
+        lambda fields, **_kwargs: recovery_fields.append(set(fields)) or generated_recovery,
     )
 
     game = web_app.WebGame(fresh=False)
@@ -1703,8 +1709,23 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
             json={"message": "拟旨如下：整饬京师"},
         )
         assert rejected.status_code == 200
-        assert "event: done" in rejected.text and "event: error" not in rejected.text
-        assert {"amount", "account", "target_id"} <= recovery_fields[0]
+        events = {}
+        for block in rejected.text.split("\n\n"):
+            lines = block.splitlines()
+            event = next((line[7:] for line in lines if line.startswith("event: ")), "")
+            data = next((line[6:] for line in lines if line.startswith("data: ")), "")
+            if event and data:
+                events[event] = json.loads(data)
+        assert "error" not in events
+        done = events["done"]
+        failure = done.get("decree_validation_failure") or {}
+        assert {"amount", "account", "target_id"} <= set(
+            failure.get("failed_fields") or []
+        )
+        # Generated prose is observed only by its presence in the projected answer;
+        # no wording, sentence, or template is part of the contract.
+        assert len(done.get("answer") or "") > len(generated_recovery)
+        assert recovery_fields
         assert not game.db.list_pending_actions(game.state.turn)
         assert not game.db.list_decree_dossiers()
 
