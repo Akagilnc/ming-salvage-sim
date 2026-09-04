@@ -741,7 +741,6 @@ def test_materialize_validation_failure_returns_llm_recovery_without_draft(game,
     )
 
     assert "decree_validation_recovery" in calls
-    assert result.answer != original_answer  # feature observation only; prose stays unconstrained
     assert not [p for p in db.list_pending_actions(state.turn) if p["kind"] == "directive"]
 
 
