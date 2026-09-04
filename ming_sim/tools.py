@@ -468,7 +468,7 @@ def build_minister_tools(character: Character, context: CourtContext,
         backing_dossier_id: Optional[int] = None,
         issue_id: Optional[int] = None,
         issue_disposition: str = "",
-        mode: str = "ordinary",
+        mode: Optional[str] = None,
     ) -> str:
         """把已定处置方案拟成一道圣旨草稿呈给皇帝审阅。
 
@@ -478,7 +478,8 @@ def build_minister_tools(character: Character, context: CourtContext,
         backing_dossier_id 指向原廷议案卷；若处置弹劾潮，填 issue_id 与
         issue_disposition，并在办人时从该事项标靶中明确选择单一 target_id。
         仅在正文讨论廷杖/流放/昭雪等制度、未填结构化字段时，不得当作已决惩处。
-        mode 是 LLM 对皇帝本意的 typed 判定：仅确为中旨时填 midzhi，否则 ordinary。
+        mode 是 LLM 对皇帝本意的新 typed 判定：确为中旨时填 midzhi，
+        确为普通旨时填 ordinary；没有新判断时不填。
         """
         text = (decree_text or "").strip()
         if not text:
