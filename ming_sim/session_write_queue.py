@@ -278,6 +278,38 @@ class SessionWriteQueue:
             ticket._awaiting_write = False
             self._cond.notify_all()
 
+    def claim_barrier(self) -> Optional[WriteTicket]:
+        """#1727：领屏障票但不 wait——立刻让 has_open_barrier 对玩家写入口可见。
+
+        用于 court_break 已在 done 暴露、尾随票尚未清的窗口：召对写入口须先落幕，
+        收夜本体仍等 prior 票（run_barrier / barrier）。seal 时返 None。
+        这不是第二把 #1353 写锁——仍是同一队列的 barrier 票。
+        """
+        return self.claim(key=("barrier",))
+
+    def run_barrier(
+        self, fn: Callable[[], T], ticket: Optional[WriteTicket] = None,
+    ) -> T:
+        """在屏障票上 wait_prior → fn → complete。
+
+        ticket 为 None 时等价 barrier(fn)（自领自还）；传入 #1727 预领票时复用该票，
+        禁再领第二张 barrier（否则 wait 自锁）。
+        """
+        own = ticket is None
+        if own:
+            with self._cond:
+                seq = self._next_seq
+                self._next_seq += 1
+                ticket = WriteTicket(seq=seq, key=("barrier",))
+                self._open[seq] = ticket
+                self._by_key.setdefault(("barrier",), set()).add(seq)
+        assert ticket is not None
+        try:
+            self.wait_prior(ticket)
+            return fn()
+        finally:
+            self.complete(ticket)
+
     def barrier(self, fn: Callable[[], T]) -> T:
         """Claim a barrier ticket after current claims; run fn when priors clear.
 
@@ -289,17 +321,7 @@ class SessionWriteQueue:
         Sealed queue: still waits for open priors, then runs fn (lifecycle/
         month-advance must proceed even when new claims are rejected).
         """
-        with self._cond:
-            seq = self._next_seq
-            self._next_seq += 1
-            ticket = WriteTicket(seq=seq, key=("barrier",))
-            self._open[seq] = ticket
-            self._by_key.setdefault(("barrier",), set()).add(seq)
-        try:
-            self.wait_prior(ticket)
-            return fn()
-        finally:
-            self.complete(ticket)
+        return self.run_barrier(fn)
 
     def wait_idle(self, *, timeout_s: Optional[float] = None) -> bool:
         """Wait until no open tickets remain. True if idle, False on timeout.
