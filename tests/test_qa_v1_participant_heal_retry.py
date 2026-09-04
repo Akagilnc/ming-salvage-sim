@@ -713,11 +713,12 @@ def test_materialize_validation_failure_returns_llm_recovery_without_draft(game,
 
     db, state, content = game
     minister = _active_minister(db, content)
-    recovery = "臣已将此稿撤下，请陛下明示所指地域，臣再行拟就。"
+    calls: list[str] = []
 
     def backend(prompt, llm_config=None, tag=""):
+        calls.append(tag)
         if tag == "decree_validation_recovery":
-            return (recovery, 1)
+            return ("任意生成回禀", 1)
         if tag != "draft_intent":
             return ("{}", 1)
         malformed = _ok_payload(person=None)
@@ -728,19 +729,14 @@ def test_materialize_validation_failure_returns_llm_recovery_without_draft(game,
     _silence_side_extractors(monkeypatch, cb)
     sess = _fake_session(db, state, content)
 
-    result = types.SimpleNamespace(
-        answer="臣先前拟稿。", proposed_directive=None, pending_action_id=0,
-        secret_order_id=None, pending_action_failures=[],
-        directive_confirmation_ambiguous=None,
-    )
-    sess._cli_backend_fallback_actions(
-        result, minister, player_message="拟旨整饬京师",
+    result = GameSession.apply_cli_conversation_actions(
+        sess, minister, player_message="拟旨整饬京师", answer="臣先前拟稿。",
+        has_directive=False, secret_order_id=None,
         preclassified_intent={"kind": "draft"},
     )
 
-    assert recovery in result.answer
-    assert "region_id" not in result.answer
-    assert "target_id" not in result.answer
+    assert "decree_validation_recovery" in calls
+    assert set((result.get("decree_validation_failure") or {}).keys()) == {"report"}
     assert not [p for p in db.list_pending_actions(state.turn) if p["kind"] == "directive"]
 
 

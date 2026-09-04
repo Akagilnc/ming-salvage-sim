@@ -1806,6 +1806,45 @@ def build_participant_correction_feedback(
     return block
 
 
+def _compose_inworld_fact_report(
+    prompt: str,
+    *,
+    llm_config: Any,
+    tag: str,
+    timeout_s: float | None = None,
+) -> str:
+    """Shared player-lane fact-to-prose call; generated prose is never rewritten."""
+    from ming_sim.exceptions import LLMUnavailable
+    from ming_sim.llm_model import cli_runner_unavailable
+
+    if timeout_s is not None and float(timeout_s) <= 0:
+        raise cli_runner_unavailable(TimeoutError(f"{tag} 无剩余预算"), backend=tag)
+
+    def _produce() -> str:
+        raw, _ = _run_backend_for_config(prompt, llm_config, tag=tag)
+        text = str(raw or "").strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```\w*\n?", "", text)
+            text = re.sub(r"\n?```$", "", text).strip()
+        if text and not text.lstrip().startswith("{"):
+            return text
+        raise cli_runner_unavailable(RuntimeError(f"{tag} 空响或非戏内文"), backend=tag)
+
+    try:
+        if timeout_s is None:
+            return _produce()
+        pool = ThreadPoolExecutor(max_workers=1)
+        try:
+            return pool.submit(_produce).result(timeout=float(timeout_s))
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
+    except LLMUnavailable:
+        raise
+    except Exception as exc:
+        _log(f"{tag} 产文失败：{exc}")
+        raise cli_runner_unavailable(exc, backend=tag) from exc
+
+
 def compose_unknown_participant_inworld_report(
     names: Optional[List[str]] = None,
     *,
@@ -1820,9 +1859,6 @@ def compose_unknown_participant_inworld_report(
     剩余预算≤0、超时或产文失败 → typed LLMUnavailable（#1299/#1310/#1452
     失败单源 CLI_RUNNER_PLAYER_MESSAGE），玩家重下这道点名。
     """
-    from ming_sim.exceptions import LLMUnavailable
-    from ming_sim.llm_model import cli_runner_unavailable
-
     cleaned = _normalize_unknown_participant_names(names)
     if voice == "minister" and str(speaker_name or "").strip():
         role = f"大臣{str(speaker_name).strip()}"
@@ -1834,45 +1870,12 @@ def compose_unknown_participant_inworld_report(
         f"只输出回禀正文，不要标题、不要系统术语、不要 JSON。\n"
         f"事实：{fact}\n"
     )
-    if timeout_s is not None and float(timeout_s) <= 0:
-        raise cli_runner_unavailable(
-            TimeoutError("查无此人回禀无剩余预算"),
-            backend="participant_escalate_report",
-        )
-
-    def _produce() -> str:
-        raw, _ = _run_backend_for_config(
-            prompt, llm_config, tag="participant_escalate_report",
-        )
-        text = str(raw or "").strip()
-        if text.startswith("```"):
-            text = re.sub(r"^```\w*\n?", "", text)
-            text = re.sub(r"\n?```$", "", text)
-            text = text.strip()
-        # 抽取器 JSON / 空响 → 失败；只要非结构化戏内文。
-        if text and not text.lstrip().startswith("{"):
-            return text
-        raise cli_runner_unavailable(
-            RuntimeError("查无此人回禀空响或非戏内文"),
-            backend="participant_escalate_report",
-        )
-
-    try:
-        if timeout_s is None:
-            return _produce()
-        pool = ThreadPoolExecutor(max_workers=1)
-        try:
-            fut = pool.submit(_produce)
-            return fut.result(timeout=float(timeout_s))
-        finally:
-            pool.shutdown(wait=False, cancel_futures=True)
-    except LLMUnavailable:
-        raise
-    except Exception as exc:
-        _log(f"查无此人回禀产文失败：{exc}")
-        raise cli_runner_unavailable(
-            exc, backend="participant_escalate_report",
-        ) from exc
+    return _compose_inworld_fact_report(
+        prompt,
+        llm_config=llm_config,
+        tag="participant_escalate_report",
+        timeout_s=timeout_s,
+    )
 
 
 def compose_decree_validation_recovery(
@@ -1882,9 +1885,6 @@ def compose_decree_validation_recovery(
     llm_config: Any = None,
 ) -> str:
     """Turn typed decree rejection facts into a player-facing retry cue via the LLM."""
-    from ming_sim.exceptions import LLMUnavailable
-    from ming_sim.llm_model import cli_runner_unavailable
-
     field_groups = {
         "所指对象": {"target_kind", "target_id"},
         "所指地域": {"region_id", "locality_scope"},
@@ -1900,21 +1900,9 @@ def compose_decree_validation_recovery(
         "补充或改说所需信息后重拟。只输出一两句回禀正文，不要标题、JSON、字段名、"
         "内部编号或系统术语。"
     )
-    try:
-        raw, _ = _run_backend_for_config(
-            prompt, llm_config, tag="decree_validation_recovery",
-        )
-        text = str(raw or "").strip()
-        if text and not text.lstrip().startswith("{"):
-            return text
-        raise RuntimeError("旨意校验回禀空响或非戏内文")
-    except LLMUnavailable:
-        raise
-    except Exception as exc:
-        _log(f"旨意校验回禀产文失败：{exc}")
-        raise cli_runner_unavailable(
-            exc, backend="decree_validation_recovery",
-        ) from exc
+    return _compose_inworld_fact_report(
+        prompt, llm_config=llm_config, tag="decree_validation_recovery",
+    )
 
 
 def _canon_person_id_key(raw: Any, *, db: Any, content: Any) -> Optional[str]:
