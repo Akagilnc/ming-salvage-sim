@@ -343,14 +343,14 @@ def test_pacification_effect_rejects_mismatched_target_binds_canonical(game):
 @pytest.mark.parametrize(
     ("player_message", "intent_mode", "expected_mode"),
     [
-        ("中旨直发招抚张献忠归顺朝廷。", None, "midzhi"),
+        ("中旨直发招抚张献忠归顺朝廷。", "midzhi", "midzhi"),
         ("招抚张献忠归顺朝廷。", None, "ordinary"),
         ("招抚张献忠归顺朝廷。", "midzhi", "midzhi"),
     ],
-    ids=["emperor_midzhi", "ordinary_default", "classifier_mode"],
+    ids=["typed_midzhi", "ordinary_default", "classifier_mode"],
 )
 def test_pacification_preserves_declared_mode(game, player_message, intent_mode, expected_mode):
-    """C2：招抚候选保留皇帝/classifier 声明的颁布方式。"""
+    """C2：招抚候选保留 classifier 的 typed 颁布方式。"""
     db, state, content = game
     _activate_canonical_bandit(db, content)
     actor = db.conn.execute(
@@ -517,7 +517,7 @@ def test_api_tool_propose_directive_stages_pacification_with_admission(game):
                 tools=[SimpleNamespace(
                     tool_name="propose_directive",
                     result="",
-                    arguments={"decree_text": self._text},
+                    arguments={"decree_text": self._text, "mode": "midzhi"},
                 )],
             )
 

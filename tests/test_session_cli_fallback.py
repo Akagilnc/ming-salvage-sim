@@ -536,7 +536,7 @@ def test_propose_directive_tool_arguments_stages_draft(game):
                 tools=[SimpleNamespace(
                     tool_name="propose_directive",
                     result="",
-                    arguments={"decree_text": "着户部清核辽饷。"},
+                    arguments={"decree_text": "着户部清核辽饷。", "mode": "midzhi"},
                 )],
             )
 
@@ -823,7 +823,7 @@ def test_midzhi_confirmation_updates_selected_dossier_mode(game, kind):
         SimpleNamespace(name=minister, office_type="兵部"),
         player_message="中旨直发，准了。", answer="臣领旨。",
         has_directive=False, secret_order_id=None,
-        preclassified_intent={"kind": "confirmation", "confirmation": "应允"},
+        preclassified_intent={"kind": "confirmation", "confirmation": "应允", "mode": "midzhi"},
         confirm_target_ids={pending_id},
     )
 
@@ -873,7 +873,7 @@ def test_confirmation_preserves_invalid_payload_for_terminal_failure_owner(
         SimpleNamespace(name=minister, office_type="兵部"),
         player_message="中旨直发，准了。", answer="臣领旨。",
         has_directive=False, secret_order_id=None,
-        preclassified_intent={"kind": "confirmation", "confirmation": "应允"},
+        preclassified_intent={"kind": "confirmation", "confirmation": "应允", "mode": "midzhi"},
         confirm_target_ids={pending_id},
     )
 
@@ -910,7 +910,7 @@ def test_night_approved_midzhi_confirmation_keeps_mode_through_close(game):
         SimpleNamespace(name=minister, office_type="兵部"),
         player_message="中旨直发，准了。", answer="臣领旨。",
         has_directive=False, secret_order_id=None,
-        preclassified_intent={"kind": "confirmation", "confirmation": "应允"},
+        preclassified_intent={"kind": "confirmation", "confirmation": "应允", "mode": "midzhi"},
         confirm_target_ids={pending_id},
     )
     audience_night.close_night(db, state, night_id=night["id"], content=content)
@@ -1171,6 +1171,7 @@ def test_non_streaming_appointment_tool_stages_pending_action(game):
         "action": "任命",
         "faction": "阉党",
         "reason": "吏部举荐",
+        "mode": "midzhi",
     }, ensure_ascii=False)
 
     class Agent:

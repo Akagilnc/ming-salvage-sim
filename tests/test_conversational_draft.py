@@ -114,7 +114,7 @@ def test_conversational_draft_intent_stages_pending(game, monkeypatch):
     assert directives == 0
 
 
-def test_new_conversational_draft_uses_emperor_mode_over_extractor(game, monkeypatch):
+def test_new_conversational_draft_persists_typed_extractor_mode(game, monkeypatch):
     db, state, content = game
     _run_conversational_draft(
         db, state, content, monkeypatch,
@@ -122,7 +122,7 @@ def test_new_conversational_draft_uses_emperor_mode_over_extractor(game, monkeyp
         minister_reply="着户部清查辽饷。",
         canned={
             "拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue",
-            "目标ID": "liao-pay", "颁布方式": "普通",
+            "目标ID": "liao-pay", "颁布方式": "中旨直发",
         },
     )
     payload = json.loads(db.list_pending_actions(state.turn)[0]["payload_json"])
@@ -276,7 +276,7 @@ def test_real_conversation_draft_supplement_preserves_and_appends_roster(
 
     extracted = {
         "draft_action": "拟旨", "draft_text": "补充后的草稿",
-        **_POLICY_FIELDS, "target_candidate": target, "mode": "ordinary",
+        **_POLICY_FIELDS, "target_candidate": target, "mode": expected_mode,
     }
     if supplement == "empty":
         extracted["participant_roster"] = []

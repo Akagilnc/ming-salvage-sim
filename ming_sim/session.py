@@ -1714,6 +1714,7 @@ class GameSession:
                             ),
                             issue_id=args.get("issue_id"),
                             issue_disposition=args.get("issue_disposition"),
+                            mode=args.get("mode") or args.get("颁布方式"),
                             intent_candidates=preclassified_intent,
                         ),
                     )
@@ -2068,7 +2069,8 @@ class GameSession:
                     if not isinstance(payload, dict):
                         continue
                     payload["mode"] = resolve_directive_mode(
-                        player_message, existing=payload.get("mode"),
+                        extracted=(intent or {}).get("mode"),
+                        existing=payload.get("mode"),
                     )
                     if pending["kind"] == "directive" and (
                             recovery_confirmation or open_n is not None):
@@ -2582,6 +2584,7 @@ class GameSession:
         backing_dossier_id: object = None,
         issue_id: object = None,
         issue_disposition: object = None,
+        mode: object = None,
         intent_candidates: Optional[List[Dict[str, Any]]] = None,
     ) -> int:
         """API/stream/CLI tool propose_directive → structured candidate seam (#522/#517).
@@ -2624,7 +2627,7 @@ class GameSession:
                 minister_name,
                 text=text,
                 target_id=target,
-                emperor_text=message_text,
+                extracted_mode=mode,
             )
             return int(pending_id or 0)
 
@@ -2703,7 +2706,7 @@ class GameSession:
             return 0
 
         return self.db.stage_explicit_directive(
-            self.state.turn, minister_name, text, mode=message_text,
+            self.state.turn, minister_name, text, mode=mode,
         )
 
     def _stage_appointment_candidate(
