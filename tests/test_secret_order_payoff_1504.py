@@ -1364,70 +1364,49 @@ def test_catch_quantity_tracer_same_unit_done_and_mismatch_ignored(game):
     assert row["target_units"] == 3.0
 
 
-def test_incomplete_extract_does_not_stage_zero_contract(game, monkeypatch):
-    """#1504：合法 JSON 抽取成功但契约为零 → 无 extract_failed，拒暂存。"""
-    from ming_sim import cli_backend as cb
+@pytest.mark.parametrize(
+    "case,raw",
+    [
+        # #1565 N2：malformed → extract_failed 身份 + content 暂存；真因可开卷
+        ("malformed", "not-json{{{{"),
+        # #1504：合法空对象 {} → 无 extract_failed，零契约拒暂存
+        ("empty_object", "{}"),
+        # #1504：合法非空 JSON 但契约为零 → 同拒暂存
+        (
+            "zero_contract",
+            json.dumps({
+                "标题": "查核辽饷侵冒",
+                "内容": "查核辽饷侵冒",
+                "承办人": "PLACEHOLDER",
+                "期限月数": 3,
+                "标签": ["辽饷"],
+                "差务": "",
+                "价值轴": [],
+                "方向": 1,
+                "交付单位": "",
+                "交付目标": 0,
+            }, ensure_ascii=False),
+        ),
+    ],
+    ids=["malformed", "empty_object", "zero_contract"],
+)
+def test_secret_extract_stage_identity_via_materialize_entry(game, monkeypatch, case, raw):
+    """密令抽取三分经既有 materialize 意图入口：malformed 暂存 / 合法{}与零契约拒暂存。
 
-    db, state, _ = game
-    name = _minister(db)
-    canned = json.dumps({
-        "标题": "查核辽饷侵冒",
-        "内容": "查核辽饷侵冒",
-        "承办人": name,
-        "期限月数": 3,
-        "标签": ["辽饷"],
-        "差务": "",
-        "价值轴": [],
-        "方向": 1,
-        "交付单位": "",
-        "交付目标": 0,
-    }, ensure_ascii=False)
-
-    def fake_json(_prompt, llm_config=None, tag=""):
-        return canned, 1
-
-    monkeypatch.setattr(cb, "_run_json_extractor_for_config", fake_json)
-    extracted = cb._extract_secret_order(
-        "查核辽饷侵冒", "臣领密旨", name, llm_config=None,
-    )
-    assert not extracted.get("extract_failed")
-    ctx = MaterializeCtx(
-        session=SimpleNamespace(db=db, state=state),
-        character=SimpleNamespace(name=name, office_type="文官"),
-        player_message="查核辽饷侵冒", reply="臣领密旨",
-        message_text="查核辽饷侵冒", explicit_prefixed=False,
-        has_directive=False, pend_for_minister=[], out={},
-        intent={"secret_action": "新建"}, intent_kind="secret",
-        llm_config=None, intent_candidates=[],
-    )
-    run_materialize_pipeline(ctx)
-    assert int(ctx.out.get("pending_action_id") or 0) == 0
-    failures = list(ctx.out.get("pending_action_failures") or [])
-    assert failures
-    assert all(row.get("kind") == "secret_order" for row in failures)
-    assert db.list_secret_orders() == []
-
-
-def test_malformed_extract_keeps_failed_identity_and_stages_content(game, monkeypatch):
-    """#1565 N2：malformed 非 JSON 不得洗成成功零契约；extract_failed + content 仍暂存。
-
-    与 #1504 合法零契约、#354 异常三分：本条只覆盖解析返回 None 的 malformed 支。
+    #354 异常失败路径仍由 session_cli_fallback 既有前缀入口覆盖，不在此重复。
+    不预调 _extract_secret_order；不另造平行样板。
     """
     from ming_sim import cli_backend as cb
 
     db, state, _ = game
     name = _minister(db)
+    if case == "zero_contract":
+        raw = raw.replace("PLACEHOLDER", name)
 
-    def fake_json(_prompt, llm_config=None, tag=""):
-        return "not-json{{{", 1
-
-    monkeypatch.setattr(cb, "_run_json_extractor_for_config", fake_json)
-    extracted = cb._extract_secret_order(
-        "查核辽饷侵冒", "臣领密旨", name, llm_config=None,
+    monkeypatch.setattr(
+        cb, "_run_json_extractor_for_config",
+        lambda *_a, **_k: (raw, 1),
     )
-    assert extracted.get("extract_failed") is True
-    assert "查核辽饷侵冒" in str(extracted.get("content") or "")
-
     ctx = MaterializeCtx(
         session=SimpleNamespace(db=db, state=state),
         character=SimpleNamespace(name=name, office_type="文官"),
@@ -1438,14 +1417,31 @@ def test_malformed_extract_keeps_failed_identity_and_stages_content(game, monkey
         llm_config=None, intent_candidates=[],
     )
     run_materialize_pipeline(ctx)
-    pid = int(ctx.out.get("pending_action_id") or 0)
-    assert pid > 0, "malformed 抽取须走 extract_failed 暂存，不得零契约拒单"
-    row = db.conn.execute(
-        "SELECT payload_json FROM pending_actions WHERE id=?", (pid,),
-    ).fetchone()
-    payload = json.loads(row["payload_json"])
-    assert "查核辽饷侵冒" in str(payload.get("content") or "")
-    assert not list(ctx.out.get("pending_action_failures") or [])
+
+    if case == "malformed":
+        pid = int(ctx.out.get("pending_action_id") or 0)
+        assert pid > 0, "malformed 抽取须走 extract_failed 暂存，不得零契约拒单"
+        row = db.conn.execute(
+            "SELECT payload_json FROM pending_actions WHERE id=?", (pid,),
+        ).fetchone()
+        payload = json.loads(row["payload_json"])
+        assert "查核辽饷侵冒" in str(payload.get("content") or "")
+        assert payload.get("extract_failed") is True
+        assert "无法解析" in str(payload.get("contract_error") or "")
+        assert "not-json" in str(payload.get("extract_raw") or "")
+        assert not list(ctx.out.get("pending_action_failures") or [])
+        return
+
+    # empty_object / zero_contract：合法成功抽取、契约为零 → 拒暂存
+    assert int(ctx.out.get("pending_action_id") or 0) == 0
+    failures = list(ctx.out.get("pending_action_failures") or [])
+    assert failures
+    assert all(row.get("kind") == "secret_order" for row in failures)
+    assert db.list_secret_orders() == []
+    staged = db.conn.execute(
+        "SELECT id FROM pending_actions WHERE kind='secret_order'",
+    ).fetchall()
+    assert staged == []
 
 
 @pytest.mark.parametrize(

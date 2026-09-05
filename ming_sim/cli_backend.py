@@ -3881,11 +3881,15 @@ def _extract_secret_order(
         confirmation_future = confirmation_pool.submit(
             confirm_dossier_links, minister_reply, dossier_candidates, broad_proposals, llm_config)
     extract_failed = False
+    # 真因身份：调用异常 ≠ 解析失败；二者均设 extract_failed，但原因分立，
+    # 不得把解析失败冒标成提供方异常，也不得被下游缺标题洗成契约错。
+    extract_failure_reason = ""
     try:
         raw, _attempts = _run_json_extractor_for_config(prompt, llm_config, tag="secret_extract")
     except Exception as exc:  # 提取失败不阻断：退回默认（trace 已在咽喉记下，含 error）
         _log(f"密令提取失败：{exc}")
         extract_failed = True
+        extract_failure_reason = f"密令抽取调用失败：{exc}"
     finally:
         # The confirmation future remains readable after shutdown.  Owning the
         # executor here guarantees cleanup even if any later normalization raises.
@@ -3895,7 +3899,11 @@ def _extract_secret_order(
     # 后者仍走下游零契约路径（#1504）；不得 or {} 合流洗成成功空抽取。
     parsed = _loads_lenient(raw)
     if parsed is None:
-        extract_failed = True
+        if not extract_failed:
+            extract_failed = True
+            extract_failure_reason = "密令抽取结果无法解析"
+        elif not extract_failure_reason:
+            extract_failure_reason = "密令抽取结果无法解析"
         obj = {}
     else:
         obj = parsed
@@ -4005,7 +4013,10 @@ def _extract_secret_order(
         contract_error = str(exc)
     else:
         contract_error = ""
-    if not title and not contract_error:
+    # 抽取失败真因优先于缺标题/缺合同——否则 malformed/异常被洗成「缺标题」。
+    if extract_failure_reason:
+        contract_error = extract_failure_reason
+    elif not title and not contract_error:
         contract_error = "密令缺少结构化标题"
     result = {"title": title, "content": content, "assignee": assignee,
             "deadline_months": deadline, "tags": tags, "excluded_names": excluded_names,
@@ -4018,8 +4029,21 @@ def _extract_secret_order(
     # extract_failed 标记供下游分流：
     # - session 显式前缀路（#504/#354）：一律暂存；异常时靠此标记+content 保留旨意+补充。
     # - materialize 意图路（#1504）：成功抽取但契约为零 → 无此标记，走 pending_action_failures。
+    # 真因经 contract_error 入 pending payload；raw 经 extract_raw 可开卷
+    # （CLI 咽喉 _trace 亦记 response，但 API 路不经该 trace，故结果内自带）。
     if extract_failed:
         result["extract_failed"] = True
+        raw_text = str(raw or "")
+        if raw_text.strip():
+            # 与 _trace 字段 cap 同规：大响应截断，保留首尾可对读。
+            cap = _TRACE_FIELD_CAP
+            if len(raw_text) > cap:
+                raw_text = (
+                    raw_text[: cap // 2]
+                    + f"\n...[截断 {len(raw_text) - cap} 字]...\n"
+                    + raw_text[-cap // 2:]
+                )
+            result["extract_raw"] = raw_text
     return result
 
 def resolve_minister_actions(
