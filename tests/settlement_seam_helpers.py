@@ -104,6 +104,13 @@ def canned_full_settlement(
     monkeypatch.setattr(decree_mod, "record_chapter_memory", lambda *a, **k: None)
     monkeypatch.setattr(decree_mod, "create_ending_summary_agent", lambda *a, **k: None)
     monkeypatch.setattr(decree_mod, "create_rescript_draft_agent", lambda *a, **k: object())
+    # #1745：玩家来源拒收呈现接缝 — canned 桩只保证路由与 has_attendant 槽，不断正文
+    def _canned_settlement_attendant(*_a, rejections=(), **_k):
+        return "\u200b" if rejections else ""
+
+    monkeypatch.setattr(
+        decree_mod, "run_settlement_attendant_message", _canned_settlement_attendant,
+    )
     monkeypatch.setattr(
         memories, "run_agent_text", lambda *a, **k: '{"body":"月记","tags":[]}',
     )

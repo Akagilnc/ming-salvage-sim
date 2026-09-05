@@ -241,6 +241,13 @@ def run_settle(db, state, content, raw_delta, *, narrative="", decree_text="", r
             source=source,  # 持久化来源，崩溃恢复重放据此还原（#144）
         )
 
+    def _probe_settlement_attendant(*, year, period, rejections):
+        # 探针无真 LLM：只保证 0008-D5 来源门路由与 attendant 槽存在性；
+        # 正文不入断言（0150-D5-b / P6/P7）。非空以满足 has_attendant typed 槽。
+        if not rejections:
+            return ""
+        return "\u200b"
+
     report = settle_with_delta(
         state,
         db,
@@ -258,6 +265,7 @@ def run_settle(db, state, content, raw_delta, *, narrative="", decree_text="", r
             dossier_ids_at_input=dossier_ids_at_input,
             secret_dossier_ids_at_input=secret_dossier_ids_at_input,
         ),
+        settlement_attendant_runner=_probe_settlement_attendant,
     )
     # settle 成功推进后才记审计：driver 不注入 chapter_recorder（无 llm_config，章节记忆由对话方另产），
     # 留一条痕迹便于事后查「哪回合没记起居注」（忘补=静默缺口，#19）。须在 settle 成功之后——
