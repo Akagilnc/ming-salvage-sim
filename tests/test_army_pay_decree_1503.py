@@ -2108,12 +2108,33 @@ def _bad_sibling_candidate(*, kind: str) -> dict:
     }
 
 
+def _office_summon_ledger(db, pending_id):
+    """Structured inactive office summon row (undo pin included)."""
+    row = db.conn.execute(
+        "SELECT id, origin_ref, origin_chat_turn_id, night_id, person_names, tags "
+        "FROM story_ledger_entries WHERE origin_ref=? LIMIT 1",
+        (f"office:{int(pending_id)}",),
+    ).fetchone()
+    if row is None:
+        return None
+    return {
+        "id": int(row["id"]),
+        "origin_ref": str(row["origin_ref"] or ""),
+        "origin_chat_turn_id": int(row["origin_chat_turn_id"] or 0),
+        "night_id": int(row["night_id"] or 0),
+        "person_names": json.loads(row["person_names"] or "[]"),
+        "tags": json.loads(row["tags"] or "[]"),
+    }
+
+
 @pytest.mark.parametrize("loop_kind", ["grant_allocation", "draft"])
 def test_mixed_batch_valid_and_invalid_xiexang_rolls_back_sibling(
     game, monkeypatch, tmp_path, loop_kind,
 ):
-    """T1+T2：混合批 typed 失败 → 新建/改写/删除全恢复，尾部不重写，拒收仍落账。"""
+    """T1+T2：混合批 typed 失败 → 新建/改写/删除/传召 ledger 全恢复，尾部不重写。"""
+    import ming_sim.audience_night as an
     import ming_sim.cli_backend as cb
+    from tests.conftest import open_audience_night
 
     monkeypatch.setattr(
         cb, "_run_backend_for_config",
@@ -2124,17 +2145,28 @@ def test_mixed_batch_valid_and_invalid_xiexang_rolls_back_sibling(
     actor = db.conn.execute(
         "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
     ).fetchone()["name"]
-    # Baseline: existing grant (to be rewritten) + existing dismiss (to be hedged).
+    night_id = open_audience_night(db, state)
+    undo_pin = 4242
+    # Baseline: grant to rewrite + appointment-with-summon to be hedge-deleted.
     existing_grant = _stage_xiexang(
         db, state.turn, amount=5, target_id="guanning",
         message="拨关宁军饷五万两。",
         reply="臣请户部发帑5万两协济，请陛下定夺准驳。",
     ).out["pending_action_id"]
     existing_office = db.stage_pending_action(
-        state.turn, kind="office", action="罢免", minister_name=actor,
-        payload={"name": actor, "office": "", "appointer": actor, "mode": "ordinary",
-                 "summon_after": "否"},
+        state.turn, kind="office", action="任命", minister_name=actor,
+        payload={
+            "name": actor, "office": "兵部尚书", "appointer": actor,
+            "mode": "ordinary", "summon_after": "是",
+        },
     )
+    an.ensure_inactive_office_summon(
+        db, int(existing_office), actor,
+        night_id=int(night_id), origin_chat_turn_id=undo_pin,
+    )
+    baseline_summon = _office_summon_ledger(db, existing_office)
+    assert baseline_summon is not None
+    assert baseline_summon["origin_chat_turn_id"] == undo_pin
     baseline_rows = _pending_rows(db, state.turn)
     baseline_by_id = {row["id"]: row for row in baseline_rows}
     assert existing_grant in baseline_by_id
@@ -2147,17 +2179,17 @@ def test_mixed_batch_valid_and_invalid_xiexang_rolls_back_sibling(
         "target_kind": "army", "target_id": "guanning", "cadence": "一次性",
         "target_candidate": str(existing_grant),
     }
-    appoint = {
-        "kind": "appointment", "appoint_action": "任命",
-        "name": actor, "office": "兵部尚书",
+    # 罢免对冲删除 baseline 任命及其派生传召。
+    dismiss = {
+        "kind": "appointment", "appoint_action": "罢免",
+        "name": actor, "office": "",
     }
-    # Both loops share the same write-set shapes: rewrite + hedge-delete + failing sibling.
     candidates = candidates_from_classifier_payload(
-        [rewrite, appoint, bad], soft=False,
+        [rewrite, dismiss, bad], soft=False,
     )
     ctx = _ctx(
         db, actor, candidates, state.turn,
-        message="拟旨如下：改拨关宁军饷并任命，另拨登莱。",
+        message="拟旨如下：改拨关宁军饷并罢免，另拨登莱。",
         reply="臣遵旨拟办。",
     )
     run_materialize_pipeline(ctx)
@@ -2167,13 +2199,16 @@ def test_mixed_batch_valid_and_invalid_xiexang_rolls_back_sibling(
         next(row["payload_json"] for row in after_rows if row["id"] == existing_grant)
     )
     assert int(restored_grant.get("amount") or 0) == 5
-    assert any(
-        row["id"] == existing_office and row["kind"] == "office" and row["action"] == "罢免"
-        for row in after_rows
-    )
+    restored_office = next(row for row in after_rows if row["id"] == existing_office)
+    assert restored_office["kind"] == "office" and restored_office["action"] == "任命"
+    restored_payload = json.loads(restored_office["payload_json"])
+    assert restored_payload.get("summon_after") == "是"
     assert not any(
-        row["kind"] == "office" and row["action"] == "任命" for row in after_rows
+        row["kind"] == "office" and row["action"] == "罢免" for row in after_rows
     )
+    restored_summon = _office_summon_ledger(db, existing_office)
+    assert restored_summon == baseline_summon
+    assert restored_summon["origin_chat_turn_id"] == undo_pin
     assert {int(d["id"]) for d in db.list_decree_dossiers()} == dossier_before
     assert not ctx.out.get("pending_action_id")
     recovery = ctx.out.get("decree_validation_failure") or {}
@@ -2190,11 +2225,12 @@ def test_mixed_batch_valid_and_invalid_xiexang_rolls_back_sibling(
     # Replay same failed batch: still zero net write (no double-stage / no tail restage).
     ctx2 = _ctx(
         db, actor, candidates, state.turn,
-        message="拟旨如下：改拨关宁军饷并任命，另拨登莱。",
+        message="拟旨如下：改拨关宁军饷并罢免，另拨登莱。",
         reply="臣遵旨拟办。",
     )
     run_materialize_pipeline(ctx2)
     assert _pending_rows(db, state.turn) == baseline_rows
+    assert _office_summon_ledger(db, existing_office) == baseline_summon
     assert not ctx2.out.get("pending_action_id")
 
 
