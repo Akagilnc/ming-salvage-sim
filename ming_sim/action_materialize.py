@@ -344,25 +344,6 @@ def _restore_pending_baseline(
             )
             _sync_office_summon_to_baseline_row(db, before)
 
-        max_row = db.conn.execute(
-            "SELECT MAX(id) AS m FROM pending_actions"
-        ).fetchone()
-        max_id = int(max_row["m"] or 0) if max_row is not None else 0
-        if max_id > 0:
-            seq_row = db.conn.execute(
-                "SELECT seq FROM sqlite_sequence WHERE name='pending_actions'"
-            ).fetchone()
-            if seq_row is None:
-                db.conn.execute(
-                    "INSERT INTO sqlite_sequence(name, seq) VALUES ('pending_actions', ?)",
-                    (max_id,),
-                )
-            elif int(seq_row["seq"] or 0) < max_id:
-                db.conn.execute(
-                    "UPDATE sqlite_sequence SET seq=? WHERE name='pending_actions'",
-                    (max_id,),
-                )
-
 
 def _rollback_batch_writes(
     ctx: MaterializeCtx,
