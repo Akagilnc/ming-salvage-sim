@@ -14,7 +14,7 @@ pack 身份以 manifest 的 `turn` / `period` / `db_path` / `attempt` 为准，�
 
 | 键 | 值 |
 |----|----|
-| 证据指针 | `qa-evidence/w11-8013-box/{manifest,traceback,resolve_context}.json|txt` · `error-1627-10.png` |
+| 证据指针 | `qa-evidence/w11-8013-box/{manifest,traceback,resolve_context}.json\|txt` · `error-1627-10.png` |
 | db_path | `/workspace/Ming_LLM/data/ming_sim_1788597390870392903.db` |
 | turn / period / attempt | 1 / 10 / 1 |
 | timestamp (UTC) | `2026-09-05T08:45:12.838231+00:00` |
