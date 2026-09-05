@@ -493,9 +493,19 @@ describe("#1725 SettlementLock 中心进度呈现", () => {
     expect(bar?.getAttribute("role")).toBe("progressbar");
     expect(bar?.getAttribute("aria-valuenow")).toBe("3");
     expect(bar?.getAttribute("aria-valuemax")).toBe("6");
-    expect(bar?.getAttribute("aria-valuemin")).toBe("1");
+    expect(bar?.getAttribute("aria-valuemin")).toBe("0");
     // 玩家侧不见内部枚举／字段名
     expect(decor?.textContent || "").not.toMatch(/SETTLEMENT_WAIT|stageIndex|progress_current/);
+  });
+
+  it("空 stage 无流式仍呈档房摘录 chrome，无 progressbar", () => {
+    const host = mount(
+      <SettlementLock stage="" thinking="" narrative="" />,
+    );
+    const decor = host.querySelector("[data-testid=settlement-lock-decor]");
+    expect(decor).not.toBeNull();
+    expect(decor?.textContent || "").toContain("档房摘录正在呈递。");
+    expect(host.querySelector("[data-testid=settlement-wait-progress]")).toBeNull();
   });
 
   it("非冻结六阶标签不伪造进度刻度", () => {

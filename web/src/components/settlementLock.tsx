@@ -29,8 +29,6 @@ export function SettlementLock({
   }, [narrative]);
 
   const progress = resolveSettlementWaitProgress(stage);
-  const hasStream = Boolean(thinking || narrative);
-  if (!hasStream && !stage) return null;
 
   const stageLine =
     stage === "数值推演结算"
@@ -56,7 +54,7 @@ export function SettlementLock({
             <div
               className="settlement-lock-progress-bar"
               role="progressbar"
-              aria-valuemin={1}
+              aria-valuemin={0}
               aria-valuenow={progress.current}
               aria-valuemax={progress.total}
               aria-label="月末结算进度"
