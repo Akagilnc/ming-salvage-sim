@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import inspect
+import logging
 import re
 import sqlite3
 import time
@@ -56,6 +57,8 @@ from ming_sim.models import Character, CourtContext, GameState, LLMConfig, is_va
 from ming_sim.paths import user_data_path
 from ming_sim.registry import MinisterRegistry, bind_content as _bind_registry
 from ming_sim.skills import bind_content as _bind_skills
+
+logger = logging.getLogger(__name__)
 
 
 AUTO_SAVE_PREFIX = "auto_"
@@ -849,63 +852,97 @@ class GameSession:
         # Scene lifecycle lives in beat_orchestration; session only holds the registry handle.
         # No dedicated scene executor (C6 rejected); open/enter share the action-intent pool.
         self._scene_registry = ChatTurnSceneRegistry(_CLI_ACTION_INTENT_EXECUTOR)
-        self.db = GameDB(db_path, content=self.content, llm_config=llm_config)
-        # #638 S7：新开档判据必须在 load_state 建 game_state 行之前取（行在＝旧档，
-        # 关系 seed 导入一律不触；验收条「只对新开档生效，旧档不受影响」的机械口径）。
-        fresh_save = not self.db.has_state()
-        # 接档载入阶段计时（#84）：原为零日志盲区，群友以为死机；逐阶段 tlog 用时，
-        # 自部署者在 server 控制台看得见进度、定位慢阶段。
-        from ming_sim.token_stats import tlog
-        _t = time.monotonic()
-        self.db.seed_static_data()
-        _t, _e = time.monotonic(), time.monotonic() - _t
-        tlog(f"[载入] 1/4 静态盘面 seed {_e:.1f}s")
-        _sync_offices_from_db_impl(self.content, self.db, llm_config)
-        self.agno_db = create_agno_db(db_path)
-        _t, _e = time.monotonic(), time.monotonic() - _t
-        tlog(f"[载入] 2/4 官职同步 + agno {_e:.1f}s")
-        # 新档的 game_state 与关系 seed 必须同成同败：load_state 内部虽有多个
-        # commit，atomic 会统一推迟到 seed 校验及落库全部成功之后。旧档仍只载入。
-        with atomic(self.db):
-            self.state = self.db.load_state(start_ym)
-            # #638 S7：新开档导入关系 seed（ADR 0086 机械面）：奠基边事件（开局前时间戳）
-            # ＋可选初始摘要。边走 record_relation_edge_event 唯一写口、摘要只落奠基段
-            # 且水位留 0（seed 边照常进日后首次月末酿制输入）；重复导入幂等不双写。
-            seed_report = None
-            if fresh_save:
-                from ming_sim.relation_seed import import_bundled_relationship_seed
-                seed_report = import_bundled_relationship_seed(
-                    self.db,
-                    opening_year=int(self.state.year),
-                    opening_period=int(self.state.period),
+        # #1749：db/agno 打开后构造任一步失败须关闭，禁泄漏连接（load_state 等）。
+        self.db = None  # type: ignore[assignment]
+        self.agno_db = None  # type: ignore[assignment]
+        try:
+            self.db = GameDB(db_path, content=self.content, llm_config=llm_config)
+            # #638 S7：新开档判据必须在 load_state 建 game_state 行之前取（行在＝旧档，
+            # 关系 seed 导入一律不触；验收条「只对新开档生效，旧档不受影响」的机械口径）。
+            fresh_save = not self.db.has_state()
+            # 接档载入阶段计时（#84）：原为零日志盲区，群友以为死机；逐阶段 tlog 用时，
+            # 自部署者在 server 控制台看得见进度、定位慢阶段。
+            from ming_sim.token_stats import tlog
+            _t = time.monotonic()
+            self.db.seed_static_data()
+            _t, _e = time.monotonic(), time.monotonic() - _t
+            tlog(f"[载入] 1/4 静态盘面 seed {_e:.1f}s")
+            _sync_offices_from_db_impl(self.content, self.db, llm_config)
+            self.agno_db = create_agno_db(db_path)
+            _t, _e = time.monotonic(), time.monotonic() - _t
+            tlog(f"[载入] 2/4 官职同步 + agno {_e:.1f}s")
+            # 新档的 game_state 与关系 seed 必须同成同败：load_state 内部虽有多个
+            # commit，atomic 会统一推迟到 seed 校验及落库全部成功之后。旧档仍只载入。
+            with atomic(self.db):
+                self.state = self.db.load_state(start_ym)
+                # #638 S7：新开档导入关系 seed（ADR 0086 机械面）：奠基边事件（开局前时间戳）
+                # ＋可选初始摘要。边走 record_relation_edge_event 唯一写口、摘要只落奠基段
+                # 且水位留 0（seed 边照常进日后首次月末酿制输入）；重复导入幂等不双写。
+                seed_report = None
+                if fresh_save:
+                    from ming_sim.relation_seed import import_bundled_relationship_seed
+                    seed_report = import_bundled_relationship_seed(
+                        self.db,
+                        opening_year=int(self.state.year),
+                        opening_period=int(self.state.period),
+                    )
+            _t, _e = time.monotonic(), time.monotonic() - _t
+            tlog(f"[载入] 3/4 状态载入 {_e:.1f}s")
+            if seed_report:
+                tlog(
+                    "[载入] 关系 seed 导入："
+                    f"{seed_report['events_imported']}/{seed_report['events_total']} 笔奠基边事件，"
+                    f"{seed_report['summaries_written']} 份初始摘要"
                 )
-        _t, _e = time.monotonic(), time.monotonic() - _t
-        tlog(f"[载入] 3/4 状态载入 {_e:.1f}s")
-        if seed_report:
-            tlog(
-                "[载入] 关系 seed 导入："
-                f"{seed_report['events_imported']}/{seed_report['events_total']} 笔奠基边事件，"
-                f"{seed_report['summaries_written']} 份初始摘要"
-            )
-        # 开局负面帝国修正：新档补全、旧档补缺、已达消除条件的不补/清残。不立 issue、不进推演。
-        sync_opening_legacies(self.db, self.state)
-        tlog(f"[载入] 4/4 开局修正 {time.monotonic() - _t:.1f}s")
-        self.deaths_this_turn: List[Dict[str, str]] = []
-        self.debuts_this_turn: List[Dict[str, str]] = []
-        self.power_renames_this_turn: List[Dict[str, object]] = []
-        self.previous_summary = ""
-        self.registry: Optional[MinisterRegistry] = None
-        self.temporary_characters: Dict[str, Character] = {}
-        self.last_decree = ""
-        # P1-1：last_decree 所覆盖的 draft 指纹（write_decree 时记，颁诏时校验是否已陈旧）。
-        self._decree_draft_fingerprint: Tuple[Tuple[int, str], ...] = ()
-        self._begun = False
-        # #1353：per-session 单写者票据队列（CLI/Web 共用）；write_gate 并入队列。
-        from ming_sim.session_write_queue import SessionWriteQueue
-        self._write_queue = SessionWriteQueue()
-        self._write_gate = self._write_queue.write_gate
-        if fresh_save:
-            self.auto_save("begin")
+            # 开局负面帝国修正：新档补全、旧档补缺、已达消除条件的不补/清残。不立 issue、不进推演。
+            sync_opening_legacies(self.db, self.state)
+            tlog(f"[载入] 4/4 开局修正 {time.monotonic() - _t:.1f}s")
+            self.deaths_this_turn: List[Dict[str, str]] = []
+            self.debuts_this_turn: List[Dict[str, str]] = []
+            self.power_renames_this_turn: List[Dict[str, object]] = []
+            self.previous_summary = ""
+            self.registry: Optional[MinisterRegistry] = None
+            self.temporary_characters: Dict[str, Character] = {}
+            self.last_decree = ""
+            # P1-1：last_decree 所覆盖的 draft 指纹（write_decree 时记，颁诏时校验是否已陈旧）。
+            self._decree_draft_fingerprint: Tuple[Tuple[int, str], ...] = ()
+            self._begun = False
+            # #1353：per-session 单写者票据队列（CLI/Web 共用）；write_gate 并入队列。
+            from ming_sim.session_write_queue import SessionWriteQueue
+            self._write_queue = SessionWriteQueue()
+            self._write_gate = self._write_queue.write_gate
+            if fresh_save:
+                self.auto_save("begin")
+        except Exception as init_exc:
+            # #1749 B：半构造清理——close 成功才清空引用；close 失败保留 db/agno，
+            # 经 residual_session 携回同一 holder/CloseOp，禁无主活连接。
+            residual = False
+            agno = getattr(self, "agno_db", None)
+            if agno is not None:
+                close_fn = getattr(agno, "close", None)
+                if callable(close_fn):
+                    try:
+                        close_fn()
+                        self.agno_db = None  # type: ignore[assignment]
+                    except Exception:
+                        logger.exception("GameSession init failed; agno_db.close failed")
+                        residual = True
+                else:
+                    self.agno_db = None  # type: ignore[assignment]
+            db = getattr(self, "db", None)
+            if db is not None:
+                try:
+                    db.close()
+                    self.db = None  # type: ignore[assignment]
+                except Exception:
+                    logger.exception("GameSession init failed; db.close failed")
+                    residual = True
+            if residual:
+                try:
+                    setattr(init_exc, "residual_session", self)
+                except Exception:
+                    logger.exception("GameSession init failed; attach residual_session failed")
+            raise
 
     # ── 回合生命周期 ──────────────────────────────────────────────────────
 
@@ -3871,5 +3908,29 @@ class GameSession:
             return None
 
     def close(self) -> None:
+        """关主库连接，并释放 agno SqliteDb 连接池（#1749）。
+
+        主库与 agno 共路径；只关 GameDB 就归档/搬移文件时，agno 仍持 WAL 句柄，
+        进程 fd 会钉在 drained_*.db 上，活局写路径可落到 readonly。
+
+        次序：先 agno 后 db。agno 失败则立即上抛、不碰 db（两侧仍完整可恢复）。
+        agno 已成功后 ``_close_epoch`` 递增——此后即使 db.close 失败/conn 仍可探测，
+        也不得恢复为活局（registry 已失 agno）。任一侧失败上抛（ADR 0005）。
+        """
         self._scene_registry.abandon_all()
-        self.db.close()
+        agno = getattr(self, "agno_db", None)
+        if agno is not None:
+            close_fn = getattr(agno, "close", None)
+            if callable(close_fn):
+                try:
+                    close_fn()
+                except BaseException:
+                    logger.exception("GameSession.agno_db.close failed")
+                    raise
+                self._close_epoch = int(getattr(self, "_close_epoch", 0) or 0) + 1
+        try:
+            self.db.close()
+        except BaseException:
+            logger.exception("GameSession.db.close failed")
+            raise
+        self._close_epoch = int(getattr(self, "_close_epoch", 0) or 0) + 1
