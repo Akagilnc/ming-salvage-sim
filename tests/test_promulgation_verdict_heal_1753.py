@@ -123,6 +123,7 @@ def test_promulgation_contract_error_heals_within_bound_then_settles(
     before_turn = int(state.turn)
     heal_budget = decree_mod.PROMULGATION_VERDICT_HEAL_RETRIES
     run_calls: list[dict] = []
+    fake_agno = object()
 
     def fake_run(agent, prompt, tag=""):
         run_calls.append({"agent_id": id(agent), "prompt": str(prompt), "tag": tag})
@@ -135,7 +136,7 @@ def test_promulgation_contract_error_heals_within_bound_then_settles(
     agents, create_kwargs = _patch_real_llm_boundary(monkeypatch, fake_run)
 
     result = decree_mod.resolve_directives(
-        state, db, object(), None, [object()], "清核河工并整饬漕运",
+        state, db, fake_agno, None, [object()], "清核河工并整饬漕运",
         content=content,
     )
 
@@ -144,17 +145,23 @@ def test_promulgation_contract_error_heals_within_bound_then_settles(
     assert len(run_calls) == heal_budget + 1
     assert len(agents) == 1
     assert len({c["agent_id"] for c in run_calls}) == 1
-    assert create_kwargs and create_kwargs[0]["agno_db"] is not None
+    assert create_kwargs and create_kwargs[0]["agno_db"] is fake_agno
     assert create_kwargs[0]["session_id"] == f"promulgation-judge-turn-{before_turn}"
     assert create_kwargs[0]["num_history_runs"] == heal_budget + 1
+    # 回喂内容对应：原始坏批（json.dumps 形）+ 该形态校验失败原因原文
+    expected_raw = json.dumps(
+        _bad_payload(mode, first_id, second_id)["verdicts"],
+        ensure_ascii=False, sort_keys=True,
+    )
+    if mode == "illegal_id":
+        expected_reason = "颁布判决 dossier_id 必须为有效 SQLite 正整数"
+    else:
+        expected_reason = "颁布判决须逐案覆盖全部 proposed 案卷，不能静默跳过"
     for heal_call in run_calls[1:]:
         prompt = heal_call["prompt"]
+        assert expected_raw in prompt, prompt[:500]
+        assert expected_reason in prompt, prompt[:500]
         assert str(first_id) in prompt and str(second_id) in prompt
-        if mode == "illegal_id":
-            assert "not-int" in prompt
-            assert "SQLite" in prompt or "正整数" in prompt
-        else:
-            assert "proposed" in prompt or "覆盖" in prompt
     remaining_proposed = {
         int(row["id"]) for row in db.list_decree_dossiers(status="proposed")
     }
@@ -180,6 +187,7 @@ def test_promulgation_heal_exhausted_fail_closed_keeps_evidence(
     }
     heal_budget = decree_mod.PROMULGATION_VERDICT_HEAL_RETRIES
     run_prompts: list[str] = []
+    fake_agno = object()
 
     def always_bad(agent, prompt, tag=""):
         run_prompts.append(str(prompt))
@@ -187,11 +195,11 @@ def test_promulgation_heal_exhausted_fail_closed_keeps_evidence(
             _bad_payload(mode, first_id, second_id), ensure_ascii=False,
         )
 
-    agents, _ = _patch_real_llm_boundary(monkeypatch, always_bad)
+    agents, create_kwargs = _patch_real_llm_boundary(monkeypatch, always_bad)
 
     with pytest.raises(SettlementAbort) as ei:
         decree_mod.resolve_directives(
-            state, db, object(), None, [object()], "清核河工并整饬漕运",
+            state, db, fake_agno, None, [object()], "清核河工并整饬漕运",
             content=content,
         )
 
@@ -202,11 +210,18 @@ def test_promulgation_heal_exhausted_fail_closed_keeps_evidence(
     assert db.get_pending_promulgation_verdicts(before_turn) == []
     assert len(run_prompts) == heal_budget + 1
     assert len(agents) == 1
-    assert any(
-        ("not-int" in p if mode == "illegal_id" else str(first_id) in p)
-        and ("正整数" in p or "SQLite" in p or "proposed" in p or "覆盖" in p)
-        for p in run_prompts[1:]
+    assert create_kwargs and create_kwargs[0]["agno_db"] is fake_agno
+    expected_raw = json.dumps(
+        _bad_payload(mode, first_id, second_id)["verdicts"],
+        ensure_ascii=False, sort_keys=True,
     )
+    if mode == "illegal_id":
+        expected_reason = "颁布判决 dossier_id 必须为有效 SQLite 正整数"
+    else:
+        expected_reason = "颁布判决须逐案覆盖全部 proposed 案卷，不能静默跳过"
+    assert any(
+        expected_raw in p and expected_reason in p for p in run_prompts[1:]
+    ), run_prompts[1][:500] if run_prompts[1:] else "no heal prompts"
     for did, snap in baseline.items():
         assert db.get_decree_dossier(did) == snap
         assert db.list_decree_dossier_decisions(did) == []
@@ -217,6 +232,10 @@ def test_promulgation_heal_exhausted_fail_closed_keeps_evidence(
     delta = json.loads((pack / "delta.json").read_text(encoding="utf-8"))
     bad_outputs = delta["promulgation_heal_bad_outputs"]
     assert len(bad_outputs) == heal_budget + 1
+    # 每轮坏输出内容对应本形态原始批，不能只数条数
+    for batch in bad_outputs:
+        dumped = json.dumps(batch, ensure_ascii=False, sort_keys=True)
+        assert dumped == expected_raw, dumped
     compliant_ids = {
         int(row["dossier_id"]) for row in delta["promulgation_compliant_verdicts"]
     }
@@ -337,12 +356,24 @@ def test_promulgation_heal_exhausted_via_seal_resolve_turn_entry(
     assert state.turn_phase == TurnPhase.SETTLING.value
     assert len(run_prompts) == heal_budget + 1
     assert len(agents) == 1
-    assert any("not-int" in p for p in run_prompts[1:])
+    expected_raw = json.dumps(
+        _bad_payload("illegal_id", first_id, second_id)["verdicts"],
+        ensure_ascii=False, sort_keys=True,
+    )
+    expected_reason = "颁布判决 dossier_id 必须为有效 SQLite 正整数"
+    assert any(
+        expected_raw in p and expected_reason in p for p in run_prompts[1:]
+    )
     assert str(abort) == settlement_abort_message(str(abort.error_pack_path))
     delta = json.loads(
         Path(abort.error_pack_path, "delta.json").read_text(encoding="utf-8")
     )
-    assert len(delta["promulgation_heal_bad_outputs"]) == heal_budget + 1
+    bad_outputs = delta["promulgation_heal_bad_outputs"]
+    assert len(bad_outputs) == heal_budget + 1
+    assert all(
+        json.dumps(batch, ensure_ascii=False, sort_keys=True) == expected_raw
+        for batch in bad_outputs
+    )
 
 
 def test_promulgation_heal_exhausted_via_advance_without_decree_entry(
@@ -376,7 +407,16 @@ def test_promulgation_heal_exhausted_via_advance_without_decree_entry(
     delta = json.loads(
         Path(abort.error_pack_path, "delta.json").read_text(encoding="utf-8")
     )
-    assert len(delta["promulgation_heal_bad_outputs"]) == heal_budget + 1
+    expected_raw = json.dumps(
+        _bad_payload("missing_coverage", first_id, second_id)["verdicts"],
+        ensure_ascii=False, sort_keys=True,
+    )
+    bad_outputs = delta["promulgation_heal_bad_outputs"]
+    assert len(bad_outputs) == heal_budget + 1
+    assert all(
+        json.dumps(batch, ensure_ascii=False, sort_keys=True) == expected_raw
+        for batch in bad_outputs
+    )
     compliant_ids = {
         int(row["dossier_id"]) for row in delta["promulgation_compliant_verdicts"]
     }
