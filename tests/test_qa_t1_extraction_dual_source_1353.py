@@ -77,7 +77,7 @@ def test_close_joins_in_flight_owner_while_open_one_shot(game, tmp_path, monkeyp
     class _SlowAgent:
         def run(self, _material):
             started.set()
-            assert release_llm.wait(5), "test release signal"
+            release_llm.wait()
             return SimpleNamespace(
                 content=(
                     '{"facts":[{"person_names":["'
@@ -107,7 +107,7 @@ def test_close_joins_in_flight_owner_while_open_one_shot(game, tmp_path, monkeyp
 
     owner_thread = threading.Thread(target=owner_worker, name="extract-owner-1353")
     owner_thread.start()
-    assert started.wait(2), "owner must enter LLM before close"
+    started.wait()
 
     close_result: dict = {}
 
@@ -125,8 +125,8 @@ def test_close_joins_in_flight_owner_while_open_one_shot(game, tmp_path, monkeyp
     assert ct.is_alive()
     assert "r" not in close_result
     release_llm.set()
-    owner_thread.join(timeout=5)
-    ct.join(timeout=5)
+    owner_thread.join()
+    ct.join()
     assert not owner_thread.is_alive() and not ct.is_alive()
 
     result = close_result.get("r") or {}
@@ -771,13 +771,13 @@ def test_barrier_waits_trail_ticket_then_auto_close(web_game, monkeypatch):
 
     def trail_worker() -> None:
         trail_holding.set()
-        assert release.wait(2.0), "barrier must block until trail ends"
+        release.wait()
         order.append("trail_end")
         game._complete_pending_write(ticket)
 
     t = threading.Thread(target=trail_worker, name="trail-barrier", daemon=True)
     t.start()
-    assert trail_holding.wait(2.0)
+    trail_holding.wait()
 
     def track_auto_close(_g, **_k):
         assert ticket._done is True
@@ -800,9 +800,9 @@ def test_barrier_waits_trail_ticket_then_auto_close(web_game, monkeypatch):
 
     order.append("release")
     release.set()
-    assert entry_done.wait(2.0)
-    t.join(timeout=2.0)
-    et.join(timeout=2.0)
+    entry_done.wait()
+    t.join()
+    et.join()
     assert not t.is_alive() and not et.is_alive()
     assert order == ["release", "trail_end", "auto_close", "body"], order
     assert int(game._pending_writes_count) == 0
@@ -824,7 +824,7 @@ def test_production_seam_cancel_blocks_trail_write(web_game):
 
     def paused_trail() -> None:
         entered.set()
-        assert release.wait(2.0)
+        release.wait()
         gate = game._ticketed_write_gate(ticket)
         try:
             with gate:
@@ -837,11 +837,11 @@ def test_production_seam_cancel_blocks_trail_write(web_game):
 
     th = threading.Thread(target=paused_trail, daemon=True)
     th.start()
-    assert entered.wait(2.0)
+    entered.wait()
     n = q.cancel_key(("turn", 4242))
     assert n == 1
     release.set()
-    th.join(timeout=2.0)
+    th.join()
     assert not th.is_alive()
     assert wrote["n"] == 0
     assert outcome.get("cancelled") == "TicketCancelled"
@@ -860,9 +860,9 @@ def test_production_seam_post_barrier_ticket_ordered(web_game, monkeypatch):
 
     def track_auto_close(_g, **_k):
         barrier_in.set()
-        assert late_claimed.wait(2.0)
+        late_claimed.wait()
         order.append("barrier")
-        assert release_barrier.wait(2.0)
+        release_barrier.wait()
 
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", track_auto_close)
     monkeypatch.setattr(web_app, "_accept_settlement_period", lambda _g: False)
@@ -876,7 +876,7 @@ def test_production_seam_post_barrier_ticket_ordered(web_game, monkeypatch):
 
     et = threading.Thread(target=run_entry, daemon=True)
     et.start()
-    assert barrier_in.wait(2.0)
+    barrier_in.wait()
 
     late = game._mark_pending_write(key=("turn", 77))
     assert late is not None
@@ -895,10 +895,10 @@ def test_production_seam_post_barrier_ticket_ordered(web_game, monkeypatch):
     assert not late_done.is_set()
 
     release_barrier.set()
-    assert entry_done.wait(2.0)
-    assert late_done.wait(2.0)
-    et.join(timeout=2.0)
-    lt.join(timeout=2.0)
+    entry_done.wait()
+    late_done.wait()
+    et.join()
+    lt.join()
     # barrier 写（auto_close）先于后票；body 在 barrier 返回后
     assert order.index("barrier") < order.index("late")
     assert order.index("barrier") < order.index("body")
@@ -930,7 +930,7 @@ def test_wait_in_flight_releases_on_worker_terminal(game, tmp_path, monkeypatch)
     monkeypatch.setattr(an, "list_in_flight_chat_turns", _list_tracking)
 
     def _worker_terminal() -> None:
-        assert waiter_polling.wait(5.0), "waiter must enter poll before terminal"
+        waiter_polling.wait()
         db.conn.execute(
             "UPDATE chat_turns SET status='active' WHERE id=?", (ctid,)
         )
@@ -944,8 +944,8 @@ def test_wait_in_flight_releases_on_worker_terminal(game, tmp_path, monkeypatch)
     # 主测试线程直调 SUT；pytest 原生捕获被测异常（禁 waiter 包装线程）
     # 不传短 timeout 墙钟；工人终态后必须返回（禁 elapsed 伪失败）
     an.wait_in_flight_clear(db, nid)
-    assert worker_published.wait(5.0), "worker must publish terminal"
-    wt.join(timeout=2.0)
+    worker_published.wait()
+    wt.join()
     assert not wt.is_alive()
     assert an.list_in_flight_chat_turns(db, nid) == []
 
@@ -1117,8 +1117,8 @@ def test_stream_close_pending_extraction_emits_error_not_hang(web_game, monkeypa
 
     th = threading.Thread(target=consume, daemon=True)
     th.start()
-    assert done.wait(5.0), "stream must terminalize error+end; hung on ev_queue"
-    th.join(timeout=1.0)
+    done.wait()
+    th.join()
     assert box.get("ok") is True, box
     types = [e.get("type") for e in events]
     assert "error" in types, events

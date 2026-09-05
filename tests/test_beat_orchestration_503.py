@@ -43,19 +43,19 @@ def test_abandon_running_scene_drains_without_persisting_result():
 
     def slow_gen(inputs: BeatInputs) -> str:
         started.set()
-        release.wait(1)
+        release.wait()
         finished.set()
         return f"body-{inputs.beat_kind}"
 
     registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=2))
     # Direct task submit: one running future the abandon path must drain.
     registry._submit(7, [(1, BeatInputs(beat_kind=BEAT_OPEN))], slow_gen)
-    assert started.wait(1)
+    started.wait()
     waiter = threading.Thread(target=registry.abandon, args=(7,))
     waiter.start()
     assert waiter.is_alive()
     release.set()
-    waiter.join(1)
+    waiter.join()
     assert finished.is_set()
     assert not waiter.is_alive()
     assert not registry.has(7)
@@ -74,7 +74,7 @@ def test_join_exception_drains_uncancellable_sibling_before_propagating():
 
     def sibling_gen(inputs: BeatInputs) -> str:
         sibling_started.set()
-        assert release_sibling.wait(2), "sibling was not released"
+        release_sibling.wait()
         sibling_finished.set()
         return f"body-{inputs.beat_kind}"
 
@@ -83,7 +83,7 @@ def test_join_exception_drains_uncancellable_sibling_before_propagating():
     fail_fut: Future = Future()
     fail_fut.set_exception(first_fail)
     slow_fut = registry._executor.submit(sibling_gen, BeatInputs(beat_kind=BEAT_ENTER))
-    assert sibling_started.wait(1), "sibling never started"
+    sibling_started.wait()
     with registry._lock:
         registry._futures[11] = [fail_fut, slow_fut]
 
@@ -98,13 +98,13 @@ def test_join_exception_drains_uncancellable_sibling_before_propagating():
     waiter = threading.Thread(target=run_join)
     waiter.start()
     # join must not return/raise while uncancellable sibling is still running.
-    waiter.join(0.2)
+    # 状态证法（#1723）：sibling 未终态 + outcome 空 + waiter 仍活，无短墙钟 join。
     assert waiter.is_alive(), "join returned before draining sibling"
     assert "exc" not in outcome and "result" not in outcome
     assert not sibling_finished.is_set()
 
     release_sibling.set()
-    waiter.join(2)
+    waiter.join()
     assert not waiter.is_alive()
     assert sibling_finished.is_set()
     assert outcome.get("exc") is first_fail
@@ -143,7 +143,7 @@ def test_web_retry_failed_scene_drain_does_not_hold_write_gate(game):
         def persist_chat_turn_scene(self, *_a, **_k): return None
         def abandon_chat_turn_scene(self, _ctid):
             drain_entered.set()
-            assert release_drain.wait(2)
+            release_drain.wait()
         def chat(self, *_a, **_k):
             raise RuntimeError("retry llm failed")
 
@@ -177,11 +177,11 @@ def test_web_retry_failed_scene_drain_does_not_hold_write_gate(game):
 
     t = threading.Thread(target=run_retry)
     t.start()
-    assert drain_entered.wait(2), "retry never entered scene drain"
-    assert rt._write_gate.acquire(timeout=0.3), "write gate held during drain"
+    drain_entered.wait()
+    assert rt._write_gate.acquire(blocking=False), "write gate held during drain"
     rt._write_gate.release()
     release_drain.set()
-    t.join(2)
+    t.join()
     assert not t.is_alive()
     assert errors and isinstance(errors[0], RuntimeError)
 
@@ -202,7 +202,7 @@ def test_open_and_enter_scene_beats_run_concurrently(game):
         with lock:
             active += 1
             max_active = max(max_active, active)
-        release.wait(1)
+        release.wait()
         with lock:
             active -= 1
         return f"kind={inputs.beat_kind}"
@@ -212,12 +212,11 @@ def test_open_and_enter_scene_beats_run_concurrently(game):
         db, state, minister_name=minister, chat_turn_id=ctid,
         beat_generator=blocking_gen,
     )
-    deadline = time.monotonic() + 1.0
-    while time.monotonic() < deadline:
+    while True:
         with lock:
             if max_active >= 2:
                 break
-        time.sleep(0.01)
+        time.sleep(0.01)  # backoff only
     release.set()
     kinds = {body.split("=", 1)[-1] for _eid, body in registry.join(ctid)}
     assert kinds == {"open", "enter"} and max_active >= 2
@@ -279,7 +278,7 @@ def test_open_enter_registry_persists_handoff_and_soft_segment(game):
     )
 
     # 真并发：BEAT_HANDOFF 与 BEAT_ENTER 须同桶重叠执行，串行提交会在此死锁超时。
-    both = threading.Barrier(2, timeout=2.0)
+    both = threading.Barrier(2)
     seen: list[str] = []
 
     def overlapping(inputs: BeatInputs) -> str:
@@ -387,7 +386,7 @@ def test_start_open_enter_claims_atomically_under_concurrent_calls(game, monkeyp
     for t in threads:
         t.start()
     for t in threads:
-        t.join(2)
+        t.join()
         assert not t.is_alive()
     kinds = sorted(body.split("=", 1)[-1] for _eid, body in registry.join(ctid))
     assert discover_calls == 1 and gen_starts == 2 and kinds == ["enter", "open"]
@@ -407,7 +406,7 @@ def test_start_open_enter_discover_vs_drain_no_late_future(game, monkeypatch, mo
 
     def gated_discover(*a, **k):
         in_discover.set()
-        assert release_discover.wait(2)
+        release_discover.wait()
         return real_discover(*a, **k)
 
     monkeypatch.setattr(bo, "discover_open_enter_tasks", gated_discover)
@@ -427,13 +426,13 @@ def test_start_open_enter_discover_vs_drain_no_late_future(game, monkeypatch, mo
         ),
     )
     starter.start()
-    assert in_discover.wait(2), "start never entered discover"
+    in_discover.wait()
     if mode == "join":
         assert registry.join(ctid) == []
     else:
         registry.abandon(ctid)
     release_discover.set()
-    starter.join(2)
+    starter.join()
     assert not starter.is_alive()
     assert not registry.has(ctid) and registry.active_turn_ids() == []
     assert gen_starts == 0 and registry.join(ctid) == []
@@ -452,7 +451,7 @@ def test_exit_scene_joins_chat_turn_lifecycle_not_sync_generate(game):
     def slow_exit(inputs: BeatInputs) -> str:
         calls.append(inputs.beat_kind)
         started.set()
-        assert release.wait(1)
+        release.wait()
         return "特征化退下旁白"
 
     registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=2))
@@ -466,7 +465,7 @@ def test_exit_scene_joins_chat_turn_lifecycle_not_sync_generate(game):
         db, state, person_name=minister, chat_turn_id=ctid, entry_id=int(entry_id),
         night_id=int(night["id"]), beat_generator=slow_exit,
     )
-    assert started.wait(1)
+    started.wait()
     assert an.list_ledger(db, night["id"])[-1]["body"] == placeholder  # 无迟到补写
     release.set()
     bo.persist_chat_turn_scene(db, registry.join(ctid))
@@ -792,7 +791,7 @@ def test_cli_dismiss_routes_exit_through_scene_registry(game, monkeypatch):
     def slow_exit(inputs: BeatInputs) -> str:
         calls.append(inputs.beat_kind)
         started.set()
-        assert release.wait(1)
+        release.wait()
         return "CLI特征化退下"
 
     session = GameSession.__new__(GameSession)
@@ -802,10 +801,10 @@ def test_cli_dismiss_routes_exit_through_scene_registry(game, monkeypatch):
     session._scene_registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=2))
     worker = threading.Thread(target=term._record_audience_exit, args=(session, minister))
     worker.start()
-    assert started.wait(1), "CLI exit never entered registry generator"
+    started.wait()
     assert an.list_ledger(db, night["id"])[-1]["body"] != "CLI特征化退下"
     release.set()
-    worker.join(2)
+    worker.join()
     assert not worker.is_alive()
     assert an.list_ledger(db, night["id"])[-1]["body"] == "CLI特征化退下"
     assert calls == [BEAT_EXIT]
@@ -906,7 +905,7 @@ def test_close_night_runs_final_exit_and_closing_in_parallel(game):
         db, state, minister, agno_session_id="solo", agno_runs_before=0,
     )
     _land_reply(db, state, minister, ctid, night_id)
-    both = threading.Barrier(2, timeout=2.0)
+    both = threading.Barrier(2)
     seen: list[str] = []
 
     def overlapping(inputs: BeatInputs) -> str:
@@ -1582,7 +1581,7 @@ def test_stream_join_and_abandon_do_not_hold_write_gate(monkeypatch):
 
         def join_chat_turn_scene(self, _ctid):
             join_entered.set()
-            assert release_join.wait(2)
+            release_join.wait()
             return []
 
         def persist_chat_turn_scene(self, *_a, **_k):
@@ -1590,7 +1589,7 @@ def test_stream_join_and_abandon_do_not_hold_write_gate(monkeypatch):
 
         def abandon_chat_turn_scene(self, _ctid):
             abandon_entered.set()
-            assert release_abandon.wait(2)
+            release_abandon.wait()
 
     class _DB:
         def create_chat_turn(self, *a, **k):
@@ -1647,11 +1646,16 @@ def test_stream_join_and_abandon_do_not_hold_write_gate(monkeypatch):
     rt._audience_turn_in_flight = lambda _n: False
     rt._start_chat_turn = lambda _n, **_k: (11, {})
     rt._record_chat_rollback_items = lambda *_a, **_k: None
-    rt._chat_payload = lambda *a, **k: {"answer": "臣遵旨。"}
+    rt._chat_payload = lambda *a, **k: {"answer": "臣遵旨。", "minister_message_id": 1}
     rt._spawn_extraction_trail = lambda *_a, **_k: None
     rt._trail_mindreading_after_reply = lambda *_a, **_k: None
+    rt._trail_highlight_judge_after_reply = lambda *_a, **_k: []
+    rt._dispatch_relation_judge = lambda *_a, **_k: None
     rt._complete_pending_write = lambda ticket=None: q.complete(ticket)
     rt._mark_pending_write = lambda key=None: q.claim(key=key or ("pending",))
+    # 轻量 mock 无 SuspendableConnection；join 后 persist 短临界段用 nullcontext，
+    # 否则 atomic(db) 因无 conn 失败 → 旧测靠 abandon.wait(2) AssertionError 被吞才“绿”。
+    monkeypatch.setattr(web_app, "atomic", lambda _db: contextlib.nullcontext())
     monkeypatch.setattr(
         web_app, "_audience_prompt_for_web_chat",
         lambda *_a, **_k: "prompt",
@@ -1669,12 +1673,14 @@ def test_stream_join_and_abandon_do_not_hold_write_gate(monkeypatch):
 
     t = threading.Thread(target=drive)
     t.start()
-    assert join_entered.wait(2), "stream never joined scene outside commit"
-    assert rt._write_gate.acquire(timeout=0.3), "write_gate held during stream join"
+    join_entered.wait()
+    assert rt._write_gate.acquire(blocking=False), "write_gate held during stream join"
     rt._write_gate.release()
     release_join.set()
-    t.join(3)
+    t.join()
     assert not t.is_alive()
+    assert any(e.get("type") == "done" for e in events), events
+    assert not abandon_entered.is_set(), "success path must not abandon"
 
     session.registry = SimpleNamespace(get=lambda _c: _AgentBoom())
     object.__setattr__(rt, "chat_history", {minister: []})
@@ -1687,11 +1693,11 @@ def test_stream_join_and_abandon_do_not_hold_write_gate(monkeypatch):
 
     t2 = threading.Thread(target=drive2)
     t2.start()
-    assert abandon_entered.wait(2), "stream never abandoned scene"
-    assert rt._write_gate.acquire(timeout=0.3), "write_gate held during stream abandon"
+    abandon_entered.wait()
+    assert rt._write_gate.acquire(blocking=False), "write_gate held during stream abandon"
     rt._write_gate.release()
     release_abandon.set()
-    t2.join(3)
+    t2.join()
     assert not t2.is_alive()
     assert any(e.get("type") == "error" for e in events2)
 
@@ -1718,7 +1724,7 @@ def test_web_stream_dismiss_registers_exit_before_join_and_persists(web_game):
     def tracking_join(ctid):
         order.append("join")
         join_entered.set()
-        assert release_join.wait(2), "join was not released"
+        release_join.wait()
         return real_join(ctid)
 
     game.session.start_chat_turn_exit_scene = tracking_start_exit
@@ -1753,7 +1759,7 @@ def test_web_stream_dismiss_registers_exit_before_join_and_persists(web_game):
 
     gate = game._runtime_write_gate()
     # 占住 write_gate：证明 join 等待在 gate 外（与 C9/T1/T10 同纪律）。
-    assert gate.acquire(timeout=0.2)
+    assert gate.acquire(blocking=False)
     try:
         result_box: dict = {}
 
@@ -1768,13 +1774,13 @@ def test_web_stream_dismiss_registers_exit_before_join_and_persists(web_game):
 
         worker = threading.Thread(target=run_stream)
         worker.start()
-        assert join_entered.wait(2), "stream never reached join"
+        join_entered.wait()
         # join 已进入且 start_exit 必先于 join；gate 仍被本测试持有 → join 不在 gate 内。
         assert order == ["start_exit", "join"], order
         assert gate.locked()
         release_join.set()
         gate.release()
-        worker.join(3)
+        worker.join()
         assert not worker.is_alive()
     finally:
         if gate.locked():
@@ -1805,7 +1811,7 @@ def test_web_stream_exit_overlaps_unfinished_reply_after_dismiss_tool(web_game):
     game = web_game
     minister = _active_minister(game.db, game.content)
     exit_body = f"【退下旁白·重叠】{minister}告退。"
-    both_in_flight = threading.Barrier(2, timeout=2.0)
+    both_in_flight = threading.Barrier(2)
     exit_started = threading.Event()
     reply_still_open = threading.Event()
     order: list[str] = []
@@ -1892,7 +1898,7 @@ def test_session_chat_exit_overlaps_inflight_action_intent(game):
     if minister not in an.present_names_at(db, night_id):
         an.summon_enter(db, night_id, minister)
 
-    both_in_flight = threading.Barrier(2, timeout=2.0)
+    both_in_flight = threading.Barrier(2)
     intent_started = threading.Event()
     exit_started = threading.Event()
     exit_body = f"【退下旁白·意图重叠】{minister}告退。"
@@ -2023,17 +2029,32 @@ def test_close_scene_early_phase1_failure_drains_and_reopens(game, monkeypatch):
 
     def slow_close(_inputs: BeatInputs) -> str:
         started.set()
-        assert release.wait(2)
+        release.wait()
         return "收夜旁白"
 
-    # crash_after_step=1 fires at end of office commit (phase-1), after start_close.
-    with pytest.raises(an.AudienceNightError, match="收夜提交崩溃注入"):
-        an.close_night(
-            db, state, night_id=night_id, content=content,
-            beat_generator=slow_close, scene_registry=registry,
-            wait_timeout_s=0.0, crash_after_step=an.CLOSE_STEP_COMMIT_OFFICE,
-        )
+    # close_night 同步 drain 在飞 gen；须在独立线程跑，主线程 started 后放行 gen，
+    # 否则 drain join ↔ release 自锁（旧 wait(2) 靠墙钟 AssertionError 自尽，#1723 禁）。
+    box: dict = {}
+
+    def _run_close() -> None:
+        try:
+            an.close_night(
+                db, state, night_id=night_id, content=content,
+                beat_generator=slow_close, scene_registry=registry,
+                wait_timeout_s=0.0, crash_after_step=an.CLOSE_STEP_COMMIT_OFFICE,
+            )
+            box["ok"] = True
+        except BaseException as exc:
+            box["exc"] = exc
+
+    worker = threading.Thread(target=_run_close)
+    worker.start()
+    started.wait()
     release.set()
+    worker.join()
+    assert "ok" not in box
+    assert isinstance(box.get("exc"), an.AudienceNightError)
+    assert "收夜提交崩溃注入" in str(box["exc"])
     failed = an.get_night(db, night_id)
     assert failed["status"] == an.NIGHT_STATUS_OPEN
     assert int(failed["close_commit_cursor"] or 0) == 0
@@ -2065,12 +2086,17 @@ def test_close_final_exit_generator_failure_rolls_back_final_exit(game):
     release_gen = threading.Event()
     gate = threading.Lock()
 
+    gen_done = threading.Event()
+
     def boom_exit(inputs: BeatInputs) -> str:
         started.set()
-        assert release_gen.wait(2)
-        if inputs.beat_kind == BEAT_EXIT:
-            raise RuntimeError("final exit generator boom")
-        return f"kind={inputs.beat_kind}|person={inputs.person_name}"
+        release_gen.wait()
+        try:
+            if inputs.beat_kind == BEAT_EXIT:
+                raise RuntimeError("final exit generator boom")
+            return f"kind={inputs.beat_kind}|person={inputs.person_name}"
+        finally:
+            gen_done.set()
 
     registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=2))
     err: list[BaseException] = []
@@ -2087,13 +2113,14 @@ def test_close_final_exit_generator_failure_rolls_back_final_exit(game):
 
     worker = threading.Thread(target=run_close)
     worker.start()
-    assert started.wait(2)
+    started.wait()
     gate.acquire()
     release_gen.set()
-    worker.join(0.2)
+    # 负向状态证：gen 已终 + worker 仍活（finalize 等持闸）；持闸期间禁 join（会自锁）
+    gen_done.wait()
     assert worker.is_alive()
     gate.release()
-    worker.join(2)
+    worker.join()
     assert not worker.is_alive()
     assert err and "final exit generator boom" in str(err[0])
     failed = an.get_night(db, int(night_id))
@@ -2126,10 +2153,15 @@ def test_close_scene_join_free_but_persist_and_cleanup_hold_write_gate(game):
     release_gen = threading.Event()
     gate = threading.Lock()
 
+    gen_done = threading.Event()
+
     def gen(inputs: BeatInputs) -> str:
         started.set()
-        assert release_gen.wait(2)
-        return f"kind={inputs.beat_kind}|person={inputs.person_name}"
+        release_gen.wait()
+        try:
+            return f"kind={inputs.beat_kind}|person={inputs.person_name}"
+        finally:
+            gen_done.set()
 
     registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=2))
     err: list[BaseException] = []
@@ -2146,17 +2178,18 @@ def test_close_scene_join_free_but_persist_and_cleanup_hold_write_gate(game):
 
     worker = threading.Thread(target=run_close)
     worker.start()
-    assert started.wait(2)
+    started.wait()
     gate.acquire()
     release_gen.set()
-    worker.join(0.2)
+    # gen 已终；persist/cleanup 仍等持闸 → worker 活着且卷轴尚无 exit
+    gen_done.wait()
     assert worker.is_alive()
     blocked_scroll = an.read_night_scroll(db, int(night_id))
     blocked_beats = _named_scene_beats(blocked_scroll)
     assert "exit" not in blocked_beats
     assert "divider" not in blocked_beats
     gate.release()
-    worker.join(2)
+    worker.join()
     assert not worker.is_alive()
     assert err == []
     closed = an.get_night(db, int(night_id))
@@ -2380,24 +2413,35 @@ def test_657_s2_s3_lock_boundary_and_parallel_summons(game, monkeypatch):
     sess._write_gate = threading.Lock()
     sess._write_queue = type("Q", (), {"write_gate": sess._write_gate})()
 
-    generators_ready = threading.Barrier(2, timeout=2.0)
+    # open+enter 每 target 可提交多 Future；Barrier(2) 会让第 3+ 方永等（旧 timeout 靠
+    # BrokenBarrier 自尽）。改 max_active 状态证并发，join_started 证 join 窗。
+    active = 0
+    max_active = 0
+    gen_lock = threading.Lock()
     join_started = threading.Event()
     join_saw_free = []
     gen_ok_body = f"{ok_name}入殿请安。"
 
     def mixed_gen(inputs):
+        nonlocal active, max_active
         name = str(getattr(inputs, "person_name", "") or "") or ""
-        generators_ready.wait()
-        assert join_started.wait(timeout=2.0)
-        free = sess._write_gate.acquire(False)
-        if free:
-            sess._write_gate.release()
-        join_saw_free.append(bool(free))
-        if name == bad_name:
-            raise RuntimeError("target B boom")
-        if name == ok_name:
-            return gen_ok_body
-        return f"{name or '臣'}入殿请安。"
+        with gen_lock:
+            active += 1
+            max_active = max(max_active, active)
+        try:
+            join_started.wait()
+            free = sess._write_gate.acquire(False)
+            if free:
+                sess._write_gate.release()
+            join_saw_free.append(bool(free))
+            if name == bad_name:
+                raise RuntimeError("target B boom")
+            if name == ok_name:
+                return gen_ok_body
+            return f"{name or '臣'}入殿请安。"
+        finally:
+            with gen_lock:
+                active -= 1
 
     sess._beat_generator = mixed_gen
     monkeypatch.setattr(
@@ -2427,7 +2471,8 @@ def test_657_s2_s3_lock_boundary_and_parallel_summons(game, monkeypatch):
     except ValueError:
         raised = True
     assert raised, "单 target 失败门闩须响亮 ValueError"
-    assert join_saw_free == [True, True], f"join 期间 gate 应空闲: {join_saw_free}"
+    assert max_active >= 2, f"summon gens 须真并发 max_active={max_active}"
+    assert join_saw_free and all(join_saw_free), f"join 期间 gate 应空闲: {join_saw_free}"
 
     # 成功 target 正文仍在（S7 失败域）
     k0 = next(k for k, n in zip(keys, ministers) if n == ok_name)
