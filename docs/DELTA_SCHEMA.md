@@ -382,7 +382,7 @@ personnel_secret 模块产出；与公共 `dossier_participants` **分立**（�
 
 引擎行为：只按护行/稽核在场口径 **clamp** 实抵上下界；**不二次扣库**、不改原 `economy_move`、**不写 0058 进展**（密奏仍走 personnel_secret / #566）。无提案时对扫描面内每路按口径中位机械落账（有/无护行同一存储、逐路键控）。
 
-> #1745 / ADR 0015-D7：可拆项坏引用（未知/非在途/已结清/已撤回案卷、缺量字段、量值非法、重复、非 dict 项）**逐项拒收留痕**；section 值非 list → 只拒该 section（`invalid_shape`，item=`{raw_value:…}`，与 `sanitize_delta_shape` 同形），**不整月 abort**。拒收经外层 `RejectionCollector`（RejectedItem 四字段 item/reason/category/source）；好项与未提案目标的中位落账仍在同一 atomic。空提案（缺省/`[]`）合法——程序用中位默认；无在途目标却收到提案 → 逐项 `missing_ref`，不落假对账行。
+> #1745 / ADR 0015-D6/D7：可拆项坏引用（未知/非在途/已结清/已撤回案卷、缺量字段、量值非法、重复）由 `record_monthly_grant_reconciliations` **逐项域级拒收留痕**；section 值非 list / 非 dict 列表项的**形状拒收**归 `sanitize_delta_shape` 独家（`invalid_shape`，item 恒 `{raw_value:…}`，含 dict 坏容器），一次归属 `dossier_reconciliations`，**不整月 abort、不双记**。拒收经外层 `RejectionCollector`（RejectedItem 四字段 item/reason/category/source）；好项与未提案目标的中位落账仍在同一 atomic。空提案（缺省/`[]`）合法——程序用中位默认；无在途目标却收到提案 → 逐项 `missing_ref`，不落假对账行。
 
 ### `dossier_progress_reports` — 长差密令逐月密奏（#566 / ADR 0058）
 personnel_secret 模块产出；settle 内经 `record_monthly_dossier_progress` 消费。

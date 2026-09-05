@@ -30,7 +30,8 @@ def env(game):
 
 
 def _create(db, state, *, action="assignment", category="清丈", payload=None,
-            target="validation", participants=None, commit=True):
+            target="validation", participants=None, commit=True,
+            rejection_collector=None):
     body = dict(payload or {})
     if category is not None:
         body["transaction_category"] = category
@@ -43,6 +44,7 @@ def _create(db, state, *, action="assignment", category="清丈", payload=None,
         payload=body,
         participants=participants,
         commit=commit,
+        rejection_collector=rejection_collector,
     )
 
 
@@ -337,9 +339,24 @@ def test_punishment_stage_rejects_unmapped_category_before_pending_or_dossier(en
 
 
 def test_unmapped_rejection_rolls_back_with_uncommitted_dossier(env):
+    """#1745：commit=False 须外层 collector；flush 后随 outer atomic 回滚无残留。"""
+    from ming_sim.applier import RejectionCollector
+
     db, state, _ = env
-    assert _create(db, state, category="修仙", commit=False) == 0
-    db.conn.rollback()
+    collector = RejectionCollector()
+    try:
+        with atomic(db):
+            assert _create(
+                db, state, category="修仙", commit=False,
+                rejection_collector=collector,
+            ) == 0
+            collector.flush_to_db(db)
+            assert db.conn.execute(
+                "SELECT COUNT(*) FROM rejection_reports",
+            ).fetchone()[0] == 1
+            raise RuntimeError("force rollback")
+    except RuntimeError:
+        pass
     assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0] == 0
     table = db.conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='rejection_reports'"

@@ -2492,7 +2492,7 @@ def settle_with_delta(
     章节记忆=chapter_recorder、结局总评=ending_summarizer、落库（含 issue/office 的
     通道感知 enrichment）=delta_applier、玩家来源拒收呈现=settlement_attendant_runner。
     真实流程传捕获 llm_config 的闭包；探针 driver 对 chapter_recorder/ending_summarizer
-    传 None，对 settlement_attendant_runner 传确定性桩（只保证 typed 槽路由），对
+    传 None，对 settlement_attendant_runner 由调用方注入（缺则玩家拒收诚实失败，P7），对
     delta_applier 传 channel=api 确定性闭包——结算核本体都不见 llm_config（ADR 0004）。
 
     delta_applier(db, state, extracted, content, registry) -> applied dict；None 时回退到
@@ -2962,9 +2962,10 @@ def _settle_after_extract_body(
         )
         if not str(rejection_speech or "").strip():
             raise LLMContractError("王承恩结算拒收递话返回空文")
+        # P6/0142：判空用临时副本；拼接只加布局分隔，不 rstrip/裁剪任一份 LLM 原文。
         existing = str(attendant_message or "")
         if existing.strip():
-            attendant_message = existing.rstrip() + "\n" + str(rejection_speech)
+            attendant_message = existing + "\n" + str(rejection_speech)
         else:
             attendant_message = str(rejection_speech)
     # 机械人口真相只留在 extraction/applied 内账；公开回响由下方既有邸报来源承担，

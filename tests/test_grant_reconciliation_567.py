@@ -38,17 +38,18 @@ def _record_recon(db, turn, generated, *, source=Provenance.player_decree):
 
 
 def _recon_rejections(db):
+    """全体拒收查询（#1745：不得以 section 过滤掩盖第二 producer）。"""
     return list(db.conn.execute(
         "SELECT section, category, source, reason, item_json "
-        "FROM rejection_reports WHERE section='dossier_reconciliations' ORDER BY id"
+        "FROM rejection_reports ORDER BY id"
     ).fetchall())
 
 
 def _probe_settlement_attendant(*, year, period, rejections):
-    """测试桩：只保证路由与 has_attendant 槽；不断正文。"""
+    """settle 注入边界：结构化事实进、真实非空文本出；不锁措辞。"""
     if not rejections:
         return ""
-    return "\u200b"
+    return "递话"
 
 
 def _actor(db):
@@ -355,17 +356,21 @@ def test_recon_section_non_list_rejected_other_sections_land(game):
     # execution 好段落库
     assert db.get_decree_dossier(gid)["status"] == "closed"
     rej = _recon_rejections(db)
+    # 恰一份 canonical 拒收；原 section 归属，非 validate_shape_rejections 假段。
     assert len(rej) == 1
+    assert rej[0]["section"] == "dossier_reconciliations"
     assert rej[0]["category"] == "invalid_shape"
     assert rej[0]["source"] == Provenance.player_decree.value
     assert json.loads(rej[0]["item_json"]) == {"raw_value": "not-a-list"}
 
 
-def test_recon_non_list_without_collector_fails_loud(game):
-    """直调无外层 collector 时拒收不得无痕继续。"""
+def test_recon_domain_reject_without_collector_fails_loud(game):
+    """直调无外层 collector 时域级拒收不得无痕继续（形状归 sanitize 独家）。"""
     db, state, _content = game
     with pytest.raises(ValueError, match="RejectionCollector"):
-        db.record_monthly_grant_reconciliations(state.turn, "not-a-list")
+        db.record_monthly_grant_reconciliations(
+            state.turn, [{"dossier_id": 999999, "arrived_amount": 1}],
+        )
 
 
 @pytest.mark.parametrize(
@@ -382,7 +387,6 @@ def test_recon_non_list_without_collector_fails_loud(game):
         (lambda gid: [{"dossier_id": gid, "loss_amount": True}], "invalid_enum"),
         (lambda gid: [{"dossier_id": gid, "loss_amount": 2.5}], "invalid_enum"),
         (lambda gid: [{"dossier_id": gid, "loss_amount": "折半"}], "invalid_enum"),
-        (lambda gid: ["not-a-dict"], "invalid_shape"),
         (lambda gid: [{"dossier_id": True, "arrived_amount": 16}], "invalid_enum"),
         (lambda gid: [{"dossier_id": 0, "arrived_amount": 16}], "invalid_enum"),
     ],
@@ -398,13 +402,12 @@ def test_recon_non_list_without_collector_fails_loud(game):
         "loss_bool",
         "loss_float",
         "loss_non_numeric_str",
-        "item_not_dict",
         "dossier_id_bool",
         "dossier_id_zero",
     ],
 )
 def test_recon_bad_item_rejected_target_gets_midpoint(game, bad, category):
-    """#1745：坏提案逐项拒收；在途目标仍落机械中位（坏提案不进 supplied）。"""
+    """#1745：域级坏提案逐项拒收；在途目标仍落机械中位（坏提案不进 supplied）。"""
     from ming_sim.db import grant_arrival_bounds
 
     db, state, _content = game
@@ -417,15 +420,54 @@ def test_recon_bad_item_rejected_target_gets_midpoint(game, bad, category):
     assert len(generated) == 1
     rej = _recon_rejections(db)
     assert len(rej) == 1
+    assert rej[0]["section"] == "dossier_reconciliations"
     assert rej[0]["category"] == category
     assert rej[0]["source"] == Provenance.player_decree.value
     assert str(rej[0]["reason"] or "").strip()
     item = json.loads(rej[0]["item_json"])
     raw = generated[0]
-    if isinstance(raw, dict):
-        assert item.get("dossier_id", raw.get("dossier_id")) == raw.get("dossier_id")
-    else:
-        assert item == {"raw_value": raw}
+    assert item.get("dossier_id", raw.get("dossier_id")) == raw.get("dossier_id")
+
+
+@pytest.mark.parametrize(
+    "shape, raw_value",
+    [
+        ("not-a-list", "not-a-list"),
+        ({"foo": 1}, {"foo": 1}),
+        ([42], 42),
+    ],
+    ids=["string_container", "dict_container", "non_dict_list_item"],
+)
+def test_recon_shape_rejected_once_via_shared_sanitize(game, shape, raw_value):
+    """#1745 / 0015-D6：三种坏形状经 settle 真入口只产一份 canonical 拒收 + raw_value。"""
+    db, state, content = game
+    gid = _in_transit_grant(db, state)
+    turn_before = int(state.turn)
+    state.turn_phase = TurnPhase.SETTLING.value
+    db.save_state(state)
+    db.conn.commit()
+
+    settle_with_delta(
+        state, db,
+        {"dossier_reconciliations": shape},
+        before_turn=turn_before,
+        content=content,
+        narrative="shape-once",
+        source=Provenance.player_decree,
+        delta_applier=issue_engine.apply_score_extraction,
+        settlement_attendant_runner=_probe_settlement_attendant,
+    )
+
+    assert int(state.turn) == turn_before + 1
+    rej = _recon_rejections(db)
+    assert len(rej) == 1
+    assert rej[0]["section"] == "dossier_reconciliations"
+    assert rej[0]["category"] == "invalid_shape"
+    assert rej[0]["source"] == Provenance.player_decree.value
+    assert json.loads(rej[0]["item_json"]) == {"raw_value": raw_value}
+    # 坏形状不挡中位落账
+    recon = db.list_dossier_reconciliations(gid)
+    assert len(recon) == 1
 
 
 def test_recon_both_amount_fields_rejected_no_guess(game):
