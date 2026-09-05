@@ -208,7 +208,7 @@ def _assert_heal_error(exc: BaseException, *must_fields: str) -> None:
     assert isinstance(exc, rescript_mod.RescriptOptionMissingFieldsError), type(exc)
     got = set(exc.missing_fields)
     for f in must_fields:
-        assert f in got, (f, exc.missing_fields, getattr(exc, "field_reasons", None))
+        assert f in got, (f, exc.missing_fields, getattr(exc, "field_failures", None))
 
 
 @pytest.mark.parametrize(
