@@ -631,24 +631,32 @@ def test_canonicalize_extraction_public_api():
 
 # ── ADR 0008 决定 5：拒收玩家可见性（player_decree/hitl → 邸报 in-world 提示）──
 
-def test_run_settle_player_sourced_rejection_surfaces_diegetic_hint(game):
-    """driver 默认 player_decree 来源：落库拒收 → 邸报给一句 in-world 提示（不暴露明细，明细进 DB/jsonl），
-    且提示**持久化进 turn_report**（web/history/重读都见，非仅即时返回串，codex R1 high）。"""
+def test_run_settle_player_sourced_rejection_durable_structured(game):
+    """driver 默认 player_decree：拒收落库四字段 + 来源门；代码不写戏内固定补句（0150-D5-b）。"""
+    from ming_sim.applier import Provenance
+
     db, state, content = game
     before = state.turn
+    narrative_in = "本月邸报。"
     report = prepare_then_settle(
         db, state, content,
         {"人物变更": [{"origin_ref": "盘面自发", "name": "查无此人甲", "动作": "任命", "office": "首辅", "reason": "测试拒收"}]},
+        narrative=narrative_in,
     )
-    assert "有司奏" in report, "player_decree 来源的拒收须在邸报给玩家一句提示（决定 5）"
-    assert "查无此人甲" not in report, "提示只一句 in-world，不暴露拒收明细（明细进 DB/jsonl）"
-    # 持久化：turn_reports（web/history 读它）也须含提示，非仅 run_settle 即时返回
+    rows = list(db.conn.execute(
+        "SELECT section, category, source FROM rejection_reports WHERE turn=?", (before,),
+    ).fetchall())
+    assert rows and all(r["source"] == Provenance.player_decree.value for r in rows)
+    # 代码不向 narrative/turn_report 注入固定戏内句
+    assert "有司奏" not in report
+    assert "窒碍未行" not in report
     persisted = db.conn.execute("SELECT report FROM turn_reports WHERE turn=?", (before,)).fetchone()[0]
-    assert "有司奏" in persisted, "提示须持久化进 turn_report（codex R1：仅返回串则 web/history 看不到）"
+    assert "有司奏" not in persisted
+    assert "窒碍未行" not in persisted
 
 
-def test_run_settle_no_rejection_no_hint(game):
-    """无拒收 → 无提示（避免噪声）；且不误持久化进 turn_report（Sourcery R1）。"""
+def test_run_settle_no_rejection_no_code_template(game):
+    """无拒收 → 代码不注入固定戏内句。"""
     db, state, content = game
     before = state.turn
     report = prepare_then_settle(
@@ -656,20 +664,28 @@ def test_run_settle_no_rejection_no_hint(game):
         {"地区变化": {"shanxi": {"origin_ref": "盘面自发", "动乱": 1}}},
     )
     assert "有司奏" not in report
+    assert "窒碍未行" not in report
     persisted = db.conn.execute("SELECT report FROM turn_reports WHERE turn=?", (before,)).fetchone()[0]
-    assert "有司奏" not in persisted, "无拒收不应把提示误持久化进 turn_report"
+    assert "有司奏" not in persisted
+    assert "窒碍未行" not in persisted
 
 
-def test_run_settle_system_source_rejection_stays_silent(game):
-    """system_simulation 来源的拒收对玩家安静——仅 player_decree/hitl_decision 给提示（决定 5）。"""
+def test_run_settle_system_source_rejection_provenance(game):
+    """system_simulation 来源拒收：结构化 source 门正确；代码不写戏内句。"""
     from ming_sim.applier import Provenance
     db, state, content = game
+    before = state.turn
     report = prepare_then_settle(
         db, state, content,
         {"人物变更": [{"origin_ref": "盘面自发", "name": "查无此人乙", "动作": "任命", "office": "首辅", "reason": "测试"}]},
         source=Provenance.system_simulation,
     )
-    assert "有司奏" not in report, "系统推演来源的拒收对玩家安静"
+    rows = list(db.conn.execute(
+        "SELECT source FROM rejection_reports WHERE turn=?", (before,),
+    ).fetchall())
+    assert rows and all(r["source"] == Provenance.system_simulation.value for r in rows)
+    assert "有司奏" not in report
+    assert "窒碍未行" not in report
 
 
 # ── #668 F3：driver pre_settle 须同步 content 在途镜像 ────────────────────────

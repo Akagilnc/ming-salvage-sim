@@ -13128,10 +13128,11 @@ class GameDB:
         无提案时用护行口径中位（无护行亦可机械落账，供 S10 结案合并）。
         不写 0058 进展、不二次扣库、不改原 economy_move。
 
-        #1745 / ADR 0015-D7：可拆项坏引用（无目标/已结清/已撤回/形坏）逐项拒收，
-        好项与未提案目标的中位落账仍在同一 atomic；整段非 list 仍 fail-loud。
+        #1745 / ADR 0015-D7：可拆坏项与坏 section 容器按段/项拒收，好项与未提案
+        目标的中位落账仍在同一 atomic。拒收归属外层 RejectionCollector（flush/
+        commit/mirror/rollback 由 settle 编排所有者负责；本方法不自建 collector）。
         """
-        from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
+        from ming_sim.applier import Provenance, RejectedItem
 
         targets = {
             int(item["dossier_id"]): item
@@ -13141,21 +13142,17 @@ class GameDB:
             generated = []
         if not targets and generated in (None, []):
             return []
-        if not isinstance(generated, list):
-            raise ValueError("对账提案须为列表")
 
-        # 拒收必须有归属：settle 传入共享 collector；直调时自有并 flush（禁无痕继续）。
-        owns_collector = rejection_collector is None
-        if owns_collector:
-            rejection_collector = RejectionCollector()
-
-        prov = (
-            source if isinstance(source, Provenance)
-            else Provenance(source) if source is not None
-            else Provenance.unknown
-        )
+        # source 走 collector 归一；None 取 typed 默认 unknown（0008-D5）。
+        if source is None:
+            source = Provenance.unknown
 
         def _reject(raw_item: object, reason: str, category: str) -> None:
+            # 无外层归属不得无痕继续（0150-D2/D3；#1745 删自有 collector 旁路）。
+            if rejection_collector is None:
+                raise ValueError(
+                    "dossier_reconciliations 拒收须由外层 RejectionCollector 归属"
+                )
             # ADR 0015 F1：RejectedItem.item 恒 dict；非 dict 包装 raw_value。
             if isinstance(raw_item, dict):
                 payload = dict(raw_item)
@@ -13164,10 +13161,21 @@ class GameDB:
             rejection_collector.record(
                 "dossier_reconciliations",
                 RejectedItem(
-                    item=payload, reason=reason, category=category, source=prov,
+                    item=payload, reason=reason, category=category, source=source,
                 ),
                 int(turn),
             )
+
+        # 0015-D7：section 值非 list → 只拒该 section，不整月 abort；与
+        # sanitize_delta_shape 对 list 段的 invalid_shape 同形（复用 collector，不平行净化）。
+        if not isinstance(generated, list):
+            _reject(
+                generated,
+                f"delta 字段 dossier_reconciliations 必须是 array(list)，"
+                f"实得 {type(generated).__name__}",
+                "invalid_shape",
+            )
+            generated = []
 
         supplied: Dict[int, Tuple[object, str]] = {}
         for item in generated:
@@ -13222,13 +13230,8 @@ class GameDB:
             note = str(item.get("note") or "").strip()
             supplied[dossier_id] = (proposed, note)
 
-        def _flush_owned() -> None:
-            if owns_collector:
-                rejection_collector.flush_to_db(self)
-
-        # 无在途目标：坏提案已逐项拒收，不落假对账行（#1745 A1）。
+        # 无在途目标：坏提案已逐项拒收，不落假对账行。
         if not targets:
-            _flush_owned()
             return []
 
         reports: List[Dict[str, object]] = []
@@ -13271,7 +13274,6 @@ class GameDB:
             )
             history = self.list_dossier_reconciliations(int(dossier_id))
             reports.append(history[-1])
-        _flush_owned()
         return reports
 
     # ── #625 / ADR 0077 supervision fact bottom ─────────────────────────

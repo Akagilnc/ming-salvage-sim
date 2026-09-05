@@ -309,7 +309,7 @@ def clear_for_resimulation(db: Any, turn: int) -> None:
                 "ALTER TABLE rejection_reports ADD COLUMN resimulation_invalidated INTEGER NOT NULL DEFAULT 0"
             )
         # #1730：重模拟只作废结算段拒收；召对段 audience_decree 是玩家已见的 durable 账，
-        # 不得被 clear_for_resimulation 无差别抹掉（邸报「窒碍未行」依赖未作废行）。
+        # 不得被 clear_for_resimulation 无差别抹掉（0008-D5 玩家来源门依赖未作废行）。
         db.conn.execute(
             "UPDATE rejection_reports SET resimulation_invalidated=1 "
             "WHERE turn=? AND section != 'audience_decree'",

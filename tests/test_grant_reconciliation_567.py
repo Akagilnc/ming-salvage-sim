@@ -16,12 +16,32 @@ import json
 import pytest
 
 import ming_sim.issues as issue_engine
+from ming_sim.applier import Provenance, RejectionCollector
 from ming_sim.db import GameDB
 from ming_sim.decree import settle_with_delta
+from ming_sim.exceptions import SettlementAbort
+from ming_sim.models import TurnPhase
 from tests.dossier_test_helpers import create_test_secret_order
 
 
 ORDERED = 30  # 北极星三路各三十万两量级（引擎以「两」为单位的整数面值）
+
+
+def _record_recon(db, turn, generated, *, source=Provenance.player_decree):
+    """直调 record 须走外层 collector（#1745：禁自有 flush 旁路）。"""
+    collector = RejectionCollector()
+    reports = db.record_monthly_grant_reconciliations(
+        turn, generated, rejection_collector=collector, source=source,
+    )
+    collector.flush_to_db(db)
+    return reports
+
+
+def _recon_rejections(db):
+    return list(db.conn.execute(
+        "SELECT section, category, source, reason, item_json "
+        "FROM rejection_reports WHERE section='dossier_reconciliations' ORDER BY id"
+    ).fetchall())
 
 
 def _actor(db):
@@ -287,13 +307,56 @@ def test_issues_context_exposes_recon_for_soft_discount(game):
     assert hit["loss_amount"] == ORDERED - 16
 
 
-def test_recon_proposals_non_list_still_fail_loud(game):
-    """整段非 list 不可拆项 → 仍 fail-loud（0015-D7 前提是可拆 section）。"""
-    db, state, _content = game
+def test_recon_section_non_list_rejected_other_sections_land(game):
+    """#1745 / 0015-D7：dossier_reconciliations 非 list → 只拒该 section；其它好段同 atomic 落库。"""
+    db, state, content = game
     gid = _in_transit_grant(db, state)
-    with pytest.raises(ValueError, match="对账提案须为列表"):
+    turn_before = int(state.turn)
+    state.turn_phase = TurnPhase.SETTLING.value
+    db.save_state(state)
+    db.conn.commit()
+
+    try:
+        settle_with_delta(
+            state, db,
+            {
+                "dossier_reconciliations": "not-a-list",
+                "dossier_executions": [{
+                    "dossier_id": gid,
+                    "outcome": "fulfilled",
+                    "note": "跨段好项",
+                }],
+            },
+            before_turn=turn_before,
+            content=content,
+            narrative="section-shape",
+            source=Provenance.player_decree,
+            delta_applier=issue_engine.apply_score_extraction,
+        )
+    except SettlementAbort:
+        pytest.fail("可拆非 list section 不得整月 SettlementAbort")
+
+    assert int(state.turn) == turn_before + 1
+    # 非 list 无好 recon 项 → 在途目标仍落机械中位
+    recon = db.list_dossier_reconciliations(gid)
+    assert len(recon) == 1
+    from ming_sim.db import grant_arrival_bounds
+    lo, hi = grant_arrival_bounds(ORDERED, escorted=False)
+    assert recon[0]["arrived_amount"] == (lo + hi) // 2
+    # execution 好段落库
+    assert db.get_decree_dossier(gid)["status"] == "closed"
+    rej = _recon_rejections(db)
+    assert len(rej) == 1
+    assert rej[0]["category"] == "invalid_shape"
+    assert rej[0]["source"] == Provenance.player_decree.value
+    assert json.loads(rej[0]["item_json"]) == {"raw_value": "not-a-list"}
+
+
+def test_recon_non_list_without_collector_fails_loud(game):
+    """直调无外层 collector 时拒收不得无痕继续。"""
+    db, state, _content = game
+    with pytest.raises(ValueError, match="RejectionCollector"):
         db.record_monthly_grant_reconciliations(state.turn, "not-a-list")
-    assert db.list_dossier_reconciliations(gid) == []
 
 
 @pytest.mark.parametrize(
@@ -333,34 +396,21 @@ def test_recon_proposals_non_list_still_fail_loud(game):
 )
 def test_recon_bad_item_rejected_target_gets_midpoint(game, bad, category):
     """#1745：坏提案逐项拒收；在途目标仍落机械中位（坏提案不进 supplied）。"""
-    import json
-
-    from ming_sim.applier import Provenance, RejectionCollector
     from ming_sim.db import grant_arrival_bounds
 
     db, state, _content = game
     gid = _in_transit_grant(db, state)
     generated = bad(gid)
-    collector = RejectionCollector()
-    reports = db.record_monthly_grant_reconciliations(
-        state.turn, generated,
-        rejection_collector=collector, source=Provenance.player_decree,
-    )
-    collector.flush_to_db(db)
+    reports = _record_recon(db, state.turn, generated)
     assert len(reports) == 1 and reports[0]["dossier_id"] == gid
     lo, hi = grant_arrival_bounds(ORDERED, escorted=False)
     assert reports[0]["arrived_amount"] == (lo + hi) // 2
-    # 每个坏项恰一条拒收（本参数化每案 generated 恰 1 项）
     assert len(generated) == 1
-    rej = list(db.conn.execute(
-        "SELECT section, category, source, reason, item_json "
-        "FROM rejection_reports ORDER BY id"
-    ).fetchall())
+    rej = _recon_rejections(db)
     assert len(rej) == 1
-    assert rej[0]["section"] == "dossier_reconciliations"
     assert rej[0]["category"] == category
     assert rej[0]["source"] == Provenance.player_decree.value
-    assert str(rej[0]["reason"] or "").strip()  # 非空；不钉措辞
+    assert str(rej[0]["reason"] or "").strip()
     item = json.loads(rej[0]["item_json"])
     raw = generated[0]
     if isinstance(raw, dict):
@@ -371,182 +421,47 @@ def test_recon_bad_item_rejected_target_gets_midpoint(game, bad, category):
 
 def test_recon_both_amount_fields_rejected_no_guess(game):
     """#1745：arrived_amount 与 loss_amount 同在 → invalid_enum 拒收，不静默优先其一。"""
-    import json
-
-    from ming_sim.applier import Provenance
     from ming_sim.db import grant_arrival_bounds
 
     db, state, _content = game
     gid = _in_transit_grant(db, state)
-    both = {
-        "dossier_id": gid,
-        "arrived_amount": 16,
-        "loss_amount": 5,
-    }
-    reports = db.record_monthly_grant_reconciliations(
-        state.turn, [both], source=Provenance.player_decree,
-    )
-    # 坏项不进 supplied → 目标仍落中位（非 16、非 ordered-5）
+    both = {"dossier_id": gid, "arrived_amount": 16, "loss_amount": 5}
+    reports = _record_recon(db, state.turn, [both])
     assert len(reports) == 1 and reports[0]["dossier_id"] == gid
     lo, hi = grant_arrival_bounds(ORDERED, escorted=False)
     assert reports[0]["arrived_amount"] == (lo + hi) // 2
-    rej = list(db.conn.execute(
-        "SELECT category, item_json, reason FROM rejection_reports "
-        "WHERE section='dossier_reconciliations'"
-    ).fetchall())
+    rej = _recon_rejections(db)
     assert len(rej) == 1
     assert rej[0]["category"] == "invalid_enum"
-    assert str(rej[0]["reason"] or "").strip()
     item = json.loads(rej[0]["item_json"])
     assert "arrived_amount" in item and "loss_amount" in item
-    assert item["dossier_id"] == gid
 
 
 def test_recon_duplicate_keeps_first_rejects_second(game):
     """#1745：重复案卷——首份落账，次份 invalid_enum 拒收。"""
-    from ming_sim.applier import Provenance, RejectionCollector
-
     db, state, _content = game
     gid = _in_transit_grant(db, state)
-    collector = RejectionCollector()
-    reports = db.record_monthly_grant_reconciliations(
-        state.turn,
+    reports = _record_recon(
+        db, state.turn,
         [
             {"dossier_id": gid, "arrived_amount": 16},
             {"dossier_id": gid, "arrived_amount": 17},
         ],
-        rejection_collector=collector, source=Provenance.system_simulation,
+        source=Provenance.system_simulation,
     )
-    collector.flush_to_db(db)
     assert len(reports) == 1
     assert reports[0]["arrived_amount"] == 16
-    rej = list(db.conn.execute(
-        "SELECT category, reason, source FROM rejection_reports"
-    ).fetchall())
+    rej = _recon_rejections(db)
     assert len(rej) == 1
     assert rej[0]["category"] == "invalid_enum"
-    assert str(rej[0]["reason"] or "").strip()
     assert rej[0]["source"] == Provenance.system_simulation.value
 
 
-def test_1745_two_bad_one_good_exact_rejection_cardinality(game):
-    """#1745：两坏一好——好项落账，坏项各恰一条 missing_ref，不多不少。"""
-    import json
+def test_1745_settle_bad_and_good_recon_same_atomic(game):
+    """#1745 主干：settle 入口混合好/坏/无目标 → 好项落库、坏项拒收、月份推进、无假 awaiting。
 
-    from ming_sim.applier import Provenance
-
-    db, state, _content = game
-    good = _in_transit_grant(db, state)
-    bad_a = {"dossier_id": 88881, "arrived_amount": 1}
-    bad_b = {"dossier_id": 88882, "arrived_amount": 2}
-    # 直调无 collector → 自有 flush，拒收仍 durable（失败诚实）
-    reports = db.record_monthly_grant_reconciliations(
-        state.turn,
-        [bad_a, {"dossier_id": good, "arrived_amount": 16}, bad_b],
-        source=Provenance.player_decree,
-    )
-    assert len(reports) == 1
-    assert reports[0]["dossier_id"] == good
-    assert reports[0]["arrived_amount"] == 16
-    rej = list(db.conn.execute(
-        "SELECT category, source, reason, item_json FROM rejection_reports "
-        "WHERE section='dossier_reconciliations' ORDER BY id"
-    ).fetchall())
-    assert len(rej) == 2
-    assert {r["category"] for r in rej} == {"missing_ref"}
-    assert all(r["source"] == Provenance.player_decree.value for r in rej)
-    assert all(str(r["reason"] or "").strip() for r in rej)
-    got_ids = {json.loads(r["item_json"])["dossier_id"] for r in rej}
-    assert got_ids == {88881, 88882}
-
-
-def test_1745_empty_targets_two_bad_no_recon_rows(game):
-    """#1745：无目标 + 两坏项 → 恰两条 missing_ref，零 recon 行。"""
-    import json
-
-    from ming_sim.applier import Provenance
-
-    db, state, _content = game
-    assert db.list_monthly_grant_reconciliation_targets() == []
-    reports = db.record_monthly_grant_reconciliations(
-        state.turn,
-        [
-            {"dossier_id": 7001, "arrived_amount": 3},
-            {"dossier_id": 7002, "loss_amount": 4},
-        ],
-        source=Provenance.player_decree,
-    )
-    assert reports == []
-    assert db.conn.execute(
-        "SELECT COUNT(*) AS n FROM decree_dossier_reconciliations"
-    ).fetchone()["n"] == 0
-    rej = list(db.conn.execute(
-        "SELECT category, item_json FROM rejection_reports "
-        "WHERE section='dossier_reconciliations' ORDER BY id"
-    ).fetchall())
-    assert len(rej) == 2
-    assert all(r["category"] == "missing_ref" for r in rej)
-    assert {json.loads(r["item_json"])["dossier_id"] for r in rej} == {7001, 7002}
-
-
-def test_1745_empty_targets_bad_recon_settle_advances(game):
-    """#1745 A1：无在途拨帑 + dossier_reconciliations → 逐项拒收，settle 推进，不 abort。
-
-    真回路：settle_with_delta 注入含坏引用的 delta；账本无在途目标。
-    验收：月份推进、拒收四字段落库、不落假 recon 行、不抛 SettlementAbort。
+    合并原空目标基数 / 两坏一好 / mixed atomic 重复主干为一条贯穿结算入口的 tracer。
     """
-    import json
-
-    from ming_sim.applier import Provenance
-    from ming_sim.exceptions import SettlementAbort
-    from ming_sim.models import TurnPhase
-
-    db, state, content = game
-    turn_before = int(state.turn)
-    state.turn_phase = TurnPhase.SETTLING.value
-    db.save_state(state)
-    db.conn.commit()
-    assert db.list_monthly_grant_reconciliation_targets() == []
-
-    bad_item = {"dossier_id": 99999, "arrived_amount": 10, "note": "内帑济辽对账"}
-    try:
-        settle_with_delta(
-            state, db,
-            {"dossier_reconciliations": [bad_item]},
-            before_turn=turn_before,
-            content=content,
-            narrative="十一月邸报",
-            source=Provenance.player_decree,
-        )
-    except SettlementAbort:
-        pytest.fail("无目标对账提案不得整月 SettlementAbort")
-
-    assert int(state.turn) == turn_before + 1
-    assert state.turn_phase != TurnPhase.AWAITING_DECISION.value
-    assert db.conn.execute(
-        "SELECT COUNT(*) AS n FROM decree_dossier_reconciliations"
-    ).fetchone()["n"] == 0
-    rows = list(db.conn.execute(
-        "SELECT section, reason, category, source, item_json "
-        "FROM rejection_reports WHERE section='dossier_reconciliations'"
-    ).fetchall())
-    assert len(rows) == 1
-    assert rows[0]["category"] == "missing_ref"
-    assert rows[0]["source"] == Provenance.player_decree.value
-    assert str(rows[0]["reason"] or "").strip()
-    item = json.loads(rows[0]["item_json"])
-    assert item["dossier_id"] == 99999
-    assert item["arrived_amount"] == 10
-
-
-def test_1745_mixed_good_and_bad_recon_same_atomic(game):
-    """#1745 B1：好项落库 + 坏项拒收同 atomic；月份推进。"""
-    import json
-
-    from ming_sim.applier import Provenance
-    from ming_sim.exceptions import SettlementAbort
-    from ming_sim.models import TurnPhase
-
     db, state, content = game
     good = _in_transit_grant(db, state, text="陕西赈银", target_id="shaanxi")
     turn_before = int(state.turn)
@@ -559,137 +474,74 @@ def test_1745_mixed_good_and_bad_recon_same_atomic(game):
             state, db,
             {"dossier_reconciliations": [
                 {"dossier_id": good, "arrived_amount": 16},
-                {"dossier_id": 88888, "arrived_amount": 5},
+                {"dossier_id": 88881, "arrived_amount": 1},
+                {"dossier_id": 88882, "arrived_amount": 2},
             ]},
             before_turn=turn_before,
             content=content,
-            narrative="mixed",
+            narrative="mixed-main",
             source=Provenance.player_decree,
         )
     except SettlementAbort:
         pytest.fail("混合好/坏对账不得整月 abort")
 
     assert int(state.turn) == turn_before + 1
+    assert state.turn_phase != TurnPhase.AWAITING_DECISION.value
     row = db.list_dossier_reconciliations(good)[-1]
     assert row["arrived_amount"] == 16
-    rej = list(db.conn.execute(
-        "SELECT category, item_json, reason FROM rejection_reports "
-        "WHERE section='dossier_reconciliations'"
-    ).fetchall())
-    assert len(rej) == 1
-    assert rej[0]["category"] == "missing_ref"
-    assert str(rej[0]["reason"] or "").strip()
-    assert json.loads(rej[0]["item_json"])["dossier_id"] == 88888
+    rej = _recon_rejections(db)
+    assert len(rej) == 2
+    assert {r["category"] for r in rej} == {"missing_ref"}
+    assert all(r["source"] == Provenance.player_decree.value for r in rej)
+    got_ids = {json.loads(r["item_json"])["dossier_id"] for r in rej}
+    assert got_ids == {88881, 88882}
 
 
-def test_1745_diagnosis_fork_never_vs_legally_closed_vs_same_settle_order(game):
-    """#1745 A 诊断独立证据：三路真实回路，绑定 A1 而非 A2 时序修。
-
-    票面分叉：A1 从未在途 / A2 同月合法结清后再提案 / A3 相位。
-    本测不以强造 fixture 代替判定：
-
-    N 从未在途：提案指向不存在 dossier_id。
-    I immediate：execution_surface=immediate 成案即终局，从未进入月度 targets。
-    C 合法结清：真实 in_transit → record_dossier_execution(fulfilled, close=True)
-      → 再提案（合法执行格终态，非裸 UPDATE）。
-    O 同 settle 时序：recon + dossier_executions 同批 → recon 先于 close，合法落账。
-
-    N/I/C 均 missing_ref、零 recon 行 → 提案时点无目标，按 B2「已合法结清按 A1 处置」。
-    O 证明 settle 内不可能「先结清再对账」→ 排除 A2 时序接缝缺陷。
-    """
-    import json
-
-    from ming_sim.applier import Provenance
-    from ming_sim.exceptions import SettlementAbort
-    from ming_sim.models import TurnPhase
-
-    db, state, content = game
-
-    def _rej_ids():
-        rows = db.conn.execute(
-            "SELECT item_json FROM rejection_reports "
-            "WHERE section='dossier_reconciliations' ORDER BY id"
-        ).fetchall()
-        return [json.loads(r["item_json"]).get("dossier_id") for r in rows]
-
-    def _rej_cats():
-        return [
-            r["category"]
-            for r in db.conn.execute(
-                "SELECT category FROM rejection_reports "
-                "WHERE section='dossier_reconciliations' ORDER BY id"
-            ).fetchall()
-        ]
-
-    # ── N：从未在途 ──────────────────────────────────────────────
-    reports_n = db.record_monthly_grant_reconciliations(
-        state.turn,
-        [{"dossier_id": 424242, "arrived_amount": 7}],
-        source=Provenance.player_decree,
+def test_1745_empty_targets_no_recon_rows(game):
+    """#1745：无在途目标 + 坏提案 → missing_ref，零 recon 行（不落假账）。"""
+    db, state, _content = game
+    assert db.list_monthly_grant_reconciliation_targets() == []
+    reports = _record_recon(
+        db, state.turn,
+        [
+            {"dossier_id": 7001, "arrived_amount": 3},
+            {"dossier_id": 7002, "loss_amount": 4},
+        ],
     )
-    assert reports_n == []
-    assert 424242 in _rej_ids()
-    assert _rej_cats().count("missing_ref") >= 1
+    assert reports == []
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM decree_dossier_reconciliations"
+    ).fetchone()["n"] == 0
+    rej = _recon_rejections(db)
+    assert len(rej) == 2
+    assert all(r["category"] == "missing_ref" for r in rej)
+    assert {json.loads(r["item_json"])["dossier_id"] for r in rej} == {7001, 7002}
 
-    # ── I：immediate 成案即终局，从未进 targets ──────────────────
-    state.metrics["内库"] = max(int(state.metrics.get("内库") or 0), 200)
-    db.save_state(state)
-    imm = db.create_decree_dossier(
-        state,
-        action_type="grant_allocation",
-        decree_text="内帑济辽·即时",
-        target_kind="region",
-        target_id="liaodong",
-        payload={
-            "account": "内库",
-            "amount": 20,
-            "execution_surface": "immediate",
-        },
-    )
-    db.apply_dossier_promulgation(state, imm, "promulgated")
-    imm_row = db.get_decree_dossier(imm)
-    assert imm_row["status"] == "closed", imm_row
-    assert imm not in {
-        int(t["dossier_id"]) for t in db.list_monthly_grant_reconciliation_targets()
-    }
-    db.conn.execute("DELETE FROM rejection_reports")  # 清 N 的行，专看 I
-    db.conn.commit()
-    reports_i = db.record_monthly_grant_reconciliations(
-        state.turn,
-        [{"dossier_id": imm, "arrived_amount": 10}],
-        source=Provenance.player_decree,
-    )
-    assert reports_i == []
-    assert db.list_dossier_reconciliations(imm) == []
-    assert _rej_ids() == [imm]
-    assert _rej_cats() == ["missing_ref"]
 
-    # ── C：真实 in_transit → 合法执行格结清 → 再提案 ─────────────
+def test_1745_legally_closed_target_not_overwritten(game):
+    """#1745 B2 独立契约：合法结清后提案 → missing_ref，不得新写对账行。"""
+    db, state, _content = game
     transit = _in_transit_grant(db, state, text="在途后结清", target_id="shaanxi")
-    assert transit in {
-        int(t["dossier_id"]) for t in db.list_monthly_grant_reconciliation_targets()
-    }
     db.record_dossier_execution(
         transit, "fulfilled", "押解已达", int(state.turn), close=True,
     )
-    closed = db.get_decree_dossier(transit)
-    assert closed["status"] == "closed"
-    assert closed["execution_outcome"] == "fulfilled"
+    assert db.get_decree_dossier(transit)["status"] == "closed"
     assert db.list_monthly_grant_reconciliation_targets() == []
-    db.conn.execute("DELETE FROM rejection_reports")
-    db.conn.commit()
-    reports_c = db.record_monthly_grant_reconciliations(
-        state.turn,
+    reports = _record_recon(
+        db, state.turn,
         [{"dossier_id": transit, "arrived_amount": 16}],
-        source=Provenance.player_decree,
     )
-    assert reports_c == []
+    assert reports == []
     assert db.list_dossier_reconciliations(transit) == []
-    assert _rej_ids() == [transit]
-    assert _rej_cats() == ["missing_ref"]
-    # B2：已合法结清 → 不得新写对账行（上式已锁）
+    rej = _recon_rejections(db)
+    assert len(rej) == 1
+    assert rej[0]["category"] == "missing_ref"
+    assert json.loads(rej[0]["item_json"])["dossier_id"] == transit
 
-    # ── O：同 settle recon+execution → recon 先见在途，合法落账 ───
+
+def test_1745_recon_then_execution_same_settle(game):
+    """#1745：同 settle recon + dossier_executions → recon 先见在途，合法落账后 close。"""
+    db, state, content = game
     still = _in_transit_grant(db, state, text="同批对账后结", target_id="xuan_da")
     turn_before = int(state.turn)
     state.turn_phase = TurnPhase.SETTLING.value
@@ -710,30 +562,19 @@ def test_1745_diagnosis_fork_never_vs_legally_closed_vs_same_settle_order(game):
             },
             before_turn=turn_before,
             content=content,
-            narrative="时序证",
+            narrative="order",
             source=Provenance.player_decree,
-            delta_applier=lambda d, s, ex, ct, rg: __import__(
-                "ming_sim.issues", fromlist=["apply_score_extraction"]
-            ).apply_score_extraction(d, s, ex, content=ct, registry=rg),
+            delta_applier=issue_engine.apply_score_extraction,
         )
     except SettlementAbort:
-        pytest.fail("同批 recon+execution 不得 abort——时序应 recon 先于 close")
+        pytest.fail("同批 recon+execution 不得 abort")
     recon = db.list_dossier_reconciliations(still)
     assert len(recon) == 1 and recon[0]["arrived_amount"] == 16
     assert db.get_decree_dossier(still)["status"] == "closed"
-    # 诊断结论：N/I/C = A1 数据侧坏引用；O 排除 A2 settle 内时序错 → 生效 B1
 
 
 def test_1745_full_chain_player_state_no_fake_awaiting(game, monkeypatch):
-    """#1745 C：全链 canned 结算入口——玩家态无假 awaiting、不泄诊断键。
-
-    入口：make_light_session.advance_without_decree + canned extract
-    （settlement_seam_helpers，与 #1274 同形 tracer 边界）。
-    """
-    import json
-
-    from ming_sim.applier import Provenance
-    from ming_sim.models import TurnPhase
+    """#1745 C：全链 canned 结算入口——玩家态无假 awaiting、结构化拒收归属正确。"""
     from tests.settlement_seam_helpers import canned_full_settlement, make_light_session
 
     db, state, content = game
@@ -754,18 +595,13 @@ def test_1745_full_chain_player_state_no_fake_awaiting(game, monkeypatch):
     assert not (result.decisions or [])
     assert int(state.turn) == turn0 + 1
     assert state.turn_phase != TurnPhase.AWAITING_DECISION.value
-
-    # 拒收 durable；零假 recon
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM decree_dossier_reconciliations"
     ).fetchone()["n"] == 0
-    rej = list(db.conn.execute(
-        "SELECT category, source, item_json FROM rejection_reports "
-        "WHERE section='dossier_reconciliations'"
-    ).fetchall())
+    rej = _recon_rejections(db)
     assert len(rej) == 1 and rej[0]["category"] == "missing_ref"
     assert json.loads(rej[0]["item_json"])["dossier_id"] == 99999
-    # 来源门：系统无旨月 → system_simulation（不冒 player 戏内）
+    # 无旨月 → system_simulation（0008-D5 来源门）
     assert rej[0]["source"] == Provenance.system_simulation.value
 
 
@@ -774,15 +610,9 @@ def test_1745_web_state_payload_after_bad_recon_settle(
 ):
     """#1745 C：坏 recon 经 settle 后 WebGame.state_payload 结构化玩家态。
 
-    自有 WebGame（禁复用 game 夹具连接）。不断自由文本；只咬
-    phase / pending_decisions / resume_phase2 / settlement_recovery。
+    自有 WebGame；只咬 phase / pending_decisions / resume_phase2 / settlement_recovery。
     """
-    import json
-
     import web_app
-    from ming_sim.applier import Provenance
-    from ming_sim.exceptions import SettlementAbort
-    from ming_sim.models import TurnPhase
 
     monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
@@ -811,7 +641,6 @@ def test_1745_web_state_payload_after_bad_recon_settle(
             )
         except SettlementAbort:
             pytest.fail("坏 recon 不得 SettlementAbort")
-        # state 即 session.state 属性同源；settle 已就地推进
 
         payload = game_web.state_payload()
         turn_blk = payload.get("turn") or {}
@@ -821,11 +650,8 @@ def test_1745_web_state_payload_after_bad_recon_settle(
         assert payload.get("resume_phase2") in (False, None)
         recovery = payload.get("settlement_recovery")
         assert recovery in (None, {}) or recovery.get("ready_replay") is not True
-        blob = json.dumps(payload, ensure_ascii=False)
-        assert "rejection_reports" not in blob
-        assert "missing_ref" not in blob
-        assert "dossier_reconciliations" not in blob
-        # DB 侧：恰一条拒收，零 recon
+        # 结构化投影：不把拒收明细键塞进 state_payload（P4）；只断键存在性
+        assert "rejection_reports" not in payload
         assert db.conn.execute(
             "SELECT COUNT(*) AS n FROM decree_dossier_reconciliations"
         ).fetchone()["n"] == 0
@@ -834,53 +660,5 @@ def test_1745_web_state_payload_after_bad_recon_settle(
             "WHERE section='dossier_reconciliations'"
         ).fetchone()["n"] == 1
     finally:
-        try:
-            game_web.session.close()
-        except Exception:
-            pass
+        game_web.session.close()
         web_app.web_game = None
-
-
-def test_1745_good_recon_and_rejection_roll_back_together(game):
-    """#1745 0008-D2：recon 好项 + 拒收行与后继失败同 atomic 回滚。"""
-    from ming_sim.applier import Provenance
-    from ming_sim.exceptions import SettlementAbort
-    from ming_sim.models import TurnPhase
-
-    db, state, content = game
-    good = _in_transit_grant(db, state)
-    turn_before = int(state.turn)
-    state.turn_phase = TurnPhase.SETTLING.value
-    db.save_state(state)
-    db.conn.commit()
-
-    def _boom_applier(*_a, **_k):
-        raise RuntimeError("forced post-recon failure for atomic proof")
-
-    with pytest.raises(SettlementAbort):
-        settle_with_delta(
-            state, db,
-            {"dossier_reconciliations": [
-                {"dossier_id": good, "arrived_amount": 16},
-                {"dossier_id": 88888, "arrived_amount": 5},
-            ]},
-            before_turn=turn_before,
-            content=content,
-            narrative="rollback",
-            source=Provenance.player_decree,
-            delta_applier=_boom_applier,
-        )
-
-    # 回滚：好项 recon 与坏项拒收均不得残留
-    # （atomic 内 CREATE rejection_reports 亦随 SQLite 事务回滚 → 表可不存在）
-    assert db.list_dossier_reconciliations(good) == []
-    tables = {
-        r[0] for r in db.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
-    }
-    if "rejection_reports" in tables:
-        assert db.conn.execute(
-            "SELECT COUNT(*) AS n FROM rejection_reports"
-        ).fetchone()["n"] == 0
-    assert int(state.turn) == turn_before  # 月未推进

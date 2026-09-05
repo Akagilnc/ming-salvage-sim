@@ -175,8 +175,9 @@ def run_settle(db, state, content, raw_delta, *, narrative="", decree_text="", r
     不再调用 pre_settle；未 prepare 响亮 ValueError 且零写。settling + ready=1 崩溃重入
     只读既有 context，不二次 prepare/tick。
 
-    source 默认 player_decree：探针每回合即皇帝下旨之结算，其落库拒收对玩家可见（邸报给一句
-    in-world 提示，ADR 0008 决定 5）。纯世界推演回合可由信封传 source=system_simulation 静默。
+    source 默认 player_decree：探针每回合即皇帝下旨之结算，拒收 source 门按 0008-D5；
+    呈现由 LLM 接缝据实编织（0150-D5-b），代码不写戏内固定句。纯世界推演可传
+    source=system_simulation。
 
     narrative 落 turn_logs/turn_reports 作下月前文 + 玩家邸报；canonical delta 先落
     pending_resolve_context 作重跑真源，turn_extractions.extractor_output 存 applied

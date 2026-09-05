@@ -2870,12 +2870,9 @@ def _settle_after_extract_body(
     # #623：断供/挪用/撤人机器扫描 → 当回合只写挽留 todo（改弦走 revoke 拦截缝）。
     scan_and_write_breach_pleas(db, state, commit=False)
 
-    # ADR 0008 决定 5：主 apply + inertia 拒收全部收齐后，玩家来源(player_decree/hitl_decision)的
-    # 落库拒收 → 邸报附一句 in-world 提示，并**持久化进 turn_report**（web/history/重读都见，非仅即时
-    # 返回串；涵盖 inertia-only 拒收，codex R1 P2 + CodeRabbit Major）。system_simulation 来源静默。
-    # record_log(sim 下月前文)在 inertia 前已跑、不带此提示噪声。提示极简、不暴露明细（明细落 DB/jsonl）。
-    if _has_durable_player_visible_rejection(db, before_turn):
-        narrative = narrative + "\n\n有司奏：所拟之事有窒碍未行者，已录档待酌。"
+    # ADR 0008 决定 5 来源门 + 0150-D5-b / P7：玩家来源拒收只留结构化事实（rejection_reports
+    # 四字段），由既有 LLM 呈现接缝据实编织；代码不写戏内固定补句、不替换/截取 narrative。
+    # system_simulation 来源对玩家安静（门仍由 _has_durable_player_visible_rejection 表达）。
     # 机械人口真相只留在 extraction/applied 内账；公开回响由下方既有邸报来源承担，
     # 不再把精确人数强制广播为所有角色的公共知识。
     # #976: release held pure-public audience chat (non-withheld) before
