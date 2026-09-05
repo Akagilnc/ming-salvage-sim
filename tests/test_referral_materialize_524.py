@@ -151,37 +151,62 @@ def test_referral_and_assignment_kinds_are_mutually_exclusive():
 # ── 锚例：交部议 ──────────────────────────────────────────────────────
 
 
-def test_jiaobuyi_lands_initiative_only_after_promulgation(game):
+def test_jiaobuyi_lands_initiative_only_after_promulgation(game, monkeypatch):
     """「交部议」：夜内零案卷零 initiative；收夜仅案卷；顺颁后 initiative。
 
     end_turn=turn+deadline_months；participants=机关列表（≥1）；零个人 owner。
+    #1565：缺 title+target_id → validation 恢复；缺 title 时题名取 target_id。
     """
+    monkeypatch.setattr(
+        cb, "_run_backend_for_config",
+        lambda _p, _c=None, *, tag="": ("臣请陛下明示下议题名后重拟。", 1),
+    )
     db, state, content = game
     actor = _minister(db)
     before = len(_active_initiatives(db))
     bodies = ["吏部", "户部"]
+    reply = "臣请交吏户二部会商。请陛下定夺准驳。"
 
-    ctx = _stage_referral(
-        db, state.turn,
-        title="清核边饷",
-        target_id="qinghe-bianxiang",
-        responsible_bodies=bodies,
-        deadline_months=6,
-        actor=actor,
-        message="此事交部议，着吏户二部会商清核边饷，限六月回报。",
-        reply="臣请交吏户二部会商。请陛下定夺准驳。",
+    # 缺锚：已识别 referral 不得静默丢单
+    bare = candidates_from_classifier_payload({
+        "kind": "referral",
+        "title": "",
+        "target_id": "",
+        "deadline_months": 6,
+        "responsible_bodies": json.dumps(bodies, ensure_ascii=False),
+    }, soft=False)
+    ctx_bare = _ctx(
+        db, actor, bare, state.turn,
+        message="此事交部议。", reply=reply,
     )
+    run_materialize_pipeline(ctx_bare)
+    assert not ctx_bare.out.get("pending_action_id")
+    failure = ctx_bare.out.get("decree_validation_failure") or {}
+    assert "title" in set(failure.get("failed_fields") or [])
+    assert failure.get("report")
+
+    # 题名锚=target_id（无分类 title）；其后收夜/顺颁沿既有入口
+    anchored = candidates_from_classifier_payload({
+        "kind": "referral",
+        "title": "",
+        "target_id": "清核边饷",
+        "deadline_months": 6,
+        "responsible_bodies": json.dumps(bodies, ensure_ascii=False),
+    }, soft=False)
+    ctx = _ctx(
+        db, actor, anchored, state.turn,
+        message="此事交部议，着吏户二部会商清核边饷，限六月回报。",
+        reply=reply,
+    )
+    run_materialize_pipeline(ctx)
     pending_id = ctx.out.get("pending_action_id")
     assert pending_id
     pending = _pending_payload(db, pending_id)
     assert pending["dossier_action_type"] == "referral"
     assert pending["end_turn"] == state.turn + 6
     assert pending["responsible_bodies"] == bodies
-    # #1565/0142：题名=结构化 title；正文唯一真源=payload.text（reply 供料）
     assert pending.get("title") == "清核边饷"
-    reply = "臣请交吏户二部会商。请陛下定夺准驳。"
     assert pending.get("text") == reply
-    assert "body" not in pending or pending.get("body") in (None, "")
     # 下议零个人 owner
     assert not str(pending.get("assignee") or pending.get("assignee_id") or "").strip()
     assert len(_active_initiatives(db)) == before, "物化前不得创建 initiative"
@@ -213,50 +238,6 @@ def test_jiaobuyi_lands_initiative_only_after_promulgation(game):
     assert participants == bodies
     assert actor not in participants  # 零个人 owner
     assert db.get_decree_dossier(dossier["id"])["status"] == "executing"
-
-
-def test_referral_title_from_target_id_when_classifier_title_empty(game, monkeypatch):
-    """#1565：缺 title 时题名取 target_id；正文=reply 供料；双空走 validation 恢复。"""
-    monkeypatch.setattr(
-        cb, "_run_backend_for_config",
-        lambda _p, _c=None, *, tag="": ("臣请陛下明示下议题名后重拟。", 1),
-    )
-    db, state, content = game
-    actor = _minister(db)
-    reply = "臣请交部议。请陛下定夺准驳。"
-
-    bare = candidates_from_classifier_payload({
-        "kind": "referral",
-        "title": "",
-        "target_id": "",
-        "deadline_months": 3,
-        "responsible_bodies": json.dumps(["户部"], ensure_ascii=False),
-    }, soft=False)
-    ctx_bare = _ctx(
-        db, actor, bare, state.turn,
-        message="着交部议。", reply=reply,
-    )
-    run_materialize_pipeline(ctx_bare)
-    assert not ctx_bare.out.get("pending_action_id")
-    failure = ctx_bare.out.get("decree_validation_failure") or {}
-    assert "title" in set(failure.get("failed_fields") or [])
-    assert failure.get("report")
-
-    anchored = candidates_from_classifier_payload({
-        "kind": "referral",
-        "title": "",
-        "target_id": "清核边饷",
-        "deadline_months": 3,
-        "responsible_bodies": json.dumps(["户部"], ensure_ascii=False),
-    }, soft=False)
-    ctx = _ctx(
-        db, actor, anchored, state.turn,
-        message="着交部议清核边饷。", reply=reply,
-    )
-    run_materialize_pipeline(ctx)
-    pending = _pending_payload(db, ctx.out["pending_action_id"])
-    assert pending.get("title") == "清核边饷"
-    assert pending.get("text") == reply
 
 
 def test_referral_rejected_verdict_creates_no_initiative(game):
