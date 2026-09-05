@@ -5887,9 +5887,10 @@ async def api_withdraw_pending_action(action_id: int) -> Dict[str, Any]:
         if game.db.withdraw_pending_action(int(action_id), int(game.state.turn)):
             return {"withdrawn": action_id, "actions": _player_visible_pending_actions(
                 game.db.list_pending_actions(int(game.state.turn)))}
-    # 删不动:查清是不存在还是已落库/非本回合
-    row = game.db.conn.execute(
-        "SELECT turn, status FROM pending_actions WHERE id=?", (int(action_id),)).fetchone()
+        # #1749：404/409 分流也须在 gate 内读库；门外读会撞退休关闭。
+        row = game.db.conn.execute(
+            "SELECT turn, status FROM pending_actions WHERE id=?", (int(action_id),),
+        ).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail="该待确认动作不存在。")
     raise HTTPException(status_code=409, detail="该动作已落库或非本回合，无法撤回。")
@@ -5918,18 +5919,23 @@ async def api_retry_pending_action(action_id: int) -> Dict[str, Any]:
                 )
                 if result.get("committed"):
                     game.db.retire_chat_turn_for_pending_action_retry(int(action_id))
+            # #1749：响应投影在 gate 内快照，禁门后读退休连接。
+            return {
+                "retry": result,
+                "actions": _player_visible_pending_actions(
+                    game.db.list_pending_actions(int(game.state.turn))),
+                "secret_orders": game.db.list_secret_orders(),
+                "can_undo_last_chat": (
+                    game.can_undo_last_chat(minister_name) if minister_name else False
+                ),
+                "pending_action_failures": (
+                    game.pending_action_failures_for(minister_name) if minister_name else []
+                ),
+            }
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from None
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from None
-    return {
-        "retry": result,
-        "actions": _player_visible_pending_actions(
-            game.db.list_pending_actions(int(game.state.turn))),
-        "secret_orders": game.db.list_secret_orders(),
-        "can_undo_last_chat": game.can_undo_last_chat(minister_name) if minister_name else False,
-        "pending_action_failures": game.pending_action_failures_for(minister_name) if minister_name else [],
-    }
 
 
 @app.get("/api/history/turns")
@@ -6238,6 +6244,8 @@ async def api_create_directive(request: DirectiveRequest) -> Dict[str, Any]:
         )
         # 会话层 _refuse_if_settling 仅查相位，守不住 pre_settle 原子块在 settling 落定前的窗口；
         # 与直写端点同走 _serialized_web_write 抢 _write_gate（cmr Gate2 F-A 残面：会话写也要串行）。
+        # #1749：响应快照必须在临界段内完成——gate 释放后 drain 可关旧库，
+        # 门外 directive_rows 会 ProgrammingError: closed database。
         with _serialized_web_write(game):
             if int(game.state.turn) != capture_turn:
                 raise ValueError("旨意抽取期间回合已推进，请在当前回合重新提交。")
@@ -6245,15 +6253,17 @@ async def api_create_directive(request: DirectiveRequest) -> Dict[str, Any]:
                 request.text.strip(), notes=request.notes,
                 dossier_payload=dossier_payload,
             )
+            return {
+                "directive": {"id": dv.id, "text": dv.text, "status": dv.status},
+                "directives": [
+                    game.directive_payload(item) for item in game.directive_rows()
+                ],
+            }
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from None  # 恢复窗冻结指引
     except LLMUnavailable as e:
         # #1274 V-1 r6 / #1452：回禀产文失败 → 结构化 400，禁裸 500 / 固定戏内模板。
         raise HTTPException(status_code=400, detail=_llm_error_detail(e)) from None
-    return {
-        "directive": {"id": dv.id, "text": dv.text, "status": dv.status},
-        "directives": [game.directive_payload(item) for item in game.directive_rows()],
-    }
 
 
 @app.patch("/api/directives/{directive_id}")
@@ -6281,29 +6291,39 @@ async def api_update_directive(directive_id: int, request: DirectivePatch) -> Di
             **({"db": game.db, "content": game.content}
                if getattr(game, "content", None) is not None else {}),
         )
+        # #1749：同 create——响应列表在 gate 内快照，禁门后读退休连接。
         with _serialized_web_write(game):
             if int(game.state.turn) != capture_turn:
                 raise ValueError("旨意抽取期间回合已推进，请在当前回合重新提交。")
             game.session.update_directive(
                 directive_id, text.strip(), dossier_payload=dossier_payload,
             )
+            return {
+                "directives": [
+                    game.directive_payload(item) for item in game.directive_rows()
+                ],
+            }
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from None
     except LLMUnavailable as e:
         # #1274 V-1 r6 / #1452：回禀产文失败 → 结构化 400，禁裸 500 / 固定戏内模板。
         raise HTTPException(status_code=400, detail=_llm_error_detail(e)) from None
-    return {"directives": [game.directive_payload(item) for item in game.directive_rows()]}
 
 
 @app.delete("/api/directives/{directive_id}")
 async def api_delete_directive(directive_id: int) -> Dict[str, Any]:
     game = get_game()
     try:
+        # #1749：同 create/update——删除后列表投影在 gate 内完成。
         with _serialized_web_write(game):
             game.session.delete_directive(directive_id)
+            return {
+                "directives": [
+                    game.directive_payload(item) for item in game.directive_rows()
+                ],
+            }
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from None
-    return {"directives": [game.directive_payload(item) for item in game.directive_rows()]}
 
 
 @app.post("/api/decree/advance_without_edict")
@@ -6751,8 +6771,10 @@ async def api_select_consort(name: str) -> Dict[str, Any]:
         consort.status = "active"
         # 同步进 registry（新增 agent）
         game.session.registry.register(consort)
+        # #1749：public_character 读 DB；须在 gate 内快照，禁门后撞退休关闭。
+        selected = game.public_character(consort)
     game.chat_history.setdefault(name, [])
-    return {"selected": game.public_character(consort)}
+    return {"selected": selected}
 
 
 @app.get("/api/saves")
@@ -6768,8 +6790,10 @@ async def api_create_save(request: SaveCreateRequest) -> Dict[str, Any]:
     game = get_game()
     with _serialized_web_write(game):
         info = game.save_to(request.name)
+        # #1749：list_saves 读 campaign_id（DB）；响应列表在 gate 内快照。
+        saves = game.list_saves()
     return steam_events.with_events(
-        {"save": info, "saves": game.list_saves()},
+        {"save": info, "saves": saves},
         [steam_events.add_stat(steam_events.STAT_SAVES_CREATED)],
     )
 
