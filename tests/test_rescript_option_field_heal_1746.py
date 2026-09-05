@@ -201,10 +201,21 @@ def test_missing_grant_kind_with_illegal_amount_not_heal(monkeypatch, tmp_path):
         normalize_rescript_layer_a_option(bad, generation_admission=True)
 
 
-def test_missing_label_with_illegal_amount_not_heal(monkeypatch, tmp_path):
-    """缺 required label + 已给非正 amount → 整批 F2.5，不进三次补交。"""
+@pytest.mark.parametrize(
+    "bad_kw, match",
+    [
+        ({"label": "", "amount": -5}, "amount"),
+        ({"label": "", "amount": 3.5}, "amount"),  # float 拒，不得 int() 截断
+        ({"label": "", "grant_kind": "bogus"}, "grant_kind"),
+    ],
+    ids=["neg_amount", "float_amount", "bogus_grant_kind"],
+)
+def test_missing_label_with_coexisting_illegal_not_heal(
+    bad_kw, match, monkeypatch, tmp_path,
+):
+    """前置缺 label + 同 option 非法值 → F2.5，不进补交。"""
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    bad = _army_pay(label="", amount=-5)
+    bad = _army_pay(**bad_kw)
     raw = _items_json([{"title": "u", "context": "c", "options": [bad, _hold()]}])
     calls: list[str] = []
 
@@ -215,7 +226,7 @@ def test_missing_label_with_illegal_amount_not_heal(monkeypatch, tmp_path):
     monkeypatch.setattr(rescript_mod, "run_agent_text", _llm)
     assert generate_rescript_draft(object(), _ctx(), turn=45) is None
     assert len(calls) == 1
-    with pytest.raises(ValueError, match="amount"):
+    with pytest.raises(ValueError, match=match):
         normalize_rescript_layer_a_option(bad, generation_admission=True)
 
 
