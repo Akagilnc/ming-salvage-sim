@@ -316,7 +316,7 @@ def test_drain_archive_rolls_back_main_db_when_wal_move_fails(monkeypatch, tmp_p
 
 
 def test_drain_archive_skips_move_when_session_close_fails(monkeypatch, tmp_path):
-    """#402 R2（CodeRabbit）：旧连接没关成功时，不移动仍可能被占用的 DB 文件。"""
+    """#402 R2（CodeRabbit）+#1740：旧连接没关成功时上抛原异常，且不移动仍可能被占用的 DB 文件。"""
     db_path = str(tmp_path / "ming_sim.db")
     with open(db_path, "w", encoding="utf-8") as f:
         f.write("db")
@@ -330,7 +330,8 @@ def test_drain_archive_skips_move_when_session_close_fails(monkeypatch, tmp_path
     monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
     monkeypatch.setattr(web_app.shutil, "move", lambda src, dst: moves.append((src, dst)))
 
-    web_app._drain_and_close_session(game, archive_db=True)
+    with pytest.raises(RuntimeError, match="close failed"):
+        web_app._drain_and_close_session(game, archive_db=True)
 
     assert moves == []
     assert os.path.exists(db_path)
@@ -832,7 +833,8 @@ def test_new_game_after_exit_does_not_clobber_old_db_while_detach_drains(monkeyp
     import sqlite3
 
     old_db_path = str(tmp_path / "old_configured.db")
-    conn = sqlite3.connect(old_db_path)
+    # detach 在后台线程 close；与同文件其它 drain 案一致，允许跨线程用连接。
+    conn = sqlite3.connect(old_db_path, check_same_thread=False)
     conn.execute("CREATE TABLE kv_store (key TEXT PRIMARY KEY, value TEXT)")
     conn.execute("INSERT INTO kv_store VALUES ('data', 'before_exit')")
     conn.commit()
