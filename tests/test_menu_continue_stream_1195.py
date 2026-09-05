@@ -45,7 +45,7 @@ def test_menu_continue_streams_stage_labels_then_done_state(monkeypatch):
         def state_payload(self) -> dict:
             return self._state
 
-    monkeypatch.setattr(web_app, "_menu_exit_detach_completion", None)
+    web_app._clear_menu_path_completions_for_tests()
     monkeypatch.setattr(web_app, "_has_main_db", lambda: True)
     monkeypatch.setattr(web_app, "WebGame", FakeWebGame)
     monkeypatch.setattr(web_app, "web_game", None)
@@ -77,7 +77,7 @@ def test_menu_continue_streams_error_when_llm_unavailable(monkeypatch):
         def __init__(self, fresh: bool = False, on_stage=None, **_kw) -> None:
             raise web_app.LLMUnavailable("未配 API key，请先到设置页填写。")
 
-    monkeypatch.setattr(web_app, "_menu_exit_detach_completion", None)
+    web_app._clear_menu_path_completions_for_tests()
     monkeypatch.setattr(web_app, "_has_main_db", lambda: True)
     monkeypatch.setattr(web_app, "WebGame", BoomWebGame)
     monkeypatch.setattr(web_app, "web_game", None)
@@ -120,7 +120,7 @@ def test_stale_continue_worker_does_not_publish_after_exit(monkeypatch):
         def state_payload(self) -> dict:
             return self._state
 
-    monkeypatch.setattr(web_app, "_menu_exit_detach_completion", None)
+    web_app._clear_menu_path_completions_for_tests()
     monkeypatch.setattr(web_app, "_has_main_db", lambda: True)
     monkeypatch.setattr(web_app, "WebGame", SlowWebGame)
     monkeypatch.setattr(web_app, "web_game", None)
@@ -179,7 +179,7 @@ def test_stale_continue_worker_does_not_publish_after_new_game(monkeypatch, tmp_
         def state_payload(self) -> dict:
             return self._state
 
-    monkeypatch.setattr(web_app, "_menu_exit_detach_completion", None)
+    web_app._clear_menu_path_completions_for_tests()
     monkeypatch.setattr(web_app, "_has_main_db", lambda: True)
     monkeypatch.setattr(web_app, "WebGame", SlowWebGame)
     monkeypatch.setattr(web_app, "web_game", None)

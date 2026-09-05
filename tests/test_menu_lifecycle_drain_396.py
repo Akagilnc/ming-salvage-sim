@@ -669,7 +669,7 @@ def test_new_game_switches_db_path_when_web_game_is_none(monkeypatch, tmp_path):
     monkeypatch.setenv("MING_SIM_DB", old_db_path)
     monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
     # 无进行中的 exit detach
-    monkeypatch.setattr(web_app, "_menu_exit_detach_completion", None)
+    web_app._clear_menu_path_completions_for_tests()
 
     fake_new_game = SimpleNamespace(state_payload=lambda: {"turn": 1})
     monkeypatch.setattr(web_app, "WebGame", lambda fresh, **_kw: fake_new_game)
